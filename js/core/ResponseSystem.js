@@ -57,7 +57,8 @@ export class ResponseSystem {
   }
 
   async requestDyingRescue(rescuer, target, card) {
-    if (!rescuer.alive || !rescuer.hand.includes(card) || card.definitionId !== "recover") return null;
+    if (!rescuer?.alive || !target?.alive || target.hp > 0 || rescuer.battleTeam !== target.battleTeam ||
+      !rescuer.hand.includes(card) || card.definitionId !== "recover") return null;
     const gameId = this.game.state.gameId;
     const request = { id:createId("dying-response"), type:"dyingRescue", sourcePlayerId:rescuer.id, targetPlayerId:target.id,
       cardId:null, legalCardIds:[card.id], requiredCount:1, legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true,
@@ -65,9 +66,32 @@ export class ResponseSystem {
     this.activeRequestIds.add(request.id);
     this.game.state.pendingResponses.push(request);
     let use;
-    if (rescuer.id === target.id && rescuer.controllerType === "ai") use = true;
-    else use = await this.waitForDecision(rescuer, request, `用调息救援${target.name}`, { target, source:rescuer, card }, [card]);
-    const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) && rescuer.alive && rescuer.hand.includes(card);
+    const aiSelfRescue = rescuer.controllerType === "ai" && rescuer.id === target.id;
+    const forcedHumanRescue =
+      (this.game.forceAiRescueHuman ?? GAME_CONFIG.forceAiRescueHuman) &&
+      rescuer.controllerType === "ai" &&
+      target.controllerType === "human" &&
+      rescuer.id !== target.id &&
+      rescuer.battleTeam === target.battleTeam;
+
+    if (aiSelfRescue) {
+      use = true;
+    } else if (forcedHumanRescue) {
+      this.game.ui.setThinking(true, rescuer, `正在准备救援${target.name}`);
+      const waited = await this.game.cleanupManager.delay(getAiDelay(this.game, "response"));
+      this.game.ui.setThinking(false);
+      if (!waited) {
+        this.finishRequest(request.id);
+        return null;
+      }
+      // 强制队友规则在等待结束后固定使用调息，不进入 AI 效用评分。
+      use = true;
+    } else {
+      use = await this.waitForDecision(rescuer, request, `用调息救援${target.name}`, { target, source:rescuer, card }, [card]);
+    }
+    const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) &&
+      rescuer.alive && target.alive && target.hp <= 0 &&
+      rescuer.battleTeam === target.battleTeam && rescuer.hand.includes(card);
     this.finishRequest(request.id);
     if (!use || !valid) return null;
     await this.game.discardCardFromHand(rescuer, card, `救援${target.name}`);

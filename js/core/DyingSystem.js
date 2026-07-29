@@ -72,6 +72,7 @@ export class DyingSystem {
         await this.game.heal(rescuer, target, 1, { card:use, reason:"dyingRescue", isDyingRescue:true });
         this.game.state.dyingContext = { targetId:target.id, need:Math.max(0, 1 - target.hp), currentHp:target.hp };
         this.game.log(`${rescuer.name}使用调息救援${target.name}，其生命变为${target.hp}。`, "heal");
+        if (target.hp <= 0) this.game.log(`${target.name}仍处于濒死，还需${1 - target.hp}张调息。`, "important");
         await this.game.eventBus.emit("dyingRescueUsed", { type:"dyingRescueUsed", target, rescuer, card:use, currentHp:target.hp });
         this.game.ui.showDying?.(target, this.game.state.dyingContext);
         this.game.ui.render(this.game);

@@ -26,6 +26,11 @@ export const GAME_CONFIG = Object.freeze({
   defaultAttackRange: 1,
   // 真人响应窗口毫秒数；推荐 8000～20000，只影响操作宽容度，不改 AI 合法性。
   responseTimeoutMs: 12000,
+  // 是否强制同阵营 AI 队友救援濒死真人。
+  // true：真人玩家濒死时，所有持有调息的存活 AI 队友必须救援。
+  // false：恢复使用普通 AI 救援策略。
+  // 该配置只影响 AI 是否救援真人，不改变真人自己的选择，也不允许敌方救援。
+  forceAiRescueHuman: true,
   // 单回合动作安全上限；降低可能截断合法连招，提高会放大异常循环风险。
   aiMaxActionsPerTurn: 16,
   // 首轮编号；仅影响展示和轮次标记，通常保持 1。

@@ -20,8 +20,11 @@ export class AiEvaluator {
   }
 
   actionUtility(action, player, visible) {
-    if (action.type === "end") return player.hand.length ? -0.8 : 0;
     const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
+    if (action.type === "end") {
+      const remainingCards = actor.handCount ?? actor.hand?.length ?? player.hand.length;
+      return remainingCards > 0 ? -0.8 : 0;
+    }
     if (action.type === "skill") {
       const target = action.targets?.[0];
       const enemies = visible.players.filter((entry) => entry.alive && entry.battleTeam !== actor.battleTeam);
@@ -59,7 +62,8 @@ export class AiEvaluator {
       const net = this.symbiosisNetFromState(actor, visible);
       value = net > 0 ? 8 + net : -9 + net;
     }
-    if (card.category === "equipment" && player.equipment?.definitionId === card.definitionId) value -= 4;
+    const equippedDefinitionId = actor.equipmentDefinitionId ?? actor.equipment?.definitionId ?? null;
+    if (card.category === "equipment" && equippedDefinitionId === card.definitionId) value -= 4;
     return value;
   }
 

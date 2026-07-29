@@ -20,7 +20,7 @@ export class AiSimulator {
     const target = next.players.find((player) => player.id === abstractAction.targets?.[0]?.id);
     actor.hand = (actor.hand ?? []).filter((entry) => entry.id !== card.id);
     actor.handCount = Math.max(0, (actor.handCount ?? 0) - 1);
-    const scale = this.tacticResolutionChance(next, actor, card);
+    const scale = this.tacticResolutionChance(next, actor, card, abstractAction.targets ?? []);
 
     switch (card.definitionId) {
       case "recover":
@@ -32,13 +32,13 @@ export class AiSimulator {
       case "harvest": actor.handCount += 2 * scale; break;
       case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + scale; break;
       case "assault":
-        if (target) this.applyDamage(next, actor, target, 1 + (actor.exposeWeaknessStacks ?? 0) + (actor.assaultBonus ?? 0), { canBlock:true });
+        if (target) this.applyDamage(next, actor, target, 1 + (actor.exposeWeaknessStacks ?? 0) + (actor.assaultBonus ?? 0), { canBlock:true, deviceAttack:true });
         actor.exposeWeaknessStacks = 0;
         actor.assaultBonus = 0;
         actor.attackUsed += 1;
         break;
       case "shockwave":
-        for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) this.applyDamage(next, actor, player, scale, { canBlock:true });
+        for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) this.applyDamage(next, actor, player, scale, { canBlock:true, deviceAttack:true });
         break;
       case "provoke":
         for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) {
@@ -72,10 +72,31 @@ export class AiSimulator {
     return next;
   }
 
-  tacticResolutionChance(state, actor, card) {
+  tacticResolutionChance(state, actor, card, targets = []) {
     if (card.category !== "tactic" || card.counterable === false) return 1;
-    return state.players.filter((player) => player.alive && player.battleTeam !== actor.battleTeam)
-      .reduce((chance, player) => chance * (1 - (player.counterProbability ?? 0) * 0.65), 1);
+    return state.players.filter((player) => player.alive && player.id !== actor.id)
+      .reduce((chance, player) => chance * (1 - (player.counterProbability ?? 0) * this.counterDesire(state, player, actor, card, targets)), 1);
+  }
+
+  counterDesire(state, responder, actor, card, targets) {
+    const sourceEnemy = responder.battleTeam !== actor.battleTeam;
+    const target = state.players.find((player) => player.id === targets[0]?.id);
+    if (card.definitionId === "symbiosis") {
+      const net = state.players.filter((player) => player.alive).reduce((sum, player) => {
+        if (player.hp >= player.maxHp) return sum;
+        return sum + (player.battleTeam === responder.battleTeam ? 1 : -1);
+      }, 0);
+      return net < 0 ? 1 : net > 0 ? 0 : 0.15;
+    }
+    if (["shockwave","provoke"].includes(card.definitionId)) return sourceEnemy ? 1 : 0;
+    if (card.definitionId === "duel") return target?.battleTeam === responder.battleTeam ? 0.9 : sourceEnemy ? 0.35 : 0;
+    if (["scout","plunder","destroy"].includes(card.definitionId) && target) {
+      if (target.battleTeam === responder.battleTeam) return sourceEnemy ? 1 : 0.75;
+      return sourceEnemy ? 0.25 : 0;
+    }
+    if (card.definitionId === "transfer") return sourceEnemy ? 0.45 : 0.15;
+    if (card.definitionId === "mutualBenefit") return sourceEnemy ? 0.15 : 0.05;
+    return sourceEnemy ? ((card.aiValue ?? 0) >= 7 ? 0.8 : 0.45) : 0;
   }
 
   applySkill(state, actor, action) {
@@ -121,17 +142,26 @@ export class AiSimulator {
 
   applyDamage(state, attacker, target, amount, options = {}) {
     if (!target.alive || amount <= 0) return;
-    let blockChance = 0;
-    if (options.canBlock) blockChance = attacker.equipmentDefinitionId === "battleDevice" ? (target.twoBlockProbability ?? 0) : (target.blockProbability ?? 0);
+    const requiresTwoBlocks = attacker.equipmentDefinitionId === "battleDevice";
+    const blockChance = options.canBlock ? (requiresTwoBlocks ? (target.twoBlockProbability ?? 0) : (target.blockProbability ?? 0)) : 0;
     let pending = amount * (1 - blockChance);
-    target.handCount = Math.max(0, target.handCount - blockChance * (attacker.equipmentDefinitionId === "battleDevice" ? 2 : 1));
     let directLoss = 0;
-    if (target.equipmentDefinitionId === "defenseDevice") {
-      const basicChance = 130 / 178;
+    if (options.deviceAttack && target.equipmentDefinitionId === "defenseDevice") {
+      const judgmentBlockChance = 35 / 178;
+      const otherBasicChance = 95 / 178;
       const equipmentChance = 8 / 178;
-      target.handCount += basicChance;
-      pending *= basicChance;
+      const passChance = !options.canBlock
+        ? 130 / 178
+        : requiresTwoBlocks
+          ? judgmentBlockChance * (1 - (target.blockProbability ?? 0)) + otherBasicChance * (1 - (target.twoBlockProbability ?? 0))
+          : otherBasicChance * (1 - (target.blockProbability ?? 0));
+      const responseChance = options.canBlock ? Math.max(0, 130 / 178 - passChance) : 0;
+      target.handCount += 130 / 178;
+      target.handCount = Math.max(0, target.handCount - responseChance * (requiresTwoBlocks ? 2 : 1));
+      pending = amount * passChance;
       directLoss = equipmentChance;
+    } else {
+      target.handCount = Math.max(0, target.handCount - blockChance * (requiresTwoBlocks ? 2 : 1));
     }
     const absorbed = Math.min(target.shield ?? 0, pending);
     target.shield = Math.max(0, (target.shield ?? 0) - absorbed);
@@ -153,7 +183,7 @@ export class AiSimulator {
       .sort((a,b) => (a.id === target.id ? -1 : b.id === target.id ? 1 : a.seatIndex - b.seatIndex));
     const capacity = allies.reduce((sum, player) => sum + (player.expectedRecoverCount ?? 0), 0);
     target.survivalChance = Math.min(1, capacity / need);
-    if (capacity < need * 0.5) {
+    if (capacity < need) {
       target.alive = false;
       return;
     }
@@ -169,7 +199,8 @@ export class AiSimulator {
       }
       remaining -= spent;
     }
-    target.hp = Math.max(0.01, target.survivalChance);
+    target.hp = 1;
+    target.survivalChance = 1;
     target.alive = true;
   }
 

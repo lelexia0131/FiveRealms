@@ -679,14 +679,18 @@ export class Game {
     if (!maximum) return [];
     if (selection?.tokens?.length) {
       if (!selection.selectionId) return [];
-      const cards = selection.tokens.slice(0, maximum).map((token) => this.cardSelectionSystem.resolveToken(token, owner, selection.selectionId)).filter(Boolean);
+      const uniqueTokens = [...new Set(selection.tokens)].slice(0, maximum);
+      const resolved = uniqueTokens.map((token) => this.cardSelectionSystem.resolveToken(token, owner, selection.selectionId)).filter(Boolean);
+      const cards = [...new Map(resolved.map((card) => [card.id, card])).values()];
       if (selection.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       return cards;
     }
     if (actor.controllerType === "human") {
       const hidden = this.cardSelectionSystem.createHiddenSelection(owner);
       const tokens = await this.ui.interactionController?.requestHiddenCards?.(hidden, maximum, reason, { exact:true });
-      const cards = (tokens ?? []).map((token) => this.cardSelectionSystem.resolveToken(token, owner, hidden.selectionId)).filter(Boolean);
+      const uniqueTokens = [...new Set(tokens ?? [])].slice(0, maximum);
+      const resolved = uniqueTokens.map((token) => this.cardSelectionSystem.resolveToken(token, owner, hidden.selectionId)).filter(Boolean);
+      const cards = [...new Map(resolved.map((card) => [card.id, card])).values()];
       this.cardSelectionSystem.clearSelection(hidden.selectionId);
       return cards;
     }
