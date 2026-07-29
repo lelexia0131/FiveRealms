@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="《五域纷争》是一款原创的五人、2V3 阵营单人网页卡牌游戏。"
+    />
+    <title>五域纷争 · 原创阵营卡牌游戏</title>
+    <link rel="stylesheet" href="./css/reset.css" />
+    <link rel="stylesheet" href="./css/layout.css" />
+    <link rel="stylesheet" href="./css/components.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <main id="app" class="app-shell">
+      <section id="start-screen" class="screen start-screen" aria-labelledby="game-title">
+        <div class="start-copy">
+          <p class="eyebrow">原创 · 五人 · 2V3 阵营卡牌</p>
+          <h1 id="game-title"><span>五域</span>纷争</h1>
+          <p class="lead">
+            裂界潮汐将五域的旅者卷入同一座浮空战场。选择一名角色，辨明盟友，
+            在隐藏手牌、即时响应与技能联动中带领阵营存活到最后。
+          </p>
+          <button id="start-button" class="primary-button start-button" type="button">
+            <span>开启本局</span><span aria-hidden="true">→</span>
+          </button>
+        </div>
+
+        <div class="rules-card" aria-label="快速规则">
+          <div class="rules-heading">
+            <span class="mini-rune" aria-hidden="true">✦</span>
+            <div><small>QUICK BRIEF</small><h2>入局须知</h2></div>
+          </div>
+          <ol>
+            <li><strong>随机结盟</strong><span>五名角色公开分为 2 人与 3 人阵营。</span></li>
+            <li><strong>轮流行动</strong><span>摸牌、出牌、弃牌，阵亡角色会被跳过。</span></li>
+            <li><strong>即时响应</strong><span>用格挡、转移或反制改变敌人的结算。</span></li>
+            <li><strong>全灭即胜</strong><span>让敌方全部阵亡，你的阵营便会获胜。</span></li>
+          </ol>
+          <p class="rules-note">二人阵营的每名角色会额外获得一张初始手牌。</p>
+        </div>
+      </section>
+
+      <section id="selection-screen" class="screen selection-screen is-hidden" aria-labelledby="selection-title">
+        <header class="selection-header">
+          <div>
+            <p class="eyebrow">角色征召</p>
+            <h2 id="selection-title">从四名旅者中选择你的化身</h2>
+          </div>
+          <div id="team-preview" class="team-preview" aria-live="polite"></div>
+        </header>
+        <div id="candidate-grid" class="candidate-grid"></div>
+      </section>
+
+      <section id="game-screen" class="screen game-screen is-hidden" aria-label="五域纷争对局">
+        <header class="status-bar">
+          <div class="brand-lockup"><span class="brand-mark">五</span><div><strong>五域纷争</strong><small>FIVE REALMS</small></div></div>
+          <div id="status-metrics" class="status-metrics" aria-live="polite"></div>
+          <button id="restart-button" class="ghost-button" type="button">重新征召</button>
+        </header>
+
+        <div class="battle-layout">
+          <section class="battlefield" aria-label="对局桌面">
+            <div id="cpu-grid" class="cpu-grid" aria-label="电脑角色"></div>
+
+            <div class="command-deck">
+              <div id="thinking-indicator" class="thinking-indicator is-hidden" aria-live="polite">
+                <span></span><span></span><span></span> 对手正在推演
+              </div>
+              <div id="current-card" class="current-card" aria-live="polite">
+                <span class="current-card-icon">◇</span>
+                <div><small>RESOLUTION</small><strong>等待第一张牌</strong></div>
+              </div>
+              <p id="action-prompt" class="action-prompt">等待对局开始……</p>
+              <div id="private-reveal" class="private-reveal is-hidden" aria-live="polite"></div>
+              <div id="response-panel" class="response-panel is-hidden" aria-live="assertive"></div>
+              <div class="action-row">
+                <button id="skill-button" class="skill-button" type="button" disabled>主动技能</button>
+                <button id="end-play-button" class="primary-button" type="button" disabled>结束出牌</button>
+                <button id="discard-confirm-button" class="primary-button is-hidden" type="button" disabled>确认弃牌</button>
+                <button id="cancel-interaction-button" class="ghost-button is-hidden" type="button">取消选择</button>
+              </div>
+            </div>
+
+            <section class="human-zone" aria-label="你的角色和手牌">
+              <div id="human-panel" class="human-panel"></div>
+              <div class="hand-wrap">
+                <div class="hand-heading"><span>你的手牌</span><small id="hand-hint">等待发牌</small></div>
+                <div id="human-hand" class="human-hand"></div>
+              </div>
+            </section>
+          </section>
+
+          <aside class="log-panel" aria-labelledby="log-title">
+            <div class="log-heading"><div><small>BATTLE FEED</small><h2 id="log-title">对局记录</h2></div><span id="log-count">0</span></div>
+            <div id="log-list" class="log-list" role="log" aria-live="polite"></div>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <div id="game-over-overlay" class="game-over-overlay is-hidden" role="dialog" aria-modal="true" aria-labelledby="game-over-title">
+      <div class="game-over-card">
+        <p class="eyebrow">对局终幕</p>
+        <h2 id="game-over-title">胜负已定</h2>
+        <p id="game-over-copy"></p>
+        <button id="play-again-button" class="primary-button" type="button">再开一局</button>
+      </div>
+    </div>
+
+    <script type="module" src="./js/main.js"></script>
+  </body>
+</html>

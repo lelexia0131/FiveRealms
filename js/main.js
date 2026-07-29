@@ -1,0 +1,37 @@
+/**
+ * 本文件是页面入口，只负责连接 UIManager 与每局新建的 Game。
+ * 它不实现卡牌、AI 或技能规则；重新开始时必须先 dispose 旧局，再创建新 gameId。
+ */
+import { Game } from "./core/Game.js";
+import { UIManager } from "./ui/UIManager.js";
+import { Debug } from "./utils/debug.js";
+
+const ui = new UIManager();
+let game = null;
+
+function startSelection() {
+  game?.dispose();
+  game = new Game(ui);
+  const candidates = game.startSelection();
+  ui.showSelection(candidates, game.state.players[0].battleTeam);
+}
+
+ui.setCallbacks({
+  onStart: startSelection,
+  onRestart: startSelection,
+  async onSelectGeneral(generalId) {
+    if (!game || game.state.selectedGeneralId) return;
+    ui.showGame(game);
+    try {
+      await game.confirmGeneral(generalId);
+    } catch (error) {
+      Debug.log("Main", "对局初始化失败", error);
+      ui.setPrompt("对局初始化失败，请重新征召。", "可点击右上角重新征召");
+    }
+  },
+  onCard: (cardId) => game?.handleHumanCard(cardId),
+  onSkill: () => game?.handleHumanSkill(),
+  onEndPlay: () => game?.requestEndHumanPlay()
+});
+
+ui.showStart();

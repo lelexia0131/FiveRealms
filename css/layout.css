@@ -1,0 +1,72 @@
+/*
+ * 本文件负责页面级布局、响应式尺寸和空间关系，依赖 reset.css。
+ * 它不定义卡牌与角色面板的细节外观；调整桌面结构时需同步检查日志栏和手牌区高度。
+ */
+:root {
+  --ink: #f3eddc;
+  --muted: #a7a69f;
+  --night: #080c13;
+  --panel: rgba(17, 23, 32, 0.92);
+  --line: rgba(255, 255, 255, 0.1);
+  --gold: #d6ad64;
+  --gold-bright: #f1ce87;
+  --dawn: #53b8bb;
+  --dawn-soft: rgba(83, 184, 187, 0.14);
+  --dusk: #c3677f;
+  --dusk-soft: rgba(195, 103, 127, 0.14);
+  --danger: #ef6c6c;
+  --good: #72c697;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+body {
+  overflow: hidden;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 48% 20%, rgba(62, 91, 106, 0.18), transparent 38%),
+    linear-gradient(145deg, #0d121b 0%, #070a10 52%, #0b1018 100%);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.16;
+  background-image: linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(to bottom, black, transparent 90%);
+}
+
+.ambient { position: fixed; width: 440px; height: 440px; border-radius: 50%; filter: blur(110px); opacity: .13; pointer-events: none; }
+.ambient-one { left: -180px; top: 14%; background: var(--dawn); }
+.ambient-two { right: -180px; bottom: 0; background: var(--dusk); }
+.app-shell { position: relative; width: 100vw; height: 100vh; }
+.screen { width: 100%; height: 100%; }
+.is-hidden { display: none !important; }
+
+.start-screen { display: grid; grid-template-columns: minmax(480px, 1.2fr) minmax(370px, .8fr); gap: clamp(72px, 10vw, 180px); align-items: center; padding: 8vh 10vw; }
+.start-copy { max-width: 720px; }
+.selection-screen { overflow: auto; padding: 5vh 6vw 7vh; }
+.selection-header { display: flex; justify-content: space-between; align-items: end; gap: 32px; max-width: 1540px; margin: 0 auto 34px; }
+.candidate-grid { display: grid; grid-template-columns: repeat(4, minmax(230px, 1fr)); gap: 18px; max-width: 1540px; margin: 0 auto; }
+
+.game-screen { padding: 16px; }
+.status-bar { height: 64px; display: grid; grid-template-columns: 220px 1fr auto; align-items: center; gap: 18px; padding: 0 18px; border: 1px solid var(--line); background: rgba(10, 15, 23, .9); }
+.battle-layout { height: calc(100vh - 96px); display: grid; grid-template-columns: minmax(860px, 1fr) 300px; gap: 12px; margin-top: 12px; }
+.battlefield { min-width: 0; display: grid; grid-template-rows: minmax(190px, 31%) minmax(170px, 31%) minmax(220px, 38%); gap: 10px; }
+.cpu-grid { display: grid; grid-template-columns: repeat(4, minmax(190px, 1fr)); gap: 10px; }
+.command-deck { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; padding: 12px; border: 1px solid var(--line); background: radial-gradient(circle at center, rgba(52, 72, 83, .16), transparent 55%); }
+.human-zone { min-height: 0; display: grid; grid-template-columns: 245px minmax(0, 1fr); gap: 10px; }
+.hand-wrap { min-width: 0; min-height: 0; padding: 12px; border: 1px solid var(--line); background: rgba(10, 14, 21, .72); }
+.human-hand { min-height: 0; height: calc(100% - 26px); display: flex; align-items: flex-end; gap: 9px; overflow-x: auto; overflow-y: hidden; padding: 8px 3px 4px; }
+.log-panel { min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--line); background: rgba(10, 14, 21, .82); }
+.log-list { min-height: 0; overflow-y: auto; flex: 1; padding: 8px 16px 20px; }
+
+@media (max-height: 760px) {
+  .game-screen { padding: 10px; }
+  .status-bar { height: 54px; }
+  .battle-layout { height: calc(100vh - 74px); margin-top: 8px; }
+  .battlefield { grid-template-rows: minmax(155px, 29%) minmax(145px, 28%) minmax(210px, 43%); gap: 7px; }
+  .cpu-card .character-description, .human-panel .character-description { display: none; }
+}
