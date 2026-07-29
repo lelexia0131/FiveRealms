@@ -3,6 +3,8 @@
  * 运行方式仅用于开发校验：使用项目附带的 package.json 执行 npm test，游戏运行本身不需要 Node.js。
  */
 import assert from "node:assert/strict";
+import { access, readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { GAME_CONFIG } from "../js/config/gameConfig.js";
 import { CARD_DEFINITIONS } from "../js/config/cardConfig.js";
 import { GENERAL_DEFINITIONS } from "../js/config/generalConfig.js";
@@ -15,9 +17,82 @@ import { Game } from "../js/core/Game.js";
 import { createAiVisibleState } from "../js/ai/AiVisibleState.js";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import { hasActiveSkill, hasPassiveSkill } from "../js/generals/skillRegistry.js";
+import { CleanupManager } from "../js/utils/CleanupManager.js";
+import { sampleDelay } from "../js/utils/aiTiming.js";
+import { equipmentSlotTemplate, playerPanelTemplate } from "../js/ui/templates.js";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
+const projectFile = (relativePath) => fileURLToPath(new URL(`../${relativePath.replace(/^\.\//, "")}`, import.meta.url));
+
+test("八名角色都有可离线读取的本地肖像", async () => {
+  assert.equal(GENERAL_DEFINITIONS.length, 8);
+  for (const general of GENERAL_DEFINITIONS) {
+    assert.match(general.portrait, /^\.\/assets\/characters\/[a-z-]+\.svg$/);
+    await access(projectFile(general.portrait));
+  }
+});
+
+test("十二种卡牌都有独立展示字段和本地插画", async () => {
+  const cards = Object.values(CARD_DEFINITIONS);
+  assert.equal(cards.length, 12);
+  for (const card of cards) {
+    assert.match(card.art, /^\.\/assets\/cards\/[a-z-]+\.svg$/);
+    assert.ok(card.icon && card.accent && card.frameStyle && card.flavorText);
+    await access(projectFile(card.art));
+  }
+});
+
+test("装备槽在空置和装备后生成不同的可访问结构", () => {
+  const player = new Player({ id: "slot", seatIndex: 0, controllerType: "human", battleTeam: "dawn" });
+  player.applyGeneral(GENERAL_DEFINITIONS[0]);
+  player.resetTurnFlags();
+  const empty = equipmentSlotTemplate(player, true);
+  assert.match(empty, /is-empty/);
+  assert.match(empty, /装备槽为空/);
+  player.equipment = { ...CARD_DEFINITIONS.coreDevice, id: "device" };
+  const equipped = equipmentSlotTemplate(player, true);
+  assert.match(equipped, /is-equipped/);
+  assert.match(equipped, /核心装置/);
+  assert.match(equipped, /每回合首次使用战术牌后摸1张牌/);
+  assert.notEqual(empty, equipped);
+});
+
+test("AI 延迟始终位于配置范围且快速模式会缩短", () => {
+  const min = sampleDelay(() => 0, GAME_CONFIG.aiInitialThinkMinMs, GAME_CONFIG.aiInitialThinkMaxMs, false);
+  const max = sampleDelay(() => 0.999999, GAME_CONFIG.aiInitialThinkMinMs, GAME_CONFIG.aiInitialThinkMaxMs, false);
+  const natural = sampleDelay(() => 0.5, GAME_CONFIG.aiResponseThinkMinMs, GAME_CONFIG.aiResponseThinkMaxMs, false);
+  const fast = sampleDelay(() => 0.5, GAME_CONFIG.aiResponseThinkMinMs, GAME_CONFIG.aiResponseThinkMaxMs, true);
+  assert.equal(min, GAME_CONFIG.aiInitialThinkMinMs);
+  assert.ok(max >= GAME_CONFIG.aiInitialThinkMinMs && max <= GAME_CONFIG.aiInitialThinkMaxMs);
+  assert.ok(fast >= GAME_CONFIG.animationFastMinimumMs && fast < natural);
+});
+
+test("重新征召时 CleanupManager 会取消未完成延迟", async () => {
+  const cleanup = new CleanupManager();
+  const waiting = cleanup.delay(5000);
+  cleanup.cleanup();
+  assert.equal(await waiting, false);
+  assert.equal(cleanup.pending.size, 0);
+});
+
+test("电脑角色模板只公开手牌数量，不把具体牌写入 DOM", () => {
+  const human = new Player({ id: "human-ui", seatIndex: 0, controllerType: "human", battleTeam: "dawn" });
+  const computer = new Player({ id: "cpu-ui", seatIndex: 1, controllerType: "ai", battleTeam: "dusk" });
+  human.applyGeneral(GENERAL_DEFINITIONS[0]);
+  computer.applyGeneral(GENERAL_DEFINITIONS[1]);
+  computer.hand.push({ id: "hidden", definitionId: "counter", name: "绝密反制牌" });
+  const markup = playerPanelTemplate(computer, { humanTeam: human.battleTeam });
+  assert.match(markup, /手牌1张/);
+  assert.doesNotMatch(markup, /绝密反制牌|definitionId/);
+});
+
+test("UIManager 源码不直接写入核心战斗状态", async () => {
+  const source = await readFile(projectFile("js/ui/UIManager.js"), "utf8");
+  for (const forbidden of [/\.hp\s*=/, /\.energy\s*=/, /\.hand\.(?:push|splice|pop|shift|unshift)/, /\.winnerTeam\s*=/, /\.isGameOver\s*=/]) {
+    assert.doesNotMatch(source, forbidden);
+  }
+});
 
 test("阵营分配始终严格为 2V3，真人可进入任一阵营", () => {
   const humanTeams = new Set();

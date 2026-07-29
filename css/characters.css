@@ -1,0 +1,100 @@
+.candidate-card { min-width: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface-raised); box-shadow: var(--shadow-card); }
+.candidate-art { position: relative; min-height: clamp(210px, 29vh, 320px); overflow: hidden; background: linear-gradient(150deg, #e7ddca, #cbb896); }
+.candidate-art::after { content: ""; position: absolute; inset: auto 0 0; height: 40%; background: linear-gradient(transparent, rgba(37,30,22,.38)); }
+.candidate-portrait { width: 100%; height: 100%; min-height: inherit; object-fit: cover; object-position: center top; transition: transform .4s ease; }
+.candidate-card:hover .candidate-portrait { transform: scale(1.025); }
+.candidate-index { position: absolute; z-index: 2; top: 13px; left: 13px; padding: 5px 8px; color: #fff; border: 1px solid rgba(255,255,255,.55); border-radius: 6px; background: rgba(49,39,26,.5); font-size: 12px; font-weight: 800; letter-spacing: .08em; backdrop-filter: blur(4px); }
+.candidate-body { display: flex; flex: 1; flex-direction: column; padding: 17px; }
+.candidate-name-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.candidate-name-row small { color: var(--text-secondary); font-size: 12px; }
+.candidate-name-row h3 { font: 700 26px/1.15 var(--serif); }
+.hp-chip { flex: 0 0 auto; padding: 5px 8px; color: var(--danger); border: 1px solid #e0b4ad; border-radius: 999px; background: #f8e8e4; font-size: 13px; font-weight: 800; }
+.tag-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 11px 0; }
+.tag { padding: 3px 8px; color: #4c5f59; border: 1px solid #bfd3cc; border-radius: 999px; background: #edf5f1; font-size: 12px; }
+.character-description { color: var(--text-secondary); font-size: 14px; line-height: 1.65; }
+.candidate-skills { display: grid; gap: 8px; margin: 14px 0; }
+.skill-copy { padding: 9px 10px; border-left: 2px solid var(--gold); background: #f7f0df; }
+.skill-copy h4 { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }
+.skill-copy h4 small { color: var(--gold); font-size: 12px; }
+.skill-copy p { margin-top: 3px; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
+.candidate-select { width: 100%; margin-top: auto; }
+
+.player-seat { --team: var(--dawn); --team-soft: var(--dawn-soft); position: relative; min-width: 0; display: grid; grid-template-columns: clamp(78px, 7vw, 112px) minmax(0, 1fr); gap: 9px; overflow: visible; padding: 9px; border: 2px solid var(--team); border-radius: 12px 20px 12px 12px; background: linear-gradient(120deg, var(--surface-raised), var(--team-soft)); box-shadow: 0 7px 16px rgba(66,48,28,.11); transition: transform .2s ease, box-shadow .2s ease, filter .2s ease; }
+.player-seat.team-dusk { --team: var(--dusk); --team-soft: var(--dusk-soft); }
+.player-seat.is-ally::before, .player-seat.is-enemy::before, .player-seat.is-self::before { position: absolute; z-index: 3; top: -7px; right: 12px; padding: 2px 7px; color: #fff; border-radius: 999px; background: var(--team); font-size: 12px; font-weight: 800; }
+.player-seat.is-ally::before { content: "盟友"; }
+.player-seat.is-enemy::before { content: "敌方"; }
+.player-seat.is-self::before { content: "你"; }
+.player-seat.is-active { transform: translateY(3px); box-shadow: 0 0 0 3px rgba(181,138,59,.42), 0 12px 24px rgba(73,52,26,.18); }
+.player-seat.is-active::after { content: "行动中"; position: absolute; z-index: 4; left: 50%; bottom: -9px; transform: translateX(-50%); padding: 2px 9px; color: #fff; border-radius: 999px; background: var(--gold); font-size: 12px; font-weight: 800; white-space: nowrap; }
+.player-seat.target-legal { cursor: pointer; animation: targetPulse 1.25s ease-in-out infinite; }
+.player-seat.target-illegal { filter: saturate(.55) brightness(.94); }
+.player-seat.is-dead { filter: grayscale(.9) sepia(.14); opacity: .76; }
+.seat-portrait-wrap { position: relative; min-width: 0; overflow: hidden; border: 1px solid color-mix(in srgb, var(--team), #fff 48%); border-radius: 8px 14px 8px 8px; background: var(--surface-muted); }
+.seat-portrait { width: 100%; height: 100%; object-fit: cover; object-position: center 17%; }
+.team-emblem { position: absolute; left: 6px; bottom: 6px; display: grid; place-items: center; width: 29px; height: 29px; color: #fff; border: 2px solid rgba(255,255,255,.8); border-radius: 50%; background: var(--team); font: 700 13px/1 var(--serif); box-shadow: 0 2px 7px rgba(0,0,0,.2); }
+.death-stamp { position: absolute; inset: 45% -9px auto; transform: rotate(-12deg); padding: 4px; color: #7f2929; border: 3px double #8e3636; background: rgba(250,238,221,.86); font: 800 14px/1 var(--serif); text-align: center; }
+.death-stamp b { margin-right: 3px; }
+.seat-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.seat-heading { display: flex; align-items: start; justify-content: space-between; gap: 7px; }
+.seat-heading > div { min-width: 0; display: grid; }
+.seat-heading strong { overflow: hidden; font: 700 17px/1.2 var(--serif); text-overflow: ellipsis; white-space: nowrap; }
+.seat-heading small { overflow: hidden; color: var(--text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.turn-state { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 12px; }
+.turn-state i { width: 7px; height: 7px; border-radius: 50%; background: #bcb19f; }
+.is-active .turn-state i, .is-thinking .turn-state i { background: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
+.vitals { display: grid; gap: 6px; }
+.life-readout { display: grid; grid-template-columns: auto minmax(28px, 1fr) auto; align-items: center; gap: 6px; }
+.life-label { color: var(--danger); font-size: 12px; font-weight: 800; }
+.life-cells { display: flex; gap: 3px; }
+.life-cell { flex: 1 1 15px; max-width: 25px; height: 10px; border: 1px solid #c78a81; border-radius: 6px 6px 3px 3px; transform: skewX(-8deg); }
+.life-cell.is-full { background: linear-gradient(#d96758, #ad3f36); box-shadow: inset 0 1px rgba(255,255,255,.4); }
+.life-cell.is-empty { background: #eee0db; }
+.life-readout > strong { color: var(--danger); font-size: 18px; line-height: 1; }
+.life-readout > strong small { font-size: 12px; }
+.resource-pills { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.resource-pill { display: grid; justify-items: center; gap: 0; padding: 2px 3px; border: 1px solid var(--border); border-radius: 6px; background: rgba(255,255,255,.64); }
+.resource-pill small { color: var(--text-secondary); font-size: 12px; line-height: 1.1; white-space: nowrap; }
+.resource-pill strong { font-size: 15px; }
+.resource-pill.energy strong { color: var(--energy); }
+.resource-pill.shield strong { color: var(--shield); }
+.status-row { display: flex; flex-wrap: wrap; gap: 4px; min-height: 22px; }
+.status-chip { padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; background: rgba(255,255,255,.65); color: var(--text-secondary); font-size: 12px; }
+.status-chip.is-danger { color: var(--danger); border-color: #d8a099; background: #f5e1dc; }
+.status-chip.is-shield { color: var(--shield); border-color: #abc1d5; background: #e4edf5; }
+
+.equipment-slot { position: relative; display: grid; grid-template-columns: 35px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 43px; padding: 5px 7px; border: 1px solid #af9362; border-radius: 8px; background: linear-gradient(135deg, #efe5d2, #dac8a7); }
+.equipment-slot.is-empty { grid-template-columns: 35px minmax(0, 1fr); color: var(--text-muted); border-style: dashed; background: rgba(250,246,234,.6); }
+.equipment-outline { width: 30px; height: 30px; border: 1px dashed var(--border-strong); border-radius: 50%; background: radial-gradient(circle, transparent 32%, rgba(169,151,123,.16) 34% 48%, transparent 50%); }
+.equipment-icon { width: 35px; height: 35px; object-fit: cover; border: 1px solid #9a7944; border-radius: 7px; background: #ddd0b6; }
+.equipment-copy { min-width: 0; display: grid; }
+.equipment-copy strong, .equipment-slot.is-empty strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.equipment-copy small, .equipment-slot.is-empty small { overflow: hidden; color: var(--text-secondary); font-size: 12px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.equipment-state { padding: 2px 5px; color: #6b4d1e; border: 1px solid #c3a46c; border-radius: 999px; background: #f8ecd2; font-size: 12px; white-space: nowrap; }
+.equipment-slot.is-triggered { filter: saturate(.65); }
+.equipment-slot.is-triggered .equipment-state { color: var(--text-secondary); background: #e6ddcd; }
+.equipment-tooltip { position: absolute; z-index: 40; left: 0; bottom: calc(100% + 8px); width: 250px; visibility: hidden; padding: 11px; color: var(--text-primary); border: 1px solid var(--gold); border-radius: 8px; background: var(--surface-raised); box-shadow: var(--shadow-card); font-size: 12px; line-height: 1.55; opacity: 0; transform: translateY(4px); transition: .16s ease; }
+.equipment-tooltip strong, .equipment-tooltip em { display: block; }
+.equipment-tooltip strong { margin-bottom: 3px; font-size: 14px; }
+.equipment-tooltip em { margin-top: 5px; color: var(--gold); font-style: normal; }
+.equipment-slot:hover .equipment-tooltip, .equipment-slot:focus-visible .equipment-tooltip { visibility: visible; opacity: 1; transform: none; }
+.character-details { max-height: 80px; overflow: auto; padding-top: 2px; border-top: 1px solid var(--border); }
+.character-details summary { color: var(--text-secondary); cursor: pointer; font-size: 12px; font-weight: 700; }
+.character-details > p, .skill-summary { margin-top: 4px; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
+.skill-summary { display: grid; grid-template-columns: auto 1fr; gap: 5px; }
+.skill-summary strong { color: var(--gold); }
+
+.human-seat { height: 100%; grid-template-columns: 104px minmax(0, 1fr); padding: 10px; }
+.human-seat .seat-heading { display: grid; gap: 1px; }
+.human-seat .seat-heading strong { font-size: 20px; }
+.human-seat .seat-heading .turn-state { justify-self: start; }
+.human-seat .equipment-copy strong { font-size: 14px; }
+
+@media (max-height: 920px) {
+  .candidate-art { min-height: 200px; }
+  .candidate-body { padding: 13px; }
+  .candidate-skills { max-height: 132px; overflow: auto; }
+  .player-seat { grid-template-columns: 72px minmax(0, 1fr); padding: 7px; }
+  .human-seat { grid-template-columns: 86px minmax(0, 1fr); }
+  .character-details { max-height: 56px; }
+}

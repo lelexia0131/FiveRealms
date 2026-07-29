@@ -1,11 +1,9 @@
-/*
- * 本文件只负责浏览器默认样式归一化，不承载主题和组件规则。
- * 修改时应保持选择器通用，具体布局请放入 layout.css，视觉组件请放入 components.css。
- */
 *, *::before, *::after { box-sizing: border-box; }
-html { color-scheme: dark; }
-body, h1, h2, p, ol { margin: 0; }
+html { color-scheme: light; }
+body, h1, h2, h3, h4, p, ol { margin: 0; }
 ol { padding: 0; }
-button { font: inherit; }
+button, input { font: inherit; }
 button, [role="button"] { -webkit-tap-highlight-color: transparent; }
-body { min-width: 1120px; min-height: 100vh; }
+button { color: inherit; }
+img { display: block; max-width: 100%; }
+body { min-width: 980px; min-height: 100vh; }

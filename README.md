@@ -200,12 +200,19 @@ defaultDrawCount: 2       // 每回合默认摸牌
 ### 修改 AI 速度和难度
 
 ```js
-aiActionDelayMs: 560,          // 每次电脑行动前等待
-aiResponseDelayMs: 420,        // 电脑响应等待
+aiInitialThinkMinMs: 900,      // 回合首次思考下限
+aiInitialThinkMaxMs: 1700,     // 回合首次思考上限
+aiBetweenActionMinMs: 650,     // 连续动作间隔下限
+aiBetweenActionMaxMs: 1200,    // 连续动作间隔上限
+aiResponseThinkMinMs: 700,     // 响应思考下限
+aiResponseThinkMaxMs: 1400,    // 响应思考上限
+animationFastMode: false,      // 默认使用自然节奏
 aiDifficultyMultiplier: 1,     // 总体行动评分倍率
 enableAiRandomness: true,      // 是否加入扰动
 aiRandomnessRange: 0.12        // 扰动范围；越高越不稳定
 ```
+
+所有 AI 等待由 `game.random()` 在范围内取样，并交给 `CleanupManager` 执行；“快速动画”只缩短展示等待，不改变决策与规则。
 
 每名角色的 `aiProfile` 位于 `js/config/generalConfig.js`。`aggression`、`defense`、`support`、`healingPriority`、`cardConservation`、`energyConservation`、`responseConservation`、`riskTolerance` 分别控制对应倾向；通常使用 0.4～1.5。
 

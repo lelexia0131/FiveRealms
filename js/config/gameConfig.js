@@ -32,10 +32,26 @@ export const GAME_CONFIG = Object.freeze({
 
   /** 真人响应等待毫秒数。增大给思考留出更多时间，减小节奏更快；推荐 5000～15000，过低影响可操作性。 */
   responseTimeoutMs: 10000,
-  /** AI 每次行动前延迟。增大便于阅读，减小加快对局；推荐 250～1000，仅影响节奏不影响决策。 */
-  aiActionDelayMs: 560,
-  /** AI 响应牌延迟。增大让响应更自然，减小会接近瞬时结算；推荐 200～800。 */
-  aiResponseDelayMs: 420,
+  /** AI 回合首次观察战场的思考范围。 */
+  aiInitialThinkMinMs: 900,
+  aiInitialThinkMaxMs: 1700,
+  /** AI 连续动作、公开行动意图之间的停顿范围。 */
+  aiBetweenActionMinMs: 650,
+  aiBetweenActionMaxMs: 1200,
+  /** AI 决定是否格挡、反制、转移或护援的思考范围。 */
+  aiResponseThinkMinMs: 700,
+  aiResponseThinkMaxMs: 1400,
+  /** AI 弃牌阶段的思考范围。 */
+  aiDiscardThinkMinMs: 700,
+  aiDiscardThinkMaxMs: 1200,
+  /** AI 收束并结束出牌阶段的短暂停顿范围。 */
+  aiEndThinkMinMs: 350,
+  aiEndThinkMaxMs: 700,
+  /** 默认是否启用快速动画；它只缩短展示等待，不改变决策结果。 */
+  animationFastMode: false,
+  /** 快速模式等待倍率与最低可读停顿。 */
+  animationFastScale: 0.18,
+  animationFastMinimumMs: 55,
   /** AI 单个出牌阶段最大动作数。增大允许更长连锁，减小可能提前结束；推荐 8～16，用于防止无穷循环。 */
   aiMaxActionsPerTurn: 12,
 

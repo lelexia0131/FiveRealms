@@ -18,6 +18,7 @@ import { resolveCardEffect } from "../cards/cardRegistry.js";
 import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js";
 import { AIController } from "../ai/AIController.js";
 import { CleanupManager } from "../utils/CleanupManager.js";
+import { getAiDelay } from "../utils/aiTiming.js";
 import { Debug } from "../utils/debug.js";
 
 export class Game {
@@ -44,12 +45,20 @@ export class Game {
     this.aiController = new AIController(this);
     this.candidates = [];
     this.actionLocked = false;
+    this.animationFastMode = GAME_CONFIG.animationFastMode;
     this.loopPromise = null;
   }
 
   /** 当前行动角色；索引尚未设置时返回 null。 */
   get currentPlayer() {
     return this.state.players[this.state.currentPlayerIndex] ?? null;
+  }
+
+  /** 切换展示节奏；只影响可清理等待与 CSS 动画，不改变规则或 AI 评分。 */
+  setAnimationFastMode(enabled) {
+    this.animationFastMode = Boolean(enabled);
+    this.ui.setFastMode?.(this.animationFastMode);
+    return this.animationFastMode;
   }
 
   /**
@@ -192,18 +201,33 @@ export class Game {
     this.ui.render(this);
   }
 
-  /** 让 AI 最多执行配置数量的动作，任何无法改变状态的 end 都立即结束。 */
+  /** AI 先公开思考，再取样可清理等待，随后公开行动意图并执行。 */
   async takeAiPlayPhase(player, gameId) {
-    this.ui.setThinking(true, player.name);
+    this.ui.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
+    this.ui.setThinking(true, player, "正在观察战场与可用资源");
+    if (!(await this.cleanupManager.delay(getAiDelay(this, "initial")))) {
+      this.ui.setThinking(false);
+      return;
+    }
     for (let count = 0; count < GAME_CONFIG.aiMaxActionsPerTurn; count += 1) {
       if (!this.isSessionValid(gameId) || this.state.isGameOver || !player.alive) break;
       const action = this.aiController.selectAction(player);
-      if (action.type === "end") break;
-      if (!(await this.cleanupManager.delay(GAME_CONFIG.aiActionDelayMs))) break;
+      if (action.type === "end") {
+        this.ui.setPrompt(`${player.name}准备结束出牌阶段。`);
+        this.ui.setThinking(true, player, "正在收束回合");
+        await this.cleanupManager.delay(getAiDelay(this, "end"));
+        break;
+      }
+      const actionName = action.type === "card" ? `准备使用「${action.card.name}」` : `准备发动「${action.skill.name}」`;
+      this.ui.setPrompt(`${player.name}${actionName}。`);
+      this.ui.setThinking(true, player, actionName);
+      if (!(await this.cleanupManager.delay(getAiDelay(this, "action")))) break;
+      this.ui.setThinking(false);
       if (action.type === "card") await this.playCard(player, action.card, action.targets);
       else if (action.type === "skill") await this.useActiveSkill(player, action.skill.id, action.targets);
     }
     this.ui.setThinking(false);
+    if (this.isSessionValid(gameId) && !this.state.isGameOver) this.ui.setPrompt(`${player.name}结束了出牌阶段。`);
   }
 
   /** 处理手牌上限；真人必须选择准确数量，电脑按价值自动弃置。 */
@@ -213,7 +237,12 @@ export class Game {
     this.log(`${player.name}需要弃置${required}张牌。`);
     let cards = [];
     if (player.controllerType === "human") cards = await this.ui.requestDiscard(player, required, `手牌上限为${player.hp}，请选择${required}张弃牌`);
-    else cards = this.aiController.chooseDiscards(player, required);
+    else {
+      this.ui.setThinking(true, player, `正在斟酌弃置${required}张牌`);
+      if (!(await this.cleanupManager.delay(getAiDelay(this, "discard")))) return;
+      cards = this.aiController.chooseDiscards(player, required);
+      this.ui.setThinking(false);
+    }
     if (!this.isSessionValid(gameId)) return;
     for (const card of cards.slice(0, required)) await this.discardCardFromHand(player, card, "弃牌阶段");
   }
@@ -254,7 +283,7 @@ export class Game {
     const resolutionId = `${this.state.gameId}:resolution:${++this.state.resolutionSerial}`;
     try {
       await this.moveHandToResolving(source, card);
-      this.ui.setCurrentCard(card.name, source.name);
+      this.ui.setCurrentCard(card, source.name);
       this.log(`${source.name}使用了「${card.name}」${targets[0] && card.targetType !== "self" ? `，目标是${targets[0].name}` : ""}。`);
       const useEvent = await this.eventBus.emit("beforeCardUse", { type: "beforeCardUse", source, card, targets, cancelled: false, metadata: {}, resolutionId });
       let cancelledBeforeResolve = useEvent.cancelled;
@@ -381,8 +410,8 @@ export class Game {
       source.statistics.damageDealt += hpDamage;
       if (hpDamage > 0 && source.battleTeam !== target.battleTeam) target.aiMemory.recentAggressors[source.id] = (target.aiMemory.recentAggressors[source.id] ?? 0) + hpDamage;
     }
-    if (shieldAbsorbed) this.log(`${target.name}的护盾吸收了${shieldAbsorbed}点伤害。`);
-    if (hpDamage) this.log(`${target.name}受到${hpDamage}点伤害，剩余${target.hp}点生命。`, "damage");
+    if (shieldAbsorbed) { this.log(`${target.name}的护盾吸收了${shieldAbsorbed}点伤害。`); this.ui.queueFeedback?.("shield", target.id, shieldAbsorbed); }
+    if (hpDamage) { this.log(`${target.name}受到${hpDamage}点伤害，剩余${target.hp}点生命。`, "damage"); this.ui.queueFeedback?.("damage", target.id, hpDamage); }
     else this.log(`${target.name}没有受到生命伤害。`);
     await this.eventBus.emit("afterDamage", { ...event, type: "afterDamage", actualAmount: hpDamage, shieldAbsorbed });
     if (target.hp <= 0 && target.alive) await this.killPlayer(target, source);
@@ -399,7 +428,7 @@ export class Game {
     const actualAmount = Math.min(event.amount, target.maxHp - target.hp);
     target.hp += actualAmount;
     if (source) source.statistics.healingDone += actualAmount;
-    if (actualAmount) this.log(`${target.name}恢复${actualAmount}点生命。`, "heal");
+    if (actualAmount) { this.log(`${target.name}恢复${actualAmount}点生命。`, "heal"); this.ui.queueFeedback?.("heal", target.id, actualAmount); }
     await this.eventBus.emit("afterHeal", { ...event, type: "afterHeal", actualAmount });
     this.ui.render(this);
     return actualAmount;
@@ -411,7 +440,7 @@ export class Game {
     await this.eventBus.emit("beforeGainEnergy", event);
     if (event.cancelled) return 0;
     const actualAmount = player.changeEnergy(event.amount);
-    if (actualAmount > 0) this.log(`${player.name}通过${event.reason}获得${actualAmount}点能量。`);
+    if (actualAmount > 0) { this.log(`${player.name}通过${event.reason}获得${actualAmount}点能量。`); this.ui.queueFeedback?.("energy", player.id, actualAmount); }
     await this.eventBus.emit("afterGainEnergy", { ...event, type: "afterGainEnergy", actualAmount });
     this.ui.render(this);
     return actualAmount;
@@ -462,7 +491,7 @@ export class Game {
       drawn += 1;
       await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     }
-    if (drawn) this.log(`${player.name}摸了${drawn}张牌。`);
+    if (drawn) { this.log(`${player.name}摸了${drawn}张牌。`); this.ui.queueFeedback?.("draw", player.id, drawn); }
     this.ui.render(this);
     return drawn;
   }
@@ -478,6 +507,7 @@ export class Game {
     this.state.deck.discard(card);
     this.syncDeckAliases();
     this.log(`${player.name}因${reason}弃置了「${card.name}」。`);
+    this.ui.queueFeedback?.("discard", player.id);
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     this.ui.render(this);
     return true;
@@ -492,6 +522,7 @@ export class Game {
     if (move.cancelled) return false;
     from.hand.splice(index, 1);
     to.hand.push(card);
+    this.ui.queueFeedback?.("draw", to.id, 1);
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     this.ui.render(this);
     return true;
@@ -537,6 +568,7 @@ export class Game {
     player.equipment = card;
     this.syncDeckAliases();
     this.log(`${player.name}装备了核心装置。`, "important");
+    this.ui.queueFeedback?.("equip", player.id);
     await this.eventBus.emit("afterCardMove", { ...equipMove, type: "afterCardMove" });
     return true;
   }

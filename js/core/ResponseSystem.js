@@ -7,6 +7,7 @@ import { GAME_CONFIG } from "../config/gameConfig.js";
 import { RuleEngine } from "./RuleEngine.js";
 import { createId } from "../utils/helpers.js";
 import { Debug } from "../utils/debug.js";
+import { getAiDelay } from "../utils/aiTiming.js";
 
 const RESPONSE_CARD = Object.freeze({ block: "block", redirect: "redirect", counter: "counter" });
 
@@ -48,8 +49,12 @@ export class ResponseSystem {
     if (responder.controllerType === "human") {
       use = Boolean(await this.game.ui.requestResponse(request, card.name));
     } else {
-      const waited = await this.game.cleanupManager.delay(GAME_CONFIG.aiResponseDelayMs);
+      const actionLabel = { block: "格挡", redirect: "转移", counter: "反制" }[type] ?? "响应";
+      this.game.ui.setThinking(true, responder, `正在考虑是否${actionLabel}`);
+      const waited = await this.game.cleanupManager.delay(getAiDelay(this.game, "response"));
       if (waited) use = this.game.aiController.shouldRespond(responder, type, context);
+      this.game.ui.setThinking(false);
+      if (waited && !use) this.game.ui.setPrompt(`${responder.name}放弃响应。`);
     }
 
     const stillValid = this.activeRequestIds.has(request.id)
@@ -80,8 +85,11 @@ export class ResponseSystem {
     let use = false;
     if (responder.controllerType === "human") use = Boolean(await this.game.ui.requestResponse(request, label));
     else {
-      const waited = await this.game.cleanupManager.delay(GAME_CONFIG.aiResponseDelayMs);
+      this.game.ui.setThinking(true, responder, `正在考虑是否发动${label}`);
+      const waited = await this.game.cleanupManager.delay(getAiDelay(this.game, "response"));
       if (waited) use = this.game.aiController.shouldRespond(responder, "guardianAid", context);
+      this.game.ui.setThinking(false);
+      if (waited && !use) this.game.ui.setPrompt(`${responder.name}放弃响应。`);
     }
     const stillValid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) && responder.alive;
     this.finishRequest(request.id);

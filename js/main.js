@@ -12,6 +12,7 @@ let game = null;
 function startSelection() {
   game?.dispose();
   game = new Game(ui);
+  game.setAnimationFastMode(ui.fastMode);
   const candidates = game.startSelection();
   ui.showSelection(candidates, game.state.players[0].battleTeam);
 }
@@ -31,7 +32,8 @@ ui.setCallbacks({
   },
   onCard: (cardId) => game?.handleHumanCard(cardId),
   onSkill: () => game?.handleHumanSkill(),
-  onEndPlay: () => game?.requestEndHumanPlay()
+  onEndPlay: () => game?.requestEndHumanPlay(),
+  onToggleFastMode: (enabled) => game?.setAnimationFastMode(enabled)
 });
 
 ui.showStart();

@@ -1,0 +1,45 @@
+:root {
+  --page-bg: #eee8da;
+  --table-bg: #d8c9ad;
+  --table-deep: #bda887;
+  --surface: #faf6ea;
+  --surface-raised: #fffdf7;
+  --surface-muted: #eee6d6;
+  --text-primary: #2d2924;
+  --text-secondary: #665f54;
+  --text-muted: #81786a;
+  --border: #cfc1aa;
+  --border-strong: #a9977b;
+  --gold: #b58a3b;
+  --gold-soft: #ead9ac;
+  --dawn: #237d78;
+  --dawn-soft: #d9eeea;
+  --dusk: #9a3f4b;
+  --dusk-soft: #f2dde0;
+  --danger: #aa3c32;
+  --success: #3e7f58;
+  --shield: #486f95;
+  --energy: #a8771e;
+  --shadow-card: 0 13px 28px rgba(68, 50, 27, .18), 0 3px 7px rgba(68, 50, 27, .12);
+  --shadow-soft: 0 8px 24px rgba(64, 49, 31, .1);
+  --radius-card: 16px;
+  --radius-panel: 14px;
+  --focus-ring: 0 0 0 3px rgba(181, 138, 59, .36), 0 0 0 5px rgba(255, 253, 247, .92);
+  --serif: "STZhongsong", "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+  --sans: "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+}
+
+body {
+  color: var(--text-primary);
+  background:
+    radial-gradient(circle at 16% 12%, rgba(255, 253, 244, .92), transparent 32rem),
+    repeating-linear-gradient(92deg, rgba(107, 78, 38, .025) 0 1px, transparent 1px 8px),
+    var(--page-bg);
+  font: 15px/1.55 var(--sans);
+  text-rendering: optimizeLegibility;
+}
+
+button, [tabindex="0"] { outline: none; }
+button:focus-visible, [tabindex="0"]:focus-visible, summary:focus-visible { box-shadow: var(--focus-ring); }
+::selection { color: #fff; background: var(--dawn); }
+

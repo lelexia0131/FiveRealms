@@ -21,6 +21,7 @@ const CARD_EFFECTS = {
     const target = targets[0];
     target.shield += 1;
     target.statuses.temporaryShield = { clearAtTurnStart: true };
+    game.ui.queueFeedback?.("shield", target.id, 1);
     game.log(`${source.name}援护${target.name}，令其获得1点临时护盾。`, "heal");
   },
 
