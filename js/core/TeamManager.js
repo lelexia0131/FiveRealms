@@ -23,7 +23,7 @@ export class TeamManager {
     return seats.map((_, index) => seats[(index + rotation) % seats.length]);
   }
 
-  /** 返回某阵营的总座位数，用于判断小队初始牌补偿。 */
+  /** 返回某阵营的总座位数，用于判断小队的开局手牌、摸牌与行动补偿。 */
   static teamSize(players, teamId) {
     return players.filter((player) => player.battleTeam === teamId).length;
   }

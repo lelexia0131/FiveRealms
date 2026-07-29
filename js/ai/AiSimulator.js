@@ -1,6 +1,6 @@
 /**
- * 轻量规划模拟器。构造器只接收过滤后的可见快照；深层推演不会访问 Game、
- * 他人手牌或未来牌堆，也不会触发 UI、日志、EventBus 或真实卡牌移动。
+ * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
+ * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
 export class AiSimulator {
   constructor(visibleState) { this.initial = structuredClone(visibleState); }
@@ -11,28 +11,169 @@ export class AiSimulator {
     const next = this.clone(state);
     const actor = next.players.find((player) => player.id === viewerId);
     if (!actor || abstractAction.type === "end") return next;
-    const card = abstractAction.card;
-    const targetId = abstractAction.targets?.[0]?.id;
-    const target = next.players.find((player) => player.id === targetId);
-    if (card) {
-      actor.hand = (actor.hand ?? []).filter((entry) => entry.id !== card.id);
-      actor.handCount = Math.max(0, actor.handCount - 1);
-      if (card.definitionId === "recover") actor.hp = Math.min(actor.maxHp, actor.hp + 1);
-      if (card.definitionId === "recover") actor.recoverUsed += 1;
-      if (card.definitionId === "charge") actor.energy = Math.min(actor.maxEnergy, actor.energy + 1);
-      if (card.definitionId === "harvest") actor.handCount += 2;
-      if (card.definitionId === "exposeWeakness") actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + 1;
-      if (card.definitionId === "assault" && target) {
-        target.hp -= 1 + (actor.exposeWeaknessStacks ?? 0);
-        actor.exposeWeaknessStacks = 0;
-        actor.attackUsed += 1;
-      }
-      if (card.definitionId === "shockwave") for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) player.hp -= 1;
-      if (["plunder","transfer"].includes(card.definitionId) && target) { target.handCount = Math.max(0, target.handCount - 1); actor.handCount += 1; }
-      if (card.definitionId === "destroy" && target) target.handCount = Math.max(0, target.handCount - 1);
-      if (card.category === "equipment") actor.equipmentDefinitionId = card.definitionId;
+    if (abstractAction.type === "skill") {
+      this.applySkill(next, actor, abstractAction);
+      return next;
     }
-    for (const player of next.players) if (player.hp <= 0) player.alive = false;
+    const card = abstractAction.card;
+    if (!card) return next;
+    const target = next.players.find((player) => player.id === abstractAction.targets?.[0]?.id);
+    actor.hand = (actor.hand ?? []).filter((entry) => entry.id !== card.id);
+    actor.handCount = Math.max(0, (actor.handCount ?? 0) - 1);
+    const scale = this.tacticResolutionChance(next, actor, card);
+
+    switch (card.definitionId) {
+      case "recover":
+        this.heal(actor, 1 * scale);
+        actor.recoverUsed += 1;
+        actor.expectedRecoverCount = Math.max(0, (actor.expectedRecoverCount ?? 0) - 1);
+        break;
+      case "charge": actor.energy = Math.min(actor.maxEnergy, actor.energy + 1); break;
+      case "harvest": actor.handCount += 2 * scale; break;
+      case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + scale; break;
+      case "assault":
+        if (target) this.applyDamage(next, actor, target, 1 + (actor.exposeWeaknessStacks ?? 0) + (actor.assaultBonus ?? 0), { canBlock:true });
+        actor.exposeWeaknessStacks = 0;
+        actor.assaultBonus = 0;
+        actor.attackUsed += 1;
+        break;
+      case "shockwave":
+        for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) this.applyDamage(next, actor, player, scale, { canBlock:true });
+        break;
+      case "provoke":
+        for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) {
+          const response = player.assaultResponseProbability ?? 0;
+          player.handCount = Math.max(0, player.handCount - response * scale);
+          player.expectedAssaultCount = Math.max(0, (player.expectedAssaultCount ?? 0) - response * scale);
+          this.applyHpLoss(next, player, (1 - response) * scale);
+        }
+        break;
+      case "plunder":
+        if (target) { target.handCount = Math.max(0, target.handCount - scale); actor.handCount += scale; }
+        break;
+      case "transfer": {
+        const source = target ?? next.players.filter((player) => player.alive && player.id !== actor.id).sort((a,b) => b.handCount - a.handCount)[0];
+        const receiver = next.players.filter((player) => player.alive && player.id !== source?.id).sort((a,b) => a.handCount - b.handCount)[0];
+        if (source && receiver) { source.handCount = Math.max(0, source.handCount - scale); receiver.handCount += scale; }
+        break;
+      }
+      case "destroy": if (target) target.handCount = Math.max(0, target.handCount - scale); break;
+      case "duel": if (target) this.applyDuel(next, actor, target, scale); break;
+      case "mutualBenefit": for (const player of next.players) if (player.alive) player.handCount += scale; break;
+      case "symbiosis": for (const player of next.players) if (player.alive) this.heal(player, scale); break;
+      default:
+        if (card.category === "equipment") actor.equipmentDefinitionId = card.definitionId;
+        break;
+    }
+    if (card.category === "tactic" && actor.equipmentDefinitionId === "recycleDevice" && !actor.recycleDeviceTriggered) {
+      actor.recycleDeviceTriggered = true;
+      actor.handCount += 1;
+    }
     return next;
+  }
+
+  tacticResolutionChance(state, actor, card) {
+    if (card.category !== "tactic" || card.counterable === false) return 1;
+    return state.players.filter((player) => player.alive && player.battleTeam !== actor.battleTeam)
+      .reduce((chance, player) => chance * (1 - (player.counterProbability ?? 0) * 0.65), 1);
+  }
+
+  applySkill(state, actor, action) {
+    const skill = action.skill;
+    const target = state.players.find((player) => player.id === action.targets?.[0]?.id);
+    if (!skill || actor.activeSkillUsed) return;
+    actor.activeSkillUsed = true;
+    if (skill.id === "allIn") {
+      const energy = actor.energy;
+      actor.energy = 0;
+      actor.handCount += Math.min(2, energy);
+      if (energy >= 3) actor.assaultBonus = (actor.assaultBonus ?? 0) + 1;
+      return;
+    }
+    actor.energy = Math.max(0, actor.energy - skill.cost);
+    if (skill.id === "breakArmy") actor.attackLimit += 1;
+    else if (skill.id === "barrier" && target) {
+      target.shield = Math.max(0, target.shield - (target.temporaryShieldAmount ?? 0)) + 1;
+      target.temporaryShieldAmount = 1;
+    } else if (skill.id === "symbiosis" && target) {
+      this.applyHpLoss(state, actor, 1);
+      if (actor.alive) this.heal(target, 2);
+    } else if (skill.id === "stealSkill" && target) {
+      target.handCount = Math.max(0, target.handCount - 1);
+      actor.handCount += 1;
+    } else if (skill.id === "burningField") {
+      for (const enemy of state.players) if (enemy.alive && enemy.battleTeam !== actor.battleTeam) this.applyDamage(state, actor, enemy, 1, { canBlock:false });
+    } else if (skill.id === "hunt" && target) {
+      target.huntMarkSourceId = null;
+      this.applyDamage(state, actor, target, 2, { canBlock:true });
+    } else if (skill.id === "resonance" && target) target.handCount += 2;
+  }
+
+  applyDuel(state, actor, target, scale) {
+    const actorAssaults = actor.expectedAssaultCount ?? (actor.hand ?? []).filter((card) => card.definitionId === "assault").length;
+    const targetAssaults = target.expectedAssaultCount ?? 0;
+    const loser = targetAssaults <= actorAssaults ? target : actor;
+    const spent = Math.min(actorAssaults, targetAssaults + (loser.id === actor.id ? 0 : 1));
+    actor.handCount = Math.max(0, actor.handCount - spent * scale);
+    target.handCount = Math.max(0, target.handCount - Math.min(targetAssaults, actorAssaults + (loser.id === target.id ? 0 : 1)) * scale);
+    this.applyDamage(state, loser.id === target.id ? actor : target, loser, scale, { canBlock:false });
+  }
+
+  applyDamage(state, attacker, target, amount, options = {}) {
+    if (!target.alive || amount <= 0) return;
+    let blockChance = 0;
+    if (options.canBlock) blockChance = attacker.equipmentDefinitionId === "battleDevice" ? (target.twoBlockProbability ?? 0) : (target.blockProbability ?? 0);
+    let pending = amount * (1 - blockChance);
+    target.handCount = Math.max(0, target.handCount - blockChance * (attacker.equipmentDefinitionId === "battleDevice" ? 2 : 1));
+    let directLoss = 0;
+    if (target.equipmentDefinitionId === "defenseDevice") {
+      const basicChance = 130 / 178;
+      const equipmentChance = 8 / 178;
+      target.handCount += basicChance;
+      pending *= basicChance;
+      directLoss = equipmentChance;
+    }
+    const absorbed = Math.min(target.shield ?? 0, pending);
+    target.shield = Math.max(0, (target.shield ?? 0) - absorbed);
+    if (target.temporaryShieldAmount) target.temporaryShieldAmount = Math.max(0, target.temporaryShieldAmount - absorbed);
+    target.hp -= Math.max(0, pending - absorbed) + directLoss;
+    this.resolveFatal(state, target);
+  }
+
+  applyHpLoss(state, target, amount) {
+    if (!target.alive || amount <= 0) return;
+    target.hp -= amount;
+    this.resolveFatal(state, target);
+  }
+
+  resolveFatal(state, target) {
+    if (target.hp > 0 || !target.alive) return;
+    const need = 1 - target.hp;
+    const allies = state.players.filter((player) => player.alive && player.battleTeam === target.battleTeam)
+      .sort((a,b) => (a.id === target.id ? -1 : b.id === target.id ? 1 : a.seatIndex - b.seatIndex));
+    const capacity = allies.reduce((sum, player) => sum + (player.expectedRecoverCount ?? 0), 0);
+    target.survivalChance = Math.min(1, capacity / need);
+    if (capacity < need * 0.5) {
+      target.alive = false;
+      return;
+    }
+    let remaining = need;
+    for (const rescuer of allies) {
+      if (remaining <= 0) break;
+      const spent = Math.min(remaining, rescuer.expectedRecoverCount ?? 0);
+      rescuer.expectedRecoverCount = Math.max(0, (rescuer.expectedRecoverCount ?? 0) - spent);
+      rescuer.handCount = Math.max(0, rescuer.handCount - spent);
+      if (rescuer.hand) {
+        let remove = Math.ceil(spent);
+        rescuer.hand = rescuer.hand.filter((card) => card.definitionId !== "recover" || remove-- <= 0);
+      }
+      remaining -= spent;
+    }
+    target.hp = Math.max(0.01, target.survivalChance);
+    target.alive = true;
+  }
+
+  heal(target, amount) {
+    if (target.alive && amount > 0) target.hp = Math.min(target.maxHp, target.hp + amount);
   }
 }

@@ -42,7 +42,16 @@ export class DyingSystem {
     const previousPhase = this.game.state.phase;
     const before = { type:"beforePlayerDying", target, source, context, cancelled:false };
     await this.game.eventBus.emit("beforePlayerDying", before);
-    if (before.cancelled || target.hp > 0 || !target.alive) return target.hp > 0;
+    if (before.cancelled) {
+      if (target.alive && target.hp <= 0) {
+        target.hp = 1;
+        this.game.log(`${target.name}的濒死被取消，生命恢复到1点以保持存活状态。`, "heal");
+        this.game.ui.queueFeedback?.("heal", target.id, 1);
+        this.game.ui.render(this.game);
+      }
+      return target.hp > 0;
+    }
+    if (target.hp > 0 || !target.alive) return target.hp > 0;
     this.game.state.phase = "dying";
     this.game.state.dyingContext = { targetId:target.id, need:1 - target.hp, currentHp:target.hp };
     this.game.log(`${target.name}进入濒死，需要${1 - target.hp}张调息才能获救。`, "important");
@@ -60,7 +69,7 @@ export class DyingSystem {
         if (!this.game.isSessionValid(gameId)) return false;
         if (!use) continue;
         usedThisRound = true;
-        target.hp += 1;
+        await this.game.heal(rescuer, target, 1, { card:use, reason:"dyingRescue", isDyingRescue:true });
         this.game.state.dyingContext = { targetId:target.id, need:Math.max(0, 1 - target.hp), currentHp:target.hp };
         this.game.log(`${rescuer.name}使用调息救援${target.name}，其生命变为${target.hp}。`, "heal");
         await this.game.eventBus.emit("dyingRescueUsed", { type:"dyingRescueUsed", target, rescuer, card:use, currentHp:target.hp });

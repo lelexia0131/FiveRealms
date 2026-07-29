@@ -13,14 +13,31 @@ export class AiEvaluator {
       const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
       const death = player.alive ? 0 : -28;
       const danger = player.alive && player.hp <= 1 ? -7 : 0;
-      score += sign * (death + danger + player.hp * 5 + player.shield * 2 + player.energy * 1.2 + player.handCount * 1.1 + (player.exposeWeaknessStacks ?? 0) * 1.5);
+      const rescueOutlook = player.survivalChance === undefined ? 0 : (player.survivalChance - 0.5) * 8;
+      score += sign * (death + danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * 1.2 + player.handCount * 1.1 + (player.exposeWeaknessStacks ?? 0) * 1.5);
     }
     return score;
   }
 
   actionUtility(action, player, visible) {
     if (action.type === "end") return player.hand.length ? -0.8 : 0;
-    if (action.type === "skill") return 4 + (action.skill.cost ?? 0) * 0.35;
+    const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
+    if (action.type === "skill") {
+      const target = action.targets?.[0];
+      const enemies = visible.players.filter((entry) => entry.alive && entry.battleTeam !== actor.battleTeam);
+      const missing = target ? Math.max(0, target.maxHp - target.hp) : 0;
+      const values = {
+        breakArmy: actor.hand?.filter((card) => card.definitionId === "assault").length ? 8 : 2,
+        barrier: 4 + (target?.hp <= 2 ? 4 : 0),
+        symbiosis: missing * 4 - (actor.hp <= 2 ? 5 : 1),
+        stealSkill: 5 + Math.min(4, target?.handCount ?? 0),
+        burningField: enemies.reduce((sum, enemy) => sum + 2 + (enemy.hp <= 1 ? 8 : 0), 0),
+        hunt: 7 + (target?.hp <= 2 ? 7 : 0),
+        allIn: Math.min(2, actor.energy) * 3 + (actor.energy >= 3 ? 4 : 0),
+        resonance: 5 + (target?.handCount <= 1 ? 3 : 0)
+      };
+      return values[action.skill.id] ?? 4;
+    }
     const card = action.card;
     let value = card.aiValue ?? 0;
     const target = action.targets?.[0];
@@ -32,12 +49,14 @@ export class AiEvaluator {
       }
       if (["plunder","destroy","scout"].includes(card.definitionId)) value += Math.min(4, target.hand?.length ?? target.handCount ?? 0);
     }
-    if (card.definitionId === "recover") value += (player.maxHp - player.hp) * 4;
-    if (card.definitionId === "charge") value += (player.maxEnergy - player.energy) * 1.5;
-    if (card.definitionId === "exposeWeakness") value += player.hand.filter((entry) => entry.definitionId === "assault").length * 2;
-    if (card.definitionId === "shockwave") value += this.game.getEnemies(player).filter((enemy) => enemy.hp <= 1).length * 7;
+    if (card.definitionId === "recover") value += (actor.maxHp - actor.hp) * 4;
+    if (card.definitionId === "charge") value += (actor.maxEnergy - actor.energy) * 1.5 + (actor.activeSkillId && !actor.activeSkillUsed && actor.energy + 1 >= actor.activeSkillCost ? 4 : 0);
+    if (card.definitionId === "exposeWeakness") value += (actor.hand ?? []).filter((entry) => entry.definitionId === "assault").length * 2;
+    if (card.definitionId === "shockwave") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam && enemy.hp <= 1).length * 7;
+    if (card.definitionId === "provoke") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam).reduce((sum, enemy) => sum + (1 - (enemy.assaultResponseProbability ?? 0)) * 3, 0);
+    if (card.definitionId === "duel" && target) value += ((actor.expectedAssaultCount ?? 0) - (target.expectedAssaultCount ?? 0)) * 2;
     if (card.definitionId === "symbiosis") {
-      const net = this.symbiosisNet(player);
+      const net = this.symbiosisNetFromState(actor, visible);
       value = net > 0 ? 8 + net : -9 + net;
     }
     if (card.category === "equipment" && player.equipment?.definitionId === card.definitionId) value -= 4;
@@ -45,7 +64,11 @@ export class AiEvaluator {
   }
 
   symbiosisNet(player) {
-    return this.game.state.players.filter((entry) => entry.alive).reduce((sum, entry) => {
+    return this.symbiosisNetFromState(player, this.game.state);
+  }
+
+  symbiosisNetFromState(player, state) {
+    return state.players.filter((entry) => entry.alive).reduce((sum, entry) => {
       const actual = entry.hp < entry.maxHp ? 1 : 0;
       return sum + (entry.battleTeam === player.battleTeam ? actual : -actual);
     }, 0) * 4;

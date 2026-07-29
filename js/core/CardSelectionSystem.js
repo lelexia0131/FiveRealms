@@ -19,11 +19,11 @@ export class CardSelectionSystem {
     return Object.freeze({ selectionId, ownerId:owner.id, handVersion:version, tokens });
   }
 
-  resolveToken(token, expectedOwner = null) {
+  resolveToken(token, expectedOwner = null, expectedSelectionId = null) {
     const record = this.selections.get(token);
     if (!record) return null;
     const owner = this.game.state.players.find((player) => player.id === record.ownerId);
-    if (!owner || (expectedOwner && owner.id !== expectedOwner.id) || owner.handVersion !== record.version) return null;
+    if (!owner || (expectedOwner && owner.id !== expectedOwner.id) || (expectedSelectionId && record.selectionId !== expectedSelectionId) || owner.handVersion !== record.version) return null;
     return owner.hand.find((card) => card.id === record.cardId) ?? null;
   }
 

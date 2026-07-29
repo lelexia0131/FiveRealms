@@ -8,7 +8,7 @@ const profile = (aggression, defense, support, healingPriority, cardConservation
 export const GENERAL_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "blade-walker", name: "刃行者", glyph: "刃", portrait: "./assets/characters/blade-walker.svg",
-    loreFaction: "流火长路", maxHp: 4, tags: ["进攻", "连击"], passiveSkillIds: ["momentum"], activeSkillIds: ["breakArmy"],
+    loreFaction: "流火长路", maxHp: 4, tags: ["进攻", "连击"], roleTags: ["damage", "attacker"], passiveSkillIds: ["momentum"], activeSkillIds: ["breakArmy"],
     passiveName: "连势", passiveDescription: "每用一种新的卡牌类别获得连势，下一次突袭可造成额外伤害。",
     activeName: "破军", activeDescription: "消耗3点能量，本回合可额外使用1张突袭。", activeCost: 3,
     description: "沿熔岩古道巡行的迅刃，用变化不定的牌序积蓄致命节奏。",
@@ -16,7 +16,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "oath-warden", name: "守誓者", glyph: "誓", portrait: "./assets/characters/oath-warden.svg",
-    loreFaction: "曜石城垒", maxHp: 3, tags: ["防御", "保护"], passiveSkillIds: ["guardianAid"], activeSkillIds: ["barrier"],
+    loreFaction: "曜石城垒", maxHp: 3, tags: ["防御", "保护"], roleTags: ["tank", "support"], passiveSkillIds: ["guardianAid"], activeSkillIds: ["barrier"],
     passiveName: "护援", passiveDescription: "每轮一次，弃置1张手牌令队友即将受到的伤害-1。",
     activeName: "壁垒", activeDescription: "消耗2点能量，令一名队友获得1点壁垒护盾；持续至其下次回合开始，重复施放只刷新、不叠加。", activeCost: 2,
     description: "背负古誓的城垒守卫，擅长将危险拦截在盟友身前。",
@@ -24,7 +24,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "spirit-medic", name: "灵医", glyph: "灵", portrait: "./assets/characters/spirit-medic.svg",
-    loreFaction: "雾泉庭", maxHp: 3, tags: ["恢复", "辅助"], passiveSkillIds: ["rejuvenation"], activeSkillIds: ["symbiosis"],
+    loreFaction: "雾泉庭", maxHp: 3, tags: ["恢复", "辅助"], roleTags: ["support", "healer"], passiveSkillIds: ["rejuvenation"], activeSkillIds: ["symbiosis"],
     passiveName: "回春", passiveDescription: "每回合第一次由你使角色恢复生命时，额外恢复1点。",
     activeName: "共生", activeDescription: "消耗2点能量并失去1点生命，令一名队友恢复2点。", activeCost: 2,
     description: "听见生命回声的游医，以自己的元息换取同伴继续作战。",
@@ -32,7 +32,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "shade-agent", name: "影客", glyph: "影", portrait: "./assets/characters/shade-agent.svg",
-    loreFaction: "无灯港", maxHp: 3, tags: ["控制", "谍报"], passiveSkillIds: ["spyGap"], activeSkillIds: ["stealSkill"],
+    loreFaction: "无灯港", maxHp: 3, tags: ["控制", "谍报"], roleTags: ["control", "utility"], passiveSkillIds: ["spyGap"], activeSkillIds: ["stealSkill"],
     passiveName: "窥隙", passiveDescription: "每回合首次伤害敌人后，私下查看其1张随机手牌。",
     activeName: "窃取", activeDescription: "消耗3点能量，随机获得一名敌人的1张手牌。", activeCost: 3,
     description: "往返暗潮市集的情报客，相信一张被看见的牌就不再是秘密。",
@@ -40,7 +40,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "ember-magus", name: "炎术师", glyph: "炎", portrait: "./assets/characters/ember-magus.svg",
-    loreFaction: "赤砂穹庐", maxHp: 3, tags: ["群攻", "爆发"], passiveSkillIds: ["ember"], activeSkillIds: ["burningField"],
+    loreFaction: "赤砂穹庐", maxHp: 3, tags: ["群攻", "爆发"], roleTags: ["damage", "caster"], passiveSkillIds: ["ember"], activeSkillIds: ["burningField"],
     passiveName: "余烬", passiveDescription: "卡牌每次结算首次对敌人造成实际伤害后，获得1点能量。",
     activeName: "焚场", activeDescription: "消耗3点能量，对所有敌人各造成1点不可格挡伤害。", activeCost: 3,
     description: "以赤砂为燃料的术士，能从每一道伤痕里回收燃烧的余烬。",
@@ -48,7 +48,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "trail-hunter", name: "追猎者", glyph: "猎", portrait: "./assets/characters/trail-hunter.svg",
-    loreFaction: "苍苔原", maxHp: 4, tags: ["标记", "爆发"], passiveSkillIds: ["tracking"], activeSkillIds: ["hunt"],
+    loreFaction: "苍苔原", maxHp: 4, tags: ["标记", "爆发"], roleTags: ["damage", "control"], passiveSkillIds: ["tracking"], activeSkillIds: ["hunt"],
     passiveName: "追踪", passiveDescription: "每回合首次以突袭指定敌人后，为其留下持续到下回合结束的猎印。",
     activeName: "猎杀", activeDescription: "消耗2点能量，对有你猎印的敌人造成2点伤害并移除猎印。", activeCost: 2,
     description: "从不追赶脚步，只追赶选择；一旦落印，猎物便难逃终局。",
@@ -56,7 +56,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "fate-gambler", name: "赌命者", glyph: "赌", portrait: "./assets/characters/fate-gambler.svg",
-    loreFaction: "镜轮市", maxHp: 4, tags: ["风险", "随机"], passiveSkillIds: ["gamble"], activeSkillIds: ["allIn"],
+    loreFaction: "镜轮市", maxHp: 4, tags: ["风险", "随机"], roleTags: ["damage", "resource"], passiveSkillIds: ["gamble"], activeSkillIds: ["allIn"],
     passiveName: "冒险", passiveDescription: "每回合首次使用战术牌后，60%摸1张，否则随机弃1张。",
     activeName: "孤注", activeDescription: "消耗全部能量并按点数摸牌；3点时还强化下一次突袭。", activeCost: 1,
     description: "在镜轮赌局中输掉姓名的旅人，习惯把剩下的一切推向桌面中央。",
@@ -64,7 +64,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "resonance-tuner", name: "调律师", glyph: "律", portrait: "./assets/characters/resonance-tuner.svg",
-    loreFaction: "鸣风塔", maxHp: 4, tags: ["辅助", "过牌"], passiveSkillIds: ["coordination"], activeSkillIds: ["resonance"],
+    loreFaction: "鸣风塔", maxHp: 4, tags: ["辅助", "过牌"], roleTags: ["support", "control"], passiveSkillIds: ["coordination"], activeSkillIds: ["resonance"],
     passiveName: "协调", passiveDescription: "每回合首次对队友使用卡牌后，自己摸1张牌。",
     activeName: "共鸣", activeDescription: "消耗2点能量，令一名队友摸2张牌。", activeCost: 2,
     description: "借风塔谐振器校准队友的行动，让每一次协作都产生新的回响。",

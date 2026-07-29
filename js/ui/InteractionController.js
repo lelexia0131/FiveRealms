@@ -57,6 +57,7 @@ export class InteractionController {
         <div class="hidden-card-grid">${hiddenSelectionMarkup(selection)}</div>
         <div class="response-actions"><button class="primary-button" type="button" data-interaction-confirm disabled>确认选择</button><button class="ghost-button" type="button" data-interaction-cancel>取消</button></div>`;
       this.ui.elements.response_panel.classList.remove("is-hidden");
+      if (this.ui.game) this.ui.render(this.ui.game);
     });
   }
 
@@ -80,6 +81,8 @@ export class InteractionController {
     this.pending = null;
     this.ui.elements.response_panel.classList.add("is-hidden");
     this.ui.elements.response_panel.innerHTML = "";
+    if (value === null) this.ui.game?.cardSelectionSystem.clearSelection(current.selection.selectionId);
     current.resolve(value);
+    if (this.ui.game) this.ui.render(this.ui.game);
   }
 }

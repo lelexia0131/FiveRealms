@@ -70,7 +70,7 @@ const PASSIVE_SKILLS = {
 
   rejuvenation(game, owner) {
     game.eventBus.on("beforeHeal", `${owner.id}:rejuvenation`, (event) => {
-      if (!owner.alive || event.source?.id !== owner.id || owner.turnFlags.rejuvenationUsed) return;
+      if (!owner.alive || event.source?.id !== owner.id || event.isDyingRescue || owner.turnFlags.rejuvenationUsed) return;
       owner.turnFlags.rejuvenationUsed = true;
       event.amount += 1;
       game.log(`${owner.name}的回春令治疗额外恢复1点。`, "heal");

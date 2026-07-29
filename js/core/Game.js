@@ -58,6 +58,7 @@ export class Game {
     this.aiController = new AIController(this);
     this.candidates = [];
     this.actionLocked = false;
+    this.interactionLocked = false;
     this.animationFastMode = GAME_CONFIG.animationFastMode;
     this.simulationMode = GAME_CONFIG.simulationMode;
     this.loopPromise = null;
@@ -192,7 +193,7 @@ export class Game {
     if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
 
     this.state.phase = "draw";
-    const drawEvent = { type: "beforeDraw", player, count: GAME_CONFIG.defaultDrawCount, cancelled: false, metadata: {} };
+    const drawEvent = { type: "beforeDraw", player, count: this.teamRules.getDrawCount(player), cancelled: false, metadata: {} };
     await this.eventBus.emit("beforeDraw", drawEvent);
     if (!drawEvent.cancelled) await this.drawCards(player, Math.max(0, drawEvent.count), "回合摸牌");
     await this.eventBus.emit("afterDraw", { ...drawEvent, type: "afterDraw" });
@@ -372,41 +373,55 @@ export class Game {
   async handleHumanCard(cardId) {
     const human = this.state.players[0];
     const card = human.hand.find((entry) => entry.id === cardId);
-    if (!card || this.currentPlayer?.id !== human.id || this.state.phase !== "play") return false;
+    if (!card || this.currentPlayer?.id !== human.id || this.state.phase !== "play" || this.actionLocked || this.interactionLocked) return false;
     const legality = RuleEngine.canPlayCard(this, human, card);
     if (!legality.ok) { this.ui.setPrompt(legality.reason); return false; }
-    const legalTargets = RuleEngine.getCardTargets(this, human, card);
-    let targets = [];
-    if (!["none", "self", "allEnemies", "allLiving", "multiStage"].includes(card.targetType)) {
-      const target = await this.ui.requestTarget(legalTargets, `为「${card.name}」选择目标`, { source:human, card });
-      if (!target) return false;
-      targets = [target];
+    this.interactionLocked = true;
+    this.ui.render(this);
+    try {
+      const legalTargets = RuleEngine.getCardTargets(this, human, card);
+      let targets = [];
+      if (!["none", "self", "allEnemies", "allLiving", "multiStage"].includes(card.targetType)) {
+        const target = await this.ui.requestTarget(legalTargets, `为「${card.name}」选择目标`, { source:human, card });
+        if (!target) return false;
+        targets = [target];
+      }
+      let selection = null;
+      if (card.selectionFlow?.length) selection = await this.ui.interactionController?.requestCardFlow?.(this, human, card, targets);
+      if (card.selectionFlow?.length && !selection) return false;
+      return await this.playCard(human, card, targets, selection);
+    } finally {
+      this.interactionLocked = false;
+      this.ui.render(this);
     }
-    let selection = null;
-    if (card.selectionFlow?.length) selection = await this.ui.interactionController?.requestCardFlow?.(this, human, card, targets);
-    if (card.selectionFlow?.length && !selection) return false;
-    return this.playCard(human, card, targets, selection);
   }
 
   /** 真人点击主动技能的入口；统一请求合法目标。 */
   async handleHumanSkill() {
     const human = this.state.players[0];
     const skill = getActiveSkill(human);
-    if (!skill || !skill.canUse(this, human).ok) return false;
-    const legalTargets = RuleEngine.getSkillTargets(this, human, skill);
-    let targets = [];
-    if (!["none", "allEnemies"].includes(skill.targetType)) {
-      const target = await this.ui.requestTarget(legalTargets, `为「${skill.name}」选择目标`);
-      if (!target) return false;
-      targets = [target];
+    if (!skill || this.actionLocked || this.interactionLocked || !skill.canUse(this, human).ok) return false;
+    this.interactionLocked = true;
+    this.ui.render(this);
+    try {
+      const legalTargets = RuleEngine.getSkillTargets(this, human, skill);
+      let targets = [];
+      if (!["none", "allEnemies"].includes(skill.targetType)) {
+        const target = await this.ui.requestTarget(legalTargets, `为「${skill.name}」选择目标`);
+        if (!target) return false;
+        targets = [target];
+      }
+      return await this.useActiveSkill(human, skill.id, targets);
+    } finally {
+      this.interactionLocked = false;
+      this.ui.render(this);
     }
-    return this.useActiveSkill(human, skill.id, targets);
   }
 
   /** 真人结束出牌阶段；仅在自己的出牌阶段有效。 */
   requestEndHumanPlay() {
     const human = this.state.players[0];
-    if (this.currentPlayer?.id !== human.id || this.state.phase !== "play" || this.actionLocked) return false;
+    if (this.currentPlayer?.id !== human.id || this.state.phase !== "play" || this.actionLocked || this.interactionLocked) return false;
     this.ui.resolveHumanPlayEnd(this.state.gameId);
     return true;
   }
@@ -465,7 +480,8 @@ export class Game {
   /** 统一治疗入口，允许 beforeHeal 修改数值并限制到最大生命。 */
   async heal(source, target, amount, context = {}) {
     if (!target?.alive || target.hp >= target.maxHp || this.state.isGameOver) return 0;
-    const event = { type: "beforeHeal", source, target, amount: Math.max(0, amount), card: context.card ?? null, skill: context.skill ?? null, cancelled: false, metadata: {} };
+    const event = { type: "beforeHeal", source, target, amount: Math.max(0, amount), card: context.card ?? null, skill: context.skill ?? null,
+      reason:context.reason ?? "治疗", isDyingRescue:Boolean(context.isDyingRescue), cancelled: false, metadata: {} };
     await this.eventBus.emit("beforeHeal", event);
     if (event.cancelled) return 0;
     const actualAmount = Math.min(event.amount, target.maxHp - target.hp);
@@ -662,14 +678,15 @@ export class Game {
     const maximum = Math.min(count, owner.hand.length);
     if (!maximum) return [];
     if (selection?.tokens?.length) {
-      const cards = selection.tokens.slice(0, maximum).map((token) => this.cardSelectionSystem.resolveToken(token, owner)).filter(Boolean);
+      if (!selection.selectionId) return [];
+      const cards = selection.tokens.slice(0, maximum).map((token) => this.cardSelectionSystem.resolveToken(token, owner, selection.selectionId)).filter(Boolean);
       if (selection.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       return cards;
     }
     if (actor.controllerType === "human") {
       const hidden = this.cardSelectionSystem.createHiddenSelection(owner);
       const tokens = await this.ui.interactionController?.requestHiddenCards?.(hidden, maximum, reason, { exact:true });
-      const cards = (tokens ?? []).map((token) => this.cardSelectionSystem.resolveToken(token, owner)).filter(Boolean);
+      const cards = (tokens ?? []).map((token) => this.cardSelectionSystem.resolveToken(token, owner, hidden.selectionId)).filter(Boolean);
       this.cardSelectionSystem.clearSelection(hidden.selectionId);
       return cards;
     }
@@ -697,6 +714,7 @@ export class Game {
   dispose() {
     if (this.state.isDisposed) return;
     this.state.isDisposed = true;
+    this.interactionLocked = false;
     this.cleanupManager.cleanup();
     this.responseSystem.cleanup();
     this.cardSelectionSystem.cleanup();

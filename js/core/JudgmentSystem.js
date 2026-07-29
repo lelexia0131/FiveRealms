@@ -24,6 +24,7 @@ export class JudgmentSystem {
     } else if (card.category === "basic") {
       this.game.state.deck.finishJudgmentToHand(card, defender);
       defender.bumpHandVersion();
+      for (const viewer of this.game.state.players) if (viewer.id !== defender.id) this.game.rememberPrivateCard(viewer, defender, card);
       this.game.log(`${defender.name}获得了判定牌，原突袭继续。`);
       result = { handled:true, immune:false, category:"basic" };
     } else {

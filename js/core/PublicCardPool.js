@@ -18,7 +18,7 @@ export class PublicCardPool {
   }
 
   async draft(source) {
-    const living = this.game.seatOrderFrom(source, true);
+    const living = this.game.seatOrderFrom(source, true).filter((player) => player.alive);
     for (const player of living) {
       if (!this.cards.length || this.game.state.isGameOver) break;
       let card = null;

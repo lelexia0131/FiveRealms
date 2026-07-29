@@ -3,6 +3,35 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js";
+
+const probabilityAtLeast = (trials, probability, required) => {
+  if (required <= 0) return 1;
+  if (trials < required || probability <= 0) return 0;
+  let below = 0;
+  for (let successes = 0; successes < required; successes += 1) {
+    let combinations = 1;
+    for (let index = 1; index <= successes; index += 1) combinations = combinations * (trials - index + 1) / index;
+    below += combinations * probability ** successes * (1 - probability) ** (trials - successes);
+  }
+  return Math.max(0, Math.min(1, 1 - below));
+};
+
+const estimateCard = (viewer, player, definitionId) => {
+  if (player.id === viewer.id) {
+    const count = player.hand.filter((card) => card.definitionId === definitionId).length;
+    return { expected:count, atLeastOne:count > 0 ? 1 : 0, atLeastTwo:count > 1 ? 1 : 0 };
+  }
+  const known = Object.values(viewer.aiMemory.knownCardsByPlayer[player.id] ?? {});
+  const knownCount = known.filter((id) => id === definitionId).length;
+  const unknownCount = Math.max(0, player.hand.length - known.length);
+  const density = (CARD_DEFINITIONS[definitionId]?.count ?? 0) / TOTAL_CARD_COUNT;
+  return {
+    expected: knownCount + unknownCount * density,
+    atLeastOne: knownCount > 0 ? 1 : probabilityAtLeast(unknownCount, density, 1),
+    atLeastTwo: knownCount >= 2 ? 1 : probabilityAtLeast(unknownCount, density, 2 - knownCount)
+  };
+};
 
 /**
  * 创建指定 AI 的只读快照。
@@ -22,13 +51,19 @@ export function createAiVisibleState(viewerId, state) {
     discardDefinitionIds: state.deck.discardPile.map((card) => card.definitionId),
     judgmentDefinitionIds: state.deck.judgmentZone.map((card) => card.definitionId),
     publicPool: (state.publicCardPool ?? []).map((card) => ({ id:card.id, definitionId:card.definitionId })),
-    players: state.players.map((player) => Object.freeze({
+    players: state.players.map((player) => {
+      const recoverEstimate = estimateCard(viewer, player, "recover");
+      const blockEstimate = estimateCard(viewer, player, "block");
+      const counterEstimate = estimateCard(viewer, player, "counter");
+      const assaultEstimate = estimateCard(viewer, player, "assault");
+      return Object.freeze({
       id: player.id,
       seatIndex: player.seatIndex,
       name: player.name,
       battleTeam: player.battleTeam,
       generalId: player.generalId,
       tags: [...player.general.tags],
+      roleTags: [...(player.general.roleTags ?? [])],
       hp: player.hp,
       maxHp: player.maxHp,
       shield: player.shield,
@@ -40,12 +75,26 @@ export function createAiVisibleState(viewerId, state) {
       recoverUsed: player.turnFlags.recoverUsed,
       recoverLimit: player.turnFlags.recoverLimit,
       exposeWeaknessStacks: player.statuses.exposeWeakness?.stacks ?? 0,
+      assaultBonus: player.turnFlags.assaultBonus ?? 0,
+      activeSkillId: player.general.activeSkillIds[0] ?? null,
+      activeSkillCost: player.general.activeCost ?? 0,
+      activeSkillUsed: player.turnFlags.activeSkillsUsed.has(player.general.activeSkillIds[0]),
+      recycleDeviceTriggered: Boolean(player.turnFlags.recycleDeviceTriggered),
+      huntMarkSourceId: player.statuses.huntMark?.sourceId ?? null,
+      temporaryShieldAmount: player.statuses.temporaryShield?.amount ?? 0,
       alive: player.alive,
       handCount: player.hand.length,
       hand: player.id === viewerId ? player.hand.map((card) => ({ id: card.id, definitionId: card.definitionId })) : undefined,
       knownCards: player.id === viewerId ? undefined : Object.entries(viewer.aiMemory.knownCardsByPlayer[player.id] ?? {}).map(([cardId, definitionId]) => ({ cardId, definitionId })),
       equipmentDefinitionId: player.equipment?.definitionId ?? null,
-      statuses: Object.keys(player.statuses)
-    }))
+      statuses: Object.keys(player.statuses),
+      expectedRecoverCount: recoverEstimate.expected,
+      blockProbability: blockEstimate.atLeastOne,
+      twoBlockProbability: blockEstimate.atLeastTwo,
+      counterProbability: counterEstimate.atLeastOne,
+      expectedAssaultCount: assaultEstimate.expected,
+      assaultResponseProbability: assaultEstimate.atLeastOne
+    });
+    })
   });
 }

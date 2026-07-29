@@ -141,6 +141,10 @@ export class UIManager {
     });
   }
 
+  isInteractionActive() {
+    return Boolean(this.targetState || this.discardState || this.responseState || this.interactionController?.pending || this.game?.interactionLocked);
+  }
+
   getDistanceState(source, target) {
     if (!target.alive) return "已阵亡";
     const distance = DistanceSystem.getDistance(this.game, source, target);
@@ -152,7 +156,7 @@ export class UIManager {
 
   renderHand(game, human) {
     const inDiscard = Boolean(this.discardState);
-    const blockedByInteraction = Boolean(this.targetState || this.responseState);
+    const blockedByInteraction = this.isInteractionActive();
     this.elements.human_hand.innerHTML = human.hand.map((card) => {
       const playable = RuleEngine.canPlayCard(game, human, card).ok;
       const selected = this.discardState?.selectedIds.has(card.id);
@@ -165,7 +169,7 @@ export class UIManager {
 
   renderControls(game, human) {
     const humanPlay = game.currentPlayer?.id === human.id && game.state.phase === "play" && human.alive && !game.state.isGameOver;
-    const interaction = Boolean(this.targetState || this.discardState || this.responseState);
+    const interaction = this.isInteractionActive();
     const skill = getActiveSkill(human);
     const skillLegal = skill?.canUse(game, human).ok ?? false;
     this.elements.skill_button.textContent = skill ? `${skill.name} · ${skill.id === "allIn" ? "全部" : skill.cost} 能量` : "主动技能";
