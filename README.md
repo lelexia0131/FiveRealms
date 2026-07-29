@@ -44,12 +44,14 @@ npm run test:balance
 
 | 规则 | 二人阵营 | 三人阵营 |
 | --- | ---: | ---: |
-| 额外初始牌 | +1 | 0 |
+| 开局手牌总数 | 3 | 4 |
 | 每回合主动突袭 | 2 | 1 |
 | 每回合主动调息 | 不限次数 | 1 |
 | 自己回合基础能量 | 2 | 1 |
 
 `recoverLimitPerTurn: null` 明确表示无限；仍必须满足受伤、持有调息且交互未锁定。
+
+守誓者最大生命为 3。主动技能“壁垒”消耗 2 点能量，只为一名存活队友提供 1 点临时护盾；该护盾被重复施放时仅刷新为 1 点，不会叠加，并在目标自己的下回合开始时消散。
 
 ## 动态存活距离环
 
@@ -238,7 +240,7 @@ FiveRealms/
 ## 常用配置修改
 
 - 牌组数量：修改 `cardConfig.js` 对应定义的 `count`，保持非负整数，并更新预期总数测试。
-- 初始牌：修改 `initialHandCount`；小队额外牌只改 `smallTeamBonuses.extraInitialCards`。
+- 初始牌：分别修改 `smallTeamBonuses.initialHandCount` 与 `largeTeamRules.initialHandCount`；当前分别为 3 和 4。
 - 摸牌：修改 `defaultDrawCount`。
 - 阵营补偿：只修改 `smallTeamBonuses` 与 `largeTeamRules`，所有消费者通过 `TeamRuleService` 读取。
 - 攻击范围：修改 `defaultAttackRange` 或单个玩家公开字段；不能改回固定座位公式。

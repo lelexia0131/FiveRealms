@@ -157,7 +157,15 @@ export const ACTIVE_SKILLS = Object.freeze({
   barrier: Object.freeze({
     id: "barrier", name: "壁垒", cost: 2, targetType: "ally", rangeRule: "ally",
     canUse(game, source) { const base = baseCanUse(game, source, this); return base.ok && !RuleEngine.getSkillTargets(game, source, this).length ? { ok:false, reason:"没有存活队友" } : base; },
-    async execute(game, source, targets) { source.changeEnergy(-2); targets[0].shield += 2; targets[0].statuses.temporaryShield = { clearAtTurnStart: true }; game.ui.queueFeedback?.("shield", targets[0].id, 2); game.log(`${source.name}为${targets[0].name}构筑壁垒，获得2点护盾。`, "heal"); }
+    async execute(game, source, targets) {
+      source.changeEnergy(-2);
+      const target = targets[0];
+      const previousTemporary = Math.min(target.shield, target.statuses.temporaryShield?.amount ?? 0);
+      target.shield = Math.max(0, target.shield - previousTemporary) + 1;
+      target.statuses.temporaryShield = { amount:1, clearAtTurnStart:true };
+      game.ui.queueFeedback?.("shield", target.id, 1);
+      game.log(`${source.name}为${target.name}构筑壁垒，获得1点持续至其下次回合开始的护盾。`, "heal");
+    }
   }),
   symbiosis: Object.freeze({
     id: "symbiosis", name: "共生", cost: 2, targetType: "injuredAlly", rangeRule: "ally",

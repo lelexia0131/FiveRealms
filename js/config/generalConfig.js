@@ -16,9 +16,9 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "oath-warden", name: "守誓者", glyph: "誓", portrait: "./assets/characters/oath-warden.svg",
-    loreFaction: "曜石城垒", maxHp: 5, tags: ["防御", "保护"], passiveSkillIds: ["guardianAid"], activeSkillIds: ["barrier"],
+    loreFaction: "曜石城垒", maxHp: 3, tags: ["防御", "保护"], passiveSkillIds: ["guardianAid"], activeSkillIds: ["barrier"],
     passiveName: "护援", passiveDescription: "每轮一次，弃置1张手牌令队友即将受到的伤害-1。",
-    activeName: "壁垒", activeDescription: "消耗2点能量，令一名队友获得2点临时护盾。", activeCost: 2,
+    activeName: "壁垒", activeDescription: "消耗2点能量，令一名队友获得1点壁垒护盾；持续至其下次回合开始，重复施放只刷新、不叠加。", activeCost: 2,
     description: "背负古誓的城垒守卫，擅长将危险拦截在盟友身前。",
     aiProfile: profile(.6, 1.45, 1.25, .7, .8, .85, .9, .45)
   }),

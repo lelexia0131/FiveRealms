@@ -16,7 +16,7 @@ export const GAME_CONFIG = Object.freeze({
   generalCandidateCount: 4,
   // 是否允许同局重复角色；开启会削弱角色辨识度并让技能叠加更难平衡。
   allowDuplicateGenerals: false,
-  // 基础初始牌；推荐 3～5，增大会提高首轮爆发并加快首次重洗。
+  // 三人阵营默认初始牌；二人阵营由 smallTeamBonuses.initialHandCount 覆盖。
   initialHandCount: 4,
   // 每回合摸牌数；推荐 1～3，增大会放宽资源压力并延长弃牌操作。
   defaultDrawCount: 2,
@@ -39,8 +39,8 @@ export const GAME_CONFIG = Object.freeze({
 
   // 二人阵营的集中补偿；null 是“无限调息”的唯一表达，不得改成魔法大数。
   smallTeamBonuses: Object.freeze({
-    // 每名小队成员额外初始牌；推荐 0～2，增大会提高首轮稳定性。
-    extraInitialCards: 1,
+    // 每名小队成员开局总手牌数；当前规则固定为 3，不再叠加基础初始牌。
+    initialHandCount: 3,
     // 每个出牌阶段主动突袭上限；用户规则固定为 2，修改会直接破坏平衡契约。
     attackLimitPerTurn: 2,
     // null 表示主动调息不限次数，但仍受受伤与手牌约束。
@@ -50,8 +50,8 @@ export const GAME_CONFIG = Object.freeze({
   }),
   // 三人阵营基准规则；与小队补偿并列，避免各模块重复判断人数。
   largeTeamRules: Object.freeze({
-    // 大队不获得额外初始牌。
-    extraInitialCards: 0,
+    // 每名大队成员开局总手牌数；默认保持 4。
+    initialHandCount: 4,
     // 每个出牌阶段主动突袭一次；提高会放大人数优势。
     attackLimitPerTurn: 1,
     // 每个出牌阶段主动调息一次；null 才表示无限。

@@ -15,7 +15,7 @@ export class TeamRuleService {
 
   isSmallTeam(playerOrTeam) { return this.getTeamSize(playerOrTeam) === GAME_CONFIG.smallTeamSize; }
   getRules(player) { return this.isSmallTeam(player) ? GAME_CONFIG.smallTeamBonuses : GAME_CONFIG.largeTeamRules; }
-  getInitialBonusCards(player) { return this.getRules(player).extraInitialCards; }
+  getInitialHandCount(player) { return this.getRules(player).initialHandCount ?? GAME_CONFIG.initialHandCount; }
   getAttackLimit(player) { return this.getRules(player).attackLimitPerTurn; }
   getRecoverLimit(player) { return this.getRules(player).recoverLimitPerTurn; }
   getTurnEnergyGain(player) {

@@ -112,8 +112,7 @@ export class Game {
     for (const player of this.state.players) {
       player.resetTurnFlags(this.teamRules.getRules(player));
       player.resetRoundFlags();
-      const bonus = this.teamRules.getInitialBonusCards(player);
-      await this.drawCards(player, GAME_CONFIG.initialHandCount + bonus, "初始发牌");
+      await this.drawCards(player, this.teamRules.getInitialHandCount(player), "初始发牌");
     }
     this.state.startingPlayerIndex = Math.floor(this.random() * this.state.players.length);
     this.state.currentPlayerIndex = this.state.startingPlayerIndex;
@@ -168,9 +167,10 @@ export class Game {
     this.state.phase = "turnStart";
     player.resetTurnFlags(this.teamRules.getRules(player));
     if (player.statuses.temporaryShield) {
-      player.shield = 0;
+      const remaining = Math.min(player.shield, player.statuses.temporaryShield.amount ?? 0);
+      player.shield -= remaining;
       delete player.statuses.temporaryShield;
-      this.log(`${player.name}的临时护盾在回合开始时消散。`);
+      if (remaining > 0) this.log(`${player.name}的壁垒护盾在回合开始时消散。`);
     }
     this.log(`${player.name}的回合开始。`, "important");
     await this.eventBus.emit("turnStart", { type: "turnStart", player });
@@ -442,6 +442,10 @@ export class Game {
     }
     const shieldAbsorbed = Math.min(target.shield, event.amount);
     target.shield -= shieldAbsorbed;
+    if (shieldAbsorbed && target.statuses.temporaryShield) {
+      target.statuses.temporaryShield.amount = Math.max(0, (target.statuses.temporaryShield.amount ?? 0) - shieldAbsorbed);
+      if (target.statuses.temporaryShield.amount === 0) delete target.statuses.temporaryShield;
+    }
     const hpDamage = Math.max(0, event.amount - shieldAbsorbed);
     target.hp -= hpDamage;
     target.statistics.damageTaken += hpDamage;
