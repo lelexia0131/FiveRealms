@@ -1,0 +1,27 @@
+/**
+ * 阵营补偿的唯一查询服务。依赖 Game 状态与 gameConfig，不修改玩家状态；
+ * 初始牌、回合额度和能量阶段都应调用这里，避免散落 teamSize === 2 判断。
+ */
+import { GAME_CONFIG } from "../config/gameConfig.js";
+
+/** 阵营人数补偿的唯一规则入口。 */
+export class TeamRuleService {
+  constructor(game) { this.game = game; }
+
+  getTeamSize(playerOrTeam) {
+    const team = typeof playerOrTeam === "string" ? playerOrTeam : playerOrTeam?.battleTeam;
+    return this.game.state.players.filter((player) => player.battleTeam === team).length;
+  }
+
+  isSmallTeam(playerOrTeam) { return this.getTeamSize(playerOrTeam) === GAME_CONFIG.smallTeamSize; }
+  getRules(player) { return this.isSmallTeam(player) ? GAME_CONFIG.smallTeamBonuses : GAME_CONFIG.largeTeamRules; }
+  getInitialBonusCards(player) { return this.getRules(player).extraInitialCards; }
+  getAttackLimit(player) { return this.getRules(player).attackLimitPerTurn; }
+  getRecoverLimit(player) { return this.getRules(player).recoverLimitPerTurn; }
+  getTurnEnergyGain(player) {
+    return this.getRules(player).turnEnergyGain + (player.equipment?.definitionId === "energyDevice" ? 1 : 0);
+  }
+  getTurnEnergyBreakdown(player) {
+    return { baseAmount:1, teamBonus:this.isSmallTeam(player) ? 1 : 0, equipmentBonus:player.equipment?.definitionId === "energyDevice" ? 1 : 0 };
+  }
+}

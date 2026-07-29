@@ -22,7 +22,7 @@ export class GeneralSelection {
    * @param {string} selectedGeneralId 真人已选角色 ID。
    * @returns {Array<Object>} 按 aiPlayers 顺序排列的角色配置。
    */
-  assignAiGenerals(aiPlayers, selectedGeneralId) {
+  assignAiGenerals(aiPlayers, selectedGeneralId, smallTeamId = null) {
     const pool = shuffled(GENERAL_DEFINITIONS.filter((general) => GAME_CONFIG.allowDuplicateGenerals || general.id !== selectedGeneralId), this.random);
     const assigned = [];
     for (const player of aiPlayers) {
@@ -32,7 +32,9 @@ export class GeneralSelection {
       const ranked = pool.map((general, index) => ({
         general,
         index,
-        diversity: general.tags.filter((tag) => !teammateTags.includes(tag)).length + this.random() * 0.5
+        diversity: general.tags.filter((tag) => !teammateTags.includes(tag)).length
+          + (player.battleTeam === smallTeamId ? ({ "ember-magus":10, "trail-hunter":9, "oath-warden":8, "blade-walker":5, "resonance-tuner":3 }[general.id] ?? 0) : 0)
+          + this.random() * 0.5
       })).sort((a, b) => b.diversity - a.diversity);
       const choice = ranked[0];
       assigned.push({ player, general: choice.general });

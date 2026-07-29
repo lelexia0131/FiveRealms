@@ -30,12 +30,15 @@ export function equipmentSlotTemplate(player, isHuman = false) {
     </div>`;
   }
   const equipment = player.equipment;
-  const triggered = Boolean(player.turnFlags?.coreDeviceTriggered);
-  return `<div class="equipment-slot is-equipped ${triggered ? "is-triggered" : "is-ready"}" tabindex="0" aria-label="装备：${escapeHtml(equipment.name)}，${triggered ? "本回合已触发" : "本回合待触发"}">
+  const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"首次战术后摸1张", defenseDevice:"受突袭前公开判定", battleDevice:"突袭需2张格挡" };
+  const stateLabels = { energyDevice:"持续供能", recycleDevice:"待触发", defenseDevice:"待判定", battleDevice:"强化中" };
+  const triggered = equipment.definitionId === "recycleDevice" && Boolean(player.turnFlags?.recycleDeviceTriggered);
+  const stateLabel = triggered ? "已触发" : stateLabels[equipment.definitionId] ?? "生效中";
+  return `<div class="equipment-slot is-equipped ${triggered ? "is-triggered" : "is-ready"}" tabindex="0" aria-label="装备：${escapeHtml(equipment.name)}，${escapeHtml(stateLabel)}">
     <img class="equipment-icon" src="${escapeHtml(equipment.icon || equipment.art)}" alt="" aria-hidden="true">
-    <div class="equipment-copy"><strong>${escapeHtml(equipment.name)}</strong><small>${isHuman ? escapeHtml(equipment.description) : "首次战术后摸1张"}</small></div>
-    <span class="equipment-state">${triggered ? "已触发" : "待触发"}</span>
-    <span class="equipment-tooltip" role="tooltip"><strong>${escapeHtml(equipment.name)}</strong>${escapeHtml(equipment.description)}<em>${triggered ? "本回合效果已经触发" : "本回合效果尚未触发"}</em></span>
+    <div class="equipment-copy"><strong>${escapeHtml(equipment.name)}</strong><small>${isHuman ? escapeHtml(equipment.description) : escapeHtml(summaries[equipment.definitionId] ?? equipment.description)}</small></div>
+    <span class="equipment-state">${escapeHtml(stateLabel)}</span>
+    <span class="equipment-tooltip" role="tooltip"><strong>${escapeHtml(equipment.name)}</strong>${escapeHtml(equipment.description)}<em>${escapeHtml(stateLabel)}</em></span>
   </div>`;
 }
 
@@ -44,15 +47,17 @@ function lifeCells(player) {
 }
 
 export function playerPanelTemplate(player, options = {}) {
-  const { humanTeam = player.battleTeam, isHuman = false, isCurrent = false, isLegalTarget = false, isTargeting = false, isThinking = false } = options;
+  const { humanTeam = player.battleTeam, isHuman = false, isCurrent = false, isLegalTarget = false, isTargeting = false, isThinking = false, distanceInfo = null, distanceState = null } = options;
   const relationship = isHuman ? "is-self" : player.battleTeam === humanTeam ? "is-ally" : "is-enemy";
   const statuses = [
-    player.statuses?.exposed ? ["破绽", "danger"] : null,
+    player.statuses?.exposeWeakness ? [`破势 ${player.statuses.exposeWeakness.stacks}`, "danger"] : null,
     player.statuses?.huntMark ? ["猎印", "mark"] : null,
-    player.shield ? [`护盾 ${player.shield}`, "shield"] : null
+    player.shield ? [`护盾 ${player.shield}`, "shield"] : null,
+    player.hp <= 0 && player.alive ? [`濒死 · 需${1 - player.hp}调息`, "danger"] : null,
+    player.turnFlags?.recycleDeviceTriggered ? ["回收已触发", "mark"] : null
   ].filter(Boolean);
   const statusText = isThinking ? "正在思考" : isCurrent ? "正在行动" : player.alive ? "等待行动" : "已阵亡";
-  return `<article class="player-seat ${isHuman ? "human-seat" : "cpu-seat"} team-${escapeHtml(player.battleTeam)} ${relationship} ${isCurrent ? "is-active" : ""} ${isLegalTarget ? "target-legal" : ""} ${isTargeting && !isLegalTarget ? "target-illegal" : ""} ${isThinking ? "is-thinking" : ""} ${player.alive ? "" : "is-dead"}" data-player-id="${escapeHtml(player.id)}" tabindex="${isLegalTarget ? "0" : "-1"}" aria-label="${escapeHtml(player.name)}，${TEAM_CONFIG[player.battleTeam].name}，生命${player.hp}点，能量${player.energy}点，手牌${player.hand.length}张">
+  return `<article class="player-seat ${isHuman ? "human-seat" : "cpu-seat"} team-${escapeHtml(player.battleTeam)} ${relationship} ${isCurrent ? "is-active" : ""} ${isLegalTarget ? "target-legal" : ""} ${isTargeting && !isLegalTarget ? "target-illegal" : ""} ${isThinking ? "is-thinking" : ""} ${player.alive ? "" : "is-dead"}" data-player-id="${escapeHtml(player.id)}" tabindex="${isLegalTarget ? "0" : "-1"}" aria-label="${escapeHtml(player.name)}，${TEAM_CONFIG[player.battleTeam].name}，生命${player.hp}点，能量${player.energy}点，手牌${player.hand.length}张${distanceInfo ? `，座位${distanceInfo.seat}，距离${distanceInfo.distance}` : ""}">
     <div class="seat-portrait-wrap">
       ${image(player.general.portrait, `${player.name}肖像`, "seat-portrait")}
       <span class="team-emblem" aria-label="${TEAM_CONFIG[player.battleTeam].name}">${player.battleTeam === "dawn" ? "晨" : "暮"}</span>
@@ -65,6 +70,8 @@ export function playerPanelTemplate(player, options = {}) {
         <div class="resource-pills"><span class="resource-pill energy"><small>能量</small><strong>${player.energy}/${player.maxEnergy}</strong></span><span class="resource-pill shield"><small>护盾</small><strong>${player.shield}</strong></span><span class="resource-pill hand-count"><small>手牌</small><strong>${player.hand.length}</strong></span></div>
       </div>
       <div class="status-row">${statuses.length ? statuses.map(([label, kind]) => `<span class="status-chip is-${kind}">${label}</span>`).join("") : '<span class="status-chip is-steady">状态稳定</span>'}</div>
+      ${distanceInfo ? `<div class="range-readout"><span>座位 ${distanceInfo.seat}</span><strong>${escapeHtml(distanceState ?? `距离 ${distanceInfo.distance}`)}</strong><small>${player.alive ? `射程 ${distanceInfo.range}` : "已离开距离环"}</small></div>` : ""}
+      ${isHuman ? `<div class="turn-usage"><span>突袭 ${player.turnFlags.attackUsed}/${player.turnFlags.attackLimit}</span><span>调息 ${player.turnFlags.recoverUsed}/${player.turnFlags.recoverLimit === null ? "∞" : player.turnFlags.recoverLimit}</span></div>` : ""}
       ${equipmentSlotTemplate(player, isHuman)}
       ${isHuman ? `<details class="character-details" open><summary>角色能力</summary><p>${escapeHtml(player.general.description)}</p><div class="skill-summary"><strong>${escapeHtml(player.general.passiveName)}</strong><span>${escapeHtml(player.general.passiveDescription)}</span></div></details>` : ""}
     </div>

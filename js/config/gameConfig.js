@@ -1,75 +1,112 @@
 /**
- * 本文件集中保存对局流程、节奏与平衡参数，不负责读取 UI 或执行规则。
- * 业务模块只应读取这些值；若新增可调数值，应先在此记录用途与安全范围。
- * 修改阵营人数时必须保证两队总人数等于 playerCount，否则 TeamManager 会拒绝启动。
+ * 集中保存规则、AI 搜索与展示节奏参数。
+ *
+ * 调整原则：人数、牌量和每回合额度会直接改变平衡；延迟只改变可读节奏；
+ * 搜索深度、宽度、采样数和预算会同时影响 AI 强度与浏览器负载。规则模块不得
+ * 在别处复制这些数字，模拟和真人对局也必须读取同一份配置。
  */
-
 export const GAME_CONFIG = Object.freeze({
-  /** 总座位数。增大会延长每轮并放大牌堆消耗，减小会削弱阵营配合；推荐固定为 5，改动会影响布局和组队逻辑。 */
+  // 固定五人桌；其他值需要同步重做阵营、座位和 UI，当前不建议修改。
   playerCount: 5,
-  /** 小队人数。增大时补偿覆盖更多角色，减小时小队更脆弱；推荐 2，必须小于 largeTeamSize。 */
+  // 少人数阵营规模；提高会改变补偿归属并破坏 2V3，当前只能为 2。
   smallTeamSize: 2,
-  /** 大队人数。增大会提高人数优势，减小会缩小目标数量；推荐 3，与 smallTeamSize 之和必须等于 5。 */
+  // 多人数阵营规模；与 playerCount-smallTeamSize 一致，当前只能为 3。
   largeTeamSize: 3,
-  /** 真人可选角色数。增大可提升选择自由但占用更多界面，减小会降低策略；推荐 3～5，不得超过角色池。 */
+  // 真人可选角色数；1～8 可运行，越大选择更充分但征召页更拥挤。
   generalCandidateCount: 4,
-  /** 是否允许重复角色。开启会增加组合波动，关闭便于辨认；推荐 false，改动不会破坏流程但会影响平衡。 */
+  // 是否允许同局重复角色；开启会削弱角色辨识度并让技能叠加更难平衡。
   allowDuplicateGenerals: false,
-
-  /** 常规初始手牌。增大提升开局选择并加速牌堆消耗，减小会使前期空转；推荐 3～5。 */
+  // 基础初始牌；推荐 3～5，增大会提高首轮爆发并加快首次重洗。
   initialHandCount: 4,
-  /** 小队每名成员的额外初始牌。增大显著补强二人队，减小会放大人数劣势；推荐 0～2，可设为 0 关闭。 */
-  smallTeamBonusCards: 1,
-  /** 默认摸牌数。增大提高行动密度并增加弃牌，减小使资源紧张；推荐 1～3，过高可能令 AI 回合变长。 */
+  // 每回合摸牌数；推荐 1～3，增大会放宽资源压力并延长弃牌操作。
   defaultDrawCount: 2,
-
-  /** 默认能量上限。增大可囤积更多爆发，减小会使高耗技能无法使用；推荐固定为 3，低于 3 会破坏部分技能。 */
+  // 默认能量上限；推荐 3～5，改变后需复核所有主动技能成本。
   defaultMaxEnergy: 3,
-  /** 每回合突袭次数。增大提高爆发并削弱防守，减为 0 会禁用普通攻击；推荐 1，技能可临时修改。 */
-  defaultAttackLimitPerTurn: 1,
-  /** 每回合调息次数。增大会拖长对局，减为 0 会禁用恢复牌；推荐 1。 */
-  defaultRecoverLimitPerTurn: 1,
-
-  /** 真人响应等待毫秒数。增大给思考留出更多时间，减小节奏更快；推荐 5000～15000，过低影响可操作性。 */
-  responseTimeoutMs: 10000,
-  /** AI 回合首次观察战场的思考范围。 */
-  aiInitialThinkMinMs: 900,
-  aiInitialThinkMaxMs: 1700,
-  /** AI 连续动作、公开行动意图之间的停顿范围。 */
-  aiBetweenActionMinMs: 650,
-  aiBetweenActionMaxMs: 1200,
-  /** AI 决定是否格挡、反制、转移或护援的思考范围。 */
-  aiResponseThinkMinMs: 700,
-  aiResponseThinkMaxMs: 1400,
-  /** AI 弃牌阶段的思考范围。 */
-  aiDiscardThinkMinMs: 700,
-  aiDiscardThinkMaxMs: 1200,
-  /** AI 收束并结束出牌阶段的短暂停顿范围。 */
-  aiEndThinkMinMs: 350,
-  aiEndThinkMaxMs: 700,
-  /** 默认是否启用快速动画；它只缩短展示等待，不改变决策结果。 */
-  animationFastMode: false,
-  /** 快速模式等待倍率与最低可读停顿。 */
-  animationFastScale: 0.18,
-  animationFastMinimumMs: 55,
-  /** AI 单个出牌阶段最大动作数。增大允许更长连锁，减小可能提前结束；推荐 8～16，用于防止无穷循环。 */
-  aiMaxActionsPerTurn: 12,
-
-  /** 是否为同分 AI 行动加入随机扰动。开启增加重玩性，关闭便于测试；不会绕过合法性检查。 */
-  enableAiRandomness: true,
-  /** AI 评分随机幅度比例。增大更不可预测，减小更稳定；推荐 0～0.2，过高可能选择明显次优行动。 */
-  aiRandomnessRange: 0.12,
-  /** AI 整体评分倍率。增大强化主动行动意愿，减小更保守；推荐 0.8～1.25，不改变规则合法性。 */
-  aiDifficultyMultiplier: 1,
-
-  /** 赌命者冒险摸牌概率。增大提高收益，减小增加风险；推荐 0.5～0.7，必须位于 0～1。 */
-  gamblerDrawChance: 0.6,
-  /** 连势最大层数。增大显著提升刃行者爆发，减小会削弱技能；推荐固定为 2。 */
-  momentumMaxStacks: 2,
-  /** 首轮编号，仅影响显示和每轮标记初始化；推荐固定为 1。 */
+  // 普通突袭射程；当前动态存活环以 1 为核心，增大会明显削弱座位战术。
+  defaultAttackRange: 1,
+  // 真人响应窗口毫秒数；推荐 8000～20000，只影响操作宽容度，不改 AI 合法性。
+  responseTimeoutMs: 12000,
+  // 单回合动作安全上限；降低可能截断合法连招，提高会放大异常循环风险。
+  aiMaxActionsPerTurn: 16,
+  // 首轮编号；仅影响展示和轮次标记，通常保持 1。
   initialRound: 1,
-  /** 是否输出详细调试轨迹。开启便于排错但输出很多，关闭保持控制台干净；不影响胜负。 */
-  debugMode: false
+  // 赌命者被动成功率；0～1，增大会直接增强该角色并影响阵营胜率。
+  gamblerDrawChance: 0.6,
+  // 刃行者连势上限；推荐 1～3，增大会显著提高连续出牌爆发。
+  momentumMaxStacks: 2,
+  // 调试输出总开关；开启只增加诊断日志，不应改变规则或随机过程。
+  debugMode: false,
+
+  // 二人阵营的集中补偿；null 是“无限调息”的唯一表达，不得改成魔法大数。
+  smallTeamBonuses: Object.freeze({
+    // 每名小队成员额外初始牌；推荐 0～2，增大会提高首轮稳定性。
+    extraInitialCards: 1,
+    // 每个出牌阶段主动突袭上限；用户规则固定为 2，修改会直接破坏平衡契约。
+    attackLimitPerTurn: 2,
+    // null 表示主动调息不限次数，但仍受受伤与手牌约束。
+    recoverLimitPerTurn: null,
+    // 自己回合能量总基础值；固定为 2，装备加成在服务层另算。
+    turnEnergyGain: 2
+  }),
+  // 三人阵营基准规则；与小队补偿并列，避免各模块重复判断人数。
+  largeTeamRules: Object.freeze({
+    // 大队不获得额外初始牌。
+    extraInitialCards: 0,
+    // 每个出牌阶段主动突袭一次；提高会放大人数优势。
+    attackLimitPerTurn: 1,
+    // 每个出牌阶段主动调息一次；null 才表示无限。
+    recoverLimitPerTurn: 1,
+    // 自己回合获得 1 点基础能量。
+    turnEnergyGain: 1
+  }),
+
+  // 以下均为毫秒范围；调高只延长自然模式阅读时间，调低会让动作显得跳跃。
+  // 首次分析推荐 1800～4500ms，复杂局面可由 aiComplexThinkMaxMs 延长。
+  aiInitialThinkMinMs: 1800,
+  aiInitialThinkMaxMs: 3500,
+  // 连续动作间的重规划展示，推荐 800～2500ms。
+  aiBetweenActionMinMs: 1000,
+  aiBetweenActionMaxMs: 2200,
+  // 格挡、反制、救援等响应思考，推荐 800～2500ms。
+  aiResponseThinkMinMs: 1000,
+  aiResponseThinkMaxMs: 2200,
+  // 弃牌思考，推荐 600～2000ms。
+  aiDiscardThinkMinMs: 1000,
+  aiDiscardThinkMaxMs: 1800,
+  // 结束出牌前停顿，推荐 350～1200ms。
+  aiEndThinkMinMs: 500,
+  aiEndThinkMaxMs: 1000,
+  // 高复杂度自然模式最长展示；过高会让玩家误以为页面卡住。
+  aiComplexThinkMaxMs: 4500,
+  // 默认关闭快速动画；开启不应改变规则、随机源或合法动作。
+  animationFastMode: false,
+  // 快速模式时间倍率；推荐 0.03～0.25，越小越接近无等待。
+  animationFastScale: 0.08,
+  // 快速模式最短延迟；保持 0 便于自动模拟，增大只影响展示。
+  animationFastMinimumMs: 0,
+  // 无 DOM 模拟标记；只关闭视觉等待，不能绕过规则。
+  simulationMode: false,
+
+  // 束搜索最大动作深度；推荐 3～5，增大呈指数增加计算量。
+  aiSearchDepth: 4,
+  // 每层保留候选数；推荐 8～12，增大更稳但会提高 CPU 占用。
+  aiBeamWidth: 10,
+  // 每次规划的未知手牌世界采样数；推荐 6～20，不能用真实隐藏牌替代。
+  aiHiddenStateSamples: 10,
+  // 单次规划时间预算；推荐 400～1500ms，到点必须返回当前最佳动作。
+  aiSearchTimeBudgetMs: 900,
+  // 每个真实动作后重新读取状态并规划，关闭会让动态距离和手牌变化失效。
+  aiReplanAfterEveryAction: true,
+  // 展开若干节点后让出事件循环；越小越流畅但调度开销更高，推荐 24～96。
+  aiSearchYieldEvery: 48,
+  // 分数差小于该值视为近似同分；增大会增加风格变化与次优选择。
+  aiNearTieRange: 0.35,
+  // 仅在近似同分时允许随机选择；关闭可获得完全确定的同局策略。
+  enableAiRandomness: true,
+  // 预留的小幅随机扰动范围；推荐 0～0.1，过大会掩盖效用评分。
+  aiRandomnessRange: 0.035,
+  // AI 难度总倍率接口；当前 1 为标准，调整前需配合评估权重验证。
+  aiDifficultyMultiplier: 1
 });
 
 export const TEAM_CONFIG = Object.freeze({
@@ -78,12 +115,7 @@ export const TEAM_CONFIG = Object.freeze({
 });
 
 export const PHASE_NAMES = Object.freeze({
-  idle: "等待",
-  turnStart: "回合开始",
-  status: "状态处理",
-  draw: "摸牌",
-  play: "出牌",
-  discard: "弃牌",
-  turnEnd: "回合结束",
-  gameOver: "对局结束"
+  idle: "等待", turnStart: "回合开始", status: "状态处理", energy: "获得能量",
+  draw: "摸牌", play: "出牌", dying: "濒死救援", judgment: "装置判定",
+  discard: "弃牌", turnEnd: "回合结束", gameOver: "对局结束"
 });

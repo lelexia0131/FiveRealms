@@ -1,0 +1,46 @@
+/**
+ * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
+ * 决斗和救援，不消费卡牌。未知信息只能来自传入概率/合法记忆。
+ */
+export class AiResponsePolicy {
+  constructor(game, evaluator, knowledge) { this.game = game; this.evaluator = evaluator; this.knowledge = knowledge; }
+
+  shouldRespond(responder, type, context, cards = []) {
+    const target = context.target ?? responder;
+    if (type === "dyingRescue") {
+      if (target.id === responder.id) return true;
+      if (target.battleTeam !== responder.battleTeam) return false;
+      const need = Math.max(1, 1 - target.hp);
+      const remaining = responder.hand.filter((card) => card.definitionId === "recover").length;
+      const teamSize = this.game.teamRules.getTeamSize(responder);
+      if (teamSize === 2) return remaining >= need;
+      const strategic = target.general?.tags?.some((tag) => ["support","damage","heal","control"].includes(tag));
+      return remaining > need || (strategic && responder.hp > 2 && remaining >= need);
+    }
+    if (type === "block") {
+      const incoming = context.amount ?? 1;
+      const lethal = incoming - target.shield >= target.hp;
+      if (this.game.teamRules.isSmallTeam(responder)) return true;
+      return lethal || target.hp <= 2 || cards.length <= responder.hand.length / 2;
+    }
+    if (type === "counter") {
+      const sourceEnemy = context.source?.battleTeam !== responder.battleTeam;
+      const id = context.card?.definitionId;
+      if (id === "symbiosis") {
+        const net = this.evaluator.symbiosisNet(responder);
+        if (net > 0) return false;
+        if (net < 0) return true;
+      }
+      const teamSwing = ["shockwave","provoke","symbiosis","mutualBenefit","duel"].includes(id);
+      if (sourceEnemy && this.game.teamRules.isSmallTeam(responder)) return teamSwing || (context.card?.aiValue ?? 0) >= 5;
+      return sourceEnemy ? teamSwing || (context.card?.aiValue ?? 0) >= 7 : id === "symbiosis" && this.evaluator.symbiosisNet(responder) < 0;
+    }
+    if (type === "assaultDiscard") {
+      if (context.card?.definitionId === "provoke") return responder.hp <= 2 || responder.hand.length > 2;
+      if (context.card?.definitionId === "duel") return true;
+      return responder.hp <= 2 || responder.hand.filter((card) => card.definitionId === "assault").length > 1;
+    }
+    if (type === "skill") return (context.amount ?? 1) > 0;
+    return false;
+  }
+}

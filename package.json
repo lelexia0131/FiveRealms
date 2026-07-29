@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node ./tests/run.mjs"
+    "test": "node ./tests/run.mjs",
+    "test:balance": "node ./tests/balance-simulation.mjs"
   }
 }

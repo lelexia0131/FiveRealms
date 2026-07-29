@@ -9,6 +9,11 @@ import {
   playerPanelTemplate, resolvingCardTemplate, thinkingTemplate
 } from "./templates.js";
 import { AnimationController } from "./animationController.js";
+import { InteractionController } from "./InteractionController.js";
+import { PublicPoolView } from "./PublicPoolView.js";
+import { PrivateRevealView } from "./PrivateRevealView.js";
+import { JudgmentView } from "./JudgmentView.js";
+import { DistanceSystem } from "../core/DistanceSystem.js";
 
 export class UIManager {
   constructor() {
@@ -16,6 +21,7 @@ export class UIManager {
       "start-screen", "selection-screen", "game-screen", "start-button", "candidate-grid", "team-preview",
       "status-metrics", "restart-button", "cpu-grid", "human-panel", "human-hand", "hand-hint",
       "thinking-indicator", "current-card", "action-prompt", "private-reveal", "response-panel",
+      "public-pool-view", "judgment-view", "dying-view", "duel-view",
       "skill-button", "end-play-button", "discard-confirm-button", "cancel-interaction-button",
       "log-panel", "battle-layout", "log-toggle-button", "fast-mode-button",
       "log-list", "log-count", "game-over-overlay", "game-over-title", "game-over-copy", "play-again-button"
@@ -32,6 +38,10 @@ export class UIManager {
     this.fastMode = false;
     this.logCollapsed = false;
     this.animationController = new AnimationController();
+    this.interactionController = new InteractionController(this);
+    this.publicPoolView = new PublicPoolView(this.elements.public_pool_view);
+    this.privateRevealView = new PrivateRevealView(this.elements.private_reveal);
+    this.judgmentView = new JudgmentView(this.elements.judgment_view);
     this.bindEvents();
   }
 
@@ -60,6 +70,7 @@ export class UIManager {
       const button = event.target.closest("[data-response-choice]");
       if (button) this.resolveResponse(button.dataset.responseChoice === "use");
     });
+    this.interactionController.bind(this.elements.response_panel);
     this.elements.log_toggle_button.addEventListener("click", () => this.setLogCollapsed(!this.logCollapsed));
     this.elements.fast_mode_button.addEventListener("click", () => this.callbacks.onToggleFastMode?.(!this.fastMode));
   }
@@ -109,7 +120,9 @@ export class UIManager {
     const targetOptions = { humanTeam: human.battleTeam, isTargeting: Boolean(this.targetState) };
     this.elements.cpu_grid.innerHTML = state.players.slice(1).map((player) => playerPanelTemplate(player, {
       ...targetOptions, isCurrent: game.currentPlayer?.id === player.id,
-      isLegalTarget: Boolean(this.targetState?.legalIds.has(player.id)), isThinking: this.thinkingPlayerId === player.id
+      isLegalTarget: Boolean(this.targetState?.legalIds.has(player.id)), isThinking: this.thinkingPlayerId === player.id,
+      distanceInfo: DistanceSystem.describe(game, human, player),
+      distanceState: this.getDistanceState(human, player)
     })).join("");
     this.elements.human_panel.innerHTML = playerPanelTemplate(human, {
       ...targetOptions, isHuman: true, isCurrent: game.currentPlayer?.id === human.id,
@@ -126,6 +139,15 @@ export class UIManager {
       isLegalTarget: Boolean(this.targetState?.legalIds.has(player.id)), isTargeting: Boolean(this.targetState),
       isThinking: this.thinkingPlayerId === player.id
     });
+  }
+
+  getDistanceState(source, target) {
+    if (!target.alive) return "已阵亡";
+    const distance = DistanceSystem.getDistance(this.game, source, target);
+    if (target.battleTeam === source.battleTeam) return `距离 ${distance} · 同阵营`;
+    const card = this.targetState?.meta?.card;
+    if (card?.definitionId === "assault") return distance <= source.attackRange ? `距离 ${distance} · 可突袭` : `距离 ${distance} · 超出攻击范围`;
+    return `距离 ${distance}`;
   }
 
   renderHand(game, human) {
@@ -180,11 +202,11 @@ export class UIManager {
     this.render(this.game);
   }
 
-  requestTarget(players, prompt) {
+  requestTarget(players, prompt, meta = {}) {
     if (!players.length) return Promise.resolve(null);
     this.cancelTarget();
     return new Promise((resolve) => {
-      this.targetState = { players, legalIds: new Set(players.map((player) => player.id)), resolve };
+      this.targetState = { players, legalIds: new Set(players.map((player) => player.id)), resolve, meta };
       this.setPrompt(prompt, "可选目标带有金色指示环");
       this.render(this.game);
     });
@@ -274,14 +296,24 @@ export class UIManager {
     this.elements.current_card.classList.add("is-entering");
   }
 
-  showPrivateReveal(message) {
-    const token = ++this.privateRevealToken;
-    this.elements.private_reveal.textContent = message;
-    this.elements.private_reveal.classList.remove("is-hidden");
-    this.game?.cleanupManager.delay(3200).then((completed) => {
-      if (completed && token === this.privateRevealToken) this.elements.private_reveal.classList.add("is-hidden");
+  showPrivateReveal(title, cards = []) {
+    const shown = this.privateRevealView.show(title, cards);
+    if (!cards.length) this.game?.cleanupManager.delay(3200).then((completed) => {
+      if (completed && !this.privateRevealView.pending) this.privateRevealView.hide();
     });
+    return shown;
   }
+  showPublicPool(cards) { this.publicPoolView.show(cards); }
+  requestPublicCard(player, cards) { return this.publicPoolView.request(player, cards); }
+  hidePublicPool() { this.publicPoolView.hide(); }
+  showJudgment(player, card) { this.judgmentView.show(player, card); }
+  showDying(target, context) {
+    this.elements.dying_view.innerHTML = `<strong>${escapeHtml(target.name)}濒死</strong><span>当前生命 ${context.currentHp}</span><b>还需 ${context.need} 张调息</b>`;
+    this.elements.dying_view.classList.remove("is-hidden");
+  }
+  hideDying() { this.elements.dying_view.classList.add("is-hidden"); this.elements.dying_view.innerHTML = ""; }
+  showDuel(current, opponent) { this.elements.duel_view.innerHTML = `<strong>决斗</strong><span>${escapeHtml(current.name)}需打出突袭</span><small>对手：${escapeHtml(opponent.name)}</small>`; this.elements.duel_view.classList.remove("is-hidden"); }
+  hideDuel() { this.elements.duel_view.classList.add("is-hidden"); this.elements.duel_view.innerHTML = ""; }
 
   appendLog(entry, count) {
     const node = document.createElement("div");
@@ -323,6 +355,12 @@ export class UIManager {
     this.privateRevealToken += 1;
     this.thinkingPlayerId = null;
     this.animationController.clear();
+    this.interactionController.cancel();
+    this.publicPoolView.cancel();
+    this.privateRevealView.hide();
+    this.judgmentView.hide();
+    this.hideDying();
+    this.hideDuel();
     this.elements.private_reveal.classList.add("is-hidden");
     this.elements.response_panel.classList.add("is-hidden");
     this.elements.thinking_indicator.classList.add("is-hidden");

@@ -1,328 +1,299 @@
 # 五域纷争
 
-《五域纷争》是一款原创的、纯浏览器运行的单人五人阵营卡牌游戏。真人与四名电脑角色被公开随机分到 2 人和 3 人阵营，选择角色后依次经历摸牌、出牌、即时响应、弃牌与回合交接；消灭敌方全部角色即可获胜。
+《五域纷争》是一款原创、离线可运行的单人五人阵营卡牌游戏。真人与四名电脑角色被公开随机分为 2 人和 3 人阵营，在环形桌面上通过基础牌、战术牌、装备、角色技能、即时响应和濒死救援消灭敌方全部角色。
 
-项目只使用 HTML、CSS、原生 JavaScript、ES Module、JSDoc 与浏览器 API。没有后端、数据库、在线图片、在线音频或运行时第三方依赖。
+项目只使用 HTML、CSS、原生 JavaScript、ES Module 和浏览器 API；没有后端、在线素材或运行时第三方依赖。角色肖像与二十种卡牌插画均为项目内原创 SVG。
 
-## 快速启动
+## 启动与测试
 
-在项目根目录执行任一静态服务器命令：
+不要直接双击 `index.html`，因为浏览器通常会阻止 `file://` 页面加载 ES Module。在项目根目录启动任意静态服务器：
 
 ```bash
 python -m http.server 8000
 ```
 
-然后访问：
+然后访问 `http://localhost:8000`。
 
-```text
-http://localhost:8000
+开发测试：
+
+```bash
+npm test
+npm run test:balance
 ```
 
-不能直接双击 `index.html`：浏览器通常会阻止 `file://` 页面加载 ES Module。游戏运行不需要 Node.js；`package.json` 只为开发期零依赖测试提供 `npm test` 入口。
+`npm test` 运行快速规则、隐藏信息、AI、UI 模板和完整对局测试。`npm run test:balance` 使用固定种子运行至少 200 局无 DOM 全 AI 对局；可用环境变量 `FIVE_REALMS_GAMES`、`FIVE_REALMS_SEED_BASE`、`FIVE_REALMS_START_INDEX` 和 `FIVE_REALMS_SEARCH_BUDGET`调整样本。
 
-## 如何开始一局
+## 如何开始和操作
 
-1. 在封面点击“开启本局”。
-2. 系统立即生成公开的 2V3 阵营，并显示真人本局阵营。
-3. 从四名不重复候选角色中选择一名。
-4. 四名电脑从剩余角色池中获得不重复角色。
-5. 系统洗牌、发牌并随机决定第一个行动角色。
-6. 轮到真人时，点击可用手牌；需要目标时，只有发光的合法角色可以点击。
-7. 点击“主动技能”可发动角色技能，点击“结束出牌”进入弃牌与回合结束流程。
-8. 手牌超过当前生命时，选择准确数量的牌后点击“确认弃牌”。
-9. 受到攻击或战术牌影响时，在倒计时内选择响应；超时自动放弃。
+1. 点击封面的“开启本局”。系统先生成公开的 2V3 阵营。
+2. 从四名不重复候选角色中选择一名；电脑从余下角色中获得四名不重复角色。
+3. 系统洗牌、发牌并随机决定首个行动角色。
+4. 轮到真人时点击可用手牌。需要目标时，合法角色会同时显示关系、动态距离和可用提示。
+5. 多阶段牌会依次要求来源、接收者或背面实体牌；“取消选择”可退出尚未提交的操作。
+6. 主动技能通过中央技能按钮发动；点击“结束出牌”进入弃牌阶段。
+7. 手牌超过当前生命时，选择准确数量并确认弃牌。
+8. 格挡、反制、挑衅交牌、决斗和濒死救援会打开独立响应窗口。
+9. 顶部“快速动画”只缩短展示与 AI 等待，不改变规则、随机源或合法性。
+10. 右侧记录可折叠；“重新征召”会取消旧回合、响应、搜索和计时器并创建新对局。
 
-## 基本规则
+## 阵营与交错座位
 
-- 五个座位由一名真人和四名电脑组成，阵营公开。
-- 晨星与暮影每局随机成为 2 人队或 3 人队；角色背景势力与对局阵营完全独立。
-- 同阵营不能成为突袭等敌对牌的目标，援护和辅助技能可以选择队友。
-- 生命降到 0 后立即阵亡，不能行动或响应，后续回合会跳过。
-- 每回合默认摸 2 张牌、最多使用 1 次突袭和 1 次调息。
-- 手牌上限等于当前生命；护盾先于生命承受伤害。
-- 每名角色能量上限默认 3，主动技能通常消耗能量。
-- 一个阵营没有存活角色时立即结束对局。
+每局严格生成 2V3。`TeamManager` 从合法模板中随机旋转、翻转并分配阵营，使二人阵营两名成员永不相邻；真人可能落入任一阵营，角色背景势力不影响对局阵营。
 
-## 已实现功能
+阵营规则集中在 `TeamRuleService`：
 
-- 完整封面、角色四选一、桌面对局、日志、响应、弃牌与胜负界面。
-- 严格的随机 2V3，真人可能进入任一阵营；二人队每人获得可配置的额外初始牌。
-- 八名原创角色，分别拥有事件驱动被动技能和标准接口主动技能。
-- 十二种原创卡牌：突袭、格挡、调息、援护、洞察、破势、转移、反制、震荡、夺取、聚能、核心装置。
-- Fisher-Yates 洗牌、唯一实体牌 ID、抽牌堆、弃牌堆、结算区、装备区与耗尽重洗。
-- 牌在“手牌 → 结算区 → 弃牌堆/装备区”之间明确移动；结算中、手中和装备中的牌不会误入重洗。
-- Promise 统一响应系统：格挡、转移、反制、护援；真人有倒计时，电脑有可配置思考延迟。
-- 群体伤害逐个目标结算，每个目标独立响应，游戏结束后立即停止后续目标。
-- 异步事件总线，可修改伤害、治疗、摸牌与能量上下文，并以唯一监听键避免重复注册。
-- AI 行动生成、规则过滤、评分、角色性格修正、随机扰动、响应判断、弃牌策略和独立威胁计算。
-- AI 可见状态过滤：其他角色只暴露手牌数量；影客合法窥见的牌只进入其私有记忆。
-- 重新征召会清理延迟、倒计时、事件监听、技能监听与未完成交互，并创建全新 `gameId`。
-- `debugMode` 集中调试开关和统一 `Debug` 输出工具。
+| 规则 | 二人阵营 | 三人阵营 |
+| --- | ---: | ---: |
+| 额外初始牌 | +1 | 0 |
+| 每回合主动突袭 | 2 | 1 |
+| 每回合主动调息 | 不限次数 | 1 |
+| 自己回合基础能量 | 2 | 1 |
 
-## 当前简化与未实现项
+`recoverLimitPerTurn: null` 明确表示无限；仍必须满足受伤、持有调息且交互未锁定。
 
-- 不含复杂濒死救援、复活、判定区、距离、座位攻击范围和固定 Boss。
-- 反制不能再次被反制；响应栈结构已统一，后续可扩展多层响应。
-- 转移第一版只处理明确标记 `canBeRedirected` 的“破势”。
-- AI 使用加权启发式而非搜索树；会考虑资源与威胁，但不会推演所有牌序。
-- 不保存中途对局，刷新页面会回到封面。
-- 界面以常见桌面浏览器为目标，未专门设计窄屏手机布局。
+## 动态存活距离环
+
+`DistanceSystem` 每次计算都从实时玩家状态构造：
+
+```js
+const aliveRing = game.state.players
+  .filter((player) => player.alive)
+  .sort((a, b) => a.seatIndex - b.seatIndex);
+```
+
+`seatIndex` 只保存原始顺时针顺序，不直接等于当前距离。阵亡角色立即移出规则距离环，剩余角色保持顺序并自然收拢；距离不做整局缓存，复活或任何 `alive` 变化也会即时生效。所有存活角色都占位，因此不能穿过队友攻击后方敌人。
+
+普通突袭要求敌对、存活、非自身且 `DistanceSystem.getDistance(game, source, target) <= source.attackRange`。震荡、挑衅、窥探、转移、掠夺、破坏、决斗、互利和共生显式忽略距离。主动技能都通过 `rangeRule: "attack" | "unlimited" | "ally" | "self"` 声明距离语义，不从 `targetType` 猜测。
+
+视觉座位不会因阵亡跳动，但目标选择文案会立即从“距离 2 · 超出攻击范围”更新为“距离 1 · 可突袭”。AI 的真实动作与深层模拟动作都走 `RuleEngine → DistanceSystem`，所以击杀中间角色后，第二张突袭可以发现新相邻目标。
+
+## 回合流程与能量
+
+每个存活角色依次经历：
+
+1. `turnStart`：重置每回合标记并清除到期临时状态。
+2. `status`：结算状态事件。
+3. `energy`：本人获得基础、二人阵营和充能装置能量，不能超过上限。
+4. `draw`：默认摸 2 张牌。
+5. `play`：主动使用牌或技能；AI 每个真实动作后重新规划。
+6. `discard`：手牌上限为当前生命，超出部分必须弃置。
+7. `turnEnd`：触发回合结束事件并移交下一名存活角色。
+
+能量增长发生在摸牌之前，并触发 `beforeTurnEnergyGain` 和 `afterTurnEnergyGain`。事件公开 `baseAmount`、`teamBonus`、`equipmentBonus`、`amount`、`actualAmount`、`cancelled` 与 `metadata`，方便技能和 UI 安全扩展。
+
+## 二十种卡牌与精确牌堆
+
+全游戏只有 `basic`、`tactic` 和 `equipment` 三种类别。响应身份由 `usageMode` 与 `responseTypes` 表示。
+
+| 类别 | definitionId | 名称 | 数量 |
+| --- | --- | --- | ---: |
+| 基础 | assault | 突袭 | 40 |
+| 基础 | recover | 调息 | 25 |
+| 基础 | block | 格挡 | 35 |
+| 基础 | charge | 充能 | 30 |
+| 战术 | scout | 窥探 | 4 |
+| 战术 | transfer | 转移 | 4 |
+| 战术 | exposeWeakness | 破势 | 4 |
+| 战术 | shockwave | 震荡 | 2 |
+| 战术 | provoke | 挑衅 | 4 |
+| 战术 | plunder | 掠夺 | 2 |
+| 战术 | destroy | 破坏 | 4 |
+| 战术 | counter | 反制 | 4 |
+| 战术 | harvest | 收获 | 4 |
+| 战术 | duel | 决斗 | 4 |
+| 战术 | mutualBenefit | 互利 | 3 |
+| 战术 | symbiosis | 共生 | 1 |
+| 装备 | energyDevice | 充能装置 | 2 |
+| 装备 | recycleDevice | 回收装置 | 2 |
+| 装备 | defenseDevice | 防御装置 | 2 |
+| 装备 | battleDevice | 战斗装置 | 2 |
+
+合计：基础牌 130、战术牌 40、装备牌 8，共 178 张。每个实体具有唯一 `card.id`；配置与规则使用稳定 `definitionId`。
+
+## 主要卡牌结算
+
+- 突袭：对动态距离内敌人造成 1 点可格挡伤害；二人阵营可主动使用两次。
+- 调息：出牌阶段自疗 1；濒死窗口可救自己或存活队友，救援不计主动次数。
+- 格挡：只在突袭响应窗口使用；战斗装置会把需求从 1 张提高为原子弃置 2 张。
+- 充能：获得 1 点能量，不超过上限。
+- 窥探：选择目标和最多两张背面实体牌，结果只在施牌者私密层展示。
+- 转移：依次选择来源、不同接收者和一张实体牌；未知牌只显示位置和牌背。
+- 破势：可叠加，下一张主动手牌突袭增加全部层数并清空；即使被格挡也消耗。
+- 震荡：按座位对所有敌人逐个进行独立、无距离突袭；不占主动突袭次数且不吃破势。
+- 挑衅：敌人逐个弃 1 张突袭，否则直接失去 1 生命；失血绕过格挡、装置与护盾。
+- 掠夺：取得目标一张背面实体手牌，公开日志不写牌名。
+- 破坏：公开被选实体牌，将其移入弃牌堆并在中央短暂展示。
+- 反制：任何其他存活角色可取消尚未生效的主动战术牌；第一版不能反制反制。
+- 收获：直接摸 2 张牌。
+- 决斗：目标先开始，双方轮流弃突袭；先放弃或无牌者受到 1 点普通伤害。
+- 互利：反制窗口后展示等同存活人数的公共牌，从施牌者起按座位每人选 1 张。
+- 共生：按座位令所有受伤存活角色恢复 1 点生命。
+
+## 牌区与重洗
+
+`Deck` 管理抽牌堆、弃牌堆、结算区和判定区。用牌先从手牌进入结算区，结算后进入弃牌堆或装备槽；判定中的牌、正在结算的牌、手牌和装备都不会误入重洗。抽牌堆空时只重洗弃牌堆，并累加 `reshuffleCount`。
+
+## 四件装备及触发顺序
+
+每名角色最多一个装备槽。新装备落入槽前，旧装备会公开进入弃牌堆。
+
+- 充能装置：本人回合能量阶段在基础与阵营加成之后额外 +1。
+- 回收装置：本人回合首次主动使用战术牌后摸 1；即使该战术被反制也触发，每回合一次。
+- 防御装置：普通或震荡突袭前进入公开判定区。战术牌令攻击免疫并弃置判定牌；基础牌归目标手牌后继续攻击，新获得的格挡可立即响应；装备牌令目标直接失去 1 生命并终止原攻击。
+- 战斗装置：施牌者的普通和震荡突袭需要目标一次提交 2 张格挡；不足 2 张时不会浪费已有格挡。
+
+攻击结算顺序为：创建伤害上下文 → 防御装置判定 → 格挡原子响应 → 护盾吸收 → 扣除生命 → `afterDamage` → 必要时进入濒死。
+
+## 濒死救援
+
+伤害不会把生命钳制到 0。例如 1 血受到 3 点伤害会变成 -2，需要连续 3 张调息恢复到 1。
+
+`DyingSystem` 时序：
+
+1. `beforePlayerDying` 可取消或修改进入流程。
+2. 触发 `playerDying`，显示当前负生命与需要的调息数。
+3. 濒死者本人先响应。
+4. 从其下一原始座位起，按顺时针询问存活队友；敌人永不进入队列。
+5. 每张调息恢复 1 并触发 `dyingRescueUsed`；仍不大于 0 时重新开始一轮询问。
+6. 达到 1 后触发 `playerRescued` 并恢复原阶段。
+7. 全员无牌或放弃后，才设置 `alive=false`、清理手牌与装备、触发 `playerDead` 并检查胜负。
+
+AI 濒死且有调息时必定自救；救队友会考虑所需张数、队伍规模、本人生命与角色战略价值。重新征召会同时取消响应 Promise、隐藏选择、救援队列和旧会话。
+
+## 响应系统与事件系统
+
+`ResponseSystem` 为格挡、反制、挑衅交牌、决斗、濒死调息和响应型技能建立统一异步请求。真人响应有超时和明确的接受/放弃按钮；AI 使用确定性团队效用策略，只在近似同分时允许极小扰动。所有等待都通过 `CleanupManager`，`dispose()` 后返回失效结果而不会遗留计时器。
+
+`EventBus` 用唯一监听键注册角色被动与规则钩子。常用事件包括回合、摸牌、用牌、目标、移动、伤害、治疗、能量、濒死、阵亡和胜负。UI 只提交用户意图；生命、能量、手牌、装备、状态和胜负只能由 `Game` 及核心系统修改。
+
+## 多阶段选择与隐藏信息边界
+
+`InteractionController` 管理目标、来源、接收者、隐藏牌和公共牌池阶段。`CardSelectionSystem` 为每次背面选择生成不透明 token，token 只映射实体 `card.id` 与当时的 `handVersion`：
+
+- DOM 只有 token、位置和牌背，不含牌名、`definitionId`、类别、描述或图片路径。
+- 手牌发生任何移动后 `handVersion` 增加，旧 token 立即失效。
+- 服务层验证 token、选择会话、所有者和版本后才返回实体牌。
+- 真人私密展示关闭后会清空 DOM；AI 窥探不会向真人展示。
+- 公开日志只记录规则允许公开的名称；窥探、转移和掠夺不泄露未知牌名。
+
+AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/状态/手牌数、弃牌、判定、公共牌池，以及自己合法窥探且仍在原手牌中的实体记忆。它不包含其他玩家真实手牌、别的 AI 私有记忆或未来牌堆顺序。
+
+## AI 规划、难度与节奏
+
+`AIController` 只是编排门面，职责拆分为：
+
+- `AiActionGenerator`：通过 `RuleEngine` 生成当前合法动作和模拟后的后续动作。
+- `AiEvaluator`：按整队存活、生命、资源、斩杀、治疗净收益和状态评分。
+- `AiPlanner`：深度 4、宽度 10 的 beam search，默认 900ms 时间预算。
+- `AiSimulator`：只克隆过滤后的快照，无 UI、日志、事件或真实状态副作用。
+- `AiKnowledge`：从 178 张组成减去公开/合法已知牌，采样 10 个隐藏世界。
+- `AiResponsePolicy`：评估格挡、反制、交牌、决斗和救援的团队效用。
+- `AiCardSelector`：处理弃牌、公共牌与隐藏位置；未知牌不能按真实牌面筛选。
+
+搜索会推演卡牌消耗、突袭/调息次数、能量、装备、破势和模拟阵亡后的动态距离。每执行一个真实动作后重新构造可见状态并重规划，旧目标不会被盲目复用。展开每 48 个节点通过 `CleanupManager.delay(0)` 让出事件循环；达到预算立即返回当前最佳方案。
+
+自然节奏由“实际规划耗时 + 最低可读展示时间”组成：首次分析 1800～3500ms，动作间与响应 1000～2200ms，弃牌 1000～1800ms，结束前 500～1000ms。若搜索已消耗部分时间，只等待差额；界面先显示角色肖像和分阶段思考提示，再公开准备执行的行动。快速模式按比例缩短等待，但仍执行同一规划和规则。
+
+修改 AI：
+
+- 速度：调整 `gameConfig.js` 中各 `ai*ThinkMinMs/MaxMs` 与快速模式倍率。
+- 搜索强度：调整 `aiSearchDepth`、`aiBeamWidth`、`aiHiddenStateSamples` 和 `aiSearchTimeBudgetMs`。提高会增加 CPU 占用。
+- 行为倾向：优先修改 `AiEvaluator` 与 `AiResponsePolicy`，不要让 AI 访问完整隐藏手牌。
+- 难度：`aiDifficultyMultiplier` 是集中扩展接口；改变评分前应重新运行 200 局模拟。
+
+## 角色、卡牌和 UI 资源
+
+八名角色配置位于 `js/config/generalConfig.js`，肖像位于 `assets/characters/`；二十种卡牌的展示与规则元数据位于 `js/config/cardConfig.js`，插画位于 `assets/cards/`。`art`、`icon`、`accent`、`frameStyle` 和 `flavorText` 只用于展示，不参与规则或 AI 合法性。
+
+界面使用明亮东方奇幻桌游主题，角色席位显示肖像、阵营徽章、生命格、能量、护盾、手牌数、状态、动态距离、当前行动与装备槽；手牌包含名称栏、类别角标、分层插画、效果区、关键词和实体卡片交互状态。动画尊重 `prefers-reduced-motion`，按钮和可操作卡牌具有 `focus-visible`，禁用卡仍保留可读内容。
 
 ## 项目结构
 
 ```text
 FiveRealms/
-├── index.html                    # 三个主界面与语义化 DOM
+├── index.html
+├── assets/
+│   ├── cards/                    # 20 张原创本地 SVG
+│   └── characters/               # 8 名角色原创本地 SVG
 ├── css/
-│   ├── reset.css                 # 浏览器样式归一化
-│   ├── layout.css                # 桌面布局和尺寸
-│   └── components.css            # 卡牌、角色、日志、响应与动画
+│   ├── theme.css                 # 设计令牌
+│   ├── layout.css                # 桌面战场与响应式布局
+│   ├── components.css            # 按钮、日志、弹层
+│   ├── cards.css                 # 实体卡牌、牌背与牌池
+│   ├── characters.css            # 征召与人物席位
+│   └── animations.css            # 轻量反馈与减弱动态
 ├── js/
-│   ├── main.js                   # 页面入口与新局控制器
-│   ├── config/
-│   │   ├── gameConfig.js         # 流程、补偿、速度、AI 与调试参数
-│   │   ├── cardConfig.js         # 12 种卡牌公开配置和牌组数量
-│   │   └── generalConfig.js      # 8 名角色及 AI 性格
-│   ├── core/
-│   │   ├── Game.js               # 对局编排、回合、资源、移动与胜负
-│   │   ├── Player.js             # 玩家运行时状态
-│   │   ├── Deck.js               # 牌堆、弃牌堆、结算区和重洗
-│   │   ├── EventBus.js           # 异步可修改事件总线
-│   │   ├── ResponseSystem.js     # Promise 统一响应窗口
-│   │   ├── RuleEngine.js         # 卡牌和技能合法性
-│   │   ├── TeamManager.js        # 2V3 阵营分配
-│   │   ├── GeneralSelection.js   # 候选与电脑角色分配
-│   │   └── GameLogger.js         # 公开日志唯一入口
-│   ├── cards/cardRegistry.js     # 12 种卡牌效果注册表
-│   ├── generals/skillRegistry.js # 8 个被动与 8 个主动技能
-│   ├── ai/
-│   │   ├── AiVisibleState.js     # 隐藏信息过滤
-│   │   ├── ThreatCalculator.js   # 独立威胁值
-│   │   └── AIController.js       # 行动生成、评分、选择、响应、弃牌
-│   ├── ui/UIManager.js           # 渲染、目标、响应和弃牌交互
-│   └── utils/                    # 随机、ID、调试和异步清理
-├── tests/run.mjs                 # 零依赖核心测试
-└── package.json                  # 仅开发测试使用
+│   ├── config/                   # 游戏、牌和角色配置
+│   ├── core/                     # Game 与独立规则系统
+│   ├── cards/cardRegistry.js     # 20 种牌的结算器
+│   ├── generals/skillRegistry.js # 8 名角色的被动/主动技能
+│   ├── ai/                       # 可见状态、生成、评估、规划、知识与响应
+│   ├── ui/                       # 模板、交互、牌池、判定、私密层和动画
+│   └── utils/                    # 可取消延迟、随机、ID 与调试
+└── tests/
+    ├── run.mjs                   # 快速回归测试
+    └── balance-simulation.mjs    # 200 局固定种子平衡模拟
 ```
 
-## 角色选择与 2V3 分配
+## 常用配置修改
 
-`TeamManager.assignTeams()` 先随机决定哪一个阵营是小队，再将 2 个小队 ID 和 3 个大队 ID 洗牌到五个座位，因此不会通过座位判断阵营。真人固定是控制器座位 0，但 `battleTeam` 同样随机。
+- 牌组数量：修改 `cardConfig.js` 对应定义的 `count`，保持非负整数，并更新预期总数测试。
+- 初始牌：修改 `initialHandCount`；小队额外牌只改 `smallTeamBonuses.extraInitialCards`。
+- 摸牌：修改 `defaultDrawCount`。
+- 阵营补偿：只修改 `smallTeamBonuses` 与 `largeTeamRules`，所有消费者通过 `TeamRuleService` 读取。
+- 攻击范围：修改 `defaultAttackRange` 或单个玩家公开字段；不能改回固定座位公式。
+- 响应时限：修改 `responseTimeoutMs`。
+- 调试：设置 `debugMode: true`，统一 `Debug` 会输出阶段、事件、牌移动、响应和清理信息。
 
-角色配置中的 `loreFaction` 是世界观背景，玩家实例中的 `battleTeam` 是本局队伍。所有目标与胜负判断只读取 `battleTeam`。
+配置项旁有中文注释，说明增减影响、推荐范围和可能的平衡/性能风险。规则数字不得复制到 UI 或 AI 模块。
 
-`GeneralSelection` 先随机取四名候选；确认后，从排除真人角色的池中为电脑分配角色。简单多样性权重会优先补充队伍尚未出现的定位标签。
+## 添加新卡牌
 
-## 回合流程
+示例“蓄势”：使用后获得 1 能量，并增加下一张战术牌效果。
 
-每名存活角色依次经历：
+1. 在 `cardConfig.js` 增加唯一 `definitionId: "prepare"`、三大类别之一、数量、使用/目标/响应字段和纯展示字段。
+2. 在 `assets/cards/prepare.svg` 添加原创离线插画。
+3. 在 `cardRegistry.js` 注册 `prepare(game, source, card, targets, context)`，通过 `game.gainEnergy()` 与状态/事件接口修改规则，不能由 UI 改状态。
+4. 在 `RuleEngine` 仅加入必要的显式合法性，不按中文名判断。
+5. 在 `AiSimulator` 模拟状态变化，在 `AiEvaluator` 增加组合收益；未知牌推断会自动读取新牌数量。
+6. 增加牌数、结算、反制、AI 牌序、DOM 展示和本地资源测试，再运行两套测试。
 
-1. `turnStart`：重置每回合次数、技能标记，清除在自己下回合开始到期的临时护盾。
-2. `beforeStatusResolve / afterStatusResolve`：为持续状态留出统一处理时机。
-3. `beforeDraw / afterDraw`：默认摸牌数可被事件修改。
-4. `playPhaseStart`：真人等待按钮操作，电脑生成并评分合法行动。
-5. `playPhaseEnd`：关闭出牌入口。
-6. 弃牌阶段：超出当前生命的手牌必须弃置。
-7. `turnEnd`：清理技能持续时间并交给下一名存活角色。
-8. 经过本轮首发座位时触发 `roundEnd`，开始下一轮并重置每轮标记。
+## 添加新角色和技能
 
-AI 每个出牌阶段还有 `aiMaxActionsPerTurn` 硬上限，即使未来添加了不消耗资源的动作，也不会无限循环。
+示例“铸甲师”：4 生命；首次装备后得 1 护盾；主动花 2 能量把装备交给队友并使其得 1 护盾。
 
-## 卡牌结算流程
+1. 在 `generalConfig.js` 增加稳定角色 ID、生命、背景、标签、肖像路径和技能 ID。
+2. 在 `assets/characters/` 添加原创肖像；配置 `portrait`，`glyph` 仅作备用图章。
+3. 被动技能在 `skillRegistry.js` 注册具唯一监听键的事件处理器，用 `turnFlags`、`roundFlags` 或 `gameFlags` 表达正确生命周期。
+4. 主动技能配置 `id/name/cost/targetType/rangeRule/canUse/execute`；合法目标由 `RuleEngine.getSkillTargets()` 返回。
+5. 响应型技能通过 `ResponseSystem.requestSkillResponse()`，不得另建不可清理的 Promise 或 `setTimeout`。
+6. 在 AI 生成、模拟和评估中增加公开状态效果；不得读取敌方真实手牌。
+7. 为配置、能量、目标、事件只触发一次、阵亡失效、重开清理和 UI 增加测试。
 
-`Game.playCard()` 是唯一主动用牌入口：
+## 添加状态、响应与胜负条件
 
-1. `RuleEngine` 检查阶段、次数、资源、手牌归属和目标。
-2. 牌从手牌进入 `resolvingCards`，防止快速点击重复使用。
-3. 触发 `beforeCardUse` 和 `targetSelected`。
-4. 可转移战术牌询问目标是否转移。
-5. 触发 `beforeCardResolve`，战术牌依次询问合法反制者。
-6. `cardRegistry` 调用伤害、治疗、摸牌、能量或装备等统一 Game 接口。
-7. 普通牌进入弃牌堆，核心装置进入唯一装备槽；旧装备进入弃牌堆。
-8. 触发 `cardUsed`，让连势、冒险、协调与核心装置等效果监听。
+- 新状态应保存结构化对象而非中文字符串；明确在回合、轮次或整局何时清除，并通过事件处理伤害/治疗修正。
+- 新响应先定义合法时机和原子消费数量，再接入 `ResponseSystem`；任何异步结果提交前检查 `gameId`、角色存活和请求有效性。
+- 胜负条件只修改 `Game.checkVictory()` 及对应测试。不要在 UI、卡牌模板或 AI 中复制胜负判断。
 
-伤害流程是：`beforeDamage` → 状态/技能修正 → 格挡响应 → 护盾 → 生命 → `afterDamage` → 阵亡 → 胜负。UI 从不直接扣血。
+## 排查回合卡住、重复结算和信息泄露
 
-## 响应系统
+回合卡住：开启 `debugMode`，检查 `phase`、`pendingResponses`、`actionLocked`、当前 `gameId`，确认所有等待来自 `CleanupManager` 且每条拒绝路径都会结束交互。
 
-`ResponseSystem` 统一创建以下请求：
+重复结算：检查实体牌是否已从手牌进入结算区、响应是否原子消费、事件监听键是否唯一、`resolutionId`/每回合标记是否已使用，并确认群体牌在胜负成立后停止。
 
-- `block`：目标使用格挡，伤害减 1。
-- `redirect`：目标使用转移，再通过同一目标选择器选合法新目标。
-- `counter`：施牌者的敌人按座位顺序获得反制机会，首个反制取消战术牌。
-- `skill`：守誓者选择护援；确认后再选择/评估要弃置的牌。
+信息泄露：检查电脑席位 DOM 只能出现 `hand.length`；隐藏选择只能出现 token/position；AI 模拟器构造参数只能是 `createAiVisibleState()` 的结果；公开日志不得写窥探、转移或掠夺的未知牌名。
 
-真人请求由 `UIManager.requestResponse()` 返回 Promise；只有一个 settle 路径，超时和快速多击不能重复结算。电脑请求经 `AIController.shouldRespond()` 评分并等待配置延迟。每个请求完成会从 `pendingResponses` 移除，重新开始会令旧请求和旧 Promise 失效。
+## 已实现功能与当前限制
 
-## 事件系统
+已实现完整 2V3 对局、八名角色、二十种牌、动态距离、负生命濒死救援、四件装备判定、多阶段隐藏选牌、公共牌池、深度牌序规划、可取消自然节奏、桌游 UI、键盘焦点、重开清理、规则测试和固定种子平衡模拟。
 
-`EventBus` 支持异步顺序执行、可修改事件对象、唯一监听键和递归深度保护。当前流程会触发：
-
-```text
-gameStart, teamAssigned, generalSelected, roundStart, turnStart,
-beforeStatusResolve, afterStatusResolve, beforeDraw, afterDraw,
-playPhaseStart, beforeCardUse, cardUsed, targetSelected,
-beforeCardResolve, beforeDamage, afterDamage, beforeHeal, afterHeal,
-beforeGainEnergy, afterGainEnergy, beforeCardMove, afterCardMove,
-beforePlayerDying, playerDead, playPhaseEnd, turnEnd, roundEnd, gameOver
-```
-
-技能监听器使用 `${playerId}:${skillId}` 形式注册。每回合标记保存在 `turnFlags`，每轮标记保存在 `roundFlags`，整局记忆保存在 `gameFlags`/`aiMemory`。这三类状态分别在回合开始、轮开始和新 Game 实例创建时重置。
-
-## AI 评分与隐藏信息
-
-AI 的流程为：
-
-1. `getLegalActions()` 使用与真人相同的 `RuleEngine` 生成卡牌、目标、技能和结束行动。
-2. `createAiVisibleState()` 隐藏其他人的手牌内容，只保留数量、公开资源、装备和状态。
-3. `ThreatCalculator` 结合低生命击杀价值、手牌数、能量、角色定位、破绽/猎印与近期伤害来源评分。
-4. `evaluate()` 结合卡牌效果、目标状态和角色 `aiProfile` 修正。
-5. 加入可配置的小幅随机扰动，选择最高分行动。
-
-AI 可以读取自己的完整手牌，因为这是合法信息；它不能通过完整 `GameState` 精确判断敌方格挡或反制。影客的窥隙只把合法看见的 `definitionId` 存入自己的 `aiMemory`，不会自动进入公开日志。
-
-## 常用配置调整
-
-### 修改牌组数量
-
-编辑 `js/config/cardConfig.js` 中各定义的 `count`。`Deck.build()` 自动读取全部定义并生成唯一 ID，不需要修改业务代码。
-
-### 修改初始手牌、摸牌和二人队补偿
-
-编辑 `js/config/gameConfig.js`：
-
-```js
-initialHandCount: 4,       // 所有人基础初始牌
-smallTeamBonusCards: 1,   // 二人队每人额外牌；设 0 关闭
-defaultDrawCount: 2       // 每回合默认摸牌
-```
-
-### 修改 AI 速度和难度
-
-```js
-aiInitialThinkMinMs: 900,      // 回合首次思考下限
-aiInitialThinkMaxMs: 1700,     // 回合首次思考上限
-aiBetweenActionMinMs: 650,     // 连续动作间隔下限
-aiBetweenActionMaxMs: 1200,    // 连续动作间隔上限
-aiResponseThinkMinMs: 700,     // 响应思考下限
-aiResponseThinkMaxMs: 1400,    // 响应思考上限
-animationFastMode: false,      // 默认使用自然节奏
-aiDifficultyMultiplier: 1,     // 总体行动评分倍率
-enableAiRandomness: true,      // 是否加入扰动
-aiRandomnessRange: 0.12        // 扰动范围；越高越不稳定
-```
-
-所有 AI 等待由 `game.random()` 在范围内取样，并交给 `CleanupManager` 执行；“快速动画”只缩短展示等待，不改变决策与规则。
-
-每名角色的 `aiProfile` 位于 `js/config/generalConfig.js`。`aggression`、`defense`、`support`、`healingPriority`、`cardConservation`、`energyConservation`、`responseConservation`、`riskTolerance` 分别控制对应倾向；通常使用 0.4～1.5。
-
-## 添加新卡牌：以“蓄势”为例
-
-目标：使用后获得 1 点能量，并使下一张战术牌效果增强。
-
-1. 在 `js/config/cardConfig.js` 添加公开定义和 `count`：
-
-   ```js
-   prepare: Object.freeze({
-     definitionId: "prepare",
-     name: "蓄势",
-     category: "basic",
-     categoryName: "能量牌",
-     subtypes: ["energy", "buff"],
-     description: "获得1点能量，并强化下一张战术牌。",
-     targetType: "self",
-     responseType: null,
-     canBeRedirected: false,
-     count: 4,
-     aiValue: 5
-   })
-   ```
-
-2. 在 `js/cards/cardRegistry.js` 的 `CARD_EFFECTS` 注册 `prepare`。调用 `game.gainEnergy()`，并写入 `source.statuses.prepared = { stacks: 1 }`，不要直接改能量上限。
-3. 通过 `beforeCardResolve` 事件监听下一张战术牌，修改事件 `metadata` 或牌效果上下文，触发后删除状态。
-4. `RuleEngine` 已支持 `self`，如果引入新目标类型，再集中添加分支。
-5. 在 `AIController.evaluate()` 为 `prepare` 添加评分，结合当前能量和是否已有蓄势状态。
-6. UI 说明自动来自卡牌配置；牌堆也会自动读取 `count`。
-7. 在 `tests/run.mjs` 增加注册、状态消耗与能量上限测试。
-
-## 添加新角色：以“铸甲师”为例
-
-目标：最大生命 4；每回合首次装备核心装置后获得 1 护盾；消耗 2 能量把装备交给队友并令其获得 1 护盾。
-
-1. 在 `js/config/generalConfig.js` 添加角色配置，设置 `passiveSkillIds: ["forgeGuard"]`、`activeSkillIds: ["transferCore"]` 和 AI 参数。
-2. 在 `js/generals/skillRegistry.js` 的 `PASSIVE_SKILLS` 注册 `forgeGuard`：监听 `afterCardMove`，检查 `event.to === "equipment"`、拥有者和 `owner.turnFlags.forgeGuardUsed`；触发后加护盾并写入回合标记。
-3. 在 `ACTIVE_SKILLS` 注册 `transferCore`，提供 `id/name/cost/targetType/canUse/execute`。`canUse` 检查能量、装备、队友和每回合次数。
-4. 若现有 `RuleEngine.getSkillTargets()` 没有合适类型，只添加一个通用“存活队友”分支，不要在伤害或回合核心按角色名判断。
-5. `execute` 调用 Game 的卡牌移动/装备接口，并通过 `changeEnergy(-2)` 扣能量；不要让 UI 移动装备。
-6. 在 `AIController.evaluate()` 为主动技能添加目标价值和能量保留修正。
-7. 添加测试：首次装备触发、第二次不触发、回合重置、能量不足、死亡后不触发、旧装备区域正确。
-
-## 添加技能和响应型技能
-
-- 被动技能：在 `PASSIVE_SKILLS` 中监听最接近效果含义的事件，使用含玩家 ID 的唯一 key；先检查 `owner.alive`。
-- 主动技能：在 `ACTIVE_SKILLS` 中实现标准对象，由 `Game.useActiveSkill()` 统一执行和加锁。
-- 响应型技能：调用 `ResponseSystem.requestSkillResponse()`，让真人与电脑共享请求生命周期；确认后再通过 UI/AI 选择代价或目标。
-- 不要在 `Game.damage()`、`takeTurn()` 等核心方法写 `if (player.name === ...)`。
-
-## 添加新状态
-
-瞬时伤害修正优先监听 `beforeDamage`；需要跨回合的状态放在 `player.statuses` 并明确到期条件。临时护盾用“目标下个回合开始”清理；猎印记录来源和到期的追猎者回合编号，避免刚添加就在同回合结束时被清除。
-
-状态的 UI 名称放在 `UIManager.playerTemplate()` 的公开状态映射中。新增状态应测试触发、消耗、到期、来源死亡和重新开始。
-
-## 修改胜负条件
-
-当前唯一入口是 `Game.checkVictory()`：检查晨星和暮影是否仍有存活角色。若增加积分或倒计时胜负，应在这里返回唯一 `winnerTeam`，然后复用已有 `gameOver` 事件、交互取消和遮罩，不要从 UI 直接结束游戏。
-
-## 调试与排错
-
-### 使用调试模式
-
-将 `js/config/gameConfig.js` 的 `debugMode` 改为 `true`。事件注册/触发、牌堆、响应、AI 合法行动和评分会统一通过 `Debug.log()` 输出。关闭后不会产生大量调试输出。
-
-### 排查回合卡住
-
-1. 查看状态栏阶段和当前行动角色。
-2. 开启 debug，确认最后一个 `turnStart/playPhaseStart/playPhaseEnd/turnEnd`。
-3. 检查是否有未完成 `pendingResponses`，响应面板是否仍在倒计时。
-4. 检查真人弃牌数量是否已准确选择。
-5. 检查 AI 动作是否能消耗牌、能量或次数；`aiMaxActionsPerTurn` 应阻止无限循环。
-6. 重新征召后若旧动作出现，检查新旧 `gameId` 与 `CleanupManager` 返回值。
-
-### 排查重复结算
-
-1. 检查实体牌是否仍在手牌；主动牌必须先进入 `resolvingCards`。
-2. 检查 `Game.actionLocked` 是否覆盖目标等待之后的整个结算期。
-3. 检查响应 ID 是否仍在 `activeRequestIds`，同一请求只能 `finishRequest()` 一次。
-4. 检查技能监听 key 是否包含玩家 ID，避免重复注册。
-5. 检查群体牌是否通过 `game.damage()` 逐个 await，而非直接循环扣血。
-
-## 测试
-
-开发期零依赖测试：
-
-```bash
-npm test
-```
-
-当前自动测试覆盖：
-
-- 300 次阵营分配始终严格 2V3，真人两种阵营均可出现。
-- 牌堆总量、唯一 ID、弃牌重洗与结算区隔离。
-- 四候选、电脑角色不重复、12 个卡牌结算器和 16 个技能注册完整。
-- 突袭只选敌人、满血不能调息、响应牌不能主动使用。
-- AI 视图隐藏其他人的具体手牌。
-- 护盾先扣、生命后扣，能量不超过上限。
-- 主动牌完整经过手牌、结算区和弃牌堆，并对合法敌人结算。
-- 使用固定随机种子的五 AI 对局可完整运行到单一阵营获胜。
-
-浏览器验收还会检查：静态服务器启动、模块导入、封面、角色选择、2V3 显示、电脑隐藏手牌、AI 行动、响应窗口、真人可用牌、目标选择、伤害日志与重新征召。
+当前限制：不保存中途对局；没有复活（距离系统已按实时 `alive` 支持未来接入）；反制第一版不形成反制链；AI 是有限深度启发式与概率采样，不是穷举求解器；未专门适配手机，宽度低于 1200px 使用紧凑桌面布局；角色技能仍集中在一个注册文件，继续扩展时可按技能拆文件。
 
 ## 后续扩展建议
 
-- 为 ResponseSystem 增加真正的多层响应栈和响应优先级。
-- 将卡牌效果拆成更多小文件，同时保留注册表作为唯一入口。
-- 增加可注入伪随机数与完整无 UI 自动对局模拟。
-- 为事件对象加入 schema 校验和调试时间线导出。
-- 扩充持续状态、装备种类和角色池，并保持配置/逻辑分离。
-- 在不改变桌面核心信息密度的前提下增加触屏和窄屏布局。
+- 为 AI 增加跨回合价值模型与更精细的装备/公共牌池采样。
+- 把技能注册器按角色拆分，并增加事件时序可视化调试器。
+- 增加可选战报导出、可复现种子输入和对局回放。
+- 在保持五个视觉座位稳定的前提下，为阵亡后的动态距离增加更细腻的桌面收拢动画。
+- 每次调整牌数、阵营补偿或 AI 权重后，固定运行快速测试与至少 200 局平衡模拟。

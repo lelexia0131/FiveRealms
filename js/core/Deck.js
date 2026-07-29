@@ -13,6 +13,8 @@ export class Deck {
     /** @type {Array<Object>} */ this.cards = [];
     /** @type {Array<Object>} */ this.discardPile = [];
     /** @type {Array<Object>} */ this.resolvingCards = [];
+    /** @type {Array<Object>} */ this.judgmentZone = [];
+    this.reshuffleCount = 0;
   }
 
   /**
@@ -23,6 +25,8 @@ export class Deck {
     this.cards = [];
     this.discardPile = [];
     this.resolvingCards = [];
+    this.judgmentZone = [];
+    this.reshuffleCount = 0;
     for (const definition of Object.values(CARD_DEFINITIONS)) {
       for (let count = 0; count < definition.count; count += 1) {
         this.cards.push({ ...definition, id: createId("card") });
@@ -47,6 +51,7 @@ export class Deck {
     if (!this.discardPile.length) return false;
     this.cards = shuffled(this.discardPile, this.random);
     this.discardPile = [];
+    this.reshuffleCount += 1;
     Debug.log("Deck", `重洗后牌堆 ${this.cards.length} 张`);
     return true;
   }
@@ -77,8 +82,31 @@ export class Deck {
 
   /** 将公开弃置或被替换的牌加入弃牌堆；重复实例会被拒绝。 */
   discard(card) {
-    if (!card || this.discardPile.includes(card) || this.resolvingCards.includes(card)) return false;
+    if (!card || this.discardPile.includes(card) || this.resolvingCards.includes(card) || this.judgmentZone.includes(card)) return false;
     this.discardPile.push(card);
+    return true;
+  }
+
+  drawToJudgment() {
+    const card = this.drawOne();
+    if (!card) return null;
+    this.judgmentZone.push(card);
+    return card;
+  }
+
+  finishJudgmentToDiscard(card) {
+    const index = this.judgmentZone.indexOf(card);
+    if (index < 0) return false;
+    this.judgmentZone.splice(index, 1);
+    this.discardPile.push(card);
+    return true;
+  }
+
+  finishJudgmentToHand(card, player) {
+    const index = this.judgmentZone.indexOf(card);
+    if (index < 0) return false;
+    this.judgmentZone.splice(index, 1);
+    player.hand.push(card);
     return true;
   }
 }

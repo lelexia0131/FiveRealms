@@ -20,6 +20,12 @@ import { AIController } from "../ai/AIController.js";
 import { CleanupManager } from "../utils/CleanupManager.js";
 import { getAiDelay } from "../utils/aiTiming.js";
 import { Debug } from "../utils/debug.js";
+import { TeamRuleService } from "./TeamRuleService.js";
+import { DyingSystem } from "./DyingSystem.js";
+import { JudgmentSystem } from "./JudgmentSystem.js";
+import { CardSelectionSystem } from "./CardSelectionSystem.js";
+import { PublicCardPool } from "./PublicCardPool.js";
+import { HpLossSystem } from "./HpLossSystem.js";
 
 export class Game {
   /**
@@ -38,14 +44,22 @@ export class Game {
       resolvingCards: deck.resolvingCards, currentPlayerIndex: -1, startingPlayerIndex: -1,
       currentRound: GAME_CONFIG.initialRound, phase: "idle", pendingAction: null,
       pendingResponses: [], activeEffects: [], selectedGeneralId: null, winnerTeam: null,
+      publicCardPool: [], currentJudgment: null, dyingContext: null,
       isGameOver: false, isDisposed: false, logs: [], debugHistory: [], resolutionSerial: 0
     };
     this.logger = new GameLogger(this.state, ui);
     this.responseSystem = new ResponseSystem(this);
+    this.teamRules = new TeamRuleService(this);
+    this.cardSelectionSystem = new CardSelectionSystem(this);
+    this.dyingSystem = new DyingSystem(this);
+    this.judgmentSystem = new JudgmentSystem(this);
+    this.hpLossSystem = new HpLossSystem(this);
+    this.publicCardPool = new PublicCardPool(this);
     this.aiController = new AIController(this);
     this.candidates = [];
     this.actionLocked = false;
     this.animationFastMode = GAME_CONFIG.animationFastMode;
+    this.simulationMode = GAME_CONFIG.simulationMode;
     this.loopPromise = null;
   }
 
@@ -87,7 +101,8 @@ export class Game {
     human.applyGeneral(selected);
     this.state.selectedGeneralId = selected.id;
     const aiPlayers = this.state.players.slice(1);
-    const assigned = this.generalSelection.assignAiGenerals(aiPlayers, selected.id);
+    const smallTeamId = ["dawn","dusk"].find((team) => this.teamRules.getTeamSize(team) === GAME_CONFIG.smallTeamSize);
+    const assigned = this.generalSelection.assignAiGenerals(aiPlayers, selected.id, smallTeamId);
     aiPlayers.forEach((player, index) => player.applyGeneral(assigned[index]));
 
     this.registerGlobalRules();
@@ -95,9 +110,9 @@ export class Game {
     this.state.deck.build();
     this.syncDeckAliases();
     for (const player of this.state.players) {
-      player.resetTurnFlags();
+      player.resetTurnFlags(this.teamRules.getRules(player));
       player.resetRoundFlags();
-      const bonus = TeamManager.teamSize(this.state.players, player.battleTeam) === GAME_CONFIG.smallTeamSize ? GAME_CONFIG.smallTeamBonusCards : 0;
+      const bonus = this.teamRules.getInitialBonusCards(player);
       await this.drawCards(player, GAME_CONFIG.initialHandCount + bonus, "初始发牌");
     }
     this.state.startingPlayerIndex = Math.floor(this.random() * this.state.players.length);
@@ -117,18 +132,13 @@ export class Game {
 
   /** 注册装备与状态等不属于特定角色的事件规则。 */
   registerGlobalRules() {
-    this.eventBus.on("beforeDamage", "global:exposed", (event) => {
-      if (!event.target?.statuses.exposed || event.amount <= 0) return;
-      event.amount += event.target.statuses.exposed.stacks ?? 1;
-      delete event.target.statuses.exposed;
-      this.log(`${event.target.name}的破绽被触发，伤害增加1点。`, "damage");
-    });
-    this.eventBus.on("cardUsed", "global:coreDevice", async (event) => {
+    this.eventBus.on("cardUsed", "global:recycleDevice", async (event) => {
       const owner = event.source;
-      if (!owner.alive || !owner.equipment || owner.equipment.definitionId !== "coreDevice" || event.card.category !== "tactic" || owner.turnFlags.coreDeviceTriggered) return;
-      owner.turnFlags.coreDeviceTriggered = true;
-      this.log(`${owner.name}的核心装置启动，摸1张牌。`);
-      await this.drawCards(owner, 1, "核心装置");
+      if (!owner.alive || this.currentPlayer?.id !== owner.id || owner.equipment?.definitionId !== "recycleDevice"
+        || event.card.category !== "tactic" || event.card.usageMode !== "active" || owner.turnFlags.recycleDeviceTriggered) return;
+      owner.turnFlags.recycleDeviceTriggered = true;
+      this.log(`${owner.name}的回收装置启动，摸1张牌。`);
+      await this.drawCards(owner, 1, "回收装置");
     });
   }
 
@@ -156,7 +166,7 @@ export class Game {
    */
   async takeTurn(player, gameId) {
     this.state.phase = "turnStart";
-    player.resetTurnFlags();
+    player.resetTurnFlags(this.teamRules.getRules(player));
     if (player.statuses.temporaryShield) {
       player.shield = 0;
       delete player.statuses.temporaryShield;
@@ -170,6 +180,15 @@ export class Game {
     const statusEvent = { type: "beforeStatusResolve", player, cancelled: false };
     await this.eventBus.emit("beforeStatusResolve", statusEvent);
     await this.eventBus.emit("afterStatusResolve", { ...statusEvent, type: "afterStatusResolve" });
+    if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
+
+    this.state.phase = "energy";
+    const energyParts = this.teamRules.getTurnEnergyBreakdown(player);
+    const energyEvent = { type:"beforeTurnEnergyGain", player, ...energyParts, amount:energyParts.baseAmount + energyParts.teamBonus + energyParts.equipmentBonus, cancelled:false, metadata:{} };
+    await this.eventBus.emit("beforeTurnEnergyGain", energyEvent);
+    let energyGained = 0;
+    if (!energyEvent.cancelled) energyGained = await this.gainEnergy(player, Math.max(0, energyEvent.amount), { reason:"回合开始" });
+    await this.eventBus.emit("afterTurnEnergyGain", { ...energyEvent, type:"afterTurnEnergyGain", actualAmount:energyGained });
     if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
 
     this.state.phase = "draw";
@@ -211,19 +230,21 @@ export class Game {
     }
     for (let count = 0; count < GAME_CONFIG.aiMaxActionsPerTurn; count += 1) {
       if (!this.isSessionValid(gameId) || this.state.isGameOver || !player.alive) break;
-      const action = this.aiController.selectAction(player);
+      const searchStarted = globalThis.performance?.now?.() ?? Date.now();
+      const action = await this.aiController.selectAction(player, { gameId });
+      const searchElapsed = (globalThis.performance?.now?.() ?? Date.now()) - searchStarted;
       if (action.type === "end") {
         this.ui.setPrompt(`${player.name}准备结束出牌阶段。`);
         this.ui.setThinking(true, player, "正在收束回合");
-        await this.cleanupManager.delay(getAiDelay(this, "end"));
+        await this.cleanupManager.delay(Math.max(0, getAiDelay(this, "end") - searchElapsed));
         break;
       }
       const actionName = action.type === "card" ? `准备使用「${action.card.name}」` : `准备发动「${action.skill.name}」`;
       this.ui.setPrompt(`${player.name}${actionName}。`);
       this.ui.setThinking(true, player, actionName);
-      if (!(await this.cleanupManager.delay(getAiDelay(this, "action")))) break;
+      if (!(await this.cleanupManager.delay(Math.max(0, getAiDelay(this, "action") - searchElapsed)))) break;
       this.ui.setThinking(false);
-      if (action.type === "card") await this.playCard(player, action.card, action.targets);
+      if (action.type === "card") await this.playCard(player, action.card, action.targets, action.selection ?? null);
       else if (action.type === "skill") await this.useActiveSkill(player, action.skill.id, action.targets);
     }
     this.ui.setThinking(false);
@@ -249,6 +270,7 @@ export class Game {
 
   /** 移动到下一名存活角色，并在经过首发座位时开始新轮。 */
   async advanceTurn() {
+    await this.cleanupDefeatedZones();
     let wrapped = false;
     let next = this.state.currentPlayerIndex;
     for (let step = 0; step < this.state.players.length; step += 1) {
@@ -270,14 +292,15 @@ export class Game {
    * 使用一张主动牌。卡牌从手牌先进入结算区，完成或取消后才进入弃牌堆/装备区。
    * @returns {Promise<boolean>} 是否实际开始结算。
    */
-  async playCard(source, card, requestedTargets = []) {
+  async playCard(source, card, requestedTargets = [], selection = null) {
     const legality = RuleEngine.canPlayCard(this, source, card);
     if (!legality.ok || this.actionLocked) return false;
     let targets = requestedTargets;
     const legalTargets = RuleEngine.getCardTargets(this, source, card);
     if (card.targetType === "self") targets = [source];
     if (card.targetType === "allEnemies") targets = legalTargets;
-    if (!["none", "self", "allEnemies"].includes(card.targetType) && (!targets[0] || !legalTargets.includes(targets[0]))) return false;
+    if (card.targetType === "allLiving") targets = legalTargets;
+    if (!["none", "self", "allEnemies", "allLiving", "multiStage"].includes(card.targetType) && (!targets[0] || !legalTargets.includes(targets[0]))) return false;
 
     this.actionLocked = true;
     const resolutionId = `${this.state.gameId}:resolution:${++this.state.resolutionSerial}`;
@@ -292,7 +315,6 @@ export class Game {
         await this.eventBus.emit("targetSelected", targetEvent);
         targets = targetEvent.targets;
       }
-      if (!cancelledBeforeResolve && targets.length === 1 && card.canBeRedirected) targets = [await this.responseSystem.askForRedirect(source, targets[0], card)];
       const resolveEvent = { type: "beforeCardResolve", source, card, targets, cancelled: false, metadata: {}, resolutionId };
       if (!cancelledBeforeResolve) await this.eventBus.emit("beforeCardResolve", resolveEvent);
       targets = resolveEvent.targets;
@@ -302,14 +324,16 @@ export class Game {
       if (countered || cancelledBeforeResolve) {
         this.log(`「${card.name}」的效果被取消。`, "important");
       } else {
-        destination = (await resolveCardEffect(this, source, card, targets, { resolutionId })).destination;
+        destination = (await resolveCardEffect(this, source, card, targets, { resolutionId, selection })).destination;
       }
       if (destination === "discard") await this.finishResolvingToDiscard(card);
       source.statistics.cardsPlayed += 1;
       await this.eventBus.emit("cardUsed", { type: "cardUsed", source, card, targets, cancelled: countered || cancelledBeforeResolve, resolutionId });
+      if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       this.ui.render(this);
       return true;
     } finally {
+      if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       this.actionLocked = false;
       if (!this.state.isGameOver && source.controllerType === "human" && this.state.phase === "play") {
         this.ui.setPrompt("继续出牌，或结束本次出牌阶段。", "选择一张可用手牌");
@@ -326,7 +350,7 @@ export class Game {
     if (!skill || skill.id !== skillId || this.actionLocked) return false;
     const legality = skill.canUse(this, source);
     if (!legality.ok) return false;
-    const legalTargets = RuleEngine.getSkillTargets(this, source, skill.id);
+    const legalTargets = RuleEngine.getSkillTargets(this, source, skill);
     if (!["none", "allEnemies"].includes(skill.targetType) && (!targets[0] || !legalTargets.includes(targets[0]))) return false;
     this.actionLocked = true;
     source.turnFlags.activeSkillsUsed.add(skill.id);
@@ -353,12 +377,15 @@ export class Game {
     if (!legality.ok) { this.ui.setPrompt(legality.reason); return false; }
     const legalTargets = RuleEngine.getCardTargets(this, human, card);
     let targets = [];
-    if (!["none", "self", "allEnemies"].includes(card.targetType)) {
-      const target = await this.ui.requestTarget(legalTargets, `为「${card.name}」选择目标`);
+    if (!["none", "self", "allEnemies", "allLiving", "multiStage"].includes(card.targetType)) {
+      const target = await this.ui.requestTarget(legalTargets, `为「${card.name}」选择目标`, { source:human, card });
       if (!target) return false;
       targets = [target];
     }
-    return this.playCard(human, card, targets);
+    let selection = null;
+    if (card.selectionFlow?.length) selection = await this.ui.interactionController?.requestCardFlow?.(this, human, card, targets);
+    if (card.selectionFlow?.length && !selection) return false;
+    return this.playCard(human, card, targets, selection);
   }
 
   /** 真人点击主动技能的入口；统一请求合法目标。 */
@@ -366,7 +393,7 @@ export class Game {
     const human = this.state.players[0];
     const skill = getActiveSkill(human);
     if (!skill || !skill.canUse(this, human).ok) return false;
-    const legalTargets = RuleEngine.getSkillTargets(this, human, skill.id);
+    const legalTargets = RuleEngine.getSkillTargets(this, human, skill);
     let targets = [];
     if (!["none", "allEnemies"].includes(skill.targetType)) {
       const target = await this.ui.requestTarget(legalTargets, `为「${skill.name}」选择目标`);
@@ -398,12 +425,24 @@ export class Game {
     };
     await this.eventBus.emit("beforeDamage", event);
     if (event.cancelled || event.amount <= 0 || !target.alive) return 0;
+    const isDeviceAttack = context.card?.subtypes?.includes("assault") && ["normal", "area"].includes(event.damageType);
+    if (isDeviceAttack) {
+      const judgment = await this.judgmentSystem.judgeDefense(source, target, event);
+      if (judgment.immune || !target.alive || this.state.isGameOver) {
+        await this.eventBus.emit("afterDamage", { ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"defenseDevice" });
+        return 0;
+      }
+    }
     const blocked = await this.responseSystem.askForBlock(source, target, event);
-    event.amount = Math.max(0, event.amount - blocked);
-    if (blocked) this.log(`${target.name}格挡了1点伤害。`, "important");
+    if (blocked) {
+      this.log(`${target.name}格挡了此次攻击。`, "important");
+      await this.eventBus.emit("afterDamage", { ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"block" });
+      this.ui.render(this);
+      return 0;
+    }
     const shieldAbsorbed = Math.min(target.shield, event.amount);
     target.shield -= shieldAbsorbed;
-    const hpDamage = Math.min(target.hp, Math.max(0, event.amount - shieldAbsorbed));
+    const hpDamage = Math.max(0, event.amount - shieldAbsorbed);
     target.hp -= hpDamage;
     target.statistics.damageTaken += hpDamage;
     if (source) {
@@ -414,7 +453,7 @@ export class Game {
     if (hpDamage) { this.log(`${target.name}受到${hpDamage}点伤害，剩余${target.hp}点生命。`, "damage"); this.ui.queueFeedback?.("damage", target.id, hpDamage); }
     else this.log(`${target.name}没有受到生命伤害。`);
     await this.eventBus.emit("afterDamage", { ...event, type: "afterDamage", actualAmount: hpDamage, shieldAbsorbed });
-    if (target.hp <= 0 && target.alive) await this.killPlayer(target, source);
+    if (target.hp <= 0 && target.alive) await this.dyingSystem.enter(target, source, context);
     this.ui.render(this);
     return hpDamage;
   }
@@ -446,17 +485,9 @@ export class Game {
     return actualAmount;
   }
 
-  /** 将生命为零的角色标记阵亡并立即检查胜负。 */
+  /** 兼容旧技能入口：生命不大于0时进入完整濒死流程。 */
   async killPlayer(target, source) {
-    const event = { type: "beforePlayerDying", target, source, cancelled: false };
-    await this.eventBus.emit("beforePlayerDying", event);
-    if (event.cancelled || target.hp > 0) return false;
-    target.alive = false;
-    target.hp = 0;
-    this.log(`${TEAM_CONFIG[target.battleTeam].name}的${target.name}阵亡。`, "important");
-    await this.eventBus.emit("playerDead", { type: "playerDead", target, source });
-    await this.checkVictory();
-    return true;
+    return this.dyingSystem.enter(target, source);
   }
 
   /** 若一个阵营无存活者，结束游戏、停止旧交互并显示结果。 */
@@ -479,6 +510,7 @@ export class Game {
 
   /** 抽指定数量的牌并逐张触发移动事件；电脑日志只公开数量。 */
   async drawCards(player, count, reason = "摸牌") {
+    if (!player?.alive || this.state.isGameOver) return 0;
     let drawn = 0;
     for (let index = 0; index < count; index += 1) {
       const card = this.state.deck.drawOne();
@@ -488,6 +520,8 @@ export class Game {
       await this.eventBus.emit("beforeCardMove", move);
       if (move.cancelled) { this.state.deck.cards.push(card); continue; }
       player.hand.push(card);
+      player.bumpHandVersion();
+      this.invalidateCardKnowledge(card.id, player.id);
       drawn += 1;
       await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     }
@@ -504,6 +538,8 @@ export class Game {
     await this.eventBus.emit("beforeCardMove", move);
     if (move.cancelled) return false;
     player.hand.splice(index, 1);
+    player.bumpHandVersion();
+    this.invalidateCardKnowledge(card.id, player.id);
     this.state.deck.discard(card);
     this.syncDeckAliases();
     this.log(`${player.name}因${reason}弃置了「${card.name}」。`);
@@ -515,6 +551,7 @@ export class Game {
 
   /** 在两名玩家间移动实体手牌；只公开最终牌名，不暴露其余隐藏牌。 */
   async moveCardBetweenHands(from, to, card, reason) {
+    if (!from?.alive || !to?.alive || this.state.isGameOver) return false;
     const index = from.hand.indexOf(card);
     if (index < 0) return false;
     const move = { type: "beforeCardMove", card, from: "hand", to: "hand", fromPlayer: from, player: to, reason, cancelled: false };
@@ -522,6 +559,9 @@ export class Game {
     if (move.cancelled) return false;
     from.hand.splice(index, 1);
     to.hand.push(card);
+    from.bumpHandVersion();
+    to.bumpHandVersion();
+    this.invalidateCardKnowledge(card.id, from.id);
     this.ui.queueFeedback?.("draw", to.id, 1);
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     this.ui.render(this);
@@ -536,6 +576,8 @@ export class Game {
     await this.eventBus.emit("beforeCardMove", move);
     if (move.cancelled) throw new Error("卡牌移动被取消");
     player.hand.splice(index, 1);
+    player.bumpHandVersion();
+    this.invalidateCardKnowledge(card.id, player.id);
     if (!this.state.deck.beginResolve(card)) throw new Error("卡牌重复进入结算区");
     this.syncDeckAliases();
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
@@ -550,7 +592,7 @@ export class Game {
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
   }
 
-  /** 将核心装置放入唯一装备槽，并公开弃置被替换装备。 */
+  /** 将装置放入唯一装备槽，并公开弃置被替换装备。 */
   async equipCard(player, card) {
     const equipMove = { type: "beforeCardMove", card, from: "resolving", to: "equipment", player, reason: "装备", cancelled: false };
     await this.eventBus.emit("beforeCardMove", equipMove);
@@ -562,12 +604,12 @@ export class Game {
       await this.eventBus.emit("beforeCardMove", replaceMove);
       this.state.deck.discard(old);
       await this.eventBus.emit("afterCardMove", { ...replaceMove, type: "afterCardMove" });
-      this.log(`${player.name}替换并弃置了旧核心装置。`);
+      this.log(`${player.name}替换并弃置了「${old.name}」。`);
     }
     this.state.deck.finishResolveToEquipment(card);
     player.equipment = card;
     this.syncDeckAliases();
-    this.log(`${player.name}装备了核心装置。`, "important");
+    this.log(`${player.name}装备了「${card.name}」。`, "important");
     this.ui.queueFeedback?.("equip", player.id);
     await this.eventBus.emit("afterCardMove", { ...equipMove, type: "afterCardMove" });
     return true;
@@ -578,6 +620,58 @@ export class Game {
   /** 返回某角色含自身在内的存活同阵营角色。 */
   getAllies(player) { return this.state.players.filter((other) => other.alive && other.battleTeam === player.battleTeam); }
 
+  /** 守住区域不变量：阵亡角色不能继续占有会阻塞重洗的手牌或装备。 */
+  async cleanupDefeatedZones() {
+    for (const player of this.state.players) {
+      if (player.alive) continue;
+      for (const card of [...player.hand]) await this.discardCardFromHand(player, card, "阵亡区域清理");
+      if (player.equipment) {
+        this.state.deck.discard(player.equipment);
+        player.equipment = null;
+      }
+    }
+    this.syncDeckAliases();
+  }
+
+  /** 从指定角色下一座位开始，按环形座位顺序返回角色；includeSource 为 true 时源角色排在首位。 */
+  seatOrderFrom(source, includeSource = false) {
+    const players = this.state.players;
+    const ordered = includeSource ? [source] : [];
+    for (let offset = 1; offset < players.length; offset += 1) ordered.push(players[(source.seatIndex + offset) % players.length]);
+    return ordered;
+  }
+
+  /** 令所有观察者关于已离开原手牌的实体牌记忆立即失效。 */
+  invalidateCardKnowledge(cardId, ownerId) {
+    for (const player of this.state.players) {
+      const known = player.aiMemory?.knownCardsByPlayer?.[ownerId];
+      if (known) delete known[cardId];
+    }
+  }
+
+  rememberPrivateCard(viewer, owner, card) {
+    const bucket = viewer.aiMemory.knownCardsByPlayer[owner.id] ??= {};
+    bucket[card.id] = card.definitionId;
+  }
+
+  async chooseHiddenCards(actor, owner, count, reason, selection = null) {
+    const maximum = Math.min(count, owner.hand.length);
+    if (!maximum) return [];
+    if (selection?.tokens?.length) {
+      const cards = selection.tokens.slice(0, maximum).map((token) => this.cardSelectionSystem.resolveToken(token, owner)).filter(Boolean);
+      if (selection.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
+      return cards;
+    }
+    if (actor.controllerType === "human") {
+      const hidden = this.cardSelectionSystem.createHiddenSelection(owner);
+      const tokens = await this.ui.interactionController?.requestHiddenCards?.(hidden, maximum, reason, { exact:true });
+      const cards = (tokens ?? []).map((token) => this.cardSelectionSystem.resolveToken(token, owner)).filter(Boolean);
+      this.cardSelectionSystem.clearSelection(hidden.selectionId);
+      return cards;
+    }
+    return this.aiController.cardSelector.chooseHiddenCards(actor, owner, maximum);
+  }
+
   /** 统一添加公开日志。 */
   log(message, kind = "normal") { return this.logger.add(message, kind); }
 
@@ -585,6 +679,7 @@ export class Game {
   syncDeckAliases() {
     this.state.discardPile = this.state.deck.discardPile;
     this.state.resolvingCards = this.state.deck.resolvingCards;
+    this.state.judgmentZone = this.state.deck.judgmentZone;
   }
 
   /** 校验异步回调仍属于本局且游戏未销毁。 */
@@ -600,6 +695,9 @@ export class Game {
     this.state.isDisposed = true;
     this.cleanupManager.cleanup();
     this.responseSystem.cleanup();
+    this.cardSelectionSystem.cleanup();
+    this.dyingSystem.cleanup();
+    this.publicCardPool.cleanup();
     this.eventBus.clear();
     this.ui.cancelPendingInteractions();
     Debug.log("Game", `清理对局 ${this.state.gameId}`);

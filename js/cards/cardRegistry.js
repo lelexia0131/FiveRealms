@@ -1,88 +1,138 @@
-/**
- * 本文件注册十二种卡牌的实际结算函数，依赖 Game 提供的统一状态变更接口。
- * 它不从 DOM 读取目标、不直接改生命，也不决定 AI 是否出牌；所有伤害、治疗、移动都会回到核心系统。
- * 新卡牌需在 cardConfig 中声明，并在 CARD_EFFECTS 中注册同名 definitionId。
- */
-import { randomChoice } from "../utils/helpers.js";
+/** 二十种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
 
-/** @type {Record<string, (game:Object,source:Object,card:Object,targets:Array<Object>,context:Object)=>Promise<Object|void>>} */
+const byId = (game, id) => game.state.players.find((player) => player.id === id && player.alive) ?? null;
+
 const CARD_EFFECTS = {
   async assault(game, source, card, targets, context) {
     source.turnFlags.attackUsed += 1;
-    await game.damage(source, targets[0], 1, { card, canBlock: true, damageType: "normal", resolutionId: context.resolutionId });
+    source.statistics.assaultsUsed += 1;
+    const stacks = source.statuses.exposeWeakness?.stacks ?? 0;
+    if (stacks) {
+      delete source.statuses.exposeWeakness;
+      game.log(`${source.name}消耗${stacks}层破势，本次突袭伤害+${stacks}。`, "important");
+    }
+    await game.damage(source, targets[0], 1 + stacks, { card, canBlock:true, damageType:"normal", resolutionId:context.resolutionId });
   },
 
   async recover(game, source, card, targets, context) {
     source.turnFlags.recoverUsed += 1;
-    await game.heal(source, source, 1, { card, resolutionId: context.resolutionId });
+    await game.heal(source, source, 1, { card, resolutionId:context.resolutionId });
   },
 
-  async support(game, source, card, targets) {
+  async charge(game, source, card) { await game.gainEnergy(source, 1, { card, reason:"聚能" }); },
+
+  async scout(game, source, card, targets, context) {
     const target = targets[0];
-    target.shield += 1;
-    target.statuses.temporaryShield = { clearAtTurnStart: true };
-    game.ui.queueFeedback?.("shield", target.id, 1);
-    game.log(`${source.name}援护${target.name}，令其获得1点临时护盾。`, "heal");
+    if (!target?.hand.length) return;
+    const chosen = await game.chooseHiddenCards(source, target, Math.min(2, target.hand.length), "选择至多2张手牌进行窥探", context.selection);
+    if (!chosen.length) return;
+    if (source.controllerType === "human") await game.ui.showPrivateReveal?.(`${target.name}的手牌情报`, chosen);
+    else for (const seen of chosen) game.rememberPrivateCard(source, target, seen);
+    game.log(`${source.name}窥探了${target.name}的${chosen.length}张手牌。`);
   },
 
-  async insight(game, source) {
-    await game.drawCards(source, 2, "洞察");
-    if (!source.hand.length) return;
-    let selected = [];
-    if (source.controllerType === "human") selected = await game.ui.requestDiscard(source, 1, "洞察要求弃置1张牌");
-    else selected = game.aiController.chooseDiscards(source, 1);
-    if (selected[0]) await game.discardCardFromHand(source, selected[0], "洞察");
+  async transfer(game, source, card, targets, context) {
+    const selection = context.selection ?? {};
+    let from = byId(game, selection.sourceId);
+    let receiver = byId(game, selection.receiverId);
+    if (!from || !from.hand.length) from = game.aiController.cardSelector.chooseTransferSource(source, game.state.players.filter((player) => player.alive && player.hand.length));
+    if (!receiver || receiver.id === from?.id) receiver = game.aiController.cardSelector.chooseTransferReceiver(source, from, game.state.players.filter((player) => player.alive && player.id !== from?.id));
+    if (!from || !receiver || from.id === receiver.id) return;
+    const [moved] = await game.chooseHiddenCards(source, from, 1, "选择要转移的手牌", selection);
+    if (!moved) return;
+    await game.moveCardBetweenHands(from, receiver, moved, "转移");
+    game.log(`${source.name}将${from.name}的1张手牌转移给了${receiver.name}。`, "important");
   },
 
-  async exposeWeakness(game, source, card, targets) {
-    const target = targets[0];
-    target.statuses.exposed = { stacks: 1, sourceId: source.id };
-    game.log(`${target.name}被看破了势头，获得1层破绽。`, "important");
+  async exposeWeakness(game, source) {
+    const status = source.statuses.exposeWeakness ??= { stacks:0 };
+    status.stacks += 1;
+    game.log(`${source.name}积累了${status.stacks}层破势。`, "important");
   },
 
   async shockwave(game, source, card, targets, context) {
-    // 群体牌逐个目标等待响应和胜负检查；一次性扣血会跳过格挡、护援与阵亡中止。
-    for (const target of [...targets]) {
+    source.statistics.assaultsUsed += 1;
+    const enemies = game.seatOrderFrom(source, false).filter((target) => target.alive && target.battleTeam !== source.battleTeam);
+    for (const target of enemies) {
       if (game.state.isGameOver) break;
-      if (target.alive) await game.damage(source, target, 1, { card, canBlock: true, damageType: "area", resolutionId: context.resolutionId });
+      if (target.alive) await game.damage(source, target, 1, { card, canBlock:true, damageType:"area", resolutionId:context.resolutionId });
     }
   },
 
-  async steal(game, source, card, targets) {
+  async provoke(game, source, card) {
+    for (const target of game.seatOrderFrom(source, false).filter((player) => player.alive && player.battleTeam !== source.battleTeam)) {
+      if (game.state.isGameOver) break;
+      const discarded = await game.responseSystem.requestAssaultDiscard(target, "响应挑衅并弃置突袭", { source, target, card });
+      if (discarded) game.log(`${target.name}以突袭回应了挑衅。`, "important");
+      else await game.hpLossSystem.lose(target, 1, { source, card, reason:"挑衅" });
+    }
+  },
+
+  async plunder(game, source, card, targets, context) {
     const target = targets[0];
-    const stolen = randomChoice(target.hand, game.random);
+    const [stolen] = await game.chooseHiddenCards(source, target, 1, "选择要掠夺的手牌", context.selection);
     if (!stolen) return;
-    await game.moveCardBetweenHands(target, source, stolen, "夺取");
-    game.log(`${source.name}从${target.name}处夺取了「${stolen.name}」。`, "important");
+    await game.moveCardBetweenHands(target, source, stolen, "掠夺");
+    game.log(`${source.name}从${target.name}处掠夺了1张手牌。`, "important");
   },
 
-  async charge(game, source) {
-    await game.gainEnergy(source, 1, { card: null, reason: "聚能" });
+  async destroy(game, source, card, targets, context) {
+    const target = targets[0];
+    const [destroyed] = await game.chooseHiddenCards(source, target, 1, "选择要破坏的手牌", context.selection);
+    if (!destroyed) return;
+    await game.discardCardFromHand(target, destroyed, `被${source.name}破坏`);
+    game.ui.setCurrentCard?.(destroyed, `${source.name}破坏的手牌`);
+    game.log(`${source.name}破坏了${target.name}的「${destroyed.name}」。`, "important");
   },
 
-  async coreDevice(game, source, card) {
-    const equipped = await game.equipCard(source, card);
-    return { destination: equipped ? "equipment" : "discard" };
+  async harvest(game, source) { await game.drawCards(source, 2, "收获"); },
+
+  async duel(game, source, card, targets, context) {
+    const target = targets[0];
+    let current = target;
+    let opponent = source;
+    game.state.duelContext = { sourceId:source.id, targetId:target.id, currentId:target.id };
+    while (current.alive && opponent.alive && !game.state.isGameOver) {
+      game.state.duelContext.currentId = current.id;
+      game.ui.showDuel?.(current, opponent);
+      const assault = await game.responseSystem.requestAssaultDiscard(current, "在决斗中打出突袭", { source:opponent, target:current, card });
+      if (!assault) {
+        game.log(`${current.name}在决斗中败下阵来。`, "important");
+        await game.damage(opponent, current, 1, { card, canBlock:false, damageType:"duel", resolutionId:context.resolutionId });
+        break;
+      }
+      [current, opponent] = [opponent, current];
+    }
+    game.state.duelContext = null;
+    game.ui.hideDuel?.();
   },
 
-  // 三种响应牌不允许主动进入这里。显式处理可让错误调用快速失败而不是静默修改状态。
+  async mutualBenefit(game, source) {
+    const count = game.state.players.filter((player) => player.alive).length;
+    game.publicCardPool.reveal(count);
+    game.log(`${source.name}展示了${game.state.publicCardPool.length}张互利牌。`, "important");
+    await game.publicCardPool.draft(source);
+  },
+
+  async symbiosis(game, source, card) {
+    for (const target of game.seatOrderFrom(source, true).filter((player) => player.alive)) {
+      await game.heal(source, target, 1, { card });
+    }
+  },
+
+  async energyDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
+  async recycleDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
+  async defenseDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
+  async battleDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
+
   async block() { throw new Error("格挡只能作为响应牌使用"); },
-  async redirect() { throw new Error("转移只能作为响应牌使用"); },
   async counter() { throw new Error("反制只能作为响应牌使用"); }
 };
 
-/**
- * 结算一张已通过合法性检查且已进入 resolvingCards 的牌。
- * @returns {Promise<{destination:string}>} 卡牌结算后的目标区域。
- */
 export async function resolveCardEffect(game, source, card, targets, context) {
   const resolver = CARD_EFFECTS[card.definitionId];
   if (!resolver) throw new Error(`未注册卡牌效果：${card.definitionId}`);
-  const result = await resolver(game, source, card, targets, context);
-  return { destination: "discard", ...(result ?? {}) };
+  return { destination:"discard", ...((await resolver(game, source, card, targets, context)) ?? {}) };
 }
 
-/** 返回是否存在指定卡牌结算器，供启动自检使用。 */
-export function hasCardResolver(definitionId) {
-  return typeof CARD_EFFECTS[definitionId] === "function";
-}
+export function hasCardResolver(definitionId) { return typeof CARD_EFFECTS[definitionId] === "function"; }

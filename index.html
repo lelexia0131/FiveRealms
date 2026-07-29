@@ -42,7 +42,7 @@
           <ol>
             <li><strong>随机结盟</strong><span>五名角色公开分为 2 人与 3 人阵营。</span></li>
             <li><strong>轮流行动</strong><span>摸牌、出牌、弃牌，阵亡角色会被跳过。</span></li>
-            <li><strong>即时响应</strong><span>用格挡、转移或反制改变敌人的结算。</span></li>
+            <li><strong>即时响应</strong><span>用格挡、反制与濒死调息改变结算。</span></li>
             <li><strong>全灭即胜</strong><span>让敌方全部阵亡，你的阵营便会获胜。</span></li>
           </ol>
           <p class="rules-note">二人阵营的每名角色会额外获得一张初始手牌。</p>
@@ -84,6 +84,10 @@
               <p id="action-prompt" class="action-prompt">等待对局开始……</p>
               <div id="private-reveal" class="private-reveal is-hidden" aria-live="polite"></div>
               <div id="response-panel" class="response-panel is-hidden" aria-live="assertive"></div>
+              <div id="public-pool-view" class="public-pool-view is-hidden" aria-live="polite"></div>
+              <div id="judgment-view" class="judgment-view is-hidden" aria-live="assertive"></div>
+              <div id="dying-view" class="dying-view is-hidden" aria-live="assertive"></div>
+              <div id="duel-view" class="duel-view is-hidden" aria-live="polite"></div>
               <div class="action-row">
                 <button id="skill-button" class="skill-button" type="button" disabled>主动技能</button>
                 <button id="end-play-button" class="primary-button" type="button" disabled>结束出牌</button>

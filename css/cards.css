@@ -34,6 +34,24 @@
 .skill-sigil { display: grid; place-items: center; width: 54px; height: 54px; color: var(--gold); border: 2px solid var(--gold); border-radius: 50%; background: #f8efd8; font-size: 26px; }
 .resolving-card.is-empty { border-style: dashed; box-shadow: none; }
 
+.hidden-card-grid, .private-card-grid, .tableau-cards { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin: 12px 0; }
+.hidden-card-back { position: relative; width: 82px; aspect-ratio: .71; display: grid; place-items: end center; overflow: hidden; padding: 9px; color: #f8efd7; border: 3px double #d1b46f; border-radius: 9px; background: radial-gradient(circle at 50% 38%, #b4934f 0 8%, transparent 9%), repeating-conic-gradient(from 45deg, #334d57 0 12.5%, #29424c 0 25%); box-shadow: 0 5px 12px rgba(38,35,28,.22); }
+.hidden-card-back::before { content:""; position:absolute; inset:7px; border:1px solid rgba(240,216,158,.8); border-radius:5px; }
+.hidden-card-back i { position:absolute; inset:26% 22%; border:2px solid #d8bd7f; border-radius:50%; transform:rotate(45deg); }
+.hidden-card-back span { position:relative; z-index:1; font-size:12px; }
+.hidden-card-back.is-selected { transform: translateY(-7px); outline: 3px solid var(--gold-soft); box-shadow: 0 0 0 3px var(--gold), 0 10px 18px rgba(38,35,28,.25); }
+.private-card, .tableau-card { width: 132px; display:grid; grid-template-rows:94px auto 1fr; gap:4px; overflow:hidden; padding:6px; color:var(--text-primary); border:2px solid var(--card-accent); border-radius:9px; background:var(--surface-raised); box-shadow:var(--shadow-card); text-align:left; }
+.private-card img, .tableau-card img { width:100%; height:94px; object-fit:cover; border-radius:5px; }
+.private-card strong, .tableau-card strong { font:700 15px/1.2 var(--serif); }
+.private-card small, .tableau-card small { color:var(--text-secondary); font-size:12px; line-height:1.35; }
+.public-pool-view, .private-reveal { width:min(760px, 80vw); max-height:70vh; overflow:auto; padding:16px; border:1px solid var(--gold); border-radius:13px; background:rgba(255,253,247,.98); box-shadow:0 18px 50px rgba(54,42,26,.28); }
+.tableau-title { font:700 20px/1.2 var(--serif); text-align:center; }
+.judgment-view, .dying-view, .duel-view { min-width:190px; display:grid; grid-template-columns:auto 1fr; align-items:center; gap:5px 9px; padding:9px 11px; border:1px solid var(--gold); border-radius:9px; background:var(--surface-raised); box-shadow:var(--shadow-soft); }
+.judgment-view img { grid-row:1 / span 3; width:54px; height:54px; object-fit:cover; border-radius:6px; }
+.judgment-view span, .dying-view strong, .duel-view strong { color:var(--gold); font-size:12px; font-weight:800; }
+.dying-view { border-color:var(--danger); background:#fff1ed; }
+.dying-view b { color:var(--danger); }
+
 @media (max-height: 920px) {
   .hand-card { flex-basis: clamp(145px, 8.9vw, 158px); width: clamp(145px, 8.9vw, 158px); grid-template-rows: 34px minmax(0, 1fr) 78px 22px; }
   .card-name { font-size: 17px; }

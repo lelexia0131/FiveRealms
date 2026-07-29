@@ -1,84 +1,36 @@
 /**
- * 本文件定义全部卡牌的公开数据与牌堆数量，不执行卡牌效果。
- * 结算逻辑位于 cards/cardRegistry.js；AI 估值位于 ai/AIController.js。
- * 增删卡牌时需同时注册结算器，并确保 count 为非负整数。
+ * 二十种公开卡牌数据。art/icon 等字段只用于展示；规则只读取显式规则字段。
+ * 三类牌为 basic / tactic / equipment，响应时机由 usageMode 与 responseTypes 描述。
  */
-
-export const CARD_DEFINITIONS = Object.freeze({
-  assault: Object.freeze({
-    definitionId: "assault", name: "突袭", category: "basic", categoryName: "基础牌",
-    subtypes: ["attack"], description: "对一名敌方角色造成1点可格挡伤害。",
-    targetType: "singleEnemy", responseType: "block", canBeRedirected: false, count: 24, aiValue: 4,
-    art: "./assets/cards/assault.svg", icon: "./assets/cards/assault.svg", accent: "#b84a2f", frameStyle: "strike", flavorText: "刀光先于战意抵达。"
-  }),
-  block: Object.freeze({
-    definitionId: "block", name: "格挡", category: "basic", categoryName: "响应牌",
-    subtypes: ["response", "block"], description: "响应可格挡伤害，使此次伤害减少1点。",
-    targetType: "responseOnly", responseType: null, canBeRedirected: false, count: 18, aiValue: 5,
-    art: "./assets/cards/block.svg", icon: "./assets/cards/block.svg", accent: "#54728a", frameStyle: "guard", flavorText: "山岳不语，自有回响。"
-  }),
-  recover: Object.freeze({
-    definitionId: "recover", name: "调息", category: "basic", categoryName: "恢复牌",
-    subtypes: ["heal"], description: "为自己恢复1点生命；满生命时不可使用。",
-    targetType: "self", responseType: null, canBeRedirected: false, count: 10, aiValue: 4,
-    art: "./assets/cards/recover.svg", icon: "./assets/cards/recover.svg", accent: "#4f8468", frameStyle: "vital", flavorText: "一息尚存，灵脉不绝。"
-  }),
-  support: Object.freeze({
-    definitionId: "support", name: "援护", category: "basic", categoryName: "辅助牌",
-    subtypes: ["support"], description: "令一名受伤队友获得1点临时护盾。",
-    targetType: "injuredAlly", responseType: null, canBeRedirected: false, count: 6, aiValue: 3,
-    art: "./assets/cards/support.svg", icon: "./assets/cards/support.svg", accent: "#2d8b82", frameStyle: "ward", flavorText: "并肩之处，风雨止步。"
-  }),
-  insight: Object.freeze({
-    definitionId: "insight", name: "洞察", category: "tactic", categoryName: "战术牌",
-    subtypes: ["draw"], description: "摸2张牌，然后弃置1张牌。",
-    targetType: "none", responseType: "counter", canBeRedirected: false, count: 6, aiValue: 5,
-    art: "./assets/cards/insight.svg", icon: "./assets/cards/insight.svg", accent: "#655b9b", frameStyle: "oracle", flavorText: "见一叶，便知潮向。"
-  }),
-  exposeWeakness: Object.freeze({
-    definitionId: "exposeWeakness", name: "破势", category: "tactic", categoryName: "战术牌",
-    subtypes: ["status"], description: "令一名敌人获得破绽；其下次受伤时伤害+1。",
-    targetType: "singleEnemy", responseType: "counter", canBeRedirected: true, count: 5, aiValue: 5,
-    art: "./assets/cards/expose-weakness.svg", icon: "./assets/cards/expose-weakness.svg", accent: "#8d332f", frameStyle: "fracture", flavorText: "裂隙从来早于崩塌。"
-  }),
-  redirect: Object.freeze({
-    definitionId: "redirect", name: "转移", category: "response", categoryName: "响应牌",
-    subtypes: ["response", "redirect"], description: "将指定自己的可转移单体战术牌转给另一合法目标。",
-    targetType: "responseOnly", responseType: null, canBeRedirected: false, count: 4, aiValue: 6,
-    art: "./assets/cards/redirect.svg", icon: "./assets/cards/redirect.svg", accent: "#465b9b", frameStyle: "current", flavorText: "借势回旋，锋芒易主。"
-  }),
-  counter: Object.freeze({
-    definitionId: "counter", name: "反制", category: "response", categoryName: "响应牌",
-    subtypes: ["response", "counter"], description: "响应其他角色的战术牌，取消其效果。",
-    targetType: "responseOnly", responseType: null, canBeRedirected: false, count: 4, aiValue: 7,
-    art: "./assets/cards/counter.svg", icon: "./assets/cards/counter.svg", accent: "#59406e", frameStyle: "seal", flavorText: "印成，则万法暂寂。"
-  }),
-  shockwave: Object.freeze({
-    definitionId: "shockwave", name: "震荡", category: "tactic", categoryName: "群体战术",
-    subtypes: ["attack", "area"], description: "依次对所有敌人造成1点可格挡伤害。",
-    targetType: "allEnemies", responseType: "counter", canBeRedirected: false, count: 3, aiValue: 7,
-    art: "./assets/cards/shockwave.svg", icon: "./assets/cards/shockwave.svg", accent: "#c35a35", frameStyle: "impact", flavorText: "大地替怒火发声。"
-  }),
-  steal: Object.freeze({
-    definitionId: "steal", name: "夺取", category: "tactic", categoryName: "战术牌",
-    subtypes: ["control"], description: "随机获得一名有手牌敌人的1张手牌。",
-    targetType: "enemyWithCards", responseType: "counter", canBeRedirected: false, count: 4, aiValue: 6,
-    art: "./assets/cards/steal.svg", icon: "./assets/cards/steal.svg", accent: "#714985", frameStyle: "chain", flavorText: "秘密总有第二位主人。"
-  }),
-  charge: Object.freeze({
-    definitionId: "charge", name: "聚能", category: "basic", categoryName: "能量牌",
-    subtypes: ["energy"], description: "获得1点能量，不能超过上限。",
-    targetType: "self", responseType: null, canBeRedirected: false, count: 6, aiValue: 4,
-    art: "./assets/cards/charge.svg", icon: "./assets/cards/charge.svg", accent: "#b4872f", frameStyle: "core", flavorText: "星火归心，静待雷鸣。"
-  }),
-  coreDevice: Object.freeze({
-    definitionId: "coreDevice", name: "核心装置", category: "equipment", categoryName: "装备牌",
-    subtypes: ["equipment"], description: "装备后，每回合首次使用战术牌后摸1张牌。",
-    targetType: "self", responseType: null, canBeRedirected: false, count: 4, aiValue: 6,
-    art: "./assets/cards/core-device.svg", icon: "./assets/cards/core-device.svg", accent: "#8b6e3f", frameStyle: "machine", flavorText: "古代机芯仍记得星辰的频率。"
-  })
+const card = (definition) => Object.freeze({
+  usageMode: "active", responseTypes: [], counterable: definition.category === "tactic",
+  ignoresDistance: false, selectionFlow: [], ...definition
 });
 
-export const CARD_COUNTS = Object.freeze(
-  Object.fromEntries(Object.values(CARD_DEFINITIONS).map((definition) => [definition.definitionId, definition.count]))
-);
+export const CARD_DEFINITIONS = Object.freeze({
+  assault: card({ definitionId:"assault", name:"突袭", category:"basic", categoryName:"基础牌", targetType:"singleEnemyInRange", subtypes:["attack","assault"], description:"对攻击距离1内的一名敌人造成1点可格挡伤害。", count:40, aiValue:4, art:"./assets/cards/assault.svg", icon:"./assets/cards/assault.svg", accent:"#b84a2f", frameStyle:"strike", flavorText:"刀光先于战意抵达。" }),
+  recover: card({ definitionId:"recover", name:"调息", category:"basic", categoryName:"基础牌", usageMode:"both", responseTypes:["dyingRescue"], targetType:"self", subtypes:["heal","rescue"], description:"出牌阶段令自己恢复1点生命；濒死时可救援自己或队友。", count:25, aiValue:6, art:"./assets/cards/recover.svg", icon:"./assets/cards/recover.svg", accent:"#4f8468", frameStyle:"vital", flavorText:"一息尚存，灵脉不绝。" }),
+  block: card({ definitionId:"block", name:"格挡", category:"basic", categoryName:"基础牌", usageMode:"response", responseTypes:["block"], targetType:"responseOnly", subtypes:["defense","response"], description:"响应突袭；弃置要求数量的格挡，令该次攻击无效。", count:35, aiValue:6, art:"./assets/cards/block.svg", icon:"./assets/cards/block.svg", accent:"#54728a", frameStyle:"guard", flavorText:"山岳不语，自有回响。" }),
+  charge: card({ definitionId:"charge", name:"聚能", category:"basic", categoryName:"基础牌", targetType:"self", subtypes:["energy"], description:"获得1点能量，不能超过上限。", count:30, aiValue:4, art:"./assets/cards/charge.svg", icon:"./assets/cards/charge.svg", accent:"#b4872f", frameStyle:"core", flavorText:"星火归心，静待雷鸣。" }),
+
+  scout: card({ definitionId:"scout", name:"窥探", category:"tactic", categoryName:"战术牌", targetType:"otherWithCards", subtypes:["information","hidden-selection"], description:"查看一名其他角色至多2张指定手牌；信息只对你公开。", count:4, aiValue:5, ignoresDistance:true, selectionFlow:["target","hiddenCards:upTo2"], art:"./assets/cards/scout.svg", icon:"./assets/cards/scout.svg", accent:"#4b718b", frameStyle:"oracle", flavorText:"潮声掩住了情报的脚步。" }),
+  transfer: card({ definitionId:"transfer", name:"转移", category:"tactic", categoryName:"战术牌", targetType:"multiStage", subtypes:["control","hidden-selection"], description:"选择一名有手牌的来源、一名不同的接收者，再转移1张指定手牌。", count:4, aiValue:5, ignoresDistance:true, selectionFlow:["source","receiver","hiddenCard:1"], art:"./assets/cards/transfer.svg", icon:"./assets/cards/transfer.svg", accent:"#3f6099", frameStyle:"current", flavorText:"物随势转，去处不由旧主。" }),
+  exposeWeakness: card({ definitionId:"exposeWeakness", name:"破势", category:"tactic", categoryName:"战术牌", targetType:"self", subtypes:["status","attack-buff"], description:"获得1层破势；下次主动突袭伤害增加全部层数并消耗。", count:4, aiValue:6, art:"./assets/cards/expose-weakness.svg", icon:"./assets/cards/expose-weakness.svg", accent:"#8d332f", frameStyle:"fracture", flavorText:"先断其势，再断其锋。" }),
+  shockwave: card({ definitionId:"shockwave", name:"震荡", category:"tactic", categoryName:"战术牌", targetType:"allEnemies", subtypes:["attack","assault","area"], description:"按座位顺序分别对所有敌人进行1次突袭；无视距离和突袭次数。", count:2, aiValue:8, ignoresDistance:true, art:"./assets/cards/shockwave.svg", icon:"./assets/cards/shockwave.svg", accent:"#c35a35", frameStyle:"impact", flavorText:"大地替怒火发声。" }),
+  provoke: card({ definitionId:"provoke", name:"挑衅", category:"tactic", categoryName:"战术牌", targetType:"allEnemies", subtypes:["coercion","hp-loss"], description:"每名敌人弃置1张突袭，否则失去1点生命。", count:4, aiValue:7, ignoresDistance:true, art:"./assets/cards/provoke.svg", icon:"./assets/cards/provoke.svg", accent:"#a44935", frameStyle:"impact", flavorText:"怒意一旦应声，代价便已写下。" }),
+  plunder: card({ definitionId:"plunder", name:"掠夺", category:"tactic", categoryName:"战术牌", targetType:"otherWithCards", subtypes:["control","hidden-selection"], description:"获得一名其他角色的1张指定手牌；牌名不公开。", count:2, aiValue:7, ignoresDistance:true, selectionFlow:["target","hiddenCard:1"], art:"./assets/cards/plunder.svg", icon:"./assets/cards/plunder.svg", accent:"#714985", frameStyle:"chain", flavorText:"秘密总有第二位主人。" }),
+  destroy: card({ definitionId:"destroy", name:"破坏", category:"tactic", categoryName:"战术牌", targetType:"otherWithCards", subtypes:["control","hidden-selection"], description:"弃置一名其他角色的1张指定手牌，并公开其牌名。", count:4, aiValue:6, ignoresDistance:true, selectionFlow:["target","hiddenCard:1"], art:"./assets/cards/destroy.svg", icon:"./assets/cards/destroy.svg", accent:"#7a3f36", frameStyle:"fracture", flavorText:"断裂之声让秘密无处藏身。" }),
+  counter: card({ definitionId:"counter", name:"反制", category:"tactic", categoryName:"战术牌", usageMode:"response", responseTypes:["counter"], targetType:"responseOnly", subtypes:["response","counter"], description:"响应其他角色的主动战术牌，取消其效果；不能反制反制。", count:4, aiValue:8, counterable:false, art:"./assets/cards/counter.svg", icon:"./assets/cards/counter.svg", accent:"#59406e", frameStyle:"seal", flavorText:"印成，则万法暂寂。" }),
+  harvest: card({ definitionId:"harvest", name:"收获", category:"tactic", categoryName:"战术牌", targetType:"none", subtypes:["draw"], description:"摸2张牌。", count:4, aiValue:7, art:"./assets/cards/harvest.svg", icon:"./assets/cards/harvest.svg", accent:"#71834b", frameStyle:"vital", flavorText:"耐心让每一粒星火结实。" }),
+  duel: card({ definitionId:"duel", name:"决斗", category:"tactic", categoryName:"战术牌", targetType:"singleEnemy", subtypes:["duel","attack-discard"], description:"目标先开始，双方轮流弃置突袭；首先不能或放弃者受到1点伤害。", count:4, aiValue:7, ignoresDistance:true, art:"./assets/cards/duel.svg", icon:"./assets/cards/duel.svg", accent:"#933d31", frameStyle:"strike", flavorText:"胜负只隔着下一次出刃。" }),
+  mutualBenefit: card({ definitionId:"mutualBenefit", name:"互利", category:"tactic", categoryName:"战术牌", targetType:"none", subtypes:["public-pool","draw"], description:"展示等同存活人数的牌，从你开始按座位顺序每人选择1张。", count:3, aiValue:7, ignoresDistance:true, selectionFlow:["publicPool"], art:"./assets/cards/mutual-benefit.svg", icon:"./assets/cards/mutual-benefit.svg", accent:"#5a8b7f", frameStyle:"ward", flavorText:"同桌之上，各取所需。" }),
+  symbiosis: card({ definitionId:"symbiosis", name:"共生", category:"tactic", categoryName:"战术牌", targetType:"allLiving", subtypes:["heal","global"], description:"按座位顺序令所有存活角色各恢复1点生命。", count:1, aiValue:8, ignoresDistance:true, art:"./assets/cards/symbiosis.svg", icon:"./assets/cards/symbiosis.svg", accent:"#45856b", frameStyle:"vital", flavorText:"万脉同息，枯处亦生。" }),
+
+  energyDevice: card({ definitionId:"energyDevice", name:"充能装置", category:"equipment", categoryName:"装备牌", targetType:"self", subtypes:["equipment","energy"], description:"回合开始获得能量时额外获得1点。", count:2, aiValue:7, counterable:false, art:"./assets/cards/energy-device.svg", icon:"./assets/cards/energy-device.svg", accent:"#b4872f", frameStyle:"machine", flavorText:"微光沿铜轨汇入核心。" }),
+  recycleDevice: card({ definitionId:"recycleDevice", name:"回收装置", category:"equipment", categoryName:"装备牌", targetType:"self", subtypes:["equipment","draw"], description:"自己回合首次主动使用战术牌后摸1张，即使该牌被反制。", count:2, aiValue:8, counterable:false, art:"./assets/cards/recycle-device.svg", icon:"./assets/cards/recycle-device.svg", accent:"#7d8260", frameStyle:"machine", flavorText:"废弃的余响仍可再次运转。" }),
+  defenseDevice: card({ definitionId:"defenseDevice", name:"防御装置", category:"equipment", categoryName:"装备牌", targetType:"self", subtypes:["equipment","judgment","defense"], description:"遭受普通或震荡突袭前判定：战术免疫；基础获得并继续；装备失去1生命并终止攻击。", count:2, aiValue:9, counterable:false, art:"./assets/cards/defense-device.svg", icon:"./assets/cards/defense-device.svg", accent:"#58788c", frameStyle:"machine", flavorText:"齿轮先一步听见危险。" }),
+  battleDevice: card({ definitionId:"battleDevice", name:"战斗装置", category:"equipment", categoryName:"装备牌", targetType:"self", subtypes:["equipment","attack"], description:"你的普通与震荡突袭需要目标同时弃置2张格挡才能防御。", count:2, aiValue:9, counterable:false, art:"./assets/cards/battle-device.svg", icon:"./assets/cards/battle-device.svg", accent:"#9a6139", frameStyle:"machine", flavorText:"双重压力让防线发出哀鸣。" })
+});
+
+export const CARD_COUNTS = Object.freeze(Object.fromEntries(Object.values(CARD_DEFINITIONS).map((definition) => [definition.definitionId, definition.count])));
+export const TOTAL_CARD_COUNT = Object.values(CARD_COUNTS).reduce((sum, count) => sum + count, 0);

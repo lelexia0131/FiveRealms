@@ -3,7 +3,6 @@
  * 它不根据角色、名字或座位推断阵营；battleTeam 是唯一判断来源。
  */
 import { GAME_CONFIG } from "../config/gameConfig.js";
-import { shuffled } from "../utils/helpers.js";
 
 export class TeamManager {
   /**
@@ -17,10 +16,11 @@ export class TeamManager {
     }
     const smallTeam = random() < 0.5 ? "dawn" : "dusk";
     const largeTeam = smallTeam === "dawn" ? "dusk" : "dawn";
-    return shuffled([
-      ...Array(GAME_CONFIG.smallTeamSize).fill(smallTeam),
-      ...Array(GAME_CONFIG.largeTeamSize).fill(largeTeam)
-    ], random);
+    // 两名小队成员固定隔座，再随机旋转与翻转；因此永不相邻且真人仍可能进入任一队。
+    let seats = [smallTeam, largeTeam, smallTeam, largeTeam, largeTeam];
+    if (random() < 0.5) seats = [...seats].reverse();
+    const rotation = Math.floor(random() * seats.length);
+    return seats.map((_, index) => seats[(index + rotation) % seats.length]);
   }
 
   /** 返回某阵营的总座位数，用于判断小队初始牌补偿。 */

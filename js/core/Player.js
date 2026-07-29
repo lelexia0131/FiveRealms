@@ -24,15 +24,17 @@ export class Player {
     this.shield = 0;
     this.energy = 0;
     this.maxEnergy = GAME_CONFIG.defaultMaxEnergy;
+    this.attackRange = GAME_CONFIG.defaultAttackRange;
     /** @type {Array<Object>} */ this.hand = [];
+    this.handVersion = 0;
     /** @type {Object|null} */ this.equipment = null;
     /** @type {Record<string, Object>} */ this.statuses = {};
     this.alive = true;
     this.turnFlags = {};
     this.roundFlags = {};
     this.gameFlags = {};
-    this.statistics = { damageDealt: 0, healingDone: 0, cardsPlayed: 0, damageTaken: 0 };
-    this.aiMemory = { revealedCardsByPlayer: {}, recentAggressors: {} };
+    this.statistics = { damageDealt: 0, healingDone: 0, cardsPlayed: 0, damageTaken: 0, assaultsUsed: 0 };
+    this.aiMemory = { revealedCardsByPlayer: {}, knownCardsByPlayer: {}, recentAggressors: {} };
   }
 
   /**
@@ -50,16 +52,16 @@ export class Player {
   }
 
   /** 重置每回合次数与技能标记；TurnManager 在回合开始调用。 */
-  resetTurnFlags() {
+  resetTurnFlags(teamRules = null) {
     this.turnFlags = {
       attackUsed: 0,
-      attackLimit: GAME_CONFIG.defaultAttackLimitPerTurn,
+      attackLimit: teamRules?.attackLimitPerTurn ?? GAME_CONFIG.largeTeamRules.attackLimitPerTurn,
       recoverUsed: 0,
-      recoverLimit: GAME_CONFIG.defaultRecoverLimitPerTurn,
+      recoverLimit: teamRules ? teamRules.recoverLimitPerTurn : GAME_CONFIG.largeTeamRules.recoverLimitPerTurn,
       categoriesUsed: new Set(),
       momentum: 0,
       activeSkillsUsed: new Set(),
-      coreDeviceTriggered: false,
+      recycleDeviceTriggered: false,
       coordinationTriggered: false,
       gambleTriggered: false,
       spyGapTriggered: false,
@@ -67,6 +69,8 @@ export class Player {
       assaultBonus: 0
     };
   }
+
+  bumpHandVersion() { this.handVersion += 1; return this.handVersion; }
 
   /** 重置每轮技能标记；新轮开始时调用。 */
   resetRoundFlags() {
