@@ -2,9 +2,9 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v19";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260730-tabletop-hands-v19";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260730-tabletop-hands-v19";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v20";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260730-tabletop-hands-v20";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260730-tabletop-hands-v20";
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }
@@ -43,7 +43,7 @@ export class AiEvaluator {
       const values = {
         breakArmy: actor.hand?.filter((card) => card.definitionId === "assault").length ? 8 : 2,
         barrier: 4 + (target?.hp <= 2 ? 4 : 0),
-        symbiosis: missing * 4 - (actor.hp <= 2 ? 5 : 1),
+        symbiosis: missing * 4,
         stealSkill: 5 + Math.min(4, target?.handCount ?? 0),
         burningField: enemies.reduce((sum, enemy) => sum + 2 + (enemy.hp <= 1 ? 8 : 0), 0),
         hunt: 7 + (target?.hp <= 2 ? 7 : 0),
@@ -71,6 +71,7 @@ export class AiEvaluator {
     }
     if (card.definitionId === "recover") value += (actor.maxHp - actor.hp) * 4;
     if (card.definitionId === "charge") value += (actor.maxEnergy - actor.energy) * 1.5 + (actor.activeSkillId && !actor.activeSkillUsed && actor.energy + 1 >= actor.activeSkillCost ? 4 : 0);
+    if (card.definitionId === "shield" && target) value += (target.hp <= 1 ? 6 : target.hp <= 2 ? 3 : 0) + Math.max(0, 2 - (target.shield ?? 0));
     if (card.definitionId === "exposeWeakness") value += (actor.hand ?? []).filter((entry) => entry.definitionId === "assault").length * 2;
     if (card.definitionId === "shockwave") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam && enemy.hp <= 1).length * 7;
     if (card.definitionId === "provoke") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam).reduce((sum, enemy) => sum + (1 - (enemy.assaultResponseProbability ?? 0)) * 3, 0);

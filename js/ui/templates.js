@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v19";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v20";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -68,7 +68,8 @@ export function skillDetailsTemplate(player) {
   const general = player?.general ?? {};
   const activeId = general.activeSkillIds?.[0] ?? null;
   const activeCost = activeId === "allIn" ? "至少1点；发动时消耗全部能量" : `${general.activeCost ?? 0}点能量`;
-  const active = general.activeName ? `<section class="skill-detail-section is-active"><div class="skill-detail-heading"><span>主动技能</span><strong>${escapeHtml(general.activeName)}</strong></div><p>${escapeHtml(general.activeDescription)}</p><dl><div><dt>能量消耗</dt><dd>${escapeHtml(activeCost)}</dd></div><div><dt>次数限制</dt><dd>每回合限发动1次</dd></div></dl></section>` : '<section class="skill-detail-empty">无主动技能</section>';
+  const activeLimit = `每回合限发动${general.activeLimitPerTurn ?? 1}次`;
+  const active = general.activeName ? `<section class="skill-detail-section is-active"><div class="skill-detail-heading"><span>主动技能</span><strong>${escapeHtml(general.activeName)}</strong></div><p>${escapeHtml(general.activeDescription)}</p><dl><div><dt>能量消耗</dt><dd>${escapeHtml(activeCost)}</dd></div><div><dt>次数限制</dt><dd>${escapeHtml(activeLimit)}</dd></div></dl></section>` : '<section class="skill-detail-empty">无主动技能</section>';
   const passive = general.passiveName ? `<section class="skill-detail-section is-passive"><div class="skill-detail-heading"><span>被动技能</span><strong>${escapeHtml(general.passiveName)}</strong></div><p>${escapeHtml(general.passiveDescription)}</p><dl><div><dt>发动条件</dt><dd>${escapeHtml(general.passiveTriggerText ?? "满足技能公开条件")}</dd></div><div><dt>触发限制</dt><dd>${escapeHtml(general.passiveLimitText ?? "依技能配置触发")}</dd></div></dl></section>` : '<section class="skill-detail-empty">无被动技能</section>';
   return `<div class="skill-dialog-card" role="document"><button type="button" class="skill-dialog-close" data-skill-dialog-close aria-label="关闭技能详情">×</button><header><img src="${escapeHtml(general.portrait)}" alt="${escapeHtml(player.name)}肖像"><div><small>${escapeHtml(player.loreFaction)}</small><h2 id="skill-details-title">${escapeHtml(player.name)} · 技能详情</h2><span>${escapeHtml(TEAM_CONFIG[player.battleTeam]?.name ?? "")}</span></div></header><div class="skill-dialog-scroll">${active}${passive}</div></div>`;
 }

@@ -2,8 +2,8 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-tabletop-hands-v19";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260730-tabletop-hands-v19";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-tabletop-hands-v20";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260730-tabletop-hands-v20";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -37,6 +37,7 @@ export class AiSimulator {
         actor.expectedRecoverCount = Math.max(0, (actor.expectedRecoverCount ?? 0) - 1);
         break;
       case "charge": actor.energy = Math.min(actor.maxEnergy, actor.energy + 1); break;
+      case "shield": if (target?.alive && target.battleTeam === actor.battleTeam) target.shield = (target.shield ?? 0) + 1; break;
       case "harvest": actor.handCount += 2 * scale; break;
       case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + scale; break;
       case "assault":
@@ -113,8 +114,11 @@ export class AiSimulator {
   applySkill(state, actor, action) {
     const skill = action.skill;
     const target = state.players.find((player) => player.id === action.targets?.[0]?.id);
-    if (!skill || actor.activeSkillUsed) return;
-    actor.activeSkillUsed = true;
+    const skillUses = actor.activeSkillUses ?? (actor.activeSkillUsed ? 1 : 0);
+    const skillLimit = actor.activeSkillLimit ?? skill.limitPerTurn ?? 1;
+    if (!skill || skillUses >= skillLimit) return;
+    actor.activeSkillUses = skillUses + 1;
+    actor.activeSkillUsed = actor.activeSkillUses >= skillLimit;
     if (skill.id === "allIn") {
       const energy = actor.energy;
       actor.energy = 0;
@@ -128,8 +132,7 @@ export class AiSimulator {
       target.shield = Math.max(0, target.shield - (target.temporaryShieldAmount ?? 0)) + 1;
       target.temporaryShieldAmount = 1;
     } else if (skill.id === "symbiosis" && target) {
-      this.applyHpLoss(state, actor, 1);
-      if (actor.alive) this.heal(target, 2);
+      this.heal(target, 1);
     } else if (skill.id === "stealSkill" && target) {
       target.handCount = Math.max(0, target.handCount - 1);
       actor.handCount += 1;
@@ -137,6 +140,7 @@ export class AiSimulator {
       for (const enemy of state.players) if (enemy.alive && enemy.battleTeam !== actor.battleTeam) this.applyDamage(state, actor, enemy, 1, { canBlock:false });
     } else if (skill.id === "hunt" && target) {
       target.huntMarkSourceId = null;
+      actor.handCount += target.blockProbability ?? 0;
       this.applyDamage(state, actor, target, 2, { canBlock:true });
     } else if (skill.id === "resonance" && target) target.handCount += 2;
   }

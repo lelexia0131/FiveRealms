@@ -1,5 +1,5 @@
 /**
- * 二十种公开卡牌数据。art/icon 等字段只用于展示；规则只读取显式规则字段。
+ * 二十一种公开卡牌数据。art/icon 等字段只用于展示；规则只读取显式规则字段。
  * 三类牌为 basic / tactic / equipment，响应时机由 usageMode 与 responseTypes 描述。
  */
 const card = (definition) => Object.freeze({
@@ -12,6 +12,7 @@ export const CARD_DEFINITIONS = Object.freeze({
   recover: card({ definitionId:"recover", name:"调息", category:"basic", categoryName:"基础牌", usageMode:"both", responseTypes:["dyingRescue"], targetType:"self", subtypes:["heal","rescue"], description:"出牌阶段令自己恢复1点生命；濒死时可救援自己或队友。", count:10, aiValue:6, art:"./assets/cards/recover.svg", icon:"./assets/cards/recover.svg", accent:"#4f8468", frameStyle:"vital", flavorText:"一息尚存，灵脉不绝。" }),
   block: card({ definitionId:"block", name:"格挡", category:"basic", categoryName:"基础牌", usageMode:"response", responseTypes:["block"], targetType:"responseOnly", subtypes:["defense","response"], description:"响应突袭；弃置要求数量的格挡，令该次攻击无效。", count:25, aiValue:6, art:"./assets/cards/block.svg", icon:"./assets/cards/block.svg", accent:"#54728a", frameStyle:"guard", flavorText:"山岳不语，自有回响。" }),
   charge: card({ definitionId:"charge", name:"聚能", category:"basic", categoryName:"基础牌", targetType:"self", subtypes:["energy"], description:"获得1点能量，不能超过上限。", count:10, aiValue:4, art:"./assets/cards/charge.svg", icon:"./assets/cards/charge.svg", accent:"#b4872f", frameStyle:"core", flavorText:"星火归心，静待雷鸣。" }),
+  shield: card({ definitionId:"shield", name:"护盾", category:"basic", categoryName:"基础牌", targetType:"singleAlly", subtypes:["defense","shield","support"], description:"令自己或一名存活队友获得1点护盾；护盾可叠加且不会在回合开始时归零。", count:10, aiValue:5, counterable:false, art:"./assets/cards/shield.svg", icon:"./assets/cards/shield.svg", accent:"#477b91", frameStyle:"ward", flavorText:"灵光层叠，终成不破之垒。" }),
 
   scout: card({ definitionId:"scout", name:"窥探", category:"tactic", categoryName:"战术牌", targetType:"otherWithCards", subtypes:["information","hidden-selection"], description:"查看一名其他角色至多2张指定手牌；信息只对你公开。", count:4, aiValue:5, ignoresDistance:true, selectionFlow:["target","hiddenCards:upTo2"], art:"./assets/cards/scout.svg", icon:"./assets/cards/scout.svg", accent:"#4b718b", frameStyle:"oracle", flavorText:"潮声掩住了情报的脚步。" }),
   transfer: card({ definitionId:"transfer", name:"转移", category:"tactic", categoryName:"战术牌", targetType:"multiStage", subtypes:["control","hidden-selection"], description:"选择一名有手牌的来源、一名不同的接收者，再转移1张指定手牌。", count:4, aiValue:5, ignoresDistance:true, selectionFlow:["source","receiver","hiddenCard:1"], art:"./assets/cards/transfer.svg", icon:"./assets/cards/transfer.svg", accent:"#3f6099", frameStyle:"current", flavorText:"物随势转，去处不由旧主。" }),

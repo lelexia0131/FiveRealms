@@ -1,4 +1,4 @@
-/** 二十种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
+/** 二十一种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
 
 const byId = (game, id) => game.state.players.find((player) => player.id === id && player.alive) ?? null;
 
@@ -20,6 +20,14 @@ const CARD_EFFECTS = {
   },
 
   async charge(game, source, card) { await game.gainEnergy(source, 1, { card, reason:"聚能" }); },
+
+  async shield(game, source, card, targets) {
+    const target = targets[0];
+    if (!target?.alive || target.battleTeam !== source.battleTeam) return;
+    target.shield += 1;
+    game.ui.queueFeedback?.("shield", target.id, 1);
+    game.log(`${source.name}使用「${card.name}」令${target.name}获得1点护盾，现有${target.shield}点。`, "heal");
+  },
 
   async scout(game, source, card, targets, context) {
     const target = targets[0];

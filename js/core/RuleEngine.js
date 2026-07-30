@@ -1,4 +1,4 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260730-tabletop-hands-v19";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260730-tabletop-hands-v20";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
@@ -10,6 +10,7 @@ export class RuleEngine {
       case "singleEnemy": return enemies;
       case "otherWithCards": return alive.filter((player) => player.id !== source.id && player.hand.length > 0);
       case "anyWithCards": return alive.filter((player) => player.hand.length > 0);
+      case "singleAlly": return alive.filter((player) => player.battleTeam === source.battleTeam);
       case "self": return [source];
       case "allEnemies": return enemies;
       case "allLiving": return alive;
@@ -35,6 +36,7 @@ export class RuleEngine {
     }
     if (card.definitionId === "charge" && source.energy >= source.maxEnergy) return { ok:false, reason:"能量已经充满" };
     if (["otherWithCards"].includes(card.targetType) && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有可选择手牌的其他角色" };
+    if (card.targetType === "singleAlly" && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有可选择的存活队友" };
     if (["singleEnemy","singleEnemyInRange","allEnemies"].includes(card.targetType) && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有合法敌方目标" };
     if (card.definitionId === "transfer") {
       const sources = game.state.players.filter((player) => player.alive && player.hand.length > 0);

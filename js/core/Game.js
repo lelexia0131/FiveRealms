@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v19";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-tabletop-hands-v19";
-import { createId, clamp } from "../utils/helpers.js?build=20260730-tabletop-hands-v19";
-import { EventBus } from "./EventBus.js?build=20260730-tabletop-hands-v19";
-import { Player } from "./Player.js?build=20260730-tabletop-hands-v19";
-import { Deck } from "./Deck.js?build=20260730-tabletop-hands-v19";
-import { TeamManager } from "./TeamManager.js?build=20260730-tabletop-hands-v19";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260730-tabletop-hands-v19";
-import { RuleEngine } from "./RuleEngine.js?build=20260730-tabletop-hands-v19";
-import { ResponseSystem } from "./ResponseSystem.js?build=20260730-tabletop-hands-v19";
-import { GameLogger } from "./GameLogger.js?build=20260730-tabletop-hands-v19";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260730-tabletop-hands-v19";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260730-tabletop-hands-v19";
-import { AIController } from "../ai/AIController.js?build=20260730-tabletop-hands-v19";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260730-tabletop-hands-v19";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260730-tabletop-hands-v19";
-import { Debug } from "../utils/debug.js?build=20260730-tabletop-hands-v19";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260730-tabletop-hands-v19";
-import { DyingSystem } from "./DyingSystem.js?build=20260730-tabletop-hands-v19";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260730-tabletop-hands-v19";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260730-tabletop-hands-v19";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260730-tabletop-hands-v19";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260730-tabletop-hands-v19";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v20";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-tabletop-hands-v20";
+import { createId, clamp } from "../utils/helpers.js?build=20260730-tabletop-hands-v20";
+import { EventBus } from "./EventBus.js?build=20260730-tabletop-hands-v20";
+import { Player } from "./Player.js?build=20260730-tabletop-hands-v20";
+import { Deck } from "./Deck.js?build=20260730-tabletop-hands-v20";
+import { TeamManager } from "./TeamManager.js?build=20260730-tabletop-hands-v20";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260730-tabletop-hands-v20";
+import { RuleEngine } from "./RuleEngine.js?build=20260730-tabletop-hands-v20";
+import { ResponseSystem } from "./ResponseSystem.js?build=20260730-tabletop-hands-v20";
+import { GameLogger } from "./GameLogger.js?build=20260730-tabletop-hands-v20";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260730-tabletop-hands-v20";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260730-tabletop-hands-v20";
+import { AIController } from "../ai/AIController.js?build=20260730-tabletop-hands-v20";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260730-tabletop-hands-v20";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260730-tabletop-hands-v20";
+import { Debug } from "../utils/debug.js?build=20260730-tabletop-hands-v20";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260730-tabletop-hands-v20";
+import { DyingSystem } from "./DyingSystem.js?build=20260730-tabletop-hands-v20";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260730-tabletop-hands-v20";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260730-tabletop-hands-v20";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260730-tabletop-hands-v20";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260730-tabletop-hands-v20";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -394,6 +394,7 @@ export class Game {
     if (!["none", "allEnemies"].includes(skill.targetType) && (!targets[0] || !legalTargets.includes(targets[0]))) return false;
     this.actionLocked = true;
     source.turnFlags.activeSkillsUsed.add(skill.id);
+    source.turnFlags.activeSkillUseCounts[skill.id] = (source.turnFlags.activeSkillUseCounts[skill.id] ?? 0) + 1;
     try {
       const targetLabel = actionTargetLabel(this, source, skill, targets);
       this.ui.setCurrentCard(skill.name, `${source.name} · 技能`, targetLabel);
@@ -516,6 +517,7 @@ export class Game {
     }
     const blocked = await this.responseSystem.askForBlock(source, target, event);
     if (blocked) {
+      context.blockedByCard = true;
       this.log(`${target.name}格挡了此次攻击。`, "important");
       await this.eventBus.emit("afterDamage", { ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"block" });
       this.ui.render(this);
