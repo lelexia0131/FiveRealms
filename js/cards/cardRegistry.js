@@ -26,8 +26,8 @@ const CARD_EFFECTS = {
     if (!target?.hand.length) return;
     const chosen = await game.chooseHiddenCards(source, target, Math.min(2, target.hand.length), "选择至多2张手牌进行窥探", context.selection);
     if (!chosen.length) return;
+    for (const seen of chosen) game.rememberPrivateCard(source, target, seen);
     if (source.controllerType === "human") await game.ui.showPrivateReveal?.(`${target.name}的手牌情报`, chosen);
-    else for (const seen of chosen) game.rememberPrivateCard(source, target, seen);
     game.log(`${source.name}窥探了${target.name}的${chosen.length}张手牌。`);
   },
 

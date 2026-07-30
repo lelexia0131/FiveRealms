@@ -1,19 +1,20 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260730-character-v6";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260730-character-v6";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260730-character-v6";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260730-response-hands-v7";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260730-response-hands-v7";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260730-response-hands-v7";
 import {
   candidateCardTemplate, escapeHtml, formatLogMessage, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, thinkingTemplate
-} from "./templates.js?build=20260730-character-v6";
-import { AnimationController } from "./animationController.js?build=20260730-character-v6";
-import { InteractionController } from "./InteractionController.js?build=20260730-character-v6";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260730-character-v6";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260730-character-v6";
-import { JudgmentView } from "./JudgmentView.js?build=20260730-character-v6";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-character-v6";
+} from "./templates.js?build=20260730-response-hands-v7";
+import { AnimationController } from "./animationController.js?build=20260730-response-hands-v7";
+import { InteractionController } from "./InteractionController.js?build=20260730-response-hands-v7";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260730-response-hands-v7";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260730-response-hands-v7";
+import { JudgmentView } from "./JudgmentView.js?build=20260730-response-hands-v7";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-response-hands-v7";
+import { createOpponentHandView } from "./handVisibility.js?build=20260730-response-hands-v7";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -63,6 +64,12 @@ export class UIManager {
       if (button) this.callbacks.onSelectGeneral?.(button.dataset.generalId);
     });
     this.elements.human_hand.addEventListener("click", (event) => this.handleHandClick(event));
+    this.elements.cpu_grid.addEventListener("wheel", (event) => {
+      const strip = event.target.closest(".opponent-hand-strip");
+      if (!strip || strip.scrollWidth <= strip.clientWidth || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      strip.scrollLeft += event.deltaY;
+      event.preventDefault();
+    }, { passive:false });
     for (const zone of [this.elements.cpu_grid, this.elements.human_panel]) {
       zone.addEventListener("click", (event) => this.handlePlayerClick(event));
       zone.addEventListener("keydown", (event) => {
@@ -129,7 +136,8 @@ export class UIManager {
       ...targetOptions, isCurrent: game.currentPlayer?.id === player.id,
       isLegalTarget: Boolean(this.targetState?.legalIds.has(player.id)), isThinking: this.thinkingPlayerId === player.id,
       distanceInfo: DistanceSystem.describe(game, human, player),
-      distanceState: this.getDistanceState(human, player)
+      distanceState: this.getDistanceState(human, player),
+      opponentHandSlots: createOpponentHandView(human, player)
     })).join("");
     this.elements.human_panel.innerHTML = playerPanelTemplate(human, {
       ...targetOptions, isHuman: true, isCurrent: game.currentPlayer?.id === human.id,
@@ -144,7 +152,8 @@ export class UIManager {
     return playerPanelTemplate(player, {
       humanTeam: human.battleTeam, isHuman, isCurrent: this.game?.currentPlayer?.id === player.id,
       isLegalTarget: Boolean(this.targetState?.legalIds.has(player.id)), isTargeting: Boolean(this.targetState),
-      isThinking: this.thinkingPlayerId === player.id
+      isThinking: this.thinkingPlayerId === player.id,
+      opponentHandSlots: isHuman ? null : createOpponentHandView(human, player)
     });
   }
 
@@ -268,10 +277,11 @@ export class UIManager {
       const interval = window.setInterval(update, 200);
       this.responseState = { request, resolve: settle, interval };
       const canUse = canSubmitResponse(request);
-      const responseHint = request.type === "block" && !canUse
-        ? `需要 ${request.requiredCount} 张格挡，当前不足；你仍可查看并放弃响应。`
-        : "现在可以改变即将发生的结算。";
-      this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${Math.ceil(request.timeoutMs / 1000)}s</span></div><p>${escapeHtml(responseHint)}</p><div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(label)}</button><button class="ghost-button" data-response-choice="decline">放弃响应</button></div>`;
+      const presentation = request.presentation ?? {};
+      const eventText = presentation.eventText ?? "当前有一项行动等待你的响应。";
+      const responseText = presentation.responseText ?? "你可以改变即将发生的结算。";
+      const availabilityText = presentation.availabilityText ?? "";
+      this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${Math.ceil(request.timeoutMs / 1000)}s</span></div><div class="response-copy"><p class="response-event">${escapeHtml(eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div><div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">放弃响应</button></div>`;
       this.elements.response_panel.classList.remove("is-hidden");
       this.game.cleanupManager.delay(request.timeoutMs).then((completed) => { if (completed) settle(false); });
       update();

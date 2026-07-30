@@ -1,4 +1,4 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260730-character-v6";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260730-response-hands-v7";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

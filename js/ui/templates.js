@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-character-v6";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-response-hands-v7";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -46,8 +46,16 @@ function lifeCells(player) {
   return Array.from({ length: player.maxHp }, (_, index) => `<span class="life-cell ${index < player.hp ? "is-full" : "is-empty"}" aria-hidden="true"></span>`).join("");
 }
 
+export function opponentHandStripTemplate(slots = []) {
+  const cards = slots.map((slot, index) => slot.known
+    ? `<span class="opponent-card-slot is-known" tabindex="0" title="${escapeHtml(`${slot.categoryName}：${slot.description}`)}" aria-label="已知手牌：${escapeHtml(slot.name)}，${escapeHtml(slot.categoryName)}，${escapeHtml(slot.description)}"><img src="${escapeHtml(slot.art)}" alt="" aria-hidden="true"><strong>${escapeHtml(slot.name)}</strong></span>`
+    : `<span class="opponent-card-slot is-unknown" aria-label="未知手牌，第${index + 1}张"><i aria-hidden="true">?</i><small aria-hidden="true">牌</small></span>`
+  ).join("");
+  return `<div class="opponent-hand-region"><small>手牌区域 · ${slots.length}张</small><div class="opponent-hand-strip" role="list" aria-label="该角色的${slots.length}张手牌">${cards || '<span class="opponent-hand-empty">无手牌</span>'}</div></div>`;
+}
+
 export function playerPanelTemplate(player, options = {}) {
-  const { humanTeam = player.battleTeam, isHuman = false, isCurrent = false, isLegalTarget = false, isTargeting = false, isThinking = false, distanceInfo = null, distanceState = null } = options;
+  const { humanTeam = player.battleTeam, isHuman = false, isCurrent = false, isLegalTarget = false, isTargeting = false, isThinking = false, distanceInfo = null, distanceState = null, opponentHandSlots = null } = options;
   const relationship = isHuman ? "is-self" : player.battleTeam === humanTeam ? "is-ally" : "is-enemy";
   const statuses = [
     player.statuses?.exposeWeakness ? [`破势 ${player.statuses.exposeWeakness.stacks}`, "danger"] : null,
@@ -69,6 +77,7 @@ export function playerPanelTemplate(player, options = {}) {
         <div class="life-readout"><span class="life-label">生命</span><div class="life-cells">${lifeCells(player)}</div><strong>${player.hp}<small>/${player.maxHp}</small></strong></div>
         <div class="resource-pills"><span class="resource-pill energy"><small>能量</small><strong>${player.energy}/${player.maxEnergy}</strong></span><span class="resource-pill shield"><small>护盾</small><strong>${player.shield}</strong></span><span class="resource-pill hand-count"><small>手牌</small><strong>${player.hand.length}</strong></span></div>
       </div>
+      ${!isHuman ? opponentHandStripTemplate(opponentHandSlots ?? Array.from({ length:player.hand.length }, (_, index) => ({ known:false, slot:index + 1 }))) : ""}
       ${statuses.length ? `<div class="status-row">${statuses.map(([label, kind]) => `<span class="status-chip is-${kind}">${label}</span>`).join("")}</div>` : ""}
       ${distanceInfo ? `<div class="range-readout"><span>座位 ${distanceInfo.seat}</span><strong>${escapeHtml(distanceState ?? `距离 ${distanceInfo.distance}`)}</strong><small>${player.alive ? `射程 ${distanceInfo.range}` : "已离开距离环"}</small></div>` : ""}
       ${equipmentSlotTemplate(player, isHuman)}

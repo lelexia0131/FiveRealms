@@ -2,7 +2,7 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml } from "./templates.js?build=20260730-character-v6";
+import { escapeHtml } from "./templates.js?build=20260730-response-hands-v7";
 
 export function hiddenSelectionMarkup(selection) {
   return selection.tokens.map((entry) => `<button type="button" class="hidden-card-back" data-hidden-token="${escapeHtml(entry.token)}" aria-pressed="false"><i aria-hidden="true"></i><span>牌背 ${entry.position}</span></button>`).join("");

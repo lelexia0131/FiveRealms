@@ -1,8 +1,71 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-character-v6";
-import { createId } from "../utils/helpers.js?build=20260730-character-v6";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260730-character-v6";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-response-hands-v7";
+import { createId } from "../utils/helpers.js?build=20260730-response-hands-v7";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260730-response-hands-v7";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
+
+const responsePlayerName = (responder, player) => player?.id === responder?.id ? "你" : (player?.name ?? "未知角色");
+
+function responseTargetName(responder, context = {}) {
+  if (context.targetLabel) return context.targetLabel;
+  const targets = (context.targets ?? []).filter(Boolean);
+  if (targets.length) return targets.map((target) => responsePlayerName(responder, target)).join("、");
+  return context.target ? responsePlayerName(responder, context.target) : "战场";
+}
+
+/** 只包含公开名称与数量的响应展示数据；UI 不接收任何隐藏牌内容。 */
+export function buildResponsePresentation(responder, type, context = {}, requiredCount = 1, availableCount = 0, fallbackLabel = "响应") {
+  const sourceName = responsePlayerName(responder, context.source);
+  const targetName = responseTargetName(responder, context);
+  const actionName = context.card?.name ?? context.skillName ?? context.actionName ?? "当前行动";
+  let eventText = `${sourceName}对${targetName}使用了「${actionName}」。`;
+  let responseText = `你可以进行${fallbackLabel}。`;
+  let responseCardName = fallbackLabel;
+  let buttonLabel = fallbackLabel;
+
+  if (type === "block") {
+    responseCardName = "格挡";
+    buttonLabel = requiredCount > 1 ? `使用${requiredCount}张格挡` : "格挡";
+    responseText = `你需要打出 ${requiredCount} 张格挡。`;
+  } else if (type === "counter") {
+    responseCardName = "反制";
+    buttonLabel = "反制";
+    if (context.card?.definitionId === "counter" && context.counteredCardName) {
+      eventText = `${sourceName}对${targetName}打出的「${context.counteredCardName}」使用了「反制」。`;
+      responseText = "你可以继续使用「反制」。";
+    } else {
+      responseText = "你可以使用「反制」。";
+    }
+  } else if (type === "assaultDiscard") {
+    responseCardName = "突袭";
+    buttonLabel = "打出突袭";
+    if (context.card?.definitionId === "duel") {
+      eventText = `${sourceName}向${targetName}发起了「决斗」。`;
+      responseText = "现在轮到你打出 1 张突袭。";
+    } else {
+      responseText = "你需要打出 1 张突袭。";
+    }
+  } else if (type === "dyingRescue") {
+    responseCardName = "调息";
+    buttonLabel = "使用调息";
+    eventText = `${responsePlayerName(responder, context.target)}已进入濒死状态。`;
+    responseText = "现在轮到你使用「调息」进行救援。";
+  } else if (type === "skill") {
+    responseCardName = context.skillName ?? fallbackLabel;
+    buttonLabel = fallbackLabel;
+    responseText = `你可以${fallbackLabel}。`;
+  }
+
+  let availabilityText = "";
+  if (requiredCount > 0) {
+    if (responseCardName === "反制" && availableCount === 0) availabilityText = "你当前没有反制，但仍可查看并放弃响应。";
+    else {
+      availabilityText = `需要 ${requiredCount} 张${responseCardName}，当前 ${availableCount} 张`;
+      availabilityText += availableCount < requiredCount ? "；当前数量不足，你仍可查看并放弃响应。" : "。";
+    }
+  }
+  return Object.freeze({ eventText, responseText, availabilityText, responseCardName, buttonLabel, requiredCount, availableCount });
+}
 
 /** 卡牌响应、强制弃置和濒死救援的可清理异步入口。 */
 export class ResponseSystem {
@@ -24,16 +87,16 @@ export class ResponseSystem {
     const definitionId = RESPONSE_DEFINITION[type];
     const cards = responder.hand.filter((card) => card.definitionId === definitionId).slice(0, requiredCount);
     if (!responder.alive || this.game.state.isGameOver) return [];
-    // 真人遭受可格挡攻击时始终看到响应窗口；牌数不足只会禁用确认按钮。
-    // AI 没有合法响应牌时仍直接跳过，避免产生没有决策意义的等待。
-    const shouldShowUnavailableBlock = type === "block" && responder.controllerType === "human";
-    if (cards.length < requiredCount && !shouldShowUnavailableBlock) return [];
+    // 规则轮到真人响应时始终显示窗口；AI 没牌仍立即跳过。
+    if (cards.length < requiredCount && responder.controllerType !== "human") return [];
+    const fallbackLabel = type === "block" ? (requiredCount === 2 ? "使用2张格挡" : "格挡") : "反制";
     const request = { id:createId("response"), type, sourcePlayerId:context.source?.id ?? null, targetPlayerId:responder.id,
       cardId:context.card?.id ?? null, legalCardIds:cards.map((card) => card.id), requiredCount,
-      legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true };
+      legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true,
+      presentation:buildResponsePresentation(responder, type, context, requiredCount, cards.length, fallbackLabel) };
     this.activeRequestIds.add(request.id);
     this.game.state.pendingResponses.push(request);
-    const label = type === "block" ? (requiredCount === 2 ? "使用2张格挡" : "格挡") : "反制";
+    const label = request.presentation.buttonLabel;
     const use = await this.waitForDecision(responder, request, label, context, cards);
     const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) && responder.alive &&
       cards.length >= requiredCount && cards.every((card) => responder.hand.includes(card));
@@ -57,14 +120,17 @@ export class ResponseSystem {
     return cards.length === required;
   }
 
-  async askForCounter(source, card, targets) {
+  async askForCounter(source, card, targets, chainContext = {}) {
     if (card.category !== "tactic" || !card.counterable) return false;
     for (const responder of this.game.seatOrderFrom(source, false)) {
       if (!responder.alive || responder.id === source.id) continue;
-      const [counterCard] = await this.requestCardResponse(responder, "counter", { source, target:targets[0] ?? null, card }, 1);
+      const [counterCard] = await this.requestCardResponse(responder, "counter", {
+        source, target:targets[0] ?? null, targets, card,
+        counteredCardName:chainContext.targetCard?.name ?? null
+      }, 1);
       if (!counterCard) continue;
       // 反制牌已经从手牌移入弃牌堆，因此递归链必然受实体牌数量限制，不会无限循环。
-      const counterWasCountered = await this.askForCounter(responder, counterCard, [source]);
+      const counterWasCountered = await this.askForCounter(responder, counterCard, [source], { targetCard:card });
       if (counterWasCountered) {
         this.game.log(`${responder.name}的「反制」被后续反制抵消。`, "important");
         return false;
@@ -76,11 +142,14 @@ export class ResponseSystem {
 
   async requestDyingRescue(rescuer, target, card) {
     if (!rescuer?.alive || !target?.alive || target.hp > 0 || rescuer.battleTeam !== target.battleTeam ||
-      !rescuer.hand.includes(card) || card.definitionId !== "recover") return null;
+      this.game.state.isGameOver) return null;
+    const legalCard = card?.definitionId === "recover" && rescuer.hand.includes(card) ? card : null;
+    if (!legalCard && rescuer.controllerType !== "human") return null;
     const gameId = this.game.state.gameId;
     const request = { id:createId("dying-response"), type:"dyingRescue", sourcePlayerId:rescuer.id, targetPlayerId:target.id,
-      cardId:null, legalCardIds:[card.id], requiredCount:1, legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true,
-      need:1 - target.hp, currentHp:target.hp };
+      cardId:null, legalCardIds:legalCard ? [legalCard.id] : [], requiredCount:1, legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true,
+      need:1 - target.hp, currentHp:target.hp,
+      presentation:buildResponsePresentation(rescuer, "dyingRescue", { target }, 1, legalCard ? 1 : 0, "使用调息") };
     this.activeRequestIds.add(request.id);
     this.game.state.pendingResponses.push(request);
     let use;
@@ -105,26 +174,28 @@ export class ResponseSystem {
       // 强制队友规则在等待结束后固定使用调息，不进入 AI 效用评分。
       use = true;
     } else {
-      use = await this.waitForDecision(rescuer, request, `用调息救援${target.name}`, { target, source:rescuer, card }, [card]);
+      use = await this.waitForDecision(rescuer, request, request.presentation.buttonLabel, { target, source:rescuer, card:legalCard }, legalCard ? [legalCard] : []);
     }
     const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) &&
       rescuer.alive && target.alive && target.hp <= 0 &&
-      rescuer.battleTeam === target.battleTeam && rescuer.hand.includes(card);
+      rescuer.battleTeam === target.battleTeam && legalCard && rescuer.hand.includes(legalCard);
     this.finishRequest(request.id);
     if (!use || !valid) return null;
-    await this.game.discardCardFromHand(rescuer, card, `救援${target.name}`);
-    return card;
+    await this.game.discardCardFromHand(rescuer, legalCard, `救援${target.name}`);
+    return legalCard;
   }
 
   async requestAssaultDiscard(responder, reason, context = {}) {
+    const gameId = this.game.state.gameId;
     const card = responder.hand.find((entry) => entry.definitionId === "assault");
-    if (!card || !responder.alive) return null;
+    if (!responder.alive || this.game.state.isGameOver || (!card && responder.controllerType !== "human")) return null;
+    const presentation = buildResponsePresentation(responder, "assaultDiscard", context, 1, card ? 1 : 0, reason);
     const request = { id:createId("assault-discard"), type:"assaultDiscard", sourcePlayerId:context.source?.id ?? null,
-      targetPlayerId:responder.id, cardId:context.card?.id ?? null, legalCardIds:[card.id], requiredCount:1,
-      legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true };
+      targetPlayerId:responder.id, cardId:context.card?.id ?? null, legalCardIds:card ? [card.id] : [], requiredCount:1,
+      legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true, presentation };
     this.activeRequestIds.add(request.id); this.game.state.pendingResponses.push(request);
-    const use = await this.waitForDecision(responder, request, reason, context, [card]);
-    const valid = this.activeRequestIds.has(request.id) && responder.alive && responder.hand.includes(card);
+    const use = await this.waitForDecision(responder, request, presentation.buttonLabel, context, card ? [card] : []);
+    const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) && responder.alive && card && responder.hand.includes(card);
     this.finishRequest(request.id);
     if (!use || !valid) return null;
     await this.game.discardCardFromHand(responder, card, reason);
@@ -135,7 +206,8 @@ export class ResponseSystem {
     if (!responder.alive || this.game.state.isGameOver) return false;
     const request = { id:createId("skill-response"), type:"skill", sourcePlayerId:context.source?.id ?? null,
       targetPlayerId:responder.id, cardId:context.card?.id ?? null, legalCardIds:[], legalSkillIds:[skillId],
-      requiredCount:0, timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true };
+      requiredCount:0, timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true,
+      presentation:buildResponsePresentation(responder, "skill", { ...context, skillName:label }, 0, 0, label) };
     this.activeRequestIds.add(request.id); this.game.state.pendingResponses.push(request);
     const use = await this.waitForDecision(responder, request, label, context, []);
     const valid = this.activeRequestIds.has(request.id) && responder.alive;

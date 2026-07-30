@@ -78,23 +78,23 @@ export const GAME_CONFIG = Object.freeze({
   }),
 
   // 以下均为毫秒范围；调高只延长自然模式阅读时间，调低会让动作显得跳跃。
-  // 首次分析推荐 1800～4500ms，复杂局面可由 aiComplexThinkMaxMs 延长。
-  aiInitialThinkMinMs: 1800,
-  aiInitialThinkMaxMs: 3500,
-  // 连续动作间的重规划展示，推荐 800～2500ms。
-  aiBetweenActionMinMs: 1000,
-  aiBetweenActionMaxMs: 2200,
-  // 格挡、反制、救援等响应思考，推荐 800～2500ms。
-  aiResponseThinkMinMs: 1000,
-  aiResponseThinkMaxMs: 2200,
-  // 弃牌思考，推荐 600～2000ms。
-  aiDiscardThinkMinMs: 1000,
-  aiDiscardThinkMaxMs: 1800,
-  // 结束出牌前停顿，推荐 350～1200ms。
-  aiEndThinkMinMs: 500,
-  aiEndThinkMaxMs: 1000,
+  // 回合首次可见思考；与下方搜索计算预算分离，不改变 AI 决策强度。
+  aiInitialThinkMinMs: 3000,
+  aiInitialThinkMaxMs: 5500,
+  // 连续动作之间的可见重规划停顿。
+  aiBetweenActionMinMs: 1800,
+  aiBetweenActionMaxMs: 3500,
+  // 格挡、反制、救援等响应的可见考虑时间。
+  aiResponseThinkMinMs: 1800,
+  aiResponseThinkMaxMs: 3200,
+  // 弃牌前的可见思考时间。
+  aiDiscardThinkMinMs: 1600,
+  aiDiscardThinkMaxMs: 2800,
+  // 结束出牌前的短暂停顿。
+  aiEndThinkMinMs: 900,
+  aiEndThinkMaxMs: 1600,
   // 高复杂度自然模式最长展示；过高会让玩家误以为页面卡住。
-  aiComplexThinkMaxMs: 4500,
+  aiComplexThinkMaxMs: 7000,
   // 默认关闭快速动画；开启不应改变规则、随机源或合法动作。
   animationFastMode: false,
   // 快速模式时间倍率；推荐 0.03～0.25，越小越接近无等待。

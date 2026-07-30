@@ -65,8 +65,8 @@ export class DyingSystem {
       for (const rescuer of order) {
         if (target.hp >= 1 || !target.alive || this.game.state.isGameOver) break;
         const cards = rescuer.hand.filter((card) => card.definitionId === "recover");
-        if (!cards.length) continue;
-        const use = await this.game.responseSystem.requestDyingRescue(rescuer, target, cards[0]);
+        // 合法真人即使没有调息也应看到本次救援响应；AI 无牌会在响应系统立即跳过。
+        const use = await this.game.responseSystem.requestDyingRescue(rescuer, target, cards[0] ?? null);
         if (!this.game.isSessionValid(gameId)) return false;
         if (!use) continue;
         usedThisRound = true;

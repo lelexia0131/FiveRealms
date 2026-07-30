@@ -58,6 +58,18 @@
 .resource-pill strong { font-size: 15px; }
 .resource-pill.energy strong { color: var(--energy); }
 .resource-pill.shield strong { color: var(--shield); }
+.cpu-seat .seat-main { overflow-y: auto; padding-right: 2px; scrollbar-width: thin; }
+.opponent-hand-region { min-width: 0; display: grid; gap: 2px; }
+.opponent-hand-region > small { color: var(--text-muted); font-size: 12px; line-height: 1; }
+.opponent-hand-strip { min-width: 0; display: flex; gap: 4px; overflow-x: auto; overflow-y: hidden; padding: 2px 1px 4px; scroll-snap-type: x proximity; scrollbar-width: thin; touch-action: pan-x; overscroll-behavior-inline: contain; }
+.opponent-card-slot { position: relative; flex: 0 0 31px; height: 38px; display: grid; place-items: center; overflow: visible; border: 1px solid #a89472; border-radius: 5px; scroll-snap-align: start; }
+.opponent-card-slot.is-unknown { color: #f8edcf; background: linear-gradient(145deg, #5d4b70, #332d43); box-shadow: inset 0 0 0 2px rgba(229,205,148,.22); }
+.opponent-card-slot.is-unknown i { font: 800 17px/1 var(--serif); }
+.opponent-card-slot.is-unknown small { font-size: 9px; line-height: 1; }
+.opponent-card-slot.is-known { flex-basis: 48px; overflow: hidden; border-color: var(--gold); background: #eadfc8; }
+.opponent-card-slot.is-known img { width: 100%; height: 100%; object-fit: cover; opacity: .74; }
+.opponent-card-slot.is-known strong { position: absolute; inset: auto 2px 2px; overflow: hidden; padding: 1px 2px; color: #fff; border-radius: 3px; background: rgba(51,39,24,.78); font-size: 10px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.opponent-hand-empty { color: var(--text-muted); font-size: 12px; }
 .status-row { display: flex; flex-wrap: wrap; gap: 4px; min-height: 22px; }
 .status-chip { padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; background: rgba(255,255,255,.65); color: var(--text-secondary); font-size: 12px; }
 .status-chip.is-danger { color: var(--danger); border-color: #d8a099; background: #f5e1dc; }
