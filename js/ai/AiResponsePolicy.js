@@ -1,4 +1,4 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v14";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v15";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

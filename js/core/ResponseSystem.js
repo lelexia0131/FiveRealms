@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v14";
-import { createId } from "../utils/helpers.js?build=20260730-tabletop-hands-v14";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260730-tabletop-hands-v14";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v15";
+import { createId } from "../utils/helpers.js?build=20260730-tabletop-hands-v15";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260730-tabletop-hands-v15";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -10,7 +10,7 @@ function responseTargetName(responder, context = {}) {
   if (context.targetLabel) return context.targetLabel;
   const targets = (context.targets ?? []).filter(Boolean);
   if (targets.length) return targets.map((target) => responsePlayerName(responder, target)).join("、");
-  return context.target ? responsePlayerName(responder, context.target) : "战场";
+  return context.target ? responsePlayerName(responder, context.target) : "";
 }
 
 /** 只包含公开名称与数量的响应展示数据；UI 不接收任何隐藏牌内容。 */
@@ -18,7 +18,9 @@ export function buildResponsePresentation(responder, type, context = {}, require
   const sourceName = responsePlayerName(responder, context.source);
   const targetName = responseTargetName(responder, context);
   const actionName = context.card?.name ?? context.skillName ?? context.actionName ?? "当前行动";
-  let eventText = `${sourceName}对${targetName}使用了「${actionName}」。`;
+  let eventText = targetName
+    ? `${sourceName}对${targetName}使用了「${actionName}」。`
+    : `${sourceName}使用了「${actionName}」。`;
   let responseText = `你可以进行${fallbackLabel}。`;
   let responseCardName = fallbackLabel;
   let buttonLabel = fallbackLabel;
