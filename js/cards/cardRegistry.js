@@ -38,6 +38,7 @@ const CARD_EFFECTS = {
     if (!from || !from.hand.length) from = game.aiController.cardSelector.chooseTransferSource(source, game.state.players.filter((player) => player.alive && player.hand.length));
     if (!receiver || receiver.id === from?.id) receiver = game.aiController.cardSelector.chooseTransferReceiver(source, from, game.state.players.filter((player) => player.alive && player.id !== from?.id));
     if (!from || !receiver || from.id === receiver.id) return;
+    game.ui.setCurrentCard?.(card, source.name, `来源 ${from.name} → 接收 ${receiver.name}`);
     const [moved] = await game.chooseHiddenCards(source, from, 1, "选择要转移的手牌", selection);
     if (!moved) return;
     await game.moveCardBetweenHands(from, receiver, moved, "转移");
@@ -81,7 +82,7 @@ const CARD_EFFECTS = {
     const [destroyed] = await game.chooseHiddenCards(source, target, 1, "选择要破坏的手牌", context.selection);
     if (!destroyed) return;
     await game.discardCardFromHand(target, destroyed, `被${source.name}破坏`);
-    game.ui.setCurrentCard?.(destroyed, `${source.name}破坏的手牌`);
+    game.ui.setCurrentCard?.(destroyed, `${source.name}破坏的手牌`, target.name);
     game.log(`${source.name}破坏了${target.name}的「${destroyed.name}」。`, "important");
   },
 

@@ -289,12 +289,14 @@ export class UIManager {
     this.thinkingPlayerId = isThinking ? player?.id ?? null : null;
     this.thinkingMessage = message;
     this.elements.thinking_indicator.classList.toggle("is-hidden", !isThinking);
+    // 思考指示已经包含完整行动和目标，避免下方 action-prompt 重复显示同一信息。
+    this.elements.action_prompt.classList.toggle("is-hidden", isThinking);
     if (isThinking) this.elements.thinking_indicator.innerHTML = thinkingTemplate(player, message);
     if (this.game?.state.players[0]?.general) this.render(this.game);
   }
 
-  setCurrentCard(cardOrName, source) {
-    this.elements.current_card.innerHTML = resolvingCardTemplate(cardOrName, source);
+  setCurrentCard(cardOrName, source, targetLabel = "") {
+    this.elements.current_card.innerHTML = resolvingCardTemplate(cardOrName, source, targetLabel);
     this.elements.current_card.classList.remove("is-entering");
     void this.elements.current_card.offsetWidth;
     this.elements.current_card.classList.add("is-entering");

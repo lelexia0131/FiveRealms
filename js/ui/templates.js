@@ -90,13 +90,16 @@ export function handCardTemplate(card, options = {}) {
   </button>`;
 }
 
-export function resolvingCardTemplate(cardOrName, source = "结算区") {
+export function resolvingCardTemplate(cardOrName, source = "结算区", targetLabel = "") {
+  const targetMarkup = targetLabel
+    ? `<span class="resolving-target"><b>作用对象</b>${escapeHtml(targetLabel)}</span>`
+    : "";
   if (typeof cardOrName === "object" && cardOrName) {
     return `<div class="resolving-card frame-${escapeHtml(cardOrName.frameStyle)}" style="--card-accent:${escapeHtml(cardOrName.accent)}">
-      <img src="${escapeHtml(cardOrName.art)}" alt="" aria-hidden="true"><div><small>${escapeHtml(source)}</small><strong>${escapeHtml(cardOrName.name)}</strong><span>${escapeHtml(cardOrName.categoryName)}</span></div>
+      <img src="${escapeHtml(cardOrName.art)}" alt="" aria-hidden="true"><div><small>${escapeHtml(source)}</small><strong>${escapeHtml(cardOrName.name)}</strong><span class="resolving-kind">${escapeHtml(cardOrName.categoryName)}</span>${targetMarkup}</div>
     </div>`;
   }
-  return `<div class="resolving-card is-skill"><span class="skill-sigil" aria-hidden="true">✦</span><div><small>${escapeHtml(source)}</small><strong>${escapeHtml(cardOrName)}</strong><span>角色技能</span></div></div>`;
+  return `<div class="resolving-card is-skill"><span class="skill-sigil" aria-hidden="true">✦</span><div><small>${escapeHtml(source)}</small><strong>${escapeHtml(cardOrName)}</strong><span class="resolving-kind">角色技能</span>${targetMarkup}</div></div>`;
 }
 
 export function thinkingTemplate(player, message) {

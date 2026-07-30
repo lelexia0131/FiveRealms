@@ -35,7 +35,12 @@ export class ResponseSystem {
     this.finishRequest(request.id);
     if (!use || !valid) return [];
     for (const card of cards) await this.game.discardCardFromHand(responder, card, `响应·${card.name}`);
-    this.game.log(`${responder.name}${type === "block" ? `同时使用${cards.length}张格挡` : "使用了反制"}。`, "important");
+    if (type === "counter") {
+      this.game.ui.setCurrentCard?.(cards[0], responder.name, `反制「${context.card?.name ?? "战术牌"}」`);
+      this.game.log(`${responder.name}使用了「反制」，作用对象：「${context.card?.name ?? "战术牌"}」。`, "important");
+    } else {
+      this.game.log(`${responder.name}同时使用${cards.length}张格挡。`, "important");
+    }
     return cards;
   }
 
@@ -48,10 +53,18 @@ export class ResponseSystem {
   }
 
   async askForCounter(source, card, targets) {
-    if (card.category !== "tactic" || !card.counterable || card.definitionId === "counter") return false;
+    if (card.category !== "tactic" || !card.counterable) return false;
     for (const responder of this.game.seatOrderFrom(source, false)) {
       if (!responder.alive || responder.id === source.id) continue;
-      if ((await this.requestCardResponse(responder, "counter", { source, target:targets[0] ?? null, card }, 1)).length) return true;
+      const [counterCard] = await this.requestCardResponse(responder, "counter", { source, target:targets[0] ?? null, card }, 1);
+      if (!counterCard) continue;
+      // 反制牌已经从手牌移入弃牌堆，因此递归链必然受实体牌数量限制，不会无限循环。
+      const counterWasCountered = await this.askForCounter(responder, counterCard, [source]);
+      if (counterWasCountered) {
+        this.game.log(`${responder.name}的「反制」被后续反制抵消。`, "important");
+        return false;
+      }
+      return true;
     }
     return false;
   }

@@ -27,6 +27,24 @@ import { CardSelectionSystem } from "./CardSelectionSystem.js";
 import { PublicCardPool } from "./PublicCardPool.js";
 import { HpLossSystem } from "./HpLossSystem.js";
 
+/** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
+function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
+  const uniqueTargets = [...new Map(
+    targets.filter((target) => target?.id && target?.name).map((target) => [target.id, target])
+  ).values()];
+  if (uniqueTargets.length) {
+    return uniqueTargets
+      .map((target) => target.id === source.id ? `${target.name}（自己）` : target.name)
+      .join("、");
+  }
+  if (cardOrSkill?.definitionId === "transfer" && selection?.sourceId && selection?.receiverId) {
+    const from = game.state.players.find((player) => player.id === selection.sourceId);
+    const receiver = game.state.players.find((player) => player.id === selection.receiverId);
+    if (from && receiver) return `来源 ${from.name} → 接收 ${receiver.name}`;
+  }
+  return "";
+}
+
 export class Game {
   /**
    * @param {Object} ui UIManager 实例。
@@ -241,8 +259,9 @@ export class Game {
         break;
       }
       const actionName = action.type === "card" ? `准备使用「${action.card.name}」` : `准备发动「${action.skill.name}」`;
-      this.ui.setPrompt(`${player.name}${actionName}。`);
-      this.ui.setThinking(true, player, actionName);
+      const targetLabel = actionTargetLabel(this, player, action.type === "card" ? action.card : action.skill, action.targets, action.selection);
+      const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
+      this.ui.setThinking(true, player, actionDescription);
       if (!(await this.cleanupManager.delay(Math.max(0, getAiDelay(this, "action") - searchElapsed)))) break;
       this.ui.setThinking(false);
       if (action.type === "card") await this.playCard(player, action.card, action.targets, action.selection ?? null);
@@ -307,8 +326,9 @@ export class Game {
     const resolutionId = `${this.state.gameId}:resolution:${++this.state.resolutionSerial}`;
     try {
       await this.moveHandToResolving(source, card);
-      this.ui.setCurrentCard(card, source.name);
-      this.log(`${source.name}使用了「${card.name}」${targets[0] && card.targetType !== "self" ? `，目标是${targets[0].name}` : ""}。`);
+      const targetLabel = actionTargetLabel(this, source, card, targets, selection);
+      this.ui.setCurrentCard(card, source.name, targetLabel);
+      this.log(`${source.name}使用了「${card.name}」${targetLabel ? `，作用对象：${targetLabel}` : ""}。`);
       const useEvent = await this.eventBus.emit("beforeCardUse", { type: "beforeCardUse", source, card, targets, cancelled: false, metadata: {}, resolutionId });
       let cancelledBeforeResolve = useEvent.cancelled;
       if (!cancelledBeforeResolve && targets.length) {
@@ -356,7 +376,8 @@ export class Game {
     this.actionLocked = true;
     source.turnFlags.activeSkillsUsed.add(skill.id);
     try {
-      this.ui.setCurrentCard(skill.name, `${source.name} · 技能`);
+      const targetLabel = actionTargetLabel(this, source, skill, targets);
+      this.ui.setCurrentCard(skill.name, `${source.name} · 技能`, targetLabel);
       await skill.execute(this, source, targets);
       this.ui.render(this);
       return true;

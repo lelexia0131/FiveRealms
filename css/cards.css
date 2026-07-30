@@ -29,7 +29,9 @@
 .resolving-card > div { min-width: 0; display: grid; }
 .resolving-card small { color: var(--text-secondary); font-size: 12px; }
 .resolving-card strong { overflow: hidden; font: 800 23px/1.2 var(--serif); text-overflow: ellipsis; white-space: nowrap; }
-.resolving-card div span { color: var(--card-accent); font-size: 12px; font-weight: 800; }
+.resolving-card .resolving-kind { color: var(--card-accent); font-size: 12px; font-weight: 800; }
+.resolving-card .resolving-target { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 5px; margin-top: 3px; color: var(--text-primary); font-size: 13px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.resolving-target b { flex: 0 0 auto; padding: 1px 4px; color: var(--surface-raised); border-radius: 4px; background: var(--card-accent); font-size: 11px; letter-spacing: .03em; }
 .resolving-card.is-skill, .resolving-card.is-empty { grid-template-columns: 58px minmax(0, 1fr); }
 .skill-sigil { display: grid; place-items: center; width: 54px; height: 54px; color: var(--gold); border: 2px solid var(--gold); border-radius: 50%; background: #f8efd8; font-size: 26px; }
 .resolving-card.is-empty { border-style: dashed; box-shadow: none; }
