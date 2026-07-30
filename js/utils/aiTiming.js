@@ -16,9 +16,10 @@ export function sampleDelay(random, minimum, maximum, fastMode = false) {
   return fastMode ? Math.max(GAME_CONFIG.animationFastMinimumMs, Math.round(natural * GAME_CONFIG.animationFastScale)) : natural;
 }
 
-export function getAiDelay(game, phase) {
-  const keys = RANGES[phase];
+export function getAiDelay(game, phase, options = {}) {
+  const keys = RANGES[phase] ? [...RANGES[phase]] : null;
   if (!keys) throw new RangeError(`未知 AI 延迟阶段：${phase}`);
+  if (phase === "initial" && options.complex) keys[1] = "aiComplexThinkMaxMs";
   if (GAME_CONFIG.simulationMode || game.simulationMode) return 0;
   return sampleDelay(game.random, GAME_CONFIG[keys[0]], GAME_CONFIG[keys[1]], game.animationFastMode);
 }

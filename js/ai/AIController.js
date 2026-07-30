@@ -23,6 +23,19 @@ export class AIController {
     const visible = createAiVisibleState(player.id, this.game.state);
     return this.planner.plan(player, visible, this.getLegalActions(player), options);
   }
+  /** 将上一棵搜索树里的动作描述重新绑定到当前真实合法动作；状态变化后匹配失败即要求重规划。 */
+  resolvePlannedAction(player, descriptor) {
+    if (!descriptor) return null;
+    return this.getLegalActions(player).find((action) => {
+      if (action.type !== descriptor.type) return false;
+      if (action.type === "end") return true;
+      if (action.type === "skill" && action.skill?.id !== descriptor.cardId) return false;
+      if (action.type === "card" && descriptor.cardInstanceId && action.card?.id !== descriptor.cardInstanceId) return false;
+      if (action.type === "card" && !descriptor.cardInstanceId && action.card?.definitionId !== descriptor.cardId) return false;
+      const targetIds = (action.targets ?? []).map((target) => target.id);
+      return targetIds.length === (descriptor.targetIds?.length ?? 0) && targetIds.every((id, index) => id === descriptor.targetIds[index]);
+    }) ?? null;
+  }
   chooseDiscards(player, count) { return this.cardSelector.chooseDiscards(player, count); }
   shouldRespond(player, type, context) { return this.responsePolicy.shouldRespond(player, type, context, []); }
   chooseRedirectTarget(_player, alternatives) { return alternatives[0] ?? null; }

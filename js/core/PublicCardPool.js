@@ -18,14 +18,20 @@ export class PublicCardPool {
   }
 
   async draft(source) {
+    const gameId = this.game.state.gameId;
     const living = this.game.seatOrderFrom(source, true).filter((player) => player.alive);
     for (const player of living) {
       if (!this.cards.length || this.game.state.isGameOver) break;
       let card = null;
       if (player.controllerType === "human") card = await this.game.ui.requestPublicCard?.(player, this.cards);
       else card = this.game.aiController.cardSelector.choosePublicCard(player, this.cards);
+      if (!this.game.isSessionValid(gameId)) return false;
+      if (this.game.state.isGameOver || !player.alive || !this.cards.length) break;
       if (!this.cards.includes(card)) card = this.cards[0];
-      this.cards.splice(this.cards.indexOf(card), 1);
+      if (!card) break;
+      const cardIndex = this.cards.indexOf(card);
+      if (cardIndex < 0) break;
+      this.cards.splice(cardIndex, 1);
       player.hand.push(card);
       player.bumpHandVersion();
       for (const viewer of this.game.state.players) if (viewer.id !== player.id) this.game.rememberPrivateCard(viewer, player, card);
@@ -35,6 +41,7 @@ export class PublicCardPool {
     for (const card of this.cards.splice(0)) this.game.state.deck.discard(card);
     this.game.state.publicCardPool = [];
     this.game.ui.hidePublicPool?.();
+    return true;
   }
 
   cleanup() { this.cards = []; this.game.state.publicCardPool = []; }

@@ -7,9 +7,38 @@ import { AiSimulator } from "./AiSimulator.js";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
-  constructor(game, evaluator) { this.game = game; this.evaluator = evaluator; this.lastSearchStats = null; }
+  constructor(game, evaluator) {
+    this.game = game;
+    this.evaluator = evaluator;
+    this.lastSearchStats = null;
+    this.lastPlannedSequence = [];
+  }
+
+  describeAction(action) {
+    return {
+      type: action.type,
+      cardId: action.card?.definitionId ?? action.skill?.id ?? null,
+      cardInstanceId: action.card?.id ?? null,
+      targetId: action.targets?.[0]?.id ?? null,
+      targetIds: (action.targets ?? []).map((target) => target.id)
+    };
+  }
+
+  chooseCandidate(beam) {
+    const bestScore = beam[0]?.score ?? -Infinity;
+    const near = beam.filter((node) => bestScore - node.score <= GAME_CONFIG.aiNearTieRange);
+    if (near.length <= 1 || !GAME_CONFIG.enableAiRandomness) return near[0] ?? beam[0];
+    const randomness = Math.max(0, Number(this.game.aiRandomnessRange ?? GAME_CONFIG.aiRandomnessRange) || 0);
+    if (!randomness) return near[0];
+    const scale = Math.max(1, Math.abs(bestScore));
+    return near.reduce((best, node) => {
+      const adjusted = node.score + (this.game.random() * 2 - 1) * scale * randomness;
+      return !best || adjusted > best.adjusted ? { node, adjusted } : best;
+    }, null).node;
+  }
 
   async plan(player, visibleState, rootActions, options = {}) {
+    this.lastPlannedSequence = [];
     const started = globalThis.performance?.now?.() ?? Date.now();
     const budget = this.game.aiSearchBudgetOverrideMs ?? GAME_CONFIG.aiSearchTimeBudgetMs;
     const simulator = new AiSimulator(visibleState);
@@ -49,11 +78,10 @@ export class AiPlanner {
       beam = candidates.slice(0, GAME_CONFIG.aiBeamWidth);
       if ((globalThis.performance?.now?.() ?? Date.now()) - started >= budget) break;
     }
-    const bestScore = beam[0]?.score ?? -Infinity;
-    const near = beam.filter((node) => bestScore - node.score <= GAME_CONFIG.aiNearTieRange);
-    const choice = near.length > 1 && GAME_CONFIG.enableAiRandomness ? near[Math.floor(this.game.random() * near.length)] : beam[0];
+    const choice = this.chooseCandidate(beam);
+    this.lastPlannedSequence = (choice?.sequence ?? []).map((action) => this.describeAction(action));
     this.lastSearchStats = { elapsedMs:(globalThis.performance?.now?.() ?? Date.now()) - started, expanded, depth:Math.max(1, choice?.sequence.length ?? 1), beamWidth:GAME_CONFIG.aiBeamWidth,
-      discoveredDynamicTarget, hiddenSamples:hiddenWorlds.length, bestSequence:(choice?.sequence ?? []).map((action) => ({ type:action.type, cardId:action.card?.definitionId ?? action.skill?.id ?? null, targetId:action.targets?.[0]?.id ?? null })) };
+      discoveredDynamicTarget, hiddenSamples:hiddenWorlds.length, bestSequence:this.lastPlannedSequence };
     return choice?.action ?? { type:"end" };
   }
 }

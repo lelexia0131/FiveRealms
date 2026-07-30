@@ -12,6 +12,7 @@ export class DyingSystem {
       if (!this.queue.some((entry) => entry.target.id === target.id)) this.queue.push({ target, source, context });
       return false;
     }
+    const entryPhase = this.game.state.phase;
     this.active = true;
     this.queue.push({ target, source, context });
     let rescued = false;
@@ -23,7 +24,7 @@ export class DyingSystem {
       return rescued;
     } finally {
       this.active = false;
-      if (!this.game.state.isGameOver && this.game.state.phase === "dying") this.game.state.phase = context.previousPhase ?? "play";
+      if (!this.game.state.isGameOver && this.game.state.phase === "dying") this.game.state.phase = entryPhase;
     }
   }
 
@@ -89,12 +90,14 @@ export class DyingSystem {
       return true;
     }
     await this.kill(target, source);
+    if (!this.game.state.isGameOver) this.game.state.phase = previousPhase;
     return false;
   }
 
   async kill(target, source) {
     if (!target.alive) return false;
     target.alive = false;
+    this.game.requestHumanPlayEndForDefeat?.(target);
     this.game.ui.render(this.game);
     this.game.log(`${target.name}救援失败，阵亡。`, "important");
     for (const card of [...target.hand]) await this.game.discardCardFromHand(target, card, "阵亡清理");

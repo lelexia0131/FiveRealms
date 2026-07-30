@@ -77,8 +77,12 @@ export class Game {
     this.candidates = [];
     this.actionLocked = false;
     this.interactionLocked = false;
+    this.pendingHumanPlayEnd = false;
     this.animationFastMode = GAME_CONFIG.animationFastMode;
     this.simulationMode = GAME_CONFIG.simulationMode;
+    this.aiReplanAfterEveryAction = GAME_CONFIG.aiReplanAfterEveryAction;
+    this.aiRandomnessRange = GAME_CONFIG.aiRandomnessRange;
+    this.aiDifficultyMultiplier = GAME_CONFIG.aiDifficultyMultiplier;
     this.loopPromise = null;
   }
 
@@ -226,7 +230,7 @@ export class Game {
     } else {
       await this.takeAiPlayPhase(player, gameId);
     }
-    if (!this.isSessionValid(gameId) || this.state.isGameOver) return;
+    if (!this.isSessionValid(gameId) || this.state.isGameOver || !player.alive) return;
     await this.eventBus.emit("playPhaseEnd", { type: "playPhaseEnd", player });
 
     this.state.phase = "discard";
@@ -243,15 +247,26 @@ export class Game {
   async takeAiPlayPhase(player, gameId) {
     this.ui.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
     this.ui.setThinking(true, player, "正在观察战场与可用资源");
-    if (!(await this.cleanupManager.delay(getAiDelay(this, "initial")))) {
+    const complexPosition = this.aiController.getLegalActions(player).length > GAME_CONFIG.aiBeamWidth;
+    if (!(await this.cleanupManager.delay(getAiDelay(this, "initial", { complex:complexPosition })))) {
       this.ui.setThinking(false);
       return;
     }
+    let queuedPlan = [];
     for (let count = 0; count < GAME_CONFIG.aiMaxActionsPerTurn; count += 1) {
       if (!this.isSessionValid(gameId) || this.state.isGameOver || !player.alive) break;
-      const searchStarted = globalThis.performance?.now?.() ?? Date.now();
-      const action = await this.aiController.selectAction(player, { gameId });
-      const searchElapsed = (globalThis.performance?.now?.() ?? Date.now()) - searchStarted;
+      let searchElapsed = 0;
+      let action = null;
+      if (!this.aiReplanAfterEveryAction && queuedPlan.length) {
+        action = this.aiController.resolvePlannedAction(player, queuedPlan.shift());
+        if (!action) queuedPlan = [];
+      }
+      if (!action) {
+        const searchStarted = globalThis.performance?.now?.() ?? Date.now();
+        action = await this.aiController.selectAction(player, { gameId });
+        searchElapsed = (globalThis.performance?.now?.() ?? Date.now()) - searchStarted;
+        if (!this.aiReplanAfterEveryAction) queuedPlan = this.aiController.planner.lastPlannedSequence.slice(1);
+      }
       if (action.type === "end") {
         this.ui.setPrompt(`${player.name}准备结束出牌阶段。`);
         this.ui.setThinking(true, player, "正在收束回合");
@@ -356,6 +371,7 @@ export class Game {
     } finally {
       if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       this.actionLocked = false;
+      this.flushPendingHumanPlayEnd();
       if (!this.state.isGameOver && source.controllerType === "human" && this.state.phase === "play") {
         this.ui.setPrompt("继续出牌，或结束本次出牌阶段。", "选择一张可用手牌");
       }
@@ -383,6 +399,7 @@ export class Game {
       return true;
     } finally {
       this.actionLocked = false;
+      this.flushPendingHumanPlayEnd();
       if (!this.state.isGameOver && source.controllerType === "human" && this.state.phase === "play") {
         this.ui.setPrompt("技能结算完成，继续出牌或结束阶段。", "选择一张可用手牌");
       }
@@ -413,6 +430,7 @@ export class Game {
       return await this.playCard(human, card, targets, selection);
     } finally {
       this.interactionLocked = false;
+      this.flushPendingHumanPlayEnd();
       this.ui.render(this);
     }
   }
@@ -435,6 +453,7 @@ export class Game {
       return await this.useActiveSkill(human, skill.id, targets);
     } finally {
       this.interactionLocked = false;
+      this.flushPendingHumanPlayEnd();
       this.ui.render(this);
     }
   }
@@ -443,6 +462,28 @@ export class Game {
   requestEndHumanPlay() {
     const human = this.state.players[0];
     if (this.currentPlayer?.id !== human.id || this.state.phase !== "play" || this.actionLocked || this.interactionLocked) return false;
+    this.ui.resolveHumanPlayEnd(this.state.gameId);
+    return true;
+  }
+
+  /** 标记当前真人已阵亡；等正在结算的卡牌/技能及交互完整退出后再释放出牌等待。 */
+  requestHumanPlayEndForDefeat(player) {
+    const human = this.state.players[0];
+    if (!player || player.id !== human?.id || player.controllerType !== "human" ||
+      this.currentPlayer?.id !== player.id) return false;
+    this.pendingHumanPlayEnd = true;
+    return this.flushPendingHumanPlayEnd();
+  }
+
+  /** 只在核心结算锁与 UI 交互锁均释放后结束真人出牌，避免回合循环抢跑。 */
+  flushPendingHumanPlayEnd() {
+    if (!this.pendingHumanPlayEnd) return false;
+    if (this.state.isDisposed) {
+      this.pendingHumanPlayEnd = false;
+      return false;
+    }
+    if (this.actionLocked || this.interactionLocked) return false;
+    this.pendingHumanPlayEnd = false;
     this.ui.resolveHumanPlayEnd(this.state.gameId);
     return true;
   }
@@ -740,6 +781,7 @@ export class Game {
     if (this.state.isDisposed) return;
     this.state.isDisposed = true;
     this.interactionLocked = false;
+    this.pendingHumanPlayEnd = false;
     this.cleanupManager.cleanup();
     this.responseSystem.cleanup();
     this.cardSelectionSystem.cleanup();

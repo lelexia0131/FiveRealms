@@ -14,8 +14,9 @@ import { RuleEngine } from "../js/core/RuleEngine.js";
 import { CardSelectionSystem } from "../js/core/CardSelectionSystem.js";
 import { createAiVisibleState } from "../js/ai/AiVisibleState.js";
 import { AiSimulator } from "../js/ai/AiSimulator.js";
+import { ThreatCalculator } from "../js/ai/ThreatCalculator.js";
 import { CleanupManager } from "../js/utils/CleanupManager.js";
-import { sampleDelay } from "../js/utils/aiTiming.js";
+import { getAiDelay, sampleDelay } from "../js/utils/aiTiming.js";
 import { equipmentSlotTemplate, playerPanelTemplate, resolvingCardTemplate } from "../js/ui/templates.js";
 import { InteractionController, hiddenSelectionMarkup } from "../js/ui/InteractionController.js";
 import { UIManager } from "../js/ui/UIManager.js";
@@ -31,7 +32,11 @@ const instance = (definitionId) => ({ ...CARD_DEFINITIONS[definitionId], id:`tes
 function makeUi(response = () => false) {
   return {
     logs:[], reveals:[], responseRequests:[], publicRequests:[], thinking:[], currentCards:[],
-    render() {}, appendLog(entry) { this.logs.push(entry.message); }, cancelPendingInteractions() {},
+    playEndState:null,
+    render() {}, appendLog(entry) { this.logs.push(entry.message); },
+    waitForHumanPlayEnd(gameId) { return new Promise((resolve) => { this.playEndState = { gameId, resolve }; }); },
+    resolveHumanPlayEnd(gameId) { if (!this.playEndState || this.playEndState.gameId !== gameId) return;const resolve=this.playEndState.resolve;this.playEndState=null;resolve(true); },
+    cancelPendingInteractions() { if(this.playEndState){const resolve=this.playEndState.resolve;this.playEndState=null;resolve(false);} },
     async requestResponse(request) { this.responseRequests.push(request); return response(request); },
     async requestDiscard(player, count) { return player.hand.slice(0, count); },
     async requestTarget(players) { return players[0] ?? null; },
@@ -297,6 +302,33 @@ test("强制救援16：濒死上下文不会触发灵医回春额外治疗", asy
   assert.equal(human.hp,1);assert.equal(medic.statistics.healingDone,1);assert.equal(medic.turnFlags.rejuvenationUsed,undefined);
 });
 
+test("真人在自己的决斗中阵亡会在完整结算后主动结束出牌等待", async () => {
+  const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
+  human.hp=1;const duel=instance("duel");human.hand.push(duel);enemy.hand.push(instance("assault"));
+  const {game,ui}=makeGame([human,ally,enemy]);const waiting=ui.waitForHumanPlayEnd(game.state.gameId);
+  assert.equal(await game.handleHumanCard(duel.id),true);
+  const ended=await Promise.race([waiting,new Promise((resolve)=>setTimeout(()=>resolve("timeout"),50))]);
+  assert.equal(human.alive,false);assert.equal(game.state.phase,"play");assert.equal(game.state.isGameOver,false);
+  assert.equal(ended,true);assert.equal(ui.playEndState,null);assert.equal(game.pendingHumanPlayEnd,false);
+});
+
+test("互利等待选牌时重新征召不会把 undefined 放入手牌", async () => {
+  const human=makePlayer("human",0,"dawn","human"),enemy=makePlayer("enemy",1,"dusk");const {game,ui}=makeGame([human,enemy]);
+  game.state.deck.cards.push(instance("block"),instance("charge"));game.publicCardPool.reveal(2);
+  let settleSelection=null;
+  ui.requestPublicCard=()=>new Promise((resolve)=>{settleSelection=resolve;});
+  ui.cancelPendingInteractions=()=>{settleSelection?.(undefined);};
+  const drafting=game.publicCardPool.draft(human);await Promise.resolve();game.dispose();
+  assert.equal(await drafting,false);assert.deepEqual(human.hand,[]);assert.equal(human.hand.includes(undefined),false);assert.equal(game.state.publicCardPool.length,0);
+});
+
+test("非出牌阶段触发阵亡后恢复进入濒死前的真实阶段", async () => {
+  const target=makePlayer("target",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
+  const {game}=makeGame([target,ally,enemy]);game.state.phase="energy";target.hp=0;
+  await game.dyingSystem.enter(target,enemy);
+  assert.equal(target.alive,false);assert.equal(game.state.isGameOver,false);assert.equal(game.state.phase,"energy");
+});
+
 // 隐藏信息、AI、延迟与 UI 安全
 test("不透明隐藏牌 DOM 不含牌名、definitionId、类别、描述或 art", () => { const markup=hiddenSelectionMarkup({tokens:[{token:"opaque-safe",position:1}]});assert.match(markup,/opaque-safe/);for(const secret of ["反制","definitionId","category","description","assets\/cards"])assert.doesNotMatch(markup,new RegExp(secret)); });
 test("过期手牌版本令不透明令牌失效", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));const selection=game.cardSelectionSystem.createHiddenSelection(b);b.bumpHandVersion();assert.equal(game.cardSelectionSystem.resolveToken(selection.tokens[0].token,b),null); });
@@ -326,6 +358,10 @@ test("回合能量事件公开基础、阵营和装备三段来源", async () =>
 test("AI 未知牌按位置采样而不因真实 definitionId 改变选择位置", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>.6});b.hand=[instance("counter"),instance("charge"),instance("block")];const first=game.aiController.cardSelector.chooseHiddenCards(a,b,1)[0];b.hand=[instance("assault"),instance("recover"),instance("energyDevice")];const second=game.aiController.cardSelector.chooseHiddenCards(a,b,1)[0];assert.equal(first.definitionId,"charge");assert.equal(second.definitionId,"recover"); });
 test("AI 自救响应策略为确定必用，敌方救援为拒绝", () => { const a=makePlayer("a",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([a,ally,enemy]);assert.equal(game.aiController.responsePolicy.shouldRespond(a,"dyingRescue",{target:a},[instance("recover")]),true);assert.equal(game.aiController.responsePolicy.shouldRespond(enemy,"dyingRescue",{target:a},[instance("recover")]),false); });
 test("AI 延迟在配置上下限内且快速模式显著缩短", () => { const natural=sampleDelay(()=>.5,GAME_CONFIG.aiInitialThinkMinMs,GAME_CONFIG.aiInitialThinkMaxMs,false);const fast=sampleDelay(()=>.5,GAME_CONFIG.aiInitialThinkMinMs,GAME_CONFIG.aiInitialThinkMaxMs,true);assert.ok(natural>=1800&&natural<=3500);assert.ok(fast<natural/2); });
+test("复杂局面首次思考实际使用 aiComplexThinkMaxMs 上限", () => { const game={random:()=>.999999,simulationMode:false,animationFastMode:false};assert.equal(getAiDelay(game,"initial"),GAME_CONFIG.aiInitialThinkMaxMs);assert.equal(getAiDelay(game,"initial",{complex:true}),GAME_CONFIG.aiComplexThinkMaxMs); });
+test("关闭逐动作重规划时会复用仍合法的束搜索牌序", async () => { const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("b",1,"dusk");const charge=instance("charge");actor.hand.push(charge);const {game}=makeGame([actor,enemy]);game.aiReplanAfterEveryAction=false;let plans=0;game.aiController.selectAction=async()=>{plans+=1;game.aiController.planner.lastPlannedSequence=[{type:"card",cardId:"charge",cardInstanceId:charge.id,targetIds:[]},{type:"end",cardId:null,cardInstanceId:null,targetIds:[]}];return {type:"card",card:charge,targets:[]};};await game.takeAiPlayPhase(actor,game.state.gameId);assert.equal(plans,1);assert.equal(actor.energy,1);assert.equal(actor.hand.length,0); });
+test("aiRandomnessRange 控制近似同分动作的评分扰动", () => { const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("b",1,"dusk");const {game}=makeGame([actor,enemy]);const beam=[{score:10,id:"first"},{score:9.9,id:"second"}];game.aiRandomnessRange=0;assert.equal(game.aiController.planner.chooseCandidate(beam).id,"first");const rolls=[0,1];game.random=()=>rolls.shift();game.aiRandomnessRange=.1;assert.equal(game.aiController.planner.chooseCandidate(beam).id,"second"); });
+test("ThreatCalculator 的稳定角色标签与近期攻击者会进入目标评分", () => { const viewer={battleTeam:"dawn"},base={id:"x",alive:true,battleTeam:"dusk",hp:3,maxHp:4,shield:0,energy:1,handCount:1,tags:[],statuses:[]};const plain=ThreatCalculator.calculate(viewer,{...base,roleTags:[]},{recentAggressors:{}},1);const support=ThreatCalculator.calculate(viewer,{...base,roleTags:["support","healer"]},{recentAggressors:{}},1);assert.ok(support>plain);const actor=makePlayer("a",0,"dawn"),first=makePlayer("first",1,"dusk","ai",4),second=makePlayer("second",2,"dusk","ai",4);const {game}=makeGame([actor,first,second]);actor.aiMemory.recentAggressors[second.id]=3;const visible=createAiVisibleState(actor.id,game.state),assault=instance("assault"),score=(target)=>game.aiController.evaluator.actionUtility({type:"card",card:assault,targets:[target]},actor,visible);game.aiDifficultyMultiplier=0;assert.equal(score(first),score(second));game.aiDifficultyMultiplier=1;assert.ok(score(second)>score(first)); });
 test("CleanupManager 可取消尚未完成的延迟", async () => { const cleanup=new CleanupManager();const waiting=cleanup.delay(5000);cleanup.cleanup();assert.equal(await waiting,false);assert.equal(cleanup.pending.size,0); });
 test("重新征召 cleanup 会清空隐藏令牌、公共池和响应", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));game.cardSelectionSystem.createHiddenSelection(b);game.state.pendingResponses.push({id:"old"});game.dispose();assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.state.pendingResponses.length,0);assert.equal(game.state.publicCardPool.length,0); });
 test("装备槽空置和四种装备生成不同可访问 DOM", () => { const p=makePlayer("a",0,"dawn");const empty=equipmentSlotTemplate(p,true);assert.match(empty,/is-empty|装备槽为空/);for(const id of ["energyDevice","recycleDevice","defenseDevice","battleDevice"]){p.equipment=instance(id);const markup=equipmentSlotTemplate(p,true);assert.match(markup,new RegExp(CARD_DEFINITIONS[id].name));assert.match(markup,new RegExp(CARD_DEFINITIONS[id].description.slice(0,6)));assert.notEqual(markup,empty);} });

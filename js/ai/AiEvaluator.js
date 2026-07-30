@@ -2,8 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
+import { GAME_CONFIG } from "../config/gameConfig.js";
+import { ThreatCalculator } from "./ThreatCalculator.js";
+
 export class AiEvaluator {
   constructor(game) { this.game = game; }
+
+  threatPriority(viewer, target, memory, expectedDamage = 1) {
+    const multiplier = Math.max(0, Number(this.game.aiDifficultyMultiplier ?? GAME_CONFIG.aiDifficultyMultiplier) || 0);
+    if (!multiplier || !target || target.battleTeam === viewer.battleTeam) return 0;
+    return ThreatCalculator.calculate(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
+  }
 
   stateUtility(state, viewerId) {
     const viewer = state.players.find((player) => player.id === viewerId);
@@ -26,7 +35,8 @@ export class AiEvaluator {
       return remainingCards > 0 ? -0.8 : 0;
     }
     if (action.type === "skill") {
-      const target = action.targets?.[0];
+      const actionTarget = action.targets?.[0];
+      const target = visible.players.find((entry) => entry.id === actionTarget?.id) ?? actionTarget;
       const enemies = visible.players.filter((entry) => entry.alive && entry.battleTeam !== actor.battleTeam);
       const missing = target ? Math.max(0, target.maxHp - target.hp) : 0;
       const values = {
@@ -39,11 +49,14 @@ export class AiEvaluator {
         allIn: Math.min(2, actor.energy) * 3 + (actor.energy >= 3 ? 4 : 0),
         resonance: 5 + (target?.handCount <= 1 ? 3 : 0)
       };
-      return values[action.skill.id] ?? 4;
+      let value = values[action.skill.id] ?? 4;
+      if (["stealSkill","hunt"].includes(action.skill.id)) value += this.threatPriority(actor, target, player.aiMemory, 1);
+      return value;
     }
     const card = action.card;
     let value = card.aiValue ?? 0;
-    const target = action.targets?.[0];
+    const actionTarget = action.targets?.[0];
+    const target = visible.players.find((entry) => entry.id === actionTarget?.id) ?? actionTarget;
     if (target) {
       const enemy = target.battleTeam !== player.battleTeam;
       if (card.subtypes.includes("attack") || card.definitionId === "duel") {
@@ -51,6 +64,9 @@ export class AiEvaluator {
         value += enemy ? 3 + focus : -12;
       }
       if (["plunder","destroy","scout"].includes(card.definitionId)) value += Math.min(4, target.hand?.length ?? target.handCount ?? 0);
+      if (enemy && ["assault","duel","plunder","destroy","scout"].includes(card.definitionId)) {
+        value += this.threatPriority(actor, target, player.aiMemory, ["assault","duel"].includes(card.definitionId) ? 1 : 0);
+      }
     }
     if (card.definitionId === "recover") value += (actor.maxHp - actor.hp) * 4;
     if (card.definitionId === "charge") value += (actor.maxEnergy - actor.energy) * 1.5 + (actor.activeSkillId && !actor.activeSkillUsed && actor.energy + 1 >= actor.activeSkillCost ? 4 : 0);
