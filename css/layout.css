@@ -34,7 +34,7 @@
 .private-reveal, .response-panel, .public-pool-view { position: absolute; z-index: 8; left: 50%; top: 50%; transform: translate(-50%, -50%); }
 .judgment-view, .dying-view, .duel-view { position: absolute; z-index: 7; right: 18px; top: 14px; }
 .action-row { grid-column: 1 / -1; display: flex; justify-content: center; gap: 9px; padding-top: 8px; }
-.human-zone { position: relative; z-index: 1; min-height: 0; display: grid; grid-template-columns: clamp(275px, 20vw, 350px) minmax(0, 1fr); gap: 12px; }
+.human-zone { position: relative; z-index: 1; min-height: 0; display: grid; grid-template-columns: clamp(360px, 24vw, 430px) minmax(0, 1fr); gap: 12px; }
 .human-panel, .hand-wrap { min-height: 0; }
 .hand-wrap { display: flex; flex-direction: column; min-width: 0; padding: 10px 12px 0; border: 1px solid rgba(169,151,123,.72); border-radius: var(--radius-panel); background: rgba(255,253,247,.55); }
 .hand-heading { flex: 0 0 auto; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 3px 7px; }
@@ -55,7 +55,7 @@
   .brand-lockup small, .toggle-button span { display: none; }
   .battle-layout { grid-template-columns: minmax(0, 1fr) 52px; }
   .log-panel:not(.is-collapsed) { position: absolute; z-index: 30; right: 10px; top: 90px; bottom: 10px; width: 320px; }
-  .human-zone { grid-template-columns: 270px minmax(0, 1fr); }
+  .human-zone { grid-template-columns: 320px minmax(0, 1fr); }
   .command-deck { grid-template-columns: minmax(250px, .8fr) minmax(330px, 1.2fr); }
 }
 
@@ -63,7 +63,7 @@
   .game-screen { padding: 6px; }
   .status-bar { flex-basis: 60px; }
   .battle-layout { padding-top: 6px; gap: 6px; }
-  .battlefield { grid-template-rows: minmax(168px, .78fr) minmax(160px, .72fr) minmax(250px, 1.15fr); gap: 6px; padding: 8px; }
+  .battlefield { grid-template-rows: minmax(180px, .72fr) minmax(150px, .6fr) minmax(285px, 1.33fr); gap: 6px; padding: 8px; }
   .command-deck { padding-block: 8px; }
   .human-zone { gap: 7px; }
 }

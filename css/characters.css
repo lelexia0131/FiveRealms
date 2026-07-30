@@ -62,11 +62,10 @@
 .status-chip { padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; background: rgba(255,255,255,.65); color: var(--text-secondary); font-size: 12px; }
 .status-chip.is-danger { color: var(--danger); border-color: #d8a099; background: #f5e1dc; }
 .status-chip.is-shield { color: var(--shield); border-color: #abc1d5; background: #e4edf5; }
-.range-readout, .turn-usage { display: flex; align-items: center; justify-content: space-between; gap: 5px; color: var(--text-secondary); font-size: 12px; }
+.range-readout { display: flex; align-items: center; justify-content: space-between; gap: 5px; color: var(--text-secondary); font-size: 12px; }
 .range-readout { padding: 3px 6px; border: 1px dashed color-mix(in srgb, var(--team), #fff 55%); border-radius: 6px; background: rgba(255,255,255,.45); }
 .range-readout strong { color: var(--team); }
 .range-readout small { font-size: 12px; }
-.turn-usage span { flex: 1; padding: 3px 5px; border-radius: 5px; background: rgba(255,255,255,.62); text-align: center; }
 
 .equipment-slot { position: relative; display: grid; grid-template-columns: 35px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 43px; padding: 5px 7px; border: 1px solid #af9362; border-radius: 8px; background: linear-gradient(135deg, #efe5d2, #dac8a7); }
 .equipment-slot.is-empty { grid-template-columns: 35px minmax(0, 1fr); color: var(--text-muted); border-style: dashed; background: rgba(250,246,234,.6); }
@@ -83,11 +82,15 @@
 .equipment-tooltip strong { margin-bottom: 3px; font-size: 14px; }
 .equipment-tooltip em { margin-top: 5px; color: var(--gold); font-style: normal; }
 .equipment-slot:hover .equipment-tooltip, .equipment-slot:focus-visible .equipment-tooltip { visibility: visible; opacity: 1; transform: none; }
-.character-details { max-height: 80px; overflow: auto; padding-top: 2px; border-top: 1px solid var(--border); }
+.character-details { flex: 1 1 auto; min-height: 0; overflow: auto; padding-top: 2px; border-top: 1px solid var(--border); }
 .character-details summary { color: var(--text-secondary); cursor: pointer; font-size: 12px; font-weight: 700; }
-.character-details > p, .skill-summary { margin-top: 4px; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
-.skill-summary { display: grid; grid-template-columns: auto 1fr; gap: 5px; }
-.skill-summary strong { color: var(--gold); }
+.character-skill-list { display: grid; gap: 5px; margin-top: 5px; }
+.skill-summary { display: grid; grid-template-columns: minmax(74px, auto) 1fr; align-items: start; gap: 7px; padding: 5px 7px; border-left: 2px solid var(--gold); border-radius: 0 6px 6px 0; background: rgba(247,240,223,.82); color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
+.skill-summary > div { display: grid; }
+.skill-summary small { color: var(--text-muted); font-size: 12px; }
+.skill-summary strong { color: var(--gold); font-size: 13px; }
+.skill-summary.is-passive-skill { border-left-color: var(--dawn); background: rgba(226,240,236,.72); }
+.skill-summary.is-passive-skill strong { color: var(--dawn); }
 
 .human-seat { height: 100%; grid-template-columns: 104px minmax(0, 1fr); padding: 10px; }
 .human-seat .seat-heading { display: grid; gap: 1px; }
@@ -101,5 +104,5 @@
   .candidate-skills { max-height: 132px; overflow: auto; }
   .player-seat { grid-template-columns: 72px minmax(0, 1fr); padding: 7px; }
   .human-seat { grid-template-columns: 86px minmax(0, 1fr); }
-  .character-details { max-height: 56px; }
+  .character-details { min-height: 52px; }
 }

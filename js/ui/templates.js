@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-response-v3";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-character-v6";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -69,11 +69,13 @@ export function playerPanelTemplate(player, options = {}) {
         <div class="life-readout"><span class="life-label">生命</span><div class="life-cells">${lifeCells(player)}</div><strong>${player.hp}<small>/${player.maxHp}</small></strong></div>
         <div class="resource-pills"><span class="resource-pill energy"><small>能量</small><strong>${player.energy}/${player.maxEnergy}</strong></span><span class="resource-pill shield"><small>护盾</small><strong>${player.shield}</strong></span><span class="resource-pill hand-count"><small>手牌</small><strong>${player.hand.length}</strong></span></div>
       </div>
-      <div class="status-row">${statuses.length ? statuses.map(([label, kind]) => `<span class="status-chip is-${kind}">${label}</span>`).join("") : '<span class="status-chip is-steady">状态稳定</span>'}</div>
+      ${statuses.length ? `<div class="status-row">${statuses.map(([label, kind]) => `<span class="status-chip is-${kind}">${label}</span>`).join("")}</div>` : ""}
       ${distanceInfo ? `<div class="range-readout"><span>座位 ${distanceInfo.seat}</span><strong>${escapeHtml(distanceState ?? `距离 ${distanceInfo.distance}`)}</strong><small>${player.alive ? `射程 ${distanceInfo.range}` : "已离开距离环"}</small></div>` : ""}
-      ${isHuman ? `<div class="turn-usage"><span>突袭 ${player.turnFlags.attackUsed}/${player.turnFlags.attackLimit}</span><span>调息 ${player.turnFlags.recoverUsed}/${player.turnFlags.recoverLimit === null ? "∞" : player.turnFlags.recoverLimit}</span></div>` : ""}
       ${equipmentSlotTemplate(player, isHuman)}
-      ${isHuman ? `<details class="character-details" open><summary>角色能力</summary><p>${escapeHtml(player.general.description)}</p><div class="skill-summary"><strong>${escapeHtml(player.general.passiveName)}</strong><span>${escapeHtml(player.general.passiveDescription)}</span></div></details>` : ""}
+      ${isHuman ? `<details class="character-details" open><summary>角色能力</summary><div class="character-skill-list">
+        <div class="skill-summary is-active-skill"><div><small>主动技能</small><strong>${escapeHtml(player.general.activeName)}</strong></div><span>${escapeHtml(player.general.activeDescription)}</span></div>
+        <div class="skill-summary is-passive-skill"><div><small>被动技能</small><strong>${escapeHtml(player.general.passiveName)}</strong></div><span>${escapeHtml(player.general.passiveDescription)}</span></div>
+      </div></details>` : ""}
     </div>
   </article>`;
 }
