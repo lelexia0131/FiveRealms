@@ -2,8 +2,8 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间预算返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v18";
-import { AiSimulator } from "./AiSimulator.js?build=20260730-tabletop-hands-v18";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v19";
+import { AiSimulator } from "./AiSimulator.js?build=20260730-tabletop-hands-v19";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {

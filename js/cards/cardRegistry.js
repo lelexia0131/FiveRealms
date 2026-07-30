@@ -71,6 +71,14 @@ const CARD_EFFECTS = {
   async provoke(game, source, card) {
     for (const target of game.seatOrderFrom(source, false).filter((player) => player.alive && player.battleTeam !== source.battleTeam)) {
       if (game.state.isGameOver) break;
+      if (!target.alive) continue;
+      const counteredForTarget = await game.responseSystem.askForCounter(source, card, [target], {
+        responders:[target], targetScoped:true
+      });
+      if (counteredForTarget) {
+        game.log(`${target.name}反制了「${card.name}」对自己的效果；其他目标继续结算。`, "important");
+        continue;
+      }
       const discarded = await game.responseSystem.requestAssaultDiscard(target, "响应挑衅并弃置突袭", { source, target, card });
       if (discarded) game.log(`${target.name}以突袭回应了挑衅。`, "important");
       else await game.hpLossSystem.lose(target, 1, { source, card, reason:"挑衅" });

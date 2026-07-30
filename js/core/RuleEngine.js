@@ -1,4 +1,4 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260730-tabletop-hands-v18";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260730-tabletop-hands-v19";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
