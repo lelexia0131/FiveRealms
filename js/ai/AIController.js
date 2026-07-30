@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260730-tabletop-hands-v23";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260730-tabletop-hands-v23";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260730-tabletop-hands-v23";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260730-tabletop-hands-v23";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260730-tabletop-hands-v23";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260730-tabletop-hands-v23";
-import { AiPlanner } from "./AiPlanner.js?build=20260730-tabletop-hands-v23";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260730-tabletop-hands-v24";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260730-tabletop-hands-v24";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260730-tabletop-hands-v24";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260730-tabletop-hands-v24";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260730-tabletop-hands-v24";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260730-tabletop-hands-v24";
+import { AiPlanner } from "./AiPlanner.js?build=20260730-tabletop-hands-v24";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {
