@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v15";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260730-tabletop-hands-v15";
-import { randomChoice } from "../utils/helpers.js?build=20260730-tabletop-hands-v15";
-import { Debug } from "../utils/debug.js?build=20260730-tabletop-hands-v15";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v16";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260730-tabletop-hands-v16";
+import { randomChoice } from "../utils/helpers.js?build=20260730-tabletop-hands-v16";
+import { Debug } from "../utils/debug.js?build=20260730-tabletop-hands-v16";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -55,7 +55,7 @@ const PASSIVE_SKILLS = {
     game.eventBus.on("beforeDamage", `${owner.id}:guardianAid`, async (event) => {
       if (!owner.alive || !event.target?.alive || owner.id === event.target.id) return;
       if (owner.battleTeam !== event.target.battleTeam || owner.roundFlags.guardianAidUsed || !owner.hand.length || event.amount <= 0) return;
-      const use = await game.responseSystem.requestSkillResponse(owner, "guardianAid", "发动护援", event);
+      const use = await game.responseSystem.requestSkillResponse(owner, "guardianAid", "护援", event);
       if (!use || !owner.alive || !owner.hand.length) return;
       let discard = null;
       if (owner.controllerType === "human") discard = (await game.ui.requestDiscard(owner, 1, "护援：选择弃置1张手牌"))[0] ?? null;
@@ -180,12 +180,12 @@ export const ACTIVE_SKILLS = Object.freeze({
   burningField: Object.freeze({
     id: "burningField", name: "焚场", cost: 3, targetType: "allEnemies", rangeRule: "unlimited",
     canUse(game, source) { return baseCanUse(game, source, this); },
-    async execute(game, source) { source.changeEnergy(-3); game.log(`${source.name}发动焚场！`, "important"); for (const target of game.getEnemies(source)) { if (game.state.isGameOver) break; if (target.alive) await game.damage(source, target, 1, {skill:"burningField",canBlock:false,damageType:"skill"}); } }
+    async execute(game, source) { source.changeEnergy(-3); game.log(`${source.name}发动焚场！`, "important"); for (const target of game.getEnemies(source)) { if (game.state.isGameOver) break; if (target.alive) await game.damage(source, target, 1, {skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill"}); } }
   }),
   hunt: Object.freeze({
     id: "hunt", name: "猎杀", cost: 2, targetType: "markedEnemy", rangeRule: "unlimited",
     canUse(game, source) { const base = baseCanUse(game, source, this); return base.ok && !RuleEngine.getSkillTargets(game, source, this).length ? {ok:false,reason:"没有猎印目标"} : base; },
-    async execute(game, source, targets) { source.changeEnergy(-2); delete targets[0].statuses.huntMark; await game.damage(source, targets[0], 2, {skill:"hunt",canBlock:true,damageType:"skill"}); }
+    async execute(game, source, targets) { source.changeEnergy(-2); delete targets[0].statuses.huntMark; await game.damage(source, targets[0], 2, {skill:"hunt",actionName:"猎杀",canBlock:true,damageType:"skill"}); }
   }),
   allIn: Object.freeze({
     id: "allIn", name: "孤注", cost: 1, targetType: "none", rangeRule: "self",

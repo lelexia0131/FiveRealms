@@ -21,24 +21,29 @@ export class PublicCardPool {
     const gameId = this.game.state.gameId;
     const living = this.game.seatOrderFrom(source, true).filter((player) => player.alive);
     for (const player of living) {
-      if (!this.cards.length || this.game.state.isGameOver) break;
+      if (!this.game.isSessionValid(gameId) || this.game.state.isGameOver) return false;
+      if (!this.cards.length) break;
+      if (!player.alive) continue;
       let card = null;
       if (player.controllerType === "human") {
-        card = await this.game.ui.requestPublicCard?.(player, this.cards);
-        if (!card) {
-          if (!this.game.isSessionValid(gameId)) return false;
-          break;
+        while (!card && this.cards.length && player.alive) {
+          const offeredCards = [...this.cards];
+          card = await this.game.ui.requestPublicCard?.(player, offeredCards);
+          if (!this.game.isSessionValid(gameId) || this.game.state.isGameOver) return false;
+          // 有效对局中的意外 null 或过期选择不能中止整张互利，重新请求当前角色选择。
+          if (!card || !this.cards.includes(card)) card = null;
         }
       } else card = this.game.aiController.cardSelector.choosePublicCard(player, this.cards);
-      if (!this.game.isSessionValid(gameId)) return false;
-      if (this.game.state.isGameOver || !player.alive || !this.cards.length) break;
+      if (!this.game.isSessionValid(gameId) || this.game.state.isGameOver) return false;
+      if (!player.alive) continue;
+      if (!this.cards.length) break;
       if (!this.cards.includes(card)) {
-        if (player.controllerType === "human") break;
+        if (player.controllerType === "human") continue;
         card = this.cards[0];
       }
-      if (!card) break;
+      if (!card) continue;
       const cardIndex = this.cards.indexOf(card);
-      if (cardIndex < 0) break;
+      if (cardIndex < 0) continue;
       this.cards.splice(cardIndex, 1);
       player.hand.push(card);
       player.bumpHandVersion();

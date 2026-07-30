@@ -1,15 +1,16 @@
 /**
  * 互利公开牌池视图。只渲染公开牌并返回被点击的实体 ID，不移动卡牌；
- * pending Promise 在取消、重开或游戏结束时必须由 UIManager 收束。
+ * pending Promise 只允许在重开、销毁或游戏结束时由 UIManager 收束；
+ * 正常互利结算必须由当前存活角色确认一张牌。
  */
-import { escapeHtml } from "./templates.js?build=20260730-tabletop-hands-v15";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260730-tabletop-hands-v15";
+import { escapeHtml } from "./templates.js?build=20260730-tabletop-hands-v16";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260730-tabletop-hands-v16";
 
 export class PublicPoolView {
   constructor(element) { this.element = element; this.pending = null; }
   show(cards, options = {}) {
     const selectedId = options.selectedId ?? null;
-    this.element.innerHTML = `<div class="tableau-title">互利公开牌池</div><div class="tableau-cards">${cards.map((card) => `<button type="button" class="tableau-card ${card.id === selectedId ? "is-selected" : ""}" data-public-card-id="${escapeHtml(card.id)}" style="--card-accent:${escapeHtml(card.accent)}" aria-pressed="${card.id === selectedId}"><img src="${escapeHtml(card.art)}" alt=""><strong>${escapeHtml(card.name)}</strong><small>${escapeHtml(card.description)}</small></button>`).join("")}</div>${options.interactive ? `<div class="tableau-actions"><button class="primary-button" type="button" data-public-confirm${selectedId ? "" : " disabled"}>确定</button><button class="ghost-button" type="button" data-public-cancel>取消</button></div>` : ""}`;
+    this.element.innerHTML = `<div class="tableau-title">互利公开牌池</div><div class="tableau-cards">${cards.map((card) => `<button type="button" class="tableau-card ${card.id === selectedId ? "is-selected" : ""}" data-public-card-id="${escapeHtml(card.id)}" style="--card-accent:${escapeHtml(card.accent)}" aria-pressed="${card.id === selectedId}"><img src="${escapeHtml(card.art)}" alt=""><strong>${escapeHtml(card.name)}</strong><small>${escapeHtml(card.description)}</small></button>`).join("")}</div>${options.interactive ? `<div class="tableau-actions"><button class="primary-button" type="button" data-public-confirm${selectedId ? "" : " disabled"}>确定</button></div>` : ""}`;
     this.element.classList.remove("is-hidden");
   }
   request(player, cards) {
@@ -25,7 +26,6 @@ export class PublicPoolView {
           this.show(cards, { interactive:true, selectedId:[...next][0] ?? null });
           return;
         }
-        if (event.target.closest("[data-public-cancel]")) { this.settle(null); return; }
         if (!event.target.closest("[data-public-confirm]") || !isCardSelectionValid(this.pending?.selected, 1, true)) return;
         const selectedId = [...this.pending.selected][0];
         this.settle(cards.find((card) => card.id === selectedId) ?? null);
