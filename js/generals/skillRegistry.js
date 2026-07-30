@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v20";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260730-tabletop-hands-v20";
-import { randomChoice } from "../utils/helpers.js?build=20260730-tabletop-hands-v20";
-import { Debug } from "../utils/debug.js?build=20260730-tabletop-hands-v20";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v23";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260730-tabletop-hands-v23";
+import { randomChoice } from "../utils/helpers.js?build=20260730-tabletop-hands-v23";
+import { Debug } from "../utils/debug.js?build=20260730-tabletop-hands-v23";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -36,18 +36,16 @@ const PASSIVE_SKILLS = {
     });
     game.eventBus.on("beforeDamage", `${owner.id}:momentum:damage`, (event) => {
       if (!owner.alive || event.source?.id !== owner.id || event.card?.definitionId !== "assault") return;
-      const bonus = owner.turnFlags.momentum + (owner.turnFlags.assaultBonus || 0);
+      const bonus = owner.turnFlags.momentum;
       if (bonus > 0) {
         event.amount += bonus;
         event.metadata.consumeMomentum = owner.turnFlags.momentum > 0;
-        event.metadata.consumeAssaultBonus = owner.turnFlags.assaultBonus > 0;
         game.log(`${owner.name}的突袭获得${bonus}点额外伤害。`, "important");
       }
     });
     game.eventBus.on("afterDamage", `${owner.id}:momentum:consume`, (event) => {
       if (event.source?.id !== owner.id || event.actualAmount <= 0) return;
       if (event.metadata.consumeMomentum) owner.turnFlags.momentum = 0;
-      if (event.metadata.consumeAssaultBonus) owner.turnFlags.assaultBonus = 0;
     });
   },
 
@@ -130,6 +128,15 @@ const PASSIVE_SKILLS = {
         await game.drawCards(owner, 1, "冒险");
       } else game.log(`${owner.name}的冒险没有带来额外收益。`);
     });
+    game.eventBus.on("beforeDamage", `${owner.id}:allIn:damage`, (event) => {
+      if (!owner.alive || event.source?.id !== owner.id || event.card?.definitionId !== "assault" || !owner.turnFlags.assaultBonus) return;
+      event.amount += owner.turnFlags.assaultBonus;
+      event.metadata.consumeAssaultBonus = true;
+      game.log(`${owner.name}的孤注令此次突袭伤害+1。`, "important");
+    });
+    game.eventBus.on("afterDamage", `${owner.id}:allIn:consume`, (event) => {
+      if (event.source?.id === owner.id && event.metadata.consumeAssaultBonus) owner.turnFlags.assaultBonus = 0;
+    });
   },
 
   coordination(game, owner) {
@@ -163,11 +170,10 @@ export const ACTIVE_SKILLS = Object.freeze({
     async execute(game, source, targets) {
       source.changeEnergy(-2);
       const target = targets[0];
-      const previousTemporary = Math.min(target.shield, target.statuses.temporaryShield?.amount ?? 0);
-      target.shield = Math.max(0, target.shield - previousTemporary) + 1;
-      target.statuses.temporaryShield = { amount:1, clearAtTurnStart:true };
+      target.shield += 1;
+      target.statuses.temporaryShield = { amount:(target.statuses.temporaryShield?.amount ?? 0) + 1, clearAtTurnStart:true };
       game.ui.queueFeedback?.("shield", target.id, 1);
-      game.log(`${source.name}为${target.name}构筑壁垒，获得1点持续至其下次回合开始的护盾。`, "heal");
+      game.log(`${source.name}为${target.name}构筑壁垒，获得1点可叠加且持续至其下次回合开始的护盾。`, "heal");
     }
   }),
   symbiosis: Object.freeze({

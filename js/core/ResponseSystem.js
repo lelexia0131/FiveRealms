@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v20";
-import { createId } from "../utils/helpers.js?build=20260730-tabletop-hands-v20";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260730-tabletop-hands-v20";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v23";
+import { createId } from "../utils/helpers.js?build=20260730-tabletop-hands-v23";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260730-tabletop-hands-v23";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v20";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v23";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -80,7 +80,6 @@ export function playerPanelTemplate(player, options = {}) {
   const statuses = [
     player.statuses?.exposeWeakness ? [`破势 ${player.statuses.exposeWeakness.stacks}`, "danger"] : null,
     player.statuses?.huntMark ? ["猎印", "mark"] : null,
-    player.shield ? [`护盾 ${player.shield}`, "shield"] : null,
     player.hp <= 0 && player.alive ? [`濒死 · 需${1 - player.hp}调息`, "danger"] : null,
     player.turnFlags?.recycleDeviceTriggered ? ["回收已触发", "mark"] : null
   ].filter(Boolean);

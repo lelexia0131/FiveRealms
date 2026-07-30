@@ -20,7 +20,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
     loreFaction: "曜石城垒", maxHp: 3, tags: ["防御", "保护"], roleTags: ["tank", "support"], passiveSkillIds: ["guardianAid"], activeSkillIds: ["barrier"],
     passiveName: "护援", passiveDescription: "每轮一次，弃置1张手牌令队友即将受到的伤害-1。",
     passiveTriggerText: "队友即将受到伤害且你可弃置1张手牌时", passiveLimitText: "每轮限触发1次",
-    activeName: "壁垒", activeDescription: "消耗2点能量，令一名队友获得1点壁垒护盾；持续至其下次回合开始，重复施放只刷新、不叠加；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
+    activeName: "壁垒", activeDescription: "消耗2点能量，令一名存活队友获得1点可叠加的壁垒护盾；持续至其下次回合开始，每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
     description: "背负古誓的城垒守卫，擅长将危险拦截在盟友身前。",
     aiProfile: profile(.6, 1.45, 1.25, .7, .8, .85, .9, .45)
   }),
@@ -72,8 +72,8 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "resonance-tuner", name: "调律师", glyph: "律", portrait: "./assets/characters/resonance-tuner.svg",
     loreFaction: "鸣风塔", maxHp: 4, tags: ["辅助", "过牌"], roleTags: ["support", "control"], passiveSkillIds: ["coordination"], activeSkillIds: ["resonance"],
-    passiveName: "协调", passiveDescription: "每回合首次对队友使用卡牌后，自己摸1张牌。",
-    passiveTriggerText: "对队友使用卡牌后", passiveLimitText: "每回合限触发1次",
+    passiveName: "协调", passiveDescription: "每回合首次对另一名队友使用卡牌后，自己摸1张牌。",
+    passiveTriggerText: "对另一名队友使用卡牌后", passiveLimitText: "每回合限触发1次",
     activeName: "共鸣", activeDescription: "消耗2点能量，令一名存活队友摸2张牌；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
     description: "借风塔谐振器校准队友的行动，让每一次协作都产生新的回响。",
     aiProfile: profile(.6, .8, 1.45, .9, .7, .8, .75, .55)

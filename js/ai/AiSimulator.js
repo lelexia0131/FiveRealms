@@ -2,8 +2,8 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-tabletop-hands-v20";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260730-tabletop-hands-v20";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-tabletop-hands-v23";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260730-tabletop-hands-v23";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -123,14 +123,14 @@ export class AiSimulator {
       const energy = actor.energy;
       actor.energy = 0;
       actor.handCount += Math.min(2, energy);
-      if (energy >= 3) actor.assaultBonus = (actor.assaultBonus ?? 0) + 1;
+      if (energy >= 3) actor.assaultBonus = 1;
       return;
     }
     actor.energy = Math.max(0, actor.energy - skill.cost);
     if (skill.id === "breakArmy") actor.attackLimit += 1;
     else if (skill.id === "barrier" && target) {
-      target.shield = Math.max(0, target.shield - (target.temporaryShieldAmount ?? 0)) + 1;
-      target.temporaryShieldAmount = 1;
+      target.shield = (target.shield ?? 0) + 1;
+      target.temporaryShieldAmount = (target.temporaryShieldAmount ?? 0) + 1;
     } else if (skill.id === "symbiosis" && target) {
       this.heal(target, 1);
     } else if (skill.id === "stealSkill" && target) {
