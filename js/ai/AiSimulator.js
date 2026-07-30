@@ -2,7 +2,8 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-tabletop-hands-v16";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-tabletop-hands-v18";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260730-tabletop-hands-v18";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -96,13 +97,8 @@ export class AiSimulator {
   counterDesire(state, responder, actor, card, targets) {
     const sourceEnemy = responder.battleTeam !== actor.battleTeam;
     const target = state.players.find((player) => player.id === targets[0]?.id);
-    if (card.definitionId === "symbiosis") {
-      const net = state.players.filter((player) => player.alive).reduce((sum, player) => {
-        if (player.hp >= player.maxHp) return sum;
-        return sum + (player.battleTeam === responder.battleTeam ? 1 : -1);
-      }, 0);
-      return net < 0 ? 1 : net > 0 ? 0 : 0.15;
-    }
+    const globalBenefitDesire = globalBenefitCounterDesire(state.players, responder.battleTeam, card.definitionId);
+    if (globalBenefitDesire !== null) return globalBenefitDesire;
     if (["shockwave","provoke"].includes(card.definitionId)) return sourceEnemy ? 1 : 0;
     if (card.definitionId === "duel") return target?.battleTeam === responder.battleTeam ? 0.9 : sourceEnemy ? 0.35 : 0;
     if (["scout","plunder","destroy"].includes(card.definitionId) && target) {
@@ -110,7 +106,6 @@ export class AiSimulator {
       return sourceEnemy ? 0.25 : 0;
     }
     if (card.definitionId === "transfer") return sourceEnemy ? 0.45 : 0.15;
-    if (card.definitionId === "mutualBenefit") return sourceEnemy ? 0.15 : 0.05;
     return sourceEnemy ? ((card.aiValue ?? 0) >= 7 ? 0.8 : 0.45) : 0;
   }
 

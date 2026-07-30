@@ -77,12 +77,12 @@
 .opponent-card-slot .card-tags { gap: 2px; padding: 1px 3px; }
 .opponent-card-slot .card-tags span { font-size: 8px; }
 .opponent-card-slot .card-tags span + span::before { margin-right: 2px; }
-.status-row { display: flex; flex-wrap: wrap; gap: 4px; min-height: 22px; }
-.status-chip { padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; background: rgba(255,255,255,.65); color: var(--text-secondary); font-size: 12px; }
-.status-chip.is-danger { color: var(--danger); border-color: #d8a099; background: #f5e1dc; }
-.status-chip.is-shield { color: var(--shield); border-color: #abc1d5; background: #e4edf5; }
-.range-readout { display: flex; align-items: center; justify-content: space-between; gap: 5px; color: var(--text-secondary); font-size: 12px; }
+.range-readout { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; }
 .range-readout { padding: 3px 6px; border: 1px dashed color-mix(in srgb, var(--team), #fff 55%); border-radius: 6px; background: rgba(255,255,255,.45); }
+.range-readout.is-status-only { grid-template-columns: minmax(0, 1fr); }
+.panel-status { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+.panel-status small { flex: 0 0 auto; color: var(--text-secondary); }
+.panel-status b { overflow: hidden; color: var(--text-primary); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .range-readout strong { color: var(--team); }
 .range-readout small { font-size: 12px; }
 
@@ -125,8 +125,6 @@
   .cpu-seat .seat-main { gap: 4px; overflow-y: hidden; padding-right: 0; }
   .cpu-seat .vitals { gap: 3px; }
   .cpu-seat .resource-pill { padding: 1px 2px; }
-  .cpu-seat .status-row { min-height: 18px; }
-  .cpu-seat .status-chip { padding: 1px 5px; }
   .cpu-seat .range-readout { padding: 2px 5px; }
   .cpu-seat .equipment-slot { min-height: 35px; grid-template-columns: 29px minmax(0, 1fr) auto; gap: 5px; padding: 3px 5px; }
   .cpu-seat .equipment-slot.is-empty { grid-template-columns: 29px minmax(0, 1fr); }

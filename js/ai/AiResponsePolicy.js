@@ -1,4 +1,5 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v16";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v18";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260730-tabletop-hands-v18";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
@@ -56,14 +57,11 @@ export class AiResponsePolicy {
     if (type === "counter") {
       const sourceEnemy = context.source?.battleTeam !== responder.battleTeam;
       const id = context.card?.definitionId;
-      if (id === "symbiosis") {
-        const net = this.evaluator.symbiosisNet(responder);
-        if (net > 0) return false;
-        if (net < 0) return true;
-      }
-      const teamSwing = ["shockwave","provoke","symbiosis","mutualBenefit","duel"].includes(id);
+      const globalBenefitDesire = globalBenefitCounterDesire(this.game.state.players, responder.battleTeam, id);
+      if (globalBenefitDesire !== null) return globalBenefitDesire > 0;
+      const teamSwing = ["shockwave","provoke","duel"].includes(id);
       if (sourceEnemy && this.game.teamRules.isSmallTeam(responder)) return teamSwing || (context.card?.aiValue ?? 0) >= 5;
-      return sourceEnemy ? teamSwing || (context.card?.aiValue ?? 0) >= 7 : id === "symbiosis" && this.evaluator.symbiosisNet(responder) < 0;
+      return sourceEnemy ? teamSwing || (context.card?.aiValue ?? 0) >= 7 : false;
     }
     if (type === "assaultDiscard") {
       if (context.card?.definitionId === "provoke") return responder.hp <= 2 || responder.hand.length > 2;
