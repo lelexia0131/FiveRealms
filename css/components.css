@@ -62,6 +62,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .response-panel p { margin: 7px 0 14px; color: var(--text-secondary); font-size: 13px; }
 .response-actions { display: flex; gap: 8px; }
 .response-actions button { flex: 1; }
+.response-actions .primary-button:disabled { color: #756e63; border-color: #c8c0b3; background: #e5e0d7; box-shadow: none; opacity: 1; }
 
 .hand-heading span { font: 700 18px/1 var(--serif); }
 .hand-heading small { color: var(--text-secondary); font-size: 12px; }
@@ -72,7 +73,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 .log-toggle-button { display: grid; place-items: center; padding: 0; color: #fff; border: 1px solid #8d6b31; border-radius: 8px; background: var(--gold); box-shadow: 0 4px 10px rgba(80,56,25,.16); }
 .log-toggle-button span { font-size: 24px; line-height: 1; }
-.log-heading #log-count { display: grid; place-items: center; min-width: 34px; height: 34px; padding: 0 8px; color: var(--dawn); border: 1px solid #a8d3cd; border-radius: 50%; background: var(--dawn-soft); font-size: 13px; font-weight: 800; }
+.log-heading #log-count { display: grid; place-items: center; min-width: 52px; height: 34px; padding: 0 10px; color: var(--dawn); border: 1px solid #a8d3cd; border-radius: 999px; background: var(--dawn-soft); font-size: 13px; font-weight: 800; white-space: nowrap; }
 .log-entry { margin-bottom: 8px; padding: 9px 10px; color: var(--text-secondary); border-left: 3px solid #d7cbb7; border-radius: 4px 9px 9px 4px; background: #f7f2e7; font-size: 13px; line-height: 1.65; }
 .log-entry.is-important { color: #46361e; border-left-color: var(--gold); background: #f7ecd1; }
 .log-entry.is-damage { color: #6d2b27; border-left-color: var(--danger); background: #f6e3df; }

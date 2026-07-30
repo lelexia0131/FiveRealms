@@ -8,13 +8,13 @@
       content="《五域纷争》是一款原创的五人、2V3 阵营单人网页卡牌游戏。"
     />
     <title>五域纷争 · 原创阵营卡牌游戏</title>
-    <link rel="stylesheet" href="./css/reset.css" />
-    <link rel="stylesheet" href="./css/theme.css" />
-    <link rel="stylesheet" href="./css/layout.css" />
-    <link rel="stylesheet" href="./css/characters.css" />
-    <link rel="stylesheet" href="./css/cards.css" />
-    <link rel="stylesheet" href="./css/components.css" />
-    <link rel="stylesheet" href="./css/animations.css" />
+    <link rel="stylesheet" href="./css/reset.css?build=20260730-response-v3" />
+    <link rel="stylesheet" href="./css/theme.css?build=20260730-response-v3" />
+    <link rel="stylesheet" href="./css/layout.css?build=20260730-response-v3" />
+    <link rel="stylesheet" href="./css/characters.css?build=20260730-response-v3" />
+    <link rel="stylesheet" href="./css/cards.css?build=20260730-response-v3" />
+    <link rel="stylesheet" href="./css/components.css?build=20260730-response-v3" />
+    <link rel="stylesheet" href="./css/animations.css?build=20260730-response-v3" />
   </head>
   <body>
     <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -107,7 +107,7 @@
 
           <aside id="log-panel" class="log-panel" aria-labelledby="log-title">
             <button id="log-toggle-button" class="log-toggle-button" type="button" aria-expanded="true" aria-label="折叠对局记录"><span aria-hidden="true">›</span></button>
-            <div class="log-heading"><div class="log-heading-copy"><small>战局编年</small><h2 id="log-title">对局记录</h2></div><span id="log-count">0</span></div>
+            <div class="log-heading"><div class="log-heading-copy"><small>战局编年</small><h2 id="log-title">对局记录</h2></div><span id="log-count" title="共 0 条对局记录" aria-label="共 0 条对局记录">0 条</span></div>
             <div id="log-list" class="log-list" role="log" aria-live="polite"></div>
           </aside>
         </div>
@@ -123,6 +123,7 @@
       </div>
     </div>
 
-    <script type="module" src="./js/main.js"></script>
+    <!-- 发布版本必须同时更新模块 import 的 build 查询参数，避免静态服务器复用旧依赖模块。 -->
+    <script type="module" src="./js/main.js?build=20260730-response-v3"></script>
   </body>
 </html>

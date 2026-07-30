@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js";
-import { createId } from "../utils/helpers.js";
-import { getAiDelay } from "../utils/aiTiming.js";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-response-v3";
+import { createId } from "../utils/helpers.js?build=20260730-response-v3";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260730-response-v3";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -23,7 +23,11 @@ export class ResponseSystem {
     const gameId = this.game.state.gameId;
     const definitionId = RESPONSE_DEFINITION[type];
     const cards = responder.hand.filter((card) => card.definitionId === definitionId).slice(0, requiredCount);
-    if (cards.length < requiredCount || !responder.alive || this.game.state.isGameOver) return [];
+    if (!responder.alive || this.game.state.isGameOver) return [];
+    // 真人遭受可格挡攻击时始终看到响应窗口；牌数不足只会禁用确认按钮。
+    // AI 没有合法响应牌时仍直接跳过，避免产生没有决策意义的等待。
+    const shouldShowUnavailableBlock = type === "block" && responder.controllerType === "human";
+    if (cards.length < requiredCount && !shouldShowUnavailableBlock) return [];
     const request = { id:createId("response"), type, sourcePlayerId:context.source?.id ?? null, targetPlayerId:responder.id,
       cardId:context.card?.id ?? null, legalCardIds:cards.map((card) => card.id), requiredCount,
       legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true };
@@ -31,7 +35,8 @@ export class ResponseSystem {
     this.game.state.pendingResponses.push(request);
     const label = type === "block" ? (requiredCount === 2 ? "使用2张格挡" : "格挡") : "反制";
     const use = await this.waitForDecision(responder, request, label, context, cards);
-    const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) && responder.alive && cards.every((card) => responder.hand.includes(card));
+    const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) && responder.alive &&
+      cards.length >= requiredCount && cards.every((card) => responder.hand.includes(card));
     this.finishRequest(request.id);
     if (!use || !valid) return [];
     for (const card of cards) await this.game.discardCardFromHand(responder, card, `响应·${card.name}`);

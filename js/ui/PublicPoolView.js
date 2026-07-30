@@ -2,7 +2,7 @@
  * 互利公开牌池视图。只渲染公开牌并返回被点击的实体 ID，不移动卡牌；
  * pending Promise 在取消、重开或游戏结束时必须由 UIManager 收束。
  */
-import { escapeHtml } from "./templates.js";
+import { escapeHtml } from "./templates.js?build=20260730-response-v3";
 
 export class PublicPoolView {
   constructor(element) { this.element = element; this.pending = null; }

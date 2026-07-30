@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js";
-import { createId, clamp } from "../utils/helpers.js";
-import { EventBus } from "./EventBus.js";
-import { Player } from "./Player.js";
-import { Deck } from "./Deck.js";
-import { TeamManager } from "./TeamManager.js";
-import { GeneralSelection } from "./GeneralSelection.js";
-import { RuleEngine } from "./RuleEngine.js";
-import { ResponseSystem } from "./ResponseSystem.js";
-import { GameLogger } from "./GameLogger.js";
-import { resolveCardEffect } from "../cards/cardRegistry.js";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js";
-import { AIController } from "../ai/AIController.js";
-import { CleanupManager } from "../utils/CleanupManager.js";
-import { getAiDelay } from "../utils/aiTiming.js";
-import { Debug } from "../utils/debug.js";
-import { TeamRuleService } from "./TeamRuleService.js";
-import { DyingSystem } from "./DyingSystem.js";
-import { JudgmentSystem } from "./JudgmentSystem.js";
-import { CardSelectionSystem } from "./CardSelectionSystem.js";
-import { PublicCardPool } from "./PublicCardPool.js";
-import { HpLossSystem } from "./HpLossSystem.js";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-response-v3";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-response-v3";
+import { createId, clamp } from "../utils/helpers.js?build=20260730-response-v3";
+import { EventBus } from "./EventBus.js?build=20260730-response-v3";
+import { Player } from "./Player.js?build=20260730-response-v3";
+import { Deck } from "./Deck.js?build=20260730-response-v3";
+import { TeamManager } from "./TeamManager.js?build=20260730-response-v3";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260730-response-v3";
+import { RuleEngine } from "./RuleEngine.js?build=20260730-response-v3";
+import { ResponseSystem } from "./ResponseSystem.js?build=20260730-response-v3";
+import { GameLogger } from "./GameLogger.js?build=20260730-response-v3";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260730-response-v3";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260730-response-v3";
+import { AIController } from "../ai/AIController.js?build=20260730-response-v3";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260730-response-v3";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260730-response-v3";
+import { Debug } from "../utils/debug.js?build=20260730-response-v3";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260730-response-v3";
+import { DyingSystem } from "./DyingSystem.js?build=20260730-response-v3";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260730-response-v3";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260730-response-v3";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260730-response-v3";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260730-response-v3";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -107,6 +107,7 @@ export class Game {
     this.state.players = teams.map((battleTeam, seatIndex) => new Player({
       id: createId("player"), seatIndex, battleTeam, controllerType: seatIndex === 0 ? "human" : "ai"
     }));
+    for (const player of this.state.players) player.maxEnergy = this.teamRules.getMaxEnergy(player);
     this.candidates = this.generalSelection.createCandidates();
     this.eventBus.emit("teamAssigned", { type: "teamAssigned", players: this.state.players });
     return this.candidates;

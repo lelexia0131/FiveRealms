@@ -52,8 +52,12 @@ export const GAME_CONFIG = Object.freeze({
     attackLimitPerTurn: 2,
     // null 表示主动调息不限次数，但仍受受伤与手牌约束。
     recoverLimitPerTurn: null,
-    // 自己回合能量总基础值；固定为 2，装备加成在服务层另算。
-    turnEnergyGain: 2
+    // 自己回合获得的基础能量；装备加成在服务层另算。
+    turnEnergyGain: 1,
+    // 阵营额外能量；当前两种阵营均无额外加成，保留字段供事件分项展示。
+    turnEnergyBonus: 0,
+    // 二人小队的能量上限；所有能量来源统一受该值约束。
+    maxEnergy: 4
   }),
   // 三人阵营基准规则；与小队补偿并列，避免各模块重复判断人数。
   largeTeamRules: Object.freeze({
@@ -63,10 +67,14 @@ export const GAME_CONFIG = Object.freeze({
     drawCountPerTurn: 2,
     // 每个出牌阶段主动突袭一次；提高会放大人数优势。
     attackLimitPerTurn: 1,
-    // 每个出牌阶段主动调息一次；null 才表示无限。
-    recoverLimitPerTurn: 1,
+    // null 表示主动调息不限次数，但仍受受伤与手牌约束。
+    recoverLimitPerTurn: null,
     // 自己回合获得 1 点基础能量。
-    turnEnergyGain: 1
+    turnEnergyGain: 1,
+    // 阵营额外能量；当前两种阵营均无额外加成，保留字段供事件分项展示。
+    turnEnergyBonus: 0,
+    // 三人阵营的能量上限；所有能量来源统一受该值约束。
+    maxEnergy: 3
   }),
 
   // 以下均为毫秒范围；调高只延长自然模式阅读时间，调低会让动作显得跳跃。

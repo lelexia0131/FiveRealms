@@ -1,19 +1,26 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js";
-import { RuleEngine } from "../core/RuleEngine.js";
-import { getActiveSkill } from "../generals/skillRegistry.js";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260730-response-v3";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260730-response-v3";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260730-response-v3";
 import {
   candidateCardTemplate, escapeHtml, formatLogMessage, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, thinkingTemplate
-} from "./templates.js";
-import { AnimationController } from "./animationController.js";
-import { InteractionController } from "./InteractionController.js";
-import { PublicPoolView } from "./PublicPoolView.js";
-import { PrivateRevealView } from "./PrivateRevealView.js";
-import { JudgmentView } from "./JudgmentView.js";
-import { DistanceSystem } from "../core/DistanceSystem.js";
+} from "./templates.js?build=20260730-response-v3";
+import { AnimationController } from "./animationController.js?build=20260730-response-v3";
+import { InteractionController } from "./InteractionController.js?build=20260730-response-v3";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260730-response-v3";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260730-response-v3";
+import { JudgmentView } from "./JudgmentView.js?build=20260730-response-v3";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-response-v3";
+
+export function canSubmitResponse(request) {
+  const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
+  return requiredCount === 0 || (request?.legalCardIds?.length ?? 0) >= requiredCount;
+}
+
+export const skillButtonLabel = (skill) => skill?.name ?? "主动技能";
 
 export class UIManager {
   constructor() {
@@ -97,7 +104,7 @@ export class UIManager {
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.remove("is-hidden");
     this.elements.log_list.innerHTML = "";
-    this.elements.log_count.textContent = "0";
+    this.updateLogCount(0);
     this.setLogCollapsed(window.innerWidth < 1280);
     if (game.state.players.every((player) => player.general)) this.render(game);
   }
@@ -172,7 +179,7 @@ export class UIManager {
     const interaction = this.isInteractionActive();
     const skill = getActiveSkill(human);
     const skillLegal = skill?.canUse(game, human).ok ?? false;
-    this.elements.skill_button.textContent = skill ? `${skill.name} · ${skill.id === "allIn" ? "全部" : skill.cost} 能量` : "主动技能";
+    this.elements.skill_button.textContent = skillButtonLabel(skill);
     this.elements.skill_button.disabled = !humanPlay || !skillLegal || interaction || game.actionLocked;
     this.elements.end_play_button.disabled = !humanPlay || interaction || game.actionLocked;
     this.elements.discard_confirm_button.classList.toggle("is-hidden", !this.discardState);
@@ -260,7 +267,11 @@ export class UIManager {
       };
       const interval = window.setInterval(update, 200);
       this.responseState = { request, resolve: settle, interval };
-      this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${Math.ceil(request.timeoutMs / 1000)}s</span></div><p>现在可以改变即将发生的结算。</p><div class="response-actions"><button class="primary-button" data-response-choice="use">${escapeHtml(label)}</button><button class="ghost-button" data-response-choice="decline">放弃响应</button></div>`;
+      const canUse = canSubmitResponse(request);
+      const responseHint = request.type === "block" && !canUse
+        ? `需要 ${request.requiredCount} 张格挡，当前不足；你仍可查看并放弃响应。`
+        : "现在可以改变即将发生的结算。";
+      this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${Math.ceil(request.timeoutMs / 1000)}s</span></div><p>${escapeHtml(responseHint)}</p><div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(label)}</button><button class="ghost-button" data-response-choice="decline">放弃响应</button></div>`;
       this.elements.response_panel.classList.remove("is-hidden");
       this.game.cleanupManager.delay(request.timeoutMs).then((completed) => { if (completed) settle(false); });
       update();
@@ -326,8 +337,16 @@ export class UIManager {
     node.className = `log-entry ${entry.kind === "normal" ? "" : `is-${entry.kind}`}`;
     node.innerHTML = formatLogMessage(entry.message);
     this.elements.log_list.append(node);
-    this.elements.log_count.textContent = String(count);
+    this.updateLogCount(count);
     this.elements.log_list.scrollTop = this.elements.log_list.scrollHeight;
+  }
+
+  updateLogCount(count) {
+    const safeCount = Number.isFinite(Number(count)) ? Math.max(0, Math.trunc(Number(count))) : 0;
+    const label = `${safeCount} 条`;
+    this.elements.log_count.textContent = label;
+    this.elements.log_count.title = `共 ${safeCount} 条对局记录`;
+    this.elements.log_count.setAttribute("aria-label", `共 ${safeCount} 条对局记录`);
   }
 
   queueFeedback(type, playerId = null, amount = null) { this.animationController.queue(type, playerId, amount); }

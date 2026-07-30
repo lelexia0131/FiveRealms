@@ -47,10 +47,11 @@ npm run test:balance
 | 开局手牌总数 | 5 | 4 |
 | 每回合摸牌 | 3 | 2 |
 | 每回合主动突袭 | 2 | 1 |
-| 每回合主动调息 | 不限次数 | 1 |
-| 自己回合基础能量 | 2 | 1 |
+| 每回合主动调息 | 不限次数 | 不限次数 |
+| 自己回合基础能量 | 1 | 1 |
+| 能量上限 | 4 | 3 |
 
-`recoverLimitPerTurn: null` 明确表示无限；仍必须满足受伤、持有调息且交互未锁定。
+两个阵营的 `recoverLimitPerTurn: null` 都明确表示无限；仍必须满足受伤、持有调息、处于自己的出牌阶段且交互未锁定。濒死救援不计入主动调息次数。
 
 守誓者最大生命为 3。主动技能“壁垒”消耗 2 点能量，只为一名存活队友提供 1 点临时护盾；该护盾被重复施放时仅刷新为 1 点，不会叠加，并在目标自己的下回合开始时消散。
 
@@ -76,13 +77,13 @@ const aliveRing = game.state.players
 
 1. `turnStart`：重置每回合标记并清除到期临时状态。
 2. `status`：结算状态事件。
-3. `energy`：本人获得基础、二人阵营和充能装置能量，不能超过上限。
+3. `energy`：本人获得配置中的 1 点基础能量，充能装置额外增加 1 点，不能超过阵营上限。
 4. `draw`：默认摸 2 张牌。
 5. `play`：主动使用牌或技能；AI 每个真实动作后重新规划。
 6. `discard`：手牌上限为当前生命，超出部分必须弃置。
 7. `turnEnd`：触发回合结束事件并移交下一名存活角色。
 
-能量增长发生在摸牌之前，并触发 `beforeTurnEnergyGain` 和 `afterTurnEnergyGain`。事件公开 `baseAmount`、`teamBonus`、`equipmentBonus`、`amount`、`actualAmount`、`cancelled` 与 `metadata`，方便技能和 UI 安全扩展。
+能量增长发生在摸牌之前，并触发 `beforeTurnEnergyGain` 和 `afterTurnEnergyGain`。二人、三人阵营无装备时均为 `baseAmount: 1`、`teamBonus: 0`、`equipmentBonus: 0`；充能装置令 `equipmentBonus` 变为 1。事件继续公开 `amount`、`actualAmount`、`cancelled` 与 `metadata`，所有来源最终分别受二人阵营 4 点、三人阵营 3 点的能量上限约束。
 
 ## 二十种卡牌与精确牌堆
 
@@ -90,10 +91,10 @@ const aliveRing = game.state.players
 
 | 类别 | definitionId | 名称 | 数量 |
 | --- | --- | --- | ---: |
-| 基础 | assault | 突袭 | 40 |
-| 基础 | recover | 调息 | 25 |
-| 基础 | block | 格挡 | 35 |
-| 基础 | charge | 充能 | 30 |
+| 基础 | assault | 突袭 | 30 |
+| 基础 | recover | 调息 | 10 |
+| 基础 | block | 格挡 | 25 |
+| 基础 | charge | 聚能 | 10 |
 | 战术 | scout | 窥探 | 4 |
 | 战术 | transfer | 转移 | 4 |
 | 战术 | exposeWeakness | 破势 | 4 |
@@ -111,12 +112,12 @@ const aliveRing = game.state.players
 | 装备 | defenseDevice | 防御装置 | 2 |
 | 装备 | battleDevice | 战斗装置 | 2 |
 
-合计：基础牌 130、战术牌 40、装备牌 8，共 178 张。每个实体具有唯一 `card.id`；配置与规则使用稳定 `definitionId`。
+合计：基础牌 75、战术牌 40、装备牌 8，共 123 张。每个实体具有唯一 `card.id`；配置与规则使用稳定 `definitionId`。
 
 ## 主要卡牌结算
 
 - 突袭：对动态距离内敌人造成 1 点可格挡伤害；二人阵营可主动使用两次。
-- 调息：出牌阶段自疗 1；濒死窗口可救自己或存活队友，救援不计主动次数。
+- 调息：两个阵营在出牌阶段均可不限次数自疗 1，但每次仍需持有实体牌且生命未满；濒死窗口可救自己或存活队友，救援不计主动次数。
 - 格挡：只在突袭响应窗口使用；战斗装置会把需求从 1 张提高为原子弃置 2 张。
 - 充能：获得 1 点能量，不超过上限。
 - 窥探：选择目标和最多两张背面实体牌，结果只在施牌者私密层展示。
@@ -195,7 +196,7 @@ AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/�
 - `AiEvaluator`：按整队存活、生命、资源、斩杀、治疗净收益和状态评分。
 - `AiPlanner`：深度 4、宽度 10 的 beam search，默认 900ms 时间预算。
 - `AiSimulator`：只克隆过滤后的快照，无 UI、日志、事件或真实状态副作用。
-- `AiKnowledge`：从 178 张组成减去公开/合法已知牌，采样 10 个隐藏世界。
+- `AiKnowledge`：从 123 张组成减去公开/合法已知牌，采样 10 个隐藏世界。
 - `AiResponsePolicy`：评估格挡、反制、交牌、决斗和救援的团队效用。
 - `AiCardSelector`：处理弃牌、公共牌与隐藏位置；未知牌不能按真实牌面筛选。
 

@@ -2,6 +2,13 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-response-v3";
+
+const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
+const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
+const BLOCK_CARD_COUNT = CARD_DEFINITIONS.block.count;
+const OTHER_BASIC_CARD_COUNT = BASIC_CARD_COUNT - BLOCK_CARD_COUNT;
+
 export class AiSimulator {
   constructor(visibleState) { this.initial = structuredClone(visibleState); }
 
@@ -147,16 +154,17 @@ export class AiSimulator {
     let pending = amount * (1 - blockChance);
     let directLoss = 0;
     if (options.deviceAttack && target.equipmentDefinitionId === "defenseDevice") {
-      const judgmentBlockChance = 35 / 178;
-      const otherBasicChance = 95 / 178;
-      const equipmentChance = 8 / 178;
+      const judgmentBlockChance = BLOCK_CARD_COUNT / TOTAL_CARD_COUNT;
+      const otherBasicChance = OTHER_BASIC_CARD_COUNT / TOTAL_CARD_COUNT;
+      const basicChance = BASIC_CARD_COUNT / TOTAL_CARD_COUNT;
+      const equipmentChance = EQUIPMENT_CARD_COUNT / TOTAL_CARD_COUNT;
       const passChance = !options.canBlock
-        ? 130 / 178
+        ? basicChance
         : requiresTwoBlocks
           ? judgmentBlockChance * (1 - (target.blockProbability ?? 0)) + otherBasicChance * (1 - (target.twoBlockProbability ?? 0))
           : otherBasicChance * (1 - (target.blockProbability ?? 0));
-      const responseChance = options.canBlock ? Math.max(0, 130 / 178 - passChance) : 0;
-      target.handCount += 130 / 178;
+      const responseChance = options.canBlock ? Math.max(0, basicChance - passChance) : 0;
+      target.handCount += basicChance;
       target.handCount = Math.max(0, target.handCount - responseChance * (requiresTwoBlocks ? 2 : 1));
       pending = amount * passChance;
       directLoss = equipmentChance;
