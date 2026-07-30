@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 280" role="img" aria-labelledby="title desc">
+  <title id="title">望远镜</title><desc id="desc">青铜望远镜对准远方的晨星</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#16384b"/><stop offset=".55" stop-color="#315f70"/><stop offset="1" stop-color="#b58d4c"/></linearGradient>
+    <linearGradient id="brass" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f1d47a"/><stop offset=".48" stop-color="#a8742f"/><stop offset="1" stop-color="#5a381f"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="#fffbd1"/><stop offset=".25" stop-color="#e5bd58" stop-opacity=".9"/><stop offset="1" stop-color="#e5bd58" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="480" height="280" fill="url(#sky)"/>
+  <circle cx="390" cy="58" r="74" fill="url(#glow)"/><circle cx="390" cy="58" r="13" fill="#fff0a5"/>
+  <g fill="#d8c887" opacity=".65"><circle cx="82" cy="45" r="3"/><circle cx="145" cy="88" r="4"/><circle cx="314" cy="34" r="3"/><circle cx="424" cy="132" r="4"/></g>
+  <path d="M0 238 92 176l75 32 83-70 92 43 138-72v171H0Z" fill="#172d36" opacity=".82"/>
+  <g transform="rotate(-20 240 145)">
+    <path d="M118 121h225v51H118z" fill="url(#brass)" stroke="#e5c56c" stroke-width="7"/>
+    <rect x="76" y="111" width="73" height="71" rx="15" fill="#263a42" stroke="#c79b4d" stroke-width="8"/>
+    <path d="M332 104h53v84h-53z" fill="#6d4928" stroke="#e0bd68" stroke-width="8"/>
+    <ellipse cx="386" cy="146" rx="21" ry="44" fill="#8ec8d0" stroke="#f0d37d" stroke-width="9"/>
+    <path d="M180 122v50M273 122v50" stroke="#715028" stroke-width="9"/>
+  </g>
+  <path d="m232 177-46 88M258 177l53 88" stroke="#c49a55" stroke-width="13" stroke-linecap="round"/>
+  <path d="M375 59 332 89" stroke="#f5d878" stroke-width="4" stroke-dasharray="8 9"/>
+</svg>

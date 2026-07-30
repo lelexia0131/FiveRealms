@@ -1,4 +1,4 @@
-/** 二十一种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
+/** 二十三种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
 
 const byId = (game, id) => game.state.players.find((player) => player.id === id && player.alive) ?? null;
 
@@ -149,6 +149,8 @@ const CARD_EFFECTS = {
   async recycleDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
   async defenseDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
   async battleDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
+  async telescope(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
+  async barrierDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
 
   async block() { throw new Error("格挡只能作为响应牌使用"); },
   async counter() { throw new Error("反制只能作为响应牌使用"); }

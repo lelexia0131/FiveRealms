@@ -4,6 +4,10 @@
  * 必须重新构造 aliveRing，所有卡牌和 AI 模拟都经 RuleEngine 调用本系统。
  */
 export class DistanceSystem {
+  static getEquipmentDefinitionId(player) {
+    return player?.equipment?.definitionId ?? player?.equipmentDefinitionId ?? null;
+  }
+
   static getAliveRing(game) {
     return game.state.players.filter((player) => player.alive).sort((a,b) => a.seatIndex - b.seatIndex);
   }
@@ -17,7 +21,11 @@ export class DistanceSystem {
     if (sourceIndex < 0 || targetIndex < 0) return Infinity;
     const clockwise = Math.abs(sourceIndex - targetIndex);
     const counterClockwise = ring.length - clockwise;
-    return Math.min(clockwise, counterClockwise);
+    let distance = Math.min(clockwise, counterClockwise);
+    // 望远镜是进攻方向修正；屏障是防御方向修正。距离最低保持为1。
+    if (this.getEquipmentDefinitionId(source) === "telescope") distance = Math.max(1, distance - 1);
+    if (this.getEquipmentDefinitionId(target) === "barrierDevice") distance += 1;
+    return distance;
   }
 
   /** 兼容只读工具测试；业务规则统一调用 getDistance(game,...)。 */

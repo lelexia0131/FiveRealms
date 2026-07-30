@@ -12,7 +12,7 @@ const ui = () => ({
   showPublicPool(){}, hidePublicPool(){}, showJudgment(){}, showDuel(){}, hideDuel(){}, showPrivateReveal(){}, setFastMode(){}
 });
 
-const totals = { smallWins:0, largeWins:0, stalled:0, deathCleanupViolations:0, rounds:0, reshuffles:0, equipmentUses:0, equipmentByType:{ energyDevice:0, recycleDevice:0, defenseDevice:0, battleDevice:0 }, attacks:0, dyingEntries:0, rescues:0, smallDamage:0, largeDamage:0, smallHealing:0, largeHealing:0, smallAttacks:0, largeAttacks:0 };
+const totals = { smallWins:0, largeWins:0, stalled:0, deathCleanupViolations:0, rounds:0, reshuffles:0, equipmentUses:0, equipmentByType:{ energyDevice:0, recycleDevice:0, defenseDevice:0, battleDevice:0, telescope:0, barrierDevice:0 }, attacks:0, dyingEntries:0, rescues:0, smallDamage:0, largeDamage:0, smallHealing:0, largeHealing:0, smallAttacks:0, largeAttacks:0 };
 const stallSnapshots = [];
 const SEED_BASE = Number(process.env.FIVE_REALMS_SEED_BASE ?? 0x9e3779b9);
 const START_INDEX = Number(process.env.FIVE_REALMS_START_INDEX ?? 0);

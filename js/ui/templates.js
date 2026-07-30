@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v24";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v25";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -39,8 +39,8 @@ export function equipmentSlotTemplate(player, isHuman = false) {
     </div>`;
   }
   const equipment = player.equipment;
-  const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"首次战术后摸1张", defenseDevice:"受突袭前公开判定", battleDevice:"突袭需2张格挡" };
-  const stateLabels = { energyDevice:"持续供能", recycleDevice:"待触发", defenseDevice:"待判定", battleDevice:"强化中" };
+  const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"首次战术后摸1张", defenseDevice:"受突袭前公开判定", battleDevice:"突袭需2张格挡", telescope:"对外距离-1", barrierDevice:"他人对你距离+1" };
+  const stateLabels = { energyDevice:"持续供能", recycleDevice:"待触发", defenseDevice:"待判定", battleDevice:"强化中", telescope:"观测中", barrierDevice:"屏障展开" };
   const triggered = equipment.definitionId === "recycleDevice" && Boolean(player.turnFlags?.recycleDeviceTriggered);
   const stateLabel = triggered ? "已触发" : stateLabels[equipment.definitionId] ?? "生效中";
   return `<div class="equipment-slot is-equipped ${triggered ? "is-triggered" : "is-ready"}" tabindex="0" aria-label="装备：${escapeHtml(equipment.name)}，${escapeHtml(stateLabel)}">

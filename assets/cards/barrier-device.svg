@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 280" role="img" aria-labelledby="title desc">
+  <title id="title">屏障</title><desc id="desc">紫蓝色机械核心展开多层防护界面</desc>
+  <defs>
+    <radialGradient id="bg"><stop stop-color="#665d86"/><stop offset=".58" stop-color="#302f50"/><stop offset="1" stop-color="#171d2b"/></radialGradient>
+    <linearGradient id="field" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d9ddff" stop-opacity=".76"/><stop offset=".5" stop-color="#7ca6cc" stop-opacity=".2"/><stop offset="1" stop-color="#c89adc" stop-opacity=".55"/></linearGradient>
+    <radialGradient id="core"><stop stop-color="#fff4bd"/><stop offset=".3" stop-color="#caa85c"/><stop offset="1" stop-color="#634d76"/></radialGradient>
+  </defs>
+  <rect width="480" height="280" fill="url(#bg)"/>
+  <g fill="none" stroke="url(#field)" stroke-width="9">
+    <path d="M240 22 391 76v75c0 60-62 96-151 113-89-17-151-53-151-113V76Z"/>
+    <path d="M240 48 354 90v58c0 43-47 72-114 88-67-16-114-45-114-88V90Z" opacity=".78"/>
+    <path d="M240 75 317 103v43c0 28-31 50-77 64-46-14-77-36-77-64v-43Z" opacity=".62"/>
+  </g>
+  <g stroke="#d4b969" stroke-width="7">
+    <circle cx="240" cy="144" r="48" fill="#3d4664"/>
+    <circle cx="240" cy="144" r="25" fill="url(#core)"/>
+    <path d="M240 96V52M240 236v-44M192 144h-47M335 144h-47"/>
+  </g>
+  <g fill="#e1cc81"><circle cx="240" cy="45" r="8"/><circle cx="240" cy="238" r="8"/><circle cx="137" cy="144" r="8"/><circle cx="343" cy="144" r="8"/></g>
+  <path d="M28 225c79-31 143-31 212 0 69-31 133-31 212 0" fill="none" stroke="#8faaca" stroke-width="6" opacity=".45"/>
+</svg>

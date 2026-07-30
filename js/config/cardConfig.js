@@ -1,5 +1,5 @@
 /**
- * 二十一种公开卡牌数据。art/icon 等字段只用于展示；规则只读取显式规则字段。
+ * 二十三种公开卡牌数据。art/icon 等字段只用于展示；规则只读取显式规则字段。
  * 三类牌为 basic / tactic / equipment，响应时机由 usageMode 与 responseTypes 描述。
  */
 const card = (definition) => Object.freeze({
@@ -30,7 +30,9 @@ export const CARD_DEFINITIONS = Object.freeze({
   energyDevice: card({ definitionId:"energyDevice", name:"充能装置", category:"equipment", categoryName:"装备牌", targetType:"self", subtypes:["equipment","energy"], description:"回合开始获得能量时额外获得1点。", count:2, aiValue:7, counterable:false, art:"./assets/cards/energy-device.svg", icon:"./assets/cards/energy-device.svg", accent:"#b4872f", frameStyle:"machine", flavorText:"微光沿铜轨汇入核心。" }),
   recycleDevice: card({ definitionId:"recycleDevice", name:"回收装置", category:"equipment", categoryName:"装备牌", targetType:"self", subtypes:["equipment","draw"], description:"自己回合首次主动使用战术牌后摸1张，即使该牌被反制。", count:2, aiValue:8, counterable:false, art:"./assets/cards/recycle-device.svg", icon:"./assets/cards/recycle-device.svg", accent:"#7d8260", frameStyle:"machine", flavorText:"废弃的余响仍可再次运转。" }),
   defenseDevice: card({ definitionId:"defenseDevice", name:"防御装置", category:"equipment", categoryName:"装备牌", targetType:"self", subtypes:["equipment","judgment","defense"], description:"遭受普通或震荡突袭前判定：战术免疫；基础获得并继续；装备失去1生命并终止攻击。", count:2, aiValue:9, counterable:false, art:"./assets/cards/defense-device.svg", icon:"./assets/cards/defense-device.svg", accent:"#58788c", frameStyle:"machine", flavorText:"齿轮先一步听见危险。" }),
-  battleDevice: card({ definitionId:"battleDevice", name:"战斗装置", category:"equipment", categoryName:"装备牌", targetType:"self", subtypes:["equipment","attack"], description:"你的普通与震荡突袭需要目标同时弃置2张格挡才能防御。", count:2, aiValue:9, counterable:false, art:"./assets/cards/battle-device.svg", icon:"./assets/cards/battle-device.svg", accent:"#9a6139", frameStyle:"machine", flavorText:"双重压力让防线发出哀鸣。" })
+  battleDevice: card({ definitionId:"battleDevice", name:"战斗装置", category:"equipment", categoryName:"装备牌", targetType:"self", subtypes:["equipment","attack"], description:"你的普通与震荡突袭需要目标同时弃置2张格挡才能防御。", count:2, aiValue:9, counterable:false, art:"./assets/cards/battle-device.svg", icon:"./assets/cards/battle-device.svg", accent:"#9a6139", frameStyle:"machine", flavorText:"双重压力让防线发出哀鸣。" }),
+  telescope: card({ definitionId:"telescope", name:"望远镜", category:"equipment", categoryName:"装备牌", targetType:"self", subtypes:["equipment","distance","attack"], description:"你计算与其他角色的距离时-1，距离最低为1。", count:2, aiValue:8, counterable:false, art:"./assets/cards/telescope.svg", icon:"./assets/cards/telescope.svg", accent:"#497c91", frameStyle:"machine", flavorText:"远处的锋芒，也能近在眼前。" }),
+  barrierDevice: card({ definitionId:"barrierDevice", name:"屏障", category:"equipment", categoryName:"装备牌", targetType:"self", subtypes:["equipment","distance","defense"], description:"其他角色计算与你的距离时+1。", count:2, aiValue:8, counterable:false, art:"./assets/cards/barrier-device.svg", icon:"./assets/cards/barrier-device.svg", accent:"#6d638f", frameStyle:"machine", flavorText:"无形界面，将来敌推远一步。" })
 });
 
 export const CARD_COUNTS = Object.freeze(Object.fromEntries(Object.values(CARD_DEFINITIONS).map((definition) => [definition.definitionId, definition.count])));

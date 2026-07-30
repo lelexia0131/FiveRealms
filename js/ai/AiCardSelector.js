@@ -2,7 +2,7 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-tabletop-hands-v24";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-tabletop-hands-v25";
 
 /** 未知手牌只按位置采样，绝不按真实定义筛选。 */
 export class AiCardSelector {
