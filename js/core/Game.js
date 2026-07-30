@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-response-hands-v7";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-response-hands-v7";
-import { createId, clamp } from "../utils/helpers.js?build=20260730-response-hands-v7";
-import { EventBus } from "./EventBus.js?build=20260730-response-hands-v7";
-import { Player } from "./Player.js?build=20260730-response-hands-v7";
-import { Deck } from "./Deck.js?build=20260730-response-hands-v7";
-import { TeamManager } from "./TeamManager.js?build=20260730-response-hands-v7";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260730-response-hands-v7";
-import { RuleEngine } from "./RuleEngine.js?build=20260730-response-hands-v7";
-import { ResponseSystem } from "./ResponseSystem.js?build=20260730-response-hands-v7";
-import { GameLogger } from "./GameLogger.js?build=20260730-response-hands-v7";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260730-response-hands-v7";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260730-response-hands-v7";
-import { AIController } from "../ai/AIController.js?build=20260730-response-hands-v7";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260730-response-hands-v7";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260730-response-hands-v7";
-import { Debug } from "../utils/debug.js?build=20260730-response-hands-v7";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260730-response-hands-v7";
-import { DyingSystem } from "./DyingSystem.js?build=20260730-response-hands-v7";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260730-response-hands-v7";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260730-response-hands-v7";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260730-response-hands-v7";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260730-response-hands-v7";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v14";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-tabletop-hands-v14";
+import { createId, clamp } from "../utils/helpers.js?build=20260730-tabletop-hands-v14";
+import { EventBus } from "./EventBus.js?build=20260730-tabletop-hands-v14";
+import { Player } from "./Player.js?build=20260730-tabletop-hands-v14";
+import { Deck } from "./Deck.js?build=20260730-tabletop-hands-v14";
+import { TeamManager } from "./TeamManager.js?build=20260730-tabletop-hands-v14";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260730-tabletop-hands-v14";
+import { RuleEngine } from "./RuleEngine.js?build=20260730-tabletop-hands-v14";
+import { ResponseSystem } from "./ResponseSystem.js?build=20260730-tabletop-hands-v14";
+import { GameLogger } from "./GameLogger.js?build=20260730-tabletop-hands-v14";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260730-tabletop-hands-v14";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260730-tabletop-hands-v14";
+import { AIController } from "../ai/AIController.js?build=20260730-tabletop-hands-v14";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260730-tabletop-hands-v14";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260730-tabletop-hands-v14";
+import { Debug } from "../utils/debug.js?build=20260730-tabletop-hands-v14";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260730-tabletop-hands-v14";
+import { DyingSystem } from "./DyingSystem.js?build=20260730-tabletop-hands-v14";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260730-tabletop-hands-v14";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260730-tabletop-hands-v14";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260730-tabletop-hands-v14";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260730-tabletop-hands-v14";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -356,7 +356,9 @@ export class Game {
       if (!cancelledBeforeResolve) await this.eventBus.emit("beforeCardResolve", resolveEvent);
       targets = resolveEvent.targets;
       cancelledBeforeResolve ||= resolveEvent.cancelled;
-      const countered = !cancelledBeforeResolve && await this.responseSystem.askForCounter(source, card, targets);
+      // 群伤牌使用逐目标反制，由各目标的效果解析负责；这里不能提前取消整张牌。
+      const countered = !cancelledBeforeResolve && card.counterScope !== "target" &&
+        await this.responseSystem.askForCounter(source, card, targets);
       let destination = "discard";
       if (countered || cancelledBeforeResolve) {
         this.log(`「${card.name}」的效果被取消。`, "important");
@@ -640,11 +642,15 @@ export class Game {
     const move = { type: "beforeCardMove", card, from: "hand", to: "hand", fromPlayer: from, player: to, reason, cancelled: false };
     await this.eventBus.emit("beforeCardMove", move);
     if (move.cancelled) return false;
+    const trackingViewers = this.state.players.filter((viewer) => viewer.id === from.id || this.isCardKnownTo(viewer, from, card));
     from.hand.splice(index, 1);
     to.hand.push(card);
     from.bumpHandVersion();
     to.bumpHandVersion();
     this.invalidateCardKnowledge(card.id, from.id);
+    for (const viewer of trackingViewers) {
+      if (viewer.id !== to.id) this.rememberPrivateCard(viewer, to, card);
+    }
     this.ui.queueFeedback?.("draw", to.id, 1);
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     this.ui.render(this);
@@ -737,6 +743,17 @@ export class Game {
     bucket[card.id] = card.definitionId;
   }
 
+  isCardKnownTo(viewer, owner, card) {
+    if (!viewer || !owner || !card) return false;
+    if (viewer.id === owner.id && owner.hand.includes(card)) return true;
+    return viewer.aiMemory?.knownCardsByPlayer?.[owner.id]?.[card.id] === card.definitionId;
+  }
+
+  cardLabelForHuman(owner, card) {
+    const human = this.state.players.find((player) => player.controllerType === "human") ?? this.state.players[0];
+    return this.isCardKnownTo(human, owner, card) ? `「${card.name}」` : "1张手牌";
+  }
+
   async chooseHiddenCards(actor, owner, count, reason, selection = null) {
     const maximum = Math.min(count, owner.hand.length);
     if (!maximum) return [];
@@ -750,7 +767,7 @@ export class Game {
     }
     if (actor.controllerType === "human") {
       const hidden = this.cardSelectionSystem.createHiddenSelection(owner);
-      const tokens = await this.ui.interactionController?.requestHiddenCards?.(hidden, maximum, reason, { exact:true });
+      const tokens = await this.ui.interactionController?.requestHiddenCards?.(hidden, maximum, reason, { exact:true, viewer:actor, owner });
       const uniqueTokens = [...new Set(tokens ?? [])].slice(0, maximum);
       const resolved = uniqueTokens.map((token) => this.cardSelectionSystem.resolveToken(token, owner, hidden.selectionId)).filter(Boolean);
       const cards = [...new Map(resolved.map((card) => [card.id, card])).values()];

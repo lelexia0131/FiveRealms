@@ -1,20 +1,21 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260730-response-hands-v7";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260730-response-hands-v7";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260730-response-hands-v7";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260730-tabletop-hands-v14";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260730-tabletop-hands-v14";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260730-tabletop-hands-v14";
 import {
   candidateCardTemplate, escapeHtml, formatLogMessage, handCardTemplate,
-  playerPanelTemplate, resolvingCardTemplate, thinkingTemplate
-} from "./templates.js?build=20260730-response-hands-v7";
-import { AnimationController } from "./animationController.js?build=20260730-response-hands-v7";
-import { InteractionController } from "./InteractionController.js?build=20260730-response-hands-v7";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260730-response-hands-v7";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260730-response-hands-v7";
-import { JudgmentView } from "./JudgmentView.js?build=20260730-response-hands-v7";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-response-hands-v7";
-import { createOpponentHandView } from "./handVisibility.js?build=20260730-response-hands-v7";
+  playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
+} from "./templates.js?build=20260730-tabletop-hands-v14";
+import { AnimationController } from "./animationController.js?build=20260730-tabletop-hands-v14";
+import { InteractionController } from "./InteractionController.js?build=20260730-tabletop-hands-v14";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260730-tabletop-hands-v14";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260730-tabletop-hands-v14";
+import { JudgmentView } from "./JudgmentView.js?build=20260730-tabletop-hands-v14";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-tabletop-hands-v14";
+import { createOpponentHandView } from "./handVisibility.js?build=20260730-tabletop-hands-v14";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260730-tabletop-hands-v14";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -32,7 +33,7 @@ export class UIManager {
       "public-pool-view", "judgment-view", "dying-view", "duel-view",
       "skill-button", "end-play-button", "discard-confirm-button", "cancel-interaction-button",
       "log-panel", "battle-layout", "log-toggle-button", "fast-mode-button",
-      "log-list", "log-count", "game-over-overlay", "game-over-title", "game-over-copy", "play-again-button"
+      "log-list", "log-count", "skill-details-overlay", "game-over-overlay", "game-over-title", "game-over-copy", "play-again-button"
     ].map((id) => [id.replaceAll("-", "_"), document.getElementById(id)]));
     this.callbacks = {};
     this.game = null;
@@ -50,6 +51,7 @@ export class UIManager {
     this.publicPoolView = new PublicPoolView(this.elements.public_pool_view);
     this.privateRevealView = new PrivateRevealView(this.elements.private_reveal);
     this.judgmentView = new JudgmentView(this.elements.judgment_view);
+    this.viewportWasNarrow = window.innerWidth < 1280;
     this.bindEvents();
   }
 
@@ -86,7 +88,12 @@ export class UIManager {
     });
     this.interactionController.bind(this.elements.response_panel);
     this.elements.log_toggle_button.addEventListener("click", () => this.setLogCollapsed(!this.logCollapsed));
+    window.addEventListener("resize", () => this.handleViewportResize());
     this.elements.fast_mode_button.addEventListener("click", () => this.callbacks.onToggleFastMode?.(!this.fastMode));
+    this.elements.skill_details_overlay.addEventListener("click", (event) => {
+      if (event.target === this.elements.skill_details_overlay || event.target.closest("[data-skill-dialog-close]")) this.hideSkillDetails();
+    });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") this.hideSkillDetails(); });
   }
 
   showStart() {
@@ -113,7 +120,16 @@ export class UIManager {
     this.elements.log_list.innerHTML = "";
     this.updateLogCount(0);
     this.setLogCollapsed(window.innerWidth < 1280);
+    this.viewportWasNarrow = window.innerWidth < 1280;
     if (game.state.players.every((player) => player.general)) this.render(game);
+  }
+
+  handleViewportResize() {
+    const isNarrow = window.innerWidth < 1280;
+    if (isNarrow && !this.viewportWasNarrow && !this.elements.game_screen.classList.contains("is-hidden")) {
+      this.setLogCollapsed(true);
+    }
+    this.viewportWasNarrow = isNarrow;
   }
 
   candidateTemplate(general, index) { return candidateCardTemplate(general, index); }
@@ -204,8 +220,7 @@ export class UIManager {
     if (!button || (button.dataset.disabled === "true" && !this.discardState)) return;
     const cardId = button.dataset.cardId;
     if (this.discardState) {
-      if (this.discardState.selectedIds.has(cardId)) this.discardState.selectedIds.delete(cardId);
-      else if (this.discardState.selectedIds.size < this.discardState.count) this.discardState.selectedIds.add(cardId);
+      this.discardState.selectedIds = toggleCardSelection(this.discardState.selectedIds, cardId, this.discardState.count);
       this.render(this.game);
       return;
     }
@@ -214,12 +229,31 @@ export class UIManager {
 
   handlePlayerClick(event) {
     const panel = event.target.closest("[data-player-id]");
-    if (!panel || !this.targetState?.legalIds.has(panel.dataset.playerId)) return;
-    const target = this.targetState.players.find((player) => player.id === panel.dataset.playerId) ?? null;
-    const resolve = this.targetState.resolve;
-    this.targetState = null;
-    resolve(target);
-    this.render(this.game);
+    if (!panel) return;
+    if (this.targetState) {
+      if (!this.targetState.legalIds.has(panel.dataset.playerId)) return;
+      const target = this.targetState.players.find((player) => player.id === panel.dataset.playerId) ?? null;
+      const resolve = this.targetState.resolve;
+      this.targetState = null;
+      resolve(target);
+      this.render(this.game);
+      return;
+    }
+    const player = this.game?.state.players.find((entry) => entry.id === panel.dataset.playerId);
+    if (player) this.showSkillDetails(player);
+  }
+
+  showSkillDetails(player) {
+    if (!player?.general) return false;
+    this.elements.skill_details_overlay.innerHTML = skillDetailsTemplate(player);
+    this.elements.skill_details_overlay.classList.remove("is-hidden");
+    this.elements.skill_details_overlay.querySelector("[data-skill-dialog-close]")?.focus();
+    return true;
+  }
+
+  hideSkillDetails() {
+    this.elements.skill_details_overlay.classList.add("is-hidden");
+    this.elements.skill_details_overlay.innerHTML = "";
   }
 
   requestTarget(players, prompt, meta = {}) {
@@ -396,6 +430,7 @@ export class UIManager {
     this.judgmentView.hide();
     this.hideDying();
     this.hideDuel();
+    this.hideSkillDetails();
     this.elements.private_reveal.classList.add("is-hidden");
     this.elements.response_panel.classList.add("is-hidden");
     this.elements.thinking_indicator.classList.add("is-hidden");

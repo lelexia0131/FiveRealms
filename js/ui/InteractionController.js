@@ -2,10 +2,16 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml } from "./templates.js?build=20260730-response-hands-v7";
+import { escapeHtml, hiddenCardBackTemplate } from "./templates.js?build=20260730-tabletop-hands-v14";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260730-tabletop-hands-v14";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260730-tabletop-hands-v14";
 
-export function hiddenSelectionMarkup(selection) {
-  return selection.tokens.map((entry) => `<button type="button" class="hidden-card-back" data-hidden-token="${escapeHtml(entry.token)}" aria-pressed="false"><i aria-hidden="true"></i><span>牌背 ${entry.position}</span></button>`).join("");
+export function hiddenSelectionMarkup(selection, slots = null) {
+  const displaySlots = slots ?? selection.tokens.map((entry) => ({ token:entry.token, known:false }));
+  return displaySlots.map((slot) => slot.known
+    ? `<button type="button" class="hidden-known-card" data-hidden-token="${escapeHtml(slot.token)}" aria-label="选择已知手牌${escapeHtml(slot.name)}" aria-pressed="false"><img src="${escapeHtml(slot.art)}" alt="" aria-hidden="true"><strong>${escapeHtml(slot.name)}</strong></button>`
+    : hiddenCardBackTemplate({ token:slot.token })
+  ).join("");
 }
 
 /** 多阶段真人选择器。只把公开 ID 或不透明令牌交给 DOM。 */
@@ -33,7 +39,8 @@ export class InteractionController {
       if (!receiver) return null;
       if (source.id === actor.id) return { sourceId:source.id, receiverId:receiver.id };
       const hidden = game.cardSelectionSystem.createHiddenSelection(source);
-      const tokens = await this.requestHiddenCards(hidden, 1, "转移：选择1张牌背", { exact:true });
+      const slots = createHiddenSelectionView(actor, source, hidden);
+      const tokens = await this.requestHiddenCards(hidden, 1, "转移：选择1张隐藏手牌", { exact:true, slots });
       return tokens?.length ? { sourceId:source.id, receiverId:receiver.id, tokens, selectionId:hidden.selectionId } : null;
     }
     if (["scout","plunder","destroy"].includes(card.definitionId)) {
@@ -41,7 +48,8 @@ export class InteractionController {
       if (!target) return null;
       const hidden = game.cardSelectionSystem.createHiddenSelection(target);
       const count = card.definitionId === "scout" ? Math.min(2, target.hand.length) : 1;
-      const tokens = await this.requestHiddenCards(hidden, count, `${card.name}：选择${card.definitionId === "scout" ? "至多2" : "1"}张牌背`, { exact:card.definitionId !== "scout" });
+      const slots = createHiddenSelectionView(actor, target, hidden);
+      const tokens = await this.requestHiddenCards(hidden, count, `${card.name}：选择${card.definitionId === "scout" ? "至多2" : "1"}张隐藏手牌`, { exact:card.definitionId !== "scout", slots });
       return tokens?.length ? { tokens, selectionId:hidden.selectionId } : null;
     }
     return {};
@@ -51,10 +59,11 @@ export class InteractionController {
     this.cancel();
     return new Promise((resolve) => {
       const selected = new Set();
+      const slots = options.slots ?? createHiddenSelectionView(options.viewer, options.owner, selection);
       this.pending = { type:"hidden", selection, count, exact:Boolean(options.exact), selected, resolve };
       this.ui.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(prompt)}</strong><span>${selection.tokens.length} 张</span></div>
-        <p>牌背只携带临时令牌，确认时核心会重新校验手牌版本。</p>
-        <div class="hidden-card-grid">${hiddenSelectionMarkup(selection)}</div>
+        <p>隐藏卡牌只携带临时令牌，确认时核心会重新校验手牌版本。</p>
+        <div class="hidden-card-grid">${hiddenSelectionMarkup(selection, slots)}</div>
         <div class="response-actions"><button class="primary-button" type="button" data-interaction-confirm disabled>确认选择</button><button class="ghost-button" type="button" data-interaction-cancel>取消</button></div>`;
       this.ui.elements.response_panel.classList.remove("is-hidden");
       if (this.ui.game) this.ui.render(this.ui.game);
@@ -63,14 +72,13 @@ export class InteractionController {
 
   toggleHidden(token) {
     if (this.pending?.type !== "hidden") return;
-    if (this.pending.selected.has(token)) this.pending.selected.delete(token);
-    else if (this.pending.selected.size < this.pending.count) this.pending.selected.add(token);
+    this.pending.selected = toggleCardSelection(this.pending.selected, token, this.pending.count);
     for (const button of this.ui.elements.response_panel.querySelectorAll("[data-hidden-token]")) {
       const active = this.pending.selected.has(button.dataset.hiddenToken);
       button.classList.toggle("is-selected", active); button.setAttribute("aria-pressed", String(active));
     }
     const confirm = this.ui.elements.response_panel.querySelector("[data-interaction-confirm]");
-    if (confirm) confirm.disabled = this.pending.exact ? this.pending.selected.size !== this.pending.count : this.pending.selected.size < 1;
+    if (confirm) confirm.disabled = !isCardSelectionValid(this.pending.selected, this.pending.count, this.pending.exact);
   }
 
   confirm() { if (this.pending) this.settle([...this.pending.selected]); }

@@ -2,7 +2,7 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-response-hands-v7";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-tabletop-hands-v14";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -27,7 +27,7 @@ export class AiSimulator {
     const target = next.players.find((player) => player.id === abstractAction.targets?.[0]?.id);
     actor.hand = (actor.hand ?? []).filter((entry) => entry.id !== card.id);
     actor.handCount = Math.max(0, (actor.handCount ?? 0) - 1);
-    const scale = this.tacticResolutionChance(next, actor, card, abstractAction.targets ?? []);
+    const scale = card.counterScope === "target" ? 1 : this.tacticResolutionChance(next, actor, card, abstractAction.targets ?? []);
 
     switch (card.definitionId) {
       case "recover":
@@ -45,7 +45,10 @@ export class AiSimulator {
         actor.attackUsed += 1;
         break;
       case "shockwave":
-        for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) this.applyDamage(next, actor, player, scale, { canBlock:true, deviceAttack:true });
+        for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) {
+          const targetScale = this.targetResolutionChance(next, actor, card, player);
+          this.applyDamage(next, actor, player, targetScale, { canBlock:true, deviceAttack:true });
+        }
         break;
       case "provoke":
         for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) {
@@ -83,6 +86,11 @@ export class AiSimulator {
     if (card.category !== "tactic" || card.counterable === false) return 1;
     return state.players.filter((player) => player.alive && player.id !== actor.id)
       .reduce((chance, player) => chance * (1 - (player.counterProbability ?? 0) * this.counterDesire(state, player, actor, card, targets)), 1);
+  }
+
+  targetResolutionChance(state, actor, card, target) {
+    if (card.counterScope !== "target") return 1;
+    return 1 - (target.counterProbability ?? 0) * this.counterDesire(state, target, actor, card, [target]);
   }
 
   counterDesire(state, responder, actor, card, targets) {

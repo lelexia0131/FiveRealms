@@ -41,8 +41,8 @@ const CARD_EFFECTS = {
     game.ui.setCurrentCard?.(card, source.name, `来源 ${from.name} → 接收 ${receiver.name}`);
     const [moved] = await game.chooseHiddenCards(source, from, 1, "选择要转移的手牌", selection);
     if (!moved) return;
-    await game.moveCardBetweenHands(from, receiver, moved, "转移");
-    game.log(`${source.name}将${from.name}的1张手牌转移给了${receiver.name}。`, "important");
+    const transferred = await game.moveCardBetweenHands(from, receiver, moved, "转移");
+    if (transferred) game.log(`${source.name}将${from.name}的${game.cardLabelForHuman(receiver, moved)}转移给了${receiver.name}。`, "important");
   },
 
   async exposeWeakness(game, source) {
@@ -56,7 +56,15 @@ const CARD_EFFECTS = {
     const enemies = game.seatOrderFrom(source, false).filter((target) => target.alive && target.battleTeam !== source.battleTeam);
     for (const target of enemies) {
       if (game.state.isGameOver) break;
-      if (target.alive) await game.damage(source, target, 1, { card, canBlock:true, damageType:"area", resolutionId:context.resolutionId });
+      if (!target.alive) continue;
+      const counteredForTarget = await game.responseSystem.askForCounter(source, card, [target], {
+        responders:[target], targetScoped:true
+      });
+      if (counteredForTarget) {
+        game.log(`${target.name}反制了「${card.name}」对自己的效果；其他目标继续结算。`, "important");
+        continue;
+      }
+      await game.damage(source, target, 1, { card, canBlock:true, damageType:"area", resolutionId:context.resolutionId });
     }
   },
 
@@ -73,8 +81,8 @@ const CARD_EFFECTS = {
     const target = targets[0];
     const [stolen] = await game.chooseHiddenCards(source, target, 1, "选择要掠夺的手牌", context.selection);
     if (!stolen) return;
-    await game.moveCardBetweenHands(target, source, stolen, "掠夺");
-    game.log(`${source.name}从${target.name}处掠夺了1张手牌。`, "important");
+    const plundered = await game.moveCardBetweenHands(target, source, stolen, "掠夺");
+    if (plundered) game.log(`${source.name}从${target.name}处掠夺了${game.cardLabelForHuman(source, stolen)}。`, "important");
   },
 
   async destroy(game, source, card, targets, context) {

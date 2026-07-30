@@ -2,27 +2,46 @@
  * 互利公开牌池视图。只渲染公开牌并返回被点击的实体 ID，不移动卡牌；
  * pending Promise 在取消、重开或游戏结束时必须由 UIManager 收束。
  */
-import { escapeHtml } from "./templates.js?build=20260730-response-hands-v7";
+import { escapeHtml } from "./templates.js?build=20260730-tabletop-hands-v14";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260730-tabletop-hands-v14";
 
 export class PublicPoolView {
   constructor(element) { this.element = element; this.pending = null; }
-  show(cards) {
-    this.element.innerHTML = `<div class="tableau-title">互利公开牌池</div><div class="tableau-cards">${cards.map((card) => `<button type="button" class="tableau-card" data-public-card-id="${escapeHtml(card.id)}" style="--card-accent:${escapeHtml(card.accent)}"><img src="${escapeHtml(card.art)}" alt=""><strong>${escapeHtml(card.name)}</strong><small>${escapeHtml(card.description)}</small></button>`).join("")}</div>`;
+  show(cards, options = {}) {
+    const selectedId = options.selectedId ?? null;
+    this.element.innerHTML = `<div class="tableau-title">互利公开牌池</div><div class="tableau-cards">${cards.map((card) => `<button type="button" class="tableau-card ${card.id === selectedId ? "is-selected" : ""}" data-public-card-id="${escapeHtml(card.id)}" style="--card-accent:${escapeHtml(card.accent)}" aria-pressed="${card.id === selectedId}"><img src="${escapeHtml(card.art)}" alt=""><strong>${escapeHtml(card.name)}</strong><small>${escapeHtml(card.description)}</small></button>`).join("")}</div>${options.interactive ? `<div class="tableau-actions"><button class="primary-button" type="button" data-public-confirm${selectedId ? "" : " disabled"}>确定</button><button class="ghost-button" type="button" data-public-cancel>取消</button></div>` : ""}`;
     this.element.classList.remove("is-hidden");
   }
   request(player, cards) {
-    this.show(cards);
+    this.cancel();
+    const selected = new Set();
+    this.show(cards, { interactive:true });
     return new Promise((resolve) => {
       const handler = (event) => {
-        const button = event.target.closest("[data-public-card-id]");
-        if (!button) return;
-        this.element.removeEventListener("click", handler);
-        resolve(cards.find((card) => card.id === button.dataset.publicCardId) ?? null);
+        const cardButton = event.target.closest("[data-public-card-id]");
+        if (cardButton) {
+          const next = toggleCardSelection(this.pending?.selected, cardButton.dataset.publicCardId, 1);
+          if (this.pending) this.pending.selected = next;
+          this.show(cards, { interactive:true, selectedId:[...next][0] ?? null });
+          return;
+        }
+        if (event.target.closest("[data-public-cancel]")) { this.settle(null); return; }
+        if (!event.target.closest("[data-public-confirm]") || !isCardSelectionValid(this.pending?.selected, 1, true)) return;
+        const selectedId = [...this.pending.selected][0];
+        this.settle(cards.find((card) => card.id === selectedId) ?? null);
       };
       this.element.addEventListener("click", handler);
-      this.pending = { resolve, handler };
+      this.pending = { resolve, handler, selected, playerId:player.id };
     });
   }
-  hide() { this.element.classList.add("is-hidden"); this.element.innerHTML = ""; this.pending = null; }
-  cancel() { if (!this.pending) return; this.element.removeEventListener("click", this.pending.handler); this.pending.resolve(null); this.hide(); }
+  settle(card) {
+    const pending = this.pending;
+    if (!pending) return;
+    this.pending = null;
+    this.element.removeEventListener("click", pending.handler);
+    this.hide();
+    pending.resolve(card);
+  }
+  hide() { this.element.classList.add("is-hidden"); this.element.innerHTML = ""; }
+  cancel() { if (this.pending) this.settle(null); else this.hide(); }
 }

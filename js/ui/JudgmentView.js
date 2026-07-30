@@ -2,7 +2,7 @@
  * 防御装置判定展示。只渲染核心已公开的判定牌；牌区移动和判定结果由
  * JudgmentSystem 负责，重开时 UIManager 会清空本视图。
  */
-import { escapeHtml } from "./templates.js?build=20260730-response-hands-v7";
+import { escapeHtml } from "./templates.js?build=20260730-tabletop-hands-v14";
 export class JudgmentView {
   constructor(element) { this.element = element; }
   show(player, card) {

@@ -1,8 +1,17 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-response-hands-v7";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v14";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
 })[character]);
+
+/** 统一的纯牌背。未知牌不包含名称、序号、说明、图片或可见文字。 */
+export function hiddenCardBackTemplate(options = {}) {
+  const selectable = Boolean(options.token);
+  const tag = selectable ? "button" : "span";
+  const tokenAttribute = selectable ? ` type="button" data-hidden-token="${escapeHtml(options.token)}" aria-label="选择一张隐藏卡牌" aria-pressed="${Boolean(options.selected)}"` : ' aria-hidden="true"';
+  const classes = ["hidden-card-back", options.compact ? "is-compact" : "", options.selected ? "is-selected" : ""].filter(Boolean).join(" ");
+  return `<${tag} class="${classes}"${tokenAttribute}><i aria-hidden="true"></i></${tag}>`;
+}
 
 const image = (src, alt, className) => `<img class="${className}" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" draggable="false">`;
 
@@ -47,11 +56,27 @@ function lifeCells(player) {
 }
 
 export function opponentHandStripTemplate(slots = []) {
-  const cards = slots.map((slot, index) => slot.known
-    ? `<span class="opponent-card-slot is-known" tabindex="0" title="${escapeHtml(`${slot.categoryName}：${slot.description}`)}" aria-label="已知手牌：${escapeHtml(slot.name)}，${escapeHtml(slot.categoryName)}，${escapeHtml(slot.description)}"><img src="${escapeHtml(slot.art)}" alt="" aria-hidden="true"><strong>${escapeHtml(slot.name)}</strong></span>`
-    : `<span class="opponent-card-slot is-unknown" aria-label="未知手牌，第${index + 1}张"><i aria-hidden="true">?</i><small aria-hidden="true">牌</small></span>`
-  ).join("");
-  return `<div class="opponent-hand-region"><small>手牌区域 · ${slots.length}张</small><div class="opponent-hand-strip" role="list" aria-label="该角色的${slots.length}张手牌">${cards || '<span class="opponent-hand-empty">无手牌</span>'}</div></div>`;
+  const cards = slots.map((slot) => {
+    if (!slot.known) return hiddenCardBackTemplate({ compact:true });
+    const tags = slot.subtypes.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("");
+    return `<span class="opponent-card-slot is-known frame-${escapeHtml(slot.frameStyle)}" style="--card-accent:${escapeHtml(slot.accent)}" tabindex="0" title="${escapeHtml(`${slot.categoryName}：${slot.description}`)}" aria-label="已知手牌：${escapeHtml(slot.name)}，${escapeHtml(slot.categoryName)}，${escapeHtml(slot.description)}"><span class="card-topline"><span class="card-name">${escapeHtml(slot.name)}</span><span class="card-category">${escapeHtml(slot.categoryName)}</span></span><span class="card-art"><img src="${escapeHtml(slot.art)}" alt="" aria-hidden="true"><span class="card-crest"><img src="${escapeHtml(slot.icon)}" alt="" aria-hidden="true"></span></span><span class="card-rules"><span class="card-description">${escapeHtml(slot.description)}</span><span class="card-flavor">${escapeHtml(slot.flavorText)}</span></span><span class="card-tags">${tags}</span></span>`;
+  }).join("");
+  return `<div class="opponent-hand-region"><div class="opponent-hand-strip" aria-label="该角色手牌">${cards}</div></div>`;
+}
+
+function passiveLimitText(description = "") {
+  if (description.includes("每轮一次")) return "每轮限触发1次";
+  if (description.includes("每回合首次")) return "每回合首次满足条件时触发";
+  return "满足说明条件时持续生效";
+}
+
+export function skillDetailsTemplate(player) {
+  const general = player?.general ?? {};
+  const activeId = general.activeSkillIds?.[0] ?? null;
+  const activeCost = activeId === "allIn" ? "至少1点；发动时消耗全部能量" : `${general.activeCost ?? 0}点能量`;
+  const active = general.activeName ? `<section class="skill-detail-section is-active"><div class="skill-detail-heading"><span>主动技能</span><strong>${escapeHtml(general.activeName)}</strong></div><p>${escapeHtml(general.activeDescription)}</p><dl><div><dt>能量消耗</dt><dd>${escapeHtml(activeCost)}</dd></div><div><dt>次数限制</dt><dd>每回合限发动1次</dd></div></dl></section>` : '<section class="skill-detail-empty">无主动技能</section>';
+  const passive = general.passiveName ? `<section class="skill-detail-section is-passive"><div class="skill-detail-heading"><span>被动技能</span><strong>${escapeHtml(general.passiveName)}</strong></div><p>${escapeHtml(general.passiveDescription)}</p><dl><div><dt>发动条件</dt><dd>满足技能说明中的公开条件</dd></div><div><dt>触发限制</dt><dd>${escapeHtml(passiveLimitText(general.passiveDescription))}</dd></div></dl></section>` : '<section class="skill-detail-empty">无被动技能</section>';
+  return `<div class="skill-dialog-card" role="document"><button type="button" class="skill-dialog-close" data-skill-dialog-close aria-label="关闭技能详情">×</button><header><img src="${escapeHtml(general.portrait)}" alt="${escapeHtml(player.name)}肖像"><div><small>${escapeHtml(player.loreFaction)}</small><h2 id="skill-details-title">${escapeHtml(player.name)} · 技能详情</h2><span>${escapeHtml(TEAM_CONFIG[player.battleTeam]?.name ?? "")}</span></div></header><div class="skill-dialog-scroll">${active}${passive}</div></div>`;
 }
 
 export function playerPanelTemplate(player, options = {}) {
@@ -66,18 +91,17 @@ export function playerPanelTemplate(player, options = {}) {
   ].filter(Boolean);
   const statusText = isThinking ? "正在思考" : isCurrent ? "正在行动" : player.alive ? "等待行动" : "已阵亡";
   return `<article class="player-seat ${isHuman ? "human-seat" : "cpu-seat"} team-${escapeHtml(player.battleTeam)} ${relationship} ${isCurrent ? "is-active" : ""} ${isLegalTarget ? "target-legal" : ""} ${isTargeting && !isLegalTarget ? "target-illegal" : ""} ${isThinking ? "is-thinking" : ""} ${player.alive ? "" : "is-dead"}" data-player-id="${escapeHtml(player.id)}" tabindex="${isLegalTarget ? "0" : "-1"}" aria-label="${escapeHtml(player.name)}，${TEAM_CONFIG[player.battleTeam].name}，生命${player.hp}点，能量${player.energy}点，手牌${player.hand.length}张${distanceInfo ? `，座位${distanceInfo.seat}，距离${distanceInfo.distance}` : ""}">
-    <div class="seat-portrait-wrap">
+    <button type="button" class="seat-portrait-wrap" data-skill-player-id="${escapeHtml(player.id)}" aria-label="查看${escapeHtml(player.name)}的技能">
       ${image(player.general.portrait, `${player.name}肖像`, "seat-portrait")}
       <span class="team-emblem" aria-label="${TEAM_CONFIG[player.battleTeam].name}">${player.battleTeam === "dawn" ? "晨" : "暮"}</span>
       ${!player.alive ? `<span class="death-stamp"><b>${escapeHtml(player.general.glyph)}</b> 阵亡</span>` : ""}
-    </div>
+    </button>
     <div class="seat-main">
-      <div class="seat-heading"><div><strong>${escapeHtml(player.name)}${isHuman ? " · 你" : ""}</strong><small>${escapeHtml(player.loreFaction)}</small></div><span class="turn-state"><i aria-hidden="true"></i>${statusText}</span></div>
+      <div class="seat-heading"><button type="button" class="seat-name-button" data-skill-player-id="${escapeHtml(player.id)}"><strong>${escapeHtml(player.name)}${isHuman ? " · 你" : ""}</strong><small>${escapeHtml(player.loreFaction)}</small></button><span class="turn-state"><i aria-hidden="true"></i>${statusText}</span></div>
       <div class="vitals">
         <div class="life-readout"><span class="life-label">生命</span><div class="life-cells">${lifeCells(player)}</div><strong>${player.hp}<small>/${player.maxHp}</small></strong></div>
         <div class="resource-pills"><span class="resource-pill energy"><small>能量</small><strong>${player.energy}/${player.maxEnergy}</strong></span><span class="resource-pill shield"><small>护盾</small><strong>${player.shield}</strong></span><span class="resource-pill hand-count"><small>手牌</small><strong>${player.hand.length}</strong></span></div>
       </div>
-      ${!isHuman ? opponentHandStripTemplate(opponentHandSlots ?? Array.from({ length:player.hand.length }, (_, index) => ({ known:false, slot:index + 1 }))) : ""}
       ${statuses.length ? `<div class="status-row">${statuses.map(([label, kind]) => `<span class="status-chip is-${kind}">${label}</span>`).join("")}</div>` : ""}
       ${distanceInfo ? `<div class="range-readout"><span>座位 ${distanceInfo.seat}</span><strong>${escapeHtml(distanceState ?? `距离 ${distanceInfo.distance}`)}</strong><small>${player.alive ? `射程 ${distanceInfo.range}` : "已离开距离环"}</small></div>` : ""}
       ${equipmentSlotTemplate(player, isHuman)}
@@ -86,6 +110,7 @@ export function playerPanelTemplate(player, options = {}) {
         <div class="skill-summary is-passive-skill"><div><small>被动技能</small><strong>${escapeHtml(player.general.passiveName)}</strong></div><span>${escapeHtml(player.general.passiveDescription)}</span></div>
       </div></details>` : ""}
     </div>
+    ${!isHuman ? opponentHandStripTemplate(opponentHandSlots ?? Array.from({ length:player.hand.length }, () => ({ known:false }))) : ""}
   </article>`;
 }
 

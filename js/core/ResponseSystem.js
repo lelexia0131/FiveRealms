@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-response-hands-v7";
-import { createId } from "../utils/helpers.js?build=20260730-response-hands-v7";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260730-response-hands-v7";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v14";
+import { createId } from "../utils/helpers.js?build=20260730-tabletop-hands-v14";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260730-tabletop-hands-v14";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -34,7 +34,9 @@ export function buildResponsePresentation(responder, type, context = {}, require
       eventText = `${sourceName}对${targetName}打出的「${context.counteredCardName}」使用了「反制」。`;
       responseText = "你可以继续使用「反制」。";
     } else {
-      responseText = "你可以使用「反制」。";
+      responseText = context.targetScoped
+        ? `你可以使用「反制」，仅取消「${actionName}」对你的效果；其他目标仍会继续结算。`
+        : "你可以使用「反制」。";
     }
   } else if (type === "assaultDiscard") {
     responseCardName = "突袭";
@@ -104,8 +106,9 @@ export class ResponseSystem {
     if (!use || !valid) return [];
     for (const card of cards) await this.game.discardCardFromHand(responder, card, `响应·${card.name}`);
     if (type === "counter") {
-      this.game.ui.setCurrentCard?.(cards[0], responder.name, `反制「${context.card?.name ?? "战术牌"}」`);
-      this.game.log(`${responder.name}使用了「反制」，作用对象：「${context.card?.name ?? "战术牌"}」。`, "important");
+      const targetSuffix = context.targetScoped ? `（仅取消对${responder.name}的效果）` : "";
+      this.game.ui.setCurrentCard?.(cards[0], responder.name, `反制「${context.card?.name ?? "战术牌"}」${targetSuffix}`);
+      this.game.log(`${responder.name}使用了「反制」，作用对象：「${context.card?.name ?? "战术牌"}」${targetSuffix}。`, "important");
     } else {
       this.game.log(`${responder.name}同时使用${cards.length}张格挡。`, "important");
     }
@@ -122,11 +125,13 @@ export class ResponseSystem {
 
   async askForCounter(source, card, targets, chainContext = {}) {
     if (card.category !== "tactic" || !card.counterable) return false;
-    for (const responder of this.game.seatOrderFrom(source, false)) {
+    const responders = chainContext.responders ?? this.game.seatOrderFrom(source, false);
+    for (const responder of responders) {
       if (!responder.alive || responder.id === source.id) continue;
       const [counterCard] = await this.requestCardResponse(responder, "counter", {
         source, target:targets[0] ?? null, targets, card,
-        counteredCardName:chainContext.targetCard?.name ?? null
+        counteredCardName:chainContext.targetCard?.name ?? null,
+        targetScoped:Boolean(chainContext.targetScoped)
       }, 1);
       if (!counterCard) continue;
       // 反制牌已经从手牌移入弃牌堆，因此递归链必然受实体牌数量限制，不会无限循环。

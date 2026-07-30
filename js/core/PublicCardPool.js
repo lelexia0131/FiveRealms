@@ -23,11 +23,19 @@ export class PublicCardPool {
     for (const player of living) {
       if (!this.cards.length || this.game.state.isGameOver) break;
       let card = null;
-      if (player.controllerType === "human") card = await this.game.ui.requestPublicCard?.(player, this.cards);
-      else card = this.game.aiController.cardSelector.choosePublicCard(player, this.cards);
+      if (player.controllerType === "human") {
+        card = await this.game.ui.requestPublicCard?.(player, this.cards);
+        if (!card) {
+          if (!this.game.isSessionValid(gameId)) return false;
+          break;
+        }
+      } else card = this.game.aiController.cardSelector.choosePublicCard(player, this.cards);
       if (!this.game.isSessionValid(gameId)) return false;
       if (this.game.state.isGameOver || !player.alive || !this.cards.length) break;
-      if (!this.cards.includes(card)) card = this.cards[0];
+      if (!this.cards.includes(card)) {
+        if (player.controllerType === "human") break;
+        card = this.cards[0];
+      }
       if (!card) break;
       const cardIndex = this.cards.indexOf(card);
       if (cardIndex < 0) break;
@@ -37,6 +45,7 @@ export class PublicCardPool {
       for (const viewer of this.game.state.players) if (viewer.id !== player.id) this.game.rememberPrivateCard(viewer, player, card);
       this.game.log(`${player.name}从互利牌池选择了「${card.name}」。`);
       this.game.ui.render(this.game);
+      this.game.ui.showPublicPool?.(this.cards);
     }
     for (const card of this.cards.splice(0)) this.game.state.deck.discard(card);
     this.game.state.publicCardPool = [];

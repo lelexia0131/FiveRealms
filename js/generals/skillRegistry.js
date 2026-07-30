@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-response-hands-v7";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260730-response-hands-v7";
-import { randomChoice } from "../utils/helpers.js?build=20260730-response-hands-v7";
-import { Debug } from "../utils/debug.js?build=20260730-response-hands-v7";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v14";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260730-tabletop-hands-v14";
+import { randomChoice } from "../utils/helpers.js?build=20260730-tabletop-hands-v14";
+import { Debug } from "../utils/debug.js?build=20260730-tabletop-hands-v14";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -175,7 +175,7 @@ export const ACTIVE_SKILLS = Object.freeze({
   stealSkill: Object.freeze({
     id: "stealSkill", name: "窃取", cost: 3, targetType: "enemyWithCards", rangeRule: "unlimited",
     canUse(game, source) { const base = baseCanUse(game, source, this); return base.ok && !RuleEngine.getSkillTargets(game, source, this).length ? {ok:false,reason:"敌人没有手牌"} : base; },
-    async execute(game, source, targets) { source.changeEnergy(-3); const card = randomChoice(targets[0].hand, game.random); if (card) { await game.moveCardBetweenHands(targets[0], source, card, "窃取"); game.log(`${source.name}从${targets[0].name}处窃取了1张手牌。`, "important"); } }
+    async execute(game, source, targets) { source.changeEnergy(-3); const card = randomChoice(targets[0].hand, game.random); if (card) { const stolen = await game.moveCardBetweenHands(targets[0], source, card, "窃取"); if (stolen) game.log(`${source.name}从${targets[0].name}处窃取了${game.cardLabelForHuman(source, card)}。`, "important"); } }
   }),
   burningField: Object.freeze({
     id: "burningField", name: "焚场", cost: 3, targetType: "allEnemies", rangeRule: "unlimited",
