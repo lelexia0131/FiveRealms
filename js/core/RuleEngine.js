@@ -2,7 +2,14 @@ import { DistanceSystem } from "./DistanceSystem.js?build=20260731-all-in-respon
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
-  static hasHandOrEquipment(player) { return Boolean(player?.hand?.length || player?.handCount > 0 || player?.equipment || player?.equipmentDefinitionId); }
+  static transferableHandCount(player, excludedCardIds = null) {
+    if (Array.isArray(player?.hand)) return player.hand.filter((held) => !excludedCardIds?.has(held.id)).length;
+    return Math.max(0, Number(player?.handCount ?? 0));
+  }
+
+  static hasHandOrEquipment(player, excludedCardIds = null) {
+    return Boolean(this.transferableHandCount(player, excludedCardIds) > 0 || player?.equipment || player?.equipmentDefinitionId);
+  }
 
   static isWithinCardEffectRange(game, source, target, card) {
     if (!source || !target || !target.alive) return false;
@@ -11,8 +18,9 @@ export class RuleEngine {
     return DistanceSystem.getDistance(game, source, target) <= card.effectRange;
   }
 
-  static getTransferSources(game, source, card) {
-    return game.state.players.filter((player) => player.alive && this.hasHandOrEquipment(player) && this.isWithinCardEffectRange(game, source, player, card));
+  static getTransferSources(game, source, card, excludedCardIds = null) {
+    const exclusions = excludedCardIds ?? (card?.definitionId === "transfer" && card?.id ? new Set([card.id]) : null);
+    return game.state.players.filter((player) => player.alive && this.hasHandOrEquipment(player, exclusions) && this.isWithinCardEffectRange(game, source, player, card));
   }
 
   static getTransferReceivers(game, source, from, card) {

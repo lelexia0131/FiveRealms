@@ -11,10 +11,10 @@ import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferS
 export class AiCardSelector {
   constructor(game, knowledge) { this.game = game; this.knowledge = knowledge; }
 
-  chooseHiddenCards(actor, owner, count) {
+  chooseHiddenCards(actor, owner, count, excludedCardIds = null) {
     const selected = [];
     const known = actor.aiMemory.knownCardsByPlayer[owner.id] ?? {};
-    const cards = [...owner.hand];
+    const cards = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
     while (selected.length < count && cards.length) {
       let index = -1;
       if (actor.id === owner.id) {
@@ -52,9 +52,9 @@ export class AiCardSelector {
    * 联合评估来源、接收者和区域。装备读取公开 definitionId；隐藏手牌只使用数量、
    * 手牌上限压力与合法已知概率，不查看实际 definitionId。
    */
-  chooseTransferCombination(actor, card, sources, allowedReceiverIds = null) {
+  chooseTransferCombination(actor, card, sources, allowedReceiverIds = null, excludedCardIds = null) {
     const candidates = buildTransferCandidates({
-      actor, sources, allowedReceiverIds,
+      actor, sources, allowedReceiverIds, excludedCardIds,
       getReceivers:(from) => RuleEngine.getTransferReceivers(this.game, actor, from, card)
     });
     return chooseBestPositiveTransfer(candidates);

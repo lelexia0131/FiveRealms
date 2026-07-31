@@ -329,11 +329,12 @@ export class Game {
    * 使用不同引用；AI 的组合计划仍会在这里通过 RuleEngine 复核。
    */
   async prepareTransferIntent(source, card, selection = null) {
-    const sources = RuleEngine.getTransferSources(this, source, card)
+    const excludedCardIds = new Set([card.id]);
+    const sources = RuleEngine.getTransferSources(this, source, card, excludedCardIds)
       .filter((from) => RuleEngine.getTransferReceivers(this, source, from, card).length);
     const planned = selection?.sourceId && selection?.receiverId
       ? selection
-      : this.aiController.cardSelector.chooseTransferCombination(source, card, sources);
+      : this.aiController.cardSelector.chooseTransferCombination(source, card, sources, null, excludedCardIds);
     const from = this.state.players.find((player) => player.id === planned?.sourceId && player.alive) ?? null;
     const receiver = this.state.players.find((player) => player.id === planned?.receiverId && player.alive) ?? null;
     if (!sources.includes(from) || !RuleEngine.getTransferReceivers(this, source, from, card).includes(receiver)) return null;
@@ -344,12 +345,13 @@ export class Game {
         ? { card:from.equipment, zone:"equipment" }
         : null;
     } else if (source.controllerType === "ai" && planned?.zone === "hand") {
-      const [hiddenCard] = this.aiController.cardSelector.chooseHiddenCards(source, from, 1);
+      const [hiddenCard] = this.aiController.cardSelector.chooseHiddenCards(source, from, 1, excludedCardIds);
       chosen = hiddenCard ? { card:hiddenCard, zone:"hand" } : null;
     } else {
-      chosen = await this.choosePlayerZoneCard(source, from, "选择要转移的手牌或装备牌", planned);
+      chosen = await this.choosePlayerZoneCard(source, from, "选择要转移的手牌或装备牌", planned, excludedCardIds);
     }
-    if (!chosen || !RuleEngine.getTransferSources(this, source, card).includes(from)
+    if (!chosen || excludedCardIds.has(chosen.card.id)
+      || !RuleEngine.getTransferSources(this, source, card, excludedCardIds).includes(from)
       || !RuleEngine.getTransferReceivers(this, source, from, card).includes(receiver)) return null;
     const privateIntent = Object.freeze({ from, receiver, card:chosen.card, zone:chosen.zone });
     const publicContext = Object.freeze({
@@ -412,24 +414,28 @@ export class Game {
           ? { publicTransferContext:preparedTransfer.publicContext }
           : {});
       let destination = "discard";
+      let effectResolved = false;
       if (countered || cancelledBeforeResolve) {
         this.log(`「${card.name}」的效果被取消。`, "important");
       } else {
-        destination = (await resolveCardEffect(this, source, card, targets, {
+        const effectResult = await resolveCardEffect(this, source, card, targets, {
           resolutionId, selection,
           privateTransferIntent:preparedTransfer?.privateIntent ?? null
-        })).destination;
+        });
+        destination = effectResult.destination;
+        effectResolved = effectResult.resolved ?? true;
       }
       if (destination === "discard") await this.finishResolvingToDiscard(card);
       source.statistics.cardsPlayed += 1;
       const effectiveTargets = preparedTransfer
-        ? [preparedTransfer.privateIntent.receiver]
+        ? (effectResolved ? [preparedTransfer.privateIntent.receiver] : [])
         : card.definitionId === "mutualBenefit"
           ? this.state.players.filter((player) => player.alive)
           : targets;
+      const cancelled = countered || cancelledBeforeResolve || Boolean(preparedTransfer && !effectResolved);
       await this.eventBus.emit("cardUsed", {
         type:"cardUsed", source, card, targets, effectiveTargets,
-        cancelled:countered || cancelledBeforeResolve, resolutionId
+        cancelled, resolved:!cancelled && effectResolved, resolutionId
       });
       if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       this.ui.render(this);
@@ -884,32 +890,39 @@ export class Game {
     return this.isCardKnownTo(human, owner, card) ? `「${card.name}」` : "1张手牌";
   }
 
-  async chooseHiddenCards(actor, owner, count, reason, selection = null) {
-    const maximum = Math.min(count, owner.hand.length);
-    if (!maximum) return [];
+  async chooseHiddenCards(actor, owner, count, reason, selection = null, excludedCardIds = null) {
+    const eligibleCards = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
+    const maximum = Math.min(count, eligibleCards.length);
+    if (!maximum) {
+      if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
+      return [];
+    }
     if (selection?.tokens?.length) {
       if (!selection.selectionId) return [];
       const uniqueTokens = [...new Set(selection.tokens)].slice(0, maximum);
-      const resolved = uniqueTokens.map((token) => this.cardSelectionSystem.resolveToken(token, owner, selection.selectionId)).filter(Boolean);
+      const resolved = uniqueTokens.map((token) => this.cardSelectionSystem.resolveToken(token, owner, selection.selectionId))
+        .filter((card) => card && !excludedCardIds?.has(card.id));
       const cards = [...new Map(resolved.map((card) => [card.id, card])).values()];
       if (selection.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       return cards;
     }
     if (actor.controllerType === "human") {
-      const hidden = this.cardSelectionSystem.createHiddenSelection(owner);
+      const hidden = this.cardSelectionSystem.createHiddenSelection(owner, eligibleCards);
       const tokens = await this.ui.interactionController?.requestHiddenCards?.(hidden, maximum, reason, { exact:true, viewer:actor, owner });
       const uniqueTokens = [...new Set(tokens ?? [])].slice(0, maximum);
-      const resolved = uniqueTokens.map((token) => this.cardSelectionSystem.resolveToken(token, owner, hidden.selectionId)).filter(Boolean);
+      const resolved = uniqueTokens.map((token) => this.cardSelectionSystem.resolveToken(token, owner, hidden.selectionId))
+        .filter((card) => card && !excludedCardIds?.has(card.id));
       const cards = [...new Map(resolved.map((card) => [card.id, card])).values()];
       this.cardSelectionSystem.clearSelection(hidden.selectionId);
       return cards;
     }
-    return this.aiController.cardSelector.chooseHiddenCards(actor, owner, maximum);
+    return this.aiController.cardSelector.chooseHiddenCards(actor, owner, maximum, excludedCardIds);
   }
 
   /** 在隐藏手牌与公开装备之间选择一张；核心始终重新验证所选实体仍在原区域。 */
-  async choosePlayerZoneCard(actor, owner, reason, selection = null) {
-    if (!owner?.alive || (!owner.hand.length && !owner.equipment)) return null;
+  async choosePlayerZoneCard(actor, owner, reason, selection = null, excludedCardIds = null) {
+    const eligibleHandCount = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)).length ?? 0;
+    if (!owner?.alive || (!eligibleHandCount && !owner.equipment)) return null;
     if (selection?.zone === "equipment") {
       if (!selection.selectionId || !this.cardSelectionSystem.isSelectionActive(selection.selectionId, owner)) return null;
       const equipment = owner.equipment;
@@ -918,12 +931,12 @@ export class Game {
       return chosen;
     }
     if (selection?.tokens?.length) {
-      const [card] = await this.chooseHiddenCards(actor, owner, 1, reason, selection);
+      const [card] = await this.chooseHiddenCards(actor, owner, 1, reason, selection, excludedCardIds);
       return card ? { card, zone:"hand" } : null;
     }
     if (actor.controllerType === "human") {
-      const requested = await this.ui.interactionController?.requestZoneCard?.(this, actor, owner, reason);
-      return requested ? this.choosePlayerZoneCard(actor, owner, reason, requested) : null;
+      const requested = await this.ui.interactionController?.requestZoneCard?.(this, actor, owner, reason, excludedCardIds);
+      return requested ? this.choosePlayerZoneCard(actor, owner, reason, requested, excludedCardIds) : null;
     }
     return this.aiController.cardSelector.chooseZoneCard(actor, owner);
   }

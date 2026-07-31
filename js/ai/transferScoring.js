@@ -5,19 +5,21 @@ const UNKNOWN_HAND_EXPECTED_VALUE = 4;
 const HUMAN_ALLY_HAND_PROTECTION = 7;
 const HUMAN_ALLY_EQUIPMENT_PROTECTION = 8;
 
-const handCount = (player) => Math.max(0, Number(player?.handCount ?? player?.hand?.length ?? 0));
+const handCount = (player, excludedCardIds = null) => Array.isArray(player?.hand)
+  ? player.hand.filter((card) => !excludedCardIds?.has(card.id)).length
+  : Math.max(0, Number(player?.handCount ?? 0));
 const equipmentDefinitionId = (player) => player?.equipmentDefinitionId ?? player?.equipment?.definitionId ?? null;
 const equipmentValue = (player) => CARD_DEFINITIONS[equipmentDefinitionId(player)]?.aiValue ?? 0;
 
-function knownHandDefinitionIds(actor, owner) {
+function knownHandDefinitionIds(actor, owner, excludedCardIds = null) {
   if (!actor || !owner) return [];
-  if (actor.id === owner.id) return (actor.hand ?? []).map((card) => card.definitionId).filter(Boolean);
-  if (Array.isArray(owner.knownCards)) return owner.knownCards.map((card) => card.definitionId).filter(Boolean);
-  return Object.values(actor.aiMemory?.knownCardsByPlayer?.[owner.id] ?? {}).filter(Boolean);
+  if (actor.id === owner.id) return (actor.hand ?? []).filter((card) => !excludedCardIds?.has(card.id)).map((card) => card.definitionId).filter(Boolean);
+  if (Array.isArray(owner.knownCards)) return owner.knownCards.filter((card) => !excludedCardIds?.has(card.cardId)).map((card) => card.definitionId).filter(Boolean);
+  return Object.entries(actor.aiMemory?.knownCardsByPlayer?.[owner.id] ?? {}).filter(([cardId]) => !excludedCardIds?.has(cardId)).map(([, definitionId]) => definitionId).filter(Boolean);
 }
 
-function expectedTransferHandValue(actor, owner) {
-  const knownValues = knownHandDefinitionIds(actor, owner)
+function expectedTransferHandValue(actor, owner, excludedCardIds = null) {
+  const knownValues = knownHandDefinitionIds(actor, owner, excludedCardIds)
     .map((definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue)
     .filter(Number.isFinite);
   // 已知实体可以定向选择其中的低价值牌；其余牌仍只采用固定期望值。
@@ -25,7 +27,7 @@ function expectedTransferHandValue(actor, owner) {
 }
 
 /** 只读取公开局面、观察者自身手牌和合法记忆的纯转移评分。 */
-export function scoreTransferCombination({ actor, from, receiver, zone }) {
+export function scoreTransferCombination({ actor, from, receiver, zone, excludedCardIds = null }) {
   if (!actor || !from || !receiver || from.id === receiver.id) return Number.NEGATIVE_INFINITY;
   const sourceIsAlly = from.battleTeam === actor.battleTeam;
   const receiverIsAlly = receiver.battleTeam === actor.battleTeam;
@@ -42,12 +44,12 @@ export function scoreTransferCombination({ actor, from, receiver, zone }) {
     return score;
   }
 
-  if (zone !== "hand" || handCount(from) <= 0) return Number.NEGATIVE_INFINITY;
-  const movedValue = expectedTransferHandValue(actor, from);
+  if (zone !== "hand" || handCount(from, excludedCardIds) <= 0) return Number.NEGATIVE_INFINITY;
+  const movedValue = expectedTransferHandValue(actor, from, excludedCardIds);
   const fromLimit = Math.max(0, Number(from.hp ?? 0));
   const receiverLimit = Math.max(0, Number(receiver.hp ?? 0));
-  const sourceOverflow = Math.max(0, handCount(from) - fromLimit);
-  const receiverSpace = Math.max(0, receiverLimit - handCount(receiver));
+  const sourceOverflow = Math.max(0, handCount(from, excludedCardIds) - fromLimit);
+  const receiverSpace = Math.max(0, receiverLimit - handCount(receiver, excludedCardIds));
   let score = (sourceIsAlly ? -movedValue : movedValue)
     + (receiverIsAlly ? movedValue : -movedValue);
 
@@ -61,7 +63,7 @@ export function scoreTransferCombination({ actor, from, receiver, zone }) {
 }
 
 /** 使用调用方提供的 RuleEngine 接收者集合构建同一结构的真实/可见候选。 */
-export function buildTransferCandidates({ actor, sources, getReceivers, allowedReceiverIds = null }) {
+export function buildTransferCandidates({ actor, sources, getReceivers, allowedReceiverIds = null, excludedCardIds = null }) {
   const candidates = [];
   for (const from of sources ?? []) {
     const receivers = (getReceivers(from) ?? []).filter((receiver) =>
@@ -71,13 +73,13 @@ export function buildTransferCandidates({ actor, sources, getReceivers, allowedR
         candidates.push({
           source:from, sourceId:from.id, receiverId:receiver.id, zone:"equipment",
           equipmentCardId:from.equipment?.id,
-          score:scoreTransferCombination({ actor, from, receiver, zone:"equipment" })
+          score:scoreTransferCombination({ actor, from, receiver, zone:"equipment", excludedCardIds })
         });
       }
-      if (handCount(from) > 0) {
+      if (handCount(from, excludedCardIds) > 0) {
         candidates.push({
           source:from, sourceId:from.id, receiverId:receiver.id, zone:"hand",
-          score:scoreTransferCombination({ actor, from, receiver, zone:"hand" })
+          score:scoreTransferCombination({ actor, from, receiver, zone:"hand", excludedCardIds })
         });
       }
     }

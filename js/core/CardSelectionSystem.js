@@ -15,7 +15,8 @@ export class CardSelectionSystem {
     const tokens = cards.map((card, index) => {
       const token = createId("opaque");
       this.selections.set(token, { selectionId, ownerId:owner.id, cardId:card.id, version });
-      return Object.freeze({ token, position:index + 1 });
+      const ownerIndex = owner.hand.findIndex((held) => held.id === card.id);
+      return Object.freeze({ token, position:ownerIndex >= 0 ? ownerIndex + 1 : index + 1 });
     });
     return Object.freeze({ selectionId, ownerId:owner.id, handVersion:version, tokens });
   }

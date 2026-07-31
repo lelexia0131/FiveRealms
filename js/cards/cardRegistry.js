@@ -41,13 +41,16 @@ const CARD_EFFECTS = {
   async transfer(game, source, card, targets, context) {
     const intent = context.privateTransferIntent;
     if (!intent || !RuleEngine.getTransferSources(game, source, card).includes(intent.from)
-      || !RuleEngine.getTransferReceivers(game, source, intent.from, card).includes(intent.receiver)) return;
+      || !RuleEngine.getTransferReceivers(game, source, intent.from, card).includes(intent.receiver)) {
+      return { destination:"discard", resolved:false };
+    }
     const transferred = intent.zone === "equipment"
       ? await game.moveEquipmentBetweenPlayers(intent.from, intent.receiver, intent.card, "转移")
       : await game.moveCardBetweenHands(intent.from, intent.receiver, intent.card, "转移");
     if (transferred && intent.zone === "hand") {
       game.log(`${source.name}将${intent.from.name}的${game.cardLabelForHuman(intent.receiver, intent.card)}转移给了${intent.receiver.name}。`, "important");
     }
+    return { destination:"discard", resolved:Boolean(transferred) };
   },
 
   async exposeWeakness(game, source) {

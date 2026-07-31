@@ -40,7 +40,7 @@ export class InteractionController {
       const receivers = RuleEngine.getTransferReceivers(game, actor, source, card);
       const receiver = await this.ui.requestTarget(receivers, "转移：选择距离1内的接收者", { source:actor, card });
       if (!receiver) return null;
-      const selected = await this.requestZoneCard(game, actor, source, "转移：选择1张手牌或装备牌");
+      const selected = await this.requestZoneCard(game, actor, source, "转移：选择1张手牌或装备牌", new Set([card.id]));
       return selected ? { sourceId:source.id, receiverId:receiver.id, ...selected } : null;
     }
     if (["plunder","destroy"].includes(card.definitionId)) {
@@ -60,9 +60,10 @@ export class InteractionController {
     return {};
   }
 
-  async requestZoneCard(game, actor, owner, prompt) {
-    if (!owner?.hand.length && !owner?.equipment) return null;
-    const hidden = game.cardSelectionSystem.createHiddenSelection(owner);
+  async requestZoneCard(game, actor, owner, prompt, excludedCardIds = null) {
+    const eligibleHand = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)) ?? [];
+    if (!eligibleHand.length && !owner?.equipment) return null;
+    const hidden = game.cardSelectionSystem.createHiddenSelection(owner, eligibleHand);
     const slots = createHiddenSelectionView(actor, owner, hidden);
     if (owner.equipment) slots.push({ token:EQUIPMENT_OPTION_TOKEN, known:true, zone:"equipment", name:owner.equipment.name, art:owner.equipment.art });
     const selected = await this.requestHiddenCards(hidden, 1, prompt, {

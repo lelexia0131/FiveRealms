@@ -13,8 +13,9 @@ export class AiActionGenerator {
 
   chooseVisibleTransferPlan(game, actor, card) {
     const sources = RuleEngine.getTransferSources(game, actor, card);
+    const excludedCardIds = card.id ? new Set([card.id]) : null;
     return chooseBestPositiveTransfer(buildTransferCandidates({
-      actor, sources,
+      actor, sources, excludedCardIds,
       getReceivers:(from) => RuleEngine.getTransferReceivers(game, actor, from, card)
     }));
   }
@@ -27,7 +28,7 @@ export class AiActionGenerator {
       if (card.definitionId === "transfer") {
         const sources = RuleEngine.getTransferSources(this.game, player, card)
           .filter((from) => RuleEngine.getTransferReceivers(this.game, player, from, card).length);
-        const selection = this.game.aiController.cardSelector.chooseTransferCombination(player, card, sources);
+        const selection = this.game.aiController.cardSelector.chooseTransferCombination(player, card, sources, null, new Set([card.id]));
         if (selection) actions.push({ type:"card", card, targets:[], selection });
         continue;
       }

@@ -608,11 +608,11 @@ test("互利规则目标包含所有存活角色且调律师只触发一次协�
 });
 test("调律师转移给队友把接收者作为有效目标并只触发一次协调", async () => {
   const tuner=makePlayer("tuner",0,"dawn","ai",7),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
-  const {game}=makeGame([tuner,enemy,ally]);registerPassiveSkills(game);game.state.deck.cards.push(instance("charge"));
+  const {game}=makeGame([tuner,enemy,ally]);registerPassiveSkills(game);game.state.deck.cards.push(instance("charge"));let usedEvent=null;game.eventBus.on("cardUsed","test:successful-transfer",(event)=>{usedEvent=event;});
   const use=instance("transfer"),moved=instance("block");tuner.hand.push(use);enemy.hand.push(moved);enemy.bumpHandVersion();
   const hidden=game.cardSelectionSystem.createHiddenSelection(enemy);
   await game.playCard(tuner,use,[],{sourceId:enemy.id,receiverId:ally.id,zone:"hand",tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});
-  assert.ok(ally.hand.includes(moved));assert.equal(tuner.turnFlags.coordinationTriggered,true);assert.equal(tuner.hand.length,1);
+  assert.ok(ally.hand.includes(moved));assert.equal(tuner.turnFlags.coordinationTriggered,true);assert.equal(tuner.hand.length,1);assert.equal(usedEvent.cancelled,false);assert.equal(usedEvent.resolved,true);assert.deepEqual(usedEvent.effectiveTargets,[ally]);
 });
 test("AI 破坏与掠夺只生成敌方目标，窃取规则也排除队友", () => {
   const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
@@ -673,6 +673,32 @@ test("交换敌人未知手牌的真实 definitionId 不改变 AI 转移计划",
   const use=instance("transfer"),first=instance("counter"),second=instance("harvest");actor.hand.push(use);enemy.hand.push(first,second);const {game}=makeGame([actor,enemy,ally]);
   const choose=()=>{const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);return [action?.selection?.sourceId,action?.selection?.receiverId,action?.selection?.zone];};
   const before=choose();[first.definitionId,second.definitionId]=[second.definitionId,first.definitionId];assert.deepEqual(choose(),before);
+});
+test("AI 以自己为转移来源时排除正在使用的转移实体", async () => {
+  const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn"),use=instance("transfer"),otherA=instance("harvest"),otherB=instance("charge");
+  actor.hp=1;actor.hand.push(use,otherA,otherB);const {game}=makeGame([actor,ally]);
+  const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);assert.ok(action);assert.equal(action.selection.sourceId,actor.id);assert.equal(action.selection.zone,"hand");
+  const prepared=await game.prepareTransferIntent(actor,use,action.selection);assert.ok(prepared);assert.notEqual(prepared.privateIntent.card,use);assert.ok([otherA,otherB].includes(prepared.privateIntent.card));
+});
+test("真人以自己为来源时核心拒绝选择正在使用的转移实体", async () => {
+  const actor=makePlayer("actor",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),use=instance("transfer"),other=instance("harvest");actor.hand.push(use,other);
+  const {game}=makeGame([actor,ally]);const hidden=game.cardSelectionSystem.createHiddenSelection(actor);
+  assert.equal(await game.playCard(actor,use,[],{sourceId:actor.id,receiverId:ally.id,zone:"hand",tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId}),false);
+  assert.ok(actor.hand.includes(use));assert.ok(actor.hand.includes(other));assert.ok(!game.state.deck.resolvingCards.includes(use));assert.ok(!game.state.deck.discardPile.includes(use));
+});
+test("排除转移牌后来源没有其他资源时不能开始转移", async () => {
+  const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn"),use=instance("transfer");actor.hand.push(use);const {game}=makeGame([actor,ally]);
+  assert.equal(RuleEngine.canPlayCard(game,actor,use).ok,false);assert.equal(await game.playCard(actor,use,[],{sourceId:actor.id,receiverId:ally.id,zone:"hand"}),false);assert.ok(actor.hand.includes(use));
+});
+test("锁定牌在结算前离开来源时转移失败且没有有效目标、成功日志或协调", async () => {
+  const tuner=makePlayer("tuner",0,"dawn","ai",7),from=makePlayer("from",1,"dusk"),escaped=makePlayer("escaped",2,"dusk"),ally=makePlayer("ally",3,"dawn"),use=instance("transfer"),locked=instance("block");
+  tuner.hand.push(use);from.hand.push(locked);const {game}=makeGame([tuner,from,escaped,ally]);game.state.deck.cards.push(instance("charge"));registerPassiveSkills(game);let usedEvent=null;
+  game.eventBus.on("beforeCardResolve","test:remove-locked-transfer-card",()=>{const index=from.hand.indexOf(locked);if(index>=0){from.hand.splice(index,1);escaped.hand.push(locked);from.bumpHandVersion();escaped.bumpHandVersion();}});
+  game.eventBus.on("cardUsed","test:failed-transfer",(event)=>{usedEvent=event;});
+  assert.equal(await game.playCard(tuner,use,[],{sourceId:from.id,receiverId:ally.id,zone:"hand"}),true);
+  assert.ok(escaped.hand.includes(locked));assert.ok(!ally.hand.includes(locked));assert.ok(game.state.deck.discardPile.includes(use));assert.ok(!game.state.deck.resolvingCards.includes(use));
+  assert.equal(tuner.turnFlags.coordinationTriggered,false);assert.equal(tuner.hand.length,0);assert.ok(usedEvent);assert.equal(usedEvent.cancelled,true);assert.equal(usedEvent.resolved,false);assert.deepEqual(usedEvent.effectiveTargets,[]);
+  assert.equal(game.state.logs.some((entry)=>entry.message.includes(`${tuner.name}将${from.name}的`)&&entry.message.includes(`转移给了${ally.name}`)),false);
 });
 test("正式击杀敌人先摸2张牌再判定胜负，救回与队友死亡均不奖励", async () => {
   const killer=makePlayer("killer",0,"dawn"),enemy=makePlayer("enemy",1,"dusk");
