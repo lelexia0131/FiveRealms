@@ -32,7 +32,12 @@ export function buildResponsePresentation(responder, type, context = {}, require
   } else if (type === "counter") {
     responseCardName = "反制";
     buttonLabel = "反制";
-    if (context.card?.definitionId === "counter" && context.counteredCardName) {
+    if (context.card?.definitionId === "transfer" && context.transferIntent) {
+      const fromName = responsePlayerName(responder, context.transferIntent.from);
+      const receiverName = responsePlayerName(responder, context.transferIntent.receiver);
+      eventText = `${sourceName}准备将${fromName}的${context.transferIntent.safeItemLabel}转移给${receiverName}。`;
+      responseText = "你可以使用「反制」取消这次转移。";
+    } else if (context.card?.definitionId === "counter" && context.counteredCardName) {
       eventText = `${sourceName}对${targetName}打出的「${context.counteredCardName}」使用了「反制」。`;
       responseText = "你可以继续使用「反制」。";
     } else {
@@ -107,13 +112,14 @@ export class ResponseSystem {
       cardsToUse.length === requiredCount && cardsToUse.every((card) => responder.hand.includes(card));
     this.finishRequest(request.id);
     if (!use || !valid) return [];
-    for (const card of cardsToUse) await this.game.discardCardFromHand(responder, card, `响应·${card.name}`);
+    for (const card of cardsToUse) await this.game.discardCardFromHand(responder, card, `响应·${card.name}`, { silent:true });
     if (type === "counter") {
       const targetSuffix = context.targetScoped ? `（仅取消对${responder.name}的效果）` : "";
       this.game.ui.setCurrentCard?.(cardsToUse[0], responder.name, `反制「${context.card?.name ?? "战术牌"}」${targetSuffix}`);
-      this.game.log(`${responder.name}使用了「反制」，作用对象：「${context.card?.name ?? "战术牌"}」${targetSuffix}。`, "important");
     } else {
-      this.game.log(`${responder.name}同时使用${cardsToUse.length}张格挡。`, "important");
+      this.game.log(cardsToUse.length === 1
+        ? `${responder.name}使用了「格挡」。`
+        : `${responder.name}同时使用了${cardsToUse.length}张「格挡」。`, "important");
     }
     return cardsToUse;
   }
@@ -134,7 +140,8 @@ export class ResponseSystem {
       const [counterCard] = await this.requestCardResponse(responder, "counter", {
         source, target:targets[0] ?? null, targets, card,
         counteredCardName:chainContext.targetCard?.name ?? null,
-        targetScoped:Boolean(chainContext.targetScoped)
+        targetScoped:Boolean(chainContext.targetScoped),
+        transferIntent:chainContext.transferIntent ?? null
       }, 1);
       if (!counterCard) continue;
       // 反制牌已经从手牌移入弃牌堆，因此递归链必然受实体牌数量限制，不会无限循环。
@@ -143,6 +150,8 @@ export class ResponseSystem {
         this.game.log(`${responder.name}的「反制」被后续反制抵消。`, "important");
         return false;
       }
+      const targetSuffix = chainContext.targetScoped ? `对${responder.name}的` : "";
+      this.game.log(`${responder.name}使用了「反制」，取消了「${card.name}」${targetSuffix}效果。`, "important");
       return true;
     }
     return false;
@@ -190,7 +199,7 @@ export class ResponseSystem {
       rescuer.battleTeam === target.battleTeam && legalCard && rescuer.hand.includes(legalCard);
     this.finishRequest(request.id);
     if (!use || !valid) return null;
-    await this.game.discardCardFromHand(rescuer, legalCard, `救援${target.name}`);
+    await this.game.discardCardFromHand(rescuer, legalCard, `救援${target.name}`, { silent:true });
     return legalCard;
   }
 
@@ -208,7 +217,14 @@ export class ResponseSystem {
     const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) && responder.alive && cardToUse && responder.hand.includes(cardToUse);
     this.finishRequest(request.id);
     if (!use || !valid) return null;
-    await this.game.discardCardFromHand(responder, cardToUse, reason);
+    await this.game.discardCardFromHand(responder, cardToUse, reason, { silent:true });
+    if (context.card?.definitionId === "duel") {
+      this.game.log(`${responder.name}在决斗中打出了「突袭」。`, "important");
+    } else if (context.card?.definitionId === "provoke") {
+      this.game.log(`${responder.name}打出了「突袭」回应挑衅。`, "important");
+    } else {
+      this.game.log(`${responder.name}打出了「突袭」。`, "important");
+    }
     return cardToUse;
   }
 

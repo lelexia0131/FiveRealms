@@ -90,6 +90,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .log-entry.is-damage { color: #6d2b27; border-left-color: var(--danger); background: #f6e3df; }
 .log-entry.is-heal { color: #28563a; border-left-color: var(--success); background: #e2f0e6; }
 .log-card-name { color: #5f4779; }
+.log-player-name { font-weight: 800; }
+.log-player-name.team-dawn { color: var(--dawn); }
+.log-player-name.team-dusk { color: var(--dusk); }
 .log-damage-value { color: var(--danger); font-size: 14px; }
 .log-heal-value { color: var(--success); font-size: 14px; }
 

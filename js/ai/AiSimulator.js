@@ -59,19 +59,23 @@ export class AiSimulator {
           const response = player.assaultResponseProbability ?? 0;
           player.handCount = Math.max(0, player.handCount - response * targetScale);
           player.expectedAssaultCount = Math.max(0, (player.expectedAssaultCount ?? 0) - response * targetScale);
-          this.applyHpLoss(next, player, (1 - response) * targetScale);
+          this.applyDamage(next, actor, player, (1 - response) * targetScale, { canBlock:false, deviceAttack:false });
         }
         break;
       case "plunder":
-        if (target) this.takeResourceToHand(actor, target, scale);
+        if (target) this.takeResource(actor, target, scale);
         break;
       case "transfer": {
         const game = { state:{ players:next.players } };
         const inRange = (player) => DistanceSystem.getDistance(game, actor, player) <= 1;
         const resources = next.players.filter((player) => player.alive && inRange(player) && ((player.handCount ?? 0) > 0 || player.equipmentDefinitionId));
-        const source = resources.sort((a,b) => (b.handCount + (b.equipmentDefinitionId ? 1 : 0)) - (a.handCount + (a.equipmentDefinitionId ? 1 : 0)))[0];
-        const receiver = next.players.filter((player) => player.alive && player.id !== source?.id && inRange(player)).sort((a,b) => a.handCount - b.handCount)[0];
-        if (source && receiver && source.equipmentDefinitionId && ((source.handCount ?? 0) <= 0 || CARD_DEFINITIONS[source.equipmentDefinitionId]?.aiValue >= 7)) {
+        const source = next.players.find((player) => player.id === abstractAction.selection?.sourceId)
+          ?? resources.sort((a,b) => (b.handCount + (b.equipmentDefinitionId ? 1 : 0)) - (a.handCount + (a.equipmentDefinitionId ? 1 : 0)))[0];
+        const receiver = next.players.find((player) => player.id === abstractAction.selection?.receiverId)
+          ?? next.players.filter((player) => player.alive && player.id !== source?.id && inRange(player)).sort((a,b) => a.handCount - b.handCount)[0];
+        const moveEquipment = abstractAction.selection?.zone === "equipment"
+          || (!abstractAction.selection?.zone && source?.equipmentDefinitionId && ((source.handCount ?? 0) <= 0 || CARD_DEFINITIONS[source.equipmentDefinitionId]?.aiValue >= 7));
+        if (source && receiver && source.equipmentDefinitionId && moveEquipment) {
           receiver.equipmentDefinitionId = source.equipmentDefinitionId;
           source.equipmentDefinitionId = null;
         } else if (source && receiver) {
@@ -95,11 +99,15 @@ export class AiSimulator {
     return next;
   }
 
-  takeResourceToHand(actor, target, scale = 1) {
+  takeResource(actor, target, scale = 1) {
     const takeEquipment = target.equipmentDefinitionId && ((target.handCount ?? 0) <= 0 || CARD_DEFINITIONS[target.equipmentDefinitionId]?.aiValue >= 7);
-    if (takeEquipment && scale >= .5) target.equipmentDefinitionId = null;
-    else target.handCount = Math.max(0, (target.handCount ?? 0) - scale);
-    actor.handCount += scale;
+    if (takeEquipment && scale >= .5) {
+      actor.equipmentDefinitionId = target.equipmentDefinitionId;
+      target.equipmentDefinitionId = null;
+    } else {
+      target.handCount = Math.max(0, (target.handCount ?? 0) - scale);
+      actor.handCount += scale;
+    }
   }
 
   destroyResource(target, scale = 1) {
@@ -157,7 +165,7 @@ export class AiSimulator {
     } else if (skill.id === "symbiosis" && target) {
       this.heal(target, 1);
     } else if (skill.id === "stealSkill" && target) {
-      this.takeResourceToHand(actor, target, 1);
+      this.takeResource(actor, target, 1);
     } else if (skill.id === "burningField") {
       for (const enemy of state.players) if (enemy.alive && enemy.battleTeam !== actor.battleTeam) this.applyDamage(state, actor, enemy, 1, { canBlock:false });
     } else if (skill.id === "hunt" && target) {
@@ -189,15 +197,14 @@ export class AiSimulator {
       const basicChance = BASIC_CARD_COUNT / TOTAL_CARD_COUNT;
       const equipmentChance = EQUIPMENT_CARD_COUNT / TOTAL_CARD_COUNT;
       const passChance = !options.canBlock
-        ? basicChance
+        ? basicChance + equipmentChance
         : requiresTwoBlocks
-          ? judgmentBlockChance * (1 - (target.blockProbability ?? 0)) + otherBasicChance * (1 - (target.twoBlockProbability ?? 0))
-          : otherBasicChance * (1 - (target.blockProbability ?? 0));
+          ? equipmentChance + judgmentBlockChance * (1 - (target.blockProbability ?? 0)) + otherBasicChance * (1 - (target.twoBlockProbability ?? 0))
+          : equipmentChance + otherBasicChance * (1 - (target.blockProbability ?? 0));
       const responseChance = options.canBlock ? Math.max(0, basicChance - passChance) : 0;
       target.handCount += basicChance;
       target.handCount = Math.max(0, target.handCount - responseChance * (requiresTwoBlocks ? 2 : 1));
       pending = amount * passChance;
-      directLoss = equipmentChance;
     } else {
       target.handCount = Math.max(0, target.handCount - blockChance * (requiresTwoBlocks ? 2 : 1));
     }
@@ -223,6 +230,7 @@ export class AiSimulator {
     target.survivalChance = Math.min(1, capacity / need);
     if (capacity < need) {
       target.alive = false;
+      target.hp = 0;
       return;
     }
     let remaining = need;

@@ -1,8 +1,6 @@
 /** 二十三种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
 import { RuleEngine } from "../core/RuleEngine.js?build=20260730-equipment-control-v26";
 
-const byId = (game, id) => game.state.players.find((player) => player.id === id && player.alive) ?? null;
-
 const CARD_EFFECTS = {
   async assault(game, source, card, targets, context) {
     source.turnFlags.attackUsed += 1;
@@ -41,21 +39,15 @@ const CARD_EFFECTS = {
   },
 
   async transfer(game, source, card, targets, context) {
-    const selection = context.selection ?? {};
-    let from = byId(game, selection.sourceId);
-    let receiver = byId(game, selection.receiverId);
-    const sources = RuleEngine.getTransferSources(game, source, card).filter((candidate) => RuleEngine.getTransferReceivers(game, source, candidate, card).length);
-    if (!sources.includes(from)) from = game.aiController.cardSelector.chooseTransferSource(source, sources);
-    const receivers = RuleEngine.getTransferReceivers(game, source, from, card);
-    if (!receivers.includes(receiver)) receiver = game.aiController.cardSelector.chooseTransferReceiver(source, from, receivers);
-    if (!from || !receiver || from.id === receiver.id) return;
-    game.ui.setCurrentCard?.(card, source.name, `来源 ${from.name} → 接收 ${receiver.name}`);
-    const chosen = await game.choosePlayerZoneCard(source, from, "选择要转移的手牌或装备牌", selection);
-    if (!chosen || !RuleEngine.getTransferSources(game, source, card).includes(from) || !RuleEngine.getTransferReceivers(game, source, from, card).includes(receiver)) return;
-    const transferred = chosen.zone === "equipment"
-      ? await game.moveEquipmentBetweenPlayers(from, receiver, chosen.card, "转移")
-      : await game.moveCardBetweenHands(from, receiver, chosen.card, "转移");
-    if (transferred) game.log(`${source.name}将${from.name}的${chosen.zone === "equipment" ? `装备「${chosen.card.name}」` : game.cardLabelForHuman(receiver, chosen.card)}转移给了${receiver.name}${chosen.zone === "equipment" ? "的装备区" : ""}。`, "important");
+    const intent = context.transferIntent;
+    if (!intent || !RuleEngine.getTransferSources(game, source, card).includes(intent.from)
+      || !RuleEngine.getTransferReceivers(game, source, intent.from, card).includes(intent.receiver)) return;
+    const transferred = intent.zone === "equipment"
+      ? await game.moveEquipmentBetweenPlayers(intent.from, intent.receiver, intent.card, "转移")
+      : await game.moveCardBetweenHands(intent.from, intent.receiver, intent.card, "转移");
+    if (transferred && intent.zone === "hand") {
+      game.log(`${source.name}将${intent.from.name}的${game.cardLabelForHuman(intent.receiver, intent.card)}转移给了${intent.receiver.name}。`, "important");
+    }
   },
 
   async exposeWeakness(game, source) {
@@ -93,8 +85,9 @@ const CARD_EFFECTS = {
         continue;
       }
       const discarded = await game.responseSystem.requestAssaultDiscard(target, "响应挑衅并弃置突袭", { source, target, card });
-      if (discarded) game.log(`${target.name}以突袭回应了挑衅。`, "important");
-      else await game.hpLossSystem.lose(target, 1, { source, card, reason:"挑衅" });
+      if (!discarded) await game.damage(source, target, 1, {
+        card, canBlock:false, damageType:"provoke", actionName:"挑衅"
+      });
     }
   },
 
@@ -104,9 +97,9 @@ const CARD_EFFECTS = {
     const chosen = await game.choosePlayerZoneCard(source, target, "选择要掠夺的手牌或装备牌", context.selection);
     if (!chosen || !RuleEngine.getCardTargets(game, source, card).includes(target)) return;
     const plundered = chosen.zone === "equipment"
-      ? await game.moveEquipmentToHand(target, source, chosen.card, "掠夺")
+      ? await game.moveEquipmentBetweenPlayers(target, source, chosen.card, "掠夺")
       : await game.moveCardBetweenHands(target, source, chosen.card, "掠夺");
-    if (plundered) game.log(`${source.name}从${target.name}处掠夺了${chosen.zone === "equipment" ? `装备「${chosen.card.name}」` : game.cardLabelForHuman(source, chosen.card)}。`, "important");
+    if (plundered && chosen.zone === "hand") game.log(`${source.name}从${target.name}处掠夺了${game.cardLabelForHuman(source, chosen.card)}。`, "important");
   },
 
   async destroy(game, source, card, targets, context) {

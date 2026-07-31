@@ -10,13 +10,53 @@ import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-equipme
 export class AiActionGenerator {
   constructor(game) { this.game = game; }
 
+  chooseVisibleTransferPlan(game, actor, card) {
+    const plans = [];
+    for (const from of RuleEngine.getTransferSources(game, actor, card)) {
+      for (const receiver of RuleEngine.getTransferReceivers(game, actor, from, card)) {
+        if (from.equipmentDefinitionId) {
+          const moved = CARD_DEFINITIONS[from.equipmentDefinitionId]?.aiValue ?? 0;
+          const replaced = CARD_DEFINITIONS[receiver.equipmentDefinitionId]?.aiValue ?? 0;
+          plans.push({
+            sourceId:from.id, receiverId:receiver.id, zone:"equipment",
+            score:(from.battleTeam === actor.battleTeam ? -moved : moved)
+              + (receiver.battleTeam === actor.battleTeam ? moved - replaced : replaced - moved)
+          });
+        }
+        if ((from.handCount ?? 0) > 0) {
+          let score = (from.battleTeam === actor.battleTeam ? -4 : 4)
+            + (receiver.battleTeam === actor.battleTeam ? 4 : -4);
+          if (from.battleTeam === actor.battleTeam && receiver.battleTeam !== actor.battleTeam) score -= 8;
+          if (from.battleTeam === actor.battleTeam && receiver.battleTeam === actor.battleTeam) {
+            score += Math.min(
+              Math.max(0, from.handCount - Math.max(0, from.hp)),
+              Math.max(0, Math.max(0, receiver.hp) - receiver.handCount)
+            ) * 4;
+          }
+          plans.push({ sourceId:from.id, receiverId:receiver.id, zone:"hand", score });
+        }
+      }
+    }
+    return plans.sort((a, b) => b.score - a.score)[0] ?? null;
+  }
+
   generate(player) {
     const actions = [];
     for (const card of player.hand) {
       if (!RuleEngine.canPlayCard(this.game, player, card).ok) continue;
       const targets = RuleEngine.getCardTargets(this.game, player, card);
+      if (card.definitionId === "transfer") {
+        const sources = RuleEngine.getTransferSources(this.game, player, card)
+          .filter((from) => RuleEngine.getTransferReceivers(this.game, player, from, card).length);
+        const selection = this.game.aiController.cardSelector.chooseTransferCombination(player, card, sources);
+        if (selection) actions.push({ type:"card", card, targets:[], selection });
+        continue;
+      }
       if (["singleEnemy", "singleEnemyInRange", "singleAlly", "otherWithCards", "otherWithCardsOrEquipment"].includes(card.targetType)) {
-        for (const target of targets) actions.push({ type:"card", card, targets:[target] });
+        const aiTargets = ["destroy","plunder"].includes(card.definitionId)
+          ? targets.filter((target) => target.battleTeam !== player.battleTeam)
+          : targets;
+        for (const target of aiTargets) actions.push({ type:"card", card, targets:[target] });
       } else actions.push({ type:"card", card, targets:card.targetType === "allEnemies" || card.targetType === "allLiving" ? targets : [] });
     }
     const skill = getActiveSkill(player);
@@ -49,10 +89,20 @@ export class AiActionGenerator {
       }
       if (card.definitionId === "recover" && (actor.hp >= actor.maxHp || (actor.recoverLimit !== null && actor.recoverUsed >= actor.recoverLimit))) continue;
       if (card.definitionId === "charge" && actor.energy >= actor.maxEnergy) continue;
+      if (card.definitionId === "transfer") {
+        const selection = this.chooseVisibleTransferPlan(simulationGame, actor, card);
+        if (selection) actions.push({ type:"card", card, targets:[], selection });
+        continue;
+      }
       if (["singleEnemy"].includes(card.targetType)) for (const target of enemies) actions.push({ type:"card", card, targets:[target] });
       else if (card.targetType === "singleAlly") for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) actions.push({ type:"card", card, targets:[target] });
       else if (card.targetType === "otherWithCards") for (const target of alive.filter((entry) => entry.id !== actor.id && entry.handCount > 0)) actions.push({ type:"card", card, targets:[target] });
-      else if (card.targetType === "otherWithCardsOrEquipment") for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) actions.push({ type:"card", card, targets:[target] });
+      else if (card.targetType === "otherWithCardsOrEquipment") {
+        const targets = RuleEngine.getCardTargets(simulationGame, actor, card);
+        for (const target of ["destroy","plunder"].includes(card.definitionId)
+          ? targets.filter((entry) => entry.battleTeam !== actor.battleTeam)
+          : targets) actions.push({ type:"card", card, targets:[target] });
+      }
       else actions.push({ type:"card", card, targets:["allEnemies","allLiving"].includes(card.targetType) ? (card.targetType === "allEnemies" ? enemies : alive) : [] });
     }
     const skill = ACTIVE_SKILLS[actor.activeSkillId];

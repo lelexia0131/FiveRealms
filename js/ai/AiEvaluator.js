@@ -65,6 +65,8 @@ export class AiEvaluator {
         value += enemy ? 3 + focus : -12;
       }
       if (["plunder","destroy","scout"].includes(card.definitionId)) value += Math.min(5, (target.hand?.length ?? target.handCount ?? 0) + (target.equipmentDefinitionId || target.equipment ? 2 : 0));
+      if (!enemy && ["plunder","destroy"].includes(card.definitionId)) value -= 30;
+      if (!enemy && card.definitionId === "scout") value -= actor.activeSkillId === "resonance" ? 5 : 12;
       if (enemy && ["assault","duel","plunder","destroy","scout"].includes(card.definitionId)) {
         value += this.threatPriority(actor, target, player.aiMemory, ["assault","duel"].includes(card.definitionId) ? 1 : 0);
       }
@@ -76,6 +78,7 @@ export class AiEvaluator {
     if (card.definitionId === "shockwave") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam && enemy.hp <= 1).length * 7;
     if (card.definitionId === "provoke") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam).reduce((sum, enemy) => sum + (1 - (enemy.assaultResponseProbability ?? 0)) * 3, 0);
     if (card.definitionId === "duel" && target) value += ((actor.expectedAssaultCount ?? 0) - (target.expectedAssaultCount ?? 0)) * 2;
+    if (card.definitionId === "transfer") value += Number(action.selection?.score ?? 0);
     if (card.definitionId === "symbiosis") {
       const net = this.symbiosisNetFromState(actor, visible);
       value = net > 0 ? 8 + net : -9 + net;

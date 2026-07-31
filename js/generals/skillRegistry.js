@@ -142,7 +142,8 @@ const PASSIVE_SKILLS = {
   coordination(game, owner) {
     game.eventBus.on("cardUsed", `${owner.id}:coordination`, async (event) => {
       if (!owner.alive || event.source.id !== owner.id || owner.turnFlags.coordinationTriggered) return;
-      if (!event.targets.some((target) => target.id !== owner.id && target.battleTeam === owner.battleTeam)) return;
+      const effectiveTargets = event.effectiveTargets ?? event.targets ?? [];
+      if (!effectiveTargets.some((target) => target.id !== owner.id && target.battleTeam === owner.battleTeam)) return;
       owner.turnFlags.coordinationTriggered = true;
       game.log(`${owner.name}通过协调摸1张牌。`);
       await game.drawCards(owner, 1, "协调");
@@ -191,9 +192,9 @@ export const ACTIVE_SKILLS = Object.freeze({
       const chosen = randomChoice(options, game.random);
       if (!chosen) return;
       const stolen = chosen.zone === "equipment"
-        ? await game.moveEquipmentToHand(target, source, chosen.card, "窃取")
+        ? await game.moveEquipmentBetweenPlayers(target, source, chosen.card, "窃取")
         : await game.moveCardBetweenHands(target, source, chosen.card, "窃取");
-      if (stolen) game.log(`${source.name}从${target.name}处窃取了${chosen.zone === "equipment" ? `装备「${chosen.card.name}」` : game.cardLabelForHuman(source, chosen.card)}。`, "important");
+      if (stolen && chosen.zone === "hand") game.log(`${source.name}从${target.name}处窃取了${game.cardLabelForHuman(source, chosen.card)}。`, "important");
     }
   }),
   burningField: Object.freeze({

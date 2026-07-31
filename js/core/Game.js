@@ -325,6 +325,39 @@ export class Game {
   }
 
   /**
+   * 在反制窗口前固定转移的来源、接收者和实体牌。隐藏手牌只保存在核心上下文中，
+   * 对外展示始终使用安全数量说明；AI 的组合计划仍会在这里通过 RuleEngine 复核。
+   */
+  async prepareTransferIntent(source, card, selection = null) {
+    const sources = RuleEngine.getTransferSources(this, source, card)
+      .filter((from) => RuleEngine.getTransferReceivers(this, source, from, card).length);
+    const planned = selection?.sourceId && selection?.receiverId
+      ? selection
+      : this.aiController.cardSelector.chooseTransferCombination(source, card, sources);
+    const from = this.state.players.find((player) => player.id === planned?.sourceId && player.alive) ?? null;
+    const receiver = this.state.players.find((player) => player.id === planned?.receiverId && player.alive) ?? null;
+    if (!sources.includes(from) || !RuleEngine.getTransferReceivers(this, source, from, card).includes(receiver)) return null;
+
+    let chosen = null;
+    if (source.controllerType === "ai" && planned?.zone === "equipment") {
+      chosen = from.equipment && (!planned.equipmentCardId || from.equipment.id === planned.equipmentCardId)
+        ? { card:from.equipment, zone:"equipment" }
+        : null;
+    } else if (source.controllerType === "ai" && planned?.zone === "hand") {
+      const [hiddenCard] = this.aiController.cardSelector.chooseHiddenCards(source, from, 1);
+      chosen = hiddenCard ? { card:hiddenCard, zone:"hand" } : null;
+    } else {
+      chosen = await this.choosePlayerZoneCard(source, from, "选择要转移的手牌或装备牌", planned);
+    }
+    if (!chosen || !RuleEngine.getTransferSources(this, source, card).includes(from)
+      || !RuleEngine.getTransferReceivers(this, source, from, card).includes(receiver)) return null;
+    return Object.freeze({
+      from, receiver, card:chosen.card, zone:chosen.zone,
+      safeItemLabel:chosen.zone === "equipment" ? `装备「${chosen.card.name}」` : "1张牌"
+    });
+  }
+
+  /**
    * 使用一张主动牌。卡牌从手牌先进入结算区，完成或取消后才进入弃牌堆/装备区。
    * @returns {Promise<boolean>} 是否实际开始结算。
    */
@@ -337,14 +370,24 @@ export class Game {
     if (card.targetType === "allEnemies") targets = legalTargets;
     if (card.targetType === "allLiving") targets = legalTargets;
     if (!["none", "self", "allEnemies", "allLiving", "multiStage"].includes(card.targetType) && (!targets[0] || !legalTargets.includes(targets[0]))) return false;
+    const transferIntent = card.definitionId === "transfer"
+      ? await this.prepareTransferIntent(source, card, selection)
+      : null;
+    if (card.definitionId === "transfer" && !transferIntent) return false;
 
     this.actionLocked = true;
     const resolutionId = `${this.state.gameId}:resolution:${++this.state.resolutionSerial}`;
     try {
       await this.moveHandToResolving(source, card);
-      const targetLabel = actionTargetLabel(this, source, card, targets, selection);
+      const targetLabel = transferIntent
+        ? `来源 ${transferIntent.from.name} → 接收 ${transferIntent.receiver.name}`
+        : actionTargetLabel(this, source, card, targets, selection);
       this.ui.setCurrentCard(card, source.name, targetLabel);
-      this.log(`${source.name}使用了「${card.name}」${targetLabel ? `，作用对象：${targetLabel}` : ""}。`);
+      if (transferIntent) {
+        this.log(`${source.name}使用了「${card.name}」，准备将${transferIntent.from.name}的${transferIntent.safeItemLabel}转移给${transferIntent.receiver.name}。`);
+      } else if (card.category !== "equipment") {
+        this.log(`${source.name}使用了「${card.name}」${targetLabel ? `，作用对象：${targetLabel}` : ""}。`);
+      }
       const useEvent = await this.eventBus.emit("beforeCardUse", { type: "beforeCardUse", source, card, targets, cancelled: false, metadata: {}, resolutionId });
       let cancelledBeforeResolve = useEvent.cancelled;
       if (!cancelledBeforeResolve && targets.length) {
@@ -358,16 +401,24 @@ export class Game {
       cancelledBeforeResolve ||= resolveEvent.cancelled;
       // 群伤牌使用逐目标反制，由各目标的效果解析负责；这里不能提前取消整张牌。
       const countered = !cancelledBeforeResolve && card.counterScope !== "target" &&
-        await this.responseSystem.askForCounter(source, card, targets);
+        await this.responseSystem.askForCounter(source, card, targets, transferIntent ? { transferIntent } : {});
       let destination = "discard";
       if (countered || cancelledBeforeResolve) {
         this.log(`「${card.name}」的效果被取消。`, "important");
       } else {
-        destination = (await resolveCardEffect(this, source, card, targets, { resolutionId, selection })).destination;
+        destination = (await resolveCardEffect(this, source, card, targets, { resolutionId, selection, transferIntent })).destination;
       }
       if (destination === "discard") await this.finishResolvingToDiscard(card);
       source.statistics.cardsPlayed += 1;
-      await this.eventBus.emit("cardUsed", { type: "cardUsed", source, card, targets, cancelled: countered || cancelledBeforeResolve, resolutionId });
+      const effectiveTargets = transferIntent
+        ? [transferIntent.receiver]
+        : card.definitionId === "mutualBenefit"
+          ? this.state.players.filter((player) => player.alive)
+          : targets;
+      await this.eventBus.emit("cardUsed", {
+        type:"cardUsed", source, card, targets, effectiveTargets,
+        cancelled:countered || cancelledBeforeResolve, resolutionId
+      });
       if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       this.ui.render(this);
       return true;
@@ -518,7 +569,6 @@ export class Game {
     const blocked = await this.responseSystem.askForBlock(source, target, event);
     if (blocked) {
       context.blockedByCard = true;
-      this.log(`${target.name}格挡了此次攻击。`, "important");
       await this.eventBus.emit("afterDamage", { ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"block" });
       this.ui.render(this);
       return 0;
@@ -555,7 +605,10 @@ export class Game {
     const actualAmount = Math.min(event.amount, target.maxHp - target.hp);
     target.hp += actualAmount;
     if (source) source.statistics.healingDone += actualAmount;
-    if (actualAmount) { this.log(`${target.name}恢复${actualAmount}点生命。`, "heal"); this.ui.queueFeedback?.("heal", target.id, actualAmount); }
+    if (actualAmount) {
+      if (!context.silentLog) this.log(`${target.name}恢复${actualAmount}点生命。`, "heal");
+      this.ui.queueFeedback?.("heal", target.id, actualAmount);
+    }
     await this.eventBus.emit("afterHeal", { ...event, type: "afterHeal", actualAmount });
     this.ui.render(this);
     return actualAmount;
@@ -597,7 +650,7 @@ export class Game {
   }
 
   /** 抽指定数量的牌并逐张触发移动事件；电脑日志只公开数量。 */
-  async drawCards(player, count, reason = "摸牌") {
+  async drawCards(player, count, reason = "摸牌", options = {}) {
     if (!player?.alive || this.state.isGameOver) return 0;
     let drawn = 0;
     for (let index = 0; index < count; index += 1) {
@@ -613,13 +666,16 @@ export class Game {
       drawn += 1;
       await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     }
-    if (drawn) { this.log(`${player.name}摸了${drawn}张牌。`); this.ui.queueFeedback?.("draw", player.id, drawn); }
+    if (drawn) {
+      if (!options.silent) this.log(`${player.name}摸了${drawn}张牌。`);
+      this.ui.queueFeedback?.("draw", player.id, drawn);
+    }
     this.ui.render(this);
     return drawn;
   }
 
   /** 从玩家手牌公开弃置一张牌；返回是否成功移动。 */
-  async discardCardFromHand(player, card, reason = "弃置") {
+  async discardCardFromHand(player, card, reason = "弃置", options = {}) {
     const index = player.hand.indexOf(card);
     if (index < 0) return false;
     const move = { type: "beforeCardMove", card, from: "hand", to: "discard", player, reason, cancelled: false };
@@ -630,7 +686,7 @@ export class Game {
     this.invalidateCardKnowledge(card.id, player.id);
     this.state.deck.discard(card);
     this.syncDeckAliases();
-    this.log(`${player.name}因${reason}弃置了「${card.name}」。`);
+    if (!options.silent) this.log(`${player.name}因${reason}弃置了「${card.name}」。`);
     this.ui.queueFeedback?.("discard", player.id);
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     this.ui.render(this);
@@ -690,7 +746,7 @@ export class Game {
       to.equipment = null;
       this.state.deck.discard(replaced);
       await this.eventBus.emit("afterCardMove", { ...replaceMove, type:"afterCardMove" });
-      this.log(`${to.name}原有的「${replaced.name}」因装备转移被替换并弃置。`);
+      this.log(`${to.name}的「${replaced.name}」被替换并进入弃牌堆。`);
     }
     from.equipment = null;
     to.equipment = card;
@@ -698,6 +754,7 @@ export class Game {
     this.syncDeckAliases();
     this.ui.queueFeedback?.("equip", to.id);
     await this.eventBus.emit("afterCardMove", { ...move, type:"afterCardMove" });
+    this.log(`${to.name}装备了「${card.name}」。`, "important");
     this.ui.render(this);
     return true;
   }
@@ -754,7 +811,7 @@ export class Game {
       await this.eventBus.emit("beforeCardMove", replaceMove);
       this.state.deck.discard(old);
       await this.eventBus.emit("afterCardMove", { ...replaceMove, type: "afterCardMove" });
-      this.log(`${player.name}替换并弃置了「${old.name}」。`);
+      this.log(`${player.name}的「${old.name}」被替换并进入弃牌堆。`);
     }
     this.state.deck.finishResolveToEquipment(card);
     player.equipment = card;

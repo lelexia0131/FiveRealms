@@ -1,5 +1,5 @@
 /**
- * 雷达的公开判定流程。依赖 Deck、HpLossSystem、EventBus 与 UI 展示；
+ * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；
  * 判定牌先进入独立判定区再去手牌或弃牌堆，绝不能在处理中参与重洗。
  */
 export class JudgmentSystem {
@@ -29,9 +29,8 @@ export class JudgmentSystem {
       result = { handled:true, immune:false, category:"basic" };
     } else {
       this.game.state.deck.finishJudgmentToDiscard(card);
-      this.game.log(`装备判定使${defender.name}失去1点生命，原突袭终止。`, "damage");
-      await this.game.hpLossSystem.lose(defender, 1, { source:attacker, card:attackContext.card, reason:"雷达判定" });
-      result = { handled:true, immune:true, category:"equipment" };
+      this.game.log(`装备判定失败，判定牌进入弃牌堆；${defender.name}不直接失去生命，原突袭继续。`, "important");
+      result = { handled:true, immune:false, category:"equipment" };
     }
     this.game.state.currentJudgment = null;
     this.game.ui.judgmentView?.hide?.();

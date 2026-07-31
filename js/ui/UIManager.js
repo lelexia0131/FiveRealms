@@ -5,7 +5,7 @@ import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260730
 import { RuleEngine } from "../core/RuleEngine.js?build=20260730-equipment-control-v26";
 import { getActiveSkill } from "../generals/skillRegistry.js?build=20260730-equipment-control-v26";
 import {
-  candidateCardTemplate, escapeHtml, formatLogMessage, handCardTemplate,
+  candidateCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
 } from "./templates.js?build=20260730-equipment-control-v26";
 import { AnimationController } from "./animationController.js?build=20260730-equipment-control-v26";
@@ -389,7 +389,7 @@ export class UIManager {
   appendLog(entry, count) {
     const node = document.createElement("div");
     node.className = `log-entry ${entry.kind === "normal" ? "" : `is-${entry.kind}`}`;
-    node.innerHTML = formatLogMessage(entry.message);
+    node.innerHTML = formatLogEntry(entry);
     this.elements.log_list.append(node);
     this.updateLogCount(count);
     this.elements.log_list.scrollTop = this.elements.log_list.scrollHeight;

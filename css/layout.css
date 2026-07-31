@@ -32,6 +32,7 @@
 .thinking-indicator { grid-column: 2; grid-row: 1; }
 .action-prompt { grid-column: 2; grid-row: 1; align-self: end; margin-bottom: 5px; padding-top: 52px; }
 .private-reveal, .response-panel, .public-pool-view { position: absolute; z-index: 8; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.command-deck:has(.response-panel:not(.is-hidden)) .current-card { transform: translateY(18px); }
 .judgment-view, .dying-view, .duel-view { position: absolute; z-index: 7; right: 18px; top: 14px; }
 .action-row { grid-column: 1 / -1; display: flex; justify-content: center; gap: 9px; padding-top: 8px; }
 .human-zone { position: relative; z-index: 1; min-height: 0; display: grid; grid-template-columns: clamp(360px, 24vw, 430px) minmax(0, 1fr); gap: 12px; }

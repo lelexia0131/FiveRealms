@@ -59,8 +59,7 @@ function lifeCells(player) {
 export function opponentHandStripTemplate(slots = []) {
   const cards = slots.map((slot) => {
     if (!slot.known) return hiddenCardBackTemplate({ compact:true });
-    const tags = slot.subtypes.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("");
-    return `<span class="opponent-card-slot is-known frame-${escapeHtml(slot.frameStyle)}" style="--card-accent:${escapeHtml(slot.accent)}" tabindex="0" title="${escapeHtml(`${slot.categoryName}：${slot.description}`)}" aria-label="已知手牌：${escapeHtml(slot.name)}，${escapeHtml(slot.categoryName)}，${escapeHtml(slot.description)}"><span class="card-topline"><span class="card-name">${escapeHtml(slot.name)}</span><span class="card-category">${escapeHtml(slot.categoryName)}</span></span><span class="card-art"><img src="${escapeHtml(slot.art)}" alt="" aria-hidden="true"><span class="card-crest"><img src="${escapeHtml(slot.icon)}" alt="" aria-hidden="true"></span></span><span class="card-rules"><span class="card-description">${escapeHtml(slot.description)}</span><span class="card-flavor">${escapeHtml(slot.flavorText)}</span></span><span class="card-tags">${tags}</span></span>`;
+    return `<span class="opponent-card-slot is-known frame-${escapeHtml(slot.frameStyle)}" style="--card-accent:${escapeHtml(slot.accent)}" tabindex="0" title="${escapeHtml(`${slot.categoryName}：${slot.description}`)}" aria-label="已知手牌：${escapeHtml(slot.name)}，${escapeHtml(slot.categoryName)}，${escapeHtml(slot.description)}"><span class="card-topline"><span class="card-name">${escapeHtml(slot.name)}</span><span class="card-category">${escapeHtml(slot.categoryName)}</span></span><span class="card-art"><img src="${escapeHtml(slot.art)}" alt="" aria-hidden="true"><span class="card-crest"><img src="${escapeHtml(slot.icon)}" alt="" aria-hidden="true"></span></span><span class="card-rules"><span class="card-description">${escapeHtml(slot.description)}</span><span class="card-flavor">${escapeHtml(slot.flavorText)}</span></span></span>`;
   }).join("");
   return `<div class="opponent-hand-region"><div class="opponent-hand-strip" aria-label="该角色手牌">${cards}</div></div>`;
 }
@@ -113,12 +112,10 @@ export function playerPanelTemplate(player, options = {}) {
 export function handCardTemplate(card, options = {}) {
   const selected = Boolean(options.selected);
   const disabled = Boolean(options.disabled);
-  const tags = card.subtypes.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("");
   return `<button class="hand-card frame-${escapeHtml(card.frameStyle)} ${selected ? "is-selected" : ""} ${disabled ? "is-disabled" : ""}" style="--card-accent:${escapeHtml(card.accent)}" type="button" data-card-id="${escapeHtml(card.id)}" data-disabled="${disabled}" aria-disabled="${disabled}" aria-pressed="${selected}">
     <span class="card-topline"><span class="card-name">${escapeHtml(card.name)}</span><span class="card-category">${escapeHtml(card.categoryName)}</span></span>
     <span class="card-art"><img src="${escapeHtml(card.art)}" alt="" aria-hidden="true" draggable="false"><span class="card-crest"><img src="${escapeHtml(card.icon)}" alt="" aria-hidden="true"></span></span>
     <span class="card-rules"><span class="card-description">${escapeHtml(card.description)}</span><span class="card-flavor">${escapeHtml(card.flavorText)}</span></span>
-    <span class="card-tags">${tags}</span>
   </button>`;
 }
 
@@ -143,4 +140,16 @@ export function formatLogMessage(message) {
     .replace(/「([^」]+)」/g, "「<strong class=\"log-card-name\">$1</strong>」")
     .replace(/(\d+)(点伤害)/g, "<strong class=\"log-damage-value\">$1</strong>$2")
     .replace(/(恢复)(\d+)(点生命)/g, "$1<strong class=\"log-heal-value\">$2</strong>$3");
+}
+
+/** 渲染结构化日志；角色 token 的阵营类只来自 battleTeam，所有文本都先转义。 */
+export function formatLogEntry(entry) {
+  const fragments = Array.isArray(entry?.fragments) ? entry.fragments : [{ type:"text", text:entry?.message ?? "" }];
+  return fragments.map((fragment) => {
+    if (fragment.type !== "player") return formatLogMessage(fragment.text);
+    const teamClass = fragment.battleTeam === "dawn" || fragment.battleTeam === "dusk"
+      ? ` team-${fragment.battleTeam}`
+      : "";
+    return `<strong class="log-player-name${teamClass}" data-player-id="${escapeHtml(fragment.playerId)}">${escapeHtml(fragment.text)}</strong>`;
+  }).join("");
 }

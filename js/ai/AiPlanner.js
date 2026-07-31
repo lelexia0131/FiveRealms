@@ -20,7 +20,10 @@ export class AiPlanner {
       cardId: action.card?.definitionId ?? action.skill?.id ?? null,
       cardInstanceId: action.card?.id ?? null,
       targetId: action.targets?.[0]?.id ?? null,
-      targetIds: (action.targets ?? []).map((target) => target.id)
+      targetIds: (action.targets ?? []).map((target) => target.id),
+      selection:action.card?.definitionId === "transfer" && action.selection
+        ? { sourceId:action.selection.sourceId, receiverId:action.selection.receiverId, zone:action.selection.zone }
+        : null
     };
   }
 

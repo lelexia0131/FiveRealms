@@ -38,7 +38,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
     loreFaction: "无灯港", maxHp: 4, tags: ["控制", "谍报"], roleTags: ["control", "utility"], passiveSkillIds: ["spyGap"], activeSkillIds: ["stealSkill"],
     passiveName: "窥隙", passiveDescription: "每回合首次对敌人造成实际伤害后，私下查看其至多2张随机手牌。",
     passiveTriggerText: "对敌人造成实际伤害后", passiveLimitText: "每回合限触发1次",
-    activeName: "窃取", activeDescription: "消耗2点能量，随机获得距离2内一名敌人的1张手牌或装备牌；装备牌进入你的手牌，每回合最多发动1次。", activeCost: 2, activeLimitPerTurn: 1,
+    activeName: "窃取", activeDescription: "消耗2点能量，随机获得距离2内一名敌人的1张手牌或装备牌；装备牌直接进入你的装备区，每回合最多发动1次。", activeCost: 2, activeLimitPerTurn: 1,
     description: "往返暗潮市集的情报客，相信一张被看见的牌就不再是秘密。",
     aiProfile: profile(1.05, .75, .4, .4, .9, .65, .85, 1.1)
   }),
@@ -72,7 +72,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "resonance-tuner", name: "调律师", glyph: "律", portrait: "./assets/characters/resonance-tuner.svg",
     loreFaction: "鸣风塔", maxHp: 4, tags: ["辅助", "过牌"], roleTags: ["support", "control"], passiveSkillIds: ["coordination"], activeSkillIds: ["resonance"],
-    passiveName: "协调", passiveDescription: "每回合首次对另一名队友使用卡牌后，自己摸1张牌。",
+    passiveName: "协调", passiveDescription: "每回合首次令另一名队友成为卡牌的有效作用目标后，自己摸1张牌；互利的所有存活角色与转移的接收者均按此规则计入。",
     passiveTriggerText: "对另一名队友使用卡牌后", passiveLimitText: "每回合限触发1次",
     activeName: "共鸣", activeDescription: "消耗2点能量，令一名存活队友摸2张牌；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
     description: "借风塔谐振器校准队友的行动，让每一次协作都产生新的回响。",

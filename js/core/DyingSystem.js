@@ -70,7 +70,7 @@ export class DyingSystem {
         if (!this.game.isSessionValid(gameId)) return false;
         if (!use) continue;
         usedThisRound = true;
-        await this.game.heal(rescuer, target, 1, { card:use, reason:"dyingRescue", isDyingRescue:true });
+        await this.game.heal(rescuer, target, 1, { card:use, reason:"dyingRescue", isDyingRescue:true, silentLog:true });
         this.game.state.dyingContext = { targetId:target.id, need:Math.max(0, 1 - target.hp), currentHp:target.hp };
         this.game.log(`${rescuer.name}使用调息救援${target.name}，其生命变为${target.hp}。`, "heal");
         if (target.hp <= 0) this.game.log(`${target.name}仍处于濒死，还需${1 - target.hp}张调息。`, "important");
@@ -96,11 +96,12 @@ export class DyingSystem {
 
   async kill(target, source) {
     if (!target.alive) return false;
+    target.hp = 0;
     target.alive = false;
     this.game.requestHumanPlayEndForDefeat?.(target);
     this.game.ui.render(this.game);
     this.game.log(`${target.name}救援失败，阵亡。`, "important");
-    for (const card of [...target.hand]) await this.game.discardCardFromHand(target, card, "阵亡清理");
+    for (const card of [...target.hand]) await this.game.discardCardFromHand(target, card, "阵亡清理", { silent:true });
     if (target.equipment) {
       const equipment = target.equipment;
       target.equipment = null;
@@ -109,6 +110,12 @@ export class DyingSystem {
     }
     this.game.syncDeckAliases();
     await this.game.eventBus.emit("playerDead", { type:"playerDead", target, source });
+    if (!target.gameFlags.killRewardGranted && source?.alive && source.battleTeam !== target.battleTeam) {
+      target.gameFlags.killRewardGranted = true;
+      const drawn = await this.game.drawCards(source, 2, "击杀奖励", { silent:true });
+      this.game.log(`${source.name}击杀了${target.name}，摸了${drawn}张牌。`, "important");
+      await this.game.eventBus.emit("enemyKilled", { type:"enemyKilled", source, target, drawn });
+    }
     await this.game.checkVictory();
     return true;
   }

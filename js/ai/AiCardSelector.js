@@ -3,6 +3,7 @@
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
 import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-equipment-control-v26";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-equipment-control-v26";
 
 /** 未知手牌只按位置采样，绝不按真实定义筛选。 */
 export class AiCardSelector {
@@ -36,14 +37,57 @@ export class AiCardSelector {
   }
 
   chooseTransferSource(actor, candidates) {
-    const allies = candidates.filter((player) => player.battleTeam === actor.battleTeam);
-    const enemies = candidates.filter((player) => player.battleTeam !== actor.battleTeam);
-    const resourceCount = (player) => player.hand.length + (player.equipment ? 1 : 0);
-    return enemies.sort((a,b) => resourceCount(b) - resourceCount(a))[0] ?? allies.sort((a,b) => resourceCount(b) - resourceCount(a))[0] ?? null;
+    return this.chooseTransferCombination(actor, CARD_DEFINITIONS.transfer, candidates)?.source ?? null;
   }
   chooseTransferReceiver(actor, from, candidates) {
-    return candidates.filter((player) => player.battleTeam === actor.battleTeam).sort((a,b) => a.hand.length - b.hand.length)[0]
-      ?? candidates.find((player) => player.id !== from?.id) ?? null;
+    const plan = this.chooseTransferCombination(actor, CARD_DEFINITIONS.transfer, [from], new Set(candidates.map((player) => player.id)));
+    return candidates.find((player) => player.id === plan?.receiverId) ?? null;
+  }
+
+  /**
+   * 联合评估来源、接收者和区域。装备读取公开 definitionId；隐藏手牌只使用数量、
+   * 手牌上限压力与合法已知概率，不查看实际 definitionId。
+   */
+  chooseTransferCombination(actor, card, sources, allowedReceiverIds = null) {
+    const candidates = [];
+    const equipmentValue = (player) => CARD_DEFINITIONS[player?.equipment?.definitionId]?.aiValue ?? 0;
+    for (const from of sources) {
+      const receivers = this.game.state.players.filter((player) =>
+        player.alive && player.id !== from.id
+        && (!allowedReceiverIds || allowedReceiverIds.has(player.id))
+        && DistanceSystem.getDistance(this.game, actor, player) <= (card.effectRange ?? 1));
+      for (const receiver of receivers) {
+        if (from.equipment) {
+          const movedValue = equipmentValue(from);
+          const replacedValue = equipmentValue(receiver);
+          const removeUtility = from.battleTeam === actor.battleTeam ? -movedValue : movedValue;
+          const receiveUtility = receiver.battleTeam === actor.battleTeam
+            ? movedValue - replacedValue
+            : replacedValue - movedValue;
+          candidates.push({
+            source:from, sourceId:from.id, receiverId:receiver.id, zone:"equipment",
+            equipmentCardId:from.equipment.id, score:removeUtility + receiveUtility
+          });
+        }
+        if (from.hand.length) {
+          const expectedValue = 4;
+          let score = (from.battleTeam === actor.battleTeam ? -expectedValue : expectedValue)
+            + (receiver.battleTeam === actor.battleTeam ? expectedValue : -expectedValue);
+          const fromOverflow = Math.max(0, from.hand.length - Math.max(0, from.hp));
+          const receiverSpace = Math.max(0, Math.max(0, receiver.hp) - receiver.hand.length);
+          if (from.battleTeam === actor.battleTeam && receiver.battleTeam === actor.battleTeam) {
+            score += Math.min(fromOverflow, receiverSpace) * 4;
+          }
+          if (from.battleTeam === actor.battleTeam && receiver.battleTeam !== actor.battleTeam) score -= 8;
+          candidates.push({ source:from, sourceId:from.id, receiverId:receiver.id, zone:"hand", score });
+        }
+      }
+    }
+    candidates.sort((a, b) => b.score - a.score
+      || Number(b.zone === "equipment") - Number(a.zone === "equipment")
+      || a.source.seatIndex - b.source.seatIndex);
+    const best = candidates[0];
+    return best ? Object.freeze({ ...best }) : null;
   }
   choosePublicCard(player, cards) { return [...cards].sort((a,b) => b.aiValue - a.aiValue)[0] ?? null; }
   chooseDiscards(player, count) {

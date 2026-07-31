@@ -33,7 +33,13 @@ export class AIController {
       if (action.type === "card" && descriptor.cardInstanceId && action.card?.id !== descriptor.cardInstanceId) return false;
       if (action.type === "card" && !descriptor.cardInstanceId && action.card?.definitionId !== descriptor.cardId) return false;
       const targetIds = (action.targets ?? []).map((target) => target.id);
-      return targetIds.length === (descriptor.targetIds?.length ?? 0) && targetIds.every((id, index) => id === descriptor.targetIds[index]);
+      if (targetIds.length !== (descriptor.targetIds?.length ?? 0) || !targetIds.every((id, index) => id === descriptor.targetIds[index])) return false;
+      if (descriptor.selection) {
+        return action.selection?.sourceId === descriptor.selection.sourceId
+          && action.selection?.receiverId === descriptor.selection.receiverId
+          && action.selection?.zone === descriptor.selection.zone;
+      }
+      return true;
     }) ?? null;
   }
   chooseDiscards(player, count) { return this.cardSelector.chooseDiscards(player, count); }
