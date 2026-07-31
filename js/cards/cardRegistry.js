@@ -1,5 +1,5 @@
 /** 二十三种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260731-all-in-response-v27";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260731-async-session-v28";
 
 const CARD_EFFECTS = {
   async assault(game, source, card, targets, context) {
@@ -29,12 +29,15 @@ const CARD_EFFECTS = {
   },
 
   async scout(game, source, card, targets, context) {
+    const gameId = game.state.gameId;
     const target = targets[0];
     if (!target?.hand.length) return;
     const chosen = await game.chooseHiddenCards(source, target, Math.min(2, target.hand.length), "选择至多2张手牌进行窥探", context.selection);
+    if (!game.isSessionValid(gameId)) return;
     if (!chosen.length) return;
     for (const seen of chosen) game.rememberPrivateCard(source, target, seen);
     if (source.controllerType === "human") await game.ui.showPrivateReveal?.(`${target.name}的手牌情报`, chosen);
+    if (!game.isSessionValid(gameId)) return;
     game.log(`${source.name}窥探了${target.name}的${chosen.length}张手牌。`);
   },
 
@@ -47,6 +50,7 @@ const CARD_EFFECTS = {
     const transferred = intent.zone === "equipment"
       ? await game.moveEquipmentBetweenPlayers(intent.from, intent.receiver, intent.card, "转移")
       : await game.moveCardBetweenHands(intent.from, intent.receiver, intent.card, "转移");
+    if (!game.isSessionValid(game.state.gameId)) return { destination:"discard", resolved:false };
     if (transferred && intent.zone === "hand") {
       game.log(`${source.name}将${intent.from.name}的${game.cardLabelForHuman(intent.receiver, intent.card)}转移给了${intent.receiver.name}。`, "important");
     }
@@ -60,6 +64,7 @@ const CARD_EFFECTS = {
   },
 
   async shockwave(game, source, card, targets, context) {
+    const gameId = game.state.gameId;
     source.statistics.assaultsUsed += 1;
     const enemies = game.seatOrderFrom(source, false).filter((target) => target.alive && target.battleTeam !== source.battleTeam);
     for (const target of enemies) {
@@ -68,51 +73,63 @@ const CARD_EFFECTS = {
       const counteredForTarget = await game.responseSystem.askForCounter(source, card, [target], {
         responders:[target], targetScoped:true
       });
-      if (counteredForTarget) {
+      if (!game.isSessionValid(gameId) || counteredForTarget.status === "cancelled") return { resolved:false };
+      if (counteredForTarget.status === "used") {
         game.log(`${target.name}反制了「${card.name}」对自己的效果；其他目标继续结算。`, "important");
         continue;
       }
       await game.damage(source, target, 1, { card, canBlock:true, damageType:"area", resolutionId:context.resolutionId });
+      if (!game.isSessionValid(gameId)) return { resolved:false };
     }
   },
 
   async provoke(game, source, card) {
+    const gameId = game.state.gameId;
     for (const target of game.seatOrderFrom(source, false).filter((player) => player.alive && player.battleTeam !== source.battleTeam)) {
       if (game.state.isGameOver) break;
       if (!target.alive) continue;
       const counteredForTarget = await game.responseSystem.askForCounter(source, card, [target], {
         responders:[target], targetScoped:true
       });
-      if (counteredForTarget) {
+      if (!game.isSessionValid(gameId) || counteredForTarget.status === "cancelled") return { resolved:false };
+      if (counteredForTarget.status === "used") {
         game.log(`${target.name}反制了「${card.name}」对自己的效果；其他目标继续结算。`, "important");
         continue;
       }
       const discarded = await game.responseSystem.requestAssaultDiscard(target, "响应挑衅并打出突袭", { source, target, card });
-      if (!discarded) await game.damage(source, target, 1, {
+      if (!game.isSessionValid(gameId) || discarded.status === "cancelled") return { resolved:false };
+      if (discarded.status !== "used") await game.damage(source, target, 1, {
         card, canBlock:false, damageType:"provoke", actionName:"挑衅"
       });
+      if (!game.isSessionValid(gameId)) return { resolved:false };
     }
   },
 
   async plunder(game, source, card, targets, context) {
+    const gameId = game.state.gameId;
     const target = targets[0];
     if (!RuleEngine.getCardTargets(game, source, card).includes(target)) return;
     const chosen = await game.choosePlayerZoneCard(source, target, "选择要掠夺的手牌或装备牌", context.selection);
+    if (!game.isSessionValid(gameId)) return;
     if (!chosen || !RuleEngine.getCardTargets(game, source, card).includes(target)) return;
     const plundered = chosen.zone === "equipment"
       ? await game.moveEquipmentBetweenPlayers(target, source, chosen.card, "掠夺")
       : await game.moveCardBetweenHands(target, source, chosen.card, "掠夺");
+    if (!game.isSessionValid(gameId)) return;
     if (plundered && chosen.zone === "hand") game.log(`${source.name}从${target.name}处掠夺了${game.cardLabelForHuman(source, chosen.card)}。`, "important");
   },
 
   async destroy(game, source, card, targets, context) {
+    const gameId = game.state.gameId;
     const target = targets[0];
     if (!RuleEngine.getCardTargets(game, source, card).includes(target)) return;
     const chosen = await game.choosePlayerZoneCard(source, target, "选择要破坏的手牌或装备牌", context.selection);
+    if (!game.isSessionValid(gameId)) return;
     if (!chosen || !RuleEngine.getCardTargets(game, source, card).includes(target)) return;
     const destroyed = chosen.zone === "equipment"
       ? await game.discardEquipment(target, chosen.card, `被${source.name}破坏`)
       : await game.discardCardFromHand(target, chosen.card, `被${source.name}破坏`);
+    if (!game.isSessionValid(gameId)) return;
     if (!destroyed) return;
     game.ui.setCurrentCard?.(chosen.card, `${source.name}破坏的${chosen.zone === "equipment" ? "装备" : "手牌"}`, target.name);
     game.log(`${source.name}破坏了${target.name}的${chosen.zone === "equipment" ? "装备" : "手牌"}「${chosen.card.name}」。`, "important");
@@ -121,6 +138,7 @@ const CARD_EFFECTS = {
   async harvest(game, source) { await game.drawCards(source, 2, "收获"); },
 
   async duel(game, source, card, targets, context) {
+    const gameId = game.state.gameId;
     const target = targets[0];
     let current = target;
     let opponent = source;
@@ -129,27 +147,34 @@ const CARD_EFFECTS = {
       game.state.duelContext.currentId = current.id;
       game.ui.showDuel?.(current, opponent);
       const assault = await game.responseSystem.requestAssaultDiscard(current, "在决斗中打出突袭", { source:opponent, target:current, card });
-      if (!assault) {
+      if (!game.isSessionValid(gameId) || assault.status === "cancelled") return { resolved:false };
+      if (assault.status !== "used") {
         game.log(`${current.name}在决斗中败下阵来。`, "important");
         await game.damage(opponent, current, 1, { card, canBlock:false, damageType:"duel", resolutionId:context.resolutionId });
+        if (!game.isSessionValid(gameId)) return { resolved:false };
         break;
       }
       [current, opponent] = [opponent, current];
     }
+    if (!game.isSessionValid(gameId)) return { resolved:false };
     game.state.duelContext = null;
     game.ui.hideDuel?.();
   },
 
   async mutualBenefit(game, source) {
+    const gameId = game.state.gameId;
     const count = game.state.players.filter((player) => player.alive).length;
     game.publicCardPool.reveal(count);
     game.log(`${source.name}展示了${game.state.publicCardPool.length}张互利牌。`, "important");
-    await game.publicCardPool.draft(source);
+    const drafted = await game.publicCardPool.draft(source);
+    return { resolved:Boolean(drafted && game.isSessionValid(gameId)) };
   },
 
   async symbiosis(game, source, card) {
+    const gameId = game.state.gameId;
     for (const target of game.seatOrderFrom(source, true).filter((player) => player.alive)) {
       await game.heal(source, target, 1, { card });
+      if (!game.isSessionValid(gameId)) return { resolved:false };
     }
   },
 

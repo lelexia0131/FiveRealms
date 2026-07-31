@@ -7,7 +7,8 @@ export class DyingSystem {
   constructor(game) { this.game = game; this.active = false; this.queue = []; }
 
   async enter(target, source = null, context = {}) {
-    if (!target?.alive || target.hp > 0 || this.game.state.isGameOver) return target?.hp > 0;
+    const gameId = this.game.state.gameId;
+    if (!this.game.isSessionValid(gameId) || !target?.alive || target.hp > 0 || this.game.state.isGameOver) return target?.hp > 0;
     if (this.active) {
       if (!this.queue.some((entry) => entry.target.id === target.id)) this.queue.push({ target, source, context });
       return false;
@@ -17,14 +18,15 @@ export class DyingSystem {
     this.queue.push({ target, source, context });
     let rescued = false;
     try {
-      while (this.queue.length && !this.game.state.isGameOver) {
+      while (this.queue.length && !this.game.state.isGameOver && this.game.isSessionValid(gameId)) {
         const entry = this.queue.shift();
         if (entry.target.alive && entry.target.hp <= 0) rescued = await this.resolve(entry.target, entry.source, entry.context);
+        if (!this.game.isSessionValid(gameId)) return false;
       }
       return rescued;
     } finally {
       this.active = false;
-      if (!this.game.state.isGameOver && this.game.state.phase === "dying") this.game.state.phase = entryPhase;
+      if (this.game.isSessionValid(gameId) && !this.game.state.isGameOver && this.game.state.phase === "dying") this.game.state.phase = entryPhase;
     }
   }
 
@@ -43,6 +45,7 @@ export class DyingSystem {
     const previousPhase = this.game.state.phase;
     const before = { type:"beforePlayerDying", target, source, context, cancelled:false };
     await this.game.eventBus.emit("beforePlayerDying", before);
+    if (!this.game.isSessionValid(gameId)) return false;
     if (before.cancelled) {
       if (target.alive && target.hp <= 0) {
         target.hp = 1;
@@ -57,6 +60,7 @@ export class DyingSystem {
     this.game.state.dyingContext = { targetId:target.id, need:1 - target.hp, currentHp:target.hp };
     this.game.log(`${target.name}进入濒死，需要${1 - target.hp}张调息才能获救。`, "important");
     await this.game.eventBus.emit("playerDying", { type:"playerDying", target, source, need:1 - target.hp, context });
+    if (!this.game.isSessionValid(gameId)) return false;
     this.game.ui.showDying?.(target, this.game.state.dyingContext);
 
     while (target.alive && target.hp <= 0 && this.game.isSessionValid(gameId)) {
@@ -66,15 +70,18 @@ export class DyingSystem {
         if (target.hp >= 1 || !target.alive || this.game.state.isGameOver) break;
         const cards = rescuer.hand.filter((card) => card.definitionId === "recover");
         // 合法真人即使没有调息也应看到本次救援响应；AI 无牌会在响应系统立即跳过。
-        const use = await this.game.responseSystem.requestDyingRescue(rescuer, target, cards[0] ?? null);
+        const response = await this.game.responseSystem.requestDyingRescue(rescuer, target, cards[0] ?? null);
         if (!this.game.isSessionValid(gameId)) return false;
-        if (!use) continue;
+        if (response.status === "cancelled") return false;
+        if (response.status !== "used" || !response.card) continue;
         usedThisRound = true;
-        await this.game.heal(rescuer, target, 1, { card:use, reason:"dyingRescue", isDyingRescue:true, silentLog:true });
+        await this.game.heal(rescuer, target, 1, { card:response.card, reason:"dyingRescue", isDyingRescue:true, silentLog:true });
+        if (!this.game.isSessionValid(gameId)) return false;
         this.game.state.dyingContext = { targetId:target.id, need:Math.max(0, 1 - target.hp), currentHp:target.hp };
         this.game.log(`${rescuer.name}使用调息救援${target.name}，其生命变为${target.hp}。`, "heal");
         if (target.hp <= 0) this.game.log(`${target.name}仍处于濒死，还需${1 - target.hp}张调息。`, "important");
-        await this.game.eventBus.emit("dyingRescueUsed", { type:"dyingRescueUsed", target, rescuer, card:use, currentHp:target.hp });
+        await this.game.eventBus.emit("dyingRescueUsed", { type:"dyingRescueUsed", target, rescuer, card:response.card, currentHp:target.hp });
+        if (!this.game.isSessionValid(gameId)) return false;
         this.game.ui.showDying?.(target, this.game.state.dyingContext);
         this.game.ui.render(this.game);
       }
@@ -86,22 +93,28 @@ export class DyingSystem {
     if (target.hp >= 1) {
       this.game.log(`${target.name}脱离濒死。`, "heal");
       await this.game.eventBus.emit("playerRescued", { type:"playerRescued", target, source });
+      if (!this.game.isSessionValid(gameId)) return false;
       if (!this.game.state.isGameOver) this.game.state.phase = previousPhase;
       return true;
     }
     await this.kill(target, source);
+    if (!this.game.isSessionValid(gameId)) return false;
     if (!this.game.state.isGameOver) this.game.state.phase = previousPhase;
     return false;
   }
 
   async kill(target, source) {
-    if (!target.alive) return false;
+    const gameId = this.game.state.gameId;
+    if (!this.game.isSessionValid(gameId) || !target.alive) return false;
     target.hp = 0;
     target.alive = false;
     this.game.requestHumanPlayEndForDefeat?.(target);
     this.game.ui.render(this.game);
     this.game.log(`${target.name}救援失败，阵亡。`, "important");
-    for (const card of [...target.hand]) await this.game.discardCardFromHand(target, card, "阵亡清理", { silent:true });
+    for (const card of [...target.hand]) {
+      await this.game.discardCardFromHand(target, card, "阵亡清理", { silent:true });
+      if (!this.game.isSessionValid(gameId)) return false;
+    }
     if (target.equipment) {
       const equipment = target.equipment;
       target.equipment = null;
@@ -110,14 +123,17 @@ export class DyingSystem {
     }
     this.game.syncDeckAliases();
     await this.game.eventBus.emit("playerDead", { type:"playerDead", target, source });
+    if (!this.game.isSessionValid(gameId)) return false;
     if (!target.gameFlags.killRewardGranted && source?.alive && source.battleTeam !== target.battleTeam) {
       target.gameFlags.killRewardGranted = true;
       const drawn = await this.game.drawCards(source, 2, "击杀奖励", { silent:true });
+      if (!this.game.isSessionValid(gameId)) return false;
       this.game.log(`${source.name}击杀了${target.name}，摸了${drawn}张牌。`, "important");
       await this.game.eventBus.emit("enemyKilled", { type:"enemyKilled", source, target, drawn });
+      if (!this.game.isSessionValid(gameId)) return false;
     }
     await this.game.checkVictory();
-    return true;
+    return this.game.isSessionValid(gameId);
   }
 
   cleanup() { this.queue = []; this.active = false; }

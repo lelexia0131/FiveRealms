@@ -6,6 +6,8 @@ export class JudgmentSystem {
   constructor(game) { this.game = game; }
 
   async judgeDefense(attacker, defender, attackContext) {
+    const gameId = this.game.state.gameId;
+    if (!this.game.isSessionValid(gameId)) return { handled:false, immune:false, cancelled:true };
     if (defender.equipment?.definitionId !== "defenseDevice") return { handled:false, immune:false };
     const card = this.game.state.deck.drawToJudgment();
     this.game.syncDeckAliases();
@@ -16,6 +18,7 @@ export class JudgmentSystem {
     this.game.ui.showJudgment?.(defender, card);
     this.game.log(`${defender.name}的雷达判定为「${card.name}」（${card.categoryName}）。`, "important");
     await this.game.eventBus.emit("judgmentRevealed", { type:"judgmentRevealed", attacker, defender, card, attackContext });
+    if (!this.game.isSessionValid(gameId)) return { handled:false, immune:false, cancelled:true };
     let result;
     if (card.category === "tactic") {
       this.game.state.deck.finishJudgmentToDiscard(card);
@@ -33,7 +36,7 @@ export class JudgmentSystem {
       result = { handled:true, immune:false, category:"equipment" };
     }
     this.game.state.currentJudgment = null;
-    this.game.ui.judgmentView?.hide?.();
+    this.game.ui.hideJudgment?.();
     if (!this.game.state.isGameOver) this.game.state.phase = previousPhase;
     this.game.syncDeckAliases();
     this.game.ui.render(this.game);

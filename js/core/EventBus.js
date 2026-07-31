@@ -3,14 +3,16 @@
  * 它不解释事件含义、不直接修改玩家，也不处理 UI；事件递归深度有限制以阻止技能死循环。
  * 重新开始必须调用 clear，避免旧角色监听器进入新对局。
  */
-import { Debug } from "../utils/debug.js?build=20260731-all-in-response-v27";
+import { Debug } from "../utils/debug.js?build=20260731-async-session-v28";
 
 export class EventBus {
-  constructor() {
+  constructor(isActive = () => true) {
     /** @type {Map<string, Map<string, Function>>} */
     this.listeners = new Map();
     this.depth = 0;
     this.maxDepth = 24;
+    this.generation = 0;
+    this.isActive = isActive;
   }
 
   /**
@@ -34,14 +36,20 @@ export class EventBus {
    * @returns {Promise<Object>} 修改后的同一事件对象。
    */
   async emit(eventName, event = {}) {
+    if (!this.isActive()) return event;
     if (this.depth >= this.maxDepth) throw new Error(`事件递归超过安全深度：${eventName}`);
     const handlers = [...(this.listeners.get(eventName)?.values() ?? [])];
+    const generation = this.generation;
     Debug.log("EventBus", `触发 ${eventName}`, event);
     this.depth += 1;
     try {
-      for (const handler of handlers) await handler(event);
+      for (const handler of handlers) {
+        if (!this.isActive() || generation !== this.generation) break;
+        await handler(event);
+        if (!this.isActive() || generation !== this.generation) break;
+      }
     } finally {
-      this.depth -= 1;
+      this.depth = Math.max(0, this.depth - 1);
     }
     return event;
   }
@@ -49,6 +57,6 @@ export class EventBus {
   /** 清空全部监听器；重新开始和销毁对局时调用。 */
   clear() {
     this.listeners.clear();
-    this.depth = 0;
+    this.generation += 1;
   }
 }

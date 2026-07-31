@@ -84,6 +84,41 @@ function makeGame(players, { random = () => 0.25, response = () => false } = {})
   return { game, ui };
 }
 
+function makeOwnedUi() {
+  return {
+    game:null, renders:[], mutations:[], logs:[], responseState:null, targetState:null, discardState:null, publicState:null,
+    attachGame:UIManager.prototype.attachGame,
+    isGameAttached:UIManager.prototype.isGameAttached,
+    createGameSession:UIManager.prototype.createGameSession,
+    render(game) { if (!this.isGameAttached(game)) return false;this.renders.push(game.state.gameId);return true; },
+    appendLog(entry) { this.logs.push(entry.message); },
+    setPrompt(message) { this.mutations.push(["prompt",message]); },
+    setThinking(value) { this.mutations.push(["thinking",value]); },
+    setCurrentCard(card) { this.mutations.push(["card",card?.id ?? card]); },
+    queueFeedback() {}, setFastMode() {}, resolveHumanPlayEnd() {},
+    requestResponse(request) { return new Promise((resolve) => { this.responseState={request,resolve};this.onResponse?.(request); }); },
+    requestTarget() { return new Promise((resolve) => { this.targetState={resolve};this.onTarget?.(); }); },
+    requestDiscard() { return new Promise((resolve) => { this.discardState={resolve};this.onDiscard?.(); }); },
+    requestPublicCard() { return new Promise((resolve) => { this.publicState={resolve};this.onPublic?.(); }); },
+    waitForHumanPlayEnd() { return Promise.resolve(true); },
+    showPrivateReveal() {}, showPublicPool() {}, hidePublicPool() {}, showJudgment() {}, hideJudgment() {},
+    showDying() {}, hideDying() {}, showDuel() {}, hideDuel() {}, showGameOver() {},
+    cancelPendingInteractions() {
+      if (this.responseState) { const {resolve}=this.responseState;this.responseState=null;resolve({status:"cancelled"}); }
+      if (this.targetState) { const {resolve}=this.targetState;this.targetState=null;resolve(null); }
+      if (this.discardState) { const {resolve}=this.discardState;this.discardState=null;resolve([]); }
+      if (this.publicState) { const {resolve}=this.publicState;this.publicState=null;resolve(null); }
+    }
+  };
+}
+
+function configureOwnedGame(game, players) {
+  game.state.players=players;game.state.currentPlayerIndex=0;game.state.startingPlayerIndex=0;game.state.phase="play";game.simulationMode=true;
+  game.cleanupManager.delay=async()=>!game.state.isDisposed;
+  for (const player of players) { player.maxEnergy=game.teamRules.getMaxEnergy(player);player.resetTurnFlags(game.teamRules.getRules(player)); }
+  return game;
+}
+
 function makeTeamFixture() {
   const small=makePlayer("small",0,"dawn","ai",0),large=makePlayer("large",1,"dusk","ai",0);
   const smallAlly=makePlayer("small-ally",2,"dawn"),largeAlly1=makePlayer("large-ally-1",3,"dusk"),largeAlly2=makePlayer("large-ally-2",4,"dusk");
@@ -294,7 +329,7 @@ test("格挡确认只在合法牌数达到要求时可用", () => { assert.equal
 test("响应窗口显示真实持有数量但只消耗所需格挡", async () => { const source=makePlayer("source",0,"dusk"),target=makePlayer("target",1,"dawn","human");target.hand.push(instance("block"),instance("block"),instance("block"));const {game,ui}=makeGame([source,target],{response:()=>true});await game.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});const request=ui.responseRequests.find((entry)=>entry.type==="block");assert.equal(request.presentation.availableCount,3);assert.equal(request.legalCardIds.length,3);assert.match(request.presentation.availabilityText,/需要 1 张格挡，当前 3 张/);assert.equal(target.hand.filter((card)=>card.definitionId==="block").length,2); });
 test("军火库响应显示完整数量并原子消耗两张格挡", async () => { const source=makePlayer("source",0,"dusk"),target=makePlayer("target",1,"dawn","human");source.equipment=instance("battleDevice");target.hand.push(instance("block"),instance("block"),instance("block"));const {game,ui}=makeGame([source,target],{response:()=>true});await game.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});const request=ui.responseRequests.find((entry)=>entry.type==="block");assert.equal(request.requiredCount,2);assert.equal(request.presentation.availableCount,3);assert.match(request.presentation.availabilityText,/需要 2 张格挡，当前 3 张/);assert.equal(target.hand.filter((card)=>card.definitionId==="block").length,1); });
 test("反制、强制突袭与濒死调息显示完整持有数量", async () => { const source=makePlayer("source",0,"dusk"),responder=makePlayer("responder",1,"dawn","human"),target=makePlayer("target",2,"dawn");const {game,ui}=makeGame([source,responder,target],{response:()=>true});responder.hand.push(instance("counter"),instance("counter"),instance("counter"));await game.responseSystem.requestCardResponse(responder,"counter",{source,target,card:instance("harvest")},1);let request=ui.responseRequests.at(-1);assert.equal(request.presentation.availableCount,3);assert.equal(responder.hand.filter((card)=>card.definitionId==="counter").length,2);responder.hand.push(instance("assault"),instance("assault"),instance("assault"),instance("assault"));await game.responseSystem.requestAssaultDiscard(responder,"决斗",{source,target:responder,card:instance("duel")});request=ui.responseRequests.at(-1);assert.equal(request.presentation.availableCount,4);assert.match(request.presentation.availabilityText,/当前 4 张/);target.hp=0;responder.hand.push(instance("recover"),instance("recover"));await game.responseSystem.requestDyingRescue(responder,target,responder.hand.find((card)=>card.definitionId==="recover"));request=ui.responseRequests.at(-1);assert.equal(request.presentation.availableCount,2);assert.match(request.presentation.availabilityText,/当前 2 张/);assert.equal(responder.hand.filter((card)=>card.definitionId==="recover").length,1); });
-test("响应事件中的角色和卡牌名称会在写入 DOM 前安全转义", async () => { const responder=makePlayer("h",0,"dawn","human"),source={id:"source",name:'<img src=x onerror=alert(1)>'},target=responder,card={name:'<script>bad()</script>',definitionId:"assault"},presentation=buildResponsePresentation(responder,"block",{source,target,card},1,0,"格挡");const previousWindow=globalThis.window;globalThis.window={setInterval,clearInterval};const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};const fake={responseState:null,elements:{response_panel:panel},game:{cleanupManager:{delay:()=>new Promise(()=>{})}},render(){}};try{const pending=UIManager.prototype.requestResponse.call(fake,{id:"escape-response",requiredCount:1,legalCardIds:[],timeoutMs:5000,presentation},"格挡");assert.doesNotMatch(panel.innerHTML,/<img|<script>/);assert.match(panel.innerHTML,/&lt;img/);assert.match(panel.innerHTML,/&lt;script/);fake.responseState.resolve(false);assert.equal(await pending,false);}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
+test("响应事件中的角色和卡牌名称会在写入 DOM 前安全转义", async () => { const responder=makePlayer("h",0,"dawn","human"),source={id:"source",name:'<img src=x onerror=alert(1)>'},target=responder,card={name:'<script>bad()</script>',definitionId:"assault"},presentation=buildResponsePresentation(responder,"block",{source,target,card},1,0,"格挡");const previousWindow=globalThis.window;globalThis.window={setInterval,clearInterval};const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};const fake={responseState:null,elements:{response_panel:panel},game:{cleanupManager:{delay:()=>new Promise(()=>{})}},render(){}};try{const pending=UIManager.prototype.requestResponse.call(fake,{id:"escape-response",requiredCount:1,legalCardIds:[],timeoutMs:5000,presentation},"格挡");assert.doesNotMatch(panel.innerHTML,/<img|<script>/);assert.match(panel.innerHTML,/&lt;img/);assert.match(panel.innerHTML,/&lt;script/);fake.responseState.resolve(false);assert.equal((await pending).status,"declined");}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
 test("主动技能按钮只显示技能名称", () => { assert.equal(skillButtonLabel({id:"allIn",name:"孤注",cost:"all"}),"孤注");assert.equal(skillButtonLabel({id:"hunt",name:"猎杀",cost:2}),"猎杀");assert.equal(skillButtonLabel(null),"主动技能"); });
 test("突袭在中央结算区与使用日志中显示作用对象", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game,ui}=makeGame([a,b]);const assault=instance("assault");a.hand.push(assault);await game.playCard(a,assault,[b]);assert.equal(ui.currentCards[0].targetLabel,b.name);assert.ok(ui.logs.some((message)=>message===`${a.name}使用了「突袭」，作用对象：${b.name}。`)); });
 test("群体牌会列出全部作用对象且结算模板显示目标标签", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dusk");const {game,ui}=makeGame([a,b,c]);const shockwave=instance("shockwave");a.hand.push(shockwave);await game.playCard(a,shockwave,[]);assert.equal(ui.currentCards[0].targetLabel,`${b.name}、${c.name}`);const markup=resolvingCardTemplate(shockwave,a.name,ui.currentCards[0].targetLabel);assert.match(markup,/作用对象/);assert.match(markup,new RegExp(`${b.name}、${c.name}`)); });
@@ -435,7 +470,7 @@ test("强制救援10：不同阵营 AI 不能从核心响应入口救真人", as
   const human=makePlayer("human",0,"dawn","human"),enemy=makePlayer("enemy",1,"dusk");
   human.hp=0;const card=instance("recover");enemy.hand.push(card);
   const {game}=makeGame([human,enemy]);const result=await game.responseSystem.requestDyingRescue(enemy,human,card);
-  assert.equal(result,null);assert.ok(enemy.hand.includes(card));assert.equal(game.state.pendingResponses.length,0);
+  assert.equal(result.status,"unavailable");assert.equal(result.card,null);assert.ok(enemy.hand.includes(card));assert.equal(game.state.pendingResponses.length,0);
 });
 test("强制救援11：关闭配置后恢复普通 AI 救援策略", async () => {
   const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
@@ -460,7 +495,7 @@ test("强制救援14：重新征召会取消尚未完成的 AI 救援等待", as
   const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");human.hp=0;const card=instance("recover");ally.hand.push(card);
   const {game,ui}=makeGame([human,ally,enemy]);game.simulationMode=false;game.cleanupManager=new CleanupManager();
   const pending=game.responseSystem.requestDyingRescue(ally,human,card);game.dispose();const result=await pending;
-  assert.equal(result,null);assert.ok(ally.hand.includes(card));assert.equal(game.cleanupManager.pending.size,0);assert.equal(game.state.pendingResponses.length,0);
+  assert.equal(result.status,"cancelled");assert.equal(result.card,null);assert.ok(ally.hand.includes(card));assert.equal(game.cleanupManager.pending.size,0);assert.equal(game.state.pendingResponses.length,0);
   assert.equal(ui.thinking.at(-1)[0],false);
 });
 test("强制救援15：救援经过 Game.heal 并产生治疗事件与统计", async () => {
@@ -575,8 +610,72 @@ test("关闭逐动作重规划时会复用仍合法的束搜索牌序", async ()
 test("aiRandomnessRange 控制近似同分动作的评分扰动", () => { const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("b",1,"dusk");const {game}=makeGame([actor,enemy]);const beam=[{score:10,id:"first"},{score:9.9,id:"second"}];game.aiRandomnessRange=0;assert.equal(game.aiController.planner.chooseCandidate(beam).id,"first");const rolls=[0,1];game.random=()=>rolls.shift();game.aiRandomnessRange=.1;assert.equal(game.aiController.planner.chooseCandidate(beam).id,"second"); });
 test("ThreatCalculator 的稳定角色标签与近期攻击者会进入目标评分", () => { const viewer={battleTeam:"dawn"},base={id:"x",alive:true,battleTeam:"dusk",hp:3,maxHp:4,shield:0,energy:1,handCount:1,tags:[],statuses:[]};const plain=ThreatCalculator.calculate(viewer,{...base,roleTags:[]},{recentAggressors:{}},1);const support=ThreatCalculator.calculate(viewer,{...base,roleTags:["support","healer"]},{recentAggressors:{}},1);assert.ok(support>plain);const actor=makePlayer("a",0,"dawn"),first=makePlayer("first",1,"dusk","ai",4),second=makePlayer("second",2,"dusk","ai",4);const {game}=makeGame([actor,first,second]);actor.aiMemory.recentAggressors[second.id]=3;const visible=createAiVisibleState(actor.id,game.state),assault=instance("assault"),score=(target)=>game.aiController.evaluator.actionUtility({type:"card",card:assault,targets:[target]},actor,visible);game.aiDifficultyMultiplier=0;assert.equal(score(first),score(second));game.aiDifficultyMultiplier=1;assert.ok(score(second)>score(first)); });
 test("CleanupManager 可取消尚未完成的延迟", async () => { const cleanup=new CleanupManager();const waiting=cleanup.delay(5000);cleanup.cleanup();assert.equal(await waiting,false);assert.equal(cleanup.pending.size,0); });
-test("响应窗口超时会按放弃处理并清除响应状态", async () => { const previousWindow=globalThis.window;globalThis.window={setInterval,clearInterval};const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};const fake={responseState:null,elements:{response_panel:panel},game:{cleanupManager:{delay:async()=>true}},render(){}};try{const result=await UIManager.prototype.requestResponse.call(fake,{id:"timeout-response",requiredCount:1,legalCardIds:[],timeoutMs:1,presentation:{eventText:"测试事件",responseText:"需要响应",availabilityText:"当前不足",buttonLabel:"格挡"}},"格挡");assert.equal(result,false);assert.equal(fake.responseState,null);assert.equal(panel.innerHTML,"");}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
-test("销毁对局会结束未完成响应 Promise 并清空请求", async () => { const a=makePlayer("a",0,"dawn"),human=makePlayer("human",1,"dusk","human");const {game,ui}=makeGame([a,human]);let settle=null;ui.requestResponse=()=>new Promise((resolve)=>{settle=resolve;});ui.cancelPendingInteractions=()=>{settle?.(false);};const pending=game.responseSystem.requestCardResponse(human,"block",{source:a,target:human,card:instance("assault")},1);await Promise.resolve();assert.equal(game.state.pendingResponses.length,1);game.dispose();assert.deepEqual(await pending,[]);assert.equal(game.state.pendingResponses.length,0); });
+test("响应窗口超时会按放弃处理并清除响应状态", async () => { const previousWindow=globalThis.window;globalThis.window={setInterval,clearInterval};const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};const fake={responseState:null,elements:{response_panel:panel},game:{cleanupManager:{delay:async()=>true}},render(){}};try{const result=await UIManager.prototype.requestResponse.call(fake,{id:"timeout-response",requiredCount:1,legalCardIds:[],timeoutMs:1,presentation:{eventText:"测试事件",responseText:"需要响应",availabilityText:"当前不足",buttonLabel:"格挡"}},"格挡");assert.equal(result.status,"declined");assert.equal(fake.responseState,null);assert.equal(panel.innerHTML,"");}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
+test("销毁对局会以 cancelled 结束未完成响应并清空请求", async () => { const a=makePlayer("a",0,"dawn"),human=makePlayer("human",1,"dusk","human");const {game,ui}=makeGame([a,human]);let settle=null;ui.requestResponse=()=>new Promise((resolve)=>{settle=resolve;});ui.cancelPendingInteractions=()=>{settle?.({status:"cancelled"});};const pending=game.responseSystem.requestCardResponse(human,"block",{source:a,target:human,card:instance("assault")},1);await Promise.resolve();assert.equal(game.state.pendingResponses.length,1);game.dispose();const result=await pending;assert.equal(result.status,"cancelled");assert.deepEqual(result.cards,[]);assert.equal(game.state.pendingResponses.length,0); });
+test("旧局格挡窗口取消后不能扣血、刷新新局 UI 或夺回绑定", async () => {
+  const ui=makeOwnedUi(),source=makePlayer("old-attacker",0,"dawn"),target=makePlayer("old-human",1,"dusk","human");
+  const old=configureOwnedGame(new Game(ui),[source,target]);ui.attachGame(old);
+  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="block")openedResolve();};
+  const hp=target.hp,pending=old.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});await opened;
+  old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-human",0,"dawn","human"),makePlayer("new-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
+  assert.equal(await pending,0);assert.equal(target.hp,hp);assert.equal(ui.game,fresh);assert.deepEqual(ui.renders,[]);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
+  assert.equal(old.ui.render(old),undefined);assert.equal(ui.game,fresh);
+});
+test("旧局护援技能响应取消后不会弃牌或减少新一段伤害", async () => {
+  const ui=makeOwnedUi(),source=makePlayer("old-aid-source",0,"dusk","ai",4),target=makePlayer("old-aid-target",1,"dawn","ai",2),guardian=makePlayer("old-aid-guardian",2,"dawn","human",1);
+  const payment=instance("charge");guardian.hand.push(payment);const old=configureOwnedGame(new Game(ui),[source,target,guardian]);registerPassiveSkills(old);ui.attachGame(old);
+  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="skill")openedResolve();};const hp=target.hp,pending=old.damage(source,target,1,{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill"});await opened;
+  old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-aid-human",0,"dawn","human"),makePlayer("new-aid-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
+  assert.equal(await pending,0);assert.equal(target.hp,hp);assert.ok(guardian.hand.includes(payment));assert.equal(guardian.roundFlags.guardianAidUsed,false);assert.equal(ui.game,fresh);assert.deepEqual(ui.mutations,[]);
+});
+test("事件处理器等待中销毁旧局时，雷达判定不会恢复后继续移动牌或伤害", async () => {
+  const ui=makeOwnedUi(),source=makePlayer("old-judge-source",0,"dawn"),target=makePlayer("old-judge-target",1,"dusk");target.equipment=instance("defenseDevice");
+  const old=configureOwnedGame(new Game(ui),[source,target]);ui.attachGame(old);const judgmentCard=instance("charge");old.state.deck.cards.push(judgmentCard);
+  let openedResolve,release;const opened=new Promise((resolve)=>{openedResolve=resolve;});const gate=new Promise((resolve)=>{release=resolve;});old.eventBus.on("judgmentRevealed","test:pause",async()=>{openedResolve();await gate;});
+  const hp=target.hp,pending=old.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});await opened;old.dispose();
+  const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-judge-human",0,"dawn","human"),makePlayer("new-judge-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];release();
+  assert.equal(await pending,0);assert.equal(target.hp,hp);assert.ok(old.state.deck.judgmentZone.includes(judgmentCard));assert.equal(fresh.state.deck.judgmentZone.length,0);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
+});
+test("旧局治疗和能量事件等待恢复后不再修改角色", async () => {
+  for (const mode of ["heal","energy"]) {
+    const ui=makeOwnedUi(),actor=makePlayer(`old-${mode}-actor`,0,"dawn"),enemy=makePlayer(`old-${mode}-enemy`,1,"dusk");const old=configureOwnedGame(new Game(ui),[actor,enemy]);ui.attachGame(old);
+    if(mode==="heal")actor.hp-=1;else actor.energy=0;const before=mode==="heal"?actor.hp:actor.energy;let openedResolve,release;const opened=new Promise((resolve)=>{openedResolve=resolve;});const gate=new Promise((resolve)=>{release=resolve;});old.eventBus.on(mode==="heal"?"beforeHeal":"beforeGainEnergy",`test:${mode}`,async()=>{openedResolve();await gate;});
+    const pending=mode==="heal"?old.heal(actor,actor,1):old.gainEnergy(actor,1,{reason:"测试"});await opened;old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer(`new-${mode}-human`,0,"dawn","human"),makePlayer(`new-${mode}-enemy`,1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];release();
+    assert.equal(await pending,0);assert.equal(mode==="heal"?actor.hp:actor.energy,before);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
+  }
+});
+for (const definitionId of ["duel","provoke"]) test(`旧局${CARD_DEFINITIONS[definitionId].name}响应取消后不会继续造成伤害`, async () => {
+  const ui=makeOwnedUi(),source=makePlayer(`old-${definitionId}-source`,0,"dawn"),target=makePlayer(`old-${definitionId}-target`,1,"dusk","human");
+  const old=configureOwnedGame(new Game(ui),[source,target]);ui.attachGame(old);const use=instance(definitionId);source.hand.push(use);
+  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="counter"){const state=ui.responseState;ui.responseState=null;state.resolve({status:"declined"});}else openedResolve();};
+  const hp=target.hp,pending=old.playCard(source,use,[target]);await opened;
+  old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer(`new-${definitionId}-human`,0,"dawn","human"),makePlayer(`new-${definitionId}-enemy`,1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
+  assert.equal(await pending,false);assert.equal(target.hp,hp);assert.equal(ui.game,fresh);assert.deepEqual(ui.renders,[]);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
+});
+test("旧局反制链取消后不会完成战术结算或污染新局中央区域", async () => {
+  const ui=makeOwnedUi(),source=makePlayer("old-counter-source",0,"dawn"),responder=makePlayer("old-counter-human",1,"dusk","human");
+  const old=configureOwnedGame(new Game(ui),[source,responder]);ui.attachGame(old);const use=instance("harvest");source.hand.push(use);
+  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="counter")openedResolve();};
+  const pending=old.playCard(source,use,[]);await opened;old.dispose();
+  const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-counter-human",0,"dawn","human"),makePlayer("new-counter-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
+  assert.equal(await pending,false);assert.ok(old.state.resolvingCards.includes(use));assert.equal(fresh.state.resolvingCards.length,0);assert.equal(ui.game,fresh);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
+});
+test("旧局公共池、目标和弃牌等待取消后不移动实体且不影响新 UI", async () => {
+  for (const mode of ["public","target","discard"]) {
+    const ui=makeOwnedUi(),human=makePlayer(`old-${mode}-human`,0,"dawn","human"),enemy=makePlayer(`old-${mode}-enemy`,1,"dusk");
+    const old=configureOwnedGame(new Game(ui),[human,enemy]);ui.attachGame(old);let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});let pending,tracked;
+    if (mode==="public") {
+      ui.onResponse=()=>{const state=ui.responseState;ui.responseState=null;state.resolve({status:"declined"});};ui.onPublic=openedResolve;
+      old.state.deck.cards.push(instance("block"),instance("charge"));tracked=instance("mutualBenefit");human.hand.push(tracked);pending=old.playCard(human,tracked,[]);
+    } else if (mode==="target") {
+      ui.onTarget=openedResolve;tracked=instance("assault");human.hand.push(tracked);pending=old.handleHumanCard(tracked.id);
+    } else {
+      ui.onDiscard=openedResolve;tracked=instance("block");human.hand.push(tracked,instance("charge"));human.hp=1;old.state.phase="discard";pending=old.handleDiscardPhase(human,old.state.gameId);
+    }
+    await opened;old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer(`new-${mode}-human`,0,"dawn","human"),makePlayer(`new-${mode}-enemy`,1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
+    await pending;assert.equal(ui.game,fresh);assert.deepEqual(ui.renders,[]);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);assert.ok(!human.hand.includes(undefined));if(mode!=="public")assert.ok(human.hand.includes(tracked));
+  }
+});
 test("重新征召 cleanup 会清空隐藏令牌、公共池和响应", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));game.cardSelectionSystem.createHiddenSelection(b);game.state.pendingResponses.push({id:"old"});game.dispose();assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.state.pendingResponses.length,0);assert.equal(game.state.publicCardPool.length,0); });
 test("重新征召后按新阵营重新设置能量上限和无限调息", async () => { const verify=async(seed)=>{let value=seed;const random=()=>((value=Math.imul(value,1664525)+1013904223>>>0)/4294967296),ui=makeUi(),game=new Game(ui,random);game.simulationMode=true;game.cleanupManager.delay=async()=>!game.state.isDisposed;const candidates=game.startSelection();for(const player of game.state.players)assert.equal(player.maxEnergy,game.teamRules.getTeamSize(player)===2?4:3);await game.confirmGeneral(candidates[0].id);for(const player of game.state.players){assert.equal(player.maxEnergy,game.teamRules.getMaxEnergy(player));assert.equal(player.turnFlags.recoverLimit,null);}game.dispose();await game.loopPromise;};await verify(11);await verify(29); });
 test("装备槽空置和六种装备生成不同可访问 DOM", () => { const p=makePlayer("a",0,"dawn");const empty=equipmentSlotTemplate(p,true);assert.match(empty,/is-empty|装备槽为空/);for(const id of ["energyDevice","recycleDevice","defenseDevice","battleDevice","telescope","barrierDevice"]){p.equipment=instance(id);const markup=equipmentSlotTemplate(p,true);assert.match(markup,new RegExp(CARD_DEFINITIONS[id].name));assert.match(markup,new RegExp(CARD_DEFINITIONS[id].description.slice(0,6)));assert.notEqual(markup,empty);} });

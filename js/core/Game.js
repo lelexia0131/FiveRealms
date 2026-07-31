@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260731-all-in-response-v27";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-all-in-response-v27";
-import { createId, clamp } from "../utils/helpers.js?build=20260731-all-in-response-v27";
-import { EventBus } from "./EventBus.js?build=20260731-all-in-response-v27";
-import { Player } from "./Player.js?build=20260731-all-in-response-v27";
-import { Deck } from "./Deck.js?build=20260731-all-in-response-v27";
-import { TeamManager } from "./TeamManager.js?build=20260731-all-in-response-v27";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260731-all-in-response-v27";
-import { RuleEngine } from "./RuleEngine.js?build=20260731-all-in-response-v27";
-import { ResponseSystem } from "./ResponseSystem.js?build=20260731-all-in-response-v27";
-import { GameLogger } from "./GameLogger.js?build=20260731-all-in-response-v27";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260731-all-in-response-v27";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260731-all-in-response-v27";
-import { AIController } from "../ai/AIController.js?build=20260731-all-in-response-v27";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260731-all-in-response-v27";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260731-all-in-response-v27";
-import { Debug } from "../utils/debug.js?build=20260731-all-in-response-v27";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260731-all-in-response-v27";
-import { DyingSystem } from "./DyingSystem.js?build=20260731-all-in-response-v27";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260731-all-in-response-v27";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260731-all-in-response-v27";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260731-all-in-response-v27";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260731-all-in-response-v27";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260731-async-session-v28";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-async-session-v28";
+import { createId, clamp } from "../utils/helpers.js?build=20260731-async-session-v28";
+import { EventBus } from "./EventBus.js?build=20260731-async-session-v28";
+import { Player } from "./Player.js?build=20260731-async-session-v28";
+import { Deck } from "./Deck.js?build=20260731-async-session-v28";
+import { TeamManager } from "./TeamManager.js?build=20260731-async-session-v28";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260731-async-session-v28";
+import { RuleEngine } from "./RuleEngine.js?build=20260731-async-session-v28";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260731-async-session-v28";
+import { GameLogger } from "./GameLogger.js?build=20260731-async-session-v28";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260731-async-session-v28";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260731-async-session-v28";
+import { AIController } from "../ai/AIController.js?build=20260731-async-session-v28";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260731-async-session-v28";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260731-async-session-v28";
+import { Debug } from "../utils/debug.js?build=20260731-async-session-v28";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260731-async-session-v28";
+import { DyingSystem } from "./DyingSystem.js?build=20260731-async-session-v28";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260731-async-session-v28";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260731-async-session-v28";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260731-async-session-v28";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260731-async-session-v28";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -51,9 +51,7 @@ export class Game {
    * @param {()=>number} random 可替换随机源，自动测试可传入确定序列。
    */
   constructor(ui, random = Math.random) {
-    this.ui = ui;
     this.random = random;
-    this.eventBus = new EventBus();
     this.cleanupManager = new CleanupManager();
     this.generalSelection = new GeneralSelection(random);
     const deck = new Deck(random);
@@ -65,7 +63,10 @@ export class Game {
       publicCardPool: [], currentJudgment: null, dyingContext: null,
       isGameOver: false, isDisposed: false, logs: [], debugHistory: [], resolutionSerial: 0
     };
-    this.logger = new GameLogger(this.state, ui);
+    this.uiManager = ui;
+    this.ui = ui.createGameSession?.(this) ?? ui;
+    this.eventBus = new EventBus(() => this.isSessionValid(this.state.gameId));
+    this.logger = new GameLogger(this.state, this.ui);
     this.responseSystem = new ResponseSystem(this);
     this.teamRules = new TeamRuleService(this);
     this.cardSelectionSystem = new CardSelectionSystem(this);
@@ -103,6 +104,7 @@ export class Game {
    * @returns {Array<Object>} 候选角色配置。
    */
   startSelection() {
+    if (this.state.isDisposed) return [];
     const teams = TeamManager.assignTeams(this.random);
     this.state.players = teams.map((battleTeam, seatIndex) => new Player({
       id: createId("player"), seatIndex, battleTeam, controllerType: seatIndex === 0 ? "human" : "ai"
@@ -119,6 +121,7 @@ export class Game {
    * @returns {Promise<void>} 完成初始牌发放后返回；循环会继续在后台等待人类操作。
    */
   async confirmGeneral(generalId) {
+    const gameId = this.state.gameId;
     const selected = this.candidates.find((general) => general.id === generalId);
     if (!selected || this.state.selectedGeneralId) throw new Error("角色选择无效或已确认");
     const human = this.state.players[0];
@@ -137,11 +140,14 @@ export class Game {
       player.resetTurnFlags(this.teamRules.getRules(player));
       player.resetRoundFlags();
       await this.drawCards(player, this.teamRules.getInitialHandCount(player), "初始发牌");
+      if (!this.isSessionValid(gameId)) return false;
     }
     this.state.startingPlayerIndex = Math.floor(this.random() * this.state.players.length);
     this.state.currentPlayerIndex = this.state.startingPlayerIndex;
     await this.eventBus.emit("generalSelected", { type: "generalSelected", player: human, general: selected });
+    if (!this.isSessionValid(gameId)) return false;
     await this.eventBus.emit("gameStart", { type: "gameStart", game: this });
+    if (!this.isSessionValid(gameId)) return false;
 
     const dawnCount = TeamManager.teamSize(this.state.players, "dawn");
     const duskCount = TeamManager.teamSize(this.state.players, "dusk");
@@ -151,6 +157,7 @@ export class Game {
     this.log(`${this.currentPlayer.name}获得首个行动回合。`, "important");
     this.ui.render(this);
     this.loopPromise = this.runGameLoop();
+    return true;
   }
 
   /** 注册装备与状态等不属于特定角色的事件规则。 */
@@ -174,6 +181,7 @@ export class Game {
     this.log(`第${this.state.currentRound}轮开始。`, "important");
     for (const player of this.state.players) player.resetRoundFlags();
     await this.eventBus.emit("roundStart", { type: "roundStart", round: this.state.currentRound });
+    if (!this.isSessionValid(gameId)) return;
     while (this.isSessionValid(gameId) && !this.state.isGameOver) {
       const player = this.currentPlayer;
       if (player?.alive) await this.takeTurn(player, gameId);
@@ -188,6 +196,7 @@ export class Game {
    * @param {string} gameId 当前会话标识。
    */
   async takeTurn(player, gameId) {
+    if (!this.isSessionValid(gameId) || !player?.alive || this.state.isGameOver) return;
     this.state.phase = "turnStart";
     player.resetTurnFlags(this.teamRules.getRules(player));
     if (player.statuses.temporaryShield) {
@@ -198,11 +207,13 @@ export class Game {
     }
     this.log(`${player.name}的回合开始。`, "important");
     await this.eventBus.emit("turnStart", { type: "turnStart", player });
+    if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
     this.ui.render(this);
 
     this.state.phase = "status";
     const statusEvent = { type: "beforeStatusResolve", player, cancelled: false };
     await this.eventBus.emit("beforeStatusResolve", statusEvent);
+    if (!this.isSessionValid(gameId)) return;
     await this.eventBus.emit("afterStatusResolve", { ...statusEvent, type: "afterStatusResolve" });
     if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
 
@@ -210,29 +221,36 @@ export class Game {
     const energyParts = this.teamRules.getTurnEnergyBreakdown(player);
     const energyEvent = { type:"beforeTurnEnergyGain", player, ...energyParts, amount:energyParts.baseAmount + energyParts.teamBonus + energyParts.equipmentBonus, cancelled:false, metadata:{} };
     await this.eventBus.emit("beforeTurnEnergyGain", energyEvent);
+    if (!this.isSessionValid(gameId)) return;
     let energyGained = 0;
     if (!energyEvent.cancelled) energyGained = await this.gainEnergy(player, Math.max(0, energyEvent.amount), { reason:"回合开始" });
+    if (!this.isSessionValid(gameId)) return;
     await this.eventBus.emit("afterTurnEnergyGain", { ...energyEvent, type:"afterTurnEnergyGain", actualAmount:energyGained });
     if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
 
     this.state.phase = "draw";
     const drawEvent = { type: "beforeDraw", player, count: this.teamRules.getDrawCount(player), cancelled: false, metadata: {} };
     await this.eventBus.emit("beforeDraw", drawEvent);
+    if (!this.isSessionValid(gameId)) return;
     if (!drawEvent.cancelled) await this.drawCards(player, Math.max(0, drawEvent.count), "回合摸牌");
+    if (!this.isSessionValid(gameId)) return;
     await this.eventBus.emit("afterDraw", { ...drawEvent, type: "afterDraw" });
     if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
 
     this.state.phase = "play";
     await this.eventBus.emit("playPhaseStart", { type: "playPhaseStart", player });
+    if (!this.isSessionValid(gameId)) return;
     this.ui.render(this);
     if (player.controllerType === "human") {
       this.ui.setPrompt("你的出牌阶段：选择手牌、发动技能，或结束出牌。", "从手牌中选择可用牌");
-      await this.ui.waitForHumanPlayEnd(gameId);
+      const completed = await this.ui.waitForHumanPlayEnd(gameId);
+      if (!completed || !this.isSessionValid(gameId)) return;
     } else {
       await this.takeAiPlayPhase(player, gameId);
     }
     if (!this.isSessionValid(gameId) || this.state.isGameOver || !player.alive) return;
     await this.eventBus.emit("playPhaseEnd", { type: "playPhaseEnd", player });
+    if (!this.isSessionValid(gameId)) return;
 
     this.state.phase = "discard";
     await this.handleDiscardPhase(player, gameId);
@@ -240,6 +258,7 @@ export class Game {
 
     this.state.phase = "turnEnd";
     await this.eventBus.emit("turnEnd", { type: "turnEnd", player });
+    if (!this.isSessionValid(gameId)) return;
     this.log(`${player.name}的回合结束。`);
     this.ui.render(this);
   }
@@ -250,7 +269,6 @@ export class Game {
     this.ui.setThinking(true, player, "正在观察战场与可用资源");
     const complexPosition = this.aiController.getLegalActions(player).length > GAME_CONFIG.aiBeamWidth;
     if (!(await this.cleanupManager.delay(getAiDelay(this, "initial", { complex:complexPosition })))) {
-      this.ui.setThinking(false);
       return;
     }
     let queuedPlan = [];
@@ -265,6 +283,7 @@ export class Game {
       if (!action) {
         const searchStarted = globalThis.performance?.now?.() ?? Date.now();
         action = await this.aiController.selectAction(player, { gameId });
+        if (!this.isSessionValid(gameId)) return;
         searchElapsed = (globalThis.performance?.now?.() ?? Date.now()) - searchStarted;
         if (!this.aiReplanAfterEveryAction) queuedPlan = this.aiController.planner.lastPlannedSequence.slice(1);
       }
@@ -272,6 +291,7 @@ export class Game {
         this.ui.setPrompt(`${player.name}准备结束出牌阶段。`);
         this.ui.setThinking(true, player, "正在收束回合");
         await this.cleanupManager.delay(Math.max(0, getAiDelay(this, "end") - searchElapsed));
+        if (!this.isSessionValid(gameId)) return;
         break;
       }
       const actionName = action.type === "card" ? `准备使用「${action.card.name}」` : `准备发动「${action.skill.name}」`;
@@ -282,6 +302,7 @@ export class Game {
       this.ui.setThinking(false);
       if (action.type === "card") await this.playCard(player, action.card, action.targets, action.selection ?? null);
       else if (action.type === "skill") await this.useActiveSkill(player, action.skill.id, action.targets);
+      if (!this.isSessionValid(gameId)) return;
     }
     this.ui.setThinking(false);
     if (this.isSessionValid(gameId) && !this.state.isGameOver) this.ui.setPrompt(`${player.name}结束了出牌阶段。`);
@@ -301,12 +322,18 @@ export class Game {
       this.ui.setThinking(false);
     }
     if (!this.isSessionValid(gameId)) return;
-    for (const card of cards.slice(0, required)) await this.discardCardFromHand(player, card, "弃牌阶段");
+    for (const card of cards.slice(0, required)) {
+      await this.discardCardFromHand(player, card, "弃牌阶段");
+      if (!this.isSessionValid(gameId)) return;
+    }
   }
 
   /** 移动到下一名存活角色，并在经过首发座位时开始新轮。 */
   async advanceTurn() {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || this.state.isGameOver) return;
     await this.cleanupDefeatedZones();
+    if (!this.isSessionValid(gameId) || this.state.isGameOver) return;
     let wrapped = false;
     let next = this.state.currentPlayerIndex;
     for (let step = 0; step < this.state.players.length; step += 1) {
@@ -316,10 +343,12 @@ export class Game {
     }
     if (wrapped) {
       await this.eventBus.emit("roundEnd", { type: "roundEnd", round: this.state.currentRound });
+      if (!this.isSessionValid(gameId)) return;
       this.state.currentRound += 1;
       for (const player of this.state.players) player.resetRoundFlags();
       this.log(`第${this.state.currentRound}轮开始。`, "important");
       await this.eventBus.emit("roundStart", { type: "roundStart", round: this.state.currentRound });
+      if (!this.isSessionValid(gameId)) return;
     }
     this.state.currentPlayerIndex = next;
   }
@@ -329,6 +358,8 @@ export class Game {
    * 使用不同引用；AI 的组合计划仍会在这里通过 RuleEngine 复核。
    */
   async prepareTransferIntent(source, card, selection = null) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId)) return null;
     const excludedCardIds = new Set([card.id]);
     const sources = RuleEngine.getTransferSources(this, source, card, excludedCardIds)
       .filter((from) => RuleEngine.getTransferReceivers(this, source, from, card).length);
@@ -350,6 +381,7 @@ export class Game {
     } else {
       chosen = await this.choosePlayerZoneCard(source, from, "选择要转移的手牌或装备牌", planned, excludedCardIds);
     }
+    if (!this.isSessionValid(gameId)) return null;
     if (!chosen || excludedCardIds.has(chosen.card.id)
       || !RuleEngine.getTransferSources(this, source, card, excludedCardIds).includes(from)
       || !RuleEngine.getTransferReceivers(this, source, from, card).includes(receiver)) return null;
@@ -370,6 +402,8 @@ export class Game {
    * @returns {Promise<boolean>} 是否实际开始结算。
    */
   async playCard(source, card, requestedTargets = [], selection = null) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || this.state.isGameOver) return false;
     const legality = RuleEngine.canPlayCard(this, source, card);
     if (!legality.ok || this.actionLocked) return false;
     let targets = requestedTargets;
@@ -381,12 +415,14 @@ export class Game {
     const preparedTransfer = card.definitionId === "transfer"
       ? await this.prepareTransferIntent(source, card, selection)
       : null;
+    if (!this.isSessionValid(gameId)) return false;
     if (card.definitionId === "transfer" && !preparedTransfer) return false;
 
     this.actionLocked = true;
     const resolutionId = `${this.state.gameId}:resolution:${++this.state.resolutionSerial}`;
     try {
       await this.moveHandToResolving(source, card);
+      if (!this.isSessionValid(gameId)) return false;
       const targetLabel = preparedTransfer
         ? `来源 ${preparedTransfer.publicContext.fromName} → 接收 ${preparedTransfer.publicContext.receiverName}`
         : actionTargetLabel(this, source, card, targets, selection);
@@ -398,21 +434,27 @@ export class Game {
         this.log(`${source.name}使用了「${card.name}」${targetLabel ? `，作用对象：${targetLabel}` : ""}。`);
       }
       const useEvent = await this.eventBus.emit("beforeCardUse", { type: "beforeCardUse", source, card, targets, cancelled: false, metadata: {}, resolutionId });
+      if (!this.isSessionValid(gameId)) return false;
       let cancelledBeforeResolve = useEvent.cancelled;
       if (!cancelledBeforeResolve && targets.length) {
         const targetEvent = { type: "targetSelected", source, card, targets, cancelled: false, metadata: {}, resolutionId };
         await this.eventBus.emit("targetSelected", targetEvent);
+        if (!this.isSessionValid(gameId)) return false;
         targets = targetEvent.targets;
       }
       const resolveEvent = { type: "beforeCardResolve", source, card, targets, cancelled: false, metadata: {}, resolutionId };
       if (!cancelledBeforeResolve) await this.eventBus.emit("beforeCardResolve", resolveEvent);
+      if (!this.isSessionValid(gameId)) return false;
       targets = resolveEvent.targets;
       cancelledBeforeResolve ||= resolveEvent.cancelled;
       // 群伤牌使用逐目标反制，由各目标的效果解析负责；这里不能提前取消整张牌。
-      const countered = !cancelledBeforeResolve && card.counterScope !== "target" &&
-        await this.responseSystem.askForCounter(source, card, targets, preparedTransfer
+      const counterResult = !cancelledBeforeResolve && card.counterScope !== "target"
+        ? await this.responseSystem.askForCounter(source, card, targets, preparedTransfer
           ? { publicTransferContext:preparedTransfer.publicContext }
-          : {});
+          : {})
+        : { status:RESPONSE_STATUS.UNAVAILABLE };
+      if (!this.isSessionValid(gameId) || isCancelledResponse(counterResult)) return false;
+      const countered = counterResult?.status === RESPONSE_STATUS.USED;
       let destination = "discard";
       let effectResolved = false;
       if (countered || cancelledBeforeResolve) {
@@ -422,10 +464,12 @@ export class Game {
           resolutionId, selection,
           privateTransferIntent:preparedTransfer?.privateIntent ?? null
         });
+        if (!this.isSessionValid(gameId)) return false;
         destination = effectResult.destination;
         effectResolved = effectResult.resolved ?? true;
       }
       if (destination === "discard") await this.finishResolvingToDiscard(card);
+      if (!this.isSessionValid(gameId)) return false;
       source.statistics.cardsPlayed += 1;
       const effectiveTargets = preparedTransfer
         ? (effectResolved ? [preparedTransfer.privateIntent.receiver] : [])
@@ -437,6 +481,7 @@ export class Game {
         type:"cardUsed", source, card, targets, effectiveTargets,
         cancelled, resolved:!cancelled && effectResolved, resolutionId
       });
+      if (!this.isSessionValid(gameId)) return false;
       if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       this.ui.render(this);
       return true;
@@ -455,6 +500,8 @@ export class Game {
    * 发动玩家的主动技能。技能接口自行扣能量，Game 负责次数锁和目标二次验证。
    */
   async useActiveSkill(source, skillId, targets = []) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || this.state.isGameOver) return false;
     const skill = getActiveSkill(source);
     if (!skill || skill.id !== skillId || this.actionLocked) return false;
     const legality = skill.canUse(this, source);
@@ -468,6 +515,7 @@ export class Game {
       const targetLabel = actionTargetLabel(this, source, skill, targets);
       this.ui.setCurrentCard(skill.name, `${source.name} · 技能`, targetLabel);
       await skill.execute(this, source, targets);
+      if (!this.isSessionValid(gameId)) return false;
       this.ui.render(this);
       return true;
     } finally {
@@ -482,6 +530,8 @@ export class Game {
 
   /** 真人点击手牌的入口；若需要目标则等待统一目标选择。 */
   async handleHumanCard(cardId) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId)) return false;
     const human = this.state.players[0];
     const card = human.hand.find((entry) => entry.id === cardId);
     if (!card || this.currentPlayer?.id !== human.id || this.state.phase !== "play" || this.actionLocked || this.interactionLocked) return false;
@@ -494,11 +544,13 @@ export class Game {
       let targets = [];
       if (!["none", "self", "allEnemies", "allLiving", "multiStage"].includes(card.targetType)) {
         const target = await this.ui.requestTarget(legalTargets, `为「${card.name}」选择目标`, { source:human, card });
+        if (!this.isSessionValid(gameId)) return false;
         if (!target) return false;
         targets = [target];
       }
       let selection = null;
-      if (card.selectionFlow?.length) selection = await this.ui.interactionController?.requestCardFlow?.(this, human, card, targets);
+      if (card.selectionFlow?.length) selection = await this.ui.requestCardFlow?.(this, human, card, targets);
+      if (!this.isSessionValid(gameId)) return false;
       if (card.selectionFlow?.length && !selection) return false;
       return await this.playCard(human, card, targets, selection);
     } finally {
@@ -510,6 +562,8 @@ export class Game {
 
   /** 真人点击主动技能的入口；统一请求合法目标。 */
   async handleHumanSkill() {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId)) return false;
     const human = this.state.players[0];
     const skill = getActiveSkill(human);
     if (!skill || this.actionLocked || this.interactionLocked || !skill.canUse(this, human).ok) return false;
@@ -520,6 +574,7 @@ export class Game {
       let targets = [];
       if (!["none", "allEnemies"].includes(skill.targetType)) {
         const target = await this.ui.requestTarget(legalTargets, `为「${skill.name}」选择目标`);
+        if (!this.isSessionValid(gameId)) return false;
         if (!target) return false;
         targets = [target];
       }
@@ -566,7 +621,8 @@ export class Game {
    * @returns {Promise<number>} 实际扣除的生命值。
    */
   async damage(source, target, amount, context = {}) {
-    if (!target?.alive || this.state.isGameOver) return 0;
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || !target?.alive || this.state.isGameOver) return 0;
     const metadata = {};
     const event = {
       type: "beforeDamage", source, target, amount: Math.max(0, amount), card: context.card ?? null,
@@ -575,19 +631,23 @@ export class Game {
       cancelled: false, metadata, resolutionId: context.resolutionId ?? createId("skill-resolution")
     };
     await this.eventBus.emit("beforeDamage", event);
+    if (!this.isSessionValid(gameId)) return 0;
     if (event.cancelled || event.amount <= 0 || !target.alive) return 0;
     const isDeviceAttack = context.card?.subtypes?.includes("assault") && ["normal", "area"].includes(event.damageType);
     if (isDeviceAttack) {
       const judgment = await this.judgmentSystem.judgeDefense(source, target, event);
+      if (!this.isSessionValid(gameId) || judgment.cancelled) return 0;
       if (judgment.immune || !target.alive || this.state.isGameOver) {
         await this.eventBus.emit("afterDamage", { ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"defenseDevice" });
         return 0;
       }
     }
-    const blocked = await this.responseSystem.askForBlock(source, target, event);
-    if (blocked) {
+    const blockResult = await this.responseSystem.askForBlock(source, target, event);
+    if (!this.isSessionValid(gameId) || isCancelledResponse(blockResult)) return 0;
+    if (blockResult.status === RESPONSE_STATUS.USED) {
       context.blockedByCard = true;
       await this.eventBus.emit("afterDamage", { ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"block" });
+      if (!this.isSessionValid(gameId)) return 0;
       this.ui.render(this);
       return 0;
     }
@@ -608,17 +668,21 @@ export class Game {
     if (hpDamage) { this.log(`${target.name}受到${hpDamage}点伤害，剩余${target.hp}点生命。`, "damage"); this.ui.queueFeedback?.("damage", target.id, hpDamage); }
     else this.log(`${target.name}没有受到生命伤害。`);
     await this.eventBus.emit("afterDamage", { ...event, type: "afterDamage", actualAmount: hpDamage, shieldAbsorbed });
+    if (!this.isSessionValid(gameId)) return hpDamage;
     if (target.hp <= 0 && target.alive) await this.dyingSystem.enter(target, source, context);
+    if (!this.isSessionValid(gameId)) return hpDamage;
     this.ui.render(this);
     return hpDamage;
   }
 
   /** 统一治疗入口，允许 beforeHeal 修改数值并限制到最大生命。 */
   async heal(source, target, amount, context = {}) {
-    if (!target?.alive || target.hp >= target.maxHp || this.state.isGameOver) return 0;
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || !target?.alive || target.hp >= target.maxHp || this.state.isGameOver) return 0;
     const event = { type: "beforeHeal", source, target, amount: Math.max(0, amount), card: context.card ?? null, skill: context.skill ?? null,
       reason:context.reason ?? "治疗", isDyingRescue:Boolean(context.isDyingRescue), cancelled: false, metadata: {} };
     await this.eventBus.emit("beforeHeal", event);
+    if (!this.isSessionValid(gameId)) return 0;
     if (event.cancelled) return 0;
     const actualAmount = Math.min(event.amount, target.maxHp - target.hp);
     target.hp += actualAmount;
@@ -628,18 +692,23 @@ export class Game {
       this.ui.queueFeedback?.("heal", target.id, actualAmount);
     }
     await this.eventBus.emit("afterHeal", { ...event, type: "afterHeal", actualAmount });
+    if (!this.isSessionValid(gameId)) return actualAmount;
     this.ui.render(this);
     return actualAmount;
   }
 
   /** 统一能量获取入口，经过事件修正并限制在 maxEnergy。 */
   async gainEnergy(player, amount, context = {}) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || !player?.alive || this.state.isGameOver) return 0;
     const event = { type: "beforeGainEnergy", player, amount, reason: context.reason ?? "效果", card: context.card ?? null, skill: context.skill ?? null, cancelled: false, metadata: {} };
     await this.eventBus.emit("beforeGainEnergy", event);
+    if (!this.isSessionValid(gameId)) return 0;
     if (event.cancelled) return 0;
     const actualAmount = player.changeEnergy(event.amount);
     if (actualAmount > 0) { this.log(`${player.name}通过${event.reason}获得${actualAmount}点能量。`); this.ui.queueFeedback?.("energy", player.id, actualAmount); }
     await this.eventBus.emit("afterGainEnergy", { ...event, type: "afterGainEnergy", actualAmount });
+    if (!this.isSessionValid(gameId)) return actualAmount;
     this.ui.render(this);
     return actualAmount;
   }
@@ -651,6 +720,8 @@ export class Game {
 
   /** 若一个阵营无存活者，结束游戏、停止旧交互并显示结果。 */
   async checkVictory() {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || this.state.isGameOver) return this.state.winnerTeam;
     const dawnAlive = this.state.players.some((player) => player.alive && player.battleTeam === "dawn");
     const duskAlive = this.state.players.some((player) => player.alive && player.battleTeam === "dusk");
     if (dawnAlive && duskAlive) return null;
@@ -662,6 +733,7 @@ export class Game {
     this.ui.cancelPendingInteractions();
     this.log(`${TEAM_CONFIG[winnerTeam].name}消灭了全部敌人，获得胜利！`, "important");
     await this.eventBus.emit("gameOver", { type: "gameOver", winnerTeam });
+    if (!this.isSessionValid(gameId)) return null;
     this.ui.render(this);
     this.ui.showGameOver(winnerTeam, this.state.players[0].battleTeam === winnerTeam);
     return winnerTeam;
@@ -669,20 +741,32 @@ export class Game {
 
   /** 抽指定数量的牌并逐张触发移动事件；电脑日志只公开数量。 */
   async drawCards(player, count, reason = "摸牌", options = {}) {
-    if (!player?.alive || this.state.isGameOver) return 0;
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || !player?.alive || this.state.isGameOver) return 0;
     let drawn = 0;
     for (let index = 0; index < count; index += 1) {
       const card = this.state.deck.drawOne();
       this.syncDeckAliases();
       if (!card) break;
+      // 跨 beforeCardMove 等待期间先放入受管结算区，避免 dispose 时实体牌悬空。
+      if (!this.state.deck.beginResolve(card)) break;
+      this.syncDeckAliases();
       const move = { type: "beforeCardMove", card, from: "deck", to: "hand", player, reason, cancelled: false };
       await this.eventBus.emit("beforeCardMove", move);
-      if (move.cancelled) { this.state.deck.cards.push(card); continue; }
+      if (!this.isSessionValid(gameId)) return drawn;
+      if (move.cancelled) {
+        this.state.deck.finishResolveToEquipment(card);
+        this.state.deck.cards.push(card);
+        this.syncDeckAliases();
+        continue;
+      }
+      if (!this.state.deck.finishResolveToEquipment(card)) return drawn;
       player.hand.push(card);
       player.bumpHandVersion();
       this.invalidateCardKnowledge(card.id, player.id);
       drawn += 1;
       await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
+      if (!this.isSessionValid(gameId)) return drawn;
     }
     if (drawn) {
       if (!options.silent) this.log(`${player.name}摸了${drawn}张牌。`);
@@ -694,10 +778,13 @@ export class Game {
 
   /** 从玩家手牌公开弃置一张牌；返回是否成功移动。 */
   async discardCardFromHand(player, card, reason = "弃置", options = {}) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId)) return false;
     const index = player.hand.indexOf(card);
     if (index < 0) return false;
     const move = { type: "beforeCardMove", card, from: "hand", to: "discard", player, reason, cancelled: false };
     await this.eventBus.emit("beforeCardMove", move);
+    if (!this.isSessionValid(gameId)) return false;
     if (move.cancelled) return false;
     player.hand.splice(index, 1);
     player.bumpHandVersion();
@@ -707,17 +794,20 @@ export class Game {
     if (!options.silent) this.log(`${player.name}因${reason}弃置了「${card.name}」。`);
     this.ui.queueFeedback?.("discard", player.id);
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
+    if (!this.isSessionValid(gameId)) return true;
     this.ui.render(this);
     return true;
   }
 
   /** 在两名玩家间移动实体手牌；只公开最终牌名，不暴露其余隐藏牌。 */
   async moveCardBetweenHands(from, to, card, reason) {
-    if (!from?.alive || !to?.alive || this.state.isGameOver) return false;
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || !from?.alive || !to?.alive || this.state.isGameOver) return false;
     const index = from.hand.indexOf(card);
     if (index < 0) return false;
     const move = { type: "beforeCardMove", card, from: "hand", to: "hand", fromPlayer: from, player: to, reason, cancelled: false };
     await this.eventBus.emit("beforeCardMove", move);
+    if (!this.isSessionValid(gameId)) return false;
     if (move.cancelled) return false;
     const trackingViewers = this.state.players.filter((viewer) => viewer.id === from.id || this.isCardKnownTo(viewer, from, card));
     from.hand.splice(index, 1);
@@ -730,15 +820,18 @@ export class Game {
     }
     this.ui.queueFeedback?.("draw", to.id, 1);
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
+    if (!this.isSessionValid(gameId)) return true;
     this.ui.render(this);
     return true;
   }
 
   /** 将公开装备从装备区移入另一名角色手牌；所有观察者继续知道该实体牌。 */
   async moveEquipmentToHand(from, to, card, reason) {
-    if (!from?.alive || !to?.alive || from.equipment !== card || this.state.isGameOver) return false;
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || !from?.alive || !to?.alive || from.equipment !== card || this.state.isGameOver) return false;
     const move = { type:"beforeCardMove", card, from:"equipment", to:"hand", fromPlayer:from, player:to, reason, cancelled:false };
     await this.eventBus.emit("beforeCardMove", move);
+    if (!this.isSessionValid(gameId)) return false;
     if (move.cancelled || from.equipment !== card) return false;
     from.equipment = null;
     to.hand.push(card);
@@ -747,23 +840,28 @@ export class Game {
     for (const viewer of this.state.players) if (viewer.id !== to.id) this.rememberPrivateCard(viewer, to, card);
     this.ui.queueFeedback?.("draw", to.id, 1);
     await this.eventBus.emit("afterCardMove", { ...move, type:"afterCardMove" });
+    if (!this.isSessionValid(gameId)) return true;
     this.ui.render(this);
     return true;
   }
 
   /** 将公开装备直接转移到另一名角色装备区；接收者旧装备按替换规则公开弃置。 */
   async moveEquipmentBetweenPlayers(from, to, card, reason) {
-    if (!from?.alive || !to?.alive || from.id === to.id || from.equipment !== card || this.state.isGameOver) return false;
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || !from?.alive || !to?.alive || from.id === to.id || from.equipment !== card || this.state.isGameOver) return false;
     const move = { type:"beforeCardMove", card, from:"equipment", to:"equipment", fromPlayer:from, player:to, reason, cancelled:false };
     await this.eventBus.emit("beforeCardMove", move);
+    if (!this.isSessionValid(gameId)) return false;
     if (move.cancelled || from.equipment !== card) return false;
     if (to.equipment) {
       const replaced = to.equipment;
       const replaceMove = { type:"beforeCardMove", card:replaced, from:"equipment", to:"discard", player:to, reason:"转移装备替换", cancelled:false };
       await this.eventBus.emit("beforeCardMove", replaceMove);
+      if (!this.isSessionValid(gameId) || replaceMove.cancelled) return false;
       to.equipment = null;
       this.state.deck.discard(replaced);
       await this.eventBus.emit("afterCardMove", { ...replaceMove, type:"afterCardMove" });
+      if (!this.isSessionValid(gameId)) return false;
       this.log(`${to.name}的「${replaced.name}」被替换并进入弃牌堆。`);
     }
     from.equipment = null;
@@ -772,6 +870,7 @@ export class Game {
     this.syncDeckAliases();
     this.ui.queueFeedback?.("equip", to.id);
     await this.eventBus.emit("afterCardMove", { ...move, type:"afterCardMove" });
+    if (!this.isSessionValid(gameId)) return true;
     this.log(`${to.name}装备了「${card.name}」。`, "important");
     this.ui.render(this);
     return true;
@@ -779,9 +878,11 @@ export class Game {
 
   /** 从装备区公开弃置实体装备。 */
   async discardEquipment(player, card, reason = "弃置装备") {
-    if (!player?.alive || player.equipment !== card) return false;
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || !player?.alive || player.equipment !== card) return false;
     const move = { type:"beforeCardMove", card, from:"equipment", to:"discard", player, reason, cancelled:false };
     await this.eventBus.emit("beforeCardMove", move);
+    if (!this.isSessionValid(gameId)) return false;
     if (move.cancelled || player.equipment !== card) return false;
     player.equipment = null;
     this.invalidateCardKnowledge(card.id, player.id);
@@ -789,16 +890,20 @@ export class Game {
     this.syncDeckAliases();
     this.ui.queueFeedback?.("discard", player.id);
     await this.eventBus.emit("afterCardMove", { ...move, type:"afterCardMove" });
+    if (!this.isSessionValid(gameId)) return true;
     this.ui.render(this);
     return true;
   }
 
   /** 将主动牌由手牌移入结算区；防止快速点击重复使用同一实体牌。 */
   async moveHandToResolving(player, card) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId)) return false;
     const index = player.hand.indexOf(card);
     if (index < 0) throw new Error("卡牌已不在手中");
     const move = { type: "beforeCardMove", card, from: "hand", to: "resolving", player, reason: "使用", cancelled: false };
     await this.eventBus.emit("beforeCardMove", move);
+    if (!this.isSessionValid(gameId)) return false;
     if (move.cancelled) throw new Error("卡牌移动被取消");
     player.hand.splice(index, 1);
     player.bumpHandVersion();
@@ -806,29 +911,39 @@ export class Game {
     if (!this.state.deck.beginResolve(card)) throw new Error("卡牌重复进入结算区");
     this.syncDeckAliases();
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
+    return this.isSessionValid(gameId);
   }
 
   /** 令结算完成的牌进入弃牌堆。 */
   async finishResolvingToDiscard(card) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId)) return false;
     const move = { type: "beforeCardMove", card, from: "resolving", to: "discard", reason: "结算完成", cancelled: false };
     await this.eventBus.emit("beforeCardMove", move);
+    if (!this.isSessionValid(gameId)) return false;
     if (!move.cancelled) this.state.deck.finishResolveToDiscard(card);
     this.syncDeckAliases();
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
+    return this.isSessionValid(gameId);
   }
 
   /** 将装置放入唯一装备槽，并公开弃置被替换装备。 */
   async equipCard(player, card) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId)) return false;
     const equipMove = { type: "beforeCardMove", card, from: "resolving", to: "equipment", player, reason: "装备", cancelled: false };
     await this.eventBus.emit("beforeCardMove", equipMove);
+    if (!this.isSessionValid(gameId)) return false;
     if (equipMove.cancelled) return false;
     if (player.equipment) {
       const old = player.equipment;
       player.equipment = null;
       const replaceMove = { type: "beforeCardMove", card: old, from: "equipment", to: "discard", player, reason: "替换装备", cancelled: false };
       await this.eventBus.emit("beforeCardMove", replaceMove);
+      if (!this.isSessionValid(gameId) || replaceMove.cancelled) return false;
       this.state.deck.discard(old);
       await this.eventBus.emit("afterCardMove", { ...replaceMove, type: "afterCardMove" });
+      if (!this.isSessionValid(gameId)) return false;
       this.log(`${player.name}的「${old.name}」被替换并进入弃牌堆。`);
     }
     this.state.deck.finishResolveToEquipment(card);
@@ -837,7 +952,7 @@ export class Game {
     this.log(`${player.name}装备了「${card.name}」。`, "important");
     this.ui.queueFeedback?.("equip", player.id);
     await this.eventBus.emit("afterCardMove", { ...equipMove, type: "afterCardMove" });
-    return true;
+    return this.isSessionValid(gameId);
   }
 
   /** 返回某角色的存活敌人。 */
@@ -847,9 +962,14 @@ export class Game {
 
   /** 守住区域不变量：阵亡角色不能继续占有会阻塞重洗的手牌或装备。 */
   async cleanupDefeatedZones() {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId)) return;
     for (const player of this.state.players) {
       if (player.alive) continue;
-      for (const card of [...player.hand]) await this.discardCardFromHand(player, card, "阵亡区域清理");
+      for (const card of [...player.hand]) {
+        await this.discardCardFromHand(player, card, "阵亡区域清理");
+        if (!this.isSessionValid(gameId)) return;
+      }
       if (player.equipment) {
         this.state.deck.discard(player.equipment);
         player.equipment = null;
@@ -891,6 +1011,8 @@ export class Game {
   }
 
   async chooseHiddenCards(actor, owner, count, reason, selection = null, excludedCardIds = null) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId)) return [];
     const eligibleCards = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
     const maximum = Math.min(count, eligibleCards.length);
     if (!maximum) {
@@ -908,7 +1030,8 @@ export class Game {
     }
     if (actor.controllerType === "human") {
       const hidden = this.cardSelectionSystem.createHiddenSelection(owner, eligibleCards);
-      const tokens = await this.ui.interactionController?.requestHiddenCards?.(hidden, maximum, reason, { exact:true, viewer:actor, owner });
+      const tokens = await this.ui.requestHiddenCards?.(hidden, maximum, reason, { exact:true, viewer:actor, owner });
+      if (!this.isSessionValid(gameId)) return [];
       const uniqueTokens = [...new Set(tokens ?? [])].slice(0, maximum);
       const resolved = uniqueTokens.map((token) => this.cardSelectionSystem.resolveToken(token, owner, hidden.selectionId))
         .filter((card) => card && !excludedCardIds?.has(card.id));
@@ -921,6 +1044,8 @@ export class Game {
 
   /** 在隐藏手牌与公开装备之间选择一张；核心始终重新验证所选实体仍在原区域。 */
   async choosePlayerZoneCard(actor, owner, reason, selection = null, excludedCardIds = null) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId)) return null;
     const eligibleHandCount = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)).length ?? 0;
     if (!owner?.alive || (!eligibleHandCount && !owner.equipment)) return null;
     if (selection?.zone === "equipment") {
@@ -932,17 +1057,22 @@ export class Game {
     }
     if (selection?.tokens?.length) {
       const [card] = await this.chooseHiddenCards(actor, owner, 1, reason, selection, excludedCardIds);
+      if (!this.isSessionValid(gameId)) return null;
       return card ? { card, zone:"hand" } : null;
     }
     if (actor.controllerType === "human") {
-      const requested = await this.ui.interactionController?.requestZoneCard?.(this, actor, owner, reason, excludedCardIds);
+      const requested = await this.ui.requestZoneCard?.(this, actor, owner, reason, excludedCardIds);
+      if (!this.isSessionValid(gameId)) return null;
       return requested ? this.choosePlayerZoneCard(actor, owner, reason, requested, excludedCardIds) : null;
     }
     return this.aiController.cardSelector.chooseZoneCard(actor, owner);
   }
 
   /** 统一添加公开日志。 */
-  log(message, kind = "normal") { return this.logger.add(message, kind); }
+  log(message, kind = "normal") {
+    if (!this.isSessionValid(this.state.gameId)) return null;
+    return this.logger.add(message, kind);
+  }
 
   /** 同步状态中的便捷别名，避免牌堆重洗替换数组后旧引用失效。 */
   syncDeckAliases() {
@@ -953,7 +1083,8 @@ export class Game {
 
   /** 校验异步回调仍属于本局且游戏未销毁。 */
   isSessionValid(gameId) {
-    return !this.state.isDisposed && this.state.gameId === gameId;
+    const ownsUi = typeof this.ui?.isSessionCurrent !== "function" || this.ui.isSessionCurrent();
+    return !this.state.isDisposed && this.state.gameId === gameId && ownsUi;
   }
 
   /**

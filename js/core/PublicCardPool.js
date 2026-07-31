@@ -6,6 +6,7 @@ export class PublicCardPool {
   constructor(game) { this.game = game; this.cards = []; }
 
   reveal(count) {
+    if (!this.game.isSessionValid(this.game.state.gameId) || this.game.state.isGameOver) return [];
     this.cards = [];
     for (let index = 0; index < count; index += 1) {
       const card = this.game.state.deck.drawOne();
@@ -52,6 +53,7 @@ export class PublicCardPool {
       this.game.ui.render(this.game);
       this.game.ui.showPublicPool?.(this.cards);
     }
+    if (!this.game.isSessionValid(gameId)) return false;
     for (const card of this.cards.splice(0)) this.game.state.deck.discard(card);
     this.game.state.publicCardPool = [];
     this.game.ui.hidePublicPool?.();

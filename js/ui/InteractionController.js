@@ -2,10 +2,10 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate } from "./templates.js?build=20260731-all-in-response-v27";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260731-all-in-response-v27";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260731-all-in-response-v27";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260731-all-in-response-v27";
+import { escapeHtml, hiddenCardBackTemplate } from "./templates.js?build=20260731-async-session-v28";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260731-async-session-v28";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260731-async-session-v28";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260731-async-session-v28";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 
@@ -33,14 +33,19 @@ export class InteractionController {
   }
 
   async requestCardFlow(game, actor, card, initialTargets) {
+    const gameId = game.state.gameId;
+    if (!game.isSessionValid(gameId)) return null;
     if (card.definitionId === "transfer") {
       const sources = RuleEngine.getTransferSources(game, actor, card).filter((from) => RuleEngine.getTransferReceivers(game, actor, from, card).length);
       const source = await this.ui.requestTarget(sources, "转移：选择距离1内的牌来源", { source:actor, card });
+      if (!game.isSessionValid(gameId)) return null;
       if (!source) return null;
       const receivers = RuleEngine.getTransferReceivers(game, actor, source, card);
       const receiver = await this.ui.requestTarget(receivers, "转移：选择距离1内的接收者", { source:actor, card });
+      if (!game.isSessionValid(gameId)) return null;
       if (!receiver) return null;
       const selected = await this.requestZoneCard(game, actor, source, "转移：选择1张手牌或装备牌", new Set([card.id]));
+      if (!game.isSessionValid(gameId)) return null;
       return selected ? { sourceId:source.id, receiverId:receiver.id, ...selected } : null;
     }
     if (["plunder","destroy"].includes(card.definitionId)) {
@@ -55,12 +60,15 @@ export class InteractionController {
       const count = Math.min(2, target.hand.length);
       const slots = createHiddenSelectionView(actor, target, hidden);
       const tokens = await this.requestHiddenCards(hidden, count, `${card.name}：选择至多2张隐藏手牌`, { exact:false, slots });
+      if (!game.isSessionValid(gameId)) return null;
       return tokens?.length ? { tokens, selectionId:hidden.selectionId } : null;
     }
     return {};
   }
 
   async requestZoneCard(game, actor, owner, prompt, excludedCardIds = null) {
+    const gameId = game.state.gameId;
+    if (!game.isSessionValid(gameId)) return null;
     const eligibleHand = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)) ?? [];
     if (!eligibleHand.length && !owner?.equipment) return null;
     const hidden = game.cardSelectionSystem.createHiddenSelection(owner, eligibleHand);
@@ -70,6 +78,7 @@ export class InteractionController {
       exact:true, slots, totalCount:slots.length,
       helpText:"手牌使用安全令牌；装备牌为公开信息，确认时核心会重新验证所在区域。"
     });
+    if (!game.isSessionValid(gameId)) return null;
     if (!selected?.length) return null;
     if (selected[0] === EQUIPMENT_OPTION_TOKEN) return { zone:"equipment", equipmentCardId:owner.equipment?.id ?? null, selectionId:hidden.selectionId };
     return { zone:"hand", tokens:selected, selectionId:hidden.selectionId };

@@ -1,21 +1,21 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260731-all-in-response-v27";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260731-all-in-response-v27";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260731-all-in-response-v27";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260731-async-session-v28";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260731-async-session-v28";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260731-async-session-v28";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260731-all-in-response-v27";
-import { AnimationController } from "./animationController.js?build=20260731-all-in-response-v27";
-import { InteractionController } from "./InteractionController.js?build=20260731-all-in-response-v27";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260731-all-in-response-v27";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260731-all-in-response-v27";
-import { JudgmentView } from "./JudgmentView.js?build=20260731-all-in-response-v27";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260731-all-in-response-v27";
-import { createOpponentHandView } from "./handVisibility.js?build=20260731-all-in-response-v27";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260731-all-in-response-v27";
+} from "./templates.js?build=20260731-async-session-v28";
+import { AnimationController } from "./animationController.js?build=20260731-async-session-v28";
+import { InteractionController } from "./InteractionController.js?build=20260731-async-session-v28";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260731-async-session-v28";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260731-async-session-v28";
+import { JudgmentView } from "./JudgmentView.js?build=20260731-async-session-v28";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260731-async-session-v28";
+import { createOpponentHandView } from "./handVisibility.js?build=20260731-async-session-v28";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260731-async-session-v28";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -23,6 +23,18 @@ export function canSubmitResponse(request) {
 }
 
 export const skillButtonLabel = (skill) => skill?.name ?? "主动技能";
+
+const CANCELLED_ASYNC_RESULTS = Object.freeze({
+  requestTarget:null,
+  requestDiscard:Object.freeze([]),
+  requestResponse:Object.freeze({ status:"cancelled" }),
+  waitForHumanPlayEnd:false,
+  requestPublicCard:null,
+  requestCardFlow:null,
+  requestHiddenCards:Object.freeze([]),
+  requestZoneCard:null,
+  showPrivateReveal:false
+});
 
 export class UIManager {
   constructor() {
@@ -57,6 +69,45 @@ export class UIManager {
   }
 
   setCallbacks(callbacks) { this.callbacks = callbacks; }
+
+  /** 切换共享 UI 的当前对局所有权；普通 render 永远不能改变该绑定。 */
+  attachGame(game) {
+    if (this.game && this.game !== game) this.cancelPendingInteractions();
+    this.game = game ?? null;
+    return this.game;
+  }
+
+  isGameAttached(game) {
+    return Boolean(game && this.game === game && !game.state?.isDisposed &&
+      game.state?.gameId && this.game.state.gameId === game.state.gameId);
+  }
+
+  /**
+   * 为单局创建带所有权校验的 UI 门面。旧局恢复执行后，所有同步 UI 写入都会
+   * 被忽略，异步请求则立即得到可终止的取消结果。
+   */
+  createGameSession(game) {
+    const manager = this;
+    return new Proxy(manager, {
+      get(target, property) {
+        if (property === "attachedGame") return game;
+        if (property === "isSessionCurrent") return () => manager.isGameAttached(game);
+        const value = Reflect.get(target, property, target);
+        if (typeof value !== "function") return value;
+        return (...args) => {
+          const ownsUi = manager.game === game;
+          const allowCleanup = property === "cancelPendingInteractions" && ownsUi;
+          if (!allowCleanup && !manager.isGameAttached(game)) {
+            if (Object.hasOwn(CANCELLED_ASYNC_RESULTS, property)) {
+              return Promise.resolve(CANCELLED_ASYNC_RESULTS[property]);
+            }
+            return undefined;
+          }
+          return value.apply(target, args);
+        };
+      }
+    });
+  }
 
   bindEvents() {
     this.elements.start_button.addEventListener("click", () => this.callbacks.onStart?.());
@@ -101,6 +152,7 @@ export class UIManager {
   }
 
   showStart() {
+    this.clearLog();
     this.elements.start_screen.classList.remove("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
@@ -109,6 +161,7 @@ export class UIManager {
   showSelection(candidates, battleTeam) {
     this.cancelPendingInteractions();
     this.resetCurrentCard();
+    this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.remove("is-hidden");
@@ -118,13 +171,12 @@ export class UIManager {
   }
 
   showGame(game) {
-    this.game = game;
+    this.attachGame(game);
     this.resetCurrentCard();
+    this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.remove("is-hidden");
-    this.elements.log_list.innerHTML = "";
-    this.updateLogCount(0);
     this.setLogCollapsed(window.innerWidth < 1280);
     this.viewportWasNarrow = window.innerWidth < 1280;
     if (game.state.players.every((player) => player.general)) this.render(game);
@@ -140,9 +192,8 @@ export class UIManager {
 
   candidateTemplate(general, index) { return candidateCardTemplate(general, index); }
 
-  render(game) {
-    this.game = game;
-    if (!game?.state.players.length || game.state.isDisposed || !game.state.players[0].general) return;
+  render(game = this.game) {
+    if (!this.isGameAttached(game) || !game.state.players.length || !game.state.players[0].general) return false;
     const state = game.state;
     const human = state.players[0];
     const dawnAlive = state.players.filter((player) => player.alive && player.battleTeam === "dawn").length;
@@ -168,6 +219,7 @@ export class UIManager {
     this.renderHand(game, human);
     this.renderControls(game, human);
     this.animationController.flush(document);
+    return true;
   }
 
   playerTemplate(player, human, isHuman) {
@@ -304,7 +356,7 @@ export class UIManager {
   }
 
   requestResponse(request, label) {
-    if (this.responseState) this.resolveResponse(false);
+    if (this.responseState) this.resolveResponse({ status:"cancelled" });
     return new Promise((resolve) => {
       const deadline = Date.now() + request.timeoutMs;
       const settle = (choice) => {
@@ -313,7 +365,7 @@ export class UIManager {
         this.responseState = null;
         this.elements.response_panel.classList.add("is-hidden");
         this.elements.response_panel.innerHTML = "";
-        resolve(choice);
+        resolve(typeof choice === "object" ? choice : { status:choice ? "used" : "declined" });
         if (this.game) this.render(this.game);
       };
       const update = () => {
@@ -329,13 +381,21 @@ export class UIManager {
       const availabilityText = presentation.availabilityText ?? "";
       this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${Math.ceil(request.timeoutMs / 1000)}s</span></div><div class="response-copy"><p class="response-event">${escapeHtml(eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div><div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">放弃响应</button></div>`;
       this.elements.response_panel.classList.remove("is-hidden");
-      this.game.cleanupManager.delay(request.timeoutMs).then((completed) => { if (completed) settle(false); });
+      this.game.cleanupManager.delay(request.timeoutMs).then((completed) => {
+        if (completed) settle({ status:"declined" });
+      });
       update();
       this.render(this.game);
     });
   }
 
-  resolveResponse(choice) { this.responseState?.resolve(choice); }
+  resolveResponse(choice) {
+    const result = typeof choice === "object" ? choice : { status:choice ? "used" : "declined" };
+    this.responseState?.resolve(result);
+  }
+  requestCardFlow(...args) { return this.interactionController.requestCardFlow(...args); }
+  requestHiddenCards(...args) { return this.interactionController.requestHiddenCards(...args); }
+  requestZoneCard(...args) { return this.interactionController.requestZoneCard(...args); }
   waitForHumanPlayEnd(gameId) { return new Promise((resolve) => { this.playEndState = { gameId, resolve }; this.render(this.game); }); }
 
   resolveHumanPlayEnd(gameId) {
@@ -385,6 +445,7 @@ export class UIManager {
   requestPublicCard(player, cards) { return this.publicPoolView.request(player, cards); }
   hidePublicPool() { this.publicPoolView.hide(); }
   showJudgment(player, card) { this.judgmentView.show(player, card); }
+  hideJudgment() { this.judgmentView.hide(); }
   showDying(target, context) {
     this.elements.dying_view.innerHTML = `<strong>${escapeHtml(target.name)}濒死</strong><span>当前生命 ${context.currentHp}</span><b>还需 ${context.need} 张调息</b>`;
     this.elements.dying_view.classList.remove("is-hidden");
@@ -400,6 +461,12 @@ export class UIManager {
     this.elements.log_list.append(node);
     this.updateLogCount(count);
     this.elements.log_list.scrollTop = this.elements.log_list.scrollHeight;
+  }
+
+  clearLog() {
+    this.elements.log_list.innerHTML = "";
+    this.elements.log_list.scrollTop = 0;
+    this.updateLogCount(0);
   }
 
   updateLogCount(count) {
@@ -436,7 +503,7 @@ export class UIManager {
   cancelPendingInteractions() {
     if (this.targetState) { const resolve = this.targetState.resolve; this.targetState = null; resolve(null); }
     if (this.discardState) { const resolve = this.discardState.resolve; this.discardState = null; resolve([]); }
-    if (this.responseState) this.responseState.resolve(false);
+    if (this.responseState) this.responseState.resolve({ status:"cancelled" });
     if (this.playEndState) { const resolve = this.playEndState.resolve; this.playEndState = null; resolve(false); }
     this.privateRevealToken += 1;
     this.thinkingPlayerId = null;
@@ -452,5 +519,6 @@ export class UIManager {
     this.elements.response_panel.classList.add("is-hidden");
     this.elements.response_panel.innerHTML = "";
     this.elements.thinking_indicator.classList.add("is-hidden");
+    this.elements.action_prompt.classList.remove("is-hidden");
   }
 }
