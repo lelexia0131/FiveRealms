@@ -27,6 +27,7 @@ export function cardDescriptionClass(description) {
 }
 
 export function candidateCardTemplate(general, index) {
+  const activeCostLabel = general.activeSkillIds?.[0] === "allIn" ? "X" : general.activeCost;
   return `<article class="candidate-card" style="--candidate-order:${index}">
     <div class="candidate-art">${image(general.portrait, `${general.name}半身像`, "candidate-portrait")}<span class="candidate-index">候选 0${index + 1}</span></div>
     <div class="candidate-body">
@@ -35,7 +36,7 @@ export function candidateCardTemplate(general, index) {
       <p class="character-description">${escapeHtml(general.description)}</p>
       <div class="candidate-skills">
         <div class="skill-copy"><h4><span>被动 · ${escapeHtml(general.passiveName)}</span><small>持续</small></h4><p>${escapeHtml(general.passiveDescription)}</p></div>
-        <div class="skill-copy"><h4><span>主动 · ${escapeHtml(general.activeName)}</span><small>${general.activeCost} 能量</small></h4><p>${escapeHtml(general.activeDescription)}</p></div>
+        <div class="skill-copy"><h4><span>主动 · ${escapeHtml(general.activeName)}</span><small>${escapeHtml(activeCostLabel)} 能量</small></h4><p>${escapeHtml(general.activeDescription)}</p></div>
       </div>
       <button class="primary-button candidate-select" type="button" data-general-id="${escapeHtml(general.id)}">选择 ${escapeHtml(general.name)}</button>
     </div>
