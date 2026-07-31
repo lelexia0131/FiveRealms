@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-equipment-control-v26";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260731-all-in-response-v27";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -80,6 +80,7 @@ export function playerPanelTemplate(player, options = {}) {
   const statuses = [
     player.statuses?.exposeWeakness ? [`破势 ${player.statuses.exposeWeakness.stacks}`, "danger"] : null,
     player.statuses?.huntMark ? ["猎印", "mark"] : null,
+    player.statuses?.allIn ? ["孤注", "danger"] : null,
     player.turnFlags?.momentum > 0 ? [`连势 ${player.turnFlags.momentum}`, "mark"] : null,
     player.hp <= 0 && player.alive ? [`濒死 · 需${1 - player.hp}调息`, "danger"] : null,
     player.turnFlags?.recycleDeviceUses > 0 ? [`回收 ${player.turnFlags.recycleDeviceUses}/2`, "mark"] : null
@@ -129,6 +130,10 @@ export function resolvingCardTemplate(cardOrName, source = "结算区", targetLa
     </div>`;
   }
   return `<div class="resolving-card is-skill"><span class="skill-sigil" aria-hidden="true">✦</span><div><small>${escapeHtml(source)}</small><strong>${escapeHtml(cardOrName)}</strong><span class="resolving-kind">角色技能</span>${targetMarkup}</div></div>`;
+}
+
+export function emptyResolvingCardTemplate() {
+  return `<div class="resolving-card is-empty"><span class="skill-sigil" aria-hidden="true">◇</span><div><small>中央结算区</small><strong>等待第一张牌</strong><span>行动会在这里公开展示</span></div></div>`;
 }
 
 export function thinkingTemplate(player, message) {

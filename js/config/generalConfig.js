@@ -65,7 +65,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
     loreFaction: "镜轮市", maxHp: 4, tags: ["风险", "随机"], roleTags: ["damage", "resource"], passiveSkillIds: ["gamble"], activeSkillIds: ["allIn"],
     passiveName: "冒险", passiveDescription: "每回合首次使用战术牌后，有60%概率摸1张牌。",
     passiveTriggerText: "使用战术牌后", passiveLimitText: "每回合限触发1次",
-    activeName: "孤注", activeDescription: "消耗全部能量，摸取不超过2张牌；消耗至少3点时进入不可叠加的孤注状态，令下一次突袭伤害+1；每回合最多发动2次。", activeCost: 1, activeLimitPerTurn: 2,
+    activeName: "孤注", activeDescription: "消耗全部能量并摸取等量牌；有30×消耗能量%的概率进入不可叠加的孤注状态，令下一次突袭伤害+1，突袭完毕后退出；每回合最多发动1次。", activeCost: 1, activeLimitPerTurn: 1,
     description: "在镜轮赌局中输掉姓名的旅人，习惯把剩下的一切推向桌面中央。",
     aiProfile: profile(1.05, .55, .4, .4, .35, .25, .4, 1.5)
   }),

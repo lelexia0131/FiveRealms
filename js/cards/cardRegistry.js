@@ -1,5 +1,5 @@
 /** 二十三种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260730-equipment-control-v26";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260731-all-in-response-v27";
 
 const CARD_EFFECTS = {
   async assault(game, source, card, targets, context) {

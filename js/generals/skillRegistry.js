@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-equipment-control-v26";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260730-equipment-control-v26";
-import { randomChoice } from "../utils/helpers.js?build=20260730-equipment-control-v26";
-import { Debug } from "../utils/debug.js?build=20260730-equipment-control-v26";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-all-in-response-v27";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260731-all-in-response-v27";
+import { randomChoice } from "../utils/helpers.js?build=20260731-all-in-response-v27";
+import { Debug } from "../utils/debug.js?build=20260731-all-in-response-v27";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -129,13 +129,17 @@ const PASSIVE_SKILLS = {
       } else game.log(`${owner.name}的冒险没有带来额外收益。`);
     });
     game.eventBus.on("beforeDamage", `${owner.id}:allIn:damage`, (event) => {
-      if (!owner.alive || event.source?.id !== owner.id || event.card?.definitionId !== "assault" || !owner.turnFlags.assaultBonus) return;
-      event.amount += owner.turnFlags.assaultBonus;
+      const allIn = owner.statuses.allIn;
+      if (!owner.alive || event.source?.id !== owner.id || event.card?.definitionId !== "assault" || !allIn) return;
+      event.amount += allIn.assaultBonus;
       event.metadata.consumeAssaultBonus = true;
       game.log(`${owner.name}的孤注令此次突袭伤害+1。`, "important");
     });
     game.eventBus.on("afterDamage", `${owner.id}:allIn:consume`, (event) => {
-      if (event.source?.id === owner.id && event.metadata.consumeAssaultBonus) owner.turnFlags.assaultBonus = 0;
+      if (event.source?.id === owner.id && event.metadata.consumeAssaultBonus) {
+        delete owner.statuses.allIn;
+        game.log(`${owner.name}的孤注状态已结束。`);
+      }
     });
   },
 
@@ -208,9 +212,20 @@ export const ACTIVE_SKILLS = Object.freeze({
     async execute(game, source, targets) { source.changeEnergy(-2); delete targets[0].statuses.huntMark; const context = {skill:"hunt",actionName:"猎杀",canBlock:true,damageType:"skill"}; await game.damage(source, targets[0], 2, context); if (context.blockedByCard && source.alive) await game.drawCards(source, 1, "猎杀被格挡"); }
   }),
   allIn: Object.freeze({
-    id: "allIn", name: "孤注", cost: 1, limitPerTurn: 2, targetType: "none", rangeRule: "self",
-    canUse(game, source) { return baseCanUse(game, source, this, 1); },
-    async execute(game, source) { const energy = source.energy; source.changeEnergy(-energy); await game.drawCards(source, Math.min(2, energy), "孤注"); if (energy >= 3) source.turnFlags.assaultBonus = 1; game.log(`${source.name}以${energy}点能量发动孤注。`, "important"); }
+    id: "allIn", name: "孤注", cost: 1, limitPerTurn: 1, targetType: "none", rangeRule: "self",
+    canUse(game, source) {
+      const base = baseCanUse(game, source, this, 1);
+      return base.ok && source.statuses.allIn ? { ok:false, reason:"已处于孤注状态" } : base;
+    },
+    async execute(game, source) {
+      const energy = source.energy;
+      const chance = Math.min(1, energy * .3);
+      source.changeEnergy(-energy);
+      await game.drawCards(source, energy, "孤注");
+      const entered = game.random() < chance;
+      if (entered) source.statuses.allIn = { assaultBonus:1 };
+      game.log(`${source.name}以${energy}点能量发动孤注并摸${energy}张牌，${entered ? "进入" : "未进入"}孤注状态（${Math.round(chance * 100)}%）。`, "important");
+    }
   }),
   resonance: Object.freeze({
     id: "resonance", name: "共鸣", cost: 2, limitPerTurn: 2, targetType: "ally", rangeRule: "ally",

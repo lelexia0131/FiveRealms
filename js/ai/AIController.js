@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260730-equipment-control-v26";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260730-equipment-control-v26";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260730-equipment-control-v26";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260730-equipment-control-v26";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260730-equipment-control-v26";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260730-equipment-control-v26";
-import { AiPlanner } from "./AiPlanner.js?build=20260730-equipment-control-v26";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260731-all-in-response-v27";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260731-all-in-response-v27";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260731-all-in-response-v27";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260731-all-in-response-v27";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260731-all-in-response-v27";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260731-all-in-response-v27";
+import { AiPlanner } from "./AiPlanner.js?build=20260731-all-in-response-v27";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

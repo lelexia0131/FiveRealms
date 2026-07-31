@@ -134,7 +134,7 @@ test("装备牌数量合计15且数量来自统一配置", () => { const equipme
 test("所有角色技能都存在注册器", () => GENERAL_DEFINITIONS.forEach((general) => { general.passiveSkillIds.forEach((id) => assert.ok(hasPassiveSkill(id))); general.activeSkillIds.forEach((id) => assert.ok(hasActiveSkill(id))); }));
 test("所有角色都用稳定英文 roleTags 供 AI 判断职责", () => GENERAL_DEFINITIONS.forEach((general) => { assert.ok(general.roleTags.length >= 2);general.roleTags.forEach((tag)=>assert.match(tag,/^[a-z-]+$/)); }));
 test("守誓者最大生命为3且壁垒说明声明临时可叠加", () => { const oath=GENERAL_DEFINITIONS.find((general)=>general.id==="oath-warden");assert.equal(oath.maxHp,3);assert.match(oath.activeDescription,/1点可叠加的壁垒护盾/);assert.match(oath.activeDescription,/下次回合开始/); });
-test("八名角色规则配置与README角色介绍一致", async () => { const readme=await readFile(projectFile("README.md"),"utf8");for(const general of GENERAL_DEFINITIONS){assert.match(readme,new RegExp(`### ${general.name}`));assert.ok(readme.includes(general.description));assert.match(readme,new RegExp(`主动·${general.activeName}`));assert.match(readme,new RegExp(`被动·${general.passiveName}`));}const byId=Object.fromEntries(GENERAL_DEFINITIONS.map((general)=>[general.id,general])),expected={"blade-walker":[4,2,1],"oath-warden":[3,2,2],"spirit-medic":[3,2,2],"shade-agent":[4,2,1],"ember-magus":[3,3,1],"trail-hunter":[4,2,2],"fate-gambler":[4,1,2],"resonance-tuner":[4,2,2]};for(const [id,values] of Object.entries(expected)){const general=byId[id],skill=ACTIVE_SKILLS[general.activeSkillIds[0]];assert.deepEqual([general.maxHp,general.activeCost,general.activeLimitPerTurn],values,id);assert.deepEqual([skill.cost,skill.limitPerTurn],values.slice(1),`${id}实际技能`);} });
+test("八名角色规则配置与README角色介绍一致", async () => { const readme=await readFile(projectFile("README.md"),"utf8");for(const general of GENERAL_DEFINITIONS){assert.match(readme,new RegExp(`### ${general.name}`));assert.ok(readme.includes(general.description));assert.match(readme,new RegExp(`主动·${general.activeName}`));assert.match(readme,new RegExp(`被动·${general.passiveName}`));}const byId=Object.fromEntries(GENERAL_DEFINITIONS.map((general)=>[general.id,general])),expected={"blade-walker":[4,2,1],"oath-warden":[3,2,2],"spirit-medic":[3,2,2],"shade-agent":[4,2,1],"ember-magus":[3,3,1],"trail-hunter":[4,2,2],"fate-gambler":[4,1,1],"resonance-tuner":[4,2,2]};for(const [id,values] of Object.entries(expected)){const general=byId[id],skill=ACTIVE_SKILLS[general.activeSkillIds[0]];assert.deepEqual([general.maxHp,general.activeCost,general.activeLimitPerTurn],values,id);assert.deepEqual([skill.cost,skill.limitPerTurn],values.slice(1),`${id}实际技能`);} });
 test("强制 AI 救援真人配置默认开启", () => assert.equal(GAME_CONFIG.forceAiRescueHuman, true));
 
 test("浏览器模块图使用统一构建版本，静态服务器不会复用旧规则模块", async () => {
@@ -158,6 +158,22 @@ test("对局记录计数显示条目单位和明确的辅助说明", () => {
   assert.equal(countElement.textContent, "62 条");
   assert.equal(countElement.title, "共 62 条对局记录");
   assert.equal(countElement["aria-label"], "共 62 条对局记录");
+});
+test("新对局会清空上一局中央结算卡，避免开局显示旧突袭", async () => {
+  const currentCard = { innerHTML:"<div>甲对乙使用了突袭</div>", classList:{ remove(){} } };
+  UIManager.prototype.resetCurrentCard.call({ elements:{ current_card:currentCard } });
+  assert.match(currentCard.innerHTML, /等待第一张牌/);
+  assert.doesNotMatch(currentCard.innerHTML, /突袭|作用对象/);
+  const source = await readFile(projectFile("js/ui/UIManager.js"), "utf8");
+  assert.match(source, /showSelection\([^)]*\)\s*\{[\s\S]*?this\.resetCurrentCard\(\)/);
+  assert.match(source, /showGame\([^)]*\)\s*\{[\s\S]*?this\.resetCurrentCard\(\)/);
+});
+test("响应窗口保持居中浮层原布局且中央结算卡在普通阶段下移", async () => {
+  const css = await readFile(projectFile("css/layout.css"), "utf8");
+  assert.match(css, /\.current-card\s*\{[^}]*translateY\(clamp\(20px,\s*2\.4vh,\s*30px\)\)/s);
+  assert.match(css, /:has\(\.response-panel:not\(\.is-hidden\)\)\s+\.current-card\s*\{[^}]*translateY\(clamp\(26px,\s*3vh,\s*38px\)\)/s);
+  assert.match(css, /\.private-reveal,\s*\.response-panel,\s*\.public-pool-view\s*\{[^}]*position:\s*absolute[^}]*left:\s*50%[^}]*top:\s*50%[^}]*translate\(-50%,\s*-50%\)/s);
+  assert.doesNotMatch(css, /\.response-panel\.is-card-response/);
 });
 
 // 牌堆、阵营、距离和次数补偿
@@ -200,11 +216,47 @@ test("README中的主动技能消耗与每回合次数进入实际规则", async
 test("灵医共生按README恢复1点且每回合可发动2次", async () => { const medic=makePlayer("medic",0,"dawn","ai",2),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");ally.hp-=2;const {game}=makeGame([medic,ally,enemy]);medic.energy=4;const medicHp=medic.hp;assert.equal(await game.useActiveSkill(medic,"symbiosis",[ally]),true);assert.equal(await game.useActiveSkill(medic,"symbiosis",[ally]),true);assert.equal(ally.hp,ally.maxHp);assert.equal(medic.hp,medicHp); });
 test("影客窥隙查看至多2张随机实体牌且人物生命和窃取消耗符合README", async () => { const shade=makePlayer("shade",0,"dawn","human",3),enemy=makePlayer("enemy",1,"dusk");enemy.hand.push(instance("assault"),instance("recover"),instance("charge"));const {game}=makeGame([shade,enemy],{random:()=>0});registerPassiveSkills(game);await game.eventBus.emit("afterDamage",{source:shade,target:enemy,actualAmount:1});assert.equal(shade.maxHp,4);assert.equal(ACTIVE_SKILLS.stealSkill.cost,2);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length,2); });
 test("赌命者冒险失败不再随机弃牌", async () => { const gambler=makePlayer("gambler",0,"dawn","ai",6),enemy=makePlayer("enemy",1,"dusk"),kept=instance("block");gambler.hand.push(kept);const {game}=makeGame([gambler,enemy],{random:()=>.99});registerPassiveSkills(game);await game.eventBus.emit("cardUsed",{source:gambler,card:instance("harvest"),targets:[]});assert.ok(gambler.hand.includes(kept));assert.equal(gambler.hand.length,1); });
-test("赌命者孤注实际强化下一次突袭且被格挡后也退出状态", async () => { const gambler=makePlayer("gambler",0,"dawn","ai",6),target=makePlayer("target",1,"dusk","human"),ally=makePlayer("ally",2,"dawn"),assault=instance("assault");gambler.hand.push(assault);const {game}=makeGame([gambler,target,ally]);registerPassiveSkills(game);game.state.deck.cards.push(instance("charge"),instance("shield"));gambler.energy=3;await game.useActiveSkill(gambler,"allIn",[]);const hp=target.hp;await game.playCard(gambler,assault,[target]);assert.equal(target.hp,hp-2);assert.equal(gambler.turnFlags.assaultBonus,0);const blockedGambler=makePlayer("blocked-gambler",0,"dawn","ai",6),blockedTarget=makePlayer("blocked-target",1,"dusk","human"),blockedAlly=makePlayer("blocked-ally",2,"dawn"),blockedAssault=instance("assault");blockedGambler.hand.push(blockedAssault);blockedTarget.hand.push(instance("block"));const {game:blockedGame}=makeGame([blockedGambler,blockedTarget,blockedAlly],{response:()=>true});registerPassiveSkills(blockedGame);blockedGame.state.deck.cards.push(instance("charge"),instance("shield"));blockedGambler.energy=3;await blockedGame.useActiveSkill(blockedGambler,"allIn",[]);await blockedGame.playCard(blockedGambler,blockedAssault,[blockedTarget]);assert.equal(blockedGambler.turnFlags.assaultBonus,0); });
+test("赌命者孤注消耗全部能量并摸取等量牌，按30x%概率进入状态", async () => {
+  for (const [energy, roll, expected] of [[1,.29,true],[1,.3,false],[2,.59,true],[2,.6,false],[3,.89,true],[3,.9,false],[4,.999,true]]) {
+    const gambler=makePlayer(`gambler-${energy}-${roll}`,0,"dawn","ai",6),enemy=makePlayer(`enemy-${energy}-${roll}`,1,"dusk");
+    const {game}=makeGame([gambler,enemy],{random:()=>roll});registerPassiveSkills(game);
+    game.state.deck.cards.push(...Array.from({length:energy},()=>instance("charge")));
+    gambler.energy=energy;
+    assert.equal(await game.useActiveSkill(gambler,"allIn",[]),true);
+    assert.equal(gambler.energy,0);
+    assert.equal(gambler.hand.length,energy);
+    assert.equal(Boolean(gambler.statuses.allIn),expected,`${energy}点能量，随机数${roll}`);
+    gambler.energy=1;
+    assert.equal(await game.useActiveSkill(gambler,"allIn",[]),false,"一回合只能使用1次");
+  }
+});
+test("孤注状态不可叠加、跨回合保留，并在下一次突袭完毕后退出", async () => {
+  const gambler=makePlayer("gambler",0,"dawn","ai",6),target=makePlayer("target",1,"dusk","human"),ally=makePlayer("ally",2,"dawn"),assault=instance("assault");
+  gambler.hand.push(assault);
+  const {game}=makeGame([gambler,target,ally],{random:()=>0});registerPassiveSkills(game);
+  game.state.deck.cards.push(instance("charge"),instance("shield"),instance("block"));
+  gambler.energy=3;await game.useActiveSkill(gambler,"allIn",[]);
+  gambler.resetTurnFlags(game.teamRules.getRules(gambler));
+  assert.deepEqual(gambler.statuses.allIn,{assaultBonus:1});
+  gambler.energy=1;
+  assert.deepEqual(ACTIVE_SKILLS.allIn.canUse(game,gambler),{ok:false,reason:"已处于孤注状态"});
+  const hp=target.hp;await game.playCard(gambler,assault,[target]);
+  assert.equal(target.hp,hp-2);assert.equal(gambler.statuses.allIn,undefined);
+});
+test("孤注强化的突袭被格挡后也会退出状态", async () => {
+  const gambler=makePlayer("blocked-gambler",0,"dawn","ai",6),target=makePlayer("blocked-target",1,"dusk","human"),ally=makePlayer("blocked-ally",2,"dawn"),assault=instance("assault");
+  gambler.hand.push(assault);target.hand.push(instance("block"));
+  const {game}=makeGame([gambler,target,ally],{response:()=>true,random:()=>0});registerPassiveSkills(game);
+  game.state.deck.cards.push(instance("charge"));
+  gambler.energy=1;await game.useActiveSkill(gambler,"allIn",[]);
+  await game.playCard(gambler,assault,[target]);
+  assert.equal(gambler.statuses.allIn,undefined);
+});
 test("炎术师余烬每个卡牌结算ID最多触发1次", async () => { const ember=makePlayer("ember",0,"dawn","ai",4),enemyA=makePlayer("enemy-a",1,"dusk"),enemyB=makePlayer("enemy-b",2,"dusk");const {game}=makeGame([ember,enemyA,enemyB]);registerPassiveSkills(game);const card=instance("shockwave");await game.eventBus.emit("afterDamage",{source:ember,target:enemyA,actualAmount:1,card,resolutionId:"same"});await game.eventBus.emit("afterDamage",{source:ember,target:enemyB,actualAmount:1,card,resolutionId:"same"});assert.equal(ember.energy,1);await game.eventBus.emit("afterDamage",{source:ember,target:enemyB,actualAmount:1,card,resolutionId:"next"});assert.equal(ember.energy,2); });
 test("调律师协调每回合只触发一次且共鸣可发动2次", async () => { const tuner=makePlayer("tuner",0,"dawn","ai",7),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([tuner,ally,enemy]);registerPassiveSkills(game);game.state.deck.cards.push(instance("assault"),instance("block"));await game.eventBus.emit("cardUsed",{source:tuner,card:instance("shield"),targets:[ally]});await game.eventBus.emit("cardUsed",{source:tuner,card:instance("shield"),targets:[ally]});assert.equal(tuner.hand.length,1);game.state.deck.cards.push(instance("assault"),instance("block"),instance("charge"),instance("shield"));tuner.energy=4;assert.equal(await game.useActiveSkill(tuner,"resonance",[ally]),true);assert.equal(await game.useActiveSkill(tuner,"resonance",[ally]),true);assert.equal(ally.hand.length,4);assert.equal(tuner.turnFlags.activeSkillUseCounts.resonance,2); });
 test("追猎者猎杀被格挡后摸1张且每回合上限为2次", async () => { const hunter=makePlayer("hunter",0,"dawn","ai",5),target=makePlayer("target",1,"dusk","human"),ally=makePlayer("ally",2,"dawn");target.statuses.huntMark={sourceId:hunter.id};target.hand.push(instance("block"));const {game}=makeGame([hunter,target,ally],{response:()=>true});game.state.deck.cards.push(instance("charge"));hunter.energy=2;assert.equal(await game.useActiveSkill(hunter,"hunt",[target]),true);assert.equal(hunter.hand.length,1);assert.equal(hunter.turnFlags.activeSkillUseCounts.hunt,1);assert.equal(ACTIVE_SKILLS.hunt.limitPerTurn,2); });
 test("技能详情使用结构化的每回合发动次数", () => { const warden=makePlayer("warden",0,"dawn","human",1),markup=skillDetailsTemplate(warden);assert.match(markup,/每回合限发动2次/); });
+test("赌命者技能详情显示等量摸牌、30x%概率和每回合1次", () => { const gambler=makePlayer("gambler",0,"dawn","human",6),markup=skillDetailsTemplate(gambler);assert.match(markup,/摸取等量牌/);assert.match(markup,/30×消耗能量%/);assert.match(markup,/每回合限发动1次/); });
 
 test("护盾牌可选择自己或任意存活队友但不能选择敌人和阵亡队友", () => { const source=makePlayer("source",0,"dawn"),ally=makePlayer("ally",1,"dawn"),dead=makePlayer("dead",2,"dawn"),enemy=makePlayer("enemy",3,"dusk");dead.alive=false;const {game}=makeGame([source,ally,dead,enemy]),card=instance("shield");source.hand.push(card);assert.deepEqual(RuleEngine.getCardTargets(game,source,card).map((player)=>player.id),[source.id,ally.id]);assert.equal(RuleEngine.targetLegality(game,source,card,enemy).ok,false); });
 test("护盾牌可为自己使用并在队友身上永久叠加", async () => { const source=makePlayer("source",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([source,ally,enemy]),selfCard=instance("shield"),first=instance("shield"),second=instance("shield");source.hand.push(selfCard,first,second);assert.equal(await game.playCard(source,selfCard,[source]),true);assert.equal(source.shield,1);assert.equal(await game.playCard(source,first,[ally]),true);assert.equal(await game.playCard(source,second,[ally]),true);assert.equal(ally.shield,2);assert.equal(ally.statuses.temporaryShield,undefined); });
@@ -455,7 +507,7 @@ test("不透明隐藏牌 DOM 不含牌名、definitionId、类别、描述或 ar
 test("过期手牌版本令不透明令牌失效", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));const selection=game.cardSelectionSystem.createHiddenSelection(b);b.bumpHandVersion();assert.equal(game.cardSelectionSystem.resolveToken(selection.tokens[0].token,b),null); });
 test("隐藏牌令牌必须属于本次 selectionId", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));const first=game.cardSelectionSystem.createHiddenSelection(b),second=game.cardSelectionSystem.createHiddenSelection(b);assert.equal(game.cardSelectionSystem.resolveToken(first.tokens[0].token,b,second.selectionId),null);assert.equal(game.cardSelectionSystem.resolveToken(first.tokens[0].token,b,first.selectionId),b.hand[0]); });
 test("核心隐藏牌解析会同时去重 token 和实体牌", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"),instance("recover"));const selection=game.cardSelectionSystem.createHiddenSelection(b);const duplicate=selection.tokens[0].token;const cards=await game.chooseHiddenCards(a,b,2,"测试去重",{selectionId:selection.selectionId,tokens:[duplicate,duplicate]});assert.equal(cards.length,1);assert.equal(cards[0].id,b.hand[0].id); });
-test("取消牌背选择会立即清除对应临时令牌", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));const selection=game.cardSelectionSystem.createHiddenSelection(b);const panel={innerHTML:"",classList:{add(){}}};let resolved="pending";const ui={game,elements:{response_panel:panel},render(){}};const controller=new InteractionController(ui);controller.pending={type:"hidden",selection,count:1,exact:true,selected:new Set(),resolve:(value)=>{resolved=value;}};controller.cancel();assert.equal(resolved,null);assert.equal(game.cardSelectionSystem.selections.size,0); });
+test("取消牌背选择会立即清除对应临时令牌", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));const selection=game.cardSelectionSystem.createHiddenSelection(b);const panel={innerHTML:"",classList:{add(){},remove(){}}};let resolved="pending";const ui={game,elements:{response_panel:panel},render(){}};const controller=new InteractionController(ui);controller.pending={type:"hidden",selection,count:1,exact:true,selected:new Set(),resolve:(value)=>{resolved=value;}};controller.cancel();assert.equal(resolved,null);assert.equal(game.cardSelectionSystem.selections.size,0); });
 test("牌背多阶段 pending 会锁住手牌、技能和结束出牌", () => { const fake={targetState:null,discardState:null,responseState:null,interactionController:{pending:{type:"hidden"}},game:{interactionLocked:false}};assert.equal(UIManager.prototype.isInteractionActive.call(fake),true);const human=makePlayer("h",0,"dawn","human"),enemy=makePlayer("e",1,"dusk");const {game}=makeGame([human,enemy]);game.interactionLocked=true;assert.equal(game.requestEndHumanPlay(),false); });
 test("电脑玩家模板只暴露手牌数量", () => { const human=makePlayer("h",0,"dawn","human"),ai=makePlayer("ai",1,"dusk");ai.hand.push({ ...instance("counter"), name:"绝密名称" });const markup=playerPanelTemplate(ai,{humanTeam:human.battleTeam});assert.match(markup,/手牌1/);assert.doesNotMatch(markup,/绝密名称|definitionId/); });
 test("未知对手手牌展示模型和 DOM 均不含真实牌面资料", () => { const human=makePlayer("h",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),secret={...instance("counter"),name:"绝密反制",description:"绝密说明"};ai.hand.push(secret);const view=createOpponentHandView(human,ai),serialized=JSON.stringify(view),markup=opponentHandStripTemplate(view);assert.deepEqual(view,[{known:false}]);for(const hidden of [secret.id,secret.definitionId,secret.name,secret.description,secret.art]){assert.ok(!serialized.includes(hidden));assert.ok(!markup.includes(hidden));}assert.match(markup,/hidden-card-back/);assert.doesNotMatch(markup,/未知手牌|\?牌|牌背\s*\d/); });

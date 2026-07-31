@@ -2,9 +2,9 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-equipment-control-v26";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260730-equipment-control-v26";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-equipment-control-v26";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260731-all-in-response-v27";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260731-all-in-response-v27";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260731-all-in-response-v27";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -153,8 +153,8 @@ export class AiSimulator {
     if (skill.id === "allIn") {
       const energy = actor.energy;
       actor.energy = 0;
-      actor.handCount += Math.min(2, energy);
-      if (energy >= 3) actor.assaultBonus = 1;
+      actor.handCount += energy;
+      actor.assaultBonus = Math.min(1, energy * .3);
       return;
     }
     actor.energy = Math.max(0, actor.energy - skill.cost);

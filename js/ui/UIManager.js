@@ -1,21 +1,21 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260730-equipment-control-v26";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260730-equipment-control-v26";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260730-equipment-control-v26";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260731-all-in-response-v27";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260731-all-in-response-v27";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260731-all-in-response-v27";
 import {
-  candidateCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
+  candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260730-equipment-control-v26";
-import { AnimationController } from "./animationController.js?build=20260730-equipment-control-v26";
-import { InteractionController } from "./InteractionController.js?build=20260730-equipment-control-v26";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260730-equipment-control-v26";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260730-equipment-control-v26";
-import { JudgmentView } from "./JudgmentView.js?build=20260730-equipment-control-v26";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-equipment-control-v26";
-import { createOpponentHandView } from "./handVisibility.js?build=20260730-equipment-control-v26";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260730-equipment-control-v26";
+} from "./templates.js?build=20260731-all-in-response-v27";
+import { AnimationController } from "./animationController.js?build=20260731-all-in-response-v27";
+import { InteractionController } from "./InteractionController.js?build=20260731-all-in-response-v27";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260731-all-in-response-v27";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260731-all-in-response-v27";
+import { JudgmentView } from "./JudgmentView.js?build=20260731-all-in-response-v27";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260731-all-in-response-v27";
+import { createOpponentHandView } from "./handVisibility.js?build=20260731-all-in-response-v27";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260731-all-in-response-v27";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -108,6 +108,7 @@ export class UIManager {
 
   showSelection(candidates, battleTeam) {
     this.cancelPendingInteractions();
+    this.resetCurrentCard();
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.remove("is-hidden");
@@ -118,6 +119,7 @@ export class UIManager {
 
   showGame(game) {
     this.game = game;
+    this.resetCurrentCard();
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.remove("is-hidden");
@@ -367,6 +369,11 @@ export class UIManager {
     this.elements.current_card.classList.add("is-entering");
   }
 
+  resetCurrentCard() {
+    this.elements.current_card.classList.remove("is-entering");
+    this.elements.current_card.innerHTML = emptyResolvingCardTemplate();
+  }
+
   showPrivateReveal(title, cards = []) {
     const shown = this.privateRevealView.show(title, cards);
     if (!cards.length) this.game?.cleanupManager.delay(3200).then((completed) => {
@@ -443,6 +450,7 @@ export class UIManager {
     this.hideSkillDetails();
     this.elements.private_reveal.classList.add("is-hidden");
     this.elements.response_panel.classList.add("is-hidden");
+    this.elements.response_panel.innerHTML = "";
     this.elements.thinking_indicator.classList.add("is-hidden");
   }
 }

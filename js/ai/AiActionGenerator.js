@@ -2,9 +2,9 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260730-equipment-control-v26";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260730-equipment-control-v26";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-equipment-control-v26";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260731-all-in-response-v27";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260731-all-in-response-v27";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-all-in-response-v27";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -106,7 +106,7 @@ export class AiActionGenerator {
       else actions.push({ type:"card", card, targets:["allEnemies","allLiving"].includes(card.targetType) ? (card.targetType === "allEnemies" ? enemies : alive) : [] });
     }
     const skill = ACTIVE_SKILLS[actor.activeSkillId];
-    if (skill && !actor.activeSkillUsed && actor.energy >= skill.cost) {
+    if (skill && !actor.activeSkillUsed && actor.energy >= skill.cost && !(skill.id === "allIn" && actor.assaultBonus)) {
       const allies = alive.filter((player) => player.id !== actor.id && player.battleTeam === actor.battleTeam);
       let targets = [];
       if (["barrier","resonance"].includes(skill.id)) targets = allies;

@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-equipment-control-v26";
-import { createId } from "../utils/helpers.js?build=20260730-equipment-control-v26";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260730-equipment-control-v26";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-all-in-response-v27";
+import { createId } from "../utils/helpers.js?build=20260731-all-in-response-v27";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260731-all-in-response-v27";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

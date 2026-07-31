@@ -3,7 +3,7 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-equipment-control-v26";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260731-all-in-response-v27";
 
 const probabilityAtLeast = (trials, probability, required) => {
   if (required <= 0) return 1;
@@ -75,7 +75,7 @@ export function createAiVisibleState(viewerId, state) {
       recoverUsed: player.turnFlags.recoverUsed,
       recoverLimit: player.turnFlags.recoverLimit,
       exposeWeaknessStacks: player.statuses.exposeWeakness?.stacks ?? 0,
-      assaultBonus: player.turnFlags.assaultBonus ?? 0,
+      assaultBonus: player.statuses.allIn?.assaultBonus ?? 0,
       activeSkillId: player.general.activeSkillIds[0] ?? null,
       activeSkillCost: player.general.activeCost ?? 0,
       activeSkillUses: player.turnFlags.activeSkillUseCounts?.[player.general.activeSkillIds[0]] ?? 0,
