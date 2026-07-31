@@ -35,8 +35,8 @@ export function candidateCardTemplate(general, index) {
       <div class="tag-row">${general.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>
       <p class="character-description">${escapeHtml(general.description)}</p>
       <div class="candidate-skills">
-        <div class="skill-copy"><h4><span>被动 · ${escapeHtml(general.passiveName)}</span><small>持续</small></h4><p>${escapeHtml(general.passiveDescription)}</p></div>
         <div class="skill-copy"><h4><span>主动 · ${escapeHtml(general.activeName)}</span><small>${escapeHtml(activeCostLabel)} 能量</small></h4><p>${escapeHtml(general.activeDescription)}</p></div>
+        <div class="skill-copy"><h4><span>被动 · ${escapeHtml(general.passiveName)}</span><small>持续</small></h4><p>${escapeHtml(general.passiveDescription)}</p></div>
       </div>
       <button class="primary-button candidate-select" type="button" data-general-id="${escapeHtml(general.id)}">选择 ${escapeHtml(general.name)}</button>
     </div>
