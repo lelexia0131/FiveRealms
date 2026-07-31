@@ -39,7 +39,7 @@ const CARD_EFFECTS = {
   },
 
   async transfer(game, source, card, targets, context) {
-    const intent = context.transferIntent;
+    const intent = context.privateTransferIntent;
     if (!intent || !RuleEngine.getTransferSources(game, source, card).includes(intent.from)
       || !RuleEngine.getTransferReceivers(game, source, intent.from, card).includes(intent.receiver)) return;
     const transferred = intent.zone === "equipment"
@@ -84,7 +84,7 @@ const CARD_EFFECTS = {
         game.log(`${target.name}反制了「${card.name}」对自己的效果；其他目标继续结算。`, "important");
         continue;
       }
-      const discarded = await game.responseSystem.requestAssaultDiscard(target, "响应挑衅并弃置突袭", { source, target, card });
+      const discarded = await game.responseSystem.requestAssaultDiscard(target, "响应挑衅并打出突袭", { source, target, card });
       if (!discarded) await game.damage(source, target, 1, {
         card, canBlock:false, damageType:"provoke", actionName:"挑衅"
       });

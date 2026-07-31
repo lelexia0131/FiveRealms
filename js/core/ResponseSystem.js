@@ -5,6 +5,7 @@ import { getAiDelay } from "../utils/aiTiming.js?build=20260731-all-in-response-
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
 const responsePlayerName = (responder, player) => player?.id === responder?.id ? "你" : (player?.name ?? "未知角色");
+const publicPlayerName = (responder, playerId, playerName) => playerId === responder?.id ? "你" : (playerName ?? "未知角色");
 
 function responseTargetName(responder, context = {}) {
   if (context.targetLabel) return context.targetLabel;
@@ -32,10 +33,11 @@ export function buildResponsePresentation(responder, type, context = {}, require
   } else if (type === "counter") {
     responseCardName = "反制";
     buttonLabel = "反制";
-    if (context.card?.definitionId === "transfer" && context.transferIntent) {
-      const fromName = responsePlayerName(responder, context.transferIntent.from);
-      const receiverName = responsePlayerName(responder, context.transferIntent.receiver);
-      eventText = `${sourceName}准备将${fromName}的${context.transferIntent.safeItemLabel}转移给${receiverName}。`;
+    if (context.card?.definitionId === "transfer" && context.publicTransferContext) {
+      const transfer = context.publicTransferContext;
+      const fromName = publicPlayerName(responder, transfer.fromPlayerId, transfer.fromName);
+      const receiverName = publicPlayerName(responder, transfer.receiverPlayerId, transfer.receiverName);
+      eventText = `${sourceName}准备将${fromName}的${transfer.safeItemLabel}转移给${receiverName}。`;
       responseText = "你可以使用「反制」取消这次转移。";
     } else if (context.card?.definitionId === "counter" && context.counteredCardName) {
       eventText = `${sourceName}对${targetName}打出的「${context.counteredCardName}」使用了「反制」。`;
@@ -141,7 +143,7 @@ export class ResponseSystem {
         source, target:targets[0] ?? null, targets, card,
         counteredCardName:chainContext.targetCard?.name ?? null,
         targetScoped:Boolean(chainContext.targetScoped),
-        transferIntent:chainContext.transferIntent ?? null
+        publicTransferContext:chainContext.publicTransferContext ?? null
       }, 1);
       if (!counterCard) continue;
       // 反制牌已经从手牌移入弃牌堆，因此递归链必然受实体牌数量限制，不会无限循环。

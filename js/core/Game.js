@@ -325,8 +325,8 @@ export class Game {
   }
 
   /**
-   * 在反制窗口前固定转移的来源、接收者和实体牌。隐藏手牌只保存在核心上下文中，
-   * 对外展示始终使用安全数量说明；AI 的组合计划仍会在这里通过 RuleEngine 复核。
+   * 在反制窗口前固定转移的来源、接收者和实体牌。私密结算对象与公开响应对象
+   * 使用不同引用；AI 的组合计划仍会在这里通过 RuleEngine 复核。
    */
   async prepareTransferIntent(source, card, selection = null) {
     const sources = RuleEngine.getTransferSources(this, source, card)
@@ -351,10 +351,16 @@ export class Game {
     }
     if (!chosen || !RuleEngine.getTransferSources(this, source, card).includes(from)
       || !RuleEngine.getTransferReceivers(this, source, from, card).includes(receiver)) return null;
-    return Object.freeze({
-      from, receiver, card:chosen.card, zone:chosen.zone,
+    const privateIntent = Object.freeze({ from, receiver, card:chosen.card, zone:chosen.zone });
+    const publicContext = Object.freeze({
+      fromPlayerId:from.id,
+      fromName:from.name,
+      receiverPlayerId:receiver.id,
+      receiverName:receiver.name,
+      zone:chosen.zone,
       safeItemLabel:chosen.zone === "equipment" ? `装备「${chosen.card.name}」` : "1张牌"
     });
+    return Object.freeze({ privateIntent, publicContext });
   }
 
   /**
@@ -370,21 +376,22 @@ export class Game {
     if (card.targetType === "allEnemies") targets = legalTargets;
     if (card.targetType === "allLiving") targets = legalTargets;
     if (!["none", "self", "allEnemies", "allLiving", "multiStage"].includes(card.targetType) && (!targets[0] || !legalTargets.includes(targets[0]))) return false;
-    const transferIntent = card.definitionId === "transfer"
+    const preparedTransfer = card.definitionId === "transfer"
       ? await this.prepareTransferIntent(source, card, selection)
       : null;
-    if (card.definitionId === "transfer" && !transferIntent) return false;
+    if (card.definitionId === "transfer" && !preparedTransfer) return false;
 
     this.actionLocked = true;
     const resolutionId = `${this.state.gameId}:resolution:${++this.state.resolutionSerial}`;
     try {
       await this.moveHandToResolving(source, card);
-      const targetLabel = transferIntent
-        ? `来源 ${transferIntent.from.name} → 接收 ${transferIntent.receiver.name}`
+      const targetLabel = preparedTransfer
+        ? `来源 ${preparedTransfer.publicContext.fromName} → 接收 ${preparedTransfer.publicContext.receiverName}`
         : actionTargetLabel(this, source, card, targets, selection);
       this.ui.setCurrentCard(card, source.name, targetLabel);
-      if (transferIntent) {
-        this.log(`${source.name}使用了「${card.name}」，准备将${transferIntent.from.name}的${transferIntent.safeItemLabel}转移给${transferIntent.receiver.name}。`);
+      if (preparedTransfer) {
+        const publicContext = preparedTransfer.publicContext;
+        this.log(`${source.name}使用了「${card.name}」，准备将${publicContext.fromName}的${publicContext.safeItemLabel}转移给${publicContext.receiverName}。`);
       } else if (card.category !== "equipment") {
         this.log(`${source.name}使用了「${card.name}」${targetLabel ? `，作用对象：${targetLabel}` : ""}。`);
       }
@@ -401,17 +408,22 @@ export class Game {
       cancelledBeforeResolve ||= resolveEvent.cancelled;
       // 群伤牌使用逐目标反制，由各目标的效果解析负责；这里不能提前取消整张牌。
       const countered = !cancelledBeforeResolve && card.counterScope !== "target" &&
-        await this.responseSystem.askForCounter(source, card, targets, transferIntent ? { transferIntent } : {});
+        await this.responseSystem.askForCounter(source, card, targets, preparedTransfer
+          ? { publicTransferContext:preparedTransfer.publicContext }
+          : {});
       let destination = "discard";
       if (countered || cancelledBeforeResolve) {
         this.log(`「${card.name}」的效果被取消。`, "important");
       } else {
-        destination = (await resolveCardEffect(this, source, card, targets, { resolutionId, selection, transferIntent })).destination;
+        destination = (await resolveCardEffect(this, source, card, targets, {
+          resolutionId, selection,
+          privateTransferIntent:preparedTransfer?.privateIntent ?? null
+        })).destination;
       }
       if (destination === "discard") await this.finishResolvingToDiscard(card);
       source.statistics.cardsPlayed += 1;
-      const effectiveTargets = transferIntent
-        ? [transferIntent.receiver]
+      const effectiveTargets = preparedTransfer
+        ? [preparedTransfer.privateIntent.receiver]
         : card.definitionId === "mutualBenefit"
           ? this.state.players.filter((player) => player.alive)
           : targets;

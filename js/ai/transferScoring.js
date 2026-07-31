@@ -1,0 +1,94 @@
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-all-in-response-v27";
+
+export const MIN_TRANSFER_UTILITY = 0.5;
+const UNKNOWN_HAND_EXPECTED_VALUE = 4;
+const HUMAN_ALLY_HAND_PROTECTION = 7;
+const HUMAN_ALLY_EQUIPMENT_PROTECTION = 8;
+
+const handCount = (player) => Math.max(0, Number(player?.handCount ?? player?.hand?.length ?? 0));
+const equipmentDefinitionId = (player) => player?.equipmentDefinitionId ?? player?.equipment?.definitionId ?? null;
+const equipmentValue = (player) => CARD_DEFINITIONS[equipmentDefinitionId(player)]?.aiValue ?? 0;
+
+function knownHandDefinitionIds(actor, owner) {
+  if (!actor || !owner) return [];
+  if (actor.id === owner.id) return (actor.hand ?? []).map((card) => card.definitionId).filter(Boolean);
+  if (Array.isArray(owner.knownCards)) return owner.knownCards.map((card) => card.definitionId).filter(Boolean);
+  return Object.values(actor.aiMemory?.knownCardsByPlayer?.[owner.id] ?? {}).filter(Boolean);
+}
+
+function expectedTransferHandValue(actor, owner) {
+  const knownValues = knownHandDefinitionIds(actor, owner)
+    .map((definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue)
+    .filter(Number.isFinite);
+  // 已知实体可以定向选择其中的低价值牌；其余牌仍只采用固定期望值。
+  return knownValues.length ? Math.min(...knownValues) : UNKNOWN_HAND_EXPECTED_VALUE;
+}
+
+/** 只读取公开局面、观察者自身手牌和合法记忆的纯转移评分。 */
+export function scoreTransferCombination({ actor, from, receiver, zone }) {
+  if (!actor || !from || !receiver || from.id === receiver.id) return Number.NEGATIVE_INFINITY;
+  const sourceIsAlly = from.battleTeam === actor.battleTeam;
+  const receiverIsAlly = receiver.battleTeam === actor.battleTeam;
+
+  if (zone === "equipment") {
+    const movedValue = equipmentValue(from);
+    if (movedValue <= 0) return Number.NEGATIVE_INFINITY;
+    const replacedValue = equipmentValue(receiver);
+    let score = (sourceIsAlly ? -movedValue : movedValue)
+      + (receiverIsAlly ? movedValue - replacedValue : replacedValue - movedValue);
+    if (sourceIsAlly && from.controllerType === "human") {
+      score -= HUMAN_ALLY_EQUIPMENT_PROTECTION + movedValue * 0.5;
+    }
+    return score;
+  }
+
+  if (zone !== "hand" || handCount(from) <= 0) return Number.NEGATIVE_INFINITY;
+  const movedValue = expectedTransferHandValue(actor, from);
+  const fromLimit = Math.max(0, Number(from.hp ?? 0));
+  const receiverLimit = Math.max(0, Number(receiver.hp ?? 0));
+  const sourceOverflow = Math.max(0, handCount(from) - fromLimit);
+  const receiverSpace = Math.max(0, receiverLimit - handCount(receiver));
+  let score = (sourceIsAlly ? -movedValue : movedValue)
+    + (receiverIsAlly ? movedValue : -movedValue);
+
+  if (sourceIsAlly && receiverIsAlly) score += Math.min(sourceOverflow, receiverSpace) * 4;
+  if (!sourceIsAlly && sourceOverflow > 0) score -= Math.min(sourceOverflow, 2) * 2;
+  if (receiverIsAlly && receiverSpace === 0) score -= movedValue * 0.75;
+  if (!receiverIsAlly && receiverSpace === 0) score += 1;
+  if (sourceIsAlly && !receiverIsAlly) score -= 8;
+  if (sourceIsAlly && from.controllerType === "human") score -= HUMAN_ALLY_HAND_PROTECTION;
+  return score;
+}
+
+/** 使用调用方提供的 RuleEngine 接收者集合构建同一结构的真实/可见候选。 */
+export function buildTransferCandidates({ actor, sources, getReceivers, allowedReceiverIds = null }) {
+  const candidates = [];
+  for (const from of sources ?? []) {
+    const receivers = (getReceivers(from) ?? []).filter((receiver) =>
+      !allowedReceiverIds || allowedReceiverIds.has(receiver.id));
+    for (const receiver of receivers) {
+      if (equipmentDefinitionId(from)) {
+        candidates.push({
+          source:from, sourceId:from.id, receiverId:receiver.id, zone:"equipment",
+          equipmentCardId:from.equipment?.id,
+          score:scoreTransferCombination({ actor, from, receiver, zone:"equipment" })
+        });
+      }
+      if (handCount(from) > 0) {
+        candidates.push({
+          source:from, sourceId:from.id, receiverId:receiver.id, zone:"hand",
+          score:scoreTransferCombination({ actor, from, receiver, zone:"hand" })
+        });
+      }
+    }
+  }
+  return candidates;
+}
+
+export function chooseBestPositiveTransfer(candidates, minimumUtility = MIN_TRANSFER_UTILITY) {
+  const best = [...(candidates ?? [])].sort((a, b) => b.score - a.score
+    || Number(b.zone === "equipment") - Number(a.zone === "equipment")
+    || (a.source?.seatIndex ?? 0) - (b.source?.seatIndex ?? 0)
+    || String(a.receiverId).localeCompare(String(b.receiverId)))[0];
+  return best && best.score >= minimumUtility ? Object.freeze({ ...best }) : null;
+}

@@ -60,6 +60,7 @@ export function createAiVisibleState(viewerId, state) {
       id: player.id,
       seatIndex: player.seatIndex,
       name: player.name,
+      controllerType: player.controllerType,
       battleTeam: player.battleTeam,
       generalId: player.generalId,
       tags: [...player.general.tags],

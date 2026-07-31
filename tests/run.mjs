@@ -17,7 +17,7 @@ import { AiSimulator } from "../js/ai/AiSimulator.js";
 import { ThreatCalculator } from "../js/ai/ThreatCalculator.js";
 import { CleanupManager } from "../js/utils/CleanupManager.js";
 import { getAiDelay, sampleDelay } from "../js/utils/aiTiming.js";
-import { equipmentSlotTemplate, formatLogEntry, handCardTemplate, hiddenCardBackTemplate, opponentHandStripTemplate, playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate } from "../js/ui/templates.js";
+import { cardDescriptionClass, equipmentSlotTemplate, formatLogEntry, handCardTemplate, hiddenCardBackTemplate, opponentHandStripTemplate, playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate } from "../js/ui/templates.js";
 import { InteractionController, hiddenSelectionMarkup } from "../js/ui/InteractionController.js";
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
 import { CARD_CATEGORY_DISPLAY_ORDER, CARD_DEFINITION_DISPLAY_ORDER, createHiddenSelectionView, createOpponentHandView } from "../js/ui/handVisibility.js";
@@ -318,7 +318,7 @@ test("影客窃取可把距离2内敌方装备移入装备区但不能越过屏�
 test("装备区选择令牌绑定本次会话、所有者和手牌版本", async () => { const actor=makePlayer("actor",0,"dawn"),owner=makePlayer("owner",1,"dusk"),equipment=instance("energyDevice");owner.equipment=equipment;const {game}=makeGame([actor,owner]);const selection=game.cardSelectionSystem.createHiddenSelection(owner);owner.bumpHandVersion();assert.equal(await game.choosePlayerZoneCard(actor,owner,"测试",{zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),null);const otherSelection=game.cardSelectionSystem.createHiddenSelection(actor);assert.equal(await game.choosePlayerZoneCard(actor,owner,"测试",{zone:"equipment",equipmentCardId:equipment.id,selectionId:otherSelection.selectionId}),null); });
 test("收获直接摸2且无需弃牌", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);game.state.deck.cards.push(instance("block"),instance("charge"));const use=instance("harvest");a.hand.push(use);await game.playCard(a,use,[]);assert.equal(a.hand.length,2); });
 test("挑衅：有突袭者可打出，没有者优先消耗护盾且不触发格挡或雷达", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk","human");const {game,ui}=makeGame([a,b,c],{response:(r)=>r.targetPlayerId===b.id});a.hand.push(instance("provoke"));b.hand.push(instance("assault"));c.shield=2;c.equipment=instance("defenseDevice");game.state.deck.cards.push(instance("harvest"));const hp=c.hp;await game.playCard(a,a.hand[0],[b,c]);assert.equal(b.hand.length,0);assert.equal(c.hp,hp);assert.equal(c.shield,1);assert.ok(!ui.responseRequests.some((request)=>request.type==="block"));assert.equal(game.state.deck.judgmentZone.length,0);assert.equal(game.state.deck.cards.at(-1)?.definitionId,"harvest"); });
-test("决斗轮流弃突袭，先不能响应者承受可被护盾吸收的1伤害", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:(r)=>r.targetPlayerId===b.id});const duel=instance("duel");a.hand.push(duel);b.hand.push(instance("assault"));a.shield=1;await game.playCard(a,duel,[b]);assert.equal(a.hp,a.maxHp);assert.equal(a.shield,0);assert.equal(a.turnFlags.attackUsed,0); });
+test("决斗轮流打出突袭，先不能响应者承受可被护盾吸收的1伤害", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:(r)=>r.targetPlayerId===b.id});const duel=instance("duel");a.hand.push(duel);b.hand.push(instance("assault"));a.shield=1;await game.playCard(a,duel,[b]);assert.equal(a.hp,a.maxHp);assert.equal(a.shield,0);assert.equal(a.turnFlags.attackUsed,0); });
 test("决斗轮到无突袭真人时先显示响应窗口再结算伤害", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>false});const duel=instance("duel"),hp=b.hp;a.hand.push(duel);await game.playCard(a,duel,[b]);const request=ui.responseRequests.find((entry)=>entry.type==="assaultDiscard");assert.ok(request);assert.deepEqual(request.legalCardIds,[]);assert.match(request.presentation.eventText,new RegExp(`${a.name}.*你.*决斗`));assert.match(request.presentation.responseText,/1 张突袭/);assert.equal(b.hp,hp-1); });
 test("挑衅轮到无突袭真人时仍显示响应窗口", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>false});const provoke=instance("provoke"),hp=b.hp;a.hand.push(provoke);await game.playCard(a,provoke,[b]);const request=ui.responseRequests.find((entry)=>entry.type==="assaultDiscard");assert.ok(request);assert.equal(request.presentation.responseCardName,"突袭");assert.match(request.presentation.availabilityText,/当前 0 张/);assert.equal(b.hp,hp-1); });
 test("反制链响应说明包含来源、目标、原牌和当前反制", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.legalCardIds.length>=request.requiredCount});a.hand.push(instance("harvest"));b.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);const chained=ui.responseRequests.find((request)=>request.type==="counter"&&request.sourcePlayerId===b.id&&request.targetPlayerId===c.id);assert.ok(chained);assert.match(chained.presentation.eventText,new RegExp(`${b.name}.*${a.name}.*收获.*反制`));assert.match(chained.presentation.responseText,/继续.*反制/); });
@@ -624,11 +624,53 @@ test("AI 破坏与掠夺只生成敌方目标，窃取规则也排除队友", ()
   }
   assert.ok(!RuleEngine.getSkillTargets(game,actor,ACTIVE_SKILLS.stealSkill).includes(ally));
 });
-test("AI 转移联合评分不会把高价值队友装备送给敌人", () => {
-  const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",4,"dusk");
-  ally.equipment=instance("defenseDevice");const {game}=makeGame([actor,ally,enemy]);
-  const plan=game.aiController.cardSelector.chooseTransferCombination(actor,CARD_DEFINITIONS.transfer,[ally]);
-  assert.equal(plan.sourceId,ally.id);assert.notEqual(plan.receiverId,enemy.id);
+test("AI 转移不会拿真人队友的雷达填自己的空装备槽", () => {
+  const actor=makePlayer("actor",0,"dawn"),humanAlly=makePlayer("human-ally",1,"dawn","human");
+  actor.hand.push(instance("transfer"));humanAlly.equipment=instance("defenseDevice");const {game}=makeGame([actor,humanAlly]);
+  assert.equal(game.aiController.actionGenerator.generate(actor).some((action)=>action.card?.definitionId==="transfer"),false);
+});
+test("AI 转移不会执行 AI 队友装备之间的零收益搬运", () => {
+  const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn");
+  actor.hand.push(instance("transfer"));ally.equipment=instance("defenseDevice");const {game}=makeGame([actor,ally]);
+  assert.equal(game.aiController.actionGenerator.generate(actor).some((action)=>action.card?.definitionId==="transfer"),false);
+});
+test("AI 转移最佳方案为负数时不进入实际动作列表", () => {
+  const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk");
+  actor.hand.push(instance("transfer"));const {game}=makeGame([actor,enemy]);
+  assert.equal(game.aiController.actionGenerator.generate(actor).some((action)=>action.card?.definitionId==="transfer"),false);
+});
+test("AI 转移可从敌人移走高价值装备交给队友", () => {
+  const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
+  const use=instance("transfer");actor.hand.push(use);actor.equipment=instance("energyDevice");enemy.equipment=instance("defenseDevice");const {game}=makeGame([actor,enemy,ally]);
+  const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);
+  assert.ok(action);assert.equal(action.selection.sourceId,enemy.id);assert.equal(action.selection.receiverId,ally.id);assert.equal(action.selection.zone,"equipment");
+});
+test("AI 转移可用敌方低价值装备替换敌方高价值装备", () => {
+  const actor=makePlayer("actor",0,"dawn"),low=makePlayer("low",1,"dusk"),high=makePlayer("high",2,"dusk");
+  const use=instance("transfer");actor.hand.push(use);actor.equipment=instance("battleDevice");low.equipment=instance("energyDevice");high.equipment=instance("defenseDevice");const {game}=makeGame([actor,low,high]);
+  const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);
+  assert.ok(action);assert.equal(action.selection.sourceId,low.id);assert.equal(action.selection.receiverId,high.id);
+});
+test("AI 转移可将即将溢出的队友手牌移给有空间的队友", () => {
+  const actor=makePlayer("actor",0,"dawn"),overflow=makePlayer("overflow",1,"dawn"),receiver=makePlayer("receiver",2,"dawn");
+  const use=instance("transfer");actor.hand.push(use);overflow.hp=1;overflow.hand.push(instance("harvest"),instance("charge"));const {game}=makeGame([actor,overflow,receiver]);
+  const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);
+  assert.ok(action);assert.equal(action.selection.sourceId,overflow.id);assert.equal(action.selection.zone,"hand");
+});
+test("AI 转移真实动作与深层模拟对同一公开局面选择一致", () => {
+  const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
+  const use=instance("transfer");actor.hand.push(use);actor.equipment=instance("energyDevice");enemy.equipment=instance("defenseDevice");const {game}=makeGame([actor,enemy,ally]);
+  const real=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);
+  const visible=createAiVisibleState(actor.id,game.state);
+  const simulated=game.aiController.actionGenerator.generateFromVisible(visible,actor.id).find((entry)=>entry.card?.id===use.id);
+  const plan=(action)=>[action?.selection?.sourceId,action?.selection?.receiverId,action?.selection?.zone];
+  assert.ok(real);assert.ok(simulated);assert.deepEqual(plan(real),plan(simulated));
+});
+test("交换敌人未知手牌的真实 definitionId 不改变 AI 转移计划", () => {
+  const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
+  const use=instance("transfer"),first=instance("counter"),second=instance("harvest");actor.hand.push(use);enemy.hand.push(first,second);const {game}=makeGame([actor,enemy,ally]);
+  const choose=()=>{const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);return [action?.selection?.sourceId,action?.selection?.receiverId,action?.selection?.zone];};
+  const before=choose();[first.definitionId,second.definitionId]=[second.definitionId,first.definitionId];assert.deepEqual(choose(),before);
 });
 test("正式击杀敌人先摸2张牌再判定胜负，救回与队友死亡均不奖励", async () => {
   const killer=makePlayer("killer",0,"dawn"),enemy=makePlayer("enemy",1,"dusk");
@@ -656,6 +698,74 @@ test("转移在反制前的日志和响应上下文包含来源与接收者但�
   const intentLog=game.state.logs.find((entry)=>entry.message.includes("准备将"));
   assert.match(intentLog.message,new RegExp(`${from.name}.*1张牌.*${receiver.name}`));assert.doesNotMatch(intentLog.message,new RegExp(secret.name));
 });
+test("隐藏转移传给 AI 响应策略的公开上下文不含锁定手牌资料", async () => {
+  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
+  const use=instance("transfer"),secret={...instance("block"),name:"绝密锁定牌"};actor.hand.push(use);from.hand.push(secret);responder.hand.push(instance("counter"));
+  const {game}=makeGame([actor,from,responder,receiver],{random:()=>0});let receivedContext=null;
+  game.aiController.responsePolicy.shouldRespond=(_player,_type,context)=>{receivedContext=context;return false;};
+  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"hand"});
+  assert.ok(receivedContext);const publicContext=receivedContext.publicTransferContext;assert.ok(publicContext);assert.equal(Object.isFrozen(publicContext),true);
+  for(const forbidden of ["card","cardId","definitionId","hiddenCardName"])assert.equal(Object.hasOwn(publicContext,forbidden),false);
+  const seen=new Set();const contains=(value,needle)=>{if(value===needle)return true;if(!value||typeof value!=="object"||seen.has(value))return false;seen.add(value);return Object.values(value).some((entry)=>contains(entry,needle));};
+  for(const secretValue of [secret,secret.id,secret.definitionId,secret.name]){seen.clear();assert.equal(contains(receivedContext,secretValue),false);}
+  assert.equal(publicContext.safeItemLabel,"1张牌");
+});
+test("转移响应期间手牌换序后仍移动反制前锁定的同一实体", async () => {
+  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
+  const use=instance("transfer"),locked=instance("block"),other=instance("harvest");actor.hand.push(use);from.hand.push(locked,other);responder.hand.push(instance("counter"));
+  const {game}=makeGame([actor,from,responder,receiver],{random:()=>0});game.aiController.responsePolicy.shouldRespond=()=>{from.hand.reverse();return false;};
+  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"hand"});
+  assert.ok(receiver.hand.includes(locked));assert.ok(from.hand.includes(other));assert.ok(!receiver.hand.includes(other));
+});
+test("转移被反制后锁定手牌仍留在来源区域", async () => {
+  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
+  const use=instance("transfer"),locked=instance("block");actor.hand.push(use);from.hand.push(locked);responder.hand.push(instance("counter"));
+  const {game}=makeGame([actor,from,responder,receiver],{random:()=>0});game.aiController.responsePolicy.shouldRespond=()=>true;
+  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"hand"});
+  assert.ok(from.hand.includes(locked));assert.ok(!receiver.hand.includes(locked));
+});
+test("公开装备转移的响应上下文可安全显示装备名", async () => {
+  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
+  const use=instance("transfer"),radar=instance("defenseDevice");actor.hand.push(use);from.equipment=radar;responder.hand.push(instance("counter"));
+  const {game}=makeGame([actor,from,responder,receiver]);let publicContext=null;game.aiController.responsePolicy.shouldRespond=(_player,_type,context)=>{publicContext=context.publicTransferContext;return false;};
+  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"equipment",equipmentCardId:radar.id});
+  assert.equal(publicContext.safeItemLabel,`装备「${radar.name}」`);assert.equal(Object.hasOwn(publicContext,"card"),false);assert.equal(Object.hasOwn(publicContext,"cardId"),false);
+});
+test("被反制的互利不建立公共牌池且不触发协调", async () => {
+  const tuner=makePlayer("tuner",0,"dawn","ai",7),counterer=makePlayer("counterer",1,"dusk","human"),ally=makePlayer("ally",2,"dawn");
+  const use=instance("mutualBenefit");tuner.hand.push(use);counterer.hand.push(instance("counter"));const {game}=makeGame([tuner,counterer,ally],{response:(request)=>request.type==="counter"});registerPassiveSkills(game);
+  await game.playCard(tuner,use,[]);assert.equal(game.state.publicCardPool.length,0);assert.equal(tuner.turnFlags.coordinationTriggered,false);assert.equal(tuner.hand.length,0);
+});
+test("被反制的转移不移动牌且不触发协调", async () => {
+  const tuner=makePlayer("tuner",0,"dawn","ai",7),from=makePlayer("from",1,"dusk"),counterer=makePlayer("counterer",2,"dusk","human"),ally=makePlayer("ally",3,"dawn");
+  const use=instance("transfer"),locked=instance("block");tuner.hand.push(use);from.hand.push(locked);counterer.hand.push(instance("counter"));const {game}=makeGame([tuner,from,counterer,ally],{response:(request)=>request.type==="counter"});registerPassiveSkills(game);
+  await game.playCard(tuner,use,[],{sourceId:from.id,receiverId:ally.id,zone:"hand"});assert.ok(from.hand.includes(locked));assert.ok(!ally.hand.includes(locked));assert.equal(tuner.turnFlags.coordinationTriggered,false);
+});
+test("协调只看转移接收者：给敌人不触发，从敌人给队友才触发", async () => {
+  const noTriggerTuner=makePlayer("no-trigger",0,"dawn","ai",7),allySource=makePlayer("ally-source",1,"dawn"),enemyReceiver=makePlayer("enemy-receiver",2,"dusk");
+  const firstUse=instance("transfer"),firstMoved=instance("harvest");noTriggerTuner.hand.push(firstUse);allySource.hand.push(firstMoved);const {game:firstGame}=makeGame([noTriggerTuner,allySource,enemyReceiver]);registerPassiveSkills(firstGame);
+  await firstGame.playCard(noTriggerTuner,firstUse,[],{sourceId:allySource.id,receiverId:enemyReceiver.id,zone:"hand"});assert.equal(noTriggerTuner.turnFlags.coordinationTriggered,false);
+
+  const enemyOnlyTuner=makePlayer("enemy-only",0,"dawn","ai",7),enemySourceOnly=makePlayer("enemy-source-only",1,"dusk"),enemyReceiverOnly=makePlayer("enemy-receiver-only",2,"dusk");
+  const enemyUse=instance("transfer"),enemyMoved=instance("harvest");enemyOnlyTuner.hand.push(enemyUse);enemySourceOnly.hand.push(enemyMoved);const {game:enemyGame}=makeGame([enemyOnlyTuner,enemySourceOnly,enemyReceiverOnly]);registerPassiveSkills(enemyGame);
+  await enemyGame.playCard(enemyOnlyTuner,enemyUse,[],{sourceId:enemySourceOnly.id,receiverId:enemyReceiverOnly.id,zone:"hand"});assert.equal(enemyOnlyTuner.turnFlags.coordinationTriggered,false);
+
+  const triggerTuner=makePlayer("trigger",0,"dawn","ai",7),enemySource=makePlayer("enemy-source",1,"dusk"),allyReceiver=makePlayer("ally-receiver",2,"dawn");
+  const secondUse=instance("transfer"),secondMoved=instance("harvest");triggerTuner.hand.push(secondUse);enemySource.hand.push(secondMoved);const {game:secondGame}=makeGame([triggerTuner,enemySource,allyReceiver]);secondGame.state.deck.cards.push(instance("charge"));registerPassiveSkills(secondGame);
+  await secondGame.playCard(triggerTuner,secondUse,[],{sourceId:enemySource.id,receiverId:allyReceiver.id,zone:"hand"});assert.equal(triggerTuner.turnFlags.coordinationTriggered,true);assert.ok(allyReceiver.hand.includes(secondMoved));
+});
+test("互利包含多个队友时每次用牌仍只触发一次协调", async () => {
+  const tuner=makePlayer("tuner",0,"dawn","ai",7),allyA=makePlayer("ally-a",1,"dawn"),enemy=makePlayer("enemy",2,"dusk"),allyB=makePlayer("ally-b",3,"dawn");
+  const use=instance("mutualBenefit");tuner.hand.push(use);const {game}=makeGame([tuner,allyA,enemy,allyB]);game.state.deck.cards.push(instance("assault"),instance("block"),instance("charge"),instance("shield"),instance("harvest"));registerPassiveSkills(game);
+  await game.playCard(tuner,use,[]);assert.equal(tuner.turnFlags.coordinationTriggered,true);assert.equal(tuner.hand.length,2);
+});
+test("beforeCardUse 与 beforeCardResolve 取消的牌都不触发协调", async () => {
+  for(const hook of ["beforeCardUse","beforeCardResolve"]){
+    const tuner=makePlayer(`tuner-${hook}`,0,"dawn","ai",7),ally=makePlayer(`ally-${hook}`,1,"dawn"),enemy=makePlayer(`enemy-${hook}`,2,"dusk"),use=instance("mutualBenefit");
+    tuner.hand.push(use);const {game}=makeGame([tuner,ally,enemy]);registerPassiveSkills(game);game.eventBus.on(hook,`test-cancel-${hook}`,(event)=>{event.cancelled=true;});
+    await game.playCard(tuner,use,[]);assert.equal(tuner.turnFlags.coordinationTriggered,false);assert.equal(game.state.publicCardPool.length,0);
+  }
+});
 test("响应牌与装备牌只输出语义日志，不产生底层弃置或通用使用日志", async () => {
   const attacker=makePlayer("attacker",0,"dawn"),defender=makePlayer("defender",1,"dusk","human");
   const {game}=makeGame([attacker,defender],{response:()=>true});defender.hand.push(instance("block"));
@@ -673,11 +783,29 @@ test("日志角色 token 可在同一行分别按阵营安全着色", () => {
   const markup=formatLogEntry(entry);assert.match(markup,/log-player-name team-dawn/);assert.match(markup,/log-player-name team-dusk/);
   assert.match(markup,/造成影响/);
 });
-test("牌面不再渲染英文 subtype，中文描述保留且 CSS 提供溢出保护", async () => {
-  const card=instance("transfer"),markup=handCardTemplate(card);
-  assert.ok(markup.includes(card.description));assert.doesNotMatch(markup,/card-tags|hidden-selection|equipment-control/);
-  const opponent=opponentHandStripTemplate([{known:true,...card}]);assert.ok(opponent.includes(card.description));assert.doesNotMatch(opponent,/card-tags|hidden-selection|equipment-control/);
-  const css=await readFile(projectFile("css/cards.css"),"utf8");assert.match(css,/card-description[^}]*overflow:\s*hidden/s);assert.match(css,/overflow-wrap:\s*anywhere/);
+test("23 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length,23);
+  for(const definition of Object.values(CARD_DEFINITIONS)){
+    const card={...definition,id:`layout-${definition.definitionId}`};
+    for(const markup of [handCardTemplate(card),opponentHandStripTemplate([{known:true,...card}])]){
+      assert.doesNotMatch(markup,/card-tags/);assert.ok(markup.includes(card.description));
+      for(const subtype of card.subtypes??[])assert.doesNotMatch(markup,new RegExp(`>\\s*${subtype}\\s*<`,"i"));
+    }
+  }
+});
+test("牌面长描述分类确定且真人与已知对手模板共用同一函数", () => {
+  for(const definitionId of ["counter","defenseDevice","transfer","mutualBenefit","battleDevice","shield","provoke"]){
+    const card=instance(definitionId),descriptionClass=cardDescriptionClass(card.description);
+    assert.match(descriptionClass,/^is-description-(?:long|very-long)$/);assert.match(handCardTemplate(card),new RegExp(descriptionClass));assert.match(opponentHandStripTemplate([{known:true,...card}]),new RegExp(descriptionClass));
+  }
+  assert.equal(cardDescriptionClass(CARD_DEFINITIONS.harvest.description),"");assert.doesNotMatch(handCardTemplate(instance("harvest")),/is-description-very-long/);
+  assert.equal(cardDescriptionClass(CARD_DEFINITIONS.radar?.description??CARD_DEFINITIONS.defenseDevice.description),"is-description-very-long");
+});
+test("牌面 CSS 删除旧标签并让长描述优先缩字、缩图和隐藏风味", async () => {
+  const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8"),css=`${cards}\n${characters}`;
+  assert.doesNotMatch(css,/\.card-tags/);assert.match(cards,/\.hand-card\.is-description-long\s*\{[^}]*grid-template-rows:/s);assert.match(cards,/\.hand-card\.is-description-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s);assert.match(cards,/\.hand-card\.is-description-very-long \.card-flavor\s*\{[^}]*display:\s*none/s);
+  assert.match(characters,/\.opponent-card-slot\.is-description-long\s*\{[^}]*grid-template-rows:/s);assert.match(characters,/\.opponent-card-slot\.is-description-very-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s);assert.match(cards,/overflow-wrap:\s*anywhere/);
+  const lowHeight=cards.match(/@media \(max-height:\s*920px\)[\s\S]*$/)?.[0]??"";assert.doesNotMatch(lowHeight,/\.card-description\s*\{[^}]*display:\s*none/s);assert.doesNotMatch(cards,/\.card-description\s*\{[^}]*overflow:\s*hidden/s);
 });
 
 let passed = 0;

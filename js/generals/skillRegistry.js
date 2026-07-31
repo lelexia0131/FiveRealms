@@ -145,6 +145,7 @@ const PASSIVE_SKILLS = {
 
   coordination(game, owner) {
     game.eventBus.on("cardUsed", `${owner.id}:coordination`, async (event) => {
+      if (event.cancelled) return;
       if (!owner.alive || event.source.id !== owner.id || owner.turnFlags.coordinationTriggered) return;
       const effectiveTargets = event.effectiveTargets ?? event.targets ?? [];
       if (!effectiveTargets.some((target) => target.id !== owner.id && target.battleTeam === owner.battleTeam)) return;

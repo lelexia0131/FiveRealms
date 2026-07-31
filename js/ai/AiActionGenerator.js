@@ -5,39 +5,18 @@
 import { RuleEngine } from "../core/RuleEngine.js?build=20260731-all-in-response-v27";
 import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260731-all-in-response-v27";
 import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-all-in-response-v27";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260731-all-in-response-v27";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
   constructor(game) { this.game = game; }
 
   chooseVisibleTransferPlan(game, actor, card) {
-    const plans = [];
-    for (const from of RuleEngine.getTransferSources(game, actor, card)) {
-      for (const receiver of RuleEngine.getTransferReceivers(game, actor, from, card)) {
-        if (from.equipmentDefinitionId) {
-          const moved = CARD_DEFINITIONS[from.equipmentDefinitionId]?.aiValue ?? 0;
-          const replaced = CARD_DEFINITIONS[receiver.equipmentDefinitionId]?.aiValue ?? 0;
-          plans.push({
-            sourceId:from.id, receiverId:receiver.id, zone:"equipment",
-            score:(from.battleTeam === actor.battleTeam ? -moved : moved)
-              + (receiver.battleTeam === actor.battleTeam ? moved - replaced : replaced - moved)
-          });
-        }
-        if ((from.handCount ?? 0) > 0) {
-          let score = (from.battleTeam === actor.battleTeam ? -4 : 4)
-            + (receiver.battleTeam === actor.battleTeam ? 4 : -4);
-          if (from.battleTeam === actor.battleTeam && receiver.battleTeam !== actor.battleTeam) score -= 8;
-          if (from.battleTeam === actor.battleTeam && receiver.battleTeam === actor.battleTeam) {
-            score += Math.min(
-              Math.max(0, from.handCount - Math.max(0, from.hp)),
-              Math.max(0, Math.max(0, receiver.hp) - receiver.handCount)
-            ) * 4;
-          }
-          plans.push({ sourceId:from.id, receiverId:receiver.id, zone:"hand", score });
-        }
-      }
-    }
-    return plans.sort((a, b) => b.score - a.score)[0] ?? null;
+    const sources = RuleEngine.getTransferSources(game, actor, card);
+    return chooseBestPositiveTransfer(buildTransferCandidates({
+      actor, sources,
+      getReceivers:(from) => RuleEngine.getTransferReceivers(game, actor, from, card)
+    }));
   }
 
   generate(player) {
