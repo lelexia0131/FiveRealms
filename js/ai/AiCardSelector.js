@@ -2,7 +2,7 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-tabletop-hands-v25";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-equipment-control-v26";
 
 /** 未知手牌只按位置采样，绝不按真实定义筛选。 */
 export class AiCardSelector {
@@ -25,10 +25,21 @@ export class AiCardSelector {
     return selected;
   }
 
+  /** 装备是公开信息；未知手牌仍只按既有不透明位置策略选择。 */
+  chooseZoneCard(actor, owner) {
+    if (!owner?.alive) return null;
+    if (owner.equipment && (!owner.hand.length || (actor.id !== owner.id && owner.equipment.aiValue >= 7))) {
+      return { card:owner.equipment, zone:"equipment" };
+    }
+    const [card] = this.chooseHiddenCards(actor, owner, 1);
+    return card ? { card, zone:"hand" } : owner.equipment ? { card:owner.equipment, zone:"equipment" } : null;
+  }
+
   chooseTransferSource(actor, candidates) {
     const allies = candidates.filter((player) => player.battleTeam === actor.battleTeam);
     const enemies = candidates.filter((player) => player.battleTeam !== actor.battleTeam);
-    return enemies.sort((a,b) => b.hand.length - a.hand.length)[0] ?? allies.sort((a,b) => b.hand.length - a.hand.length)[0] ?? null;
+    const resourceCount = (player) => player.hand.length + (player.equipment ? 1 : 0);
+    return enemies.sort((a,b) => resourceCount(b) - resourceCount(a))[0] ?? allies.sort((a,b) => resourceCount(b) - resourceCount(a))[0] ?? null;
   }
   chooseTransferReceiver(actor, from, candidates) {
     return candidates.filter((player) => player.battleTeam === actor.battleTeam).sort((a,b) => a.hand.length - b.hand.length)[0]

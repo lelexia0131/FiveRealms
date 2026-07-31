@@ -2,9 +2,9 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v25";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260730-tabletop-hands-v25";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260730-tabletop-hands-v25";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260730-equipment-control-v26";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260730-equipment-control-v26";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260730-equipment-control-v26";
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }
@@ -44,7 +44,7 @@ export class AiEvaluator {
         breakArmy: actor.hand?.filter((card) => card.definitionId === "assault").length ? 8 : 2,
         barrier: 4 + (target?.hp <= 2 ? 4 : 0),
         symbiosis: missing * 4,
-        stealSkill: 5 + Math.min(4, target?.handCount ?? 0),
+        stealSkill: 5 + Math.min(4, (target?.handCount ?? 0) + (target?.equipmentDefinitionId ? 2 : 0)),
         burningField: enemies.reduce((sum, enemy) => sum + 2 + (enemy.hp <= 1 ? 8 : 0), 0),
         hunt: 7 + (target?.hp <= 2 ? 7 : 0),
         allIn: Math.min(2, actor.energy) * 3 + (actor.energy >= 3 ? 4 : 0),
@@ -64,7 +64,7 @@ export class AiEvaluator {
         const focus = (target.maxHp - target.hp) * 3 + (target.hp <= 2 ? 5 : 0) + (target.hp <= 1 ? 8 : 0);
         value += enemy ? 3 + focus : -12;
       }
-      if (["plunder","destroy","scout"].includes(card.definitionId)) value += Math.min(4, target.hand?.length ?? target.handCount ?? 0);
+      if (["plunder","destroy","scout"].includes(card.definitionId)) value += Math.min(5, (target.hand?.length ?? target.handCount ?? 0) + (target.equipmentDefinitionId || target.equipment ? 2 : 0));
       if (enemy && ["assault","duel","plunder","destroy","scout"].includes(card.definitionId)) {
         value += this.threatPriority(actor, target, player.aiMemory, ["assault","duel"].includes(card.definitionId) ? 1 : 0);
       }

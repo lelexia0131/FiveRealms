@@ -1,5 +1,5 @@
 /**
- * 防御装置的公开判定流程。依赖 Deck、HpLossSystem、EventBus 与 UI 展示；
+ * 雷达的公开判定流程。依赖 Deck、HpLossSystem、EventBus 与 UI 展示；
  * 判定牌先进入独立判定区再去手牌或弃牌堆，绝不能在处理中参与重洗。
  */
 export class JudgmentSystem {
@@ -14,7 +14,7 @@ export class JudgmentSystem {
     this.game.state.phase = "judgment";
     this.game.state.currentJudgment = { card, defenderId:defender.id, attackerId:attacker?.id ?? null };
     this.game.ui.showJudgment?.(defender, card);
-    this.game.log(`${defender.name}的防御装置判定为「${card.name}」（${card.categoryName}）。`, "important");
+    this.game.log(`${defender.name}的雷达判定为「${card.name}」（${card.categoryName}）。`, "important");
     await this.game.eventBus.emit("judgmentRevealed", { type:"judgmentRevealed", attacker, defender, card, attackContext });
     let result;
     if (card.category === "tactic") {
@@ -30,7 +30,7 @@ export class JudgmentSystem {
     } else {
       this.game.state.deck.finishJudgmentToDiscard(card);
       this.game.log(`装备判定使${defender.name}失去1点生命，原突袭终止。`, "damage");
-      await this.game.hpLossSystem.lose(defender, 1, { source:attacker, card:attackContext.card, reason:"防御装置判定" });
+      await this.game.hpLossSystem.lose(defender, 1, { source:attacker, card:attackContext.card, reason:"雷达判定" });
       result = { handled:true, immune:true, category:"equipment" };
     }
     this.game.state.currentJudgment = null;

@@ -1,4 +1,5 @@
 /** 二十三种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
+import { RuleEngine } from "../core/RuleEngine.js?build=20260730-equipment-control-v26";
 
 const byId = (game, id) => game.state.players.find((player) => player.id === id && player.alive) ?? null;
 
@@ -43,14 +44,18 @@ const CARD_EFFECTS = {
     const selection = context.selection ?? {};
     let from = byId(game, selection.sourceId);
     let receiver = byId(game, selection.receiverId);
-    if (!from || !from.hand.length) from = game.aiController.cardSelector.chooseTransferSource(source, game.state.players.filter((player) => player.alive && player.hand.length));
-    if (!receiver || receiver.id === from?.id) receiver = game.aiController.cardSelector.chooseTransferReceiver(source, from, game.state.players.filter((player) => player.alive && player.id !== from?.id));
+    const sources = RuleEngine.getTransferSources(game, source, card).filter((candidate) => RuleEngine.getTransferReceivers(game, source, candidate, card).length);
+    if (!sources.includes(from)) from = game.aiController.cardSelector.chooseTransferSource(source, sources);
+    const receivers = RuleEngine.getTransferReceivers(game, source, from, card);
+    if (!receivers.includes(receiver)) receiver = game.aiController.cardSelector.chooseTransferReceiver(source, from, receivers);
     if (!from || !receiver || from.id === receiver.id) return;
     game.ui.setCurrentCard?.(card, source.name, `来源 ${from.name} → 接收 ${receiver.name}`);
-    const [moved] = await game.chooseHiddenCards(source, from, 1, "选择要转移的手牌", selection);
-    if (!moved) return;
-    const transferred = await game.moveCardBetweenHands(from, receiver, moved, "转移");
-    if (transferred) game.log(`${source.name}将${from.name}的${game.cardLabelForHuman(receiver, moved)}转移给了${receiver.name}。`, "important");
+    const chosen = await game.choosePlayerZoneCard(source, from, "选择要转移的手牌或装备牌", selection);
+    if (!chosen || !RuleEngine.getTransferSources(game, source, card).includes(from) || !RuleEngine.getTransferReceivers(game, source, from, card).includes(receiver)) return;
+    const transferred = chosen.zone === "equipment"
+      ? await game.moveEquipmentBetweenPlayers(from, receiver, chosen.card, "转移")
+      : await game.moveCardBetweenHands(from, receiver, chosen.card, "转移");
+    if (transferred) game.log(`${source.name}将${from.name}的${chosen.zone === "equipment" ? `装备「${chosen.card.name}」` : game.cardLabelForHuman(receiver, chosen.card)}转移给了${receiver.name}${chosen.zone === "equipment" ? "的装备区" : ""}。`, "important");
   },
 
   async exposeWeakness(game, source) {
@@ -95,19 +100,26 @@ const CARD_EFFECTS = {
 
   async plunder(game, source, card, targets, context) {
     const target = targets[0];
-    const [stolen] = await game.chooseHiddenCards(source, target, 1, "选择要掠夺的手牌", context.selection);
-    if (!stolen) return;
-    const plundered = await game.moveCardBetweenHands(target, source, stolen, "掠夺");
-    if (plundered) game.log(`${source.name}从${target.name}处掠夺了${game.cardLabelForHuman(source, stolen)}。`, "important");
+    if (!RuleEngine.getCardTargets(game, source, card).includes(target)) return;
+    const chosen = await game.choosePlayerZoneCard(source, target, "选择要掠夺的手牌或装备牌", context.selection);
+    if (!chosen || !RuleEngine.getCardTargets(game, source, card).includes(target)) return;
+    const plundered = chosen.zone === "equipment"
+      ? await game.moveEquipmentToHand(target, source, chosen.card, "掠夺")
+      : await game.moveCardBetweenHands(target, source, chosen.card, "掠夺");
+    if (plundered) game.log(`${source.name}从${target.name}处掠夺了${chosen.zone === "equipment" ? `装备「${chosen.card.name}」` : game.cardLabelForHuman(source, chosen.card)}。`, "important");
   },
 
   async destroy(game, source, card, targets, context) {
     const target = targets[0];
-    const [destroyed] = await game.chooseHiddenCards(source, target, 1, "选择要破坏的手牌", context.selection);
+    if (!RuleEngine.getCardTargets(game, source, card).includes(target)) return;
+    const chosen = await game.choosePlayerZoneCard(source, target, "选择要破坏的手牌或装备牌", context.selection);
+    if (!chosen || !RuleEngine.getCardTargets(game, source, card).includes(target)) return;
+    const destroyed = chosen.zone === "equipment"
+      ? await game.discardEquipment(target, chosen.card, `被${source.name}破坏`)
+      : await game.discardCardFromHand(target, chosen.card, `被${source.name}破坏`);
     if (!destroyed) return;
-    await game.discardCardFromHand(target, destroyed, `被${source.name}破坏`);
-    game.ui.setCurrentCard?.(destroyed, `${source.name}破坏的手牌`, target.name);
-    game.log(`${source.name}破坏了${target.name}的「${destroyed.name}」。`, "important");
+    game.ui.setCurrentCard?.(chosen.card, `${source.name}破坏的${chosen.zone === "equipment" ? "装备" : "手牌"}`, target.name);
+    game.log(`${source.name}破坏了${target.name}的${chosen.zone === "equipment" ? "装备" : "手牌"}「${chosen.card.name}」。`, "important");
   },
 
   async harvest(game, source) { await game.drawCards(source, 2, "收获"); },

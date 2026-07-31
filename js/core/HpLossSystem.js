@@ -1,6 +1,6 @@
 /**
  * 处理“失去生命”而非伤害。依赖 Game、EventBus 与 DyingSystem；它会修改生命，
- * 但故意绕过护盾、格挡和防御装置。普通伤害必须继续使用 Game.damage()。
+ * 但故意绕过护盾、格挡和雷达。普通伤害必须继续使用 Game.damage()。
  */
 export class HpLossSystem {
   constructor(game) { this.game = game; }

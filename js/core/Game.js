@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v25";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-tabletop-hands-v25";
-import { createId, clamp } from "../utils/helpers.js?build=20260730-tabletop-hands-v25";
-import { EventBus } from "./EventBus.js?build=20260730-tabletop-hands-v25";
-import { Player } from "./Player.js?build=20260730-tabletop-hands-v25";
-import { Deck } from "./Deck.js?build=20260730-tabletop-hands-v25";
-import { TeamManager } from "./TeamManager.js?build=20260730-tabletop-hands-v25";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260730-tabletop-hands-v25";
-import { RuleEngine } from "./RuleEngine.js?build=20260730-tabletop-hands-v25";
-import { ResponseSystem } from "./ResponseSystem.js?build=20260730-tabletop-hands-v25";
-import { GameLogger } from "./GameLogger.js?build=20260730-tabletop-hands-v25";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260730-tabletop-hands-v25";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260730-tabletop-hands-v25";
-import { AIController } from "../ai/AIController.js?build=20260730-tabletop-hands-v25";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260730-tabletop-hands-v25";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260730-tabletop-hands-v25";
-import { Debug } from "../utils/debug.js?build=20260730-tabletop-hands-v25";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260730-tabletop-hands-v25";
-import { DyingSystem } from "./DyingSystem.js?build=20260730-tabletop-hands-v25";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260730-tabletop-hands-v25";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260730-tabletop-hands-v25";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260730-tabletop-hands-v25";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260730-tabletop-hands-v25";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-equipment-control-v26";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-equipment-control-v26";
+import { createId, clamp } from "../utils/helpers.js?build=20260730-equipment-control-v26";
+import { EventBus } from "./EventBus.js?build=20260730-equipment-control-v26";
+import { Player } from "./Player.js?build=20260730-equipment-control-v26";
+import { Deck } from "./Deck.js?build=20260730-equipment-control-v26";
+import { TeamManager } from "./TeamManager.js?build=20260730-equipment-control-v26";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260730-equipment-control-v26";
+import { RuleEngine } from "./RuleEngine.js?build=20260730-equipment-control-v26";
+import { ResponseSystem } from "./ResponseSystem.js?build=20260730-equipment-control-v26";
+import { GameLogger } from "./GameLogger.js?build=20260730-equipment-control-v26";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260730-equipment-control-v26";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260730-equipment-control-v26";
+import { AIController } from "../ai/AIController.js?build=20260730-equipment-control-v26";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260730-equipment-control-v26";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260730-equipment-control-v26";
+import { Debug } from "../utils/debug.js?build=20260730-equipment-control-v26";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260730-equipment-control-v26";
+import { DyingSystem } from "./DyingSystem.js?build=20260730-equipment-control-v26";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260730-equipment-control-v26";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260730-equipment-control-v26";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260730-equipment-control-v26";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260730-equipment-control-v26";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -158,10 +158,10 @@ export class Game {
     this.eventBus.on("cardUsed", "global:recycleDevice", async (event) => {
       const owner = event.source;
       if (!owner.alive || this.currentPlayer?.id !== owner.id || owner.equipment?.definitionId !== "recycleDevice"
-        || event.card.category !== "tactic" || event.card.usageMode !== "active" || owner.turnFlags.recycleDeviceTriggered) return;
-      owner.turnFlags.recycleDeviceTriggered = true;
-      this.log(`${owner.name}的回收装置启动，摸1张牌。`);
-      await this.drawCards(owner, 1, "回收装置");
+        || event.card.category !== "tactic" || event.card.usageMode !== "active" || (owner.turnFlags.recycleDeviceUses ?? 0) >= 2) return;
+      owner.turnFlags.recycleDeviceUses = (owner.turnFlags.recycleDeviceUses ?? 0) + 1;
+      this.log(`${owner.name}的回收站启动（${owner.turnFlags.recycleDeviceUses}/2），摸1张牌。`);
+      await this.drawCards(owner, 1, "回收站");
     });
   }
 
@@ -660,6 +660,64 @@ export class Game {
     return true;
   }
 
+  /** 将公开装备从装备区移入另一名角色手牌；所有观察者继续知道该实体牌。 */
+  async moveEquipmentToHand(from, to, card, reason) {
+    if (!from?.alive || !to?.alive || from.equipment !== card || this.state.isGameOver) return false;
+    const move = { type:"beforeCardMove", card, from:"equipment", to:"hand", fromPlayer:from, player:to, reason, cancelled:false };
+    await this.eventBus.emit("beforeCardMove", move);
+    if (move.cancelled || from.equipment !== card) return false;
+    from.equipment = null;
+    to.hand.push(card);
+    to.bumpHandVersion();
+    this.invalidateCardKnowledge(card.id, from.id);
+    for (const viewer of this.state.players) if (viewer.id !== to.id) this.rememberPrivateCard(viewer, to, card);
+    this.ui.queueFeedback?.("draw", to.id, 1);
+    await this.eventBus.emit("afterCardMove", { ...move, type:"afterCardMove" });
+    this.ui.render(this);
+    return true;
+  }
+
+  /** 将公开装备直接转移到另一名角色装备区；接收者旧装备按替换规则公开弃置。 */
+  async moveEquipmentBetweenPlayers(from, to, card, reason) {
+    if (!from?.alive || !to?.alive || from.id === to.id || from.equipment !== card || this.state.isGameOver) return false;
+    const move = { type:"beforeCardMove", card, from:"equipment", to:"equipment", fromPlayer:from, player:to, reason, cancelled:false };
+    await this.eventBus.emit("beforeCardMove", move);
+    if (move.cancelled || from.equipment !== card) return false;
+    if (to.equipment) {
+      const replaced = to.equipment;
+      const replaceMove = { type:"beforeCardMove", card:replaced, from:"equipment", to:"discard", player:to, reason:"转移装备替换", cancelled:false };
+      await this.eventBus.emit("beforeCardMove", replaceMove);
+      to.equipment = null;
+      this.state.deck.discard(replaced);
+      await this.eventBus.emit("afterCardMove", { ...replaceMove, type:"afterCardMove" });
+      this.log(`${to.name}原有的「${replaced.name}」因装备转移被替换并弃置。`);
+    }
+    from.equipment = null;
+    to.equipment = card;
+    this.invalidateCardKnowledge(card.id, from.id);
+    this.syncDeckAliases();
+    this.ui.queueFeedback?.("equip", to.id);
+    await this.eventBus.emit("afterCardMove", { ...move, type:"afterCardMove" });
+    this.ui.render(this);
+    return true;
+  }
+
+  /** 从装备区公开弃置实体装备。 */
+  async discardEquipment(player, card, reason = "弃置装备") {
+    if (!player?.alive || player.equipment !== card) return false;
+    const move = { type:"beforeCardMove", card, from:"equipment", to:"discard", player, reason, cancelled:false };
+    await this.eventBus.emit("beforeCardMove", move);
+    if (move.cancelled || player.equipment !== card) return false;
+    player.equipment = null;
+    this.invalidateCardKnowledge(card.id, player.id);
+    this.state.deck.discard(card);
+    this.syncDeckAliases();
+    this.ui.queueFeedback?.("discard", player.id);
+    await this.eventBus.emit("afterCardMove", { ...move, type:"afterCardMove" });
+    this.ui.render(this);
+    return true;
+  }
+
   /** 将主动牌由手牌移入结算区；防止快速点击重复使用同一实体牌。 */
   async moveHandToResolving(player, card) {
     const index = player.hand.indexOf(card);
@@ -778,6 +836,27 @@ export class Game {
       return cards;
     }
     return this.aiController.cardSelector.chooseHiddenCards(actor, owner, maximum);
+  }
+
+  /** 在隐藏手牌与公开装备之间选择一张；核心始终重新验证所选实体仍在原区域。 */
+  async choosePlayerZoneCard(actor, owner, reason, selection = null) {
+    if (!owner?.alive || (!owner.hand.length && !owner.equipment)) return null;
+    if (selection?.zone === "equipment") {
+      if (!selection.selectionId || !this.cardSelectionSystem.isSelectionActive(selection.selectionId, owner)) return null;
+      const equipment = owner.equipment;
+      const chosen = equipment && equipment.id === selection.equipmentCardId ? { card:equipment, zone:"equipment" } : null;
+      this.cardSelectionSystem.clearSelection(selection.selectionId);
+      return chosen;
+    }
+    if (selection?.tokens?.length) {
+      const [card] = await this.chooseHiddenCards(actor, owner, 1, reason, selection);
+      return card ? { card, zone:"hand" } : null;
+    }
+    if (actor.controllerType === "human") {
+      const requested = await this.ui.interactionController?.requestZoneCard?.(this, actor, owner, reason);
+      return requested ? this.choosePlayerZoneCard(actor, owner, reason, requested) : null;
+    }
+    return this.aiController.cardSelector.chooseZoneCard(actor, owner);
   }
 
   /** 统一添加公开日志。 */

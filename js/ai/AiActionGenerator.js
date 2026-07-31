@@ -2,9 +2,9 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260730-tabletop-hands-v25";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260730-tabletop-hands-v25";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-tabletop-hands-v25";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260730-equipment-control-v26";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260730-equipment-control-v26";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260730-equipment-control-v26";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -15,7 +15,7 @@ export class AiActionGenerator {
     for (const card of player.hand) {
       if (!RuleEngine.canPlayCard(this.game, player, card).ok) continue;
       const targets = RuleEngine.getCardTargets(this.game, player, card);
-      if (["singleEnemy", "singleEnemyInRange", "singleAlly", "otherWithCards"].includes(card.targetType)) {
+      if (["singleEnemy", "singleEnemyInRange", "singleAlly", "otherWithCards", "otherWithCardsOrEquipment"].includes(card.targetType)) {
         for (const target of targets) actions.push({ type:"card", card, targets:[target] });
       } else actions.push({ type:"card", card, targets:card.targetType === "allEnemies" || card.targetType === "allLiving" ? targets : [] });
     }
@@ -52,6 +52,7 @@ export class AiActionGenerator {
       if (["singleEnemy"].includes(card.targetType)) for (const target of enemies) actions.push({ type:"card", card, targets:[target] });
       else if (card.targetType === "singleAlly") for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) actions.push({ type:"card", card, targets:[target] });
       else if (card.targetType === "otherWithCards") for (const target of alive.filter((entry) => entry.id !== actor.id && entry.handCount > 0)) actions.push({ type:"card", card, targets:[target] });
+      else if (card.targetType === "otherWithCardsOrEquipment") for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) actions.push({ type:"card", card, targets:[target] });
       else actions.push({ type:"card", card, targets:["allEnemies","allLiving"].includes(card.targetType) ? (card.targetType === "allEnemies" ? enemies : alive) : [] });
     }
     const skill = ACTIVE_SKILLS[actor.activeSkillId];
@@ -60,7 +61,7 @@ export class AiActionGenerator {
       let targets = [];
       if (["barrier","resonance"].includes(skill.id)) targets = allies;
       else if (skill.id === "symbiosis") targets = allies.filter((player) => player.hp < player.maxHp);
-      else if (skill.id === "stealSkill") targets = enemies.filter((player) => player.handCount > 0);
+      else if (skill.id === "stealSkill") targets = RuleEngine.getSkillTargets(simulationGame, actor, skill);
       else if (skill.id === "hunt") targets = enemies.filter((player) => player.huntMarkSourceId === actor.id);
       if (["none","allEnemies"].includes(skill.targetType)) actions.push({ type:"skill", skill, targets:skill.targetType === "allEnemies" ? enemies : [] });
       else for (const target of targets) actions.push({ type:"skill", skill, targets:[target] });

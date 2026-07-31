@@ -2,8 +2,9 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-tabletop-hands-v25";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260730-tabletop-hands-v25";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260730-equipment-control-v26";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260730-equipment-control-v26";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260730-equipment-control-v26";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -62,15 +63,24 @@ export class AiSimulator {
         }
         break;
       case "plunder":
-        if (target) { target.handCount = Math.max(0, target.handCount - scale); actor.handCount += scale; }
+        if (target) this.takeResourceToHand(actor, target, scale);
         break;
       case "transfer": {
-        const source = target ?? next.players.filter((player) => player.alive && player.id !== actor.id).sort((a,b) => b.handCount - a.handCount)[0];
-        const receiver = next.players.filter((player) => player.alive && player.id !== source?.id).sort((a,b) => a.handCount - b.handCount)[0];
-        if (source && receiver) { source.handCount = Math.max(0, source.handCount - scale); receiver.handCount += scale; }
+        const game = { state:{ players:next.players } };
+        const inRange = (player) => DistanceSystem.getDistance(game, actor, player) <= 1;
+        const resources = next.players.filter((player) => player.alive && inRange(player) && ((player.handCount ?? 0) > 0 || player.equipmentDefinitionId));
+        const source = resources.sort((a,b) => (b.handCount + (b.equipmentDefinitionId ? 1 : 0)) - (a.handCount + (a.equipmentDefinitionId ? 1 : 0)))[0];
+        const receiver = next.players.filter((player) => player.alive && player.id !== source?.id && inRange(player)).sort((a,b) => a.handCount - b.handCount)[0];
+        if (source && receiver && source.equipmentDefinitionId && ((source.handCount ?? 0) <= 0 || CARD_DEFINITIONS[source.equipmentDefinitionId]?.aiValue >= 7)) {
+          receiver.equipmentDefinitionId = source.equipmentDefinitionId;
+          source.equipmentDefinitionId = null;
+        } else if (source && receiver) {
+          source.handCount = Math.max(0, source.handCount - scale);
+          receiver.handCount += scale;
+        }
         break;
       }
-      case "destroy": if (target) target.handCount = Math.max(0, target.handCount - scale); break;
+      case "destroy": if (target) this.destroyResource(target, scale); break;
       case "duel": if (target) this.applyDuel(next, actor, target, scale); break;
       case "mutualBenefit": for (const player of next.players) if (player.alive) player.handCount += scale; break;
       case "symbiosis": for (const player of next.players) if (player.alive) this.heal(player, scale); break;
@@ -78,11 +88,24 @@ export class AiSimulator {
         if (card.category === "equipment") actor.equipmentDefinitionId = card.definitionId;
         break;
     }
-    if (card.category === "tactic" && actor.equipmentDefinitionId === "recycleDevice" && !actor.recycleDeviceTriggered) {
-      actor.recycleDeviceTriggered = true;
+    if (card.category === "tactic" && actor.equipmentDefinitionId === "recycleDevice" && (actor.recycleDeviceUses ?? 0) < 2) {
+      actor.recycleDeviceUses = (actor.recycleDeviceUses ?? 0) + 1;
       actor.handCount += 1;
     }
     return next;
+  }
+
+  takeResourceToHand(actor, target, scale = 1) {
+    const takeEquipment = target.equipmentDefinitionId && ((target.handCount ?? 0) <= 0 || CARD_DEFINITIONS[target.equipmentDefinitionId]?.aiValue >= 7);
+    if (takeEquipment && scale >= .5) target.equipmentDefinitionId = null;
+    else target.handCount = Math.max(0, (target.handCount ?? 0) - scale);
+    actor.handCount += scale;
+  }
+
+  destroyResource(target, scale = 1) {
+    const destroyEquipment = target.equipmentDefinitionId && ((target.handCount ?? 0) <= 0 || CARD_DEFINITIONS[target.equipmentDefinitionId]?.aiValue >= 7);
+    if (destroyEquipment && scale >= .5) target.equipmentDefinitionId = null;
+    else target.handCount = Math.max(0, (target.handCount ?? 0) - scale);
   }
 
   tacticResolutionChance(state, actor, card, targets = []) {
@@ -134,8 +157,7 @@ export class AiSimulator {
     } else if (skill.id === "symbiosis" && target) {
       this.heal(target, 1);
     } else if (skill.id === "stealSkill" && target) {
-      target.handCount = Math.max(0, target.handCount - 1);
-      actor.handCount += 1;
+      this.takeResourceToHand(actor, target, 1);
     } else if (skill.id === "burningField") {
       for (const enemy of state.players) if (enemy.alive && enemy.battleTeam !== actor.battleTeam) this.applyDamage(state, actor, enemy, 1, { canBlock:false });
     } else if (skill.id === "hunt" && target) {

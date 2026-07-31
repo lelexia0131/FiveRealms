@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-tabletop-hands-v25";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260730-equipment-control-v26";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -39,10 +39,11 @@ export function equipmentSlotTemplate(player, isHuman = false) {
     </div>`;
   }
   const equipment = player.equipment;
-  const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"首次战术后摸1张", defenseDevice:"受突袭前公开判定", battleDevice:"突袭需2张格挡", telescope:"对外距离-1", barrierDevice:"他人对你距离+1" };
-  const stateLabels = { energyDevice:"持续供能", recycleDevice:"待触发", defenseDevice:"待判定", battleDevice:"强化中", telescope:"观测中", barrierDevice:"屏障展开" };
-  const triggered = equipment.definitionId === "recycleDevice" && Boolean(player.turnFlags?.recycleDeviceTriggered);
-  const stateLabel = triggered ? "已触发" : stateLabels[equipment.definitionId] ?? "生效中";
+  const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"战术后摸1张·每回合2次", defenseDevice:"受突袭前公开判定", battleDevice:"突袭需2张格挡", telescope:"对外距离-1", barrierDevice:"他人对你距离+1" };
+  const stateLabels = { energyDevice:"持续供能", recycleDevice:"待回收", defenseDevice:"待判定", battleDevice:"强化中", telescope:"观测中", barrierDevice:"屏障展开" };
+  const recycleUses = player.turnFlags?.recycleDeviceUses ?? 0;
+  const triggered = equipment.definitionId === "recycleDevice" && recycleUses >= 2;
+  const stateLabel = equipment.definitionId === "recycleDevice" ? `本回合 ${recycleUses}/2` : stateLabels[equipment.definitionId] ?? "生效中";
   return `<div class="equipment-slot is-equipped ${triggered ? "is-triggered" : "is-ready"}" tabindex="0" aria-label="装备：${escapeHtml(equipment.name)}，${escapeHtml(stateLabel)}">
     <img class="equipment-icon" src="${escapeHtml(equipment.icon || equipment.art)}" alt="" aria-hidden="true">
     <div class="equipment-copy"><strong>${escapeHtml(equipment.name)}</strong><small>${isHuman ? escapeHtml(equipment.description) : escapeHtml(summaries[equipment.definitionId] ?? equipment.description)}</small></div>
@@ -82,7 +83,7 @@ export function playerPanelTemplate(player, options = {}) {
     player.statuses?.huntMark ? ["猎印", "mark"] : null,
     player.turnFlags?.momentum > 0 ? [`连势 ${player.turnFlags.momentum}`, "mark"] : null,
     player.hp <= 0 && player.alive ? [`濒死 · 需${1 - player.hp}调息`, "danger"] : null,
-    player.turnFlags?.recycleDeviceTriggered ? ["回收已触发", "mark"] : null
+    player.turnFlags?.recycleDeviceUses > 0 ? [`回收 ${player.turnFlags.recycleDeviceUses}/2`, "mark"] : null
   ].filter(Boolean);
   const statusSummary = statuses.length ? statuses.map(([label]) => label).join(" · ") : "—";
   const statusText = isThinking ? "正在思考" : isCurrent ? "正在行动" : player.alive ? "等待行动" : "已阵亡";
