@@ -2,10 +2,10 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260731-async-session-v28";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260731-async-session-v28";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-async-session-v28";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260731-async-session-v28";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260731-private-intent-atomic-v29";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260731-private-intent-atomic-v29";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-private-intent-atomic-v29";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260731-private-intent-atomic-v29";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -51,6 +51,7 @@ export class AiActionGenerator {
 
   /** 从过滤快照重新生成深层动作；动态距离只使用快照中的实时 aliveRing。 */
   generateFromVisible(state, playerId) {
+    if (state.playPhaseEnded) return [];
     const actor = state.players.find((player) => player.id === playerId && player.alive);
     if (!actor) return [{ type:"end" }];
     const alive = state.players.filter((player) => player.alive).sort((a,b) => a.seatIndex - b.seatIndex);

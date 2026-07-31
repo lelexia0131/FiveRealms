@@ -2,8 +2,8 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间预算返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-async-session-v28";
-import { AiSimulator } from "./AiSimulator.js?build=20260731-async-session-v28";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-private-intent-atomic-v29";
+import { AiSimulator } from "./AiSimulator.js?build=20260731-private-intent-atomic-v29";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -53,21 +53,41 @@ export class AiPlanner {
       if (action.card?.category === "tactic") return -hiddenWorlds.filter((world) => Object.values(world).some((hand) => hand.includes("counter"))).length / hiddenWorlds.length;
       return 0;
     };
-    let beam = rootActions.map((action) => ({ action, state:simulator.apply(visibleState, action, player.id), score:this.evaluator.actionUtility(action, player, visibleState) + hiddenAdjustment(action), sequence:[action] }));
+    let beam = rootActions.map((action) => {
+      const state = simulator.apply(visibleState, action, player.id);
+      return {
+        action,
+        state,
+        terminal:Boolean(state.playPhaseEnded),
+        score:this.evaluator.actionUtility(action, player, visibleState) + hiddenAdjustment(action),
+        sequence:[action]
+      };
+    });
     beam.sort((a,b) => b.score - a.score);
     beam = beam.slice(0, GAME_CONFIG.aiBeamWidth);
     let expanded = beam.length;
     const rootAssaultTargets = new Set(rootActions.filter((action) => action.card?.definitionId === "assault").map((action) => action.targets?.[0]?.id));
     let discoveredDynamicTarget = false;
     for (let depth = 2; depth <= GAME_CONFIG.aiSearchDepth; depth += 1) {
+      if (beam.every((node) => node.terminal)) break;
       const candidates = [];
       for (const node of beam) {
+        if (node.terminal) {
+          candidates.push(node);
+          continue;
+        }
         const followActions = this.game.aiController.actionGenerator.generateFromVisible(node.state, player.id);
         for (const follow of followActions) {
           if (follow.card?.definitionId === "assault" && !rootAssaultTargets.has(follow.targets?.[0]?.id)) discoveredDynamicTarget = true;
           const state = simulator.apply(node.state, follow, player.id);
           const score = node.score + this.evaluator.actionUtility(follow, player, node.state) / depth + this.evaluator.stateUtility(state, player.id) * 0.08 / depth;
-          candidates.push({ action:node.action, state, score, sequence:[...node.sequence, follow] });
+          candidates.push({
+            action:node.action,
+            state,
+            terminal:Boolean(state.playPhaseEnded),
+            score,
+            sequence:[...node.sequence, follow]
+          });
           expanded += 1;
           if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
             if (!(await this.game.cleanupManager.delay(0)) || !this.game.isSessionValid(options.gameId ?? this.game.state.gameId)) return { type:"end" };
@@ -82,7 +102,10 @@ export class AiPlanner {
       if ((globalThis.performance?.now?.() ?? Date.now()) - started >= budget) break;
     }
     const choice = this.chooseCandidate(beam);
-    this.lastPlannedSequence = (choice?.sequence ?? []).map((action) => this.describeAction(action));
+    const selectedSequence = [...(choice?.sequence ?? [])];
+    const endIndex = selectedSequence.findIndex((action) => action.type === "end");
+    this.lastPlannedSequence = (endIndex >= 0 ? selectedSequence.slice(0, endIndex + 1) : selectedSequence)
+      .map((action) => this.describeAction(action));
     this.lastSearchStats = { elapsedMs:(globalThis.performance?.now?.() ?? Date.now()) - started, expanded, depth:Math.max(1, choice?.sequence.length ?? 1), beamWidth:GAME_CONFIG.aiBeamWidth,
       discoveredDynamicTarget, hiddenSamples:hiddenWorlds.length, bestSequence:this.lastPlannedSequence };
     return choice?.action ?? { type:"end" };

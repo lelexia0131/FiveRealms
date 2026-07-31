@@ -142,6 +142,45 @@ function clickTarget(selector, dataset = {}) {
   return { dataset, closest:(query) => query === selector ? { dataset } : null };
 }
 
+async function choosePrivateCardThroughInteraction(game, actor, card, target, { handIndexes = [0], equipment = false } = {}) {
+  const ui = {
+    game,
+    elements:{ response_panel:makeInteractiveElement() },
+    render() {},
+    async requestTarget(players) { return players[0] ?? null; }
+  };
+  const controller = new InteractionController(ui);
+  controller.requestHiddenCards = async (selection, _count, _prompt, options = {}) => {
+    if (equipment) return [options.slots.find((slot) => slot.zone === "equipment")?.token].filter(Boolean);
+    return handIndexes.map((index) => selection.tokens[index]?.token).filter(Boolean);
+  };
+  return controller.requestCardFlow(game, actor, card, [target]);
+}
+
+function assertNoHiddenSelectionLeak(value, hiddenCards) {
+  const seen = new Set();
+  const visit = (entry) => {
+    if (!entry || typeof entry !== "object" || seen.has(entry)) return;
+    seen.add(entry);
+    for (const hidden of hiddenCards) assert.notEqual(entry, hidden, "公开上下文包含隐藏实体对象");
+    for (const nested of Object.values(entry)) visit(nested);
+  };
+  visit(value);
+  const serialized = JSON.stringify(value);
+  for (const hidden of hiddenCards) {
+    for (const secret of [hidden.id, hidden.definitionId, hidden.name, hidden.description]) {
+      if (secret) assert.equal(serialized.includes(secret), false, `公开上下文泄露隐藏字段：${secret}`);
+    }
+  }
+}
+
+function forceAvailableAiCounters(game, capturedContexts = []) {
+  game.aiController.responsePolicy.shouldRespond = (_responder, type, context, cards) => {
+    capturedContexts.push(context);
+    return type === "counter" && cards.length > 0;
+  };
+}
+
 // 配置、展示资源与注册表（40 项）
 for (const general of GENERAL_DEFINITIONS) test(`角色资源：${general.name}具有有效本地肖像`, async () => {
   assert.match(general.portrait, /^\.\/assets\/characters\/[a-z-]+\.svg$/);
@@ -903,6 +942,146 @@ test("响应牌与装备牌只输出语义日志，不产生底层弃置或通�
   assert.ok(game.state.logs.some((entry)=>entry.message===`${attacker.name}装备了「充能桩」。`));
   assert.ok(!game.state.logs.some((entry)=>entry.message.includes("使用了「充能桩」")));
 });
+
+test("真人破坏预选手牌经过双重反制后仍破坏原实体且不泄露私密选择", async () => {
+  const source=makePlayer("private-destroy-source",0,"dawn","human"),target=makePlayer("private-destroy-target",1,"dusk"),third=makePlayer("private-destroy-third",2,"dawn");
+  const use=instance("destroy"),secret={...instance("charge"),definitionId:"hidden-destroy-definition",name:"隐藏破坏实体标记",description:"隐藏破坏描述标记"},decoy=instance("block"),firstCounter=instance("counter"),secondCounter=instance("counter");
+  source.hand.push(use);target.hand.push(secret,decoy,firstCounter);third.hand.push(secondCounter);
+  const {game,ui}=makeGame([source,target,third]),contexts=[];forceAvailableAiCounters(game,contexts);
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0]});
+  assert.ok(selection?.selectionId);assert.ok(game.cardSelectionSystem.selections.size>0);
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.ok(game.state.deck.discardPile.includes(secret));assert.ok(target.hand.includes(decoy));assert.ok(!target.hand.includes(secret));
+  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
+  for(const context of contexts)assertNoHiddenSelectionLeak(context,[secret]);
+  for(const request of ui.responseRequests)assertNoHiddenSelectionLeak(request,[secret]);
+});
+
+test("真人掠夺预选手牌经过双重反制后仍获得原实体", async () => {
+  const source=makePlayer("private-plunder-source",0,"dawn","human"),target=makePlayer("private-plunder-target",1,"dusk"),third=makePlayer("private-plunder-third",2,"dawn");
+  const use=instance("plunder"),secret=instance("harvest"),decoy=instance("charge"),firstCounter=instance("counter"),secondCounter=instance("counter");
+  source.hand.push(use);target.hand.push(secret,decoy,firstCounter);third.hand.push(secondCounter);
+  const {game}=makeGame([source,target,third]);forceAvailableAiCounters(game);
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0]});
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.ok(source.hand.includes(secret));assert.ok(target.hand.includes(decoy));assert.ok(!target.hand.includes(secret));
+  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
+});
+
+test("真人掠夺预选装备不受目标反制导致的手牌版本变化影响", async () => {
+  const source=makePlayer("private-equip-source",0,"dawn","human"),target=makePlayer("private-equip-target",1,"dusk"),third=makePlayer("private-equip-third",2,"dawn");
+  const use=instance("plunder"),equipment=instance("defenseDevice"),firstCounter=instance("counter"),secondCounter=instance("counter");
+  source.hand.push(use);target.hand.push(firstCounter);target.equipment=equipment;third.hand.push(secondCounter);
+  const {game}=makeGame([source,target,third]);forceAvailableAiCounters(game);
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{equipment:true});
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.equal(target.equipment,null);assert.equal(source.equipment,equipment);
+  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
+});
+
+test("真人窥探两张手牌经过双重反制后仍只展示反制前确认的实体", async () => {
+  const source=makePlayer("private-scout-source",0,"dawn","human"),target=makePlayer("private-scout-target",1,"dusk"),third=makePlayer("private-scout-third",2,"dawn");
+  const use=instance("scout"),first=instance("charge"),second=instance("harvest"),counter=instance("counter"),thirdCounter=instance("counter");
+  source.hand.push(use);target.hand.push(first,second,counter);third.hand.push(thirdCounter);
+  const {game,ui}=makeGame([source,target,third]);forceAvailableAiCounters(game);
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0,1]});
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.deepEqual(ui.reveals.at(-1)?.cards,[first,second]);
+  assert.equal(source.aiMemory.knownCardsByPlayer[target.id][first.id],first.definitionId);
+  assert.equal(source.aiMemory.knownCardsByPlayer[target.id][second.id],second.definitionId);
+  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
+});
+
+test("反制期间原预选牌离开区域时破坏安全失败且不改选其他牌", async () => {
+  const source=makePlayer("private-missing-source",0,"dawn","human"),target=makePlayer("private-missing-target",1,"dusk"),third=makePlayer("private-missing-third",2,"dawn");
+  const use=instance("destroy"),selected=instance("charge"),decoy=instance("harvest"),counter=instance("counter"),thirdCounter=instance("counter");
+  source.hand.push(use);target.hand.push(selected,decoy,counter);third.hand.push(thirdCounter);
+  const {game}=makeGame([source,target,third]);forceAvailableAiCounters(game);let usedEvent=null,moved=false;
+  game.eventBus.on("afterCardMove","test:remove-private-destroy-selection",async(event)=>{if(!moved&&event.card===counter){moved=true;await game.discardCardFromHand(target,selected,"反制期间合法移走",{silent:true});}});
+  game.eventBus.on("cardUsed","test:private-destroy-safe-failure",(event)=>{if(event.card===use)usedEvent=event;});
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0]});
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.ok(game.state.deck.discardPile.includes(selected));assert.ok(target.hand.includes(decoy));
+  assert.equal(usedEvent?.resolved,false);assert.deepEqual(usedEvent?.effectiveTargets,[]);
+  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
+});
+
+test("窥探预选两张中一张在反制期间离开时只展示仍在原手牌的一张", async () => {
+  const source=makePlayer("private-filter-source",0,"dawn","human"),target=makePlayer("private-filter-target",1,"dusk"),third=makePlayer("private-filter-third",2,"dawn");
+  const use=instance("scout"),left=instance("charge"),remains=instance("harvest"),counter=instance("counter"),thirdCounter=instance("counter");
+  source.hand.push(use);target.hand.push(left,remains,counter);third.hand.push(thirdCounter);
+  const {game,ui}=makeGame([source,target,third]);forceAvailableAiCounters(game);let moved=false;
+  game.eventBus.on("afterCardMove","test:remove-one-private-scout-selection",async(event)=>{if(!moved&&event.card===counter){moved=true;await game.discardCardFromHand(target,left,"反制期间合法移走",{silent:true});}});
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0,1]});
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.deepEqual(ui.reveals.at(-1)?.cards,[remains]);
+  assert.equal(source.aiMemory.knownCardsByPlayer[target.id]?.[left.id],undefined);
+  assert.equal(source.aiMemory.knownCardsByPlayer[target.id][remains.id],remains.definitionId);
+});
+
+test("AI 模拟 end 会设置终止状态且终止快照不再生成动作", () => {
+  const actor=makePlayer("terminal-actor",0,"dawn"),enemy=makePlayer("terminal-enemy",1,"dusk"),use=instance("harvest");actor.hand.push(use);
+  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state),terminal=new AiSimulator(visible).apply(visible,{type:"end"},actor.id);
+  assert.equal(visible.playPhaseEnded,false);assert.equal(terminal.playPhaseEnded,true);
+  assert.deepEqual(game.aiController.actionGenerator.generateFromVisible(terminal,actor.id),[]);
+});
+
+test("AI Planner 不扩展 end 根节点，即使动作生成器伪造高收益后续", async () => {
+  const actor=makePlayer("terminal-plan-actor",0,"dawn"),enemy=makePlayer("terminal-plan-enemy",1,"dusk"),fiction=instance("harvest");actor.hand.push(fiction);
+  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state),planner=game.aiController.planner;
+  game.aiController.actionGenerator.generateFromVisible=()=>[{type:"card",card:fiction,targets:[]}];
+  planner.evaluator.actionUtility=(action)=>action.type==="card"?10000:0;planner.evaluator.stateUtility=()=>10000;
+  const chosen=await planner.plan(actor,visible,[{type:"end"}],{gameId:game.state.gameId});
+  assert.equal(chosen.type,"end");assert.equal(planner.lastSearchStats.expanded,1);assert.deepEqual(planner.lastPlannedSequence.map((action)=>action.type),["end"]);
+});
+
+test("AI 规划序列中的 end 始终位于末尾且真实 AI 仍能正常结束", async () => {
+  const actor=makePlayer("terminal-real-actor",0,"dawn"),enemy=makePlayer("terminal-real-enemy",1,"dusk");
+  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state),actions=game.aiController.getLegalActions(actor);
+  assert.deepEqual(actions,[{type:"end"}]);assert.equal((await game.aiController.planner.plan(actor,visible,actions,{gameId:game.state.gameId})).type,"end");
+  const endIndex=game.aiController.planner.lastPlannedSequence.findIndex((action)=>action.type==="end");assert.equal(endIndex,game.aiController.planner.lastPlannedSequence.length-1);
+  await game.takeAiPlayPhase(actor,game.state.gameId);assert.equal(actor.hand.length,0);assert.equal(game.state.phase,"play");
+});
+
+test("两张响应牌原子支付成功时统一提交并发送完整移动事件", async () => {
+  const player=makePlayer("atomic-success",0,"dawn"),enemy=makePlayer("atomic-success-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
+  const {game}=makeGame([player,enemy]),events=[];game.eventBus.on("afterCardMove","test:atomic-success",(event)=>events.push(event.card));
+  const beforeVersion=player.handVersion,result=await game.payCardsFromHandAtomically(player,[first,second],"测试原子支付",{silent:true,expectedCount:2});
+  assert.equal(result.status,"used");assert.deepEqual(result.cards,[first,second]);assert.equal(player.hand.length,0);assert.equal(player.handVersion,beforeVersion+1);
+  assert.ok(game.state.deck.discardPile.includes(first));assert.ok(game.state.deck.discardPile.includes(second));assert.deepEqual(events,[first,second]);
+});
+
+test("第二张 beforeCardMove 取消时原子响应两张牌都保留", async () => {
+  const player=makePlayer("atomic-cancel",0,"dawn"),enemy=makePlayer("atomic-cancel-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
+  const {game}=makeGame([player,enemy]);game.eventBus.on("beforeCardMove","test:atomic-cancel",(event)=>{if(event.card===second)event.cancelled=true;});
+  const version=player.handVersion,result=await game.payCardsFromHandAtomically(player,[first,second],"测试原子取消",{silent:true,expectedCount:2});
+  assert.equal(result.status,"invalid");assert.deepEqual(player.hand,[first,second]);assert.equal(player.handVersion,version);assert.equal(game.state.deck.discardPile.includes(first),false);assert.equal(game.state.deck.discardPile.includes(second),false);
+});
+
+test("原子响应支付拒绝已离手实体和重复实体且不移动其余牌", async () => {
+  const player=makePlayer("atomic-invalid",0,"dawn"),enemy=makePlayer("atomic-invalid-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
+  const {game}=makeGame([player,enemy]);player.hand.splice(player.hand.indexOf(second),1);
+  const missing=await game.payCardsFromHandAtomically(player,[first,second],"测试实体已变化",{silent:true,expectedCount:2});
+  assert.equal(missing.status,"invalid");assert.deepEqual(player.hand,[first]);assert.equal(game.state.deck.discardPile.includes(first),false);
+  player.hand.push(second);const duplicate=await game.payCardsFromHandAtomically(player,[first,first],"测试重复实体",{silent:true,expectedCount:2});
+  assert.equal(duplicate.status,"invalid");assert.deepEqual(player.hand,[first,second]);assert.equal(game.state.deck.discardPile.length,0);
+});
+
+test("原子响应支付验证期间 dispose 返回 cancelled 且不消费任何牌", async () => {
+  const player=makePlayer("atomic-dispose",0,"dawn"),enemy=makePlayer("atomic-dispose-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
+  const {game}=makeGame([player,enemy]);let openedResolve,release;const opened=new Promise((resolve)=>{openedResolve=resolve;}),gate=new Promise((resolve)=>{release=resolve;});
+  game.eventBus.on("beforeCardMove","test:atomic-dispose",async()=>{openedResolve();await gate;});
+  const pending=game.payCardsFromHandAtomically(player,[first,second],"测试销毁取消",{silent:true,expectedCount:2});await opened;game.dispose();release();
+  const result=await pending;assert.equal(result.status,"cancelled");assert.deepEqual(player.hand,[first,second]);assert.equal(game.state.deck.discardPile.length,0);
+});
+
+test("响应系统只有整组原子支付完成后才返回 used", async () => {
+  const attacker=makePlayer("atomic-response-attacker",0,"dawn"),defender=makePlayer("atomic-response-defender",1,"dusk","human"),first=instance("block"),second=instance("block");defender.hand.push(first,second);
+  const {game}=makeGame([attacker,defender],{response:()=>true});game.eventBus.on("beforeCardMove","test:atomic-response-invalid",(event)=>{if(event.card===second)event.cancelled=true;});
+  const result=await game.responseSystem.requestCardResponse(defender,"block",{source:attacker,target:defender,card:instance("assault")},2);
+  assert.equal(result.status,"invalid");assert.deepEqual(result.cards,[]);assert.deepEqual(defender.hand,[first,second]);assert.equal(game.state.deck.discardPile.length,0);
+});
+
 test("日志角色 token 可在同一行分别按阵营安全着色", () => {
   const dawn=makePlayer("晨方角色",0,"dawn"),dusk=makePlayer("暮方角色",1,"dusk");const {game}=makeGame([dawn,dusk]);
   const entry=game.log(`${dawn.name}对${dusk.name}造成影响。`);

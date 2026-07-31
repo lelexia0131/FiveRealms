@@ -1,4 +1,4 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260731-async-session-v28";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260731-private-intent-atomic-v29";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

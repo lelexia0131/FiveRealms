@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260731-async-session-v28";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-async-session-v28";
-import { createId, clamp } from "../utils/helpers.js?build=20260731-async-session-v28";
-import { EventBus } from "./EventBus.js?build=20260731-async-session-v28";
-import { Player } from "./Player.js?build=20260731-async-session-v28";
-import { Deck } from "./Deck.js?build=20260731-async-session-v28";
-import { TeamManager } from "./TeamManager.js?build=20260731-async-session-v28";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260731-async-session-v28";
-import { RuleEngine } from "./RuleEngine.js?build=20260731-async-session-v28";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260731-async-session-v28";
-import { GameLogger } from "./GameLogger.js?build=20260731-async-session-v28";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260731-async-session-v28";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260731-async-session-v28";
-import { AIController } from "../ai/AIController.js?build=20260731-async-session-v28";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260731-async-session-v28";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260731-async-session-v28";
-import { Debug } from "../utils/debug.js?build=20260731-async-session-v28";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260731-async-session-v28";
-import { DyingSystem } from "./DyingSystem.js?build=20260731-async-session-v28";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260731-async-session-v28";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260731-async-session-v28";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260731-async-session-v28";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260731-async-session-v28";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260731-private-intent-atomic-v29";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-private-intent-atomic-v29";
+import { createId, clamp } from "../utils/helpers.js?build=20260731-private-intent-atomic-v29";
+import { EventBus } from "./EventBus.js?build=20260731-private-intent-atomic-v29";
+import { Player } from "./Player.js?build=20260731-private-intent-atomic-v29";
+import { Deck } from "./Deck.js?build=20260731-private-intent-atomic-v29";
+import { TeamManager } from "./TeamManager.js?build=20260731-private-intent-atomic-v29";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260731-private-intent-atomic-v29";
+import { RuleEngine } from "./RuleEngine.js?build=20260731-private-intent-atomic-v29";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260731-private-intent-atomic-v29";
+import { GameLogger } from "./GameLogger.js?build=20260731-private-intent-atomic-v29";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260731-private-intent-atomic-v29";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260731-private-intent-atomic-v29";
+import { AIController } from "../ai/AIController.js?build=20260731-private-intent-atomic-v29";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260731-private-intent-atomic-v29";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260731-private-intent-atomic-v29";
+import { Debug } from "../utils/debug.js?build=20260731-private-intent-atomic-v29";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260731-private-intent-atomic-v29";
+import { DyingSystem } from "./DyingSystem.js?build=20260731-private-intent-atomic-v29";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260731-private-intent-atomic-v29";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260731-private-intent-atomic-v29";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260731-private-intent-atomic-v29";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260731-private-intent-atomic-v29";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -398,6 +398,60 @@ export class Game {
   }
 
   /**
+   * 在反制窗口打开前消费短期隐藏选择令牌，并把结果固化为仅供最终解析器使用的实体意图。
+   * 公开上下文只保留玩家、区域与数量；实体牌、定义和名称不会进入响应链。
+   */
+  async preparePrivateCardSelectionIntent(source, card, targets, selection = null) {
+    const gameId = this.state.gameId;
+    const target = targets[0] ?? null;
+    if (!this.isSessionValid(gameId) || !target?.alive
+      || !RuleEngine.getCardTargets(this, source, card).includes(target)) return null;
+
+    try {
+      let zone = "hand";
+      let cards = [];
+      if (card.definitionId === "scout") {
+        cards = await this.chooseHiddenCards(
+          source,
+          target,
+          Math.min(2, target.hand.length),
+          "选择至多2张手牌进行窥探",
+          selection
+        );
+      } else if (["plunder", "destroy"].includes(card.definitionId)) {
+        const chosen = await this.choosePlayerZoneCard(
+          source,
+          target,
+          card.definitionId === "plunder" ? "选择要掠夺的手牌或装备牌" : "选择要破坏的手牌或装备牌",
+          selection
+        );
+        if (chosen) {
+          zone = chosen.zone;
+          cards = [chosen.card];
+        }
+      } else return null;
+
+      if (!this.isSessionValid(gameId) || !cards.length
+        || !RuleEngine.getCardTargets(this, source, card).includes(target)) return null;
+      const uniqueCards = [...new Map(cards.map((entity) => [entity.id, entity])).values()];
+      const privateIntent = Object.freeze({
+        owner:target,
+        zone,
+        cards:Object.freeze(uniqueCards),
+        selectionId:selection?.selectionId ?? null
+      });
+      const publicContext = Object.freeze({
+        ownerPlayerId:target.id,
+        zone,
+        selectedCount:uniqueCards.length
+      });
+      return Object.freeze({ privateIntent, publicContext });
+    } finally {
+      if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
+    }
+  }
+
+  /**
    * 使用一张主动牌。卡牌从手牌先进入结算区，完成或取消后才进入弃牌堆/装备区。
    * @returns {Promise<boolean>} 是否实际开始结算。
    */
@@ -415,8 +469,13 @@ export class Game {
     const preparedTransfer = card.definitionId === "transfer"
       ? await this.prepareTransferIntent(source, card, selection)
       : null;
+    const needsPrivateSelection = ["scout", "plunder", "destroy"].includes(card.definitionId);
+    const preparedPrivateSelection = needsPrivateSelection
+      ? await this.preparePrivateCardSelectionIntent(source, card, targets, selection)
+      : null;
     if (!this.isSessionValid(gameId)) return false;
     if (card.definitionId === "transfer" && !preparedTransfer) return false;
+    if (needsPrivateSelection && !preparedPrivateSelection) return false;
 
     this.actionLocked = true;
     const resolutionId = `${this.state.gameId}:resolution:${++this.state.resolutionSerial}`;
@@ -449,9 +508,10 @@ export class Game {
       cancelledBeforeResolve ||= resolveEvent.cancelled;
       // 群伤牌使用逐目标反制，由各目标的效果解析负责；这里不能提前取消整张牌。
       const counterResult = !cancelledBeforeResolve && card.counterScope !== "target"
-        ? await this.responseSystem.askForCounter(source, card, targets, preparedTransfer
-          ? { publicTransferContext:preparedTransfer.publicContext }
-          : {})
+        ? await this.responseSystem.askForCounter(source, card, targets, {
+          publicTransferContext:preparedTransfer?.publicContext ?? null,
+          publicSelectionContext:preparedPrivateSelection?.publicContext ?? null
+        })
         : { status:RESPONSE_STATUS.UNAVAILABLE };
       if (!this.isSessionValid(gameId) || isCancelledResponse(counterResult)) return false;
       const countered = counterResult?.status === RESPONSE_STATUS.USED;
@@ -462,7 +522,8 @@ export class Game {
       } else {
         const effectResult = await resolveCardEffect(this, source, card, targets, {
           resolutionId, selection,
-          privateTransferIntent:preparedTransfer?.privateIntent ?? null
+          privateTransferIntent:preparedTransfer?.privateIntent ?? null,
+          privateCardSelectionIntent:preparedPrivateSelection?.privateIntent ?? null
         });
         if (!this.isSessionValid(gameId)) return false;
         destination = effectResult.destination;
@@ -473,10 +534,13 @@ export class Game {
       source.statistics.cardsPlayed += 1;
       const effectiveTargets = preparedTransfer
         ? (effectResolved ? [preparedTransfer.privateIntent.receiver] : [])
+        : preparedPrivateSelection && !effectResolved
+          ? []
         : card.definitionId === "mutualBenefit"
           ? this.state.players.filter((player) => player.alive)
           : targets;
-      const cancelled = countered || cancelledBeforeResolve || Boolean(preparedTransfer && !effectResolved);
+      const cancelled = countered || cancelledBeforeResolve
+        || Boolean((preparedTransfer || preparedPrivateSelection) && !effectResolved);
       await this.eventBus.emit("cardUsed", {
         type:"cardUsed", source, card, targets, effectiveTargets,
         cancelled, resolved:!cancelled && effectResolved, resolutionId
@@ -797,6 +861,64 @@ export class Game {
     if (!this.isSessionValid(gameId)) return true;
     this.ui.render(this);
     return true;
+  }
+
+  /**
+   * 原子支付一组手牌：先完成整组 beforeCardMove 预检，再一次性提交所有区域变化。
+   * 返回响应状态，调用方只有在 used 时才能把规则响应视为成功。
+   */
+  async payCardsFromHandAtomically(player, cards, reason = "响应支付", options = {}) {
+    const gameId = this.state.gameId;
+    const selected = Array.isArray(cards) ? [...cards] : [];
+    const expectedCount = options.expectedCount ?? selected.length;
+    const invalid = () => Object.freeze({ status:RESPONSE_STATUS.INVALID, cards:[] });
+    const cancelled = () => Object.freeze({ status:RESPONSE_STATUS.CANCELLED, cards:[] });
+    if (!this.isSessionValid(gameId)) return cancelled();
+    if (!player?.alive || this.state.isGameOver || expectedCount <= 0 || selected.length !== expectedCount) return invalid();
+    if (new Set(selected).size !== selected.length
+      || new Set(selected.map((card) => card?.id)).size !== selected.length
+      || selected.some((card) => !card?.id)) return invalid();
+
+    const canCommit = () => selected.every((card) => player.hand.includes(card)
+      && !this.state.deck.cards.includes(card)
+      && !this.state.deck.discardPile.includes(card)
+      && !this.state.deck.resolvingCards.includes(card)
+      && !this.state.deck.judgmentZone.includes(card)
+      && !(this.state.publicCardPool ?? []).includes(card)
+      && !this.state.players.some((owner) => owner.equipment === card));
+    if (!canCommit()) return invalid();
+
+    const moves = selected.map((card) => ({
+      type:"beforeCardMove", card, from:"hand", to:"discard", player, reason, cancelled:false,
+      atomicGroupSize:selected.length
+    }));
+    for (const move of moves) {
+      await this.eventBus.emit("beforeCardMove", move);
+      if (!this.isSessionValid(gameId)) return cancelled();
+      if (move.cancelled || !canCommit()) return invalid();
+    }
+    if (!this.isSessionValid(gameId)) return cancelled();
+    if (!canCommit()) return invalid();
+
+    const indexes = selected.map((card) => player.hand.indexOf(card)).sort((a, b) => b - a);
+    for (const index of indexes) player.hand.splice(index, 1);
+    player.bumpHandVersion();
+    for (const card of selected) {
+      this.invalidateCardKnowledge(card.id, player.id);
+      this.state.deck.discard(card);
+    }
+    this.syncDeckAliases();
+    if (!options.silent) {
+      const label = selected.length === 1 ? `「${selected[0].name}」` : `${selected.length}张牌`;
+      this.log(`${player.name}因${reason}弃置了${label}。`);
+    }
+    this.ui.queueFeedback?.("discard", player.id, selected.length);
+    for (const move of moves) {
+      await this.eventBus.emit("afterCardMove", { ...move, type:"afterCardMove" });
+      if (!this.isSessionValid(gameId)) return cancelled();
+    }
+    this.ui.render(this);
+    return Object.freeze({ status:RESPONSE_STATUS.USED, cards:Object.freeze([...selected]) });
   }
 
   /** 在两名玩家间移动实体手牌；只公开最终牌名，不暴露其余隐藏牌。 */

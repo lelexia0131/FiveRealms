@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-async-session-v28";
-import { createId } from "../utils/helpers.js?build=20260731-async-session-v28";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260731-async-session-v28";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-private-intent-atomic-v29";
+import { createId } from "../utils/helpers.js?build=20260731-private-intent-atomic-v29";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260731-private-intent-atomic-v29";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -24,6 +24,17 @@ function normalizeDecision(decision) {
 
 const responsePlayerName = (responder, player) => player?.id === responder?.id ? "你" : (player?.name ?? "未知角色");
 const publicPlayerName = (responder, playerId, playerName) => playerId === responder?.id ? "你" : (playerName ?? "未知角色");
+const publicPlayerContext = (player) => player ? Object.freeze({
+  id:player.id,
+  name:player.name,
+  controllerType:player.controllerType,
+  battleTeam:player.battleTeam,
+  hp:player.hp,
+  maxHp:player.maxHp,
+  shield:player.shield,
+  energy:player.energy,
+  alive:player.alive
+}) : null;
 
 function responseTargetName(responder, context = {}) {
   if (context.targetLabel) return context.targetLabel;
@@ -140,11 +151,16 @@ export class ResponseSystem {
     if (isCancelledResponse(decision) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
     if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { cards:[] });
     if (!valid) return responseResult(RESPONSE_STATUS.INVALID, { cards:[] });
-    for (const card of cardsToUse) {
-      const moved = await this.game.discardCardFromHand(responder, card, `响应·${card.name}`, { silent:true });
-      if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
-      if (!moved) return responseResult(RESPONSE_STATUS.INVALID, { cards:[] });
+    const payment = await this.game.payCardsFromHandAtomically(
+      responder,
+      cardsToUse,
+      `响应·${type === "block" ? "格挡" : "反制"}`,
+      { silent:true, expectedCount:requiredCount }
+    );
+    if (payment.status === RESPONSE_STATUS.CANCELLED || !this.game.isSessionValid(gameId)) {
+      return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
     }
+    if (payment.status !== RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.INVALID, { cards:[] });
     if (type === "counter") {
       const targetSuffix = context.targetScoped ? `（仅取消对${responder.name}的效果）` : "";
       this.game.ui.setCurrentCard?.(cardsToUse[0], responder.name, `反制「${context.card?.name ?? "战术牌"}」${targetSuffix}`);
@@ -169,11 +185,14 @@ export class ResponseSystem {
     const responders = chainContext.responders ?? this.game.seatOrderFrom(source, false);
     for (const responder of responders) {
       if (!responder.alive || responder.id === source.id) continue;
+      const publicSource = publicPlayerContext(source);
+      const publicTargets = targets.map(publicPlayerContext).filter(Boolean);
       const response = await this.requestCardResponse(responder, "counter", {
-        source, target:targets[0] ?? null, targets, card,
+        source:publicSource, target:publicTargets[0] ?? null, targets:publicTargets, card,
         counteredCardName:chainContext.targetCard?.name ?? null,
         targetScoped:Boolean(chainContext.targetScoped),
-        publicTransferContext:chainContext.publicTransferContext ?? null
+        publicTransferContext:chainContext.publicTransferContext ?? null,
+        publicSelectionContext:chainContext.publicSelectionContext ?? null
       }, 1);
       if (isCancelledResponse(response) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       const [counterCard] = response.cards ?? [];
@@ -237,9 +256,15 @@ export class ResponseSystem {
     if (isCancelledResponse(decision) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
     if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { card:null });
     if (!valid) return responseResult(RESPONSE_STATUS.INVALID, { card:null });
-    const moved = await this.game.discardCardFromHand(rescuer, legalCard, `救援${target.name}`, { silent:true });
-    if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    return moved ? responseResult(RESPONSE_STATUS.USED, { card:legalCard }) : responseResult(RESPONSE_STATUS.INVALID, { card:null });
+    const payment = await this.game.payCardsFromHandAtomically(
+      rescuer, [legalCard], `救援${target.name}`, { silent:true, expectedCount:1 }
+    );
+    if (payment.status === RESPONSE_STATUS.CANCELLED || !this.game.isSessionValid(gameId)) {
+      return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
+    }
+    return payment.status === RESPONSE_STATUS.USED
+      ? responseResult(RESPONSE_STATUS.USED, { card:legalCard })
+      : responseResult(RESPONSE_STATUS.INVALID, { card:null });
   }
 
   async requestAssaultDiscard(responder, reason, context = {}) {
@@ -259,9 +284,13 @@ export class ResponseSystem {
     if (isCancelledResponse(decision) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
     if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { card:null });
     if (!valid) return responseResult(RESPONSE_STATUS.INVALID, { card:null });
-    const moved = await this.game.discardCardFromHand(responder, cardToUse, reason, { silent:true });
-    if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    if (!moved) return responseResult(RESPONSE_STATUS.INVALID, { card:null });
+    const payment = await this.game.payCardsFromHandAtomically(
+      responder, [cardToUse], reason, { silent:true, expectedCount:1 }
+    );
+    if (payment.status === RESPONSE_STATUS.CANCELLED || !this.game.isSessionValid(gameId)) {
+      return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
+    }
+    if (payment.status !== RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.INVALID, { card:null });
     if (context.card?.definitionId === "duel") {
       this.game.log(`${responder.name}在决斗中打出了「突袭」。`, "important");
     } else if (context.card?.definitionId === "provoke") {

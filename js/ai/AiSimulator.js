@@ -2,9 +2,9 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260731-async-session-v28";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260731-async-session-v28";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260731-async-session-v28";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260731-private-intent-atomic-v29";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260731-private-intent-atomic-v29";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260731-private-intent-atomic-v29";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -18,8 +18,13 @@ export class AiSimulator {
 
   apply(state, abstractAction, viewerId) {
     const next = this.clone(state);
+    if (next.playPhaseEnded) return next;
+    if (abstractAction.type === "end") {
+      next.playPhaseEnded = true;
+      return next;
+    }
     const actor = next.players.find((player) => player.id === viewerId);
-    if (!actor || abstractAction.type === "end") return next;
+    if (!actor) return next;
     if (abstractAction.type === "skill") {
       this.applySkill(next, actor, abstractAction);
       return next;

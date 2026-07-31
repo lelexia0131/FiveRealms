@@ -1,5 +1,18 @@
 /** 二十三种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260731-async-session-v28";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260731-private-intent-atomic-v29";
+
+/** 只在最终效果解析时读取私密意图，并按原角色、原区域复验实体牌。 */
+function resolvePrivateSelectionIntent(game, source, card, target, context, expectedZone = null) {
+  const intent = context.privateCardSelectionIntent;
+  if (!intent || intent.owner !== target || !target?.alive
+    || (expectedZone && intent.zone !== expectedZone)
+    || !["hand", "equipment"].includes(intent.zone)
+    || !RuleEngine.getCardTargets(game, source, card).includes(target)) return null;
+  const cards = intent.cards.filter((entity) => intent.zone === "hand"
+    ? target.hand.includes(entity)
+    : target.equipment === entity);
+  return { owner:target, zone:intent.zone, cards };
+}
 
 const CARD_EFFECTS = {
   async assault(game, source, card, targets, context) {
@@ -31,14 +44,14 @@ const CARD_EFFECTS = {
   async scout(game, source, card, targets, context) {
     const gameId = game.state.gameId;
     const target = targets[0];
-    if (!target?.hand.length) return;
-    const chosen = await game.chooseHiddenCards(source, target, Math.min(2, target.hand.length), "选择至多2张手牌进行窥探", context.selection);
-    if (!game.isSessionValid(gameId)) return;
-    if (!chosen.length) return;
+    const intent = resolvePrivateSelectionIntent(game, source, card, target, context, "hand");
+    const chosen = intent?.cards.slice(0, 2) ?? [];
+    if (!chosen.length) return { resolved:false };
     for (const seen of chosen) game.rememberPrivateCard(source, target, seen);
     if (source.controllerType === "human") await game.ui.showPrivateReveal?.(`${target.name}的手牌情报`, chosen);
-    if (!game.isSessionValid(gameId)) return;
+    if (!game.isSessionValid(gameId)) return { resolved:false };
     game.log(`${source.name}窥探了${target.name}的${chosen.length}张手牌。`);
+    return { resolved:true };
   },
 
   async transfer(game, source, card, targets, context) {
@@ -108,31 +121,31 @@ const CARD_EFFECTS = {
   async plunder(game, source, card, targets, context) {
     const gameId = game.state.gameId;
     const target = targets[0];
-    if (!RuleEngine.getCardTargets(game, source, card).includes(target)) return;
-    const chosen = await game.choosePlayerZoneCard(source, target, "选择要掠夺的手牌或装备牌", context.selection);
-    if (!game.isSessionValid(gameId)) return;
-    if (!chosen || !RuleEngine.getCardTargets(game, source, card).includes(target)) return;
+    const intent = resolvePrivateSelectionIntent(game, source, card, target, context);
+    const chosen = intent?.cards[0] ? { card:intent.cards[0], zone:intent.zone } : null;
+    if (!chosen) return { resolved:false };
     const plundered = chosen.zone === "equipment"
       ? await game.moveEquipmentBetweenPlayers(target, source, chosen.card, "掠夺")
       : await game.moveCardBetweenHands(target, source, chosen.card, "掠夺");
-    if (!game.isSessionValid(gameId)) return;
+    if (!game.isSessionValid(gameId)) return { resolved:false };
     if (plundered && chosen.zone === "hand") game.log(`${source.name}从${target.name}处掠夺了${game.cardLabelForHuman(source, chosen.card)}。`, "important");
+    return { resolved:Boolean(plundered) };
   },
 
   async destroy(game, source, card, targets, context) {
     const gameId = game.state.gameId;
     const target = targets[0];
-    if (!RuleEngine.getCardTargets(game, source, card).includes(target)) return;
-    const chosen = await game.choosePlayerZoneCard(source, target, "选择要破坏的手牌或装备牌", context.selection);
-    if (!game.isSessionValid(gameId)) return;
-    if (!chosen || !RuleEngine.getCardTargets(game, source, card).includes(target)) return;
+    const intent = resolvePrivateSelectionIntent(game, source, card, target, context);
+    const chosen = intent?.cards[0] ? { card:intent.cards[0], zone:intent.zone } : null;
+    if (!chosen) return { resolved:false };
     const destroyed = chosen.zone === "equipment"
       ? await game.discardEquipment(target, chosen.card, `被${source.name}破坏`)
       : await game.discardCardFromHand(target, chosen.card, `被${source.name}破坏`);
-    if (!game.isSessionValid(gameId)) return;
-    if (!destroyed) return;
+    if (!game.isSessionValid(gameId)) return { resolved:false };
+    if (!destroyed) return { resolved:false };
     game.ui.setCurrentCard?.(chosen.card, `${source.name}破坏的${chosen.zone === "equipment" ? "装备" : "手牌"}`, target.name);
     game.log(`${source.name}破坏了${target.name}的${chosen.zone === "equipment" ? "装备" : "手牌"}「${chosen.card.name}」。`, "important");
+    return { resolved:true };
   },
 
   async harvest(game, source) { await game.drawCards(source, 2, "收获"); },
