@@ -2,10 +2,10 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-momentum-expiry-v44";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-momentum-expiry-v44";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-momentum-expiry-v44";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260801-momentum-expiry-v44";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-card-pool-layout-v45";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-card-pool-layout-v45";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-card-pool-layout-v45";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260801-card-pool-layout-v45";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {

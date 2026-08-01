@@ -29,7 +29,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
     loreFaction: "雾泉庭", maxHp: 3, tags: ["恢复", "辅助"], roleTags: ["support", "healer"], passiveSkillIds: ["rejuvenation"], activeSkillIds: ["symbiosis"],
     passiveName: "回春", passiveDescription: "每回合第一次由你使己方阵营角色恢复生命时，额外恢复1点并摸1张牌；濒死救援也可触发。",
     passiveTriggerText: "由你使己方阵营角色（包括自己）恢复生命时", passiveLimitText: "每回合限触发1次",
-    activeName: "共生", activeDescription: "消耗2点能量，使一名受伤的己方阵营角色（包括自己）恢复1点生命；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
+    activeName: "滋荣", activeDescription: "消耗2点能量，使一名受伤的己方阵营角色（包括自己）恢复1点生命；若目标不是自己，自己同样恢复1点生命；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
     description: "听见生命回声的游医，以自己的元息换取同伴继续作战。",
     aiProfile: profile(.45, .95, 1.45, 1.5, .75, .9, .85, .35)
   }),

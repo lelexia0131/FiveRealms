@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-momentum-expiry-v44";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-card-pool-layout-v45";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -90,16 +90,17 @@ export function skillDetailsTemplate(player) {
 export function playerPanelTemplate(player, options = {}) {
   const { humanTeam = player.battleTeam, isHuman = false, isCurrent = false, isLegalTarget = false, isTargeting = false, isThinking = false, distanceInfo = null, distanceState = null, opponentHandSlots = null } = options;
   const relationship = isHuman ? "is-self" : player.battleTeam === humanTeam ? "is-ally" : "is-enemy";
-  const statuses = [
+  const statuses = player.alive ? [
     player.statuses?.exposeWeakness ? [`破势 ${player.statuses.exposeWeakness.stacks}`, "danger"] : null,
     player.statuses?.huntMark ? ["猎印", "mark"] : null,
     player.statuses?.allIn ? ["孤注", "danger"] : null,
     player.turnFlags?.momentum > 0 ? [`连势 ${player.turnFlags.momentum}`, "mark"] : null,
     player.hp <= 0 && player.alive ? [`濒死 · 需${1 - player.hp}调息`, "danger"] : null
-  ].filter(Boolean);
+  ].filter(Boolean) : [];
   const statusSummary = statuses.length ? statuses.map(([label]) => label).join(" · ") : "—";
   const statusText = isThinking ? "正在思考" : isCurrent ? "正在行动" : player.alive ? "等待行动" : "已阵亡";
-  return `<article class="player-seat ${isHuman ? "human-seat" : "cpu-seat"} team-${escapeHtml(player.battleTeam)} ${relationship} ${isCurrent ? "is-active" : ""} ${isLegalTarget ? "target-legal" : ""} ${isTargeting && !isLegalTarget ? "target-illegal" : ""} ${isThinking ? "is-thinking" : ""} ${player.alive ? "" : "is-dead"}" data-player-id="${escapeHtml(player.id)}" tabindex="${isLegalTarget ? "0" : "-1"}" aria-label="${escapeHtml(player.name)}，${TEAM_CONFIG[player.battleTeam].name}，生命${player.hp}点，能量${player.energy}点，手牌${player.hand.length}张，状态${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}${distanceInfo ? `，距离${distanceInfo.distance}` : ""}">
+  const showDistance = Boolean(player.alive && distanceInfo);
+  return `<article class="player-seat ${isHuman ? "human-seat" : "cpu-seat"} team-${escapeHtml(player.battleTeam)} ${relationship} ${isCurrent ? "is-active" : ""} ${isLegalTarget ? "target-legal" : ""} ${isTargeting && !isLegalTarget ? "target-illegal" : ""} ${isThinking ? "is-thinking" : ""} ${player.alive ? "" : "is-dead"}" data-player-id="${escapeHtml(player.id)}" tabindex="${isLegalTarget ? "0" : "-1"}" aria-label="${escapeHtml(player.name)}，${TEAM_CONFIG[player.battleTeam].name}，生命${player.hp}点，能量${player.energy}点，手牌${player.hand.length}张，状态${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}${showDistance ? `，距离${distanceInfo.distance}` : ""}">
     <button type="button" class="seat-portrait-wrap" data-skill-player-id="${escapeHtml(player.id)}" aria-label="查看${escapeHtml(player.name)}的技能">
       ${image(player.general.portrait, `${player.name}肖像`, "seat-portrait")}
       <span class="team-emblem" aria-label="${TEAM_CONFIG[player.battleTeam].name}">${player.battleTeam === "dawn" ? "晨" : "暮"}</span>
@@ -111,7 +112,7 @@ export function playerPanelTemplate(player, options = {}) {
         <div class="life-readout"><span class="life-label">生命</span><div class="life-cells">${lifeCells(player)}</div><strong>${player.hp}<small>/${player.maxHp}</small></strong></div>
         <div class="resource-pills"><span class="resource-pill energy"><small>能量</small><strong>${player.energy}/${player.maxEnergy}</strong></span><span class="resource-pill shield"><small>护盾</small><strong>${player.shield}</strong></span><span class="resource-pill hand-count"><small>手牌</small><strong>${player.hand.length}</strong></span></div>
       </div>
-      <div class="range-readout ${distanceInfo ? "" : "is-status-only"}"><span class="panel-status" title="状态：${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}"><small>状态</small><b>${escapeHtml(statusSummary)}</b></span>${distanceInfo ? `<strong>${escapeHtml(distanceState ?? `距离 ${distanceInfo.distance}`)}</strong><small>${player.alive ? `射程 ${distanceInfo.range}` : "已离开距离环"}</small>` : ""}</div>
+      <div class="range-readout ${showDistance ? "" : "is-status-only"}"><span class="panel-status" title="状态：${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}"><small>状态</small><b>${escapeHtml(statusSummary)}</b></span>${showDistance ? `<strong>${escapeHtml(distanceState ?? `距离 ${distanceInfo.distance}`)}</strong><small>射程 ${distanceInfo.range}</small>` : ""}</div>
       ${equipmentSlotTemplate(player, isHuman)}
       ${isHuman ? `<details class="character-details" open><summary>角色能力</summary><div class="character-skill-list">
         <div class="skill-summary is-active-skill"><div><small>主动技能</small><strong>${escapeHtml(player.general.activeName)}</strong></div><span>${escapeHtml(player.general.activeDescription)}</span></div>

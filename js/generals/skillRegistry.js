@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-momentum-expiry-v44";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-momentum-expiry-v44";
-import { randomChoice } from "../utils/helpers.js?build=20260801-momentum-expiry-v44";
-import { Debug } from "../utils/debug.js?build=20260801-momentum-expiry-v44";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-card-pool-layout-v45";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-card-pool-layout-v45";
+import { randomChoice } from "../utils/helpers.js?build=20260801-card-pool-layout-v45";
+import { Debug } from "../utils/debug.js?build=20260801-card-pool-layout-v45";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -196,9 +196,15 @@ export const ACTIVE_SKILLS = Object.freeze({
     }
   }),
   symbiosis: Object.freeze({
-    id: "symbiosis", name: "共生", cost: 2, limitPerTurn: 2, targetType: "injuredAlly", rangeRule: "ally",
+    id: "symbiosis", name: "滋荣", cost: 2, limitPerTurn: 2, targetType: "injuredAlly", rangeRule: "ally",
     canUse(game, source) { const base = baseCanUse(game, source, this); if (!base.ok) return base; return RuleEngine.getSkillTargets(game, source, this).length ? base : {ok:false,reason:"没有受伤的己方阵营角色"}; },
-    async execute(game, source, targets) { source.changeEnergy(-2); await game.heal(source, targets[0], 1, { skill:"symbiosis" }); }
+    async execute(game, source, targets) {
+      const gameId = game.state.gameId;
+      source.changeEnergy(-2);
+      const target = targets[0];
+      await game.heal(source, target, 1, { skill:"symbiosis" });
+      if (game.isSessionValid(gameId) && target.id !== source.id) await game.heal(source, source, 1, { skill:"symbiosis" });
+    }
   }),
   stealSkill: Object.freeze({
     id: "stealSkill", name: "窃取", cost: 1, limitPerTurn: 2, targetType: "enemyWithCardsOrEquipment", rangeRule: "fixed", range: 2,

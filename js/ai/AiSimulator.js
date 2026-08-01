@@ -2,10 +2,10 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-momentum-expiry-v44";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-momentum-expiry-v44";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-momentum-expiry-v44";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-momentum-expiry-v44";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-card-pool-layout-v45";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-card-pool-layout-v45";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-card-pool-layout-v45";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-card-pool-layout-v45";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -165,6 +165,7 @@ export class AiSimulator {
       target.shield = (target.shield ?? 0) + 1;
     } else if (skill.id === "symbiosis" && target) {
       this.healFrom(actor, target, 1);
+      if (target.id !== actor.id) this.healFrom(actor, actor, 1);
     } else if (skill.id === "stealSkill" && target) {
       this.stealResourceToHand(actor, target);
     } else if (skill.id === "burningField") {
@@ -249,6 +250,11 @@ export class AiSimulator {
     if (capacity < need) {
       target.alive = false;
       target.hp = 0;
+      target.exposeWeaknessStacks = 0;
+      target.assaultBonus = 0;
+      target.huntMarkSourceId = null;
+      target.momentum = 0;
+      target.statuses = [];
       if (attacker?.alive && attacker.battleTeam !== target.battleTeam) {
         attacker.handCount = (attacker.handCount ?? 0) + GAME_CONFIG.killRewardDrawCount;
       }

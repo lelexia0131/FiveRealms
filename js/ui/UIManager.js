@@ -1,21 +1,21 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260801-momentum-expiry-v44";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-momentum-expiry-v44";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260801-momentum-expiry-v44";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260801-card-pool-layout-v45";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-card-pool-layout-v45";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260801-card-pool-layout-v45";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260801-momentum-expiry-v44";
-import { AnimationController } from "./animationController.js?build=20260801-momentum-expiry-v44";
-import { InteractionController } from "./InteractionController.js?build=20260801-momentum-expiry-v44";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260801-momentum-expiry-v44";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260801-momentum-expiry-v44";
-import { JudgmentView } from "./JudgmentView.js?build=20260801-momentum-expiry-v44";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-momentum-expiry-v44";
-import { createOpponentHandView } from "./handVisibility.js?build=20260801-momentum-expiry-v44";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260801-momentum-expiry-v44";
+} from "./templates.js?build=20260801-card-pool-layout-v45";
+import { AnimationController } from "./animationController.js?build=20260801-card-pool-layout-v45";
+import { InteractionController } from "./InteractionController.js?build=20260801-card-pool-layout-v45";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260801-card-pool-layout-v45";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260801-card-pool-layout-v45";
+import { JudgmentView } from "./JudgmentView.js?build=20260801-card-pool-layout-v45";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-card-pool-layout-v45";
+import { createOpponentHandView } from "./handVisibility.js?build=20260801-card-pool-layout-v45";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260801-card-pool-layout-v45";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
