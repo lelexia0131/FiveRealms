@@ -2,9 +2,10 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260731-private-intent-atomic-v29";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260731-private-intent-atomic-v29";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260731-private-intent-atomic-v29";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260731-shade-svg-kill-v30";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-shade-svg-kill-v30";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260731-shade-svg-kill-v30";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260731-shade-svg-kill-v30";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -170,7 +171,7 @@ export class AiSimulator {
     } else if (skill.id === "symbiosis" && target) {
       this.heal(target, 1);
     } else if (skill.id === "stealSkill" && target) {
-      this.takeResource(actor, target, 1);
+      this.stealResourceToHand(actor, target);
     } else if (skill.id === "burningField") {
       for (const enemy of state.players) if (enemy.alive && enemy.battleTeam !== actor.battleTeam) this.applyDamage(state, actor, enemy, 1, { canBlock:false });
     } else if (skill.id === "hunt" && target) {
@@ -178,6 +179,21 @@ export class AiSimulator {
       actor.handCount += target.blockProbability ?? 0;
       this.applyDamage(state, actor, target, 2, { canBlock:true });
     } else if (skill.id === "resonance" && target) target.handCount += 2;
+  }
+
+  /** 窃取所得资源只增加手牌；目标仅有装备时，模拟中明确移除装备且不替换施术者装备。 */
+  stealResourceToHand(actor, target) {
+    const handCount = Math.max(0, target.handCount ?? 0);
+    const hasEquipment = Boolean(target.equipmentDefinitionId);
+    const candidateCount = handCount + (hasEquipment ? 1 : 0);
+    if (!candidateCount) return;
+    actor.handCount = (actor.handCount ?? 0) + 1;
+    if (!handCount && hasEquipment) {
+      target.equipmentDefinitionId = null;
+      return;
+    }
+    // 混合候选用期望手牌损失表示；装备不会被错误赋给施术者或立即提供装备效果。
+    target.handCount = Math.max(0, handCount - handCount / candidateCount);
   }
 
   applyDuel(state, actor, target, scale) {
@@ -217,7 +233,7 @@ export class AiSimulator {
     target.shield = Math.max(0, (target.shield ?? 0) - absorbed);
     if (target.temporaryShieldAmount) target.temporaryShieldAmount = Math.max(0, target.temporaryShieldAmount - absorbed);
     target.hp -= Math.max(0, pending - absorbed) + directLoss;
-    this.resolveFatal(state, target);
+    this.resolveFatal(state, target, attacker);
   }
 
   applyHpLoss(state, target, amount) {
@@ -226,7 +242,7 @@ export class AiSimulator {
     this.resolveFatal(state, target);
   }
 
-  resolveFatal(state, target) {
+  resolveFatal(state, target, attacker = null) {
     if (target.hp > 0 || !target.alive) return;
     const need = 1 - target.hp;
     const allies = state.players.filter((player) => player.alive && player.battleTeam === target.battleTeam)
@@ -236,6 +252,9 @@ export class AiSimulator {
     if (capacity < need) {
       target.alive = false;
       target.hp = 0;
+      if (attacker?.alive && attacker.battleTeam !== target.battleTeam) {
+        attacker.handCount = (attacker.handCount ?? 0) + GAME_CONFIG.killRewardDrawCount;
+      }
       return;
     }
     let remaining = need;

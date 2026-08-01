@@ -1,3 +1,5 @@
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-shade-svg-kill-v30";
+
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；
  * 救援顺序为本人，然后从本人下一座位起的存活队友。实例随 Game 创建，并在
@@ -126,9 +128,9 @@ export class DyingSystem {
     if (!this.game.isSessionValid(gameId)) return false;
     if (!target.gameFlags.killRewardGranted && source?.alive && source.battleTeam !== target.battleTeam) {
       target.gameFlags.killRewardGranted = true;
-      const drawn = await this.game.drawCards(source, 2, "击杀奖励", { silent:true });
+      const drawn = await this.game.drawCards(source, GAME_CONFIG.killRewardDrawCount, "击杀奖励", { silent:true });
       if (!this.game.isSessionValid(gameId)) return false;
-      this.game.log(`${source.name}击杀了${target.name}，摸了${drawn}张牌。`, "important");
+      this.game.log(`${source.name}击杀了${target.name}，额外摸了${drawn}张牌。`, "important");
       await this.game.eventBus.emit("enemyKilled", { type:"enemyKilled", source, target, drawn });
       if (!this.game.isSessionValid(gameId)) return false;
     }

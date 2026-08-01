@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 280" role="img" aria-labelledby="title desc">
+<svg width="480" height="280" viewBox="0 0 480 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">望远镜</title><desc id="desc">青铜望远镜对准远方的晨星</desc>
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#16384b"/><stop offset=".55" stop-color="#315f70"/><stop offset="1" stop-color="#b58d4c"/></linearGradient>

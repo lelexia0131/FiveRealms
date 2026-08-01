@@ -36,9 +36,9 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "shade-agent", name: "影客", glyph: "影", portrait: "./assets/characters/shade-agent.svg",
     loreFaction: "无灯港", maxHp: 4, tags: ["控制", "谍报"], roleTags: ["control", "utility"], passiveSkillIds: ["spyGap"], activeSkillIds: ["stealSkill"],
-    passiveName: "窥隙", passiveDescription: "每回合首次对敌人造成实际伤害后，私下查看其至多2张随机手牌。",
+    passiveName: "窥隙", passiveDescription: "每回合首次对敌人造成实际伤害后，私下查看其至多2张手牌。",
     passiveTriggerText: "对敌人造成实际伤害后", passiveLimitText: "每回合限触发1次",
-    activeName: "窃取", activeDescription: "消耗2点能量，随机获得距离2内一名敌人的1张手牌或装备牌；装备牌直接进入你的装备区，每回合最多发动1次。", activeCost: 2, activeLimitPerTurn: 1,
+    activeName: "窃取", activeDescription: "消耗2点能量，随机获得距离2内一名敌人的1张手牌或装备牌，每回合最多发动1次。", activeCost: 2, activeLimitPerTurn: 1,
     description: "往返暗潮市集的情报客，相信一张被看见的牌就不再是秘密。",
     aiProfile: profile(1.05, .75, .4, .4, .9, .65, .85, 1.1)
   }),

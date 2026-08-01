@@ -92,7 +92,7 @@
 .equipment-slot { position: relative; display: grid; grid-template-columns: 35px minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 43px; padding: 5px 7px; border: 1px solid #af9362; border-radius: 8px; background: linear-gradient(135deg, #efe5d2, #dac8a7); }
 .equipment-slot.is-empty { grid-template-columns: 35px minmax(0, 1fr); color: var(--text-muted); border-style: dashed; background: rgba(250,246,234,.6); }
 .equipment-outline { width: 30px; height: 30px; border: 1px dashed var(--border-strong); border-radius: 50%; background: radial-gradient(circle, transparent 32%, rgba(169,151,123,.16) 34% 48%, transparent 50%); }
-.equipment-icon { width: 35px; height: 35px; object-fit: cover; border: 1px solid #9a7944; border-radius: 7px; background: #ddd0b6; }
+.equipment-icon { display: block; width: 35px; height: 35px; object-fit: cover; border: 1px solid #9a7944; border-radius: 7px; background: #ddd0b6; }
 .equipment-copy { min-width: 0; display: grid; }
 .equipment-copy strong, .equipment-slot.is-empty strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .equipment-copy small, .equipment-slot.is-empty small { overflow: hidden; color: var(--text-secondary); font-size: 12px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }

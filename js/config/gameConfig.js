@@ -39,6 +39,8 @@ export const GAME_CONFIG = Object.freeze({
   gamblerDrawChance: 0.6,
   // 刃行者连势上限；推荐 1～3，增大会显著提高连续出牌爆发。
   momentumMaxStacks: 2,
+  // 合法击杀敌方角色后的额外摸牌数；真实死亡结算与 AI 模拟统一读取。
+  killRewardDrawCount: 1,
   // 调试输出总开关；开启只增加诊断日志，不应改变规则或随机过程。
   debugMode: false,
 

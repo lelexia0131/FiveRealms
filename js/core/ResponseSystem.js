@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-private-intent-atomic-v29";
-import { createId } from "../utils/helpers.js?build=20260731-private-intent-atomic-v29";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260731-private-intent-atomic-v29";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-shade-svg-kill-v30";
+import { createId } from "../utils/helpers.js?build=20260731-shade-svg-kill-v30";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260731-shade-svg-kill-v30";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

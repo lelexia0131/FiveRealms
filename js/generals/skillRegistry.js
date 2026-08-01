@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-private-intent-atomic-v29";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260731-private-intent-atomic-v29";
-import { randomChoice } from "../utils/helpers.js?build=20260731-private-intent-atomic-v29";
-import { Debug } from "../utils/debug.js?build=20260731-private-intent-atomic-v29";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-shade-svg-kill-v30";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260731-shade-svg-kill-v30";
+import { randomChoice } from "../utils/helpers.js?build=20260731-shade-svg-kill-v30";
+import { Debug } from "../utils/debug.js?build=20260731-shade-svg-kill-v30";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -79,18 +79,20 @@ const PASSIVE_SKILLS = {
   },
 
   spyGap(game, owner) {
-    game.eventBus.on("afterDamage", `${owner.id}:spyGap`, (event) => {
-      if (!owner.alive || event.source?.id !== owner.id || event.target.battleTeam === owner.battleTeam || event.actualAmount <= 0 || owner.turnFlags.spyGapTriggered) return;
+    game.eventBus.on("afterDamage", `${owner.id}:spyGap`, async (event) => {
+      const gameId = game.state.gameId;
+      if (!owner.alive || event.source?.id !== owner.id || !event.target?.alive || event.target.hp <= 0
+        || event.target.battleTeam === owner.battleTeam || event.actualAmount <= 0
+        || owner.turnFlags.spyGapTriggered || !event.target.hand.length) return;
       owner.turnFlags.spyGapTriggered = true;
-      const remaining = [...event.target.hand];
-      const seen = [];
-      while (remaining.length && seen.length < 2) {
-        const index = Math.min(remaining.length - 1, Math.floor(game.random() * remaining.length));
-        seen.push(remaining.splice(index, 1)[0]);
-      }
+      const intent = await game.preparePrivateHandPeekIntent(owner, event.target, 2, `窥隙：选择查看${event.target.name}至多2张手牌`);
+      if (!game.isSessionValid(gameId)) return;
+      const seen = game.resolvePrivateHandPeekIntent(owner, intent);
       if (!seen.length) return;
       for (const card of seen) game.rememberPrivateCard(owner, event.target, card);
-      if (owner.controllerType === "human") game.ui.showPrivateReveal(`窥隙：${event.target.name}持有${seen.map((card) => `「${card.name}」`).join("、")}`);
+      if (owner.controllerType === "human") await game.ui.showPrivateReveal(`窥隙：${event.target.name}的手牌`, seen);
+      if (!game.isSessionValid(gameId)) return;
+      game.log(`${owner.name}发动窥隙，查看了${event.target.name}的${seen.length}张手牌。`);
     });
   },
 
@@ -201,10 +203,10 @@ export const ACTIVE_SKILLS = Object.freeze({
       const chosen = randomChoice(options, game.random);
       if (!chosen) return;
       const stolen = chosen.zone === "equipment"
-        ? await game.moveEquipmentBetweenPlayers(target, source, chosen.card, "窃取")
+        ? await game.moveEquipmentToHand(target, source, chosen.card, "窃取")
         : await game.moveCardBetweenHands(target, source, chosen.card, "窃取");
       if (!game.isSessionValid(gameId)) return;
-      if (stolen && chosen.zone === "hand") game.log(`${source.name}从${target.name}处窃取了${game.cardLabelForHuman(source, chosen.card)}。`, "important");
+      if (stolen) game.log(`${source.name}从${target.name}处窃取了${game.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
     }
   }),
   burningField: Object.freeze({

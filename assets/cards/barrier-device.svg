@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 280" role="img" aria-labelledby="title desc">
+<svg width="480" height="280" viewBox="0 0 480 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">屏障</title><desc id="desc">紫蓝色机械核心展开多层防护界面</desc>
   <defs>
     <radialGradient id="bg"><stop stop-color="#665d86"/><stop offset=".58" stop-color="#302f50"/><stop offset="1" stop-color="#171d2b"/></radialGradient>

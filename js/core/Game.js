@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260731-private-intent-atomic-v29";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-private-intent-atomic-v29";
-import { createId, clamp } from "../utils/helpers.js?build=20260731-private-intent-atomic-v29";
-import { EventBus } from "./EventBus.js?build=20260731-private-intent-atomic-v29";
-import { Player } from "./Player.js?build=20260731-private-intent-atomic-v29";
-import { Deck } from "./Deck.js?build=20260731-private-intent-atomic-v29";
-import { TeamManager } from "./TeamManager.js?build=20260731-private-intent-atomic-v29";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260731-private-intent-atomic-v29";
-import { RuleEngine } from "./RuleEngine.js?build=20260731-private-intent-atomic-v29";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260731-private-intent-atomic-v29";
-import { GameLogger } from "./GameLogger.js?build=20260731-private-intent-atomic-v29";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260731-private-intent-atomic-v29";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260731-private-intent-atomic-v29";
-import { AIController } from "../ai/AIController.js?build=20260731-private-intent-atomic-v29";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260731-private-intent-atomic-v29";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260731-private-intent-atomic-v29";
-import { Debug } from "../utils/debug.js?build=20260731-private-intent-atomic-v29";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260731-private-intent-atomic-v29";
-import { DyingSystem } from "./DyingSystem.js?build=20260731-private-intent-atomic-v29";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260731-private-intent-atomic-v29";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260731-private-intent-atomic-v29";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260731-private-intent-atomic-v29";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260731-private-intent-atomic-v29";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260731-shade-svg-kill-v30";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-shade-svg-kill-v30";
+import { createId, clamp } from "../utils/helpers.js?build=20260731-shade-svg-kill-v30";
+import { EventBus } from "./EventBus.js?build=20260731-shade-svg-kill-v30";
+import { Player } from "./Player.js?build=20260731-shade-svg-kill-v30";
+import { Deck } from "./Deck.js?build=20260731-shade-svg-kill-v30";
+import { TeamManager } from "./TeamManager.js?build=20260731-shade-svg-kill-v30";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260731-shade-svg-kill-v30";
+import { RuleEngine } from "./RuleEngine.js?build=20260731-shade-svg-kill-v30";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260731-shade-svg-kill-v30";
+import { GameLogger } from "./GameLogger.js?build=20260731-shade-svg-kill-v30";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260731-shade-svg-kill-v30";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260731-shade-svg-kill-v30";
+import { AIController } from "../ai/AIController.js?build=20260731-shade-svg-kill-v30";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260731-shade-svg-kill-v30";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260731-shade-svg-kill-v30";
+import { Debug } from "../utils/debug.js?build=20260731-shade-svg-kill-v30";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260731-shade-svg-kill-v30";
+import { DyingSystem } from "./DyingSystem.js?build=20260731-shade-svg-kill-v30";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260731-shade-svg-kill-v30";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260731-shade-svg-kill-v30";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260731-shade-svg-kill-v30";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260731-shade-svg-kill-v30";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -449,6 +449,41 @@ export class Game {
     } finally {
       if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
     }
+  }
+
+  /**
+   * 被动技能的私密窥牌入口：真人复用不透明牌背选择，AI 只按合法记忆或隐藏位置选择。
+   * 确认后立即清除 UI token，只把稳定实体意图留在当前异步调用栈中。
+   */
+  async preparePrivateHandPeekIntent(viewer, owner, count, reason) {
+    const gameId = this.state.gameId;
+    const maximum = Math.min(Math.max(0, count), owner?.hand?.length ?? 0);
+    if (!this.isSessionValid(gameId) || !viewer?.alive || !owner?.alive || !maximum) return null;
+    if (viewer.controllerType !== "human") {
+      const cards = this.aiController.cardSelector.chooseHiddenCards(viewer, owner, maximum);
+      return cards.length ? Object.freeze({ owner, zone:"hand", cards:Object.freeze([...cards]), selectionId:null }) : null;
+    }
+
+    const hidden = this.cardSelectionSystem.createHiddenSelection(owner);
+    try {
+      const tokens = await this.ui.requestHiddenCards?.(hidden, maximum, reason, {
+        exact:false, viewer, owner,
+        helpText:"隐藏牌只使用临时令牌；确认时核心会重新验证所选实体仍在目标手牌中。"
+      });
+      if (!this.isSessionValid(gameId) || !viewer.alive || !owner.alive) return null;
+      const cards = this.cardSelectionSystem.resolveConfirmedTokens(tokens, owner, hidden.selectionId, maximum);
+      return cards.length
+        ? Object.freeze({ owner, zone:"hand", cards:Object.freeze(cards), selectionId:hidden.selectionId })
+        : null;
+    } finally {
+      this.cardSelectionSystem.clearSelection(hidden.selectionId);
+    }
+  }
+
+  /** 结算私密窥牌意图时只保留仍在原角色手牌区的实体。 */
+  resolvePrivateHandPeekIntent(viewer, intent) {
+    if (!this.isSessionValid(this.state.gameId) || !viewer?.alive || !intent?.owner?.alive || intent.zone !== "hand") return [];
+    return intent.cards.filter((card) => intent.owner.hand.includes(card));
   }
 
   /**

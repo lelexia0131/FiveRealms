@@ -1,4 +1,4 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260731-private-intent-atomic-v29";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260731-shade-svg-kill-v30";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
