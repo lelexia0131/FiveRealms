@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-plunder-hand-v31";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-card-art-invariant-v35";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 const UNKNOWN_HAND_EXPECTED_VALUE = 4;

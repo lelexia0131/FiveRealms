@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-plunder-hand-v31";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-card-art-invariant-v35";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -71,7 +71,8 @@ function lifeCells(player) {
 export function opponentHandStripTemplate(slots = []) {
   const cards = slots.map((slot) => {
     if (!slot.known) return hiddenCardBackTemplate({ compact:true });
-    return `<span class="opponent-card-slot is-known frame-${escapeHtml(slot.frameStyle)} ${cardDescriptionClass(slot.description)}" style="--card-accent:${escapeHtml(slot.accent)}" tabindex="0" title="${escapeHtml(`${slot.categoryName}：${slot.description}`)}" aria-label="已知手牌：${escapeHtml(slot.name)}，${escapeHtml(slot.categoryName)}，${escapeHtml(slot.description)}"><span class="card-topline"><span class="card-name">${escapeHtml(slot.name)}</span><span class="card-category">${escapeHtml(slot.categoryName)}</span></span><span class="card-art"><img src="${escapeHtml(slot.art)}" alt="" aria-hidden="true"><span class="card-crest"><img src="${escapeHtml(slot.icon)}" alt="" aria-hidden="true"></span></span><span class="card-rules"><span class="card-description">${escapeHtml(slot.description)}</span><span class="card-flavor">${escapeHtml(slot.flavorText)}</span></span></span>`;
+    const descriptionClass = cardDescriptionClass(slot.description);
+    return `<span class="opponent-card-slot is-known frame-${escapeHtml(slot.frameStyle)}" style="--card-accent:${escapeHtml(slot.accent)}" tabindex="0" title="${escapeHtml(`${slot.categoryName}：${slot.description}`)}" aria-label="已知手牌：${escapeHtml(slot.name)}，${escapeHtml(slot.categoryName)}，${escapeHtml(slot.description)}"><span class="card-topline"><span class="card-name">${escapeHtml(slot.name)}</span><span class="card-category">${escapeHtml(slot.categoryName)}</span></span><span class="card-art"><img src="${escapeHtml(slot.art)}" alt="" aria-hidden="true"><span class="card-crest"><img src="${escapeHtml(slot.icon)}" alt="" aria-hidden="true"></span></span><span class="card-rules ${descriptionClass}"><span class="card-description">${escapeHtml(slot.description)}</span><span class="card-flavor">${escapeHtml(slot.flavorText)}</span></span></span>`;
   }).join("");
   return `<div class="opponent-hand-region"><div class="opponent-hand-strip" aria-label="该角色手牌">${cards}</div></div>`;
 }
@@ -124,10 +125,11 @@ export function playerPanelTemplate(player, options = {}) {
 export function handCardTemplate(card, options = {}) {
   const selected = Boolean(options.selected);
   const disabled = Boolean(options.disabled);
-  return `<button class="hand-card frame-${escapeHtml(card.frameStyle)} ${cardDescriptionClass(card.description)} ${selected ? "is-selected" : ""} ${disabled ? "is-disabled" : ""}" style="--card-accent:${escapeHtml(card.accent)}" type="button" data-card-id="${escapeHtml(card.id)}" data-disabled="${disabled}" aria-disabled="${disabled}" aria-pressed="${selected}">
+  const descriptionClass = cardDescriptionClass(card.description);
+  return `<button class="hand-card frame-${escapeHtml(card.frameStyle)} ${selected ? "is-selected" : ""} ${disabled ? "is-disabled" : ""}" style="--card-accent:${escapeHtml(card.accent)}" type="button" data-card-id="${escapeHtml(card.id)}" data-disabled="${disabled}" aria-disabled="${disabled}" aria-pressed="${selected}">
     <span class="card-topline"><span class="card-name">${escapeHtml(card.name)}</span><span class="card-category">${escapeHtml(card.categoryName)}</span></span>
     <span class="card-art"><img src="${escapeHtml(card.art)}" alt="" aria-hidden="true" draggable="false"><span class="card-crest"><img src="${escapeHtml(card.icon)}" alt="" aria-hidden="true"></span></span>
-    <span class="card-rules"><span class="card-description">${escapeHtml(card.description)}</span><span class="card-flavor">${escapeHtml(card.flavorText)}</span></span>
+    <span class="card-rules ${descriptionClass}"><span class="card-description">${escapeHtml(card.description)}</span><span class="card-flavor">${escapeHtml(card.flavorText)}</span></span>
   </button>`;
 }
 

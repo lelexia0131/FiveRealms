@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-plunder-hand-v31";
-import { createId } from "../utils/helpers.js?build=20260801-plunder-hand-v31";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-plunder-hand-v31";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-card-art-invariant-v35";
+import { createId } from "../utils/helpers.js?build=20260801-card-art-invariant-v35";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260801-card-art-invariant-v35";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

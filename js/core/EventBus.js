@@ -3,7 +3,7 @@
  * 它不解释事件含义、不直接修改玩家，也不处理 UI；事件递归深度有限制以阻止技能死循环。
  * 重新开始必须调用 clear，避免旧角色监听器进入新对局。
  */
-import { Debug } from "../utils/debug.js?build=20260801-plunder-hand-v31";
+import { Debug } from "../utils/debug.js?build=20260801-card-art-invariant-v35";
 
 export class EventBus {
   constructor(isActive = () => true) {

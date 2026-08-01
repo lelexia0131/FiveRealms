@@ -70,16 +70,15 @@
 .opponent-card-slot .card-name { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .opponent-card-slot .card-category { padding: 1px 3px; font-size: 9px; }
 .opponent-card-slot .card-art { border-radius: 5px 5px 2px 2px; }
+.opponent-card-slot > .card-art { height: 70px; min-height: 70px; max-height: 70px; }
 .opponent-card-slot .card-crest { right: 3px; bottom: 3px; width: 21px; height: 21px; padding: 1px; }
 .opponent-card-slot .card-rules { gap: 1px; padding: 3px; }
 .opponent-card-slot .card-description { font-size: 8px; line-height: 1.16; }
 .opponent-card-slot .card-flavor { display: none; }
-.opponent-card-slot.is-description-long { grid-template-rows: 27px 58px minmax(0, 1fr); }
-.opponent-card-slot.is-description-long .card-description { font-size: 7.4px; line-height: 1.1; }
-.opponent-card-slot.is-description-long .card-flavor { display: none; }
-.opponent-card-slot.is-description-very-long { grid-template-rows: 27px 50px minmax(0, 1fr); }
-.opponent-card-slot.is-description-very-long .card-description { font-size: 7px; line-height: 1.06; }
-.opponent-card-slot.is-description-very-long .card-flavor { display: none; }
+.opponent-card-slot .card-rules.is-description-long .card-description { font-size: 7.4px; line-height: 1.1; }
+.opponent-card-slot .card-rules.is-description-long .card-flavor { display: none; }
+.opponent-card-slot .card-rules.is-description-very-long .card-description { font-size: 7px; line-height: 1.06; }
+.opponent-card-slot .card-rules.is-description-very-long .card-flavor { display: none; }
 .range-readout { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; }
 .range-readout { padding: 3px 6px; border: 1px dashed color-mix(in srgb, var(--team), #fff 55%); border-radius: 6px; background: rgba(255,255,255,.45); }
 .range-readout.is-status-only { grid-template-columns: minmax(0, 1fr); }

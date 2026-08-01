@@ -1,4 +1,4 @@
-.hand-card { --card-accent: #7d6b55; position: relative; flex: 0 0 clamp(145px, 8.9vw, 154px); width: clamp(145px, 8.9vw, 154px); aspect-ratio: 170 / 238; display: grid; grid-template-rows: 37px minmax(72px, 1fr) minmax(88px, auto); scroll-snap-align: start; overflow: hidden; padding: 7px; color: var(--text-primary); border: 2px solid color-mix(in srgb, var(--card-accent), #3a2d22 18%); border-radius: var(--radius-card); background: linear-gradient(145deg, #fffdf5, #eae0cd); box-shadow: var(--shadow-card); text-align: left; transform-origin: center bottom; transition: transform .2s ease, box-shadow .2s ease, filter .2s ease; }
+.hand-card { --card-accent: #7d6b55; position: relative; flex: 0 0 clamp(145px, 8.9vw, 154px); width: clamp(145px, 8.9vw, 154px); aspect-ratio: 170 / 238; display: grid; grid-template-rows: 37px 72px minmax(0, 1fr); scroll-snap-align: start; overflow: hidden; padding: 7px; color: var(--text-primary); border: 2px solid color-mix(in srgb, var(--card-accent), #3a2d22 18%); border-radius: var(--radius-card); background: linear-gradient(145deg, #fffdf5, #eae0cd); box-shadow: var(--shadow-card); text-align: left; transform-origin: center bottom; transition: transform .2s ease, box-shadow .2s ease, filter .2s ease; }
 .hand-card::before { content: ""; position: absolute; inset: 4px; pointer-events: none; border: 1px solid color-mix(in srgb, var(--card-accent), #fff 58%); border-radius: 11px; }
 .hand-card::after { content: ""; position: absolute; top: 0; left: 18%; width: 64%; height: 3px; border-radius: 0 0 6px 6px; background: var(--card-accent); }
 .hand-card:hover, .hand-card:focus-visible { z-index: 5; transform: translateY(-13px) rotate(-.3deg); box-shadow: 0 20px 32px rgba(68,50,27,.24), var(--focus-ring); }
@@ -9,6 +9,7 @@
 .card-name { font: 800 19px/1 var(--serif); }
 .card-category { padding: 2px 5px; color: var(--card-accent); border: 1px solid color-mix(in srgb, var(--card-accent), #fff 50%); border-radius: 999px; background: color-mix(in srgb, var(--card-accent), #fff 88%); font-size: 12px; font-weight: 800; white-space: nowrap; }
 .card-art { position: relative; min-height: 0; overflow: hidden; border: 1px solid color-mix(in srgb, var(--card-accent), #493629 18%); border-radius: 8px 8px 4px 4px; background: #d8cbb7; }
+.hand-card > .card-art { height: 72px; min-height: 72px; max-height: 72px; }
 .card-art > img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .3s ease; }
 .hand-card:hover .card-art > img { transform: scale(1.035); }
 .card-crest { position: absolute; right: 5px; bottom: 5px; width: 30px; height: 30px; overflow: hidden; padding: 2px; border: 1px solid rgba(255,255,255,.8); border-radius: 50%; background: color-mix(in srgb, var(--card-accent), #fff 22%); box-shadow: 0 2px 6px rgba(0,0,0,.2); }
@@ -16,16 +17,15 @@
 .card-rules { position: relative; z-index: 1; min-height: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 3px; overflow: visible; padding: 6px; border: 1px solid #d8c9af; border-top: 0; border-radius: 0 0 7px 7px; background: rgba(255,253,247,.76); }
 .card-description { color: var(--text-primary); font-size: 11px; line-height: 1.32; overflow-wrap: anywhere; }
 .card-flavor { overflow: hidden; color: var(--text-muted); font: italic 12px/1.3 var(--serif); text-overflow: ellipsis; white-space: nowrap; }
-.hand-card.is-description-long { grid-template-rows: 37px minmax(60px, .8fr) minmax(100px, auto); }
-.hand-card.is-description-long .card-description { font-size: 10px; line-height: 1.22; }
-.hand-card.is-description-long .card-flavor { display: none; }
-.hand-card.is-description-very-long { grid-template-rows: 37px minmax(52px, .68fr) minmax(108px, auto); }
-.hand-card.is-description-very-long .card-description { font-size: 9px; line-height: 1.18; }
-.hand-card.is-description-very-long .card-flavor { display: none; }
+.hand-card .card-rules.is-description-long .card-description { font-size: 10px; line-height: 1.22; }
+.hand-card .card-rules.is-description-long .card-flavor { display: none; }
+.hand-card .card-rules.is-description-very-long .card-description { font-size: 9px; line-height: 1.18; }
+.hand-card .card-rules.is-description-very-long .card-flavor { display: none; }
 .frame-strike .card-art, .frame-impact .card-art { clip-path: polygon(0 0, 100% 0, 94% 100%, 6% 100%); }
 .frame-guard::before, .frame-ward::before { border-width: 2px; }
 .frame-seal .card-crest, .frame-oracle .card-crest { border-radius: 8px; transform: rotate(6deg); }
-.frame-machine { border-style: double; border-width: 4px; }
+.frame-machine { border-style: solid; border-width: 2px; }
+.frame-machine::before { inset: 3px; border-style: double; border-width: 3px; }
 
 .resolving-card { --card-accent: var(--gold); display: grid; grid-template-columns: 74px minmax(0, 1fr); align-items: center; gap: 12px; min-height: 90px; padding: 8px; border: 2px solid var(--card-accent); border-radius: 13px; background: var(--surface-raised); box-shadow: var(--shadow-card); }
 .resolving-card > img { display: block; width: 74px; height: 74px; object-fit: cover; border: 1px solid color-mix(in srgb, var(--card-accent), #fff 45%); border-radius: 9px; }
@@ -67,12 +67,32 @@
 .dying-view b { color:var(--danger); }
 
 @media (max-height: 920px) {
-  .hand-card { flex-basis: clamp(136px, 8.5vw, 148px); width: clamp(136px, 8.5vw, 148px); grid-template-rows: 32px minmax(66px, 1fr) minmax(80px, auto); padding: 6px; }
-  .hand-card.is-description-long { grid-template-rows: 32px 50px minmax(92px, auto); }
-  .hand-card.is-description-very-long { grid-template-rows: 32px 44px minmax(98px, auto); }
+  .hand-card { flex-basis: clamp(136px, 8.5vw, 148px); width: clamp(136px, 8.5vw, 148px); grid-template-rows: 32px 66px minmax(0, 1fr); padding: 6px; }
+  .hand-card > .card-art { height: 66px; min-height: 66px; max-height: 66px; }
   .card-name { font-size: 17px; }
   .card-rules { padding-top: 5px; }
   .card-flavor { display: none; }
   .resolving-card { min-height: 76px; grid-template-columns: 62px minmax(0, 1fr); }
   .resolving-card > img { width: 60px; height: 60px; }
+}
+
+/* 牌面插画高度是跨卡牌不变量。放在文件末尾以阻止描述长度规则覆盖它。 */
+.hand-card {
+  grid-template-rows: 37px 72px minmax(0, 1fr) !important;
+}
+.hand-card > .card-art {
+  block-size: 72px !important;
+  min-block-size: 72px !important;
+  max-block-size: 72px !important;
+}
+
+@media (max-height: 920px) {
+  .hand-card {
+    grid-template-rows: 32px 66px minmax(0, 1fr) !important;
+  }
+  .hand-card > .card-art {
+    block-size: 66px !important;
+    min-block-size: 66px !important;
+    max-block-size: 66px !important;
+  }
 }

@@ -1112,10 +1112,10 @@ test("牌面长描述分类确定且真人与已知对手模板共用同一函�
   assert.equal(cardDescriptionClass(CARD_DEFINITIONS.harvest.description),"");assert.doesNotMatch(handCardTemplate(instance("harvest")),/is-description-very-long/);
   assert.equal(cardDescriptionClass(CARD_DEFINITIONS.radar?.description??CARD_DEFINITIONS.defenseDevice.description),"is-description-very-long");
 });
-test("牌面 CSS 删除旧标签并让长描述优先缩字、缩图和隐藏风味", async () => {
+test("牌面 CSS 将长描述标记限制在文字区且不再影响外层插画网格", async () => {
   const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8"),css=`${cards}\n${characters}`;
-  assert.doesNotMatch(css,/\.card-tags/);assert.match(cards,/\.hand-card\.is-description-long\s*\{[^}]*grid-template-rows:/s);assert.match(cards,/\.hand-card\.is-description-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s);assert.match(cards,/\.hand-card\.is-description-very-long \.card-flavor\s*\{[^}]*display:\s*none/s);
-  assert.match(characters,/\.opponent-card-slot\.is-description-long\s*\{[^}]*grid-template-rows:/s);assert.match(characters,/\.opponent-card-slot\.is-description-very-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s);assert.match(cards,/overflow-wrap:\s*anywhere/);
+  assert.doesNotMatch(css,/\.card-tags/);assert.match(cards,/\.hand-card \.card-rules\.is-description-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s);assert.match(cards,/\.hand-card \.card-rules\.is-description-very-long \.card-flavor\s*\{[^}]*display:\s*none/s);
+  assert.match(characters,/\.opponent-card-slot \.card-rules\.is-description-very-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s);assert.doesNotMatch(css,/\.\w*-?card(?:-slot)?\.is-description-(?:very-)?long\s*\{[^}]*grid-template-rows/s);assert.match(cards,/overflow-wrap:\s*anywhere/);
   const lowHeight=cards.match(/@media \(max-height:\s*920px\)[\s\S]*$/)?.[0]??"";assert.doesNotMatch(lowHeight,/\.card-description\s*\{[^}]*display:\s*none/s);assert.doesNotMatch(cards,/\.card-description\s*\{[^}]*overflow:\s*hidden/s);
 });
 
@@ -1268,6 +1268,37 @@ test("卡牌CSS在手牌、结算、私密展示、判定和装备区统一约�
   const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8");
   for(const selector of [".card-art > img",".resolving-card > img",".hidden-known-card img",".private-card img, .tableau-card img",".judgment-view img"]){const escaped=selector.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");assert.match(cards,new RegExp(`${escaped}\\s*\\{[^}]*display:\\s*block[^}]*width:\\s*[^;]+;[^}]*height:\\s*[^;]+;[^}]*object-fit:\\s*(?:cover|contain)`,"s"),selector);}
   assert.match(characters,/\.equipment-icon\s*\{[^}]*display:\s*block[^}]*width:\s*[^;]+;[^}]*height:\s*[^;]+;[^}]*object-fit:\s*cover/s);
+});
+
+test("所有牌框保持相同内容宽度且机械双线不再挤压牌面", async () => {
+  const css=await readFile(projectFile("css/cards.css"),"utf8");
+  assert.match(css,/\.hand-card\s*\{[^}]*border:\s*2px\s+solid/s);
+  assert.match(css,/\.frame-machine\s*\{[^}]*border-style:\s*solid;[^}]*border-width:\s*2px;/s);
+  assert.match(css,/\.frame-machine::before\s*\{[^}]*border-style:\s*double;[^}]*border-width:\s*3px;/s);
+  assert.doesNotMatch(css,/\.frame-machine\s*\{[^}]*border-width:\s*4px/s);
+});
+
+test("护盾和反制等长描述牌与普通牌保持相同插画高度", async () => {
+  const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8");
+  assert.match(cards,/\.hand-card\s*\{[^}]*grid-template-rows:\s*37px\s+72px\s+minmax\(0,\s*1fr\)/s);
+  assert.match(cards,/\.hand-card\s*>\s*\.card-art\s*\{[^}]*height:\s*72px;[^}]*min-height:\s*72px;[^}]*max-height:\s*72px;/s);
+  assert.match(cards,/@media\s*\(max-height:\s*920px\)[\s\S]*?\.hand-card\s*\{[^}]*grid-template-rows:\s*32px\s+66px\s+minmax\(0,\s*1fr\)/s);
+  assert.match(cards,/@media\s*\(max-height:\s*920px\)[\s\S]*?\.hand-card\s*>\s*\.card-art\s*\{[^}]*height:\s*66px;[^}]*min-height:\s*66px;[^}]*max-height:\s*66px;/s);
+  assert.match(characters,/\.opponent-card-slot\s*\{[^}]*grid-template-rows:\s*27px\s+70px\s+minmax\(0,\s*1fr\)/s);
+  assert.match(characters,/\.opponent-card-slot\s*>\s*\.card-art\s*\{[^}]*height:\s*70px;[^}]*min-height:\s*70px;[^}]*max-height:\s*70px;/s);
+  assert.doesNotMatch(`${cards}\n${characters}`,/\.\w*-?card(?:-slot)?\.is-description-(?:very-)?long\s*\{[^}]*grid-template-rows/s);
+});
+
+test("反制护盾和军火库的长描述标记只进入文字区并由末尾规则锁定插画高度", async () => {
+  const cards=await readFile(projectFile("css/cards.css"),"utf8");
+  for(const definitionId of ["counter","shield","battleDevice"]){
+    const markup=handCardTemplate(instance(definitionId));
+    assert.doesNotMatch(markup,/^<button class="[^"]*is-description-(?:very-)?long/);
+    assert.match(markup,/class="card-rules is-description-(?:very-)?long"/);
+  }
+  assert.match(cards,/牌面插画高度是跨卡牌不变量/);
+  assert.match(cards,/\.hand-card\s*>\s*\.card-art\s*\{[^}]*block-size:\s*72px\s*!important;[^}]*min-block-size:\s*72px\s*!important;[^}]*max-block-size:\s*72px\s*!important;/s);
+  assert.match(cards,/@media\s*\(max-height:\s*920px\)[\s\S]*?\.hand-card\s*>\s*\.card-art\s*\{[^}]*block-size:\s*66px\s*!important;/s);
 });
 
 test("击杀奖励配置为1且AI模拟使用同一奖励数量", () => {
