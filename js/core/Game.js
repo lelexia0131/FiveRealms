@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-transfer-hand-only-v37";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-transfer-hand-only-v37";
-import { createId, clamp } from "../utils/helpers.js?build=20260801-transfer-hand-only-v37";
-import { EventBus } from "./EventBus.js?build=20260801-transfer-hand-only-v37";
-import { Player } from "./Player.js?build=20260801-transfer-hand-only-v37";
-import { Deck } from "./Deck.js?build=20260801-transfer-hand-only-v37";
-import { TeamManager } from "./TeamManager.js?build=20260801-transfer-hand-only-v37";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260801-transfer-hand-only-v37";
-import { RuleEngine } from "./RuleEngine.js?build=20260801-transfer-hand-only-v37";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260801-transfer-hand-only-v37";
-import { GameLogger } from "./GameLogger.js?build=20260801-transfer-hand-only-v37";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260801-transfer-hand-only-v37";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-transfer-hand-only-v37";
-import { AIController } from "../ai/AIController.js?build=20260801-transfer-hand-only-v37";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260801-transfer-hand-only-v37";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-transfer-hand-only-v37";
-import { Debug } from "../utils/debug.js?build=20260801-transfer-hand-only-v37";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260801-transfer-hand-only-v37";
-import { DyingSystem } from "./DyingSystem.js?build=20260801-transfer-hand-only-v37";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260801-transfer-hand-only-v37";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260801-transfer-hand-only-v37";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260801-transfer-hand-only-v37";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260801-transfer-hand-only-v37";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-private-reveal-layout-v39";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-private-reveal-layout-v39";
+import { createId, clamp } from "../utils/helpers.js?build=20260801-private-reveal-layout-v39";
+import { EventBus } from "./EventBus.js?build=20260801-private-reveal-layout-v39";
+import { Player } from "./Player.js?build=20260801-private-reveal-layout-v39";
+import { Deck } from "./Deck.js?build=20260801-private-reveal-layout-v39";
+import { TeamManager } from "./TeamManager.js?build=20260801-private-reveal-layout-v39";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260801-private-reveal-layout-v39";
+import { RuleEngine } from "./RuleEngine.js?build=20260801-private-reveal-layout-v39";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260801-private-reveal-layout-v39";
+import { GameLogger } from "./GameLogger.js?build=20260801-private-reveal-layout-v39";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260801-private-reveal-layout-v39";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-private-reveal-layout-v39";
+import { AIController } from "../ai/AIController.js?build=20260801-private-reveal-layout-v39";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260801-private-reveal-layout-v39";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260801-private-reveal-layout-v39";
+import { Debug } from "../utils/debug.js?build=20260801-private-reveal-layout-v39";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260801-private-reveal-layout-v39";
+import { DyingSystem } from "./DyingSystem.js?build=20260801-private-reveal-layout-v39";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260801-private-reveal-layout-v39";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260801-private-reveal-layout-v39";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260801-private-reveal-layout-v39";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260801-private-reveal-layout-v39";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {

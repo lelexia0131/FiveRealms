@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-transfer-hand-only-v37";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-transfer-hand-only-v37";
-import { randomChoice } from "../utils/helpers.js?build=20260801-transfer-hand-only-v37";
-import { Debug } from "../utils/debug.js?build=20260801-transfer-hand-only-v37";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-private-reveal-layout-v39";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-private-reveal-layout-v39";
+import { randomChoice } from "../utils/helpers.js?build=20260801-private-reveal-layout-v39";
+import { Debug } from "../utils/debug.js?build=20260801-private-reveal-layout-v39";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -192,11 +192,11 @@ export const ACTIVE_SKILLS = Object.freeze({
     async execute(game, source, targets) { source.changeEnergy(-2); await game.heal(source, targets[0], 1, { skill:"symbiosis" }); }
   }),
   stealSkill: Object.freeze({
-    id: "stealSkill", name: "窃取", cost: 2, limitPerTurn: 1, targetType: "enemyWithCardsOrEquipment", rangeRule: "fixed", range: 2,
+    id: "stealSkill", name: "窃取", cost: 1, limitPerTurn: 2, targetType: "enemyWithCardsOrEquipment", rangeRule: "fixed", range: 2,
     canUse(game, source) { const base = baseCanUse(game, source, this); return base.ok && !RuleEngine.getSkillTargets(game, source, this).length ? {ok:false,reason:"距离2内没有持有手牌或装备的敌人"} : base; },
     async execute(game, source, targets) {
       const gameId = game.state.gameId;
-      source.changeEnergy(-2);
+      source.changeEnergy(-1);
       const target = targets[0];
       const options = [...target.hand.map((card) => ({ card, zone:"hand" })), ...(target.equipment ? [{ card:target.equipment, zone:"equipment" }] : [])];
       const chosen = randomChoice(options, game.random);

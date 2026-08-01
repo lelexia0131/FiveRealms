@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-transfer-hand-only-v37";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-private-reveal-layout-v39";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -122,15 +122,26 @@ export function playerPanelTemplate(player, options = {}) {
   </article>`;
 }
 
+function cardFaceTemplate(card) {
+  const descriptionClass = cardDescriptionClass(card.description);
+  return `<span class="card-topline"><span class="card-name">${escapeHtml(card.name)}</span><span class="card-category">${escapeHtml(card.categoryName)}</span></span>
+    <span class="card-art"><img src="${escapeHtml(card.art)}" alt="" aria-hidden="true" draggable="false"><span class="card-crest"><img src="${escapeHtml(card.icon)}" alt="" aria-hidden="true"></span></span>
+    <span class="card-rules ${descriptionClass}"><span class="card-description">${escapeHtml(card.description)}</span><span class="card-flavor">${escapeHtml(card.flavorText)}</span></span>`;
+}
+
 export function handCardTemplate(card, options = {}) {
   const selected = Boolean(options.selected);
   const disabled = Boolean(options.disabled);
-  const descriptionClass = cardDescriptionClass(card.description);
   return `<button class="hand-card frame-${escapeHtml(card.frameStyle)} ${selected ? "is-selected" : ""} ${disabled ? "is-disabled" : ""}" style="--card-accent:${escapeHtml(card.accent)}" type="button" data-card-id="${escapeHtml(card.id)}" data-disabled="${disabled}" aria-disabled="${disabled}" aria-pressed="${selected}">
-    <span class="card-topline"><span class="card-name">${escapeHtml(card.name)}</span><span class="card-category">${escapeHtml(card.categoryName)}</span></span>
-    <span class="card-art"><img src="${escapeHtml(card.art)}" alt="" aria-hidden="true" draggable="false"><span class="card-crest"><img src="${escapeHtml(card.icon)}" alt="" aria-hidden="true"></span></span>
-    <span class="card-rules ${descriptionClass}"><span class="card-description">${escapeHtml(card.description)}</span><span class="card-flavor">${escapeHtml(card.flavorText)}</span></span>
+    ${cardFaceTemplate(card)}
   </button>`;
+}
+
+/** 私密展示复用真人手牌的完整牌面，但不暴露可用于交互的实体 card.id。 */
+export function privateCardTemplate(card) {
+  return `<article class="hand-card private-card frame-${escapeHtml(card.frameStyle)}" style="--card-accent:${escapeHtml(card.accent)}" aria-label="${escapeHtml(`${card.name}，${card.categoryName}，${card.description}`)}">
+    ${cardFaceTemplate(card)}
+  </article>`;
 }
 
 export function resolvingCardTemplate(cardOrName, source = "结算区", targetLabel = "") {

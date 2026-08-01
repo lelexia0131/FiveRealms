@@ -17,7 +17,7 @@ import { AiSimulator } from "../js/ai/AiSimulator.js";
 import { ThreatCalculator } from "../js/ai/ThreatCalculator.js";
 import { CleanupManager } from "../js/utils/CleanupManager.js";
 import { getAiDelay, sampleDelay } from "../js/utils/aiTiming.js";
-import { candidateCardTemplate, cardDescriptionClass, equipmentSlotTemplate, formatLogEntry, handCardTemplate, hiddenCardBackTemplate, opponentHandStripTemplate, playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate } from "../js/ui/templates.js";
+import { candidateCardTemplate, cardDescriptionClass, equipmentSlotTemplate, formatLogEntry, handCardTemplate, hiddenCardBackTemplate, opponentHandStripTemplate, playerPanelTemplate, privateCardTemplate, resolvingCardTemplate, skillDetailsTemplate } from "../js/ui/templates.js";
 import { InteractionController, hiddenSelectionMarkup } from "../js/ui/InteractionController.js";
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
 import { CARD_CATEGORY_DISPLAY_ORDER, CARD_DEFINITION_DISPLAY_ORDER, createHiddenSelectionView, createOpponentHandView } from "../js/ui/handVisibility.js";
@@ -213,7 +213,7 @@ test("所有角色技能都存在注册器", () => GENERAL_DEFINITIONS.forEach((
 test("所有角色都用稳定英文 roleTags 供 AI 判断职责", () => GENERAL_DEFINITIONS.forEach((general) => { assert.ok(general.roleTags.length >= 2);general.roleTags.forEach((tag)=>assert.match(tag,/^[a-z-]+$/)); }));
 test("守誓者最大生命为3且壁垒说明为可叠加的永久护盾", () => { const oath=GENERAL_DEFINITIONS.find((general)=>general.id==="oath-warden");assert.equal(oath.maxHp,3);assert.match(oath.activeDescription,/1点可叠加的护盾/);assert.match(oath.activeDescription,/不会随回合消失/);assert.match(oath.activeDescription,/抵消伤害时消耗/); });
 test("壁垒配置、README与实际目标规则保持一致", async () => { const oath=GENERAL_DEFINITIONS.find((general)=>general.id==="oath-warden"),readme=await readFile(projectFile("README.md"),"utf8"),config=await readFile(projectFile("js/config/generalConfig.js"),"utf8"),skills=await readFile(projectFile("js/generals/skillRegistry.js"),"utf8");assert.equal(oath.activeCost,ACTIVE_SKILLS.barrier.cost);assert.equal(oath.activeLimitPerTurn,ACTIVE_SKILLS.barrier.limitPerTurn);for(const text of [readme,config]){assert.doesNotMatch(text,/临时护盾|下次回合开始|回合开始时消散|统一消散/);assert.match(text,/不会随回合(?:数)?消失/);}assert.doesNotMatch(skills,/statuses\.temporaryShield|clearAtTurnStart/);const source=makePlayer("warden",0,"dawn","ai",1),ally=makePlayer("ally",1,"dawn"),deadAlly=makePlayer("dead-ally",2,"dawn"),enemy=makePlayer("enemy",3,"dusk");deadAlly.alive=false;const {game}=makeGame([source,ally,deadAlly,enemy]);assert.deepEqual(RuleEngine.getSkillTargets(game,source,ACTIVE_SKILLS.barrier).map((player)=>player.id),[ally.id]); });
-test("八名角色规则配置与README角色介绍一致", async () => { const readme=await readFile(projectFile("README.md"),"utf8");for(const general of GENERAL_DEFINITIONS){assert.match(readme,new RegExp(`### ${general.name}`));assert.ok(readme.includes(general.description));assert.match(readme,new RegExp(`主动·${general.activeName}`));assert.match(readme,new RegExp(`被动·${general.passiveName}`));}const byId=Object.fromEntries(GENERAL_DEFINITIONS.map((general)=>[general.id,general])),expected={"blade-walker":[4,2,1],"oath-warden":[3,2,2],"spirit-medic":[3,2,2],"shade-agent":[4,2,1],"ember-magus":[3,3,1],"trail-hunter":[4,2,2],"fate-gambler":[4,1,1],"resonance-tuner":[4,2,2]};for(const [id,values] of Object.entries(expected)){const general=byId[id],skill=ACTIVE_SKILLS[general.activeSkillIds[0]];assert.deepEqual([general.maxHp,general.activeCost,general.activeLimitPerTurn],values,id);assert.deepEqual([skill.cost,skill.limitPerTurn],values.slice(1),`${id}实际技能`);} });
+test("八名角色规则配置与README角色介绍一致", async () => { const readme=await readFile(projectFile("README.md"),"utf8");for(const general of GENERAL_DEFINITIONS){assert.match(readme,new RegExp(`### ${general.name}`));assert.ok(readme.includes(general.description));assert.match(readme,new RegExp(`主动·${general.activeName}`));assert.match(readme,new RegExp(`被动·${general.passiveName}`));}const byId=Object.fromEntries(GENERAL_DEFINITIONS.map((general)=>[general.id,general])),expected={"blade-walker":[4,2,1],"oath-warden":[3,2,2],"spirit-medic":[3,2,2],"shade-agent":[4,1,2],"ember-magus":[3,3,1],"trail-hunter":[4,2,2],"fate-gambler":[4,1,1],"resonance-tuner":[4,2,2]};for(const [id,values] of Object.entries(expected)){const general=byId[id],skill=ACTIVE_SKILLS[general.activeSkillIds[0]];assert.deepEqual([general.maxHp,general.activeCost,general.activeLimitPerTurn],values,id);assert.deepEqual([skill.cost,skill.limitPerTurn],values.slice(1),`${id}实际技能`);} });
 test("强制 AI 救援真人配置默认开启", () => assert.equal(GAME_CONFIG.forceAiRescueHuman, true));
 
 test("浏览器模块图使用统一构建版本，静态服务器不会复用旧规则模块", async () => {
@@ -294,7 +294,7 @@ test("壁垒护盾经过完整轮次且守誓者阵亡后仍然保留", async ()
 test("壁垒与护盾牌使用统一伤害吸收规则", async () => { const source=makePlayer("warden",0,"dawn","ai",1),target=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk"),shieldCard=instance("shield");const {game}=makeGame([source,target,enemy]);source.hand.push(shieldCard);source.energy=2;assert.equal(await game.playCard(source,shieldCard,[target]),true);await ACTIVE_SKILLS.barrier.execute(game,source,[target]);const hp=target.hp;assert.equal(target.shield,2);await game.damage(enemy,target,3,{canBlock:false,damageType:"normal"});assert.equal(target.shield,0);assert.equal(target.hp,hp-1);assert.equal("temporaryShield" in target.statuses,false); });
 test("README中的主动技能消耗与每回合次数进入实际规则", async () => { const warden=makePlayer("warden",0,"dawn","ai",1),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([warden,ally,enemy]);warden.energy=4;assert.equal(await game.useActiveSkill(warden,"barrier",[ally]),true);assert.equal(await game.useActiveSkill(warden,"barrier",[ally]),true);warden.energy=2;assert.equal(await game.useActiveSkill(warden,"barrier",[ally]),false);assert.equal(warden.turnFlags.activeSkillUseCounts.barrier,2);const blade=makePlayer("blade",0,"dawn","ai",0),bladeAlly=makePlayer("blade-ally",1,"dawn"),bladeEnemy=makePlayer("blade-enemy",2,"dusk");const {game:bladeGame}=makeGame([blade,bladeAlly,bladeEnemy]);blade.energy=2;assert.equal(await bladeGame.useActiveSkill(blade,"breakArmy",[]),true);assert.equal(blade.energy,0);assert.equal(blade.turnFlags.attackLimit,3); });
 test("灵医共生按README恢复1点且每回合可发动2次", async () => { const medic=makePlayer("medic",0,"dawn","ai",2),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");ally.hp-=2;const {game}=makeGame([medic,ally,enemy]);medic.energy=4;const medicHp=medic.hp;assert.equal(await game.useActiveSkill(medic,"symbiosis",[ally]),true);assert.equal(await game.useActiveSkill(medic,"symbiosis",[ally]),true);assert.equal(ally.hp,ally.maxHp);assert.equal(medic.hp,medicHp); });
-test("影客窥隙经实际伤害与隐藏选择查看至多2张实体牌", async () => { const shade=makePlayer("shade",0,"dawn","human",3),enemy=makePlayer("enemy",1,"dusk");enemy.hand.push(instance("assault"),instance("recover"),instance("charge"));const {game,ui}=makeGame([shade,enemy],{random:()=>0});registerPassiveSkills(game);await game.damage(shade,enemy,1,{canBlock:false});assert.equal(shade.maxHp,4);assert.equal(ACTIVE_SKILLS.stealSkill.cost,2);assert.equal(ui.hiddenRequests.length,1);assert.equal(ui.hiddenRequests[0].count,2);assert.equal(ui.reveals.length,1);assert.equal(ui.reveals[0].cards.length,2);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length,2); });
+test("影客窥隙经实际伤害与隐藏选择查看至多2张实体牌", async () => { const shade=makePlayer("shade",0,"dawn","human",3),enemy=makePlayer("enemy",1,"dusk");enemy.hand.push(instance("assault"),instance("recover"),instance("charge"));const {game,ui}=makeGame([shade,enemy],{random:()=>0});registerPassiveSkills(game);await game.damage(shade,enemy,1,{canBlock:false});assert.equal(shade.maxHp,4);assert.equal(ACTIVE_SKILLS.stealSkill.cost,1);assert.equal(ui.hiddenRequests.length,1);assert.equal(ui.hiddenRequests[0].count,2);assert.equal(ui.reveals.length,1);assert.equal(ui.reveals[0].cards.length,2);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length,2); });
 test("赌命者冒险失败不再随机弃牌", async () => { const gambler=makePlayer("gambler",0,"dawn","ai",6),enemy=makePlayer("enemy",1,"dusk"),kept=instance("block");gambler.hand.push(kept);const {game}=makeGame([gambler,enemy],{random:()=>.99});registerPassiveSkills(game);await game.eventBus.emit("cardUsed",{source:gambler,card:instance("harvest"),targets:[]});assert.ok(gambler.hand.includes(kept));assert.equal(gambler.hand.length,1); });
 test("赌命者孤注消耗全部能量并摸取等量牌，按30x%概率进入状态", async () => {
   for (const [energy, roll, expected] of [[1,.29,true],[1,.3,false],[2,.59,true],[2,.6,false],[3,.89,true],[3,.9,false],[4,.999,true]]) {
@@ -1157,7 +1157,7 @@ test("窃取把3张手牌与1张装备组成单一等概率实体集合", async 
   for(const [expectedIndex,roll] of rolls.entries()){
     const shade=makePlayer(`uniform-shade-${expectedIndex}`,0,"dawn","ai",3),target=makePlayer(`uniform-target-${expectedIndex}`,1,"dusk");
     const cards=[instance("assault"),instance("recover"),instance("charge")],equipment=instance("recycleDevice"),original=instance("battleDevice");
-    target.hand.push(...cards);target.equipment=equipment;shade.equipment=original;shade.energy=2;
+    target.hand.push(...cards);target.equipment=equipment;shade.equipment=original;shade.energy=1;
     const {game}=makeGame([shade,target],{random:()=>roll}),candidate=[...cards,equipment][expectedIndex];
     const shadeVersion=shade.handVersion,targetVersion=target.handVersion;
     assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);
@@ -1170,21 +1170,26 @@ test("窃取把3张手牌与1张装备组成单一等概率实体集合", async 
   }
 });
 
+test("真人窃取先选择距离2内敌人再只从该目标随机获得资源", async () => {
+  const shade=makePlayer("human-steal-shade",0,"dawn","human",3),allyA=makePlayer("human-steal-ally-a",1,"dawn"),chosen=makePlayer("human-steal-chosen",2,"dusk"),otherEnemy=makePlayer("human-steal-other",3,"dusk"),allyB=makePlayer("human-steal-ally-b",4,"dawn"),chosenEquipment=instance("energyDevice"),untouched=instance("block");chosen.equipment=chosenEquipment;otherEnemy.hand.push(untouched);shade.energy=1;const {game,ui}=makeGame([shade,allyA,chosen,otherEnemy,allyB],{random:()=>0});let offered=null,prompt="";ui.requestTarget=async(players,message)=>{offered=[...players];prompt=message;return chosen;};assert.equal(await game.handleHumanSkill(),true);assert.ok(offered.includes(chosen));assert.ok(offered.includes(otherEnemy));assert.ok(offered.every((player)=>player.battleTeam!==shade.battleTeam&&DistanceSystem.getDistance(game,shade,player)<=2));assert.match(prompt,/窃取.*选择目标/);assert.equal(chosen.equipment,null);assert.ok(shade.hand.includes(chosenEquipment));assert.ok(otherEnemy.hand.includes(untouched));assert.equal(shade.energy,0);
+});
+
 test("窃取装备先进入手牌且只有之后正常使用才会装备和替换", async () => {
   const shade=makePlayer("equip-to-hand-shade",0,"dawn","ai",3),target=makePlayer("equip-to-hand-target",1,"dusk"),stolen=instance("energyDevice"),original=instance("battleDevice");
-  const {game}=makeGame([shade,target],{random:()=>0});shade.energy=2;shade.equipment=original;target.equipment=stolen;const moves=[];
+  const {game}=makeGame([shade,target],{random:()=>0});shade.energy=1;shade.equipment=original;target.equipment=stolen;const moves=[];
   game.eventBus.on("afterCardMove","test:steal-equipment-zone",(event)=>{if(event.card===stolen)moves.push([event.from,event.to]);});
   assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);
   assert.deepEqual(moves,[["equipment","hand"]]);assert.equal(shade.equipment,original);assert.ok(shade.hand.includes(stolen));assert.equal(shade.turnFlags.recycleDeviceUses,0);
   assert.equal(await game.playCard(shade,stolen,[]),true);assert.equal(shade.equipment,stolen);assert.ok(game.state.deck.discardPile.includes(original));
 });
 
-test("窃取每回合只能发动1次且技能文本不再声明直接装备", async () => {
-  const shade=makePlayer("steal-limit",0,"dawn","ai",3),target=makePlayer("steal-limit-target",1,"dusk");target.hand.push(instance("block"),instance("charge"));
-  const {game}=makeGame([shade,target],{random:()=>0});shade.energy=4;
-  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);shade.energy=4;
-  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),false);assert.equal(shade.turnFlags.activeSkillUseCounts.stealSkill,1);
-  assert.doesNotMatch(GENERAL_DEFINITIONS[3].activeDescription,/直接进入.*装备区|直接装备/);
+test("窃取消耗1点能量且每回合最多发动2次", async () => {
+  const shade=makePlayer("steal-limit",0,"dawn","ai",3),target=makePlayer("steal-limit-target",1,"dusk");target.hand.push(instance("block"),instance("charge"),instance("recover"));
+  const {game}=makeGame([shade,target],{random:()=>0});shade.energy=3;
+  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);assert.equal(shade.energy,2);
+  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);assert.equal(shade.energy,1);
+  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),false);assert.equal(shade.turnFlags.activeSkillUseCounts.stealSkill,2);assert.equal(target.hand.length,1);
+  assert.equal(ACTIVE_SKILLS.stealSkill.cost,1);assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn,2);assert.doesNotMatch(GENERAL_DEFINITIONS[3].activeDescription,/直接进入.*装备区|直接装备/);
 });
 
 test("AI模拟窃取装备时只增加手牌且保持影客当前装备", () => {
@@ -1192,13 +1197,14 @@ test("AI模拟窃取装备时只增加手牌且保持影客当前装备", () => 
   shade.equipment=current;shade.energy=2;target.equipment=instance("energyDevice");const {game}=makeGame([shade,target]);
   const visible=createAiVisibleState(shade.id,game.state),next=new AiSimulator(visible).apply(visible,{type:"skill",skill:ACTIVE_SKILLS.stealSkill,targets:[{id:target.id}]},shade.id);
   const actor=next.players.find((player)=>player.id===shade.id),victim=next.players.find((player)=>player.id===target.id);
-  assert.equal(actor.handCount,1);assert.equal(actor.equipmentDefinitionId,current.definitionId);assert.equal(victim.equipmentDefinitionId,null);
+  assert.equal(actor.handCount,1);assert.equal(actor.energy,1);assert.equal(actor.activeSkillUses,1);assert.equal(actor.activeSkillUsed,false);assert.equal(actor.equipmentDefinitionId,current.definitionId);assert.equal(victim.equipmentDefinitionId,null);
 });
 
 test("窃取说明与README均使用收入手牌的新规则", async () => {
   const readme=await readFile(projectFile("README.md"),"utf8"),description=GENERAL_DEFINITIONS[3].activeDescription;
-  assert.match(description,/随机获得.*手牌或装备牌/);assert.doesNotMatch(`${description}\n${readme}`,/装备牌直接进入.*装备区|窃取.*直接装备/);
-  assert.match(readme,/统一候选集合.*等概率随机获得.*收入手牌/);
+  assert.equal(GENERAL_DEFINITIONS[3].activeCost,1);assert.equal(GENERAL_DEFINITIONS[3].activeLimitPerTurn,2);assert.equal(ACTIVE_SKILLS.stealSkill.cost,1);assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn,2);
+  assert.match(description,/消耗1点能量.*选择距离2内.*敌人作为目标/);assert.match(description,/统一候选集合.*等概率随机获得.*收入手牌/);assert.match(description,/每回合最多发动2次/);assert.doesNotMatch(`${description}\n${readme}`,/装备牌直接进入.*装备区|窃取.*直接装备/);
+  assert.match(readme,/主动·窃取[^\n]*消耗 1 点能量[^\n]*选择距离 2 内[^\n]*敌人作为目标[^\n]*统一候选集合[^\n]*等概率随机获得[^\n]*一回合最多使用 2 次/);
 });
 
 test("窥隙真人选择只私下展示且公共日志与DOM不泄露牌面", async () => {
@@ -1274,8 +1280,15 @@ test("全部卡牌SVG使用统一480x280画布且配置引用均存在", async (
 
 test("卡牌CSS在手牌、结算、私密展示、判定和装备区统一约束图片尺寸", async () => {
   const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8");
-  for(const selector of [".card-art > img",".resolving-card > img",".hidden-known-card img",".private-card img, .tableau-card img",".judgment-view img"]){const escaped=selector.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");assert.match(cards,new RegExp(`${escaped}\\s*\\{[^}]*display:\\s*block[^}]*width:\\s*[^;]+;[^}]*height:\\s*[^;]+;[^}]*object-fit:\\s*(?:cover|contain)`,"s"),selector);}
+  for(const selector of [".card-art > img",".resolving-card > img",".hidden-known-card img",".tableau-card > img",".judgment-view img"]){const escaped=selector.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");assert.match(cards,new RegExp(`${escaped}\\s*\\{[^}]*display:\\s*block[^}]*width:\\s*[^;]+;[^}]*height:\\s*[^;]+;[^}]*object-fit:\\s*(?:cover|contain)`,"s"),selector);}
   assert.match(characters,/\.equipment-icon\s*\{[^}]*display:\s*block[^}]*width:\s*[^;]+;[^}]*height:\s*[^;]+;[^}]*object-fit:\s*cover/s);
+});
+
+test("窥隙结果牌与正常手牌共用完整牌面布局且不暴露实体ID", async () => {
+  const card=instance("counter"),normal=handCardTemplate(card),revealed=privateCardTemplate(card),face=(markup)=>markup.replace(/^<[^>]+>\s*/,"").replace(/\s*<\/(?:button|article)>$/,"");
+  for(const className of ["card-topline","card-name","card-category","card-art","card-crest","card-rules","card-description","card-flavor"])assert.match(revealed,new RegExp(`class="[^"]*${className}`),className);
+  assert.equal(face(revealed),face(normal));assert.match(revealed,/class="hand-card private-card frame-seal"/);assert.doesNotMatch(revealed,/data-card-id|data-disabled|aria-pressed/);assert.doesNotMatch(revealed,new RegExp(card.id));
+  const css=await readFile(projectFile("css/cards.css"),"utf8");assert.match(css,/\.private-card\.hand-card\s*\{[^}]*font-weight:\s*400;[^}]*cursor:\s*default;/s);assert.doesNotMatch(css,/\.private-card\s*,\s*\.tableau-card|\.private-card\s+img/);
 });
 
 test("所有牌框保持相同内容宽度且机械双线不再挤压牌面", async () => {
