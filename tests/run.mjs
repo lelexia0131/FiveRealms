@@ -233,6 +233,11 @@ test("晨昏 BGM 使用不同速度、音色与旋律轮廓", () => {
   assert.notEqual(MUSIC_PROFILES.dawn.tempo, MUSIC_PROFILES.dusk.tempo);
   assert.notEqual(MUSIC_PROFILES.dawn.wave, MUSIC_PROFILES.dusk.wave);
   assert.notDeepEqual(MUSIC_PROFILES.dawn.lead, MUSIC_PROFILES.dusk.lead);
+  for (const profile of Object.values(MUSIC_PROFILES)) {
+    assert.ok(profile.lead.length * 30 / profile.tempo >= 60);
+    assert.equal(profile.bass.length * 8, profile.lead.length);
+    assert.equal(profile.thirds.length, profile.bass.length);
+  }
 });
 test("BGM 音量可独立调节并限制在合法范围", () => {
   const sound = new SoundManager();
@@ -240,6 +245,16 @@ test("BGM 音量可独立调节并限制在合法范围", () => {
   assert.equal(sound.musicVolume, 0.82);
   assert.equal(sound.setMusicVolume(3), 1);
   assert.equal(sound.setMusicVolume(-1), 0);
+});
+test("晨昏主题切换后分别续播而不是反复从开头播放", () => {
+  const sound = new SoundManager();
+  sound.musicTeam="dawn";sound.musicStep=42;
+  sound.setMusicTeam("dusk");
+  assert.equal(sound.musicStepsByTeam.dawn,42);
+  sound.musicStep=17;
+  sound.setMusicTeam("dawn");
+  assert.equal(sound.musicStepsByTeam.dusk,17);
+  assert.equal(sound.musicStep,42);
 });
 test("抽牌音效只使用柔和纸张噪声而不含持续滑音", async () => {
   const source = await readFile(projectFile("js/audio/SoundManager.js"), "utf8");

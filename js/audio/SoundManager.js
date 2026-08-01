@@ -13,19 +13,54 @@ const musicGainForVolume = (volume) => {
   return volume * 2.2 + upperBoost * upperBoost;
 };
 
+const longMelody = (...phrases) => Object.freeze(phrases.flat());
+
+// 每个乐句16步、全曲12句，共192步；晨约74秒、昏约80秒才完成一次循环。
+const DAWN_MELODY = longMelody(
+  [60,null,64,null,67,null,69,67,64,null,62,null,64,null,67,null],
+  [67,null,69,72,69,null,67,null,64,67,64,null,62,null,60,null],
+  [60,null,64,null,67,69,72,null,69,67,64,null,62,64,67,null],
+  [64,null,67,null,72,71,69,null,67,null,64,62,64,null,67,null],
+  [69,72,74,null,72,69,67,null,64,67,69,null,67,64,62,null],
+  [67,null,71,72,76,null,74,72,69,null,67,64,67,null,69,null],
+  [72,null,76,79,76,null,74,null,72,69,67,null,69,null,72,null],
+  [64,67,69,null,72,null,71,69,67,null,64,67,69,null,64,null],
+  [60,64,67,72,71,null,69,67,64,null,67,69,72,null,74,null],
+  [69,null,72,74,76,null,74,72,69,67,64,null,67,69,72,null],
+  [72,null,69,67,64,null,62,64,67,69,67,null,64,62,60,null],
+  [67,64,62,null,60,null,64,67,69,null,67,64,62,null,60,null]
+);
+
+const DUSK_MELODY = longMelody(
+  [57,null,60,null,64,null,65,64,60,null,57,null,55,null,53,null],
+  [53,null,57,60,57,null,55,null,52,55,57,null,60,null,57,null],
+  [45,null,52,53,57,null,60,57,55,null,52,53,55,null,57,null],
+  [60,64,65,null,64,60,57,null,55,57,60,null,57,55,52,null],
+  [52,null,55,57,60,null,64,60,57,null,55,52,53,null,55,null],
+  [57,null,60,64,65,null,67,65,64,null,60,57,60,null,64,null],
+  [64,null,67,69,67,null,65,64,60,null,57,55,57,null,60,null],
+  [53,57,60,null,64,null,62,60,57,null,53,55,57,null,52,null],
+  [45,52,57,60,59,null,57,53,52,null,55,57,60,null,62,null],
+  [60,null,64,65,67,null,65,64,60,57,55,null,57,60,64,null],
+  [64,null,60,57,53,null,52,53,55,57,55,null,53,52,48,null],
+  [57,53,52,null,48,null,52,55,57,null,55,52,50,null,45,null]
+);
+
 export const MUSIC_PROFILES = Object.freeze({
   dawn: Object.freeze({
     tempo: 78,
-    lead: Object.freeze([60, 64, 67, 69, 67, 64, 62, 67, 72, 69, 67, 64, 62, 64, 67, 69]),
-    bass: Object.freeze([48, 48, 45, 43]),
+    lead: DAWN_MELODY,
+    bass: Object.freeze([48,45,43,48,45,50,48,43,45,48,50,47,48,45,43,50,45,48,43,47,48,45,43,48]),
+    thirds: Object.freeze([4,3,4,2,4,4,3,4,3,4,4,3,4,3,4,4,3,4,2,3,4,3,4,4]),
     wave: "triangle",
     leadLevel: 0.036,
     padLevel: 0.022
   }),
   dusk: Object.freeze({
     tempo: 72,
-    lead: Object.freeze([57, 60, 64, 65, 64, 60, 57, 53, 55, 57, 60, 64, 60, 57, 55, 52]),
-    bass: Object.freeze([45, 41, 43, 40]),
+    lead: DUSK_MELODY,
+    bass: Object.freeze([45,41,43,40,41,45,43,40,45,41,38,43,45,40,41,43,38,45,41,40,43,41,38,45]),
+    thirds: Object.freeze([3,3,4,3,3,3,4,3,3,3,3,4,3,3,3,4,3,3,4,3,4,3,3,3]),
     wave: "sine",
     leadLevel: 0.042,
     padLevel: 0.028
@@ -70,6 +105,7 @@ export class SoundManager {
     this.musicTimer = null;
     this.nextMusicTime = 0;
     this.musicStep = 0;
+    this.musicStepsByTeam = { dawn:0, dusk:0 };
     this.lastPlayedAt = new Map();
   }
 
@@ -126,10 +162,11 @@ export class SoundManager {
   setMusicTeam(team) {
     if (!MUSIC_PROFILES[team]) return this.stopMusic();
     const changed = this.musicTeam !== team;
-    this.musicTeam = team;
     if (changed) {
+      if (this.musicTeam) this.musicStepsByTeam[this.musicTeam] = this.musicStep;
+      this.musicTeam = team;
       this.stopScheduler();
-      this.musicStep = 0;
+      this.musicStep = this.musicStepsByTeam[team] ?? 0;
       this.nextMusicTime = 0;
     }
     if (this.enabled) void this.unlock();
@@ -137,6 +174,7 @@ export class SoundManager {
   }
 
   stopMusic() {
+    if (this.musicTeam) this.musicStepsByTeam[this.musicTeam] = this.musicStep;
     this.musicTeam = null;
     this.stopScheduler();
   }
@@ -166,16 +204,22 @@ export class SoundManager {
 
   scheduleMusicStep(profile, step, time, duration) {
     const note = profile.lead[step % profile.lead.length];
-    if (step % 2 === 0 || step % 8 === 7) {
+    if (note != null && (step % 2 === 0 || step % 8 === 7)) {
       this.tone(note, time, duration * 1.55, profile.wave, profile.leadLevel, this.musicGain);
     }
     if (step % 8 === 0) {
-      const bass = profile.bass[Math.floor(step / 8) % profile.bass.length];
+      const measure = Math.floor(step / 8);
+      const bass = profile.bass[measure % profile.bass.length];
+      const third = profile.thirds[measure % profile.thirds.length];
       this.tone(bass, time, duration * 7.2, "sine", profile.padLevel, this.musicGain, 0.18);
-      this.tone(bass + (this.musicTeam === "dawn" ? 7 : 5), time, duration * 7.2, "triangle", profile.padLevel * 0.48, this.musicGain, 0.24);
+      this.tone(bass + 12 + third, time, duration * 7.2, "triangle", profile.padLevel * 0.32, this.musicGain, 0.24);
+      this.tone(bass + 19, time, duration * 7.2, "sine", profile.padLevel * 0.2, this.musicGain, 0.28);
     }
-    if (this.musicTeam === "dawn" && step % 16 === 12) {
+    if (this.musicTeam === "dawn" && note != null && step % 16 === 12) {
       this.tone(note + 12, time, duration * 2.4, "sine", 0.018, this.musicGain, 0.08);
+    }
+    if (this.musicTeam === "dusk" && note != null && step % 32 === 28) {
+      this.tone(note + 7, time, duration * 3.2, "triangle", 0.012, this.musicGain, 0.12);
     }
   }
 

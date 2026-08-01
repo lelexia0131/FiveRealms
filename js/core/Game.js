@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-audio-soft-v51";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-audio-soft-v51";
-import { createId, clamp } from "../utils/helpers.js?build=20260801-audio-soft-v51";
-import { EventBus } from "./EventBus.js?build=20260801-audio-soft-v51";
-import { Player } from "./Player.js?build=20260801-audio-soft-v51";
-import { Deck } from "./Deck.js?build=20260801-audio-soft-v51";
-import { TeamManager } from "./TeamManager.js?build=20260801-audio-soft-v51";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260801-audio-soft-v51";
-import { RuleEngine } from "./RuleEngine.js?build=20260801-audio-soft-v51";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260801-audio-soft-v51";
-import { GameLogger } from "./GameLogger.js?build=20260801-audio-soft-v51";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260801-audio-soft-v51";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-audio-soft-v51";
-import { AIController } from "../ai/AIController.js?build=20260801-audio-soft-v51";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260801-audio-soft-v51";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-audio-soft-v51";
-import { Debug } from "../utils/debug.js?build=20260801-audio-soft-v51";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260801-audio-soft-v51";
-import { DyingSystem } from "./DyingSystem.js?build=20260801-audio-soft-v51";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260801-audio-soft-v51";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260801-audio-soft-v51";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260801-audio-soft-v51";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260801-audio-soft-v51";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-bgm-long-v52";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-bgm-long-v52";
+import { createId, clamp } from "../utils/helpers.js?build=20260801-bgm-long-v52";
+import { EventBus } from "./EventBus.js?build=20260801-bgm-long-v52";
+import { Player } from "./Player.js?build=20260801-bgm-long-v52";
+import { Deck } from "./Deck.js?build=20260801-bgm-long-v52";
+import { TeamManager } from "./TeamManager.js?build=20260801-bgm-long-v52";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260801-bgm-long-v52";
+import { RuleEngine } from "./RuleEngine.js?build=20260801-bgm-long-v52";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260801-bgm-long-v52";
+import { GameLogger } from "./GameLogger.js?build=20260801-bgm-long-v52";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260801-bgm-long-v52";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-bgm-long-v52";
+import { AIController } from "../ai/AIController.js?build=20260801-bgm-long-v52";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260801-bgm-long-v52";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260801-bgm-long-v52";
+import { Debug } from "../utils/debug.js?build=20260801-bgm-long-v52";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260801-bgm-long-v52";
+import { DyingSystem } from "./DyingSystem.js?build=20260801-bgm-long-v52";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260801-bgm-long-v52";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260801-bgm-long-v52";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260801-bgm-long-v52";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260801-bgm-long-v52";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {

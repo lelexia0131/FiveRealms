@@ -1,4 +1,4 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260801-audio-soft-v51";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260801-bgm-long-v52";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
