@@ -293,6 +293,20 @@ test("角色面板不再显示突袭和调息次数栏", () => { const {small,la
 test("真人角色能力按主动在上、被动在下展示且不混入人物介绍", () => { const player=makePlayer("human",0,"dawn","human",0),markup=playerPanelTemplate(player,{isHuman:true});const activeIndex=markup.indexOf(player.general.activeName),passiveIndex=markup.indexOf(player.general.passiveName);assert.ok(activeIndex>=0&&passiveIndex>activeIndex);assert.match(markup,/主动技能/);assert.match(markup,/被动技能/);assert.match(markup,new RegExp(player.general.activeDescription));assert.match(markup,new RegExp(player.general.passiveDescription));assert.doesNotMatch(markup,new RegExp(player.general.description)); });
 test("角色状态取代座位栏且护盾只在独立资源栏显示", () => { const player=makePlayer("human",0,"dawn","human",0);player.shield=2;let markup=playerPanelTemplate(player,{isHuman:true});assert.match(markup,/class="panel-status"/);assert.match(markup,/>状态<\/small><b>—<\/b>/);assert.match(markup,/resource-pill shield[^>]*><small>护盾<\/small><strong>2<\/strong>/);assert.doesNotMatch(markup,/状态<\/small><b>[^<]*护盾|状态稳定|status-row|status-chip|座位\s*\d/);player.statuses.exposeWeakness={stacks:2};player.statuses.huntMark={sourceId:"hunter"};markup=playerPanelTemplate(player,{isHuman:true,distanceInfo:{distance:1,range:1,seat:3},distanceState:"距离 1 · 可突袭"});assert.match(markup,/状态<\/small><b>破势 2 · 猎印<\/b>/);assert.match(markup,/距离 1 · 可突袭/);assert.match(markup,/射程 1/);assert.doesNotMatch(markup,/状态<\/small><b>[^<]*护盾|座位\s*3/); });
 test("刃行者使用不同类别卡牌会增加并公开显示连势且命中后消耗", async () => { const blade=makePlayer("blade",0,"dawn","ai",0),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk","ai",0);const {game}=makeGame([blade,ally,enemy]);registerPassiveSkills(game);const charge=instance("charge"),harvest=instance("harvest"),assault=instance("assault");blade.hand.push(charge,harvest,assault);game.state.deck.cards.push(instance("block"),instance("shield"));assert.equal(await game.playCard(blade,charge,[blade]),true);assert.equal(blade.turnFlags.momentum,1);assert.equal(await game.playCard(blade,harvest,[]),true);assert.equal(blade.turnFlags.momentum,2);assert.match(playerPanelTemplate(blade,{humanTeam:"dawn"}),/状态<\/small><b>连势 2<\/b>/);const hp=enemy.hp;assert.equal(await game.playCard(blade,assault,[enemy]),true);assert.equal(enemy.hp,hp-3);assert.equal(blade.turnFlags.momentum,0);assert.doesNotMatch(playerPanelTemplate(blade,{humanTeam:"dawn"}),/连势 \d/); });
+test("刃行者连势只在本人回合结束时清空", async () => {
+  const blade=makePlayer("blade-turn-end",0,"dawn","ai",0),ally=makePlayer("blade-ally",1,"dawn"),enemy=makePlayer("blade-enemy",2,"dusk"),{game}=makeGame([blade,ally,enemy]);registerPassiveSkills(game);
+  blade.turnFlags.momentum=2;await game.eventBus.emit("turnEnd",{type:"turnEnd",player:ally});assert.equal(blade.turnFlags.momentum,2);
+  await game.eventBus.emit("turnEnd",{type:"turnEnd",player:blade});assert.equal(blade.turnFlags.momentum,0);assert.doesNotMatch(playerPanelTemplate(blade,{humanTeam:"dawn"}),/连势 \d/);
+});
+test("刃行者配置与README都声明回合结束清空连势", async () => {
+  const blade=GENERAL_DEFINITIONS.find((general)=>general.id==="blade-walker"),readme=await readFile(projectFile("README.md"),"utf8"),bladeSection=readme.match(/### 刃行者[\s\S]*?(?=\r?\n### )/)?.[0]??"";
+  assert.match(blade.passiveDescription,/回合结束后清空连势/);assert.match(bladeSection,/回合结束后清空连势/);
+});
+test("刃行者完整回合结束流程会清空未消费的连势", async () => {
+  const blade=makePlayer("blade-full-turn",0,"dawn","ai",0),enemy=makePlayer("blade-full-turn-enemy",1,"dusk"),{game}=makeGame([blade,enemy]);registerPassiveSkills(game);
+  game.aiController.selectAction=async()=>({type:"end"});game.eventBus.on("playPhaseEnd","test:grant-momentum-before-turn-end",()=>{blade.turnFlags.momentum=2;});
+  await game.takeTurn(blade,game.state.gameId);assert.equal(blade.turnFlags.momentum,0);
+});
 test("壁垒每次提供1点可叠加的永久护盾", async () => { const source=makePlayer("a",0,"dawn"),target=makePlayer("b",1,"dawn","ai",1),enemy=makePlayer("c",2,"dusk");const {game}=makeGame([source,target,enemy]);source.energy=4;target.shield=2;await ACTIVE_SKILLS.barrier.execute(game,source,[target]);assert.equal(target.shield,3);await ACTIVE_SKILLS.barrier.execute(game,source,[target]);assert.equal(target.shield,4);assert.equal("temporaryShield" in target.statuses,false);const log=game.state.logs.at(-1)?.message??"";assert.match(log,/构筑壁垒.*获得1点护盾/);assert.doesNotMatch(log,/持续|消散/); });
 test("壁垒护盾不会在目标回合开始时消失", async () => { const source=makePlayer("a",0,"dawn"),target=makePlayer("b",1,"dawn","ai",1),enemy=makePlayer("c",2,"dusk");const {game}=makeGame([source,target,enemy]);source.energy=2;await ACTIVE_SKILLS.barrier.execute(game,source,[target]);game.state.currentPlayerIndex=1;game.aiController.selectAction=async()=>({type:"end"});await game.takeTurn(target,game.state.gameId);assert.equal(target.shield,1);assert.equal("temporaryShield" in target.statuses,false); });
 test("壁垒护盾经过完整轮次且守誓者阵亡后仍然保留", async () => { const source=makePlayer("warden",0,"dawn","ai",1),target=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([source,target,enemy]);source.energy=2;target.shield=1;await ACTIVE_SKILLS.barrier.execute(game,source,[target]);source.alive=false;source.hp=0;game.state.currentPlayerIndex=1;game.state.startingPlayerIndex=1;game.aiController.selectAction=async()=>({type:"end"});for(let turn=0;turn<4;turn+=1){await game.takeTurn(game.currentPlayer,game.state.gameId);await game.advanceTurn();}assert.equal(game.state.currentRound,3);assert.equal(target.shield,2);assert.equal("temporaryShield" in target.statuses,false); });
@@ -1105,9 +1119,9 @@ test("窥探预选两张中一张在反制期间离开时只展示仍在原手�
 });
 
 test("AI 模拟 end 会设置终止状态且终止快照不再生成动作", () => {
-  const actor=makePlayer("terminal-actor",0,"dawn"),enemy=makePlayer("terminal-enemy",1,"dusk"),use=instance("harvest");actor.hand.push(use);
-  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state),terminal=new AiSimulator(visible).apply(visible,{type:"end"},actor.id);
-  assert.equal(visible.playPhaseEnded,false);assert.equal(terminal.playPhaseEnded,true);
+  const actor=makePlayer("terminal-actor",0,"dawn","ai",0),enemy=makePlayer("terminal-enemy",1,"dusk"),use=instance("harvest");actor.hand.push(use);
+  const {game}=makeGame([actor,enemy]);actor.turnFlags.momentum=2;const visible=createAiVisibleState(actor.id,game.state),terminal=new AiSimulator(visible).apply(visible,{type:"end"},actor.id);
+  assert.equal(visible.playPhaseEnded,false);assert.equal(visible.players[0].momentum,2);assert.equal(terminal.playPhaseEnded,true);assert.equal(terminal.players[0].momentum,0);
   assert.deepEqual(game.aiController.actionGenerator.generateFromVisible(terminal,actor.id),[]);
 });
 
@@ -1296,6 +1310,14 @@ test("所有隐藏选择池都不显示令牌或核心校验技术提示", async
   const pending=controller.requestHiddenCards(selection,1,"掠夺：选择手牌或装备",{viewer,owner,helpText:"手牌使用安全令牌；装备牌为公开信息，确认时核心会重新验证所在区域。"});
   assert.doesNotMatch(panel.innerHTML,/安全令牌|临时令牌|核心会重新|handVersion|校验手牌版本/);assert.doesNotMatch(panel.innerHTML,/<p>/);
   controller.cancel();assert.equal(await pending,null);
+});
+test("互利、窥隙和隐藏选择牌池为选中上移预留空间且不拉伸牌面", async () => {
+  const css=await readFile(projectFile("css/cards.css"),"utf8"),selection=hiddenSelectionMarkup({tokens:[{token:"opaque-a"}]});
+  assert.match(css,/\.hidden-card-grid,\s*\.private-card-grid,\s*\.tableau-cards\s*\{[^}]*align-items:\s*flex-start[^}]*margin:\s*16px 0 12px/s);
+  assert.match(css,/\.hidden-card-grid\s*\{\s*gap:\s*9px/);
+  assert.match(css,/\.tableau-cards \.hand-card\.is-selected\s*\{\s*transform:\s*translateY\(-7px\)/s);
+  assert.match(css,/\.hidden-card-grid \.hand-card\.is-selected[^}]*translateY\(-7px\)/s);
+  assert.match(selection,/hidden-card-back is-compact/);
 });
 
 test("窥隙目标仅1张手牌时最多选择并展示1张", async () => {

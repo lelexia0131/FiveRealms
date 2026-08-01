@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-spirit-medic-v42";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-spirit-medic-v42";
-import { randomChoice } from "../utils/helpers.js?build=20260801-spirit-medic-v42";
-import { Debug } from "../utils/debug.js?build=20260801-spirit-medic-v42";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-momentum-expiry-v44";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-momentum-expiry-v44";
+import { randomChoice } from "../utils/helpers.js?build=20260801-momentum-expiry-v44";
+import { Debug } from "../utils/debug.js?build=20260801-momentum-expiry-v44";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -46,6 +46,9 @@ const PASSIVE_SKILLS = {
     game.eventBus.on("afterDamage", `${owner.id}:momentum:consume`, (event) => {
       if (event.source?.id !== owner.id || event.actualAmount <= 0) return;
       if (event.metadata.consumeMomentum) owner.turnFlags.momentum = 0;
+    });
+    game.eventBus.on("turnEnd", `${owner.id}:momentum:turnEnd`, (event) => {
+      if (event.player?.id === owner.id) owner.turnFlags.momentum = 0;
     });
   },
 

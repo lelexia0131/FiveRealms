@@ -1,4 +1,4 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260801-spirit-medic-v42";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260801-momentum-expiry-v44";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

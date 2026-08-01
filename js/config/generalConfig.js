@@ -9,7 +9,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "blade-walker", name: "刃行者", glyph: "刃", portrait: "./assets/characters/blade-walker.svg",
     loreFaction: "流火长路", maxHp: 4, tags: ["进攻", "连击"], roleTags: ["damage", "attacker"], passiveSkillIds: ["momentum"], activeSkillIds: ["breakArmy"],
-    passiveName: "连势", passiveDescription: "每回合首次使用一种新的卡牌类别时获得1层连势，最多2层；下一次突袭实际造成伤害时增加等同层数的伤害并消耗。",
+    passiveName: "连势", passiveDescription: "每回合首次使用一种新的卡牌类别时获得1层连势，最多2层；下一次突袭实际造成伤害时增加等同层数的伤害并消耗，回合结束后清空连势。",
     passiveTriggerText: "使用本回合尚未记录的卡牌类别时", passiveLimitText: "每回合按不同卡牌类别分别触发",
     activeName: "破军", activeDescription: "消耗2点能量，本回合可额外使用1张突袭；每回合最多发动1次。", activeCost: 2, activeLimitPerTurn: 1,
     description: "沿熔岩古道巡行的迅刃，用变化不定的牌序积蓄致命节奏。",

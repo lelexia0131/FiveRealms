@@ -3,7 +3,7 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-spirit-medic-v42";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-momentum-expiry-v44";
 
 const probabilityAtLeast = (trials, probability, required) => {
   if (required <= 0) return 1;
@@ -76,6 +76,7 @@ export function createAiVisibleState(viewerId, state) {
       attackLimit: player.turnFlags.attackLimit,
       recoverUsed: player.turnFlags.recoverUsed,
       recoverLimit: player.turnFlags.recoverLimit,
+      momentum: player.turnFlags.momentum ?? 0,
       rejuvenationUsed: Boolean(player.turnFlags.rejuvenationUsed),
       exposeWeaknessStacks: player.statuses.exposeWeakness?.stacks ?? 0,
       assaultBonus: player.statuses.allIn?.assaultBonus ?? 0,

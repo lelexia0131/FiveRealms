@@ -2,10 +2,10 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260801-spirit-medic-v42";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-spirit-medic-v42";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-spirit-medic-v42";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-spirit-medic-v42";
+import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260801-momentum-expiry-v44";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-momentum-expiry-v44";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-momentum-expiry-v44";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-momentum-expiry-v44";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 
@@ -13,7 +13,7 @@ export function hiddenSelectionMarkup(selection, slots = null) {
   const displaySlots = slots ?? selection.tokens.map((entry) => ({ token:entry.token, known:false }));
   return displaySlots.map((slot) => slot.known
     ? hiddenKnownCardTemplate(slot, slot.token, { zone:slot.zone })
-    : hiddenCardBackTemplate({ token:slot.token })
+    : hiddenCardBackTemplate({ token:slot.token, compact:true })
   ).join("");
 }
 

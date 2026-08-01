@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-spirit-medic-v42";
-import { createId } from "../utils/helpers.js?build=20260801-spirit-medic-v42";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-spirit-medic-v42";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-momentum-expiry-v44";
+import { createId } from "../utils/helpers.js?build=20260801-momentum-expiry-v44";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260801-momentum-expiry-v44";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
