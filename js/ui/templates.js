@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260731-shade-svg-kill-v30";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-plunder-hand-v31";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

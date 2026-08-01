@@ -1,4 +1,4 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-shade-svg-kill-v30";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-plunder-hand-v31";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；

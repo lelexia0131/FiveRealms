@@ -2,10 +2,10 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate } from "./templates.js?build=20260731-shade-svg-kill-v30";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260731-shade-svg-kill-v30";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260731-shade-svg-kill-v30";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260731-shade-svg-kill-v30";
+import { escapeHtml, hiddenCardBackTemplate } from "./templates.js?build=20260801-plunder-hand-v31";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-plunder-hand-v31";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-plunder-hand-v31";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-plunder-hand-v31";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 
@@ -89,9 +89,12 @@ export class InteractionController {
     return new Promise((resolve) => {
       const selected = new Set();
       const slots = options.slots ?? createHiddenSelectionView(options.viewer, options.owner, selection);
+      const helpText = options.hideHelpText
+        ? ""
+        : `<p>${escapeHtml(options.helpText ?? "隐藏卡牌只携带临时令牌，确认时核心会重新校验手牌版本。")}</p>`;
       this.pending = { type:"hidden", selection, count, exact:Boolean(options.exact), selected, resolve };
       this.ui.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(prompt)}</strong><span>${options.totalCount ?? selection.tokens.length} 张</span></div>
-        <p>${escapeHtml(options.helpText ?? "隐藏卡牌只携带临时令牌，确认时核心会重新校验手牌版本。")}</p>
+        ${helpText}
         <div class="hidden-card-grid">${hiddenSelectionMarkup(selection, slots)}</div>
         <div class="response-actions"><button class="primary-button" type="button" data-interaction-confirm disabled>确认选择</button><button class="ghost-button" type="button" data-interaction-cancel>取消</button></div>`;
       this.ui.elements.response_panel.classList.remove("is-hidden");

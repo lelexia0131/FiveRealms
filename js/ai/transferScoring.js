@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260731-shade-svg-kill-v30";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-plunder-hand-v31";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 const UNKNOWN_HAND_EXPECTED_VALUE = 4;

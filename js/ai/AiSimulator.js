@@ -2,10 +2,10 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260731-shade-svg-kill-v30";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-shade-svg-kill-v30";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260731-shade-svg-kill-v30";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260731-shade-svg-kill-v30";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-plunder-hand-v31";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-plunder-hand-v31";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-plunder-hand-v31";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-plunder-hand-v31";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -69,7 +69,7 @@ export class AiSimulator {
         }
         break;
       case "plunder":
-        if (target) this.takeResource(actor, target, scale);
+        if (target) this.takeResourceToHand(actor, target, scale);
         break;
       case "transfer": {
         const game = { state:{ players:next.players } };
@@ -105,11 +105,11 @@ export class AiSimulator {
     return next;
   }
 
-  takeResource(actor, target, scale = 1) {
+  takeResourceToHand(actor, target, scale = 1) {
     const takeEquipment = target.equipmentDefinitionId && ((target.handCount ?? 0) <= 0 || CARD_DEFINITIONS[target.equipmentDefinitionId]?.aiValue >= 7);
     if (takeEquipment && scale >= .5) {
-      actor.equipmentDefinitionId = target.equipmentDefinitionId;
       target.equipmentDefinitionId = null;
+      actor.handCount += scale;
     } else {
       target.handCount = Math.max(0, (target.handCount ?? 0) - scale);
       actor.handCount += scale;

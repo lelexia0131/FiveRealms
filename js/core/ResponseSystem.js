@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-shade-svg-kill-v30";
-import { createId } from "../utils/helpers.js?build=20260731-shade-svg-kill-v30";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260731-shade-svg-kill-v30";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-plunder-hand-v31";
+import { createId } from "../utils/helpers.js?build=20260801-plunder-hand-v31";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260801-plunder-hand-v31";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

@@ -2,9 +2,9 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260731-shade-svg-kill-v30";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260731-shade-svg-kill-v30";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260731-shade-svg-kill-v30";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-plunder-hand-v31";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260801-plunder-hand-v31";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260801-plunder-hand-v31";
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }
@@ -64,7 +64,10 @@ export class AiEvaluator {
         const focus = (target.maxHp - target.hp) * 3 + (target.hp <= 2 ? 5 : 0) + (target.hp <= 1 ? 8 : 0);
         value += enemy ? 3 + focus : -12;
       }
-      if (["plunder","destroy","scout"].includes(card.definitionId)) value += Math.min(5, (target.hand?.length ?? target.handCount ?? 0) + (target.equipmentDefinitionId || target.equipment ? 2 : 0));
+      if (["plunder","destroy","scout"].includes(card.definitionId)) {
+        const equipmentValue = target.equipmentDefinitionId || target.equipment ? (card.definitionId === "plunder" ? 1 : 2) : 0;
+        value += Math.min(5, (target.hand?.length ?? target.handCount ?? 0) + equipmentValue);
+      }
       if (!enemy && ["plunder","destroy"].includes(card.definitionId)) value -= 30;
       if (!enemy && card.definitionId === "scout") value -= actor.activeSkillId === "resonance" ? 5 : 12;
       if (enemy && ["assault","duel","plunder","destroy","scout"].includes(card.definitionId)) {

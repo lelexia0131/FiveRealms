@@ -1,5 +1,5 @@
 /** 二十三种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260731-shade-svg-kill-v30";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-plunder-hand-v31";
 
 /** 只在最终效果解析时读取私密意图，并按原角色、原区域复验实体牌。 */
 function resolvePrivateSelectionIntent(game, source, card, target, context, expectedZone = null) {
@@ -125,10 +125,10 @@ const CARD_EFFECTS = {
     const chosen = intent?.cards[0] ? { card:intent.cards[0], zone:intent.zone } : null;
     if (!chosen) return { resolved:false };
     const plundered = chosen.zone === "equipment"
-      ? await game.moveEquipmentBetweenPlayers(target, source, chosen.card, "掠夺")
+      ? await game.moveEquipmentToHand(target, source, chosen.card, "掠夺")
       : await game.moveCardBetweenHands(target, source, chosen.card, "掠夺");
     if (!game.isSessionValid(gameId)) return { resolved:false };
-    if (plundered && chosen.zone === "hand") game.log(`${source.name}从${target.name}处掠夺了${game.cardLabelForHuman(source, chosen.card)}。`, "important");
+    if (plundered) game.log(`${source.name}从${target.name}处掠夺了${game.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
     return { resolved:Boolean(plundered) };
   },
 
