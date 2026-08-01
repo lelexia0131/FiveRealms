@@ -1,4 +1,4 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260801-card-pool-layout-v45";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260801-audio-soft-v51";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

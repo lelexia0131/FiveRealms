@@ -2,10 +2,10 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260801-card-pool-layout-v45";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-card-pool-layout-v45";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-card-pool-layout-v45";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-card-pool-layout-v45";
+import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260801-audio-soft-v51";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-audio-soft-v51";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-audio-soft-v51";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-audio-soft-v51";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 
@@ -114,6 +114,7 @@ export class InteractionController {
 
   toggleHidden(token) {
     if (this.pending?.type !== "hidden") return;
+    this.ui.playSound?.("select");
     this.pending.selected = toggleCardSelection(this.pending.selected, token, this.pending.count);
     for (const button of this.ui.elements.response_panel.querySelectorAll("[data-hidden-token]")) {
       const active = this.pending.selected.has(button.dataset.hiddenToken);

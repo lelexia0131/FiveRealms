@@ -6,13 +6,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="《五域纷争》是一款原创的五人、2V3 阵营单人网页卡牌游戏。" />
   <title>五域纷争</title>
-  <link rel="stylesheet" href="./css/reset.css?build=20260801-card-pool-layout-v45" />
-  <link rel="stylesheet" href="./css/theme.css?build=20260801-card-pool-layout-v45" />
-  <link rel="stylesheet" href="./css/layout.css?build=20260801-card-pool-layout-v45" />
-  <link rel="stylesheet" href="./css/characters.css?build=20260801-card-pool-layout-v45" />
-  <link rel="stylesheet" href="./css/cards.css?build=20260801-card-pool-layout-v45" />
-  <link rel="stylesheet" href="./css/components.css?build=20260801-card-pool-layout-v45" />
-  <link rel="stylesheet" href="./css/animations.css?build=20260801-card-pool-layout-v45" />
+  <link rel="stylesheet" href="./css/reset.css?build=20260801-audio-soft-v51" />
+  <link rel="stylesheet" href="./css/theme.css?build=20260801-audio-soft-v51" />
+  <link rel="stylesheet" href="./css/layout.css?build=20260801-audio-soft-v51" />
+  <link rel="stylesheet" href="./css/characters.css?build=20260801-audio-soft-v51" />
+  <link rel="stylesheet" href="./css/cards.css?build=20260801-audio-soft-v51" />
+  <link rel="stylesheet" href="./css/components.css?build=20260801-audio-soft-v51" />
+  <link rel="stylesheet" href="./css/animations.css?build=20260801-audio-soft-v51" />
 </head>
 
 <body>
@@ -28,9 +28,17 @@
           裂界潮汐将五域的旅者卷入同一座浮空战场。选择一名角色，辨明盟友，
           在隐藏手牌、即时响应与技能联动中带领阵营存活到最后。
         </p>
-        <button id="start-button" class="primary-button start-button" type="button">
-          <span>开启本局</span><span aria-hidden="true">→</span>
-        </button>
+        <div class="start-actions">
+          <button id="start-button" class="primary-button start-button" type="button">
+            <span>开启本局</span><span aria-hidden="true">→</span>
+          </button>
+          <div class="audio-controls">
+            <button class="toggle-button audio-toggle-button" type="button" data-audio-toggle aria-pressed="true"><i
+                aria-hidden="true"></i><span>声音：开</span></button>
+            <label class="music-volume-control"><span>BGM</span><input type="range" min="0" max="100" value="75"
+                data-music-volume aria-label="背景音乐音量" /></label>
+          </div>
+        </div>
       </div>
 
       <div class="rules-card" aria-label="快速规则">
@@ -56,7 +64,15 @@
           <p class="eyebrow">角色征召</p>
           <h2 id="selection-title">从四名旅者中选择你的化身</h2>
         </div>
-        <div id="team-preview" class="team-preview" aria-live="polite"></div>
+        <div class="selection-status">
+          <div id="team-preview" class="team-preview" aria-live="polite"></div>
+          <div class="audio-controls">
+            <button class="toggle-button audio-toggle-button" type="button" data-audio-toggle aria-pressed="true"><i
+                aria-hidden="true"></i><span>声音：开</span></button>
+            <label class="music-volume-control"><span>BGM</span><input type="range" min="0" max="100" value="75"
+                data-music-volume aria-label="背景音乐音量" /></label>
+          </div>
+        </div>
       </header>
       <div id="candidate-grid" class="candidate-grid"></div>
     </section>
@@ -68,6 +84,12 @@
         </div>
         <div id="status-metrics" class="status-metrics" aria-live="polite"></div>
         <div class="status-actions">
+          <div class="audio-controls">
+            <button class="toggle-button audio-toggle-button" type="button" data-audio-toggle aria-pressed="true"><i
+                aria-hidden="true"></i><span>声音：开</span></button>
+            <label class="music-volume-control"><span>BGM</span><input type="range" min="0" max="100" value="75"
+                data-music-volume aria-label="背景音乐音量" /></label>
+          </div>
           <button id="fast-mode-button" class="toggle-button" type="button" aria-pressed="false"><i
               aria-hidden="true"></i><span>快速动画：关</span></button>
           <button id="restart-button" class="ghost-button" type="button">重新征召</button>
@@ -139,7 +161,7 @@
   </div>
 
   <!-- 发布版本必须同时更新模块 import 的 build 查询参数，避免静态服务器复用旧依赖模块。 -->
-  <script type="module" src="./js/main.js?build=20260801-card-pool-layout-v45"></script>
+  <script type="module" src="./js/main.js?build=20260801-audio-soft-v51"></script>
 </body>
 
 </html>

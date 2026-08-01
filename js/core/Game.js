@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-card-pool-layout-v45";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-card-pool-layout-v45";
-import { createId, clamp } from "../utils/helpers.js?build=20260801-card-pool-layout-v45";
-import { EventBus } from "./EventBus.js?build=20260801-card-pool-layout-v45";
-import { Player } from "./Player.js?build=20260801-card-pool-layout-v45";
-import { Deck } from "./Deck.js?build=20260801-card-pool-layout-v45";
-import { TeamManager } from "./TeamManager.js?build=20260801-card-pool-layout-v45";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260801-card-pool-layout-v45";
-import { RuleEngine } from "./RuleEngine.js?build=20260801-card-pool-layout-v45";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260801-card-pool-layout-v45";
-import { GameLogger } from "./GameLogger.js?build=20260801-card-pool-layout-v45";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260801-card-pool-layout-v45";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-card-pool-layout-v45";
-import { AIController } from "../ai/AIController.js?build=20260801-card-pool-layout-v45";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260801-card-pool-layout-v45";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-card-pool-layout-v45";
-import { Debug } from "../utils/debug.js?build=20260801-card-pool-layout-v45";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260801-card-pool-layout-v45";
-import { DyingSystem } from "./DyingSystem.js?build=20260801-card-pool-layout-v45";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260801-card-pool-layout-v45";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260801-card-pool-layout-v45";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260801-card-pool-layout-v45";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260801-card-pool-layout-v45";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-audio-soft-v51";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-audio-soft-v51";
+import { createId, clamp } from "../utils/helpers.js?build=20260801-audio-soft-v51";
+import { EventBus } from "./EventBus.js?build=20260801-audio-soft-v51";
+import { Player } from "./Player.js?build=20260801-audio-soft-v51";
+import { Deck } from "./Deck.js?build=20260801-audio-soft-v51";
+import { TeamManager } from "./TeamManager.js?build=20260801-audio-soft-v51";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260801-audio-soft-v51";
+import { RuleEngine } from "./RuleEngine.js?build=20260801-audio-soft-v51";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260801-audio-soft-v51";
+import { GameLogger } from "./GameLogger.js?build=20260801-audio-soft-v51";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260801-audio-soft-v51";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-audio-soft-v51";
+import { AIController } from "../ai/AIController.js?build=20260801-audio-soft-v51";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260801-audio-soft-v51";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260801-audio-soft-v51";
+import { Debug } from "../utils/debug.js?build=20260801-audio-soft-v51";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260801-audio-soft-v51";
+import { DyingSystem } from "./DyingSystem.js?build=20260801-audio-soft-v51";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260801-audio-soft-v51";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260801-audio-soft-v51";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260801-audio-soft-v51";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260801-audio-soft-v51";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -197,6 +197,7 @@ export class Game {
    */
   async takeTurn(player, gameId) {
     if (!this.isSessionValid(gameId) || !player?.alive || this.state.isGameOver) return;
+    this.ui.setMusicTeam?.(player.battleTeam);
     this.state.phase = "turnStart";
     player.resetTurnFlags(this.teamRules.getRules(player));
     this.log(`${player.name}的回合开始。`, "important");
@@ -512,6 +513,7 @@ export class Game {
         ? `来源 ${preparedTransfer.publicContext.fromName} → 接收 ${preparedTransfer.publicContext.receiverName}`
         : actionTargetLabel(this, source, card, targets, selection);
       this.ui.setCurrentCard(card, source.name, targetLabel);
+      this.ui.playSound?.("playCard");
       if (preparedTransfer) {
         const publicContext = preparedTransfer.publicContext;
         this.log(`${source.name}使用了「${card.name}」，准备将${publicContext.fromName}的${publicContext.safeItemLabel}转移给${publicContext.receiverName}。`);
@@ -604,6 +606,7 @@ export class Game {
     try {
       const targetLabel = actionTargetLabel(this, source, skill, targets);
       this.ui.setCurrentCard(skill.name, `${source.name} · 技能`, targetLabel);
+      this.ui.playSound?.("skill");
       await skill.execute(this, source, targets);
       if (!this.isSessionValid(gameId)) return false;
       this.ui.render(this);

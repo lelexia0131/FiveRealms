@@ -1,21 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260801-card-pool-layout-v45";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-card-pool-layout-v45";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260801-card-pool-layout-v45";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260801-audio-soft-v51";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-audio-soft-v51";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260801-audio-soft-v51";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260801-card-pool-layout-v45";
-import { AnimationController } from "./animationController.js?build=20260801-card-pool-layout-v45";
-import { InteractionController } from "./InteractionController.js?build=20260801-card-pool-layout-v45";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260801-card-pool-layout-v45";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260801-card-pool-layout-v45";
-import { JudgmentView } from "./JudgmentView.js?build=20260801-card-pool-layout-v45";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-card-pool-layout-v45";
-import { createOpponentHandView } from "./handVisibility.js?build=20260801-card-pool-layout-v45";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260801-card-pool-layout-v45";
+} from "./templates.js?build=20260801-audio-soft-v51";
+import { AnimationController } from "./animationController.js?build=20260801-audio-soft-v51";
+import { InteractionController } from "./InteractionController.js?build=20260801-audio-soft-v51";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260801-audio-soft-v51";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260801-audio-soft-v51";
+import { JudgmentView } from "./JudgmentView.js?build=20260801-audio-soft-v51";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-audio-soft-v51";
+import { createOpponentHandView } from "./handVisibility.js?build=20260801-audio-soft-v51";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260801-audio-soft-v51";
+import { SoundManager } from "../audio/SoundManager.js?build=20260801-audio-soft-v51";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -48,6 +49,9 @@ export class UIManager {
       "log-list", "log-count", "skill-details-overlay", "game-over-overlay", "game-over-title", "game-over-copy", "play-again-button"
     ].map((id) => [id.replaceAll("-", "_"), document.getElementById(id)]));
     this.callbacks = {};
+    this.sound = new SoundManager();
+    this.audioButtons = [...document.querySelectorAll("[data-audio-toggle]")];
+    this.musicVolumeInputs = [...document.querySelectorAll("[data-music-volume]")];
     this.game = null;
     this.targetState = null;
     this.discardState = null;
@@ -61,7 +65,7 @@ export class UIManager {
     this.logCollapsed = false;
     this.animationController = new AnimationController();
     this.interactionController = new InteractionController(this);
-    this.publicPoolView = new PublicPoolView(this.elements.public_pool_view);
+    this.publicPoolView = new PublicPoolView(this.elements.public_pool_view, () => this.playSound("select"));
     this.privateRevealView = new PrivateRevealView(this.elements.private_reveal);
     this.judgmentView = new JudgmentView(this.elements.judgment_view);
     this.viewportWasNarrow = window.innerWidth < 1280;
@@ -110,12 +114,15 @@ export class UIManager {
   }
 
   bindEvents() {
-    this.elements.start_button.addEventListener("click", () => this.callbacks.onStart?.());
-    this.elements.restart_button.addEventListener("click", () => this.callbacks.onRestart?.());
-    this.elements.play_again_button.addEventListener("click", () => this.callbacks.onRestart?.());
+    this.updateAudioButtons();
+    for (const button of this.audioButtons) button.addEventListener("click", () => this.toggleAudio());
+    for (const input of this.musicVolumeInputs) input.addEventListener("input", () => this.setMusicVolume(input.value));
+    this.elements.start_button.addEventListener("click", () => { void this.sound.unlock(); this.playSound("select"); this.callbacks.onStart?.(); });
+    this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
+    this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.candidate_grid.addEventListener("click", (event) => {
       const button = event.target.closest("[data-general-id]");
-      if (button) this.callbacks.onSelectGeneral?.(button.dataset.generalId);
+      if (button) { this.playSound("select"); this.callbacks.onSelectGeneral?.(button.dataset.generalId); }
     });
     this.elements.human_hand.addEventListener("click", (event) => this.handleHandClick(event));
     this.elements.cpu_grid.addEventListener("wheel", (event) => {
@@ -133,13 +140,13 @@ export class UIManager {
         this.handlePlayerClick(event);
       });
     }
-    this.elements.skill_button.addEventListener("click", () => this.callbacks.onSkill?.());
+    this.elements.skill_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onSkill?.(); });
     this.elements.end_play_button.addEventListener("click", () => this.callbacks.onEndPlay?.());
-    this.elements.discard_confirm_button.addEventListener("click", () => this.confirmDiscard());
-    this.elements.cancel_interaction_button.addEventListener("click", () => this.cancelTarget());
+    this.elements.discard_confirm_button.addEventListener("click", () => { this.playSound("select"); this.confirmDiscard(); });
+    this.elements.cancel_interaction_button.addEventListener("click", () => { this.playSound("select"); this.cancelTarget(); });
     this.elements.response_panel.addEventListener("click", (event) => {
       const button = event.target.closest("[data-response-choice]");
-      if (button) this.resolveResponse(button.dataset.responseChoice === "use");
+      if (button) { this.playSound("select"); this.resolveResponse(button.dataset.responseChoice === "use"); }
     });
     this.interactionController.bind(this.elements.response_panel);
     this.elements.log_toggle_button.addEventListener("click", () => this.setLogCollapsed(!this.logCollapsed));
@@ -152,6 +159,7 @@ export class UIManager {
   }
 
   showStart() {
+    this.sound.stopMusic();
     this.clearLog();
     this.elements.start_screen.classList.remove("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
@@ -159,6 +167,7 @@ export class UIManager {
   }
 
   showSelection(candidates, battleTeam) {
+    this.sound.setMusicTeam(battleTeam);
     this.cancelPendingInteractions();
     this.resetCurrentCard();
     this.clearLog();
@@ -278,6 +287,7 @@ export class UIManager {
     if (!button || (button.dataset.disabled === "true" && !this.discardState)) return;
     const cardId = button.dataset.cardId;
     if (this.discardState) {
+      this.playSound("select");
       this.discardState.selectedIds = toggleCardSelection(this.discardState.selectedIds, cardId, this.discardState.count);
       this.render(this.game);
       return;
@@ -291,6 +301,7 @@ export class UIManager {
     if (this.targetState) {
       if (!this.targetState.legalIds.has(panel.dataset.playerId)) return;
       const target = this.targetState.players.find((player) => player.id === panel.dataset.playerId) ?? null;
+      this.playSound?.("select");
       const resolve = this.targetState.resolve;
       this.targetState = null;
       resolve(target);
@@ -477,7 +488,39 @@ export class UIManager {
     this.elements.log_count.setAttribute("aria-label", `共 ${safeCount} 条对局记录`);
   }
 
-  queueFeedback(type, playerId = null, amount = null) { this.animationController.queue(type, playerId, amount); }
+  playSound(name) { void this.sound.play(name); }
+
+  setMusicTeam(team) { this.sound.setMusicTeam(team); }
+
+  async toggleAudio() {
+    await this.sound.setEnabled(!this.sound.enabled);
+    this.updateAudioButtons();
+  }
+
+  updateAudioButtons() {
+    for (const button of this.audioButtons) {
+      button.setAttribute("aria-pressed", String(this.sound.enabled));
+      button.setAttribute("aria-label", this.sound.enabled ? "关闭声音" : "开启声音");
+      const label = button.querySelector("span");
+      if (label) label.textContent = this.sound.enabled ? "声音：开" : "声音：关";
+    }
+    const percentage = String(Math.round(this.sound.musicVolume * 100));
+    for (const input of this.musicVolumeInputs) {
+      input.value = percentage;
+      input.setAttribute("aria-valuetext", `${percentage}%`);
+    }
+  }
+
+  setMusicVolume(value) {
+    this.sound.setMusicVolume(Number(value) / 100);
+    this.updateAudioButtons();
+  }
+
+  queueFeedback(type, playerId = null, amount = null) {
+    this.animationController.queue(type, playerId, amount);
+    const soundByFeedback = { draw:"draw", damage:"hit", heal:"heal", shield:"shield", discard:"discard" };
+    if (soundByFeedback[type]) this.playSound(soundByFeedback[type]);
+  }
 
   setFastMode(enabled) {
     this.fastMode = Boolean(enabled);

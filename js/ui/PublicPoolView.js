@@ -3,11 +3,11 @@
  * pending Promise 只允许在重开、销毁或游戏结束时由 UIManager 收束；
  * 正常互利结算必须由当前存活角色确认一张牌。
  */
-import { publicPoolCardTemplate } from "./templates.js?build=20260801-card-pool-layout-v45";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-card-pool-layout-v45";
+import { publicPoolCardTemplate } from "./templates.js?build=20260801-audio-soft-v51";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-audio-soft-v51";
 
 export class PublicPoolView {
-  constructor(element) { this.element = element; this.pending = null; }
+  constructor(element, onSelect = null) { this.element = element; this.pending = null; this.onSelect = onSelect; }
   show(cards, options = {}) {
     const selectedId = options.selectedId ?? null;
     this.element.innerHTML = `<div class="tableau-title">互利公开牌池</div><div class="tableau-cards">${cards.map((card) => publicPoolCardTemplate(card, { selected:card.id === selectedId })).join("")}</div>${options.interactive ? `<div class="tableau-actions"><button class="primary-button" type="button" data-public-confirm${selectedId ? "" : " disabled"}>确定</button></div>` : ""}`;
@@ -21,12 +21,14 @@ export class PublicPoolView {
       const handler = (event) => {
         const cardButton = event.target.closest("[data-public-card-id]");
         if (cardButton) {
+          this.onSelect?.();
           const next = toggleCardSelection(this.pending?.selected, cardButton.dataset.publicCardId, 1);
           if (this.pending) this.pending.selected = next;
           this.show(cards, { interactive:true, selectedId:[...next][0] ?? null });
           return;
         }
         if (!event.target.closest("[data-public-confirm]") || !isCardSelectionValid(this.pending?.selected, 1, true)) return;
+        this.onSelect?.();
         const selectedId = [...this.pending.selected][0];
         this.settle(cards.find((card) => card.id === selectedId) ?? null);
       };

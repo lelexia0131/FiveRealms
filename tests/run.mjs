@@ -26,6 +26,7 @@ import { isCardSelectionValid, toggleCardSelection } from "../js/ui/selectionUti
 import { buildResponsePresentation } from "../js/core/ResponseSystem.js";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import { ACTIVE_SKILLS, hasActiveSkill, hasPassiveSkill, registerPassiveSkills } from "../js/generals/skillRegistry.js";
+import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -221,6 +222,48 @@ test("灵医配置与README同步回春摸牌、濒死触发及滋荣自疗规�
   for(const text of [medic.activeDescription,medicSection]){assert.match(text,/受伤的己方阵营角色/);assert.match(text,/包括自己/);assert.match(text,/目标不是自己.*自己同样恢复\s*1\s*点生命/);assert.match(text,/消耗\s*2\s*点能量/);assert.match(text,/最多(?:使用|发动)\s*2\s*次/);}
 });
 test("强制 AI 救援真人配置默认开启", () => assert.equal(GAME_CONFIG.forceAiRescueHuman, true));
+test("声音系统覆盖八类反馈且在无 Web Audio 环境安全降级", async () => {
+  const sound = new SoundManager();
+  for (const name of ["draw","select","playCard","hit","skill","discard","heal","shield"]) {
+    assert.equal(typeof sound[`sound_${name}`], "function", name);
+  }
+  if (!sound.isSupported) assert.equal(await sound.play("draw"), false);
+});
+test("晨昏 BGM 使用不同速度、音色与旋律轮廓", () => {
+  assert.notEqual(MUSIC_PROFILES.dawn.tempo, MUSIC_PROFILES.dusk.tempo);
+  assert.notEqual(MUSIC_PROFILES.dawn.wave, MUSIC_PROFILES.dusk.wave);
+  assert.notDeepEqual(MUSIC_PROFILES.dawn.lead, MUSIC_PROFILES.dusk.lead);
+});
+test("BGM 音量可独立调节并限制在合法范围", () => {
+  const sound = new SoundManager();
+  assert.equal(sound.setMusicVolume(0.82), 0.82);
+  assert.equal(sound.musicVolume, 0.82);
+  assert.equal(sound.setMusicVolume(3), 1);
+  assert.equal(sound.setMusicVolume(-1), 0);
+});
+test("抽牌音效只使用柔和纸张噪声而不含持续滑音", async () => {
+  const source = await readFile(projectFile("js/audio/SoundManager.js"), "utf8");
+  const drawBody = source.match(/sound_draw\(time\)\s*\{([\s\S]*?)\n\s*\}/)?.[1] ?? "";
+  assert.match(drawBody, /this\.noise\(/);
+  assert.doesNotMatch(drawBody, /this\.(?:sweep|tone)\(/);
+});
+test("出牌音效改用低频棕噪声且不含白噪声或持续滑音", async () => {
+  const source = await readFile(projectFile("js/audio/SoundManager.js"), "utf8");
+  const playBody = source.match(/sound_playCard\(time\)\s*\{([\s\S]*?)\n\s*\}/)?.[1] ?? "";
+  assert.match(playBody, /this\.softNoise\(/);
+  assert.doesNotMatch(playBody, /this\.(?:noise|sweep|tone)\(/);
+});
+test("普通手牌出牌不叠加选中提示音", () => {
+  const played=[],sounds=[];
+  const context={ discardState:null, callbacks:{ onCard:(cardId)=>played.push(cardId) }, playSound:(name)=>sounds.push(name), render(){} };
+  const event={ target:clickTarget("[data-card-id]",{cardId:"audio-card",disabled:"false"}) };
+  UIManager.prototype.handleHandClick.call(context,event);
+  assert.deepEqual(played,["audio-card"]);
+  assert.deepEqual(sounds,[]);
+  context.discardState={ selectedIds:new Set(), count:1 };
+  UIManager.prototype.handleHandClick.call(context,event);
+  assert.deepEqual(sounds,["select"]);
+});
 
 test("浏览器模块图使用统一构建版本，静态服务器不会复用旧规则模块", async () => {
   const index = await readFile(projectFile("index.html"), "utf8");

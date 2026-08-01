@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-card-pool-layout-v45";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-audio-soft-v51";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 const UNKNOWN_HAND_EXPECTED_VALUE = 4;

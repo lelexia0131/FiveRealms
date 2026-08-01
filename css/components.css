@@ -2,7 +2,8 @@
 .start-copy h1 { margin: 12px 0 22px; font: 700 clamp(64px, 8vw, 116px)/.92 var(--serif); letter-spacing: -.06em; color: #322a20; }
 .start-copy h1 span { color: var(--gold); }
 .lead { max-width: 670px; color: var(--text-secondary); font: 17px/1.9 var(--serif); }
-.start-button { margin-top: 34px; min-width: 190px; }
+.start-actions { display: flex; align-items: center; gap: 12px; margin-top: 34px; }
+.start-button { min-width: 190px; }
 .rules-card { padding: 30px; border: 1px solid var(--border); border-radius: 6px 26px 6px 26px; background: linear-gradient(145deg, rgba(255,253,247,.98), rgba(244,237,222,.96)); box-shadow: var(--shadow-card); }
 .rules-heading { display: flex; align-items: center; gap: 14px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .rules-heading small, .log-heading small { color: var(--text-muted); font-size: 12px; letter-spacing: .16em; }
@@ -26,8 +27,14 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .toggle-button { display: inline-flex; align-items: center; gap: 8px; padding-inline: 11px; color: var(--text-secondary); border: 1px solid var(--border); background: var(--surface); }
 .toggle-button i { width: 9px; height: 9px; border: 1px solid var(--border-strong); border-radius: 50%; background: #d5ccbc; }
 .toggle-button[aria-pressed="true"] i { border-color: var(--dawn); background: var(--dawn); box-shadow: 0 0 0 3px var(--dawn-soft); }
+.audio-toggle-button { white-space: nowrap; }
+.audio-controls { display: inline-flex; align-items: center; gap: 8px; }
+.music-volume-control { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; font-weight: 800; white-space: nowrap; }
+.music-volume-control input { width: 92px; height: 22px; accent-color: var(--dawn); cursor: pointer; }
+.music-volume-control input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 
 .selection-header h2 { margin-top: 4px; font: 700 clamp(30px, 3vw, 44px)/1.15 var(--serif); }
+.selection-status { display: flex; align-items: center; gap: 10px; }
 .team-preview { display: flex; align-items: center; gap: 12px; min-width: 260px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-raised); box-shadow: var(--shadow-soft); }
 .team-preview span { color: var(--text-secondary); font-size: 13px; }
 .team-preview strong { font-size: 17px; }
