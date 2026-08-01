@@ -1,5 +1,5 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-hidden-known-layout-v40";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-hidden-known-layout-v40";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-selection-pools-v41";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-selection-pools-v41";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

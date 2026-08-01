@@ -2,10 +2,10 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260801-hidden-known-layout-v40";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-hidden-known-layout-v40";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-hidden-known-layout-v40";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-hidden-known-layout-v40";
+import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260801-selection-pools-v41";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-selection-pools-v41";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-selection-pools-v41";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-selection-pools-v41";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 
@@ -77,10 +77,7 @@ export class InteractionController {
       const { name, categoryName, description, art, icon, accent, frameStyle, flavorText } = owner.equipment;
       slots.push({ token:EQUIPMENT_OPTION_TOKEN, known:true, zone:"equipment", name, categoryName, description, art, icon, accent, frameStyle, flavorText });
     }
-    const selected = await this.requestHiddenCards(hidden, 1, prompt, {
-      exact:true, slots, totalCount:slots.length,
-      helpText:"手牌使用安全令牌；装备牌为公开信息，确认时核心会重新验证所在区域。"
-    });
+    const selected = await this.requestHiddenCards(hidden, 1, prompt, { exact:true, slots, totalCount:slots.length });
     if (!game.isSessionValid(gameId)) return null;
     if (!selected?.length) return null;
     if (selected[0] === EQUIPMENT_OPTION_TOKEN) return { zone:"equipment", equipmentCardId:owner.equipment?.id ?? null, selectionId:hidden.selectionId };
@@ -95,10 +92,7 @@ export class InteractionController {
     if (!eligibleHand.length) return null;
     const hidden = game.cardSelectionSystem.createHiddenSelection(owner, eligibleHand);
     const slots = createHiddenSelectionView(actor, owner, hidden);
-    const selected = await this.requestHiddenCards(hidden, 1, prompt, {
-      exact:true, slots, totalCount:slots.length,
-      helpText:"只能选择手牌；装备区的牌不能被转移。"
-    });
+    const selected = await this.requestHiddenCards(hidden, 1, prompt, { exact:true, slots, totalCount:slots.length });
     if (!game.isSessionValid(gameId)) return null;
     if (!selected?.length) return null;
     return { zone:"hand", tokens:selected, selectionId:hidden.selectionId };
@@ -109,12 +103,8 @@ export class InteractionController {
     return new Promise((resolve) => {
       const selected = new Set();
       const slots = options.slots ?? createHiddenSelectionView(options.viewer, options.owner, selection);
-      const helpText = options.hideHelpText
-        ? ""
-        : `<p>${escapeHtml(options.helpText ?? "隐藏卡牌只携带临时令牌，确认时核心会重新校验手牌版本。")}</p>`;
       this.pending = { type:"hidden", selection, count, exact:Boolean(options.exact), selected, resolve };
       this.ui.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(prompt)}</strong><span>${options.totalCount ?? selection.tokens.length} 张</span></div>
-        ${helpText}
         <div class="hidden-card-grid">${hiddenSelectionMarkup(selection, slots)}</div>
         <div class="response-actions"><button class="primary-button" type="button" data-interaction-confirm disabled>确认选择</button><button class="ghost-button" type="button" data-interaction-cancel>取消</button></div>`;
       this.ui.elements.response_panel.classList.remove("is-hidden");

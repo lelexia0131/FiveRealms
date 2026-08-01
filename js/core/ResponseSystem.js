@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-hidden-known-layout-v40";
-import { createId } from "../utils/helpers.js?build=20260801-hidden-known-layout-v40";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-hidden-known-layout-v40";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-selection-pools-v41";
+import { createId } from "../utils/helpers.js?build=20260801-selection-pools-v41";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260801-selection-pools-v41";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

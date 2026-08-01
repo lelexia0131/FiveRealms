@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-hidden-known-layout-v40";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-selection-pools-v41";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -149,6 +149,14 @@ export function hiddenKnownCardTemplate(card, token, options = {}) {
   const zoneLabel = options.zone === "equipment" ? "装备" : "已知手牌";
   const zoneClass = options.zone === "equipment" ? " is-equipment-option" : "";
   return `<button type="button" class="hand-card hidden-known-card frame-${escapeHtml(card.frameStyle)}${zoneClass}" style="--card-accent:${escapeHtml(card.accent)}" data-hidden-token="${escapeHtml(token)}" aria-label="选择${zoneLabel}${escapeHtml(card.name)}" aria-pressed="false">
+    ${cardFaceTemplate(card)}
+  </button>`;
+}
+
+/** 公开牌池复用标准牌面；公开实体 ID 仅用于本池的选择确认。 */
+export function publicPoolCardTemplate(card, options = {}) {
+  const selected = Boolean(options.selected);
+  return `<button type="button" class="hand-card tableau-card frame-${escapeHtml(card.frameStyle)} ${selected ? "is-selected" : ""}" style="--card-accent:${escapeHtml(card.accent)}" data-public-card-id="${escapeHtml(card.id)}" aria-label="选择${escapeHtml(card.name)}" aria-pressed="${selected}">
     ${cardFaceTemplate(card)}
   </button>`;
 }
