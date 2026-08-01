@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-selection-pools-v41";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-selection-pools-v41";
-import { randomChoice } from "../utils/helpers.js?build=20260801-selection-pools-v41";
-import { Debug } from "../utils/debug.js?build=20260801-selection-pools-v41";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-spirit-medic-v42";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-spirit-medic-v42";
+import { randomChoice } from "../utils/helpers.js?build=20260801-spirit-medic-v42";
+import { Debug } from "../utils/debug.js?build=20260801-spirit-medic-v42";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -71,10 +71,16 @@ const PASSIVE_SKILLS = {
 
   rejuvenation(game, owner) {
     game.eventBus.on("beforeHeal", `${owner.id}:rejuvenation`, (event) => {
-      if (!owner.alive || event.source?.id !== owner.id || event.isDyingRescue || owner.turnFlags.rejuvenationUsed) return;
+      if (!owner.alive || event.source?.id !== owner.id || event.target?.battleTeam !== owner.battleTeam
+        || event.amount <= 0 || owner.turnFlags.rejuvenationUsed) return;
       owner.turnFlags.rejuvenationUsed = true;
+      event.metadata.rejuvenationOwnerId = owner.id;
       event.amount += 1;
-      game.log(`${owner.name}的回春令治疗额外恢复1点。`, "heal");
+    });
+    game.eventBus.on("afterHeal", `${owner.id}:rejuvenation:draw`, async (event) => {
+      if (event.metadata?.rejuvenationOwnerId !== owner.id || event.actualAmount <= 0) return;
+      game.log(`${owner.name}的回春令治疗额外恢复1点，并摸1张牌。`, "heal");
+      await game.drawCards(owner, 1, "回春");
     });
   },
 
@@ -188,7 +194,7 @@ export const ACTIVE_SKILLS = Object.freeze({
   }),
   symbiosis: Object.freeze({
     id: "symbiosis", name: "共生", cost: 2, limitPerTurn: 2, targetType: "injuredAlly", rangeRule: "ally",
-    canUse(game, source) { const base = baseCanUse(game, source, this); if (!base.ok) return base; return RuleEngine.getSkillTargets(game, source, this).length ? base : {ok:false,reason:"没有受伤队友"}; },
+    canUse(game, source) { const base = baseCanUse(game, source, this); if (!base.ok) return base; return RuleEngine.getSkillTargets(game, source, this).length ? base : {ok:false,reason:"没有受伤的己方阵营角色"}; },
     async execute(game, source, targets) { source.changeEnergy(-2); await game.heal(source, targets[0], 1, { skill:"symbiosis" }); }
   }),
   stealSkill: Object.freeze({

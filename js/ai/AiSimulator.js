@@ -2,10 +2,10 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-selection-pools-v41";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-selection-pools-v41";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-selection-pools-v41";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-selection-pools-v41";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-spirit-medic-v42";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-spirit-medic-v42";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-spirit-medic-v42";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-spirit-medic-v42";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -39,7 +39,7 @@ export class AiSimulator {
 
     switch (card.definitionId) {
       case "recover":
-        this.heal(actor, 1 * scale);
+        this.healFrom(actor, actor, 1 * scale);
         actor.recoverUsed += 1;
         actor.expectedRecoverCount = Math.max(0, (actor.expectedRecoverCount ?? 0) - 1);
         break;
@@ -88,7 +88,7 @@ export class AiSimulator {
       case "destroy": if (target) this.destroyResource(target, scale); break;
       case "duel": if (target) this.applyDuel(next, actor, target, scale); break;
       case "mutualBenefit": for (const player of next.players) if (player.alive) player.handCount += scale; break;
-      case "symbiosis": for (const player of next.players) if (player.alive) this.heal(player, scale); break;
+      case "symbiosis": for (const player of next.players) if (player.alive) this.healFrom(actor, player, scale); break;
       default:
         if (card.category === "equipment") actor.equipmentDefinitionId = card.definitionId;
         break;
@@ -163,7 +163,7 @@ export class AiSimulator {
     else if (skill.id === "barrier" && target) {
       target.shield = (target.shield ?? 0) + 1;
     } else if (skill.id === "symbiosis" && target) {
-      this.heal(target, 1);
+      this.healFrom(actor, target, 1);
     } else if (skill.id === "stealSkill" && target) {
       this.stealResourceToHand(actor, target);
     } else if (skill.id === "burningField") {
@@ -240,7 +240,10 @@ export class AiSimulator {
     const need = 1 - target.hp;
     const allies = state.players.filter((player) => player.alive && player.battleTeam === target.battleTeam)
       .sort((a,b) => (a.id === target.id ? -1 : b.id === target.id ? 1 : a.seatIndex - b.seatIndex));
-    const capacity = allies.reduce((sum, player) => sum + (player.expectedRecoverCount ?? 0), 0);
+    const rejuvenationBonus = (player) => player.generalId === "spirit-medic" && !player.rejuvenationUsed
+      ? Math.min(1, player.expectedRecoverCount ?? 0)
+      : 0;
+    const capacity = allies.reduce((sum, player) => sum + (player.expectedRecoverCount ?? 0) + rejuvenationBonus(player), 0);
     target.survivalChance = Math.min(1, capacity / need);
     if (capacity < need) {
       target.alive = false;
@@ -251,23 +254,51 @@ export class AiSimulator {
       return;
     }
     let remaining = need;
+    let healingApplied = 0;
     for (const rescuer of allies) {
       if (remaining <= 0) break;
-      const spent = Math.min(remaining, rescuer.expectedRecoverCount ?? 0);
+      let available = rescuer.expectedRecoverCount ?? 0;
+      let spent = 0;
+      if (available > 0 && rejuvenationBonus(rescuer) > 0) {
+        const firstCard = Math.min(1, available);
+        const firstHealing = firstCard * 2;
+        spent += firstCard;
+        available -= firstCard;
+        remaining -= firstHealing;
+        healingApplied += firstHealing;
+        rescuer.rejuvenationUsed = true;
+        rescuer.handCount = (rescuer.handCount ?? 0) + firstCard;
+      }
+      const regularSpent = Math.min(Math.max(0, remaining), available);
+      spent += regularSpent;
+      remaining -= regularSpent;
+      healingApplied += regularSpent;
       rescuer.expectedRecoverCount = Math.max(0, (rescuer.expectedRecoverCount ?? 0) - spent);
       rescuer.handCount = Math.max(0, rescuer.handCount - spent);
       if (rescuer.hand) {
         let remove = Math.ceil(spent);
         rescuer.hand = rescuer.hand.filter((card) => card.definitionId !== "recover" || remove-- <= 0);
       }
-      remaining -= spent;
     }
-    target.hp = 1;
+    target.hp = Math.min(target.maxHp, target.hp + healingApplied);
     target.survivalChance = 1;
     target.alive = true;
   }
 
   heal(target, amount) {
     if (target.alive && amount > 0) target.hp = Math.min(target.maxHp, target.hp + amount);
+  }
+
+  /** 模拟由角色发起的治疗；灵医首次治疗己方时同步计算回春的治疗与摸牌收益。 */
+  healFrom(source, target, amount) {
+    if (!target?.alive || target.hp >= target.maxHp || amount <= 0) return;
+    let finalAmount = amount;
+    if (source?.generalId === "spirit-medic" && source.battleTeam === target.battleTeam && !source.rejuvenationUsed) {
+      const triggerWeight = Math.min(1, amount);
+      source.rejuvenationUsed = true;
+      source.handCount = (source.handCount ?? 0) + triggerWeight;
+      finalAmount += triggerWeight;
+    }
+    this.heal(target, finalAmount);
   }
 }

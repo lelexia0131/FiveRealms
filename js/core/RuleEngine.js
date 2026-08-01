@@ -1,4 +1,4 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260801-selection-pools-v41";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260801-spirit-medic-v42";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
@@ -92,7 +92,7 @@ export class RuleEngine {
     const alive = game.state.players.filter((player) => player.alive);
     let candidates = [];
     if (["barrier", "resonance"].includes(skillId)) candidates = alive.filter((player) => player.id !== source.id && player.battleTeam === source.battleTeam);
-    else if (skillId === "symbiosis") candidates = alive.filter((player) => player.id !== source.id && player.battleTeam === source.battleTeam && player.hp < player.maxHp);
+    else if (skillId === "symbiosis") candidates = alive.filter((player) => player.battleTeam === source.battleTeam && player.hp < player.maxHp);
     else if (skillId === "stealSkill") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && this.hasHandOrEquipment(player));
     else if (skillId === "hunt") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && player.statuses.huntMark?.sourceId === source.id);
     if (skill.rangeRule === "attack") return candidates.filter((target) => DistanceSystem.getDistance(game, source, target) <= source.attackRange);
