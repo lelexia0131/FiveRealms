@@ -1,15 +1,12 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-permanent-barrier-v36";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-transfer-hand-only-v37";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 const UNKNOWN_HAND_EXPECTED_VALUE = 4;
 const HUMAN_ALLY_HAND_PROTECTION = 7;
-const HUMAN_ALLY_EQUIPMENT_PROTECTION = 8;
 
 const handCount = (player, excludedCardIds = null) => Array.isArray(player?.hand)
   ? player.hand.filter((card) => !excludedCardIds?.has(card.id)).length
   : Math.max(0, Number(player?.handCount ?? 0));
-const equipmentDefinitionId = (player) => player?.equipmentDefinitionId ?? player?.equipment?.definitionId ?? null;
-const equipmentValue = (player) => CARD_DEFINITIONS[equipmentDefinitionId(player)]?.aiValue ?? 0;
 
 function knownHandDefinitionIds(actor, owner, excludedCardIds = null) {
   if (!actor || !owner) return [];
@@ -31,18 +28,6 @@ export function scoreTransferCombination({ actor, from, receiver, zone, excluded
   if (!actor || !from || !receiver || from.id === receiver.id) return Number.NEGATIVE_INFINITY;
   const sourceIsAlly = from.battleTeam === actor.battleTeam;
   const receiverIsAlly = receiver.battleTeam === actor.battleTeam;
-
-  if (zone === "equipment") {
-    const movedValue = equipmentValue(from);
-    if (movedValue <= 0) return Number.NEGATIVE_INFINITY;
-    const replacedValue = equipmentValue(receiver);
-    let score = (sourceIsAlly ? -movedValue : movedValue)
-      + (receiverIsAlly ? movedValue - replacedValue : replacedValue - movedValue);
-    if (sourceIsAlly && from.controllerType === "human") {
-      score -= HUMAN_ALLY_EQUIPMENT_PROTECTION + movedValue * 0.5;
-    }
-    return score;
-  }
 
   if (zone !== "hand" || handCount(from, excludedCardIds) <= 0) return Number.NEGATIVE_INFINITY;
   const movedValue = expectedTransferHandValue(actor, from, excludedCardIds);
@@ -69,13 +54,6 @@ export function buildTransferCandidates({ actor, sources, getReceivers, allowedR
     const receivers = (getReceivers(from) ?? []).filter((receiver) =>
       !allowedReceiverIds || allowedReceiverIds.has(receiver.id));
     for (const receiver of receivers) {
-      if (equipmentDefinitionId(from)) {
-        candidates.push({
-          source:from, sourceId:from.id, receiverId:receiver.id, zone:"equipment",
-          equipmentCardId:from.equipment?.id,
-          score:scoreTransferCombination({ actor, from, receiver, zone:"equipment", excludedCardIds })
-        });
-      }
       if (handCount(from, excludedCardIds) > 0) {
         candidates.push({
           source:from, sourceId:from.id, receiverId:receiver.id, zone:"hand",
@@ -89,7 +67,6 @@ export function buildTransferCandidates({ actor, sources, getReceivers, allowedR
 
 export function chooseBestPositiveTransfer(candidates, minimumUtility = MIN_TRANSFER_UTILITY) {
   const best = [...(candidates ?? [])].sort((a, b) => b.score - a.score
-    || Number(b.zone === "equipment") - Number(a.zone === "equipment")
     || (a.source?.seatIndex ?? 0) - (b.source?.seatIndex ?? 0)
     || String(a.receiverId).localeCompare(String(b.receiverId)))[0];
   return best && best.score >= minimumUtility ? Object.freeze({ ...best }) : null;

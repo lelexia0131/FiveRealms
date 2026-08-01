@@ -1,5 +1,5 @@
 /** 二十三种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-permanent-barrier-v36";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-transfer-hand-only-v37";
 
 /** 只在最终效果解析时读取私密意图，并按原角色、原区域复验实体牌。 */
 function resolvePrivateSelectionIntent(game, source, card, target, context, expectedZone = null) {
@@ -56,15 +56,14 @@ const CARD_EFFECTS = {
 
   async transfer(game, source, card, targets, context) {
     const intent = context.privateTransferIntent;
-    if (!intent || !RuleEngine.getTransferSources(game, source, card).includes(intent.from)
+    if (!intent || intent.zone !== "hand" || !intent.from?.hand?.includes(intent.card)
+      || !RuleEngine.getTransferSources(game, source, card).includes(intent.from)
       || !RuleEngine.getTransferReceivers(game, source, intent.from, card).includes(intent.receiver)) {
       return { destination:"discard", resolved:false };
     }
-    const transferred = intent.zone === "equipment"
-      ? await game.moveEquipmentBetweenPlayers(intent.from, intent.receiver, intent.card, "转移")
-      : await game.moveCardBetweenHands(intent.from, intent.receiver, intent.card, "转移");
+    const transferred = await game.moveCardBetweenHands(intent.from, intent.receiver, intent.card, "转移");
     if (!game.isSessionValid(game.state.gameId)) return { destination:"discard", resolved:false };
-    if (transferred && intent.zone === "hand") {
+    if (transferred) {
       game.log(`${source.name}将${intent.from.name}的${game.cardLabelForHuman(intent.receiver, intent.card)}转移给了${intent.receiver.name}。`, "important");
     }
     return { destination:"discard", resolved:Boolean(transferred) };

@@ -2,10 +2,10 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-permanent-barrier-v36";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-permanent-barrier-v36";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-permanent-barrier-v36";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-permanent-barrier-v36";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-transfer-hand-only-v37";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-transfer-hand-only-v37";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-transfer-hand-only-v37";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-transfer-hand-only-v37";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -74,17 +74,12 @@ export class AiSimulator {
       case "transfer": {
         const game = { state:{ players:next.players } };
         const inRange = (player) => DistanceSystem.getDistance(game, actor, player) <= 1;
-        const resources = next.players.filter((player) => player.alive && inRange(player) && ((player.handCount ?? 0) > 0 || player.equipmentDefinitionId));
+        const resources = next.players.filter((player) => player.alive && inRange(player) && (player.handCount ?? 0) > 0);
         const source = next.players.find((player) => player.id === abstractAction.selection?.sourceId)
-          ?? resources.sort((a,b) => (b.handCount + (b.equipmentDefinitionId ? 1 : 0)) - (a.handCount + (a.equipmentDefinitionId ? 1 : 0)))[0];
+          ?? resources.sort((a,b) => b.handCount - a.handCount)[0];
         const receiver = next.players.find((player) => player.id === abstractAction.selection?.receiverId)
           ?? next.players.filter((player) => player.alive && player.id !== source?.id && inRange(player)).sort((a,b) => a.handCount - b.handCount)[0];
-        const moveEquipment = abstractAction.selection?.zone === "equipment"
-          || (!abstractAction.selection?.zone && source?.equipmentDefinitionId && ((source.handCount ?? 0) <= 0 || CARD_DEFINITIONS[source.equipmentDefinitionId]?.aiValue >= 7));
-        if (source && receiver && source.equipmentDefinitionId && moveEquipment) {
-          receiver.equipmentDefinitionId = source.equipmentDefinitionId;
-          source.equipmentDefinitionId = null;
-        } else if (source && receiver) {
+        if (source && receiver && (source.handCount ?? 0) > 0 && abstractAction.selection?.zone !== "equipment") {
           source.handCount = Math.max(0, source.handCount - scale);
           receiver.handCount += scale;
         }

@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-permanent-barrier-v36";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-permanent-barrier-v36";
-import { createId, clamp } from "../utils/helpers.js?build=20260801-permanent-barrier-v36";
-import { EventBus } from "./EventBus.js?build=20260801-permanent-barrier-v36";
-import { Player } from "./Player.js?build=20260801-permanent-barrier-v36";
-import { Deck } from "./Deck.js?build=20260801-permanent-barrier-v36";
-import { TeamManager } from "./TeamManager.js?build=20260801-permanent-barrier-v36";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260801-permanent-barrier-v36";
-import { RuleEngine } from "./RuleEngine.js?build=20260801-permanent-barrier-v36";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260801-permanent-barrier-v36";
-import { GameLogger } from "./GameLogger.js?build=20260801-permanent-barrier-v36";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260801-permanent-barrier-v36";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-permanent-barrier-v36";
-import { AIController } from "../ai/AIController.js?build=20260801-permanent-barrier-v36";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260801-permanent-barrier-v36";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-permanent-barrier-v36";
-import { Debug } from "../utils/debug.js?build=20260801-permanent-barrier-v36";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260801-permanent-barrier-v36";
-import { DyingSystem } from "./DyingSystem.js?build=20260801-permanent-barrier-v36";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260801-permanent-barrier-v36";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260801-permanent-barrier-v36";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260801-permanent-barrier-v36";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260801-permanent-barrier-v36";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-transfer-hand-only-v37";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-transfer-hand-only-v37";
+import { createId, clamp } from "../utils/helpers.js?build=20260801-transfer-hand-only-v37";
+import { EventBus } from "./EventBus.js?build=20260801-transfer-hand-only-v37";
+import { Player } from "./Player.js?build=20260801-transfer-hand-only-v37";
+import { Deck } from "./Deck.js?build=20260801-transfer-hand-only-v37";
+import { TeamManager } from "./TeamManager.js?build=20260801-transfer-hand-only-v37";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260801-transfer-hand-only-v37";
+import { RuleEngine } from "./RuleEngine.js?build=20260801-transfer-hand-only-v37";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260801-transfer-hand-only-v37";
+import { GameLogger } from "./GameLogger.js?build=20260801-transfer-hand-only-v37";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260801-transfer-hand-only-v37";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-transfer-hand-only-v37";
+import { AIController } from "../ai/AIController.js?build=20260801-transfer-hand-only-v37";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260801-transfer-hand-only-v37";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260801-transfer-hand-only-v37";
+import { Debug } from "../utils/debug.js?build=20260801-transfer-hand-only-v37";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260801-transfer-hand-only-v37";
+import { DyingSystem } from "./DyingSystem.js?build=20260801-transfer-hand-only-v37";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260801-transfer-hand-only-v37";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260801-transfer-hand-only-v37";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260801-transfer-hand-only-v37";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260801-transfer-hand-only-v37";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -348,7 +348,7 @@ export class Game {
   }
 
   /**
-   * 在反制窗口前固定转移的来源、接收者和实体牌。私密结算对象与公开响应对象
+   * 在反制窗口前固定转移的来源、接收者和手牌实体。私密结算对象与公开响应对象
    * 使用不同引用；AI 的组合计划仍会在这里通过 RuleEngine 复核。
    */
   async prepareTransferIntent(source, card, selection = null) {
@@ -360,33 +360,31 @@ export class Game {
     const planned = selection?.sourceId && selection?.receiverId
       ? selection
       : this.aiController.cardSelector.chooseTransferCombination(source, card, sources, null, excludedCardIds);
+    if (planned?.zone && planned.zone !== "hand") {
+      if (planned.selectionId) this.cardSelectionSystem.clearSelection(planned.selectionId);
+      return null;
+    }
     const from = this.state.players.find((player) => player.id === planned?.sourceId && player.alive) ?? null;
     const receiver = this.state.players.find((player) => player.id === planned?.receiverId && player.alive) ?? null;
     if (!sources.includes(from) || !RuleEngine.getTransferReceivers(this, source, from, card).includes(receiver)) return null;
 
-    let chosen = null;
-    if (source.controllerType === "ai" && planned?.zone === "equipment") {
-      chosen = from.equipment && (!planned.equipmentCardId || from.equipment.id === planned.equipmentCardId)
-        ? { card:from.equipment, zone:"equipment" }
-        : null;
-    } else if (source.controllerType === "ai" && planned?.zone === "hand") {
-      const [hiddenCard] = this.aiController.cardSelector.chooseHiddenCards(source, from, 1, excludedCardIds);
-      chosen = hiddenCard ? { card:hiddenCard, zone:"hand" } : null;
-    } else {
-      chosen = await this.choosePlayerZoneCard(source, from, "选择要转移的手牌或装备牌", planned, excludedCardIds);
-    }
+    const [hiddenCard] = source.controllerType === "ai"
+      ? this.aiController.cardSelector.chooseHiddenCards(source, from, 1, excludedCardIds)
+      : await this.chooseHiddenCards(source, from, 1, "选择要转移的手牌", planned, excludedCardIds);
+    const chosen = hiddenCard ? { card:hiddenCard, zone:"hand" } : null;
     if (!this.isSessionValid(gameId)) return null;
     if (!chosen || excludedCardIds.has(chosen.card.id)
       || !RuleEngine.getTransferSources(this, source, card, excludedCardIds).includes(from)
       || !RuleEngine.getTransferReceivers(this, source, from, card).includes(receiver)) return null;
-    const privateIntent = Object.freeze({ from, receiver, card:chosen.card, zone:chosen.zone });
+    if (chosen.zone !== "hand" || !from.hand.includes(chosen.card)) return null;
+    const privateIntent = Object.freeze({ from, receiver, card:chosen.card, zone:"hand" });
     const publicContext = Object.freeze({
       fromPlayerId:from.id,
       fromName:from.name,
       receiverPlayerId:receiver.id,
       receiverName:receiver.name,
-      zone:chosen.zone,
-      safeItemLabel:chosen.zone === "equipment" ? `装备「${chosen.card.name}」` : "1张牌"
+      zone:"hand",
+      safeItemLabel:"1张牌"
     });
     return Object.freeze({ privateIntent, publicContext });
   }
@@ -988,37 +986,6 @@ export class Game {
     this.ui.queueFeedback?.("draw", to.id, 1);
     await this.eventBus.emit("afterCardMove", { ...move, type:"afterCardMove" });
     if (!this.isSessionValid(gameId)) return true;
-    this.ui.render(this);
-    return true;
-  }
-
-  /** 将公开装备直接转移到另一名角色装备区；接收者旧装备按替换规则公开弃置。 */
-  async moveEquipmentBetweenPlayers(from, to, card, reason) {
-    const gameId = this.state.gameId;
-    if (!this.isSessionValid(gameId) || !from?.alive || !to?.alive || from.id === to.id || from.equipment !== card || this.state.isGameOver) return false;
-    const move = { type:"beforeCardMove", card, from:"equipment", to:"equipment", fromPlayer:from, player:to, reason, cancelled:false };
-    await this.eventBus.emit("beforeCardMove", move);
-    if (!this.isSessionValid(gameId)) return false;
-    if (move.cancelled || from.equipment !== card) return false;
-    if (to.equipment) {
-      const replaced = to.equipment;
-      const replaceMove = { type:"beforeCardMove", card:replaced, from:"equipment", to:"discard", player:to, reason:"转移装备替换", cancelled:false };
-      await this.eventBus.emit("beforeCardMove", replaceMove);
-      if (!this.isSessionValid(gameId) || replaceMove.cancelled) return false;
-      to.equipment = null;
-      this.state.deck.discard(replaced);
-      await this.eventBus.emit("afterCardMove", { ...replaceMove, type:"afterCardMove" });
-      if (!this.isSessionValid(gameId)) return false;
-      this.log(`${to.name}的「${replaced.name}」被替换并进入弃牌堆。`);
-    }
-    from.equipment = null;
-    to.equipment = card;
-    this.invalidateCardKnowledge(card.id, from.id);
-    this.syncDeckAliases();
-    this.ui.queueFeedback?.("equip", to.id);
-    await this.eventBus.emit("afterCardMove", { ...move, type:"afterCardMove" });
-    if (!this.isSessionValid(gameId)) return true;
-    this.log(`${to.name}装备了「${card.name}」。`, "important");
     this.ui.render(this);
     return true;
   }

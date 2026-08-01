@@ -2,10 +2,10 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate } from "./templates.js?build=20260801-permanent-barrier-v36";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-permanent-barrier-v36";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-permanent-barrier-v36";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-permanent-barrier-v36";
+import { escapeHtml, hiddenCardBackTemplate } from "./templates.js?build=20260801-transfer-hand-only-v37";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-transfer-hand-only-v37";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-transfer-hand-only-v37";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-transfer-hand-only-v37";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 
@@ -44,7 +44,7 @@ export class InteractionController {
       const receiver = await this.ui.requestTarget(receivers, "转移：选择距离1内的接收者", { source:actor, card });
       if (!game.isSessionValid(gameId)) return null;
       if (!receiver) return null;
-      const selected = await this.requestZoneCard(game, actor, source, "转移：选择1张手牌或装备牌", new Set([card.id]));
+      const selected = await this.requestHandCard(game, actor, source, "转移：选择1张手牌", new Set([card.id]));
       if (!game.isSessionValid(gameId)) return null;
       return selected ? { sourceId:source.id, receiverId:receiver.id, ...selected } : null;
     }
@@ -81,6 +81,23 @@ export class InteractionController {
     if (!game.isSessionValid(gameId)) return null;
     if (!selected?.length) return null;
     if (selected[0] === EQUIPMENT_OPTION_TOKEN) return { zone:"equipment", equipmentCardId:owner.equipment?.id ?? null, selectionId:hidden.selectionId };
+    return { zone:"hand", tokens:selected, selectionId:hidden.selectionId };
+  }
+
+  /** 转移专用：只呈现隐藏手牌槽位，不把公开装备加入候选。 */
+  async requestHandCard(game, actor, owner, prompt, excludedCardIds = null) {
+    const gameId = game.state.gameId;
+    if (!game.isSessionValid(gameId)) return null;
+    const eligibleHand = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)) ?? [];
+    if (!eligibleHand.length) return null;
+    const hidden = game.cardSelectionSystem.createHiddenSelection(owner, eligibleHand);
+    const slots = createHiddenSelectionView(actor, owner, hidden);
+    const selected = await this.requestHiddenCards(hidden, 1, prompt, {
+      exact:true, slots, totalCount:slots.length,
+      helpText:"只能选择手牌；装备区的牌不能被转移。"
+    });
+    if (!game.isSessionValid(gameId)) return null;
+    if (!selected?.length) return null;
     return { zone:"hand", tokens:selected, selectionId:hidden.selectionId };
   }
 

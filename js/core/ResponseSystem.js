@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-permanent-barrier-v36";
-import { createId } from "../utils/helpers.js?build=20260801-permanent-barrier-v36";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-permanent-barrier-v36";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-transfer-hand-only-v37";
+import { createId } from "../utils/helpers.js?build=20260801-transfer-hand-only-v37";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260801-transfer-hand-only-v37";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

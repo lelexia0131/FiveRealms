@@ -389,11 +389,13 @@ test("窥探只向真人私密层展示并把该实体牌标记为已知", async
 test("AI 窥探记忆绑定实体 card.id", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0});const scout=instance("scout"), secret=instance("block");a.hand.push(scout);b.hand.push(secret);await game.playCard(a,scout,[b]);assert.equal(a.aiMemory.knownCardsByPlayer[b.id][secret.id],secret.definitionId); });
 test("被窥探牌离开原手牌后实体记忆立即失效", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const secret=instance("block");b.hand.push(secret);game.rememberPrivateCard(a,b,secret);await game.discardCardFromHand(b,secret,"测试");assert.equal(a.aiMemory.knownCardsByPlayer[b.id][secret.id],undefined); });
 test("转移支持来源、接收者与指定牌三阶段", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);const transfer=instance("transfer"),moved=instance("block");a.hand.push(transfer);b.hand.push(moved);b.bumpHandVersion();const hidden=game.cardSelectionSystem.createHiddenSelection(b);await game.playCard(a,transfer,[],{sourceId:b.id,receiverId:c.id,tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});assert.ok(c.hand.includes(moved));assert.ok(!game.state.logs.at(-1).message.includes(moved.name)); });
+test("转移配置和README明确只允许移动手牌", async () => { const transfer=CARD_DEFINITIONS.transfer,readme=await readFile(projectFile("README.md"),"utf8");assert.deepEqual(transfer.targetZones,["hand"]);assert.deepEqual(transfer.selectionFlow,["source","receiver","handCard:1"]);assert.ok(!transfer.subtypes.includes("equipment-control"));assert.match(transfer.description,/手牌/);assert.match(transfer.description,/不能转移装备区/);assert.match(readme,/转移：[^\n]*装备区的牌不能被转移/);assert.doesNotMatch(readme,/转移：[^\n]*装备直接进入接收者装备区/); });
+test("真人转移选牌界面不提供装备区选项", async () => { const actor=makePlayer("actor",0,"dawn","human"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn"),use=instance("transfer"),held=instance("block"),equipment=instance("defenseDevice");actor.hand.push(use);from.hand.push(held);from.equipment=equipment;const {game}=makeGame([actor,from,receiver]),chosenPlayers=[from,receiver],ui={requestTarget:async()=>chosenPlayers.shift()},controller=new InteractionController(ui);let slots=null;controller.requestHiddenCards=async(selection,_count,_prompt,options)=>{slots=options.slots;return [selection.tokens[0].token];};const result=await controller.requestCardFlow(game,actor,use,[]);assert.equal(result.zone,"hand");assert.ok(result.tokens.length===1);assert.equal(slots.length,1);assert.ok(slots.every((slot)=>slot.zone!=="equipment"&&slot.token!=="public-equipment")); });
 test("真人掠夺指定隐藏牌后按已知公开牌名记录", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const use=instance("plunder"),secret=instance("block");a.hand.push(use);b.hand.push(secret);b.bumpHandVersion();const h=game.cardSelectionSystem.createHiddenSelection(b);await game.playCard(a,use,[b],{tokens:[h.tokens[0].token],selectionId:h.selectionId});assert.ok(a.hand.includes(secret));assert.ok(game.state.logs.some((entry)=>entry.message.includes(secret.name))); });
 test("破坏公开牌名并把牌移入弃牌堆", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const use=instance("destroy"),secret=instance("block");a.hand.push(use);b.hand.push(secret);b.bumpHandVersion();const h=game.cardSelectionSystem.createHiddenSelection(b);await game.playCard(a,use,[b],{tokens:[h.tokens[0].token],selectionId:h.selectionId});assert.ok(game.state.deck.discardPile.includes(secret));assert.ok(game.state.logs.some((entry)=>entry.message.includes(secret.name))); });
 test("四种旧装备采用README中的新名称且保留稳定definitionId", () => { assert.deepEqual(Object.fromEntries(["energyDevice","recycleDevice","defenseDevice","battleDevice"].map((id)=>[id,CARD_DEFINITIONS[id].name])),{energyDevice:"充能桩",recycleDevice:"回收站",defenseDevice:"雷达",battleDevice:"军火库"}); });
-test("转移与掠夺按统一动态距离限制，破坏仍不限距离", () => { const actor=makePlayer("actor",0,"dawn"),near=makePlayer("near",1,"dusk"),far=makePlayer("far",2,"dusk"),other=makePlayer("other",3,"dawn"),tail=makePlayer("tail",4,"dawn");near.hand.push(instance("block"));far.equipment=instance("barrierDevice");const {game}=makeGame([actor,near,far,other,tail]);assert.ok(RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(near));assert.ok(!RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(far));assert.ok(!RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.plunder).includes(far));assert.ok(RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.destroy).includes(far));far.equipment=instance("energyDevice");actor.equipment=instance("telescope");assert.ok(RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(far));assert.ok(RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.plunder).includes(far)); });
-test("转移可把距离1内来源的装备移入距离1接收者装备区并替换旧装备", async () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),middle=makePlayer("middle",2,"dusk"),other=makePlayer("other",3,"dawn"),receiver=makePlayer("receiver",4,"dawn"),moved=instance("energyDevice"),replaced=instance("defenseDevice"),use=instance("transfer");const {game}=makeGame([actor,from,middle,other,receiver]);actor.hand.push(use);from.equipment=moved;receiver.equipment=replaced;const selection=game.cardSelectionSystem.createHiddenSelection(from);assert.equal(await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"equipment",equipmentCardId:moved.id,selectionId:selection.selectionId}),true);assert.equal(from.equipment,null);assert.equal(receiver.equipment,moved);assert.ok(game.state.deck.discardPile.includes(replaced));assert.equal(game.cardSelectionSystem.isSelectionActive(selection.selectionId,from),false); });
+test("转移与掠夺按统一动态距离限制且转移来源必须持有手牌", () => { const actor=makePlayer("actor",0,"dawn"),near=makePlayer("near",1,"dusk"),far=makePlayer("far",2,"dusk"),other=makePlayer("other",3,"dawn"),tail=makePlayer("tail",4,"dawn");near.hand.push(instance("block"));far.equipment=instance("barrierDevice");const {game}=makeGame([actor,near,far,other,tail]);assert.ok(RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(near));assert.ok(!RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(far));assert.ok(!RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.plunder).includes(far));assert.ok(RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.destroy).includes(far));far.hand.push(instance("charge"));far.equipment=instance("energyDevice");actor.equipment=instance("telescope");assert.ok(RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(far));assert.ok(RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.plunder).includes(far)); });
+test("真人和核心都拒绝把装备区实体作为转移牌", async () => { const actor=makePlayer("actor",0,"dawn","human"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn"),equipment=instance("energyDevice"),hiddenCard=instance("block"),oldEquipment=instance("defenseDevice"),use=instance("transfer");const {game}=makeGame([actor,from,receiver]);actor.hand.push(use);from.hand.push(hiddenCard);from.equipment=equipment;receiver.equipment=oldEquipment;const selection=game.cardSelectionSystem.createHiddenSelection(from);assert.equal(await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),false);assert.ok(actor.hand.includes(use));assert.equal(from.equipment,equipment);assert.equal(receiver.equipment,oldEquipment);assert.ok(from.hand.includes(hiddenCard));assert.ok(!game.state.deck.discardPile.includes(use));assert.equal(game.cardSelectionSystem.isSelectionActive(selection.selectionId,from),false); });
 test("掠夺可把距离2内目标装备公开移入施牌者手牌", async () => { const actor=makePlayer("actor",0,"dawn","human"),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),equipment=instance("energyDevice"),original=instance("battleDevice"),use=instance("plunder");const {game}=makeGame([actor,near,target,other,tail]);actor.equipment=original;actor.hand.push(use);target.equipment=equipment;const handVersion=actor.handVersion,selection=game.cardSelectionSystem.createHiddenSelection(target);assert.equal(await game.playCard(actor,use,[target],{zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),true);assert.equal(target.equipment,null);assert.equal(actor.equipment,original);assert.ok(actor.hand.includes(equipment));assert.ok(!game.state.deck.discardPile.includes(original));assert.ok(actor.handVersion>handVersion);assert.ok(game.state.logs.some((entry)=>entry.message.includes("充能桩")&&entry.message.includes("收入手牌"))); });
 test("破坏可不限距离弃置装备区装备", async () => { const actor=makePlayer("actor",0,"dawn"),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),equipment=instance("barrierDevice"),use=instance("destroy");const {game}=makeGame([actor,near,target,other,tail]);actor.hand.push(use);target.equipment=equipment;assert.equal(DistanceSystem.getDistance(game,actor,target),3);const selection=game.cardSelectionSystem.createHiddenSelection(target);assert.equal(await game.playCard(actor,use,[target],{zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),true);assert.equal(target.equipment,null);assert.ok(game.state.deck.discardPile.includes(equipment)); });
 test("影客窃取可把距离2内敌方装备收入手牌且不替换原装备", async () => { const shade=makePlayer("shade",0,"dawn","ai",3),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),equipment=instance("energyDevice"),original=instance("battleDevice");const {game}=makeGame([shade,near,target,other,tail],{random:()=>0});shade.energy=2;shade.equipment=original;target.equipment=equipment;assert.ok(RuleEngine.getSkillTargets(game,shade,ACTIVE_SKILLS.stealSkill).includes(target));assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);assert.equal(target.equipment,null);assert.equal(shade.equipment,original);assert.ok(shade.hand.includes(equipment));assert.ok(!game.state.deck.discardPile.includes(equipment));const blockedShade=makePlayer("blocked-shade",0,"dawn","ai",3),blockedNear=makePlayer("blocked-near",1,"dawn"),blocked=makePlayer("blocked",2,"dusk"),blockedOther=makePlayer("blocked-other",3,"dusk"),blockedTail=makePlayer("blocked-tail",4,"dawn");blocked.equipment=instance("barrierDevice");const {game:blockedGame}=makeGame([blockedShade,blockedNear,blocked,blockedOther,blockedTail]);assert.equal(DistanceSystem.getDistance(blockedGame,blockedShade,blocked),3);assert.ok(!RuleEngine.getSkillTargets(blockedGame,blockedShade,ACTIVE_SKILLS.stealSkill).includes(blocked)); });
@@ -772,12 +774,12 @@ test("AI 破坏与掠夺只生成敌方目标，窃取规则也排除队友", ()
   }
   assert.ok(!RuleEngine.getSkillTargets(game,actor,ACTIVE_SKILLS.stealSkill).includes(ally));
 });
-test("AI 转移不会拿真人队友的雷达填自己的空装备槽", () => {
+test("AI 转移忽略真人队友装备区的雷达", () => {
   const actor=makePlayer("actor",0,"dawn"),humanAlly=makePlayer("human-ally",1,"dawn","human");
   actor.hand.push(instance("transfer"));humanAlly.equipment=instance("defenseDevice");const {game}=makeGame([actor,humanAlly]);
   assert.equal(game.aiController.actionGenerator.generate(actor).some((action)=>action.card?.definitionId==="transfer"),false);
 });
-test("AI 转移不会执行 AI 队友装备之间的零收益搬运", () => {
+test("AI 转移不会把仅有装备的角色作为来源", () => {
   const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn");
   actor.hand.push(instance("transfer"));ally.equipment=instance("defenseDevice");const {game}=makeGame([actor,ally]);
   assert.equal(game.aiController.actionGenerator.generate(actor).some((action)=>action.card?.definitionId==="transfer"),false);
@@ -787,17 +789,17 @@ test("AI 转移最佳方案为负数时不进入实际动作列表", () => {
   actor.hand.push(instance("transfer"));const {game}=makeGame([actor,enemy]);
   assert.equal(game.aiController.actionGenerator.generate(actor).some((action)=>action.card?.definitionId==="transfer"),false);
 });
-test("AI 转移可从敌人移走高价值装备交给队友", () => {
+test("AI 转移不会从敌人装备区移走高价值装备", () => {
   const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
   const use=instance("transfer");actor.hand.push(use);actor.equipment=instance("energyDevice");enemy.equipment=instance("defenseDevice");const {game}=makeGame([actor,enemy,ally]);
   const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);
-  assert.ok(action);assert.equal(action.selection.sourceId,enemy.id);assert.equal(action.selection.receiverId,ally.id);assert.equal(action.selection.zone,"equipment");
+  assert.equal(action,undefined);assert.equal(enemy.equipment.definitionId,"defenseDevice");assert.equal(ally.equipment,null);
 });
-test("AI 转移可用敌方低价值装备替换敌方高价值装备", () => {
-  const actor=makePlayer("actor",0,"dawn"),low=makePlayer("low",1,"dusk"),high=makePlayer("high",2,"dusk");
-  const use=instance("transfer");actor.hand.push(use);actor.equipment=instance("battleDevice");low.equipment=instance("energyDevice");high.equipment=instance("defenseDevice");const {game}=makeGame([actor,low,high]);
+test("AI 转移在角色同时拥有手牌和装备时只生成手牌选择", () => {
+  const actor=makePlayer("actor",0,"dawn"),low=makePlayer("low",1,"dusk"),high=makePlayer("high",2,"dusk"),ally=makePlayer("ally",3,"dawn");
+  const use=instance("transfer");actor.hand.push(use);low.hand.push(instance("block"));low.equipment=instance("energyDevice");high.equipment=instance("defenseDevice");const {game}=makeGame([actor,low,high,ally]);
   const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);
-  assert.ok(action);assert.equal(action.selection.sourceId,low.id);assert.equal(action.selection.receiverId,high.id);
+  assert.ok(action);assert.equal(action.selection.sourceId,low.id);assert.equal(action.selection.zone,"hand");assert.equal(Object.hasOwn(action.selection,"equipmentCardId"),false);
 });
 test("AI 转移可将即将溢出的队友手牌移给有空间的队友", () => {
   const actor=makePlayer("actor",0,"dawn"),overflow=makePlayer("overflow",1,"dawn"),receiver=makePlayer("receiver",2,"dawn");
@@ -807,12 +809,15 @@ test("AI 转移可将即将溢出的队友手牌移给有空间的队友", () =>
 });
 test("AI 转移真实动作与深层模拟对同一公开局面选择一致", () => {
   const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
-  const use=instance("transfer");actor.hand.push(use);actor.equipment=instance("energyDevice");enemy.equipment=instance("defenseDevice");const {game}=makeGame([actor,enemy,ally]);
+  const use=instance("transfer");actor.hand.push(use);actor.equipment=instance("energyDevice");enemy.hand.push(instance("block"));enemy.equipment=instance("defenseDevice");const {game}=makeGame([actor,enemy,ally]);
   const real=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);
   const visible=createAiVisibleState(actor.id,game.state);
   const simulated=game.aiController.actionGenerator.generateFromVisible(visible,actor.id).find((entry)=>entry.card?.id===use.id);
   const plan=(action)=>[action?.selection?.sourceId,action?.selection?.receiverId,action?.selection?.zone];
-  assert.ok(real);assert.ok(simulated);assert.deepEqual(plan(real),plan(simulated));
+  assert.ok(real);assert.ok(simulated);assert.equal(real.selection.zone,"hand");assert.deepEqual(plan(real),plan(simulated));
+});
+test("AI 模拟器拒绝伪造的装备区转移选择", () => {
+  const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn"),use=instance("transfer"),equipment=instance("defenseDevice");actor.hand.push(use);enemy.equipment=equipment;const {game}=makeGame([actor,enemy,ally]),visible=createAiVisibleState(actor.id,game.state),next=new AiSimulator(visible).apply(visible,{type:"card",card:use,targets:[],selection:{sourceId:enemy.id,receiverId:ally.id,zone:"equipment",equipmentCardId:equipment.id}},actor.id),nextEnemy=next.players.find((player)=>player.id===enemy.id),nextAlly=next.players.find((player)=>player.id===ally.id);assert.equal(nextEnemy.equipmentDefinitionId,"defenseDevice");assert.equal(nextAlly.equipmentDefinitionId,null);assert.equal(nextAlly.handCount,0);
 });
 test("交换敌人未知手牌的真实 definitionId 不改变 AI 转移计划", () => {
   const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
@@ -832,8 +837,8 @@ test("真人以自己为来源时核心拒绝选择正在使用的转移实体",
   assert.equal(await game.playCard(actor,use,[],{sourceId:actor.id,receiverId:ally.id,zone:"hand",tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId}),false);
   assert.ok(actor.hand.includes(use));assert.ok(actor.hand.includes(other));assert.ok(!game.state.deck.resolvingCards.includes(use));assert.ok(!game.state.deck.discardPile.includes(use));
 });
-test("排除转移牌后来源没有其他资源时不能开始转移", async () => {
-  const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn"),use=instance("transfer");actor.hand.push(use);const {game}=makeGame([actor,ally]);
+test("排除转移牌后没有其他手牌时即使有装备也不能开始转移", async () => {
+  const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn"),use=instance("transfer");actor.hand.push(use);actor.equipment=instance("defenseDevice");const {game}=makeGame([actor,ally]);
   assert.equal(RuleEngine.canPlayCard(game,actor,use).ok,false);assert.equal(await game.playCard(actor,use,[],{sourceId:actor.id,receiverId:ally.id,zone:"hand"}),false);assert.ok(actor.hand.includes(use));
 });
 test("锁定牌在结算前离开来源时转移失败且没有有效目标、成功日志或协调", async () => {
@@ -898,12 +903,12 @@ test("转移被反制后锁定手牌仍留在来源区域", async () => {
   await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"hand"});
   assert.ok(from.hand.includes(locked));assert.ok(!receiver.hand.includes(locked));
 });
-test("公开装备转移的响应上下文可安全显示装备名", async () => {
+test("伪造装备区转移不会开启反制窗口或生成公开转移上下文", async () => {
   const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
-  const use=instance("transfer"),radar=instance("defenseDevice");actor.hand.push(use);from.equipment=radar;responder.hand.push(instance("counter"));
-  const {game}=makeGame([actor,from,responder,receiver]);let publicContext=null;game.aiController.responsePolicy.shouldRespond=(_player,_type,context)=>{publicContext=context.publicTransferContext;return false;};
-  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"equipment",equipmentCardId:radar.id});
-  assert.equal(publicContext.safeItemLabel,`装备「${radar.name}」`);assert.equal(Object.hasOwn(publicContext,"card"),false);assert.equal(Object.hasOwn(publicContext,"cardId"),false);
+  const use=instance("transfer"),radar=instance("defenseDevice"),held=instance("block");actor.hand.push(use);from.hand.push(held);from.equipment=radar;responder.hand.push(instance("counter"));
+  const {game}=makeGame([actor,from,responder,receiver]);let publicContext=null;game.aiController.responsePolicy.shouldRespond=(_player,_type,context)=>{publicContext=context.publicTransferContext;return false;};const selection=game.cardSelectionSystem.createHiddenSelection(from);
+  assert.equal(await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"equipment",equipmentCardId:radar.id,selectionId:selection.selectionId}),false);
+  assert.equal(publicContext,null);assert.equal(from.equipment,radar);assert.ok(actor.hand.includes(use));assert.equal(game.state.pendingResponses.length,0);
 });
 test("被反制的互利不建立公共牌池且不触发协调", async () => {
   const tuner=makePlayer("tuner",0,"dawn","ai",7),counterer=makePlayer("counterer",1,"dusk","human"),ally=makePlayer("ally",2,"dawn");

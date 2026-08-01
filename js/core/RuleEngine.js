@@ -1,4 +1,4 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260801-permanent-barrier-v36";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260801-transfer-hand-only-v37";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
@@ -20,7 +20,7 @@ export class RuleEngine {
 
   static getTransferSources(game, source, card, excludedCardIds = null) {
     const exclusions = excludedCardIds ?? (card?.definitionId === "transfer" && card?.id ? new Set([card.id]) : null);
-    return game.state.players.filter((player) => player.alive && this.hasHandOrEquipment(player, exclusions) && this.isWithinCardEffectRange(game, source, player, card));
+    return game.state.players.filter((player) => player.alive && this.transferableHandCount(player, exclusions) > 0 && this.isWithinCardEffectRange(game, source, player, card));
   }
 
   static getTransferReceivers(game, source, from, card) {
@@ -67,7 +67,7 @@ export class RuleEngine {
     if (["singleEnemy","singleEnemyInRange","allEnemies"].includes(card.targetType) && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有合法敌方目标" };
     if (card.definitionId === "transfer") {
       const sources = this.getTransferSources(game, source, card);
-      if (!sources.some((from) => this.getTransferReceivers(game, source, from, card).length)) return { ok:false, reason:"距离1内没有可完成转移的来源和接收者" };
+      if (!sources.some((from) => this.getTransferReceivers(game, source, from, card).length)) return { ok:false, reason:"距离1内没有可转移手牌的来源和接收者" };
     }
     return { ok:true, reason:"" };
   }

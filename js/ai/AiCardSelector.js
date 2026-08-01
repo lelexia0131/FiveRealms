@@ -2,10 +2,10 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-permanent-barrier-v36";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-permanent-barrier-v36";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-permanent-barrier-v36";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260801-permanent-barrier-v36";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-transfer-hand-only-v37";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-transfer-hand-only-v37";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-transfer-hand-only-v37";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260801-transfer-hand-only-v37";
 
 /** 未知手牌只按位置采样，绝不按真实定义筛选。 */
 export class AiCardSelector {
@@ -48,10 +48,7 @@ export class AiCardSelector {
     return candidates.find((player) => player.id === plan?.receiverId) ?? null;
   }
 
-  /**
-   * 联合评估来源、接收者和区域。装备读取公开 definitionId；隐藏手牌只使用数量、
-   * 手牌上限压力与合法已知概率，不查看实际 definitionId。
-   */
+  /** 联合评估来源、接收者和手牌；未知牌只使用数量、上限压力与合法已知概率。 */
   chooseTransferCombination(actor, card, sources, allowedReceiverIds = null, excludedCardIds = null) {
     const candidates = buildTransferCandidates({
       actor, sources, allowedReceiverIds, excludedCardIds,
