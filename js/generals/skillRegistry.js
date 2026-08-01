@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-card-art-invariant-v35";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-card-art-invariant-v35";
-import { randomChoice } from "../utils/helpers.js?build=20260801-card-art-invariant-v35";
-import { Debug } from "../utils/debug.js?build=20260801-card-art-invariant-v35";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-permanent-barrier-v36";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-permanent-barrier-v36";
+import { randomChoice } from "../utils/helpers.js?build=20260801-permanent-barrier-v36";
+import { Debug } from "../utils/debug.js?build=20260801-permanent-barrier-v36";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -181,10 +181,9 @@ export const ACTIVE_SKILLS = Object.freeze({
     async execute(game, source, targets) {
       source.changeEnergy(-2);
       const target = targets[0];
-      target.shield += 1;
-      target.statuses.temporaryShield = { amount:(target.statuses.temporaryShield?.amount ?? 0) + 1, clearAtTurnStart:true };
+      target.shield = (target.shield ?? 0) + 1;
       game.ui.queueFeedback?.("shield", target.id, 1);
-      game.log(`${source.name}为${target.name}构筑壁垒，获得1点可叠加且持续至其下次回合开始的护盾。`, "heal");
+      game.log(`${source.name}为${target.name}构筑壁垒，${target.name}获得1点护盾。`, "heal");
     }
   }),
   symbiosis: Object.freeze({

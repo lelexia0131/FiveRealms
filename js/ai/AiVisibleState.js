@@ -3,7 +3,7 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-card-art-invariant-v35";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-permanent-barrier-v36";
 
 const probabilityAtLeast = (trials, probability, required) => {
   if (required <= 0) return 1;
@@ -85,7 +85,6 @@ export function createAiVisibleState(viewerId, state) {
       activeSkillUsed: (player.turnFlags.activeSkillUseCounts?.[player.general.activeSkillIds[0]] ?? 0) >= (player.general.activeLimitPerTurn ?? 1),
       recycleDeviceUses: player.turnFlags.recycleDeviceUses ?? 0,
       huntMarkSourceId: player.statuses.huntMark?.sourceId ?? null,
-      temporaryShieldAmount: player.statuses.temporaryShield?.amount ?? 0,
       alive: player.alive,
       handCount: player.hand.length,
       hand: player.id === viewerId ? player.hand.map((card) => ({ id: card.id, definitionId: card.definitionId })) : undefined,

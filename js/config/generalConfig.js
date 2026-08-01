@@ -20,7 +20,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
     loreFaction: "曜石城垒", maxHp: 3, tags: ["防御", "保护"], roleTags: ["tank", "support"], passiveSkillIds: ["guardianAid"], activeSkillIds: ["barrier"],
     passiveName: "护援", passiveDescription: "每轮一次，弃置1张手牌令队友即将受到的伤害-1。",
     passiveTriggerText: "队友即将受到伤害且你可弃置1张手牌时", passiveLimitText: "每轮限触发1次",
-    activeName: "壁垒", activeDescription: "消耗2点能量，令一名存活队友获得1点可叠加的壁垒护盾；持续至其下次回合开始，每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
+    activeName: "壁垒", activeDescription: "消耗2点能量，使一名存活队友获得1点可叠加的护盾；该护盾不会随回合消失，只会在抵消伤害时消耗，每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
     description: "背负古誓的城垒守卫，擅长将危险拦截在盟友身前。",
     aiProfile: profile(.6, 1.45, 1.25, .7, .8, .85, .9, .45)
   }),
