@@ -2,17 +2,17 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate } from "./templates.js?build=20260801-private-reveal-layout-v39";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-private-reveal-layout-v39";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-private-reveal-layout-v39";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-private-reveal-layout-v39";
+import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260801-hidden-known-layout-v40";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-hidden-known-layout-v40";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-hidden-known-layout-v40";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-hidden-known-layout-v40";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 
 export function hiddenSelectionMarkup(selection, slots = null) {
   const displaySlots = slots ?? selection.tokens.map((entry) => ({ token:entry.token, known:false }));
   return displaySlots.map((slot) => slot.known
-    ? `<button type="button" class="hidden-known-card${slot.zone === "equipment" ? " is-equipment-option" : ""}" data-hidden-token="${escapeHtml(slot.token)}" aria-label="选择${slot.zone === "equipment" ? "装备" : "已知手牌"}${escapeHtml(slot.name)}" aria-pressed="false"><img src="${escapeHtml(slot.art)}" alt="" aria-hidden="true"><strong>${escapeHtml(slot.name)}</strong></button>`
+    ? hiddenKnownCardTemplate(slot, slot.token, { zone:slot.zone })
     : hiddenCardBackTemplate({ token:slot.token })
   ).join("");
 }
@@ -73,7 +73,10 @@ export class InteractionController {
     if (!eligibleHand.length && !owner?.equipment) return null;
     const hidden = game.cardSelectionSystem.createHiddenSelection(owner, eligibleHand);
     const slots = createHiddenSelectionView(actor, owner, hidden);
-    if (owner.equipment) slots.push({ token:EQUIPMENT_OPTION_TOKEN, known:true, zone:"equipment", name:owner.equipment.name, art:owner.equipment.art });
+    if (owner.equipment) {
+      const { name, categoryName, description, art, icon, accent, frameStyle, flavorText } = owner.equipment;
+      slots.push({ token:EQUIPMENT_OPTION_TOKEN, known:true, zone:"equipment", name, categoryName, description, art, icon, accent, frameStyle, flavorText });
+    }
     const selected = await this.requestHiddenCards(hidden, 1, prompt, {
       exact:true, slots, totalCount:slots.length,
       helpText:"手牌使用安全令牌；装备牌为公开信息，确认时核心会重新验证所在区域。"

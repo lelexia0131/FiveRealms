@@ -1,4 +1,4 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260801-private-reveal-layout-v39";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260801-hidden-known-layout-v40";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

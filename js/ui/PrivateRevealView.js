@@ -2,7 +2,7 @@
  * 仅真人可见的临时情报层。关闭时立即清空牌面 DOM；本模块不写公开日志、
  * 不保存 AI 记忆，也不修改任何游戏状态。
  */
-import { escapeHtml, privateCardTemplate } from "./templates.js?build=20260801-private-reveal-layout-v39";
+import { escapeHtml, privateCardTemplate } from "./templates.js?build=20260801-hidden-known-layout-v40";
 
 export class PrivateRevealView {
   constructor(element) { this.element = element; this.pending = null; }

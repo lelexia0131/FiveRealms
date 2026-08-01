@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-private-reveal-layout-v39";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-hidden-known-layout-v40";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -142,6 +142,15 @@ export function privateCardTemplate(card) {
   return `<article class="hand-card private-card frame-${escapeHtml(card.frameStyle)}" style="--card-accent:${escapeHtml(card.accent)}" aria-label="${escapeHtml(`${card.name}，${card.categoryName}，${card.description}`)}">
     ${cardFaceTemplate(card)}
   </article>`;
+}
+
+/** 隐藏选择中的已知牌使用标准牌面，只向 DOM 写入不透明选择 token。 */
+export function hiddenKnownCardTemplate(card, token, options = {}) {
+  const zoneLabel = options.zone === "equipment" ? "装备" : "已知手牌";
+  const zoneClass = options.zone === "equipment" ? " is-equipment-option" : "";
+  return `<button type="button" class="hand-card hidden-known-card frame-${escapeHtml(card.frameStyle)}${zoneClass}" style="--card-accent:${escapeHtml(card.accent)}" data-hidden-token="${escapeHtml(token)}" aria-label="选择${zoneLabel}${escapeHtml(card.name)}" aria-pressed="false">
+    ${cardFaceTemplate(card)}
+  </button>`;
 }
 
 export function resolvingCardTemplate(cardOrName, source = "结算区", targetLabel = "") {

@@ -3,8 +3,8 @@
  * pending Promise 只允许在重开、销毁或游戏结束时由 UIManager 收束；
  * 正常互利结算必须由当前存活角色确认一张牌。
  */
-import { escapeHtml } from "./templates.js?build=20260801-private-reveal-layout-v39";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-private-reveal-layout-v39";
+import { escapeHtml } from "./templates.js?build=20260801-hidden-known-layout-v40";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-hidden-known-layout-v40";
 
 export class PublicPoolView {
   constructor(element) { this.element = element; this.pending = null; }

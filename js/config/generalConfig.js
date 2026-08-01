@@ -35,7 +35,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "shade-agent", name: "影客", glyph: "影", portrait: "./assets/characters/shade-agent.svg",
-    loreFaction: "无灯港", maxHp: 4, tags: ["控制", "谍报"], roleTags: ["control", "utility"], passiveSkillIds: ["spyGap"], activeSkillIds: ["stealSkill"],
+    loreFaction: "无灯港", maxHp: 3, tags: ["控制", "谍报"], roleTags: ["control", "utility"], passiveSkillIds: ["spyGap"], activeSkillIds: ["stealSkill"],
     passiveName: "窥隙", passiveDescription: "每回合首次对敌人造成实际伤害后，私下查看其至多2张手牌。",
     passiveTriggerText: "对敌人造成实际伤害后", passiveLimitText: "每回合限触发1次",
     activeName: "窃取", activeDescription: "消耗1点能量，选择距离2内一名持有手牌或装备的敌人作为目标，将其全部手牌与装备区牌组成统一候选集合，等概率随机获得其中1张并收入手牌；每回合最多发动2次。", activeCost: 1, activeLimitPerTurn: 2,

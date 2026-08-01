@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-private-reveal-layout-v39";
-import { createId } from "../utils/helpers.js?build=20260801-private-reveal-layout-v39";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-private-reveal-layout-v39";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-hidden-known-layout-v40";
+import { createId } from "../utils/helpers.js?build=20260801-hidden-known-layout-v40";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260801-hidden-known-layout-v40";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
