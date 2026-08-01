@@ -3,7 +3,7 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-bgm-long-v52";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-hunter-tracking-v53";
 
 const probabilityAtLeast = (trials, probability, required) => {
   if (required <= 0) return 1;
@@ -87,6 +87,7 @@ export function createAiVisibleState(viewerId, state) {
       activeSkillLimit: player.general.activeLimitPerTurn ?? 1,
       activeSkillUsed: (player.turnFlags.activeSkillUseCounts?.[player.general.activeSkillIds[0]] ?? 0) >= (player.general.activeLimitPerTurn ?? 1),
       recycleDeviceUses: player.turnFlags.recycleDeviceUses ?? 0,
+      trackingTargetIds: [...(player.turnFlags.trackingTargetIds ?? [])],
       huntMarkSourceId: player.statuses.huntMark?.sourceId ?? null,
       alive: player.alive,
       handCount: player.hand.length,

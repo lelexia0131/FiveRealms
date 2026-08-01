@@ -2,10 +2,10 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-bgm-long-v52";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-bgm-long-v52";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-bgm-long-v52";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-bgm-long-v52";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260801-hunter-tracking-v53";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-hunter-tracking-v53";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-hunter-tracking-v53";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-hunter-tracking-v53";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -50,6 +50,14 @@ export class AiSimulator {
       case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + scale; break;
       case "assault":
         {
+          if (target && actor.generalId === "trail-hunter" && target.battleTeam !== actor.battleTeam) {
+            actor.trackingTargetIds ??= [];
+            if (actor.trackingTargetIds.length < 2 && !actor.trackingTargetIds.includes(target.id)) {
+              actor.trackingTargetIds.push(target.id);
+              target.huntMarkSourceId = actor.id;
+              if (Array.isArray(target.statuses) && !target.statuses.includes("huntMark")) target.statuses.push("huntMark");
+            }
+          }
           const momentum = actor.generalId === "blade-walker" ? (actor.momentum ?? 0) : 0;
           const actualDamage = target
             ? this.applyDamage(next, actor, target, 1 + (actor.exposeWeaknessStacks ?? 0) + (actor.assaultBonus ?? 0) + momentum, { canBlock:true, deviceAttack:true })
@@ -186,6 +194,7 @@ export class AiSimulator {
       for (const enemy of state.players) if (enemy.alive && enemy.battleTeam !== actor.battleTeam) this.applyDamage(state, actor, enemy, 1, { canBlock:false });
     } else if (skill.id === "hunt" && target) {
       target.huntMarkSourceId = null;
+      if (Array.isArray(target.statuses)) target.statuses = target.statuses.filter((status) => status !== "huntMark");
       actor.handCount += target.blockProbability ?? 0;
       this.applyDamage(state, actor, target, 2, { canBlock:true });
     } else if (skill.id === "resonance" && target) target.handCount += 2;

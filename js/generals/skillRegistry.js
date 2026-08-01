@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-bgm-long-v52";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260801-bgm-long-v52";
-import { randomChoice } from "../utils/helpers.js?build=20260801-bgm-long-v52";
-import { Debug } from "../utils/debug.js?build=20260801-bgm-long-v52";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-hunter-tracking-v53";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260801-hunter-tracking-v53";
+import { randomChoice } from "../utils/helpers.js?build=20260801-hunter-tracking-v53";
+import { Debug } from "../utils/debug.js?build=20260801-hunter-tracking-v53";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -119,10 +119,13 @@ const PASSIVE_SKILLS = {
       if (event.player.id === owner.id) owner.gameFlags.trackingTurnNumber = (owner.gameFlags.trackingTurnNumber ?? 0) + 1;
     });
     game.eventBus.on("targetSelected", `${owner.id}:tracking`, (event) => {
-      if (!owner.alive || event.source.id !== owner.id || event.card?.definitionId !== "assault" || owner.turnFlags.trackingTriggered) return;
-      owner.turnFlags.trackingTriggered = true;
-      event.targets[0].statuses.huntMark = { sourceId: owner.id, expireAtTurnEnd: (owner.gameFlags.trackingTurnNumber ?? 1) + 1 };
-      game.log(`${owner.name}在${event.targets[0].name}身上留下了猎印。`, "important");
+      const target = event.targets[0];
+      if (!owner.alive || event.source.id !== owner.id || event.card?.definitionId !== "assault" || !target
+        || target.battleTeam === owner.battleTeam || owner.turnFlags.trackingTargetIds.size >= 2
+        || owner.turnFlags.trackingTargetIds.has(target.id)) return;
+      owner.turnFlags.trackingTargetIds.add(target.id);
+      target.statuses.huntMark = { sourceId: owner.id, expireAtTurnEnd: (owner.gameFlags.trackingTurnNumber ?? 1) + 1 };
+      game.log(`${owner.name}在${target.name}身上留下了猎印。`, "important");
     });
     game.eventBus.on("turnEnd", `${owner.id}:tracking:cleanup`, (event) => {
       if (event.player.id !== owner.id) return;

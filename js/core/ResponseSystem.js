@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-bgm-long-v52";
-import { createId } from "../utils/helpers.js?build=20260801-bgm-long-v52";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-bgm-long-v52";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-hunter-tracking-v53";
+import { createId } from "../utils/helpers.js?build=20260801-hunter-tracking-v53";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260801-hunter-tracking-v53";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

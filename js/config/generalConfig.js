@@ -54,8 +54,8 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "trail-hunter", name: "追猎者", glyph: "猎", portrait: "./assets/characters/trail-hunter.svg",
     loreFaction: "苍苔原", maxHp: 4, tags: ["标记", "爆发"], roleTags: ["damage", "control"], passiveSkillIds: ["tracking"], activeSkillIds: ["hunt"],
-    passiveName: "追踪", passiveDescription: "每回合首次以突袭指定敌人后留下猎印，持续到你自己的下回合结束。",
-    passiveTriggerText: "以突袭指定敌人后", passiveLimitText: "每回合限触发1次",
+    passiveName: "追踪", passiveDescription: "每回合以突袭指定敌人后可留下猎印，限触发2次；同一名敌人每回合最多留下1次猎印；猎印持续到你自己的下回合结束。",
+    passiveTriggerText: "以突袭指定敌人后", passiveLimitText: "每回合限触发2次；同一敌人每回合限1次",
     activeName: "猎杀", activeDescription: "消耗2点能量，对有你猎印的敌人造成2点可格挡伤害并移除猎印；无视距离，若格挡成功则摸1张牌；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
     description: "从不追赶脚步，只追赶选择；一旦落印，猎物便难逃终局。",
     aiProfile: profile(1.3, .7, .35, .45, .65, .75, .65, .95)
