@@ -1,6 +1,10 @@
 import { Game } from "../js/core/Game.js";
 
 const GAME_COUNT = Number(process.env.FIVE_REALMS_GAMES ?? 200);
+const SEARCH_NODE_BUDGET = Number(process.env.FIVE_REALMS_SEARCH_NODE_BUDGET ?? 1000);
+if (!Number.isInteger(SEARCH_NODE_BUDGET) || SEARCH_NODE_BUDGET <= 0) {
+  throw new Error("FIVE_REALMS_SEARCH_NODE_BUDGET 必须是正整数");
+}
 const makeRandom = (seedValue) => {
   let seed = seedValue >>> 0;
   return () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
@@ -21,7 +25,7 @@ for (let offset = 0; offset < GAME_COUNT; offset += 1) {
   const game = new Game(ui(), makeRandom(SEED_BASE ^ (index * 2654435761)));
   game.simulationMode = true;
   game.animationFastMode = true;
-  game.aiSearchBudgetOverrideMs = Number(process.env.FIVE_REALMS_SEARCH_BUDGET ?? 900);
+  game.aiSearchNodeBudgetOverride = SEARCH_NODE_BUDGET;
   game.cleanupManager.delay = async () => !game.state.isDisposed;
   const candidates = game.startSelection();
   game.state.players[0].controllerType = "ai";

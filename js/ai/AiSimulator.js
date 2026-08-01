@@ -49,7 +49,13 @@ export class AiSimulator {
       case "harvest": actor.handCount += 2 * scale; break;
       case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + scale; break;
       case "assault":
-        if (target) this.applyDamage(next, actor, target, 1 + (actor.exposeWeaknessStacks ?? 0) + (actor.assaultBonus ?? 0), { canBlock:true, deviceAttack:true });
+        {
+          const momentum = actor.generalId === "blade-walker" ? (actor.momentum ?? 0) : 0;
+          const actualDamage = target
+            ? this.applyDamage(next, actor, target, 1 + (actor.exposeWeaknessStacks ?? 0) + (actor.assaultBonus ?? 0) + momentum, { canBlock:true, deviceAttack:true })
+            : 0;
+          if (actualDamage > 0 && momentum > 0) actor.momentum = 0;
+        }
         actor.exposeWeaknessStacks = 0;
         actor.assaultBonus = 0;
         actor.attackUsed += 1;
@@ -97,6 +103,14 @@ export class AiSimulator {
     if (card.category === "tactic" && actor.equipmentDefinitionId === "recycleDevice" && (actor.recycleDeviceUses ?? 0) < 2) {
       actor.recycleDeviceUses = (actor.recycleDeviceUses ?? 0) + 1;
       actor.handCount += 1;
+    }
+    if (actor.generalId === "blade-walker" && actor.alive) {
+      const category = card.category ?? CARD_DEFINITIONS[card.definitionId]?.category;
+      actor.categoriesUsed ??= [];
+      if (category && !actor.categoriesUsed.includes(category)) {
+        actor.categoriesUsed.push(category);
+        actor.momentum = Math.min(GAME_CONFIG.momentumMaxStacks, (actor.momentum ?? 0) + 1);
+      }
     }
     return next;
   }
@@ -203,7 +217,7 @@ export class AiSimulator {
   }
 
   applyDamage(state, attacker, target, amount, options = {}) {
-    if (!target.alive || amount <= 0) return;
+    if (!target.alive || amount <= 0) return 0;
     const requiresTwoBlocks = attacker.equipmentDefinitionId === "battleDevice";
     const blockChance = options.canBlock ? (requiresTwoBlocks ? (target.twoBlockProbability ?? 0) : (target.blockProbability ?? 0)) : 0;
     let pending = amount * (1 - blockChance);
@@ -227,8 +241,10 @@ export class AiSimulator {
     }
     const absorbed = Math.min(target.shield ?? 0, pending);
     target.shield = Math.max(0, (target.shield ?? 0) - absorbed);
-    target.hp -= Math.max(0, pending - absorbed) + directLoss;
+    const actualDamage = Math.max(0, pending - absorbed) + directLoss;
+    target.hp -= actualDamage;
     this.resolveFatal(state, target, attacker);
+    return actualDamage;
   }
 
   applyHpLoss(state, target, amount) {

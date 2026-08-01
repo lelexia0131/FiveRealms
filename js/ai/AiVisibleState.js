@@ -77,6 +77,7 @@ export function createAiVisibleState(viewerId, state) {
       recoverUsed: player.turnFlags.recoverUsed,
       recoverLimit: player.turnFlags.recoverLimit,
       momentum: player.turnFlags.momentum ?? 0,
+      categoriesUsed: [...(player.turnFlags.categoriesUsed ?? [])],
       rejuvenationUsed: Boolean(player.turnFlags.rejuvenationUsed),
       exposeWeaknessStacks: player.statuses.exposeWeakness?.stacks ?? 0,
       assaultBonus: player.statuses.allIn?.assaultBonus ?? 0,

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { access, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { GAME_CONFIG } from "../js/config/gameConfig.js";
 import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../js/config/cardConfig.js";
 import { GENERAL_DEFINITIONS } from "../js/config/generalConfig.js";
@@ -30,6 +32,7 @@ import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
+const execFileAsync = promisify(execFile);
 const projectFile = (relativePath) => fileURLToPath(new URL(`../${relativePath.replace(/^\.\//, "")}`, import.meta.url));
 async function listJavaScriptFiles(directory = projectFile("js")) {
   const entries = await readdir(directory, { withFileTypes:true });
@@ -245,6 +248,21 @@ test("BGM 音量可独立调节并限制在合法范围", () => {
   assert.equal(sound.musicVolume, 0.82);
   assert.equal(sound.setMusicVolume(3), 1);
   assert.equal(sound.setMusicVolume(-1), 0);
+});
+test("BGM 无保存音量时使用默认值且明确保存零时保持静音", () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  try {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable:true,
+      value:{ getItem:() => null, setItem(){} }
+    });
+    assert.equal(new SoundManager().musicVolume, 0.75);
+    globalThis.localStorage.getItem = () => "0";
+    assert.equal(new SoundManager().musicVolume, 0);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "localStorage", previous);
+    else delete globalThis.localStorage;
+  }
 });
 test("晨昏主题切换后分别续播而不是反复从开头播放", () => {
   const sound = new SoundManager();
@@ -788,6 +806,41 @@ test("AI 模拟器只接收过滤快照并可独立克隆推演", () => { const 
 test("AI 动作生成使用同一距离合法性", () => { const ps=[makePlayer("a",0,"dawn"),makePlayer("b",1,"dusk"),makePlayer("c",2,"dusk"),makePlayer("d",3,"dawn"),makePlayer("e",4,"dusk")];const {game}=makeGame(ps);ps[0].hand.push(instance("assault"));const targets=game.aiController.getLegalActions(ps[0]).filter((a)=>a.card?.definitionId==="assault").map((a)=>a.targets[0].id);assert.deepEqual(targets,["b","e"]); });
 test("AI 可见动作与模拟器支持装备掠夺进入手牌且不读取隐藏手牌", () => { const actor=makePlayer("actor",0,"dawn"),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),plunder=instance("plunder");actor.hand.push(plunder);actor.equipment=instance("battleDevice");target.equipment=instance("energyDevice");const {game}=makeGame([actor,near,target,other,tail]),visible=createAiVisibleState(actor.id,game.state),actions=game.aiController.actionGenerator.generateFromVisible(visible,actor.id);const action=actions.find((entry)=>entry.card?.id===plunder.id&&entry.targets[0]?.id===target.id);assert.ok(action);assert.equal(visible.players[2].hand,undefined);const next=new AiSimulator(visible).apply(visible,action,actor.id);assert.equal(next.players[2].equipmentDefinitionId,null);assert.equal(next.players[0].equipmentDefinitionId,"battleDevice");assert.equal(next.players[0].handCount,1); });
 test("AI 束搜索实际达到多层、记录展开节点并采样10个隐藏世界", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);a.hand.push(instance("charge"),instance("exposeWeakness"),instance("assault"));const action=await game.aiController.selectAction(a,{gameId:game.state.gameId});assert.ok(["card","skill","end"].includes(action.type));assert.ok(game.aiController.planner.lastSearchStats.expanded>3);assert.ok(game.aiController.planner.lastSearchStats.depth>=2);assert.equal(game.aiController.planner.lastSearchStats.hiddenSamples,10); });
+test("AI 刃行者模拟按不同类别积累连势且命中的突袭消耗连势", () => {
+  const blade=makePlayer("sim-blade",0,"dawn","ai",0),enemy=makePlayer("sim-blade-enemy",1,"dusk"),charge=instance("charge"),harvest=instance("harvest"),assault=instance("assault");
+  blade.hand.push(charge,harvest,assault);
+  const {game}=makeGame([blade,enemy]),visible=createAiVisibleState(blade.id,game.state),simulator=new AiSimulator(visible);
+  const charged=simulator.apply(visible,{type:"card",card:charge,targets:[]},blade.id);
+  const harvested=simulator.apply(charged,{type:"card",card:harvest,targets:[]},blade.id);
+  const attacked=simulator.apply(harvested,{type:"card",card:assault,targets:[{id:enemy.id}]},blade.id);
+  assert.deepEqual(charged.players[0].categoriesUsed,["basic"]);assert.equal(charged.players[0].momentum,1);
+  assert.deepEqual(harvested.players[0].categoriesUsed,["basic","tactic"]);assert.equal(harvested.players[0].momentum,GAME_CONFIG.momentumMaxStacks);
+  assert.equal(attacked.players[1].hp,enemy.maxHp-3);assert.equal(attacked.players[0].momentum,0);
+});
+test("AI 刃行者突袭被格挡或被护盾完全吸收时不消耗连势", () => {
+  const state={players:[
+    {id:"blade",seatIndex:0,generalId:"blade-walker",battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,momentum:2,categoriesUsed:["basic","tactic"],expectedRecoverCount:0},
+    {id:"target",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,alive:true,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}
+  ]};
+  const blocked=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
+  assert.equal(blocked.players[1].hp,4);assert.equal(blocked.players[0].momentum,2);
+  const shieldedState=structuredClone(state);shieldedState.players[1].blockProbability=0;shieldedState.players[1].shield=3;
+  const shielded=new AiSimulator(shieldedState).apply(shieldedState,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
+  assert.equal(shielded.players[1].hp,4);assert.equal(shielded.players[1].shield,0);assert.equal(shielded.players[0].momentum,2);
+});
+test("AI 固定节点预算达到上限后返回当前最佳动作且不再按时间截断", async () => {
+  const actor=makePlayer("node-budget-actor",0,"dawn"),enemy=makePlayer("node-budget-enemy",1,"dusk");actor.hand.push(instance("charge"),instance("exposeWeakness"),instance("assault"));
+  const {game}=makeGame([actor,enemy]);game.aiSearchNodeBudgetOverride=5;game.aiSearchBudgetOverrideMs=0;
+  const action=await game.aiController.selectAction(actor,{gameId:game.state.gameId});
+  assert.ok(["card","skill","end"].includes(action.type));assert.equal(game.aiController.planner.lastSearchStats.expanded,5);assert.equal(game.aiController.planner.lastSearchStats.budgetType,"nodes");assert.equal(game.aiController.planner.lastSearchStats.nodeBudget,5);
+});
+test("平衡模拟在相同种子和固定节点预算下连续两次结果完全一致", async () => {
+  const env={...process.env,FIVE_REALMS_GAMES:"2",FIVE_REALMS_SEED_BASE:"123456789",FIVE_REALMS_START_INDEX:"7",FIVE_REALMS_SEARCH_NODE_BUDGET:"80"};
+  delete env.FIVE_REALMS_SEARCH_BUDGET;
+  const run=async()=>JSON.parse((await execFileAsync(process.execPath,[projectFile("tests/balance-simulation.mjs")],{cwd:projectFile("."),env,encoding:"utf8",maxBuffer:1024*1024})).stdout);
+  const first=await run(),second=await run();
+  assert.deepEqual(second,first);assert.deepEqual([first.games,first.completedGames,first.smallTeamWinRate,first.largeTeamWinRate],[2,2,50,50]);
+});
 test("AI 模拟器识别破势叠加后强化普通突袭", () => { const visible={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:4,attackRange:1,attackUsed:0,attackLimit:2,recoverUsed:0,recoverLimit:null,exposeWeaknessStacks:0,alive:true,handCount:3,hand:[{id:"x1",definitionId:"exposeWeakness"},{id:"x2",definitionId:"exposeWeakness"},{id:"a1",definitionId:"assault"}]},{id:"b",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:3,attackRange:1,alive:true,handCount:0}]};const simulator=new AiSimulator(visible);const once=simulator.apply(visible,{type:"card",card:{id:"x1",definitionId:"exposeWeakness"},targets:[]},"a");const twice=simulator.apply(once,{type:"card",card:{id:"x2",definitionId:"exposeWeakness"},targets:[]},"a");const attacked=simulator.apply(twice,{type:"card",card:{id:"a1",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(attacked.players[1].hp,1);assert.equal(attacked.players[0].exposeWeaknessStacks,0);assert.equal(attacked.players[0].recoverLimit,null); });
 test("AI 深层节点能发现先聚能再发动主动技能", () => { const actor=makePlayer("a",0,"dawn","ai",2),ally=makePlayer("ally",1,"dawn","ai",1),enemy=makePlayer("e",2,"dusk");actor.energy=1;ally.hp-=1;actor.hand.push(instance("charge"));const {game}=makeGame([actor,ally,enemy]);const visible=createAiVisibleState(actor.id,game.state);const simulator=new AiSimulator(visible);const charged=simulator.apply(visible,{type:"card",card:actor.hand[0],targets:[]},actor.id);const follow=game.aiController.actionGenerator.generateFromVisible(charged,actor.id);assert.ok(follow.some((action)=>action.type==="skill"&&action.skill.id==="symbiosis"&&action.targets[0].id===ally.id)); });
 test("AI 模拟伤害会计算队伍调息并保留可获救角色", () => { const state={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,expectedRecoverCount:0},{id:"b",seatIndex:1,battleTeam:"dusk",hp:1,maxHp:4,shield:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0},{id:"c",seatIndex:2,battleTeam:"dusk",hp:3,maxHp:3,shield:0,alive:true,handCount:1,expectedRecoverCount:1}]};const simulator=new AiSimulator(state);const next=simulator.apply(state,{type:"card",card:{id:"hit",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(next.players[1].alive,true);assert.equal(next.players[1].hp,1);assert.equal(next.players[2].expectedRecoverCount,0); });

@@ -81,8 +81,10 @@ function safelyStorePreference(enabled) {
 
 function safelyReadMusicVolume() {
   try {
-    const stored = Number(globalThis.localStorage?.getItem(MUSIC_VOLUME_KEY));
-    return Number.isFinite(stored) && stored >= 0 && stored <= 1 ? stored : DEFAULT_MUSIC_VOLUME;
+    const stored = globalThis.localStorage?.getItem(MUSIC_VOLUME_KEY);
+    if (typeof stored !== "string" || stored.trim() === "") return DEFAULT_MUSIC_VOLUME;
+    const volume = Number(stored);
+    return Number.isFinite(volume) && volume >= 0 && volume <= 1 ? volume : DEFAULT_MUSIC_VOLUME;
   } catch { return DEFAULT_MUSIC_VOLUME; }
 }
 

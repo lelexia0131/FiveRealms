@@ -1,6 +1,6 @@
 /**
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
- * 到达时间预算返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
+ * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
 import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-bgm-long-v52";
 import { AiSimulator } from "./AiSimulator.js?build=20260801-bgm-long-v52";
@@ -43,7 +43,11 @@ export class AiPlanner {
   async plan(player, visibleState, rootActions, options = {}) {
     this.lastPlannedSequence = [];
     const started = globalThis.performance?.now?.() ?? Date.now();
-    const budget = this.game.aiSearchBudgetOverrideMs ?? GAME_CONFIG.aiSearchTimeBudgetMs;
+    const timeBudget = this.game.aiSearchBudgetOverrideMs ?? GAME_CONFIG.aiSearchTimeBudgetMs;
+    const configuredNodeBudget = Number(this.game.aiSearchNodeBudgetOverride);
+    const nodeBudget = Number.isFinite(configuredNodeBudget) && configuredNodeBudget >= 1
+      ? Math.floor(configuredNodeBudget)
+      : null;
     const simulator = new AiSimulator(visibleState);
     const hiddenWorlds = this.game.aiController.knowledge.sampleHiddenWorlds(player, visibleState, GAME_CONFIG.aiHiddenStateSamples);
     const hiddenAdjustment = (action) => {
@@ -53,7 +57,8 @@ export class AiPlanner {
       if (action.card?.category === "tactic") return -hiddenWorlds.filter((world) => Object.values(world).some((hand) => hand.includes("counter"))).length / hiddenWorlds.length;
       return 0;
     };
-    let beam = rootActions.map((action) => {
+    const rootActionsWithinBudget = nodeBudget === null ? rootActions : rootActions.slice(0, nodeBudget);
+    let beam = rootActionsWithinBudget.map((action) => {
       const state = simulator.apply(visibleState, action, player.id);
       return {
         action,
@@ -65,11 +70,14 @@ export class AiPlanner {
     });
     beam.sort((a,b) => b.score - a.score);
     beam = beam.slice(0, GAME_CONFIG.aiBeamWidth);
-    let expanded = beam.length;
+    let expanded = nodeBudget === null ? beam.length : rootActionsWithinBudget.length;
+    const limitReached = () => nodeBudget === null
+      ? (globalThis.performance?.now?.() ?? Date.now()) - started >= timeBudget
+      : expanded >= nodeBudget;
     const rootAssaultTargets = new Set(rootActions.filter((action) => action.card?.definitionId === "assault").map((action) => action.targets?.[0]?.id));
     let discoveredDynamicTarget = false;
     for (let depth = 2; depth <= GAME_CONFIG.aiSearchDepth; depth += 1) {
-      if (beam.every((node) => node.terminal)) break;
+      if (limitReached() || beam.every((node) => node.terminal)) break;
       const candidates = [];
       for (const node of beam) {
         if (node.terminal) {
@@ -78,6 +86,7 @@ export class AiPlanner {
         }
         const followActions = this.game.aiController.actionGenerator.generateFromVisible(node.state, player.id);
         for (const follow of followActions) {
+          if (limitReached()) break;
           if (follow.card?.definitionId === "assault" && !rootAssaultTargets.has(follow.targets?.[0]?.id)) discoveredDynamicTarget = true;
           const state = simulator.apply(node.state, follow, player.id);
           const score = node.score + this.evaluator.actionUtility(follow, player, node.state) / depth + this.evaluator.stateUtility(state, player.id) * 0.08 / depth;
@@ -92,14 +101,14 @@ export class AiPlanner {
           if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
             if (!(await this.game.cleanupManager.delay(0)) || !this.game.isSessionValid(options.gameId ?? this.game.state.gameId)) return { type:"end" };
           }
-          if ((globalThis.performance?.now?.() ?? Date.now()) - started >= budget) break;
+          if (limitReached()) break;
         }
-        if ((globalThis.performance?.now?.() ?? Date.now()) - started >= budget) break;
+        if (limitReached()) break;
       }
       if (!candidates.length) break;
       candidates.sort((a,b) => b.score - a.score);
       beam = candidates.slice(0, GAME_CONFIG.aiBeamWidth);
-      if ((globalThis.performance?.now?.() ?? Date.now()) - started >= budget) break;
+      if (limitReached()) break;
     }
     const choice = this.chooseCandidate(beam);
     const selectedSequence = [...(choice?.sequence ?? [])];
@@ -107,6 +116,7 @@ export class AiPlanner {
     this.lastPlannedSequence = (endIndex >= 0 ? selectedSequence.slice(0, endIndex + 1) : selectedSequence)
       .map((action) => this.describeAction(action));
     this.lastSearchStats = { elapsedMs:(globalThis.performance?.now?.() ?? Date.now()) - started, expanded, depth:Math.max(1, choice?.sequence.length ?? 1), beamWidth:GAME_CONFIG.aiBeamWidth,
+      budgetType:nodeBudget === null ? "time" : "nodes", nodeBudget,
       discoveredDynamicTarget, hiddenSamples:hiddenWorlds.length, bestSequence:this.lastPlannedSequence };
     return choice?.action ?? { type:"end" };
   }
