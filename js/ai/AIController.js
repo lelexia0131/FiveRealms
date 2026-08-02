@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260801-hunter-tracking-v53";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260801-hunter-tracking-v53";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260801-hunter-tracking-v53";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260801-hunter-tracking-v53";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260801-hunter-tracking-v53";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260801-hunter-tracking-v53";
-import { AiPlanner } from "./AiPlanner.js?build=20260801-hunter-tracking-v53";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260802-ai-planner-v54";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260802-ai-planner-v54";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260802-ai-planner-v54";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260802-ai-planner-v54";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260802-ai-planner-v54";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260802-ai-planner-v54";
+import { AiPlanner } from "./AiPlanner.js?build=20260802-ai-planner-v54";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

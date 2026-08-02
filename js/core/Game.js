@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260801-hunter-tracking-v53";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-hunter-tracking-v53";
-import { createId, clamp } from "../utils/helpers.js?build=20260801-hunter-tracking-v53";
-import { EventBus } from "./EventBus.js?build=20260801-hunter-tracking-v53";
-import { Player } from "./Player.js?build=20260801-hunter-tracking-v53";
-import { Deck } from "./Deck.js?build=20260801-hunter-tracking-v53";
-import { TeamManager } from "./TeamManager.js?build=20260801-hunter-tracking-v53";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260801-hunter-tracking-v53";
-import { RuleEngine } from "./RuleEngine.js?build=20260801-hunter-tracking-v53";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260801-hunter-tracking-v53";
-import { GameLogger } from "./GameLogger.js?build=20260801-hunter-tracking-v53";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260801-hunter-tracking-v53";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-hunter-tracking-v53";
-import { AIController } from "../ai/AIController.js?build=20260801-hunter-tracking-v53";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260801-hunter-tracking-v53";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-hunter-tracking-v53";
-import { Debug } from "../utils/debug.js?build=20260801-hunter-tracking-v53";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260801-hunter-tracking-v53";
-import { DyingSystem } from "./DyingSystem.js?build=20260801-hunter-tracking-v53";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260801-hunter-tracking-v53";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260801-hunter-tracking-v53";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260801-hunter-tracking-v53";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260801-hunter-tracking-v53";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260802-ai-planner-v54";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260802-ai-planner-v54";
+import { createId, clamp } from "../utils/helpers.js?build=20260802-ai-planner-v54";
+import { EventBus } from "./EventBus.js?build=20260802-ai-planner-v54";
+import { Player } from "./Player.js?build=20260802-ai-planner-v54";
+import { Deck } from "./Deck.js?build=20260802-ai-planner-v54";
+import { TeamManager } from "./TeamManager.js?build=20260802-ai-planner-v54";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260802-ai-planner-v54";
+import { RuleEngine } from "./RuleEngine.js?build=20260802-ai-planner-v54";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260802-ai-planner-v54";
+import { GameLogger } from "./GameLogger.js?build=20260802-ai-planner-v54";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260802-ai-planner-v54";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260802-ai-planner-v54";
+import { AIController } from "../ai/AIController.js?build=20260802-ai-planner-v54";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260802-ai-planner-v54";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260802-ai-planner-v54";
+import { Debug } from "../utils/debug.js?build=20260802-ai-planner-v54";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260802-ai-planner-v54";
+import { DyingSystem } from "./DyingSystem.js?build=20260802-ai-planner-v54";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260802-ai-planner-v54";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260802-ai-planner-v54";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260802-ai-planner-v54";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260802-ai-planner-v54";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -269,7 +269,15 @@ export class Game {
   async takeAiPlayPhase(player, gameId) {
     this.ui.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
     this.ui.setThinking(true, player, "正在观察战场与可用资源");
-    const complexPosition = this.aiController.getLegalActions(player).length > GAME_CONFIG.aiBeamWidth;
+    let complexPosition = false;
+    try {
+      complexPosition = this.aiController.getLegalActions(player).length > GAME_CONFIG.aiBeamWidth;
+    } catch (error) {
+      Debug.log("AI", `${player.name}生成合法动作失败，安全结束出牌阶段`, error);
+      this.ui.setThinking(false);
+      this.ui.setPrompt(`${player.name}结束了出牌阶段。`);
+      return;
+    }
     if (!(await this.cleanupManager.delay(getAiDelay(this, "initial", { complex:complexPosition })))) {
       return;
     }
@@ -284,7 +292,13 @@ export class Game {
       }
       if (!action) {
         const searchStarted = globalThis.performance?.now?.() ?? Date.now();
-        action = await this.aiController.selectAction(player, { gameId });
+        try {
+          action = await this.aiController.selectAction(player, { gameId });
+        } catch (error) {
+          // 规划异常不能让回合 Promise 悬空；安全退化为结束出牌，并清除“观察战场”遮罩。
+          Debug.log("AI", `${player.name}规划行动失败，安全结束出牌阶段`, error);
+          action = { type:"end" };
+        }
         if (!this.isSessionValid(gameId)) return;
         searchElapsed = (globalThis.performance?.now?.() ?? Date.now()) - searchStarted;
         if (!this.aiReplanAfterEveryAction) queuedPlan = this.aiController.planner.lastPlannedSequence.slice(1);

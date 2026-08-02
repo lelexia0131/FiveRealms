@@ -2,8 +2,8 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-hunter-tracking-v53";
-import { AiSimulator } from "./AiSimulator.js?build=20260801-hunter-tracking-v53";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260802-ai-planner-v54";
+import { AiSimulator } from "./AiSimulator.js?build=20260802-ai-planner-v54";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -61,31 +61,39 @@ export class AiPlanner {
         * executionProbability;
       return (immediate + this.evaluator.stateUtility(afterState, player.id) * 0.08) / depth;
     };
-    const rootActionsWithinBudget = nodeBudget === null ? rootActions : rootActions.slice(0, nodeBudget);
-    let beam = rootActionsWithinBudget.map((action) => {
+    let expanded = 0;
+    const limitReached = () => nodeBudget === null
+      ? (globalThis.performance?.now?.() ?? Date.now()) - started >= timeBudget
+      : expanded >= nodeBudget;
+    const beam = [];
+    // 根动作也受时间/节点预算约束并定期让出主线程；复杂手牌不能把界面锁死在“观察战场”。
+    for (const action of rootActions) {
+      if (beam.length && limitReached()) break;
       const state = simulator.apply(visibleState, action, player.id);
-      return {
+      beam.push({
         action,
         state,
         terminal:Boolean(state.playPhaseEnded),
         // 根节点也必须看到模拟后的伤害、装备和资源变化，否则第一次束裁剪会丢掉真正优质的动作。
         score:transitionScore(action, visibleState, state),
         sequence:[action]
-      };
-    });
+      });
+      expanded += 1;
+      if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
+        if (!(await this.game.cleanupManager.delay(0)) || !this.game.isSessionValid(options.gameId ?? this.game.state.gameId)) {
+          return { type:"end" };
+        }
+      }
+    }
     beam.sort((a,b) => b.score - a.score);
-    beam = beam.slice(0, GAME_CONFIG.aiBeamWidth);
-    let bestCandidate = beam[0];
-    let expanded = nodeBudget === null ? beam.length : rootActionsWithinBudget.length;
-    const limitReached = () => nodeBudget === null
-      ? (globalThis.performance?.now?.() ?? Date.now()) - started >= timeBudget
-      : expanded >= nodeBudget;
+    let activeBeam = beam.slice(0, GAME_CONFIG.aiBeamWidth);
+    let bestCandidate = activeBeam[0];
     const rootAssaultTargets = new Set(rootActions.filter((action) => action.card?.definitionId === "assault").map((action) => action.targets?.[0]?.id));
     let discoveredDynamicTarget = false;
     for (let depth = 2; depth <= GAME_CONFIG.aiSearchDepth; depth += 1) {
-      if (limitReached() || beam.every((node) => node.terminal)) break;
+      if (limitReached() || activeBeam.every((node) => node.terminal)) break;
       const candidates = [];
-      for (const node of beam) {
+      for (const node of activeBeam) {
         if (node.terminal) {
           candidates.push(node);
           continue;
@@ -114,12 +122,12 @@ export class AiPlanner {
       }
       if (!candidates.length) break;
       candidates.sort((a,b) => b.score - a.score);
-      beam = candidates.slice(0, GAME_CONFIG.aiBeamWidth);
+      activeBeam = candidates.slice(0, GAME_CONFIG.aiBeamWidth);
       if (limitReached()) break;
     }
     const choice = nodeBudget !== null && limitReached()
       ? bestCandidate
-      : this.chooseCandidate(beam);
+      : this.chooseCandidate(activeBeam);
     const selectedSequence = [...(choice?.sequence ?? [])];
     const endIndex = selectedSequence.findIndex((action) => action.type === "end");
     this.lastPlannedSequence = (endIndex >= 0 ? selectedSequence.slice(0, endIndex + 1) : selectedSequence)

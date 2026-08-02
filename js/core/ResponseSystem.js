@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-hunter-tracking-v53";
-import { createId } from "../utils/helpers.js?build=20260801-hunter-tracking-v53";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260801-hunter-tracking-v53";
-import { RuleEngine } from "./RuleEngine.js?build=20260801-hunter-tracking-v53";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260802-ai-planner-v54";
+import { createId } from "../utils/helpers.js?build=20260802-ai-planner-v54";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260802-ai-planner-v54";
+import { RuleEngine } from "./RuleEngine.js?build=20260802-ai-planner-v54";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

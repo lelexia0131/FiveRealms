@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260801-hunter-tracking-v53";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-hunter-tracking-v53";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260802-ai-planner-v54";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260802-ai-planner-v54";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
