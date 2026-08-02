@@ -31,11 +31,13 @@ export class AiSimulator {
   constructor(visibleState) {
     this.initial = structuredClone(visibleState);
     this.initializeEquipmentBaselines(this.initial);
+    this.initializeAssaultSummaries(this.initial);
   }
 
   clone(state = this.initial) {
     const cloned = structuredClone(state);
     this.initializeEquipmentBaselines(cloned);
+    this.initializeAssaultSummaries(cloned);
     return cloned;
   }
 
@@ -46,6 +48,10 @@ export class AiSimulator {
         ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7)
         : 0;
     }
+  }
+
+  initializeAssaultSummaries(state) {
+    for (const player of state?.players ?? []) this.syncAssaultSummary(player);
   }
 
   nextProbabilityEventKey(state, label = "event") {
@@ -234,6 +240,9 @@ export class AiSimulator {
     }
     const card = abstractAction.card;
     if (!card) return next;
+    const assaultAvailabilityBeforeUse = card.definitionId === "assault"
+      ? clampProbability(actor.assaultResponseProbability)
+      : 0;
     const target = next.players.find((player) => player.id === abstractAction.targets?.[0]?.id);
     const heldCard = (actor.hand ?? []).find((entry) => entry.id === card.id) ?? null;
     const availabilityBranches = getAvailabilityBranches(heldCard ?? card);
@@ -261,6 +270,10 @@ export class AiSimulator {
       actor.hand = remainingProbability > 0 ? actor.hand : actor.hand.filter((entry) => entry.id !== card.id);
     }
     const executionProbability = this.eventProbability(cardEventWorlds);
+    if (card.definitionId === "assault" && assaultAvailabilityBeforeUse > PROBABILITY_EPSILON) {
+      this.consumeAssaultForOpportunity(actor,
+        Math.min(1, executionProbability / assaultAvailabilityBeforeUse));
+    }
     actor.handCount = Math.max(0, (actor.handCount ?? 0) - executionProbability);
     if (executionProbability <= 0) return next;
     const effectEventWorlds = card.counterScope === "target"
@@ -269,6 +282,9 @@ export class AiSimulator {
         this.tacticResolutionChance(next, actor, card, abstractAction.targets ?? []),
         `counter:${card.id ?? card.definitionId}`);
     const scale = this.eventProbability(effectEventWorlds);
+    const cardDamageContext = { cardDamage:true, emberTriggeredProbabilities:{} };
+    let coordinationProbability = 0;
+    let coordinationTargets = [];
 
     switch (card.definitionId) {
       case "recover":
@@ -277,12 +293,19 @@ export class AiSimulator {
         actor.expectedRecoverCount = Math.max(0, (actor.expectedRecoverCount ?? 0) - executionProbability);
         break;
       case "charge": this.changeEnergy(next, actor, 1, effectEventWorlds); break;
-      case "shield": if (target?.alive && target.battleTeam === actor.battleTeam) this.changeShield(next, target, 1, effectEventWorlds); break;
+      case "shield":
+        if (target?.alive && target.battleTeam === actor.battleTeam) {
+          this.changeShield(next, target, 1, effectEventWorlds);
+          coordinationProbability = scale;
+          coordinationTargets = [target];
+        }
+        break;
       case "harvest": actor.handCount += 2 * scale; break;
       case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + scale; break;
       case "assault":
         if (target) this.simulateAssault(next, actor, target, cardEventWorlds, {
-          attackUseSlot:abstractAction.attackUseSlot
+          attackUseSlot:abstractAction.attackUseSlot,
+          damageContext:cardDamageContext
         });
         break;
       case "shockwave":
@@ -292,7 +315,8 @@ export class AiSimulator {
           this.applyDamage(next, actor, player, 1, {
             canBlock:true,
             deviceAttack:true,
-            eventBranches:targetWorlds
+            eventBranches:targetWorlds,
+            damageContext:cardDamageContext
           });
         }
         break;
@@ -303,13 +327,15 @@ export class AiSimulator {
           const targetWorlds = this.gateEventWorlds(next, effectEventWorlds,
             targetScale, `target-counter:${card.id}:${player.id}`);
           const eventProbability = this.eventProbability(targetWorlds);
-          player.handCount = Math.max(0, player.handCount - response * eventProbability);
-          player.expectedAssaultCount = Math.max(0, (player.expectedAssaultCount ?? 0) - response * eventProbability);
+          const spent = this.consumeAssaultForOpportunity(player, eventProbability);
+          player.handCount = Math.max(0, player.handCount - spent);
+          this.consumeKnownCardsFromHand(next, player, "assault", spent);
           this.applyDamage(next, actor, player, 1, {
             canBlock:false,
             deviceAttack:false,
             eventBranches:this.gateEventWorlds(next, targetWorlds,
-              1 - response, `provoke-response:${card.id}:${player.id}`)
+              1 - response, `provoke-response:${card.id}:${player.id}`),
+            damageContext:cardDamageContext
           });
         }
         break;
@@ -340,20 +366,27 @@ export class AiSimulator {
         const actualUseWorlds = consumedAttack.eventWorlds;
         const effectiveUseProbability = this.eventProbability(actualUseWorlds);
         const effectiveDeclineProbability = Math.min(existenceProbability, Math.max(0, scale - effectiveUseProbability));
-        first.handCount = Math.max(0, first.handCount - effectiveUseProbability);
-        first.expectedAssaultCount = Math.max(0, (first.expectedAssaultCount ?? 0) - effectiveUseProbability);
+        const assaultOpportunity = assaultAvailable > PROBABILITY_EPSILON
+          ? Math.min(1, effectiveUseProbability / assaultAvailable)
+          : 0;
+        const assaultSpent = this.consumeAssaultForOpportunity(first, assaultOpportunity);
+        first.handCount = Math.max(0, first.handCount - assaultSpent);
+        this.consumeKnownCardsFromHand(next, first, "assault", assaultSpent);
         // 借势实际打出突袭的分支必然处于“指定装备仍存在”条件下，避免装备效果再次乘存在概率。
         this.simulateAssault(next, first, second, actualUseWorlds, {
           sourceEquipmentConditional:true,
-          attackUseConsumed:true
+          attackUseConsumed:true,
+          damageContext:cardDamageContext
         });
         actor.handCount += effectiveDeclineProbability;
         actor.expectedEquipmentGain = (actor.expectedEquipmentGain ?? 0) + equipmentValue * effectiveDeclineProbability;
         this.setSimulatedEquipment(first, first.equipmentDefinitionId, existenceProbability - effectiveDeclineProbability);
+        coordinationProbability = scale;
+        coordinationTargets = [first, second];
         break;
       }
       case "plunder":
-        if (target) this.takeResourceToHand(actor, target, scale);
+        if (target) this.takeResourceToHand(next, actor, target, scale);
         break;
       case "transfer": {
         const source = next.players.find((player) => player.id === abstractAction.selection?.sourceId)
@@ -361,19 +394,33 @@ export class AiSimulator {
         const receiver = next.players.find((player) => player.id === abstractAction.selection?.receiverId)
           ?? null;
         if (source && receiver && (source.handCount ?? 0) > 0 && abstractAction.selection?.zone !== "equipment") {
-          source.handCount = Math.max(0, source.handCount - scale);
-          receiver.handCount += scale;
+          const transferred = this.consumeRandomHandCards(next, source, scale);
+          receiver.handCount += transferred;
+          coordinationProbability = transferred;
+          coordinationTargets = [receiver];
         }
         break;
       }
-      case "destroy": if (target) this.destroyResource(target, scale); break;
-      case "duel": if (target) this.applyDuel(next, actor, target, scale); break;
-      case "mutualBenefit": for (const player of next.players) if (player.alive) player.handCount += scale; break;
-      case "symbiosis": for (const player of next.players) if (player.alive) this.healFrom(actor, player, scale); break;
+      case "destroy": if (target) this.destroyResource(next, target, scale); break;
+      case "duel": if (target) this.applyDuel(next, actor, target, scale, cardDamageContext); break;
+      case "mutualBenefit": {
+        coordinationTargets = next.players.filter((player) => player.alive);
+        coordinationProbability = scale;
+        for (const player of coordinationTargets) player.handCount += scale;
+        break;
+      }
+      case "symbiosis": {
+        coordinationTargets = this.seatOrderFrom(next, actor, true);
+        coordinationProbability = scale;
+        for (const player of coordinationTargets) this.healFrom(actor, player, scale);
+        break;
+      }
       default:
         if (card.category === "equipment") this.setSimulatedEquipment(actor, card.definitionId, executionProbability);
         break;
     }
+    this.simulateGamble(actor, card, executionProbability);
+    this.simulateCoordination(actor, coordinationTargets, coordinationProbability);
     const recycleProbability = executionProbability * this.getSimulatedEquipmentProbability(actor, "recycleDevice");
     if (card.category === "tactic" && recycleProbability > 0) {
       const remainingUses = Math.max(0, 2 - (actor.recycleDeviceUses ?? 0));
@@ -431,6 +478,129 @@ export class AiSimulator {
     }
   }
 
+  normalizeAssaultCountDistribution(player, rawDistribution = null) {
+    let source = Array.isArray(rawDistribution) && rawDistribution.length
+      ? rawDistribution
+      : null;
+    if (!source && Array.isArray(player?.hand)
+      && (player.hand.length > 0 || !(Number(player.expectedAssaultCount) > 0))) {
+      source = [{ count:0, probability:1 }];
+      for (const card of player.hand.filter((entry) => entry.definitionId === "assault")) {
+        const availability = clampProbability(totalBranchProbability(getAvailabilityBranches(card)));
+        const next = [];
+        for (const branch of source) {
+          next.push({ count:branch.count, probability:branch.probability * (1 - availability) });
+          next.push({ count:branch.count + 1, probability:branch.probability * availability });
+        }
+        source = next;
+      }
+    }
+    if (!source) {
+      const expected = Math.max(0, Number(player?.expectedAssaultCount) || 0);
+      const response = clampProbability(player?.assaultResponseProbability
+        ?? (expected > 0 ? 1 : 0));
+      if (response <= PROBABILITY_EPSILON || expected <= PROBABILITY_EPSILON) {
+        source = [{ count:0, probability:1 }];
+      } else {
+        const conditionalMean = Math.max(1, expected / response);
+        const lower = Math.floor(conditionalMean);
+        const upper = Math.ceil(conditionalMean);
+        const upperWeight = conditionalMean - lower;
+        source = [
+          { count:0, probability:1 - response },
+          { count:lower, probability:response * (1 - upperWeight) },
+          { count:upper, probability:response * upperWeight }
+        ];
+      }
+    }
+    const maxCount = Math.max(0, Math.ceil(Number(player?.handCount) || 0));
+    const merged = new Map();
+    for (const branch of source) {
+      const count = Math.max(0, Math.min(maxCount, Math.floor(Number(branch?.count) || 0)));
+      const probability = Math.max(0, Number(branch?.probability) || 0);
+      if (probability <= PROBABILITY_EPSILON) continue;
+      merged.set(count, (merged.get(count) ?? 0) + probability);
+    }
+    if (!merged.size) return [{ count:0, probability:1 }];
+    const total = [...merged.values()].reduce((sum, probability) => sum + probability, 0);
+    return [...merged.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([count, probability]) => ({ count, probability:probability / total }));
+  }
+
+  syncAssaultSummary(player, distribution = null) {
+    const normalized = this.normalizeAssaultCountDistribution(
+      player,
+      distribution ?? player?.assaultCountDistribution
+    );
+    player.assaultCountDistribution = normalized;
+    player.expectedAssaultCount = normalized.reduce(
+      (sum, branch) => sum + branch.count * branch.probability, 0
+    );
+    player.assaultResponseProbability = normalized.reduce(
+      (sum, branch) => sum + (branch.count > 0 ? branch.probability : 0), 0
+    );
+    return normalized;
+  }
+
+  consumeAssaultForOpportunity(player, opportunityProbability = 1) {
+    const chance = clampProbability(opportunityProbability);
+    const distribution = this.syncAssaultSummary(player);
+    const remaining = [];
+    let expectedSpent = 0;
+    for (const branch of distribution) {
+      if (branch.count <= 0 || chance <= PROBABILITY_EPSILON) {
+        remaining.push(branch);
+        continue;
+      }
+      remaining.push({ count:branch.count, probability:branch.probability * (1 - chance) });
+      remaining.push({ count:branch.count - 1, probability:branch.probability * chance });
+      expectedSpent += branch.probability * chance;
+    }
+    this.syncAssaultSummary(player, remaining);
+    return expectedSpent;
+  }
+
+  consumeRandomHandCards(state, player, expectedAmount) {
+    let remaining = Math.max(0, Number(expectedAmount) || 0);
+    let totalSpent = 0;
+    while (remaining > PROBABILITY_EPSILON && (player.handCount ?? 0) > PROBABILITY_EPSILON) {
+      const handBefore = Math.max(PROBABILITY_EPSILON, Number(player.handCount) || 0);
+      const spend = Math.min(1, remaining, handBefore);
+      const distribution = this.syncAssaultSummary(player);
+      const next = [];
+      for (const branch of distribution) {
+        const assaultLossChance = clampProbability(spend * branch.count / handBefore);
+        next.push({ count:branch.count, probability:branch.probability * (1 - assaultLossChance) });
+        if (branch.count > 0) next.push({ count:branch.count - 1, probability:branch.probability * assaultLossChance });
+      }
+      this.syncAssaultSummary(player, next);
+
+      const cards = (player.hand ?? []).filter((card) => totalBranchProbability(getAvailabilityBranches(card)) > PROBABILITY_EPSILON);
+      const totalAvailability = cards.reduce((sum, card) => sum + totalBranchProbability(getAvailabilityBranches(card)), 0);
+      for (const card of cards) {
+        const availabilityState = getAvailabilityStateBranches(card);
+        const availableProbability = totalBranchProbability(availabilityState.filter((branch) => branch.available));
+        const removalProbability = totalAvailability > 0 ? spend * availableProbability / totalAvailability : 0;
+        const removalWorlds = this.getEventWorlds(state,
+          availableProbability > 0 ? removalProbability / availableProbability : 0,
+          null, `random-card-loss:${player.id}:${card.id}`);
+        const joined = joinProbabilityStateBranches(availabilityState, removalWorlds);
+        card.availabilityStateBranches = projectProbabilityStateBranches(joined, (branch) => ({
+          available:Boolean(branch.available && !branch.occurs)
+        }));
+        card.availabilityBranches = availableBranchesFromState(card.availabilityStateBranches);
+      }
+      if (Array.isArray(player.hand)) {
+        player.hand = player.hand.filter((card) => totalBranchProbability(getAvailabilityBranches(card)) > PROBABILITY_EPSILON);
+      }
+      player.handCount = Math.max(0, handBefore - spend);
+      remaining -= spend;
+      totalSpent += spend;
+    }
+    return totalSpent;
+  }
+
   /** 连势按“该类别此前已使用”的概率累计，避免多个部分概率动作重复获得完整首次收益。 */
   simulateCategoryUse(player, category, useProbability = 1, lifeDamageProbability = 0) {
     if (!category || player?.generalId !== "blade-walker") return 0;
@@ -456,6 +626,44 @@ export class AiSimulator {
     player.momentum = Math.min(GAME_CONFIG.momentumMaxStacks,
       currentMomentum * (1 - lifeDamageChance) + firstUseOnHit + firstUseWithoutHit * nonHitGain);
     return firstUseProbability;
+  }
+
+  simulateGamble(actor, card, useProbability) {
+    if (actor?.generalId !== "fate-gambler" || card?.category !== "tactic") return 0;
+    const oldProbability = clampProbability(actor.gambleTriggeredProbability
+      ?? (actor.gambleTriggered ? 1 : 0));
+    const newProbability = unionProbability(oldProbability, useProbability);
+    const triggerProbability = Math.max(0, newProbability - oldProbability);
+    actor.gambleTriggeredProbability = newProbability;
+    actor.gambleTriggered = newProbability >= 1 - PROBABILITY_EPSILON;
+    actor.handCount = (actor.handCount ?? 0) + triggerProbability * GAME_CONFIG.gamblerDrawChance;
+    return triggerProbability;
+  }
+
+  simulateCoordination(actor, effectiveTargets, resolutionProbability) {
+    if (actor?.generalId !== "resonance-tuner") return 0;
+    if (!(effectiveTargets ?? []).some((target) => target?.alive && target.id !== actor.id
+      && target.battleTeam === actor.battleTeam)) return 0;
+    const oldProbability = clampProbability(actor.coordinationTriggeredProbability
+      ?? (actor.coordinationTriggered ? 1 : 0));
+    const newProbability = unionProbability(oldProbability, resolutionProbability);
+    const triggerProbability = Math.max(0, newProbability - oldProbability);
+    actor.coordinationTriggeredProbability = newProbability;
+    actor.coordinationTriggered = newProbability >= 1 - PROBABILITY_EPSILON;
+    actor.handCount = (actor.handCount ?? 0) + triggerProbability;
+    return triggerProbability;
+  }
+
+  seatOrderFrom(state, source, includeSource = false) {
+    const players = state?.players ?? [];
+    const seatCount = Math.max(1, players.length);
+    const sourceSeat = Number(source?.seatIndex) || 0;
+    return players.filter((player) => player.alive && (includeSource || player.id !== source.id))
+      .sort((left, right) => {
+        const leftDistance = ((Number(left.seatIndex) || 0) - sourceSeat + seatCount) % seatCount;
+        const rightDistance = ((Number(right.seatIndex) || 0) - sourceSeat + seatCount) % seatCount;
+        return leftDistance - rightDistance;
+      });
   }
 
   /** 目标指定阶段的猎印概率使用联合概率；同一猎手每回合最多留下两次猎印。 */
@@ -499,27 +707,31 @@ export class AiSimulator {
 
   /** 护援在格挡、雷达和护盾之前减少伤害，并同步计算一次弃牌与每轮次数的期望代价。 */
   simulateGuardianAid(state, target, incomingDamage, eventProbability) {
-    let remainingDamage = Math.max(0, incomingDamage);
+    const probability = clampProbability(eventProbability);
+    if (incomingDamage <= PROBABILITY_EPSILON || probability <= PROBABILITY_EPSILON) return Math.max(0, incomingDamage);
+    const conditionalReduction = Math.min(1, incomingDamage / probability);
+    let remainingTriggerProbability = probability;
+    let expectedReduction = 0;
     for (const guardian of state.players) {
-      if (remainingDamage <= 0) break;
+      if (remainingTriggerProbability <= PROBABILITY_EPSILON) break;
       if (!guardian.alive || guardian.generalId !== "oath-warden" || guardian.id === target.id
         || guardian.battleTeam !== target.battleTeam) continue;
       const oldUsedProbability = clampProbability(guardian.guardianAidUsedProbability
         ?? (guardian.guardianAidUsed ? 1 : 0));
       const handAvailability = Math.min(1, Math.max(0, Number(guardian.handCount) || 0));
-      const triggerProbability = Math.min(remainingDamage,
-        clampProbability(eventProbability) * (1 - oldUsedProbability) * handAvailability);
+      const triggerProbability = remainingTriggerProbability * (1 - oldUsedProbability) * handAvailability;
       if (triggerProbability <= 0) continue;
-      guardian.handCount = Math.max(0, guardian.handCount - triggerProbability);
+      this.consumeRandomHandCards(state, guardian, triggerProbability);
       guardian.guardianAidUsedProbability = clampProbability(oldUsedProbability + triggerProbability);
       guardian.guardianAidUsed = guardian.guardianAidUsedProbability >= 1 - Number.EPSILON;
-      remainingDamage = Math.max(0, remainingDamage - triggerProbability);
+      expectedReduction += triggerProbability * conditionalReduction;
+      remainingTriggerProbability = Math.max(0, remainingTriggerProbability - triggerProbability);
     }
-    return remainingDamage;
+    return Math.max(0, incomingDamage - expectedReduction);
   }
 
-  /** 突袭造成生命伤害后的角色收益只在实际伤害分支触发。 */
-  simulateAssaultAfterDamage(state, source, target, lifeDamageProbability, lifeDamageBranches = null) {
+  /** 统一处理实际生命伤害后的角色收益。 */
+  simulateAfterLifeDamage(state, source, target, lifeDamageProbability, lifeDamageBranches = null, damageContext = {}) {
     const chance = clampProbability(lifeDamageProbability);
     if (!chance || !source?.alive || !target) return;
     if (source.generalId === "shade-agent" && target.alive && target.hp > 0
@@ -532,11 +744,40 @@ export class AiSimulator {
       source.expectedInformationGain = (source.expectedInformationGain ?? 0)
         + Math.min(2, target.handCount) * triggerProbability;
     }
-    if (source.generalId === "ember-magus" && target.battleTeam !== source.battleTeam) {
-      const worlds = lifeDamageBranches
-        ?? this.getEventWorlds(state, chance, null, `ember-energy:${source.id}:${target.id}`);
-      this.changeEnergy(state, source, 1, worlds);
+    if (damageContext.cardDamage && source.generalId === "ember-magus"
+      && target.battleTeam !== source.battleTeam) {
+      damageContext.emberTriggeredProbabilities ??= {};
+      const oldProbability = clampProbability(damageContext.emberTriggeredProbabilities[source.id]);
+      const newProbability = unionProbability(oldProbability, chance);
+      damageContext.emberTriggeredProbabilities[source.id] = newProbability;
+      damageContext.emberBaseEnergyBranches ??= {};
+      damageContext.emberBaseEnergyBranches[source.id] ??= getValueBranches(source, "energy", source.energy);
+      if (newProbability > oldProbability + PROBABILITY_EPSILON) {
+        const triggerWorlds = oldProbability <= PROBABILITY_EPSILON && lifeDamageBranches
+          ? lifeDamageBranches
+          : probabilityEventPartition(
+            this.nextProbabilityEventKey(state, `ember-resolution:${source.id}`),
+            newProbability,
+            "occurs"
+          );
+        const baseEnergy = damageContext.emberBaseEnergyBranches[source.id].map((branch) => ({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          baseEnergyAmount:branch.amount
+        }));
+        const joined = joinProbabilityStateBranches(baseEnergy, triggerWorlds);
+        source.energyBranches = projectProbabilityStateBranches(joined, (branch) => ({
+          amount:Math.max(0, Math.min(source.maxEnergy ?? Infinity,
+            branch.baseEnergyAmount + (branch.occurs ? 1 : 0)))
+        }));
+        source.energy = expectedBranchValue(source.energyBranches);
+      }
     }
+  }
+
+  simulateAssaultAfterDamage(state, source, target, lifeDamageProbability, lifeDamageBranches = null) {
+    return this.simulateAfterLifeDamage(state, source, target, lifeDamageProbability,
+      lifeDamageBranches, { cardDamage:true, emberTriggeredProbabilities:{} });
   }
 
   /** 普通突袭与借势响应共用同一次数槽、伤害与后续收益结算入口。 */
@@ -557,24 +798,28 @@ export class AiSimulator {
     const momentum = source.generalId === "blade-walker" ? (source.momentum ?? 0) : 0;
     const damageOutcome = {};
     const damage = 1 + (source.exposeWeaknessStacks ?? 0) + (source.assaultBonus ?? 0) + momentum;
-    const expectedDamageAfterGuardianAid = this.simulateGuardianAid(state, target, damage * chance, chance);
-    const conditionalDamageAfterGuardianAid = expectedDamageAfterGuardianAid / chance;
-    this.applyDamage(state, source, target, conditionalDamageAfterGuardianAid, {
+    this.applyDamage(state, source, target, damage, {
       canBlock:true,
       deviceAttack:true,
       eventBranches:assaultWorlds,
       outcome:damageOutcome,
-      attackerEquipmentProbability:options.sourceEquipmentConditional ? 1 : undefined
+      attackerEquipmentProbability:options.sourceEquipmentConditional ? 1 : undefined,
+      damageContext:options.damageContext ?? { cardDamage:true, emberTriggeredProbabilities:{} }
     });
     const lifeDamageChance = clampProbability(damageOutcome.lifeDamageChance ?? 0);
     source.exposeWeaknessStacks = (source.exposeWeaknessStacks ?? 0) * (1 - chance);
     source.assaultBonus = (source.assaultBonus ?? 0) * (1 - chance);
     this.simulateCategoryUse(source, "basic", chance, lifeDamageChance);
-    this.simulateAssaultAfterDamage(state, source, target, lifeDamageChance, damageOutcome.lifeDamageBranches);
     return lifeDamageChance;
   }
 
-  takeResourceToHand(actor, target, scale = 1) {
+  takeResourceToHand(state, actor, target, scale = 1) {
+    if (!Array.isArray(state?.players)) {
+      scale = target ?? 1;
+      target = actor;
+      actor = state;
+      state = { players:[actor, target] };
+    }
     const takeEquipment = target.equipmentDefinitionId && ((target.handCount ?? 0) <= 0 || CARD_DEFINITIONS[target.equipmentDefinitionId]?.aiValue >= 7);
     if (takeEquipment) {
       const existenceProbability = this.getSimulatedEquipmentProbability(target);
@@ -582,18 +827,23 @@ export class AiSimulator {
       this.setSimulatedEquipment(target, target.equipmentDefinitionId, existenceProbability - transferProbability);
       actor.handCount += transferProbability;
     } else {
-      target.handCount = Math.max(0, (target.handCount ?? 0) - scale);
-      actor.handCount += scale;
+      const transferred = this.consumeRandomHandCards(state, target, scale);
+      actor.handCount += transferred;
     }
   }
 
-  destroyResource(target, scale = 1) {
+  destroyResource(state, target, scale = 1) {
+    if (!Array.isArray(state?.players)) {
+      scale = target ?? 1;
+      target = state;
+      state = { players:[target] };
+    }
     const destroyEquipment = target.equipmentDefinitionId && ((target.handCount ?? 0) <= 0 || CARD_DEFINITIONS[target.equipmentDefinitionId]?.aiValue >= 7);
     if (destroyEquipment) {
       const existenceProbability = this.getSimulatedEquipmentProbability(target);
       this.setSimulatedEquipment(target, target.equipmentDefinitionId,
         existenceProbability * (1 - Math.max(0, Math.min(1, scale))));
-    } else target.handCount = Math.max(0, (target.handCount ?? 0) - scale);
+    } else this.consumeRandomHandCards(state, target, scale);
   }
 
   tacticResolutionChance(state, actor, card, targets = []) {
@@ -654,7 +904,7 @@ export class AiSimulator {
       this.healFrom(actor, target, chance);
       if (target.id !== actor.id) this.healFrom(actor, actor, chance);
     } else if (skill.id === "stealSkill" && target) {
-      this.stealResourceToHand(actor, target, chance);
+      this.stealResourceToHand(state, actor, target, chance);
     } else if (skill.id === "burningField") {
       for (const enemy of state.players) if (enemy.alive && enemy.battleTeam !== actor.battleTeam) {
         this.applyDamage(state, actor, enemy, 1, { canBlock:false, eventBranches:eventWorlds });
@@ -704,7 +954,13 @@ export class AiSimulator {
   }
 
   /** 窃取所得资源只增加手牌；目标仅有装备时，模拟中明确移除装备且不替换施术者装备。 */
-  stealResourceToHand(actor, target, scale = 1) {
+  stealResourceToHand(state, actor, target, scale = 1) {
+    if (!Array.isArray(state?.players)) {
+      scale = target ?? 1;
+      target = actor;
+      actor = state;
+      state = { players:[actor, target] };
+    }
     const chance = clampProbability(scale);
     const handCount = Math.max(0, target.handCount ?? 0);
     const existenceProbability = this.getSimulatedEquipmentProbability(target);
@@ -713,29 +969,74 @@ export class AiSimulator {
     const handLoss = handCount > 0 ? (1 - existenceProbability / (handCount + 1)) * chance : 0;
     const gainProbability = (handCount > 0 ? 1 : existenceProbability) * chance;
     actor.handCount = (actor.handCount ?? 0) + gainProbability;
-    target.handCount = Math.max(0, handCount - handLoss);
+    this.consumeRandomHandCards(state, target, handLoss);
     this.setSimulatedEquipment(target, target.equipmentDefinitionId, existenceProbability - equipmentLossProbability);
   }
 
-  applyDuel(state, actor, target, scale) {
-    const actorAssaults = actor.expectedAssaultCount ?? (actor.hand ?? []).filter((card) => card.definitionId === "assault").length;
-    const targetAssaults = target.expectedAssaultCount ?? 0;
-    const targetLoses = targetAssaults <= actorAssaults;
-    const actorSpent = targetLoses ? targetAssaults : actorAssaults;
-    const targetSpent = targetLoses ? targetAssaults : actorAssaults + 1;
-    const scaledActorSpent = actorSpent * scale;
-    const scaledTargetSpent = targetSpent * scale;
-    actor.handCount = Math.max(0, actor.handCount - scaledActorSpent);
-    target.handCount = Math.max(0, target.handCount - scaledTargetSpent);
-    actor.expectedAssaultCount = Math.max(0, actorAssaults - scaledActorSpent);
-    target.expectedAssaultCount = Math.max(0, targetAssaults - scaledTargetSpent);
-    this.consumeKnownCardsFromHand(state, actor, "assault", scaledActorSpent);
-    this.consumeKnownCardsFromHand(state, target, "assault", scaledTargetSpent);
-    const loser = targetLoses ? target : actor;
-    this.applyDamage(state, targetLoses ? actor : target, loser, 1, {
+  applyDuel(state, actor, target, scale, damageContext = { cardDamage:true, emberTriggeredProbabilities:{} }) {
+    const resolutionProbability = clampProbability(scale);
+    const actorDistribution = this.syncAssaultSummary(actor);
+    const targetDistribution = this.syncAssaultSummary(target);
+    const actorRemaining = new Map();
+    const targetRemaining = new Map();
+    const addBranch = (map, count, probability) => {
+      if (probability <= PROBABILITY_EPSILON) return;
+      map.set(count, (map.get(count) ?? 0) + probability);
+    };
+    for (const branch of actorDistribution) addBranch(
+      actorRemaining, branch.count, branch.probability * (1 - resolutionProbability)
+    );
+    for (const branch of targetDistribution) addBranch(
+      targetRemaining, branch.count, branch.probability * (1 - resolutionProbability)
+    );
+
+    let actorLoseProbability = 0;
+    let targetLoseProbability = 0;
+    let expectedActorSpent = 0;
+    let expectedTargetSpent = 0;
+    for (const actorBranch of actorDistribution) {
+      for (const targetBranch of targetDistribution) {
+        const probability = actorBranch.probability * targetBranch.probability * resolutionProbability;
+        if (probability <= PROBABILITY_EPSILON) continue;
+        const actorCount = actorBranch.count;
+        const targetCount = targetBranch.count;
+        const targetLoses = targetCount <= actorCount;
+        const actorSpent = Math.min(actorCount, targetCount);
+        const targetSpent = Math.min(targetCount, actorCount + 1);
+        expectedActorSpent += probability * actorSpent;
+        expectedTargetSpent += probability * targetSpent;
+        if (targetLoses) targetLoseProbability += probability;
+        else actorLoseProbability += probability;
+        addBranch(actorRemaining, actorCount - actorSpent, probability);
+        addBranch(targetRemaining, targetCount - targetSpent, probability);
+      }
+    }
+
+    const toDistribution = (map) => [...map.entries()].map(([count, probability]) => ({ count, probability }));
+    const actorRemainingDistribution = this.syncAssaultSummary(actor, toDistribution(actorRemaining));
+    const targetRemainingDistribution = this.syncAssaultSummary(target, toDistribution(targetRemaining));
+    actor.handCount = Math.max(0, actor.handCount - expectedActorSpent);
+    target.handCount = Math.max(0, target.handCount - expectedTargetSpent);
+    this.consumeKnownCardsFromHand(state, actor, "assault", expectedActorSpent);
+    this.consumeKnownCardsFromHand(state, target, "assault", expectedTargetSpent);
+    this.applyDamage(state, target, actor, 1, {
       canBlock:false,
-      eventProbability:scale
+      eventProbability:actorLoseProbability,
+      damageContext
     });
+    this.applyDamage(state, actor, target, 1, {
+      canBlock:false,
+      eventProbability:targetLoseProbability,
+      damageContext
+    });
+    return {
+      actorLoseProbability,
+      targetLoseProbability,
+      expectedActorSpent,
+      expectedTargetSpent,
+      actorRemainingDistribution,
+      targetRemainingDistribution
+    };
   }
 
   applyDamage(state, attacker, target, amount, options = {}) {
@@ -752,6 +1053,20 @@ export class AiSimulator {
       `damage-event:${attacker?.id ?? "unknown"}:${target.id}`);
     const eventProbability = this.eventProbability(eventWorlds);
     if (eventProbability <= 0) return 0;
+    const aidedExpectedDamage = this.simulateGuardianAid(
+      state, target, amount * eventProbability, eventProbability
+    );
+    amount = aidedExpectedDamage / eventProbability;
+    if (amount <= PROBABILITY_EPSILON) {
+      if (options.outcome) {
+        options.outcome.lifeDamageBranches = projectProbabilityStateBranches(
+          eventWorlds, () => ({ occurs:false })
+        );
+        options.outcome.lifeDamageChance = 0;
+        options.outcome.blockedByCardChance = 0;
+      }
+      return 0;
+    }
     const battleProbability = clampProbability(options.deviceAttack
       && attacker.equipmentDefinitionId === "battleDevice"
       ? (options.attackerEquipmentProbability ?? this.getSimulatedEquipmentProbability(attacker, "battleDevice"))
@@ -841,14 +1156,18 @@ export class AiSimulator {
     const actualDamage = damageWorlds.reduce((sum, branch) => (
       sum + branch.probability * hpDamageFor(branch)
     ), 0);
+    const lifeDamageBranches = projectProbabilityStateBranches(damageWorlds, (branch) => ({
+      occurs:hpDamageFor(branch) > PROBABILITY_EPSILON
+    }));
+    const lifeDamageChance = this.eventProbability(lifeDamageBranches);
     if (options.outcome) {
-      options.outcome.lifeDamageBranches = projectProbabilityStateBranches(damageWorlds, (branch) => ({
-        occurs:hpDamageFor(branch) > PROBABILITY_EPSILON
-      }));
-      options.outcome.lifeDamageChance = this.eventProbability(options.outcome.lifeDamageBranches);
+      options.outcome.lifeDamageBranches = lifeDamageBranches;
+      options.outcome.lifeDamageChance = lifeDamageChance;
       options.outcome.blockedByCardChance = eventProbability * blockedByCardChance;
     }
     target.hp -= actualDamage;
+    this.simulateAfterLifeDamage(state, attacker, target, lifeDamageChance,
+      lifeDamageBranches, options.damageContext ?? {});
     this.resolveFatal(state, target, attacker);
     return actualDamage;
   }
@@ -890,6 +1209,7 @@ export class AiSimulator {
       target.handCount = 0;
       target.hand = [];
       target.expectedAssaultCount = 0;
+      target.assaultCountDistribution = [{ count:0, probability:1 }];
       target.expectedRecoverCount = 0;
       target.assaultResponseProbability = 0;
       target.blockProbability = 0;
@@ -904,30 +1224,30 @@ export class AiSimulator {
     }
     let remaining = need;
     let healingApplied = 0;
-    for (const rescuer of allies) {
-      if (remaining <= 0) break;
-      let available = rescuer.expectedRecoverCount ?? 0;
-      let spent = 0;
-      if (available > 0 && rejuvenationBonus(rescuer) > 0) {
-        const firstCard = Math.min(1, available);
-        const firstHealing = firstCard * 2;
-        spent += firstCard;
-        available -= firstCard;
-        remaining -= firstHealing;
-        healingApplied += firstHealing;
-        rescuer.rejuvenationUsed = true;
-        rescuer.handCount = (rescuer.handCount ?? 0) + firstCard;
+    const totalRecover = allies.reduce((sum, rescuer) => sum + Math.max(0, rescuer.expectedRecoverCount ?? 0), 0);
+    const maxRounds = Math.max(1, Math.ceil(totalRecover));
+    let rounds = 0;
+    while (remaining > PROBABILITY_EPSILON && rounds < maxRounds) {
+      let usedThisRound = false;
+      for (const rescuer of allies) {
+        if (remaining <= PROBABILITY_EPSILON) break;
+        const available = Math.max(0, rescuer.expectedRecoverCount ?? 0);
+        if (available <= PROBABILITY_EPSILON) continue;
+        const canRejuvenate = rejuvenationBonus(rescuer) > 0;
+        const healingPerCard = canRejuvenate ? 2 : 1;
+        const spent = Math.min(1, available);
+        if (spent <= PROBABILITY_EPSILON) continue;
+        const healing = spent * healingPerCard;
+        usedThisRound = true;
+        remaining -= healing;
+        healingApplied += healing;
+        rescuer.expectedRecoverCount = Math.max(0, available - spent);
+        rescuer.handCount = Math.max(0, (rescuer.handCount ?? 0) - spent + (canRejuvenate ? spent : 0));
+        if (canRejuvenate) rescuer.rejuvenationUsed = true;
+        this.consumeKnownCardsFromHand(state, rescuer, "recover", spent);
       }
-      const regularSpent = Math.min(Math.max(0, remaining), available);
-      spent += regularSpent;
-      remaining -= regularSpent;
-      healingApplied += regularSpent;
-      rescuer.expectedRecoverCount = Math.max(0, (rescuer.expectedRecoverCount ?? 0) - spent);
-      rescuer.handCount = Math.max(0, rescuer.handCount - spent);
-      if (rescuer.hand) {
-        let remove = Math.ceil(spent);
-        rescuer.hand = rescuer.hand.filter((card) => card.definitionId !== "recover" || remove-- <= 0);
-      }
+      rounds += 1;
+      if (!usedThisRound) break;
     }
     target.hp = Math.min(target.maxHp, target.hp + healingApplied);
     target.survivalChance = 1;

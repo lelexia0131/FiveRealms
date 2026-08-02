@@ -103,7 +103,7 @@ const CARD_EFFECTS = {
     }
   },
 
-  async provoke(game, source, card) {
+  async provoke(game, source, card, _targets, context) {
     const gameId = game.state.gameId;
     for (const target of game.seatOrderFrom(source, false).filter((player) => player.alive && player.battleTeam !== source.battleTeam)) {
       if (game.state.isGameOver) break;
@@ -118,7 +118,7 @@ const CARD_EFFECTS = {
       const discarded = await game.responseSystem.requestAssaultDiscard(target, "响应挑衅并打出突袭", { source, target, card });
       if (!game.isSessionValid(gameId) || discarded.status === "cancelled") return { resolved:false };
       if (discarded.status !== "used") await game.damage(source, target, 1, {
-        card, canBlock:false, damageType:"provoke", actionName:"挑衅"
+        card, canBlock:false, damageType:"provoke", actionName:"挑衅", resolutionId:context.resolutionId
       });
       if (!game.isSessionValid(gameId)) return { resolved:false };
     }

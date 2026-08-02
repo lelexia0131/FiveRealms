@@ -124,7 +124,8 @@ const PASSIVE_SKILLS = {
         || target.battleTeam === owner.battleTeam || owner.turnFlags.trackingTargetIds.size >= 2
         || owner.turnFlags.trackingTargetIds.has(target.id)) return;
       owner.turnFlags.trackingTargetIds.add(target.id);
-      target.statuses.huntMark = { sourceId: owner.id, expireAtTurnEnd: (owner.gameFlags.trackingTurnNumber ?? 1) + 1 };
+      const currentTrackingTurn = owner.gameFlags.trackingTurnNumber ?? 0;
+      target.statuses.huntMark = { sourceId: owner.id, expireAtTurnEnd: currentTrackingTurn + 1 };
       game.log(`${owner.name}在${target.name}身上留下了猎印。`, "important");
     });
     game.eventBus.on("turnEnd", `${owner.id}:tracking:cleanup`, (event) => {
@@ -229,7 +230,7 @@ export const ACTIVE_SKILLS = Object.freeze({
   burningField: Object.freeze({
     id: "burningField", name: "焚场", cost: 3, limitPerTurn: 1, targetType: "allEnemies", rangeRule: "unlimited",
     canUse(game, source) { return baseCanUse(game, source, this); },
-    async execute(game, source) { const gameId=game.state.gameId;source.changeEnergy(-3);game.log(`${source.name}发动焚场！`, "important");for(const target of game.getEnemies(source)){if(!game.isSessionValid(gameId)||game.state.isGameOver)break;if(target.alive)await game.damage(source,target,1,{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill"});} }
+    async execute(game, source, _targets, context = {}) { const gameId=game.state.gameId;source.changeEnergy(-3);game.log(`${source.name}发动焚场！`, "important");for(const target of game.getEnemies(source)){if(!game.isSessionValid(gameId)||game.state.isGameOver)break;if(target.alive)await game.damage(source,target,1,{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill",resolutionId:context.resolutionId});} }
   }),
   hunt: Object.freeze({
     id: "hunt", name: "猎杀", cost: 2, limitPerTurn: 2, targetType: "markedEnemy", rangeRule: "unlimited",

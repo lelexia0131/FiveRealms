@@ -2243,6 +2243,179 @@ test("反制链每张实际反制只记录一条带明确双方与对象的日�
   assert.deepEqual(logs,[`${first.name}对${source.name}的「收获」使用了「反制」，取消了「收获」的效果。`,`${second.name}对${first.name}的「反制」使用了「反制」，取消了「反制」的效果。`]);assert.ok(!game.state.logs.some((entry)=>entry.message.includes("被后续反制抵消")||entry.message===`「收获」的效果被取消。`));
 });
 
+function simulatedDuelPlayer(id, team, count) {
+  return {
+    id, seatIndex:team === "dawn" ? 0 : 1, battleTeam:team, alive:true,
+    hp:10, maxHp:10, shield:0, handCount:count, hand:[], expectedRecoverCount:0,
+    assaultCountDistribution:[{ count, probability:1 }], expectedAssaultCount:count,
+    assaultResponseProbability:count > 0 ? 1 : 0, blockProbability:0
+  };
+}
+
+test("AI决斗按整数突袭分布覆盖1对0、1对1、1对2与0对0", () => {
+  const cases = [
+    [1,0,{actorLoseProbability:0,targetLoseProbability:1,expectedActorSpent:0,expectedTargetSpent:0}],
+    [1,1,{actorLoseProbability:0,targetLoseProbability:1,expectedActorSpent:1,expectedTargetSpent:1}],
+    [1,2,{actorLoseProbability:1,targetLoseProbability:0,expectedActorSpent:1,expectedTargetSpent:2}],
+    [0,0,{actorLoseProbability:0,targetLoseProbability:1,expectedActorSpent:0,expectedTargetSpent:0}]
+  ];
+  for (const [actorCount,targetCount,expected] of cases) {
+    const actor=simulatedDuelPlayer(`duel-actor-${actorCount}-${targetCount}`,"dawn",actorCount);
+    const target=simulatedDuelPlayer(`duel-target-${actorCount}-${targetCount}`,"dusk",targetCount);
+    const state={players:[actor,target]},outcome=new AiSimulator(state).applyDuel(state,actor,target,1);
+    for (const [field,value] of Object.entries(expected)) assertClose(outcome[field],value);
+  }
+});
+
+test("AI决斗未知手牌产生双向非零失败概率且分支严格有界", () => {
+  const actor=makePlayer("duel-visible-actor",0,"dawn","ai"),target=makePlayer("duel-hidden-target",1,"dusk");
+  target.hand.push(instance("recover"),instance("block"));
+  const {game}=makeGame([actor,target]),visible=createAiVisibleState(actor.id,game.state);
+  const visibleActor=structuredClone(visible.players[0]),visibleTarget=structuredClone(visible.players[1]);
+  const state={players:[visibleActor,visibleTarget]},outcome=new AiSimulator(state).applyDuel(state,visibleActor,visibleTarget,1);
+  assert.ok(outcome.actorLoseProbability>0&&outcome.targetLoseProbability>0);
+  assert.ok(outcome.actorLoseProbability<1&&outcome.targetLoseProbability<1);
+  assert.ok(visibleTarget.assaultCountDistribution.length<=visibleTarget.handCount+1);
+  assertClose(visibleTarget.assaultCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+  assert.ok(visibleTarget.assaultCountDistribution.every((branch)=>Number.isInteger(branch.count)&&branch.count>=0));
+});
+
+test("AI决斗1张对4张未知手牌不会确定判负且目标消耗不超原期望", () => {
+  const actor=makePlayer("duel-one-actor",0,"dawn","ai"),target=makePlayer("duel-four-target",1,"dusk");
+  actor.hand.push(instance("assault"));target.hand.push(instance("recover"),instance("block"),instance("charge"),instance("shield"));
+  const {game}=makeGame([actor,target]),visible=createAiVisibleState(actor.id,game.state);
+  const a=structuredClone(visible.players[0]),t=structuredClone(visible.players[1]),original=t.expectedAssaultCount;
+  const state={players:[a,t]},outcome=new AiSimulator(state).applyDuel(state,a,t,1);
+  assert.ok(outcome.actorLoseProbability>0&&outcome.actorLoseProbability<1);
+  assert.ok(outcome.targetLoseProbability>0&&outcome.targetLoseProbability<1);
+  assert.ok(outcome.expectedTargetSpent<=original+1e-9);
+});
+
+test("AI决斗前主动突袭会同步为0张突袭", () => {
+  const state={players:[
+    {id:"assault-then-duel",seatIndex:0,battleTeam:"dawn",alive:true,hp:5,maxHp:5,shield:0,handCount:1,hand:[{id:"only-assault",definitionId:"assault"}],attackUsed:0,attackLimit:2,assaultCountDistribution:[{count:1,probability:1}]},
+    {id:"assault-first-target",seatIndex:1,battleTeam:"dusk",alive:true,hp:10,maxHp:10,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0,assaultCountDistribution:[{count:0,probability:1}]},
+    {id:"duel-second-target",seatIndex:2,battleTeam:"dusk",alive:true,hp:10,maxHp:10,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0,assaultCountDistribution:[{count:0,probability:1}]}
+  ]};
+  const simulator=new AiSimulator(state),afterAssault=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"only-assault"},targets:[{id:"assault-first-target"}]},"assault-then-duel");
+  const actor=afterAssault.players[0],target=afterAssault.players[2],outcome=simulator.applyDuel(afterAssault,actor,target,1);
+  assert.equal(actor.expectedAssaultCount,0);assert.deepEqual(actor.assaultCountDistribution,[{count:0,probability:1}]);assert.equal(outcome.expectedActorSpent,0);
+});
+
+test("AI决斗分布不读取敌方真实隐藏手牌内容", () => {
+  const actor=makePlayer("duel-private-actor",0,"dawn","ai"),target=makePlayer("duel-private-target",1,"dusk");
+  target.hand.push(instance("assault"),instance("assault"),instance("recover"),instance("block"));
+  const {game}=makeGame([actor,target]),first=createAiVisibleState(actor.id,game.state).players[1].assaultCountDistribution;
+  target.hand=target.hand.map((card,index)=>({...instance(["shield","charge","counter","harvest"][index]),id:card.id}));
+  const second=createAiVisibleState(actor.id,game.state).players[1].assaultCountDistribution;
+  assert.deepEqual(second,first);
+});
+
+test("余烬按挑衅和震荡的同一resolutionId各只触发一次", async () => {
+  for (const definitionId of ["provoke","shockwave"]) {
+    const ember=makePlayer(`ember-${definitionId}`,0,"dawn","ai",4),enemies=[1,2,3].map((seat)=>makePlayer(`${definitionId}-enemy-${seat}`,seat,"dusk"));
+    const {game}=makeGame([ember,...enemies]);registerPassiveSkills(game);ember.hand.push(instance(definitionId));
+    await game.playCard(ember,ember.hand[0],enemies);assert.equal(ember.energy,1);
+  }
+  const ember=makePlayer("ember-two-cards",0,"dawn","ai",4),enemy=makePlayer("ember-two-target",1,"dusk"),{game}=makeGame([ember,enemy]);
+  registerPassiveSkills(game);ember.hand.push(instance("provoke"),instance("provoke"));
+  await game.playCard(ember,ember.hand[0],[enemy]);await game.playCard(ember,ember.hand[0],[enemy]);assert.equal(ember.energy,2);
+});
+
+test("格挡决策随可用格挡数单调且先验证实际支付数量", () => {
+  const responder=makePlayer("block-policy",0,"dawn","ai"),ally1=makePlayer("block-ally-1",1,"dawn"),enemy1=makePlayer("block-enemy-1",2,"dusk"),ally2=makePlayer("block-ally-2",3,"dawn"),enemy2=makePlayer("block-enemy-2",4,"dusk");
+  const {game}=makeGame([responder,ally1,enemy1,ally2,enemy2]),policy=game.aiController.responsePolicy;
+  const decisions=[];
+  for (const count of [1,2,3]) {
+    responder.hand=[...Array.from({length:count},()=>instance("block")),...Array.from({length:4-count},()=>instance("charge"))];
+    decisions.push(policy.shouldRespond(responder,"block",{target:responder,amount:1,requiredCount:1},responder.hand.filter((card)=>card.definitionId==="block")));
+  }
+  assert.ok(!decisions.some((decision,index)=>index>0&&decisions[index-1]&&!decision));
+  responder.hp=1;responder.shield=0;responder.hand=[instance("block")];assert.equal(policy.shouldRespond(responder,"block",{target:responder,amount:1,requiredCount:1},responder.hand),true);
+  responder.hp=2;assert.equal(policy.shouldRespond(responder,"block",{target:responder,amount:1,requiredCount:1},responder.hand),true);
+  assert.equal(policy.shouldRespond(responder,"block",{target:responder,amount:2,requiredCount:2},responder.hand),false);
+});
+
+test("AI护援统一覆盖突袭、震荡、挑衅、决斗、猎杀与焚场", () => {
+  const runCard=(definitionId,targetSetup=()=>{})=>{
+    const actor={id:`${definitionId}-actor`,seatIndex:0,battleTeam:"dawn",alive:true,hp:5,maxHp:5,shield:0,energy:3,maxEnergy:4,handCount:1,hand:[{id:`${definitionId}-card`,definitionId}],attackUsed:0,attackLimit:2,assaultCountDistribution:[{count:definitionId==="assault"?1:0,probability:1}]};
+    const target={id:`${definitionId}-target`,seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0,assaultCountDistribution:[{count:0,probability:1}]};
+    const guardian={id:`${definitionId}-guardian`,seatIndex:2,generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:1,hand:[{id:`${definitionId}-aid`,definitionId:"charge"}],guardianAidUsedProbability:0};
+    targetSetup(actor,target);const state={players:[actor,target,guardian]},next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS[definitionId],id:`${definitionId}-card`},targets:[target]},actor.id);
+    assert.equal(next.players[1].hp,5);assert.equal(next.players[2].handCount,0);
+  };
+  for (const id of ["assault","shockwave","provoke","duel"]) runCard(id);
+  const runSkill=(skill,actorGeneral,damage)=>{
+    const actor={id:`${skill.id}-actor`,seatIndex:0,generalId:actorGeneral,battleTeam:"dawn",alive:true,hp:5,maxHp:5,shield:0,energy:3,maxEnergy:4,handCount:0,activeSkillUses:0};
+    const target={id:`${skill.id}-target`,seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0,statuses:[],huntMarkSourceId:actor.id,huntMarkProbability:1,huntMarkProbabilities:{[actor.id]:1},huntMarkStateBranchesBySource:{[actor.id]:[{probability:1,conditions:{},marked:true}]}};
+    const guardian={id:`${skill.id}-guardian`,seatIndex:2,generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:1,hand:[{id:`${skill.id}-aid`,definitionId:"charge"}],guardianAidUsedProbability:0};
+    const state={players:[actor,target,guardian]},next=new AiSimulator(state).apply(state,{type:"skill",skill,targets:[target]},actor.id);
+    assert.equal(next.players[1].hp,5-(damage-1));assert.equal(next.players[2].handCount,0);
+  };
+  runSkill(ACTIVE_SKILLS.hunt,"trail-hunter",2);runSkill(ACTIVE_SKILLS.burningField,"ember-magus",1);
+});
+
+test("AI护援每名守誓者每轮一次且零伤害与阵亡时不弃牌", () => {
+  const attacker={id:"aid-attacker",battleTeam:"dawn",alive:true,hp:5,maxHp:5,handCount:0};
+  const target={id:"aid-target",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0};
+  const guardian={id:"aid-guardian",generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:2,guardianAidUsedProbability:0};
+  const state={players:[attacker,target,guardian]},simulator=new AiSimulator(state);simulator.applyDamage(state,attacker,target,0,{canBlock:false});assert.equal(guardian.handCount,2);
+  simulator.applyDamage(state,attacker,target,1,{canBlock:false});simulator.applyDamage(state,attacker,target,1,{canBlock:false});assert.equal(guardian.handCount,1);assert.equal(target.hp,4);
+  const dead={...guardian,id:"dead-aid",alive:false,handCount:1,guardianAidUsedProbability:0},deadTarget={...target,id:"dead-aid-target",hp:5};const deadState={players:[attacker,deadTarget,dead]};simulator.applyDamage(deadState,attacker,deadTarget,1,{canBlock:false});assert.equal(dead.handCount,1);assert.equal(deadTarget.hp,4);
+});
+
+test("AI窥隙与余烬从统一生命伤害入口覆盖非突袭和群体卡牌", () => {
+  const spy=simulatedDuelPlayer("duel-spy","dawn",1);spy.generalId="shade-agent";spy.expectedInformationGain=0;spy.spyGapTriggeredProbability=0;
+  const spyTarget=simulatedDuelPlayer("duel-spy-target","dusk",0);spyTarget.handCount=3;
+  const duelState={players:[spy,spyTarget]};new AiSimulator(duelState).applyDuel(duelState,spy,spyTarget,1);assert.equal(spy.expectedInformationGain,2);
+  const ember={id:"provoke-ember",seatIndex:0,generalId:"ember-magus",battleTeam:"dawn",alive:true,hp:4,maxHp:4,energy:0,maxEnergy:3,handCount:1,hand:[{id:"ember-provoke",definitionId:"provoke"}]};
+  const enemies=[1,2,3].map((seat)=>({id:`ember-group-${seat}`,seatIndex:seat,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0,assaultCountDistribution:[{count:0,probability:1}]}));
+  const state={players:[ember,...enemies]},next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.provoke,id:"ember-provoke"},targets:enemies},ember.id);assert.equal(next.players[0].energy,1);
+});
+
+test("AI救援轮次让A与B首轮各消耗一张调息", () => {
+  const target={id:"round-rescue-target",seatIndex:0,battleTeam:"dawn",alive:true,hp:-1,maxHp:4,handCount:0,expectedRecoverCount:0};
+  const a={id:"round-rescue-a",seatIndex:1,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:2,hand:[{id:"a-r1",definitionId:"recover"},{id:"a-r2",definitionId:"recover"}],expectedRecoverCount:2};
+  const b={id:"round-rescue-b",seatIndex:2,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"b-r1",definitionId:"recover"}],expectedRecoverCount:1};
+  const state={players:[target,a,b]};new AiSimulator(state).resolveFatal(state,target);assert.equal(target.hp,1);assert.equal(a.expectedRecoverCount,1);assert.equal(b.expectedRecoverCount,0);
+});
+
+test("AI共生顺序从非0号出牌者开始并让回春命中首个合法目标", () => {
+  const ally0={id:"symbiosis-seat-0",seatIndex:0,battleTeam:"dawn",alive:true,hp:1,maxHp:4,handCount:0};
+  const enemy1={id:"symbiosis-seat-1",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0,counterProbability:0};
+  const medic={id:"symbiosis-medic",seatIndex:2,generalId:"spirit-medic",battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"ordered-symbiosis",definitionId:"symbiosis"}],rejuvenationUsed:false};
+  const ally3={id:"symbiosis-seat-3",seatIndex:3,battleTeam:"dawn",alive:true,hp:1,maxHp:4,handCount:0};
+  const state={players:[ally0,enemy1,medic,ally3]},next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.symbiosis,id:"ordered-symbiosis"},targets:state.players},medic.id);
+  assert.equal(next.players[3].hp,3);assert.equal(next.players[0].hp,2);assert.equal(next.players[2].handCount,1);
+});
+
+test("AI冒险首次战术期望摸0.6且被反制仍触发、同回合不重复", () => {
+  const actor={id:"gamble-sim",seatIndex:0,generalId:"fate-gambler",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:2,hand:[{id:"gamble-one",definitionId:"exposeWeakness"},{id:"gamble-two",definitionId:"exposeWeakness"}],gambleTriggered:false};
+  const enemy={id:"gamble-counter",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,counterProbability:1};const state={players:[actor,enemy]},simulator=new AiSimulator(state);
+  const once=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"gamble-one"},targets:[]},actor.id);assertClose(once.players[0].handCount,1.6);assert.equal(once.players[0].gambleTriggered,true);
+  const twice=simulator.apply(once,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"gamble-two"},targets:[]},actor.id);assertClose(twice.players[0].handCount,.6);
+});
+
+test("AI协调只依据未取消的其他己方有效目标且同回合一次", () => {
+  const actor={id:"coord-sim",seatIndex:0,generalId:"resonance-tuner",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"coord-one",definitionId:"shield"},{id:"coord-two",definitionId:"shield"}],coordinationTriggered:false};
+  const ally={id:"coord-ally",seatIndex:1,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0};const enemy={id:"coord-enemy",seatIndex:2,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,counterProbability:0};
+  const state={players:[actor,ally,enemy]},simulator=new AiSimulator(state),action=(id,target)=>({type:"card",card:{...CARD_DEFINITIONS.shield,id},targets:[target]});
+  const once=simulator.apply(state,action("coord-one",ally),actor.id);assert.equal(once.players[0].handCount,2);assert.equal(once.players[0].coordinationTriggered,true);
+  const twice=simulator.apply(once,action("coord-two",ally),actor.id);assert.equal(twice.players[0].handCount,1);
+  const selfState=structuredClone(state),selfOnly=new AiSimulator(selfState).apply(selfState,action("coord-one",selfState.players[0]),actor.id);assert.equal(selfOnly.players[0].coordinationTriggered,false);
+  const counterActor={...actor,id:"coord-countered",handCount:1,hand:[{id:"coord-mutual",definitionId:"mutualBenefit"}],coordinationTriggered:false},counterAlly={...ally,id:"coord-counter-ally"},counterEnemy={...enemy,id:"coord-counter-enemy",counterProbability:1};const counterState={players:[counterActor,counterAlly,counterEnemy]};
+  const countered=new AiSimulator(counterState).apply(counterState,{type:"card",card:{...CARD_DEFINITIONS.mutualBenefit,id:"coord-mutual"},targets:counterState.players},counterActor.id);assert.equal(countered.players[0].coordinationTriggered,false);
+});
+
+test("猎印到期覆盖正常回合与首次回合前借势时钟", async () => {
+  const normalHunter=makePlayer("normal-clock-hunter",0,"dawn","ai",5),normalTarget=makePlayer("normal-clock-target",1,"dusk"),normalGame=makeGame([normalHunter,normalTarget]).game;registerPassiveSkills(normalGame);
+  await normalGame.eventBus.emit("turnStart",{type:"turnStart",player:normalHunter});await normalGame.eventBus.emit("targetSelected",{type:"targetSelected",source:normalHunter,card:instance("assault"),targets:[normalTarget]});assert.equal(normalTarget.statuses.huntMark.expireAtTurnEnd,2);
+  await normalGame.eventBus.emit("turnEnd",{type:"turnEnd",player:normalHunter});assert.ok(normalTarget.statuses.huntMark);await normalGame.eventBus.emit("turnStart",{type:"turnStart",player:normalHunter});await normalGame.eventBus.emit("turnEnd",{type:"turnEnd",player:normalHunter});assert.equal(normalTarget.statuses.huntMark,undefined);
+  const earlyHunter=makePlayer("early-clock-hunter",0,"dawn","ai",5),earlyTarget=makePlayer("early-clock-target",1,"dusk"),earlyGame=makeGame([earlyHunter,earlyTarget]).game;registerPassiveSkills(earlyGame);
+  await earlyGame.eventBus.emit("targetSelected",{type:"targetSelected",source:earlyHunter,card:instance("assault"),targets:[earlyTarget]});assert.equal(earlyTarget.statuses.huntMark.expireAtTurnEnd,1);
+  await earlyGame.eventBus.emit("turnStart",{type:"turnStart",player:earlyHunter});await earlyGame.eventBus.emit("turnEnd",{type:"turnEnd",player:earlyHunter});assert.equal(earlyTarget.statuses.huntMark,undefined);
+});
+
 let passed = 0;
 const testPattern = process.env.TEST_PATTERN ? new RegExp(process.env.TEST_PATTERN, "u") : null;
 const selectedTests = testPattern ? tests.filter(({ name }) => testPattern.test(name)) : tests;

@@ -17,10 +17,33 @@ const probabilityAtLeast = (trials, probability, required) => {
   return Math.max(0, Math.min(1, 1 - below));
 };
 
+const binomialCountDistribution = (trials, probability, offset = 0) => {
+  const count = Math.max(0, Math.floor(Number(trials) || 0));
+  const chance = Math.max(0, Math.min(1, Number(probability) || 0));
+  if (!count || chance <= 0) return [{ count:Math.max(0, offset), probability:1 }];
+  if (chance >= 1) return [{ count:Math.max(0, offset + count), probability:1 }];
+  const branches = [];
+  let combinations = 1;
+  for (let successes = 0; successes <= count; successes += 1) {
+    if (successes > 0) combinations = combinations * (count - successes + 1) / successes;
+    branches.push({
+      count:Math.max(0, offset + successes),
+      probability:combinations * chance ** successes * (1 - chance) ** (count - successes)
+    });
+  }
+  const total = branches.reduce((sum, branch) => sum + branch.probability, 0);
+  return branches.map((branch) => ({ ...branch, probability:branch.probability / total }));
+};
+
 const estimateCard = (viewer, player, definitionId) => {
   if (player.id === viewer.id) {
     const count = player.hand.filter((card) => card.definitionId === definitionId).length;
-    return { expected:count, atLeastOne:count > 0 ? 1 : 0, atLeastTwo:count > 1 ? 1 : 0 };
+    return {
+      expected:count,
+      atLeastOne:count > 0 ? 1 : 0,
+      atLeastTwo:count > 1 ? 1 : 0,
+      distribution:[{ count, probability:1 }]
+    };
   }
   const known = Object.values(viewer.aiMemory.knownCardsByPlayer[player.id] ?? {});
   const knownCount = known.filter((id) => id === definitionId).length;
@@ -29,7 +52,8 @@ const estimateCard = (viewer, player, definitionId) => {
   return {
     expected: knownCount + unknownCount * density,
     atLeastOne: knownCount > 0 ? 1 : probabilityAtLeast(unknownCount, density, 1),
-    atLeastTwo: knownCount >= 2 ? 1 : probabilityAtLeast(unknownCount, density, 2 - knownCount)
+    atLeastTwo: knownCount >= 2 ? 1 : probabilityAtLeast(unknownCount, density, 2 - knownCount),
+    distribution:binomialCountDistribution(unknownCount, density, knownCount)
   };
 };
 
@@ -95,6 +119,10 @@ export function createAiVisibleState(viewerId, state) {
         .map((category) => [category, player.turnFlags.categoriesUsed?.has(category) ? 1 : 0])),
       guardianAidUsedProbability: player.roundFlags.guardianAidUsed ? 1 : 0,
       spyGapTriggeredProbability: player.turnFlags.spyGapTriggered ? 1 : 0,
+      gambleTriggered: Boolean(player.turnFlags.gambleTriggered),
+      gambleTriggeredProbability: player.turnFlags.gambleTriggered ? 1 : 0,
+      coordinationTriggered: Boolean(player.turnFlags.coordinationTriggered),
+      coordinationTriggeredProbability: player.turnFlags.coordinationTriggered ? 1 : 0,
       rejuvenationUsed: Boolean(player.turnFlags.rejuvenationUsed),
       exposeWeaknessStacks: player.statuses.exposeWeakness?.stacks ?? 0,
       assaultBonus: player.statuses.allIn?.assaultBonus ?? 0,
@@ -146,7 +174,8 @@ export function createAiVisibleState(viewerId, state) {
       twoBlockProbability: blockEstimate.atLeastTwo,
       counterProbability: counterEstimate.atLeastOne,
       expectedAssaultCount: assaultEstimate.expected,
-      assaultResponseProbability: assaultEstimate.atLeastOne
+      assaultResponseProbability: assaultEstimate.atLeastOne,
+      assaultCountDistribution: assaultEstimate.distribution
     });
     })
   });

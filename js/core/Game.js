@@ -860,7 +860,7 @@ export class Game {
       const targetLabel = actionTargetLabel(this, source, skill, targets);
       this.ui.setCurrentCard(skill.name, `${source.name} · 技能`, targetLabel);
       this.ui.playSound?.("skill");
-      await skill.execute(this, source, targets);
+      await skill.execute(this, source, targets, { resolutionId:createId("skill-resolution") });
       if (!this.isSessionValid(gameId)) return false;
       this.ui.render(this);
       return true;

@@ -52,8 +52,14 @@ export class AiResponsePolicy {
     if (type === "block") {
       const incoming = context.amount ?? 1;
       const lethal = incoming - target.shield >= target.hp;
+      const availableBlocks = cards.length;
+      const requiredBlocks = Math.max(1, context.requiredCount ?? 1);
+      const canPay = availableBlocks >= requiredBlocks;
+      if (!canPay) return false;
+      const lowHp = target.hp <= 2;
+      const blocksAreAbundant = availableBlocks * 2 >= responder.hand.length;
       if (this.game.teamRules.isSmallTeam(responder)) return true;
-      return lethal || target.hp <= 2 || cards.length <= responder.hand.length / 2;
+      return lethal || lowHp || blocksAreAbundant;
     }
     if (type === "counter") {
       const sourceEnemy = context.source?.battleTeam !== responder.battleTeam;
