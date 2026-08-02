@@ -1,5 +1,5 @@
 /** AI 展示节奏的纯函数入口。实际等待仍统一由 CleanupManager 执行。 */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260802-ai-planner-v54";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260802-ai-action-guard-v55";
 
 const RANGES = Object.freeze({
   initial: ["aiInitialThinkMinMs", "aiInitialThinkMaxMs"],

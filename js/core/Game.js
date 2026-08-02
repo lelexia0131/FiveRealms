@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260802-ai-planner-v54";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260802-ai-planner-v54";
-import { createId, clamp } from "../utils/helpers.js?build=20260802-ai-planner-v54";
-import { EventBus } from "./EventBus.js?build=20260802-ai-planner-v54";
-import { Player } from "./Player.js?build=20260802-ai-planner-v54";
-import { Deck } from "./Deck.js?build=20260802-ai-planner-v54";
-import { TeamManager } from "./TeamManager.js?build=20260802-ai-planner-v54";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260802-ai-planner-v54";
-import { RuleEngine } from "./RuleEngine.js?build=20260802-ai-planner-v54";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260802-ai-planner-v54";
-import { GameLogger } from "./GameLogger.js?build=20260802-ai-planner-v54";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260802-ai-planner-v54";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260802-ai-planner-v54";
-import { AIController } from "../ai/AIController.js?build=20260802-ai-planner-v54";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260802-ai-planner-v54";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260802-ai-planner-v54";
-import { Debug } from "../utils/debug.js?build=20260802-ai-planner-v54";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260802-ai-planner-v54";
-import { DyingSystem } from "./DyingSystem.js?build=20260802-ai-planner-v54";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260802-ai-planner-v54";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260802-ai-planner-v54";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260802-ai-planner-v54";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260802-ai-planner-v54";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260802-ai-action-guard-v55";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260802-ai-action-guard-v55";
+import { createId, clamp } from "../utils/helpers.js?build=20260802-ai-action-guard-v55";
+import { EventBus } from "./EventBus.js?build=20260802-ai-action-guard-v55";
+import { Player } from "./Player.js?build=20260802-ai-action-guard-v55";
+import { Deck } from "./Deck.js?build=20260802-ai-action-guard-v55";
+import { TeamManager } from "./TeamManager.js?build=20260802-ai-action-guard-v55";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260802-ai-action-guard-v55";
+import { RuleEngine } from "./RuleEngine.js?build=20260802-ai-action-guard-v55";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260802-ai-action-guard-v55";
+import { GameLogger } from "./GameLogger.js?build=20260802-ai-action-guard-v55";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260802-ai-action-guard-v55";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260802-ai-action-guard-v55";
+import { AIController } from "../ai/AIController.js?build=20260802-ai-action-guard-v55";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260802-ai-action-guard-v55";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260802-ai-action-guard-v55";
+import { Debug } from "../utils/debug.js?build=20260802-ai-action-guard-v55";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260802-ai-action-guard-v55";
+import { DyingSystem } from "./DyingSystem.js?build=20260802-ai-action-guard-v55";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260802-ai-action-guard-v55";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260802-ai-action-guard-v55";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260802-ai-action-guard-v55";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260802-ai-action-guard-v55";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -185,15 +185,53 @@ export class Game {
    */
   async runGameLoop() {
     const gameId = this.state.gameId;
-    this.log(`第${this.state.currentRound}轮开始。`, "important");
-    for (const player of this.state.players) player.resetRoundFlags();
-    await this.eventBus.emit("roundStart", { type: "roundStart", round: this.state.currentRound });
-    if (!this.isSessionValid(gameId)) return;
-    while (this.isSessionValid(gameId) && !this.state.isGameOver) {
-      const player = this.currentPlayer;
-      if (player?.alive) await this.takeTurn(player, gameId);
-      if (!this.isSessionValid(gameId) || this.state.isGameOver) break;
-      await this.advanceTurn();
+    let consecutiveTurnFailures = 0;
+    const failureLimit = 3;
+    try {
+      this.log(`第${this.state.currentRound}轮开始。`, "important");
+      for (const player of this.state.players) player.resetRoundFlags();
+      await this.eventBus.emit("roundStart", { type: "roundStart", round: this.state.currentRound });
+      if (!this.isSessionValid(gameId)) return;
+      while (this.isSessionValid(gameId) && !this.state.isGameOver) {
+        const player = this.currentPlayer;
+        if (!player || !this.state.players.some((entry) => entry.alive)) {
+          Debug.log("Game", "当前行动角色或存活角色状态无效，安全结束游戏循环");
+          break;
+        }
+        let turnFailed = false;
+        try {
+          if (player.alive) await this.takeTurn(player, gameId);
+        } catch (error) {
+          turnFailed = true;
+          consecutiveTurnFailures += 1;
+          Debug.log("Game", `${player.name}的回合执行失败，尝试推进至下一名存活角色`, error);
+          this.actionLocked = false;
+          this.interactionLocked = false;
+          this.ui.setThinking(false);
+          this.ui.cancelPendingInteractions?.();
+        }
+        if (!this.isSessionValid(gameId) || this.state.isGameOver) break;
+        if (turnFailed) {
+          if (consecutiveTurnFailures >= failureLimit) {
+            Debug.log("Game", `连续${failureLimit}个回合执行失败，安全结束游戏循环`);
+            break;
+          }
+          // 异常后至少让出一次任务，避免损坏状态形成无间隔快速失败循环。
+          if (!(await this.cleanupManager.delay(0))) break;
+        } else {
+          consecutiveTurnFailures = 0;
+        }
+        await this.advanceTurn();
+      }
+    } catch (error) {
+      // 最后一层只负责令 loopPromise 安全收束；单回合异常已在上方尝试继续推进。
+      Debug.log("Game", "游戏循环遇到无法恢复的异常，已安全停止", error);
+      this.actionLocked = false;
+      this.interactionLocked = false;
+      if (this.state.gameId === gameId && !this.state.isDisposed) {
+        this.ui.setThinking(false);
+        this.ui.cancelPendingInteractions?.();
+      }
     }
   }
 
@@ -267,61 +305,78 @@ export class Game {
 
   /** AI 先公开思考，再取样可清理等待，随后公开行动意图并执行。 */
   async takeAiPlayPhase(player, gameId) {
-    this.ui.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
-    this.ui.setThinking(true, player, "正在观察战场与可用资源");
-    let complexPosition = false;
-    try {
-      complexPosition = this.aiController.getLegalActions(player).length > GAME_CONFIG.aiBeamWidth;
-    } catch (error) {
-      Debug.log("AI", `${player.name}生成合法动作失败，安全结束出牌阶段`, error);
-      this.ui.setThinking(false);
-      this.ui.setPrompt(`${player.name}结束了出牌阶段。`);
-      return;
-    }
-    if (!(await this.cleanupManager.delay(getAiDelay(this, "initial", { complex:complexPosition })))) {
-      return;
-    }
     let queuedPlan = [];
-    for (let count = 0; count < GAME_CONFIG.aiMaxActionsPerTurn; count += 1) {
-      if (!this.isSessionValid(gameId) || this.state.isGameOver || !player.alive) break;
-      let searchElapsed = 0;
-      let action = null;
-      if (!this.aiReplanAfterEveryAction && queuedPlan.length) {
-        action = this.aiController.resolvePlannedAction(player, queuedPlan.shift());
-        if (!action) queuedPlan = [];
+    try {
+      this.ui.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
+      this.ui.setThinking(true, player, "正在观察战场与可用资源");
+      let complexPosition = false;
+      try {
+        complexPosition = this.aiController.getLegalActions(player).length > GAME_CONFIG.aiBeamWidth;
+      } catch (error) {
+        Debug.log("AI", `${player.name}生成合法动作失败，安全结束出牌阶段`, error);
+        return;
       }
-      if (!action) {
-        const searchStarted = globalThis.performance?.now?.() ?? Date.now();
+      if (!(await this.cleanupManager.delay(getAiDelay(this, "initial", { complex:complexPosition })))) return;
+      for (let count = 0; count < GAME_CONFIG.aiMaxActionsPerTurn; count += 1) {
+        if (!this.isSessionValid(gameId) || this.state.isGameOver || !player.alive) break;
+        let searchElapsed = 0;
+        let action = null;
+        if (!this.aiReplanAfterEveryAction && queuedPlan.length) {
+          action = this.aiController.resolvePlannedAction(player, queuedPlan.shift());
+          if (!action) queuedPlan = [];
+        }
+        if (!action) {
+          const searchStarted = globalThis.performance?.now?.() ?? Date.now();
+          try {
+            action = await this.aiController.selectAction(player, { gameId });
+          } catch (error) {
+            // 规划异常不能让回合 Promise 悬空；安全退化为结束出牌。
+            Debug.log("AI", `${player.name}规划行动失败，安全结束出牌阶段`, error);
+            action = { type:"end" };
+          }
+          if (!this.isSessionValid(gameId)) return;
+          searchElapsed = (globalThis.performance?.now?.() ?? Date.now()) - searchStarted;
+          if (!this.aiReplanAfterEveryAction) queuedPlan = this.aiController.planner.lastPlannedSequence.slice(1);
+        }
+        if (action.type === "end") {
+          this.ui.setPrompt(`${player.name}准备结束出牌阶段。`);
+          this.ui.setThinking(true, player, "正在收束回合");
+          await this.cleanupManager.delay(Math.max(0, getAiDelay(this, "end") - searchElapsed));
+          if (!this.isSessionValid(gameId)) return;
+          break;
+        }
+        const actionName = action.type === "card" ? `准备使用「${action.card.name}」` : `准备发动「${action.skill.name}」`;
+        const targetLabel = actionTargetLabel(this, player, action.type === "card" ? action.card : action.skill, action.targets, action.selection);
+        const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
+        this.ui.setThinking(true, player, actionDescription);
+        if (!(await this.cleanupManager.delay(Math.max(0, getAiDelay(this, "action") - searchElapsed)))) break;
+        this.ui.setThinking(false);
+        let executed = false;
         try {
-          action = await this.aiController.selectAction(player, { gameId });
+          if (action.type === "card") executed = await this.playCard(player, action.card, action.targets, action.selection ?? null);
+          else if (action.type === "skill") executed = await this.useActiveSkill(player, action.skill.id, action.targets);
         } catch (error) {
-          // 规划异常不能让回合 Promise 悬空；安全退化为结束出牌，并清除“观察战场”遮罩。
-          Debug.log("AI", `${player.name}规划行动失败，安全结束出牌阶段`, error);
-          action = { type:"end" };
+          Debug.log("AI", `${player.name}执行行动失败，安全结束出牌阶段`, error);
+          queuedPlan = [];
+          break;
+        }
+        // 陈旧动作或可预期移动失败同样结束本阶段，避免重复尝试同一实体。
+        if (!executed) {
+          queuedPlan = [];
+          break;
         }
         if (!this.isSessionValid(gameId)) return;
-        searchElapsed = (globalThis.performance?.now?.() ?? Date.now()) - searchStarted;
-        if (!this.aiReplanAfterEveryAction) queuedPlan = this.aiController.planner.lastPlannedSequence.slice(1);
       }
-      if (action.type === "end") {
-        this.ui.setPrompt(`${player.name}准备结束出牌阶段。`);
-        this.ui.setThinking(true, player, "正在收束回合");
-        await this.cleanupManager.delay(Math.max(0, getAiDelay(this, "end") - searchElapsed));
-        if (!this.isSessionValid(gameId)) return;
-        break;
+      if (this.isSessionValid(gameId) && !this.state.isGameOver) this.ui.setPrompt(`${player.name}结束了出牌阶段。`);
+    } finally {
+      queuedPlan = [];
+      if (this.state.gameId === gameId && !this.state.isDisposed) {
+        this.actionLocked = false;
+        this.interactionLocked = false;
+        this.ui.setThinking(false);
+        this.ui.render(this);
       }
-      const actionName = action.type === "card" ? `准备使用「${action.card.name}」` : `准备发动「${action.skill.name}」`;
-      const targetLabel = actionTargetLabel(this, player, action.type === "card" ? action.card : action.skill, action.targets, action.selection);
-      const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
-      this.ui.setThinking(true, player, actionDescription);
-      if (!(await this.cleanupManager.delay(Math.max(0, getAiDelay(this, "action") - searchElapsed)))) break;
-      this.ui.setThinking(false);
-      if (action.type === "card") await this.playCard(player, action.card, action.targets, action.selection ?? null);
-      else if (action.type === "skill") await this.useActiveSkill(player, action.skill.id, action.targets);
-      if (!this.isSessionValid(gameId)) return;
     }
-    this.ui.setThinking(false);
-    if (this.isSessionValid(gameId) && !this.state.isGameOver) this.ui.setPrompt(`${player.name}结束了出牌阶段。`);
   }
 
   /** 处理手牌上限；真人必须选择准确数量，电脑按价值自动弃置。 */
@@ -640,8 +695,10 @@ export class Game {
     const previousActionLocked = this.actionLocked;
     this.actionLocked = true;
     const resolutionId = `${this.state.gameId}:resolution:${++this.state.resolutionSerial}`;
+    let completed = false;
     try {
-      await this.moveHandToResolving(source, card);
+      const moved = await this.moveHandToResolving(source, card);
+      if (!moved) return false;
       if (!this.isSessionValid(gameId)) return false;
       const targetLabel = preparedTransfer
         ? `来源 ${preparedTransfer.publicContext.fromName} → 接收 ${preparedTransfer.publicContext.receiverName}`
@@ -717,12 +774,17 @@ export class Game {
       if (!this.isSessionValid(gameId)) return false;
       if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       this.ui.render(this);
+      completed = true;
       return true;
     } finally {
       if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       this.actionLocked = previousActionLocked;
+      if (!previousActionLocked && source.controllerType !== "human") {
+        this.interactionLocked = false;
+        if (this.ui.thinkingPlayerId != null) this.ui.setThinking(false);
+      }
       this.flushPendingHumanPlayEnd();
-      if (!previousActionLocked && !this.state.isGameOver && source.alive && source.controllerType === "human"
+      if (completed && !previousActionLocked && !this.state.isGameOver && source.alive && source.controllerType === "human"
         && this.currentPlayer?.id === source.id && this.state.phase === "play") {
         this.ui.setPrompt("继续出牌，或结束本次出牌阶段。", "选择一张可用手牌");
       }
@@ -755,6 +817,10 @@ export class Game {
       return true;
     } finally {
       this.actionLocked = false;
+      if (source.controllerType !== "human") {
+        this.interactionLocked = false;
+        if (this.ui.thinkingPlayerId != null) this.ui.setThinking(false);
+      }
       this.flushPendingHumanPlayEnd();
       if (!this.state.isGameOver && source.controllerType === "human" && this.state.phase === "play") {
         this.ui.setPrompt("技能结算完成，继续出牌或结束阶段。", "选择一张可用手牌");
@@ -1157,16 +1223,17 @@ export class Game {
   async moveHandToResolving(player, card) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return false;
-    const index = player.hand.indexOf(card);
-    if (index < 0) throw new Error("卡牌已不在手中");
+    if (player.hand.indexOf(card) < 0) return false;
     const move = { type: "beforeCardMove", card, from: "hand", to: "resolving", player, reason: "使用", cancelled: false };
     await this.eventBus.emit("beforeCardMove", move);
     if (!this.isSessionValid(gameId)) return false;
-    if (move.cancelled) throw new Error("卡牌移动被取消");
-    player.hand.splice(index, 1);
+    if (move.cancelled) return false;
+    // 移动事件可能改变手牌，提交前重新按实体引用确认；beginResolve 失败时手牌必须保持原状。
+    const currentIndex = player.hand.indexOf(card);
+    if (currentIndex < 0 || !this.state.deck.beginResolve(card)) return false;
+    player.hand.splice(currentIndex, 1);
     player.bumpHandVersion();
     this.invalidateCardKnowledge(card.id, player.id);
-    if (!this.state.deck.beginResolve(card)) throw new Error("卡牌重复进入结算区");
     this.syncDeckAliases();
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     return this.isSessionValid(gameId);

@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260802-ai-planner-v54";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260802-ai-action-guard-v55";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 const UNKNOWN_HAND_EXPECTED_VALUE = 4;
