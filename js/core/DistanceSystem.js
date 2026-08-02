@@ -1,5 +1,3 @@
-import { joinProbabilityStateBranches } from "../ai/AiProbabilityBranches.js?build=20260802-resource-branches-v57";
-
 /**
  * 实时存活座位环与攻击范围工具。只读取 Game/过滤快照中的公开座位和 alive；
  * 不修改状态、不缓存距离矩阵。视觉 seatIndex 只保存原始顺时针次序，阵亡后
@@ -22,9 +20,6 @@ export class DistanceSystem {
   }
 
   static getAliveRing(game) {
-    // AI partial-death snapshots keep any nonzero-survival player in this union ring.
-    // Actor/target legality is intersected with hpBranches; only intermediate-seat
-    // removal remains a documented conservative approximation to avoid enumerating rings.
     return game.state.players.filter((player) => player.alive).sort((a,b) => a.seatIndex - b.seatIndex);
   }
 
@@ -66,19 +61,10 @@ export class DistanceSystem {
         return;
       }
       if (forcedConditions.has(key) || variables.has(key)) return;
-      const stateBranches = Array.isArray(player.equipmentStateBranches) && player.equipmentStateBranches.length
-        ? player.equipmentStateBranches.map((branch) => {
-          const present = Boolean(branch.present && branch.definitionId === definitionId);
-          return {
-            probability:branch.probability,
-            conditions:{ ...branch.conditions, [key]:present ? "present" : "absent" }
-          };
-        })
-        : null;
       const probability = this.getEquipmentDefinitionId(player) === definitionId
         ? this.getEquipmentEffectProbability(player, definitionId)
         : 0;
-      variables.set(key, { player, definitionId, probability, stateBranches });
+      variables.set(key, { player, definitionId, probability });
     };
 
     for (const requirement of entries) {
@@ -92,11 +78,16 @@ export class DistanceSystem {
     let branches = [{ probability:1, conditions:Object.fromEntries(forcedConditions) }];
     for (const [key, variable] of variables) {
       const probability = Math.max(0, Math.min(1, Number(variable.probability) || 0));
-      const partition = variable.stateBranches ?? [
-        { probability, conditions:{ [key]:"present" } },
-        { probability:1 - probability, conditions:{ [key]:"absent" } }
-      ].filter((branch) => branch.probability > 0);
-      branches = joinProbabilityStateBranches(branches, partition);
+      const next = [];
+      if (probability > 0) for (const branch of branches) next.push({
+        probability:branch.probability * probability,
+        conditions:{ ...branch.conditions, [key]:"present" }
+      });
+      if (probability < 1) for (const branch of branches) next.push({
+        probability:branch.probability * (1 - probability),
+        conditions:{ ...branch.conditions, [key]:"absent" }
+      });
+      branches = next;
     }
 
     const isPresent = (conditions, player, definitionId) => (

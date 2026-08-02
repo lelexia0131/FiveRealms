@@ -22,9 +22,8 @@ export class AiEvaluator {
     let score = 0;
     for (const player of state.players) {
       const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
-      const aliveProbability = player.aliveProbability ?? (player.alive ? 1 : 0);
-      const death = -28 * (1 - aliveProbability);
-      const danger = aliveProbability > 0 && player.hp <= aliveProbability ? -7 * aliveProbability : 0;
+      const death = player.alive ? 0 : -28;
+      const danger = player.alive && player.hp <= 1 ? -7 : 0;
       const rescueOutlook = player.survivalChance === undefined ? 0 : (player.survivalChance - 0.5) * 8;
       // 只计模拟产生的期望装备变化；初始装备概率为1时增量为0，不扰动既有基础评分。
       const equipmentValue = player.equipmentDefinitionId ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7) : 0;
