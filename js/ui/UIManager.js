@@ -310,6 +310,13 @@ export class UIManager {
   }
 
   handlePlayerClick(event) {
+    // 技能详情点击优先于目标选择；打开/关闭详情都不改写当前 targetState。
+    const skillTrigger = event.target.closest("[data-skill-player-id]");
+    if (skillTrigger) {
+      const player = this.game?.state.players.find((entry) => entry.id === skillTrigger.dataset.skillPlayerId);
+      if (player) this.showSkillDetails(player, skillTrigger);
+      return;
+    }
     const panel = event.target.closest("[data-player-id]");
     if (!panel) return;
     if (this.targetState) {
@@ -328,10 +335,6 @@ export class UIManager {
       this.render(this.game);
       return;
     }
-    const skillTrigger = event.target.closest("[data-skill-player-id]");
-    if (!skillTrigger) return;
-    const player = this.game?.state.players.find((entry) => entry.id === skillTrigger.dataset.skillPlayerId);
-    if (player) this.showSkillDetails(player, skillTrigger);
   }
 
   showSkillDetails(player, trigger = null) {

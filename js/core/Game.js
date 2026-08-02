@@ -708,7 +708,7 @@ export class Game {
       if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       this.actionLocked = previousActionLocked;
       this.flushPendingHumanPlayEnd();
-      if (!previousActionLocked && !this.state.isGameOver && source.controllerType === "human"
+      if (!previousActionLocked && !this.state.isGameOver && source.alive && source.controllerType === "human"
         && this.currentPlayer?.id === source.id && this.state.phase === "play") {
         this.ui.setPrompt("继续出牌，或结束本次出牌阶段。", "选择一张可用手牌");
       }

@@ -87,15 +87,18 @@ export class AiSimulator {
         const willingness = Math.max(.08, Math.min(.97,
           .42 + equipmentValue * .04 + targetValue - friendlyFirePenalty - defenseRisk * .2
           - conserveAssaultPenalty));
+        const existenceProbability = this.getSimulatedEquipmentProbability(first);
         const useProbability = scale * assaultAvailable * willingness;
-        first.handCount = Math.max(0, first.handCount - useProbability);
-        first.expectedAssaultCount = Math.max(0, (first.expectedAssaultCount ?? 0) - useProbability);
-        this.simulateAssault(next, first, second, useProbability);
         const declineProbability = Math.max(0, scale - useProbability);
-        actor.handCount += declineProbability;
-        actor.expectedEquipmentGain = (actor.expectedEquipmentGain ?? 0) + equipmentValue * declineProbability;
-        const priorRetention = first.equipmentRetentionProbability ?? 1;
-        first.equipmentRetentionProbability = Math.max(0, priorRetention * (1 - declineProbability));
+        const effectiveUseProbability = existenceProbability * useProbability;
+        const effectiveDeclineProbability = existenceProbability * declineProbability;
+        first.handCount = Math.max(0, first.handCount - effectiveUseProbability);
+        first.expectedAssaultCount = Math.max(0, (first.expectedAssaultCount ?? 0) - effectiveUseProbability);
+        // 借势实际打出突袭的分支必然处于“指定装备仍存在”条件下，避免装备效果再次乘存在概率。
+        this.simulateAssault(next, first, second, effectiveUseProbability, { sourceEquipmentConditional:true });
+        actor.handCount += effectiveDeclineProbability;
+        actor.expectedEquipmentGain = (actor.expectedEquipmentGain ?? 0) + equipmentValue * effectiveDeclineProbability;
+        this.setSimulatedEquipment(first, first.equipmentDefinitionId, existenceProbability - effectiveDeclineProbability);
         break;
       }
       case "plunder":
@@ -120,12 +123,13 @@ export class AiSimulator {
       case "mutualBenefit": for (const player of next.players) if (player.alive) player.handCount += scale; break;
       case "symbiosis": for (const player of next.players) if (player.alive) this.healFrom(actor, player, scale); break;
       default:
-        if (card.category === "equipment") actor.equipmentDefinitionId = card.definitionId;
+        if (card.category === "equipment") this.setSimulatedEquipment(actor, card.definitionId, 1);
         break;
     }
-    if (card.category === "tactic" && actor.equipmentDefinitionId === "recycleDevice" && (actor.recycleDeviceUses ?? 0) < 2) {
-      actor.recycleDeviceUses = (actor.recycleDeviceUses ?? 0) + 1;
-      actor.handCount += 1;
+    const recycleProbability = this.getSimulatedEquipmentProbability(actor, "recycleDevice");
+    if (card.category === "tactic" && recycleProbability > 0 && (actor.recycleDeviceUses ?? 0) < 2) {
+      actor.recycleDeviceUses = (actor.recycleDeviceUses ?? 0) + recycleProbability;
+      actor.handCount += recycleProbability;
     }
     if (actor.generalId === "blade-walker" && actor.alive) {
       const category = card.category ?? CARD_DEFINITIONS[card.definitionId]?.category;
@@ -139,8 +143,25 @@ export class AiSimulator {
     return next;
   }
 
+  /** AI 模拟中装备定义与存在概率的唯一写入口；换装固定重置为完整的新装备。 */
+  setSimulatedEquipment(player, definitionId, probability = 1) {
+    const normalized = Math.max(0, Math.min(1, Number(probability) || 0));
+    if (!definitionId || normalized === 0) {
+      player.equipmentDefinitionId = null;
+      player.equipmentRetentionProbability = 0;
+      return;
+    }
+    player.equipmentDefinitionId = definitionId;
+    player.equipmentRetentionProbability = normalized;
+  }
+
+  getSimulatedEquipmentProbability(player, definitionId = null) {
+    if (!player?.equipmentDefinitionId || (definitionId && player.equipmentDefinitionId !== definitionId)) return 0;
+    return Math.max(0, Math.min(1, Number(player.equipmentRetentionProbability ?? 1) || 0));
+  }
+
   /** 普通突袭与借势响应共用的期望结算入口；概率仅缩放是否真正打出，防御和伤害仍走统一模拟。 */
-  simulateAssault(state, source, target, resolutionChance = 1) {
+  simulateAssault(state, source, target, resolutionChance = 1, options = {}) {
     const chance = Math.max(0, Math.min(1, resolutionChance));
     if (!chance || !source?.alive || !target?.alive) return 0;
     if (source.generalId === "trail-hunter" && target.battleTeam !== source.battleTeam) {
@@ -155,7 +176,12 @@ export class AiSimulator {
     const momentum = source.generalId === "blade-walker" ? (source.momentum ?? 0) : 0;
     const damageOutcome = {};
     const damage = 1 + (source.exposeWeaknessStacks ?? 0) + (source.assaultBonus ?? 0) + momentum;
-    this.applyDamage(state, source, target, damage * chance, { canBlock:true, deviceAttack:true, outcome:damageOutcome });
+    this.applyDamage(state, source, target, damage * chance, {
+      canBlock:true,
+      deviceAttack:true,
+      outcome:damageOutcome,
+      attackerEquipmentProbability:options.sourceEquipmentConditional ? 1 : undefined
+    });
     const lifeDamageChance = chance * (damageOutcome.lifeDamageChance ?? 0);
     source.exposeWeaknessStacks = (source.exposeWeaknessStacks ?? 0) * (1 - chance);
     source.assaultBonus = (source.assaultBonus ?? 0) * (1 - chance);
@@ -173,9 +199,11 @@ export class AiSimulator {
 
   takeResourceToHand(actor, target, scale = 1) {
     const takeEquipment = target.equipmentDefinitionId && ((target.handCount ?? 0) <= 0 || CARD_DEFINITIONS[target.equipmentDefinitionId]?.aiValue >= 7);
-    if (takeEquipment && scale >= .5) {
-      target.equipmentDefinitionId = null;
-      actor.handCount += scale;
+    if (takeEquipment) {
+      const existenceProbability = this.getSimulatedEquipmentProbability(target);
+      const transferProbability = existenceProbability * Math.max(0, Math.min(1, scale));
+      this.setSimulatedEquipment(target, target.equipmentDefinitionId, existenceProbability - transferProbability);
+      actor.handCount += transferProbability;
     } else {
       target.handCount = Math.max(0, (target.handCount ?? 0) - scale);
       actor.handCount += scale;
@@ -184,8 +212,11 @@ export class AiSimulator {
 
   destroyResource(target, scale = 1) {
     const destroyEquipment = target.equipmentDefinitionId && ((target.handCount ?? 0) <= 0 || CARD_DEFINITIONS[target.equipmentDefinitionId]?.aiValue >= 7);
-    if (destroyEquipment && scale >= .5) target.equipmentDefinitionId = null;
-    else target.handCount = Math.max(0, (target.handCount ?? 0) - scale);
+    if (destroyEquipment) {
+      const existenceProbability = this.getSimulatedEquipmentProbability(target);
+      this.setSimulatedEquipment(target, target.equipmentDefinitionId,
+        existenceProbability * (1 - Math.max(0, Math.min(1, scale))));
+    } else target.handCount = Math.max(0, (target.handCount ?? 0) - scale);
   }
 
   tacticResolutionChance(state, actor, card, targets = []) {
@@ -251,16 +282,14 @@ export class AiSimulator {
   /** 窃取所得资源只增加手牌；目标仅有装备时，模拟中明确移除装备且不替换施术者装备。 */
   stealResourceToHand(actor, target) {
     const handCount = Math.max(0, target.handCount ?? 0);
-    const hasEquipment = Boolean(target.equipmentDefinitionId);
-    const candidateCount = handCount + (hasEquipment ? 1 : 0);
-    if (!candidateCount) return;
-    actor.handCount = (actor.handCount ?? 0) + 1;
-    if (!handCount && hasEquipment) {
-      target.equipmentDefinitionId = null;
-      return;
-    }
-    // 混合候选用期望手牌损失表示；装备不会被错误赋给施术者或立即提供装备效果。
-    target.handCount = Math.max(0, handCount - handCount / candidateCount);
+    const existenceProbability = this.getSimulatedEquipmentProbability(target);
+    if (!handCount && !existenceProbability) return;
+    const equipmentLossProbability = existenceProbability / (handCount + 1);
+    const handLoss = handCount > 0 ? 1 - equipmentLossProbability : 0;
+    const gainProbability = handCount > 0 ? 1 : existenceProbability;
+    actor.handCount = (actor.handCount ?? 0) + gainProbability;
+    target.handCount = Math.max(0, handCount - handLoss);
+    this.setSimulatedEquipment(target, target.equipmentDefinitionId, existenceProbability - equipmentLossProbability);
   }
 
   applyDuel(state, actor, target, scale) {
@@ -278,27 +307,48 @@ export class AiSimulator {
       if (options.outcome) options.outcome.lifeDamageChance = 0;
       return 0;
     }
-    const requiresTwoBlocks = attacker.equipmentDefinitionId === "battleDevice";
-    const blockChance = options.canBlock ? (requiresTwoBlocks ? (target.twoBlockProbability ?? 0) : (target.blockProbability ?? 0)) : 0;
+    const battleProbability = attacker.equipmentDefinitionId === "battleDevice"
+      ? (options.attackerEquipmentProbability ?? this.getSimulatedEquipmentProbability(attacker, "battleDevice"))
+      : 0;
+    const normalBlockChance = target.blockProbability ?? 0;
+    const twoBlockChance = target.twoBlockProbability ?? 0;
+    const blockChance = options.canBlock
+      ? battleProbability * twoBlockChance + (1 - battleProbability) * normalBlockChance
+      : 0;
     let passChance = 1 - blockChance;
     let pending = amount * passChance;
     let directLoss = 0;
-    if (options.deviceAttack && target.equipmentDefinitionId === "defenseDevice") {
+    const defenseProbability = options.deviceAttack
+      ? this.getSimulatedEquipmentProbability(target, "defenseDevice")
+      : 0;
+    if (defenseProbability > 0) {
       const judgmentBlockChance = BLOCK_CARD_COUNT / TOTAL_CARD_COUNT;
       const otherBasicChance = OTHER_BASIC_CARD_COUNT / TOTAL_CARD_COUNT;
       const basicChance = BASIC_CARD_COUNT / TOTAL_CARD_COUNT;
       const equipmentChance = EQUIPMENT_CARD_COUNT / TOTAL_CARD_COUNT;
-      passChance = !options.canBlock
+      const normalRadarPass = !options.canBlock
         ? basicChance + equipmentChance
-        : requiresTwoBlocks
-          ? equipmentChance + judgmentBlockChance * (1 - (target.blockProbability ?? 0)) + otherBasicChance * (1 - (target.twoBlockProbability ?? 0))
-          : equipmentChance + otherBasicChance * (1 - (target.blockProbability ?? 0));
-      const responseChance = options.canBlock ? Math.max(0, basicChance - passChance) : 0;
-      target.handCount += basicChance;
-      target.handCount = Math.max(0, target.handCount - responseChance * (requiresTwoBlocks ? 2 : 1));
+        : equipmentChance + otherBasicChance * (1 - normalBlockChance);
+      const battleRadarPass = !options.canBlock
+        ? basicChance + equipmentChance
+        : equipmentChance + judgmentBlockChance * (1 - normalBlockChance) + otherBasicChance * (1 - twoBlockChance);
+      const radarPass = battleProbability * battleRadarPass + (1 - battleProbability) * normalRadarPass;
+      passChance = (1 - defenseProbability) * passChance + defenseProbability * radarPass;
+      const noRadarSpent = options.canBlock
+        ? battleProbability * twoBlockChance * 2 + (1 - battleProbability) * normalBlockChance
+        : 0;
+      const radarSpent = options.canBlock
+        ? battleProbability * Math.max(0, basicChance - battleRadarPass) * 2
+          + (1 - battleProbability) * Math.max(0, basicChance - normalRadarPass)
+        : 0;
+      target.handCount += defenseProbability * basicChance;
+      target.handCount = Math.max(0, target.handCount - (1 - defenseProbability) * noRadarSpent - defenseProbability * radarSpent);
       pending = amount * passChance;
     } else {
-      target.handCount = Math.max(0, target.handCount - blockChance * (requiresTwoBlocks ? 2 : 1));
+      const spent = options.canBlock
+        ? battleProbability * twoBlockChance * 2 + (1 - battleProbability) * normalBlockChance
+        : 0;
+      target.handCount = Math.max(0, target.handCount - spent);
     }
     if (options.outcome) options.outcome.lifeDamageChance = (target.shield ?? 0) < amount ? passChance : 0;
     const absorbed = Math.min(target.shield ?? 0, pending);

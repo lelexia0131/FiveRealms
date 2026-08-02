@@ -8,6 +8,13 @@ export class DistanceSystem {
     return player?.equipment?.definitionId ?? player?.equipmentDefinitionId ?? null;
   }
 
+  /** 真实角色没有概率字段，恒按1处理；AI 期望快照按装备仍存在的概率加权效果。 */
+  static getEquipmentEffectProbability(player, definitionId) {
+    if (this.getEquipmentDefinitionId(player) !== definitionId) return 0;
+    const probability = player?.equipmentRetentionProbability;
+    return probability == null ? 1 : Math.max(0, Math.min(1, Number(probability) || 0));
+  }
+
   static getAliveRing(game) {
     return game.state.players.filter((player) => player.alive).sort((a,b) => a.seatIndex - b.seatIndex);
   }
@@ -23,8 +30,8 @@ export class DistanceSystem {
     const counterClockwise = ring.length - clockwise;
     let distance = Math.min(clockwise, counterClockwise);
     // 望远镜是进攻方向修正；屏障是防御方向修正。距离最低保持为1。
-    if (this.getEquipmentDefinitionId(source) === "telescope") distance = Math.max(1, distance - 1);
-    if (this.getEquipmentDefinitionId(target) === "barrierDevice") distance += 1;
+    distance = Math.max(1, distance - this.getEquipmentEffectProbability(source, "telescope"));
+    distance += this.getEquipmentEffectProbability(target, "barrierDevice");
     return distance;
   }
 
