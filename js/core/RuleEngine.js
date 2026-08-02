@@ -82,7 +82,7 @@ export class RuleEngine {
     if (!source || !target || !target.alive) return false;
     if (source.id === target.id) return true;
     if (card?.ignoresDistance || card?.effectRange == null) return true;
-    return DistanceSystem.getDistance(game, source, target) <= card.effectRange;
+    return DistanceSystem.getRangeLegalityProbability(game, source, target, card.effectRange) > 0;
   }
 
   static getTransferSources(game, source, card, excludedCardIds = null) {
@@ -165,8 +165,8 @@ export class RuleEngine {
     else if (skillId === "symbiosis") candidates = alive.filter((player) => player.battleTeam === source.battleTeam && player.hp < player.maxHp);
     else if (skillId === "stealSkill") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && this.hasHandOrEquipment(player));
     else if (skillId === "hunt") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && player.statuses.huntMark?.sourceId === source.id);
-    if (skill.rangeRule === "attack") return candidates.filter((target) => DistanceSystem.getDistance(game, source, target) <= source.attackRange);
-    if (skill.rangeRule === "fixed") return candidates.filter((target) => DistanceSystem.getDistance(game, source, target) <= skill.range);
+    if (skill.rangeRule === "attack") return candidates.filter((target) => DistanceSystem.getRangeLegalityProbability(game, source, target, source.attackRange) > 0);
+    if (skill.rangeRule === "fixed") return candidates.filter((target) => DistanceSystem.getRangeLegalityProbability(game, source, target, skill.range) > 0);
     if (["unlimited", "ally"].includes(skill.rangeRule)) return candidates;
     return skill.rangeRule === "self" && candidates.includes(source) ? [source] : [];
   }

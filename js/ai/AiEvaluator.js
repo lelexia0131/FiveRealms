@@ -29,8 +29,13 @@ export class AiEvaluator {
       const equipmentValue = player.equipmentDefinitionId ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7) : 0;
       const equipmentDelta = equipmentValue * ((player.equipmentRetentionProbability ?? (equipmentValue ? 1 : 0)) - (equipmentValue ? 1 : 0))
         + (player.expectedEquipmentGain ?? 0);
+      const markThreat = Object.entries(player.huntMarkProbabilities ?? {}).reduce((sum, [sourceId, probability]) => {
+        const source = state.players.find((entry) => entry.id === sourceId);
+        return sum + (source?.battleTeam !== player.battleTeam ? Number(probability) || 0 : 0);
+      }, 0);
       score += sign * (death + danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * 1.2
-        + player.handCount * 1.1 + (player.exposeWeaknessStacks ?? 0) * 1.5 + equipmentDelta * .25);
+        + player.handCount * 1.1 + (player.exposeWeaknessStacks ?? 0) * 1.5 + equipmentDelta * .25
+        + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5);
     }
     return score;
   }
@@ -86,21 +91,7 @@ export class AiEvaluator {
     if (card.definitionId === "exposeWeakness") value += (actor.hand ?? []).filter((entry) => entry.definitionId === "assault").length * 2;
     if (card.definitionId === "shockwave") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam && enemy.hp <= 1).length * 7;
     if (card.definitionId === "provoke") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam).reduce((sum, enemy) => sum + (1 - (enemy.assaultResponseProbability ?? 0)) * 3, 0);
-    if (card.definitionId === "leverage") {
-      const firstActionTarget = action.targets?.[0];
-      const secondActionTarget = action.targets?.[1];
-      const first = visible.players.find((entry) => entry.id === firstActionTarget?.id) ?? firstActionTarget;
-      const second = visible.players.find((entry) => entry.id === secondActionTarget?.id) ?? secondActionTarget;
-      const equipmentId = first?.equipmentDefinitionId ?? first?.equipment?.definitionId;
-      const equipmentValue = Number(equipmentId ? (CARD_DEFINITIONS[equipmentId]?.aiValue ?? first?.equipment?.aiValue ?? 7) : 0);
-      const hasUsage = Number(first?.attackUsed ?? 0) < Number(first?.attackLimit ?? 0);
-      const assaultProbability = hasUsage ? Math.max(0, Math.min(1, first?.assaultResponseProbability ?? 0)) : 0;
-      const attackSwing = second?.battleTeam === actor.battleTeam
-        ? -10 - (second?.hp <= 2 ? 5 : 0)
-        : 6 + (second?.hp <= 2 ? 4 : 0);
-      const equipmentSwing = equipmentValue * (first?.battleTeam === actor.battleTeam ? -.35 : 1.25);
-      value += assaultProbability * attackSwing + (1 - assaultProbability) * equipmentSwing;
-    }
+    // 借势造成的伤害、手牌与装备变化已经由 AiSimulator 写入后继状态，统一交给 stateUtility 计分。
     if (card.definitionId === "duel" && target) value += ((actor.expectedAssaultCount ?? 0) - (target.expectedAssaultCount ?? 0)) * 2;
     if (card.definitionId === "transfer") value += Number(action.selection?.score ?? 0);
     if (card.definitionId === "symbiosis") {

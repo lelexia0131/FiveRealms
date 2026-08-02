@@ -78,6 +78,10 @@ export function createAiVisibleState(viewerId, state) {
       recoverLimit: player.turnFlags.recoverLimit,
       momentum: player.turnFlags.momentum ?? 0,
       categoriesUsed: [...(player.turnFlags.categoriesUsed ?? [])],
+      categoryUsedProbabilities: Object.fromEntries(["basic","tactic","equipment"]
+        .map((category) => [category, player.turnFlags.categoriesUsed?.has(category) ? 1 : 0])),
+      guardianAidUsedProbability: player.roundFlags.guardianAidUsed ? 1 : 0,
+      spyGapTriggeredProbability: player.turnFlags.spyGapTriggered ? 1 : 0,
       rejuvenationUsed: Boolean(player.turnFlags.rejuvenationUsed),
       exposeWeaknessStacks: player.statuses.exposeWeakness?.stacks ?? 0,
       assaultBonus: player.statuses.allIn?.assaultBonus ?? 0,
@@ -88,7 +92,13 @@ export function createAiVisibleState(viewerId, state) {
       activeSkillUsed: (player.turnFlags.activeSkillUseCounts?.[player.general.activeSkillIds[0]] ?? 0) >= (player.general.activeLimitPerTurn ?? 1),
       recycleDeviceUses: player.turnFlags.recycleDeviceUses ?? 0,
       trackingTargetIds: [...(player.turnFlags.trackingTargetIds ?? [])],
+      trackingUses: player.turnFlags.trackingTargetIds?.size ?? 0,
       huntMarkSourceId: player.statuses.huntMark?.sourceId ?? null,
+      huntMarkProbability: player.statuses.huntMark ? 1 : 0,
+      huntMarkProbabilities: player.statuses.huntMark
+        ? { [player.statuses.huntMark.sourceId]:1 }
+        : {},
+      expectedInformationGain: 0,
       alive: player.alive,
       handCount: player.hand.length,
       hand: player.id === viewerId ? player.hand.map((card) => ({ id: card.id, definitionId: card.definitionId })) : undefined,

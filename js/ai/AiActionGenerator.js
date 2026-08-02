@@ -6,6 +6,7 @@ import { RuleEngine } from "../core/RuleEngine.js?build=20260801-hunter-tracking
 import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260801-hunter-tracking-v53";
 import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-hunter-tracking-v53";
 import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260801-hunter-tracking-v53";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260801-hunter-tracking-v53";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -79,10 +80,17 @@ export class AiActionGenerator {
     for (const held of actor.hand ?? []) {
       const definition = CARD_DEFINITIONS[held.definitionId];
       if (!definition || definition.usageMode === "response") continue;
-      const card = { ...definition, id:held.id };
+      const card = { ...definition, ...held, id:held.id };
       if (card.definitionId === "assault") {
         if (actor.attackUsed >= actor.attackLimit) continue;
-        for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) actions.push({ type:"card", card, targets:[target] });
+        for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) {
+          const rangeDependencyKey = `assault:${target.id}`;
+          if (card.unavailableRangeDependencyKeys?.includes(rangeDependencyKey)) continue;
+          const rangeProbability = DistanceSystem.getRangeLegalityProbability(simulationGame, actor, target, actor.attackRange ?? 1);
+          if (rangeProbability > 0) actions.push({
+            type:"card", card, targets:[target], conditionalExecutionProbability:rangeProbability, rangeDependencyKey
+          });
+        }
         continue;
       }
       if (card.definitionId === "recover" && (actor.hp >= actor.maxHp || (actor.recoverLimit !== null && actor.recoverUsed >= actor.recoverLimit))) continue;
@@ -98,15 +106,26 @@ export class AiActionGenerator {
           && (firstTarget.equipmentRetentionProbability ?? 1) > 0
           && RuleEngine.getAssaultTargetCandidates(simulationGame, firstTarget).length > 0);
         for (const firstTarget of firstTargets) {
+          const equipmentDependencyKey = `${firstTarget.id}:${firstTarget.equipmentDefinitionId}`;
+          if (card.unavailableLeverageEquipmentKeys?.includes(equipmentDependencyKey)) continue;
+          const equipmentProbability = Math.max(0, Math.min(1, firstTarget.equipmentRetentionProbability ?? 1));
           for (const secondTarget of RuleEngine.getAssaultTargetCandidates(simulationGame, firstTarget)) {
+            const rangeProbabilityGivenEquipment = DistanceSystem.getRangeLegalityProbability(
+              simulationGame, firstTarget, secondTarget, firstTarget.attackRange ?? 1,
+              { sourceEquipmentPresent:true }
+            );
+            const conditionalExecutionProbability = equipmentProbability * rangeProbabilityGivenEquipment;
+            if (conditionalExecutionProbability <= 0) continue;
             actions.push({
               type:"card",
               card,
               targets:[firstTarget, secondTarget],
+              conditionalExecutionProbability,
               selection:{
                 firstTargetId:firstTarget.id,
                 equipmentCardId:null,
                 equipmentDefinitionId:firstTarget.equipmentDefinitionId,
+                equipmentDependencyKey,
                 secondTargetId:secondTarget.id
               }
             });
@@ -138,6 +157,13 @@ export class AiActionGenerator {
       else for (const target of targets) actions.push({ type:"skill", skill, targets:[target] });
     }
     actions.push({ type:"end" });
-    return actions;
+    return actions.map((action) => {
+      if (action.type !== "card") return action;
+      const cardProbability = Math.max(0, Math.min(1, action.card?.retentionProbability ?? 1));
+      return {
+        ...action,
+        executionProbability:cardProbability * (action.conditionalExecutionProbability ?? 1)
+      };
+    });
   }
 }

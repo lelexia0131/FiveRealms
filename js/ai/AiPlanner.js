@@ -55,6 +55,12 @@ export class AiPlanner {
       if (action.card?.category === "tactic") return -hiddenWorlds.filter((world) => Object.values(world).some((hand) => hand.includes("counter"))).length / hiddenWorlds.length;
       return 0;
     };
+    const transitionScore = (action, beforeState, afterState, depth = 1) => {
+      const executionProbability = action.executionProbability ?? 1;
+      const immediate = (this.evaluator.actionUtility(action, player, beforeState) + hiddenAdjustment(action))
+        * executionProbability;
+      return (immediate + this.evaluator.stateUtility(afterState, player.id) * 0.08) / depth;
+    };
     const rootActionsWithinBudget = nodeBudget === null ? rootActions : rootActions.slice(0, nodeBudget);
     let beam = rootActionsWithinBudget.map((action) => {
       const state = simulator.apply(visibleState, action, player.id);
@@ -62,7 +68,8 @@ export class AiPlanner {
         action,
         state,
         terminal:Boolean(state.playPhaseEnded),
-        score:this.evaluator.actionUtility(action, player, visibleState) + hiddenAdjustment(action),
+        // 根节点也必须看到模拟后的伤害、装备和资源变化，否则第一次束裁剪会丢掉真正优质的动作。
+        score:transitionScore(action, visibleState, state),
         sequence:[action]
       };
     });
@@ -88,7 +95,7 @@ export class AiPlanner {
           if (limitReached()) break;
           if (follow.card?.definitionId === "assault" && !rootAssaultTargets.has(follow.targets?.[0]?.id)) discoveredDynamicTarget = true;
           const state = simulator.apply(node.state, follow, player.id);
-          const score = node.score + this.evaluator.actionUtility(follow, player, node.state) / depth + this.evaluator.stateUtility(state, player.id) * 0.08 / depth;
+          const score = node.score + transitionScore(follow, node.state, state, depth);
           candidates.push({
             action:node.action,
             state,
