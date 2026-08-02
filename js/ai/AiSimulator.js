@@ -37,6 +37,7 @@ export class AiSimulator {
     actor.hand = (actor.hand ?? []).filter((entry) => entry.id !== card.id);
     actor.handCount = Math.max(0, (actor.handCount ?? 0) - 1);
     const scale = card.counterScope === "target" ? 1 : this.tacticResolutionChance(next, actor, card, abstractAction.targets ?? []);
+    let assaultLifeDamageChance = null;
 
     switch (card.definitionId) {
       case "recover":
@@ -61,7 +62,7 @@ export class AiSimulator {
           const momentum = actor.generalId === "blade-walker" ? (actor.momentum ?? 0) : 0;
           const damageOutcome = {};
           if (target) this.applyDamage(next, actor, target, 1 + (actor.exposeWeaknessStacks ?? 0) + (actor.assaultBonus ?? 0) + momentum, { canBlock:true, deviceAttack:true, outcome:damageOutcome });
-          if (damageOutcome.lifeDamageChance > 0 && momentum > 0) actor.momentum *= 1 - damageOutcome.lifeDamageChance;
+          assaultLifeDamageChance = damageOutcome.lifeDamageChance ?? 0;
         }
         actor.exposeWeaknessStacks = 0;
         actor.assaultBonus = 0;
@@ -114,9 +115,14 @@ export class AiSimulator {
     if (actor.generalId === "blade-walker" && actor.alive) {
       const category = card.category ?? CARD_DEFINITIONS[card.definitionId]?.category;
       actor.categoriesUsed ??= [];
-      if (category && !actor.categoriesUsed.includes(category)) {
-        actor.categoriesUsed.push(category);
-        actor.momentum = Math.min(GAME_CONFIG.momentumMaxStacks, (actor.momentum ?? 0) + 1);
+      const gainsMomentum = category && !actor.categoriesUsed.includes(category) ? 1 : 0;
+      if (gainsMomentum) actor.categoriesUsed.push(category);
+      if (assaultLifeDamageChance !== null) {
+        const hitMomentum = Math.min(GAME_CONFIG.momentumMaxStacks, gainsMomentum);
+        const missMomentum = Math.min(GAME_CONFIG.momentumMaxStacks, (actor.momentum ?? 0) + gainsMomentum);
+        actor.momentum = hitMomentum * assaultLifeDamageChance + missMomentum * (1 - assaultLifeDamageChance);
+      } else if (gainsMomentum) {
+        actor.momentum = Math.min(GAME_CONFIG.momentumMaxStacks, (actor.momentum ?? 0) + gainsMomentum);
       }
     }
     return next;

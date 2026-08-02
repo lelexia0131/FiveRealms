@@ -877,6 +877,19 @@ test("AI 刃行者突袭部分命中时按生命伤害概率消耗连势", () =>
   const shielded=new AiSimulator(shieldedState).apply(shieldedState,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
   assert.equal(shielded.players[1].hp,4);assert.equal(shielded.players[0].momentum,1);
 });
+test("AI 刃行者首次使用基础牌的连势按突袭命中分支计算期望", () => {
+  const state={players:[
+    {id:"blade",seatIndex:0,generalId:"blade-walker",battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,momentum:2,categoriesUsed:["tactic"],expectedRecoverCount:0},
+    {id:"target",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,alive:true,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0}
+  ]};
+  const action={type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]};
+  const partial=new AiSimulator(state).apply(state,action,"blade");
+  assert.equal(partial.players[0].momentum,1.5);assert.deepEqual(partial.players[0].categoriesUsed,["tactic","basic"]);
+  const hitState=structuredClone(state);hitState.players[1].blockProbability=0;
+  assert.equal(new AiSimulator(hitState).apply(hitState,action,"blade").players[0].momentum,1);
+  const missState=structuredClone(state);missState.players[1].blockProbability=1;
+  assert.equal(new AiSimulator(missState).apply(missState,action,"blade").players[0].momentum,2);
+});
 test("AI 固定节点预算达到上限后返回当前最佳动作且不再按时间截断", async () => {
   const actor=makePlayer("node-budget-actor",0,"dawn"),enemy=makePlayer("node-budget-enemy",1,"dusk");actor.hand.push(instance("charge"),instance("exposeWeakness"),instance("assault"));
   const {game}=makeGame([actor,enemy]);game.aiSearchNodeBudgetOverride=5;game.aiSearchBudgetOverrideMs=0;
