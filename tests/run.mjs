@@ -985,7 +985,7 @@ test("AI 刃行者突袭部分命中时按生命伤害概率消耗连势", () =>
   assert.equal(next.players[1].hp,2.5);assert.equal(next.players[0].momentum,1);
   const shieldedState=structuredClone(state);shieldedState.players[1].shield=2;
   const shielded=new AiSimulator(shieldedState).apply(shieldedState,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
-  assert.equal(shielded.players[1].hp,4);assert.equal(shielded.players[0].momentum,1);
+  assert.equal(shielded.players[1].hp,3.5);assert.equal(shielded.players[0].momentum,1);
 });
 test("AI 刃行者首次使用基础牌的连势按突袭命中分支计算期望", () => {
   const state={players:[
@@ -2055,6 +2055,110 @@ test("部分概率攻击额外缩放雷达得牌、格挡消耗与最终伤害",
     radarJudgmentProbabilities:{block:0,otherBasic:1,equipment:0}
   });
   assertClose(state.players[1].hp,3.8);assertClose(state.players[1].handCount,1.2);
+});
+
+const conditionalAssaultState = (attackLimit) => ({ playPhaseEnded:false, players:[
+  {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,maxEnergy:4,handCount:2,hand:[{id:"one",definitionId:"assault"},{id:"two",definitionId:"assault"}],attackUsed:0,attackLimit,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4},
+  {id:"middle",seatIndex:1,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0},
+  {id:"far",seatIndex:2,battleTeam:"dusk",alive:true,hp:8,maxHp:8,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+  {id:"near",seatIndex:3,battleTeam:"dusk",alive:true,hp:8,maxHp:8,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0}
+] });
+
+test("概率突袭次数槽阻止两张牌重复消费同一望远镜世界", () => {
+  const state=conditionalAssaultState(1),{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const first=game.aiController.actionGenerator.generateFromVisible(state,"actor").find((action)=>action.card?.id==="one"&&action.targets[0]?.id==="far");
+  assertClose(first.executionProbability,.4);
+  const once=new AiSimulator(state).apply(state,first,"actor"),follow=game.aiController.actionGenerator.generateFromVisible(once,"actor");
+  assertClose(once.players[0].attackUsed,.4);
+  assert.ok(!follow.some((action)=>action.card?.id==="two"&&action.targets[0]?.id==="far"));
+  assertClose(follow.find((action)=>action.card?.id==="one"&&action.targets[0]?.id==="near").executionProbability,.6);
+});
+
+test("两个概率突袭次数槽可在同一望远镜世界各消费一次", () => {
+  const state=conditionalAssaultState(2),{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const first=game.aiController.actionGenerator.generateFromVisible(state,"actor").find((action)=>action.card?.id==="one"&&action.targets[0]?.id==="far");
+  const once=new AiSimulator(state).apply(state,first,"actor");
+  const second=game.aiController.actionGenerator.generateFromVisible(once,"actor").find((action)=>action.card?.id==="two"&&action.targets[0]?.id==="far");
+  assertClose(second.executionProbability,.4);assert.notEqual(second.attackUseSlot,first.attackUseSlot);
+  const twice=new AiSimulator(once).apply(once,second,"actor");assertClose(twice.players[0].attackUsed,.8);
+});
+
+test("借势强制突袭复用真实次数槽且震荡不消费次数槽", () => {
+  const leverageState={players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"l1",definitionId:"leverage"},{id:"l2",definitionId:"leverage"}],counterProbability:0},
+    {id:"first",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:2,attackUsed:0,attackLimit:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:2,blockProbability:0,counterProbability:0},
+    {id:"second",seatIndex:2,battleTeam:"dawn",alive:true,hp:8,maxHp:8,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0}
+  ]},simulator=new AiSimulator(leverageState),action=(id)=>({type:"card",card:{...CARD_DEFINITIONS.leverage,id},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}}),once=simulator.apply(leverageState,action("l1"),"actor"),twice=simulator.apply(once,action("l2"),"actor");
+  assert.ok(once.players[1].attackUsed>0&&once.players[1].attackUsed<1);assert.ok(twice.players[1].attackUsed>once.players[1].attackUsed&&twice.players[1].attackUsed<=1);
+
+  const shockState={players:[{id:"source",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"shock",definitionId:"shockwave"},{id:"hit",definitionId:"assault"}],attackUsed:0,attackLimit:1,counterProbability:0},{id:"enemy",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0,expectedRecoverCount:0}]};
+  const shocked=new AiSimulator(shockState).apply(shockState,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"shock"},targets:[{id:"enemy"}]},"source");assertClose(shocked.players[0].attackUsed,0);
+  const assaulted=new AiSimulator(shocked).apply(shocked,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"enemy"}]},"source");assertClose(assaulted.players[0].attackUsed,1);
+});
+
+test("概率破军只在发动世界新增可用突袭次数槽", () => {
+  const shared="break-army-energy",state={playPhaseEnded:false,players:[
+    {id:"blade",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:.8,maxEnergy:4,energyBranches:[{probability:.4,conditions:{[shared]:"yes"},amount:2},{probability:.6,conditions:{[shared]:"no"},amount:0}],handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:1,attackLimit:1,attackRange:1,activeSkillId:"breakArmy",activeSkillUses:0,activeSkillLimit:1},
+    {id:"enemy",seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0}
+  ]},{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const skill=game.aiController.actionGenerator.generateFromVisible(state,"blade").find((action)=>action.skill?.id==="breakArmy");assertClose(skill.executionProbability,.4);
+  const boosted=new AiSimulator(state).apply(state,skill,"blade");assertClose(boosted.players[0].attackLimit,1.4);
+  const assault=game.aiController.actionGenerator.generateFromVisible(boosted,"blade").find((action)=>action.card?.id==="hit");assertClose(assault.executionProbability,.4);
+});
+
+test("概率伤害先逐世界结算护盾再汇总期望", () => {
+  const run=({amount,eventProbability,shield,blockProbability=0})=>{const state={players:[
+    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield,handCount:blockProbability?1:0,blockProbability,twoBlockProbability:0,expectedRecoverCount:0}
+  ]};const simulator=new AiSimulator(state),outcome={},damage=simulator.applyDamage(state,state.players[0],state.players[1],amount,{canBlock:blockProbability>0,eventProbability,outcome});return {state,target:state.players[1],damage,outcome};};
+  let result=run({amount:2,eventProbability:.4,shield:1});assertClose(result.target.shield,.6);assertClose(result.target.hp,3.6);assertClose(result.damage,.4);assertClose(result.outcome.lifeDamageChance,.4);
+  result=run({amount:1,eventProbability:.4,shield:1});assertClose(result.target.shield,.6);assertClose(result.target.hp,4);
+  result=run({amount:2,eventProbability:.4,shield:2});assertClose(result.target.shield,1.2);assertClose(result.target.hp,4);
+  result=run({amount:2,eventProbability:.4,shield:1,blockProbability:.5});assertClose(result.target.shield,.8);assertClose(result.target.hp,3.8);assertClose(result.target.handCount,.8);assertClose(result.outcome.lifeDamageChance,.2);
+  result=run({amount:3,eventProbability:1,shield:2});assertClose(result.target.shield,0);assertClose(result.target.hp,3);assertClose(result.outcome.lifeDamageChance,1);
+});
+
+test("连续概率伤害不会重复使用已消耗的护盾分支", () => {
+  const state={players:[{id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},{id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:1,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0}]},simulator=new AiSimulator(state);
+  const first=simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:false,eventProbability:.4});
+  const second=simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:false,eventProbability:.4});
+  assertClose(first,0);assertClose(second,.16);assertClose(state.players[1].shield,.36);assertClose(state.players[1].hp,3.84);
+});
+
+const conditionalHuntState = (secondMarkBranches) => ({playPhaseEnded:false,players:[
+  {id:"hunter",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,maxEnergy:4,handCount:0,hand:[],activeSkillId:"hunt",activeSkillUses:0,activeSkillLimit:2},
+  {id:"marked-a",seatIndex:1,battleTeam:"dusk",alive:true,hp:6,maxHp:6,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkProbabilities:{hunter:.4},huntMarkStateBranchesBySource:{hunter:[{probability:.4,conditions:{shared:"yes"},marked:true},{probability:.6,conditions:{shared:"no"},marked:false}]},statuses:[],expectedRecoverCount:0},
+  {id:"marked-b",seatIndex:2,battleTeam:"dusk",alive:true,hp:6,maxHp:6,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkProbabilities:{hunter:secondMarkBranches.filter((branch)=>branch.marked).reduce((sum,branch)=>sum+branch.probability,0)},huntMarkStateBranchesBySource:{hunter:secondMarkBranches},statuses:[],expectedRecoverCount:0}
+]});
+
+test("能量分支让后续技能只在仍有足够能量的世界生成", () => {
+  const state=conditionalHuntState([{probability:1,conditions:{},marked:true}]),{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const first=game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-a");
+  const once=new AiSimulator(state).apply(state,first,"hunter"),energy=once.players[0].energyBranches;
+  assertClose(energy.filter((branch)=>branch.amount===0).reduce((sum,branch)=>sum+branch.probability,0),.4);assertClose(once.players[0].energy,1.2);
+  const second=game.aiController.actionGenerator.generateFromVisible(once,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-b");assertClose(second.executionProbability,.6);
+  const twice=new AiSimulator(once).apply(once,second,"hunter");assertClose(twice.players[0].energy,0);assertClose(twice.players[0].activeSkillUses,1);
+});
+
+test("完全重叠与互斥猎印分别阻止和允许复用同一份能量", () => {
+  const {game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]),firstMark=(state)=>game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-a");
+  const overlapping=conditionalHuntState([{probability:.4,conditions:{shared:"yes"},marked:true},{probability:.6,conditions:{shared:"no"},marked:false}]);
+  const overlapOnce=new AiSimulator(overlapping).apply(overlapping,firstMark(overlapping),"hunter");assert.ok(!game.aiController.actionGenerator.generateFromVisible(overlapOnce,"hunter").some((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-b"));
+  const exclusive=conditionalHuntState([{probability:.4,conditions:{shared:"yes"},marked:false},{probability:.6,conditions:{shared:"no"},marked:true}]);
+  const exclusiveOnce=new AiSimulator(exclusive).apply(exclusive,firstMark(exclusive),"hunter"),second=game.aiController.actionGenerator.generateFromVisible(exclusiveOnce,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-b");assertClose(second.executionProbability,.6);
+});
+
+test("概率获得能量与孤注均按各自世界的实际能量结算", () => {
+  const shared="charge-world",state={playPhaseEnded:false,players:[
+    {id:"hunter",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:1,maxEnergy:4,handCount:1,hand:[{id:"charge",definitionId:"charge",availabilityBranches:[{probability:.4,conditions:{[shared]:"yes"}}],availabilityStateBranches:[{probability:.4,conditions:{[shared]:"yes"},available:true},{probability:.6,conditions:{[shared]:"no"},available:false}]}],activeSkillId:"hunt",activeSkillUses:0,activeSkillLimit:2},
+    {id:"marked",seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkProbabilities:{hunter:1},huntMarkStateBranchesBySource:{hunter:[{probability:1,conditions:{},marked:true}]},statuses:[],expectedRecoverCount:0}
+  ]},{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const charge=game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.card?.id==="charge"),charged=new AiSimulator(state).apply(state,charge,"hunter");
+  const hunt=game.aiController.actionGenerator.generateFromVisible(charged,"hunter").find((action)=>action.skill?.id==="hunt");assertClose(hunt.executionProbability,.4);
+
+  const allInState={players:[{id:"gambler",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:1.2,maxEnergy:4,energyBranches:[{probability:.4,conditions:{rich:"yes"},amount:3},{probability:.6,conditions:{rich:"no"},amount:0}],handCount:0,activeSkillUses:0,activeSkillLimit:1}]};
+  const allInWorlds=[{probability:.4,conditions:{rich:"yes"},executes:true},{probability:.6,conditions:{rich:"no"},executes:false}],allIn=new AiSimulator(allInState).apply(allInState,{type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[],executionProbability:.4,executionWorldBranches:allInWorlds},"gambler");
+  assertClose(allIn.players[0].handCount,1.2);assertClose(allIn.players[0].energy,0);
 });
 
 let passed = 0;

@@ -2,18 +2,23 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260802-probability-branches-v56";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260802-probability-branches-v56";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260802-probability-branches-v56";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260802-probability-branches-v56";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260802-probability-branches-v56";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260802-resource-branches-v57";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260802-resource-branches-v57";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260802-resource-branches-v57";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260802-resource-branches-v57";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260802-resource-branches-v57";
 import {
+  PROBABILITY_EPSILON,
+  availableBranchesFromState,
   binaryConditionPartition,
-  getAvailabilityBranches,
+  getAvailabilityStateBranches,
+  getValueBranches,
   huntMarkConditionKey,
-  partitionAvailabilityBranches,
+  joinProbabilityStateBranches,
+  mergeProbabilityBranches,
+  projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260802-probability-branches-v56";
+} from "./AiProbabilityBranches.js?build=20260802-resource-branches-v57";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -89,7 +94,6 @@ export class AiActionGenerator {
       if (!definition || definition.usageMode === "response") continue;
       const card = { ...definition, ...held, id:held.id };
       if (card.definitionId === "assault") {
-        if (actor.attackUsed >= actor.attackLimit) continue;
         for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) {
           actions.push({ type:"card", card, targets:[target] });
         }
@@ -136,16 +140,22 @@ export class AiActionGenerator {
       else actions.push({ type:"card", card, targets:["allEnemies","allLiving"].includes(card.targetType) ? (card.targetType === "allEnemies" ? enemies : alive) : [] });
     }
     const skill = ACTIVE_SKILLS[actor.activeSkillId];
-    if (skill && !actor.activeSkillUsed && actor.energy >= skill.cost && !(skill.id === "allIn" && actor.assaultBonus)) {
+    if (skill && !(skill.id === "allIn" && (actor.assaultBonus ?? 0) >= 1 - PROBABILITY_EPSILON)) {
       const friendlies = alive.filter((player) => player.battleTeam === actor.battleTeam);
       const allies = friendlies.filter((player) => player.id !== actor.id);
       let targets = [];
       if (["barrier","resonance"].includes(skill.id)) targets = allies;
       else if (skill.id === "symbiosis") targets = friendlies.filter((player) => player.hp < player.maxHp);
       else if (skill.id === "stealSkill") targets = RuleEngine.getSkillTargets(simulationGame, actor, skill);
-      else if (skill.id === "hunt") targets = enemies.filter((player) => Math.max(0, Math.min(1, Number(
-        player.huntMarkProbabilities?.[actor.id] ?? (player.huntMarkSourceId === actor.id ? 1 : 0)
-      ) || 0)) > 0);
+      else if (skill.id === "hunt") targets = enemies.filter((player) => {
+        const markBranches = player.huntMarkStateBranchesBySource?.[actor.id];
+        if (Array.isArray(markBranches)) {
+          return totalBranchProbability(markBranches.filter((branch) => branch.marked)) > PROBABILITY_EPSILON;
+        }
+        return Math.max(0, Math.min(1, Number(
+          player.huntMarkProbabilities?.[actor.id] ?? (player.huntMarkSourceId === actor.id ? 1 : 0)
+        ) || 0)) > 0;
+      });
       if (["none","allEnemies"].includes(skill.targetType)) actions.push({ type:"skill", skill, targets:skill.targetType === "allEnemies" ? enemies : [] });
       else for (const target of targets) actions.push({ type:"skill", skill, targets:[target] });
     }
@@ -158,6 +168,14 @@ export class AiActionGenerator {
     if (action.type === "skill") {
       if (action.skill.id === "hunt") {
         const target = action.targets?.[0];
+        const markBranches = target?.huntMarkStateBranchesBySource?.[actor.id];
+        if (Array.isArray(markBranches) && markBranches.length) {
+          return markBranches.map((branch) => ({
+            probability:branch.probability,
+            conditions:branch.conditions,
+            matches:Boolean(branch.marked)
+          }));
+        }
         const markProbability = Math.max(0, Math.min(1, Number(
           target?.huntMarkProbabilities?.[actor.id] ?? (target?.huntMarkSourceId === actor.id ? 1 : 0)
         ) || 0));
@@ -216,40 +234,122 @@ export class AiActionGenerator {
     return [{ probability:1, conditions:{}, matches:true }];
   }
 
-  /** 把卡牌或技能次数槽与动作成立条件相交，并把消费/剩余分支一并交给模拟器。 */
+  getAttackUseSlots(actor) {
+    if (Array.isArray(actor.attackUseSlots)) return actor.attackUseSlots;
+    const limit = Math.max(0, Math.ceil(Number(actor.attackLimit) || 0));
+    const used = Math.max(0, Number(actor.attackUsed) || 0);
+    return Array.from({ length:limit }, (_, index) => {
+      if (index < Math.floor(used)) return [{ probability:1, conditions:{}, available:false }];
+      if (index > Math.floor(used) || used === Math.floor(used)) {
+        return [{ probability:1, conditions:{}, available:true }];
+      }
+      const unavailable = used - Math.floor(used);
+      return [
+        { probability:1 - unavailable, conditions:{}, available:true },
+        { probability:unavailable, conditions:{ [`legacyAttackUse:${actor.id}:${index}`]:"used" }, available:false }
+      ];
+    });
+  }
+
+  getSkillUseSlots(actor, skill) {
+    if (Array.isArray(actor.activeSkillUseSlots)) return actor.activeSkillUseSlots;
+    if (Array.isArray(actor.activeSkillAvailabilityBranches)) {
+      return actor.activeSkillAvailabilityBranches.map((availabilityBranches) => (
+        getAvailabilityStateBranches({ availabilityBranches })
+      ));
+    }
+    const uses = Math.max(0, Number(actor.activeSkillUses ?? (actor.activeSkillUsed ? 1 : 0)) || 0);
+    const limit = Math.max(0, Math.ceil(Number(actor.activeSkillLimit ?? skill.limitPerTurn ?? 1) || 0));
+    return Array.from({ length:limit }, (_, index) => [{
+      probability:1,
+      conditions:{},
+      available:index >= Math.ceil(uses)
+    }]);
+  }
+
+  buildExecutionWorlds(partitions, predicate) {
+    return joinProbabilityStateBranches(...partitions).map((branch) => ({
+      ...branch,
+      executes:Boolean(predicate(branch))
+    }));
+  }
+
+  summarizeExecution(worlds) {
+    const executionBranches = mergeProbabilityBranches(worlds.filter((branch) => branch.executes));
+    return { executionBranches, executionProbability:totalBranchProbability(executionBranches) };
+  }
+
+  /** 把条件、卡牌、次数槽和数量资源作为完整世界分区联合判断。 */
   attachProbabilityBranches(game, actor, action) {
     if (action.type === "end") return action;
     const conditionBranches = this.getActionConditionPartition(game, actor, action);
     if (action.type === "card") {
-      const split = partitionAvailabilityBranches(getAvailabilityBranches(action.card), conditionBranches);
-      const executionProbability = totalBranchProbability(split.matching);
-      if (executionProbability <= Number.EPSILON) return null;
-      return {
-        ...action,
-        conditionBranches,
-        executionBranches:split.matching,
-        remainingAvailabilityBranches:split.remaining,
-        executionProbability
-      };
+      const cardState = getAvailabilityStateBranches(action.card).map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        cardAvailable:branch.available
+      }));
+      const basePartitions = [conditionBranches, cardState];
+      const attackSlots = action.card.definitionId === "assault" ? this.getAttackUseSlots(actor) : [null];
+      for (let attackUseSlot = 0; attackUseSlot < attackSlots.length; attackUseSlot += 1) {
+        const attackState = attackSlots[attackUseSlot]?.map((branch) => ({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          attackSlotAvailable:branch.available
+        }));
+        const worlds = this.buildExecutionWorlds(
+          attackState ? [...basePartitions, attackState] : basePartitions,
+          (branch) => branch.matches && branch.cardAvailable && (attackState ? branch.attackSlotAvailable : true)
+        );
+        const summary = this.summarizeExecution(worlds);
+        if (summary.executionProbability <= PROBABILITY_EPSILON) continue;
+        const cardAvailabilityStateBranches = projectProbabilityStateBranches(worlds, (branch) => ({
+          available:branch.cardAvailable && !branch.executes
+        }));
+        const result = {
+          ...action,
+          conditionBranches,
+          executionWorldBranches:worlds,
+          ...summary,
+          remainingAvailabilityStateBranches:cardAvailabilityStateBranches,
+          remainingAvailabilityBranches:availableBranchesFromState(cardAvailabilityStateBranches)
+        };
+        if (attackState) result.attackUseSlot = attackUseSlot;
+        return result;
+      }
+      return null;
     }
 
-    const skillUses = actor.activeSkillUses ?? (actor.activeSkillUsed ? 1 : 0);
-    const skillLimit = actor.activeSkillLimit ?? action.skill.limitPerTurn ?? 1;
-    const slots = actor.activeSkillAvailabilityBranches ?? Array.from(
-      { length:Math.max(0, Math.ceil(skillLimit - skillUses)) },
-      () => [{ probability:1, conditions:{} }]
-    );
+    const slots = this.getSkillUseSlots(actor, action.skill);
+    const energyState = getValueBranches(actor, "energy", actor.energy).map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions,
+      energyAmount:branch.amount
+    }));
+    const minimumEnergy = action.skill.id === "allIn" ? 1 : Number(action.skill.cost) || 0;
     for (let skillUseSlot = 0; skillUseSlot < slots.length; skillUseSlot += 1) {
-      const split = partitionAvailabilityBranches(slots[skillUseSlot], conditionBranches);
-      const executionProbability = totalBranchProbability(split.matching);
-      if (executionProbability <= Number.EPSILON) continue;
+      const slotState = slots[skillUseSlot].map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        skillSlotAvailable:branch.available ?? true
+      }));
+      const worlds = this.buildExecutionWorlds(
+        [conditionBranches, slotState, energyState],
+        (branch) => branch.matches && branch.skillSlotAvailable && branch.energyAmount >= minimumEnergy
+      );
+      const summary = this.summarizeExecution(worlds);
+      if (summary.executionProbability <= PROBABILITY_EPSILON) continue;
+      const skillAvailabilityStateBranches = projectProbabilityStateBranches(worlds, (branch) => ({
+        available:branch.skillSlotAvailable && !branch.executes
+      }));
       return {
         ...action,
         conditionBranches,
-        executionBranches:split.matching,
-        remainingSkillAvailabilityBranches:split.remaining,
+        executionWorldBranches:worlds,
+        ...summary,
+        remainingSkillAvailabilityStateBranches:skillAvailabilityStateBranches,
+        remainingSkillAvailabilityBranches:availableBranchesFromState(skillAvailabilityStateBranches),
         skillUseSlot,
-        executionProbability
       };
     }
     return null;
