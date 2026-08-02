@@ -37,7 +37,6 @@ export class AiSimulator {
     actor.hand = (actor.hand ?? []).filter((entry) => entry.id !== card.id);
     actor.handCount = Math.max(0, (actor.handCount ?? 0) - 1);
     const scale = card.counterScope === "target" ? 1 : this.tacticResolutionChance(next, actor, card, abstractAction.targets ?? []);
-    let assaultLifeDamageChance = null;
 
     switch (card.definitionId) {
       case "recover":
@@ -50,23 +49,7 @@ export class AiSimulator {
       case "harvest": actor.handCount += 2 * scale; break;
       case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + scale; break;
       case "assault":
-        {
-          if (target && actor.generalId === "trail-hunter" && target.battleTeam !== actor.battleTeam) {
-            actor.trackingTargetIds ??= [];
-            if (actor.trackingTargetIds.length < 2 && !actor.trackingTargetIds.includes(target.id)) {
-              actor.trackingTargetIds.push(target.id);
-              target.huntMarkSourceId = actor.id;
-              if (Array.isArray(target.statuses) && !target.statuses.includes("huntMark")) target.statuses.push("huntMark");
-            }
-          }
-          const momentum = actor.generalId === "blade-walker" ? (actor.momentum ?? 0) : 0;
-          const damageOutcome = {};
-          if (target) this.applyDamage(next, actor, target, 1 + (actor.exposeWeaknessStacks ?? 0) + (actor.assaultBonus ?? 0) + momentum, { canBlock:true, deviceAttack:true, outcome:damageOutcome });
-          assaultLifeDamageChance = damageOutcome.lifeDamageChance ?? 0;
-        }
-        actor.exposeWeaknessStacks = 0;
-        actor.assaultBonus = 0;
-        actor.attackUsed += 1;
+        if (target) this.simulateAssault(next, actor, target, 1);
         break;
       case "shockwave":
         for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) {
@@ -89,17 +72,30 @@ export class AiSimulator {
         const second = next.players.find((player) => player.id === abstractAction.selection?.secondTargetId)
           ?? next.players.find((player) => player.id === abstractAction.targets?.[1]?.id);
         if (!first?.alive || !second?.alive || !first.equipmentDefinitionId) break;
-        const assaultAvailable = Math.max(0, Math.min(1, first.assaultResponseProbability ?? 0));
+        // 候选组合从不因手牌估计或次数删除；这些因素只影响实际使用的连续概率。
+        const usageAvailable = Number(first.attackUsed ?? 0) < Number(first.attackLimit ?? 0) ? 1 : 0;
+        const assaultAvailable = Math.max(0, Math.min(1, first.assaultResponseProbability ?? 0)) * usageAvailable;
         const equipmentValue = CARD_DEFINITIONS[first.equipmentDefinitionId]?.aiValue ?? 7;
-        const friendlyFirePenalty = second.battleTeam === first.battleTeam ? .75 : 0;
-        const useProbability = assaultAvailable * Math.max(.15, Math.min(.95, .55 + equipmentValue * .04 - friendlyFirePenalty));
+        const friendlyFirePenalty = second.battleTeam === first.battleTeam ? .55 : 0;
+        const defenseRisk = Math.min(.9, second.equipmentDefinitionId === "defenseDevice"
+          ? Math.max(second.blockProbability ?? 0, BLOCK_CARD_COUNT / TOTAL_CARD_COUNT)
+          : (second.blockProbability ?? 0));
+        const targetValue = second.battleTeam === first.battleTeam
+          ? -0.35 - (second.hp <= 2 ? .15 : 0)
+          : .3 + (second.hp <= 2 ? .15 : 0);
+        const conserveAssaultPenalty = (first.expectedAssaultCount ?? 0) <= .75 ? .18 : 0;
+        const willingness = Math.max(.08, Math.min(.97,
+          .42 + equipmentValue * .04 + targetValue - friendlyFirePenalty - defenseRisk * .2
+          - conserveAssaultPenalty));
+        const useProbability = scale * assaultAvailable * willingness;
         first.handCount = Math.max(0, first.handCount - useProbability);
         first.expectedAssaultCount = Math.max(0, (first.expectedAssaultCount ?? 0) - useProbability);
-        first.attackUsed = (first.attackUsed ?? 0) + useProbability;
-        this.applyDamage(next, first, second, useProbability, { canBlock:true, deviceAttack:true });
-        const declineProbability = 1 - useProbability;
+        this.simulateAssault(next, first, second, useProbability);
+        const declineProbability = Math.max(0, scale - useProbability);
         actor.handCount += declineProbability;
-        if (declineProbability >= .5) first.equipmentDefinitionId = null;
+        actor.expectedEquipmentGain = (actor.expectedEquipmentGain ?? 0) + equipmentValue * declineProbability;
+        const priorRetention = first.equipmentRetentionProbability ?? 1;
+        first.equipmentRetentionProbability = Math.max(0, priorRetention * (1 - declineProbability));
         break;
       }
       case "plunder":
@@ -136,15 +132,43 @@ export class AiSimulator {
       actor.categoriesUsed ??= [];
       const gainsMomentum = category && !actor.categoriesUsed.includes(category) ? 1 : 0;
       if (gainsMomentum) actor.categoriesUsed.push(category);
-      if (assaultLifeDamageChance !== null) {
-        const hitMomentum = Math.min(GAME_CONFIG.momentumMaxStacks, gainsMomentum);
-        const missMomentum = Math.min(GAME_CONFIG.momentumMaxStacks, (actor.momentum ?? 0) + gainsMomentum);
-        actor.momentum = hitMomentum * assaultLifeDamageChance + missMomentum * (1 - assaultLifeDamageChance);
-      } else if (gainsMomentum) {
+      if (gainsMomentum) {
         actor.momentum = Math.min(GAME_CONFIG.momentumMaxStacks, (actor.momentum ?? 0) + gainsMomentum);
       }
     }
     return next;
+  }
+
+  /** 普通突袭与借势响应共用的期望结算入口；概率仅缩放是否真正打出，防御和伤害仍走统一模拟。 */
+  simulateAssault(state, source, target, resolutionChance = 1) {
+    const chance = Math.max(0, Math.min(1, resolutionChance));
+    if (!chance || !source?.alive || !target?.alive) return 0;
+    if (source.generalId === "trail-hunter" && target.battleTeam !== source.battleTeam) {
+      source.trackingTargetIds ??= [];
+      target.huntMarkProbability = Math.min(1, (target.huntMarkProbability ?? 0) + chance);
+      if (chance === 1 && source.trackingTargetIds.length < 2 && !source.trackingTargetIds.includes(target.id)) {
+        source.trackingTargetIds.push(target.id);
+        target.huntMarkSourceId = source.id;
+        if (Array.isArray(target.statuses) && !target.statuses.includes("huntMark")) target.statuses.push("huntMark");
+      }
+    }
+    const momentum = source.generalId === "blade-walker" ? (source.momentum ?? 0) : 0;
+    const damageOutcome = {};
+    const damage = 1 + (source.exposeWeaknessStacks ?? 0) + (source.assaultBonus ?? 0) + momentum;
+    this.applyDamage(state, source, target, damage * chance, { canBlock:true, deviceAttack:true, outcome:damageOutcome });
+    const lifeDamageChance = chance * (damageOutcome.lifeDamageChance ?? 0);
+    source.exposeWeaknessStacks = (source.exposeWeaknessStacks ?? 0) * (1 - chance);
+    source.assaultBonus = (source.assaultBonus ?? 0) * (1 - chance);
+    source.attackUsed = (source.attackUsed ?? 0) + chance;
+    if (source.generalId === "blade-walker") {
+      source.categoriesUsed ??= [];
+      const gainsMomentum = source.categoriesUsed.includes("basic") ? 0 : chance;
+      if (chance === 1 && !source.categoriesUsed.includes("basic")) source.categoriesUsed.push("basic");
+      const hitMomentum = Math.min(GAME_CONFIG.momentumMaxStacks, gainsMomentum);
+      const missMomentum = Math.min(GAME_CONFIG.momentumMaxStacks, (source.momentum ?? 0) + gainsMomentum);
+      source.momentum = hitMomentum * lifeDamageChance + missMomentum * (1 - lifeDamageChance);
+    }
+    return lifeDamageChance;
   }
 
   takeResourceToHand(actor, target, scale = 1) {

@@ -46,13 +46,13 @@ export class InteractionController {
       const equipment = firstTarget.equipment;
       if (!equipment?.id || !RuleEngine.getLeverageFirstTargets(game, actor).includes(firstTarget)) return null;
 
-      const secondTargets = RuleEngine.getLegalAssaultTargets(game, firstTarget);
+      const secondTargets = RuleEngine.getAssaultTargetCandidates(game, firstTarget);
       const secondTarget = await this.ui.requestTarget(secondTargets, "选择其使用突袭的目标", {
         source:firstTarget, card:CARD_DEFINITIONS.assault, confirmSelection:true, stepTitle:"借势 · 第二目标"
       });
       if (!game.isSessionValid(gameId) || !secondTarget) return null;
       if (firstTarget.equipment !== equipment || equipment.id == null
-        || !RuleEngine.getLegalAssaultTargets(game, firstTarget).includes(secondTarget)) return null;
+        || !RuleEngine.getAssaultTargetCandidates(game, firstTarget).includes(secondTarget)) return null;
 
       const confirmed = await this.requestConfirmation(
         "借势 · 确认",

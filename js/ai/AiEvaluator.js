@@ -25,7 +25,12 @@ export class AiEvaluator {
       const death = player.alive ? 0 : -28;
       const danger = player.alive && player.hp <= 1 ? -7 : 0;
       const rescueOutlook = player.survivalChance === undefined ? 0 : (player.survivalChance - 0.5) * 8;
-      score += sign * (death + danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * 1.2 + player.handCount * 1.1 + (player.exposeWeaknessStacks ?? 0) * 1.5);
+      // 只计模拟产生的期望装备变化；初始装备概率为1时增量为0，不扰动既有基础评分。
+      const equipmentValue = player.equipmentDefinitionId ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7) : 0;
+      const equipmentDelta = equipmentValue * ((player.equipmentRetentionProbability ?? (equipmentValue ? 1 : 0)) - (equipmentValue ? 1 : 0))
+        + (player.expectedEquipmentGain ?? 0);
+      score += sign * (death + danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * 1.2
+        + player.handCount * 1.1 + (player.exposeWeaknessStacks ?? 0) * 1.5 + equipmentDelta * .25);
     }
     return score;
   }
@@ -88,7 +93,8 @@ export class AiEvaluator {
       const second = visible.players.find((entry) => entry.id === secondActionTarget?.id) ?? secondActionTarget;
       const equipmentId = first?.equipmentDefinitionId ?? first?.equipment?.definitionId;
       const equipmentValue = Number(equipmentId ? (CARD_DEFINITIONS[equipmentId]?.aiValue ?? first?.equipment?.aiValue ?? 7) : 0);
-      const assaultProbability = Math.max(0, Math.min(1, first?.assaultResponseProbability ?? 0));
+      const hasUsage = Number(first?.attackUsed ?? 0) < Number(first?.attackLimit ?? 0);
+      const assaultProbability = hasUsage ? Math.max(0, Math.min(1, first?.assaultResponseProbability ?? 0)) : 0;
       const attackSwing = second?.battleTeam === actor.battleTeam
         ? -10 - (second?.hp <= 2 ? 5 : 0)
         : 6 + (second?.hp <= 2 ? 4 : 0);

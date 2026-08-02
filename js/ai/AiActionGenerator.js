@@ -27,7 +27,7 @@ export class AiActionGenerator {
       const targets = RuleEngine.getCardTargets(this.game, player, card);
       if (card.definitionId === "leverage") {
         for (const firstTarget of RuleEngine.getLeverageFirstTargets(this.game, player)) {
-          for (const secondTarget of RuleEngine.getLegalAssaultTargets(this.game, firstTarget)) {
+          for (const secondTarget of RuleEngine.getAssaultTargetCandidates(this.game, firstTarget)) {
             actions.push({
               type:"card",
               card,
@@ -95,9 +95,10 @@ export class AiActionGenerator {
       if (card.definitionId === "leverage") {
         const firstTargets = alive.filter((firstTarget) => firstTarget.id !== actor.id
           && firstTarget.equipmentDefinitionId
-          && RuleEngine.getLegalAssaultTargets(simulationGame, firstTarget).length > 0);
+          && (firstTarget.equipmentRetentionProbability ?? 1) > 0
+          && RuleEngine.getAssaultTargetCandidates(simulationGame, firstTarget).length > 0);
         for (const firstTarget of firstTargets) {
-          for (const secondTarget of RuleEngine.getLegalAssaultTargets(simulationGame, firstTarget)) {
+          for (const secondTarget of RuleEngine.getAssaultTargetCandidates(simulationGame, firstTarget)) {
             actions.push({
               type:"card",
               card,

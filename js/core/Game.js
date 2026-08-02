@@ -406,7 +406,7 @@ export class Game {
     const firstTarget = this.state.players.find((player) => player.id === selection.firstTargetId) ?? null;
     const secondTarget = this.state.players.find((player) => player.id === selection.secondTargetId) ?? null;
     if (!RuleEngine.getLeverageFirstTargets(this, source).includes(firstTarget)) return null;
-    if (!RuleEngine.getLegalAssaultTargets(this, firstTarget).includes(secondTarget)) return null;
+    if (!RuleEngine.getAssaultTargetCandidates(this, firstTarget).includes(secondTarget)) return null;
     const equipmentCard = firstTarget.equipment;
     if (!equipmentCard?.id || equipmentCard.id !== selection.equipmentCardId) return null;
     return Object.freeze({
@@ -537,16 +537,13 @@ export class Game {
     }
 
     const { firstTarget, secondTarget, equipmentCard } = intent;
-    let response = { status:RESPONSE_STATUS.UNAVAILABLE, card:null };
-    const legalAssaults = RuleEngine.getUsableAssaultCards(this, firstTarget, secondTarget);
-    if (legalAssaults.length) {
-      response = await this.responseSystem.requestLeverageAssault(firstTarget, secondTarget, {
-        source,
-        card,
-        equipment:equipmentCard
-      });
-      if (!this.isSessionValid(gameId) || isCancelledResponse(response)) return false;
-    }
+    // AI 即使没有可用突袭也经过相同思考等待，避免通过响应时长泄露手牌。
+    const response = await this.responseSystem.requestLeverageAssault(firstTarget, secondTarget, {
+      source,
+      card,
+      equipment:equipmentCard
+    });
+    if (!this.isSessionValid(gameId) || isCancelledResponse(response)) return false;
 
     // 响应等待期间重新读取三名玩家、装备、距离、次数及真实手牌实例。
     if (!this.leveragePlayersRemainValid(source, intent)) {
@@ -604,7 +601,7 @@ export class Game {
     if (!legality.ok || (this.actionLocked && !forcedAssault)) return false;
     let targets = requestedTargets;
     const legalTargets = forcedAssault
-      ? RuleEngine.getLegalAssaultTargets(this, source)
+      ? RuleEngine.getAssaultTargetCandidates(this, source)
       : RuleEngine.getCardTargets(this, source, card);
     if (card.targetType === "self") targets = [source];
     if (card.targetType === "allEnemies") targets = legalTargets;

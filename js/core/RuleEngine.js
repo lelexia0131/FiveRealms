@@ -8,27 +8,54 @@ export class RuleEngine {
   }
 
   /**
-   * 普通突袭的实时合法目标列表。借势只复用本入口，不复制距离、阵营或次数规则。
-   * requireUsage 关闭时仅用于底层目标展示；默认同时检查当前突袭次数。
+   * 突袭的实时目标候选，只判断目标侧规则；不得读取手牌或本回合使用次数。
+   * 普通主动突袭与借势都复用这里的距离、阵营、装备、技能和状态结果。
    */
-  static getLegalAssaultTargets(game, source, { requireUsage = true } = {}) {
+  static getAssaultTargetCandidates(game, source) {
     if (!this.isPlayerInGame(game, source)) return [];
-    const attackUsed = source.turnFlags?.attackUsed ?? source.attackUsed ?? 0;
-    const attackLimit = source.turnFlags?.attackLimit ?? source.attackLimit ?? 0;
-    if (requireUsage && attackUsed >= attackLimit) return [];
     return this.getCardTargets(game, source, CARD_DEFINITIONS.assault);
   }
 
-  /** 借势响应使用真实手牌突袭；只放宽“必须轮到本人出牌”，其余规则完全保留。 */
-  static canUseForcedAssault(game, source, card, target) {
+  /** 兼容旧调用：合法目标列表只表示“可被指定”，不表示当前持牌者一定能实际出牌。 */
+  static getLegalAssaultTargets(game, source) {
+    return this.getAssaultTargetCandidates(game, source);
+  }
+
+  /** 借势选择阶段的兼容别名。 */
+  static getLeverageAssaultTargets(game, source) {
+    return this.getAssaultTargetCandidates(game, source);
+  }
+
+  /** 普通突袭与借势响应共用的次数快照，额外次数统一体现在 attackLimit 中。 */
+  static getAssaultUsage(source) {
+    return Object.freeze({
+      used:Number(source?.turnFlags?.attackUsed ?? source?.attackUsed ?? 0),
+      limit:Number(source?.turnFlags?.attackLimit ?? source?.attackLimit ?? 0)
+    });
+  }
+
+  /**
+   * 实际使用突袭的统一入口。借势仅通过 allowOutOfTurn 放宽行动者和阶段要求；
+   * 真实手牌、次数以及实时目标合法性与普通主动突袭完全相同。
+   */
+  static canActuallyUseAssault(game, source, card, target = null, { allowOutOfTurn = false } = {}) {
     if (!this.isPlayerInGame(game, source)) return { ok:false, reason:"角色已阵亡或离场" };
     if (!card || card.definitionId !== "assault" || !source.hand?.includes(card)) return { ok:false, reason:"突袭已不在手中" };
     if (card.usageMode === "response" || card.targetType === "responseOnly") return { ok:false, reason:"该牌不能主动使用" };
-    const attackUsed = source.turnFlags?.attackUsed ?? source.attackUsed ?? 0;
-    const attackLimit = source.turnFlags?.attackLimit ?? source.attackLimit ?? 0;
-    if (attackUsed >= attackLimit) return { ok:false, reason:"本回合突袭次数已用尽" };
-    if (!this.getLegalAssaultTargets(game, source).includes(target)) return { ok:false, reason:"目标不再是合法突袭目标" };
+    if (!allowOutOfTurn && (game.state.phase !== "play" || game.currentPlayer?.id !== source.id)) {
+      return { ok:false, reason:"现在不是你的出牌阶段" };
+    }
+    const usage = this.getAssaultUsage(source);
+    if (usage.used >= usage.limit) return { ok:false, reason:"本回合突袭次数已用尽" };
+    const candidates = this.getAssaultTargetCandidates(game, source);
+    if (target && !candidates.includes(target)) return { ok:false, reason:"目标不再是合法突袭目标" };
+    if (!target && !candidates.length) return { ok:false, reason:"攻击距离内没有敌人" };
     return { ok:true, reason:"" };
+  }
+
+  /** 借势响应的兼容入口：只放宽不在本人出牌阶段。 */
+  static canUseForcedAssault(game, source, card, target) {
+    return this.canActuallyUseAssault(game, source, card, target, { allowOutOfTurn:true });
   }
 
   static getUsableAssaultCards(game, source, target) {
@@ -40,7 +67,7 @@ export class RuleEngine {
     return game.state.players.filter((player) => player !== cardUser
       && this.isPlayerInGame(game, player)
       && Boolean(player.equipment?.id)
-      && this.getLegalAssaultTargets(game, player).length > 0);
+      && this.getAssaultTargetCandidates(game, player).length > 0);
   }
   static transferableHandCount(player, excludedCardIds = null) {
     if (Array.isArray(player?.hand)) return player.hand.filter((held) => !excludedCardIds?.has(held.id)).length;
@@ -92,8 +119,8 @@ export class RuleEngine {
     if (!source.hand.includes(card)) return { ok:false, reason:"这张牌已不在手中" };
     if (card.usageMode === "response" || card.targetType === "responseOnly") return { ok:false, reason:"这张牌只能在对应响应时机使用" };
     if (card.definitionId === "assault") {
-      if (source.turnFlags.attackUsed >= source.turnFlags.attackLimit) return { ok:false, reason:"本回合突袭次数已用尽" };
-      if (!this.getLegalAssaultTargets(game, source).length) return { ok:false, reason:"攻击距离内没有敌人" };
+      const assaultLegality = this.canActuallyUseAssault(game, source, card);
+      if (!assaultLegality.ok) return assaultLegality;
     }
     if (card.definitionId === "recover") {
       const limit = source.turnFlags.recoverLimit;

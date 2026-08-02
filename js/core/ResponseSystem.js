@@ -129,7 +129,8 @@ export class ResponseSystem {
     let use = false;
     use = this.game.aiController.responsePolicy.shouldRespond(responder, request.type, context, cards);
     this.game.ui.setThinking(false);
-    if (!use) this.game.ui.setPrompt(`${responder.name}放弃${label}。`);
+    // 借势的所有拒绝原因只在最终结算处统一公开，不能用中间提示暴露 AI 手牌。
+    if (!use && request.type !== "leverageAssault") this.game.ui.setPrompt(`${responder.name}放弃${label}。`);
     return responseResult(use ? RESPONSE_STATUS.USED : RESPONSE_STATUS.DECLINED);
   }
 
@@ -309,13 +310,16 @@ export class ResponseSystem {
 
   /**
    * 借势响应不在这里消费牌：确认后返回同一实体，由 Game.playCard 进入普通突袭
-   * 完整流程。没有合法突袭时不创建窗口，直接交给借势统一拒绝分支。
+   * 完整流程。真人没有合法突袭时不创建窗口；AI 仍经过相同思考等待，避免手牌侧信道。
    */
   async requestLeverageAssault(responder, target, context = {}) {
     const gameId = this.game.state.gameId;
     const availableCards = RuleEngine.getUsableAssaultCards(this.game, responder, target);
     if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    if (!responder?.alive || !target?.alive || this.game.state.isGameOver || !availableCards.length) {
+    if (!responder?.alive || !target?.alive || this.game.state.isGameOver) {
+      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    }
+    if (!availableCards.length && responder.controllerType === "human") {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
     const presentation = {
