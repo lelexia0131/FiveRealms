@@ -33,6 +33,90 @@ const estimateCard = (viewer, player, definitionId) => {
   };
 };
 
+const expectedCountPartition = (playerId, field, expected, maximum) => {
+  const value = Math.max(0, Math.min(maximum, Number(expected) || 0));
+  const lower = Math.floor(value), upper = Math.ceil(value);
+  if (lower === upper) return [{ probability:1, conditions:{}, [field]:lower }];
+  const key = `hiddenHand:${playerId}:${field}`;
+  return [
+    { probability:upper - value, conditions:{ [key]:String(lower) }, [field]:lower },
+    { probability:value - lower, conditions:{ [key]:String(upper) }, [field]:upper }
+  ];
+};
+
+const blockCountPartition = (playerId, estimate) => {
+  if (estimate.atLeastOne <= Number.EPSILON) {
+    return [{ probability:1, conditions:{}, blockCount:0 }];
+  }
+  if (estimate.atLeastTwo >= 1 - Number.EPSILON) {
+    return [{ probability:1, conditions:{}, blockCount:2 }];
+  }
+  const none = Math.max(0, 1 - estimate.atLeastOne);
+  const one = Math.max(0, estimate.atLeastOne - estimate.atLeastTwo);
+  const two = Math.max(0, estimate.atLeastTwo);
+  const key = `hiddenHand:${playerId}:blockCount`;
+  return [
+    { probability:none, conditions:{ [key]:"0" }, blockCount:0 },
+    { probability:one, conditions:{ [key]:"1" }, blockCount:1 },
+    { probability:two, conditions:{ [key]:"2+" }, blockCount:2 }
+  ];
+};
+
+/** 未知牌只由公开手牌数和牌库密度生成紧凑数量分支，不读取真实牌定义。 */
+const createHandResourceBranches = (viewer, player, estimates) => {
+  const handCount = player.hand.length;
+  if (player.id === viewer.id) {
+    const count = (definitionId) => player.hand.filter((card) => card.definitionId === definitionId).length;
+    const blockCount = count("block"), counterCount = count("counter");
+    const assaultCount = count("assault"), recoverCount = count("recover");
+    return [{
+      probability:1, conditions:{}, handCount,
+      blockCount, counterCount, assaultCount, recoverCount,
+      otherCount:Math.max(0, handCount - blockCount - counterCount - assaultCount - recoverCount)
+    }];
+  }
+  const counterPartition = estimates.counter.atLeastOne <= Number.EPSILON
+    ? [{ probability:1, conditions:{}, counterCount:0 }]
+    : estimates.counter.atLeastOne >= 1 - Number.EPSILON
+      ? [{ probability:1, conditions:{}, counterCount:1 }]
+      : [
+        { probability:1 - estimates.counter.atLeastOne, conditions:{ [`hiddenHand:${player.id}:counterCount`]:"0" }, counterCount:0 },
+        { probability:estimates.counter.atLeastOne, conditions:{ [`hiddenHand:${player.id}:counterCount`]:"1+" }, counterCount:1 }
+      ];
+  const partitions = [
+    ["blockCount", blockCountPartition(player.id, estimates.block)],
+    ["counterCount", counterPartition],
+    ["assaultCount", expectedCountPartition(player.id, "assaultCount", estimates.assault.expected, handCount)],
+    ["recoverCount", expectedCountPartition(player.id, "recoverCount", estimates.recover.expected, handCount)]
+  ];
+  // Hidden definitions are unknowable. Couple marginal count estimates through one
+  // public quantile variable: marginals stay exact while branch count grows linearly.
+  const distributions = partitions.map(([field, branches]) => {
+    let cumulative = 0;
+    return [field, branches.filter((branch) => branch.probability > Number.EPSILON).map((branch) => {
+      cumulative += branch.probability;
+      return { upper:cumulative, value:branch[field] };
+    })];
+  });
+  const breakpoints = [...new Set([0, 1, ...distributions.flatMap(([, entries]) => entries.map((entry) => entry.upper))])]
+    .filter((value) => value >= 0 && value <= 1).sort((left, right) => left - right);
+  return breakpoints.slice(0, -1).map((lower, index) => {
+    const upper = breakpoints[index + 1], midpoint = (lower + upper) / 2;
+    const counts = Object.fromEntries(distributions.map(([field, entries]) => [
+      field,
+      Math.min(handCount, entries.find((entry) => midpoint <= entry.upper + Number.EPSILON)?.value ?? 0)
+    ]));
+    return {
+      probability:upper - lower,
+      conditions:{ [`hiddenHand:${player.id}:resourceWorld`]:String(index) },
+      handCount,
+      ...counts,
+      otherCount:Math.max(0, handCount - counts.blockCount - counts.counterCount
+        - counts.assaultCount - counts.recoverCount)
+    };
+  });
+};
+
 /**
  * 创建指定 AI 的只读快照。
  * @param {string} viewerId 观察者玩家 ID。
@@ -60,6 +144,12 @@ export function createAiVisibleState(viewerId, state) {
       const activeSkillId = player.general.activeSkillIds[0] ?? null;
       const activeSkillUses = player.turnFlags.activeSkillUseCounts?.[activeSkillId] ?? 0;
       const activeSkillLimit = player.general.activeLimitPerTurn ?? 1;
+      const handResourceBranches = createHandResourceBranches(viewer, player, {
+        recover:recoverEstimate,
+        block:blockEstimate,
+        counter:counterEstimate,
+        assault:assaultEstimate
+      });
       return Object.freeze({
       id: player.id,
       seatIndex: player.seatIndex,
@@ -70,6 +160,9 @@ export function createAiVisibleState(viewerId, state) {
       tags: [...player.general.tags],
       roleTags: [...(player.general.roleTags ?? [])],
       hp: player.hp,
+      hpBranches:[{ probability:1, conditions:{}, amount:player.hp, alive:player.alive }],
+      aliveProbability:player.alive ? 1 : 0,
+      deathProbability:player.alive ? 0 : 1,
       maxHp: player.maxHp,
       shield: player.shield,
       shieldBranches:[{ probability:1, conditions:{}, amount:player.shield }],
@@ -90,14 +183,24 @@ export function createAiVisibleState(viewerId, state) {
       recoverUsed: player.turnFlags.recoverUsed,
       recoverLimit: player.turnFlags.recoverLimit,
       momentum: player.turnFlags.momentum ?? 0,
+      momentumBranches:[{ probability:1, conditions:{}, amount:player.turnFlags.momentum ?? 0 }],
       categoriesUsed: [...(player.turnFlags.categoriesUsed ?? [])],
       categoryUsedProbabilities: Object.fromEntries(["basic","tactic","equipment"]
         .map((category) => [category, player.turnFlags.categoriesUsed?.has(category) ? 1 : 0])),
+      categoryUseStateBranches:Object.fromEntries(["basic","tactic","equipment"].map((category) => [
+        category,
+        [{ probability:1, conditions:{}, used:Boolean(player.turnFlags.categoriesUsed?.has(category)) }]
+      ])),
       guardianAidUsedProbability: player.roundFlags.guardianAidUsed ? 1 : 0,
+      guardianAidStateBranches:[{ probability:1, conditions:{}, used:Boolean(player.roundFlags.guardianAidUsed) }],
       spyGapTriggeredProbability: player.turnFlags.spyGapTriggered ? 1 : 0,
+      spyGapStateBranches:[{ probability:1, conditions:{}, used:Boolean(player.turnFlags.spyGapTriggered) }],
       rejuvenationUsed: Boolean(player.turnFlags.rejuvenationUsed),
+      rejuvenationStateBranches:[{ probability:1, conditions:{}, used:Boolean(player.turnFlags.rejuvenationUsed) }],
       exposeWeaknessStacks: player.statuses.exposeWeakness?.stacks ?? 0,
+      exposeWeaknessBranches:[{ probability:1, conditions:{}, amount:player.statuses.exposeWeakness?.stacks ?? 0 }],
       assaultBonus: player.statuses.allIn?.assaultBonus ?? 0,
+      assaultBonusBranches:[{ probability:1, conditions:{}, amount:player.statuses.allIn?.assaultBonus ?? 0 }],
       activeSkillId,
       activeSkillCost: player.general.activeCost ?? 0,
       activeSkillUses,
@@ -116,6 +219,11 @@ export function createAiVisibleState(viewerId, state) {
         }]
       ),
       recycleDeviceUses: player.turnFlags.recycleDeviceUses ?? 0,
+      recycleUseSlots:Array.from({ length:2 }, (_, index) => [{
+        probability:1,
+        conditions:{},
+        available:index >= (player.turnFlags.recycleDeviceUses ?? 0)
+      }]),
       trackingTargetIds: [...(player.turnFlags.trackingTargetIds ?? [])],
       trackingUses: player.turnFlags.trackingTargetIds?.size ?? 0,
       huntMarkSourceId: player.statuses.huntMark?.sourceId ?? null,
@@ -129,6 +237,7 @@ export function createAiVisibleState(viewerId, state) {
       expectedInformationGain: 0,
       alive: player.alive,
       handCount: player.hand.length,
+      handResourceBranches,
       hand: player.id === viewerId ? player.hand.map((card) => ({
         id:card.id,
         definitionId:card.definitionId,
@@ -138,6 +247,12 @@ export function createAiVisibleState(viewerId, state) {
       knownCards: player.id === viewerId ? undefined : Object.entries(viewer.aiMemory.knownCardsByPlayer[player.id] ?? {}).map(([cardId, definitionId]) => ({ cardId, definitionId })),
       equipmentDefinitionId: player.equipment?.definitionId ?? null,
       equipmentRetentionProbability: player.equipment ? 1 : 0,
+      equipmentStateBranches:[{
+        probability:1,
+        conditions:{},
+        definitionId:player.equipment?.definitionId ?? null,
+        present:Boolean(player.equipment)
+      }],
       expectedEquipmentGain: 0,
       statuses: Object.keys(player.statuses),
       expectedRecoverCount: recoverEstimate.expected,

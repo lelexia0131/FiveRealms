@@ -28,6 +28,10 @@ const stateSignature = (branch) => JSON.stringify({
   state:branchState(branch)
 });
 
+const sortBranches = (branches) => [...branches].sort((left, right) => (
+  stateSignature(left).localeCompare(stateSignature(right))
+));
+
 /** 合并同一条件集合的概率质量；调用方仍拥有返回的新分支数组。 */
 export function mergeProbabilityBranches(branches = []) {
   const merged = new Map();
@@ -40,7 +44,7 @@ export function mergeProbabilityBranches(branches = []) {
     if (current) current.probability += probability;
     else merged.set(signature, { probability, conditions });
   }
-  return [...merged.values()];
+  return sortBranches(merged.values());
 }
 
 export const totalBranchProbability = (branches = []) => branches.reduce(
@@ -63,7 +67,7 @@ export function mergeProbabilityStateBranches(branches = []) {
     if (current) current.probability += probability;
     else merged.set(signature, branch);
   }
-  return [...merged.values()].filter((branch) => branch.probability > PROBABILITY_EPSILON);
+  return sortBranches([...merged.values()].filter((branch) => branch.probability > PROBABILITY_EPSILON));
 }
 
 /**

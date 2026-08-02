@@ -16,6 +16,7 @@ import { RuleEngine } from "../js/core/RuleEngine.js";
 import { CardSelectionSystem } from "../js/core/CardSelectionSystem.js";
 import { createAiVisibleState } from "../js/ai/AiVisibleState.js";
 import { AiSimulator } from "../js/ai/AiSimulator.js";
+import { totalBranchProbability } from "../js/ai/AiProbabilityBranches.js";
 import { ThreatCalculator } from "../js/ai/ThreatCalculator.js";
 import { CleanupManager } from "../js/utils/CleanupManager.js";
 import { getAiDelay, sampleDelay } from "../js/utils/aiTiming.js";
@@ -2161,9 +2162,162 @@ test("概率获得能量与孤注均按各自世界的实际能量结算", () =>
   assertClose(allIn.players[0].handCount,1.2);assertClose(allIn.players[0].energy,0);
 });
 
+test("AI probability slots choose maximum coverage with stable ties", () => {
+  const {game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const state={playPhaseEnded:false,players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,maxEnergy:4,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackRange:1,attackUsed:.4,attackLimit:2,attackUseSlots:[
+      [{probability:.6,conditions:{slot0:"free"},available:true},{probability:.4,conditions:{slot0:"used"},available:false}],
+      [{probability:1,conditions:{},available:true}]
+    ]},
+    {id:"target",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0}
+  ]};
+  let action=game.aiController.actionGenerator.generateFromVisible(state,"actor")
+    .find((entry)=>entry.card?.id==="hit");
+  assert.equal(action.attackUseSlot,1);assertClose(action.executionProbability,1);
+  state.players[0].attackUseSlots[1]=structuredClone(state.players[0].attackUseSlots[0]);
+  action=game.aiController.actionGenerator.generateFromVisible(state,"actor")
+    .find((entry)=>entry.card?.id==="hit");
+  assert.equal(action.attackUseSlot,0);assertClose(action.executionProbability,.6);
+
+  state.players[0].hand=[];state.players[0].handCount=0;state.players[0].activeSkillId="stealSkill";
+  state.players[0].activeSkillUses=.4;state.players[0].activeSkillLimit=2;
+  state.players[0].activeSkillUseSlots=[
+    [{probability:.6,conditions:{skill0:"free"},available:true},{probability:.4,conditions:{skill0:"used"},available:false}],
+    [{probability:1,conditions:{},available:true}]
+  ];
+  state.players[1].handCount=1;
+  action=game.aiController.actionGenerator.generateFromVisible(state,"actor")
+    .find((entry)=>entry.skill?.id==="stealSkill");
+  assert.equal(action.skillUseSlot,1);assertClose(action.executionProbability,1);
+});
+
+test("charge consumes only non-full energy worlds", () => {
+  const shared="charge-full",state={playPhaseEnded:false,players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:3.4,maxEnergy:4,
+      energyBranches:[{probability:.4,conditions:{[shared]:"full"},amount:4},{probability:.6,conditions:{[shared]:"room"},amount:3}],
+      handCount:1,hand:[{id:"charge",definitionId:"charge"}]},
+    {id:"target",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0}
+  ]},{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const action=game.aiController.actionGenerator.generateFromVisible(state,"actor")
+    .find((entry)=>entry.card?.id==="charge");
+  assertClose(action.executionProbability,.6);
+  const next=new AiSimulator(state).apply(state,action,"actor"),actor=next.players[0];
+  assertClose(actor.energy,4);assertClose(actor.handCount,.4);
+  assertClose(actor.hand[0].availabilityBranches.reduce((sum,branch)=>sum+branch.probability,0),.4);
+  assert.ok(!game.aiController.actionGenerator.generateFromVisible(next,"actor")
+    .some((entry)=>entry.card?.id==="charge"));
+});
+
+test("hp death and kill reward stay on the lethal worlds", () => {
+  const run=(hp,damage,probability)=>{const state={players:[
+    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"target",battleTeam:"dusk",alive:true,hp,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0}
+  ]};new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],damage,{canBlock:false,eventProbability:probability});return state;};
+  let state=run(1,2,.5);assertClose(state.players[1].deathProbability,.5);assertClose(state.players[1].aliveProbability,.5);assertClose(state.players[0].handCount,.5);
+  state=run(4,5,.4);assertClose(state.players[1].deathProbability,.4);assertClose(state.players[0].handCount,.4);
+  state=run(2,1,.4);assertClose(state.players[1].deathProbability,0);assertClose(state.players[1].hp,1.6);assertClose(state.players[0].handCount,0);
+});
+
+test("rescue cards are consumed only in compatible dying worlds", () => {
+  const shared="fatal",base=()=>({players:[
+    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"target",seatIndex:1,battleTeam:"dusk",alive:true,hp:1,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},
+    {id:"rescuer",seatIndex:2,battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:1,expectedRecoverCount:1,
+      handResourceBranches:[{probability:1,conditions:{},handCount:1,blockCount:0,counterCount:0,assaultCount:0,recoverCount:1,otherCount:0}]}
+  ]});
+  const event=[{probability:.4,conditions:{[shared]:"yes"},occurs:true},{probability:.6,conditions:{[shared]:"no"},occurs:false}];
+  let state=base();new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],1,{eventBranches:event});
+  assertClose(state.players[1].deathProbability,0);assertClose(state.players[2].expectedRecoverCount,.6);
+  state=base();state.players[2].handResourceBranches=[
+    {probability:.4,conditions:{[shared]:"yes"},handCount:0,blockCount:0,counterCount:0,assaultCount:0,recoverCount:0,otherCount:0},
+    {probability:.6,conditions:{[shared]:"no"},handCount:1,blockCount:0,counterCount:0,assaultCount:0,recoverCount:1,otherCount:0}
+  ];
+  new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],1,{eventBranches:event});
+  assertClose(state.players[1].deathProbability,.4);assertClose(state.players[2].expectedRecoverCount,.6);
+});
+
+test("block and counter resources cannot be reused by consecutive actions", () => {
+  const target={id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0,
+    handResourceBranches:[{probability:1,conditions:{},handCount:1,blockCount:1,counterCount:0,assaultCount:0,recoverCount:0,otherCount:0}]};
+  const state={players:[{id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},target]},simulator=new AiSimulator(state);
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true});assert.equal(target.hp,4);assert.equal(target.blockProbability,0);
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true});assert.equal(target.hp,3);
+
+  const tacticState={players:[
+    {id:"source",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:2,hand:[{id:"s1",definitionId:"shockwave"},{id:"s2",definitionId:"shockwave"}],counterProbability:0},
+    {id:"enemy",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,counterProbability:1,blockProbability:0,expectedRecoverCount:0,
+      handResourceBranches:[{probability:1,conditions:{},handCount:1,blockCount:0,counterCount:1,assaultCount:0,recoverCount:0,otherCount:0}]}
+  ]},sim=new AiSimulator(tacticState),play=(id)=>({type:"card",card:{...CARD_DEFINITIONS.shockwave,id},targets:[{id:"enemy"}]});
+  const once=sim.apply(tacticState,play("s1"),"source");assert.equal(once.players[1].hp,4);assert.equal(once.players[1].counterProbability,0);
+  const twice=sim.apply(once,play("s2"),"source");assert.equal(twice.players[1].hp,3);
+});
+
+test("overlapping and exclusive ownership worlds consume each resource once", () => {
+  const shared="ownership",yes=[{probability:.4,conditions:{[shared]:"yes"},occurs:true},{probability:.6,conditions:{[shared]:"no"},occurs:false}],no=[{probability:.4,conditions:{[shared]:"yes"},occurs:false},{probability:.6,conditions:{[shared]:"no"},occurs:true}];
+  const makeState=()=>({players:[
+    {id:"actor",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,handResourceBranches:[{probability:1,conditions:{},handCount:1,blockCount:0,counterCount:0,assaultCount:0,recoverCount:0,otherCount:1}]}
+  ]});
+  let state=makeState(),sim=new AiSimulator(state);sim.takeResourceToHand(state,state.players[0],state.players[1],yes);sim.takeResourceToHand(state,state.players[0],state.players[1],yes);
+  assertClose(state.players[0].handCount,.4);assertClose(state.players[1].handCount,.6);
+  state=makeState();sim=new AiSimulator(state);sim.takeResourceToHand(state,state.players[0],state.players[1],yes);sim.takeResourceToHand(state,state.players[0],state.players[1],no);
+  assertClose(state.players[0].handCount,1);assertClose(state.players[1].handCount,0);
+});
+
+test("conditional assault bonuses preserve correlation and consume only attack worlds", () => {
+  const shared="bonus",source={id:"source",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,attackUsed:0,
+    exposeWeaknessStacks:.4,exposeWeaknessBranches:[{probability:.4,conditions:{[shared]:"yes"},amount:1},{probability:.6,conditions:{[shared]:"no"},amount:0}],assaultBonus:0,momentum:0};
+  const target={id:"target",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0};
+  const yes=[{probability:.4,conditions:{[shared]:"yes"},occurs:true},{probability:.6,conditions:{[shared]:"no"},occurs:false}],no=[{probability:.4,conditions:{[shared]:"yes"},occurs:false},{probability:.6,conditions:{[shared]:"no"},occurs:true}];
+  let state={players:[structuredClone(source),structuredClone(target)]},sim=new AiSimulator(state);sim.simulateAssault(state,state.players[0],state.players[1],yes,{attackUseConsumed:true});
+  assertClose(state.players[1].hp,4.2);assertClose(state.players[0].exposeWeaknessStacks,0);
+  state={players:[structuredClone(source),structuredClone(target)]};sim=new AiSimulator(state);sim.simulateAssault(state,state.players[0],state.players[1],no,{attackUseConsumed:true});
+  assertClose(state.players[1].hp,4.4);assertClose(state.players[0].exposeWeaknessStacks,.4);
+});
+
+test("all-in bonus follows its actual energy world instead of squaring probability", () => {
+  const shared="all-in-world",state={players:[
+    {id:"gambler",generalId:"fate-gambler",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:1.6,maxEnergy:4,
+      energyBranches:[{probability:.4,conditions:{[shared]:"yes"},amount:4},{probability:.6,conditions:{[shared]:"no"},amount:0}],
+      handCount:0,activeSkillUses:0,activeSkillLimit:1,assaultBonus:0},
+    {id:"target",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0}
+  ]},event=[{probability:.4,conditions:{[shared]:"yes"},executes:true},{probability:.6,conditions:{[shared]:"no"},executes:false}],sim=new AiSimulator(state);
+  const after=sim.apply(state,{type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[],executionWorldBranches:event},"gambler");
+  const assault=[{probability:.4,conditions:{[shared]:"yes"},occurs:true},{probability:.6,conditions:{[shared]:"no"},occurs:false}];
+  sim.simulateAssault(after,after.players[0],after.players[1],assault,{attackUseConsumed:true});
+  assertClose(after.players[1].hp,4.2);assertClose(after.players[0].assaultBonus,0);
+});
+
+test("rejuvenation and guardian one-shot states remain conditional", () => {
+  const shared="passive",yes=[{probability:.4,conditions:{[shared]:"yes"},occurs:true},{probability:.6,conditions:{[shared]:"no"},occurs:false}],no=[{probability:.4,conditions:{[shared]:"yes"},occurs:false},{probability:.6,conditions:{[shared]:"no"},occurs:true}];
+  const medic={id:"medic",generalId:"spirit-medic",battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:0,rejuvenationUsed:false};
+  const first={id:"first",battleTeam:"dawn",alive:true,hp:1,maxHp:4,handCount:0},second={id:"second",battleTeam:"dawn",alive:true,hp:1,maxHp:4,handCount:0};
+  let state={players:[medic,first,second]},sim=new AiSimulator(state);sim.healFrom(state,medic,first,1,yes);sim.healFrom(state,medic,second,1,no);
+  assertClose(medic.handCount,1);assertClose(totalBranchProbability(medic.rejuvenationStateBranches.filter((branch)=>branch.used)),1);
+
+  const guardian={id:"guardian",generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:1,
+    handResourceBranches:[{probability:1,conditions:{},handCount:1,blockCount:0,counterCount:0,assaultCount:0,recoverCount:0,otherCount:1}]};
+  const attacker={id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},victim={id:"victim",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0};
+  state={players:[attacker,victim,guardian]};sim=new AiSimulator(state);sim.simulateAssault(state,attacker,victim,yes,{attackUseConsumed:true});sim.simulateAssault(state,attacker,victim,yes,{attackUseConsumed:true});
+  assertClose(victim.hp,3.6);assertClose(guardian.handCount,.6);assertClose(guardian.guardianAidUsedProbability,.4);
+});
+
+test("equipment removal worlds drive later distance legality", () => {
+  const shared="destroy-equipment",event=[{probability:.4,conditions:{[shared]:"yes"},occurs:true},{probability:.6,conditions:{[shared]:"no"},occurs:false}];
+  const source={id:"source",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,equipmentDefinitionId:"telescope",equipmentRetentionProbability:1};
+  const target={id:"target",seatIndex:2,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0};
+  const state={players:[source,{id:"middle",seatIndex:1,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},target,{id:"tail",seatIndex:3,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0}]},sim=new AiSimulator(state);
+  sim.destroyResource(state,source,event);
+  const branches=DistanceSystem.getRangeConditionBranches({state},{source,target,range:1});
+  assertClose(branches.filter((branch)=>branch.matches).reduce((sum,branch)=>sum+branch.probability,0),.6);
+});
+
 let passed = 0;
 const testPattern = process.env.TEST_PATTERN ? new RegExp(process.env.TEST_PATTERN, "u") : null;
-const selectedTests = testPattern ? tests.filter(({ name }) => testPattern.test(name)) : tests;
+const testOffset = Math.max(0, Number(process.env.TEST_OFFSET) || 0);
+const testLimit = Math.max(0, Number(process.env.TEST_LIMIT) || tests.length);
+const selectedTests = (testPattern ? tests.filter(({ name }) => testPattern.test(name)) : tests)
+  .slice(testOffset, testOffset + testLimit);
 for (const { name, fn } of selectedTests) {
   try { await fn(); passed += 1; process.stdout.write(`✓ ${name}\n`); }
   catch (error) { process.stderr.write(`✗ ${name}\n${error.stack}\n`); process.exitCode = 1; }
