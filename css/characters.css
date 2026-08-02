@@ -29,6 +29,7 @@
 .player-seat.is-active::after { content: "行动中"; position: absolute; z-index: 4; left: 50%; bottom: 8px; transform: translateX(-50%); padding: 2px 9px; color: #fff; border-radius: 999px; background: var(--gold); font-size: 12px; font-weight: 800; white-space: nowrap; box-shadow: 0 2px 6px rgba(50,35,20,.18); }
 .cpu-seat.is-active::after { bottom: 206px; }
 .player-seat.target-legal { cursor: pointer; animation: targetPulse 1.25s ease-in-out infinite; }
+.player-seat.target-selected { outline: 4px solid #c6882d; box-shadow: 0 0 0 6px rgba(198,136,45,.2), var(--shadow-card); }
 .player-seat.target-illegal { filter: saturate(.55) brightness(.94); }
 .player-seat.is-dead { filter: grayscale(.9) sepia(.14); opacity: .76; }
 .seat-portrait-wrap { position: relative; min-width: 0; overflow: hidden; padding: 0; border: 1px solid color-mix(in srgb, var(--team), #fff 48%); border-radius: 8px 14px 8px 8px; background: var(--surface-muted); cursor: pointer; }

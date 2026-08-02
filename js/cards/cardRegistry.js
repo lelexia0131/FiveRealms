@@ -1,4 +1,4 @@
-/** 二十三种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
+/** 二十四种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
 import { RuleEngine } from "../core/RuleEngine.js?build=20260801-hunter-tracking-v53";
 
 /** 只在最终效果解析时读取私密意图，并按原角色、原区域复验实体牌。 */
@@ -115,6 +115,11 @@ const CARD_EFFECTS = {
       });
       if (!game.isSessionValid(gameId)) return { resolved:false };
     }
+  },
+
+  /** 借势只编排统一响应、普通突袭和装备转移入口，不在卡牌层复制底层规则。 */
+  async leverage(game, source, card, _targets, context) {
+    return { resolved:await game.resolveLeverage(source, card, context.privateLeverageIntent, context.resolutionId) };
   },
 
   async plunder(game, source, card, targets, context) {

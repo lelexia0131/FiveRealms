@@ -1,6 +1,7 @@
 import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-hunter-tracking-v53";
 import { createId } from "../utils/helpers.js?build=20260801-hunter-tracking-v53";
 import { getAiDelay } from "../utils/aiTiming.js?build=20260801-hunter-tracking-v53";
+import { RuleEngine } from "./RuleEngine.js?build=20260801-hunter-tracking-v53";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -16,7 +17,7 @@ const responseResult = (status, payload = {}) => Object.freeze({ status, ...payl
 export const isCancelledResponse = (result) => result?.status === RESPONSE_STATUS.CANCELLED;
 
 function normalizeDecision(decision) {
-  if (decision?.status === RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.USED);
+  if (decision?.status === RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.USED, { cardId:decision.cardId ?? null });
   if (decision?.status === RESPONSE_STATUS.CANCELLED) return responseResult(RESPONSE_STATUS.CANCELLED);
   if (decision?.status === RESPONSE_STATUS.DECLINED) return responseResult(RESPONSE_STATUS.DECLINED);
   return responseResult(decision ? RESPONSE_STATUS.USED : RESPONSE_STATUS.DECLINED);
@@ -85,6 +86,11 @@ export function buildResponsePresentation(responder, type, context = {}, require
     } else {
       responseText = "你需要打出 1 张突袭。";
     }
+  } else if (type === "leverageAssault") {
+    responseCardName = "突袭";
+    buttonLabel = "使用突袭";
+    eventText = `${sourceName}对你使用了「借势」，要求你对${targetName}使用「突袭」。`;
+    responseText = `你可以使用一张真实突袭；若拒绝，将失去「${context.equipment?.name ?? "指定装备"}」。`;
   } else if (type === "dyingRescue") {
     responseCardName = "调息";
     buttonLabel = "使用调息";
@@ -299,6 +305,54 @@ export class ResponseSystem {
       this.game.log(`${responder.name}打出了「突袭」。`, "important");
     }
     return responseResult(RESPONSE_STATUS.USED, { card:cardToUse });
+  }
+
+  /**
+   * 借势响应不在这里消费牌：确认后返回同一实体，由 Game.playCard 进入普通突袭
+   * 完整流程。没有合法突袭时不创建窗口，直接交给借势统一拒绝分支。
+   */
+  async requestLeverageAssault(responder, target, context = {}) {
+    const gameId = this.game.state.gameId;
+    const availableCards = RuleEngine.getUsableAssaultCards(this.game, responder, target);
+    if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
+    if (!responder?.alive || !target?.alive || this.game.state.isGameOver || !availableCards.length) {
+      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    }
+    const presentation = {
+      ...buildResponsePresentation(responder, "leverageAssault", { ...context, target }, 1, availableCards.length, "使用突袭"),
+      declineLabel:"拒绝"
+    };
+    const request = {
+      id:createId("leverage-assault"),
+      type:"leverageAssault",
+      sourcePlayerId:context.source?.id ?? null,
+      targetPlayerId:responder.id,
+      forcedTargetPlayerId:target.id,
+      cardId:context.card?.id ?? null,
+      legalCardIds:availableCards.map((entry) => entry.id),
+      requiredCount:1,
+      legalSkillIds:[],
+      timeoutMs:GAME_CONFIG.responseTimeoutMs,
+      allowDecline:true,
+      presentation
+    };
+    this.activeRequestIds.add(request.id);
+    this.game.state.pendingResponses.push(request);
+    const decision = await this.waitForDecision(responder, request, presentation.buttonLabel, { ...context, target }, availableCards);
+    const selectedId = responder.controllerType === "human"
+      ? (decision.cardId ?? (availableCards.length === 1 ? availableCards[0].id : null))
+      : availableCards[0]?.id;
+    const selectedCard = availableCards.find((entry) => entry.id === selectedId) ?? null;
+    const valid = this.activeRequestIds.has(request.id)
+      && this.game.isSessionValid(gameId)
+      && selectedCard
+      && RuleEngine.canUseForcedAssault(this.game, responder, selectedCard, target).ok;
+    this.finishRequest(request.id);
+    if (isCancelledResponse(decision) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
+    if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { card:null });
+    return valid
+      ? responseResult(RESPONSE_STATUS.USED, { card:selectedCard })
+      : responseResult(RESPONSE_STATUS.INVALID, { card:null });
   }
 
   async requestSkillResponse(responder, skillId, responseName, context) {

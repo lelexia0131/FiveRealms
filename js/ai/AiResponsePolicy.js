@@ -1,5 +1,6 @@
 import { GAME_CONFIG } from "../config/gameConfig.js?build=20260801-hunter-tracking-v53";
 import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260801-hunter-tracking-v53";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260801-hunter-tracking-v53";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
@@ -67,6 +68,27 @@ export class AiResponsePolicy {
       if (context.card?.definitionId === "provoke") return responder.hp <= 2 || responder.hand.length > 2;
       if (context.card?.definitionId === "duel") return true;
       return responder.hp <= 2 || responder.hand.filter((card) => card.definitionId === "assault").length > 1;
+    }
+    if (type === "leverageAssault") {
+      if (!cards.length || !target?.alive) return false;
+      const enemyTarget = target.battleTeam !== responder.battleTeam;
+      // 借势响应同样只能依据 AI 可见快照评分，不能把真实手牌或内部状态对象交给评估器。
+      const visible = createAiVisibleState(responder.id, this.game.state);
+      const visibleResponder = visible.players.find((player) => player.id === responder.id);
+      const visibleTarget = visible.players.find((player) => player.id === target.id);
+      const threat = enemyTarget && visibleResponder && visibleTarget
+        ? this.evaluator.threatPriority(visibleResponder, visibleTarget, responder.aiMemory, 1)
+        : 0;
+      const attackBenefit = enemyTarget
+        ? 4 + threat + Math.max(0, target.maxHp - target.hp) * 1.5 + (target.hp <= 1 ? 5 : 0)
+        : -10;
+      const equipmentValue = Number(context.equipment?.aiValue ?? 5);
+      const assaultCount = cards.length;
+      const assaultCost = assaultCount <= 1 ? 4.5 : 2.5;
+      // 只用公开手牌数与未知牌密度估算防御，不读取目标真实手牌牌面。
+      const blockRisk = Math.min(.85, (target.hand?.length ?? 0) * this.knowledge.probability(responder, "block"));
+      const score = attackBenefit + equipmentValue * 1.05 - assaultCost - blockRisk * 2.5;
+      return score > 0;
     }
     if (type === "skill") return (context.amount ?? 1) > 0;
     return false;

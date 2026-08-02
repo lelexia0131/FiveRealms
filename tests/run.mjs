@@ -206,12 +206,17 @@ for (const definition of Object.values(CARD_DEFINITIONS)) test(`卡牌资源：$
   assert.ok(hasCardResolver(definition.definitionId));
 });
 
-test("牌组恰有23种定义和155张实体牌", () => { assert.equal(Object.keys(CARD_DEFINITIONS).length, 23); assert.equal(TOTAL_CARD_COUNT, 155); });
+test("牌组恰有24种定义和158张实体牌", () => { assert.equal(Object.keys(CARD_DEFINITIONS).length, 24); assert.equal(TOTAL_CARD_COUNT, 158); });
 test("三种卡牌分类之外没有旧响应分类", () => assert.deepEqual([...new Set(Object.values(CARD_DEFINITIONS).map((card) => card.category))].sort(), ["basic","equipment","tactic"]));
 test("旧 support/insight/steal/coreDevice/redirect 定义已删除", () => ["support","insight","steal","coreDevice","redirect"].forEach((id) => assert.equal(CARD_DEFINITIONS[id], undefined)));
 test("五种基础牌数量为突袭40、格挡20、调息12、聚能10、护盾10", () => assert.deepEqual(Object.fromEntries(["assault","block","recover","charge","shield"].map((id)=>[id,CARD_DEFINITIONS[id].count])),{assault:40,block:20,recover:12,charge:10,shield:10}));
 test("基础牌数量合计92", () => assert.equal(Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0), 92));
-test("战术牌数量合计48", () => assert.equal(Object.values(CARD_DEFINITIONS).filter((card) => card.category === "tactic").reduce((sum, card) => sum + card.count, 0), 48));
+test("战术牌数量合计51", () => assert.equal(Object.values(CARD_DEFINITIONS).filter((card) => card.category === "tactic").reduce((sum, card) => sum + card.count, 0), 51));
+test("借势在集中牌堆中固定3张且均为不同真实实例", () => {
+  const deck=new Deck(()=>0);deck.build();const cards=deck.cards.filter((card)=>card.definitionId==="leverage");
+  assert.equal(CARD_DEFINITIONS.leverage.count,3);assert.equal(cards.length,3);assert.equal(new Set(cards.map((card)=>card.id)).size,3);assert.equal(new Set(cards).size,3);
+  deck.build();assert.equal(deck.cards.filter((card)=>card.definitionId==="leverage").length,3);
+});
 test("装备牌数量合计15且数量来自统一配置", () => { const equipment = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment"); assert.equal(equipment.reduce((sum, card) => sum + card.count, 0), 15); assert.equal(equipment.length, 6); assert.deepEqual(Object.fromEntries(equipment.map((card)=>[card.definitionId,card.count])),{energyDevice:2,recycleDevice:3,defenseDevice:2,battleDevice:2,telescope:3,barrierDevice:3}); });
 test("所有角色技能都存在注册器", () => GENERAL_DEFINITIONS.forEach((general) => { general.passiveSkillIds.forEach((id) => assert.ok(hasPassiveSkill(id))); general.activeSkillIds.forEach((id) => assert.ok(hasActiveSkill(id))); }));
 test("所有角色都用稳定英文 roleTags 供 AI 判断职责", () => GENERAL_DEFINITIONS.forEach((general) => { assert.ok(general.roleTags.length >= 2);general.roleTags.forEach((tag)=>assert.match(tag,/^[a-z-]+$/)); }));
@@ -338,7 +343,7 @@ test("响应窗口保持居中浮层原布局且中央结算卡在普通阶段�
 });
 
 // 牌堆、阵营、距离和次数补偿
-test("Deck 创建155个唯一实体 card.id", () => { const deck = new Deck(() => .4); assert.equal(deck.build(), 155); assert.equal(new Set(deck.cards.map((card) => card.id)).size, 155); });
+test("Deck 创建158个唯一实体 card.id", () => { const deck = new Deck(() => .4); assert.equal(deck.build(), 158); assert.equal(new Set(deck.cards.map((card) => card.id)).size, 158); });
 test("结算区不会进入重洗", () => { const deck = new Deck(() => .4); deck.build(); const resolving = deck.drawOne(); const discard = deck.drawOne(); deck.beginResolve(resolving); deck.discard(discard); deck.cards = []; deck.reshuffle(); assert.equal(deck.cards.length, 1); assert.equal(deck.resolvingCards[0], resolving); });
 test("判定区不会进入重洗", () => { const deck = new Deck(() => .4); deck.build(); const judgment = deck.drawToJudgment(); const discard = deck.drawOne(); deck.discard(discard); deck.cards = []; deck.reshuffle(); assert.equal(deck.cards.length, 1); assert.equal(deck.judgmentZone[0], judgment); });
 test("重洗计数会准确累加", () => { const deck = new Deck(); deck.discardPile.push(instance("charge")); deck.reshuffle(); assert.equal(deck.reshuffleCount, 1); });
@@ -539,6 +544,74 @@ test("反制、强制突袭与濒死调息显示完整持有数量", async () =>
 test("响应事件中的角色和卡牌名称会在写入 DOM 前安全转义", async () => { const responder=makePlayer("h",0,"dawn","human"),source={id:"source",name:'<img src=x onerror=alert(1)>'},target=responder,card={name:'<script>bad()</script>',definitionId:"assault"},presentation=buildResponsePresentation(responder,"block",{source,target,card},1,0,"格挡");const previousWindow=globalThis.window;globalThis.window={setInterval,clearInterval};const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};const fake={responseState:null,elements:{response_panel:panel},game:{cleanupManager:{delay:()=>new Promise(()=>{})}},render(){}};try{const pending=UIManager.prototype.requestResponse.call(fake,{id:"escape-response",requiredCount:1,legalCardIds:[],timeoutMs:5000,presentation},"格挡");assert.doesNotMatch(panel.innerHTML,/<img|<script>/);assert.match(panel.innerHTML,/&lt;img/);assert.match(panel.innerHTML,/&lt;script/);fake.responseState.resolve(false);assert.equal((await pending).status,"declined");}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
 test("主动技能按钮只显示技能名称", () => { assert.equal(skillButtonLabel({id:"allIn",name:"孤注",cost:"all"}),"孤注");assert.equal(skillButtonLabel({id:"hunt",name:"猎杀",cost:2}),"猎杀");assert.equal(skillButtonLabel(null),"主动技能"); });
 test("突袭在中央结算区与使用日志中显示作用对象", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game,ui}=makeGame([a,b]);const assault=instance("assault");a.hand.push(assault);await game.playCard(a,assault,[b]);assert.equal(ui.currentCards[0].targetLabel,b.name);assert.ok(ui.logs.some((message)=>message===`${a.name}使用了「突袭」，作用对象：${b.name}。`)); });
+test("借势第一目标严格要求其他存活角色拥有真实装备且当前有普通突袭目标", () => {
+  const actor=makePlayer("actor",0,"dawn"),valid=makePlayer("valid",1,"dusk"),empty=makePlayer("empty",2,"dusk"),dead=makePlayer("dead",3,"dusk");
+  valid.equipment=instance("energyDevice");dead.equipment=instance("telescope");dead.alive=false;empty.statuses.virtualEquipment={definitionId:"battleDevice"};
+  const {game}=makeGame([actor,valid,empty,dead]);assert.deepEqual(RuleEngine.getLeverageFirstTargets(game,actor),[valid]);
+  valid.turnFlags.attackUsed=valid.turnFlags.attackLimit;assert.deepEqual(RuleEngine.getLeverageFirstTargets(game,actor),[]);
+});
+test("借势第二目标复用普通突袭列表并允许选择借势使用者本人", () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk");first.equipment=instance("energyDevice");
+  const {game}=makeGame([actor,first,ally]);const targets=RuleEngine.getLegalAssaultTargets(game,first);assert.ok(targets.includes(actor));assert.ok(!targets.includes(first));assert.ok(!targets.includes(ally));
+});
+test("借势选择阶段取消不会消耗卡牌或留下状态变化", async () => {
+  const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk"),use=instance("leverage"),equipment=instance("energyDevice");actor.hand.push(use);first.equipment=equipment;const {game}=makeGame([actor,first]);const controller=new InteractionController({requestTarget:async()=>null});const logCount=game.state.logs.length;
+  assert.equal(await controller.requestCardFlow(game,actor,use,[]),null);assert.ok(actor.hand.includes(use));assert.equal(first.equipment,equipment);assert.equal(game.state.logs.length,logCount);assert.equal(controller.pending,null);
+});
+test("借势无合法突袭时不弹响应窗口并把同一装备实例移入使用者手牌", async () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;
+  const {game,ui}=makeGame([actor,first]);const selection={firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id};
+  assert.equal(await game.playCard(actor,use,[],selection),true);assert.equal(ui.responseRequests.some((request)=>request.type==="leverageAssault"),false);assert.equal(first.equipment,null);assert.ok(actor.hand.includes(equipment));assert.equal(actor.equipment,null);assert.ok(game.state.deck.discardPile.includes(use));assert.equal(equipment.id,selection.equipmentCardId);
+});
+test("借势主动拒绝统一转移装备且不消耗第一目标突袭", async () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","human"),equipment=instance("battleDevice"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;
+  const {game,ui}=makeGame([actor,first],{response:()=>false});await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});
+  assert.ok(first.hand.includes(assault));assert.ok(actor.hand.includes(equipment));assert.ok(ui.logs.some((message)=>message===`${first.name}拒绝使用「突袭」，${actor.name}获得了其「${equipment.name}」。`));assert.ok(!ui.logs.some((message)=>/没有突袭|距离|次数/.test(message)));
+});
+test("借势成功响应使用真实突袭并完整复用次数、伤害、格挡和弃置流程", async () => {
+  const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk","human"),equipment=instance("battleDevice"),assault=instance("assault"),blockA=instance("block"),blockB=instance("block"),use=instance("leverage");actor.hand.push(use,blockA,blockB);first.hand.push(assault);first.equipment=equipment;
+  const {game,ui}=makeGame([actor,first],{response:(request)=>request.type==="leverageAssault"||request.type==="block"});const hp=actor.hp;
+  await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});
+  assert.equal(first.equipment,equipment);assert.equal(first.turnFlags.attackUsed,1);assert.equal(actor.hp,hp);assert.ok(game.state.deck.discardPile.includes(assault));assert.ok(game.state.deck.discardPile.includes(use));assert.equal(actor.hand.includes(blockA),false);assert.equal(actor.hand.includes(blockB),false);assert.ok(ui.responseRequests.some((request)=>request.type==="leverageAssault"&&request.legalCardIds.includes(assault.id)));
+});
+test("借势不能绕过第一目标的突袭次数限制", async () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;
+  const {game,ui}=makeGame([actor,first],{response:()=>true});first.turnFlags.attackUsed=first.turnFlags.attackLimit;
+  assert.equal(RuleEngine.canPlayCard(game,actor,use).ok,false);assert.equal(RuleEngine.getLeverageFirstTargets(game,actor).length,0);assert.equal(ui.responseRequests.length,0);
+});
+test("借势锁定望远镜时响应前不卸装，仍按该武器修正后的距离使用普通突袭", async () => {
+  const actor=makePlayer("actor",2,"dawn","human"),first=makePlayer("first",0,"dusk","human"),screen=makePlayer("screen",1,"dusk"),other=makePlayer("other",3,"dawn"),tail=makePlayer("tail",4,"dawn"),equipment=instance("telescope"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;
+  const {game}=makeGame([actor,first,screen,other,tail],{response:(request)=>request.type==="leverageAssault"});assert.equal(DistanceSystem.getDistance(game,first,actor),1);
+  assert.ok(RuleEngine.getLegalAssaultTargets(game,first).includes(actor));await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});assert.equal(first.equipment,equipment);assert.equal(first.turnFlags.attackUsed,1);
+});
+test("借势只接受唯一ID对应的原装备且不会用同名替代", async () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),original=instance("energyDevice"),replacement=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=original;const {game}=makeGame([actor,first]);
+  assert.equal(await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:replacement.id,secondTargetId:actor.id}),false);assert.ok(actor.hand.includes(use));assert.equal(first.equipment,original);
+  game.eventBus.on("beforeCardResolve","test:replace-leverage-equipment",(event)=>{if(event.card===use)first.equipment=replacement;});
+  assert.equal(await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:original.id,secondTargetId:actor.id}),true);assert.equal(first.equipment,replacement);assert.ok(!actor.hand.includes(original));assert.ok(!actor.hand.includes(replacement));assert.ok(game.state.logs.some((entry)=>entry.message.includes("指定装备已离开装备区")));
+});
+test("借势并发重复提交只结算和转移一次", async () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;const {game}=makeGame([actor,first]);const selection={firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id};
+  const results=await Promise.all([game.playCard(actor,use,[],selection),game.playCard(actor,use,[],selection)]);assert.equal(results.filter(Boolean).length,1);assert.equal(actor.hand.filter((card)=>card===equipment).length,1);assert.equal(first.equipment,null);assert.equal(game.state.deck.discardPile.filter((card)=>card===use).length,1);
+});
+test("借势响应前任一目标离场会取消且不按拒绝转移装备", async () => {
+  for(const leaving of ["first","second"]){const actor=makePlayer(`actor-${leaving}`,0,"dawn"),first=makePlayer(`first-${leaving}`,1,"dusk"),second=makePlayer(`second-${leaving}`,2,"dawn"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;const {game}=makeGame([actor,first,second]);
+    game.eventBus.on("beforeCardResolve",`test:leave-before-leverage:${leaving}`,(event)=>{if(event.card===use)(leaving==="first"?first:second).alive=false;});
+    await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:second.id});assert.equal(first.equipment,equipment);assert.ok(!actor.hand.includes(equipment));assert.ok(game.state.logs.some((entry)=>entry.message.includes("目标已离场")));
+  }
+});
+test("AI 主动借势只枚举公开装备与第一目标普通突袭合法目标", () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk"),far=makePlayer("far",3,"dawn"),tail=makePlayer("tail",4,"dawn"),use=instance("leverage");actor.hand.push(use);first.equipment=instance("energyDevice");const {game}=makeGame([actor,first,ally,far,tail]);
+  const actions=game.aiController.getLegalActions(actor).filter((action)=>action.card?.id===use.id);assert.ok(actions.length>0);for(const action of actions){assert.equal(action.selection.firstTargetId,first.id);assert.equal(action.selection.equipmentCardId,first.equipment.id);assert.ok(RuleEngine.getLegalAssaultTargets(game,first).includes(action.targets[1]));}assert.ok(actions.some((action)=>action.targets[1]===actor));assert.ok(!actions.some((action)=>action.targets[1]===far));
+});
+test("AI 借势响应使用统一策略且仍通过普通突袭流程", async () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),equipment=instance("battleDevice"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault,instance("assault"));first.equipment=equipment;const {game}=makeGame([actor,first]);game.aiController.responsePolicy.shouldRespond=(_responder,type)=>type==="leverageAssault";
+  await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});assert.equal(first.turnFlags.attackUsed,1);assert.equal(first.equipment,equipment);assert.ok(game.state.deck.discardPile.includes(assault));
+});
+test("AI 借势响应通过可见快照评估真实玩家状态", () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),equipment=instance("battleDevice"),assault=instance("assault");first.hand.push(assault);first.equipment=equipment;const {game}=makeGame([actor,first]);
+  const decision=game.aiController.responsePolicy.shouldRespond(first,"leverageAssault",{target:actor,equipment},[assault]);assert.equal(typeof decision,"boolean");
+});
 test("群体牌会列出全部作用对象且结算模板显示目标标签", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dusk");const {game,ui}=makeGame([a,b,c]);const shockwave=instance("shockwave");a.hand.push(shockwave);await game.playCard(a,shockwave,[]);assert.equal(ui.currentCards[0].targetLabel,`${b.name}、${c.name}`);const markup=resolvingCardTemplate(shockwave,a.name,ui.currentCards[0].targetLabel);assert.match(markup,/作用对象/);assert.match(markup,new RegExp(`${b.name}、${c.name}`)); });
 test("上方 AI 思考提示出现时隐藏下方重复提示", () => { const classes=()=>{const values=new Set();return {values,toggle(name,force){if(force)values.add(name);else values.delete(name);}};};const thinkingClasses=classes(),promptClasses=classes();const fake={game:null,thinkingPlayerId:null,thinkingMessage:"",elements:{thinking_indicator:{classList:thinkingClasses,innerHTML:""},action_prompt:{classList:promptClasses}},render(){}};const player=makePlayer("ai",0,"dawn");UIManager.prototype.setThinking.call(fake,true,player,"准备使用突袭");assert.ok(promptClasses.values.has("is-hidden"));UIManager.prototype.setThinking.call(fake,false,player);assert.ok(!promptClasses.values.has("is-hidden")); });
 test("多层破势叠加并在下一次主动突袭一次性消耗", async () => { const a=makePlayer("a",0,"dawn"), b=makePlayer("b",1,"dusk"); b.hp=8;b.maxHp=8; const {game}=makeGame([a,b]); for(let i=0;i<2;i+=1){const c=instance("exposeWeakness");a.hand.push(c);await game.playCard(a,c,[]);} assert.equal(a.statuses.exposeWeakness.stacks,2); const attack=instance("assault");a.hand.push(attack);await game.playCard(a,attack,[b]);assert.equal(b.hp,5);assert.equal(a.statuses.exposeWeakness,undefined); });
@@ -1388,8 +1461,8 @@ test("日志角色 token 可在同一行分别按阵营安全着色", () => {
   const markup=formatLogEntry(entry);assert.match(markup,/log-player-name team-dawn/);assert.match(markup,/log-player-name team-dusk/);
   assert.match(markup,/造成影响/);
 });
-test("23 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
-  assert.equal(Object.keys(CARD_DEFINITIONS).length,23);
+test("24 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length,24);
   for(const definition of Object.values(CARD_DEFINITIONS)){
     const card={...definition,id:`layout-${definition.definitionId}`};
     for(const markup of [handCardTemplate(card),opponentHandStripTemplate([{known:true,...card}])]){

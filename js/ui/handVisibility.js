@@ -8,7 +8,7 @@ import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-hunter-
 export const CARD_CATEGORY_DISPLAY_ORDER = Object.freeze({ basic:0, tactic:1, equipment:2, unknown:3 });
 export const CARD_DEFINITION_DISPLAY_ORDER = Object.freeze([
   "assault", "recover", "block", "charge", "shield",
-  "scout", "transfer", "exposeWeakness", "shockwave", "provoke", "plunder", "destroy", "counter", "harvest", "duel", "mutualBenefit", "symbiosis",
+  "scout", "transfer", "exposeWeakness", "shockwave", "provoke", "leverage", "plunder", "destroy", "counter", "harvest", "duel", "mutualBenefit", "symbiosis",
   "energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"
 ]);
 const definitionOrder = new Map(CARD_DEFINITION_DISPLAY_ORDER.map((definitionId, index) => [definitionId, index]));

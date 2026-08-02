@@ -42,6 +42,11 @@ function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = 
     const receiver = game.state.players.find((player) => player.id === selection.receiverId);
     if (from && receiver) return `来源 ${from.name} → 接收 ${receiver.name}`;
   }
+  if (cardOrSkill?.definitionId === "leverage" && selection?.firstTargetId && selection?.secondTargetId) {
+    const first = game.state.players.find((player) => player.id === selection.firstTargetId);
+    const second = game.state.players.find((player) => player.id === selection.secondTargetId);
+    if (first && second) return `${first.name} → ${second.name}`;
+  }
   return "";
 }
 
@@ -84,6 +89,8 @@ export class Game {
     this.aiReplanAfterEveryAction = GAME_CONFIG.aiReplanAfterEveryAction;
     this.aiRandomnessRange = GAME_CONFIG.aiRandomnessRange;
     this.aiDifficultyMultiplier = GAME_CONFIG.aiDifficultyMultiplier;
+    /** 同一借势 resolutionId 在本局只能进入一次核心结算，防止异步重复提交。 */
+    this.leverageResolutionIds = new Set();
     this.loopPromise = null;
   }
 
@@ -391,6 +398,26 @@ export class Game {
   }
 
   /**
+   * 在借势进入结算区前锁定公开选择。装备同时保存唯一 ID 与原实例引用；后续每个
+   * 异步边界仍会重新检查所在区域，绝不会按名称、槽位或索引寻找替代品。
+   */
+  prepareLeverageIntent(source, selection = null) {
+    if (!this.isSessionValid(this.state.gameId) || !source?.alive || !selection) return null;
+    const firstTarget = this.state.players.find((player) => player.id === selection.firstTargetId) ?? null;
+    const secondTarget = this.state.players.find((player) => player.id === selection.secondTargetId) ?? null;
+    if (!RuleEngine.getLeverageFirstTargets(this, source).includes(firstTarget)) return null;
+    if (!RuleEngine.getLegalAssaultTargets(this, firstTarget).includes(secondTarget)) return null;
+    const equipmentCard = firstTarget.equipment;
+    if (!equipmentCard?.id || equipmentCard.id !== selection.equipmentCardId) return null;
+    return Object.freeze({
+      firstTarget,
+      secondTarget,
+      equipmentCard,
+      equipmentCardId:equipmentCard.id
+    });
+  }
+
+  /**
    * 在反制窗口打开前消费短期隐藏选择令牌，并把结果固化为仅供最终解析器使用的实体意图。
    * 公开上下文只保留玩家、区域与数量；实体牌、定义和名称不会进入响应链。
    */
@@ -478,17 +505,107 @@ export class Game {
     return intent.cards.filter((card) => intent.owner.hand.includes(card));
   }
 
+  /** 借势目标失效采用统一取消分支；死亡或离场绝不能被当作拒绝并转移装备。 */
+  leveragePlayersRemainValid(source, intent) {
+    const inGame = (player) => Boolean(player?.alive && this.state.players.includes(player));
+    return inGame(source) && inGame(intent?.firstTarget) && inGame(intent?.secondTarget);
+  }
+
+  /** 只接受发动时记录 ID 所对应的同一装备实例，名称相同也不能替代。 */
+  leverageEquipmentRemainsValid(intent) {
+    return Boolean(intent?.equipmentCard?.id
+      && intent.equipmentCard.id === intent.equipmentCardId
+      && intent.firstTarget?.equipment === intent.equipmentCard);
+  }
+
+  /**
+   * 借势的玩家/AI 共用结算。指定装备在响应结束前始终留在装备区，因此普通
+   * RuleEngine 距离计算会继续应用该装备；只有统一拒绝后才调用装备转移入口。
+   */
+  async resolveLeverage(source, card, intent, resolutionId) {
+    const gameId = this.state.gameId;
+    if (!this.isSessionValid(gameId) || !intent || !resolutionId || this.leverageResolutionIds.has(resolutionId)) return false;
+    this.leverageResolutionIds.add(resolutionId);
+
+    if (!this.leveragePlayersRemainValid(source, intent)) {
+      this.log(`目标已离场，「${card.name}」结算取消。`, "important");
+      return false;
+    }
+    if (!this.leverageEquipmentRemainsValid(intent)) {
+      this.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+      return false;
+    }
+
+    const { firstTarget, secondTarget, equipmentCard } = intent;
+    let response = { status:RESPONSE_STATUS.UNAVAILABLE, card:null };
+    const legalAssaults = RuleEngine.getUsableAssaultCards(this, firstTarget, secondTarget);
+    if (legalAssaults.length) {
+      response = await this.responseSystem.requestLeverageAssault(firstTarget, secondTarget, {
+        source,
+        card,
+        equipment:equipmentCard
+      });
+      if (!this.isSessionValid(gameId) || isCancelledResponse(response)) return false;
+    }
+
+    // 响应等待期间重新读取三名玩家、装备、距离、次数及真实手牌实例。
+    if (!this.leveragePlayersRemainValid(source, intent)) {
+      this.log(`目标已离场，「${card.name}」结算取消。`, "important");
+      return false;
+    }
+    if (!this.leverageEquipmentRemainsValid(intent)) {
+      this.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+      return false;
+    }
+
+    if (response.status === RESPONSE_STATUS.USED && response.card
+      && RuleEngine.canUseForcedAssault(this, firstTarget, response.card, secondTarget).ok) {
+      const used = await this.playCard(firstTarget, response.card, [secondTarget], null, {
+        usageContext:"leverageAssault",
+        parentResolutionId:resolutionId
+      });
+      if (used) return true;
+      if (!this.isSessionValid(gameId)) return false;
+    }
+
+    // 所有无法使用与主动放弃在公开结果上统一为“拒绝”，且此刻才卸下装备。
+    if (!this.leveragePlayersRemainValid(source, intent)) {
+      this.log(`目标已离场，「${card.name}」结算取消。`, "important");
+      return false;
+    }
+    if (!this.leverageEquipmentRemainsValid(intent)) {
+      this.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+      return false;
+    }
+    const moved = await this.moveEquipmentToHand(firstTarget, source, equipmentCard, "借势");
+    if (!this.isSessionValid(gameId)) return false;
+    if (moved) {
+      this.log(`${firstTarget.name}拒绝使用「突袭」，${source.name}获得了其「${equipmentCard.name}」。`, "important");
+      return true;
+    }
+    if (!this.leverageEquipmentRemainsValid(intent)) {
+      this.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+    }
+    return false;
+  }
+
   /**
    * 使用一张主动牌。卡牌从手牌先进入结算区，完成或取消后才进入弃牌堆/装备区。
    * @returns {Promise<boolean>} 是否实际开始结算。
    */
-  async playCard(source, card, requestedTargets = [], selection = null) {
+  async playCard(source, card, requestedTargets = [], selection = null, options = {}) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId) || this.state.isGameOver) return false;
-    const legality = RuleEngine.canPlayCard(this, source, card);
-    if (!legality.ok || this.actionLocked) return false;
+    const forcedAssault = options.usageContext === "leverageAssault" && card?.definitionId === "assault";
+    const legality = forcedAssault
+      ? RuleEngine.canUseForcedAssault(this, source, card, requestedTargets[0])
+      : RuleEngine.canPlayCard(this, source, card);
+    // 借势会在自身结算锁内嵌套调用普通突袭；除此之外任何重入仍被统一锁拒绝。
+    if (!legality.ok || (this.actionLocked && !forcedAssault)) return false;
     let targets = requestedTargets;
-    const legalTargets = RuleEngine.getCardTargets(this, source, card);
+    const legalTargets = forcedAssault
+      ? RuleEngine.getLegalAssaultTargets(this, source)
+      : RuleEngine.getCardTargets(this, source, card);
     if (card.targetType === "self") targets = [source];
     if (card.targetType === "allEnemies") targets = legalTargets;
     if (card.targetType === "allLiving") targets = legalTargets;
@@ -496,14 +613,20 @@ export class Game {
     const preparedTransfer = card.definitionId === "transfer"
       ? await this.prepareTransferIntent(source, card, selection)
       : null;
+    const preparedLeverage = card.definitionId === "leverage"
+      ? this.prepareLeverageIntent(source, selection)
+      : null;
     const needsPrivateSelection = ["scout", "plunder", "destroy"].includes(card.definitionId);
     const preparedPrivateSelection = needsPrivateSelection
       ? await this.preparePrivateCardSelectionIntent(source, card, targets, selection)
       : null;
     if (!this.isSessionValid(gameId)) return false;
     if (card.definitionId === "transfer" && !preparedTransfer) return false;
+    if (card.definitionId === "leverage" && !preparedLeverage) return false;
     if (needsPrivateSelection && !preparedPrivateSelection) return false;
+    if (preparedLeverage) targets = [preparedLeverage.firstTarget, preparedLeverage.secondTarget];
 
+    const previousActionLocked = this.actionLocked;
     this.actionLocked = true;
     const resolutionId = `${this.state.gameId}:resolution:${++this.state.resolutionSerial}`;
     try {
@@ -511,12 +634,16 @@ export class Game {
       if (!this.isSessionValid(gameId)) return false;
       const targetLabel = preparedTransfer
         ? `来源 ${preparedTransfer.publicContext.fromName} → 接收 ${preparedTransfer.publicContext.receiverName}`
+        : preparedLeverage
+          ? `${preparedLeverage.firstTarget.name} → ${preparedLeverage.secondTarget.name}`
         : actionTargetLabel(this, source, card, targets, selection);
       this.ui.setCurrentCard(card, source.name, targetLabel);
       this.ui.playSound?.("playCard");
       if (preparedTransfer) {
         const publicContext = preparedTransfer.publicContext;
         this.log(`${source.name}使用了「${card.name}」，准备将${publicContext.fromName}的${publicContext.safeItemLabel}转移给${publicContext.receiverName}。`);
+      } else if (preparedLeverage) {
+        this.log(`${source.name}对${preparedLeverage.firstTarget.name}使用「借势」，令其对${preparedLeverage.secondTarget.name}使用「突袭」。`);
       } else if (card.category !== "equipment") {
         this.log(`${source.name}使用了「${card.name}」${targetLabel ? `，作用对象：${targetLabel}` : ""}。`);
       }
@@ -551,7 +678,8 @@ export class Game {
         const effectResult = await resolveCardEffect(this, source, card, targets, {
           resolutionId, selection,
           privateTransferIntent:preparedTransfer?.privateIntent ?? null,
-          privateCardSelectionIntent:preparedPrivateSelection?.privateIntent ?? null
+          privateCardSelectionIntent:preparedPrivateSelection?.privateIntent ?? null,
+          privateLeverageIntent:preparedLeverage
         });
         if (!this.isSessionValid(gameId)) return false;
         destination = effectResult.destination;
@@ -562,13 +690,15 @@ export class Game {
       source.statistics.cardsPlayed += 1;
       const effectiveTargets = preparedTransfer
         ? (effectResolved ? [preparedTransfer.privateIntent.receiver] : [])
+        : preparedLeverage
+          ? (effectResolved ? [preparedLeverage.firstTarget, preparedLeverage.secondTarget] : [])
         : preparedPrivateSelection && !effectResolved
           ? []
         : card.definitionId === "mutualBenefit"
           ? this.state.players.filter((player) => player.alive)
           : targets;
       const cancelled = countered || cancelledBeforeResolve
-        || Boolean((preparedTransfer || preparedPrivateSelection) && !effectResolved);
+        || Boolean((preparedTransfer || preparedPrivateSelection || preparedLeverage) && !effectResolved);
       await this.eventBus.emit("cardUsed", {
         type:"cardUsed", source, card, targets, effectiveTargets,
         cancelled, resolved:!cancelled && effectResolved, resolutionId
@@ -579,9 +709,10 @@ export class Game {
       return true;
     } finally {
       if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
-      this.actionLocked = false;
+      this.actionLocked = previousActionLocked;
       this.flushPendingHumanPlayEnd();
-      if (!this.state.isGameOver && source.controllerType === "human" && this.state.phase === "play") {
+      if (!previousActionLocked && !this.state.isGameOver && source.controllerType === "human"
+        && this.currentPlayer?.id === source.id && this.state.phase === "play") {
         this.ui.setPrompt("继续出牌，或结束本次出牌阶段。", "选择一张可用手牌");
       }
       this.ui.render(this);

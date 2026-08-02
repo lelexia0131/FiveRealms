@@ -83,6 +83,25 @@ export class AiSimulator {
           this.applyDamage(next, actor, player, (1 - response) * targetScale, { canBlock:false, deviceAttack:false });
         }
         break;
+      case "leverage": {
+        const first = next.players.find((player) => player.id === abstractAction.selection?.firstTargetId)
+          ?? next.players.find((player) => player.id === abstractAction.targets?.[0]?.id);
+        const second = next.players.find((player) => player.id === abstractAction.selection?.secondTargetId)
+          ?? next.players.find((player) => player.id === abstractAction.targets?.[1]?.id);
+        if (!first?.alive || !second?.alive || !first.equipmentDefinitionId) break;
+        const assaultAvailable = Math.max(0, Math.min(1, first.assaultResponseProbability ?? 0));
+        const equipmentValue = CARD_DEFINITIONS[first.equipmentDefinitionId]?.aiValue ?? 7;
+        const friendlyFirePenalty = second.battleTeam === first.battleTeam ? .75 : 0;
+        const useProbability = assaultAvailable * Math.max(.15, Math.min(.95, .55 + equipmentValue * .04 - friendlyFirePenalty));
+        first.handCount = Math.max(0, first.handCount - useProbability);
+        first.expectedAssaultCount = Math.max(0, (first.expectedAssaultCount ?? 0) - useProbability);
+        first.attackUsed = (first.attackUsed ?? 0) + useProbability;
+        this.applyDamage(next, first, second, useProbability, { canBlock:true, deviceAttack:true });
+        const declineProbability = 1 - useProbability;
+        actor.handCount += declineProbability;
+        if (declineProbability >= .5) first.equipmentDefinitionId = null;
+        break;
+      }
       case "plunder":
         if (target) this.takeResourceToHand(actor, target, scale);
         break;

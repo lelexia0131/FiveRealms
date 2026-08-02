@@ -145,6 +145,12 @@ export class UIManager {
     this.elements.discard_confirm_button.addEventListener("click", () => { this.playSound("select"); this.confirmDiscard(); });
     this.elements.cancel_interaction_button.addEventListener("click", () => { this.playSound("select"); this.cancelTarget(); });
     this.elements.response_panel.addEventListener("click", (event) => {
+      const responseCard = event.target.closest("[data-response-card-id]");
+      if (responseCard) { this.playSound("select"); this.toggleResponseCard(responseCard.dataset.responseCardId); return; }
+      const targetConfirm = event.target.closest("[data-target-confirm]");
+      if (targetConfirm) { this.playSound("select"); this.confirmTarget(); return; }
+      const targetCancel = event.target.closest("[data-target-cancel]");
+      if (targetCancel) { this.playSound("select"); this.cancelTarget(); return; }
       const button = event.target.closest("[data-response-choice]");
       if (button) { this.playSound("select"); this.resolveResponse(button.dataset.responseChoice === "use"); }
     });
@@ -214,16 +220,23 @@ export class UIManager {
     ];
     this.elements.status_metrics.innerHTML = metrics.map(([label, value, key]) => `<span class="metric metric-${key}" data-pile="${key}"><small>${label}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
     const targetOptions = { humanTeam: human.battleTeam, isTargeting: Boolean(this.targetState) };
+    const targetSource = this.targetState?.meta?.source ?? human;
     this.elements.cpu_grid.innerHTML = state.players.slice(1).map((player) => playerPanelTemplate(player, {
       ...targetOptions, isCurrent: game.currentPlayer?.id === player.id,
-      isLegalTarget: Boolean(this.targetState?.legalIds.has(player.id)), isThinking: this.thinkingPlayerId === player.id,
-      distanceInfo: DistanceSystem.describe(game, human, player),
-      distanceState: this.getDistanceState(human, player),
+      isLegalTarget: Boolean(this.targetState?.legalIds.has(player.id)),
+      isSelectedTarget: this.targetState?.selected?.id === player.id,
+      isThinking: this.thinkingPlayerId === player.id,
+      distanceInfo: DistanceSystem.describe(game, targetSource, player),
+      distanceState: this.getDistanceState(targetSource, player),
       opponentHandSlots: createOpponentHandView(human, player)
     })).join("");
     this.elements.human_panel.innerHTML = playerPanelTemplate(human, {
       ...targetOptions, isHuman: true, isCurrent: game.currentPlayer?.id === human.id,
-      isLegalTarget: Boolean(this.targetState?.legalIds.has(human.id)), isThinking: this.thinkingPlayerId === human.id
+      isLegalTarget: Boolean(this.targetState?.legalIds.has(human.id)),
+      isSelectedTarget: this.targetState?.selected?.id === human.id,
+      isThinking: this.thinkingPlayerId === human.id,
+      distanceInfo:this.targetState && targetSource.id !== human.id ? DistanceSystem.describe(game, targetSource, human) : null,
+      distanceState:this.targetState && targetSource.id !== human.id ? this.getDistanceState(targetSource, human) : null
     });
     this.renderHand(game, human);
     this.renderControls(game, human);
@@ -235,6 +248,7 @@ export class UIManager {
     return playerPanelTemplate(player, {
       humanTeam: human.battleTeam, isHuman, isCurrent: this.game?.currentPlayer?.id === player.id,
       isLegalTarget: Boolean(this.targetState?.legalIds.has(player.id)), isTargeting: Boolean(this.targetState),
+      isSelectedTarget: this.targetState?.selected?.id === player.id,
       isThinking: this.thinkingPlayerId === player.id,
       opponentHandSlots: isHuman ? null : createOpponentHandView(human, player)
     });
@@ -302,6 +316,12 @@ export class UIManager {
       if (!this.targetState.legalIds.has(panel.dataset.playerId)) return;
       const target = this.targetState.players.find((player) => player.id === panel.dataset.playerId) ?? null;
       this.playSound?.("select");
+      if (this.targetState.meta?.confirmSelection) {
+        this.targetState.selected = target;
+        this.renderTargetConfirmation();
+        this.render(this.game);
+        return;
+      }
       const resolve = this.targetState.resolve;
       this.targetState = null;
       resolve(target);
@@ -335,16 +355,36 @@ export class UIManager {
     if (!players.length) return Promise.resolve(null);
     this.cancelTarget();
     return new Promise((resolve) => {
-      this.targetState = { players, legalIds: new Set(players.map((player) => player.id)), resolve, meta };
+      this.targetState = { players, legalIds: new Set(players.map((player) => player.id)), resolve, meta, prompt, selected:null };
       this.setPrompt(prompt, "可选目标带有金色指示环");
+      if (meta.confirmSelection) this.renderTargetConfirmation();
       this.render(this.game);
     });
+  }
+
+  renderTargetConfirmation() {
+    if (!this.targetState?.meta?.confirmSelection) return;
+    const selectedName = this.targetState.selected?.name ?? "尚未选择";
+    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(this.targetState.meta.stepTitle ?? "选择目标")}</strong><span>${escapeHtml(selectedName)}</span></div><div class="response-copy"><p class="response-event">${escapeHtml(this.targetState.prompt)}</p><p class="response-requirement">点击任一金色目标可直接改选，再确认本步骤。</p></div><div class="response-actions"><button class="primary-button" type="button" data-target-confirm${this.targetState.selected ? "" : " disabled aria-disabled=\"true\""}>确认选择</button><button class="ghost-button" type="button" data-target-cancel>取消</button></div>`;
+    this.elements.response_panel.classList.remove("is-hidden");
+  }
+
+  confirmTarget() {
+    if (!this.targetState?.meta?.confirmSelection || !this.targetState.selected) return;
+    const { resolve, selected } = this.targetState;
+    this.targetState = null;
+    this.elements.response_panel.classList.add("is-hidden");
+    this.elements.response_panel.innerHTML = "";
+    resolve(selected);
+    if (this.game) this.render(this.game);
   }
 
   cancelTarget() {
     if (!this.targetState) return;
     const resolve = this.targetState.resolve;
     this.targetState = null;
+    this.elements.response_panel.classList.add("is-hidden");
+    this.elements.response_panel.innerHTML = "";
     resolve(null);
     if (this.game) this.render(this.game);
   }
@@ -384,13 +424,8 @@ export class UIManager {
         if (node) node.textContent = `${Math.max(0, Math.ceil((deadline - Date.now()) / 1000))}s`;
       };
       const interval = window.setInterval(update, 200);
-      this.responseState = { request, resolve: settle, interval };
-      const canUse = canSubmitResponse(request);
-      const presentation = request.presentation ?? {};
-      const eventText = presentation.eventText ?? "当前有一项行动等待你的响应。";
-      const responseText = presentation.responseText ?? "你可以改变即将发生的结算。";
-      const availabilityText = presentation.availabilityText ?? "";
-      this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${Math.ceil(request.timeoutMs / 1000)}s</span></div><div class="response-copy"><p class="response-event">${escapeHtml(eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div><div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">放弃响应</button></div>`;
+      this.responseState = { request, resolve: settle, interval, deadline, label, selectedCardIds:new Set() };
+      UIManager.prototype.renderResponseRequest.call(this);
       this.elements.response_panel.classList.remove("is-hidden");
       this.game.cleanupManager.delay(request.timeoutMs).then((completed) => {
         if (completed) settle({ status:"declined" });
@@ -400,8 +435,39 @@ export class UIManager {
     });
   }
 
+  renderResponseRequest() {
+    const state = this.responseState;
+    if (!state) return;
+    const { request, label } = state;
+    const presentation = request.presentation ?? {};
+    const requiresCardChoice = request.type === "leverageAssault";
+    const responder = this.game?.state?.players?.find((player) => player.id === request.targetPlayerId);
+    const legalCards = requiresCardChoice
+      ? (responder?.hand ?? []).filter((card) => request.legalCardIds.includes(card.id))
+      : [];
+    const selectedValid = !requiresCardChoice || (state.selectedCardIds.size === 1
+      && legalCards.some((card) => state.selectedCardIds.has(card.id)));
+    const canUse = canSubmitResponse(request) && selectedValid;
+    const eventText = presentation.eventText ?? "当前有一项行动等待你的响应。";
+    const responseText = presentation.responseText ?? "你可以改变即将发生的结算。";
+    const availabilityText = presentation.availabilityText ?? "";
+    const cardMarkup = requiresCardChoice
+      ? `<div class="hidden-card-grid leverage-response-cards">${legalCards.map((card) => handCardTemplate(card, { response:true, selected:state.selectedCardIds.has(card.id) })).join("")}</div>`
+      : "";
+    const seconds = Math.max(0, Math.ceil((state.deadline - Date.now()) / 1000));
+    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${seconds}s</span></div><div class="response-copy"><p class="response-event">${escapeHtml(eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div>${cardMarkup}<div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">${escapeHtml(presentation.declineLabel ?? "放弃响应")}</button></div>`;
+  }
+
+  toggleResponseCard(cardId) {
+    const state = this.responseState;
+    if (!state || state.request.type !== "leverageAssault" || !state.request.legalCardIds.includes(cardId)) return;
+    state.selectedCardIds = toggleCardSelection(state.selectedCardIds, cardId, 1);
+    UIManager.prototype.renderResponseRequest.call(this);
+  }
+
   resolveResponse(choice) {
-    const result = typeof choice === "object" ? choice : { status:choice ? "used" : "declined" };
+    const selectedCardId = this.responseState?.selectedCardIds?.values().next().value ?? null;
+    const result = typeof choice === "object" ? choice : { status:choice ? "used" : "declined", cardId:choice ? selectedCardId : null };
     this.responseState?.resolve(result);
   }
   requestCardFlow(...args) { return this.interactionController.requestCardFlow(...args); }

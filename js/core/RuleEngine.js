@@ -1,7 +1,47 @@
 import { DistanceSystem } from "./DistanceSystem.js?build=20260801-hunter-tracking-v53";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-hunter-tracking-v53";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
+  static isPlayerInGame(game, player) {
+    return Boolean(player?.alive && game?.state?.players?.some((entry) => entry === player && entry.alive));
+  }
+
+  /**
+   * 普通突袭的实时合法目标列表。借势只复用本入口，不复制距离、阵营或次数规则。
+   * requireUsage 关闭时仅用于底层目标展示；默认同时检查当前突袭次数。
+   */
+  static getLegalAssaultTargets(game, source, { requireUsage = true } = {}) {
+    if (!this.isPlayerInGame(game, source)) return [];
+    const attackUsed = source.turnFlags?.attackUsed ?? source.attackUsed ?? 0;
+    const attackLimit = source.turnFlags?.attackLimit ?? source.attackLimit ?? 0;
+    if (requireUsage && attackUsed >= attackLimit) return [];
+    return this.getCardTargets(game, source, CARD_DEFINITIONS.assault);
+  }
+
+  /** 借势响应使用真实手牌突袭；只放宽“必须轮到本人出牌”，其余规则完全保留。 */
+  static canUseForcedAssault(game, source, card, target) {
+    if (!this.isPlayerInGame(game, source)) return { ok:false, reason:"角色已阵亡或离场" };
+    if (!card || card.definitionId !== "assault" || !source.hand?.includes(card)) return { ok:false, reason:"突袭已不在手中" };
+    if (card.usageMode === "response" || card.targetType === "responseOnly") return { ok:false, reason:"该牌不能主动使用" };
+    const attackUsed = source.turnFlags?.attackUsed ?? source.attackUsed ?? 0;
+    const attackLimit = source.turnFlags?.attackLimit ?? source.attackLimit ?? 0;
+    if (attackUsed >= attackLimit) return { ok:false, reason:"本回合突袭次数已用尽" };
+    if (!this.getLegalAssaultTargets(game, source).includes(target)) return { ok:false, reason:"目标不再是合法突袭目标" };
+    return { ok:true, reason:"" };
+  }
+
+  static getUsableAssaultCards(game, source, target) {
+    return (source?.hand ?? []).filter((card) => this.canUseForcedAssault(game, source, card, target).ok);
+  }
+
+  /** 第一目标必须拥有真实装备实例，并且当前仍存在普通突袭合法目标。 */
+  static getLeverageFirstTargets(game, cardUser) {
+    return game.state.players.filter((player) => player !== cardUser
+      && this.isPlayerInGame(game, player)
+      && Boolean(player.equipment?.id)
+      && this.getLegalAssaultTargets(game, player).length > 0);
+  }
   static transferableHandCount(player, excludedCardIds = null) {
     if (Array.isArray(player?.hand)) return player.hand.filter((held) => !excludedCardIds?.has(held.id)).length;
     return Math.max(0, Number(player?.handCount ?? 0));
@@ -53,7 +93,7 @@ export class RuleEngine {
     if (card.usageMode === "response" || card.targetType === "responseOnly") return { ok:false, reason:"这张牌只能在对应响应时机使用" };
     if (card.definitionId === "assault") {
       if (source.turnFlags.attackUsed >= source.turnFlags.attackLimit) return { ok:false, reason:"本回合突袭次数已用尽" };
-      if (!this.getCardTargets(game, source, card).length) return { ok:false, reason:"攻击距离内没有敌人" };
+      if (!this.getLegalAssaultTargets(game, source).length) return { ok:false, reason:"攻击距离内没有敌人" };
     }
     if (card.definitionId === "recover") {
       const limit = source.turnFlags.recoverLimit;
@@ -68,6 +108,9 @@ export class RuleEngine {
     if (card.definitionId === "transfer") {
       const sources = this.getTransferSources(game, source, card);
       if (!sources.some((from) => this.getTransferReceivers(game, source, from, card).length)) return { ok:false, reason:"距离1内没有可转移手牌的来源和接收者" };
+    }
+    if (card.definitionId === "leverage" && !this.getLeverageFirstTargets(game, source).length) {
+      return { ok:false, reason:"没有装备区有真实装备且能够突袭的其他角色" };
     }
     return { ok:true, reason:"" };
   }

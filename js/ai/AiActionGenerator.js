@@ -25,6 +25,23 @@ export class AiActionGenerator {
     for (const card of player.hand) {
       if (!RuleEngine.canPlayCard(this.game, player, card).ok) continue;
       const targets = RuleEngine.getCardTargets(this.game, player, card);
+      if (card.definitionId === "leverage") {
+        for (const firstTarget of RuleEngine.getLeverageFirstTargets(this.game, player)) {
+          for (const secondTarget of RuleEngine.getLegalAssaultTargets(this.game, firstTarget)) {
+            actions.push({
+              type:"card",
+              card,
+              targets:[firstTarget, secondTarget],
+              selection:{
+                firstTargetId:firstTarget.id,
+                equipmentCardId:firstTarget.equipment.id,
+                secondTargetId:secondTarget.id
+              }
+            });
+          }
+        }
+        continue;
+      }
       if (card.definitionId === "transfer") {
         const sources = RuleEngine.getTransferSources(this.game, player, card)
           .filter((from) => RuleEngine.getTransferReceivers(this.game, player, from, card).length);
@@ -73,6 +90,27 @@ export class AiActionGenerator {
       if (card.definitionId === "transfer") {
         const selection = this.chooseVisibleTransferPlan(simulationGame, actor, card);
         if (selection) actions.push({ type:"card", card, targets:[], selection });
+        continue;
+      }
+      if (card.definitionId === "leverage") {
+        const firstTargets = alive.filter((firstTarget) => firstTarget.id !== actor.id
+          && firstTarget.equipmentDefinitionId
+          && RuleEngine.getLegalAssaultTargets(simulationGame, firstTarget).length > 0);
+        for (const firstTarget of firstTargets) {
+          for (const secondTarget of RuleEngine.getLegalAssaultTargets(simulationGame, firstTarget)) {
+            actions.push({
+              type:"card",
+              card,
+              targets:[firstTarget, secondTarget],
+              selection:{
+                firstTargetId:firstTarget.id,
+                equipmentCardId:null,
+                equipmentDefinitionId:firstTarget.equipmentDefinitionId,
+                secondTargetId:secondTarget.id
+              }
+            });
+          }
+        }
         continue;
       }
       if (["singleEnemy"].includes(card.targetType)) for (const target of enemies) actions.push({ type:"card", card, targets:[target] });

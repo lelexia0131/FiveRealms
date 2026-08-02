@@ -35,9 +35,8 @@ export class AIController {
       const targetIds = (action.targets ?? []).map((target) => target.id);
       if (targetIds.length !== (descriptor.targetIds?.length ?? 0) || !targetIds.every((id, index) => id === descriptor.targetIds[index])) return false;
       if (descriptor.selection) {
-        return action.selection?.sourceId === descriptor.selection.sourceId
-          && action.selection?.receiverId === descriptor.selection.receiverId
-          && action.selection?.zone === descriptor.selection.zone;
+        if (!action.selection) return false;
+        return Object.entries(descriptor.selection).every(([key, value]) => value == null || action.selection[key] === value);
       }
       return true;
     }) ?? null;

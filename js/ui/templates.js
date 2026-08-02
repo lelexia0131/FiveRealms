@@ -88,7 +88,7 @@ export function skillDetailsTemplate(player) {
 }
 
 export function playerPanelTemplate(player, options = {}) {
-  const { humanTeam = player.battleTeam, isHuman = false, isCurrent = false, isLegalTarget = false, isTargeting = false, isThinking = false, distanceInfo = null, distanceState = null, opponentHandSlots = null } = options;
+  const { humanTeam = player.battleTeam, isHuman = false, isCurrent = false, isLegalTarget = false, isSelectedTarget = false, isTargeting = false, isThinking = false, distanceInfo = null, distanceState = null, opponentHandSlots = null } = options;
   const relationship = isHuman ? "is-self" : player.battleTeam === humanTeam ? "is-ally" : "is-enemy";
   const statuses = player.alive ? [
     player.statuses?.exposeWeakness ? [`破势 ${player.statuses.exposeWeakness.stacks}`, "danger"] : null,
@@ -100,7 +100,7 @@ export function playerPanelTemplate(player, options = {}) {
   const statusSummary = statuses.length ? statuses.map(([label]) => label).join(" · ") : "—";
   const statusText = isThinking ? "正在思考" : isCurrent ? "正在行动" : player.alive ? "等待行动" : "已阵亡";
   const showDistance = Boolean(player.alive && distanceInfo);
-  return `<article class="player-seat ${isHuman ? "human-seat" : "cpu-seat"} team-${escapeHtml(player.battleTeam)} ${relationship} ${isCurrent ? "is-active" : ""} ${isLegalTarget ? "target-legal" : ""} ${isTargeting && !isLegalTarget ? "target-illegal" : ""} ${isThinking ? "is-thinking" : ""} ${player.alive ? "" : "is-dead"}" data-player-id="${escapeHtml(player.id)}" tabindex="${isLegalTarget ? "0" : "-1"}" aria-label="${escapeHtml(player.name)}，${TEAM_CONFIG[player.battleTeam].name}，生命${player.hp}点，能量${player.energy}点，手牌${player.hand.length}张，状态${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}${showDistance ? `，距离${distanceInfo.distance}` : ""}">
+  return `<article class="player-seat ${isHuman ? "human-seat" : "cpu-seat"} team-${escapeHtml(player.battleTeam)} ${relationship} ${isCurrent ? "is-active" : ""} ${isLegalTarget ? "target-legal" : ""} ${isSelectedTarget ? "target-selected" : ""} ${isTargeting && !isLegalTarget ? "target-illegal" : ""} ${isThinking ? "is-thinking" : ""} ${player.alive ? "" : "is-dead"}" data-player-id="${escapeHtml(player.id)}" tabindex="${isLegalTarget ? "0" : "-1"}" aria-label="${escapeHtml(player.name)}，${TEAM_CONFIG[player.battleTeam].name}，生命${player.hp}点，能量${player.energy}点，手牌${player.hand.length}张，状态${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}${showDistance ? `，距离${distanceInfo.distance}` : ""}">
     <button type="button" class="seat-portrait-wrap" data-skill-player-id="${escapeHtml(player.id)}" aria-label="查看${escapeHtml(player.name)}的技能">
       ${image(player.general.portrait, `${player.name}肖像`, "seat-portrait")}
       <span class="team-emblem" aria-label="${TEAM_CONFIG[player.battleTeam].name}">${player.battleTeam === "dawn" ? "晨" : "暮"}</span>
@@ -133,7 +133,8 @@ function cardFaceTemplate(card) {
 export function handCardTemplate(card, options = {}) {
   const selected = Boolean(options.selected);
   const disabled = Boolean(options.disabled);
-  return `<button class="hand-card frame-${escapeHtml(card.frameStyle)} ${selected ? "is-selected" : ""} ${disabled ? "is-disabled" : ""}" style="--card-accent:${escapeHtml(card.accent)}" type="button" data-card-id="${escapeHtml(card.id)}" data-disabled="${disabled}" aria-disabled="${disabled}" aria-pressed="${selected}">
+  const cardIdAttribute = options.response ? "data-response-card-id" : "data-card-id";
+  return `<button class="hand-card frame-${escapeHtml(card.frameStyle)} ${selected ? "is-selected" : ""} ${disabled ? "is-disabled" : ""}" style="--card-accent:${escapeHtml(card.accent)}" type="button" ${cardIdAttribute}="${escapeHtml(card.id)}" data-disabled="${disabled}" aria-disabled="${disabled}" aria-pressed="${selected}">
     ${cardFaceTemplate(card)}
   </button>`;
 }

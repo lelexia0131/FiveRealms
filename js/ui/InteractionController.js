@@ -6,6 +6,7 @@ import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./t
 import { createHiddenSelectionView } from "./handVisibility.js?build=20260801-hunter-tracking-v53";
 import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260801-hunter-tracking-v53";
 import { RuleEngine } from "../core/RuleEngine.js?build=20260801-hunter-tracking-v53";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260801-hunter-tracking-v53";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 
@@ -35,6 +36,35 @@ export class InteractionController {
   async requestCardFlow(game, actor, card, initialTargets) {
     const gameId = game.state.gameId;
     if (!game.isSessionValid(gameId)) return null;
+    if (card.definitionId === "leverage") {
+      // 项目当前每人只有一个公开装备槽，故装备阶段可按规则自动选中唯一真实实例。
+      const firstTargets = RuleEngine.getLeverageFirstTargets(game, actor);
+      const firstTarget = await this.ui.requestTarget(firstTargets, "选择一名装备区有装备且能够使用突袭的其他玩家", {
+        source:actor, card, confirmSelection:true, stepTitle:"借势 · 第一目标"
+      });
+      if (!game.isSessionValid(gameId) || !firstTarget) return null;
+      const equipment = firstTarget.equipment;
+      if (!equipment?.id || !RuleEngine.getLeverageFirstTargets(game, actor).includes(firstTarget)) return null;
+
+      const secondTargets = RuleEngine.getLegalAssaultTargets(game, firstTarget);
+      const secondTarget = await this.ui.requestTarget(secondTargets, "选择其使用突袭的目标", {
+        source:firstTarget, card:CARD_DEFINITIONS.assault, confirmSelection:true, stepTitle:"借势 · 第二目标"
+      });
+      if (!game.isSessionValid(gameId) || !secondTarget) return null;
+      if (firstTarget.equipment !== equipment || equipment.id == null
+        || !RuleEngine.getLegalAssaultTargets(game, firstTarget).includes(secondTarget)) return null;
+
+      const confirmed = await this.requestConfirmation(
+        "借势 · 确认",
+        `${actor.name}指定${firstTarget.name}以「${equipment.name}」为代价，对${secondTarget.name}使用「突袭」。`
+      );
+      if (!confirmed || !game.isSessionValid(gameId)) return null;
+      return {
+        firstTargetId:firstTarget.id,
+        equipmentCardId:equipment.id,
+        secondTargetId:secondTarget.id
+      };
+    }
     if (card.definitionId === "transfer") {
       const sources = RuleEngine.getTransferSources(game, actor, card).filter((from) => RuleEngine.getTransferReceivers(game, actor, from, card).length);
       const source = await this.ui.requestTarget(sources, "转移：选择距离1内的牌来源", { source:actor, card });
@@ -112,6 +142,16 @@ export class InteractionController {
     });
   }
 
+  requestConfirmation(title, summary) {
+    this.cancel();
+    return new Promise((resolve) => {
+      this.pending = { type:"confirm", resolve };
+      this.ui.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(title)}</strong><span>三项选择已完成</span></div><div class="response-copy"><p class="response-event">${escapeHtml(summary)}</p><p class="response-requirement">确认后才会消耗「借势」并进入响应。</p></div><div class="response-actions"><button class="primary-button" type="button" data-interaction-confirm>确认使用</button><button class="ghost-button" type="button" data-interaction-cancel>取消</button></div>`;
+      this.ui.elements.response_panel.classList.remove("is-hidden");
+      if (this.ui.game) this.ui.render(this.ui.game);
+    });
+  }
+
   toggleHidden(token) {
     if (this.pending?.type !== "hidden") return;
     this.ui.playSound?.("select");
@@ -124,7 +164,10 @@ export class InteractionController {
     if (confirm) confirm.disabled = !isCardSelectionValid(this.pending.selected, this.pending.count, this.pending.exact);
   }
 
-  confirm() { if (this.pending) this.settle([...this.pending.selected]); }
+  confirm() {
+    if (!this.pending) return;
+    this.settle(this.pending.type === "confirm" ? true : [...this.pending.selected]);
+  }
   cancel() { if (this.pending) this.settle(null); }
   settle(value) {
     const current = this.pending;
@@ -132,7 +175,7 @@ export class InteractionController {
     this.pending = null;
     this.ui.elements.response_panel.classList.add("is-hidden");
     this.ui.elements.response_panel.innerHTML = "";
-    if (value === null) this.ui.game?.cardSelectionSystem.clearSelection(current.selection.selectionId);
+    if (value === null && current.selection?.selectionId) this.ui.game?.cardSelectionSystem.clearSelection(current.selection.selectionId);
     current.resolve(value);
     if (this.ui.game) this.ui.render(this.ui.game);
   }
