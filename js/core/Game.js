@@ -91,6 +91,8 @@ export class Game {
     this.aiDifficultyMultiplier = GAME_CONFIG.aiDifficultyMultiplier;
     /** 同一借势 resolutionId 在本局只能进入一次核心结算，防止异步重复提交。 */
     this.leverageResolutionIds = new Set();
+    /** 记录结算区实体的唯一所有者，隔离借势外层牌与内嵌突袭牌。 */
+    this.resolutionOwners = new Map();
     this.loopPromise = null;
   }
 
@@ -626,10 +628,16 @@ export class Game {
 
     if (response.status === RESPONSE_STATUS.USED && response.card
       && RuleEngine.canUseForcedAssault(this, firstTarget, response.card, secondTarget).ok) {
-      const used = await this.playCard(firstTarget, response.card, [secondTarget], null, {
-        usageContext:"leverageAssault",
-        parentResolutionId:resolutionId
-      });
+      let used = false;
+      try {
+        used = await this.playCard(firstTarget, response.card, [secondTarget], null, {
+          usageContext:"leverageAssault",
+          parentResolutionId:resolutionId
+        });
+      } catch (error) {
+        // 内嵌突袭拥有独立 resolution；其失败只结束该响应，外层借势继续按拒绝分支收束。
+        Debug.log("Game", `${firstTarget.name}的借势内嵌突袭结算失败`, error);
+      }
       if (used) return true;
       if (!this.isSessionValid(gameId)) return false;
     }
@@ -696,8 +704,18 @@ export class Game {
     this.actionLocked = true;
     const resolutionId = `${this.state.gameId}:resolution:${++this.state.resolutionSerial}`;
     let completed = false;
+    let enteredResolving = false;
+    let destinationCommitted = false;
+    let expectedDestination = card.category === "equipment" ? "equipment" : "discard";
+    let failureReason = null;
     try {
-      const moved = await this.moveHandToResolving(source, card);
+      let moved = false;
+      try {
+        moved = await this.moveHandToResolving(source, card, resolutionId);
+      } finally {
+        // afterCardMove 监听器也可能抛错，按实体所有权识别已完成的物理移动。
+        enteredResolving = this.resolutionOwners.get(card) === resolutionId;
+      }
       if (!moved) return false;
       if (!this.isSessionValid(gameId)) return false;
       const targetLabel = preparedTransfer
@@ -753,9 +771,18 @@ export class Game {
         destination = effectResult.destination;
         effectResolved = effectResult.resolved ?? true;
       }
-      if (destination === "discard") await this.finishResolvingToDiscard(card);
+      expectedDestination = destination;
+      if (destination === "discard") {
+        const discarded = await this.finishResolvingToDiscard(card, resolutionId);
+        destinationCommitted = discarded && this.isCardCommittedToDiscard(card);
+        if (!destinationCommitted) throw new Error("结算牌未能进入弃牌堆");
+      } else if (destination === "equipment") {
+        destinationCommitted = this.isCardCommittedToEquipment(source, card);
+        if (!destinationCommitted) throw new Error("装备牌未能进入装备区");
+      } else {
+        throw new Error("未知的卡牌结算目标区域");
+      }
       if (!this.isSessionValid(gameId)) return false;
-      source.statistics.cardsPlayed += 1;
       const effectiveTargets = preparedTransfer
         ? (effectResolved ? [preparedTransfer.privateIntent.receiver] : [])
         : preparedLeverage
@@ -772,11 +799,27 @@ export class Game {
         cancelled, resolved:!cancelled && effectResolved, resolutionId
       });
       if (!this.isSessionValid(gameId)) return false;
+      source.statistics.cardsPlayed += 1;
       if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       this.ui.render(this);
       completed = true;
       return true;
+    } catch (error) {
+      failureReason = error;
+      throw error;
     } finally {
+      if (enteredResolving) {
+        destinationCommitted = expectedDestination === "discard"
+          ? this.isCardCommittedToDiscard(card)
+          : expectedDestination === "equipment"
+            ? this.isCardCommittedToEquipment(source, card)
+            : false;
+        if (!destinationCommitted && this.resolutionOwners.get(card) === resolutionId) {
+          this.cleanupFailedResolution(card, failureReason, resolutionId);
+        } else if (destinationCommitted && this.resolutionOwners.get(card) === resolutionId) {
+          this.resolutionOwners.delete(card);
+        }
+      }
       if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
       this.actionLocked = previousActionLocked;
       if (!previousActionLocked && source.controllerType !== "human") {
@@ -1220,10 +1263,11 @@ export class Game {
   }
 
   /** 将主动牌由手牌移入结算区；防止快速点击重复使用同一实体牌。 */
-  async moveHandToResolving(player, card) {
+  async moveHandToResolving(player, card, resolutionId = null) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return false;
     if (player.hand.indexOf(card) < 0) return false;
+    if (resolutionId && this.resolutionOwners.has(card)) return false;
     const move = { type: "beforeCardMove", card, from: "hand", to: "resolving", player, reason: "使用", cancelled: false };
     await this.eventBus.emit("beforeCardMove", move);
     if (!this.isSessionValid(gameId)) return false;
@@ -1234,50 +1278,141 @@ export class Game {
     player.hand.splice(currentIndex, 1);
     player.bumpHandVersion();
     this.invalidateCardKnowledge(card.id, player.id);
+    if (resolutionId) this.resolutionOwners.set(card, resolutionId);
     this.syncDeckAliases();
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     return this.isSessionValid(gameId);
   }
 
   /** 令结算完成的牌进入弃牌堆。 */
-  async finishResolvingToDiscard(card) {
+  async finishResolvingToDiscard(card, resolutionId = null) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return false;
+    if (resolutionId && this.resolutionOwners.get(card) !== resolutionId) return false;
+    if (!this.state.deck.resolvingCards.includes(card)) return false;
     const move = { type: "beforeCardMove", card, from: "resolving", to: "discard", reason: "结算完成", cancelled: false };
     await this.eventBus.emit("beforeCardMove", move);
     if (!this.isSessionValid(gameId)) return false;
-    if (!move.cancelled) this.state.deck.finishResolveToDiscard(card);
+    if (move.cancelled || (resolutionId && this.resolutionOwners.get(card) !== resolutionId)) return false;
+    const discarded = this.state.deck.finishResolveToDiscard(card);
+    if (!discarded) return false;
     this.syncDeckAliases();
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
-    return this.isSessionValid(gameId);
+    return this.state.deck.discardPile.includes(card) && !this.state.deck.resolvingCards.includes(card);
   }
 
-  /** 将装置放入唯一装备槽，并公开弃置被替换装备。 */
-  async equipCard(player, card) {
+  /** 将装置放入唯一装备槽；全部移动预检通过后一次性提交新旧实体。 */
+  async equipCard(player, card, resolutionId = null) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return false;
+    const ownsResolution = () => !resolutionId || this.resolutionOwners.get(card) === resolutionId;
+    const canCommitNew = () => ownsResolution()
+      && this.state.deck.resolvingCards.includes(card)
+      && !this.state.deck.cards.includes(card)
+      && !this.state.deck.discardPile.includes(card)
+      && !this.state.deck.judgmentZone.includes(card)
+      && !(this.state.publicCardPool ?? []).includes(card)
+      && !this.state.players.some((owner) => owner.hand.includes(card) || owner.equipment === card);
+    if (!canCommitNew()) return false;
     const equipMove = { type: "beforeCardMove", card, from: "resolving", to: "equipment", player, reason: "装备", cancelled: false };
     await this.eventBus.emit("beforeCardMove", equipMove);
     if (!this.isSessionValid(gameId)) return false;
-    if (equipMove.cancelled) return false;
-    if (player.equipment) {
-      const old = player.equipment;
-      player.equipment = null;
-      const replaceMove = { type: "beforeCardMove", card: old, from: "equipment", to: "discard", player, reason: "替换装备", cancelled: false };
+    if (equipMove.cancelled || !canCommitNew()) return false;
+
+    const old = player.equipment;
+    const replaceMove = old
+      ? { type: "beforeCardMove", card: old, from: "equipment", to: "discard", player, reason: "替换装备", cancelled: false }
+      : null;
+    const oldRemainsValid = () => !old || (player.equipment === old
+      && !this.state.deck.cards.includes(old)
+      && !this.state.deck.discardPile.includes(old)
+      && !this.state.deck.resolvingCards.includes(old)
+      && !this.state.deck.judgmentZone.includes(old)
+      && !(this.state.publicCardPool ?? []).includes(old)
+      && !this.state.players.some((owner) => owner.hand.includes(old) || (owner !== player && owner.equipment === old)));
+    if (replaceMove) {
       await this.eventBus.emit("beforeCardMove", replaceMove);
       if (!this.isSessionValid(gameId) || replaceMove.cancelled) return false;
-      this.state.deck.discard(old);
-      await this.eventBus.emit("afterCardMove", { ...replaceMove, type: "afterCardMove" });
-      if (!this.isSessionValid(gameId)) return false;
-      this.log(`${player.name}的「${old.name}」被替换并进入弃牌堆。`);
     }
-    this.state.deck.finishResolveToEquipment(card);
+
+    // 从最后一次预检到提交之间不再 await，旧装备和新装备作为一个不可分割状态切换。
+    if (!canCommitNew() || !oldRemainsValid()) return false;
+    const resolvingIndex = this.state.deck.resolvingCards.indexOf(card);
+    if (resolvingIndex < 0) return false;
+    this.state.deck.resolvingCards.splice(resolvingIndex, 1);
+    if (old) this.state.deck.discardPile.push(old);
     player.equipment = card;
     this.syncDeckAliases();
+    if (replaceMove) {
+      await this.eventBus.emit("afterCardMove", { ...replaceMove, type: "afterCardMove" });
+      this.log(`${player.name}的「${old.name}」被替换并进入弃牌堆。`);
+    }
     this.log(`${player.name}装备了「${card.name}」。`, "important");
     this.ui.queueFeedback?.("equip", player.id);
     await this.eventBus.emit("afterCardMove", { ...equipMove, type: "afterCardMove" });
-    return this.isSessionValid(gameId);
+    return player.equipment === card && !this.state.deck.resolvingCards.includes(card);
+  }
+
+  /** 返回实体牌在所有规则区域中的实际出现位置；重复引用也会被逐一计数。 */
+  getCardZoneOccurrences(card) {
+    const occurrences = [];
+    const collect = (cards, zone) => cards.forEach((entry) => { if (entry === card) occurrences.push(zone); });
+    collect(this.state.deck.cards, "deck");
+    collect(this.state.deck.discardPile, "discard");
+    collect(this.state.deck.resolvingCards, "resolving");
+    collect(this.state.deck.judgmentZone, "judgment");
+    collect(this.state.publicCardPool ?? [], "publicPool");
+    for (const player of this.state.players) {
+      collect(player.hand, `hand:${player.id}`);
+      if (player.equipment === card) occurrences.push(`equipment:${player.id}`);
+    }
+    return occurrences;
+  }
+
+  /** 只有弃牌堆是实体牌的唯一实际区域时，弃牌提交才算成功。 */
+  isCardCommittedToDiscard(card) {
+    const occurrences = this.getCardZoneOccurrences(card);
+    return occurrences.length === 1 && occurrences[0] === "discard";
+  }
+
+  /** 只有指定玩家装备槽是实体牌的唯一实际区域时，装备提交才算成功。 */
+  isCardCommittedToEquipment(player, card) {
+    const occurrences = this.getCardZoneOccurrences(card);
+    return occurrences.length === 1 && occurrences[0] === `equipment:${player?.id}`;
+  }
+
+  /**
+   * 失败结算的内部兜底：不触发规则事件、不记录公开日志，只把当前 resolution
+   * 拥有且尚未提交的实体规范化到弃牌堆。
+   */
+  cleanupFailedResolution(card, reason = null, resolutionId = null) {
+    if (!card || (resolutionId && this.resolutionOwners.get(card) !== resolutionId)) return false;
+    if (!resolutionId && !this.state.deck.resolvingCards.includes(card)) return false;
+    const removeAll = (cards) => {
+      let removed = false;
+      for (let index = cards.length - 1; index >= 0; index -= 1) {
+        if (cards[index] !== card) continue;
+        cards.splice(index, 1);
+        removed = true;
+      }
+      return removed;
+    };
+    removeAll(this.state.deck.cards);
+    removeAll(this.state.deck.discardPile);
+    removeAll(this.state.deck.resolvingCards);
+    removeAll(this.state.deck.judgmentZone);
+    removeAll(this.state.publicCardPool ?? []);
+    if (this.publicCardPool?.cards && this.publicCardPool.cards !== this.state.publicCardPool) removeAll(this.publicCardPool.cards);
+    for (const player of this.state.players) {
+      if (removeAll(player.hand)) player.bumpHandVersion();
+      if (player.equipment === card) player.equipment = null;
+    }
+    this.state.deck.discardPile.push(card);
+    this.resolutionOwners.delete(card);
+    this.syncDeckAliases();
+    Debug.log("Game", `已清理失败结算实体 ${card.id ?? "unknown"}`, reason ?? undefined);
+    return this.state.deck.discardPile.filter((entry) => entry === card).length === 1
+      && !this.state.deck.resolvingCards.includes(card);
   }
 
   /** 返回某角色的存活敌人。 */

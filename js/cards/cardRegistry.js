@@ -14,6 +14,15 @@ function resolvePrivateSelectionIntent(game, source, card, target, context, expe
   return { owner:target, zone:intent.zone, cards };
 }
 
+/** 装备结算必须真实提交到装备区；预检失败交由 playCard 的失败清理收束。 */
+async function resolveEquipment(game, source, card, context) {
+  const equipped = await game.equipCard(source, card, context.resolutionId);
+  if (!equipped || source.equipment !== card || game.state.deck.resolvingCards.includes(card)) {
+    throw new Error("装备牌未能进入装备区");
+  }
+  return { destination:"equipment" };
+}
+
 const CARD_EFFECTS = {
   async assault(game, source, card, targets, context) {
     source.turnFlags.attackUsed += 1;
@@ -195,12 +204,12 @@ const CARD_EFFECTS = {
     }
   },
 
-  async energyDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
-  async recycleDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
-  async defenseDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
-  async battleDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
-  async telescope(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
-  async barrierDevice(game, source, card) { return { destination:await game.equipCard(source, card) ? "equipment" : "discard" }; },
+  async energyDevice(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },
+  async recycleDevice(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },
+  async defenseDevice(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },
+  async battleDevice(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },
+  async telescope(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },
+  async barrierDevice(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },
 
   async block() { throw new Error("格挡只能作为响应牌使用"); },
   async counter() { throw new Error("反制只能作为响应牌使用"); }

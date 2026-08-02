@@ -58,7 +58,8 @@ export class Deck {
 
   /** 将一张已离开手牌的卡放入结算区；同一实例不会重复加入。 */
   beginResolve(card) {
-    if (!card || this.resolvingCards.includes(card)) return false;
+    if (!card || this.cards.includes(card) || this.discardPile.includes(card)
+      || this.resolvingCards.includes(card) || this.judgmentZone.includes(card)) return false;
     this.resolvingCards.push(card);
     return true;
   }
@@ -66,7 +67,7 @@ export class Deck {
   /** 从结算区移除卡并放入弃牌堆；装备牌应改由 equip 完成而不调用此方法。 */
   finishResolveToDiscard(card) {
     const index = this.resolvingCards.indexOf(card);
-    if (index < 0) return false;
+    if (index < 0 || this.discardPile.includes(card)) return false;
     this.resolvingCards.splice(index, 1);
     this.discardPile.push(card);
     return true;

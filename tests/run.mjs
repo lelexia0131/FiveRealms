@@ -92,6 +92,11 @@ function makeGame(players, { random = () => 0.25, response = () => false } = {})
   return { game, ui };
 }
 
+/** 统一按实体引用检查抽牌、手牌、装备、弃牌、结算、判定和公共牌池。 */
+function assertCardOnlyIn(game, card, expectedZone) {
+  assert.deepEqual(game.getCardZoneOccurrences(card), [expectedZone]);
+}
+
 function makeOwnedUi() {
   return {
     game:null, renders:[], mutations:[], logs:[], responseState:null, targetState:null, discardState:null, publicState:null,
@@ -1032,6 +1037,67 @@ test("beforeCardMove 取消 AI 动作后游戏循环仍推进至下一角色", a
 test("beginResolve 失败时 playCard 不移除手牌或产生悬空牌", async () => {
   const ai=makePlayer("begin-resolve-ai",0,"dawn"),enemy=makePlayer("begin-resolve-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([ai,enemy]);ai.hand.push(card);game.state.deck.beginResolve=()=>false;assert.equal(await game.playCard(ai,card,[]),false);assert.deepEqual(ai.hand,[card]);assert.equal(game.state.resolvingCards.length,0);assert.equal(game.state.discardPile.length,0);assert.equal(ai.statistics.cardsPlayed,0);assert.equal(game.actionLocked,false);
 });
+test("beforeCardUse 抛异常后实体牌离开结算区并只进入一次弃牌堆", async () => {
+  const source=makePlayer("before-use-source",0,"dawn"),enemy=makePlayer("before-use-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);
+  game.eventBus.on("beforeCardUse","test:throw-before-use",(event)=>{if(event.card===card)throw new Error("private beforeCardUse failure");});
+  await assert.rejects(game.playCard(source,card,[]),/private beforeCardUse failure/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);assert.doesNotMatch(game.state.logs.map((entry)=>entry.message).join("\n"),/private beforeCardUse failure/);
+});
+test("targetSelected 抛异常后不会留下悬空牌", async () => {
+  const source=makePlayer("target-hook-source",0,"dawn"),enemy=makePlayer("target-hook-enemy",1,"dusk"),card=instance("assault"),{game}=makeGame([source,enemy]);source.hand.push(card);
+  game.eventBus.on("targetSelected","test:throw-target-selected",(event)=>{if(event.card===card)throw new Error("target hook failed");});
+  await assert.rejects(game.playCard(source,card,[enemy]),/target hook failed/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+test("beforeCardResolve 抛异常后不会留下悬空牌", async () => {
+  const source=makePlayer("resolve-hook-source",0,"dawn"),enemy=makePlayer("resolve-hook-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);
+  game.eventBus.on("beforeCardResolve","test:throw-before-resolve",(event)=>{if(event.card===card)throw new Error("resolve hook failed");});
+  await assert.rejects(game.playCard(source,card,[]),/resolve hook failed/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+test("反制流程抛异常后主动牌安全进入弃牌堆", async () => {
+  const source=makePlayer("counter-failure-source",0,"dawn"),enemy=makePlayer("counter-failure-enemy",1,"dusk"),card=instance("harvest"),{game}=makeGame([source,enemy]);source.hand.push(card);game.responseSystem.askForCounter=async()=>{throw new Error("counter flow failed");};
+  await assert.rejects(game.playCard(source,card,[]),/counter flow failed/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+test("卡牌效果部分生效后抛异常不回滚效果但会清理实体牌", async () => {
+  const source=makePlayer("partial-effect-source",0,"dawn"),enemy=makePlayer("partial-effect-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.energy=0;source.hand.push(card);
+  game.eventBus.on("afterGainEnergy","test:throw-after-partial-effect",(event)=>{if(event.card===card)throw new Error("effect failed after mutation");});
+  await assert.rejects(game.playCard(source,card,[]),/effect failed after mutation/);assert.equal(source.energy,1);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+test("cardUsed 监听器抛异常后不重复弃牌且不重复触发事件", async () => {
+  const source=makePlayer("card-used-source",0,"dawn"),enemy=makePlayer("card-used-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);let calls=0;
+  game.eventBus.on("cardUsed","test:throw-card-used",(event)=>{if(event.card===card){calls+=1;throw new Error("cardUsed failed");}});
+  await assert.rejects(game.playCard(source,card,[]),/cardUsed failed/);assert.equal(calls,1);assertCardOnlyIn(game,card,"discard");assert.equal(game.state.deck.discardPile.filter((entry)=>entry===card).length,1);assert.equal(source.statistics.cardsPlayed,0);
+});
+test("finishResolvingToDiscard 虚假成功时 playCard 检测真实区域并执行失败清理", async () => {
+  const source=makePlayer("finish-failure-source",0,"dawn"),enemy=makePlayer("finish-failure-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);game.finishResolvingToDiscard=async()=>true;
+  await assert.rejects(game.playCard(source,card,[]),/结算牌未能进入弃牌堆/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+test("equipCard 虚假成功但牌仍在结算区时由调用方拒绝并清理", async () => {
+  const source=makePlayer("equip-result-source",0,"dawn"),enemy=makePlayer("equip-result-enemy",1,"dusk"),card=instance("energyDevice"),{game}=makeGame([source,enemy]);source.hand.push(card);game.equipCard=async()=>true;
+  await assert.rejects(game.playCard(source,card,[]),/装备牌未能进入装备区/);assert.equal(source.equipment,null);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+test("装备替换预检取消或抛异常时旧装备保持原位且新装备进入弃牌堆", async () => {
+  for(const mode of ["cancel","throw"]){const source=makePlayer(`replace-${mode}-source`,0,"dawn"),enemy=makePlayer(`replace-${mode}-enemy`,1,"dusk"),old=instance("energyDevice"),next=instance("battleDevice"),{game}=makeGame([source,enemy]);source.equipment=old;source.hand.push(next);
+    game.eventBus.on("beforeCardMove",`test:replace-preflight-${mode}`,(event)=>{if(event.card!==old||event.from!=="equipment")return;if(mode==="cancel")event.cancelled=true;else throw new Error("replacement preflight failed");});
+    await assert.rejects(game.playCard(source,next,[]),mode==="cancel"?/装备牌未能进入装备区/:/replacement preflight failed/);assert.equal(source.equipment,old);assertCardOnlyIn(game,old,`equipment:${source.id}`);assertCardOnlyIn(game,next,"discard");assert.equal(source.statistics.cardsPlayed,0);
+  }
+});
+test("装备替换成功后旧装备只在弃牌堆且新装备只在装备区", async () => {
+  const source=makePlayer("atomic-equip-source",0,"dawn"),enemy=makePlayer("atomic-equip-enemy",1,"dusk"),old=instance("energyDevice"),next=instance("battleDevice"),{game}=makeGame([source,enemy]);source.equipment=old;source.hand.push(next);
+  assert.equal(await game.playCard(source,next,[]),true);assert.equal(source.equipment,next);assertCardOnlyIn(game,old,"discard");assertCardOnlyIn(game,next,`equipment:${source.id}`);assert.equal(game.resolutionOwners.size,0);
+});
+test("借势内嵌突袭异常只失败清理突袭牌且外层借势正常收束", async () => {
+  const actor=makePlayer("nested-actor",0,"dawn","human"),first=makePlayer("nested-first",1,"dusk","human"),equipment=instance("energyDevice"),assault=instance("assault"),leverage=instance("leverage");actor.hand.push(leverage);first.hand.push(assault);first.equipment=equipment;
+  const {game}=makeGame([actor,first],{response:(request)=>request.type==="leverageAssault"});let outerUsed=0,innerUsed=0;
+  game.eventBus.on("beforeCardResolve","test:throw-nested-assault",(event)=>{if(event.card===assault)throw new Error("nested assault failed");});game.eventBus.on("cardUsed","test:count-nested-resolutions",(event)=>{if(event.card===leverage)outerUsed+=1;if(event.card===assault)innerUsed+=1;});
+  assert.equal(await game.playCard(actor,leverage,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id}),true);assert.equal(outerUsed,1);assert.equal(innerUsed,0);assertCardOnlyIn(game,assault,"discard");assertCardOnlyIn(game,leverage,"discard");assertCardOnlyIn(game,equipment,`hand:${actor.id}`);assert.equal(game.resolutionOwners.size,0);assert.equal(game.actionLocked,false);
+});
+test("结算异常后 actionLocked、interactionLocked 与 AI thinking 全部恢复", async () => {
+  const source=makePlayer("lock-restore-source",0,"dawn"),enemy=makePlayer("lock-restore-enemy",1,"dusk"),card=instance("charge"),{game,ui}=makeGame([source,enemy]);source.hand.push(card);game.interactionLocked=true;ui.thinkingPlayerId=source.id;ui.setThinking(true,source,"测试异常恢复");
+  game.eventBus.on("beforeCardUse","test:throw-for-lock-restore",(event)=>{if(event.card===card)throw new Error("restore locks");});await assert.rejects(game.playCard(source,card,[]),/restore locks/);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assertCardOnlyIn(game,card,"discard");
+});
+test("实体牌结算异常后游戏循环仍推进到下一角色", async () => {
+  const source=makePlayer("resolution-loop-source",0,"dawn"),next=makePlayer("resolution-loop-next",1,"dusk"),card=instance("charge"),{game,ui}=makeGame([source,next]);source.hand.push(card);game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>({type:"card",card,targets:[]});game.eventBus.on("afterGainEnergy","test:throw-loop-partial",(event)=>{if(event.card===card)throw new Error("loop resolution failed");});let nextStarted=false;game.eventBus.on("turnStart","test:next-after-resolution-failure",(event)=>{if(event.player===next){nextStarted=true;game.state.isGameOver=true;}});
+  game.loopPromise=game.runGameLoop();await assert.doesNotReject(game.loopPromise);assert.equal(nextStarted,true);assertCardOnlyIn(game,card,"discard");assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);
+});
 test("AI 陈旧手牌动作返回失败后安全结束阶段并清除锁与思考状态", async () => {
   const ai=makePlayer("stale-action-ai",0,"dawn"),enemy=makePlayer("stale-action-enemy",1,"dusk"),staleCard=instance("charge"),{game,ui}=makeGame([ai,enemy]);let selections=0;game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>{selections+=1;return {type:"card",card:staleCard,targets:[]};};await game.takeAiPlayPhase(ai,game.state.gameId);assert.equal(selections,1);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assert.equal(game.state.resolvingCards.length,0);
 });
@@ -1185,7 +1251,7 @@ test("旧局反制链取消后不会完成战术结算或污染新局中央区�
   let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="counter")openedResolve();};
   const pending=old.playCard(source,use,[]);await opened;old.dispose();
   const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-counter-human",0,"dawn","human"),makePlayer("new-counter-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
-  assert.equal(await pending,false);assert.ok(old.state.resolvingCards.includes(use));assert.equal(fresh.state.resolvingCards.length,0);assert.equal(ui.game,fresh);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
+  assert.equal(await pending,false);assertCardOnlyIn(old,use,"discard");assert.equal(fresh.state.resolvingCards.length,0);assert.equal(ui.game,fresh);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
 });
 test("旧局公共池、目标和弃牌等待取消后不移动实体且不影响新 UI", async () => {
   for (const mode of ["public","target","discard"]) {
