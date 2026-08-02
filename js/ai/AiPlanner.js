@@ -70,6 +70,7 @@ export class AiPlanner {
     });
     beam.sort((a,b) => b.score - a.score);
     beam = beam.slice(0, GAME_CONFIG.aiBeamWidth);
+    let bestCandidate = beam[0];
     let expanded = nodeBudget === null ? beam.length : rootActionsWithinBudget.length;
     const limitReached = () => nodeBudget === null
       ? (globalThis.performance?.now?.() ?? Date.now()) - started >= timeBudget
@@ -97,6 +98,7 @@ export class AiPlanner {
             score,
             sequence:[...node.sequence, follow]
           });
+          if (!bestCandidate || score > bestCandidate.score) bestCandidate = candidates.at(-1);
           expanded += 1;
           if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
             if (!(await this.game.cleanupManager.delay(0)) || !this.game.isSessionValid(options.gameId ?? this.game.state.gameId)) return { type:"end" };
@@ -110,7 +112,9 @@ export class AiPlanner {
       beam = candidates.slice(0, GAME_CONFIG.aiBeamWidth);
       if (limitReached()) break;
     }
-    const choice = this.chooseCandidate(beam);
+    const choice = nodeBudget !== null && limitReached()
+      ? bestCandidate
+      : this.chooseCandidate(beam);
     const selectedSequence = [...(choice?.sequence ?? [])];
     const endIndex = selectedSequence.findIndex((action) => action.type === "end");
     this.lastPlannedSequence = (endIndex >= 0 ? selectedSequence.slice(0, endIndex + 1) : selectedSequence)

@@ -59,10 +59,9 @@ export class AiSimulator {
             }
           }
           const momentum = actor.generalId === "blade-walker" ? (actor.momentum ?? 0) : 0;
-          const actualDamage = target
-            ? this.applyDamage(next, actor, target, 1 + (actor.exposeWeaknessStacks ?? 0) + (actor.assaultBonus ?? 0) + momentum, { canBlock:true, deviceAttack:true })
-            : 0;
-          if (actualDamage > 0 && momentum > 0) actor.momentum = 0;
+          const damageOutcome = {};
+          if (target) this.applyDamage(next, actor, target, 1 + (actor.exposeWeaknessStacks ?? 0) + (actor.assaultBonus ?? 0) + momentum, { canBlock:true, deviceAttack:true, outcome:damageOutcome });
+          if (damageOutcome.lifeDamageChance > 0 && momentum > 0) actor.momentum *= 1 - damageOutcome.lifeDamageChance;
         }
         actor.exposeWeaknessStacks = 0;
         actor.assaultBonus = 0;
@@ -226,17 +225,21 @@ export class AiSimulator {
   }
 
   applyDamage(state, attacker, target, amount, options = {}) {
-    if (!target.alive || amount <= 0) return 0;
+    if (!target.alive || amount <= 0) {
+      if (options.outcome) options.outcome.lifeDamageChance = 0;
+      return 0;
+    }
     const requiresTwoBlocks = attacker.equipmentDefinitionId === "battleDevice";
     const blockChance = options.canBlock ? (requiresTwoBlocks ? (target.twoBlockProbability ?? 0) : (target.blockProbability ?? 0)) : 0;
-    let pending = amount * (1 - blockChance);
+    let passChance = 1 - blockChance;
+    let pending = amount * passChance;
     let directLoss = 0;
     if (options.deviceAttack && target.equipmentDefinitionId === "defenseDevice") {
       const judgmentBlockChance = BLOCK_CARD_COUNT / TOTAL_CARD_COUNT;
       const otherBasicChance = OTHER_BASIC_CARD_COUNT / TOTAL_CARD_COUNT;
       const basicChance = BASIC_CARD_COUNT / TOTAL_CARD_COUNT;
       const equipmentChance = EQUIPMENT_CARD_COUNT / TOTAL_CARD_COUNT;
-      const passChance = !options.canBlock
+      passChance = !options.canBlock
         ? basicChance + equipmentChance
         : requiresTwoBlocks
           ? equipmentChance + judgmentBlockChance * (1 - (target.blockProbability ?? 0)) + otherBasicChance * (1 - (target.twoBlockProbability ?? 0))
@@ -248,6 +251,7 @@ export class AiSimulator {
     } else {
       target.handCount = Math.max(0, target.handCount - blockChance * (requiresTwoBlocks ? 2 : 1));
     }
+    if (options.outcome) options.outcome.lifeDamageChance = (target.shield ?? 0) < amount ? passChance : 0;
     const absorbed = Math.min(target.shield ?? 0, pending);
     target.shield = Math.max(0, (target.shield ?? 0) - absorbed);
     const actualDamage = Math.max(0, pending - absorbed) + directLoss;

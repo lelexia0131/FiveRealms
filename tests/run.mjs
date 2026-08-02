@@ -866,11 +866,36 @@ test("AI 刃行者突袭被格挡或被护盾完全吸收时不消耗连势", ()
   const shielded=new AiSimulator(shieldedState).apply(shieldedState,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
   assert.equal(shielded.players[1].hp,4);assert.equal(shielded.players[1].shield,0);assert.equal(shielded.players[0].momentum,2);
 });
+test("AI 刃行者突袭部分命中时按生命伤害概率消耗连势", () => {
+  const state={players:[
+    {id:"blade",seatIndex:0,generalId:"blade-walker",battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,momentum:2,categoriesUsed:["basic","tactic"],expectedRecoverCount:0},
+    {id:"target",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,alive:true,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0}
+  ]};
+  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
+  assert.equal(next.players[1].hp,2.5);assert.equal(next.players[0].momentum,1);
+  const shieldedState=structuredClone(state);shieldedState.players[1].shield=2;
+  const shielded=new AiSimulator(shieldedState).apply(shieldedState,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
+  assert.equal(shielded.players[1].hp,4);assert.equal(shielded.players[0].momentum,1);
+});
 test("AI 固定节点预算达到上限后返回当前最佳动作且不再按时间截断", async () => {
   const actor=makePlayer("node-budget-actor",0,"dawn"),enemy=makePlayer("node-budget-enemy",1,"dusk");actor.hand.push(instance("charge"),instance("exposeWeakness"),instance("assault"));
   const {game}=makeGame([actor,enemy]);game.aiSearchNodeBudgetOverride=5;game.aiSearchBudgetOverrideMs=0;
   const action=await game.aiController.selectAction(actor,{gameId:game.state.gameId});
   assert.ok(["card","skill","end"].includes(action.type));assert.equal(game.aiController.planner.lastSearchStats.expanded,5);assert.equal(game.aiController.planner.lastSearchStats.budgetType,"nodes");assert.equal(game.aiController.planner.lastSearchStats.nodeBudget,5);
+});
+test("AI 固定节点预算截止时保留上一层已发现的全局最佳候选", async () => {
+  const actor=makePlayer("node-best-actor",0,"dawn"),enemy=makePlayer("node-best-enemy",1,"dusk"),best=instance("charge"),lower=instance("harvest");
+  actor.hand.push(best,lower);
+  const {game}=makeGame([actor,enemy]);
+  const visible=createAiVisibleState(actor.id,game.state),planner=game.aiController.planner;
+  game.aiSearchNodeBudgetOverride=3;game.aiRandomnessRange=0;
+  planner.evaluator={
+    actionUtility:(action)=>action.card?.id===best.id?10:action.card?.id===lower.id?5:-20,
+    stateUtility:()=>0
+  };
+  game.aiController.actionGenerator.generateFromVisible=(state)=>state.players.find((player)=>player.id===actor.id).hand?.some((card)=>card.id===best.id)?[{type:"end"}]:[];
+  const action=await planner.plan(actor,visible,[{type:"card",card:best,targets:[]},{type:"card",card:lower,targets:[]}],{gameId:game.state.gameId});
+  assert.equal(action.card.id,best.id);assert.equal(planner.lastSearchStats.expanded,3);
 });
 test("平衡模拟在相同种子和固定节点预算下连续两次结果完全一致", async () => {
   const env={...process.env,FIVE_REALMS_GAMES:"2",FIVE_REALMS_SEED_BASE:"123456789",FIVE_REALMS_START_INDEX:"7",FIVE_REALMS_SEARCH_NODE_BUDGET:"80"};
