@@ -368,7 +368,7 @@ export class UIManager {
   renderTargetConfirmation() {
     if (!this.targetState?.meta?.confirmSelection) return;
     const selectedName = this.targetState.selected?.name ?? "尚未选择";
-    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(this.targetState.meta.stepTitle ?? "选择目标")}</strong><span>${escapeHtml(selectedName)}</span></div><div class="response-copy"><p class="response-event">${escapeHtml(this.targetState.prompt)}</p><p class="response-requirement">点击任一金色目标可直接改选，再确认本步骤。</p></div><div class="response-actions"><button class="primary-button" type="button" data-target-confirm${this.targetState.selected ? "" : " disabled aria-disabled=\"true\""}>确认选择</button><button class="ghost-button" type="button" data-target-cancel>取消</button></div>`;
+    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(this.targetState.meta.stepTitle ?? "选择目标")}</strong><span>${escapeHtml(selectedName)}</span></div><div class="response-copy"><p class="response-event">${escapeHtml(this.targetState.prompt)}</p></div><div class="response-actions"><button class="primary-button" type="button" data-target-confirm${this.targetState.selected ? "" : " disabled aria-disabled=\"true\""}>确认选择</button><button class="ghost-button" type="button" data-target-cancel>取消</button></div>`;
     this.elements.response_panel.classList.remove("is-hidden");
   }
 
