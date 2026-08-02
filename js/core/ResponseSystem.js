@@ -204,15 +204,16 @@ export class ResponseSystem {
       if (isCancelledResponse(response) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       const [counterCard] = response.cards ?? [];
       if (response.status !== RESPONSE_STATUS.USED || !counterCard) continue;
+      const cancelledTarget = chainContext.targetScoped
+        ? `对${targets[0]?.name ?? responder.name}的效果`
+        : "的效果";
+      this.game.log(`${responder.name}对${source.name}的「${card.name}」使用了「反制」，取消了「${card.name}」${cancelledTarget}。`, "important");
       // 反制牌已经从手牌移入弃牌堆，因此递归链必然受实体牌数量限制，不会无限循环。
       const counterWasCountered = await this.askForCounter(responder, counterCard, [source], { targetCard:card });
       if (isCancelledResponse(counterWasCountered) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       if (counterWasCountered.status === RESPONSE_STATUS.USED) {
-        this.game.log(`${responder.name}的「反制」被后续反制抵消。`, "important");
         return responseResult(RESPONSE_STATUS.DECLINED);
       }
-      const targetSuffix = chainContext.targetScoped ? `对${responder.name}的` : "";
-      this.game.log(`${responder.name}使用了「反制」，取消了「${card.name}」${targetSuffix}效果。`, "important");
       return responseResult(RESPONSE_STATUS.USED, { card:counterCard });
     }
     return responseResult(RESPONSE_STATUS.DECLINED);

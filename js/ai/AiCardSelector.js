@@ -41,7 +41,8 @@ export class AiCardSelector {
   }
 
   chooseTransferSource(actor, candidates) {
-    return this.chooseTransferCombination(actor, CARD_DEFINITIONS.transfer, candidates)?.source ?? null;
+    const plan = this.chooseTransferCombination(actor, CARD_DEFINITIONS.transfer, candidates);
+    return candidates.find((player) => player.id === plan?.sourceId) ?? null;
   }
   chooseTransferReceiver(actor, from, candidates) {
     const plan = this.chooseTransferCombination(actor, CARD_DEFINITIONS.transfer, [from], new Set(candidates.map((player) => player.id)));

@@ -96,7 +96,6 @@ const CARD_EFFECTS = {
       });
       if (!game.isSessionValid(gameId) || counteredForTarget.status === "cancelled") return { resolved:false };
       if (counteredForTarget.status === "used") {
-        game.log(`${target.name}反制了「${card.name}」对自己的效果；其他目标继续结算。`, "important");
         continue;
       }
       await game.damage(source, target, 1, { card, canBlock:true, damageType:"area", resolutionId:context.resolutionId });
@@ -114,7 +113,6 @@ const CARD_EFFECTS = {
       });
       if (!game.isSessionValid(gameId) || counteredForTarget.status === "cancelled") return { resolved:false };
       if (counteredForTarget.status === "used") {
-        game.log(`${target.name}反制了「${card.name}」对自己的效果；其他目标继续结算。`, "important");
         continue;
       }
       const discarded = await game.responseSystem.requestAssaultDiscard(target, "响应挑衅并打出突袭", { source, target, card });

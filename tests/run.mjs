@@ -685,11 +685,11 @@ test("互利选牌严格跳过阵亡座位", async () => { const a=makePlayer("a
 test("共生按全体存活角色结算治疗", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");[a,b,c].forEach((p)=>p.hp-=1);const {game}=makeGame([a,b,c]);a.hand.push(instance("symbiosis"));await game.playCard(a,a.hand[0],[]);[a,b,c].forEach((p)=>assert.equal(p.hp,p.maxHp)); });
 test("反制者包含盟友并按施牌者后的座位顺序", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dawn","human"),c=makePlayer("c",2,"dusk","human");const order=[];const {game}=makeGame([a,b,c],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});a.hand.push(instance("harvest"));b.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id]); });
 test("反制本身可被反制且仍保持响应牌接口", () => { assert.equal(CARD_DEFINITIONS.counter.counterable,true);assert.equal(CARD_DEFINITIONS.counter.usageMode,"response");assert.match(CARD_DEFINITIONS.counter.description,/也可以被其他反制响应/); });
-test("震荡的反制只取消当前目标所受效果而不取消整张群伤牌", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.targetPlayerId===b.id});const shockwave=instance("shockwave"),counter=instance("counter"),bHp=b.hp,cHp=c.hp;a.hand.push(shockwave);b.hand.push(counter);await game.playCard(a,shockwave,[b,c]);assert.equal(b.hp,bHp);assert.equal(c.hp,cHp-1);assert.equal(b.hand.includes(counter),false);assert.ok(ui.responseRequests.some((request)=>request.type==="counter"&&request.targetPlayerId===b.id&&request.presentation.responseText.includes("仅取消")&&request.presentation.responseText.includes("其他目标")));assert.ok(ui.logs.some((message)=>message.includes(`${b.name}反制了「震荡」对自己的效果`))); });
-test("挑衅的反制只取消当前目标效果且不能保护队友", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk","human");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.targetPlayerId===b.id});const provoke=instance("provoke"),counter=instance("counter"),bHp=b.hp,cHp=c.hp;a.hand.push(provoke);b.hand.push(counter);await game.playCard(a,provoke,[b,c]);assert.equal(b.hp,bHp);assert.equal(c.hp,cHp-1);assert.equal(b.hand.includes(counter),false);assert.ok(ui.responseRequests.some((request)=>request.type==="counter"&&request.targetPlayerId===b.id&&request.presentation.responseText.includes("仅取消")&&request.presentation.responseText.includes("其他目标")));assert.ok(ui.logs.some((message)=>message.includes(`${b.name}反制了「挑衅」对自己的效果`))); });
-test("针对震荡目标的反制仍可被后续反制，之后该目标继续承受效果", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.legalCardIds.length>=request.requiredCount});const shockwave=instance("shockwave"),first=instance("counter"),second=instance("counter"),hp=b.hp;a.hand.push(shockwave,second);b.hand.push(first);await game.playCard(a,shockwave,[b]);assert.equal(b.hp,hp-1);assert.equal(b.hand.includes(first),false);assert.equal(a.hand.includes(second),false);assert.ok(ui.logs.some((message)=>message.includes(`${b.name}的「反制」被后续反制抵消`))); });
-test("两次反制后原战术牌恢复生效", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const order=[];const {game,ui}=makeGame([a,b,c],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});game.state.deck.cards.push(instance("block"),instance("charge"));a.hand.push(instance("harvest"));b.hand.push(instance("counter"));c.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id,a.id,b.id]);assert.equal(a.hand.length,2);assert.equal(b.hand.length,0);assert.equal(c.hand.length,0);assert.ok(ui.logs.some((message)=>message.includes(`${b.name}的「反制」被后续反制抵消`))); });
-test("三次反制后原战术牌仍被取消", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human"),d=makePlayer("d",3,"dusk","human");const order=[];const {game}=makeGame([a,b,c,d],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});game.state.deck.cards.push(instance("block"),instance("charge"));a.hand.push(instance("harvest"));b.hand.push(instance("counter"));c.hand.push(instance("counter"));d.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id,d.id,a.id,b.id,c.id]);assert.equal(a.hand.length,0);assert.equal(b.hand.length,0);assert.equal(c.hand.length,0);assert.equal(d.hand.length,0);assert.ok(game.state.logs.some((entry)=>entry.message.includes("效果被取消"))); });
+test("震荡的反制只取消当前目标所受效果而不取消整张群伤牌", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.targetPlayerId===b.id});const shockwave=instance("shockwave"),counter=instance("counter"),bHp=b.hp,cHp=c.hp;a.hand.push(shockwave);b.hand.push(counter);await game.playCard(a,shockwave,[b,c]);assert.equal(b.hp,bHp);assert.equal(c.hp,cHp-1);assert.equal(b.hand.includes(counter),false);assert.ok(ui.responseRequests.some((request)=>request.type==="counter"&&request.targetPlayerId===b.id&&request.presentation.responseText.includes("仅取消")&&request.presentation.responseText.includes("其他目标")));assert.ok(ui.logs.some((message)=>message===`${b.name}对${a.name}的「震荡」使用了「反制」，取消了「震荡」对${b.name}的效果。`)); });
+test("挑衅的反制只取消当前目标效果且不能保护队友", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk","human");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.targetPlayerId===b.id});const provoke=instance("provoke"),counter=instance("counter"),bHp=b.hp,cHp=c.hp;a.hand.push(provoke);b.hand.push(counter);await game.playCard(a,provoke,[b,c]);assert.equal(b.hp,bHp);assert.equal(c.hp,cHp-1);assert.equal(b.hand.includes(counter),false);assert.ok(ui.responseRequests.some((request)=>request.type==="counter"&&request.targetPlayerId===b.id&&request.presentation.responseText.includes("仅取消")&&request.presentation.responseText.includes("其他目标")));assert.ok(ui.logs.some((message)=>message===`${b.name}对${a.name}的「挑衅」使用了「反制」，取消了「挑衅」对${b.name}的效果。`)); });
+test("针对震荡目标的反制仍可被后续反制，之后该目标继续承受效果", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.legalCardIds.length>=request.requiredCount});const shockwave=instance("shockwave"),first=instance("counter"),second=instance("counter"),hp=b.hp;a.hand.push(shockwave,second);b.hand.push(first);await game.playCard(a,shockwave,[b]);assert.equal(b.hp,hp-1);assert.equal(b.hand.includes(first),false);assert.equal(a.hand.includes(second),false);assert.ok(ui.logs.some((message)=>message===`${b.name}对${a.name}的「震荡」使用了「反制」，取消了「震荡」对${b.name}的效果。`));assert.ok(ui.logs.some((message)=>message===`${a.name}对${b.name}的「反制」使用了「反制」，取消了「反制」的效果。`));assert.ok(!ui.logs.some((message)=>message.includes("被后续反制抵消"))); });
+test("两次反制后原战术牌恢复生效", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const order=[];const {game,ui}=makeGame([a,b,c],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});game.state.deck.cards.push(instance("block"),instance("charge"));a.hand.push(instance("harvest"));b.hand.push(instance("counter"));c.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id,a.id,b.id]);assert.equal(a.hand.length,2);assert.equal(b.hand.length,0);assert.equal(c.hand.length,0);assert.equal(ui.logs.filter((message)=>message.includes("使用了「反制」")).length,2);assert.ok(!ui.logs.some((message)=>message.includes("被后续反制抵消"))); });
+test("三次反制后原战术牌仍被取消", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human"),d=makePlayer("d",3,"dusk","human");const order=[];const {game}=makeGame([a,b,c,d],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});game.state.deck.cards.push(instance("block"),instance("charge"));a.hand.push(instance("harvest"));b.hand.push(instance("counter"));c.hand.push(instance("counter"));d.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id,d.id,a.id,b.id,c.id]);assert.equal(a.hand.length,0);assert.equal(b.hand.length,0);assert.equal(c.hand.length,0);assert.equal(d.hand.length,0);assert.equal(game.state.logs.filter((entry)=>entry.message.includes("使用了「反制」")).length,3);assert.ok(game.state.logs.some((entry)=>entry.message.includes("取消了「收获」的效果"))); });
 
 // 装备与判定
 for (const id of ["energyDevice","recycleDevice","defenseDevice","battleDevice","telescope","barrierDevice"]) test(`装备 ${CARD_DEFINITIONS[id].name} 会进入唯一装备槽`, async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const equipment=instance(id);a.hand.push(equipment);await game.playCard(a,equipment,[]);assert.equal(a.equipment,equipment);assert.ok(!game.state.deck.discardPile.includes(equipment)); });
@@ -1133,7 +1133,7 @@ test("AI 共用突袭模拟消费破势与孤注并保留濒死救援和击杀�
   const rescuedAttacker={id:"rescued-attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,attackUsed:0},rescued={id:"rescued",battleTeam:"dusk",alive:true,hp:1,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},rescuer={id:"rescuer",generalId:"spirit-medic",battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:1,expectedRecoverCount:1,rejuvenationUsed:false},rescueState={players:[rescuedAttacker,rescued,rescuer]};simulator.simulateAssault(rescueState,rescuedAttacker,rescued,1);assert.equal(rescued.alive,true);assert.equal(rescued.hp,2);assert.equal(rescuedAttacker.handCount,0);
 });
 test("平衡模拟在相同种子和固定节点预算下连续两次结果完全一致", async () => {
-  const env={...process.env,FIVE_REALMS_GAMES:"2",FIVE_REALMS_SEED_BASE:"123456789",FIVE_REALMS_START_INDEX:"0",FIVE_REALMS_SEARCH_NODE_BUDGET:"80"};
+  const env={...process.env,FIVE_REALMS_GAMES:"2",FIVE_REALMS_SEED_BASE:"123456789",FIVE_REALMS_START_INDEX:"8",FIVE_REALMS_SEARCH_NODE_BUDGET:"80"};
   delete env.FIVE_REALMS_SEARCH_BUDGET;
   const run=async()=>JSON.parse((await execFileAsync(process.execPath,[projectFile("tests/balance-simulation.mjs")],{cwd:projectFile("."),env,encoding:"utf8",maxBuffer:1024*1024})).stdout);
   const first=await run(),second=await run();
@@ -2159,6 +2159,88 @@ test("概率获得能量与孤注均按各自世界的实际能量结算", () =>
   const allInState={players:[{id:"gambler",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:1.2,maxEnergy:4,energyBranches:[{probability:.4,conditions:{rich:"yes"},amount:3},{probability:.6,conditions:{rich:"no"},amount:0}],handCount:0,activeSkillUses:0,activeSkillLimit:1}]};
   const allInWorlds=[{probability:.4,conditions:{rich:"yes"},executes:true},{probability:.6,conditions:{rich:"no"},executes:false}],allIn=new AiSimulator(allInState).apply(allInState,{type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[],executionProbability:.4,executionWorldBranches:allInWorlds},"gambler");
   assertClose(allIn.players[0].handCount,1.2);assertClose(allIn.players[0].energy,0);
+});
+
+test("AI破军只在额外攻击槽确实有第二张突袭可用时生成", () => {
+  const blade=makePlayer("break-army-blade",0,"dawn","ai",0),enemy=makePlayer("break-army-enemy",1,"dusk");
+  blade.energy=2;blade.hand.push(instance("assault"));const {game}=makeGame([blade,enemy]);blade.energy=2;
+  const skills=()=>game.aiController.getLegalActions(blade).filter((action)=>action.skill?.id==="breakArmy");
+  assert.equal(skills().length,0);assert.equal(game.aiController.evaluator.breakArmyUtility(createAiVisibleState(blade.id,game.state).players[0]),-4);blade.turnFlags.attackUsed=blade.turnFlags.attackLimit;assert.equal(skills().length,1);assert.equal(game.aiController.evaluator.breakArmyUtility(createAiVisibleState(blade.id,game.state).players[0]),8);
+});
+
+test("AI决斗按目标先出牌关系扣除双方突袭且不额外消费出牌者", () => {
+  const run=(actorAssaults,targetAssaults)=>{const actorHand=[{id:"duel",definitionId:"duel"},...Array.from({length:actorAssaults},(_,index)=>({id:`actor-assault-${index}`,definitionId:"assault"}))],targetHand=Array.from({length:targetAssaults},(_,index)=>({id:`target-assault-${index}`,definitionId:"assault"})),state={playPhaseEnded:false,players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:actorHand.length,hand:actorHand,expectedAssaultCount:actorAssaults,counterProbability:0},
+    {id:"target",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:targetHand.length,hand:targetHand,expectedAssaultCount:targetAssaults,expectedRecoverCount:0,blockProbability:0,counterProbability:0}
+  ]};return new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.duel,id:"duel"},targets:[{id:"target"}]},"actor");};
+  let next=run(1,0);assert.equal(next.players[0].expectedAssaultCount,1);assert.equal(next.players[0].hand.filter((card)=>card.definitionId==="assault").length,1);assert.equal(next.players[1].hp,3);
+  next=run(1,1);assert.equal(next.players[0].expectedAssaultCount,0);assert.equal(next.players[1].expectedAssaultCount,0);assert.ok(next.players.every((player)=>!(player.hand??[]).some((card)=>card.definitionId==="assault")));
+  next=run(1,2);assert.equal(next.players[0].expectedAssaultCount,0);assert.equal(next.players[1].expectedAssaultCount,0);assert.equal(next.players[0].hp,3);
+});
+
+test("AI决斗移除的具体突袭不会再次进入深层动作生成", () => {
+  const state={playPhaseEnded:false,players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,maxEnergy:4,attackRange:1,attackUsed:0,attackLimit:2,handCount:2,hand:[{id:"duel",definitionId:"duel"},{id:"assault",definitionId:"assault"}],expectedAssaultCount:1,counterProbability:0},
+    {id:"target",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,expectedAssaultCount:1,expectedRecoverCount:0,blockProbability:0,counterProbability:0}
+  ]},{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]),next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.duel,id:"duel"},targets:[{id:"target"}]},"actor");
+  assert.ok(!game.aiController.actionGenerator.generateFromVisible(next,"actor").some((action)=>action.card?.definitionId==="assault"));
+});
+
+test("AI军火库不会提高猎杀等非设备攻击的格挡需求", () => {
+  const state={players:[
+    {id:"hunter",battleTeam:"dawn",alive:true,hp:4,maxHp:4,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1},
+    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}
+  ]};
+  new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],2,{canBlock:true,deviceAttack:false});
+  assert.equal(state.players[1].hp,4);assert.equal(state.players[1].handCount,0);
+});
+
+test("AI模拟阵亡会清空手牌装备摘要且评估器只保留死亡惩罚", () => {
+  const state={players:[
+    {id:"killer",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0},
+    {id:"victim",seatIndex:1,battleTeam:"dusk",alive:true,hp:1,maxHp:4,shield:0,energy:3,handCount:5,hand:[{id:"a",definitionId:"assault"}],expectedAssaultCount:3,expectedRecoverCount:.2,assaultResponseProbability:1,blockProbability:1,twoBlockProbability:1,counterProbability:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,huntMarkSourceId:null,huntMarkProbabilities:{}}
+  ]},simulator=new AiSimulator(state);simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:false});const victim=state.players[1];
+  assert.deepEqual([victim.alive,victim.handCount,victim.hand.length,victim.expectedAssaultCount,victim.expectedRecoverCount,victim.equipmentDefinitionId,victim.equipmentRetentionProbability],[false,0,0,0,0,null,0]);
+  const {game}=makeGame([makePlayer("viewer",0,"dawn"),makePlayer("dead",1,"dusk")]),viewer={id:"viewer",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0},dead={id:"dead",battleTeam:"dusk",alive:false,hp:0,maxHp:4,shield:0,energy:0,handCount:0};
+  const emptyScore=game.aiController.evaluator.stateUtility({players:[viewer,dead]},viewer.id),richScore=game.aiController.evaluator.stateUtility({players:[viewer,{...dead,shield:99,energy:99,handCount:99,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1}]},viewer.id);assert.equal(richScore,emptyScore);
+});
+
+test("AI装备完全移除时按初始装备价值产生完整损失", () => {
+  const {game}=makeGame([makePlayer("equipment-viewer",0,"dawn"),makePlayer("equipment-enemy",1,"dusk")]),value=CARD_DEFINITIONS.battleDevice.aiValue,base={id:"equipment-viewer",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0,initialEquipmentValue:value,expectedEquipmentGain:0},enemy={id:"equipment-enemy",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0};
+  const partial=game.aiController.evaluator.stateUtility({players:[{...base,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:.1},enemy]},base.id),removed=game.aiController.evaluator.stateUtility({players:[{...base,equipmentDefinitionId:null,equipmentRetentionProbability:0},enemy]},base.id);
+  assert.ok(removed<partial);assertClose(partial-removed,value*.1*.25);
+});
+
+test("AI攻击与技能次数槽选择执行概率最高的可用槽", () => {
+  const partialSlot=[{probability:.2,conditions:{partial:"yes"},available:true},{probability:.8,conditions:{partial:"no"},available:false}],fullSlot=[{probability:1,conditions:{},available:true}],{game}=makeGame([makePlayer("slot-real-a",0,"dawn"),makePlayer("slot-real-b",1,"dusk")]);
+  const attackState={playPhaseEnded:false,players:[{id:"attacker",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,attackRange:1,attackUsed:0,attackLimit:2,attackUseSlots:[partialSlot,fullSlot],handCount:1,hand:[{id:"hit",definitionId:"assault"}]},{id:"enemy",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0}]};
+  const attack=game.aiController.actionGenerator.generateFromVisible(attackState,"attacker").find((action)=>action.card?.id==="hit");assert.equal(attack.attackUseSlot,1);assert.equal(attack.executionProbability,1);
+  const skillState={playPhaseEnded:false,players:[{id:"warden",seatIndex:0,battleTeam:"dawn",alive:true,hp:3,maxHp:3,shield:0,energy:2,activeSkillId:"barrier",activeSkillUses:0,activeSkillLimit:2,activeSkillUseSlots:[partialSlot,fullSlot],handCount:0,hand:[]},{id:"ally",seatIndex:1,battleTeam:"dawn",alive:true,hp:3,maxHp:3,shield:0,handCount:0},{id:"enemy",seatIndex:2,battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:0}]};
+  const skill=game.aiController.actionGenerator.generateFromVisible(skillState,"warden").find((action)=>action.skill?.id==="barrier");assert.equal(skill.skillUseSlot,1);assert.equal(skill.executionProbability,1);
+});
+
+test("AI濒死救援在本人后按相对座位环绕顺序消费调息", () => {
+  const players=[
+    {id:"ally-zero",seatIndex:0,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"recover-zero",definitionId:"recover"}],expectedRecoverCount:1},
+    {id:"enemy-one",seatIndex:1,battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:0,expectedRecoverCount:0},
+    {id:"dying",seatIndex:2,battleTeam:"dawn",alive:true,hp:0,maxHp:3,handCount:0,hand:[],expectedRecoverCount:0},
+    {id:"enemy-three",seatIndex:3,battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:0,expectedRecoverCount:0},
+    {id:"ally-four",seatIndex:4,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"recover-four",definitionId:"recover"}],expectedRecoverCount:1}
+  ],state={players},simulator=new AiSimulator(state);simulator.resolveFatal(state,players[2],players[1]);assert.equal(players[2].hp,1);assert.equal(players[4].expectedRecoverCount,0);assert.equal(players[0].expectedRecoverCount,1);
+});
+
+test("关闭逐动作重规划时转移描述只保存稳定ID并可重新绑定", () => {
+  const actor=makePlayer("transfer-rebind-actor",0,"dawn"),from=makePlayer("transfer-rebind-from",1,"dusk"),receiver=makePlayer("transfer-rebind-receiver",2,"dawn"),use=instance("transfer");actor.hand.push(use);from.hand.push(instance("block"));const {game}=makeGame([actor,from,receiver]),action=game.aiController.getLegalActions(actor).find((entry)=>entry.card?.id===use.id),descriptor=game.aiController.planner.describeAction(action);
+  assert.deepEqual(descriptor.selection,{sourceId:action.selection.sourceId,receiverId:action.selection.receiverId,zone:"hand"});assert.equal(Object.hasOwn(descriptor.selection,"source"),false);assert.equal(Object.hasOwn(descriptor.selection,"score"),false);assert.ok(game.aiController.resolvePlannedAction(actor,structuredClone(descriptor)));
+});
+
+test("追猎者阵亡时统一清理其他角色身上由其留下的猎印", async () => {
+  const hunter=makePlayer("dead-hunter",0,"dawn","ai",5),marked=makePlayer("marked-after-death",1,"dusk"),killer=makePlayer("hunter-killer",2,"dusk");marked.statuses.huntMark={sourceId:hunter.id,expireAtTurnEnd:99};const {game}=makeGame([hunter,marked,killer]);await game.dyingSystem.kill(hunter,killer);assert.equal(marked.statuses.huntMark,undefined);
+});
+
+test("反制链每张实际反制只记录一条带明确双方与对象的日志", async () => {
+  const source=makePlayer("log-source",0,"dawn","human"),first=makePlayer("log-first",1,"dusk","human"),second=makePlayer("log-second",2,"dawn","human"),use=instance("harvest");source.hand.push(use);first.hand.push(instance("counter"));second.hand.push(instance("counter"));const {game}=makeGame([source,first,second],{response:(request)=>request.type==="counter"&&request.legalCardIds.length>=request.requiredCount});game.state.deck.cards.push(instance("charge"),instance("block"));await game.playCard(source,use,[]);const logs=game.state.logs.map((entry)=>entry.message).filter((message)=>message.includes("使用了「反制」"));
+  assert.deepEqual(logs,[`${first.name}对${source.name}的「收获」使用了「反制」，取消了「收获」的效果。`,`${second.name}对${first.name}的「反制」使用了「反制」，取消了「反制」的效果。`]);assert.ok(!game.state.logs.some((entry)=>entry.message.includes("被后续反制抵消")||entry.message===`「收获」的效果被取消。`));
 });
 
 let passed = 0;

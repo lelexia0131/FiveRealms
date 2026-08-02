@@ -24,6 +24,31 @@ import {
 export class AiActionGenerator {
   constructor(game) { this.game = game; }
 
+  expectedAvailableAssaults(actor) {
+    return (actor.hand ?? []).filter((card) => card.definitionId === "assault")
+      .reduce((sum, card) => sum + totalBranchProbability(getAvailabilityStateBranches(card)
+        .filter((branch) => branch.available)), 0);
+  }
+
+  expectedAvailableAttackUses(actor) {
+    const slots = Array.isArray(actor.attackUseSlots)
+      ? actor.attackUseSlots
+      : null;
+    if (slots) {
+      return slots.reduce((sum, slot) => sum + totalBranchProbability(
+        (slot ?? []).filter((branch) => branch.available)
+      ), 0);
+    }
+    const limit = Number(actor.attackLimit ?? actor.turnFlags?.attackLimit) || 0;
+    const used = Number(actor.attackUsed ?? actor.turnFlags?.attackUsed) || 0;
+    return Math.max(0, limit - used);
+  }
+
+  canBenefitFromBreakArmy(actor) {
+    return this.expectedAvailableAssaults(actor)
+      > this.expectedAvailableAttackUses(actor) + PROBABILITY_EPSILON;
+  }
+
   chooseVisibleTransferPlan(game, actor, card) {
     const sources = RuleEngine.getTransferSources(game, actor, card);
     const excludedCardIds = card.id ? new Set([card.id]) : null;
@@ -70,7 +95,8 @@ export class AiActionGenerator {
       } else actions.push({ type:"card", card, targets:card.targetType === "allEnemies" || card.targetType === "allLiving" ? targets : [] });
     }
     const skill = getActiveSkill(player);
-    if (skill?.canUse(this.game, player).ok) {
+    if (skill?.canUse(this.game, player).ok
+      && (skill.id !== "breakArmy" || this.canBenefitFromBreakArmy(player))) {
       const targets = RuleEngine.getSkillTargets(this.game, player, skill);
       if (skill.targetType === "none" || skill.targetType === "allEnemies") actions.push({ type:"skill", skill, targets });
       else for (const target of targets) actions.push({ type:"skill", skill, targets:[target] });
@@ -140,7 +166,9 @@ export class AiActionGenerator {
       else actions.push({ type:"card", card, targets:["allEnemies","allLiving"].includes(card.targetType) ? (card.targetType === "allEnemies" ? enemies : alive) : [] });
     }
     const skill = ACTIVE_SKILLS[actor.activeSkillId];
-    if (skill && !(skill.id === "allIn" && (actor.assaultBonus ?? 0) >= 1 - PROBABILITY_EPSILON)) {
+    if (skill
+      && !(skill.id === "allIn" && (actor.assaultBonus ?? 0) >= 1 - PROBABILITY_EPSILON)
+      && (skill.id !== "breakArmy" || this.canBenefitFromBreakArmy(actor))) {
       const friendlies = alive.filter((player) => player.battleTeam === actor.battleTeam);
       const allies = friendlies.filter((player) => player.id !== actor.id);
       let targets = [];
@@ -291,6 +319,7 @@ export class AiActionGenerator {
       }));
       const basePartitions = [conditionBranches, cardState];
       const attackSlots = action.card.definitionId === "assault" ? this.getAttackUseSlots(actor) : [null];
+      let bestResult = null;
       for (let attackUseSlot = 0; attackUseSlot < attackSlots.length; attackUseSlot += 1) {
         const attackState = attackSlots[attackUseSlot]?.map((branch) => ({
           probability:branch.probability,
@@ -315,9 +344,11 @@ export class AiActionGenerator {
           remainingAvailabilityBranches:availableBranchesFromState(cardAvailabilityStateBranches)
         };
         if (attackState) result.attackUseSlot = attackUseSlot;
-        return result;
+        if (!bestResult || result.executionProbability > bestResult.executionProbability + PROBABILITY_EPSILON) {
+          bestResult = result;
+        }
       }
-      return null;
+      return bestResult;
     }
 
     const slots = this.getSkillUseSlots(actor, action.skill);
@@ -327,6 +358,7 @@ export class AiActionGenerator {
       energyAmount:branch.amount
     }));
     const minimumEnergy = action.skill.id === "allIn" ? 1 : Number(action.skill.cost) || 0;
+    let bestResult = null;
     for (let skillUseSlot = 0; skillUseSlot < slots.length; skillUseSlot += 1) {
       const slotState = slots[skillUseSlot].map((branch) => ({
         probability:branch.probability,
@@ -342,7 +374,7 @@ export class AiActionGenerator {
       const skillAvailabilityStateBranches = projectProbabilityStateBranches(worlds, (branch) => ({
         available:branch.skillSlotAvailable && !branch.executes
       }));
-      return {
+      const result = {
         ...action,
         conditionBranches,
         executionWorldBranches:worlds,
@@ -351,7 +383,10 @@ export class AiActionGenerator {
         remainingSkillAvailabilityBranches:availableBranchesFromState(skillAvailabilityStateBranches),
         skillUseSlot,
       };
+      if (!bestResult || result.executionProbability > bestResult.executionProbability + PROBABILITY_EPSILON) {
+        bestResult = result;
+      }
     }
-    return null;
+    return bestResult;
   }
 }

@@ -15,13 +15,22 @@ export class AiPlanner {
   }
 
   describeAction(action) {
+    const selection = action.selection
+      ? action.card?.definitionId === "transfer"
+        ? {
+            sourceId:action.selection.sourceId,
+            receiverId:action.selection.receiverId,
+            zone:action.selection.zone
+          }
+        : { ...action.selection }
+      : null;
     return {
       type: action.type,
       cardId: action.card?.definitionId ?? action.skill?.id ?? null,
       cardInstanceId: action.card?.id ?? null,
       targetId: action.targets?.[0]?.id ?? null,
       targetIds: (action.targets ?? []).map((target) => target.id),
-      selection:action.selection ? { ...action.selection } : null
+      selection
     };
   }
 

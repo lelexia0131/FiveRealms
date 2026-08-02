@@ -56,7 +56,7 @@ export function buildTransferCandidates({ actor, sources, getReceivers, allowedR
     for (const receiver of receivers) {
       if (handCount(from, excludedCardIds) > 0) {
         candidates.push({
-          source:from, sourceId:from.id, receiverId:receiver.id, zone:"hand",
+          sourceId:from.id, sourceSeatIndex:from.seatIndex, receiverId:receiver.id, zone:"hand",
           score:scoreTransferCombination({ actor, from, receiver, zone:"hand", excludedCardIds })
         });
       }
@@ -67,7 +67,12 @@ export function buildTransferCandidates({ actor, sources, getReceivers, allowedR
 
 export function chooseBestPositiveTransfer(candidates, minimumUtility = MIN_TRANSFER_UTILITY) {
   const best = [...(candidates ?? [])].sort((a, b) => b.score - a.score
-    || (a.source?.seatIndex ?? 0) - (b.source?.seatIndex ?? 0)
+    || (a.sourceSeatIndex ?? 0) - (b.sourceSeatIndex ?? 0)
     || String(a.receiverId).localeCompare(String(b.receiverId)))[0];
-  return best && best.score >= minimumUtility ? Object.freeze({ ...best }) : null;
+  return best && best.score >= minimumUtility ? Object.freeze({
+    sourceId:best.sourceId,
+    receiverId:best.receiverId,
+    zone:best.zone,
+    score:best.score
+  }) : null;
 }

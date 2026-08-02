@@ -10,6 +10,20 @@ import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260802-resourc
 export class AiEvaluator {
   constructor(game) { this.game = game; }
 
+  breakArmyUtility(actor) {
+    const assaultCount = (actor.hand ?? []).filter((card) => card.definitionId === "assault")
+      .reduce((sum, card) => sum + (Array.isArray(card.availabilityBranches)
+        ? card.availabilityBranches.reduce((total, branch) => total + (Number(branch.probability) || 0), 0)
+        : 1), 0);
+    const availableAttackUses = Array.isArray(actor.attackUseSlots)
+      ? actor.attackUseSlots.reduce((sum, slot) => sum + (slot ?? []).reduce((total, branch) => (
+          total + (branch.available ? Number(branch.probability) || 0 : 0)
+        ), 0), 0)
+      : Math.max(0, (Number(actor.attackLimit ?? actor.turnFlags?.attackLimit) || 0)
+        - (Number(actor.attackUsed ?? actor.turnFlags?.attackUsed) || 0));
+    return assaultCount > availableAttackUses + Number.EPSILON ? 8 : -4;
+  }
+
   threatPriority(viewer, target, memory, expectedDamage = 1) {
     const multiplier = Math.max(0, Number(this.game.aiDifficultyMultiplier ?? GAME_CONFIG.aiDifficultyMultiplier) || 0);
     if (!multiplier || !target || target.battleTeam === viewer.battleTeam) return 0;
@@ -22,18 +36,22 @@ export class AiEvaluator {
     let score = 0;
     for (const player of state.players) {
       const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
-      const death = player.alive ? 0 : -28;
-      const danger = player.alive && player.hp <= 1 ? -7 : 0;
+      if (!player.alive) {
+        score += sign * -28;
+        continue;
+      }
+      const danger = player.hp <= 1 ? -7 : 0;
       const rescueOutlook = player.survivalChance === undefined ? 0 : (player.survivalChance - 0.5) * 8;
-      // 只计模拟产生的期望装备变化；初始装备概率为1时增量为0，不扰动既有基础评分。
       const equipmentValue = player.equipmentDefinitionId ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7) : 0;
-      const equipmentDelta = equipmentValue * ((player.equipmentRetentionProbability ?? (equipmentValue ? 1 : 0)) - (equipmentValue ? 1 : 0))
+      const initialEquipmentValue = player.initialEquipmentValue ?? equipmentValue;
+      const equipmentDelta = equipmentValue * (player.equipmentRetentionProbability ?? (equipmentValue ? 1 : 0))
+        - initialEquipmentValue
         + (player.expectedEquipmentGain ?? 0);
       const markThreat = Object.entries(player.huntMarkProbabilities ?? {}).reduce((sum, [sourceId, probability]) => {
         const source = state.players.find((entry) => entry.id === sourceId);
         return sum + (source?.battleTeam !== player.battleTeam ? Number(probability) || 0 : 0);
       }, 0);
-      score += sign * (death + danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * 1.2
+      score += sign * (danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * 1.2
         + player.handCount * 1.1 + (player.exposeWeaknessStacks ?? 0) * 1.5 + equipmentDelta * .25
         + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5);
     }
@@ -52,7 +70,7 @@ export class AiEvaluator {
       const enemies = visible.players.filter((entry) => entry.alive && entry.battleTeam !== actor.battleTeam);
       const missing = target ? Math.max(0, target.maxHp - target.hp) : 0;
       const values = {
-        breakArmy: actor.hand?.filter((card) => card.definitionId === "assault").length ? 8 : 2,
+        breakArmy: this.breakArmyUtility(actor),
         barrier: 4 + (target?.hp <= 2 ? 4 : 0),
         symbiosis: missing * 4,
         stealSkill: 5 + Math.min(4, (target?.handCount ?? 0) + (target?.equipmentDefinitionId ? 1 : 0)),

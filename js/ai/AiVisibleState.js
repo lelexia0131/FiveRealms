@@ -138,6 +138,7 @@ export function createAiVisibleState(viewerId, state) {
       knownCards: player.id === viewerId ? undefined : Object.entries(viewer.aiMemory.knownCardsByPlayer[player.id] ?? {}).map(([cardId, definitionId]) => ({ cardId, definitionId })),
       equipmentDefinitionId: player.equipment?.definitionId ?? null,
       equipmentRetentionProbability: player.equipment ? 1 : 0,
+      initialEquipmentValue: player.equipment ? (CARD_DEFINITIONS[player.equipment.definitionId]?.aiValue ?? 7) : 0,
       expectedEquipmentGain: 0,
       statuses: Object.keys(player.statuses),
       expectedRecoverCount: recoverEstimate.expected,

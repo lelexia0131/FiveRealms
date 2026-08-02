@@ -179,6 +179,12 @@ export class Game {
       this.log(`${owner.name}的回收站启动（${owner.turnFlags.recycleDeviceUses}/2），摸1张牌。`);
       await this.drawCards(owner, 1, "回收站");
     });
+    this.eventBus.on("playerDead", "global:huntMarkSourceCleanup", (event) => {
+      for (const player of this.state.players) {
+        if (player.statuses.huntMark?.sourceId === event.target.id) delete player.statuses.huntMark;
+      }
+      this.ui.render(this);
+    });
   }
 
   /**
@@ -758,9 +764,9 @@ export class Game {
       const countered = counterResult?.status === RESPONSE_STATUS.USED;
       let destination = "discard";
       let effectResolved = false;
-      if (countered || cancelledBeforeResolve) {
+      if (cancelledBeforeResolve) {
         this.log(`「${card.name}」的效果被取消。`, "important");
-      } else {
+      } else if (!countered) {
         const effectResult = await resolveCardEffect(this, source, card, targets, {
           resolutionId, selection,
           privateTransferIntent:preparedTransfer?.privateIntent ?? null,
