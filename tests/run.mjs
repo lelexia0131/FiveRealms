@@ -44,6 +44,10 @@ async function listJavaScriptFiles(directory = projectFile("js")) {
 }
 let serial = 0;
 const instance = (definitionId) => ({ ...CARD_DEFINITIONS[definitionId], id:`test-card-${definitionId}-${++serial}` });
+const assertClose = (actual, expected, epsilon = 1e-9) => assert.ok(
+  Math.abs(actual - expected) <= epsilon,
+  `expected ${actual} to be within ${epsilon} of ${expected}`
+);
 
 function makeUi(response = () => false) {
   return {
@@ -1163,16 +1167,16 @@ test("概率距离合法性枚举离散装备分支且真实状态只返回0或1
   const source={id:"s",seatIndex:0,battleTeam:"dawn",alive:true,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4},middle={id:"m",seatIndex:1,battleTeam:"dawn",alive:true},target={id:"t",seatIndex:2,battleTeam:"dusk",alive:true,equipmentDefinitionId:"barrierDevice",equipmentRetentionProbability:.25},tail={id:"x",seatIndex:3,battleTeam:"dusk",alive:true},game={state:{players:[source,middle,target,tail]}};assert.ok(Math.abs(DistanceSystem.getRangeLegalityProbability(game,source,target,1)-.3)<1e-9);delete source.equipmentRetentionProbability;delete target.equipmentRetentionProbability;assert.equal(DistanceSystem.getRangeLegalityProbability(game,source,target,1),0);target.equipmentDefinitionId=null;assert.equal(DistanceSystem.getRangeLegalityProbability(game,source,target,1),1);
 });
 test("概率距离动作按同一概率扣牌结算且未执行分支不能重复攻击同一目标", () => {
-  const state={playPhaseEnded:false,players:[{id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.5},{id:"m",seatIndex:1,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0},{id:"t",seatIndex:2,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},{id:"x",seatIndex:3,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0}]};const actor=makePlayer("real",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),{game}=makeGame([actor,enemy]),actions=game.aiController.actionGenerator.generateFromVisible(state,"a"),attack=actions.find((action)=>action.card?.id==="hit"&&action.targets[0]?.id==="t");assert.equal(attack.executionProbability,.5);const next=new AiSimulator(state).apply(state,attack,"a"),nextActor=next.players[0];assert.equal(nextActor.handCount,.5);assert.equal(nextActor.hand[0].retentionProbability,.5);assert.equal(nextActor.attackUsed,.5);assert.equal(next.players[2].hp,3.5);const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");assert.ok(!follow.some((action)=>action.card?.id==="hit"&&action.targets[0]?.id==="t"));
+  const state={playPhaseEnded:false,players:[{id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.5},{id:"m",seatIndex:1,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0},{id:"t",seatIndex:2,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},{id:"x",seatIndex:3,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0}]};const actor=makePlayer("real",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),{game}=makeGame([actor,enemy]),actions=game.aiController.actionGenerator.generateFromVisible(state,"a"),attack=actions.find((action)=>action.card?.id==="hit"&&action.targets[0]?.id==="t");assert.equal(attack.executionProbability,.5);const next=new AiSimulator(state).apply(state,attack,"a"),nextActor=next.players[0];assert.equal(nextActor.handCount,.5);assert.deepEqual(nextActor.hand[0].availabilityBranches,[{probability:.5,conditions:{"equipment:a:telescope":"absent","equipment:t:barrierDevice":"absent"}}]);assert.equal(nextActor.attackUsed,.5);assert.equal(next.players[2].hp,3.5);const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");assert.ok(!follow.some((action)=>action.card?.id==="hit"&&action.targets[0]?.id==="t"));
 });
 test("概率装备依赖的借势同步缩放卡牌成本并禁止再次针对同一装备", () => {
-  const state={playPhaseEnded:false,players:[{id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"l",definitionId:"leverage"}],attackUsed:0,attackLimit:1,attackRange:1,counterProbability:0},{id:"f",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:.25,assaultResponseProbability:1,expectedAssaultCount:1,counterProbability:0,blockProbability:0}]};const actor=makePlayer("real",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),{game}=makeGame([actor,enemy]),actions=game.aiController.actionGenerator.generateFromVisible(state,"a"),leverage=actions.find((action)=>action.card?.id==="l");assert.equal(leverage.executionProbability,.25);const next=new AiSimulator(state).apply(state,leverage,"a"),held=next.players[0].hand.find((card)=>card.id==="l");assert.equal(held.retentionProbability,.75);assert.ok(held.unavailableLeverageEquipmentKeys.includes("f:energyDevice"));const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");assert.ok(!follow.some((action)=>action.card?.id==="l"&&action.selection?.firstTargetId==="f"));
+  const state={playPhaseEnded:false,players:[{id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"l",definitionId:"leverage"}],attackUsed:0,attackLimit:1,attackRange:1,counterProbability:0},{id:"f",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:.25,assaultResponseProbability:1,expectedAssaultCount:1,counterProbability:0,blockProbability:0}]};const actor=makePlayer("real",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),{game}=makeGame([actor,enemy]),actions=game.aiController.actionGenerator.generateFromVisible(state,"a"),leverage=actions.find((action)=>action.card?.id==="l");assert.equal(leverage.executionProbability,.25);const next=new AiSimulator(state).apply(state,leverage,"a"),held=next.players[0].hand.find((card)=>card.id==="l");assert.deepEqual(held.availabilityBranches,[{probability:.75,conditions:{"equipment:a:barrierDevice":"absent","equipment:f:energyDevice":"absent","equipment:f:telescope":"absent"}}]);const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");assert.ok(!follow.some((action)=>action.card?.id==="l"&&action.selection?.firstTargetId==="f"));
 });
 test("AI 回收站触发期望严格封顶2次", () => {
   const state={players:[{id:"r",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:1,hand:[{id:"x",definitionId:"exposeWeakness"}],equipmentDefinitionId:"recycleDevice",equipmentRetentionProbability:.8,recycleDeviceUses:1.7,exposeWeaknessStacks:0}]};const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x"},targets:[]},"r");assert.ok(Math.abs(next.players[0].recycleDeviceUses-2)<1e-9);assert.ok(Math.abs(next.players[0].handCount-.3)<1e-9);
 });
 test("AI 雷达按判定牌类型计算格挡消耗并保持手牌非负", () => {
-  const battleProbability=.25,normalBlockProbability=.1,twoBlockProbability=.02,state={players:[{id:"a",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:battleProbability},{id:"b",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:normalBlockProbability,twoBlockProbability,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}]},basicTotal=Object.values(CARD_DEFINITIONS).filter((card)=>card.category==="basic").reduce((sum,card)=>sum+card.count,0),blockChance=CARD_DEFINITIONS.block.count/TOTAL_CARD_COUNT,otherBasicChance=(basicTotal-CARD_DEFINITIONS.block.count)/TOTAL_CARD_COUNT,normalSpent=Math.max(0,blockChance-otherBasicChance*normalBlockProbability),battleSpent=Math.max(0,2*(blockChance*normalBlockProbability-otherBasicChance*twoBlockProbability)),expectedSpent=battleProbability*battleSpent+(1-battleProbability)*normalSpent,simulator=new AiSimulator(state);simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});assert.ok(Math.abs(state.players[1].handCount-Math.max(0,basicTotal/TOTAL_CARD_COUNT-expectedSpent))<1e-9);assert.ok(state.players[1].handCount>=0);
+  const battleProbability=.25,normalBlockProbability=.1,twoBlockProbability=.02,state={players:[{id:"a",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:battleProbability},{id:"b",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:normalBlockProbability,twoBlockProbability,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}]},basicTotal=Object.values(CARD_DEFINITIONS).filter((card)=>card.category==="basic").reduce((sum,card)=>sum+card.count,0),equipmentTotal=Object.values(CARD_DEFINITIONS).filter((card)=>card.category==="equipment").reduce((sum,card)=>sum+card.count,0),blockChance=CARD_DEFINITIONS.block.count/TOTAL_CARD_COUNT,otherBasicChance=(basicTotal-CARD_DEFINITIONS.block.count)/TOTAL_CARD_COUNT,equipmentChance=equipmentTotal/TOTAL_CARD_COUNT,normalSpent=blockChance+(otherBasicChance+equipmentChance)*normalBlockProbability,battleSpent=2*(blockChance*normalBlockProbability+(otherBasicChance+equipmentChance)*twoBlockProbability),expectedSpent=battleProbability*battleSpent+(1-battleProbability)*normalSpent,simulator=new AiSimulator(state);simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});assert.ok(Math.abs(state.players[1].handCount-Math.max(0,basicTotal/TOTAL_CARD_COUNT-expectedSpent))<1e-9);assert.ok(state.players[1].handCount>=0);
 });
 test("AI 掠夺破坏窃取与主动装备均通过统一装备状态更新", () => {
   const simulator=new AiSimulator({players:[]}),actor={handCount:0,equipmentDefinitionId:null,equipmentRetentionProbability:0},target={handCount:0,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1};simulator.takeResourceToHand(actor,target,.4);assert.equal(target.equipmentRetentionProbability,.6);assert.equal(actor.handCount,.4);simulator.destroyResource(target,.5);assert.equal(target.equipmentRetentionProbability,.3);simulator.stealResourceToHand(actor,target);assert.equal(target.equipmentDefinitionId,null);assert.equal(target.equipmentRetentionProbability,0);const state={players:[{id:"a",alive:true,battleTeam:"dawn",handCount:1,hand:[{id:"e",definitionId:"barrierDevice"}],equipmentDefinitionId:"telescope",equipmentRetentionProbability:.2}]};const equipped=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.barrierDevice,id:"e"},targets:[]},"a");assert.deepEqual([equipped.players[0].equipmentDefinitionId,equipped.players[0].equipmentRetentionProbability],["barrierDevice",1]);
@@ -1902,6 +1906,155 @@ test("无明确来源的死亡不奖励且连续击杀两个敌人各奖励1张"
 test("击杀奖励README与规则文本统一为额外摸1张", async () => {
   const readme=await readFile(projectFile("README.md"),"utf8"),sources=(await Promise.all((await listJavaScriptFiles()).map((file)=>readFile(file,"utf8")))).join("\n");
   assert.match(readme,/杀死敌方角色后.*额外摸 1 张牌/);assert.doesNotMatch(`${readme}\n${sources}`,/击杀[^\n]{0,20}摸(?:了)?2张|杀死敌人[^\n]{0,20}摸2张/);
+});
+
+test("AI 转移联合距离分支共享同一望远镜且效果按概率缩放", () => {
+  const state={playPhaseEnded:false,players:[
+    {id:"z-actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"move",definitionId:"transfer"}],equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4,counterProbability:0},
+    {id:"near",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0,counterProbability:0},
+    {id:"source",seatIndex:2,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,counterProbability:0},
+    {id:"a-receiver",seatIndex:3,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,counterProbability:0},
+    {id:"tail",seatIndex:4,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0,counterProbability:0}
+  ]};
+  const {game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const actions=game.aiController.actionGenerator.generateFromVisible(state,"z-actor");
+  const transfer=actions.find((action)=>action.card?.id==="move");
+  assert.equal(transfer.selection.sourceId,"source");assert.equal(transfer.selection.receiverId,"a-receiver");
+  assertClose(transfer.executionProbability,.4);
+  const next=new AiSimulator(state).apply(state,transfer,"z-actor");
+  assertClose(next.players[0].handCount,.6);assertClose(next.players[2].handCount,1.6);assertClose(next.players[3].handCount,.4);
+});
+
+test("AI 掠夺和固定距离窃取按真实距离分支缩放全部资源", () => {
+  const basePlayers=[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,handCount:1,hand:[{id:"loot",definitionId:"plunder"}],equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4,counterProbability:0,activeSkillId:"stealSkill",activeSkillUses:0,activeSkillLimit:2,activeSkillUsed:false},
+    {id:"p1",seatIndex:1,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"p2",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"target",seatIndex:3,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,counterProbability:0},
+    {id:"p4",seatIndex:4,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"p5",seatIndex:5,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0}
+  ];
+  const {game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const plunder=game.aiController.actionGenerator.generateFromVisible({playPhaseEnded:false,players:structuredClone(basePlayers)},"actor")
+    .find((action)=>action.card?.id==="loot");
+  assertClose(plunder.executionProbability,.4);
+  const plundered=new AiSimulator({players:basePlayers}).apply({players:basePlayers},plunder,"actor");
+  assertClose(plundered.players[0].handCount,1);assertClose(plundered.players[3].handCount,.6);
+
+  const skillState={playPhaseEnded:false,players:structuredClone(basePlayers)};
+  skillState.players[0].hand=[];skillState.players[0].handCount=0;
+  const steal=game.aiController.actionGenerator.generateFromVisible(skillState,"actor")
+    .find((action)=>action.type==="skill"&&action.skill.id==="stealSkill"&&action.targets[0].id==="target");
+  assertClose(steal.executionProbability,.4);
+  const stolen=new AiSimulator(skillState).apply(skillState,steal,"actor");
+  assertClose(stolen.players[0].energy,1.6);assertClose(stolen.players[0].activeSkillUses,.4);
+  assertClose(stolen.players[0].handCount,.4);assertClose(stolen.players[3].handCount,.6);
+});
+
+test("确定合法距离保持概率1且条件技能次数不会重复消费同一分支", () => {
+  const state={playPhaseEnded:false,players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,handCount:0,hand:[],activeSkillId:"stealSkill",activeSkillUses:0,activeSkillLimit:2,activeSkillUsed:false},
+    {id:"target",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:2}
+  ]};
+  const {game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const first=game.aiController.actionGenerator.generateFromVisible(state,"actor").find((action)=>action.type==="skill");
+  assert.equal(first.executionProbability,1);
+  const once=new AiSimulator(state).apply(state,first,"actor");
+  const second=game.aiController.actionGenerator.generateFromVisible(once,"actor").find((action)=>action.type==="skill");
+  assert.equal(second.executionProbability,1);assert.notEqual(second.skillUseSlot,first.skillUseSlot);
+  const twice=new AiSimulator(once).apply(once,second,"actor");
+  assert.ok(!game.aiController.actionGenerator.generateFromVisible(twice,"actor").some((action)=>action.type==="skill"));
+});
+
+test("同一卡牌只消费相交分支，另一张牌仍可复用同一望远镜世界", () => {
+  const state={playPhaseEnded:false,players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:2,hand:[{id:"one",definitionId:"assault"},{id:"two",definitionId:"assault"}],attackUsed:0,attackLimit:2,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4},
+    {id:"near",seatIndex:1,battleTeam:"dusk",alive:true,hp:6,maxHp:6,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},
+    {id:"far",seatIndex:2,battleTeam:"dusk",alive:true,hp:6,maxHp:6,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},
+    {id:"ally",seatIndex:3,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"tail",seatIndex:4,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0}
+  ]};
+  const {game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const generated=game.aiController.actionGenerator.generateFromVisible(state,"actor");
+  const farFirst=generated.find((action)=>action.card?.id==="one"&&action.targets[0]?.id==="far");
+  assertClose(farFirst.executionProbability,.4);
+  const once=new AiSimulator(state).apply(state,farFirst,"actor");
+  const follow=game.aiController.actionGenerator.generateFromVisible(once,"actor");
+  assert.ok(!follow.some((action)=>action.card?.id==="one"&&action.targets[0]?.id==="far"));
+  assertClose(follow.find((action)=>action.card?.id==="one"&&action.targets[0]?.id==="near").executionProbability,.6);
+  assertClose(follow.find((action)=>action.card?.id==="two"&&action.targets[0]?.id==="far").executionProbability,.4);
+});
+
+test("望远镜与目标屏障组合分支各计一次且不重复质量", () => {
+  const source={id:"source",seatIndex:0,battleTeam:"dawn",alive:true,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4};
+  const target={id:"target",seatIndex:2,battleTeam:"dusk",alive:true,equipmentDefinitionId:"barrierDevice",equipmentRetentionProbability:.25};
+  const game={state:{players:[source,{id:"middle",seatIndex:1,alive:true},target,{id:"tail",seatIndex:3,alive:true}]}};
+  const branches=DistanceSystem.getRangeConditionBranches(game,{source,target,range:1});
+  assert.equal(branches.length,4);assertClose(branches.reduce((sum,branch)=>sum+branch.probability,0),1);
+  assert.equal(new Set(branches.map((branch)=>JSON.stringify(branch.conditions))).size,4);
+  assertClose(branches.filter((branch)=>branch.matches).reduce((sum,branch)=>sum+branch.probability,0),.3);
+});
+
+test("概率猎印生成猎杀并按0.4缩放成本次数伤害格挡和摸牌", () => {
+  const state={playPhaseEnded:false,players:[
+    {id:"hunter",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,handCount:0,activeSkillId:"hunt",activeSkillUses:0,activeSkillLimit:2,activeSkillUsed:false},
+    {id:"marked",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:.5,twoBlockProbability:0,huntMarkSourceId:null,huntMarkProbability:.4,huntMarkProbabilities:{hunter:.4},statuses:[],expectedRecoverCount:0}
+  ]};
+  const {game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const hunt=game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.skill?.id==="hunt");
+  assertClose(hunt.executionProbability,.4);
+  const next=new AiSimulator(state).apply(state,hunt,"hunter");
+  assertClose(next.players[0].energy,1.2);assertClose(next.players[0].activeSkillUses,.4);assertClose(next.players[0].handCount,.2);
+  assertClose(next.players[1].hp,3.6);assertClose(next.players[1].handCount,.8);assertClose(next.players[1].huntMarkProbabilities.hunter,0);
+  assert.ok(!game.aiController.actionGenerator.generateFromVisible(next,"hunter").some((action)=>action.skill?.id==="hunt"));
+});
+
+test("完整猎印概率1保持真实猎杀的完整成本和伤害", () => {
+  const state={players:[
+    {id:"hunter",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,handCount:0,activeSkillUses:0,activeSkillLimit:2},
+    {id:"marked",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkSourceId:"hunter",huntMarkProbabilities:{hunter:1},statuses:["huntMark"],expectedRecoverCount:0}
+  ]};
+  const action={type:"skill",skill:ACTIVE_SKILLS.hunt,targets:[{id:"marked"}],executionProbability:1};
+  const next=new AiSimulator(state).apply(state,action,"hunter");
+  assert.equal(next.players[0].energy,0);assert.equal(next.players[0].activeSkillUses,1);assert.equal(next.players[1].hp,2);assert.equal(next.players[1].huntMarkSourceId,null);
+});
+
+test("雷达战术判定免疫且不消耗原格挡，基础与装备判定按真实顺序结算", () => {
+  const simulator=new AiSimulator({players:[]});
+  const run=({handCount,blockProbability,judgment})=>{const state={players:[
+    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount,blockProbability,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
+  ]};simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true,radarJudgmentProbabilities:judgment});return state.players[1];};
+  const tactic=run({handCount:1,blockProbability:1,judgment:{block:0,otherBasic:0,equipment:0}});
+  assert.equal(tactic.hp,4);assert.equal(tactic.handCount,1);
+  const judgedBlock=run({handCount:0,blockProbability:0,judgment:{block:1,otherBasic:0,equipment:0}});
+  assert.equal(judgedBlock.hp,4);assert.equal(judgedBlock.handCount,0);
+  const otherBasic=run({handCount:0,blockProbability:0,judgment:{block:0,otherBasic:1,equipment:0}});
+  assert.equal(otherBasic.hp,3);assert.equal(otherBasic.handCount,1);
+  const equipment=run({handCount:1,blockProbability:1,judgment:{block:0,otherBasic:0,equipment:1}});
+  assert.equal(equipment.hp,4);assert.equal(equipment.handCount,0);
+});
+
+test("军火库雷达判得格挡后仍要求原手牌另有一张格挡", () => {
+  const simulator=new AiSimulator({players:[]});
+  const run=(normalBlockChance,handCount)=>{const state={players:[
+    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1},
+    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount,blockProbability:normalBlockChance,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
+  ]};simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true,radarJudgmentProbabilities:{block:1,otherBasic:0,equipment:0}});return state.players[1];};
+  const withoutOriginal=run(0,0);assert.equal(withoutOriginal.hp,3);assert.equal(withoutOriginal.handCount,1);
+  const withOriginal=run(1,1);assert.equal(withOriginal.hp,4);assert.equal(withOriginal.handCount,0);
+});
+
+test("部分概率攻击额外缩放雷达得牌、格挡消耗与最终伤害", () => {
+  const state={players:[
+    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:.5,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
+  ]};
+  new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],1,{
+    canBlock:true,deviceAttack:true,eventProbability:.4,
+    radarJudgmentProbabilities:{block:0,otherBasic:1,equipment:0}
+  });
+  assertClose(state.players[1].hp,3.8);assertClose(state.players[1].handCount,1.2);
 });
 
 let passed = 0;

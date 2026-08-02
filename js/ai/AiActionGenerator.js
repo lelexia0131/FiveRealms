@@ -2,11 +2,18 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260802-ai-action-guard-v55";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260802-ai-action-guard-v55";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260802-ai-action-guard-v55";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260802-ai-action-guard-v55";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260802-ai-action-guard-v55";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260802-probability-branches-v56";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260802-probability-branches-v56";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260802-probability-branches-v56";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260802-probability-branches-v56";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260802-probability-branches-v56";
+import {
+  binaryConditionPartition,
+  getAvailabilityBranches,
+  huntMarkConditionKey,
+  partitionAvailabilityBranches,
+  totalBranchProbability
+} from "./AiProbabilityBranches.js?build=20260802-probability-branches-v56";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -84,12 +91,7 @@ export class AiActionGenerator {
       if (card.definitionId === "assault") {
         if (actor.attackUsed >= actor.attackLimit) continue;
         for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) {
-          const rangeDependencyKey = `assault:${target.id}`;
-          if (card.unavailableRangeDependencyKeys?.includes(rangeDependencyKey)) continue;
-          const rangeProbability = DistanceSystem.getRangeLegalityProbability(simulationGame, actor, target, actor.attackRange ?? 1);
-          if (rangeProbability > 0) actions.push({
-            type:"card", card, targets:[target], conditionalExecutionProbability:rangeProbability, rangeDependencyKey
-          });
+          actions.push({ type:"card", card, targets:[target] });
         }
         continue;
       }
@@ -106,26 +108,15 @@ export class AiActionGenerator {
           && (firstTarget.equipmentRetentionProbability ?? 1) > 0
           && RuleEngine.getAssaultTargetCandidates(simulationGame, firstTarget).length > 0);
         for (const firstTarget of firstTargets) {
-          const equipmentDependencyKey = `${firstTarget.id}:${firstTarget.equipmentDefinitionId}`;
-          if (card.unavailableLeverageEquipmentKeys?.includes(equipmentDependencyKey)) continue;
-          const equipmentProbability = Math.max(0, Math.min(1, firstTarget.equipmentRetentionProbability ?? 1));
           for (const secondTarget of RuleEngine.getAssaultTargetCandidates(simulationGame, firstTarget)) {
-            const rangeProbabilityGivenEquipment = DistanceSystem.getRangeLegalityProbability(
-              simulationGame, firstTarget, secondTarget, firstTarget.attackRange ?? 1,
-              { sourceEquipmentPresent:true }
-            );
-            const conditionalExecutionProbability = equipmentProbability * rangeProbabilityGivenEquipment;
-            if (conditionalExecutionProbability <= 0) continue;
             actions.push({
               type:"card",
               card,
               targets:[firstTarget, secondTarget],
-              conditionalExecutionProbability,
               selection:{
                 firstTargetId:firstTarget.id,
                 equipmentCardId:null,
                 equipmentDefinitionId:firstTarget.equipmentDefinitionId,
-                equipmentDependencyKey,
                 secondTargetId:secondTarget.id
               }
             });
@@ -152,18 +143,115 @@ export class AiActionGenerator {
       if (["barrier","resonance"].includes(skill.id)) targets = allies;
       else if (skill.id === "symbiosis") targets = friendlies.filter((player) => player.hp < player.maxHp);
       else if (skill.id === "stealSkill") targets = RuleEngine.getSkillTargets(simulationGame, actor, skill);
-      else if (skill.id === "hunt") targets = enemies.filter((player) => player.huntMarkSourceId === actor.id);
+      else if (skill.id === "hunt") targets = enemies.filter((player) => Math.max(0, Math.min(1, Number(
+        player.huntMarkProbabilities?.[actor.id] ?? (player.huntMarkSourceId === actor.id ? 1 : 0)
+      ) || 0)) > 0);
       if (["none","allEnemies"].includes(skill.targetType)) actions.push({ type:"skill", skill, targets:skill.targetType === "allEnemies" ? enemies : [] });
       else for (const target of targets) actions.push({ type:"skill", skill, targets:[target] });
     }
     actions.push({ type:"end" });
-    return actions.map((action) => {
-      if (action.type !== "card") return action;
-      const cardProbability = Math.max(0, Math.min(1, action.card?.retentionProbability ?? 1));
+    return actions.map((action) => this.attachProbabilityBranches(simulationGame, actor, action))
+      .filter(Boolean);
+  }
+
+  getActionConditionPartition(game, actor, action) {
+    if (action.type === "skill") {
+      if (action.skill.id === "hunt") {
+        const target = action.targets?.[0];
+        const markProbability = Math.max(0, Math.min(1, Number(
+          target?.huntMarkProbabilities?.[actor.id] ?? (target?.huntMarkSourceId === actor.id ? 1 : 0)
+        ) || 0));
+        return binaryConditionPartition(huntMarkConditionKey(actor.id, target?.id), markProbability);
+      }
+      if (action.skill.rangeRule === "attack" || action.skill.rangeRule === "fixed") {
+        const target = action.targets?.[0];
+        return DistanceSystem.getRangeConditionBranches(game, {
+          source:actor,
+          target,
+          range:action.skill.rangeRule === "attack" ? actor.attackRange : action.skill.range
+        });
+      }
+      return [{ probability:1, conditions:{}, matches:true }];
+    }
+
+    const card = action.card;
+    if (card.definitionId === "transfer") {
+      const source = game.state.players.find((player) => player.id === action.selection?.sourceId);
+      const receiver = game.state.players.find((player) => player.id === action.selection?.receiverId);
+      return DistanceSystem.getRangeConditionBranches(game, [
+        { source:actor, target:source, range:card.effectRange },
+        { source:actor, target:receiver, range:card.effectRange }
+      ]);
+    }
+    if (card.definitionId === "leverage") {
+      const first = game.state.players.find((player) => player.id === action.selection?.firstTargetId);
+      const second = game.state.players.find((player) => player.id === action.selection?.secondTargetId);
+      return DistanceSystem.getRangeConditionBranches(game, {
+        source:first,
+        target:second,
+        range:first?.attackRange ?? 1
+      }, {
+        equipmentRequirements:[{
+          player:first,
+          definitionId:action.selection?.equipmentDefinitionId,
+          present:true
+        }]
+      });
+    }
+    const target = action.targets?.[0];
+    if (card.definitionId === "assault" && target) {
+      return DistanceSystem.getRangeConditionBranches(game, {
+        source:actor,
+        target,
+        range:actor.attackRange ?? 1
+      });
+    }
+    if (!card.ignoresDistance && card.effectRange != null && target) {
+      return DistanceSystem.getRangeConditionBranches(game, {
+        source:actor,
+        target,
+        range:card.effectRange
+      });
+    }
+    return [{ probability:1, conditions:{}, matches:true }];
+  }
+
+  /** 把卡牌或技能次数槽与动作成立条件相交，并把消费/剩余分支一并交给模拟器。 */
+  attachProbabilityBranches(game, actor, action) {
+    if (action.type === "end") return action;
+    const conditionBranches = this.getActionConditionPartition(game, actor, action);
+    if (action.type === "card") {
+      const split = partitionAvailabilityBranches(getAvailabilityBranches(action.card), conditionBranches);
+      const executionProbability = totalBranchProbability(split.matching);
+      if (executionProbability <= Number.EPSILON) return null;
       return {
         ...action,
-        executionProbability:cardProbability * (action.conditionalExecutionProbability ?? 1)
+        conditionBranches,
+        executionBranches:split.matching,
+        remainingAvailabilityBranches:split.remaining,
+        executionProbability
       };
-    });
+    }
+
+    const skillUses = actor.activeSkillUses ?? (actor.activeSkillUsed ? 1 : 0);
+    const skillLimit = actor.activeSkillLimit ?? action.skill.limitPerTurn ?? 1;
+    const slots = actor.activeSkillAvailabilityBranches ?? Array.from(
+      { length:Math.max(0, Math.ceil(skillLimit - skillUses)) },
+      () => [{ probability:1, conditions:{} }]
+    );
+    for (let skillUseSlot = 0; skillUseSlot < slots.length; skillUseSlot += 1) {
+      const split = partitionAvailabilityBranches(slots[skillUseSlot], conditionBranches);
+      const executionProbability = totalBranchProbability(split.matching);
+      if (executionProbability <= Number.EPSILON) continue;
+      return {
+        ...action,
+        conditionBranches,
+        executionBranches:split.matching,
+        remainingSkillAvailabilityBranches:split.remaining,
+        skillUseSlot,
+        executionProbability
+      };
+    }
+    return null;
   }
 }

@@ -3,8 +3,8 @@
  * Player 只保存数据并提供安全的资源变更，不决定目标合法性、伤害响应或胜负。
  * 每局都会重新创建 Player，因此无需跨局保留实例。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260802-ai-action-guard-v55";
-import { clamp } from "../utils/helpers.js?build=20260802-ai-action-guard-v55";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260802-probability-branches-v56";
+import { clamp } from "../utils/helpers.js?build=20260802-probability-branches-v56";
 
 export class Player {
   /**

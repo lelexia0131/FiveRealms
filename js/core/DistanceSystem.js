@@ -15,6 +15,10 @@ export class DistanceSystem {
     return probability == null ? 1 : Math.max(0, Math.min(1, Number(probability) || 0));
   }
 
+  static equipmentConditionKey(player, definitionId) {
+    return `equipment:${player.id}:${definitionId}`;
+  }
+
   static getAliveRing(game) {
     return game.state.players.filter((player) => player.alive).sort((a,b) => a.seatIndex - b.seatIndex);
   }
@@ -40,31 +44,79 @@ export class DistanceSystem {
   }
 
   /**
-   * 枚举距离装备的离散存在分支并返回处于范围内的概率；真实状态只会返回0或1。
-   * options 仅供“借势已知指定装备存在”的条件分支使用，不影响真实规则。
+   * 枚举一组距离要求共享的装备世界。每个分支保存无条件概率质量、规范化条件集，
+   * 以及所有距离/装备要求是否同时成立；同一望远镜变量只枚举一次。
    */
-  static getRangeLegalityProbability(game, source, target, range, options = {}) {
-    const baseDistance = this.getBaseDistance(game, source, target);
-    if (!Number.isFinite(baseDistance)) return 0;
-    if (baseDistance === 0) return 1;
-    const telescopeProbability = options.sourceEquipmentPresent === true
-      && this.getEquipmentDefinitionId(source) === "telescope"
-      ? 1
-      : this.getEquipmentEffectProbability(source, "telescope");
-    const barrierProbability = options.targetEquipmentPresent === true
-      && this.getEquipmentDefinitionId(target) === "barrierDevice"
-      ? 1
-      : this.getEquipmentEffectProbability(target, "barrierDevice");
-    let legalProbability = 0;
-    for (const [telescopePresent, telescopeBranch] of [[false, 1 - telescopeProbability], [true, telescopeProbability]]) {
-      if (telescopeBranch <= 0) continue;
-      for (const [barrierPresent, barrierBranch] of [[false, 1 - barrierProbability], [true, barrierProbability]]) {
-        if (barrierBranch <= 0) continue;
-        const distance = Math.max(1, baseDistance - (telescopePresent ? 1 : 0)) + (barrierPresent ? 1 : 0);
-        if (distance <= range) legalProbability += telescopeBranch * barrierBranch;
+  static getRangeConditionBranches(game, requirements, options = {}) {
+    const entries = (Array.isArray(requirements) ? requirements : [requirements]).filter(Boolean);
+    if (!entries.length) return [{ probability:1, conditions:{}, matches:true }];
+    const variables = new Map();
+    const forcedConditions = new Map();
+    const addVariable = (player, definitionId, forcedPresent = false) => {
+      if (!player) return;
+      const key = this.equipmentConditionKey(player, definitionId);
+      if (forcedPresent) {
+        forcedConditions.set(key, "present");
+        variables.delete(key);
+        return;
       }
+      if (forcedConditions.has(key) || variables.has(key)) return;
+      const probability = this.getEquipmentDefinitionId(player) === definitionId
+        ? this.getEquipmentEffectProbability(player, definitionId)
+        : 0;
+      variables.set(key, { player, definitionId, probability });
+    };
+
+    for (const requirement of entries) {
+      addVariable(requirement.source, "telescope", options.sourceEquipmentPresent === true && entries.length === 1);
+      addVariable(requirement.target, "barrierDevice", options.targetEquipmentPresent === true && entries.length === 1);
     }
-    return Math.max(0, Math.min(1, legalProbability));
+    for (const equipment of options.equipmentRequirements ?? []) {
+      addVariable(equipment.player, equipment.definitionId);
+    }
+
+    let branches = [{ probability:1, conditions:Object.fromEntries(forcedConditions) }];
+    for (const [key, variable] of variables) {
+      const probability = Math.max(0, Math.min(1, Number(variable.probability) || 0));
+      const next = [];
+      if (probability > 0) for (const branch of branches) next.push({
+        probability:branch.probability * probability,
+        conditions:{ ...branch.conditions, [key]:"present" }
+      });
+      if (probability < 1) for (const branch of branches) next.push({
+        probability:branch.probability * (1 - probability),
+        conditions:{ ...branch.conditions, [key]:"absent" }
+      });
+      branches = next;
+    }
+
+    const isPresent = (conditions, player, definitionId) => (
+      conditions[this.equipmentConditionKey(player, definitionId)] === "present"
+    );
+    return branches.map((branch) => {
+      const distancesLegal = entries.every(({ source, target, range }) => {
+        const baseDistance = this.getBaseDistance(game, source, target);
+        if (!Number.isFinite(baseDistance)) return false;
+        if (baseDistance === 0) return true;
+        const distance = Math.max(1, baseDistance - (isPresent(branch.conditions, source, "telescope") ? 1 : 0))
+          + (isPresent(branch.conditions, target, "barrierDevice") ? 1 : 0);
+        return distance <= range;
+      });
+      const equipmentLegal = (options.equipmentRequirements ?? []).every(({ player, definitionId, present = true }) => (
+        isPresent(branch.conditions, player, definitionId) === present
+      ));
+      return {
+        probability:branch.probability,
+        conditions:Object.fromEntries(Object.entries(branch.conditions).sort(([left], [right]) => left.localeCompare(right))),
+        matches:distancesLegal && equipmentLegal
+      };
+    });
+  }
+
+  static getRangeLegalityProbability(game, source, target, range, options = {}) {
+    return this.getRangeConditionBranches(game, { source, target, range }, options)
+      .filter((branch) => branch.matches)
+      .reduce((sum, branch) => sum + branch.probability, 0);
   }
 
   /** 兼容只读工具测试；业务规则统一调用 getDistance(game,...)。 */

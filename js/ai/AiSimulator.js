@@ -2,10 +2,10 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260802-ai-action-guard-v55";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260802-ai-action-guard-v55";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260802-ai-action-guard-v55";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260802-ai-action-guard-v55";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260802-probability-branches-v56";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260802-probability-branches-v56";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260802-probability-branches-v56";
+import { getAvailabilityBranches, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260802-probability-branches-v56";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -31,31 +31,37 @@ export class AiSimulator {
     }
     if (!actor) return next;
     if (abstractAction.type === "skill") {
-      this.applySkill(next, actor, abstractAction);
+      const executionProbability = clampProbability(abstractAction.executionProbability ?? 1);
+      if (executionProbability <= 0) return next;
+      const skillUses = actor.activeSkillUses ?? (actor.activeSkillUsed ? 1 : 0);
+      const skillLimit = actor.activeSkillLimit ?? abstractAction.skill?.limitPerTurn ?? 1;
+      actor.activeSkillAvailabilityBranches ??= Array.from(
+        { length:Math.max(0, Math.ceil(skillLimit - skillUses)) },
+        () => [{ probability:1, conditions:{} }]
+      );
+      if (abstractAction.skillUseSlot != null && actor.activeSkillAvailabilityBranches[abstractAction.skillUseSlot]) {
+        actor.activeSkillAvailabilityBranches[abstractAction.skillUseSlot]
+          = structuredClone(abstractAction.remainingSkillAvailabilityBranches ?? []);
+      }
+      this.applySkill(next, actor, abstractAction, executionProbability);
       return next;
     }
     const card = abstractAction.card;
     if (!card) return next;
     const target = next.players.find((player) => player.id === abstractAction.targets?.[0]?.id);
     const heldCard = (actor.hand ?? []).find((entry) => entry.id === card.id) ?? null;
-    const cardProbability = Math.max(0, Math.min(1, Number(heldCard?.retentionProbability ?? 1) || 0));
+    const availabilityBranches = getAvailabilityBranches(heldCard ?? card);
+    const cardProbability = totalBranchProbability(availabilityBranches);
     const executionProbability = Math.max(0, Math.min(cardProbability,
       Number(abstractAction.executionProbability ?? cardProbability) || 0));
     if (heldCard) {
-      const remainingProbability = Math.max(0, cardProbability - executionProbability);
-      heldCard.retentionProbability = remainingProbability;
-      if (card.definitionId === "leverage" && abstractAction.selection?.equipmentDependencyKey) {
-        heldCard.unavailableLeverageEquipmentKeys ??= [];
-        if (!heldCard.unavailableLeverageEquipmentKeys.includes(abstractAction.selection.equipmentDependencyKey)) {
-          heldCard.unavailableLeverageEquipmentKeys.push(abstractAction.selection.equipmentDependencyKey);
-        }
-      }
-      if (abstractAction.rangeDependencyKey) {
-        heldCard.unavailableRangeDependencyKeys ??= [];
-        if (!heldCard.unavailableRangeDependencyKeys.includes(abstractAction.rangeDependencyKey)) {
-          heldCard.unavailableRangeDependencyKeys.push(abstractAction.rangeDependencyKey);
-        }
-      }
+      const remainingBranches = abstractAction.remainingAvailabilityBranches
+        ? structuredClone(abstractAction.remainingAvailabilityBranches)
+        : (cardProbability - executionProbability > Number.EPSILON
+          ? [{ probability:cardProbability - executionProbability, conditions:{} }]
+          : []);
+      heldCard.availabilityBranches = remainingBranches;
+      const remainingProbability = totalBranchProbability(remainingBranches);
       actor.hand = remainingProbability > 0 ? actor.hand : actor.hand.filter((entry) => entry.id !== card.id);
     }
     actor.handCount = Math.max(0, (actor.handCount ?? 0) - executionProbability);
@@ -67,11 +73,11 @@ export class AiSimulator {
     switch (card.definitionId) {
       case "recover":
         this.healFrom(actor, actor, 1 * scale);
-        actor.recoverUsed += 1;
-        actor.expectedRecoverCount = Math.max(0, (actor.expectedRecoverCount ?? 0) - 1);
+        actor.recoverUsed = (actor.recoverUsed ?? 0) + executionProbability;
+        actor.expectedRecoverCount = Math.max(0, (actor.expectedRecoverCount ?? 0) - executionProbability);
         break;
-      case "charge": actor.energy = Math.min(actor.maxEnergy, actor.energy + 1); break;
-      case "shield": if (target?.alive && target.battleTeam === actor.battleTeam) target.shield = (target.shield ?? 0) + 1; break;
+      case "charge": actor.energy = Math.min(actor.maxEnergy, actor.energy + scale); break;
+      case "shield": if (target?.alive && target.battleTeam === actor.battleTeam) target.shield = (target.shield ?? 0) + scale; break;
       case "harvest": actor.handCount += 2 * scale; break;
       case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + scale; break;
       case "assault":
@@ -79,17 +85,22 @@ export class AiSimulator {
         break;
       case "shockwave":
         for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) {
-          const targetScale = this.targetResolutionChance(next, actor, card, player);
-          this.applyDamage(next, actor, player, targetScale, { canBlock:true, deviceAttack:true });
+          const targetScale = scale * this.targetResolutionChance(next, actor, card, player);
+          this.applyDamage(next, actor, player, 1, { canBlock:true, deviceAttack:true, eventProbability:targetScale });
         }
         break;
       case "provoke":
         for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) {
           const targetScale = this.targetResolutionChance(next, actor, card, player);
           const response = player.assaultResponseProbability ?? 0;
-          player.handCount = Math.max(0, player.handCount - response * targetScale);
-          player.expectedAssaultCount = Math.max(0, (player.expectedAssaultCount ?? 0) - response * targetScale);
-          this.applyDamage(next, actor, player, (1 - response) * targetScale, { canBlock:false, deviceAttack:false });
+          const eventProbability = scale * targetScale;
+          player.handCount = Math.max(0, player.handCount - response * eventProbability);
+          player.expectedAssaultCount = Math.max(0, (player.expectedAssaultCount ?? 0) - response * eventProbability);
+          this.applyDamage(next, actor, player, 1, {
+            canBlock:false,
+            deviceAttack:false,
+            eventProbability:(1 - response) * eventProbability
+          });
         }
         break;
       case "leverage": {
@@ -129,13 +140,10 @@ export class AiSimulator {
         if (target) this.takeResourceToHand(actor, target, scale);
         break;
       case "transfer": {
-        const game = { state:{ players:next.players } };
-        const inRange = (player) => DistanceSystem.getRangeLegalityProbability(game, actor, player, 1) > 0;
-        const resources = next.players.filter((player) => player.alive && inRange(player) && (player.handCount ?? 0) > 0);
         const source = next.players.find((player) => player.id === abstractAction.selection?.sourceId)
-          ?? resources.sort((a,b) => b.handCount - a.handCount)[0];
+          ?? null;
         const receiver = next.players.find((player) => player.id === abstractAction.selection?.receiverId)
-          ?? next.players.filter((player) => player.alive && player.id !== source?.id && inRange(player)).sort((a,b) => a.handCount - b.handCount)[0];
+          ?? null;
         if (source && receiver && (source.handCount ?? 0) > 0 && abstractAction.selection?.zone !== "equipment") {
           source.handCount = Math.max(0, source.handCount - scale);
           receiver.handCount += scale;
@@ -147,7 +155,7 @@ export class AiSimulator {
       case "mutualBenefit": for (const player of next.players) if (player.alive) player.handCount += scale; break;
       case "symbiosis": for (const player of next.players) if (player.alive) this.healFrom(actor, player, scale); break;
       default:
-        if (card.category === "equipment") this.setSimulatedEquipment(actor, card.definitionId, 1);
+        if (card.category === "equipment") this.setSimulatedEquipment(actor, card.definitionId, executionProbability);
         break;
     }
     const recycleProbability = executionProbability * this.getSimulatedEquipmentProbability(actor, "recycleDevice");
@@ -281,14 +289,16 @@ export class AiSimulator {
     const momentum = source.generalId === "blade-walker" ? (source.momentum ?? 0) : 0;
     const damageOutcome = {};
     const damage = 1 + (source.exposeWeaknessStacks ?? 0) + (source.assaultBonus ?? 0) + momentum;
-    const damageAfterGuardianAid = this.simulateGuardianAid(state, target, damage * chance, chance);
-    this.applyDamage(state, source, target, damageAfterGuardianAid, {
+    const expectedDamageAfterGuardianAid = this.simulateGuardianAid(state, target, damage * chance, chance);
+    const conditionalDamageAfterGuardianAid = expectedDamageAfterGuardianAid / chance;
+    this.applyDamage(state, source, target, conditionalDamageAfterGuardianAid, {
       canBlock:true,
       deviceAttack:true,
+      eventProbability:chance,
       outcome:damageOutcome,
       attackerEquipmentProbability:options.sourceEquipmentConditional ? 1 : undefined
     });
-    const lifeDamageChance = clampProbability(chance * (damageOutcome.lifeDamageChance ?? 0));
+    const lifeDamageChance = clampProbability(damageOutcome.lifeDamageChance ?? 0);
     source.exposeWeaknessStacks = (source.exposeWeaknessStacks ?? 0) * (1 - chance);
     source.assaultBonus = (source.assaultBonus ?? 0) * (1 - chance);
     source.attackUsed = (source.attackUsed ?? 0) + chance;
@@ -345,50 +355,67 @@ export class AiSimulator {
     return sourceEnemy ? ((card.aiValue ?? 0) >= 7 ? 0.8 : 0.45) : 0;
   }
 
-  applySkill(state, actor, action) {
+  applySkill(state, actor, action, executionProbability = 1) {
     const skill = action.skill;
     const target = state.players.find((player) => player.id === action.targets?.[0]?.id);
+    const chance = clampProbability(executionProbability);
     const skillUses = actor.activeSkillUses ?? (actor.activeSkillUsed ? 1 : 0);
     const skillLimit = actor.activeSkillLimit ?? skill.limitPerTurn ?? 1;
-    if (!skill || skillUses >= skillLimit) return;
-    actor.activeSkillUses = skillUses + 1;
-    actor.activeSkillUsed = actor.activeSkillUses >= skillLimit;
+    if (!skill || chance <= 0 || skillUses >= skillLimit) return;
+    actor.activeSkillUses = Math.min(skillLimit, skillUses + chance);
+    actor.activeSkillUsed = actor.activeSkillUses >= skillLimit - Number.EPSILON;
     if (skill.id === "allIn") {
       const energy = actor.energy;
-      actor.energy = 0;
-      actor.handCount += energy;
-      actor.assaultBonus = Math.min(1, energy * .3);
+      actor.energy = Math.max(0, actor.energy - energy * chance);
+      actor.handCount += energy * chance;
+      actor.assaultBonus = (actor.assaultBonus ?? 0) + Math.min(1, energy * .3) * chance;
       return;
     }
-    actor.energy = Math.max(0, actor.energy - skill.cost);
-    if (skill.id === "breakArmy") actor.attackLimit += 1;
+    actor.energy = Math.max(0, actor.energy - skill.cost * chance);
+    if (skill.id === "breakArmy") actor.attackLimit += chance;
     else if (skill.id === "barrier" && target) {
-      target.shield = (target.shield ?? 0) + 1;
+      target.shield = (target.shield ?? 0) + chance;
     } else if (skill.id === "symbiosis" && target) {
-      this.healFrom(actor, target, 1);
-      if (target.id !== actor.id) this.healFrom(actor, actor, 1);
+      this.healFrom(actor, target, chance);
+      if (target.id !== actor.id) this.healFrom(actor, actor, chance);
     } else if (skill.id === "stealSkill" && target) {
-      this.stealResourceToHand(actor, target);
+      this.stealResourceToHand(actor, target, chance);
     } else if (skill.id === "burningField") {
-      for (const enemy of state.players) if (enemy.alive && enemy.battleTeam !== actor.battleTeam) this.applyDamage(state, actor, enemy, 1, { canBlock:false });
+      for (const enemy of state.players) if (enemy.alive && enemy.battleTeam !== actor.battleTeam) {
+        this.applyDamage(state, actor, enemy, 1, { canBlock:false, eventProbability:chance });
+      }
     } else if (skill.id === "hunt" && target) {
-      target.huntMarkSourceId = null;
-      if (target.huntMarkProbabilities) target.huntMarkProbabilities[actor.id] = 0;
+      target.huntMarkProbabilities ??= {};
+      const oldMarkProbability = clampProbability(target.huntMarkProbabilities[actor.id]
+        ?? (target.huntMarkSourceId === actor.id ? 1 : 0));
+      const consumedMarkProbability = Math.min(oldMarkProbability, chance);
+      target.huntMarkProbabilities[actor.id] = Math.max(0, oldMarkProbability - consumedMarkProbability);
       target.huntMarkProbability = Math.max(0, ...Object.values(target.huntMarkProbabilities ?? {}).map(clampProbability));
-      if (Array.isArray(target.statuses)) target.statuses = target.statuses.filter((status) => status !== "huntMark");
-      actor.handCount += target.blockProbability ?? 0;
-      this.applyDamage(state, actor, target, 2, { canBlock:true });
-    } else if (skill.id === "resonance" && target) target.handCount += 2;
+      const fullMarkSource = Object.entries(target.huntMarkProbabilities)
+        .find(([, probability]) => clampProbability(probability) >= 1 - Number.EPSILON)?.[0] ?? null;
+      target.huntMarkSourceId = fullMarkSource;
+      if (Array.isArray(target.statuses) && !fullMarkSource) {
+        target.statuses = target.statuses.filter((status) => status !== "huntMark");
+      }
+      const outcome = {};
+      this.applyDamage(state, actor, target, 2, {
+        canBlock:true,
+        eventProbability:consumedMarkProbability,
+        outcome
+      });
+      actor.handCount += outcome.blockedByCardChance ?? 0;
+    } else if (skill.id === "resonance" && target) target.handCount += 2 * chance;
   }
 
   /** 窃取所得资源只增加手牌；目标仅有装备时，模拟中明确移除装备且不替换施术者装备。 */
-  stealResourceToHand(actor, target) {
+  stealResourceToHand(actor, target, scale = 1) {
+    const chance = clampProbability(scale);
     const handCount = Math.max(0, target.handCount ?? 0);
     const existenceProbability = this.getSimulatedEquipmentProbability(target);
-    if (!handCount && !existenceProbability) return;
-    const equipmentLossProbability = existenceProbability / (handCount + 1);
-    const handLoss = handCount > 0 ? 1 - equipmentLossProbability : 0;
-    const gainProbability = handCount > 0 ? 1 : existenceProbability;
+    if ((!handCount && !existenceProbability) || chance <= 0) return;
+    const equipmentLossProbability = existenceProbability / (handCount + 1) * chance;
+    const handLoss = handCount > 0 ? (1 - existenceProbability / (handCount + 1)) * chance : 0;
+    const gainProbability = (handCount > 0 ? 1 : existenceProbability) * chance;
     actor.handCount = (actor.handCount ?? 0) + gainProbability;
     target.handCount = Math.max(0, handCount - handLoss);
     this.setSimulatedEquipment(target, target.equipmentDefinitionId, existenceProbability - equipmentLossProbability);
@@ -401,64 +428,97 @@ export class AiSimulator {
     const spent = Math.min(actorAssaults, targetAssaults + (loser.id === actor.id ? 0 : 1));
     actor.handCount = Math.max(0, actor.handCount - spent * scale);
     target.handCount = Math.max(0, target.handCount - Math.min(targetAssaults, actorAssaults + (loser.id === target.id ? 0 : 1)) * scale);
-    this.applyDamage(state, loser.id === target.id ? actor : target, loser, scale, { canBlock:false });
+    this.applyDamage(state, loser.id === target.id ? actor : target, loser, 1, {
+      canBlock:false,
+      eventProbability:scale
+    });
   }
 
   applyDamage(state, attacker, target, amount, options = {}) {
     if (!target.alive || amount <= 0) {
-      if (options.outcome) options.outcome.lifeDamageChance = 0;
+      if (options.outcome) {
+        options.outcome.lifeDamageChance = 0;
+        options.outcome.blockedByCardChance = 0;
+      }
       return 0;
     }
-    const battleProbability = attacker.equipmentDefinitionId === "battleDevice"
+    const eventProbability = clampProbability(options.eventProbability ?? 1);
+    if (eventProbability <= 0) return 0;
+    const battleProbability = clampProbability(attacker.equipmentDefinitionId === "battleDevice"
       ? (options.attackerEquipmentProbability ?? this.getSimulatedEquipmentProbability(attacker, "battleDevice"))
-      : 0;
-    const normalBlockChance = target.blockProbability ?? 0;
-    const twoBlockChance = target.twoBlockProbability ?? 0;
+      : 0);
+    const normalBlockChance = clampProbability(target.blockProbability ?? 0);
+    const twoBlockChance = clampProbability(target.twoBlockProbability ?? 0);
     const blockChance = options.canBlock
       ? battleProbability * twoBlockChance + (1 - battleProbability) * normalBlockChance
       : 0;
     let passChance = 1 - blockChance;
-    let pending = amount * passChance;
-    let directLoss = 0;
     const defenseProbability = options.deviceAttack
       ? this.getSimulatedEquipmentProbability(target, "defenseDevice")
       : 0;
+    let blockedByCardChance = blockChance;
+    let expectedBlockSpend = options.canBlock
+      ? battleProbability * twoBlockChance * 2 + (1 - battleProbability) * normalBlockChance
+      : 0;
+    let expectedJudgmentGain = 0;
     if (defenseProbability > 0) {
-      const judgmentBlockChance = BLOCK_CARD_COUNT / TOTAL_CARD_COUNT;
-      const otherBasicChance = OTHER_BASIC_CARD_COUNT / TOTAL_CARD_COUNT;
-      const basicChance = BASIC_CARD_COUNT / TOTAL_CARD_COUNT;
-      const equipmentChance = EQUIPMENT_CARD_COUNT / TOTAL_CARD_COUNT;
+      const judgmentProbabilities = options.radarJudgmentProbabilities ?? {};
+      const judgmentBlockChance = clampProbability(
+        judgmentProbabilities.block ?? BLOCK_CARD_COUNT / TOTAL_CARD_COUNT
+      );
+      const otherBasicChance = clampProbability(
+        judgmentProbabilities.otherBasic ?? OTHER_BASIC_CARD_COUNT / TOTAL_CARD_COUNT
+      );
+      const basicChance = judgmentBlockChance + otherBasicChance;
+      const equipmentChance = clampProbability(
+        judgmentProbabilities.equipment ?? EQUIPMENT_CARD_COUNT / TOTAL_CARD_COUNT
+      );
       const normalRadarPass = !options.canBlock
         ? basicChance + equipmentChance
-        : equipmentChance + otherBasicChance * (1 - normalBlockChance);
+        : (otherBasicChance + equipmentChance) * (1 - normalBlockChance);
       const battleRadarPass = !options.canBlock
         ? basicChance + equipmentChance
-        : equipmentChance + judgmentBlockChance * (1 - normalBlockChance) + otherBasicChance * (1 - twoBlockChance);
+        : judgmentBlockChance * (1 - normalBlockChance)
+          + (otherBasicChance + equipmentChance) * (1 - twoBlockChance);
       const radarPass = battleProbability * battleRadarPass + (1 - battleProbability) * normalRadarPass;
       passChance = (1 - defenseProbability) * passChance + defenseProbability * radarPass;
       const noRadarSpent = options.canBlock
         ? battleProbability * twoBlockChance * 2 + (1 - battleProbability) * normalBlockChance
         : 0;
       const normalRadarSpent = options.canBlock
-        ? Math.max(0, judgmentBlockChance - otherBasicChance * normalBlockChance)
+        ? judgmentBlockChance + (otherBasicChance + equipmentChance) * normalBlockChance
         : 0;
       const battleRadarSpent = options.canBlock
-        ? Math.max(0, 2 * (judgmentBlockChance * normalBlockChance - otherBasicChance * twoBlockChance))
+        ? 2 * (judgmentBlockChance * normalBlockChance
+          + (otherBasicChance + equipmentChance) * twoBlockChance)
         : 0;
       const radarSpent = battleProbability * battleRadarSpent + (1 - battleProbability) * normalRadarSpent;
-      target.handCount += defenseProbability * basicChance;
-      target.handCount = Math.max(0, target.handCount - (1 - defenseProbability) * noRadarSpent - defenseProbability * radarSpent);
-      pending = amount * passChance;
-    } else {
-      const spent = options.canBlock
-        ? battleProbability * twoBlockChance * 2 + (1 - battleProbability) * normalBlockChance
+      const normalRadarBlocked = options.canBlock
+        ? judgmentBlockChance + (otherBasicChance + equipmentChance) * normalBlockChance
         : 0;
-      target.handCount = Math.max(0, target.handCount - spent);
+      const battleRadarBlocked = options.canBlock
+        ? judgmentBlockChance * normalBlockChance
+          + (otherBasicChance + equipmentChance) * twoBlockChance
+        : 0;
+      const radarBlocked = battleProbability * battleRadarBlocked
+        + (1 - battleProbability) * normalRadarBlocked;
+      blockedByCardChance = (1 - defenseProbability) * blockChance + defenseProbability * radarBlocked;
+      expectedBlockSpend = (1 - defenseProbability) * noRadarSpent + defenseProbability * radarSpent;
+      expectedJudgmentGain = defenseProbability * basicChance;
     }
-    if (options.outcome) options.outcome.lifeDamageChance = (target.shield ?? 0) < amount ? passChance : 0;
+    target.handCount = Math.max(0, (target.handCount ?? 0)
+      + eventProbability * expectedJudgmentGain
+      - eventProbability * expectedBlockSpend);
+    const pending = amount * eventProbability * passChance;
+    if (options.outcome) {
+      options.outcome.lifeDamageChance = (target.shield ?? 0) < amount
+        ? eventProbability * passChance
+        : 0;
+      options.outcome.blockedByCardChance = eventProbability * blockedByCardChance;
+    }
     const absorbed = Math.min(target.shield ?? 0, pending);
     target.shield = Math.max(0, (target.shield ?? 0) - absorbed);
-    const actualDamage = Math.max(0, pending - absorbed) + directLoss;
+    const actualDamage = Math.max(0, pending - absorbed);
     target.hp -= actualDamage;
     this.resolveFatal(state, target, attacker);
     return actualDamage;

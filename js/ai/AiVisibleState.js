@@ -3,7 +3,7 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260802-ai-action-guard-v55";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260802-probability-branches-v56";
 
 const probabilityAtLeast = (trials, probability, required) => {
   if (required <= 0) return 1;
@@ -57,6 +57,9 @@ export function createAiVisibleState(viewerId, state) {
       const blockEstimate = estimateCard(viewer, player, "block");
       const counterEstimate = estimateCard(viewer, player, "counter");
       const assaultEstimate = estimateCard(viewer, player, "assault");
+      const activeSkillId = player.general.activeSkillIds[0] ?? null;
+      const activeSkillUses = player.turnFlags.activeSkillUseCounts?.[activeSkillId] ?? 0;
+      const activeSkillLimit = player.general.activeLimitPerTurn ?? 1;
       return Object.freeze({
       id: player.id,
       seatIndex: player.seatIndex,
@@ -85,11 +88,15 @@ export function createAiVisibleState(viewerId, state) {
       rejuvenationUsed: Boolean(player.turnFlags.rejuvenationUsed),
       exposeWeaknessStacks: player.statuses.exposeWeakness?.stacks ?? 0,
       assaultBonus: player.statuses.allIn?.assaultBonus ?? 0,
-      activeSkillId: player.general.activeSkillIds[0] ?? null,
+      activeSkillId,
       activeSkillCost: player.general.activeCost ?? 0,
-      activeSkillUses: player.turnFlags.activeSkillUseCounts?.[player.general.activeSkillIds[0]] ?? 0,
-      activeSkillLimit: player.general.activeLimitPerTurn ?? 1,
-      activeSkillUsed: (player.turnFlags.activeSkillUseCounts?.[player.general.activeSkillIds[0]] ?? 0) >= (player.general.activeLimitPerTurn ?? 1),
+      activeSkillUses,
+      activeSkillLimit,
+      activeSkillUsed: activeSkillUses >= activeSkillLimit,
+      activeSkillAvailabilityBranches:Array.from(
+        { length:Math.max(0, activeSkillLimit - activeSkillUses) },
+        () => [{ probability:1, conditions:{} }]
+      ),
       recycleDeviceUses: player.turnFlags.recycleDeviceUses ?? 0,
       trackingTargetIds: [...(player.turnFlags.trackingTargetIds ?? [])],
       trackingUses: player.turnFlags.trackingTargetIds?.size ?? 0,
@@ -101,7 +108,11 @@ export function createAiVisibleState(viewerId, state) {
       expectedInformationGain: 0,
       alive: player.alive,
       handCount: player.hand.length,
-      hand: player.id === viewerId ? player.hand.map((card) => ({ id: card.id, definitionId: card.definitionId })) : undefined,
+      hand: player.id === viewerId ? player.hand.map((card) => ({
+        id:card.id,
+        definitionId:card.definitionId,
+        availabilityBranches:[{ probability:1, conditions:{} }]
+      })) : undefined,
       knownCards: player.id === viewerId ? undefined : Object.entries(viewer.aiMemory.knownCardsByPlayer[player.id] ?? {}).map(([cardId, definitionId]) => ({ cardId, definitionId })),
       equipmentDefinitionId: player.equipment?.definitionId ?? null,
       equipmentRetentionProbability: player.equipment ? 1 : 0,

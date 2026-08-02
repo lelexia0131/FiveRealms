@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260802-ai-action-guard-v55";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260802-ai-action-guard-v55";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260802-ai-action-guard-v55";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260802-ai-action-guard-v55";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260802-ai-action-guard-v55";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260802-ai-action-guard-v55";
-import { AiPlanner } from "./AiPlanner.js?build=20260802-ai-action-guard-v55";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260802-probability-branches-v56";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260802-probability-branches-v56";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260802-probability-branches-v56";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260802-probability-branches-v56";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260802-probability-branches-v56";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260802-probability-branches-v56";
+import { AiPlanner } from "./AiPlanner.js?build=20260802-probability-branches-v56";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

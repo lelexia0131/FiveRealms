@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260802-ai-action-guard-v55";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260802-probability-branches-v56";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
