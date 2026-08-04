@@ -2274,13 +2274,41 @@ test("两个概率突袭次数槽可在同一望远镜世界各消费一次", ()
   const twice=new AiSimulator(once).apply(once,second,"actor");assertClose(twice.players[0].attackUsed,.8);
 });
 
+test("AI 模拟借势不受普通突袭次数槽耗尽影响", () => {
+  const basePlayers=(attackUsed)=>({players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},
+    {id:"first",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"a1",definitionId:"assault"},{id:"a2",definitionId:"assault"}],attackUsed,attackLimit:1,attackRange:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:2,blockProbability:0,counterProbability:0},
+    {id:"second",seatIndex:2,battleTeam:"dawn",alive:true,hp:8,maxHp:8,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0}
+  ]});
+  const action={type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}};
+  const availableState=basePlayers(0),exhaustedState=basePlayers(1);
+  const availableNext=new AiSimulator(availableState).apply(availableState,action,"actor");
+  const exhaustedNext=new AiSimulator(exhaustedState).apply(exhaustedState,action,"actor");
+  const availableFirst=availableNext.players[1],exhaustedFirst=exhaustedNext.players[1];
+  const availableIncrement=availableFirst.attackUsed-0;
+  const exhaustedIncrement=exhaustedFirst.attackUsed-1;
+  assert.ok(availableIncrement>0);
+  assert.ok(exhaustedIncrement>0);
+  assertClose(availableIncrement,exhaustedIncrement);
+  assert.ok(exhaustedFirst.attackUsed>exhaustedFirst.attackLimit);
+  assertClose(exhaustedFirst.attackUsed,1+availableIncrement);
+  assertClose(availableNext.players[2].hp,exhaustedNext.players[2].hp);
+  assertClose(availableFirst.handCount,exhaustedFirst.handCount);
+  assertClose(availableFirst.expectedAssaultCount,exhaustedFirst.expectedAssaultCount);
+  assertClose(availableFirst.equipmentRetentionProbability,exhaustedFirst.equipmentRetentionProbability);
+  assertClose(availableNext.players[0].expectedEquipmentGain,exhaustedNext.players[0].expectedEquipmentGain);
+});
+
 test("借势强制突袭复用真实次数槽且震荡不消费次数槽", () => {
   const leverageState={players:[
     {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"l1",definitionId:"leverage"},{id:"l2",definitionId:"leverage"}],counterProbability:0},
     {id:"first",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:2,attackUsed:0,attackLimit:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:2,blockProbability:0,counterProbability:0},
     {id:"second",seatIndex:2,battleTeam:"dawn",alive:true,hp:8,maxHp:8,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0}
   ]},simulator=new AiSimulator(leverageState),action=(id)=>({type:"card",card:{...CARD_DEFINITIONS.leverage,id},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}}),once=simulator.apply(leverageState,action("l1"),"actor"),twice=simulator.apply(once,action("l2"),"actor");
-  assert.ok(once.players[1].attackUsed>0&&once.players[1].attackUsed<1);assert.ok(twice.players[1].attackUsed>once.players[1].attackUsed&&twice.players[1].attackUsed<=1);
+  const onceFirst=once.players[1],twiceFirst=twice.players[1];
+  assert.ok(onceFirst.attackUsed>0&&onceFirst.attackUsed<1);
+  assert.ok(twiceFirst.attackUsed>twiceFirst.attackLimit);
+  assert.ok(twiceFirst.attackUsed>onceFirst.attackUsed+1e-9);
 
   const shockState={players:[{id:"source",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"shock",definitionId:"shockwave"},{id:"hit",definitionId:"assault"}],attackUsed:0,attackLimit:1,counterProbability:0},{id:"enemy",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0,expectedRecoverCount:0}]};
   const shocked=new AiSimulator(shockState).apply(shockState,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"shock"},targets:[{id:"enemy"}]},"source");assertClose(shocked.players[0].attackUsed,0);

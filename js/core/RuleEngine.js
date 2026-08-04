@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260804-public-pool-alias-sync-v61";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-public-pool-alias-sync-v61";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260804-leverage-ai-assault-v62";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-leverage-ai-assault-v62";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

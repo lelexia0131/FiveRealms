@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-public-pool-alias-sync-v61";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-leverage-ai-assault-v62";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
