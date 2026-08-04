@@ -5,13 +5,14 @@
  * 价值模型：全局基础 aiValue + 稀疏角色差值；未配置的组合自动回退 0。
  * 后续新增角色或卡牌时，未配置差值即可立即使用基础值。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-transfer-self-source-v67";
-import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260804-transfer-self-source-v67";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-role-card-selection-v68";
+import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260804-role-card-selection-v68";
 
 /**
  * 角色 × 卡牌稀疏差值表。
  *
- * 本阶段保持为空；后续只记录非零差值，禁止写入完整矩阵。
+ * 当前保存首版稀疏角色差值：只记录非零项，未配置组合自动回退 0。
+ * 新角色和新卡牌不要求立即配置差值；禁止写入完整矩阵。
  * 未来添加角色条目时，必须同时 Object.freeze 该角色的嵌套差值对象。
  */
 export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
@@ -217,7 +218,7 @@ export function getBaseCardAiValue(definitionId, cardDefinitions = CARD_DEFINITI
  * @param {string} definitionId 卡牌 definitionId
  * @param {Object} [options] 测试注入用配置
  * @param {Object} [options.cardDefinitions] 默认 CARD_DEFINITIONS
- * @param {Array} [options.generalDefinitions] 默认 GENERAL_DEFINITIONS
+ * @param {Array} [options.generalDefinitions] 仅测试注入；省略时生产默认使用 GENERAL_BY_ID 常数时间查询
  * @param {Object} [options.deltas] 默认 ROLE_CARD_VALUE_DELTAS
  * @returns {number} 角色有效 aiValue
  */

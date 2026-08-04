@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-transfer-self-source-v67";
-import { createId } from "../utils/helpers.js?build=20260804-transfer-self-source-v67";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-transfer-self-source-v67";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-transfer-self-source-v67";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-role-card-selection-v68";
+import { createId } from "../utils/helpers.js?build=20260804-role-card-selection-v68";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260804-role-card-selection-v68";
+import { RuleEngine } from "./RuleEngine.js?build=20260804-role-card-selection-v68";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

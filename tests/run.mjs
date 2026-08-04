@@ -2841,6 +2841,195 @@ test("角色卡牌价值：卡牌跨角色平均差绝对值不超过 0.125", ()
   }
 });
 
+// ---- 阶段 B1：自己手牌与公开池选牌价值 ----
+test("B1 自己隐藏牌选择使用角色有效值且刃行者选中更低的 scout", () => {
+  const actor = makePlayer("actor", 0, "dawn"); // blade-walker：assault 5、scout 4
+  const ally = makePlayer("ally", 1, "dawn");
+  const { game } = makeGame([actor, ally], { random: () => 0 });
+  const assault = instance("assault"), scout = instance("scout");
+  actor.hand = [assault, scout];
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1)[0];
+  assert.equal(chosen, scout);
+});
+
+test("B1 自己隐藏牌选择随角色不同而不同", () => {
+  const warden = makePlayer("warden", 0, "dawn", "ai", 1); // oath-warden：assault 3、scout 5
+  const ally = makePlayer("ally", 1, "dawn");
+  const { game } = makeGame([warden, ally], { random: () => 0 });
+  const assault = instance("assault"), scout = instance("scout");
+  warden.hand = [assault, scout];
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(warden, warden, 1)[0];
+  assert.equal(chosen, assault);
+});
+
+test("B1 自己隐藏牌相同角色价值时保持原始位置", () => {
+  const actor = makePlayer("actor", 0, "dawn"); // blade-walker：assault 5、transfer 5
+  const ally = makePlayer("ally", 1, "dawn");
+  const { game } = makeGame([actor, ally], { random: () => 0 });
+  const assault = instance("assault"), transfer = instance("transfer");
+  actor.hand = [assault, transfer];
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1)[0];
+  assert.equal(chosen, assault);
+});
+
+test("B1 自己隐藏牌选择仍遵循 excludedCardIds", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const ally = makePlayer("ally", 1, "dawn");
+  const { game } = makeGame([actor, ally], { random: () => 0 });
+  const assault = instance("assault"), scout = instance("scout");
+  actor.hand = [assault, scout];
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1, new Set([scout.id]))[0];
+  assert.equal(chosen, assault);
+});
+
+test("B1 自己隐藏牌选择不调用随机数", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const ally = makePlayer("ally", 1, "dawn");
+  let randomCalls = 0;
+  const { game } = makeGame([actor, ally], { random: () => { randomCalls += 1; return 0; } });
+  const assault = instance("assault"), scout = instance("scout");
+  actor.hand = [assault, scout];
+  game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1);
+  assert.equal(randomCalls, 0);
+});
+
+test("B1 transfer purpose 不进入自己手牌角色价值分支", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const receiver = makePlayer("receiver", 1, "dawn");
+  const { game } = makeGame([actor, receiver], { random: () => 0 });
+  const assault = instance("assault"), scout = instance("scout");
+  actor.hand = [assault, scout];
+  const candidate = chooseTransferHandCandidate(actor, actor, receiver);
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1, null, { purpose: "transfer", receiver })[0];
+  assert.equal(chosen.id, candidate.cardId);
+  assert.equal(chosen, assault);
+});
+
+test("B1 expectedCardValue 自己已知手牌返回角色有效值", () => {
+  const blade = makePlayer("blade", 0, "dawn");
+  const warden = makePlayer("warden", 1, "dawn", "ai", 1);
+  const { game } = makeGame([blade, warden], { random: () => 0 });
+  const assault = instance("assault");
+  blade.hand = [assault];
+  warden.hand = [assault];
+  assert.equal(game.aiController.cardSelector.expectedCardValue(blade, blade, assault), 5);
+  assert.equal(game.aiController.cardSelector.expectedCardValue(warden, warden, assault), 3);
+});
+
+test("B1 expectedCardValue 他人牌仍使用未知固定值与全局基础值", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const medic = makePlayer("medic", 1, "dusk", "ai", 2); // spirit-medic
+  const { game } = makeGame([actor, medic], { random: () => 0 });
+  const recover = instance("recover");
+  medic.hand = [recover];
+  assert.equal(game.aiController.cardSelector.expectedCardValue(actor, medic, recover), 4);
+  game.rememberPrivateCard(actor, medic, recover);
+  assert.equal(game.aiController.cardSelector.expectedCardValue(actor, medic, recover), 6);
+});
+
+test("B1 公开池影客优先选 scout 而灵医优先选 recover", () => {
+  const shade = makePlayer("shade", 0, "dawn", "ai", 3);
+  const medic = makePlayer("medic", 1, "dawn", "ai", 2);
+  const { game } = makeGame([shade, medic], { random: () => 0 });
+  const scout = instance("scout"), recover = instance("recover");
+  const pool = [scout, recover];
+  const before = pool.map((card) => card.id);
+  const selector = game.aiController.cardSelector;
+  assert.equal(selector.choosePublicCard(shade, pool), scout);
+  assert.equal(selector.choosePublicCard(medic, pool), recover);
+  assert.deepEqual(pool.map((card) => card.id), before);
+});
+
+test("B1 公开池相同价值保持原始顺序且空池返回 null", () => {
+  const shade = makePlayer("shade", 0, "dawn", "ai", 3);
+  const ally = makePlayer("ally", 1, "dawn");
+  const { game } = makeGame([shade, ally], { random: () => 0 });
+  const plunder = instance("plunder"), destroy = instance("destroy"); // 影客两者均为 8
+  const selector = game.aiController.cardSelector;
+  assert.equal(selector.choosePublicCard(shade, [plunder, destroy]), plunder);
+  assert.equal(selector.choosePublicCard(shade, []), null);
+});
+
+test("B1 弃牌使用角色有效值且刃行者弃置 scout", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const enemy = makePlayer("enemy", 1, "dusk");
+  const { game } = makeGame([actor, enemy], { random: () => 0 });
+  const assault = instance("assault"), scout = instance("scout");
+  actor.hand = [assault, scout];
+  const discarded = game.aiController.chooseDiscards(actor, 1).map((card) => card.definitionId);
+  assert.deepEqual(discarded, ["scout"]);
+  assert.deepEqual(actor.hand.map((card) => card.definitionId), ["assault", "scout"]);
+});
+
+test("B1 弃牌不同角色对同一手牌结果不同", () => {
+  const warden = makePlayer("warden", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("enemy", 1, "dusk");
+  const { game } = makeGame([warden, enemy], { random: () => 0 });
+  const assault = instance("assault"), scout = instance("scout");
+  warden.hand = [assault, scout];
+  const discarded = game.aiController.chooseDiscards(warden, 1).map((card) => card.definitionId);
+  assert.deepEqual(discarded, ["assault"]);
+});
+
+test("B1 弃牌 count>1 时按角色有效值升序且同分保持原始顺序", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const enemy = makePlayer("enemy", 1, "dusk");
+  const { game } = makeGame([actor, enemy], { random: () => 0 });
+  const assault = instance("assault"), scout = instance("scout"), block = instance("block");
+  actor.hand = [assault, scout, block];
+  const discarded = game.aiController.chooseDiscards(actor, 2).map((card) => card.definitionId);
+  assert.deepEqual(discarded, ["scout", "assault"]);
+});
+
+test("B1 弃牌原有动态修正全部保留", () => {
+  const enemy = makePlayer("enemy", 1, "dusk");
+  const recover = instance("recover"), shield = instance("shield");
+  // 满血 recover -2：刃行者 recover 6→4、shield 5 → 弃 recover
+  const fullHp = makePlayer("full", 0, "dawn");
+  const { game: fullGame } = makeGame([fullHp, enemy], { random: () => 0 });
+  fullHp.hand = [recover, shield];
+  assert.deepEqual(fullGame.aiController.chooseDiscards(fullHp, 1).map((card) => card.definitionId), ["recover"]);
+
+  // 濒死 recover +7 与 block +6：弃 charge/assault 而保留 recover/block
+  const lowHp = makePlayer("low", 0, "dawn");
+  const { game: lowGame } = makeGame([lowHp, enemy], { random: () => 0 });
+  lowHp.hp = 1;
+  const block = instance("block"), charge = instance("charge"), assault = instance("assault");
+  lowHp.hand = [recover, block, charge, assault];
+  const lowDiscarded = lowGame.aiController.chooseDiscards(lowHp, 2).map((card) => card.definitionId);
+  assert.ok(!lowDiscarded.includes("recover") && !lowDiscarded.includes("block"));
+
+  // symbiosis -5：刃行者 symbiosis 4-5=-1 → 优先弃置
+  const symbiosis = instance("symbiosis");
+  const gambler = makePlayer("gambler", 0, "dawn");
+  const { game: symbiosisGame } = makeGame([gambler, enemy], { random: () => 0 });
+  gambler.hand = [assault, symbiosis];
+  assert.deepEqual(symbiosisGame.aiController.chooseDiscards(gambler, 1).map((card) => card.definitionId), ["symbiosis"]);
+
+  // stranded assault +5：无距离1敌人时 assault 5+5=10 > scout 4 → 弃 scout
+  const stranded = makePlayer("stranded", 0, "dawn");
+  const ally = makePlayer("ally", 1, "dawn");
+  const farEnemy = makePlayer("far", 2, "dusk");
+  const tailA = makePlayer("tail-a", 3, "dawn");
+  const tailB = makePlayer("tail-b", 4, "dawn");
+  const { game: strandedGame } = makeGame([stranded, ally, farEnemy, tailA, tailB], { random: () => 0 });
+  const scout = instance("scout");
+  stranded.hand = [assault, scout];
+  assert.deepEqual(strandedGame.aiController.chooseDiscards(stranded, 1).map((card) => card.definitionId), ["scout"]);
+});
+
+test("B1 其他玩家已知牌排序仍使用全局基础值而非目标角色差值", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const shade = makePlayer("shade", 1, "dusk", "ai", 3);
+  const { game } = makeGame([actor, shade], { random: () => 0.99 });
+  const scout = instance("scout"), recover = instance("recover");
+  shade.hand = [scout, recover];
+  game.rememberPrivateCard(actor, shade, scout);
+  game.rememberPrivateCard(actor, shade, recover);
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, shade, 1, null, { purpose: "spy-gap" })[0];
+  assert.equal(chosen, scout);
+});
+
 let passed = 0;
 const testPattern = process.env.TEST_PATTERN ? new RegExp(process.env.TEST_PATTERN, "u") : null;
 const selectedTests = testPattern ? tests.filter(({ name }) => testPattern.test(name)) : tests;

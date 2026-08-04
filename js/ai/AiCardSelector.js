@@ -2,10 +2,11 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-transfer-self-source-v67";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260804-transfer-self-source-v67";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-transfer-self-source-v67";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-transfer-self-source-v67";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-role-card-selection-v68";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260804-role-card-selection-v68";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-role-card-selection-v68";
+import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-role-card-selection-v68";
+import { getRoleCardAiValue } from "./roleCardValue.js?build=20260804-role-card-selection-v68";
 
 /** 未知手牌只按位置采样，绝不按真实定义筛选。 */
 export class AiCardSelector {
@@ -32,7 +33,10 @@ export class AiCardSelector {
         }
         if (index < 0) return selected;
       } else if (actor.id === owner.id) {
-        index = cards.reduce((best, card, current) => card.aiValue < cards[best].aiValue ? current : best, 0);
+        index = cards.reduce((best, card, current) => (
+          getRoleCardAiValue(actor.generalId, card.definitionId)
+            < getRoleCardAiValue(actor.generalId, cards[best].definitionId) ? current : best
+        ), 0);
       } else if (purpose === "scout" || purpose === "spy-gap") {
         index = this.peekIndex(known, cards);
       } else if (purpose === "plunder" || purpose === "destroy") {
@@ -106,7 +110,7 @@ export class AiCardSelector {
 
   /** 仅从合法记忆或自己手牌估值；对他人未知位置只返回固定期望值。 */
   expectedCardValue(actor, owner, card) {
-    if (actor.id === owner.id) return card.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
+    if (actor.id === owner.id) return getRoleCardAiValue(actor.generalId, card.definitionId);
     const definitionId = actor.aiMemory.knownCardsByPlayer[owner.id]?.[card.id] ?? null;
     return definitionId ? (CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE) : UNKNOWN_HAND_EXPECTED_VALUE;
   }
@@ -128,12 +132,17 @@ export class AiCardSelector {
     });
     return chooseBestPositiveTransfer(candidates);
   }
-  choosePublicCard(player, cards) { return [...cards].sort((a,b) => b.aiValue - a.aiValue)[0] ?? null; }
+  choosePublicCard(player, cards) {
+    return [...cards].sort((a, b) => (
+      getRoleCardAiValue(player.generalId, b.definitionId)
+        - getRoleCardAiValue(player.generalId, a.definitionId)
+    ))[0] ?? null;
+  }
   chooseDiscards(player, count) {
     const enemies = this.game.getEnemies(player);
     const stranded = enemies.length > 0 && !enemies.some((enemy) => DistanceSystem.inAttackRange(this.game, player, enemy));
     const value = (card) => {
-      let score = card.aiValue;
+      let score = getRoleCardAiValue(player.generalId, card.definitionId);
       if (stranded && card.definitionId === "assault") score += 5;
       if (player.hp >= player.maxHp && card.definitionId === "recover") score -= 2;
       if (player.hp <= 2 && card.definitionId === "recover") score += 7;
