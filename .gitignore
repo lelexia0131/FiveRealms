@@ -1,0 +1,301 @@
+# ============================================================
+
+# FiveRealms .gitignore
+
+# ============================================================
+
+# ------------------------------------------------------------
+
+# Dependencies
+
+# ------------------------------------------------------------
+
+node_modules/
+
+# pnpm local store, if created inside the project
+
+.pnpm-store/
+
+# Yarn Plug'n'Play
+
+.pnp
+.pnp.js
+.pnp.cjs
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Do not ignore package-lock.json, pnpm-lock.yaml or yarn.lock.
+
+# Lock files should normally be committed.
+
+# ------------------------------------------------------------
+
+# Build output
+
+# ------------------------------------------------------------
+
+dist/
+build/
+out/
+.output/
+public/build/
+
+# Temporary build output
+
+.tmp/
+temp/
+tmp/
+
+# ------------------------------------------------------------
+
+# Cache
+
+# ------------------------------------------------------------
+
+.cache/
+.parcel-cache/
+.vite/
+.eslintcache
+.stylelintcache
+
+*.tsbuildinfo
+
+# ------------------------------------------------------------
+
+# Test and coverage output
+
+# ------------------------------------------------------------
+
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+
+# Playwright downloaded or temporary files
+
+playwright/.cache/
+
+# ------------------------------------------------------------
+
+# Logs
+
+# ------------------------------------------------------------
+
+logs/
+*.log
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Local runtime logs
+
+debug.log
+error.log
+
+# ------------------------------------------------------------
+
+# Environment variables and secrets
+
+# ------------------------------------------------------------
+
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Common secret and credential files
+
+*.pem
+*.key
+*.p12
+*.pfx
+
+credentials.json
+secrets.json
+secret.json
+
+# Local API-key files
+
+*.secret
+*.secrets
+
+# ------------------------------------------------------------
+
+# Local databases and generated runtime data
+
+# ------------------------------------------------------------
+
+*.sqlite
+*.sqlite3
+*.db
+
+data/local/
+storage/local/
+saves/
+save-data/
+
+# Uncomment only if these folders contain generated local game data.
+
+# Do not ignore them if they contain source-controlled game configuration.
+
+#
+
+# data/generated/
+
+# storage/generated/
+
+# ------------------------------------------------------------
+
+# Operating-system files
+
+# ------------------------------------------------------------
+
+# Windows
+
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# ------------------------------------------------------------
+
+# Editor and IDE files
+
+# ------------------------------------------------------------
+
+# Visual Studio Code
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+
+# JetBrains IDEs
+
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Visual Studio
+
+.vs/
+
+# Vim
+
+*.swp
+*.swo
+*.swn
+
+# Emacs
+
+#*#
+.#*
+
+# Generic editor backup files
+
+*.bak
+*.backup
+*.orig
+*.rej
+
+# ------------------------------------------------------------
+
+# Codex and AI-tool local data
+
+# ------------------------------------------------------------
+
+.codex/
+.claude/
+.cursor/
+.windsurf/
+
+# Local AI instruction scratch files
+
+AGENTS.local.md
+CLAUDE.local.md
+
+# Keep the project's official AGENTS.md under version control.
+
+# Do not add AGENTS.md here.
+
+# ------------------------------------------------------------
+
+# Local scripts and machine-specific configuration
+
+# ------------------------------------------------------------
+
+*.local
+*.local.json
+*.local.js
+*.local.cjs
+*.local.mjs
+*.local.toml
+*.local.yaml
+*.local.yml
+
+config.local.*
+local-config.*
+
+# ------------------------------------------------------------
+
+# Archives and temporary exports
+
+# ------------------------------------------------------------
+
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+
+exports/
+backups/
+
+# ------------------------------------------------------------
+
+# Profiling and diagnostic output
+
+# ------------------------------------------------------------
+
+*.cpuprofile
+*.heapprofile
+*.heapsnapshot
+
+diagnostics/
+profiling/
+
+# ------------------------------------------------------------
+
+# Miscellaneous temporary files
+
+# ------------------------------------------------------------
+
+*.tmp
+*.temp
+*.cache
+*.pid
+*.pid.lock
+*.seed
+
+~$*
