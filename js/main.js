@@ -3,7 +3,7 @@
  * 它不实现卡牌、AI 或技能规则；重新开始时必须先 dispose 旧局，再创建新 gameId。
  */
 import { Game } from "./core/Game.js?build=20260802-resource-branches-v57";
-import { UIManager } from "./ui/UIManager.js?build=20260802-resource-branches-v57";
+import { UIManager } from "./ui/UIManager.js?build=20260804-target-selection-v58";
 import { Debug } from "./utils/debug.js?build=20260802-resource-branches-v57";
 
 const ui = new UIManager();
