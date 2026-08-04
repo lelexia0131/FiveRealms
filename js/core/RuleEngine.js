@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260804-transfer-context-utility-v66";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-transfer-context-utility-v66";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260804-transfer-self-source-v67";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-transfer-self-source-v67";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

@@ -2,10 +2,10 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-transfer-context-utility-v66";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260804-transfer-context-utility-v66";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-transfer-context-utility-v66";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-transfer-context-utility-v66";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-transfer-self-source-v67";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260804-transfer-self-source-v67";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-transfer-self-source-v67";
+import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-transfer-self-source-v67";
 
 /** 未知手牌只按位置采样，绝不按真实定义筛选。 */
 export class AiCardSelector {
@@ -18,13 +18,7 @@ export class AiCardSelector {
     const purpose = context?.purpose ?? null;
     while (selected.length < count && cards.length) {
       let index = -1;
-      if (actor.id === owner.id) {
-        index = cards.reduce((best, card, current) => card.aiValue < cards[best].aiValue ? current : best, 0);
-      } else if (purpose === "scout" || purpose === "spy-gap") {
-        index = this.peekIndex(known, cards);
-      } else if (purpose === "plunder" || purpose === "destroy") {
-        index = this.extremeIndex(known, cards, "highest");
-      } else if (purpose === "transfer") {
+      if (purpose === "transfer") {
         const candidate = chooseTransferHandCandidate(actor, owner, context?.receiver, excludedCardIds);
         if (!candidate) return selected;
         if (candidate.selectionKind === "known") {
@@ -37,6 +31,12 @@ export class AiCardSelector {
           index = unknownIndices[Math.floor(this.game.random() * unknownIndices.length)] ?? 0;
         }
         if (index < 0) return selected;
+      } else if (actor.id === owner.id) {
+        index = cards.reduce((best, card, current) => card.aiValue < cards[best].aiValue ? current : best, 0);
+      } else if (purpose === "scout" || purpose === "spy-gap") {
+        index = this.peekIndex(known, cards);
+      } else if (purpose === "plunder" || purpose === "destroy") {
+        index = this.extremeIndex(known, cards, "highest");
       } else {
         const knownCards = cards.map((card, current) => ({ card, current, definitionId:known[card.id] }))
           .filter((entry) => entry.definitionId)

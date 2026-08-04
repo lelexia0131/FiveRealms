@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-transfer-context-utility-v66";
-import { createId } from "../utils/helpers.js?build=20260804-transfer-context-utility-v66";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-transfer-context-utility-v66";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-transfer-context-utility-v66";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-transfer-self-source-v67";
+import { createId } from "../utils/helpers.js?build=20260804-transfer-self-source-v67";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260804-transfer-self-source-v67";
+import { RuleEngine } from "./RuleEngine.js?build=20260804-transfer-self-source-v67";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
