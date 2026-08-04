@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-plunder-dual-role-value-v70";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-resource-selection-shared-v71";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

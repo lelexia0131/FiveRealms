@@ -30,6 +30,7 @@ import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import { ACTIVE_SKILLS, hasActiveSkill, hasPassiveSkill, registerPassiveSkills } from "../js/generals/skillRegistry.js";
 import { UNKNOWN_HAND_EXPECTED_VALUE, buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, expectedHandValue, scoreTransferCombination } from "../js/ai/transferScoring.js";
 import { ROLE_CARD_VALUE_DELTAS, getBaseCardAiValue, getRoleCardAiValue, validateRoleCardValueDeltas } from "../js/ai/roleCardValue.js";
+import { chooseBestResourceHandCandidate, chooseResourceZone, getResourceDefinitionUtility, getResourceUnknownUtility } from "../js/ai/resourceSelectionValue.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 const tests = [];
@@ -3253,6 +3254,209 @@ test("同阵营掠夺辅助语义使用差值而非相加", () => {
   game.rememberPrivateCard(blade, warden, knownBlock);
   const chosen = game.aiController.cardSelector.chooseHiddenCards(blade, warden, 1, null, { purpose: "plunder" })[0];
   assert.equal(chosen, unknown); // 同阵营 block：5-7=-2 < 未知 0；若相加则为 12
+});
+
+test("资源选择共享价值：破坏使用 owner 角色价值且未知为 4", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const owner = makePlayer("owner", 1, "dusk", "ai", 2); // spirit-medic
+  assert.equal(getResourceDefinitionUtility("destroy", actor, owner, "recover"), 8);
+  assert.equal(getResourceUnknownUtility("destroy", actor, owner), 4);
+});
+
+test("资源选择共享价值：掠夺敌方相加、同阵营相减且未知为 8/0", () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 0); // blade-walker
+  const enemy = makePlayer("enemy", 1, "dusk", "ai", 2); // spirit-medic
+  const ally = makePlayer("ally", 1, "dawn", "ai", 2);
+  assert.equal(getResourceDefinitionUtility("plunder", actor, enemy, "recover"), 14);
+  assert.equal(getResourceDefinitionUtility("plunder", actor, ally, "recover"), -2);
+  assert.equal(getResourceUnknownUtility("plunder", actor, enemy), 8);
+  assert.equal(getResourceUnknownUtility("plunder", actor, ally), 0);
+});
+
+test("资源选择共享价值：非法 purpose 与未知 ID 抛错", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const owner = makePlayer("owner", 1, "dusk");
+  const badOwner = { id: "bad", battleTeam: "dusk", generalId: "not-a-role" };
+  assert.throws(() => getResourceDefinitionUtility("scout", actor, owner, "assault"), /scout/);
+  assert.throws(() => getResourceUnknownUtility("scout", actor, owner), /scout/);
+  assert.throws(() => getResourceDefinitionUtility("destroy", actor, owner, "unknown-card"), /unknown-card/);
+  assert.throws(() => getResourceDefinitionUtility("destroy", actor, badOwner, "assault"), /not-a-role/);
+});
+
+test("资源选择手牌候选：已知最高、同分保持较早位置", () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 3); // shade-agent
+  const owner = makePlayer("owner", 1, "dusk", "ai", 0); // blade-walker
+  const best = chooseBestResourceHandCandidate({
+    purpose: "plunder",
+    actor,
+    owner,
+    knownCards: [
+      { cardId: "r", definitionId: "recover" }, // 11
+      { cardId: "b", definitionId: "block" }    // 12
+    ],
+    unknownCount: 0
+  });
+  assert.equal(best.cardId, "b");
+  const tie = chooseBestResourceHandCandidate({
+    purpose: "plunder",
+    actor,
+    owner,
+    knownCards: [
+      { cardId: "r", definitionId: "recover" },
+      { cardId: "t", definitionId: "transfer" }
+    ],
+    unknownCount: 0
+  });
+  assert.equal(tie.cardId, "r"); // 同为 11，保留较早位置
+});
+
+test("资源选择手牌候选：未知严格更高选未知、同分选已知、仅未知选未知", () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 2); // spirit-medic
+  const owner = makePlayer("owner", 1, "dusk", "ai", 1); // oath-warden
+  const unknownWins = chooseBestResourceHandCandidate({
+    purpose: "plunder",
+    actor,
+    owner,
+    knownCards: [{ cardId: "a", definitionId: "assault" }],
+    unknownCount: 1
+  });
+  assert.equal(unknownWins.selectionKind, "unknown");
+  assert.equal(unknownWins.cardId, null);
+  assert.equal(unknownWins.definitionId, null);
+  assert.equal(unknownWins.utility, 8);
+
+  const bladeOwner = makePlayer("blade-owner", 1, "dusk", "ai", 0);
+  const destroyTie = chooseBestResourceHandCandidate({
+    purpose: "destroy",
+    actor,
+    owner: bladeOwner,
+    knownCards: [{ cardId: "x", definitionId: "scout" }], // blade scout 4
+    unknownCount: 1
+  });
+  assert.equal(destroyTie.selectionKind, "known");
+  assert.equal(destroyTie.cardId, "x");
+
+  const onlyUnknown = chooseBestResourceHandCandidate({
+    purpose: "destroy",
+    actor,
+    owner,
+    knownCards: [],
+    unknownCount: 2
+  });
+  assert.equal(onlyUnknown.selectionKind, "unknown");
+  assert.equal(onlyUnknown.utility, 4);
+  assert.equal(chooseBestResourceHandCandidate({
+    purpose: "destroy",
+    actor,
+    owner,
+    knownCards: [],
+    unknownCount: 0
+  }), null);
+});
+
+test("资源选择手牌候选：unknownCount 正小数视为存在未知候选且输入不被修改", () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 2);
+  const owner = makePlayer("owner", 1, "dusk", "ai", 1);
+  const knownCards = [{ cardId: "a", definitionId: "assault" }];
+  const snapshot = JSON.stringify(knownCards);
+  const result = chooseBestResourceHandCandidate({
+    purpose: "plunder",
+    actor,
+    owner,
+    knownCards,
+    unknownCount: 0.5
+  });
+  assert.equal(result.selectionKind, "unknown");
+  assert.equal(JSON.stringify(knownCards), snapshot);
+});
+
+test("资源选择区域：手牌更高、装备更高、同分优先手牌、单边与空返回", () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 2); // spirit-medic
+  const owner = makePlayer("owner", 1, "dusk", "ai", 0); // blade-walker
+  const equipmentDefinitionId = "energyDevice"; // medic 7 + blade 6 = 13
+  const highHand = { selectionKind: "known", cardId: "r", definitionId: "recover", utility: 14 };
+  assert.equal(chooseResourceZone({
+    purpose: "plunder", actor, owner, handCandidate: highHand, equipmentDefinitionId
+  }).zone, "hand");
+  const lowHand = { selectionKind: "known", cardId: "b", definitionId: "block", utility: 12 };
+  assert.equal(chooseResourceZone({
+    purpose: "plunder", actor, owner, handCandidate: lowHand, equipmentDefinitionId
+  }).zone, "equipment");
+  const tieHand = { selectionKind: "known", cardId: "p", definitionId: "plunder", utility: 13 };
+  assert.equal(chooseResourceZone({
+    purpose: "plunder", actor, owner, handCandidate: tieHand, equipmentDefinitionId
+  }).zone, "hand");
+  assert.equal(chooseResourceZone({
+    purpose: "plunder", actor, owner, handCandidate: highHand, equipmentDefinitionId: null
+  }).zone, "hand");
+  assert.equal(chooseResourceZone({
+    purpose: "plunder", actor, owner, handCandidate: null, equipmentDefinitionId
+  }).zone, "equipment");
+  assert.equal(chooseResourceZone({
+    purpose: "plunder", actor, owner, handCandidate: null, equipmentDefinitionId: null
+  }), null);
+});
+
+test("资源选择随机调用：已知手牌胜出不调用随机数", () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 3); // shade-agent
+  const owner = makePlayer("owner", 1, "dusk", "ai", 0); // blade-walker
+  let randomCalls = 0;
+  const { game } = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
+  const recover = instance("recover"), block = instance("block");
+  owner.hand = [recover, block];
+  game.rememberPrivateCard(actor, owner, recover);
+  game.rememberPrivateCard(actor, owner, block);
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, owner, 1, null, { purpose: "plunder" })[0];
+  assert.equal(chosen, block);
+  assert.equal(randomCalls, 0);
+});
+
+test("资源选择随机调用：未知手牌胜出调用一次随机数", () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 2);
+  const owner = makePlayer("owner", 1, "dusk", "ai", 1);
+  let randomCalls = 0;
+  const { game } = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
+  const knownAssault = instance("assault"), unknown = instance("counter");
+  owner.hand = [knownAssault, unknown];
+  game.rememberPrivateCard(actor, owner, knownAssault);
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, owner, 1, null, { purpose: "plunder" })[0];
+  assert.equal(chosen, unknown);
+  assert.equal(randomCalls, 1);
+});
+
+test("资源选择随机调用：未知候选存在但装备胜出仍调用一次随机数", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const owner = makePlayer("owner", 1, "dusk", "ai", 1); // oath-warden
+  let randomCalls = 0;
+  const { game } = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
+  owner.hand = [instance("counter")]; // 未知，破坏值 4
+  owner.equipment = instance("energyDevice"); // oath-warden 值 7 > 4
+  const chosen = game.aiController.cardSelector.chooseZoneCard(actor, owner, { purpose: "destroy" });
+  assert.equal(chosen.zone, "equipment");
+  assert.equal(randomCalls, 1);
+});
+
+test("资源选择随机调用：只有装备且没有手牌不调用随机数", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const owner = makePlayer("owner", 1, "dusk");
+  let randomCalls = 0;
+  const { game } = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
+  owner.equipment = instance("energyDevice");
+  owner.hand = [];
+  const chosen = game.aiController.cardSelector.chooseZoneCard(actor, owner, { purpose: "destroy" });
+  assert.equal(chosen.zone, "equipment");
+  assert.equal(randomCalls, 0);
+});
+
+test("资源选择随机调用：多选两张未知牌各调用一次随机数", () => {
+  const actor = makePlayer("actor", 0, "dawn");
+  const owner = makePlayer("owner", 1, "dusk");
+  let randomCalls = 0;
+  const { game } = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
+  owner.hand = [instance("counter"), instance("charge")];
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, owner, 2, null, { purpose: "destroy" });
+  assert.equal(chosen.length, 2);
+  assert.equal(randomCalls, 2);
 });
 
 let passed = 0;

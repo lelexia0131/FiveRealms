@@ -1,4 +1,4 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-plunder-dual-role-value-v70";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-resource-selection-shared-v71";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；

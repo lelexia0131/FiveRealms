@@ -2,9 +2,9 @@
  * 本文件是页面入口，只负责连接 UIManager 与每局新建的 Game。
  * 它不实现卡牌、AI 或技能规则；重新开始时必须先 dispose 旧局，再创建新 gameId。
  */
-import { Game } from "./core/Game.js?build=20260804-plunder-dual-role-value-v70";
-import { UIManager } from "./ui/UIManager.js?build=20260804-plunder-dual-role-value-v70";
-import { Debug } from "./utils/debug.js?build=20260804-plunder-dual-role-value-v70";
+import { Game } from "./core/Game.js?build=20260804-resource-selection-shared-v71";
+import { UIManager } from "./ui/UIManager.js?build=20260804-resource-selection-shared-v71";
+import { Debug } from "./utils/debug.js?build=20260804-resource-selection-shared-v71";
 
 const ui = new UIManager();
 let game = null;
