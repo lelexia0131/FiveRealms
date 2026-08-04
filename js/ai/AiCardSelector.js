@@ -2,11 +2,20 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-role-card-selection-v68";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260804-role-card-selection-v68";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-role-card-selection-v68";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-role-card-selection-v68";
-import { getRoleCardAiValue } from "./roleCardValue.js?build=20260804-role-card-selection-v68";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-destroy-target-value-v69";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260804-destroy-target-value-v69";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-destroy-target-value-v69";
+import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-destroy-target-value-v69";
+import { getRoleCardAiValue } from "./roleCardValue.js?build=20260804-destroy-target-value-v69";
+
+const globalKnownValue = (definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
+
+/** 破坏目标手牌的损失估值：仅使用合法记忆或自己手牌，未知位置保持固定期望值。 */
+const destroyCardLossValue = (actor, owner, card) => {
+  if (actor.id === owner.id) return getRoleCardAiValue(owner.generalId, card.definitionId);
+  const definitionId = actor.aiMemory.knownCardsByPlayer[owner.id]?.[card.id] ?? null;
+  return definitionId ? getRoleCardAiValue(owner.generalId, definitionId) : UNKNOWN_HAND_EXPECTED_VALUE;
+};
 
 /** 未知手牌只按位置采样，绝不按真实定义筛选。 */
 export class AiCardSelector {
@@ -39,7 +48,9 @@ export class AiCardSelector {
         ), 0);
       } else if (purpose === "scout" || purpose === "spy-gap") {
         index = this.peekIndex(known, cards);
-      } else if (purpose === "plunder" || purpose === "destroy") {
+      } else if (purpose === "destroy") {
+        index = this.extremeIndex(known, cards, "highest", (definitionId) => getRoleCardAiValue(owner.generalId, definitionId));
+      } else if (purpose === "plunder") {
         index = this.extremeIndex(known, cards, "highest");
       } else {
         const knownCards = cards.map((card, current) => ({ card, current, definitionId:known[card.id] }))
@@ -69,13 +80,13 @@ export class AiCardSelector {
   }
 
   /** 已知/未知混合时按价值方向选一个位置；未知位置只按固定期望值参与，不读真实牌面。 */
-  extremeIndex(known, cards, direction) {
+  extremeIndex(known, cards, direction, knownValueForDefinition = globalKnownValue) {
     const knownEntries = [];
     const unknownIndices = [];
     for (let current = 0; current < cards.length; current += 1) {
       const definitionId = known[cards[current].id];
       if (definitionId) {
-        knownEntries.push({ current, value:CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE });
+        knownEntries.push({ current, value:knownValueForDefinition(definitionId) });
       } else {
         unknownIndices.push(current);
       }
@@ -96,8 +107,12 @@ export class AiCardSelector {
     const purpose = context?.purpose ?? null;
     if (purpose === "plunder" || purpose === "destroy") {
       const [card] = this.chooseHiddenCards(actor, owner, 1, excludedCardIds, context);
-      const handValue = card ? this.expectedCardValue(actor, owner, card) : Number.NEGATIVE_INFINITY;
-      const equipmentValue = owner.equipment?.aiValue ?? Number.NEGATIVE_INFINITY;
+      const handValue = card
+        ? (purpose === "destroy" ? destroyCardLossValue(actor, owner, card) : this.expectedCardValue(actor, owner, card))
+        : Number.NEGATIVE_INFINITY;
+      const equipmentValue = owner.equipment
+        ? (purpose === "destroy" ? getRoleCardAiValue(owner.generalId, owner.equipment.definitionId) : owner.equipment.aiValue)
+        : Number.NEGATIVE_INFINITY;
       if (card && (!owner.equipment || handValue >= equipmentValue)) return { card, zone:"hand" };
       return owner.equipment ? { card:owner.equipment, zone:"equipment" } : null;
     }

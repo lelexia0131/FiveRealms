@@ -1,12 +1,13 @@
 /**
- * 角色卡牌价值基础设施（阶段 A）。
+ * 角色卡牌价值统一入口。
  *
- * 只提供数据表与纯函数，不接入任何 AI 决策，不修改卡牌配置。
+ * 保存全局基础值与稀疏角色差值，并由已接入的 AI 决策模块调用。
+ * 不修改卡牌配置或游戏状态。
  * 价值模型：全局基础 aiValue + 稀疏角色差值；未配置的组合自动回退 0。
  * 后续新增角色或卡牌时，未配置差值即可立即使用基础值。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-role-card-selection-v68";
-import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260804-role-card-selection-v68";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-destroy-target-value-v69";
+import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260804-destroy-target-value-v69";
 
 /**
  * 角色 × 卡牌稀疏差值表。

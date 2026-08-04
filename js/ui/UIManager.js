@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260804-role-card-selection-v68";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260804-role-card-selection-v68";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260804-role-card-selection-v68";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260804-destroy-target-value-v69";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260804-destroy-target-value-v69";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260804-destroy-target-value-v69";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260804-role-card-selection-v68";
-import { AnimationController } from "./animationController.js?build=20260804-role-card-selection-v68";
-import { InteractionController } from "./InteractionController.js?build=20260804-role-card-selection-v68";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260804-role-card-selection-v68";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260804-role-card-selection-v68";
-import { JudgmentView } from "./JudgmentView.js?build=20260804-role-card-selection-v68";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-role-card-selection-v68";
-import { createOpponentHandView } from "./handVisibility.js?build=20260804-role-card-selection-v68";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260804-role-card-selection-v68";
-import { SoundManager } from "../audio/SoundManager.js?build=20260804-role-card-selection-v68";
+} from "./templates.js?build=20260804-destroy-target-value-v69";
+import { AnimationController } from "./animationController.js?build=20260804-destroy-target-value-v69";
+import { InteractionController } from "./InteractionController.js?build=20260804-destroy-target-value-v69";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260804-destroy-target-value-v69";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260804-destroy-target-value-v69";
+import { JudgmentView } from "./JudgmentView.js?build=20260804-destroy-target-value-v69";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-destroy-target-value-v69";
+import { createOpponentHandView } from "./handVisibility.js?build=20260804-destroy-target-value-v69";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260804-destroy-target-value-v69";
+import { SoundManager } from "../audio/SoundManager.js?build=20260804-destroy-target-value-v69";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);

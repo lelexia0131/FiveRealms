@@ -1,4 +1,4 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-role-card-selection-v68";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-destroy-target-value-v69";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；
