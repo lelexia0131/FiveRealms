@@ -310,9 +310,9 @@ export class UIManager {
   }
 
   handlePlayerClick(event) {
-    // 技能详情点击优先于目标选择；打开/关闭详情都不改写当前 targetState。
+    // 目标选择期间，角色区域点击优先用于选择目标。
     const skillTrigger = event.target.closest("[data-skill-player-id]");
-    if (skillTrigger) {
+    if (skillTrigger && !this.targetState) {
       const player = this.game?.state.players.find((entry) => entry.id === skillTrigger.dataset.skillPlayerId);
       if (player) this.showSkillDetails(player, skillTrigger);
       return;
