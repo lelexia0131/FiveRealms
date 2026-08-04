@@ -13,6 +13,7 @@ export class PublicCardPool {
       if (!card) break;
       this.cards.push(card);
     }
+    this.game.syncDeckAliases();
     this.game.state.publicCardPool = this.cards;
     this.game.ui.showPublicPool?.(this.cards);
     return this.cards;

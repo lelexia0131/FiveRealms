@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-leverage-ignore-limit-v60";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-public-pool-alias-sync-v61";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 const UNKNOWN_HAND_EXPECTED_VALUE = 4;
