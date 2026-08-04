@@ -4,6 +4,7 @@
  */
 import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260802-resource-branches-v57";
 import { GAME_CONFIG } from "../config/gameConfig.js?build=20260802-resource-branches-v57";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260802-resource-branches-v57";
 import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260802-resource-branches-v57";
 import {
   PROBABILITY_EPSILON,
@@ -345,8 +346,14 @@ export class AiSimulator {
         const second = next.players.find((player) => player.id === abstractAction.selection?.secondTargetId)
           ?? next.players.find((player) => player.id === abstractAction.targets?.[1]?.id);
         if (!first?.alive || !second?.alive || !first.equipmentDefinitionId) break;
+        // 借势第二目标选择只按距离，但实际打出突袭必须满足普通突袭完整目标合法性。
+        const simulationGame = { state:{ players:next.players } };
+        const canActuallyTargetWithAssault = RuleEngine.getLegalAssaultTargets(simulationGame, first)
+          .some((candidate) => candidate.id === second.id);
         // 候选组合从不因手牌估计或次数删除；实际使用必须消费第一目标自己的次数槽。
-        const assaultAvailable = Math.max(0, Math.min(1, first.assaultResponseProbability ?? 0));
+        const assaultAvailable = canActuallyTargetWithAssault
+          ? Math.max(0, Math.min(1, first.assaultResponseProbability ?? 0))
+          : 0;
         const equipmentValue = CARD_DEFINITIONS[first.equipmentDefinitionId]?.aiValue ?? 7;
         const friendlyFirePenalty = second.battleTeam === first.battleTeam ? .55 : 0;
         const defenseRisk = Math.min(.9, second.equipmentDefinitionId === "defenseDevice"

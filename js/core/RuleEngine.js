@@ -8,20 +8,24 @@ export class RuleEngine {
   }
 
   /**
-   * 突袭的实时目标候选，只判断目标侧规则；不得读取手牌或本回合使用次数。
-   * 普通主动突袭与借势都复用这里的距离、阵营、装备、技能和状态结果。
+   * 借势第二目标的实时候选：只要求存活、不是第一目标本人，且第一目标到
+   * 第二目标的距离满足第一目标的攻击范围。不得检查阵营、手牌或突袭次数；
+   * 这些条件属于后续响应与结算阶段。
    */
   static getAssaultTargetCandidates(game, source) {
+    if (!this.isPlayerInGame(game, source)) return [];
+    return game.state.players.filter((player) => player.alive
+      && player.id !== source.id
+      && DistanceSystem.inAttackRange(game, source, player));
+  }
+
+  /** 普通突袭的实时合法目标列表：兼容旧调用，仍包含距离、阵营、装备、技能和状态规则，不读取手牌或次数。 */
+  static getLegalAssaultTargets(game, source) {
     if (!this.isPlayerInGame(game, source)) return [];
     return this.getCardTargets(game, source, CARD_DEFINITIONS.assault);
   }
 
-  /** 兼容旧调用：合法目标列表只表示“可被指定”，不表示当前持牌者一定能实际出牌。 */
-  static getLegalAssaultTargets(game, source) {
-    return this.getAssaultTargetCandidates(game, source);
-  }
-
-  /** 借势选择阶段的兼容别名。 */
+  /** 借势选择阶段的兼容别名：第二目标只受距离限制。 */
   static getLeverageAssaultTargets(game, source) {
     return this.getAssaultTargetCandidates(game, source);
   }
@@ -47,7 +51,7 @@ export class RuleEngine {
     }
     const usage = this.getAssaultUsage(source);
     if (usage.used >= usage.limit) return { ok:false, reason:"本回合突袭次数已用尽" };
-    const candidates = this.getAssaultTargetCandidates(game, source);
+    const candidates = this.getLegalAssaultTargets(game, source);
     if (target && !candidates.includes(target)) return { ok:false, reason:"目标不再是合法突袭目标" };
     if (!target && !candidates.length) return { ok:false, reason:"攻击距离内没有敌人" };
     return { ok:true, reason:"" };
@@ -62,7 +66,7 @@ export class RuleEngine {
     return (source?.hand ?? []).filter((card) => this.canUseForcedAssault(game, source, card, target).ok);
   }
 
-  /** 第一目标必须拥有真实装备实例，并且当前仍存在普通突袭合法目标。 */
+  /** 第一目标必须拥有真实装备实例，并且至少存在一个距离合法的借势第二目标。 */
   static getLeverageFirstTargets(game, cardUser) {
     return game.state.players.filter((player) => player !== cardUser
       && this.isPlayerInGame(game, player)
