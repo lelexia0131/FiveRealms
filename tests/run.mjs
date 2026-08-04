@@ -4,7 +4,7 @@ import { access, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { GAME_CONFIG } from "../js/config/gameConfig.js";
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../js/config/cardConfig.js";
+import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../js/config/cardConfig.js";
 import { GENERAL_DEFINITIONS } from "../js/config/generalConfig.js";
 import { Game } from "../js/core/Game.js";
 import { Player } from "../js/core/Player.js";
@@ -31,6 +31,7 @@ import { ACTIVE_SKILLS, hasActiveSkill, hasPassiveSkill, registerPassiveSkills }
 import { UNKNOWN_HAND_EXPECTED_VALUE, buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, expectedHandValue, scoreTransferCombination } from "../js/ai/transferScoring.js";
 import { ROLE_CARD_VALUE_DELTAS, getBaseCardAiValue, getRoleCardAiValue, validateRoleCardValueDeltas } from "../js/ai/roleCardValue.js";
 import { chooseBestResourceHandCandidate, chooseResourceZone, getResourceDefinitionUtility, getResourceUnknownUtility } from "../js/ai/resourceSelectionValue.js";
+import { AiKnowledge } from "../js/ai/AiKnowledge.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 const tests = [];
@@ -3794,6 +3795,205 @@ test("掠夺模拟共享模块单一公式来源", async () => {
   const source = await readFile(projectFile("js/ai/AiSimulator.js"), "utf8");
   assert.match(source, /chooseSimulatedResourceSelection/);
   assert.doesNotMatch(source, /const takeEquipment =/);
+});
+
+const makeRemainingKnowledge = (viewer, state = null) => {
+  const game = {
+    state: state ?? {
+      deck: { discardPile:[], resolvingCards:[], judgmentZone:[] },
+      players: [],
+      publicCardPool: []
+    },
+    random: () => 0
+  };
+  return new AiKnowledge(game);
+};
+
+test("剩余牌池：空公开状态返回完整计数", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const counts = makeRemainingKnowledge(viewer).remainingCounts(viewer);
+  assert.deepEqual(counts, CARD_COUNTS);
+});
+
+test("剩余牌池：扣除 viewer 自己手牌", () => {
+  const viewer = { id:"v", hand:[{ id:"c1", definitionId:"assault" }], aiMemory:{ knownCardsByPlayer:{} } };
+  const counts = makeRemainingKnowledge(viewer).remainingCounts(viewer);
+  assert.equal(counts.assault, CARD_COUNTS.assault - 1);
+  assert.equal(counts.block, CARD_COUNTS.block);
+});
+
+test("剩余牌池：扣除弃牌堆", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const state = { deck:{ discardPile:[{ id:"d1", definitionId:"block" }], resolvingCards:[], judgmentZone:[] }, players:[], publicCardPool:[] };
+  const counts = makeRemainingKnowledge(viewer, state).remainingCounts(viewer);
+  assert.equal(counts.block, CARD_COUNTS.block - 1);
+});
+
+test("剩余牌池：扣除结算区", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const state = { deck:{ discardPile:[], resolvingCards:[{ id:"r1", definitionId:"charge" }], judgmentZone:[] }, players:[], publicCardPool:[] };
+  const counts = makeRemainingKnowledge(viewer, state).remainingCounts(viewer);
+  assert.equal(counts.charge, CARD_COUNTS.charge - 1);
+});
+
+test("剩余牌池：扣除判定区", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const state = { deck:{ discardPile:[], resolvingCards:[], judgmentZone:[{ id:"j1", definitionId:"shield" }] }, players:[], publicCardPool:[] };
+  const counts = makeRemainingKnowledge(viewer, state).remainingCounts(viewer);
+  assert.equal(counts.shield, CARD_COUNTS.shield - 1);
+});
+
+test("剩余牌池：扣除全部公开装备", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const state = {
+    deck:{ discardPile:[], resolvingCards:[], judgmentZone:[] },
+    players:[
+      { id:"a", equipment:{ id:"e1", definitionId:"energyDevice" } },
+      { id:"b", equipment:{ id:"e2", definitionId:"telescope" } }
+    ],
+    publicCardPool:[]
+  };
+  const counts = makeRemainingKnowledge(viewer, state).remainingCounts(viewer);
+  assert.equal(counts.energyDevice, CARD_COUNTS.energyDevice - 1);
+  assert.equal(counts.telescope, CARD_COUNTS.telescope - 1);
+});
+
+test("剩余牌池：扣除公共牌池", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const state = { deck:{ discardPile:[], resolvingCards:[], judgmentZone:[] }, players:[], publicCardPool:[{ id:"p1", definitionId:"counter" }] };
+  const counts = makeRemainingKnowledge(viewer, state).remainingCounts(viewer);
+  assert.equal(counts.counter, CARD_COUNTS.counter - 1);
+});
+
+test("剩余牌池：扣除 viewer 合法记忆", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{ enemy:{ m1:"recover" } } } };
+  const counts = makeRemainingKnowledge(viewer).remainingCounts(viewer);
+  assert.equal(counts.recover, CARD_COUNTS.recover - 1);
+});
+
+test("剩余牌池：不读取其他 AI 私有记忆", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  let reads = 0;
+  const otherMemory = { get knownCardsByPlayer(){ reads += 1; return { enemy:{ x:"recover" } }; } };
+  const state = { deck:{ discardPile:[], resolvingCards:[], judgmentZone:[] }, players:[{ id:"other", aiMemory:otherMemory }], publicCardPool:[] };
+  const counts = makeRemainingKnowledge(viewer, state).remainingCounts(viewer);
+  assert.equal(reads, 0);
+  assert.equal(counts.recover, CARD_COUNTS.recover);
+});
+
+test("剩余牌池：不读取其他玩家真实手牌", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const other = { id:"other" };
+  Object.defineProperty(other, "hand", { enumerable:true, get(){ throw new Error("读取了其他玩家手牌"); } });
+  const state = { deck:{ discardPile:[], resolvingCards:[], judgmentZone:[] }, players:[other], publicCardPool:[] };
+  const counts = makeRemainingKnowledge(viewer, state).remainingCounts(viewer);
+  assert.equal(counts.assault, CARD_COUNTS.assault);
+});
+
+test("剩余牌池：不读取抽牌堆顺序", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const deck = { discardPile:[], resolvingCards:[], judgmentZone:[] };
+  Object.defineProperty(deck, "cards", { enumerable:true, get(){ throw new Error("读取了抽牌堆"); } });
+  const state = { deck, players:[], publicCardPool:[] };
+  const counts = makeRemainingKnowledge(viewer, state).remainingCounts(viewer);
+  assert.equal(counts.assault, CARD_COUNTS.assault);
+});
+
+test("剩余牌池：同一实体跨区域只扣一次", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{ enemy:{ same:"recover" } } } };
+  const state = { deck:{ discardPile:[], resolvingCards:[], judgmentZone:[] }, players:[], publicCardPool:[{ id:"same", definitionId:"recover" }] };
+  const counts = makeRemainingKnowledge(viewer, state).remainingCounts(viewer);
+  assert.equal(counts.recover, CARD_COUNTS.recover - 1);
+});
+
+test("剩余牌池：id 与 cardId 统一去重", () => {
+  const viewer = { id:"v", hand:[{ id:"same-card", definitionId:"recover" }], aiMemory:{ knownCardsByPlayer:{ enemy:{ "same-card":"recover" } } } };
+  const counts = makeRemainingKnowledge(viewer).remainingCounts(viewer);
+  assert.equal(counts.recover, CARD_COUNTS.recover - 1);
+});
+
+test("剩余牌池：无 ID 条目分别扣除", () => {
+  const viewer = { id:"v", hand:[{ definitionId:"recover" }, { definitionId:"recover" }], aiMemory:{ knownCardsByPlayer:{} } };
+  const counts = makeRemainingKnowledge(viewer).remainingCounts(viewer);
+  assert.equal(counts.recover, CARD_COUNTS.recover - 2);
+});
+
+test("剩余牌池：计数不为负数", () => {
+  const viewer = { id:"v", hand:Array.from({ length:CARD_COUNTS.assault + 5 }, () => ({ definitionId:"assault" })), aiMemory:{ knownCardsByPlayer:{} } };
+  const counts = makeRemainingKnowledge(viewer).remainingCounts(viewer);
+  assert.equal(counts.assault, 0);
+  assert.ok(Object.values(counts).every((count) => count >= 0));
+});
+
+test("剩余牌池：非法定义不污染结果", () => {
+  const viewer = { id:"v", hand:[{ id:"bad", definitionId:"not-a-card" }], aiMemory:{ knownCardsByPlayer:{} } };
+  const counts = makeRemainingKnowledge(viewer).remainingCounts(viewer);
+  assert.equal(Object.hasOwn(counts, "not-a-card"), false);
+  assert.deepEqual(counts, CARD_COUNTS);
+});
+
+test("剩余牌池：每次返回新对象", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const knowledge = makeRemainingKnowledge(viewer);
+  const first = knowledge.remainingCounts(viewer);
+  const second = knowledge.remainingCounts(viewer);
+  assert.notEqual(first, second);
+  first.assault = 0;
+  const third = knowledge.remainingCounts(viewer);
+  assert.equal(third.assault, CARD_COUNTS.assault);
+});
+
+test("剩余牌池：probability 兼容包装", () => {
+  const viewer = { id:"v", hand:[{ id:"c1", definitionId:"assault" }], aiMemory:{ knownCardsByPlayer:{} } };
+  const knowledge = makeRemainingKnowledge(viewer);
+  const remaining = knowledge.remainingCounts(viewer);
+  const total = Object.values(remaining).reduce((sum, count) => sum + count, 0);
+  for (const definitionId of Object.keys(CARD_COUNTS)) {
+    assert.ok(Math.abs(knowledge.probability(viewer, definitionId) - remaining[definitionId] / total) < 1e-12);
+  }
+  assert.equal(knowledge.probability(viewer, "not-a-card"), 0);
+});
+
+test("剩余牌池：空剩余池时 probability 返回 0", () => {
+  const entries = Object.entries(CARD_COUNTS).flatMap(([definitionId, count]) => (
+    Array.from({ length:count }, () => ({ definitionId }))
+  ));
+  const viewer = { id:"v", hand:entries, aiMemory:{ knownCardsByPlayer:{} } };
+  const knowledge = makeRemainingKnowledge(viewer);
+  assert.equal(knowledge.probability(viewer, "assault"), 0);
+  assert.equal(knowledge.probability(viewer, "block"), 0);
+  assert.ok(Number.isFinite(knowledge.probability(viewer, "assault")));
+});
+
+test("剩余牌池：公共牌池改变概率", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const base = { deck:{ discardPile:[], resolvingCards:[], judgmentZone:[] }, players:[] };
+  const without = makeRemainingKnowledge(viewer, { ...base, publicCardPool:[] });
+  const withPool = makeRemainingKnowledge(viewer, { ...base, publicCardPool:[{ id:"p1", definitionId:"block" }] });
+  const before = without.probability(viewer, "block");
+  const after = withPool.probability(viewer, "block");
+  const expected = (CARD_COUNTS.block - 1) / (TOTAL_CARD_COUNT - 1);
+  assert.ok(Math.abs(after - expected) < 1e-12);
+  assert.ok(after < before);
+});
+
+test("剩余牌池：totalCards 保持", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  assert.equal(makeRemainingKnowledge(viewer).totalCards(), TOTAL_CARD_COUNT);
+});
+
+test("剩余牌池：sampleHiddenWorlds 结构保持且继承公共牌池扣除", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const state = {
+    deck:{ discardPile:[], resolvingCards:[], judgmentZone:[] },
+    players:[{ id:"other", handCount:1, knownCards:[] }],
+    publicCardPool:[{ id:"p1", definitionId:"block" }]
+  };
+  const knowledge = makeRemainingKnowledge(viewer, state);
+  const worlds = knowledge.sampleHiddenWorlds(viewer, { players:[viewer, state.players[0]] }, 1);
+  assert.equal(worlds.length, 1);
+  assert.ok(Array.isArray(worlds[0].other));
+  assert.ok(knowledge.probability(viewer, "block") < CARD_COUNTS.block / TOTAL_CARD_COUNT);
 });
 
 let passed = 0;
