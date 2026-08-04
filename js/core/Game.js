@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-allin-evaluator-marginal-v64";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-allin-evaluator-marginal-v64";
-import { createId, clamp } from "../utils/helpers.js?build=20260804-allin-evaluator-marginal-v64";
-import { EventBus } from "./EventBus.js?build=20260804-allin-evaluator-marginal-v64";
-import { Player } from "./Player.js?build=20260804-allin-evaluator-marginal-v64";
-import { Deck } from "./Deck.js?build=20260804-allin-evaluator-marginal-v64";
-import { TeamManager } from "./TeamManager.js?build=20260804-allin-evaluator-marginal-v64";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260804-allin-evaluator-marginal-v64";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-allin-evaluator-marginal-v64";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260804-allin-evaluator-marginal-v64";
-import { GameLogger } from "./GameLogger.js?build=20260804-allin-evaluator-marginal-v64";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260804-allin-evaluator-marginal-v64";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260804-allin-evaluator-marginal-v64";
-import { AIController } from "../ai/AIController.js?build=20260804-allin-evaluator-marginal-v64";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260804-allin-evaluator-marginal-v64";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-allin-evaluator-marginal-v64";
-import { Debug } from "../utils/debug.js?build=20260804-allin-evaluator-marginal-v64";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260804-allin-evaluator-marginal-v64";
-import { DyingSystem } from "./DyingSystem.js?build=20260804-allin-evaluator-marginal-v64";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260804-allin-evaluator-marginal-v64";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260804-allin-evaluator-marginal-v64";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260804-allin-evaluator-marginal-v64";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260804-allin-evaluator-marginal-v64";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-transfer-context-utility-v66";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-transfer-context-utility-v66";
+import { createId, clamp } from "../utils/helpers.js?build=20260804-transfer-context-utility-v66";
+import { EventBus } from "./EventBus.js?build=20260804-transfer-context-utility-v66";
+import { Player } from "./Player.js?build=20260804-transfer-context-utility-v66";
+import { Deck } from "./Deck.js?build=20260804-transfer-context-utility-v66";
+import { TeamManager } from "./TeamManager.js?build=20260804-transfer-context-utility-v66";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260804-transfer-context-utility-v66";
+import { RuleEngine } from "./RuleEngine.js?build=20260804-transfer-context-utility-v66";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260804-transfer-context-utility-v66";
+import { GameLogger } from "./GameLogger.js?build=20260804-transfer-context-utility-v66";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260804-transfer-context-utility-v66";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260804-transfer-context-utility-v66";
+import { AIController } from "../ai/AIController.js?build=20260804-transfer-context-utility-v66";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260804-transfer-context-utility-v66";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260804-transfer-context-utility-v66";
+import { Debug } from "../utils/debug.js?build=20260804-transfer-context-utility-v66";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260804-transfer-context-utility-v66";
+import { DyingSystem } from "./DyingSystem.js?build=20260804-transfer-context-utility-v66";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260804-transfer-context-utility-v66";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260804-transfer-context-utility-v66";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260804-transfer-context-utility-v66";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260804-transfer-context-utility-v66";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -452,9 +452,13 @@ export class Game {
     const from = this.state.players.find((player) => player.id === planned?.sourceId && player.alive) ?? null;
     const receiver = this.state.players.find((player) => player.id === planned?.receiverId && player.alive) ?? null;
     if (!sources.includes(from) || !RuleEngine.getTransferReceivers(this, source, from, card).includes(receiver)) return null;
+    // AI 禁止主动把己方手牌转移给敌方；真人路径保持公共规则合法。
+    if (source.controllerType === "ai"
+      && from.battleTeam === source.battleTeam
+      && receiver.battleTeam !== source.battleTeam) return null;
 
     const [hiddenCard] = source.controllerType === "ai"
-      ? this.aiController.cardSelector.chooseHiddenCards(source, from, 1, excludedCardIds)
+      ? this.aiController.cardSelector.chooseHiddenCards(source, from, 1, excludedCardIds, { purpose:"transfer", receiver })
       : await this.chooseHiddenCards(source, from, 1, "选择要转移的手牌", planned, excludedCardIds);
     const chosen = hiddenCard ? { card:hiddenCard, zone:"hand" } : null;
     if (!this.isSessionValid(gameId)) return null;
@@ -513,14 +517,18 @@ export class Game {
           target,
           Math.min(2, target.hand.length),
           "选择至多2张手牌进行窥探",
-          selection
+          selection,
+          null,
+          { purpose:"scout" }
         );
       } else if (["plunder", "destroy"].includes(card.definitionId)) {
         const chosen = await this.choosePlayerZoneCard(
           source,
           target,
           card.definitionId === "plunder" ? "选择要掠夺的手牌或装备牌" : "选择要破坏的手牌或装备牌",
-          selection
+          selection,
+          null,
+          { purpose:card.definitionId }
         );
         if (chosen) {
           zone = chosen.zone;
@@ -557,7 +565,7 @@ export class Game {
     const maximum = Math.min(Math.max(0, count), owner?.hand?.length ?? 0);
     if (!this.isSessionValid(gameId) || !viewer?.alive || !owner?.alive || !maximum) return null;
     if (viewer.controllerType !== "human") {
-      const cards = this.aiController.cardSelector.chooseHiddenCards(viewer, owner, maximum);
+      const cards = this.aiController.cardSelector.chooseHiddenCards(viewer, owner, maximum, null, { purpose:"spy-gap" });
       return cards.length ? Object.freeze({ owner, zone:"hand", cards:Object.freeze([...cards]), selectionId:null }) : null;
     }
 
@@ -1476,7 +1484,7 @@ export class Game {
     return this.isCardKnownTo(human, owner, card) ? `「${card.name}」` : "1张手牌";
   }
 
-  async chooseHiddenCards(actor, owner, count, reason, selection = null, excludedCardIds = null) {
+  async chooseHiddenCards(actor, owner, count, reason, selection = null, excludedCardIds = null, aiContext = null) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return [];
     const eligibleCards = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
@@ -1505,11 +1513,11 @@ export class Game {
       this.cardSelectionSystem.clearSelection(hidden.selectionId);
       return cards;
     }
-    return this.aiController.cardSelector.chooseHiddenCards(actor, owner, maximum, excludedCardIds);
+    return this.aiController.cardSelector.chooseHiddenCards(actor, owner, maximum, excludedCardIds, aiContext);
   }
 
   /** 在隐藏手牌与公开装备之间选择一张；核心始终重新验证所选实体仍在原区域。 */
-  async choosePlayerZoneCard(actor, owner, reason, selection = null, excludedCardIds = null) {
+  async choosePlayerZoneCard(actor, owner, reason, selection = null, excludedCardIds = null, aiContext = null) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return null;
     const eligibleHandCount = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)).length ?? 0;
@@ -1531,7 +1539,7 @@ export class Game {
       if (!this.isSessionValid(gameId)) return null;
       return requested ? this.choosePlayerZoneCard(actor, owner, reason, requested, excludedCardIds) : null;
     }
-    return this.aiController.cardSelector.chooseZoneCard(actor, owner);
+    return this.aiController.cardSelector.chooseZoneCard(actor, owner, aiContext, excludedCardIds);
   }
 
   /** 统一添加公开日志。 */
