@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-leverage-ai-assault-v62";
-import { createId } from "../utils/helpers.js?build=20260804-leverage-ai-assault-v62";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-leverage-ai-assault-v62";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-leverage-ai-assault-v62";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-allin-ai-no-stack-v63";
+import { createId } from "../utils/helpers.js?build=20260804-allin-ai-no-stack-v63";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260804-allin-ai-no-stack-v63";
+import { RuleEngine } from "./RuleEngine.js?build=20260804-allin-ai-no-stack-v63";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
