@@ -2,22 +2,22 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-remaining-card-counts-v74";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260804-remaining-card-counts-v74";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-remaining-card-counts-v74";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-remaining-card-counts-v74";
-import { getRoleCardAiValue } from "./roleCardValue.js?build=20260804-remaining-card-counts-v74";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-dynamic-resource-unknown-v75";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260804-dynamic-resource-unknown-v75";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-dynamic-resource-unknown-v75";
+import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-dynamic-resource-unknown-v75";
+import { getRoleCardAiValue } from "./roleCardValue.js?build=20260804-dynamic-resource-unknown-v75";
 import {
   chooseBestResourceHandCandidate,
   chooseResourceZone,
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-} from "./resourceSelectionValue.js?build=20260804-remaining-card-counts-v74";
+} from "./resourceSelectionValue.js?build=20260804-dynamic-resource-unknown-v75";
 
 const globalKnownValue = (definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
 
 /** 把真实手牌实体整理为共享模块可用的手牌候选（仅合法记忆或自己手牌）。 */
-const buildResourceHandCandidate = (actor, owner, card, purpose) => {
+const buildResourceHandCandidate = (actor, owner, card, purpose, remainingCardCounts = null) => {
   const definitionId = actor.id === owner.id
     ? card.definitionId
     : (actor.aiMemory.knownCardsByPlayer[owner.id]?.[card.id] ?? null);
@@ -33,7 +33,7 @@ const buildResourceHandCandidate = (actor, owner, card, purpose) => {
     selectionKind: "unknown",
     cardId: null,
     definitionId: null,
-    utility: getResourceUnknownUtility(purpose, actor, owner)
+    utility: getResourceUnknownUtility(purpose, actor, owner, remainingCardCounts)
   };
 };
 
@@ -41,11 +41,16 @@ const buildResourceHandCandidate = (actor, owner, card, purpose) => {
 export class AiCardSelector {
   constructor(game, knowledge) { this.game = game; this.knowledge = knowledge; }
 
-  chooseHiddenCards(actor, owner, count, excludedCardIds = null, context = null) {
+  chooseHiddenCards(actor, owner, count, excludedCardIds = null, context = null, resourceCounts = null) {
     const selected = [];
     const known = actor.aiMemory.knownCardsByPlayer[owner.id] ?? {};
     const cards = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
     const purpose = context?.purpose ?? null;
+    const remainingCardCounts = resourceCounts !== null
+      ? resourceCounts
+      : ((purpose === "destroy" || purpose === "plunder")
+        ? (this.knowledge?.remainingCounts?.(actor) ?? null)
+        : null);
     while (selected.length < count && cards.length) {
       let index = -1;
       if (purpose === "transfer") {
@@ -79,7 +84,8 @@ export class AiCardSelector {
           actor,
           owner,
           knownCards,
-          unknownCount: cards.length - knownCards.length
+          unknownCount: cards.length - knownCards.length,
+          remainingCardCounts
         });
         if (!candidate) return selected;
         if (candidate.selectionKind === "known") {
@@ -146,8 +152,9 @@ export class AiCardSelector {
     if (!owner?.alive) return null;
     const purpose = context?.purpose ?? null;
     if (purpose === "plunder" || purpose === "destroy") {
-      const [card] = this.chooseHiddenCards(actor, owner, 1, excludedCardIds, context);
-      const handCandidate = card ? buildResourceHandCandidate(actor, owner, card, purpose) : null;
+      const remainingCardCounts = this.knowledge?.remainingCounts?.(actor) ?? null;
+      const [card] = this.chooseHiddenCards(actor, owner, 1, excludedCardIds, context, remainingCardCounts);
+      const handCandidate = card ? buildResourceHandCandidate(actor, owner, card, purpose, remainingCardCounts) : null;
       const zoneChoice = chooseResourceZone({
         purpose,
         actor,

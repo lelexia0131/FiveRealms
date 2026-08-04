@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-remaining-card-counts-v74";
-import { createId } from "../utils/helpers.js?build=20260804-remaining-card-counts-v74";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-remaining-card-counts-v74";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-remaining-card-counts-v74";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-dynamic-resource-unknown-v75";
+import { createId } from "../utils/helpers.js?build=20260804-dynamic-resource-unknown-v75";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260804-dynamic-resource-unknown-v75";
+import { RuleEngine } from "./RuleEngine.js?build=20260804-dynamic-resource-unknown-v75";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

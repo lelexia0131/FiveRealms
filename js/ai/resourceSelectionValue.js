@@ -12,8 +12,8 @@
  * 本模块不读取游戏状态、不修改传入对象、不调用随机数、不生成真实卡牌实体、
  * 不读取未知牌定义，也不包含角色差值副本。
  */
-import { getRoleCardAiValue } from "./roleCardValue.js?build=20260804-remaining-card-counts-v74";
-import { UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-remaining-card-counts-v74";
+import { getRoleCardAiValue } from "./roleCardValue.js?build=20260804-dynamic-resource-unknown-v75";
+import { UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-dynamic-resource-unknown-v75";
 
 /**
  * 某张已知定义在破坏/掠夺中的价值。
@@ -38,8 +38,21 @@ export function getResourceDefinitionUtility(purpose, actor, owner, definitionId
  * 未知手牌在破坏/掠夺中的价值。
  *
  * destroy：4；plunder 敌方：8（4+4）；plunder 同阵营：0（4-4）。
+ * 传入 remainingCardCounts 时按剩余实例数量计算角色相关动态期望；
+ * 无有效计数时回退上述固定值。
  */
-export function getResourceUnknownUtility(purpose, actor, owner) {
+export function getResourceUnknownUtility(purpose, actor, owner, remainingCardCounts = null) {
+  if (remainingCardCounts !== null && typeof remainingCardCounts === "object") {
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (const [definitionId, count] of Object.entries(remainingCardCounts)) {
+      if (!Number.isFinite(count) || count <= 0) continue;
+      const utility = getResourceDefinitionUtility(purpose, actor, owner, definitionId);
+      weightedSum += count * utility;
+      totalWeight += count;
+    }
+    if (totalWeight > 0) return weightedSum / totalWeight;
+  }
   if (purpose === "destroy") {
     return UNKNOWN_HAND_EXPECTED_VALUE;
   }
@@ -62,7 +75,8 @@ export function chooseBestResourceHandCandidate({
   actor,
   owner,
   knownCards,
-  unknownCount
+  unknownCount,
+  remainingCardCounts
 }) {
   const knownList = Array.isArray(knownCards) ? knownCards : [];
   const hasUnknown = Number(unknownCount) > 0;
@@ -83,11 +97,11 @@ export function chooseBestResourceHandCandidate({
       selectionKind: "unknown",
       cardId: null,
       definitionId: null,
-      utility: getResourceUnknownUtility(purpose, actor, owner)
+      utility: getResourceUnknownUtility(purpose, actor, owner, remainingCardCounts)
     };
   }
   if (best && hasUnknown) {
-    const unknownUtility = getResourceUnknownUtility(purpose, actor, owner);
+    const unknownUtility = getResourceUnknownUtility(purpose, actor, owner, remainingCardCounts);
     if (unknownUtility > best.utility) {
       return {
         selectionKind: "unknown",

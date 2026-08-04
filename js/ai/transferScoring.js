@@ -1,5 +1,5 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-remaining-card-counts-v74";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260804-remaining-card-counts-v74";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-dynamic-resource-unknown-v75";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260804-dynamic-resource-unknown-v75";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

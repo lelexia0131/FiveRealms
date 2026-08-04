@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-remaining-card-counts-v74";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260804-remaining-card-counts-v74";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260804-remaining-card-counts-v74";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-dynamic-resource-unknown-v75";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260804-dynamic-resource-unknown-v75";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260804-dynamic-resource-unknown-v75";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

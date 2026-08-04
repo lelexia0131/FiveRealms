@@ -32,6 +32,7 @@ import { UNKNOWN_HAND_EXPECTED_VALUE, buildTransferCandidates, chooseBestPositiv
 import { ROLE_CARD_VALUE_DELTAS, getBaseCardAiValue, getRoleCardAiValue, validateRoleCardValueDeltas } from "../js/ai/roleCardValue.js";
 import { chooseBestResourceHandCandidate, chooseResourceZone, getResourceDefinitionUtility, getResourceUnknownUtility } from "../js/ai/resourceSelectionValue.js";
 import { AiKnowledge } from "../js/ai/AiKnowledge.js";
+import { AiCardSelector } from "../js/ai/AiCardSelector.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 const tests = [];
@@ -3994,6 +3995,199 @@ test("剩余牌池：sampleHiddenWorlds 结构保持且继承公共牌池扣除"
   assert.equal(worlds.length, 1);
   assert.ok(Array.isArray(worlds[0].other));
   assert.ok(knowledge.probability(viewer, "block") < CARD_COUNTS.block / TOTAL_CARD_COUNT);
+});
+
+test("动态未知：destroy 单定义等于 owner 角色价值", () => {
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"spirit-medic" };
+  const actual = getResourceUnknownUtility("destroy", actor, owner, { assault: 3 });
+  assert.ok(Math.abs(actual - getRoleCardAiValue("spirit-medic", "assault")) < 1e-9);
+});
+
+test("动态未知：plunder 敌方单定义等于双角色之和", () => {
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"spirit-medic" };
+  const actual = getResourceUnknownUtility("plunder", actor, owner, { recover: 2 });
+  assert.ok(Math.abs(actual - (getRoleCardAiValue("blade-walker", "recover") + getRoleCardAiValue("spirit-medic", "recover"))) < 1e-9);
+});
+
+test("动态未知：plunder 同阵营单定义等于差值且不必为 0", () => {
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const owner = { id:"o", battleTeam:"dawn", generalId:"spirit-medic" };
+  const actual = getResourceUnknownUtility("plunder", actor, owner, { recover: 2 });
+  assert.ok(Math.abs(actual - (getRoleCardAiValue("blade-walker", "recover") - getRoleCardAiValue("spirit-medic", "recover"))) < 1e-9);
+  assert.notEqual(actual, 0);
+});
+
+test("动态未知：按实例数量加权而非定义平均", () => {
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"spirit-medic" };
+  const actual = getResourceUnknownUtility("destroy", actor, owner, { assault: 3, block: 1 });
+  assert.ok(Math.abs(actual - 4) < 1e-9); // (3*3 + 7) / 4
+  assert.notEqual(actual, 5); // 定义平均 (3+7)/2
+});
+
+test("动态未知：忽略零、负数和非有限计数", () => {
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"spirit-medic" };
+  const counts = { assault: 0, block: -1, charge: NaN, shield: Infinity, recover: 2 };
+  const actual = getResourceUnknownUtility("destroy", actor, owner, counts);
+  assert.ok(Math.abs(actual - getRoleCardAiValue("spirit-medic", "recover")) < 1e-9);
+});
+
+test("动态未知：空池与缺失计数固定回退", () => {
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const enemy = { id:"e", battleTeam:"dusk", generalId:"spirit-medic" };
+  const ally = { id:"y", battleTeam:"dawn", generalId:"spirit-medic" };
+  for (const counts of [null, {}, { assault: 0 }]) {
+    assert.equal(getResourceUnknownUtility("destroy", actor, enemy, counts), 4);
+    assert.equal(getResourceUnknownUtility("plunder", actor, enemy, counts), 8);
+    assert.equal(getResourceUnknownUtility("plunder", actor, ally, counts), 0);
+  }
+});
+
+test("动态未知：旧三参数调用保持固定语义", () => {
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const enemy = { id:"e", battleTeam:"dusk", generalId:"spirit-medic" };
+  const ally = { id:"y", battleTeam:"dawn", generalId:"spirit-medic" };
+  assert.equal(getResourceUnknownUtility("destroy", actor, enemy), 4);
+  assert.equal(getResourceUnknownUtility("plunder", actor, enemy), 8);
+  assert.equal(getResourceUnknownUtility("plunder", actor, ally), 0);
+});
+
+test("动态未知：非法正计数定义抛错", () => {
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"spirit-medic" };
+  assert.throws(() => getResourceUnknownUtility("destroy", actor, owner, { "not-a-card": 1 }), /not-a-card/);
+  assert.throws(() => getResourceUnknownUtility("plunder", actor, owner, { "not-a-card": 2 }), /not-a-card/);
+});
+
+test("动态未知：剩余池使未知胜出而固定值使已知胜出", () => {
+  const makeSelector = (knowledge) => new AiCardSelector({ random: () => 0 }, knowledge);
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", aiMemory:{ knownCardsByPlayer:{} } };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"blade-walker", hand:[{ id:"k", definitionId:"assault" }, { id:"u", definitionId:"counter" }] };
+  actor.aiMemory.knownCardsByPlayer[owner.id] = { k:"assault" };
+  const fixed = makeSelector(null);
+  assert.equal(fixed.chooseHiddenCards(actor, owner, 1, null, { purpose:"destroy" })[0], owner.hand[0]);
+  const dynamic = makeSelector({ remainingCounts: () => ({ counter: 7, defenseDevice: 1 }) });
+  assert.equal(dynamic.chooseHiddenCards(actor, owner, 1, null, { purpose:"destroy" })[0], owner.hand[1]);
+});
+
+test("动态未知：与已知同分时已知优先", () => {
+  const selector = new AiCardSelector({ random: () => 0 }, { remainingCounts: () => ({ scout: 2 }) });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", aiMemory:{ knownCardsByPlayer:{} } };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"blade-walker", hand:[{ id:"k", definitionId:"scout" }, { id:"u", definitionId:"counter" }] };
+  actor.aiMemory.knownCardsByPlayer[owner.id] = { k:"scout" };
+  const chosen = selector.chooseHiddenCards(actor, owner, 1, null, { purpose:"destroy" })[0];
+  assert.equal(chosen, owner.hand[0]);
+});
+
+test("动态未知：影响手牌与装备区域选择", () => {
+  const build = (knowledge) => new AiCardSelector({ random: () => 0 }, knowledge);
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true, aiMemory:{ knownCardsByPlayer:{} } };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"blade-walker", alive:true, hand:[{ id:"u", definitionId:"counter" }], equipment:{ id:"e", definitionId:"energyDevice" } };
+  const fixed = build(null);
+  assert.equal(fixed.chooseZoneCard(actor, owner, { purpose:"destroy" }).zone, "equipment");
+  const dynamic = build({ remainingCounts: () => ({ counter: 7, defenseDevice: 1 }) });
+  assert.equal(dynamic.chooseZoneCard(actor, owner, { purpose:"destroy" }).zone, "hand");
+});
+
+test("动态未知：区域同分仍优先手牌", () => {
+  const selector = new AiCardSelector({ random: () => 0 }, { remainingCounts: () => ({ telescope: 3 }) });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true, aiMemory:{ knownCardsByPlayer:{} } };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"blade-walker", alive:true, hand:[{ id:"u", definitionId:"counter" }], equipment:{ id:"e", definitionId:"telescope" } };
+  const choice = selector.chooseZoneCard(actor, owner, { purpose:"destroy" });
+  assert.equal(choice.zone, "hand");
+});
+
+test("动态未知：chooseHiddenCards 每次完整调用只扫描一次剩余计数", () => {
+  let calls = 0;
+  const knowledge = { remainingCounts: () => { calls += 1; return { assault: 1 }; } };
+  const selector = new AiCardSelector({ random: () => 0 }, knowledge);
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", aiMemory:{ knownCardsByPlayer:{} } };
+  const ownerOne = { id:"o", battleTeam:"dusk", generalId:"blade-walker", hand:[{ id:"u1", definitionId:"counter" }] };
+  assert.equal(selector.chooseHiddenCards(actor, ownerOne, 1, null, { purpose:"destroy" }).length, 1);
+  assert.equal(calls, 1);
+  const ownerTwo = { id:"o2", battleTeam:"dusk", generalId:"blade-walker", hand:[{ id:"u1", definitionId:"counter" }, { id:"u2", definitionId:"charge" }] };
+  assert.equal(selector.chooseHiddenCards(actor, ownerTwo, 2, null, { purpose:"destroy" }).length, 2);
+  assert.equal(calls, 2);
+});
+
+test("动态未知：chooseZoneCard 只扫描一次剩余计数", () => {
+  let calls = 0;
+  const knowledge = { remainingCounts: () => {
+    calls += 1;
+    if (calls > 1) throw new Error("重复扫描");
+    return { battleDevice: 1 };
+  } };
+  const selector = new AiCardSelector({ random: () => 0 }, knowledge);
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true, aiMemory:{ knownCardsByPlayer:{} } };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"blade-walker", alive:true, hand:[{ id:"u", definitionId:"counter" }], equipment:{ id:"e", definitionId:"energyDevice" } };
+  const choice = selector.chooseZoneCard(actor, owner, { purpose:"destroy" });
+  assert.equal(choice.zone, "hand");
+  assert.equal(calls, 1);
+});
+
+test("动态未知：不修改计数输入", () => {
+  const counts = { assault: 3, block: 1 };
+  const snapshot = JSON.stringify(counts);
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"spirit-medic" };
+  getResourceUnknownUtility("destroy", actor, owner, counts);
+  chooseBestResourceHandCandidate({ purpose:"destroy", actor, owner, knownCards:[], unknownCount:1, remainingCardCounts: counts });
+  assert.equal(JSON.stringify(counts), snapshot);
+});
+
+test("动态未知：未知实体真实定义不泄漏", () => {
+  const build = (hiddenDefinitionId, throwing = false) => {
+    const selector = new AiCardSelector({ random: () => 0 }, { remainingCounts: () => ({ counter: 7, defenseDevice: 1 }) });
+    const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", aiMemory:{ knownCardsByPlayer:{} } };
+    const unknown = throwing ? { id:"u" } : { id:"u", definitionId:hiddenDefinitionId };
+    if (throwing) {
+      Object.defineProperty(unknown, "definitionId", { enumerable:true, get(){ throw new Error("读取未知定义"); } });
+    }
+    const owner = { id:"o", battleTeam:"dusk", generalId:"blade-walker", hand:[unknown] };
+    const chosen = selector.chooseHiddenCards(actor, owner, 1, null, { purpose:"destroy" })[0];
+    return { chosen, owner };
+  };
+  const normal = build("counter");
+  const throwing = build("charge", true);
+  assert.equal(normal.chosen, normal.owner.hand[0]);
+  assert.equal(throwing.chosen, throwing.owner.hand[0]);
+});
+
+test("动态未知：未知候选输给装备仍调用一次随机数", () => {
+  let randomCalls = 0;
+  const selector = new AiCardSelector({ random: () => { randomCalls += 1; return 0; } }, { remainingCounts: () => ({ assault: 1 }) });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true, aiMemory:{ knownCardsByPlayer:{} } };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"blade-walker", alive:true, hand:[{ id:"u", definitionId:"counter" }], equipment:{ id:"e", definitionId:"energyDevice" } };
+  const choice = selector.chooseZoneCard(actor, owner, { purpose:"destroy" });
+  assert.equal(choice.zone, "equipment");
+  assert.equal(randomCalls, 1);
+});
+
+test("动态未知：count>1 冻结同一计数快照", () => {
+  let calls = 0;
+  const selector = new AiCardSelector({ random: () => 0 }, { remainingCounts: () => { calls += 1; return { counter: 7, defenseDevice: 1 }; } });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", aiMemory:{ knownCardsByPlayer:{} } };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"blade-walker", hand:[{ id:"u1", definitionId:"counter" }, { id:"u2", definitionId:"charge" }] };
+  const chosen = selector.chooseHiddenCards(actor, owner, 2, null, { purpose:"destroy" });
+  assert.equal(chosen.length, 2);
+  assert.equal(calls, 1);
+});
+
+test("动态未知：knowledge 缺失时固定回退", () => {
+  const selector = new AiCardSelector({ random: () => 0 }, null);
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", aiMemory:{ knownCardsByPlayer:{} } };
+  const owner = { id:"o", battleTeam:"dusk", generalId:"blade-walker", hand:[{ id:"k", definitionId:"assault" }, { id:"u", definitionId:"counter" }] };
+  actor.aiMemory.knownCardsByPlayer[owner.id] = { k:"assault" };
+  const chosen = selector.chooseHiddenCards(actor, owner, 1, null, { purpose:"destroy" })[0];
+  assert.equal(chosen, owner.hand[0]);
+});
+
+test("动态未知：模拟器未接入动态计数", async () => {
+  const source = await readFile(projectFile("js/ai/AiSimulator.js"), "utf8");
+  assert.doesNotMatch(source, /remainingCounts/);
 });
 
 let passed = 0;
