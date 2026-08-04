@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-destroy-target-value-v69";
-import { createId } from "../utils/helpers.js?build=20260804-destroy-target-value-v69";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-destroy-target-value-v69";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-destroy-target-value-v69";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-plunder-dual-role-value-v70";
+import { createId } from "../utils/helpers.js?build=20260804-plunder-dual-role-value-v70";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260804-plunder-dual-role-value-v70";
+import { RuleEngine } from "./RuleEngine.js?build=20260804-plunder-dual-role-value-v70";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

@@ -2,11 +2,11 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260804-destroy-target-value-v69";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260804-destroy-target-value-v69";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260804-destroy-target-value-v69";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260804-destroy-target-value-v69";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-destroy-target-value-v69";
+import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260804-plunder-dual-role-value-v70";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260804-plunder-dual-role-value-v70";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260804-plunder-dual-role-value-v70";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260804-plunder-dual-role-value-v70";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-plunder-dual-role-value-v70";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 

@@ -2,11 +2,11 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-destroy-target-value-v69";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260804-destroy-target-value-v69";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-destroy-target-value-v69";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-destroy-target-value-v69";
-import { getRoleCardAiValue } from "./roleCardValue.js?build=20260804-destroy-target-value-v69";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260804-plunder-dual-role-value-v70";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260804-plunder-dual-role-value-v70";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-plunder-dual-role-value-v70";
+import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260804-plunder-dual-role-value-v70";
+import { getRoleCardAiValue } from "./roleCardValue.js?build=20260804-plunder-dual-role-value-v70";
 
 const globalKnownValue = (definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
 
@@ -15,6 +15,26 @@ const destroyCardLossValue = (actor, owner, card) => {
   if (actor.id === owner.id) return getRoleCardAiValue(owner.generalId, card.definitionId);
   const definitionId = actor.aiMemory.knownCardsByPlayer[owner.id]?.[card.id] ?? null;
   return definitionId ? getRoleCardAiValue(owner.generalId, definitionId) : UNKNOWN_HAND_EXPECTED_VALUE;
+};
+
+/** 掠夺某张定义的组合效用：敌方为目标损失 + 使用者获得，同阵营为使用者获得 - 原持有者损失。 */
+const plunderDefinitionUtility = (actor, owner, definitionId) => {
+  const actorValue = getRoleCardAiValue(actor.generalId, definitionId);
+  const ownerValue = getRoleCardAiValue(owner.generalId, definitionId);
+  return owner.battleTeam === actor.battleTeam ? actorValue - ownerValue : actorValue + ownerValue;
+};
+
+/** 掠夺未知位置的组合效用：敌方 4+4，同阵营 4-4。 */
+const unknownPlunderUtility = (actor, owner) => (
+  owner.battleTeam === actor.battleTeam ? 0 : UNKNOWN_HAND_EXPECTED_VALUE * 2
+);
+
+/** 掠夺目标手牌的组合效用：只使用合法记忆或自己手牌，未知位置保持固定期望值。 */
+const plunderCardUtility = (actor, owner, card) => {
+  const definitionId = actor.id === owner.id
+    ? card.definitionId
+    : (actor.aiMemory.knownCardsByPlayer[owner.id]?.[card.id] ?? null);
+  return definitionId ? plunderDefinitionUtility(actor, owner, definitionId) : unknownPlunderUtility(actor, owner);
 };
 
 /** 未知手牌只按位置采样，绝不按真实定义筛选。 */
@@ -51,7 +71,13 @@ export class AiCardSelector {
       } else if (purpose === "destroy") {
         index = this.extremeIndex(known, cards, "highest", (definitionId) => getRoleCardAiValue(owner.generalId, definitionId));
       } else if (purpose === "plunder") {
-        index = this.extremeIndex(known, cards, "highest");
+        index = this.extremeIndex(
+          known,
+          cards,
+          "highest",
+          (definitionId) => plunderDefinitionUtility(actor, owner, definitionId),
+          unknownPlunderUtility(actor, owner)
+        );
       } else {
         const knownCards = cards.map((card, current) => ({ card, current, definitionId:known[card.id] }))
           .filter((entry) => entry.definitionId)
@@ -80,7 +106,7 @@ export class AiCardSelector {
   }
 
   /** 已知/未知混合时按价值方向选一个位置；未知位置只按固定期望值参与，不读真实牌面。 */
-  extremeIndex(known, cards, direction, knownValueForDefinition = globalKnownValue) {
+  extremeIndex(known, cards, direction, knownValueForDefinition = globalKnownValue, unknownValue = UNKNOWN_HAND_EXPECTED_VALUE) {
     const knownEntries = [];
     const unknownIndices = [];
     for (let current = 0; current < cards.length; current += 1) {
@@ -96,7 +122,7 @@ export class AiCardSelector {
       direction === "highest" ? (entry.value > best.value ? entry : best) : (entry.value < best.value ? entry : best)
     ), knownEntries[0]);
     const unknownWins = unknownIndices.length > 0
-      && (direction === "highest" ? UNKNOWN_HAND_EXPECTED_VALUE > bestKnown.value : UNKNOWN_HAND_EXPECTED_VALUE < bestKnown.value);
+      && (direction === "highest" ? unknownValue > bestKnown.value : unknownValue < bestKnown.value);
     if (unknownWins) return unknownIndices[Math.floor(this.game.random() * unknownIndices.length)];
     return bestKnown.current;
   }
@@ -108,10 +134,10 @@ export class AiCardSelector {
     if (purpose === "plunder" || purpose === "destroy") {
       const [card] = this.chooseHiddenCards(actor, owner, 1, excludedCardIds, context);
       const handValue = card
-        ? (purpose === "destroy" ? destroyCardLossValue(actor, owner, card) : this.expectedCardValue(actor, owner, card))
+        ? (purpose === "destroy" ? destroyCardLossValue(actor, owner, card) : plunderCardUtility(actor, owner, card))
         : Number.NEGATIVE_INFINITY;
       const equipmentValue = owner.equipment
-        ? (purpose === "destroy" ? getRoleCardAiValue(owner.generalId, owner.equipment.definitionId) : owner.equipment.aiValue)
+        ? (purpose === "destroy" ? getRoleCardAiValue(owner.generalId, owner.equipment.definitionId) : plunderDefinitionUtility(actor, owner, owner.equipment.definitionId))
         : Number.NEGATIVE_INFINITY;
       if (card && (!owner.equipment || handValue >= equipmentValue)) return { card, zone:"hand" };
       return owner.equipment ? { card:owner.equipment, zone:"equipment" } : null;

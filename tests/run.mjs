@@ -28,7 +28,7 @@ import { isCardSelectionValid, toggleCardSelection } from "../js/ui/selectionUti
 import { buildResponsePresentation } from "../js/core/ResponseSystem.js";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import { ACTIVE_SKILLS, hasActiveSkill, hasPassiveSkill, registerPassiveSkills } from "../js/generals/skillRegistry.js";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, expectedHandValue, scoreTransferCombination } from "../js/ai/transferScoring.js";
+import { UNKNOWN_HAND_EXPECTED_VALUE, buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, expectedHandValue, scoreTransferCombination } from "../js/ai/transferScoring.js";
 import { ROLE_CARD_VALUE_DELTAS, getBaseCardAiValue, getRoleCardAiValue, validateRoleCardValueDeltas } from "../js/ai/roleCardValue.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
@@ -3101,17 +3101,18 @@ test("破坏手牌与装备比较使用目标角色价值", () => {
   assert.equal(chosen.card, recover);
 });
 
-test("掠夺保持全局行为不被破坏逻辑泄漏", () => {
+test("掠夺使用双角色效用而非破坏的单角色损失", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const medic = makePlayer("medic", 1, "dusk", "ai", 2);
   const { game } = makeGame([actor, medic], { random: () => 0 });
-  const recover = instance("recover");
-  medic.hand = [recover];
+  const block = instance("block");
+  medic.hand = [block];
   medic.equipment = instance("energyDevice");
-  game.rememberPrivateCard(actor, medic, recover);
-  const chosen = game.aiController.cardSelector.chooseZoneCard(actor, medic, { purpose: "plunder" });
-  assert.equal(chosen.zone, "equipment");
-  assert.equal(chosen.card, medic.equipment);
+  game.rememberPrivateCard(actor, medic, block);
+  const destroyChoice = game.aiController.cardSelector.chooseZoneCard(actor, medic, { purpose: "destroy" });
+  assert.equal(destroyChoice.zone, "hand"); // 破坏：block 7 与 energyDevice 7 同分，优先手牌
+  const plunderChoice = game.aiController.cardSelector.chooseZoneCard(actor, medic, { purpose: "plunder" });
+  assert.equal(plunderChoice.zone, "equipment"); // 掠夺：block 5+7=12 < energyDevice 6+7=13
 });
 
 test("破坏同分时优先手牌且已知手牌同分保持较早位置", () => {
@@ -3139,6 +3140,119 @@ test("非破坏非掠夺的装备阈值分支保持不变", () => {
   const chosen = game.aiController.cardSelector.chooseZoneCard(actor, enemy, null);
   assert.equal(chosen.zone, "equipment");
   assert.equal(chosen.card, enemy.equipment);
+});
+
+test("掠夺使用者角色影响已知手牌选择", () => {
+  const shade = makePlayer("shade", 0, "dawn", "ai", 3);
+  const blade = makePlayer("blade", 1, "dusk", "ai", 0);
+  const { game } = makeGame([shade, blade], { random: () => 0 });
+  const recover = instance("recover"), block = instance("block");
+  blade.hand = [recover, block];
+  game.rememberPrivateCard(shade, blade, recover);
+  game.rememberPrivateCard(shade, blade, block);
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(shade, blade, 1, null, { purpose: "plunder" })[0];
+  assert.equal(chosen, block); // 影客：recover 11 < block 12
+
+  const medic = makePlayer("medic", 2, "dawn", "ai", 2);
+  const bladeTwo = makePlayer("blade-two", 3, "dusk", "ai", 0);
+  const { game: medicGame } = makeGame([medic, bladeTwo], { random: () => 0 });
+  const recoverTwo = instance("recover"), blockTwo = instance("block");
+  bladeTwo.hand = [recoverTwo, blockTwo];
+  medicGame.rememberPrivateCard(medic, bladeTwo, recoverTwo);
+  medicGame.rememberPrivateCard(medic, bladeTwo, blockTwo);
+  const chosenMedic = medicGame.aiController.cardSelector.chooseHiddenCards(medic, bladeTwo, 1, null, { purpose: "plunder" })[0];
+  assert.equal(chosenMedic, recoverTwo); // 灵医：recover 14 > block 12
+});
+
+test("掠夺目标角色影响已知手牌选择", () => {
+  const blade = makePlayer("blade", 0, "dawn", "ai", 0);
+  const ember = makePlayer("ember", 1, "dusk", "ai", 4);
+  const { game } = makeGame([blade, ember], { random: () => 0 });
+  const assault = instance("assault"), block = instance("block");
+  ember.hand = [assault, block];
+  game.rememberPrivateCard(blade, ember, assault);
+  game.rememberPrivateCard(blade, ember, block);
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(blade, ember, 1, null, { purpose: "plunder" })[0];
+  assert.equal(chosen, assault); // 同分保持较早位置
+
+  const bladeTwo = makePlayer("blade-two", 0, "dawn", "ai", 0);
+  const warden = makePlayer("warden", 1, "dusk", "ai", 1);
+  const { game: wardenGame } = makeGame([bladeTwo, warden], { random: () => 0 });
+  const assaultTwo = instance("assault"), blockTwo = instance("block");
+  warden.hand = [assaultTwo, blockTwo];
+  wardenGame.rememberPrivateCard(bladeTwo, warden, assaultTwo);
+  wardenGame.rememberPrivateCard(bladeTwo, warden, blockTwo);
+  const chosenWarden = wardenGame.aiController.cardSelector.chooseHiddenCards(bladeTwo, warden, 1, null, { purpose: "plunder" })[0];
+  assert.equal(chosenWarden, blockTwo); // 守誓者：assault 8 < block 12
+});
+
+test("掠夺未知敌方牌组合效用为 8", () => {
+  const medic = makePlayer("medic", 0, "dawn", "ai", 2);
+  const warden = makePlayer("warden", 1, "dusk", "ai", 1);
+  let randomCalls = 0;
+  const { game } = makeGame([medic, warden], { random: () => { randomCalls += 1; return 0; } });
+  const knownAssault = instance("assault"), unknown = instance("counter");
+  warden.hand = [knownAssault, unknown];
+  game.rememberPrivateCard(medic, warden, knownAssault);
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(medic, warden, 1, null, { purpose: "plunder" })[0];
+  assert.equal(chosen, unknown); // 已知 6 < 未知 8
+  assert.equal(randomCalls, 1);
+  assert.equal(UNKNOWN_HAND_EXPECTED_VALUE, 4);
+});
+
+test("掠夺不因未知实体真实牌面改变选择位置", () => {
+  const build = (unknownCard) => {
+    const medic = makePlayer("medic", 0, "dawn", "ai", 2);
+    const warden = makePlayer("warden", 1, "dusk", "ai", 1);
+    const { game } = makeGame([medic, warden], { random: () => 0.5 });
+    const knownAssault = instance("assault");
+    warden.hand = [knownAssault, unknownCard];
+    game.rememberPrivateCard(medic, warden, knownAssault);
+    return { game, medic, warden };
+  };
+  const high = build(instance("counter"));
+  const low = build(instance("charge"));
+  const highChosen = high.game.aiController.cardSelector.chooseHiddenCards(high.medic, high.warden, 1, null, { purpose: "plunder" })[0];
+  const lowChosen = low.game.aiController.cardSelector.chooseHiddenCards(low.medic, low.warden, 1, null, { purpose: "plunder" })[0];
+  assert.equal(highChosen, high.warden.hand[1]);
+  assert.equal(lowChosen, low.warden.hand[1]);
+});
+
+test("掠夺手牌与装备比较使用双角色效用", () => {
+  const medic = makePlayer("medic", 0, "dawn", "ai", 2);
+  const blade = makePlayer("blade", 1, "dusk", "ai", 0);
+  const { game } = makeGame([medic, blade], { random: () => 0 });
+  const recover = instance("recover");
+  blade.hand = [recover];
+  blade.equipment = instance("energyDevice");
+  game.rememberPrivateCard(medic, blade, recover);
+  const chosen = game.aiController.cardSelector.chooseZoneCard(medic, blade, { purpose: "plunder" });
+  assert.equal(chosen.zone, "hand");
+  assert.equal(chosen.card, recover); // recover 14 > energyDevice 13
+});
+
+test("掠夺同分时优先手牌", () => {
+  const medic = makePlayer("medic", 0, "dawn", "ai", 2);
+  const blade = makePlayer("blade", 1, "dusk", "ai", 0);
+  const { game } = makeGame([medic, blade], { random: () => 0 });
+  const plunder = instance("plunder");
+  blade.hand = [plunder];
+  blade.equipment = instance("energyDevice");
+  game.rememberPrivateCard(medic, blade, plunder);
+  const chosen = game.aiController.cardSelector.chooseZoneCard(medic, blade, { purpose: "plunder" });
+  assert.equal(chosen.zone, "hand");
+  assert.equal(chosen.card, plunder); // 均为 13，同分优先手牌
+});
+
+test("同阵营掠夺辅助语义使用差值而非相加", () => {
+  const blade = makePlayer("blade", 0, "dawn", "ai", 0);
+  const warden = makePlayer("warden", 1, "dawn", "ai", 1);
+  const { game } = makeGame([blade, warden], { random: () => 0 });
+  const knownBlock = instance("block"), unknown = instance("counter");
+  warden.hand = [knownBlock, unknown];
+  game.rememberPrivateCard(blade, warden, knownBlock);
+  const chosen = game.aiController.cardSelector.chooseHiddenCards(blade, warden, 1, null, { purpose: "plunder" })[0];
+  assert.equal(chosen, unknown); // 同阵营 block：5-7=-2 < 未知 0；若相加则为 12
 });
 
 let passed = 0;
