@@ -3543,7 +3543,7 @@ test("破坏模拟不读取目标隐藏 hand 实体定义", () => {
   Object.defineProperty(hidden, "definitionId", { enumerable:true, get(){ throw new Error("读取了隐藏牌定义"); } });
   target.hand = [hidden];
   const simulator = new AiSimulator({ players:[] });
-  const selection = simulator.chooseSimulatedResourceSelection(actor, target, "destroy");
+  const selection = simulator.chooseSimulatedResourceSelection({ players: [] }, actor, target, "destroy");
   assert.equal(selection.zone, "equipment");
 
   const buildState = (hiddenDefinitionId) => ({ players:[
@@ -3716,7 +3716,7 @@ test("掠夺模拟不读取目标隐藏 hand 实体定义", () => {
   Object.defineProperty(hidden, "definitionId", { enumerable:true, get(){ throw new Error("读取了隐藏牌定义"); } });
   target.hand = [hidden];
   const simulator = new AiSimulator({ players:[] });
-  const selection = simulator.chooseSimulatedResourceSelection(actor, target, "plunder");
+  const selection = simulator.chooseSimulatedResourceSelection({ players: [] }, actor, target, "plunder");
   assert.equal(selection.zone, "hand");
 
   const build = (hiddenDefinitionId) => {
@@ -4188,6 +4188,224 @@ test("动态未知：knowledge 缺失时固定回退", () => {
 test("动态未知：模拟器未接入动态计数", async () => {
   const source = await readFile(projectFile("js/ai/AiSimulator.js"), "utf8");
   assert.doesNotMatch(source, /remainingCounts/);
+});
+
+test("可见状态：携带剩余计数副本且不修改输入", () => {
+  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
+  const { game } = makeGame([actor, enemy]);
+  const counts = { assault: 3, block: 1 };
+  const snapshot = JSON.stringify(counts);
+  const visible = createAiVisibleState(actor.id, game.state, counts);
+  assert.deepEqual(visible.remainingCardCounts, counts);
+  assert.notEqual(visible.remainingCardCounts, counts);
+  assert.equal(JSON.stringify(counts), snapshot);
+});
+
+test("可见状态：两参数调用兼容且计数为 null", () => {
+  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
+  const { game } = makeGame([actor, enemy]);
+  const visible = createAiVisibleState(actor.id, game.state);
+  assert.equal(visible.remainingCardCounts, null);
+  assert.equal(visible.players.length, 2);
+});
+
+test("可见状态：不自行计算剩余计数", () => {
+  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
+  const { game } = makeGame([actor, enemy]);
+  const visible = createAiVisibleState(actor.id, game.state, { assault: 1 });
+  game.state.publicCardPool.push({ id:"p", definitionId:"block" });
+  assert.deepEqual(visible.remainingCardCounts, { assault: 1 });
+  assert.equal("remainingCounts" in visible, false);
+});
+
+test("模拟器动态：AIController 每次行动只计算一次当前 viewer 计数", async () => {
+  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
+  const { game } = makeGame([actor, enemy]);
+  let captured = null, calls = 0;
+  game.aiController.knowledge.remainingCounts = (viewer) => { captured = viewer; calls += 1; return { assault: 1 }; };
+  const plan = {};
+  game.aiController.planner.plan = async (player, visible) => { plan.player = player; plan.visible = visible; return { type:"end" }; };
+  await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+  assert.equal(captured, actor);
+  assert.equal(calls, 1);
+  assert.equal(plan.visible.remainingCardCounts.assault, 1);
+});
+
+test("模拟器动态：destroy 使用动态未知 owner 期望", () => {
+  const run = (counts) => {
+    const state = { remainingCardCounts: counts, players:[
+      { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, hand:[{id:"use",definitionId:"destroy"}], equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:0 },
+      { id:"t", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, knownCards:[], equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1, counterProbability:0 }
+    ]};
+    return new AiSimulator(state).apply(state, { type:"card", card:{id:"use",definitionId:"destroy"}, targets:[{id:"t"}] }, "a").players[1];
+  };
+  const fixed = run(null); // 未知 4 < 装备 6 → 装备
+  assert.ok(Math.abs(fixed.equipmentRetentionProbability - 0) < 1e-9);
+  const dynamic = run({ counter: 7, defenseDevice: 1 }); // 动态 7.125 > 6 → 手牌
+  assert.ok(Math.abs(dynamic.handCount - 0) < 1e-9);
+  assert.equal(dynamic.equipmentRetentionProbability, 1);
+});
+
+test("模拟器动态：plunder 使用动态 actor+owner 期望", () => {
+  const run = (counts) => {
+    const state = { remainingCardCounts: counts, players:[
+      { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"spirit-medic", alive:true, hp:4, maxHp:4, handCount:1, hand:[{id:"use",definitionId:"plunder"}], equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:0 },
+      { id:"t", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, knownCards:[], equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1, counterProbability:0 }
+    ]};
+    const next = new AiSimulator(state).apply(state, { type:"card", card:{id:"use",definitionId:"plunder"}, targets:[{id:"t"}] }, "a");
+    return { actor:next.players[0], target:next.players[1] };
+  };
+  const fixed = run(null); // 未知 8 < 装备 13 → 装备
+  assert.ok(Math.abs(fixed.target.equipmentRetentionProbability - 0) < 1e-9);
+  assert.equal(fixed.actor.handCount, 1);
+  const dynamic = run({ counter: 7, defenseDevice: 1 }); // 动态 15.125 > 13 → 手牌
+  assert.ok(Math.abs(dynamic.target.handCount - 0) < 1e-9);
+  assert.equal(dynamic.target.equipmentRetentionProbability, 1);
+});
+
+test("模拟器动态：同阵营 plunder 使用动态差值", () => {
+  const run = (counts) => {
+    const state = { remainingCardCounts: counts, players:[] };
+    const simulator = new AiSimulator(state);
+    const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true, handCount:0 };
+    const owner = { id:"o", battleTeam:"dawn", generalId:"spirit-medic", alive:true, handCount:1, knownCards:[] };
+    return simulator.chooseSimulatedResourceSelection(state, actor, owner, "plunder");
+  };
+  assert.equal(run(null).utility, 0);
+  const dynamic = run({ counter: 7, defenseDevice: 1 });
+  assert.ok(Math.abs(dynamic.utility - (-2)) < 1e-9); // (7*(7-9) + 1*(8-10)) / 8
+  assert.notEqual(dynamic.utility, 0);
+});
+
+test("模拟器动态：缺失与空计数固定回退", () => {
+  const run = (counts) => {
+    const state = { remainingCardCounts: counts, players:[] };
+    const simulator = new AiSimulator(state);
+    const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true, handCount:0 };
+    const enemy = { id:"e", battleTeam:"dusk", generalId:"spirit-medic", alive:true, handCount:1, knownCards:[] };
+    const ally = { id:"y", battleTeam:"dawn", generalId:"spirit-medic", alive:true, handCount:1, knownCards:[] };
+    return {
+      destroy: simulator.chooseSimulatedResourceSelection(state, actor, enemy, "destroy").utility,
+      plunderEnemy: simulator.chooseSimulatedResourceSelection(state, actor, enemy, "plunder").utility,
+      plunderAlly: simulator.chooseSimulatedResourceSelection(state, actor, ally, "plunder").utility
+    };
+  };
+  for (const counts of [null, {}, { assault: 0 }]) {
+    const result = run(counts);
+    assert.equal(result.destroy, 4);
+    assert.equal(result.plunderEnemy, 8);
+    assert.equal(result.plunderAlly, 0);
+  }
+});
+
+test("模拟器动态：与共享候选/区域公式一致", () => {
+  const counts = { counter: 7, defenseDevice: 1 };
+  const state = { remainingCardCounts: counts, players:[] };
+  const simulator = new AiSimulator(state);
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true };
+  const target = { id:"t", battleTeam:"dusk", generalId:"blade-walker", alive:true, handCount:1, knownCards:[], equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1 };
+  const selection = simulator.chooseSimulatedResourceSelection(state, actor, target, "destroy");
+  const handCandidate = chooseBestResourceHandCandidate({ purpose:"destroy", actor, owner:target, knownCards:[], unknownCount:1, remainingCardCounts: counts });
+  const zone = chooseResourceZone({ purpose:"destroy", actor, owner:target, handCandidate, equipmentDefinitionId:"energyDevice" });
+  assert.equal(selection.zone, zone.zone);
+  assert.equal(selection.selectionKind, zone.selectionKind);
+  assert.ok(Math.abs(selection.utility - zone.utility) < 1e-9);
+});
+
+test("模拟器动态：与已知同分时已知胜出", () => {
+  const state = { remainingCardCounts: { scout: 2 }, players:[] };
+  const simulator = new AiSimulator(state);
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true };
+  const target = { id:"t", battleTeam:"dusk", generalId:"blade-walker", alive:true, handCount:2, knownCards:[{ cardId:"k", definitionId:"scout" }] };
+  const selection = simulator.chooseSimulatedResourceSelection(state, actor, target, "destroy");
+  assert.equal(selection.selectionKind, "known");
+  assert.equal(selection.cardId, "k");
+});
+
+test("模拟器动态：手牌与装备同分仍选手牌", () => {
+  const state = { remainingCardCounts: { telescope: 3 }, players:[] };
+  const simulator = new AiSimulator(state);
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true };
+  const target = { id:"t", battleTeam:"dusk", generalId:"blade-walker", alive:true, handCount:1, knownCards:[], equipmentDefinitionId:"telescope", equipmentRetentionProbability:1 };
+  const selection = simulator.chooseSimulatedResourceSelection(state, actor, target, "destroy");
+  assert.equal(selection.zone, "hand");
+});
+
+test("模拟器动态：陈旧 knownCards 回退继续生效", () => {
+  const state = { remainingCardCounts: { counter: 7, defenseDevice: 1 }, players:[] };
+  const simulator = new AiSimulator(state);
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true };
+  const target = { id:"t", battleTeam:"dusk", generalId:"blade-walker", alive:true, handCount:0.5, knownCards:[{ cardId:"r", definitionId:"recover" }], equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1 };
+  const built = simulator.buildSimulatedKnownCards(target);
+  assert.deepEqual(built.knownCards, []);
+  assert.equal(built.unknownCount, 0.5);
+  const before = JSON.stringify(target.knownCards);
+  const selection = simulator.chooseSimulatedResourceSelection(state, actor, target, "destroy");
+  assert.equal(selection.zone, "equipment"); // 动态 7.125 < 军火库 10
+  assert.equal(JSON.stringify(target.knownCards), before);
+});
+
+test("模拟器动态：克隆计数引用隔离", () => {
+  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
+  const { game } = makeGame([actor, enemy]);
+  const counts = { assault: 3, block: 1 };
+  const visible = createAiVisibleState(actor.id, game.state, counts);
+  const simulator = new AiSimulator(visible);
+  const next = simulator.apply(visible, { type:"end" }, actor.id);
+  assert.deepEqual(visible.remainingCardCounts, counts);
+  assert.deepEqual(simulator.initial.remainingCardCounts, counts);
+  assert.deepEqual(next.remainingCardCounts, counts);
+  assert.notEqual(visible.remainingCardCounts, simulator.initial.remainingCardCounts);
+  assert.notEqual(simulator.initial.remainingCardCounts, next.remainingCardCounts);
+});
+
+test("模拟器动态：根节点剩余牌池冻结", () => {
+  const counts = { assault: 3, block: 1 };
+  const targetState = [{ id:"t", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:0 }];
+  const apply = (definitionId) => {
+    const state = { remainingCardCounts: counts, players:[
+      { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, hand:[{id:"c", definitionId}], equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:0 },
+      ...targetState
+    ]};
+    return new AiSimulator(state).apply(state, { type:"card", card:{id:"c", definitionId}, targets:[{id:"t"}] }, "a");
+  };
+  assert.deepEqual(apply("assault").remainingCardCounts, counts);
+  assert.deepEqual(apply("harvest").remainingCardCounts, counts);
+  assert.deepEqual(apply("destroy").remainingCardCounts, counts);
+  assert.deepEqual(apply("plunder").remainingCardCounts, counts);
+  assert.deepEqual(counts, { assault: 3, block: 1 });
+});
+
+test("模拟器动态：未知实体真实定义不泄漏", () => {
+  const counts = { counter: 7, defenseDevice: 1 };
+  const build = (hidden, throwing = false) => {
+    const simulator = new AiSimulator({ remainingCardCounts: counts, players:[] });
+    const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true };
+    const unknown = throwing ? { id:"u" } : { id:"u", definitionId:hidden };
+    if (throwing) {
+      Object.defineProperty(unknown, "definitionId", { enumerable:true, get(){ throw new Error("读取未知定义"); } });
+    }
+    const target = { id:"t", battleTeam:"dusk", generalId:"blade-walker", alive:true, handCount:1, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0, hand:[unknown] };
+    return simulator.chooseSimulatedResourceSelection({ remainingCardCounts: counts, players:[] }, actor, target, "destroy");
+  };
+  const normal = build("counter");
+  const throwing = build("charge", true);
+  assert.equal(normal.zone, throwing.zone);
+  assert.equal(normal.selectionKind, throwing.selectionKind);
+  assert.ok(Math.abs(normal.utility - throwing.utility) < 1e-9);
+});
+
+test("模拟器动态：聚合身份模型保持", () => {
+  const state = { remainingCardCounts: { counter: 7, defenseDevice: 1 }, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"spirit-medic", alive:true, hp:4, maxHp:4, handCount:1, hand:[{id:"use",definitionId:"plunder"}], equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:0 },
+    { id:"t", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:0 }
+  ]};
+  const next = new AiSimulator(state).apply(state, { type:"card", card:{id:"use",definitionId:"plunder"}, targets:[{id:"t"}] }, "a");
+  assert.deepEqual(next.players[1].knownCards, []);
+  assert.ok(Math.abs(next.players[1].handCount - 0) < 1e-9);
+  assert.equal(next.players[0].handCount, 1);
+  assert.deepEqual(next.players[0].hand, []);
+  assert.ok(!("availabilityBranches" in next.players[0]));
 });
 
 let passed = 0;

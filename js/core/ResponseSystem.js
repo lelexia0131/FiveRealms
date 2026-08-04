@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-dynamic-resource-unknown-v75";
-import { createId } from "../utils/helpers.js?build=20260804-dynamic-resource-unknown-v75";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-dynamic-resource-unknown-v75";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-dynamic-resource-unknown-v75";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-dynamic-resource-sim-v76";
+import { createId } from "../utils/helpers.js?build=20260804-dynamic-resource-sim-v76";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260804-dynamic-resource-sim-v76";
+import { RuleEngine } from "./RuleEngine.js?build=20260804-dynamic-resource-sim-v76";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

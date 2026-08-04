@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260804-dynamic-resource-unknown-v75";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260804-dynamic-resource-unknown-v75";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260804-dynamic-resource-unknown-v75";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260804-dynamic-resource-unknown-v75";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260804-dynamic-resource-unknown-v75";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260804-dynamic-resource-unknown-v75";
-import { AiPlanner } from "./AiPlanner.js?build=20260804-dynamic-resource-unknown-v75";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260804-dynamic-resource-sim-v76";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260804-dynamic-resource-sim-v76";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260804-dynamic-resource-sim-v76";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260804-dynamic-resource-sim-v76";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260804-dynamic-resource-sim-v76";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260804-dynamic-resource-sim-v76";
+import { AiPlanner } from "./AiPlanner.js?build=20260804-dynamic-resource-sim-v76";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {
@@ -20,7 +20,8 @@ export class AIController {
 
   getLegalActions(player) { return this.actionGenerator.generate(player); }
   async selectAction(player, options = {}) {
-    const visible = createAiVisibleState(player.id, this.game.state);
+    const remainingCardCounts = this.knowledge.remainingCounts(player);
+    const visible = createAiVisibleState(player.id, this.game.state, remainingCardCounts);
     return this.planner.plan(player, visible, this.getLegalActions(player), options);
   }
   /** 将上一棵搜索树里的动作描述重新绑定到当前真实合法动作；状态变化后匹配失败即要求重规划。 */
