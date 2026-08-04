@@ -553,11 +553,46 @@ test("反制、强制突袭与濒死调息显示完整持有数量", async () =>
 test("响应事件中的角色和卡牌名称会在写入 DOM 前安全转义", async () => { const responder=makePlayer("h",0,"dawn","human"),source={id:"source",name:'<img src=x onerror=alert(1)>'},target=responder,card={name:'<script>bad()</script>',definitionId:"assault"},presentation=buildResponsePresentation(responder,"block",{source,target,card},1,0,"格挡");const previousWindow=globalThis.window;globalThis.window={setInterval,clearInterval};const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};const fake={responseState:null,elements:{response_panel:panel},game:{cleanupManager:{delay:()=>new Promise(()=>{})}},render(){}};try{const pending=UIManager.prototype.requestResponse.call(fake,{id:"escape-response",requiredCount:1,legalCardIds:[],timeoutMs:5000,presentation},"格挡");assert.doesNotMatch(panel.innerHTML,/<img|<script>/);assert.match(panel.innerHTML,/&lt;img/);assert.match(panel.innerHTML,/&lt;script/);fake.responseState.resolve(false);assert.equal((await pending).status,"declined");}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
 test("主动技能按钮只显示技能名称", () => { assert.equal(skillButtonLabel({id:"allIn",name:"孤注",cost:"all"}),"孤注");assert.equal(skillButtonLabel({id:"hunt",name:"猎杀",cost:2}),"猎杀");assert.equal(skillButtonLabel(null),"主动技能"); });
 test("突袭在中央结算区与使用日志中显示作用对象", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game,ui}=makeGame([a,b]);const assault=instance("assault");a.hand.push(assault);await game.playCard(a,assault,[b]);assert.equal(ui.currentCards[0].targetLabel,b.name);assert.ok(ui.logs.some((message)=>message===`${a.name}使用了「突袭」，作用对象：${b.name}。`)); });
-test("借势第一目标严格要求其他存活角色拥有真实装备且当前有普通突袭目标", () => {
-  const actor=makePlayer("actor",0,"dawn"),valid=makePlayer("valid",1,"dusk"),empty=makePlayer("empty",2,"dusk"),dead=makePlayer("dead",3,"dusk");
+test("借势第一目标要求真实装备且至少存在一个距离合法第二目标", () => {
+  const actor=makePlayer("actor",0,"dawn"),valid=makePlayer("valid",1,"dawn"),empty=makePlayer("empty",2,"dawn"),dead=makePlayer("dead",3,"dawn");
   valid.equipment=instance("energyDevice");dead.equipment=instance("telescope");dead.alive=false;empty.statuses.virtualEquipment={definitionId:"battleDevice"};
-  const {game}=makeGame([actor,valid,empty,dead]);assert.deepEqual(RuleEngine.getLeverageFirstTargets(game,actor),[valid]);
+  const {game}=makeGame([actor,valid,empty,dead]);assert.deepEqual(RuleEngine.getLegalAssaultTargets(game,valid),[]);
+  assert.ok(RuleEngine.getAssaultTargetCandidates(game,valid).includes(actor));assert.deepEqual(RuleEngine.getLeverageFirstTargets(game,actor),[valid]);
   valid.turnFlags.attackUsed=valid.turnFlags.attackLimit;assert.deepEqual(RuleEngine.getLeverageFirstTargets(game,actor),[valid]);
+});
+test("借势核心第一目标筛选不要求普通突袭敌人且允许同阵营第二目标", () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dawn"),ally=makePlayer("ally",2,"dawn"),use=instance("leverage");actor.hand.push(use);first.equipment=instance("energyDevice");
+  const {game}=makeGame([actor,first,ally]);
+  assert.deepEqual(RuleEngine.getLegalAssaultTargets(game,first),[]);assert.ok(RuleEngine.getAssaultTargetCandidates(game,first).includes(actor));
+  assert.ok(RuleEngine.getLeverageFirstTargets(game,actor).includes(first));assert.ok(!RuleEngine.getLeverageFirstTargets(game,actor).includes(actor));
+  assert.equal(RuleEngine.canPlayCard(game,actor,use).ok,true);
+});
+test("AI 根节点在无普通突袭敌人时仍生成同阵营借势意图", () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dawn"),ally=makePlayer("ally",2,"dawn"),use=instance("leverage");actor.hand.push(use);first.equipment=instance("energyDevice");
+  const {game}=makeGame([actor,first,ally]);assert.deepEqual(RuleEngine.getLegalAssaultTargets(game,first),[]);
+  const actions=game.aiController.actionGenerator.generate(actor).filter((action)=>action.card?.id===use.id);
+  assert.ok(actions.some((action)=>action.selection.firstTargetId===first.id&&action.selection.equipmentCardId===first.equipment.id&&action.selection.secondTargetId===actor.id));
+});
+test("AI 深层生成在无普通突袭敌人时仍枚举同阵营借势第二目标", () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dawn"),ally=makePlayer("ally",2,"dawn"),use=instance("leverage");actor.hand.push(use);first.equipment=instance("energyDevice");
+  const {game}=makeGame([actor,first,ally]);const visible=createAiVisibleState(actor.id,game.state),visibleFirst=visible.players.find((player)=>player.id===first.id);
+  const simulationGame={state:{players:visible.players}};
+  assert.equal(RuleEngine.getLegalAssaultTargets(simulationGame,visibleFirst).length,0);assert.ok(RuleEngine.getAssaultTargetCandidates(simulationGame,visibleFirst).some((player)=>player.id===actor.id));
+  const deepActions=game.aiController.actionGenerator.generateFromVisible(visible,actor.id).filter((action)=>action.card?.id===use.id);
+  assert.ok(deepActions.some((action)=>action.selection.firstTargetId===first.id&&action.selection.equipmentCardId===null&&action.selection.equipmentDefinitionId==="energyDevice"&&action.selection.secondTargetId===actor.id));
+});
+test("真人借势无普通突袭敌人时仍可选择同阵营第一目标和使用者为第二目标", async () => {
+  const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dawn"),use=instance("leverage"),equipment=instance("energyDevice");actor.hand.push(use);first.equipment=equipment;const {game}=makeGame([actor,first]);
+  let call=0;const controller=new InteractionController({requestTarget:async(players)=>{call+=1;return call===1?players.find((player)=>player.id==="first"):players.find((player)=>player.id==="actor");}});
+  controller.requestConfirmation=async()=>true;
+  const selection=await controller.requestCardFlow(game,actor,use,[]);
+  assert.deepEqual(selection,{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});
+});
+test("借势第一目标没有距离合法第二目标时仍被排除", () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dawn"),ally=makePlayer("ally",2,"dawn"),enemy=makePlayer("enemy",3,"dusk"),tail=makePlayer("tail",4,"dawn");first.equipment=instance("energyDevice");
+  actor.equipment=instance("barrierDevice");ally.equipment=instance("barrierDevice");enemy.equipment=instance("barrierDevice");tail.equipment=instance("barrierDevice");
+  const {game}=makeGame([actor,first,ally,enemy,tail]);
+  assert.deepEqual(RuleEngine.getAssaultTargetCandidates(game,first),[]);assert.ok(!RuleEngine.getLeverageFirstTargets(game,actor).includes(first));
 });
 test("借势第一目标筛选完全不读取手牌或突袭次数", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),equipment=instance("energyDevice");first.equipment=equipment;const {game}=makeGame([actor,first]);
@@ -570,9 +605,11 @@ test("借势可指定距离外队友为第一目标且只检查其对第二目�
   assert.equal(DistanceSystem.getDistance(game,actor,farAlly),2);assert.ok(RuleEngine.getLeverageFirstTargets(game,actor).includes(farAlly));assert.ok(RuleEngine.getLegalAssaultTargets(game,farAlly).includes(enemy));
   await game.playCard(actor,use,[],{firstTargetId:farAlly.id,equipmentCardId:equipment.id,secondTargetId:enemy.id});assert.equal(farAlly.equipment,null);assert.ok(actor.hand.includes(equipment));
 });
-test("借势第二目标复用普通突袭列表并允许选择借势使用者本人", () => {
-  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk");first.equipment=instance("energyDevice");
-  const {game}=makeGame([actor,first,ally]);const targets=RuleEngine.getLegalAssaultTargets(game,first);assert.ok(targets.includes(actor));assert.ok(!targets.includes(first));assert.ok(!targets.includes(ally));
+test("借势第二目标只按第一目标攻击距离筛选且允许同阵营与使用者本人", () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk"),far=makePlayer("far",3,"dawn"),tail=makePlayer("tail",4,"dawn");first.equipment=instance("energyDevice");
+  const {game}=makeGame([actor,first,ally,far,tail]);const targets=RuleEngine.getAssaultTargetCandidates(game,first);
+  assert.ok(targets.includes(actor));assert.ok(targets.includes(ally));assert.ok(!targets.includes(first));assert.ok(!targets.includes(far));assert.ok(!targets.includes(tail));
+  assert.ok(!RuleEngine.getLegalAssaultTargets(game,first).includes(ally));
 });
 test("借势选择阶段取消不会消耗卡牌或留下状态变化", async () => {
   const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk"),use=instance("leverage"),equipment=instance("energyDevice");actor.hand.push(use);first.equipment=equipment;const {game}=makeGame([actor,first]);const controller=new InteractionController({requestTarget:async()=>null});const logCount=game.state.logs.length;
@@ -623,9 +660,37 @@ test("借势响应前任一目标离场会取消且不按拒绝转移装备", as
     await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:second.id});assert.equal(first.equipment,equipment);assert.ok(!actor.hand.includes(equipment));assert.ok(game.state.logs.some((entry)=>entry.message.includes("目标已离场")));
   }
 });
-test("AI 主动借势只枚举公开装备与第一目标普通突袭合法目标", () => {
+test("AI 主动借势第一目标需有距离合法第二目标且第二目标只按距离枚举", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk"),far=makePlayer("far",3,"dawn"),tail=makePlayer("tail",4,"dawn"),use=instance("leverage");actor.hand.push(use);first.equipment=instance("energyDevice");const {game}=makeGame([actor,first,ally,far,tail]);
-  const actions=game.aiController.getLegalActions(actor).filter((action)=>action.card?.id===use.id);assert.ok(actions.length>0);for(const action of actions){assert.equal(action.selection.firstTargetId,first.id);assert.equal(action.selection.equipmentCardId,first.equipment.id);assert.ok(RuleEngine.getLegalAssaultTargets(game,first).includes(action.targets[1]));}assert.ok(actions.some((action)=>action.targets[1]===actor));assert.ok(!actions.some((action)=>action.targets[1]===far));
+  const actions=game.aiController.getLegalActions(actor).filter((action)=>action.card?.id===use.id);assert.ok(actions.length>0);for(const action of actions){assert.equal(action.selection.firstTargetId,first.id);assert.equal(action.selection.equipmentCardId,first.equipment.id);assert.ok(RuleEngine.getAssaultTargetCandidates(game,first).includes(action.targets[1]));}assert.ok(actions.some((action)=>action.targets[1]===actor));assert.ok(actions.some((action)=>action.targets[1]===ally));assert.ok(!actions.some((action)=>action.targets[1]===far));assert.ok(!actions.some((action)=>action.targets[1]===tail));
+});
+test("借势第二目标选择不读取第一目标手牌或突袭次数", () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk"),equipment=instance("energyDevice");first.equipment=equipment;const {game}=makeGame([actor,first,ally]);
+  first.hand=new Proxy([], {get(){throw new Error("借势第二目标筛选不应读取手牌");}});
+  first.turnFlags=new Proxy(first.turnFlags,{get(target,key){if(key==="attackUsed"||key==="attackLimit")throw new Error("借势第二目标筛选不应读取突袭次数");return Reflect.get(target,key);}});
+  const targets=RuleEngine.getAssaultTargetCandidates(game,first);assert.ok(targets.includes(actor));assert.ok(targets.includes(ally));
+});
+test("借势第二目标距离按第一目标到第二目标计算而非借势使用者", () => {
+  const user=makePlayer("user",0,"dawn"),screen=makePlayer("screen",1,"dawn"),first=makePlayer("first",2,"dusk"),second=makePlayer("second",3,"dusk"),tail=makePlayer("tail",4,"dawn");first.equipment=instance("energyDevice");const {game}=makeGame([user,screen,first,second,tail]);
+  assert.equal(DistanceSystem.getDistance(game,first,second),1);assert.equal(DistanceSystem.getDistance(game,user,second),2);
+  const targets=RuleEngine.getAssaultTargetCandidates(game,first);assert.ok(targets.includes(second));
+});
+test("借势可指定距离内同阵营第二目标且核心接受该选择", async () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","human"),ally=makePlayer("ally",2,"dusk"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;const {game,ui}=makeGame([actor,first,ally]);
+  assert.equal(await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:ally.id}),true);
+  assert.equal(ui.responseRequests.some((request)=>request.type==="leverageAssault"),false);assert.equal(first.equipment,null);assert.ok(actor.hand.includes(equipment));
+});
+test("真人借势可选择距离内同阵营第二目标", async () => {
+  const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;const {game}=makeGame([actor,first,ally]);
+  let call=0;const controller=new InteractionController({requestTarget:async(players)=>{call+=1;return call===1?players.find((player)=>player.id==="first"):players.find((player)=>player.id==="ally");}});
+  controller.requestConfirmation=async()=>true;
+  const selection=await controller.requestCardFlow(game,actor,use,[]);
+  assert.deepEqual(selection,{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:ally.id});
+});
+test("借势第二目标候选枚举不提前交出装备或结算突袭", () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk"),equipment=instance("energyDevice"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;const {game}=makeGame([actor,first,ally]);const logs=game.state.logs.length;
+  RuleEngine.getAssaultTargetCandidates(game,first);
+  assert.equal(first.equipment,equipment);assert.equal(first.turnFlags.attackUsed,0);assert.ok(first.hand.includes(assault));assert.ok(actor.hand.includes(use));assert.equal(game.state.logs.length,logs);
 });
 test("AI 不会因估计没有突袭或次数用尽删除合法借势组合", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),use=instance("leverage");actor.hand.push(use);first.equipment=instance("energyDevice");const {game}=makeGame([actor,first]);first.turnFlags.attackUsed=first.turnFlags.attackLimit;
