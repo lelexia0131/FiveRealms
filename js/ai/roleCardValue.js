@@ -6,7 +6,7 @@
  * 后续新增角色或卡牌时，未配置差值即可立即使用基础值。
  */
 import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-transfer-self-source-v67";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260804-transfer-self-source-v67";
+import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260804-transfer-self-source-v67";
 
 /**
  * 角色 × 卡牌稀疏差值表。
@@ -14,7 +14,183 @@ import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260804-t
  * 本阶段保持为空；后续只记录非零差值，禁止写入完整矩阵。
  * 未来添加角色条目时，必须同时 Object.freeze 该角色的嵌套差值对象。
  */
-export const ROLE_CARD_VALUE_DELTAS = Object.freeze({});
+export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
+  "blade-walker": Object.freeze({
+    assault: 1,
+    block: -1,
+    charge: -1,
+    scout: -1,
+    transfer: -1,
+    exposeWeakness: 1,
+    shockwave: 1,
+    provoke: 1,
+    leverage: 1,
+    destroy: 1,
+    counter: -1,
+    harvest: -1,
+    duel: 1,
+    mutualBenefit: -1,
+    symbiosis: -1,
+    energyDevice: -1,
+    recycleDevice: -1,
+    defenseDevice: -1,
+    battleDevice: 1,
+    telescope: 1,
+    barrierDevice: -1
+  }),
+
+  "oath-warden": Object.freeze({
+    assault: -1,
+    recover: 1,
+    block: 1,
+    shield: 1,
+    transfer: 1,
+    exposeWeakness: -1,
+    shockwave: -1,
+    provoke: -1,
+    leverage: -1,
+    plunder: -1,
+    destroy: -1,
+    counter: 1,
+    duel: -1,
+    mutualBenefit: -1,
+    symbiosis: 1,
+    recycleDevice: -1,
+    defenseDevice: 1,
+    battleDevice: -1,
+    telescope: -1,
+    barrierDevice: 1
+  }),
+
+  "spirit-medic": Object.freeze({
+    assault: -1,
+    recover: 2,
+    block: 1,
+    shield: 1,
+    scout: 1,
+    transfer: 1,
+    exposeWeakness: -1,
+    shockwave: -1,
+    provoke: -1,
+    leverage: -1,
+    plunder: -1,
+    destroy: -1,
+    counter: 1,
+    harvest: 1,
+    duel: -1,
+    symbiosis: 2,
+    recycleDevice: -1,
+    defenseDevice: 1,
+    battleDevice: -1,
+    telescope: -1,
+    barrierDevice: 1
+  }),
+
+  "shade-agent": Object.freeze({
+    recover: -1,
+    block: 1,
+    charge: -1,
+    scout: 2,
+    exposeWeakness: 1,
+    leverage: 1,
+    plunder: 1,
+    destroy: 1,
+    energyDevice: -1,
+    recycleDevice: 1,
+    telescope: 1
+  }),
+
+  "ember-magus": Object.freeze({
+    assault: 1,
+    recover: -1,
+    block: -1,
+    charge: 1,
+    shield: -1,
+    scout: -1,
+    transfer: -1,
+    exposeWeakness: -1,
+    shockwave: 1,
+    provoke: 1,
+    destroy: 1,
+    counter: -1,
+    harvest: -1,
+    duel: -1,
+    mutualBenefit: -1,
+    symbiosis: -1,
+    energyDevice: 1,
+    recycleDevice: 1,
+    defenseDevice: -1,
+    battleDevice: 1,
+    barrierDevice: -1
+  }),
+
+  "trail-hunter": Object.freeze({
+    assault: 1,
+    recover: -1,
+    block: -1,
+    shield: -1,
+    scout: -1,
+    transfer: -1,
+    exposeWeakness: 1,
+    leverage: 1,
+    destroy: 1,
+    counter: -1,
+    harvest: -1,
+    duel: 1,
+    mutualBenefit: -1,
+    symbiosis: -1,
+    recycleDevice: -1,
+    defenseDevice: -1,
+    battleDevice: 1,
+    telescope: 1,
+    barrierDevice: -1
+  }),
+
+  "fate-gambler": Object.freeze({
+    recover: -1,
+    block: -1,
+    charge: 1,
+    shield: -1,
+    scout: -1,
+    transfer: -1,
+    exposeWeakness: 1,
+    shockwave: 1,
+    provoke: 1,
+    plunder: 1,
+    destroy: -1,
+    counter: -1,
+    harvest: 1,
+    duel: 1,
+    mutualBenefit: 1,
+    symbiosis: -1,
+    energyDevice: 1,
+    recycleDevice: 1,
+    defenseDevice: -1
+  }),
+
+  "resonance-tuner": Object.freeze({
+    assault: -1,
+    block: 1,
+    shield: 1,
+    scout: 1,
+    transfer: 2,
+    exposeWeakness: -1,
+    shockwave: -1,
+    provoke: -1,
+    leverage: -1,
+    destroy: -1,
+    counter: 1,
+    harvest: 1,
+    duel: -1,
+    mutualBenefit: 2,
+    symbiosis: 1,
+    recycleDevice: 1,
+    defenseDevice: 1,
+    battleDevice: -1,
+    telescope: -1,
+    barrierDevice: 1
+  })
+});
 
 /**
  * 获取全局基础 aiValue。
@@ -48,20 +224,26 @@ export function getBaseCardAiValue(definitionId, cardDefinitions = CARD_DEFINITI
 export function getRoleCardAiValue(generalId, definitionId, options = {}) {
   const {
     cardDefinitions = CARD_DEFINITIONS,
-    generalDefinitions = GENERAL_DEFINITIONS,
+    generalDefinitions,
     deltas = ROLE_CARD_VALUE_DELTAS
   } = options ?? {};
-  const knownGeneral = Array.isArray(generalDefinitions)
-    && generalDefinitions.some((general) => general?.id === generalId);
+  const knownGeneral = generalDefinitions === undefined
+    ? Object.hasOwn(GENERAL_BY_ID, generalId)
+    : Array.isArray(generalDefinitions) && generalDefinitions.some((general) => general?.id === generalId);
   if (!knownGeneral) {
     throw new Error(`getRoleCardAiValue 未知角色 ID：${generalId}`);
   }
   const base = getBaseCardAiValue(definitionId, cardDefinitions);
   const roleDeltas = deltas?.[generalId];
-  const delta = roleDeltas && typeof roleDeltas === "object"
-    && Object.hasOwn(roleDeltas, definitionId)
-    ? roleDeltas[definitionId]
-    : 0;
+  const hasExplicitDelta = roleDeltas !== null && typeof roleDeltas === "object"
+    && Object.hasOwn(roleDeltas, definitionId);
+  if (!hasExplicitDelta) return base;
+  const delta = roleDeltas[definitionId];
+  if (!Number.isInteger(delta) || delta < -2 || delta > 2) {
+    throw new Error(
+      `getRoleCardAiValue 非法差值：角色 ${generalId}，卡牌 ${definitionId}，差值 ${String(delta)}`
+    );
+  }
   return base + delta;
 }
 

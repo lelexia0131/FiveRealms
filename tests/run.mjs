@@ -2692,12 +2692,14 @@ test("猎印到期覆盖正常回合与首次回合前借势时钟", async () =>
 });
 
 // ---- 角色卡牌价值基础设施（阶段 A）----
-test("角色卡牌价值：空差值表下全部真实角色与卡牌均等于全局基础值", () => {
+test("角色卡牌价值：生产差值表合法且全部真实组合计算正确", () => {
   assert.deepEqual(validateRoleCardValueDeltas(ROLE_CARD_VALUE_DELTAS), []);
   for (const general of GENERAL_DEFINITIONS) {
+    const roleDeltas = ROLE_CARD_VALUE_DELTAS[general.id] ?? {};
     for (const definition of Object.values(CARD_DEFINITIONS)) {
-      assert.equal(getRoleCardAiValue(general.id, definition.definitionId), definition.aiValue);
-      assert.equal(getRoleCardAiValue(general.id, definition.definitionId), getBaseCardAiValue(definition.definitionId));
+      const expectedDelta = roleDeltas[definition.definitionId] ?? 0;
+      assert.equal(getRoleCardAiValue(general.id, definition.definitionId), definition.aiValue + expectedDelta);
+      assert.equal(getRoleCardAiValue(general.id, definition.definitionId), getBaseCardAiValue(definition.definitionId) + expectedDelta);
     }
   }
 });
@@ -2766,9 +2768,77 @@ test("角色卡牌价值：运行时未知角色或卡牌 ID 抛出可定位错�
   assert.throws(() => getRoleCardAiValue(undefined, "assault"), /undefined/);
 });
 
-test("角色卡牌价值：差值配置表不可变", () => {
+test("角色卡牌价值：差值表顶层与全部角色对象均冻结且保持稀疏", () => {
   assert.equal(Object.isFrozen(ROLE_CARD_VALUE_DELTAS), true);
+  for (const [generalId, roleDeltas] of Object.entries(ROLE_CARD_VALUE_DELTAS)) {
+    assert.equal(Object.isFrozen(roleDeltas), true);
+    assert.ok(Object.keys(roleDeltas).length > 0, `${generalId} 不应为空对象`);
+    for (const [definitionId, delta] of Object.entries(roleDeltas)) {
+      assert.notEqual(delta, 0, `${generalId}/${definitionId} 不应显式配置 0`);
+    }
+  }
   assert.throws(() => { ROLE_CARD_VALUE_DELTAS["blade-walker"] = { assault: 1 }; }, TypeError);
+  assert.throws(() => { ROLE_CARD_VALUE_DELTAS["blade-walker"]["assault"] = 2; }, TypeError);
+});
+
+test("角色卡牌价值：Getter 直接拒绝非法差值", () => {
+  for (const badDelta of [0.5, NaN, Infinity, -3, 3, "1"]) {
+    const deltas = Object.freeze({ "blade-walker": Object.freeze({ assault: badDelta }) });
+    assert.throws(() => getRoleCardAiValue("blade-walker", "assault", { deltas }), (error) => {
+      const message = String(error?.message ?? error);
+      return message.includes("blade-walker") && message.includes("assault") && message.includes(String(badDelta));
+    });
+  }
+});
+
+test("角色卡牌价值：Getter 拒绝非法基础值", () => {
+  const badDefinitions = [
+    { aiValue: NaN },
+    { aiValue: Infinity },
+    { aiValue: "4" },
+    { definitionId: "badCard" }
+  ];
+  for (const badDefinition of badDefinitions) {
+    const cardDefinitions = {
+      ...CARD_DEFINITIONS,
+      badCard: Object.freeze({ definitionId: "badCard", ...badDefinition })
+    };
+    assert.throws(() => getBaseCardAiValue("badCard", cardDefinitions), /badCard/);
+    assert.throws(() => getRoleCardAiValue("blade-walker", "badCard", { cardDefinitions }), /badCard/);
+  }
+});
+
+test("角色卡牌价值：首版有效值全部位于 2 到 11", () => {
+  for (const general of GENERAL_DEFINITIONS) {
+    for (const definition of Object.values(CARD_DEFINITIONS)) {
+      const value = getRoleCardAiValue(general.id, definition.definitionId);
+      assert.ok(value >= 2 && value <= 11, `${general.id}/${definition.definitionId}=${value}`);
+    }
+  }
+});
+
+test("角色卡牌价值：角色牌数加权平均差位于 -0.25 到 +0.25", () => {
+  const total = Object.values(CARD_DEFINITIONS).reduce((sum, definition) => sum + definition.count, 0);
+  for (const general of GENERAL_DEFINITIONS) {
+    const roleDeltas = ROLE_CARD_VALUE_DELTAS[general.id] ?? {};
+    const weightedSum = Object.values(CARD_DEFINITIONS).reduce((sum, definition) => (
+      sum + (roleDeltas[definition.definitionId] ?? 0) * definition.count
+    ), 0);
+    const average = weightedSum / total;
+    assert.ok(average >= -0.25 && average <= 0.25, `${general.id} 加权平均 ${average}`);
+  }
+});
+
+test("角色卡牌价值：卡牌跨角色平均差绝对值不超过 0.125", () => {
+  const roleCount = GENERAL_DEFINITIONS.length;
+  for (const definition of Object.values(CARD_DEFINITIONS)) {
+    let sum = 0;
+    for (const general of GENERAL_DEFINITIONS) {
+      sum += ROLE_CARD_VALUE_DELTAS[general.id]?.[definition.definitionId] ?? 0;
+    }
+    const average = sum / roleCount;
+    assert.ok(Math.abs(average) <= 0.125 + 1e-9, `${definition.definitionId} 平均 ${average}`);
+  }
 });
 
 let passed = 0;
