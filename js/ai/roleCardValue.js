@@ -1,0 +1,120 @@
+/**
+ * 角色卡牌价值基础设施（阶段 A）。
+ *
+ * 只提供数据表与纯函数，不接入任何 AI 决策，不修改卡牌配置。
+ * 价值模型：全局基础 aiValue + 稀疏角色差值；未配置的组合自动回退 0。
+ * 后续新增角色或卡牌时，未配置差值即可立即使用基础值。
+ */
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-transfer-self-source-v67";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260804-transfer-self-source-v67";
+
+/**
+ * 角色 × 卡牌稀疏差值表。
+ *
+ * 本阶段保持为空；后续只记录非零差值，禁止写入完整矩阵。
+ * 未来添加角色条目时，必须同时 Object.freeze 该角色的嵌套差值对象。
+ */
+export const ROLE_CARD_VALUE_DELTAS = Object.freeze({});
+
+/**
+ * 获取全局基础 aiValue。
+ *
+ * @param {string} definitionId 卡牌 definitionId
+ * @param {Object} [cardDefinitions] 测试注入用卡牌定义集合，默认 CARD_DEFINITIONS
+ * @returns {number} 全局基础 aiValue
+ */
+export function getBaseCardAiValue(definitionId, cardDefinitions = CARD_DEFINITIONS) {
+  const definition = cardDefinitions[definitionId];
+  if (!definition || !Number.isFinite(definition.aiValue)) {
+    throw new Error(`getBaseCardAiValue 未知卡牌 ID：${definitionId}`);
+  }
+  return definition.aiValue;
+}
+
+/**
+ * 获取角色对某张卡牌的有效 aiValue。
+ *
+ * 有效值 = 全局基础 aiValue + (角色差值 ?? 0)。
+ * 未知角色 ID 或未知卡牌 ID 必须抛错，禁止把拼写错误静默当作中性组合。
+ *
+ * @param {string} generalId 角色 ID（GENERAL_DEFINITIONS 中的 id）
+ * @param {string} definitionId 卡牌 definitionId
+ * @param {Object} [options] 测试注入用配置
+ * @param {Object} [options.cardDefinitions] 默认 CARD_DEFINITIONS
+ * @param {Array} [options.generalDefinitions] 默认 GENERAL_DEFINITIONS
+ * @param {Object} [options.deltas] 默认 ROLE_CARD_VALUE_DELTAS
+ * @returns {number} 角色有效 aiValue
+ */
+export function getRoleCardAiValue(generalId, definitionId, options = {}) {
+  const {
+    cardDefinitions = CARD_DEFINITIONS,
+    generalDefinitions = GENERAL_DEFINITIONS,
+    deltas = ROLE_CARD_VALUE_DELTAS
+  } = options ?? {};
+  const knownGeneral = Array.isArray(generalDefinitions)
+    && generalDefinitions.some((general) => general?.id === generalId);
+  if (!knownGeneral) {
+    throw new Error(`getRoleCardAiValue 未知角色 ID：${generalId}`);
+  }
+  const base = getBaseCardAiValue(definitionId, cardDefinitions);
+  const roleDeltas = deltas?.[generalId];
+  const delta = roleDeltas && typeof roleDeltas === "object"
+    && Object.hasOwn(roleDeltas, definitionId)
+    ? roleDeltas[definitionId]
+    : 0;
+  return base + delta;
+}
+
+/**
+ * 校验稀疏差值表。
+ *
+ * 动态读取 GENERAL_DEFINITIONS 与 CARD_DEFINITIONS（或测试注入集合）：
+ * - 每个角色 ID 必须存在；
+ * - 每个卡牌 ID 必须存在；
+ * - 每个差值必须是 -2..+2 的有限整数；
+ * - 未配置的角色与卡牌完全合法，空表完全合法；
+ * - 已删除或改名后遗留的条目必须校验失败。
+ *
+ * @param {Object} [deltas] 待校验差值表，默认 ROLE_CARD_VALUE_DELTAS
+ * @param {Object} [options] 测试注入用配置
+ * @param {Object} [options.cardDefinitions] 默认 CARD_DEFINITIONS
+ * @param {Array} [options.generalDefinitions] 默认 GENERAL_DEFINITIONS
+ * @returns {string[]} 错误信息数组；空数组表示合法
+ */
+export function validateRoleCardValueDeltas(deltas = ROLE_CARD_VALUE_DELTAS, options = {}) {
+  const {
+    cardDefinitions = CARD_DEFINITIONS,
+    generalDefinitions = GENERAL_DEFINITIONS
+  } = options ?? {};
+  if (deltas === null || typeof deltas !== "object" || Array.isArray(deltas)) {
+    return ["角色差值表必须是对象"];
+  }
+  const generalIds = new Set(
+    Array.isArray(generalDefinitions) ? generalDefinitions.map((general) => general?.id) : []
+  );
+  const errors = [];
+  for (const [generalId, roleDeltas] of Object.entries(deltas)) {
+    if (!generalIds.has(generalId)) {
+      errors.push(`未知角色 ID：${generalId}`);
+      continue;
+    }
+    if (roleDeltas === null || typeof roleDeltas !== "object" || Array.isArray(roleDeltas)) {
+      errors.push(`角色 ${generalId} 的差值必须是对象`);
+      continue;
+    }
+    for (const [definitionId, delta] of Object.entries(roleDeltas)) {
+      if (!Object.hasOwn(cardDefinitions, definitionId)) {
+        errors.push(`未知卡牌 ID：${definitionId}（角色 ${generalId}）`);
+        continue;
+      }
+      if (!Number.isInteger(delta)) {
+        errors.push(`卡牌 ${definitionId}（角色 ${generalId}）的差值必须是有限整数，实际：${String(delta)}`);
+        continue;
+      }
+      if (delta < -2 || delta > 2) {
+        errors.push(`卡牌 ${definitionId}（角色 ${generalId}）的差值超出 -2..+2：${delta}`);
+      }
+    }
+  }
+  return errors;
+}

@@ -29,6 +29,7 @@ import { buildResponsePresentation } from "../js/core/ResponseSystem.js";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import { ACTIVE_SKILLS, hasActiveSkill, hasPassiveSkill, registerPassiveSkills } from "../js/generals/skillRegistry.js";
 import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, expectedHandValue, scoreTransferCombination } from "../js/ai/transferScoring.js";
+import { ROLE_CARD_VALUE_DELTAS, getBaseCardAiValue, getRoleCardAiValue, validateRoleCardValueDeltas } from "../js/ai/roleCardValue.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 const tests = [];
@@ -2688,6 +2689,86 @@ test("猎印到期覆盖正常回合与首次回合前借势时钟", async () =>
   const earlyHunter=makePlayer("early-clock-hunter",0,"dawn","ai",5),earlyTarget=makePlayer("early-clock-target",1,"dusk"),earlyGame=makeGame([earlyHunter,earlyTarget]).game;registerPassiveSkills(earlyGame);
   await earlyGame.eventBus.emit("targetSelected",{type:"targetSelected",source:earlyHunter,card:instance("assault"),targets:[earlyTarget]});assert.equal(earlyTarget.statuses.huntMark.expireAtTurnEnd,1);
   await earlyGame.eventBus.emit("turnStart",{type:"turnStart",player:earlyHunter});await earlyGame.eventBus.emit("turnEnd",{type:"turnEnd",player:earlyHunter});assert.equal(earlyTarget.statuses.huntMark,undefined);
+});
+
+// ---- 角色卡牌价值基础设施（阶段 A）----
+test("角色卡牌价值：空差值表下全部真实角色与卡牌均等于全局基础值", () => {
+  assert.deepEqual(validateRoleCardValueDeltas(ROLE_CARD_VALUE_DELTAS), []);
+  for (const general of GENERAL_DEFINITIONS) {
+    for (const definition of Object.values(CARD_DEFINITIONS)) {
+      assert.equal(getRoleCardAiValue(general.id, definition.definitionId), definition.aiValue);
+      assert.equal(getRoleCardAiValue(general.id, definition.definitionId), getBaseCardAiValue(definition.definitionId));
+    }
+  }
+});
+
+test("角色卡牌价值：新增角色未配置差值时自动回退基础值", () => {
+  const futureGeneralDefinitions = [...GENERAL_DEFINITIONS, Object.freeze({ id: "future-role" })];
+  const deltas = Object.freeze({ "blade-walker": Object.freeze({ assault: 1 }) });
+  for (const definition of Object.values(CARD_DEFINITIONS)) {
+    assert.equal(getRoleCardAiValue("future-role", definition.definitionId, {
+      generalDefinitions: futureGeneralDefinitions,
+      deltas
+    }), definition.aiValue);
+  }
+  assert.deepEqual(validateRoleCardValueDeltas(deltas, { generalDefinitions: futureGeneralDefinitions }), []);
+});
+
+test("角色卡牌价值：新增卡牌未配置差值时自动回退基础值", () => {
+  const futureCardDefinitions = {
+    ...CARD_DEFINITIONS,
+    futureCard: Object.freeze({ definitionId: "futureCard", aiValue: 4 })
+  };
+  const deltas = Object.freeze({ "blade-walker": Object.freeze({ assault: 1 }) });
+  for (const general of GENERAL_DEFINITIONS) {
+    assert.equal(getRoleCardAiValue(general.id, "futureCard", { cardDefinitions: futureCardDefinitions }), 4);
+  }
+  assert.equal(getBaseCardAiValue("futureCard", futureCardDefinitions), 4);
+  assert.deepEqual(validateRoleCardValueDeltas(deltas, { cardDefinitions: futureCardDefinitions }), []);
+});
+
+test("角色卡牌价值：稀疏差值只作用于配置的组合", () => {
+  const deltas = Object.freeze({ "blade-walker": Object.freeze({ assault: 1 }) });
+  assert.deepEqual(validateRoleCardValueDeltas(deltas), []);
+  assert.equal(getRoleCardAiValue("blade-walker", "assault", { deltas }), getBaseCardAiValue("assault") + 1);
+  assert.equal(getRoleCardAiValue("blade-walker", "recover", { deltas }), getBaseCardAiValue("recover"));
+  assert.equal(getRoleCardAiValue("oath-warden", "assault", { deltas }), getBaseCardAiValue("assault"));
+});
+
+test("角色卡牌价值：边界差值 -2 与 +2 合法", () => {
+  const deltas = Object.freeze({
+    "blade-walker": Object.freeze({ assault: -2 }),
+    "oath-warden": Object.freeze({ recover: 2 })
+  });
+  assert.deepEqual(validateRoleCardValueDeltas(deltas), []);
+  assert.equal(getRoleCardAiValue("blade-walker", "assault", { deltas }), getBaseCardAiValue("assault") - 2);
+  assert.equal(getRoleCardAiValue("oath-warden", "recover", { deltas }), getBaseCardAiValue("recover") + 2);
+});
+
+test("角色卡牌价值：无效差值配置被拒绝", () => {
+  const contains = (errors, fragment) => errors.some((message) => message.includes(fragment));
+  assert.ok(contains(validateRoleCardValueDeltas({ "not-a-role": { assault: 1 } }), "not-a-role"));
+  assert.ok(contains(validateRoleCardValueDeltas({ "blade-walker": { "not-a-card": 1 } }), "not-a-card"));
+  assert.ok(contains(validateRoleCardValueDeltas({ "blade-walker": { assault: 0.5 } }), "assault"));
+  assert.ok(contains(validateRoleCardValueDeltas({ "blade-walker": { assault: NaN } }), "assault"));
+  assert.ok(contains(validateRoleCardValueDeltas({ "blade-walker": { assault: Infinity } }), "assault"));
+  assert.ok(contains(validateRoleCardValueDeltas({ "blade-walker": { assault: -3 } }), "-3"));
+  assert.ok(contains(validateRoleCardValueDeltas({ "blade-walker": { assault: 3 } }), "3"));
+  assert.ok(validateRoleCardValueDeltas(null).length > 0);
+  assert.ok(validateRoleCardValueDeltas([]).length > 0);
+  assert.ok(validateRoleCardValueDeltas({ "blade-walker": [] }).length > 0);
+});
+
+test("角色卡牌价值：运行时未知角色或卡牌 ID 抛出可定位错误", () => {
+  assert.throws(() => getRoleCardAiValue("unknown-role", "assault"), /unknown-role/);
+  assert.throws(() => getRoleCardAiValue("blade-walker", "unknown-card"), /unknown-card/);
+  assert.throws(() => getBaseCardAiValue("unknown-card"), /unknown-card/);
+  assert.throws(() => getRoleCardAiValue(undefined, "assault"), /undefined/);
+});
+
+test("角色卡牌价值：差值配置表不可变", () => {
+  assert.equal(Object.isFrozen(ROLE_CARD_VALUE_DELTAS), true);
+  assert.throws(() => { ROLE_CARD_VALUE_DELTAS["blade-walker"] = { assault: 1 }; }, TypeError);
 });
 
 let passed = 0;
