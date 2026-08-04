@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260804-destroy-sim-zone-v72";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-destroy-sim-zone-v72";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260804-plunder-sim-zone-v73";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-plunder-sim-zone-v73";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

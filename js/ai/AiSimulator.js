@@ -2,11 +2,11 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260804-destroy-sim-zone-v72";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-destroy-sim-zone-v72";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260804-destroy-sim-zone-v72";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260804-destroy-sim-zone-v72";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260804-destroy-sim-zone-v72";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260804-plunder-sim-zone-v73";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-plunder-sim-zone-v73";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260804-plunder-sim-zone-v73";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260804-plunder-sim-zone-v73";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260804-plunder-sim-zone-v73";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -19,7 +19,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260804-destroy-sim-zone-v72";
+} from "./AiProbabilityBranches.js?build=20260804-plunder-sim-zone-v73";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -865,15 +865,17 @@ export class AiSimulator {
       actor = state;
       state = { players:[actor, target] };
     }
-    const takeEquipment = target.equipmentDefinitionId && ((target.handCount ?? 0) <= 0 || CARD_DEFINITIONS[target.equipmentDefinitionId]?.aiValue >= 7);
-    if (takeEquipment) {
+    const clampedScale = Math.max(0, Math.min(1, Number(scale) || 0));
+    const selection = this.chooseSimulatedResourceSelection(actor, target, "plunder");
+    if (!selection) return;
+    if (selection.zone === "equipment") {
       const existenceProbability = this.getSimulatedEquipmentProbability(target);
-      const transferProbability = existenceProbability * Math.max(0, Math.min(1, scale));
+      const transferProbability = existenceProbability * clampedScale;
       this.setSimulatedEquipment(target, target.equipmentDefinitionId, existenceProbability - transferProbability);
-      actor.handCount += transferProbability;
-    } else {
-      const transferred = this.consumeRandomHandCards(state, target, scale);
-      actor.handCount += transferred;
+      actor.handCount = (actor.handCount ?? 0) + transferProbability;
+    } else if (selection.zone === "hand") {
+      const transferred = this.consumeRandomHandCards(state, target, clampedScale);
+      actor.handCount = (actor.handCount ?? 0) + transferred;
     }
   }
 

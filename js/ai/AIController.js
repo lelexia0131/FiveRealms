@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260804-destroy-sim-zone-v72";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260804-destroy-sim-zone-v72";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260804-destroy-sim-zone-v72";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260804-destroy-sim-zone-v72";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260804-destroy-sim-zone-v72";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260804-destroy-sim-zone-v72";
-import { AiPlanner } from "./AiPlanner.js?build=20260804-destroy-sim-zone-v72";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260804-plunder-sim-zone-v73";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260804-plunder-sim-zone-v73";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260804-plunder-sim-zone-v73";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260804-plunder-sim-zone-v73";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260804-plunder-sim-zone-v73";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260804-plunder-sim-zone-v73";
+import { AiPlanner } from "./AiPlanner.js?build=20260804-plunder-sim-zone-v73";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {
