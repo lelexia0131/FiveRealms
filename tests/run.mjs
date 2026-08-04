@@ -4408,6 +4408,38 @@ test("模拟器动态：聚合身份模型保持", () => {
   assert.ok(!("availabilityBranches" in next.players[0]));
 });
 
+test("控制器文件名：目录真实文件名为 AiController.js", async () => {
+  const aiDirectoryEntries = await readdir(projectFile("js/ai"));
+  assert.ok(aiDirectoryEntries.includes("AiController.js"));
+  assert.ok(!aiDirectoryEntries.includes(`AI${"Controller.js"}`));
+});
+
+test("控制器文件名：新模块可导入且仍导出 AIController", async () => {
+  const module = await import("../js/ai/AiController.js");
+  assert.equal(typeof module.AIController, "function");
+});
+
+test("控制器文件名：Game 使用新路径且无旧路径", async () => {
+  const source = await readFile(projectFile("js/core/Game.js"), "utf8");
+  assert.ok(source.includes("../ai/AiController.js?build=20260804-ai-controller-filename-v77"));
+  assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
+});
+
+test("控制器文件名：全资源图无旧文件名", async () => {
+  const oldControllerFilename = `AI${"Controller.js"}`;
+  const files = [...(await listJavaScriptFiles()), projectFile("index.html"), projectFile("tests/run.mjs")];
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    assert.ok(!source.includes(oldControllerFilename), `${file} 包含旧文件名`);
+  }
+});
+
+test("控制器文件名：导出类名仍为 AIController", async () => {
+  const module = await import("../js/ai/AiController.js");
+  assert.equal(typeof module.AIController, "function");
+  assert.equal(module.AiController, undefined);
+});
+
 let passed = 0;
 const testPattern = process.env.TEST_PATTERN ? new RegExp(process.env.TEST_PATTERN, "u") : null;
 const selectedTests = testPattern ? tests.filter(({ name }) => testPattern.test(name)) : tests;
