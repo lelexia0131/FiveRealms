@@ -446,6 +446,7 @@ test("赌命者孤注消耗全部能量并摸取等量牌，按30x%概率进入�
     assert.equal(Boolean(gambler.statuses.allIn),expected,`${energy}点能量，随机数${roll}`);
     gambler.energy=1;
     assert.equal(await game.useActiveSkill(gambler,"allIn",[]),false,"一回合只能使用1次");
+    assert.deepEqual(ACTIVE_SKILLS.allIn.canUse(game,gambler),{ok:false,reason:"本回合发动次数已用尽"},"同回合拒绝原因必须是每回合次数限制");
   }
 });
 test("孤注状态不可叠加、跨回合保留，并在下一次突袭完毕后退出", async () => {
@@ -457,9 +458,34 @@ test("孤注状态不可叠加、跨回合保留，并在下一次突袭完毕�
   gambler.resetTurnFlags(game.teamRules.getRules(gambler));
   assert.deepEqual(gambler.statuses.allIn,{assaultBonus:1});
   gambler.energy=1;
-  assert.deepEqual(ACTIVE_SKILLS.allIn.canUse(game,gambler),{ok:false,reason:"已处于孤注状态"});
+  assert.deepEqual(ACTIVE_SKILLS.allIn.canUse(game,gambler),{ok:true,reason:""},"孤注状态存在不再阻止下一回合发动孤注");
   const hp=target.hp;await game.playCard(gambler,assault,[target]);
   assert.equal(target.hp,hp-2);assert.equal(gambler.statuses.allIn,undefined);
+});
+test("已有孤注状态时再次发动孤注不叠加也不删除状态", async () => {
+  for (const roll of [0, .9]) {
+    const gambler=makePlayer(`gambler-restack-${roll}`,0,"dawn","ai",6),enemy=makePlayer(`enemy-restack-${roll}`,1,"dusk");
+    const {game}=makeGame([gambler,enemy],{random:()=>roll});registerPassiveSkills(game);
+    game.state.deck.cards.push(instance("charge"));
+    gambler.statuses.allIn={assaultBonus:1};
+    gambler.energy=1;
+    assert.deepEqual(ACTIVE_SKILLS.allIn.canUse(game,gambler),{ok:true,reason:""},"已有状态时孤注技能可用");
+    assert.equal(await game.useActiveSkill(gambler,"allIn",[]),true);
+    assert.equal(gambler.energy,0);
+    assert.equal(gambler.hand.length,1);
+    assert.deepEqual(gambler.statuses.allIn,{assaultBonus:1},`随机数${roll}时仍只保留单层孤注状态`);
+  }
+});
+test("AI 已有孤注状态时仍生成孤注动作", () => {
+  const gambler=makePlayer("ai-gambler",0,"dawn","ai",6),enemy=makePlayer("ai-gambler-enemy",1,"dusk");
+  const {game}=makeGame([gambler,enemy]);
+  gambler.energy=1;
+  gambler.statuses.allIn={assaultBonus:1};
+  const rootActions=game.aiController.getLegalActions(gambler);
+  assert.ok(rootActions.some((action)=>action.type==="skill"&&action.skill?.id==="allIn"),"根动作生成不得因已有孤注状态排除孤注");
+  const visible=createAiVisibleState(gambler.id,game.state);
+  const deepActions=game.aiController.actionGenerator.generateFromVisible(visible,gambler.id);
+  assert.ok(deepActions.some((action)=>action.type==="skill"&&action.skill?.id==="allIn"),"深层动作生成不得因 assaultBonus 排除孤注");
 });
 test("孤注强化的突袭被格挡后也会退出状态", async () => {
   const gambler=makePlayer("blocked-gambler",0,"dawn","ai",6),target=makePlayer("blocked-target",1,"dusk","human"),ally=makePlayer("blocked-ally",2,"dawn"),assault=instance("assault");

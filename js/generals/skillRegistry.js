@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-target-selection-v58";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260804-target-selection-v58";
-import { randomChoice } from "../utils/helpers.js?build=20260804-target-selection-v58";
-import { Debug } from "../utils/debug.js?build=20260804-target-selection-v58";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-all-in-availability-v59";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260804-all-in-availability-v59";
+import { randomChoice } from "../utils/helpers.js?build=20260804-all-in-availability-v59";
+import { Debug } from "../utils/debug.js?build=20260804-all-in-availability-v59";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -240,8 +240,7 @@ export const ACTIVE_SKILLS = Object.freeze({
   allIn: Object.freeze({
     id: "allIn", name: "孤注", cost: 1, limitPerTurn: 1, targetType: "none", rangeRule: "self",
     canUse(game, source) {
-      const base = baseCanUse(game, source, this, 1);
-      return base.ok && source.statuses.allIn ? { ok:false, reason:"已处于孤注状态" } : base;
+      return baseCanUse(game, source, this, 1);
     },
     async execute(game, source) {
       const gameId = game.state.gameId;
