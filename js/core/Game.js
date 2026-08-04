@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-leverage-ignore-limit-v60";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-leverage-ignore-limit-v60";
-import { createId, clamp } from "../utils/helpers.js?build=20260804-leverage-ignore-limit-v60";
-import { EventBus } from "./EventBus.js?build=20260804-leverage-ignore-limit-v60";
-import { Player } from "./Player.js?build=20260804-leverage-ignore-limit-v60";
-import { Deck } from "./Deck.js?build=20260804-leverage-ignore-limit-v60";
-import { TeamManager } from "./TeamManager.js?build=20260804-leverage-ignore-limit-v60";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260804-leverage-ignore-limit-v60";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-leverage-ignore-limit-v60";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260804-leverage-ignore-limit-v60";
-import { GameLogger } from "./GameLogger.js?build=20260804-leverage-ignore-limit-v60";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260804-leverage-ignore-limit-v60";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260804-leverage-ignore-limit-v60";
-import { AIController } from "../ai/AIController.js?build=20260804-leverage-ignore-limit-v60";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260804-leverage-ignore-limit-v60";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-leverage-ignore-limit-v60";
-import { Debug } from "../utils/debug.js?build=20260804-leverage-ignore-limit-v60";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260804-leverage-ignore-limit-v60";
-import { DyingSystem } from "./DyingSystem.js?build=20260804-leverage-ignore-limit-v60";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260804-leverage-ignore-limit-v60";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260804-leverage-ignore-limit-v60";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260804-leverage-ignore-limit-v60";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260804-leverage-ignore-limit-v60";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-public-pool-alias-sync-v61";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-public-pool-alias-sync-v61";
+import { createId, clamp } from "../utils/helpers.js?build=20260804-public-pool-alias-sync-v61";
+import { EventBus } from "./EventBus.js?build=20260804-public-pool-alias-sync-v61";
+import { Player } from "./Player.js?build=20260804-public-pool-alias-sync-v61";
+import { Deck } from "./Deck.js?build=20260804-public-pool-alias-sync-v61";
+import { TeamManager } from "./TeamManager.js?build=20260804-public-pool-alias-sync-v61";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260804-public-pool-alias-sync-v61";
+import { RuleEngine } from "./RuleEngine.js?build=20260804-public-pool-alias-sync-v61";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260804-public-pool-alias-sync-v61";
+import { GameLogger } from "./GameLogger.js?build=20260804-public-pool-alias-sync-v61";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260804-public-pool-alias-sync-v61";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260804-public-pool-alias-sync-v61";
+import { AIController } from "../ai/AIController.js?build=20260804-public-pool-alias-sync-v61";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260804-public-pool-alias-sync-v61";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260804-public-pool-alias-sync-v61";
+import { Debug } from "../utils/debug.js?build=20260804-public-pool-alias-sync-v61";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260804-public-pool-alias-sync-v61";
+import { DyingSystem } from "./DyingSystem.js?build=20260804-public-pool-alias-sync-v61";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260804-public-pool-alias-sync-v61";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260804-public-pool-alias-sync-v61";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260804-public-pool-alias-sync-v61";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260804-public-pool-alias-sync-v61";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -622,7 +622,7 @@ export class Game {
     });
     if (!this.isSessionValid(gameId) || isCancelledResponse(response)) return false;
 
-    // 响应等待期间重新读取三名玩家、装备、距离、次数及真实手牌实例。
+    // 响应等待期间重新读取三名玩家、装备、距离、目标合法性及真实手牌实例。
     if (!this.leveragePlayersRemainValid(source, intent)) {
       this.log(`目标已离场，「${card.name}」结算取消。`, "important");
       return false;

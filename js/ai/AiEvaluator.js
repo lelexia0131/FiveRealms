@@ -2,10 +2,10 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-leverage-ignore-limit-v60";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260804-leverage-ignore-limit-v60";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260804-leverage-ignore-limit-v60";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-leverage-ignore-limit-v60";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-public-pool-alias-sync-v61";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260804-public-pool-alias-sync-v61";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260804-public-pool-alias-sync-v61";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-public-pool-alias-sync-v61";
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }

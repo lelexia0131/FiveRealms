@@ -810,6 +810,48 @@ test("无人物目标的战术牌响应文案不再显示对战场使用", () =>
 test("护援响应区分原技能名称与当前响应技能名称", async () => { for(const [actionName,context] of [["焚场",{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill"}],["猎杀",{skill:"hunt",actionName:"猎杀",canBlock:true,damageType:"skill"}],["突袭",{card:instance("assault"),canBlock:true,damageType:"normal"}]]){const source=makePlayer(`source-${actionName}`,0,"dusk","ai",4),target=makePlayer(`target-${actionName}`,1,"dawn","ai",2),guardian=makePlayer(`guardian-${actionName}`,2,"dawn","human",1);guardian.hand.push(instance("charge"));const {game,ui}=makeGame([source,target,guardian],{response:()=>false});registerPassiveSkills(game);await game.damage(source,target,1,context);const request=ui.responseRequests.find((entry)=>entry.type==="skill");assert.ok(request);assert.equal(request.presentation.eventText,`${source.name}对${target.name}使用了「${actionName}」。`);assert.equal(request.presentation.responseText,"你可以发动「护援」。");assert.equal(request.presentation.buttonLabel,"发动护援");assert.doesNotMatch(request.presentation.eventText,/发动护援|burningField|hunt/);} });
 test("互利在反制窗口之后才展示并按座位每人选1张", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);assert.equal(game.state.publicCardPool.length,0);assert.equal(ui.publicRequests.length,1); });
 test("互利选牌严格跳过阵亡座位", async () => { const a=makePlayer("a",0,"dawn","human"),dead=makePlayer("dead",1,"dusk"),b=makePlayer("b",2,"dusk"),c=makePlayer("c",3,"dawn");dead.alive=false;const {game}=makeGame([a,dead,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(dead.hand.length,0);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1); });
+test("互利触发重洗后弃牌堆别名保持同步", async () => {
+  const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);
+  const discards=[instance("block"),instance("charge"),instance("recover")];for(const card of discards) game.state.deck.discard(card);
+  let aliasDuringReveal=true;const originalShow=game.ui.showPublicPool;game.ui.showPublicPool=(cards)=>{aliasDuringReveal=game.state.discardPile===game.state.deck.discardPile;originalShow?.(cards);};
+  const mb=instance("mutualBenefit");a.hand.push(mb);
+  assert.equal(await game.playCard(a,mb,[]),true);
+  assert.equal(aliasDuringReveal,true);
+  assert.equal(game.state.deck.reshuffleCount,1);
+  assert.equal(game.state.publicCardPool.length,0);
+  assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);
+  assert.equal(game.state.deck.cards.length,0);
+  assert.equal(game.state.discardPile,game.state.deck.discardPile);
+  assert.equal(game.state.discardPile.length,1);
+  assert.ok(game.state.deck.discardPile.includes(mb));
+  const drafted=new Set([...a.hand,...b.hand,...c.hand]);for(const card of discards) assert.ok(drafted.has(card));
+});
+test("互利不触发重洗时弃牌堆别名保持不变", async () => {
+  const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);
+  game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));
+  const mb=instance("mutualBenefit");a.hand.push(mb);
+  assert.equal(game.state.deck.reshuffleCount,0);
+  assert.equal(await game.playCard(a,mb,[]),true);
+  assert.equal(game.state.deck.reshuffleCount,0);
+  assert.equal(game.state.discardPile,game.state.deck.discardPile);
+  assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);
+  assert.equal(game.state.deck.cards.length,0);
+  assert.equal(game.state.deck.discardPile.length,1);
+  assert.ok(game.state.deck.discardPile.includes(mb));
+});
+test("互利公共牌揭示触发重洗后两个弃牌堆入口读取同一数组", () => {
+  const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);
+  const discards=[instance("block"),instance("charge"),instance("recover")];for(const card of discards) game.state.deck.discard(card);
+  const pool=game.publicCardPool.reveal(3);
+  assert.equal(pool.length,3);
+  assert.equal(game.state.deck.reshuffleCount,1);
+  assert.equal(game.state.discardPile,game.state.deck.discardPile);
+  assert.equal(game.state.discardPile.length,0);
+  const extra=instance("shield");
+  assert.equal(game.state.deck.discard(extra),true);
+  assert.ok(game.state.discardPile.includes(extra));
+  assert.equal(game.state.discardPile.includes(extra),game.state.deck.discardPile.includes(extra));
+});
 test("共生按全体存活角色结算治疗", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");[a,b,c].forEach((p)=>p.hp-=1);const {game}=makeGame([a,b,c]);a.hand.push(instance("symbiosis"));await game.playCard(a,a.hand[0],[]);[a,b,c].forEach((p)=>assert.equal(p.hp,p.maxHp)); });
 test("反制者包含盟友并按施牌者后的座位顺序", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dawn","human"),c=makePlayer("c",2,"dusk","human");const order=[];const {game}=makeGame([a,b,c],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});a.hand.push(instance("harvest"));b.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id]); });
 test("反制本身可被反制且仍保持响应牌接口", () => { assert.equal(CARD_DEFINITIONS.counter.counterable,true);assert.equal(CARD_DEFINITIONS.counter.usageMode,"response");assert.match(CARD_DEFINITIONS.counter.description,/也可以被其他反制响应/); });
