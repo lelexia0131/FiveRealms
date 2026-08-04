@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-resource-selection-shared-v71";
-import { createId } from "../utils/helpers.js?build=20260804-resource-selection-shared-v71";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-resource-selection-shared-v71";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-resource-selection-shared-v71";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-destroy-sim-zone-v72";
+import { createId } from "../utils/helpers.js?build=20260804-destroy-sim-zone-v72";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260804-destroy-sim-zone-v72";
+import { RuleEngine } from "./RuleEngine.js?build=20260804-destroy-sim-zone-v72";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

@@ -1,5 +1,5 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-resource-selection-shared-v71";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260804-resource-selection-shared-v71";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-destroy-sim-zone-v72";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260804-destroy-sim-zone-v72";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
