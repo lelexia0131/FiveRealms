@@ -2,10 +2,10 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-leverage-ai-assault-v62";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260804-leverage-ai-assault-v62";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260804-leverage-ai-assault-v62";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-leverage-ai-assault-v62";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-allin-evaluator-marginal-v64";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260804-allin-evaluator-marginal-v64";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260804-allin-evaluator-marginal-v64";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-allin-evaluator-marginal-v64";
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }
@@ -76,7 +76,7 @@ export class AiEvaluator {
         stealSkill: 5 + Math.min(4, (target?.handCount ?? 0) + (target?.equipmentDefinitionId ? 1 : 0)),
         burningField: enemies.reduce((sum, enemy) => sum + 2 + (enemy.hp <= 1 ? 8 : 0), 0),
         hunt: 7 + (target?.hp <= 2 ? 7 : 0),
-        allIn: actor.energy * 3 + Math.min(1, actor.energy * .3) * 4,
+        allIn: actor.energy * 3 + Math.min(1, actor.energy * .3) * (1 - (actor.assaultBonus ?? 0)) * 4,
         resonance: 5 + (target?.handCount <= 1 ? 3 : 0)
       };
       let value = values[action.skill.id] ?? 4;

@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-leverage-ai-assault-v62";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-leverage-ai-assault-v62";
-import { createId, clamp } from "../utils/helpers.js?build=20260804-leverage-ai-assault-v62";
-import { EventBus } from "./EventBus.js?build=20260804-leverage-ai-assault-v62";
-import { Player } from "./Player.js?build=20260804-leverage-ai-assault-v62";
-import { Deck } from "./Deck.js?build=20260804-leverage-ai-assault-v62";
-import { TeamManager } from "./TeamManager.js?build=20260804-leverage-ai-assault-v62";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260804-leverage-ai-assault-v62";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-leverage-ai-assault-v62";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260804-leverage-ai-assault-v62";
-import { GameLogger } from "./GameLogger.js?build=20260804-leverage-ai-assault-v62";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260804-leverage-ai-assault-v62";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260804-leverage-ai-assault-v62";
-import { AIController } from "../ai/AIController.js?build=20260804-leverage-ai-assault-v62";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260804-leverage-ai-assault-v62";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-leverage-ai-assault-v62";
-import { Debug } from "../utils/debug.js?build=20260804-leverage-ai-assault-v62";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260804-leverage-ai-assault-v62";
-import { DyingSystem } from "./DyingSystem.js?build=20260804-leverage-ai-assault-v62";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260804-leverage-ai-assault-v62";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260804-leverage-ai-assault-v62";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260804-leverage-ai-assault-v62";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260804-leverage-ai-assault-v62";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-allin-evaluator-marginal-v64";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-allin-evaluator-marginal-v64";
+import { createId, clamp } from "../utils/helpers.js?build=20260804-allin-evaluator-marginal-v64";
+import { EventBus } from "./EventBus.js?build=20260804-allin-evaluator-marginal-v64";
+import { Player } from "./Player.js?build=20260804-allin-evaluator-marginal-v64";
+import { Deck } from "./Deck.js?build=20260804-allin-evaluator-marginal-v64";
+import { TeamManager } from "./TeamManager.js?build=20260804-allin-evaluator-marginal-v64";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260804-allin-evaluator-marginal-v64";
+import { RuleEngine } from "./RuleEngine.js?build=20260804-allin-evaluator-marginal-v64";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260804-allin-evaluator-marginal-v64";
+import { GameLogger } from "./GameLogger.js?build=20260804-allin-evaluator-marginal-v64";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260804-allin-evaluator-marginal-v64";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260804-allin-evaluator-marginal-v64";
+import { AIController } from "../ai/AIController.js?build=20260804-allin-evaluator-marginal-v64";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260804-allin-evaluator-marginal-v64";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260804-allin-evaluator-marginal-v64";
+import { Debug } from "../utils/debug.js?build=20260804-allin-evaluator-marginal-v64";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260804-allin-evaluator-marginal-v64";
+import { DyingSystem } from "./DyingSystem.js?build=20260804-allin-evaluator-marginal-v64";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260804-allin-evaluator-marginal-v64";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260804-allin-evaluator-marginal-v64";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260804-allin-evaluator-marginal-v64";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260804-allin-evaluator-marginal-v64";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {

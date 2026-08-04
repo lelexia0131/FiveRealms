@@ -2380,6 +2380,27 @@ test("概率获得能量与孤注均按各自世界的实际能量结算", () =>
   assertClose(allIn.players[0].handCount,1.2);assertClose(allIn.players[0].energy,0);
 });
 
+test("AI 模拟孤注已有状态不叠加且按状态概率合并", () => {
+  const makeState=(assaultBonus)=>({players:[{id:"gambler",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,maxEnergy:4,energyBranches:[{probability:1,conditions:{},amount:2}],assaultBonus,handCount:0,activeSkillUses:0,activeSkillLimit:1}]});
+  const action={type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[],executionProbability:1,executionWorldBranches:[{probability:1,conditions:{},executes:true}]};
+  const empty=new AiSimulator(makeState(0)).apply(makeState(0),action,"gambler");
+  const full=new AiSimulator(makeState(1)).apply(makeState(1),action,"gambler");
+  const partial=new AiSimulator(makeState(.5)).apply(makeState(.5),action,"gambler");
+  assertClose(empty.players[0].assaultBonus,.6);assertClose(empty.players[0].energy,0);assertClose(empty.players[0].handCount,2);
+  assertClose(full.players[0].assaultBonus,1);assertClose(full.players[0].energy,0);assertClose(full.players[0].handCount,2);
+  assertClose(partial.players[0].assaultBonus,.8);assertClose(partial.players[0].energy,0);assertClose(partial.players[0].handCount,2);
+});
+
+test("AI 孤注动作评分按当前状态概率计算边际状态收益", () => {
+  const gambler=makePlayer("evaluator-allin",0,"dawn","ai",6),enemy=makePlayer("evaluator-allin-enemy",1,"dusk"),{game}=makeGame([gambler,enemy]),evaluator=game.aiController.evaluator;
+  const makeVisible=(assaultBonus)=>({players:[{id:gambler.id,battleTeam:"dawn",alive:true,energy:2,assaultBonus}]});
+  const action={type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[]};
+  const none=evaluator.actionUtility(action,gambler,makeVisible(0));
+  const full=evaluator.actionUtility(action,gambler,makeVisible(1));
+  const partial=evaluator.actionUtility(action,gambler,makeVisible(.5));
+  assertClose(none,8.4);assertClose(full,6);assertClose(partial,7.2);assertClose(none-full,2.4);
+});
+
 test("AI破军只在额外攻击槽确实有第二张突袭可用时生成", () => {
   const blade=makePlayer("break-army-blade",0,"dawn","ai",0),enemy=makePlayer("break-army-enemy",1,"dusk");
   blade.energy=2;blade.hand.push(instance("assault"));const {game}=makeGame([blade,enemy]);blade.energy=2;

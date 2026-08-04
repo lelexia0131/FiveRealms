@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-leverage-ai-assault-v62";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-allin-evaluator-marginal-v64";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
