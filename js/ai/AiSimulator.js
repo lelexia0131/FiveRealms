@@ -2,10 +2,11 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260804-transfer-self-source-v67";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-transfer-self-source-v67";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260804-transfer-self-source-v67";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260804-transfer-self-source-v67";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260804-ai-controller-filename-v77";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-ai-controller-filename-v77";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260804-ai-controller-filename-v77";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260804-ai-controller-filename-v77";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260804-ai-controller-filename-v77";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -18,7 +19,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260804-transfer-self-source-v67";
+} from "./AiProbabilityBranches.js?build=20260804-ai-controller-filename-v77";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -410,7 +411,7 @@ export class AiSimulator {
         }
         break;
       }
-      case "destroy": if (target) this.destroyResource(next, target, scale); break;
+      case "destroy": if (target) this.destroyResource(next, actor, target, scale); break;
       case "duel": if (target) this.applyDuel(next, actor, target, scale, cardDamageContext); break;
       case "mutualBenefit": {
         coordinationTargets = next.players.filter((player) => player.alive);
@@ -459,6 +460,42 @@ export class AiSimulator {
   getSimulatedEquipmentProbability(player, definitionId = null) {
     if (!player?.equipmentDefinitionId || (definitionId && player.equipmentDefinitionId !== definitionId)) return 0;
     return Math.max(0, Math.min(1, Number(player.equipmentRetentionProbability ?? 1) || 0));
+  }
+
+  /**
+   * 从模拟可见状态整理合法已知手牌与未知数量。
+   * 身份数量超过聚合手牌时保守回退：剩余期望手牌全部按未知聚合处理，不猜测哪张已知牌消失。
+   */
+  buildSimulatedKnownCards(target) {
+    const knownCards = Array.isArray(target.knownCards) ? target.knownCards : [];
+    const handCount = Math.max(0, Number(target.handCount) || 0);
+    if (knownCards.length > handCount + PROBABILITY_EPSILON) {
+      return { knownCards: [], unknownCount: handCount };
+    }
+    return { knownCards, unknownCount: Math.max(0, handCount - knownCards.length) };
+  }
+
+  /** 模拟破坏/掠夺的抽象资源选择；用于 destroy 与 plunder，不读取 target.hand。 */
+  chooseSimulatedResourceSelection(state, actor, target, purpose) {
+    const { knownCards, unknownCount } = this.buildSimulatedKnownCards(target);
+    const handCandidate = chooseBestResourceHandCandidate({
+      purpose,
+      actor,
+      owner: target,
+      knownCards,
+      unknownCount,
+      remainingCardCounts: state?.remainingCardCounts ?? null
+    });
+    const equipmentDefinitionId = this.getSimulatedEquipmentProbability(target) > PROBABILITY_EPSILON
+      ? (target.equipmentDefinitionId ?? null)
+      : null;
+    return chooseResourceZone({
+      purpose,
+      actor,
+      owner: target,
+      handCandidate,
+      equipmentDefinitionId
+    });
   }
 
   /** 从 AI 自己的具体模拟手牌中同步消费响应牌；部分期望消费会保留对应可用概率。 */
@@ -829,30 +866,38 @@ export class AiSimulator {
       actor = state;
       state = { players:[actor, target] };
     }
-    const takeEquipment = target.equipmentDefinitionId && ((target.handCount ?? 0) <= 0 || CARD_DEFINITIONS[target.equipmentDefinitionId]?.aiValue >= 7);
-    if (takeEquipment) {
+    const clampedScale = Math.max(0, Math.min(1, Number(scale) || 0));
+    const selection = this.chooseSimulatedResourceSelection(state, actor, target, "plunder");
+    if (!selection) return;
+    if (selection.zone === "equipment") {
       const existenceProbability = this.getSimulatedEquipmentProbability(target);
-      const transferProbability = existenceProbability * Math.max(0, Math.min(1, scale));
+      const transferProbability = existenceProbability * clampedScale;
       this.setSimulatedEquipment(target, target.equipmentDefinitionId, existenceProbability - transferProbability);
-      actor.handCount += transferProbability;
-    } else {
-      const transferred = this.consumeRandomHandCards(state, target, scale);
-      actor.handCount += transferred;
+      actor.handCount = (actor.handCount ?? 0) + transferProbability;
+    } else if (selection.zone === "hand") {
+      const transferred = this.consumeRandomHandCards(state, target, clampedScale);
+      actor.handCount = (actor.handCount ?? 0) + transferred;
     }
   }
 
-  destroyResource(state, target, scale = 1) {
+  /**
+   * 本阶段只同步破坏的手牌/装备区域选择。
+   * 选择手牌后仍使用聚合随机消耗，不追踪具体已知牌身份。
+   */
+  destroyResource(state, actor, target, scale = 1) {
     if (!Array.isArray(state?.players)) {
-      scale = target ?? 1;
-      target = state;
-      state = { players:[target] };
+      throw new Error("destroyResource 需要 state、actor、target、scale 完整签名");
     }
-    const destroyEquipment = target.equipmentDefinitionId && ((target.handCount ?? 0) <= 0 || CARD_DEFINITIONS[target.equipmentDefinitionId]?.aiValue >= 7);
-    if (destroyEquipment) {
+    const clampedScale = Math.max(0, Math.min(1, Number(scale) || 0));
+    const selection = this.chooseSimulatedResourceSelection(state, actor, target, "destroy");
+    if (!selection) return;
+    if (selection.zone === "equipment") {
       const existenceProbability = this.getSimulatedEquipmentProbability(target);
       this.setSimulatedEquipment(target, target.equipmentDefinitionId,
-        existenceProbability * (1 - Math.max(0, Math.min(1, scale))));
-    } else this.consumeRandomHandCards(state, target, scale);
+        existenceProbability * (1 - clampedScale));
+    } else if (selection.zone === "hand") {
+      this.consumeRandomHandCards(state, target, clampedScale);
+    }
   }
 
   tacticResolutionChance(state, actor, card, targets = []) {

@@ -3,7 +3,7 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260804-transfer-self-source-v67";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260804-ai-controller-filename-v77";
 
 const probabilityAtLeast = (trials, probability, required) => {
   if (required <= 0) return 1;
@@ -63,7 +63,7 @@ const estimateCard = (viewer, player, definitionId) => {
  * @param {Object} state 完整游戏状态。
  * @returns {Object} 不含他人具体手牌对象的可见状态。
  */
-export function createAiVisibleState(viewerId, state) {
+export function createAiVisibleState(viewerId, state, remainingCardCounts = null) {
   const viewer = state.players.find((player) => player.id === viewerId);
   if (!viewer) throw new Error("AI 可见状态缺少观察者");
   return Object.freeze({
@@ -71,6 +71,10 @@ export function createAiVisibleState(viewerId, state) {
     currentRound: state.currentRound,
     phase: state.phase,
     playPhaseEnded: false,
+    remainingCardCounts: remainingCardCounts && typeof remainingCardCounts === "object"
+      && !Array.isArray(remainingCardCounts)
+      ? Object.freeze({ ...remainingCardCounts })
+      : null,
     deckCount: state.deck.cards.length,
     discardCount: state.deck.discardPile.length,
     discardDefinitionIds: state.deck.discardPile.map((card) => card.definitionId),
