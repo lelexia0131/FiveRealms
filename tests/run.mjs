@@ -2391,6 +2391,16 @@ test("AI 模拟孤注已有状态不叠加且按状态概率合并", () => {
   assertClose(partial.players[0].assaultBonus,.8);assertClose(partial.players[0].energy,0);assertClose(partial.players[0].handCount,2);
 });
 
+test("AI 孤注动作评分按当前状态概率计算边际状态收益", () => {
+  const gambler=makePlayer("evaluator-allin",0,"dawn","ai",6),enemy=makePlayer("evaluator-allin-enemy",1,"dusk"),{game}=makeGame([gambler,enemy]),evaluator=game.aiController.evaluator;
+  const makeVisible=(assaultBonus)=>({players:[{id:gambler.id,battleTeam:"dawn",alive:true,energy:2,assaultBonus}]});
+  const action={type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[]};
+  const none=evaluator.actionUtility(action,gambler,makeVisible(0));
+  const full=evaluator.actionUtility(action,gambler,makeVisible(1));
+  const partial=evaluator.actionUtility(action,gambler,makeVisible(.5));
+  assertClose(none,8.4);assertClose(full,6);assertClose(partial,7.2);assertClose(none-full,2.4);
+});
+
 test("AI破军只在额外攻击槽确实有第二张突袭可用时生成", () => {
   const blade=makePlayer("break-army-blade",0,"dawn","ai",0),enemy=makePlayer("break-army-enemy",1,"dusk");
   blade.energy=2;blade.hand.push(instance("assault"));const {game}=makeGame([blade,enemy]);blade.energy=2;

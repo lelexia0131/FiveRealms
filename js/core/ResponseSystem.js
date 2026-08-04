@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-allin-ai-no-stack-v63";
-import { createId } from "../utils/helpers.js?build=20260804-allin-ai-no-stack-v63";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-allin-ai-no-stack-v63";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-allin-ai-no-stack-v63";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-allin-evaluator-marginal-v64";
+import { createId } from "../utils/helpers.js?build=20260804-allin-evaluator-marginal-v64";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260804-allin-evaluator-marginal-v64";
+import { RuleEngine } from "./RuleEngine.js?build=20260804-allin-evaluator-marginal-v64";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

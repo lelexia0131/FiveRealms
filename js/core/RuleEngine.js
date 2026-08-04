@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260804-allin-ai-no-stack-v63";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-allin-ai-no-stack-v63";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260804-allin-evaluator-marginal-v64";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-allin-evaluator-marginal-v64";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
