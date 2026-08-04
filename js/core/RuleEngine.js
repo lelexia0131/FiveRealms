@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260804-all-in-availability-v59";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-all-in-availability-v59";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260804-leverage-ignore-limit-v60";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-leverage-ignore-limit-v60";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
@@ -39,27 +39,29 @@ export class RuleEngine {
   }
 
   /**
-   * 实际使用突袭的统一入口。借势仅通过 allowOutOfTurn 放宽行动者和阶段要求；
-   * 真实手牌、次数以及实时目标合法性与普通主动突袭完全相同。
+   * 实际使用突袭的统一入口。借势通过 allowOutOfTurn 放宽行动者和阶段要求，
+   * 并通过 ignoreAttackLimit 忽略第一目标已用突袭次数；其余检查与普通主动突袭相同。
    */
-  static canActuallyUseAssault(game, source, card, target = null, { allowOutOfTurn = false } = {}) {
+  static canActuallyUseAssault(game, source, card, target = null, { allowOutOfTurn = false, ignoreAttackLimit = false } = {}) {
     if (!this.isPlayerInGame(game, source)) return { ok:false, reason:"角色已阵亡或离场" };
     if (!card || card.definitionId !== "assault" || !source.hand?.includes(card)) return { ok:false, reason:"突袭已不在手中" };
     if (card.usageMode === "response" || card.targetType === "responseOnly") return { ok:false, reason:"该牌不能主动使用" };
     if (!allowOutOfTurn && (game.state.phase !== "play" || game.currentPlayer?.id !== source.id)) {
       return { ok:false, reason:"现在不是你的出牌阶段" };
     }
-    const usage = this.getAssaultUsage(source);
-    if (usage.used >= usage.limit) return { ok:false, reason:"本回合突袭次数已用尽" };
+    if (!ignoreAttackLimit) {
+      const usage = this.getAssaultUsage(source);
+      if (usage.used >= usage.limit) return { ok:false, reason:"本回合突袭次数已用尽" };
+    }
     const candidates = this.getLegalAssaultTargets(game, source);
     if (target && !candidates.includes(target)) return { ok:false, reason:"目标不再是合法突袭目标" };
     if (!target && !candidates.length) return { ok:false, reason:"攻击距离内没有敌人" };
     return { ok:true, reason:"" };
   }
 
-  /** 借势响应的兼容入口：只放宽不在本人出牌阶段。 */
+  /** 借势响应的兼容入口：只放宽不在本人出牌阶段，且忽略第一目标已用突袭次数。 */
   static canUseForcedAssault(game, source, card, target) {
-    return this.canActuallyUseAssault(game, source, card, target, { allowOutOfTurn:true });
+    return this.canActuallyUseAssault(game, source, card, target, { allowOutOfTurn:true, ignoreAttackLimit:true });
   }
 
   static getUsableAssaultCards(game, source, target) {

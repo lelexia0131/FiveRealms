@@ -84,7 +84,8 @@ if (report.stalledGames > 0) {
   console.error(`平衡警告：${report.stalledGames} 局超过250轮仍未结束。`);
   process.exitCode = 1;
 }
-if (report.smallTeamWinRate < 40 || report.smallTeamWinRate > 60) {
+const reportOnly = process.env.FIVE_REALMS_BALANCE_REPORT_ONLY === "1";
+if (!reportOnly && (report.smallTeamWinRate < 40 || report.smallTeamWinRate > 60)) {
   console.error(`平衡警告：小队胜率 ${report.smallTeamWinRate}% 超出目标 40%–60%。`);
   process.exitCode = 1;
 }

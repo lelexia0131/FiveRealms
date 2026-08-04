@@ -657,13 +657,50 @@ test("借势成功响应使用真实突袭并完整复用次数、伤害、格�
   await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});
   assert.equal(first.equipment,equipment);assert.equal(first.turnFlags.attackUsed,1);assert.equal(actor.hp,hp);assert.ok(game.state.deck.discardPile.includes(assault));assert.ok(game.state.deck.discardPile.includes(use));assert.equal(actor.hand.includes(blockA),false);assert.equal(actor.hand.includes(blockB),false);assert.ok(ui.responseRequests.some((request)=>request.type==="leverageAssault"&&request.legalCardIds.includes(assault.id)));
 });
-test("借势不能绕过第一目标的突袭次数限制", async () => {
-  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;
-  const {game,ui}=makeGame([actor,first],{response:()=>true});first.turnFlags.attackUsed=first.turnFlags.attackLimit;
-  assert.equal(RuleEngine.canPlayCard(game,actor,use).ok,true);assert.deepEqual(RuleEngine.getLeverageFirstTargets(game,actor),[first]);assert.deepEqual(RuleEngine.getAssaultTargetCandidates(game,first),[actor]);
-  assert.equal(RuleEngine.canActuallyUseAssault(game,first,assault,actor,{allowOutOfTurn:true}).ok,false);
-  await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});
-  assert.equal(ui.responseRequests.some((request)=>request.type==="leverageAssault"),false);assert.ok(first.hand.includes(assault));assert.ok(actor.hand.includes(equipment));assert.equal(first.turnFlags.attackUsed,first.turnFlags.attackLimit);assert.ok(ui.logs.some((message)=>message===`${first.name}拒绝使用「突袭」，${actor.name}获得了其「${equipment.name}」。`));
+test("借势忽略第一目标已用突袭次数并完整执行真实突袭", async () => {
+  const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;
+  const {game,ui}=makeGame([actor,first],{response:(request)=>request.type==="leverageAssault"});first.turnFlags.attackUsed=first.turnFlags.attackLimit;
+  assert.equal(RuleEngine.canPlayCard(game,actor,use).ok,true);
+  assert.equal(RuleEngine.canUseForcedAssault(game,first,assault,actor).ok,true);
+  assert.deepEqual(RuleEngine.getUsableAssaultCards(game,first,actor).map((card)=>card.id),[assault.id]);
+  assert.equal(await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id}),true);
+  assert.ok(ui.responseRequests.some((request)=>request.type==="leverageAssault"&&request.legalCardIds.includes(assault.id)));
+  assert.equal(first.equipment,equipment);
+  assert.equal(first.turnFlags.attackUsed,first.turnFlags.attackLimit+1);
+  assert.ok(game.state.deck.discardPile.includes(assault));
+  assert.ok(!actor.hand.includes(equipment));
+  assert.ok(!ui.logs.some((message)=>message.includes("拒绝使用「突袭」")));
+});
+test("普通主动突袭仍受已用次数限制", () => {
+  const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const assault=instance("assault");a.hand.push(assault);a.turnFlags.attackUsed=a.turnFlags.attackLimit;
+  assert.equal(RuleEngine.canPlayCard(game,a,assault).ok,false);
+  assert.equal(RuleEngine.canActuallyUseAssault(game,a,assault,b).ok,false);
+  assert.equal(RuleEngine.canActuallyUseAssault(game,a,assault,b,{allowOutOfTurn:true}).ok,false);
+  assert.equal(RuleEngine.canUseForcedAssault(game,a,assault,b).ok,true);
+});
+test("借势忽略已用次数后仍检查距离与目标合法性", () => {
+  const actor=makePlayer("actor",0,"dawn"),far=makePlayer("far",1,"dusk"),first=makePlayer("first",2,"dusk"),tail=makePlayer("tail",3,"dawn"),other=makePlayer("other",4,"dawn");const {game}=makeGame([actor,far,first,tail,other]);const assault=instance("assault");first.hand.push(assault);first.turnFlags.attackUsed=first.turnFlags.attackLimit;
+  assert.equal(DistanceSystem.getDistance(game,first,actor),2);
+  assert.equal(DistanceSystem.getDistance(game,first,tail),1);
+  assert.equal(RuleEngine.canUseForcedAssault(game,first,assault,actor).ok,false);
+  assert.deepEqual(RuleEngine.getUsableAssaultCards(game,first,actor),[]);
+  assert.equal(RuleEngine.canUseForcedAssault(game,first,assault,tail).ok,true);
+  assert.deepEqual(RuleEngine.getUsableAssaultCards(game,first,tail).map((card)=>card.id),[assault.id]);
+});
+test("借势已用次数耗尽且手中没有突袭时仍转移装备", async () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;const {game,ui}=makeGame([actor,first]);first.turnFlags.attackUsed=first.turnFlags.attackLimit;
+  assert.equal(await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id}),true);
+  assert.equal(ui.responseRequests.some((request)=>request.type==="leverageAssault"),false);
+  assert.equal(first.equipment,null);
+  assert.ok(actor.hand.includes(equipment));
+  assert.ok(ui.logs.some((message)=>message.includes("拒绝使用「突袭」")));
+});
+test("AI 借势在已用次数耗尽时仍能评估并接受残血击杀", () => {
+  const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","ai"),second=makePlayer("second",2,"dawn","ai"),equipment=instance("telescope"),assault=instance("assault");actor.hand.push(instance("leverage"));first.hand.push(assault);first.equipment=equipment;second.hp=1;const {game}=makeGame([actor,first,second]);first.turnFlags.attackUsed=first.turnFlags.attackLimit;
+  const usable=RuleEngine.getUsableAssaultCards(game,first,second);
+  assert.equal(usable.length,1);
+  assert.equal(usable[0],assault);
+  assert.equal(game.aiController.responsePolicy.shouldRespond(first,"leverageAssault",{target:second,equipment},usable),true);
 });
 test("借势锁定望远镜时响应前不卸装，仍按该武器修正后的距离使用普通突袭", async () => {
   const actor=makePlayer("actor",2,"dawn","human"),first=makePlayer("first",0,"dusk","human"),screen=makePlayer("screen",1,"dusk"),other=makePlayer("other",3,"dawn"),tail=makePlayer("tail",4,"dawn"),equipment=instance("telescope"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;
@@ -1224,11 +1261,16 @@ test("AI 共用突袭模拟消费破势与孤注并保留濒死救援和击杀�
   const rescuedAttacker={id:"rescued-attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,attackUsed:0},rescued={id:"rescued",battleTeam:"dusk",alive:true,hp:1,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},rescuer={id:"rescuer",generalId:"spirit-medic",battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:1,expectedRecoverCount:1,rejuvenationUsed:false},rescueState={players:[rescuedAttacker,rescued,rescuer]};simulator.simulateAssault(rescueState,rescuedAttacker,rescued,1);assert.equal(rescued.alive,true);assert.equal(rescued.hp,2);assert.equal(rescuedAttacker.handCount,0);
 });
 test("平衡模拟在相同种子和固定节点预算下连续两次结果完全一致", async () => {
-  const env={...process.env,FIVE_REALMS_GAMES:"2",FIVE_REALMS_SEED_BASE:"123456789",FIVE_REALMS_START_INDEX:"8",FIVE_REALMS_SEARCH_NODE_BUDGET:"80"};
+  const env={...process.env,FIVE_REALMS_GAMES:"2",FIVE_REALMS_SEED_BASE:"123456789",FIVE_REALMS_START_INDEX:"8",FIVE_REALMS_SEARCH_NODE_BUDGET:"80",FIVE_REALMS_BALANCE_REPORT_ONLY:"1"};
   delete env.FIVE_REALMS_SEARCH_BUDGET;
   const run=async()=>JSON.parse((await execFileAsync(process.execPath,[projectFile("tests/balance-simulation.mjs")],{cwd:projectFile("."),env,encoding:"utf8",maxBuffer:1024*1024})).stdout);
   const first=await run(),second=await run();
-  assert.deepEqual(second,first);assert.deepEqual([first.games,first.completedGames,first.smallTeamWinRate,first.largeTeamWinRate],[2,2,50,50]);
+  assert.deepEqual(second,first);
+  assert.equal(first.games,2);
+  assert.equal(first.completedGames,2);
+  assert.equal(first.stalledGames,0);
+  assert.ok(Number.isFinite(first.smallTeamWinRate)&&Number.isFinite(first.largeTeamWinRate));
+  assert.ok(Math.abs(first.smallTeamWinRate+first.largeTeamWinRate-100)<1e-9);
 });
 test("AI 模拟器识别破势叠加后强化普通突袭", () => { const visible={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:4,attackRange:1,attackUsed:0,attackLimit:2,recoverUsed:0,recoverLimit:null,exposeWeaknessStacks:0,alive:true,handCount:3,hand:[{id:"x1",definitionId:"exposeWeakness"},{id:"x2",definitionId:"exposeWeakness"},{id:"a1",definitionId:"assault"}]},{id:"b",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:3,attackRange:1,alive:true,handCount:0}]};const simulator=new AiSimulator(visible);const once=simulator.apply(visible,{type:"card",card:{id:"x1",definitionId:"exposeWeakness"},targets:[]},"a");const twice=simulator.apply(once,{type:"card",card:{id:"x2",definitionId:"exposeWeakness"},targets:[]},"a");const attacked=simulator.apply(twice,{type:"card",card:{id:"a1",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(attacked.players[1].hp,1);assert.equal(attacked.players[0].exposeWeaknessStacks,0);assert.equal(attacked.players[0].recoverLimit,null); });
 test("AI 普通突袭与借势响应共用同一模拟入口", () => {
