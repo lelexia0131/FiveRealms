@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260805-transfer-role-scoring-v80";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-transfer-role-scoring-v80";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260805-transfer-simulator-identity-v81";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-transfer-simulator-identity-v81";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
