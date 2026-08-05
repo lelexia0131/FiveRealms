@@ -2,11 +2,11 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-resource-identity-v79";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260805-resource-identity-v79";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-resource-identity-v79";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260805-resource-identity-v79";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260805-resource-identity-v79";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-transfer-role-scoring-v80";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260805-transfer-role-scoring-v80";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-transfer-role-scoring-v80";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260805-transfer-role-scoring-v80";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260805-transfer-role-scoring-v80";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -18,7 +18,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260805-resource-identity-v79";
+} from "./AiProbabilityBranches.js?build=20260805-transfer-role-scoring-v80";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -49,11 +49,11 @@ export class AiActionGenerator {
       > this.expectedAvailableAttackUses(actor) + PROBABILITY_EPSILON;
   }
 
-  chooseVisibleTransferPlan(game, actor, card) {
+  chooseVisibleTransferPlan(game, actor, card, remainingCardCounts = null) {
     const sources = RuleEngine.getTransferSources(game, actor, card);
     const excludedCardIds = card.id ? new Set([card.id]) : null;
     return chooseBestPositiveTransfer(buildTransferCandidates({
-      actor, sources, excludedCardIds,
+      actor, sources, excludedCardIds, remainingCardCounts,
       getReceivers:(from) => RuleEngine.getTransferReceivers(game, actor, from, card)
     }));
   }
@@ -128,7 +128,7 @@ export class AiActionGenerator {
       if (card.definitionId === "recover" && (actor.hp >= actor.maxHp || (actor.recoverLimit !== null && actor.recoverUsed >= actor.recoverLimit))) continue;
       if (card.definitionId === "charge" && actor.energy >= actor.maxEnergy) continue;
       if (card.definitionId === "transfer") {
-        const selection = this.chooseVisibleTransferPlan(simulationGame, actor, card);
+        const selection = this.chooseVisibleTransferPlan(simulationGame, actor, card, state.remainingCardCounts ?? null);
         if (selection) actions.push({ type:"card", card, targets:[], selection });
         continue;
       }

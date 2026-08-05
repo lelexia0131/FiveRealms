@@ -1,5 +1,5 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-resource-identity-v79";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260805-resource-identity-v79";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-transfer-role-scoring-v80";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260805-transfer-role-scoring-v80";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
@@ -39,18 +39,26 @@ function knownHandCandidateEntries(actor, owner, excludedCardIds = null) {
     .filter((entry) => entry.definitionId);
 }
 
+/** 统一基础值入口：generalId 缺失时回退全局基础值，非空非法 generalId 保持抛错。 */
+function roleOrBaseCardAiValue(player, definitionId) {
+  return player?.generalId
+    ? getRoleCardAiValue(player.generalId, definitionId)
+    : getBaseCardAiValue(definitionId);
+}
+
 /**
- * 手牌预计价值：已知实体使用 aiValue，未知位置每个按固定期望值 4 参与极值；
+ * 手牌预计价值：已知实体使用持牌角色情境价值，未知位置按动态期望参与极值；
  * 与 AiCardSelector 的实际选牌方向共用同一规则。
  */
-export function expectedHandValue(actor, owner, direction = "lowest", excludedCardIds = null) {
+export function expectedHandValue(actor, owner, direction = "lowest", excludedCardIds = null, remainingCardCounts = null) {
   const definitionIds = knownHandDefinitionIds(actor, owner, excludedCardIds);
   const knownValues = definitionIds
-    .map((definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue)
+    .map((definitionId) => cardSituationValue(definitionId, owner))
     .filter(Number.isFinite);
   const unknownCount = Math.max(0, handCount(owner, excludedCardIds) - definitionIds.length);
+  const unknownValue = expectedUnknownSituationValue(owner, remainingCardCounts);
   const candidates = [...knownValues];
-  for (let index = 0; index < unknownCount; index += 1) candidates.push(UNKNOWN_HAND_EXPECTED_VALUE);
+  for (let index = 0; index < unknownCount; index += 1) candidates.push(unknownValue);
   if (!candidates.length) return UNKNOWN_HAND_EXPECTED_VALUE;
   return direction === "highest" ? Math.max(...candidates) : Math.min(...candidates);
 }
@@ -60,7 +68,7 @@ export function expectedHandValue(actor, owner, direction = "lowest", excludedCa
  * 不读取隐藏手牌，也不建立完整卡牌评估器。
  */
 export function cardSituationValue(definitionId, player) {
-  const base = CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
+  const base = roleOrBaseCardAiValue(player, definitionId);
   const hp = Number(player?.hp ?? player?.maxHp ?? 0);
   const maxHp = Number(player?.maxHp ?? hp);
   const shield = Number(player?.shield ?? 0);
@@ -92,6 +100,22 @@ export function cardSituationValue(definitionId, player) {
   return value;
 }
 
+/** 未知手牌按剩余实例计数加权的角色情境期望；无有效计数时回退固定值 4。 */
+function expectedUnknownSituationValue(player, remainingCardCounts) {
+  if (remainingCardCounts !== null && typeof remainingCardCounts === "object"
+    && !Array.isArray(remainingCardCounts)) {
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (const [definitionId, count] of Object.entries(remainingCardCounts)) {
+      if (!Number.isFinite(count) || count <= 0) continue;
+      weightedSum += count * cardSituationValue(definitionId, player);
+      totalWeight += count;
+    }
+    if (totalWeight > 0) return weightedSum / totalWeight;
+  }
+  return UNKNOWN_HAND_EXPECTED_VALUE;
+}
+
 function transferCardUtility(sourceIsAlly, receiverIsAlly, sourceValue, receiverValue) {
   if (sourceIsAlly && receiverIsAlly) return receiverValue - sourceValue;
   if (!sourceIsAlly && receiverIsAlly) return sourceValue + receiverValue;
@@ -103,32 +127,33 @@ function transferCardUtility(sourceIsAlly, receiverIsAlly, sourceValue, receiver
  * 共享逐牌候选决策：评分与执行都调用它，保证选中同一张已知牌或同一类未知候选。
  * 未知候选只输出聚合描述，不携带真实 cardId/definitionId。
  */
-export function chooseTransferHandCandidate(actor, from, receiver, excludedCardIds = null) {
+export function chooseTransferHandCandidate(actor, from, receiver, excludedCardIds = null, remainingCardCounts = null) {
   if (!actor || !from || !receiver) return null;
   const sourceIsAlly = from.battleTeam === actor.battleTeam;
   const receiverIsAlly = receiver.battleTeam === actor.battleTeam;
   if (sourceIsAlly && !receiverIsAlly) return null;
   const knownEntries = knownHandCandidateEntries(actor, from, excludedCardIds);
   const unknownCount = Math.max(0, handCount(from, excludedCardIds) - knownEntries.length);
-  const scored = knownEntries.map((entry) => ({
-    selectionKind:"known",
-    cardId:entry.cardId,
-    definitionId:entry.definitionId,
-    expectedValue:CARD_DEFINITIONS[entry.definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE,
-    utility:transferCardUtility(
-      sourceIsAlly,
-      receiverIsAlly,
-      cardSituationValue(entry.definitionId, from),
-      cardSituationValue(entry.definitionId, receiver)
-    )
-  }));
+  const scored = knownEntries.map((entry) => {
+    const sourceValue = cardSituationValue(entry.definitionId, from);
+    const receiverValue = cardSituationValue(entry.definitionId, receiver);
+    return {
+      selectionKind:"known",
+      cardId:entry.cardId,
+      definitionId:entry.definitionId,
+      expectedValue:receiverValue,
+      utility:transferCardUtility(sourceIsAlly, receiverIsAlly, sourceValue, receiverValue)
+    };
+  });
   if (unknownCount > 0) {
+    const sourceUnknownValue = expectedUnknownSituationValue(from, remainingCardCounts);
+    const receiverUnknownValue = expectedUnknownSituationValue(receiver, remainingCardCounts);
     scored.push({
       selectionKind:"unknown",
       cardId:null,
       definitionId:null,
-      expectedValue:UNKNOWN_HAND_EXPECTED_VALUE,
-      utility:transferCardUtility(sourceIsAlly, receiverIsAlly, UNKNOWN_HAND_EXPECTED_VALUE, UNKNOWN_HAND_EXPECTED_VALUE)
+      expectedValue:receiverUnknownValue,
+      utility:transferCardUtility(sourceIsAlly, receiverIsAlly, sourceUnknownValue, receiverUnknownValue)
     });
   }
   if (!scored.length) return null;
@@ -161,14 +186,14 @@ function enemyThreatGap(actor, from, receiver) {
 }
 
 /** 只读取公开局面、观察者自身手牌和合法记忆的纯转移评分。 */
-export function scoreTransferCombination({ actor, from, receiver, zone, excludedCardIds = null }) {
+export function scoreTransferCombination({ actor, from, receiver, zone, excludedCardIds = null, remainingCardCounts = null }) {
   if (!actor || !from || !receiver || from.id === receiver.id) return Number.NEGATIVE_INFINITY;
   const sourceIsAlly = from.battleTeam === actor.battleTeam;
   const receiverIsAlly = receiver.battleTeam === actor.battleTeam;
   if (sourceIsAlly && !receiverIsAlly) return Number.NEGATIVE_INFINITY;
 
   if (zone !== "hand" || handCount(from, excludedCardIds) <= 0) return Number.NEGATIVE_INFINITY;
-  const candidate = chooseTransferHandCandidate(actor, from, receiver, excludedCardIds);
+  const candidate = chooseTransferHandCandidate(actor, from, receiver, excludedCardIds, remainingCardCounts);
   if (!candidate) return Number.NEGATIVE_INFINITY;
   const fromLimit = Math.max(0, Number(from.hp ?? 0));
   const receiverLimit = Math.max(0, Number(receiver.hp ?? 0));
@@ -189,7 +214,7 @@ export function scoreTransferCombination({ actor, from, receiver, zone, excluded
 }
 
 /** 使用调用方提供的 RuleEngine 接收者集合构建同一结构的真实/可见候选。 */
-export function buildTransferCandidates({ actor, sources, getReceivers, allowedReceiverIds = null, excludedCardIds = null }) {
+export function buildTransferCandidates({ actor, sources, getReceivers, allowedReceiverIds = null, excludedCardIds = null, remainingCardCounts = null }) {
   const candidates = [];
   for (const from of sources ?? []) {
     const receivers = (getReceivers(from) ?? []).filter((receiver) =>
@@ -198,7 +223,7 @@ export function buildTransferCandidates({ actor, sources, getReceivers, allowedR
       if (handCount(from, excludedCardIds) > 0) {
         candidates.push({
           sourceId:from.id, sourceSeatIndex:from.seatIndex, receiverId:receiver.id, zone:"hand",
-          score:scoreTransferCombination({ actor, from, receiver, zone:"hand", excludedCardIds })
+          score:scoreTransferCombination({ actor, from, receiver, zone:"hand", excludedCardIds, remainingCardCounts })
         });
       }
     }

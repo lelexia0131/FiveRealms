@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-resource-identity-v79";
-import { createId } from "../utils/helpers.js?build=20260805-resource-identity-v79";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260805-resource-identity-v79";
-import { RuleEngine } from "./RuleEngine.js?build=20260805-resource-identity-v79";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-transfer-role-scoring-v80";
+import { createId } from "../utils/helpers.js?build=20260805-transfer-role-scoring-v80";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260805-transfer-role-scoring-v80";
+import { RuleEngine } from "./RuleEngine.js?build=20260805-transfer-role-scoring-v80";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

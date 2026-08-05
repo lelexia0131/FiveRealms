@@ -2,7 +2,7 @@
  * 本文件负责 2V3 阵营生成与阵营查询，依赖游戏配置和洗牌工具。
  * 它不根据角色、名字或座位推断阵营；battleTeam 是唯一判断来源。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-resource-identity-v79";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-transfer-role-scoring-v80";
 
 export class TeamManager {
   /**

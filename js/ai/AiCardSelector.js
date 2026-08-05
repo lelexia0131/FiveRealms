@@ -2,17 +2,17 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260805-resource-identity-v79";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-resource-identity-v79";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-resource-identity-v79";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260805-resource-identity-v79";
-import { getRoleCardAiValue } from "./roleCardValue.js?build=20260805-resource-identity-v79";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260805-transfer-role-scoring-v80";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-transfer-role-scoring-v80";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-transfer-role-scoring-v80";
+import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260805-transfer-role-scoring-v80";
+import { getRoleCardAiValue } from "./roleCardValue.js?build=20260805-transfer-role-scoring-v80";
 import {
   chooseBestResourceHandCandidate,
   chooseResourceZone,
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-} from "./resourceSelectionValue.js?build=20260805-resource-identity-v79";
+} from "./resourceSelectionValue.js?build=20260805-transfer-role-scoring-v80";
 
 const globalKnownValue = (definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
 
@@ -48,13 +48,13 @@ export class AiCardSelector {
     const purpose = context?.purpose ?? null;
     const remainingCardCounts = resourceCounts !== null
       ? resourceCounts
-      : ((purpose === "destroy" || purpose === "plunder")
+      : ((purpose === "transfer" || purpose === "destroy" || purpose === "plunder")
         ? (this.knowledge?.remainingCounts?.(actor) ?? null)
         : null);
     while (selected.length < count && cards.length) {
       let index = -1;
       if (purpose === "transfer") {
-        const candidate = chooseTransferHandCandidate(actor, owner, context?.receiver, excludedCardIds);
+        const candidate = chooseTransferHandCandidate(actor, owner, context?.receiver, excludedCardIds, remainingCardCounts);
         if (!candidate) return selected;
         if (candidate.selectionKind === "known") {
           index = cards.findIndex((card) => card.id === candidate.cardId);
@@ -191,8 +191,9 @@ export class AiCardSelector {
 
   /** 联合评估来源、接收者和手牌；未知牌只使用数量、上限压力与合法已知概率。 */
   chooseTransferCombination(actor, card, sources, allowedReceiverIds = null, excludedCardIds = null) {
+    const remainingCardCounts = this.knowledge?.remainingCounts?.(actor) ?? null;
     const candidates = buildTransferCandidates({
-      actor, sources, allowedReceiverIds, excludedCardIds,
+      actor, sources, allowedReceiverIds, excludedCardIds, remainingCardCounts,
       getReceivers:(from) => RuleEngine.getTransferReceivers(this.game, actor, from, card)
     });
     return chooseBestPositiveTransfer(candidates);

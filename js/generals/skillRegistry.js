@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-resource-identity-v79";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-resource-identity-v79";
-import { randomChoice } from "../utils/helpers.js?build=20260805-resource-identity-v79";
-import { Debug } from "../utils/debug.js?build=20260805-resource-identity-v79";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-transfer-role-scoring-v80";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-transfer-role-scoring-v80";
+import { randomChoice } from "../utils/helpers.js?build=20260805-transfer-role-scoring-v80";
+import { Debug } from "../utils/debug.js?build=20260805-transfer-role-scoring-v80";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
