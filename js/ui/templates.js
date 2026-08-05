@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260805-ai-remaining-density-v84";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260805-ai-hidden-world-sampling-v85";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

@@ -1342,7 +1342,7 @@ test("AI 固定节点预算截止时保留上一层已发现的全局最佳候�
   const actor=makePlayer("node-best-actor",0,"dawn"),enemy=makePlayer("node-best-enemy",1,"dusk"),best=instance("charge"),lower=instance("harvest");
   actor.hand.push(best,lower);
   const {game}=makeGame([actor,enemy]);
-  const visible=createAiVisibleState(actor.id,game.state),planner=game.aiController.planner;
+  const visible=createAiVisibleState(actor.id,game.state,game.aiController.knowledge.remainingCounts(actor)),planner=game.aiController.planner;
   game.aiSearchNodeBudgetOverride=3;game.aiRandomnessRange=0;
   planner.evaluator={
     actionUtility:(action)=>action.card?.id===best.id?10:action.card?.id===lower.id?5:-20,
@@ -1353,10 +1353,10 @@ test("AI 固定节点预算截止时保留上一层已发现的全局最佳候�
   assert.equal(action.card.id,best.id);assert.equal(planner.lastSearchStats.expanded,3);
 });
 test("AI 根节点束裁剪会计入模拟后的局面效用", async () => {
-  const actor=makePlayer("root-state-actor",0,"dawn"),enemy=makePlayer("root-state-enemy",1,"dusk"),charge=instance("charge"),assault=instance("assault");actor.hand.push(charge,assault);const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state),planner=game.aiController.planner;game.aiSearchNodeBudgetOverride=2;game.aiRandomnessRange=0;let stateCalls=0;planner.evaluator={actionUtility:()=>0,stateUtility:(state)=>{stateCalls+=1;return state.players.find((player)=>player.id===enemy.id).hp<enemy.hp?100:0;}};const action=await planner.plan(actor,visible,[{type:"card",card:charge,targets:[]},{type:"card",card:assault,targets:[{id:enemy.id}]}],{gameId:game.state.gameId});assert.equal(action.card.id,assault.id);assert.equal(stateCalls,2);
+  const actor=makePlayer("root-state-actor",0,"dawn"),enemy=makePlayer("root-state-enemy",1,"dusk"),charge=instance("charge"),assault=instance("assault");actor.hand.push(charge,assault);const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state,game.aiController.knowledge.remainingCounts(actor)),planner=game.aiController.planner;game.aiSearchNodeBudgetOverride=2;game.aiRandomnessRange=0;let stateCalls=0;planner.evaluator={actionUtility:()=>0,stateUtility:(state)=>{stateCalls+=1;return state.players.find((player)=>player.id===enemy.id).hp<enemy.hp?100:0;}};const action=await planner.plan(actor,visible,[{type:"card",card:charge,targets:[]},{type:"card",card:assault,targets:[{id:enemy.id}]}],{gameId:game.state.gameId});assert.equal(action.card.id,assault.id);assert.equal(stateCalls,2);
 });
 test("AI 根动作生成受搜索预算约束，不会长期锁住观察战场界面", async () => {
-  const actor=makePlayer("root-budget-actor",0,"dawn"),enemy=makePlayer("root-budget-enemy",1,"dusk"),card=instance("charge");actor.hand.push(card);const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state),planner=game.aiController.planner;game.aiSearchBudgetOverrideMs=0;game.aiRandomnessRange=0;let evaluated=0;planner.evaluator={actionUtility:()=>0,stateUtility:()=>{evaluated+=1;return 0;}};const roots=Array.from({length:200},(_,index)=>({type:"card",card:{...card,id:`root-${index}`},targets:[]}));const action=await planner.plan(actor,visible,roots,{gameId:game.state.gameId});assert.equal(action.type,"card");assert.equal(evaluated,1);assert.equal(planner.lastSearchStats.expanded,1);
+  const actor=makePlayer("root-budget-actor",0,"dawn"),enemy=makePlayer("root-budget-enemy",1,"dusk"),card=instance("charge");actor.hand.push(card);const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state,game.aiController.knowledge.remainingCounts(actor)),planner=game.aiController.planner;game.aiSearchBudgetOverrideMs=0;game.aiRandomnessRange=0;let evaluated=0;planner.evaluator={actionUtility:()=>0,stateUtility:()=>{evaluated+=1;return 0;}};const roots=Array.from({length:200},(_,index)=>({type:"card",card:{...card,id:`root-${index}`},targets:[]}));const action=await planner.plan(actor,visible,roots,{gameId:game.state.gameId});assert.equal(action.type,"card");assert.equal(evaluated,1);assert.equal(planner.lastSearchStats.expanded,1);
 });
 test("AI 规划异常会安全结束出牌并清理观察状态", async () => {
   const ai=makePlayer("planner-fallback-ai",0,"dawn"),enemy=makePlayer("planner-fallback-enemy",1,"dusk"),{game,ui}=makeGame([ai,enemy]);game.state.currentPlayerIndex=0;game.state.phase="play";game.cleanupManager.delay=async()=>true;game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>{throw new Error("planner test failure");};await game.takeAiPlayPhase(ai,game.state.gameId);assert.equal(ui.thinking.at(-1)[0],false);assert.match(ui.logs.join("\n"),/^(?!.*planner test failure)/s);
@@ -2236,7 +2236,7 @@ test("AI 模拟 end 会设置终止状态且终止快照不再生成动作", () 
 
 test("AI Planner 不扩展 end 根节点，即使动作生成器伪造高收益后续", async () => {
   const actor=makePlayer("terminal-plan-actor",0,"dawn"),enemy=makePlayer("terminal-plan-enemy",1,"dusk"),fiction=instance("harvest");actor.hand.push(fiction);
-  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state),planner=game.aiController.planner;
+  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state,game.aiController.knowledge.remainingCounts(actor)),planner=game.aiController.planner;
   game.aiController.actionGenerator.generateFromVisible=()=>[{type:"card",card:fiction,targets:[]}];
   planner.evaluator.actionUtility=(action)=>action.type==="card"?10000:0;planner.evaluator.stateUtility=()=>10000;
   const chosen=await planner.plan(actor,visible,[{type:"end"}],{gameId:game.state.gameId});
@@ -2245,7 +2245,7 @@ test("AI Planner 不扩展 end 根节点，即使动作生成器伪造高收益�
 
 test("AI 规划序列中的 end 始终位于末尾且真实 AI 仍能正常结束", async () => {
   const actor=makePlayer("terminal-real-actor",0,"dawn"),enemy=makePlayer("terminal-real-enemy",1,"dusk");
-  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state),actions=game.aiController.getLegalActions(actor);
+  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state,game.aiController.knowledge.remainingCounts(actor)),actions=game.aiController.getLegalActions(actor);
   assert.deepEqual(actions,[{type:"end"}]);assert.equal((await game.aiController.planner.plan(actor,visible,actions,{gameId:game.state.gameId})).type,"end");
   const endIndex=game.aiController.planner.lastPlannedSequence.findIndex((action)=>action.type==="end");assert.equal(endIndex,game.aiController.planner.lastPlannedSequence.length-1);
   await game.takeAiPlayPhase(actor,game.state.gameId);assert.equal(actor.hand.length,0);assert.equal(game.state.phase,"play");
@@ -5008,10 +5008,114 @@ test("剩余牌池：sampleHiddenWorlds 结构保持且继承公共牌池扣除"
     publicCardPool:[{ id:"p1", definitionId:"block" }]
   };
   const knowledge = makeRemainingKnowledge(viewer, state);
-  const worlds = knowledge.sampleHiddenWorlds(viewer, { players:[viewer, state.players[0]] }, 1);
+  const worlds = knowledge.sampleHiddenWorlds(viewer, {
+    remainingCardCounts: knowledge.remainingCounts(viewer),
+    players:[viewer, state.players[0]]
+  }, 1);
   assert.equal(worlds.length, 1);
   assert.ok(Array.isArray(worlds[0].other));
   assert.ok(knowledge.probability(viewer, "block") < CARD_COUNTS.block / TOTAL_CARD_COUNT);
+});
+
+test("隐藏世界抽样 sampleHiddenWorlds：单 world 同种牌不超过根剩余计数", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const counts = { counter:1, assault:5 };
+  const knowledge = makeRemainingKnowledge(viewer);
+  const worlds = knowledge.sampleHiddenWorlds(viewer, {
+    remainingCardCounts: counts,
+    players:[viewer, { id:"e1", handCount:1, knownCards:[] }, { id:"e2", handCount:1, knownCards:[] }]
+  }, 1);
+  const sampled = Object.values(worlds[0]).flat();
+  const sampledCount = sampled.filter((id) => id === "counter").length;
+  assert.ok(sampledCount <= counts.counter);
+  assert.equal(sampledCount, 1);
+});
+
+test("隐藏世界抽样 sampleHiddenWorlds：多牌种分别不超过对应剩余计数", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const counts = { counter:1, block:2, assault:3 };
+  const knowledge = makeRemainingKnowledge(viewer);
+  const worlds = knowledge.sampleHiddenWorlds(viewer, {
+    remainingCardCounts: counts,
+    players:[viewer, { id:"e1", handCount:2, knownCards:[] }, { id:"e2", handCount:2, knownCards:[] }]
+  }, 1);
+  const sampled = Object.values(worlds[0]).flat();
+  for (const [definitionId, initialCount] of Object.entries(counts)) {
+    const sampledCount = sampled.filter((id) => id === definitionId).length;
+    assert.ok(sampledCount <= initialCount, `${definitionId} 抽样 ${sampledCount} 超过剩余 ${initialCount}`);
+  }
+});
+
+test("隐藏世界抽样 sampleHiddenWorlds：不同 world 独立重置剩余计数", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const counts = { counter:1, assault:5 };
+  const knowledge = makeRemainingKnowledge(viewer);
+  const worlds = knowledge.sampleHiddenWorlds(viewer, {
+    remainingCardCounts: counts,
+    players:[viewer, { id:"e1", handCount:1, knownCards:[] }, { id:"e2", handCount:1, knownCards:[] }]
+  }, 2);
+  assert.equal(worlds.length, 2);
+  for (const world of worlds) {
+    const sampled = Object.values(world).flat();
+    assert.equal(sampled.filter((id) => id === "counter").length, 1);
+  }
+});
+
+test("隐藏世界抽样 sampleHiddenWorlds：根剩余计数不被修改", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const counts = { counter:1, assault:5 };
+  const snapshot = { ...counts };
+  const knowledge = makeRemainingKnowledge(viewer);
+  knowledge.sampleHiddenWorlds(viewer, {
+    remainingCardCounts: counts,
+    players:[viewer, { id:"e1", handCount:2, knownCards:[] }]
+  }, 2);
+  assert.deepEqual(counts, snapshot);
+});
+
+test("隐藏世界抽样 sampleHiddenWorlds：计数归零后后续位置不再抽到该牌", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const counts = { assault:1, counter:1, block:5 };
+  const knowledge = makeRemainingKnowledge(viewer);
+  knowledge.game.random = () => 0.15;
+  const worlds = knowledge.sampleHiddenWorlds(viewer, {
+    remainingCardCounts: counts,
+    players:[viewer, { id:"e1", handCount:2, knownCards:[] }]
+  }, 1);
+  const sampled = Object.values(worlds[0]).flat();
+  assert.equal(sampled.filter((id) => id === "counter").length, 1);
+  assert.ok(sampled.includes("assault"));
+});
+
+test("隐藏世界抽样 sampleHiddenWorlds：未知位置超过可用剩余牌数时抛出明确错误", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const knowledge = makeRemainingKnowledge(viewer);
+  assert.throws(() => knowledge.sampleHiddenWorlds(viewer, {
+    remainingCardCounts: { counter:1 },
+    players:[viewer, { id:"e1", handCount:2, knownCards:[] }]
+  }, 1), /超过该世界可用剩余牌数/);
+});
+
+test("隐藏世界抽样 sampleHiddenWorlds：world 数量、结构、已知牌与手牌长度保持", () => {
+  const viewer = { id:"v", hand:[], aiMemory:{ knownCardsByPlayer:{} } };
+  const counts = { counter:1, assault:5 };
+  const knowledge = makeRemainingKnowledge(viewer);
+  const players = [
+    viewer,
+    { id:"e1", handCount:3, knownCards:[{ cardId:"k1", definitionId:"block" }] },
+    { id:"e2", handCount:1, knownCards:[] }
+  ];
+  const worlds = knowledge.sampleHiddenWorlds(viewer, { remainingCardCounts: counts, players }, 2);
+  assert.equal(worlds.length, 2);
+  for (const world of worlds) {
+    assert.deepEqual(Object.keys(world), ["e1", "e2"]);
+    assert.ok(Array.isArray(world.e1));
+    assert.ok(Array.isArray(world.e2));
+    assert.equal(world.e1[0], "block");
+    assert.equal(world.e1.length, 3);
+    assert.equal(world.e2.length, 1);
+    assert.equal(Object.hasOwn(world, "v"), false);
+  }
 });
 
 test("动态未知：destroy 单定义等于 owner 角色价值", () => {
@@ -5584,7 +5688,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260805-ai-remaining-density-v84"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260805-ai-hidden-world-sampling-v85"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 
