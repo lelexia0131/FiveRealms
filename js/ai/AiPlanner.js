@@ -2,8 +2,8 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ai-hidden-world-sampling-v85";
-import { AiSimulator } from "./AiSimulator.js?build=20260805-ai-hidden-world-sampling-v85";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ai-tactic-counter-risk-v86";
+import { AiSimulator } from "./AiSimulator.js?build=20260805-ai-tactic-counter-risk-v86";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -58,15 +58,35 @@ export class AiPlanner {
     const simulator = new AiSimulator(visibleState);
     const hiddenWorlds = this.game.aiController.knowledge.sampleHiddenWorlds(player, visibleState, GAME_CONFIG.aiHiddenStateSamples);
     const hiddenAdjustment = (action) => {
+      if (action.card?.definitionId !== "assault" || !hiddenWorlds.length) return 0;
       const targetId = action.targets?.[0]?.id;
-      if (!targetId || !hiddenWorlds.length) return 0;
-      if (action.card?.definitionId === "assault") return -1.5 * hiddenWorlds.filter((world) => world[targetId]?.includes("block")).length / hiddenWorlds.length;
-      if (action.card?.category === "tactic") return -hiddenWorlds.filter((world) => Object.values(world).some((hand) => hand.includes("counter"))).length / hiddenWorlds.length;
-      return 0;
+      if (!targetId) return 0;
+      return -1.5 * hiddenWorlds.filter((world) => world[targetId]?.includes("block")).length / hiddenWorlds.length;
+    };
+    const tacticResolutionScale = (action, state) => {
+      const card = action.card;
+      if (card?.category !== "tactic" || card.counterable === false) return 1;
+      const actor = state.players.find((entry) => entry.id === player.id);
+      if (!actor) return 1;
+      if (card.counterScope === "target") {
+        const targetIds = new Set((action.targets ?? []).map((target) => target.id));
+        const aliveTargets = state.players.filter((entry) => targetIds.has(entry.id) && entry.alive);
+        if (!aliveTargets.length) return 0;
+        const total = aliveTargets.reduce((sum, target) => (
+          sum + simulator.targetResolutionChance(state, actor, card, target)
+        ), 0);
+        return total / aliveTargets.length;
+      }
+      const mappedTargets = (action.targets ?? [])
+        .map((target) => state.players.find((entry) => entry.id === target.id))
+        .filter(Boolean);
+      return simulator.tacticResolutionChance(state, actor, card, mappedTargets);
     };
     const transitionScore = (action, beforeState, afterState, depth = 1) => {
       const executionProbability = action.executionProbability ?? 1;
-      const immediate = (this.evaluator.actionUtility(action, player, beforeState) + hiddenAdjustment(action))
+      const actionValue = this.evaluator.actionUtility(action, player, beforeState);
+      const resolutionScale = tacticResolutionScale(action, beforeState);
+      const immediate = (actionValue * resolutionScale + hiddenAdjustment(action))
         * executionProbability;
       return (immediate + this.evaluator.stateUtility(afterState, player.id) * 0.08) / depth;
     };

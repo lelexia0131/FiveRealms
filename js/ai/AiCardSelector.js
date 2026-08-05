@@ -2,17 +2,17 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260805-ai-hidden-world-sampling-v85";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-ai-hidden-world-sampling-v85";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-ai-hidden-world-sampling-v85";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260805-ai-hidden-world-sampling-v85";
-import { getRoleCardAiValue } from "./roleCardValue.js?build=20260805-ai-hidden-world-sampling-v85";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260805-ai-tactic-counter-risk-v86";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-ai-tactic-counter-risk-v86";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-ai-tactic-counter-risk-v86";
+import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260805-ai-tactic-counter-risk-v86";
+import { getRoleCardAiValue } from "./roleCardValue.js?build=20260805-ai-tactic-counter-risk-v86";
 import {
   chooseBestResourceHandCandidate,
   chooseResourceZone,
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-} from "./resourceSelectionValue.js?build=20260805-ai-hidden-world-sampling-v85";
+} from "./resourceSelectionValue.js?build=20260805-ai-tactic-counter-risk-v86";
 
 const globalKnownValue = (definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
 
