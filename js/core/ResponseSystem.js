@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-transfer-simulator-identity-v81";
-import { createId } from "../utils/helpers.js?build=20260805-transfer-simulator-identity-v81";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260805-transfer-simulator-identity-v81";
-import { RuleEngine } from "./RuleEngine.js?build=20260805-transfer-simulator-identity-v81";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-expose-weakness-response-v82";
+import { createId } from "../utils/helpers.js?build=20260805-expose-weakness-response-v82";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260805-expose-weakness-response-v82";
+import { RuleEngine } from "./RuleEngine.js?build=20260805-expose-weakness-response-v82";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -47,7 +47,9 @@ function responseTargetName(responder, context = {}) {
 /** 只包含公开名称与数量的响应展示数据；UI 不接收任何隐藏牌内容。 */
 export function buildResponsePresentation(responder, type, context = {}, requiredCount = 1, availableCount = 0, fallbackLabel = "响应") {
   const sourceName = responsePlayerName(responder, context.source);
-  const targetName = responseTargetName(responder, context);
+  const targetName = context.card?.targetType === "self"
+    ? ""
+    : responseTargetName(responder, context);
   const actionName = context.card?.name ?? context.actionName ?? "伤害";
   let eventText = targetName
     ? `${sourceName}对${targetName}使用了「${actionName}」。`
