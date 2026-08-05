@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260805-oath-warden-guardian-aid-v87";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260805-ember-magus-burning-field-v88";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

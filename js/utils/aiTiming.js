@@ -1,5 +1,5 @@
 /** AI 展示节奏的纯函数入口。实际等待仍统一由 CleanupManager 执行。 */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-oath-warden-guardian-aid-v87";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ember-magus-burning-field-v88";
 
 const RANGES = Object.freeze({
   initial: ["aiInitialThinkMinMs", "aiInitialThinkMaxMs"],

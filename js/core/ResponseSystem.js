@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-oath-warden-guardian-aid-v87";
-import { createId } from "../utils/helpers.js?build=20260805-oath-warden-guardian-aid-v87";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260805-oath-warden-guardian-aid-v87";
-import { RuleEngine } from "./RuleEngine.js?build=20260805-oath-warden-guardian-aid-v87";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ember-magus-burning-field-v88";
+import { createId } from "../utils/helpers.js?build=20260805-ember-magus-burning-field-v88";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260805-ember-magus-burning-field-v88";
+import { RuleEngine } from "./RuleEngine.js?build=20260805-ember-magus-burning-field-v88";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

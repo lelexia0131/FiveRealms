@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-oath-warden-guardian-aid-v87";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-oath-warden-guardian-aid-v87";
-import { randomChoice } from "../utils/helpers.js?build=20260805-oath-warden-guardian-aid-v87";
-import { Debug } from "../utils/debug.js?build=20260805-oath-warden-guardian-aid-v87";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ember-magus-burning-field-v88";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-ember-magus-burning-field-v88";
+import { randomChoice } from "../utils/helpers.js?build=20260805-ember-magus-burning-field-v88";
+import { Debug } from "../utils/debug.js?build=20260805-ember-magus-burning-field-v88";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -228,9 +228,9 @@ export const ACTIVE_SKILLS = Object.freeze({
     }
   }),
   burningField: Object.freeze({
-    id: "burningField", name: "焚场", cost: 3, limitPerTurn: 1, targetType: "allEnemies", rangeRule: "unlimited",
+    id: "burningField", name: "焚场", cost: 2, limitPerTurn: 1, targetType: "allEnemies", rangeRule: "unlimited",
     canUse(game, source) { return baseCanUse(game, source, this); },
-    async execute(game, source, _targets, context = {}) { const gameId=game.state.gameId;source.changeEnergy(-3);game.log(`${source.name}发动焚场！`, "important");for(const target of game.getEnemies(source)){if(!game.isSessionValid(gameId)||game.state.isGameOver)break;if(target.alive)await game.damage(source,target,1,{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill",resolutionId:context.resolutionId});} }
+    async execute(game, source, _targets, context = {}) { const gameId=game.state.gameId;source.changeEnergy(-2);game.log(`${source.name}发动焚场！`, "important");for(const target of game.getEnemies(source)){if(!game.isSessionValid(gameId)||game.state.isGameOver)break;if(target.alive)await game.damage(source,target,1,{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill",resolutionId:context.resolutionId});} }
   }),
   hunt: Object.freeze({
     id: "hunt", name: "猎杀", cost: 2, limitPerTurn: 2, targetType: "markedEnemy", rangeRule: "unlimited",
