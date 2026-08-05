@@ -2,13 +2,36 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-ai-controller-filename-v77";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260804-ai-controller-filename-v77";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260804-ai-controller-filename-v77";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260804-ai-controller-filename-v77";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-role-core-scoring-v78";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260805-role-core-scoring-v78";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260805-role-core-scoring-v78";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-role-core-scoring-v78";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-role-core-scoring-v78";
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }
+
+  /** 角色对某张卡牌相对全局基础值的差量；缺少 generalId 或 definitionId 时回退 0。 */
+  roleCardDelta(generalId, definitionId) {
+    if (!generalId || !definitionId) return 0;
+    return getRoleCardAiValue(generalId, definitionId) - getBaseCardAiValue(definitionId);
+  }
+
+  /** 具体手牌的剩余可用概率：优先读取 availabilityStateBranches，其次 availabilityBranches。 */
+  cardAvailability(card) {
+    const stateBranches = Array.isArray(card?.availabilityStateBranches)
+      ? card.availabilityStateBranches
+      : null;
+    if (stateBranches) {
+      return stateBranches
+        .filter((branch) => branch.available)
+        .reduce((sum, branch) => sum + (Number(branch.probability) || 0), 0);
+    }
+    if (Array.isArray(card?.availabilityBranches)) {
+      return card.availabilityBranches.reduce((sum, branch) => sum + (Number(branch.probability) || 0), 0);
+    }
+    return 1;
+  }
 
   breakArmyUtility(actor) {
     const assaultCount = (actor.hand ?? []).filter((card) => card.definitionId === "assault")
@@ -47,12 +70,28 @@ export class AiEvaluator {
       const equipmentDelta = equipmentValue * (player.equipmentRetentionProbability ?? (equipmentValue ? 1 : 0))
         - initialEquipmentValue
         + (player.expectedEquipmentGain ?? 0);
+      const currentEquipmentRoleDelta = player.equipmentDefinitionId
+        ? this.roleCardDelta(player.generalId, player.equipmentDefinitionId)
+        : 0;
+      const initialEquipmentRoleDelta = Number.isFinite(player.initialEquipmentRoleDelta)
+        ? player.initialEquipmentRoleDelta
+        : currentEquipmentRoleDelta;
+      const equipmentRoleDelta = currentEquipmentRoleDelta
+          * (player.equipmentRetentionProbability ?? (currentEquipmentRoleDelta ? 1 : 0))
+        - initialEquipmentRoleDelta
+        + (player.expectedEquipmentRoleDelta ?? 0);
+      const handRoleDelta = player.id === viewerId
+        ? (player.hand ?? []).reduce((sum, card) => (
+            sum + this.roleCardDelta(player.generalId, card?.definitionId) * this.cardAvailability(card)
+          ), 0)
+        : 0;
       const markThreat = Object.entries(player.huntMarkProbabilities ?? {}).reduce((sum, [sourceId, probability]) => {
         const source = state.players.find((entry) => entry.id === sourceId);
         return sum + (source?.battleTeam !== player.battleTeam ? Number(probability) || 0 : 0);
       }, 0);
       score += sign * (danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * 1.2
-        + player.handCount * 1.1 + (player.exposeWeaknessStacks ?? 0) * 1.5 + equipmentDelta * .25
+        + player.handCount * 1.1 + handRoleDelta + (player.exposeWeaknessStacks ?? 0) * 1.5
+        + equipmentDelta * .25 + equipmentRoleDelta * .25
         + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5);
     }
     return score;
@@ -84,7 +123,10 @@ export class AiEvaluator {
       return value;
     }
     const card = action.card;
-    let value = card.aiValue ?? 0;
+    const roleDelta = this.roleCardDelta(actor?.generalId, card?.definitionId);
+    let value = actor?.generalId && card?.definitionId
+      ? getRoleCardAiValue(actor.generalId, card.definitionId)
+      : (card.aiValue ?? 0);
     const actionTarget = action.targets?.[0];
     const target = visible.players.find((entry) => entry.id === actionTarget?.id) ?? actionTarget;
     if (target) {
@@ -114,7 +156,7 @@ export class AiEvaluator {
     if (card.definitionId === "transfer") value += Number(action.selection?.score ?? 0);
     if (card.definitionId === "symbiosis") {
       const net = this.symbiosisNetFromState(actor, visible);
-      value = net > 0 ? 8 + net : -9 + net;
+      value = (net > 0 ? 8 + net : -9 + net) + roleDelta;
     }
     const equippedDefinitionId = actor.equipmentDefinitionId ?? actor.equipment?.definitionId ?? null;
     if (card.category === "equipment" && equippedDefinitionId === card.definitionId) value -= 4;

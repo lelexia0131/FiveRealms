@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-ai-controller-filename-v77";
-import { createId } from "../utils/helpers.js?build=20260804-ai-controller-filename-v77";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260804-ai-controller-filename-v77";
-import { RuleEngine } from "./RuleEngine.js?build=20260804-ai-controller-filename-v77";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-role-core-scoring-v78";
+import { createId } from "../utils/helpers.js?build=20260805-role-core-scoring-v78";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260805-role-core-scoring-v78";
+import { RuleEngine } from "./RuleEngine.js?build=20260805-role-core-scoring-v78";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

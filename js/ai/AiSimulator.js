@@ -2,11 +2,12 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260804-ai-controller-filename-v77";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260804-ai-controller-filename-v77";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260804-ai-controller-filename-v77";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260804-ai-controller-filename-v77";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260804-ai-controller-filename-v77";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-role-core-scoring-v78";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-role-core-scoring-v78";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-role-core-scoring-v78";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-role-core-scoring-v78";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-role-core-scoring-v78";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-role-core-scoring-v78";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -19,7 +20,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260804-ai-controller-filename-v77";
+} from "./AiProbabilityBranches.js?build=20260805-role-core-scoring-v78";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -45,11 +46,23 @@ export class AiSimulator {
 
   initializeEquipmentBaselines(state) {
     for (const player of state?.players ?? []) {
-      if (Object.hasOwn(player, "initialEquipmentValue")) continue;
-      player.initialEquipmentValue = player.equipmentDefinitionId
-        ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7)
-        : 0;
+      if (!Object.hasOwn(player, "initialEquipmentValue")) {
+        player.initialEquipmentValue = player.equipmentDefinitionId
+          ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7)
+          : 0;
+      }
+      if (!Object.hasOwn(player, "initialEquipmentRoleDelta")) {
+        player.initialEquipmentRoleDelta = player.equipmentDefinitionId
+          ? this.equipmentRoleDelta(player, player.equipmentDefinitionId)
+          : 0;
+      }
     }
+  }
+
+  /** 角色对装备卡牌相对全局基础值的差量；缺少 generalId 或 definitionId 时回退 0。 */
+  equipmentRoleDelta(player, definitionId) {
+    if (!player?.generalId || !definitionId) return 0;
+    return getRoleCardAiValue(player.generalId, definitionId) - getBaseCardAiValue(definitionId);
   }
 
   initializeAssaultSummaries(state) {
@@ -390,6 +403,8 @@ export class AiSimulator {
         });
         actor.handCount += effectiveDeclineProbability;
         actor.expectedEquipmentGain = (actor.expectedEquipmentGain ?? 0) + equipmentValue * effectiveDeclineProbability;
+        actor.expectedEquipmentRoleDelta = (actor.expectedEquipmentRoleDelta ?? 0)
+          + this.equipmentRoleDelta(actor, first.equipmentDefinitionId) * effectiveDeclineProbability;
         this.setSimulatedEquipment(first, first.equipmentDefinitionId, existenceProbability - effectiveDeclineProbability);
         coordinationProbability = scale;
         coordinationTargets = [first, second];

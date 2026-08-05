@@ -2844,6 +2844,215 @@ test("角色卡牌价值：卡牌跨角色平均差绝对值不超过 0.125", ()
   }
 });
 
+// ---- 角色核心评分：动作与状态评分接入角色卡牌价值 ----
+test("角色核心评分：动作基础价值使用角色有效值且刃行者与守誓者突袭相差 2", () => {
+  const { game } = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("warden", 1, "dawn", "ai", 1)]);
+  game.aiDifficultyMultiplier = 0;
+  const evaluator = game.aiController.evaluator;
+  const makeVisible = (id, generalId) => ({
+    players: [
+      { id, battleTeam:"dawn", generalId, alive:true, hp:4, maxHp:4, energy:0, maxEnergy:4, handCount:1, hand:[] },
+      { id:"target", battleTeam:"dusk", alive:true, hp:1, maxHp:4, handCount:1 }
+    ]
+  });
+  const blade = makePlayer("blade", 0, "dawn");
+  const warden = makePlayer("warden", 1, "dawn", "ai", 1);
+  const assault = instance("assault");
+  const action = { type:"card", card:assault, targets:[{ id:"target" }] };
+  const bladeScore = evaluator.actionUtility(action, blade, makeVisible("blade", "blade-walker"));
+  const wardenScore = evaluator.actionUtility(action, warden, makeVisible("warden", "oath-warden"));
+  // 刃行者 assault = 4+1，守誓者 assault = 4-1；同一目标时伤害/焦点增量完全一致
+  assert.equal(bladeScore - wardenScore, 2);
+  assert.equal(bladeScore, assault.aiValue + 1 + 3 + (4 - 1) * 3 + 5 + 8);
+  assert.equal(wardenScore, assault.aiValue - 1 + 3 + (4 - 1) * 3 + 5 + 8);
+});
+
+test("角色核心评分：无角色差值的卡牌组合仍等于全局基础值", () => {
+  const { game } = makeGame([makePlayer("blade", 0, "dawn")]);
+  const evaluator = game.aiController.evaluator;
+  const blade = makePlayer("blade", 0, "dawn");
+  const visible = {
+    players: [
+      { id:"blade", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, energy:0, maxEnergy:4, handCount:1, hand:[] }
+    ]
+  };
+  // blade-walker 未配置 plunder 差值，动作分必须保持全局基础值 7
+  assert.equal(getRoleCardAiValue("blade-walker", "plunder"), CARD_DEFINITIONS.plunder.aiValue);
+  assert.equal(evaluator.actionUtility({ type:"card", card:instance("plunder"), targets:[] }, blade, visible), CARD_DEFINITIONS.plunder.aiValue);
+});
+
+test("角色核心评分：共生专用公式保留并额外加入角色差量", () => {
+  const { game } = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("medic", 1, "dusk", "ai", 2)]);
+  const evaluator = game.aiController.evaluator;
+  const makeVisible = (id, generalId) => ({
+    players: [
+      { id, battleTeam:"dawn", generalId, alive:true, hp:4, maxHp:4, energy:0, maxEnergy:4, handCount:1, hand:[] },
+      { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, handCount:1 }
+    ]
+  });
+  const blade = makePlayer("blade", 0, "dawn");
+  const medic = makePlayer("medic", 1, "dusk", "ai", 2);
+  const action = { type:"card", card:instance("symbiosis"), targets:[] };
+  // 满生命时共生专用净收益为 0，公式落到 -9；刃行者差量 -1、灵医差量 +2
+  assert.equal(evaluator.actionUtility(action, blade, makeVisible("blade", "blade-walker")), -9 - 1);
+  assert.equal(evaluator.actionUtility(action, medic, makeVisible("medic", "spirit-medic")), -9 + 2);
+});
+
+test("角色核心评分：缺少 generalId 或 definitionId 时回退旧基础评分且不抛错", () => {
+  const { game } = makeGame([makePlayer("actor", 0, "dawn")]);
+  game.aiDifficultyMultiplier = 0;
+  const evaluator = game.aiController.evaluator;
+  const actor = makePlayer("actor", 0, "dawn");
+  const visible = {
+    players: [
+      { id:"actor", battleTeam:"dawn", alive:true, hp:4, maxHp:4, energy:0, maxEnergy:4, handCount:1, hand:[] },
+      { id:"target", battleTeam:"dusk", alive:true, hp:1, maxHp:4, handCount:1 }
+    ]
+  };
+  const assault = instance("assault");
+  const assaultScore = evaluator.actionUtility({ type:"card", card:assault, targets:[{ id:"target" }] }, actor, visible);
+  assert.equal(assaultScore, assault.aiValue + 3 + (4 - 1) * 3 + 5 + 8);
+  // 缺少 definitionId 的简化卡牌按旧 aiValue 回退
+  assert.doesNotThrow(() => evaluator.actionUtility({ type:"card", card:{ id:"x", aiValue:5 }, targets:[] }, actor, visible));
+  assert.equal(evaluator.actionUtility({ type:"card", card:{ id:"x", aiValue:5 }, targets:[] }, actor, visible), 5);
+  // 简化状态缺少 generalId 时，stateUtility 的手牌与装备角色差量回退 0
+  const simplified = {
+    players: [
+      { id:"actor", battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1, hand:[{ id:"c", definitionId:"assault" }], equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1, expectedEquipmentGain:0, expectedEquipmentRoleDelta:0 },
+      { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 }
+    ]
+  };
+  assert.doesNotThrow(() => evaluator.stateUtility(simplified, "actor"));
+});
+
+test("角色核心评分：手牌数量相同但组成不同时状态评分体现角色差量", () => {
+  const { game } = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
+  const evaluator = game.aiController.evaluator;
+  const makeState = (cards) => ({
+    players: [
+      { id:"viewer", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:2, hand:cards },
+      { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 }
+    ]
+  });
+  const assault = instance("assault"), scout = instance("scout");
+  // blade-walker：assault 差量 +1、scout 差量 -1，两组手牌差量总和相差 4
+  assert.equal(
+    evaluator.stateUtility(makeState([assault, assault]), "viewer")
+      - evaluator.stateUtility(makeState([scout, scout]), "viewer"),
+    4
+  );
+});
+
+test("角色核心评分：手牌部分可用概率按剩余可用概率折算角色差量", () => {
+  const { game } = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
+  const evaluator = game.aiController.evaluator;
+  const base = { id:"viewer", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1 };
+  const enemy = { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 };
+  const full = { ...base, hand:[{ id:"a", definitionId:"assault", availabilityBranches:[{ probability:1, conditions:{} }] }] };
+  const half = { ...base, hand:[{ id:"a", definitionId:"assault", availabilityBranches:[{ probability:.5, conditions:{} }] }] };
+  assertClose(
+    evaluator.stateUtility({ players:[full, enemy] }, "viewer")
+      - evaluator.stateUtility({ players:[half, enemy] }, "viewer"),
+    .5
+  );
+});
+
+test("角色核心评分：状态评分不读取其他玩家手牌组成", () => {
+  const { game } = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
+  const evaluator = game.aiController.evaluator;
+  const viewer = { id:"viewer", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1, hand:[{ id:"v", definitionId:"assault" }] };
+  const hidden = { id:"enemy", battleTeam:"dusk", generalId:"spirit-medic", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:2, hand:[{ id:"h1", definitionId:"recover" }, { id:"h2", definitionId:"recover" }] };
+  assert.equal(
+    evaluator.stateUtility({ players:[viewer, hidden] }, "viewer"),
+    evaluator.stateUtility({ players:[viewer, { ...hidden, hand:undefined }] }, "viewer")
+  );
+});
+
+test("角色核心评分：初始装备角色差量基线使未变化装备净差量为 0", () => {
+  const { game } = makeGame([makePlayer("viewer", 0, "dawn")]);
+  const evaluator = game.aiController.evaluator;
+  const base = { id:"viewer", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1, expectedEquipmentGain:0, expectedEquipmentRoleDelta:0 };
+  const enemy = { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 };
+  // battleDevice 对 blade-walker 的角色差量为 +1
+  assert.equal(getRoleCardAiValue("blade-walker", "battleDevice") - getBaseCardAiValue("battleDevice"), 1);
+  const withBaseline = evaluator.stateUtility({ players:[{ ...base, initialEquipmentRoleDelta:1 }, enemy] }, "viewer");
+  const withoutBaseline = evaluator.stateUtility({ players:[{ ...base, initialEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  assertClose(withoutBaseline - withBaseline, .25);
+});
+
+test("角色核心评分：同一件新装备由不同角色获得时状态差量不同", () => {
+  const { game } = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("medic", 1, "dusk", "ai", 2)]);
+  const evaluator = game.aiController.evaluator;
+  const enemy = { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 };
+  const makeState = (id, generalId) => ({ id, battleTeam:"dawn", generalId, alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1, initialEquipmentRoleDelta:0, expectedEquipmentRoleDelta:0 });
+  const bladeScore = evaluator.stateUtility({ players:[makeState("blade", "blade-walker"), enemy] }, "blade");
+  const medicScore = evaluator.stateUtility({ players:[makeState("medic", "spirit-medic"), enemy] }, "medic");
+  // battleDevice：blade-walker 差量 +1、spirit-medic 差量 -1 → 状态差量差 0.5
+  assertClose(bladeScore - medicScore, .5);
+});
+
+test("角色核心评分：换装、丢失与概率获得装备按角色差量计算", () => {
+  const { game } = makeGame([makePlayer("viewer", 0, "dawn")]);
+  const evaluator = game.aiController.evaluator;
+  const enemy = { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 };
+  const base = { id:"viewer", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0, initialEquipmentRoleDelta:1 };
+  // 换装到 energyDevice：blade-walker 差量 -1，初始 battleDevice 差量 +1 → 净差量 -2
+  const swapped = evaluator.stateUtility({ players:[{ ...base, equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1, expectedEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  const swappedNoBaseline = evaluator.stateUtility({ players:[{ ...base, initialEquipmentRoleDelta:0, equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1, expectedEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  assertClose(swappedNoBaseline - swapped, .25);
+  // 装备丢失：当前保留概率 0，初始差量 1 相对初始差量 0 的角色装备差量为 -1
+  const lostWithBaseline = evaluator.stateUtility({ players:[{ ...base, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:0, expectedEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  const lostNoBaseline = evaluator.stateUtility({ players:[{ ...base, initialEquipmentRoleDelta:0, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:0, expectedEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  assertClose(lostNoBaseline - lostWithBaseline, .25);
+  // 概率获得已知装备：expectedEquipmentRoleDelta 按接收者角色差量 × 概率
+  const gained = evaluator.stateUtility({ players:[{ ...base, equipmentDefinitionId:null, equipmentRetentionProbability:0, initialEquipmentRoleDelta:0, expectedEquipmentRoleDelta:1 }, enemy] }, "viewer");
+  const noGain = evaluator.stateUtility({ players:[{ ...base, equipmentDefinitionId:null, equipmentRetentionProbability:0, initialEquipmentRoleDelta:0, expectedEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  assertClose(gained - noGain, .25);
+});
+
+test("角色核心评分：借势概率获得装备同步接收者角色装备差量", () => {
+  const state = {
+    players: [
+      { id:"actor", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", hp:4, maxHp:4, shield:0, energy:0, alive:true, handCount:1, hand:[{ id:"l", definitionId:"leverage" }], counterProbability:0, expectedEquipmentGain:0, expectedEquipmentRoleDelta:0 },
+      { id:"first", seatIndex:1, battleTeam:"dusk", generalId:"oath-warden", hp:4, maxHp:4, shield:0, energy:0, alive:true, handCount:2, attackUsed:0, attackLimit:1, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1, assaultResponseProbability:.5, expectedAssaultCount:.5, blockProbability:0, counterProbability:0 },
+      { id:"second", seatIndex:2, battleTeam:"dawn", hp:4, maxHp:4, shield:0, energy:0, alive:true, handCount:0, blockProbability:0, expectedRecoverCount:0 }
+    ]
+  };
+  const simulator = new AiSimulator(state);
+  const next = simulator.apply(state, {
+    type:"card",
+    card:{ ...CARD_DEFINITIONS.leverage, id:"l" },
+    targets:[{ id:"first" }, { id:"second" }],
+    selection:{ firstTargetId:"first", secondTargetId:"second" }
+  }, "actor");
+  const actor = next.players[0], first = next.players[1];
+  const declineProbability = 1 - first.equipmentRetentionProbability;
+  const bladeBattleDeviceDelta = getRoleCardAiValue("blade-walker", "battleDevice") - getBaseCardAiValue("battleDevice");
+  assert.ok(declineProbability > 0 && declineProbability < 1);
+  assertClose(actor.expectedEquipmentRoleDelta, bladeBattleDeviceDelta * declineProbability);
+  assert.ok(actor.expectedEquipmentGain > 0);
+});
+
+test("角色核心评分：真实 Planner 会按角色权重选择不同动作", async () => {
+  const run = async (generalIndex) => {
+    const actor = makePlayer("actor", 0, "dawn", "ai", generalIndex);
+    const enemy = makePlayer("enemy", 1, "dusk");
+    const provoke = instance("provoke"), harvest = instance("harvest");
+    actor.hand = [provoke, harvest];
+    enemy.hand = [instance("assault")];
+    const { game } = makeGame([actor, enemy]);
+    game.rememberPrivateCard(actor, enemy, enemy.hand[0]);
+    game.aiSearchNodeBudgetOverride = 3;
+    game.aiRandomnessRange = 0;
+    const action = await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+    return action.card?.definitionId;
+  };
+  // 全局基础值相同（provoke/harvest 均为 7），角色差量相反：刃行者 +1/-1，灵医 -1/+1
+  assert.equal(CARD_DEFINITIONS.provoke.aiValue, CARD_DEFINITIONS.harvest.aiValue);
+  assert.equal(await run(0), "provoke");
+  assert.equal(await run(2), "harvest");
+});
+
 // ---- 自己手牌、公开池与破坏目标角色价值 ----
 test("角色选牌：自己隐藏牌选择使用角色有效值且刃行者选中更低的 scout", () => {
   const actor = makePlayer("actor", 0, "dawn"); // blade-walker：assault 5、scout 4
@@ -4421,7 +4630,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260804-ai-controller-filename-v77"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260805-role-core-scoring-v78"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 
