@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ai-tactic-counter-risk-v86";
-import { createId } from "../utils/helpers.js?build=20260805-ai-tactic-counter-risk-v86";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260805-ai-tactic-counter-risk-v86";
-import { RuleEngine } from "./RuleEngine.js?build=20260805-ai-tactic-counter-risk-v86";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-oath-warden-guardian-aid-v87";
+import { createId } from "../utils/helpers.js?build=20260805-oath-warden-guardian-aid-v87";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260805-oath-warden-guardian-aid-v87";
+import { RuleEngine } from "./RuleEngine.js?build=20260805-oath-warden-guardian-aid-v87";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

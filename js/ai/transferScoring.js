@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-ai-tactic-counter-risk-v86";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260805-ai-tactic-counter-risk-v86";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260805-ai-tactic-counter-risk-v86";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-oath-warden-guardian-aid-v87";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260805-oath-warden-guardian-aid-v87";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260805-oath-warden-guardian-aid-v87";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

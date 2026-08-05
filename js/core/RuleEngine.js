@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260805-ai-tactic-counter-risk-v86";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-ai-tactic-counter-risk-v86";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260805-oath-warden-guardian-aid-v87";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-oath-warden-guardian-aid-v87";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

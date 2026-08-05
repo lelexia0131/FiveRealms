@@ -970,6 +970,69 @@ test("响应窗口队伍颜色复用现有主题变量", async () => {
   assert.match(css,/\.response-event \.response-player-name\.team-dusk\s*\{[^}]*color:\s*var\(--dusk\)/s);
 });
 test("护援响应区分原技能名称与当前响应技能名称", async () => { for(const [actionName,context] of [["焚场",{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill"}],["猎杀",{skill:"hunt",actionName:"猎杀",canBlock:true,damageType:"skill"}],["突袭",{card:instance("assault"),canBlock:true,damageType:"normal"}]]){const source=makePlayer(`source-${actionName}`,0,"dusk","ai",4),target=makePlayer(`target-${actionName}`,1,"dawn","ai",2),guardian=makePlayer(`guardian-${actionName}`,2,"dawn","human",1);guardian.hand.push(instance("charge"));const {game,ui}=makeGame([source,target,guardian],{response:()=>false});registerPassiveSkills(game);await game.damage(source,target,1,context);const request=ui.responseRequests.find((entry)=>entry.type==="skill");assert.ok(request);assert.equal(request.presentation.eventText,`${source.name}对${target.name}使用了「${actionName}」。`);assert.equal(request.presentation.responseText,"你可以发动「护援」。");assert.equal(request.presentation.buttonLabel,"发动护援");assert.doesNotMatch(request.presentation.eventText,/发动护援|burningField|hunt/);} });
+test("守誓者护援同一玩家回合内第二次伤害不能再次触发", async () => {
+  const source = makePlayer("aid-same-source", 0, "dusk", "ai", 4);
+  const target = makePlayer("aid-same-target", 1, "dawn", "ai", 5);
+  const guardian = makePlayer("aid-same-guardian", 2, "dawn", "human", 1);
+  guardian.hand.push(instance("charge"), instance("charge"));
+  const { game, ui } = makeGame([source, target, guardian], { response: () => true });
+  registerPassiveSkills(game);
+  const hp = target.hp;
+  assert.equal(guardian.roundFlags.guardianAidUsed, false);
+  await game.damage(source, target, 2, { canBlock:false, damageType:"skill", actionName:"测试" });
+  assert.equal(guardian.roundFlags.guardianAidUsed, true);
+  assert.equal(guardian.hand.length, 1);
+  assert.equal(target.hp, hp - 1);
+  const skillRequests = ui.responseRequests.filter((request) => request.type === "skill").length;
+  await game.damage(source, target, 2, { canBlock:false, damageType:"skill", actionName:"测试" });
+  assert.equal(guardian.hand.length, 1);
+  assert.equal(target.hp, hp - 3);
+  assert.equal(ui.responseRequests.filter((request) => request.type === "skill").length, skillRequests);
+});
+test("守誓者护援在下一名非守誓者玩家回合开始后重新可用", async () => {
+  const source = makePlayer("aid-next-source", 0, "dusk", "ai", 4);
+  const ally = makePlayer("aid-next-ally", 1, "dawn", "ai", 0);
+  const guardian = makePlayer("aid-next-guardian", 2, "dawn", "human", 1);
+  const nextPlayer = makePlayer("aid-next-player", 3, "dawn", "ai", 5);
+  const { game, ui } = makeGame([source, ally, guardian, nextPlayer], { response: () => true });
+  registerPassiveSkills(game);
+  guardian.hand.push(instance("charge"), instance("charge"));
+  const hp = ally.hp;
+  await game.damage(source, ally, 2, { canBlock:false, damageType:"skill", actionName:"测试" });
+  assert.equal(guardian.roundFlags.guardianAidUsed, true);
+  assert.equal(guardian.hand.length, 1);
+  assert.equal(ally.hp, hp - 1);
+  let resetObserved = false;
+  game.eventBus.on("turnStart", "test:guardian-aid-reset", () => {
+    if (!guardian.roundFlags.guardianAidUsed) resetObserved = true;
+  });
+  game.state.currentPlayerIndex = 3;
+  game.aiController.selectAction = async () => ({ type: "end" });
+  await game.takeTurn(nextPlayer, game.state.gameId);
+  assert.equal(resetObserved, true);
+  assert.equal(guardian.roundFlags.guardianAidUsed, false);
+  const skillRequests = ui.responseRequests.filter((request) => request.type === "skill").length;
+  await game.damage(source, ally, 2, { canBlock:false, damageType:"skill", actionName:"测试" });
+  assert.equal(guardian.roundFlags.guardianAidUsed, true);
+  assert.equal(guardian.hand.length, 0);
+  assert.equal(ally.hp, hp - 2);
+  assert.equal(ui.responseRequests.filter((request) => request.type === "skill").length, skillRequests + 1);
+});
+test("守誓者护援回合重置后AI新快照读取guardianAidUsedProbability为0", async () => {
+  const source = makePlayer("aid-snap-source", 0, "dusk", "ai", 4);
+  const guardian = makePlayer("aid-snap-guardian", 1, "dawn", "human", 1);
+  const nextPlayer = makePlayer("aid-snap-next", 2, "dawn", "ai", 5);
+  const { game } = makeGame([source, guardian, nextPlayer]);
+  guardian.roundFlags.guardianAidUsed = true;
+  const before = createAiVisibleState(source.id, game.state);
+  assert.equal(before.players.find((player) => player.id === guardian.id).guardianAidUsedProbability, 1);
+  game.state.currentPlayerIndex = 2;
+  game.aiController.selectAction = async () => ({ type: "end" });
+  await game.takeTurn(nextPlayer, game.state.gameId);
+  assert.equal(guardian.roundFlags.guardianAidUsed, false);
+  const after = createAiVisibleState(source.id, game.state);
+  assert.equal(after.players.find((player) => player.id === guardian.id).guardianAidUsedProbability, 0);
+});
 test("互利在反制窗口之后才展示并按座位每人选1张", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);assert.equal(game.state.publicCardPool.length,0);assert.equal(ui.publicRequests.length,1); });
 test("互利选牌严格跳过阵亡座位", async () => { const a=makePlayer("a",0,"dawn","human"),dead=makePlayer("dead",1,"dusk"),b=makePlayer("b",2,"dusk"),c=makePlayer("c",3,"dawn");dead.alive=false;const {game}=makeGame([a,dead,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(dead.hand.length,0);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1); });
 test("互利触发重洗后弃牌堆别名保持同步", async () => {
@@ -1242,7 +1305,7 @@ test("对局中缩放进入窄屏断点会自动折叠日志避免遮挡战场",
 test("隐藏牌选择窗口不显示牌背编号或真实卡牌资料", () => { const owner=makePlayer("owner",1,"dusk"),viewer=makePlayer("viewer",0,"dawn","human"),secret={...instance("counter"),name:"不可泄露名称",description:"不可泄露说明"};owner.hand.push(secret);const selection={tokens:[{token:"opaque-a",position:1}]},slots=createHiddenSelectionView(viewer,owner,selection),markup=hiddenSelectionMarkup(selection,slots);assert.deepEqual(slots,[{token:"opaque-a",known:false}]);for(const hidden of [secret.id,secret.definitionId,secret.name,secret.description,secret.art,"牌背 1","未知牌 1","？牌"])assert.ok(!markup.includes(hidden));assert.match(markup,/hidden-card-back/); });
 test("所有隐藏牌界面源码不再生成可见牌背序号", async () => { const sources=await Promise.all(["js/ui/templates.js","js/ui/InteractionController.js"].map((file)=>readFile(projectFile(file),"utf8")));const source=sources.join("\n");assert.doesNotMatch(source,/牌背\s*\$\{|未知牌\s*\$\{|\?牌/); });
 test("角色技能详情完整展示主动与被动公开信息", () => { const player=makePlayer("hero",0,"dawn","human",3);player.hand.push({...instance("counter"),name:"隐藏决策资料"});const markup=skillDetailsTemplate(player);assert.match(markup,/主动技能/);assert.match(markup,new RegExp(player.general.activeName));assert.match(markup,new RegExp(player.general.activeDescription));assert.match(markup,/能量消耗|发动时消耗全部能量/);assert.match(markup,/次数限制/);assert.match(markup,/被动技能/);assert.match(markup,new RegExp(player.general.passiveName));assert.match(markup,new RegExp(player.general.passiveDescription));assert.doesNotMatch(markup,/隐藏决策资料|knownCardsByPlayer|aiMemory|decision|weight/); });
-test("八名角色使用结构化被动触发条件与限制文案", async () => { const expected={"blade-walker":"每回合按不同卡牌类别分别触发","oath-warden":"每轮限触发1次","spirit-medic":"每回合限触发1次","shade-agent":"每回合限触发1次","ember-magus":"每次卡牌结算最多触发1次","trail-hunter":"每回合限触发2次；同一敌人每回合限1次","fate-gambler":"每回合限触发1次","resonance-tuner":"每回合限触发1次"};for(const [index,general] of GENERAL_DEFINITIONS.entries()){assert.ok(general.passiveTriggerText);assert.equal(general.passiveLimitText,expected[general.id]);const player=makePlayer(`structured-${general.id}`,index,"dawn","human",index),markup=skillDetailsTemplate(player);assert.match(markup,new RegExp(general.passiveTriggerText));assert.match(markup,new RegExp(general.passiveLimitText));}const source=await readFile(projectFile("js/ui/templates.js"),"utf8");assert.doesNotMatch(source,/description\.includes\(|每轮一次.*includes|每回合首次.*includes/); });
+test("八名角色使用结构化被动触发条件与限制文案", async () => { const expected={"blade-walker":"每回合按不同卡牌类别分别触发","oath-warden":"每回合限触发1次","spirit-medic":"每回合限触发1次","shade-agent":"每回合限触发1次","ember-magus":"每次卡牌结算最多触发1次","trail-hunter":"每回合限触发2次；同一敌人每回合限1次","fate-gambler":"每回合限触发1次","resonance-tuner":"每回合限触发1次"};for(const [index,general] of GENERAL_DEFINITIONS.entries()){assert.ok(general.passiveTriggerText);assert.equal(general.passiveLimitText,expected[general.id]);const player=makePlayer(`structured-${general.id}`,index,"dawn","human",index),markup=skillDetailsTemplate(player);assert.match(markup,new RegExp(general.passiveTriggerText));assert.match(markup,new RegExp(general.passiveLimitText));}const source=await readFile(projectFile("js/ui/templates.js"),"utf8");assert.doesNotMatch(source,/description\.includes\(|每轮一次.*includes|每回合首次.*includes/); });
 test("目标选择期间头像与名称优先选择目标且不打开技能面板", () => { const source=makePlayer("source",0,"dawn","human"),target=makePlayer("target",1,"dusk"),illegal=makePlayer("illegal",2,"dawn"),other=makePlayer("other",3,"dawn");let resolved=null,shown=null,triggerUsed=null,rendered=0;const makeState=()=>({players:[target],legalIds:new Set([target.id]),resolve:(value)=>{resolved=value;}});const makeFake=()=>({game:{state:{players:[source,target,illegal,other]}},targetState:null,showSkillDetails:(value,trigger)=>{shown=value;triggerUsed=trigger;},render:()=>{rendered+=1;},playSound(){}});const panelFor=(player)=>({dataset:{playerId:player.id}}),skillFor=(player)=>({dataset:{skillPlayerId:player.id}}),eventFor=(player,kind)=>({target:{closest:(query)=>query==="[data-skill-player-id]"&&["avatar","name"].includes(kind)?skillFor(player):query==="[data-player-id]"?panelFor(player):null}});let ui=makeFake();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"avatar"));assert.equal(shown,target);assert.equal(triggerUsed.dataset.skillPlayerId,target.id);assert.equal(ui.targetState,null);shown=null;triggerUsed=null;UIManager.prototype.handlePlayerClick.call(ui,eventFor(other,"name"));assert.equal(shown,other);assert.equal(ui.targetState,null);shown=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"avatar"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);assert.equal(rendered,1);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"name"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(illegal,"avatar"));assert.equal(resolved,null);assert.equal(shown,null);assert.ok(ui.targetState);assert.equal(ui.targetState.legalIds.has(target.id),true);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(illegal,"name"));assert.equal(resolved,null);assert.equal(shown,null);assert.ok(ui.targetState);resolved=null;rendered=0;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"panel"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);assert.equal(rendered,1); });
 test("关闭技能弹窗后焦点返回原生触发按钮", () => { let focused=0;const overlay={innerHTML:"dialog",classList:{add(){}}},trigger={isConnected:true,focus(){focused+=1;}};const fake={elements:{skill_details_overlay:overlay},skillDetailsTrigger:trigger};UIManager.prototype.hideSkillDetails.call(fake);assert.equal(overlay.innerHTML,"");assert.equal(fake.skillDetailsTrigger,null);assert.equal(focused,1); });
 test("互利必须先选择再确认且可直接切换选择", async () => { const element=makeInteractiveElement(),view=new PublicPoolView(element),player=makePlayer("human",0,"dawn","human"),first=instance("assault"),second=instance("block");let settled=false;const pending=view.request(player,[first,second]).then((card)=>{settled=true;return card;});assert.match(element.innerHTML,/data-public-confirm disabled/);element.click(clickTarget("[data-public-card-id]",{publicCardId:first.id}));await Promise.resolve();assert.equal(settled,false);assert.equal(view.pending.selected.has(first.id),true);assert.doesNotMatch(element.innerHTML,/data-public-confirm disabled/);element.click(clickTarget("[data-public-card-id]",{publicCardId:second.id}));assert.deepEqual([...view.pending.selected],[second.id]);assert.equal(settled,false);element.click(clickTarget("[data-public-confirm]"));assert.equal(await pending,second);assert.equal(view.pending,null); });
@@ -3273,7 +3336,7 @@ test("AI护援统一覆盖突袭、震荡、挑衅、决斗、猎杀与焚场", 
   runSkill(ACTIVE_SKILLS.hunt,"trail-hunter",2);runSkill(ACTIVE_SKILLS.burningField,"ember-magus",1);
 });
 
-test("AI护援每名守誓者每轮一次且零伤害与阵亡时不弃牌", () => {
+test("AI护援每名守誓者每回合一次且零伤害与阵亡时不弃牌", () => {
   const attacker={id:"aid-attacker",battleTeam:"dawn",alive:true,hp:5,maxHp:5,handCount:0};
   const target={id:"aid-target",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0};
   const guardian={id:"aid-guardian",generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:2,guardianAidUsedProbability:0};
@@ -5911,7 +5974,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260805-ai-tactic-counter-risk-v86"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260805-oath-warden-guardian-aid-v87"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 

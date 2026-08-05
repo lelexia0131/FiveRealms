@@ -2,7 +2,7 @@
  * 隐藏实体牌令牌服务。依赖 Game 玩家与 createId，只在内存保存 token 映射；
  * DOM 永远只能收到 token/position。手牌版本变化或对局 dispose 后映射必须失效。
  */
-import { createId } from "../utils/helpers.js?build=20260805-ai-tactic-counter-risk-v86";
+import { createId } from "../utils/helpers.js?build=20260805-oath-warden-guardian-aid-v87";
 
 /** 把隐藏实体牌转换为短期不透明令牌。令牌只在当前手牌版本有效。 */
 export class CardSelectionSystem {

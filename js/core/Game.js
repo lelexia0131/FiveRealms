@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260805-ai-tactic-counter-risk-v86";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-ai-tactic-counter-risk-v86";
-import { createId, clamp } from "../utils/helpers.js?build=20260805-ai-tactic-counter-risk-v86";
-import { EventBus } from "./EventBus.js?build=20260805-ai-tactic-counter-risk-v86";
-import { Player } from "./Player.js?build=20260805-ai-tactic-counter-risk-v86";
-import { Deck } from "./Deck.js?build=20260805-ai-tactic-counter-risk-v86";
-import { TeamManager } from "./TeamManager.js?build=20260805-ai-tactic-counter-risk-v86";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260805-ai-tactic-counter-risk-v86";
-import { RuleEngine } from "./RuleEngine.js?build=20260805-ai-tactic-counter-risk-v86";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260805-ai-tactic-counter-risk-v86";
-import { GameLogger } from "./GameLogger.js?build=20260805-ai-tactic-counter-risk-v86";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260805-ai-tactic-counter-risk-v86";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260805-ai-tactic-counter-risk-v86";
-import { AIController } from "../ai/AiController.js?build=20260805-ai-tactic-counter-risk-v86";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260805-ai-tactic-counter-risk-v86";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260805-ai-tactic-counter-risk-v86";
-import { Debug } from "../utils/debug.js?build=20260805-ai-tactic-counter-risk-v86";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260805-ai-tactic-counter-risk-v86";
-import { DyingSystem } from "./DyingSystem.js?build=20260805-ai-tactic-counter-risk-v86";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260805-ai-tactic-counter-risk-v86";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260805-ai-tactic-counter-risk-v86";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260805-ai-tactic-counter-risk-v86";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260805-ai-tactic-counter-risk-v86";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260805-oath-warden-guardian-aid-v87";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-oath-warden-guardian-aid-v87";
+import { createId, clamp } from "../utils/helpers.js?build=20260805-oath-warden-guardian-aid-v87";
+import { EventBus } from "./EventBus.js?build=20260805-oath-warden-guardian-aid-v87";
+import { Player } from "./Player.js?build=20260805-oath-warden-guardian-aid-v87";
+import { Deck } from "./Deck.js?build=20260805-oath-warden-guardian-aid-v87";
+import { TeamManager } from "./TeamManager.js?build=20260805-oath-warden-guardian-aid-v87";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260805-oath-warden-guardian-aid-v87";
+import { RuleEngine } from "./RuleEngine.js?build=20260805-oath-warden-guardian-aid-v87";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260805-oath-warden-guardian-aid-v87";
+import { GameLogger } from "./GameLogger.js?build=20260805-oath-warden-guardian-aid-v87";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260805-oath-warden-guardian-aid-v87";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260805-oath-warden-guardian-aid-v87";
+import { AIController } from "../ai/AiController.js?build=20260805-oath-warden-guardian-aid-v87";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260805-oath-warden-guardian-aid-v87";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260805-oath-warden-guardian-aid-v87";
+import { Debug } from "../utils/debug.js?build=20260805-oath-warden-guardian-aid-v87";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260805-oath-warden-guardian-aid-v87";
+import { DyingSystem } from "./DyingSystem.js?build=20260805-oath-warden-guardian-aid-v87";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260805-oath-warden-guardian-aid-v87";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260805-oath-warden-guardian-aid-v87";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260805-oath-warden-guardian-aid-v87";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260805-oath-warden-guardian-aid-v87";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -253,6 +253,7 @@ export class Game {
     this.ui.setMusicTeam?.(player.battleTeam);
     this.state.phase = "turnStart";
     player.resetTurnFlags(this.teamRules.getRules(player));
+    for (const entry of this.state.players) entry.roundFlags.guardianAidUsed = false;
     this.log(`${player.name}的回合开始。`, "important");
     await this.eventBus.emit("turnStart", { type: "turnStart", player });
     if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
