@@ -1,4 +1,4 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ember-magus-burning-field-v88";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-spy-gap-rescue-v89";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；

@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ember-magus-burning-field-v88";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-ember-magus-burning-field-v88";
-import { randomChoice } from "../utils/helpers.js?build=20260805-ember-magus-burning-field-v88";
-import { Debug } from "../utils/debug.js?build=20260805-ember-magus-burning-field-v88";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-spy-gap-rescue-v89";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-spy-gap-rescue-v89";
+import { randomChoice } from "../utils/helpers.js?build=20260805-spy-gap-rescue-v89";
+import { Debug } from "../utils/debug.js?build=20260805-spy-gap-rescue-v89";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -88,20 +88,43 @@ const PASSIVE_SKILLS = {
   },
 
   spyGap(game, owner) {
-    game.eventBus.on("afterDamage", `${owner.id}:spyGap`, async (event) => {
+    async function revealGap(target) {
       const gameId = game.state.gameId;
-      if (!owner.alive || event.source?.id !== owner.id || !event.target?.alive || event.target.hp <= 0
-        || event.target.battleTeam === owner.battleTeam || event.actualAmount <= 0
-        || owner.turnFlags.spyGapTriggered || !event.target.hand.length) return;
+      if (!owner.alive || !target?.alive || target.hp <= 0
+        || target.battleTeam === owner.battleTeam
+        || owner.turnFlags.spyGapTriggered || !target.hand.length) return;
       owner.turnFlags.spyGapTriggered = true;
-      const intent = await game.preparePrivateHandPeekIntent(owner, event.target, 2, `窥隙：选择查看${event.target.name}至多2张手牌`);
+      const intent = await game.preparePrivateHandPeekIntent(owner, target, 2, `窥隙：选择查看${target.name}至多2张手牌`);
       if (!game.isSessionValid(gameId)) return;
       const seen = game.resolvePrivateHandPeekIntent(owner, intent);
       if (!seen.length) return;
-      for (const card of seen) game.rememberPrivateCard(owner, event.target, card);
-      if (owner.controllerType === "human") await game.ui.showPrivateReveal(`窥隙：${event.target.name}的手牌`, seen);
+      for (const card of seen) game.rememberPrivateCard(owner, target, card);
+      if (owner.controllerType === "human") await game.ui.showPrivateReveal(`窥隙：${target.name}的手牌`, seen);
       if (!game.isSessionValid(gameId)) return;
-      game.log(`${owner.name}发动窥隙，查看了${event.target.name}的${seen.length}张手牌。`);
+      game.log(`${owner.name}发动窥隙，查看了${target.name}的${seen.length}张手牌。`);
+    }
+
+    game.eventBus.on("afterDamage", `${owner.id}:spyGap`, async (event) => {
+      if (!owner.alive || event.source?.id !== owner.id || !event.target?.alive
+        || event.target.battleTeam === owner.battleTeam || event.actualAmount <= 0
+        || owner.turnFlags.spyGapTriggered) return;
+      if (event.target.hp > 0) {
+        await revealGap(event.target);
+        return;
+      }
+      owner.turnFlags.spyGapPendingTargetIds ??= new Set();
+      owner.turnFlags.spyGapPendingTargetIds.add(event.target.id);
+    });
+
+    game.eventBus.on("playerRescued", `${owner.id}:spyGap:rescue`, async (event) => {
+      const pending = owner.turnFlags.spyGapPendingTargetIds;
+      if (!pending?.has(event.target?.id)) return;
+      pending.delete(event.target.id);
+      await revealGap(event.target);
+    });
+
+    game.eventBus.on("playerDead", `${owner.id}:spyGap:dead`, (event) => {
+      owner.turnFlags.spyGapPendingTargetIds?.delete(event.target?.id);
     });
   },
 

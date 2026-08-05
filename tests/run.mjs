@@ -2843,6 +2843,72 @@ test("窥隙同回合仅触发一次且格挡、护盾、队友和空手牌均�
 
   const emptyShade=makePlayer("peek-empty",0,"dawn","human",3),emptyTarget=makePlayer("peek-empty-target",1,"dusk");const emptyFixture=makeGame([emptyShade,emptyTarget]);registerPassiveSkills(emptyFixture.game);await emptyFixture.game.damage(emptyShade,emptyTarget,1,{canBlock:false});assert.equal(emptyFixture.ui.hiddenRequests.length,0);
 });
+test("窥隙在致命伤害获救后触发且不会在救援前提前触发", async () => {
+  const shade=makePlayer("peek-rescue-shade",0,"dawn","human",3),enemy=makePlayer("peek-rescue-enemy",1,"dusk");enemy.hp=1;enemy.hand.push(instance("recover"),instance("counter"),instance("harvest"));
+  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
+  game.eventBus.on("playerDying","test:peek-rescue-no-early",()=>{
+    assert.equal(ui.hiddenRequests.length,0);
+    assert.equal(shade.turnFlags.spyGapTriggered,false);
+  });
+  await game.damage(shade,enemy,1,{canBlock:false});
+  assert.equal(enemy.alive,true);assert.equal(enemy.hp,1);
+  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+  assert.equal(ui.hiddenRequests.length,1);assert.equal(ui.reveals[0].cards.length,2);
+  assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length,2);
+});
+test("窥隙在致命伤害由队友救援成功后触发", async () => {
+  const shade=makePlayer("peek-ally-rescue-shade",0,"dawn","human",3),enemy=makePlayer("peek-ally-rescue-enemy",1,"dusk"),ally=makePlayer("peek-ally-rescue-ally",2,"dusk","ai",6);
+  enemy.hp=1;enemy.hand.push(instance("counter"),instance("harvest"),instance("duel"));ally.hand.push(instance("recover"));
+  const {game,ui}=makeGame([shade,enemy,ally]);registerPassiveSkills(game);
+  await game.damage(shade,enemy,1,{canBlock:false});
+  assert.equal(enemy.alive,true);assert.equal(enemy.hp,1);
+  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+  assert.equal(ui.hiddenRequests.length,1);assert.equal(ui.reveals[0].cards.length,2);
+  assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length,2);
+});
+test("窥隙在致命伤害救援失败阵亡时不触发且不残留资格", async () => {
+  const shade=makePlayer("peek-dead-shade",0,"dawn","human",3),enemy=makePlayer("peek-dead-enemy",1,"dusk");enemy.hp=1;enemy.hand.push(instance("counter"),instance("harvest"));
+  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
+  await game.damage(shade,enemy,1,{canBlock:false});
+  assert.equal(enemy.alive,false);assert.equal(enemy.hp,0);
+  assert.equal(shade.turnFlags.spyGapTriggered,false);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+  assert.equal(ui.hiddenRequests.length,0);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]??{}).length,0);
+});
+test("窥隙经濒死获救触发后同回合对其他敌人不再触发", async () => {
+  const shade=makePlayer("peek-twice-shade",0,"dawn","human",3),first=makePlayer("peek-twice-first",1,"dusk"),second=makePlayer("peek-twice-second",2,"dusk");
+  first.hp=1;first.hand.push(instance("recover"),instance("counter"),instance("harvest"));second.hp=2;second.hand.push(instance("charge"),instance("duel"));
+  const {game,ui}=makeGame([shade,first,second]);registerPassiveSkills(game);
+  await game.damage(shade,first,1,{canBlock:false});
+  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(ui.hiddenRequests.length,1);
+  await game.damage(shade,second,1,{canBlock:false});
+  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(ui.hiddenRequests.length,1);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+});
+test("非伤害失去生命获救不得触发窥隙", async () => {
+  const shade=makePlayer("peek-hploss-shade",0,"dawn","human",3),enemy=makePlayer("peek-hploss-enemy",1,"dusk");enemy.hp=1;enemy.hand.push(instance("recover"),instance("counter"),instance("harvest"));
+  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
+  await game.hpLossSystem.lose(enemy,1,{source:shade,reason:"测试失去生命"});
+  assert.equal(enemy.alive,true);assert.equal(enemy.hp,1);
+  assert.equal(shade.turnFlags.spyGapTriggered,false);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+  assert.equal(ui.hiddenRequests.length,0);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]??{}).length,0);
+});
+test("护盾完全吸收伤害时窥隙不触发且不写入待处理资格", async () => {
+  const shade=makePlayer("peek-shield-zero-shade",0,"dawn","human",3),enemy=makePlayer("peek-shield-zero-enemy",1,"dusk");enemy.shield=1;enemy.hand.push(instance("charge"),instance("duel"));
+  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
+  await game.damage(shade,enemy,1,{canBlock:false});
+  assert.equal(enemy.hp,enemy.maxHp);
+  assert.equal(shade.turnFlags.spyGapTriggered,false);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+  assert.equal(ui.hiddenRequests.length,0);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]??{}).length,0);
+});
+test("AI窥隙在目标濒死获救后仍结算且救援失败不结算", () => {
+  const spy={id:"ai-rescue-spy",generalId:"shade-agent",battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:0,attackUsed:0,spyGapTriggeredProbability:0,expectedInformationGain:0};
+  const rescued={id:"ai-rescue-target",seatIndex:1,battleTeam:"dusk",alive:true,hp:1,maxHp:3,shield:0,handCount:3,blockProbability:0,expectedRecoverCount:1};
+  const rescuedState={players:[spy,rescued]};new AiSimulator(rescuedState).simulateAssault(rescuedState,spy,rescued,1);
+  assert.equal(rescued.hp,1);assert.equal(spy.spyGapTriggeredProbability,1);assert.equal(spy.expectedInformationGain,2);
+  const deadSpy={id:"ai-dead-spy",generalId:"shade-agent",battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:0,attackUsed:0,spyGapTriggeredProbability:0,expectedInformationGain:0};
+  const dead={id:"ai-dead-target",seatIndex:1,battleTeam:"dusk",alive:true,hp:1,maxHp:3,shield:0,handCount:2,blockProbability:0,expectedRecoverCount:0};
+  const deadState={players:[deadSpy,dead]};new AiSimulator(deadState).simulateAssault(deadState,deadSpy,dead,1);
+  assert.equal(dead.alive,false);assert.equal(deadSpy.spyGapTriggeredProbability,0);assert.equal(deadSpy.expectedInformationGain,0);
+});
 
 test("窥隙隐藏选择期间dispose会收束Promise并清理令牌", async () => {
   const shade=makePlayer("peek-dispose",0,"dawn","human",3),target=makePlayer("peek-dispose-target",1,"dusk");target.hand.push(instance("charge"),instance("harvest"));
@@ -6075,7 +6141,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260805-ember-magus-burning-field-v88"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260805-spy-gap-rescue-v89"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 

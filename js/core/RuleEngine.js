@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260805-ember-magus-burning-field-v88";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-ember-magus-burning-field-v88";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260805-spy-gap-rescue-v89";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-spy-gap-rescue-v89";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

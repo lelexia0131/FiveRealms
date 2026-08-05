@@ -2,12 +2,12 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-ember-magus-burning-field-v88";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ember-magus-burning-field-v88";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-ember-magus-burning-field-v88";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-ember-magus-burning-field-v88";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-ember-magus-burning-field-v88";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-ember-magus-burning-field-v88";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-spy-gap-rescue-v89";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-spy-gap-rescue-v89";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-spy-gap-rescue-v89";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-spy-gap-rescue-v89";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-spy-gap-rescue-v89";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-spy-gap-rescue-v89";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,7 +20,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260805-ember-magus-burning-field-v88";
+} from "./AiProbabilityBranches.js?build=20260805-spy-gap-rescue-v89";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -1147,16 +1147,6 @@ export class AiSimulator {
   simulateAfterLifeDamage(state, source, target, lifeDamageProbability, lifeDamageBranches = null, damageContext = {}) {
     const chance = clampProbability(lifeDamageProbability);
     if (!chance || !source?.alive || !target) return;
-    if (source.generalId === "shade-agent" && target.alive && target.hp > 0
-      && target.battleTeam !== source.battleTeam && (target.handCount ?? 0) > 0) {
-      const oldTriggeredProbability = clampProbability(source.spyGapTriggeredProbability
-        ?? (source.spyGapTriggered ? 1 : 0));
-      const triggerProbability = (1 - oldTriggeredProbability) * chance;
-      source.spyGapTriggeredProbability = unionProbability(oldTriggeredProbability, chance);
-      source.spyGapTriggered = source.spyGapTriggeredProbability >= 1 - Number.EPSILON;
-      source.expectedInformationGain = (source.expectedInformationGain ?? 0)
-        + Math.min(2, target.handCount) * triggerProbability;
-    }
     if (damageContext.cardDamage && source.generalId === "ember-magus"
       && target.battleTeam !== source.battleTeam) {
       damageContext.emberTriggeredProbabilities ??= {};
@@ -1186,6 +1176,21 @@ export class AiSimulator {
         source.energy = expectedBranchValue(source.energyBranches);
       }
     }
+  }
+
+  /** 濒死救援结算后再结算窥隙，避免目标获救后继续存活时被漏算。 */
+  simulateSpyGapAfterLifeDamage(state, source, target, lifeDamageProbability) {
+    const chance = clampProbability(lifeDamageProbability);
+    if (!chance || !source?.alive || !target?.alive || target.hp <= 0
+      || target.battleTeam === source.battleTeam || (target.handCount ?? 0) <= 0
+      || source.generalId !== "shade-agent") return;
+    const oldTriggeredProbability = clampProbability(source.spyGapTriggeredProbability
+      ?? (source.spyGapTriggered ? 1 : 0));
+    const triggerProbability = (1 - oldTriggeredProbability) * chance;
+    source.spyGapTriggeredProbability = unionProbability(oldTriggeredProbability, chance);
+    source.spyGapTriggered = source.spyGapTriggeredProbability >= 1 - Number.EPSILON;
+    source.expectedInformationGain = (source.expectedInformationGain ?? 0)
+      + Math.min(2, target.handCount) * triggerProbability;
   }
 
   simulateAssaultAfterDamage(state, source, target, lifeDamageProbability, lifeDamageBranches = null) {
@@ -1652,6 +1657,7 @@ export class AiSimulator {
     this.simulateAfterLifeDamage(state, attacker, target, lifeDamageChance,
       lifeDamageBranches, options.damageContext ?? {});
     this.resolveFatal(state, target, attacker);
+    this.simulateSpyGapAfterLifeDamage(state, attacker, target, lifeDamageChance);
     return actualDamage;
   }
 
