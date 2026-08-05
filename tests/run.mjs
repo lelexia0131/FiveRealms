@@ -1550,6 +1550,229 @@ test("AI 不会反制对己方净治疗明显有利的共生", () => { const a=m
 test("AI 对互利按当前存活敌我人数决定是否反制", () => { const smallA=makePlayer("small-a",0,"dawn"),largeA=makePlayer("large-a",1,"dusk"),smallB=makePlayer("small-b",2,"dawn"),largeB=makePlayer("large-b",3,"dusk"),largeC=makePlayer("large-c",4,"dusk");const {game}=makeGame([smallA,largeA,smallB,largeB,largeC]);const card=instance("mutualBenefit"),counter=instance("counter");assert.equal(game.aiController.responsePolicy.shouldRespond(smallA,"counter",{source:largeA,card},[counter]),true);assert.equal(game.aiController.responsePolicy.shouldRespond(largeA,"counter",{source:smallA,card},[counter]),false);largeC.alive=false;assert.equal(game.aiController.responsePolicy.shouldRespond(smallA,"counter",{source:largeA,card},[counter]),false); });
 test("AI 对共生按双方本次实际治疗人数决定是否反制", () => { const a=makePlayer("a",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemyA=makePlayer("enemy-a",2,"dusk"),enemyB=makePlayer("enemy-b",3,"dusk"),enemyC=makePlayer("enemy-c",4,"dusk");const {game}=makeGame([a,ally,enemyA,enemyB,enemyC]);const card=instance("symbiosis"),counter=instance("counter");a.hp-=1;ally.hp-=1;enemyA.hp-=1;assert.equal(game.aiController.responsePolicy.shouldRespond(a,"counter",{source:enemyA,card},[counter]),false);ally.hp=ally.maxHp;enemyB.hp-=1;assert.equal(game.aiController.responsePolicy.shouldRespond(a,"counter",{source:enemyA,card},[counter]),true); });
 test("AI 模拟器与真实策略使用相同的全体受益反制判断", () => { const state={players:[{id:"small-a",battleTeam:"dawn",alive:true,hp:4,maxHp:4},{id:"large-a",battleTeam:"dusk",alive:true,hp:4,maxHp:4},{id:"small-b",battleTeam:"dawn",alive:true,hp:4,maxHp:4},{id:"large-b",battleTeam:"dusk",alive:true,hp:4,maxHp:4},{id:"large-c",battleTeam:"dusk",alive:true,hp:4,maxHp:4}]};const simulator=new AiSimulator(state),small=state.players[0],large=state.players[1],card={...CARD_DEFINITIONS.mutualBenefit,id:"mutual"};assert.equal(simulator.counterDesire(state,small,large,card,[]),1);assert.equal(simulator.counterDesire(state,large,small,card,[]),0);state.players[4].alive=false;assert.equal(simulator.counterDesire(state,small,large,card,[]),0); });
+
+const makeCounterRiskPlayer = (id, team, overrides = {}) => ({
+  id,
+  seatIndex:0,
+  battleTeam:team,
+  generalId:"blade-walker",
+  alive:true,
+  hp:4,
+  maxHp:4,
+  shield:0,
+  energy:1,
+  maxEnergy:4,
+  handCount:0,
+  attackUsed:0,
+  attackLimit:1,
+  attackRange:1,
+  counterProbability:0,
+  blockProbability:0,
+  twoBlockProbability:0,
+  expectedRecoverCount:0,
+  expectedAssaultCount:0,
+  assaultResponseProbability:0,
+  expectedInformationGain:0,
+  equipmentDefinitionId:null,
+  equipmentRetentionProbability:0,
+  knownCards:null,
+  statuses:[],
+  ...overrides
+});
+
+const planWithStubEvaluator = async (game, actor, visible, roots, evaluator, nodeBudget = null) => {
+  game.aiRandomnessRange = 0;
+  game.aiController.actionGenerator.generateFromVisible = () => [];
+  game.aiSearchNodeBudgetOverride = nodeBudget == null ? roots.length : nodeBudget;
+  const planner = game.aiController.planner;
+  planner.evaluator = evaluator;
+  return planner.plan(actor, visible, roots, { gameId:game.state.gameId });
+};
+
+test("战术反制风险：队友 counterProbability 不产生机械 hidden world 扣分", async () => {
+  const actor=makePlayer("a",0,"dawn"),teammate=makePlayer("t",1,"dawn"),enemy=makePlayer("e",2,"dusk");
+  const run=async(counterProbability)=>{
+    const {game}=makeGame([actor,teammate,enemy]);
+    const visible={remainingCardCounts:{assault:30},players:[
+      makeCounterRiskPlayer("a","dawn",{seatIndex:0}),
+      makeCounterRiskPlayer("t","dawn",{seatIndex:1,handCount:1,knownCards:[{cardId:"tc1",definitionId:"counter"}],counterProbability}),
+      makeCounterRiskPlayer("e","dusk",{seatIndex:2})
+    ]};
+    const scout={...CARD_DEFINITIONS.scout,id:"scout-risk"};
+    return planWithStubEvaluator(game,actor,visible,[
+      {type:"card",card:scout,targets:[{id:"e"}]},
+      {type:"end"}
+    ],{actionUtility:(action)=>action.type==="end"?0:0.9,stateUtility:()=>0});
+  };
+  const without=await run(0),withCounter=await run(1);
+  assert.equal(without.card?.definitionId,"scout");
+  assert.equal(withCounter.card?.definitionId,"scout");
+});
+
+test("战术反制风险：敌方意愿按结算比例影响即时价值且无目标全局牌不被跳过", async () => {
+  const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("e",1,"dusk");
+  const run=async(counterProbability)=>{
+    const {game}=makeGame([actor,enemy]);
+    const visible={remainingCardCounts:{assault:30},players:[
+      makeCounterRiskPlayer("a","dawn",{seatIndex:0}),
+      makeCounterRiskPlayer("e","dusk",{seatIndex:1,counterProbability})
+    ]};
+    const harvest={...CARD_DEFINITIONS.harvest,id:"h1"};
+    const expose={...CARD_DEFINITIONS.exposeWeakness,id:"x1"};
+    const symbiosis={...CARD_DEFINITIONS.symbiosis,id:"s1"};
+    return planWithStubEvaluator(game,actor,visible,[
+      {type:"card",card:harvest,targets:[]},
+      {type:"card",card:expose,targets:[]},
+      {type:"card",card:symbiosis,targets:[{id:"a"},{id:"e"}]}
+    ],{actionUtility:(action)=>action.type==="card"?1:0,stateUtility:()=>0});
+  };
+  const withRisk=await run(1),withoutRisk=await run(0);
+  assert.equal(withRisk.card?.definitionId,"symbiosis");
+  assert.equal(withoutRisk.card?.definitionId,"harvest");
+});
+
+test("战术反制风险：target scope 只按存活实际目标平均结算比例", async () => {
+  const actor=makePlayer("a",0,"dawn");
+  const {game}=makeGame([actor]);
+  const visible={remainingCardCounts:{assault:30},players:[
+    makeCounterRiskPlayer("a","dawn",{seatIndex:0}),
+    makeCounterRiskPlayer("b","dusk",{seatIndex:1}),
+    makeCounterRiskPlayer("c","dusk",{seatIndex:2,counterProbability:1}),
+    makeCounterRiskPlayer("d","dusk",{seatIndex:3,counterProbability:1,alive:false})
+  ]};
+  const shock={...CARD_DEFINITIONS.shockwave,id:"sw"};
+  const action=await planWithStubEvaluator(game,actor,visible,[
+    {type:"card",card:shock,targets:[{id:"b"},{id:"d"}]},
+    {type:"card",card:shock,targets:[{id:"b"},{id:"c"}]},
+    {type:"card",card:shock,targets:[{id:"b"}]}
+  ],{actionUtility:(action)=>action.type==="card"?1:0,stateUtility:()=>0});
+  assert.deepEqual(action.targets.map((target)=>target.id),["b","d"]);
+});
+
+test("战术反制风险：counterable false 的战术牌结算比例为 1", async () => {
+  const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("e",1,"dusk");
+  const {game}=makeGame([actor,enemy]);
+  const state={players:[
+    makeCounterRiskPlayer("a","dawn",{seatIndex:0}),
+    makeCounterRiskPlayer("e","dusk",{seatIndex:1,counterProbability:1})
+  ]};
+  const simulator=new AiSimulator(state);
+  const nonCounterable={category:"tactic",counterable:false,counterScope:"target",aiValue:5};
+  assert.equal(simulator.tacticResolutionChance(state,state.players[0],nonCounterable,[]),1);
+  assert.equal(simulator.targetResolutionChance(state,state.players[0],nonCounterable,state.players[1]),1);
+  assert.equal(simulator.targetResolutionChance(state,state.players[0],{...nonCounterable,counterScope:"card"},state.players[1]),1);
+  const visible={remainingCardCounts:{assault:30},players:state.players};
+  const card={...nonCounterable,definitionId:"test-no-counter",id:"nc"};
+  const action=await planWithStubEvaluator(game,actor,visible,[
+    {type:"card",card,targets:[{id:"e"}]},
+    {type:"end"}
+  ],{actionUtility:(action)=>action.type==="end"?0:0.9,stateUtility:()=>0});
+  assert.equal(action.card?.definitionId,"test-no-counter");
+});
+
+test("战术反制风险：scout 按反制 scale 记录期望信息收益且不实例化", () => {
+  const makeTarget=(overrides)=>makeCounterRiskPlayer("t","dusk",{seatIndex:1,handCount:4,knownCards:[{cardId:"k1",definitionId:"block"}],...overrides});
+  const run=(target,counterProbability=0)=>{
+    const state={players:[
+      makeCounterRiskPlayer("a","dawn",{seatIndex:0}),
+      target
+    ]};
+    state.players[1].counterProbability=counterProbability;
+    const card={...CARD_DEFINITIONS.scout,id:"s"};
+    return new AiSimulator(state).apply(state,{type:"card",card,targets:[{id:"t"}]},"a");
+  };
+  const normal=run(makeTarget());
+  assert.equal(normal.players[0].expectedInformationGain,2);
+  assert.equal(normal.players[1].knownCards.length,1);
+  assert.equal(Object.hasOwn(normal.players[1],"hand"),false);
+  const partial=run(makeTarget(),0.5);
+  assert.ok(Math.abs(partial.players[0].expectedInformationGain-1)<1e-9);
+  const full=run(makeTarget(),1);
+  assert.equal(full.players[0].expectedInformationGain,0);
+  const allKnown=run(makeTarget({handCount:1,knownCards:[{cardId:"k1",definitionId:"block"},{cardId:"k2",definitionId:"assault"}]}));
+  assert.equal(allKnown.players[0].expectedInformationGain,0);
+});
+
+test("战术反制风险：scout 深层部分可用已知牌按期望数量统计", () => {
+  const partialKnown = () => [{
+    cardId:"k1",
+    definitionId:"block",
+    availabilityStateBranches:[
+      { probability:0.5, conditions:{}, available:true },
+      { probability:0.5, conditions:{}, available:false }
+    ]
+  }];
+  const run=(counterProbability)=>{
+    const state={players:[
+      makeCounterRiskPlayer("a","dawn",{seatIndex:0}),
+      makeCounterRiskPlayer("t","dusk",{seatIndex:1,handCount:2,knownCards:partialKnown(),counterProbability})
+    ]};
+    const card={...CARD_DEFINITIONS.scout,id:"s"};
+    return new AiSimulator(state).apply(state,{type:"card",card,targets:[{id:"t"}]},"a");
+  };
+  const full=run(0);
+  assert.ok(Math.abs(full.players[0].expectedInformationGain-1.5)<1e-9);
+  assert.equal(full.players[1].knownCards.length,1);
+  const partial=run(0.5);
+  assert.ok(Math.abs(partial.players[0].expectedInformationGain-0.75)<1e-9);
+});
+
+test("战术反制风险：深层战术评分使用后续节点状态而非根 counter 状态", async () => {
+  const actor=makePlayer("a",0,"dawn"),holder=makePlayer("h",1,"dusk");
+  const {game}=makeGame([actor,holder]);
+  game.aiRandomnessRange=0;
+  game.aiSearchNodeBudgetOverride=3;
+  const planner=game.aiController.planner;
+  planner.evaluator={actionUtility:(action)=>{
+    if(action.type==="end") return 0.4;
+    if(action.card?.definitionId==="assault") return 1;
+    if(action.card?.definitionId==="harvest") return 1;
+    return 0;
+  },stateUtility:()=>0};
+  const visible={remainingCardCounts:{assault:30},players:[
+    makeCounterRiskPlayer("a","dawn",{seatIndex:0,attackUsed:0,attackLimit:1}),
+    makeCounterRiskPlayer("h","dusk",{seatIndex:1,hp:1,handCount:1,knownCards:[{cardId:"hc1",definitionId:"counter"}],counterProbability:1})
+  ]};
+  const assaultCard={...CARD_DEFINITIONS.assault,id:"hit"};
+  const harvestCard={...CARD_DEFINITIONS.harvest,id:"draw"};
+  let calls=0;
+  game.aiController.actionGenerator.generateFromVisible=(nodeState)=>{
+    calls+=1;
+    return calls===1 ? [
+      {type:"card",card:harvestCard,targets:[]},
+      {type:"end"}
+    ] : [];
+  };
+  const action=await planner.plan(actor,visible,[{type:"card",card:assaultCard,targets:[{id:"h"}]}],{gameId:game.state.gameId});
+  assert.equal(action.card?.definitionId,"assault");
+  assert.deepEqual(planner.lastPlannedSequence.map((entry)=>entry.cardId),["assault","harvest"]);
+});
+
+test("战术反制风险：assault 隐藏格挡调整保持原行为", async () => {
+  const actor=makePlayer("a",0,"dawn"),target=makePlayer("t",1,"dusk");
+  const run=async(knownBlock)=>{
+    const {game}=makeGame([actor,target]);
+    game.aiRandomnessRange=0;
+    game.aiSearchNodeBudgetOverride=2;
+    const planner=game.aiController.planner;
+    planner.evaluator={actionUtility:(action)=>action.type==="end"?0.4:1,stateUtility:()=>0};
+    game.aiController.actionGenerator.generateFromVisible=()=>[];
+    const visible={remainingCardCounts:{assault:30},players:[
+      makeCounterRiskPlayer("a","dawn",{seatIndex:0,attackUsed:0,attackLimit:1}),
+      makeCounterRiskPlayer("t","dusk",{seatIndex:1,handCount:knownBlock?1:0,knownCards:knownBlock?[{cardId:"b1",definitionId:"block"}]:[]})
+    ]};
+    const assault={...CARD_DEFINITIONS.assault,id:"hit"};
+    const result=await planner.plan(actor,visible,[
+      {type:"card",card:assault,targets:[{id:"t"}]},
+      {type:"end"}
+    ],{gameId:game.state.gameId});
+    return { action:result, expanded:planner.lastSearchStats?.expanded, sequence:planner.lastPlannedSequence?.map((entry)=>entry.cardId) };
+  };
+  const withBlock=await run(true),withoutBlock=await run(false);
+  assert.equal(withBlock.action.type,"end");
+  assert.equal(withoutBlock.action.card?.definitionId,"assault");
+});
+
 test("回合能量事件公开配置基础、零阵营加成和装备加成且不能突破上限", async () => { const {game,small}=makeTeamFixture();small.energy=3;small.equipment=instance("energyDevice");game.cleanupManager.delay=async()=>true;game.aiController.selectAction=async()=>({type:"end"});let before=null,after=null;game.eventBus.on("beforeTurnEnergyGain","test:before",(event)=>{before={baseAmount:event.baseAmount,teamBonus:event.teamBonus,equipmentBonus:event.equipmentBonus,amount:event.amount};});game.eventBus.on("afterTurnEnergyGain","test:after",(event)=>{after=event.actualAmount;});await game.takeTurn(small,game.state.gameId);assert.deepEqual(before,{baseAmount:1,teamBonus:0,equipmentBonus:1,amount:2});assert.equal(after,1);assert.equal(small.energy,4); });
 test("AI 未知牌按位置采样而不因真实 definitionId 改变选择位置", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>.6});b.hand=[instance("counter"),instance("charge"),instance("block")];const first=game.aiController.cardSelector.chooseHiddenCards(a,b,1)[0];b.hand=[instance("assault"),instance("recover"),instance("energyDevice")];const second=game.aiController.cardSelector.chooseHiddenCards(a,b,1)[0];assert.equal(first.definitionId,"charge");assert.equal(second.definitionId,"recover"); });
 test("AI 窥探优先选择未知手牌位置而非已知低价值牌", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0});const known=instance("counter"),first=instance("charge"),second=instance("assault");b.hand=[known,first,second];game.rememberPrivateCard(a,b,known);const chosen=game.aiController.cardSelector.chooseHiddenCards(a,b,1,null,{purpose:"scout"})[0];assert.equal(chosen,first); });
@@ -5688,7 +5911,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260805-ai-hidden-world-sampling-v85"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260805-ai-tactic-counter-risk-v86"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 

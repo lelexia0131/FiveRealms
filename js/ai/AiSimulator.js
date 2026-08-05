@@ -2,12 +2,12 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-ai-hidden-world-sampling-v85";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ai-hidden-world-sampling-v85";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-ai-hidden-world-sampling-v85";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-ai-hidden-world-sampling-v85";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-ai-hidden-world-sampling-v85";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-ai-hidden-world-sampling-v85";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-ai-tactic-counter-risk-v86";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ai-tactic-counter-risk-v86";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-ai-tactic-counter-risk-v86";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-ai-tactic-counter-risk-v86";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-ai-tactic-counter-risk-v86";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-ai-tactic-counter-risk-v86";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,7 +20,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260805-ai-hidden-world-sampling-v85";
+} from "./AiProbabilityBranches.js?build=20260805-ai-tactic-counter-risk-v86";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -368,6 +368,15 @@ export class AiSimulator {
         break;
       case "harvest": actor.handCount += 2 * scale; break;
       case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + scale; break;
+      case "scout": {
+        if (!target?.alive) break;
+        const knownExpectedCount = (target.knownCards ?? [])
+          .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+        const unknownCount = Math.max(0, (Number(target.handCount) || 0) - knownExpectedCount);
+        const informationGain = Math.min(2, unknownCount);
+        actor.expectedInformationGain = (actor.expectedInformationGain ?? 0) + informationGain * scale;
+        break;
+      }
       case "assault":
         if (target) this.simulateAssault(next, actor, target, cardEventWorlds, {
           attackUseSlot:abstractAction.attackUseSlot,
@@ -1322,7 +1331,7 @@ export class AiSimulator {
   }
 
   targetResolutionChance(state, actor, card, target) {
-    if (card.counterScope !== "target") return 1;
+    if (card.category !== "tactic" || card.counterable === false || card.counterScope !== "target") return 1;
     return 1 - (target.counterProbability ?? 0) * this.counterDesire(state, target, actor, card, [target]);
   }
 
