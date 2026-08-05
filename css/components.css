@@ -69,6 +69,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .response-copy { display: grid; gap: 6px; margin: 9px 0 14px; }
 .response-panel p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
 .response-panel .response-event { color: var(--text-primary); font-size: 14px; font-weight: 700; }
+.response-event .response-player-name.team-dawn { color: var(--dawn); }
+.response-event .response-player-name.team-dusk { color: var(--dusk); }
 .response-panel .response-requirement { color: #5b472b; }
 .response-panel .response-availability { padding: 7px 9px; border-radius: 7px; background: #f3eee5; }
 .response-panel .response-availability.is-ready { color: var(--success); background: #e5f1e8; }

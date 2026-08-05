@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260805-transfer-simulator-identity-v81";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-transfer-simulator-identity-v81";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260805-transfer-simulator-identity-v81";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260805-response-team-color-v83";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-response-team-color-v83";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260805-response-team-color-v83";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260805-transfer-simulator-identity-v81";
-import { AnimationController } from "./animationController.js?build=20260805-transfer-simulator-identity-v81";
-import { InteractionController } from "./InteractionController.js?build=20260805-transfer-simulator-identity-v81";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260805-transfer-simulator-identity-v81";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260805-transfer-simulator-identity-v81";
-import { JudgmentView } from "./JudgmentView.js?build=20260805-transfer-simulator-identity-v81";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260805-transfer-simulator-identity-v81";
-import { createOpponentHandView } from "./handVisibility.js?build=20260805-transfer-simulator-identity-v81";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260805-transfer-simulator-identity-v81";
-import { SoundManager } from "../audio/SoundManager.js?build=20260805-transfer-simulator-identity-v81";
+} from "./templates.js?build=20260805-response-team-color-v83";
+import { AnimationController } from "./animationController.js?build=20260805-response-team-color-v83";
+import { InteractionController } from "./InteractionController.js?build=20260805-response-team-color-v83";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260805-response-team-color-v83";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260805-response-team-color-v83";
+import { JudgmentView } from "./JudgmentView.js?build=20260805-response-team-color-v83";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260805-response-team-color-v83";
+import { createOpponentHandView } from "./handVisibility.js?build=20260805-response-team-color-v83";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260805-response-team-color-v83";
+import { SoundManager } from "../audio/SoundManager.js?build=20260805-response-team-color-v83";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -24,6 +24,28 @@ export function canSubmitResponse(request) {
 }
 
 export const skillButtonLabel = (skill) => skill?.name ?? "主动技能";
+
+/** 渲染响应事件；优先使用结构化片段，缺失或异常时回退整段转义文本。 */
+function renderResponseEvent(presentation, eventText) {
+  const fragments = presentation?.eventFragments;
+  if (!Array.isArray(fragments) || !fragments.length) return escapeHtml(eventText);
+  let markup = "";
+  for (const fragment of fragments) {
+    if (!fragment || typeof fragment.text !== "string") return escapeHtml(eventText);
+    if (fragment.type === "player") {
+      let className = "response-player-name";
+      if (fragment.battleTeam === "dawn") className += " team-dawn";
+      else if (fragment.battleTeam === "dusk") className += " team-dusk";
+      const playerIdAttribute = typeof fragment.playerId === "string"
+        ? ` data-player-id="${escapeHtml(fragment.playerId)}"`
+        : "";
+      markup += `<strong class="${className}"${playerIdAttribute}>${escapeHtml(fragment.text)}</strong>`;
+    } else {
+      markup += escapeHtml(fragment.text);
+    }
+  }
+  return markup;
+}
 
 const CANCELLED_ASYNC_RESULTS = Object.freeze({
   requestTarget:null,
@@ -458,7 +480,7 @@ export class UIManager {
       ? `<div class="hidden-card-grid leverage-response-cards">${legalCards.map((card) => handCardTemplate(card, { response:true, selected:state.selectedCardIds.has(card.id) })).join("")}</div>`
       : "";
     const seconds = Math.max(0, Math.ceil((state.deadline - Date.now()) / 1000));
-    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${seconds}s</span></div><div class="response-copy"><p class="response-event">${escapeHtml(eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div>${cardMarkup}<div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">${escapeHtml(presentation.declineLabel ?? "放弃响应")}</button></div>`;
+    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${seconds}s</span></div><div class="response-copy"><p class="response-event">${renderResponseEvent(presentation, eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div>${cardMarkup}<div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">${escapeHtml(presentation.declineLabel ?? "放弃响应")}</button></div>`;
   }
 
   toggleResponseCard(cardId) {

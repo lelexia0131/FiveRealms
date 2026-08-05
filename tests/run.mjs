@@ -813,6 +813,162 @@ test("决斗轮到无突袭真人时先显示响应窗口再结算伤害", async
 test("挑衅轮到无突袭真人时仍显示响应窗口", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>false});const provoke=instance("provoke"),hp=b.hp;a.hand.push(provoke);await game.playCard(a,provoke,[b]);const request=ui.responseRequests.find((entry)=>entry.type==="assaultDiscard");assert.ok(request);assert.equal(request.presentation.responseCardName,"突袭");assert.match(request.presentation.availabilityText,/当前 0 张/);assert.equal(b.hp,hp-1); });
 test("反制链响应说明包含来源、目标、原牌和当前反制", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.legalCardIds.length>=request.requiredCount});a.hand.push(instance("harvest"));b.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);const chained=ui.responseRequests.find((request)=>request.type==="counter"&&request.sourcePlayerId===b.id&&request.targetPlayerId===c.id);assert.ok(chained);assert.match(chained.presentation.eventText,new RegExp(`${b.name}.*${a.name}.*收获.*反制`));assert.match(chained.presentation.responseText,/继续.*反制/); });
 test("无人物目标的战术牌响应文案不再显示对战场使用", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai");const presentation=buildResponsePresentation(responder,"counter",{source,card:instance("transfer"),targets:[]},1,0,"反制");assert.equal(presentation.eventText,`${source.name}使用了「转移」。`);assert.doesNotMatch(presentation.eventText,/对战场使用/); });
+test("破势自目标反制响应文案不显示使用者为目标", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai"),card=instance("exposeWeakness");const presentation=buildResponsePresentation(responder,"counter",{source,target:source,targets:[source],card},1,0,"反制");assert.equal(presentation.eventText,`${source.name}使用了「${card.name}」。`);assert.ok(!presentation.eventText.includes(`对${source.name}`)); });
+test("破势真实出牌流程的反制请求不显示自目标", async () => { const source=makePlayer("source",0,"dawn"),responder=makePlayer("human",1,"dusk","human");const {game,ui}=makeGame([source,responder],{response:()=>false});const card=instance("exposeWeakness");source.hand.push(card);await game.playCard(source,card,[]);const request=ui.responseRequests.find((entry)=>entry.type==="counter"&&entry.targetPlayerId===responder.id);assert.ok(request);assert.equal(request.presentation.eventText,`${source.name}使用了「${card.name}」。`);assert.ok(!request.presentation.eventText.includes(`对${source.name}`)); });
+test("真实目标战术牌反制文案仍显示目标且无目标牌保持原样", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai"),target=makePlayer("target",2,"dawn","ai");const duel=instance("duel");assert.equal(buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:duel},1,0,"反制").eventText,`${source.name}对${target.name}使用了「决斗」。`);const harvest=instance("harvest");assert.equal(buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:harvest},1,0,"反制").eventText,`${source.name}使用了「收获」。`); });
+const renderResponseEventHtml = async (presentation) => {
+  const previousWindow = globalThis.window;
+  globalThis.window = { setInterval, clearInterval };
+  const panel = { innerHTML:"", classList:{ add(){}, remove(){} }, querySelector(){ return null; } };
+  const fake = { responseState:null, elements:{ response_panel:panel }, game:{ cleanupManager:{ delay:()=>new Promise(()=>{}) } }, render(){} };
+  try {
+    const pending = UIManager.prototype.requestResponse.call(fake, { id:"team-color-render", requiredCount:1, legalCardIds:[], timeoutMs:5000, presentation }, "反制");
+    const html = panel.innerHTML;
+    fake.responseState.resolve(false);
+    await pending;
+    return html;
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+  }
+};
+test("响应窗口结构化片段保留使用者与目标身份和队伍", () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"},target={id:"target",name:"角色B",battleTeam:"dusk"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:instance("duel")},1,0,"反制");
+  assert.equal(presentation.eventText,"角色A对角色B使用了「决斗」。");
+  assert.deepEqual(presentation.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"对"},
+    {type:"player",text:"角色B",playerId:"target",battleTeam:"dusk"},
+    {type:"text",text:"使用了「决斗」。"}
+  ]);
+});
+test("响应窗口不同队伍角色分别渲染队伍颜色节点", async () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"},target={id:"target",name:"角色B",battleTeam:"dusk"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:instance("duel")},1,0,"反制");
+  const html=await renderResponseEventHtml(presentation);
+  assert.match(html,/<strong class="response-player-name team-dawn"[^>]*>角色A<\/strong>/);
+  assert.match(html,/<strong class="response-player-name team-dusk"[^>]*>角色B<\/strong>/);
+  assert.equal((html.match(/response-player-name/g)??[]).length,2);
+});
+test("响应窗口同队伍角色仍独立着色", async () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:"角色A",battleTeam:"dawn"},target={id:"target",name:"角色B",battleTeam:"dawn"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:instance("duel")},1,0,"反制");
+  const html=await renderResponseEventHtml(presentation);
+  assert.equal((html.match(/response-player-name team-dawn/g)??[]).length,2);
+  assert.doesNotMatch(html,/team-dusk/);
+  assert.equal((html.match(/response-player-name/g)??[]).length,2);
+});
+test("无目标响应文案只有使用者是角色片段", () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:instance("harvest")},1,0,"反制");
+  assert.equal(presentation.eventText,"角色A使用了「收获」。");
+  assert.deepEqual(presentation.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"使用了「收获」。"}
+  ]);
+});
+test("破势响应片段只有使用者且UI只着色使用者", async () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:"角色A",battleTeam:"dawn"},card=instance("exposeWeakness");
+  const presentation=buildResponsePresentation(responder,"counter",{source,target:source,targets:[source],card},1,0,"反制");
+  assert.equal(presentation.eventText,"角色A使用了「破势」。");
+  assert.deepEqual(presentation.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"使用了「破势」。"}
+  ]);
+  const html=await renderResponseEventHtml(presentation);
+  assert.equal((html.match(/response-player-name/g)??[]).length,1);
+  assert.match(html,/response-player-name team-dawn/);
+});
+test("多目标响应片段分别保留每个目标的身份与队伍", () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"},first={id:"first",name:"角色B",battleTeam:"dusk"},second={id:"second",name:"角色D",battleTeam:"dawn"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target:first,targets:[first,second],card:instance("mutualBenefit")},1,0,"反制");
+  assert.equal(presentation.eventText,"角色A对角色B、角色D使用了「互利」。");
+  assert.deepEqual(presentation.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"对"},
+    {type:"player",text:"角色B",playerId:"first",battleTeam:"dusk"},
+    {type:"text",text:"、"},
+    {type:"player",text:"角色D",playerId:"second",battleTeam:"dawn"},
+    {type:"text",text:"使用了「互利」。"}
+  ]);
+});
+test("响应窗口中的“你”保持普通文本不着色", async () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:"角色A",battleTeam:"dawn"},second={id:"second",name:"角色B",battleTeam:"dusk"};
+  const block=buildResponsePresentation(responder,"block",{source,target:responder,card:instance("assault")},1,0,"格挡");
+  assert.equal(block.eventText,"角色A对你使用了「突袭」。");
+  assert.deepEqual(block.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"对"},
+    {type:"text",text:"你"},
+    {type:"text",text:"使用了「突袭」。"}
+  ]);
+  const html=await renderResponseEventHtml(block);
+  assert.equal((html.match(/response-player-name/g)??[]).length,1);
+  assert.doesNotMatch(html,/>你<\/strong>/);
+  const leverage=buildResponsePresentation(responder,"leverageAssault",{source,target:second,card:instance("leverage")},1,0,"使用突袭");
+  assert.equal(leverage.eventText,"角色A对你使用了「借势」，要求你对角色B使用「突袭」。");
+  assert.deepEqual(leverage.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"对你使用了「借势」，要求你对"},
+    {type:"player",text:"角色B",playerId:"second",battleTeam:"dusk"},
+    {type:"text",text:"使用「突袭」。"}
+  ]);
+});
+test("反制链与濒死响应片段保留实际角色身份", () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色B",battleTeam:"dusk"},previous={id:"previous",name:"角色A",battleTeam:"dawn"};
+  const chain=buildResponsePresentation(responder,"counter",{source,target:previous,targets:[previous],card:instance("counter"),counteredCardName:"收获"},1,0,"反制");
+  assert.equal(chain.eventText,"角色B对角色A打出的「收获」使用了「反制」。");
+  assert.deepEqual(chain.eventFragments,[
+    {type:"player",text:"角色B",playerId:"source",battleTeam:"dusk"},
+    {type:"text",text:"对"},
+    {type:"player",text:"角色A",playerId:"previous",battleTeam:"dawn"},
+    {type:"text",text:"打出的「收获」使用了「反制」。"}
+  ]);
+  const dying=buildResponsePresentation(responder,"dyingRescue",{target:previous},1,0,"使用调息");
+  assert.equal(dying.eventText,"角色A已进入濒死状态。");
+  assert.deepEqual(dying.eventFragments,[
+    {type:"player",text:"角色A",playerId:"previous",battleTeam:"dawn"},
+    {type:"text",text:"已进入濒死状态。"}
+  ]);
+  const selfDying=buildResponsePresentation(responder,"dyingRescue",{target:responder},1,0,"使用调息");
+  assert.equal(selfDying.eventText,"你已进入濒死状态。");
+  assert.deepEqual(selfDying.eventFragments,[
+    {type:"text",text:"你"},
+    {type:"text",text:"已进入濒死状态。"}
+  ]);
+});
+test("响应窗口角色名经结构化片段转义且队伍class保留", async () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:'<img src=x onerror=alert(1)>',battleTeam:"dawn"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:instance("harvest")},1,0,"反制");
+  const html=await renderResponseEventHtml(presentation);
+  assert.doesNotMatch(html,/<img\b/i);
+  assert.doesNotMatch(html,/<img[^>]*onerror=/i);
+  assert.match(html,/&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html,/<strong class="response-player-name team-dawn"/);
+});
+test("旧响应 presentation 无结构化片段时回退整段转义", async () => {
+  const html=await renderResponseEventHtml({ eventText:'<script>bad()</script>', responseText:"需要响应", availabilityText:"", buttonLabel:"格挡" });
+  assert.doesNotMatch(html,/<script>/);
+  assert.match(html,/&lt;script&gt;bad\(\)&lt;\/script&gt;/);
+});
+test("转移响应片段包含来源与接收者的队伍", async () => {
+  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk","human"),receiver=makePlayer("receiver",3,"dawn");
+  const use=instance("transfer"),secret=instance("block");actor.hand.push(use);from.hand.push(secret);from.bumpHandVersion();
+  const {game,ui}=makeGame([actor,from,responder,receiver],{response:()=>false});const hidden=game.cardSelectionSystem.createHiddenSelection(from);
+  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});
+  const request=ui.responseRequests.find((entry)=>entry.type==="counter"&&entry.targetPlayerId===responder.id);
+  assert.ok(request);
+  const fragments=request.presentation.eventFragments;
+  assert.equal(fragments.find((fragment)=>fragment.type==="player"&&fragment.playerId===actor.id).battleTeam,"dawn");
+  assert.equal(fragments.find((fragment)=>fragment.type==="player"&&fragment.playerId===from.id).battleTeam,"dusk");
+  assert.equal(fragments.find((fragment)=>fragment.type==="player"&&fragment.playerId===receiver.id).battleTeam,"dawn");
+  assert.match(request.presentation.eventText,new RegExp(`${from.name}.*1张牌.*${receiver.name}`));
+});
+test("响应窗口队伍颜色复用现有主题变量", async () => {
+  const css=await readFile(projectFile("css/components.css"),"utf8");
+  assert.match(css,/\.response-event \.response-player-name\.team-dawn\s*\{[^}]*color:\s*var\(--dawn\)/s);
+  assert.match(css,/\.response-event \.response-player-name\.team-dusk\s*\{[^}]*color:\s*var\(--dusk\)/s);
+});
 test("护援响应区分原技能名称与当前响应技能名称", async () => { for(const [actionName,context] of [["焚场",{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill"}],["猎杀",{skill:"hunt",actionName:"猎杀",canBlock:true,damageType:"skill"}],["突袭",{card:instance("assault"),canBlock:true,damageType:"normal"}]]){const source=makePlayer(`source-${actionName}`,0,"dusk","ai",4),target=makePlayer(`target-${actionName}`,1,"dawn","ai",2),guardian=makePlayer(`guardian-${actionName}`,2,"dawn","human",1);guardian.hand.push(instance("charge"));const {game,ui}=makeGame([source,target,guardian],{response:()=>false});registerPassiveSkills(game);await game.damage(source,target,1,context);const request=ui.responseRequests.find((entry)=>entry.type==="skill");assert.ok(request);assert.equal(request.presentation.eventText,`${source.name}对${target.name}使用了「${actionName}」。`);assert.equal(request.presentation.responseText,"你可以发动「护援」。");assert.equal(request.presentation.buttonLabel,"发动护援");assert.doesNotMatch(request.presentation.eventText,/发动护援|burningField|hunt/);} });
 test("互利在反制窗口之后才展示并按座位每人选1张", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);assert.equal(game.state.publicCardPool.length,0);assert.equal(ui.publicRequests.length,1); });
 test("互利选牌严格跳过阵亡座位", async () => { const a=makePlayer("a",0,"dawn","human"),dead=makePlayer("dead",1,"dusk"),b=makePlayer("b",2,"dusk"),c=makePlayer("c",3,"dawn");dead.alive=false;const {game}=makeGame([a,dead,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(dead.hand.length,0);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1); });
@@ -5282,7 +5438,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260805-transfer-simulator-identity-v81"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260805-response-team-color-v83"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 

@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-transfer-simulator-identity-v81";
-import { createId } from "../utils/helpers.js?build=20260805-transfer-simulator-identity-v81";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260805-transfer-simulator-identity-v81";
-import { RuleEngine } from "./RuleEngine.js?build=20260805-transfer-simulator-identity-v81";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-response-team-color-v83";
+import { createId } from "../utils/helpers.js?build=20260805-response-team-color-v83";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260805-response-team-color-v83";
+import { RuleEngine } from "./RuleEngine.js?build=20260805-response-team-color-v83";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -44,14 +44,48 @@ function responseTargetName(responder, context = {}) {
   return context.target ? responsePlayerName(responder, context.target) : "";
 }
 
+const textFragment = (text) => Object.freeze({ type:"text", text:String(text) });
+
+const playerFragment = (player, text, battleTeam) => {
+  if (!player?.id) return textFragment(text ?? "未知角色");
+  return Object.freeze({
+    type:"player",
+    text:String(text ?? player.name ?? "未知角色"),
+    playerId:player.id,
+    battleTeam:battleTeam ?? player.battleTeam
+  });
+};
+
+/** 返回目标角色的展示片段；与 responseTargetName 使用同一数据源，不解析 eventText。 */
+function responseTargetFragments(responder, context = {}) {
+  if (context.targetLabel) return [textFragment(context.targetLabel)];
+  const targets = (context.targets ?? []).filter(Boolean);
+  const list = targets.length ? targets : (context.target ? [context.target] : []);
+  const fragments = [];
+  list.forEach((target, index) => {
+    if (index > 0) fragments.push(textFragment("、"));
+    const display = responsePlayerName(responder, target);
+    fragments.push(display === "你" ? textFragment("你") : playerFragment(target, display));
+  });
+  return fragments;
+}
+
 /** 只包含公开名称与数量的响应展示数据；UI 不接收任何隐藏牌内容。 */
 export function buildResponsePresentation(responder, type, context = {}, requiredCount = 1, availableCount = 0, fallbackLabel = "响应") {
   const sourceName = responsePlayerName(responder, context.source);
-  const targetName = responseTargetName(responder, context);
   const actionName = context.card?.name ?? context.actionName ?? "伤害";
-  let eventText = targetName
-    ? `${sourceName}对${targetName}使用了「${actionName}」。`
-    : `${sourceName}使用了「${actionName}」。`;
+  const sourceFragment = sourceName === "你"
+    ? textFragment("你")
+    : playerFragment(context.source, sourceName);
+  let eventFragments = [sourceFragment];
+  if (context.card?.targetType !== "self") {
+    const targetFragments = responseTargetFragments(responder, context);
+    if (targetFragments.length) {
+      eventFragments.push(textFragment("对"));
+      eventFragments.push(...targetFragments);
+    }
+  }
+  eventFragments.push(textFragment(`使用了「${actionName}」。`));
   let responseText = `你可以进行${fallbackLabel}。`;
   let responseCardName = fallbackLabel;
   let buttonLabel = fallbackLabel;
@@ -65,12 +99,28 @@ export function buildResponsePresentation(responder, type, context = {}, require
     buttonLabel = "反制";
     if (context.card?.definitionId === "transfer" && context.publicTransferContext) {
       const transfer = context.publicTransferContext;
-      const fromName = publicPlayerName(responder, transfer.fromPlayerId, transfer.fromName);
-      const receiverName = publicPlayerName(responder, transfer.receiverPlayerId, transfer.receiverName);
-      eventText = `${sourceName}准备将${fromName}的${transfer.safeItemLabel}转移给${receiverName}。`;
+      const fromDisplay = publicPlayerName(responder, transfer.fromPlayerId, transfer.fromName);
+      const receiverDisplay = publicPlayerName(responder, transfer.receiverPlayerId, transfer.receiverName);
+      eventFragments = [
+        sourceFragment,
+        textFragment("准备将"),
+        fromDisplay === "你"
+          ? textFragment("你")
+          : playerFragment({ id:transfer.fromPlayerId, name:transfer.fromName }, transfer.fromName, transfer.fromBattleTeam),
+        textFragment(`的${transfer.safeItemLabel}转移给`),
+        receiverDisplay === "你"
+          ? textFragment("你")
+          : playerFragment({ id:transfer.receiverPlayerId, name:transfer.receiverName }, transfer.receiverName, transfer.receiverBattleTeam),
+        textFragment("。")
+      ];
       responseText = "你可以使用「反制」取消这次转移。";
     } else if (context.card?.definitionId === "counter" && context.counteredCardName) {
-      eventText = `${sourceName}对${targetName}打出的「${context.counteredCardName}」使用了「反制」。`;
+      eventFragments = [
+        sourceFragment,
+        textFragment("对"),
+        ...responseTargetFragments(responder, context),
+        textFragment(`打出的「${context.counteredCardName}」使用了「反制」。`)
+      ];
       responseText = "你可以继续使用「反制」。";
     } else {
       responseText = context.targetScoped
@@ -81,7 +131,12 @@ export function buildResponsePresentation(responder, type, context = {}, require
     responseCardName = "突袭";
     buttonLabel = "打出突袭";
     if (context.card?.definitionId === "duel") {
-      eventText = `${sourceName}向${targetName}发起了「决斗」。`;
+      eventFragments = [
+        sourceFragment,
+        textFragment("向"),
+        ...responseTargetFragments(responder, context),
+        textFragment("发起了「决斗」。")
+      ];
       responseText = "现在轮到你打出 1 张突袭。";
     } else {
       responseText = "你需要打出 1 张突袭。";
@@ -89,12 +144,20 @@ export function buildResponsePresentation(responder, type, context = {}, require
   } else if (type === "leverageAssault") {
     responseCardName = "突袭";
     buttonLabel = "使用突袭";
-    eventText = `${sourceName}对你使用了「借势」，要求你对${targetName}使用「突袭」。`;
+    eventFragments = [
+      sourceFragment,
+      textFragment("对你使用了「借势」，要求你对"),
+      ...responseTargetFragments(responder, context),
+      textFragment("使用「突袭」。")
+    ];
     responseText = `你可以使用一张真实突袭；若拒绝，将失去「${context.equipment?.name ?? "指定装备"}」。`;
   } else if (type === "dyingRescue") {
     responseCardName = "调息";
     buttonLabel = "使用调息";
-    eventText = `${responsePlayerName(responder, context.target)}已进入濒死状态。`;
+    eventFragments = [
+      ...responseTargetFragments(responder, context),
+      textFragment("已进入濒死状态。")
+    ];
     responseText = "现在轮到你使用「调息」进行救援。";
   } else if (type === "skill") {
     responseCardName = context.responseName ?? fallbackLabel;
@@ -110,7 +173,12 @@ export function buildResponsePresentation(responder, type, context = {}, require
       availabilityText += availableCount < requiredCount ? "；当前数量不足，你仍可查看并放弃响应。" : "。";
     }
   }
-  return Object.freeze({ eventText, responseText, availabilityText, responseCardName, buttonLabel, requiredCount, availableCount });
+  const eventText = eventFragments.map((fragment) => fragment.text).join("");
+  return Object.freeze({
+    eventText,
+    eventFragments:Object.freeze(eventFragments.map((fragment) => Object.freeze(fragment))),
+    responseText, availabilityText, responseCardName, buttonLabel, requiredCount, availableCount
+  });
 }
 
 /** 卡牌响应、强制弃置和濒死救援的可清理异步入口。 */
@@ -194,11 +262,19 @@ export class ResponseSystem {
       if (!responder.alive || responder.id === source.id) continue;
       const publicSource = publicPlayerContext(source);
       const publicTargets = targets.map(publicPlayerContext).filter(Boolean);
+      const publicTransferContext = chainContext.publicTransferContext ?? null;
+      const enrichedTransferContext = publicTransferContext
+        ? Object.freeze({
+            ...publicTransferContext,
+            fromBattleTeam:this.game.state.players.find((player) => player.id === publicTransferContext.fromPlayerId)?.battleTeam,
+            receiverBattleTeam:this.game.state.players.find((player) => player.id === publicTransferContext.receiverPlayerId)?.battleTeam
+          })
+        : null;
       const response = await this.requestCardResponse(responder, "counter", {
         source:publicSource, target:publicTargets[0] ?? null, targets:publicTargets, card,
         counteredCardName:chainContext.targetCard?.name ?? null,
         targetScoped:Boolean(chainContext.targetScoped),
-        publicTransferContext:chainContext.publicTransferContext ?? null,
+        publicTransferContext:enrichedTransferContext,
         publicSelectionContext:chainContext.publicSelectionContext ?? null
       }, 1);
       if (isCancelledResponse(response) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
