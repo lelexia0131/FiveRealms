@@ -3,8 +3,8 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-response-team-color-v83";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-response-team-color-v83";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-ai-remaining-density-v84";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-ai-remaining-density-v84";
 
 const equipmentRoleDelta = (player, definitionId) => {
   if (!player?.generalId || !definitionId) return 0;
@@ -41,7 +41,23 @@ const binomialCountDistribution = (trials, probability, offset = 0) => {
   return branches.map((branch) => ({ ...branch, probability:branch.probability / total }));
 };
 
-const estimateCard = (viewer, player, definitionId) => {
+const fixedCardDensity = (definitionId) => (CARD_DEFINITIONS[definitionId]?.count ?? 0) / TOTAL_CARD_COUNT;
+
+const remainingCardDensity = (remainingCardCounts, definitionId) => {
+  if (!remainingCardCounts || typeof remainingCardCounts !== "object" || Array.isArray(remainingCardCounts)) {
+    return fixedCardDensity(definitionId);
+  }
+  let total = 0;
+  for (const count of Object.values(remainingCardCounts)) {
+    if (Number.isFinite(count)) total += Math.max(0, count);
+  }
+  if (total <= 0) return 0;
+  const count = Number(remainingCardCounts[definitionId]);
+  if (!Number.isFinite(count) || count <= 0) return 0;
+  return Math.max(0, Math.min(1, count / total));
+};
+
+const estimateCard = (viewer, player, definitionId, remainingCardCounts = null) => {
   if (player.id === viewer.id) {
     const count = player.hand.filter((card) => card.definitionId === definitionId).length;
     return {
@@ -54,7 +70,7 @@ const estimateCard = (viewer, player, definitionId) => {
   const known = Object.values(viewer.aiMemory.knownCardsByPlayer[player.id] ?? {});
   const knownCount = known.filter((id) => id === definitionId).length;
   const unknownCount = Math.max(0, player.hand.length - known.length);
-  const density = (CARD_DEFINITIONS[definitionId]?.count ?? 0) / TOTAL_CARD_COUNT;
+  const density = remainingCardDensity(remainingCardCounts, definitionId);
   return {
     expected: knownCount + unknownCount * density,
     atLeastOne: knownCount > 0 ? 1 : probabilityAtLeast(unknownCount, density, 1),
@@ -72,25 +88,26 @@ const estimateCard = (viewer, player, definitionId) => {
 export function createAiVisibleState(viewerId, state, remainingCardCounts = null) {
   const viewer = state.players.find((player) => player.id === viewerId);
   if (!viewer) throw new Error("AI 可见状态缺少观察者");
+  const validRemainingCardCounts = remainingCardCounts && typeof remainingCardCounts === "object"
+    && !Array.isArray(remainingCardCounts)
+    ? Object.freeze({ ...remainingCardCounts })
+    : null;
   return Object.freeze({
     gameId: state.gameId,
     currentRound: state.currentRound,
     phase: state.phase,
     playPhaseEnded: false,
-    remainingCardCounts: remainingCardCounts && typeof remainingCardCounts === "object"
-      && !Array.isArray(remainingCardCounts)
-      ? Object.freeze({ ...remainingCardCounts })
-      : null,
+    remainingCardCounts: validRemainingCardCounts,
     deckCount: state.deck.cards.length,
     discardCount: state.deck.discardPile.length,
     discardDefinitionIds: state.deck.discardPile.map((card) => card.definitionId),
     judgmentDefinitionIds: state.deck.judgmentZone.map((card) => card.definitionId),
     publicPool: (state.publicCardPool ?? []).map((card) => ({ id:card.id, definitionId:card.definitionId })),
     players: state.players.map((player) => {
-      const recoverEstimate = estimateCard(viewer, player, "recover");
-      const blockEstimate = estimateCard(viewer, player, "block");
-      const counterEstimate = estimateCard(viewer, player, "counter");
-      const assaultEstimate = estimateCard(viewer, player, "assault");
+      const recoverEstimate = estimateCard(viewer, player, "recover", validRemainingCardCounts);
+      const blockEstimate = estimateCard(viewer, player, "block", validRemainingCardCounts);
+      const counterEstimate = estimateCard(viewer, player, "counter", validRemainingCardCounts);
+      const assaultEstimate = estimateCard(viewer, player, "assault", validRemainingCardCounts);
       const activeSkillId = player.general.activeSkillIds[0] ?? null;
       const activeSkillUses = player.turnFlags.activeSkillUseCounts?.[activeSkillId] ?? 0;
       const activeSkillLimit = player.general.activeLimitPerTurn ?? 1;

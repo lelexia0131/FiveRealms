@@ -2,12 +2,12 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-response-team-color-v83";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-response-team-color-v83";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-response-team-color-v83";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-response-team-color-v83";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-response-team-color-v83";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-response-team-color-v83";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-ai-remaining-density-v84";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ai-remaining-density-v84";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-ai-remaining-density-v84";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-ai-remaining-density-v84";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-ai-remaining-density-v84";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-ai-remaining-density-v84";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,12 +20,63 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260805-response-team-color-v83";
+} from "./AiProbabilityBranches.js?build=20260805-ai-remaining-density-v84";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
 const BLOCK_CARD_COUNT = CARD_DEFINITIONS.block.count;
 const OTHER_BASIC_CARD_COUNT = BASIC_CARD_COUNT - BLOCK_CARD_COUNT;
+const fixedCardDensity = (definitionId) => (CARD_DEFINITIONS[definitionId]?.count ?? 0) / TOTAL_CARD_COUNT;
+
+const remainingCardDensity = (remainingCardCounts, definitionId) => {
+  if (!remainingCardCounts || typeof remainingCardCounts !== "object" || Array.isArray(remainingCardCounts)) {
+    return fixedCardDensity(definitionId);
+  }
+  let total = 0;
+  for (const count of Object.values(remainingCardCounts)) {
+    if (Number.isFinite(count)) total += Math.max(0, count);
+  }
+  if (total <= 0) return 0;
+  const count = Number(remainingCardCounts[definitionId]);
+  if (!Number.isFinite(count) || count <= 0) return 0;
+  return Math.max(0, Math.min(1, count / total));
+};
+
+const fixedRadarJudgmentProbabilities = () => ({
+  block: BLOCK_CARD_COUNT / TOTAL_CARD_COUNT,
+  otherBasic: OTHER_BASIC_CARD_COUNT / TOTAL_CARD_COUNT,
+  equipment: EQUIPMENT_CARD_COUNT / TOTAL_CARD_COUNT
+});
+
+const remainingRadarJudgmentProbabilities = (remainingCardCounts) => {
+  if (!remainingCardCounts || typeof remainingCardCounts !== "object" || Array.isArray(remainingCardCounts)) {
+    return fixedRadarJudgmentProbabilities();
+  }
+  const positiveCounts = {};
+  let total = 0;
+  for (const [definitionId, count] of Object.entries(remainingCardCounts)) {
+    const value = Number(count);
+    if (!Number.isFinite(value) || value <= 0) continue;
+    positiveCounts[definitionId] = value;
+    total += value;
+  }
+  if (total <= 0) return { block:0, otherBasic:0, equipment:0 };
+  let block = 0;
+  let otherBasic = 0;
+  let equipment = 0;
+  for (const [definitionId, count] of Object.entries(positiveCounts)) {
+    const definition = CARD_DEFINITIONS[definitionId];
+    if (!definition) continue;
+    if (definitionId === "block") block += count;
+    else if (definition.category === "basic") otherBasic += count;
+    else if (definition.category === "equipment") equipment += count;
+  }
+  return {
+    block: Math.max(0, Math.min(1, block / total)),
+    otherBasic: Math.max(0, Math.min(1, otherBasic / total)),
+    equipment: Math.max(0, Math.min(1, equipment / total))
+  };
+};
 const clampProbability = (value) => Math.max(0, Math.min(1, Number(value) || 0));
 const unionProbability = (oldProbability, newProbability) => 1
   - (1 - clampProbability(oldProbability)) * (1 - clampProbability(newProbability));
@@ -371,7 +422,7 @@ export class AiSimulator {
         const equipmentValue = CARD_DEFINITIONS[first.equipmentDefinitionId]?.aiValue ?? 7;
         const friendlyFirePenalty = second.battleTeam === first.battleTeam ? .55 : 0;
         const defenseRisk = Math.min(.9, second.equipmentDefinitionId === "defenseDevice"
-          ? Math.max(second.blockProbability ?? 0, BLOCK_CARD_COUNT / TOTAL_CARD_COUNT)
+          ? (second.blockProbability ?? remainingCardDensity(next.remainingCardCounts, "block"))
           : (second.blockProbability ?? 0));
         const targetValue = second.battleTeam === first.battleTeam
           ? -0.35 - (second.hp <= 2 ? .15 : 0)
@@ -540,7 +591,7 @@ export class AiSimulator {
       availabilityStateBranches: acquired
     });
     player.handCount = (player.handCount ?? 0) + acquisitionProbability;
-    this.syncCardEstimates(player);
+    this.syncCardEstimates(player, state?.remainingCardCounts);
     return acquisitionProbability;
   }
 
@@ -599,7 +650,7 @@ export class AiSimulator {
       if (addedProbability > PROBABILITY_EPSILON) {
         player.handCount = (player.handCount ?? 0) + addedProbability;
       }
-      this.syncCardEstimates(player);
+      this.syncCardEstimates(player, state?.remainingCardCounts);
       return addedProbability;
     }
     player.knownCards ??= [];
@@ -610,7 +661,7 @@ export class AiSimulator {
       availabilityStateBranches:acquired
     });
     player.handCount = (player.handCount ?? 0) + acquisitionProbability;
-    this.syncCardEstimates(player);
+    this.syncCardEstimates(player, state?.remainingCardCounts);
     return acquisitionProbability;
   }
 
@@ -646,7 +697,7 @@ export class AiSimulator {
       }
     }
     source.handCount = Math.max(0, (source.handCount ?? 0) - transferProbability);
-    this.syncCardEstimates(source);
+    this.syncCardEstimates(source, state?.remainingCardCounts);
     if (receiverIsActor) {
       return this.addSimulatedCardToHand(state, receiver, {
         id:identity.cardId,
@@ -661,13 +712,13 @@ export class AiSimulator {
     const transferred = this.consumeUnknownResourceCard(state, source, expectedAmount, availableUnknownCount);
     if (transferred > PROBABILITY_EPSILON) {
       receiver.handCount = (receiver.handCount ?? 0) + transferred;
-      this.syncCardEstimates(receiver);
+      this.syncCardEstimates(receiver, state?.remainingCardCounts);
     }
     return transferred;
   }
 
   /** 按具体牌与未知聚合重建四类派生摘要；只用于定向已知牌转移/移除与装备入手路径。 */
-  cardEstimateDistribution(player, definitionId) {
+  cardEstimateDistribution(player, definitionId, remainingCardCounts = null) {
     const explicitEntries = Array.isArray(player.hand)
       ? player.hand.filter((card) => card?.definitionId === definitionId)
       : Array.isArray(player.knownCards)
@@ -680,7 +731,7 @@ export class AiSimulator {
     const unknownExpectedCount = Math.max(0, handCount - explicitExpectedCount);
     const wholeSlots = Math.floor(unknownExpectedCount);
     const fractionalSlot = unknownExpectedCount - wholeSlots;
-    const density = (CARD_DEFINITIONS[definitionId]?.count ?? 0) / TOTAL_CARD_COUNT;
+    const density = remainingCardDensity(remainingCardCounts, definitionId);
     let distribution = [{ count:0, probability:1 }];
     const convolve = (probability) => {
       const next = [];
@@ -708,7 +759,7 @@ export class AiSimulator {
       .map(([count, probability]) => ({ count, probability:probability / total }));
   }
 
-  syncCardEstimates(player) {
+  syncCardEstimates(player, remainingCardCounts = null) {
     if (!player) return;
     const expectation = (distribution) => distribution.reduce(
       (sum, branch) => sum + branch.count * branch.probability, 0
@@ -716,10 +767,10 @@ export class AiSimulator {
     const atLeast = (distribution, required) => distribution.reduce(
       (sum, branch) => sum + (branch.count >= required ? branch.probability : 0), 0
     );
-    const recoverDistribution = this.cardEstimateDistribution(player, "recover");
-    const blockDistribution = this.cardEstimateDistribution(player, "block");
-    const counterDistribution = this.cardEstimateDistribution(player, "counter");
-    const assaultDistribution = this.cardEstimateDistribution(player, "assault");
+    const recoverDistribution = this.cardEstimateDistribution(player, "recover", remainingCardCounts);
+    const blockDistribution = this.cardEstimateDistribution(player, "block", remainingCardCounts);
+    const counterDistribution = this.cardEstimateDistribution(player, "counter", remainingCardCounts);
+    const assaultDistribution = this.cardEstimateDistribution(player, "assault", remainingCardCounts);
     player.expectedRecoverCount = expectation(recoverDistribution);
     player.blockProbability = atLeast(blockDistribution, 1);
     player.twoBlockProbability = atLeast(blockDistribution, 2);
@@ -907,7 +958,7 @@ export class AiSimulator {
     if (spent <= PROBABILITY_EPSILON) return 0;
     player.handCount = Math.max(0, (player.handCount ?? 0) - spent);
     this.downgradePartialKnownCardsAfterRandomLoss(player);
-    this.syncCardEstimates(player);
+    this.syncCardEstimates(player, state?.remainingCardCounts);
     return spent;
   }
 
@@ -949,7 +1000,7 @@ export class AiSimulator {
       totalSpent += spend;
     }
     if (totalSpent > PROBABILITY_EPSILON && this.downgradePartialKnownCardsAfterRandomLoss(player)) {
-      this.syncCardEstimates(player);
+      this.syncCardEstimates(player, state?.remainingCardCounts);
     }
     return totalSpent;
   }
@@ -1202,7 +1253,7 @@ export class AiSimulator {
           target.knownCards = target.knownCards.filter((item) => item !== entry);
         }
         target.handCount = Math.max(0, (target.handCount ?? 0) - acquisitionProbability);
-        this.syncCardEstimates(target);
+        this.syncCardEstimates(target, state?.remainingCardCounts);
         this.addSimulatedCardToHand(state, actor, {
           id: selection.cardId,
           definitionId: selection.definitionId
@@ -1250,7 +1301,7 @@ export class AiSimulator {
           target.knownCards = target.knownCards.filter((item) => item !== entry);
         }
         target.handCount = Math.max(0, (target.handCount ?? 0) - removalProbability);
-        this.syncCardEstimates(target);
+        this.syncCardEstimates(target, state?.remainingCardCounts);
         return;
       }
       this.consumeRandomHandCards(state, target, this.eventProbability(effectWorlds));
@@ -1506,7 +1557,10 @@ export class AiSimulator {
       : 0;
     let expectedJudgmentGain = 0;
     if (defenseProbability > 0) {
-      const judgmentProbabilities = options.radarJudgmentProbabilities ?? {};
+      const judgmentProbabilities = {
+        ...remainingRadarJudgmentProbabilities(state?.remainingCardCounts),
+        ...(options.radarJudgmentProbabilities ?? {})
+      };
       const judgmentBlockChance = clampProbability(
         judgmentProbabilities.block ?? BLOCK_CARD_COUNT / TOTAL_CARD_COUNT
       );

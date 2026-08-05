@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-response-team-color-v83";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260805-response-team-color-v83";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260805-response-team-color-v83";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-ai-remaining-density-v84";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260805-ai-remaining-density-v84";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260805-ai-remaining-density-v84";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

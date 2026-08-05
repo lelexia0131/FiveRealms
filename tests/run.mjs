@@ -1804,7 +1804,7 @@ test("Bug2 未知牌转移只移动聚合数量且不创建身份", () => {
   assertClose(nextActor.handCount,1);
   assert.equal(nextActor.hand.some((card)=>card.definitionId||card.id),false);
   assert.equal(nextSource.knownCards.length,0);
-  assert.ok(nextActor.blockProbability>0);
+  assert.equal(nextActor.blockProbability,0);
 });
 test("Bug2 已知转移同步来源与接收者四类摘要", () => {
   const scenarios=[["recover","expectedRecoverCount"],["block","blockProbability"],["counter","counterProbability"],["assault","expectedAssaultCount"]];
@@ -5425,6 +5425,152 @@ test("模拟器动态：聚合身份模型保持", () => {
   assert.ok(!("availabilityBranches" in next.players[0]));
 });
 
+test("可见状态动态密度：剩余0与缺失定义按零处理且计数变化同步", () => {
+  const actor=makePlayer("density-actor",0,"dawn"),enemy=makePlayer("density-enemy",1,"dusk");
+  enemy.hand=[instance("assault")];
+  const {game}=makeGame([actor,enemy]);
+  const zero=createAiVisibleState(actor.id,game.state,{assault:0,block:0});
+  assert.equal(zero.players[1].expectedAssaultCount,0);
+  assert.equal(zero.players[1].assaultResponseProbability,0);
+  assert.equal(zero.players[1].blockProbability,0);
+  assert.equal(zero.players[1].counterProbability,0);
+  assert.equal(zero.players[1].expectedRecoverCount,0);
+  const low=createAiVisibleState(actor.id,game.state,{assault:1,block:9});
+  const high=createAiVisibleState(actor.id,game.state,{assault:9,block:1});
+  assertClose(low.players[1].expectedAssaultCount,.1);
+  assertClose(low.players[1].assaultResponseProbability,.1);
+  assertClose(low.players[1].blockProbability,.9);
+  assertClose(high.players[1].expectedAssaultCount,.9);
+  assertClose(high.players[1].assaultResponseProbability,.9);
+  assertClose(high.players[1].blockProbability,.1);
+});
+
+test("可见状态动态密度：有效计数总和为零不触发固定回退", () => {
+  const actor=makePlayer("density-empty-actor",0,"dawn"),enemy=makePlayer("density-empty-enemy",1,"dusk");
+  enemy.hand=[instance("assault")];
+  const {game}=makeGame([actor,enemy]);
+  const target=createAiVisibleState(actor.id,game.state,{}).players[1];
+  assert.equal(target.expectedAssaultCount,0);
+  assert.equal(target.assaultResponseProbability,0);
+  assert.equal(target.blockProbability,0);
+  assert.equal(target.counterProbability,0);
+  assert.equal(target.expectedRecoverCount,0);
+});
+
+test("可见状态动态密度：无动态计数保留固定初始密度回退", () => {
+  const actor=makePlayer("density-fallback-actor",0,"dawn"),enemy=makePlayer("density-fallback-enemy",1,"dusk");
+  enemy.hand=[instance("assault")];
+  const {game}=makeGame([actor,enemy]);
+  const target=createAiVisibleState(actor.id,game.state).players[1];
+  const assaultDensity=CARD_DEFINITIONS.assault.count/TOTAL_CARD_COUNT;
+  const blockDensity=CARD_DEFINITIONS.block.count/TOTAL_CARD_COUNT;
+  assertClose(target.expectedAssaultCount,assaultDensity);
+  assertClose(target.assaultResponseProbability,assaultDensity);
+  assertClose(target.blockProbability,blockDensity);
+});
+
+test("可见状态动态密度：已知手牌仍按已知数量计入且不因剩余为零被删除", () => {
+  const actor=makePlayer("density-known-actor",0,"dawn"),enemy=makePlayer("density-known-enemy",1,"dusk");
+  const held=instance("block");
+  enemy.hand=[held];
+  const {game}=makeGame([actor,enemy]);
+  game.rememberPrivateCard(actor,enemy,held);
+  const target=createAiVisibleState(actor.id,game.state,{block:0,assault:1}).players[1];
+  assert.equal(target.handCount,1);
+  assert.equal(target.blockProbability,1);
+  assert.equal(target.twoBlockProbability,0);
+  assert.equal(target.expectedRecoverCount,0);
+});
+
+test("模拟器动态密度：syncCardEstimates 使用剩余计数且剩余0保持零", () => {
+  const simulator=new AiSimulator({players:[]});
+  const state={remainingCardCounts:{assault:0,block:0,counter:0,recover:0},players:[
+    {id:"t",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,handCount:1,knownCards:[],equipmentDefinitionId:null,equipmentRetentionProbability:0}
+  ]};
+  simulator.syncCardEstimates(state.players[0],state.remainingCardCounts);
+  const target=state.players[0];
+  assert.equal(target.expectedRecoverCount,0);
+  assert.equal(target.blockProbability,0);
+  assert.equal(target.twoBlockProbability,0);
+  assert.equal(target.counterProbability,0);
+  assert.equal(target.expectedAssaultCount,0);
+  assert.equal(target.assaultResponseProbability,0);
+});
+
+test("模拟器动态密度：资源移动后重算不恢复初始密度", () => {
+  const state={remainingCardCounts:{assault:0,block:0,counter:0,recover:0},players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,handCount:0,hand:[],equipmentDefinitionId:null,equipmentRetentionProbability:0},
+    {id:"t",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,handCount:1,knownCards:[],equipmentDefinitionId:null,equipmentRetentionProbability:0}
+  ]};
+  const simulator=new AiSimulator(state);
+  simulator.destroyResource(state,state.players[0],state.players[1],1);
+  const target=state.players[1];
+  assert.equal(target.handCount,0);
+  assert.equal(target.blockProbability,0);
+  assert.equal(target.counterProbability,0);
+  assert.equal(target.expectedAssaultCount,0);
+  assert.equal(target.expectedRecoverCount,0);
+});
+
+test("模拟器动态密度：无动态计数保留固定密度回退", () => {
+  const simulator=new AiSimulator({players:[]});
+  const player={id:"t",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,handCount:1,knownCards:[],equipmentDefinitionId:null,equipmentRetentionProbability:0};
+  simulator.syncCardEstimates(player);
+  const assaultDensity=CARD_DEFINITIONS.assault.count/TOTAL_CARD_COUNT;
+  const blockDensity=CARD_DEFINITIONS.block.count/TOTAL_CARD_COUNT;
+  assertClose(player.expectedAssaultCount,assaultDensity);
+  assertClose(player.assaultResponseProbability,assaultDensity);
+  assertClose(player.blockProbability,blockDensity);
+});
+
+test("借势风险：动态格挡剩余0时防御装备不再抬高非零风险", () => {
+  const makeState=(defense)=>({remainingCardCounts:{block:0,assault:10},players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},
+    {id:"first",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:2,hand:[{id:"a1",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:1,blockProbability:0,counterProbability:0},
+    {id:"second",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0,equipmentDefinitionId:defense?"defenseDevice":null,equipmentRetentionProbability:defense?1:0}
+  ]});
+  const action={type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}};
+  const without=new AiSimulator(makeState(false)).apply(makeState(false),action,"actor");
+  const withDefense=new AiSimulator(makeState(true)).apply(makeState(true),action,"actor");
+  assertClose(withDefense.players[0].handCount,without.players[0].handCount);
+  assertClose(withDefense.players[1].attackUsed,without.players[1].attackUsed);
+  assertClose(withDefense.players[2].hp,without.players[2].hp);
+});
+
+test("雷达默认概率：动态类别密度且耗尽类别为零", () => {
+  const run=(counts)=>{
+    const state={remainingCardCounts:counts,players:[
+      {id:"a",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1},
+      {id:"t",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
+    ]};
+    const outcome={};
+    new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true,outcome});
+    return outcome.lifeDamageChance;
+  };
+  assert.equal(run({scout:1,provoke:1,shockwave:1}),0);
+  assert.ok(run({assault:1,scout:1})>0);
+});
+
+test("雷达默认概率：显式概率优先于动态计数", () => {
+  const state={remainingCardCounts:{assault:10},players:[
+    {id:"a",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1},
+    {id:"t",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
+  ]};
+  const outcome={};
+  new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true,outcome,radarJudgmentProbabilities:{block:0,otherBasic:0,equipment:0}});
+  assert.equal(outcome.lifeDamageChance,0);
+});
+
+test("雷达默认概率：无动态计数保留固定初始类别密度", () => {
+  const state={players:[
+    {id:"a",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1},
+    {id:"t",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
+  ]};
+  const outcome={};
+  new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true,outcome});
+  assert.ok(outcome.lifeDamageChance>0);
+});
+
 test("控制器文件名：目录真实文件名为 AiController.js", async () => {
   const aiDirectoryEntries = await readdir(projectFile("js/ai"));
   assert.ok(aiDirectoryEntries.includes("AiController.js"));
@@ -5438,7 +5584,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260805-response-team-color-v83"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260805-ai-remaining-density-v84"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 
