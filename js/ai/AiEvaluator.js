@@ -2,11 +2,11 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-role-core-scoring-v78";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260805-role-core-scoring-v78";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260805-role-core-scoring-v78";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-role-core-scoring-v78";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-role-core-scoring-v78";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-resource-identity-v79";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260805-resource-identity-v79";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260805-resource-identity-v79";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260805-resource-identity-v79";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-resource-identity-v79";
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }

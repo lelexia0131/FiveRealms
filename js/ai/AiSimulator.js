@@ -2,12 +2,12 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-role-core-scoring-v78";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-role-core-scoring-v78";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-role-core-scoring-v78";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-role-core-scoring-v78";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-role-core-scoring-v78";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-role-core-scoring-v78";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-resource-identity-v79";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-resource-identity-v79";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-resource-identity-v79";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-resource-identity-v79";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-resource-identity-v79";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-resource-identity-v79";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,7 +20,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260805-role-core-scoring-v78";
+} from "./AiProbabilityBranches.js?build=20260805-resource-identity-v79";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -411,7 +411,7 @@ export class AiSimulator {
         break;
       }
       case "plunder":
-        if (target) this.takeResourceToHand(next, actor, target, scale);
+        if (target) this.takeResourceToHand(next, actor, target, effectEventWorlds, `plunder:${card.id ?? card.definitionId}`);
         break;
       case "transfer": {
         const source = next.players.find((player) => player.id === abstractAction.selection?.sourceId)
@@ -426,7 +426,7 @@ export class AiSimulator {
         }
         break;
       }
-      case "destroy": if (target) this.destroyResource(next, actor, target, scale); break;
+      case "destroy": if (target) this.destroyResource(next, actor, target, effectEventWorlds, `destroy:${card.id ?? card.definitionId}`); break;
       case "duel": if (target) this.applyDuel(next, actor, target, scale, cardDamageContext); break;
       case "mutualBenefit": {
         coordinationTargets = next.players.filter((player) => player.alive);
@@ -477,6 +477,125 @@ export class AiSimulator {
     return Math.max(0, Math.min(1, Number(player.equipmentRetentionProbability ?? 1) || 0));
   }
 
+  /** 读取抽象牌或已知牌条目的剩余可用概率；字段缺失时按完整可用 1。 */
+  cardAvailability(card) {
+    const stateBranches = Array.isArray(card?.availabilityStateBranches)
+      ? card.availabilityStateBranches
+      : null;
+    if (stateBranches) {
+      return totalBranchProbability(stateBranches.filter((branch) => branch.available));
+    }
+    if (Array.isArray(card?.availabilityBranches)) {
+      return totalBranchProbability(card.availabilityBranches);
+    }
+    return 1;
+  }
+
+  /** 将标量或已有世界统一为带条件键的效果世界；目标移除与行动者获得必须复用同一数组。 */
+  normalizeResourceEffectWorlds(state, resolution, label) {
+    if (Array.isArray(resolution) && resolution.length) return resolution;
+    const probability = Math.max(0, Math.min(1, Number(resolution) || 0));
+    return this.getEventWorlds(state, probability, null, label);
+  }
+
+  /** 生成仅用于模拟的唯一卡牌 ID，避免与真实实体 ID 冲突。 */
+  nextSimulatedCardId(state, definitionId) {
+    state.simulatedCardCounter = Math.max(0, Number(state.simulatedCardCounter) || 0) + 1;
+    return `simulated-resource:${state.simulatedCardCounter}:${definitionId}`;
+  }
+
+  /** 在目标 knownCards 中按 cardId + definitionId 查找条目。 */
+  findKnownCardEntry(target, cardId, definitionId) {
+    if (!Array.isArray(target?.knownCards) || !cardId || !definitionId) return null;
+    return target.knownCards.find((entry) => (
+      entry?.cardId === cardId && entry?.definitionId === definitionId
+    )) ?? null;
+  }
+
+  /** 将一张已知身份或模拟身份的抽象牌加入玩家手牌，可用性来自 acquisitionWorlds 的 occurs 分支。 */
+  addSimulatedCardToHand(state, player, cardIdentity, acquisitionWorlds) {
+    if (!player || !cardIdentity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
+    const acquired = projectProbabilityStateBranches(acquisitionWorlds, (branch) => ({
+      available:Boolean(branch.occurs)
+    }));
+    const acquisitionProbability = totalBranchProbability(acquired.filter((branch) => branch.available));
+    if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
+    const id = cardIdentity.id ?? this.nextSimulatedCardId(state, cardIdentity.definitionId);
+    player.hand ??= [];
+    player.hand.push({
+      id,
+      definitionId: cardIdentity.definitionId,
+      availabilityBranches: availableBranchesFromState(acquired),
+      availabilityStateBranches: acquired
+    });
+    player.handCount = (player.handCount ?? 0) + acquisitionProbability;
+    this.syncCardEstimates(player);
+    return acquisitionProbability;
+  }
+
+  /** 按具体牌与未知聚合重建四类派生摘要；只用于定向已知牌转移/移除与装备入手路径。 */
+  cardEstimateDistribution(player, definitionId) {
+    const explicitEntries = Array.isArray(player.hand)
+      ? player.hand.filter((card) => card?.definitionId === definitionId)
+      : Array.isArray(player.knownCards)
+        ? player.knownCards.filter((entry) => entry?.definitionId === definitionId)
+        : [];
+    const explicitExpectedCount = explicitEntries.reduce(
+      (sum, card) => sum + this.cardAvailability(card), 0
+    );
+    const handCount = Math.max(0, Number(player.handCount) || 0);
+    const unknownExpectedCount = Math.max(0, handCount - explicitExpectedCount);
+    const wholeSlots = Math.floor(unknownExpectedCount);
+    const fractionalSlot = unknownExpectedCount - wholeSlots;
+    const density = (CARD_DEFINITIONS[definitionId]?.count ?? 0) / TOTAL_CARD_COUNT;
+    let distribution = [{ count:0, probability:1 }];
+    const convolve = (probability) => {
+      const next = [];
+      for (const branch of distribution) {
+        next.push({ count:branch.count, probability:branch.probability * (1 - probability) });
+        next.push({ count:branch.count + 1, probability:branch.probability * probability });
+      }
+      distribution = next;
+    };
+    for (const card of explicitEntries) convolve(this.cardAvailability(card));
+    for (let slot = 0; slot < wholeSlots; slot += 1) convolve(density);
+    if (fractionalSlot > PROBABILITY_EPSILON) convolve(fractionalSlot * density);
+    const maxCount = Math.max(0, Math.ceil(handCount));
+    const merged = new Map();
+    for (const branch of distribution) {
+      const count = Math.max(0, Math.min(maxCount, Math.floor(Number(branch?.count) || 0)));
+      const probability = Math.max(0, Number(branch?.probability) || 0);
+      if (probability <= PROBABILITY_EPSILON) continue;
+      merged.set(count, (merged.get(count) ?? 0) + probability);
+    }
+    if (!merged.size) return [{ count:0, probability:1 }];
+    const total = [...merged.values()].reduce((sum, probability) => sum + probability, 0);
+    return [...merged.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([count, probability]) => ({ count, probability:probability / total }));
+  }
+
+  syncCardEstimates(player) {
+    if (!player) return;
+    const expectation = (distribution) => distribution.reduce(
+      (sum, branch) => sum + branch.count * branch.probability, 0
+    );
+    const atLeast = (distribution, required) => distribution.reduce(
+      (sum, branch) => sum + (branch.count >= required ? branch.probability : 0), 0
+    );
+    const recoverDistribution = this.cardEstimateDistribution(player, "recover");
+    const blockDistribution = this.cardEstimateDistribution(player, "block");
+    const counterDistribution = this.cardEstimateDistribution(player, "counter");
+    const assaultDistribution = this.cardEstimateDistribution(player, "assault");
+    player.expectedRecoverCount = expectation(recoverDistribution);
+    player.blockProbability = atLeast(blockDistribution, 1);
+    player.twoBlockProbability = atLeast(blockDistribution, 2);
+    player.counterProbability = atLeast(counterDistribution, 1);
+    player.assaultCountDistribution = assaultDistribution;
+    player.expectedAssaultCount = expectation(assaultDistribution);
+    player.assaultResponseProbability = atLeast(assaultDistribution, 1);
+  }
+
   /**
    * 从模拟可见状态整理合法已知手牌与未知数量。
    * 身份数量超过聚合手牌时保守回退：剩余期望手牌全部按未知聚合处理，不猜测哪张已知牌消失。
@@ -484,10 +603,12 @@ export class AiSimulator {
   buildSimulatedKnownCards(target) {
     const knownCards = Array.isArray(target.knownCards) ? target.knownCards : [];
     const handCount = Math.max(0, Number(target.handCount) || 0);
-    if (knownCards.length > handCount + PROBABILITY_EPSILON) {
+    const certainKnown = knownCards.filter((entry) => this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON);
+    const certainKnownCount = certainKnown.length;
+    if (certainKnownCount > handCount + PROBABILITY_EPSILON) {
       return { knownCards: [], unknownCount: handCount };
     }
-    return { knownCards, unknownCount: Math.max(0, handCount - knownCards.length) };
+    return { knownCards: certainKnown, unknownCount: Math.max(0, handCount - certainKnownCount) };
   }
 
   /** 模拟破坏/掠夺的抽象资源选择；用于 destroy 与 plunder，不读取 target.hand。 */
@@ -504,13 +625,16 @@ export class AiSimulator {
     const equipmentDefinitionId = this.getSimulatedEquipmentProbability(target) > PROBABILITY_EPSILON
       ? (target.equipmentDefinitionId ?? null)
       : null;
-    return chooseResourceZone({
+    const selection = chooseResourceZone({
       purpose,
       actor,
       owner: target,
       handCandidate,
       equipmentDefinitionId
     });
+    if (!selection) return null;
+    // 仅供模拟器未知消费使用；不修改资源选择模块的公共语义
+    return { ...selection, availableUnknownCount: unknownCount };
   }
 
   /** 从 AI 自己的具体模拟手牌中同步消费响应牌；部分期望消费会保留对应可用概率。 */
@@ -622,6 +746,38 @@ export class AiSimulator {
     return expectedSpent;
   }
 
+  /**
+   * 聚合随机消费后对部分概率 knownCards 做保守身份降级。
+   * 完整确定条目保留；零概率与部分概率条目移除（其概率质量已包含在 handCount 中，转为未知聚合）。
+   * @returns {boolean} knownCards 是否发生变化
+   */
+  downgradePartialKnownCardsAfterRandomLoss(player) {
+    if (!Array.isArray(player?.knownCards)) return false;
+    const retained = player.knownCards.filter((entry) => this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON);
+    const changed = retained.length !== player.knownCards.length;
+    if (changed) player.knownCards = retained;
+    return changed;
+  }
+
+  /**
+   * 资源专用未知消费：只消费 availableUnknownCount 范围内的未知聚合数量，
+   * 不按整手牌比例侵蚀完整确定 known；消费后始终重算摘要。
+   * @returns {number} 实际消费的期望数量
+   */
+  consumeUnknownResourceCard(state, player, expectedAmount, availableUnknownCount) {
+    if (!player) return 0;
+    const spent = Math.min(
+      Math.max(0, Number(expectedAmount) || 0),
+      Math.max(0, Number(availableUnknownCount) || 0),
+      Math.max(0, Number(player.handCount) || 0)
+    );
+    if (spent <= PROBABILITY_EPSILON) return 0;
+    player.handCount = Math.max(0, (player.handCount ?? 0) - spent);
+    this.downgradePartialKnownCardsAfterRandomLoss(player);
+    this.syncCardEstimates(player);
+    return spent;
+  }
+
   consumeRandomHandCards(state, player, expectedAmount) {
     let remaining = Math.max(0, Number(expectedAmount) || 0);
     let totalSpent = 0;
@@ -658,6 +814,9 @@ export class AiSimulator {
       player.handCount = Math.max(0, handBefore - spend);
       remaining -= spend;
       totalSpent += spend;
+    }
+    if (totalSpent > PROBABILITY_EPSILON && this.downgradePartialKnownCardsAfterRandomLoss(player)) {
+      this.syncCardEstimates(player);
     }
     return totalSpent;
   }
@@ -874,44 +1033,101 @@ export class AiSimulator {
     return lifeDamageChance;
   }
 
-  takeResourceToHand(state, actor, target, scale = 1) {
+  takeResourceToHand(state, actor, target, resolution = 1, label = "plunder-resource") {
     if (!Array.isArray(state?.players)) {
-      scale = target ?? 1;
+      resolution = target ?? 1;
       target = actor;
       actor = state;
       state = { players:[actor, target] };
     }
-    const clampedScale = Math.max(0, Math.min(1, Number(scale) || 0));
+    const effectWorlds = this.normalizeResourceEffectWorlds(state, resolution, label);
     const selection = this.chooseSimulatedResourceSelection(state, actor, target, "plunder");
     if (!selection) return;
     if (selection.zone === "equipment") {
       const existenceProbability = this.getSimulatedEquipmentProbability(target);
-      const transferProbability = existenceProbability * clampedScale;
-      this.setSimulatedEquipment(target, target.equipmentDefinitionId, existenceProbability - transferProbability);
-      actor.handCount = (actor.handCount ?? 0) + transferProbability;
+      const equipmentTransferWorlds = this.gateEventWorlds(
+        state,
+        effectWorlds,
+        existenceProbability,
+        `equipment-transfer:${target.id ?? "unknown"}:${selection.definitionId}`
+      );
+      const transferProbability = this.eventProbability(equipmentTransferWorlds);
+      if (transferProbability > PROBABILITY_EPSILON) {
+        this.setSimulatedEquipment(target, target.equipmentDefinitionId, existenceProbability - transferProbability);
+        this.addSimulatedCardToHand(state, actor, { definitionId: selection.definitionId }, equipmentTransferWorlds);
+      }
+    } else if (selection.zone === "hand" && selection.selectionKind === "known") {
+      const entry = this.findKnownCardEntry(target, selection.cardId, selection.definitionId);
+      if (entry && this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON) {
+        const acquisitionProbability = this.eventProbability(effectWorlds);
+        if (acquisitionProbability <= PROBABILITY_EPSILON) return;
+        entry.availabilityStateBranches = projectProbabilityStateBranches(effectWorlds, (branch) => ({
+          available:Boolean(!branch.occurs)
+        }));
+        entry.availabilityBranches = availableBranchesFromState(entry.availabilityStateBranches);
+        if (totalBranchProbability(entry.availabilityBranches) <= PROBABILITY_EPSILON) {
+          target.knownCards = target.knownCards.filter((item) => item !== entry);
+        }
+        target.handCount = Math.max(0, (target.handCount ?? 0) - acquisitionProbability);
+        this.syncCardEstimates(target);
+        this.addSimulatedCardToHand(state, actor, {
+          id: selection.cardId,
+          definitionId: selection.definitionId
+        }, effectWorlds);
+        return;
+      }
+      const transferred = this.consumeRandomHandCards(state, target, this.eventProbability(effectWorlds));
+      actor.handCount = (actor.handCount ?? 0) + transferred;
     } else if (selection.zone === "hand") {
-      const transferred = this.consumeRandomHandCards(state, target, clampedScale);
+      const transferred = this.consumeUnknownResourceCard(
+        state,
+        target,
+        this.eventProbability(effectWorlds),
+        selection.availableUnknownCount
+      );
       actor.handCount = (actor.handCount ?? 0) + transferred;
     }
   }
 
   /**
-   * 本阶段只同步破坏的手牌/装备区域选择。
-   * 选择手牌后仍使用聚合随机消耗，不追踪具体已知牌身份。
+   * 同步破坏的手牌/装备区域选择；确定已知牌按 cardId 定向移除，
+   * 部分概率保留互补可用分支，未知牌继续走聚合随机消耗。
    */
-  destroyResource(state, actor, target, scale = 1) {
+  destroyResource(state, actor, target, resolution = 1, label = "destroy-resource") {
     if (!Array.isArray(state?.players)) {
       throw new Error("destroyResource 需要 state、actor、target、scale 完整签名");
     }
-    const clampedScale = Math.max(0, Math.min(1, Number(scale) || 0));
+    const effectWorlds = this.normalizeResourceEffectWorlds(state, resolution, label);
     const selection = this.chooseSimulatedResourceSelection(state, actor, target, "destroy");
     if (!selection) return;
     if (selection.zone === "equipment") {
       const existenceProbability = this.getSimulatedEquipmentProbability(target);
       this.setSimulatedEquipment(target, target.equipmentDefinitionId,
-        existenceProbability * (1 - clampedScale));
+        existenceProbability * (1 - this.eventProbability(effectWorlds)));
+    } else if (selection.zone === "hand" && selection.selectionKind === "known") {
+      const entry = this.findKnownCardEntry(target, selection.cardId, selection.definitionId);
+      if (entry && this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON) {
+        const removalProbability = this.eventProbability(effectWorlds);
+        if (removalProbability <= PROBABILITY_EPSILON) return;
+        entry.availabilityStateBranches = projectProbabilityStateBranches(effectWorlds, (branch) => ({
+          available:Boolean(!branch.occurs)
+        }));
+        entry.availabilityBranches = availableBranchesFromState(entry.availabilityStateBranches);
+        if (totalBranchProbability(entry.availabilityBranches) <= PROBABILITY_EPSILON) {
+          target.knownCards = target.knownCards.filter((item) => item !== entry);
+        }
+        target.handCount = Math.max(0, (target.handCount ?? 0) - removalProbability);
+        this.syncCardEstimates(target);
+        return;
+      }
+      this.consumeRandomHandCards(state, target, this.eventProbability(effectWorlds));
     } else if (selection.zone === "hand") {
-      this.consumeRandomHandCards(state, target, clampedScale);
+      this.consumeUnknownResourceCard(
+        state,
+        target,
+        this.eventProbability(effectWorlds),
+        selection.availableUnknownCount
+      );
     }
   }
 
