@@ -2844,6 +2844,215 @@ test("角色卡牌价值：卡牌跨角色平均差绝对值不超过 0.125", ()
   }
 });
 
+// ---- 角色核心评分：动作与状态评分接入角色卡牌价值 ----
+test("角色核心评分：动作基础价值使用角色有效值且刃行者与守誓者突袭相差 2", () => {
+  const { game } = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("warden", 1, "dawn", "ai", 1)]);
+  game.aiDifficultyMultiplier = 0;
+  const evaluator = game.aiController.evaluator;
+  const makeVisible = (id, generalId) => ({
+    players: [
+      { id, battleTeam:"dawn", generalId, alive:true, hp:4, maxHp:4, energy:0, maxEnergy:4, handCount:1, hand:[] },
+      { id:"target", battleTeam:"dusk", alive:true, hp:1, maxHp:4, handCount:1 }
+    ]
+  });
+  const blade = makePlayer("blade", 0, "dawn");
+  const warden = makePlayer("warden", 1, "dawn", "ai", 1);
+  const assault = instance("assault");
+  const action = { type:"card", card:assault, targets:[{ id:"target" }] };
+  const bladeScore = evaluator.actionUtility(action, blade, makeVisible("blade", "blade-walker"));
+  const wardenScore = evaluator.actionUtility(action, warden, makeVisible("warden", "oath-warden"));
+  // 刃行者 assault = 4+1，守誓者 assault = 4-1；同一目标时伤害/焦点增量完全一致
+  assert.equal(bladeScore - wardenScore, 2);
+  assert.equal(bladeScore, assault.aiValue + 1 + 3 + (4 - 1) * 3 + 5 + 8);
+  assert.equal(wardenScore, assault.aiValue - 1 + 3 + (4 - 1) * 3 + 5 + 8);
+});
+
+test("角色核心评分：无角色差值的卡牌组合仍等于全局基础值", () => {
+  const { game } = makeGame([makePlayer("blade", 0, "dawn")]);
+  const evaluator = game.aiController.evaluator;
+  const blade = makePlayer("blade", 0, "dawn");
+  const visible = {
+    players: [
+      { id:"blade", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, energy:0, maxEnergy:4, handCount:1, hand:[] }
+    ]
+  };
+  // blade-walker 未配置 plunder 差值，动作分必须保持全局基础值 7
+  assert.equal(getRoleCardAiValue("blade-walker", "plunder"), CARD_DEFINITIONS.plunder.aiValue);
+  assert.equal(evaluator.actionUtility({ type:"card", card:instance("plunder"), targets:[] }, blade, visible), CARD_DEFINITIONS.plunder.aiValue);
+});
+
+test("角色核心评分：共生专用公式保留并额外加入角色差量", () => {
+  const { game } = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("medic", 1, "dusk", "ai", 2)]);
+  const evaluator = game.aiController.evaluator;
+  const makeVisible = (id, generalId) => ({
+    players: [
+      { id, battleTeam:"dawn", generalId, alive:true, hp:4, maxHp:4, energy:0, maxEnergy:4, handCount:1, hand:[] },
+      { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, handCount:1 }
+    ]
+  });
+  const blade = makePlayer("blade", 0, "dawn");
+  const medic = makePlayer("medic", 1, "dusk", "ai", 2);
+  const action = { type:"card", card:instance("symbiosis"), targets:[] };
+  // 满生命时共生专用净收益为 0，公式落到 -9；刃行者差量 -1、灵医差量 +2
+  assert.equal(evaluator.actionUtility(action, blade, makeVisible("blade", "blade-walker")), -9 - 1);
+  assert.equal(evaluator.actionUtility(action, medic, makeVisible("medic", "spirit-medic")), -9 + 2);
+});
+
+test("角色核心评分：缺少 generalId 或 definitionId 时回退旧基础评分且不抛错", () => {
+  const { game } = makeGame([makePlayer("actor", 0, "dawn")]);
+  game.aiDifficultyMultiplier = 0;
+  const evaluator = game.aiController.evaluator;
+  const actor = makePlayer("actor", 0, "dawn");
+  const visible = {
+    players: [
+      { id:"actor", battleTeam:"dawn", alive:true, hp:4, maxHp:4, energy:0, maxEnergy:4, handCount:1, hand:[] },
+      { id:"target", battleTeam:"dusk", alive:true, hp:1, maxHp:4, handCount:1 }
+    ]
+  };
+  const assault = instance("assault");
+  const assaultScore = evaluator.actionUtility({ type:"card", card:assault, targets:[{ id:"target" }] }, actor, visible);
+  assert.equal(assaultScore, assault.aiValue + 3 + (4 - 1) * 3 + 5 + 8);
+  // 缺少 definitionId 的简化卡牌按旧 aiValue 回退
+  assert.doesNotThrow(() => evaluator.actionUtility({ type:"card", card:{ id:"x", aiValue:5 }, targets:[] }, actor, visible));
+  assert.equal(evaluator.actionUtility({ type:"card", card:{ id:"x", aiValue:5 }, targets:[] }, actor, visible), 5);
+  // 简化状态缺少 generalId 时，stateUtility 的手牌与装备角色差量回退 0
+  const simplified = {
+    players: [
+      { id:"actor", battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1, hand:[{ id:"c", definitionId:"assault" }], equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1, expectedEquipmentGain:0, expectedEquipmentRoleDelta:0 },
+      { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 }
+    ]
+  };
+  assert.doesNotThrow(() => evaluator.stateUtility(simplified, "actor"));
+});
+
+test("角色核心评分：手牌数量相同但组成不同时状态评分体现角色差量", () => {
+  const { game } = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
+  const evaluator = game.aiController.evaluator;
+  const makeState = (cards) => ({
+    players: [
+      { id:"viewer", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:2, hand:cards },
+      { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 }
+    ]
+  });
+  const assault = instance("assault"), scout = instance("scout");
+  // blade-walker：assault 差量 +1、scout 差量 -1，两组手牌差量总和相差 4
+  assert.equal(
+    evaluator.stateUtility(makeState([assault, assault]), "viewer")
+      - evaluator.stateUtility(makeState([scout, scout]), "viewer"),
+    4
+  );
+});
+
+test("角色核心评分：手牌部分可用概率按剩余可用概率折算角色差量", () => {
+  const { game } = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
+  const evaluator = game.aiController.evaluator;
+  const base = { id:"viewer", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1 };
+  const enemy = { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 };
+  const full = { ...base, hand:[{ id:"a", definitionId:"assault", availabilityBranches:[{ probability:1, conditions:{} }] }] };
+  const half = { ...base, hand:[{ id:"a", definitionId:"assault", availabilityBranches:[{ probability:.5, conditions:{} }] }] };
+  assertClose(
+    evaluator.stateUtility({ players:[full, enemy] }, "viewer")
+      - evaluator.stateUtility({ players:[half, enemy] }, "viewer"),
+    .5
+  );
+});
+
+test("角色核心评分：状态评分不读取其他玩家手牌组成", () => {
+  const { game } = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
+  const evaluator = game.aiController.evaluator;
+  const viewer = { id:"viewer", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1, hand:[{ id:"v", definitionId:"assault" }] };
+  const hidden = { id:"enemy", battleTeam:"dusk", generalId:"spirit-medic", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:2, hand:[{ id:"h1", definitionId:"recover" }, { id:"h2", definitionId:"recover" }] };
+  assert.equal(
+    evaluator.stateUtility({ players:[viewer, hidden] }, "viewer"),
+    evaluator.stateUtility({ players:[viewer, { ...hidden, hand:undefined }] }, "viewer")
+  );
+});
+
+test("角色核心评分：初始装备角色差量基线使未变化装备净差量为 0", () => {
+  const { game } = makeGame([makePlayer("viewer", 0, "dawn")]);
+  const evaluator = game.aiController.evaluator;
+  const base = { id:"viewer", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1, expectedEquipmentGain:0, expectedEquipmentRoleDelta:0 };
+  const enemy = { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 };
+  // battleDevice 对 blade-walker 的角色差量为 +1
+  assert.equal(getRoleCardAiValue("blade-walker", "battleDevice") - getBaseCardAiValue("battleDevice"), 1);
+  const withBaseline = evaluator.stateUtility({ players:[{ ...base, initialEquipmentRoleDelta:1 }, enemy] }, "viewer");
+  const withoutBaseline = evaluator.stateUtility({ players:[{ ...base, initialEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  assertClose(withoutBaseline - withBaseline, .25);
+});
+
+test("角色核心评分：同一件新装备由不同角色获得时状态差量不同", () => {
+  const { game } = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("medic", 1, "dusk", "ai", 2)]);
+  const evaluator = game.aiController.evaluator;
+  const enemy = { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 };
+  const makeState = (id, generalId) => ({ id, battleTeam:"dawn", generalId, alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1, initialEquipmentRoleDelta:0, expectedEquipmentRoleDelta:0 });
+  const bladeScore = evaluator.stateUtility({ players:[makeState("blade", "blade-walker"), enemy] }, "blade");
+  const medicScore = evaluator.stateUtility({ players:[makeState("medic", "spirit-medic"), enemy] }, "medic");
+  // battleDevice：blade-walker 差量 +1、spirit-medic 差量 -1 → 状态差量差 0.5
+  assertClose(bladeScore - medicScore, .5);
+});
+
+test("角色核心评分：换装、丢失与概率获得装备按角色差量计算", () => {
+  const { game } = makeGame([makePlayer("viewer", 0, "dawn")]);
+  const evaluator = game.aiController.evaluator;
+  const enemy = { id:"enemy", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0 };
+  const base = { id:"viewer", battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0, initialEquipmentRoleDelta:1 };
+  // 换装到 energyDevice：blade-walker 差量 -1，初始 battleDevice 差量 +1 → 净差量 -2
+  const swapped = evaluator.stateUtility({ players:[{ ...base, equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1, expectedEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  const swappedNoBaseline = evaluator.stateUtility({ players:[{ ...base, initialEquipmentRoleDelta:0, equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1, expectedEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  assertClose(swappedNoBaseline - swapped, .25);
+  // 装备丢失：当前保留概率 0，初始差量 1 相对初始差量 0 的角色装备差量为 -1
+  const lostWithBaseline = evaluator.stateUtility({ players:[{ ...base, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:0, expectedEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  const lostNoBaseline = evaluator.stateUtility({ players:[{ ...base, initialEquipmentRoleDelta:0, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:0, expectedEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  assertClose(lostNoBaseline - lostWithBaseline, .25);
+  // 概率获得已知装备：expectedEquipmentRoleDelta 按接收者角色差量 × 概率
+  const gained = evaluator.stateUtility({ players:[{ ...base, equipmentDefinitionId:null, equipmentRetentionProbability:0, initialEquipmentRoleDelta:0, expectedEquipmentRoleDelta:1 }, enemy] }, "viewer");
+  const noGain = evaluator.stateUtility({ players:[{ ...base, equipmentDefinitionId:null, equipmentRetentionProbability:0, initialEquipmentRoleDelta:0, expectedEquipmentRoleDelta:0 }, enemy] }, "viewer");
+  assertClose(gained - noGain, .25);
+});
+
+test("角色核心评分：借势概率获得装备同步接收者角色装备差量", () => {
+  const state = {
+    players: [
+      { id:"actor", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", hp:4, maxHp:4, shield:0, energy:0, alive:true, handCount:1, hand:[{ id:"l", definitionId:"leverage" }], counterProbability:0, expectedEquipmentGain:0, expectedEquipmentRoleDelta:0 },
+      { id:"first", seatIndex:1, battleTeam:"dusk", generalId:"oath-warden", hp:4, maxHp:4, shield:0, energy:0, alive:true, handCount:2, attackUsed:0, attackLimit:1, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1, assaultResponseProbability:.5, expectedAssaultCount:.5, blockProbability:0, counterProbability:0 },
+      { id:"second", seatIndex:2, battleTeam:"dawn", hp:4, maxHp:4, shield:0, energy:0, alive:true, handCount:0, blockProbability:0, expectedRecoverCount:0 }
+    ]
+  };
+  const simulator = new AiSimulator(state);
+  const next = simulator.apply(state, {
+    type:"card",
+    card:{ ...CARD_DEFINITIONS.leverage, id:"l" },
+    targets:[{ id:"first" }, { id:"second" }],
+    selection:{ firstTargetId:"first", secondTargetId:"second" }
+  }, "actor");
+  const actor = next.players[0], first = next.players[1];
+  const declineProbability = 1 - first.equipmentRetentionProbability;
+  const bladeBattleDeviceDelta = getRoleCardAiValue("blade-walker", "battleDevice") - getBaseCardAiValue("battleDevice");
+  assert.ok(declineProbability > 0 && declineProbability < 1);
+  assertClose(actor.expectedEquipmentRoleDelta, bladeBattleDeviceDelta * declineProbability);
+  assert.ok(actor.expectedEquipmentGain > 0);
+});
+
+test("角色核心评分：真实 Planner 会按角色权重选择不同动作", async () => {
+  const run = async (generalIndex) => {
+    const actor = makePlayer("actor", 0, "dawn", "ai", generalIndex);
+    const enemy = makePlayer("enemy", 1, "dusk");
+    const provoke = instance("provoke"), harvest = instance("harvest");
+    actor.hand = [provoke, harvest];
+    enemy.hand = [instance("assault")];
+    const { game } = makeGame([actor, enemy]);
+    game.rememberPrivateCard(actor, enemy, enemy.hand[0]);
+    game.aiSearchNodeBudgetOverride = 3;
+    game.aiRandomnessRange = 0;
+    const action = await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+    return action.card?.definitionId;
+  };
+  // 全局基础值相同（provoke/harvest 均为 7），角色差量相反：刃行者 +1/-1，灵医 -1/+1
+  assert.equal(CARD_DEFINITIONS.provoke.aiValue, CARD_DEFINITIONS.harvest.aiValue);
+  assert.equal(await run(0), "provoke");
+  assert.equal(await run(2), "harvest");
+});
+
 // ---- 自己手牌、公开池与破坏目标角色价值 ----
 test("角色选牌：自己隐藏牌选择使用角色有效值且刃行者选中更低的 scout", () => {
   const actor = makePlayer("actor", 0, "dawn"); // blade-walker：assault 5、scout 4
@@ -3573,14 +3782,16 @@ test("破坏模拟 knownCards 数量一致时参与共享选择", () => {
     { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true, handCount:1, hand:[{id:"use",definitionId:"destroy"}], equipmentDefinitionId:null, equipmentRetentionProbability:0 },
     { id:"t", battleTeam:"dusk", generalId:"spirit-medic", alive:true, handCount:2, knownCards:[{cardId:"r",definitionId:"recover"}], equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1, counterProbability:0 }
   ]};
-  const before = JSON.stringify(state.players[1].knownCards);
   const next = new AiSimulator(state).apply(state, { type:"card", card:{id:"use",definitionId:"destroy"}, targets:[{id:"t"}] }, "a");
   assert.ok(Math.abs(next.players[1].handCount - 1) < 1e-9);
   assert.equal(next.players[1].equipmentRetentionProbability, 1);
-  assert.equal(JSON.stringify(next.players[1].knownCards), before);
+  assert.deepEqual(next.players[1].knownCards, []);
 });
 
 test("破坏模拟 scale 三档：手牌与装备", () => {
+  const availability = (entry) => Array.isArray(entry?.availabilityStateBranches)
+    ? entry.availabilityStateBranches.filter((branch) => branch.available).reduce((sum, branch) => sum + branch.probability, 0)
+    : 1;
   const runHand = (scale) => {
     const state = { players:[
       { id:"a", battleTeam:"dawn", generalId:"blade-walker", alive:true, handCount:1, hand:[{id:"use",definitionId:"destroy"}], equipmentDefinitionId:null, equipmentRetentionProbability:0 },
@@ -3589,11 +3800,15 @@ test("破坏模拟 scale 三档：手牌与装备", () => {
     const next = new AiSimulator(state).apply(state, { type:"card", card:{id:"use",definitionId:"destroy"}, targets:[{id:"t"}], executionProbability:scale }, "a");
     return next.players[1];
   };
-  assert.ok(Math.abs(runHand(0).handCount - 1) < 1e-9);
-  assert.ok(Math.abs(runHand(0.5).handCount - 0.5) < 1e-9);
-  assert.ok(Math.abs(runHand(1).handCount - 0) < 1e-9);
-  const knownCardsBefore = JSON.stringify(runHand(0.5).knownCards);
-  assert.equal(JSON.stringify(runHand(1).knownCards), knownCardsBefore);
+  const zeroHand = runHand(0), halfHand = runHand(0.5), fullHand = runHand(1);
+  assert.ok(Math.abs(zeroHand.handCount - 1) < 1e-9);
+  assert.ok(Math.abs(halfHand.handCount - 0.5) < 1e-9);
+  assert.ok(Math.abs(fullHand.handCount - 0) < 1e-9);
+  assert.equal(zeroHand.knownCards.length, 1);
+  assert.ok(Math.abs(availability(zeroHand.knownCards[0]) - 1) < 1e-9);
+  assert.equal(halfHand.knownCards.length, 1);
+  assert.ok(Math.abs(availability(halfHand.knownCards[0]) - 0.5) < 1e-9);
+  assert.deepEqual(fullHand.knownCards, []);
 
   const runEquipment = (scale) => {
     const state = { players:[
@@ -3608,7 +3823,7 @@ test("破坏模拟 scale 三档：手牌与装备", () => {
   assert.ok(Math.abs(runEquipment(1).equipmentRetentionProbability - 0) < 1e-9);
 });
 
-test("破坏模拟同步后掠夺模拟仍保持聚合身份模型", () => {
+test("破坏模拟同步后掠夺模拟保留具体身份", () => {
   const simulator = new AiSimulator({ players:[] });
   const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", handCount:0, equipmentDefinitionId:null, equipmentRetentionProbability:0 };
   const target = { id:"t", battleTeam:"dusk", generalId:"spirit-medic", handCount:1, knownCards:[{cardId:"r",definitionId:"recover"}], equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1 };
@@ -3616,7 +3831,10 @@ test("破坏模拟同步后掠夺模拟仍保持聚合身份模型", () => {
   assert.ok(Math.abs(target.handCount - 0) < 1e-9); // 双角色：recover 14 > energyDevice 13 → 手牌
   assert.equal(actor.handCount, 1);
   assert.equal(target.equipmentRetentionProbability, 1);
-  assert.deepEqual(target.knownCards, [{ cardId:"r", definitionId:"recover" }]);
+  assert.deepEqual(target.knownCards, []);
+  assert.equal(actor.hand.length, 1);
+  assert.equal(actor.hand[0].id, "r");
+  assert.equal(actor.hand[0].definitionId, "recover");
 });
 
 test("破坏模拟共享模块单一公式来源", async () => {
@@ -3680,14 +3898,16 @@ test("掠夺模拟同分时优先手牌", () => {
   assert.equal(actor.handCount, 1);
 });
 
-test("掠夺模拟只有装备时转移装备为手牌数量", () => {
+test("掠夺模拟只有装备时转移装备为具体手牌", () => {
   const simulator = new AiSimulator({ players:[] });
   const actor = { id:"actor", battleTeam:"dawn", generalId:"spirit-medic", handCount:0, hand:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
   const target = { id:"target", battleTeam:"dusk", generalId:"blade-walker", handCount:0, knownCards:[], equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1 };
   simulator.takeResourceToHand({ players:[actor,target] }, actor, target, 1);
   assert.ok(Math.abs(target.equipmentRetentionProbability - 0) < 1e-9);
   assert.equal(actor.handCount, 1);
-  assert.deepEqual(actor.hand, []);
+  assert.equal(actor.hand.length, 1);
+  assert.equal(actor.hand[0].definitionId, "energyDevice");
+  assert.match(actor.hand[0].id, /^simulated-resource:/);
 });
 
 test("掠夺模拟只有手牌时聚合转移", () => {
@@ -3750,18 +3970,23 @@ test("掠夺模拟 knownCards 可信时参与双角色比较", () => {
   const simulator = new AiSimulator({ players:[] });
   const actor = { id:"actor", battleTeam:"dawn", generalId:"spirit-medic", handCount:0, equipmentDefinitionId:null, equipmentRetentionProbability:0 };
   const target = { id:"target", battleTeam:"dusk", generalId:"blade-walker", handCount:2, knownCards:[{cardId:"r",definitionId:"recover"}], equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1 };
-  const before = JSON.stringify(target.knownCards);
   simulator.takeResourceToHand({ players:[actor,target] }, actor, target, 1);
   // recover 14 > 装备 13 → 手牌；未知 8 参与比较但低于两者
   assert.ok(Math.abs(target.handCount - 1) < 1e-9);
   assert.equal(target.equipmentRetentionProbability, 1);
-  assert.equal(JSON.stringify(target.knownCards), before);
+  assert.deepEqual(target.knownCards, []);
+  assert.equal(actor.hand.length, 1);
+  assert.equal(actor.hand[0].id, "r");
+  assert.equal(actor.hand[0].definitionId, "recover");
 });
 
 test("掠夺模拟 scale 三档：手牌", () => {
+  const availability = (entry) => Array.isArray(entry?.availabilityStateBranches)
+    ? entry.availabilityStateBranches.filter((branch) => branch.available).reduce((sum, branch) => sum + branch.probability, 0)
+    : 1;
   const run = (scale) => {
     const simulator = new AiSimulator({ players:[] });
-    const actor = { id:"actor", battleTeam:"dawn", generalId:"spirit-medic", handCount:0, equipmentDefinitionId:null, equipmentRetentionProbability:0 };
+    const actor = { id:"actor", battleTeam:"dawn", generalId:"spirit-medic", handCount:0, hand:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
     const target = { id:"target", battleTeam:"dusk", generalId:"blade-walker", handCount:1, knownCards:[{cardId:"r",definitionId:"recover"}], equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1 };
     simulator.takeResourceToHand({ players:[actor,target] }, actor, target, scale);
     return { actor, target };
@@ -3771,7 +3996,18 @@ test("掠夺模拟 scale 三档：手牌", () => {
   assert.ok(Math.abs(half.target.handCount - 0.5) < 1e-9 && Math.abs(half.actor.handCount - 0.5) < 1e-9);
   assert.ok(Math.abs(full.target.handCount - 0) < 1e-9 && Math.abs(full.actor.handCount - 1) < 1e-9);
   assert.ok(Number.isFinite(half.target.handCount) && Number.isFinite(half.actor.handCount));
-  assert.equal(JSON.stringify(half.target.knownCards), JSON.stringify(full.target.knownCards));
+  assert.equal(zero.target.knownCards.length, 1);
+  assert.ok(Math.abs(availability(zero.target.knownCards[0]) - 1) < 1e-9);
+  assert.equal(half.target.knownCards.length, 1);
+  assert.ok(Math.abs(availability(half.target.knownCards[0]) - 0.5) < 1e-9);
+  assert.deepEqual(full.target.knownCards, []);
+  assert.equal(zero.actor.hand.length, 0);
+  assert.equal(half.actor.hand.length, 1);
+  assert.equal(half.actor.hand[0].id, "r");
+  assert.ok(Math.abs(availability(half.actor.hand[0]) - 0.5) < 1e-9);
+  assert.equal(full.actor.hand.length, 1);
+  assert.equal(full.actor.hand[0].id, "r");
+  assert.ok(Math.abs(availability(full.actor.hand[0]) - 1) < 1e-9);
 });
 
 test("掠夺模拟 scale 三档：装备", () => {
@@ -3789,13 +4025,377 @@ test("掠夺模拟 scale 三档：装备", () => {
   assert.ok(Math.abs(zero.actor.handCount - 0) < 1e-9);
   assert.ok(Math.abs(half.actor.handCount - 0.5) < 1e-9);
   assert.ok(Math.abs(full.actor.handCount - 1) < 1e-9);
-  assert.deepEqual(full.actor.hand, []);
+  assert.equal(zero.actor.hand.length, 0);
+  assert.equal(half.actor.hand.length, 1);
+  assert.equal(half.actor.hand[0].definitionId, "energyDevice");
+  assert.match(half.actor.hand[0].id, /^simulated-resource:/);
+  assert.ok(Math.abs(half.actor.hand[0].availabilityStateBranches.filter((branch) => branch.available).reduce((sum, branch) => sum + branch.probability, 0) - 0.5) < 1e-9);
+  assert.equal(full.actor.hand.length, 1);
+  assert.equal(full.actor.hand[0].definitionId, "energyDevice");
+  assert.match(full.actor.hand[0].id, /^simulated-resource:/);
+  assert.ok(Math.abs(full.actor.hand[0].availabilityStateBranches.filter((branch) => branch.available).reduce((sum, branch) => sum + branch.probability, 0) - 1) < 1e-9);
 });
 
 test("掠夺模拟共享模块单一公式来源", async () => {
   const source = await readFile(projectFile("js/ai/AiSimulator.js"), "utf8");
   assert.match(source, /chooseSimulatedResourceSelection/);
   assert.doesNotMatch(source, /const takeEquipment =/);
+});
+
+// ---- 资源身份：破坏与掠夺模拟保留具体已知牌 ----
+test("资源身份：确定性破坏已知 counter 移除身份并重算反制概率", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1, knownCards:[{ cardId:"c", definitionId:"counter" }], equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:1 };
+  simulator.destroyResource({ players:[actor,target] }, actor, target, 1);
+  assert.equal(target.handCount, 0);
+  assert.deepEqual(target.knownCards, []);
+  assert.equal(target.counterProbability, 0);
+  // 下一层战术牌结算不再认为该反制存在
+  assert.equal(simulator.tacticResolutionChance({ players:[actor,target] }, actor, { category:"tactic", counterable:true }, [target]), 1);
+});
+
+test("资源身份：确定性掠夺已知 assault 后可在下一层生成突袭动作", () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 0);
+  const target = makePlayer("target", 1, "dusk", "ai", 1);
+  const plunder = instance("plunder"), assault = instance("assault");
+  actor.hand = [plunder];
+  target.hand = [assault];
+  const { game } = makeGame([actor, target]);
+  game.rememberPrivateCard(actor, target, assault);
+  const visible = createAiVisibleState(actor.id, game.state);
+  const action = game.aiController.actionGenerator.generateFromVisible(visible, actor.id)
+    .find((entry) => entry.card?.id === plunder.id && entry.targets[0]?.id === target.id);
+  assert.ok(action);
+  const next = new AiSimulator(visible).apply(visible, action, actor.id);
+  const actorNext = next.players[0], targetNext = next.players[1];
+  assert.deepEqual(targetNext.knownCards, []);
+  assert.ok(Math.abs(targetNext.handCount - 0) < 1e-9);
+  assert.ok(Math.abs(targetNext.expectedAssaultCount - 0) < 1e-9);
+  assert.equal(targetNext.assaultResponseProbability, 0);
+  assert.ok(actorNext.hand.some((card) => card.id === assault.id && card.definitionId === "assault"));
+  const follow = game.aiController.actionGenerator.generateFromVisible(next, actor.id);
+  assert.ok(follow.some((entry) => entry.card?.id === assault.id && entry.targets[0]?.id === target.id));
+});
+
+test("资源身份：部分概率破坏保留已知牌剩余可用概率且不确定化", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1, knownCards:[{ cardId:"c", definitionId:"counter" }], equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:1 };
+  simulator.destroyResource({ players:[actor,target] }, actor, target, 0.6);
+  assert.ok(Math.abs(target.handCount - 0.4) < 1e-9);
+  assert.equal(target.knownCards.length, 1);
+  const availability = target.knownCards[0].availabilityStateBranches
+    .filter((branch) => branch.available)
+    .reduce((sum, branch) => sum + branch.probability, 0);
+  assert.ok(Math.abs(availability - 0.4) < 1e-9);
+  assert.ok(Math.abs(target.counterProbability - 0.4) < 1e-9);
+});
+
+test("资源身份：部分概率掠夺双方共享条件分支且所有权互补", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", handCount:0, hand:[] };
+  const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1, knownCards:[{ cardId:"c", definitionId:"counter" }], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
+  simulator.takeResourceToHand({ players:[actor,target] }, actor, target, 0.6);
+  assert.ok(Math.abs(target.handCount - 0.4) < 1e-9);
+  assert.ok(Math.abs(actor.handCount - 0.6) < 1e-9);
+  const actorCard = actor.hand[0], targetEntry = target.knownCards[0];
+  assert.equal(actorCard.id, "c");
+  let actorOwned = 0, targetOwned = 0;
+  for (const actorBranch of actorCard.availabilityStateBranches) {
+    const counterpart = targetEntry.availabilityStateBranches.find((branch) => (
+      JSON.stringify(branch.conditions) === JSON.stringify(actorBranch.conditions)
+    ));
+    // 同一条件键代表同一世界：概率必须一致且可用状态互补
+    assert.ok(counterpart);
+    assertClose(actorBranch.probability, counterpart.probability);
+    assert.notEqual(actorBranch.available, counterpart.available);
+    if (actorBranch.available) actorOwned += actorBranch.probability;
+    if (counterpart.available) targetOwned += counterpart.probability;
+  }
+  assertClose(actorOwned, 0.6);
+  assertClose(targetOwned, 0.4);
+  assertClose(actorOwned + targetOwned, 1);
+});
+
+test("资源身份：部分概率已知牌保守并入未知聚合而不作为确定 known", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const target = {
+    id:"t", battleTeam:"dusk", generalId:"shade-agent", handCount:0.4,
+    knownCards:[{
+      cardId:"c", definitionId:"counter",
+      availabilityBranches:[{ probability:0.4, conditions:{} }],
+      availabilityStateBranches:[
+        { probability:0.4, conditions:{}, available:true },
+        { probability:0.6, conditions:{}, available:false }
+      ]
+    }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const { knownCards, unknownCount } = simulator.buildSimulatedKnownCards(target);
+  assert.deepEqual(knownCards, []);
+  assert.ok(Math.abs(unknownCount - 0.4) < 1e-9);
+  const selection = simulator.chooseSimulatedResourceSelection({ players:[actor,target] }, actor, target, "destroy");
+  assert.equal(selection.zone, "hand");
+  assert.equal(selection.selectionKind, "unknown");
+  assert.equal(selection.cardId, null);
+});
+
+test("资源身份：已知 block/counter/recover/assault 移除后摘要按分布精确重算", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const densityOf = (definitionId) => CARD_DEFINITIONS[definitionId].count / TOTAL_CARD_COUNT;
+  const makeTarget = (cardId, definitionId) => ({
+    id:`t-${definitionId}`, battleTeam:"dusk", generalId:"oath-warden",
+    handCount:2, knownCards:[{ cardId, definitionId }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  });
+
+  const blockTarget = makeTarget("b1", "block");
+  simulator.destroyResource({ players:[actor, blockTarget] }, actor, blockTarget, 1);
+  assert.ok(Math.abs(blockTarget.handCount - 1) < 1e-9);
+  assert.ok(Math.abs(blockTarget.blockProbability - densityOf("block")) < 1e-9);
+  assert.equal(blockTarget.twoBlockProbability, 0);
+
+  const counterTarget = makeTarget("c1", "counter");
+  simulator.destroyResource({ players:[actor, counterTarget] }, actor, counterTarget, 1);
+  assert.ok(Math.abs(counterTarget.counterProbability - densityOf("counter")) < 1e-9);
+
+  const recoverTarget = makeTarget("r1", "recover");
+  simulator.destroyResource({ players:[actor, recoverTarget] }, actor, recoverTarget, 1);
+  assert.ok(Math.abs(recoverTarget.expectedRecoverCount - densityOf("recover")) < 1e-9);
+
+  const assaultTarget = makeTarget("a1", "assault");
+  assaultTarget.generalId = "blade-walker"; // 已知 assault 效用 5 > 未知期望 4，才会被选中
+  simulator.destroyResource({ players:[actor, assaultTarget] }, actor, assaultTarget, 1);
+  assert.ok(Math.abs(assaultTarget.expectedAssaultCount - densityOf("assault")) < 1e-9);
+  assert.ok(Math.abs(assaultTarget.assaultResponseProbability - densityOf("assault")) < 1e-9);
+  assertClose(assaultTarget.assaultCountDistribution.find((branch) => branch.count === 0).probability, 1 - densityOf("assault"));
+  assertClose(assaultTarget.assaultCountDistribution.find((branch) => branch.count === 1).probability, densityOf("assault"));
+});
+
+test("资源身份：未知牌路径保持聚合随机消费且不产生具体手牌", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", handCount:0, hand:[] };
+  const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
+  simulator.takeResourceToHand({ players:[actor,target] }, actor, target, 1);
+  assert.ok(Math.abs(target.handCount - 1) < 1e-9);
+  assert.equal(actor.handCount, 1);
+  assert.equal(actor.hand.length, 0);
+});
+
+test("资源身份：掠夺装备加入具体手牌后下一层可生成装备动作", () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 0);
+  const target = makePlayer("target", 1, "dusk", "ai", 1);
+  const plunder = instance("plunder"), equipment = instance("telescope");
+  actor.hand = [plunder];
+  target.equipment = equipment;
+  const { game } = makeGame([actor, target]);
+  const visible = createAiVisibleState(actor.id, game.state);
+  const action = game.aiController.actionGenerator.generateFromVisible(visible, actor.id)
+    .find((entry) => entry.card?.id === plunder.id && entry.targets[0]?.id === target.id);
+  assert.ok(action);
+  const next = new AiSimulator(visible).apply(visible, action, actor.id);
+  assert.equal(next.players[1].equipmentDefinitionId, null);
+  assert.equal(next.players[1].equipmentRetentionProbability, 0);
+  const gained = next.players[0].hand.find((card) => card.definitionId === "telescope");
+  assert.ok(gained);
+  assert.match(gained.id, /^simulated-resource:/);
+  const follow = game.aiController.actionGenerator.generateFromVisible(next, actor.id);
+  assert.ok(follow.some((entry) => entry.card?.definitionId === "telescope"));
+});
+
+test("资源身份：真实 Planner 先掠夺已知 assault 再在后续层使用", async () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 0);
+  const target = makePlayer("target", 1, "dusk", "ai", 1);
+  target.hp = 1;
+  const plunder = instance("plunder"), assault = instance("assault");
+  actor.hand = [plunder];
+  target.hand = [assault];
+  const { game } = makeGame([actor, target]);
+  game.rememberPrivateCard(actor, target, assault);
+  game.aiSearchNodeBudgetOverride = 4;
+  game.aiRandomnessRange = 0;
+  const action = await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+  assert.equal(action.card?.id, plunder.id);
+  const sequence = game.aiController.planner.lastPlannedSequence;
+  assert.ok(sequence.some((entry) => (
+    entry.type === "card" && entry.cardId === "assault" && entry.cardInstanceId === assault.id
+  )));
+});
+
+// ---- 资源身份补修：部分 knownCards 随机消费后的保守降级 ----
+test("资源身份补修：部分 known 经过未知随机消费后降级为未知聚合", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1.4,
+    knownCards:[{
+      cardId:"c", definitionId:"counter",
+      availabilityBranches:[{ probability:0.4, conditions:{} }],
+      availabilityStateBranches:[
+        { probability:0.4, conditions:{}, available:true },
+        { probability:0.6, conditions:{}, available:false }
+      ]
+    }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:0.4
+  };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
+  assert.ok(Math.abs(spent - 1) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 0.4) < 1e-9);
+  assert.deepEqual(player.knownCards, []);
+  // 剩余数量作为未知聚合参与估计：P(counter >= 1) = 0.4 × 全局密度
+  const density = CARD_DEFINITIONS.counter.count / TOTAL_CARD_COUNT;
+  assert.ok(Math.abs(player.counterProbability - 0.4 * density) < 1e-9);
+});
+
+test("资源身份补修：连续部分掠夺后再按未知破坏不保留幽灵牌", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", handCount:0, hand:[] };
+  const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1, knownCards:[{ cardId:"c", definitionId:"counter" }], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
+  simulator.takeResourceToHand({ players:[actor,target] }, actor, target, 0.6);
+  assert.ok(Math.abs(target.handCount - 0.4) < 1e-9);
+  assert.equal(target.knownCards.length, 1);
+  simulator.destroyResource({ players:[actor,target] }, actor, target, 1);
+  assert.ok(Math.abs(target.handCount - 0) < 1e-9);
+  assert.deepEqual(target.knownCards, []);
+  assert.equal(target.counterProbability, 0);
+  // 同一 counter 不会再次作为确定资源被选择
+  assert.equal(simulator.chooseSimulatedResourceSelection({ players:[actor,target] }, actor, target, "destroy"), null);
+});
+
+test("资源身份补修：完整确定 known 在聚合随机消费后保留", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
+    knownCards:[{ cardId:"c", definitionId:"counter" }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:1
+  };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
+  assert.ok(Math.abs(spent - 1) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 1) < 1e-9);
+  assert.equal(player.knownCards.length, 1);
+  assert.equal(player.knownCards[0].cardId, "c");
+  // 完整确定牌不被无条件清除，counterProbability 仍体现该牌
+  assert.equal(player.counterProbability, 1);
+  simulator.syncCardEstimates(player);
+  assert.equal(player.counterProbability, 1);
+});
+
+test("资源身份补修：零概率 known 条目在随机消费后清理", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1,
+    knownCards:[{
+      cardId:"z", definitionId:"counter",
+      availabilityBranches:[],
+      availabilityStateBranches:[{ probability:1, conditions:{}, available:false }]
+    }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
+  assert.ok(Math.abs(spent - 1) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 0) < 1e-9);
+  assert.deepEqual(player.knownCards, []);
+});
+
+test("资源身份补修：无 knownCards 时随机消费行为保持不变", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = { id:"t", battleTeam:"dusk", generalId:"blade-walker", handCount:2, equipmentDefinitionId:null, equipmentRetentionProbability:0 };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
+  assert.ok(Math.abs(spent - 1) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 1) < 1e-9);
+  assert.equal(player.knownCards, undefined);
+});
+
+test("资源身份补修：unknown 消费只消耗未知部分且不侵蚀完整确定 counter", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1.4,
+    knownCards:[
+      { cardId:"c", definitionId:"counter" },
+      {
+        cardId:"r", definitionId:"recover",
+        availabilityBranches:[{ probability:0.4, conditions:{} }],
+        availabilityStateBranches:[
+          { probability:0.4, conditions:{}, available:true },
+          { probability:0.6, conditions:{}, available:false }
+        ]
+      }
+    ],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:1
+  };
+  // 确定 known counter 1 张，unknownCount = 0.4；效果概率 1 时最多消费 0.4
+  const spent = simulator.consumeUnknownResourceCard({ players:[player] }, player, 1, 0.4);
+  assert.ok(Math.abs(spent - 0.4) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 1) < 1e-9);
+  assert.equal(player.knownCards.length, 1);
+  assert.equal(player.knownCards[0].cardId, "c");
+  assert.equal(player.knownCards[0].definitionId, "counter");
+  assert.equal(player.counterProbability, 1);
+});
+
+test("资源身份补修：unknown 破坏不按整手牌比例降低确定 assault", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  // oath-warden 已知 assault 效用 3 < 未知期望 4 → 选择结果明确为 unknown
+  const target = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
+    knownCards:[{ cardId:"a1", definitionId:"assault" }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  simulator.destroyResource({ players:[actor,target] }, actor, target, 1);
+  assert.ok(Math.abs(target.handCount - 1) < 1e-9);
+  assert.equal(target.knownCards.length, 1);
+  assert.equal(target.knownCards[0].cardId, "a1");
+  assert.ok(Math.abs(target.expectedAssaultCount - 1) < 1e-9);
+  assert.equal(target.assaultResponseProbability, 1);
+  assert.deepEqual(target.assaultCountDistribution, [{ count:1, probability:1 }]);
+});
+
+test("资源身份补修：unknownCount 小于效果概率时最多消费可用未知数量", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", handCount:0, hand:[] };
+  const destroyTarget = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:0.25, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
+  simulator.destroyResource({ players:[actor,destroyTarget] }, actor, destroyTarget, 1);
+  assert.ok(Math.abs(destroyTarget.handCount - 0) < 1e-9);
+  const plunderTarget = { id:"t2", battleTeam:"dusk", generalId:"oath-warden", handCount:0.25, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
+  simulator.takeResourceToHand({ players:[actor,plunderTarget] }, actor, plunderTarget, 1);
+  assert.ok(Math.abs(plunderTarget.handCount - 0) < 1e-9);
+  assert.ok(Math.abs(actor.handCount - 0.25) < 1e-9);
+});
+
+test("资源身份补修：unknownCount 大于效果概率时按效果概率消费", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
+  const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
+  simulator.destroyResource({ players:[actor,target] }, actor, target, 0.4);
+  assert.ok(Math.abs(target.handCount - 0.6) < 1e-9);
+});
+
+test("资源身份补修：掠夺 unknown 时目标减少量等于行动者增加量", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", handCount:0, hand:[] };
+  const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1.4, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
+  simulator.takeResourceToHand({ players:[actor,target] }, actor, target, 0.6);
+  assert.ok(Math.abs(target.handCount - 0.8) < 1e-9);
+  assert.ok(Math.abs(actor.handCount - 0.6) < 1e-9);
+  assert.equal(actor.hand.length, 0);
+});
+
+test("资源身份补修：纯 unknown 破坏/掠夺按剩余未知数量同步摘要", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", handCount:0, hand:[] };
+  const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
+  simulator.destroyResource({ players:[actor,target] }, actor, target, 1);
+  assert.ok(Math.abs(target.handCount - 1) < 1e-9);
+  assert.ok(Math.abs(target.blockProbability - CARD_DEFINITIONS.block.count / TOTAL_CARD_COUNT) < 1e-9);
+  const plunderTarget = { id:"t2", battleTeam:"dusk", generalId:"oath-warden", handCount:1, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
+  simulator.takeResourceToHand({ players:[actor,plunderTarget] }, actor, plunderTarget, 0.4);
+  assert.ok(Math.abs(plunderTarget.handCount - 0.6) < 1e-9);
+  assert.ok(Math.abs(actor.handCount - 0.4) < 1e-9);
+  assert.equal(actor.hand.length, 0);
+  assert.ok(Math.abs(plunderTarget.counterProbability - 0.6 * (CARD_DEFINITIONS.counter.count / TOTAL_CARD_COUNT)) < 1e-9);
 });
 
 const makeRemainingKnowledge = (viewer, state = null) => {
@@ -4421,7 +5021,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260804-ai-controller-filename-v77"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260805-resource-identity-v79"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 

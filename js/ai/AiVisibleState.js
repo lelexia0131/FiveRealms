@@ -3,7 +3,13 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260804-ai-controller-filename-v77";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-resource-identity-v79";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-resource-identity-v79";
+
+const equipmentRoleDelta = (player, definitionId) => {
+  if (!player?.generalId || !definitionId) return 0;
+  return getRoleCardAiValue(player.generalId, definitionId) - getBaseCardAiValue(definitionId);
+};
 
 const probabilityAtLeast = (trials, probability, required) => {
   if (required <= 0) return 1;
@@ -167,11 +173,20 @@ export function createAiVisibleState(viewerId, state, remainingCardCounts = null
         availabilityBranches:[{ probability:1, conditions:{} }],
         availabilityStateBranches:[{ probability:1, conditions:{}, available:true }]
       })) : undefined,
-      knownCards: player.id === viewerId ? undefined : Object.entries(viewer.aiMemory.knownCardsByPlayer[player.id] ?? {}).map(([cardId, definitionId]) => ({ cardId, definitionId })),
+      knownCards: player.id === viewerId ? undefined : Object.entries(viewer.aiMemory.knownCardsByPlayer[player.id] ?? {}).map(([cardId, definitionId]) => ({
+        cardId,
+        definitionId,
+        availabilityBranches:[{ probability:1, conditions:{} }],
+        availabilityStateBranches:[{ probability:1, conditions:{}, available:true }]
+      })),
       equipmentDefinitionId: player.equipment?.definitionId ?? null,
       equipmentRetentionProbability: player.equipment ? 1 : 0,
       initialEquipmentValue: player.equipment ? (CARD_DEFINITIONS[player.equipment.definitionId]?.aiValue ?? 7) : 0,
+      initialEquipmentRoleDelta: player.equipment
+        ? equipmentRoleDelta(player, player.equipment.definitionId)
+        : 0,
       expectedEquipmentGain: 0,
+      expectedEquipmentRoleDelta: 0,
       statuses: Object.keys(player.statuses),
       expectedRecoverCount: recoverEstimate.expected,
       blockProbability: blockEstimate.atLeastOne,

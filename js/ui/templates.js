@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260804-ai-controller-filename-v77";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260805-resource-identity-v79";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
