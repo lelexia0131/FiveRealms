@@ -1,5 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-transfer-role-scoring-v80";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260805-transfer-role-scoring-v80";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-transfer-simulator-identity-v81";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260805-transfer-simulator-identity-v81";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260805-transfer-simulator-identity-v81";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
@@ -8,14 +9,31 @@ const HUMAN_ALLY_HAND_PROTECTION = 7;
 const MIN_ENEMY_REDISTRIBUTION_THREAT_GAP = 4;
 const MIN_ENEMY_REDISTRIBUTION_UTILITY = 5;
 
+/** 只读卡牌可用概率：优先 availabilityStateBranches，其次 availabilityBranches，无字段回退 1。 */
+function cardAvailability(card) {
+  if (Array.isArray(card?.availabilityStateBranches)) {
+    return totalBranchProbability(card.availabilityStateBranches.filter((branch) => branch.available));
+  }
+  if (Array.isArray(card?.availabilityBranches)) {
+    return totalBranchProbability(card.availabilityBranches);
+  }
+  return 1;
+}
+
+/** 手牌期望数量：实体牌按可用概率求和，其他玩家快照继续使用 handCount 字段。 */
 const handCount = (player, excludedCardIds = null) => Array.isArray(player?.hand)
-  ? player.hand.filter((card) => !excludedCardIds?.has(card.id)).length
+  ? player.hand
+      .filter((card) => !excludedCardIds?.has(card.id))
+      .reduce((sum, card) => sum + cardAvailability(card), 0)
   : Math.max(0, Number(player?.handCount ?? 0));
+
+/** 只有完整可用身份才属于 known；部分/零概率身份的概率质量保留在 handCount 中进入 unknown。 */
+const isCertainKnown = (card) => cardAvailability(card) >= 1 - PROBABILITY_EPSILON;
 
 function knownHandDefinitionIds(actor, owner, excludedCardIds = null) {
   if (!actor || !owner) return [];
-  if (actor.id === owner.id) return (actor.hand ?? []).filter((card) => !excludedCardIds?.has(card.id)).map((card) => card.definitionId).filter(Boolean);
-  if (Array.isArray(owner.knownCards)) return owner.knownCards.filter((card) => !excludedCardIds?.has(card.cardId)).map((card) => card.definitionId).filter(Boolean);
+  if (actor.id === owner.id) return (actor.hand ?? []).filter((card) => !excludedCardIds?.has(card.id)).filter(isCertainKnown).map((card) => card.definitionId).filter(Boolean);
+  if (Array.isArray(owner.knownCards)) return owner.knownCards.filter((card) => !excludedCardIds?.has(card.cardId)).filter(isCertainKnown).map((card) => card.definitionId).filter(Boolean);
   return Object.entries(actor.aiMemory?.knownCardsByPlayer?.[owner.id] ?? {}).filter(([cardId]) => !excludedCardIds?.has(cardId)).map(([, definitionId]) => definitionId).filter(Boolean);
 }
 
@@ -24,12 +42,14 @@ function knownHandCandidateEntries(actor, owner, excludedCardIds = null) {
   if (actor.id === owner.id) {
     return (owner.hand ?? [])
       .filter((card) => !excludedCardIds?.has(card.id))
+      .filter(isCertainKnown)
       .map((card) => ({ cardId:card.id, definitionId:card.definitionId }))
       .filter((entry) => entry.definitionId);
   }
   if (Array.isArray(owner.knownCards)) {
     return owner.knownCards
       .filter((card) => !excludedCardIds?.has(card.cardId))
+      .filter(isCertainKnown)
       .map((card) => ({ cardId:card.cardId, definitionId:card.definitionId }))
       .filter((entry) => entry.definitionId);
   }
@@ -58,7 +78,7 @@ export function expectedHandValue(actor, owner, direction = "lowest", excludedCa
   const unknownCount = Math.max(0, handCount(owner, excludedCardIds) - definitionIds.length);
   const unknownValue = expectedUnknownSituationValue(owner, remainingCardCounts);
   const candidates = [...knownValues];
-  for (let index = 0; index < unknownCount; index += 1) candidates.push(unknownValue);
+  if (unknownCount > 0) candidates.push(unknownValue);
   if (!candidates.length) return UNKNOWN_HAND_EXPECTED_VALUE;
   return direction === "highest" ? Math.max(...candidates) : Math.min(...candidates);
 }
@@ -142,7 +162,8 @@ export function chooseTransferHandCandidate(actor, from, receiver, excludedCardI
       cardId:entry.cardId,
       definitionId:entry.definitionId,
       expectedValue:receiverValue,
-      utility:transferCardUtility(sourceIsAlly, receiverIsAlly, sourceValue, receiverValue)
+      utility:transferCardUtility(sourceIsAlly, receiverIsAlly, sourceValue, receiverValue),
+      availableUnknownCount:0
     };
   });
   if (unknownCount > 0) {
@@ -153,7 +174,8 @@ export function chooseTransferHandCandidate(actor, from, receiver, excludedCardI
       cardId:null,
       definitionId:null,
       expectedValue:receiverUnknownValue,
-      utility:transferCardUtility(sourceIsAlly, receiverIsAlly, sourceUnknownValue, receiverUnknownValue)
+      utility:transferCardUtility(sourceIsAlly, receiverIsAlly, sourceUnknownValue, receiverUnknownValue),
+      availableUnknownCount:unknownCount
     });
   }
   if (!scored.length) return null;
@@ -185,16 +207,16 @@ function enemyThreatGap(actor, from, receiver) {
     - ThreatCalculator.calculate(threatView(actor), threatView(receiver), memory);
 }
 
-/** 只读取公开局面、观察者自身手牌和合法记忆的纯转移评分。 */
-export function scoreTransferCombination({ actor, from, receiver, zone, excludedCardIds = null, remainingCardCounts = null }) {
-  if (!actor || !from || !receiver || from.id === receiver.id) return Number.NEGATIVE_INFINITY;
+/** 共享候选与完整组合评分的最小内部入口：每个组合只调用一次候选选择器。 */
+function evaluateTransferCombination({ actor, from, receiver, zone, excludedCardIds = null, remainingCardCounts = null }) {
+  if (!actor || !from || !receiver || from.id === receiver.id) return { candidate:null, score:Number.NEGATIVE_INFINITY };
   const sourceIsAlly = from.battleTeam === actor.battleTeam;
   const receiverIsAlly = receiver.battleTeam === actor.battleTeam;
-  if (sourceIsAlly && !receiverIsAlly) return Number.NEGATIVE_INFINITY;
+  if (sourceIsAlly && !receiverIsAlly) return { candidate:null, score:Number.NEGATIVE_INFINITY };
 
-  if (zone !== "hand" || handCount(from, excludedCardIds) <= 0) return Number.NEGATIVE_INFINITY;
+  if (zone !== "hand" || handCount(from, excludedCardIds) <= 0) return { candidate:null, score:Number.NEGATIVE_INFINITY };
   const candidate = chooseTransferHandCandidate(actor, from, receiver, excludedCardIds, remainingCardCounts);
-  if (!candidate) return Number.NEGATIVE_INFINITY;
+  if (!candidate) return { candidate:null, score:Number.NEGATIVE_INFINITY };
   const fromLimit = Math.max(0, Number(from.hp ?? 0));
   const receiverLimit = Math.max(0, Number(receiver.hp ?? 0));
   const sourceOverflow = Math.max(0, handCount(from, excludedCardIds) - fromLimit);
@@ -207,10 +229,15 @@ export function scoreTransferCombination({ actor, from, receiver, zone, excluded
   if (!receiverIsAlly && receiverSpace === 0) score += 1;
   if (sourceIsAlly && from.controllerType === "human") score -= HUMAN_ALLY_HAND_PROTECTION;
   if (!sourceIsAlly && !receiverIsAlly) {
-    if (enemyThreatGap(actor, from, receiver) < MIN_ENEMY_REDISTRIBUTION_THREAT_GAP) return Number.NEGATIVE_INFINITY;
-    if (score < MIN_ENEMY_REDISTRIBUTION_UTILITY) return Number.NEGATIVE_INFINITY;
+    if (enemyThreatGap(actor, from, receiver) < MIN_ENEMY_REDISTRIBUTION_THREAT_GAP) return { candidate, score:Number.NEGATIVE_INFINITY };
+    if (score < MIN_ENEMY_REDISTRIBUTION_UTILITY) return { candidate, score:Number.NEGATIVE_INFINITY };
   }
-  return score;
+  return { candidate, score };
+}
+
+/** 只读取公开局面、观察者自身手牌和合法记忆的纯转移评分。 */
+export function scoreTransferCombination(options) {
+  return evaluateTransferCombination(options).score;
 }
 
 /** 使用调用方提供的 RuleEngine 接收者集合构建同一结构的真实/可见候选。 */
@@ -221,9 +248,15 @@ export function buildTransferCandidates({ actor, sources, getReceivers, allowedR
       !allowedReceiverIds || allowedReceiverIds.has(receiver.id));
     for (const receiver of receivers) {
       if (handCount(from, excludedCardIds) > 0) {
+        const evaluation = evaluateTransferCombination({ actor, from, receiver, zone:"hand", excludedCardIds, remainingCardCounts });
         candidates.push({
           sourceId:from.id, sourceSeatIndex:from.seatIndex, receiverId:receiver.id, zone:"hand",
-          score:scoreTransferCombination({ actor, from, receiver, zone:"hand", excludedCardIds, remainingCardCounts })
+          score:evaluation.score,
+          selectionKind:evaluation.candidate?.selectionKind ?? null,
+          cardId:evaluation.candidate?.cardId ?? null,
+          definitionId:evaluation.candidate?.definitionId ?? null,
+          expectedValue:evaluation.candidate?.expectedValue ?? null,
+          availableUnknownCount:evaluation.candidate?.availableUnknownCount ?? 0
         });
       }
     }
@@ -239,6 +272,11 @@ export function chooseBestPositiveTransfer(candidates, minimumUtility = MIN_TRAN
     sourceId:best.sourceId,
     receiverId:best.receiverId,
     zone:best.zone,
-    score:best.score
+    score:best.score,
+    selectionKind:best.selectionKind ?? null,
+    cardId:best.cardId ?? null,
+    definitionId:best.definitionId ?? null,
+    expectedValue:best.expectedValue ?? null,
+    availableUnknownCount:best.availableUnknownCount ?? 0
   }) : null;
 }

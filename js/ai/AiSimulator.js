@@ -2,12 +2,12 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-transfer-role-scoring-v80";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-transfer-role-scoring-v80";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-transfer-role-scoring-v80";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-transfer-role-scoring-v80";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-transfer-role-scoring-v80";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-transfer-role-scoring-v80";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-transfer-simulator-identity-v81";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-transfer-simulator-identity-v81";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260805-transfer-simulator-identity-v81";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-transfer-simulator-identity-v81";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-transfer-simulator-identity-v81";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-transfer-simulator-identity-v81";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,7 +20,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260805-transfer-role-scoring-v80";
+} from "./AiProbabilityBranches.js?build=20260805-transfer-simulator-identity-v81";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -419,8 +419,19 @@ export class AiSimulator {
         const receiver = next.players.find((player) => player.id === abstractAction.selection?.receiverId)
           ?? null;
         if (source && receiver && (source.handCount ?? 0) > 0 && abstractAction.selection?.zone !== "equipment") {
-          const transferred = this.consumeRandomHandCards(next, source, scale);
-          receiver.handCount += transferred;
+          const selection = abstractAction.selection ?? {};
+          const transferCardId = card?.id ?? null;
+          const excludedTransferCard = transferCardId ? new Set([transferCardId]) : null;
+          const transferred = selection.selectionKind === "known"
+            ? this.transferKnownCardIdentity(next, source, receiver, {
+                cardId:selection.cardId ?? null,
+                definitionId:selection.definitionId ?? null
+              }, effectEventWorlds, receiver.id === actor.id, excludedTransferCard)
+            : this.transferUnknownCardIdentity(next, source, receiver,
+                this.eventProbability(effectEventWorlds),
+                selection.availableUnknownCount != null && Number.isFinite(Number(selection.availableUnknownCount))
+                  ? Math.max(0, Number(selection.availableUnknownCount))
+                  : this.availableUnknownCountFor(source, excludedTransferCard));
           coordinationProbability = transferred;
           coordinationTargets = [receiver];
         }
@@ -531,6 +542,128 @@ export class AiSimulator {
     player.handCount = (player.handCount ?? 0) + acquisitionProbability;
     this.syncCardEstimates(player);
     return acquisitionProbability;
+  }
+
+  /** 计算来源在当前可见表示中的未知聚合数量；可选排除正在使用的转移牌。 */
+  availableUnknownCountFor(player, excludedCardIds = null) {
+    if (!player) return 0;
+    if (Array.isArray(player.hand)) {
+      const cards = player.hand.filter((card) => !excludedCardIds?.has(card.id));
+      const certainKnownCount = cards.filter((card) => this.cardAvailability(card) >= 1 - PROBABILITY_EPSILON).length;
+      const concreteExpected = cards.reduce((sum, card) => sum + this.cardAvailability(card), 0);
+      return Math.max(0, concreteExpected - certainKnownCount);
+    }
+    const { unknownCount } = this.buildSimulatedKnownCards(player);
+    return Math.max(0, unknownCount);
+  }
+
+  /** 定位来源中的已知转移实体：自己手牌按 id，其他玩家 knownCards 按 cardId+definitionId。 */
+  findTransferCardEntry(source, cardId, definitionId) {
+    if (!cardId || !definitionId) return null;
+    if (Array.isArray(source?.hand)) {
+      return source.hand.find((card) => card?.id === cardId && card?.definitionId === definitionId) ?? null;
+    }
+    return this.findKnownCardEntry(source, cardId, definitionId);
+  }
+
+  /** 只给其他玩家写入合法已知身份；绝不创建其完整 hand。 */
+  addSimulatedKnownCard(state, player, identity, acquisitionWorlds) {
+    if (!player || !identity?.cardId || !identity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
+    const acquired = projectProbabilityStateBranches(acquisitionWorlds, (branch) => ({
+      available:Boolean(branch.occurs)
+    }));
+    const acquisitionProbability = totalBranchProbability(acquired.filter((branch) => branch.available));
+    if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
+    const sameCardId = (player.knownCards ?? []).find((entry) => entry?.cardId === identity.cardId) ?? null;
+    if (sameCardId && sameCardId.definitionId !== identity.definitionId) {
+      throw new Error(`addSimulatedKnownCard 同 cardId 不同 definitionId：${identity.cardId}`);
+    }
+    const existing = sameCardId;
+    if (existing) {
+      if (existing.definitionId !== identity.definitionId) {
+        throw new Error(`addSimulatedKnownCard 同 cardId 不同 definitionId：${identity.cardId}`);
+      }
+      const oldState = getAvailabilityStateBranches(existing);
+      const oldProbability = this.cardAvailability(existing);
+      const newState = projectProbabilityStateBranches(acquisitionWorlds, (branch) => ({
+        newAvailable:Boolean(branch.occurs)
+      }));
+      const merged = joinProbabilityStateBranches(oldState, newState);
+      const mergedState = projectProbabilityStateBranches(merged, (branch) => ({
+        available:Boolean(branch.available || branch.newAvailable)
+      }));
+      existing.availabilityStateBranches = mergedState;
+      existing.availabilityBranches = availableBranchesFromState(mergedState);
+      const addedProbability = Math.max(0,
+        totalBranchProbability(mergedState.filter((branch) => branch.available)) - oldProbability);
+      if (addedProbability > PROBABILITY_EPSILON) {
+        player.handCount = (player.handCount ?? 0) + addedProbability;
+      }
+      this.syncCardEstimates(player);
+      return addedProbability;
+    }
+    player.knownCards ??= [];
+    player.knownCards.push({
+      cardId:identity.cardId,
+      definitionId:identity.definitionId,
+      availabilityBranches:availableBranchesFromState(acquired),
+      availabilityStateBranches:acquired
+    });
+    player.handCount = (player.handCount ?? 0) + acquisitionProbability;
+    this.syncCardEstimates(player);
+    return acquisitionProbability;
+  }
+
+  /** 已知转移：同一 joined branches 决定来源剩余与接收者获得，身份不在同世界双存。 */
+  transferKnownCardIdentity(state, source, receiver, identity, effectWorlds, receiverIsActor, excludedCardIds = null) {
+    const entry = (!excludedCardIds?.has(identity.cardId))
+      ? this.findTransferCardEntry(source, identity.cardId, identity.definitionId)
+      : null;
+    if (!entry || this.cardAvailability(entry) < 1 - PROBABILITY_EPSILON) {
+      return this.transferUnknownCardIdentity(state, source, receiver,
+        this.eventProbability(effectWorlds), this.availableUnknownCountFor(source, excludedCardIds));
+    }
+    const availabilityState = getAvailabilityStateBranches(entry);
+    const joined = joinProbabilityStateBranches(effectWorlds, availabilityState);
+    const remainingState = projectProbabilityStateBranches(joined, (branch) => ({
+      available:Boolean(branch.available && !branch.occurs)
+    }));
+    const acquisitionWorlds = projectProbabilityStateBranches(joined, (branch) => ({
+      occurs:Boolean(branch.available && branch.occurs)
+    }));
+    const transferProbability = this.eventProbability(acquisitionWorlds);
+    if (transferProbability <= PROBABILITY_EPSILON) return 0;
+    entry.availabilityStateBranches = remainingState;
+    entry.availabilityBranches = availableBranchesFromState(remainingState);
+    const remainingProbability = totalBranchProbability(entry.availabilityBranches);
+    if (Array.isArray(source.hand)) {
+      if (remainingProbability <= PROBABILITY_EPSILON) {
+        source.hand = source.hand.filter((card) => card.id !== identity.cardId);
+      }
+    } else if (Array.isArray(source.knownCards)) {
+      if (remainingProbability <= PROBABILITY_EPSILON) {
+        source.knownCards = source.knownCards.filter((item) => item !== entry);
+      }
+    }
+    source.handCount = Math.max(0, (source.handCount ?? 0) - transferProbability);
+    this.syncCardEstimates(source);
+    if (receiverIsActor) {
+      return this.addSimulatedCardToHand(state, receiver, {
+        id:identity.cardId,
+        definitionId:identity.definitionId
+      }, acquisitionWorlds);
+    }
+    return this.addSimulatedKnownCard(state, receiver, identity, acquisitionWorlds);
+  }
+
+  /** 未知转移：只移动匿名聚合数量并同步接收者摘要。 */
+  transferUnknownCardIdentity(state, source, receiver, expectedAmount, availableUnknownCount) {
+    const transferred = this.consumeUnknownResourceCard(state, source, expectedAmount, availableUnknownCount);
+    if (transferred > PROBABILITY_EPSILON) {
+      receiver.handCount = (receiver.handCount ?? 0) + transferred;
+      this.syncCardEstimates(receiver);
+    }
+    return transferred;
   }
 
   /** 按具体牌与未知聚合重建四类派生摘要；只用于定向已知牌转移/移除与装备入手路径。 */

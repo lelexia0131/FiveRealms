@@ -33,6 +33,7 @@ import { ROLE_CARD_VALUE_DELTAS, getBaseCardAiValue, getRoleCardAiValue, validat
 import { chooseBestResourceHandCandidate, chooseResourceZone, getResourceDefinitionUtility, getResourceUnknownUtility } from "../js/ai/resourceSelectionValue.js";
 import { AiKnowledge } from "../js/ai/AiKnowledge.js";
 import { AiCardSelector } from "../js/ai/AiCardSelector.js";
+import { joinProbabilityStateBranches } from "../js/ai/AiProbabilityBranches.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 const tests = [];
@@ -1436,6 +1437,258 @@ test("转移角色权重：无有效剩余计数时未知值回退4并保持旧�
 test("转移角色权重：generalId 缺失回退全局基础值且非法角色 ID 抛错", () => { assert.equal(cardSituationValue("assault",{hp:4,maxHp:4}),getBaseCardAiValue("assault"));assert.equal(cardSituationValue("counter",{hp:4,maxHp:4}),getBaseCardAiValue("counter"));assert.throws(()=>cardSituationValue("assault",{generalId:"not-a-general",hp:4,maxHp:4}),/未知角色 ID/);assert.throws(()=>cardSituationValue("not-a-card",{hp:4,maxHp:4}),/未知卡牌 ID/); });
 test("转移角色权重：根节点规划与实际选牌使用同一剩余计数选择相同候选", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn");const use=instance("transfer"),known=instance("assault"),unknown=instance("counter");actor.hand.push(use);from.hand=[known,unknown];const {game}=makeGame([actor,from,receiver],{random:()=>0});game.rememberPrivateCard(actor,from,known);const counts={recover:10};game.aiController.knowledge.remainingCounts=()=>({...counts});const plan=game.aiController.cardSelector.chooseTransferCombination(actor,CARD_DEFINITIONS.transfer,[from]);assert.ok(plan);const candidate=chooseTransferHandCandidate(actor,from,receiver,null,counts);assert.equal(candidate.selectionKind,"unknown");assert.equal(plan.score,scoreTransferCombination({actor,from,receiver,zone:"hand",remainingCardCounts:counts}));const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,from,1,null,{purpose:"transfer",receiver})[0];assert.equal(chosen,unknown); });
 test("转移角色权重：深层规划使用可见快照剩余计数", () => { const makeState=(counts)=>({playPhaseEnded:false,remainingCardCounts:counts,players:[{id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},{id:"f",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,knownCards:[],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},{id:"r",seatIndex:2,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,shield:0,energy:0,handCount:0,attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0}]});const actor=makePlayer("real",0,"dawn"),enemy=makePlayer("other",1,"dusk");const {game}=makeGame([actor,enemy]);const generator=game.aiController.actionGenerator;const assaultState=makeState({assault:10}),recoverState=makeState({recover:10});const assaultAction=generator.generateFromVisible(assaultState,"a").find((entry)=>entry.card?.definitionId==="transfer");const recoverAction=generator.generateFromVisible(recoverState,"a").find((entry)=>entry.card?.definitionId==="transfer");assert.ok(assaultAction);assert.ok(recoverAction);assert.notEqual(assaultAction.selection.receiverId,recoverAction.selection.receiverId);assert.notEqual(assaultAction.selection.score,recoverAction.selection.score);const assaultCandidate=chooseTransferHandCandidate(assaultState.players[0],assaultState.players[1],assaultState.players[2],null,assaultState.remainingCardCounts);const recoverCandidate=chooseTransferHandCandidate(recoverState.players[0],recoverState.players[1],recoverState.players[2],null,recoverState.remainingCardCounts);assert.equal(assaultCandidate.selectionKind,"unknown");assert.equal(assaultCandidate.expectedValue,getRoleCardAiValue("spirit-medic","assault"));assert.equal(recoverCandidate.selectionKind,"unknown");assert.equal(recoverCandidate.expectedValue,getRoleCardAiValue("spirit-medic","recover")-2); });
+test("Bug2 转移动作携带已知候选身份", () => { const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");const use=instance("transfer"),held=instance("block");actor.hand.push(use);enemy.hand.push(held);const {game}=makeGame([actor,enemy,ally]);game.rememberPrivateCard(actor,enemy,held);const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);assert.ok(action);const selection=action.selection;assert.equal(selection.selectionKind,"known");assert.equal(selection.cardId,held.id);assert.equal(selection.definitionId,"block");assert.equal(selection.expectedValue,getRoleCardAiValue("spirit-medic","block"));assert.equal(selection.availableUnknownCount,0);assert.ok(selection.sourceId&&selection.receiverId&&selection.zone==="hand"&&Number.isFinite(selection.score)); });
+test("Bug2 转移动作携带未知候选类别与精确未知数量", () => { const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");const use=instance("transfer");actor.hand.push(use);enemy.hand.push(instance("counter"),instance("harvest"));const {game}=makeGame([actor,enemy,ally]);const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);assert.ok(action);const selection=action.selection;assert.equal(selection.selectionKind,"unknown");assert.equal(selection.cardId,null);assert.equal(selection.definitionId,null);assert.equal(selection.availableUnknownCount,2);assert.equal(selection.zone,"hand"); });
+test("Bug2 其他玩家已知突袭转入当前 AI 后下一层可生成突袭", () => {
+  const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,attackUsed:0,attackLimit:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
+    {id:"s",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,knownCards:[{cardId:"known-assault",definitionId:"assault",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]}],counterProbability:0}
+  ]};
+  const {game}=makeGame([makePlayer("real",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const action=game.aiController.actionGenerator.generateFromVisible(state,"a").find((entry)=>entry.card?.definitionId==="transfer");
+  assert.ok(action);assert.equal(action.selection.selectionKind,"known");assert.equal(action.selection.cardId,"known-assault");
+  const next=new AiSimulator(state).apply(state,action,"a");
+  const nextActor=next.players[0],nextSource=next.players[1];
+  assert.ok(nextActor.hand.some((card)=>card.id==="known-assault"&&card.definitionId==="assault"));
+  assert.equal(nextActor.handCount,1);
+  assert.equal(nextSource.knownCards.some((entry)=>entry.cardId==="known-assault"),false);
+  assert.equal(nextSource.handCount,0);
+  const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");
+  assert.ok(follow.some((entry)=>entry.card?.id==="known-assault"&&entry.card?.definitionId==="assault"));
+});
+test("Bug2 当前 AI 把已知突袭转给其他玩家且不创建其 hand", () => {
+  const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,shield:0,energy:0,handCount:2,hand:[{id:"use",definitionId:"transfer"},{id:"own-assault",definitionId:"assault"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
+    {id:"s",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,handCount:0,counterProbability:0},
+    {id:"r",seatIndex:2,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0,knownCards:[],counterProbability:0}
+  ]};
+  const {game}=makeGame([makePlayer("real",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const action=game.aiController.actionGenerator.generateFromVisible(state,"a").find((entry)=>entry.card?.definitionId==="transfer");
+  assert.ok(action);assert.equal(action.selection.sourceId,"a");assert.equal(action.selection.receiverId,"r");assert.equal(action.selection.cardId,"own-assault");
+  const next=new AiSimulator(state).apply(state,action,"a");
+  const nextActor=next.players[0],nextReceiver=next.players[2];
+  assert.equal(nextActor.hand.some((card)=>card.id==="own-assault"),false);
+  assert.equal(nextActor.handCount,0);
+  assert.equal(nextReceiver.hand,undefined);
+  assert.equal(nextReceiver.handCount,1);
+  assert.ok(nextReceiver.knownCards.some((entry)=>entry.cardId==="own-assault"&&entry.definitionId==="assault"));
+  const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");
+  assert.ok(!follow.some((entry)=>entry.card?.id==="own-assault"));
+});
+test("Bug2 其他玩家之间移动已知身份", () => {
+  const state={playPhaseEnded:false,remainingCardCounts:{block:10},players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
+    {id:"s",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:1,maxHp:3,shield:0,energy:3,handCount:1,knownCards:[{cardId:"k5",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]}],counterProbability:0},
+    {id:"r",seatIndex:2,battleTeam:"dusk",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,shield:0,energy:0,handCount:0,knownCards:[],counterProbability:0}
+  ]};
+  const {game}=makeGame([makePlayer("real",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const transferCard=state.players[0].hand[0];
+  const action={type:"card",card:transferCard,targets:[],selection:{sourceId:"s",receiverId:"r",zone:"hand",score:6,selectionKind:"known",cardId:"k5",definitionId:"block",expectedValue:7,availableUnknownCount:0}};
+  const next=new AiSimulator(state).apply(state,action,"a");
+  const nextSource=next.players[1],nextReceiver=next.players[2];
+  assert.equal(nextSource.knownCards.some((entry)=>entry.cardId==="k5"),false);
+  assert.equal(nextSource.handCount,0);
+  assert.equal(nextReceiver.hand,undefined);
+  assert.equal(nextReceiver.handCount,1);
+  const moved=nextReceiver.knownCards.find((entry)=>entry.cardId==="k5");
+  assert.ok(moved);assert.equal(moved.definitionId,"block");assert.equal(nextReceiver.blockProbability,1);
+});
+test("Bug2 完全反制时来源身份与双方手牌不变", () => {
+  const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
+    {id:"s",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,knownCards:[{cardId:"known-assault",definitionId:"assault",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]}],counterProbability:1/0.45},
+    {id:"r",seatIndex:2,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,shield:0,energy:0,handCount:0,counterProbability:0}
+  ]};
+  const {game}=makeGame([makePlayer("real",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const action=game.aiController.actionGenerator.generateFromVisible(state,"a").find((entry)=>entry.card?.definitionId==="transfer");
+  assert.ok(action);assert.equal(action.selection.selectionKind,"known");
+  const next=new AiSimulator(state).apply(state,action,"a");
+  const nextActor=next.players[0],nextSource=next.players[1],nextReceiver=next.players[2];
+  assert.equal(nextActor.hand.some((card)=>card.id==="use"),false);
+  assert.ok(nextSource.knownCards.some((entry)=>entry.cardId==="known-assault"));
+  assert.equal(nextSource.handCount,1);
+  assert.equal(nextReceiver.handCount,0);
+  assert.equal((nextReceiver.knownCards ?? []).some((entry)=>entry.cardId==="known-assault"),false);
+});
+test("Bug2 部分概率转移中来源与接收者身份世界互补", () => {
+  const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
+    {id:"z-actor",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"move",definitionId:"transfer"}],equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4,counterProbability:0,attackRange:1},
+    {id:"near",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0,counterProbability:0},
+    {id:"source",seatIndex:2,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,handCount:1,knownCards:[{cardId:"known-assault",definitionId:"assault",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]}],counterProbability:0},
+    {id:"a-receiver",seatIndex:3,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,handCount:0,counterProbability:0},
+    {id:"tail",seatIndex:4,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0,counterProbability:0}
+  ]};
+  const {game}=makeGame([makePlayer("real",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const action=game.aiController.actionGenerator.generateFromVisible(state,"z-actor").find((entry)=>entry.card?.id==="move");
+  assert.ok(action);assertClose(action.executionProbability,.4);
+  const next=new AiSimulator(state).apply(state,action,"z-actor");
+  const nextActor=next.players[0],nextSource=next.players[2];
+  const sourceEntry=nextSource.knownCards.find((entry)=>entry.cardId==="known-assault");
+  const receiverEntry=nextActor.hand.find((card)=>card.id==="known-assault");
+  assert.ok(sourceEntry);assert.ok(receiverEntry);
+  const sourceAvailable=sourceEntry.availabilityStateBranches.reduce((sum,branch)=>sum+(branch.available?branch.probability:0),0);
+  const receiverAvailable=receiverEntry.availabilityStateBranches.reduce((sum,branch)=>sum+(branch.available?branch.probability:0),0);
+  assertClose(sourceAvailable,.6);assertClose(receiverAvailable,.4);assertClose(sourceAvailable+receiverAvailable,1);
+  const joined=joinProbabilityStateBranches(
+    sourceEntry.availabilityStateBranches.map((branch)=>({probability:branch.probability,conditions:branch.conditions,sourceAvailable:branch.available})),
+    receiverEntry.availabilityStateBranches.map((branch)=>({probability:branch.probability,conditions:branch.conditions,receiverAvailable:branch.available}))
+  );
+  assert.ok(joined.length>0);
+  for(const branch of joined) {
+    assert.equal(branch.sourceAvailable || branch.receiverAvailable,true);
+    assert.equal(branch.sourceAvailable && branch.receiverAvailable,false);
+  }
+  assertClose(nextSource.handCount,.6);
+  assertClose(1 - nextSource.handCount,receiverAvailable);
+});
+test("Bug2 部分可用来源身份按未知聚合处理且不创建身份", () => {
+  const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
+    {id:"z-actor",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"move",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
+    {id:"source",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,handCount:1,knownCards:[{cardId:"partial-assault",definitionId:"assault",availabilityBranches:[{probability:.5,conditions:{}}],availabilityStateBranches:[{probability:.5,conditions:{"src-state":"yes"},available:true},{probability:.5,conditions:{"src-state":"no"},available:false}]}],counterProbability:0},
+    {id:"r",seatIndex:2,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,handCount:0,counterProbability:0}
+  ]};
+  const {game}=makeGame([makePlayer("real",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const action=game.aiController.actionGenerator.generateFromVisible(state,"z-actor").find((entry)=>entry.card?.id==="move");
+  assert.ok(action);
+  assert.equal(action.selection.selectionKind,"unknown");
+  assert.equal(action.selection.cardId,null);
+  assert.equal(action.selection.definitionId,null);
+  assertClose(action.selection.availableUnknownCount,1);
+  const next=new AiSimulator(state).apply(state,action,"z-actor");
+  const nextActor=next.players[0],nextSource=next.players[1],nextReceiver=next.players[2];
+  assert.equal(nextActor.hand.some((card)=>card.id==="partial-assault"),false);
+  assert.equal(nextSource.knownCards.some((entry)=>entry.cardId==="partial-assault"),false);
+  assert.equal((nextReceiver.knownCards ?? []).some((entry)=>entry.cardId==="partial-assault"),false);
+  assert.equal(nextReceiver.hand,undefined);
+  assertClose(nextSource.handCount,0);
+  assertClose(nextActor.handCount,1);
+  assertClose(nextReceiver.handCount,0);
+});
+test("Bug2 手牌期望数量按可用概率计算且部分身份归入未知", () => {
+  const actor={id:"actor",battleTeam:"dawn",generalId:"blade-walker",hp:4,maxHp:4,hand:[
+    {id:"full",definitionId:"assault",availabilityStateBranches:[{probability:1,conditions:{},available:true}]},
+    {id:"half",definitionId:"counter",availabilityStateBranches:[{probability:.5,conditions:{},available:true},{probability:.5,conditions:{},available:false}]},
+    {id:"gone",definitionId:"recover",availabilityStateBranches:[{probability:1,conditions:{},available:false}]},
+    {id:"use",definitionId:"transfer",availabilityStateBranches:[{probability:1,conditions:{},available:true}]}
+  ]};
+  const receiver={id:"receiver",battleTeam:"dawn",hp:4,maxHp:4};
+  const candidate=chooseTransferHandCandidate(actor,actor,receiver,new Set(["use"]));
+  assert.equal(candidate.selectionKind,"unknown");
+  assert.equal(candidate.cardId,null);
+  assertClose(candidate.availableUnknownCount,.5);
+  const fromKnownCards={id:"from-kc",battleTeam:"dusk",generalId:"blade-walker",hp:4,maxHp:4,handCount:1.5,knownCards:[
+    {cardId:"full2",definitionId:"charge",availabilityStateBranches:[{probability:1,conditions:{},available:true}]},
+    {cardId:"half2",definitionId:"counter",availabilityStateBranches:[{probability:.5,conditions:{},available:true},{probability:.5,conditions:{},available:false}]},
+    {cardId:"gone2",definitionId:"recover",availabilityStateBranches:[{probability:1,conditions:{},available:false}]}
+  ]};
+  const candidateKc=chooseTransferHandCandidate(actor,fromKnownCards,receiver);
+  assert.equal(candidateKc.selectionKind,"unknown");
+  assert.equal(candidateKc.cardId,null);
+  assertClose(candidateKc.availableUnknownCount,.5);
+});
+test("Bug2 部分概率高价值牌不再按完整确定身份评分", () => {
+  const actor={id:"actor",battleTeam:"dawn"};
+  const receiver={id:"receiver",battleTeam:"dawn",generalId:"spirit-medic",hp:3,maxHp:3};
+  const makeFrom=(cards,handCount)=>({id:"from",battleTeam:"dusk",generalId:"blade-walker",hp:4,maxHp:4,handCount,knownCards:cards});
+  const partialCard={cardId:"high-20",definitionId:"counter",availabilityStateBranches:[{probability:.2,conditions:{},available:true},{probability:.8,conditions:{},available:false}]};
+  const partial=chooseTransferHandCandidate(actor,makeFrom([partialCard],.2),receiver);
+  assert.equal(partial.selectionKind,"unknown");
+  assert.equal(partial.cardId,null);
+  assertClose(partial.availableUnknownCount,.2);
+  const partialScore=scoreTransferCombination({actor,from:makeFrom([partialCard],.2),receiver,zone:"hand"});
+  const fullScore=scoreTransferCombination({actor,from:makeFrom([{cardId:"high-full",definitionId:"counter",availabilityStateBranches:[{probability:1,conditions:{},available:true}]}],1),receiver,zone:"hand"});
+  assert.ok(partialScore<fullScore);
+});
+test("Bug2 防御性旧动作对部分可用 known 身份按未知聚合处理", () => {
+  const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
+    {id:"s",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,handCount:.4,knownCards:[{cardId:"partial-k",definitionId:"assault",availabilityBranches:[{probability:.4,conditions:{}}],availabilityStateBranches:[{probability:.4,conditions:{},available:true},{probability:.6,conditions:{},available:false}]}],counterProbability:0},
+    {id:"r",seatIndex:2,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,handCount:0,counterProbability:0}
+  ]};
+  const transferCard=state.players[0].hand[0];
+  const action={type:"card",card:transferCard,targets:[],selection:{sourceId:"s",receiverId:"r",zone:"hand",score:9,selectionKind:"known",cardId:"partial-k",definitionId:"assault",expectedValue:8,availableUnknownCount:0}};
+  const next=new AiSimulator(state).apply(state,action,"a");
+  const nextSource=next.players[1],nextReceiver=next.players[2];
+  assert.equal(nextSource.knownCards.some((entry)=>entry.cardId==="partial-k"),false);
+  assert.equal((nextReceiver.knownCards ?? []).some((entry)=>entry.cardId==="partial-k"),false);
+  assert.equal(nextReceiver.hand,undefined);
+  assertClose(nextSource.handCount,0);
+  assertClose(nextReceiver.handCount,.4);
+});
+test("Bug2 接收者已有同身份部分可用时按新增概率合并", () => {
+  const state={playPhaseEnded:false,remainingCardCounts:{block:10},players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
+    {id:"s",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,handCount:1,knownCards:[{cardId:"dup",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]}],counterProbability:0},
+    {id:"r",seatIndex:2,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,handCount:.3,knownCards:[{cardId:"dup",definitionId:"block",availabilityBranches:[{probability:.3,conditions:{}}],availabilityStateBranches:[{probability:.3,conditions:{},available:true},{probability:.7,conditions:{},available:false}]}],counterProbability:0}
+  ]};
+  const transferCard=state.players[0].hand[0];
+  const action={type:"card",card:transferCard,targets:[],selection:{sourceId:"s",receiverId:"r",zone:"hand",score:9,selectionKind:"known",cardId:"dup",definitionId:"block",expectedValue:7,availableUnknownCount:0}};
+  const next=new AiSimulator(state).apply(state,action,"a");
+  const nextReceiver=next.players[2];
+  const entries=nextReceiver.knownCards.filter((entry)=>entry.cardId==="dup");
+  assert.equal(entries.length,1);
+  const merged=entries[0].availabilityStateBranches.reduce((sum,branch)=>sum+(branch.available?branch.probability:0),0);
+  assertClose(merged,1);
+  assertClose(nextReceiver.handCount,1);
+  const simulator=new AiSimulator({players:[]});
+  assert.throws(()=>simulator.addSimulatedKnownCard({players:[]},{id:"r2",knownCards:[{cardId:"dup",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]}]},{cardId:"dup",definitionId:"assault"},[{probability:1,conditions:{},occurs:true}]),/不同 definitionId/);
+});
+test("Bug2 未知牌转移只移动聚合数量且不创建身份", () => {
+  const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
+    {id:"s",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:2,knownCards:[],counterProbability:0},
+    {id:"r",seatIndex:2,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,shield:0,energy:0,handCount:0,counterProbability:0}
+  ]};
+  const {game}=makeGame([makePlayer("real",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const action=game.aiController.actionGenerator.generateFromVisible(state,"a").find((entry)=>entry.card?.definitionId==="transfer");
+  assert.ok(action);assert.equal(action.selection.selectionKind,"unknown");assert.equal(action.selection.availableUnknownCount,2);
+  const next=new AiSimulator(state).apply(state,action,"a");
+  const nextActor=next.players[0],nextSource=next.players[1];
+  assertClose(nextSource.handCount,1);
+  assertClose(nextActor.handCount,1);
+  assert.equal(nextActor.hand.some((card)=>card.definitionId||card.id),false);
+  assert.equal(nextSource.knownCards.length,0);
+  assert.ok(nextActor.blockProbability>0);
+});
+test("Bug2 已知转移同步来源与接收者四类摘要", () => {
+  const scenarios=[["recover","expectedRecoverCount"],["block","blockProbability"],["counter","counterProbability"],["assault","expectedAssaultCount"]];
+  for(const [definitionId,field] of scenarios){
+    const state={playPhaseEnded:false,remainingCardCounts:{[definitionId]:10},players:[
+      {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
+      {id:"s",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,knownCards:[{cardId:`k-${definitionId}`,definitionId,availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]}],counterProbability:0},
+      {id:"r",seatIndex:2,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,shield:0,energy:0,handCount:0,counterProbability:0}
+    ]};
+    const transferCard=state.players[0].hand[0];
+    const action={type:"card",card:transferCard,targets:[],selection:{sourceId:"s",receiverId:"r",zone:"hand",score:10,selectionKind:"known",cardId:`k-${definitionId}`,definitionId,expectedValue:1,availableUnknownCount:0}};
+    const next=new AiSimulator(state).apply(state,action,"a");
+    const nextSource=next.players[1],nextReceiver=next.players[2];
+    assert.equal(nextSource[field],0,`${definitionId} source`);assert.equal(nextReceiver[field],1,`${definitionId} receiver`);
+    if(definitionId==="block"){assert.equal(nextSource.twoBlockProbability,0);assert.equal(nextReceiver.twoBlockProbability,0);}
+    if(definitionId==="assault"){assert.equal(nextSource.assaultResponseProbability,0);assert.equal(nextReceiver.assaultResponseProbability,1);}
+  }
+});
+test("Bug2 模拟执行评分阶段选中的同一已知牌身份", () => {
+  const state={playPhaseEnded:false,remainingCardCounts:{counter:10},players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
+    {id:"s",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:2,knownCards:[{cardId:"low-charge",definitionId:"charge",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]},{cardId:"high-counter",definitionId:"counter",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]}],counterProbability:0},
+    {id:"r",seatIndex:2,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,shield:0,energy:0,handCount:0,counterProbability:0}
+  ]};
+  const {game}=makeGame([makePlayer("real",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const action=game.aiController.actionGenerator.generateFromVisible(state,"a").find((entry)=>entry.card?.definitionId==="transfer");
+  assert.ok(action);assert.equal(action.selection.cardId,"high-counter");
+  const next=new AiSimulator(state).apply(state,action,"a");
+  const nextSource=next.players[1],nextReceiver=next.players[2];
+  assert.ok(nextReceiver.knownCards.some((entry)=>entry.cardId==="high-counter"));
+  assert.ok(!nextReceiver.knownCards.some((entry)=>entry.cardId==="low-charge"));
+  assert.ok(nextSource.knownCards.some((entry)=>entry.cardId==="low-charge"));
+  assert.equal(nextSource.knownCards.some((entry)=>entry.cardId==="high-counter"),false);
+});
+test("Bug2 Planner 描述不保存转移候选身份", () => {
+  const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
+  const {game}=makeGame([actor,enemy,ally]);
+  const descriptor=game.aiController.planner.describeAction({type:"card",card:instance("transfer"),targets:[],selection:{sourceId:"s",receiverId:"r",zone:"hand",score:9,selectionKind:"known",cardId:"c1",definitionId:"block",expectedValue:7,availableUnknownCount:0}});
+  assert.deepEqual(descriptor.selection,{sourceId:"s",receiverId:"r",zone:"hand"});
+});
 test("AI 自救响应策略为确定必用，敌方救援为拒绝", () => { const a=makePlayer("a",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([a,ally,enemy]);assert.equal(game.aiController.responsePolicy.shouldRespond(a,"dyingRescue",{target:a},[instance("recover")]),true);assert.equal(game.aiController.responsePolicy.shouldRespond(enemy,"dyingRescue",{target:a},[instance("recover")]),false); });
 test("AI 延迟在配置上下限内且快速模式显著缩短", () => { const natural=sampleDelay(()=>.5,GAME_CONFIG.aiInitialThinkMinMs,GAME_CONFIG.aiInitialThinkMaxMs,false);const fast=sampleDelay(()=>.5,GAME_CONFIG.aiInitialThinkMinMs,GAME_CONFIG.aiInitialThinkMaxMs,true);assert.ok(natural>=GAME_CONFIG.aiInitialThinkMinMs&&natural<=GAME_CONFIG.aiInitialThinkMaxMs);assert.ok(fast<natural/2); });
 test("AI 各可见思考阶段使用集中配置范围且不改变搜索预算", () => { const ranges={initial:[3000,5500],action:[1800,3500],response:[1800,3200],discard:[1600,2800],end:[900,1600]};for(const [phase,[minimum,maximum]] of Object.entries(ranges)){const low=getAiDelay({random:()=>0,simulationMode:false,animationFastMode:false},phase),high=getAiDelay({random:()=>.999999,simulationMode:false,animationFastMode:false},phase),fast=getAiDelay({random:()=>.5,simulationMode:false,animationFastMode:true},phase);assert.equal(low,minimum);assert.ok(high<=maximum&&high>=maximum-1);assert.ok(fast<(minimum+maximum)/4);}assert.equal(GAME_CONFIG.aiComplexThinkMaxMs,7000);assert.equal(GAME_CONFIG.aiSearchTimeBudgetMs,900); });
@@ -5029,7 +5282,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260805-transfer-role-scoring-v80"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260805-transfer-simulator-identity-v81"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 
