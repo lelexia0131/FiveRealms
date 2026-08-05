@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260805-ai-tactic-counter-risk-v86";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260805-ai-tactic-counter-risk-v86";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260805-ai-tactic-counter-risk-v86";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260805-ai-tactic-counter-risk-v86";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260805-ai-tactic-counter-risk-v86";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260805-ai-tactic-counter-risk-v86";
-import { AiPlanner } from "./AiPlanner.js?build=20260805-ai-tactic-counter-risk-v86";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260805-ember-magus-burning-field-v88";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260805-ember-magus-burning-field-v88";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260805-ember-magus-burning-field-v88";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260805-ember-magus-burning-field-v88";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260805-ember-magus-burning-field-v88";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260805-ember-magus-burning-field-v88";
+import { AiPlanner } from "./AiPlanner.js?build=20260805-ember-magus-burning-field-v88";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

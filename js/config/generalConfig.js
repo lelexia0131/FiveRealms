@@ -18,8 +18,8 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "oath-warden", name: "守誓者", glyph: "誓", portrait: "./assets/characters/oath-warden.svg",
     loreFaction: "曜石城垒", maxHp: 3, tags: ["防御", "保护"], roleTags: ["tank", "support"], passiveSkillIds: ["guardianAid"], activeSkillIds: ["barrier"],
-    passiveName: "护援", passiveDescription: "每轮一次，弃置1张手牌令队友即将受到的伤害-1。",
-    passiveTriggerText: "队友即将受到伤害且你可弃置1张手牌时", passiveLimitText: "每轮限触发1次",
+    passiveName: "护援", passiveDescription: "每回合一次，弃置1张手牌令队友即将受到的伤害-1。",
+    passiveTriggerText: "队友即将受到伤害且你可弃置1张手牌时", passiveLimitText: "每回合限触发1次",
     activeName: "壁垒", activeDescription: "消耗2点能量，使一名存活队友获得1点可叠加的护盾；该护盾不会随回合消失，只会在抵消伤害时消耗，每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
     description: "背负古誓的城垒守卫，擅长将危险拦截在盟友身前。",
     aiProfile: profile(.6, 1.45, 1.25, .7, .8, .85, .9, .45)
@@ -47,7 +47,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
     loreFaction: "赤砂穹庐", maxHp: 3, tags: ["群攻", "爆发"], roleTags: ["damage", "caster"], passiveSkillIds: ["ember"], activeSkillIds: ["burningField"],
     passiveName: "余烬", passiveDescription: "卡牌每次结算首次对敌人造成实际伤害后，获得1点能量。",
     passiveTriggerText: "卡牌结算中首次对敌人造成实际伤害后", passiveLimitText: "每次卡牌结算最多触发1次",
-    activeName: "焚场", activeDescription: "消耗3点能量，对所有存活敌人各造成1点不可格挡伤害；每回合最多发动1次。", activeCost: 3, activeLimitPerTurn: 1,
+    activeName: "焚场", activeDescription: "消耗2点能量，对所有存活敌人各造成1点不可格挡伤害；每回合最多发动1次。", activeCost: 2, activeLimitPerTurn: 1,
     description: "以赤砂为燃料的术士，能从每一道伤痕里回收燃烧的余烬。",
     aiProfile: profile(1.45, .45, .25, .3, .45, .55, .45, 1.25)
   }),

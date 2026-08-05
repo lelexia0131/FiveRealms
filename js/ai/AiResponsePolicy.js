@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ai-tactic-counter-risk-v86";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-ai-tactic-counter-risk-v86";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260805-ai-tactic-counter-risk-v86";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-ember-magus-burning-field-v88";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-ember-magus-burning-field-v88";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260805-ember-magus-burning-field-v88";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

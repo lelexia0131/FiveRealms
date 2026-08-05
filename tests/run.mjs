@@ -237,7 +237,7 @@ test("所有角色技能都存在注册器", () => GENERAL_DEFINITIONS.forEach((
 test("所有角色都用稳定英文 roleTags 供 AI 判断职责", () => GENERAL_DEFINITIONS.forEach((general) => { assert.ok(general.roleTags.length >= 2);general.roleTags.forEach((tag)=>assert.match(tag,/^[a-z-]+$/)); }));
 test("守誓者最大生命为3且壁垒说明为可叠加的永久护盾", () => { const oath=GENERAL_DEFINITIONS.find((general)=>general.id==="oath-warden");assert.equal(oath.maxHp,3);assert.match(oath.activeDescription,/1点可叠加的护盾/);assert.match(oath.activeDescription,/不会随回合消失/);assert.match(oath.activeDescription,/抵消伤害时消耗/); });
 test("壁垒配置、README与实际目标规则保持一致", async () => { const oath=GENERAL_DEFINITIONS.find((general)=>general.id==="oath-warden"),readme=await readFile(projectFile("README.md"),"utf8"),config=await readFile(projectFile("js/config/generalConfig.js"),"utf8"),skills=await readFile(projectFile("js/generals/skillRegistry.js"),"utf8");assert.equal(oath.activeCost,ACTIVE_SKILLS.barrier.cost);assert.equal(oath.activeLimitPerTurn,ACTIVE_SKILLS.barrier.limitPerTurn);for(const text of [readme,config]){assert.doesNotMatch(text,/临时护盾|下次回合开始|回合开始时消散|统一消散/);assert.match(text,/不会随回合(?:数)?消失/);}assert.doesNotMatch(skills,/statuses\.temporaryShield|clearAtTurnStart/);const source=makePlayer("warden",0,"dawn","ai",1),ally=makePlayer("ally",1,"dawn"),deadAlly=makePlayer("dead-ally",2,"dawn"),enemy=makePlayer("enemy",3,"dusk");deadAlly.alive=false;const {game}=makeGame([source,ally,deadAlly,enemy]);assert.deepEqual(RuleEngine.getSkillTargets(game,source,ACTIVE_SKILLS.barrier).map((player)=>player.id),[ally.id]); });
-test("八名角色规则配置与README角色介绍一致", async () => { const readme=await readFile(projectFile("README.md"),"utf8");for(const general of GENERAL_DEFINITIONS){assert.match(readme,new RegExp(`### ${general.name}`));assert.ok(readme.includes(general.description));assert.match(readme,new RegExp(`主动·${general.activeName}`));assert.match(readme,new RegExp(`被动·${general.passiveName}`));}const byId=Object.fromEntries(GENERAL_DEFINITIONS.map((general)=>[general.id,general])),expected={"blade-walker":[4,2,1],"oath-warden":[3,2,2],"spirit-medic":[3,2,2],"shade-agent":[3,1,2],"ember-magus":[3,3,1],"trail-hunter":[4,2,2],"fate-gambler":[4,1,1],"resonance-tuner":[4,2,2]};for(const [id,values] of Object.entries(expected)){const general=byId[id],skill=ACTIVE_SKILLS[general.activeSkillIds[0]];assert.deepEqual([general.maxHp,general.activeCost,general.activeLimitPerTurn],values,id);assert.deepEqual([skill.cost,skill.limitPerTurn],values.slice(1),`${id}实际技能`);} });
+test("八名角色规则配置与README角色介绍一致", async () => { const readme=await readFile(projectFile("README.md"),"utf8");for(const general of GENERAL_DEFINITIONS){assert.match(readme,new RegExp(`### ${general.name}`));assert.ok(readme.includes(general.description));assert.match(readme,new RegExp(`主动·${general.activeName}`));assert.match(readme,new RegExp(`被动·${general.passiveName}`));}const byId=Object.fromEntries(GENERAL_DEFINITIONS.map((general)=>[general.id,general])),expected={"blade-walker":[4,2,1],"oath-warden":[3,2,2],"spirit-medic":[3,2,2],"shade-agent":[3,1,2],"ember-magus":[3,2,1],"trail-hunter":[4,2,2],"fate-gambler":[4,1,1],"resonance-tuner":[4,2,2]};for(const [id,values] of Object.entries(expected)){const general=byId[id],skill=ACTIVE_SKILLS[general.activeSkillIds[0]];assert.deepEqual([general.maxHp,general.activeCost,general.activeLimitPerTurn],values,id);assert.deepEqual([skill.cost,skill.limitPerTurn],values.slice(1),`${id}实际技能`);} });
 test("灵医配置与README同步回春摸牌、濒死触发及滋荣自疗规则", async () => {
   const medic=GENERAL_DEFINITIONS.find((general)=>general.id==="spirit-medic"),readme=await readFile(projectFile("README.md"),"utf8"),medicSection=readme.match(/### 灵医[\s\S]*?(?=\r?\n### )/)?.[0]??"";
   for(const text of [medic.passiveDescription,medicSection]){assert.match(text,/己方阵营角色/);assert.match(text,/额外恢复\s*1\s*点/);assert.match(text,/摸\s*1\s*张牌/);assert.match(text,/濒死救援.*触发|濒死救援也可触发/);assert.doesNotMatch(text,/濒死救援.*不会|阻止灵医.*回春/);}
@@ -970,6 +970,170 @@ test("响应窗口队伍颜色复用现有主题变量", async () => {
   assert.match(css,/\.response-event \.response-player-name\.team-dusk\s*\{[^}]*color:\s*var\(--dusk\)/s);
 });
 test("护援响应区分原技能名称与当前响应技能名称", async () => { for(const [actionName,context] of [["焚场",{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill"}],["猎杀",{skill:"hunt",actionName:"猎杀",canBlock:true,damageType:"skill"}],["突袭",{card:instance("assault"),canBlock:true,damageType:"normal"}]]){const source=makePlayer(`source-${actionName}`,0,"dusk","ai",4),target=makePlayer(`target-${actionName}`,1,"dawn","ai",2),guardian=makePlayer(`guardian-${actionName}`,2,"dawn","human",1);guardian.hand.push(instance("charge"));const {game,ui}=makeGame([source,target,guardian],{response:()=>false});registerPassiveSkills(game);await game.damage(source,target,1,context);const request=ui.responseRequests.find((entry)=>entry.type==="skill");assert.ok(request);assert.equal(request.presentation.eventText,`${source.name}对${target.name}使用了「${actionName}」。`);assert.equal(request.presentation.responseText,"你可以发动「护援」。");assert.equal(request.presentation.buttonLabel,"发动护援");assert.doesNotMatch(request.presentation.eventText,/发动护援|burningField|hunt/);} });
+test("守誓者护援同一玩家回合内第二次伤害不能再次触发", async () => {
+  const source = makePlayer("aid-same-source", 0, "dusk", "ai", 4);
+  const target = makePlayer("aid-same-target", 1, "dawn", "ai", 5);
+  const guardian = makePlayer("aid-same-guardian", 2, "dawn", "human", 1);
+  guardian.hand.push(instance("charge"), instance("charge"));
+  const { game, ui } = makeGame([source, target, guardian], { response: () => true });
+  registerPassiveSkills(game);
+  const hp = target.hp;
+  assert.equal(guardian.roundFlags.guardianAidUsed, false);
+  await game.damage(source, target, 2, { canBlock:false, damageType:"skill", actionName:"测试" });
+  assert.equal(guardian.roundFlags.guardianAidUsed, true);
+  assert.equal(guardian.hand.length, 1);
+  assert.equal(target.hp, hp - 1);
+  const skillRequests = ui.responseRequests.filter((request) => request.type === "skill").length;
+  await game.damage(source, target, 2, { canBlock:false, damageType:"skill", actionName:"测试" });
+  assert.equal(guardian.hand.length, 1);
+  assert.equal(target.hp, hp - 3);
+  assert.equal(ui.responseRequests.filter((request) => request.type === "skill").length, skillRequests);
+});
+test("守誓者护援在下一名非守誓者玩家回合开始后重新可用", async () => {
+  const source = makePlayer("aid-next-source", 0, "dusk", "ai", 4);
+  const ally = makePlayer("aid-next-ally", 1, "dawn", "ai", 0);
+  const guardian = makePlayer("aid-next-guardian", 2, "dawn", "human", 1);
+  const nextPlayer = makePlayer("aid-next-player", 3, "dawn", "ai", 5);
+  const { game, ui } = makeGame([source, ally, guardian, nextPlayer], { response: () => true });
+  registerPassiveSkills(game);
+  guardian.hand.push(instance("charge"), instance("charge"));
+  const hp = ally.hp;
+  await game.damage(source, ally, 2, { canBlock:false, damageType:"skill", actionName:"测试" });
+  assert.equal(guardian.roundFlags.guardianAidUsed, true);
+  assert.equal(guardian.hand.length, 1);
+  assert.equal(ally.hp, hp - 1);
+  let resetObserved = false;
+  game.eventBus.on("turnStart", "test:guardian-aid-reset", () => {
+    if (!guardian.roundFlags.guardianAidUsed) resetObserved = true;
+  });
+  game.state.currentPlayerIndex = 3;
+  game.aiController.selectAction = async () => ({ type: "end" });
+  await game.takeTurn(nextPlayer, game.state.gameId);
+  assert.equal(resetObserved, true);
+  assert.equal(guardian.roundFlags.guardianAidUsed, false);
+  const skillRequests = ui.responseRequests.filter((request) => request.type === "skill").length;
+  await game.damage(source, ally, 2, { canBlock:false, damageType:"skill", actionName:"测试" });
+  assert.equal(guardian.roundFlags.guardianAidUsed, true);
+  assert.equal(guardian.hand.length, 0);
+  assert.equal(ally.hp, hp - 2);
+  assert.equal(ui.responseRequests.filter((request) => request.type === "skill").length, skillRequests + 1);
+});
+test("守誓者护援回合重置后AI新快照读取guardianAidUsedProbability为0", async () => {
+  const source = makePlayer("aid-snap-source", 0, "dusk", "ai", 4);
+  const guardian = makePlayer("aid-snap-guardian", 1, "dawn", "human", 1);
+  const nextPlayer = makePlayer("aid-snap-next", 2, "dawn", "ai", 5);
+  const { game } = makeGame([source, guardian, nextPlayer]);
+  guardian.roundFlags.guardianAidUsed = true;
+  const before = createAiVisibleState(source.id, game.state);
+  assert.equal(before.players.find((player) => player.id === guardian.id).guardianAidUsedProbability, 1);
+  game.state.currentPlayerIndex = 2;
+  game.aiController.selectAction = async () => ({ type: "end" });
+  await game.takeTurn(nextPlayer, game.state.gameId);
+  assert.equal(guardian.roundFlags.guardianAidUsed, false);
+  const after = createAiVisibleState(source.id, game.state);
+  assert.equal(after.players.find((player) => player.id === guardian.id).guardianAidUsedProbability, 0);
+});
+test("炎术师焚场2点能量可发动并扣至0、3点能量发动后剩1", async () => {
+  const makeEmber = (energy) => {
+    const ember = makePlayer("ember-cost", 0, "dawn", "human", 4);
+    const ally = makePlayer("ember-cost-ally", 1, "dawn", "ai", 0);
+    const enemy = makePlayer("ember-cost-enemy", 2, "dusk", "ai", 5);
+    ember.energy = energy;
+    const { game } = makeGame([ember, ally, enemy]);
+    return { ember, enemy, game };
+  };
+  {
+    const { ember, enemy, game } = makeEmber(2);
+    const hp = enemy.hp;
+    assert.equal(ACTIVE_SKILLS.burningField.canUse(game, ember).ok, true);
+    assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
+    assert.equal(ember.energy, 0);
+    assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 1);
+    assert.equal(enemy.hp, hp - 1);
+  }
+  {
+    const { ember, enemy, game } = makeEmber(3);
+    const hp = enemy.hp;
+    assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
+    assert.equal(ember.energy, 1);
+    assert.equal(enemy.hp, hp - 1);
+  }
+});
+test("炎术师焚场1点能量不能发动且不扣费不计数不造成伤害", async () => {
+  const ember = makePlayer("ember-low", 0, "dawn", "human", 4);
+  const ally = makePlayer("ember-low-ally", 1, "dawn", "ai", 0);
+  const enemy = makePlayer("ember-low-enemy", 2, "dusk", "ai", 5);
+  ember.energy = 1;
+  const { game } = makeGame([ember, ally, enemy]);
+  const hp = enemy.hp;
+  assert.equal(ACTIVE_SKILLS.burningField.canUse(game, ember).ok, false);
+  assert.equal(await game.useActiveSkill(ember, "burningField", []), false);
+  assert.equal(ember.energy, 1);
+  assert.equal(ember.turnFlags.activeSkillUseCounts.burningField ?? 0, 0);
+  assert.equal(enemy.hp, hp);
+});
+test("炎术师焚场只伤害存活敌人、队友与本人不受伤且不可格挡", async () => {
+  const ember = makePlayer("ember-field", 0, "dawn", "human", 4);
+  const ally = makePlayer("ember-field-ally", 1, "dawn", "ai", 0);
+  const deadEnemy = makePlayer("ember-field-dead", 2, "dusk", "ai", 5);
+  const enemyA = makePlayer("ember-field-enemy-a", 3, "dusk", "ai", 5);
+  const enemyB = makePlayer("ember-field-enemy-b", 4, "dusk", "ai", 5);
+  deadEnemy.alive = false;
+  ember.energy = 2;
+  let observed = null;
+  const { game } = makeGame([ember, ally, deadEnemy, enemyA, enemyB]);
+  game.eventBus.on("beforeDamage", "test:burning-field-options", (event) => {
+    observed = { canBlock:event.canBlock, damageType:event.damageType, skill:event.skill };
+  });
+  const allyHp = ally.hp, emberHp = ember.hp, deadHp = deadEnemy.hp;
+  const hpA = enemyA.hp, hpB = enemyB.hp;
+  assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
+  assert.equal(enemyA.hp, hpA - 1);
+  assert.equal(enemyB.hp, hpB - 1);
+  assert.equal(ally.hp, allyHp);
+  assert.equal(ember.hp, emberHp);
+  assert.equal(deadEnemy.hp, deadHp);
+  assert.ok(observed);
+  assert.equal(observed.canBlock, false);
+  assert.equal(observed.damageType, "skill");
+  assert.equal(observed.skill, "burningField");
+});
+test("炎术师焚场每回合最多发动一次且第二次不扣费不造成伤害", async () => {
+  const ember = makePlayer("ember-limit", 0, "dawn", "human", 4);
+  const ally = makePlayer("ember-limit-ally", 1, "dawn", "ai", 0);
+  const enemy = makePlayer("ember-limit-enemy", 2, "dusk", "ai", 5);
+  ember.energy = 2;
+  const { game } = makeGame([ember, ally, enemy]);
+  const hp = enemy.hp;
+  assert.equal(ACTIVE_SKILLS.burningField.limitPerTurn, 1);
+  assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
+  assert.equal(ember.energy, 0);
+  assert.equal(enemy.hp, hp - 1);
+  ember.energy = 2;
+  assert.equal(await game.useActiveSkill(ember, "burningField", []), false);
+  assert.equal(ember.energy, 2);
+  assert.equal(enemy.hp, hp - 1);
+  assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 1);
+});
+test("AI在炎术师2点能量时生成焚场动作且模拟扣除2点", async () => {
+  const ember = makePlayer("ember-ai", 0, "dawn", "ai", 4);
+  const ally = makePlayer("ember-ai-ally", 1, "dawn", "ai", 0);
+  const enemy = makePlayer("ember-ai-enemy", 2, "dusk", "ai", 5);
+  ember.energy = 2;
+  const { game } = makeGame([ember, ally, enemy]);
+  const visible = createAiVisibleState(ember.id, game.state);
+  const action = game.aiController.actionGenerator.generateFromVisible(visible, ember.id)
+    .find((entry) => entry.skill?.id === "burningField");
+  assert.ok(action);
+  assert.equal(action.skill.cost, 2);
+  ember.energy = 3;
+  const visible3 = createAiVisibleState(ember.id, game.state);
+  const next = new AiSimulator(visible3).apply(visible3, action, ember.id);
+  const nextEmber = next.players.find((player) => player.id === ember.id);
+  const nextEnemy = next.players.find((player) => player.id === enemy.id);
+  assert.equal(nextEmber.energy, 1);
+  assert.equal(nextEnemy.hp, enemy.hp - 1);
+});
 test("互利在反制窗口之后才展示并按座位每人选1张", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);assert.equal(game.state.publicCardPool.length,0);assert.equal(ui.publicRequests.length,1); });
 test("互利选牌严格跳过阵亡座位", async () => { const a=makePlayer("a",0,"dawn","human"),dead=makePlayer("dead",1,"dusk"),b=makePlayer("b",2,"dusk"),c=makePlayer("c",3,"dawn");dead.alive=false;const {game}=makeGame([a,dead,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(dead.hand.length,0);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1); });
 test("互利触发重洗后弃牌堆别名保持同步", async () => {
@@ -1242,7 +1406,7 @@ test("对局中缩放进入窄屏断点会自动折叠日志避免遮挡战场",
 test("隐藏牌选择窗口不显示牌背编号或真实卡牌资料", () => { const owner=makePlayer("owner",1,"dusk"),viewer=makePlayer("viewer",0,"dawn","human"),secret={...instance("counter"),name:"不可泄露名称",description:"不可泄露说明"};owner.hand.push(secret);const selection={tokens:[{token:"opaque-a",position:1}]},slots=createHiddenSelectionView(viewer,owner,selection),markup=hiddenSelectionMarkup(selection,slots);assert.deepEqual(slots,[{token:"opaque-a",known:false}]);for(const hidden of [secret.id,secret.definitionId,secret.name,secret.description,secret.art,"牌背 1","未知牌 1","？牌"])assert.ok(!markup.includes(hidden));assert.match(markup,/hidden-card-back/); });
 test("所有隐藏牌界面源码不再生成可见牌背序号", async () => { const sources=await Promise.all(["js/ui/templates.js","js/ui/InteractionController.js"].map((file)=>readFile(projectFile(file),"utf8")));const source=sources.join("\n");assert.doesNotMatch(source,/牌背\s*\$\{|未知牌\s*\$\{|\?牌/); });
 test("角色技能详情完整展示主动与被动公开信息", () => { const player=makePlayer("hero",0,"dawn","human",3);player.hand.push({...instance("counter"),name:"隐藏决策资料"});const markup=skillDetailsTemplate(player);assert.match(markup,/主动技能/);assert.match(markup,new RegExp(player.general.activeName));assert.match(markup,new RegExp(player.general.activeDescription));assert.match(markup,/能量消耗|发动时消耗全部能量/);assert.match(markup,/次数限制/);assert.match(markup,/被动技能/);assert.match(markup,new RegExp(player.general.passiveName));assert.match(markup,new RegExp(player.general.passiveDescription));assert.doesNotMatch(markup,/隐藏决策资料|knownCardsByPlayer|aiMemory|decision|weight/); });
-test("八名角色使用结构化被动触发条件与限制文案", async () => { const expected={"blade-walker":"每回合按不同卡牌类别分别触发","oath-warden":"每轮限触发1次","spirit-medic":"每回合限触发1次","shade-agent":"每回合限触发1次","ember-magus":"每次卡牌结算最多触发1次","trail-hunter":"每回合限触发2次；同一敌人每回合限1次","fate-gambler":"每回合限触发1次","resonance-tuner":"每回合限触发1次"};for(const [index,general] of GENERAL_DEFINITIONS.entries()){assert.ok(general.passiveTriggerText);assert.equal(general.passiveLimitText,expected[general.id]);const player=makePlayer(`structured-${general.id}`,index,"dawn","human",index),markup=skillDetailsTemplate(player);assert.match(markup,new RegExp(general.passiveTriggerText));assert.match(markup,new RegExp(general.passiveLimitText));}const source=await readFile(projectFile("js/ui/templates.js"),"utf8");assert.doesNotMatch(source,/description\.includes\(|每轮一次.*includes|每回合首次.*includes/); });
+test("八名角色使用结构化被动触发条件与限制文案", async () => { const expected={"blade-walker":"每回合按不同卡牌类别分别触发","oath-warden":"每回合限触发1次","spirit-medic":"每回合限触发1次","shade-agent":"每回合限触发1次","ember-magus":"每次卡牌结算最多触发1次","trail-hunter":"每回合限触发2次；同一敌人每回合限1次","fate-gambler":"每回合限触发1次","resonance-tuner":"每回合限触发1次"};for(const [index,general] of GENERAL_DEFINITIONS.entries()){assert.ok(general.passiveTriggerText);assert.equal(general.passiveLimitText,expected[general.id]);const player=makePlayer(`structured-${general.id}`,index,"dawn","human",index),markup=skillDetailsTemplate(player);assert.match(markup,new RegExp(general.passiveTriggerText));assert.match(markup,new RegExp(general.passiveLimitText));}const source=await readFile(projectFile("js/ui/templates.js"),"utf8");assert.doesNotMatch(source,/description\.includes\(|每轮一次.*includes|每回合首次.*includes/); });
 test("目标选择期间头像与名称优先选择目标且不打开技能面板", () => { const source=makePlayer("source",0,"dawn","human"),target=makePlayer("target",1,"dusk"),illegal=makePlayer("illegal",2,"dawn"),other=makePlayer("other",3,"dawn");let resolved=null,shown=null,triggerUsed=null,rendered=0;const makeState=()=>({players:[target],legalIds:new Set([target.id]),resolve:(value)=>{resolved=value;}});const makeFake=()=>({game:{state:{players:[source,target,illegal,other]}},targetState:null,showSkillDetails:(value,trigger)=>{shown=value;triggerUsed=trigger;},render:()=>{rendered+=1;},playSound(){}});const panelFor=(player)=>({dataset:{playerId:player.id}}),skillFor=(player)=>({dataset:{skillPlayerId:player.id}}),eventFor=(player,kind)=>({target:{closest:(query)=>query==="[data-skill-player-id]"&&["avatar","name"].includes(kind)?skillFor(player):query==="[data-player-id]"?panelFor(player):null}});let ui=makeFake();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"avatar"));assert.equal(shown,target);assert.equal(triggerUsed.dataset.skillPlayerId,target.id);assert.equal(ui.targetState,null);shown=null;triggerUsed=null;UIManager.prototype.handlePlayerClick.call(ui,eventFor(other,"name"));assert.equal(shown,other);assert.equal(ui.targetState,null);shown=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"avatar"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);assert.equal(rendered,1);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"name"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(illegal,"avatar"));assert.equal(resolved,null);assert.equal(shown,null);assert.ok(ui.targetState);assert.equal(ui.targetState.legalIds.has(target.id),true);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(illegal,"name"));assert.equal(resolved,null);assert.equal(shown,null);assert.ok(ui.targetState);resolved=null;rendered=0;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"panel"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);assert.equal(rendered,1); });
 test("关闭技能弹窗后焦点返回原生触发按钮", () => { let focused=0;const overlay={innerHTML:"dialog",classList:{add(){}}},trigger={isConnected:true,focus(){focused+=1;}};const fake={elements:{skill_details_overlay:overlay},skillDetailsTrigger:trigger};UIManager.prototype.hideSkillDetails.call(fake);assert.equal(overlay.innerHTML,"");assert.equal(fake.skillDetailsTrigger,null);assert.equal(focused,1); });
 test("互利必须先选择再确认且可直接切换选择", async () => { const element=makeInteractiveElement(),view=new PublicPoolView(element),player=makePlayer("human",0,"dawn","human"),first=instance("assault"),second=instance("block");let settled=false;const pending=view.request(player,[first,second]).then((card)=>{settled=true;return card;});assert.match(element.innerHTML,/data-public-confirm disabled/);element.click(clickTarget("[data-public-card-id]",{publicCardId:first.id}));await Promise.resolve();assert.equal(settled,false);assert.equal(view.pending.selected.has(first.id),true);assert.doesNotMatch(element.innerHTML,/data-public-confirm disabled/);element.click(clickTarget("[data-public-card-id]",{publicCardId:second.id}));assert.deepEqual([...view.pending.selected],[second.id]);assert.equal(settled,false);element.click(clickTarget("[data-public-confirm]"));assert.equal(await pending,second);assert.equal(view.pending,null); });
@@ -3273,7 +3437,7 @@ test("AI护援统一覆盖突袭、震荡、挑衅、决斗、猎杀与焚场", 
   runSkill(ACTIVE_SKILLS.hunt,"trail-hunter",2);runSkill(ACTIVE_SKILLS.burningField,"ember-magus",1);
 });
 
-test("AI护援每名守誓者每轮一次且零伤害与阵亡时不弃牌", () => {
+test("AI护援每名守誓者每回合一次且零伤害与阵亡时不弃牌", () => {
   const attacker={id:"aid-attacker",battleTeam:"dawn",alive:true,hp:5,maxHp:5,handCount:0};
   const target={id:"aid-target",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0};
   const guardian={id:"aid-guardian",generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:2,guardianAidUsedProbability:0};
@@ -5911,7 +6075,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260805-ai-tactic-counter-risk-v86"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260805-ember-magus-burning-field-v88"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 
