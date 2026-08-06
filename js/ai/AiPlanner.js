@@ -2,8 +2,8 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-block-consumption-v90";
-import { AiSimulator } from "./AiSimulator.js?build=20260806-ai-block-consumption-v90";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-radar-block-v91";
+import { AiSimulator } from "./AiSimulator.js?build=20260806-ai-radar-block-v91";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {

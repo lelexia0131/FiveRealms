@@ -2,12 +2,12 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260806-ai-block-consumption-v90";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-block-consumption-v90";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260806-ai-block-consumption-v90";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260806-ai-block-consumption-v90";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260806-ai-block-consumption-v90";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260806-ai-block-consumption-v90";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260806-ai-radar-block-v91";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-radar-block-v91";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260806-ai-radar-block-v91";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260806-ai-radar-block-v91";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260806-ai-radar-block-v91";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260806-ai-radar-block-v91";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,7 +20,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260806-ai-block-consumption-v90";
+} from "./AiProbabilityBranches.js?build=20260806-ai-radar-block-v91";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -1181,12 +1181,12 @@ export class AiSimulator {
    * 这里只更新 hand / knownCards 的身份可用性，不修改 handCount 或 blockCountDistribution；
    * 总格挡容量由 blockCountDistribution 统一扣减，避免两个入口重复计数。
    */
-  consumeBlockIdentities(state, player, blockWorlds) {
+  consumeBlockIdentities(state, player, blockWorlds, excludedCardIds = null) {
     if (!player || !Array.isArray(blockWorlds) || !blockWorlds.length) return;
     const candidates = [
       ...(Array.isArray(player.hand) ? player.hand.filter((card) => card.definitionId === "block") : []),
       ...(Array.isArray(player.knownCards) ? player.knownCards.filter((entry) => entry.definitionId === "block") : [])
-    ];
+    ].filter((card) => !excludedCardIds?.has(card.id ?? card.cardId));
     if (!candidates.length) return;
     let remainingWorlds = blockWorlds.map((branch) => ({
       probability:branch.probability,
@@ -2063,6 +2063,230 @@ export class AiSimulator {
     };
   }
 
+  /** 五种进入手牌的基础判定定义；战术与装备可聚合，基础牌必须各自成支。 */
+  static get RADAR_BASIC_DEFINITIONS() {
+    return ["assault", "recover", "block", "charge", "shield"];
+  }
+
+  /**
+   * 构造单一互斥雷达结果分区：noRadar / noJudgment / tactic / equipment /
+   * basic:assault / basic:recover / basic:block / basic:charge / basic:shield。
+   * 所有结果共享同一个条件键，不同结果值互斥，概率合计为 1。
+   * 默认概率来自 remainingCardCounts（只读）；override 兼容
+   * { block, otherBasic, equipment }，其中 otherBasic 按剩余密度拆分到四种非格挡基础牌。
+   */
+  buildRadarOutcomePartition(state, defenseProbability, overrideProbabilities = null) {
+    const defense = clampProbability(defenseProbability);
+    const remaining = state?.remainingCardCounts;
+    const weights = {};
+    let totalWeight = 0;
+    if (remaining && typeof remaining === "object" && !Array.isArray(remaining)) {
+      for (const [definitionId, count] of Object.entries(remaining)) {
+        const value = Number(count);
+        if (!Number.isFinite(value) || value <= 0) continue;
+        if (!CARD_DEFINITIONS[definitionId]) continue;
+        weights[definitionId] = (weights[definitionId] ?? 0) + value;
+        totalWeight += value;
+      }
+    } else {
+      for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
+        weights[definitionId] = definition.count;
+        totalWeight += definition.count;
+      }
+    }
+
+    const basicProbabilities = {};
+    for (const definitionId of AiSimulator.RADAR_BASIC_DEFINITIONS) {
+      basicProbabilities[definitionId] = totalWeight > PROBABILITY_EPSILON
+        ? (weights[definitionId] ?? 0) / totalWeight
+        : 0;
+    }
+    let tacticProbability = 0;
+    let equipmentProbability = 0;
+    for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
+      const weight = weights[definitionId] ?? 0;
+      if (weight <= 0) continue;
+      if (definition.category === "tactic") tacticProbability += weight / totalWeight;
+      else if (definition.category === "equipment") equipmentProbability += weight / totalWeight;
+    }
+
+    const override = overrideProbabilities && typeof overrideProbabilities === "object"
+      ? overrideProbabilities
+      : null;
+    if (override) {
+      const otherBasicDefinitions = ["assault", "recover", "charge", "shield"];
+      const overrideBlock = clampProbability(override.block ?? basicProbabilities.block);
+      const overrideEquipment = clampProbability(override.equipment ?? equipmentProbability);
+      const overrideOtherBasic = clampProbability(override.otherBasic ?? otherBasicDefinitions
+        .reduce((sum, definitionId) => sum + basicProbabilities[definitionId], 0));
+      const otherBasicWeights = otherBasicDefinitions
+        .reduce((sum, definitionId) => sum + (weights[definitionId] ?? 0), 0);
+      let otherBasicRatios;
+      if (otherBasicWeights > PROBABILITY_EPSILON) {
+        otherBasicRatios = Object.fromEntries(otherBasicDefinitions.map((definitionId) => [
+          definitionId, (weights[definitionId] ?? 0) / otherBasicWeights
+        ]));
+      } else {
+        const fixedTotal = otherBasicDefinitions
+          .reduce((sum, definitionId) => sum + CARD_DEFINITIONS[definitionId].count, 0);
+        otherBasicRatios = Object.fromEntries(otherBasicDefinitions.map((definitionId) => [
+          definitionId, fixedTotal > 0 ? CARD_DEFINITIONS[definitionId].count / fixedTotal : 0.25
+        ]));
+      }
+      basicProbabilities.block = overrideBlock;
+      for (const definitionId of otherBasicDefinitions) {
+        basicProbabilities[definitionId] = overrideOtherBasic * otherBasicRatios[definitionId];
+      }
+      equipmentProbability = overrideEquipment;
+      tacticProbability = Math.max(0, 1 - overrideBlock - overrideOtherBasic - overrideEquipment);
+    }
+
+    let judgmentTotal = tacticProbability + equipmentProbability;
+    for (const definitionId of AiSimulator.RADAR_BASIC_DEFINITIONS) {
+      judgmentTotal += basicProbabilities[definitionId];
+    }
+    if (judgmentTotal > PROBABILITY_EPSILON) {
+      tacticProbability /= judgmentTotal;
+      equipmentProbability /= judgmentTotal;
+      for (const definitionId of AiSimulator.RADAR_BASIC_DEFINITIONS) {
+        basicProbabilities[definitionId] /= judgmentTotal;
+      }
+    } else {
+      tacticProbability = 0;
+      equipmentProbability = 0;
+      for (const definitionId of AiSimulator.RADAR_BASIC_DEFINITIONS) {
+        basicProbabilities[definitionId] = 0;
+      }
+    }
+
+    const key = this.nextProbabilityEventKey(state, "radar-outcome");
+    const branches = [];
+    const noRadarProbability = 1 - defense;
+    if (noRadarProbability > PROBABILITY_EPSILON) {
+      branches.push({
+        probability:noRadarProbability,
+        conditions:{ [key]:"noRadar" },
+        radarOutcome:"noRadar",
+        responseAllowed:true,
+        immuneByRadar:false
+      });
+    }
+    const hasJudgmentPool = totalWeight > PROBABILITY_EPSILON || Boolean(override);
+    if (defense > PROBABILITY_EPSILON) {
+      const pushOutcome = (outcome, probability, responseAllowed, immuneByRadar) => {
+        const chance = probability * defense;
+        if (chance > PROBABILITY_EPSILON) {
+          branches.push({
+            probability:chance,
+            conditions:{ [key]:outcome },
+            radarOutcome:outcome,
+            responseAllowed,
+            immuneByRadar
+          });
+        }
+      };
+      if (!hasJudgmentPool) {
+        pushOutcome("noJudgment", 1, true, false);
+      } else {
+        pushOutcome("tactic", tacticProbability, false, true);
+        pushOutcome("equipment", equipmentProbability, true, false);
+        for (const definitionId of AiSimulator.RADAR_BASIC_DEFINITIONS) {
+          pushOutcome(`basic:${definitionId}`, basicProbabilities[definitionId], true, false);
+        }
+      }
+    }
+    const branchTotal = branches.reduce((sum, branch) => sum + branch.probability, 0);
+    return branchTotal > 0
+      ? branches.map((branch) => ({ ...branch, probability:branch.probability / branchTotal }))
+      : [{ probability:1, conditions:{ [key]:"noRadar" }, radarOutcome:"noRadar", responseAllowed:true, immuneByRadar:false }];
+  }
+
+  /**
+   * 统一格挡响应结算：在包含 occurs / requiredCount / responseAllowed / immuneByRadar
+   * 的攻击世界中，只有真正满足数量且允许响应的世界才消费格挡。
+   * 复用 B1a 的 blockCountDistribution + consumeBlockIdentities 逻辑，
+   * 并返回带 blockedByCard / passes 的完整攻击结果分区供伤害结算直接使用。
+   */
+  consumeBlockResponseWorlds(state, target, attackWorlds, options = {}) {
+    const blockState = this.getBlockCountBranches(target, state?.remainingCardCounts ?? null);
+    const preJudgmentPartition = Array.isArray(options.preJudgmentBlockState)
+      && options.preJudgmentBlockState.length
+      ? options.preJudgmentBlockState.map((branch) => ({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          preBlockCount:branch.blockCount
+        }))
+      : null;
+    const joined = preJudgmentPartition
+      ? joinProbabilityStateBranches(attackWorlds, blockState, preJudgmentPartition)
+      : joinProbabilityStateBranches(attackWorlds, blockState);
+    const responseMatches = (branch) => Boolean(
+      branch.occurs
+      && branch.responseAllowed !== false
+      && !branch.immuneByRadar
+      && branch.blockCount >= branch.requiredCount
+    );
+    const consumedBranches = joined.filter(responseMatches);
+    const blockedProbability = totalBranchProbability(consumedBranches);
+    const expectedBlockSpend = consumedBranches.reduce(
+      (sum, branch) => sum + branch.probability * branch.requiredCount, 0
+    );
+    const remainingBlockBranches = projectProbabilityStateBranches(joined, (branch) => ({
+      blockCount:responseMatches(branch)
+        ? Math.max(0, branch.blockCount - branch.requiredCount)
+        : branch.blockCount
+    }));
+    target.blockCountDistribution = remainingBlockBranches;
+    this.syncBlockSummary(target);
+    const identityWorlds = joined.map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions,
+      requiredCount:branch.requiredCount,
+      blockUsed:responseMatches(branch)
+    }));
+    const judgmentBlockCard = options.judgmentBlockCard ?? null;
+    const excludedCardIds = judgmentBlockCard
+      ? new Set([judgmentBlockCard.id ?? judgmentBlockCard.cardId])
+      : null;
+    this.consumeBlockIdentities(state, target, identityWorlds, excludedCardIds);
+    if (judgmentBlockCard && preJudgmentPartition) {
+      // 判定牌追加在手牌末尾：原匿名格挡容量足够时，判定格挡身份必须保留；
+      // 只有判定前总格挡不足 requiredCount 的世界才真正消费判定格挡。
+      const judgmentConsumedWorlds = projectProbabilityStateBranches(joined, (branch) => ({
+        occurs:Boolean(
+          responseMatches(branch)
+          && branch.preBlockCount < branch.requiredCount
+        )
+      }));
+      const judgmentAvailability = getAvailabilityStateBranches(judgmentBlockCard).map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        available:Boolean(branch.available)
+      }));
+      const joinedJudgment = joinProbabilityStateBranches(judgmentAvailability, judgmentConsumedWorlds);
+      judgmentBlockCard.availabilityStateBranches = projectProbabilityStateBranches(joinedJudgment, (branch) => ({
+        available:Boolean(branch.available && !branch.occurs)
+      }));
+      judgmentBlockCard.availabilityBranches = availableBranchesFromState(
+        judgmentBlockCard.availabilityStateBranches
+      );
+      if (totalBranchProbability(judgmentBlockCard.availabilityBranches) <= PROBABILITY_EPSILON) {
+        if (Array.isArray(target.hand)) target.hand = target.hand.filter((card) => card !== judgmentBlockCard);
+        if (Array.isArray(target.knownCards)) target.knownCards = target.knownCards.filter((entry) => entry !== judgmentBlockCard);
+      }
+    }
+    target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
+    const outcomeWorlds = projectProbabilityStateBranches(joined, (branch) => ({
+      occurs:Boolean(branch.occurs),
+      radarOutcome:branch.radarOutcome ?? null,
+      requiredCount:branch.requiredCount,
+      immuneByRadar:Boolean(branch.immuneByRadar),
+      blockedByCard:responseMatches(branch),
+      passes:Boolean(branch.occurs && !branch.immuneByRadar && !responseMatches(branch))
+    }));
+    return { outcomeWorlds, blockedProbability, expectedBlockSpend };
+  }
+
   applyDamage(state, attacker, target, amount, options = {}) {
     if (!target.alive || amount <= 0) {
       if (options.outcome) {
@@ -2100,69 +2324,73 @@ export class AiSimulator {
       : 0;
     let blockedByCardChance = 0;
     let expectedBlockSpend = 0;
-    let expectedJudgmentGain = 0;
     let passChance = 1;
+    let attackOutcomeWorlds = null;
     if (defenseProbability > 0) {
-      // B1b 范围：雷达路径保持原行为，本任务不修改雷达判定与雷达格挡身份。
-      const normalBlockChance = clampProbability(target.blockProbability ?? 0);
-      const twoBlockChance = clampProbability(target.twoBlockProbability ?? 0);
-      const blockChance = options.canBlock
-        ? battleProbability * twoBlockChance + (1 - battleProbability) * normalBlockChance
-        : 0;
-      passChance = 1 - blockChance;
-      blockedByCardChance = blockChance;
-      expectedBlockSpend = options.canBlock
-        ? battleProbability * twoBlockChance * 2 + (1 - battleProbability) * normalBlockChance
-        : 0;
-      const judgmentProbabilities = {
-        ...remainingRadarJudgmentProbabilities(state?.remainingCardCounts),
-        ...(options.radarJudgmentProbabilities ?? {})
-      };
-      const judgmentBlockChance = clampProbability(
-        judgmentProbabilities.block ?? BLOCK_CARD_COUNT / TOTAL_CARD_COUNT
+      // 雷达路径：单一互斥结果分区，判定身份、格挡消费与伤害通过共用同一组条件世界。
+      const radarOutcomePartition = this.buildRadarOutcomePartition(
+        state, defenseProbability, options.radarJudgmentProbabilities
       );
-      const otherBasicChance = clampProbability(
-        judgmentProbabilities.otherBasic ?? OTHER_BASIC_CARD_COUNT / TOTAL_CARD_COUNT
+      const battleKey = this.nextProbabilityEventKey(
+        state,
+        `battle-required:${attacker?.id ?? "unknown"}:${target.id}`
       );
-      const basicChance = judgmentBlockChance + otherBasicChance;
-      const equipmentChance = clampProbability(
-        judgmentProbabilities.equipment ?? EQUIPMENT_CARD_COUNT / TOTAL_CARD_COUNT
-      );
-      const normalRadarPass = !options.canBlock
-        ? basicChance + equipmentChance
-        : (otherBasicChance + equipmentChance) * (1 - normalBlockChance);
-      const battleRadarPass = !options.canBlock
-        ? basicChance + equipmentChance
-        : judgmentBlockChance * (1 - normalBlockChance)
-          + (otherBasicChance + equipmentChance) * (1 - twoBlockChance);
-      const radarPass = battleProbability * battleRadarPass + (1 - battleProbability) * normalRadarPass;
-      passChance = (1 - defenseProbability) * passChance + defenseProbability * radarPass;
-      const noRadarSpent = options.canBlock
-        ? battleProbability * twoBlockChance * 2 + (1 - battleProbability) * normalBlockChance
+      const requiredPartition = battleProbability >= 1 - PROBABILITY_EPSILON
+        ? [{ probability:1, conditions:{}, requiredCount:2 }]
+        : battleProbability <= PROBABILITY_EPSILON
+          ? [{ probability:1, conditions:{}, requiredCount:1 }]
+          : [
+              { probability:battleProbability, conditions:{ [battleKey]:"yes" }, requiredCount:2 },
+              { probability:1 - battleProbability, conditions:{ [battleKey]:"no" }, requiredCount:1 }
+            ];
+      const baseWorlds = joinProbabilityStateBranches(
+        eventWorlds, radarOutcomePartition, requiredPartition
+      ).map((branch) => ({
+        ...branch,
+        responseAllowed:Boolean(options.canBlock) && branch.responseAllowed !== false
+      }));
+      // 先基于判定前的身份保存格挡容量：既避免旧快照在判定身份加入后才
+      // 用“全部已知”捷径重建分布并重复计数，也用于决定判定格挡是否被消费。
+      // 无条件的匿名容量分支在这里显式键化，使判定格挡身份、判定前容量和
+      // 最终 blockCount 在后续世界中保持同一条件关联。
+      const preJudgmentKey = this.nextProbabilityEventKey(state, "pre-judgment-blocks");
+      const preJudgmentBlockState = this.getBlockCountBranches(
+        target, state?.remainingCardCounts ?? null
+      ).map((branch, index) => ({
+        probability:branch.probability,
+        conditions:{ ...branch.conditions, [preJudgmentKey]:`v${index}` },
+        blockCount:branch.blockCount
+      }));
+      target.blockCountDistribution = preJudgmentBlockState;
+      this.syncBlockSummary(target);
+      let judgmentBlockCard = null;
+      // 基础判定牌先加入身份：判定得到的格挡可以立即用于本次响应。
+      for (const definitionId of AiSimulator.RADAR_BASIC_DEFINITIONS) {
+        const acquisitionWorlds = projectProbabilityStateBranches(baseWorlds, (branch) => ({
+          occurs:Boolean(branch.occurs && branch.radarOutcome === `basic:${definitionId}`)
+        }));
+        if (this.eventProbability(acquisitionWorlds) <= PROBABILITY_EPSILON) continue;
+        const simulatedId = this.nextSimulatedCardId(state, definitionId);
+        if (Array.isArray(target.hand)) {
+          this.addSimulatedCardToHand(state, target, { id:simulatedId, definitionId }, acquisitionWorlds);
+          if (definitionId === "block") {
+            judgmentBlockCard = target.hand.find((card) => card.id === simulatedId) ?? null;
+          }
+        } else {
+          this.addSimulatedKnownCard(state, target, { cardId:simulatedId, definitionId }, acquisitionWorlds);
+          if (definitionId === "block") {
+            judgmentBlockCard = target.knownCards.find((entry) => entry.cardId === simulatedId) ?? null;
+          }
+        }
+      }
+      const response = this.consumeBlockResponseWorlds(state, target, baseWorlds, {
+        preJudgmentBlockState,
+        judgmentBlockCard
+      });
+      attackOutcomeWorlds = response.outcomeWorlds;
+      blockedByCardChance = eventProbability > 0
+        ? Math.min(1, response.blockedProbability / eventProbability)
         : 0;
-      const normalRadarSpent = options.canBlock
-        ? judgmentBlockChance + (otherBasicChance + equipmentChance) * normalBlockChance
-        : 0;
-      const battleRadarSpent = options.canBlock
-        ? 2 * (judgmentBlockChance * normalBlockChance
-          + (otherBasicChance + equipmentChance) * twoBlockChance)
-        : 0;
-      const radarSpent = battleProbability * battleRadarSpent + (1 - battleProbability) * normalRadarSpent;
-      const normalRadarBlocked = options.canBlock
-        ? judgmentBlockChance + (otherBasicChance + equipmentChance) * normalBlockChance
-        : 0;
-      const battleRadarBlocked = options.canBlock
-        ? judgmentBlockChance * normalBlockChance
-          + (otherBasicChance + equipmentChance) * twoBlockChance
-        : 0;
-      const radarBlocked = battleProbability * battleRadarBlocked
-        + (1 - battleProbability) * normalRadarBlocked;
-      blockedByCardChance = (1 - defenseProbability) * blockChance + defenseProbability * radarBlocked;
-      expectedBlockSpend = (1 - defenseProbability) * noRadarSpent + defenseProbability * radarSpent;
-      expectedJudgmentGain = defenseProbability * basicChance;
-      target.handCount = Math.max(0, (target.handCount ?? 0)
-        + eventProbability * expectedJudgmentGain
-        - eventProbability * expectedBlockSpend);
     } else if (options.canBlock) {
       // 非雷达路径：格挡数量分布与本次伤害事件世界联合，只有同时发生且数量足够的
       // 世界才消费格挡；消费张数由军火库条件决定（1 或 2）。
@@ -2207,17 +2435,18 @@ export class AiSimulator {
       this.consumeBlockIdentities(state, target, identityWorlds);
       target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
     }
-    const passPartition = probabilityEventPartition(
-      this.nextProbabilityEventKey(state, `damage-pass:${attacker?.id ?? "unknown"}:${target.id}`),
-      passChance,
-      "passes"
-    );
     const shieldState = getValueBranches(target, "shield", target.shield).map((branch) => ({
       probability:branch.probability,
       conditions:branch.conditions,
       shieldAmount:branch.amount
     }));
-    const damageWorlds = joinProbabilityStateBranches(eventWorlds, passPartition, shieldState);
+    const damageWorlds = attackOutcomeWorlds
+      ? joinProbabilityStateBranches(attackOutcomeWorlds, shieldState)
+      : joinProbabilityStateBranches(eventWorlds, probabilityEventPartition(
+          this.nextProbabilityEventKey(state, `damage-pass:${attacker?.id ?? "unknown"}:${target.id}`),
+          passChance,
+          "passes"
+        ), shieldState);
     const hpDamageFor = (branch) => branch.occurs && branch.passes
       ? Math.max(0, amount - branch.shieldAmount)
       : 0;

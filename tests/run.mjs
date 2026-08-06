@@ -3156,6 +3156,310 @@ test("部分概率攻击额外缩放雷达得牌、格挡消耗与最终伤害",
   assertClose(state.players[1].hp,3.8);assertClose(state.players[1].handCount,1.2);
 });
 
+// ---- B1b：雷达判定身份与格挡消费 ----
+const b1bTarget = (overrides = {}) => ({
+  id:"target", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, handCount:0,
+  generalId:"oath-warden", blockProbability:0, twoBlockProbability:0, equipmentDefinitionId:"defenseDevice",
+  equipmentRetentionProbability:1, expectedRecoverCount:0, ...overrides
+});
+const b1bAttacker = (overrides = {}) => ({
+  id:"attacker", battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, handCount:0,
+  generalId:"blade-walker", expectedRecoverCount:0, ...overrides
+});
+const b1bBattleAttacker = () => b1bAttacker({ equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1 });
+const b1bApply = (target, attacker = b1bAttacker(), options = {}, existingState = null) => {
+  const state = existingState ?? { remainingCardCounts: options.remainingCardCounts ?? null, players:[attacker, target] };
+  if (options.remainingCardCounts !== undefined) state.remainingCardCounts = options.remainingCardCounts;
+  const simulator = new AiSimulator({ players:[] });
+  const { remainingCardCounts, ...damageOptions } = options;
+  simulator.applyDamage(state, attacker, target, 1, { canBlock:true, deviceAttack:true, ...damageOptions });
+  return { state, simulator, target, attacker };
+};
+
+test("B1b真实：原格挡+判定格挡普通攻击只消费原格挡", async () => {
+  const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});
+  b.equipment=instance("defenseDevice");const original=instance("block"),judged=instance("block");
+  b.hand.push(original);game.state.deck.cards.push(judged);const hp=b.hp;
+  await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
+  assert.equal(b.hp,hp);assert.equal(b.hand.length,1);assert.equal(b.hand[0],judged);
+  assert.ok(game.state.deck.discardPile.includes(original));assert.ok(!game.state.deck.discardPile.includes(judged));
+});
+
+test("B1b真实：军火库两张原格挡+判定格挡只消费两张原格挡", async () => {
+  const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});
+  a.equipment=instance("battleDevice");b.equipment=instance("defenseDevice");
+  const original1=instance("block"),original2=instance("block"),judged=instance("block");
+  b.hand.push(original1,original2);game.state.deck.cards.push(judged);const hp=b.hp;
+  await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
+  assert.equal(b.hp,hp);assert.equal(b.hand.length,1);assert.equal(b.hand[0],judged);
+  assert.ok(game.state.deck.discardPile.includes(original1));assert.ok(game.state.deck.discardPile.includes(original2));
+  assert.ok(!game.state.deck.discardPile.includes(judged));
+});
+
+test("B1b真实：军火库一张原格挡+判定格挡两张都消费", async () => {
+  const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});
+  a.equipment=instance("battleDevice");b.equipment=instance("defenseDevice");
+  const original=instance("block"),judged=instance("block");
+  b.hand.push(original);game.state.deck.cards.push(judged);const hp=b.hp;
+  await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
+  assert.equal(b.hp,hp);assert.equal(b.hand.length,0);
+  assert.ok(game.state.deck.discardPile.includes(original));assert.ok(game.state.deck.discardPile.includes(judged));
+});
+
+test("B1b模拟：战术判定免疫且不增加不消费", () => {
+  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  b1bApply(target, b1bAttacker(), {radarJudgmentProbabilities:{block:0,otherBasic:0,equipment:0}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.knownCards[0].cardId,"orig");assert.ok(Math.abs(target.blockProbability-1)<1e-9);
+  assert.ok(target.blockCountDistribution.some((branch)=>branch.blockCount===1&&Math.abs(branch.probability-1)<1e-9));
+});
+
+test("B1b模拟：无原格挡+判定格挡普通攻击即得即用", () => {
+  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  b1bApply(target, b1bAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);assert.ok(target.blockCountDistribution.every((branch)=>branch.blockCount===0));
+});
+
+test("B1b模拟：判定聚能普通攻击命中且聚能公开保留", () => {
+  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}});
+  assert.equal(target.hp,3);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.knownCards[0].definitionId,"charge");assert.ok(Math.abs(target.blockProbability)<1e-9);
+});
+
+test("B1b模拟：原格挡+判定格挡普通攻击保留判定格挡且第二次仍可挡", () => {
+  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  const round1=b1bApply(target, b1bAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  const kept=target.knownCards[0];assert.equal(kept.definitionId,"block");assert.notEqual(kept.cardId,"orig");
+  assert.ok(Math.abs(target.blockProbability-1)<1e-9);
+  b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}}, round1.state);
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.knownCards[0].definitionId,"charge");assert.equal(target.blockProbability,0);
+});
+
+test("B1b模拟：原格挡+判定聚能普通攻击后第二次命中", () => {
+  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  const round1=b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.knownCards[0].definitionId,"charge");assert.equal(target.blockProbability,0);
+  b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}}, round1.state);
+  assert.equal(target.hp,3);
+});
+
+test("B1b模拟：军火库无原格挡+判定格挡不消费且随后普通攻击可挡", () => {
+  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  const round1=b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,3);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.knownCards[0].definitionId,"block");assert.ok(Math.abs(target.blockProbability-1)<1e-9);
+  b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}}, round1.state);
+  assert.equal(target.hp,3);assert.equal(target.blockProbability,0);
+});
+
+test("B1b模拟：军火库一张原格挡+判定格挡两张同时消费", () => {
+  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);
+});
+
+test("B1b模拟：军火库两张原格挡+判定格挡只消费两张原格挡", () => {
+  const target=b1bTarget({handCount:2,knownCards:[fullKnownCard("o1","block"),fullKnownCard("o2","block")],blockProbability:1,twoBlockProbability:1,blockCountDistribution:[{probability:1,conditions:{},blockCount:2}]});
+  b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  const kept=target.knownCards[0];assert.equal(kept.definitionId,"block");assert.ok(!["o1","o2"].includes(kept.cardId));
+  assert.equal(target.twoBlockProbability,0);
+});
+
+test("B1b模拟：军火库一张原格挡+判定聚能不足两张攻击命中且都保留", () => {
+  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{charge:1}});
+  assert.equal(target.hp,3);assert.equal(target.handCount,2);assert.equal(target.knownCards.length,2);
+  assert.deepEqual(target.knownCards.map((entry)=>entry.definitionId).sort(),["block","charge"]);
+  assert.equal(target.blockProbability,1);
+});
+
+test("B1b模拟：装备判定不增加身份且原格挡按普通规则消费", () => {
+  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  b1bApply(target, b1bAttacker(), {remainingCardCounts:{energyDevice:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);
+});
+
+test("B1b模拟：判定调息增加调息摘要", () => {
+  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  b1bApply(target, b1bAttacker(), {remainingCardCounts:{recover:1}});
+  assert.equal(target.handCount,1);assert.equal(target.knownCards[0].definitionId,"recover");
+  assert.equal(target.expectedRecoverCount,1);
+});
+
+test("B1b模拟：判定突袭增加突袭摘要", () => {
+  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  b1bApply(target, b1bAttacker(), {remainingCardCounts:{assault:1}});
+  assert.equal(target.knownCards[0].definitionId,"assault");
+  assert.equal(target.expectedAssaultCount,1);assert.equal(target.assaultResponseProbability,1);
+  assert.ok(target.assaultCountDistribution.some((branch)=>branch.count===1&&Math.abs(branch.probability-1)<1e-9));
+});
+
+test("B1b模拟：判定护盾只创建身份不提升格挡调息突袭摘要", () => {
+  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  b1bApply(target, b1bAttacker(), {remainingCardCounts:{shield:1}});
+  assert.equal(target.knownCards[0].definitionId,"shield");
+  assert.equal(target.blockProbability,0);assert.equal(target.expectedRecoverCount,0);assert.equal(target.expectedAssaultCount,0);
+});
+
+test("B1b模拟：50%雷达两分支身份与格挡消费共享条件世界", () => {
+  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}],equipmentRetentionProbability:.5});
+  const {simulator}=b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}});
+  assert.equal(target.hp,4);assertClose(target.handCount,.5);
+  const charge=target.knownCards.find((entry)=>entry.definitionId==="charge");
+  assert.ok(charge);assertClose(simulator.cardAvailability(charge),.5);
+  assert.ok(charge.availabilityStateBranches.every((branch)=>Object.keys(branch.conditions).some((key)=>key.includes("radar-outcome"))));
+  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+  assert.equal(target.blockProbability,0);
+});
+
+test("B1b模拟：40%攻击未发生世界不判定不消费不受伤", () => {
+  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  const {simulator}=b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1},eventProbability:.4});
+  assert.equal(target.hp,4);assertClose(target.handCount,1);
+  const charge=target.knownCards.find((entry)=>entry.definitionId==="charge");
+  const block=target.knownCards.find((entry)=>entry.definitionId==="block");
+  assert.ok(charge);assertClose(simulator.cardAvailability(charge),.4);
+  assert.ok(block);assertClose(simulator.cardAvailability(block),.6);
+  const byCount=blockDistributionByCount(target.blockCountDistribution);
+  assertClose(byCount[0] ?? 0,.4);assertClose(byCount[1] ?? 0,.6);
+});
+
+test("B1b模拟：混合判定身份互斥且每个世界最多一张基础牌", () => {
+  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  const {simulator}=b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:5,charge:5}});
+  assert.equal(target.hp,3); // 军火库只有一张判定格挡不足两张，两个分支都命中
+  const block=target.knownCards.find((entry)=>entry.definitionId==="block");
+  const charge=target.knownCards.find((entry)=>entry.definitionId==="charge");
+  assert.ok(block);assert.ok(charge);
+  assertClose(simulator.cardAvailability(block),.5);assertClose(simulator.cardAvailability(charge),.5);
+  const joined=joinProbabilityStateBranches(
+    projectAvailability(block.availabilityStateBranches,"blockAvail"),
+    projectAvailability(charge.availabilityStateBranches,"chargeAvail")
+  );
+  const bothAvailable=joined.filter((branch)=>branch.blockAvail&&branch.chargeAvail)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assert.ok(Math.abs(bothAvailable)<1e-9);
+});
+
+test("B1b模拟：clone 后雷达判定消费状态不恢复", () => {
+  const state={remainingCardCounts:{charge:1},players:[b1bAttacker(),b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]})]};
+  const simulator=new AiSimulator({players:[]});
+  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
+  assert.equal(state.players[1].blockProbability,0);
+  const cloned=simulator.clone(state);
+  assert.equal(cloned.players[1].blockProbability,0);
+  assert.ok(cloned.players[1].knownCards.some((entry)=>entry.definitionId==="charge"));
+  simulator.applyDamage(cloned,cloned.players[0],cloned.players[1],1,{canBlock:true,deviceAttack:true});
+  assert.equal(cloned.players[1].hp,3);
+  assert.equal(state.players[1].hp,4);
+});
+
+test("B1b模拟：判定聚能可被后续破坏定向移除", () => {
+  const state={remainingCardCounts:{charge:1},players:[b1bAttacker(),b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]})]};
+  const simulator=new AiSimulator({players:[]});
+  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
+  const target=state.players[1];
+  target.equipmentDefinitionId=null;target.equipmentRetentionProbability=0;
+  assert.equal(target.knownCards[0].definitionId,"charge");
+  const selection=simulator.chooseSimulatedResourceSelection(state,state.players[0],target,"destroy");
+  assert.equal(selection.selectionKind,"known");assert.equal(selection.definitionId,"charge");
+  simulator.destroyResource(state,state.players[0],target,1);
+  assert.equal(target.knownCards.length,0);assert.equal(target.handCount,0);
+});
+
+test("B1b模拟：判定聚能可被后续掠夺转移到行动者", () => {
+  const state={remainingCardCounts:{charge:1},players:[b1bAttacker(),b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]})]};
+  const simulator=new AiSimulator({players:[]});
+  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
+  const actor=state.players[0],target=state.players[1];
+  target.equipmentDefinitionId=null;target.equipmentRetentionProbability=0;
+  simulator.takeResourceToHand(state,actor,target,1);
+  assert.equal(target.knownCards.length,0);assert.equal(target.handCount,0);
+  assert.equal(actor.hand.length,1);assert.equal(actor.hand[0].definitionId,"charge");
+});
+
+test("B1b模拟：判定聚能可被后续转移给接收者", () => {
+  const receiver=b1bTarget({id:"receiver",battleTeam:"dawn",handCount:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:0}],equipmentDefinitionId:null,equipmentRetentionProbability:0});
+  const state={remainingCardCounts:{charge:1},players:[b1bAttacker(),b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]}),receiver]};
+  const simulator=new AiSimulator({players:[]});
+  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
+  const target=state.players[1],charge=target.knownCards[0];
+  simulator.transferKnownCardIdentity(state,target,receiver,{cardId:charge.cardId,definitionId:"charge"},[{probability:1,conditions:{},occurs:true}],false);
+  assert.equal(target.knownCards.length,0);assert.equal(target.handCount,0);
+  assert.equal(receiver.knownCards.length,1);assert.equal(receiver.knownCards[0].definitionId,"charge");
+  assert.equal(receiver.handCount,1);
+});
+
+test("B1b模拟：空判定池退化为普通格挡流程", () => {
+  const target=b1bTarget({knownCards:[],blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  b1bApply(target, b1bAttacker(), {remainingCardCounts:{}});
+  assert.equal(target.hp,3);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+});
+
+test("B1b模拟：空判定池不免疫且原格挡仍按普通规则消费", () => {
+  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  b1bApply(target, b1bAttacker(), {remainingCardCounts:{}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+});
+
+test("B1b补充：匿名确定格挡优先于判定格挡被消费", () => {
+  const target=b1bTarget({handCount:1,blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  const {simulator}=b1bApply(target, b1bAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);
+  assert.equal(target.knownCards.length,1);
+  const judged=target.knownCards[0];assert.equal(judged.definitionId,"block");
+  assertClose(simulator.cardAvailability(judged),1);
+  const byCount=blockDistributionByCount(target.blockCountDistribution);
+  assertClose(byCount[1] ?? 0,1);
+  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+});
+
+test("B1b补充：匿名50%格挡与判定格挡同世界关联", () => {
+  const target=b1bTarget({handCount:1,blockProbability:.5,twoBlockProbability:0,blockCountDistribution:[{probability:.5,conditions:{},blockCount:0},{probability:.5,conditions:{},blockCount:1}]});
+  const {simulator}=b1bApply(target, b1bAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);
+  const judged=target.knownCards[0];assert.equal(judged.definitionId,"block");
+  assertClose(simulator.cardAvailability(judged),.5);
+  const byCount=blockDistributionByCount(target.blockCountDistribution);
+  assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
+  const joint=joinProbabilityStateBranches(
+    projectAvailability(judged.availabilityStateBranches,"judgedAvail"),
+    target.blockCountDistribution.map(({blockCount,probability,conditions})=>({probability,conditions,count1:blockCount===1}))
+  );
+  const mismatched=joint.filter((branch)=>branch.judgedAvail!==branch.count1)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assert.ok(Math.abs(mismatched)<1e-9);
+  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+});
+
+test("B1b补充：两张匿名格挡+判定格挡军火库只消费原匿名格挡", () => {
+  const target=b1bTarget({handCount:2,blockProbability:1,twoBlockProbability:1,blockCountDistribution:[{probability:1,conditions:{},blockCount:2}]});
+  const {simulator}=b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);
+  assert.equal(target.knownCards.length,1);assert.equal(target.knownCards[0].definitionId,"block");
+  assertClose(simulator.cardAvailability(target.knownCards[0]),1);
+  const byCount=blockDistributionByCount(target.blockCountDistribution);
+  assertClose(byCount[1] ?? 0,1);assert.equal(target.twoBlockProbability,0);
+  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+});
+
+test("B1b补充：一张匿名格挡+判定格挡军火库两张都消费", () => {
+  const target=b1bTarget({handCount:1,blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);
+  assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);
+  assert.ok(target.blockCountDistribution.every((branch)=>branch.blockCount===0));
+});
+
 const conditionalAssaultState = (attackLimit) => ({ playPhaseEnded:false, players:[
   {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,maxEnergy:4,handCount:2,hand:[{id:"one",definitionId:"assault"},{id:"two",definitionId:"assault"}],attackUsed:0,attackLimit,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4},
   {id:"middle",seatIndex:1,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0},
@@ -6708,7 +7012,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260806-ai-block-consumption-v90"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260806-ai-radar-block-v91"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 

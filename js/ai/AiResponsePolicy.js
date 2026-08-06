@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-block-consumption-v90";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260806-ai-block-consumption-v90";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260806-ai-block-consumption-v90";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-radar-block-v91";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260806-ai-radar-block-v91";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260806-ai-radar-block-v91";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
