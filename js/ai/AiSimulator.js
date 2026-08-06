@@ -2,12 +2,12 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260805-spy-gap-rescue-v89";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-spy-gap-rescue-v89";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260805-spy-gap-rescue-v89";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260805-spy-gap-rescue-v89";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260805-spy-gap-rescue-v89";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260805-spy-gap-rescue-v89";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260806-ai-block-consumption-v90";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-block-consumption-v90";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260806-ai-block-consumption-v90";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260806-ai-block-consumption-v90";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260806-ai-block-consumption-v90";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260806-ai-block-consumption-v90";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,7 +20,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260805-spy-gap-rescue-v89";
+} from "./AiProbabilityBranches.js?build=20260806-ai-block-consumption-v90";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -86,12 +86,14 @@ export class AiSimulator {
     this.initial = structuredClone(visibleState);
     this.initializeEquipmentBaselines(this.initial);
     this.initializeAssaultSummaries(this.initial);
+    this.initializeBlockCountDistributions(this.initial);
   }
 
   clone(state = this.initial) {
     const cloned = structuredClone(state);
     this.initializeEquipmentBaselines(cloned);
     this.initializeAssaultSummaries(cloned);
+    this.initializeBlockCountDistributions(cloned);
     return cloned;
   }
 
@@ -118,6 +120,317 @@ export class AiSimulator {
 
   initializeAssaultSummaries(state) {
     for (const player of state?.players ?? []) this.syncAssaultSummary(player);
+  }
+
+  /** 初始化或保留每个玩家的格挡数量分布；分布是后续 blockProbability 的唯一来源。 */
+  initializeBlockCountDistributions(state) {
+    for (const player of state?.players ?? []) {
+      if (!Array.isArray(player.blockCountDistribution) || !player.blockCountDistribution.length) {
+        player.blockCountDistribution = this.buildInitialBlockCountDistribution(player, state?.remainingCardCounts ?? null);
+      }
+      this.syncBlockSummary(player);
+    }
+  }
+
+  /** 为缺少分布的旧快照/测试状态构造兼容初始分布；生产可见状态始终自带分布。 */
+  buildInitialBlockCountDistribution(player, remainingCardCounts = null) {
+    const explicit = [
+      ...(Array.isArray(player.hand) ? player.hand : []),
+      ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+    ].filter((card) => card?.definitionId === "block")
+      .reduce((sum, card) => sum + this.cardAvailability(card), 0);
+    if (explicit > PROBABILITY_EPSILON
+      && Math.abs(Number(player.handCount ?? 0) - explicit) < PROBABILITY_EPSILON) {
+      return [{ probability:1, conditions:{}, blockCount:Math.max(0, Math.round(explicit)) }];
+    }
+    if (explicit > PROBABILITY_EPSILON) {
+      return this.cardEstimateDistribution(player, "block", remainingCardCounts)
+        .map((branch) => ({ probability:branch.probability, conditions:{}, blockCount:branch.count }));
+    }
+    if (player.blockProbability == null) {
+      return this.cardEstimateDistribution(player, "block", remainingCardCounts)
+        .map((branch) => ({ probability:branch.probability, conditions:{}, blockCount:branch.count }));
+    }
+    const blockProbability = clampProbability(player.blockProbability ?? 0);
+    const twoBlockProbability = clampProbability(player.twoBlockProbability ?? 0);
+    if (blockProbability <= PROBABILITY_EPSILON) {
+      return [{ probability:1, conditions:{}, blockCount:0 }];
+    }
+    if (twoBlockProbability >= 1 - PROBABILITY_EPSILON) {
+      const count = Math.max(2, Math.ceil(Number(player.handCount) || 0));
+      return [{ probability:1, conditions:{}, blockCount:count }];
+    }
+    const branches = [
+      { probability:Math.max(0, 1 - blockProbability), conditions:{}, blockCount:0 },
+      { probability:Math.max(0, blockProbability - twoBlockProbability), conditions:{}, blockCount:1 },
+      { probability:twoBlockProbability, conditions:{}, blockCount:2 }
+    ].filter((branch) => branch.probability > PROBABILITY_EPSILON);
+    const total = branches.reduce((sum, branch) => sum + branch.probability, 0);
+    return total > 0
+      ? branches.map((branch) => ({ ...branch, probability:branch.probability / total }))
+      : [{ probability:1, conditions:{}, blockCount:0 }];
+  }
+
+  /** 把格挡数量分布同步为 blockProbability / twoBlockProbability，并规范化分布。 */
+  syncBlockSummary(player) {
+    if (!Array.isArray(player.blockCountDistribution) || !player.blockCountDistribution.length) {
+      player.blockCountDistribution = [{ probability:1, conditions:{}, blockCount:0 }];
+    }
+    const branches = mergeProbabilityStateBranches(
+      player.blockCountDistribution.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions ?? {},
+        blockCount:Math.max(0, Math.floor(Number(branch.blockCount ?? branch.count) || 0))
+      }))
+    );
+    player.blockCountDistribution = branches;
+    player.blockProbability = branches.reduce(
+      (sum, branch) => sum + (branch.blockCount >= 1 ? branch.probability : 0), 0
+    );
+    player.twoBlockProbability = branches.reduce(
+      (sum, branch) => sum + (branch.blockCount >= 2 ? branch.probability : 0), 0
+    );
+    return branches;
+  }
+
+  /** 返回可用于 joinProbabilityStateBranches 的格挡数量状态分支。 */
+  getBlockCountBranches(player, remainingCardCounts = null) {
+    if (!Array.isArray(player.blockCountDistribution) || !player.blockCountDistribution.length) {
+      player.blockCountDistribution = this.buildInitialBlockCountDistribution(player, remainingCardCounts);
+    }
+    return this.syncBlockSummary(player).map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions,
+      blockCount:branch.blockCount
+    }));
+  }
+
+  /**
+   * 构造每个条件世界中的确定格挡数量。
+   * 只统计 hand / knownCards 中 definitionId === "block" 的身份，
+   * 按 availabilityStateBranches 逐张累加，不修改状态、不生成新随机事件。
+   */
+  getKnownBlockCountBranches(player) {
+    const cards = [
+      ...(Array.isArray(player.hand) ? player.hand.filter((card) => card.definitionId === "block") : []),
+      ...(Array.isArray(player.knownCards) ? player.knownCards.filter((entry) => entry.definitionId === "block") : [])
+    ];
+    let branches = [{ probability:1, conditions:{}, knownBlockCount:0 }];
+    for (const card of cards) {
+      const availabilityState = getAvailabilityStateBranches(card).map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        available:Boolean(branch.available)
+      }));
+      const joined = joinProbabilityStateBranches(branches, availabilityState);
+      branches = projectProbabilityStateBranches(joined, (branch) => ({
+        knownBlockCount:branch.knownBlockCount + (branch.available ? 1 : 0)
+      }));
+    }
+    return branches;
+  }
+
+  /** 确保玩家拥有合法格挡分布；已有分布不会被覆盖。 */
+  ensureBlockCountDistribution(player, remainingCardCounts = null) {
+    if (!Array.isArray(player.blockCountDistribution) || !player.blockCountDistribution.length) {
+      player.blockCountDistribution = this.buildInitialBlockCountDistribution(player, remainingCardCounts);
+    }
+    return this.syncBlockSummary(player);
+  }
+
+  /** 在实际获得确定格挡的世界中，让格挡数量 +1。 */
+  addKnownBlockToDistribution(state, player, gainWorlds) {
+    const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
+    const partition = gainWorlds.map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions ?? {},
+      gained:Boolean(branch.occurs ?? branch.available)
+    }));
+    const joined = joinProbabilityStateBranches(blockState, partition);
+    player.blockCountDistribution = projectProbabilityStateBranches(joined, (branch) => ({
+      blockCount:branch.blockCount + (branch.gained ? 1 : 0)
+    }));
+    this.syncBlockSummary(player);
+  }
+
+  /** 在实际失去确定格挡的世界中，让格挡数量 -1，且不低于 0。 */
+  removeKnownBlockFromDistribution(state, player, removalWorlds) {
+    const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
+    const partition = removalWorlds.map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions ?? {},
+      removed:Boolean(branch.occurs ?? branch.available)
+    }));
+    const joined = joinProbabilityStateBranches(blockState, partition);
+    player.blockCountDistribution = projectProbabilityStateBranches(joined, (branch) => ({
+      blockCount:Math.max(0, branch.blockCount - (branch.removed ? 1 : 0))
+    }));
+    this.syncBlockSummary(player);
+  }
+
+  /** 只为真正新增的匿名牌叠加一次根先验，不对旧手牌重新抽样。 */
+  addOneUnknownCardToBlockDistribution(state, player, gainWorlds) {
+    const density = remainingCardDensity(state?.remainingCardCounts, "block");
+    const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
+    const partition = gainWorlds.map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions ?? {},
+      gained:Boolean(branch.occurs ?? branch.available)
+    }));
+    const joined = joinProbabilityStateBranches(blockState, partition);
+    const outcomes = [];
+    for (const branch of joined) {
+      if (branch.gained && density > 0) {
+        outcomes.push({
+          probability:branch.probability * (1 - density),
+          conditions:branch.conditions,
+          blockCount:branch.blockCount
+        });
+        outcomes.push({
+          probability:branch.probability * density,
+          conditions:branch.conditions,
+          blockCount:branch.blockCount + 1
+        });
+      } else {
+        outcomes.push({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          blockCount:branch.blockCount
+        });
+      }
+    }
+    player.blockCountDistribution = mergeProbabilityStateBranches(outcomes);
+    this.syncBlockSummary(player);
+  }
+
+  /**
+   * 从当前格挡分布中按无放回条件概率移除匿名牌。
+   * 只返回“实际移除”的世界，来源与接收者可共享同一组 blockRemoved 条件。
+   */
+  removeUnknownCardsFromBlockDistribution(
+    state,
+    player,
+    expectedAmount,
+    unknownCount,
+    eventWorlds = null,
+    label = "unknown-removal",
+    adjustHandCount = true
+  ) {
+    this.ensureBlockCountDistribution(player, state?.remainingCardCounts ?? null);
+    const unknown = Math.max(0, Number(unknownCount) || 0);
+    const spent = Math.min(
+      Math.max(0, Number(expectedAmount) || 0),
+      unknown,
+      Math.max(0, Number(player.handCount) || 0)
+    );
+    if (spent <= PROBABILITY_EPSILON || unknown <= 0) return { removed:0, identityWorlds:[] };
+    const eventProbabilityValue = Array.isArray(eventWorlds) && eventWorlds.length
+      ? this.eventProbability(eventWorlds)
+      : 1;
+    const removalProbability = eventProbabilityValue > 0
+      ? Math.min(1, spent / eventProbabilityValue)
+      : 0;
+    let removalWorlds;
+    if (Array.isArray(eventWorlds) && eventWorlds.length) {
+      // 在效果世界内部按 spent 缩放“实际移除”事件，保证返回的移除期望等于 spent。
+      removalWorlds = this.gateEventWorlds(state, eventWorlds, removalProbability, `${label}:gate`);
+    } else {
+      removalWorlds = probabilityEventPartition(
+        this.nextProbabilityEventKey(state, label),
+        removalProbability,
+        "occurs"
+      );
+    }
+    const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
+    const knownState = this.getKnownBlockCountBranches(player);
+    const joined = joinProbabilityStateBranches(blockState, removalWorlds, knownState);
+    const outcomes = [];
+    for (const branch of joined) {
+      const total = branch.blockCount;
+      const known = branch.knownBlockCount;
+      const anonymousBlocks = Math.max(0, Math.min(unknown, total - known));
+      const occurs = Boolean(branch.occurs);
+      if (occurs && anonymousBlocks > 0) {
+        const removalChance = Math.min(1, anonymousBlocks / unknown);
+        outcomes.push({
+          probability:branch.probability * removalChance,
+          conditions:branch.conditions,
+          blockCount:Math.max(0, total - 1),
+          occurs:true,
+          blockRemoved:true
+        });
+        outcomes.push({
+          probability:branch.probability * (1 - removalChance),
+          conditions:branch.conditions,
+          blockCount:total,
+          occurs:true,
+          blockRemoved:false
+        });
+      } else if (occurs) {
+        // 移除事件发生，但该世界没有匿名格挡可移除，移除的是匿名非格挡。
+        outcomes.push({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          blockCount:total,
+          occurs:true,
+          blockRemoved:false
+        });
+      } else {
+        outcomes.push({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          blockCount:total,
+          occurs:false,
+          blockRemoved:false
+        });
+      }
+    }
+    player.blockCountDistribution = mergeProbabilityStateBranches(
+      outcomes.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        blockCount:branch.blockCount
+      }))
+    );
+    this.syncBlockSummary(player);
+    const identityWorlds = mergeProbabilityStateBranches(
+      outcomes.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        occurs:branch.occurs,
+        blockRemoved:branch.blockRemoved
+      }))
+    );
+    let removed = totalBranchProbability(identityWorlds.filter((branch) => branch.occurs));
+    if (Math.abs(removed - spent) <= PROBABILITY_EPSILON * 1e3) removed = spent;
+    if (adjustHandCount) player.handCount = Math.max(0, (player.handCount ?? 0) - removed);
+    return { removed, identityWorlds };
+  }
+
+  /** 匿名牌转移：来源与接收者共享同一组“是否格挡”条件世界。 */
+  transferUnknownBlockCapacity(state, source, receiver, effectWorlds, unknownCount) {
+    const { removed, identityWorlds } = this.removeUnknownCardsFromBlockDistribution(
+      state,
+      source,
+      this.eventProbability(effectWorlds),
+      unknownCount,
+      effectWorlds,
+      "transfer-unknown",
+      false
+    );
+    if (removed <= PROBABILITY_EPSILON) return 0;
+    this.downgradePartialKnownCardsAfterRandomLoss(source);
+    source.handCount = Math.max(0, (source.handCount ?? 0) - removed);
+    const blockState = this.getBlockCountBranches(receiver, state?.remainingCardCounts ?? null);
+    const joined = joinProbabilityStateBranches(blockState, identityWorlds);
+    receiver.blockCountDistribution = projectProbabilityStateBranches(joined, (branch) => ({
+      blockCount:branch.blockCount + (branch.occurs && branch.blockRemoved ? 1 : 0)
+    }));
+    this.syncBlockSummary(receiver);
+    receiver.handCount = (receiver.handCount ?? 0) + removed;
+    this.syncCardEstimates(source, state?.remainingCardCounts);
+    this.syncCardEstimates(receiver, state?.remainingCardCounts);
+    return removed;
   }
 
   nextProbabilityEventKey(state, label = "event") {
@@ -488,7 +801,7 @@ export class AiSimulator {
                 definitionId:selection.definitionId ?? null
               }, effectEventWorlds, receiver.id === actor.id, excludedTransferCard)
             : this.transferUnknownCardIdentity(next, source, receiver,
-                this.eventProbability(effectEventWorlds),
+                effectEventWorlds,
                 selection.availableUnknownCount != null && Number.isFinite(Number(selection.availableUnknownCount))
                   ? Math.max(0, Number(selection.availableUnknownCount))
                   : this.availableUnknownCountFor(source, excludedTransferCard));
@@ -600,6 +913,7 @@ export class AiSimulator {
       availabilityStateBranches: acquired
     });
     player.handCount = (player.handCount ?? 0) + acquisitionProbability;
+    if (cardIdentity.definitionId === "block") this.addKnownBlockToDistribution(state, player, acquired);
     this.syncCardEstimates(player, state?.remainingCardCounts);
     return acquisitionProbability;
   }
@@ -658,6 +972,12 @@ export class AiSimulator {
         totalBranchProbability(mergedState.filter((branch) => branch.available)) - oldProbability);
       if (addedProbability > PROBABILITY_EPSILON) {
         player.handCount = (player.handCount ?? 0) + addedProbability;
+        if (identity.definitionId === "block") {
+          const addedWorlds = projectProbabilityStateBranches(merged, (branch) => ({
+            occurs:Boolean(branch.newAvailable && !branch.available)
+          }));
+          this.addKnownBlockToDistribution(state, player, addedWorlds);
+        }
       }
       this.syncCardEstimates(player, state?.remainingCardCounts);
       return addedProbability;
@@ -670,6 +990,7 @@ export class AiSimulator {
       availabilityStateBranches:acquired
     });
     player.handCount = (player.handCount ?? 0) + acquisitionProbability;
+    if (identity.definitionId === "block") this.addKnownBlockToDistribution(state, player, acquired);
     this.syncCardEstimates(player, state?.remainingCardCounts);
     return acquisitionProbability;
   }
@@ -681,7 +1002,7 @@ export class AiSimulator {
       : null;
     if (!entry || this.cardAvailability(entry) < 1 - PROBABILITY_EPSILON) {
       return this.transferUnknownCardIdentity(state, source, receiver,
-        this.eventProbability(effectWorlds), this.availableUnknownCountFor(source, excludedCardIds));
+        effectWorlds, this.availableUnknownCountFor(source, excludedCardIds));
     }
     const availabilityState = getAvailabilityStateBranches(entry);
     const joined = joinProbabilityStateBranches(effectWorlds, availabilityState);
@@ -693,6 +1014,9 @@ export class AiSimulator {
     }));
     const transferProbability = this.eventProbability(acquisitionWorlds);
     if (transferProbability <= PROBABILITY_EPSILON) return 0;
+    if (identity.definitionId === "block") {
+      this.removeKnownBlockFromDistribution(state, source, acquisitionWorlds);
+    }
     entry.availabilityStateBranches = remainingState;
     entry.availabilityBranches = availableBranchesFromState(remainingState);
     const remainingProbability = totalBranchProbability(entry.availabilityBranches);
@@ -716,14 +1040,9 @@ export class AiSimulator {
     return this.addSimulatedKnownCard(state, receiver, identity, acquisitionWorlds);
   }
 
-  /** 未知转移：只移动匿名聚合数量并同步接收者摘要。 */
-  transferUnknownCardIdentity(state, source, receiver, expectedAmount, availableUnknownCount) {
-    const transferred = this.consumeUnknownResourceCard(state, source, expectedAmount, availableUnknownCount);
-    if (transferred > PROBABILITY_EPSILON) {
-      receiver.handCount = (receiver.handCount ?? 0) + transferred;
-      this.syncCardEstimates(receiver, state?.remainingCardCounts);
-    }
-    return transferred;
+  /** 未知转移：来源与接收者共享同一组匿名牌身份条件。 */
+  transferUnknownCardIdentity(state, source, receiver, effectWorlds, availableUnknownCount) {
+    return this.transferUnknownBlockCapacity(state, source, receiver, effectWorlds, availableUnknownCount);
   }
 
   /** 按具体牌与未知聚合重建四类派生摘要；只用于定向已知牌转移/移除与装备入手路径。 */
@@ -777,12 +1096,13 @@ export class AiSimulator {
       (sum, branch) => sum + (branch.count >= required ? branch.probability : 0), 0
     );
     const recoverDistribution = this.cardEstimateDistribution(player, "recover", remainingCardCounts);
-    const blockDistribution = this.cardEstimateDistribution(player, "block", remainingCardCounts);
     const counterDistribution = this.cardEstimateDistribution(player, "counter", remainingCardCounts);
     const assaultDistribution = this.cardEstimateDistribution(player, "assault", remainingCardCounts);
     player.expectedRecoverCount = expectation(recoverDistribution);
-    player.blockProbability = atLeast(blockDistribution, 1);
-    player.twoBlockProbability = atLeast(blockDistribution, 2);
+    if (!Array.isArray(player.blockCountDistribution) || !player.blockCountDistribution.length) {
+      player.blockCountDistribution = this.buildInitialBlockCountDistribution(player, remainingCardCounts);
+    }
+    this.syncBlockSummary(player);
     player.counterProbability = atLeast(counterDistribution, 1);
     player.assaultCountDistribution = assaultDistribution;
     player.expectedAssaultCount = expectation(assaultDistribution);
@@ -853,6 +1173,54 @@ export class AiSimulator {
         player.hand = player.hand.filter((entry) => entry.id !== card.id);
       }
       remaining -= spendProbability;
+    }
+  }
+
+  /**
+  * 在包含“已格挡/未格挡”的完整世界分区中消费确定格挡身份。
+   * 这里只更新 hand / knownCards 的身份可用性，不修改 handCount 或 blockCountDistribution；
+   * 总格挡容量由 blockCountDistribution 统一扣减，避免两个入口重复计数。
+   */
+  consumeBlockIdentities(state, player, blockWorlds) {
+    if (!player || !Array.isArray(blockWorlds) || !blockWorlds.length) return;
+    const candidates = [
+      ...(Array.isArray(player.hand) ? player.hand.filter((card) => card.definitionId === "block") : []),
+      ...(Array.isArray(player.knownCards) ? player.knownCards.filter((entry) => entry.definitionId === "block") : [])
+    ];
+    if (!candidates.length) return;
+    let remainingWorlds = blockWorlds.map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions ?? {},
+      remaining:branch.blockUsed
+        ? Math.max(0, Number(branch.requiredCount) || 1)
+        : 0
+    }));
+    for (const card of candidates) {
+      const availabilityState = getAvailabilityStateBranches(card).map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        available:Boolean(branch.available)
+      }));
+      const joined = joinProbabilityStateBranches(remainingWorlds, availabilityState);
+      if (!joined.length) break;
+      const usedWorlds = projectProbabilityStateBranches(joined, (branch) => ({
+        used:Boolean(branch.available && branch.remaining > 0),
+        remaining:Math.max(0, Number(branch.remaining) - (branch.available && branch.remaining > 0 ? 1 : 0))
+      }));
+      card.availabilityStateBranches = projectProbabilityStateBranches(joined, (branch) => ({
+        available:Boolean(branch.available && !(branch.available && branch.remaining > 0))
+      }));
+      card.availabilityBranches = availableBranchesFromState(card.availabilityStateBranches);
+      if (totalBranchProbability(card.availabilityBranches) <= PROBABILITY_EPSILON) {
+        if (Array.isArray(player.hand)) player.hand = player.hand.filter((entry) => entry !== card);
+        if (Array.isArray(player.knownCards)) player.knownCards = player.knownCards.filter((entry) => entry !== card);
+      }
+      remainingWorlds = usedWorlds.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        remaining:branch.remaining
+      }));
+      if (!remainingWorlds.some((branch) => branch.remaining > 0 && branch.probability > PROBABILITY_EPSILON)) break;
     }
   }
 
@@ -946,7 +1314,10 @@ export class AiSimulator {
    */
   downgradePartialKnownCardsAfterRandomLoss(player) {
     if (!Array.isArray(player?.knownCards)) return false;
-    const retained = player.knownCards.filter((entry) => this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON);
+    const retained = player.knownCards.filter((entry) => (
+      (entry.definitionId === "block" && this.cardAvailability(entry) > PROBABILITY_EPSILON)
+      || this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON
+    ));
     const changed = retained.length !== player.knownCards.length;
     if (changed) player.knownCards = retained;
     return changed;
@@ -957,7 +1328,7 @@ export class AiSimulator {
    * 不按整手牌比例侵蚀完整确定 known；消费后始终重算摘要。
    * @returns {number} 实际消费的期望数量
    */
-  consumeUnknownResourceCard(state, player, expectedAmount, availableUnknownCount) {
+  consumeUnknownResourceCard(state, player, expectedAmount, availableUnknownCount, eventWorlds = null) {
     if (!player) return 0;
     const spent = Math.min(
       Math.max(0, Number(expectedAmount) || 0),
@@ -965,10 +1336,193 @@ export class AiSimulator {
       Math.max(0, Number(player.handCount) || 0)
     );
     if (spent <= PROBABILITY_EPSILON) return 0;
-    player.handCount = Math.max(0, (player.handCount ?? 0) - spent);
+    const { removed } = this.removeUnknownCardsFromBlockDistribution(
+      state,
+      player,
+      spent,
+      availableUnknownCount,
+      eventWorlds,
+      "unknown-resource-loss"
+    );
     this.downgradePartialKnownCardsAfterRandomLoss(player);
     this.syncCardEstimates(player, state?.remainingCardCounts);
-    return spent;
+    return removed;
+  }
+
+  /**
+   * 从整副手牌中随机移除一张：hand / knownCards 身份与匿名桶组成互斥候选池。
+   * 一次移除只可能选中一个候选，并返回本次实际移除的期望数量。
+   */
+  removeOneRandomCardFromHand(state, player, spend) {
+    const amount = Math.min(
+      Math.max(0, Number(spend) || 0),
+      Math.max(0, Number(player.handCount) || 0)
+    );
+    if (amount <= PROBABILITY_EPSILON || !player) return 0;
+    const explicitCards = [
+      ...(Array.isArray(player.hand) ? player.hand : []),
+      ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+    ];
+    const explicitExpected = explicitCards.reduce(
+      (sum, card) => sum + this.cardAvailability(card), 0
+    );
+    const expectedUnknown = Math.max(0, (Number(player.handCount) || 0) - explicitExpected);
+    const candidates = [
+      ...(Array.isArray(player.hand) ? player.hand
+        .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON)
+        .map((card, index) => ({ key:`hand:${card.id ?? index}`, card, definitionId:card.definitionId })) : []),
+      ...(Array.isArray(player.knownCards) ? player.knownCards
+        .filter((entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON)
+        .map((entry, index) => ({ key:`known:${entry.cardId ?? index}`, card:entry, definitionId:entry.definitionId })) : [])
+    ];
+    if (!candidates.length && expectedUnknown <= PROBABILITY_EPSILON) return 0;
+
+    let anonymousState = Array.isArray(player.anonymousCountBranches) && player.anonymousCountBranches.length
+      ? mergeProbabilityStateBranches(player.anonymousCountBranches)
+      : null;
+    if (anonymousState) {
+      const anonymousExpected = anonymousState.reduce(
+        (sum, branch) => sum + branch.probability * (Number(branch.anonymousCount) || 0), 0
+      );
+      if (Math.abs(anonymousExpected - expectedUnknown) > PROBABILITY_EPSILON) anonymousState = null;
+    }
+    if (!anonymousState) {
+      player.anonymousCountBranches = [{ probability:1, conditions:{}, anonymousCount:expectedUnknown }];
+      anonymousState = player.anonymousCountBranches;
+    }
+
+    const removalWorlds = probabilityEventPartition(
+      this.nextProbabilityEventKey(state, "random-hand-removal"),
+      Math.min(1, amount),
+      "occurs"
+    );
+    const candidatePartitions = candidates.map((candidate, index) => (
+      getAvailabilityStateBranches(candidate.card).map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        [`c${index}`]:Boolean(branch.available)
+      }))
+    ));
+    const anonymousPartition = anonymousState.map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions,
+      anonymousCount:Math.max(0, Number(branch.anonymousCount) || 0)
+    }));
+    const joined = joinProbabilityStateBranches(
+      removalWorlds, ...candidatePartitions, anonymousPartition
+    );
+    const selectionKey = this.nextProbabilityEventKey(state, "random-hand-selection");
+    const outcomes = [];
+    for (const branch of joined) {
+      const occurs = Boolean(branch.occurs);
+      const available = candidates.map((_, index) => Boolean(branch[`c${index}`]));
+      const knownCount = available.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+      const anonymousCount = Math.max(0, Number(branch.anonymousCount) || 0);
+      const total = knownCount + anonymousCount;
+      if (!occurs || total <= PROBABILITY_EPSILON) {
+        outcomes.push({
+          probability:branch.probability,
+          conditions:{ ...branch.conditions, [selectionKey]:"none" },
+          selectedIndex:-1,
+          anonymousSelected:false,
+          anonymousCount
+        });
+        continue;
+      }
+      for (let index = 0; index < candidates.length; index += 1) {
+        if (available[index]) {
+          outcomes.push({
+            probability:branch.probability / total,
+            conditions:{ ...branch.conditions, [selectionKey]:`known:${candidates[index].key}` },
+            selectedIndex:index,
+            anonymousSelected:false,
+            anonymousCount
+          });
+        }
+      }
+      outcomes.push({
+        probability:branch.probability * (anonymousCount / total),
+        conditions:{ ...branch.conditions, [selectionKey]:"anonymous" },
+        selectedIndex:-1,
+        anonymousSelected:true,
+        anonymousCount
+      });
+    }
+
+    const selectionPartition = mergeProbabilityStateBranches(outcomes);
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      const availabilityState = getAvailabilityStateBranches(candidate.card).map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        available:Boolean(branch.available)
+      }));
+      const joinedAvailability = joinProbabilityStateBranches(availabilityState, selectionPartition);
+      candidate.card.availabilityStateBranches = projectProbabilityStateBranches(
+        joinedAvailability,
+        (branch) => ({ available:Boolean(branch.available && !(branch.selectedIndex === index)) })
+      );
+      candidate.card.availabilityBranches = availableBranchesFromState(candidate.card.availabilityStateBranches);
+      if (totalBranchProbability(candidate.card.availabilityBranches) <= PROBABILITY_EPSILON) {
+        if (Array.isArray(player.hand)) player.hand = player.hand.filter((card) => card !== candidate.card);
+        if (Array.isArray(player.knownCards)) player.knownCards = player.knownCards.filter((entry) => entry !== candidate.card);
+      }
+    }
+
+    const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
+    const knownState = this.getKnownBlockCountBranches(player);
+    const joinedBlock = joinProbabilityStateBranches(blockState, knownState, selectionPartition);
+    const blockOutcomes = [];
+    for (const branch of joinedBlock) {
+      const totalBlocks = Math.max(0, Math.floor(Number(branch.blockCount) || 0));
+      const knownBlocks = Math.max(0, Math.floor(Number(branch.knownBlockCount) || 0));
+      const selectedIndex = Number.isFinite(Number(branch.selectedIndex)) ? Number(branch.selectedIndex) : -1;
+      if (branch.anonymousSelected) {
+        const anonymousCount = Math.max(0, Number(branch.anonymousCount) || 0);
+        const anonymousBlocks = Math.max(0, Math.min(anonymousCount, totalBlocks - knownBlocks));
+        const removalChance = anonymousCount > PROBABILITY_EPSILON
+          ? Math.min(1, anonymousBlocks / anonymousCount)
+          : 0;
+        blockOutcomes.push({
+          probability:branch.probability * removalChance,
+          conditions:branch.conditions,
+          blockCount:Math.max(0, totalBlocks - 1)
+        });
+        blockOutcomes.push({
+          probability:branch.probability * (1 - removalChance),
+          conditions:branch.conditions,
+          blockCount:totalBlocks
+        });
+      } else if (selectedIndex >= 0 && candidates[selectedIndex]?.definitionId === "block") {
+        blockOutcomes.push({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          blockCount:Math.max(0, totalBlocks - 1)
+        });
+      } else {
+        blockOutcomes.push({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          blockCount:totalBlocks
+        });
+      }
+    }
+    player.blockCountDistribution = mergeProbabilityStateBranches(blockOutcomes);
+    this.syncBlockSummary(player);
+
+    const joinedAnonymous = joinProbabilityStateBranches(anonymousPartition, selectionPartition);
+    player.anonymousCountBranches = projectProbabilityStateBranches(joinedAnonymous, (branch) => ({
+      anonymousCount:Math.max(0, (Number(branch.anonymousCount) || 0) - (branch.anonymousSelected ? 1 : 0))
+    }));
+
+    if (Array.isArray(player.hand)) {
+      player.hand = player.hand.filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON);
+    }
+    if (Array.isArray(player.knownCards)) {
+      player.knownCards = player.knownCards.filter((entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON);
+    }
+    player.handCount = Math.max(0, (player.handCount ?? 0) - amount);
+    return amount;
   }
 
   consumeRandomHandCards(state, player, expectedAmount) {
@@ -985,31 +1539,9 @@ export class AiSimulator {
         if (branch.count > 0) next.push({ count:branch.count - 1, probability:branch.probability * assaultLossChance });
       }
       this.syncAssaultSummary(player, next);
-
-      const cards = (player.hand ?? []).filter((card) => totalBranchProbability(getAvailabilityBranches(card)) > PROBABILITY_EPSILON);
-      const totalAvailability = cards.reduce((sum, card) => sum + totalBranchProbability(getAvailabilityBranches(card)), 0);
-      for (const card of cards) {
-        const availabilityState = getAvailabilityStateBranches(card);
-        const availableProbability = totalBranchProbability(availabilityState.filter((branch) => branch.available));
-        const removalProbability = totalAvailability > 0 ? spend * availableProbability / totalAvailability : 0;
-        const removalWorlds = this.getEventWorlds(state,
-          availableProbability > 0 ? removalProbability / availableProbability : 0,
-          null, `random-card-loss:${player.id}:${card.id}`);
-        const joined = joinProbabilityStateBranches(availabilityState, removalWorlds);
-        card.availabilityStateBranches = projectProbabilityStateBranches(joined, (branch) => ({
-          available:Boolean(branch.available && !branch.occurs)
-        }));
-        card.availabilityBranches = availableBranchesFromState(card.availabilityStateBranches);
-      }
-      if (Array.isArray(player.hand)) {
-        player.hand = player.hand.filter((card) => totalBranchProbability(getAvailabilityBranches(card)) > PROBABILITY_EPSILON);
-      }
-      player.handCount = Math.max(0, handBefore - spend);
+      this.removeOneRandomCardFromHand(state, player, spend);
       remaining -= spend;
       totalSpent += spend;
-    }
-    if (totalSpent > PROBABILITY_EPSILON && this.downgradePartialKnownCardsAfterRandomLoss(player)) {
-      this.syncCardEstimates(player, state?.remainingCardCounts);
     }
     return totalSpent;
   }
@@ -1259,6 +1791,9 @@ export class AiSimulator {
       if (entry && this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON) {
         const acquisitionProbability = this.eventProbability(effectWorlds);
         if (acquisitionProbability <= PROBABILITY_EPSILON) return;
+        if (selection.definitionId === "block") {
+          this.removeKnownBlockFromDistribution(state, target, effectWorlds);
+        }
         entry.availabilityStateBranches = projectProbabilityStateBranches(effectWorlds, (branch) => ({
           available:Boolean(!branch.occurs)
         }));
@@ -1277,13 +1812,13 @@ export class AiSimulator {
       const transferred = this.consumeRandomHandCards(state, target, this.eventProbability(effectWorlds));
       actor.handCount = (actor.handCount ?? 0) + transferred;
     } else if (selection.zone === "hand") {
-      const transferred = this.consumeUnknownResourceCard(
+      this.transferUnknownBlockCapacity(
         state,
         target,
-        this.eventProbability(effectWorlds),
+        actor,
+        effectWorlds,
         selection.availableUnknownCount
       );
-      actor.handCount = (actor.handCount ?? 0) + transferred;
     }
   }
 
@@ -1307,6 +1842,9 @@ export class AiSimulator {
       if (entry && this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON) {
         const removalProbability = this.eventProbability(effectWorlds);
         if (removalProbability <= PROBABILITY_EPSILON) return;
+        if (selection.definitionId === "block") {
+          this.removeKnownBlockFromDistribution(state, target, effectWorlds);
+        }
         entry.availabilityStateBranches = projectProbabilityStateBranches(effectWorlds, (branch) => ({
           available:Boolean(!branch.occurs)
         }));
@@ -1324,7 +1862,8 @@ export class AiSimulator {
         state,
         target,
         this.eventProbability(effectWorlds),
-        selection.availableUnknownCount
+        selection.availableUnknownCount,
+        effectWorlds
       );
     }
   }
@@ -1556,21 +2095,25 @@ export class AiSimulator {
       && attacker.equipmentDefinitionId === "battleDevice"
       ? (options.attackerEquipmentProbability ?? this.getSimulatedEquipmentProbability(attacker, "battleDevice"))
       : 0);
-    const normalBlockChance = clampProbability(target.blockProbability ?? 0);
-    const twoBlockChance = clampProbability(target.twoBlockProbability ?? 0);
-    const blockChance = options.canBlock
-      ? battleProbability * twoBlockChance + (1 - battleProbability) * normalBlockChance
-      : 0;
-    let passChance = 1 - blockChance;
     const defenseProbability = options.deviceAttack
       ? this.getSimulatedEquipmentProbability(target, "defenseDevice")
       : 0;
-    let blockedByCardChance = blockChance;
-    let expectedBlockSpend = options.canBlock
-      ? battleProbability * twoBlockChance * 2 + (1 - battleProbability) * normalBlockChance
-      : 0;
+    let blockedByCardChance = 0;
+    let expectedBlockSpend = 0;
     let expectedJudgmentGain = 0;
+    let passChance = 1;
     if (defenseProbability > 0) {
+      // B1b 范围：雷达路径保持原行为，本任务不修改雷达判定与雷达格挡身份。
+      const normalBlockChance = clampProbability(target.blockProbability ?? 0);
+      const twoBlockChance = clampProbability(target.twoBlockProbability ?? 0);
+      const blockChance = options.canBlock
+        ? battleProbability * twoBlockChance + (1 - battleProbability) * normalBlockChance
+        : 0;
+      passChance = 1 - blockChance;
+      blockedByCardChance = blockChance;
+      expectedBlockSpend = options.canBlock
+        ? battleProbability * twoBlockChance * 2 + (1 - battleProbability) * normalBlockChance
+        : 0;
       const judgmentProbabilities = {
         ...remainingRadarJudgmentProbabilities(state?.remainingCardCounts),
         ...(options.radarJudgmentProbabilities ?? {})
@@ -1617,10 +2160,53 @@ export class AiSimulator {
       blockedByCardChance = (1 - defenseProbability) * blockChance + defenseProbability * radarBlocked;
       expectedBlockSpend = (1 - defenseProbability) * noRadarSpent + defenseProbability * radarSpent;
       expectedJudgmentGain = defenseProbability * basicChance;
+      target.handCount = Math.max(0, (target.handCount ?? 0)
+        + eventProbability * expectedJudgmentGain
+        - eventProbability * expectedBlockSpend);
+    } else if (options.canBlock) {
+      // 非雷达路径：格挡数量分布与本次伤害事件世界联合，只有同时发生且数量足够的
+      // 世界才消费格挡；消费张数由军火库条件决定（1 或 2）。
+      const battleKey = this.nextProbabilityEventKey(
+        state,
+        `battle-required:${attacker?.id ?? "unknown"}:${target.id}`
+      );
+      const requiredPartition = battleProbability >= 1 - PROBABILITY_EPSILON
+        ? [{ probability:1, conditions:{}, requiredCount:2 }]
+        : battleProbability <= PROBABILITY_EPSILON
+          ? [{ probability:1, conditions:{}, requiredCount:1 }]
+          : [
+              { probability:battleProbability, conditions:{ [battleKey]:"yes" }, requiredCount:2 },
+              { probability:1 - battleProbability, conditions:{ [battleKey]:"no" }, requiredCount:1 }
+            ];
+      const blockState = this.getBlockCountBranches(target, state?.remainingCardCounts ?? null);
+      const blockWorlds = joinProbabilityStateBranches(eventWorlds, requiredPartition, blockState);
+      const consumedBranches = blockWorlds.filter(
+        (branch) => branch.occurs && branch.blockCount >= branch.requiredCount
+      );
+      const blockedProbability = totalBranchProbability(consumedBranches);
+      blockedByCardChance = eventProbability > 0
+        ? Math.min(1, blockedProbability / eventProbability)
+        : 0;
+      passChance = Math.max(0, Math.min(1, 1 - blockedByCardChance));
+      expectedBlockSpend = consumedBranches.reduce(
+        (sum, branch) => sum + branch.probability * branch.requiredCount, 0
+      );
+      const remainingBlockBranches = projectProbabilityStateBranches(blockWorlds, (branch) => ({
+        blockCount: branch.occurs && branch.blockCount >= branch.requiredCount
+          ? Math.max(0, branch.blockCount - branch.requiredCount)
+          : branch.blockCount
+      }));
+      target.blockCountDistribution = remainingBlockBranches;
+      this.syncBlockSummary(target);
+      const identityWorlds = blockWorlds.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        requiredCount:branch.requiredCount,
+        blockUsed:Boolean(branch.occurs && branch.blockCount >= branch.requiredCount)
+      }));
+      this.consumeBlockIdentities(state, target, identityWorlds);
+      target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
     }
-    target.handCount = Math.max(0, (target.handCount ?? 0)
-      + eventProbability * expectedJudgmentGain
-      - eventProbability * expectedBlockSpend);
     const passPartition = probabilityEventPartition(
       this.nextProbabilityEventKey(state, `damage-pass:${attacker?.id ?? "unknown"}:${target.id}`),
       passChance,

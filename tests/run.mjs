@@ -1446,7 +1446,7 @@ test("AI模拟中的灵医回春也能让一张濒死调息恢复2点并摸牌",
 });
 test("AI壁垒只增加统一护盾且快照不包含专属护盾字段", () => { const warden=makePlayer("warden",0,"dawn","ai",1),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");warden.energy=2;ally.shield=2;const {game}=makeGame([warden,ally,enemy]),visible=createAiVisibleState(warden.id,game.state);assert.ok(visible.players.every((player)=>!("temporaryShieldAmount" in player)));const next=new AiSimulator(visible).apply(visible,{type:"skill",skill:{id:"barrier",cost:2,limitPerTurn:2},targets:[{id:ally.id}]},warden.id),nextAlly=next.players.find((player)=>player.id===ally.id);assert.equal(nextAlly.shield,3);assert.equal("temporaryShieldAmount" in nextAlly,false); });
 test("AI 对未知调息只按公开手牌数估算而不读取真实牌面", () => { const ai=makePlayer("ai",0,"dawn"),other=makePlayer("other",1,"dusk");const {game}=makeGame([ai,other]);other.hand=[instance("recover")];const first=createAiVisibleState(ai.id,game.state).players[1].expectedRecoverCount;other.hand=[instance("assault")];const second=createAiVisibleState(ai.id,game.state).players[1].expectedRecoverCount;assert.equal(first,second); });
-test("AI 模拟器只接收过滤快照并可独立克隆推演", () => { const visible={players:[{id:"a",battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:3,alive:true,handCount:1,hand:[{id:"x",definitionId:"assault"}]},{id:"b",battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:3,alive:true,handCount:2}]};const simulator=new AiSimulator(visible);const next=simulator.apply(visible,{type:"card",card:{id:"x",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(next.players[1].hp,3);assert.equal(visible.players[1].hp,4);assert.equal("game" in simulator,false); });
+test("AI 模拟器只接收过滤快照并可独立克隆推演", () => { const visible={players:[{id:"a",battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:3,alive:true,handCount:1,hand:[{id:"x",definitionId:"assault"}]},{id:"b",battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:3,alive:true,handCount:2,blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]}]};const simulator=new AiSimulator(visible);const next=simulator.apply(visible,{type:"card",card:{id:"x",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(next.players[1].hp,3);assert.equal(visible.players[1].hp,4);assert.equal("game" in simulator,false); });
 test("AI 动作生成使用同一距离合法性", () => { const ps=[makePlayer("a",0,"dawn"),makePlayer("b",1,"dusk"),makePlayer("c",2,"dusk"),makePlayer("d",3,"dawn"),makePlayer("e",4,"dusk")];const {game}=makeGame(ps);ps[0].hand.push(instance("assault"));const targets=game.aiController.getLegalActions(ps[0]).filter((a)=>a.card?.definitionId==="assault").map((a)=>a.targets[0].id);assert.deepEqual(targets,["b","e"]); });
 test("AI 可见动作与模拟器支持装备掠夺进入手牌且不读取隐藏手牌", () => { const actor=makePlayer("actor",0,"dawn"),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),plunder=instance("plunder");actor.hand.push(plunder);actor.equipment=instance("battleDevice");target.equipment=instance("energyDevice");const {game}=makeGame([actor,near,target,other,tail]),visible=createAiVisibleState(actor.id,game.state),actions=game.aiController.actionGenerator.generateFromVisible(visible,actor.id);const action=actions.find((entry)=>entry.card?.id===plunder.id&&entry.targets[0]?.id===target.id);assert.ok(action);assert.equal(visible.players[2].hand,undefined);const next=new AiSimulator(visible).apply(visible,action,actor.id);assert.equal(next.players[2].equipmentDefinitionId,null);assert.equal(next.players[0].equipmentDefinitionId,"battleDevice");assert.equal(next.players[0].handCount,1); });
 test("AI 束搜索实际达到多层、记录展开节点并采样10个隐藏世界", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);a.hand.push(instance("charge"),instance("exposeWeakness"),instance("assault"));const action=await game.aiController.selectAction(a,{gameId:game.state.gameId});assert.ok(["card","skill","end"].includes(action.type));assert.ok(game.aiController.planner.lastSearchStats.expanded>3);assert.ok(game.aiController.planner.lastSearchStats.depth>=2);assert.equal(game.aiController.planner.lastSearchStats.hiddenSamples,10); });
@@ -3250,6 +3250,311 @@ test("连续概率伤害不会重复使用已消耗的护盾分支", () => {
   const first=simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:false,eventProbability:.4});
   const second=simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:false,eventProbability:.4});
   assertClose(first,0);assertClose(second,.16);assertClose(state.players[1].shield,.36);assertClose(state.players[1].hp,3.84);
+});
+
+test("B1a：当前 AI 的一张确定格挡只使用一次", () => {
+  const blockCard={id:"b1",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
+  const state={players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,hand:[blockCard],blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.hand.length,0);
+  assert.equal(target.blockProbability,0);assert.equal(target.twoBlockProbability,0);
+  assert.ok(target.blockCountDistribution.every((branch)=>branch.blockCount===0));
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assert.equal(target.hp,3);
+});
+
+test("B1a：其他玩家的一张 knownCards 格挡只使用一次", () => {
+  const blockCard={cardId:"b2",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
+  const state={players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,knownCards:[blockCard],blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);assert.equal(target.twoBlockProbability,0);
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assert.equal(target.hp,3);
+});
+
+test("B1a：一张匿名未知手牌的条件概率不会重复使用", () => {
+  const state={players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assertClose(target.hp,3.5);assert.equal(target.blockProbability,0);
+  assert.ok(target.blockCountDistribution.every((branch)=>branch.blockCount===0));
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assertClose(target.hp,2.5);
+});
+
+test("B1a：军火库的两张确定格挡只阻挡一次", () => {
+  const blockCard=(id)=>({cardId:id,definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]});
+  const state={players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,knownCards:[blockCard("b1"),blockCard("b2")],blockProbability:1,twoBlockProbability:1,expectedRecoverCount:0}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:true});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);assert.equal(target.twoBlockProbability,0);
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:true});
+  assert.equal(target.hp,3);
+});
+
+test("B1a：军火库只有一张格挡时不消费且后续普通攻击仍可格挡", () => {
+  const blockCard={cardId:"b1",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
+  const state={players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,knownCards:[blockCard],blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:true});
+  assert.equal(target.hp,3);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.twoBlockProbability,0);
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assert.equal(target.hp,3);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+});
+
+test("B1a：部分事件世界不得过度消费格挡身份和数量", () => {
+  const blockCard={cardId:"b1",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
+  const state={players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,knownCards:[blockCard],blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false,eventProbability:.4});
+  assert.equal(target.hp,4);assertClose(target.handCount,.6);assert.equal(target.knownCards.length,1);
+  assertClose(target.knownCards[0].availabilityBranches.reduce((sum,branch)=>sum+branch.probability,0),.6);
+  assertClose(target.blockProbability,.6);
+  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assertClose(target.hp,3.6);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);
+});
+
+test("B1a：雷达格挡消费仍由后续 B1b 处理", () => {
+  const blockCard={cardId:"b1",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
+  const state={remainingCardCounts:{charge:1},players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,knownCards:[blockCard],blockProbability:1,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:true});
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:true});
+  assert.equal(state.players.length,2);
+  assert.ok(Number.isFinite(target.hp));
+});
+
+test("B1a补充：普通同步不能恢复已消费概率", () => {
+  const state={remainingCardCounts:null,players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0,
+      blockCountDistribution:[{probability:.5,conditions:{},blockCount:0},{probability:.5,conditions:{},blockCount:1}]}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assertClose(target.hp,3.5);assert.equal(target.blockProbability,0);
+  simulator.syncCardEstimates(target,null);
+  assert.equal(target.blockProbability,0);
+  assert.ok(target.blockCountDistribution.every((branch)=>branch.blockCount===0));
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assertClose(target.hp,2.5);
+});
+
+test("B1a补充：失去未知牌不能恢复概率", () => {
+  const state={remainingCardCounts:null,players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0,
+      blockCountDistribution:[{probability:.5,conditions:{},blockCount:0},{probability:.5,conditions:{},blockCount:1}]}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  simulator.consumeUnknownResourceCard(state,target,.2,.5);
+  assert.equal(target.blockProbability,0);
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assertClose(target.hp,2.5);
+});
+
+test("B1a补充：获得确定非格挡牌不能恢复旧概率", () => {
+  const state={remainingCardCounts:null,players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:.5,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
+      blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.addSimulatedKnownCard(state,target,{cardId:"c1",definitionId:"charge"},[{probability:1,conditions:{},occurs:true}]);
+  assert.equal(target.blockProbability,0);
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assertClose(target.hp,3);
+});
+
+test("B1a补充：获得确定格挡牌只增加一张", () => {
+  const state={remainingCardCounts:null,players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:.5,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
+      blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.addSimulatedKnownCard(state,target,{cardId:"b1",definitionId:"block"},[{probability:1,conditions:{},occurs:true}]);
+  assert.equal(target.blockProbability,1);assert.equal(target.twoBlockProbability,0);
+  assert.ok(target.blockCountDistribution.some((branch)=>branch.blockCount===1&&branch.probability===1));
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assert.equal(target.hp,4);
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assertClose(target.hp,3);
+});
+
+test("B1a补充：获得一张新匿名牌只为新牌增加概率", () => {
+  const state={remainingCardCounts:{block:10,assault:10},players:[
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
+      blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[0];
+  simulator.addOneUnknownCardToBlockDistribution(state,target,[{probability:1,conditions:{},occurs:true}]);
+  const byCount=Object.fromEntries(target.blockCountDistribution.map((branch)=>[branch.blockCount,branch.probability]));
+  assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
+});
+
+test("B1a补充：来源无格挡的匿名牌转移不能创造格挡", () => {
+  const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]};
+  const receiver={id:"r",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]};
+  const state={remainingCardCounts:null,players:[source,receiver]},simulator=new AiSimulator({players:[]});
+  simulator.transferUnknownBlockCapacity(state,source,receiver,[{probability:1,conditions:{},occurs:true}],1);
+  assert.equal(source.blockProbability,0);assert.equal(receiver.blockProbability,0);
+  assert.ok(receiver.blockCountDistribution.every((branch)=>branch.blockCount===0));
+});
+
+test("B1a补充：匿名格挡容量转移守恒", () => {
+  const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]};
+  const receiver={id:"r",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]};
+  const state={remainingCardCounts:null,players:[source,receiver]},simulator=new AiSimulator({players:[]});
+  simulator.transferUnknownBlockCapacity(state,source,receiver,[{probability:1,conditions:{},occurs:true}],1);
+  assert.equal(source.blockProbability,0);assert.equal(receiver.blockProbability,1);
+  assert.ok(source.blockCountDistribution.every((branch)=>branch.blockCount===0));
+  assert.ok(receiver.blockCountDistribution.some((branch)=>branch.blockCount===1&&branch.probability===1));
+});
+
+test("B1a补充：部分概率匿名转移保持同一条件", () => {
+  const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]};
+  const receiver={id:"r",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]};
+  const state={remainingCardCounts:null,players:[source,receiver]},simulator=new AiSimulator({players:[]});
+  const effectWorlds=[
+    {probability:.5,conditions:{event:"yes"},occurs:true},
+    {probability:.5,conditions:{event:"no"},occurs:false}
+  ];
+  simulator.transferUnknownBlockCapacity(state,source,receiver,effectWorlds,1);
+  assertClose(source.handCount,.5);assertClose(receiver.handCount,.5);
+  const sourceZero=source.blockCountDistribution.find((branch)=>branch.blockCount===0);
+  const receiverOne=receiver.blockCountDistribution.find((branch)=>branch.blockCount===1);
+  assert.ok(sourceZero);assert.ok(receiverOne);
+  assert.deepEqual(sourceZero.conditions,receiverOne.conditions);
+});
+
+test("B1a补充：clone 后仍不恢复已消费概率", () => {
+  const state={remainingCardCounts:null,players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0,
+      blockCountDistribution:[{probability:.5,conditions:{},blockCount:0},{probability:.5,conditions:{},blockCount:1}]}
+  ]},simulator=new AiSimulator({players:[]});
+  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:false});
+  const cloned=simulator.clone(state);
+  simulator.applyDamage(cloned,cloned.players[0],cloned.players[1],1,{canBlock:true,deviceAttack:false});
+  assertClose(cloned.players[1].hp,2.5);
+});
+
+test("B1a补充：三张确定格挡连续消费", () => {
+  const blockCard=(id)=>({cardId:id,definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]});
+  const state={remainingCardCounts:null,players:[
+    {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
+    {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:3,knownCards:[blockCard("b1"),blockCard("b2"),blockCard("b3")],blockProbability:1,twoBlockProbability:1,expectedRecoverCount:0,
+      blockCountDistribution:[{probability:1,conditions:{},blockCount:3}]}
+  ]},simulator=new AiSimulator({players:[]}),target=state.players[1];
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:false});
+  assert.equal(target.hp,4);assert.equal(target.handCount,2);assert.equal(target.knownCards.length,2);
+  simulator.applyDamage(state,state.players[0],target,1,{canBlock:true,deviceAttack:true});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);
+});
+
+test("B1a混合：确定格挡 + 匿名50%格挡转移", () => {
+  const blockCard={cardId:"kb",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
+  const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,knownCards:[blockCard],blockProbability:1,twoBlockProbability:.5,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:.5,conditions:{},blockCount:1},{probability:.5,conditions:{},blockCount:2}]};
+  const receiver={id:"r",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]};
+  const state={remainingCardCounts:null,players:[source,receiver]},simulator=new AiSimulator({players:[]});
+  simulator.transferUnknownBlockCapacity(state,source,receiver,[{probability:1,conditions:{},occurs:true}],1);
+  assert.equal(source.knownCards.length,1);assert.equal(source.blockProbability,1);assert.equal(source.twoBlockProbability,0);
+  assert.ok(source.blockCountDistribution.some((branch)=>branch.blockCount===1&&branch.probability===1));
+  const byCount=Object.fromEntries(receiver.blockCountDistribution.map((branch)=>[branch.blockCount,branch.probability]));
+  assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
+});
+
+test("B1a混合：确定格挡 + 匿名50%格挡随机失去", () => {
+  const blockCard={cardId:"kb",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
+  const target={id:"t",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,knownCards:[blockCard],blockProbability:1,twoBlockProbability:.5,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:.5,conditions:{},blockCount:1},{probability:.5,conditions:{},blockCount:2}]};
+  const actor={id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0};
+  const state={remainingCardCounts:null,players:[actor,target]},simulator=new AiSimulator({players:[]});
+  simulator.removeUnknownCardsFromBlockDistribution(state,target,1,1,null,"mixed-lose");
+  assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.blockProbability,1);assert.equal(target.twoBlockProbability,0);
+  assert.ok(target.blockCountDistribution.some((branch)=>branch.blockCount===1&&branch.probability===1));
+});
+
+test("B1a混合：确定格挡 + 匿名非格挡转移", () => {
+  const blockCard={cardId:"kb",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
+  const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,knownCards:[blockCard],blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]};
+  const receiver={id:"r",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]};
+  const state={remainingCardCounts:null,players:[source,receiver]},simulator=new AiSimulator({players:[]});
+  simulator.transferUnknownBlockCapacity(state,source,receiver,[{probability:1,conditions:{},occurs:true}],1);
+  assert.equal(source.blockProbability,1);assert.ok(source.blockCountDistribution.some((branch)=>branch.blockCount===1&&branch.probability===1));
+  assert.equal(receiver.blockProbability,0);assert.ok(receiver.blockCountDistribution.every((branch)=>branch.blockCount===0));
+});
+
+test("B1a混合：确定格挡 + 匿名格挡转移", () => {
+  const blockCard={cardId:"kb",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
+  const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,knownCards:[blockCard],blockProbability:1,twoBlockProbability:1,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:2}]};
+  const receiver={id:"r",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]};
+  const state={remainingCardCounts:null,players:[source,receiver]},simulator=new AiSimulator({players:[]});
+  simulator.transferUnknownBlockCapacity(state,source,receiver,[{probability:1,conditions:{},occurs:true}],1);
+  assert.equal(source.blockProbability,1);assert.ok(source.blockCountDistribution.some((branch)=>branch.blockCount===1&&branch.probability===1));
+  assert.equal(receiver.blockProbability,1);assert.ok(receiver.blockCountDistribution.some((branch)=>branch.blockCount===1&&branch.probability===1));
+});
+
+test("B1a混合：部分可用确定格挡与匿名牌", () => {
+  const known={cardId:"pk",definitionId:"block",availabilityBranches:[{probability:.4,conditions:{known:"yes"}},{probability:.6,conditions:{known:"no"}}],availabilityStateBranches:[{probability:.4,conditions:{known:"yes"},available:true},{probability:.6,conditions:{known:"no"},available:false}]};
+  const target={id:"t",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,knownCards:[known],blockProbability:.7,twoBlockProbability:.2,expectedRecoverCount:0,
+    blockCountDistribution:[
+      {probability:.2,conditions:{known:"yes"},blockCount:1},
+      {probability:.2,conditions:{known:"yes"},blockCount:2},
+      {probability:.3,conditions:{known:"no"},blockCount:0},
+      {probability:.3,conditions:{known:"no"},blockCount:1}
+    ]};
+  const actor={id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0};
+  const state={remainingCardCounts:null,players:[actor,target]},simulator=new AiSimulator({players:[]});
+  simulator.consumeUnknownResourceCard(state,target,1,1);
+  assert.equal(target.knownCards.length,1);
+  const yes=target.blockCountDistribution.find((branch)=>branch.conditions.known==="yes");
+  const no=target.blockCountDistribution.find((branch)=>branch.conditions.known==="no");
+  assert.ok(yes&&yes.blockCount===1&&Math.abs(yes.probability-.4)<1e-9);
+  assert.ok(no&&no.blockCount===0&&Math.abs(no.probability-.6)<1e-9);
+});
+
+test("B1a混合：两张确定格挡保护", () => {
+  const blockCard=(id)=>({cardId:id,definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]});
+  const target={id:"t",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:3,knownCards:[blockCard("k1"),blockCard("k2")],blockProbability:1,twoBlockProbability:1,expectedRecoverCount:0,
+    blockCountDistribution:[{probability:1,conditions:{},blockCount:2}]};
+  const actor={id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0};
+  const state={remainingCardCounts:null,players:[actor,target]},simulator=new AiSimulator({players:[]});
+  simulator.removeUnknownCardsFromBlockDistribution(state,target,1,1,null,"two-known-lose");
+  assert.equal(target.knownCards.length,2);assert.equal(target.blockProbability,1);assert.equal(target.twoBlockProbability,1);
+  assert.ok(target.blockCountDistribution.some((branch)=>branch.blockCount===2&&branch.probability===1));
 });
 
 const conditionalHuntState = (secondMarkBranches) => ({playPhaseEnded:false,players:[
@@ -5096,16 +5401,16 @@ test("资源身份：真实 Planner 先掠夺已知 assault 再在后续层使�
 });
 
 // ---- 资源身份补修：部分 knownCards 随机消费后的保守降级 ----
-test("资源身份补修：部分 known 经过未知随机消费后降级为未知聚合", () => {
+test("资源身份补修：部分 known 参与整手牌随机选择且未选中时保留", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1.4,
     knownCards:[{
       cardId:"c", definitionId:"counter",
-      availabilityBranches:[{ probability:0.4, conditions:{} }],
+      availabilityBranches:[{ probability:0.4, conditions:{known:"yes"} }],
       availabilityStateBranches:[
-        { probability:0.4, conditions:{}, available:true },
-        { probability:0.6, conditions:{}, available:false }
+        { probability:0.4, conditions:{known:"yes"}, available:true },
+        { probability:0.6, conditions:{known:"no"}, available:false }
       ]
     }],
     equipmentDefinitionId:null, equipmentRetentionProbability:0, counterProbability:0.4
@@ -5113,10 +5418,12 @@ test("资源身份补修：部分 known 经过未知随机消费后降级为未�
   const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
   assert.ok(Math.abs(spent - 1) < 1e-9);
   assert.ok(Math.abs(player.handCount - 0.4) < 1e-9);
-  assert.deepEqual(player.knownCards, []);
-  // 剩余数量作为未知聚合参与估计：P(counter >= 1) = 0.4 × 全局密度
+  assert.equal(player.knownCards.length, 1);
+  // 被选中 world 的身份归零，未选中 world 继续保留。
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 0.2) < 1e-9);
   const density = CARD_DEFINITIONS.counter.count / TOTAL_CARD_COUNT;
-  assert.ok(Math.abs(player.counterProbability - 0.4 * density) < 1e-9);
+  simulator.syncCardEstimates(player, null);
+  assert.ok(Math.abs(player.counterProbability - (0.2 + 0.16 * density)) < 1e-9);
 });
 
 test("资源身份补修：连续部分掠夺后再按未知破坏不保留幽灵牌", () => {
@@ -5134,7 +5441,7 @@ test("资源身份补修：连续部分掠夺后再按未知破坏不保留幽�
   assert.equal(simulator.chooseSimulatedResourceSelection({ players:[actor,target] }, actor, target, "destroy"), null);
 });
 
-test("资源身份补修：完整确定 known 在聚合随机消费后保留", () => {
+test("资源身份补修：完整确定 known 参与整手牌随机选择", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
@@ -5146,10 +5453,11 @@ test("资源身份补修：完整确定 known 在聚合随机消费后保留", (
   assert.ok(Math.abs(player.handCount - 1) < 1e-9);
   assert.equal(player.knownCards.length, 1);
   assert.equal(player.knownCards[0].cardId, "c");
-  // 完整确定牌不被无条件清除，counterProbability 仍体现该牌
-  assert.equal(player.counterProbability, 1);
+  // 与匿名牌组成互斥候选，选中概率各 50%。
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 0.5) < 1e-9);
   simulator.syncCardEstimates(player);
-  assert.equal(player.counterProbability, 1);
+  const density = CARD_DEFINITIONS.counter.count / TOTAL_CARD_COUNT;
+  assert.ok(Math.abs(player.counterProbability - (0.5 + 0.25 * density)) < 1e-9);
 });
 
 test("资源身份补修：零概率 known 条目在随机消费后清理", () => {
@@ -5176,6 +5484,265 @@ test("资源身份补修：无 knownCards 时随机消费行为保持不变", ()
   assert.ok(Math.abs(spent - 1) < 1e-9);
   assert.ok(Math.abs(player.handCount - 1) < 1e-9);
   assert.equal(player.knownCards, undefined);
+});
+
+// ---- B1a 最终补丁：整手牌随机移除必须包含 knownCards ----
+const fullKnownCard = (cardId, definitionId) => ({
+  cardId,
+  definitionId,
+  availabilityBranches:[{ probability:1, conditions:{} }],
+  availabilityStateBranches:[{ probability:1, conditions:{}, available:true }]
+});
+const fullHandCard = (id, definitionId) => ({
+  id,
+  definitionId,
+  availabilityBranches:[{ probability:1, conditions:{} }],
+  availabilityStateBranches:[{ probability:1, conditions:{}, available:true }]
+});
+const blockDistributionByCount = (distribution) => {
+  const byCount = {};
+  for (const branch of distribution) {
+    byCount[branch.blockCount] = (byCount[branch.blockCount] ?? 0) + branch.probability;
+  }
+  return byCount;
+};
+const projectAvailability = (branches, field) => branches.map(({ available, probability, conditions }) => ({
+  probability, conditions, [field]:Boolean(available)
+}));
+
+test("B1a整手牌：确定格挡 + 匿名非格挡随机移除一张", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
+    knownCards:[fullKnownCard("b", "block")],
+    blockCountDistribution:[{ probability:1, conditions:{}, blockCount:1 }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
+  assert.ok(Math.abs(spent - 1) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 1) < 1e-9);
+  assert.equal(player.knownCards.length, 1);
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 0.5) < 1e-9);
+  const byCount = blockDistributionByCount(player.blockCountDistribution);
+  assert.ok(Math.abs((byCount[0] ?? 0) - 0.5) < 1e-9);
+  assert.ok(Math.abs((byCount[1] ?? 0) - 0.5) < 1e-9);
+});
+
+test("B1a整手牌：确定格挡 + 确定聚能随机移除一张且互斥", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
+    knownCards:[fullKnownCard("b", "block"), fullKnownCard("q", "charge")],
+    blockCountDistribution:[{ probability:1, conditions:{}, blockCount:1 }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
+  assert.ok(Math.abs(spent - 1) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 1) < 1e-9);
+  assert.equal(player.knownCards.length, 2);
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 0.5) < 1e-9);
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[1]) - 0.5) < 1e-9);
+  const joined = joinProbabilityStateBranches(
+    projectAvailability(player.knownCards[0].availabilityStateBranches, "blockAvail"),
+    projectAvailability(player.knownCards[1].availabilityStateBranches, "chargeAvail")
+  );
+  const bothAvailable = joined.filter((branch) => branch.blockAvail && branch.chargeAvail)
+    .reduce((sum, branch) => sum + branch.probability, 0);
+  const neitherAvailable = joined.filter((branch) => !branch.blockAvail && !branch.chargeAvail)
+    .reduce((sum, branch) => sum + branch.probability, 0);
+  assert.ok(Math.abs(bothAvailable) < 1e-9);
+  assert.ok(Math.abs(neitherAvailable) < 1e-9);
+  const byCount = blockDistributionByCount(player.blockCountDistribution);
+  assert.ok(Math.abs((byCount[0] ?? 0) - 0.5) < 1e-9);
+  assert.ok(Math.abs((byCount[1] ?? 0) - 0.5) < 1e-9);
+});
+
+test("B1a整手牌：确定格挡 + 匿名50%格挡随机移除一张", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
+    knownCards:[{
+      cardId:"b", definitionId:"block",
+      availabilityBranches:[
+        { probability:0.5, conditions:{ anon:"no" } },
+        { probability:0.5, conditions:{ anon:"yes" } }
+      ],
+      availabilityStateBranches:[
+        { probability:0.5, conditions:{ anon:"no" }, available:true },
+        { probability:0.5, conditions:{ anon:"yes" }, available:true }
+      ]
+    }],
+    blockCountDistribution:[
+      { probability:0.5, conditions:{ anon:"no" }, blockCount:1 },
+      { probability:0.5, conditions:{ anon:"yes" }, blockCount:2 }
+    ],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
+  assert.ok(Math.abs(spent - 1) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 1) < 1e-9);
+  assert.equal(player.knownCards.length, 1);
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 0.5) < 1e-9);
+  const byCount = blockDistributionByCount(player.blockCountDistribution);
+  assert.ok(Math.abs((byCount[0] ?? 0) - 0.25) < 1e-9);
+  assert.ok(Math.abs((byCount[1] ?? 0) - 0.75) < 1e-9);
+});
+
+test("B1a整手牌：三类候选互斥且各占三分之一", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:3,
+    knownCards:[fullKnownCard("b", "block"), fullKnownCard("q", "charge")],
+    blockCountDistribution:[{ probability:1, conditions:{}, blockCount:1 }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
+  assert.ok(Math.abs(spent - 1) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 2) < 1e-9);
+  assert.equal(player.knownCards.length, 2);
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 2 / 3) < 1e-9);
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[1]) - 2 / 3) < 1e-9);
+  const joined = joinProbabilityStateBranches(
+    projectAvailability(player.knownCards[0].availabilityStateBranches, "blockAvail"),
+    projectAvailability(player.knownCards[1].availabilityStateBranches, "chargeAvail")
+  );
+  const byWorld = {
+    blockOnly:0, chargeOnly:0, both:0, neither:0
+  };
+  for (const branch of joined) {
+    const key = branch.blockAvail && branch.chargeAvail ? "both"
+      : !branch.blockAvail && !branch.chargeAvail ? "neither"
+        : branch.blockAvail ? "blockOnly" : "chargeOnly";
+    byWorld[key] += branch.probability;
+  }
+  assert.ok(Math.abs(byWorld.blockOnly - 1 / 3) < 1e-9);
+  assert.ok(Math.abs(byWorld.chargeOnly - 1 / 3) < 1e-9);
+  assert.ok(Math.abs(byWorld.both - 1 / 3) < 1e-9);
+  assert.ok(Math.abs(byWorld.neither) < 1e-9);
+  const anonymousRemoved = player.anonymousCountBranches
+    .filter((branch) => (branch.anonymousCount ?? 0) === 0)
+    .reduce((sum, branch) => sum + branch.probability, 0);
+  assert.ok(Math.abs(anonymousRemoved - 1 / 3) < 1e-9);
+});
+
+test("B1a整手牌：部分可用确定格挡按条件世界进入候选", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1.5,
+    knownCards:[{
+      cardId:"b", definitionId:"block",
+      availabilityBranches:[{ probability:0.5, conditions:{ present:"yes" } }],
+      availabilityStateBranches:[
+        { probability:0.5, conditions:{ present:"yes" }, available:true },
+        { probability:0.5, conditions:{ present:"no" }, available:false }
+      ]
+    }],
+    blockCountDistribution:[
+      { probability:0.5, conditions:{ present:"yes" }, blockCount:1 },
+      { probability:0.5, conditions:{ present:"no" }, blockCount:0 }
+    ],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
+  assert.ok(Math.abs(spent - 1) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 0.5) < 1e-9);
+  assert.equal(player.knownCards.length, 1);
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 0.25) < 1e-9);
+  const absentWorlds = player.knownCards[0].availabilityStateBranches
+    .filter((branch) => branch.conditions.present === "no" && branch.available)
+    .reduce((sum, branch) => sum + branch.probability, 0);
+  assert.ok(Math.abs(absentWorlds) < 1e-9);
+  const byCount = blockDistributionByCount(player.blockCountDistribution);
+  assert.ok(Math.abs((byCount[0] ?? 0) - 0.75) < 1e-9);
+  assert.ok(Math.abs((byCount[1] ?? 0) - 0.25) < 1e-9);
+});
+
+test("B1a整手牌：40% 概率随机移除一格挡与一匿名非格挡", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
+    knownCards:[fullKnownCard("b", "block")],
+    blockCountDistribution:[{ probability:1, conditions:{}, blockCount:1 }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 0.4);
+  assert.ok(Math.abs(spent - 0.4) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 1.6) < 1e-9);
+  assert.equal(player.knownCards.length, 1);
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 0.8) < 1e-9);
+  const byCount = blockDistributionByCount(player.blockCountDistribution);
+  assert.ok(Math.abs((byCount[0] ?? 0) - 0.2) < 1e-9);
+  assert.ok(Math.abs((byCount[1] ?? 0) - 0.8) < 1e-9);
+  const totalProbability = player.blockCountDistribution.reduce(
+    (sum, branch) => sum + branch.probability, 0
+  );
+  assert.ok(Math.abs(totalProbability - 1) < 1e-9);
+});
+
+test("B1a整手牌：连续无放回移除两张后格挡保留概率为三分之一", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:3,
+    knownCards:[fullKnownCard("b", "block"), fullKnownCard("q", "charge")],
+    blockCountDistribution:[{ probability:1, conditions:{}, blockCount:1 }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 2);
+  assert.ok(Math.abs(spent - 2) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 1) < 1e-9);
+  assert.equal(player.knownCards.length, 2);
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 1 / 3) < 1e-9);
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[1]) - 1 / 3) < 1e-9);
+  const byCount = blockDistributionByCount(player.blockCountDistribution);
+  assert.ok(Math.abs((byCount[0] ?? 0) - 2 / 3) < 1e-9);
+  assert.ok(Math.abs((byCount[1] ?? 0) - 1 / 3) < 1e-9);
+});
+
+test("B1a整手牌：匿名专用入口仍完整保护 knownCards", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
+    knownCards:[fullKnownCard("b", "block")],
+    blockCountDistribution:[{ probability:1, conditions:{}, blockCount:1 }],
+    blockProbability:1, twoBlockProbability:0,
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const spent = simulator.consumeUnknownResourceCard({ players:[player] }, player, 1, 1);
+  assert.ok(Math.abs(spent - 1) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 1) < 1e-9);
+  assert.equal(player.knownCards.length, 1);
+  assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 1) < 1e-9);
+  const byCount = blockDistributionByCount(player.blockCountDistribution);
+  assert.ok(Math.abs((byCount[1] ?? 0) - 1) < 1e-9);
+});
+
+test("B1a整手牌：当前 AI 完整 hand 路径保持互斥随机移除", () => {
+  const simulator = new AiSimulator({ players:[] });
+  const player = {
+    id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
+    hand:[fullHandCard("b", "block"), fullHandCard("q", "charge")],
+    blockCountDistribution:[{ probability:1, conditions:{}, blockCount:1 }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
+  assert.ok(Math.abs(spent - 1) < 1e-9);
+  assert.ok(Math.abs(player.handCount - 1) < 1e-9);
+  assert.equal(player.hand.length, 2);
+  assert.ok(Math.abs(simulator.cardAvailability(player.hand[0]) - 0.5) < 1e-9);
+  assert.ok(Math.abs(simulator.cardAvailability(player.hand[1]) - 0.5) < 1e-9);
+  const joined = joinProbabilityStateBranches(
+    projectAvailability(player.hand[0].availabilityStateBranches, "blockAvail"),
+    projectAvailability(player.hand[1].availabilityStateBranches, "chargeAvail")
+  );
+  const bothAvailable = joined.filter((branch) => branch.blockAvail && branch.chargeAvail)
+    .reduce((sum, branch) => sum + branch.probability, 0);
+  const neitherAvailable = joined.filter((branch) => !branch.blockAvail && !branch.chargeAvail)
+    .reduce((sum, branch) => sum + branch.probability, 0);
+  assert.ok(Math.abs(bothAvailable) < 1e-9);
+  assert.ok(Math.abs(neitherAvailable) < 1e-9);
+  const byCount = blockDistributionByCount(player.blockCountDistribution);
+  assert.ok(Math.abs((byCount[0] ?? 0) - 0.5) < 1e-9);
+  assert.ok(Math.abs((byCount[1] ?? 0) - 0.5) < 1e-9);
 });
 
 test("资源身份补修：unknown 消费只消耗未知部分且不侵蚀完整确定 counter", () => {
@@ -6141,7 +6708,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260805-spy-gap-rescue-v89"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260806-ai-block-consumption-v90"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 

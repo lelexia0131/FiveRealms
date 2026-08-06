@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260805-spy-gap-rescue-v89";
-import { createId } from "../utils/helpers.js?build=20260805-spy-gap-rescue-v89";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260805-spy-gap-rescue-v89";
-import { RuleEngine } from "./RuleEngine.js?build=20260805-spy-gap-rescue-v89";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-block-consumption-v90";
+import { createId } from "../utils/helpers.js?build=20260806-ai-block-consumption-v90";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260806-ai-block-consumption-v90";
+import { RuleEngine } from "./RuleEngine.js?build=20260806-ai-block-consumption-v90";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
