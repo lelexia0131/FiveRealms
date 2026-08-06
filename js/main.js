@@ -2,9 +2,9 @@
  * 本文件是页面入口，只负责连接 UIManager 与每局新建的 Game。
  * 它不实现卡牌、AI 或技能规则；重新开始时必须先 dispose 旧局，再创建新 gameId。
  */
-import { Game } from "./core/Game.js?build=20260806-ai-target-counter-v92";
-import { UIManager } from "./ui/UIManager.js?build=20260806-ai-target-counter-v92";
-import { Debug } from "./utils/debug.js?build=20260806-ai-target-counter-v92";
+import { Game } from "./core/Game.js?build=20260806-ai-threat-id-v95";
+import { UIManager } from "./ui/UIManager.js?build=20260806-ai-threat-id-v95";
+import { Debug } from "./utils/debug.js?build=20260806-ai-threat-id-v95";
 
 const ui = new UIManager();
 let game = null;

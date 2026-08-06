@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260806-ai-target-counter-v92";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260806-ai-target-counter-v92";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260806-ai-threat-id-v95";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260806-ai-threat-id-v95";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

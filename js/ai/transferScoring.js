@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260806-ai-target-counter-v92";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260806-ai-target-counter-v92";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260806-ai-target-counter-v92";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260806-ai-threat-id-v95";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260806-ai-threat-id-v95";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260806-ai-threat-id-v95";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
@@ -186,8 +186,9 @@ export function chooseTransferHandCandidate(actor, from, receiver, excludedCardI
 }
 
 /** 把真实 Player 或过滤快照归一化为 ThreatCalculator 可读的公开字段。 */
-function threatView(player) {
+export function threatView(player) {
   return {
+    id:player?.id,
     alive:Boolean(player?.alive),
     battleTeam:player?.battleTeam,
     hp:Number(player?.hp ?? 0),

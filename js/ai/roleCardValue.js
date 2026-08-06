@@ -6,8 +6,8 @@
  * 价值模型：全局基础 aiValue + 稀疏角色差值；未配置的组合自动回退 0。
  * 后续新增角色或卡牌时，未配置差值即可立即使用基础值。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260806-ai-target-counter-v92";
-import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260806-ai-target-counter-v92";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260806-ai-threat-id-v95";
+import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260806-ai-threat-id-v95";
 
 /**
  * 角色 × 卡牌稀疏差值表。
