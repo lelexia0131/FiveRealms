@@ -1,6 +1,6 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-threat-id-v95";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260806-ai-threat-id-v95";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260806-ai-threat-id-v95";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-allin-counter-v96";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260806-ai-allin-counter-v96";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260806-ai-allin-counter-v96";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

@@ -3928,12 +3928,87 @@ test("B1c摸牌：击杀奖励为新牌叠加反制先验", () => {
   assertClose(b1cCounterByCount(after)[1] ?? 0,.5);
 });
 
-test("B1c摸牌：孤注摸牌增加反制先验", () => {
+test("B1c摸牌：赌命被动摸牌增加反制先验", () => {
   const actor=b1cDrawActor({generalId:"fate-gambler",handCount:1,hand:[{id:"x",definitionId:"exposeWeakness"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
   const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
   const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x"},targets:[]},"a");
   assertClose(next.players[0].handCount,.6);
   assertClose(next.players[0].counterProbability,.3);
+});
+
+test("B1c摸牌：主动技能孤注摸牌增加反制先验", () => {
+  const actor=b1cDrawActor({generalId:"fate-gambler",handCount:0,hand:[],energy:2,maxEnergy:4,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+  const simulator=new AiSimulator(state);
+  simulator.applySkill(state,actor,{type:"skill",skill:{id:"allIn"},targets:[]},[{probability:1,conditions:{},occurs:true}]);
+  assert.equal(actor.energy,0);
+  assert.equal(actor.handCount,2);
+  const byCount=b1cCounterByCount(actor);
+  assertClose(byCount[0] ?? 0,.25);assertClose(byCount[1] ?? 0,.5);assertClose(byCount[2] ?? 0,.25);
+  assertClose(actor.counterProbability,.75);
+  assertClose(actor.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+});
+
+test("B1c摸牌：40%概率主动孤注只在发动世界增加反制", () => {
+  const actor=b1cDrawActor({generalId:"fate-gambler",handCount:0,hand:[],energy:2,maxEnergy:4,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+  const simulator=new AiSimulator(state);
+  simulator.applySkill(state,actor,{type:"skill",skill:{id:"allIn"},targets:[]},[
+    {probability:.4,conditions:{allIn:"yes"},occurs:true},
+    {probability:.6,conditions:{allIn:"no"},occurs:false}
+  ]);
+  assertClose(actor.handCount,.8);
+  assertClose(actor.energy,1.2);
+  const byCount=b1cCounterByCount(actor);
+  assertClose(byCount[0] ?? 0,.7);assertClose(byCount[1] ?? 0,.2);assertClose(byCount[2] ?? 0,.1);
+  assertClose(actor.counterProbability,.3);
+  assertClose(actor.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+  const triggerGain=actor.counterCountDistribution
+    .filter((branch)=>branch.counterCount>0&&branch.conditions?.allIn==="yes")
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  const noTriggerGain=actor.counterCountDistribution
+    .filter((branch)=>branch.counterCount>0&&branch.conditions?.allIn==="no")
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assertClose(triggerGain,.3);
+  assertClose(noTriggerGain,0);
+});
+
+test("B1c摸牌：旧反制消费后主动孤注只产生新牌先验", () => {
+  const actor=b1cDrawActor({generalId:"fate-gambler",handCount:2,hand:[{id:"c",definitionId:"counter"},{id:"o",definitionId:"charge"}],energy:2,maxEnergy:4});
+  const state={players:[actor,b1cPlayer("e","dusk",{})]};
+  const simulator=new AiSimulator(state);
+  simulator.consumeTargetCounterResponseWorlds(state,actor,[{probability:1,conditions:{},occurs:true}],1);
+  assert.equal(actor.handCount,1);assert.equal(b1cCounterProbability(actor),0);
+  assert.equal(actor.hand.some((card)=>card.definitionId==="counter"),false);
+  state.remainingCardCounts={counter:1,charge:1};
+  simulator.applySkill(state,actor,{type:"skill",skill:{id:"allIn"},targets:[]},[{probability:1,conditions:{},occurs:true}]);
+  assert.equal(actor.handCount,3);
+  const byCount=b1cCounterByCount(actor);
+  assertClose(byCount[0] ?? 0,.25);assertClose(byCount[1] ?? 0,.5);assertClose(byCount[2] ?? 0,.25);
+  assertClose(actor.counterProbability,.75);
+  assert.equal(actor.hand.some((card)=>card.definitionId==="counter"),false);
+});
+
+test("B1c摸牌：主动孤注摸牌数跟随能量条件世界", () => {
+  const actor=b1cDrawActor({generalId:"fate-gambler",handCount:0,hand:[],energy:2,maxEnergy:4,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  actor.energyBranches=[
+    {probability:.5,conditions:{energyWorld:"one"},amount:1},
+    {probability:.5,conditions:{energyWorld:"three"},amount:3}
+  ];
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+  const simulator=new AiSimulator(state);
+  simulator.applySkill(state,actor,{type:"skill",skill:{id:"allIn"},targets:[]},[{probability:1,conditions:{},occurs:true}]);
+  assert.equal(actor.energy,0);
+  assertClose(actor.handCount,2);
+  const oneCounter=actor.counterCountDistribution
+    .filter((branch)=>branch.conditions?.energyWorld==="one")
+    .reduce((sum,branch)=>sum+branch.probability*(branch.counterCount>=1?1:0),0);
+  const threeCounter=actor.counterCountDistribution
+    .filter((branch)=>branch.conditions?.energyWorld==="three")
+    .reduce((sum,branch)=>sum+branch.probability*(branch.counterCount>=1?1:0),0);
+  assertClose(oneCounter,.25);
+  assertClose(threeCounter,.4375);
+  assertClose(actor.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
 });
 
 test("B1c摸牌：协调摸牌增加反制先验", () => {
@@ -7655,7 +7730,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260806-ai-threat-id-v95"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260806-ai-allin-counter-v96"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 

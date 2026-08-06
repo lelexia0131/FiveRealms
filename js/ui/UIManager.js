@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260806-ai-threat-id-v95";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260806-ai-threat-id-v95";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260806-ai-threat-id-v95";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260806-ai-allin-counter-v96";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260806-ai-allin-counter-v96";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260806-ai-allin-counter-v96";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260806-ai-threat-id-v95";
-import { AnimationController } from "./animationController.js?build=20260806-ai-threat-id-v95";
-import { InteractionController } from "./InteractionController.js?build=20260806-ai-threat-id-v95";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260806-ai-threat-id-v95";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260806-ai-threat-id-v95";
-import { JudgmentView } from "./JudgmentView.js?build=20260806-ai-threat-id-v95";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260806-ai-threat-id-v95";
-import { createOpponentHandView } from "./handVisibility.js?build=20260806-ai-threat-id-v95";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260806-ai-threat-id-v95";
-import { SoundManager } from "../audio/SoundManager.js?build=20260806-ai-threat-id-v95";
+} from "./templates.js?build=20260806-ai-allin-counter-v96";
+import { AnimationController } from "./animationController.js?build=20260806-ai-allin-counter-v96";
+import { InteractionController } from "./InteractionController.js?build=20260806-ai-allin-counter-v96";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260806-ai-allin-counter-v96";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260806-ai-allin-counter-v96";
+import { JudgmentView } from "./JudgmentView.js?build=20260806-ai-allin-counter-v96";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260806-ai-allin-counter-v96";
+import { createOpponentHandView } from "./handVisibility.js?build=20260806-ai-allin-counter-v96";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260806-ai-allin-counter-v96";
+import { SoundManager } from "../audio/SoundManager.js?build=20260806-ai-allin-counter-v96";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);

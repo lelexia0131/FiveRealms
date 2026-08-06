@@ -2,12 +2,12 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260806-ai-threat-id-v95";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-threat-id-v95";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260806-ai-threat-id-v95";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260806-ai-threat-id-v95";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260806-ai-threat-id-v95";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260806-ai-threat-id-v95";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260806-ai-allin-counter-v96";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-allin-counter-v96";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260806-ai-allin-counter-v96";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260806-ai-allin-counter-v96";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260806-ai-allin-counter-v96";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260806-ai-allin-counter-v96";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,7 +20,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260806-ai-threat-id-v95";
+} from "./AiProbabilityBranches.js?build=20260806-ai-allin-counter-v96";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -439,15 +439,57 @@ export class AiSimulator {
    * 统一匿名摸牌入口：只增加 handCount，并对每张真正新获得的匿名牌叠加一次
    * 反制根先验。整数张数复用同一个“摸牌事件是否发生”世界（同发生同不发生）；
    * 非整数期望通过事件 gate 表示“是否获得最后一张”，不增加半张牌容量。
+   * amount 也可以传函数：按每个条件世界各自应摸张数摸牌，摸牌数与对应的
+   * energyAmount/发动条件世界保持关联，不能用全局期望值重新独立抽样。
    * @returns {number} 实际获得的期望牌数
    */
   gainUnknownCardsWithCounterState(state, player, amount, eventWorlds = null, label = "unknown-draw") {
-    if (!player || amount <= PROBABILITY_EPSILON) return 0;
+    if (!player) return 0;
+    if (typeof amount !== "function" && amount <= PROBABILITY_EPSILON) return 0;
     const worlds = Array.isArray(eventWorlds) && eventWorlds.length
       ? eventWorlds
       : this.getEventWorlds(state, 1, null, label);
     const eventMass = this.eventProbability(worlds);
     if (eventMass <= PROBABILITY_EPSILON) return 0;
+    if (typeof amount === "function") {
+      const remainingByBranch = worlds.map((branch) => (
+        branch.occurs ? Math.max(0, Number(amount(branch)) || 0) : 0
+      ));
+      let gained = 0;
+      while (remainingByBranch.some((remaining) => remaining > PROBABILITY_EPSILON)) {
+        const cardWorlds = [];
+        for (let index = 0; index < worlds.length; index += 1) {
+          const branch = worlds[index];
+          const remaining = remainingByBranch[index];
+          if (remaining <= PROBABILITY_EPSILON) {
+            cardWorlds.push({ ...branch, occurs:false });
+            continue;
+          }
+          const cardProbability = Math.min(1, remaining);
+          if (cardProbability >= 1 - PROBABILITY_EPSILON) {
+            cardWorlds.push({ ...branch, occurs:true });
+          } else {
+            const gate = probabilityEventPartition(
+              this.nextProbabilityEventKey(state, `${label}:branch-card`),
+              cardProbability,
+              "gateOccurs"
+            );
+            for (const gated of joinProbabilityStateBranches([branch], gate)) {
+              cardWorlds.push({ ...gated, occurs:Boolean(gated.gateOccurs) });
+            }
+          }
+        }
+        const cardGain = this.eventProbability(cardWorlds);
+        if (cardGain <= PROBABILITY_EPSILON) break;
+        player.handCount = (player.handCount ?? 0) + cardGain;
+        this.addOneUnknownCardToCounterDistribution(state, player, cardWorlds);
+        gained += cardGain;
+        for (let index = 0; index < remainingByBranch.length; index += 1) {
+          remainingByBranch[index] -= Math.min(1, remainingByBranch[index]);
+        }
+      }
+      return gained;
+    }
     let remaining = Math.max(0, Number(amount) || 0);
     let gained = 0;
     while (remaining > PROBABILITY_EPSILON) {
@@ -2372,9 +2414,13 @@ export class AiSimulator {
       const joined = this.updateEnergyFromWorlds(actor, eventWorlds, (amount, branch) => (
         branch.occurs ? 0 : amount
       ));
-      actor.handCount += joined.reduce((sum, branch) => (
-        sum + (branch.occurs ? branch.probability * branch.energyAmount : 0)
-      ), 0);
+      this.gainUnknownCardsWithCounterState(
+        state,
+        actor,
+        (branch) => (branch.occurs ? branch.energyAmount : 0),
+        joined,
+        "allIn-draw"
+      );
       const currentAssaultBonus = actor.assaultBonus ?? 0;
       const joinedExpectedValue = joined.reduce((sum, branch) => (
         sum + (branch.occurs ? branch.probability * Math.min(1, branch.energyAmount * .3) : 0)
