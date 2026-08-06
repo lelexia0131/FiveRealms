@@ -3,9 +3,9 @@
  * 它依赖卡牌配置和随机工具，不负责合法性、日志或卡牌效果。
  * 所有在手牌、装备区或 resolvingCards 中的卡都不会进入重洗来源。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260806-ai-radar-block-v91";
-import { createId, shuffled } from "../utils/helpers.js?build=20260806-ai-radar-block-v91";
-import { Debug } from "../utils/debug.js?build=20260806-ai-radar-block-v91";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260806-ai-target-counter-v92";
+import { createId, shuffled } from "../utils/helpers.js?build=20260806-ai-target-counter-v92";
+import { Debug } from "../utils/debug.js?build=20260806-ai-target-counter-v92";
 
 export class Deck {
   constructor(random = Math.random) {

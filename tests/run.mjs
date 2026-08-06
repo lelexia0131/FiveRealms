@@ -2036,7 +2036,7 @@ test("其他玩家之间移动已知身份", () => {
   const moved=nextReceiver.knownCards.find((entry)=>entry.cardId==="k5");
   assert.ok(moved);assert.equal(moved.definitionId,"block");assert.equal(nextReceiver.blockProbability,1);
 });
-test("完全反制时来源身份与双方手牌不变", () => {
+test("目标反制风险下转移部分生效且来源与接收者身份互补", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
     {id:"s",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,knownCards:[{cardId:"known-assault",definitionId:"assault",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]}],counterProbability:1/0.45},
@@ -2045,13 +2045,18 @@ test("完全反制时来源身份与双方手牌不变", () => {
   const {game}=makeGame([makePlayer("real",0,"dawn"),makePlayer("real-b",1,"dusk")]);
   const action=game.aiController.actionGenerator.generateFromVisible(state,"a").find((entry)=>entry.card?.definitionId==="transfer");
   assert.ok(action);assert.equal(action.selection.selectionKind,"known");
-  const next=new AiSimulator(state).apply(state,action,"a");
+  const simulator=new AiSimulator(state),next=simulator.apply(state,action,"a");
   const nextActor=next.players[0],nextSource=next.players[1],nextReceiver=next.players[2];
   assert.equal(nextActor.hand.some((card)=>card.id==="use"),false);
-  assert.ok(nextSource.knownCards.some((entry)=>entry.cardId==="known-assault"));
-  assert.equal(nextSource.handCount,1);
+  // 来源确定持有一张反制，转移意愿 0.45 → 45% 世界反制取消、55% 世界转移成功。
+  assertClose(nextSource.handCount,0.45);
+  const sourceAssault=nextSource.knownCards.find((entry)=>entry.cardId==="known-assault");
+  assert.ok(sourceAssault);assertClose(simulator.cardAvailability(sourceAssault),0.45);
+  // 生成动作的接收者是行动者自己；转移成功世界进入行动者手牌。
+  assertClose(nextActor.handCount,0.55);
+  const receiverAssault=nextActor.hand.find((card)=>card.id==="known-assault");
+  assert.ok(receiverAssault);assertClose(simulator.cardAvailability(receiverAssault),0.55);
   assert.equal(nextReceiver.handCount,0);
-  assert.equal((nextReceiver.knownCards ?? []).some((entry)=>entry.cardId==="known-assault"),false);
 });
 test("部分概率转移中来源与接收者身份世界互补", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
@@ -2219,12 +2224,17 @@ test("模拟执行评分阶段选中的同一已知牌身份", () => {
   const {game}=makeGame([makePlayer("real",0,"dawn"),makePlayer("real-b",1,"dusk")]);
   const action=game.aiController.actionGenerator.generateFromVisible(state,"a").find((entry)=>entry.card?.definitionId==="transfer");
   assert.ok(action);assert.equal(action.selection.cardId,"high-counter");
-  const next=new AiSimulator(state).apply(state,action,"a");
+  const simulator=new AiSimulator(state),next=simulator.apply(state,action,"a");
   const nextSource=next.players[1],nextReceiver=next.players[2];
-  assert.ok(nextReceiver.knownCards.some((entry)=>entry.cardId==="high-counter"));
+  // 来源持有确定反制，转移意愿 0.45 → 55% 世界转移成功。
+  assertClose(nextSource.handCount,1.45);
+  assertClose(nextReceiver.handCount,0.55);
+  const sourceHigh=nextSource.knownCards.find((entry)=>entry.cardId==="high-counter");
+  assert.ok(sourceHigh);assertClose(simulator.cardAvailability(sourceHigh),0.45);
+  const receiverHigh=nextReceiver.knownCards.find((entry)=>entry.cardId==="high-counter");
+  assert.ok(receiverHigh);assertClose(simulator.cardAvailability(receiverHigh),0.55);
   assert.ok(!nextReceiver.knownCards.some((entry)=>entry.cardId==="low-charge"));
   assert.ok(nextSource.knownCards.some((entry)=>entry.cardId==="low-charge"));
-  assert.equal(nextSource.knownCards.some((entry)=>entry.cardId==="high-counter"),false);
 });
 test("Planner 描述不保存转移候选身份", () => {
   const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
@@ -3458,6 +3468,628 @@ test("B1b补充：一张匿名格挡+判定格挡军火库两张都消费", () =
   assert.equal(target.knownCards.length,0);
   assert.equal(target.blockProbability,0);
   assert.ok(target.blockCountDistribution.every((branch)=>branch.blockCount===0));
+});
+
+// ---- B1c：目标级反制长期消费状态 ----
+const b1cKnownCounter = (cardId) => ({
+  cardId, definitionId:"counter",
+  availabilityBranches:[{ probability:1, conditions:{} }],
+  availabilityStateBranches:[{ probability:1, conditions:{}, available:true }]
+});
+const b1cPlayer = (id, team, overrides = {}) => ({
+  id, seatIndex:0, battleTeam:team, generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0,
+  handCount:0, counterProbability:0, blockProbability:0, twoBlockProbability:0, expectedRecoverCount:0,
+  expectedAssaultCount:0, assaultResponseProbability:0, expectedInformationGain:0,
+  equipmentDefinitionId:null, equipmentRetentionProbability:0, statuses:[], ...overrides
+});
+const b1cApply = (state, definitionId, actorId = "a") => (
+  new AiSimulator({ players:[] }).apply(
+    state,
+    { type:"card", card:{ ...CARD_DEFINITIONS[definitionId], id:`${definitionId}-b1c` }, targets:[] },
+    actorId
+  )
+);
+const b1cCounterProbability = (player) => (player.counterCountDistribution ?? [])
+  .reduce((sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0);
+const b1cCounterByCount = (player) => {
+  const byCount = {};
+  for (const branch of player.counterCountDistribution ?? []) {
+    byCount[branch.counterCount] = (byCount[branch.counterCount] ?? 0) + branch.probability;
+  }
+  return byCount;
+};
+const b1cAvailability = (entry) => entry.availabilityStateBranches
+  .filter((branch) => branch.available)
+  .reduce((sum, branch) => sum + branch.probability, 0);
+
+test("B1c可见状态：自己反制数量分布准确", () => {
+  const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("e",1,"dusk");
+  const {game}=makeGame([actor,enemy]);
+  actor.hand.push(instance("counter"),instance("counter"));
+  const visible=createAiVisibleState(actor.id,game.state),view=visible.players[0];
+  assert.deepEqual(view.counterCountDistribution,[{ count:2, probability:1 }]);
+  assert.equal(view.counterProbability,1);
+});
+
+test("B1c可见状态：其他玩家已知反制+匿名二项分布且根计数只读", () => {
+  const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("e",1,"dusk");
+  const {game}=makeGame([actor,enemy]);
+  enemy.hand.push(instance("counter"),instance("charge"),instance("charge"));
+  game.rememberPrivateCard(actor,enemy,enemy.hand[0]);
+  const counts={counter:5,assault:5};
+  const visible=createAiVisibleState(actor.id,game.state,counts),view=visible.players[1];
+  const byCount=Object.fromEntries(view.counterCountDistribution.map((branch)=>[branch.count,branch.probability]));
+  assertClose(byCount[1] ?? 0,.25);assertClose(byCount[2] ?? 0,.5);assertClose(byCount[3] ?? 0,.25);
+  assert.equal(view.counterProbability,1);
+  assert.deepEqual(counts,{counter:5,assault:5});
+});
+
+test("B1c模拟：一张确定反制连续两次震荡第一次消费第二次命中", () => {
+  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  let next=b1cApply(state,"shockwave");
+  assert.equal(next.players[1].hp,4);assert.equal(next.players[1].handCount,0);
+  assert.equal(b1cCounterProbability(next.players[1]),0);assert.equal(next.players[1].knownCards.length,0);
+  next=b1cApply(next,"shockwave");
+  assert.equal(next.players[1].hp,3);
+});
+
+test("B1c模拟：一张确定反制震荡后挑衅无法再次反制", () => {
+  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")],assaultCountDistribution:[{count:0,probability:1}]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  let next=b1cApply(state,"shockwave");
+  assert.equal(next.players[1].hp,4);assert.equal(b1cCounterProbability(next.players[1]),0);
+  next=b1cApply(next,"provoke");
+  assert.equal(next.players[1].hp,3);
+});
+
+test("B1c模拟：两张确定反制两次目标级牌各消费一张", () => {
+  const target=b1cPlayer("b","dusk",{handCount:2,counterProbability:1,knownCards:[b1cKnownCounter("c1"),b1cKnownCounter("c2")]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  let next=b1cApply(state,"shockwave");
+  assert.equal(next.players[1].hp,4);assert.equal(b1cCounterProbability(next.players[1]),1);
+  assert.equal(next.players[1].knownCards.length,2);
+  assertClose(b1cAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="c1")),.5);
+  assertClose(b1cAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="c2")),.5);
+  next=b1cApply(next,"provoke");
+  assert.equal(next.players[1].hp,4);assert.equal(b1cCounterProbability(next.players[1]),0);
+  assert.equal(next.players[1].knownCards.length,0);
+});
+
+test("B1c模拟：desire 为 0 时不消费且效果继续", () => {
+  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  const simulator=new AiSimulator({players:[]});
+  const effectWorlds=[{ probability:1, conditions:{}, occurs:true }];
+  const response=simulator.consumeTargetCounterResponseWorlds(state,target,effectWorlds,0);
+  assert.equal(response.outcomeWorlds[0].effectPasses,true);
+  assert.equal(response.outcomeWorlds[0].counterAttempted,false);
+  assert.equal(target.handCount,1);assert.equal(b1cCounterProbability(target),1);
+  assert.equal(target.knownCards[0].cardId,"c1");
+});
+
+test("B1c模拟：一张匿名确定反制第一次消费第二次无反制", () => {
+  const target=b1cPlayer("b","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  let next=b1cApply(state,"shockwave");
+  assert.equal(next.players[1].hp,4);assert.equal(next.players[1].handCount,0);
+  assert.equal(b1cCounterProbability(next.players[1]),0);
+  next=b1cApply(next,"shockwave");
+  assert.equal(next.players[1].hp,3);
+});
+
+test("B1c模拟：匿名50%反制首次消费后二次不复活", () => {
+  const target=b1cPlayer("b","dusk",{handCount:1,counterCountDistribution:[
+    {probability:.5,conditions:{anon:"no"},counterCount:0},
+    {probability:.5,conditions:{anon:"yes"},counterCount:1}
+  ]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  let next=b1cApply(state,"shockwave");
+  assert.equal(next.players[1].hp,3.5);assertClose(next.players[1].handCount,.5);
+  assert.equal(b1cCounterProbability(next.players[1]),0);
+  const byCount=b1cCounterByCount(next.players[1]);
+  assertClose(byCount[0] ?? 0,1);
+  next=b1cApply(next,"shockwave");
+  assert.equal(next.players[1].hp,2.5);
+});
+
+test("B1c模拟：40%事件未发生世界不响应不消费", () => {
+  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  const simulator=new AiSimulator({players:[]});
+  const effectWorlds=[
+    { probability:.4, conditions:{event:"yes"}, occurs:true },
+    { probability:.6, conditions:{event:"no"}, occurs:false }
+  ];
+  const response=simulator.consumeTargetCounterResponseWorlds(state,target,effectWorlds,1);
+  assertClose(target.handCount,.6);
+  assertClose(b1cCounterProbability(target),.6);
+  const cancelled=response.outcomeWorlds.filter((branch)=>branch.effectCancelled)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assertClose(cancelled,.4);
+  const attemptedWithoutEffect=response.outcomeWorlds.filter((branch)=>!branch.effectOccurs&&branch.counterAttempted)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assert.ok(Math.abs(attemptedWithoutEffect)<1e-9);
+});
+
+test("B1c模拟：desire 40% 消费与取消共用同一条件世界", () => {
+  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  const simulator=new AiSimulator({players:[]});
+  const response=simulator.consumeTargetCounterResponseWorlds(
+    state,target,[{ probability:1, conditions:{}, occurs:true }],0.4
+  );
+  const cancelled=response.outcomeWorlds.filter((branch)=>branch.effectCancelled)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  const consumed=response.outcomeWorlds.filter((branch)=>branch.counterConsumed)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assertClose(cancelled,.4);assertClose(consumed,.4);
+  assertClose(target.handCount,.6);
+  assertClose(b1cCounterProbability(target),.6);
+  const joint=joinProbabilityStateBranches(
+    projectAvailability(target.knownCards[0].availabilityStateBranches,"counterAvail"),
+    response.outcomeWorlds.map(({probability,conditions,effectCancelled})=>({probability,conditions,effectCancelled}))
+  );
+  const mismatch=joint.filter((branch)=>branch.counterAvail===branch.effectCancelled)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assert.ok(Math.abs(mismatch)<1e-9);
+});
+
+test("B1c模拟：已知1+匿名非反制使用后确定身份必消费", () => {
+  const target=b1cPlayer("b","dusk",{handCount:2,knownCards:[b1cKnownCounter("k1")],counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  const next=b1cApply(state,"shockwave");
+  assert.equal(next.players[1].hp,4);assert.equal(next.players[1].handCount,1);
+  assert.equal(next.players[1].knownCards.length,0);
+  assert.equal(b1cCounterProbability(next.players[1]),0);
+});
+
+test("B1c模拟：已知1+匿名确定反制使用后已知身份保留一半且只消费一个来源", () => {
+  const target=b1cPlayer("b","dusk",{handCount:2,knownCards:[b1cKnownCounter("k1")],counterCountDistribution:[{probability:1,conditions:{},counterCount:2}]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  const simulator=new AiSimulator({players:[]});
+  const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
+  const targetAfter=next.players[1];
+  assert.equal(targetAfter.hp,4);assert.equal(targetAfter.handCount,1);
+  const kept=targetAfter.knownCards.find((entry)=>entry.cardId==="k1");
+  assert.ok(kept);assertClose(simulator.cardAvailability(kept),.5);
+  const byCount=b1cCounterByCount(targetAfter);
+  assertClose(byCount[1] ?? 0,1);
+  assert.ok(!(byCount[2] ?? 0));assert.ok(!(byCount[0] ?? 0));
+});
+
+test("B1c模拟：已知1+匿名50%反制后身份保留0.25且只存在于count1世界", () => {
+  const target=b1cPlayer("b","dusk",{handCount:2,knownCards:[b1cKnownCounter("k1")],counterCountDistribution:[
+    {probability:.5,conditions:{anon:"no"},counterCount:1},
+    {probability:.5,conditions:{anon:"yes"},counterCount:2}
+  ]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  const simulator=new AiSimulator({players:[]});
+  const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
+  const targetAfter=next.players[1];
+  const kept=targetAfter.knownCards.find((entry)=>entry.cardId==="k1");
+  assert.ok(kept);assertClose(simulator.cardAvailability(kept),.25);
+  const joint=joinProbabilityStateBranches(
+    projectAvailability(kept.availabilityStateBranches,"keptAvail"),
+    targetAfter.counterCountDistribution.map(({probability,conditions,counterCount})=>({probability,conditions,count1:counterCount===1}))
+  );
+  const impossible=joint.filter((branch)=>branch.keptAvail&&!branch.count1)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assert.ok(Math.abs(impossible)<1e-9);
+  const byCount=b1cCounterByCount(targetAfter);
+  assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
+});
+
+test("B1c模拟：两张已知反制一次互斥选择且第二次消费剩余一张", () => {
+  const target=b1cPlayer("b","dusk",{handCount:2,counterProbability:1,knownCards:[b1cKnownCounter("k1"),b1cKnownCounter("k2")]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  const simulator=new AiSimulator({players:[]});
+  let next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
+  const after1=next.players[1];
+  assert.equal(after1.knownCards.length,2);
+  assertClose(b1cAvailability(after1.knownCards.find((entry)=>entry.cardId==="k1")),.5);
+  assertClose(b1cAvailability(after1.knownCards.find((entry)=>entry.cardId==="k2")),.5);
+  const joint1=joinProbabilityStateBranches(
+    projectAvailability(after1.knownCards.find((entry)=>entry.cardId==="k1").availabilityStateBranches,"a1"),
+    projectAvailability(after1.knownCards.find((entry)=>entry.cardId==="k2").availabilityStateBranches,"a2")
+  );
+  const bothKept=joint1.filter((branch)=>branch.a1&&branch.a2).reduce((sum,branch)=>sum+branch.probability,0);
+  const bothGone=joint1.filter((branch)=>!branch.a1&&!branch.a2).reduce((sum,branch)=>sum+branch.probability,0);
+  assert.ok(Math.abs(bothKept)<1e-9);assert.ok(Math.abs(bothGone)<1e-9);
+  const byCount=b1cCounterByCount(after1);
+  assertClose(byCount[1] ?? 0,1);
+  next=simulator.apply(next,{type:"card",card:{...CARD_DEFINITIONS.provoke,id:"pv"},targets:[]},"a");
+  assert.equal(next.players[1].knownCards.length,0);
+  assert.equal(b1cCounterProbability(next.players[1]),0);
+});
+
+test("B1c模拟：部分可用已知反制只在可用世界进入候选", () => {
+  const partial={
+    cardId:"pk",definitionId:"counter",
+    availabilityBranches:[{probability:.5,conditions:{present:"yes"}}],
+    availabilityStateBranches:[
+      {probability:.5,conditions:{present:"yes"},available:true},
+      {probability:.5,conditions:{present:"no"},available:false}
+    ]
+  };
+  const target=b1cPlayer("b","dusk",{handCount:1,knownCards:[partial],counterCountDistribution:[
+    {probability:.5,conditions:{present:"yes"},counterCount:1},
+    {probability:.5,conditions:{present:"no"},counterCount:0}
+  ]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  const simulator=new AiSimulator({players:[]});
+  const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
+  assert.equal(next.players[1].hp,3.5);
+  assert.equal(next.players[1].knownCards.length,0);
+  const after=next.players[1];
+  assert.equal(b1cCounterProbability(after),0);
+});
+
+test("B1c模拟：多目标各自独立消费反制", () => {
+  const b=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("b1")]});
+  const c=b1cPlayer("c","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
+  const state={players:[b1cPlayer("a","dawn"),b,c]};
+  const next=b1cApply(state,"shockwave");
+  assert.equal(next.players[1].hp,4);assert.equal(next.players[1].knownCards.length,0);
+  assert.equal(next.players[2].hp,4);assert.equal(next.players[2].knownCards.length,0);
+});
+
+test("B1c模拟：B两张反制C无牌时B只消费一张且C受效果", () => {
+  const b=b1cPlayer("b","dusk",{handCount:2,counterProbability:1,knownCards:[b1cKnownCounter("b1"),b1cKnownCounter("b2")]});
+  const c=b1cPlayer("c","dusk",{});
+  const state={players:[b1cPlayer("a","dawn"),b,c]};
+  const next=b1cApply(state,"shockwave");
+  assert.equal(next.players[1].hp,4);assert.equal(next.players[1].knownCards.length,2);
+  assertClose(b1cAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="b1")),.5);
+  assertClose(b1cAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="b2")),.5);
+  assert.equal(b1cCounterProbability(next.players[1]),1);
+  assert.equal(next.players[2].hp,3);
+});
+
+test("B1c模拟：clone 后已消费反制不恢复", () => {
+  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  const simulator=new AiSimulator({players:[]});
+  let next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
+  assert.equal(b1cCounterProbability(next.players[1]),0);
+  const cloned=simulator.clone(next);
+  assert.equal(b1cCounterProbability(cloned.players[1]),0);
+  const afterClone=simulator.apply(cloned,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw2"},targets:[]},"a");
+  assert.equal(afterClone.players[1].hp,3);
+});
+
+test("B1c模拟：已消费确定反制不再被资源操作选中", () => {
+  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  const simulator=new AiSimulator({players:[]});
+  const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
+  const selection=simulator.chooseSimulatedResourceSelection(next,next.players[0],next.players[1],"destroy");
+  assert.ok(!selection || selection.selectionKind !== "known" || selection.definitionId !== "counter");
+  assert.equal(next.players[1].knownCards.length,0);
+});
+
+test("B1c模拟：确定反制被破坏后不能响应", () => {
+  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
+  const state={players:[b1cPlayer("a","dawn"),target]};
+  const simulator=new AiSimulator({players:[]});
+  simulator.destroyResource(state,state.players[0],target,1);
+  assert.equal(target.knownCards.length,0);assert.equal(b1cCounterProbability(target),0);
+  const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
+  assert.equal(next.players[1].hp,3);
+});
+
+test("B1c模拟：确定反制转移后来源减一接收者加一", () => {
+  const source=b1cPlayer("s","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
+  const receiver=b1cPlayer("r","dawn",{handCount:0,counterProbability:0});
+  const state={players:[b1cPlayer("a","dawn"),source,receiver]};
+  const simulator=new AiSimulator({players:[]});
+  simulator.transferKnownCardIdentity(
+    state,source,receiver,{cardId:"c1",definitionId:"counter"},
+    [{probability:1,conditions:{},occurs:true}],false
+  );
+  assert.equal(source.knownCards.length,0);assert.equal(b1cCounterProbability(source),0);assert.equal(source.handCount,0);
+  assert.equal(receiver.knownCards.length,1);assert.equal(b1cCounterProbability(receiver),1);assert.equal(receiver.handCount,1);
+});
+
+test("B1c模拟：匿名反制转移容量守恒且共享条件世界", () => {
+  const source=b1cPlayer("s","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+  const receiver=b1cPlayer("r","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={players:[b1cPlayer("a","dawn"),source,receiver]};
+  const simulator=new AiSimulator({players:[]});
+  simulator.transferUnknownCardIdentity(
+    state,source,receiver,[{probability:1,conditions:{},occurs:true}],1
+  );
+  assert.equal(b1cCounterProbability(source),0);assert.equal(source.handCount,0);
+  assert.equal(b1cCounterProbability(receiver),1);assert.equal(receiver.handCount,1);
+  const joint=joinProbabilityStateBranches(
+    source.counterCountDistribution.map(({probability,conditions,counterCount})=>({probability,conditions,sourceCount:counterCount})),
+    receiver.counterCountDistribution.map(({probability,conditions,counterCount})=>({probability,conditions,receiverCount:counterCount}))
+  );
+  const both=joint.filter((branch)=>branch.sourceCount===0&&branch.receiverCount===1)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assertClose(both,1);
+});
+
+test("B1c模拟：整手牌随机移除互斥消费已知或匿名反制", () => {
+  const player=b1cPlayer("t","dusk",{handCount:2,knownCards:[b1cKnownCounter("k1")],counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+  const simulator=new AiSimulator({players:[]});
+  simulator.consumeRandomHandCards({players:[player]},player,1);
+  assertClose(simulator.cardAvailability(player.knownCards[0]),.5);
+  const byCount=b1cCounterByCount(player);
+  assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
+  const joint=joinProbabilityStateBranches(
+    projectAvailability(player.knownCards[0].availabilityStateBranches,"keptAvail"),
+    player.counterCountDistribution.map(({probability,conditions,counterCount})=>({probability,conditions,count1:counterCount===1}))
+  );
+  const impossible=joint.filter((branch)=>branch.keptAvail&&!branch.count1)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assert.ok(Math.abs(impossible)<1e-9);
+});
+
+test("B1c模拟：新摸一张匿名牌只增加该新牌反制先验且旧牌不复活", () => {
+  const player=b1cPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:10},players:[player]};
+  const simulator=new AiSimulator({players:[]});
+  const gainWorlds=[{probability:1,conditions:{draw:"yes"},occurs:true}];
+  player.handCount += 1;
+  simulator.addOneUnknownCardToCounterDistribution(state,player,gainWorlds);
+  assert.equal(player.counterProbability,1);
+  const byCount=b1cCounterByCount(player);
+  assertClose(byCount[0] ?? 0,0);assertClose(byCount[1] ?? 0,1);
+  // 旧匿名反制消费后摸新牌：新牌才有先验，旧牌不恢复。
+  const consumed=b1cPlayer("u","dusk",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state2={remainingCardCounts:{counter:10},players:[consumed]};
+  consumed.handCount = 1;
+  simulator.addOneUnknownCardToCounterDistribution(state2,consumed,gainWorlds);
+  assert.equal(consumed.counterProbability,1);
+  assert.ok(consumed.counterCountDistribution.every((branch)=>branch.conditions.draw==="yes"));
+});
+
+// ---- B1c 最终补充：匿名摸牌接入反制增量 ----
+const b1cDrawActor = (overrides = {}) => ({
+  id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0,
+  handCount:1, counterProbability:0, blockProbability:0, twoBlockProbability:0, expectedRecoverCount:0,
+  expectedAssaultCount:0, assaultResponseProbability:0, expectedInformationGain:0,
+  equipmentDefinitionId:null, equipmentRetentionProbability:0, statuses:[], ...overrides
+});
+
+test("B1c摸牌：收获摸两张并叠加两次新牌反制先验", () => {
+  const actor=b1cDrawActor({handCount:1,hand:[{id:"h",definitionId:"harvest"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.harvest,id:"h"},targets:[]},"a");
+  const after=next.players[0];
+  assert.equal(after.handCount,2);
+  const byCount=b1cCounterByCount(after);
+  assertClose(byCount[0] ?? 0,.25);assertClose(byCount[1] ?? 0,.5);assertClose(byCount[2] ?? 0,.25);
+  assertClose(after.counterProbability,.75);
+  assertClose(after.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+});
+
+test("B1c摸牌：旧反制消费后再收获只产生新牌先验", () => {
+  const actor=b1cDrawActor({handCount:2,hand:[{id:"c",definitionId:"counter"},{id:"h",definitionId:"harvest"}]});
+  const state={players:[actor,b1cPlayer("e","dusk",{})]};
+  const simulator=new AiSimulator(state);
+  simulator.consumeTargetCounterResponseWorlds(state,actor,[{probability:1,conditions:{},occurs:true}],1);
+  assert.equal(actor.handCount,1);assert.equal(actor.hand[0].definitionId,"harvest");
+  assert.equal(b1cCounterProbability(actor),0);
+  state.remainingCardCounts={counter:1,charge:1};
+  const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.harvest,id:"h"},targets:[]},"a");
+  const after=next.players[0];
+  assert.equal(after.handCount,2);
+  const byCount=b1cCounterByCount(after);
+  assertClose(byCount[0] ?? 0,.25);assertClose(byCount[1] ?? 0,.5);assertClose(byCount[2] ?? 0,.25);
+  assert.equal(after.hand.some((card)=>card.definitionId==="counter"),false);
+});
+
+test("B1c摸牌：40%概率收获两张共享同一效果世界", () => {
+  const actor=b1cDrawActor({handCount:1,hand:[{id:"h",definitionId:"harvest"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.harvest,id:"h"},targets:[],executionProbability:.4},"a");
+  const after=next.players[0];
+  assertClose(after.handCount,1.4);
+  const byCount=b1cCounterByCount(after);
+  assertClose(byCount[0] ?? 0,.7);assertClose(byCount[1] ?? 0,.2);assertClose(byCount[2] ?? 0,.1);
+  assertClose(after.counterProbability,.3);
+  assertClose(after.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+});
+
+test("B1c摸牌：回收站前两次战术各摸一张第三次不触发", () => {
+  const actor=b1cDrawActor({handCount:3,hand:[
+    {id:"x1",definitionId:"exposeWeakness"},
+    {id:"x2",definitionId:"exposeWeakness"},
+    {id:"x3",definitionId:"exposeWeakness"}
+  ],equipmentDefinitionId:"recycleDevice",equipmentRetentionProbability:1,recycleDeviceUses:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+  const simulator=new AiSimulator(state);
+  let next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x1"},targets:[]},"a");
+  assert.equal(next.players[0].handCount,3);assertClose(b1cCounterProbability(next.players[0]),.5);
+  next=simulator.apply(next,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x2"},targets:[]},"a");
+  const byCount2=b1cCounterByCount(next.players[0]);
+  assertClose(byCount2[0] ?? 0,.25);assertClose(byCount2[1] ?? 0,.5);assertClose(byCount2[2] ?? 0,.25);
+  next=simulator.apply(next,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x3"},targets:[]},"a");
+  assert.equal(next.players[0].handCount,2);
+  const byCount3=b1cCounterByCount(next.players[0]);
+  assertClose(byCount3[0] ?? 0,.25);assertClose(byCount3[1] ?? 0,.5);assertClose(byCount3[2] ?? 0,.25);
+});
+
+test("B1c摸牌：击杀奖励为新牌叠加反制先验", () => {
+  const attacker=b1cDrawActor({handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const enemy=b1cPlayer("e","dusk",{handCount:0,hp:1,blockProbability:0,expectedRecoverCount:0,assaultResponseProbability:0});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[attacker,enemy]};
+  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"e"}]},"a");
+  const after=next.players[0];
+  assert.equal(after.handCount,1); // 1 打出 -1 + 击杀奖励 1
+  assertClose(after.counterProbability,.5);
+  assertClose(b1cCounterByCount(after)[0] ?? 0,.5);
+  assertClose(b1cCounterByCount(after)[1] ?? 0,.5);
+});
+
+test("B1c摸牌：孤注摸牌增加反制先验", () => {
+  const actor=b1cDrawActor({generalId:"fate-gambler",handCount:1,hand:[{id:"x",definitionId:"exposeWeakness"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x"},targets:[]},"a");
+  assertClose(next.players[0].handCount,.6);
+  assertClose(next.players[0].counterProbability,.3);
+});
+
+test("B1c摸牌：协调摸牌增加反制先验", () => {
+  const actor=b1cDrawActor({generalId:"resonance-tuner",handCount:1,hand:[{id:"s",definitionId:"shield"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const ally=b1cPlayer("ally","dawn",{handCount:0});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,ally,b1cPlayer("e","dusk",{})]};
+  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.shield,id:"s"},targets:[{id:"ally"}]},"a");
+  assert.equal(next.players[0].handCount,1);
+  assertClose(next.players[0].counterProbability,.5);
+});
+
+test("B1c摸牌：共鸣技能摸两张增加反制先验", () => {
+  const actor=b1cDrawActor({handCount:0,hand:[],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=b1cPlayer("t","dusk",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,target]};
+  const simulator=new AiSimulator(state);
+  simulator.applySkill(state,actor,{type:"skill",skill:{id:"resonance"},targets:[{id:"t"}]},[{probability:1,conditions:{},occurs:true}]);
+  assert.equal(target.handCount,2);
+  const byCount=b1cCounterByCount(target);
+  assertClose(byCount[0] ?? 0,.25);assertClose(byCount[1] ?? 0,.5);assertClose(byCount[2] ?? 0,.25);
+  assertClose(target.counterProbability,.75);
+});
+
+test("B1c摸牌：灵医回春摸牌增加反制先验", () => {
+  const medic=b1cDrawActor({generalId:"spirit-medic",handCount:0,hand:[],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const ally=b1cPlayer("ally","dawn",{handCount:0,hp:2,maxHp:4});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[medic,ally]};
+  const simulator=new AiSimulator(state);
+  simulator.healFrom(state,medic,ally,1);
+  assert.equal(medic.handCount,1);
+  assertClose(medic.counterProbability,.5);
+  assert.equal(medic.rejuvenationUsed,true);
+});
+
+test("B1c摸牌：猎杀被格挡后摸牌增加反制先验", () => {
+  const hunter=b1cDrawActor({handCount:0,hand:[],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=b1cPlayer("t","dusk",{handCount:1,hand:[{id:"b",definitionId:"block"}],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}],huntMarkSourceId:hunter.id,huntMarkProbability:1,huntMarkProbabilities:{[hunter.id]:1},huntMarkStateBranchesBySource:{[hunter.id]:[{probability:1,conditions:{},marked:true}]}});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[hunter,target]};
+  const simulator=new AiSimulator(state);
+  simulator.applySkill(state,hunter,{type:"skill",skill:{id:"hunt"},targets:[{id:"t"}]},[{probability:1,conditions:{},occurs:true}]);
+  assert.equal(hunter.handCount,1);
+  assertClose(hunter.counterProbability,.5);
+});
+
+test("B1c摸牌：已知牌移动不按匿名根先验重复增加反制", () => {
+  const source=b1cPlayer("s","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
+  const receiver=b1cPlayer("r","dawn",{handCount:0,counterProbability:0});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[b1cDrawActor(),source,receiver]};
+  const simulator=new AiSimulator(state);
+  simulator.transferKnownCardIdentity(state,source,receiver,{cardId:"c1",definitionId:"counter"},[{probability:1,conditions:{},occurs:true}],false);
+  assert.deepEqual(receiver.counterCountDistribution,[{probability:1,conditions:{},counterCount:1}]);
+  assert.equal(receiver.counterProbability,1);
+  // 雷达判定得到公开基础牌（非反制）不增加反制容量。
+  const radarTarget=b1cPlayer("radar","dusk",{handCount:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state2={remainingCardCounts:{charge:1},players:[b1cDrawActor(),radarTarget]};
+  const simulator2=new AiSimulator(state2);
+  simulator2.applyDamage(state2,state2.players[0],radarTarget,1,{canBlock:true,deviceAttack:true});
+  assert.equal(radarTarget.counterProbability,0);
+});
+
+// ---- B1c 最终收口：窃取反制容量守恒 ----
+test("B1c窃取：唯一匿名确定反制窃取后容量守恒", () => {
+  const actor=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=b1cPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+  const state={players:[actor,target]};
+  const simulator=new AiSimulator(state);
+  simulator.stealResourceToHand(state,actor,target,1);
+  assert.equal(target.handCount,0);assert.equal(b1cCounterProbability(target),0);
+  assert.equal(actor.handCount,1);assert.equal(b1cCounterProbability(actor),1);
+  const byCount=b1cCounterByCount(actor);
+  assertClose(byCount[1] ?? 0,1);
+  assertClose(actor.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+});
+
+test("B1c窃取：唯一匿名50%反制窃取后与来源同条件世界", () => {
+  const actor=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=b1cPlayer("t","dusk",{handCount:1,counterCountDistribution:[
+    {probability:.5,conditions:{anon:"no"},counterCount:0},
+    {probability:.5,conditions:{anon:"yes"},counterCount:1}
+  ]});
+  const state={players:[actor,target]};
+  const simulator=new AiSimulator(state);
+  simulator.stealResourceToHand(state,actor,target,1);
+  assert.equal(target.handCount,0);assert.equal(b1cCounterProbability(target),0);
+  const byCount=b1cCounterByCount(actor);
+  assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
+  assertClose(actor.counterProbability,.5);
+  const count1Branches=actor.counterCountDistribution.filter((branch)=>branch.counterCount===1);
+  assert.ok(count1Branches.some((branch)=>branch.conditions.anon==="yes"));
+  const count0Branches=actor.counterCountDistribution.filter((branch)=>branch.counterCount===0);
+  assert.ok(count0Branches.some((branch)=>branch.conditions.anon==="no"));
+});
+
+test("B1c窃取：手牌与装备各有概率时只转移手牌世界反制", () => {
+  const actor=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=b1cPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}],equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1});
+  const state={players:[actor,target]};
+  const simulator=new AiSimulator(state);
+  simulator.stealResourceToHand(state,actor,target,1);
+  assert.equal(actor.handCount,1);
+  assertClose(actor.counterProbability,.5);
+  assertClose(target.equipmentRetentionProbability,.5);
+  assertClose(target.handCount,.5);
+  assertClose(b1cCounterProbability(target),.5);
+  const joint=joinProbabilityStateBranches(
+    actor.counterCountDistribution.map(({probability,conditions,counterCount})=>({probability,conditions,actorCount1:counterCount===1})),
+    target.counterCountDistribution.map(({probability,conditions,counterCount})=>({probability,conditions,targetCount1:counterCount===1}))
+  );
+  const both=joint.filter((branch)=>branch.actorCount1&&branch.targetCount1)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assert.ok(Math.abs(both)<1e-9);
+});
+
+test("B1c窃取：40%概率窃取只转移发生世界反制", () => {
+  const actor=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=b1cPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+  const state={players:[actor,target]};
+  const simulator=new AiSimulator(state);
+  simulator.stealResourceToHand(state,actor,target,.4);
+  assertClose(actor.handCount,.4);assertClose(actor.counterProbability,.4);
+  assertClose(target.handCount,.6);assertClose(b1cCounterProbability(target),.6);
+});
+
+test("B1c窃取：行动者窃取反制后可响应一次目标级牌", () => {
+  const thief=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const victim=b1cPlayer("v","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+  const state={players:[thief,victim]};
+  const simulator=new AiSimulator(state);
+  simulator.stealResourceToHand(state,thief,victim,1);
+  assert.equal(b1cCounterProbability(thief),1);
+  const attacker=b1cPlayer("atk","dusk",{handCount:0});
+  const state2={players:[attacker,thief]};
+  let next=simulator.apply(state2,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"atk");
+  assert.equal(next.players[1].hp,4);assert.equal(b1cCounterProbability(next.players[1]),0);
+  next=simulator.apply(next,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw2"},targets:[]},"atk");
+  assert.equal(next.players[1].hp,3);
+});
+
+test("B1c窃取：来源唯一反制被窃取后不能再响应", () => {
+  const thief=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const victim=b1cPlayer("v","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+  const state={players:[thief,victim]};
+  const simulator=new AiSimulator(state);
+  simulator.stealResourceToHand(state,thief,victim,1);
+  assert.equal(b1cCounterProbability(victim),0);
+  const attacker=b1cPlayer("atk","dawn",{handCount:0});
+  const state2={players:[attacker,victim]};
+  const next=simulator.apply(state2,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"atk");
+  assert.equal(next.players[1].hp,3);
+});
+
+test("B1c窃取：只窃取装备不产生反制容量", () => {
+  const actor=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=b1cPlayer("t","dusk",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}],equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1});
+  const state={players:[actor,target]};
+  const simulator=new AiSimulator(state);
+  simulator.stealResourceToHand(state,actor,target,1);
+  assert.equal(actor.handCount,1);assert.equal(b1cCounterProbability(actor),0);
+  assert.equal(target.equipmentRetentionProbability,0);
+  assert.ok(actor.counterCountDistribution.every((branch)=>branch.counterCount===0));
 });
 
 const conditionalAssaultState = (attackLimit) => ({ playPhaseEnded:false, players:[
@@ -5725,9 +6357,13 @@ test("资源身份补修：部分 known 参与整手牌随机选择且未选中�
   assert.equal(player.knownCards.length, 1);
   // 被选中 world 的身份归零，未选中 world 继续保留。
   assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 0.2) < 1e-9);
-  const density = CARD_DEFINITIONS.counter.count / TOTAL_CARD_COUNT;
   simulator.syncCardEstimates(player, null);
-  assert.ok(Math.abs(player.counterProbability - (0.2 + 0.16 * density)) < 1e-9);
+  // B1c：counterProbability 由维护中的 counterCountDistribution 派生，不再从根先验重估。
+  const derived = player.counterCountDistribution.reduce(
+    (sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0
+  );
+  assert.ok(Math.abs(player.counterProbability - derived) < 1e-9);
+  assertClose(player.counterCountDistribution.reduce((sum, branch) => sum + branch.probability, 0), 1);
 });
 
 test("资源身份补修：连续部分掠夺后再按未知破坏不保留幽灵牌", () => {
@@ -5760,8 +6396,11 @@ test("资源身份补修：完整确定 known 参与整手牌随机选择", () =
   // 与匿名牌组成互斥候选，选中概率各 50%。
   assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 0.5) < 1e-9);
   simulator.syncCardEstimates(player);
-  const density = CARD_DEFINITIONS.counter.count / TOTAL_CARD_COUNT;
-  assert.ok(Math.abs(player.counterProbability - (0.5 + 0.25 * density)) < 1e-9);
+  const derived = player.counterCountDistribution.reduce(
+    (sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0
+  );
+  assert.ok(Math.abs(player.counterProbability - derived) < 1e-9);
+  assertClose(player.counterCountDistribution.reduce((sum, branch) => sum + branch.probability, 0), 1);
 });
 
 test("资源身份补修：零概率 known 条目在随机消费后清理", () => {
@@ -7012,7 +7651,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260806-ai-radar-block-v91"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260806-ai-target-counter-v92"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 

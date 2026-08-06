@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-radar-block-v91";
-import { createId } from "../utils/helpers.js?build=20260806-ai-radar-block-v91";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260806-ai-radar-block-v91";
-import { RuleEngine } from "./RuleEngine.js?build=20260806-ai-radar-block-v91";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-target-counter-v92";
+import { createId } from "../utils/helpers.js?build=20260806-ai-target-counter-v92";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260806-ai-target-counter-v92";
+import { RuleEngine } from "./RuleEngine.js?build=20260806-ai-target-counter-v92";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
