@@ -104,17 +104,9 @@
 .equipment-tooltip strong { margin-bottom: 3px; font-size: 14px; }
 .equipment-tooltip em { margin-top: 5px; color: var(--gold); font-style: normal; }
 .equipment-slot:hover .equipment-tooltip, .equipment-slot:focus-visible .equipment-tooltip { visibility: visible; opacity: 1; transform: none; }
-.character-details { flex: 1 1 auto; min-height: 0; overflow: auto; padding-top: 2px; border-top: 1px solid var(--border); }
-.character-details summary { color: var(--text-secondary); cursor: pointer; font-size: 12px; font-weight: 700; }
-.character-skill-list { display: grid; gap: 5px; margin-top: 5px; }
-.skill-summary { display: grid; grid-template-columns: minmax(74px, auto) 1fr; align-items: start; gap: 7px; padding: 5px 7px; border-left: 2px solid var(--gold); border-radius: 0 6px 6px 0; background: rgba(247,240,223,.82); color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
-.skill-summary > div { display: grid; }
-.skill-summary small { color: var(--text-muted); font-size: 12px; }
-.skill-summary strong { color: var(--gold); font-size: 13px; }
-.skill-summary.is-passive-skill { border-left-color: var(--dawn); background: rgba(226,240,236,.72); }
-.skill-summary.is-passive-skill strong { color: var(--dawn); }
 
 .human-seat { height: 100%; grid-template-columns: 104px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); padding: 10px; }
+.player-seat.human-seat { padding-bottom: 32px; }
 .human-seat .seat-heading { display: grid; gap: 1px; }
 .human-seat .seat-heading strong { font-size: 20px; }
 .human-seat .seat-heading .turn-state { justify-self: start; }
@@ -135,5 +127,4 @@
   .opponent-hand-strip { height: 192px; padding-bottom: 2px; }
   .cpu-seat.is-active::after { bottom: 201px; }
   .human-seat { grid-template-columns: 86px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-  .character-details { min-height: 52px; }
 }

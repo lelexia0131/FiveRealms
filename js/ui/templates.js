@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-propagation-value-v109";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-human-seat-equal-height-v112";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -115,10 +115,6 @@ export function playerPanelTemplate(player, options = {}) {
       </div>
       <div class="range-readout ${showDistance ? "" : "is-status-only"}"><span class="panel-status" title="状态：${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}"><small>状态</small><b>${escapeHtml(statusSummary)}</b></span>${showDistance ? `<strong>${escapeHtml(distanceState ?? `距离 ${distanceInfo.distance}`)}</strong><small>射程 ${distanceInfo.range}</small>` : ""}</div>
       ${equipmentSlotTemplate(player, isHuman)}
-      ${isHuman ? `<details class="character-details" open><summary>角色能力</summary><div class="character-skill-list">
-        <div class="skill-summary is-active-skill"><div><small>主动技能</small><strong>${escapeHtml(player.general.activeName)}</strong></div><span>${escapeHtml(player.general.activeDescription)}</span></div>
-        <div class="skill-summary is-passive-skill"><div><small>被动技能</small><strong>${escapeHtml(player.general.passiveName)}</strong></div><span>${escapeHtml(player.general.passiveDescription)}</span></div>
-      </div></details>` : ""}
     </div>
     ${!isHuman ? opponentHandStripTemplate(opponentHandSlots ?? Array.from({ length:player.hand.length }, () => ({ known:false }))) : ""}
   </article>`;

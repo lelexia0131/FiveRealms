@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-lightning-propagation-value-v109";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260807-lightning-propagation-value-v109";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260807-lightning-propagation-value-v109";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-human-seat-equal-height-v112";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260807-human-seat-equal-height-v112";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260807-human-seat-equal-height-v112";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
