@@ -7758,7 +7758,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260807-lightning-central-card-unify-v105"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260807-lightning-team-burden-v106"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 
@@ -8334,6 +8334,27 @@ test("闪电：AI 无其他合法接收者时按转回自己估值而非消失",
   }));
 });
 
+
+test("闪电：lightningTeamBurden 跨阵营接收者按持有者与接收者各自阵营分别签名", () => {
+  const makeState = (holderTeam, receiverTeam) => {
+    const holder = { id:"holder", seatIndex:0, battleTeam:holderTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
+    const players = [holder];
+    if (receiverTeam) players.push({ id:"receiver", seatIndex:1, battleTeam:receiverTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:[] });
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, holder };
+  };
+  // 场景 1：己方持有、敌方接收 -> 1.5 - 0.375 = 1.125
+  let built = makeState("dawn", "dusk");
+  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.125);
+  // 场景 2：敌方持有、己方接收 -> -1.5 + 0.375 = -1.125
+  built = makeState("dusk", "dawn");
+  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), -1.125);
+  // 场景 3：己方持有、己方接收 -> 1.5 + 0.375 = 1.875
+  built = makeState("dawn", "dawn");
+  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.875);
+  // 场景 4：无其他接收者，nextLightningReceiver 返回持有者本人 -> 1.5 + 0.375 = 1.875
+  built = makeState("dawn", null);
+  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.875);
+});
 let passed = 0;
 const testPattern = process.env.TEST_PATTERN ? new RegExp(process.env.TEST_PATTERN, "u") : null;
 const selectedTests = testPattern ? tests.filter(({ name }) => testPattern.test(name)) : tests;

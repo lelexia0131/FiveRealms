@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-central-card-unify-v105";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-team-burden-v106";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

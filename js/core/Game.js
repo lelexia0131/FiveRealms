@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-central-card-unify-v105";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-central-card-unify-v105";
-import { createId, clamp } from "../utils/helpers.js?build=20260807-lightning-central-card-unify-v105";
-import { EventBus } from "./EventBus.js?build=20260807-lightning-central-card-unify-v105";
-import { Player } from "./Player.js?build=20260807-lightning-central-card-unify-v105";
-import { Deck } from "./Deck.js?build=20260807-lightning-central-card-unify-v105";
-import { TeamManager } from "./TeamManager.js?build=20260807-lightning-central-card-unify-v105";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260807-lightning-central-card-unify-v105";
-import { RuleEngine } from "./RuleEngine.js?build=20260807-lightning-central-card-unify-v105";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260807-lightning-central-card-unify-v105";
-import { GameLogger } from "./GameLogger.js?build=20260807-lightning-central-card-unify-v105";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260807-lightning-central-card-unify-v105";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-lightning-central-card-unify-v105";
-import { AIController } from "../ai/AiController.js?build=20260807-lightning-central-card-unify-v105";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260807-lightning-central-card-unify-v105";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260807-lightning-central-card-unify-v105";
-import { Debug } from "../utils/debug.js?build=20260807-lightning-central-card-unify-v105";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260807-lightning-central-card-unify-v105";
-import { DyingSystem } from "./DyingSystem.js?build=20260807-lightning-central-card-unify-v105";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260807-lightning-central-card-unify-v105";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260807-lightning-central-card-unify-v105";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260807-lightning-central-card-unify-v105";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260807-lightning-central-card-unify-v105";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-team-burden-v106";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-team-burden-v106";
+import { createId, clamp } from "../utils/helpers.js?build=20260807-lightning-team-burden-v106";
+import { EventBus } from "./EventBus.js?build=20260807-lightning-team-burden-v106";
+import { Player } from "./Player.js?build=20260807-lightning-team-burden-v106";
+import { Deck } from "./Deck.js?build=20260807-lightning-team-burden-v106";
+import { TeamManager } from "./TeamManager.js?build=20260807-lightning-team-burden-v106";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260807-lightning-team-burden-v106";
+import { RuleEngine } from "./RuleEngine.js?build=20260807-lightning-team-burden-v106";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260807-lightning-team-burden-v106";
+import { GameLogger } from "./GameLogger.js?build=20260807-lightning-team-burden-v106";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260807-lightning-team-burden-v106";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-lightning-team-burden-v106";
+import { AIController } from "../ai/AiController.js?build=20260807-lightning-team-burden-v106";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260807-lightning-team-burden-v106";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260807-lightning-team-burden-v106";
+import { Debug } from "../utils/debug.js?build=20260807-lightning-team-burden-v106";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260807-lightning-team-burden-v106";
+import { DyingSystem } from "./DyingSystem.js?build=20260807-lightning-team-burden-v106";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260807-lightning-team-burden-v106";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260807-lightning-team-burden-v106";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260807-lightning-team-burden-v106";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260807-lightning-team-burden-v106";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {

@@ -7,10 +7,9 @@
  *
  * 特性：
  * - Worker Threads 动态任务池，默认使用全部可用逻辑处理器；
- * - 备用候选对局：默认准备目标局数+10，先完成目标数量后立即终止其余慢局；
+ * - 备用候选对局：默认准备目标局数+24，先完成目标数量后立即终止其余慢局；
  * - 可选尾部投机执行；备用候选模式下默认关闭，避免重复计算同一种子；
  * - 固定全局局号和随机种子，串行/并行使用相同测试样本；
- * - 保留旧 balance-simulation.mjs 的兼容字段，并输出更完整的统计报告；
  * - 不依赖第三方包，不修改正式 Game、AI、规则或牌堆代码。
  */
 
@@ -1428,7 +1427,7 @@ function printHelp() {
       --detailed / --no-detailed           完整事件统计，默认开启
       --include-game-records               在 JSON 中加入逐局记录，默认关闭
       --game-records-limit <n>             逐局记录上限；0=全部，默认 0
-      --slow-game-samples <n>              最慢对局样本数量，默认 10
+      --slow-game-samples <n>              最慢对局样本数量，默认 24
       --stall-samples <n>                  停滞快照数量，默认 3
       --error-samples <n>                  错误样本数量，默认 5
       --summary / --no-summary             stderr 输出中文摘要，默认开启

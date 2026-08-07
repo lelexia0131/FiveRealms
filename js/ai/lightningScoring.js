@@ -2,8 +2,8 @@
  * 闪电的 AI 共享纯计算：状态检查、剩余装备类别概率、下一接收者查找与期望负担。
  * 只读取公开/过滤后的字段，不实例化匿名判定牌，不修改 remainingCardCounts 根先验。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260807-lightning-central-card-unify-v105";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260807-lightning-central-card-unify-v105";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260807-lightning-team-burden-v106";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260807-lightning-team-burden-v106";
 
 const DISCOUNT = 0.5;
 
@@ -53,8 +53,10 @@ export function lightningTeamBurden(state, holder, viewerTeam) {
   const transferBurden = receiver?.alive
     ? (1 - probability) * DISCOUNT * probability * damageRisk(receiver)
     : 0;
-  const total = holderBurden + transferBurden;
-  return holder.battleTeam === viewerTeam ? total : -total;
+  const signedBurden = (player, burden) =>
+    player.battleTeam === viewerTeam ? burden : -burden;
+  return signedBurden(holder, holderBurden)
+    + (receiver ? signedBurden(receiver, transferBurden) : 0);
 }
 
 /** 状态反制成功后立即转移给 receiver 时，从 viewerTeam 视角的后续期望损失。 */
