@@ -34,6 +34,7 @@ import { chooseBestResourceHandCandidate, chooseResourceZone, getResourceDefinit
 import { AiKnowledge } from "../js/ai/AiKnowledge.js";
 import { AiCardSelector } from "../js/ai/AiCardSelector.js";
 import { joinProbabilityStateBranches } from "../js/ai/AiProbabilityBranches.js";
+import { equipmentJudgmentProbability, lightningTeamBurden, lightningUseValue, nextLightningReceiver } from "../js/ai/lightningScoring.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 const tests = [];
@@ -221,12 +222,12 @@ for (const definition of Object.values(CARD_DEFINITIONS)) test(`卡牌资源：$
   assert.ok(hasCardResolver(definition.definitionId));
 });
 
-test("牌组恰有24种定义和158张实体牌", () => { assert.equal(Object.keys(CARD_DEFINITIONS).length, 24); assert.equal(TOTAL_CARD_COUNT, 158); });
+test("牌组恰有25种定义和160张实体牌", () => { assert.equal(Object.keys(CARD_DEFINITIONS).length, 25); assert.equal(TOTAL_CARD_COUNT, 160); });
 test("三种卡牌分类之外没有旧响应分类", () => assert.deepEqual([...new Set(Object.values(CARD_DEFINITIONS).map((card) => card.category))].sort(), ["basic","equipment","tactic"]));
 test("旧 support/insight/steal/coreDevice/redirect 定义已删除", () => ["support","insight","steal","coreDevice","redirect"].forEach((id) => assert.equal(CARD_DEFINITIONS[id], undefined)));
 test("五种基础牌数量为突袭40、格挡20、调息12、聚能10、护盾10", () => assert.deepEqual(Object.fromEntries(["assault","block","recover","charge","shield"].map((id)=>[id,CARD_DEFINITIONS[id].count])),{assault:40,block:20,recover:12,charge:10,shield:10}));
 test("基础牌数量合计92", () => assert.equal(Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0), 92));
-test("战术牌数量合计51", () => assert.equal(Object.values(CARD_DEFINITIONS).filter((card) => card.category === "tactic").reduce((sum, card) => sum + card.count, 0), 51));
+test("战术牌数量合计53", () => assert.equal(Object.values(CARD_DEFINITIONS).filter((card) => card.category === "tactic").reduce((sum, card) => sum + card.count, 0), 53));
 test("借势在集中牌堆中固定3张且均为不同真实实例", () => {
   const deck=new Deck(()=>0);deck.build();const cards=deck.cards.filter((card)=>card.definitionId==="leverage");
   assert.equal(CARD_DEFINITIONS.leverage.count,3);assert.equal(cards.length,3);assert.equal(new Set(cards.map((card)=>card.id)).size,3);assert.equal(new Set(cards).size,3);
@@ -358,7 +359,7 @@ test("响应窗口保持居中浮层原布局且中央结算卡在普通阶段�
 });
 
 // 牌堆、阵营、距离和次数补偿
-test("Deck 创建158个唯一实体 card.id", () => { const deck = new Deck(() => .4); assert.equal(deck.build(), 158); assert.equal(new Set(deck.cards.map((card) => card.id)).size, 158); });
+test("Deck 创建160个唯一实体 card.id", () => { const deck = new Deck(() => .4); assert.equal(deck.build(), 160); assert.equal(new Set(deck.cards.map((card) => card.id)).size, 160); });
 test("结算区不会进入重洗", () => { const deck = new Deck(() => .4); deck.build(); const resolving = deck.drawOne(); const discard = deck.drawOne(); deck.beginResolve(resolving); deck.discard(discard); deck.cards = []; deck.reshuffle(); assert.equal(deck.cards.length, 1); assert.equal(deck.resolvingCards[0], resolving); });
 test("判定区不会进入重洗", () => { const deck = new Deck(() => .4); deck.build(); const judgment = deck.drawToJudgment(); const discard = deck.drawOne(); deck.discard(discard); deck.cards = []; deck.reshuffle(); assert.equal(deck.cards.length, 1); assert.equal(deck.judgmentZone[0], judgment); });
 test("重洗计数会准确累加", () => { const deck = new Deck(); deck.discardPile.push(instance("charge")); deck.reshuffle(); assert.equal(deck.reshuffleCount, 1); });
@@ -2725,8 +2726,8 @@ test("日志角色 token 可在同一行分别按阵营安全着色", () => {
   const markup=formatLogEntry(entry);assert.match(markup,/log-player-name team-dawn/);assert.match(markup,/log-player-name team-dusk/);
   assert.match(markup,/造成影响/);
 });
-test("24 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
-  assert.equal(Object.keys(CARD_DEFINITIONS).length,24);
+test("25 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length,25);
   for(const definition of Object.values(CARD_DEFINITIONS)){
     const card={...definition,id:`layout-${definition.definitionId}`};
     for(const markup of [handCardTemplate(card),opponentHandStripTemplate([{known:true,...card}])]){
@@ -7757,7 +7758,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260807-leverage-response-ui-v97"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260807-lightning-central-card-unify-v105"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 
@@ -7774,6 +7775,563 @@ test("控制器文件名：导出类名仍为 AIController", async () => {
   const module = await import("../js/ai/AiController.js");
   assert.equal(typeof module.AIController, "function");
   assert.equal(module.AiController, undefined);
+});
+
+test("闪电：定义、数量与牌堆总数正确", () => {
+  const lightning = CARD_DEFINITIONS.lightning;
+  assert.ok(lightning);
+  assert.equal(lightning.category, "tactic");
+  assert.equal(lightning.count, 2);
+  assert.equal(lightning.targetType, "none");
+  assert.equal(lightning.aiValue, 5);
+  assert.ok(lightning.description.includes("闪电"));
+  assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("lightning"));
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 25);
+  const tacticTotal = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "tactic").reduce((sum, card) => sum + card.count, 0);
+  assert.equal(tacticTotal, 53);
+  assert.equal(TOTAL_CARD_COUNT, 160);
+});
+
+test("闪电：Deck.build 生成正好两张不同实体 ID", () => {
+  const deck = new Deck(() => 0);
+  assert.equal(deck.build(), 160);
+  const cards = deck.cards.filter((card) => card.definitionId === "lightning");
+  assert.equal(cards.length, 2);
+  assert.equal(new Set(cards.map((card) => card.id)).size, 2);
+});
+
+test("闪电：无状态时可用，成功后获得状态并进入弃牌堆", async () => {
+  const source = makePlayer("a", 0, "dawn", "human"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([source, enemy]);
+  const card = instance("lightning");
+  source.hand.push(card);
+  assert.equal(await game.playCard(source, card, []), true);
+  assert.deepEqual(source.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: source.id });
+  assert.ok(game.state.deck.discardPile.includes(card));
+});
+
+test("闪电：已有闪电状态时真实规则拒绝使用", async () => {
+  const source = makePlayer("a", 0, "dawn", "human"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([source, enemy]);
+  source.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: source.id };
+  const card = instance("lightning");
+  source.hand.push(card);
+  assert.equal(RuleEngine.canPlayCard(game, source, card).ok, false);
+  assert.equal(await game.playCard(source, card, []), false);
+  assert.ok(source.hand.includes(card));
+});
+
+test("闪电：使用阶段普通反制成功后不获得状态且不转移", async () => {
+  const source = makePlayer("a", 0, "dawn", "human"), enemy = makePlayer("b", 1, "dusk", "human"), receiver = makePlayer("c", 2, "dawn");
+  const { game } = makeGame([source, enemy, receiver], { response: () => true });
+  const card = instance("lightning"), counter = instance("counter");
+  source.hand.push(card);
+  enemy.hand.push(counter);
+  assert.equal(await game.playCard(source, card, []), true);
+  assert.equal(source.statuses.lightning, undefined);
+  assert.equal(receiver.statuses.lightning, undefined);
+  assert.ok(game.state.deck.discardPile.includes(card));
+  assert.ok(game.state.deck.discardPile.includes(counter));
+});
+
+test("闪电：使用回合不立即判定，下一次实际回合在摸牌前结算", async () => {
+  const source = makePlayer("a", 0, "dawn", "ai"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([source, enemy]);
+  const card = instance("lightning");
+  source.hand.push(card);
+  await game.playCard(source, card, []);
+  assert.equal(source.hp, source.maxHp);
+  assert.ok(source.statuses.lightning);
+  game.state.deck.cards = [instance("defenseDevice")];
+  game.state.deck.discardPile = [];
+  let damageBeforeDraw = false;
+  game.eventBus.on("beforeDraw", "test:lightning-before-draw", (event) => {
+    if (event.player === source && source.hp < source.maxHp) damageBeforeDraw = true;
+  });
+  game.aiController.getLegalActions = () => [{ type:"end" }];
+  game.aiController.selectAction = async () => ({ type:"end" });
+  await game.takeTurn(source, game.state.gameId);
+  assert.equal(damageBeforeDraw, true);
+  assert.equal(source.hp, source.maxHp - 3);
+  assert.equal(source.statuses.lightning, undefined);
+});
+
+test("闪电：判定非装备牌后移除状态并顺时针转移，保留来源元数据", async () => {
+  const holder = makePlayer("a", 0, "dawn"), next = makePlayer("b", 1, "dusk"), tail = makePlayer("c", 2, "dawn");
+  const { game } = makeGame([holder, next, tail]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  game.state.deck.cards = [instance("assault")];
+  game.state.deck.discardPile = [];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.deepEqual(next.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
+  assert.equal(tail.statuses.lightning, undefined);
+  assert.ok(game.state.deck.discardPile.some((entry) => entry.definitionId === "assault"));
+});
+
+test("闪电：判定装备牌触发3点中立伤害且状态立即消费", async () => {
+  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  const equipment = instance("defenseDevice");
+  game.state.deck.cards = [equipment];
+  const events = [];
+  game.eventBus.on("beforeDamage", "test:lightning-before", (event) => events.push(["before", event.source, event.damageType, { ...event.metadata }]));
+  game.eventBus.on("afterDamage", "test:lightning-after", (event) => events.push(["after", event.source, event.actualAmount, { ...event.metadata }]));
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.hp, holder.maxHp - 3);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.equal(enemy.statuses.lightning, undefined);
+  assert.equal(events.length, 2);
+  assert.equal(events[0][1], null);
+  assert.equal(events[0][2], "lightning");
+  assert.equal(events[0][3].statusId, "lightning");
+  assert.equal(events[0][3].cardDefinitionId, "lightning");
+  assert.equal(events[0][3].originPlayerId, holder.id);
+  assert.equal(events[0][3].currentHolderId, holder.id);
+  assert.equal(events[0][3].baseDamage, 3);
+  assert.equal(events[0][3].judgmentCategory, "equipment");
+  assert.equal(events[1][3].statusId, "lightning");
+  assert.ok(game.state.deck.discardPile.includes(equipment));
+});
+
+test("闪电：伤害不请求格挡且不触发雷达防御判定", async () => {
+  const holder = makePlayer("a", 0, "dawn");
+  const { game } = makeGame([holder]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  holder.equipment = instance("defenseDevice");
+  const block = instance("block");
+  holder.hand.push(block);
+  game.state.deck.cards = [instance("energyDevice")];
+  let judgmentReveals = 0;
+  game.eventBus.on("judgmentRevealed", "test:lightning-judge-count", () => { judgmentReveals += 1; });
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.hp, holder.maxHp - 3);
+  assert.ok(holder.hand.includes(block));
+  assert.equal(judgmentReveals, 1);
+  assert.equal(game.state.deck.judgmentZone.length, 0);
+});
+
+test("闪电：护盾吸收后按统一伤害系统记录", async () => {
+  const holder = makePlayer("a", 0, "dawn");
+  const { game } = makeGame([holder]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  holder.shield = 1;
+  const events = [];
+  game.eventBus.on("afterDamage", "test:lightning-shield", (event) => events.push({ actualAmount:event.actualAmount, shieldAbsorbed:event.shieldAbsorbed, source:event.source }));
+  game.state.deck.cards = [instance("energyDevice")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.hp, holder.maxHp - 2);
+  assert.equal(holder.shield, 0);
+  assert.equal(events[0].actualAmount, 2);
+  assert.equal(events[0].shieldAbsorbed, 1);
+  assert.equal(events[0].source, null);
+});
+
+test("闪电：伤害被防止降为0时状态仍被消费且不转移", async () => {
+  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  game.state.deck.cards = [instance("energyDevice")];
+  game.eventBus.on("beforeDamage", "test:lightning-prevent", (event) => { if (event.damageType === "lightning") event.amount = 0; });
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.hp, holder.maxHp);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.equal(enemy.statuses.lightning, undefined);
+});
+
+test("闪电：判定牌先入判定区再入弃牌堆且别名保持同步", async () => {
+  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  const card = instance("assault");
+  game.state.deck.cards = [card];
+  let inJudgmentZone = false;
+  game.eventBus.on("judgmentRevealed", "test:lightning-zone", (event) => {
+    inJudgmentZone = game.state.deck.judgmentZone.includes(event.card);
+  });
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(inJudgmentZone, true);
+  assert.ok(game.state.deck.discardPile.includes(card));
+  assert.equal(game.state.deck.judgmentZone.length, 0);
+  assert.equal(game.state.judgmentZone, game.state.deck.judgmentZone);
+  assert.equal(game.state.discardPile, game.state.deck.discardPile);
+});
+
+test("闪电：空牌堆重洗弃牌堆后仍能完成判定", async () => {
+  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  game.state.deck.cards = [];
+  game.state.deck.discardPile = [instance("recover")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.ok(enemy.statuses.lightning);
+  assert.equal(game.state.deck.reshuffleCount, 1);
+});
+
+test("闪电：状态反制由持有者本人优先响应，成功后不翻判定牌并转移", async () => {
+  const holder = makePlayer("a", 0, "dawn", "human"), receiver = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, receiver], { response: () => true });
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  const counter = instance("counter");
+  holder.hand.push(counter);
+  const equipment = instance("energyDevice");
+  game.state.deck.cards = [equipment];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.deepEqual(receiver.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
+  assert.ok(game.state.deck.discardPile.includes(counter));
+  assert.ok(game.state.deck.cards.includes(equipment));
+  assert.equal(holder.hp, holder.maxHp);
+});
+
+test("闪电：状态反制按顺时针响应，反制被反制后继续判定", async () => {
+  const holder = makePlayer("a", 0, "dawn"), responder = makePlayer("b", 1, "dusk"), counterer = makePlayer("c", 2, "dusk");
+  const { game } = makeGame([holder, responder, counterer]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  responder.hand.push(instance("counter"));
+  counterer.hand.push(instance("counter"));
+  forceAvailableAiCounters(game);
+  const equipment = instance("telescope");
+  game.state.deck.cards = [equipment];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.hp, holder.maxHp - 3);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.equal(responder.hand.length, 0);
+  assert.equal(counterer.hand.length, 0);
+  assert.ok(game.state.deck.discardPile.includes(equipment));
+});
+
+test("闪电：转移跳过死亡与已有闪电玩家且不受阵营影响", async () => {
+  const holder = makePlayer("a", 0, "dawn"), dead = makePlayer("b", 1, "dusk"), already = makePlayer("c", 2, "dawn"), target = makePlayer("d", 3, "dusk");
+  const { game } = makeGame([holder, dead, already, target]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  dead.alive = false;
+  already.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: already.id };
+  game.state.deck.cards = [instance("recover")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.deepEqual(already.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: already.id });
+  assert.deepEqual(target.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
+});
+
+test("闪电：判定未触发且无其他合法接收者时转移回自己", async () => {
+  const holder = makePlayer("a", 0, "dawn"), ally = makePlayer("b", 1, "dawn"), enemy = makePlayer("c", 2, "dusk");
+  const { game } = makeGame([holder, ally, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  ally.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: ally.id };
+  enemy.alive = false;
+  game.state.deck.cards = [instance("recover")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.deepEqual(holder.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
+  assert.deepEqual(ally.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: ally.id });
+  assert.ok(game.state.logs.some((entry) => entry.message === `${holder.name}的「闪电」判定未触发，转移给${holder.name}。`));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("没有可转移的目标")));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("闪电消失")));
+});
+
+test("闪电：中立伤害阵亡不给原使用者或持有者击杀奖励", async () => {
+  const origin = makePlayer("o", 0, "dawn"), holder = makePlayer("h", 1, "dusk"), medic = makePlayer("m", 2, "dawn");
+  const { game } = makeGame([origin, holder, medic]);
+  origin.hand.push(instance("assault"));
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: origin.id };
+  holder.hp = 2;
+  game.state.deck.cards = [instance("energyDevice")];
+  game.state.deck.discardPile = [];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.alive, false);
+  assert.equal(origin.hand.length, 1);
+  assert.equal(holder.statistics.damageDealt, 0);
+});
+
+test("闪电：AI 根节点与深层生成均拒绝已有闪电状态", () => {
+  const source = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([source, enemy]);
+  source.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: source.id };
+  source.hand.push(instance("lightning"));
+  assert.ok(!game.aiController.getLegalActions(source).some((action) => action.card?.definitionId === "lightning"));
+  const visible = createAiVisibleState(source.id, game.state);
+  assert.ok(!game.aiController.actionGenerator.generateFromVisible(visible, source.id).some((action) => action.card?.definitionId === "lightning"));
+  const source2 = makePlayer("a2", 0, "dawn"), enemy2 = makePlayer("b2", 1, "dusk");
+  const { game: game2 } = makeGame([source2, enemy2]);
+  source2.hand.push(instance("lightning"));
+  assert.ok(game2.aiController.getLegalActions(source2).some((action) => action.card?.definitionId === "lightning"));
+  const visible2 = createAiVisibleState(source2.id, game2.state);
+  assert.ok(game2.aiController.actionGenerator.generateFromVisible(visible2, source2.id).some((action) => action.card?.definitionId === "lightning"));
+});
+
+test("闪电：AiSimulator 成功使用后写入状态且不立即判定或伤害", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, hand:[{ id:"use", definitionId:"lightning" }], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[] }
+  ]};
+  const next = new AiSimulator(state).apply(state, { type:"card", card:{ id:"use", definitionId:"lightning" }, targets:[] }, "a");
+  assert.ok(next.players[0].statuses.includes("lightning"));
+  assert.equal(next.players[0].hp, 4);
+  assert.equal(next.players[1].statuses.length, 0);
+  assert.equal(next.remainingCardCounts, null);
+});
+
+test("闪电：AI 装备判定概率按类别聚合且不修改计数", () => {
+  const counts = { assault:3, defenseDevice:1, telescope:2 };
+  const snapshot = JSON.stringify(counts);
+  assertClose(equipmentJudgmentProbability(counts), 3 / 6);
+  assert.equal(JSON.stringify(counts), snapshot);
+  const equipmentTotal = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
+  assertClose(equipmentJudgmentProbability(null), equipmentTotal / TOTAL_CARD_COUNT);
+  const players = [
+    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", statuses:[] },
+    { id:"b", seatIndex:1, alive:false, battleTeam:"dusk", statuses:[] },
+    { id:"c", seatIndex:2, alive:true, battleTeam:"dusk", statuses:["lightning"] },
+    { id:"d", seatIndex:3, alive:true, battleTeam:"dawn", statuses:[] }
+  ];
+  assert.equal(nextLightningReceiver(players, players[0]).id, "d");
+});
+
+test("闪电：AI 使用价值随自身低血惩罚、敌人低血收益和队友低血损失单调变化", () => {
+  const make = (hp, receiver) => ({
+    remainingCardCounts:{ defenseDevice:1, assault:3 },
+    players:[
+      { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp, maxHp:4, shield:0, statuses:[] },
+      ...(receiver ? [{ id:"b", seatIndex:1, battleTeam:receiver.team, alive:true, hp:receiver.hp, maxHp:4, shield:0, statuses:[] }] : [])
+    ]
+  });
+  const lowSelf = lightningUseValue(make(1, null).players[0], make(1, null));
+  const highSelf = lightningUseValue(make(4, null).players[0], make(4, null));
+  assert.ok(lowSelf < highSelf);
+  const enemyLow = lightningUseValue(make(4, { team:"dusk", hp:1 }).players[0], make(4, { team:"dusk", hp:1 }));
+  const enemyHigh = lightningUseValue(make(4, { team:"dusk", hp:4 }).players[0], make(4, { team:"dusk", hp:4 }));
+  assert.ok(enemyLow > enemyHigh);
+  const allyLow = lightningUseValue(make(4, { team:"dawn", hp:1 }).players[0], make(4, { team:"dawn", hp:1 }));
+  const allyHigh = lightningUseValue(make(4, { team:"dawn", hp:4 }).players[0], make(4, { team:"dawn", hp:4 }));
+  assert.ok(allyLow < allyHigh);
+});
+
+test("闪电：AI 状态反制决策不是固定 true 或 false", () => {
+  const holderAlly = makePlayer("a", 0, "dawn"), receiverEnemy = makePlayer("b", 1, "dusk"), responder = makePlayer("r", 2, "dawn");
+  const { game } = makeGame([holderAlly, receiverEnemy, responder]);
+  holderAlly.hp = 1;
+  holderAlly.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holderAlly.id };
+  game.aiController.knowledge.remainingCounts = () => ({ defenseDevice:9, assault:1 });
+  const context = { statusCounterContext:{ holderId:holderAlly.id, holderName:holderAlly.name } };
+  assert.equal(game.aiController.responsePolicy.shouldRespond(responder, "counter", context, [instance("counter")]), true);
+  const responder2 = makePlayer("r2", 0, "dawn"), holderEnemy = makePlayer("e", 1, "dusk"), receiverAlly = makePlayer("f", 2, "dawn");
+  const { game: game2 } = makeGame([responder2, holderEnemy, receiverAlly]);
+  holderEnemy.hp = 4;
+  holderEnemy.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holderEnemy.id };
+  game2.aiController.knowledge.remainingCounts = () => ({ defenseDevice:9, assault:1 });
+  const context2 = { statusCounterContext:{ holderId:holderEnemy.id, holderName:holderEnemy.name } };
+  assert.equal(game2.aiController.responsePolicy.shouldRespond(responder2, "counter", context2, [instance("counter")]), false);
+});
+
+test("闪电：玩家面板显示状态徽章且卡牌模板可渲染", () => {
+  const player = makePlayer("a", 0, "dawn", "human");
+  player.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: player.id };
+  assert.match(playerPanelTemplate(player, { isHuman:true }), /闪电/);
+  const card = instance("lightning");
+  const markup = handCardTemplate(card);
+  assert.match(markup, /闪电/);
+  assert.match(markup, /assets\/cards\/lightning\.svg/);
+  assert.ok(["", "is-description-long", "is-description-very-long"].includes(cardDescriptionClass(card.description)));
+});
+
+test("闪电：状态反制响应展示文案正确", () => {
+  const responder = { id:"r", name:"响应者" };
+  const presentation = buildResponsePresentation(responder, "counter", {
+    statusCounterContext:{ holderId:"a", holderName:"甲" }
+  }, 1, 1, "反制");
+  assert.equal(presentation.eventText, "是否使用「反制」，令甲的“闪电”转移？");
+  assert.equal(presentation.responseText, "是否使用「反制」，令甲的“闪电”转移？");
+});
+
+test("闪电：SVG 使用统一 480×280 规格", async () => {
+  const source = await readFile(projectFile("assets/cards/lightning.svg"), "utf8");
+  assert.match(source, /<svg width="480" height="280" viewBox="0 0 480 280"/);
+});
+
+test("闪电：SVG 主体恢复为未放大的正常构图", async () => {
+  const source = await readFile(projectFile("assets/cards/lightning.svg"), "utf8");
+  const glow = source.match(/<circle cx="240" cy="138" r="(\d+)"/);
+  assert.ok(glow, "闪电辉光圆必须保持画布居中");
+  assert.ok(Number(glow[1]) <= 90, `闪电辉光圆仍被放大：r=${glow[1]}`);
+  const bolt = source.match(/<path d="([^"]+)" fill="#ffe084"/);
+  assert.ok(bolt, "缺少主闪电路径");
+  const tokens = bolt[1].match(/[A-Za-z]|-?\d+/g) ?? [];
+  let x = 0, y = 0, index = 0, minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const pen = (px, py) => { minX = Math.min(minX, px); minY = Math.min(minY, py); maxX = Math.max(maxX, px); maxY = Math.max(maxY, py); };
+  const num = () => Number(tokens[index++]);
+  while (index < tokens.length) {
+    const command = tokens[index++];
+    if (command === "M") { x = num(); y = num(); pen(x, y); while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x = num(); y = num(); pen(x, y); } }
+    else if (command === "l") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x += num(); y += num(); pen(x, y); } }
+    else if (command === "h") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x += num(); pen(x, y); } }
+    else if (command === "v") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { y += num(); pen(x, y); } }
+    else if (command === "L") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x = num(); y = num(); pen(x, y); } }
+    else if (command === "H") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x = num(); pen(x, y); } }
+    else if (command === "V") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { y = num(); pen(x, y); } }
+  }
+  assert.ok(minY >= 55 && maxY <= 225, `主闪电纵向范围异常（疑似放大）：${minY}..${maxY}`);
+  assert.ok(maxX - minX <= 200 && maxY - minY <= 170, `主闪电尺寸异常（疑似放大）：${maxX - minX}x${maxY - minY}`);
+});
+
+test("闪电：响应卡片信息框与其他战术牌共用统一尺寸", async () => {
+  const layout = await readFile(projectFile("css/layout.css"), "utf8");
+  const rule = layout.match(/\.current-card\s*\{[^}]*\}/g)?.find((entry) => entry.includes("grid-column: 1")) ?? "";
+  assert.match(rule, /width:\s*min\(440px/, "响应卡片信息框必须使用带响应式上限的稳定宽度");
+  assert.match(rule, /min-height:\s*104px/, "同类中央结算卡必须使用统一 min-height");
+  assert.match(rule, /display:\s*grid/, "中央结算卡容器必须撑起统一基础高度");
+  assert.doesNotMatch(rule, /(?<!min-)height:/, "不得使用固定 height");
+  assert.match(rule, /justify-self:\s*center/);
+  const lightning = instance("lightning"), assault = instance("assault");
+  const lightningMarkup = resolvingCardTemplate(lightning, "甲", "乙");
+  const assaultMarkup = resolvingCardTemplate(assault, "甲", "乙");
+  for (const markup of [lightningMarkup, assaultMarkup]) {
+    assert.match(markup, /class="resolving-card frame-/);
+    assert.match(markup, /<img src=/);
+    assert.match(markup, /resolving-kind/);
+  }
+  assert.doesNotMatch(lightningMarkup, /class="[^"]*lightning[^"]*"/, "闪电不得使用专属响应卡片类");
+  const noTargetSkillMarkup = resolvingCardTemplate("壁垒", "守誓者 · 技能", "");
+  assert.match(noTargetSkillMarkup, /class="resolving-card is-skill"/, "无目标技能必须沿用同类中央结算卡模板");
+  assert.doesNotMatch(noTargetSkillMarkup, /作用对象/);
+  assert.match(resolvingCardTemplate("猎杀", "追猎者 · 技能", "目标"), /作用对象/, "有目标技能仍正常显示作用对象");
+  assert.match(resolvingCardTemplate(instance("收获"), "甲", ""), /resolving-card/, "内容较长的无目标卡牌仍使用同类模板");
+  const cards = await readFile(projectFile("css/cards.css"), "utf8");
+  const imgRule = cards.match(/\.resolving-card > img\s*\{[^}]*\}/)?.[0] ?? "";
+  assert.match(imgRule, /width:\s*74px/, "左侧正方形图片区域不得被放大");
+  assert.match(imgRule, /height:\s*74px/);
+});
+
+test("闪电：中央结算卡显示作用对象为自己且不进入业务 targets", () => {
+  const lightning = instance("lightning");
+  const human = makePlayer("human", 0, "dawn", "human");
+  const ai = makePlayer("ai", 1, "dusk");
+  const { game } = makeGame([human, ai]);
+  assert.equal(lightning.targetType, "none");
+  assert.deepEqual(RuleEngine.getCardTargets(game, human, lightning), [], "闪电真实业务 targets 必须保持为空");
+  const panel = () => {
+    const classes = new Set();
+    return {
+      innerHTML: "",
+      classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) },
+      get offsetWidth() { return 440; }
+    };
+  };
+  const humanPanel = panel();
+  UIManager.prototype.setCurrentCard.call({
+    game, elements: { current_card: humanPanel },
+    resolveCurrentCardDisplayTargets: UIManager.prototype.resolveCurrentCardDisplayTargets
+  }, lightning, human.name, "");
+  assert.match(humanPanel.innerHTML, /作用对象/);
+  assert.match(humanPanel.innerHTML, new RegExp(`${human.name}（自己）`), "人类使用闪电时显示（自己）");
+  const aiPanel = panel();
+  UIManager.prototype.setCurrentCard.call({
+    game, elements: { current_card: aiPanel },
+    resolveCurrentCardDisplayTargets: UIManager.prototype.resolveCurrentCardDisplayTargets
+  }, lightning, ai.name, "");
+  assert.match(aiPanel.innerHTML, new RegExp(`${ai.name}（自己）`));
+  assert.doesNotMatch(aiPanel.innerHTML, new RegExp(human.name), "其他玩家使用闪电时不得把人类玩家显示为自己");
+  const shield = instance("shield");
+  const shieldMarkup = resolvingCardTemplate(shield, human.name, `${human.name}（自己）`);
+  assert.match(shieldMarkup, /作用对象/);
+  assert.match(shieldMarkup, new RegExp(`${human.name}（自己）`), "护盾原有展示不变");
+  const displayMarkup = resolvingCardTemplate(lightning, ai.name, "", [{ id: ai.id, name: ai.name, isSelf: true }]);
+  assert.match(displayMarkup, /作用对象/);
+  assert.match(displayMarkup, new RegExp(`${ai.name}（自己）`));
+  const bothMarkup = resolvingCardTemplate(lightning, ai.name, "业务目标", [{ id: ai.id, name: ai.name, isSelf: true }]);
+  assert.match(bothMarkup, /业务目标/);
+  assert.doesNotMatch(bothMarkup, /（自己）/, "真实业务目标标签优先于纯展示字段");
+});
+
+test("闪电：判定触发日志复用玩家与卡牌名称格式化机制", async () => {
+  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  const equipment = instance("defenseDevice");
+  game.state.deck.cards = [equipment];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  const reveal = game.state.logs.find((entry) => entry.message.includes("判定为"));
+  const trigger = game.state.logs.find((entry) => entry.message.includes("判定触发"));
+  assert.ok(reveal);
+  assert.ok(trigger);
+  assert.equal(reveal.message, `${holder.name}的「闪电」判定为「${equipment.name}」，为装备牌。`);
+  assert.equal(trigger.message, `${holder.name}的「闪电」判定触发。`);
+  assert.ok(reveal.fragments.some((fragment) => fragment.type === "player" && fragment.playerId === holder.id));
+  const rendered = formatLogEntry(reveal);
+  assert.match(rendered, /log-player-name/);
+  assert.match(rendered, /log-card-name/);
+  assert.ok(rendered.includes("「<strong class=\"log-card-name\">闪电</strong>」"));
+  assert.ok(rendered.includes(`「<strong class="log-card-name">${equipment.name}</strong>」`));
+  for (const entry of game.state.logs) {
+    assert.ok(!entry.message.includes("【") && !entry.message.includes("】"), `日志不得使用【】：${entry.message}`);
+    assert.ok(!entry.message.includes("“闪电”"), `日志不得使用弯引号“闪电”：${entry.message}`);
+  }
+});
+
+test("闪电：基础牌与战术牌判定类别日志正确", async () => {
+  const run = (judgmentDefinitionId) => {
+    const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+    const { game } = makeGame([holder, enemy]);
+    holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+    const judgmentCard = instance(judgmentDefinitionId);
+    game.state.deck.cards = [judgmentCard];
+    return { game, holder, enemy, judgmentCard };
+  };
+  const basic = run("assault");
+  await basic.game.eventBus.emit("beforeStatusResolve", { player: basic.holder, cancelled: false });
+  assert.ok(basic.game.state.logs.some((entry) => entry.message === `${basic.holder.name}的「闪电」判定为「${basic.judgmentCard.name}」，为基础牌。`));
+  assert.ok(basic.game.state.logs.some((entry) => entry.message === `${basic.holder.name}的「闪电」判定未触发，转移给${basic.enemy.name}。`));
+  const tactic = run("harvest");
+  await tactic.game.eventBus.emit("beforeStatusResolve", { player: tactic.holder, cancelled: false });
+  assert.ok(tactic.game.state.logs.some((entry) => entry.message === `${tactic.holder.name}的「闪电」判定为「${tactic.judgmentCard.name}」，为战术牌。`));
+  assert.ok(tactic.game.state.logs.some((entry) => entry.message === `${tactic.holder.name}的「闪电」判定未触发，转移给${tactic.enemy.name}。`));
+});
+
+test("闪电：反制路径不输出判定日志", async () => {
+  const holder = makePlayer("a", 0, "dawn", "human"), receiver = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, receiver], { response: () => true });
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  holder.hand.push(instance("counter"));
+  game.state.deck.cards = [instance("energyDevice")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.ok(game.state.logs.some((entry) => entry.message === `${holder.name}的「闪电」被反制，转移给${receiver.name}。`));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("判定为")));
+});
+
+test("闪电：反制后无其他合法接收者时转移回自己", async () => {
+  const holder = makePlayer("a", 0, "dawn", "human"), ally = makePlayer("b", 1, "dawn"), enemy = makePlayer("c", 2, "dusk");
+  const { game } = makeGame([holder, ally, enemy], { response: () => true });
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  holder.hand.push(instance("counter"));
+  ally.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: ally.id };
+  enemy.alive = false;
+  game.state.deck.cards = [instance("energyDevice")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.deepEqual(holder.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
+  assert.deepEqual(ally.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: ally.id });
+  assert.ok(game.state.logs.some((entry) => entry.message === `${holder.name}的「闪电」被反制，转移给${holder.name}。`));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("判定为")));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("没有可转移的目标")));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("闪电消失")));
+});
+
+test("闪电：卡牌描述与 README 当前描述完全一致", async () => {
+  const readme = await readFile(projectFile("README.md"), "utf8");
+  const match = readme.match(/- 闪电：([^\n]+)/);
+  assert.ok(match, "README 缺少闪电条目");
+  assert.equal(CARD_DEFINITIONS.lightning.description, match[1].trim());
+});
+
+test("闪电：AI 无其他合法接收者时按转回自己估值而非消失", () => {
+  const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
+  const state = { remainingCardCounts:{ defenseDevice:1, assault:3 }, players:[holder] };
+  assert.ok(lightningTeamBurden(state, holder, "dawn") > 0);
+  const actor = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+  assert.ok(lightningUseValue(actor, { remainingCardCounts:{ defenseDevice:1, assault:3 }, players:[actor] }) < lightningUseValue(actor, {
+    remainingCardCounts:{ defenseDevice:1, assault:3 },
+    players:[actor, { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] }]
+  }));
 });
 
 let passed = 0;

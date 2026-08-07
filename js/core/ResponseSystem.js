@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-leverage-response-ui-v97";
-import { createId } from "../utils/helpers.js?build=20260807-leverage-response-ui-v97";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260807-leverage-response-ui-v97";
-import { RuleEngine } from "./RuleEngine.js?build=20260807-leverage-response-ui-v97";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-central-card-unify-v105";
+import { createId } from "../utils/helpers.js?build=20260807-lightning-central-card-unify-v105";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260807-lightning-central-card-unify-v105";
+import { RuleEngine } from "./RuleEngine.js?build=20260807-lightning-central-card-unify-v105";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -97,7 +97,19 @@ export function buildResponsePresentation(responder, type, context = {}, require
   } else if (type === "counter") {
     responseCardName = "反制";
     buttonLabel = "反制";
-    if (context.card?.definitionId === "transfer" && context.publicTransferContext) {
+    if (context.statusCounterContext) {
+      const statusCounter = context.statusCounterContext;
+      const holderDisplay = publicPlayerName(responder, statusCounter.holderId, statusCounter.holderName);
+      const holderFragment = holderDisplay === "你"
+        ? textFragment("你的")
+        : playerFragment({ id:statusCounter.holderId, name:statusCounter.holderName }, `${statusCounter.holderName}的`);
+      eventFragments = [
+        textFragment("是否使用「反制」，令"),
+        holderFragment,
+        textFragment("“闪电”转移？")
+      ];
+      responseText = `是否使用「反制」，令${holderDisplay === "你" ? "你的" : `${statusCounter.holderName}的`}“闪电”转移？`;
+    } else if (context.card?.definitionId === "transfer" && context.publicTransferContext) {
       const transfer = context.publicTransferContext;
       const fromDisplay = publicPlayerName(responder, transfer.fromPlayerId, transfer.fromName);
       const receiverDisplay = publicPlayerName(responder, transfer.receiverPlayerId, transfer.receiverName);
@@ -290,6 +302,42 @@ export class ResponseSystem {
       if (counterWasCountered.status === RESPONSE_STATUS.USED) {
         return responseResult(RESPONSE_STATUS.DECLINED);
       }
+      return responseResult(RESPONSE_STATUS.USED, { card:counterCard });
+    }
+    return responseResult(RESPONSE_STATUS.DECLINED);
+  }
+
+  /**
+   * 闪电状态判定前的独立反制窗口。响应者从当前闪电持有者本人开始，再按顺时针询问其余存活玩家；
+   * 反制成功则返回 USED，反制被反制或无人响应则返回 DECLINED。
+   * 不构造虚构闪电实体牌，也不走普通 askForCounter 的排除施放者逻辑。
+   */
+  async askForStatusCounter(holder, context = {}) {
+    const gameId = this.game.state.gameId;
+    if (!this.game.isSessionValid(gameId) || !holder?.alive || this.game.state.isGameOver) return responseResult(RESPONSE_STATUS.DECLINED);
+    const responders = [holder, ...this.game.seatOrderFrom(holder, false)].filter((player) => player.alive);
+    for (const responder of responders) {
+      if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
+      const publicHolder = publicPlayerContext(holder);
+      const response = await this.requestCardResponse(responder, "counter", {
+        source:publicHolder,
+        target:publicHolder,
+        targets:[publicHolder],
+        card:null,
+        statusCounterContext:{
+          holderId:holder.id,
+          holderName:holder.name,
+          statusId:context.statusId ?? "lightning",
+          originPlayerId:context.originPlayerId ?? null
+        }
+      }, 1);
+      if (isCancelledResponse(response) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
+      const [counterCard] = response.cards ?? [];
+      if (response.status !== RESPONSE_STATUS.USED || !counterCard) continue;
+      this.game.log(`${responder.name}对${holder.name}的「闪电」使用了「反制」。`, "important");
+      const counterWasCountered = await this.askForCounter(responder, counterCard, [holder], { targetCard:null, statusCounterChain:true });
+      if (isCancelledResponse(counterWasCountered) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
+      if (counterWasCountered.status === RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.DECLINED);
       return responseResult(RESPONSE_STATUS.USED, { card:counterCard });
     }
     return responseResult(RESPONSE_STATUS.DECLINED);

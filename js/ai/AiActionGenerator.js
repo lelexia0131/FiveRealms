@@ -2,11 +2,11 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260807-leverage-response-ui-v97";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-leverage-response-ui-v97";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-leverage-response-ui-v97";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260807-leverage-response-ui-v97";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260807-leverage-response-ui-v97";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260807-lightning-central-card-unify-v105";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-lightning-central-card-unify-v105";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-central-card-unify-v105";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260807-lightning-central-card-unify-v105";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260807-lightning-central-card-unify-v105";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -18,7 +18,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260807-leverage-response-ui-v97";
+} from "./AiProbabilityBranches.js?build=20260807-lightning-central-card-unify-v105";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -62,6 +62,7 @@ export class AiActionGenerator {
     const actions = [];
     for (const card of player.hand) {
       if (!RuleEngine.canPlayCard(this.game, player, card).ok) continue;
+      if (card.definitionId === "lightning" && RuleEngine.hasStatus(player, "lightning")) continue;
       const targets = RuleEngine.getCardTargets(this.game, player, card);
       if (card.definitionId === "leverage") {
         for (const firstTarget of RuleEngine.getLeverageFirstTargets(this.game, player)) {
@@ -119,6 +120,7 @@ export class AiActionGenerator {
       const definition = CARD_DEFINITIONS[held.definitionId];
       if (!definition || definition.usageMode === "response") continue;
       const card = { ...definition, ...held, id:held.id };
+      if (card.definitionId === "lightning" && RuleEngine.hasStatus(actor, "lightning")) continue;
       if (card.definitionId === "assault") {
         for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) {
           actions.push({ type:"card", card, targets:[target] });

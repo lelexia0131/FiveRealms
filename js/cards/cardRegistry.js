@@ -1,5 +1,5 @@
-/** 二十四种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260807-leverage-response-ui-v97";
+/** 二十五种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
+import { RuleEngine } from "../core/RuleEngine.js?build=20260807-lightning-central-card-unify-v105";
 
 /** 只在最终效果解析时读取私密意图，并按原角色、原区域复验实体牌。 */
 function resolvePrivateSelectionIntent(game, source, card, target, context, expectedZone = null) {
@@ -208,6 +208,12 @@ const CARD_EFFECTS = {
   async battleDevice(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },
   async telescope(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },
   async barrierDevice(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },
+
+  async lightning(game, source, card) {
+    if (source.statuses.lightning) return;
+    source.statuses.lightning = { cardDefinitionId: card.definitionId, originPlayerId: source.id };
+    game.log(`${source.name}获得了「闪电」状态。`, "important");
+  },
 
   async block() { throw new Error("格挡只能作为响应牌使用"); },
   async counter() { throw new Error("反制只能作为响应牌使用"); }

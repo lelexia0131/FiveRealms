@@ -1,9 +1,6 @@
 {
-  "name": "five-realms-card-game",
-  "private": true,
-  "type": "module",
   "scripts": {
     "test": "node ./tests/run.mjs",
-    "test:balance": "node ./tests/balance-simulation.mjs"
+    "test:balance": "node ./tests/balance.mjs"
   }
 }

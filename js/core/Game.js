@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-leverage-response-ui-v97";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-leverage-response-ui-v97";
-import { createId, clamp } from "../utils/helpers.js?build=20260807-leverage-response-ui-v97";
-import { EventBus } from "./EventBus.js?build=20260807-leverage-response-ui-v97";
-import { Player } from "./Player.js?build=20260807-leverage-response-ui-v97";
-import { Deck } from "./Deck.js?build=20260807-leverage-response-ui-v97";
-import { TeamManager } from "./TeamManager.js?build=20260807-leverage-response-ui-v97";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260807-leverage-response-ui-v97";
-import { RuleEngine } from "./RuleEngine.js?build=20260807-leverage-response-ui-v97";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260807-leverage-response-ui-v97";
-import { GameLogger } from "./GameLogger.js?build=20260807-leverage-response-ui-v97";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260807-leverage-response-ui-v97";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-leverage-response-ui-v97";
-import { AIController } from "../ai/AiController.js?build=20260807-leverage-response-ui-v97";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260807-leverage-response-ui-v97";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260807-leverage-response-ui-v97";
-import { Debug } from "../utils/debug.js?build=20260807-leverage-response-ui-v97";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260807-leverage-response-ui-v97";
-import { DyingSystem } from "./DyingSystem.js?build=20260807-leverage-response-ui-v97";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260807-leverage-response-ui-v97";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260807-leverage-response-ui-v97";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260807-leverage-response-ui-v97";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260807-leverage-response-ui-v97";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-central-card-unify-v105";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-central-card-unify-v105";
+import { createId, clamp } from "../utils/helpers.js?build=20260807-lightning-central-card-unify-v105";
+import { EventBus } from "./EventBus.js?build=20260807-lightning-central-card-unify-v105";
+import { Player } from "./Player.js?build=20260807-lightning-central-card-unify-v105";
+import { Deck } from "./Deck.js?build=20260807-lightning-central-card-unify-v105";
+import { TeamManager } from "./TeamManager.js?build=20260807-lightning-central-card-unify-v105";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260807-lightning-central-card-unify-v105";
+import { RuleEngine } from "./RuleEngine.js?build=20260807-lightning-central-card-unify-v105";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260807-lightning-central-card-unify-v105";
+import { GameLogger } from "./GameLogger.js?build=20260807-lightning-central-card-unify-v105";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260807-lightning-central-card-unify-v105";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-lightning-central-card-unify-v105";
+import { AIController } from "../ai/AiController.js?build=20260807-lightning-central-card-unify-v105";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260807-lightning-central-card-unify-v105";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260807-lightning-central-card-unify-v105";
+import { Debug } from "../utils/debug.js?build=20260807-lightning-central-card-unify-v105";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260807-lightning-central-card-unify-v105";
+import { DyingSystem } from "./DyingSystem.js?build=20260807-lightning-central-card-unify-v105";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260807-lightning-central-card-unify-v105";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260807-lightning-central-card-unify-v105";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260807-lightning-central-card-unify-v105";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260807-lightning-central-card-unify-v105";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -182,6 +182,55 @@ export class Game {
     this.eventBus.on("playerDead", "global:huntMarkSourceCleanup", (event) => {
       for (const player of this.state.players) {
         if (player.statuses.huntMark?.sourceId === event.target.id) delete player.statuses.huntMark;
+      }
+      this.ui.render(this);
+    });
+    this.eventBus.on("beforeStatusResolve", "global:lightning", async (event) => {
+      const holder = event.player;
+      const status = holder?.statuses?.lightning;
+      if (!status || event.cancelled || !holder?.alive || this.state.isGameOver) return;
+      const gameId = this.state.gameId;
+      const counterResult = await this.responseSystem.askForStatusCounter(holder, {
+        statusId:"lightning",
+        originPlayerId:status.originPlayerId ?? null
+      });
+      if (!this.isSessionValid(gameId) || this.state.isGameOver || !holder.alive) return;
+      if (isCancelledResponse(counterResult)) return;
+      if (counterResult.status === RESPONSE_STATUS.USED) {
+        delete holder.statuses.lightning;
+        const receiver = RuleEngine.nextLightningReceiver(this.state.players, holder);
+        if (receiver) {
+          receiver.statuses.lightning = { ...status, cardDefinitionId:"lightning", originPlayerId:status.originPlayerId ?? holder.id };
+          this.log(`${holder.name}的「闪电」被反制，转移给${receiver.name}。`, "important");
+        }
+        this.ui.render(this);
+        return;
+      }
+      const judgment = await this.judgmentSystem.judgeLightning(holder, { status });
+      if (!this.isSessionValid(gameId) || this.state.isGameOver || !holder.alive || !judgment.handled) return;
+      if (judgment.triggered) {
+        delete holder.statuses.lightning;
+        await this.damage(null, holder, 3, {
+          damageType:"lightning",
+          reason:"lightning",
+          canBlock:false,
+          actionName:"闪电",
+          metadata:{
+            statusId:"lightning",
+            cardDefinitionId:"lightning",
+            originPlayerId:status.originPlayerId ?? null,
+            currentHolderId:holder.id,
+            baseDamage:3,
+            judgmentCategory:"equipment"
+          }
+        });
+        return;
+      }
+      delete holder.statuses.lightning;
+      const receiver = RuleEngine.nextLightningReceiver(this.state.players, holder);
+      if (receiver) {
+        receiver.statuses.lightning = { ...status, cardDefinitionId:"lightning", originPlayerId:status.originPlayerId ?? holder.id };
+        this.log(`${holder.name}的「闪电」判定未触发，转移给${receiver.name}。`, "important");
       }
       this.ui.render(this);
     });
@@ -983,6 +1032,7 @@ export class Game {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId) || !target?.alive || this.state.isGameOver) return 0;
     const metadata = {};
+    if (context.metadata && typeof context.metadata === "object") Object.assign(metadata, context.metadata);
     const event = {
       type: "beforeDamage", source, target, amount: Math.max(0, amount), card: context.card ?? null,
       skill: context.skill ?? null, damageType: context.damageType ?? "normal", canBlock: context.canBlock ?? false,

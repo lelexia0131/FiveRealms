@@ -2,11 +2,12 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-leverage-response-ui-v97";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260807-leverage-response-ui-v97";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260807-leverage-response-ui-v97";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-leverage-response-ui-v97";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-leverage-response-ui-v97";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-central-card-unify-v105";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260807-lightning-central-card-unify-v105";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260807-lightning-central-card-unify-v105";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-central-card-unify-v105";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-lightning-central-card-unify-v105";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260807-lightning-central-card-unify-v105";
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }
@@ -92,7 +93,8 @@ export class AiEvaluator {
       score += sign * (danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * 1.2
         + player.handCount * 1.1 + handRoleDelta + (player.exposeWeaknessStacks ?? 0) * 1.5
         + equipmentDelta * .25 + equipmentRoleDelta * .25
-        + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5);
+        + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5)
+      - lightningTeamBurden(state, player, viewer.battleTeam);
     }
     return score;
   }
@@ -127,6 +129,9 @@ export class AiEvaluator {
     let value = actor?.generalId && card?.definitionId
       ? getRoleCardAiValue(actor.generalId, card.definitionId)
       : (card.aiValue ?? 0);
+    if (card.definitionId === "lightning") {
+      value = lightningUseValue(actor, visible) + roleDelta;
+    }
     const actionTarget = action.targets?.[0];
     const target = visible.players.find((entry) => entry.id === actionTarget?.id) ?? actionTarget;
     if (target) {

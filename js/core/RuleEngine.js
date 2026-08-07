@@ -1,10 +1,27 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260807-leverage-response-ui-v97";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-leverage-response-ui-v97";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260807-lightning-central-card-unify-v105";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-central-card-unify-v105";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
   static isPlayerInGame(game, player) {
     return Boolean(player?.alive && game?.state?.players?.some((entry) => entry === player && entry.alive));
+  }
+
+  /** 统一状态检查：真实 Player 使用 statuses 对象，AI 可见/模拟状态使用 statuses 字符串数组。 */
+  static hasStatus(player, statusId) {
+    if (!player || !statusId) return false;
+    if (Array.isArray(player.statuses)) return player.statuses.includes(statusId);
+    return Boolean(player.statuses?.[statusId]);
+  }
+
+  /** 从当前持有者下一座位开始顺时针查找下一名合法闪电接收者；找不到其他合法接收者时兜底返回当前持有者自己。 */
+  static nextLightningReceiver(players, holder) {
+    if (!holder?.alive || !Array.isArray(players) || !players.length) return null;
+    for (let offset = 1; offset < players.length; offset += 1) {
+      const candidate = players[(holder.seatIndex + offset) % players.length];
+      if (candidate?.alive && candidate.id !== holder.id && !this.hasStatus(candidate, "lightning")) return candidate;
+    }
+    return holder;
   }
 
   /**
@@ -134,6 +151,7 @@ export class RuleEngine {
       if (limit !== null && source.turnFlags.recoverUsed >= limit) return { ok:false, reason:"本回合调息次数已用尽" };
     }
     if (card.definitionId === "charge" && source.energy >= source.maxEnergy) return { ok:false, reason:"能量已经充满" };
+    if (card.definitionId === "lightning" && this.hasStatus(source, "lightning")) return { ok:false, reason:"已处于闪电状态，不能再次使用闪电" };
     if (card.targetType === "otherWithCards" && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有可选择手牌的其他角色" };
     if (card.targetType === "otherWithCardsOrEquipment" && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"范围内没有可选择手牌或装备的其他角色" };
     if (card.targetType === "singleAlly" && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有可选择的存活队友" };

@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-leverage-response-ui-v97";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-central-card-unify-v105";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -93,6 +93,7 @@ export function playerPanelTemplate(player, options = {}) {
   const statuses = player.alive ? [
     player.statuses?.exposeWeakness ? [`破势 ${player.statuses.exposeWeakness.stacks}`, "danger"] : null,
     player.statuses?.huntMark ? ["猎印", "mark"] : null,
+    player.statuses?.lightning ? ["闪电", "danger"] : null,
     player.statuses?.allIn ? ["孤注", "danger"] : null,
     player.turnFlags?.momentum > 0 ? [`连势 ${player.turnFlags.momentum}`, "mark"] : null,
     player.hp <= 0 && player.alive ? [`濒死 · 需${1 - player.hp}调息`, "danger"] : null
@@ -163,10 +164,19 @@ export function publicPoolCardTemplate(card, options = {}) {
   </button>`;
 }
 
-export function resolvingCardTemplate(cardOrName, source = "结算区", targetLabel = "") {
+export function resolvingCardTemplate(cardOrName, source = "结算区", targetLabel = "", displayTargets = null) {
+  const displayTargetMarkup = Array.isArray(displayTargets) && displayTargets.length
+    ? displayTargets.map((target) => {
+        const targetName = typeof target === "string" ? target : target?.name ?? "";
+        const selfSuffix = target && typeof target === "object" && target.isSelf ? "（自己）" : "";
+        return escapeHtml(`${targetName}${selfSuffix}`);
+      }).join("、")
+    : "";
   const targetMarkup = targetLabel
     ? `<span class="resolving-target"><b>作用对象</b>${escapeHtml(targetLabel)}</span>`
-    : "";
+    : displayTargetMarkup
+      ? `<span class="resolving-target"><b>作用对象</b>${displayTargetMarkup}</span>`
+      : "";
   if (typeof cardOrName === "object" && cardOrName) {
     return `<div class="resolving-card frame-${escapeHtml(cardOrName.frameStyle)}" style="--card-accent:${escapeHtml(cardOrName.accent)}">
       <img src="${escapeHtml(cardOrName.art)}" alt="" aria-hidden="true"><div><small>${escapeHtml(source)}</small><strong>${escapeHtml(cardOrName.name)}</strong><span class="resolving-kind">${escapeHtml(cardOrName.categoryName)}</span>${targetMarkup}</div>

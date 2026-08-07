@@ -1,6 +1,13 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-leverage-response-ui-v97";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260807-leverage-response-ui-v97";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260807-leverage-response-ui-v97";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-central-card-unify-v105";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260807-lightning-central-card-unify-v105";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260807-lightning-central-card-unify-v105";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-central-card-unify-v105";
+import {
+  hasLightning,
+  lightningTeamBurden,
+  lightningTransferredBurden,
+  nextLightningReceiver
+} from "./lightningScoring.js?build=20260807-lightning-central-card-unify-v105";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
@@ -62,6 +69,7 @@ export class AiResponsePolicy {
       return lethal || lowHp || blocksAreAbundant;
     }
     if (type === "counter") {
+      if (context.statusCounterContext) return this.shouldCounterLightning(responder, context);
       const sourceEnemy = context.source?.battleTeam !== responder.battleTeam;
       const id = context.card?.definitionId;
       const globalBenefitDesire = globalBenefitCounterDesire(this.game.state.players, responder.battleTeam, id);
@@ -98,5 +106,21 @@ export class AiResponsePolicy {
     }
     if (type === "skill") return (context.amount ?? 1) > 0;
     return false;
+  }
+
+  /** 闪电状态反制：比较不反制继续判定的团队期望与反制转移后的团队期望加反制牌机会成本。 */
+  shouldCounterLightning(responder, context) {
+    const statusContext = context.statusCounterContext;
+    const holder = this.game.state.players.find((player) => player.id === statusContext?.holderId && player.alive);
+    if (!holder || !hasLightning(holder)) return false;
+    const remainingCardCounts = this.knowledge.remainingCounts(responder);
+    const state = { players:this.game.state.players, remainingCardCounts };
+    const noCounterBurden = lightningTeamBurden(state, holder, responder.battleTeam);
+    const receiver = nextLightningReceiver(this.game.state.players, holder);
+    const withCounterBurden = receiver
+      ? lightningTransferredBurden(state, receiver, responder.battleTeam)
+      : 0;
+    const counterCost = (CARD_DEFINITIONS.counter.aiValue ?? 8) * 0.35;
+    return withCounterBurden + counterCost < noCounterBurden;
   }
 }

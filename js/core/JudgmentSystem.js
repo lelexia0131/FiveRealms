@@ -42,4 +42,42 @@ export class JudgmentSystem {
     this.game.ui.render(this.game);
     return result;
   }
+
+  /**
+   * 闪电状态判定：翻开一张判定牌并公开展示，判定牌最终一律进入弃牌堆。
+   * 触发条件只按卡牌类别判断（equipment），不枚举具体装备 definitionId。
+   * @returns {Promise<{handled:boolean, triggered:boolean, category:string|null, cancelled?:boolean}>}
+   */
+  async judgeLightning(holder, context = {}) {
+    const gameId = this.game.state.gameId;
+    if (!this.game.isSessionValid(gameId)) return { handled:false, triggered:false, cancelled:true };
+    if (!holder?.alive || !this.game.state.players.some((entry) => entry === holder && entry.alive)) return { handled:false, triggered:false };
+    const card = this.game.state.deck.drawToJudgment();
+    this.game.syncDeckAliases();
+    if (!card) {
+      this.game.log(`没有可翻开的判定牌，「闪电」结算顺延。`);
+      return { handled:false, triggered:false };
+    }
+    const categoryLabel = card.category === "basic" ? "基础牌"
+      : card.category === "tactic" ? "战术牌"
+        : card.category === "equipment" ? "装备牌" : card.categoryName;
+    const previousPhase = this.game.state.phase;
+    this.game.state.phase = "judgment";
+    this.game.state.currentJudgment = { card, defenderId:holder.id, attackerId:null, statusId:"lightning" };
+    this.game.ui.showJudgment?.(holder, card);
+    this.game.log(`${holder.name}的「闪电」判定为「${card.name}」，为${categoryLabel}。`, "important");
+    await this.game.eventBus.emit("judgmentRevealed", {
+      type:"judgmentRevealed", attacker:null, defender:holder, card, statusId:"lightning", lightningContext:context
+    });
+    if (!this.game.isSessionValid(gameId)) return { handled:false, triggered:false, cancelled:true };
+    const triggered = card.category === "equipment";
+    this.game.state.deck.finishJudgmentToDiscard(card);
+    if (triggered) this.game.log(`${holder.name}的「闪电」判定触发。`, "important");
+    this.game.state.currentJudgment = null;
+    this.game.ui.hideJudgment?.();
+    if (!this.game.state.isGameOver) this.game.state.phase = previousPhase;
+    this.game.syncDeckAliases();
+    this.game.ui.render(this.game);
+    return { handled:true, triggered, category:card.category, card };
+  }
 }
