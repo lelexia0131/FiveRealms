@@ -299,3 +299,6 @@ profiling/
 *.seed
 
 ~$*
+
+# Generated balance reports
+reports/
