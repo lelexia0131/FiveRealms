@@ -90,7 +90,7 @@ export const CARD_DEFINITIONS = Object.freeze(
       subtypes: ["defense", "shield", "support"],
       description: "令一名友方玩家获得1点护盾；每点护盾免疫1点伤害。",
       count: 10,
-      aiValue: 5,
+      aiValue: 6,
       counterable: false,
       art: "./assets/cards/shield.svg",
       icon: "./assets/cards/shield.svg",

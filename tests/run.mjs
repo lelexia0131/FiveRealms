@@ -423,6 +423,11 @@ test(
   )
 );
 
+test("卡牌定义：护盾全局基础 aiValue 为 6 且不低于调息", () => {
+  assert.equal(CARD_DEFINITIONS.shield.aiValue, 6);
+  assert.ok(CARD_DEFINITIONS.shield.aiValue >= CARD_DEFINITIONS.recover.aiValue);
+});
+
 test("卡牌定义：借势在集中牌堆中固定3张且均为不同真实实例", () => {
   const deck = new Deck(() => 0);
   deck.build();

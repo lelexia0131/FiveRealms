@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v113";
-import { createId } from "../utils/helpers.js?build=20260807-burning-field-2x-v113";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260807-burning-field-2x-v113";
-import { RuleEngine } from "./RuleEngine.js?build=20260807-burning-field-2x-v113";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v114";
+import { createId } from "../utils/helpers.js?build=20260807-burning-field-2x-v114";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260807-burning-field-2x-v114";
+import { RuleEngine } from "./RuleEngine.js?build=20260807-burning-field-2x-v114";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

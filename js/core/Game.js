@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v113";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v113";
-import { createId, clamp } from "../utils/helpers.js?build=20260807-burning-field-2x-v113";
-import { EventBus } from "./EventBus.js?build=20260807-burning-field-2x-v113";
-import { Player } from "./Player.js?build=20260807-burning-field-2x-v113";
-import { Deck } from "./Deck.js?build=20260807-burning-field-2x-v113";
-import { TeamManager } from "./TeamManager.js?build=20260807-burning-field-2x-v113";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260807-burning-field-2x-v113";
-import { RuleEngine } from "./RuleEngine.js?build=20260807-burning-field-2x-v113";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260807-burning-field-2x-v113";
-import { GameLogger } from "./GameLogger.js?build=20260807-burning-field-2x-v113";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260807-burning-field-2x-v113";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-burning-field-2x-v113";
-import { AIController } from "../ai/AiController.js?build=20260807-burning-field-2x-v113";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260807-burning-field-2x-v113";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260807-burning-field-2x-v113";
-import { Debug } from "../utils/debug.js?build=20260807-burning-field-2x-v113";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260807-burning-field-2x-v113";
-import { DyingSystem } from "./DyingSystem.js?build=20260807-burning-field-2x-v113";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260807-burning-field-2x-v113";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260807-burning-field-2x-v113";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260807-burning-field-2x-v113";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260807-burning-field-2x-v113";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v114";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v114";
+import { createId, clamp } from "../utils/helpers.js?build=20260807-burning-field-2x-v114";
+import { EventBus } from "./EventBus.js?build=20260807-burning-field-2x-v114";
+import { Player } from "./Player.js?build=20260807-burning-field-2x-v114";
+import { Deck } from "./Deck.js?build=20260807-burning-field-2x-v114";
+import { TeamManager } from "./TeamManager.js?build=20260807-burning-field-2x-v114";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260807-burning-field-2x-v114";
+import { RuleEngine } from "./RuleEngine.js?build=20260807-burning-field-2x-v114";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260807-burning-field-2x-v114";
+import { GameLogger } from "./GameLogger.js?build=20260807-burning-field-2x-v114";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260807-burning-field-2x-v114";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-burning-field-2x-v114";
+import { AIController } from "../ai/AiController.js?build=20260807-burning-field-2x-v114";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260807-burning-field-2x-v114";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260807-burning-field-2x-v114";
+import { Debug } from "../utils/debug.js?build=20260807-burning-field-2x-v114";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260807-burning-field-2x-v114";
+import { DyingSystem } from "./DyingSystem.js?build=20260807-burning-field-2x-v114";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260807-burning-field-2x-v114";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260807-burning-field-2x-v114";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260807-burning-field-2x-v114";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260807-burning-field-2x-v114";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
