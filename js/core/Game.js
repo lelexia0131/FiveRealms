@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-probability-state-v107";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-probability-state-v107";
-import { createId, clamp } from "../utils/helpers.js?build=20260807-lightning-probability-state-v107";
-import { EventBus } from "./EventBus.js?build=20260807-lightning-probability-state-v107";
-import { Player } from "./Player.js?build=20260807-lightning-probability-state-v107";
-import { Deck } from "./Deck.js?build=20260807-lightning-probability-state-v107";
-import { TeamManager } from "./TeamManager.js?build=20260807-lightning-probability-state-v107";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260807-lightning-probability-state-v107";
-import { RuleEngine } from "./RuleEngine.js?build=20260807-lightning-probability-state-v107";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260807-lightning-probability-state-v107";
-import { GameLogger } from "./GameLogger.js?build=20260807-lightning-probability-state-v107";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260807-lightning-probability-state-v107";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-lightning-probability-state-v107";
-import { AIController } from "../ai/AiController.js?build=20260807-lightning-probability-state-v107";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260807-lightning-probability-state-v107";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260807-lightning-probability-state-v107";
-import { Debug } from "../utils/debug.js?build=20260807-lightning-probability-state-v107";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260807-lightning-probability-state-v107";
-import { DyingSystem } from "./DyingSystem.js?build=20260807-lightning-probability-state-v107";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260807-lightning-probability-state-v107";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260807-lightning-probability-state-v107";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260807-lightning-probability-state-v107";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260807-lightning-probability-state-v107";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-resolving-targets-harvest-v108";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-resolving-targets-harvest-v108";
+import { createId, clamp } from "../utils/helpers.js?build=20260807-resolving-targets-harvest-v108";
+import { EventBus } from "./EventBus.js?build=20260807-resolving-targets-harvest-v108";
+import { Player } from "./Player.js?build=20260807-resolving-targets-harvest-v108";
+import { Deck } from "./Deck.js?build=20260807-resolving-targets-harvest-v108";
+import { TeamManager } from "./TeamManager.js?build=20260807-resolving-targets-harvest-v108";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260807-resolving-targets-harvest-v108";
+import { RuleEngine } from "./RuleEngine.js?build=20260807-resolving-targets-harvest-v108";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260807-resolving-targets-harvest-v108";
+import { GameLogger } from "./GameLogger.js?build=20260807-resolving-targets-harvest-v108";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260807-resolving-targets-harvest-v108";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-resolving-targets-harvest-v108";
+import { AIController } from "../ai/AiController.js?build=20260807-resolving-targets-harvest-v108";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260807-resolving-targets-harvest-v108";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260807-resolving-targets-harvest-v108";
+import { Debug } from "../utils/debug.js?build=20260807-resolving-targets-harvest-v108";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260807-resolving-targets-harvest-v108";
+import { DyingSystem } from "./DyingSystem.js?build=20260807-resolving-targets-harvest-v108";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260807-resolving-targets-harvest-v108";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260807-resolving-targets-harvest-v108";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260807-resolving-targets-harvest-v108";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260807-resolving-targets-harvest-v108";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -48,6 +48,18 @@ function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = 
     if (first && second) return `${first.name} → ${second.name}`;
   }
   return "";
+}
+
+/** 纯展示：为中央结算卡生成 displayTargets，不进入业务 targets、规则判断或 AI。 */
+function resolveActionDisplayTargets(game, source, cardOrSkill, targets = []) {
+  if (targets.length) return targets;
+  if (cardOrSkill?.targetType === "allEnemies") {
+    return game.getEnemies(source).map((target) => ({ id: target.id, name: target.name }));
+  }
+  if (cardOrSkill?.targetType === "none") {
+    return [{ id: source.id, name: source.name, isSelf: true }];
+  }
+  return null;
 }
 
 export class Game {
@@ -787,7 +799,7 @@ export class Game {
         : preparedLeverage
           ? `${preparedLeverage.firstTarget.name} → ${preparedLeverage.secondTarget.name}`
         : actionTargetLabel(this, source, card, targets, selection);
-      this.ui.setCurrentCard(card, source.name, targetLabel);
+      this.ui.setCurrentCard(card, source.name, targetLabel, resolveActionDisplayTargets(this, source, card, targets));
       this.ui.playSound?.("playCard");
       if (preparedTransfer) {
         const publicContext = preparedTransfer.publicContext;
@@ -916,7 +928,7 @@ export class Game {
     source.turnFlags.activeSkillUseCounts[skill.id] = (source.turnFlags.activeSkillUseCounts[skill.id] ?? 0) + 1;
     try {
       const targetLabel = actionTargetLabel(this, source, skill, targets);
-      this.ui.setCurrentCard(skill.name, `${source.name} · 技能`, targetLabel);
+      this.ui.setCurrentCard(skill.name, `${source.name} · 技能`, targetLabel, resolveActionDisplayTargets(this, source, skill, targets));
       this.ui.playSound?.("skill");
       await skill.execute(this, source, targets, { resolutionId:createId("skill-resolution") });
       if (!this.isSessionValid(gameId)) return false;

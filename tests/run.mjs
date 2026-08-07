@@ -73,7 +73,7 @@ function makeUi(response = () => false) {
       return selection.tokens.slice(0, count).map((entry) => entry.token);
     },
     async showPrivateReveal(title, cards = []) { this.reveals.push({ title, cards:[...cards] }); },
-    setCurrentCard(cardOrName, source, targetLabel = "") { this.currentCards.push({ cardOrName, source, targetLabel }); }, setPrompt() {}, setThinking(...args) { this.thinking.push(args); }, showGameOver() {}, queueFeedback() {},
+    setCurrentCard(cardOrName, source, targetLabel = "", displayTargets = null) { this.currentCards.push({ cardOrName, source, targetLabel, displayTargets }); }, setPrompt() {}, setThinking(...args) { this.thinking.push(args); }, showGameOver() {}, queueFeedback() {},
     showDying() {}, hideDying() {}, showPublicPool() {}, hidePublicPool() {}, showJudgment() {}, showDuel() {}, hideDuel() {}
   };
 }
@@ -834,16 +834,16 @@ test("掠夺可把距离2内目标装备公开移入施牌者手牌", async () =
 test("破坏可不限距离弃置装备区装备", async () => { const actor=makePlayer("actor",0,"dawn"),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),equipment=instance("barrierDevice"),use=instance("destroy");const {game}=makeGame([actor,near,target,other,tail]);actor.hand.push(use);target.equipment=equipment;assert.equal(DistanceSystem.getDistance(game,actor,target),3);const selection=game.cardSelectionSystem.createHiddenSelection(target);assert.equal(await game.playCard(actor,use,[target],{zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),true);assert.equal(target.equipment,null);assert.ok(game.state.deck.discardPile.includes(equipment)); });
 test("影客窃取可把距离2内敌方装备收入手牌且不替换原装备", async () => { const shade=makePlayer("shade",0,"dawn","ai",3),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),equipment=instance("energyDevice"),original=instance("battleDevice");const {game}=makeGame([shade,near,target,other,tail],{random:()=>0});shade.energy=2;shade.equipment=original;target.equipment=equipment;assert.ok(RuleEngine.getSkillTargets(game,shade,ACTIVE_SKILLS.stealSkill).includes(target));assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);assert.equal(target.equipment,null);assert.equal(shade.equipment,original);assert.ok(shade.hand.includes(equipment));assert.ok(!game.state.deck.discardPile.includes(equipment));const blockedShade=makePlayer("blocked-shade",0,"dawn","ai",3),blockedNear=makePlayer("blocked-near",1,"dawn"),blocked=makePlayer("blocked",2,"dusk"),blockedOther=makePlayer("blocked-other",3,"dusk"),blockedTail=makePlayer("blocked-tail",4,"dawn");blocked.equipment=instance("barrierDevice");const {game:blockedGame}=makeGame([blockedShade,blockedNear,blocked,blockedOther,blockedTail]);assert.equal(DistanceSystem.getDistance(blockedGame,blockedShade,blocked),3);assert.ok(!RuleEngine.getSkillTargets(blockedGame,blockedShade,ACTIVE_SKILLS.stealSkill).includes(blocked)); });
 test("装备区选择令牌绑定本次会话、所有者和手牌版本", async () => { const actor=makePlayer("actor",0,"dawn"),owner=makePlayer("owner",1,"dusk"),equipment=instance("energyDevice");owner.equipment=equipment;const {game}=makeGame([actor,owner]);const selection=game.cardSelectionSystem.createHiddenSelection(owner);owner.bumpHandVersion();assert.equal(await game.choosePlayerZoneCard(actor,owner,"测试",{zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),null);const otherSelection=game.cardSelectionSystem.createHiddenSelection(actor);assert.equal(await game.choosePlayerZoneCard(actor,owner,"测试",{zone:"equipment",equipmentCardId:equipment.id,selectionId:otherSelection.selectionId}),null); });
-test("收获直接摸2且无需弃牌", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);game.state.deck.cards.push(instance("block"),instance("charge"));const use=instance("harvest");a.hand.push(use);await game.playCard(a,use,[]);assert.equal(a.hand.length,2); });
+test("丰收直接摸2且无需弃牌", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);game.state.deck.cards.push(instance("block"),instance("charge"));const use=instance("harvest");a.hand.push(use);await game.playCard(a,use,[]);assert.equal(a.hand.length,2); });
 test("挑衅：有突袭者可打出，没有者优先消耗护盾且不触发格挡或雷达", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk","human");const {game,ui}=makeGame([a,b,c],{response:(r)=>r.targetPlayerId===b.id});a.hand.push(instance("provoke"));b.hand.push(instance("assault"));c.shield=2;c.equipment=instance("defenseDevice");game.state.deck.cards.push(instance("harvest"));const hp=c.hp;await game.playCard(a,a.hand[0],[b,c]);assert.equal(b.hand.length,0);assert.equal(c.hp,hp);assert.equal(c.shield,1);assert.ok(!ui.responseRequests.some((request)=>request.type==="block"));assert.equal(game.state.deck.judgmentZone.length,0);assert.equal(game.state.deck.cards.at(-1)?.definitionId,"harvest"); });
 test("决斗轮流打出突袭，先不能响应者承受可被护盾吸收的1伤害", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:(r)=>r.targetPlayerId===b.id});const duel=instance("duel");a.hand.push(duel);b.hand.push(instance("assault"));a.shield=1;await game.playCard(a,duel,[b]);assert.equal(a.hp,a.maxHp);assert.equal(a.shield,0);assert.equal(a.turnFlags.attackUsed,0); });
 test("决斗轮到无突袭真人时先显示响应窗口再结算伤害", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>false});const duel=instance("duel"),hp=b.hp;a.hand.push(duel);await game.playCard(a,duel,[b]);const request=ui.responseRequests.find((entry)=>entry.type==="assaultDiscard");assert.ok(request);assert.deepEqual(request.legalCardIds,[]);assert.match(request.presentation.eventText,new RegExp(`${a.name}.*你.*决斗`));assert.match(request.presentation.responseText,/1 张突袭/);assert.equal(b.hp,hp-1); });
 test("挑衅轮到无突袭真人时仍显示响应窗口", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>false});const provoke=instance("provoke"),hp=b.hp;a.hand.push(provoke);await game.playCard(a,provoke,[b]);const request=ui.responseRequests.find((entry)=>entry.type==="assaultDiscard");assert.ok(request);assert.equal(request.presentation.responseCardName,"突袭");assert.match(request.presentation.availabilityText,/当前 0 张/);assert.equal(b.hp,hp-1); });
-test("反制链响应说明包含来源、目标、原牌和当前反制", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.legalCardIds.length>=request.requiredCount});a.hand.push(instance("harvest"));b.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);const chained=ui.responseRequests.find((request)=>request.type==="counter"&&request.sourcePlayerId===b.id&&request.targetPlayerId===c.id);assert.ok(chained);assert.match(chained.presentation.eventText,new RegExp(`${b.name}.*${a.name}.*收获.*反制`));assert.match(chained.presentation.responseText,/继续.*反制/); });
+test("反制链响应说明包含来源、目标、原牌和当前反制", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.legalCardIds.length>=request.requiredCount});a.hand.push(instance("harvest"));b.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);const chained=ui.responseRequests.find((request)=>request.type==="counter"&&request.sourcePlayerId===b.id&&request.targetPlayerId===c.id);assert.ok(chained);assert.match(chained.presentation.eventText,new RegExp(`${b.name}.*${a.name}.*丰收.*反制`));assert.match(chained.presentation.responseText,/继续.*反制/); });
 test("无人物目标的战术牌响应文案不再显示对战场使用", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai");const presentation=buildResponsePresentation(responder,"counter",{source,card:instance("transfer"),targets:[]},1,0,"反制");assert.equal(presentation.eventText,`${source.name}使用了「转移」。`);assert.doesNotMatch(presentation.eventText,/对战场使用/); });
 test("破势自目标反制响应文案不显示使用者为目标", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai"),card=instance("exposeWeakness");const presentation=buildResponsePresentation(responder,"counter",{source,target:source,targets:[source],card},1,0,"反制");assert.equal(presentation.eventText,`${source.name}使用了「${card.name}」。`);assert.ok(!presentation.eventText.includes(`对${source.name}`)); });
 test("破势真实出牌流程的反制请求不显示自目标", async () => { const source=makePlayer("source",0,"dawn"),responder=makePlayer("human",1,"dusk","human");const {game,ui}=makeGame([source,responder],{response:()=>false});const card=instance("exposeWeakness");source.hand.push(card);await game.playCard(source,card,[]);const request=ui.responseRequests.find((entry)=>entry.type==="counter"&&entry.targetPlayerId===responder.id);assert.ok(request);assert.equal(request.presentation.eventText,`${source.name}使用了「${card.name}」。`);assert.ok(!request.presentation.eventText.includes(`对${source.name}`)); });
-test("真实目标战术牌反制文案仍显示目标且无目标牌保持原样", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai"),target=makePlayer("target",2,"dawn","ai");const duel=instance("duel");assert.equal(buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:duel},1,0,"反制").eventText,`${source.name}对${target.name}使用了「决斗」。`);const harvest=instance("harvest");assert.equal(buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:harvest},1,0,"反制").eventText,`${source.name}使用了「收获」。`); });
+test("真实目标战术牌反制文案仍显示目标且无目标牌保持原样", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai"),target=makePlayer("target",2,"dawn","ai");const duel=instance("duel");assert.equal(buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:duel},1,0,"反制").eventText,`${source.name}对${target.name}使用了「决斗」。`);const harvest=instance("harvest");assert.equal(buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:harvest},1,0,"反制").eventText,`${source.name}使用了「丰收」。`); });
 const renderResponseEventHtml = async (presentation) => {
   const previousWindow = globalThis.window;
   globalThis.window = { setInterval, clearInterval };
@@ -889,10 +889,10 @@ test("响应窗口同队伍角色仍独立着色", async () => {
 test("无目标响应文案只有使用者是角色片段", () => {
   const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"};
   const presentation=buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:instance("harvest")},1,0,"反制");
-  assert.equal(presentation.eventText,"角色A使用了「收获」。");
+  assert.equal(presentation.eventText,"角色A使用了「丰收」。");
   assert.deepEqual(presentation.eventFragments,[
     {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
-    {type:"text",text:"使用了「收获」。"}
+    {type:"text",text:"使用了「丰收」。"}
   ]);
 });
 test("破势响应片段只有使用者且UI只着色使用者", async () => {
@@ -944,13 +944,13 @@ test("响应窗口中的“你”保持普通文本不着色", async () => {
 });
 test("反制链与濒死响应片段保留实际角色身份", () => {
   const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色B",battleTeam:"dusk"},previous={id:"previous",name:"角色A",battleTeam:"dawn"};
-  const chain=buildResponsePresentation(responder,"counter",{source,target:previous,targets:[previous],card:instance("counter"),counteredCardName:"收获"},1,0,"反制");
-  assert.equal(chain.eventText,"角色B对角色A打出的「收获」使用了「反制」。");
+  const chain=buildResponsePresentation(responder,"counter",{source,target:previous,targets:[previous],card:instance("counter"),counteredCardName:"丰收"},1,0,"反制");
+  assert.equal(chain.eventText,"角色B对角色A打出的「丰收」使用了「反制」。");
   assert.deepEqual(chain.eventFragments,[
     {type:"player",text:"角色B",playerId:"source",battleTeam:"dusk"},
     {type:"text",text:"对"},
     {type:"player",text:"角色A",playerId:"previous",battleTeam:"dawn"},
-    {type:"text",text:"打出的「收获」使用了「反制」。"}
+    {type:"text",text:"打出的「丰收」使用了「反制」。"}
   ]);
   const dying=buildResponsePresentation(responder,"dyingRescue",{target:previous},1,0,"使用调息");
   assert.equal(dying.eventText,"角色A已进入濒死状态。");
@@ -1213,7 +1213,7 @@ test("震荡的反制只取消当前目标所受效果而不取消整张群伤�
 test("挑衅的反制只取消当前目标效果且不能保护队友", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk","human");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.targetPlayerId===b.id});const provoke=instance("provoke"),counter=instance("counter"),bHp=b.hp,cHp=c.hp;a.hand.push(provoke);b.hand.push(counter);await game.playCard(a,provoke,[b,c]);assert.equal(b.hp,bHp);assert.equal(c.hp,cHp-1);assert.equal(b.hand.includes(counter),false);assert.ok(ui.responseRequests.some((request)=>request.type==="counter"&&request.targetPlayerId===b.id&&request.presentation.responseText.includes("仅取消")&&request.presentation.responseText.includes("其他目标")));assert.ok(ui.logs.some((message)=>message===`${b.name}对${a.name}的「挑衅」使用了「反制」，取消了「挑衅」对${b.name}的效果。`)); });
 test("针对震荡目标的反制仍可被后续反制，之后该目标继续承受效果", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.legalCardIds.length>=request.requiredCount});const shockwave=instance("shockwave"),first=instance("counter"),second=instance("counter"),hp=b.hp;a.hand.push(shockwave,second);b.hand.push(first);await game.playCard(a,shockwave,[b]);assert.equal(b.hp,hp-1);assert.equal(b.hand.includes(first),false);assert.equal(a.hand.includes(second),false);assert.ok(ui.logs.some((message)=>message===`${b.name}对${a.name}的「震荡」使用了「反制」，取消了「震荡」对${b.name}的效果。`));assert.ok(ui.logs.some((message)=>message===`${a.name}对${b.name}的「反制」使用了「反制」，取消了「反制」的效果。`));assert.ok(!ui.logs.some((message)=>message.includes("被后续反制抵消"))); });
 test("两次反制后原战术牌恢复生效", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const order=[];const {game,ui}=makeGame([a,b,c],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});game.state.deck.cards.push(instance("block"),instance("charge"));a.hand.push(instance("harvest"));b.hand.push(instance("counter"));c.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id,a.id,b.id]);assert.equal(a.hand.length,2);assert.equal(b.hand.length,0);assert.equal(c.hand.length,0);assert.equal(ui.logs.filter((message)=>message.includes("使用了「反制」")).length,2);assert.ok(!ui.logs.some((message)=>message.includes("被后续反制抵消"))); });
-test("三次反制后原战术牌仍被取消", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human"),d=makePlayer("d",3,"dusk","human");const order=[];const {game}=makeGame([a,b,c,d],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});game.state.deck.cards.push(instance("block"),instance("charge"));a.hand.push(instance("harvest"));b.hand.push(instance("counter"));c.hand.push(instance("counter"));d.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id,d.id,a.id,b.id,c.id]);assert.equal(a.hand.length,0);assert.equal(b.hand.length,0);assert.equal(c.hand.length,0);assert.equal(d.hand.length,0);assert.equal(game.state.logs.filter((entry)=>entry.message.includes("使用了「反制」")).length,3);assert.ok(game.state.logs.some((entry)=>entry.message.includes("取消了「收获」的效果"))); });
+test("三次反制后原战术牌仍被取消", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human"),d=makePlayer("d",3,"dusk","human");const order=[];const {game}=makeGame([a,b,c,d],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});game.state.deck.cards.push(instance("block"),instance("charge"));a.hand.push(instance("harvest"));b.hand.push(instance("counter"));c.hand.push(instance("counter"));d.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id,d.id,a.id,b.id,c.id]);assert.equal(a.hand.length,0);assert.equal(b.hand.length,0);assert.equal(c.hand.length,0);assert.equal(d.hand.length,0);assert.equal(game.state.logs.filter((entry)=>entry.message.includes("使用了「反制」")).length,3);assert.ok(game.state.logs.some((entry)=>entry.message.includes("取消了「丰收」的效果"))); });
 
 // 装备与判定
 for (const id of ["energyDevice","recycleDevice","defenseDevice","battleDevice","telescope","barrierDevice"]) test(`装备 ${CARD_DEFINITIONS[id].name} 会进入唯一装备槽`, async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const equipment=instance(id);a.hand.push(equipment);await game.playCard(a,equipment,[]);assert.equal(a.equipment,equipment);assert.ok(!game.state.deck.discardPile.includes(equipment)); });
@@ -3910,7 +3910,7 @@ const b1cDrawActor = (overrides = {}) => ({
   equipmentDefinitionId:null, equipmentRetentionProbability:0, statuses:[], ...overrides
 });
 
-test("B1c摸牌：收获摸两张并叠加两次新牌反制先验", () => {
+test("B1c摸牌：丰收摸两张并叠加两次新牌反制先验", () => {
   const actor=b1cDrawActor({handCount:1,hand:[{id:"h",definitionId:"harvest"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
   const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
   const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.harvest,id:"h"},targets:[]},"a");
@@ -3922,7 +3922,7 @@ test("B1c摸牌：收获摸两张并叠加两次新牌反制先验", () => {
   assertClose(after.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
 });
 
-test("B1c摸牌：旧反制消费后再收获只产生新牌先验", () => {
+test("B1c摸牌：旧反制消费后再丰收只产生新牌先验", () => {
   const actor=b1cDrawActor({handCount:2,hand:[{id:"c",definitionId:"counter"},{id:"h",definitionId:"harvest"}]});
   const state={players:[actor,b1cPlayer("e","dusk",{})]};
   const simulator=new AiSimulator(state);
@@ -3938,7 +3938,7 @@ test("B1c摸牌：旧反制消费后再收获只产生新牌先验", () => {
   assert.equal(after.hand.some((card)=>card.definitionId==="counter"),false);
 });
 
-test("B1c摸牌：40%概率收获两张共享同一效果世界", () => {
+test("B1c摸牌：40%概率丰收两张共享同一效果世界", () => {
   const actor=b1cDrawActor({handCount:1,hand:[{id:"h",definitionId:"harvest"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
   const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
   const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.harvest,id:"h"},targets:[],executionProbability:.4},"a");
@@ -4761,7 +4761,7 @@ test("追猎者阵亡时统一清理其他角色身上由其留下的猎印", as
 
 test("反制链每张实际反制只记录一条带明确双方与对象的日志", async () => {
   const source=makePlayer("log-source",0,"dawn","human"),first=makePlayer("log-first",1,"dusk","human"),second=makePlayer("log-second",2,"dawn","human"),use=instance("harvest");source.hand.push(use);first.hand.push(instance("counter"));second.hand.push(instance("counter"));const {game}=makeGame([source,first,second],{response:(request)=>request.type==="counter"&&request.legalCardIds.length>=request.requiredCount});game.state.deck.cards.push(instance("charge"),instance("block"));await game.playCard(source,use,[]);const logs=game.state.logs.map((entry)=>entry.message).filter((message)=>message.includes("使用了「反制」"));
-  assert.deepEqual(logs,[`${first.name}对${source.name}的「收获」使用了「反制」，取消了「收获」的效果。`,`${second.name}对${first.name}的「反制」使用了「反制」，取消了「反制」的效果。`]);assert.ok(!game.state.logs.some((entry)=>entry.message.includes("被后续反制抵消")||entry.message===`「收获」的效果被取消。`));
+  assert.deepEqual(logs,[`${first.name}对${source.name}的「丰收」使用了「反制」，取消了「丰收」的效果。`,`${second.name}对${first.name}的「反制」使用了「反制」，取消了「反制」的效果。`]);assert.ok(!game.state.logs.some((entry)=>entry.message.includes("被后续反制抵消")||entry.message===`「丰收」的效果被取消。`));
 });
 
 function simulatedDuelPlayer(id, team, count) {
@@ -8223,42 +8223,38 @@ test("闪电：响应卡片信息框与其他战术牌共用统一尺寸", async
   assert.match(noTargetSkillMarkup, /class="resolving-card is-skill"/, "无目标技能必须沿用同类中央结算卡模板");
   assert.doesNotMatch(noTargetSkillMarkup, /作用对象/);
   assert.match(resolvingCardTemplate("猎杀", "追猎者 · 技能", "目标"), /作用对象/, "有目标技能仍正常显示作用对象");
-  assert.match(resolvingCardTemplate(instance("收获"), "甲", ""), /resolving-card/, "内容较长的无目标卡牌仍使用同类模板");
+  assert.match(resolvingCardTemplate(instance("harvest"), "甲", ""), /resolving-card/, "内容较长的无目标卡牌仍使用同类模板");
   const cards = await readFile(projectFile("css/cards.css"), "utf8");
   const imgRule = cards.match(/\.resolving-card > img\s*\{[^}]*\}/)?.[0] ?? "";
   assert.match(imgRule, /width:\s*74px/, "左侧正方形图片区域不得被放大");
   assert.match(imgRule, /height:\s*74px/);
 });
 
-test("闪电：中央结算卡显示作用对象为自己且不进入业务 targets", () => {
+test("闪电：中央结算卡显示作用对象为自己且不进入业务 targets", async () => {
   const lightning = instance("lightning");
   const human = makePlayer("human", 0, "dawn", "human");
   const ai = makePlayer("ai", 1, "dusk");
-  const { game } = makeGame([human, ai]);
+  const { game, ui } = makeGame([human, ai]);
   assert.equal(lightning.targetType, "none");
   assert.deepEqual(RuleEngine.getCardTargets(game, human, lightning), [], "闪电真实业务 targets 必须保持为空");
-  const panel = () => {
-    const classes = new Set();
-    return {
-      innerHTML: "",
-      classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) },
-      get offsetWidth() { return 440; }
-    };
-  };
-  const humanPanel = panel();
-  UIManager.prototype.setCurrentCard.call({
-    game, elements: { current_card: humanPanel },
-    resolveCurrentCardDisplayTargets: UIManager.prototype.resolveCurrentCardDisplayTargets
-  }, lightning, human.name, "");
-  assert.match(humanPanel.innerHTML, /作用对象/);
-  assert.match(humanPanel.innerHTML, new RegExp(`${human.name}（自己）`), "人类使用闪电时显示（自己）");
-  const aiPanel = panel();
-  UIManager.prototype.setCurrentCard.call({
-    game, elements: { current_card: aiPanel },
-    resolveCurrentCardDisplayTargets: UIManager.prototype.resolveCurrentCardDisplayTargets
-  }, lightning, ai.name, "");
-  assert.match(aiPanel.innerHTML, new RegExp(`${ai.name}（自己）`));
-  assert.doesNotMatch(aiPanel.innerHTML, new RegExp(human.name), "其他玩家使用闪电时不得把人类玩家显示为自己");
+  human.hand.push(lightning);
+  await game.playCard(human, lightning, []);
+  const humanRecord = ui.currentCards.at(-1);
+  assert.equal(humanRecord.targetLabel, "", "闪电不生成业务 targetLabel");
+  assert.deepEqual(humanRecord.displayTargets, [{ id: human.id, name: human.name, isSelf: true }]);
+  const humanMarkup = resolvingCardTemplate(lightning, human.name, humanRecord.targetLabel, humanRecord.displayTargets);
+  assert.match(humanMarkup, /作用对象/);
+  assert.match(humanMarkup, new RegExp(`${human.name}（自己）`), "人类使用闪电时显示（自己）");
+  assert.ok(human.statuses.lightning, "闪电业务效果不变");
+  const aiLightning = instance("lightning");
+  ai.hand.push(aiLightning);
+  game.state.currentPlayerIndex = 1;
+  await game.playCard(ai, aiLightning, []);
+  const aiRecord = ui.currentCards.at(-1);
+  assert.deepEqual(aiRecord.displayTargets, [{ id: ai.id, name: ai.name, isSelf: true }]);
+  const aiMarkup = resolvingCardTemplate(aiLightning, ai.name, aiRecord.targetLabel, aiRecord.displayTargets);
+  assert.match(aiMarkup, new RegExp(`${ai.name}（自己）`));
+  assert.doesNotMatch(aiMarkup, new RegExp(human.name), "其他玩家使用闪电时不得把人类玩家显示为自己");
   const shield = instance("shield");
   const shieldMarkup = resolvingCardTemplate(shield, human.name, `${human.name}（自己）`);
   assert.match(shieldMarkup, /作用对象/);
@@ -8269,6 +8265,70 @@ test("闪电：中央结算卡显示作用对象为自己且不进入业务 targ
   const bothMarkup = resolvingCardTemplate(lightning, ai.name, "业务目标", [{ id: ai.id, name: ai.name, isSelf: true }]);
   assert.match(bothMarkup, /业务目标/);
   assert.doesNotMatch(bothMarkup, /（自己）/, "真实业务目标标签优先于纯展示字段");
+});
+
+test("丰收：中央结算卡经 displayTargets 显示自己且真实 targets 仍为空", async () => {
+  const a = makePlayer("a", 0, "dawn", "human");
+  const b = makePlayer("b", 1, "dusk");
+  const { game, ui } = makeGame([a, b]);
+  game.state.deck.cards.push(instance("block"), instance("charge"));
+  const use = instance("harvest");
+  a.hand.push(use);
+  assert.equal(use.name, "丰收");
+  assert.deepEqual(RuleEngine.getCardTargets(game, a, use), [], "丰收业务 targets 必须为空");
+  await game.playCard(a, use, []);
+  const record = ui.currentCards.at(-1);
+  assert.equal(record.cardOrName, use);
+  assert.equal(record.targetLabel, "", "丰收不得通过 actionTargetLabel 获得业务文案");
+  assert.deepEqual(record.displayTargets, [{ id: a.id, name: a.name, isSelf: true }]);
+  const markup = resolvingCardTemplate(use, a.name, record.targetLabel, record.displayTargets);
+  assert.match(markup, /丰收/);
+  assert.match(markup, /作用对象/);
+  assert.match(markup, new RegExp(`${a.name}（自己）`));
+  assert.equal(a.hand.length, 2, "效果仍为施牌者摸2张牌");
+  assert.ok(game.state.logs.some((entry) => entry.message === `${a.name}使用了「丰收」。`), "使用日志不含新增作用对象");
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("使用了「丰收」，作用对象")), "actionTargetLabel 语义未被扩大");
+});
+
+test("焚场：中央结算卡经 displayTargets 显示全部存活敌人且不改变技能结算", async () => {
+  const source = makePlayer("pyro", 0, "dawn", "human", 4);
+  const ally = makePlayer("ally", 1, "dawn");
+  const enemyA = makePlayer("enemyA", 2, "dusk");
+  const enemyB = makePlayer("enemyB", 3, "dusk");
+  const { game, ui } = makeGame([source, ally, enemyA, enemyB]);
+  source.energy = 2;
+  const hpA = enemyA.hp, hpB = enemyB.hp;
+  await game.useActiveSkill(source, "burningField", []);
+  const record = ui.currentCards.at(-1);
+  assert.equal(record.targetLabel, "", "焚场空 targets 时不得生成业务 targetLabel");
+  assert.deepEqual(record.displayTargets.map((target) => target.name), [enemyA.name, enemyB.name]);
+  const markup = resolvingCardTemplate("焚场", `${source.name} · 技能`, record.targetLabel, record.displayTargets);
+  assert.match(markup, /作用对象/);
+  assert.match(markup, new RegExp(enemyA.name));
+  assert.match(markup, new RegExp(enemyB.name));
+  const targetMarkup = markup.match(/<span class="resolving-target">.*<\/span>/)?.[0] ?? "";
+  assert.doesNotMatch(targetMarkup, new RegExp(source.name), "作用对象不得包含施牌者");
+  assert.doesNotMatch(targetMarkup, new RegExp(ally.name), "作用对象不得包含队友");
+  assert.equal(enemyA.hp, hpA - 1);
+  assert.equal(enemyB.hp, hpB - 1);
+  assert.equal(ally.hp, ally.maxHp, "队友不受焚场影响");
+  assert.equal(source.hp, source.maxHp, "施牌者不因展示成为敌人");
+});
+
+test("none 型主动技能：中央结算卡经 displayTargets 显示自己", async () => {
+  for (const [generalIndex, skillId, skillName] of [[0, "breakArmy", "破军"], [6, "allIn", "孤注"]]) {
+    const source = makePlayer("source", 0, "dawn", "human", generalIndex);
+    const enemy = makePlayer("enemy", 1, "dusk");
+    const { game, ui } = makeGame([source, enemy]);
+    source.energy = skillId === "allIn" ? 1 : 2;
+    await game.useActiveSkill(source, skillId, []);
+    const record = ui.currentCards.at(-1);
+    assert.equal(record.targetLabel, "", `${skillName}不得获得业务 targetLabel`);
+    assert.deepEqual(record.displayTargets, [{ id: source.id, name: source.name, isSelf: true }]);
+    const markup = resolvingCardTemplate(skillName, `${source.name} · 技能`, record.targetLabel, record.displayTargets);
+    assert.match(markup, /作用对象/);
+    assert.match(markup, new RegExp(`${source.name}（自己）`));
+  }
 });
 
 test("闪电：判定触发日志复用玩家与卡牌名称格式化机制", async () => {

@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260807-lightning-probability-state-v107";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260807-lightning-probability-state-v107";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260807-lightning-probability-state-v107";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260807-resolving-targets-harvest-v108";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260807-resolving-targets-harvest-v108";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260807-resolving-targets-harvest-v108";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260807-lightning-probability-state-v107";
-import { AnimationController } from "./animationController.js?build=20260807-lightning-probability-state-v107";
-import { InteractionController } from "./InteractionController.js?build=20260807-lightning-probability-state-v107";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260807-lightning-probability-state-v107";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260807-lightning-probability-state-v107";
-import { JudgmentView } from "./JudgmentView.js?build=20260807-lightning-probability-state-v107";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260807-lightning-probability-state-v107";
-import { createOpponentHandView } from "./handVisibility.js?build=20260807-lightning-probability-state-v107";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260807-lightning-probability-state-v107";
-import { SoundManager } from "../audio/SoundManager.js?build=20260807-lightning-probability-state-v107";
+} from "./templates.js?build=20260807-resolving-targets-harvest-v108";
+import { AnimationController } from "./animationController.js?build=20260807-resolving-targets-harvest-v108";
+import { InteractionController } from "./InteractionController.js?build=20260807-resolving-targets-harvest-v108";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260807-resolving-targets-harvest-v108";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260807-resolving-targets-harvest-v108";
+import { JudgmentView } from "./JudgmentView.js?build=20260807-resolving-targets-harvest-v108";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260807-resolving-targets-harvest-v108";
+import { createOpponentHandView } from "./handVisibility.js?build=20260807-resolving-targets-harvest-v108";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260807-resolving-targets-harvest-v108";
+import { SoundManager } from "../audio/SoundManager.js?build=20260807-resolving-targets-harvest-v108";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -516,20 +516,11 @@ export class UIManager {
 
   setCurrentCard(cardOrName, source, targetLabel = "", displayTargets = null) {
     this.elements.current_card.innerHTML = resolvingCardTemplate(
-      cardOrName, source, targetLabel,
-      displayTargets ?? this.resolveCurrentCardDisplayTargets(cardOrName, source)
+      cardOrName, source, targetLabel, displayTargets
     );
     this.elements.current_card.classList.remove("is-entering");
     void this.elements.current_card.offsetWidth;
     this.elements.current_card.classList.add("is-entering");
-  }
-
-  /** 纯展示字段：仅用于中央结算卡“作用对象”行，不进入业务 targets、规则判断或 AI。 */
-  resolveCurrentCardDisplayTargets(cardOrName, source) {
-    if (cardOrName?.definitionId !== "lightning" || !this.game) return null;
-    const sourcePlayer = this.game.state.players.find((player) => player.name === source);
-    if (!sourcePlayer) return null;
-    return [{ id: sourcePlayer.id, name: sourcePlayer.name, isSelf: true }];
   }
 
   resetCurrentCard() {

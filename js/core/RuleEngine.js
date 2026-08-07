@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260807-lightning-probability-state-v107";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-probability-state-v107";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260807-resolving-targets-harvest-v108";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-resolving-targets-harvest-v108";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

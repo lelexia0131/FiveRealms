@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-lightning-probability-state-v107";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260807-lightning-probability-state-v107";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260807-lightning-probability-state-v107";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-resolving-targets-harvest-v108";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260807-resolving-targets-harvest-v108";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260807-resolving-targets-harvest-v108";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
