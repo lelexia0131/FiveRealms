@@ -37,6 +37,7 @@ import { joinProbabilityStateBranches } from "../js/ai/AiProbabilityBranches.js"
 import { buildLightningPropagationChain, equipmentJudgmentProbability, lightningPresenceProbability, lightningTeamBurden, lightningTransferredBurden, lightningUseValue, nextLightningReceiver } from "../js/ai/lightningScoring.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
+// Test Runner 与通用 Helpers
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 const execFileAsync = promisify(execFile);
@@ -205,7 +206,11 @@ function forceAvailableAiCounters(game, capturedContexts = []) {
   };
 }
 
-// 配置、展示资源与注册表（40 项）
+
+// ==================== 配置、定义与静态资源 ====================
+
+// ---- 角色资源与卡牌资源 ----
+
 for (const general of GENERAL_DEFINITIONS) test(`角色资源：${general.name}具有有效本地肖像`, async () => {
   assert.match(general.portrait, /^\.\/assets\/characters\/[a-z-]+\.svg$/);
   await access(projectFile(general.portrait));
@@ -222,30 +227,51 @@ for (const definition of Object.values(CARD_DEFINITIONS)) test(`卡牌资源：$
   assert.ok(hasCardResolver(definition.definitionId));
 });
 
+// ---- 卡牌定义与数量 ----
+
 test("牌组恰有25种定义和160张实体牌", () => { assert.equal(Object.keys(CARD_DEFINITIONS).length, 25); assert.equal(TOTAL_CARD_COUNT, 160); });
+
 test("三种卡牌分类之外没有旧响应分类", () => assert.deepEqual([...new Set(Object.values(CARD_DEFINITIONS).map((card) => card.category))].sort(), ["basic","equipment","tactic"]));
+
 test("旧 support/insight/steal/coreDevice/redirect 定义已删除", () => ["support","insight","steal","coreDevice","redirect"].forEach((id) => assert.equal(CARD_DEFINITIONS[id], undefined)));
+
 test("五种基础牌数量为突袭40、格挡20、调息12、聚能10、护盾10", () => assert.deepEqual(Object.fromEntries(["assault","block","recover","charge","shield"].map((id)=>[id,CARD_DEFINITIONS[id].count])),{assault:40,block:20,recover:12,charge:10,shield:10}));
+
 test("基础牌数量合计92", () => assert.equal(Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0), 92));
+
 test("战术牌数量合计53", () => assert.equal(Object.values(CARD_DEFINITIONS).filter((card) => card.category === "tactic").reduce((sum, card) => sum + card.count, 0), 53));
+
 test("借势在集中牌堆中固定3张且均为不同真实实例", () => {
   const deck=new Deck(()=>0);deck.build();const cards=deck.cards.filter((card)=>card.definitionId==="leverage");
   assert.equal(CARD_DEFINITIONS.leverage.count,3);assert.equal(cards.length,3);assert.equal(new Set(cards.map((card)=>card.id)).size,3);assert.equal(new Set(cards).size,3);
   deck.build();assert.equal(deck.cards.filter((card)=>card.definitionId==="leverage").length,3);
 });
+
 test("装备牌数量合计15且数量来自统一配置", () => { const equipment = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment"); assert.equal(equipment.reduce((sum, card) => sum + card.count, 0), 15); assert.equal(equipment.length, 6); assert.deepEqual(Object.fromEntries(equipment.map((card)=>[card.definitionId,card.count])),{energyDevice:2,recycleDevice:3,defenseDevice:2,battleDevice:2,telescope:3,barrierDevice:3}); });
+
+// ---- 角色规则与配置一致性 ----
+
 test("所有角色技能都存在注册器", () => GENERAL_DEFINITIONS.forEach((general) => { general.passiveSkillIds.forEach((id) => assert.ok(hasPassiveSkill(id))); general.activeSkillIds.forEach((id) => assert.ok(hasActiveSkill(id))); }));
+
 test("所有角色都用稳定英文 roleTags 供 AI 判断职责", () => GENERAL_DEFINITIONS.forEach((general) => { assert.ok(general.roleTags.length >= 2);general.roleTags.forEach((tag)=>assert.match(tag,/^[a-z-]+$/)); }));
+
 test("守誓者最大生命为3且壁垒说明为可叠加的永久护盾", () => { const oath=GENERAL_DEFINITIONS.find((general)=>general.id==="oath-warden");assert.equal(oath.maxHp,3);assert.match(oath.activeDescription,/1点可叠加的护盾/);assert.match(oath.activeDescription,/不会随回合消失/);assert.match(oath.activeDescription,/抵消伤害时消耗/); });
+
 test("壁垒配置、README与实际目标规则保持一致", async () => { const oath=GENERAL_DEFINITIONS.find((general)=>general.id==="oath-warden"),readme=await readFile(projectFile("README.md"),"utf8"),config=await readFile(projectFile("js/config/generalConfig.js"),"utf8"),skills=await readFile(projectFile("js/generals/skillRegistry.js"),"utf8");assert.equal(oath.activeCost,ACTIVE_SKILLS.barrier.cost);assert.equal(oath.activeLimitPerTurn,ACTIVE_SKILLS.barrier.limitPerTurn);for(const text of [readme,config]){assert.doesNotMatch(text,/临时护盾|下次回合开始|回合开始时消散|统一消散/);assert.match(text,/不会随回合(?:数)?消失/);}assert.doesNotMatch(skills,/statuses\.temporaryShield|clearAtTurnStart/);const source=makePlayer("warden",0,"dawn","ai",1),ally=makePlayer("ally",1,"dawn"),deadAlly=makePlayer("dead-ally",2,"dawn"),enemy=makePlayer("enemy",3,"dusk");deadAlly.alive=false;const {game}=makeGame([source,ally,deadAlly,enemy]);assert.deepEqual(RuleEngine.getSkillTargets(game,source,ACTIVE_SKILLS.barrier).map((player)=>player.id),[ally.id]); });
+
 test("八名角色规则配置与README角色介绍一致", async () => { const readme=await readFile(projectFile("README.md"),"utf8");for(const general of GENERAL_DEFINITIONS){assert.match(readme,new RegExp(`### ${general.name}`));assert.ok(readme.includes(general.description));assert.match(readme,new RegExp(`主动·${general.activeName}`));assert.match(readme,new RegExp(`被动·${general.passiveName}`));}const byId=Object.fromEntries(GENERAL_DEFINITIONS.map((general)=>[general.id,general])),expected={"blade-walker":[4,2,1],"oath-warden":[3,2,2],"spirit-medic":[3,2,2],"shade-agent":[3,1,2],"ember-magus":[3,2,2],"trail-hunter":[4,2,2],"fate-gambler":[4,1,1],"resonance-tuner":[4,2,2]};for(const [id,values] of Object.entries(expected)){const general=byId[id],skill=ACTIVE_SKILLS[general.activeSkillIds[0]];assert.deepEqual([general.maxHp,general.activeCost,general.activeLimitPerTurn],values,id);assert.deepEqual([skill.cost,skill.limitPerTurn],values.slice(1),`${id}实际技能`);} });
+
 test("灵医配置与README同步回春摸牌、濒死触发及滋荣自疗规则", async () => {
   const medic=GENERAL_DEFINITIONS.find((general)=>general.id==="spirit-medic"),readme=await readFile(projectFile("README.md"),"utf8"),medicSection=readme.match(/### 灵医[\s\S]*?(?=\r?\n### )/)?.[0]??"";
   for(const text of [medic.passiveDescription,medicSection]){assert.match(text,/己方阵营角色/);assert.match(text,/额外恢复\s*1\s*点/);assert.match(text,/摸\s*1\s*张牌/);assert.match(text,/濒死救援.*触发|濒死救援也可触发/);assert.doesNotMatch(text,/濒死救援.*不会|阻止灵医.*回春/);}
   assert.equal(medic.activeName,"滋荣");assert.equal(ACTIVE_SKILLS.symbiosis.name,"滋荣");
   for(const text of [medic.activeDescription,medicSection]){assert.match(text,/受伤的己方阵营角色/);assert.match(text,/包括自己/);assert.match(text,/目标不是自己.*自己同样恢复\s*1\s*点生命/);assert.match(text,/消耗\s*2\s*点能量/);assert.match(text,/最多(?:使用|发动)\s*2\s*次/);}
 });
+
 test("强制 AI 救援真人配置默认开启", () => assert.equal(GAME_CONFIG.forceAiRescueHuman, true));
+
+// ---- 音频与 BGM ----
+
 test("声音系统覆盖八类反馈且在无 Web Audio 环境安全降级", async () => {
   const sound = new SoundManager();
   for (const name of ["draw","select","playCard","hit","skill","discard","heal","shield"]) {
@@ -253,6 +279,7 @@ test("声音系统覆盖八类反馈且在无 Web Audio 环境安全降级", asy
   }
   if (!sound.isSupported) assert.equal(await sound.play("draw"), false);
 });
+
 test("晨昏 BGM 使用不同速度、音色与旋律轮廓", () => {
   assert.notEqual(MUSIC_PROFILES.dawn.tempo, MUSIC_PROFILES.dusk.tempo);
   assert.notEqual(MUSIC_PROFILES.dawn.wave, MUSIC_PROFILES.dusk.wave);
@@ -263,6 +290,7 @@ test("晨昏 BGM 使用不同速度、音色与旋律轮廓", () => {
     assert.equal(profile.thirds.length, profile.bass.length);
   }
 });
+
 test("BGM 音量可独立调节并限制在合法范围", () => {
   const sound = new SoundManager();
   assert.equal(sound.setMusicVolume(0.82), 0.82);
@@ -270,6 +298,7 @@ test("BGM 音量可独立调节并限制在合法范围", () => {
   assert.equal(sound.setMusicVolume(3), 1);
   assert.equal(sound.setMusicVolume(-1), 0);
 });
+
 test("BGM 无保存音量时使用默认值且明确保存零时保持静音", () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   try {
@@ -285,6 +314,7 @@ test("BGM 无保存音量时使用默认值且明确保存零时保持静音", (
     else delete globalThis.localStorage;
   }
 });
+
 test("晨昏主题切换后分别续播而不是反复从开头播放", () => {
   const sound = new SoundManager();
   sound.musicTeam="dawn";sound.musicStep=42;
@@ -295,18 +325,21 @@ test("晨昏主题切换后分别续播而不是反复从开头播放", () => {
   assert.equal(sound.musicStepsByTeam.dusk,17);
   assert.equal(sound.musicStep,42);
 });
+
 test("抽牌音效只使用柔和纸张噪声而不含持续滑音", async () => {
   const source = await readFile(projectFile("js/audio/SoundManager.js"), "utf8");
   const drawBody = source.match(/sound_draw\(time\)\s*\{([\s\S]*?)\n\s*\}/)?.[1] ?? "";
   assert.match(drawBody, /this\.noise\(/);
   assert.doesNotMatch(drawBody, /this\.(?:sweep|tone)\(/);
 });
+
 test("出牌音效改用低频棕噪声且不含白噪声或持续滑音", async () => {
   const source = await readFile(projectFile("js/audio/SoundManager.js"), "utf8");
   const playBody = source.match(/sound_playCard\(time\)\s*\{([\s\S]*?)\n\s*\}/)?.[1] ?? "";
   assert.match(playBody, /this\.softNoise\(/);
   assert.doesNotMatch(playBody, /this\.(?:noise|sweep|tone)\(/);
 });
+
 test("普通手牌出牌不叠加选中提示音", () => {
   const played=[],sounds=[];
   const context={ discardState:null, callbacks:{ onCard:(cardId)=>played.push(cardId) }, playSound:(name)=>sounds.push(name), render(){} };
@@ -318,6 +351,8 @@ test("普通手牌出牌不叠加选中提示音", () => {
   UIManager.prototype.handleHandClick.call(context,event);
   assert.deepEqual(sounds,["select"]);
 });
+
+// ---- 浏览器构建一致性 ----
 
 test("浏览器模块图全部资源使用统一构建版本", async () => {
   const index = await readFile(projectFile("index.html"), "utf8");
@@ -334,269 +369,215 @@ test("浏览器模块图全部资源使用统一构建版本", async () => {
     }
   }
 });
-test("对局记录计数显示条目单位和明确的辅助说明", () => {
-  const countElement = { textContent:"", title:"", setAttribute(name, value) { this[name] = value; } };
-  UIManager.prototype.updateLogCount.call({ elements:{ log_count:countElement } }, 62);
-  assert.equal(countElement.textContent, "62 条");
-  assert.equal(countElement.title, "共 62 条对局记录");
-  assert.equal(countElement["aria-label"], "共 62 条对局记录");
-});
-test("新对局会清空上一局中央结算卡，避免开局显示旧突袭", async () => {
-  const currentCard = { innerHTML:"<div>甲对乙使用了突袭</div>", classList:{ remove(){} } };
-  UIManager.prototype.resetCurrentCard.call({ elements:{ current_card:currentCard } });
-  assert.match(currentCard.innerHTML, /等待第一张牌/);
-  assert.doesNotMatch(currentCard.innerHTML, /突袭|作用对象/);
-  const source = await readFile(projectFile("js/ui/UIManager.js"), "utf8");
-  assert.match(source, /showSelection\([^)]*\)\s*\{[\s\S]*?this\.resetCurrentCard\(\)/);
-  assert.match(source, /showGame\([^)]*\)\s*\{[\s\S]*?this\.resetCurrentCard\(\)/);
-});
-test("响应窗口保持居中浮层原布局且中央结算卡在普通阶段下移", async () => {
-  const css = await readFile(projectFile("css/layout.css"), "utf8");
-  assert.match(css, /\.current-card\s*\{[^}]*translateY\(clamp\(20px,\s*2\.4vh,\s*30px\)\)/s);
-  assert.match(css, /:has\(\.response-panel:not\(\.is-hidden\)\)\s+\.current-card\s*\{[^}]*translateY\(clamp\(26px,\s*3vh,\s*38px\)\)/s);
-  assert.match(css, /\.private-reveal,\s*\.response-panel,\s*\.public-pool-view\s*\{[^}]*position:\s*absolute[^}]*left:\s*50%[^}]*top:\s*50%[^}]*translate\(-50%,\s*-50%\)/s);
-  assert.doesNotMatch(css, /\.response-panel\.is-card-response/);
-});
 
-// 牌堆、阵营、距离和次数补偿
+// ==================== 核心状态与基础规则 ====================
+
+// ---- 牌堆、区域与重洗 ----
+
 test("Deck 创建160个唯一实体 card.id", () => { const deck = new Deck(() => .4); assert.equal(deck.build(), 160); assert.equal(new Set(deck.cards.map((card) => card.id)).size, 160); });
+
 test("结算区不会进入重洗", () => { const deck = new Deck(() => .4); deck.build(); const resolving = deck.drawOne(); const discard = deck.drawOne(); deck.beginResolve(resolving); deck.discard(discard); deck.cards = []; deck.reshuffle(); assert.equal(deck.cards.length, 1); assert.equal(deck.resolvingCards[0], resolving); });
+
 test("判定区不会进入重洗", () => { const deck = new Deck(() => .4); deck.build(); const judgment = deck.drawToJudgment(); const discard = deck.drawOne(); deck.discard(discard); deck.cards = []; deck.reshuffle(); assert.equal(deck.cards.length, 1); assert.equal(deck.judgmentZone[0], judgment); });
+
 test("重洗计数会准确累加", () => { const deck = new Deck(); deck.discardPile.push(instance("charge")); deck.reshuffle(); assert.equal(deck.reshuffleCount, 1); });
+
+// ---- 阵营与座位 ----
+
 test("阵营始终严格2V3", () => { for (let i=0;i<50;i+=1) { const teams = TeamManager.assignTeams(() => (i % 17) / 17); const dawn=teams.filter((t)=>t==="dawn").length; const dusk=teams.filter((t)=>t==="dusk").length; assert.deepEqual([dawn,dusk].sort(),[2,3]); } });
+
 test("小队两名成员在环形座位上不相邻", () => { for (let i=0;i<40;i+=1) { const teams=TeamManager.assignTeams(() => (i%19)/19); const small=["dawn","dusk"].find((team)=>teams.filter((entry)=>entry===team).length===2); const seats=teams.map((team,index)=>team===small?index:-1).filter((index)=>index>=0); const raw=Math.abs(seats[0]-seats[1]); assert.ok(Math.min(raw,5-raw)>1); } });
+
 test("真人座位可以随机进入小队或大队", () => { const sizes=new Set(); for(let i=0;i<60;i+=1){const teams=TeamManager.assignTeams(()=>((i*7)%61)/61); sizes.add(teams.filter((team)=>team===teams[0]).length);} assert.deepEqual([...sizes].sort(),[2,3]); });
-test("环形距离取顺时针与逆时针较小值", () => { const ps=Array.from({length:5},(_,i)=>({id:`p${i}`,seatIndex:i,alive:true})); const game={state:{players:ps}}; assert.equal(DistanceSystem.getDistance(game,ps[0],ps[4]),1); assert.equal(DistanceSystem.getDistance(game,ps[0],ps[2]),2); });
-test("望远镜令装备者计算到其他角色的距离减1且最低为1", () => { const ps=Array.from({length:5},(_,i)=>makePlayer(`p${i}`,i,i<2?"dawn":"dusk"));const {game}=makeGame(ps);ps[0].equipment=instance("telescope");assert.equal(DistanceSystem.getDistance(game,ps[0],ps[2]),1);assert.equal(DistanceSystem.getDistance(game,ps[0],ps[1]),1);assert.equal(DistanceSystem.getDistance(game,ps[2],ps[0]),2); });
-test("屏障令其他角色计算到装备者的距离加1但不影响装备者主动测距", () => { const ps=Array.from({length:5},(_,i)=>makePlayer(`p${i}`,i,i<2?"dawn":"dusk"));const {game}=makeGame(ps);ps[1].equipment=instance("barrierDevice");assert.equal(DistanceSystem.getDistance(game,ps[0],ps[1]),2);assert.equal(DistanceSystem.getDistance(game,ps[1],ps[0]),1); });
-test("望远镜和屏障在同一条方向距离上依次生效", () => { const ps=Array.from({length:5},(_,i)=>makePlayer(`p${i}`,i,i<2?"dawn":"dusk"));const {game}=makeGame(ps);ps[0].equipment=instance("telescope");ps[2].equipment=instance("barrierDevice");assert.equal(DistanceSystem.getDistance(game,ps[0],ps[2]),2); });
-test("距离装备即时改变普通突袭合法目标且AI快照使用相同修正", () => { const source=makePlayer("source",0,"dawn"),ally=makePlayer("ally",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dusk"),assault=instance("assault");const {game}=makeGame([source,ally,target,other,tail]);source.hand.push(assault);assert.ok(!RuleEngine.getCardTargets(game,source,assault).includes(target));source.equipment=instance("telescope");assert.ok(RuleEngine.getCardTargets(game,source,assault).includes(target));const visible=createAiVisibleState(source.id,game.state);assert.equal(DistanceSystem.getDistance({state:{players:visible.players}},visible.players[0],visible.players[2]),1);target.equipment=instance("barrierDevice");assert.ok(!RuleEngine.getCardTargets(game,source,assault).includes(target)); });
-test("AI深层模拟装备望远镜后会生成新进入距离的突袭目标", () => { const source=makePlayer("source",0,"dawn"),ally=makePlayer("ally",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dusk"),telescope=instance("telescope"),assault=instance("assault");source.hand.push(telescope,assault);const {game}=makeGame([source,ally,target,other,tail]),visible=createAiVisibleState(source.id,game.state),equipAction=game.aiController.actionGenerator.generateFromVisible(visible,source.id).find((action)=>action.card?.id===telescope.id),equipped=new AiSimulator(visible).apply(visible,equipAction,source.id),follow=game.aiController.actionGenerator.generateFromVisible(equipped,source.id);assert.ok(follow.some((action)=>action.card?.id===assault.id&&action.targets[0]?.id===target.id)); });
-test("普通突袭只能选择距离1内敌人", () => { const ps=[makePlayer("a",0,"dawn"),makePlayer("b",1,"dusk"),makePlayer("c",2,"dusk"),makePlayer("d",3,"dawn"),makePlayer("e",4,"dusk")]; const {game}=makeGame(ps); ps[0].hand.push(instance("assault")); assert.deepEqual(RuleEngine.getCardTargets(game,ps[0],ps[0].hand[0]).map((p)=>p.id),["b","e"]); });
-test("震荡与决斗显式无视距离", () => { assert.equal(CARD_DEFINITIONS.shockwave.ignoresDistance,true); assert.equal(CARD_DEFINITIONS.duel.ignoresDistance,true); });
-test("震荡与挑衅都使用逐目标反制作用域", () => { assert.equal(CARD_DEFINITIONS.shockwave.counterScope,"target");assert.equal(CARD_DEFINITIONS.provoke.counterScope,"target"); });
-test("七种全局或指定型卡牌显式无视距离", () => { for (const id of ["shockwave","provoke","scout","destroy","duel","mutualBenefit","symbiosis"]) assert.equal(CARD_DEFINITIONS[id].ignoresDistance,true,id); });
-test("每个主动技能都显式声明距离规则", () => { for (const skill of Object.values(ACTIVE_SKILLS)) assert.ok(["attack","fixed","unlimited","ally","self"].includes(skill.rangeRule),skill.id); });
+
+// ---- 回合与能量 ----
+
 test("小队规则为开局5张、每回合摸3张、突袭2、调息无限、回合能量1、能量上限4", () => { const {game,small}=makeTeamFixture();const rules=game.teamRules;assert.equal(rules.getInitialHandCount(small),5);assert.equal(rules.getDrawCount(small),3);assert.equal(rules.getAttackLimit(small),2);assert.equal(rules.getRecoverLimit(small),null);assert.equal(rules.getTurnEnergyGain(small),1);assert.equal(rules.getMaxEnergy(small),4);assert.equal(small.maxEnergy,4); });
+
 test("大队规则为开局4张、每回合摸2张、突袭1、调息无限、回合能量1、能量上限3", () => { const {game,large}=makeTeamFixture();const rules=game.teamRules;assert.equal(rules.getInitialHandCount(large),4);assert.equal(rules.getDrawCount(large),2);assert.equal(rules.getAttackLimit(large),1);assert.equal(rules.getRecoverLimit(large),null);assert.equal(rules.getTurnEnergyGain(large),1);assert.equal(rules.getMaxEnergy(large),3);assert.equal(large.maxEnergy,3); });
+
 test("回合摸牌事件按二人阵营3张、三人阵营2张取值", async () => { const ps=[makePlayer("a",0,"dawn"),makePlayer("b",1,"dusk"),makePlayer("c",2,"dawn"),makePlayer("d",3,"dusk"),makePlayer("e",4,"dusk")];const {game}=makeGame(ps);const counts=[];game.eventBus.on("beforeDraw","test:team-draw",(event)=>counts.push(event.count));game.aiController.selectAction=async()=>({type:"end"});game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));await game.takeTurn(ps[0],game.state.gameId);game.state.currentPlayerIndex=1;game.state.deck.cards.push(instance("block"),instance("charge"));await game.takeTurn(ps[1],game.state.gameId);assert.deepEqual(counts,[3,2]); });
+
 test("二人小队无装备时每回合实际获得1点能量", async () => { const {game,small}=makeTeamFixture();game.aiController.selectAction=async()=>({type:"end"});await game.takeTurn(small,game.state.gameId);assert.equal(small.energy,1);assert.deepEqual(game.teamRules.getTurnEnergyBreakdown(small),{baseAmount:1,teamBonus:0,equipmentBonus:0}); });
+
 test("三人小队无装备时每回合实际获得1点能量", async () => { const {game,large}=makeTeamFixture();game.state.currentPlayerIndex=large.seatIndex;game.aiController.selectAction=async()=>({type:"end"});await game.takeTurn(large,game.state.gameId);assert.equal(large.energy,1);assert.deepEqual(game.teamRules.getTurnEnergyBreakdown(large),{baseAmount:1,teamBonus:0,equipmentBonus:0}); });
+
 test("二人小队能量最多积累到4", async () => { const {game,small}=makeTeamFixture();small.energy=3;assert.equal(await game.gainEnergy(small,3,{reason:"测试"}),1);assert.equal(small.energy,4); });
+
 test("三人小队能量最多积累到3", async () => { const {game,large}=makeTeamFixture();large.energy=2;assert.equal(await game.gainEnergy(large,3,{reason:"测试"}),1);assert.equal(large.energy,3); });
-test("充能桩只给回合能量额外+1", () => { const {game,small}=makeTeamFixture();small.equipment=instance("energyDevice");assert.equal(game.teamRules.getTurnEnergyGain(small),2);assert.deepEqual(game.teamRules.getTurnEnergyBreakdown(small),{baseAmount:1,teamBonus:0,equipmentBonus:1});small.equipment=instance("battleDevice");assert.equal(game.teamRules.getTurnEnergyGain(small),1); });
+
 test("回合基础能量和阵营加成都由规则配置读取而非服务层硬编码", () => { const {game,small}=makeTeamFixture();const original=game.teamRules.getRules;game.teamRules.getRules=()=>({turnEnergyGain:2,turnEnergyBonus:3});assert.deepEqual(game.teamRules.getTurnEnergyBreakdown(small),{baseAmount:2,teamBonus:3,equipmentBonus:0});assert.equal(game.teamRules.getTurnEnergyGain(small),5);game.teamRules.getRules=original; });
+
+test("回合能量事件公开配置基础、零阵营加成和装备加成且不能突破上限", async () => { const {game,small}=makeTeamFixture();small.energy=3;small.equipment=instance("energyDevice");game.cleanupManager.delay=async()=>true;game.aiController.selectAction=async()=>({type:"end"});let before=null,after=null;game.eventBus.on("beforeTurnEnergyGain","test:before",(event)=>{before={baseAmount:event.baseAmount,teamBonus:event.teamBonus,equipmentBonus:event.equipmentBonus,amount:event.amount};});game.eventBus.on("afterTurnEnergyGain","test:after",(event)=>{after=event.actualAmount;});await game.takeTurn(small,game.state.gameId);assert.deepEqual(before,{baseAmount:1,teamBonus:0,equipmentBonus:1,amount:2});assert.equal(after,1);assert.equal(small.energy,4); });
+
+// ---- 距离规则 ----
+
+test("环形距离取顺时针与逆时针较小值", () => { const ps=Array.from({length:5},(_,i)=>({id:`p${i}`,seatIndex:i,alive:true})); const game={state:{players:ps}}; assert.equal(DistanceSystem.getDistance(game,ps[0],ps[4]),1); assert.equal(DistanceSystem.getDistance(game,ps[0],ps[2]),2); });
+
+test("震荡与决斗显式无视距离", () => { assert.equal(CARD_DEFINITIONS.shockwave.ignoresDistance,true); assert.equal(CARD_DEFINITIONS.duel.ignoresDistance,true); });
+
+test("震荡与挑衅都使用逐目标反制作用域", () => { assert.equal(CARD_DEFINITIONS.shockwave.counterScope,"target");assert.equal(CARD_DEFINITIONS.provoke.counterScope,"target"); });
+
+test("七种全局或指定型卡牌显式无视距离", () => { for (const id of ["shockwave","provoke","scout","destroy","duel","mutualBenefit","symbiosis"]) assert.equal(CARD_DEFINITIONS[id].ignoresDistance,true,id); });
+
+test("每个主动技能都显式声明距离规则", () => { for (const skill of Object.values(ACTIVE_SKILLS)) assert.ok(["attack","fixed","unlimited","ally","self"].includes(skill.rangeRule),skill.id); });
+
+// ---- 动态距离 ----
+
+const distanceFixture = () => { const players=[makePlayer("A",0,"dawn"),makePlayer("B",1,"dusk"),makePlayer("C",2,"dusk"),makePlayer("D",3,"dawn"),makePlayer("E",4,"dusk")]; return { players, game:makeGame(players).game }; };
+
+test("动态距离：五人全存活时固定相邻距离为1", () => { const {players,game}=distanceFixture();assert.equal(DistanceSystem.getDistance(game,players[0],players[1]),1); });
+
+test("动态距离：五人全存活时隔一人距离为2", () => { const {players,game}=distanceFixture();assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),2); });
+
+test("动态距离：中间角色阵亡后两侧由2变1", () => { const {players,game}=distanceFixture();players[1].alive=false;assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),1); });
+
+test("动态距离：连续两人阵亡后距离继续压缩", () => { const {players,game}=distanceFixture();players[1].alive=false;players[3].alive=false;assert.equal(DistanceSystem.getDistance(game,players[2],players[4]),1); });
+
+test("动态距离：三名存活角色任意两人距离均为1", () => { const {players,game}=distanceFixture();players[1].alive=false;players[3].alive=false;for(const a of [players[0],players[2],players[4]])for(const b of [players[0],players[2],players[4]])if(a!==b)assert.equal(DistanceSystem.getDistance(game,a,b),1); });
+
+test("动态距离：两名存活角色之间距离为1", () => { const {players,game}=distanceFixture();players.slice(1,4).forEach((p)=>p.alive=false);assert.equal(DistanceSystem.getDistance(game,players[0],players[4]),1); });
+
+test("动态距离：阵亡角色的距离为 Infinity", () => { const {players,game}=distanceFixture();players[1].alive=false;assert.equal(DistanceSystem.getDistance(game,players[0],players[1]),Infinity); });
+
+test("动态距离：存活角色到自身距离为0", () => { const {players,game}=distanceFixture();assert.equal(DistanceSystem.getDistance(game,players[0],players[0]),0); });
+
+test("动态距离：存活队友仍占据距离，不能穿过队友", () => { const players=[makePlayer("A",0,"dawn"),makePlayer("B",1,"dawn"),makePlayer("C",2,"dusk"),makePlayer("D",3,"dusk")];const {game}=makeGame(players);assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),2);assert.equal(DistanceSystem.getDistance(game,players[0],players[3]),1); });
+
+test("动态距离：普通突袭在阵亡后立即出现新合法目标", () => { const {players,game}=distanceFixture();const assault=instance("assault");players[0].hand.push(assault);assert.ok(!RuleEngine.getCardTargets(game,players[0],assault).includes(players[2]));players[1].alive=false;assert.ok(RuleEngine.getCardTargets(game,players[0],assault).includes(players[2])); });
+
+test("动态距离：震荡和决斗始终显式忽略距离", () => { assert.equal(CARD_DEFINITIONS.shockwave.ignoresDistance,true);assert.equal(CARD_DEFINITIONS.duel.ignoresDistance,true); });
+
+test("动态距离：UI 距离文案可在阵亡后从2更新为1", () => { const {players,game}=distanceFixture();let info=DistanceSystem.describe(game,players[0],players[2]);let markup=playerPanelTemplate(players[2],{humanTeam:"dawn",distanceInfo:info,distanceState:`距离 ${info.distance} · 超出攻击范围`});assert.match(markup,/距离 2 · 超出攻击范围/);players[1].alive=false;info=DistanceSystem.describe(game,players[0],players[2]);markup=playerPanelTemplate(players[2],{humanTeam:"dawn",distanceInfo:info,distanceState:`距离 ${info.distance} · 可突袭`});assert.match(markup,/距离 1 · 可突袭/); });
+
+test("动态距离：AI 动作生成不根据固定 seatIndex 攻击", () => { const {players,game}=distanceFixture();const assault=instance("assault");players[0].hand.push(assault);players[1].alive=false;const targets=game.aiController.getLegalActions(players[0]).filter((action)=>action.card?.id===assault.id).map((action)=>action.targets[0].id);assert.ok(targets.includes("C")); });
+
+test("动态距离：AI 模拟识别先击杀中间角色再攻击新相邻敌人", async () => { const {players,game}=distanceFixture();players[0].turnFlags.attackLimit=2;players[1].hp=1;players[0].hand.push(instance("assault"),instance("assault"));game.aiSearchBudgetOverrideMs=100;await game.aiController.selectAction(players[0],{gameId:game.state.gameId});assert.equal(game.aiController.planner.lastSearchStats.discoveredDynamicTarget,true); });
+
+test("动态距离：每次调用都读取实时 alive，不使用整局缓存", () => { const {players,game}=distanceFixture();assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),2);players[1].alive=false;assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),1);players[1].alive=true;assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),2); });
+
+test("动态距离：新 Game 使用自己的全新存活环", () => { const first=distanceFixture(),second=distanceFixture();first.players[1].alive=false;assert.equal(DistanceSystem.getDistance(first.game,first.players[0],first.players[2]),1);assert.equal(DistanceSystem.getDistance(second.game,second.players[0],second.players[2]),2); });
+
+// ==================== 基础牌 ====================
+
+// ---- 突袭 ----
+
+test("普通突袭只能选择距离1内敌人", () => { const ps=[makePlayer("a",0,"dawn"),makePlayer("b",1,"dusk"),makePlayer("c",2,"dusk"),makePlayer("d",3,"dawn"),makePlayer("e",4,"dusk")]; const {game}=makeGame(ps); ps[0].hand.push(instance("assault")); assert.deepEqual(RuleEngine.getCardTargets(game,ps[0],ps[0].hand[0]).map((p)=>p.id),["b","e"]); });
+
+test("普通突袭计入次数并造成伤害", async () => { const a=makePlayer("a",0,"dawn"), b=makePlayer("b",1,"dusk"); const {game}=makeGame([a,b]); const c=instance("assault"); a.hand.push(c); await game.playCard(a,c,[b]); assert.equal(a.turnFlags.attackUsed,1); assert.equal(b.hp,b.maxHp-1); });
+
+// ---- 调息 ----
+
 test("满生命角色即使持有调息也不能主动使用", () => { const {game,small,large}=makeTeamFixture();for(const player of [small,large]){game.state.currentPlayerIndex=player.seatIndex;const recover=instance("recover");player.hand.push(recover);assert.equal(RuleEngine.canPlayCard(game,player,recover).ok,false);} });
-test("角色面板不再显示突袭和调息次数栏", () => { const {small,large}=makeTeamFixture();for(const player of [small,large]){const markup=playerPanelTemplate(player,{isHuman:true});assert.doesNotMatch(markup,/turn-usage|突袭 \d+\/|调息 \d+\//);} });
-test("主玩家面板不再常驻展示角色能力且保留技能详情入口", () => {
-  const player=makePlayer("human",0,"dawn","human",0);
-  const markup=playerPanelTemplate(player,{isHuman:true});
-  assert.doesNotMatch(markup,/character-details|character-skill-list|skill-summary/);
-  assert.doesNotMatch(markup,/角色能力|主动技能|被动技能/);
-  assert.ok(!markup.includes(player.general.activeName));
-  assert.ok(!markup.includes(player.general.activeDescription));
-  assert.ok(!markup.includes(player.general.passiveName));
-  assert.ok(!markup.includes(player.general.passiveDescription));
-  assert.ok(!markup.includes(player.general.description));
-  assert.match(markup,/data-skill-player-id/);
-});
-test("角色状态取代座位栏且护盾只在独立资源栏显示", () => { const player=makePlayer("human",0,"dawn","human",0);player.shield=2;let markup=playerPanelTemplate(player,{isHuman:true});assert.match(markup,/class="panel-status"/);assert.match(markup,/>状态<\/small><b>—<\/b>/);assert.match(markup,/resource-pill shield[^>]*><small>护盾<\/small><strong>2<\/strong>/);assert.doesNotMatch(markup,/状态<\/small><b>[^<]*护盾|状态稳定|status-row|status-chip|座位\s*\d/);player.statuses.exposeWeakness={stacks:2};player.statuses.huntMark={sourceId:"hunter"};markup=playerPanelTemplate(player,{isHuman:true,distanceInfo:{distance:1,range:1,seat:3},distanceState:"距离 1 · 可突袭"});assert.match(markup,/状态<\/small><b>破势 2 · 猎印<\/b>/);assert.match(markup,/距离 1 · 可突袭/);assert.match(markup,/射程 1/);assert.doesNotMatch(markup,/状态<\/small><b>[^<]*护盾|座位\s*3/); });
-test("阵亡角色面板不显示残留状态和距离环文案", () => {
-  const player=makePlayer("dead-panel",0,"dusk","ai",6);player.hp=0;player.alive=false;player.statuses={exposeWeakness:{stacks:2},huntMark:{sourceId:"hunter"},allIn:{assaultBonus:1}};player.turnFlags.momentum=3;
-  const markup=playerPanelTemplate(player,{humanTeam:"dawn",distanceInfo:{distance:Infinity,range:1},distanceState:"已离开距离环"});
-  assert.match(markup,/已阵亡/);assert.match(markup,/>状态<\/small><b>—<\/b>/);assert.doesNotMatch(markup,/破势|猎印|孤注|连势|已离开距离环|距离Infinity|距离 Infinity|射程/);
-});
-test("刃行者使用不同类别卡牌会增加并公开显示连势且命中后消耗", async () => { const blade=makePlayer("blade",0,"dawn","ai",0),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk","ai",0);const {game}=makeGame([blade,ally,enemy]);registerPassiveSkills(game);const charge=instance("charge"),harvest=instance("harvest"),assault=instance("assault");blade.hand.push(charge,harvest,assault);game.state.deck.cards.push(instance("block"),instance("shield"));assert.equal(await game.playCard(blade,charge,[blade]),true);assert.equal(blade.turnFlags.momentum,1);assert.equal(await game.playCard(blade,harvest,[]),true);assert.equal(blade.turnFlags.momentum,2);assert.match(playerPanelTemplate(blade,{humanTeam:"dawn"}),/状态<\/small><b>连势 2<\/b>/);const hp=enemy.hp;assert.equal(await game.playCard(blade,assault,[enemy]),true);assert.equal(enemy.hp,hp-3);assert.equal(blade.turnFlags.momentum,0);assert.doesNotMatch(playerPanelTemplate(blade,{humanTeam:"dawn"}),/连势 \d/); });
-test("刃行者连势只在本人回合结束时清空", async () => {
-  const blade=makePlayer("blade-turn-end",0,"dawn","ai",0),ally=makePlayer("blade-ally",1,"dawn"),enemy=makePlayer("blade-enemy",2,"dusk"),{game}=makeGame([blade,ally,enemy]);registerPassiveSkills(game);
-  blade.turnFlags.momentum=2;await game.eventBus.emit("turnEnd",{type:"turnEnd",player:ally});assert.equal(blade.turnFlags.momentum,2);
-  await game.eventBus.emit("turnEnd",{type:"turnEnd",player:blade});assert.equal(blade.turnFlags.momentum,0);assert.doesNotMatch(playerPanelTemplate(blade,{humanTeam:"dawn"}),/连势 \d/);
-});
-test("刃行者配置与README都声明回合结束清空连势", async () => {
-  const blade=GENERAL_DEFINITIONS.find((general)=>general.id==="blade-walker"),readme=await readFile(projectFile("README.md"),"utf8"),bladeSection=readme.match(/### 刃行者[\s\S]*?(?=\r?\n### )/)?.[0]??"";
-  assert.match(blade.passiveDescription,/回合结束后清空连势/);assert.match(bladeSection,/回合结束后清空连势/);
-});
-test("刃行者完整回合结束流程会清空未消费的连势", async () => {
-  const blade=makePlayer("blade-full-turn",0,"dawn","ai",0),enemy=makePlayer("blade-full-turn-enemy",1,"dusk"),{game}=makeGame([blade,enemy]);registerPassiveSkills(game);
-  game.aiController.selectAction=async()=>({type:"end"});game.eventBus.on("playPhaseEnd","test:grant-momentum-before-turn-end",()=>{blade.turnFlags.momentum=2;});
-  await game.takeTurn(blade,game.state.gameId);assert.equal(blade.turnFlags.momentum,0);
-});
-test("壁垒每次提供1点可叠加的永久护盾", async () => { const source=makePlayer("a",0,"dawn"),target=makePlayer("b",1,"dawn","ai",1),enemy=makePlayer("c",2,"dusk");const {game}=makeGame([source,target,enemy]);source.energy=4;target.shield=2;await ACTIVE_SKILLS.barrier.execute(game,source,[target]);assert.equal(target.shield,3);await ACTIVE_SKILLS.barrier.execute(game,source,[target]);assert.equal(target.shield,4);assert.equal("temporaryShield" in target.statuses,false);const log=game.state.logs.at(-1)?.message??"";assert.match(log,/构筑壁垒.*获得1点护盾/);assert.doesNotMatch(log,/持续|消散/); });
-test("壁垒护盾不会在目标回合开始时消失", async () => { const source=makePlayer("a",0,"dawn"),target=makePlayer("b",1,"dawn","ai",1),enemy=makePlayer("c",2,"dusk");const {game}=makeGame([source,target,enemy]);source.energy=2;await ACTIVE_SKILLS.barrier.execute(game,source,[target]);game.state.currentPlayerIndex=1;game.aiController.selectAction=async()=>({type:"end"});await game.takeTurn(target,game.state.gameId);assert.equal(target.shield,1);assert.equal("temporaryShield" in target.statuses,false); });
-test("壁垒护盾经过完整轮次且守誓者阵亡后仍然保留", async () => { const source=makePlayer("warden",0,"dawn","ai",1),target=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([source,target,enemy]);source.energy=2;target.shield=1;await ACTIVE_SKILLS.barrier.execute(game,source,[target]);source.alive=false;source.hp=0;game.state.currentPlayerIndex=1;game.state.startingPlayerIndex=1;game.aiController.selectAction=async()=>({type:"end"});for(let turn=0;turn<4;turn+=1){await game.takeTurn(game.currentPlayer,game.state.gameId);await game.advanceTurn();}assert.equal(game.state.currentRound,3);assert.equal(target.shield,2);assert.equal("temporaryShield" in target.statuses,false); });
-test("壁垒与护盾牌使用统一伤害吸收规则", async () => { const source=makePlayer("warden",0,"dawn","ai",1),target=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk"),shieldCard=instance("shield");const {game}=makeGame([source,target,enemy]);source.hand.push(shieldCard);source.energy=2;assert.equal(await game.playCard(source,shieldCard,[target]),true);await ACTIVE_SKILLS.barrier.execute(game,source,[target]);const hp=target.hp;assert.equal(target.shield,2);await game.damage(enemy,target,3,{canBlock:false,damageType:"normal"});assert.equal(target.shield,0);assert.equal(target.hp,hp-1);assert.equal("temporaryShield" in target.statuses,false); });
-test("README中的主动技能消耗与每回合次数进入实际规则", async () => { const warden=makePlayer("warden",0,"dawn","ai",1),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([warden,ally,enemy]);warden.energy=4;assert.equal(await game.useActiveSkill(warden,"barrier",[ally]),true);assert.equal(await game.useActiveSkill(warden,"barrier",[ally]),true);warden.energy=2;assert.equal(await game.useActiveSkill(warden,"barrier",[ally]),false);assert.equal(warden.turnFlags.activeSkillUseCounts.barrier,2);const blade=makePlayer("blade",0,"dawn","ai",0),bladeAlly=makePlayer("blade-ally",1,"dawn"),bladeEnemy=makePlayer("blade-enemy",2,"dusk");const {game:bladeGame}=makeGame([blade,bladeAlly,bladeEnemy]);blade.energy=2;assert.equal(await bladeGame.useActiveSkill(blade,"breakArmy",[]),true);assert.equal(blade.energy,0);assert.equal(blade.turnFlags.attackLimit,3); });
-test("灵医滋荣可选择受伤的自己或队友，治疗队友时自己也恢复1点", async () => {
-  const medic=makePlayer("medic",0,"dawn","ai",2),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
-  medic.hp=1;ally.hp=1;const {game}=makeGame([medic,ally,enemy]);registerPassiveSkills(game);game.state.deck.cards.push(instance("block"));medic.energy=4;
-  assert.deepEqual(RuleEngine.getSkillTargets(game,medic,ACTIVE_SKILLS.symbiosis).map((player)=>player.id),[medic.id,ally.id]);
-  assert.equal(await game.useActiveSkill(medic,"symbiosis",[ally]),true);
-  assert.equal(ally.hp,3);assert.equal(medic.hp,2);assert.equal(medic.hand.length,1);
-  assert.equal(await game.useActiveSkill(medic,"symbiosis",[medic]),true);
-  assert.equal(medic.hp,medic.maxHp);assert.equal(medic.hand.length,1);assert.equal(medic.energy,0);
-  medic.energy=2;assert.equal(await game.useActiveSkill(medic,"symbiosis",[ally]),false);
-  assert.equal(medic.turnFlags.activeSkillUseCounts.symbiosis,2);
-});
-test("灵医回春每回合首次治疗己方额外恢复1点并摸1张", async () => {
-  const medic=makePlayer("medic-rejuvenation",0,"dawn","ai",2),ally=makePlayer("ally-rejuvenation",1,"dawn"),enemy=makePlayer("enemy-rejuvenation",2,"dusk");
-  medic.hp=2;ally.hp=1;enemy.hp-=1;const {game}=makeGame([medic,ally,enemy]);registerPassiveSkills(game);game.state.deck.cards.push(instance("block"),instance("charge"));
-  await game.heal(medic,enemy,1,{reason:"测试敌方治疗"});
-  assert.equal(medic.turnFlags.rejuvenationUsed,false);assert.equal(medic.hand.length,0);
-  assert.equal(await game.heal(medic,ally,1,{reason:"测试队友治疗"}),2);
-  assert.equal(ally.hp,3);assert.equal(medic.hand.length,1);assert.equal(medic.turnFlags.rejuvenationUsed,true);
-  assert.equal(await game.heal(medic,medic,1,{reason:"测试自我治疗"}),1);
-  assert.equal(medic.hp,3);assert.equal(medic.hand.length,1);
-  medic.resetTurnFlags(game.teamRules.getRules(medic));ally.hp=1;
-  assert.equal(await game.heal(medic,ally,1,{reason:"测试下一回合"}),2);
-  assert.equal(medic.hand.length,2);assert.equal(medic.turnFlags.rejuvenationUsed,true);
-});
-test("影客为3点生命且窥隙经实际伤害与隐藏选择查看至多2张实体牌", async () => { const shade=makePlayer("shade",0,"dawn","human",3),enemy=makePlayer("enemy",1,"dusk");enemy.hand.push(instance("assault"),instance("recover"),instance("charge"));const {game,ui}=makeGame([shade,enemy],{random:()=>0});registerPassiveSkills(game);await game.damage(shade,enemy,1,{canBlock:false});assert.equal(shade.maxHp,3);assert.equal(shade.hp,3);assert.equal(ACTIVE_SKILLS.stealSkill.cost,1);assert.equal(ui.hiddenRequests.length,1);assert.equal(ui.hiddenRequests[0].count,2);assert.equal(ui.reveals.length,1);assert.equal(ui.reveals[0].cards.length,2);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length,2); });
-test("赌命者冒险失败不再随机弃牌", async () => { const gambler=makePlayer("gambler",0,"dawn","ai",6),enemy=makePlayer("enemy",1,"dusk"),kept=instance("block");gambler.hand.push(kept);const {game}=makeGame([gambler,enemy],{random:()=>.99});registerPassiveSkills(game);await game.eventBus.emit("cardUsed",{source:gambler,card:instance("harvest"),targets:[]});assert.ok(gambler.hand.includes(kept));assert.equal(gambler.hand.length,1); });
-test("赌命者孤注消耗全部能量并摸取等量牌，按30x%概率进入状态", async () => {
-  for (const [energy, roll, expected] of [[1,.29,true],[1,.3,false],[2,.59,true],[2,.6,false],[3,.89,true],[3,.9,false],[4,.999,true]]) {
-    const gambler=makePlayer(`gambler-${energy}-${roll}`,0,"dawn","ai",6),enemy=makePlayer(`enemy-${energy}-${roll}`,1,"dusk");
-    const {game}=makeGame([gambler,enemy],{random:()=>roll});registerPassiveSkills(game);
-    game.state.deck.cards.push(...Array.from({length:energy},()=>instance("charge")));
-    gambler.energy=energy;
-    assert.equal(await game.useActiveSkill(gambler,"allIn",[]),true);
-    assert.equal(gambler.energy,0);
-    assert.equal(gambler.hand.length,energy);
-    assert.equal(Boolean(gambler.statuses.allIn),expected,`${energy}点能量，随机数${roll}`);
-    gambler.energy=1;
-    assert.equal(await game.useActiveSkill(gambler,"allIn",[]),false,"一回合只能使用1次");
-    assert.deepEqual(ACTIVE_SKILLS.allIn.canUse(game,gambler),{ok:false,reason:"本回合发动次数已用尽"},"同回合拒绝原因必须是每回合次数限制");
-  }
-});
-test("孤注状态不可叠加、跨回合保留，并在下一次突袭完毕后退出", async () => {
-  const gambler=makePlayer("gambler",0,"dawn","ai",6),target=makePlayer("target",1,"dusk","human"),ally=makePlayer("ally",2,"dawn"),assault=instance("assault");
-  gambler.hand.push(assault);
-  const {game}=makeGame([gambler,target,ally],{random:()=>0});registerPassiveSkills(game);
-  game.state.deck.cards.push(instance("charge"),instance("shield"),instance("block"));
-  gambler.energy=3;await game.useActiveSkill(gambler,"allIn",[]);
-  gambler.resetTurnFlags(game.teamRules.getRules(gambler));
-  assert.deepEqual(gambler.statuses.allIn,{assaultBonus:1});
-  gambler.energy=1;
-  assert.deepEqual(ACTIVE_SKILLS.allIn.canUse(game,gambler),{ok:true,reason:""},"孤注状态存在不再阻止下一回合发动孤注");
-  const hp=target.hp;await game.playCard(gambler,assault,[target]);
-  assert.equal(target.hp,hp-2);assert.equal(gambler.statuses.allIn,undefined);
-});
-test("已有孤注状态时再次发动孤注不叠加也不删除状态", async () => {
-  for (const roll of [0, .9]) {
-    const gambler=makePlayer(`gambler-restack-${roll}`,0,"dawn","ai",6),enemy=makePlayer(`enemy-restack-${roll}`,1,"dusk");
-    const {game}=makeGame([gambler,enemy],{random:()=>roll});registerPassiveSkills(game);
-    game.state.deck.cards.push(instance("charge"));
-    gambler.statuses.allIn={assaultBonus:1};
-    gambler.energy=1;
-    assert.deepEqual(ACTIVE_SKILLS.allIn.canUse(game,gambler),{ok:true,reason:""},"已有状态时孤注技能可用");
-    assert.equal(await game.useActiveSkill(gambler,"allIn",[]),true);
-    assert.equal(gambler.energy,0);
-    assert.equal(gambler.hand.length,1);
-    assert.deepEqual(gambler.statuses.allIn,{assaultBonus:1},`随机数${roll}时仍只保留单层孤注状态`);
-  }
-});
-test("AI 已有孤注状态时仍生成孤注动作", () => {
-  const gambler=makePlayer("ai-gambler",0,"dawn","ai",6),enemy=makePlayer("ai-gambler-enemy",1,"dusk");
-  const {game}=makeGame([gambler,enemy]);
-  gambler.energy=1;
-  gambler.statuses.allIn={assaultBonus:1};
-  const rootActions=game.aiController.getLegalActions(gambler);
-  assert.ok(rootActions.some((action)=>action.type==="skill"&&action.skill?.id==="allIn"),"根动作生成不得因已有孤注状态排除孤注");
-  const visible=createAiVisibleState(gambler.id,game.state);
-  const deepActions=game.aiController.actionGenerator.generateFromVisible(visible,gambler.id);
-  assert.ok(deepActions.some((action)=>action.type==="skill"&&action.skill?.id==="allIn"),"深层动作生成不得因 assaultBonus 排除孤注");
-});
-test("孤注强化的突袭被格挡后也会退出状态", async () => {
-  const gambler=makePlayer("blocked-gambler",0,"dawn","ai",6),target=makePlayer("blocked-target",1,"dusk","human"),ally=makePlayer("blocked-ally",2,"dawn"),assault=instance("assault");
-  gambler.hand.push(assault);target.hand.push(instance("block"));
-  const {game}=makeGame([gambler,target,ally],{response:()=>true,random:()=>0});registerPassiveSkills(game);
-  game.state.deck.cards.push(instance("charge"));
-  gambler.energy=1;await game.useActiveSkill(gambler,"allIn",[]);
-  await game.playCard(gambler,assault,[target]);
-  assert.equal(gambler.statuses.allIn,undefined);
-});
-test("炎术师余烬每个卡牌结算ID最多触发1次", async () => { const ember=makePlayer("ember",0,"dawn","ai",4),enemyA=makePlayer("enemy-a",1,"dusk"),enemyB=makePlayer("enemy-b",2,"dusk");const {game}=makeGame([ember,enemyA,enemyB]);registerPassiveSkills(game);const card=instance("shockwave");await game.eventBus.emit("afterDamage",{source:ember,target:enemyA,actualAmount:1,card,resolutionId:"same"});await game.eventBus.emit("afterDamage",{source:ember,target:enemyB,actualAmount:1,card,resolutionId:"same"});assert.equal(ember.energy,1);await game.eventBus.emit("afterDamage",{source:ember,target:enemyB,actualAmount:1,card,resolutionId:"next"});assert.equal(ember.energy,2); });
-test("调律师协调每回合只触发一次且共鸣可发动2次", async () => { const tuner=makePlayer("tuner",0,"dawn","ai",7),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([tuner,ally,enemy]);registerPassiveSkills(game);game.state.deck.cards.push(instance("assault"),instance("block"));await game.eventBus.emit("cardUsed",{source:tuner,card:instance("shield"),targets:[ally]});await game.eventBus.emit("cardUsed",{source:tuner,card:instance("shield"),targets:[ally]});assert.equal(tuner.hand.length,1);game.state.deck.cards.push(instance("assault"),instance("block"),instance("charge"),instance("shield"));tuner.energy=4;assert.equal(await game.useActiveSkill(tuner,"resonance",[ally]),true);assert.equal(await game.useActiveSkill(tuner,"resonance",[ally]),true);assert.equal(ally.hand.length,4);assert.equal(tuner.turnFlags.activeSkillUseCounts.resonance,2); });
-test("追猎者每回合最多标记2名敌人且同一敌人最多留下1次猎印", async () => {
-  const hunter=makePlayer("tracking-hunter",0,"dawn","ai",5),enemyA=makePlayer("tracking-a",1,"dusk"),enemyB=makePlayer("tracking-b",2,"dusk"),enemyC=makePlayer("tracking-c",3,"dusk"),{game}=makeGame([hunter,enemyA,enemyB,enemyC]);registerPassiveSkills(game);
-  const target=(enemy)=>game.eventBus.emit("targetSelected",{source:hunter,card:instance("assault"),targets:[enemy]});
-  await game.eventBus.emit("turnStart",{player:hunter});await target(enemyA);
-  assert.deepEqual(enemyA.statuses.huntMark,{sourceId:hunter.id,expireAtTurnEnd:2});
-  delete enemyA.statuses.huntMark;await target(enemyA);assert.equal(enemyA.statuses.huntMark,undefined);
-  await target(enemyB);assert.deepEqual(enemyB.statuses.huntMark,{sourceId:hunter.id,expireAtTurnEnd:2});
-  await target(enemyC);assert.equal(enemyC.statuses.huntMark,undefined);
-  assert.deepEqual([...hunter.turnFlags.trackingTargetIds],[enemyA.id,enemyB.id]);
-});
-test("追猎者猎印持续到自己的下回合结束", async () => {
-  const hunter=makePlayer("tracking-clock-hunter",0,"dawn","ai",5),enemy=makePlayer("tracking-clock-enemy",1,"dusk"),{game}=makeGame([hunter,enemy]);registerPassiveSkills(game);
-  await game.eventBus.emit("turnStart",{player:hunter});await game.eventBus.emit("targetSelected",{source:hunter,card:instance("assault"),targets:[enemy]});
-  await game.eventBus.emit("turnEnd",{player:hunter});assert.equal(enemy.statuses.huntMark?.sourceId,hunter.id);
-  await game.eventBus.emit("turnStart",{player:hunter});assert.equal(enemy.statuses.huntMark?.sourceId,hunter.id);
-  await game.eventBus.emit("turnEnd",{player:hunter});assert.equal(enemy.statuses.huntMark,undefined);
-});
-test("AI 深层模拟保存追踪目标并允许同回合标记不同敌人", () => {
-  const state={players:[
-    {id:"hunter",seatIndex:0,generalId:"trail-hunter",battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:4,alive:true,handCount:4,hand:[{id:"a1",definitionId:"assault"},{id:"a2",definitionId:"assault"},{id:"a3",definitionId:"assault"},{id:"a4",definitionId:"assault"}],attackUsed:0,trackingTargetIds:[],activeSkillUses:0,activeSkillLimit:2,statuses:[]},
-    {id:"enemy-a",seatIndex:1,battleTeam:"dusk",hp:10,maxHp:10,shield:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0,statuses:[]},
-    {id:"enemy-b",seatIndex:2,battleTeam:"dusk",hp:10,maxHp:10,shield:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0,statuses:[]},
-    {id:"enemy-c",seatIndex:3,battleTeam:"dusk",hp:10,maxHp:10,shield:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0,statuses:[]}
-  ]},simulator=new AiSimulator(state);
-  const markedA=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"a1"},targets:[{id:"enemy-a"}]},"hunter");
-  const huntedA=simulator.apply(markedA,{type:"skill",skill:{id:"hunt",cost:0,limitPerTurn:2},targets:[{id:"enemy-a"}]},"hunter");
-  const repeatedA=simulator.apply(huntedA,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"a2"},targets:[{id:"enemy-a"}]},"hunter");
-  const markedB=simulator.apply(repeatedA,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"a3"},targets:[{id:"enemy-b"}]},"hunter");
-  const cappedC=simulator.apply(markedB,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"a4"},targets:[{id:"enemy-c"}]},"hunter");
-  assert.equal(markedA.players[1].huntMarkSourceId,"hunter");assert.equal(repeatedA.players[1].huntMarkSourceId,null);
-  assert.equal(markedB.players[2].huntMarkSourceId,"hunter");assert.equal(cappedC.players[3].huntMarkSourceId,undefined);assert.deepEqual(cappedC.players[0].trackingTargetIds,["enemy-a","enemy-b"]);
-});
-test("追踪配置与README声明每回合限2次、同一敌人限1次并持续到下回合结束", async () => {
-  const hunter=GENERAL_DEFINITIONS.find((general)=>general.id==="trail-hunter"),readme=await readFile(projectFile("README.md"),"utf8"),section=readme.match(/### 追猎者[\s\S]*?(?=\r?\n### )/)?.[0]??"";
-  for(const text of [hunter.passiveDescription,hunter.passiveLimitText,section])assert.match(text,/每回合.*2\s*次/);
-  for(const text of [hunter.passiveDescription,hunter.passiveLimitText,section]){assert.match(text,/同一名?敌人.*(?:每回合|一回合).*(?:1次|1 次)/);}
-  for(const text of [hunter.passiveDescription,section])assert.match(text,/下回合结束/);
-});
-test("追猎者猎杀被格挡后摸1张且每回合上限为2次", async () => { const hunter=makePlayer("hunter",0,"dawn","ai",5),target=makePlayer("target",1,"dusk","human"),ally=makePlayer("ally",2,"dawn");target.statuses.huntMark={sourceId:hunter.id};target.hand.push(instance("block"));const {game}=makeGame([hunter,target,ally],{response:()=>true});game.state.deck.cards.push(instance("charge"));hunter.energy=2;assert.equal(await game.useActiveSkill(hunter,"hunt",[target]),true);assert.equal(hunter.hand.length,1);assert.equal(hunter.turnFlags.activeSkillUseCounts.hunt,1);assert.equal(ACTIVE_SKILLS.hunt.limitPerTurn,2); });
-test("技能详情使用结构化的每回合发动次数", () => { const warden=makePlayer("warden",0,"dawn","human",1),markup=skillDetailsTemplate(warden);assert.match(markup,/每回合限发动2次/); });
-test("赌命者技能详情显示等量摸牌、30x%概率和每回合1次", () => { const gambler=makePlayer("gambler",0,"dawn","human",6),markup=skillDetailsTemplate(gambler);assert.match(markup,/摸取等量牌/);assert.match(markup,/30×消耗能量%/);assert.match(markup,/每回合限发动1次/); });
-test("赌命者候选卡将孤注消耗显示为 X 能量", () => { const gambler=GENERAL_DEFINITIONS.find((general)=>general.id==="fate-gambler"),markup=candidateCardTemplate(gambler,0);assert.match(markup,/主动 · 孤注/);assert.match(markup,/<small>X 能量<\/small>/);assert.doesNotMatch(markup,/<small>1 能量<\/small>/); });
-test("角色候选卡统一将主动技能显示在被动技能上方", () => { for(const [index,general] of GENERAL_DEFINITIONS.entries()){const markup=candidateCardTemplate(general,index),active=markup.indexOf(`主动 · ${general.activeName}`),passive=markup.indexOf(`被动 · ${general.passiveName}`);assert.ok(active>=0&&passive>=0&&active<passive,general.name);} });
+
+test("二人小队可在同一出牌阶段连续使用多张调息", async () => { const {game,small}=makeTeamFixture();small.hp-=2;small.hand.push(instance("recover"),instance("recover"));await game.playCard(small,small.hand[0],[]);await game.playCard(small,small.hand[0],[]);assert.equal(small.hp,small.maxHp);assert.equal(small.turnFlags.recoverUsed,2);assert.equal(small.turnFlags.recoverLimit,null); });
+
+test("三人小队可在同一出牌阶段连续使用多张调息", async () => { const {game,large}=makeTeamFixture();game.state.currentPlayerIndex=large.seatIndex;large.hp-=2;large.hand.push(instance("recover"),instance("recover"));await game.playCard(large,large.hand[0],[]);await game.playCard(large,large.hand[0],[]);assert.equal(large.hp,large.maxHp);assert.equal(large.turnFlags.recoverUsed,2);assert.equal(large.turnFlags.recoverLimit,null); });
+
+// ---- 聚能 ----
+
+test("聚能不能突破二人或三人阵营的能量上限", async () => { for(const kind of ["small","large"]){const fixture=makeTeamFixture(),player=fixture[kind];fixture.game.state.currentPlayerIndex=player.seatIndex;player.energy=player.maxEnergy-1;player.hand.push(instance("charge"),instance("charge"));await fixture.game.playCard(player,player.hand[0],[]);assert.equal(player.energy,player.maxEnergy);assert.equal(RuleEngine.canPlayCard(fixture.game,player,player.hand[0]).ok,false);} });
+
+// ---- 护盾 ----
 
 test("护盾牌可选择自己或任意存活队友但不能选择敌人和阵亡队友", () => { const source=makePlayer("source",0,"dawn"),ally=makePlayer("ally",1,"dawn"),dead=makePlayer("dead",2,"dawn"),enemy=makePlayer("enemy",3,"dusk");dead.alive=false;const {game}=makeGame([source,ally,dead,enemy]),card=instance("shield");source.hand.push(card);assert.deepEqual(RuleEngine.getCardTargets(game,source,card).map((player)=>player.id),[source.id,ally.id]);assert.equal(RuleEngine.targetLegality(game,source,card,enemy).ok,false); });
+
 test("护盾牌可为自己使用并在队友身上永久叠加", async () => { const source=makePlayer("source",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([source,ally,enemy]),selfCard=instance("shield"),first=instance("shield"),second=instance("shield");source.hand.push(selfCard,first,second);assert.equal(await game.playCard(source,selfCard,[source]),true);assert.equal(source.shield,1);assert.equal(await game.playCard(source,first,[ally]),true);assert.equal(await game.playCard(source,second,[ally]),true);assert.equal(ally.shield,2);assert.equal(ally.statuses.temporaryShield,undefined); });
+
 test("护盾牌提供的护盾不会在目标回合开始时归零", async () => { const source=makePlayer("source",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([source,ally,enemy]),card=instance("shield");source.hand.push(card);await game.playCard(source,card,[ally]);game.state.currentPlayerIndex=1;game.state.deck.cards.push(instance("assault"),instance("block"),instance("charge"));game.aiController.selectAction=async()=>({type:"end"});await game.takeTurn(ally,game.state.gameId);assert.equal(ally.shield,1); });
+
 test("每点护盾免疫1点伤害并在免疫后消耗", async () => { const attacker=makePlayer("attacker",0,"dusk"),target=makePlayer("target",1,"dawn");const {game}=makeGame([attacker,target]);target.shield=2;const hp=target.hp,actual=await game.damage(attacker,target,3,{canBlock:false});assert.equal(target.shield,0);assert.equal(target.hp,hp-1);assert.equal(actual,1); });
+
 test("护盾牌提交敌方目标会在核心层拒绝且不消耗实体牌", async () => { const source=makePlayer("source",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),card=instance("shield");const {game}=makeGame([source,enemy]);source.hand.push(card);assert.equal(await game.playCard(source,card,[enemy]),false);assert.ok(source.hand.includes(card));assert.equal(enemy.shield,0); });
 
-// 动态存活座位环（16 项）
-const distanceFixture = () => { const players=[makePlayer("A",0,"dawn"),makePlayer("B",1,"dusk"),makePlayer("C",2,"dusk"),makePlayer("D",3,"dawn"),makePlayer("E",4,"dusk")]; return { players, game:makeGame(players).game }; };
-test("动态距离1：五人全存活时固定相邻距离为1", () => { const {players,game}=distanceFixture();assert.equal(DistanceSystem.getDistance(game,players[0],players[1]),1); });
-test("动态距离2：五人全存活时隔一人距离为2", () => { const {players,game}=distanceFixture();assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),2); });
-test("动态距离3：中间角色阵亡后两侧由2变1", () => { const {players,game}=distanceFixture();players[1].alive=false;assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),1); });
-test("动态距离4：连续两人阵亡后距离继续压缩", () => { const {players,game}=distanceFixture();players[1].alive=false;players[3].alive=false;assert.equal(DistanceSystem.getDistance(game,players[2],players[4]),1); });
-test("动态距离5：三名存活角色任意两人距离均为1", () => { const {players,game}=distanceFixture();players[1].alive=false;players[3].alive=false;for(const a of [players[0],players[2],players[4]])for(const b of [players[0],players[2],players[4]])if(a!==b)assert.equal(DistanceSystem.getDistance(game,a,b),1); });
-test("动态距离6：两名存活角色之间距离为1", () => { const {players,game}=distanceFixture();players.slice(1,4).forEach((p)=>p.alive=false);assert.equal(DistanceSystem.getDistance(game,players[0],players[4]),1); });
-test("动态距离7：阵亡角色的距离为 Infinity", () => { const {players,game}=distanceFixture();players[1].alive=false;assert.equal(DistanceSystem.getDistance(game,players[0],players[1]),Infinity); });
-test("动态距离8：存活角色到自身距离为0", () => { const {players,game}=distanceFixture();assert.equal(DistanceSystem.getDistance(game,players[0],players[0]),0); });
-test("动态距离9：存活队友仍占据距离，不能穿过队友", () => { const players=[makePlayer("A",0,"dawn"),makePlayer("B",1,"dawn"),makePlayer("C",2,"dusk"),makePlayer("D",3,"dusk")];const {game}=makeGame(players);assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),2);assert.equal(DistanceSystem.getDistance(game,players[0],players[3]),1); });
-test("动态距离10：普通突袭在阵亡后立即出现新合法目标", () => { const {players,game}=distanceFixture();const assault=instance("assault");players[0].hand.push(assault);assert.ok(!RuleEngine.getCardTargets(game,players[0],assault).includes(players[2]));players[1].alive=false;assert.ok(RuleEngine.getCardTargets(game,players[0],assault).includes(players[2])); });
-test("动态距离11：震荡和决斗始终显式忽略距离", () => { assert.equal(CARD_DEFINITIONS.shockwave.ignoresDistance,true);assert.equal(CARD_DEFINITIONS.duel.ignoresDistance,true); });
-test("动态距离12：UI 距离文案可在阵亡后从2更新为1", () => { const {players,game}=distanceFixture();let info=DistanceSystem.describe(game,players[0],players[2]);let markup=playerPanelTemplate(players[2],{humanTeam:"dawn",distanceInfo:info,distanceState:`距离 ${info.distance} · 超出攻击范围`});assert.match(markup,/距离 2 · 超出攻击范围/);players[1].alive=false;info=DistanceSystem.describe(game,players[0],players[2]);markup=playerPanelTemplate(players[2],{humanTeam:"dawn",distanceInfo:info,distanceState:`距离 ${info.distance} · 可突袭`});assert.match(markup,/距离 1 · 可突袭/); });
-test("动态距离13：AI 动作生成不根据固定 seatIndex 攻击", () => { const {players,game}=distanceFixture();const assault=instance("assault");players[0].hand.push(assault);players[1].alive=false;const targets=game.aiController.getLegalActions(players[0]).filter((action)=>action.card?.id===assault.id).map((action)=>action.targets[0].id);assert.ok(targets.includes("C")); });
-test("动态距离14：AI 模拟识别先击杀中间角色再攻击新相邻敌人", async () => { const {players,game}=distanceFixture();players[0].turnFlags.attackLimit=2;players[1].hp=1;players[0].hand.push(instance("assault"),instance("assault"));game.aiSearchBudgetOverrideMs=100;await game.aiController.selectAction(players[0],{gameId:game.state.gameId});assert.equal(game.aiController.planner.lastSearchStats.discoveredDynamicTarget,true); });
-test("动态距离15：每次调用都读取实时 alive，不使用整局缓存", () => { const {players,game}=distanceFixture();assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),2);players[1].alive=false;assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),1);players[1].alive=true;assert.equal(DistanceSystem.getDistance(game,players[0],players[2]),2); });
-test("动态距离16：新 Game 使用自己的全新存活环", () => { const first=distanceFixture(),second=distanceFixture();first.players[1].alive=false;assert.equal(DistanceSystem.getDistance(first.game,first.players[0],first.players[2]),1);assert.equal(DistanceSystem.getDistance(second.game,second.players[0],second.players[2]),2); });
+// ==================== 战术牌 ====================
 
-// 基础牌、战术牌与公开/隐藏移动
-test("普通突袭计入次数并造成伤害", async () => { const a=makePlayer("a",0,"dawn"), b=makePlayer("b",1,"dusk"); const {game}=makeGame([a,b]); const c=instance("assault"); a.hand.push(c); await game.playCard(a,c,[b]); assert.equal(a.turnFlags.attackUsed,1); assert.equal(b.hp,b.maxHp-1); });
-test("真人没有格挡时仍出现完整响应窗口，但不能凭空格挡", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>true});const hp=b.hp,assault=instance("assault");await game.damage(a,b,1,{card:assault,canBlock:true,damageType:"normal"});assert.equal(ui.responseRequests.length,1);const request=ui.responseRequests[0];assert.deepEqual(request.legalCardIds,[]);assert.equal(request.requiredCount,1);assert.match(request.presentation.eventText,new RegExp(`${a.name}.*你.*突袭`));assert.match(request.presentation.availabilityText,/当前 0 张/);assert.equal(canSubmitResponse(request),false);assert.equal(b.hp,hp-1); });
-test("AI 没有合法响应牌时立即跳过且不创建真人响应请求", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","ai");const {game,ui}=makeGame([a,b]);const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(ui.responseRequests.length,0);assert.equal(ui.thinking.length,0);assert.equal(b.hp,hp-1); });
-test("真人没有反制也按座次获得一次响应窗口", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const {game,ui}=makeGame([a,b,c]);a.hand.push(instance("harvest"));game.state.deck.cards.push(instance("charge"),instance("block"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(ui.responseRequests.filter((request)=>request.type==="counter").map((request)=>request.targetPlayerId),[b.id,c.id]);assert.ok(ui.responseRequests.every((request)=>request.legalCardIds.length===0)); });
-test("格挡确认只在合法牌数达到要求时可用", () => { assert.equal(canSubmitResponse({requiredCount:1,legalCardIds:[]}),false);assert.equal(canSubmitResponse({requiredCount:2,legalCardIds:["one"]}),false);assert.equal(canSubmitResponse({requiredCount:2,legalCardIds:["one","two"]}),true); });
-test("响应窗口显示真实持有数量但只消耗所需格挡", async () => { const source=makePlayer("source",0,"dusk"),target=makePlayer("target",1,"dawn","human");target.hand.push(instance("block"),instance("block"),instance("block"));const {game,ui}=makeGame([source,target],{response:()=>true});await game.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});const request=ui.responseRequests.find((entry)=>entry.type==="block");assert.equal(request.presentation.availableCount,3);assert.equal(request.legalCardIds.length,3);assert.match(request.presentation.availabilityText,/需要 1 张格挡，当前 3 张/);assert.equal(target.hand.filter((card)=>card.definitionId==="block").length,2); });
-test("军火库响应显示完整数量并原子消耗两张格挡", async () => { const source=makePlayer("source",0,"dusk"),target=makePlayer("target",1,"dawn","human");source.equipment=instance("battleDevice");target.hand.push(instance("block"),instance("block"),instance("block"));const {game,ui}=makeGame([source,target],{response:()=>true});await game.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});const request=ui.responseRequests.find((entry)=>entry.type==="block");assert.equal(request.requiredCount,2);assert.equal(request.presentation.availableCount,3);assert.match(request.presentation.availabilityText,/需要 2 张格挡，当前 3 张/);assert.equal(target.hand.filter((card)=>card.definitionId==="block").length,1); });
-test("反制、强制突袭与濒死调息显示完整持有数量", async () => { const source=makePlayer("source",0,"dusk"),responder=makePlayer("responder",1,"dawn","human"),target=makePlayer("target",2,"dawn");const {game,ui}=makeGame([source,responder,target],{response:()=>true});responder.hand.push(instance("counter"),instance("counter"),instance("counter"));await game.responseSystem.requestCardResponse(responder,"counter",{source,target,card:instance("harvest")},1);let request=ui.responseRequests.at(-1);assert.equal(request.presentation.availableCount,3);assert.equal(responder.hand.filter((card)=>card.definitionId==="counter").length,2);responder.hand.push(instance("assault"),instance("assault"),instance("assault"),instance("assault"));await game.responseSystem.requestAssaultDiscard(responder,"决斗",{source,target:responder,card:instance("duel")});request=ui.responseRequests.at(-1);assert.equal(request.presentation.availableCount,4);assert.match(request.presentation.availabilityText,/当前 4 张/);target.hp=0;responder.hand.push(instance("recover"),instance("recover"));await game.responseSystem.requestDyingRescue(responder,target,responder.hand.find((card)=>card.definitionId==="recover"));request=ui.responseRequests.at(-1);assert.equal(request.presentation.availableCount,2);assert.match(request.presentation.availabilityText,/当前 2 张/);assert.equal(responder.hand.filter((card)=>card.definitionId==="recover").length,1); });
-test("响应事件中的角色和卡牌名称会在写入 DOM 前安全转义", async () => { const responder=makePlayer("h",0,"dawn","human"),source={id:"source",name:'<img src=x onerror=alert(1)>'},target=responder,card={name:'<script>bad()</script>',definitionId:"assault"},presentation=buildResponsePresentation(responder,"block",{source,target,card},1,0,"格挡");const previousWindow=globalThis.window;globalThis.window={setInterval,clearInterval};const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};const fake={responseState:null,elements:{response_panel:panel},game:{cleanupManager:{delay:()=>new Promise(()=>{})}},render(){}};try{const pending=UIManager.prototype.requestResponse.call(fake,{id:"escape-response",requiredCount:1,legalCardIds:[],timeoutMs:5000,presentation},"格挡");assert.doesNotMatch(panel.innerHTML,/<img|<script>/);assert.match(panel.innerHTML,/&lt;img/);assert.match(panel.innerHTML,/&lt;script/);fake.responseState.resolve(false);assert.equal((await pending).status,"declined");}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
-test("主动技能按钮只显示技能名称", () => { assert.equal(skillButtonLabel({id:"allIn",name:"孤注",cost:"all"}),"孤注");assert.equal(skillButtonLabel({id:"hunt",name:"猎杀",cost:2}),"猎杀");assert.equal(skillButtonLabel(null),"主动技能"); });
-test("突袭在中央结算区与使用日志中显示作用对象", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game,ui}=makeGame([a,b]);const assault=instance("assault");a.hand.push(assault);await game.playCard(a,assault,[b]);assert.equal(ui.currentCards[0].targetLabel,b.name);assert.ok(ui.logs.some((message)=>message===`${a.name}使用了「突袭」，作用对象：${b.name}。`)); });
+// ---- 转移 ----
+
+test("转移支持来源、接收者与指定牌三阶段", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);const transfer=instance("transfer"),moved=instance("block");a.hand.push(transfer);b.hand.push(moved);b.bumpHandVersion();const hidden=game.cardSelectionSystem.createHiddenSelection(b);await game.playCard(a,transfer,[],{sourceId:b.id,receiverId:c.id,tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});assert.ok(c.hand.includes(moved));assert.ok(!game.state.logs.at(-1).message.includes(moved.name)); });
+
+test("转移配置和README明确只允许移动手牌", async () => { const transfer=CARD_DEFINITIONS.transfer,readme=await readFile(projectFile("README.md"),"utf8");assert.deepEqual(transfer.targetZones,["hand"]);assert.deepEqual(transfer.selectionFlow,["source","receiver","handCard:1"]);assert.ok(!transfer.subtypes.includes("equipment-control"));assert.match(transfer.description,/手牌/);assert.match(transfer.description,/不能转移装备区/);assert.match(readme,/转移：[^\n]*装备区的牌不能被转移/);assert.doesNotMatch(readme,/转移：[^\n]*装备直接进入接收者装备区/); });
+
+test("真人转移选牌界面不提供装备区选项", async () => { const actor=makePlayer("actor",0,"dawn","human"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn"),use=instance("transfer"),held=instance("block"),equipment=instance("defenseDevice");actor.hand.push(use);from.hand.push(held);from.equipment=equipment;const {game}=makeGame([actor,from,receiver]),chosenPlayers=[from,receiver],ui={requestTarget:async()=>chosenPlayers.shift()},controller=new InteractionController(ui);let slots=null;controller.requestHiddenCards=async(selection,_count,_prompt,options)=>{slots=options.slots;return [selection.tokens[0].token];};const result=await controller.requestCardFlow(game,actor,use,[]);assert.equal(result.zone,"hand");assert.ok(result.tokens.length===1);assert.equal(slots.length,1);assert.ok(slots.every((slot)=>slot.zone!=="equipment"&&slot.token!=="public-equipment")); });
+
+test("转移与掠夺按统一动态距离限制且转移来源必须持有手牌", () => { const actor=makePlayer("actor",0,"dawn"),near=makePlayer("near",1,"dusk"),far=makePlayer("far",2,"dusk"),other=makePlayer("other",3,"dawn"),tail=makePlayer("tail",4,"dawn");near.hand.push(instance("block"));far.equipment=instance("barrierDevice");const {game}=makeGame([actor,near,far,other,tail]);assert.ok(RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(near));assert.ok(!RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(far));assert.ok(!RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.plunder).includes(far));assert.ok(RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.destroy).includes(far));far.hand.push(instance("charge"));far.equipment=instance("energyDevice");actor.equipment=instance("telescope");assert.ok(RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(far));assert.ok(RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.plunder).includes(far)); });
+
+test("真人和核心都拒绝把装备区实体作为转移牌", async () => { const actor=makePlayer("actor",0,"dawn","human"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn"),equipment=instance("energyDevice"),hiddenCard=instance("block"),oldEquipment=instance("defenseDevice"),use=instance("transfer");const {game}=makeGame([actor,from,receiver]);actor.hand.push(use);from.hand.push(hiddenCard);from.equipment=equipment;receiver.equipment=oldEquipment;const selection=game.cardSelectionSystem.createHiddenSelection(from);assert.equal(await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),false);assert.ok(actor.hand.includes(use));assert.equal(from.equipment,equipment);assert.equal(receiver.equipment,oldEquipment);assert.ok(from.hand.includes(hiddenCard));assert.ok(!game.state.deck.discardPile.includes(use));assert.equal(game.cardSelectionSystem.isSelectionActive(selection.selectionId,from),false); });
+
+test("锁定牌在结算前离开来源时转移失败且没有有效目标、成功日志或协调", async () => {
+  const tuner=makePlayer("tuner",0,"dawn","ai",7),from=makePlayer("from",1,"dusk"),escaped=makePlayer("escaped",2,"dusk"),ally=makePlayer("ally",3,"dawn"),use=instance("transfer"),locked=instance("block");
+  tuner.hand.push(use);from.hand.push(locked);const {game}=makeGame([tuner,from,escaped,ally]);game.state.deck.cards.push(instance("charge"));registerPassiveSkills(game);let usedEvent=null;
+  game.eventBus.on("beforeCardResolve","test:remove-locked-transfer-card",()=>{const index=from.hand.indexOf(locked);if(index>=0){from.hand.splice(index,1);escaped.hand.push(locked);from.bumpHandVersion();escaped.bumpHandVersion();}});
+  game.eventBus.on("cardUsed","test:failed-transfer",(event)=>{usedEvent=event;});
+  assert.equal(await game.playCard(tuner,use,[],{sourceId:from.id,receiverId:ally.id,zone:"hand"}),true);
+  assert.ok(escaped.hand.includes(locked));assert.ok(!ally.hand.includes(locked));assert.ok(game.state.deck.discardPile.includes(use));assert.ok(!game.state.deck.resolvingCards.includes(use));
+  assert.equal(tuner.turnFlags.coordinationTriggered,false);assert.equal(tuner.hand.length,0);assert.ok(usedEvent);assert.equal(usedEvent.cancelled,true);assert.equal(usedEvent.resolved,false);assert.deepEqual(usedEvent.effectiveTargets,[]);
+  assert.equal(game.state.logs.some((entry)=>entry.message.includes(`${tuner.name}将${from.name}的`)&&entry.message.includes(`转移给了${ally.name}`)),false);
+});
+
+test("转移在反制前的日志和响应上下文包含来源与接收者但不泄露隐藏牌名", async () => {
+  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk","human"),receiver=makePlayer("receiver",3,"dawn");
+  const use=instance("transfer"),secret=instance("block");actor.hand.push(use);from.hand.push(secret);from.bumpHandVersion();
+  const {game,ui}=makeGame([actor,from,responder,receiver],{response:()=>false});const hidden=game.cardSelectionSystem.createHiddenSelection(from);
+  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});
+  const request=ui.responseRequests.find((entry)=>entry.type==="counter"&&entry.targetPlayerId===responder.id);
+  assert.match(request.presentation.eventText,new RegExp(`${from.name}.*1张牌.*${receiver.name}`));
+  assert.doesNotMatch(request.presentation.eventText,new RegExp(secret.name));
+  const intentLog=game.state.logs.find((entry)=>entry.message.includes("准备将"));
+  assert.match(intentLog.message,new RegExp(`${from.name}.*1张牌.*${receiver.name}`));assert.doesNotMatch(intentLog.message,new RegExp(secret.name));
+});
+
+test("隐藏转移传给 AI 响应策略的公开上下文不含锁定手牌资料", async () => {
+  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
+  const use=instance("transfer"),secret={...instance("block"),name:"绝密锁定牌"};actor.hand.push(use);from.hand.push(secret);responder.hand.push(instance("counter"));
+  const {game}=makeGame([actor,from,responder,receiver],{random:()=>0});let receivedContext=null;
+  game.aiController.responsePolicy.shouldRespond=(_player,_type,context)=>{receivedContext=context;return false;};
+  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"hand"});
+  assert.ok(receivedContext);const publicContext=receivedContext.publicTransferContext;assert.ok(publicContext);assert.equal(Object.isFrozen(publicContext),true);
+  for(const forbidden of ["card","cardId","definitionId","hiddenCardName"])assert.equal(Object.hasOwn(publicContext,forbidden),false);
+  const seen=new Set();const contains=(value,needle)=>{if(value===needle)return true;if(!value||typeof value!=="object"||seen.has(value))return false;seen.add(value);return Object.values(value).some((entry)=>contains(entry,needle));};
+  for(const secretValue of [secret,secret.id,secret.definitionId,secret.name]){seen.clear();assert.equal(contains(receivedContext,secretValue),false);}
+  assert.equal(publicContext.safeItemLabel,"1张牌");
+});
+
+test("转移响应期间手牌换序后仍移动反制前锁定的同一实体", async () => {
+  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
+  const use=instance("transfer"),locked=instance("block"),other=instance("harvest");actor.hand.push(use);from.hand.push(locked,other);responder.hand.push(instance("counter"));
+  const {game}=makeGame([actor,from,responder,receiver],{random:()=>0});game.aiController.responsePolicy.shouldRespond=()=>{from.hand.reverse();return false;};
+  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"hand"});
+  assert.ok(receiver.hand.includes(locked));assert.ok(from.hand.includes(other));assert.ok(!receiver.hand.includes(other));
+});
+
+test("转移被反制后锁定手牌仍留在来源区域", async () => {
+  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
+  const use=instance("transfer"),locked=instance("block");actor.hand.push(use);from.hand.push(locked);responder.hand.push(instance("counter"));
+  const {game}=makeGame([actor,from,responder,receiver],{random:()=>0});game.aiController.responsePolicy.shouldRespond=()=>true;
+  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"hand"});
+  assert.ok(from.hand.includes(locked));assert.ok(!receiver.hand.includes(locked));
+});
+
+test("伪造装备区转移不会开启反制窗口或生成公开转移上下文", async () => {
+  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
+  const use=instance("transfer"),radar=instance("defenseDevice"),held=instance("block");actor.hand.push(use);from.hand.push(held);from.equipment=radar;responder.hand.push(instance("counter"));
+  const {game}=makeGame([actor,from,responder,receiver]);let publicContext=null;game.aiController.responsePolicy.shouldRespond=(_player,_type,context)=>{publicContext=context.publicTransferContext;return false;};const selection=game.cardSelectionSystem.createHiddenSelection(from);
+  assert.equal(await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"equipment",equipmentCardId:radar.id,selectionId:selection.selectionId}),false);
+  assert.equal(publicContext,null);assert.equal(from.equipment,radar);assert.ok(actor.hand.includes(use));assert.equal(game.state.pendingResponses.length,0);
+});
+
+// ---- 破势 ----
+
+test("多层破势叠加并在下一次主动突袭一次性消耗", async () => { const a=makePlayer("a",0,"dawn"), b=makePlayer("b",1,"dusk"); b.hp=8;b.maxHp=8; const {game}=makeGame([a,b]); for(let i=0;i<2;i+=1){const c=instance("exposeWeakness");a.hand.push(c);await game.playCard(a,c,[]);} assert.equal(a.statuses.exposeWeakness.stacks,2); const attack=instance("assault");a.hand.push(attack);await game.playCard(a,attack,[b]);assert.equal(b.hp,5);assert.equal(a.statuses.exposeWeakness,undefined); });
+
+test("破势即使突袭被格挡也会消耗", async () => { const a=makePlayer("a",0,"dawn"), b=makePlayer("b",1,"dusk","human"); const {game}=makeGame([a,b],{response:()=>true}); a.statuses.exposeWeakness={stacks:2}; a.hand.push(instance("assault")); b.hand.push(instance("block")); await game.playCard(a,a.hand[0],[b]); assert.equal(b.hp,b.maxHp); assert.equal(a.statuses.exposeWeakness,undefined); });
+
+test("震荡不计突袭次数也不消耗破势", async () => { const a=makePlayer("a",0,"dawn"), b=makePlayer("b",1,"dusk"), c=makePlayer("c",2,"dusk"); const {game}=makeGame([a,b,c]); a.statuses.exposeWeakness={stacks:2}; const card=instance("shockwave");a.hand.push(card);await game.playCard(a,card,[b,c]);assert.equal(a.turnFlags.attackUsed,0);assert.equal(a.statuses.exposeWeakness.stacks,2); });
+
+// ---- 挑衅 ----
+
+test("挑衅：有突袭者可打出，没有者优先消耗护盾且不触发格挡或雷达", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk","human");const {game,ui}=makeGame([a,b,c],{response:(r)=>r.targetPlayerId===b.id});a.hand.push(instance("provoke"));b.hand.push(instance("assault"));c.shield=2;c.equipment=instance("defenseDevice");game.state.deck.cards.push(instance("harvest"));const hp=c.hp;await game.playCard(a,a.hand[0],[b,c]);assert.equal(b.hand.length,0);assert.equal(c.hp,hp);assert.equal(c.shield,1);assert.ok(!ui.responseRequests.some((request)=>request.type==="block"));assert.equal(game.state.deck.judgmentZone.length,0);assert.equal(game.state.deck.cards.at(-1)?.definitionId,"harvest"); });
+
+// ---- 借势 ----
+
 test("借势第一目标要求真实装备且至少存在一个距离合法第二目标", () => {
   const actor=makePlayer("actor",0,"dawn"),valid=makePlayer("valid",1,"dawn"),empty=makePlayer("empty",2,"dawn"),dead=makePlayer("dead",3,"dawn");
   valid.equipment=instance("energyDevice");dead.equipment=instance("telescope");dead.alive=false;empty.statuses.virtualEquipment={definitionId:"battleDevice"};
@@ -604,6 +585,7 @@ test("借势第一目标要求真实装备且至少存在一个距离合法第�
   assert.ok(RuleEngine.getAssaultTargetCandidates(game,valid).includes(actor));assert.deepEqual(RuleEngine.getLeverageFirstTargets(game,actor),[valid]);
   valid.turnFlags.attackUsed=valid.turnFlags.attackLimit;assert.deepEqual(RuleEngine.getLeverageFirstTargets(game,actor),[valid]);
 });
+
 test("借势核心第一目标筛选不要求普通突袭敌人且允许同阵营第二目标", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dawn"),ally=makePlayer("ally",2,"dawn"),use=instance("leverage");actor.hand.push(use);first.equipment=instance("energyDevice");
   const {game}=makeGame([actor,first,ally]);
@@ -611,12 +593,14 @@ test("借势核心第一目标筛选不要求普通突袭敌人且允许同阵�
   assert.ok(RuleEngine.getLeverageFirstTargets(game,actor).includes(first));assert.ok(!RuleEngine.getLeverageFirstTargets(game,actor).includes(actor));
   assert.equal(RuleEngine.canPlayCard(game,actor,use).ok,true);
 });
+
 test("AI 根节点在无普通突袭敌人时仍生成同阵营借势意图", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dawn"),ally=makePlayer("ally",2,"dawn"),use=instance("leverage");actor.hand.push(use);first.equipment=instance("energyDevice");
   const {game}=makeGame([actor,first,ally]);assert.deepEqual(RuleEngine.getLegalAssaultTargets(game,first),[]);
   const actions=game.aiController.actionGenerator.generate(actor).filter((action)=>action.card?.id===use.id);
   assert.ok(actions.some((action)=>action.selection.firstTargetId===first.id&&action.selection.equipmentCardId===first.equipment.id&&action.selection.secondTargetId===actor.id));
 });
+
 test("AI 深层生成在无普通突袭敌人时仍枚举同阵营借势第二目标", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dawn"),ally=makePlayer("ally",2,"dawn"),use=instance("leverage");actor.hand.push(use);first.equipment=instance("energyDevice");
   const {game}=makeGame([actor,first,ally]);const visible=createAiVisibleState(actor.id,game.state),visibleFirst=visible.players.find((player)=>player.id===first.id);
@@ -625,6 +609,7 @@ test("AI 深层生成在无普通突袭敌人时仍枚举同阵营借势第二�
   const deepActions=game.aiController.actionGenerator.generateFromVisible(visible,actor.id).filter((action)=>action.card?.id===use.id);
   assert.ok(deepActions.some((action)=>action.selection.firstTargetId===first.id&&action.selection.equipmentCardId===null&&action.selection.equipmentDefinitionId==="energyDevice"&&action.selection.secondTargetId===actor.id));
 });
+
 test("真人借势无普通突袭敌人时仍可选择同阵营第一目标和使用者为第二目标", async () => {
   const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dawn"),use=instance("leverage"),equipment=instance("energyDevice");actor.hand.push(use);first.equipment=equipment;const {game}=makeGame([actor,first]);
   let call=0;const controller=new InteractionController({requestTarget:async(players)=>{call+=1;return call===1?players.find((player)=>player.id==="first"):players.find((player)=>player.id==="actor");}});
@@ -632,49 +617,58 @@ test("真人借势无普通突袭敌人时仍可选择同阵营第一目标和�
   const selection=await controller.requestCardFlow(game,actor,use,[]);
   assert.deepEqual(selection,{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});
 });
+
 test("借势第一目标没有距离合法第二目标时仍被排除", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dawn"),ally=makePlayer("ally",2,"dawn"),enemy=makePlayer("enemy",3,"dusk"),tail=makePlayer("tail",4,"dawn");first.equipment=instance("energyDevice");
   actor.equipment=instance("barrierDevice");ally.equipment=instance("barrierDevice");enemy.equipment=instance("barrierDevice");tail.equipment=instance("barrierDevice");
   const {game}=makeGame([actor,first,ally,enemy,tail]);
   assert.deepEqual(RuleEngine.getAssaultTargetCandidates(game,first),[]);assert.ok(!RuleEngine.getLeverageFirstTargets(game,actor).includes(first));
 });
+
 test("借势第一目标筛选完全不读取手牌或突袭次数", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),equipment=instance("energyDevice");first.equipment=equipment;const {game}=makeGame([actor,first]);
   first.hand=new Proxy([], {get(){throw new Error("候选筛选不应读取手牌");}});
   first.turnFlags=new Proxy(first.turnFlags,{get(target,key){if(key==="attackUsed"||key==="attackLimit")throw new Error("候选筛选不应读取突袭次数");return Reflect.get(target,key);}});
   assert.deepEqual(RuleEngine.getLeverageFirstTargets(game,actor),[first]);assert.deepEqual(RuleEngine.getAssaultTargetCandidates(game,first),[actor]);
 });
+
 test("借势可指定距离外队友为第一目标且只检查其对第二目标的普通突袭距离", async () => {
   const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),farAlly=makePlayer("far-ally",2,"dawn"),ally=makePlayer("ally",3,"dawn"),tail=makePlayer("tail",4,"dusk"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);farAlly.equipment=equipment;const {game}=makeGame([actor,enemy,farAlly,ally,tail]);
   assert.equal(DistanceSystem.getDistance(game,actor,farAlly),2);assert.ok(RuleEngine.getLeverageFirstTargets(game,actor).includes(farAlly));assert.ok(RuleEngine.getLegalAssaultTargets(game,farAlly).includes(enemy));
   await game.playCard(actor,use,[],{firstTargetId:farAlly.id,equipmentCardId:equipment.id,secondTargetId:enemy.id});assert.equal(farAlly.equipment,null);assert.ok(actor.hand.includes(equipment));
 });
+
 test("借势第二目标只按第一目标攻击距离筛选且允许同阵营与使用者本人", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk"),far=makePlayer("far",3,"dawn"),tail=makePlayer("tail",4,"dawn");first.equipment=instance("energyDevice");
   const {game}=makeGame([actor,first,ally,far,tail]);const targets=RuleEngine.getAssaultTargetCandidates(game,first);
   assert.ok(targets.includes(actor));assert.ok(targets.includes(ally));assert.ok(!targets.includes(first));assert.ok(!targets.includes(far));assert.ok(!targets.includes(tail));
   assert.ok(!RuleEngine.getLegalAssaultTargets(game,first).includes(ally));
 });
+
 test("借势选择阶段取消不会消耗卡牌或留下状态变化", async () => {
   const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk"),use=instance("leverage"),equipment=instance("energyDevice");actor.hand.push(use);first.equipment=equipment;const {game}=makeGame([actor,first]);const controller=new InteractionController({requestTarget:async()=>null});const logCount=game.state.logs.length;
   assert.equal(await controller.requestCardFlow(game,actor,use,[]),null);assert.ok(actor.hand.includes(use));assert.equal(first.equipment,equipment);assert.equal(game.state.logs.length,logCount);assert.equal(controller.pending,null);
 });
+
 test("借势无合法突袭时不弹响应窗口并把同一装备实例移入使用者手牌", async () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;
   const {game,ui}=makeGame([actor,first]);const selection={firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id};
   assert.equal(await game.playCard(actor,use,[],selection),true);assert.equal(ui.responseRequests.some((request)=>request.type==="leverageAssault"),false);assert.equal(first.equipment,null);assert.ok(actor.hand.includes(equipment));assert.equal(actor.equipment,null);assert.ok(game.state.deck.discardPile.includes(use));assert.equal(equipment.id,selection.equipmentCardId);
 });
+
 test("借势主动拒绝统一转移装备且不消耗第一目标突袭", async () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","human"),equipment=instance("battleDevice"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;
   const {game,ui}=makeGame([actor,first],{response:()=>false});await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});
   assert.ok(first.hand.includes(assault));assert.ok(actor.hand.includes(equipment));assert.ok(ui.logs.some((message)=>message===`${first.name}拒绝使用「突袭」，${actor.name}获得了其「${equipment.name}」。`));assert.ok(!ui.logs.some((message)=>/没有突袭|距离|次数/.test(message)));
 });
+
 test("借势成功响应使用真实突袭并完整复用次数、伤害、格挡和弃置流程", async () => {
   const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk","human"),equipment=instance("battleDevice"),assault=instance("assault"),blockA=instance("block"),blockB=instance("block"),use=instance("leverage");actor.hand.push(use,blockA,blockB);first.hand.push(assault);first.equipment=equipment;
   const {game,ui}=makeGame([actor,first],{response:(request)=>request.type==="leverageAssault"||request.type==="block"});const hp=actor.hp;
   await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});
   assert.equal(first.equipment,equipment);assert.equal(first.turnFlags.attackUsed,1);assert.equal(actor.hp,hp);assert.ok(game.state.deck.discardPile.includes(assault));assert.ok(game.state.deck.discardPile.includes(use));assert.equal(actor.hand.includes(blockA),false);assert.equal(actor.hand.includes(blockB),false);assert.ok(ui.responseRequests.some((request)=>request.type==="leverageAssault"&&request.legalCardIds.includes(assault.id)));
 });
+
 test("借势忽略第一目标已用突袭次数并完整执行真实突袭", async () => {
   const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;
   const {game,ui}=makeGame([actor,first],{response:(request)=>request.type==="leverageAssault"});first.turnFlags.attackUsed=first.turnFlags.attackLimit;
@@ -689,6 +683,7 @@ test("借势忽略第一目标已用突袭次数并完整执行真实突袭", as
   assert.ok(!actor.hand.includes(equipment));
   assert.ok(!ui.logs.some((message)=>message.includes("拒绝使用「突袭」")));
 });
+
 test("普通主动突袭仍受已用次数限制", () => {
   const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const assault=instance("assault");a.hand.push(assault);a.turnFlags.attackUsed=a.turnFlags.attackLimit;
   assert.equal(RuleEngine.canPlayCard(game,a,assault).ok,false);
@@ -696,6 +691,7 @@ test("普通主动突袭仍受已用次数限制", () => {
   assert.equal(RuleEngine.canActuallyUseAssault(game,a,assault,b,{allowOutOfTurn:true}).ok,false);
   assert.equal(RuleEngine.canUseForcedAssault(game,a,assault,b).ok,true);
 });
+
 test("借势忽略已用次数后仍检查距离与目标合法性", () => {
   const actor=makePlayer("actor",0,"dawn"),far=makePlayer("far",1,"dusk"),first=makePlayer("first",2,"dusk"),tail=makePlayer("tail",3,"dawn"),other=makePlayer("other",4,"dawn");const {game}=makeGame([actor,far,first,tail,other]);const assault=instance("assault");first.hand.push(assault);first.turnFlags.attackUsed=first.turnFlags.attackLimit;
   assert.equal(DistanceSystem.getDistance(game,first,actor),2);
@@ -705,6 +701,7 @@ test("借势忽略已用次数后仍检查距离与目标合法性", () => {
   assert.equal(RuleEngine.canUseForcedAssault(game,first,assault,tail).ok,true);
   assert.deepEqual(RuleEngine.getUsableAssaultCards(game,first,tail).map((card)=>card.id),[assault.id]);
 });
+
 test("借势已用次数耗尽且手中没有突袭时仍转移装备", async () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;const {game,ui}=makeGame([actor,first]);first.turnFlags.attackUsed=first.turnFlags.attackLimit;
   assert.equal(await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id}),true);
@@ -713,6 +710,7 @@ test("借势已用次数耗尽且手中没有突袭时仍转移装备", async ()
   assert.ok(actor.hand.includes(equipment));
   assert.ok(ui.logs.some((message)=>message.includes("拒绝使用「突袭」")));
 });
+
 test("AI 借势在已用次数耗尽时仍能评估并接受残血击杀", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","ai"),second=makePlayer("second",2,"dawn","ai"),equipment=instance("telescope"),assault=instance("assault");actor.hand.push(instance("leverage"));first.hand.push(assault);first.equipment=equipment;second.hp=1;const {game}=makeGame([actor,first,second]);first.turnFlags.attackUsed=first.turnFlags.attackLimit;
   const usable=RuleEngine.getUsableAssaultCards(game,first,second);
@@ -720,47 +718,56 @@ test("AI 借势在已用次数耗尽时仍能评估并接受残血击杀", () =>
   assert.equal(usable[0],assault);
   assert.equal(game.aiController.responsePolicy.shouldRespond(first,"leverageAssault",{target:second,equipment},usable),true);
 });
+
 test("借势锁定望远镜时响应前不卸装，仍按该武器修正后的距离使用普通突袭", async () => {
   const actor=makePlayer("actor",2,"dawn","human"),first=makePlayer("first",0,"dusk","human"),screen=makePlayer("screen",1,"dusk"),other=makePlayer("other",3,"dawn"),tail=makePlayer("tail",4,"dawn"),equipment=instance("telescope"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;
   const {game}=makeGame([actor,first,screen,other,tail],{response:(request)=>request.type==="leverageAssault"});assert.equal(DistanceSystem.getDistance(game,first,actor),1);
   assert.ok(RuleEngine.getLegalAssaultTargets(game,first).includes(actor));await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});assert.equal(first.equipment,equipment);assert.equal(first.turnFlags.attackUsed,1);
 });
+
 test("借势只接受唯一ID对应的原装备且不会用同名替代", async () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),original=instance("energyDevice"),replacement=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=original;const {game}=makeGame([actor,first]);
   assert.equal(await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:replacement.id,secondTargetId:actor.id}),false);assert.ok(actor.hand.includes(use));assert.equal(first.equipment,original);
   game.eventBus.on("beforeCardResolve","test:replace-leverage-equipment",(event)=>{if(event.card===use)first.equipment=replacement;});
   assert.equal(await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:original.id,secondTargetId:actor.id}),true);assert.equal(first.equipment,replacement);assert.ok(!actor.hand.includes(original));assert.ok(!actor.hand.includes(replacement));assert.ok(game.state.logs.some((entry)=>entry.message.includes("指定装备已离开装备区")));
 });
+
 test("借势并发重复提交只结算和转移一次", async () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;const {game}=makeGame([actor,first]);const selection={firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id};
   const results=await Promise.all([game.playCard(actor,use,[],selection),game.playCard(actor,use,[],selection)]);assert.equal(results.filter(Boolean).length,1);assert.equal(actor.hand.filter((card)=>card===equipment).length,1);assert.equal(first.equipment,null);assert.equal(game.state.deck.discardPile.filter((card)=>card===use).length,1);
 });
+
 test("借势响应前任一目标离场会取消且不按拒绝转移装备", async () => {
   for(const leaving of ["first","second"]){const actor=makePlayer(`actor-${leaving}`,0,"dawn"),first=makePlayer(`first-${leaving}`,1,"dusk"),second=makePlayer(`second-${leaving}`,2,"dawn"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;const {game}=makeGame([actor,first,second]);
     game.eventBus.on("beforeCardResolve",`test:leave-before-leverage:${leaving}`,(event)=>{if(event.card===use)(leaving==="first"?first:second).alive=false;});
     await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:second.id});assert.equal(first.equipment,equipment);assert.ok(!actor.hand.includes(equipment));assert.ok(game.state.logs.some((entry)=>entry.message.includes("目标已离场")));
   }
 });
+
 test("AI 主动借势第一目标需有距离合法第二目标且第二目标只按距离枚举", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk"),far=makePlayer("far",3,"dawn"),tail=makePlayer("tail",4,"dawn"),use=instance("leverage");actor.hand.push(use);first.equipment=instance("energyDevice");const {game}=makeGame([actor,first,ally,far,tail]);
   const actions=game.aiController.getLegalActions(actor).filter((action)=>action.card?.id===use.id);assert.ok(actions.length>0);for(const action of actions){assert.equal(action.selection.firstTargetId,first.id);assert.equal(action.selection.equipmentCardId,first.equipment.id);assert.ok(RuleEngine.getAssaultTargetCandidates(game,first).includes(action.targets[1]));}assert.ok(actions.some((action)=>action.targets[1]===actor));assert.ok(actions.some((action)=>action.targets[1]===ally));assert.ok(!actions.some((action)=>action.targets[1]===far));assert.ok(!actions.some((action)=>action.targets[1]===tail));
 });
+
 test("借势第二目标选择不读取第一目标手牌或突袭次数", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk"),equipment=instance("energyDevice");first.equipment=equipment;const {game}=makeGame([actor,first,ally]);
   first.hand=new Proxy([], {get(){throw new Error("借势第二目标筛选不应读取手牌");}});
   first.turnFlags=new Proxy(first.turnFlags,{get(target,key){if(key==="attackUsed"||key==="attackLimit")throw new Error("借势第二目标筛选不应读取突袭次数");return Reflect.get(target,key);}});
   const targets=RuleEngine.getAssaultTargetCandidates(game,first);assert.ok(targets.includes(actor));assert.ok(targets.includes(ally));
 });
+
 test("借势第二目标距离按第一目标到第二目标计算而非借势使用者", () => {
   const user=makePlayer("user",0,"dawn"),screen=makePlayer("screen",1,"dawn"),first=makePlayer("first",2,"dusk"),second=makePlayer("second",3,"dusk"),tail=makePlayer("tail",4,"dawn");first.equipment=instance("energyDevice");const {game}=makeGame([user,screen,first,second,tail]);
   assert.equal(DistanceSystem.getDistance(game,first,second),1);assert.equal(DistanceSystem.getDistance(game,user,second),2);
   const targets=RuleEngine.getAssaultTargetCandidates(game,first);assert.ok(targets.includes(second));
 });
+
 test("借势可指定距离内同阵营第二目标且核心接受该选择", async () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk","human"),ally=makePlayer("ally",2,"dusk"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;const {game,ui}=makeGame([actor,first,ally]);
   assert.equal(await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:ally.id}),true);
   assert.equal(ui.responseRequests.some((request)=>request.type==="leverageAssault"),false);assert.equal(first.equipment,null);assert.ok(actor.hand.includes(equipment));
 });
+
 test("真人借势可选择距离内同阵营第二目标", async () => {
   const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;const {game}=makeGame([actor,first,ally]);
   let call=0;const controller=new InteractionController({requestTarget:async(players)=>{call+=1;return call===1?players.find((player)=>player.id==="first"):players.find((player)=>player.id==="ally");}});
@@ -768,33 +775,40 @@ test("真人借势可选择距离内同阵营第二目标", async () => {
   const selection=await controller.requestCardFlow(game,actor,use,[]);
   assert.deepEqual(selection,{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:ally.id});
 });
+
 test("借势第二目标候选枚举不提前交出装备或结算突袭", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),ally=makePlayer("ally",2,"dusk"),equipment=instance("energyDevice"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;const {game}=makeGame([actor,first,ally]);const logs=game.state.logs.length;
   RuleEngine.getAssaultTargetCandidates(game,first);
   assert.equal(first.equipment,equipment);assert.equal(first.turnFlags.attackUsed,0);assert.ok(first.hand.includes(assault));assert.ok(actor.hand.includes(use));assert.equal(game.state.logs.length,logs);
 });
+
 test("AI 不会因估计没有突袭或次数用尽删除合法借势组合", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),use=instance("leverage");actor.hand.push(use);first.equipment=instance("energyDevice");const {game}=makeGame([actor,first]);first.turnFlags.attackUsed=first.turnFlags.attackLimit;
   const rootActions=game.aiController.getLegalActions(actor).filter((action)=>action.card?.id===use.id);assert.ok(rootActions.length>0);
   const visible=createAiVisibleState(actor.id,game.state),visibleFirst=visible.players.find((player)=>player.id===first.id);assert.equal(visibleFirst.assaultResponseProbability,0);assert.equal(visibleFirst.attackUsed,visibleFirst.attackLimit);
   const deepActions=game.aiController.actionGenerator.generateFromVisible(visible,actor.id).filter((action)=>action.card?.id===use.id);assert.ok(deepActions.length>0);assert.ok(deepActions.some((action)=>action.selection.secondTargetId===actor.id));
 });
+
 test("AI 借势响应使用统一策略且仍通过普通突袭流程", async () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),equipment=instance("battleDevice"),assault=instance("assault"),use=instance("leverage");actor.hand.push(use);first.hand.push(assault,instance("assault"));first.equipment=equipment;const {game}=makeGame([actor,first]);game.aiController.responsePolicy.shouldRespond=(_responder,type)=>type==="leverageAssault";
   await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});assert.equal(first.turnFlags.attackUsed,1);assert.equal(first.equipment,equipment);assert.ok(game.state.deck.discardPile.includes(assault));
 });
+
 test("AI 借势响应通过可见快照评估真实玩家状态", () => {
   const actor=makePlayer("actor",0,"dawn"),first=makePlayer("first",1,"dusk"),equipment=instance("battleDevice"),assault=instance("assault");first.hand.push(assault);first.equipment=equipment;const {game}=makeGame([actor,first]);
   const decision=game.aiController.responsePolicy.shouldRespond(first,"leverageAssault",{target:actor,equipment},[assault]);assert.equal(typeof decision,"boolean");
 });
+
 test("AI 借势有牌拒绝与无牌拒绝经过相同思考提示且日志不泄露原因", async () => {
   const run=async(withAssault)=>{const actor=makePlayer(`actor-${withAssault}`,0,"dawn"),first=makePlayer(`first-${withAssault}`,1,"dusk"),equipment=instance("energyDevice"),use=instance("leverage");actor.hand.push(use);first.equipment=equipment;if(withAssault)first.hand.push(instance("assault"));const {game,ui}=makeGame([actor,first]);game.aiController.responsePolicy.shouldRespond=()=>false;const prompts=[];ui.setPrompt=(message)=>prompts.push(message);await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});return {thinking:ui.thinking.map((entry)=>entry[0]),prompts,logs:ui.logs.filter((message)=>message.includes("拒绝使用「突袭」"))};};
   const without=await run(false),withCard=await run(true);assert.deepEqual(without.thinking,[true,false]);assert.deepEqual(withCard.thinking,[true,false]);assert.deepEqual(without.prompts,[]);assert.deepEqual(withCard.prompts,[]);assert.equal(without.logs.length,1);assert.equal(withCard.logs.length,1);assert.ok(without.logs.every((message)=>!/没有|次数|无法|距离/.test(message)));assert.ok(withCard.logs.every((message)=>!/没有|次数|无法|距离/.test(message)));
 });
+
 test("真人把自己设为借势第二目标并阵亡后不恢复继续出牌提示", async () => {
   const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk","ai"),ally=makePlayer("ally",2,"dawn","ai"),equipment=instance("energyDevice"),assault=instance("assault"),use=instance("leverage");actor.hp=1;actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;const {game,ui}=makeGame([actor,first,ally]);const prompts=[];ui.setPrompt=(message)=>prompts.push(message);game.aiController.responsePolicy.shouldRespond=(_responder,type)=>type==="leverageAssault";
   await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});assert.equal(actor.alive,false);assert.equal(game.pendingHumanPlayEnd,false);assert.ok(!prompts.some((message)=>message.includes("继续出牌")||message.includes("结束本次出牌阶段")));
 });
+
 test("借势人类多张突袭无需选牌也能使用且只消耗一张", async () => {
   const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),assaultA=instance("assault"),assaultB=instance("assault"),use=instance("leverage");
   actor.hand.push(use);first.hand.push(assaultA,assaultB);first.equipment=equipment;
@@ -804,6 +818,7 @@ test("借势人类多张突袭无需选牌也能使用且只消耗一张", async
   assert.ok(!first.hand.includes(assaultA));assert.ok(first.hand.includes(assaultB));
   assert.ok(game.state.deck.discardPile.includes(assaultA));assert.ok(!game.state.deck.discardPile.includes(assaultB));assert.ok(game.state.deck.discardPile.includes(use));
 });
+
 test("借势人类多张突袭拒绝时转移装备且不消耗突袭", async () => {
   const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),assaultA=instance("assault"),assaultB=instance("assault"),use=instance("leverage");
   actor.hand.push(use);first.hand.push(assaultA,assaultB);first.equipment=equipment;
@@ -813,6 +828,7 @@ test("借势人类多张突袭拒绝时转移装备且不消耗突袭", async ()
   assert.ok(first.hand.includes(assaultA));assert.ok(first.hand.includes(assaultB));
   assert.ok(game.state.deck.discardPile.includes(use));
 });
+
 test("借势响应窗口不再渲染卡牌列表且使用按钮无需选牌即可用", () => {
   const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};
   const fake={responseState:{request:{id:"leverage-ui",type:"leverageAssault",requiredCount:1,legalCardIds:["a1","a2"],timeoutMs:5000,presentation:{eventText:"事件",responseText:"响应说明",availabilityText:"需要 1 张突袭，当前 2 张。",buttonLabel:"使用突袭",declineLabel:"拒绝"}},deadline:Date.now()+5000,label:"使用突袭",selectedCardIds:new Set()},elements:{response_panel:panel},game:null,render(){}};
@@ -822,193 +838,1573 @@ test("借势响应窗口不再渲染卡牌列表且使用按钮无需选牌即�
   assert.match(html,/使用突袭/);assert.match(html,/拒绝/);assert.match(html,/需要 1 张突袭，当前 2 张/);
   assert.equal((html.match(/data-response-choice/g)??[]).length,2);assert.doesNotMatch(html,/disabled/);
 });
-test("群体牌会列出全部作用对象且结算模板显示目标标签", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dusk");const {game,ui}=makeGame([a,b,c]);const shockwave=instance("shockwave");a.hand.push(shockwave);await game.playCard(a,shockwave,[]);assert.equal(ui.currentCards[0].targetLabel,`${b.name}、${c.name}`);const markup=resolvingCardTemplate(shockwave,a.name,ui.currentCards[0].targetLabel);assert.match(markup,/作用对象/);assert.match(markup,new RegExp(`${b.name}、${c.name}`)); });
-test("上方 AI 思考提示出现时隐藏下方重复提示", () => { const classes=()=>{const values=new Set();return {values,toggle(name,force){if(force)values.add(name);else values.delete(name);}};};const thinkingClasses=classes(),promptClasses=classes();const fake={game:null,thinkingPlayerId:null,thinkingMessage:"",elements:{thinking_indicator:{classList:thinkingClasses,innerHTML:""},action_prompt:{classList:promptClasses}},render(){}};const player=makePlayer("ai",0,"dawn");UIManager.prototype.setThinking.call(fake,true,player,"准备使用突袭");assert.ok(promptClasses.values.has("is-hidden"));UIManager.prototype.setThinking.call(fake,false,player);assert.ok(!promptClasses.values.has("is-hidden")); });
-test("多层破势叠加并在下一次主动突袭一次性消耗", async () => { const a=makePlayer("a",0,"dawn"), b=makePlayer("b",1,"dusk"); b.hp=8;b.maxHp=8; const {game}=makeGame([a,b]); for(let i=0;i<2;i+=1){const c=instance("exposeWeakness");a.hand.push(c);await game.playCard(a,c,[]);} assert.equal(a.statuses.exposeWeakness.stacks,2); const attack=instance("assault");a.hand.push(attack);await game.playCard(a,attack,[b]);assert.equal(b.hp,5);assert.equal(a.statuses.exposeWeakness,undefined); });
-test("破势即使突袭被格挡也会消耗", async () => { const a=makePlayer("a",0,"dawn"), b=makePlayer("b",1,"dusk","human"); const {game}=makeGame([a,b],{response:()=>true}); a.statuses.exposeWeakness={stacks:2}; a.hand.push(instance("assault")); b.hand.push(instance("block")); await game.playCard(a,a.hand[0],[b]); assert.equal(b.hp,b.maxHp); assert.equal(a.statuses.exposeWeakness,undefined); });
-test("震荡不计突袭次数也不消耗破势", async () => { const a=makePlayer("a",0,"dawn"), b=makePlayer("b",1,"dusk"), c=makePlayer("c",2,"dusk"); const {game}=makeGame([a,b,c]); a.statuses.exposeWeakness={stacks:2}; const card=instance("shockwave");a.hand.push(card);await game.playCard(a,card,[b,c]);assert.equal(a.turnFlags.attackUsed,0);assert.equal(a.statuses.exposeWeakness.stacks,2); });
-test("二人小队可在同一出牌阶段连续使用多张调息", async () => { const {game,small}=makeTeamFixture();small.hp-=2;small.hand.push(instance("recover"),instance("recover"));await game.playCard(small,small.hand[0],[]);await game.playCard(small,small.hand[0],[]);assert.equal(small.hp,small.maxHp);assert.equal(small.turnFlags.recoverUsed,2);assert.equal(small.turnFlags.recoverLimit,null); });
-test("三人小队可在同一出牌阶段连续使用多张调息", async () => { const {game,large}=makeTeamFixture();game.state.currentPlayerIndex=large.seatIndex;large.hp-=2;large.hand.push(instance("recover"),instance("recover"));await game.playCard(large,large.hand[0],[]);await game.playCard(large,large.hand[0],[]);assert.equal(large.hp,large.maxHp);assert.equal(large.turnFlags.recoverUsed,2);assert.equal(large.turnFlags.recoverLimit,null); });
-test("聚能不能突破二人或三人阵营的能量上限", async () => { for(const kind of ["small","large"]){const fixture=makeTeamFixture(),player=fixture[kind];fixture.game.state.currentPlayerIndex=player.seatIndex;player.energy=player.maxEnergy-1;player.hand.push(instance("charge"),instance("charge"));await fixture.game.playCard(player,player.hand[0],[]);assert.equal(player.energy,player.maxEnergy);assert.equal(RuleEngine.canPlayCard(fixture.game,player,player.hand[0]).ok,false);} });
-test("窥探只向真人私密层展示并把该实体牌标记为已知", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk");const {game,ui}=makeGame([a,b]);const scout=instance("scout"), secret=instance("counter");a.hand.push(scout);b.hand.push(secret);b.bumpHandVersion();const hidden=game.cardSelectionSystem.createHiddenSelection(b);await game.playCard(a,scout,[b],{tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});assert.equal(ui.reveals[0].cards[0],secret);assert.equal(createOpponentHandView(a,b)[0].name,secret.name);assert.ok(!game.state.logs.at(-1).message.includes(secret.name)); });
-test("AI 窥探记忆绑定实体 card.id", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0});const scout=instance("scout"), secret=instance("block");a.hand.push(scout);b.hand.push(secret);await game.playCard(a,scout,[b]);assert.equal(a.aiMemory.knownCardsByPlayer[b.id][secret.id],secret.definitionId); });
-test("被窥探牌离开原手牌后实体记忆立即失效", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const secret=instance("block");b.hand.push(secret);game.rememberPrivateCard(a,b,secret);await game.discardCardFromHand(b,secret,"测试");assert.equal(a.aiMemory.knownCardsByPlayer[b.id][secret.id],undefined); });
-test("转移支持来源、接收者与指定牌三阶段", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);const transfer=instance("transfer"),moved=instance("block");a.hand.push(transfer);b.hand.push(moved);b.bumpHandVersion();const hidden=game.cardSelectionSystem.createHiddenSelection(b);await game.playCard(a,transfer,[],{sourceId:b.id,receiverId:c.id,tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});assert.ok(c.hand.includes(moved));assert.ok(!game.state.logs.at(-1).message.includes(moved.name)); });
-test("转移配置和README明确只允许移动手牌", async () => { const transfer=CARD_DEFINITIONS.transfer,readme=await readFile(projectFile("README.md"),"utf8");assert.deepEqual(transfer.targetZones,["hand"]);assert.deepEqual(transfer.selectionFlow,["source","receiver","handCard:1"]);assert.ok(!transfer.subtypes.includes("equipment-control"));assert.match(transfer.description,/手牌/);assert.match(transfer.description,/不能转移装备区/);assert.match(readme,/转移：[^\n]*装备区的牌不能被转移/);assert.doesNotMatch(readme,/转移：[^\n]*装备直接进入接收者装备区/); });
-test("真人转移选牌界面不提供装备区选项", async () => { const actor=makePlayer("actor",0,"dawn","human"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn"),use=instance("transfer"),held=instance("block"),equipment=instance("defenseDevice");actor.hand.push(use);from.hand.push(held);from.equipment=equipment;const {game}=makeGame([actor,from,receiver]),chosenPlayers=[from,receiver],ui={requestTarget:async()=>chosenPlayers.shift()},controller=new InteractionController(ui);let slots=null;controller.requestHiddenCards=async(selection,_count,_prompt,options)=>{slots=options.slots;return [selection.tokens[0].token];};const result=await controller.requestCardFlow(game,actor,use,[]);assert.equal(result.zone,"hand");assert.ok(result.tokens.length===1);assert.equal(slots.length,1);assert.ok(slots.every((slot)=>slot.zone!=="equipment"&&slot.token!=="public-equipment")); });
+
+test("借势内嵌突袭异常只失败清理突袭牌且外层借势正常收束", async () => {
+  const actor=makePlayer("nested-actor",0,"dawn","human"),first=makePlayer("nested-first",1,"dusk","human"),equipment=instance("energyDevice"),assault=instance("assault"),leverage=instance("leverage");actor.hand.push(leverage);first.hand.push(assault);first.equipment=equipment;
+  const {game}=makeGame([actor,first],{response:(request)=>request.type==="leverageAssault"});let outerUsed=0,innerUsed=0;
+  game.eventBus.on("beforeCardResolve","test:throw-nested-assault",(event)=>{if(event.card===assault)throw new Error("nested assault failed");});game.eventBus.on("cardUsed","test:count-nested-resolutions",(event)=>{if(event.card===leverage)outerUsed+=1;if(event.card===assault)innerUsed+=1;});
+  assert.equal(await game.playCard(actor,leverage,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id}),true);assert.equal(outerUsed,1);assert.equal(innerUsed,0);assertCardOnlyIn(game,assault,"discard");assertCardOnlyIn(game,leverage,"discard");assertCardOnlyIn(game,equipment,`hand:${actor.id}`);assert.equal(game.resolutionOwners.size,0);assert.equal(game.actionLocked,false);
+});
+
+test("AI 借势动作粗评分不重复计算后继状态中的伤害与装备收益", () => {
+  const actor=makePlayer("leverage-score-actor",0,"dawn"),first=makePlayer("leverage-score-first",1,"dusk"),second=makePlayer("leverage-score-second",2,"dusk"),{game}=makeGame([actor,first,second]),evaluator=game.aiController.evaluator,card={...CARD_DEFINITIONS.leverage,id:"leverage-score"},action={type:"card",card,targets:[{id:first.id},{id:second.id}]},makeVisible=(equipmentDefinitionId,hp)=>({players:[{id:actor.id,battleTeam:"dawn",handCount:1},{id:first.id,battleTeam:"dusk",equipmentDefinitionId,attackUsed:0,attackLimit:1,assaultResponseProbability:.8},{id:second.id,battleTeam:"dusk",hp,maxHp:4}]});assert.equal(evaluator.actionUtility(action,actor,makeVisible("battleDevice",1)),evaluator.actionUtility(action,actor,makeVisible("energyDevice",4)));
+});
+
+test("AI 普通突袭与借势响应共用同一模拟入口", () => {
+  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,hand:[{id:"a",definitionId:"assault"},{id:"l",definitionId:"leverage"}],attackUsed:0,attackLimit:2,counterProbability:0},{id:"first",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,attackUsed:0,attackLimit:1,equipmentDefinitionId:"energyDevice",assaultResponseProbability:1,expectedAssaultCount:1,blockProbability:0,counterProbability:0},{id:"second",seatIndex:2,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:0,blockProbability:0,counterProbability:0}]};
+  const simulator=new AiSimulator(state),original=simulator.simulateAssault.bind(simulator),sources=[];simulator.simulateAssault=(next,source,target,chance,options)=>{sources.push(source.id);return original(next,source,target,chance,options);};simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"a"},targets:[{id:"first"}]},"actor");simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}},"actor");assert.deepEqual(sources,["actor","first"]);
+});
+
+test("AI 模拟借势不会对同阵营第二目标使用突袭", () => {
+  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},{id:"first",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,hand:[{id:"a1",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:1,blockProbability:0,counterProbability:0},{id:"second",seatIndex:2,battleTeam:"dusk",hp:4,maxHp:4,shield:2,energy:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0}]};
+  const game={state:{players:state.players}};assert.ok(!RuleEngine.getLegalAssaultTargets(game,state.players[1]).some((candidate)=>candidate.id==="second"));assert.ok(RuleEngine.getAssaultTargetCandidates(game,state.players[1]).some((candidate)=>candidate.id==="second"));
+  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}},"actor"),first=next.players[1],second=next.players[2];
+  assert.equal(second.hp,4);assert.equal(second.shield,2);assert.equal(first.attackUsed,0);assert.equal(first.attackUseSlots[0][0].available,true);assert.equal(first.expectedAssaultCount,1);assert.equal(first.handCount,2);assert.equal(first.hand.length,1);assert.equal(first.equipmentDefinitionId,null);assert.equal(first.equipmentRetentionProbability,0);assert.equal(next.players[0].expectedEquipmentGain,CARD_DEFINITIONS.energyDevice.aiValue);assert.equal(next.players[0].handCount,1);
+});
+
+test("AI 模拟借势不会对同阵营使用者本人使用突袭", () => {
+  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},{id:"first",seatIndex:1,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"a1",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:1,blockProbability:0,counterProbability:0}]};
+  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"actor"}],selection:{firstTargetId:"first",secondTargetId:"actor"}},"actor"),actor=next.players[0],first=next.players[1];
+  assert.equal(actor.hp,4);assert.equal(first.attackUsed,0);assert.equal(first.attackUseSlots[0][0].available,true);assert.equal(first.expectedAssaultCount,1);assert.equal(first.handCount,1);assert.equal(first.equipmentDefinitionId,null);assert.equal(actor.expectedEquipmentGain,CARD_DEFINITIONS.energyDevice.aiValue);assert.equal(actor.handCount,1);
+});
+
+test("AI 模拟借势对合法敌方第二目标保留突袭使用", () => {
+  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},{id:"first",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,hand:[{id:"a1",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:1,blockProbability:0,counterProbability:0},{id:"second",seatIndex:2,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0}]};
+  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}},"actor"),first=next.players[1],second=next.players[2];
+  assert.ok(first.attackUsed>0);assert.ok(first.expectedAssaultCount<1);assert.ok(first.handCount<2);assert.ok(second.hp<4);
+});
+
+test("AI 借势用连续期望模拟使用与拒绝且不按阈值删除装备", () => {
+  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},{id:"first",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,attackUsed:0,attackLimit:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,assaultResponseProbability:.5,expectedAssaultCount:.5,blockProbability:0,counterProbability:0},{id:"second",seatIndex:2,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:0,blockProbability:.2,twoBlockProbability:0,counterProbability:0}]};
+  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}},"actor"),actor=next.players[0],first=next.players[1],second=next.players[2];assert.equal(first.equipmentDefinitionId,"battleDevice");assert.ok(first.equipmentRetentionProbability>0&&first.equipmentRetentionProbability<1);assert.ok(actor.handCount>0&&actor.handCount<1);assert.ok(actor.expectedEquipmentGain>0);assert.ok(first.attackUsed>0&&first.attackUsed<1);assert.ok(second.hp<4);
+});
+
+test("AI 连续借势按装备剩余概率计算且累计获得期望不超过同一件装备", () => {
+  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,hand:[{id:"l1",definitionId:"leverage"},{id:"l2",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},{id:"first",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,attackUsed:0,attackLimit:2,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,assaultResponseProbability:.5,expectedAssaultCount:1,blockProbability:0,counterProbability:0},{id:"second",seatIndex:2,battleTeam:"dawn",hp:5,maxHp:5,shield:0,energy:0,alive:true,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0}]};
+  const simulator=new AiSimulator(state),action=(id)=>({type:"card",card:{...CARD_DEFINITIONS.leverage,id},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}}),once=simulator.apply(state,action("l1"),"actor"),twice=simulator.apply(once,action("l2"),"actor"),equipmentValue=CARD_DEFINITIONS.battleDevice.aiValue,firstOnce=once.players[1],firstTwice=twice.players[1],actorTwice=twice.players[0];assert.ok(firstOnce.equipmentRetentionProbability<1&&firstOnce.equipmentRetentionProbability>0);assert.ok(firstTwice.equipmentRetentionProbability<firstOnce.equipmentRetentionProbability);assert.ok(actorTwice.expectedEquipmentGain/equipmentValue<=1+1e-9);assert.ok(actorTwice.handCount<=1+1e-9);assert.ok(firstTwice.attackUsed<=2);
+});
+
+test("AI 模拟借势不受普通突袭次数槽耗尽影响", () => {
+  const basePlayers=(attackUsed)=>({players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},
+    {id:"first",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"a1",definitionId:"assault"},{id:"a2",definitionId:"assault"}],attackUsed,attackLimit:1,attackRange:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:2,blockProbability:0,counterProbability:0},
+    {id:"second",seatIndex:2,battleTeam:"dawn",alive:true,hp:8,maxHp:8,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0}
+  ]});
+  const action={type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}};
+  const availableState=basePlayers(0),exhaustedState=basePlayers(1);
+  const availableNext=new AiSimulator(availableState).apply(availableState,action,"actor");
+  const exhaustedNext=new AiSimulator(exhaustedState).apply(exhaustedState,action,"actor");
+  const availableFirst=availableNext.players[1],exhaustedFirst=exhaustedNext.players[1];
+  const availableIncrement=availableFirst.attackUsed-0;
+  const exhaustedIncrement=exhaustedFirst.attackUsed-1;
+  assert.ok(availableIncrement>0);
+  assert.ok(exhaustedIncrement>0);
+  assertClose(availableIncrement,exhaustedIncrement);
+  assert.ok(exhaustedFirst.attackUsed>exhaustedFirst.attackLimit);
+  assertClose(exhaustedFirst.attackUsed,1+availableIncrement);
+  assertClose(availableNext.players[2].hp,exhaustedNext.players[2].hp);
+  assertClose(availableFirst.handCount,exhaustedFirst.handCount);
+  assertClose(availableFirst.expectedAssaultCount,exhaustedFirst.expectedAssaultCount);
+  assertClose(availableFirst.equipmentRetentionProbability,exhaustedFirst.equipmentRetentionProbability);
+  assertClose(availableNext.players[0].expectedEquipmentGain,exhaustedNext.players[0].expectedEquipmentGain);
+});
+
+test("借势强制突袭复用真实次数槽且震荡不消费次数槽", () => {
+  const leverageState={players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"l1",definitionId:"leverage"},{id:"l2",definitionId:"leverage"}],counterProbability:0},
+    {id:"first",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:2,attackUsed:0,attackLimit:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:2,blockProbability:0,counterProbability:0},
+    {id:"second",seatIndex:2,battleTeam:"dawn",alive:true,hp:8,maxHp:8,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0}
+  ]},simulator=new AiSimulator(leverageState),action=(id)=>({type:"card",card:{...CARD_DEFINITIONS.leverage,id},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}}),once=simulator.apply(leverageState,action("l1"),"actor"),twice=simulator.apply(once,action("l2"),"actor");
+  const onceFirst=once.players[1],twiceFirst=twice.players[1];
+  assert.ok(onceFirst.attackUsed>0&&onceFirst.attackUsed<1);
+  assert.ok(twiceFirst.attackUsed>twiceFirst.attackLimit);
+  assert.ok(twiceFirst.attackUsed>onceFirst.attackUsed+1e-9);
+
+  const shockState={players:[{id:"source",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"shock",definitionId:"shockwave"},{id:"hit",definitionId:"assault"}],attackUsed:0,attackLimit:1,counterProbability:0},{id:"enemy",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0,expectedRecoverCount:0}]};
+  const shocked=new AiSimulator(shockState).apply(shockState,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"shock"},targets:[{id:"enemy"}]},"source");assertClose(shocked.players[0].attackUsed,0);
+  const assaulted=new AiSimulator(shocked).apply(shocked,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"enemy"}]},"source");assertClose(assaulted.players[0].attackUsed,1);
+});
+
+test("借势风险：动态格挡剩余0时防御装备不再抬高非零风险", () => {
+  const makeState=(defense)=>({remainingCardCounts:{block:0,assault:10},players:[
+    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},
+    {id:"first",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:2,hand:[{id:"a1",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:1,blockProbability:0,counterProbability:0},
+    {id:"second",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0,equipmentDefinitionId:defense?"defenseDevice":null,equipmentRetentionProbability:defense?1:0}
+  ]});
+  const action={type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}};
+  const without=new AiSimulator(makeState(false)).apply(makeState(false),action,"actor");
+  const withDefense=new AiSimulator(makeState(true)).apply(makeState(true),action,"actor");
+  assertClose(withDefense.players[0].handCount,without.players[0].handCount);
+  assertClose(withDefense.players[1].attackUsed,without.players[1].attackUsed);
+  assertClose(withDefense.players[2].hp,without.players[2].hp);
+});
+
+// ---- 掠夺 ----
+
 test("真人掠夺指定隐藏牌后按已知公开牌名记录", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const use=instance("plunder"),secret=instance("block");a.hand.push(use);b.hand.push(secret);b.bumpHandVersion();const h=game.cardSelectionSystem.createHiddenSelection(b);await game.playCard(a,use,[b],{tokens:[h.tokens[0].token],selectionId:h.selectionId});assert.ok(a.hand.includes(secret));assert.ok(game.state.logs.some((entry)=>entry.message.includes(secret.name))); });
-test("破坏公开牌名并把牌移入弃牌堆", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const use=instance("destroy"),secret=instance("block");a.hand.push(use);b.hand.push(secret);b.bumpHandVersion();const h=game.cardSelectionSystem.createHiddenSelection(b);await game.playCard(a,use,[b],{tokens:[h.tokens[0].token],selectionId:h.selectionId});assert.ok(game.state.deck.discardPile.includes(secret));assert.ok(game.state.logs.some((entry)=>entry.message.includes(secret.name))); });
-test("四种旧装备采用README中的新名称且保留稳定definitionId", () => { assert.deepEqual(Object.fromEntries(["energyDevice","recycleDevice","defenseDevice","battleDevice"].map((id)=>[id,CARD_DEFINITIONS[id].name])),{energyDevice:"充能桩",recycleDevice:"回收站",defenseDevice:"雷达",battleDevice:"军火库"}); });
-test("转移与掠夺按统一动态距离限制且转移来源必须持有手牌", () => { const actor=makePlayer("actor",0,"dawn"),near=makePlayer("near",1,"dusk"),far=makePlayer("far",2,"dusk"),other=makePlayer("other",3,"dawn"),tail=makePlayer("tail",4,"dawn");near.hand.push(instance("block"));far.equipment=instance("barrierDevice");const {game}=makeGame([actor,near,far,other,tail]);assert.ok(RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(near));assert.ok(!RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(far));assert.ok(!RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.plunder).includes(far));assert.ok(RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.destroy).includes(far));far.hand.push(instance("charge"));far.equipment=instance("energyDevice");actor.equipment=instance("telescope");assert.ok(RuleEngine.getTransferSources(game,actor,CARD_DEFINITIONS.transfer).includes(far));assert.ok(RuleEngine.getCardTargets(game,actor,CARD_DEFINITIONS.plunder).includes(far)); });
-test("真人和核心都拒绝把装备区实体作为转移牌", async () => { const actor=makePlayer("actor",0,"dawn","human"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn"),equipment=instance("energyDevice"),hiddenCard=instance("block"),oldEquipment=instance("defenseDevice"),use=instance("transfer");const {game}=makeGame([actor,from,receiver]);actor.hand.push(use);from.hand.push(hiddenCard);from.equipment=equipment;receiver.equipment=oldEquipment;const selection=game.cardSelectionSystem.createHiddenSelection(from);assert.equal(await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),false);assert.ok(actor.hand.includes(use));assert.equal(from.equipment,equipment);assert.equal(receiver.equipment,oldEquipment);assert.ok(from.hand.includes(hiddenCard));assert.ok(!game.state.deck.discardPile.includes(use));assert.equal(game.cardSelectionSystem.isSelectionActive(selection.selectionId,from),false); });
+
 test("掠夺可把距离2内目标装备公开移入施牌者手牌", async () => { const actor=makePlayer("actor",0,"dawn","human"),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),equipment=instance("energyDevice"),original=instance("battleDevice"),use=instance("plunder");const {game}=makeGame([actor,near,target,other,tail]);actor.equipment=original;actor.hand.push(use);target.equipment=equipment;const handVersion=actor.handVersion,selection=game.cardSelectionSystem.createHiddenSelection(target);assert.equal(await game.playCard(actor,use,[target],{zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),true);assert.equal(target.equipment,null);assert.equal(actor.equipment,original);assert.ok(actor.hand.includes(equipment));assert.ok(!game.state.deck.discardPile.includes(original));assert.ok(actor.handVersion>handVersion);assert.ok(game.state.logs.some((entry)=>entry.message.includes("充能桩")&&entry.message.includes("收入手牌"))); });
+
+// ---- 破坏 ----
+
+test("破坏公开牌名并把牌移入弃牌堆", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const use=instance("destroy"),secret=instance("block");a.hand.push(use);b.hand.push(secret);b.bumpHandVersion();const h=game.cardSelectionSystem.createHiddenSelection(b);await game.playCard(a,use,[b],{tokens:[h.tokens[0].token],selectionId:h.selectionId});assert.ok(game.state.deck.discardPile.includes(secret));assert.ok(game.state.logs.some((entry)=>entry.message.includes(secret.name))); });
+
 test("破坏可不限距离弃置装备区装备", async () => { const actor=makePlayer("actor",0,"dawn"),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),equipment=instance("barrierDevice"),use=instance("destroy");const {game}=makeGame([actor,near,target,other,tail]);actor.hand.push(use);target.equipment=equipment;assert.equal(DistanceSystem.getDistance(game,actor,target),3);const selection=game.cardSelectionSystem.createHiddenSelection(target);assert.equal(await game.playCard(actor,use,[target],{zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),true);assert.equal(target.equipment,null);assert.ok(game.state.deck.discardPile.includes(equipment)); });
-test("影客窃取可把距离2内敌方装备收入手牌且不替换原装备", async () => { const shade=makePlayer("shade",0,"dawn","ai",3),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),equipment=instance("energyDevice"),original=instance("battleDevice");const {game}=makeGame([shade,near,target,other,tail],{random:()=>0});shade.energy=2;shade.equipment=original;target.equipment=equipment;assert.ok(RuleEngine.getSkillTargets(game,shade,ACTIVE_SKILLS.stealSkill).includes(target));assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);assert.equal(target.equipment,null);assert.equal(shade.equipment,original);assert.ok(shade.hand.includes(equipment));assert.ok(!game.state.deck.discardPile.includes(equipment));const blockedShade=makePlayer("blocked-shade",0,"dawn","ai",3),blockedNear=makePlayer("blocked-near",1,"dawn"),blocked=makePlayer("blocked",2,"dusk"),blockedOther=makePlayer("blocked-other",3,"dusk"),blockedTail=makePlayer("blocked-tail",4,"dawn");blocked.equipment=instance("barrierDevice");const {game:blockedGame}=makeGame([blockedShade,blockedNear,blocked,blockedOther,blockedTail]);assert.equal(DistanceSystem.getDistance(blockedGame,blockedShade,blocked),3);assert.ok(!RuleEngine.getSkillTargets(blockedGame,blockedShade,ACTIVE_SKILLS.stealSkill).includes(blocked)); });
-test("装备区选择令牌绑定本次会话、所有者和手牌版本", async () => { const actor=makePlayer("actor",0,"dawn"),owner=makePlayer("owner",1,"dusk"),equipment=instance("energyDevice");owner.equipment=equipment;const {game}=makeGame([actor,owner]);const selection=game.cardSelectionSystem.createHiddenSelection(owner);owner.bumpHandVersion();assert.equal(await game.choosePlayerZoneCard(actor,owner,"测试",{zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),null);const otherSelection=game.cardSelectionSystem.createHiddenSelection(actor);assert.equal(await game.choosePlayerZoneCard(actor,owner,"测试",{zone:"equipment",equipmentCardId:equipment.id,selectionId:otherSelection.selectionId}),null); });
+
+// ---- 丰收 ----
+
 test("丰收直接摸2且无需弃牌", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);game.state.deck.cards.push(instance("block"),instance("charge"));const use=instance("harvest");a.hand.push(use);await game.playCard(a,use,[]);assert.equal(a.hand.length,2); });
-test("挑衅：有突袭者可打出，没有者优先消耗护盾且不触发格挡或雷达", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk","human");const {game,ui}=makeGame([a,b,c],{response:(r)=>r.targetPlayerId===b.id});a.hand.push(instance("provoke"));b.hand.push(instance("assault"));c.shield=2;c.equipment=instance("defenseDevice");game.state.deck.cards.push(instance("harvest"));const hp=c.hp;await game.playCard(a,a.hand[0],[b,c]);assert.equal(b.hand.length,0);assert.equal(c.hp,hp);assert.equal(c.shield,1);assert.ok(!ui.responseRequests.some((request)=>request.type==="block"));assert.equal(game.state.deck.judgmentZone.length,0);assert.equal(game.state.deck.cards.at(-1)?.definitionId,"harvest"); });
+
+// ---- 决斗 ----
+
 test("决斗轮流打出突袭，先不能响应者承受可被护盾吸收的1伤害", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:(r)=>r.targetPlayerId===b.id});const duel=instance("duel");a.hand.push(duel);b.hand.push(instance("assault"));a.shield=1;await game.playCard(a,duel,[b]);assert.equal(a.hp,a.maxHp);assert.equal(a.shield,0);assert.equal(a.turnFlags.attackUsed,0); });
+
 test("决斗轮到无突袭真人时先显示响应窗口再结算伤害", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>false});const duel=instance("duel"),hp=b.hp;a.hand.push(duel);await game.playCard(a,duel,[b]);const request=ui.responseRequests.find((entry)=>entry.type==="assaultDiscard");assert.ok(request);assert.deepEqual(request.legalCardIds,[]);assert.match(request.presentation.eventText,new RegExp(`${a.name}.*你.*决斗`));assert.match(request.presentation.responseText,/1 张突袭/);assert.equal(b.hp,hp-1); });
-test("挑衅轮到无突袭真人时仍显示响应窗口", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>false});const provoke=instance("provoke"),hp=b.hp;a.hand.push(provoke);await game.playCard(a,provoke,[b]);const request=ui.responseRequests.find((entry)=>entry.type==="assaultDiscard");assert.ok(request);assert.equal(request.presentation.responseCardName,"突袭");assert.match(request.presentation.availabilityText,/当前 0 张/);assert.equal(b.hp,hp-1); });
-test("反制链响应说明包含来源、目标、原牌和当前反制", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.legalCardIds.length>=request.requiredCount});a.hand.push(instance("harvest"));b.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);const chained=ui.responseRequests.find((request)=>request.type==="counter"&&request.sourcePlayerId===b.id&&request.targetPlayerId===c.id);assert.ok(chained);assert.match(chained.presentation.eventText,new RegExp(`${b.name}.*${a.name}.*丰收.*反制`));assert.match(chained.presentation.responseText,/继续.*反制/); });
-test("无人物目标的战术牌响应文案不再显示对战场使用", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai");const presentation=buildResponsePresentation(responder,"counter",{source,card:instance("transfer"),targets:[]},1,0,"反制");assert.equal(presentation.eventText,`${source.name}使用了「转移」。`);assert.doesNotMatch(presentation.eventText,/对战场使用/); });
-test("破势自目标反制响应文案不显示使用者为目标", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai"),card=instance("exposeWeakness");const presentation=buildResponsePresentation(responder,"counter",{source,target:source,targets:[source],card},1,0,"反制");assert.equal(presentation.eventText,`${source.name}使用了「${card.name}」。`);assert.ok(!presentation.eventText.includes(`对${source.name}`)); });
-test("破势真实出牌流程的反制请求不显示自目标", async () => { const source=makePlayer("source",0,"dawn"),responder=makePlayer("human",1,"dusk","human");const {game,ui}=makeGame([source,responder],{response:()=>false});const card=instance("exposeWeakness");source.hand.push(card);await game.playCard(source,card,[]);const request=ui.responseRequests.find((entry)=>entry.type==="counter"&&entry.targetPlayerId===responder.id);assert.ok(request);assert.equal(request.presentation.eventText,`${source.name}使用了「${card.name}」。`);assert.ok(!request.presentation.eventText.includes(`对${source.name}`)); });
-test("真实目标战术牌反制文案仍显示目标且无目标牌保持原样", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai"),target=makePlayer("target",2,"dawn","ai");const duel=instance("duel");assert.equal(buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:duel},1,0,"反制").eventText,`${source.name}对${target.name}使用了「决斗」。`);const harvest=instance("harvest");assert.equal(buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:harvest},1,0,"反制").eventText,`${source.name}使用了「丰收」。`); });
-const renderResponseEventHtml = async (presentation) => {
-  const previousWindow = globalThis.window;
-  globalThis.window = { setInterval, clearInterval };
-  const panel = { innerHTML:"", classList:{ add(){}, remove(){} }, querySelector(){ return null; } };
-  const fake = { responseState:null, elements:{ response_panel:panel }, game:{ cleanupManager:{ delay:()=>new Promise(()=>{}) } }, render(){} };
-  try {
-    const pending = UIManager.prototype.requestResponse.call(fake, { id:"team-color-render", requiredCount:1, legalCardIds:[], timeoutMs:5000, presentation }, "反制");
-    const html = panel.innerHTML;
-    fake.responseState.resolve(false);
-    await pending;
-    return html;
-  } finally {
-    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+
+// ---- 互利 ----
+
+test("互利在反制窗口之后才展示并按座位每人选1张", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);assert.equal(game.state.publicCardPool.length,0);assert.equal(ui.publicRequests.length,1); });
+
+test("互利选牌严格跳过阵亡座位", async () => { const a=makePlayer("a",0,"dawn","human"),dead=makePlayer("dead",1,"dusk"),b=makePlayer("b",2,"dusk"),c=makePlayer("c",3,"dawn");dead.alive=false;const {game}=makeGame([a,dead,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(dead.hand.length,0);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1); });
+
+test("互利触发重洗后弃牌堆别名保持同步", async () => {
+  const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);
+  const discards=[instance("block"),instance("charge"),instance("recover")];for(const card of discards) game.state.deck.discard(card);
+  let aliasDuringReveal=true;const originalShow=game.ui.showPublicPool;game.ui.showPublicPool=(cards)=>{aliasDuringReveal=game.state.discardPile===game.state.deck.discardPile;originalShow?.(cards);};
+  const mb=instance("mutualBenefit");a.hand.push(mb);
+  assert.equal(await game.playCard(a,mb,[]),true);
+  assert.equal(aliasDuringReveal,true);
+  assert.equal(game.state.deck.reshuffleCount,1);
+  assert.equal(game.state.publicCardPool.length,0);
+  assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);
+  assert.equal(game.state.deck.cards.length,0);
+  assert.equal(game.state.discardPile,game.state.deck.discardPile);
+  assert.equal(game.state.discardPile.length,1);
+  assert.ok(game.state.deck.discardPile.includes(mb));
+  const drafted=new Set([...a.hand,...b.hand,...c.hand]);for(const card of discards) assert.ok(drafted.has(card));
+});
+
+test("互利不触发重洗时弃牌堆别名保持不变", async () => {
+  const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);
+  game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));
+  const mb=instance("mutualBenefit");a.hand.push(mb);
+  assert.equal(game.state.deck.reshuffleCount,0);
+  assert.equal(await game.playCard(a,mb,[]),true);
+  assert.equal(game.state.deck.reshuffleCount,0);
+  assert.equal(game.state.discardPile,game.state.deck.discardPile);
+  assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);
+  assert.equal(game.state.deck.cards.length,0);
+  assert.equal(game.state.deck.discardPile.length,1);
+  assert.ok(game.state.deck.discardPile.includes(mb));
+});
+
+test("互利公共牌揭示触发重洗后两个弃牌堆入口读取同一数组", () => {
+  const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);
+  const discards=[instance("block"),instance("charge"),instance("recover")];for(const card of discards) game.state.deck.discard(card);
+  const pool=game.publicCardPool.reveal(3);
+  assert.equal(pool.length,3);
+  assert.equal(game.state.deck.reshuffleCount,1);
+  assert.equal(game.state.discardPile,game.state.deck.discardPile);
+  assert.equal(game.state.discardPile.length,0);
+  const extra=instance("shield");
+  assert.equal(game.state.deck.discard(extra),true);
+  assert.ok(game.state.discardPile.includes(extra));
+  assert.equal(game.state.discardPile.includes(extra),game.state.deck.discardPile.includes(extra));
+});
+
+// ---- 共生 ----
+
+test("共生按全体存活角色结算治疗", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");[a,b,c].forEach((p)=>p.hp-=1);const {game}=makeGame([a,b,c]);a.hand.push(instance("symbiosis"));await game.playCard(a,a.hand[0],[]);[a,b,c].forEach((p)=>assert.equal(p.hp,p.maxHp)); });
+
+// ---- 闪电 ----
+
+test("闪电：定义、数量与牌堆总数正确", () => {
+  const lightning = CARD_DEFINITIONS.lightning;
+  assert.ok(lightning);
+  assert.equal(lightning.category, "tactic");
+  assert.equal(lightning.count, 2);
+  assert.equal(lightning.targetType, "none");
+  assert.equal(lightning.aiValue, 5);
+  assert.ok(lightning.description.includes("闪电"));
+  assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("lightning"));
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 25);
+  const tacticTotal = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "tactic").reduce((sum, card) => sum + card.count, 0);
+  assert.equal(tacticTotal, 53);
+  assert.equal(TOTAL_CARD_COUNT, 160);
+});
+
+test("闪电：Deck.build 生成正好两张不同实体 ID", () => {
+  const deck = new Deck(() => 0);
+  assert.equal(deck.build(), 160);
+  const cards = deck.cards.filter((card) => card.definitionId === "lightning");
+  assert.equal(cards.length, 2);
+  assert.equal(new Set(cards.map((card) => card.id)).size, 2);
+});
+
+test("闪电：无状态时可用，成功后获得状态并进入弃牌堆", async () => {
+  const source = makePlayer("a", 0, "dawn", "human"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([source, enemy]);
+  const card = instance("lightning");
+  source.hand.push(card);
+  assert.equal(await game.playCard(source, card, []), true);
+  assert.deepEqual(source.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: source.id });
+  assert.ok(game.state.deck.discardPile.includes(card));
+});
+
+test("闪电：已有闪电状态时真实规则拒绝使用", async () => {
+  const source = makePlayer("a", 0, "dawn", "human"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([source, enemy]);
+  source.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: source.id };
+  const card = instance("lightning");
+  source.hand.push(card);
+  assert.equal(RuleEngine.canPlayCard(game, source, card).ok, false);
+  assert.equal(await game.playCard(source, card, []), false);
+  assert.ok(source.hand.includes(card));
+});
+
+test("闪电：使用阶段普通反制成功后不获得状态且不转移", async () => {
+  const source = makePlayer("a", 0, "dawn", "human"), enemy = makePlayer("b", 1, "dusk", "human"), receiver = makePlayer("c", 2, "dawn");
+  const { game } = makeGame([source, enemy, receiver], { response: () => true });
+  const card = instance("lightning"), counter = instance("counter");
+  source.hand.push(card);
+  enemy.hand.push(counter);
+  assert.equal(await game.playCard(source, card, []), true);
+  assert.equal(source.statuses.lightning, undefined);
+  assert.equal(receiver.statuses.lightning, undefined);
+  assert.ok(game.state.deck.discardPile.includes(card));
+  assert.ok(game.state.deck.discardPile.includes(counter));
+});
+
+test("闪电：使用回合不立即判定，下一次实际回合在摸牌前结算", async () => {
+  const source = makePlayer("a", 0, "dawn", "ai"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([source, enemy]);
+  const card = instance("lightning");
+  source.hand.push(card);
+  await game.playCard(source, card, []);
+  assert.equal(source.hp, source.maxHp);
+  assert.ok(source.statuses.lightning);
+  game.state.deck.cards = [instance("defenseDevice")];
+  game.state.deck.discardPile = [];
+  let damageBeforeDraw = false;
+  game.eventBus.on("beforeDraw", "test:lightning-before-draw", (event) => {
+    if (event.player === source && source.hp < source.maxHp) damageBeforeDraw = true;
+  });
+  game.aiController.getLegalActions = () => [{ type:"end" }];
+  game.aiController.selectAction = async () => ({ type:"end" });
+  await game.takeTurn(source, game.state.gameId);
+  assert.equal(damageBeforeDraw, true);
+  assert.equal(source.hp, source.maxHp - 3);
+  assert.equal(source.statuses.lightning, undefined);
+});
+
+test("闪电：判定非装备牌后移除状态并顺时针转移，保留来源元数据", async () => {
+  const holder = makePlayer("a", 0, "dawn"), next = makePlayer("b", 1, "dusk"), tail = makePlayer("c", 2, "dawn");
+  const { game } = makeGame([holder, next, tail]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  game.state.deck.cards = [instance("assault")];
+  game.state.deck.discardPile = [];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.deepEqual(next.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
+  assert.equal(tail.statuses.lightning, undefined);
+  assert.ok(game.state.deck.discardPile.some((entry) => entry.definitionId === "assault"));
+});
+
+test("闪电：判定装备牌触发3点中立伤害且状态立即消费", async () => {
+  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  const equipment = instance("defenseDevice");
+  game.state.deck.cards = [equipment];
+  const events = [];
+  game.eventBus.on("beforeDamage", "test:lightning-before", (event) => events.push(["before", event.source, event.damageType, { ...event.metadata }]));
+  game.eventBus.on("afterDamage", "test:lightning-after", (event) => events.push(["after", event.source, event.actualAmount, { ...event.metadata }]));
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.hp, holder.maxHp - 3);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.equal(enemy.statuses.lightning, undefined);
+  assert.equal(events.length, 2);
+  assert.equal(events[0][1], null);
+  assert.equal(events[0][2], "lightning");
+  assert.equal(events[0][3].statusId, "lightning");
+  assert.equal(events[0][3].cardDefinitionId, "lightning");
+  assert.equal(events[0][3].originPlayerId, holder.id);
+  assert.equal(events[0][3].currentHolderId, holder.id);
+  assert.equal(events[0][3].baseDamage, 3);
+  assert.equal(events[0][3].judgmentCategory, "equipment");
+  assert.equal(events[1][3].statusId, "lightning");
+  assert.ok(game.state.deck.discardPile.includes(equipment));
+});
+
+test("闪电：伤害不请求格挡且不触发雷达防御判定", async () => {
+  const holder = makePlayer("a", 0, "dawn");
+  const { game } = makeGame([holder]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  holder.equipment = instance("defenseDevice");
+  const block = instance("block");
+  holder.hand.push(block);
+  game.state.deck.cards = [instance("energyDevice")];
+  let judgmentReveals = 0;
+  game.eventBus.on("judgmentRevealed", "test:lightning-judge-count", () => { judgmentReveals += 1; });
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.hp, holder.maxHp - 3);
+  assert.ok(holder.hand.includes(block));
+  assert.equal(judgmentReveals, 1);
+  assert.equal(game.state.deck.judgmentZone.length, 0);
+});
+
+test("闪电：护盾吸收后按统一伤害系统记录", async () => {
+  const holder = makePlayer("a", 0, "dawn");
+  const { game } = makeGame([holder]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  holder.shield = 1;
+  const events = [];
+  game.eventBus.on("afterDamage", "test:lightning-shield", (event) => events.push({ actualAmount:event.actualAmount, shieldAbsorbed:event.shieldAbsorbed, source:event.source }));
+  game.state.deck.cards = [instance("energyDevice")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.hp, holder.maxHp - 2);
+  assert.equal(holder.shield, 0);
+  assert.equal(events[0].actualAmount, 2);
+  assert.equal(events[0].shieldAbsorbed, 1);
+  assert.equal(events[0].source, null);
+});
+
+test("闪电：伤害被防止降为0时状态仍被消费且不转移", async () => {
+  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  game.state.deck.cards = [instance("energyDevice")];
+  game.eventBus.on("beforeDamage", "test:lightning-prevent", (event) => { if (event.damageType === "lightning") event.amount = 0; });
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.hp, holder.maxHp);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.equal(enemy.statuses.lightning, undefined);
+});
+
+test("闪电：判定牌先入判定区再入弃牌堆且别名保持同步", async () => {
+  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  const card = instance("assault");
+  game.state.deck.cards = [card];
+  let inJudgmentZone = false;
+  game.eventBus.on("judgmentRevealed", "test:lightning-zone", (event) => {
+    inJudgmentZone = game.state.deck.judgmentZone.includes(event.card);
+  });
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(inJudgmentZone, true);
+  assert.ok(game.state.deck.discardPile.includes(card));
+  assert.equal(game.state.deck.judgmentZone.length, 0);
+  assert.equal(game.state.judgmentZone, game.state.deck.judgmentZone);
+  assert.equal(game.state.discardPile, game.state.deck.discardPile);
+});
+
+test("闪电：空牌堆重洗弃牌堆后仍能完成判定", async () => {
+  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  game.state.deck.cards = [];
+  game.state.deck.discardPile = [instance("recover")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.ok(enemy.statuses.lightning);
+  assert.equal(game.state.deck.reshuffleCount, 1);
+});
+
+test("闪电：状态反制由持有者本人优先响应，成功后不翻判定牌并转移", async () => {
+  const holder = makePlayer("a", 0, "dawn", "human"), receiver = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, receiver], { response: () => true });
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  const counter = instance("counter");
+  holder.hand.push(counter);
+  const equipment = instance("energyDevice");
+  game.state.deck.cards = [equipment];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.deepEqual(receiver.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
+  assert.ok(game.state.deck.discardPile.includes(counter));
+  assert.ok(game.state.deck.cards.includes(equipment));
+  assert.equal(holder.hp, holder.maxHp);
+});
+
+test("闪电：状态反制按顺时针响应，反制被反制后继续判定", async () => {
+  const holder = makePlayer("a", 0, "dawn"), responder = makePlayer("b", 1, "dusk"), counterer = makePlayer("c", 2, "dusk");
+  const { game } = makeGame([holder, responder, counterer]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  responder.hand.push(instance("counter"));
+  counterer.hand.push(instance("counter"));
+  forceAvailableAiCounters(game);
+  const equipment = instance("telescope");
+  game.state.deck.cards = [equipment];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.hp, holder.maxHp - 3);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.equal(responder.hand.length, 0);
+  assert.equal(counterer.hand.length, 0);
+  assert.ok(game.state.deck.discardPile.includes(equipment));
+});
+
+test("闪电：转移跳过死亡与已有闪电玩家且不受阵营影响", async () => {
+  const holder = makePlayer("a", 0, "dawn"), dead = makePlayer("b", 1, "dusk"), already = makePlayer("c", 2, "dawn"), target = makePlayer("d", 3, "dusk");
+  const { game } = makeGame([holder, dead, already, target]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  dead.alive = false;
+  already.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: already.id };
+  game.state.deck.cards = [instance("recover")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.deepEqual(already.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: already.id });
+  assert.deepEqual(target.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
+});
+
+test("闪电：判定未触发且无其他合法接收者时转移回自己", async () => {
+  const holder = makePlayer("a", 0, "dawn"), ally = makePlayer("b", 1, "dawn"), enemy = makePlayer("c", 2, "dusk");
+  const { game } = makeGame([holder, ally, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  ally.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: ally.id };
+  enemy.alive = false;
+  game.state.deck.cards = [instance("recover")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.deepEqual(holder.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
+  assert.deepEqual(ally.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: ally.id });
+  assert.ok(game.state.logs.some((entry) => entry.message === `${holder.name}的「闪电」判定未触发，转移给${holder.name}。`));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("没有可转移的目标")));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("闪电消失")));
+});
+
+test("闪电：中立伤害阵亡不给原使用者或持有者击杀奖励", async () => {
+  const origin = makePlayer("o", 0, "dawn"), holder = makePlayer("h", 1, "dusk"), medic = makePlayer("m", 2, "dawn");
+  const { game } = makeGame([origin, holder, medic]);
+  origin.hand.push(instance("assault"));
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: origin.id };
+  holder.hp = 2;
+  game.state.deck.cards = [instance("energyDevice")];
+  game.state.deck.discardPile = [];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.alive, false);
+  assert.equal(origin.hand.length, 1);
+  assert.equal(holder.statistics.damageDealt, 0);
+});
+
+test("闪电：AI 根节点与深层生成均拒绝已有闪电状态", () => {
+  const source = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([source, enemy]);
+  source.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: source.id };
+  source.hand.push(instance("lightning"));
+  assert.ok(!game.aiController.getLegalActions(source).some((action) => action.card?.definitionId === "lightning"));
+  const visible = createAiVisibleState(source.id, game.state);
+  assert.ok(!game.aiController.actionGenerator.generateFromVisible(visible, source.id).some((action) => action.card?.definitionId === "lightning"));
+  const source2 = makePlayer("a2", 0, "dawn"), enemy2 = makePlayer("b2", 1, "dusk");
+  const { game: game2 } = makeGame([source2, enemy2]);
+  source2.hand.push(instance("lightning"));
+  assert.ok(game2.aiController.getLegalActions(source2).some((action) => action.card?.definitionId === "lightning"));
+  const visible2 = createAiVisibleState(source2.id, game2.state);
+  assert.ok(game2.aiController.actionGenerator.generateFromVisible(visible2, source2.id).some((action) => action.card?.definitionId === "lightning"));
+});
+
+test("闪电：AiSimulator 成功使用后写入状态且不立即判定或伤害", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, hand:[{ id:"use", definitionId:"lightning" }], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[] }
+  ]};
+  const next = new AiSimulator(state).apply(state, { type:"card", card:{ id:"use", definitionId:"lightning" }, targets:[] }, "a");
+  assert.ok(next.players[0].statuses.includes("lightning"));
+  assertClose(next.players[0].lightningStatusProbability, 1);
+  assertClose(next.players[0].lightningStatusStateBranches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0), 1);
+  assert.equal(next.players[0].hp, 4);
+  assert.equal(next.players[1].statuses.length, 0);
+  assert.equal(next.remainingCardCounts, null);
+});
+
+test("闪电：AI 装备判定概率按类别聚合且不修改计数", () => {
+  const counts = { assault:3, defenseDevice:1, telescope:2 };
+  const snapshot = JSON.stringify(counts);
+  assertClose(equipmentJudgmentProbability(counts), 3 / 6);
+  assert.equal(JSON.stringify(counts), snapshot);
+  const equipmentTotal = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
+  assertClose(equipmentJudgmentProbability(null), equipmentTotal / TOTAL_CARD_COUNT);
+  const players = [
+    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", statuses:[] },
+    { id:"b", seatIndex:1, alive:false, battleTeam:"dusk", statuses:[] },
+    { id:"c", seatIndex:2, alive:true, battleTeam:"dusk", statuses:["lightning"] },
+    { id:"d", seatIndex:3, alive:true, battleTeam:"dawn", statuses:[] }
+  ];
+  assert.equal(nextLightningReceiver(players, players[0]).id, "d");
+});
+
+test("闪电：AI 使用价值随自身低血惩罚、敌人低血收益和队友低血损失单调变化", () => {
+  const make = (hp, receiver) => ({
+    remainingCardCounts:{ defenseDevice:1, assault:3 },
+    players:[
+      { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp, maxHp:4, shield:0, statuses:[] },
+      ...(receiver ? [{ id:"b", seatIndex:1, battleTeam:receiver.team, alive:true, hp:receiver.hp, maxHp:4, shield:0, statuses:[] }] : [])
+    ]
+  });
+  const lowSelf = lightningUseValue(make(1, null).players[0], make(1, null));
+  const highSelf = lightningUseValue(make(4, null).players[0], make(4, null));
+  assert.ok(lowSelf < highSelf);
+  const enemyLow = lightningUseValue(make(4, { team:"dusk", hp:1 }).players[0], make(4, { team:"dusk", hp:1 }));
+  const enemyHigh = lightningUseValue(make(4, { team:"dusk", hp:4 }).players[0], make(4, { team:"dusk", hp:4 }));
+  assert.ok(enemyLow > enemyHigh);
+  const allyLow = lightningUseValue(make(4, { team:"dawn", hp:1 }).players[0], make(4, { team:"dawn", hp:1 }));
+  const allyHigh = lightningUseValue(make(4, { team:"dawn", hp:4 }).players[0], make(4, { team:"dawn", hp:4 }));
+  assert.ok(allyLow < allyHigh);
+});
+
+test("闪电：AI 状态反制决策不是固定 true 或 false", () => {
+  const holderAlly = makePlayer("a", 0, "dawn"), receiverEnemy = makePlayer("b", 1, "dusk"), responder = makePlayer("r", 2, "dawn");
+  const { game } = makeGame([holderAlly, receiverEnemy, responder]);
+  holderAlly.hp = 1;
+  holderAlly.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holderAlly.id };
+  game.aiController.knowledge.remainingCounts = () => ({ defenseDevice:9, assault:1 });
+  const context = { statusCounterContext:{ holderId:holderAlly.id, holderName:holderAlly.name } };
+  assert.equal(game.aiController.responsePolicy.shouldRespond(responder, "counter", context, [instance("counter")]), true);
+  const responder2 = makePlayer("r2", 0, "dawn"), holderEnemy = makePlayer("e", 1, "dusk"), receiverAlly = makePlayer("f", 2, "dawn");
+  const { game: game2 } = makeGame([responder2, holderEnemy, receiverAlly]);
+  holderEnemy.hp = 4;
+  holderEnemy.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holderEnemy.id };
+  game2.aiController.knowledge.remainingCounts = () => ({ defenseDevice:9, assault:1 });
+  const context2 = { statusCounterContext:{ holderId:holderEnemy.id, holderName:holderEnemy.name } };
+  assert.equal(game2.aiController.responsePolicy.shouldRespond(responder2, "counter", context2, [instance("counter")]), false);
+});
+
+test("闪电：玩家面板显示状态徽章且卡牌模板可渲染", () => {
+  const player = makePlayer("a", 0, "dawn", "human");
+  player.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: player.id };
+  assert.match(playerPanelTemplate(player, { isHuman:true }), /闪电/);
+  const card = instance("lightning");
+  const markup = handCardTemplate(card);
+  assert.match(markup, /闪电/);
+  assert.match(markup, /assets\/cards\/lightning\.svg/);
+  assert.ok(["", "is-description-long", "is-description-very-long"].includes(cardDescriptionClass(card.description)));
+});
+
+test("闪电：状态反制响应展示文案正确", () => {
+  const responder = { id:"r", name:"响应者" };
+  const presentation = buildResponsePresentation(responder, "counter", {
+    statusCounterContext:{ holderId:"a", holderName:"甲" }
+  }, 1, 1, "反制");
+  assert.equal(presentation.eventText, "是否使用「反制」，令甲的“闪电”转移？");
+  assert.equal(presentation.responseText, "是否使用「反制」，令甲的“闪电”转移？");
+});
+
+test("闪电：SVG 使用统一 480×280 规格", async () => {
+  const source = await readFile(projectFile("assets/cards/lightning.svg"), "utf8");
+  assert.match(source, /<svg width="480" height="280" viewBox="0 0 480 280"/);
+});
+
+test("闪电：SVG 主体恢复为未放大的正常构图", async () => {
+  const source = await readFile(projectFile("assets/cards/lightning.svg"), "utf8");
+  const glow = source.match(/<circle cx="240" cy="138" r="(\d+)"/);
+  assert.ok(glow, "闪电辉光圆必须保持画布居中");
+  assert.ok(Number(glow[1]) <= 90, `闪电辉光圆仍被放大：r=${glow[1]}`);
+  const bolt = source.match(/<path d="([^"]+)" fill="#ffe084"/);
+  assert.ok(bolt, "缺少主闪电路径");
+  const tokens = bolt[1].match(/[A-Za-z]|-?\d+/g) ?? [];
+  let x = 0, y = 0, index = 0, minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const pen = (px, py) => { minX = Math.min(minX, px); minY = Math.min(minY, py); maxX = Math.max(maxX, px); maxY = Math.max(maxY, py); };
+  const num = () => Number(tokens[index++]);
+  while (index < tokens.length) {
+    const command = tokens[index++];
+    if (command === "M") { x = num(); y = num(); pen(x, y); while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x = num(); y = num(); pen(x, y); } }
+    else if (command === "l") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x += num(); y += num(); pen(x, y); } }
+    else if (command === "h") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x += num(); pen(x, y); } }
+    else if (command === "v") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { y += num(); pen(x, y); } }
+    else if (command === "L") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x = num(); y = num(); pen(x, y); } }
+    else if (command === "H") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x = num(); pen(x, y); } }
+    else if (command === "V") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { y = num(); pen(x, y); } }
   }
+  assert.ok(minY >= 55 && maxY <= 225, `主闪电纵向范围异常（疑似放大）：${minY}..${maxY}`);
+  assert.ok(maxX - minX <= 200 && maxY - minY <= 170, `主闪电尺寸异常（疑似放大）：${maxX - minX}x${maxY - minY}`);
+});
+
+test("闪电：响应卡片信息框与其他战术牌共用统一尺寸", async () => {
+  const layout = await readFile(projectFile("css/layout.css"), "utf8");
+  const rule = layout.match(/\.current-card\s*\{[^}]*\}/g)?.find((entry) => entry.includes("grid-column: 1")) ?? "";
+  assert.match(rule, /width:\s*min\(440px/, "响应卡片信息框必须使用带响应式上限的稳定宽度");
+  assert.match(rule, /min-height:\s*104px/, "同类中央结算卡必须使用统一 min-height");
+  assert.match(rule, /display:\s*grid/, "中央结算卡容器必须撑起统一基础高度");
+  assert.doesNotMatch(rule, /(?<!min-)height:/, "不得使用固定 height");
+  assert.match(rule, /justify-self:\s*center/);
+  const lightning = instance("lightning"), assault = instance("assault");
+  const lightningMarkup = resolvingCardTemplate(lightning, "甲", "乙");
+  const assaultMarkup = resolvingCardTemplate(assault, "甲", "乙");
+  for (const markup of [lightningMarkup, assaultMarkup]) {
+    assert.match(markup, /class="resolving-card frame-/);
+    assert.match(markup, /<img src=/);
+    assert.match(markup, /resolving-kind/);
+  }
+  assert.doesNotMatch(lightningMarkup, /class="[^"]*lightning[^"]*"/, "闪电不得使用专属响应卡片类");
+  const noTargetSkillMarkup = resolvingCardTemplate("壁垒", "守誓者 · 技能", "");
+  assert.match(noTargetSkillMarkup, /class="resolving-card is-skill"/, "无目标技能必须沿用同类中央结算卡模板");
+  assert.doesNotMatch(noTargetSkillMarkup, /作用对象/);
+  assert.match(resolvingCardTemplate("猎杀", "追猎者 · 技能", "目标"), /作用对象/, "有目标技能仍正常显示作用对象");
+  assert.match(resolvingCardTemplate(instance("harvest"), "甲", ""), /resolving-card/, "内容较长的无目标卡牌仍使用同类模板");
+  const cards = await readFile(projectFile("css/cards.css"), "utf8");
+  const imgRule = cards.match(/\.resolving-card > img\s*\{[^}]*\}/)?.[0] ?? "";
+  assert.match(imgRule, /width:\s*74px/, "左侧正方形图片区域不得被放大");
+  assert.match(imgRule, /height:\s*74px/);
+});
+
+test("闪电：中央结算卡显示作用对象为自己且不进入业务 targets", async () => {
+  const lightning = instance("lightning");
+  const human = makePlayer("human", 0, "dawn", "human");
+  const ai = makePlayer("ai", 1, "dusk");
+  const { game, ui } = makeGame([human, ai]);
+  assert.equal(lightning.targetType, "none");
+  assert.deepEqual(RuleEngine.getCardTargets(game, human, lightning), [], "闪电真实业务 targets 必须保持为空");
+  human.hand.push(lightning);
+  await game.playCard(human, lightning, []);
+  const humanRecord = ui.currentCards.at(-1);
+  assert.equal(humanRecord.targetLabel, "", "闪电不生成业务 targetLabel");
+  assert.deepEqual(humanRecord.displayTargets, [{ id: human.id, name: human.name, isSelf: true }]);
+  const humanMarkup = resolvingCardTemplate(lightning, human.name, humanRecord.targetLabel, humanRecord.displayTargets);
+  assert.match(humanMarkup, /作用对象/);
+  assert.match(humanMarkup, new RegExp(`${human.name}（自己）`), "人类使用闪电时显示（自己）");
+  assert.ok(human.statuses.lightning, "闪电业务效果不变");
+  const aiLightning = instance("lightning");
+  ai.hand.push(aiLightning);
+  game.state.currentPlayerIndex = 1;
+  await game.playCard(ai, aiLightning, []);
+  const aiRecord = ui.currentCards.at(-1);
+  assert.deepEqual(aiRecord.displayTargets, [{ id: ai.id, name: ai.name, isSelf: true }]);
+  const aiMarkup = resolvingCardTemplate(aiLightning, ai.name, aiRecord.targetLabel, aiRecord.displayTargets);
+  assert.match(aiMarkup, new RegExp(`${ai.name}（自己）`));
+  assert.doesNotMatch(aiMarkup, new RegExp(human.name), "其他玩家使用闪电时不得把人类玩家显示为自己");
+  const shield = instance("shield");
+  const shieldMarkup = resolvingCardTemplate(shield, human.name, `${human.name}（自己）`);
+  assert.match(shieldMarkup, /作用对象/);
+  assert.match(shieldMarkup, new RegExp(`${human.name}（自己）`), "护盾原有展示不变");
+  const displayMarkup = resolvingCardTemplate(lightning, ai.name, "", [{ id: ai.id, name: ai.name, isSelf: true }]);
+  assert.match(displayMarkup, /作用对象/);
+  assert.match(displayMarkup, new RegExp(`${ai.name}（自己）`));
+  const bothMarkup = resolvingCardTemplate(lightning, ai.name, "业务目标", [{ id: ai.id, name: ai.name, isSelf: true }]);
+  assert.match(bothMarkup, /业务目标/);
+  assert.doesNotMatch(bothMarkup, /（自己）/, "真实业务目标标签优先于纯展示字段");
+});
+
+test("闪电：判定触发日志复用玩家与卡牌名称格式化机制", async () => {
+  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  const equipment = instance("defenseDevice");
+  game.state.deck.cards = [equipment];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  const reveal = game.state.logs.find((entry) => entry.message.includes("判定为"));
+  const trigger = game.state.logs.find((entry) => entry.message.includes("判定触发"));
+  assert.ok(reveal);
+  assert.ok(trigger);
+  assert.equal(reveal.message, `${holder.name}的「闪电」判定为「${equipment.name}」，为装备牌。`);
+  assert.equal(trigger.message, `${holder.name}的「闪电」判定触发。`);
+  assert.ok(reveal.fragments.some((fragment) => fragment.type === "player" && fragment.playerId === holder.id));
+  const rendered = formatLogEntry(reveal);
+  assert.match(rendered, /log-player-name/);
+  assert.match(rendered, /log-card-name/);
+  assert.ok(rendered.includes("「<strong class=\"log-card-name\">闪电</strong>」"));
+  assert.ok(rendered.includes(`「<strong class="log-card-name">${equipment.name}</strong>」`));
+  for (const entry of game.state.logs) {
+    assert.ok(!entry.message.includes("【") && !entry.message.includes("】"), `日志不得使用【】：${entry.message}`);
+    assert.ok(!entry.message.includes("“闪电”"), `日志不得使用弯引号“闪电”：${entry.message}`);
+  }
+});
+
+test("闪电：基础牌与战术牌判定类别日志正确", async () => {
+  const run = (judgmentDefinitionId) => {
+    const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+    const { game } = makeGame([holder, enemy]);
+    holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+    const judgmentCard = instance(judgmentDefinitionId);
+    game.state.deck.cards = [judgmentCard];
+    return { game, holder, enemy, judgmentCard };
+  };
+  const basic = run("assault");
+  await basic.game.eventBus.emit("beforeStatusResolve", { player: basic.holder, cancelled: false });
+  assert.ok(basic.game.state.logs.some((entry) => entry.message === `${basic.holder.name}的「闪电」判定为「${basic.judgmentCard.name}」，为基础牌。`));
+  assert.ok(basic.game.state.logs.some((entry) => entry.message === `${basic.holder.name}的「闪电」判定未触发，转移给${basic.enemy.name}。`));
+  const tactic = run("harvest");
+  await tactic.game.eventBus.emit("beforeStatusResolve", { player: tactic.holder, cancelled: false });
+  assert.ok(tactic.game.state.logs.some((entry) => entry.message === `${tactic.holder.name}的「闪电」判定为「${tactic.judgmentCard.name}」，为战术牌。`));
+  assert.ok(tactic.game.state.logs.some((entry) => entry.message === `${tactic.holder.name}的「闪电」判定未触发，转移给${tactic.enemy.name}。`));
+});
+
+test("闪电：反制路径不输出判定日志", async () => {
+  const holder = makePlayer("a", 0, "dawn", "human"), receiver = makePlayer("b", 1, "dusk");
+  const { game } = makeGame([holder, receiver], { response: () => true });
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  holder.hand.push(instance("counter"));
+  game.state.deck.cards = [instance("energyDevice")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.ok(game.state.logs.some((entry) => entry.message === `${holder.name}的「闪电」被反制，转移给${receiver.name}。`));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("判定为")));
+});
+
+test("闪电：反制后无其他合法接收者时转移回自己", async () => {
+  const holder = makePlayer("a", 0, "dawn", "human"), ally = makePlayer("b", 1, "dawn"), enemy = makePlayer("c", 2, "dusk");
+  const { game } = makeGame([holder, ally, enemy], { response: () => true });
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  holder.hand.push(instance("counter"));
+  ally.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: ally.id };
+  enemy.alive = false;
+  game.state.deck.cards = [instance("energyDevice")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.deepEqual(holder.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
+  assert.deepEqual(ally.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: ally.id });
+  assert.ok(game.state.logs.some((entry) => entry.message === `${holder.name}的「闪电」被反制，转移给${holder.name}。`));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("判定为")));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("没有可转移的目标")));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("闪电消失")));
+});
+
+test("闪电：卡牌描述与 README 当前描述完全一致", async () => {
+  const readme = await readFile(projectFile("README.md"), "utf8");
+  const match = readme.match(/- 闪电：([^\n]+)/);
+  assert.ok(match, "README 缺少闪电条目");
+  assert.equal(CARD_DEFINITIONS.lightning.description, match[1].trim());
+});
+
+test("闪电：AI 无其他合法接收者时按转回自己估值而非消失", () => {
+  const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
+  const state = { remainingCardCounts:{ defenseDevice:1, assault:3 }, players:[holder] };
+  assert.ok(lightningTeamBurden(state, holder, "dawn") > 0);
+  const actor = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+  assert.ok(lightningUseValue(actor, { remainingCardCounts:{ defenseDevice:1, assault:3 }, players:[actor] }) < lightningUseValue(actor, {
+    remainingCardCounts:{ defenseDevice:1, assault:3 },
+    players:[actor, { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] }]
+  }));
+});
+
+test("闪电：lightningTeamBurden 跨阵营接收者按持有者与接收者各自阵营分别签名", () => {
+  const makeState = (holderTeam, receiverTeam) => {
+    const holder = { id:"holder", seatIndex:0, battleTeam:holderTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
+    const players = [holder];
+    if (receiverTeam) players.push({ id:"receiver", seatIndex:1, battleTeam:receiverTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:[] });
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, holder };
+  };
+  // 场景 1：己方持有、敌方接收 -> 1.5 - 0.375 = 1.125
+  let built = makeState("dawn", "dusk");
+  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.125);
+  // 场景 2：敌方持有、己方接收 -> -1.5 + 0.375 = -1.125
+  built = makeState("dusk", "dawn");
+  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), -1.125);
+  // 场景 3：己方持有、己方接收 -> 1.5 + 0.375 = 1.875
+  built = makeState("dawn", "dawn");
+  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.875);
+  // 场景 4：无其他接收者，nextLightningReceiver 返回持有者本人 -> 1.5 + 0.375 = 1.875
+  built = makeState("dawn", null);
+  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.875);
+});
+
+test("闪电：AI 模拟部分成功保留完整 lightningStatusStateBranches", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
+  ]};
+  const next = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
+  const actor = next.players[0];
+  const branches = actor.lightningStatusStateBranches;
+  assert.ok(Array.isArray(branches));
+  const presentProbability = branches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0);
+  const absentProbability = branches.reduce((sum, branch) => sum + (branch.present ? 0 : branch.probability), 0);
+  assertClose(presentProbability, 0.6);
+  assertClose(absentProbability, 0.4);
+  assertClose(branches.reduce((sum, branch) => sum + branch.probability, 0), 1);
+  assertClose(actor.lightningStatusProbability, 0.6);
+  assert.ok(!actor.statuses.includes("lightning"));
+  const conditionKeys = [...new Set(branches.flatMap((branch) => Object.keys(branch.conditions)))];
+  assert.equal(conditionKeys.length, 1);
+  assert.ok(conditionKeys[0].includes("counter"));
+  assert.equal(actor.hp, 4);
+  assert.equal(next.players[1].hp, 4);
+});
+
+test("闪电：AI 模拟动作不执行时不产生概率闪电状态", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, hand:[instance("lightning")], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:0 }
+  ]};
+  state.players[0].hand[0].availabilityStateBranches = [{ probability:1, conditions:{}, available:false }];
+  state.players[0].hand[0].availabilityBranches = [];
+  const next = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
+  const actor = next.players[0];
+  assert.ok(!actor.statuses.includes("lightning"));
+  assertClose(lightningPresenceProbability(actor), 0);
+});
+
+test("闪电：深层第二张闪电仅在 absent 世界生成且 executionProbability=1-presence", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
+  ]};
+  const first = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
+  assert.ok(lightningUseValue(first.players[0], first) > -50);
+  const { game } = makeGame([makePlayer("a",0,"dawn"), makePlayer("b",1,"dusk")]);
+  const actions = game.aiController.actionGenerator.generateFromVisible(first, "a");
+  const second = actions.find((action) => action.card?.definitionId === "lightning");
+  assert.ok(second);
+  assertClose(second.executionProbability, 0.4);
+});
+
+test("闪电：第二张 executionWorldBranches 继承第一次闪电条件键", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
+  ]};
+  const first = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
+  const firstBranches = first.players[0].lightningStatusStateBranches;
+  const firstKey = [...new Set(firstBranches.flatMap((branch) => Object.keys(branch.conditions)))][0];
+  assert.ok(firstKey);
+  const { game } = makeGame([makePlayer("a",0,"dawn"), makePlayer("b",1,"dusk")]);
+  const second = game.aiController.actionGenerator.generateFromVisible(first, "a").find((action) => action.card?.definitionId === "lightning");
+  assert.ok(second);
+  const executing = second.executionWorldBranches.filter((branch) => branch.executes);
+  const notExecuting = second.executionWorldBranches.filter((branch) => !branch.executes);
+  assert.ok(executing.length > 0);
+  assert.ok(notExecuting.length > 0);
+  for (const branch of executing) assert.equal(branch.conditions[firstKey], "no");
+  for (const branch of notExecuting) assert.equal(branch.conditions[firstKey], "yes");
+});
+
+test("闪电：第二次使用后状态按 union 更新且不覆盖旧 present 世界", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
+  ]};
+  const first = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
+  const { game } = makeGame([makePlayer("a",0,"dawn"), makePlayer("b",1,"dusk")]);
+  const second = game.aiController.actionGenerator.generateFromVisible(first, "a").find((action) => action.card?.definitionId === "lightning");
+  assert.ok(second);
+  const after = new AiSimulator(first).apply(first, second, "a");
+  const actor = after.players[0];
+  const presence = actor.lightningStatusStateBranches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0);
+  assertClose(presence, 0.84);
+  assertClose(actor.lightningStatusProbability, 0.84);
+  assert.ok(!actor.statuses.includes("lightning"));
+  const firstBranches = first.players[0].lightningStatusStateBranches;
+  const firstKey = Object.keys(firstBranches[0].conditions)[0];
+  const oldPresentProbability = firstBranches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0);
+  const keptPresentProbability = actor.lightningStatusStateBranches.reduce((sum, branch) => (
+    sum + (branch.present && branch.conditions[firstKey] === "yes" ? branch.probability : 0)
+  ), 0);
+  assertClose(keptPresentProbability, oldPresentProbability);
+});
+
+test("闪电：lightningTeamBurden 按 presence 线性加权", () => {
+  const makeState = (mode) => {
+    const holder = { id:"holder", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+    const receiver = { id:"receiver", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+    if (mode === "full") holder.statuses = ["lightning"];
+    if (mode === "partial") {
+      holder.lightningStatusStateBranches = [
+        { probability:0.6, conditions:{}, present:true },
+        { probability:0.4, conditions:{}, present:false }
+      ];
+      holder.lightningStatusProbability = 0.6;
+    }
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players:[holder, receiver] }, holder };
+  };
+  const full = makeState("full");
+  const fullBurden = lightningTeamBurden(full.state, full.holder, "dawn");
+  assertClose(fullBurden, 1.125);
+  const absent = makeState("absent");
+  assertClose(lightningTeamBurden(absent.state, absent.holder, "dawn"), 0);
+  const partial = makeState("partial");
+  assertClose(lightningTeamBurden(partial.state, partial.holder, "dawn"), fullBurden * 0.6);
+});
+
+test("闪电：有限传播链两人一跳完全兼容", () => {
+  const make = (players) => ({ remainingCardCounts:{ defenseDevice:1, assault:1 }, players });
+  const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
+  const enemy = { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+  assert.deepEqual(buildLightningPropagationChain([holder, enemy], holder).map((player) => player.id), ["a","b"]);
+  assertClose(lightningTeamBurden(make([holder, enemy]), holder, "dawn"), 1.125);
+  const actor = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+  assertClose(lightningUseValue(actor, make([actor, enemy])), 2.875);
+});
+
+test("闪电：有限传播链单人无其他接收者自转移兼容", () => {
+  const make = (players) => ({ remainingCardCounts:{ defenseDevice:1, assault:1 }, players });
+  const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
+  assert.deepEqual(buildLightningPropagationChain([holder], holder).map((player) => player.id), ["a","a"]);
+  assertClose(lightningTeamBurden(make([holder]), holder, "dawn"), 1.875);
+  const actor = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+  assertClose(lightningUseValue(actor, make([actor])), 2.125);
+});
+
+test("闪电：有限传播链敌多友少自然产生更高使用价值", () => {
+  const make = (teams, holderHasLightning) => {
+    const players = teams.map((team, index) => ({ id:`p${index}`, seatIndex:index, battleTeam:team, alive:true, hp:4, maxHp:4, shield:0, statuses:[] }));
+    if (holderHasLightning) players[0].statuses = ["lightning"];
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
+  };
+  const enemyHeavyBurden = make(["dawn","dusk","dusk","dusk"], true);
+  const allyHeavyBurden = make(["dawn","dawn","dawn","dusk"], true);
+  assertClose(lightningTeamBurden(enemyHeavyBurden.state, enemyHeavyBurden.actor, "dawn"), 1.0078125);
+  assertClose(lightningTeamBurden(allyHeavyBurden.state, allyHeavyBurden.actor, "dawn"), 1.9453125);
+  const enemyHeavyUse = make(["dawn","dusk","dusk","dusk"], false);
+  const allyHeavyUse = make(["dawn","dawn","dawn","dusk"], false);
+  const enemyUseValue = lightningUseValue(enemyHeavyUse.actor, enemyHeavyUse.state);
+  const allyUseValue = lightningUseValue(allyHeavyUse.actor, allyHeavyUse.state);
+  assertClose(enemyUseValue, 2.9921875);
+  assertClose(allyUseValue, 2.0546875);
+  assert.ok(enemyUseValue > allyUseValue);
+});
+
+test("闪电：有限传播链相同人数近端敌人更有价值", () => {
+  const make = (teams) => {
+    const players = teams.map((team, index) => ({ id:`p${index}`, seatIndex:index, battleTeam:team, alive:true, hp:4, maxHp:4, shield:0, statuses:[] }));
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
+  };
+  const enemyFront = make(["dawn","dusk","dusk","dawn"]);
+  const allyFront = make(["dawn","dawn","dusk","dusk"]);
+  const enemyFrontValue = lightningUseValue(enemyFront.actor, enemyFront.state);
+  const allyFrontValue = lightningUseValue(allyFront.actor, allyFront.state);
+  assertClose(enemyFrontValue, 2.9453125);
+  assertClose(allyFrontValue, 2.2421875);
+  assert.ok(enemyFrontValue > allyFrontValue);
+});
+
+test("闪电：有限传播链 actor 低血仍压过人数优势", () => {
+  const make = (hp) => {
+    const players = [
+      { id:"p0", seatIndex:0, battleTeam:"dawn", alive:true, hp, maxHp:4, shield:0, statuses:[] },
+      { id:"p1", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
+      { id:"p2", seatIndex:2, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
+      { id:"p3", seatIndex:3, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] }
+    ];
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
+  };
+  const lowValue = lightningUseValue(make(1).actor, make(1).state);
+  const highValue = lightningUseValue(make(4).actor, make(4).state);
+  assertClose(lowValue, -9.5078125);
+  assertClose(highValue, 2.9921875);
+  assert.ok(lowValue < highValue);
+});
+
+test("闪电：有限传播链未来低血目标按阵营单调", () => {
+  const make = (teams) => {
+    const players = teams.map((team, index) => ({ id:`p${index}`, seatIndex:index, battleTeam:team, alive:true, hp:4, maxHp:4, shield:0, statuses:[] }));
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
+  };
+  const enemyHigh = make(["dawn","dusk","dawn","dawn"]);
+  const enemyLow = make(["dawn","dusk","dawn","dawn"]);
+  enemyLow.state.players[1].hp = 1;
+  const enemyHighValue = lightningUseValue(enemyHigh.actor, enemyHigh.state);
+  const enemyLowValue = lightningUseValue(enemyLow.actor, enemyLow.state);
+  assertClose(enemyHighValue, 2.7578125);
+  assertClose(enemyLowValue, 2.8828125);
+  assert.ok(enemyLowValue > enemyHighValue);
+  const allyHigh = make(["dawn","dawn","dusk","dusk"]);
+  const allyLow = make(["dawn","dawn","dusk","dusk"]);
+  allyLow.state.players[1].hp = 1;
+  const allyHighValue = lightningUseValue(allyHigh.actor, allyHigh.state);
+  const allyLowValue = lightningUseValue(allyLow.actor, allyLow.state);
+  assertClose(allyHighValue, 2.2421875);
+  assertClose(allyLowValue, 2.1171875);
+  assert.ok(allyLowValue < allyHighValue);
+});
+
+test("闪电：有限传播链跳过已持独立闪电的玩家", () => {
+  const players = [
+    { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, statuses:[] },
+    { id:"c", seatIndex:2, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"d", seatIndex:3, battleTeam:"dusk", alive:true, statuses:[] }
+  ];
+  assert.deepEqual(buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a","b","d"]);
+});
+
+test("闪电：初始持有者自身闪电状态不影响其作为传播链起点", () => {
+  const players = [
+    { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, statuses:[] }
+  ];
+  assert.deepEqual(buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a","b"]);
+});
+
+test("闪电：无其他合法接收者时传播链自转移", () => {
+  const players = [
+    { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"b", seatIndex:1, battleTeam:"dusk", alive:false, statuses:[] },
+    { id:"c", seatIndex:2, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"d", seatIndex:3, battleTeam:"dusk", alive:false, statuses:[] }
+  ];
+  assert.deepEqual(buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a","a"]);
+});
+
+test("闪电：概率闪电状态对有限传播链保持线性缩放", () => {
+  const make = (presence) => {
+    const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+    const players = [
+      holder,
+      { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
+      { id:"c", seatIndex:2, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
+      { id:"d", seatIndex:3, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] }
+    ];
+    if (presence === 1) holder.statuses = ["lightning"];
+    if (presence === 0.6) {
+      holder.lightningStatusStateBranches = [
+        { probability:0.6, conditions:{}, present:true },
+        { probability:0.4, conditions:{}, present:false }
+      ];
+      holder.lightningStatusProbability = 0.6;
+    }
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, holder };
+  };
+  const full = lightningTeamBurden(make(1).state, make(1).holder, "dawn");
+  assertClose(full, 1.0078125);
+  assertClose(lightningTeamBurden(make(0).state, make(0).holder, "dawn"), 0);
+  assertClose(lightningTeamBurden(make(0.6).state, make(0.6).holder, "dawn"), full * 0.6);
+});
+
+test("闪电：lightningTransferredBurden 升级为从 receiver 开始的有限传播链", () => {
+  const make = (receiverTeam, nextTeam) => {
+    const receiver = { id:"r", seatIndex:0, battleTeam:receiverTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+    const next = { id:"n", seatIndex:1, battleTeam:nextTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players:[receiver, next] }, receiver };
+  };
+  // k=0：D × p × risk(receiver) = 0.5 × 0.5 × 3 = 0.75（己方）
+  // k=1：D × p × (1-p) × D × risk(next) = 0.5 × 0.5 × 0.5 × 0.5 × 3 = 0.1875（敌方）
+  const enemyNext = make("dawn", "dusk");
+  assertClose(lightningTransferredBurden(enemyNext.state, enemyNext.receiver, "dawn"), 0.5625);
+  const allyReceiver = make("dusk", "dawn");
+  assertClose(lightningTransferredBurden(allyReceiver.state, allyReceiver.receiver, "dawn"), -0.5625);
+  const sameTeam = make("dawn", "dawn");
+  assertClose(lightningTransferredBurden(sameTeam.state, sameTeam.receiver, "dawn"), 0.9375);
+});
+
+// ==================== 装备 ====================
+
+// ---- 装备基础与替换 ----
+
+for (const id of ["energyDevice","recycleDevice","defenseDevice","battleDevice","telescope","barrierDevice"]) test(`装备 ${CARD_DEFINITIONS[id].name} 会进入唯一装备槽`, async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const equipment=instance(id);a.hand.push(equipment);await game.playCard(a,equipment,[]);assert.equal(a.equipment,equipment);assert.ok(!game.state.deck.discardPile.includes(equipment)); });
+
+test("四种旧装备采用README中的新名称且保留稳定definitionId", () => { assert.deepEqual(Object.fromEntries(["energyDevice","recycleDevice","defenseDevice","battleDevice"].map((id)=>[id,CARD_DEFINITIONS[id].name])),{energyDevice:"充能桩",recycleDevice:"回收站",defenseDevice:"雷达",battleDevice:"军火库"}); });
+
+test("替换装备时旧装备进入弃牌堆且新装备留在槽内", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const old=instance("energyDevice");a.equipment=old;const next=instance("battleDevice");a.hand.push(next);await game.playCard(a,next,[]);assert.equal(a.equipment,next);assert.ok(game.state.deck.discardPile.includes(old)); });
+
+test("望远镜替换为屏障后方向性距离立即按新装备重算", async () => { const source=makePlayer("source",0,"dawn"),ally=makePlayer("ally",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dusk"),old=instance("telescope"),next=instance("barrierDevice");const {game}=makeGame([source,ally,target,other,tail]);source.equipment=old;source.hand.push(next);assert.equal(DistanceSystem.getDistance(game,source,target),1);assert.equal(await game.playCard(source,next,[]),true);assert.equal(DistanceSystem.getDistance(game,source,target),2);assert.equal(DistanceSystem.getDistance(game,target,source),3);assert.ok(game.state.deck.discardPile.includes(old)); });
+
+// ---- 充能桩 ----
+
+test("充能桩只给回合能量额外+1", () => { const {game,small}=makeTeamFixture();small.equipment=instance("energyDevice");assert.equal(game.teamRules.getTurnEnergyGain(small),2);assert.deepEqual(game.teamRules.getTurnEnergyBreakdown(small),{baseAmount:1,teamBonus:0,equipmentBonus:1});small.equipment=instance("battleDevice");assert.equal(game.teamRules.getTurnEnergyGain(small),1); });
+
+// ---- 回收站 ----
+
+test("回收站每回合前两张主动战术各摸1且被反制也触发", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:(request)=>request.type==="counter"});a.equipment=instance("recycleDevice");a.hand.push(instance("harvest"),instance("exposeWeakness"),instance("exposeWeakness"));b.hand.push(instance("counter"));game.state.deck.cards.push(instance("charge"),instance("block"),instance("shield"));await game.playCard(a,a.hand[0],[]);await game.playCard(a,a.hand[0],[]);await game.playCard(a,a.hand[0],[]);assert.equal(a.turnFlags.recycleDeviceUses,2);assert.equal(a.hand.length,2); });
+
+test("回收站次数只在装备区显示并随真实回合状态重置", () => {
+  const player=makePlayer("recycle-ui",0,"dawn","human");
+  player.equipment=instance("recycleDevice");
+  for(const uses of [0,1,2]){
+    player.turnFlags.recycleDeviceUses=uses;
+    const equipment=equipmentSlotTemplate(player,true),panel=playerPanelTemplate(player,{isHuman:true});
+    assert.match(equipment,new RegExp(`>${uses}/2<`));
+    const status=panel.match(/<span class="panel-status"[\s\S]*?<\/span>/)?.[0]??"";
+    assert.doesNotMatch(status,/回收站|回收|\d\/2/);
+  }
+  player.resetTurnFlags({attackLimitPerTurn:2,recoverLimitPerTurn:null});
+  assert.match(equipmentSlotTemplate(player,true),/>0\/2</);
+  player.equipment=null;
+  assert.doesNotMatch(equipmentSlotTemplate(player,true),/>\d\/2</);
+});
+
+test("回收站仍严格限制每回合最多触发2次", async () => {
+  const owner=makePlayer("recycle-rule",0,"dawn"),enemy=makePlayer("recycle-enemy",1,"dusk");
+  const {game}=makeGame([owner,enemy]);owner.equipment=instance("recycleDevice");
+  owner.hand.push(instance("exposeWeakness"),instance("exposeWeakness"),instance("exposeWeakness"));
+  game.state.deck.cards.push(instance("charge"),instance("block"),instance("shield"));
+  await game.playCard(owner,owner.hand[0],[]);await game.playCard(owner,owner.hand[0],[]);await game.playCard(owner,owner.hand[0],[]);
+  assert.equal(owner.turnFlags.recycleDeviceUses,2);assert.equal(game.state.logs.filter((entry)=>entry.message.includes("回收站启动")).length,2);
+});
+
+// ---- 雷达 ----
+
+const radarFixtureTarget = (overrides = {}) => ({
+  id:"target", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, handCount:0,
+  generalId:"oath-warden", blockProbability:0, twoBlockProbability:0, equipmentDefinitionId:"defenseDevice",
+  equipmentRetentionProbability:1, expectedRecoverCount:0, ...overrides
+});
+const radarAttacker = (overrides = {}) => ({
+  id:"attacker", battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, handCount:0,
+  generalId:"blade-walker", expectedRecoverCount:0, ...overrides
+});
+const radarBattleAttacker = () => radarAttacker({ equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1 });
+const radarApply = (target, attacker = radarAttacker(), options = {}, existingState = null) => {
+  const state = existingState ?? { remainingCardCounts: options.remainingCardCounts ?? null, players:[attacker, target] };
+  if (options.remainingCardCounts !== undefined) state.remainingCardCounts = options.remainingCardCounts;
+  const simulator = new AiSimulator({ players:[] });
+  const { remainingCardCounts, ...damageOptions } = options;
+  simulator.applyDamage(state, attacker, target, 1, { canBlock:true, deviceAttack:true, ...damageOptions });
+  return { state, simulator, target, attacker };
 };
-test("响应窗口结构化片段保留使用者与目标身份和队伍", () => {
-  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"},target={id:"target",name:"角色B",battleTeam:"dusk"};
-  const presentation=buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:instance("duel")},1,0,"反制");
-  assert.equal(presentation.eventText,"角色A对角色B使用了「决斗」。");
-  assert.deepEqual(presentation.eventFragments,[
-    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
-    {type:"text",text:"对"},
-    {type:"player",text:"角色B",playerId:"target",battleTeam:"dusk"},
-    {type:"text",text:"使用了「决斗」。"}
-  ]);
+
+test("雷达判定战术牌时免疫原突袭并把判定牌弃置", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.equipment=instance("defenseDevice");const judgment=instance("harvest");game.state.deck.cards.push(judgment);const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(b.hp,hp);assert.ok(game.state.deck.discardPile.includes(judgment));assert.equal(game.state.deck.judgmentZone.length,0); });
+
+test("雷达判定基础牌时获得该牌并继续攻击", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.equipment=instance("defenseDevice");const judgment=instance("charge");game.state.deck.cards.push(judgment);const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.ok(b.hand.includes(judgment));assert.equal(b.hp,hp-1); });
+
+test("雷达公开获得的基础牌写入其他 AI 记忆", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.equipment=instance("defenseDevice");const judgment=instance("charge");game.state.deck.cards.push(judgment);await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(a.aiMemory.knownCardsByPlayer[b.id][judgment.id],"charge"); });
+
+test("雷达获得的格挡可立即用于当前攻击", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});b.equipment=instance("defenseDevice");game.state.deck.cards.push(instance("block"));const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(b.hp,hp);assert.equal(b.hand.length,0); });
+
+test("雷达判定装备牌时不直接扣血且原攻击继续由护盾吸收", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.equipment=instance("defenseDevice");const judgment=instance("energyDevice");game.state.deck.cards.push(judgment);b.shield=2;const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(b.hp,hp);assert.equal(b.shield,1);assert.ok(game.state.deck.discardPile.includes(judgment));assert.equal(b.equipment.definitionId,"defenseDevice"); });
+
+test("雷达战术判定免疫且不消耗原格挡，基础与装备判定按真实顺序结算", () => {
+  const simulator=new AiSimulator({players:[]});
+  const run=({handCount,blockProbability,judgment})=>{const state={players:[
+    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount,blockProbability,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
+  ]};simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true,radarJudgmentProbabilities:judgment});return state.players[1];};
+  const tactic=run({handCount:1,blockProbability:1,judgment:{block:0,otherBasic:0,equipment:0}});
+  assert.equal(tactic.hp,4);assert.equal(tactic.handCount,1);
+  const judgedBlock=run({handCount:0,blockProbability:0,judgment:{block:1,otherBasic:0,equipment:0}});
+  assert.equal(judgedBlock.hp,4);assert.equal(judgedBlock.handCount,0);
+  const otherBasic=run({handCount:0,blockProbability:0,judgment:{block:0,otherBasic:1,equipment:0}});
+  assert.equal(otherBasic.hp,3);assert.equal(otherBasic.handCount,1);
+  const equipment=run({handCount:1,blockProbability:1,judgment:{block:0,otherBasic:0,equipment:1}});
+  assert.equal(equipment.hp,4);assert.equal(equipment.handCount,0);
 });
-test("响应窗口不同队伍角色分别渲染队伍颜色节点", async () => {
-  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"},target={id:"target",name:"角色B",battleTeam:"dusk"};
-  const presentation=buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:instance("duel")},1,0,"反制");
-  const html=await renderResponseEventHtml(presentation);
-  assert.match(html,/<strong class="response-player-name team-dawn"[^>]*>角色A<\/strong>/);
-  assert.match(html,/<strong class="response-player-name team-dusk"[^>]*>角色B<\/strong>/);
-  assert.equal((html.match(/response-player-name/g)??[]).length,2);
+
+test("军火库雷达判得格挡后仍要求原手牌另有一张格挡", () => {
+  const simulator=new AiSimulator({players:[]});
+  const run=(normalBlockChance,handCount)=>{const state={players:[
+    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1},
+    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount,blockProbability:normalBlockChance,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
+  ]};simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true,radarJudgmentProbabilities:{block:1,otherBasic:0,equipment:0}});return state.players[1];};
+  const withoutOriginal=run(0,0);assert.equal(withoutOriginal.hp,3);assert.equal(withoutOriginal.handCount,1);
+  const withOriginal=run(1,1);assert.equal(withOriginal.hp,4);assert.equal(withOriginal.handCount,0);
 });
-test("响应窗口同队伍角色仍独立着色", async () => {
-  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:"角色A",battleTeam:"dawn"},target={id:"target",name:"角色B",battleTeam:"dawn"};
-  const presentation=buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:instance("duel")},1,0,"反制");
-  const html=await renderResponseEventHtml(presentation);
-  assert.equal((html.match(/response-player-name team-dawn/g)??[]).length,2);
-  assert.doesNotMatch(html,/team-dusk/);
-  assert.equal((html.match(/response-player-name/g)??[]).length,2);
+
+test("部分概率攻击额外缩放雷达得牌、格挡消耗与最终伤害", () => {
+  const state={players:[
+    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:.5,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
+  ]};
+  new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],1,{
+    canBlock:true,deviceAttack:true,eventProbability:.4,
+    radarJudgmentProbabilities:{block:0,otherBasic:1,equipment:0}
+  });
+  assertClose(state.players[1].hp,3.8);assertClose(state.players[1].handCount,1.2);
 });
-test("无目标响应文案只有使用者是角色片段", () => {
-  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"};
-  const presentation=buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:instance("harvest")},1,0,"反制");
-  assert.equal(presentation.eventText,"角色A使用了「丰收」。");
-  assert.deepEqual(presentation.eventFragments,[
-    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
-    {type:"text",text:"使用了「丰收」。"}
-  ]);
+
+test("雷达：原格挡+判定格挡普通攻击只消费原格挡", async () => {
+  const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});
+  b.equipment=instance("defenseDevice");const original=instance("block"),judged=instance("block");
+  b.hand.push(original);game.state.deck.cards.push(judged);const hp=b.hp;
+  await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
+  assert.equal(b.hp,hp);assert.equal(b.hand.length,1);assert.equal(b.hand[0],judged);
+  assert.ok(game.state.deck.discardPile.includes(original));assert.ok(!game.state.deck.discardPile.includes(judged));
 });
-test("破势响应片段只有使用者且UI只着色使用者", async () => {
-  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:"角色A",battleTeam:"dawn"},card=instance("exposeWeakness");
-  const presentation=buildResponsePresentation(responder,"counter",{source,target:source,targets:[source],card},1,0,"反制");
-  assert.equal(presentation.eventText,"角色A使用了「破势」。");
-  assert.deepEqual(presentation.eventFragments,[
-    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
-    {type:"text",text:"使用了「破势」。"}
-  ]);
-  const html=await renderResponseEventHtml(presentation);
-  assert.equal((html.match(/response-player-name/g)??[]).length,1);
-  assert.match(html,/response-player-name team-dawn/);
+
+test("雷达：军火库两张原格挡+判定格挡只消费两张原格挡", async () => {
+  const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});
+  a.equipment=instance("battleDevice");b.equipment=instance("defenseDevice");
+  const original1=instance("block"),original2=instance("block"),judged=instance("block");
+  b.hand.push(original1,original2);game.state.deck.cards.push(judged);const hp=b.hp;
+  await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
+  assert.equal(b.hp,hp);assert.equal(b.hand.length,1);assert.equal(b.hand[0],judged);
+  assert.ok(game.state.deck.discardPile.includes(original1));assert.ok(game.state.deck.discardPile.includes(original2));
+  assert.ok(!game.state.deck.discardPile.includes(judged));
 });
-test("多目标响应片段分别保留每个目标的身份与队伍", () => {
-  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"},first={id:"first",name:"角色B",battleTeam:"dusk"},second={id:"second",name:"角色D",battleTeam:"dawn"};
-  const presentation=buildResponsePresentation(responder,"counter",{source,target:first,targets:[first,second],card:instance("mutualBenefit")},1,0,"反制");
-  assert.equal(presentation.eventText,"角色A对角色B、角色D使用了「互利」。");
-  assert.deepEqual(presentation.eventFragments,[
-    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
-    {type:"text",text:"对"},
-    {type:"player",text:"角色B",playerId:"first",battleTeam:"dusk"},
-    {type:"text",text:"、"},
-    {type:"player",text:"角色D",playerId:"second",battleTeam:"dawn"},
-    {type:"text",text:"使用了「互利」。"}
-  ]);
+
+test("雷达：军火库一张原格挡+判定格挡两张都消费", async () => {
+  const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});
+  a.equipment=instance("battleDevice");b.equipment=instance("defenseDevice");
+  const original=instance("block"),judged=instance("block");
+  b.hand.push(original);game.state.deck.cards.push(judged);const hp=b.hp;
+  await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
+  assert.equal(b.hp,hp);assert.equal(b.hand.length,0);
+  assert.ok(game.state.deck.discardPile.includes(original));assert.ok(game.state.deck.discardPile.includes(judged));
 });
-test("响应窗口中的“你”保持普通文本不着色", async () => {
-  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:"角色A",battleTeam:"dawn"},second={id:"second",name:"角色B",battleTeam:"dusk"};
-  const block=buildResponsePresentation(responder,"block",{source,target:responder,card:instance("assault")},1,0,"格挡");
-  assert.equal(block.eventText,"角色A对你使用了「突袭」。");
-  assert.deepEqual(block.eventFragments,[
-    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
-    {type:"text",text:"对"},
-    {type:"text",text:"你"},
-    {type:"text",text:"使用了「突袭」。"}
-  ]);
-  const html=await renderResponseEventHtml(block);
-  assert.equal((html.match(/response-player-name/g)??[]).length,1);
-  assert.doesNotMatch(html,/>你<\/strong>/);
-  const leverage=buildResponsePresentation(responder,"leverageAssault",{source,target:second,card:instance("leverage")},1,0,"使用突袭");
-  assert.equal(leverage.eventText,"角色A对你使用了「借势」，要求你对角色B使用「突袭」。");
-  assert.deepEqual(leverage.eventFragments,[
-    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
-    {type:"text",text:"对你使用了「借势」，要求你对"},
-    {type:"player",text:"角色B",playerId:"second",battleTeam:"dusk"},
-    {type:"text",text:"使用「突袭」。"}
-  ]);
+
+test("AI·雷达：战术判定免疫且不增加不消费", () => {
+  const target=radarFixtureTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  radarApply(target, radarAttacker(), {radarJudgmentProbabilities:{block:0,otherBasic:0,equipment:0}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.knownCards[0].cardId,"orig");assert.ok(Math.abs(target.blockProbability-1)<1e-9);
+  assert.ok(target.blockCountDistribution.some((branch)=>branch.blockCount===1&&Math.abs(branch.probability-1)<1e-9));
 });
-test("反制链与濒死响应片段保留实际角色身份", () => {
-  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色B",battleTeam:"dusk"},previous={id:"previous",name:"角色A",battleTeam:"dawn"};
-  const chain=buildResponsePresentation(responder,"counter",{source,target:previous,targets:[previous],card:instance("counter"),counteredCardName:"丰收"},1,0,"反制");
-  assert.equal(chain.eventText,"角色B对角色A打出的「丰收」使用了「反制」。");
-  assert.deepEqual(chain.eventFragments,[
-    {type:"player",text:"角色B",playerId:"source",battleTeam:"dusk"},
-    {type:"text",text:"对"},
-    {type:"player",text:"角色A",playerId:"previous",battleTeam:"dawn"},
-    {type:"text",text:"打出的「丰收」使用了「反制」。"}
-  ]);
-  const dying=buildResponsePresentation(responder,"dyingRescue",{target:previous},1,0,"使用调息");
-  assert.equal(dying.eventText,"角色A已进入濒死状态。");
-  assert.deepEqual(dying.eventFragments,[
-    {type:"player",text:"角色A",playerId:"previous",battleTeam:"dawn"},
-    {type:"text",text:"已进入濒死状态。"}
-  ]);
-  const selfDying=buildResponsePresentation(responder,"dyingRescue",{target:responder},1,0,"使用调息");
-  assert.equal(selfDying.eventText,"你已进入濒死状态。");
-  assert.deepEqual(selfDying.eventFragments,[
-    {type:"text",text:"你"},
-    {type:"text",text:"已进入濒死状态。"}
-  ]);
+
+test("AI·雷达：无原格挡+判定格挡普通攻击即得即用", () => {
+  const target=radarFixtureTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  radarApply(target, radarAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);assert.ok(target.blockCountDistribution.every((branch)=>branch.blockCount===0));
 });
-test("响应窗口角色名经结构化片段转义且队伍class保留", async () => {
-  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:'<img src=x onerror=alert(1)>',battleTeam:"dawn"};
-  const presentation=buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:instance("harvest")},1,0,"反制");
-  const html=await renderResponseEventHtml(presentation);
-  assert.doesNotMatch(html,/<img\b/i);
-  assert.doesNotMatch(html,/<img[^>]*onerror=/i);
-  assert.match(html,/&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.match(html,/<strong class="response-player-name team-dawn"/);
+
+test("AI·雷达：判定聚能普通攻击命中且聚能公开保留", () => {
+  const target=radarFixtureTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  radarApply(target, radarAttacker(), {remainingCardCounts:{charge:1}});
+  assert.equal(target.hp,3);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.knownCards[0].definitionId,"charge");assert.ok(Math.abs(target.blockProbability)<1e-9);
 });
-test("旧响应 presentation 无结构化片段时回退整段转义", async () => {
-  const html=await renderResponseEventHtml({ eventText:'<script>bad()</script>', responseText:"需要响应", availabilityText:"", buttonLabel:"格挡" });
-  assert.doesNotMatch(html,/<script>/);
-  assert.match(html,/&lt;script&gt;bad\(\)&lt;\/script&gt;/);
+
+test("AI·雷达：原格挡+判定格挡普通攻击保留判定格挡且第二次仍可挡", () => {
+  const target=radarFixtureTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  const round1=radarApply(target, radarAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  const kept=target.knownCards[0];assert.equal(kept.definitionId,"block");assert.notEqual(kept.cardId,"orig");
+  assert.ok(Math.abs(target.blockProbability-1)<1e-9);
+  radarApply(target, radarAttacker(), {remainingCardCounts:{charge:1}}, round1.state);
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.knownCards[0].definitionId,"charge");assert.equal(target.blockProbability,0);
 });
-test("转移响应片段包含来源与接收者的队伍", async () => {
-  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk","human"),receiver=makePlayer("receiver",3,"dawn");
-  const use=instance("transfer"),secret=instance("block");actor.hand.push(use);from.hand.push(secret);from.bumpHandVersion();
-  const {game,ui}=makeGame([actor,from,responder,receiver],{response:()=>false});const hidden=game.cardSelectionSystem.createHiddenSelection(from);
-  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});
-  const request=ui.responseRequests.find((entry)=>entry.type==="counter"&&entry.targetPlayerId===responder.id);
-  assert.ok(request);
-  const fragments=request.presentation.eventFragments;
-  assert.equal(fragments.find((fragment)=>fragment.type==="player"&&fragment.playerId===actor.id).battleTeam,"dawn");
-  assert.equal(fragments.find((fragment)=>fragment.type==="player"&&fragment.playerId===from.id).battleTeam,"dusk");
-  assert.equal(fragments.find((fragment)=>fragment.type==="player"&&fragment.playerId===receiver.id).battleTeam,"dawn");
-  assert.match(request.presentation.eventText,new RegExp(`${from.name}.*1张牌.*${receiver.name}`));
+
+test("AI·雷达：原格挡+判定聚能普通攻击后第二次命中", () => {
+  const target=radarFixtureTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  const round1=radarApply(target, radarAttacker(), {remainingCardCounts:{charge:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.knownCards[0].definitionId,"charge");assert.equal(target.blockProbability,0);
+  radarApply(target, radarAttacker(), {remainingCardCounts:{charge:1}}, round1.state);
+  assert.equal(target.hp,3);
 });
-test("响应窗口队伍颜色复用现有主题变量", async () => {
-  const css=await readFile(projectFile("css/components.css"),"utf8");
-  assert.match(css,/\.response-event \.response-player-name\.team-dawn\s*\{[^}]*color:\s*var\(--dawn\)/s);
-  assert.match(css,/\.response-event \.response-player-name\.team-dusk\s*\{[^}]*color:\s*var\(--dusk\)/s);
+
+test("AI·雷达：军火库无原格挡+判定格挡不消费且随后普通攻击可挡", () => {
+  const target=radarFixtureTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  const round1=radarApply(target, radarBattleAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,3);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  assert.equal(target.knownCards[0].definitionId,"block");assert.ok(Math.abs(target.blockProbability-1)<1e-9);
+  radarApply(target, radarAttacker(), {remainingCardCounts:{charge:1}}, round1.state);
+  assert.equal(target.hp,3);assert.equal(target.blockProbability,0);
 });
+
+test("AI·雷达：军火库一张原格挡+判定格挡两张同时消费", () => {
+  const target=radarFixtureTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  radarApply(target, radarBattleAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);
+});
+
+test("AI·雷达：军火库两张原格挡+判定格挡只消费两张原格挡", () => {
+  const target=radarFixtureTarget({handCount:2,knownCards:[fullKnownCard("o1","block"),fullKnownCard("o2","block")],blockProbability:1,twoBlockProbability:1,blockCountDistribution:[{probability:1,conditions:{},blockCount:2}]});
+  radarApply(target, radarBattleAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
+  const kept=target.knownCards[0];assert.equal(kept.definitionId,"block");assert.ok(!["o1","o2"].includes(kept.cardId));
+  assert.equal(target.twoBlockProbability,0);
+});
+
+test("AI·雷达：军火库一张原格挡+判定聚能不足两张攻击命中且都保留", () => {
+  const target=radarFixtureTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  radarApply(target, radarBattleAttacker(), {remainingCardCounts:{charge:1}});
+  assert.equal(target.hp,3);assert.equal(target.handCount,2);assert.equal(target.knownCards.length,2);
+  assert.deepEqual(target.knownCards.map((entry)=>entry.definitionId).sort(),["block","charge"]);
+  assert.equal(target.blockProbability,1);
+});
+
+test("AI·雷达：装备判定不增加身份且原格挡按普通规则消费", () => {
+  const target=radarFixtureTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  radarApply(target, radarAttacker(), {remainingCardCounts:{energyDevice:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);
+});
+
+test("AI·雷达：判定调息增加调息摘要", () => {
+  const target=radarFixtureTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  radarApply(target, radarAttacker(), {remainingCardCounts:{recover:1}});
+  assert.equal(target.handCount,1);assert.equal(target.knownCards[0].definitionId,"recover");
+  assert.equal(target.expectedRecoverCount,1);
+});
+
+test("AI·雷达：判定突袭增加突袭摘要", () => {
+  const target=radarFixtureTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  radarApply(target, radarAttacker(), {remainingCardCounts:{assault:1}});
+  assert.equal(target.knownCards[0].definitionId,"assault");
+  assert.equal(target.expectedAssaultCount,1);assert.equal(target.assaultResponseProbability,1);
+  assert.ok(target.assaultCountDistribution.some((branch)=>branch.count===1&&Math.abs(branch.probability-1)<1e-9));
+});
+
+test("AI·雷达：判定护盾只创建身份不提升格挡调息突袭摘要", () => {
+  const target=radarFixtureTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  radarApply(target, radarAttacker(), {remainingCardCounts:{shield:1}});
+  assert.equal(target.knownCards[0].definitionId,"shield");
+  assert.equal(target.blockProbability,0);assert.equal(target.expectedRecoverCount,0);assert.equal(target.expectedAssaultCount,0);
+});
+
+test("AI·雷达：50%雷达两分支身份与格挡消费共享条件世界", () => {
+  const target=radarFixtureTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}],equipmentRetentionProbability:.5});
+  const {simulator}=radarApply(target, radarAttacker(), {remainingCardCounts:{charge:1}});
+  assert.equal(target.hp,4);assertClose(target.handCount,.5);
+  const charge=target.knownCards.find((entry)=>entry.definitionId==="charge");
+  assert.ok(charge);assertClose(simulator.cardAvailability(charge),.5);
+  assert.ok(charge.availabilityStateBranches.every((branch)=>Object.keys(branch.conditions).some((key)=>key.includes("radar-outcome"))));
+  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+  assert.equal(target.blockProbability,0);
+});
+
+test("AI·雷达：40%攻击未发生世界不判定不消费不受伤", () => {
+  const target=radarFixtureTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  const {simulator}=radarApply(target, radarAttacker(), {remainingCardCounts:{charge:1},eventProbability:.4});
+  assert.equal(target.hp,4);assertClose(target.handCount,1);
+  const charge=target.knownCards.find((entry)=>entry.definitionId==="charge");
+  const block=target.knownCards.find((entry)=>entry.definitionId==="block");
+  assert.ok(charge);assertClose(simulator.cardAvailability(charge),.4);
+  assert.ok(block);assertClose(simulator.cardAvailability(block),.6);
+  const byCount=blockDistributionByCount(target.blockCountDistribution);
+  assertClose(byCount[0] ?? 0,.4);assertClose(byCount[1] ?? 0,.6);
+});
+
+test("AI·雷达：混合判定身份互斥且每个世界最多一张基础牌", () => {
+  const target=radarFixtureTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  const {simulator}=radarApply(target, radarBattleAttacker(), {remainingCardCounts:{block:5,charge:5}});
+  assert.equal(target.hp,3); // 军火库只有一张判定格挡不足两张，两个分支都命中
+  const block=target.knownCards.find((entry)=>entry.definitionId==="block");
+  const charge=target.knownCards.find((entry)=>entry.definitionId==="charge");
+  assert.ok(block);assert.ok(charge);
+  assertClose(simulator.cardAvailability(block),.5);assertClose(simulator.cardAvailability(charge),.5);
+  const joined=joinProbabilityStateBranches(
+    projectAvailability(block.availabilityStateBranches,"blockAvail"),
+    projectAvailability(charge.availabilityStateBranches,"chargeAvail")
+  );
+  const bothAvailable=joined.filter((branch)=>branch.blockAvail&&branch.chargeAvail)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assert.ok(Math.abs(bothAvailable)<1e-9);
+});
+
+test("AI·雷达：clone 后雷达判定消费状态不恢复", () => {
+  const state={remainingCardCounts:{charge:1},players:[radarAttacker(),radarFixtureTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]})]};
+  const simulator=new AiSimulator({players:[]});
+  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
+  assert.equal(state.players[1].blockProbability,0);
+  const cloned=simulator.clone(state);
+  assert.equal(cloned.players[1].blockProbability,0);
+  assert.ok(cloned.players[1].knownCards.some((entry)=>entry.definitionId==="charge"));
+  simulator.applyDamage(cloned,cloned.players[0],cloned.players[1],1,{canBlock:true,deviceAttack:true});
+  assert.equal(cloned.players[1].hp,3);
+  assert.equal(state.players[1].hp,4);
+});
+
+test("AI·雷达：判定聚能可被后续破坏定向移除", () => {
+  const state={remainingCardCounts:{charge:1},players:[radarAttacker(),radarFixtureTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]})]};
+  const simulator=new AiSimulator({players:[]});
+  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
+  const target=state.players[1];
+  target.equipmentDefinitionId=null;target.equipmentRetentionProbability=0;
+  assert.equal(target.knownCards[0].definitionId,"charge");
+  const selection=simulator.chooseSimulatedResourceSelection(state,state.players[0],target,"destroy");
+  assert.equal(selection.selectionKind,"known");assert.equal(selection.definitionId,"charge");
+  simulator.destroyResource(state,state.players[0],target,1);
+  assert.equal(target.knownCards.length,0);assert.equal(target.handCount,0);
+});
+
+test("AI·雷达：判定聚能可被后续掠夺转移到行动者", () => {
+  const state={remainingCardCounts:{charge:1},players:[radarAttacker(),radarFixtureTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]})]};
+  const simulator=new AiSimulator({players:[]});
+  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
+  const actor=state.players[0],target=state.players[1];
+  target.equipmentDefinitionId=null;target.equipmentRetentionProbability=0;
+  simulator.takeResourceToHand(state,actor,target,1);
+  assert.equal(target.knownCards.length,0);assert.equal(target.handCount,0);
+  assert.equal(actor.hand.length,1);assert.equal(actor.hand[0].definitionId,"charge");
+});
+
+test("AI·雷达：判定聚能可被后续转移给接收者", () => {
+  const receiver=radarFixtureTarget({id:"receiver",battleTeam:"dawn",handCount:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:0}],equipmentDefinitionId:null,equipmentRetentionProbability:0});
+  const state={remainingCardCounts:{charge:1},players:[radarAttacker(),radarFixtureTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]}),receiver]};
+  const simulator=new AiSimulator({players:[]});
+  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
+  const target=state.players[1],charge=target.knownCards[0];
+  simulator.transferKnownCardIdentity(state,target,receiver,{cardId:charge.cardId,definitionId:"charge"},[{probability:1,conditions:{},occurs:true}],false);
+  assert.equal(target.knownCards.length,0);assert.equal(target.handCount,0);
+  assert.equal(receiver.knownCards.length,1);assert.equal(receiver.knownCards[0].definitionId,"charge");
+  assert.equal(receiver.handCount,1);
+});
+
+test("AI·雷达：空判定池退化为普通格挡流程", () => {
+  const target=radarFixtureTarget({knownCards:[],blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
+  radarApply(target, radarAttacker(), {remainingCardCounts:{}});
+  assert.equal(target.hp,3);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+});
+
+test("AI·雷达：空判定池不免疫且原格挡仍按普通规则消费", () => {
+  const target=radarFixtureTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  radarApply(target, radarAttacker(), {remainingCardCounts:{}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
+});
+
+test("AI·雷达：匿名确定格挡优先于判定格挡被消费", () => {
+  const target=radarFixtureTarget({handCount:1,blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  const {simulator}=radarApply(target, radarAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);
+  assert.equal(target.knownCards.length,1);
+  const judged=target.knownCards[0];assert.equal(judged.definitionId,"block");
+  assertClose(simulator.cardAvailability(judged),1);
+  const byCount=blockDistributionByCount(target.blockCountDistribution);
+  assertClose(byCount[1] ?? 0,1);
+  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+});
+
+test("AI·雷达：匿名50%格挡与判定格挡同世界关联", () => {
+  const target=radarFixtureTarget({handCount:1,blockProbability:.5,twoBlockProbability:0,blockCountDistribution:[{probability:.5,conditions:{},blockCount:0},{probability:.5,conditions:{},blockCount:1}]});
+  const {simulator}=radarApply(target, radarAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);
+  const judged=target.knownCards[0];assert.equal(judged.definitionId,"block");
+  assertClose(simulator.cardAvailability(judged),.5);
+  const byCount=blockDistributionByCount(target.blockCountDistribution);
+  assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
+  const joint=joinProbabilityStateBranches(
+    projectAvailability(judged.availabilityStateBranches,"judgedAvail"),
+    target.blockCountDistribution.map(({blockCount,probability,conditions})=>({probability,conditions,count1:blockCount===1}))
+  );
+  const mismatched=joint.filter((branch)=>branch.judgedAvail!==branch.count1)
+    .reduce((sum,branch)=>sum+branch.probability,0);
+  assert.ok(Math.abs(mismatched)<1e-9);
+  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+});
+
+test("AI·雷达：两张匿名格挡+判定格挡军火库只消费原匿名格挡", () => {
+  const target=radarFixtureTarget({handCount:2,blockProbability:1,twoBlockProbability:1,blockCountDistribution:[{probability:1,conditions:{},blockCount:2}]});
+  const {simulator}=radarApply(target, radarBattleAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,1);
+  assert.equal(target.knownCards.length,1);assert.equal(target.knownCards[0].definitionId,"block");
+  assertClose(simulator.cardAvailability(target.knownCards[0]),1);
+  const byCount=blockDistributionByCount(target.blockCountDistribution);
+  assertClose(byCount[1] ?? 0,1);assert.equal(target.twoBlockProbability,0);
+  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
+});
+
+test("AI·雷达：一张匿名格挡+判定格挡军火库两张都消费", () => {
+  const target=radarFixtureTarget({handCount:1,blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
+  radarApply(target, radarBattleAttacker(), {remainingCardCounts:{block:1}});
+  assert.equal(target.hp,4);assert.equal(target.handCount,0);
+  assert.equal(target.knownCards.length,0);
+  assert.equal(target.blockProbability,0);
+  assert.ok(target.blockCountDistribution.every((branch)=>branch.blockCount===0));
+});
+
+// ---- 军火库 ----
+
+test("军火库响应显示完整数量并原子消耗两张格挡", async () => { const source=makePlayer("source",0,"dusk"),target=makePlayer("target",1,"dawn","human");source.equipment=instance("battleDevice");target.hand.push(instance("block"),instance("block"),instance("block"));const {game,ui}=makeGame([source,target],{response:()=>true});await game.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});const request=ui.responseRequests.find((entry)=>entry.type==="block");assert.equal(request.requiredCount,2);assert.equal(request.presentation.availableCount,3);assert.match(request.presentation.availabilityText,/需要 2 张格挡，当前 3 张/);assert.equal(target.hand.filter((card)=>card.definitionId==="block").length,1); });
+
+test("军火库要求2张格挡；只有1张时仍显示响应但按钮禁用且不会浪费", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>true});a.equipment=instance("battleDevice");b.hand.push(instance("block"));const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});const request=ui.responseRequests[0];assert.equal(request.requiredCount,2);assert.equal(request.legalCardIds.length,1);assert.equal(canSubmitResponse(request),false);assert.match(request.presentation.availabilityText,/不足/);assert.equal(b.hp,hp-1);assert.equal(b.hand.length,1); });
+
+test("军火库面对2张格挡时原子弃置并完全防住", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});a.equipment=instance("battleDevice");b.hand.push(instance("block"),instance("block"));const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(b.hp,hp);assert.equal(b.hand.length,0); });
+
+test("AI 模拟军火库要求两张格挡而不是一张", () => { const state={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,equipmentDefinitionId:"battleDevice",expectedRecoverCount:0},{id:"b",seatIndex:1,battleTeam:"dusk",hp:3,maxHp:3,shield:0,alive:true,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}]};const next=new AiSimulator(state).apply(state,{type:"card",card:{id:"hit",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(next.players[1].hp,2); });
+
+test("AI军火库不会提高猎杀等非设备攻击的格挡需求", () => {
+  const state={players:[
+    {id:"hunter",battleTeam:"dawn",alive:true,hp:4,maxHp:4,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1},
+    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}
+  ]};
+  new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],2,{canBlock:true,deviceAttack:false});
+  assert.equal(state.players[1].hp,4);assert.equal(state.players[1].handCount,0);
+});
+
+// ---- 望远镜与屏障 ----
+
+test("望远镜令装备者计算到其他角色的距离减1且最低为1", () => { const ps=Array.from({length:5},(_,i)=>makePlayer(`p${i}`,i,i<2?"dawn":"dusk"));const {game}=makeGame(ps);ps[0].equipment=instance("telescope");assert.equal(DistanceSystem.getDistance(game,ps[0],ps[2]),1);assert.equal(DistanceSystem.getDistance(game,ps[0],ps[1]),1);assert.equal(DistanceSystem.getDistance(game,ps[2],ps[0]),2); });
+
+test("屏障令其他角色计算到装备者的距离加1但不影响装备者主动测距", () => { const ps=Array.from({length:5},(_,i)=>makePlayer(`p${i}`,i,i<2?"dawn":"dusk"));const {game}=makeGame(ps);ps[1].equipment=instance("barrierDevice");assert.equal(DistanceSystem.getDistance(game,ps[0],ps[1]),2);assert.equal(DistanceSystem.getDistance(game,ps[1],ps[0]),1); });
+
+test("望远镜和屏障在同一条方向距离上依次生效", () => { const ps=Array.from({length:5},(_,i)=>makePlayer(`p${i}`,i,i<2?"dawn":"dusk"));const {game}=makeGame(ps);ps[0].equipment=instance("telescope");ps[2].equipment=instance("barrierDevice");assert.equal(DistanceSystem.getDistance(game,ps[0],ps[2]),2); });
+
+test("距离装备即时改变普通突袭合法目标且AI快照使用相同修正", () => { const source=makePlayer("source",0,"dawn"),ally=makePlayer("ally",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dusk"),assault=instance("assault");const {game}=makeGame([source,ally,target,other,tail]);source.hand.push(assault);assert.ok(!RuleEngine.getCardTargets(game,source,assault).includes(target));source.equipment=instance("telescope");assert.ok(RuleEngine.getCardTargets(game,source,assault).includes(target));const visible=createAiVisibleState(source.id,game.state);assert.equal(DistanceSystem.getDistance({state:{players:visible.players}},visible.players[0],visible.players[2]),1);target.equipment=instance("barrierDevice");assert.ok(!RuleEngine.getCardTargets(game,source,assault).includes(target)); });
+
+test("AI深层模拟装备望远镜后会生成新进入距离的突袭目标", () => { const source=makePlayer("source",0,"dawn"),ally=makePlayer("ally",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dusk"),telescope=instance("telescope"),assault=instance("assault");source.hand.push(telescope,assault);const {game}=makeGame([source,ally,target,other,tail]),visible=createAiVisibleState(source.id,game.state),equipAction=game.aiController.actionGenerator.generateFromVisible(visible,source.id).find((action)=>action.card?.id===telescope.id),equipped=new AiSimulator(visible).apply(visible,equipAction,source.id),follow=game.aiController.actionGenerator.generateFromVisible(equipped,source.id);assert.ok(follow.some((action)=>action.card?.id===assault.id&&action.targets[0]?.id===target.id)); });
+
+// ==================== 角色技能 ====================
+
+// ---- 刃行者 ----
+
+test("刃行者使用不同类别卡牌会增加并公开显示连势且命中后消耗", async () => { const blade=makePlayer("blade",0,"dawn","ai",0),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk","ai",0);const {game}=makeGame([blade,ally,enemy]);registerPassiveSkills(game);const charge=instance("charge"),harvest=instance("harvest"),assault=instance("assault");blade.hand.push(charge,harvest,assault);game.state.deck.cards.push(instance("block"),instance("shield"));assert.equal(await game.playCard(blade,charge,[blade]),true);assert.equal(blade.turnFlags.momentum,1);assert.equal(await game.playCard(blade,harvest,[]),true);assert.equal(blade.turnFlags.momentum,2);assert.match(playerPanelTemplate(blade,{humanTeam:"dawn"}),/状态<\/small><b>连势 2<\/b>/);const hp=enemy.hp;assert.equal(await game.playCard(blade,assault,[enemy]),true);assert.equal(enemy.hp,hp-3);assert.equal(blade.turnFlags.momentum,0);assert.doesNotMatch(playerPanelTemplate(blade,{humanTeam:"dawn"}),/连势 \d/); });
+
+test("刃行者连势只在本人回合结束时清空", async () => {
+  const blade=makePlayer("blade-turn-end",0,"dawn","ai",0),ally=makePlayer("blade-ally",1,"dawn"),enemy=makePlayer("blade-enemy",2,"dusk"),{game}=makeGame([blade,ally,enemy]);registerPassiveSkills(game);
+  blade.turnFlags.momentum=2;await game.eventBus.emit("turnEnd",{type:"turnEnd",player:ally});assert.equal(blade.turnFlags.momentum,2);
+  await game.eventBus.emit("turnEnd",{type:"turnEnd",player:blade});assert.equal(blade.turnFlags.momentum,0);assert.doesNotMatch(playerPanelTemplate(blade,{humanTeam:"dawn"}),/连势 \d/);
+});
+
+test("刃行者配置与README都声明回合结束清空连势", async () => {
+  const blade=GENERAL_DEFINITIONS.find((general)=>general.id==="blade-walker"),readme=await readFile(projectFile("README.md"),"utf8"),bladeSection=readme.match(/### 刃行者[\s\S]*?(?=\r?\n### )/)?.[0]??"";
+  assert.match(blade.passiveDescription,/回合结束后清空连势/);assert.match(bladeSection,/回合结束后清空连势/);
+});
+
+test("刃行者完整回合结束流程会清空未消费的连势", async () => {
+  const blade=makePlayer("blade-full-turn",0,"dawn","ai",0),enemy=makePlayer("blade-full-turn-enemy",1,"dusk"),{game}=makeGame([blade,enemy]);registerPassiveSkills(game);
+  game.aiController.selectAction=async()=>({type:"end"});game.eventBus.on("playPhaseEnd","test:grant-momentum-before-turn-end",()=>{blade.turnFlags.momentum=2;});
+  await game.takeTurn(blade,game.state.gameId);assert.equal(blade.turnFlags.momentum,0);
+});
+
+test("AI 刃行者模拟按不同类别积累连势且命中的突袭消耗连势", () => {
+  const blade=makePlayer("sim-blade",0,"dawn","ai",0),enemy=makePlayer("sim-blade-enemy",1,"dusk"),charge=instance("charge"),harvest=instance("harvest"),assault=instance("assault");
+  blade.hand.push(charge,harvest,assault);
+  const {game}=makeGame([blade,enemy]),visible=createAiVisibleState(blade.id,game.state),simulator=new AiSimulator(visible);
+  const charged=simulator.apply(visible,{type:"card",card:charge,targets:[]},blade.id);
+  const harvested=simulator.apply(charged,{type:"card",card:harvest,targets:[]},blade.id);
+  const attacked=simulator.apply(harvested,{type:"card",card:assault,targets:[{id:enemy.id}]},blade.id);
+  assert.deepEqual(charged.players[0].categoriesUsed,["basic"]);assert.equal(charged.players[0].momentum,1);
+  assert.deepEqual(harvested.players[0].categoriesUsed,["basic","tactic"]);assert.equal(harvested.players[0].momentum,GAME_CONFIG.momentumMaxStacks);
+  assert.equal(attacked.players[1].hp,enemy.maxHp-3);assert.equal(attacked.players[0].momentum,0);
+});
+
+test("AI 刃行者突袭被格挡或被护盾完全吸收时不消耗连势", () => {
+  const state={players:[
+    {id:"blade",seatIndex:0,generalId:"blade-walker",battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,momentum:2,categoriesUsed:["basic","tactic"],expectedRecoverCount:0},
+    {id:"target",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,alive:true,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}
+  ]};
+  const blocked=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
+  assert.equal(blocked.players[1].hp,4);assert.equal(blocked.players[0].momentum,2);
+  const shieldedState=structuredClone(state);shieldedState.players[1].blockProbability=0;shieldedState.players[1].shield=3;
+  const shielded=new AiSimulator(shieldedState).apply(shieldedState,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
+  assert.equal(shielded.players[1].hp,4);assert.equal(shielded.players[1].shield,0);assert.equal(shielded.players[0].momentum,2);
+});
+
+test("AI 刃行者突袭部分命中时按生命伤害概率消耗连势", () => {
+  const state={players:[
+    {id:"blade",seatIndex:0,generalId:"blade-walker",battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,momentum:2,categoriesUsed:["basic","tactic"],expectedRecoverCount:0},
+    {id:"target",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,alive:true,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0}
+  ]};
+  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
+  assert.equal(next.players[1].hp,2.5);assert.equal(next.players[0].momentum,1);
+  const shieldedState=structuredClone(state);shieldedState.players[1].shield=2;
+  const shielded=new AiSimulator(shieldedState).apply(shieldedState,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
+  assert.equal(shielded.players[1].hp,3.5);assert.equal(shielded.players[0].momentum,1);
+});
+
+test("AI 刃行者首次使用基础牌的连势按突袭命中分支计算期望", () => {
+  const state={players:[
+    {id:"blade",seatIndex:0,generalId:"blade-walker",battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,momentum:2,categoriesUsed:["tactic"],expectedRecoverCount:0},
+    {id:"target",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,alive:true,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0}
+  ]};
+  const action={type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]};
+  const partial=new AiSimulator(state).apply(state,action,"blade");
+  assert.equal(partial.players[0].momentum,1.5);assert.deepEqual(partial.players[0].categoriesUsed,["tactic","basic"]);
+  const hitState=structuredClone(state);hitState.players[1].blockProbability=0;
+  assert.equal(new AiSimulator(hitState).apply(hitState,action,"blade").players[0].momentum,1);
+  const missState=structuredClone(state);missState.players[1].blockProbability=1;
+  assert.equal(new AiSimulator(missState).apply(missState,action,"blade").players[0].momentum,2);
+});
+
+test("概率破军只在发动世界新增可用突袭次数槽", () => {
+  const shared="break-army-energy",state={playPhaseEnded:false,players:[
+    {id:"blade",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:.8,maxEnergy:4,energyBranches:[{probability:.4,conditions:{[shared]:"yes"},amount:2},{probability:.6,conditions:{[shared]:"no"},amount:0}],handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:1,attackLimit:1,attackRange:1,activeSkillId:"breakArmy",activeSkillUses:0,activeSkillLimit:1},
+    {id:"enemy",seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0}
+  ]},{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const skill=game.aiController.actionGenerator.generateFromVisible(state,"blade").find((action)=>action.skill?.id==="breakArmy");assertClose(skill.executionProbability,.4);
+  const boosted=new AiSimulator(state).apply(state,skill,"blade");assertClose(boosted.players[0].attackLimit,1.4);
+  const assault=game.aiController.actionGenerator.generateFromVisible(boosted,"blade").find((action)=>action.card?.id==="hit");assertClose(assault.executionProbability,.4);
+});
+
+test("AI破军只在额外攻击槽确实有第二张突袭可用时生成", () => {
+  const blade=makePlayer("break-army-blade",0,"dawn","ai",0),enemy=makePlayer("break-army-enemy",1,"dusk");
+  blade.energy=2;blade.hand.push(instance("assault"));const {game}=makeGame([blade,enemy]);blade.energy=2;
+  const skills=()=>game.aiController.getLegalActions(blade).filter((action)=>action.skill?.id==="breakArmy");
+  assert.equal(skills().length,0);assert.equal(game.aiController.evaluator.breakArmyUtility(createAiVisibleState(blade.id,game.state).players[0]),-4);blade.turnFlags.attackUsed=blade.turnFlags.attackLimit;assert.equal(skills().length,1);assert.equal(game.aiController.evaluator.breakArmyUtility(createAiVisibleState(blade.id,game.state).players[0]),8);
+});
+
+// ---- 守誓者 ----
+
+test("壁垒每次提供1点可叠加的永久护盾", async () => { const source=makePlayer("a",0,"dawn"),target=makePlayer("b",1,"dawn","ai",1),enemy=makePlayer("c",2,"dusk");const {game}=makeGame([source,target,enemy]);source.energy=4;target.shield=2;await ACTIVE_SKILLS.barrier.execute(game,source,[target]);assert.equal(target.shield,3);await ACTIVE_SKILLS.barrier.execute(game,source,[target]);assert.equal(target.shield,4);assert.equal("temporaryShield" in target.statuses,false);const log=game.state.logs.at(-1)?.message??"";assert.match(log,/构筑壁垒.*获得1点护盾/);assert.doesNotMatch(log,/持续|消散/); });
+
+test("壁垒护盾不会在目标回合开始时消失", async () => { const source=makePlayer("a",0,"dawn"),target=makePlayer("b",1,"dawn","ai",1),enemy=makePlayer("c",2,"dusk");const {game}=makeGame([source,target,enemy]);source.energy=2;await ACTIVE_SKILLS.barrier.execute(game,source,[target]);game.state.currentPlayerIndex=1;game.aiController.selectAction=async()=>({type:"end"});await game.takeTurn(target,game.state.gameId);assert.equal(target.shield,1);assert.equal("temporaryShield" in target.statuses,false); });
+
+test("壁垒护盾经过完整轮次且守誓者阵亡后仍然保留", async () => { const source=makePlayer("warden",0,"dawn","ai",1),target=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([source,target,enemy]);source.energy=2;target.shield=1;await ACTIVE_SKILLS.barrier.execute(game,source,[target]);source.alive=false;source.hp=0;game.state.currentPlayerIndex=1;game.state.startingPlayerIndex=1;game.aiController.selectAction=async()=>({type:"end"});for(let turn=0;turn<4;turn+=1){await game.takeTurn(game.currentPlayer,game.state.gameId);await game.advanceTurn();}assert.equal(game.state.currentRound,3);assert.equal(target.shield,2);assert.equal("temporaryShield" in target.statuses,false); });
+
+test("壁垒与护盾牌使用统一伤害吸收规则", async () => { const source=makePlayer("warden",0,"dawn","ai",1),target=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk"),shieldCard=instance("shield");const {game}=makeGame([source,target,enemy]);source.hand.push(shieldCard);source.energy=2;assert.equal(await game.playCard(source,shieldCard,[target]),true);await ACTIVE_SKILLS.barrier.execute(game,source,[target]);const hp=target.hp;assert.equal(target.shield,2);await game.damage(enemy,target,3,{canBlock:false,damageType:"normal"});assert.equal(target.shield,0);assert.equal(target.hp,hp-1);assert.equal("temporaryShield" in target.statuses,false); });
+
+test("README中的主动技能消耗与每回合次数进入实际规则", async () => { const warden=makePlayer("warden",0,"dawn","ai",1),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([warden,ally,enemy]);warden.energy=4;assert.equal(await game.useActiveSkill(warden,"barrier",[ally]),true);assert.equal(await game.useActiveSkill(warden,"barrier",[ally]),true);warden.energy=2;assert.equal(await game.useActiveSkill(warden,"barrier",[ally]),false);assert.equal(warden.turnFlags.activeSkillUseCounts.barrier,2);const blade=makePlayer("blade",0,"dawn","ai",0),bladeAlly=makePlayer("blade-ally",1,"dawn"),bladeEnemy=makePlayer("blade-enemy",2,"dusk");const {game:bladeGame}=makeGame([blade,bladeAlly,bladeEnemy]);blade.energy=2;assert.equal(await bladeGame.useActiveSkill(blade,"breakArmy",[]),true);assert.equal(blade.energy,0);assert.equal(blade.turnFlags.attackLimit,3); });
+
 test("护援响应区分原技能名称与当前响应技能名称", async () => { for(const [actionName,context] of [["焚场",{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill"}],["猎杀",{skill:"hunt",actionName:"猎杀",canBlock:true,damageType:"skill"}],["突袭",{card:instance("assault"),canBlock:true,damageType:"normal"}]]){const source=makePlayer(`source-${actionName}`,0,"dusk","ai",4),target=makePlayer(`target-${actionName}`,1,"dawn","ai",2),guardian=makePlayer(`guardian-${actionName}`,2,"dawn","human",1);guardian.hand.push(instance("charge"));const {game,ui}=makeGame([source,target,guardian],{response:()=>false});registerPassiveSkills(game);await game.damage(source,target,1,context);const request=ui.responseRequests.find((entry)=>entry.type==="skill");assert.ok(request);assert.equal(request.presentation.eventText,`${source.name}对${target.name}使用了「${actionName}」。`);assert.equal(request.presentation.responseText,"你可以发动「护援」。");assert.equal(request.presentation.buttonLabel,"发动护援");assert.doesNotMatch(request.presentation.eventText,/发动护援|burningField|hunt/);} });
+
 test("守誓者护援同一玩家回合内第二次伤害不能再次触发", async () => {
   const source = makePlayer("aid-same-source", 0, "dusk", "ai", 4);
   const target = makePlayer("aid-same-target", 1, "dawn", "ai", 5);
@@ -1028,6 +2424,7 @@ test("守誓者护援同一玩家回合内第二次伤害不能再次触发", as
   assert.equal(target.hp, hp - 3);
   assert.equal(ui.responseRequests.filter((request) => request.type === "skill").length, skillRequests);
 });
+
 test("守誓者护援在下一名非守誓者玩家回合开始后重新可用", async () => {
   const source = makePlayer("aid-next-source", 0, "dusk", "ai", 4);
   const ally = makePlayer("aid-next-ally", 1, "dawn", "ai", 0);
@@ -1057,6 +2454,7 @@ test("守誓者护援在下一名非守誓者玩家回合开始后重新可用",
   assert.equal(ally.hp, hp - 2);
   assert.equal(ui.responseRequests.filter((request) => request.type === "skill").length, skillRequests + 1);
 });
+
 test("守誓者护援回合重置后AI新快照读取guardianAidUsedProbability为0", async () => {
   const source = makePlayer("aid-snap-source", 0, "dusk", "ai", 4);
   const guardian = makePlayer("aid-snap-guardian", 1, "dawn", "human", 1);
@@ -1072,6 +2470,331 @@ test("守誓者护援回合重置后AI新快照读取guardianAidUsedProbability�
   const after = createAiVisibleState(source.id, game.state);
   assert.equal(after.players.find((player) => player.id === guardian.id).guardianAidUsedProbability, 0);
 });
+
+test("AI壁垒只增加统一护盾且快照不包含专属护盾字段", () => { const warden=makePlayer("warden",0,"dawn","ai",1),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");warden.energy=2;ally.shield=2;const {game}=makeGame([warden,ally,enemy]),visible=createAiVisibleState(warden.id,game.state);assert.ok(visible.players.every((player)=>!("temporaryShieldAmount" in player)));const next=new AiSimulator(visible).apply(visible,{type:"skill",skill:{id:"barrier",cost:2,limitPerTurn:2},targets:[{id:ally.id}]},warden.id),nextAlly=next.players.find((player)=>player.id===ally.id);assert.equal(nextAlly.shield,3);assert.equal("temporaryShieldAmount" in nextAlly,false); });
+
+test("AI护援统一覆盖突袭、震荡、挑衅、决斗、猎杀与焚场", () => {
+  const runCard=(definitionId,targetSetup=()=>{})=>{
+    const actor={id:`${definitionId}-actor`,seatIndex:0,battleTeam:"dawn",alive:true,hp:5,maxHp:5,shield:0,energy:3,maxEnergy:4,handCount:1,hand:[{id:`${definitionId}-card`,definitionId}],attackUsed:0,attackLimit:2,assaultCountDistribution:[{count:definitionId==="assault"?1:0,probability:1}]};
+    const target={id:`${definitionId}-target`,seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0,assaultCountDistribution:[{count:0,probability:1}]};
+    const guardian={id:`${definitionId}-guardian`,seatIndex:2,generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:1,hand:[{id:`${definitionId}-aid`,definitionId:"charge"}],guardianAidUsedProbability:0};
+    targetSetup(actor,target);const state={players:[actor,target,guardian]},next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS[definitionId],id:`${definitionId}-card`},targets:[target]},actor.id);
+    assert.equal(next.players[1].hp,5);assert.equal(next.players[2].handCount,0);
+  };
+  for (const id of ["assault","shockwave","provoke","duel"]) runCard(id);
+  const runSkill=(skill,actorGeneral,damage)=>{
+    const actor={id:`${skill.id}-actor`,seatIndex:0,generalId:actorGeneral,battleTeam:"dawn",alive:true,hp:5,maxHp:5,shield:0,energy:3,maxEnergy:4,handCount:0,activeSkillUses:0};
+    const target={id:`${skill.id}-target`,seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0,statuses:[],huntMarkSourceId:actor.id,huntMarkProbability:1,huntMarkProbabilities:{[actor.id]:1},huntMarkStateBranchesBySource:{[actor.id]:[{probability:1,conditions:{},marked:true}]}};
+    const guardian={id:`${skill.id}-guardian`,seatIndex:2,generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:1,hand:[{id:`${skill.id}-aid`,definitionId:"charge"}],guardianAidUsedProbability:0};
+    const state={players:[actor,target,guardian]},next=new AiSimulator(state).apply(state,{type:"skill",skill,targets:[target]},actor.id);
+    assert.equal(next.players[1].hp,5-(damage-1));assert.equal(next.players[2].handCount,0);
+  };
+  runSkill(ACTIVE_SKILLS.hunt,"trail-hunter",2);runSkill(ACTIVE_SKILLS.burningField,"ember-magus",1);
+});
+
+test("AI护援在单个模拟快照内只触发一次且零伤害与阵亡时不弃牌", () => {
+  const attacker={id:"aid-attacker",battleTeam:"dawn",alive:true,hp:5,maxHp:5,handCount:0};
+  const target={id:"aid-target",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0};
+  const guardian={id:"aid-guardian",generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:2,guardianAidUsedProbability:0};
+  const state={players:[attacker,target,guardian]},simulator=new AiSimulator(state);simulator.applyDamage(state,attacker,target,0,{canBlock:false});assert.equal(guardian.handCount,2);
+  simulator.applyDamage(state,attacker,target,1,{canBlock:false});simulator.applyDamage(state,attacker,target,1,{canBlock:false});assert.equal(guardian.handCount,1);assert.equal(target.hp,4);
+  const dead={...guardian,id:"dead-aid",alive:false,handCount:1,guardianAidUsedProbability:0},deadTarget={...target,id:"dead-aid-target",hp:5};const deadState={players:[attacker,deadTarget,dead]};simulator.applyDamage(deadState,attacker,deadTarget,1,{canBlock:false});assert.equal(dead.handCount,1);assert.equal(deadTarget.hp,4);
+});
+
+// ---- 灵医 ----
+
+test("灵医滋荣可选择受伤的自己或队友，治疗队友时自己也恢复1点", async () => {
+  const medic=makePlayer("medic",0,"dawn","ai",2),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
+  medic.hp=1;ally.hp=1;const {game}=makeGame([medic,ally,enemy]);registerPassiveSkills(game);game.state.deck.cards.push(instance("block"));medic.energy=4;
+  assert.deepEqual(RuleEngine.getSkillTargets(game,medic,ACTIVE_SKILLS.symbiosis).map((player)=>player.id),[medic.id,ally.id]);
+  assert.equal(await game.useActiveSkill(medic,"symbiosis",[ally]),true);
+  assert.equal(ally.hp,3);assert.equal(medic.hp,2);assert.equal(medic.hand.length,1);
+  assert.equal(await game.useActiveSkill(medic,"symbiosis",[medic]),true);
+  assert.equal(medic.hp,medic.maxHp);assert.equal(medic.hand.length,1);assert.equal(medic.energy,0);
+  medic.energy=2;assert.equal(await game.useActiveSkill(medic,"symbiosis",[ally]),false);
+  assert.equal(medic.turnFlags.activeSkillUseCounts.symbiosis,2);
+});
+
+test("灵医回春每回合首次治疗己方额外恢复1点并摸1张", async () => {
+  const medic=makePlayer("medic-rejuvenation",0,"dawn","ai",2),ally=makePlayer("ally-rejuvenation",1,"dawn"),enemy=makePlayer("enemy-rejuvenation",2,"dusk");
+  medic.hp=2;ally.hp=1;enemy.hp-=1;const {game}=makeGame([medic,ally,enemy]);registerPassiveSkills(game);game.state.deck.cards.push(instance("block"),instance("charge"));
+  await game.heal(medic,enemy,1,{reason:"测试敌方治疗"});
+  assert.equal(medic.turnFlags.rejuvenationUsed,false);assert.equal(medic.hand.length,0);
+  assert.equal(await game.heal(medic,ally,1,{reason:"测试队友治疗"}),2);
+  assert.equal(ally.hp,3);assert.equal(medic.hand.length,1);assert.equal(medic.turnFlags.rejuvenationUsed,true);
+  assert.equal(await game.heal(medic,medic,1,{reason:"测试自我治疗"}),1);
+  assert.equal(medic.hp,3);assert.equal(medic.hand.length,1);
+  medic.resetTurnFlags(game.teamRules.getRules(medic));ally.hp=1;
+  assert.equal(await game.heal(medic,ally,1,{reason:"测试下一回合"}),2);
+  assert.equal(medic.hand.length,2);assert.equal(medic.turnFlags.rejuvenationUsed,true);
+});
+
+test("灵医回春可在救援濒死队友时额外恢复并摸牌", async () => {
+  const target=makePlayer("d",0,"dawn","human",1),medic=makePlayer("m",1,"dawn","ai",2),enemy=makePlayer("e",2,"dusk");
+  target.hp=-1;medic.hand.push(instance("recover"));const {game}=makeGame([target,medic,enemy]);game.state.deck.cards.push(instance("block"));registerPassiveSkills(game);
+  const events=[];game.eventBus.on("beforeHeal","test:rescue-before",(event)=>events.push([event.type,event.isDyingRescue]));game.eventBus.on("afterHeal","test:rescue-after",(event)=>events.push([event.type,event.actualAmount]));
+  await game.dyingSystem.enter(target,enemy);
+  assert.equal(target.alive,true);assert.equal(target.hp,1);assert.equal(medic.statistics.healingDone,2);assert.equal(medic.hand.length,1);
+  assert.deepEqual(events,[["beforeHeal",true],["afterHeal",2]]);assert.equal(medic.turnFlags.rejuvenationUsed,true);
+});
+
+test("灵医本人濒死时也能以回春强化自救并摸牌", async () => {
+  const medic=makePlayer("self-dying-medic",0,"dawn","ai",2),enemy=makePlayer("self-dying-enemy",1,"dusk");
+  medic.hp=-1;medic.hand.push(instance("recover"));const {game}=makeGame([medic,enemy]);game.state.deck.cards.push(instance("charge"));registerPassiveSkills(game);
+  await game.dyingSystem.enter(medic,enemy);
+  assert.equal(medic.alive,true);assert.equal(medic.hp,1);assert.equal(medic.statistics.healingDone,2);assert.equal(medic.hand.length,1);assert.equal(medic.turnFlags.rejuvenationUsed,true);
+});
+
+test("AI滋荣会生成自疗目标并模拟治疗队友时同步自疗", () => {
+  const medic=makePlayer("ai-medic",0,"dawn","ai",2),ally=makePlayer("ai-medic-ally",1,"dawn"),enemy=makePlayer("ai-medic-enemy",2,"dusk");
+  medic.hp=1;ally.hp=1;medic.energy=4;const {game}=makeGame([medic,ally,enemy]);const visible=createAiVisibleState(medic.id,game.state),generator=game.aiController.actionGenerator;
+  const actions=generator.generateFromVisible(visible,medic.id).filter((action)=>action.type==="skill"&&action.skill.id==="symbiosis");
+  assert.deepEqual(actions.map((action)=>action.targets[0].id),[medic.id,ally.id]);
+  const allyAction=actions.find((action)=>action.targets[0].id===ally.id),afterAlly=new AiSimulator(visible).apply(visible,allyAction,medic.id),simMedic=afterAlly.players.find((player)=>player.id===medic.id),simAlly=afterAlly.players.find((player)=>player.id===ally.id);
+  assert.equal(simAlly.hp,3);assert.equal(simMedic.hp,2);assert.equal(simMedic.handCount,1);assert.equal(simMedic.rejuvenationUsed,true);
+  const selfAction=generator.generateFromVisible(afterAlly,medic.id).find((action)=>action.type==="skill"&&action.skill.id==="symbiosis"&&action.targets[0].id===medic.id);
+  const afterSelf=new AiSimulator(afterAlly).apply(afterAlly,selfAction,medic.id),simMedicAgain=afterSelf.players.find((player)=>player.id===medic.id);
+  assert.equal(simMedicAgain.hp,3);assert.equal(simMedicAgain.handCount,1);assert.equal(simMedicAgain.activeSkillUses,2);
+});
+
+test("AI模拟中的灵医回春也能让一张濒死调息恢复2点并摸牌", () => {
+  const state={playPhaseEnded:false,players:[
+    {id:"attacker",seatIndex:0,generalId:"blade-walker",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,hand:[{id:"assault",definitionId:"assault"}],attackUsed:0,attackLimit:2,exposeWeaknessStacks:1,assaultBonus:0},
+    {id:"target",seatIndex:1,generalId:"oath-warden",battleTeam:"dawn",alive:true,hp:1,maxHp:3,shield:0,handCount:0,expectedRecoverCount:0,blockProbability:0,twoBlockProbability:0},
+    {id:"medic",seatIndex:2,generalId:"spirit-medic",battleTeam:"dawn",alive:true,hp:3,maxHp:3,shield:0,handCount:1,expectedRecoverCount:1,rejuvenationUsed:false}
+  ]};
+  const action={type:"card",card:{...CARD_DEFINITIONS.assault,id:"assault"},targets:[state.players[1]]},next=new AiSimulator(state).apply(state,action,"attacker"),target=next.players[1],medic=next.players[2];
+  assert.equal(target.alive,true);assert.equal(target.hp,1);assert.equal(medic.expectedRecoverCount,0);assert.equal(medic.handCount,1);assert.equal(medic.rejuvenationUsed,true);
+});
+
+test("AI共生顺序从非0号出牌者开始并让回春命中首个合法目标", () => {
+  const ally0={id:"symbiosis-seat-0",seatIndex:0,battleTeam:"dawn",alive:true,hp:1,maxHp:4,handCount:0};
+  const enemy1={id:"symbiosis-seat-1",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0,counterProbability:0};
+  const medic={id:"symbiosis-medic",seatIndex:2,generalId:"spirit-medic",battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"ordered-symbiosis",definitionId:"symbiosis"}],rejuvenationUsed:false};
+  const ally3={id:"symbiosis-seat-3",seatIndex:3,battleTeam:"dawn",alive:true,hp:1,maxHp:4,handCount:0};
+  const state={players:[ally0,enemy1,medic,ally3]},next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.symbiosis,id:"ordered-symbiosis"},targets:state.players},medic.id);
+  assert.equal(next.players[3].hp,3);assert.equal(next.players[0].hp,2);assert.equal(next.players[2].handCount,1);
+});
+
+// ---- 影客 ----
+
+test("影客为3点生命且窥隙经实际伤害与隐藏选择查看至多2张实体牌", async () => { const shade=makePlayer("shade",0,"dawn","human",3),enemy=makePlayer("enemy",1,"dusk");enemy.hand.push(instance("assault"),instance("recover"),instance("charge"));const {game,ui}=makeGame([shade,enemy],{random:()=>0});registerPassiveSkills(game);await game.damage(shade,enemy,1,{canBlock:false});assert.equal(shade.maxHp,3);assert.equal(shade.hp,3);assert.equal(ACTIVE_SKILLS.stealSkill.cost,1);assert.equal(ui.hiddenRequests.length,1);assert.equal(ui.hiddenRequests[0].count,2);assert.equal(ui.reveals.length,1);assert.equal(ui.reveals[0].cards.length,2);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length,2); });
+
+test("影客窃取可把距离2内敌方装备收入手牌且不替换原装备", async () => { const shade=makePlayer("shade",0,"dawn","ai",3),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),equipment=instance("energyDevice"),original=instance("battleDevice");const {game}=makeGame([shade,near,target,other,tail],{random:()=>0});shade.energy=2;shade.equipment=original;target.equipment=equipment;assert.ok(RuleEngine.getSkillTargets(game,shade,ACTIVE_SKILLS.stealSkill).includes(target));assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);assert.equal(target.equipment,null);assert.equal(shade.equipment,original);assert.ok(shade.hand.includes(equipment));assert.ok(!game.state.deck.discardPile.includes(equipment));const blockedShade=makePlayer("blocked-shade",0,"dawn","ai",3),blockedNear=makePlayer("blocked-near",1,"dawn"),blocked=makePlayer("blocked",2,"dusk"),blockedOther=makePlayer("blocked-other",3,"dusk"),blockedTail=makePlayer("blocked-tail",4,"dawn");blocked.equipment=instance("barrierDevice");const {game:blockedGame}=makeGame([blockedShade,blockedNear,blocked,blockedOther,blockedTail]);assert.equal(DistanceSystem.getDistance(blockedGame,blockedShade,blocked),3);assert.ok(!RuleEngine.getSkillTargets(blockedGame,blockedShade,ACTIVE_SKILLS.stealSkill).includes(blocked)); });
+
+test("窃取把3张手牌与1张装备组成单一等概率实体集合", async () => {
+  const rolls=[0,.26,.51,.76];
+  for(const [expectedIndex,roll] of rolls.entries()){
+    const shade=makePlayer(`uniform-shade-${expectedIndex}`,0,"dawn","ai",3),target=makePlayer(`uniform-target-${expectedIndex}`,1,"dusk");
+    const cards=[instance("assault"),instance("recover"),instance("charge")],equipment=instance("recycleDevice"),original=instance("battleDevice");
+    target.hand.push(...cards);target.equipment=equipment;shade.equipment=original;shade.energy=1;
+    const {game}=makeGame([shade,target],{random:()=>roll}),candidate=[...cards,equipment][expectedIndex];
+    const shadeVersion=shade.handVersion,targetVersion=target.handVersion;
+    assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);
+    assert.deepEqual(shade.hand,[candidate]);assert.equal(shade.equipment,original);assert.equal(shade.handVersion,shadeVersion+1);
+    assert.equal(target.hand.includes(candidate),false);assert.equal(target.equipment===candidate,false);
+    assert.equal(game.state.deck.discardPile.includes(candidate),false);assert.equal(game.state.deck.resolvingCards.includes(candidate),false);
+    assert.equal(target.handVersion,targetVersion+(expectedIndex<3?1:0));
+    const zones=[shade.hand.includes(candidate),shade.equipment===candidate,target.hand.includes(candidate),target.equipment===candidate,game.state.deck.discardPile.includes(candidate)];
+    assert.equal(zones.filter(Boolean).length,1);
+  }
+});
+
+test("真人窃取先选择距离2内敌人再只从该目标随机获得资源", async () => {
+  const shade=makePlayer("human-steal-shade",0,"dawn","human",3),allyA=makePlayer("human-steal-ally-a",1,"dawn"),chosen=makePlayer("human-steal-chosen",2,"dusk"),otherEnemy=makePlayer("human-steal-other",3,"dusk"),allyB=makePlayer("human-steal-ally-b",4,"dawn"),chosenEquipment=instance("energyDevice"),untouched=instance("block");chosen.equipment=chosenEquipment;otherEnemy.hand.push(untouched);shade.energy=1;const {game,ui}=makeGame([shade,allyA,chosen,otherEnemy,allyB],{random:()=>0});let offered=null,prompt="";ui.requestTarget=async(players,message)=>{offered=[...players];prompt=message;return chosen;};assert.equal(await game.handleHumanSkill(),true);assert.ok(offered.includes(chosen));assert.ok(offered.includes(otherEnemy));assert.ok(offered.every((player)=>player.battleTeam!==shade.battleTeam&&DistanceSystem.getDistance(game,shade,player)<=2));assert.match(prompt,/窃取.*选择目标/);assert.equal(chosen.equipment,null);assert.ok(shade.hand.includes(chosenEquipment));assert.ok(otherEnemy.hand.includes(untouched));assert.equal(shade.energy,0);
+});
+
+test("窃取装备先进入手牌且只有之后正常使用才会装备和替换", async () => {
+  const shade=makePlayer("equip-to-hand-shade",0,"dawn","ai",3),target=makePlayer("equip-to-hand-target",1,"dusk"),stolen=instance("energyDevice"),original=instance("battleDevice");
+  const {game}=makeGame([shade,target],{random:()=>0});shade.energy=1;shade.equipment=original;target.equipment=stolen;const moves=[];
+  game.eventBus.on("afterCardMove","test:steal-equipment-zone",(event)=>{if(event.card===stolen)moves.push([event.from,event.to]);});
+  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);
+  assert.deepEqual(moves,[["equipment","hand"]]);assert.equal(shade.equipment,original);assert.ok(shade.hand.includes(stolen));assert.equal(shade.turnFlags.recycleDeviceUses,0);
+  assert.equal(await game.playCard(shade,stolen,[]),true);assert.equal(shade.equipment,stolen);assert.ok(game.state.deck.discardPile.includes(original));
+});
+
+test("窃取消耗1点能量且每回合最多发动2次", async () => {
+  const shade=makePlayer("steal-limit",0,"dawn","ai",3),target=makePlayer("steal-limit-target",1,"dusk");target.hand.push(instance("block"),instance("charge"),instance("recover"));
+  const {game}=makeGame([shade,target],{random:()=>0});shade.energy=3;
+  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);assert.equal(shade.energy,2);
+  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);assert.equal(shade.energy,1);
+  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),false);assert.equal(shade.turnFlags.activeSkillUseCounts.stealSkill,2);assert.equal(target.hand.length,1);
+  assert.equal(ACTIVE_SKILLS.stealSkill.cost,1);assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn,2);assert.doesNotMatch(GENERAL_DEFINITIONS[3].activeDescription,/直接进入.*装备区|直接装备/);
+});
+
+test("AI模拟窃取装备时只增加手牌且保持影客当前装备", () => {
+  const shade=makePlayer("sim-steal-shade",0,"dawn","ai",3),target=makePlayer("sim-steal-target",1,"dusk"),current=instance("battleDevice");
+  shade.equipment=current;shade.energy=2;target.equipment=instance("energyDevice");const {game}=makeGame([shade,target]);
+  const visible=createAiVisibleState(shade.id,game.state),next=new AiSimulator(visible).apply(visible,{type:"skill",skill:ACTIVE_SKILLS.stealSkill,targets:[{id:target.id}]},shade.id);
+  const actor=next.players.find((player)=>player.id===shade.id),victim=next.players.find((player)=>player.id===target.id);
+  assert.equal(actor.handCount,1);assert.equal(actor.energy,1);assert.equal(actor.activeSkillUses,1);assert.equal(actor.activeSkillUsed,false);assert.equal(actor.equipmentDefinitionId,current.definitionId);assert.equal(victim.equipmentDefinitionId,null);
+});
+
+test("窃取说明与README均使用收入手牌的新规则", async () => {
+  const readme=await readFile(projectFile("README.md"),"utf8"),description=GENERAL_DEFINITIONS[3].activeDescription;
+  assert.equal(GENERAL_DEFINITIONS[3].activeCost,1);assert.equal(GENERAL_DEFINITIONS[3].activeLimitPerTurn,2);assert.equal(ACTIVE_SKILLS.stealSkill.cost,1);assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn,2);
+  assert.match(description,/消耗1点能量.*选择距离2内.*敌人作为目标/);assert.match(description,/统一候选集合.*等概率随机获得.*收入手牌/);assert.match(description,/每回合最多发动2次/);assert.doesNotMatch(`${description}\n${readme}`,/装备牌直接进入.*装备区|窃取.*直接装备/);
+  assert.match(readme,/主动·窃取[^\n]*消耗 1 点能量[^\n]*选择距离 2 内[^\n]*敌人作为目标[^\n]*统一候选集合[^\n]*等概率随机获得[^\n]*一回合最多使用 2 次/);
+});
+
+test("窥隙真人选择只私下展示且公共日志与DOM不泄露牌面", async () => {
+  const shade=makePlayer("peek-human",0,"dawn","human",3),target=makePlayer("peek-target",1,"dusk"),secrets=[instance("counter"),instance("harvest"),instance("duel")];target.hand.push(...secrets);
+  const {game,ui}=makeGame([shade,target]);registerPassiveSkills(game);await game.damage(shade,target,1,{canBlock:false});
+  assert.equal(ui.hiddenRequests.length,1);const request=ui.hiddenRequests[0],markup=hiddenSelectionMarkup(request.selection);assert.equal("helpText" in request.options,false);assert.equal("hideHelpText" in request.options,false);
+  for(const card of secrets){assert.doesNotMatch(markup,new RegExp(card.id));assert.doesNotMatch(markup,new RegExp(card.definitionId));assert.doesNotMatch(markup,new RegExp(card.name));assert.doesNotMatch(markup,new RegExp(card.description));}
+  assert.deepEqual(ui.reveals[0].cards,secrets.slice(0,2));assert.equal(game.cardSelectionSystem.sessions.size,0);assert.equal(game.cardSelectionSystem.selections.size,0);
+  const publicLog=game.state.logs.find((entry)=>entry.message.includes("发动窥隙"));assert.equal(publicLog.message,`${shade.name}发动窥隙，查看了${target.name}的2张手牌。`);
+  for(const card of secrets)assert.doesNotMatch(publicLog.message,new RegExp(card.name));
+});
+
+test("所有隐藏选择池都不显示令牌或核心校验技术提示", async () => {
+  const owner=makePlayer("peek-help-owner",0,"dusk"),viewer=makePlayer("peek-help-viewer",1,"dawn","human",3),secret=instance("counter");owner.hand.push(secret);
+  const selection={selectionId:"peek-help",tokens:[{token:"opaque-token"}]},panel=makeInteractiveElement();
+  const ui={game:null,elements:{response_panel:panel},render(){}};const controller=new InteractionController(ui);
+  const pending=controller.requestHiddenCards(selection,1,"掠夺：选择手牌或装备",{viewer,owner,helpText:"手牌使用安全令牌；装备牌为公开信息，确认时核心会重新验证所在区域。"});
+  assert.doesNotMatch(panel.innerHTML,/安全令牌|临时令牌|核心会重新|handVersion|校验手牌版本/);assert.doesNotMatch(panel.innerHTML,/<p>/);
+  controller.cancel();assert.equal(await pending,null);
+});
+
+test("互利、窥隙和隐藏选择牌池为选中上移预留空间且不拉伸牌面", async () => {
+  const css=await readFile(projectFile("css/cards.css"),"utf8"),selection=hiddenSelectionMarkup({tokens:[{token:"opaque-a"}]});
+  assert.match(css,/\.hidden-card-grid,\s*\.private-card-grid,\s*\.tableau-cards\s*\{[^}]*align-items:\s*flex-start[^}]*margin:\s*16px 0 12px/s);
+  assert.match(css,/\.hidden-card-grid\s*\{\s*gap:\s*9px/);
+  assert.match(css,/\.tableau-cards \.hand-card\.is-selected\s*\{\s*transform:\s*translateY\(-7px\)/s);
+  assert.match(css,/\.hidden-card-grid \.hand-card\.is-selected[^}]*translateY\(-7px\)/s);
+  assert.match(selection,/hidden-card-back is-compact/);
+});
+
+test("窥隙目标仅1张手牌时最多选择并展示1张", async () => {
+  const shade=makePlayer("peek-one",0,"dawn","human",3),target=makePlayer("peek-one-target",1,"dusk"),only=instance("counter");target.hand.push(only);
+  const {game,ui}=makeGame([shade,target]);registerPassiveSkills(game);await game.damage(shade,target,1,{canBlock:false});
+  assert.equal(ui.hiddenRequests[0].count,1);assert.deepEqual(ui.reveals[0].cards,[only]);
+});
+
+test("窥隙等待期间已选牌离手时只展示仍在原手牌的实体", async () => {
+  const shade=makePlayer("peek-changing",0,"dawn","human",3),target=makePlayer("peek-changing-target",1,"dusk"),first=instance("counter"),second=instance("harvest"),third=instance("duel");target.hand.push(first,second,third);
+  const {game,ui}=makeGame([shade,target]);registerPassiveSkills(game);
+  ui.requestHiddenCards=async(selection)=>{target.hand.splice(target.hand.indexOf(first),1);target.bumpHandVersion();game.state.deck.discard(first);return selection.tokens.slice(0,2).map((entry)=>entry.token);};
+  await game.damage(shade,target,1,{canBlock:false});assert.deepEqual(ui.reveals[0].cards,[second]);
+  assert.deepEqual(Object.keys(shade.aiMemory.knownCardsByPlayer[target.id]),[second.id]);assert.ok(!ui.reveals[0].cards.includes(third));
+  assert.equal(game.cardSelectionSystem.sessions.size,0);assert.equal(game.cardSelectionSystem.selections.size,0);
+});
+
+test("窥隙同回合仅触发一次且格挡、护盾、队友和空手牌均不触发", async () => {
+  const shade=makePlayer("peek-once",0,"dawn","human",3),target=makePlayer("peek-once-target",1,"dusk");target.hand.push(instance("charge"),instance("harvest"),instance("duel"));
+  const {game,ui}=makeGame([shade,target]);registerPassiveSkills(game);await game.damage(shade,target,1,{canBlock:false});await game.damage(shade,target,1,{canBlock:false});assert.equal(ui.hiddenRequests.length,1);
+
+  const shieldShade=makePlayer("peek-shield",0,"dawn","human",3),shieldTarget=makePlayer("peek-shield-target",1,"dusk");shieldTarget.shield=1;shieldTarget.hand.push(instance("charge"));const shieldFixture=makeGame([shieldShade,shieldTarget]);registerPassiveSkills(shieldFixture.game);await shieldFixture.game.damage(shieldShade,shieldTarget,1,{canBlock:false});assert.equal(shieldFixture.ui.hiddenRequests.length,0);
+
+  const blockShade=makePlayer("peek-block",0,"dawn","human",3),blockTarget=makePlayer("peek-block-target",1,"dusk","human");blockTarget.hand.push(instance("block"),instance("charge"));const blockFixture=makeGame([blockShade,blockTarget],{response:(request)=>request.type==="block"});registerPassiveSkills(blockFixture.game);await blockFixture.game.damage(blockShade,blockTarget,1,{card:instance("assault"),canBlock:true});assert.equal(blockFixture.ui.hiddenRequests.length,0);
+
+  const allyShade=makePlayer("peek-ally",0,"dawn","human",3),ally=makePlayer("peek-ally-target",1,"dawn");ally.hand.push(instance("charge"));const allyFixture=makeGame([allyShade,ally]);registerPassiveSkills(allyFixture.game);await allyFixture.game.damage(allyShade,ally,1,{canBlock:false});assert.equal(allyFixture.ui.hiddenRequests.length,0);
+
+  const emptyShade=makePlayer("peek-empty",0,"dawn","human",3),emptyTarget=makePlayer("peek-empty-target",1,"dusk");const emptyFixture=makeGame([emptyShade,emptyTarget]);registerPassiveSkills(emptyFixture.game);await emptyFixture.game.damage(emptyShade,emptyTarget,1,{canBlock:false});assert.equal(emptyFixture.ui.hiddenRequests.length,0);
+});
+
+test("窥隙在致命伤害获救后触发且不会在救援前提前触发", async () => {
+  const shade=makePlayer("peek-rescue-shade",0,"dawn","human",3),enemy=makePlayer("peek-rescue-enemy",1,"dusk");enemy.hp=1;enemy.hand.push(instance("recover"),instance("counter"),instance("harvest"));
+  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
+  game.eventBus.on("playerDying","test:peek-rescue-no-early",()=>{
+    assert.equal(ui.hiddenRequests.length,0);
+    assert.equal(shade.turnFlags.spyGapTriggered,false);
+  });
+  await game.damage(shade,enemy,1,{canBlock:false});
+  assert.equal(enemy.alive,true);assert.equal(enemy.hp,1);
+  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+  assert.equal(ui.hiddenRequests.length,1);assert.equal(ui.reveals[0].cards.length,2);
+  assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length,2);
+});
+
+test("窥隙在致命伤害由队友救援成功后触发", async () => {
+  const shade=makePlayer("peek-ally-rescue-shade",0,"dawn","human",3),enemy=makePlayer("peek-ally-rescue-enemy",1,"dusk"),ally=makePlayer("peek-ally-rescue-ally",2,"dusk","ai",6);
+  enemy.hp=1;enemy.hand.push(instance("counter"),instance("harvest"),instance("duel"));ally.hand.push(instance("recover"));
+  const {game,ui}=makeGame([shade,enemy,ally]);registerPassiveSkills(game);
+  await game.damage(shade,enemy,1,{canBlock:false});
+  assert.equal(enemy.alive,true);assert.equal(enemy.hp,1);
+  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+  assert.equal(ui.hiddenRequests.length,1);assert.equal(ui.reveals[0].cards.length,2);
+  assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length,2);
+});
+
+test("窥隙在致命伤害救援失败阵亡时不触发且不残留资格", async () => {
+  const shade=makePlayer("peek-dead-shade",0,"dawn","human",3),enemy=makePlayer("peek-dead-enemy",1,"dusk");enemy.hp=1;enemy.hand.push(instance("counter"),instance("harvest"));
+  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
+  await game.damage(shade,enemy,1,{canBlock:false});
+  assert.equal(enemy.alive,false);assert.equal(enemy.hp,0);
+  assert.equal(shade.turnFlags.spyGapTriggered,false);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+  assert.equal(ui.hiddenRequests.length,0);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]??{}).length,0);
+});
+
+test("窥隙经濒死获救触发后同回合对其他敌人不再触发", async () => {
+  const shade=makePlayer("peek-twice-shade",0,"dawn","human",3),first=makePlayer("peek-twice-first",1,"dusk"),second=makePlayer("peek-twice-second",2,"dusk");
+  first.hp=1;first.hand.push(instance("recover"),instance("counter"),instance("harvest"));second.hp=2;second.hand.push(instance("charge"),instance("duel"));
+  const {game,ui}=makeGame([shade,first,second]);registerPassiveSkills(game);
+  await game.damage(shade,first,1,{canBlock:false});
+  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(ui.hiddenRequests.length,1);
+  await game.damage(shade,second,1,{canBlock:false});
+  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(ui.hiddenRequests.length,1);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+});
+
+test("非伤害失去生命获救不得触发窥隙", async () => {
+  const shade=makePlayer("peek-hploss-shade",0,"dawn","human",3),enemy=makePlayer("peek-hploss-enemy",1,"dusk");enemy.hp=1;enemy.hand.push(instance("recover"),instance("counter"),instance("harvest"));
+  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
+  await game.hpLossSystem.lose(enemy,1,{source:shade,reason:"测试失去生命"});
+  assert.equal(enemy.alive,true);assert.equal(enemy.hp,1);
+  assert.equal(shade.turnFlags.spyGapTriggered,false);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+  assert.equal(ui.hiddenRequests.length,0);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]??{}).length,0);
+});
+
+test("护盾完全吸收伤害时窥隙不触发且不写入待处理资格", async () => {
+  const shade=makePlayer("peek-shield-zero-shade",0,"dawn","human",3),enemy=makePlayer("peek-shield-zero-enemy",1,"dusk");enemy.shield=1;enemy.hand.push(instance("charge"),instance("duel"));
+  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
+  await game.damage(shade,enemy,1,{canBlock:false});
+  assert.equal(enemy.hp,enemy.maxHp);
+  assert.equal(shade.turnFlags.spyGapTriggered,false);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
+  assert.equal(ui.hiddenRequests.length,0);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]??{}).length,0);
+});
+
+test("AI窥隙在目标濒死获救后仍结算且救援失败不结算", () => {
+  const spy={id:"ai-rescue-spy",generalId:"shade-agent",battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:0,attackUsed:0,spyGapTriggeredProbability:0,expectedInformationGain:0};
+  const rescued={id:"ai-rescue-target",seatIndex:1,battleTeam:"dusk",alive:true,hp:1,maxHp:3,shield:0,handCount:3,blockProbability:0,expectedRecoverCount:1};
+  const rescuedState={players:[spy,rescued]};new AiSimulator(rescuedState).simulateAssault(rescuedState,spy,rescued,1);
+  assert.equal(rescued.hp,1);assert.equal(spy.spyGapTriggeredProbability,1);assert.equal(spy.expectedInformationGain,2);
+  const deadSpy={id:"ai-dead-spy",generalId:"shade-agent",battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:0,attackUsed:0,spyGapTriggeredProbability:0,expectedInformationGain:0};
+  const dead={id:"ai-dead-target",seatIndex:1,battleTeam:"dusk",alive:true,hp:1,maxHp:3,shield:0,handCount:2,blockProbability:0,expectedRecoverCount:0};
+  const deadState={players:[deadSpy,dead]};new AiSimulator(deadState).simulateAssault(deadState,deadSpy,dead,1);
+  assert.equal(dead.alive,false);assert.equal(deadSpy.spyGapTriggeredProbability,0);assert.equal(deadSpy.expectedInformationGain,0);
+});
+
+test("窥隙隐藏选择期间dispose会收束Promise并清理令牌", async () => {
+  const shade=makePlayer("peek-dispose",0,"dawn","human",3),target=makePlayer("peek-dispose-target",1,"dusk");target.hand.push(instance("charge"),instance("harvest"));
+  const {game,ui}=makeGame([shade,target]);registerPassiveSkills(game);let openedResolve,settle;const opened=new Promise((resolve)=>{openedResolve=resolve;});
+  ui.requestHiddenCards=()=>new Promise((resolve)=>{settle=resolve;openedResolve();});const baseCancel=ui.cancelPendingInteractions.bind(ui);ui.cancelPendingInteractions=()=>{baseCancel();settle?.(null);};
+  const pending=game.damage(shade,target,1,{canBlock:false});await opened;assert.equal(game.cardSelectionSystem.sessions.size,1);game.dispose();await pending;
+  assert.equal(game.cardSelectionSystem.sessions.size,0);assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(ui.reveals.length,0);
+});
+
+test("AI窥隙按未知位置选择且只更新自己的私密记忆", async () => {
+  const shade=makePlayer("peek-ai",0,"dawn","ai",3),ally=makePlayer("peek-ai-ally",1,"dawn","ai",0),target=makePlayer("peek-ai-target",2,"dusk");let definitionReads=0;
+  const cards=[instance("counter"),instance("harvest"),instance("duel")];for(const card of cards){const value=card.definitionId;Object.defineProperty(card,"definitionId",{configurable:true,get(){definitionReads+=1;return value;}});}target.hand.push(...cards);
+  const {game,ui}=makeGame([shade,ally,target],{random:()=>0});registerPassiveSkills(game);await game.damage(shade,target,1,{canBlock:false});
+  assert.equal(definitionReads,2);assert.deepEqual(Object.keys(shade.aiMemory.knownCardsByPlayer[target.id]),cards.slice(0,2).map((card)=>card.id));
+  assert.equal(Object.keys(ally.aiMemory.knownCardsByPlayer[target.id]??{}).length,0);assert.equal(ui.reveals.length,0);
+});
+
+test("AI窥隙与余烬从统一生命伤害入口覆盖非突袭和群体卡牌", () => {
+  const spy=simulatedDuelPlayer("duel-spy","dawn",1);spy.generalId="shade-agent";spy.expectedInformationGain=0;spy.spyGapTriggeredProbability=0;
+  const spyTarget=simulatedDuelPlayer("duel-spy-target","dusk",0);spyTarget.handCount=3;
+  const duelState={players:[spy,spyTarget]};new AiSimulator(duelState).applyDuel(duelState,spy,spyTarget,1);assert.equal(spy.expectedInformationGain,2);
+  const ember={id:"provoke-ember",seatIndex:0,generalId:"ember-magus",battleTeam:"dawn",alive:true,hp:4,maxHp:4,energy:0,maxEnergy:3,handCount:1,hand:[{id:"ember-provoke",definitionId:"provoke"}]};
+  const enemies=[1,2,3].map((seat)=>({id:`ember-group-${seat}`,seatIndex:seat,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0,assaultCountDistribution:[{count:0,probability:1}]}));
+  const state={players:[ember,...enemies]},next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.provoke,id:"ember-provoke"},targets:enemies},ember.id);assert.equal(next.players[0].energy,1);
+});
+
+// ---- 炎术师 ----
+
+test("炎术师余烬每个卡牌结算ID最多触发1次", async () => { const ember=makePlayer("ember",0,"dawn","ai",4),enemyA=makePlayer("enemy-a",1,"dusk"),enemyB=makePlayer("enemy-b",2,"dusk");const {game}=makeGame([ember,enemyA,enemyB]);registerPassiveSkills(game);const card=instance("shockwave");await game.eventBus.emit("afterDamage",{source:ember,target:enemyA,actualAmount:1,card,resolutionId:"same"});await game.eventBus.emit("afterDamage",{source:ember,target:enemyB,actualAmount:1,card,resolutionId:"same"});assert.equal(ember.energy,1);await game.eventBus.emit("afterDamage",{source:ember,target:enemyB,actualAmount:1,card,resolutionId:"next"});assert.equal(ember.energy,2); });
+
 test("炎术师焚场2点能量可发动并扣至0、3点能量发动后剩1", async () => {
   const makeEmber = (energy) => {
     const ember = makePlayer("ember-cost", 0, "dawn", "human", 4);
@@ -1098,6 +2821,7 @@ test("炎术师焚场2点能量可发动并扣至0、3点能量发动后剩1", a
     assert.equal(enemy.hp, hp - 1);
   }
 });
+
 test("炎术师焚场1点能量不能发动且不扣费不计数不造成伤害", async () => {
   const ember = makePlayer("ember-low", 0, "dawn", "human", 4);
   const ally = makePlayer("ember-low-ally", 1, "dawn", "ai", 0);
@@ -1111,6 +2835,7 @@ test("炎术师焚场1点能量不能发动且不扣费不计数不造成伤害"
   assert.equal(ember.turnFlags.activeSkillUseCounts.burningField ?? 0, 0);
   assert.equal(enemy.hp, hp);
 });
+
 test("炎术师焚场只伤害存活敌人、队友与本人不受伤且不可格挡", async () => {
   const ember = makePlayer("ember-field", 0, "dawn", "human", 4);
   const ally = makePlayer("ember-field-ally", 1, "dawn", "ai", 0);
@@ -1137,6 +2862,7 @@ test("炎术师焚场只伤害存活敌人、队友与本人不受伤且不可�
   assert.equal(observed.damageType, "skill");
   assert.equal(observed.skill, "burningField");
 });
+
 test("炎术师焚场每回合最多发动两次且第三次不扣费不造成伤害", async () => {
   const ember = makePlayer("ember-limit", 0, "dawn", "human", 4);
   const ally = makePlayer("ember-limit-ally", 1, "dawn", "ai", 0);
@@ -1164,6 +2890,7 @@ test("炎术师焚场每回合最多发动两次且第三次不扣费不造成�
   assert.equal(enemy.hp, hp - 2);
   assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 2);
 });
+
 test("AI在炎术师焚场已使用1次且能量充足时仍生成并模拟第2次，已用2次后不再生成", async () => {
   const ember = makePlayer("ember-ai", 0, "dawn", "ai", 4);
   const ally = makePlayer("ember-ai-ally", 1, "dawn", "ai", 0);
@@ -1198,106 +2925,455 @@ test("AI在炎术师焚场已使用1次且能量充足时仍生成并模拟第2�
     .find((entry) => entry.skill?.id === "burningField");
   assert.equal(exhaustedAction, undefined);
 });
-test("互利在反制窗口之后才展示并按座位每人选1张", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);assert.equal(game.state.publicCardPool.length,0);assert.equal(ui.publicRequests.length,1); });
-test("互利选牌严格跳过阵亡座位", async () => { const a=makePlayer("a",0,"dawn","human"),dead=makePlayer("dead",1,"dusk"),b=makePlayer("b",2,"dusk"),c=makePlayer("c",3,"dawn");dead.alive=false;const {game}=makeGame([a,dead,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(dead.hand.length,0);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1); });
-test("互利触发重洗后弃牌堆别名保持同步", async () => {
-  const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);
-  const discards=[instance("block"),instance("charge"),instance("recover")];for(const card of discards) game.state.deck.discard(card);
-  let aliasDuringReveal=true;const originalShow=game.ui.showPublicPool;game.ui.showPublicPool=(cards)=>{aliasDuringReveal=game.state.discardPile===game.state.deck.discardPile;originalShow?.(cards);};
-  const mb=instance("mutualBenefit");a.hand.push(mb);
-  assert.equal(await game.playCard(a,mb,[]),true);
-  assert.equal(aliasDuringReveal,true);
-  assert.equal(game.state.deck.reshuffleCount,1);
-  assert.equal(game.state.publicCardPool.length,0);
-  assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);
-  assert.equal(game.state.deck.cards.length,0);
-  assert.equal(game.state.discardPile,game.state.deck.discardPile);
-  assert.equal(game.state.discardPile.length,1);
-  assert.ok(game.state.deck.discardPile.includes(mb));
-  const drafted=new Set([...a.hand,...b.hand,...c.hand]);for(const card of discards) assert.ok(drafted.has(card));
+
+test("余烬按挑衅和震荡的同一resolutionId各只触发一次", async () => {
+  for (const definitionId of ["provoke","shockwave"]) {
+    const ember=makePlayer(`ember-${definitionId}`,0,"dawn","ai",4),enemies=[1,2,3].map((seat)=>makePlayer(`${definitionId}-enemy-${seat}`,seat,"dusk"));
+    const {game}=makeGame([ember,...enemies]);registerPassiveSkills(game);ember.hand.push(instance(definitionId));
+    await game.playCard(ember,ember.hand[0],enemies);assert.equal(ember.energy,1);
+  }
+  const ember=makePlayer("ember-two-cards",0,"dawn","ai",4),enemy=makePlayer("ember-two-target",1,"dusk"),{game}=makeGame([ember,enemy]);
+  registerPassiveSkills(game);ember.hand.push(instance("provoke"),instance("provoke"));
+  await game.playCard(ember,ember.hand[0],[enemy]);await game.playCard(ember,ember.hand[0],[enemy]);assert.equal(ember.energy,2);
 });
-test("互利不触发重洗时弃牌堆别名保持不变", async () => {
-  const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);
-  game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));
-  const mb=instance("mutualBenefit");a.hand.push(mb);
-  assert.equal(game.state.deck.reshuffleCount,0);
-  assert.equal(await game.playCard(a,mb,[]),true);
-  assert.equal(game.state.deck.reshuffleCount,0);
-  assert.equal(game.state.discardPile,game.state.deck.discardPile);
-  assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);
-  assert.equal(game.state.deck.cards.length,0);
-  assert.equal(game.state.deck.discardPile.length,1);
-  assert.ok(game.state.deck.discardPile.includes(mb));
+
+// ---- 追猎者 ----
+
+test("追猎者每回合最多标记2名敌人且同一敌人最多留下1次猎印", async () => {
+  const hunter=makePlayer("tracking-hunter",0,"dawn","ai",5),enemyA=makePlayer("tracking-a",1,"dusk"),enemyB=makePlayer("tracking-b",2,"dusk"),enemyC=makePlayer("tracking-c",3,"dusk"),{game}=makeGame([hunter,enemyA,enemyB,enemyC]);registerPassiveSkills(game);
+  const target=(enemy)=>game.eventBus.emit("targetSelected",{source:hunter,card:instance("assault"),targets:[enemy]});
+  await game.eventBus.emit("turnStart",{player:hunter});await target(enemyA);
+  assert.deepEqual(enemyA.statuses.huntMark,{sourceId:hunter.id,expireAtTurnEnd:2});
+  delete enemyA.statuses.huntMark;await target(enemyA);assert.equal(enemyA.statuses.huntMark,undefined);
+  await target(enemyB);assert.deepEqual(enemyB.statuses.huntMark,{sourceId:hunter.id,expireAtTurnEnd:2});
+  await target(enemyC);assert.equal(enemyC.statuses.huntMark,undefined);
+  assert.deepEqual([...hunter.turnFlags.trackingTargetIds],[enemyA.id,enemyB.id]);
 });
-test("互利公共牌揭示触发重洗后两个弃牌堆入口读取同一数组", () => {
-  const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game}=makeGame([a,b,c]);
-  const discards=[instance("block"),instance("charge"),instance("recover")];for(const card of discards) game.state.deck.discard(card);
-  const pool=game.publicCardPool.reveal(3);
-  assert.equal(pool.length,3);
-  assert.equal(game.state.deck.reshuffleCount,1);
-  assert.equal(game.state.discardPile,game.state.deck.discardPile);
-  assert.equal(game.state.discardPile.length,0);
-  const extra=instance("shield");
-  assert.equal(game.state.deck.discard(extra),true);
-  assert.ok(game.state.discardPile.includes(extra));
-  assert.equal(game.state.discardPile.includes(extra),game.state.deck.discardPile.includes(extra));
+
+test("追猎者猎印持续到自己的下回合结束", async () => {
+  const hunter=makePlayer("tracking-clock-hunter",0,"dawn","ai",5),enemy=makePlayer("tracking-clock-enemy",1,"dusk"),{game}=makeGame([hunter,enemy]);registerPassiveSkills(game);
+  await game.eventBus.emit("turnStart",{player:hunter});await game.eventBus.emit("targetSelected",{source:hunter,card:instance("assault"),targets:[enemy]});
+  await game.eventBus.emit("turnEnd",{player:hunter});assert.equal(enemy.statuses.huntMark?.sourceId,hunter.id);
+  await game.eventBus.emit("turnStart",{player:hunter});assert.equal(enemy.statuses.huntMark?.sourceId,hunter.id);
+  await game.eventBus.emit("turnEnd",{player:hunter});assert.equal(enemy.statuses.huntMark,undefined);
 });
-test("共生按全体存活角色结算治疗", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");[a,b,c].forEach((p)=>p.hp-=1);const {game}=makeGame([a,b,c]);a.hand.push(instance("symbiosis"));await game.playCard(a,a.hand[0],[]);[a,b,c].forEach((p)=>assert.equal(p.hp,p.maxHp)); });
+
+test("AI 深层模拟保存追踪目标并允许同回合标记不同敌人", () => {
+  const state={players:[
+    {id:"hunter",seatIndex:0,generalId:"trail-hunter",battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:4,alive:true,handCount:4,hand:[{id:"a1",definitionId:"assault"},{id:"a2",definitionId:"assault"},{id:"a3",definitionId:"assault"},{id:"a4",definitionId:"assault"}],attackUsed:0,trackingTargetIds:[],activeSkillUses:0,activeSkillLimit:2,statuses:[]},
+    {id:"enemy-a",seatIndex:1,battleTeam:"dusk",hp:10,maxHp:10,shield:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0,statuses:[]},
+    {id:"enemy-b",seatIndex:2,battleTeam:"dusk",hp:10,maxHp:10,shield:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0,statuses:[]},
+    {id:"enemy-c",seatIndex:3,battleTeam:"dusk",hp:10,maxHp:10,shield:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0,statuses:[]}
+  ]},simulator=new AiSimulator(state);
+  const markedA=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"a1"},targets:[{id:"enemy-a"}]},"hunter");
+  const huntedA=simulator.apply(markedA,{type:"skill",skill:{id:"hunt",cost:0,limitPerTurn:2},targets:[{id:"enemy-a"}]},"hunter");
+  const repeatedA=simulator.apply(huntedA,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"a2"},targets:[{id:"enemy-a"}]},"hunter");
+  const markedB=simulator.apply(repeatedA,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"a3"},targets:[{id:"enemy-b"}]},"hunter");
+  const cappedC=simulator.apply(markedB,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"a4"},targets:[{id:"enemy-c"}]},"hunter");
+  assert.equal(markedA.players[1].huntMarkSourceId,"hunter");assert.equal(repeatedA.players[1].huntMarkSourceId,null);
+  assert.equal(markedB.players[2].huntMarkSourceId,"hunter");assert.equal(cappedC.players[3].huntMarkSourceId,undefined);assert.deepEqual(cappedC.players[0].trackingTargetIds,["enemy-a","enemy-b"]);
+});
+
+test("追踪配置与README声明每回合限2次、同一敌人限1次并持续到下回合结束", async () => {
+  const hunter=GENERAL_DEFINITIONS.find((general)=>general.id==="trail-hunter"),readme=await readFile(projectFile("README.md"),"utf8"),section=readme.match(/### 追猎者[\s\S]*?(?=\r?\n### )/)?.[0]??"";
+  for(const text of [hunter.passiveDescription,hunter.passiveLimitText,section])assert.match(text,/每回合.*2\s*次/);
+  for(const text of [hunter.passiveDescription,hunter.passiveLimitText,section]){assert.match(text,/同一名?敌人.*(?:每回合|一回合).*(?:1次|1 次)/);}
+  for(const text of [hunter.passiveDescription,section])assert.match(text,/下回合结束/);
+});
+
+test("追猎者猎杀被格挡后摸1张且每回合上限为2次", async () => { const hunter=makePlayer("hunter",0,"dawn","ai",5),target=makePlayer("target",1,"dusk","human"),ally=makePlayer("ally",2,"dawn");target.statuses.huntMark={sourceId:hunter.id};target.hand.push(instance("block"));const {game}=makeGame([hunter,target,ally],{response:()=>true});game.state.deck.cards.push(instance("charge"));hunter.energy=2;assert.equal(await game.useActiveSkill(hunter,"hunt",[target]),true);assert.equal(hunter.hand.length,1);assert.equal(hunter.turnFlags.activeSkillUseCounts.hunt,1);assert.equal(ACTIVE_SKILLS.hunt.limitPerTurn,2); });
+
+test("AI 猎印与基础牌类别使用概率采用联合概率累计", () => {
+  const simulator=new AiSimulator({players:[]}),hunter={id:"hunter",generalId:"trail-hunter",battleTeam:"dawn",alive:true,trackingTargetIds:[],trackingUses:0,attackUsed:0},marked={id:"marked",battleTeam:"dusk",alive:true,hp:10,maxHp:10,shield:10,handCount:0,blockProbability:0,statuses:[],expectedRecoverCount:0},trackingState={players:[hunter,marked]};simulator.simulateAssault(trackingState,hunter,marked,.5);simulator.simulateAssault(trackingState,hunter,marked,.5);assert.ok(Math.abs(marked.huntMarkProbabilities[hunter.id]-.75)<1e-9);assert.ok(Math.abs(hunter.trackingUses-.75)<1e-9);
+  const blade={id:"blade",generalId:"blade-walker",battleTeam:"dawn",alive:true,momentum:0,categoriesUsed:[],categoryUsedProbabilities:{basic:0},attackUsed:0},shielded={id:"shielded",battleTeam:"dusk",alive:true,hp:10,maxHp:10,shield:10,handCount:0,blockProbability:0,expectedRecoverCount:0},momentumState={players:[blade,shielded]};simulator.simulateAssault(momentumState,blade,shielded,.5);simulator.simulateAssault(momentumState,blade,shielded,.5);assert.ok(Math.abs(blade.categoryUsedProbabilities.basic-.75)<1e-9);assert.ok(Math.abs(blade.momentum-.75)<1e-9);
+});
+
+test("概率猎印生成猎杀并按0.4缩放成本次数伤害格挡和摸牌", () => {
+  const state={playPhaseEnded:false,players:[
+    {id:"hunter",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,handCount:0,activeSkillId:"hunt",activeSkillUses:0,activeSkillLimit:2,activeSkillUsed:false},
+    {id:"marked",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:.5,twoBlockProbability:0,huntMarkSourceId:null,huntMarkProbability:.4,huntMarkProbabilities:{hunter:.4},statuses:[],expectedRecoverCount:0}
+  ]};
+  const {game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const hunt=game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.skill?.id==="hunt");
+  assertClose(hunt.executionProbability,.4);
+  const next=new AiSimulator(state).apply(state,hunt,"hunter");
+  assertClose(next.players[0].energy,1.2);assertClose(next.players[0].activeSkillUses,.4);assertClose(next.players[0].handCount,.2);
+  assertClose(next.players[1].hp,3.6);assertClose(next.players[1].handCount,.8);assertClose(next.players[1].huntMarkProbabilities.hunter,0);
+  assert.ok(!game.aiController.actionGenerator.generateFromVisible(next,"hunter").some((action)=>action.skill?.id==="hunt"));
+});
+
+test("完整猎印概率1保持真实猎杀的完整成本和伤害", () => {
+  const state={players:[
+    {id:"hunter",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,handCount:0,activeSkillUses:0,activeSkillLimit:2},
+    {id:"marked",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkSourceId:"hunter",huntMarkProbabilities:{hunter:1},statuses:["huntMark"],expectedRecoverCount:0}
+  ]};
+  const action={type:"skill",skill:ACTIVE_SKILLS.hunt,targets:[{id:"marked"}],executionProbability:1};
+  const next=new AiSimulator(state).apply(state,action,"hunter");
+  assert.equal(next.players[0].energy,0);assert.equal(next.players[0].activeSkillUses,1);assert.equal(next.players[1].hp,2);assert.equal(next.players[1].huntMarkSourceId,null);
+});
+
+test("追猎者阵亡时统一清理其他角色身上由其留下的猎印", async () => {
+  const hunter=makePlayer("dead-hunter",0,"dawn","ai",5),marked=makePlayer("marked-after-death",1,"dusk"),killer=makePlayer("hunter-killer",2,"dusk");marked.statuses.huntMark={sourceId:hunter.id,expireAtTurnEnd:99};const {game}=makeGame([hunter,marked,killer]);await game.dyingSystem.kill(hunter,killer);assert.equal(marked.statuses.huntMark,undefined);
+});
+
+test("猎印到期覆盖正常回合与首次回合前借势时钟", async () => {
+  const normalHunter=makePlayer("normal-clock-hunter",0,"dawn","ai",5),normalTarget=makePlayer("normal-clock-target",1,"dusk"),normalGame=makeGame([normalHunter,normalTarget]).game;registerPassiveSkills(normalGame);
+  await normalGame.eventBus.emit("turnStart",{type:"turnStart",player:normalHunter});await normalGame.eventBus.emit("targetSelected",{type:"targetSelected",source:normalHunter,card:instance("assault"),targets:[normalTarget]});assert.equal(normalTarget.statuses.huntMark.expireAtTurnEnd,2);
+  await normalGame.eventBus.emit("turnEnd",{type:"turnEnd",player:normalHunter});assert.ok(normalTarget.statuses.huntMark);await normalGame.eventBus.emit("turnStart",{type:"turnStart",player:normalHunter});await normalGame.eventBus.emit("turnEnd",{type:"turnEnd",player:normalHunter});assert.equal(normalTarget.statuses.huntMark,undefined);
+  const earlyHunter=makePlayer("early-clock-hunter",0,"dawn","ai",5),earlyTarget=makePlayer("early-clock-target",1,"dusk"),earlyGame=makeGame([earlyHunter,earlyTarget]).game;registerPassiveSkills(earlyGame);
+  await earlyGame.eventBus.emit("targetSelected",{type:"targetSelected",source:earlyHunter,card:instance("assault"),targets:[earlyTarget]});assert.equal(earlyTarget.statuses.huntMark.expireAtTurnEnd,1);
+  await earlyGame.eventBus.emit("turnStart",{type:"turnStart",player:earlyHunter});await earlyGame.eventBus.emit("turnEnd",{type:"turnEnd",player:earlyHunter});assert.equal(earlyTarget.statuses.huntMark,undefined);
+});
+
+// ---- 赌命者 ----
+
+test("赌命者冒险失败不再随机弃牌", async () => { const gambler=makePlayer("gambler",0,"dawn","ai",6),enemy=makePlayer("enemy",1,"dusk"),kept=instance("block");gambler.hand.push(kept);const {game}=makeGame([gambler,enemy],{random:()=>.99});registerPassiveSkills(game);await game.eventBus.emit("cardUsed",{source:gambler,card:instance("harvest"),targets:[]});assert.ok(gambler.hand.includes(kept));assert.equal(gambler.hand.length,1); });
+
+test("赌命者孤注消耗全部能量并摸取等量牌，按30x%概率进入状态", async () => {
+  for (const [energy, roll, expected] of [[1,.29,true],[1,.3,false],[2,.59,true],[2,.6,false],[3,.89,true],[3,.9,false],[4,.999,true]]) {
+    const gambler=makePlayer(`gambler-${energy}-${roll}`,0,"dawn","ai",6),enemy=makePlayer(`enemy-${energy}-${roll}`,1,"dusk");
+    const {game}=makeGame([gambler,enemy],{random:()=>roll});registerPassiveSkills(game);
+    game.state.deck.cards.push(...Array.from({length:energy},()=>instance("charge")));
+    gambler.energy=energy;
+    assert.equal(await game.useActiveSkill(gambler,"allIn",[]),true);
+    assert.equal(gambler.energy,0);
+    assert.equal(gambler.hand.length,energy);
+    assert.equal(Boolean(gambler.statuses.allIn),expected,`${energy}点能量，随机数${roll}`);
+    gambler.energy=1;
+    assert.equal(await game.useActiveSkill(gambler,"allIn",[]),false,"一回合只能使用1次");
+    assert.deepEqual(ACTIVE_SKILLS.allIn.canUse(game,gambler),{ok:false,reason:"本回合发动次数已用尽"},"同回合拒绝原因必须是每回合次数限制");
+  }
+});
+
+test("孤注状态不可叠加、跨回合保留，并在下一次突袭完毕后退出", async () => {
+  const gambler=makePlayer("gambler",0,"dawn","ai",6),target=makePlayer("target",1,"dusk","human"),ally=makePlayer("ally",2,"dawn"),assault=instance("assault");
+  gambler.hand.push(assault);
+  const {game}=makeGame([gambler,target,ally],{random:()=>0});registerPassiveSkills(game);
+  game.state.deck.cards.push(instance("charge"),instance("shield"),instance("block"));
+  gambler.energy=3;await game.useActiveSkill(gambler,"allIn",[]);
+  gambler.resetTurnFlags(game.teamRules.getRules(gambler));
+  assert.deepEqual(gambler.statuses.allIn,{assaultBonus:1});
+  gambler.energy=1;
+  assert.deepEqual(ACTIVE_SKILLS.allIn.canUse(game,gambler),{ok:true,reason:""},"孤注状态存在不再阻止下一回合发动孤注");
+  const hp=target.hp;await game.playCard(gambler,assault,[target]);
+  assert.equal(target.hp,hp-2);assert.equal(gambler.statuses.allIn,undefined);
+});
+
+test("已有孤注状态时再次发动孤注不叠加也不删除状态", async () => {
+  for (const roll of [0, .9]) {
+    const gambler=makePlayer(`gambler-restack-${roll}`,0,"dawn","ai",6),enemy=makePlayer(`enemy-restack-${roll}`,1,"dusk");
+    const {game}=makeGame([gambler,enemy],{random:()=>roll});registerPassiveSkills(game);
+    game.state.deck.cards.push(instance("charge"));
+    gambler.statuses.allIn={assaultBonus:1};
+    gambler.energy=1;
+    assert.deepEqual(ACTIVE_SKILLS.allIn.canUse(game,gambler),{ok:true,reason:""},"已有状态时孤注技能可用");
+    assert.equal(await game.useActiveSkill(gambler,"allIn",[]),true);
+    assert.equal(gambler.energy,0);
+    assert.equal(gambler.hand.length,1);
+    assert.deepEqual(gambler.statuses.allIn,{assaultBonus:1},`随机数${roll}时仍只保留单层孤注状态`);
+  }
+});
+
+test("AI 已有孤注状态时仍生成孤注动作", () => {
+  const gambler=makePlayer("ai-gambler",0,"dawn","ai",6),enemy=makePlayer("ai-gambler-enemy",1,"dusk");
+  const {game}=makeGame([gambler,enemy]);
+  gambler.energy=1;
+  gambler.statuses.allIn={assaultBonus:1};
+  const rootActions=game.aiController.getLegalActions(gambler);
+  assert.ok(rootActions.some((action)=>action.type==="skill"&&action.skill?.id==="allIn"),"根动作生成不得因已有孤注状态排除孤注");
+  const visible=createAiVisibleState(gambler.id,game.state);
+  const deepActions=game.aiController.actionGenerator.generateFromVisible(visible,gambler.id);
+  assert.ok(deepActions.some((action)=>action.type==="skill"&&action.skill?.id==="allIn"),"深层动作生成不得因 assaultBonus 排除孤注");
+});
+
+test("孤注强化的突袭被格挡后也会退出状态", async () => {
+  const gambler=makePlayer("blocked-gambler",0,"dawn","ai",6),target=makePlayer("blocked-target",1,"dusk","human"),ally=makePlayer("blocked-ally",2,"dawn"),assault=instance("assault");
+  gambler.hand.push(assault);target.hand.push(instance("block"));
+  const {game}=makeGame([gambler,target,ally],{response:()=>true,random:()=>0});registerPassiveSkills(game);
+  game.state.deck.cards.push(instance("charge"));
+  gambler.energy=1;await game.useActiveSkill(gambler,"allIn",[]);
+  await game.playCard(gambler,assault,[target]);
+  assert.equal(gambler.statuses.allIn,undefined);
+});
+
+test("AI 模拟孤注已有状态不叠加且按状态概率合并", () => {
+  const makeState=(assaultBonus)=>({players:[{id:"gambler",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,maxEnergy:4,energyBranches:[{probability:1,conditions:{},amount:2}],assaultBonus,handCount:0,activeSkillUses:0,activeSkillLimit:1}]});
+  const action={type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[],executionProbability:1,executionWorldBranches:[{probability:1,conditions:{},executes:true}]};
+  const empty=new AiSimulator(makeState(0)).apply(makeState(0),action,"gambler");
+  const full=new AiSimulator(makeState(1)).apply(makeState(1),action,"gambler");
+  const partial=new AiSimulator(makeState(.5)).apply(makeState(.5),action,"gambler");
+  assertClose(empty.players[0].assaultBonus,.6);assertClose(empty.players[0].energy,0);assertClose(empty.players[0].handCount,2);
+  assertClose(full.players[0].assaultBonus,1);assertClose(full.players[0].energy,0);assertClose(full.players[0].handCount,2);
+  assertClose(partial.players[0].assaultBonus,.8);assertClose(partial.players[0].energy,0);assertClose(partial.players[0].handCount,2);
+});
+
+test("AI 孤注动作评分按当前状态概率计算边际状态收益", () => {
+  const gambler=makePlayer("evaluator-allin",0,"dawn","ai",6),enemy=makePlayer("evaluator-allin-enemy",1,"dusk"),{game}=makeGame([gambler,enemy]),evaluator=game.aiController.evaluator;
+  const makeVisible=(assaultBonus)=>({players:[{id:gambler.id,battleTeam:"dawn",alive:true,energy:2,assaultBonus}]});
+  const action={type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[]};
+  const none=evaluator.actionUtility(action,gambler,makeVisible(0));
+  const full=evaluator.actionUtility(action,gambler,makeVisible(1));
+  const partial=evaluator.actionUtility(action,gambler,makeVisible(.5));
+  assertClose(none,8.4);assertClose(full,6);assertClose(partial,7.2);assertClose(none-full,2.4);
+});
+
+test("AI冒险首次战术期望摸0.6且被反制仍触发、同回合不重复", () => {
+  const actor={id:"gamble-sim",seatIndex:0,generalId:"fate-gambler",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:2,hand:[{id:"gamble-one",definitionId:"exposeWeakness"},{id:"gamble-two",definitionId:"exposeWeakness"}],gambleTriggered:false};
+  const enemy={id:"gamble-counter",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,counterProbability:1};const state={players:[actor,enemy]},simulator=new AiSimulator(state);
+  const once=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"gamble-one"},targets:[]},actor.id);assertClose(once.players[0].handCount,1.6);assert.equal(once.players[0].gambleTriggered,true);
+  const twice=simulator.apply(once,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"gamble-two"},targets:[]},actor.id);assertClose(twice.players[0].handCount,.6);
+});
+
+// ---- 调律师 ----
+
+test("调律师协调每回合只触发一次且共鸣可发动2次", async () => { const tuner=makePlayer("tuner",0,"dawn","ai",7),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([tuner,ally,enemy]);registerPassiveSkills(game);game.state.deck.cards.push(instance("assault"),instance("block"));await game.eventBus.emit("cardUsed",{source:tuner,card:instance("shield"),targets:[ally]});await game.eventBus.emit("cardUsed",{source:tuner,card:instance("shield"),targets:[ally]});assert.equal(tuner.hand.length,1);game.state.deck.cards.push(instance("assault"),instance("block"),instance("charge"),instance("shield"));tuner.energy=4;assert.equal(await game.useActiveSkill(tuner,"resonance",[ally]),true);assert.equal(await game.useActiveSkill(tuner,"resonance",[ally]),true);assert.equal(ally.hand.length,4);assert.equal(tuner.turnFlags.activeSkillUseCounts.resonance,2); });
+
+test("被反制的互利不建立公共牌池且不触发协调", async () => {
+  const tuner=makePlayer("tuner",0,"dawn","ai",7),counterer=makePlayer("counterer",1,"dusk","human"),ally=makePlayer("ally",2,"dawn");
+  const use=instance("mutualBenefit");tuner.hand.push(use);counterer.hand.push(instance("counter"));const {game}=makeGame([tuner,counterer,ally],{response:(request)=>request.type==="counter"});registerPassiveSkills(game);
+  await game.playCard(tuner,use,[]);assert.equal(game.state.publicCardPool.length,0);assert.equal(tuner.turnFlags.coordinationTriggered,false);assert.equal(tuner.hand.length,0);
+});
+
+test("被反制的转移不移动牌且不触发协调", async () => {
+  const tuner=makePlayer("tuner",0,"dawn","ai",7),from=makePlayer("from",1,"dusk"),counterer=makePlayer("counterer",2,"dusk","human"),ally=makePlayer("ally",3,"dawn");
+  const use=instance("transfer"),locked=instance("block");tuner.hand.push(use);from.hand.push(locked);counterer.hand.push(instance("counter"));const {game}=makeGame([tuner,from,counterer,ally],{response:(request)=>request.type==="counter"});registerPassiveSkills(game);
+  await game.playCard(tuner,use,[],{sourceId:from.id,receiverId:ally.id,zone:"hand"});assert.ok(from.hand.includes(locked));assert.ok(!ally.hand.includes(locked));assert.equal(tuner.turnFlags.coordinationTriggered,false);
+});
+
+test("协调只看转移接收者：给敌人不触发，从敌人给队友才触发", async () => {
+  const noTriggerTuner=makePlayer("no-trigger",0,"dawn","human",7),allySource=makePlayer("ally-source",1,"dawn"),enemyReceiver=makePlayer("enemy-receiver",2,"dusk");
+  const firstUse=instance("transfer"),firstMoved=instance("harvest");noTriggerTuner.hand.push(firstUse);allySource.hand.push(firstMoved);const {game:firstGame}=makeGame([noTriggerTuner,allySource,enemyReceiver]);registerPassiveSkills(firstGame);
+  await firstGame.playCard(noTriggerTuner,firstUse,[],{sourceId:allySource.id,receiverId:enemyReceiver.id,zone:"hand"});assert.equal(noTriggerTuner.turnFlags.coordinationTriggered,false);
+
+  const enemyOnlyTuner=makePlayer("enemy-only",0,"dawn","ai",7),enemySourceOnly=makePlayer("enemy-source-only",1,"dusk"),enemyReceiverOnly=makePlayer("enemy-receiver-only",2,"dusk");
+  const enemyUse=instance("transfer"),enemyMoved=instance("harvest");enemyOnlyTuner.hand.push(enemyUse);enemySourceOnly.hand.push(enemyMoved);const {game:enemyGame}=makeGame([enemyOnlyTuner,enemySourceOnly,enemyReceiverOnly]);registerPassiveSkills(enemyGame);
+  await enemyGame.playCard(enemyOnlyTuner,enemyUse,[],{sourceId:enemySourceOnly.id,receiverId:enemyReceiverOnly.id,zone:"hand"});assert.equal(enemyOnlyTuner.turnFlags.coordinationTriggered,false);
+
+  const triggerTuner=makePlayer("trigger",0,"dawn","ai",7),enemySource=makePlayer("enemy-source",1,"dusk"),allyReceiver=makePlayer("ally-receiver",2,"dawn");
+  const secondUse=instance("transfer"),secondMoved=instance("harvest");triggerTuner.hand.push(secondUse);enemySource.hand.push(secondMoved);const {game:secondGame}=makeGame([triggerTuner,enemySource,allyReceiver]);secondGame.state.deck.cards.push(instance("charge"));registerPassiveSkills(secondGame);
+  await secondGame.playCard(triggerTuner,secondUse,[],{sourceId:enemySource.id,receiverId:allyReceiver.id,zone:"hand"});assert.equal(triggerTuner.turnFlags.coordinationTriggered,true);assert.ok(allyReceiver.hand.includes(secondMoved));
+});
+
+test("互利包含多个队友时每次用牌仍只触发一次协调", async () => {
+  const tuner=makePlayer("tuner",0,"dawn","ai",7),allyA=makePlayer("ally-a",1,"dawn"),enemy=makePlayer("enemy",2,"dusk"),allyB=makePlayer("ally-b",3,"dawn");
+  const use=instance("mutualBenefit");tuner.hand.push(use);const {game}=makeGame([tuner,allyA,enemy,allyB]);game.state.deck.cards.push(instance("assault"),instance("block"),instance("charge"),instance("shield"),instance("harvest"));registerPassiveSkills(game);
+  await game.playCard(tuner,use,[]);assert.equal(tuner.turnFlags.coordinationTriggered,true);assert.equal(tuner.hand.length,2);
+});
+
+test("beforeCardUse 与 beforeCardResolve 取消的牌都不触发协调", async () => {
+  for(const hook of ["beforeCardUse","beforeCardResolve"]){
+    const tuner=makePlayer(`tuner-${hook}`,0,"dawn","ai",7),ally=makePlayer(`ally-${hook}`,1,"dawn"),enemy=makePlayer(`enemy-${hook}`,2,"dusk"),use=instance("mutualBenefit");
+    tuner.hand.push(use);const {game}=makeGame([tuner,ally,enemy]);registerPassiveSkills(game);game.eventBus.on(hook,`test-cancel-${hook}`,(event)=>{event.cancelled=true;});
+    await game.playCard(tuner,use,[]);assert.equal(tuner.turnFlags.coordinationTriggered,false);assert.equal(game.state.publicCardPool.length,0);
+  }
+});
+
+test("AI协调只依据未取消的其他己方有效目标且同回合一次", () => {
+  const actor={id:"coord-sim",seatIndex:0,generalId:"resonance-tuner",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"coord-one",definitionId:"shield"},{id:"coord-two",definitionId:"shield"}],coordinationTriggered:false};
+  const ally={id:"coord-ally",seatIndex:1,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0};const enemy={id:"coord-enemy",seatIndex:2,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,counterProbability:0};
+  const state={players:[actor,ally,enemy]},simulator=new AiSimulator(state),action=(id,target)=>({type:"card",card:{...CARD_DEFINITIONS.shield,id},targets:[target]});
+  const once=simulator.apply(state,action("coord-one",ally),actor.id);assert.equal(once.players[0].handCount,2);assert.equal(once.players[0].coordinationTriggered,true);
+  const twice=simulator.apply(once,action("coord-two",ally),actor.id);assert.equal(twice.players[0].handCount,1);
+  const selfState=structuredClone(state),selfOnly=new AiSimulator(selfState).apply(selfState,action("coord-one",selfState.players[0]),actor.id);assert.equal(selfOnly.players[0].coordinationTriggered,false);
+  const counterActor={...actor,id:"coord-countered",handCount:1,hand:[{id:"coord-mutual",definitionId:"mutualBenefit"}],coordinationTriggered:false},counterAlly={...ally,id:"coord-counter-ally"},counterEnemy={...enemy,id:"coord-counter-enemy",counterProbability:1};const counterState={players:[counterActor,counterAlly,counterEnemy]};
+  const countered=new AiSimulator(counterState).apply(counterState,{type:"card",card:{...CARD_DEFINITIONS.mutualBenefit,id:"coord-mutual"},targets:counterState.players},counterActor.id);assert.equal(countered.players[0].coordinationTriggered,false);
+});
+
+// ==================== 响应、伤害与濒死系统 ====================
+
+// ---- 格挡与响应窗口 ----
+
+test("真人没有格挡时仍出现完整响应窗口，但不能凭空格挡", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>true});const hp=b.hp,assault=instance("assault");await game.damage(a,b,1,{card:assault,canBlock:true,damageType:"normal"});assert.equal(ui.responseRequests.length,1);const request=ui.responseRequests[0];assert.deepEqual(request.legalCardIds,[]);assert.equal(request.requiredCount,1);assert.match(request.presentation.eventText,new RegExp(`${a.name}.*你.*突袭`));assert.match(request.presentation.availabilityText,/当前 0 张/);assert.equal(canSubmitResponse(request),false);assert.equal(b.hp,hp-1); });
+
+test("AI 没有合法响应牌时立即跳过且不创建真人响应请求", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","ai");const {game,ui}=makeGame([a,b]);const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(ui.responseRequests.length,0);assert.equal(ui.thinking.length,0);assert.equal(b.hp,hp-1); });
+
+test("真人没有反制也按座次获得一次响应窗口", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const {game,ui}=makeGame([a,b,c]);a.hand.push(instance("harvest"));game.state.deck.cards.push(instance("charge"),instance("block"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(ui.responseRequests.filter((request)=>request.type==="counter").map((request)=>request.targetPlayerId),[b.id,c.id]);assert.ok(ui.responseRequests.every((request)=>request.legalCardIds.length===0)); });
+
+test("格挡确认只在合法牌数达到要求时可用", () => { assert.equal(canSubmitResponse({requiredCount:1,legalCardIds:[]}),false);assert.equal(canSubmitResponse({requiredCount:2,legalCardIds:["one"]}),false);assert.equal(canSubmitResponse({requiredCount:2,legalCardIds:["one","two"]}),true); });
+
+test("响应窗口显示真实持有数量但只消耗所需格挡", async () => { const source=makePlayer("source",0,"dusk"),target=makePlayer("target",1,"dawn","human");target.hand.push(instance("block"),instance("block"),instance("block"));const {game,ui}=makeGame([source,target],{response:()=>true});await game.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});const request=ui.responseRequests.find((entry)=>entry.type==="block");assert.equal(request.presentation.availableCount,3);assert.equal(request.legalCardIds.length,3);assert.match(request.presentation.availabilityText,/需要 1 张格挡，当前 3 张/);assert.equal(target.hand.filter((card)=>card.definitionId==="block").length,2); });
+
+test("反制、强制突袭与濒死调息显示完整持有数量", async () => { const source=makePlayer("source",0,"dusk"),responder=makePlayer("responder",1,"dawn","human"),target=makePlayer("target",2,"dawn");const {game,ui}=makeGame([source,responder,target],{response:()=>true});responder.hand.push(instance("counter"),instance("counter"),instance("counter"));await game.responseSystem.requestCardResponse(responder,"counter",{source,target,card:instance("harvest")},1);let request=ui.responseRequests.at(-1);assert.equal(request.presentation.availableCount,3);assert.equal(responder.hand.filter((card)=>card.definitionId==="counter").length,2);responder.hand.push(instance("assault"),instance("assault"),instance("assault"),instance("assault"));await game.responseSystem.requestAssaultDiscard(responder,"决斗",{source,target:responder,card:instance("duel")});request=ui.responseRequests.at(-1);assert.equal(request.presentation.availableCount,4);assert.match(request.presentation.availabilityText,/当前 4 张/);target.hp=0;responder.hand.push(instance("recover"),instance("recover"));await game.responseSystem.requestDyingRescue(responder,target,responder.hand.find((card)=>card.definitionId==="recover"));request=ui.responseRequests.at(-1);assert.equal(request.presentation.availableCount,2);assert.match(request.presentation.availabilityText,/当前 2 张/);assert.equal(responder.hand.filter((card)=>card.definitionId==="recover").length,1); });
+
+// ---- 反制 ----
+
 test("反制者包含盟友并按施牌者后的座位顺序", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dawn","human"),c=makePlayer("c",2,"dusk","human");const order=[];const {game}=makeGame([a,b,c],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});a.hand.push(instance("harvest"));b.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id]); });
+
 test("反制本身可被反制且仍保持响应牌接口", () => {
   assert.equal(CARD_DEFINITIONS.counter.category,"tactic");
   assert.equal(CARD_DEFINITIONS.counter.usageMode,"response");
   assert.ok(CARD_DEFINITIONS.counter.responseTypes.includes("counter"));
   assert.equal(CARD_DEFINITIONS.counter.counterable,true);
 });
+
 test("震荡的反制只取消当前目标所受效果而不取消整张群伤牌", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.targetPlayerId===b.id});const shockwave=instance("shockwave"),counter=instance("counter"),bHp=b.hp,cHp=c.hp;a.hand.push(shockwave);b.hand.push(counter);await game.playCard(a,shockwave,[b,c]);assert.equal(b.hp,bHp);assert.equal(c.hp,cHp-1);assert.equal(b.hand.includes(counter),false);assert.ok(ui.responseRequests.some((request)=>request.type==="counter"&&request.targetPlayerId===b.id&&request.presentation.responseText.includes("仅取消")&&request.presentation.responseText.includes("其他目标")));assert.ok(ui.logs.some((message)=>message===`${b.name}对${a.name}的「震荡」使用了「反制」，取消了「震荡」对${b.name}的效果。`)); });
+
 test("挑衅的反制只取消当前目标效果且不能保护队友", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk","human");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.targetPlayerId===b.id});const provoke=instance("provoke"),counter=instance("counter"),bHp=b.hp,cHp=c.hp;a.hand.push(provoke);b.hand.push(counter);await game.playCard(a,provoke,[b,c]);assert.equal(b.hp,bHp);assert.equal(c.hp,cHp-1);assert.equal(b.hand.includes(counter),false);assert.ok(ui.responseRequests.some((request)=>request.type==="counter"&&request.targetPlayerId===b.id&&request.presentation.responseText.includes("仅取消")&&request.presentation.responseText.includes("其他目标")));assert.ok(ui.logs.some((message)=>message===`${b.name}对${a.name}的「挑衅」使用了「反制」，取消了「挑衅」对${b.name}的效果。`)); });
+
 test("针对震荡目标的反制仍可被后续反制，之后该目标继续承受效果", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.legalCardIds.length>=request.requiredCount});const shockwave=instance("shockwave"),first=instance("counter"),second=instance("counter"),hp=b.hp;a.hand.push(shockwave,second);b.hand.push(first);await game.playCard(a,shockwave,[b]);assert.equal(b.hp,hp-1);assert.equal(b.hand.includes(first),false);assert.equal(a.hand.includes(second),false);assert.ok(ui.logs.some((message)=>message===`${b.name}对${a.name}的「震荡」使用了「反制」，取消了「震荡」对${b.name}的效果。`));assert.ok(ui.logs.some((message)=>message===`${a.name}对${b.name}的「反制」使用了「反制」，取消了「反制」的效果。`));assert.ok(!ui.logs.some((message)=>message.includes("被后续反制抵消"))); });
+
 test("两次反制后原战术牌恢复生效", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const order=[];const {game,ui}=makeGame([a,b,c],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});game.state.deck.cards.push(instance("block"),instance("charge"));a.hand.push(instance("harvest"));b.hand.push(instance("counter"));c.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id,a.id,b.id]);assert.equal(a.hand.length,2);assert.equal(b.hand.length,0);assert.equal(c.hand.length,0);assert.equal(ui.logs.filter((message)=>message.includes("使用了「反制」")).length,2);assert.ok(!ui.logs.some((message)=>message.includes("被后续反制抵消"))); });
+
 test("三次反制后原战术牌仍被取消", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human"),d=makePlayer("d",3,"dusk","human");const order=[];const {game}=makeGame([a,b,c,d],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});game.state.deck.cards.push(instance("block"),instance("charge"));a.hand.push(instance("harvest"));b.hand.push(instance("counter"));c.hand.push(instance("counter"));d.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id,d.id,a.id,b.id,c.id]);assert.equal(a.hand.length,0);assert.equal(b.hand.length,0);assert.equal(c.hand.length,0);assert.equal(d.hand.length,0);assert.equal(game.state.logs.filter((entry)=>entry.message.includes("使用了「反制」")).length,3);assert.ok(game.state.logs.some((entry)=>entry.message.includes("取消了「丰收」的效果"))); });
 
-// 装备与判定
-for (const id of ["energyDevice","recycleDevice","defenseDevice","battleDevice","telescope","barrierDevice"]) test(`装备 ${CARD_DEFINITIONS[id].name} 会进入唯一装备槽`, async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const equipment=instance(id);a.hand.push(equipment);await game.playCard(a,equipment,[]);assert.equal(a.equipment,equipment);assert.ok(!game.state.deck.discardPile.includes(equipment)); });
-test("替换装备时旧装备进入弃牌堆且新装备留在槽内", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const old=instance("energyDevice");a.equipment=old;const next=instance("battleDevice");a.hand.push(next);await game.playCard(a,next,[]);assert.equal(a.equipment,next);assert.ok(game.state.deck.discardPile.includes(old)); });
-test("望远镜替换为屏障后方向性距离立即按新装备重算", async () => { const source=makePlayer("source",0,"dawn"),ally=makePlayer("ally",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dusk"),old=instance("telescope"),next=instance("barrierDevice");const {game}=makeGame([source,ally,target,other,tail]);source.equipment=old;source.hand.push(next);assert.equal(DistanceSystem.getDistance(game,source,target),1);assert.equal(await game.playCard(source,next,[]),true);assert.equal(DistanceSystem.getDistance(game,source,target),2);assert.equal(DistanceSystem.getDistance(game,target,source),3);assert.ok(game.state.deck.discardPile.includes(old)); });
-test("回收站每回合前两张主动战术各摸1且被反制也触发", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:(request)=>request.type==="counter"});a.equipment=instance("recycleDevice");a.hand.push(instance("harvest"),instance("exposeWeakness"),instance("exposeWeakness"));b.hand.push(instance("counter"));game.state.deck.cards.push(instance("charge"),instance("block"),instance("shield"));await game.playCard(a,a.hand[0],[]);await game.playCard(a,a.hand[0],[]);await game.playCard(a,a.hand[0],[]);assert.equal(a.turnFlags.recycleDeviceUses,2);assert.equal(a.hand.length,2); });
-test("雷达判定战术牌时免疫原突袭并把判定牌弃置", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.equipment=instance("defenseDevice");const judgment=instance("harvest");game.state.deck.cards.push(judgment);const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(b.hp,hp);assert.ok(game.state.deck.discardPile.includes(judgment));assert.equal(game.state.deck.judgmentZone.length,0); });
-test("雷达判定基础牌时获得该牌并继续攻击", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.equipment=instance("defenseDevice");const judgment=instance("charge");game.state.deck.cards.push(judgment);const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.ok(b.hand.includes(judgment));assert.equal(b.hp,hp-1); });
-test("雷达公开获得的基础牌写入其他 AI 记忆", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.equipment=instance("defenseDevice");const judgment=instance("charge");game.state.deck.cards.push(judgment);await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(a.aiMemory.knownCardsByPlayer[b.id][judgment.id],"charge"); });
-test("雷达获得的格挡可立即用于当前攻击", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});b.equipment=instance("defenseDevice");game.state.deck.cards.push(instance("block"));const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(b.hp,hp);assert.equal(b.hand.length,0); });
-test("雷达判定装备牌时不直接扣血且原攻击继续由护盾吸收", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.equipment=instance("defenseDevice");const judgment=instance("energyDevice");game.state.deck.cards.push(judgment);b.shield=2;const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(b.hp,hp);assert.equal(b.shield,1);assert.ok(game.state.deck.discardPile.includes(judgment));assert.equal(b.equipment.definitionId,"defenseDevice"); });
-test("军火库要求2张格挡；只有1张时仍显示响应但按钮禁用且不会浪费", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>true});a.equipment=instance("battleDevice");b.hand.push(instance("block"));const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});const request=ui.responseRequests[0];assert.equal(request.requiredCount,2);assert.equal(request.legalCardIds.length,1);assert.equal(canSubmitResponse(request),false);assert.match(request.presentation.availabilityText,/不足/);assert.equal(b.hp,hp-1);assert.equal(b.hand.length,1); });
-test("军火库面对2张格挡时原子弃置并完全防住", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});a.equipment=instance("battleDevice");b.hand.push(instance("block"),instance("block"));const hp=b.hp;await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});assert.equal(b.hp,hp);assert.equal(b.hand.length,0); });
+test("响应牌与装备牌只输出语义日志，不产生底层弃置或通用使用日志", async () => {
+  const attacker=makePlayer("attacker",0,"dawn"),defender=makePlayer("defender",1,"dusk","human");
+  const {game}=makeGame([attacker,defender],{response:()=>true});defender.hand.push(instance("block"));
+  await game.damage(attacker,defender,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
+  assert.ok(game.state.logs.some((entry)=>entry.message===`${defender.name}使用了「格挡」。`));
+  assert.ok(!game.state.logs.some((entry)=>entry.message.includes("因响应·格挡弃置")));
+  const equipment=instance("energyDevice");attacker.hand.push(equipment);await game.playCard(attacker,equipment,[]);
+  assert.ok(game.state.logs.some((entry)=>entry.message===`${attacker.name}装备了「充能桩」。`));
+  assert.ok(!game.state.logs.some((entry)=>entry.message.includes("使用了「充能桩」")));
+});
 
-// 负生命、濒死救援与事件顺序
+test("真人破坏预选手牌经过双重反制后仍破坏原实体且不泄露私密选择", async () => {
+  const source=makePlayer("private-destroy-source",0,"dawn","human"),target=makePlayer("private-destroy-target",1,"dusk"),third=makePlayer("private-destroy-third",2,"dawn");
+  const use=instance("destroy"),secret={...instance("charge"),definitionId:"hidden-destroy-definition",name:"隐藏破坏实体标记",description:"隐藏破坏描述标记"},decoy=instance("block"),firstCounter=instance("counter"),secondCounter=instance("counter");
+  source.hand.push(use);target.hand.push(secret,decoy,firstCounter);third.hand.push(secondCounter);
+  const {game,ui}=makeGame([source,target,third]),contexts=[];forceAvailableAiCounters(game,contexts);
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0]});
+  assert.ok(selection?.selectionId);assert.ok(game.cardSelectionSystem.selections.size>0);
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.ok(game.state.deck.discardPile.includes(secret));assert.ok(target.hand.includes(decoy));assert.ok(!target.hand.includes(secret));
+  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
+  for(const context of contexts)assertNoHiddenSelectionLeak(context,[secret]);
+  for(const request of ui.responseRequests)assertNoHiddenSelectionLeak(request,[secret]);
+});
+
+test("真人掠夺预选手牌经过双重反制后仍获得原实体", async () => {
+  const source=makePlayer("private-plunder-source",0,"dawn","human"),target=makePlayer("private-plunder-target",1,"dusk"),third=makePlayer("private-plunder-third",2,"dawn");
+  const use=instance("plunder"),secret=instance("harvest"),decoy=instance("charge"),firstCounter=instance("counter"),secondCounter=instance("counter");
+  source.hand.push(use);target.hand.push(secret,decoy,firstCounter);third.hand.push(secondCounter);
+  const {game}=makeGame([source,target,third]);forceAvailableAiCounters(game);
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0]});
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.ok(source.hand.includes(secret));assert.ok(target.hand.includes(decoy));assert.ok(!target.hand.includes(secret));
+  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
+});
+
+test("真人掠夺预选装备不受目标反制导致的手牌版本变化影响", async () => {
+  const source=makePlayer("private-equip-source",0,"dawn","human"),target=makePlayer("private-equip-target",1,"dusk"),third=makePlayer("private-equip-third",2,"dawn");
+  const use=instance("plunder"),equipment=instance("defenseDevice"),firstCounter=instance("counter"),secondCounter=instance("counter");
+  source.hand.push(use);target.hand.push(firstCounter);target.equipment=equipment;third.hand.push(secondCounter);
+  const {game}=makeGame([source,target,third]);forceAvailableAiCounters(game);
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{equipment:true});
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.equal(target.equipment,null);assert.equal(source.equipment,null);assert.ok(source.hand.includes(equipment));
+  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
+});
+
+test("真人窥探两张手牌经过双重反制后仍只展示反制前确认的实体", async () => {
+  const source=makePlayer("private-scout-source",0,"dawn","human"),target=makePlayer("private-scout-target",1,"dusk"),third=makePlayer("private-scout-third",2,"dawn");
+  const use=instance("scout"),first=instance("charge"),second=instance("harvest"),counter=instance("counter"),thirdCounter=instance("counter");
+  source.hand.push(use);target.hand.push(first,second,counter);third.hand.push(thirdCounter);
+  const {game,ui}=makeGame([source,target,third]);forceAvailableAiCounters(game);
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0,1]});
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.deepEqual(ui.reveals.at(-1)?.cards,[first,second]);
+  assert.equal(source.aiMemory.knownCardsByPlayer[target.id][first.id],first.definitionId);
+  assert.equal(source.aiMemory.knownCardsByPlayer[target.id][second.id],second.definitionId);
+  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
+});
+
+test("反制期间原预选牌离开区域时破坏安全失败且不改选其他牌", async () => {
+  const source=makePlayer("private-missing-source",0,"dawn","human"),target=makePlayer("private-missing-target",1,"dusk"),third=makePlayer("private-missing-third",2,"dawn");
+  const use=instance("destroy"),selected=instance("charge"),decoy=instance("harvest"),counter=instance("counter"),thirdCounter=instance("counter");
+  source.hand.push(use);target.hand.push(selected,decoy,counter);third.hand.push(thirdCounter);
+  const {game}=makeGame([source,target,third]);forceAvailableAiCounters(game);let usedEvent=null,moved=false;
+  game.eventBus.on("afterCardMove","test:remove-private-destroy-selection",async(event)=>{if(!moved&&event.card===counter){moved=true;await game.discardCardFromHand(target,selected,"反制期间合法移走",{silent:true});}});
+  game.eventBus.on("cardUsed","test:private-destroy-safe-failure",(event)=>{if(event.card===use)usedEvent=event;});
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0]});
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.ok(game.state.deck.discardPile.includes(selected));assert.ok(target.hand.includes(decoy));
+  assert.equal(usedEvent?.resolved,false);assert.deepEqual(usedEvent?.effectiveTargets,[]);
+  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
+});
+
+test("窥探预选两张中一张在反制期间离开时只展示仍在原手牌的一张", async () => {
+  const source=makePlayer("private-filter-source",0,"dawn","human"),target=makePlayer("private-filter-target",1,"dusk"),third=makePlayer("private-filter-third",2,"dawn");
+  const use=instance("scout"),left=instance("charge"),remains=instance("harvest"),counter=instance("counter"),thirdCounter=instance("counter");
+  source.hand.push(use);target.hand.push(left,remains,counter);third.hand.push(thirdCounter);
+  const {game,ui}=makeGame([source,target,third]);forceAvailableAiCounters(game);let moved=false;
+  game.eventBus.on("afterCardMove","test:remove-one-private-scout-selection",async(event)=>{if(!moved&&event.card===counter){moved=true;await game.discardCardFromHand(target,left,"反制期间合法移走",{silent:true});}});
+  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0,1]});
+  assert.equal(await game.playCard(source,use,[target],selection),true);
+  assert.deepEqual(ui.reveals.at(-1)?.cards,[remains]);
+  assert.equal(source.aiMemory.knownCardsByPlayer[target.id]?.[left.id],undefined);
+  assert.equal(source.aiMemory.knownCardsByPlayer[target.id][remains.id],remains.definitionId);
+});
+
+test("反制链每张实际反制只记录一条带明确双方与对象的日志", async () => {
+  const source=makePlayer("log-source",0,"dawn","human"),first=makePlayer("log-first",1,"dusk","human"),second=makePlayer("log-second",2,"dawn","human"),use=instance("harvest");source.hand.push(use);first.hand.push(instance("counter"));second.hand.push(instance("counter"));const {game}=makeGame([source,first,second],{response:(request)=>request.type==="counter"&&request.legalCardIds.length>=request.requiredCount});game.state.deck.cards.push(instance("charge"),instance("block"));await game.playCard(source,use,[]);const logs=game.state.logs.map((entry)=>entry.message).filter((message)=>message.includes("使用了「反制」"));
+  assert.deepEqual(logs,[`${first.name}对${source.name}的「丰收」使用了「反制」，取消了「丰收」的效果。`,`${second.name}对${first.name}的「反制」使用了「反制」，取消了「反制」的效果。`]);assert.ok(!game.state.logs.some((entry)=>entry.message.includes("被后续反制抵消")||entry.message===`「丰收」的效果被取消。`));
+});
+
+// ---- 原子响应支付 ----
+
+test("两张响应牌原子支付成功时统一提交并发送完整移动事件", async () => {
+  const player=makePlayer("atomic-success",0,"dawn"),enemy=makePlayer("atomic-success-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
+  const {game}=makeGame([player,enemy]),events=[];game.eventBus.on("afterCardMove","test:atomic-success",(event)=>events.push(event.card));
+  const beforeVersion=player.handVersion,result=await game.payCardsFromHandAtomically(player,[first,second],"测试原子支付",{silent:true,expectedCount:2});
+  assert.equal(result.status,"used");assert.deepEqual(result.cards,[first,second]);assert.equal(player.hand.length,0);assert.equal(player.handVersion,beforeVersion+1);
+  assert.ok(game.state.deck.discardPile.includes(first));assert.ok(game.state.deck.discardPile.includes(second));assert.deepEqual(events,[first,second]);
+});
+
+test("第二张 beforeCardMove 取消时原子响应两张牌都保留", async () => {
+  const player=makePlayer("atomic-cancel",0,"dawn"),enemy=makePlayer("atomic-cancel-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
+  const {game}=makeGame([player,enemy]);game.eventBus.on("beforeCardMove","test:atomic-cancel",(event)=>{if(event.card===second)event.cancelled=true;});
+  const version=player.handVersion,result=await game.payCardsFromHandAtomically(player,[first,second],"测试原子取消",{silent:true,expectedCount:2});
+  assert.equal(result.status,"invalid");assert.deepEqual(player.hand,[first,second]);assert.equal(player.handVersion,version);assert.equal(game.state.deck.discardPile.includes(first),false);assert.equal(game.state.deck.discardPile.includes(second),false);
+});
+
+test("原子响应支付拒绝已离手实体和重复实体且不移动其余牌", async () => {
+  const player=makePlayer("atomic-invalid",0,"dawn"),enemy=makePlayer("atomic-invalid-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
+  const {game}=makeGame([player,enemy]);player.hand.splice(player.hand.indexOf(second),1);
+  const missing=await game.payCardsFromHandAtomically(player,[first,second],"测试实体已变化",{silent:true,expectedCount:2});
+  assert.equal(missing.status,"invalid");assert.deepEqual(player.hand,[first]);assert.equal(game.state.deck.discardPile.includes(first),false);
+  player.hand.push(second);const duplicate=await game.payCardsFromHandAtomically(player,[first,first],"测试重复实体",{silent:true,expectedCount:2});
+  assert.equal(duplicate.status,"invalid");assert.deepEqual(player.hand,[first,second]);assert.equal(game.state.deck.discardPile.length,0);
+});
+
+test("原子响应支付验证期间 dispose 返回 cancelled 且不消费任何牌", async () => {
+  const player=makePlayer("atomic-dispose",0,"dawn"),enemy=makePlayer("atomic-dispose-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
+  const {game}=makeGame([player,enemy]);let openedResolve,release;const opened=new Promise((resolve)=>{openedResolve=resolve;}),gate=new Promise((resolve)=>{release=resolve;});
+  game.eventBus.on("beforeCardMove","test:atomic-dispose",async()=>{openedResolve();await gate;});
+  const pending=game.payCardsFromHandAtomically(player,[first,second],"测试销毁取消",{silent:true,expectedCount:2});await opened;game.dispose();release();
+  const result=await pending;assert.equal(result.status,"cancelled");assert.deepEqual(player.hand,[first,second]);assert.equal(game.state.deck.discardPile.length,0);
+});
+
+test("响应系统只有整组原子支付完成后才返回 used", async () => {
+  const attacker=makePlayer("atomic-response-attacker",0,"dawn"),defender=makePlayer("atomic-response-defender",1,"dusk","human"),first=instance("block"),second=instance("block");defender.hand.push(first,second);
+  const {game}=makeGame([attacker,defender],{response:()=>true});game.eventBus.on("beforeCardMove","test:atomic-response-invalid",(event)=>{if(event.card===second)event.cancelled=true;});
+  const result=await game.responseSystem.requestCardResponse(defender,"block",{source:attacker,target:defender,card:instance("assault")},2);
+  assert.equal(result.status,"invalid");assert.deepEqual(result.cards,[]);assert.deepEqual(defender.hand,[first,second]);assert.equal(game.state.deck.discardPile.length,0);
+});
+
+// ---- 濒死与救援 ----
+
 test("濒死救援阶段保留负生命以计算调息，正式阵亡后归零", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");b.hp=1;const {game}=makeGame([a,b]);let dyingHp=null,need=null;game.eventBus.on("playerDying","test:negative-hp",(event)=>{dyingHp=event.target.hp;need=event.need;});await game.damage(a,b,3,{canBlock:false});assert.equal(dyingHp,-2);assert.equal(need,3);assert.equal(b.hp,0);assert.equal(b.alive,false); });
+
 test("无人可救时濒死角色在救援窗口后以0生命阵亡", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");b.hp=1;const {game}=makeGame([a,b]);await game.damage(a,b,1,{canBlock:false});assert.equal(b.alive,false);assert.equal(b.hp,0); });
+
 test("合法真人救援者没有调息时仍显示响应窗口", async () => { const target=makePlayer("target",0,"dawn"),human=makePlayer("human",1,"dawn","human"),enemy=makePlayer("enemy",2,"dusk");target.hp=0;const {game,ui}=makeGame([target,human,enemy],{response:()=>false});await game.dyingSystem.enter(target,enemy);const request=ui.responseRequests.find((entry)=>entry.type==="dyingRescue"&&entry.sourcePlayerId===human.id);assert.ok(request);assert.deepEqual(request.legalCardIds,[]);assert.match(request.presentation.eventText,new RegExp(`${target.name}.*濒死`));assert.match(request.presentation.responseText,/调息.*救援/);assert.match(request.presentation.availabilityText,/当前 0 张/); });
+
 test("AI 濒死本人有调息时必须自救", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");b.hp=1;b.hand.push(instance("recover"));const {game}=makeGame([a,b]);const used=b.turnFlags.recoverUsed;await game.damage(a,b,1,{canBlock:false});assert.equal(b.alive,true);assert.equal(b.hp,1);assert.equal(b.turnFlags.recoverUsed,used); });
+
 test("负1生命需要2张调息并会重复开启救援轮", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");b.hp=1;b.hand.push(instance("recover"),instance("recover"));const {game}=makeGame([a,b]);await game.damage(a,b,2,{canBlock:false});assert.equal(b.hp,1);assert.equal(b.alive,true); });
+
 test("救援顺序为濒死本人后再从下一座位起的盟友", async () => { const dying=makePlayer("d",0,"dawn","human"),ally1=makePlayer("a1",1,"dawn","human"),enemy=makePlayer("e",2,"dusk","human"),ally2=makePlayer("a2",3,"dawn","human");dying.hp=0;[dying,ally1,enemy,ally2].forEach((p)=>p.hand.push(instance("recover")));const order=[];const {game}=makeGame([dying,ally1,enemy,ally2],{response:(r)=>(order.push(r.sourcePlayerId),r.sourcePlayerId===ally1.id)});await game.dyingSystem.enter(dying,enemy);assert.deepEqual(order,[dying.id,ally1.id]);assert.equal(dying.hp,1); });
+
 test("敌人永远不会进入濒死救援候选队列", async () => { const dying=makePlayer("d",0,"dawn","human"),enemy=makePlayer("e",1,"dusk","human");dying.hp=0;enemy.hand.push(instance("recover"));const {game,ui}=makeGame([dying,enemy],{response:()=>false});await game.dyingSystem.enter(dying,enemy);assert.deepEqual(ui.responseRequests.map((request)=>request.sourcePlayerId),[dying.id]);assert.ok(!ui.responseRequests.some((request)=>request.sourcePlayerId===enemy.id));assert.equal(dying.alive,false); });
+
 test("beforePlayerDying 取消后会恢复到合法的1点生命", async () => { const dying=makePlayer("d",0,"dawn"),enemy=makePlayer("e",1,"dusk");dying.hp=0;const {game}=makeGame([dying,enemy]);game.eventBus.on("beforePlayerDying","test:cancel",(event)=>{event.cancelled=true;});await game.dyingSystem.enter(dying,enemy);assert.equal(dying.alive,true);assert.equal(dying.hp,1); });
+
 test("成功救援事件顺序包含 dying、rescueUsed、rescued", async () => { const dying=makePlayer("d",0,"dawn"),enemy=makePlayer("e",1,"dusk");dying.hp=0;dying.hand.push(instance("recover"));const {game}=makeGame([dying,enemy]);const events=[];for(const type of ["playerDying","dyingRescueUsed","playerRescued"])game.eventBus.on(type,`test:${type}`,()=>events.push(type));await game.dyingSystem.enter(dying,enemy);assert.deepEqual(events,["playerDying","dyingRescueUsed","playerRescued"]); });
-test("灵医回春可在救援濒死队友时额外恢复并摸牌", async () => {
-  const target=makePlayer("d",0,"dawn","human",1),medic=makePlayer("m",1,"dawn","ai",2),enemy=makePlayer("e",2,"dusk");
-  target.hp=-1;medic.hand.push(instance("recover"));const {game}=makeGame([target,medic,enemy]);game.state.deck.cards.push(instance("block"));registerPassiveSkills(game);
-  const events=[];game.eventBus.on("beforeHeal","test:rescue-before",(event)=>events.push([event.type,event.isDyingRescue]));game.eventBus.on("afterHeal","test:rescue-after",(event)=>events.push([event.type,event.actualAmount]));
-  await game.dyingSystem.enter(target,enemy);
-  assert.equal(target.alive,true);assert.equal(target.hp,1);assert.equal(medic.statistics.healingDone,2);assert.equal(medic.hand.length,1);
-  assert.deepEqual(events,[["beforeHeal",true],["afterHeal",2]]);assert.equal(medic.turnFlags.rejuvenationUsed,true);
-});
-test("灵医本人濒死时也能以回春强化自救并摸牌", async () => {
-  const medic=makePlayer("self-dying-medic",0,"dawn","ai",2),enemy=makePlayer("self-dying-enemy",1,"dusk");
-  medic.hp=-1;medic.hand.push(instance("recover"));const {game}=makeGame([medic,enemy]);game.state.deck.cards.push(instance("charge"));registerPassiveSkills(game);
-  await game.dyingSystem.enter(medic,enemy);
-  assert.equal(medic.alive,true);assert.equal(medic.hp,1);assert.equal(medic.statistics.healingDone,2);assert.equal(medic.hand.length,1);assert.equal(medic.turnFlags.rejuvenationUsed,true);
-});
+
 test("三人阵营 AI 能协作各交一张调息救回负1血队友", async () => { const target=makePlayer("d",0,"dawn","ai",2),ally1=makePlayer("a1",1,"dawn"),ally2=makePlayer("a2",2,"dawn"),enemy=makePlayer("e",3,"dusk");target.hp=-1;ally1.hand.push(instance("recover"));ally2.hand.push(instance("recover"));const {game}=makeGame([target,ally1,ally2,enemy]);assert.equal(game.aiController.responsePolicy.assessDyingRescue(ally1,target).strategic,true);await game.dyingSystem.enter(target,enemy);assert.equal(target.alive,true);assert.equal(target.hp,1);assert.equal(ally1.hand.length,0);assert.equal(ally2.hand.length,0); });
+
 test("AI 按单张边际价值启动负2血的1+2协作救援", async () => { const target=makePlayer("d",0,"dawn","ai",2),ally1=makePlayer("a1",1,"dawn"),ally2=makePlayer("a2",2,"dawn"),enemy=makePlayer("e",3,"dusk");target.hp=-2;ally1.hand.push(instance("recover"));ally2.hand.push(instance("recover"),instance("recover"));const {game}=makeGame([target,ally1,ally2,enemy]);const assessment=game.aiController.responsePolicy.assessDyingRescue(ally1,target);assert.ok(assessment.futureExpectedRecover>0);assert.equal(game.aiController.responsePolicy.shouldRespond(ally1,"dyingRescue",{target},[ally1.hand[0]]),true);await game.dyingSystem.enter(target,enemy);assert.equal(target.alive,true);assert.equal(target.hp,1);assert.equal(ally1.hand.length,0);assert.equal(ally2.hand.length,0); });
 
-// 同阵营 AI 强制救援真人（16 项）
-test("强制救援1：同阵营 AI 持有调息时真人必定获救", async () => {
+test("强制救援：同阵营 AI 持有调息时真人必定获救", async () => {
   const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
   human.hp=0;ally.hand.push(instance("recover"));
   const {game,ui}=makeGame([human,ally,enemy]);
@@ -1307,28 +3383,32 @@ test("强制救援1：同阵营 AI 持有调息时真人必定获救", async () 
   assert.ok(ui.logs.some((message)=>message.includes(`${ally.name}使用调息救援${human.name}`)));
   assert.ok(ui.logs.some((message)=>message.includes(`${human.name}脱离濒死`)));
 });
-test("强制救援2：AI 只剩最后一张调息时也必须救真人", async () => {
+
+test("强制救援：AI 只剩最后一张调息时也必须救真人", async () => {
   const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
   human.hp=0;ally.hand=[instance("recover")];
   const {game}=makeGame([human,ally,enemy]);game.aiController.responsePolicy.shouldRespond=()=>false;
   await game.dyingSystem.enter(human,enemy);
   assert.equal(human.hp,1);assert.equal(ally.hand.length,0);
 });
-test("强制救援3：AI 只有1点生命时也必须救真人", async () => {
+
+test("强制救援：AI 只有1点生命时也必须救真人", async () => {
   const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
   human.hp=0;ally.hp=1;ally.hand.push(instance("recover"));
   const {game}=makeGame([human,ally,enemy]);game.aiController.responsePolicy.shouldRespond=()=>false;
   await game.dyingSystem.enter(human,enemy);
   assert.equal(human.hp,1);assert.equal(ally.hp,1);assert.equal(ally.hand.length,0);
 });
-test("强制救援4：AI 评分函数返回 false 时仍绕过策略救真人", async () => {
+
+test("强制救援：AI 评分函数返回 false 时仍绕过策略救真人", async () => {
   const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
   human.hp=0;ally.hand.push(instance("recover"));
   const {game}=makeGame([human,ally,enemy]);let policyCalls=0;game.aiController.responsePolicy.shouldRespond=()=>{policyCalls+=1;return false;};
   await game.dyingSystem.enter(human,enemy);
   assert.equal(human.hp,1);assert.equal(policyCalls,0);
 });
-test("强制救援5：AI 即使无法独自完全救活也必须先使用调息", async () => {
+
+test("强制救援：AI 即使无法独自完全救活也必须先使用调息", async () => {
   const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
   human.hp=-1;ally.hand.push(instance("recover"));
   const {game,ui}=makeGame([human,ally,enemy]);game.aiController.responsePolicy.shouldRespond=()=>false;
@@ -1336,66 +3416,76 @@ test("强制救援5：AI 即使无法独自完全救活也必须先使用调息"
   assert.equal(ally.hand.length,0);assert.equal(ally.statistics.healingDone,1);assert.equal(human.hp,0);assert.equal(human.alive,false);
   assert.ok(ui.logs.some((message)=>message.includes(`${human.name}仍处于濒死，还需1张调息`)));
 });
-test("强制救援6：真人负1血时两名 AI 各用一张并救活", async () => {
+
+test("强制救援：真人负1血时两名 AI 各用一张并救活", async () => {
   const human=makePlayer("human",0,"dawn","human"),allyA=makePlayer("ally-a",1,"dawn"),allyB=makePlayer("ally-b",2,"dawn"),enemy=makePlayer("enemy",3,"dusk");
   human.hp=-1;allyA.hand.push(instance("recover"));allyB.hand.push(instance("recover"));
   const {game}=makeGame([human,allyA,allyB,enemy]);game.aiController.responsePolicy.shouldRespond=()=>false;
   await game.dyingSystem.enter(human,enemy);
   assert.equal(human.alive,true);assert.equal(human.hp,1);assert.equal(allyA.hand.length,0);assert.equal(allyB.hand.length,0);
 });
-test("强制救援7：真人负2血时同一 AI 跨三轮连续使用三张", async () => {
+
+test("强制救援：真人负2血时同一 AI 跨三轮连续使用三张", async () => {
   const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
   human.hp=-2;ally.hand.push(instance("recover"),instance("recover"),instance("recover"));
   const {game}=makeGame([human,ally,enemy]);game.aiController.responsePolicy.shouldRespond=()=>false;
   await game.dyingSystem.enter(human,enemy);
   assert.equal(human.alive,true);assert.equal(human.hp,1);assert.equal(ally.hand.length,0);assert.equal(ally.statistics.healingDone,3);
 });
-test("强制救援8：总共仅两张时仍全部使用，真人到0血后阵亡", async () => {
+
+test("强制救援：总共仅两张时仍全部使用，真人到0血后阵亡", async () => {
   const human=makePlayer("human",0,"dawn","human"),allyA=makePlayer("ally-a",1,"dawn"),allyB=makePlayer("ally-b",2,"dawn"),enemy=makePlayer("enemy",3,"dusk");
   human.hp=-2;allyA.hand.push(instance("recover"));allyB.hand.push(instance("recover"));
   const {game}=makeGame([human,allyA,allyB,enemy]);game.aiController.responsePolicy.shouldRespond=()=>false;
   await game.dyingSystem.enter(human,enemy);
   assert.equal(human.hp,0);assert.equal(human.alive,false);assert.equal(allyA.hand.length,0);assert.equal(allyB.hand.length,0);
 });
-test("强制救援9：敌方 AI 即使持有调息也不能救真人", async () => {
+
+test("强制救援：敌方 AI 即使持有调息也不能救真人", async () => {
   const human=makePlayer("human",0,"dawn","human"),enemy=makePlayer("enemy",1,"dusk");
   human.hp=0;enemy.hand.push(instance("recover"));
   const {game,ui}=makeGame([human,enemy]);await game.dyingSystem.enter(human,enemy);
   assert.equal(human.alive,false);assert.equal(enemy.hand.length,1);assert.equal(ui.thinking.length,0);
 });
-test("强制救援10：不同阵营 AI 不能从核心响应入口救真人", async () => {
+
+test("强制救援：不同阵营 AI 不能从核心响应入口救真人", async () => {
   const human=makePlayer("human",0,"dawn","human"),enemy=makePlayer("enemy",1,"dusk");
   human.hp=0;const card=instance("recover");enemy.hand.push(card);
   const {game}=makeGame([human,enemy]);const result=await game.responseSystem.requestDyingRescue(enemy,human,card);
   assert.equal(result.status,"unavailable");assert.equal(result.card,null);assert.ok(enemy.hand.includes(card));assert.equal(game.state.pendingResponses.length,0);
 });
-test("强制救援11：关闭配置后恢复普通 AI 救援策略", async () => {
+
+test("强制救援：关闭配置后恢复普通 AI 救援策略", async () => {
   const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
   human.hp=0;ally.hand.push(instance("recover"));
   const {game}=makeGame([human,ally,enemy]);game.forceAiRescueHuman=false;let policyCalls=0;game.aiController.responsePolicy.shouldRespond=()=>{policyCalls+=1;return false;};
   await game.dyingSystem.enter(human,enemy);
   assert.equal(human.alive,false);assert.equal(ally.hand.length,1);assert.equal(policyCalls,1);
 });
-test("强制救援12：真人救队友时仍可自行接受或拒绝", async () => {
+
+test("强制救援：真人救队友时仍可自行接受或拒绝", async () => {
   const run=async (decision)=>{const target=makePlayer(`target-${decision}`,0,"dawn"),human=makePlayer(`human-${decision}`,1,"dawn","human"),enemy=makePlayer(`enemy-${decision}`,2,"dusk");target.hp=0;human.hand.push(instance("recover"));const fixture=makeGame([target,human,enemy],{response:()=>decision});await fixture.game.dyingSystem.enter(target,enemy);return {target,human,ui:fixture.ui};};
   const declined=await run(false),accepted=await run(true);
   assert.equal(declined.target.alive,false);assert.equal(declined.human.hand.length,1);assert.equal(declined.ui.responseRequests.length,1);
   assert.equal(accepted.target.alive,true);assert.equal(accepted.target.hp,1);assert.equal(accepted.human.hand.length,0);assert.equal(accepted.ui.responseRequests.length,1);
 });
-test("强制救援13：AI 自己濒死时仍然固定自救", async () => {
+
+test("强制救援：AI 自己濒死时仍然固定自救", async () => {
   const target=makePlayer("target",0,"dawn"),enemy=makePlayer("enemy",1,"dusk");target.hp=0;target.hand.push(instance("recover"));
   const {game}=makeGame([target,enemy]);let policyCalls=0;game.aiController.responsePolicy.shouldRespond=()=>{policyCalls+=1;return false;};
   await game.dyingSystem.enter(target,enemy);
   assert.equal(target.alive,true);assert.equal(target.hp,1);assert.equal(policyCalls,0);
 });
-test("强制救援14：重新征召会取消尚未完成的 AI 救援等待", async () => {
+
+test("强制救援：重新征召会取消尚未完成的 AI 救援等待", async () => {
   const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");human.hp=0;const card=instance("recover");ally.hand.push(card);
   const {game,ui}=makeGame([human,ally,enemy]);game.simulationMode=false;game.cleanupManager=new CleanupManager();
   const pending=game.responseSystem.requestDyingRescue(ally,human,card);game.dispose();const result=await pending;
   assert.equal(result.status,"cancelled");assert.equal(result.card,null);assert.ok(ally.hand.includes(card));assert.equal(game.cleanupManager.pending.size,0);assert.equal(game.state.pendingResponses.length,0);
   assert.equal(ui.thinking.at(-1)[0],false);
 });
-test("强制救援15：救援经过 Game.heal 并产生治疗事件与统计", async () => {
+
+test("强制救援：救援经过 Game.heal 并产生治疗事件与统计", async () => {
   const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");human.hp=0;ally.hand.push(instance("recover"));
   const {game}=makeGame([human,ally,enemy]);const events=[];
   game.eventBus.on("beforeHeal","test:forced-before",(event)=>events.push([event.type,event.isDyingRescue,event.reason]));
@@ -1403,31 +3493,29 @@ test("强制救援15：救援经过 Game.heal 并产生治疗事件与统计", a
   await game.dyingSystem.enter(human,enemy);
   assert.deepEqual(events,[["beforeHeal",true,"dyingRescue"],["afterHeal",1]]);assert.equal(ally.statistics.healingDone,1);assert.equal(human.hp,1);
 });
-test("强制救援16：濒死上下文会触发灵医回春额外治疗与摸牌", async () => {
-  const human=makePlayer("human",0,"dawn","human"),medic=makePlayer("medic",1,"dawn","ai",2),enemy=makePlayer("enemy",2,"dusk");human.hp=0;medic.hand.push(instance("recover"));
-  const {game}=makeGame([human,medic,enemy]);game.state.deck.cards.push(instance("block"));registerPassiveSkills(game);await game.dyingSystem.enter(human,enemy);
-  assert.equal(human.hp,2);assert.equal(medic.statistics.healingDone,2);assert.equal(medic.hand.length,1);assert.equal(medic.turnFlags.rejuvenationUsed,true);
+
+test("AI濒死救援在本人后按相对座位环绕顺序消费调息", () => {
+  const players=[
+    {id:"ally-zero",seatIndex:0,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"recover-zero",definitionId:"recover"}],expectedRecoverCount:1},
+    {id:"enemy-one",seatIndex:1,battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:0,expectedRecoverCount:0},
+    {id:"dying",seatIndex:2,battleTeam:"dawn",alive:true,hp:0,maxHp:3,handCount:0,hand:[],expectedRecoverCount:0},
+    {id:"enemy-three",seatIndex:3,battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:0,expectedRecoverCount:0},
+    {id:"ally-four",seatIndex:4,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"recover-four",definitionId:"recover"}],expectedRecoverCount:1}
+  ],state={players},simulator=new AiSimulator(state);simulator.resolveFatal(state,players[2],players[1]);assert.equal(players[2].hp,1);assert.equal(players[4].expectedRecoverCount,0);assert.equal(players[0].expectedRecoverCount,1);
 });
 
-test("真人在自己的决斗中阵亡会在完整结算后主动结束出牌等待", async () => {
-  const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
-  human.hp=1;const duel=instance("duel");human.hand.push(duel);enemy.hand.push(instance("assault"));
-  const {game,ui}=makeGame([human,ally,enemy]);const waiting=ui.waitForHumanPlayEnd(game.state.gameId);
-  assert.equal(await game.handleHumanCard(duel.id),true);
-  const ended=await Promise.race([waiting,new Promise((resolve)=>setTimeout(()=>resolve("timeout"),50))]);
-  assert.equal(human.alive,false);assert.equal(game.state.phase,"play");assert.equal(game.state.isGameOver,false);
-  assert.equal(ended,true);assert.equal(ui.playEndState,null);assert.equal(game.pendingHumanPlayEnd,false);
+test("AI救援轮次让A与B首轮各消耗一张调息", () => {
+  const target={id:"round-rescue-target",seatIndex:0,battleTeam:"dawn",alive:true,hp:-1,maxHp:4,handCount:0,expectedRecoverCount:0};
+  const a={id:"round-rescue-a",seatIndex:1,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:2,hand:[{id:"a-r1",definitionId:"recover"},{id:"a-r2",definitionId:"recover"}],expectedRecoverCount:2};
+  const b={id:"round-rescue-b",seatIndex:2,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"b-r1",definitionId:"recover"}],expectedRecoverCount:1};
+  const state={players:[target,a,b]};new AiSimulator(state).resolveFatal(state,target);assert.equal(target.hp,1);assert.equal(a.expectedRecoverCount,1);assert.equal(b.expectedRecoverCount,0);
 });
 
-test("互利等待选牌时重新征召不会把 undefined 放入手牌", async () => {
-  const human=makePlayer("human",0,"dawn","human"),enemy=makePlayer("enemy",1,"dusk");const {game,ui}=makeGame([human,enemy]);
-  game.state.deck.cards.push(instance("block"),instance("charge"));game.publicCardPool.reveal(2);
-  let settleSelection=null;
-  ui.requestPublicCard=()=>new Promise((resolve)=>{settleSelection=resolve;});
-  ui.cancelPendingInteractions=()=>{settleSelection?.(undefined);};
-  const drafting=game.publicCardPool.draft(human);await Promise.resolve();game.dispose();
-  assert.equal(await drafting,false);assert.deepEqual(human.hand,[]);assert.equal(human.hand.includes(undefined),false);assert.equal(game.state.publicCardPool.length,0);
-});
+// ==================== 隐藏信息与交互安全 ====================
+
+// ---- 隐藏牌与选择令牌 ----
+
+test("装备区选择令牌绑定本次会话、所有者和手牌版本", async () => { const actor=makePlayer("actor",0,"dawn"),owner=makePlayer("owner",1,"dusk"),equipment=instance("energyDevice");owner.equipment=equipment;const {game}=makeGame([actor,owner]);const selection=game.cardSelectionSystem.createHiddenSelection(owner);owner.bumpHandVersion();assert.equal(await game.choosePlayerZoneCard(actor,owner,"测试",{zone:"equipment",equipmentCardId:equipment.id,selectionId:selection.selectionId}),null);const otherSelection=game.cardSelectionSystem.createHiddenSelection(actor);assert.equal(await game.choosePlayerZoneCard(actor,owner,"测试",{zone:"equipment",equipmentCardId:equipment.id,selectionId:otherSelection.selectionId}),null); });
 
 test("非出牌阶段触发阵亡后恢复进入濒死前的真实阶段", async () => {
   const target=makePlayer("target",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
@@ -1436,14 +3524,15 @@ test("非出牌阶段触发阵亡后恢复进入濒死前的真实阶段", async
   assert.equal(target.alive,false);assert.equal(game.state.isGameOver,false);assert.equal(game.state.phase,"energy");
 });
 
-// 隐藏信息、AI、延迟与 UI 安全
 test("不透明隐藏牌 DOM 不含牌名、definitionId、类别、描述或 art", () => { const markup=hiddenSelectionMarkup({tokens:[{token:"opaque-safe",position:1}]});assert.match(markup,/opaque-safe/);for(const secret of ["反制","definitionId","category","description","assets\/cards"])assert.doesNotMatch(markup,new RegExp(secret)); });
+
 test("窥隙选择池的已知牌复用正常完整牌面且仍只使用不透明令牌", async () => {
   const viewer=makePlayer("peek-layout-viewer",0,"dawn","human",3),owner=makePlayer("peek-layout-owner",1,"dusk"),known=instance("counter"),unknown=instance("recover"),{game}=makeGame([viewer,owner]);owner.hand.push(known,unknown);game.rememberPrivateCard(viewer,owner,known);const selection=game.cardSelectionSystem.createHiddenSelection(owner),slots=createHiddenSelectionView(viewer,owner,selection),markup=hiddenSelectionMarkup(selection,slots);
   for(const className of ["hand-card","hidden-known-card","card-topline","card-name","card-category","card-art","card-crest","card-rules","card-description","card-flavor"])assert.match(markup,new RegExp(`class="[^"]*${className}`),className);
   assert.match(markup,new RegExp(selection.tokens[0].token));assert.match(markup,/hidden-card-back/);assert.match(markup,new RegExp(known.name));assert.match(markup,new RegExp(known.description.slice(0,8)));assert.doesNotMatch(markup,/data-card-id|data-disabled/);assert.doesNotMatch(markup,new RegExp(known.id));for(const hidden of [unknown.id,unknown.name,unknown.description,unknown.art])assert.doesNotMatch(markup,new RegExp(hidden.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
   const css=await readFile(projectFile("css/cards.css"),"utf8");assert.match(css,/\.hidden-known-card\.hand-card\s*\{[^}]*cursor:\s*pointer;/s);assert.doesNotMatch(css,/\.hidden-known-card\s+img|\.hidden-known-card\s+strong/);
 });
+
 test("隐藏选择池的已知牌与未知牌同尺寸且全部牌池保持单行横向滚动", async () => {
   const css=await readFile(projectFile("css/cards.css"),"utf8");
   assert.match(css,/\.hidden-card-grid,\s*\.private-card-grid,\s*\.tableau-cards\s*\{[^}]*flex-wrap:\s*nowrap[^}]*justify-content:\s*safe center[^}]*overflow-x:\s*auto[^}]*overflow-y:\s*hidden/s);
@@ -1451,134 +3540,101 @@ test("隐藏选择池的已知牌与未知牌同尺寸且全部牌池保持单�
   assert.match(css,/\.hidden-card-grid\s+\.hidden-known-card\.hand-card\s*\{[^}]*flex:\s*0\s+0\s+124px[^}]*width:\s*124px[^}]*height:\s*174px/s);
   assert.match(css,/\.hidden-card-grid\s+\.hidden-known-card\s*>\s*\.card-art\s*\{[^}]*block-size:\s*70px\s*!important/s);
 });
+
 test("掠夺选择池的公开装备复用正常牌面图标与说明", async () => {
   const actor=makePlayer("plunder-pool-actor",0,"dawn","human"),owner=makePlayer("plunder-pool-owner",1,"dusk"),equipment=instance("defenseDevice"),{game}=makeGame([actor,owner]);owner.equipment=equipment;const panel=makeInteractiveElement(),controller=new InteractionController({game,elements:{response_panel:panel},render(){}});let receivedSelection=null,receivedOptions=null;controller.requestHiddenCards=async (selection,_count,_prompt,options)=>{receivedSelection=selection;receivedOptions=options;return ["public-equipment"];};const result=await controller.requestZoneCard(game,actor,owner,"掠夺：选择1张手牌或装备牌"),markup=hiddenSelectionMarkup({tokens:[]},receivedOptions.slots);
   assert.deepEqual(result,{zone:"equipment",equipmentCardId:equipment.id,selectionId:receivedSelection.selectionId});for(const className of ["hand-card","hidden-known-card","frame-machine","card-topline","card-name","card-category","card-art","card-crest","card-rules","card-description","card-flavor"])assert.match(markup,new RegExp(className));assert.equal((markup.match(/<img\b/g)??[]).length,2);assert.match(markup,new RegExp(equipment.name));assert.match(markup,new RegExp(equipment.categoryName));assert.match(markup,new RegExp(equipment.description));assert.doesNotMatch(markup,/data-card-id/);assert.doesNotMatch(markup,new RegExp(equipment.id));
 });
+
 test("过期手牌版本令不透明令牌失效", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));const selection=game.cardSelectionSystem.createHiddenSelection(b);b.bumpHandVersion();assert.equal(game.cardSelectionSystem.resolveToken(selection.tokens[0].token,b),null); });
+
 test("隐藏牌令牌必须属于本次 selectionId", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));const first=game.cardSelectionSystem.createHiddenSelection(b),second=game.cardSelectionSystem.createHiddenSelection(b);assert.equal(game.cardSelectionSystem.resolveToken(first.tokens[0].token,b,second.selectionId),null);assert.equal(game.cardSelectionSystem.resolveToken(first.tokens[0].token,b,first.selectionId),b.hand[0]); });
+
 test("核心隐藏牌解析会同时去重 token 和实体牌", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"),instance("recover"));const selection=game.cardSelectionSystem.createHiddenSelection(b);const duplicate=selection.tokens[0].token;const cards=await game.chooseHiddenCards(a,b,2,"测试去重",{selectionId:selection.selectionId,tokens:[duplicate,duplicate]});assert.equal(cards.length,1);assert.equal(cards[0].id,b.hand[0].id); });
+
 test("取消牌背选择会立即清除对应临时令牌", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));const selection=game.cardSelectionSystem.createHiddenSelection(b);const panel={innerHTML:"",classList:{add(){},remove(){}}};let resolved="pending";const ui={game,elements:{response_panel:panel},render(){}};const controller=new InteractionController(ui);controller.pending={type:"hidden",selection,count:1,exact:true,selected:new Set(),resolve:(value)=>{resolved=value;}};controller.cancel();assert.equal(resolved,null);assert.equal(game.cardSelectionSystem.selections.size,0); });
+
 test("牌背多阶段 pending 会锁住手牌、技能和结束出牌", () => { const fake={targetState:null,discardState:null,responseState:null,interactionController:{pending:{type:"hidden"}},game:{interactionLocked:false}};assert.equal(UIManager.prototype.isInteractionActive.call(fake),true);const human=makePlayer("h",0,"dawn","human"),enemy=makePlayer("e",1,"dusk");const {game}=makeGame([human,enemy]);game.interactionLocked=true;assert.equal(game.requestEndHumanPlay(),false); });
-test("电脑玩家模板只暴露手牌数量", () => { const human=makePlayer("h",0,"dawn","human"),ai=makePlayer("ai",1,"dusk");ai.hand.push({ ...instance("counter"), name:"绝密名称" });const markup=playerPanelTemplate(ai,{humanTeam:human.battleTeam});assert.match(markup,/手牌1/);assert.doesNotMatch(markup,/绝密名称|definitionId/); });
-test("未知对手手牌展示模型和 DOM 均不含真实牌面资料", () => { const human=makePlayer("h",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),secret={...instance("counter"),name:"绝密反制",description:"绝密说明"};ai.hand.push(secret);const view=createOpponentHandView(human,ai),serialized=JSON.stringify(view),markup=opponentHandStripTemplate(view);assert.deepEqual(view,[{known:false}]);for(const hidden of [secret.id,secret.definitionId,secret.name,secret.description,secret.art]){assert.ok(!serialized.includes(hidden));assert.ok(!markup.includes(hidden));}assert.match(markup,/hidden-card-back/);assert.doesNotMatch(markup,/未知手牌|\?牌|牌背\s*\d/); });
-test("真人识别实体牌后显示已知小卡面和说明", () => { const human=makePlayer("h",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),secret=instance("block");const {game}=makeGame([human,ai]);ai.hand.push(secret);game.rememberPrivateCard(human,ai,secret);const view=createOpponentHandView(human,ai),markup=opponentHandStripTemplate(view);assert.equal(view[0].known,true);assert.equal(view[0].name,secret.name);assert.match(markup,new RegExp(secret.name));assert.match(markup,new RegExp(secret.description.slice(0,6))); });
-test("真人窥探后持续识别该实体牌，离开原手牌后立即失效", async () => { const human=makePlayer("h",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),secret=instance("counter");const {game}=makeGame([human,ai]);ai.hand.push(secret);game.rememberPrivateCard(human,ai,secret);assert.equal(createOpponentHandView(human,ai)[0].known,true);await game.discardCardFromHand(ai,secret,"测试离手");assert.equal(createOpponentHandView(human,ai).length,0);assert.equal(human.aiMemory.knownCardsByPlayer[ai.id][secret.id],undefined); });
-test("大量对手手牌保持固定卡牌尺寸并在独立区域横向滚动", async () => { const slots=Array.from({length:18},()=>({known:false})),markup=opponentHandStripTemplate(slots),characterCss=await readFile(projectFile("css/characters.css"),"utf8"),cardCss=await readFile(projectFile("css/cards.css"),"utf8");assert.equal((markup.match(/hidden-card-back is-compact/g)??[]).length,18);assert.match(markup,/opponent-hand-strip/);assert.match(characterCss,/\.opponent-hand-strip\s*\{[^}]*overflow-x:\s*auto/s);assert.match(characterCss,/touch-action:\s*pan-x/);assert.match(cardCss,/\.hidden-card-back\.is-compact\s*\{[^}]*width:\s*124px[^}]*height:\s*174px/s); });
-test("对手手牌区删除标题并占用独立网格行", async () => { const ai=makePlayer("ai",1,"dusk"),markup=playerPanelTemplate(ai,{opponentHandSlots:[{known:false}]}),css=await readFile(projectFile("css/characters.css"),"utf8");assert.doesNotMatch(markup,/手牌区域\s*·|手牌区域/);assert.match(css,/\.player-seat\s*\{[^}]*grid-template-rows:/s);assert.match(css,/\.opponent-hand-region\s*\{[^}]*grid-column:\s*1\s*\/\s*-1[^}]*grid-row:\s*2/s); });
-test("统一未知牌组件只渲染无文字纯牌背", () => { const markup=hiddenCardBackTemplate({compact:true});assert.match(markup,/hidden-card-back is-compact/);assert.doesNotMatch(markup,/\?牌|牌背|未知牌|>\s*\d+\s*</);assert.match(markup,/aria-hidden="true"/); });
-test("已知对手手牌保留中文实体卡层级、删除英文标签并与牌背同尺寸", async () => { const human=makePlayer("human",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),card=instance("mutualBenefit"),{game}=makeGame([human,ai]);ai.hand.push(card);game.rememberPrivateCard(human,ai,card);const markup=opponentHandStripTemplate(createOpponentHandView(human,ai)),css=await readFile(projectFile("css/characters.css"),"utf8");for(const className of ["card-topline","card-name","card-category","card-art","card-crest","card-rules","card-description","card-flavor"])assert.match(markup,new RegExp(className));assert.doesNotMatch(markup,/card-tags|public-pool|draw/);assert.match(markup,new RegExp(card.name));assert.match(markup,new RegExp(card.description.slice(0,6)));assert.match(markup,new RegExp(card.flavorText.slice(0,4)));assert.match(css,/\.opponent-card-slot\s*\{[^}]*flex:\s*0\s+0\s+124px[^}]*width:\s*124px[^}]*height:\s*174px/s); });
-test("人物席、中央消息区和真人区各占独立网格行且低高度改为内部滚动", async () => { const layoutCss=await readFile(projectFile("css/layout.css"),"utf8"),characterCss=await readFile(projectFile("css/characters.css"),"utf8");assert.match(layoutCss,/\.battlefield\s*\{[^}]*grid-template-rows:\s*minmax\(480px,[^}]*minmax\(174px,[^}]*minmax\(270px,[^}]*overflow-y:\s*auto/s);assert.match(layoutCss,/\.cpu-grid\s*\{[^}]*overflow:\s*hidden/s);assert.match(layoutCss,/\.command-deck\s*\{[^}]*min-height:\s*174px/s);assert.match(characterCss,/\.player-seat\s*\{[^}]*grid-template-rows:\s*minmax\(245px,[^}]*202px[^}]*overflow:\s*hidden/s); });
-test("对手手牌滚动条预留独立高度且阵营与行动徽章位于裁切边界内", async () => { const css=await readFile(projectFile("css/characters.css"),"utf8");assert.match(css,/\.opponent-hand-strip\s*\{[^}]*height:\s*197px[^}]*overflow-x:\s*auto/s);assert.match(css,/\.player-seat\.is-ally::before[^}]*\{[^}]*top:\s*6px[^}]*left:\s*6px/s);assert.match(css,/\.player-seat\.is-active::after\s*\{[^}]*bottom:\s*8px/s);assert.match(css,/\.cpu-seat\.is-active::after\s*\{[^}]*bottom:\s*206px/s); });
-test("主玩家人物框与手牌框在 human-zone 内自然等高且行动徽标空间常驻", async () => {
-  const layout=await readFile(projectFile("css/layout.css"),"utf8"),css=await readFile(projectFile("css/characters.css"),"utf8");
-  assert.match(layout,/\.human-zone\s*\{[^}]*align-content:\s*start/s);
-  assert.doesNotMatch(layout,/\.human-panel\s*\{[^}]*align-self:\s*start/s);
-  assert.match(css,/\.human-seat\s*\{[^}]*height:\s*100%/s);
-  assert.match(css,/\.player-seat\.human-seat\s*\{[^}]*padding-bottom:\s*32px/s);
-  assert.doesNotMatch(css,/\.human-seat\.is-active\s*\{[^}]*padding-bottom/s);
-});
-test("低高度战场压缩为单屏且真人手牌顶部保留安全间距", async () => { const layout=await readFile(projectFile("css/layout.css"),"utf8"),cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8");assert.match(layout,/@media \(max-height:\s*920px\)[\s\S]*grid-template-rows:\s*410px\s+135px\s+minmax\(250px,\s*1fr\)/);assert.match(layout,/\.human-hand\s*\{[^}]*padding:\s*4px\s+5px\s+7px/s);assert.match(cards,/@media \(max-height:\s*920px\)[\s\S]*\.hand-card\s*\{[^}]*clamp\(136px,\s*8\.5vw,\s*148px\)/);assert.match(characters,/@media \(max-height:\s*920px\)[\s\S]*grid-template-rows:\s*minmax\(194px,\s*1fr\)\s+197px/); });
-test("对局中缩放进入窄屏断点会自动折叠日志避免遮挡战场", () => { const previousWindow=globalThis.window;let collapsed=null;globalThis.window={innerWidth:1000};const fake={viewportWasNarrow:false,elements:{game_screen:{classList:{contains:()=>false}}},setLogCollapsed:(value)=>{collapsed=value;}};try{UIManager.prototype.handleViewportResize.call(fake);assert.equal(collapsed,true);assert.equal(fake.viewportWasNarrow,true);globalThis.window.innerWidth=1440;UIManager.prototype.handleViewportResize.call(fake);assert.equal(collapsed,true);assert.equal(fake.viewportWasNarrow,false);}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
-test("隐藏牌选择窗口不显示牌背编号或真实卡牌资料", () => { const owner=makePlayer("owner",1,"dusk"),viewer=makePlayer("viewer",0,"dawn","human"),secret={...instance("counter"),name:"不可泄露名称",description:"不可泄露说明"};owner.hand.push(secret);const selection={tokens:[{token:"opaque-a",position:1}]},slots=createHiddenSelectionView(viewer,owner,selection),markup=hiddenSelectionMarkup(selection,slots);assert.deepEqual(slots,[{token:"opaque-a",known:false}]);for(const hidden of [secret.id,secret.definitionId,secret.name,secret.description,secret.art,"牌背 1","未知牌 1","？牌"])assert.ok(!markup.includes(hidden));assert.match(markup,/hidden-card-back/); });
-test("所有隐藏牌界面源码不再生成可见牌背序号", async () => { const sources=await Promise.all(["js/ui/templates.js","js/ui/InteractionController.js"].map((file)=>readFile(projectFile(file),"utf8")));const source=sources.join("\n");assert.doesNotMatch(source,/牌背\s*\$\{|未知牌\s*\$\{|\?牌/); });
-test("角色技能详情完整展示主动与被动公开信息", () => { const player=makePlayer("hero",0,"dawn","human",3);player.hand.push({...instance("counter"),name:"隐藏决策资料"});const markup=skillDetailsTemplate(player);assert.match(markup,/主动技能/);assert.match(markup,new RegExp(player.general.activeName));assert.match(markup,new RegExp(player.general.activeDescription));assert.match(markup,/能量消耗|发动时消耗全部能量/);assert.match(markup,/次数限制/);assert.match(markup,/被动技能/);assert.match(markup,new RegExp(player.general.passiveName));assert.match(markup,new RegExp(player.general.passiveDescription));assert.doesNotMatch(markup,/隐藏决策资料|knownCardsByPlayer|aiMemory|decision|weight/); });
-test("八名角色使用结构化被动触发条件与限制文案", async () => { const expected={"blade-walker":"每回合按不同卡牌类别分别触发","oath-warden":"每回合限触发1次","spirit-medic":"每回合限触发1次","shade-agent":"每回合限触发1次","ember-magus":"每次卡牌结算最多触发1次","trail-hunter":"每回合限触发2次；同一敌人每回合限1次","fate-gambler":"每回合限触发1次","resonance-tuner":"每回合限触发1次"};for(const [index,general] of GENERAL_DEFINITIONS.entries()){assert.ok(general.passiveTriggerText);assert.equal(general.passiveLimitText,expected[general.id]);const player=makePlayer(`structured-${general.id}`,index,"dawn","human",index),markup=skillDetailsTemplate(player);assert.match(markup,new RegExp(general.passiveTriggerText));assert.match(markup,new RegExp(general.passiveLimitText));}const source=await readFile(projectFile("js/ui/templates.js"),"utf8");assert.doesNotMatch(source,/description\.includes\(|每轮一次.*includes|每回合首次.*includes/); });
-test("目标选择期间头像与名称优先选择目标且不打开技能面板", () => { const source=makePlayer("source",0,"dawn","human"),target=makePlayer("target",1,"dusk"),illegal=makePlayer("illegal",2,"dawn"),other=makePlayer("other",3,"dawn");let resolved=null,shown=null,triggerUsed=null,rendered=0;const makeState=()=>({players:[target],legalIds:new Set([target.id]),resolve:(value)=>{resolved=value;}});const makeFake=()=>({game:{state:{players:[source,target,illegal,other]}},targetState:null,showSkillDetails:(value,trigger)=>{shown=value;triggerUsed=trigger;},render:()=>{rendered+=1;},playSound(){}});const panelFor=(player)=>({dataset:{playerId:player.id}}),skillFor=(player)=>({dataset:{skillPlayerId:player.id}}),eventFor=(player,kind)=>({target:{closest:(query)=>query==="[data-skill-player-id]"&&["avatar","name"].includes(kind)?skillFor(player):query==="[data-player-id]"?panelFor(player):null}});let ui=makeFake();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"avatar"));assert.equal(shown,target);assert.equal(triggerUsed.dataset.skillPlayerId,target.id);assert.equal(ui.targetState,null);shown=null;triggerUsed=null;UIManager.prototype.handlePlayerClick.call(ui,eventFor(other,"name"));assert.equal(shown,other);assert.equal(ui.targetState,null);shown=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"avatar"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);assert.equal(rendered,1);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"name"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(illegal,"avatar"));assert.equal(resolved,null);assert.equal(shown,null);assert.ok(ui.targetState);assert.equal(ui.targetState.legalIds.has(target.id),true);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(illegal,"name"));assert.equal(resolved,null);assert.equal(shown,null);assert.ok(ui.targetState);resolved=null;rendered=0;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"panel"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);assert.equal(rendered,1); });
-test("关闭技能弹窗后焦点返回原生触发按钮", () => { let focused=0;const overlay={innerHTML:"dialog",classList:{add(){}}},trigger={isConnected:true,focus(){focused+=1;}};const fake={elements:{skill_details_overlay:overlay},skillDetailsTrigger:trigger};UIManager.prototype.hideSkillDetails.call(fake);assert.equal(overlay.innerHTML,"");assert.equal(fake.skillDetailsTrigger,null);assert.equal(focused,1); });
-test("互利必须先选择再确认且可直接切换选择", async () => { const element=makeInteractiveElement(),view=new PublicPoolView(element),player=makePlayer("human",0,"dawn","human"),first=instance("assault"),second=instance("block");let settled=false;const pending=view.request(player,[first,second]).then((card)=>{settled=true;return card;});assert.match(element.innerHTML,/data-public-confirm disabled/);element.click(clickTarget("[data-public-card-id]",{publicCardId:first.id}));await Promise.resolve();assert.equal(settled,false);assert.equal(view.pending.selected.has(first.id),true);assert.doesNotMatch(element.innerHTML,/data-public-confirm disabled/);element.click(clickTarget("[data-public-card-id]",{publicCardId:second.id}));assert.deepEqual([...view.pending.selected],[second.id]);assert.equal(settled,false);element.click(clickTarget("[data-public-confirm]"));assert.equal(await pending,second);assert.equal(view.pending,null); });
-test("互利公开牌池也复用正常完整牌面", async () => { const element=makeInteractiveElement(),view=new PublicPoolView(element),card=instance("mutualBenefit");view.show([card],{interactive:true});for(const className of ["hand-card","tableau-card","frame-ward","card-topline","card-name","card-category","card-art","card-crest","card-rules","card-description","card-flavor"])assert.match(element.innerHTML,new RegExp(className));assert.equal((element.innerHTML.match(/<img\b/g)??[]).length,2);assert.match(element.innerHTML,new RegExp(card.description));assert.match(element.innerHTML,/data-public-card-id/);const css=await readFile(projectFile("css/cards.css"),"utf8");assert.match(css,/\.tableau-card\.hand-card\s*\{[^}]*cursor:\s*pointer;/s);assert.doesNotMatch(css,/\.tableau-card\s*>\s*img|\.tableau-card\s+strong|\.tableau-card\s+small/); });
-test("互利界面不提供取消按钮且内部 cancel 仅供清理", async () => { const element=makeInteractiveElement(),view=new PublicPoolView(element),player=makePlayer("human",0,"dawn","human"),card=instance("recover");let settled=false;const pending=view.request(player,[card]).then((value)=>{settled=true;return value;});assert.doesNotMatch(element.innerHTML,/data-public-cancel|>取消</);element.click(clickTarget("[data-public-card-id]",{publicCardId:card.id}));element.click(clickTarget("[data-public-cancel]"));await Promise.resolve();assert.equal(settled,false);view.cancel();assert.equal(await pending,null);assert.equal(view.pending,null); });
-test("有效对局中互利意外返回 null 会重开当前选择并继续后续座次", async () => { const human=makePlayer("human",0,"dawn","human"),next=makePlayer("next",1,"dusk"),last=makePlayer("last",2,"dawn"),{game,ui}=makeGame([human,next,last]);const cards=[instance("assault"),instance("block"),instance("recover")];game.publicCardPool.cards=[...cards];game.state.publicCardPool=game.publicCardPool.cards;let calls=0;ui.requestPublicCard=async (_player,available)=>{calls+=1;return calls===1?null:available[0];};const result=await game.publicCardPool.draft(human);assert.equal(result,true);assert.equal(calls,2);assert.equal(human.hand.length,1);assert.equal(next.hand.length,1);assert.equal(last.hand.length,1);assert.equal(game.state.publicCardPool.length,0); });
-test("标准单选可直接从第一张切换到第二张", () => { let selected=toggleCardSelection(new Set(),"first",1);selected=toggleCardSelection(selected,"second",1);assert.deepEqual([...selected],["second"]);assert.equal(isCardSelectionValid(selected,1,true),true);selected=toggleCardSelection(selected,"second",1);assert.equal(selected.size,0); });
-test("多选组件仍可同时保留多张选择", () => { let selected=toggleCardSelection(new Set(),"first",2);selected=toggleCardSelection(selected,"second",2);assert.deepEqual([...selected],["first","second"]);assert.equal(isCardSelectionValid(selected,2,true),true); });
-test("真人已知的实体牌被AI窃取后仍在获得者面板显示真实牌面", async () => { const human=makePlayer("human",0,"dawn","human"),thief=makePlayer("thief",1,"dusk","ai",3),secret=instance("block");const {game}=makeGame([human,thief],{random:()=>0});human.hand.push(secret);thief.energy=3;await ACTIVE_SKILLS.stealSkill.execute(game,thief,[human]);const view=createOpponentHandView(human,thief);assert.equal(view[0].known,true);assert.equal(view[0].name,secret.name);assert.ok(game.state.logs.some((entry)=>entry.message.includes(thief.name)&&entry.message.includes(human.name)&&entry.message.includes(secret.name))); });
-test("AI之间未公开随机获得不会向真人泄露牌面", async () => { const human=makePlayer("human",0,"dawn","human"),thief=makePlayer("thief",1,"dawn"),owner=makePlayer("owner",2,"dusk"),plunder=instance("plunder"),secret={...instance("counter"),name:"AI私密牌"};const {game}=makeGame([human,thief,owner],{random:()=>0});thief.hand.push(plunder);owner.hand.push(secret);await game.playCard(thief,plunder,[owner]);const view=createOpponentHandView(human,thief),markup=opponentHandStripTemplate(view);assert.ok(view.some((entry)=>entry.known===false));assert.ok(!markup.includes(secret.name));assert.ok(!game.state.logs.some((entry)=>entry.message.includes(secret.name))); });
-test("已知实体牌进入弃牌等非手牌区域后立即清除认知", async () => { const human=makePlayer("human",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),secret=instance("block");const {game}=makeGame([human,ai]);ai.hand.push(secret);game.rememberPrivateCard(human,ai,secret);await game.discardCardFromHand(ai,secret,"公开离手");assert.equal(human.aiMemory.knownCardsByPlayer[ai.id][secret.id],undefined);assert.ok(game.state.deck.discardPile.includes(secret)); });
-test("AI面板按README类别及名称顺序排序且未知牌最后", () => { const human=makePlayer("human",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),unknown=instance("counter"),equipment=instance("energyDevice"),tactic=instance("destroy"),block=instance("block"),assault=instance("assault");ai.hand.push(unknown,equipment,tactic,block,assault);const {game}=makeGame([human,ai]);for(const card of [equipment,tactic,block,assault])game.rememberPrivateCard(human,ai,card);const before=ai.hand.map((card)=>card.id),view=createOpponentHandView(human,ai);assert.deepEqual(view.map((entry)=>entry.known?entry.name:"unknown"),[assault.name,block.name,tactic.name,equipment.name,"unknown"]);assert.deepEqual(ai.hand.map((card)=>card.id),before);assert.deepEqual(CARD_CATEGORY_DISPLAY_ORDER,{basic:0,tactic:1,equipment:2,unknown:3}); });
-test("同类别已知牌严格采用README定义顺序", () => { const human=makePlayer("human",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),ids=["shield","charge","block","recover","assault","symbiosis","scout","mutualBenefit","destroy","barrierDevice","battleDevice","telescope","energyDevice"],cards=ids.map(instance);ai.hand.push(...cards);const {game}=makeGame([human,ai]);cards.forEach((card)=>game.rememberPrivateCard(human,ai,card));const ordered=createOpponentHandView(human,ai).map((entry)=>entry.name),expected=CARD_DEFINITION_DISPLAY_ORDER.filter((id)=>ids.includes(id)).map((id)=>CARD_DEFINITIONS[id].name);assert.deepEqual(ordered,expected);assert.ok(ordered.indexOf("护盾")>ordered.indexOf("聚能"));assert.ok(ordered.indexOf("望远镜")<ordered.indexOf("屏障")); });
+
+// ---- 窥探与已知记忆 ----
+
+test("窥探只向真人私密层展示并把该实体牌标记为已知", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk");const {game,ui}=makeGame([a,b]);const scout=instance("scout"), secret=instance("counter");a.hand.push(scout);b.hand.push(secret);b.bumpHandVersion();const hidden=game.cardSelectionSystem.createHiddenSelection(b);await game.playCard(a,scout,[b],{tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});assert.equal(ui.reveals[0].cards[0],secret);assert.equal(createOpponentHandView(a,b)[0].name,secret.name);assert.ok(!game.state.logs.at(-1).message.includes(secret.name)); });
+
+test("AI 窥探记忆绑定实体 card.id", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0});const scout=instance("scout"), secret=instance("block");a.hand.push(scout);b.hand.push(secret);await game.playCard(a,scout,[b]);assert.equal(a.aiMemory.knownCardsByPlayer[b.id][secret.id],secret.definitionId); });
+
+test("被窥探牌离开原手牌后实体记忆立即失效", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);const secret=instance("block");b.hand.push(secret);game.rememberPrivateCard(a,b,secret);await game.discardCardFromHand(b,secret,"测试");assert.equal(a.aiMemory.knownCardsByPlayer[b.id][secret.id],undefined); });
+
+// ==================== AI 基础设施 ====================
+
+// ---- 可见状态、动作生成与模拟器 ----
+
 test("AI 可见状态不含其他玩家真实手牌", () => { const ai=makePlayer("ai",0,"dawn"),other=makePlayer("other",1,"dusk");ai.hand.push(instance("assault"));other.hand.push(instance("counter"));const {game}=makeGame([ai,other]);const visible=createAiVisibleState(ai.id,game.state);assert.equal(visible.players[1].hand,undefined);assert.equal(visible.players[1].handCount,1);assert.equal(visible.players[0].hand[0].definitionId,"assault"); });
+
 test("AI 可见状态、动作生成和模拟器正确识别阵营上限与无限调息", () => { const {game,small,large}=makeTeamFixture();large.hp-=1;large.turnFlags.recoverUsed=7;const recover=instance("recover");large.hand.push(recover);const visible=createAiVisibleState(large.id,game.state),smallView=visible.players.find((player)=>player.id===small.id),largeView=visible.players.find((player)=>player.id===large.id);assert.deepEqual([smallView.maxEnergy,smallView.recoverLimit],[4,null]);assert.deepEqual([largeView.maxEnergy,largeView.recoverLimit],[3,null]);const action=game.aiController.actionGenerator.generateFromVisible(visible,large.id).find((entry)=>entry.card?.id===recover.id);assert.ok(action);const simulated=new AiSimulator(visible).apply(visible,action,large.id),simulatedLarge=simulated.players.find((player)=>player.id===large.id);assert.equal(simulatedLarge.recoverLimit,null);assert.equal(simulatedLarge.hp,large.hp+1); });
+
 test("AI只为自己或存活队友生成护盾目标并在深层模拟中叠加", () => { const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk"),card=instance("shield");actor.hand.push(card);ally.shield=1;const {game}=makeGame([actor,ally,enemy]);const visible=createAiVisibleState(actor.id,game.state),actions=game.aiController.actionGenerator.generateFromVisible(visible,actor.id).filter((action)=>action.card?.id===card.id);assert.deepEqual(actions.map((action)=>action.targets[0].id),[actor.id,ally.id]);const chosen=actions.find((action)=>action.targets[0].id===ally.id),next=new AiSimulator(visible).apply(visible,chosen,actor.id),nextAlly=next.players.find((player)=>player.id===ally.id);assert.equal(nextAlly.shield,2);assert.equal(visible.players.find((player)=>player.id===ally.id).shield,1); });
+
 test("AI可见状态与模拟器保留主动技能多次发动额度", () => { const warden=makePlayer("warden",0,"dawn","ai",1),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");warden.energy=4;const {game}=makeGame([warden,ally,enemy]);warden.turnFlags.activeSkillUseCounts.barrier=1;warden.turnFlags.activeSkillsUsed.add("barrier");const visible=createAiVisibleState(warden.id,game.state),actor=visible.players.find((player)=>player.id===warden.id);assert.deepEqual([actor.activeSkillUses,actor.activeSkillLimit,actor.activeSkillUsed],[1,2,false]);const action=game.aiController.actionGenerator.generateFromVisible(visible,warden.id).find((entry)=>entry.type==="skill"&&entry.skill.id==="barrier");assert.ok(action);const next=new AiSimulator(visible).apply(visible,action,warden.id),nextActor=next.players.find((player)=>player.id===warden.id);assert.deepEqual([nextActor.activeSkillUses,nextActor.activeSkillUsed],[2,true]); });
-test("AI滋荣会生成自疗目标并模拟治疗队友时同步自疗", () => {
-  const medic=makePlayer("ai-medic",0,"dawn","ai",2),ally=makePlayer("ai-medic-ally",1,"dawn"),enemy=makePlayer("ai-medic-enemy",2,"dusk");
-  medic.hp=1;ally.hp=1;medic.energy=4;const {game}=makeGame([medic,ally,enemy]);const visible=createAiVisibleState(medic.id,game.state),generator=game.aiController.actionGenerator;
-  const actions=generator.generateFromVisible(visible,medic.id).filter((action)=>action.type==="skill"&&action.skill.id==="symbiosis");
-  assert.deepEqual(actions.map((action)=>action.targets[0].id),[medic.id,ally.id]);
-  const allyAction=actions.find((action)=>action.targets[0].id===ally.id),afterAlly=new AiSimulator(visible).apply(visible,allyAction,medic.id),simMedic=afterAlly.players.find((player)=>player.id===medic.id),simAlly=afterAlly.players.find((player)=>player.id===ally.id);
-  assert.equal(simAlly.hp,3);assert.equal(simMedic.hp,2);assert.equal(simMedic.handCount,1);assert.equal(simMedic.rejuvenationUsed,true);
-  const selfAction=generator.generateFromVisible(afterAlly,medic.id).find((action)=>action.type==="skill"&&action.skill.id==="symbiosis"&&action.targets[0].id===medic.id);
-  const afterSelf=new AiSimulator(afterAlly).apply(afterAlly,selfAction,medic.id),simMedicAgain=afterSelf.players.find((player)=>player.id===medic.id);
-  assert.equal(simMedicAgain.hp,3);assert.equal(simMedicAgain.handCount,1);assert.equal(simMedicAgain.activeSkillUses,2);
-});
-test("AI模拟中的灵医回春也能让一张濒死调息恢复2点并摸牌", () => {
-  const state={playPhaseEnded:false,players:[
-    {id:"attacker",seatIndex:0,generalId:"blade-walker",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,hand:[{id:"assault",definitionId:"assault"}],attackUsed:0,attackLimit:2,exposeWeaknessStacks:1,assaultBonus:0},
-    {id:"target",seatIndex:1,generalId:"oath-warden",battleTeam:"dawn",alive:true,hp:1,maxHp:3,shield:0,handCount:0,expectedRecoverCount:0,blockProbability:0,twoBlockProbability:0},
-    {id:"medic",seatIndex:2,generalId:"spirit-medic",battleTeam:"dawn",alive:true,hp:3,maxHp:3,shield:0,handCount:1,expectedRecoverCount:1,rejuvenationUsed:false}
-  ]};
-  const action={type:"card",card:{...CARD_DEFINITIONS.assault,id:"assault"},targets:[state.players[1]]},next=new AiSimulator(state).apply(state,action,"attacker"),target=next.players[1],medic=next.players[2];
-  assert.equal(target.alive,true);assert.equal(target.hp,1);assert.equal(medic.expectedRecoverCount,0);assert.equal(medic.handCount,1);assert.equal(medic.rejuvenationUsed,true);
-});
-test("AI壁垒只增加统一护盾且快照不包含专属护盾字段", () => { const warden=makePlayer("warden",0,"dawn","ai",1),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");warden.energy=2;ally.shield=2;const {game}=makeGame([warden,ally,enemy]),visible=createAiVisibleState(warden.id,game.state);assert.ok(visible.players.every((player)=>!("temporaryShieldAmount" in player)));const next=new AiSimulator(visible).apply(visible,{type:"skill",skill:{id:"barrier",cost:2,limitPerTurn:2},targets:[{id:ally.id}]},warden.id),nextAlly=next.players.find((player)=>player.id===ally.id);assert.equal(nextAlly.shield,3);assert.equal("temporaryShieldAmount" in nextAlly,false); });
+
 test("AI 对未知调息只按公开手牌数估算而不读取真实牌面", () => { const ai=makePlayer("ai",0,"dawn"),other=makePlayer("other",1,"dusk");const {game}=makeGame([ai,other]);other.hand=[instance("recover")];const first=createAiVisibleState(ai.id,game.state).players[1].expectedRecoverCount;other.hand=[instance("assault")];const second=createAiVisibleState(ai.id,game.state).players[1].expectedRecoverCount;assert.equal(first,second); });
+
 test("AI 模拟器只接收过滤快照并可独立克隆推演", () => { const visible={players:[{id:"a",battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:3,alive:true,handCount:1,hand:[{id:"x",definitionId:"assault"}]},{id:"b",battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:3,alive:true,handCount:2,blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]}]};const simulator=new AiSimulator(visible);const next=simulator.apply(visible,{type:"card",card:{id:"x",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(next.players[1].hp,3);assert.equal(visible.players[1].hp,4);assert.equal("game" in simulator,false); });
+
 test("AI 动作生成使用同一距离合法性", () => { const ps=[makePlayer("a",0,"dawn"),makePlayer("b",1,"dusk"),makePlayer("c",2,"dusk"),makePlayer("d",3,"dawn"),makePlayer("e",4,"dusk")];const {game}=makeGame(ps);ps[0].hand.push(instance("assault"));const targets=game.aiController.getLegalActions(ps[0]).filter((a)=>a.card?.definitionId==="assault").map((a)=>a.targets[0].id);assert.deepEqual(targets,["b","e"]); });
+
 test("AI 可见动作与模拟器支持装备掠夺进入手牌且不读取隐藏手牌", () => { const actor=makePlayer("actor",0,"dawn"),near=makePlayer("near",1,"dawn"),target=makePlayer("target",2,"dusk"),other=makePlayer("other",3,"dusk"),tail=makePlayer("tail",4,"dawn"),plunder=instance("plunder");actor.hand.push(plunder);actor.equipment=instance("battleDevice");target.equipment=instance("energyDevice");const {game}=makeGame([actor,near,target,other,tail]),visible=createAiVisibleState(actor.id,game.state),actions=game.aiController.actionGenerator.generateFromVisible(visible,actor.id);const action=actions.find((entry)=>entry.card?.id===plunder.id&&entry.targets[0]?.id===target.id);assert.ok(action);assert.equal(visible.players[2].hand,undefined);const next=new AiSimulator(visible).apply(visible,action,actor.id);assert.equal(next.players[2].equipmentDefinitionId,null);assert.equal(next.players[0].equipmentDefinitionId,"battleDevice");assert.equal(next.players[0].handCount,1); });
+
 test("AI 束搜索实际达到多层、记录展开节点并采样10个隐藏世界", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);a.hand.push(instance("charge"),instance("exposeWeakness"),instance("assault"));const action=await game.aiController.selectAction(a,{gameId:game.state.gameId});assert.ok(["card","skill","end"].includes(action.type));assert.ok(game.aiController.planner.lastSearchStats.expanded>3);assert.ok(game.aiController.planner.lastSearchStats.depth>=2);assert.equal(game.aiController.planner.lastSearchStats.hiddenSamples,10); });
-test("AI 刃行者模拟按不同类别积累连势且命中的突袭消耗连势", () => {
-  const blade=makePlayer("sim-blade",0,"dawn","ai",0),enemy=makePlayer("sim-blade-enemy",1,"dusk"),charge=instance("charge"),harvest=instance("harvest"),assault=instance("assault");
-  blade.hand.push(charge,harvest,assault);
-  const {game}=makeGame([blade,enemy]),visible=createAiVisibleState(blade.id,game.state),simulator=new AiSimulator(visible);
-  const charged=simulator.apply(visible,{type:"card",card:charge,targets:[]},blade.id);
-  const harvested=simulator.apply(charged,{type:"card",card:harvest,targets:[]},blade.id);
-  const attacked=simulator.apply(harvested,{type:"card",card:assault,targets:[{id:enemy.id}]},blade.id);
-  assert.deepEqual(charged.players[0].categoriesUsed,["basic"]);assert.equal(charged.players[0].momentum,1);
-  assert.deepEqual(harvested.players[0].categoriesUsed,["basic","tactic"]);assert.equal(harvested.players[0].momentum,GAME_CONFIG.momentumMaxStacks);
-  assert.equal(attacked.players[1].hp,enemy.maxHp-3);assert.equal(attacked.players[0].momentum,0);
+
+// ---- 装备与距离概率 ----
+
+test("AI 装备统一接口会在换装时重置概率并在明确失去时清空", () => {
+  const simulator=new AiSimulator({players:[]}),player={equipmentDefinitionId:"telescope",equipmentRetentionProbability:.25};simulator.setSimulatedEquipment(player,"barrierDevice",1);assert.deepEqual([player.equipmentDefinitionId,player.equipmentRetentionProbability],["barrierDevice",1]);simulator.setSimulatedEquipment(player,null,0);assert.deepEqual([player.equipmentDefinitionId,player.equipmentRetentionProbability],[null,0]);
 });
-test("AI 刃行者突袭被格挡或被护盾完全吸收时不消耗连势", () => {
-  const state={players:[
-    {id:"blade",seatIndex:0,generalId:"blade-walker",battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,momentum:2,categoriesUsed:["basic","tactic"],expectedRecoverCount:0},
-    {id:"target",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,alive:true,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}
-  ]};
-  const blocked=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
-  assert.equal(blocked.players[1].hp,4);assert.equal(blocked.players[0].momentum,2);
-  const shieldedState=structuredClone(state);shieldedState.players[1].blockProbability=0;shieldedState.players[1].shield=3;
-  const shielded=new AiSimulator(shieldedState).apply(shieldedState,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
-  assert.equal(shielded.players[1].hp,4);assert.equal(shielded.players[1].shield,0);assert.equal(shielded.players[0].momentum,2);
+
+test("AI 距离与攻防装备效果按装备存在概率加权", () => {
+  const source={id:"s",seatIndex:0,battleTeam:"dawn",alive:true,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.5},middle={id:"m",seatIndex:1,battleTeam:"dawn",alive:true},target={id:"t",seatIndex:2,battleTeam:"dusk",alive:true,equipmentDefinitionId:"barrierDevice",equipmentRetentionProbability:.25},tail={id:"x",seatIndex:3,battleTeam:"dusk",alive:true},game={state:{players:[source,middle,target,tail]}};assert.equal(DistanceSystem.getDistance(game,source,target),2);assert.equal(DistanceSystem.getRangeLegalityProbability(game,source,target,1),.375);
+  const damageState={players:[{id:"a",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:.5},{id:"b",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:1,twoBlockProbability:0,equipmentDefinitionId:null,equipmentRetentionProbability:0,expectedRecoverCount:0}]};const simulator=new AiSimulator(damageState),next=simulator.clone(damageState);simulator.applyDamage(next,next.players[0],next.players[1],1,{canBlock:true,deviceAttack:true});assert.equal(next.players[1].hp,3.5);assert.equal(next.players[1].handCount,.5);
 });
-test("AI 刃行者突袭部分命中时按生命伤害概率消耗连势", () => {
-  const state={players:[
-    {id:"blade",seatIndex:0,generalId:"blade-walker",battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,momentum:2,categoriesUsed:["basic","tactic"],expectedRecoverCount:0},
-    {id:"target",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,alive:true,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0}
-  ]};
-  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
-  assert.equal(next.players[1].hp,2.5);assert.equal(next.players[0].momentum,1);
-  const shieldedState=structuredClone(state);shieldedState.players[1].shield=2;
-  const shielded=new AiSimulator(shieldedState).apply(shieldedState,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]},"blade");
-  assert.equal(shielded.players[1].hp,3.5);assert.equal(shielded.players[0].momentum,1);
+
+test("AI 雷达与回收站效果按装备存在概率加权", () => {
+  const makeDamage=(probability)=>({players:[{id:"a",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,equipmentDefinitionId:null,equipmentRetentionProbability:0},{id:"b",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,equipmentDefinitionId:probability?"defenseDevice":null,equipmentRetentionProbability:probability,expectedRecoverCount:0}]});const simulator=new AiSimulator({players:[]}),damage=(probability)=>{const state=makeDamage(probability);simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});return state.players[1].hp;},without=damage(0),half=damage(.5),full=damage(1);assert.ok(full>half&&half>without);assert.ok(Math.abs(half-(full+without)/2)<1e-9);
+  const recycleState={players:[{id:"r",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:1,hand:[{id:"x",definitionId:"exposeWeakness"}],equipmentDefinitionId:"recycleDevice",equipmentRetentionProbability:.5,recycleDeviceUses:0,exposeWeaknessStacks:0}]};const recycled=simulator.apply(recycleState,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x"},targets:[]},"r");assert.equal(recycled.players[0].handCount,.5);assert.equal(recycled.players[0].recycleDeviceUses,.5);
 });
-test("AI 刃行者首次使用基础牌的连势按突袭命中分支计算期望", () => {
-  const state={players:[
-    {id:"blade",seatIndex:0,generalId:"blade-walker",battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,momentum:2,categoriesUsed:["tactic"],expectedRecoverCount:0},
-    {id:"target",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,alive:true,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0}
-  ]};
-  const action={type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"target"}]};
-  const partial=new AiSimulator(state).apply(state,action,"blade");
-  assert.equal(partial.players[0].momentum,1.5);assert.deepEqual(partial.players[0].categoriesUsed,["tactic","basic"]);
-  const hitState=structuredClone(state);hitState.players[1].blockProbability=0;
-  assert.equal(new AiSimulator(hitState).apply(hitState,action,"blade").players[0].momentum,1);
-  const missState=structuredClone(state);missState.players[1].blockProbability=1;
-  assert.equal(new AiSimulator(missState).apply(missState,action,"blade").players[0].momentum,2);
+
+test("概率距离合法性枚举离散装备分支且真实状态只返回0或1", () => {
+  const source={id:"s",seatIndex:0,battleTeam:"dawn",alive:true,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4},middle={id:"m",seatIndex:1,battleTeam:"dawn",alive:true},target={id:"t",seatIndex:2,battleTeam:"dusk",alive:true,equipmentDefinitionId:"barrierDevice",equipmentRetentionProbability:.25},tail={id:"x",seatIndex:3,battleTeam:"dusk",alive:true},game={state:{players:[source,middle,target,tail]}};assert.ok(Math.abs(DistanceSystem.getRangeLegalityProbability(game,source,target,1)-.3)<1e-9);delete source.equipmentRetentionProbability;delete target.equipmentRetentionProbability;assert.equal(DistanceSystem.getRangeLegalityProbability(game,source,target,1),0);target.equipmentDefinitionId=null;assert.equal(DistanceSystem.getRangeLegalityProbability(game,source,target,1),1);
 });
+
+test("概率距离动作按同一概率扣牌结算且未执行分支不能重复攻击同一目标", () => {
+  const state={playPhaseEnded:false,players:[{id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.5},{id:"m",seatIndex:1,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0},{id:"t",seatIndex:2,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},{id:"x",seatIndex:3,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0}]};const actor=makePlayer("real",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),{game}=makeGame([actor,enemy]),actions=game.aiController.actionGenerator.generateFromVisible(state,"a"),attack=actions.find((action)=>action.card?.id==="hit"&&action.targets[0]?.id==="t");assert.equal(attack.executionProbability,.5);const next=new AiSimulator(state).apply(state,attack,"a"),nextActor=next.players[0];assert.equal(nextActor.handCount,.5);assert.deepEqual(nextActor.hand[0].availabilityBranches,[{probability:.5,conditions:{"equipment:a:telescope":"absent","equipment:t:barrierDevice":"absent"}}]);assert.equal(nextActor.attackUsed,.5);assert.equal(next.players[2].hp,3.5);const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");assert.ok(!follow.some((action)=>action.card?.id==="hit"&&action.targets[0]?.id==="t"));
+});
+
+test("概率装备依赖的借势同步缩放卡牌成本并禁止再次针对同一装备", () => {
+  const state={playPhaseEnded:false,players:[{id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"l",definitionId:"leverage"}],attackUsed:0,attackLimit:1,attackRange:1,counterProbability:0},{id:"f",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:.25,assaultResponseProbability:1,expectedAssaultCount:1,counterProbability:0,blockProbability:0}]};const actor=makePlayer("real",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),{game}=makeGame([actor,enemy]),actions=game.aiController.actionGenerator.generateFromVisible(state,"a"),leverage=actions.find((action)=>action.card?.id==="l");assert.equal(leverage.executionProbability,.25);const next=new AiSimulator(state).apply(state,leverage,"a"),held=next.players[0].hand.find((card)=>card.id==="l");assert.deepEqual(held.availabilityBranches,[{probability:.75,conditions:{"equipment:a:barrierDevice":"absent","equipment:f:energyDevice":"absent","equipment:f:telescope":"absent"}}]);const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");assert.ok(!follow.some((action)=>action.card?.id==="l"&&action.selection?.firstTargetId==="f"));
+});
+
+test("AI 回收站触发期望严格封顶2次", () => {
+  const state={players:[{id:"r",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:1,hand:[{id:"x",definitionId:"exposeWeakness"}],equipmentDefinitionId:"recycleDevice",equipmentRetentionProbability:.8,recycleDeviceUses:1.7,exposeWeaknessStacks:0}]};const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x"},targets:[]},"r");assert.ok(Math.abs(next.players[0].recycleDeviceUses-2)<1e-9);assert.ok(Math.abs(next.players[0].handCount-.3)<1e-9);
+});
+
+test("AI 雷达按判定牌类型计算格挡消耗并保持手牌非负", () => {
+  const battleProbability=.25,normalBlockProbability=.1,twoBlockProbability=.02,state={players:[{id:"a",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:battleProbability},{id:"b",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:normalBlockProbability,twoBlockProbability,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}]},basicTotal=Object.values(CARD_DEFINITIONS).filter((card)=>card.category==="basic").reduce((sum,card)=>sum+card.count,0),equipmentTotal=Object.values(CARD_DEFINITIONS).filter((card)=>card.category==="equipment").reduce((sum,card)=>sum+card.count,0),blockChance=CARD_DEFINITIONS.block.count/TOTAL_CARD_COUNT,otherBasicChance=(basicTotal-CARD_DEFINITIONS.block.count)/TOTAL_CARD_COUNT,equipmentChance=equipmentTotal/TOTAL_CARD_COUNT,normalSpent=blockChance+(otherBasicChance+equipmentChance)*normalBlockProbability,battleSpent=2*(blockChance*normalBlockProbability+(otherBasicChance+equipmentChance)*twoBlockProbability),expectedSpent=battleProbability*battleSpent+(1-battleProbability)*normalSpent,simulator=new AiSimulator(state);simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});assert.ok(Math.abs(state.players[1].handCount-Math.max(0,basicTotal/TOTAL_CARD_COUNT-expectedSpent))<1e-9);assert.ok(state.players[1].handCount>=0);
+});
+
+test("AI 掠夺破坏窃取与主动装备均通过统一装备状态更新", () => {
+  const simulator=new AiSimulator({players:[]}),actor={id:"actor",battleTeam:"dawn",generalId:"blade-walker",handCount:0,equipmentDefinitionId:null,equipmentRetentionProbability:0},target={id:"target",battleTeam:"dusk",generalId:"oath-warden",handCount:0,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1};simulator.takeResourceToHand(actor,target,.4);assert.equal(target.equipmentRetentionProbability,.6);assert.equal(actor.handCount,.4);simulator.destroyResource({players:[actor,target]},actor,target,.5);assert.equal(target.equipmentRetentionProbability,.3);simulator.stealResourceToHand(actor,target);assert.equal(target.equipmentDefinitionId,null);assert.equal(target.equipmentRetentionProbability,0);const state={players:[{id:"a",alive:true,battleTeam:"dawn",handCount:1,hand:[{id:"e",definitionId:"barrierDevice"}],equipmentDefinitionId:"telescope",equipmentRetentionProbability:.2}]};const equipped=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.barrierDevice,id:"e"},targets:[]},"a");assert.deepEqual([equipped.players[0].equipmentDefinitionId,equipped.players[0].equipmentRetentionProbability],["barrierDevice",1]);
+});
+
+// ---- 搜索、规划与重规划 ----
+
 test("AI 固定节点预算达到上限后返回当前最佳动作且不再按时间截断", async () => {
   const actor=makePlayer("node-budget-actor",0,"dawn"),enemy=makePlayer("node-budget-enemy",1,"dusk");actor.hand.push(instance("charge"),instance("exposeWeakness"),instance("assault"));
   const {game}=makeGame([actor,enemy]);game.aiSearchNodeBudgetOverride=5;game.aiSearchBudgetOverrideMs=0;
   const action=await game.aiController.selectAction(actor,{gameId:game.state.gameId});
   assert.ok(["card","skill","end"].includes(action.type));assert.equal(game.aiController.planner.lastSearchStats.expanded,5);assert.equal(game.aiController.planner.lastSearchStats.budgetType,"nodes");assert.equal(game.aiController.planner.lastSearchStats.nodeBudget,5);
 });
+
 test("AI 固定节点预算截止时保留上一层已发现的全局最佳候选", async () => {
   const actor=makePlayer("node-best-actor",0,"dawn"),enemy=makePlayer("node-best-enemy",1,"dusk"),best=instance("charge"),lower=instance("harvest");
   actor.hand.push(best,lower);
@@ -1593,118 +3649,69 @@ test("AI 固定节点预算截止时保留上一层已发现的全局最佳候�
   const action=await planner.plan(actor,visible,[{type:"card",card:best,targets:[]},{type:"card",card:lower,targets:[]}],{gameId:game.state.gameId});
   assert.equal(action.card.id,best.id);assert.equal(planner.lastSearchStats.expanded,3);
 });
+
 test("AI 根节点束裁剪会计入模拟后的局面效用", async () => {
   const actor=makePlayer("root-state-actor",0,"dawn"),enemy=makePlayer("root-state-enemy",1,"dusk"),charge=instance("charge"),assault=instance("assault");actor.hand.push(charge,assault);const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state,game.aiController.knowledge.remainingCounts(actor)),planner=game.aiController.planner;game.aiSearchNodeBudgetOverride=2;game.aiRandomnessRange=0;let stateCalls=0;planner.evaluator={actionUtility:()=>0,stateUtility:(state)=>{stateCalls+=1;return state.players.find((player)=>player.id===enemy.id).hp<enemy.hp?100:0;}};const action=await planner.plan(actor,visible,[{type:"card",card:charge,targets:[]},{type:"card",card:assault,targets:[{id:enemy.id}]}],{gameId:game.state.gameId});assert.equal(action.card.id,assault.id);assert.equal(stateCalls,2);
 });
+
 test("AI 根动作生成受搜索预算约束，不会长期锁住观察战场界面", async () => {
   const actor=makePlayer("root-budget-actor",0,"dawn"),enemy=makePlayer("root-budget-enemy",1,"dusk"),card=instance("charge");actor.hand.push(card);const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state,game.aiController.knowledge.remainingCounts(actor)),planner=game.aiController.planner;game.aiSearchBudgetOverrideMs=0;game.aiRandomnessRange=0;let evaluated=0;planner.evaluator={actionUtility:()=>0,stateUtility:()=>{evaluated+=1;return 0;}};const roots=Array.from({length:200},(_,index)=>({type:"card",card:{...card,id:`root-${index}`},targets:[]}));const action=await planner.plan(actor,visible,roots,{gameId:game.state.gameId});assert.equal(action.type,"card");assert.equal(evaluated,1);assert.equal(planner.lastSearchStats.expanded,1);
 });
+
 test("AI 规划异常会安全结束出牌并清理观察状态", async () => {
   const ai=makePlayer("planner-fallback-ai",0,"dawn"),enemy=makePlayer("planner-fallback-enemy",1,"dusk"),{game,ui}=makeGame([ai,enemy]);game.state.currentPlayerIndex=0;game.state.phase="play";game.cleanupManager.delay=async()=>true;game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>{throw new Error("planner test failure");};await game.takeAiPlayPhase(ai,game.state.gameId);assert.equal(ui.thinking.at(-1)[0],false);assert.match(ui.logs.join("\n"),/^(?!.*planner test failure)/s);
 });
-test("手牌实体已离开时 moveHandToResolving 返回失败而不抛异常", async () => {
-  const ai=makePlayer("missing-move-ai",0,"dawn"),enemy=makePlayer("missing-move-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([ai,enemy]);assert.equal(await game.moveHandToResolving(ai,card),false);assert.equal(game.state.resolvingCards.length,0);assert.equal(game.state.discardPile.length,0);
+
+test("AI 模拟 end 会设置终止状态且终止快照不再生成动作", () => {
+  const actor=makePlayer("terminal-actor",0,"dawn","ai",0),enemy=makePlayer("terminal-enemy",1,"dusk"),use=instance("harvest");actor.hand.push(use);
+  const {game}=makeGame([actor,enemy]);actor.turnFlags.momentum=2;const visible=createAiVisibleState(actor.id,game.state),terminal=new AiSimulator(visible).apply(visible,{type:"end"},actor.id);
+  assert.equal(visible.playPhaseEnded,false);assert.equal(visible.players[0].momentum,2);assert.equal(terminal.playPhaseEnded,true);assert.equal(terminal.players[0].momentum,0);
+  assert.deepEqual(game.aiController.actionGenerator.generateFromVisible(terminal,actor.id),[]);
 });
-test("beforeCardMove 取消出牌时保持手牌且不产生出牌统计或事件", async () => {
-  const ai=makePlayer("cancel-move-ai",0,"dawn"),enemy=makePlayer("cancel-move-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([ai,enemy]);ai.hand.push(card);let used=0;game.eventBus.on("beforeCardMove","test:cancel-ai-card-move",(event)=>{if(event.card===card)event.cancelled=true;});game.eventBus.on("cardUsed","test:no-card-used-after-cancel",()=>{used+=1;});assert.equal(await game.playCard(ai,card,[]),false);assert.deepEqual(ai.hand,[card]);assert.equal(game.state.resolvingCards.length,0);assert.equal(game.state.discardPile.length,0);assert.equal(ai.statistics.cardsPlayed,0);assert.equal(used,0);assert.equal(game.actionLocked,false);
+
+test("AI Planner 不扩展 end 根节点，即使动作生成器伪造高收益后续", async () => {
+  const actor=makePlayer("terminal-plan-actor",0,"dawn"),enemy=makePlayer("terminal-plan-enemy",1,"dusk"),fiction=instance("harvest");actor.hand.push(fiction);
+  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state,game.aiController.knowledge.remainingCounts(actor)),planner=game.aiController.planner;
+  game.aiController.actionGenerator.generateFromVisible=()=>[{type:"card",card:fiction,targets:[]}];
+  planner.evaluator.actionUtility=(action)=>action.type==="card"?10000:0;planner.evaluator.stateUtility=()=>10000;
+  const chosen=await planner.plan(actor,visible,[{type:"end"}],{gameId:game.state.gameId});
+  assert.equal(chosen.type,"end");assert.equal(planner.lastSearchStats.expanded,1);assert.deepEqual(planner.lastPlannedSequence.map((action)=>action.type),["end"]);
 });
-test("beforeCardMove 取消 AI 动作后游戏循环仍推进至下一角色", async () => {
-  const ai=makePlayer("cancel-loop-ai",0,"dawn"),next=makePlayer("cancel-loop-next",1,"dusk"),card=instance("charge"),{game}=makeGame([ai,next]);ai.hand.push(card);game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>({type:"card",card,targets:[]});game.eventBus.on("beforeCardMove","test:cancel-loop-card",(event)=>{if(event.card===card)event.cancelled=true;});let nextStarted=false;game.eventBus.on("turnStart","test:cancel-loop-next-turn",(event)=>{if(event.player===next){nextStarted=true;game.state.isGameOver=true;}});game.loopPromise=game.runGameLoop();await assert.doesNotReject(game.loopPromise);assert.equal(nextStarted,true);assert.deepEqual(ai.hand,[card]);assert.equal(game.state.resolvingCards.length,0);assert.equal(game.actionLocked,false);
+
+test("AI 规划序列中的 end 始终位于末尾且真实 AI 仍能正常结束", async () => {
+  const actor=makePlayer("terminal-real-actor",0,"dawn"),enemy=makePlayer("terminal-real-enemy",1,"dusk");
+  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state,game.aiController.knowledge.remainingCounts(actor)),actions=game.aiController.getLegalActions(actor);
+  assert.deepEqual(actions,[{type:"end"}]);assert.equal((await game.aiController.planner.plan(actor,visible,actions,{gameId:game.state.gameId})).type,"end");
+  const endIndex=game.aiController.planner.lastPlannedSequence.findIndex((action)=>action.type==="end");assert.equal(endIndex,game.aiController.planner.lastPlannedSequence.length-1);
+  await game.takeAiPlayPhase(actor,game.state.gameId);assert.equal(actor.hand.length,0);assert.equal(game.state.phase,"play");
 });
-test("beginResolve 失败时 playCard 不移除手牌或产生悬空牌", async () => {
-  const ai=makePlayer("begin-resolve-ai",0,"dawn"),enemy=makePlayer("begin-resolve-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([ai,enemy]);ai.hand.push(card);game.state.deck.beginResolve=()=>false;assert.equal(await game.playCard(ai,card,[]),false);assert.deepEqual(ai.hand,[card]);assert.equal(game.state.resolvingCards.length,0);assert.equal(game.state.discardPile.length,0);assert.equal(ai.statistics.cardsPlayed,0);assert.equal(game.actionLocked,false);
+
+test("关闭逐动作重规划时转移描述只保存稳定ID并可重新绑定", () => {
+  const actor=makePlayer("transfer-rebind-actor",0,"dawn"),from=makePlayer("transfer-rebind-from",1,"dusk"),receiver=makePlayer("transfer-rebind-receiver",2,"dawn"),use=instance("transfer");actor.hand.push(use);from.hand.push(instance("block"));const {game}=makeGame([actor,from,receiver]),action=game.aiController.getLegalActions(actor).find((entry)=>entry.card?.id===use.id),descriptor=game.aiController.planner.describeAction(action);
+  assert.deepEqual(descriptor.selection,{sourceId:action.selection.sourceId,receiverId:action.selection.receiverId,zone:"hand"});assert.equal(Object.hasOwn(descriptor.selection,"source"),false);assert.equal(Object.hasOwn(descriptor.selection,"score"),false);assert.ok(game.aiController.resolvePlannedAction(actor,structuredClone(descriptor)));
 });
-test("beforeCardUse 抛异常后实体牌离开结算区并只进入一次弃牌堆", async () => {
-  const source=makePlayer("before-use-source",0,"dawn"),enemy=makePlayer("before-use-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);
-  game.eventBus.on("beforeCardUse","test:throw-before-use",(event)=>{if(event.card===card)throw new Error("private beforeCardUse failure");});
-  await assert.rejects(game.playCard(source,card,[]),/private beforeCardUse failure/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);assert.doesNotMatch(game.state.logs.map((entry)=>entry.message).join("\n"),/private beforeCardUse failure/);
-});
-test("targetSelected 抛异常后不会留下悬空牌", async () => {
-  const source=makePlayer("target-hook-source",0,"dawn"),enemy=makePlayer("target-hook-enemy",1,"dusk"),card=instance("assault"),{game}=makeGame([source,enemy]);source.hand.push(card);
-  game.eventBus.on("targetSelected","test:throw-target-selected",(event)=>{if(event.card===card)throw new Error("target hook failed");});
-  await assert.rejects(game.playCard(source,card,[enemy]),/target hook failed/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
-});
-test("beforeCardResolve 抛异常后不会留下悬空牌", async () => {
-  const source=makePlayer("resolve-hook-source",0,"dawn"),enemy=makePlayer("resolve-hook-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);
-  game.eventBus.on("beforeCardResolve","test:throw-before-resolve",(event)=>{if(event.card===card)throw new Error("resolve hook failed");});
-  await assert.rejects(game.playCard(source,card,[]),/resolve hook failed/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
-});
-test("反制流程抛异常后主动牌安全进入弃牌堆", async () => {
-  const source=makePlayer("counter-failure-source",0,"dawn"),enemy=makePlayer("counter-failure-enemy",1,"dusk"),card=instance("harvest"),{game}=makeGame([source,enemy]);source.hand.push(card);game.responseSystem.askForCounter=async()=>{throw new Error("counter flow failed");};
-  await assert.rejects(game.playCard(source,card,[]),/counter flow failed/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
-});
-test("卡牌效果部分生效后抛异常不回滚效果但会清理实体牌", async () => {
-  const source=makePlayer("partial-effect-source",0,"dawn"),enemy=makePlayer("partial-effect-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.energy=0;source.hand.push(card);
-  game.eventBus.on("afterGainEnergy","test:throw-after-partial-effect",(event)=>{if(event.card===card)throw new Error("effect failed after mutation");});
-  await assert.rejects(game.playCard(source,card,[]),/effect failed after mutation/);assert.equal(source.energy,1);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
-});
-test("cardUsed 监听器抛异常后不重复弃牌且不重复触发事件", async () => {
-  const source=makePlayer("card-used-source",0,"dawn"),enemy=makePlayer("card-used-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);let calls=0;
-  game.eventBus.on("cardUsed","test:throw-card-used",(event)=>{if(event.card===card){calls+=1;throw new Error("cardUsed failed");}});
-  await assert.rejects(game.playCard(source,card,[]),/cardUsed failed/);assert.equal(calls,1);assertCardOnlyIn(game,card,"discard");assert.equal(game.state.deck.discardPile.filter((entry)=>entry===card).length,1);assert.equal(source.statistics.cardsPlayed,0);
-});
-test("finishResolvingToDiscard 虚假成功时 playCard 检测真实区域并执行失败清理", async () => {
-  const source=makePlayer("finish-failure-source",0,"dawn"),enemy=makePlayer("finish-failure-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);game.finishResolvingToDiscard=async()=>true;
-  await assert.rejects(game.playCard(source,card,[]),/结算牌未能进入弃牌堆/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
-});
-test("equipCard 虚假成功但牌仍在结算区时由调用方拒绝并清理", async () => {
-  const source=makePlayer("equip-result-source",0,"dawn"),enemy=makePlayer("equip-result-enemy",1,"dusk"),card=instance("energyDevice"),{game}=makeGame([source,enemy]);source.hand.push(card);game.equipCard=async()=>true;
-  await assert.rejects(game.playCard(source,card,[]),/装备牌未能进入装备区/);assert.equal(source.equipment,null);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
-});
-test("装备替换预检取消或抛异常时旧装备保持原位且新装备进入弃牌堆", async () => {
-  for(const mode of ["cancel","throw"]){const source=makePlayer(`replace-${mode}-source`,0,"dawn"),enemy=makePlayer(`replace-${mode}-enemy`,1,"dusk"),old=instance("energyDevice"),next=instance("battleDevice"),{game}=makeGame([source,enemy]);source.equipment=old;source.hand.push(next);
-    game.eventBus.on("beforeCardMove",`test:replace-preflight-${mode}`,(event)=>{if(event.card!==old||event.from!=="equipment")return;if(mode==="cancel")event.cancelled=true;else throw new Error("replacement preflight failed");});
-    await assert.rejects(game.playCard(source,next,[]),mode==="cancel"?/装备牌未能进入装备区/:/replacement preflight failed/);assert.equal(source.equipment,old);assertCardOnlyIn(game,old,`equipment:${source.id}`);assertCardOnlyIn(game,next,"discard");assert.equal(source.statistics.cardsPlayed,0);
-  }
-});
-test("装备替换成功后旧装备只在弃牌堆且新装备只在装备区", async () => {
-  const source=makePlayer("atomic-equip-source",0,"dawn"),enemy=makePlayer("atomic-equip-enemy",1,"dusk"),old=instance("energyDevice"),next=instance("battleDevice"),{game}=makeGame([source,enemy]);source.equipment=old;source.hand.push(next);
-  assert.equal(await game.playCard(source,next,[]),true);assert.equal(source.equipment,next);assertCardOnlyIn(game,old,"discard");assertCardOnlyIn(game,next,`equipment:${source.id}`);assert.equal(game.resolutionOwners.size,0);
-});
-test("借势内嵌突袭异常只失败清理突袭牌且外层借势正常收束", async () => {
-  const actor=makePlayer("nested-actor",0,"dawn","human"),first=makePlayer("nested-first",1,"dusk","human"),equipment=instance("energyDevice"),assault=instance("assault"),leverage=instance("leverage");actor.hand.push(leverage);first.hand.push(assault);first.equipment=equipment;
-  const {game}=makeGame([actor,first],{response:(request)=>request.type==="leverageAssault"});let outerUsed=0,innerUsed=0;
-  game.eventBus.on("beforeCardResolve","test:throw-nested-assault",(event)=>{if(event.card===assault)throw new Error("nested assault failed");});game.eventBus.on("cardUsed","test:count-nested-resolutions",(event)=>{if(event.card===leverage)outerUsed+=1;if(event.card===assault)innerUsed+=1;});
-  assert.equal(await game.playCard(actor,leverage,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id}),true);assert.equal(outerUsed,1);assert.equal(innerUsed,0);assertCardOnlyIn(game,assault,"discard");assertCardOnlyIn(game,leverage,"discard");assertCardOnlyIn(game,equipment,`hand:${actor.id}`);assert.equal(game.resolutionOwners.size,0);assert.equal(game.actionLocked,false);
-});
-test("结算异常后 actionLocked、interactionLocked 与 AI thinking 全部恢复", async () => {
-  const source=makePlayer("lock-restore-source",0,"dawn"),enemy=makePlayer("lock-restore-enemy",1,"dusk"),card=instance("charge"),{game,ui}=makeGame([source,enemy]);source.hand.push(card);game.interactionLocked=true;ui.thinkingPlayerId=source.id;ui.setThinking(true,source,"测试异常恢复");
-  game.eventBus.on("beforeCardUse","test:throw-for-lock-restore",(event)=>{if(event.card===card)throw new Error("restore locks");});await assert.rejects(game.playCard(source,card,[]),/restore locks/);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assertCardOnlyIn(game,card,"discard");
-});
-test("实体牌结算异常后游戏循环仍推进到下一角色", async () => {
-  const source=makePlayer("resolution-loop-source",0,"dawn"),next=makePlayer("resolution-loop-next",1,"dusk"),card=instance("charge"),{game,ui}=makeGame([source,next]);source.hand.push(card);game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>({type:"card",card,targets:[]});game.eventBus.on("afterGainEnergy","test:throw-loop-partial",(event)=>{if(event.card===card)throw new Error("loop resolution failed");});let nextStarted=false;game.eventBus.on("turnStart","test:next-after-resolution-failure",(event)=>{if(event.player===next){nextStarted=true;game.state.isGameOver=true;}});
-  game.loopPromise=game.runGameLoop();await assert.doesNotReject(game.loopPromise);assert.equal(nextStarted,true);assertCardOnlyIn(game,card,"discard");assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);
-});
-test("AI 陈旧手牌动作返回失败后安全结束阶段并清除锁与思考状态", async () => {
-  const ai=makePlayer("stale-action-ai",0,"dawn"),enemy=makePlayer("stale-action-enemy",1,"dusk"),staleCard=instance("charge"),{game,ui}=makeGame([ai,enemy]);let selections=0;game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>{selections+=1;return {type:"card",card:staleCard,targets:[]};};await game.takeAiPlayPhase(ai,game.state.gameId);assert.equal(selections,1);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assert.equal(game.state.resolvingCards.length,0);
-});
-test("AI 真实出牌异常不会拒绝 loopPromise 且下一名存活角色仍开始回合", async () => {
-  const ai=makePlayer("throw-card-ai",0,"dawn"),next=makePlayer("throw-card-next",1,"dusk"),card=instance("charge"),{game,ui}=makeGame([ai,next]);ai.hand.push(card);game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>({type:"card",card,targets:[]});game.eventBus.on("beforeCardMove","test:throw-real-card-error",(event)=>{if(event.card===card)throw new Error("ai card execution exploded");});let nextStarted=false;game.eventBus.on("turnStart","test:observe-next-turn",(event)=>{if(event.player===next){nextStarted=true;game.state.isGameOver=true;}});game.loopPromise=game.runGameLoop();await assert.doesNotReject(game.loopPromise);assert.equal(nextStarted,true);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assert.doesNotMatch(ui.logs.join("\n"),/ai card execution exploded/);assert.doesNotMatch(game.state.logs.map((entry)=>entry.message).join("\n"),/ai card execution exploded/);
-});
-test("AI 主动技能执行异常由出牌阶段捕获并恢复全部锁状态", async () => {
-  const ai=makePlayer("throw-skill-ai",0,"dawn","ai",1),ally=makePlayer("throw-skill-ally",1,"dawn"),enemy=makePlayer("throw-skill-enemy",2,"dusk"),{game,ui}=makeGame([ai,ally,enemy]);ai.energy=4;game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>({type:"skill",skill:ACTIVE_SKILLS.barrier,targets:[ally]});ui.setCurrentCard=()=>{throw new Error("ai skill execution exploded");};await game.takeAiPlayPhase(ai,game.state.gameId);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assert.doesNotMatch(ui.logs.join("\n"),/ai skill execution exploded/);
-});
-test("游戏循环连续回合异常有上限并以 resolved 状态安全停止", async () => {
-  const first=makePlayer("loop-guard-first",0,"dawn"),second=makePlayer("loop-guard-second",1,"dusk"),{game,ui}=makeGame([first,second]),attempts=[];game.takeTurn=async(player)=>{attempts.push(player.id);throw new Error(`turn failure ${player.id}`);};game.loopPromise=game.runGameLoop();await assert.doesNotReject(game.loopPromise);assert.deepEqual(attempts,[first.id,second.id,first.id]);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assert.doesNotMatch(ui.logs.join("\n"),/turn failure/);
-});
-test("AI 借势动作粗评分不重复计算后继状态中的伤害与装备收益", () => {
-  const actor=makePlayer("leverage-score-actor",0,"dawn"),first=makePlayer("leverage-score-first",1,"dusk"),second=makePlayer("leverage-score-second",2,"dusk"),{game}=makeGame([actor,first,second]),evaluator=game.aiController.evaluator,card={...CARD_DEFINITIONS.leverage,id:"leverage-score"},action={type:"card",card,targets:[{id:first.id},{id:second.id}]},makeVisible=(equipmentDefinitionId,hp)=>({players:[{id:actor.id,battleTeam:"dawn",handCount:1},{id:first.id,battleTeam:"dusk",equipmentDefinitionId,attackUsed:0,attackLimit:1,assaultResponseProbability:.8},{id:second.id,battleTeam:"dusk",hp,maxHp:4}]});assert.equal(evaluator.actionUtility(action,actor,makeVisible("battleDevice",1)),evaluator.actionUtility(action,actor,makeVisible("energyDevice",4)));
-});
-test("AI 猎印与基础牌类别使用概率采用联合概率累计", () => {
-  const simulator=new AiSimulator({players:[]}),hunter={id:"hunter",generalId:"trail-hunter",battleTeam:"dawn",alive:true,trackingTargetIds:[],trackingUses:0,attackUsed:0},marked={id:"marked",battleTeam:"dusk",alive:true,hp:10,maxHp:10,shield:10,handCount:0,blockProbability:0,statuses:[],expectedRecoverCount:0},trackingState={players:[hunter,marked]};simulator.simulateAssault(trackingState,hunter,marked,.5);simulator.simulateAssault(trackingState,hunter,marked,.5);assert.ok(Math.abs(marked.huntMarkProbabilities[hunter.id]-.75)<1e-9);assert.ok(Math.abs(hunter.trackingUses-.75)<1e-9);
-  const blade={id:"blade",generalId:"blade-walker",battleTeam:"dawn",alive:true,momentum:0,categoriesUsed:[],categoryUsedProbabilities:{basic:0},attackUsed:0},shielded={id:"shielded",battleTeam:"dusk",alive:true,hp:10,maxHp:10,shield:10,handCount:0,blockProbability:0,expectedRecoverCount:0},momentumState={players:[blade,shielded]};simulator.simulateAssault(momentumState,blade,shielded,.5);simulator.simulateAssault(momentumState,blade,shielded,.5);assert.ok(Math.abs(blade.categoryUsedProbabilities.basic-.75)<1e-9);assert.ok(Math.abs(blade.momentum-.75)<1e-9);
-});
+
+// ---- 模拟覆盖与概率分支 ----
+
+const conditionalHuntState = (secondMarkBranches) => ({playPhaseEnded:false,players:[
+  {id:"hunter",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,maxEnergy:4,handCount:0,hand:[],activeSkillId:"hunt",activeSkillUses:0,activeSkillLimit:2},
+  {id:"marked-a",seatIndex:1,battleTeam:"dusk",alive:true,hp:6,maxHp:6,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkProbabilities:{hunter:.4},huntMarkStateBranchesBySource:{hunter:[{probability:.4,conditions:{shared:"yes"},marked:true},{probability:.6,conditions:{shared:"no"},marked:false}]},statuses:[],expectedRecoverCount:0},
+  {id:"marked-b",seatIndex:2,battleTeam:"dusk",alive:true,hp:6,maxHp:6,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkProbabilities:{hunter:secondMarkBranches.filter((branch)=>branch.marked).reduce((sum,branch)=>sum+branch.probability,0)},huntMarkStateBranchesBySource:{hunter:secondMarkBranches},statuses:[],expectedRecoverCount:0}
+]});
+
 test("AI 共用突袭模拟覆盖护援弃牌、窥隙信息和余烬能量", () => {
   const simulator=new AiSimulator({players:[]});
   const attacker={id:"attacker",generalId:"blade-walker",battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0,momentum:0,categoriesUsed:["basic"],attackUsed:0},protectedTarget={id:"protected",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},guardian={id:"guardian",generalId:"oath-warden",battleTeam:"dawn",alive:true,hp:3,maxHp:3,shield:0,handCount:1,guardianAidUsedProbability:0};simulator.simulateAssault({players:[attacker,protectedTarget,guardian]},attacker,protectedTarget,1);assert.equal(protectedTarget.hp,4);assert.equal(guardian.handCount,0);assert.equal(guardian.guardianAidUsedProbability,1);
   const spy={id:"spy",generalId:"shade-agent",battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:0,attackUsed:0,spyGapTriggeredProbability:0,expectedInformationGain:0},spyTarget={id:"spy-target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:3,blockProbability:0,expectedRecoverCount:0};simulator.simulateAssault({players:[spy,spyTarget]},spy,spyTarget,1);assert.equal(spyTarget.hp,3);assert.equal(spy.spyGapTriggeredProbability,1);assert.equal(spy.expectedInformationGain,2);
   const ember={id:"ember",generalId:"ember-magus",battleTeam:"dawn",alive:true,hp:3,maxHp:3,energy:1,maxEnergy:3,handCount:0,attackUsed:0},emberTarget={id:"ember-target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0};simulator.simulateAssault({players:[ember,emberTarget]},ember,emberTarget,1);assert.equal(ember.energy,2);
 });
+
 test("AI 共用突袭模拟消费破势与孤注并保留濒死救援和击杀奖励", () => {
   const simulator=new AiSimulator({players:[]}),source={id:"source",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,attackUsed:0,exposeWeaknessStacks:2,assaultBonus:1},target={id:"target",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0};simulator.simulateAssault({players:[source,target]},source,target,1);assert.equal(target.hp,1);assert.equal(source.exposeWeaknessStacks,0);assert.equal(source.assaultBonus,0);
   const killer={id:"killer",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,attackUsed:0},victim={id:"victim",battleTeam:"dusk",alive:true,hp:1,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},killState={players:[killer,victim]};simulator.simulateAssault(killState,killer,victim,1);assert.equal(victim.alive,false);assert.equal(killer.handCount,GAME_CONFIG.killRewardDrawCount);
   const rescuedAttacker={id:"rescued-attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,attackUsed:0},rescued={id:"rescued",battleTeam:"dusk",alive:true,hp:1,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},rescuer={id:"rescuer",generalId:"spirit-medic",battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:1,expectedRecoverCount:1,rejuvenationUsed:false},rescueState={players:[rescuedAttacker,rescued,rescuer]};simulator.simulateAssault(rescueState,rescuedAttacker,rescued,1);assert.equal(rescued.alive,true);assert.equal(rescued.hp,2);assert.equal(rescuedAttacker.handCount,0);
 });
+
 test("平衡模拟在相同种子和固定节点预算下连续两次核心报告完全一致", async () => {
   const env = {
     ...process.env,
@@ -1742,80 +3749,113 @@ test("平衡模拟在相同种子和固定节点预算下连续两次核心报�
   assert.ok(Number.isFinite(first.smallTeamWinRate) && Number.isFinite(first.largeTeamWinRate));
   assert.ok(Math.abs(first.smallTeamWinRate + first.largeTeamWinRate - 100) < 1e-9);
 });
+
 test("AI 模拟器识别破势叠加后强化普通突袭", () => { const visible={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:4,attackRange:1,attackUsed:0,attackLimit:2,recoverUsed:0,recoverLimit:null,exposeWeaknessStacks:0,alive:true,handCount:3,hand:[{id:"x1",definitionId:"exposeWeakness"},{id:"x2",definitionId:"exposeWeakness"},{id:"a1",definitionId:"assault"}]},{id:"b",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:3,attackRange:1,alive:true,handCount:0}]};const simulator=new AiSimulator(visible);const once=simulator.apply(visible,{type:"card",card:{id:"x1",definitionId:"exposeWeakness"},targets:[]},"a");const twice=simulator.apply(once,{type:"card",card:{id:"x2",definitionId:"exposeWeakness"},targets:[]},"a");const attacked=simulator.apply(twice,{type:"card",card:{id:"a1",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(attacked.players[1].hp,1);assert.equal(attacked.players[0].exposeWeaknessStacks,0);assert.equal(attacked.players[0].recoverLimit,null); });
-test("AI 普通突袭与借势响应共用同一模拟入口", () => {
-  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,hand:[{id:"a",definitionId:"assault"},{id:"l",definitionId:"leverage"}],attackUsed:0,attackLimit:2,counterProbability:0},{id:"first",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,attackUsed:0,attackLimit:1,equipmentDefinitionId:"energyDevice",assaultResponseProbability:1,expectedAssaultCount:1,blockProbability:0,counterProbability:0},{id:"second",seatIndex:2,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:0,blockProbability:0,counterProbability:0}]};
-  const simulator=new AiSimulator(state),original=simulator.simulateAssault.bind(simulator),sources=[];simulator.simulateAssault=(next,source,target,chance,options)=>{sources.push(source.id);return original(next,source,target,chance,options);};simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"a"},targets:[{id:"first"}]},"actor");simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}},"actor");assert.deepEqual(sources,["actor","first"]);
-});
-test("AI 模拟借势不会对同阵营第二目标使用突袭", () => {
-  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},{id:"first",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,hand:[{id:"a1",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:1,blockProbability:0,counterProbability:0},{id:"second",seatIndex:2,battleTeam:"dusk",hp:4,maxHp:4,shield:2,energy:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0}]};
-  const game={state:{players:state.players}};assert.ok(!RuleEngine.getLegalAssaultTargets(game,state.players[1]).some((candidate)=>candidate.id==="second"));assert.ok(RuleEngine.getAssaultTargetCandidates(game,state.players[1]).some((candidate)=>candidate.id==="second"));
-  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}},"actor"),first=next.players[1],second=next.players[2];
-  assert.equal(second.hp,4);assert.equal(second.shield,2);assert.equal(first.attackUsed,0);assert.equal(first.attackUseSlots[0][0].available,true);assert.equal(first.expectedAssaultCount,1);assert.equal(first.handCount,2);assert.equal(first.hand.length,1);assert.equal(first.equipmentDefinitionId,null);assert.equal(first.equipmentRetentionProbability,0);assert.equal(next.players[0].expectedEquipmentGain,CARD_DEFINITIONS.energyDevice.aiValue);assert.equal(next.players[0].handCount,1);
-});
-test("AI 模拟借势不会对同阵营使用者本人使用突袭", () => {
-  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},{id:"first",seatIndex:1,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"a1",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:1,blockProbability:0,counterProbability:0}]};
-  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"actor"}],selection:{firstTargetId:"first",secondTargetId:"actor"}},"actor"),actor=next.players[0],first=next.players[1];
-  assert.equal(actor.hp,4);assert.equal(first.attackUsed,0);assert.equal(first.attackUseSlots[0][0].available,true);assert.equal(first.expectedAssaultCount,1);assert.equal(first.handCount,1);assert.equal(first.equipmentDefinitionId,null);assert.equal(actor.expectedEquipmentGain,CARD_DEFINITIONS.energyDevice.aiValue);assert.equal(actor.handCount,1);
-});
-test("AI 模拟借势对合法敌方第二目标保留突袭使用", () => {
-  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},{id:"first",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,hand:[{id:"a1",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:1,blockProbability:0,counterProbability:0},{id:"second",seatIndex:2,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0}]};
-  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}},"actor"),first=next.players[1],second=next.players[2];
-  assert.ok(first.attackUsed>0);assert.ok(first.expectedAssaultCount<1);assert.ok(first.handCount<2);assert.ok(second.hp<4);
-});
-test("AI 借势用连续期望模拟使用与拒绝且不按阈值删除装备", () => {
-  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},{id:"first",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,attackUsed:0,attackLimit:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,assaultResponseProbability:.5,expectedAssaultCount:.5,blockProbability:0,counterProbability:0},{id:"second",seatIndex:2,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:0,blockProbability:.2,twoBlockProbability:0,counterProbability:0}]};
-  const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}},"actor"),actor=next.players[0],first=next.players[1],second=next.players[2];assert.equal(first.equipmentDefinitionId,"battleDevice");assert.ok(first.equipmentRetentionProbability>0&&first.equipmentRetentionProbability<1);assert.ok(actor.handCount>0&&actor.handCount<1);assert.ok(actor.expectedEquipmentGain>0);assert.ok(first.attackUsed>0&&first.attackUsed<1);assert.ok(second.hp<4);
-});
-test("AI 连续借势按装备剩余概率计算且累计获得期望不超过同一件装备", () => {
-  const state={players:[{id:"actor",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,hand:[{id:"l1",definitionId:"leverage"},{id:"l2",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},{id:"first",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:2,attackUsed:0,attackLimit:2,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,assaultResponseProbability:.5,expectedAssaultCount:1,blockProbability:0,counterProbability:0},{id:"second",seatIndex:2,battleTeam:"dawn",hp:5,maxHp:5,shield:0,energy:0,alive:true,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0}]};
-  const simulator=new AiSimulator(state),action=(id)=>({type:"card",card:{...CARD_DEFINITIONS.leverage,id},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}}),once=simulator.apply(state,action("l1"),"actor"),twice=simulator.apply(once,action("l2"),"actor"),equipmentValue=CARD_DEFINITIONS.battleDevice.aiValue,firstOnce=once.players[1],firstTwice=twice.players[1],actorTwice=twice.players[0];assert.ok(firstOnce.equipmentRetentionProbability<1&&firstOnce.equipmentRetentionProbability>0);assert.ok(firstTwice.equipmentRetentionProbability<firstOnce.equipmentRetentionProbability);assert.ok(actorTwice.expectedEquipmentGain/equipmentValue<=1+1e-9);assert.ok(actorTwice.handCount<=1+1e-9);assert.ok(firstTwice.attackUsed<=2);
-});
-test("AI 装备统一接口会在换装时重置概率并在明确失去时清空", () => {
-  const simulator=new AiSimulator({players:[]}),player={equipmentDefinitionId:"telescope",equipmentRetentionProbability:.25};simulator.setSimulatedEquipment(player,"barrierDevice",1);assert.deepEqual([player.equipmentDefinitionId,player.equipmentRetentionProbability],["barrierDevice",1]);simulator.setSimulatedEquipment(player,null,0);assert.deepEqual([player.equipmentDefinitionId,player.equipmentRetentionProbability],[null,0]);
-});
-test("AI 距离与攻防装备效果按装备存在概率加权", () => {
-  const source={id:"s",seatIndex:0,battleTeam:"dawn",alive:true,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.5},middle={id:"m",seatIndex:1,battleTeam:"dawn",alive:true},target={id:"t",seatIndex:2,battleTeam:"dusk",alive:true,equipmentDefinitionId:"barrierDevice",equipmentRetentionProbability:.25},tail={id:"x",seatIndex:3,battleTeam:"dusk",alive:true},game={state:{players:[source,middle,target,tail]}};assert.equal(DistanceSystem.getDistance(game,source,target),2);assert.equal(DistanceSystem.getRangeLegalityProbability(game,source,target,1),.375);
-  const damageState={players:[{id:"a",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:.5},{id:"b",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:1,twoBlockProbability:0,equipmentDefinitionId:null,equipmentRetentionProbability:0,expectedRecoverCount:0}]};const simulator=new AiSimulator(damageState),next=simulator.clone(damageState);simulator.applyDamage(next,next.players[0],next.players[1],1,{canBlock:true,deviceAttack:true});assert.equal(next.players[1].hp,3.5);assert.equal(next.players[1].handCount,.5);
-});
-test("AI 雷达与回收站效果按装备存在概率加权", () => {
-  const makeDamage=(probability)=>({players:[{id:"a",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,equipmentDefinitionId:null,equipmentRetentionProbability:0},{id:"b",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,equipmentDefinitionId:probability?"defenseDevice":null,equipmentRetentionProbability:probability,expectedRecoverCount:0}]});const simulator=new AiSimulator({players:[]}),damage=(probability)=>{const state=makeDamage(probability);simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});return state.players[1].hp;},without=damage(0),half=damage(.5),full=damage(1);assert.ok(full>half&&half>without);assert.ok(Math.abs(half-(full+without)/2)<1e-9);
-  const recycleState={players:[{id:"r",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:1,hand:[{id:"x",definitionId:"exposeWeakness"}],equipmentDefinitionId:"recycleDevice",equipmentRetentionProbability:.5,recycleDeviceUses:0,exposeWeaknessStacks:0}]};const recycled=simulator.apply(recycleState,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x"},targets:[]},"r");assert.equal(recycled.players[0].handCount,.5);assert.equal(recycled.players[0].recycleDeviceUses,.5);
-});
-test("概率距离合法性枚举离散装备分支且真实状态只返回0或1", () => {
-  const source={id:"s",seatIndex:0,battleTeam:"dawn",alive:true,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4},middle={id:"m",seatIndex:1,battleTeam:"dawn",alive:true},target={id:"t",seatIndex:2,battleTeam:"dusk",alive:true,equipmentDefinitionId:"barrierDevice",equipmentRetentionProbability:.25},tail={id:"x",seatIndex:3,battleTeam:"dusk",alive:true},game={state:{players:[source,middle,target,tail]}};assert.ok(Math.abs(DistanceSystem.getRangeLegalityProbability(game,source,target,1)-.3)<1e-9);delete source.equipmentRetentionProbability;delete target.equipmentRetentionProbability;assert.equal(DistanceSystem.getRangeLegalityProbability(game,source,target,1),0);target.equipmentDefinitionId=null;assert.equal(DistanceSystem.getRangeLegalityProbability(game,source,target,1),1);
-});
-test("概率距离动作按同一概率扣牌结算且未执行分支不能重复攻击同一目标", () => {
-  const state={playPhaseEnded:false,players:[{id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.5},{id:"m",seatIndex:1,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0},{id:"t",seatIndex:2,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},{id:"x",seatIndex:3,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0}]};const actor=makePlayer("real",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),{game}=makeGame([actor,enemy]),actions=game.aiController.actionGenerator.generateFromVisible(state,"a"),attack=actions.find((action)=>action.card?.id==="hit"&&action.targets[0]?.id==="t");assert.equal(attack.executionProbability,.5);const next=new AiSimulator(state).apply(state,attack,"a"),nextActor=next.players[0];assert.equal(nextActor.handCount,.5);assert.deepEqual(nextActor.hand[0].availabilityBranches,[{probability:.5,conditions:{"equipment:a:telescope":"absent","equipment:t:barrierDevice":"absent"}}]);assert.equal(nextActor.attackUsed,.5);assert.equal(next.players[2].hp,3.5);const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");assert.ok(!follow.some((action)=>action.card?.id==="hit"&&action.targets[0]?.id==="t"));
-});
-test("概率装备依赖的借势同步缩放卡牌成本并禁止再次针对同一装备", () => {
-  const state={playPhaseEnded:false,players:[{id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"l",definitionId:"leverage"}],attackUsed:0,attackLimit:1,attackRange:1,counterProbability:0},{id:"f",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:.25,assaultResponseProbability:1,expectedAssaultCount:1,counterProbability:0,blockProbability:0}]};const actor=makePlayer("real",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),{game}=makeGame([actor,enemy]),actions=game.aiController.actionGenerator.generateFromVisible(state,"a"),leverage=actions.find((action)=>action.card?.id==="l");assert.equal(leverage.executionProbability,.25);const next=new AiSimulator(state).apply(state,leverage,"a"),held=next.players[0].hand.find((card)=>card.id==="l");assert.deepEqual(held.availabilityBranches,[{probability:.75,conditions:{"equipment:a:barrierDevice":"absent","equipment:f:energyDevice":"absent","equipment:f:telescope":"absent"}}]);const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");assert.ok(!follow.some((action)=>action.card?.id==="l"&&action.selection?.firstTargetId==="f"));
-});
-test("AI 回收站触发期望严格封顶2次", () => {
-  const state={players:[{id:"r",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:1,hand:[{id:"x",definitionId:"exposeWeakness"}],equipmentDefinitionId:"recycleDevice",equipmentRetentionProbability:.8,recycleDeviceUses:1.7,exposeWeaknessStacks:0}]};const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x"},targets:[]},"r");assert.ok(Math.abs(next.players[0].recycleDeviceUses-2)<1e-9);assert.ok(Math.abs(next.players[0].handCount-.3)<1e-9);
-});
-test("AI 雷达按判定牌类型计算格挡消耗并保持手牌非负", () => {
-  const battleProbability=.25,normalBlockProbability=.1,twoBlockProbability=.02,state={players:[{id:"a",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:battleProbability},{id:"b",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:normalBlockProbability,twoBlockProbability,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}]},basicTotal=Object.values(CARD_DEFINITIONS).filter((card)=>card.category==="basic").reduce((sum,card)=>sum+card.count,0),equipmentTotal=Object.values(CARD_DEFINITIONS).filter((card)=>card.category==="equipment").reduce((sum,card)=>sum+card.count,0),blockChance=CARD_DEFINITIONS.block.count/TOTAL_CARD_COUNT,otherBasicChance=(basicTotal-CARD_DEFINITIONS.block.count)/TOTAL_CARD_COUNT,equipmentChance=equipmentTotal/TOTAL_CARD_COUNT,normalSpent=blockChance+(otherBasicChance+equipmentChance)*normalBlockProbability,battleSpent=2*(blockChance*normalBlockProbability+(otherBasicChance+equipmentChance)*twoBlockProbability),expectedSpent=battleProbability*battleSpent+(1-battleProbability)*normalSpent,simulator=new AiSimulator(state);simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});assert.ok(Math.abs(state.players[1].handCount-Math.max(0,basicTotal/TOTAL_CARD_COUNT-expectedSpent))<1e-9);assert.ok(state.players[1].handCount>=0);
-});
-test("AI 掠夺破坏窃取与主动装备均通过统一装备状态更新", () => {
-  const simulator=new AiSimulator({players:[]}),actor={id:"actor",battleTeam:"dawn",generalId:"blade-walker",handCount:0,equipmentDefinitionId:null,equipmentRetentionProbability:0},target={id:"target",battleTeam:"dusk",generalId:"oath-warden",handCount:0,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1};simulator.takeResourceToHand(actor,target,.4);assert.equal(target.equipmentRetentionProbability,.6);assert.equal(actor.handCount,.4);simulator.destroyResource({players:[actor,target]},actor,target,.5);assert.equal(target.equipmentRetentionProbability,.3);simulator.stealResourceToHand(actor,target);assert.equal(target.equipmentDefinitionId,null);assert.equal(target.equipmentRetentionProbability,0);const state={players:[{id:"a",alive:true,battleTeam:"dawn",handCount:1,hand:[{id:"e",definitionId:"barrierDevice"}],equipmentDefinitionId:"telescope",equipmentRetentionProbability:.2}]};const equipped=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.barrierDevice,id:"e"},targets:[]},"a");assert.deepEqual([equipped.players[0].equipmentDefinitionId,equipped.players[0].equipmentRetentionProbability],["barrierDevice",1]);
-});
+
 test("AI 深层节点能发现先聚能再发动主动技能", () => { const actor=makePlayer("a",0,"dawn","ai",2),ally=makePlayer("ally",1,"dawn","ai",1),enemy=makePlayer("e",2,"dusk");actor.energy=1;ally.hp-=1;actor.hand.push(instance("charge"));const {game}=makeGame([actor,ally,enemy]);const visible=createAiVisibleState(actor.id,game.state);const simulator=new AiSimulator(visible);const charged=simulator.apply(visible,{type:"card",card:actor.hand[0],targets:[]},actor.id);const follow=game.aiController.actionGenerator.generateFromVisible(charged,actor.id);assert.ok(follow.some((action)=>action.type==="skill"&&action.skill.id==="symbiosis"&&action.targets[0].id===ally.id)); });
+
 test("AI 模拟伤害会计算队伍调息并保留可获救角色", () => { const state={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,expectedRecoverCount:0},{id:"b",seatIndex:1,battleTeam:"dusk",hp:1,maxHp:4,shield:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0},{id:"c",seatIndex:2,battleTeam:"dusk",hp:3,maxHp:3,shield:0,alive:true,handCount:1,expectedRecoverCount:1}]};const simulator=new AiSimulator(state);const next=simulator.apply(state,{type:"card",card:{id:"hit",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(next.players[1].alive,true);assert.equal(next.players[1].hp,1);assert.equal(next.players[2].expectedRecoverCount,0); });
+
 test("AI 模拟调息不足时保持0血离散阵亡而不制造半血存活者", () => { const state={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,expectedRecoverCount:0},{id:"b",seatIndex:1,battleTeam:"dusk",hp:0,maxHp:4,shield:0,alive:true,handCount:0,blockProbability:0,expectedRecoverCount:0},{id:"c",seatIndex:2,battleTeam:"dusk",hp:3,maxHp:3,shield:0,alive:true,handCount:1,expectedRecoverCount:1}]};const next=new AiSimulator(state).apply(state,{type:"card",card:{id:"hit",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(next.players[1].alive,false);assert.equal(next.players[1].hp,0);assert.equal(next.players[1].survivalChance,.5); });
-test("AI 模拟军火库要求两张格挡而不是一张", () => { const state={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,equipmentDefinitionId:"battleDevice",expectedRecoverCount:0},{id:"b",seatIndex:1,battleTeam:"dusk",hp:3,maxHp:3,shield:0,alive:true,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}]};const next=new AiSimulator(state).apply(state,{type:"card",card:{id:"hit",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(next.players[1].hp,2); });
+
 test("AI 模拟雷达按当前牌堆配置计算判定概率", () => { const state={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,expectedRecoverCount:0},{id:"b",seatIndex:1,battleTeam:"dusk",hp:3,maxHp:3,shield:0,alive:true,handCount:0,blockProbability:0,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",expectedRecoverCount:0}]};const next=new AiSimulator(state).apply(state,{type:"card",card:{id:"hit",definitionId:"assault"},targets:[{id:"b"}]},"a"),basicTotal=Object.values(CARD_DEFINITIONS).filter((card)=>card.category==="basic").reduce((sum,card)=>sum+card.count,0),otherBasic=basicTotal-CARD_DEFINITIONS.block.count,equipment=Object.values(CARD_DEFINITIONS).filter((card)=>card.category==="equipment").reduce((sum,card)=>sum+card.count,0);assert.ok(Math.abs(next.players[1].hp-(3-(otherBasic+equipment)/TOTAL_CARD_COUNT))<1e-9); });
+
 test("AI 模拟反制会考虑同阵营响应者的阵营净收益", () => { const state={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{id:"s",definitionId:"symbiosis"}]},{id:"ally",seatIndex:1,battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,counterProbability:1},{id:"e1",seatIndex:2,battleTeam:"dusk",hp:2,maxHp:3,shield:0,alive:true,handCount:0,counterProbability:0},{id:"e2",seatIndex:3,battleTeam:"dusk",hp:2,maxHp:3,shield:0,alive:true,handCount:0,counterProbability:0}]};const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.symbiosis,id:"s"},targets:state.players},"a");assert.equal(next.players[2].hp,2);assert.equal(next.players[3].hp,2); });
+
 test("AI 模拟震荡时按目标分别计算反制而不是取消整张牌", () => { const state={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{...CARD_DEFINITIONS.shockwave,id:"s"}]},{id:"b",seatIndex:1,battleTeam:"dusk",hp:3,maxHp:3,shield:0,alive:true,handCount:1,counterProbability:1,blockProbability:0,expectedRecoverCount:0},{id:"c",seatIndex:2,battleTeam:"dusk",hp:3,maxHp:3,shield:0,alive:true,handCount:0,counterProbability:0,blockProbability:0,expectedRecoverCount:0}]};const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"s"},targets:[state.players[1],state.players[2]]},"a");assert.equal(next.players[1].hp,3);assert.equal(next.players[2].hp,2); });
+
 test("AI 模拟挑衅时按目标分别计算反制", () => { const state={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:1,hand:[{...CARD_DEFINITIONS.provoke,id:"p"}]},{id:"b",seatIndex:1,battleTeam:"dusk",hp:3,maxHp:3,shield:0,alive:true,handCount:1,counterProbability:1,assaultResponseProbability:0,expectedAssaultCount:0},{id:"c",seatIndex:2,battleTeam:"dusk",hp:3,maxHp:3,shield:0,alive:true,handCount:0,counterProbability:0,assaultResponseProbability:0,expectedAssaultCount:0}]};const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.provoke,id:"p"},targets:[state.players[1],state.players[2]]},"a");assert.equal(next.players[1].hp,3);assert.equal(next.players[2].hp,2); });
+
 test("AI 模拟回收站在前两张战术后补牌且第三张不再触发", () => { const state={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,alive:true,handCount:3,hand:[{id:"x1",definitionId:"exposeWeakness"},{id:"x2",definitionId:"exposeWeakness"},{id:"x3",definitionId:"exposeWeakness"}],equipmentDefinitionId:"recycleDevice",recycleDeviceUses:0},{id:"b",seatIndex:1,battleTeam:"dusk",hp:3,maxHp:3,shield:0,alive:true,handCount:0,counterProbability:0}]};const simulator=new AiSimulator(state);const once=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x1"},targets:[]},"a");const twice=simulator.apply(once,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x2"},targets:[]},"a");const thrice=simulator.apply(twice,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x3"},targets:[]},"a");assert.equal(once.players[0].handCount,3);assert.equal(twice.players[0].handCount,3);assert.equal(thrice.players[0].handCount,2);assert.equal(thrice.players[0].recycleDeviceUses,2); });
+
 test("AI 深层结束与重复装备评分读取模拟节点而非根玩家", () => { const real=makePlayer("a",0,"dawn");real.hand.push(instance("assault"),instance("charge"));const enemy=makePlayer("b",1,"dusk");const {game}=makeGame([real,enemy]);const evaluator=game.aiController.evaluator;const emptyVisible={players:[{id:real.id,battleTeam:"dawn",handCount:0,equipmentDefinitionId:"energyDevice"},{id:enemy.id,battleTeam:"dusk",alive:true,hp:3,maxHp:3}]};assert.equal(evaluator.actionUtility({type:"end"},real,emptyVisible),0);const equipment=instance("energyDevice");assert.equal(evaluator.actionUtility({type:"card",card:equipment,targets:[]},real,emptyVisible),equipment.aiValue-4); });
+
 test("AI 到达搜索预算仍返回当前最佳合法动作", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);for(let i=0;i<8;i+=1)a.hand.push(instance(i%2?"exposeWeakness":"assault"));game.aiSearchBudgetOverrideMs=0;const action=await game.aiController.selectAction(a,{gameId:game.state.gameId});assert.ok(["card","skill","end"].includes(action.type));assert.ok(game.aiController.planner.lastSearchStats.elapsedMs<250); });
+
 test("AI 低血弃牌会保留调息和格挡", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);a.hp=1;a.hand.push(instance("recover"),instance("block"),instance("charge"),instance("assault"));const discarded=game.aiController.chooseDiscards(a,2).map((card)=>card.definitionId);assert.ok(!discarded.includes("recover"));assert.ok(!discarded.includes("block")); });
+
 test("AI 不会反制对己方净治疗明显有利的共生", () => { const a=makePlayer("a",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");a.hp-=1;ally.hp-=1;const {game}=makeGame([a,ally,enemy]);const use=game.aiController.responsePolicy.shouldRespond(a,"counter",{source:enemy,card:instance("symbiosis")},[instance("counter")]);assert.equal(use,false); });
+
 test("AI 对互利按当前存活敌我人数决定是否反制", () => { const smallA=makePlayer("small-a",0,"dawn"),largeA=makePlayer("large-a",1,"dusk"),smallB=makePlayer("small-b",2,"dawn"),largeB=makePlayer("large-b",3,"dusk"),largeC=makePlayer("large-c",4,"dusk");const {game}=makeGame([smallA,largeA,smallB,largeB,largeC]);const card=instance("mutualBenefit"),counter=instance("counter");assert.equal(game.aiController.responsePolicy.shouldRespond(smallA,"counter",{source:largeA,card},[counter]),true);assert.equal(game.aiController.responsePolicy.shouldRespond(largeA,"counter",{source:smallA,card},[counter]),false);largeC.alive=false;assert.equal(game.aiController.responsePolicy.shouldRespond(smallA,"counter",{source:largeA,card},[counter]),false); });
+
 test("AI 对共生按双方本次实际治疗人数决定是否反制", () => { const a=makePlayer("a",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemyA=makePlayer("enemy-a",2,"dusk"),enemyB=makePlayer("enemy-b",3,"dusk"),enemyC=makePlayer("enemy-c",4,"dusk");const {game}=makeGame([a,ally,enemyA,enemyB,enemyC]);const card=instance("symbiosis"),counter=instance("counter");a.hp-=1;ally.hp-=1;enemyA.hp-=1;assert.equal(game.aiController.responsePolicy.shouldRespond(a,"counter",{source:enemyA,card},[counter]),false);ally.hp=ally.maxHp;enemyB.hp-=1;assert.equal(game.aiController.responsePolicy.shouldRespond(a,"counter",{source:enemyA,card},[counter]),true); });
+
 test("AI 模拟器与真实策略使用相同的全体受益反制判断", () => { const state={players:[{id:"small-a",battleTeam:"dawn",alive:true,hp:4,maxHp:4},{id:"large-a",battleTeam:"dusk",alive:true,hp:4,maxHp:4},{id:"small-b",battleTeam:"dawn",alive:true,hp:4,maxHp:4},{id:"large-b",battleTeam:"dusk",alive:true,hp:4,maxHp:4},{id:"large-c",battleTeam:"dusk",alive:true,hp:4,maxHp:4}]};const simulator=new AiSimulator(state),small=state.players[0],large=state.players[1],card={...CARD_DEFINITIONS.mutualBenefit,id:"mutual"};assert.equal(simulator.counterDesire(state,small,large,card,[]),1);assert.equal(simulator.counterDesire(state,large,small,card,[]),0);state.players[4].alive=false;assert.equal(simulator.counterDesire(state,small,large,card,[]),0); });
+
+test("概率伤害先逐世界结算护盾再汇总期望", () => {
+  const run=({amount,eventProbability,shield,blockProbability=0})=>{const state={players:[
+    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
+    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield,handCount:blockProbability?1:0,blockProbability,twoBlockProbability:0,expectedRecoverCount:0}
+  ]};const simulator=new AiSimulator(state),outcome={},damage=simulator.applyDamage(state,state.players[0],state.players[1],amount,{canBlock:blockProbability>0,eventProbability,outcome});return {state,target:state.players[1],damage,outcome};};
+  let result=run({amount:2,eventProbability:.4,shield:1});assertClose(result.target.shield,.6);assertClose(result.target.hp,3.6);assertClose(result.damage,.4);assertClose(result.outcome.lifeDamageChance,.4);
+  result=run({amount:1,eventProbability:.4,shield:1});assertClose(result.target.shield,.6);assertClose(result.target.hp,4);
+  result=run({amount:2,eventProbability:.4,shield:2});assertClose(result.target.shield,1.2);assertClose(result.target.hp,4);
+  result=run({amount:2,eventProbability:.4,shield:1,blockProbability:.5});assertClose(result.target.shield,.8);assertClose(result.target.hp,3.8);assertClose(result.target.handCount,.8);assertClose(result.outcome.lifeDamageChance,.2);
+  result=run({amount:3,eventProbability:1,shield:2});assertClose(result.target.shield,0);assertClose(result.target.hp,3);assertClose(result.outcome.lifeDamageChance,1);
+});
+
+test("连续概率伤害不会重复使用已消耗的护盾分支", () => {
+  const state={players:[{id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},{id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:1,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0}]},simulator=new AiSimulator(state);
+  const first=simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:false,eventProbability:.4});
+  const second=simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:false,eventProbability:.4});
+  assertClose(first,0);assertClose(second,.16);assertClose(state.players[1].shield,.36);assertClose(state.players[1].hp,3.84);
+});
+
+test("能量分支让后续技能只在仍有足够能量的世界生成", () => {
+  const state=conditionalHuntState([{probability:1,conditions:{},marked:true}]),{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const first=game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-a");
+  const once=new AiSimulator(state).apply(state,first,"hunter"),energy=once.players[0].energyBranches;
+  assertClose(energy.filter((branch)=>branch.amount===0).reduce((sum,branch)=>sum+branch.probability,0),.4);assertClose(once.players[0].energy,1.2);
+  const second=game.aiController.actionGenerator.generateFromVisible(once,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-b");assertClose(second.executionProbability,.6);
+  const twice=new AiSimulator(once).apply(once,second,"hunter");assertClose(twice.players[0].energy,0);assertClose(twice.players[0].activeSkillUses,1);
+});
+
+test("完全重叠与互斥猎印分别阻止和允许复用同一份能量", () => {
+  const {game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]),firstMark=(state)=>game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-a");
+  const overlapping=conditionalHuntState([{probability:.4,conditions:{shared:"yes"},marked:true},{probability:.6,conditions:{shared:"no"},marked:false}]);
+  const overlapOnce=new AiSimulator(overlapping).apply(overlapping,firstMark(overlapping),"hunter");assert.ok(!game.aiController.actionGenerator.generateFromVisible(overlapOnce,"hunter").some((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-b"));
+  const exclusive=conditionalHuntState([{probability:.4,conditions:{shared:"yes"},marked:false},{probability:.6,conditions:{shared:"no"},marked:true}]);
+  const exclusiveOnce=new AiSimulator(exclusive).apply(exclusive,firstMark(exclusive),"hunter"),second=game.aiController.actionGenerator.generateFromVisible(exclusiveOnce,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-b");assertClose(second.executionProbability,.6);
+});
+
+test("概率获得能量与孤注均按各自世界的实际能量结算", () => {
+  const shared="charge-world",state={playPhaseEnded:false,players:[
+    {id:"hunter",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:1,maxEnergy:4,handCount:1,hand:[{id:"charge",definitionId:"charge",availabilityBranches:[{probability:.4,conditions:{[shared]:"yes"}}],availabilityStateBranches:[{probability:.4,conditions:{[shared]:"yes"},available:true},{probability:.6,conditions:{[shared]:"no"},available:false}]}],activeSkillId:"hunt",activeSkillUses:0,activeSkillLimit:2},
+    {id:"marked",seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkProbabilities:{hunter:1},huntMarkStateBranchesBySource:{hunter:[{probability:1,conditions:{},marked:true}]},statuses:[],expectedRecoverCount:0}
+  ]},{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
+  const charge=game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.card?.id==="charge"),charged=new AiSimulator(state).apply(state,charge,"hunter");
+  const hunt=game.aiController.actionGenerator.generateFromVisible(charged,"hunter").find((action)=>action.skill?.id==="hunt");assertClose(hunt.executionProbability,.4);
+
+  const allInState={players:[{id:"gambler",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:1.2,maxEnergy:4,energyBranches:[{probability:.4,conditions:{rich:"yes"},amount:3},{probability:.6,conditions:{rich:"no"},amount:0}],handCount:0,activeSkillUses:0,activeSkillLimit:1}]};
+  const allInWorlds=[{probability:.4,conditions:{rich:"yes"},executes:true},{probability:.6,conditions:{rich:"no"},executes:false}],allIn=new AiSimulator(allInState).apply(allInState,{type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[],executionProbability:.4,executionWorldBranches:allInWorlds},"gambler");
+  assertClose(allIn.players[0].handCount,1.2);assertClose(allIn.players[0].energy,0);
+});
+
+test("AI模拟阵亡会清空手牌装备摘要且评估器只保留死亡惩罚", () => {
+  const state={players:[
+    {id:"killer",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0},
+    {id:"victim",seatIndex:1,battleTeam:"dusk",alive:true,hp:1,maxHp:4,shield:0,energy:3,handCount:5,hand:[{id:"a",definitionId:"assault"}],expectedAssaultCount:3,expectedRecoverCount:.2,assaultResponseProbability:1,blockProbability:1,twoBlockProbability:1,counterProbability:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,huntMarkSourceId:null,huntMarkProbabilities:{}}
+  ]},simulator=new AiSimulator(state);simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:false});const victim=state.players[1];
+  assert.deepEqual([victim.alive,victim.handCount,victim.hand.length,victim.expectedAssaultCount,victim.expectedRecoverCount,victim.equipmentDefinitionId,victim.equipmentRetentionProbability],[false,0,0,0,0,null,0]);
+  const {game}=makeGame([makePlayer("viewer",0,"dawn"),makePlayer("dead",1,"dusk")]),viewer={id:"viewer",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0},dead={id:"dead",battleTeam:"dusk",alive:false,hp:0,maxHp:4,shield:0,energy:0,handCount:0};
+  const emptyScore=game.aiController.evaluator.stateUtility({players:[viewer,dead]},viewer.id),richScore=game.aiController.evaluator.stateUtility({players:[viewer,{...dead,shield:99,energy:99,handCount:99,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1}]},viewer.id);assert.equal(richScore,emptyScore);
+});
+
+test("AI装备完全移除时按初始装备价值产生完整损失", () => {
+  const {game}=makeGame([makePlayer("equipment-viewer",0,"dawn"),makePlayer("equipment-enemy",1,"dusk")]),value=CARD_DEFINITIONS.battleDevice.aiValue,base={id:"equipment-viewer",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0,initialEquipmentValue:value,expectedEquipmentGain:0},enemy={id:"equipment-enemy",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0};
+  const partial=game.aiController.evaluator.stateUtility({players:[{...base,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:.1},enemy]},base.id),removed=game.aiController.evaluator.stateUtility({players:[{...base,equipmentDefinitionId:null,equipmentRetentionProbability:0},enemy]},base.id);
+  assert.ok(removed<partial);assertClose(partial-removed,value*.1*.25);
+});
+
+test("AI攻击与技能次数槽选择执行概率最高的可用槽", () => {
+  const partialSlot=[{probability:.2,conditions:{partial:"yes"},available:true},{probability:.8,conditions:{partial:"no"},available:false}],fullSlot=[{probability:1,conditions:{},available:true}],{game}=makeGame([makePlayer("slot-real-a",0,"dawn"),makePlayer("slot-real-b",1,"dusk")]);
+  const attackState={playPhaseEnded:false,players:[{id:"attacker",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,attackRange:1,attackUsed:0,attackLimit:2,attackUseSlots:[partialSlot,fullSlot],handCount:1,hand:[{id:"hit",definitionId:"assault"}]},{id:"enemy",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0}]};
+  const attack=game.aiController.actionGenerator.generateFromVisible(attackState,"attacker").find((action)=>action.card?.id==="hit");assert.equal(attack.attackUseSlot,1);assert.equal(attack.executionProbability,1);
+  const skillState={playPhaseEnded:false,players:[{id:"warden",seatIndex:0,battleTeam:"dawn",alive:true,hp:3,maxHp:3,shield:0,energy:2,activeSkillId:"barrier",activeSkillUses:0,activeSkillLimit:2,activeSkillUseSlots:[partialSlot,fullSlot],handCount:0,hand:[]},{id:"ally",seatIndex:1,battleTeam:"dawn",alive:true,hp:3,maxHp:3,shield:0,handCount:0},{id:"enemy",seatIndex:2,battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:0}]};
+  const skill=game.aiController.actionGenerator.generateFromVisible(skillState,"warden").find((action)=>action.skill?.id==="barrier");assert.equal(skill.skillUseSlot,1);assert.equal(skill.executionProbability,1);
+});
+
+// ---- 战术反制风险 ----
 
 const makeCounterRiskPlayer = (id, team, overrides = {}) => ({
   id,
@@ -2039,55 +4079,106 @@ test("战术反制风险：assault 隐藏格挡调整保持原行为", async () 
   assert.equal(withoutBlock.action.card?.definitionId,"assault");
 });
 
-test("回合能量事件公开配置基础、零阵营加成和装备加成且不能突破上限", async () => { const {game,small}=makeTeamFixture();small.energy=3;small.equipment=instance("energyDevice");game.cleanupManager.delay=async()=>true;game.aiController.selectAction=async()=>({type:"end"});let before=null,after=null;game.eventBus.on("beforeTurnEnergyGain","test:before",(event)=>{before={baseAmount:event.baseAmount,teamBonus:event.teamBonus,equipmentBonus:event.equipmentBonus,amount:event.amount};});game.eventBus.on("afterTurnEnergyGain","test:after",(event)=>{after=event.actualAmount;});await game.takeTurn(small,game.state.gameId);assert.deepEqual(before,{baseAmount:1,teamBonus:0,equipmentBonus:1,amount:2});assert.equal(after,1);assert.equal(small.energy,4); });
+// ---- 窥探与卡牌选择 ----
+
 test("AI 未知牌按位置采样而不因真实 definitionId 改变选择位置", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>.6});b.hand=[instance("counter"),instance("charge"),instance("block")];const first=game.aiController.cardSelector.chooseHiddenCards(a,b,1)[0];b.hand=[instance("assault"),instance("recover"),instance("energyDevice")];const second=game.aiController.cardSelector.chooseHiddenCards(a,b,1)[0];assert.equal(first.definitionId,"charge");assert.equal(second.definitionId,"recover"); });
+
 test("AI 窥探优先选择未知手牌位置而非已知低价值牌", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0});const known=instance("counter"),first=instance("charge"),second=instance("assault");b.hand=[known,first,second];game.rememberPrivateCard(a,b,known);const chosen=game.aiController.cardSelector.chooseHiddenCards(a,b,1,null,{purpose:"scout"})[0];assert.equal(chosen,first); });
+
 test("AI 窥探未知位置超量时受控随机选择且不读取未知真实牌面", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0.6});const known=instance("counter"),first=instance("charge"),second=instance("assault");let reads=0;for(const card of [first,second]){const definitionId=card.definitionId,aiValue=card.aiValue;Object.defineProperty(card,"definitionId",{configurable:true,get(){reads+=1;return definitionId;}});Object.defineProperty(card,"aiValue",{configurable:true,get(){reads+=1;return aiValue;}});}b.hand=[known,first,second];game.rememberPrivateCard(a,b,known);const chosen=game.aiController.cardSelector.chooseHiddenCards(a,b,1,null,{purpose:"scout"})[0];assert.equal(reads,0);assert.equal(chosen,second); });
+
 test("AI 窥探未知不足时先选未知再用已知低价值补足且不重复", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0});const high=instance("counter"),low=instance("block"),unknown=instance("charge");b.hand=[high,low,unknown];game.rememberPrivateCard(a,b,high);game.rememberPrivateCard(a,b,low);const chosen=game.aiController.cardSelector.chooseHiddenCards(a,b,2,null,{purpose:"scout"});assert.equal(chosen.length,2);assert.equal(chosen[0],unknown);assert.equal(chosen[1],low);assert.notEqual(chosen[0],chosen[1]); });
+
 test("AI 窥探全部已知时按低价值顺序稳定回退", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0.99});const high=instance("counter"),low=instance("block"),lowest=instance("charge");b.hand=[high,low,lowest];for(const card of b.hand)game.rememberPrivateCard(a,b,card);const chosen=game.aiController.cardSelector.chooseHiddenCards(a,b,2,null,{purpose:"spy-gap"});assert.deepEqual(chosen,[lowest,low]); });
+
 test("AI 窥探遵循 excludedCardIds", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0});const known=instance("counter"),excluded=instance("charge"),target=instance("assault");b.hand=[known,excluded,target];game.rememberPrivateCard(a,b,known);const chosen=game.aiController.cardSelector.chooseHiddenCards(a,b,1,new Set([excluded.id]),{purpose:"scout"})[0];assert.equal(chosen,target); });
+
+// ---- 转移评分与动作 ----
+
 test("AI 掠夺选择已知高价值手牌而非较低价值装备", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0});const low=instance("block"),high=instance("counter");b.hand=[low,high];b.equipment=instance("energyDevice");game.rememberPrivateCard(a,b,high);const chosen=game.aiController.cardSelector.chooseZoneCard(a,b,{purpose:"plunder"});assert.equal(chosen.zone,"hand");assert.equal(chosen.card,high); });
+
 test("AI 掠夺装备价值高于手牌与未知期望值时选择装备", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0});b.hand.push(instance("charge"));b.equipment=instance("energyDevice");const chosen=game.aiController.cardSelector.chooseZoneCard(a,b,{purpose:"plunder"});assert.equal(chosen.zone,"equipment");assert.equal(chosen.card,b.equipment); });
+
 test("AI 破坏把未知位置按期望值4比较且不读取真实牌面", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0});const known=instance("block"),unknown=instance("counter");let reads=0;const definitionId=unknown.definitionId,aiValue=unknown.aiValue;Object.defineProperty(unknown,"definitionId",{configurable:true,get(){reads+=1;return definitionId;}});Object.defineProperty(unknown,"aiValue",{configurable:true,get(){reads+=1;return aiValue;}});b.hand=[known,unknown];game.rememberPrivateCard(a,b,known);const chosen=game.aiController.cardSelector.chooseZoneCard(a,b,{purpose:"destroy"});assert.equal(reads,0);assert.equal(chosen.zone,"hand");assert.equal(chosen.card,known); });
+
 test("AI choosePlayerZoneCard 向手牌选择传递 excludedCardIds", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b],{random:()=>0});const high=instance("counter"),low=instance("block");b.hand=[high,low];game.rememberPrivateCard(a,b,high);game.rememberPrivateCard(a,b,low);const chosen=await game.choosePlayerZoneCard(a,b,"测试",null,new Set([high.id]),{purpose:"destroy"});assert.equal(chosen.zone,"hand");assert.equal(chosen.card,low); });
+
 test("AI 转移评分对己方来源到敌方接收返回负无穷", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dawn"),receiver=makePlayer("receiver",2,"dusk");from.hand.push(instance("block"));const {game}=makeGame([actor,from,receiver]);assert.equal(scoreTransferCombination({actor,from,receiver,zone:"hand"}),Number.NEGATIVE_INFINITY); });
+
 test("AI 转移候选不包含己方来源到敌方接收组合", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dawn"),enemy=makePlayer("enemy",2,"dusk"),ally=makePlayer("ally",3,"dawn");from.hp=1;from.hand.push(instance("charge"),instance("assault"));const {game}=makeGame([actor,from,enemy,ally]);const candidates=buildTransferCandidates({actor,sources:[from],getReceivers:()=>[enemy,ally]});assert.equal(candidates.find((entry)=>entry.receiverId===enemy.id).score,Number.NEGATIVE_INFINITY);const best=chooseBestPositiveTransfer(candidates);assert.ok(best);assert.notEqual(best.receiverId,enemy.id); });
+
 test("AI 异常己方给敌方转移计划在准备阶段被拒绝", async () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dawn"),receiver=makePlayer("receiver",2,"dusk"),use=instance("transfer"),held=instance("block");actor.hand.push(use);from.hand.push(held);const {game}=makeGame([actor,from,receiver]);assert.equal(await game.prepareTransferIntent(actor,use,{sourceId:from.id,receiverId:receiver.id,zone:"hand"}),null);assert.ok(from.hand.includes(held)); });
+
 test("真人仍可把己方手牌转移给敌方", async () => { const actor=makePlayer("actor",0,"dawn","human"),from=makePlayer("from",1,"dawn"),receiver=makePlayer("receiver",2,"dusk"),use=instance("transfer"),held=instance("block");actor.hand.push(use);from.hand.push(held);from.bumpHandVersion();const {game}=makeGame([actor,from,receiver]);const prepared=await game.prepareTransferIntent(actor,use,{sourceId:from.id,receiverId:receiver.id,zone:"hand"});assert.ok(prepared);assert.equal(prepared.privateIntent.receiver,receiver);assert.equal(prepared.privateIntent.card,held); });
+
 test("AI 转移己方到己方选择受伤接收者更需要的已知调息", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dawn"),receiver=makePlayer("receiver",2,"dawn");const {game}=makeGame([actor,from,receiver],{random:()=>0});const assault=instance("assault"),recover=instance("recover");from.hand=[assault,recover];game.rememberPrivateCard(actor,from,assault);game.rememberPrivateCard(actor,from,recover);receiver.hp=2;const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,from,1,null,{purpose:"transfer",receiver})[0];assert.equal(chosen,recover); });
+
 test("AI 转移己方到己方选择低血接收者更需要的已知格挡", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dawn"),receiver=makePlayer("receiver",2,"dawn");const {game}=makeGame([actor,from,receiver],{random:()=>0});const charge=instance("charge"),block=instance("block");from.hand=[charge,block];game.rememberPrivateCard(actor,from,charge);game.rememberPrivateCard(actor,from,block);receiver.hp=1;const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,from,1,null,{purpose:"transfer",receiver})[0];assert.equal(chosen,block); });
+
 test("AI 转移己方到己方不转走来源更需要的已知调息", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dawn"),receiver=makePlayer("receiver",2,"dawn");const {game}=makeGame([actor,from,receiver],{random:()=>0});const recover=instance("recover"),charge=instance("charge");from.hand=[recover,charge];game.rememberPrivateCard(actor,from,recover);game.rememberPrivateCard(actor,from,charge);from.hp=1;const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,from,1,null,{purpose:"transfer",receiver})[0];assert.equal(chosen,charge); });
+
 test("AI 转移己方到己方无溢出且无正支援收益时不生成", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dawn"),receiver=makePlayer("receiver",2,"dawn");const use=instance("transfer"),charge=instance("charge");actor.hand.push(use);from.hand.push(charge);const {game}=makeGame([actor,from,receiver]);game.rememberPrivateCard(actor,from,charge);assert.equal(game.aiController.actionGenerator.generate(actor).some((entry)=>entry.card?.id===use.id),false); });
+
 test("AI 转移己方到己方未知牌只在溢出空间收益足够时胜出", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dawn"),receiver=makePlayer("receiver",2,"dawn");const use=instance("transfer");actor.hand.push(use);const known=instance("block"),unknown=instance("charge");from.hand=[known,unknown];const {game}=makeGame([actor,from,receiver],{random:()=>0});game.rememberPrivateCard(actor,from,known);from.hp=3;assert.equal(game.aiController.actionGenerator.generate(actor).some((entry)=>entry.card?.id===use.id),false);from.hp=1;const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);assert.ok(action);const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,from,1,null,{purpose:"transfer",receiver})[0];assert.equal(chosen,unknown); });
+
 test("AI 转移敌方到己方选择团队净收益最高的已知候选", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn");const {game}=makeGame([actor,from,receiver],{random:()=>0});const low=instance("charge"),high=instance("counter");from.hand=[low,high];game.rememberPrivateCard(actor,from,low);game.rememberPrivateCard(actor,from,high);const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,from,1,null,{purpose:"transfer",receiver})[0];assert.equal(chosen,high); });
+
 test("AI 转移敌方到己方已知与未知期望值4混合时平局优先已知", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn","ai",0);const {game}=makeGame([actor,from,receiver],{random:()=>0});const known=instance("assault"),unknown=instance("counter");let reads=0;const definitionId=unknown.definitionId,aiValue=unknown.aiValue;Object.defineProperty(unknown,"definitionId",{configurable:true,get(){reads+=1;return definitionId;}});Object.defineProperty(unknown,"aiValue",{configurable:true,get(){reads+=1;return aiValue;}});from.hand=[known,unknown];game.rememberPrivateCard(actor,from,known);const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,from,1,null,{purpose:"transfer",receiver},{})[0];assert.equal(reads,0);assert.equal(chosen,known); });
+
 test("AI 转移敌方到己方未知候选胜出时只随机未知位置且不读取真实牌面", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn");const {game}=makeGame([actor,from,receiver],{random:()=>0.6});const first=instance("charge"),second=instance("assault");let reads=0;for(const card of [first,second]){const definitionId=card.definitionId,aiValue=card.aiValue;Object.defineProperty(card,"definitionId",{configurable:true,get(){reads+=1;return definitionId;}});Object.defineProperty(card,"aiValue",{configurable:true,get(){reads+=1;return aiValue;}});}from.hand=[first,second];const candidate=chooseTransferHandCandidate(actor,from,receiver);assert.equal(candidate.selectionKind,"unknown");assert.equal(candidate.cardId,null);const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,from,1,null,{purpose:"transfer",receiver})[0];assert.equal(reads,0);assert.equal(chosen,second); });
+
 test("AI 敌方到敌方高威胁来源低威胁接收者且净削弱为正时生成", () => { const actor=makePlayer("actor",0,"dawn"),source=makePlayer("source",1,"dusk"),receiver=makePlayer("receiver",2,"dusk");const {game}=makeGame([actor,source,receiver]);const block=instance("block");source.hand.push(block);game.rememberPrivateCard(actor,source,block);source.hp=1;source.energy=3;const candidates=buildTransferCandidates({actor,sources:[source],allowedReceiverIds:new Set([receiver.id]),getReceivers:()=>[receiver]});const best=chooseBestPositiveTransfer(candidates);assert.ok(best);assert.equal(best.receiverId,receiver.id);assert.ok(best.score>=5); });
+
 test("AI 敌方到敌方威胁差不足时不生成", () => { const actor=makePlayer("actor",0,"dawn"),source=makePlayer("source",1,"dusk"),receiver=makePlayer("receiver",2,"dusk");const {game}=makeGame([actor,source,receiver]);const block=instance("block");source.hand.push(block);game.rememberPrivateCard(actor,source,block);const candidates=buildTransferCandidates({actor,sources:[source],allowedReceiverIds:new Set([receiver.id]),getReceivers:()=>[receiver]});assert.equal(chooseBestPositiveTransfer(candidates),null); });
+
 test("AI 敌方到敌方低威胁来源高威胁接收者不生成", () => { const actor=makePlayer("actor",0,"dawn"),source=makePlayer("source",1,"dusk"),receiver=makePlayer("receiver",2,"dusk");const {game}=makeGame([actor,source,receiver]);const block=instance("block");source.hand.push(block);game.rememberPrivateCard(actor,source,block);receiver.hp=1;receiver.energy=3;const candidates=buildTransferCandidates({actor,sources:[source],allowedReceiverIds:new Set([receiver.id]),getReceivers:()=>[receiver]});assert.equal(chooseBestPositiveTransfer(candidates),null); });
+
 test("AI 敌方到敌方接收者收益抵消来源损失时不生成", () => { const actor=makePlayer("actor",0,"dawn"),source=makePlayer("source",1,"dusk"),receiver=makePlayer("receiver",2,"dusk");const {game}=makeGame([actor,source,receiver]);const block=instance("block");source.hand.push(block);game.rememberPrivateCard(actor,source,block);source.hp=1;source.energy=3;receiver.hp=1;const candidates=buildTransferCandidates({actor,sources:[source],allowedReceiverIds:new Set([receiver.id]),getReceivers:()=>[receiver]});assert.equal(chooseBestPositiveTransfer(candidates),null); });
+
 test("AI 敌方到敌方极小正分被专用门槛拒绝", () => { const actor=makePlayer("actor",0,"dawn"),source=makePlayer("source",1,"dusk"),receiver=makePlayer("receiver",2,"dusk");const {game}=makeGame([actor,source,receiver]);const charge=instance("charge");source.hand.push(charge);game.rememberPrivateCard(actor,source,charge);source.hp=2;source.energy=3;receiver.hp=3;receiver.hand.push(instance("assault"),instance("assault"),instance("assault"),instance("assault"));const candidates=buildTransferCandidates({actor,sources:[source],allowedReceiverIds:new Set([receiver.id]),getReceivers:()=>[receiver]});assert.equal(chooseBestPositiveTransfer(candidates),null); });
-test("B2 threatView 保留玩家 ID", () => { const player={id:"player-b",alive:true,battleTeam:"dusk",hp:3,maxHp:4};assert.equal(threatView(player).id,"player-b"); });
-test("B2 threatView 保留 ID 使近期攻击者记忆参与威胁评分", () => { const viewer={battleTeam:"dawn"},target={id:"player-b",alive:true,battleTeam:"dusk",hp:3,maxHp:4,shield:0,energy:1,handCount:1,tags:[],roleTags:[],statuses:[]};const targetView=threatView(target);assert.equal(targetView.id,"player-b");const withMemory=ThreatCalculator.calculate(viewer,targetView,{recentAggressors:{"player-b":3}},1);const withoutMemory=ThreatCalculator.calculate(viewer,targetView,{recentAggressors:{}},1);assert.equal(withMemory-withoutMemory,6); });
-test("B2 近期攻击者记忆决定敌方转移威胁差门槛", () => { const actor={id:"actor",battleTeam:"dawn"},source={id:"source",battleTeam:"dusk",alive:true,hp:2,maxHp:4,shield:0,energy:0,handCount:1,knownCards:[{cardId:"k1",definitionId:"block"}],roleTags:[],tags:[],statuses:[]},receiver={id:"receiver",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:4,roleTags:[],tags:[],statuses:[]};const build=(memory)=>buildTransferCandidates({actor:{...actor,aiMemory:{recentAggressors:memory}},sources:[source],allowedReceiverIds:new Set([receiver.id]),getReceivers:()=>[receiver]});assert.equal(chooseBestPositiveTransfer(build({})),null);const best=chooseBestPositiveTransfer(build({source:3}));assert.ok(best);assert.equal(best.receiverId,receiver.id); });
-test("B2 threatView 无 ID 输入兼容", () => { assert.equal(threatView(undefined).id,undefined);assert.equal(threatView(null).id,undefined); });
+
+test("转移威胁：threatView 保留玩家 ID", () => { const player={id:"player-b",alive:true,battleTeam:"dusk",hp:3,maxHp:4};assert.equal(threatView(player).id,"player-b"); });
+
+test("转移威胁：threatView 保留 ID 使近期攻击者记忆参与威胁评分", () => { const viewer={battleTeam:"dawn"},target={id:"player-b",alive:true,battleTeam:"dusk",hp:3,maxHp:4,shield:0,energy:1,handCount:1,tags:[],roleTags:[],statuses:[]};const targetView=threatView(target);assert.equal(targetView.id,"player-b");const withMemory=ThreatCalculator.calculate(viewer,targetView,{recentAggressors:{"player-b":3}},1);const withoutMemory=ThreatCalculator.calculate(viewer,targetView,{recentAggressors:{}},1);assert.equal(withMemory-withoutMemory,6); });
+
+test("转移威胁：近期攻击者记忆决定敌方转移威胁差门槛", () => { const actor={id:"actor",battleTeam:"dawn"},source={id:"source",battleTeam:"dusk",alive:true,hp:2,maxHp:4,shield:0,energy:0,handCount:1,knownCards:[{cardId:"k1",definitionId:"block"}],roleTags:[],tags:[],statuses:[]},receiver={id:"receiver",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:4,roleTags:[],tags:[],statuses:[]};const build=(memory)=>buildTransferCandidates({actor:{...actor,aiMemory:{recentAggressors:memory}},sources:[source],allowedReceiverIds:new Set([receiver.id]),getReceivers:()=>[receiver]});assert.equal(chooseBestPositiveTransfer(build({})),null);const best=chooseBestPositiveTransfer(build({source:3}));assert.ok(best);assert.equal(best.receiverId,receiver.id); });
+
+test("转移威胁：threatView 无 ID 输入兼容", () => { assert.equal(threatView(undefined).id,undefined);assert.equal(threatView(null).id,undefined); });
+
 test("转移评分与执行对同一已知牌选择一致", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn");const {game}=makeGame([actor,from,receiver],{random:()=>0});const low=instance("block"),high=instance("counter");from.hand=[low,high];game.rememberPrivateCard(actor,from,low);game.rememberPrivateCard(actor,from,high);const candidate=chooseTransferHandCandidate(actor,from,receiver);assert.equal(candidate.selectionKind,"known");const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,from,1,null,{purpose:"transfer",receiver})[0];assert.equal(chosen.id,candidate.cardId);assert.equal(chosen,high); });
+
 test("转移评分选择未知候选时执行只从未知位置随机选择", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn");const {game}=makeGame([actor,from,receiver],{random:()=>0.6});const first=instance("charge"),second=instance("assault");from.hand=[first,second];const candidate=chooseTransferHandCandidate(actor,from,receiver);assert.equal(candidate.selectionKind,"unknown");const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,from,1,null,{purpose:"transfer",receiver})[0];assert.equal(chosen,second); });
+
 test("转移评分快照 handCount+非空 knownCards+未知位置混合正确", () => { const actor={id:"actor",battleTeam:"dawn"};const from={id:"from",battleTeam:"dusk",hp:4,maxHp:4,handCount:3,knownCards:[{cardId:"k1",definitionId:"block"},{cardId:"k2",definitionId:"counter"}]};const receiver={id:"receiver",battleTeam:"dawn",hp:4,maxHp:4,handCount:0};const candidate=chooseTransferHandCandidate(actor,from,receiver);assert.equal(candidate.selectionKind,"known");assert.equal(candidate.cardId,"k2");assert.equal(candidate.expectedValue,8);assert.equal(scoreTransferCombination({actor,from,receiver,zone:"hand"}),16); });
+
 test("真实与深层模拟选择相同来源接收者及候选类型", () => { const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");const use=instance("transfer"),held=instance("block");actor.hand.push(use);enemy.hand.push(held);const {game}=makeGame([actor,enemy,ally]);game.rememberPrivateCard(actor,enemy,held);const realAction=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);const visible=createAiVisibleState(actor.id,game.state);const simAction=game.aiController.actionGenerator.generateFromVisible(visible,actor.id).find((entry)=>entry.card?.id===use.id);assert.ok(realAction);assert.ok(simAction);assert.equal(realAction.selection.sourceId,simAction.selection.sourceId);assert.equal(realAction.selection.receiverId,simAction.selection.receiverId);const realCandidate=chooseTransferHandCandidate(actor,enemy,ally);const simFrom=visible.players.find((player)=>player.id===enemy.id);const simAlly=visible.players.find((player)=>player.id===ally.id);const simCandidate=chooseTransferHandCandidate(actor,simFrom,simAlly);assert.equal(realCandidate.selectionKind,simCandidate.selectionKind);assert.equal(realCandidate.cardId,simCandidate.cardId); });
+
 test("AI 自己作为转移来源时执行与评分选择同一张情境最优牌", () => { const actor=makePlayer("actor",0,"dawn"),receiver=makePlayer("receiver",1,"dawn");const {game}=makeGame([actor,receiver],{random:()=>0});const recover=instance("recover"),charge=instance("charge");actor.hand.push(recover,charge);receiver.hp=2;const candidate=chooseTransferHandCandidate(actor,actor,receiver);assert.equal(candidate.selectionKind,"known");assert.equal(candidate.cardId,recover.id);const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,actor,1,null,{purpose:"transfer",receiver})[0];assert.equal(chosen,recover);assert.equal(chosen.id,candidate.cardId); });
+
 test("AI 对自己手牌无 transfer purpose 时仍按最低基础价值选择", () => { const actor=makePlayer("actor",0,"dawn"),receiver=makePlayer("receiver",1,"dawn");const {game}=makeGame([actor,receiver],{random:()=>0});const recover=instance("recover"),charge=instance("charge");actor.hand.push(recover,charge);const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,actor,1)[0];assert.equal(chosen,charge); });
+
 test("转移评分预计牌值已知牌接入角色价值且未知牌回退4", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn");const {game}=makeGame([actor,from,receiver]);const low=instance("charge"),high=instance("counter"),unknown=instance("assault");from.hand=[low,high,unknown];game.rememberPrivateCard(actor,from,low);game.rememberPrivateCard(actor,from,high);assert.equal(expectedHandValue(actor,from,"highest"),9);assert.equal(expectedHandValue(actor,from,"lowest"),4); });
+
 test("转移角色权重：相同突袭不同来源角色的来源损失精确反映角色差值", () => { const actor={id:"actor",battleTeam:"dawn"};const receiver={id:"receiver",battleTeam:"dawn",generalId:"spirit-medic",hp:3,maxHp:3};const makeFrom=(generalId)=>({id:"from",battleTeam:"dusk",generalId,hp:3,maxHp:3,handCount:1,knownCards:[{cardId:"k",definitionId:"assault"}]});const blade=chooseTransferHandCandidate(actor,makeFrom("blade-walker"),receiver);const warden=chooseTransferHandCandidate(actor,makeFrom("oath-warden"),receiver);assert.equal(blade.selectionKind,"known");assert.equal(blade.expectedValue,getRoleCardAiValue("spirit-medic","assault"));assert.equal(blade.utility,getRoleCardAiValue("blade-walker","assault")+getRoleCardAiValue("spirit-medic","assault"));assert.equal(warden.utility,getRoleCardAiValue("oath-warden","assault")+getRoleCardAiValue("spirit-medic","assault"));assert.equal(blade.utility-warden.utility,2); });
+
 test("转移角色权重：已知牌接收者角色价值进入效用与 expectedValue", () => { const actor={id:"actor",battleTeam:"dawn"};const source={id:"source",battleTeam:"dusk",generalId:"blade-walker",hp:3,maxHp:3,handCount:1,knownCards:[{cardId:"k",definitionId:"counter"}]};const bladeReceiver={id:"r1",battleTeam:"dawn",generalId:"blade-walker",hp:4,maxHp:4};const medicReceiver={id:"r2",battleTeam:"dawn",generalId:"spirit-medic",hp:3,maxHp:3};const bladeCandidate=chooseTransferHandCandidate(actor,source,bladeReceiver);const medicCandidate=chooseTransferHandCandidate(actor,source,medicReceiver);const bladeValue=getRoleCardAiValue("blade-walker","counter"),medicValue=getRoleCardAiValue("spirit-medic","counter");assert.equal(bladeCandidate.expectedValue,bladeValue);assert.equal(medicCandidate.expectedValue,medicValue);assert.equal(bladeCandidate.utility,bladeValue+bladeValue);assert.equal(medicCandidate.utility,bladeValue+medicValue);assert.equal(bladeValue,7);assert.equal(medicValue,9);assert.ok(medicCandidate.utility>bladeCandidate.utility); });
+
 test("转移角色权重：恢复牌同时叠加角色基础价值与生命情境修正", () => { const full={generalId:"spirit-medic",hp:3,maxHp:3};const low={generalId:"spirit-medic",hp:1,maxHp:3};const bladeFull={generalId:"blade-walker",hp:4,maxHp:4};assert.equal(cardSituationValue("recover",full),getRoleCardAiValue("spirit-medic","recover")-2);assert.equal(cardSituationValue("recover",low),getRoleCardAiValue("spirit-medic","recover")+7+2);assert.equal(cardSituationValue("recover",bladeFull),getRoleCardAiValue("blade-walker","recover")-2);assert.equal(cardSituationValue("recover",full)-cardSituationValue("recover",bladeFull),2); });
+
 test("转移角色权重：未知牌动态期望随角色与剩余分布变化", () => { const actor={id:"actor",battleTeam:"dawn"};const makeSource=(generalId)=>({id:"from",battleTeam:"dusk",generalId,hp:4,maxHp:4,handCount:1,knownCards:[]});const makeReceiver=(generalId)=>({id:"receiver",battleTeam:"dawn",generalId,hp:3,maxHp:3,handCount:0});const assaultCounts={assault:10},recoverCounts={recover:10};const assaultCandidate=chooseTransferHandCandidate(actor,makeSource("blade-walker"),makeReceiver("spirit-medic"),null,assaultCounts);const recoverCandidate=chooseTransferHandCandidate(actor,makeSource("blade-walker"),makeReceiver("spirit-medic"),null,recoverCounts);assert.equal(assaultCandidate.selectionKind,"unknown");assert.equal(assaultCandidate.expectedValue,getRoleCardAiValue("spirit-medic","assault"));assert.equal(assaultCandidate.utility,getRoleCardAiValue("blade-walker","assault")+getRoleCardAiValue("spirit-medic","assault"));assert.equal(recoverCandidate.expectedValue,getRoleCardAiValue("spirit-medic","recover")-2);assert.equal(recoverCandidate.utility,getRoleCardAiValue("blade-walker","recover")-2+getRoleCardAiValue("spirit-medic","recover")-2);const wardenSource=chooseTransferHandCandidate(actor,makeSource("oath-warden"),makeReceiver("spirit-medic"),null,assaultCounts);assert.equal(wardenSource.utility,getRoleCardAiValue("oath-warden","assault")+getRoleCardAiValue("spirit-medic","assault"));assert.equal(assaultCandidate.utility-wardenSource.utility,2);const bladeReceiver=chooseTransferHandCandidate(actor,makeSource("blade-walker"),makeReceiver("blade-walker"),null,assaultCounts);assert.equal(bladeReceiver.expectedValue,getRoleCardAiValue("blade-walker","assault"));assert.equal(assaultCandidate.expectedValue-bladeReceiver.expectedValue,-2);assert.throws(()=>chooseTransferHandCandidate(actor,makeSource("blade-walker"),makeReceiver("spirit-medic"),null,{"not-a-card":1}),/未知卡牌 ID/); });
+
 test("转移角色权重：无有效剩余计数时未知值回退4并保持旧调用兼容", () => { const actor={id:"actor",battleTeam:"dawn"};const from={id:"from",battleTeam:"dusk",generalId:"blade-walker",hp:4,maxHp:4,handCount:1,knownCards:[]};const receiver={id:"receiver",battleTeam:"dawn",generalId:"spirit-medic",hp:3,maxHp:3,handCount:0};for(const counts of [null,undefined,{}, {assault:0},{assault:-1}]){const candidate=chooseTransferHandCandidate(actor,from,receiver,null,counts);assert.equal(candidate.selectionKind,"unknown");assert.equal(candidate.expectedValue,UNKNOWN_HAND_EXPECTED_VALUE);assert.equal(candidate.utility,UNKNOWN_HAND_EXPECTED_VALUE*2);}assert.equal(expectedHandValue(actor,from,"lowest"),UNKNOWN_HAND_EXPECTED_VALUE);assert.equal(expectedHandValue(actor,from,"highest"),UNKNOWN_HAND_EXPECTED_VALUE); });
+
 test("转移角色权重：generalId 缺失回退全局基础值且非法角色 ID 抛错", () => { assert.equal(cardSituationValue("assault",{hp:4,maxHp:4}),getBaseCardAiValue("assault"));assert.equal(cardSituationValue("counter",{hp:4,maxHp:4}),getBaseCardAiValue("counter"));assert.throws(()=>cardSituationValue("assault",{generalId:"not-a-general",hp:4,maxHp:4}),/未知角色 ID/);assert.throws(()=>cardSituationValue("not-a-card",{hp:4,maxHp:4}),/未知卡牌 ID/); });
+
 test("转移角色权重：根节点规划与实际选牌使用同一剩余计数选择相同候选", () => { const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),receiver=makePlayer("receiver",2,"dawn");const use=instance("transfer"),known=instance("assault"),unknown=instance("counter");actor.hand.push(use);from.hand=[known,unknown];const {game}=makeGame([actor,from,receiver],{random:()=>0});game.rememberPrivateCard(actor,from,known);const counts={recover:10};game.aiController.knowledge.remainingCounts=()=>({...counts});const plan=game.aiController.cardSelector.chooseTransferCombination(actor,CARD_DEFINITIONS.transfer,[from]);assert.ok(plan);const candidate=chooseTransferHandCandidate(actor,from,receiver,null,counts);assert.equal(candidate.selectionKind,"unknown");assert.equal(plan.score,scoreTransferCombination({actor,from,receiver,zone:"hand",remainingCardCounts:counts}));const chosen=game.aiController.cardSelector.chooseHiddenCards(actor,from,1,null,{purpose:"transfer",receiver})[0];assert.equal(chosen,unknown); });
+
 test("转移角色权重：深层规划使用可见快照剩余计数", () => { const makeState=(counts)=>({playPhaseEnded:false,remainingCardCounts:counts,players:[{id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},{id:"f",seatIndex:1,battleTeam:"dusk",generalId:"oath-warden",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,knownCards:[],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},{id:"r",seatIndex:2,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,shield:0,energy:0,handCount:0,attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0}]});const actor=makePlayer("real",0,"dawn"),enemy=makePlayer("other",1,"dusk");const {game}=makeGame([actor,enemy]);const generator=game.aiController.actionGenerator;const assaultState=makeState({assault:10}),recoverState=makeState({recover:10});const assaultAction=generator.generateFromVisible(assaultState,"a").find((entry)=>entry.card?.definitionId==="transfer");const recoverAction=generator.generateFromVisible(recoverState,"a").find((entry)=>entry.card?.definitionId==="transfer");assert.ok(assaultAction);assert.ok(recoverAction);assert.notEqual(assaultAction.selection.receiverId,recoverAction.selection.receiverId);assert.notEqual(assaultAction.selection.score,recoverAction.selection.score);const assaultCandidate=chooseTransferHandCandidate(assaultState.players[0],assaultState.players[1],assaultState.players[2],null,assaultState.remainingCardCounts);const recoverCandidate=chooseTransferHandCandidate(recoverState.players[0],recoverState.players[1],recoverState.players[2],null,recoverState.remainingCardCounts);assert.equal(assaultCandidate.selectionKind,"unknown");assert.equal(assaultCandidate.expectedValue,getRoleCardAiValue("spirit-medic","assault"));assert.equal(recoverCandidate.selectionKind,"unknown");assert.equal(recoverCandidate.expectedValue,getRoleCardAiValue("spirit-medic","recover")-2); });
+
 test("转移动作携带已知候选身份", () => { const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");const use=instance("transfer"),held=instance("block");actor.hand.push(use);enemy.hand.push(held);const {game}=makeGame([actor,enemy,ally]);game.rememberPrivateCard(actor,enemy,held);const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);assert.ok(action);const selection=action.selection;assert.equal(selection.selectionKind,"known");assert.equal(selection.cardId,held.id);assert.equal(selection.definitionId,"block");assert.equal(selection.expectedValue,getRoleCardAiValue("spirit-medic","block"));assert.equal(selection.availableUnknownCount,0);assert.ok(selection.sourceId&&selection.receiverId&&selection.zone==="hand"&&Number.isFinite(selection.score)); });
+
 test("转移动作携带未知候选类别与精确未知数量", () => { const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");const use=instance("transfer");actor.hand.push(use);enemy.hand.push(instance("counter"),instance("harvest"));const {game}=makeGame([actor,enemy,ally]);const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);assert.ok(action);const selection=action.selection;assert.equal(selection.selectionKind,"unknown");assert.equal(selection.cardId,null);assert.equal(selection.definitionId,null);assert.equal(selection.availableUnknownCount,2);assert.equal(selection.zone,"hand"); });
+
 test("其他玩家已知突袭转入当前 AI 后下一层可生成突袭", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,attackUsed:0,attackLimit:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
@@ -2105,6 +4196,7 @@ test("其他玩家已知突袭转入当前 AI 后下一层可生成突袭", () =
   const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");
   assert.ok(follow.some((entry)=>entry.card?.id==="known-assault"&&entry.card?.definitionId==="assault"));
 });
+
 test("当前 AI 把已知突袭转给其他玩家且不创建其 hand", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"spirit-medic",alive:true,hp:3,maxHp:3,shield:0,energy:0,handCount:2,hand:[{id:"use",definitionId:"transfer"},{id:"own-assault",definitionId:"assault"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
@@ -2124,6 +4216,7 @@ test("当前 AI 把已知突袭转给其他玩家且不创建其 hand", () => {
   const follow=game.aiController.actionGenerator.generateFromVisible(next,"a");
   assert.ok(!follow.some((entry)=>entry.card?.id==="own-assault"));
 });
+
 test("其他玩家之间移动已知身份", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{block:10},players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
@@ -2142,6 +4235,7 @@ test("其他玩家之间移动已知身份", () => {
   const moved=nextReceiver.knownCards.find((entry)=>entry.cardId==="k5");
   assert.ok(moved);assert.equal(moved.definitionId,"block");assert.equal(nextReceiver.blockProbability,1);
 });
+
 test("目标反制风险下转移部分生效且来源与接收者身份互补", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
@@ -2164,6 +4258,7 @@ test("目标反制风险下转移部分生效且来源与接收者身份互补",
   assert.ok(receiverAssault);assertClose(simulator.cardAvailability(receiverAssault),0.55);
   assert.equal(nextReceiver.handCount,0);
 });
+
 test("部分概率转移中来源与接收者身份世界互补", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
     {id:"z-actor",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"move",definitionId:"transfer"}],equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4,counterProbability:0,attackRange:1},
@@ -2195,6 +4290,7 @@ test("部分概率转移中来源与接收者身份世界互补", () => {
   assertClose(nextSource.handCount,.6);
   assertClose(1 - nextSource.handCount,receiverAvailable);
 });
+
 test("部分可用来源身份按未知聚合处理且不创建身份", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
     {id:"z-actor",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"move",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
@@ -2218,6 +4314,7 @@ test("部分可用来源身份按未知聚合处理且不创建身份", () => {
   assertClose(nextActor.handCount,1);
   assertClose(nextReceiver.handCount,0);
 });
+
 test("手牌期望数量按可用概率计算且部分身份归入未知", () => {
   const actor={id:"actor",battleTeam:"dawn",generalId:"blade-walker",hp:4,maxHp:4,hand:[
     {id:"full",definitionId:"assault",availabilityStateBranches:[{probability:1,conditions:{},available:true}]},
@@ -2240,6 +4337,7 @@ test("手牌期望数量按可用概率计算且部分身份归入未知", () =>
   assert.equal(candidateKc.cardId,null);
   assertClose(candidateKc.availableUnknownCount,.5);
 });
+
 test("部分概率高价值牌不再按完整确定身份评分", () => {
   const actor={id:"actor",battleTeam:"dawn"};
   const receiver={id:"receiver",battleTeam:"dawn",generalId:"spirit-medic",hp:3,maxHp:3};
@@ -2253,6 +4351,7 @@ test("部分概率高价值牌不再按完整确定身份评分", () => {
   const fullScore=scoreTransferCombination({actor,from:makeFrom([{cardId:"high-full",definitionId:"counter",availabilityStateBranches:[{probability:1,conditions:{},available:true}]}],1),receiver,zone:"hand"});
   assert.ok(partialScore<fullScore);
 });
+
 test("防御性旧动作对部分可用 known 身份按未知聚合处理", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
@@ -2269,6 +4368,7 @@ test("防御性旧动作对部分可用 known 身份按未知聚合处理", () =
   assertClose(nextSource.handCount,0);
   assertClose(nextReceiver.handCount,.4);
 });
+
 test("接收者已有同身份部分可用时按新增概率合并", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{block:10},players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
@@ -2287,6 +4387,7 @@ test("接收者已有同身份部分可用时按新增概率合并", () => {
   const simulator=new AiSimulator({players:[]});
   assert.throws(()=>simulator.addSimulatedKnownCard({players:[]},{id:"r2",knownCards:[{cardId:"dup",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]}]},{cardId:"dup",definitionId:"assault"},[{probability:1,conditions:{},occurs:true}]),/不同 definitionId/);
 });
+
 test("未知牌转移只移动聚合数量且不创建身份", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{assault:10},players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
@@ -2304,6 +4405,7 @@ test("未知牌转移只移动聚合数量且不创建身份", () => {
   assert.equal(nextSource.knownCards.length,0);
   assert.equal(nextActor.blockProbability,0);
 });
+
 test("已知转移同步来源与接收者四类摘要", () => {
   const scenarios=[["recover","expectedRecoverCount"],["block","blockProbability"],["counter","counterProbability"],["assault","expectedAssaultCount"]];
   for(const [definitionId,field] of scenarios){
@@ -2321,6 +4423,7 @@ test("已知转移同步来源与接收者四类摘要", () => {
     if(definitionId==="assault"){assert.equal(nextSource.assaultResponseProbability,0);assert.equal(nextReceiver.assaultResponseProbability,1);}
   }
 });
+
 test("模拟执行评分阶段选中的同一已知牌身份", () => {
   const state={playPhaseEnded:false,remainingCardCounts:{counter:10},players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",generalId:"blade-walker",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"use",definitionId:"transfer"}],attackRange:1,equipmentDefinitionId:null,equipmentRetentionProbability:0,counterProbability:0},
@@ -2342,169 +4445,53 @@ test("模拟执行评分阶段选中的同一已知牌身份", () => {
   assert.ok(!nextReceiver.knownCards.some((entry)=>entry.cardId==="low-charge"));
   assert.ok(nextSource.knownCards.some((entry)=>entry.cardId==="low-charge"));
 });
+
 test("Planner 描述不保存转移候选身份", () => {
   const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
   const {game}=makeGame([actor,enemy,ally]);
   const descriptor=game.aiController.planner.describeAction({type:"card",card:instance("transfer"),targets:[],selection:{sourceId:"s",receiverId:"r",zone:"hand",score:9,selectionKind:"known",cardId:"c1",definitionId:"block",expectedValue:7,availableUnknownCount:0}});
   assert.deepEqual(descriptor.selection,{sourceId:"s",receiverId:"r",zone:"hand"});
 });
-test("AI 自救响应策略为确定必用，敌方救援为拒绝", () => { const a=makePlayer("a",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([a,ally,enemy]);assert.equal(game.aiController.responsePolicy.shouldRespond(a,"dyingRescue",{target:a},[instance("recover")]),true);assert.equal(game.aiController.responsePolicy.shouldRespond(enemy,"dyingRescue",{target:a},[instance("recover")]),false); });
-test("AI 延迟在配置上下限内且快速模式显著缩短", () => { const natural=sampleDelay(()=>.5,GAME_CONFIG.aiInitialThinkMinMs,GAME_CONFIG.aiInitialThinkMaxMs,false);const fast=sampleDelay(()=>.5,GAME_CONFIG.aiInitialThinkMinMs,GAME_CONFIG.aiInitialThinkMaxMs,true);assert.ok(natural>=GAME_CONFIG.aiInitialThinkMinMs&&natural<=GAME_CONFIG.aiInitialThinkMaxMs);assert.ok(fast<natural/2); });
-test("AI 各可见思考阶段使用集中配置范围且不改变搜索预算", () => { const ranges={initial:[3000,5500],action:[1800,3500],response:[1800,3200],discard:[1600,2800],end:[900,1600]};for(const [phase,[minimum,maximum]] of Object.entries(ranges)){const low=getAiDelay({random:()=>0,simulationMode:false,animationFastMode:false},phase),high=getAiDelay({random:()=>.999999,simulationMode:false,animationFastMode:false},phase),fast=getAiDelay({random:()=>.5,simulationMode:false,animationFastMode:true},phase);assert.equal(low,minimum);assert.ok(high<=maximum&&high>=maximum-1);assert.ok(fast<(minimum+maximum)/4);}assert.equal(GAME_CONFIG.aiComplexThinkMaxMs,7000);assert.equal(GAME_CONFIG.aiSearchTimeBudgetMs,900); });
-test("复杂局面首次思考实际使用 aiComplexThinkMaxMs 上限", () => { const game={random:()=>.999999,simulationMode:false,animationFastMode:false};assert.equal(getAiDelay(game,"initial"),GAME_CONFIG.aiInitialThinkMaxMs);assert.equal(getAiDelay(game,"initial",{complex:true}),GAME_CONFIG.aiComplexThinkMaxMs); });
-test("关闭逐动作重规划时会复用仍合法的束搜索牌序", async () => { const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("b",1,"dusk");const charge=instance("charge");actor.hand.push(charge);const {game}=makeGame([actor,enemy]);game.aiReplanAfterEveryAction=false;let plans=0;game.aiController.selectAction=async()=>{plans+=1;game.aiController.planner.lastPlannedSequence=[{type:"card",cardId:"charge",cardInstanceId:charge.id,targetIds:[]},{type:"end",cardId:null,cardInstanceId:null,targetIds:[]}];return {type:"card",card:charge,targets:[]};};await game.takeAiPlayPhase(actor,game.state.gameId);assert.equal(plans,1);assert.equal(actor.energy,1);assert.equal(actor.hand.length,0); });
-test("aiRandomnessRange 控制近似同分动作的评分扰动", () => { const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("b",1,"dusk");const {game}=makeGame([actor,enemy]);const beam=[{score:10,id:"first"},{score:9.9,id:"second"}];game.aiRandomnessRange=0;assert.equal(game.aiController.planner.chooseCandidate(beam).id,"first");const rolls=[0,1];game.random=()=>rolls.shift();game.aiRandomnessRange=.1;assert.equal(game.aiController.planner.chooseCandidate(beam).id,"second"); });
-test("ThreatCalculator 的稳定角色标签与近期攻击者会进入目标评分", () => { const viewer={battleTeam:"dawn"},base={id:"x",alive:true,battleTeam:"dusk",hp:3,maxHp:4,shield:0,energy:1,handCount:1,tags:[],statuses:[]};const plain=ThreatCalculator.calculate(viewer,{...base,roleTags:[]},{recentAggressors:{}},1);const support=ThreatCalculator.calculate(viewer,{...base,roleTags:["support","healer"]},{recentAggressors:{}},1);assert.ok(support>plain);const actor=makePlayer("a",0,"dawn"),first=makePlayer("first",1,"dusk","ai",4),second=makePlayer("second",2,"dusk","ai",4);const {game}=makeGame([actor,first,second]);actor.aiMemory.recentAggressors[second.id]=3;const visible=createAiVisibleState(actor.id,game.state),assault=instance("assault"),score=(target)=>game.aiController.evaluator.actionUtility({type:"card",card:assault,targets:[target]},actor,visible);game.aiDifficultyMultiplier=0;assert.equal(score(first),score(second));game.aiDifficultyMultiplier=1;assert.ok(score(second)>score(first)); });
-test("CleanupManager 可取消尚未完成的延迟", async () => { const cleanup=new CleanupManager();const waiting=cleanup.delay(5000);cleanup.cleanup();assert.equal(await waiting,false);assert.equal(cleanup.pending.size,0); });
-test("响应窗口超时会按放弃处理并清除响应状态", async () => { const previousWindow=globalThis.window;globalThis.window={setInterval,clearInterval};const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};const fake={responseState:null,elements:{response_panel:panel},game:{cleanupManager:{delay:async()=>true}},render(){}};try{const result=await UIManager.prototype.requestResponse.call(fake,{id:"timeout-response",requiredCount:1,legalCardIds:[],timeoutMs:1,presentation:{eventText:"测试事件",responseText:"需要响应",availabilityText:"当前不足",buttonLabel:"格挡"}},"格挡");assert.equal(result.status,"declined");assert.equal(fake.responseState,null);assert.equal(panel.innerHTML,"");}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
-test("销毁对局会以 cancelled 结束未完成响应并清空请求", async () => { const a=makePlayer("a",0,"dawn"),human=makePlayer("human",1,"dusk","human");const {game,ui}=makeGame([a,human]);let settle=null;ui.requestResponse=()=>new Promise((resolve)=>{settle=resolve;});ui.cancelPendingInteractions=()=>{settle?.({status:"cancelled"});};const pending=game.responseSystem.requestCardResponse(human,"block",{source:a,target:human,card:instance("assault")},1);await Promise.resolve();assert.equal(game.state.pendingResponses.length,1);game.dispose();const result=await pending;assert.equal(result.status,"cancelled");assert.deepEqual(result.cards,[]);assert.equal(game.state.pendingResponses.length,0); });
-test("旧局格挡窗口取消后不能扣血、刷新新局 UI 或夺回绑定", async () => {
-  const ui=makeOwnedUi(),source=makePlayer("old-attacker",0,"dawn"),target=makePlayer("old-human",1,"dusk","human");
-  const old=configureOwnedGame(new Game(ui),[source,target]);ui.attachGame(old);
-  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="block")openedResolve();};
-  const hp=target.hp,pending=old.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});await opened;
-  old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-human",0,"dawn","human"),makePlayer("new-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
-  assert.equal(await pending,0);assert.equal(target.hp,hp);assert.equal(ui.game,fresh);assert.deepEqual(ui.renders,[]);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
-  assert.equal(old.ui.render(old),undefined);assert.equal(ui.game,fresh);
-});
-test("旧局护援技能响应取消后不会弃牌或减少新一段伤害", async () => {
-  const ui=makeOwnedUi(),source=makePlayer("old-aid-source",0,"dusk","ai",4),target=makePlayer("old-aid-target",1,"dawn","ai",2),guardian=makePlayer("old-aid-guardian",2,"dawn","human",1);
-  const payment=instance("charge");guardian.hand.push(payment);const old=configureOwnedGame(new Game(ui),[source,target,guardian]);registerPassiveSkills(old);ui.attachGame(old);
-  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="skill")openedResolve();};const hp=target.hp,pending=old.damage(source,target,1,{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill"});await opened;
-  old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-aid-human",0,"dawn","human"),makePlayer("new-aid-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
-  assert.equal(await pending,0);assert.equal(target.hp,hp);assert.ok(guardian.hand.includes(payment));assert.equal(guardian.roundFlags.guardianAidUsed,false);assert.equal(ui.game,fresh);assert.deepEqual(ui.mutations,[]);
-});
-test("事件处理器等待中销毁旧局时，雷达判定不会恢复后继续移动牌或伤害", async () => {
-  const ui=makeOwnedUi(),source=makePlayer("old-judge-source",0,"dawn"),target=makePlayer("old-judge-target",1,"dusk");target.equipment=instance("defenseDevice");
-  const old=configureOwnedGame(new Game(ui),[source,target]);ui.attachGame(old);const judgmentCard=instance("charge");old.state.deck.cards.push(judgmentCard);
-  let openedResolve,release;const opened=new Promise((resolve)=>{openedResolve=resolve;});const gate=new Promise((resolve)=>{release=resolve;});old.eventBus.on("judgmentRevealed","test:pause",async()=>{openedResolve();await gate;});
-  const hp=target.hp,pending=old.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});await opened;old.dispose();
-  const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-judge-human",0,"dawn","human"),makePlayer("new-judge-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];release();
-  assert.equal(await pending,0);assert.equal(target.hp,hp);assert.ok(old.state.deck.judgmentZone.includes(judgmentCard));assert.equal(fresh.state.deck.judgmentZone.length,0);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
-});
-test("旧局治疗和能量事件等待恢复后不再修改角色", async () => {
-  for (const mode of ["heal","energy"]) {
-    const ui=makeOwnedUi(),actor=makePlayer(`old-${mode}-actor`,0,"dawn"),enemy=makePlayer(`old-${mode}-enemy`,1,"dusk");const old=configureOwnedGame(new Game(ui),[actor,enemy]);ui.attachGame(old);
-    if(mode==="heal")actor.hp-=1;else actor.energy=0;const before=mode==="heal"?actor.hp:actor.energy;let openedResolve,release;const opened=new Promise((resolve)=>{openedResolve=resolve;});const gate=new Promise((resolve)=>{release=resolve;});old.eventBus.on(mode==="heal"?"beforeHeal":"beforeGainEnergy",`test:${mode}`,async()=>{openedResolve();await gate;});
-    const pending=mode==="heal"?old.heal(actor,actor,1):old.gainEnergy(actor,1,{reason:"测试"});await opened;old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer(`new-${mode}-human`,0,"dawn","human"),makePlayer(`new-${mode}-enemy`,1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];release();
-    assert.equal(await pending,0);assert.equal(mode==="heal"?actor.hp:actor.energy,before);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
-  }
-});
-for (const definitionId of ["duel","provoke"]) test(`旧局${CARD_DEFINITIONS[definitionId].name}响应取消后不会继续造成伤害`, async () => {
-  const ui=makeOwnedUi(),source=makePlayer(`old-${definitionId}-source`,0,"dawn"),target=makePlayer(`old-${definitionId}-target`,1,"dusk","human");
-  const old=configureOwnedGame(new Game(ui),[source,target]);ui.attachGame(old);const use=instance(definitionId);source.hand.push(use);
-  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="counter"){const state=ui.responseState;ui.responseState=null;state.resolve({status:"declined"});}else openedResolve();};
-  const hp=target.hp,pending=old.playCard(source,use,[target]);await opened;
-  old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer(`new-${definitionId}-human`,0,"dawn","human"),makePlayer(`new-${definitionId}-enemy`,1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
-  assert.equal(await pending,false);assert.equal(target.hp,hp);assert.equal(ui.game,fresh);assert.deepEqual(ui.renders,[]);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
-});
-test("旧局反制链取消后不会完成战术结算或污染新局中央区域", async () => {
-  const ui=makeOwnedUi(),source=makePlayer("old-counter-source",0,"dawn"),responder=makePlayer("old-counter-human",1,"dusk","human");
-  const old=configureOwnedGame(new Game(ui),[source,responder]);ui.attachGame(old);const use=instance("harvest");source.hand.push(use);
-  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="counter")openedResolve();};
-  const pending=old.playCard(source,use,[]);await opened;old.dispose();
-  const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-counter-human",0,"dawn","human"),makePlayer("new-counter-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
-  assert.equal(await pending,false);assertCardOnlyIn(old,use,"discard");assert.equal(fresh.state.resolvingCards.length,0);assert.equal(ui.game,fresh);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
-});
-test("旧局公共池、目标和弃牌等待取消后不移动实体且不影响新 UI", async () => {
-  for (const mode of ["public","target","discard"]) {
-    const ui=makeOwnedUi(),human=makePlayer(`old-${mode}-human`,0,"dawn","human"),enemy=makePlayer(`old-${mode}-enemy`,1,"dusk");
-    const old=configureOwnedGame(new Game(ui),[human,enemy]);ui.attachGame(old);let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});let pending,tracked;
-    if (mode==="public") {
-      ui.onResponse=()=>{const state=ui.responseState;ui.responseState=null;state.resolve({status:"declined"});};ui.onPublic=openedResolve;
-      old.state.deck.cards.push(instance("block"),instance("charge"));tracked=instance("mutualBenefit");human.hand.push(tracked);pending=old.playCard(human,tracked,[]);
-    } else if (mode==="target") {
-      ui.onTarget=openedResolve;tracked=instance("assault");human.hand.push(tracked);pending=old.handleHumanCard(tracked.id);
-    } else {
-      ui.onDiscard=openedResolve;tracked=instance("block");human.hand.push(tracked,instance("charge"));human.hp=1;old.state.phase="discard";pending=old.handleDiscardPhase(human,old.state.gameId);
-    }
-    await opened;old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer(`new-${mode}-human`,0,"dawn","human"),makePlayer(`new-${mode}-enemy`,1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
-    await pending;assert.equal(ui.game,fresh);assert.deepEqual(ui.renders,[]);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);assert.ok(!human.hand.includes(undefined));if(mode!=="public")assert.ok(human.hand.includes(tracked));
-  }
-});
-test("重新征召 cleanup 会清空隐藏令牌、公共池和响应", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));game.cardSelectionSystem.createHiddenSelection(b);game.state.pendingResponses.push({id:"old"});game.dispose();assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.state.pendingResponses.length,0);assert.equal(game.state.publicCardPool.length,0); });
-test("重新征召后按新阵营重新设置能量上限和无限调息", async () => { const verify=async(seed)=>{let value=seed;const random=()=>((value=Math.imul(value,1664525)+1013904223>>>0)/4294967296),ui=makeUi(),game=new Game(ui,random);game.simulationMode=true;game.cleanupManager.delay=async()=>!game.state.isDisposed;const candidates=game.startSelection();for(const player of game.state.players)assert.equal(player.maxEnergy,game.teamRules.getTeamSize(player)===2?4:3);await game.confirmGeneral(candidates[0].id);for(const player of game.state.players){assert.equal(player.maxEnergy,game.teamRules.getMaxEnergy(player));assert.equal(player.turnFlags.recoverLimit,null);}game.dispose();await game.loopPromise;};await verify(11);await verify(29); });
-test("装备槽空置和六种装备生成不同可访问 DOM", () => { const p=makePlayer("a",0,"dawn");const empty=equipmentSlotTemplate(p,true);assert.match(empty,/is-empty|装备槽为空/);for(const id of ["energyDevice","recycleDevice","defenseDevice","battleDevice","telescope","barrierDevice"]){p.equipment=instance(id);const markup=equipmentSlotTemplate(p,true);assert.match(markup,new RegExp(CARD_DEFINITIONS[id].name));assert.match(markup,new RegExp(CARD_DEFINITIONS[id].description.slice(0,6)));assert.notEqual(markup,empty);} });
-test("UIManager 源码不直接写生命、能量、手牌或胜负", async () => { const source=await readFile(projectFile("js/ui/UIManager.js"),"utf8");for(const forbidden of [/\.hp\s*=/,/\.energy\s*=/,/\.hand\.(?:push|splice|pop|shift|unshift)/,/\.winnerTeam\s*=/,/\.isGameOver\s*=/])assert.doesNotMatch(source,forbidden); });
-test("全 AI 快速对局能推进到合法胜者", async () => { let seed=77;const random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/4294967296);const ui=makeUi();const game=new Game(ui,random);game.simulationMode=true;game.setAnimationFastMode(true);game.cleanupManager.delay=async()=>!game.state.isDisposed;const candidates=game.startSelection();game.state.players[0].controllerType="ai";await game.confirmGeneral(candidates[0].id);const result=await Promise.race([game.loopPromise.then(()=>"done"),new Promise((resolve)=>setTimeout(()=>resolve("timeout"),10000))]);assert.equal(result,"done");assert.ok(["dawn","dusk"].includes(game.state.winnerTeam));game.dispose(); });
 
-// 跨模块集成回归
-test("掠夺装备收入手牌且不会替换或弃置使用者旧装备", async () => {
-  const actor=makePlayer("actor",0,"dawn","human"),target=makePlayer("target",1,"dusk"),use=instance("plunder");
-  const old=instance("barrierDevice"),moved=instance("energyDevice");actor.equipment=old;actor.hand.push(use);target.equipment=moved;
-  const {game}=makeGame([actor,target]);const selection=game.cardSelectionSystem.createHiddenSelection(target);
-  await game.playCard(actor,use,[target],{zone:"equipment",equipmentCardId:moved.id,selectionId:selection.selectionId});
-  assert.equal(actor.equipment,old);assert.ok(actor.hand.includes(moved));assert.ok(!game.state.deck.discardPile.includes(old));assert.equal(target.equipment,null);
-  assert.equal(await game.playCard(actor,moved,[]),true);assert.equal(actor.equipment,moved);assert.ok(game.state.deck.discardPile.includes(old));
-});
-test("雷达装备判定后仍可正常使用已有格挡", async () => {
-  const attacker=makePlayer("attacker",0,"dawn"),defender=makePlayer("defender",1,"dusk","human");
-  const {game,ui}=makeGame([attacker,defender],{response:(request)=>request.type==="block"});
-  defender.equipment=instance("defenseDevice");defender.hand.push(instance("block"));game.state.deck.cards.push(instance("energyDevice"));
-  const hp=defender.hp;await game.damage(attacker,defender,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
-  assert.equal(defender.hp,hp);assert.equal(defender.hand.length,0);assert.ok(ui.responseRequests.some((request)=>request.type==="block"));
-});
-test("互利规则目标包含所有存活角色且调律师只触发一次协调", async () => {
-  const tuner=makePlayer("tuner",0,"dawn","ai",7),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
-  const {game}=makeGame([tuner,ally,enemy]);registerPassiveSkills(game);
-  assert.deepEqual(RuleEngine.getCardTargets(game,tuner,CARD_DEFINITIONS.mutualBenefit),[tuner,ally,enemy]);
-  game.state.deck.cards.push(instance("assault"),instance("block"),instance("charge"),instance("shield"));
-  const use=instance("mutualBenefit");tuner.hand.push(use);await game.playCard(tuner,use,[]);
-  assert.equal(tuner.turnFlags.coordinationTriggered,true);assert.equal(tuner.hand.length,2);
-});
-test("调律师转移给队友把接收者作为有效目标并只触发一次协调", async () => {
-  const tuner=makePlayer("tuner",0,"dawn","ai",7),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
-  const {game}=makeGame([tuner,enemy,ally]);registerPassiveSkills(game);game.state.deck.cards.push(instance("charge"));let usedEvent=null;game.eventBus.on("cardUsed","test:successful-transfer",(event)=>{usedEvent=event;});
-  const use=instance("transfer"),moved=instance("block");tuner.hand.push(use);enemy.hand.push(moved);enemy.bumpHandVersion();
-  const hidden=game.cardSelectionSystem.createHiddenSelection(enemy);
-  await game.playCard(tuner,use,[],{sourceId:enemy.id,receiverId:ally.id,zone:"hand",tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});
-  assert.ok(ally.hand.includes(moved));assert.equal(tuner.turnFlags.coordinationTriggered,true);assert.equal(tuner.hand.length,1);assert.equal(usedEvent.cancelled,false);assert.equal(usedEvent.resolved,true);assert.deepEqual(usedEvent.effectiveTargets,[ally]);
-});
-test("AI 破坏与掠夺只生成敌方目标，窃取规则也排除队友", () => {
-  const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
-  ally.hand.push(instance("block"));enemy.hand.push(instance("block"));
-  const destroy=instance("destroy"),plunder=instance("plunder");actor.hand.push(destroy,plunder);
-  const {game}=makeGame([actor,ally,enemy]);
-  const actions=game.aiController.actionGenerator.generate(actor);
-  for(const id of ["destroy","plunder"]){
-    const targets=actions.filter((action)=>action.card?.definitionId===id).map((action)=>action.targets[0]);
-    assert.ok(targets.length>0);assert.ok(targets.every((target)=>target.battleTeam!==actor.battleTeam));
-  }
-  assert.ok(!RuleEngine.getSkillTargets(game,actor,ACTIVE_SKILLS.stealSkill).includes(ally));
-});
 test("AI 转移忽略真人队友装备区的雷达", () => {
   const actor=makePlayer("actor",0,"dawn"),humanAlly=makePlayer("human-ally",1,"dawn","human");
   actor.hand.push(instance("transfer"));humanAlly.equipment=instance("defenseDevice");const {game}=makeGame([actor,humanAlly]);
   assert.equal(game.aiController.actionGenerator.generate(actor).some((action)=>action.card?.definitionId==="transfer"),false);
 });
+
 test("AI 转移不会把仅有装备的角色作为来源", () => {
   const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn");
   actor.hand.push(instance("transfer"));ally.equipment=instance("defenseDevice");const {game}=makeGame([actor,ally]);
   assert.equal(game.aiController.actionGenerator.generate(actor).some((action)=>action.card?.definitionId==="transfer"),false);
 });
+
 test("AI 转移最佳方案为负数时不进入实际动作列表", () => {
   const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk");
   actor.hand.push(instance("transfer"));const {game}=makeGame([actor,enemy]);
   assert.equal(game.aiController.actionGenerator.generate(actor).some((action)=>action.card?.definitionId==="transfer"),false);
 });
+
 test("AI 转移不会从敌人装备区移走高价值装备", () => {
   const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
   const use=instance("transfer");actor.hand.push(use);actor.equipment=instance("energyDevice");enemy.equipment=instance("defenseDevice");const {game}=makeGame([actor,enemy,ally]);
   const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);
   assert.equal(action,undefined);assert.equal(enemy.equipment.definitionId,"defenseDevice");assert.equal(ally.equipment,null);
 });
+
 test("AI 转移在角色同时拥有手牌和装备时只生成手牌选择", () => {
   const actor=makePlayer("actor",0,"dawn"),low=makePlayer("low",1,"dusk"),high=makePlayer("high",2,"dusk"),ally=makePlayer("ally",3,"dawn");
   const use=instance("transfer");actor.hand.push(use);low.hand.push(instance("block"));low.equipment=instance("energyDevice");high.equipment=instance("defenseDevice");const {game}=makeGame([actor,low,high,ally]);
   const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);
   assert.ok(action);assert.equal(action.selection.sourceId,low.id);assert.equal(action.selection.zone,"hand");assert.equal(Object.hasOwn(action.selection,"equipmentCardId"),false);
 });
+
 test("AI 转移可将即将溢出的队友手牌移给有空间的队友", () => {
   const actor=makePlayer("actor",0,"dawn"),overflow=makePlayer("overflow",1,"dawn"),receiver=makePlayer("receiver",2,"dawn");
   const use=instance("transfer");actor.hand.push(use);overflow.hp=1;overflow.hand.push(instance("harvest"),instance("charge"));const {game}=makeGame([actor,overflow,receiver]);
   const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);
   assert.ok(action);assert.equal(action.selection.sourceId,overflow.id);assert.equal(action.selection.zone,"hand");
 });
+
 test("AI 转移真实动作与深层模拟对同一公开局面选择一致", () => {
   const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
   const use=instance("transfer");actor.hand.push(use);actor.equipment=instance("energyDevice");enemy.hand.push(instance("block"));enemy.equipment=instance("defenseDevice");const {game}=makeGame([actor,enemy,ally]);
@@ -2514,616 +4501,35 @@ test("AI 转移真实动作与深层模拟对同一公开局面选择一致", ()
   const plan=(action)=>[action?.selection?.sourceId,action?.selection?.receiverId,action?.selection?.zone];
   assert.ok(real);assert.ok(simulated);assert.equal(real.selection.zone,"hand");assert.deepEqual(plan(real),plan(simulated));
 });
+
 test("AI 模拟器拒绝伪造的装备区转移选择", () => {
   const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn"),use=instance("transfer"),equipment=instance("defenseDevice");actor.hand.push(use);enemy.equipment=equipment;const {game}=makeGame([actor,enemy,ally]),visible=createAiVisibleState(actor.id,game.state),next=new AiSimulator(visible).apply(visible,{type:"card",card:use,targets:[],selection:{sourceId:enemy.id,receiverId:ally.id,zone:"equipment",equipmentCardId:equipment.id}},actor.id),nextEnemy=next.players.find((player)=>player.id===enemy.id),nextAlly=next.players.find((player)=>player.id===ally.id);assert.equal(nextEnemy.equipmentDefinitionId,"defenseDevice");assert.equal(nextAlly.equipmentDefinitionId,null);assert.equal(nextAlly.handCount,0);
 });
+
 test("交换敌人未知手牌的真实 definitionId 不改变 AI 转移计划", () => {
   const actor=makePlayer("actor",0,"dawn"),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
   const use=instance("transfer"),first=instance("counter"),second=instance("harvest");actor.hand.push(use);enemy.hand.push(first,second);const {game}=makeGame([actor,enemy,ally]);
   const choose=()=>{const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);return [action?.selection?.sourceId,action?.selection?.receiverId,action?.selection?.zone];};
   const before=choose();[first.definitionId,second.definitionId]=[second.definitionId,first.definitionId];assert.deepEqual(choose(),before);
 });
+
 test("AI 以自己为转移来源时排除正在使用的转移实体", async () => {
   const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn"),use=instance("transfer"),otherA=instance("harvest"),otherB=instance("charge");
   actor.hp=1;actor.hand.push(use,otherA,otherB);const {game}=makeGame([actor,ally]);
   const action=game.aiController.actionGenerator.generate(actor).find((entry)=>entry.card?.id===use.id);assert.ok(action);assert.equal(action.selection.sourceId,actor.id);assert.equal(action.selection.zone,"hand");
   const prepared=await game.prepareTransferIntent(actor,use,action.selection);assert.ok(prepared);assert.notEqual(prepared.privateIntent.card,use);assert.ok([otherA,otherB].includes(prepared.privateIntent.card));
 });
+
 test("真人以自己为来源时核心拒绝选择正在使用的转移实体", async () => {
   const actor=makePlayer("actor",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),use=instance("transfer"),other=instance("harvest");actor.hand.push(use,other);
   const {game}=makeGame([actor,ally]);const hidden=game.cardSelectionSystem.createHiddenSelection(actor);
   assert.equal(await game.playCard(actor,use,[],{sourceId:actor.id,receiverId:ally.id,zone:"hand",tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId}),false);
   assert.ok(actor.hand.includes(use));assert.ok(actor.hand.includes(other));assert.ok(!game.state.deck.resolvingCards.includes(use));assert.ok(!game.state.deck.discardPile.includes(use));
 });
+
 test("排除转移牌后没有其他手牌时即使有装备也不能开始转移", async () => {
   const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn"),use=instance("transfer");actor.hand.push(use);actor.equipment=instance("defenseDevice");const {game}=makeGame([actor,ally]);
   assert.equal(RuleEngine.canPlayCard(game,actor,use).ok,false);assert.equal(await game.playCard(actor,use,[],{sourceId:actor.id,receiverId:ally.id,zone:"hand"}),false);assert.ok(actor.hand.includes(use));
-});
-test("锁定牌在结算前离开来源时转移失败且没有有效目标、成功日志或协调", async () => {
-  const tuner=makePlayer("tuner",0,"dawn","ai",7),from=makePlayer("from",1,"dusk"),escaped=makePlayer("escaped",2,"dusk"),ally=makePlayer("ally",3,"dawn"),use=instance("transfer"),locked=instance("block");
-  tuner.hand.push(use);from.hand.push(locked);const {game}=makeGame([tuner,from,escaped,ally]);game.state.deck.cards.push(instance("charge"));registerPassiveSkills(game);let usedEvent=null;
-  game.eventBus.on("beforeCardResolve","test:remove-locked-transfer-card",()=>{const index=from.hand.indexOf(locked);if(index>=0){from.hand.splice(index,1);escaped.hand.push(locked);from.bumpHandVersion();escaped.bumpHandVersion();}});
-  game.eventBus.on("cardUsed","test:failed-transfer",(event)=>{usedEvent=event;});
-  assert.equal(await game.playCard(tuner,use,[],{sourceId:from.id,receiverId:ally.id,zone:"hand"}),true);
-  assert.ok(escaped.hand.includes(locked));assert.ok(!ally.hand.includes(locked));assert.ok(game.state.deck.discardPile.includes(use));assert.ok(!game.state.deck.resolvingCards.includes(use));
-  assert.equal(tuner.turnFlags.coordinationTriggered,false);assert.equal(tuner.hand.length,0);assert.ok(usedEvent);assert.equal(usedEvent.cancelled,true);assert.equal(usedEvent.resolved,false);assert.deepEqual(usedEvent.effectiveTargets,[]);
-  assert.equal(game.state.logs.some((entry)=>entry.message.includes(`${tuner.name}将${from.name}的`)&&entry.message.includes(`转移给了${ally.name}`)),false);
-});
-test("正式击杀敌人额外摸1张牌再判定胜负，救回与队友死亡均不奖励", async () => {
-  const killer=makePlayer("killer",0,"dawn"),enemy=makePlayer("enemy",1,"dusk");
-  const {game}=makeGame([killer,enemy]);game.state.deck.cards.push(instance("charge"),instance("block"));enemy.hp=1;
-  await game.damage(killer,enemy,1,{canBlock:false});
-  assert.equal(enemy.hp,0);assert.equal(enemy.alive,false);assert.equal(killer.hand.length,1);assert.equal(game.state.isGameOver,true);
-  assert.ok(game.state.logs.some((entry)=>entry.message===`${killer.name}击杀了${enemy.name}，额外摸了1张牌。`));
-
-  const source=makePlayer("source",0,"dawn"),rescued=makePlayer("rescued",1,"dusk");rescued.hp=1;rescued.hand.push(instance("recover"));
-  const {game:rescueGame}=makeGame([source,rescued]);rescueGame.state.deck.cards.push(instance("charge"),instance("block"));
-  await rescueGame.damage(source,rescued,1,{canBlock:false});assert.equal(rescued.alive,true);assert.equal(source.hand.length,0);
-
-  const allySource=makePlayer("ally-source",0,"dawn"),allyTarget=makePlayer("ally-target",1,"dawn"),otherEnemy=makePlayer("other-enemy",2,"dusk");
-  const {game:allyGame}=makeGame([allySource,allyTarget,otherEnemy]);allyGame.state.deck.cards.push(instance("charge"),instance("block"));allyTarget.hp=1;
-  await allyGame.damage(allySource,allyTarget,1,{canBlock:false});assert.equal(allySource.hand.length,0);
-});
-test("转移在反制前的日志和响应上下文包含来源与接收者但不泄露隐藏牌名", async () => {
-  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk","human"),receiver=makePlayer("receiver",3,"dawn");
-  const use=instance("transfer"),secret=instance("block");actor.hand.push(use);from.hand.push(secret);from.bumpHandVersion();
-  const {game,ui}=makeGame([actor,from,responder,receiver],{response:()=>false});const hidden=game.cardSelectionSystem.createHiddenSelection(from);
-  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});
-  const request=ui.responseRequests.find((entry)=>entry.type==="counter"&&entry.targetPlayerId===responder.id);
-  assert.match(request.presentation.eventText,new RegExp(`${from.name}.*1张牌.*${receiver.name}`));
-  assert.doesNotMatch(request.presentation.eventText,new RegExp(secret.name));
-  const intentLog=game.state.logs.find((entry)=>entry.message.includes("准备将"));
-  assert.match(intentLog.message,new RegExp(`${from.name}.*1张牌.*${receiver.name}`));assert.doesNotMatch(intentLog.message,new RegExp(secret.name));
-});
-test("隐藏转移传给 AI 响应策略的公开上下文不含锁定手牌资料", async () => {
-  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
-  const use=instance("transfer"),secret={...instance("block"),name:"绝密锁定牌"};actor.hand.push(use);from.hand.push(secret);responder.hand.push(instance("counter"));
-  const {game}=makeGame([actor,from,responder,receiver],{random:()=>0});let receivedContext=null;
-  game.aiController.responsePolicy.shouldRespond=(_player,_type,context)=>{receivedContext=context;return false;};
-  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"hand"});
-  assert.ok(receivedContext);const publicContext=receivedContext.publicTransferContext;assert.ok(publicContext);assert.equal(Object.isFrozen(publicContext),true);
-  for(const forbidden of ["card","cardId","definitionId","hiddenCardName"])assert.equal(Object.hasOwn(publicContext,forbidden),false);
-  const seen=new Set();const contains=(value,needle)=>{if(value===needle)return true;if(!value||typeof value!=="object"||seen.has(value))return false;seen.add(value);return Object.values(value).some((entry)=>contains(entry,needle));};
-  for(const secretValue of [secret,secret.id,secret.definitionId,secret.name]){seen.clear();assert.equal(contains(receivedContext,secretValue),false);}
-  assert.equal(publicContext.safeItemLabel,"1张牌");
-});
-test("转移响应期间手牌换序后仍移动反制前锁定的同一实体", async () => {
-  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
-  const use=instance("transfer"),locked=instance("block"),other=instance("harvest");actor.hand.push(use);from.hand.push(locked,other);responder.hand.push(instance("counter"));
-  const {game}=makeGame([actor,from,responder,receiver],{random:()=>0});game.aiController.responsePolicy.shouldRespond=()=>{from.hand.reverse();return false;};
-  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"hand"});
-  assert.ok(receiver.hand.includes(locked));assert.ok(from.hand.includes(other));assert.ok(!receiver.hand.includes(other));
-});
-test("转移被反制后锁定手牌仍留在来源区域", async () => {
-  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
-  const use=instance("transfer"),locked=instance("block");actor.hand.push(use);from.hand.push(locked);responder.hand.push(instance("counter"));
-  const {game}=makeGame([actor,from,responder,receiver],{random:()=>0});game.aiController.responsePolicy.shouldRespond=()=>true;
-  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"hand"});
-  assert.ok(from.hand.includes(locked));assert.ok(!receiver.hand.includes(locked));
-});
-test("伪造装备区转移不会开启反制窗口或生成公开转移上下文", async () => {
-  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk"),receiver=makePlayer("receiver",3,"dawn");
-  const use=instance("transfer"),radar=instance("defenseDevice"),held=instance("block");actor.hand.push(use);from.hand.push(held);from.equipment=radar;responder.hand.push(instance("counter"));
-  const {game}=makeGame([actor,from,responder,receiver]);let publicContext=null;game.aiController.responsePolicy.shouldRespond=(_player,_type,context)=>{publicContext=context.publicTransferContext;return false;};const selection=game.cardSelectionSystem.createHiddenSelection(from);
-  assert.equal(await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,zone:"equipment",equipmentCardId:radar.id,selectionId:selection.selectionId}),false);
-  assert.equal(publicContext,null);assert.equal(from.equipment,radar);assert.ok(actor.hand.includes(use));assert.equal(game.state.pendingResponses.length,0);
-});
-test("被反制的互利不建立公共牌池且不触发协调", async () => {
-  const tuner=makePlayer("tuner",0,"dawn","ai",7),counterer=makePlayer("counterer",1,"dusk","human"),ally=makePlayer("ally",2,"dawn");
-  const use=instance("mutualBenefit");tuner.hand.push(use);counterer.hand.push(instance("counter"));const {game}=makeGame([tuner,counterer,ally],{response:(request)=>request.type==="counter"});registerPassiveSkills(game);
-  await game.playCard(tuner,use,[]);assert.equal(game.state.publicCardPool.length,0);assert.equal(tuner.turnFlags.coordinationTriggered,false);assert.equal(tuner.hand.length,0);
-});
-test("被反制的转移不移动牌且不触发协调", async () => {
-  const tuner=makePlayer("tuner",0,"dawn","ai",7),from=makePlayer("from",1,"dusk"),counterer=makePlayer("counterer",2,"dusk","human"),ally=makePlayer("ally",3,"dawn");
-  const use=instance("transfer"),locked=instance("block");tuner.hand.push(use);from.hand.push(locked);counterer.hand.push(instance("counter"));const {game}=makeGame([tuner,from,counterer,ally],{response:(request)=>request.type==="counter"});registerPassiveSkills(game);
-  await game.playCard(tuner,use,[],{sourceId:from.id,receiverId:ally.id,zone:"hand"});assert.ok(from.hand.includes(locked));assert.ok(!ally.hand.includes(locked));assert.equal(tuner.turnFlags.coordinationTriggered,false);
-});
-test("协调只看转移接收者：给敌人不触发，从敌人给队友才触发", async () => {
-  const noTriggerTuner=makePlayer("no-trigger",0,"dawn","human",7),allySource=makePlayer("ally-source",1,"dawn"),enemyReceiver=makePlayer("enemy-receiver",2,"dusk");
-  const firstUse=instance("transfer"),firstMoved=instance("harvest");noTriggerTuner.hand.push(firstUse);allySource.hand.push(firstMoved);const {game:firstGame}=makeGame([noTriggerTuner,allySource,enemyReceiver]);registerPassiveSkills(firstGame);
-  await firstGame.playCard(noTriggerTuner,firstUse,[],{sourceId:allySource.id,receiverId:enemyReceiver.id,zone:"hand"});assert.equal(noTriggerTuner.turnFlags.coordinationTriggered,false);
-
-  const enemyOnlyTuner=makePlayer("enemy-only",0,"dawn","ai",7),enemySourceOnly=makePlayer("enemy-source-only",1,"dusk"),enemyReceiverOnly=makePlayer("enemy-receiver-only",2,"dusk");
-  const enemyUse=instance("transfer"),enemyMoved=instance("harvest");enemyOnlyTuner.hand.push(enemyUse);enemySourceOnly.hand.push(enemyMoved);const {game:enemyGame}=makeGame([enemyOnlyTuner,enemySourceOnly,enemyReceiverOnly]);registerPassiveSkills(enemyGame);
-  await enemyGame.playCard(enemyOnlyTuner,enemyUse,[],{sourceId:enemySourceOnly.id,receiverId:enemyReceiverOnly.id,zone:"hand"});assert.equal(enemyOnlyTuner.turnFlags.coordinationTriggered,false);
-
-  const triggerTuner=makePlayer("trigger",0,"dawn","ai",7),enemySource=makePlayer("enemy-source",1,"dusk"),allyReceiver=makePlayer("ally-receiver",2,"dawn");
-  const secondUse=instance("transfer"),secondMoved=instance("harvest");triggerTuner.hand.push(secondUse);enemySource.hand.push(secondMoved);const {game:secondGame}=makeGame([triggerTuner,enemySource,allyReceiver]);secondGame.state.deck.cards.push(instance("charge"));registerPassiveSkills(secondGame);
-  await secondGame.playCard(triggerTuner,secondUse,[],{sourceId:enemySource.id,receiverId:allyReceiver.id,zone:"hand"});assert.equal(triggerTuner.turnFlags.coordinationTriggered,true);assert.ok(allyReceiver.hand.includes(secondMoved));
-});
-test("互利包含多个队友时每次用牌仍只触发一次协调", async () => {
-  const tuner=makePlayer("tuner",0,"dawn","ai",7),allyA=makePlayer("ally-a",1,"dawn"),enemy=makePlayer("enemy",2,"dusk"),allyB=makePlayer("ally-b",3,"dawn");
-  const use=instance("mutualBenefit");tuner.hand.push(use);const {game}=makeGame([tuner,allyA,enemy,allyB]);game.state.deck.cards.push(instance("assault"),instance("block"),instance("charge"),instance("shield"),instance("harvest"));registerPassiveSkills(game);
-  await game.playCard(tuner,use,[]);assert.equal(tuner.turnFlags.coordinationTriggered,true);assert.equal(tuner.hand.length,2);
-});
-test("beforeCardUse 与 beforeCardResolve 取消的牌都不触发协调", async () => {
-  for(const hook of ["beforeCardUse","beforeCardResolve"]){
-    const tuner=makePlayer(`tuner-${hook}`,0,"dawn","ai",7),ally=makePlayer(`ally-${hook}`,1,"dawn"),enemy=makePlayer(`enemy-${hook}`,2,"dusk"),use=instance("mutualBenefit");
-    tuner.hand.push(use);const {game}=makeGame([tuner,ally,enemy]);registerPassiveSkills(game);game.eventBus.on(hook,`test-cancel-${hook}`,(event)=>{event.cancelled=true;});
-    await game.playCard(tuner,use,[]);assert.equal(tuner.turnFlags.coordinationTriggered,false);assert.equal(game.state.publicCardPool.length,0);
-  }
-});
-test("响应牌与装备牌只输出语义日志，不产生底层弃置或通用使用日志", async () => {
-  const attacker=makePlayer("attacker",0,"dawn"),defender=makePlayer("defender",1,"dusk","human");
-  const {game}=makeGame([attacker,defender],{response:()=>true});defender.hand.push(instance("block"));
-  await game.damage(attacker,defender,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
-  assert.ok(game.state.logs.some((entry)=>entry.message===`${defender.name}使用了「格挡」。`));
-  assert.ok(!game.state.logs.some((entry)=>entry.message.includes("因响应·格挡弃置")));
-  const equipment=instance("energyDevice");attacker.hand.push(equipment);await game.playCard(attacker,equipment,[]);
-  assert.ok(game.state.logs.some((entry)=>entry.message===`${attacker.name}装备了「充能桩」。`));
-  assert.ok(!game.state.logs.some((entry)=>entry.message.includes("使用了「充能桩」")));
-});
-
-test("真人破坏预选手牌经过双重反制后仍破坏原实体且不泄露私密选择", async () => {
-  const source=makePlayer("private-destroy-source",0,"dawn","human"),target=makePlayer("private-destroy-target",1,"dusk"),third=makePlayer("private-destroy-third",2,"dawn");
-  const use=instance("destroy"),secret={...instance("charge"),definitionId:"hidden-destroy-definition",name:"隐藏破坏实体标记",description:"隐藏破坏描述标记"},decoy=instance("block"),firstCounter=instance("counter"),secondCounter=instance("counter");
-  source.hand.push(use);target.hand.push(secret,decoy,firstCounter);third.hand.push(secondCounter);
-  const {game,ui}=makeGame([source,target,third]),contexts=[];forceAvailableAiCounters(game,contexts);
-  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0]});
-  assert.ok(selection?.selectionId);assert.ok(game.cardSelectionSystem.selections.size>0);
-  assert.equal(await game.playCard(source,use,[target],selection),true);
-  assert.ok(game.state.deck.discardPile.includes(secret));assert.ok(target.hand.includes(decoy));assert.ok(!target.hand.includes(secret));
-  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
-  for(const context of contexts)assertNoHiddenSelectionLeak(context,[secret]);
-  for(const request of ui.responseRequests)assertNoHiddenSelectionLeak(request,[secret]);
-});
-
-test("真人掠夺预选手牌经过双重反制后仍获得原实体", async () => {
-  const source=makePlayer("private-plunder-source",0,"dawn","human"),target=makePlayer("private-plunder-target",1,"dusk"),third=makePlayer("private-plunder-third",2,"dawn");
-  const use=instance("plunder"),secret=instance("harvest"),decoy=instance("charge"),firstCounter=instance("counter"),secondCounter=instance("counter");
-  source.hand.push(use);target.hand.push(secret,decoy,firstCounter);third.hand.push(secondCounter);
-  const {game}=makeGame([source,target,third]);forceAvailableAiCounters(game);
-  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0]});
-  assert.equal(await game.playCard(source,use,[target],selection),true);
-  assert.ok(source.hand.includes(secret));assert.ok(target.hand.includes(decoy));assert.ok(!target.hand.includes(secret));
-  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
-});
-
-test("真人掠夺预选装备不受目标反制导致的手牌版本变化影响", async () => {
-  const source=makePlayer("private-equip-source",0,"dawn","human"),target=makePlayer("private-equip-target",1,"dusk"),third=makePlayer("private-equip-third",2,"dawn");
-  const use=instance("plunder"),equipment=instance("defenseDevice"),firstCounter=instance("counter"),secondCounter=instance("counter");
-  source.hand.push(use);target.hand.push(firstCounter);target.equipment=equipment;third.hand.push(secondCounter);
-  const {game}=makeGame([source,target,third]);forceAvailableAiCounters(game);
-  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{equipment:true});
-  assert.equal(await game.playCard(source,use,[target],selection),true);
-  assert.equal(target.equipment,null);assert.equal(source.equipment,null);assert.ok(source.hand.includes(equipment));
-  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
-});
-
-test("真人窥探两张手牌经过双重反制后仍只展示反制前确认的实体", async () => {
-  const source=makePlayer("private-scout-source",0,"dawn","human"),target=makePlayer("private-scout-target",1,"dusk"),third=makePlayer("private-scout-third",2,"dawn");
-  const use=instance("scout"),first=instance("charge"),second=instance("harvest"),counter=instance("counter"),thirdCounter=instance("counter");
-  source.hand.push(use);target.hand.push(first,second,counter);third.hand.push(thirdCounter);
-  const {game,ui}=makeGame([source,target,third]);forceAvailableAiCounters(game);
-  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0,1]});
-  assert.equal(await game.playCard(source,use,[target],selection),true);
-  assert.deepEqual(ui.reveals.at(-1)?.cards,[first,second]);
-  assert.equal(source.aiMemory.knownCardsByPlayer[target.id][first.id],first.definitionId);
-  assert.equal(source.aiMemory.knownCardsByPlayer[target.id][second.id],second.definitionId);
-  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
-});
-
-test("反制期间原预选牌离开区域时破坏安全失败且不改选其他牌", async () => {
-  const source=makePlayer("private-missing-source",0,"dawn","human"),target=makePlayer("private-missing-target",1,"dusk"),third=makePlayer("private-missing-third",2,"dawn");
-  const use=instance("destroy"),selected=instance("charge"),decoy=instance("harvest"),counter=instance("counter"),thirdCounter=instance("counter");
-  source.hand.push(use);target.hand.push(selected,decoy,counter);third.hand.push(thirdCounter);
-  const {game}=makeGame([source,target,third]);forceAvailableAiCounters(game);let usedEvent=null,moved=false;
-  game.eventBus.on("afterCardMove","test:remove-private-destroy-selection",async(event)=>{if(!moved&&event.card===counter){moved=true;await game.discardCardFromHand(target,selected,"反制期间合法移走",{silent:true});}});
-  game.eventBus.on("cardUsed","test:private-destroy-safe-failure",(event)=>{if(event.card===use)usedEvent=event;});
-  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0]});
-  assert.equal(await game.playCard(source,use,[target],selection),true);
-  assert.ok(game.state.deck.discardPile.includes(selected));assert.ok(target.hand.includes(decoy));
-  assert.equal(usedEvent?.resolved,false);assert.deepEqual(usedEvent?.effectiveTargets,[]);
-  assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.cardSelectionSystem.sessions.size,0);
-});
-
-test("窥探预选两张中一张在反制期间离开时只展示仍在原手牌的一张", async () => {
-  const source=makePlayer("private-filter-source",0,"dawn","human"),target=makePlayer("private-filter-target",1,"dusk"),third=makePlayer("private-filter-third",2,"dawn");
-  const use=instance("scout"),left=instance("charge"),remains=instance("harvest"),counter=instance("counter"),thirdCounter=instance("counter");
-  source.hand.push(use);target.hand.push(left,remains,counter);third.hand.push(thirdCounter);
-  const {game,ui}=makeGame([source,target,third]);forceAvailableAiCounters(game);let moved=false;
-  game.eventBus.on("afterCardMove","test:remove-one-private-scout-selection",async(event)=>{if(!moved&&event.card===counter){moved=true;await game.discardCardFromHand(target,left,"反制期间合法移走",{silent:true});}});
-  const selection=await choosePrivateCardThroughInteraction(game,source,use,target,{handIndexes:[0,1]});
-  assert.equal(await game.playCard(source,use,[target],selection),true);
-  assert.deepEqual(ui.reveals.at(-1)?.cards,[remains]);
-  assert.equal(source.aiMemory.knownCardsByPlayer[target.id]?.[left.id],undefined);
-  assert.equal(source.aiMemory.knownCardsByPlayer[target.id][remains.id],remains.definitionId);
-});
-
-test("AI 模拟 end 会设置终止状态且终止快照不再生成动作", () => {
-  const actor=makePlayer("terminal-actor",0,"dawn","ai",0),enemy=makePlayer("terminal-enemy",1,"dusk"),use=instance("harvest");actor.hand.push(use);
-  const {game}=makeGame([actor,enemy]);actor.turnFlags.momentum=2;const visible=createAiVisibleState(actor.id,game.state),terminal=new AiSimulator(visible).apply(visible,{type:"end"},actor.id);
-  assert.equal(visible.playPhaseEnded,false);assert.equal(visible.players[0].momentum,2);assert.equal(terminal.playPhaseEnded,true);assert.equal(terminal.players[0].momentum,0);
-  assert.deepEqual(game.aiController.actionGenerator.generateFromVisible(terminal,actor.id),[]);
-});
-
-test("AI Planner 不扩展 end 根节点，即使动作生成器伪造高收益后续", async () => {
-  const actor=makePlayer("terminal-plan-actor",0,"dawn"),enemy=makePlayer("terminal-plan-enemy",1,"dusk"),fiction=instance("harvest");actor.hand.push(fiction);
-  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state,game.aiController.knowledge.remainingCounts(actor)),planner=game.aiController.planner;
-  game.aiController.actionGenerator.generateFromVisible=()=>[{type:"card",card:fiction,targets:[]}];
-  planner.evaluator.actionUtility=(action)=>action.type==="card"?10000:0;planner.evaluator.stateUtility=()=>10000;
-  const chosen=await planner.plan(actor,visible,[{type:"end"}],{gameId:game.state.gameId});
-  assert.equal(chosen.type,"end");assert.equal(planner.lastSearchStats.expanded,1);assert.deepEqual(planner.lastPlannedSequence.map((action)=>action.type),["end"]);
-});
-
-test("AI 规划序列中的 end 始终位于末尾且真实 AI 仍能正常结束", async () => {
-  const actor=makePlayer("terminal-real-actor",0,"dawn"),enemy=makePlayer("terminal-real-enemy",1,"dusk");
-  const {game}=makeGame([actor,enemy]),visible=createAiVisibleState(actor.id,game.state,game.aiController.knowledge.remainingCounts(actor)),actions=game.aiController.getLegalActions(actor);
-  assert.deepEqual(actions,[{type:"end"}]);assert.equal((await game.aiController.planner.plan(actor,visible,actions,{gameId:game.state.gameId})).type,"end");
-  const endIndex=game.aiController.planner.lastPlannedSequence.findIndex((action)=>action.type==="end");assert.equal(endIndex,game.aiController.planner.lastPlannedSequence.length-1);
-  await game.takeAiPlayPhase(actor,game.state.gameId);assert.equal(actor.hand.length,0);assert.equal(game.state.phase,"play");
-});
-
-test("两张响应牌原子支付成功时统一提交并发送完整移动事件", async () => {
-  const player=makePlayer("atomic-success",0,"dawn"),enemy=makePlayer("atomic-success-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
-  const {game}=makeGame([player,enemy]),events=[];game.eventBus.on("afterCardMove","test:atomic-success",(event)=>events.push(event.card));
-  const beforeVersion=player.handVersion,result=await game.payCardsFromHandAtomically(player,[first,second],"测试原子支付",{silent:true,expectedCount:2});
-  assert.equal(result.status,"used");assert.deepEqual(result.cards,[first,second]);assert.equal(player.hand.length,0);assert.equal(player.handVersion,beforeVersion+1);
-  assert.ok(game.state.deck.discardPile.includes(first));assert.ok(game.state.deck.discardPile.includes(second));assert.deepEqual(events,[first,second]);
-});
-
-test("第二张 beforeCardMove 取消时原子响应两张牌都保留", async () => {
-  const player=makePlayer("atomic-cancel",0,"dawn"),enemy=makePlayer("atomic-cancel-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
-  const {game}=makeGame([player,enemy]);game.eventBus.on("beforeCardMove","test:atomic-cancel",(event)=>{if(event.card===second)event.cancelled=true;});
-  const version=player.handVersion,result=await game.payCardsFromHandAtomically(player,[first,second],"测试原子取消",{silent:true,expectedCount:2});
-  assert.equal(result.status,"invalid");assert.deepEqual(player.hand,[first,second]);assert.equal(player.handVersion,version);assert.equal(game.state.deck.discardPile.includes(first),false);assert.equal(game.state.deck.discardPile.includes(second),false);
-});
-
-test("原子响应支付拒绝已离手实体和重复实体且不移动其余牌", async () => {
-  const player=makePlayer("atomic-invalid",0,"dawn"),enemy=makePlayer("atomic-invalid-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
-  const {game}=makeGame([player,enemy]);player.hand.splice(player.hand.indexOf(second),1);
-  const missing=await game.payCardsFromHandAtomically(player,[first,second],"测试实体已变化",{silent:true,expectedCount:2});
-  assert.equal(missing.status,"invalid");assert.deepEqual(player.hand,[first]);assert.equal(game.state.deck.discardPile.includes(first),false);
-  player.hand.push(second);const duplicate=await game.payCardsFromHandAtomically(player,[first,first],"测试重复实体",{silent:true,expectedCount:2});
-  assert.equal(duplicate.status,"invalid");assert.deepEqual(player.hand,[first,second]);assert.equal(game.state.deck.discardPile.length,0);
-});
-
-test("原子响应支付验证期间 dispose 返回 cancelled 且不消费任何牌", async () => {
-  const player=makePlayer("atomic-dispose",0,"dawn"),enemy=makePlayer("atomic-dispose-enemy",1,"dusk"),first=instance("block"),second=instance("block");player.hand.push(first,second);
-  const {game}=makeGame([player,enemy]);let openedResolve,release;const opened=new Promise((resolve)=>{openedResolve=resolve;}),gate=new Promise((resolve)=>{release=resolve;});
-  game.eventBus.on("beforeCardMove","test:atomic-dispose",async()=>{openedResolve();await gate;});
-  const pending=game.payCardsFromHandAtomically(player,[first,second],"测试销毁取消",{silent:true,expectedCount:2});await opened;game.dispose();release();
-  const result=await pending;assert.equal(result.status,"cancelled");assert.deepEqual(player.hand,[first,second]);assert.equal(game.state.deck.discardPile.length,0);
-});
-
-test("响应系统只有整组原子支付完成后才返回 used", async () => {
-  const attacker=makePlayer("atomic-response-attacker",0,"dawn"),defender=makePlayer("atomic-response-defender",1,"dusk","human"),first=instance("block"),second=instance("block");defender.hand.push(first,second);
-  const {game}=makeGame([attacker,defender],{response:()=>true});game.eventBus.on("beforeCardMove","test:atomic-response-invalid",(event)=>{if(event.card===second)event.cancelled=true;});
-  const result=await game.responseSystem.requestCardResponse(defender,"block",{source:attacker,target:defender,card:instance("assault")},2);
-  assert.equal(result.status,"invalid");assert.deepEqual(result.cards,[]);assert.deepEqual(defender.hand,[first,second]);assert.equal(game.state.deck.discardPile.length,0);
-});
-
-test("日志角色 token 可在同一行分别按阵营安全着色", () => {
-  const dawn=makePlayer("晨方角色",0,"dawn"),dusk=makePlayer("暮方角色",1,"dusk");const {game}=makeGame([dawn,dusk]);
-  const entry=game.log(`${dawn.name}对${dusk.name}造成影响。`);
-  assert.deepEqual(entry.fragments.filter((fragment)=>fragment.type==="player").map((fragment)=>fragment.battleTeam),["dawn","dusk"]);
-  const markup=formatLogEntry(entry);assert.match(markup,/log-player-name team-dawn/);assert.match(markup,/log-player-name team-dusk/);
-  assert.match(markup,/造成影响/);
-});
-test("25 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
-  assert.equal(Object.keys(CARD_DEFINITIONS).length,25);
-  for(const definition of Object.values(CARD_DEFINITIONS)){
-    const card={...definition,id:`layout-${definition.definitionId}`};
-    for(const markup of [handCardTemplate(card),opponentHandStripTemplate([{known:true,...card}])]){
-      assert.doesNotMatch(markup,/card-tags/);assert.ok(markup.includes(card.description));
-      for(const subtype of card.subtypes??[])assert.doesNotMatch(markup,new RegExp(`>\\s*${subtype}\\s*<`,"i"));
-    }
-  }
-});
-test("牌面长描述分类确定且真人与已知对手模板共用同一函数", () => {
-  for(const definitionId of ["defenseDevice","transfer","mutualBenefit","battleDevice"]){
-    const card=instance(definitionId),descriptionClass=cardDescriptionClass(card.description);
-    assert.match(descriptionClass,/^is-description-(?:long|very-long)$/);assert.match(handCardTemplate(card),new RegExp(descriptionClass));assert.match(opponentHandStripTemplate([{known:true,...card}]),new RegExp(descriptionClass));
-  }
-  for(const definitionId of ["harvest","counter","shield","provoke"]){
-    const card=instance(definitionId);
-    assert.equal(cardDescriptionClass(card.description),"");assert.doesNotMatch(handCardTemplate(card),/is-description-(?:long|very-long)/);assert.doesNotMatch(opponentHandStripTemplate([{known:true,...card}]),/is-description-(?:long|very-long)/);
-  }
-  assert.equal(cardDescriptionClass(CARD_DEFINITIONS.transfer.description),"is-description-very-long");
-});
-test("牌面 CSS 将长描述标记限制在文字区且不再影响外层插画网格", async () => {
-  const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8"),css=`${cards}\n${characters}`;
-  assert.doesNotMatch(css,/\.card-tags/);assert.match(cards,/\.hand-card \.card-rules\.is-description-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s);assert.match(cards,/\.hand-card \.card-rules\.is-description-very-long \.card-flavor\s*\{[^}]*display:\s*none/s);
-  assert.match(characters,/\.opponent-card-slot \.card-rules\.is-description-very-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s);assert.doesNotMatch(css,/\.\w*-?card(?:-slot)?\.is-description-(?:very-)?long\s*\{[^}]*grid-template-rows/s);assert.match(cards,/overflow-wrap:\s*anywhere/);
-  const lowHeight=cards.match(/@media \(max-height:\s*920px\)[\s\S]*$/)?.[0]??"";assert.doesNotMatch(lowHeight,/\.card-description\s*\{[^}]*display:\s*none/s);assert.doesNotMatch(cards,/\.card-description\s*\{[^}]*overflow:\s*hidden/s);
-});
-
-test("回收站次数只在装备区显示并随真实回合状态重置", () => {
-  const player=makePlayer("recycle-ui",0,"dawn","human");
-  player.equipment=instance("recycleDevice");
-  for(const uses of [0,1,2]){
-    player.turnFlags.recycleDeviceUses=uses;
-    const equipment=equipmentSlotTemplate(player,true),panel=playerPanelTemplate(player,{isHuman:true});
-    assert.match(equipment,new RegExp(`>${uses}/2<`));
-    const status=panel.match(/<span class="panel-status"[\s\S]*?<\/span>/)?.[0]??"";
-    assert.doesNotMatch(status,/回收站|回收|\d\/2/);
-  }
-  player.resetTurnFlags({attackLimitPerTurn:2,recoverLimitPerTurn:null});
-  assert.match(equipmentSlotTemplate(player,true),/>0\/2</);
-  player.equipment=null;
-  assert.doesNotMatch(equipmentSlotTemplate(player,true),/>\d\/2</);
-});
-
-test("回收站仍严格限制每回合最多触发2次", async () => {
-  const owner=makePlayer("recycle-rule",0,"dawn"),enemy=makePlayer("recycle-enemy",1,"dusk");
-  const {game}=makeGame([owner,enemy]);owner.equipment=instance("recycleDevice");
-  owner.hand.push(instance("exposeWeakness"),instance("exposeWeakness"),instance("exposeWeakness"));
-  game.state.deck.cards.push(instance("charge"),instance("block"),instance("shield"));
-  await game.playCard(owner,owner.hand[0],[]);await game.playCard(owner,owner.hand[0],[]);await game.playCard(owner,owner.hand[0],[]);
-  assert.equal(owner.turnFlags.recycleDeviceUses,2);assert.equal(game.state.logs.filter((entry)=>entry.message.includes("回收站启动")).length,2);
-});
-
-test("窃取把3张手牌与1张装备组成单一等概率实体集合", async () => {
-  const rolls=[0,.26,.51,.76];
-  for(const [expectedIndex,roll] of rolls.entries()){
-    const shade=makePlayer(`uniform-shade-${expectedIndex}`,0,"dawn","ai",3),target=makePlayer(`uniform-target-${expectedIndex}`,1,"dusk");
-    const cards=[instance("assault"),instance("recover"),instance("charge")],equipment=instance("recycleDevice"),original=instance("battleDevice");
-    target.hand.push(...cards);target.equipment=equipment;shade.equipment=original;shade.energy=1;
-    const {game}=makeGame([shade,target],{random:()=>roll}),candidate=[...cards,equipment][expectedIndex];
-    const shadeVersion=shade.handVersion,targetVersion=target.handVersion;
-    assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);
-    assert.deepEqual(shade.hand,[candidate]);assert.equal(shade.equipment,original);assert.equal(shade.handVersion,shadeVersion+1);
-    assert.equal(target.hand.includes(candidate),false);assert.equal(target.equipment===candidate,false);
-    assert.equal(game.state.deck.discardPile.includes(candidate),false);assert.equal(game.state.deck.resolvingCards.includes(candidate),false);
-    assert.equal(target.handVersion,targetVersion+(expectedIndex<3?1:0));
-    const zones=[shade.hand.includes(candidate),shade.equipment===candidate,target.hand.includes(candidate),target.equipment===candidate,game.state.deck.discardPile.includes(candidate)];
-    assert.equal(zones.filter(Boolean).length,1);
-  }
-});
-
-test("真人窃取先选择距离2内敌人再只从该目标随机获得资源", async () => {
-  const shade=makePlayer("human-steal-shade",0,"dawn","human",3),allyA=makePlayer("human-steal-ally-a",1,"dawn"),chosen=makePlayer("human-steal-chosen",2,"dusk"),otherEnemy=makePlayer("human-steal-other",3,"dusk"),allyB=makePlayer("human-steal-ally-b",4,"dawn"),chosenEquipment=instance("energyDevice"),untouched=instance("block");chosen.equipment=chosenEquipment;otherEnemy.hand.push(untouched);shade.energy=1;const {game,ui}=makeGame([shade,allyA,chosen,otherEnemy,allyB],{random:()=>0});let offered=null,prompt="";ui.requestTarget=async(players,message)=>{offered=[...players];prompt=message;return chosen;};assert.equal(await game.handleHumanSkill(),true);assert.ok(offered.includes(chosen));assert.ok(offered.includes(otherEnemy));assert.ok(offered.every((player)=>player.battleTeam!==shade.battleTeam&&DistanceSystem.getDistance(game,shade,player)<=2));assert.match(prompt,/窃取.*选择目标/);assert.equal(chosen.equipment,null);assert.ok(shade.hand.includes(chosenEquipment));assert.ok(otherEnemy.hand.includes(untouched));assert.equal(shade.energy,0);
-});
-
-test("窃取装备先进入手牌且只有之后正常使用才会装备和替换", async () => {
-  const shade=makePlayer("equip-to-hand-shade",0,"dawn","ai",3),target=makePlayer("equip-to-hand-target",1,"dusk"),stolen=instance("energyDevice"),original=instance("battleDevice");
-  const {game}=makeGame([shade,target],{random:()=>0});shade.energy=1;shade.equipment=original;target.equipment=stolen;const moves=[];
-  game.eventBus.on("afterCardMove","test:steal-equipment-zone",(event)=>{if(event.card===stolen)moves.push([event.from,event.to]);});
-  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);
-  assert.deepEqual(moves,[["equipment","hand"]]);assert.equal(shade.equipment,original);assert.ok(shade.hand.includes(stolen));assert.equal(shade.turnFlags.recycleDeviceUses,0);
-  assert.equal(await game.playCard(shade,stolen,[]),true);assert.equal(shade.equipment,stolen);assert.ok(game.state.deck.discardPile.includes(original));
-});
-
-test("窃取消耗1点能量且每回合最多发动2次", async () => {
-  const shade=makePlayer("steal-limit",0,"dawn","ai",3),target=makePlayer("steal-limit-target",1,"dusk");target.hand.push(instance("block"),instance("charge"),instance("recover"));
-  const {game}=makeGame([shade,target],{random:()=>0});shade.energy=3;
-  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);assert.equal(shade.energy,2);
-  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),true);assert.equal(shade.energy,1);
-  assert.equal(await game.useActiveSkill(shade,"stealSkill",[target]),false);assert.equal(shade.turnFlags.activeSkillUseCounts.stealSkill,2);assert.equal(target.hand.length,1);
-  assert.equal(ACTIVE_SKILLS.stealSkill.cost,1);assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn,2);assert.doesNotMatch(GENERAL_DEFINITIONS[3].activeDescription,/直接进入.*装备区|直接装备/);
-});
-
-test("AI模拟窃取装备时只增加手牌且保持影客当前装备", () => {
-  const shade=makePlayer("sim-steal-shade",0,"dawn","ai",3),target=makePlayer("sim-steal-target",1,"dusk"),current=instance("battleDevice");
-  shade.equipment=current;shade.energy=2;target.equipment=instance("energyDevice");const {game}=makeGame([shade,target]);
-  const visible=createAiVisibleState(shade.id,game.state),next=new AiSimulator(visible).apply(visible,{type:"skill",skill:ACTIVE_SKILLS.stealSkill,targets:[{id:target.id}]},shade.id);
-  const actor=next.players.find((player)=>player.id===shade.id),victim=next.players.find((player)=>player.id===target.id);
-  assert.equal(actor.handCount,1);assert.equal(actor.energy,1);assert.equal(actor.activeSkillUses,1);assert.equal(actor.activeSkillUsed,false);assert.equal(actor.equipmentDefinitionId,current.definitionId);assert.equal(victim.equipmentDefinitionId,null);
-});
-
-test("窃取说明与README均使用收入手牌的新规则", async () => {
-  const readme=await readFile(projectFile("README.md"),"utf8"),description=GENERAL_DEFINITIONS[3].activeDescription;
-  assert.equal(GENERAL_DEFINITIONS[3].activeCost,1);assert.equal(GENERAL_DEFINITIONS[3].activeLimitPerTurn,2);assert.equal(ACTIVE_SKILLS.stealSkill.cost,1);assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn,2);
-  assert.match(description,/消耗1点能量.*选择距离2内.*敌人作为目标/);assert.match(description,/统一候选集合.*等概率随机获得.*收入手牌/);assert.match(description,/每回合最多发动2次/);assert.doesNotMatch(`${description}\n${readme}`,/装备牌直接进入.*装备区|窃取.*直接装备/);
-  assert.match(readme,/主动·窃取[^\n]*消耗 1 点能量[^\n]*选择距离 2 内[^\n]*敌人作为目标[^\n]*统一候选集合[^\n]*等概率随机获得[^\n]*一回合最多使用 2 次/);
-});
-
-test("窥隙真人选择只私下展示且公共日志与DOM不泄露牌面", async () => {
-  const shade=makePlayer("peek-human",0,"dawn","human",3),target=makePlayer("peek-target",1,"dusk"),secrets=[instance("counter"),instance("harvest"),instance("duel")];target.hand.push(...secrets);
-  const {game,ui}=makeGame([shade,target]);registerPassiveSkills(game);await game.damage(shade,target,1,{canBlock:false});
-  assert.equal(ui.hiddenRequests.length,1);const request=ui.hiddenRequests[0],markup=hiddenSelectionMarkup(request.selection);assert.equal("helpText" in request.options,false);assert.equal("hideHelpText" in request.options,false);
-  for(const card of secrets){assert.doesNotMatch(markup,new RegExp(card.id));assert.doesNotMatch(markup,new RegExp(card.definitionId));assert.doesNotMatch(markup,new RegExp(card.name));assert.doesNotMatch(markup,new RegExp(card.description));}
-  assert.deepEqual(ui.reveals[0].cards,secrets.slice(0,2));assert.equal(game.cardSelectionSystem.sessions.size,0);assert.equal(game.cardSelectionSystem.selections.size,0);
-  const publicLog=game.state.logs.find((entry)=>entry.message.includes("发动窥隙"));assert.equal(publicLog.message,`${shade.name}发动窥隙，查看了${target.name}的2张手牌。`);
-  for(const card of secrets)assert.doesNotMatch(publicLog.message,new RegExp(card.name));
-});
-
-test("所有隐藏选择池都不显示令牌或核心校验技术提示", async () => {
-  const owner=makePlayer("peek-help-owner",0,"dusk"),viewer=makePlayer("peek-help-viewer",1,"dawn","human",3),secret=instance("counter");owner.hand.push(secret);
-  const selection={selectionId:"peek-help",tokens:[{token:"opaque-token"}]},panel=makeInteractiveElement();
-  const ui={game:null,elements:{response_panel:panel},render(){}};const controller=new InteractionController(ui);
-  const pending=controller.requestHiddenCards(selection,1,"掠夺：选择手牌或装备",{viewer,owner,helpText:"手牌使用安全令牌；装备牌为公开信息，确认时核心会重新验证所在区域。"});
-  assert.doesNotMatch(panel.innerHTML,/安全令牌|临时令牌|核心会重新|handVersion|校验手牌版本/);assert.doesNotMatch(panel.innerHTML,/<p>/);
-  controller.cancel();assert.equal(await pending,null);
-});
-test("互利、窥隙和隐藏选择牌池为选中上移预留空间且不拉伸牌面", async () => {
-  const css=await readFile(projectFile("css/cards.css"),"utf8"),selection=hiddenSelectionMarkup({tokens:[{token:"opaque-a"}]});
-  assert.match(css,/\.hidden-card-grid,\s*\.private-card-grid,\s*\.tableau-cards\s*\{[^}]*align-items:\s*flex-start[^}]*margin:\s*16px 0 12px/s);
-  assert.match(css,/\.hidden-card-grid\s*\{\s*gap:\s*9px/);
-  assert.match(css,/\.tableau-cards \.hand-card\.is-selected\s*\{\s*transform:\s*translateY\(-7px\)/s);
-  assert.match(css,/\.hidden-card-grid \.hand-card\.is-selected[^}]*translateY\(-7px\)/s);
-  assert.match(selection,/hidden-card-back is-compact/);
-});
-
-test("窥隙目标仅1张手牌时最多选择并展示1张", async () => {
-  const shade=makePlayer("peek-one",0,"dawn","human",3),target=makePlayer("peek-one-target",1,"dusk"),only=instance("counter");target.hand.push(only);
-  const {game,ui}=makeGame([shade,target]);registerPassiveSkills(game);await game.damage(shade,target,1,{canBlock:false});
-  assert.equal(ui.hiddenRequests[0].count,1);assert.deepEqual(ui.reveals[0].cards,[only]);
-});
-
-test("窥隙等待期间已选牌离手时只展示仍在原手牌的实体", async () => {
-  const shade=makePlayer("peek-changing",0,"dawn","human",3),target=makePlayer("peek-changing-target",1,"dusk"),first=instance("counter"),second=instance("harvest"),third=instance("duel");target.hand.push(first,second,third);
-  const {game,ui}=makeGame([shade,target]);registerPassiveSkills(game);
-  ui.requestHiddenCards=async(selection)=>{target.hand.splice(target.hand.indexOf(first),1);target.bumpHandVersion();game.state.deck.discard(first);return selection.tokens.slice(0,2).map((entry)=>entry.token);};
-  await game.damage(shade,target,1,{canBlock:false});assert.deepEqual(ui.reveals[0].cards,[second]);
-  assert.deepEqual(Object.keys(shade.aiMemory.knownCardsByPlayer[target.id]),[second.id]);assert.ok(!ui.reveals[0].cards.includes(third));
-  assert.equal(game.cardSelectionSystem.sessions.size,0);assert.equal(game.cardSelectionSystem.selections.size,0);
-});
-
-test("窥隙同回合仅触发一次且格挡、护盾、队友和空手牌均不触发", async () => {
-  const shade=makePlayer("peek-once",0,"dawn","human",3),target=makePlayer("peek-once-target",1,"dusk");target.hand.push(instance("charge"),instance("harvest"),instance("duel"));
-  const {game,ui}=makeGame([shade,target]);registerPassiveSkills(game);await game.damage(shade,target,1,{canBlock:false});await game.damage(shade,target,1,{canBlock:false});assert.equal(ui.hiddenRequests.length,1);
-
-  const shieldShade=makePlayer("peek-shield",0,"dawn","human",3),shieldTarget=makePlayer("peek-shield-target",1,"dusk");shieldTarget.shield=1;shieldTarget.hand.push(instance("charge"));const shieldFixture=makeGame([shieldShade,shieldTarget]);registerPassiveSkills(shieldFixture.game);await shieldFixture.game.damage(shieldShade,shieldTarget,1,{canBlock:false});assert.equal(shieldFixture.ui.hiddenRequests.length,0);
-
-  const blockShade=makePlayer("peek-block",0,"dawn","human",3),blockTarget=makePlayer("peek-block-target",1,"dusk","human");blockTarget.hand.push(instance("block"),instance("charge"));const blockFixture=makeGame([blockShade,blockTarget],{response:(request)=>request.type==="block"});registerPassiveSkills(blockFixture.game);await blockFixture.game.damage(blockShade,blockTarget,1,{card:instance("assault"),canBlock:true});assert.equal(blockFixture.ui.hiddenRequests.length,0);
-
-  const allyShade=makePlayer("peek-ally",0,"dawn","human",3),ally=makePlayer("peek-ally-target",1,"dawn");ally.hand.push(instance("charge"));const allyFixture=makeGame([allyShade,ally]);registerPassiveSkills(allyFixture.game);await allyFixture.game.damage(allyShade,ally,1,{canBlock:false});assert.equal(allyFixture.ui.hiddenRequests.length,0);
-
-  const emptyShade=makePlayer("peek-empty",0,"dawn","human",3),emptyTarget=makePlayer("peek-empty-target",1,"dusk");const emptyFixture=makeGame([emptyShade,emptyTarget]);registerPassiveSkills(emptyFixture.game);await emptyFixture.game.damage(emptyShade,emptyTarget,1,{canBlock:false});assert.equal(emptyFixture.ui.hiddenRequests.length,0);
-});
-test("窥隙在致命伤害获救后触发且不会在救援前提前触发", async () => {
-  const shade=makePlayer("peek-rescue-shade",0,"dawn","human",3),enemy=makePlayer("peek-rescue-enemy",1,"dusk");enemy.hp=1;enemy.hand.push(instance("recover"),instance("counter"),instance("harvest"));
-  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
-  game.eventBus.on("playerDying","test:peek-rescue-no-early",()=>{
-    assert.equal(ui.hiddenRequests.length,0);
-    assert.equal(shade.turnFlags.spyGapTriggered,false);
-  });
-  await game.damage(shade,enemy,1,{canBlock:false});
-  assert.equal(enemy.alive,true);assert.equal(enemy.hp,1);
-  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
-  assert.equal(ui.hiddenRequests.length,1);assert.equal(ui.reveals[0].cards.length,2);
-  assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length,2);
-});
-test("窥隙在致命伤害由队友救援成功后触发", async () => {
-  const shade=makePlayer("peek-ally-rescue-shade",0,"dawn","human",3),enemy=makePlayer("peek-ally-rescue-enemy",1,"dusk"),ally=makePlayer("peek-ally-rescue-ally",2,"dusk","ai",6);
-  enemy.hp=1;enemy.hand.push(instance("counter"),instance("harvest"),instance("duel"));ally.hand.push(instance("recover"));
-  const {game,ui}=makeGame([shade,enemy,ally]);registerPassiveSkills(game);
-  await game.damage(shade,enemy,1,{canBlock:false});
-  assert.equal(enemy.alive,true);assert.equal(enemy.hp,1);
-  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
-  assert.equal(ui.hiddenRequests.length,1);assert.equal(ui.reveals[0].cards.length,2);
-  assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length,2);
-});
-test("窥隙在致命伤害救援失败阵亡时不触发且不残留资格", async () => {
-  const shade=makePlayer("peek-dead-shade",0,"dawn","human",3),enemy=makePlayer("peek-dead-enemy",1,"dusk");enemy.hp=1;enemy.hand.push(instance("counter"),instance("harvest"));
-  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
-  await game.damage(shade,enemy,1,{canBlock:false});
-  assert.equal(enemy.alive,false);assert.equal(enemy.hp,0);
-  assert.equal(shade.turnFlags.spyGapTriggered,false);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
-  assert.equal(ui.hiddenRequests.length,0);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]??{}).length,0);
-});
-test("窥隙经濒死获救触发后同回合对其他敌人不再触发", async () => {
-  const shade=makePlayer("peek-twice-shade",0,"dawn","human",3),first=makePlayer("peek-twice-first",1,"dusk"),second=makePlayer("peek-twice-second",2,"dusk");
-  first.hp=1;first.hand.push(instance("recover"),instance("counter"),instance("harvest"));second.hp=2;second.hand.push(instance("charge"),instance("duel"));
-  const {game,ui}=makeGame([shade,first,second]);registerPassiveSkills(game);
-  await game.damage(shade,first,1,{canBlock:false});
-  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(ui.hiddenRequests.length,1);
-  await game.damage(shade,second,1,{canBlock:false});
-  assert.equal(shade.turnFlags.spyGapTriggered,true);assert.equal(ui.hiddenRequests.length,1);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
-});
-test("非伤害失去生命获救不得触发窥隙", async () => {
-  const shade=makePlayer("peek-hploss-shade",0,"dawn","human",3),enemy=makePlayer("peek-hploss-enemy",1,"dusk");enemy.hp=1;enemy.hand.push(instance("recover"),instance("counter"),instance("harvest"));
-  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
-  await game.hpLossSystem.lose(enemy,1,{source:shade,reason:"测试失去生命"});
-  assert.equal(enemy.alive,true);assert.equal(enemy.hp,1);
-  assert.equal(shade.turnFlags.spyGapTriggered,false);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
-  assert.equal(ui.hiddenRequests.length,0);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]??{}).length,0);
-});
-test("护盾完全吸收伤害时窥隙不触发且不写入待处理资格", async () => {
-  const shade=makePlayer("peek-shield-zero-shade",0,"dawn","human",3),enemy=makePlayer("peek-shield-zero-enemy",1,"dusk");enemy.shield=1;enemy.hand.push(instance("charge"),instance("duel"));
-  const {game,ui}=makeGame([shade,enemy]);registerPassiveSkills(game);
-  await game.damage(shade,enemy,1,{canBlock:false});
-  assert.equal(enemy.hp,enemy.maxHp);
-  assert.equal(shade.turnFlags.spyGapTriggered,false);assert.equal(shade.turnFlags.spyGapPendingTargetIds.size,0);
-  assert.equal(ui.hiddenRequests.length,0);assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]??{}).length,0);
-});
-test("AI窥隙在目标濒死获救后仍结算且救援失败不结算", () => {
-  const spy={id:"ai-rescue-spy",generalId:"shade-agent",battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:0,attackUsed:0,spyGapTriggeredProbability:0,expectedInformationGain:0};
-  const rescued={id:"ai-rescue-target",seatIndex:1,battleTeam:"dusk",alive:true,hp:1,maxHp:3,shield:0,handCount:3,blockProbability:0,expectedRecoverCount:1};
-  const rescuedState={players:[spy,rescued]};new AiSimulator(rescuedState).simulateAssault(rescuedState,spy,rescued,1);
-  assert.equal(rescued.hp,1);assert.equal(spy.spyGapTriggeredProbability,1);assert.equal(spy.expectedInformationGain,2);
-  const deadSpy={id:"ai-dead-spy",generalId:"shade-agent",battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:0,attackUsed:0,spyGapTriggeredProbability:0,expectedInformationGain:0};
-  const dead={id:"ai-dead-target",seatIndex:1,battleTeam:"dusk",alive:true,hp:1,maxHp:3,shield:0,handCount:2,blockProbability:0,expectedRecoverCount:0};
-  const deadState={players:[deadSpy,dead]};new AiSimulator(deadState).simulateAssault(deadState,deadSpy,dead,1);
-  assert.equal(dead.alive,false);assert.equal(deadSpy.spyGapTriggeredProbability,0);assert.equal(deadSpy.expectedInformationGain,0);
-});
-
-test("窥隙隐藏选择期间dispose会收束Promise并清理令牌", async () => {
-  const shade=makePlayer("peek-dispose",0,"dawn","human",3),target=makePlayer("peek-dispose-target",1,"dusk");target.hand.push(instance("charge"),instance("harvest"));
-  const {game,ui}=makeGame([shade,target]);registerPassiveSkills(game);let openedResolve,settle;const opened=new Promise((resolve)=>{openedResolve=resolve;});
-  ui.requestHiddenCards=()=>new Promise((resolve)=>{settle=resolve;openedResolve();});const baseCancel=ui.cancelPendingInteractions.bind(ui);ui.cancelPendingInteractions=()=>{baseCancel();settle?.(null);};
-  const pending=game.damage(shade,target,1,{canBlock:false});await opened;assert.equal(game.cardSelectionSystem.sessions.size,1);game.dispose();await pending;
-  assert.equal(game.cardSelectionSystem.sessions.size,0);assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(ui.reveals.length,0);
-});
-
-test("AI窥隙按未知位置选择且只更新自己的私密记忆", async () => {
-  const shade=makePlayer("peek-ai",0,"dawn","ai",3),ally=makePlayer("peek-ai-ally",1,"dawn","ai",0),target=makePlayer("peek-ai-target",2,"dusk");let definitionReads=0;
-  const cards=[instance("counter"),instance("harvest"),instance("duel")];for(const card of cards){const value=card.definitionId;Object.defineProperty(card,"definitionId",{configurable:true,get(){definitionReads+=1;return value;}});}target.hand.push(...cards);
-  const {game,ui}=makeGame([shade,ally,target],{random:()=>0});registerPassiveSkills(game);await game.damage(shade,target,1,{canBlock:false});
-  assert.equal(definitionReads,2);assert.deepEqual(Object.keys(shade.aiMemory.knownCardsByPlayer[target.id]),cards.slice(0,2).map((card)=>card.id));
-  assert.equal(Object.keys(ally.aiMemory.knownCardsByPlayer[target.id]??{}).length,0);assert.equal(ui.reveals.length,0);
-});
-
-test("全部卡牌SVG使用统一480x280画布且配置引用均存在", async () => {
-  const files=(await readdir(projectFile("assets/cards"))).filter((name)=>name.endsWith(".svg")).sort();assert.ok(files.length>0);
-  for(const name of files){const source=await readFile(projectFile(`assets/cards/${name}`),"utf8"),root=source.match(/<svg\b[^>]*>/)?.[0]??"";assert.match(root,/\bwidth="480"/i,name);assert.match(root,/\bheight="280"/i,name);assert.match(root,/\bviewBox="0 0 480 280"/i,name);}
-  for(const definition of Object.values(CARD_DEFINITIONS))await access(projectFile(definition.art.replace(/^\.\//,"")));
-  const shield=await readFile(projectFile("assets/cards/shield.svg"),"utf8"),assault=await readFile(projectFile("assets/cards/assault.svg"),"utf8"),transfer=await readFile(projectFile("assets/cards/transfer.svg"),"utf8");
-  for(const source of [shield,assault,transfer])assert.match(source,/^<svg width="480" height="280" viewBox="0 0 480 280"/);
-});
-
-test("卡牌CSS在手牌、结算、私密展示、判定和装备区统一约束图片尺寸", async () => {
-  const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8");
-  for(const selector of [".card-art > img",".resolving-card > img",".judgment-view img"]){const escaped=selector.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");assert.match(cards,new RegExp(`${escaped}\\s*\\{[^}]*display:\\s*block[^}]*width:\\s*[^;]+;[^}]*height:\\s*[^;]+;[^}]*object-fit:\\s*(?:cover|contain)`,"s"),selector);}
-  assert.match(characters,/\.equipment-icon\s*\{[^}]*display:\s*block[^}]*width:\s*[^;]+;[^}]*height:\s*[^;]+;[^}]*object-fit:\s*cover/s);
-});
-
-test("窥隙结果牌与正常手牌共用完整牌面布局且不暴露实体ID", async () => {
-  const card=instance("counter"),normal=handCardTemplate(card),revealed=privateCardTemplate(card),face=(markup)=>markup.replace(/^<[^>]+>\s*/,"").replace(/\s*<\/(?:button|article)>$/,"");
-  for(const className of ["card-topline","card-name","card-category","card-art","card-crest","card-rules","card-description","card-flavor"])assert.match(revealed,new RegExp(`class="[^"]*${className}`),className);
-  assert.equal(face(revealed),face(normal));assert.match(revealed,/class="hand-card private-card frame-seal"/);assert.doesNotMatch(revealed,/data-card-id|data-disabled|aria-pressed/);assert.doesNotMatch(revealed,new RegExp(card.id));
-  const css=await readFile(projectFile("css/cards.css"),"utf8");assert.match(css,/\.private-card\.hand-card\s*\{[^}]*font-weight:\s*400;[^}]*cursor:\s*default;/s);assert.doesNotMatch(css,/\.private-card\s*,\s*\.tableau-card|\.private-card\s+img/);
-});
-
-test("所有牌框保持相同内容宽度且机械双线不再挤压牌面", async () => {
-  const css=await readFile(projectFile("css/cards.css"),"utf8");
-  assert.match(css,/\.hand-card\s*\{[^}]*border:\s*2px\s+solid/s);
-  assert.match(css,/\.frame-machine\s*\{[^}]*border-style:\s*solid;[^}]*border-width:\s*2px;/s);
-  assert.match(css,/\.frame-machine::before\s*\{[^}]*border-style:\s*double;[^}]*border-width:\s*3px;/s);
-  assert.doesNotMatch(css,/\.frame-machine\s*\{[^}]*border-width:\s*4px/s);
-});
-
-test("护盾和反制等长描述牌与普通牌保持相同插画高度", async () => {
-  const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8");
-  assert.match(cards,/\.hand-card\s*\{[^}]*grid-template-rows:\s*37px\s+72px\s+minmax\(0,\s*1fr\)/s);
-  assert.match(cards,/\.hand-card\s*>\s*\.card-art\s*\{[^}]*height:\s*72px;[^}]*min-height:\s*72px;[^}]*max-height:\s*72px;/s);
-  assert.match(cards,/@media\s*\(max-height:\s*920px\)[\s\S]*?\.hand-card\s*\{[^}]*grid-template-rows:\s*32px\s+66px\s+minmax\(0,\s*1fr\)/s);
-  assert.match(cards,/@media\s*\(max-height:\s*920px\)[\s\S]*?\.hand-card\s*>\s*\.card-art\s*\{[^}]*height:\s*66px;[^}]*min-height:\s*66px;[^}]*max-height:\s*66px;/s);
-  assert.match(characters,/\.opponent-card-slot\s*\{[^}]*grid-template-rows:\s*27px\s+70px\s+minmax\(0,\s*1fr\)/s);
-  assert.match(characters,/\.opponent-card-slot\s*>\s*\.card-art\s*\{[^}]*height:\s*70px;[^}]*min-height:\s*70px;[^}]*max-height:\s*70px;/s);
-  assert.doesNotMatch(`${cards}\n${characters}`,/\.\w*-?card(?:-slot)?\.is-description-(?:very-)?long\s*\{[^}]*grid-template-rows/s);
-});
-
-test("长描述牌的长描述标记只进入文字区并由末尾规则锁定插画高度", async () => {
-  const cards=await readFile(projectFile("css/cards.css"),"utf8");
-  for(const definitionId of ["battleDevice","defenseDevice","mutualBenefit","transfer"]){
-    const markup=handCardTemplate(instance(definitionId));
-    assert.doesNotMatch(markup,/^<button class="[^"]*is-description-(?:very-)?long/);
-    assert.match(markup,/class="card-rules is-description-(?:very-)?long"/);
-  }
-  assert.match(cards,/牌面插画高度是跨卡牌不变量/);
-  assert.match(cards,/\.hand-card\s*>\s*\.card-art\s*\{[^}]*block-size:\s*72px\s*!important;[^}]*min-block-size:\s*72px\s*!important;[^}]*max-block-size:\s*72px\s*!important;/s);
-  assert.match(cards,/@media\s*\(max-height:\s*920px\)[\s\S]*?\.hand-card\s*>\s*\.card-art\s*\{[^}]*block-size:\s*66px\s*!important;/s);
-});
-
-test("击杀奖励配置为1且AI模拟使用同一奖励数量", () => {
-  const killer=makePlayer("sim-killer",0,"dawn"),target=makePlayer("sim-victim",1,"dusk"),assault=instance("assault");killer.hand.push(assault);target.hp=1;target.statuses={exposeWeakness:{stacks:2},huntMark:{sourceId:"hunter"},allIn:{assaultBonus:1}};target.turnFlags.momentum=2;
-  const {game}=makeGame([killer,target]),visible=createAiVisibleState(killer.id,game.state),next=new AiSimulator(visible).apply(visible,{type:"card",card:assault,targets:[{id:target.id}]},killer.id);
-  const simulatedTarget=next.players.find((player)=>player.id===target.id);
-  assert.equal(GAME_CONFIG.killRewardDrawCount,1);assert.equal(simulatedTarget.alive,false);assert.equal(next.players.find((player)=>player.id===killer.id).handCount,1);assert.deepEqual([simulatedTarget.exposeWeaknessStacks,simulatedTarget.assaultBonus,simulatedTarget.huntMarkSourceId,simulatedTarget.momentum,simulatedTarget.statuses],[0,0,null,0,[]]);
-});
-
-test("正式阵亡会在首次界面刷新前清空状态和连势", async () => {
-  const source=makePlayer("death-source",0,"dawn"),target=makePlayer("death-target",1,"dusk"),survivor=makePlayer("death-survivor",2,"dusk"),{game,ui}=makeGame([source,target,survivor]);
-  target.hp=0;target.statuses={exposeWeakness:{stacks:2},huntMark:{sourceId:source.id},allIn:{assaultBonus:1}};target.turnFlags.momentum=3;
-  const snapshots=[];const originalRender=ui.render.bind(ui);ui.render=(renderedGame)=>{snapshots.push({statuses:{...target.statuses},momentum:target.turnFlags.momentum,alive:target.alive});return originalRender(renderedGame);};
-  assert.equal(await game.dyingSystem.kill(target,source),true);assert.deepEqual(target.statuses,{});assert.equal(target.turnFlags.momentum,0);assert.equal(target.alive,false);assert.deepEqual(snapshots[0],{statuses:{},momentum:0,alive:false});
-});
-
-test("无明确来源的死亡不奖励且连续击杀两个敌人各奖励1张", async () => {
-  const current=makePlayer("no-source-current",0,"dawn"),victim=makePlayer("no-source-victim",1,"dusk"),other=makePlayer("no-source-other",2,"dusk");victim.hp=0;
-  const noSource=makeGame([current,victim,other]);noSource.game.state.deck.cards.push(instance("charge"));await noSource.game.dyingSystem.kill(victim,null);assert.equal(current.hand.length,0);
-
-  const killer=makePlayer("double-killer",0,"dawn"),ally=makePlayer("double-ally",1,"dawn"),enemyA=makePlayer("double-enemy-a",2,"dusk"),enemyB=makePlayer("double-enemy-b",3,"dusk");enemyA.hp=1;enemyB.hp=1;
-  const fixture=makeGame([killer,ally,enemyA,enemyB]);fixture.game.state.deck.cards.push(instance("charge"),instance("block"));let rewards=0;fixture.game.eventBus.on("enemyKilled","test:count-kill-reward",()=>{rewards+=1;});
-  await fixture.game.damage(killer,enemyA,1,{canBlock:false});await fixture.game.damage(killer,enemyB,1,{canBlock:false});
-  assert.equal(killer.hand.length,2);assert.equal(rewards,2);assert.equal(await fixture.game.dyingSystem.kill(enemyB,killer),false);assert.equal(killer.hand.length,2);
-});
-
-test("击杀奖励README与规则文本统一为额外摸1张", async () => {
-  const readme=await readFile(projectFile("README.md"),"utf8"),sources=(await Promise.all((await listJavaScriptFiles()).map((file)=>readFile(file,"utf8")))).join("\n");
-  assert.match(readme,/杀死敌方角色后.*额外摸 1 张牌/);assert.doesNotMatch(`${readme}\n${sources}`,/击杀[^\n]{0,20}摸(?:了)?2张|杀死敌人[^\n]{0,20}摸2张/);
 });
 
 test("AI 转移联合距离分支共享同一望远镜且效果按概率缩放", () => {
@@ -3213,405 +4619,63 @@ test("望远镜与目标屏障组合分支各计一次且不重复质量", () =>
   assertClose(branches.filter((branch)=>branch.matches).reduce((sum,branch)=>sum+branch.probability,0),.3);
 });
 
-test("概率猎印生成猎杀并按0.4缩放成本次数伤害格挡和摸牌", () => {
-  const state={playPhaseEnded:false,players:[
-    {id:"hunter",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,handCount:0,activeSkillId:"hunt",activeSkillUses:0,activeSkillLimit:2,activeSkillUsed:false},
-    {id:"marked",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:.5,twoBlockProbability:0,huntMarkSourceId:null,huntMarkProbability:.4,huntMarkProbabilities:{hunter:.4},statuses:[],expectedRecoverCount:0}
-  ]};
-  const {game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
-  const hunt=game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.skill?.id==="hunt");
-  assertClose(hunt.executionProbability,.4);
-  const next=new AiSimulator(state).apply(state,hunt,"hunter");
-  assertClose(next.players[0].energy,1.2);assertClose(next.players[0].activeSkillUses,.4);assertClose(next.players[0].handCount,.2);
-  assertClose(next.players[1].hp,3.6);assertClose(next.players[1].handCount,.8);assertClose(next.players[1].huntMarkProbabilities.hunter,0);
-  assert.ok(!game.aiController.actionGenerator.generateFromVisible(next,"hunter").some((action)=>action.skill?.id==="hunt"));
-});
+// ---- 响应概率与延迟 ----
 
-test("完整猎印概率1保持真实猎杀的完整成本和伤害", () => {
-  const state={players:[
-    {id:"hunter",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,handCount:0,activeSkillUses:0,activeSkillLimit:2},
-    {id:"marked",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkSourceId:"hunter",huntMarkProbabilities:{hunter:1},statuses:["huntMark"],expectedRecoverCount:0}
-  ]};
-  const action={type:"skill",skill:ACTIVE_SKILLS.hunt,targets:[{id:"marked"}],executionProbability:1};
-  const next=new AiSimulator(state).apply(state,action,"hunter");
-  assert.equal(next.players[0].energy,0);assert.equal(next.players[0].activeSkillUses,1);assert.equal(next.players[1].hp,2);assert.equal(next.players[1].huntMarkSourceId,null);
-});
+test("AI 自救响应策略为确定必用，敌方救援为拒绝", () => { const a=makePlayer("a",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");const {game}=makeGame([a,ally,enemy]);assert.equal(game.aiController.responsePolicy.shouldRespond(a,"dyingRescue",{target:a},[instance("recover")]),true);assert.equal(game.aiController.responsePolicy.shouldRespond(enemy,"dyingRescue",{target:a},[instance("recover")]),false); });
 
-test("雷达战术判定免疫且不消耗原格挡，基础与装备判定按真实顺序结算", () => {
-  const simulator=new AiSimulator({players:[]});
-  const run=({handCount,blockProbability,judgment})=>{const state={players:[
-    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
-    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount,blockProbability,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
-  ]};simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true,radarJudgmentProbabilities:judgment});return state.players[1];};
-  const tactic=run({handCount:1,blockProbability:1,judgment:{block:0,otherBasic:0,equipment:0}});
-  assert.equal(tactic.hp,4);assert.equal(tactic.handCount,1);
-  const judgedBlock=run({handCount:0,blockProbability:0,judgment:{block:1,otherBasic:0,equipment:0}});
-  assert.equal(judgedBlock.hp,4);assert.equal(judgedBlock.handCount,0);
-  const otherBasic=run({handCount:0,blockProbability:0,judgment:{block:0,otherBasic:1,equipment:0}});
-  assert.equal(otherBasic.hp,3);assert.equal(otherBasic.handCount,1);
-  const equipment=run({handCount:1,blockProbability:1,judgment:{block:0,otherBasic:0,equipment:1}});
-  assert.equal(equipment.hp,4);assert.equal(equipment.handCount,0);
-});
+test("AI 延迟在配置上下限内且快速模式显著缩短", () => { const natural=sampleDelay(()=>.5,GAME_CONFIG.aiInitialThinkMinMs,GAME_CONFIG.aiInitialThinkMaxMs,false);const fast=sampleDelay(()=>.5,GAME_CONFIG.aiInitialThinkMinMs,GAME_CONFIG.aiInitialThinkMaxMs,true);assert.ok(natural>=GAME_CONFIG.aiInitialThinkMinMs&&natural<=GAME_CONFIG.aiInitialThinkMaxMs);assert.ok(fast<natural/2); });
 
-test("军火库雷达判得格挡后仍要求原手牌另有一张格挡", () => {
-  const simulator=new AiSimulator({players:[]});
-  const run=(normalBlockChance,handCount)=>{const state={players:[
-    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1},
-    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount,blockProbability:normalBlockChance,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
-  ]};simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true,radarJudgmentProbabilities:{block:1,otherBasic:0,equipment:0}});return state.players[1];};
-  const withoutOriginal=run(0,0);assert.equal(withoutOriginal.hp,3);assert.equal(withoutOriginal.handCount,1);
-  const withOriginal=run(1,1);assert.equal(withOriginal.hp,4);assert.equal(withOriginal.handCount,0);
-});
+test("AI 各可见思考阶段使用集中配置范围且不改变搜索预算", () => { const ranges={initial:[3000,5500],action:[1800,3500],response:[1800,3200],discard:[1600,2800],end:[900,1600]};for(const [phase,[minimum,maximum]] of Object.entries(ranges)){const low=getAiDelay({random:()=>0,simulationMode:false,animationFastMode:false},phase),high=getAiDelay({random:()=>.999999,simulationMode:false,animationFastMode:false},phase),fast=getAiDelay({random:()=>.5,simulationMode:false,animationFastMode:true},phase);assert.equal(low,minimum);assert.ok(high<=maximum&&high>=maximum-1);assert.ok(fast<(minimum+maximum)/4);}assert.equal(GAME_CONFIG.aiComplexThinkMaxMs,7000);assert.equal(GAME_CONFIG.aiSearchTimeBudgetMs,900); });
 
-test("部分概率攻击额外缩放雷达得牌、格挡消耗与最终伤害", () => {
-  const state={players:[
-    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
-    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:.5,twoBlockProbability:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,expectedRecoverCount:0}
-  ]};
-  new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],1,{
-    canBlock:true,deviceAttack:true,eventProbability:.4,
-    radarJudgmentProbabilities:{block:0,otherBasic:1,equipment:0}
-  });
-  assertClose(state.players[1].hp,3.8);assertClose(state.players[1].handCount,1.2);
-});
+test("复杂局面首次思考实际使用 aiComplexThinkMaxMs 上限", () => { const game={random:()=>.999999,simulationMode:false,animationFastMode:false};assert.equal(getAiDelay(game,"initial"),GAME_CONFIG.aiInitialThinkMaxMs);assert.equal(getAiDelay(game,"initial",{complex:true}),GAME_CONFIG.aiComplexThinkMaxMs); });
 
-// ---- B1b：雷达判定身份与格挡消费 ----
-const b1bTarget = (overrides = {}) => ({
-  id:"target", battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, handCount:0,
-  generalId:"oath-warden", blockProbability:0, twoBlockProbability:0, equipmentDefinitionId:"defenseDevice",
-  equipmentRetentionProbability:1, expectedRecoverCount:0, ...overrides
-});
-const b1bAttacker = (overrides = {}) => ({
-  id:"attacker", battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, handCount:0,
-  generalId:"blade-walker", expectedRecoverCount:0, ...overrides
-});
-const b1bBattleAttacker = () => b1bAttacker({ equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1 });
-const b1bApply = (target, attacker = b1bAttacker(), options = {}, existingState = null) => {
-  const state = existingState ?? { remainingCardCounts: options.remainingCardCounts ?? null, players:[attacker, target] };
-  if (options.remainingCardCounts !== undefined) state.remainingCardCounts = options.remainingCardCounts;
-  const simulator = new AiSimulator({ players:[] });
-  const { remainingCardCounts, ...damageOptions } = options;
-  simulator.applyDamage(state, attacker, target, 1, { canBlock:true, deviceAttack:true, ...damageOptions });
-  return { state, simulator, target, attacker };
-};
+test("关闭逐动作重规划时会复用仍合法的束搜索牌序", async () => { const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("b",1,"dusk");const charge=instance("charge");actor.hand.push(charge);const {game}=makeGame([actor,enemy]);game.aiReplanAfterEveryAction=false;let plans=0;game.aiController.selectAction=async()=>{plans+=1;game.aiController.planner.lastPlannedSequence=[{type:"card",cardId:"charge",cardInstanceId:charge.id,targetIds:[]},{type:"end",cardId:null,cardInstanceId:null,targetIds:[]}];return {type:"card",card:charge,targets:[]};};await game.takeAiPlayPhase(actor,game.state.gameId);assert.equal(plans,1);assert.equal(actor.energy,1);assert.equal(actor.hand.length,0); });
 
-test("B1b真实：原格挡+判定格挡普通攻击只消费原格挡", async () => {
-  const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});
-  b.equipment=instance("defenseDevice");const original=instance("block"),judged=instance("block");
-  b.hand.push(original);game.state.deck.cards.push(judged);const hp=b.hp;
-  await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
-  assert.equal(b.hp,hp);assert.equal(b.hand.length,1);assert.equal(b.hand[0],judged);
-  assert.ok(game.state.deck.discardPile.includes(original));assert.ok(!game.state.deck.discardPile.includes(judged));
-});
+test("aiRandomnessRange 控制近似同分动作的评分扰动", () => { const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("b",1,"dusk");const {game}=makeGame([actor,enemy]);const beam=[{score:10,id:"first"},{score:9.9,id:"second"}];game.aiRandomnessRange=0;assert.equal(game.aiController.planner.chooseCandidate(beam).id,"first");const rolls=[0,1];game.random=()=>rolls.shift();game.aiRandomnessRange=.1;assert.equal(game.aiController.planner.chooseCandidate(beam).id,"second"); });
 
-test("B1b真实：军火库两张原格挡+判定格挡只消费两张原格挡", async () => {
-  const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});
-  a.equipment=instance("battleDevice");b.equipment=instance("defenseDevice");
-  const original1=instance("block"),original2=instance("block"),judged=instance("block");
-  b.hand.push(original1,original2);game.state.deck.cards.push(judged);const hp=b.hp;
-  await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
-  assert.equal(b.hp,hp);assert.equal(b.hand.length,1);assert.equal(b.hand[0],judged);
-  assert.ok(game.state.deck.discardPile.includes(original1));assert.ok(game.state.deck.discardPile.includes(original2));
-  assert.ok(!game.state.deck.discardPile.includes(judged));
-});
+test("ThreatCalculator 的稳定角色标签与近期攻击者会进入目标评分", () => { const viewer={battleTeam:"dawn"},base={id:"x",alive:true,battleTeam:"dusk",hp:3,maxHp:4,shield:0,energy:1,handCount:1,tags:[],statuses:[]};const plain=ThreatCalculator.calculate(viewer,{...base,roleTags:[]},{recentAggressors:{}},1);const support=ThreatCalculator.calculate(viewer,{...base,roleTags:["support","healer"]},{recentAggressors:{}},1);assert.ok(support>plain);const actor=makePlayer("a",0,"dawn"),first=makePlayer("first",1,"dusk","ai",4),second=makePlayer("second",2,"dusk","ai",4);const {game}=makeGame([actor,first,second]);actor.aiMemory.recentAggressors[second.id]=3;const visible=createAiVisibleState(actor.id,game.state),assault=instance("assault"),score=(target)=>game.aiController.evaluator.actionUtility({type:"card",card:assault,targets:[target]},actor,visible);game.aiDifficultyMultiplier=0;assert.equal(score(first),score(second));game.aiDifficultyMultiplier=1;assert.ok(score(second)>score(first)); });
 
-test("B1b真实：军火库一张原格挡+判定格挡两张都消费", async () => {
-  const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game}=makeGame([a,b],{response:()=>true});
-  a.equipment=instance("battleDevice");b.equipment=instance("defenseDevice");
-  const original=instance("block"),judged=instance("block");
-  b.hand.push(original);game.state.deck.cards.push(judged);const hp=b.hp;
-  await game.damage(a,b,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
-  assert.equal(b.hp,hp);assert.equal(b.hand.length,0);
-  assert.ok(game.state.deck.discardPile.includes(original));assert.ok(game.state.deck.discardPile.includes(judged));
-});
+// ---- 反制概率、先验与容量 ----
 
-test("B1b模拟：战术判定免疫且不增加不消费", () => {
-  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
-  b1bApply(target, b1bAttacker(), {radarJudgmentProbabilities:{block:0,otherBasic:0,equipment:0}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
-  assert.equal(target.knownCards[0].cardId,"orig");assert.ok(Math.abs(target.blockProbability-1)<1e-9);
-  assert.ok(target.blockCountDistribution.some((branch)=>branch.blockCount===1&&Math.abs(branch.probability-1)<1e-9));
-});
-
-test("B1b模拟：无原格挡+判定格挡普通攻击即得即用", () => {
-  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
-  b1bApply(target, b1bAttacker(), {remainingCardCounts:{block:1}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
-  assert.equal(target.blockProbability,0);assert.ok(target.blockCountDistribution.every((branch)=>branch.blockCount===0));
-});
-
-test("B1b模拟：判定聚能普通攻击命中且聚能公开保留", () => {
-  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
-  b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}});
-  assert.equal(target.hp,3);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
-  assert.equal(target.knownCards[0].definitionId,"charge");assert.ok(Math.abs(target.blockProbability)<1e-9);
-});
-
-test("B1b模拟：原格挡+判定格挡普通攻击保留判定格挡且第二次仍可挡", () => {
-  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
-  const round1=b1bApply(target, b1bAttacker(), {remainingCardCounts:{block:1}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
-  const kept=target.knownCards[0];assert.equal(kept.definitionId,"block");assert.notEqual(kept.cardId,"orig");
-  assert.ok(Math.abs(target.blockProbability-1)<1e-9);
-  b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}}, round1.state);
-  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
-  assert.equal(target.knownCards[0].definitionId,"charge");assert.equal(target.blockProbability,0);
-});
-
-test("B1b模拟：原格挡+判定聚能普通攻击后第二次命中", () => {
-  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
-  const round1=b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
-  assert.equal(target.knownCards[0].definitionId,"charge");assert.equal(target.blockProbability,0);
-  b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}}, round1.state);
-  assert.equal(target.hp,3);
-});
-
-test("B1b模拟：军火库无原格挡+判定格挡不消费且随后普通攻击可挡", () => {
-  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
-  const round1=b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:1}});
-  assert.equal(target.hp,3);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
-  assert.equal(target.knownCards[0].definitionId,"block");assert.ok(Math.abs(target.blockProbability-1)<1e-9);
-  b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}}, round1.state);
-  assert.equal(target.hp,3);assert.equal(target.blockProbability,0);
-});
-
-test("B1b模拟：军火库一张原格挡+判定格挡两张同时消费", () => {
-  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
-  b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:1}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
-  assert.equal(target.blockProbability,0);
-});
-
-test("B1b模拟：军火库两张原格挡+判定格挡只消费两张原格挡", () => {
-  const target=b1bTarget({handCount:2,knownCards:[fullKnownCard("o1","block"),fullKnownCard("o2","block")],blockProbability:1,twoBlockProbability:1,blockCountDistribution:[{probability:1,conditions:{},blockCount:2}]});
-  b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:1}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,1);assert.equal(target.knownCards.length,1);
-  const kept=target.knownCards[0];assert.equal(kept.definitionId,"block");assert.ok(!["o1","o2"].includes(kept.cardId));
-  assert.equal(target.twoBlockProbability,0);
-});
-
-test("B1b模拟：军火库一张原格挡+判定聚能不足两张攻击命中且都保留", () => {
-  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
-  b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{charge:1}});
-  assert.equal(target.hp,3);assert.equal(target.handCount,2);assert.equal(target.knownCards.length,2);
-  assert.deepEqual(target.knownCards.map((entry)=>entry.definitionId).sort(),["block","charge"]);
-  assert.equal(target.blockProbability,1);
-});
-
-test("B1b模拟：装备判定不增加身份且原格挡按普通规则消费", () => {
-  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
-  b1bApply(target, b1bAttacker(), {remainingCardCounts:{energyDevice:1}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
-  assert.equal(target.blockProbability,0);
-});
-
-test("B1b模拟：判定调息增加调息摘要", () => {
-  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
-  b1bApply(target, b1bAttacker(), {remainingCardCounts:{recover:1}});
-  assert.equal(target.handCount,1);assert.equal(target.knownCards[0].definitionId,"recover");
-  assert.equal(target.expectedRecoverCount,1);
-});
-
-test("B1b模拟：判定突袭增加突袭摘要", () => {
-  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
-  b1bApply(target, b1bAttacker(), {remainingCardCounts:{assault:1}});
-  assert.equal(target.knownCards[0].definitionId,"assault");
-  assert.equal(target.expectedAssaultCount,1);assert.equal(target.assaultResponseProbability,1);
-  assert.ok(target.assaultCountDistribution.some((branch)=>branch.count===1&&Math.abs(branch.probability-1)<1e-9));
-});
-
-test("B1b模拟：判定护盾只创建身份不提升格挡调息突袭摘要", () => {
-  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
-  b1bApply(target, b1bAttacker(), {remainingCardCounts:{shield:1}});
-  assert.equal(target.knownCards[0].definitionId,"shield");
-  assert.equal(target.blockProbability,0);assert.equal(target.expectedRecoverCount,0);assert.equal(target.expectedAssaultCount,0);
-});
-
-test("B1b模拟：50%雷达两分支身份与格挡消费共享条件世界", () => {
-  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}],equipmentRetentionProbability:.5});
-  const {simulator}=b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1}});
-  assert.equal(target.hp,4);assertClose(target.handCount,.5);
-  const charge=target.knownCards.find((entry)=>entry.definitionId==="charge");
-  assert.ok(charge);assertClose(simulator.cardAvailability(charge),.5);
-  assert.ok(charge.availabilityStateBranches.every((branch)=>Object.keys(branch.conditions).some((key)=>key.includes("radar-outcome"))));
-  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
-  assert.equal(target.blockProbability,0);
-});
-
-test("B1b模拟：40%攻击未发生世界不判定不消费不受伤", () => {
-  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
-  const {simulator}=b1bApply(target, b1bAttacker(), {remainingCardCounts:{charge:1},eventProbability:.4});
-  assert.equal(target.hp,4);assertClose(target.handCount,1);
-  const charge=target.knownCards.find((entry)=>entry.definitionId==="charge");
-  const block=target.knownCards.find((entry)=>entry.definitionId==="block");
-  assert.ok(charge);assertClose(simulator.cardAvailability(charge),.4);
-  assert.ok(block);assertClose(simulator.cardAvailability(block),.6);
-  const byCount=blockDistributionByCount(target.blockCountDistribution);
-  assertClose(byCount[0] ?? 0,.4);assertClose(byCount[1] ?? 0,.6);
-});
-
-test("B1b模拟：混合判定身份互斥且每个世界最多一张基础牌", () => {
-  const target=b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
-  const {simulator}=b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:5,charge:5}});
-  assert.equal(target.hp,3); // 军火库只有一张判定格挡不足两张，两个分支都命中
-  const block=target.knownCards.find((entry)=>entry.definitionId==="block");
-  const charge=target.knownCards.find((entry)=>entry.definitionId==="charge");
-  assert.ok(block);assert.ok(charge);
-  assertClose(simulator.cardAvailability(block),.5);assertClose(simulator.cardAvailability(charge),.5);
-  const joined=joinProbabilityStateBranches(
-    projectAvailability(block.availabilityStateBranches,"blockAvail"),
-    projectAvailability(charge.availabilityStateBranches,"chargeAvail")
-  );
-  const bothAvailable=joined.filter((branch)=>branch.blockAvail&&branch.chargeAvail)
-    .reduce((sum,branch)=>sum+branch.probability,0);
-  assert.ok(Math.abs(bothAvailable)<1e-9);
-});
-
-test("B1b模拟：clone 后雷达判定消费状态不恢复", () => {
-  const state={remainingCardCounts:{charge:1},players:[b1bAttacker(),b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]})]};
-  const simulator=new AiSimulator({players:[]});
-  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
-  assert.equal(state.players[1].blockProbability,0);
-  const cloned=simulator.clone(state);
-  assert.equal(cloned.players[1].blockProbability,0);
-  assert.ok(cloned.players[1].knownCards.some((entry)=>entry.definitionId==="charge"));
-  simulator.applyDamage(cloned,cloned.players[0],cloned.players[1],1,{canBlock:true,deviceAttack:true});
-  assert.equal(cloned.players[1].hp,3);
-  assert.equal(state.players[1].hp,4);
-});
-
-test("B1b模拟：判定聚能可被后续破坏定向移除", () => {
-  const state={remainingCardCounts:{charge:1},players:[b1bAttacker(),b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]})]};
-  const simulator=new AiSimulator({players:[]});
-  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
-  const target=state.players[1];
-  target.equipmentDefinitionId=null;target.equipmentRetentionProbability=0;
-  assert.equal(target.knownCards[0].definitionId,"charge");
-  const selection=simulator.chooseSimulatedResourceSelection(state,state.players[0],target,"destroy");
-  assert.equal(selection.selectionKind,"known");assert.equal(selection.definitionId,"charge");
-  simulator.destroyResource(state,state.players[0],target,1);
-  assert.equal(target.knownCards.length,0);assert.equal(target.handCount,0);
-});
-
-test("B1b模拟：判定聚能可被后续掠夺转移到行动者", () => {
-  const state={remainingCardCounts:{charge:1},players:[b1bAttacker(),b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]})]};
-  const simulator=new AiSimulator({players:[]});
-  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
-  const actor=state.players[0],target=state.players[1];
-  target.equipmentDefinitionId=null;target.equipmentRetentionProbability=0;
-  simulator.takeResourceToHand(state,actor,target,1);
-  assert.equal(target.knownCards.length,0);assert.equal(target.handCount,0);
-  assert.equal(actor.hand.length,1);assert.equal(actor.hand[0].definitionId,"charge");
-});
-
-test("B1b模拟：判定聚能可被后续转移给接收者", () => {
-  const receiver=b1bTarget({id:"receiver",battleTeam:"dawn",handCount:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:0}],equipmentDefinitionId:null,equipmentRetentionProbability:0});
-  const state={remainingCardCounts:{charge:1},players:[b1bAttacker(),b1bTarget({blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]}),receiver]};
-  const simulator=new AiSimulator({players:[]});
-  simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:true,deviceAttack:true});
-  const target=state.players[1],charge=target.knownCards[0];
-  simulator.transferKnownCardIdentity(state,target,receiver,{cardId:charge.cardId,definitionId:"charge"},[{probability:1,conditions:{},occurs:true}],false);
-  assert.equal(target.knownCards.length,0);assert.equal(target.handCount,0);
-  assert.equal(receiver.knownCards.length,1);assert.equal(receiver.knownCards[0].definitionId,"charge");
-  assert.equal(receiver.handCount,1);
-});
-
-test("B1b模拟：空判定池退化为普通格挡流程", () => {
-  const target=b1bTarget({knownCards:[],blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]});
-  b1bApply(target, b1bAttacker(), {remainingCardCounts:{}});
-  assert.equal(target.hp,3);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
-});
-
-test("B1b模拟：空判定池不免疫且原格挡仍按普通规则消费", () => {
-  const target=b1bTarget({handCount:1,knownCards:[fullKnownCard("orig","block")],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
-  b1bApply(target, b1bAttacker(), {remainingCardCounts:{}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
-});
-
-test("B1b补充：匿名确定格挡优先于判定格挡被消费", () => {
-  const target=b1bTarget({handCount:1,blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
-  const {simulator}=b1bApply(target, b1bAttacker(), {remainingCardCounts:{block:1}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,1);
-  assert.equal(target.knownCards.length,1);
-  const judged=target.knownCards[0];assert.equal(judged.definitionId,"block");
-  assertClose(simulator.cardAvailability(judged),1);
-  const byCount=blockDistributionByCount(target.blockCountDistribution);
-  assertClose(byCount[1] ?? 0,1);
-  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
-});
-
-test("B1b补充：匿名50%格挡与判定格挡同世界关联", () => {
-  const target=b1bTarget({handCount:1,blockProbability:.5,twoBlockProbability:0,blockCountDistribution:[{probability:.5,conditions:{},blockCount:0},{probability:.5,conditions:{},blockCount:1}]});
-  const {simulator}=b1bApply(target, b1bAttacker(), {remainingCardCounts:{block:1}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,1);
-  const judged=target.knownCards[0];assert.equal(judged.definitionId,"block");
-  assertClose(simulator.cardAvailability(judged),.5);
-  const byCount=blockDistributionByCount(target.blockCountDistribution);
-  assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
-  const joint=joinProbabilityStateBranches(
-    projectAvailability(judged.availabilityStateBranches,"judgedAvail"),
-    target.blockCountDistribution.map(({blockCount,probability,conditions})=>({probability,conditions,count1:blockCount===1}))
-  );
-  const mismatched=joint.filter((branch)=>branch.judgedAvail!==branch.count1)
-    .reduce((sum,branch)=>sum+branch.probability,0);
-  assert.ok(Math.abs(mismatched)<1e-9);
-  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
-});
-
-test("B1b补充：两张匿名格挡+判定格挡军火库只消费原匿名格挡", () => {
-  const target=b1bTarget({handCount:2,blockProbability:1,twoBlockProbability:1,blockCountDistribution:[{probability:1,conditions:{},blockCount:2}]});
-  const {simulator}=b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:1}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,1);
-  assert.equal(target.knownCards.length,1);assert.equal(target.knownCards[0].definitionId,"block");
-  assertClose(simulator.cardAvailability(target.knownCards[0]),1);
-  const byCount=blockDistributionByCount(target.blockCountDistribution);
-  assertClose(byCount[1] ?? 0,1);assert.equal(target.twoBlockProbability,0);
-  assertClose(target.blockCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
-});
-
-test("B1b补充：一张匿名格挡+判定格挡军火库两张都消费", () => {
-  const target=b1bTarget({handCount:1,blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]});
-  b1bApply(target, b1bBattleAttacker(), {remainingCardCounts:{block:1}});
-  assert.equal(target.hp,4);assert.equal(target.handCount,0);
-  assert.equal(target.knownCards.length,0);
-  assert.equal(target.blockProbability,0);
-  assert.ok(target.blockCountDistribution.every((branch)=>branch.blockCount===0));
-});
-
-// ---- B1c：目标级反制长期消费状态 ----
-const b1cKnownCounter = (cardId) => ({
+const counterKnownCard = (cardId) => ({
   cardId, definitionId:"counter",
   availabilityBranches:[{ probability:1, conditions:{} }],
   availabilityStateBranches:[{ probability:1, conditions:{}, available:true }]
 });
-const b1cPlayer = (id, team, overrides = {}) => ({
+const counterPlayer = (id, team, overrides = {}) => ({
   id, seatIndex:0, battleTeam:team, generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0,
   handCount:0, counterProbability:0, blockProbability:0, twoBlockProbability:0, expectedRecoverCount:0,
   expectedAssaultCount:0, assaultResponseProbability:0, expectedInformationGain:0,
   equipmentDefinitionId:null, equipmentRetentionProbability:0, statuses:[], ...overrides
 });
-const b1cApply = (state, definitionId, actorId = "a") => (
+const counterApply = (state, definitionId, actorId = "a") => (
   new AiSimulator({ players:[] }).apply(
     state,
     { type:"card", card:{ ...CARD_DEFINITIONS[definitionId], id:`${definitionId}-b1c` }, targets:[] },
     actorId
   )
 );
-const b1cCounterProbability = (player) => (player.counterCountDistribution ?? [])
+const counterProbabilityOf = (player) => (player.counterCountDistribution ?? [])
   .reduce((sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0);
-const b1cCounterByCount = (player) => {
+const counterByCount = (player) => {
   const byCount = {};
   for (const branch of player.counterCountDistribution ?? []) {
     byCount[branch.counterCount] = (byCount[branch.counterCount] ?? 0) + branch.probability;
   }
   return byCount;
 };
-const b1cAvailability = (entry) => entry.availabilityStateBranches
+const counterAvailability = (entry) => entry.availabilityStateBranches
   .filter((branch) => branch.available)
   .reduce((sum, branch) => sum + branch.probability, 0);
 
-test("B1c可见状态：自己反制数量分布准确", () => {
+const counterDrawActor = (overrides = {}) => ({
+  id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0,
+  handCount:1, counterProbability:0, blockProbability:0, twoBlockProbability:0, expectedRecoverCount:0,
+  expectedAssaultCount:0, assaultResponseProbability:0, expectedInformationGain:0,
+  equipmentDefinitionId:null, equipmentRetentionProbability:0, statuses:[], ...overrides
+});
+
+test("反制概率：自己反制数量分布准确", () => {
   const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("e",1,"dusk");
   const {game}=makeGame([actor,enemy]);
   actor.hand.push(instance("counter"),instance("counter"));
@@ -3620,7 +4684,7 @@ test("B1c可见状态：自己反制数量分布准确", () => {
   assert.equal(view.counterProbability,1);
 });
 
-test("B1c可见状态：其他玩家已知反制+匿名二项分布且根计数只读", () => {
+test("反制概率：其他玩家已知反制+匿名二项分布且根计数只读", () => {
   const actor=makePlayer("a",0,"dawn"),enemy=makePlayer("e",1,"dusk");
   const {game}=makeGame([actor,enemy]);
   enemy.hand.push(instance("counter"),instance("charge"),instance("charge"));
@@ -3633,78 +4697,78 @@ test("B1c可见状态：其他玩家已知反制+匿名二项分布且根计数�
   assert.deepEqual(counts,{counter:5,assault:5});
 });
 
-test("B1c模拟：一张确定反制连续两次震荡第一次消费第二次命中", () => {
-  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
-  let next=b1cApply(state,"shockwave");
+test("反制概率：一张确定反制连续两次震荡第一次消费第二次命中", () => {
+  const target=counterPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("c1")]});
+  const state={players:[counterPlayer("a","dawn"),target]};
+  let next=counterApply(state,"shockwave");
   assert.equal(next.players[1].hp,4);assert.equal(next.players[1].handCount,0);
-  assert.equal(b1cCounterProbability(next.players[1]),0);assert.equal(next.players[1].knownCards.length,0);
-  next=b1cApply(next,"shockwave");
+  assert.equal(counterProbabilityOf(next.players[1]),0);assert.equal(next.players[1].knownCards.length,0);
+  next=counterApply(next,"shockwave");
   assert.equal(next.players[1].hp,3);
 });
 
-test("B1c模拟：一张确定反制震荡后挑衅无法再次反制", () => {
-  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")],assaultCountDistribution:[{count:0,probability:1}]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
-  let next=b1cApply(state,"shockwave");
-  assert.equal(next.players[1].hp,4);assert.equal(b1cCounterProbability(next.players[1]),0);
-  next=b1cApply(next,"provoke");
+test("反制概率：一张确定反制震荡后挑衅无法再次反制", () => {
+  const target=counterPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("c1")],assaultCountDistribution:[{count:0,probability:1}]});
+  const state={players:[counterPlayer("a","dawn"),target]};
+  let next=counterApply(state,"shockwave");
+  assert.equal(next.players[1].hp,4);assert.equal(counterProbabilityOf(next.players[1]),0);
+  next=counterApply(next,"provoke");
   assert.equal(next.players[1].hp,3);
 });
 
-test("B1c模拟：两张确定反制两次目标级牌各消费一张", () => {
-  const target=b1cPlayer("b","dusk",{handCount:2,counterProbability:1,knownCards:[b1cKnownCounter("c1"),b1cKnownCounter("c2")]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
-  let next=b1cApply(state,"shockwave");
-  assert.equal(next.players[1].hp,4);assert.equal(b1cCounterProbability(next.players[1]),1);
+test("反制概率：两张确定反制两次目标级牌各消费一张", () => {
+  const target=counterPlayer("b","dusk",{handCount:2,counterProbability:1,knownCards:[counterKnownCard("c1"),counterKnownCard("c2")]});
+  const state={players:[counterPlayer("a","dawn"),target]};
+  let next=counterApply(state,"shockwave");
+  assert.equal(next.players[1].hp,4);assert.equal(counterProbabilityOf(next.players[1]),1);
   assert.equal(next.players[1].knownCards.length,2);
-  assertClose(b1cAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="c1")),.5);
-  assertClose(b1cAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="c2")),.5);
-  next=b1cApply(next,"provoke");
-  assert.equal(next.players[1].hp,4);assert.equal(b1cCounterProbability(next.players[1]),0);
+  assertClose(counterAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="c1")),.5);
+  assertClose(counterAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="c2")),.5);
+  next=counterApply(next,"provoke");
+  assert.equal(next.players[1].hp,4);assert.equal(counterProbabilityOf(next.players[1]),0);
   assert.equal(next.players[1].knownCards.length,0);
 });
 
-test("B1c模拟：desire 为 0 时不消费且效果继续", () => {
-  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
+test("反制概率：desire 为 0 时不消费且效果继续", () => {
+  const target=counterPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("c1")]});
+  const state={players:[counterPlayer("a","dawn"),target]};
   const simulator=new AiSimulator({players:[]});
   const effectWorlds=[{ probability:1, conditions:{}, occurs:true }];
   const response=simulator.consumeTargetCounterResponseWorlds(state,target,effectWorlds,0);
   assert.equal(response.outcomeWorlds[0].effectPasses,true);
   assert.equal(response.outcomeWorlds[0].counterAttempted,false);
-  assert.equal(target.handCount,1);assert.equal(b1cCounterProbability(target),1);
+  assert.equal(target.handCount,1);assert.equal(counterProbabilityOf(target),1);
   assert.equal(target.knownCards[0].cardId,"c1");
 });
 
-test("B1c模拟：一张匿名确定反制第一次消费第二次无反制", () => {
-  const target=b1cPlayer("b","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
-  let next=b1cApply(state,"shockwave");
+test("反制概率：一张匿名确定反制第一次消费第二次无反制", () => {
+  const target=counterPlayer("b","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+  const state={players:[counterPlayer("a","dawn"),target]};
+  let next=counterApply(state,"shockwave");
   assert.equal(next.players[1].hp,4);assert.equal(next.players[1].handCount,0);
-  assert.equal(b1cCounterProbability(next.players[1]),0);
-  next=b1cApply(next,"shockwave");
+  assert.equal(counterProbabilityOf(next.players[1]),0);
+  next=counterApply(next,"shockwave");
   assert.equal(next.players[1].hp,3);
 });
 
-test("B1c模拟：匿名50%反制首次消费后二次不复活", () => {
-  const target=b1cPlayer("b","dusk",{handCount:1,counterCountDistribution:[
+test("反制概率：匿名50%反制首次消费后二次不复活", () => {
+  const target=counterPlayer("b","dusk",{handCount:1,counterCountDistribution:[
     {probability:.5,conditions:{anon:"no"},counterCount:0},
     {probability:.5,conditions:{anon:"yes"},counterCount:1}
   ]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
-  let next=b1cApply(state,"shockwave");
+  const state={players:[counterPlayer("a","dawn"),target]};
+  let next=counterApply(state,"shockwave");
   assert.equal(next.players[1].hp,3.5);assertClose(next.players[1].handCount,.5);
-  assert.equal(b1cCounterProbability(next.players[1]),0);
-  const byCount=b1cCounterByCount(next.players[1]);
+  assert.equal(counterProbabilityOf(next.players[1]),0);
+  const byCount=counterByCount(next.players[1]);
   assertClose(byCount[0] ?? 0,1);
-  next=b1cApply(next,"shockwave");
+  next=counterApply(next,"shockwave");
   assert.equal(next.players[1].hp,2.5);
 });
 
-test("B1c模拟：40%事件未发生世界不响应不消费", () => {
-  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
+test("反制概率：40%事件未发生世界不响应不消费", () => {
+  const target=counterPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("c1")]});
+  const state={players:[counterPlayer("a","dawn"),target]};
   const simulator=new AiSimulator({players:[]});
   const effectWorlds=[
     { probability:.4, conditions:{event:"yes"}, occurs:true },
@@ -3712,7 +4776,7 @@ test("B1c模拟：40%事件未发生世界不响应不消费", () => {
   ];
   const response=simulator.consumeTargetCounterResponseWorlds(state,target,effectWorlds,1);
   assertClose(target.handCount,.6);
-  assertClose(b1cCounterProbability(target),.6);
+  assertClose(counterProbabilityOf(target),.6);
   const cancelled=response.outcomeWorlds.filter((branch)=>branch.effectCancelled)
     .reduce((sum,branch)=>sum+branch.probability,0);
   assertClose(cancelled,.4);
@@ -3721,9 +4785,9 @@ test("B1c模拟：40%事件未发生世界不响应不消费", () => {
   assert.ok(Math.abs(attemptedWithoutEffect)<1e-9);
 });
 
-test("B1c模拟：desire 40% 消费与取消共用同一条件世界", () => {
-  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
+test("反制概率：desire 40% 消费与取消共用同一条件世界", () => {
+  const target=counterPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("c1")]});
+  const state={players:[counterPlayer("a","dawn"),target]};
   const simulator=new AiSimulator({players:[]});
   const response=simulator.consumeTargetCounterResponseWorlds(
     state,target,[{ probability:1, conditions:{}, occurs:true }],0.4
@@ -3734,7 +4798,7 @@ test("B1c模拟：desire 40% 消费与取消共用同一条件世界", () => {
     .reduce((sum,branch)=>sum+branch.probability,0);
   assertClose(cancelled,.4);assertClose(consumed,.4);
   assertClose(target.handCount,.6);
-  assertClose(b1cCounterProbability(target),.6);
+  assertClose(counterProbabilityOf(target),.6);
   const joint=joinProbabilityStateBranches(
     projectAvailability(target.knownCards[0].availabilityStateBranches,"counterAvail"),
     response.outcomeWorlds.map(({probability,conditions,effectCancelled})=>({probability,conditions,effectCancelled}))
@@ -3744,35 +4808,35 @@ test("B1c模拟：desire 40% 消费与取消共用同一条件世界", () => {
   assert.ok(Math.abs(mismatch)<1e-9);
 });
 
-test("B1c模拟：已知1+匿名非反制使用后确定身份必消费", () => {
-  const target=b1cPlayer("b","dusk",{handCount:2,knownCards:[b1cKnownCounter("k1")],counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
-  const next=b1cApply(state,"shockwave");
+test("反制概率：已知1+匿名非反制使用后确定身份必消费", () => {
+  const target=counterPlayer("b","dusk",{handCount:2,knownCards:[counterKnownCard("k1")],counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+  const state={players:[counterPlayer("a","dawn"),target]};
+  const next=counterApply(state,"shockwave");
   assert.equal(next.players[1].hp,4);assert.equal(next.players[1].handCount,1);
   assert.equal(next.players[1].knownCards.length,0);
-  assert.equal(b1cCounterProbability(next.players[1]),0);
+  assert.equal(counterProbabilityOf(next.players[1]),0);
 });
 
-test("B1c模拟：已知1+匿名确定反制使用后已知身份保留一半且只消费一个来源", () => {
-  const target=b1cPlayer("b","dusk",{handCount:2,knownCards:[b1cKnownCounter("k1")],counterCountDistribution:[{probability:1,conditions:{},counterCount:2}]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
+test("反制概率：已知1+匿名确定反制使用后已知身份保留一半且只消费一个来源", () => {
+  const target=counterPlayer("b","dusk",{handCount:2,knownCards:[counterKnownCard("k1")],counterCountDistribution:[{probability:1,conditions:{},counterCount:2}]});
+  const state={players:[counterPlayer("a","dawn"),target]};
   const simulator=new AiSimulator({players:[]});
   const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
   const targetAfter=next.players[1];
   assert.equal(targetAfter.hp,4);assert.equal(targetAfter.handCount,1);
   const kept=targetAfter.knownCards.find((entry)=>entry.cardId==="k1");
   assert.ok(kept);assertClose(simulator.cardAvailability(kept),.5);
-  const byCount=b1cCounterByCount(targetAfter);
+  const byCount=counterByCount(targetAfter);
   assertClose(byCount[1] ?? 0,1);
   assert.ok(!(byCount[2] ?? 0));assert.ok(!(byCount[0] ?? 0));
 });
 
-test("B1c模拟：已知1+匿名50%反制后身份保留0.25且只存在于count1世界", () => {
-  const target=b1cPlayer("b","dusk",{handCount:2,knownCards:[b1cKnownCounter("k1")],counterCountDistribution:[
+test("反制概率：已知1+匿名50%反制后身份保留0.25且只存在于count1世界", () => {
+  const target=counterPlayer("b","dusk",{handCount:2,knownCards:[counterKnownCard("k1")],counterCountDistribution:[
     {probability:.5,conditions:{anon:"no"},counterCount:1},
     {probability:.5,conditions:{anon:"yes"},counterCount:2}
   ]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
+  const state={players:[counterPlayer("a","dawn"),target]};
   const simulator=new AiSimulator({players:[]});
   const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
   const targetAfter=next.players[1];
@@ -3785,19 +4849,19 @@ test("B1c模拟：已知1+匿名50%反制后身份保留0.25且只存在于count
   const impossible=joint.filter((branch)=>branch.keptAvail&&!branch.count1)
     .reduce((sum,branch)=>sum+branch.probability,0);
   assert.ok(Math.abs(impossible)<1e-9);
-  const byCount=b1cCounterByCount(targetAfter);
+  const byCount=counterByCount(targetAfter);
   assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
 });
 
-test("B1c模拟：两张已知反制一次互斥选择且第二次消费剩余一张", () => {
-  const target=b1cPlayer("b","dusk",{handCount:2,counterProbability:1,knownCards:[b1cKnownCounter("k1"),b1cKnownCounter("k2")]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
+test("反制概率：两张已知反制一次互斥选择且第二次消费剩余一张", () => {
+  const target=counterPlayer("b","dusk",{handCount:2,counterProbability:1,knownCards:[counterKnownCard("k1"),counterKnownCard("k2")]});
+  const state={players:[counterPlayer("a","dawn"),target]};
   const simulator=new AiSimulator({players:[]});
   let next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
   const after1=next.players[1];
   assert.equal(after1.knownCards.length,2);
-  assertClose(b1cAvailability(after1.knownCards.find((entry)=>entry.cardId==="k1")),.5);
-  assertClose(b1cAvailability(after1.knownCards.find((entry)=>entry.cardId==="k2")),.5);
+  assertClose(counterAvailability(after1.knownCards.find((entry)=>entry.cardId==="k1")),.5);
+  assertClose(counterAvailability(after1.knownCards.find((entry)=>entry.cardId==="k2")),.5);
   const joint1=joinProbabilityStateBranches(
     projectAvailability(after1.knownCards.find((entry)=>entry.cardId==="k1").availabilityStateBranches,"a1"),
     projectAvailability(after1.knownCards.find((entry)=>entry.cardId==="k2").availabilityStateBranches,"a2")
@@ -3805,14 +4869,14 @@ test("B1c模拟：两张已知反制一次互斥选择且第二次消费剩余�
   const bothKept=joint1.filter((branch)=>branch.a1&&branch.a2).reduce((sum,branch)=>sum+branch.probability,0);
   const bothGone=joint1.filter((branch)=>!branch.a1&&!branch.a2).reduce((sum,branch)=>sum+branch.probability,0);
   assert.ok(Math.abs(bothKept)<1e-9);assert.ok(Math.abs(bothGone)<1e-9);
-  const byCount=b1cCounterByCount(after1);
+  const byCount=counterByCount(after1);
   assertClose(byCount[1] ?? 0,1);
   next=simulator.apply(next,{type:"card",card:{...CARD_DEFINITIONS.provoke,id:"pv"},targets:[]},"a");
   assert.equal(next.players[1].knownCards.length,0);
-  assert.equal(b1cCounterProbability(next.players[1]),0);
+  assert.equal(counterProbabilityOf(next.players[1]),0);
 });
 
-test("B1c模拟：部分可用已知反制只在可用世界进入候选", () => {
+test("反制概率：部分可用已知反制只在可用世界进入候选", () => {
   const partial={
     cardId:"pk",definitionId:"counter",
     availabilityBranches:[{probability:.5,conditions:{present:"yes"}}],
@@ -3821,55 +4885,55 @@ test("B1c模拟：部分可用已知反制只在可用世界进入候选", () =>
       {probability:.5,conditions:{present:"no"},available:false}
     ]
   };
-  const target=b1cPlayer("b","dusk",{handCount:1,knownCards:[partial],counterCountDistribution:[
+  const target=counterPlayer("b","dusk",{handCount:1,knownCards:[partial],counterCountDistribution:[
     {probability:.5,conditions:{present:"yes"},counterCount:1},
     {probability:.5,conditions:{present:"no"},counterCount:0}
   ]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
+  const state={players:[counterPlayer("a","dawn"),target]};
   const simulator=new AiSimulator({players:[]});
   const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
   assert.equal(next.players[1].hp,3.5);
   assert.equal(next.players[1].knownCards.length,0);
   const after=next.players[1];
-  assert.equal(b1cCounterProbability(after),0);
+  assert.equal(counterProbabilityOf(after),0);
 });
 
-test("B1c模拟：多目标各自独立消费反制", () => {
-  const b=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("b1")]});
-  const c=b1cPlayer("c","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
-  const state={players:[b1cPlayer("a","dawn"),b,c]};
-  const next=b1cApply(state,"shockwave");
+test("反制概率：多目标各自独立消费反制", () => {
+  const b=counterPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("b1")]});
+  const c=counterPlayer("c","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("c1")]});
+  const state={players:[counterPlayer("a","dawn"),b,c]};
+  const next=counterApply(state,"shockwave");
   assert.equal(next.players[1].hp,4);assert.equal(next.players[1].knownCards.length,0);
   assert.equal(next.players[2].hp,4);assert.equal(next.players[2].knownCards.length,0);
 });
 
-test("B1c模拟：B两张反制C无牌时B只消费一张且C受效果", () => {
-  const b=b1cPlayer("b","dusk",{handCount:2,counterProbability:1,knownCards:[b1cKnownCounter("b1"),b1cKnownCounter("b2")]});
-  const c=b1cPlayer("c","dusk",{});
-  const state={players:[b1cPlayer("a","dawn"),b,c]};
-  const next=b1cApply(state,"shockwave");
+test("反制概率：B两张反制C无牌时B只消费一张且C受效果", () => {
+  const b=counterPlayer("b","dusk",{handCount:2,counterProbability:1,knownCards:[counterKnownCard("b1"),counterKnownCard("b2")]});
+  const c=counterPlayer("c","dusk",{});
+  const state={players:[counterPlayer("a","dawn"),b,c]};
+  const next=counterApply(state,"shockwave");
   assert.equal(next.players[1].hp,4);assert.equal(next.players[1].knownCards.length,2);
-  assertClose(b1cAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="b1")),.5);
-  assertClose(b1cAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="b2")),.5);
-  assert.equal(b1cCounterProbability(next.players[1]),1);
+  assertClose(counterAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="b1")),.5);
+  assertClose(counterAvailability(next.players[1].knownCards.find((entry)=>entry.cardId==="b2")),.5);
+  assert.equal(counterProbabilityOf(next.players[1]),1);
   assert.equal(next.players[2].hp,3);
 });
 
-test("B1c模拟：clone 后已消费反制不恢复", () => {
-  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
+test("反制概率：clone 后已消费反制不恢复", () => {
+  const target=counterPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("c1")]});
+  const state={players:[counterPlayer("a","dawn"),target]};
   const simulator=new AiSimulator({players:[]});
   let next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
-  assert.equal(b1cCounterProbability(next.players[1]),0);
+  assert.equal(counterProbabilityOf(next.players[1]),0);
   const cloned=simulator.clone(next);
-  assert.equal(b1cCounterProbability(cloned.players[1]),0);
+  assert.equal(counterProbabilityOf(cloned.players[1]),0);
   const afterClone=simulator.apply(cloned,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw2"},targets:[]},"a");
   assert.equal(afterClone.players[1].hp,3);
 });
 
-test("B1c模拟：已消费确定反制不再被资源操作选中", () => {
-  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
+test("反制概率：已消费确定反制不再被资源操作选中", () => {
+  const target=counterPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("c1")]});
+  const state={players:[counterPlayer("a","dawn"),target]};
   const simulator=new AiSimulator({players:[]});
   const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
   const selection=simulator.chooseSimulatedResourceSelection(next,next.players[0],next.players[1],"destroy");
@@ -3877,39 +4941,39 @@ test("B1c模拟：已消费确定反制不再被资源操作选中", () => {
   assert.equal(next.players[1].knownCards.length,0);
 });
 
-test("B1c模拟：确定反制被破坏后不能响应", () => {
-  const target=b1cPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
-  const state={players:[b1cPlayer("a","dawn"),target]};
+test("反制概率：确定反制被破坏后不能响应", () => {
+  const target=counterPlayer("b","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("c1")]});
+  const state={players:[counterPlayer("a","dawn"),target]};
   const simulator=new AiSimulator({players:[]});
   simulator.destroyResource(state,state.players[0],target,1);
-  assert.equal(target.knownCards.length,0);assert.equal(b1cCounterProbability(target),0);
+  assert.equal(target.knownCards.length,0);assert.equal(counterProbabilityOf(target),0);
   const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"a");
   assert.equal(next.players[1].hp,3);
 });
 
-test("B1c模拟：确定反制转移后来源减一接收者加一", () => {
-  const source=b1cPlayer("s","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
-  const receiver=b1cPlayer("r","dawn",{handCount:0,counterProbability:0});
-  const state={players:[b1cPlayer("a","dawn"),source,receiver]};
+test("反制概率：确定反制转移后来源减一接收者加一", () => {
+  const source=counterPlayer("s","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("c1")]});
+  const receiver=counterPlayer("r","dawn",{handCount:0,counterProbability:0});
+  const state={players:[counterPlayer("a","dawn"),source,receiver]};
   const simulator=new AiSimulator({players:[]});
   simulator.transferKnownCardIdentity(
     state,source,receiver,{cardId:"c1",definitionId:"counter"},
     [{probability:1,conditions:{},occurs:true}],false
   );
-  assert.equal(source.knownCards.length,0);assert.equal(b1cCounterProbability(source),0);assert.equal(source.handCount,0);
-  assert.equal(receiver.knownCards.length,1);assert.equal(b1cCounterProbability(receiver),1);assert.equal(receiver.handCount,1);
+  assert.equal(source.knownCards.length,0);assert.equal(counterProbabilityOf(source),0);assert.equal(source.handCount,0);
+  assert.equal(receiver.knownCards.length,1);assert.equal(counterProbabilityOf(receiver),1);assert.equal(receiver.handCount,1);
 });
 
-test("B1c模拟：匿名反制转移容量守恒且共享条件世界", () => {
-  const source=b1cPlayer("s","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
-  const receiver=b1cPlayer("r","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const state={players:[b1cPlayer("a","dawn"),source,receiver]};
+test("反制概率：匿名反制转移容量守恒且共享条件世界", () => {
+  const source=counterPlayer("s","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+  const receiver=counterPlayer("r","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={players:[counterPlayer("a","dawn"),source,receiver]};
   const simulator=new AiSimulator({players:[]});
   simulator.transferUnknownCardIdentity(
     state,source,receiver,[{probability:1,conditions:{},occurs:true}],1
   );
-  assert.equal(b1cCounterProbability(source),0);assert.equal(source.handCount,0);
-  assert.equal(b1cCounterProbability(receiver),1);assert.equal(receiver.handCount,1);
+  assert.equal(counterProbabilityOf(source),0);assert.equal(source.handCount,0);
+  assert.equal(counterProbabilityOf(receiver),1);assert.equal(receiver.handCount,1);
   const joint=joinProbabilityStateBranches(
     source.counterCountDistribution.map(({probability,conditions,counterCount})=>({probability,conditions,sourceCount:counterCount})),
     receiver.counterCountDistribution.map(({probability,conditions,counterCount})=>({probability,conditions,receiverCount:counterCount}))
@@ -3919,12 +4983,12 @@ test("B1c模拟：匿名反制转移容量守恒且共享条件世界", () => {
   assertClose(both,1);
 });
 
-test("B1c模拟：整手牌随机移除互斥消费已知或匿名反制", () => {
-  const player=b1cPlayer("t","dusk",{handCount:2,knownCards:[b1cKnownCounter("k1")],counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+test("反制概率：整手牌随机移除互斥消费已知或匿名反制", () => {
+  const player=counterPlayer("t","dusk",{handCount:2,knownCards:[counterKnownCard("k1")],counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
   const simulator=new AiSimulator({players:[]});
   simulator.consumeRandomHandCards({players:[player]},player,1);
   assertClose(simulator.cardAvailability(player.knownCards[0]),.5);
-  const byCount=b1cCounterByCount(player);
+  const byCount=counterByCount(player);
   assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
   const joint=joinProbabilityStateBranches(
     projectAvailability(player.knownCards[0].availabilityStateBranches,"keptAvail"),
@@ -3935,18 +4999,18 @@ test("B1c模拟：整手牌随机移除互斥消费已知或匿名反制", () =>
   assert.ok(Math.abs(impossible)<1e-9);
 });
 
-test("B1c模拟：新摸一张匿名牌只增加该新牌反制先验且旧牌不复活", () => {
-  const player=b1cPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+test("反制概率：新摸一张匿名牌只增加该新牌反制先验且旧牌不复活", () => {
+  const player=counterPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
   const state={remainingCardCounts:{counter:10},players:[player]};
   const simulator=new AiSimulator({players:[]});
   const gainWorlds=[{probability:1,conditions:{draw:"yes"},occurs:true}];
   player.handCount += 1;
   simulator.addOneUnknownCardToCounterDistribution(state,player,gainWorlds);
   assert.equal(player.counterProbability,1);
-  const byCount=b1cCounterByCount(player);
+  const byCount=counterByCount(player);
   assertClose(byCount[0] ?? 0,0);assertClose(byCount[1] ?? 0,1);
   // 旧匿名反制消费后摸新牌：新牌才有先验，旧牌不恢复。
-  const consumed=b1cPlayer("u","dusk",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const consumed=counterPlayer("u","dusk",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
   const state2={remainingCardCounts:{counter:10},players:[consumed]};
   consumed.handCount = 1;
   simulator.addOneUnknownCardToCounterDistribution(state2,consumed,gainWorlds);
@@ -3954,109 +5018,101 @@ test("B1c模拟：新摸一张匿名牌只增加该新牌反制先验且旧牌�
   assert.ok(consumed.counterCountDistribution.every((branch)=>branch.conditions.draw==="yes"));
 });
 
-// ---- B1c 最终补充：匿名摸牌接入反制增量 ----
-const b1cDrawActor = (overrides = {}) => ({
-  id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0,
-  handCount:1, counterProbability:0, blockProbability:0, twoBlockProbability:0, expectedRecoverCount:0,
-  expectedAssaultCount:0, assaultResponseProbability:0, expectedInformationGain:0,
-  equipmentDefinitionId:null, equipmentRetentionProbability:0, statuses:[], ...overrides
-});
-
-test("B1c摸牌：丰收摸两张并叠加两次新牌反制先验", () => {
-  const actor=b1cDrawActor({handCount:1,hand:[{id:"h",definitionId:"harvest"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+test("反制先验：丰收摸两张并叠加两次新牌反制先验", () => {
+  const actor=counterDrawActor({handCount:1,hand:[{id:"h",definitionId:"harvest"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,counterPlayer("e","dusk",{})]};
   const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.harvest,id:"h"},targets:[]},"a");
   const after=next.players[0];
   assert.equal(after.handCount,2);
-  const byCount=b1cCounterByCount(after);
+  const byCount=counterByCount(after);
   assertClose(byCount[0] ?? 0,.25);assertClose(byCount[1] ?? 0,.5);assertClose(byCount[2] ?? 0,.25);
   assertClose(after.counterProbability,.75);
   assertClose(after.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
 });
 
-test("B1c摸牌：旧反制消费后再丰收只产生新牌先验", () => {
-  const actor=b1cDrawActor({handCount:2,hand:[{id:"c",definitionId:"counter"},{id:"h",definitionId:"harvest"}]});
-  const state={players:[actor,b1cPlayer("e","dusk",{})]};
+test("反制先验：旧反制消费后再丰收只产生新牌先验", () => {
+  const actor=counterDrawActor({handCount:2,hand:[{id:"c",definitionId:"counter"},{id:"h",definitionId:"harvest"}]});
+  const state={players:[actor,counterPlayer("e","dusk",{})]};
   const simulator=new AiSimulator(state);
   simulator.consumeTargetCounterResponseWorlds(state,actor,[{probability:1,conditions:{},occurs:true}],1);
   assert.equal(actor.handCount,1);assert.equal(actor.hand[0].definitionId,"harvest");
-  assert.equal(b1cCounterProbability(actor),0);
+  assert.equal(counterProbabilityOf(actor),0);
   state.remainingCardCounts={counter:1,charge:1};
   const next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.harvest,id:"h"},targets:[]},"a");
   const after=next.players[0];
   assert.equal(after.handCount,2);
-  const byCount=b1cCounterByCount(after);
+  const byCount=counterByCount(after);
   assertClose(byCount[0] ?? 0,.25);assertClose(byCount[1] ?? 0,.5);assertClose(byCount[2] ?? 0,.25);
   assert.equal(after.hand.some((card)=>card.definitionId==="counter"),false);
 });
 
-test("B1c摸牌：40%概率丰收两张共享同一效果世界", () => {
-  const actor=b1cDrawActor({handCount:1,hand:[{id:"h",definitionId:"harvest"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+test("反制先验：40%概率丰收两张共享同一效果世界", () => {
+  const actor=counterDrawActor({handCount:1,hand:[{id:"h",definitionId:"harvest"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,counterPlayer("e","dusk",{})]};
   const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.harvest,id:"h"},targets:[],executionProbability:.4},"a");
   const after=next.players[0];
   assertClose(after.handCount,1.4);
-  const byCount=b1cCounterByCount(after);
+  const byCount=counterByCount(after);
   assertClose(byCount[0] ?? 0,.7);assertClose(byCount[1] ?? 0,.2);assertClose(byCount[2] ?? 0,.1);
   assertClose(after.counterProbability,.3);
   assertClose(after.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
 });
 
-test("B1c摸牌：回收站前两次战术各摸一张第三次不触发", () => {
-  const actor=b1cDrawActor({handCount:3,hand:[
+test("反制先验：回收站前两次战术各摸一张第三次不触发", () => {
+  const actor=counterDrawActor({handCount:3,hand:[
     {id:"x1",definitionId:"exposeWeakness"},
     {id:"x2",definitionId:"exposeWeakness"},
     {id:"x3",definitionId:"exposeWeakness"}
   ],equipmentDefinitionId:"recycleDevice",equipmentRetentionProbability:1,recycleDeviceUses:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,counterPlayer("e","dusk",{})]};
   const simulator=new AiSimulator(state);
   let next=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x1"},targets:[]},"a");
-  assert.equal(next.players[0].handCount,3);assertClose(b1cCounterProbability(next.players[0]),.5);
+  assert.equal(next.players[0].handCount,3);assertClose(counterProbabilityOf(next.players[0]),.5);
   next=simulator.apply(next,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x2"},targets:[]},"a");
-  const byCount2=b1cCounterByCount(next.players[0]);
+  const byCount2=counterByCount(next.players[0]);
   assertClose(byCount2[0] ?? 0,.25);assertClose(byCount2[1] ?? 0,.5);assertClose(byCount2[2] ?? 0,.25);
   next=simulator.apply(next,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x3"},targets:[]},"a");
   assert.equal(next.players[0].handCount,2);
-  const byCount3=b1cCounterByCount(next.players[0]);
+  const byCount3=counterByCount(next.players[0]);
   assertClose(byCount3[0] ?? 0,.25);assertClose(byCount3[1] ?? 0,.5);assertClose(byCount3[2] ?? 0,.25);
 });
 
-test("B1c摸牌：击杀奖励为新牌叠加反制先验", () => {
-  const attacker=b1cDrawActor({handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const enemy=b1cPlayer("e","dusk",{handCount:0,hp:1,blockProbability:0,expectedRecoverCount:0,assaultResponseProbability:0});
+test("反制先验：击杀奖励为新牌叠加反制先验", () => {
+  const attacker=counterDrawActor({handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const enemy=counterPlayer("e","dusk",{handCount:0,hp:1,blockProbability:0,expectedRecoverCount:0,assaultResponseProbability:0});
   const state={remainingCardCounts:{counter:1,charge:1},players:[attacker,enemy]};
   const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"e"}]},"a");
   const after=next.players[0];
   assert.equal(after.handCount,1); // 1 打出 -1 + 击杀奖励 1
   assertClose(after.counterProbability,.5);
-  assertClose(b1cCounterByCount(after)[0] ?? 0,.5);
-  assertClose(b1cCounterByCount(after)[1] ?? 0,.5);
+  assertClose(counterByCount(after)[0] ?? 0,.5);
+  assertClose(counterByCount(after)[1] ?? 0,.5);
 });
 
-test("B1c摸牌：赌命被动摸牌增加反制先验", () => {
-  const actor=b1cDrawActor({generalId:"fate-gambler",handCount:1,hand:[{id:"x",definitionId:"exposeWeakness"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+test("反制先验：赌命被动摸牌增加反制先验", () => {
+  const actor=counterDrawActor({generalId:"fate-gambler",handCount:1,hand:[{id:"x",definitionId:"exposeWeakness"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,counterPlayer("e","dusk",{})]};
   const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"x"},targets:[]},"a");
   assertClose(next.players[0].handCount,.6);
   assertClose(next.players[0].counterProbability,.3);
 });
 
-test("B1c摸牌：主动技能孤注摸牌增加反制先验", () => {
-  const actor=b1cDrawActor({generalId:"fate-gambler",handCount:0,hand:[],energy:2,maxEnergy:4,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+test("反制先验：主动技能孤注摸牌增加反制先验", () => {
+  const actor=counterDrawActor({generalId:"fate-gambler",handCount:0,hand:[],energy:2,maxEnergy:4,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,counterPlayer("e","dusk",{})]};
   const simulator=new AiSimulator(state);
   simulator.applySkill(state,actor,{type:"skill",skill:{id:"allIn"},targets:[]},[{probability:1,conditions:{},occurs:true}]);
   assert.equal(actor.energy,0);
   assert.equal(actor.handCount,2);
-  const byCount=b1cCounterByCount(actor);
+  const byCount=counterByCount(actor);
   assertClose(byCount[0] ?? 0,.25);assertClose(byCount[1] ?? 0,.5);assertClose(byCount[2] ?? 0,.25);
   assertClose(actor.counterProbability,.75);
   assertClose(actor.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
 });
 
-test("B1c摸牌：40%概率主动孤注只在发动世界增加反制", () => {
-  const actor=b1cDrawActor({generalId:"fate-gambler",handCount:0,hand:[],energy:2,maxEnergy:4,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+test("反制先验：40%概率主动孤注只在发动世界增加反制", () => {
+  const actor=counterDrawActor({generalId:"fate-gambler",handCount:0,hand:[],energy:2,maxEnergy:4,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,counterPlayer("e","dusk",{})]};
   const simulator=new AiSimulator(state);
   simulator.applySkill(state,actor,{type:"skill",skill:{id:"allIn"},targets:[]},[
     {probability:.4,conditions:{allIn:"yes"},occurs:true},
@@ -4064,7 +5120,7 @@ test("B1c摸牌：40%概率主动孤注只在发动世界增加反制", () => {
   ]);
   assertClose(actor.handCount,.8);
   assertClose(actor.energy,1.2);
-  const byCount=b1cCounterByCount(actor);
+  const byCount=counterByCount(actor);
   assertClose(byCount[0] ?? 0,.7);assertClose(byCount[1] ?? 0,.2);assertClose(byCount[2] ?? 0,.1);
   assertClose(actor.counterProbability,.3);
   assertClose(actor.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
@@ -4078,29 +5134,29 @@ test("B1c摸牌：40%概率主动孤注只在发动世界增加反制", () => {
   assertClose(noTriggerGain,0);
 });
 
-test("B1c摸牌：旧反制消费后主动孤注只产生新牌先验", () => {
-  const actor=b1cDrawActor({generalId:"fate-gambler",handCount:2,hand:[{id:"c",definitionId:"counter"},{id:"o",definitionId:"charge"}],energy:2,maxEnergy:4});
-  const state={players:[actor,b1cPlayer("e","dusk",{})]};
+test("反制先验：旧反制消费后主动孤注只产生新牌先验", () => {
+  const actor=counterDrawActor({generalId:"fate-gambler",handCount:2,hand:[{id:"c",definitionId:"counter"},{id:"o",definitionId:"charge"}],energy:2,maxEnergy:4});
+  const state={players:[actor,counterPlayer("e","dusk",{})]};
   const simulator=new AiSimulator(state);
   simulator.consumeTargetCounterResponseWorlds(state,actor,[{probability:1,conditions:{},occurs:true}],1);
-  assert.equal(actor.handCount,1);assert.equal(b1cCounterProbability(actor),0);
+  assert.equal(actor.handCount,1);assert.equal(counterProbabilityOf(actor),0);
   assert.equal(actor.hand.some((card)=>card.definitionId==="counter"),false);
   state.remainingCardCounts={counter:1,charge:1};
   simulator.applySkill(state,actor,{type:"skill",skill:{id:"allIn"},targets:[]},[{probability:1,conditions:{},occurs:true}]);
   assert.equal(actor.handCount,3);
-  const byCount=b1cCounterByCount(actor);
+  const byCount=counterByCount(actor);
   assertClose(byCount[0] ?? 0,.25);assertClose(byCount[1] ?? 0,.5);assertClose(byCount[2] ?? 0,.25);
   assertClose(actor.counterProbability,.75);
   assert.equal(actor.hand.some((card)=>card.definitionId==="counter"),false);
 });
 
-test("B1c摸牌：主动孤注摸牌数跟随能量条件世界", () => {
-  const actor=b1cDrawActor({generalId:"fate-gambler",handCount:0,hand:[],energy:2,maxEnergy:4,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+test("反制先验：主动孤注摸牌数跟随能量条件世界", () => {
+  const actor=counterDrawActor({generalId:"fate-gambler",handCount:0,hand:[],energy:2,maxEnergy:4,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
   actor.energyBranches=[
     {probability:.5,conditions:{energyWorld:"one"},amount:1},
     {probability:.5,conditions:{energyWorld:"three"},amount:3}
   ];
-  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,b1cPlayer("e","dusk",{})]};
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,counterPlayer("e","dusk",{})]};
   const simulator=new AiSimulator(state);
   simulator.applySkill(state,actor,{type:"skill",skill:{id:"allIn"},targets:[]},[{probability:1,conditions:{},occurs:true}]);
   assert.equal(actor.energy,0);
@@ -4116,30 +5172,30 @@ test("B1c摸牌：主动孤注摸牌数跟随能量条件世界", () => {
   assertClose(actor.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
 });
 
-test("B1c摸牌：协调摸牌增加反制先验", () => {
-  const actor=b1cDrawActor({generalId:"resonance-tuner",handCount:1,hand:[{id:"s",definitionId:"shield"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const ally=b1cPlayer("ally","dawn",{handCount:0});
-  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,ally,b1cPlayer("e","dusk",{})]};
+test("反制先验：协调摸牌增加反制先验", () => {
+  const actor=counterDrawActor({generalId:"resonance-tuner",handCount:1,hand:[{id:"s",definitionId:"shield"}],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const ally=counterPlayer("ally","dawn",{handCount:0});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[actor,ally,counterPlayer("e","dusk",{})]};
   const next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.shield,id:"s"},targets:[{id:"ally"}]},"a");
   assert.equal(next.players[0].handCount,1);
   assertClose(next.players[0].counterProbability,.5);
 });
 
-test("B1c摸牌：共鸣技能摸两张增加反制先验", () => {
-  const actor=b1cDrawActor({handCount:0,hand:[],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const target=b1cPlayer("t","dusk",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+test("反制先验：共鸣技能摸两张增加反制先验", () => {
+  const actor=counterDrawActor({handCount:0,hand:[],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=counterPlayer("t","dusk",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
   const state={remainingCardCounts:{counter:1,charge:1},players:[actor,target]};
   const simulator=new AiSimulator(state);
   simulator.applySkill(state,actor,{type:"skill",skill:{id:"resonance"},targets:[{id:"t"}]},[{probability:1,conditions:{},occurs:true}]);
   assert.equal(target.handCount,2);
-  const byCount=b1cCounterByCount(target);
+  const byCount=counterByCount(target);
   assertClose(byCount[0] ?? 0,.25);assertClose(byCount[1] ?? 0,.5);assertClose(byCount[2] ?? 0,.25);
   assertClose(target.counterProbability,.75);
 });
 
-test("B1c摸牌：灵医回春摸牌增加反制先验", () => {
-  const medic=b1cDrawActor({generalId:"spirit-medic",handCount:0,hand:[],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const ally=b1cPlayer("ally","dawn",{handCount:0,hp:2,maxHp:4});
+test("反制先验：灵医回春摸牌增加反制先验", () => {
+  const medic=counterDrawActor({generalId:"spirit-medic",handCount:0,hand:[],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const ally=counterPlayer("ally","dawn",{handCount:0,hp:2,maxHp:4});
   const state={remainingCardCounts:{counter:1,charge:1},players:[medic,ally]};
   const simulator=new AiSimulator(state);
   simulator.healFrom(state,medic,ally,1);
@@ -4148,9 +5204,9 @@ test("B1c摸牌：灵医回春摸牌增加反制先验", () => {
   assert.equal(medic.rejuvenationUsed,true);
 });
 
-test("B1c摸牌：猎杀被格挡后摸牌增加反制先验", () => {
-  const hunter=b1cDrawActor({handCount:0,hand:[],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const target=b1cPlayer("t","dusk",{handCount:1,hand:[{id:"b",definitionId:"block"}],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}],huntMarkSourceId:hunter.id,huntMarkProbability:1,huntMarkProbabilities:{[hunter.id]:1},huntMarkStateBranchesBySource:{[hunter.id]:[{probability:1,conditions:{},marked:true}]}});
+test("反制先验：猎杀被格挡后摸牌增加反制先验", () => {
+  const hunter=counterDrawActor({handCount:0,hand:[],counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=counterPlayer("t","dusk",{handCount:1,hand:[{id:"b",definitionId:"block"}],blockProbability:1,twoBlockProbability:0,blockCountDistribution:[{probability:1,conditions:{},blockCount:1}],huntMarkSourceId:hunter.id,huntMarkProbability:1,huntMarkProbabilities:{[hunter.id]:1},huntMarkStateBranchesBySource:{[hunter.id]:[{probability:1,conditions:{},marked:true}]}});
   const state={remainingCardCounts:{counter:1,charge:1},players:[hunter,target]};
   const simulator=new AiSimulator(state);
   simulator.applySkill(state,hunter,{type:"skill",skill:{id:"hunt"},targets:[{id:"t"}]},[{probability:1,conditions:{},occurs:true}]);
@@ -4158,47 +5214,46 @@ test("B1c摸牌：猎杀被格挡后摸牌增加反制先验", () => {
   assertClose(hunter.counterProbability,.5);
 });
 
-test("B1c摸牌：已知牌移动不按匿名根先验重复增加反制", () => {
-  const source=b1cPlayer("s","dusk",{handCount:1,counterProbability:1,knownCards:[b1cKnownCounter("c1")]});
-  const receiver=b1cPlayer("r","dawn",{handCount:0,counterProbability:0});
-  const state={remainingCardCounts:{counter:1,charge:1},players:[b1cDrawActor(),source,receiver]};
+test("反制先验：已知牌移动不按匿名根先验重复增加反制", () => {
+  const source=counterPlayer("s","dusk",{handCount:1,counterProbability:1,knownCards:[counterKnownCard("c1")]});
+  const receiver=counterPlayer("r","dawn",{handCount:0,counterProbability:0});
+  const state={remainingCardCounts:{counter:1,charge:1},players:[counterDrawActor(),source,receiver]};
   const simulator=new AiSimulator(state);
   simulator.transferKnownCardIdentity(state,source,receiver,{cardId:"c1",definitionId:"counter"},[{probability:1,conditions:{},occurs:true}],false);
   assert.deepEqual(receiver.counterCountDistribution,[{probability:1,conditions:{},counterCount:1}]);
   assert.equal(receiver.counterProbability,1);
   // 雷达判定得到公开基础牌（非反制）不增加反制容量。
-  const radarTarget=b1cPlayer("radar","dusk",{handCount:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const state2={remainingCardCounts:{charge:1},players:[b1cDrawActor(),radarTarget]};
+  const radarTarget=counterPlayer("radar","dusk",{handCount:0,equipmentDefinitionId:"defenseDevice",equipmentRetentionProbability:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const state2={remainingCardCounts:{charge:1},players:[counterDrawActor(),radarTarget]};
   const simulator2=new AiSimulator(state2);
   simulator2.applyDamage(state2,state2.players[0],radarTarget,1,{canBlock:true,deviceAttack:true});
   assert.equal(radarTarget.counterProbability,0);
 });
 
-// ---- B1c 最终收口：窃取反制容量守恒 ----
-test("B1c窃取：唯一匿名确定反制窃取后容量守恒", () => {
-  const actor=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const target=b1cPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+test("反制容量：唯一匿名确定反制窃取后容量守恒", () => {
+  const actor=counterPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=counterPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
   const state={players:[actor,target]};
   const simulator=new AiSimulator(state);
   simulator.stealResourceToHand(state,actor,target,1);
-  assert.equal(target.handCount,0);assert.equal(b1cCounterProbability(target),0);
-  assert.equal(actor.handCount,1);assert.equal(b1cCounterProbability(actor),1);
-  const byCount=b1cCounterByCount(actor);
+  assert.equal(target.handCount,0);assert.equal(counterProbabilityOf(target),0);
+  assert.equal(actor.handCount,1);assert.equal(counterProbabilityOf(actor),1);
+  const byCount=counterByCount(actor);
   assertClose(byCount[1] ?? 0,1);
   assertClose(actor.counterCountDistribution.reduce((sum,branch)=>sum+branch.probability,0),1);
 });
 
-test("B1c窃取：唯一匿名50%反制窃取后与来源同条件世界", () => {
-  const actor=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const target=b1cPlayer("t","dusk",{handCount:1,counterCountDistribution:[
+test("反制容量：唯一匿名50%反制窃取后与来源同条件世界", () => {
+  const actor=counterPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=counterPlayer("t","dusk",{handCount:1,counterCountDistribution:[
     {probability:.5,conditions:{anon:"no"},counterCount:0},
     {probability:.5,conditions:{anon:"yes"},counterCount:1}
   ]});
   const state={players:[actor,target]};
   const simulator=new AiSimulator(state);
   simulator.stealResourceToHand(state,actor,target,1);
-  assert.equal(target.handCount,0);assert.equal(b1cCounterProbability(target),0);
-  const byCount=b1cCounterByCount(actor);
+  assert.equal(target.handCount,0);assert.equal(counterProbabilityOf(target),0);
+  const byCount=counterByCount(actor);
   assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
   assertClose(actor.counterProbability,.5);
   const count1Branches=actor.counterCountDistribution.filter((branch)=>branch.counterCount===1);
@@ -4207,9 +5262,9 @@ test("B1c窃取：唯一匿名50%反制窃取后与来源同条件世界", () =>
   assert.ok(count0Branches.some((branch)=>branch.conditions.anon==="no"));
 });
 
-test("B1c窃取：手牌与装备各有概率时只转移手牌世界反制", () => {
-  const actor=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const target=b1cPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}],equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1});
+test("反制容量：手牌与装备各有概率时只转移手牌世界反制", () => {
+  const actor=counterPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=counterPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}],equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1});
   const state={players:[actor,target]};
   const simulator=new AiSimulator(state);
   simulator.stealResourceToHand(state,actor,target,1);
@@ -4217,7 +5272,7 @@ test("B1c窃取：手牌与装备各有概率时只转移手牌世界反制", ()
   assertClose(actor.counterProbability,.5);
   assertClose(target.equipmentRetentionProbability,.5);
   assertClose(target.handCount,.5);
-  assertClose(b1cCounterProbability(target),.5);
+  assertClose(counterProbabilityOf(target),.5);
   const joint=joinProbabilityStateBranches(
     actor.counterCountDistribution.map(({probability,conditions,counterCount})=>({probability,conditions,actorCount1:counterCount===1})),
     target.counterCountDistribution.map(({probability,conditions,counterCount})=>({probability,conditions,targetCount1:counterCount===1}))
@@ -4227,54 +5282,56 @@ test("B1c窃取：手牌与装备各有概率时只转移手牌世界反制", ()
   assert.ok(Math.abs(both)<1e-9);
 });
 
-test("B1c窃取：40%概率窃取只转移发生世界反制", () => {
-  const actor=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const target=b1cPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+test("反制容量：40%概率窃取只转移发生世界反制", () => {
+  const actor=counterPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=counterPlayer("t","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
   const state={players:[actor,target]};
   const simulator=new AiSimulator(state);
   simulator.stealResourceToHand(state,actor,target,.4);
   assertClose(actor.handCount,.4);assertClose(actor.counterProbability,.4);
-  assertClose(target.handCount,.6);assertClose(b1cCounterProbability(target),.6);
+  assertClose(target.handCount,.6);assertClose(counterProbabilityOf(target),.6);
 });
 
-test("B1c窃取：行动者窃取反制后可响应一次目标级牌", () => {
-  const thief=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const victim=b1cPlayer("v","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+test("反制容量：行动者窃取反制后可响应一次目标级牌", () => {
+  const thief=counterPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const victim=counterPlayer("v","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
   const state={players:[thief,victim]};
   const simulator=new AiSimulator(state);
   simulator.stealResourceToHand(state,thief,victim,1);
-  assert.equal(b1cCounterProbability(thief),1);
-  const attacker=b1cPlayer("atk","dusk",{handCount:0});
+  assert.equal(counterProbabilityOf(thief),1);
+  const attacker=counterPlayer("atk","dusk",{handCount:0});
   const state2={players:[attacker,thief]};
   let next=simulator.apply(state2,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"atk");
-  assert.equal(next.players[1].hp,4);assert.equal(b1cCounterProbability(next.players[1]),0);
+  assert.equal(next.players[1].hp,4);assert.equal(counterProbabilityOf(next.players[1]),0);
   next=simulator.apply(next,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw2"},targets:[]},"atk");
   assert.equal(next.players[1].hp,3);
 });
 
-test("B1c窃取：来源唯一反制被窃取后不能再响应", () => {
-  const thief=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const victim=b1cPlayer("v","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
+test("反制容量：来源唯一反制被窃取后不能再响应", () => {
+  const thief=counterPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const victim=counterPlayer("v","dusk",{handCount:1,counterCountDistribution:[{probability:1,conditions:{},counterCount:1}]});
   const state={players:[thief,victim]};
   const simulator=new AiSimulator(state);
   simulator.stealResourceToHand(state,thief,victim,1);
-  assert.equal(b1cCounterProbability(victim),0);
-  const attacker=b1cPlayer("atk","dawn",{handCount:0});
+  assert.equal(counterProbabilityOf(victim),0);
+  const attacker=counterPlayer("atk","dawn",{handCount:0});
   const state2={players:[attacker,victim]};
   const next=simulator.apply(state2,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"sw"},targets:[]},"atk");
   assert.equal(next.players[1].hp,3);
 });
 
-test("B1c窃取：只窃取装备不产生反制容量", () => {
-  const actor=b1cPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
-  const target=b1cPlayer("t","dusk",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}],equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1});
+test("反制容量：只窃取装备不产生反制容量", () => {
+  const actor=counterPlayer("a","dawn",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}]});
+  const target=counterPlayer("t","dusk",{handCount:0,counterCountDistribution:[{probability:1,conditions:{},counterCount:0}],equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1});
   const state={players:[actor,target]};
   const simulator=new AiSimulator(state);
   simulator.stealResourceToHand(state,actor,target,1);
-  assert.equal(actor.handCount,1);assert.equal(b1cCounterProbability(actor),0);
+  assert.equal(actor.handCount,1);assert.equal(counterProbabilityOf(actor),0);
   assert.equal(target.equipmentRetentionProbability,0);
   assert.ok(actor.counterCountDistribution.every((branch)=>branch.counterCount===0));
 });
+
+// ---- 格挡概率与次数槽 ----
 
 const conditionalAssaultState = (attackLimit) => ({ playPhaseEnded:false, players:[
   {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,maxEnergy:4,handCount:2,hand:[{id:"one",definitionId:"assault"},{id:"two",definitionId:"assault"}],attackUsed:0,attackLimit,attackRange:1,equipmentDefinitionId:"telescope",equipmentRetentionProbability:.4},
@@ -4302,77 +5359,7 @@ test("两个概率突袭次数槽可在同一望远镜世界各消费一次", ()
   const twice=new AiSimulator(once).apply(once,second,"actor");assertClose(twice.players[0].attackUsed,.8);
 });
 
-test("AI 模拟借势不受普通突袭次数槽耗尽影响", () => {
-  const basePlayers=(attackUsed)=>({players:[
-    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},
-    {id:"first",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"a1",definitionId:"assault"},{id:"a2",definitionId:"assault"}],attackUsed,attackLimit:1,attackRange:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:2,blockProbability:0,counterProbability:0},
-    {id:"second",seatIndex:2,battleTeam:"dawn",alive:true,hp:8,maxHp:8,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0}
-  ]});
-  const action={type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}};
-  const availableState=basePlayers(0),exhaustedState=basePlayers(1);
-  const availableNext=new AiSimulator(availableState).apply(availableState,action,"actor");
-  const exhaustedNext=new AiSimulator(exhaustedState).apply(exhaustedState,action,"actor");
-  const availableFirst=availableNext.players[1],exhaustedFirst=exhaustedNext.players[1];
-  const availableIncrement=availableFirst.attackUsed-0;
-  const exhaustedIncrement=exhaustedFirst.attackUsed-1;
-  assert.ok(availableIncrement>0);
-  assert.ok(exhaustedIncrement>0);
-  assertClose(availableIncrement,exhaustedIncrement);
-  assert.ok(exhaustedFirst.attackUsed>exhaustedFirst.attackLimit);
-  assertClose(exhaustedFirst.attackUsed,1+availableIncrement);
-  assertClose(availableNext.players[2].hp,exhaustedNext.players[2].hp);
-  assertClose(availableFirst.handCount,exhaustedFirst.handCount);
-  assertClose(availableFirst.expectedAssaultCount,exhaustedFirst.expectedAssaultCount);
-  assertClose(availableFirst.equipmentRetentionProbability,exhaustedFirst.equipmentRetentionProbability);
-  assertClose(availableNext.players[0].expectedEquipmentGain,exhaustedNext.players[0].expectedEquipmentGain);
-});
-
-test("借势强制突袭复用真实次数槽且震荡不消费次数槽", () => {
-  const leverageState={players:[
-    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"l1",definitionId:"leverage"},{id:"l2",definitionId:"leverage"}],counterProbability:0},
-    {id:"first",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:2,attackUsed:0,attackLimit:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:2,blockProbability:0,counterProbability:0},
-    {id:"second",seatIndex:2,battleTeam:"dawn",alive:true,hp:8,maxHp:8,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0}
-  ]},simulator=new AiSimulator(leverageState),action=(id)=>({type:"card",card:{...CARD_DEFINITIONS.leverage,id},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}}),once=simulator.apply(leverageState,action("l1"),"actor"),twice=simulator.apply(once,action("l2"),"actor");
-  const onceFirst=once.players[1],twiceFirst=twice.players[1];
-  assert.ok(onceFirst.attackUsed>0&&onceFirst.attackUsed<1);
-  assert.ok(twiceFirst.attackUsed>twiceFirst.attackLimit);
-  assert.ok(twiceFirst.attackUsed>onceFirst.attackUsed+1e-9);
-
-  const shockState={players:[{id:"source",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"shock",definitionId:"shockwave"},{id:"hit",definitionId:"assault"}],attackUsed:0,attackLimit:1,counterProbability:0},{id:"enemy",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0,expectedRecoverCount:0}]};
-  const shocked=new AiSimulator(shockState).apply(shockState,{type:"card",card:{...CARD_DEFINITIONS.shockwave,id:"shock"},targets:[{id:"enemy"}]},"source");assertClose(shocked.players[0].attackUsed,0);
-  const assaulted=new AiSimulator(shocked).apply(shocked,{type:"card",card:{...CARD_DEFINITIONS.assault,id:"hit"},targets:[{id:"enemy"}]},"source");assertClose(assaulted.players[0].attackUsed,1);
-});
-
-test("概率破军只在发动世界新增可用突袭次数槽", () => {
-  const shared="break-army-energy",state={playPhaseEnded:false,players:[
-    {id:"blade",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:.8,maxEnergy:4,energyBranches:[{probability:.4,conditions:{[shared]:"yes"},amount:2},{probability:.6,conditions:{[shared]:"no"},amount:0}],handCount:1,hand:[{id:"hit",definitionId:"assault"}],attackUsed:1,attackLimit:1,attackRange:1,activeSkillId:"breakArmy",activeSkillUses:0,activeSkillLimit:1},
-    {id:"enemy",seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0}
-  ]},{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
-  const skill=game.aiController.actionGenerator.generateFromVisible(state,"blade").find((action)=>action.skill?.id==="breakArmy");assertClose(skill.executionProbability,.4);
-  const boosted=new AiSimulator(state).apply(state,skill,"blade");assertClose(boosted.players[0].attackLimit,1.4);
-  const assault=game.aiController.actionGenerator.generateFromVisible(boosted,"blade").find((action)=>action.card?.id==="hit");assertClose(assault.executionProbability,.4);
-});
-
-test("概率伤害先逐世界结算护盾再汇总期望", () => {
-  const run=({amount,eventProbability,shield,blockProbability=0})=>{const state={players:[
-    {id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},
-    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield,handCount:blockProbability?1:0,blockProbability,twoBlockProbability:0,expectedRecoverCount:0}
-  ]};const simulator=new AiSimulator(state),outcome={},damage=simulator.applyDamage(state,state.players[0],state.players[1],amount,{canBlock:blockProbability>0,eventProbability,outcome});return {state,target:state.players[1],damage,outcome};};
-  let result=run({amount:2,eventProbability:.4,shield:1});assertClose(result.target.shield,.6);assertClose(result.target.hp,3.6);assertClose(result.damage,.4);assertClose(result.outcome.lifeDamageChance,.4);
-  result=run({amount:1,eventProbability:.4,shield:1});assertClose(result.target.shield,.6);assertClose(result.target.hp,4);
-  result=run({amount:2,eventProbability:.4,shield:2});assertClose(result.target.shield,1.2);assertClose(result.target.hp,4);
-  result=run({amount:2,eventProbability:.4,shield:1,blockProbability:.5});assertClose(result.target.shield,.8);assertClose(result.target.hp,3.8);assertClose(result.target.handCount,.8);assertClose(result.outcome.lifeDamageChance,.2);
-  result=run({amount:3,eventProbability:1,shield:2});assertClose(result.target.shield,0);assertClose(result.target.hp,3);assertClose(result.outcome.lifeDamageChance,1);
-});
-
-test("连续概率伤害不会重复使用已消耗的护盾分支", () => {
-  const state={players:[{id:"attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0},{id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:1,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0}]},simulator=new AiSimulator(state);
-  const first=simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:false,eventProbability:.4});
-  const second=simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:false,eventProbability:.4});
-  assertClose(first,0);assertClose(second,.16);assertClose(state.players[1].shield,.36);assertClose(state.players[1].hp,3.84);
-});
-
-test("B1a：当前 AI 的一张确定格挡只使用一次", () => {
+test("格挡概率：当前 AI 的一张确定格挡只使用一次", () => {
   const blockCard={id:"b1",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
   const state={players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
@@ -4386,7 +5373,7 @@ test("B1a：当前 AI 的一张确定格挡只使用一次", () => {
   assert.equal(target.hp,3);
 });
 
-test("B1a：其他玩家的一张 knownCards 格挡只使用一次", () => {
+test("格挡概率：其他玩家的一张 knownCards 格挡只使用一次", () => {
   const blockCard={cardId:"b2",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
   const state={players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
@@ -4399,7 +5386,7 @@ test("B1a：其他玩家的一张 knownCards 格挡只使用一次", () => {
   assert.equal(target.hp,3);
 });
 
-test("B1a：一张匿名未知手牌的条件概率不会重复使用", () => {
+test("格挡概率：一张匿名未知手牌的条件概率不会重复使用", () => {
   const state={players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
     {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0}
@@ -4411,7 +5398,7 @@ test("B1a：一张匿名未知手牌的条件概率不会重复使用", () => {
   assertClose(target.hp,2.5);
 });
 
-test("B1a：军火库的两张确定格挡只阻挡一次", () => {
+test("格挡概率：军火库的两张确定格挡只阻挡一次", () => {
   const blockCard=(id)=>({cardId:id,definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]});
   const state={players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
@@ -4424,7 +5411,7 @@ test("B1a：军火库的两张确定格挡只阻挡一次", () => {
   assert.equal(target.hp,3);
 });
 
-test("B1a：军火库只有一张格挡时不消费且后续普通攻击仍可格挡", () => {
+test("格挡概率：军火库只有一张格挡时不消费且后续普通攻击仍可格挡", () => {
   const blockCard={cardId:"b1",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
   const state={players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
@@ -4437,7 +5424,7 @@ test("B1a：军火库只有一张格挡时不消费且后续普通攻击仍可�
   assert.equal(target.hp,3);assert.equal(target.handCount,0);assert.equal(target.knownCards.length,0);
 });
 
-test("B1a：部分事件世界不得过度消费格挡身份和数量", () => {
+test("格挡概率：部分事件世界不得过度消费格挡身份和数量", () => {
   const blockCard={cardId:"b1",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
   const state={players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
@@ -4453,7 +5440,7 @@ test("B1a：部分事件世界不得过度消费格挡身份和数量", () => {
   assert.equal(target.blockProbability,0);
 });
 
-test("B1a：雷达格挡消费仍由后续 B1b 处理", () => {
+test("格挡概率：雷达格挡消费仍由后续雷达判定处理", () => {
   const blockCard={cardId:"b1",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
   const state={remainingCardCounts:{charge:1},players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
@@ -4465,7 +5452,7 @@ test("B1a：雷达格挡消费仍由后续 B1b 处理", () => {
   assert.ok(Number.isFinite(target.hp));
 });
 
-test("B1a补充：普通同步不能恢复已消费概率", () => {
+test("格挡概率：普通同步不能恢复已消费概率", () => {
   const state={remainingCardCounts:null,players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
     {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0,
@@ -4480,7 +5467,7 @@ test("B1a补充：普通同步不能恢复已消费概率", () => {
   assertClose(target.hp,2.5);
 });
 
-test("B1a补充：失去未知牌不能恢复概率", () => {
+test("格挡概率：失去未知牌不能恢复概率", () => {
   const state={remainingCardCounts:null,players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
     {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0,
@@ -4493,7 +5480,7 @@ test("B1a补充：失去未知牌不能恢复概率", () => {
   assertClose(target.hp,2.5);
 });
 
-test("B1a补充：获得确定非格挡牌不能恢复旧概率", () => {
+test("格挡概率：获得确定非格挡牌不能恢复旧概率", () => {
   const state={remainingCardCounts:null,players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
     {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:.5,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
@@ -4505,7 +5492,7 @@ test("B1a补充：获得确定非格挡牌不能恢复旧概率", () => {
   assertClose(target.hp,3);
 });
 
-test("B1a补充：获得确定格挡牌只增加一张", () => {
+test("格挡概率：获得确定格挡牌只增加一张", () => {
   const state={remainingCardCounts:null,players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
     {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:.5,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
@@ -4520,7 +5507,7 @@ test("B1a补充：获得确定格挡牌只增加一张", () => {
   assertClose(target.hp,3);
 });
 
-test("B1a补充：获得一张新匿名牌只为新牌增加概率", () => {
+test("格挡概率：获得一张新匿名牌只为新牌增加概率", () => {
   const state={remainingCardCounts:{block:10,assault:10},players:[
     {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
       blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]}
@@ -4530,7 +5517,7 @@ test("B1a补充：获得一张新匿名牌只为新牌增加概率", () => {
   assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
 });
 
-test("B1a补充：来源无格挡的匿名牌转移不能创造格挡", () => {
+test("格挡概率：来源无格挡的匿名牌转移不能创造格挡", () => {
   const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
     blockCountDistribution:[{probability:1,conditions:{},blockCount:0}]};
   const receiver={id:"r",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
@@ -4541,7 +5528,7 @@ test("B1a补充：来源无格挡的匿名牌转移不能创造格挡", () => {
   assert.ok(receiver.blockCountDistribution.every((branch)=>branch.blockCount===0));
 });
 
-test("B1a补充：匿名格挡容量转移守恒", () => {
+test("格挡概率：匿名格挡容量转移守恒", () => {
   const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0,
     blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]};
   const receiver={id:"r",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
@@ -4553,7 +5540,7 @@ test("B1a补充：匿名格挡容量转移守恒", () => {
   assert.ok(receiver.blockCountDistribution.some((branch)=>branch.blockCount===1&&branch.probability===1));
 });
 
-test("B1a补充：部分概率匿名转移保持同一条件", () => {
+test("格挡概率：部分概率匿名转移保持同一条件", () => {
   const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0,
     blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]};
   const receiver={id:"r",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0,
@@ -4571,7 +5558,7 @@ test("B1a补充：部分概率匿名转移保持同一条件", () => {
   assert.deepEqual(sourceZero.conditions,receiverOne.conditions);
 });
 
-test("B1a补充：clone 后仍不恢复已消费概率", () => {
+test("格挡概率：clone 后仍不恢复已消费概率", () => {
   const state={remainingCardCounts:null,players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
     {id:"b",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,blockProbability:.5,twoBlockProbability:0,expectedRecoverCount:0,
@@ -4583,7 +5570,7 @@ test("B1a补充：clone 后仍不恢复已消费概率", () => {
   assertClose(cloned.players[1].hp,2.5);
 });
 
-test("B1a补充：三张确定格挡连续消费", () => {
+test("格挡概率：三张确定格挡连续消费", () => {
   const blockCard=(id)=>({cardId:id,definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]});
   const state={remainingCardCounts:null,players:[
     {id:"a",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,blockProbability:0,twoBlockProbability:0,expectedRecoverCount:0},
@@ -4597,7 +5584,7 @@ test("B1a补充：三张确定格挡连续消费", () => {
   assert.equal(target.blockProbability,0);
 });
 
-test("B1a混合：确定格挡 + 匿名50%格挡转移", () => {
+test("格挡概率：确定格挡 + 匿名50%格挡转移", () => {
   const blockCard={cardId:"kb",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
   const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,knownCards:[blockCard],blockProbability:1,twoBlockProbability:.5,expectedRecoverCount:0,
     blockCountDistribution:[{probability:.5,conditions:{},blockCount:1},{probability:.5,conditions:{},blockCount:2}]};
@@ -4611,7 +5598,7 @@ test("B1a混合：确定格挡 + 匿名50%格挡转移", () => {
   assertClose(byCount[0] ?? 0,.5);assertClose(byCount[1] ?? 0,.5);
 });
 
-test("B1a混合：确定格挡 + 匿名50%格挡随机失去", () => {
+test("格挡概率：确定格挡 + 匿名50%格挡随机失去", () => {
   const blockCard={cardId:"kb",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
   const target={id:"t",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,knownCards:[blockCard],blockProbability:1,twoBlockProbability:.5,expectedRecoverCount:0,
     blockCountDistribution:[{probability:.5,conditions:{},blockCount:1},{probability:.5,conditions:{},blockCount:2}]};
@@ -4623,7 +5610,7 @@ test("B1a混合：确定格挡 + 匿名50%格挡随机失去", () => {
   assert.ok(target.blockCountDistribution.some((branch)=>branch.blockCount===1&&branch.probability===1));
 });
 
-test("B1a混合：确定格挡 + 匿名非格挡转移", () => {
+test("格挡概率：确定格挡 + 匿名非格挡转移", () => {
   const blockCard={cardId:"kb",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
   const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,knownCards:[blockCard],blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0,
     blockCountDistribution:[{probability:1,conditions:{},blockCount:1}]};
@@ -4635,7 +5622,7 @@ test("B1a混合：确定格挡 + 匿名非格挡转移", () => {
   assert.equal(receiver.blockProbability,0);assert.ok(receiver.blockCountDistribution.every((branch)=>branch.blockCount===0));
 });
 
-test("B1a混合：确定格挡 + 匿名格挡转移", () => {
+test("格挡概率：确定格挡 + 匿名格挡转移", () => {
   const blockCard={cardId:"kb",definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]};
   const source={id:"s",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,knownCards:[blockCard],blockProbability:1,twoBlockProbability:1,expectedRecoverCount:0,
     blockCountDistribution:[{probability:1,conditions:{},blockCount:2}]};
@@ -4647,7 +5634,7 @@ test("B1a混合：确定格挡 + 匿名格挡转移", () => {
   assert.equal(receiver.blockProbability,1);assert.ok(receiver.blockCountDistribution.some((branch)=>branch.blockCount===1&&branch.probability===1));
 });
 
-test("B1a混合：部分可用确定格挡与匿名牌", () => {
+test("格挡概率：部分可用确定格挡与匿名牌", () => {
   const known={cardId:"pk",definitionId:"block",availabilityBranches:[{probability:.4,conditions:{known:"yes"}},{probability:.6,conditions:{known:"no"}}],availabilityStateBranches:[{probability:.4,conditions:{known:"yes"},available:true},{probability:.6,conditions:{known:"no"},available:false}]};
   const target={id:"t",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:2,knownCards:[known],blockProbability:.7,twoBlockProbability:.2,expectedRecoverCount:0,
     blockCountDistribution:[
@@ -4666,7 +5653,7 @@ test("B1a混合：部分可用确定格挡与匿名牌", () => {
   assert.ok(no&&no.blockCount===0&&Math.abs(no.probability-.6)<1e-9);
 });
 
-test("B1a混合：两张确定格挡保护", () => {
+test("格挡概率：两张确定格挡保护", () => {
   const blockCard=(id)=>({cardId:id,definitionId:"block",availabilityBranches:[{probability:1,conditions:{}}],availabilityStateBranches:[{probability:1,conditions:{},available:true}]});
   const target={id:"t",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:3,knownCards:[blockCard("k1"),blockCard("k2")],blockProbability:1,twoBlockProbability:1,expectedRecoverCount:0,
     blockCountDistribution:[{probability:1,conditions:{},blockCount:2}]};
@@ -4677,69 +5664,30 @@ test("B1a混合：两张确定格挡保护", () => {
   assert.ok(target.blockCountDistribution.some((branch)=>branch.blockCount===2&&branch.probability===1));
 });
 
-const conditionalHuntState = (secondMarkBranches) => ({playPhaseEnded:false,players:[
-  {id:"hunter",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,maxEnergy:4,handCount:0,hand:[],activeSkillId:"hunt",activeSkillUses:0,activeSkillLimit:2},
-  {id:"marked-a",seatIndex:1,battleTeam:"dusk",alive:true,hp:6,maxHp:6,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkProbabilities:{hunter:.4},huntMarkStateBranchesBySource:{hunter:[{probability:.4,conditions:{shared:"yes"},marked:true},{probability:.6,conditions:{shared:"no"},marked:false}]},statuses:[],expectedRecoverCount:0},
-  {id:"marked-b",seatIndex:2,battleTeam:"dusk",alive:true,hp:6,maxHp:6,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkProbabilities:{hunter:secondMarkBranches.filter((branch)=>branch.marked).reduce((sum,branch)=>sum+branch.probability,0)},huntMarkStateBranchesBySource:{hunter:secondMarkBranches},statuses:[],expectedRecoverCount:0}
-]});
-
-test("能量分支让后续技能只在仍有足够能量的世界生成", () => {
-  const state=conditionalHuntState([{probability:1,conditions:{},marked:true}]),{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
-  const first=game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-a");
-  const once=new AiSimulator(state).apply(state,first,"hunter"),energy=once.players[0].energyBranches;
-  assertClose(energy.filter((branch)=>branch.amount===0).reduce((sum,branch)=>sum+branch.probability,0),.4);assertClose(once.players[0].energy,1.2);
-  const second=game.aiController.actionGenerator.generateFromVisible(once,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-b");assertClose(second.executionProbability,.6);
-  const twice=new AiSimulator(once).apply(once,second,"hunter");assertClose(twice.players[0].energy,0);assertClose(twice.players[0].activeSkillUses,1);
+test("格挡决策随可用格挡数单调且先验证实际支付数量", () => {
+  const responder=makePlayer("block-policy",0,"dawn","ai"),ally1=makePlayer("block-ally-1",1,"dawn"),enemy1=makePlayer("block-enemy-1",2,"dusk"),ally2=makePlayer("block-ally-2",3,"dawn"),enemy2=makePlayer("block-enemy-2",4,"dusk");
+  const {game}=makeGame([responder,ally1,enemy1,ally2,enemy2]),policy=game.aiController.responsePolicy;
+  const decisions=[];
+  for (const count of [1,2,3]) {
+    responder.hand=[...Array.from({length:count},()=>instance("block")),...Array.from({length:4-count},()=>instance("charge"))];
+    decisions.push(policy.shouldRespond(responder,"block",{target:responder,amount:1,requiredCount:1},responder.hand.filter((card)=>card.definitionId==="block")));
+  }
+  assert.ok(!decisions.some((decision,index)=>index>0&&decisions[index-1]&&!decision));
+  responder.hp=1;responder.shield=0;responder.hand=[instance("block")];assert.equal(policy.shouldRespond(responder,"block",{target:responder,amount:1,requiredCount:1},responder.hand),true);
+  responder.hp=2;assert.equal(policy.shouldRespond(responder,"block",{target:responder,amount:1,requiredCount:1},responder.hand),true);
+  assert.equal(policy.shouldRespond(responder,"block",{target:responder,amount:2,requiredCount:2},responder.hand),false);
 });
 
-test("完全重叠与互斥猎印分别阻止和允许复用同一份能量", () => {
-  const {game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]),firstMark=(state)=>game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-a");
-  const overlapping=conditionalHuntState([{probability:.4,conditions:{shared:"yes"},marked:true},{probability:.6,conditions:{shared:"no"},marked:false}]);
-  const overlapOnce=new AiSimulator(overlapping).apply(overlapping,firstMark(overlapping),"hunter");assert.ok(!game.aiController.actionGenerator.generateFromVisible(overlapOnce,"hunter").some((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-b"));
-  const exclusive=conditionalHuntState([{probability:.4,conditions:{shared:"yes"},marked:false},{probability:.6,conditions:{shared:"no"},marked:true}]);
-  const exclusiveOnce=new AiSimulator(exclusive).apply(exclusive,firstMark(exclusive),"hunter"),second=game.aiController.actionGenerator.generateFromVisible(exclusiveOnce,"hunter").find((action)=>action.skill?.id==="hunt"&&action.targets[0].id==="marked-b");assertClose(second.executionProbability,.6);
-});
+// ---- 决斗与技能模拟 ----
 
-test("概率获得能量与孤注均按各自世界的实际能量结算", () => {
-  const shared="charge-world",state={playPhaseEnded:false,players:[
-    {id:"hunter",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:1,maxEnergy:4,handCount:1,hand:[{id:"charge",definitionId:"charge",availabilityBranches:[{probability:.4,conditions:{[shared]:"yes"}}],availabilityStateBranches:[{probability:.4,conditions:{[shared]:"yes"},available:true},{probability:.6,conditions:{[shared]:"no"},available:false}]}],activeSkillId:"hunt",activeSkillUses:0,activeSkillLimit:2},
-    {id:"marked",seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,twoBlockProbability:0,huntMarkProbabilities:{hunter:1},huntMarkStateBranchesBySource:{hunter:[{probability:1,conditions:{},marked:true}]},statuses:[],expectedRecoverCount:0}
-  ]},{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]);
-  const charge=game.aiController.actionGenerator.generateFromVisible(state,"hunter").find((action)=>action.card?.id==="charge"),charged=new AiSimulator(state).apply(state,charge,"hunter");
-  const hunt=game.aiController.actionGenerator.generateFromVisible(charged,"hunter").find((action)=>action.skill?.id==="hunt");assertClose(hunt.executionProbability,.4);
-
-  const allInState={players:[{id:"gambler",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:1.2,maxEnergy:4,energyBranches:[{probability:.4,conditions:{rich:"yes"},amount:3},{probability:.6,conditions:{rich:"no"},amount:0}],handCount:0,activeSkillUses:0,activeSkillLimit:1}]};
-  const allInWorlds=[{probability:.4,conditions:{rich:"yes"},executes:true},{probability:.6,conditions:{rich:"no"},executes:false}],allIn=new AiSimulator(allInState).apply(allInState,{type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[],executionProbability:.4,executionWorldBranches:allInWorlds},"gambler");
-  assertClose(allIn.players[0].handCount,1.2);assertClose(allIn.players[0].energy,0);
-});
-
-test("AI 模拟孤注已有状态不叠加且按状态概率合并", () => {
-  const makeState=(assaultBonus)=>({players:[{id:"gambler",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:2,maxEnergy:4,energyBranches:[{probability:1,conditions:{},amount:2}],assaultBonus,handCount:0,activeSkillUses:0,activeSkillLimit:1}]});
-  const action={type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[],executionProbability:1,executionWorldBranches:[{probability:1,conditions:{},executes:true}]};
-  const empty=new AiSimulator(makeState(0)).apply(makeState(0),action,"gambler");
-  const full=new AiSimulator(makeState(1)).apply(makeState(1),action,"gambler");
-  const partial=new AiSimulator(makeState(.5)).apply(makeState(.5),action,"gambler");
-  assertClose(empty.players[0].assaultBonus,.6);assertClose(empty.players[0].energy,0);assertClose(empty.players[0].handCount,2);
-  assertClose(full.players[0].assaultBonus,1);assertClose(full.players[0].energy,0);assertClose(full.players[0].handCount,2);
-  assertClose(partial.players[0].assaultBonus,.8);assertClose(partial.players[0].energy,0);assertClose(partial.players[0].handCount,2);
-});
-
-test("AI 孤注动作评分按当前状态概率计算边际状态收益", () => {
-  const gambler=makePlayer("evaluator-allin",0,"dawn","ai",6),enemy=makePlayer("evaluator-allin-enemy",1,"dusk"),{game}=makeGame([gambler,enemy]),evaluator=game.aiController.evaluator;
-  const makeVisible=(assaultBonus)=>({players:[{id:gambler.id,battleTeam:"dawn",alive:true,energy:2,assaultBonus}]});
-  const action={type:"skill",skill:ACTIVE_SKILLS.allIn,targets:[]};
-  const none=evaluator.actionUtility(action,gambler,makeVisible(0));
-  const full=evaluator.actionUtility(action,gambler,makeVisible(1));
-  const partial=evaluator.actionUtility(action,gambler,makeVisible(.5));
-  assertClose(none,8.4);assertClose(full,6);assertClose(partial,7.2);assertClose(none-full,2.4);
-});
-
-test("AI破军只在额外攻击槽确实有第二张突袭可用时生成", () => {
-  const blade=makePlayer("break-army-blade",0,"dawn","ai",0),enemy=makePlayer("break-army-enemy",1,"dusk");
-  blade.energy=2;blade.hand.push(instance("assault"));const {game}=makeGame([blade,enemy]);blade.energy=2;
-  const skills=()=>game.aiController.getLegalActions(blade).filter((action)=>action.skill?.id==="breakArmy");
-  assert.equal(skills().length,0);assert.equal(game.aiController.evaluator.breakArmyUtility(createAiVisibleState(blade.id,game.state).players[0]),-4);blade.turnFlags.attackUsed=blade.turnFlags.attackLimit;assert.equal(skills().length,1);assert.equal(game.aiController.evaluator.breakArmyUtility(createAiVisibleState(blade.id,game.state).players[0]),8);
-});
+function simulatedDuelPlayer(id, team, count) {
+  return {
+    id, seatIndex:team === "dawn" ? 0 : 1, battleTeam:team, alive:true,
+    hp:10, maxHp:10, shield:0, handCount:count, hand:[], expectedRecoverCount:0,
+    assaultCountDistribution:[{ count, probability:1 }], expectedAssaultCount:count,
+    assaultResponseProbability:count > 0 ? 1 : 0, blockProbability:0
+  };
+}
 
 test("AI决斗按目标先出牌关系扣除双方突袭且不额外消费出牌者", () => {
   const run=(actorAssaults,targetAssaults)=>{const actorHand=[{id:"duel",definitionId:"duel"},...Array.from({length:actorAssaults},(_,index)=>({id:`actor-assault-${index}`,definitionId:"assault"}))],targetHand=Array.from({length:targetAssaults},(_,index)=>({id:`target-assault-${index}`,definitionId:"assault"})),state={playPhaseEnded:false,players:[
@@ -4758,72 +5706,6 @@ test("AI决斗移除的具体突袭不会再次进入深层动作生成", () => 
   ]},{game}=makeGame([makePlayer("real-a",0,"dawn"),makePlayer("real-b",1,"dusk")]),next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.duel,id:"duel"},targets:[{id:"target"}]},"actor");
   assert.ok(!game.aiController.actionGenerator.generateFromVisible(next,"actor").some((action)=>action.card?.definitionId==="assault"));
 });
-
-test("AI军火库不会提高猎杀等非设备攻击的格挡需求", () => {
-  const state={players:[
-    {id:"hunter",battleTeam:"dawn",alive:true,hp:4,maxHp:4,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1},
-    {id:"target",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:1,blockProbability:1,twoBlockProbability:0,expectedRecoverCount:0}
-  ]};
-  new AiSimulator(state).applyDamage(state,state.players[0],state.players[1],2,{canBlock:true,deviceAttack:false});
-  assert.equal(state.players[1].hp,4);assert.equal(state.players[1].handCount,0);
-});
-
-test("AI模拟阵亡会清空手牌装备摘要且评估器只保留死亡惩罚", () => {
-  const state={players:[
-    {id:"killer",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0},
-    {id:"victim",seatIndex:1,battleTeam:"dusk",alive:true,hp:1,maxHp:4,shield:0,energy:3,handCount:5,hand:[{id:"a",definitionId:"assault"}],expectedAssaultCount:3,expectedRecoverCount:.2,assaultResponseProbability:1,blockProbability:1,twoBlockProbability:1,counterProbability:1,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1,huntMarkSourceId:null,huntMarkProbabilities:{}}
-  ]},simulator=new AiSimulator(state);simulator.applyDamage(state,state.players[0],state.players[1],1,{canBlock:false});const victim=state.players[1];
-  assert.deepEqual([victim.alive,victim.handCount,victim.hand.length,victim.expectedAssaultCount,victim.expectedRecoverCount,victim.equipmentDefinitionId,victim.equipmentRetentionProbability],[false,0,0,0,0,null,0]);
-  const {game}=makeGame([makePlayer("viewer",0,"dawn"),makePlayer("dead",1,"dusk")]),viewer={id:"viewer",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0},dead={id:"dead",battleTeam:"dusk",alive:false,hp:0,maxHp:4,shield:0,energy:0,handCount:0};
-  const emptyScore=game.aiController.evaluator.stateUtility({players:[viewer,dead]},viewer.id),richScore=game.aiController.evaluator.stateUtility({players:[viewer,{...dead,shield:99,energy:99,handCount:99,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:1}]},viewer.id);assert.equal(richScore,emptyScore);
-});
-
-test("AI装备完全移除时按初始装备价值产生完整损失", () => {
-  const {game}=makeGame([makePlayer("equipment-viewer",0,"dawn"),makePlayer("equipment-enemy",1,"dusk")]),value=CARD_DEFINITIONS.battleDevice.aiValue,base={id:"equipment-viewer",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0,initialEquipmentValue:value,expectedEquipmentGain:0},enemy={id:"equipment-enemy",battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0};
-  const partial=game.aiController.evaluator.stateUtility({players:[{...base,equipmentDefinitionId:"battleDevice",equipmentRetentionProbability:.1},enemy]},base.id),removed=game.aiController.evaluator.stateUtility({players:[{...base,equipmentDefinitionId:null,equipmentRetentionProbability:0},enemy]},base.id);
-  assert.ok(removed<partial);assertClose(partial-removed,value*.1*.25);
-});
-
-test("AI攻击与技能次数槽选择执行概率最高的可用槽", () => {
-  const partialSlot=[{probability:.2,conditions:{partial:"yes"},available:true},{probability:.8,conditions:{partial:"no"},available:false}],fullSlot=[{probability:1,conditions:{},available:true}],{game}=makeGame([makePlayer("slot-real-a",0,"dawn"),makePlayer("slot-real-b",1,"dusk")]);
-  const attackState={playPhaseEnded:false,players:[{id:"attacker",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,attackRange:1,attackUsed:0,attackLimit:2,attackUseSlots:[partialSlot,fullSlot],handCount:1,hand:[{id:"hit",definitionId:"assault"}]},{id:"enemy",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0}]};
-  const attack=game.aiController.actionGenerator.generateFromVisible(attackState,"attacker").find((action)=>action.card?.id==="hit");assert.equal(attack.attackUseSlot,1);assert.equal(attack.executionProbability,1);
-  const skillState={playPhaseEnded:false,players:[{id:"warden",seatIndex:0,battleTeam:"dawn",alive:true,hp:3,maxHp:3,shield:0,energy:2,activeSkillId:"barrier",activeSkillUses:0,activeSkillLimit:2,activeSkillUseSlots:[partialSlot,fullSlot],handCount:0,hand:[]},{id:"ally",seatIndex:1,battleTeam:"dawn",alive:true,hp:3,maxHp:3,shield:0,handCount:0},{id:"enemy",seatIndex:2,battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:0}]};
-  const skill=game.aiController.actionGenerator.generateFromVisible(skillState,"warden").find((action)=>action.skill?.id==="barrier");assert.equal(skill.skillUseSlot,1);assert.equal(skill.executionProbability,1);
-});
-
-test("AI濒死救援在本人后按相对座位环绕顺序消费调息", () => {
-  const players=[
-    {id:"ally-zero",seatIndex:0,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"recover-zero",definitionId:"recover"}],expectedRecoverCount:1},
-    {id:"enemy-one",seatIndex:1,battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:0,expectedRecoverCount:0},
-    {id:"dying",seatIndex:2,battleTeam:"dawn",alive:true,hp:0,maxHp:3,handCount:0,hand:[],expectedRecoverCount:0},
-    {id:"enemy-three",seatIndex:3,battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:0,expectedRecoverCount:0},
-    {id:"ally-four",seatIndex:4,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"recover-four",definitionId:"recover"}],expectedRecoverCount:1}
-  ],state={players},simulator=new AiSimulator(state);simulator.resolveFatal(state,players[2],players[1]);assert.equal(players[2].hp,1);assert.equal(players[4].expectedRecoverCount,0);assert.equal(players[0].expectedRecoverCount,1);
-});
-
-test("关闭逐动作重规划时转移描述只保存稳定ID并可重新绑定", () => {
-  const actor=makePlayer("transfer-rebind-actor",0,"dawn"),from=makePlayer("transfer-rebind-from",1,"dusk"),receiver=makePlayer("transfer-rebind-receiver",2,"dawn"),use=instance("transfer");actor.hand.push(use);from.hand.push(instance("block"));const {game}=makeGame([actor,from,receiver]),action=game.aiController.getLegalActions(actor).find((entry)=>entry.card?.id===use.id),descriptor=game.aiController.planner.describeAction(action);
-  assert.deepEqual(descriptor.selection,{sourceId:action.selection.sourceId,receiverId:action.selection.receiverId,zone:"hand"});assert.equal(Object.hasOwn(descriptor.selection,"source"),false);assert.equal(Object.hasOwn(descriptor.selection,"score"),false);assert.ok(game.aiController.resolvePlannedAction(actor,structuredClone(descriptor)));
-});
-
-test("追猎者阵亡时统一清理其他角色身上由其留下的猎印", async () => {
-  const hunter=makePlayer("dead-hunter",0,"dawn","ai",5),marked=makePlayer("marked-after-death",1,"dusk"),killer=makePlayer("hunter-killer",2,"dusk");marked.statuses.huntMark={sourceId:hunter.id,expireAtTurnEnd:99};const {game}=makeGame([hunter,marked,killer]);await game.dyingSystem.kill(hunter,killer);assert.equal(marked.statuses.huntMark,undefined);
-});
-
-test("反制链每张实际反制只记录一条带明确双方与对象的日志", async () => {
-  const source=makePlayer("log-source",0,"dawn","human"),first=makePlayer("log-first",1,"dusk","human"),second=makePlayer("log-second",2,"dawn","human"),use=instance("harvest");source.hand.push(use);first.hand.push(instance("counter"));second.hand.push(instance("counter"));const {game}=makeGame([source,first,second],{response:(request)=>request.type==="counter"&&request.legalCardIds.length>=request.requiredCount});game.state.deck.cards.push(instance("charge"),instance("block"));await game.playCard(source,use,[]);const logs=game.state.logs.map((entry)=>entry.message).filter((message)=>message.includes("使用了「反制」"));
-  assert.deepEqual(logs,[`${first.name}对${source.name}的「丰收」使用了「反制」，取消了「丰收」的效果。`,`${second.name}对${first.name}的「反制」使用了「反制」，取消了「反制」的效果。`]);assert.ok(!game.state.logs.some((entry)=>entry.message.includes("被后续反制抵消")||entry.message===`「丰收」的效果被取消。`));
-});
-
-function simulatedDuelPlayer(id, team, count) {
-  return {
-    id, seatIndex:team === "dawn" ? 0 : 1, battleTeam:team, alive:true,
-    hp:10, maxHp:10, shield:0, handCount:count, hand:[], expectedRecoverCount:0,
-    assaultCountDistribution:[{ count, probability:1 }], expectedAssaultCount:count,
-    assaultResponseProbability:count > 0 ? 1 : 0, blockProbability:0
-  };
-}
 
 test("AI决斗按整数突袭分布覆盖1对0、1对1、1对2与0对0", () => {
   const cases = [
@@ -4884,112 +5766,8 @@ test("AI决斗分布不读取敌方真实隐藏手牌内容", () => {
   assert.deepEqual(second,first);
 });
 
-test("余烬按挑衅和震荡的同一resolutionId各只触发一次", async () => {
-  for (const definitionId of ["provoke","shockwave"]) {
-    const ember=makePlayer(`ember-${definitionId}`,0,"dawn","ai",4),enemies=[1,2,3].map((seat)=>makePlayer(`${definitionId}-enemy-${seat}`,seat,"dusk"));
-    const {game}=makeGame([ember,...enemies]);registerPassiveSkills(game);ember.hand.push(instance(definitionId));
-    await game.playCard(ember,ember.hand[0],enemies);assert.equal(ember.energy,1);
-  }
-  const ember=makePlayer("ember-two-cards",0,"dawn","ai",4),enemy=makePlayer("ember-two-target",1,"dusk"),{game}=makeGame([ember,enemy]);
-  registerPassiveSkills(game);ember.hand.push(instance("provoke"),instance("provoke"));
-  await game.playCard(ember,ember.hand[0],[enemy]);await game.playCard(ember,ember.hand[0],[enemy]);assert.equal(ember.energy,2);
-});
+// ---- 角色卡牌价值与选牌 ----
 
-test("格挡决策随可用格挡数单调且先验证实际支付数量", () => {
-  const responder=makePlayer("block-policy",0,"dawn","ai"),ally1=makePlayer("block-ally-1",1,"dawn"),enemy1=makePlayer("block-enemy-1",2,"dusk"),ally2=makePlayer("block-ally-2",3,"dawn"),enemy2=makePlayer("block-enemy-2",4,"dusk");
-  const {game}=makeGame([responder,ally1,enemy1,ally2,enemy2]),policy=game.aiController.responsePolicy;
-  const decisions=[];
-  for (const count of [1,2,3]) {
-    responder.hand=[...Array.from({length:count},()=>instance("block")),...Array.from({length:4-count},()=>instance("charge"))];
-    decisions.push(policy.shouldRespond(responder,"block",{target:responder,amount:1,requiredCount:1},responder.hand.filter((card)=>card.definitionId==="block")));
-  }
-  assert.ok(!decisions.some((decision,index)=>index>0&&decisions[index-1]&&!decision));
-  responder.hp=1;responder.shield=0;responder.hand=[instance("block")];assert.equal(policy.shouldRespond(responder,"block",{target:responder,amount:1,requiredCount:1},responder.hand),true);
-  responder.hp=2;assert.equal(policy.shouldRespond(responder,"block",{target:responder,amount:1,requiredCount:1},responder.hand),true);
-  assert.equal(policy.shouldRespond(responder,"block",{target:responder,amount:2,requiredCount:2},responder.hand),false);
-});
-
-test("AI护援统一覆盖突袭、震荡、挑衅、决斗、猎杀与焚场", () => {
-  const runCard=(definitionId,targetSetup=()=>{})=>{
-    const actor={id:`${definitionId}-actor`,seatIndex:0,battleTeam:"dawn",alive:true,hp:5,maxHp:5,shield:0,energy:3,maxEnergy:4,handCount:1,hand:[{id:`${definitionId}-card`,definitionId}],attackUsed:0,attackLimit:2,assaultCountDistribution:[{count:definitionId==="assault"?1:0,probability:1}]};
-    const target={id:`${definitionId}-target`,seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0,assaultCountDistribution:[{count:0,probability:1}]};
-    const guardian={id:`${definitionId}-guardian`,seatIndex:2,generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:1,hand:[{id:`${definitionId}-aid`,definitionId:"charge"}],guardianAidUsedProbability:0};
-    targetSetup(actor,target);const state={players:[actor,target,guardian]},next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS[definitionId],id:`${definitionId}-card`},targets:[target]},actor.id);
-    assert.equal(next.players[1].hp,5);assert.equal(next.players[2].handCount,0);
-  };
-  for (const id of ["assault","shockwave","provoke","duel"]) runCard(id);
-  const runSkill=(skill,actorGeneral,damage)=>{
-    const actor={id:`${skill.id}-actor`,seatIndex:0,generalId:actorGeneral,battleTeam:"dawn",alive:true,hp:5,maxHp:5,shield:0,energy:3,maxEnergy:4,handCount:0,activeSkillUses:0};
-    const target={id:`${skill.id}-target`,seatIndex:1,battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0,statuses:[],huntMarkSourceId:actor.id,huntMarkProbability:1,huntMarkProbabilities:{[actor.id]:1},huntMarkStateBranchesBySource:{[actor.id]:[{probability:1,conditions:{},marked:true}]}};
-    const guardian={id:`${skill.id}-guardian`,seatIndex:2,generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:1,hand:[{id:`${skill.id}-aid`,definitionId:"charge"}],guardianAidUsedProbability:0};
-    const state={players:[actor,target,guardian]},next=new AiSimulator(state).apply(state,{type:"skill",skill,targets:[target]},actor.id);
-    assert.equal(next.players[1].hp,5-(damage-1));assert.equal(next.players[2].handCount,0);
-  };
-  runSkill(ACTIVE_SKILLS.hunt,"trail-hunter",2);runSkill(ACTIVE_SKILLS.burningField,"ember-magus",1);
-});
-
-test("AI护援在单个模拟快照内只触发一次且零伤害与阵亡时不弃牌", () => {
-  const attacker={id:"aid-attacker",battleTeam:"dawn",alive:true,hp:5,maxHp:5,handCount:0};
-  const target={id:"aid-target",battleTeam:"dusk",alive:true,hp:5,maxHp:5,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0};
-  const guardian={id:"aid-guardian",generalId:"oath-warden",battleTeam:"dusk",alive:true,hp:3,maxHp:3,handCount:2,guardianAidUsedProbability:0};
-  const state={players:[attacker,target,guardian]},simulator=new AiSimulator(state);simulator.applyDamage(state,attacker,target,0,{canBlock:false});assert.equal(guardian.handCount,2);
-  simulator.applyDamage(state,attacker,target,1,{canBlock:false});simulator.applyDamage(state,attacker,target,1,{canBlock:false});assert.equal(guardian.handCount,1);assert.equal(target.hp,4);
-  const dead={...guardian,id:"dead-aid",alive:false,handCount:1,guardianAidUsedProbability:0},deadTarget={...target,id:"dead-aid-target",hp:5};const deadState={players:[attacker,deadTarget,dead]};simulator.applyDamage(deadState,attacker,deadTarget,1,{canBlock:false});assert.equal(dead.handCount,1);assert.equal(deadTarget.hp,4);
-});
-
-test("AI窥隙与余烬从统一生命伤害入口覆盖非突袭和群体卡牌", () => {
-  const spy=simulatedDuelPlayer("duel-spy","dawn",1);spy.generalId="shade-agent";spy.expectedInformationGain=0;spy.spyGapTriggeredProbability=0;
-  const spyTarget=simulatedDuelPlayer("duel-spy-target","dusk",0);spyTarget.handCount=3;
-  const duelState={players:[spy,spyTarget]};new AiSimulator(duelState).applyDuel(duelState,spy,spyTarget,1);assert.equal(spy.expectedInformationGain,2);
-  const ember={id:"provoke-ember",seatIndex:0,generalId:"ember-magus",battleTeam:"dawn",alive:true,hp:4,maxHp:4,energy:0,maxEnergy:3,handCount:1,hand:[{id:"ember-provoke",definitionId:"provoke"}]};
-  const enemies=[1,2,3].map((seat)=>({id:`ember-group-${seat}`,seatIndex:seat,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0,assaultCountDistribution:[{count:0,probability:1}]}));
-  const state={players:[ember,...enemies]},next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.provoke,id:"ember-provoke"},targets:enemies},ember.id);assert.equal(next.players[0].energy,1);
-});
-
-test("AI救援轮次让A与B首轮各消耗一张调息", () => {
-  const target={id:"round-rescue-target",seatIndex:0,battleTeam:"dawn",alive:true,hp:-1,maxHp:4,handCount:0,expectedRecoverCount:0};
-  const a={id:"round-rescue-a",seatIndex:1,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:2,hand:[{id:"a-r1",definitionId:"recover"},{id:"a-r2",definitionId:"recover"}],expectedRecoverCount:2};
-  const b={id:"round-rescue-b",seatIndex:2,battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"b-r1",definitionId:"recover"}],expectedRecoverCount:1};
-  const state={players:[target,a,b]};new AiSimulator(state).resolveFatal(state,target);assert.equal(target.hp,1);assert.equal(a.expectedRecoverCount,1);assert.equal(b.expectedRecoverCount,0);
-});
-
-test("AI共生顺序从非0号出牌者开始并让回春命中首个合法目标", () => {
-  const ally0={id:"symbiosis-seat-0",seatIndex:0,battleTeam:"dawn",alive:true,hp:1,maxHp:4,handCount:0};
-  const enemy1={id:"symbiosis-seat-1",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:0,counterProbability:0};
-  const medic={id:"symbiosis-medic",seatIndex:2,generalId:"spirit-medic",battleTeam:"dawn",alive:true,hp:3,maxHp:3,handCount:1,hand:[{id:"ordered-symbiosis",definitionId:"symbiosis"}],rejuvenationUsed:false};
-  const ally3={id:"symbiosis-seat-3",seatIndex:3,battleTeam:"dawn",alive:true,hp:1,maxHp:4,handCount:0};
-  const state={players:[ally0,enemy1,medic,ally3]},next=new AiSimulator(state).apply(state,{type:"card",card:{...CARD_DEFINITIONS.symbiosis,id:"ordered-symbiosis"},targets:state.players},medic.id);
-  assert.equal(next.players[3].hp,3);assert.equal(next.players[0].hp,2);assert.equal(next.players[2].handCount,1);
-});
-
-test("AI冒险首次战术期望摸0.6且被反制仍触发、同回合不重复", () => {
-  const actor={id:"gamble-sim",seatIndex:0,generalId:"fate-gambler",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:2,hand:[{id:"gamble-one",definitionId:"exposeWeakness"},{id:"gamble-two",definitionId:"exposeWeakness"}],gambleTriggered:false};
-  const enemy={id:"gamble-counter",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,handCount:1,counterProbability:1};const state={players:[actor,enemy]},simulator=new AiSimulator(state);
-  const once=simulator.apply(state,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"gamble-one"},targets:[]},actor.id);assertClose(once.players[0].handCount,1.6);assert.equal(once.players[0].gambleTriggered,true);
-  const twice=simulator.apply(once,{type:"card",card:{...CARD_DEFINITIONS.exposeWeakness,id:"gamble-two"},targets:[]},actor.id);assertClose(twice.players[0].handCount,.6);
-});
-
-test("AI协调只依据未取消的其他己方有效目标且同回合一次", () => {
-  const actor={id:"coord-sim",seatIndex:0,generalId:"resonance-tuner",battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:2,hand:[{id:"coord-one",definitionId:"shield"},{id:"coord-two",definitionId:"shield"}],coordinationTriggered:false};
-  const ally={id:"coord-ally",seatIndex:1,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,handCount:0};const enemy={id:"coord-enemy",seatIndex:2,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,handCount:0,counterProbability:0};
-  const state={players:[actor,ally,enemy]},simulator=new AiSimulator(state),action=(id,target)=>({type:"card",card:{...CARD_DEFINITIONS.shield,id},targets:[target]});
-  const once=simulator.apply(state,action("coord-one",ally),actor.id);assert.equal(once.players[0].handCount,2);assert.equal(once.players[0].coordinationTriggered,true);
-  const twice=simulator.apply(once,action("coord-two",ally),actor.id);assert.equal(twice.players[0].handCount,1);
-  const selfState=structuredClone(state),selfOnly=new AiSimulator(selfState).apply(selfState,action("coord-one",selfState.players[0]),actor.id);assert.equal(selfOnly.players[0].coordinationTriggered,false);
-  const counterActor={...actor,id:"coord-countered",handCount:1,hand:[{id:"coord-mutual",definitionId:"mutualBenefit"}],coordinationTriggered:false},counterAlly={...ally,id:"coord-counter-ally"},counterEnemy={...enemy,id:"coord-counter-enemy",counterProbability:1};const counterState={players:[counterActor,counterAlly,counterEnemy]};
-  const countered=new AiSimulator(counterState).apply(counterState,{type:"card",card:{...CARD_DEFINITIONS.mutualBenefit,id:"coord-mutual"},targets:counterState.players},counterActor.id);assert.equal(countered.players[0].coordinationTriggered,false);
-});
-
-test("猎印到期覆盖正常回合与首次回合前借势时钟", async () => {
-  const normalHunter=makePlayer("normal-clock-hunter",0,"dawn","ai",5),normalTarget=makePlayer("normal-clock-target",1,"dusk"),normalGame=makeGame([normalHunter,normalTarget]).game;registerPassiveSkills(normalGame);
-  await normalGame.eventBus.emit("turnStart",{type:"turnStart",player:normalHunter});await normalGame.eventBus.emit("targetSelected",{type:"targetSelected",source:normalHunter,card:instance("assault"),targets:[normalTarget]});assert.equal(normalTarget.statuses.huntMark.expireAtTurnEnd,2);
-  await normalGame.eventBus.emit("turnEnd",{type:"turnEnd",player:normalHunter});assert.ok(normalTarget.statuses.huntMark);await normalGame.eventBus.emit("turnStart",{type:"turnStart",player:normalHunter});await normalGame.eventBus.emit("turnEnd",{type:"turnEnd",player:normalHunter});assert.equal(normalTarget.statuses.huntMark,undefined);
-  const earlyHunter=makePlayer("early-clock-hunter",0,"dawn","ai",5),earlyTarget=makePlayer("early-clock-target",1,"dusk"),earlyGame=makeGame([earlyHunter,earlyTarget]).game;registerPassiveSkills(earlyGame);
-  await earlyGame.eventBus.emit("targetSelected",{type:"targetSelected",source:earlyHunter,card:instance("assault"),targets:[earlyTarget]});assert.equal(earlyTarget.statuses.huntMark.expireAtTurnEnd,1);
-  await earlyGame.eventBus.emit("turnStart",{type:"turnStart",player:earlyHunter});await earlyGame.eventBus.emit("turnEnd",{type:"turnEnd",player:earlyHunter});assert.equal(earlyTarget.statuses.huntMark,undefined);
-});
-
-// ---- 角色卡牌价值基础设施----
 test("角色卡牌价值：生产差值表合法且全部真实组合计算正确", () => {
   assert.deepEqual(validateRoleCardValueDeltas(ROLE_CARD_VALUE_DELTAS), []);
   for (const general of GENERAL_DEFINITIONS) {
@@ -5139,7 +5917,6 @@ test("角色卡牌价值：卡牌跨角色平均差绝对值不超过 0.125", ()
   }
 });
 
-// ---- 角色核心评分：动作与状态评分接入角色卡牌价值 ----
 test("角色核心评分：动作基础价值使用角色有效值且刃行者与守誓者突袭相差 2", () => {
   const { game } = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("warden", 1, "dawn", "ai", 1)]);
   game.aiDifficultyMultiplier = 0;
@@ -5348,7 +6125,6 @@ test("角色核心评分：真实 Planner 会按角色权重选择不同动作",
   assert.equal(await run(2), "harvest");
 });
 
-// ---- 自己手牌、公开池与破坏目标角色价值 ----
 test("角色选牌：自己隐藏牌选择使用角色有效值且刃行者选中更低的 scout", () => {
   const actor = makePlayer("actor", 0, "dawn"); // blade-walker：assault 5、scout 4
   const ally = makePlayer("ally", 1, "dawn");
@@ -5536,6 +6312,8 @@ test("角色选牌：其他玩家已知牌排序仍使用全局基础值而非�
   const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, shade, 1, null, { purpose: "spy-gap" })[0];
   assert.equal(chosen, scout);
 });
+
+// ---- 破坏、掠夺与资源选择 ----
 
 test("破坏已知手牌使用目标角色价值", () => {
   const actor = makePlayer("actor", 0, "dawn");
@@ -6337,7 +7115,31 @@ test("掠夺模拟共享模块单一公式来源", async () => {
   assert.doesNotMatch(source, /const takeEquipment =/);
 });
 
-// ---- 资源身份：破坏与掠夺模拟保留具体已知牌 ----
+// ---- 资源身份与整手牌随机移除 ----
+
+const fullKnownCard = (cardId, definitionId) => ({
+  cardId,
+  definitionId,
+  availabilityBranches:[{ probability:1, conditions:{} }],
+  availabilityStateBranches:[{ probability:1, conditions:{}, available:true }]
+});
+const fullHandCard = (id, definitionId) => ({
+  id,
+  definitionId,
+  availabilityBranches:[{ probability:1, conditions:{} }],
+  availabilityStateBranches:[{ probability:1, conditions:{}, available:true }]
+});
+const blockDistributionByCount = (distribution) => {
+  const byCount = {};
+  for (const branch of distribution) {
+    byCount[branch.blockCount] = (byCount[branch.blockCount] ?? 0) + branch.probability;
+  }
+  return byCount;
+};
+const projectAvailability = (branches, field) => branches.map(({ available, probability, conditions }) => ({
+  probability, conditions, [field]:Boolean(available)
+}));
+
 test("资源身份：确定性破坏已知 counter 移除身份并重算反制概率", () => {
   const simulator = new AiSimulator({ players:[] });
   const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
@@ -6520,8 +7322,7 @@ test("资源身份：真实 Planner 先掠夺已知 assault 再在后续层使�
   )));
 });
 
-// ---- 资源身份补修：部分 knownCards 随机消费后的保守降级 ----
-test("资源身份补修：部分 known 参与整手牌随机选择且未选中时保留", () => {
+test("资源身份：部分 known 参与整手牌随机选择且未选中时保留", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1.4,
@@ -6550,7 +7351,7 @@ test("资源身份补修：部分 known 参与整手牌随机选择且未选中�
   assertClose(player.counterCountDistribution.reduce((sum, branch) => sum + branch.probability, 0), 1);
 });
 
-test("资源身份补修：连续部分掠夺后再按未知破坏不保留幽灵牌", () => {
+test("资源身份：连续部分掠夺后再按未知破坏不保留幽灵牌", () => {
   const simulator = new AiSimulator({ players:[] });
   const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", handCount:0, hand:[] };
   const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1, knownCards:[{ cardId:"c", definitionId:"counter" }], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
@@ -6565,7 +7366,7 @@ test("资源身份补修：连续部分掠夺后再按未知破坏不保留幽�
   assert.equal(simulator.chooseSimulatedResourceSelection({ players:[actor,target] }, actor, target, "destroy"), null);
 });
 
-test("资源身份补修：完整确定 known 参与整手牌随机选择", () => {
+test("资源身份：完整确定 known 参与整手牌随机选择", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
@@ -6587,7 +7388,7 @@ test("资源身份补修：完整确定 known 参与整手牌随机选择", () =
   assertClose(player.counterCountDistribution.reduce((sum, branch) => sum + branch.probability, 0), 1);
 });
 
-test("资源身份补修：零概率 known 条目在随机消费后清理", () => {
+test("资源身份：零概率 known 条目在随机消费后清理", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1,
@@ -6604,7 +7405,7 @@ test("资源身份补修：零概率 known 条目在随机消费后清理", () =
   assert.deepEqual(player.knownCards, []);
 });
 
-test("资源身份补修：无 knownCards 时随机消费行为保持不变", () => {
+test("资源身份：无 knownCards 时随机消费行为保持不变", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = { id:"t", battleTeam:"dusk", generalId:"blade-walker", handCount:2, equipmentDefinitionId:null, equipmentRetentionProbability:0 };
   const spent = simulator.consumeRandomHandCards({ players:[player] }, player, 1);
@@ -6613,31 +7414,7 @@ test("资源身份补修：无 knownCards 时随机消费行为保持不变", ()
   assert.equal(player.knownCards, undefined);
 });
 
-// ---- B1a 最终补丁：整手牌随机移除必须包含 knownCards ----
-const fullKnownCard = (cardId, definitionId) => ({
-  cardId,
-  definitionId,
-  availabilityBranches:[{ probability:1, conditions:{} }],
-  availabilityStateBranches:[{ probability:1, conditions:{}, available:true }]
-});
-const fullHandCard = (id, definitionId) => ({
-  id,
-  definitionId,
-  availabilityBranches:[{ probability:1, conditions:{} }],
-  availabilityStateBranches:[{ probability:1, conditions:{}, available:true }]
-});
-const blockDistributionByCount = (distribution) => {
-  const byCount = {};
-  for (const branch of distribution) {
-    byCount[branch.blockCount] = (byCount[branch.blockCount] ?? 0) + branch.probability;
-  }
-  return byCount;
-};
-const projectAvailability = (branches, field) => branches.map(({ available, probability, conditions }) => ({
-  probability, conditions, [field]:Boolean(available)
-}));
-
-test("B1a整手牌：确定格挡 + 匿名非格挡随机移除一张", () => {
+test("整手牌随机移除：确定格挡 + 匿名非格挡随机移除一张", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
@@ -6655,7 +7432,7 @@ test("B1a整手牌：确定格挡 + 匿名非格挡随机移除一张", () => {
   assert.ok(Math.abs((byCount[1] ?? 0) - 0.5) < 1e-9);
 });
 
-test("B1a整手牌：确定格挡 + 确定聚能随机移除一张且互斥", () => {
+test("整手牌随机移除：确定格挡 + 确定聚能随机移除一张且互斥", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
@@ -6684,7 +7461,7 @@ test("B1a整手牌：确定格挡 + 确定聚能随机移除一张且互斥", ()
   assert.ok(Math.abs((byCount[1] ?? 0) - 0.5) < 1e-9);
 });
 
-test("B1a整手牌：确定格挡 + 匿名50%格挡随机移除一张", () => {
+test("整手牌随机移除：确定格挡 + 匿名50%格挡随机移除一张", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
@@ -6715,7 +7492,7 @@ test("B1a整手牌：确定格挡 + 匿名50%格挡随机移除一张", () => {
   assert.ok(Math.abs((byCount[1] ?? 0) - 0.75) < 1e-9);
 });
 
-test("B1a整手牌：三类候选互斥且各占三分之一", () => {
+test("整手牌随机移除：三类候选互斥且各占三分之一", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:3,
@@ -6752,7 +7529,7 @@ test("B1a整手牌：三类候选互斥且各占三分之一", () => {
   assert.ok(Math.abs(anonymousRemoved - 1 / 3) < 1e-9);
 });
 
-test("B1a整手牌：部分可用确定格挡按条件世界进入候选", () => {
+test("整手牌随机移除：部分可用确定格挡按条件世界进入候选", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1.5,
@@ -6784,7 +7561,7 @@ test("B1a整手牌：部分可用确定格挡按条件世界进入候选", () =>
   assert.ok(Math.abs((byCount[1] ?? 0) - 0.25) < 1e-9);
 });
 
-test("B1a整手牌：40% 概率随机移除一格挡与一匿名非格挡", () => {
+test("整手牌随机移除：40% 概率随机移除一格挡与一匿名非格挡", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
@@ -6806,7 +7583,7 @@ test("B1a整手牌：40% 概率随机移除一格挡与一匿名非格挡", () =
   assert.ok(Math.abs(totalProbability - 1) < 1e-9);
 });
 
-test("B1a整手牌：连续无放回移除两张后格挡保留概率为三分之一", () => {
+test("整手牌随机移除：连续无放回移除两张后格挡保留概率为三分之一", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:3,
@@ -6825,7 +7602,7 @@ test("B1a整手牌：连续无放回移除两张后格挡保留概率为三分�
   assert.ok(Math.abs((byCount[1] ?? 0) - 1 / 3) < 1e-9);
 });
 
-test("B1a整手牌：匿名专用入口仍完整保护 knownCards", () => {
+test("整手牌随机移除：匿名专用入口仍完整保护 knownCards", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
@@ -6843,7 +7620,7 @@ test("B1a整手牌：匿名专用入口仍完整保护 knownCards", () => {
   assert.ok(Math.abs((byCount[1] ?? 0) - 1) < 1e-9);
 });
 
-test("B1a整手牌：当前 AI 完整 hand 路径保持互斥随机移除", () => {
+test("整手牌随机移除：当前 AI 完整 hand 路径保持互斥随机移除", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2,
@@ -6872,7 +7649,7 @@ test("B1a整手牌：当前 AI 完整 hand 路径保持互斥随机移除", () =
   assert.ok(Math.abs((byCount[1] ?? 0) - 0.5) < 1e-9);
 });
 
-test("资源身份补修：unknown 消费只消耗未知部分且不侵蚀完整确定 counter", () => {
+test("资源身份：unknown 消费只消耗未知部分且不侵蚀完整确定 counter", () => {
   const simulator = new AiSimulator({ players:[] });
   const player = {
     id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1.4,
@@ -6899,7 +7676,7 @@ test("资源身份补修：unknown 消费只消耗未知部分且不侵蚀完整
   assert.equal(player.counterProbability, 1);
 });
 
-test("资源身份补修：unknown 破坏不按整手牌比例降低确定 assault", () => {
+test("资源身份：unknown 破坏不按整手牌比例降低确定 assault", () => {
   const simulator = new AiSimulator({ players:[] });
   const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
   // oath-warden 已知 assault 效用 3 < 未知期望 4 → 选择结果明确为 unknown
@@ -6917,7 +7694,7 @@ test("资源身份补修：unknown 破坏不按整手牌比例降低确定 assau
   assert.deepEqual(target.assaultCountDistribution, [{ count:1, probability:1 }]);
 });
 
-test("资源身份补修：unknownCount 小于效果概率时最多消费可用未知数量", () => {
+test("资源身份：unknownCount 小于效果概率时最多消费可用未知数量", () => {
   const simulator = new AiSimulator({ players:[] });
   const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", handCount:0, hand:[] };
   const destroyTarget = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:0.25, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
@@ -6929,7 +7706,7 @@ test("资源身份补修：unknownCount 小于效果概率时最多消费可用�
   assert.ok(Math.abs(actor.handCount - 0.25) < 1e-9);
 });
 
-test("资源身份补修：unknownCount 大于效果概率时按效果概率消费", () => {
+test("资源身份：unknownCount 大于效果概率时按效果概率消费", () => {
   const simulator = new AiSimulator({ players:[] });
   const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
   const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
@@ -6937,7 +7714,7 @@ test("资源身份补修：unknownCount 大于效果概率时按效果概率消�
   assert.ok(Math.abs(target.handCount - 0.6) < 1e-9);
 });
 
-test("资源身份补修：掠夺 unknown 时目标减少量等于行动者增加量", () => {
+test("资源身份：掠夺 unknown 时目标减少量等于行动者增加量", () => {
   const simulator = new AiSimulator({ players:[] });
   const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", handCount:0, hand:[] };
   const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:1.4, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
@@ -6947,7 +7724,7 @@ test("资源身份补修：掠夺 unknown 时目标减少量等于行动者增�
   assert.equal(actor.hand.length, 0);
 });
 
-test("资源身份补修：纯 unknown 破坏/掠夺按剩余未知数量同步摘要", () => {
+test("资源身份：纯 unknown 破坏/掠夺按剩余未知数量同步摘要", () => {
   const simulator = new AiSimulator({ players:[] });
   const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker", handCount:0, hand:[] };
   const target = { id:"t", battleTeam:"dusk", generalId:"oath-warden", handCount:2, knownCards:[], equipmentDefinitionId:null, equipmentRetentionProbability:0 };
@@ -6961,6 +7738,8 @@ test("资源身份补修：纯 unknown 破坏/掠夺按剩余未知数量同步�
   assert.equal(actor.hand.length, 0);
   assert.ok(Math.abs(plunderTarget.counterProbability - 0.6 * (CARD_DEFINITIONS.counter.count / TOTAL_CARD_COUNT)) < 1e-9);
 });
+
+// ---- 剩余牌池与隐藏世界 ----
 
 const makeRemainingKnowledge = (viewer, state = null) => {
   const game = {
@@ -7264,6 +8043,8 @@ test("隐藏世界抽样 sampleHiddenWorlds：world 数量、结构、已知牌�
     assert.equal(Object.hasOwn(world, "v"), false);
   }
 });
+
+// ---- 动态未知与动态密度 ----
 
 test("动态未知：destroy 单定义等于 owner 角色价值", () => {
   const actor = { id:"a", battleTeam:"dawn", generalId:"blade-walker" };
@@ -7774,19 +8555,7 @@ test("模拟器动态密度：无动态计数保留固定密度回退", () => {
   assertClose(player.blockProbability,blockDensity);
 });
 
-test("借势风险：动态格挡剩余0时防御装备不再抬高非零风险", () => {
-  const makeState=(defense)=>({remainingCardCounts:{block:0,assault:10},players:[
-    {id:"actor",seatIndex:0,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:1,hand:[{id:"l",definitionId:"leverage"}],counterProbability:0,expectedEquipmentGain:0},
-    {id:"first",seatIndex:1,battleTeam:"dusk",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:2,hand:[{id:"a1",definitionId:"assault"}],attackUsed:0,attackLimit:1,attackRange:1,equipmentDefinitionId:"energyDevice",equipmentRetentionProbability:1,assaultResponseProbability:1,expectedAssaultCount:1,blockProbability:0,counterProbability:0},
-    {id:"second",seatIndex:2,battleTeam:"dawn",alive:true,hp:4,maxHp:4,shield:0,energy:0,handCount:0,blockProbability:0,twoBlockProbability:0,counterProbability:0,equipmentDefinitionId:defense?"defenseDevice":null,equipmentRetentionProbability:defense?1:0}
-  ]});
-  const action={type:"card",card:{...CARD_DEFINITIONS.leverage,id:"l"},targets:[{id:"first"},{id:"second"}],selection:{firstTargetId:"first",secondTargetId:"second"}};
-  const without=new AiSimulator(makeState(false)).apply(makeState(false),action,"actor");
-  const withDefense=new AiSimulator(makeState(true)).apply(makeState(true),action,"actor");
-  assertClose(withDefense.players[0].handCount,without.players[0].handCount);
-  assertClose(withDefense.players[1].attackUsed,without.players[1].attackUsed);
-  assertClose(withDefense.players[2].hp,without.players[2].hp);
-});
+// ---- 雷达与装备默认概率 ----
 
 test("雷达默认概率：动态类别密度且耗尽类别为零", () => {
   const run=(counts)=>{
@@ -7822,501 +8591,366 @@ test("雷达默认概率：无动态计数保留固定初始类别密度", () =>
   assert.ok(outcome.lifeDamageChance>0);
 });
 
-test("控制器文件名：目录真实文件名为 AiController.js", async () => {
-  const aiDirectoryEntries = await readdir(projectFile("js/ai"));
-  assert.ok(aiDirectoryEntries.includes("AiController.js"));
-  assert.ok(!aiDirectoryEntries.includes(`AI${"Controller.js"}`));
+// ==================== UI 与模板 ====================
+
+// ---- 玩家面板与技能详情 ----
+
+test("角色面板不再显示突袭和调息次数栏", () => { const {small,large}=makeTeamFixture();for(const player of [small,large]){const markup=playerPanelTemplate(player,{isHuman:true});assert.doesNotMatch(markup,/turn-usage|突袭 \d+\/|调息 \d+\//);} });
+
+test("主玩家面板不再常驻展示角色能力且保留技能详情入口", () => {
+  const player=makePlayer("human",0,"dawn","human",0);
+  const markup=playerPanelTemplate(player,{isHuman:true});
+  assert.doesNotMatch(markup,/character-details|character-skill-list|skill-summary/);
+  assert.doesNotMatch(markup,/角色能力|主动技能|被动技能/);
+  assert.ok(!markup.includes(player.general.activeName));
+  assert.ok(!markup.includes(player.general.activeDescription));
+  assert.ok(!markup.includes(player.general.passiveName));
+  assert.ok(!markup.includes(player.general.passiveDescription));
+  assert.ok(!markup.includes(player.general.description));
+  assert.match(markup,/data-skill-player-id/);
 });
 
-test("控制器文件名：新模块可导入且仍导出 AIController", async () => {
-  const module = await import("../js/ai/AiController.js");
-  assert.equal(typeof module.AIController, "function");
+test("角色状态取代座位栏且护盾只在独立资源栏显示", () => { const player=makePlayer("human",0,"dawn","human",0);player.shield=2;let markup=playerPanelTemplate(player,{isHuman:true});assert.match(markup,/class="panel-status"/);assert.match(markup,/>状态<\/small><b>—<\/b>/);assert.match(markup,/resource-pill shield[^>]*><small>护盾<\/small><strong>2<\/strong>/);assert.doesNotMatch(markup,/状态<\/small><b>[^<]*护盾|状态稳定|status-row|status-chip|座位\s*\d/);player.statuses.exposeWeakness={stacks:2};player.statuses.huntMark={sourceId:"hunter"};markup=playerPanelTemplate(player,{isHuman:true,distanceInfo:{distance:1,range:1,seat:3},distanceState:"距离 1 · 可突袭"});assert.match(markup,/状态<\/small><b>破势 2 · 猎印<\/b>/);assert.match(markup,/距离 1 · 可突袭/);assert.match(markup,/射程 1/);assert.doesNotMatch(markup,/状态<\/small><b>[^<]*护盾|座位\s*3/); });
+
+test("阵亡角色面板不显示残留状态和距离环文案", () => {
+  const player=makePlayer("dead-panel",0,"dusk","ai",6);player.hp=0;player.alive=false;player.statuses={exposeWeakness:{stacks:2},huntMark:{sourceId:"hunter"},allIn:{assaultBonus:1}};player.turnFlags.momentum=3;
+  const markup=playerPanelTemplate(player,{humanTeam:"dawn",distanceInfo:{distance:Infinity,range:1},distanceState:"已离开距离环"});
+  assert.match(markup,/已阵亡/);assert.match(markup,/>状态<\/small><b>—<\/b>/);assert.doesNotMatch(markup,/破势|猎印|孤注|连势|已离开距离环|距离Infinity|距离 Infinity|射程/);
 });
 
-test("控制器文件名：Game 使用新路径且无旧路径", async () => {
-  const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.match(source, /\.\.\/ai\/AiController\.js\?build=[^"']+/);
-  assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
+test("技能详情使用结构化的每回合发动次数", () => { const warden=makePlayer("warden",0,"dawn","human",1),markup=skillDetailsTemplate(warden);assert.match(markup,/每回合限发动2次/); });
+
+test("赌命者技能详情显示等量摸牌、30x%概率和每回合1次", () => { const gambler=makePlayer("gambler",0,"dawn","human",6),markup=skillDetailsTemplate(gambler);assert.match(markup,/摸取等量牌/);assert.match(markup,/30×消耗能量%/);assert.match(markup,/每回合限发动1次/); });
+
+test("赌命者候选卡将孤注消耗显示为 X 能量", () => { const gambler=GENERAL_DEFINITIONS.find((general)=>general.id==="fate-gambler"),markup=candidateCardTemplate(gambler,0);assert.match(markup,/主动 · 孤注/);assert.match(markup,/<small>X 能量<\/small>/);assert.doesNotMatch(markup,/<small>1 能量<\/small>/); });
+
+test("角色候选卡统一将主动技能显示在被动技能上方", () => { for(const [index,general] of GENERAL_DEFINITIONS.entries()){const markup=candidateCardTemplate(general,index),active=markup.indexOf(`主动 · ${general.activeName}`),passive=markup.indexOf(`被动 · ${general.passiveName}`);assert.ok(active>=0&&passive>=0&&active<passive,general.name);} });
+
+test("角色技能详情完整展示主动与被动公开信息", () => { const player=makePlayer("hero",0,"dawn","human",3);player.hand.push({...instance("counter"),name:"隐藏决策资料"});const markup=skillDetailsTemplate(player);assert.match(markup,/主动技能/);assert.match(markup,new RegExp(player.general.activeName));assert.match(markup,new RegExp(player.general.activeDescription));assert.match(markup,/能量消耗|发动时消耗全部能量/);assert.match(markup,/次数限制/);assert.match(markup,/被动技能/);assert.match(markup,new RegExp(player.general.passiveName));assert.match(markup,new RegExp(player.general.passiveDescription));assert.doesNotMatch(markup,/隐藏决策资料|knownCardsByPlayer|aiMemory|decision|weight/); });
+
+test("八名角色使用结构化被动触发条件与限制文案", async () => { const expected={"blade-walker":"每回合按不同卡牌类别分别触发","oath-warden":"每回合限触发1次","spirit-medic":"每回合限触发1次","shade-agent":"每回合限触发1次","ember-magus":"每次卡牌结算最多触发1次","trail-hunter":"每回合限触发2次；同一敌人每回合限1次","fate-gambler":"每回合限触发1次","resonance-tuner":"每回合限触发1次"};for(const [index,general] of GENERAL_DEFINITIONS.entries()){assert.ok(general.passiveTriggerText);assert.equal(general.passiveLimitText,expected[general.id]);const player=makePlayer(`structured-${general.id}`,index,"dawn","human",index),markup=skillDetailsTemplate(player);assert.match(markup,new RegExp(general.passiveTriggerText));assert.match(markup,new RegExp(general.passiveLimitText));}const source=await readFile(projectFile("js/ui/templates.js"),"utf8");assert.doesNotMatch(source,/description\.includes\(|每轮一次.*includes|每回合首次.*includes/); });
+
+test("目标选择期间头像与名称优先选择目标且不打开技能面板", () => { const source=makePlayer("source",0,"dawn","human"),target=makePlayer("target",1,"dusk"),illegal=makePlayer("illegal",2,"dawn"),other=makePlayer("other",3,"dawn");let resolved=null,shown=null,triggerUsed=null,rendered=0;const makeState=()=>({players:[target],legalIds:new Set([target.id]),resolve:(value)=>{resolved=value;}});const makeFake=()=>({game:{state:{players:[source,target,illegal,other]}},targetState:null,showSkillDetails:(value,trigger)=>{shown=value;triggerUsed=trigger;},render:()=>{rendered+=1;},playSound(){}});const panelFor=(player)=>({dataset:{playerId:player.id}}),skillFor=(player)=>({dataset:{skillPlayerId:player.id}}),eventFor=(player,kind)=>({target:{closest:(query)=>query==="[data-skill-player-id]"&&["avatar","name"].includes(kind)?skillFor(player):query==="[data-player-id]"?panelFor(player):null}});let ui=makeFake();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"avatar"));assert.equal(shown,target);assert.equal(triggerUsed.dataset.skillPlayerId,target.id);assert.equal(ui.targetState,null);shown=null;triggerUsed=null;UIManager.prototype.handlePlayerClick.call(ui,eventFor(other,"name"));assert.equal(shown,other);assert.equal(ui.targetState,null);shown=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"avatar"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);assert.equal(rendered,1);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"name"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(illegal,"avatar"));assert.equal(resolved,null);assert.equal(shown,null);assert.ok(ui.targetState);assert.equal(ui.targetState.legalIds.has(target.id),true);resolved=null;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(illegal,"name"));assert.equal(resolved,null);assert.equal(shown,null);assert.ok(ui.targetState);resolved=null;rendered=0;ui=makeFake();ui.targetState=makeState();UIManager.prototype.handlePlayerClick.call(ui,eventFor(target,"panel"));assert.equal(resolved,target);assert.equal(shown,null);assert.equal(ui.targetState,null);assert.equal(rendered,1); });
+
+test("关闭技能弹窗后焦点返回原生触发按钮", () => { let focused=0;const overlay={innerHTML:"dialog",classList:{add(){}}},trigger={isConnected:true,focus(){focused+=1;}};const fake={elements:{skill_details_overlay:overlay},skillDetailsTrigger:trigger};UIManager.prototype.hideSkillDetails.call(fake);assert.equal(overlay.innerHTML,"");assert.equal(fake.skillDetailsTrigger,null);assert.equal(focused,1); });
+
+// ---- 对手手牌与已知牌面板 ----
+
+test("电脑玩家模板只暴露手牌数量", () => { const human=makePlayer("h",0,"dawn","human"),ai=makePlayer("ai",1,"dusk");ai.hand.push({ ...instance("counter"), name:"绝密名称" });const markup=playerPanelTemplate(ai,{humanTeam:human.battleTeam});assert.match(markup,/手牌1/);assert.doesNotMatch(markup,/绝密名称|definitionId/); });
+
+test("未知对手手牌展示模型和 DOM 均不含真实牌面资料", () => { const human=makePlayer("h",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),secret={...instance("counter"),name:"绝密反制",description:"绝密说明"};ai.hand.push(secret);const view=createOpponentHandView(human,ai),serialized=JSON.stringify(view),markup=opponentHandStripTemplate(view);assert.deepEqual(view,[{known:false}]);for(const hidden of [secret.id,secret.definitionId,secret.name,secret.description,secret.art]){assert.ok(!serialized.includes(hidden));assert.ok(!markup.includes(hidden));}assert.match(markup,/hidden-card-back/);assert.doesNotMatch(markup,/未知手牌|\?牌|牌背\s*\d/); });
+
+test("真人识别实体牌后显示已知小卡面和说明", () => { const human=makePlayer("h",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),secret=instance("block");const {game}=makeGame([human,ai]);ai.hand.push(secret);game.rememberPrivateCard(human,ai,secret);const view=createOpponentHandView(human,ai),markup=opponentHandStripTemplate(view);assert.equal(view[0].known,true);assert.equal(view[0].name,secret.name);assert.match(markup,new RegExp(secret.name));assert.match(markup,new RegExp(secret.description.slice(0,6))); });
+
+test("真人窥探后持续识别该实体牌，离开原手牌后立即失效", async () => { const human=makePlayer("h",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),secret=instance("counter");const {game}=makeGame([human,ai]);ai.hand.push(secret);game.rememberPrivateCard(human,ai,secret);assert.equal(createOpponentHandView(human,ai)[0].known,true);await game.discardCardFromHand(ai,secret,"测试离手");assert.equal(createOpponentHandView(human,ai).length,0);assert.equal(human.aiMemory.knownCardsByPlayer[ai.id][secret.id],undefined); });
+
+test("大量对手手牌保持固定卡牌尺寸并在独立区域横向滚动", async () => { const slots=Array.from({length:18},()=>({known:false})),markup=opponentHandStripTemplate(slots),characterCss=await readFile(projectFile("css/characters.css"),"utf8"),cardCss=await readFile(projectFile("css/cards.css"),"utf8");assert.equal((markup.match(/hidden-card-back is-compact/g)??[]).length,18);assert.match(markup,/opponent-hand-strip/);assert.match(characterCss,/\.opponent-hand-strip\s*\{[^}]*overflow-x:\s*auto/s);assert.match(characterCss,/touch-action:\s*pan-x/);assert.match(cardCss,/\.hidden-card-back\.is-compact\s*\{[^}]*width:\s*124px[^}]*height:\s*174px/s); });
+
+test("对手手牌区删除标题并占用独立网格行", async () => { const ai=makePlayer("ai",1,"dusk"),markup=playerPanelTemplate(ai,{opponentHandSlots:[{known:false}]}),css=await readFile(projectFile("css/characters.css"),"utf8");assert.doesNotMatch(markup,/手牌区域\s*·|手牌区域/);assert.match(css,/\.player-seat\s*\{[^}]*grid-template-rows:/s);assert.match(css,/\.opponent-hand-region\s*\{[^}]*grid-column:\s*1\s*\/\s*-1[^}]*grid-row:\s*2/s); });
+
+test("统一未知牌组件只渲染无文字纯牌背", () => { const markup=hiddenCardBackTemplate({compact:true});assert.match(markup,/hidden-card-back is-compact/);assert.doesNotMatch(markup,/\?牌|牌背|未知牌|>\s*\d+\s*</);assert.match(markup,/aria-hidden="true"/); });
+
+test("已知对手手牌保留中文实体卡层级、删除英文标签并与牌背同尺寸", async () => { const human=makePlayer("human",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),card=instance("mutualBenefit"),{game}=makeGame([human,ai]);ai.hand.push(card);game.rememberPrivateCard(human,ai,card);const markup=opponentHandStripTemplate(createOpponentHandView(human,ai)),css=await readFile(projectFile("css/characters.css"),"utf8");for(const className of ["card-topline","card-name","card-category","card-art","card-crest","card-rules","card-description","card-flavor"])assert.match(markup,new RegExp(className));assert.doesNotMatch(markup,/card-tags|public-pool|draw/);assert.match(markup,new RegExp(card.name));assert.match(markup,new RegExp(card.description.slice(0,6)));assert.match(markup,new RegExp(card.flavorText.slice(0,4)));assert.match(css,/\.opponent-card-slot\s*\{[^}]*flex:\s*0\s+0\s+124px[^}]*width:\s*124px[^}]*height:\s*174px/s); });
+
+test("人物席、中央消息区和真人区各占独立网格行且低高度改为内部滚动", async () => { const layoutCss=await readFile(projectFile("css/layout.css"),"utf8"),characterCss=await readFile(projectFile("css/characters.css"),"utf8");assert.match(layoutCss,/\.battlefield\s*\{[^}]*grid-template-rows:\s*minmax\(480px,[^}]*minmax\(174px,[^}]*minmax\(270px,[^}]*overflow-y:\s*auto/s);assert.match(layoutCss,/\.cpu-grid\s*\{[^}]*overflow:\s*hidden/s);assert.match(layoutCss,/\.command-deck\s*\{[^}]*min-height:\s*174px/s);assert.match(characterCss,/\.player-seat\s*\{[^}]*grid-template-rows:\s*minmax\(245px,[^}]*202px[^}]*overflow:\s*hidden/s); });
+
+test("对手手牌滚动条预留独立高度且阵营与行动徽章位于裁切边界内", async () => { const css=await readFile(projectFile("css/characters.css"),"utf8");assert.match(css,/\.opponent-hand-strip\s*\{[^}]*height:\s*197px[^}]*overflow-x:\s*auto/s);assert.match(css,/\.player-seat\.is-ally::before[^}]*\{[^}]*top:\s*6px[^}]*left:\s*6px/s);assert.match(css,/\.player-seat\.is-active::after\s*\{[^}]*bottom:\s*8px/s);assert.match(css,/\.cpu-seat\.is-active::after\s*\{[^}]*bottom:\s*206px/s); });
+
+test("主玩家人物框与手牌框在 human-zone 内自然等高且行动徽标空间常驻", async () => {
+  const layout=await readFile(projectFile("css/layout.css"),"utf8"),css=await readFile(projectFile("css/characters.css"),"utf8");
+  assert.match(layout,/\.human-zone\s*\{[^}]*align-content:\s*start/s);
+  assert.doesNotMatch(layout,/\.human-panel\s*\{[^}]*align-self:\s*start/s);
+  assert.match(css,/\.human-seat\s*\{[^}]*height:\s*100%/s);
+  assert.match(css,/\.player-seat\.human-seat\s*\{[^}]*padding-bottom:\s*32px/s);
+  assert.doesNotMatch(css,/\.human-seat\.is-active\s*\{[^}]*padding-bottom/s);
 });
 
-test("控制器文件名：全资源图无旧文件名", async () => {
-  const oldControllerFilename = `AI${"Controller.js"}`;
-  const files = [...(await listJavaScriptFiles()), projectFile("index.html"), projectFile("tests/run.mjs")];
-  for (const file of files) {
-    const source = await readFile(file, "utf8");
-    assert.ok(!source.includes(oldControllerFilename), `${file} 包含旧文件名`);
+test("低高度战场压缩为单屏且真人手牌顶部保留安全间距", async () => { const layout=await readFile(projectFile("css/layout.css"),"utf8"),cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8");assert.match(layout,/@media \(max-height:\s*920px\)[\s\S]*grid-template-rows:\s*410px\s+135px\s+minmax\(250px,\s*1fr\)/);assert.match(layout,/\.human-hand\s*\{[^}]*padding:\s*4px\s+5px\s+7px/s);assert.match(cards,/@media \(max-height:\s*920px\)[\s\S]*\.hand-card\s*\{[^}]*clamp\(136px,\s*8\.5vw,\s*148px\)/);assert.match(characters,/@media \(max-height:\s*920px\)[\s\S]*grid-template-rows:\s*minmax\(194px,\s*1fr\)\s+197px/); });
+
+test("对局中缩放进入窄屏断点会自动折叠日志避免遮挡战场", () => { const previousWindow=globalThis.window;let collapsed=null;globalThis.window={innerWidth:1000};const fake={viewportWasNarrow:false,elements:{game_screen:{classList:{contains:()=>false}}},setLogCollapsed:(value)=>{collapsed=value;}};try{UIManager.prototype.handleViewportResize.call(fake);assert.equal(collapsed,true);assert.equal(fake.viewportWasNarrow,true);globalThis.window.innerWidth=1440;UIManager.prototype.handleViewportResize.call(fake);assert.equal(collapsed,true);assert.equal(fake.viewportWasNarrow,false);}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
+
+test("隐藏牌选择窗口不显示牌背编号或真实卡牌资料", () => { const owner=makePlayer("owner",1,"dusk"),viewer=makePlayer("viewer",0,"dawn","human"),secret={...instance("counter"),name:"不可泄露名称",description:"不可泄露说明"};owner.hand.push(secret);const selection={tokens:[{token:"opaque-a",position:1}]},slots=createHiddenSelectionView(viewer,owner,selection),markup=hiddenSelectionMarkup(selection,slots);assert.deepEqual(slots,[{token:"opaque-a",known:false}]);for(const hidden of [secret.id,secret.definitionId,secret.name,secret.description,secret.art,"牌背 1","未知牌 1","？牌"])assert.ok(!markup.includes(hidden));assert.match(markup,/hidden-card-back/); });
+
+test("所有隐藏牌界面源码不再生成可见牌背序号", async () => { const sources=await Promise.all(["js/ui/templates.js","js/ui/InteractionController.js"].map((file)=>readFile(projectFile(file),"utf8")));const source=sources.join("\n");assert.doesNotMatch(source,/牌背\s*\$\{|未知牌\s*\$\{|\?牌/); });
+
+test("真人已知的实体牌被AI窃取后仍在获得者面板显示真实牌面", async () => { const human=makePlayer("human",0,"dawn","human"),thief=makePlayer("thief",1,"dusk","ai",3),secret=instance("block");const {game}=makeGame([human,thief],{random:()=>0});human.hand.push(secret);thief.energy=3;await ACTIVE_SKILLS.stealSkill.execute(game,thief,[human]);const view=createOpponentHandView(human,thief);assert.equal(view[0].known,true);assert.equal(view[0].name,secret.name);assert.ok(game.state.logs.some((entry)=>entry.message.includes(thief.name)&&entry.message.includes(human.name)&&entry.message.includes(secret.name))); });
+
+test("AI之间未公开随机获得不会向真人泄露牌面", async () => { const human=makePlayer("human",0,"dawn","human"),thief=makePlayer("thief",1,"dawn"),owner=makePlayer("owner",2,"dusk"),plunder=instance("plunder"),secret={...instance("counter"),name:"AI私密牌"};const {game}=makeGame([human,thief,owner],{random:()=>0});thief.hand.push(plunder);owner.hand.push(secret);await game.playCard(thief,plunder,[owner]);const view=createOpponentHandView(human,thief),markup=opponentHandStripTemplate(view);assert.ok(view.some((entry)=>entry.known===false));assert.ok(!markup.includes(secret.name));assert.ok(!game.state.logs.some((entry)=>entry.message.includes(secret.name))); });
+
+test("已知实体牌进入弃牌等非手牌区域后立即清除认知", async () => { const human=makePlayer("human",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),secret=instance("block");const {game}=makeGame([human,ai]);ai.hand.push(secret);game.rememberPrivateCard(human,ai,secret);await game.discardCardFromHand(ai,secret,"公开离手");assert.equal(human.aiMemory.knownCardsByPlayer[ai.id][secret.id],undefined);assert.ok(game.state.deck.discardPile.includes(secret)); });
+
+test("AI面板按README类别及名称顺序排序且未知牌最后", () => { const human=makePlayer("human",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),unknown=instance("counter"),equipment=instance("energyDevice"),tactic=instance("destroy"),block=instance("block"),assault=instance("assault");ai.hand.push(unknown,equipment,tactic,block,assault);const {game}=makeGame([human,ai]);for(const card of [equipment,tactic,block,assault])game.rememberPrivateCard(human,ai,card);const before=ai.hand.map((card)=>card.id),view=createOpponentHandView(human,ai);assert.deepEqual(view.map((entry)=>entry.known?entry.name:"unknown"),[assault.name,block.name,tactic.name,equipment.name,"unknown"]);assert.deepEqual(ai.hand.map((card)=>card.id),before);assert.deepEqual(CARD_CATEGORY_DISPLAY_ORDER,{basic:0,tactic:1,equipment:2,unknown:3}); });
+
+test("同类别已知牌严格采用README定义顺序", () => { const human=makePlayer("human",0,"dawn","human"),ai=makePlayer("ai",1,"dusk"),ids=["shield","charge","block","recover","assault","symbiosis","scout","mutualBenefit","destroy","barrierDevice","battleDevice","telescope","energyDevice"],cards=ids.map(instance);ai.hand.push(...cards);const {game}=makeGame([human,ai]);cards.forEach((card)=>game.rememberPrivateCard(human,ai,card));const ordered=createOpponentHandView(human,ai).map((entry)=>entry.name),expected=CARD_DEFINITION_DISPLAY_ORDER.filter((id)=>ids.includes(id)).map((id)=>CARD_DEFINITIONS[id].name);assert.deepEqual(ordered,expected);assert.ok(ordered.indexOf("护盾")>ordered.indexOf("聚能"));assert.ok(ordered.indexOf("望远镜")<ordered.indexOf("屏障")); });
+
+// ---- 响应窗口 ----
+
+const renderResponseEventHtml = async (presentation) => {
+  const previousWindow = globalThis.window;
+  globalThis.window = { setInterval, clearInterval };
+  const panel = { innerHTML:"", classList:{ add(){}, remove(){} }, querySelector(){ return null; } };
+  const fake = { responseState:null, elements:{ response_panel:panel }, game:{ cleanupManager:{ delay:()=>new Promise(()=>{}) } }, render(){} };
+  try {
+    const pending = UIManager.prototype.requestResponse.call(fake, { id:"team-color-render", requiredCount:1, legalCardIds:[], timeoutMs:5000, presentation }, "反制");
+    const html = panel.innerHTML;
+    fake.responseState.resolve(false);
+    await pending;
+    return html;
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+  }
+};
+
+test("响应窗口保持居中浮层原布局且中央结算卡在普通阶段下移", async () => {
+  const css = await readFile(projectFile("css/layout.css"), "utf8");
+  assert.match(css, /\.current-card\s*\{[^}]*translateY\(clamp\(20px,\s*2\.4vh,\s*30px\)\)/s);
+  assert.match(css, /:has\(\.response-panel:not\(\.is-hidden\)\)\s+\.current-card\s*\{[^}]*translateY\(clamp\(26px,\s*3vh,\s*38px\)\)/s);
+  assert.match(css, /\.private-reveal,\s*\.response-panel,\s*\.public-pool-view\s*\{[^}]*position:\s*absolute[^}]*left:\s*50%[^}]*top:\s*50%[^}]*translate\(-50%,\s*-50%\)/s);
+  assert.doesNotMatch(css, /\.response-panel\.is-card-response/);
+});
+
+test("挑衅轮到无突袭真人时仍显示响应窗口", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human");const {game,ui}=makeGame([a,b],{response:()=>false});const provoke=instance("provoke"),hp=b.hp;a.hand.push(provoke);await game.playCard(a,provoke,[b]);const request=ui.responseRequests.find((entry)=>entry.type==="assaultDiscard");assert.ok(request);assert.equal(request.presentation.responseCardName,"突袭");assert.match(request.presentation.availabilityText,/当前 0 张/);assert.equal(b.hp,hp-1); });
+
+test("反制链响应说明包含来源、目标、原牌和当前反制", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn","human");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.legalCardIds.length>=request.requiredCount});a.hand.push(instance("harvest"));b.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);const chained=ui.responseRequests.find((request)=>request.type==="counter"&&request.sourcePlayerId===b.id&&request.targetPlayerId===c.id);assert.ok(chained);assert.match(chained.presentation.eventText,new RegExp(`${b.name}.*${a.name}.*丰收.*反制`));assert.match(chained.presentation.responseText,/继续.*反制/); });
+
+test("无人物目标的战术牌响应文案不再显示对战场使用", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai");const presentation=buildResponsePresentation(responder,"counter",{source,card:instance("transfer"),targets:[]},1,0,"反制");assert.equal(presentation.eventText,`${source.name}使用了「转移」。`);assert.doesNotMatch(presentation.eventText,/对战场使用/); });
+
+test("破势自目标反制响应文案不显示使用者为目标", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai"),card=instance("exposeWeakness");const presentation=buildResponsePresentation(responder,"counter",{source,target:source,targets:[source],card},1,0,"反制");assert.equal(presentation.eventText,`${source.name}使用了「${card.name}」。`);assert.ok(!presentation.eventText.includes(`对${source.name}`)); });
+
+test("破势真实出牌流程的反制请求不显示自目标", async () => { const source=makePlayer("source",0,"dawn"),responder=makePlayer("human",1,"dusk","human");const {game,ui}=makeGame([source,responder],{response:()=>false});const card=instance("exposeWeakness");source.hand.push(card);await game.playCard(source,card,[]);const request=ui.responseRequests.find((entry)=>entry.type==="counter"&&entry.targetPlayerId===responder.id);assert.ok(request);assert.equal(request.presentation.eventText,`${source.name}使用了「${card.name}」。`);assert.ok(!request.presentation.eventText.includes(`对${source.name}`)); });
+
+test("真实目标战术牌反制文案仍显示目标且无目标牌保持原样", () => { const responder=makePlayer("human",0,"dawn","human"),source=makePlayer("ai",1,"dusk","ai"),target=makePlayer("target",2,"dawn","ai");const duel=instance("duel");assert.equal(buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:duel},1,0,"反制").eventText,`${source.name}对${target.name}使用了「决斗」。`);const harvest=instance("harvest");assert.equal(buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:harvest},1,0,"反制").eventText,`${source.name}使用了「丰收」。`); });
+
+test("响应窗口结构化片段保留使用者与目标身份和队伍", () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"},target={id:"target",name:"角色B",battleTeam:"dusk"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:instance("duel")},1,0,"反制");
+  assert.equal(presentation.eventText,"角色A对角色B使用了「决斗」。");
+  assert.deepEqual(presentation.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"对"},
+    {type:"player",text:"角色B",playerId:"target",battleTeam:"dusk"},
+    {type:"text",text:"使用了「决斗」。"}
+  ]);
+});
+
+test("响应窗口不同队伍角色分别渲染队伍颜色节点", async () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"},target={id:"target",name:"角色B",battleTeam:"dusk"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:instance("duel")},1,0,"反制");
+  const html=await renderResponseEventHtml(presentation);
+  assert.match(html,/<strong class="response-player-name team-dawn"[^>]*>角色A<\/strong>/);
+  assert.match(html,/<strong class="response-player-name team-dusk"[^>]*>角色B<\/strong>/);
+  assert.equal((html.match(/response-player-name/g)??[]).length,2);
+});
+
+test("响应窗口同队伍角色仍独立着色", async () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:"角色A",battleTeam:"dawn"},target={id:"target",name:"角色B",battleTeam:"dawn"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target,targets:[target],card:instance("duel")},1,0,"反制");
+  const html=await renderResponseEventHtml(presentation);
+  assert.equal((html.match(/response-player-name team-dawn/g)??[]).length,2);
+  assert.doesNotMatch(html,/team-dusk/);
+  assert.equal((html.match(/response-player-name/g)??[]).length,2);
+});
+
+test("无目标响应文案只有使用者是角色片段", () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:instance("harvest")},1,0,"反制");
+  assert.equal(presentation.eventText,"角色A使用了「丰收」。");
+  assert.deepEqual(presentation.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"使用了「丰收」。"}
+  ]);
+});
+
+test("破势响应片段只有使用者且UI只着色使用者", async () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:"角色A",battleTeam:"dawn"},card=instance("exposeWeakness");
+  const presentation=buildResponsePresentation(responder,"counter",{source,target:source,targets:[source],card},1,0,"反制");
+  assert.equal(presentation.eventText,"角色A使用了「破势」。");
+  assert.deepEqual(presentation.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"使用了「破势」。"}
+  ]);
+  const html=await renderResponseEventHtml(presentation);
+  assert.equal((html.match(/response-player-name/g)??[]).length,1);
+  assert.match(html,/response-player-name team-dawn/);
+});
+
+test("多目标响应片段分别保留每个目标的身份与队伍", () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色A",battleTeam:"dawn"},first={id:"first",name:"角色B",battleTeam:"dusk"},second={id:"second",name:"角色D",battleTeam:"dawn"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target:first,targets:[first,second],card:instance("mutualBenefit")},1,0,"反制");
+  assert.equal(presentation.eventText,"角色A对角色B、角色D使用了「互利」。");
+  assert.deepEqual(presentation.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"对"},
+    {type:"player",text:"角色B",playerId:"first",battleTeam:"dusk"},
+    {type:"text",text:"、"},
+    {type:"player",text:"角色D",playerId:"second",battleTeam:"dawn"},
+    {type:"text",text:"使用了「互利」。"}
+  ]);
+});
+
+test("响应窗口中的“你”保持普通文本不着色", async () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:"角色A",battleTeam:"dawn"},second={id:"second",name:"角色B",battleTeam:"dusk"};
+  const block=buildResponsePresentation(responder,"block",{source,target:responder,card:instance("assault")},1,0,"格挡");
+  assert.equal(block.eventText,"角色A对你使用了「突袭」。");
+  assert.deepEqual(block.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"对"},
+    {type:"text",text:"你"},
+    {type:"text",text:"使用了「突袭」。"}
+  ]);
+  const html=await renderResponseEventHtml(block);
+  assert.equal((html.match(/response-player-name/g)??[]).length,1);
+  assert.doesNotMatch(html,/>你<\/strong>/);
+  const leverage=buildResponsePresentation(responder,"leverageAssault",{source,target:second,card:instance("leverage")},1,0,"使用突袭");
+  assert.equal(leverage.eventText,"角色A对你使用了「借势」，要求你对角色B使用「突袭」。");
+  assert.deepEqual(leverage.eventFragments,[
+    {type:"player",text:"角色A",playerId:"source",battleTeam:"dawn"},
+    {type:"text",text:"对你使用了「借势」，要求你对"},
+    {type:"player",text:"角色B",playerId:"second",battleTeam:"dusk"},
+    {type:"text",text:"使用「突袭」。"}
+  ]);
+});
+
+test("反制链与濒死响应片段保留实际角色身份", () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dawn"},source={id:"source",name:"角色B",battleTeam:"dusk"},previous={id:"previous",name:"角色A",battleTeam:"dawn"};
+  const chain=buildResponsePresentation(responder,"counter",{source,target:previous,targets:[previous],card:instance("counter"),counteredCardName:"丰收"},1,0,"反制");
+  assert.equal(chain.eventText,"角色B对角色A打出的「丰收」使用了「反制」。");
+  assert.deepEqual(chain.eventFragments,[
+    {type:"player",text:"角色B",playerId:"source",battleTeam:"dusk"},
+    {type:"text",text:"对"},
+    {type:"player",text:"角色A",playerId:"previous",battleTeam:"dawn"},
+    {type:"text",text:"打出的「丰收」使用了「反制」。"}
+  ]);
+  const dying=buildResponsePresentation(responder,"dyingRescue",{target:previous},1,0,"使用调息");
+  assert.equal(dying.eventText,"角色A已进入濒死状态。");
+  assert.deepEqual(dying.eventFragments,[
+    {type:"player",text:"角色A",playerId:"previous",battleTeam:"dawn"},
+    {type:"text",text:"已进入濒死状态。"}
+  ]);
+  const selfDying=buildResponsePresentation(responder,"dyingRescue",{target:responder},1,0,"使用调息");
+  assert.equal(selfDying.eventText,"你已进入濒死状态。");
+  assert.deepEqual(selfDying.eventFragments,[
+    {type:"text",text:"你"},
+    {type:"text",text:"已进入濒死状态。"}
+  ]);
+});
+
+test("响应窗口角色名经结构化片段转义且队伍class保留", async () => {
+  const responder={id:"responder",name:"角色C",battleTeam:"dusk"},source={id:"source",name:'<img src=x onerror=alert(1)>',battleTeam:"dawn"};
+  const presentation=buildResponsePresentation(responder,"counter",{source,target:null,targets:[],card:instance("harvest")},1,0,"反制");
+  const html=await renderResponseEventHtml(presentation);
+  assert.doesNotMatch(html,/<img\b/i);
+  assert.doesNotMatch(html,/<img[^>]*onerror=/i);
+  assert.match(html,/&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html,/<strong class="response-player-name team-dawn"/);
+});
+
+test("旧响应 presentation 无结构化片段时回退整段转义", async () => {
+  const html=await renderResponseEventHtml({ eventText:'<script>bad()</script>', responseText:"需要响应", availabilityText:"", buttonLabel:"格挡" });
+  assert.doesNotMatch(html,/<script>/);
+  assert.match(html,/&lt;script&gt;bad\(\)&lt;\/script&gt;/);
+});
+
+test("转移响应片段包含来源与接收者的队伍", async () => {
+  const actor=makePlayer("actor",0,"dawn"),from=makePlayer("from",1,"dusk"),responder=makePlayer("responder",2,"dusk","human"),receiver=makePlayer("receiver",3,"dawn");
+  const use=instance("transfer"),secret=instance("block");actor.hand.push(use);from.hand.push(secret);from.bumpHandVersion();
+  const {game,ui}=makeGame([actor,from,responder,receiver],{response:()=>false});const hidden=game.cardSelectionSystem.createHiddenSelection(from);
+  await game.playCard(actor,use,[],{sourceId:from.id,receiverId:receiver.id,tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});
+  const request=ui.responseRequests.find((entry)=>entry.type==="counter"&&entry.targetPlayerId===responder.id);
+  assert.ok(request);
+  const fragments=request.presentation.eventFragments;
+  assert.equal(fragments.find((fragment)=>fragment.type==="player"&&fragment.playerId===actor.id).battleTeam,"dawn");
+  assert.equal(fragments.find((fragment)=>fragment.type==="player"&&fragment.playerId===from.id).battleTeam,"dusk");
+  assert.equal(fragments.find((fragment)=>fragment.type==="player"&&fragment.playerId===receiver.id).battleTeam,"dawn");
+  assert.match(request.presentation.eventText,new RegExp(`${from.name}.*1张牌.*${receiver.name}`));
+});
+
+test("响应窗口队伍颜色复用现有主题变量", async () => {
+  const css=await readFile(projectFile("css/components.css"),"utf8");
+  assert.match(css,/\.response-event \.response-player-name\.team-dawn\s*\{[^}]*color:\s*var\(--dawn\)/s);
+  assert.match(css,/\.response-event \.response-player-name\.team-dusk\s*\{[^}]*color:\s*var\(--dusk\)/s);
+});
+
+// ---- 互利选择交互 ----
+
+test("互利必须先选择再确认且可直接切换选择", async () => { const element=makeInteractiveElement(),view=new PublicPoolView(element),player=makePlayer("human",0,"dawn","human"),first=instance("assault"),second=instance("block");let settled=false;const pending=view.request(player,[first,second]).then((card)=>{settled=true;return card;});assert.match(element.innerHTML,/data-public-confirm disabled/);element.click(clickTarget("[data-public-card-id]",{publicCardId:first.id}));await Promise.resolve();assert.equal(settled,false);assert.equal(view.pending.selected.has(first.id),true);assert.doesNotMatch(element.innerHTML,/data-public-confirm disabled/);element.click(clickTarget("[data-public-card-id]",{publicCardId:second.id}));assert.deepEqual([...view.pending.selected],[second.id]);assert.equal(settled,false);element.click(clickTarget("[data-public-confirm]"));assert.equal(await pending,second);assert.equal(view.pending,null); });
+
+test("互利公开牌池也复用正常完整牌面", async () => { const element=makeInteractiveElement(),view=new PublicPoolView(element),card=instance("mutualBenefit");view.show([card],{interactive:true});for(const className of ["hand-card","tableau-card","frame-ward","card-topline","card-name","card-category","card-art","card-crest","card-rules","card-description","card-flavor"])assert.match(element.innerHTML,new RegExp(className));assert.equal((element.innerHTML.match(/<img\b/g)??[]).length,2);assert.match(element.innerHTML,new RegExp(card.description));assert.match(element.innerHTML,/data-public-card-id/);const css=await readFile(projectFile("css/cards.css"),"utf8");assert.match(css,/\.tableau-card\.hand-card\s*\{[^}]*cursor:\s*pointer;/s);assert.doesNotMatch(css,/\.tableau-card\s*>\s*img|\.tableau-card\s+strong|\.tableau-card\s+small/); });
+
+test("互利界面不提供取消按钮且内部 cancel 仅供清理", async () => { const element=makeInteractiveElement(),view=new PublicPoolView(element),player=makePlayer("human",0,"dawn","human"),card=instance("recover");let settled=false;const pending=view.request(player,[card]).then((value)=>{settled=true;return value;});assert.doesNotMatch(element.innerHTML,/data-public-cancel|>取消</);element.click(clickTarget("[data-public-card-id]",{publicCardId:card.id}));element.click(clickTarget("[data-public-cancel]"));await Promise.resolve();assert.equal(settled,false);view.cancel();assert.equal(await pending,null);assert.equal(view.pending,null); });
+
+test("有效对局中互利意外返回 null 会重开当前选择并继续后续座次", async () => { const human=makePlayer("human",0,"dawn","human"),next=makePlayer("next",1,"dusk"),last=makePlayer("last",2,"dawn"),{game,ui}=makeGame([human,next,last]);const cards=[instance("assault"),instance("block"),instance("recover")];game.publicCardPool.cards=[...cards];game.state.publicCardPool=game.publicCardPool.cards;let calls=0;ui.requestPublicCard=async (_player,available)=>{calls+=1;return calls===1?null:available[0];};const result=await game.publicCardPool.draft(human);assert.equal(result,true);assert.equal(calls,2);assert.equal(human.hand.length,1);assert.equal(next.hand.length,1);assert.equal(last.hand.length,1);assert.equal(game.state.publicCardPool.length,0); });
+
+test("标准单选可直接从第一张切换到第二张", () => { let selected=toggleCardSelection(new Set(),"first",1);selected=toggleCardSelection(selected,"second",1);assert.deepEqual([...selected],["second"]);assert.equal(isCardSelectionValid(selected,1,true),true);selected=toggleCardSelection(selected,"second",1);assert.equal(selected.size,0); });
+
+test("多选组件仍可同时保留多张选择", () => { let selected=toggleCardSelection(new Set(),"first",2);selected=toggleCardSelection(selected,"second",2);assert.deepEqual([...selected],["first","second"]);assert.equal(isCardSelectionValid(selected,2,true),true); });
+
+// ---- 中央结算卡与日志 ----
+
+test("对局记录计数显示条目单位和明确的辅助说明", () => {
+  const countElement = { textContent:"", title:"", setAttribute(name, value) { this[name] = value; } };
+  UIManager.prototype.updateLogCount.call({ elements:{ log_count:countElement } }, 62);
+  assert.equal(countElement.textContent, "62 条");
+  assert.equal(countElement.title, "共 62 条对局记录");
+  assert.equal(countElement["aria-label"], "共 62 条对局记录");
+});
+
+test("新对局会清空上一局中央结算卡，避免开局显示旧突袭", async () => {
+  const currentCard = { innerHTML:"<div>甲对乙使用了突袭</div>", classList:{ remove(){} } };
+  UIManager.prototype.resetCurrentCard.call({ elements:{ current_card:currentCard } });
+  assert.match(currentCard.innerHTML, /等待第一张牌/);
+  assert.doesNotMatch(currentCard.innerHTML, /突袭|作用对象/);
+  const source = await readFile(projectFile("js/ui/UIManager.js"), "utf8");
+  assert.match(source, /showSelection\([^)]*\)\s*\{[\s\S]*?this\.resetCurrentCard\(\)/);
+  assert.match(source, /showGame\([^)]*\)\s*\{[\s\S]*?this\.resetCurrentCard\(\)/);
+});
+
+test("响应事件中的角色和卡牌名称会在写入 DOM 前安全转义", async () => { const responder=makePlayer("h",0,"dawn","human"),source={id:"source",name:'<img src=x onerror=alert(1)>'},target=responder,card={name:'<script>bad()</script>',definitionId:"assault"},presentation=buildResponsePresentation(responder,"block",{source,target,card},1,0,"格挡");const previousWindow=globalThis.window;globalThis.window={setInterval,clearInterval};const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};const fake={responseState:null,elements:{response_panel:panel},game:{cleanupManager:{delay:()=>new Promise(()=>{})}},render(){}};try{const pending=UIManager.prototype.requestResponse.call(fake,{id:"escape-response",requiredCount:1,legalCardIds:[],timeoutMs:5000,presentation},"格挡");assert.doesNotMatch(panel.innerHTML,/<img|<script>/);assert.match(panel.innerHTML,/&lt;img/);assert.match(panel.innerHTML,/&lt;script/);fake.responseState.resolve(false);assert.equal((await pending).status,"declined");}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
+
+test("主动技能按钮只显示技能名称", () => { assert.equal(skillButtonLabel({id:"allIn",name:"孤注",cost:"all"}),"孤注");assert.equal(skillButtonLabel({id:"hunt",name:"猎杀",cost:2}),"猎杀");assert.equal(skillButtonLabel(null),"主动技能"); });
+
+test("突袭在中央结算区与使用日志中显示作用对象", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game,ui}=makeGame([a,b]);const assault=instance("assault");a.hand.push(assault);await game.playCard(a,assault,[b]);assert.equal(ui.currentCards[0].targetLabel,b.name);assert.ok(ui.logs.some((message)=>message===`${a.name}使用了「突袭」，作用对象：${b.name}。`)); });
+
+test("群体牌会列出全部作用对象且结算模板显示目标标签", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dusk");const {game,ui}=makeGame([a,b,c]);const shockwave=instance("shockwave");a.hand.push(shockwave);await game.playCard(a,shockwave,[]);assert.equal(ui.currentCards[0].targetLabel,`${b.name}、${c.name}`);const markup=resolvingCardTemplate(shockwave,a.name,ui.currentCards[0].targetLabel);assert.match(markup,/作用对象/);assert.match(markup,new RegExp(`${b.name}、${c.name}`)); });
+
+test("上方 AI 思考提示出现时隐藏下方重复提示", () => { const classes=()=>{const values=new Set();return {values,toggle(name,force){if(force)values.add(name);else values.delete(name);}};};const thinkingClasses=classes(),promptClasses=classes();const fake={game:null,thinkingPlayerId:null,thinkingMessage:"",elements:{thinking_indicator:{classList:thinkingClasses,innerHTML:""},action_prompt:{classList:promptClasses}},render(){}};const player=makePlayer("ai",0,"dawn");UIManager.prototype.setThinking.call(fake,true,player,"准备使用突袭");assert.ok(promptClasses.values.has("is-hidden"));UIManager.prototype.setThinking.call(fake,false,player);assert.ok(!promptClasses.values.has("is-hidden")); });
+
+test("日志角色 token 可在同一行分别按阵营安全着色", () => {
+  const dawn=makePlayer("晨方角色",0,"dawn"),dusk=makePlayer("暮方角色",1,"dusk");const {game}=makeGame([dawn,dusk]);
+  const entry=game.log(`${dawn.name}对${dusk.name}造成影响。`);
+  assert.deepEqual(entry.fragments.filter((fragment)=>fragment.type==="player").map((fragment)=>fragment.battleTeam),["dawn","dusk"]);
+  const markup=formatLogEntry(entry);assert.match(markup,/log-player-name team-dawn/);assert.match(markup,/log-player-name team-dusk/);
+  assert.match(markup,/造成影响/);
+});
+
+test("25 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length,25);
+  for(const definition of Object.values(CARD_DEFINITIONS)){
+    const card={...definition,id:`layout-${definition.definitionId}`};
+    for(const markup of [handCardTemplate(card),opponentHandStripTemplate([{known:true,...card}])]){
+      assert.doesNotMatch(markup,/card-tags/);assert.ok(markup.includes(card.description));
+      for(const subtype of card.subtypes??[])assert.doesNotMatch(markup,new RegExp(`>\\s*${subtype}\\s*<`,"i"));
+    }
   }
 });
 
-test("控制器文件名：导出类名仍为 AIController", async () => {
-  const module = await import("../js/ai/AiController.js");
-  assert.equal(typeof module.AIController, "function");
-  assert.equal(module.AiController, undefined);
-});
-
-test("闪电：定义、数量与牌堆总数正确", () => {
-  const lightning = CARD_DEFINITIONS.lightning;
-  assert.ok(lightning);
-  assert.equal(lightning.category, "tactic");
-  assert.equal(lightning.count, 2);
-  assert.equal(lightning.targetType, "none");
-  assert.equal(lightning.aiValue, 5);
-  assert.ok(lightning.description.includes("闪电"));
-  assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("lightning"));
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 25);
-  const tacticTotal = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "tactic").reduce((sum, card) => sum + card.count, 0);
-  assert.equal(tacticTotal, 53);
-  assert.equal(TOTAL_CARD_COUNT, 160);
-});
-
-test("闪电：Deck.build 生成正好两张不同实体 ID", () => {
-  const deck = new Deck(() => 0);
-  assert.equal(deck.build(), 160);
-  const cards = deck.cards.filter((card) => card.definitionId === "lightning");
-  assert.equal(cards.length, 2);
-  assert.equal(new Set(cards.map((card) => card.id)).size, 2);
-});
-
-test("闪电：无状态时可用，成功后获得状态并进入弃牌堆", async () => {
-  const source = makePlayer("a", 0, "dawn", "human"), enemy = makePlayer("b", 1, "dusk");
-  const { game } = makeGame([source, enemy]);
-  const card = instance("lightning");
-  source.hand.push(card);
-  assert.equal(await game.playCard(source, card, []), true);
-  assert.deepEqual(source.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: source.id });
-  assert.ok(game.state.deck.discardPile.includes(card));
-});
-
-test("闪电：已有闪电状态时真实规则拒绝使用", async () => {
-  const source = makePlayer("a", 0, "dawn", "human"), enemy = makePlayer("b", 1, "dusk");
-  const { game } = makeGame([source, enemy]);
-  source.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: source.id };
-  const card = instance("lightning");
-  source.hand.push(card);
-  assert.equal(RuleEngine.canPlayCard(game, source, card).ok, false);
-  assert.equal(await game.playCard(source, card, []), false);
-  assert.ok(source.hand.includes(card));
-});
-
-test("闪电：使用阶段普通反制成功后不获得状态且不转移", async () => {
-  const source = makePlayer("a", 0, "dawn", "human"), enemy = makePlayer("b", 1, "dusk", "human"), receiver = makePlayer("c", 2, "dawn");
-  const { game } = makeGame([source, enemy, receiver], { response: () => true });
-  const card = instance("lightning"), counter = instance("counter");
-  source.hand.push(card);
-  enemy.hand.push(counter);
-  assert.equal(await game.playCard(source, card, []), true);
-  assert.equal(source.statuses.lightning, undefined);
-  assert.equal(receiver.statuses.lightning, undefined);
-  assert.ok(game.state.deck.discardPile.includes(card));
-  assert.ok(game.state.deck.discardPile.includes(counter));
-});
-
-test("闪电：使用回合不立即判定，下一次实际回合在摸牌前结算", async () => {
-  const source = makePlayer("a", 0, "dawn", "ai"), enemy = makePlayer("b", 1, "dusk");
-  const { game } = makeGame([source, enemy]);
-  const card = instance("lightning");
-  source.hand.push(card);
-  await game.playCard(source, card, []);
-  assert.equal(source.hp, source.maxHp);
-  assert.ok(source.statuses.lightning);
-  game.state.deck.cards = [instance("defenseDevice")];
-  game.state.deck.discardPile = [];
-  let damageBeforeDraw = false;
-  game.eventBus.on("beforeDraw", "test:lightning-before-draw", (event) => {
-    if (event.player === source && source.hp < source.maxHp) damageBeforeDraw = true;
-  });
-  game.aiController.getLegalActions = () => [{ type:"end" }];
-  game.aiController.selectAction = async () => ({ type:"end" });
-  await game.takeTurn(source, game.state.gameId);
-  assert.equal(damageBeforeDraw, true);
-  assert.equal(source.hp, source.maxHp - 3);
-  assert.equal(source.statuses.lightning, undefined);
-});
-
-test("闪电：判定非装备牌后移除状态并顺时针转移，保留来源元数据", async () => {
-  const holder = makePlayer("a", 0, "dawn"), next = makePlayer("b", 1, "dusk"), tail = makePlayer("c", 2, "dawn");
-  const { game } = makeGame([holder, next, tail]);
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  game.state.deck.cards = [instance("assault")];
-  game.state.deck.discardPile = [];
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.equal(holder.statuses.lightning, undefined);
-  assert.deepEqual(next.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
-  assert.equal(tail.statuses.lightning, undefined);
-  assert.ok(game.state.deck.discardPile.some((entry) => entry.definitionId === "assault"));
-});
-
-test("闪电：判定装备牌触发3点中立伤害且状态立即消费", async () => {
-  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
-  const { game } = makeGame([holder, enemy]);
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  const equipment = instance("defenseDevice");
-  game.state.deck.cards = [equipment];
-  const events = [];
-  game.eventBus.on("beforeDamage", "test:lightning-before", (event) => events.push(["before", event.source, event.damageType, { ...event.metadata }]));
-  game.eventBus.on("afterDamage", "test:lightning-after", (event) => events.push(["after", event.source, event.actualAmount, { ...event.metadata }]));
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.equal(holder.hp, holder.maxHp - 3);
-  assert.equal(holder.statuses.lightning, undefined);
-  assert.equal(enemy.statuses.lightning, undefined);
-  assert.equal(events.length, 2);
-  assert.equal(events[0][1], null);
-  assert.equal(events[0][2], "lightning");
-  assert.equal(events[0][3].statusId, "lightning");
-  assert.equal(events[0][3].cardDefinitionId, "lightning");
-  assert.equal(events[0][3].originPlayerId, holder.id);
-  assert.equal(events[0][3].currentHolderId, holder.id);
-  assert.equal(events[0][3].baseDamage, 3);
-  assert.equal(events[0][3].judgmentCategory, "equipment");
-  assert.equal(events[1][3].statusId, "lightning");
-  assert.ok(game.state.deck.discardPile.includes(equipment));
-});
-
-test("闪电：伤害不请求格挡且不触发雷达防御判定", async () => {
-  const holder = makePlayer("a", 0, "dawn");
-  const { game } = makeGame([holder]);
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  holder.equipment = instance("defenseDevice");
-  const block = instance("block");
-  holder.hand.push(block);
-  game.state.deck.cards = [instance("energyDevice")];
-  let judgmentReveals = 0;
-  game.eventBus.on("judgmentRevealed", "test:lightning-judge-count", () => { judgmentReveals += 1; });
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.equal(holder.hp, holder.maxHp - 3);
-  assert.ok(holder.hand.includes(block));
-  assert.equal(judgmentReveals, 1);
-  assert.equal(game.state.deck.judgmentZone.length, 0);
-});
-
-test("闪电：护盾吸收后按统一伤害系统记录", async () => {
-  const holder = makePlayer("a", 0, "dawn");
-  const { game } = makeGame([holder]);
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  holder.shield = 1;
-  const events = [];
-  game.eventBus.on("afterDamage", "test:lightning-shield", (event) => events.push({ actualAmount:event.actualAmount, shieldAbsorbed:event.shieldAbsorbed, source:event.source }));
-  game.state.deck.cards = [instance("energyDevice")];
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.equal(holder.hp, holder.maxHp - 2);
-  assert.equal(holder.shield, 0);
-  assert.equal(events[0].actualAmount, 2);
-  assert.equal(events[0].shieldAbsorbed, 1);
-  assert.equal(events[0].source, null);
-});
-
-test("闪电：伤害被防止降为0时状态仍被消费且不转移", async () => {
-  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
-  const { game } = makeGame([holder, enemy]);
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  game.state.deck.cards = [instance("energyDevice")];
-  game.eventBus.on("beforeDamage", "test:lightning-prevent", (event) => { if (event.damageType === "lightning") event.amount = 0; });
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.equal(holder.hp, holder.maxHp);
-  assert.equal(holder.statuses.lightning, undefined);
-  assert.equal(enemy.statuses.lightning, undefined);
-});
-
-test("闪电：判定牌先入判定区再入弃牌堆且别名保持同步", async () => {
-  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
-  const { game } = makeGame([holder, enemy]);
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  const card = instance("assault");
-  game.state.deck.cards = [card];
-  let inJudgmentZone = false;
-  game.eventBus.on("judgmentRevealed", "test:lightning-zone", (event) => {
-    inJudgmentZone = game.state.deck.judgmentZone.includes(event.card);
-  });
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.equal(inJudgmentZone, true);
-  assert.ok(game.state.deck.discardPile.includes(card));
-  assert.equal(game.state.deck.judgmentZone.length, 0);
-  assert.equal(game.state.judgmentZone, game.state.deck.judgmentZone);
-  assert.equal(game.state.discardPile, game.state.deck.discardPile);
-});
-
-test("闪电：空牌堆重洗弃牌堆后仍能完成判定", async () => {
-  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
-  const { game } = makeGame([holder, enemy]);
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  game.state.deck.cards = [];
-  game.state.deck.discardPile = [instance("recover")];
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.equal(holder.statuses.lightning, undefined);
-  assert.ok(enemy.statuses.lightning);
-  assert.equal(game.state.deck.reshuffleCount, 1);
-});
-
-test("闪电：状态反制由持有者本人优先响应，成功后不翻判定牌并转移", async () => {
-  const holder = makePlayer("a", 0, "dawn", "human"), receiver = makePlayer("b", 1, "dusk");
-  const { game } = makeGame([holder, receiver], { response: () => true });
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  const counter = instance("counter");
-  holder.hand.push(counter);
-  const equipment = instance("energyDevice");
-  game.state.deck.cards = [equipment];
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.equal(holder.statuses.lightning, undefined);
-  assert.deepEqual(receiver.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
-  assert.ok(game.state.deck.discardPile.includes(counter));
-  assert.ok(game.state.deck.cards.includes(equipment));
-  assert.equal(holder.hp, holder.maxHp);
-});
-
-test("闪电：状态反制按顺时针响应，反制被反制后继续判定", async () => {
-  const holder = makePlayer("a", 0, "dawn"), responder = makePlayer("b", 1, "dusk"), counterer = makePlayer("c", 2, "dusk");
-  const { game } = makeGame([holder, responder, counterer]);
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  responder.hand.push(instance("counter"));
-  counterer.hand.push(instance("counter"));
-  forceAvailableAiCounters(game);
-  const equipment = instance("telescope");
-  game.state.deck.cards = [equipment];
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.equal(holder.hp, holder.maxHp - 3);
-  assert.equal(holder.statuses.lightning, undefined);
-  assert.equal(responder.hand.length, 0);
-  assert.equal(counterer.hand.length, 0);
-  assert.ok(game.state.deck.discardPile.includes(equipment));
-});
-
-test("闪电：转移跳过死亡与已有闪电玩家且不受阵营影响", async () => {
-  const holder = makePlayer("a", 0, "dawn"), dead = makePlayer("b", 1, "dusk"), already = makePlayer("c", 2, "dawn"), target = makePlayer("d", 3, "dusk");
-  const { game } = makeGame([holder, dead, already, target]);
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  dead.alive = false;
-  already.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: already.id };
-  game.state.deck.cards = [instance("recover")];
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.equal(holder.statuses.lightning, undefined);
-  assert.deepEqual(already.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: already.id });
-  assert.deepEqual(target.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
-});
-
-test("闪电：判定未触发且无其他合法接收者时转移回自己", async () => {
-  const holder = makePlayer("a", 0, "dawn"), ally = makePlayer("b", 1, "dawn"), enemy = makePlayer("c", 2, "dusk");
-  const { game } = makeGame([holder, ally, enemy]);
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  ally.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: ally.id };
-  enemy.alive = false;
-  game.state.deck.cards = [instance("recover")];
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.deepEqual(holder.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
-  assert.deepEqual(ally.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: ally.id });
-  assert.ok(game.state.logs.some((entry) => entry.message === `${holder.name}的「闪电」判定未触发，转移给${holder.name}。`));
-  assert.ok(!game.state.logs.some((entry) => entry.message.includes("没有可转移的目标")));
-  assert.ok(!game.state.logs.some((entry) => entry.message.includes("闪电消失")));
-});
-
-test("闪电：中立伤害阵亡不给原使用者或持有者击杀奖励", async () => {
-  const origin = makePlayer("o", 0, "dawn"), holder = makePlayer("h", 1, "dusk"), medic = makePlayer("m", 2, "dawn");
-  const { game } = makeGame([origin, holder, medic]);
-  origin.hand.push(instance("assault"));
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: origin.id };
-  holder.hp = 2;
-  game.state.deck.cards = [instance("energyDevice")];
-  game.state.deck.discardPile = [];
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.equal(holder.alive, false);
-  assert.equal(origin.hand.length, 1);
-  assert.equal(holder.statistics.damageDealt, 0);
-});
-
-test("闪电：AI 根节点与深层生成均拒绝已有闪电状态", () => {
-  const source = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
-  const { game } = makeGame([source, enemy]);
-  source.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: source.id };
-  source.hand.push(instance("lightning"));
-  assert.ok(!game.aiController.getLegalActions(source).some((action) => action.card?.definitionId === "lightning"));
-  const visible = createAiVisibleState(source.id, game.state);
-  assert.ok(!game.aiController.actionGenerator.generateFromVisible(visible, source.id).some((action) => action.card?.definitionId === "lightning"));
-  const source2 = makePlayer("a2", 0, "dawn"), enemy2 = makePlayer("b2", 1, "dusk");
-  const { game: game2 } = makeGame([source2, enemy2]);
-  source2.hand.push(instance("lightning"));
-  assert.ok(game2.aiController.getLegalActions(source2).some((action) => action.card?.definitionId === "lightning"));
-  const visible2 = createAiVisibleState(source2.id, game2.state);
-  assert.ok(game2.aiController.actionGenerator.generateFromVisible(visible2, source2.id).some((action) => action.card?.definitionId === "lightning"));
-});
-
-test("闪电：AiSimulator 成功使用后写入状态且不立即判定或伤害", () => {
-  const state = { remainingCardCounts:null, players:[
-    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, hand:[{ id:"use", definitionId:"lightning" }], statuses:[], counterProbability:0 },
-    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[] }
-  ]};
-  const next = new AiSimulator(state).apply(state, { type:"card", card:{ id:"use", definitionId:"lightning" }, targets:[] }, "a");
-  assert.ok(next.players[0].statuses.includes("lightning"));
-  assertClose(next.players[0].lightningStatusProbability, 1);
-  assertClose(next.players[0].lightningStatusStateBranches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0), 1);
-  assert.equal(next.players[0].hp, 4);
-  assert.equal(next.players[1].statuses.length, 0);
-  assert.equal(next.remainingCardCounts, null);
-});
-
-test("闪电：AI 装备判定概率按类别聚合且不修改计数", () => {
-  const counts = { assault:3, defenseDevice:1, telescope:2 };
-  const snapshot = JSON.stringify(counts);
-  assertClose(equipmentJudgmentProbability(counts), 3 / 6);
-  assert.equal(JSON.stringify(counts), snapshot);
-  const equipmentTotal = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
-  assertClose(equipmentJudgmentProbability(null), equipmentTotal / TOTAL_CARD_COUNT);
-  const players = [
-    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", statuses:[] },
-    { id:"b", seatIndex:1, alive:false, battleTeam:"dusk", statuses:[] },
-    { id:"c", seatIndex:2, alive:true, battleTeam:"dusk", statuses:["lightning"] },
-    { id:"d", seatIndex:3, alive:true, battleTeam:"dawn", statuses:[] }
-  ];
-  assert.equal(nextLightningReceiver(players, players[0]).id, "d");
-});
-
-test("闪电：AI 使用价值随自身低血惩罚、敌人低血收益和队友低血损失单调变化", () => {
-  const make = (hp, receiver) => ({
-    remainingCardCounts:{ defenseDevice:1, assault:3 },
-    players:[
-      { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp, maxHp:4, shield:0, statuses:[] },
-      ...(receiver ? [{ id:"b", seatIndex:1, battleTeam:receiver.team, alive:true, hp:receiver.hp, maxHp:4, shield:0, statuses:[] }] : [])
-    ]
-  });
-  const lowSelf = lightningUseValue(make(1, null).players[0], make(1, null));
-  const highSelf = lightningUseValue(make(4, null).players[0], make(4, null));
-  assert.ok(lowSelf < highSelf);
-  const enemyLow = lightningUseValue(make(4, { team:"dusk", hp:1 }).players[0], make(4, { team:"dusk", hp:1 }));
-  const enemyHigh = lightningUseValue(make(4, { team:"dusk", hp:4 }).players[0], make(4, { team:"dusk", hp:4 }));
-  assert.ok(enemyLow > enemyHigh);
-  const allyLow = lightningUseValue(make(4, { team:"dawn", hp:1 }).players[0], make(4, { team:"dawn", hp:1 }));
-  const allyHigh = lightningUseValue(make(4, { team:"dawn", hp:4 }).players[0], make(4, { team:"dawn", hp:4 }));
-  assert.ok(allyLow < allyHigh);
-});
-
-test("闪电：AI 状态反制决策不是固定 true 或 false", () => {
-  const holderAlly = makePlayer("a", 0, "dawn"), receiverEnemy = makePlayer("b", 1, "dusk"), responder = makePlayer("r", 2, "dawn");
-  const { game } = makeGame([holderAlly, receiverEnemy, responder]);
-  holderAlly.hp = 1;
-  holderAlly.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holderAlly.id };
-  game.aiController.knowledge.remainingCounts = () => ({ defenseDevice:9, assault:1 });
-  const context = { statusCounterContext:{ holderId:holderAlly.id, holderName:holderAlly.name } };
-  assert.equal(game.aiController.responsePolicy.shouldRespond(responder, "counter", context, [instance("counter")]), true);
-  const responder2 = makePlayer("r2", 0, "dawn"), holderEnemy = makePlayer("e", 1, "dusk"), receiverAlly = makePlayer("f", 2, "dawn");
-  const { game: game2 } = makeGame([responder2, holderEnemy, receiverAlly]);
-  holderEnemy.hp = 4;
-  holderEnemy.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holderEnemy.id };
-  game2.aiController.knowledge.remainingCounts = () => ({ defenseDevice:9, assault:1 });
-  const context2 = { statusCounterContext:{ holderId:holderEnemy.id, holderName:holderEnemy.name } };
-  assert.equal(game2.aiController.responsePolicy.shouldRespond(responder2, "counter", context2, [instance("counter")]), false);
-});
-
-test("闪电：玩家面板显示状态徽章且卡牌模板可渲染", () => {
-  const player = makePlayer("a", 0, "dawn", "human");
-  player.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: player.id };
-  assert.match(playerPanelTemplate(player, { isHuman:true }), /闪电/);
-  const card = instance("lightning");
-  const markup = handCardTemplate(card);
-  assert.match(markup, /闪电/);
-  assert.match(markup, /assets\/cards\/lightning\.svg/);
-  assert.ok(["", "is-description-long", "is-description-very-long"].includes(cardDescriptionClass(card.description)));
-});
-
-test("闪电：状态反制响应展示文案正确", () => {
-  const responder = { id:"r", name:"响应者" };
-  const presentation = buildResponsePresentation(responder, "counter", {
-    statusCounterContext:{ holderId:"a", holderName:"甲" }
-  }, 1, 1, "反制");
-  assert.equal(presentation.eventText, "是否使用「反制」，令甲的“闪电”转移？");
-  assert.equal(presentation.responseText, "是否使用「反制」，令甲的“闪电”转移？");
-});
-
-test("闪电：SVG 使用统一 480×280 规格", async () => {
-  const source = await readFile(projectFile("assets/cards/lightning.svg"), "utf8");
-  assert.match(source, /<svg width="480" height="280" viewBox="0 0 480 280"/);
-});
-
-test("闪电：SVG 主体恢复为未放大的正常构图", async () => {
-  const source = await readFile(projectFile("assets/cards/lightning.svg"), "utf8");
-  const glow = source.match(/<circle cx="240" cy="138" r="(\d+)"/);
-  assert.ok(glow, "闪电辉光圆必须保持画布居中");
-  assert.ok(Number(glow[1]) <= 90, `闪电辉光圆仍被放大：r=${glow[1]}`);
-  const bolt = source.match(/<path d="([^"]+)" fill="#ffe084"/);
-  assert.ok(bolt, "缺少主闪电路径");
-  const tokens = bolt[1].match(/[A-Za-z]|-?\d+/g) ?? [];
-  let x = 0, y = 0, index = 0, minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  const pen = (px, py) => { minX = Math.min(minX, px); minY = Math.min(minY, py); maxX = Math.max(maxX, px); maxY = Math.max(maxY, py); };
-  const num = () => Number(tokens[index++]);
-  while (index < tokens.length) {
-    const command = tokens[index++];
-    if (command === "M") { x = num(); y = num(); pen(x, y); while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x = num(); y = num(); pen(x, y); } }
-    else if (command === "l") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x += num(); y += num(); pen(x, y); } }
-    else if (command === "h") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x += num(); pen(x, y); } }
-    else if (command === "v") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { y += num(); pen(x, y); } }
-    else if (command === "L") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x = num(); y = num(); pen(x, y); } }
-    else if (command === "H") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { x = num(); pen(x, y); } }
-    else if (command === "V") { while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) { y = num(); pen(x, y); } }
+test("牌面长描述分类确定且真人与已知对手模板共用同一函数", () => {
+  for(const definitionId of ["defenseDevice","transfer","mutualBenefit","battleDevice"]){
+    const card=instance(definitionId),descriptionClass=cardDescriptionClass(card.description);
+    assert.match(descriptionClass,/^is-description-(?:long|very-long)$/);assert.match(handCardTemplate(card),new RegExp(descriptionClass));assert.match(opponentHandStripTemplate([{known:true,...card}]),new RegExp(descriptionClass));
   }
-  assert.ok(minY >= 55 && maxY <= 225, `主闪电纵向范围异常（疑似放大）：${minY}..${maxY}`);
-  assert.ok(maxX - minX <= 200 && maxY - minY <= 170, `主闪电尺寸异常（疑似放大）：${maxX - minX}x${maxY - minY}`);
-});
-
-test("闪电：响应卡片信息框与其他战术牌共用统一尺寸", async () => {
-  const layout = await readFile(projectFile("css/layout.css"), "utf8");
-  const rule = layout.match(/\.current-card\s*\{[^}]*\}/g)?.find((entry) => entry.includes("grid-column: 1")) ?? "";
-  assert.match(rule, /width:\s*min\(440px/, "响应卡片信息框必须使用带响应式上限的稳定宽度");
-  assert.match(rule, /min-height:\s*104px/, "同类中央结算卡必须使用统一 min-height");
-  assert.match(rule, /display:\s*grid/, "中央结算卡容器必须撑起统一基础高度");
-  assert.doesNotMatch(rule, /(?<!min-)height:/, "不得使用固定 height");
-  assert.match(rule, /justify-self:\s*center/);
-  const lightning = instance("lightning"), assault = instance("assault");
-  const lightningMarkup = resolvingCardTemplate(lightning, "甲", "乙");
-  const assaultMarkup = resolvingCardTemplate(assault, "甲", "乙");
-  for (const markup of [lightningMarkup, assaultMarkup]) {
-    assert.match(markup, /class="resolving-card frame-/);
-    assert.match(markup, /<img src=/);
-    assert.match(markup, /resolving-kind/);
+  for(const definitionId of ["harvest","counter","shield","provoke"]){
+    const card=instance(definitionId);
+    assert.equal(cardDescriptionClass(card.description),"");assert.doesNotMatch(handCardTemplate(card),/is-description-(?:long|very-long)/);assert.doesNotMatch(opponentHandStripTemplate([{known:true,...card}]),/is-description-(?:long|very-long)/);
   }
-  assert.doesNotMatch(lightningMarkup, /class="[^"]*lightning[^"]*"/, "闪电不得使用专属响应卡片类");
-  const noTargetSkillMarkup = resolvingCardTemplate("壁垒", "守誓者 · 技能", "");
-  assert.match(noTargetSkillMarkup, /class="resolving-card is-skill"/, "无目标技能必须沿用同类中央结算卡模板");
-  assert.doesNotMatch(noTargetSkillMarkup, /作用对象/);
-  assert.match(resolvingCardTemplate("猎杀", "追猎者 · 技能", "目标"), /作用对象/, "有目标技能仍正常显示作用对象");
-  assert.match(resolvingCardTemplate(instance("harvest"), "甲", ""), /resolving-card/, "内容较长的无目标卡牌仍使用同类模板");
-  const cards = await readFile(projectFile("css/cards.css"), "utf8");
-  const imgRule = cards.match(/\.resolving-card > img\s*\{[^}]*\}/)?.[0] ?? "";
-  assert.match(imgRule, /width:\s*74px/, "左侧正方形图片区域不得被放大");
-  assert.match(imgRule, /height:\s*74px/);
+  assert.equal(cardDescriptionClass(CARD_DEFINITIONS.transfer.description),"is-description-very-long");
 });
 
-test("闪电：中央结算卡显示作用对象为自己且不进入业务 targets", async () => {
-  const lightning = instance("lightning");
-  const human = makePlayer("human", 0, "dawn", "human");
-  const ai = makePlayer("ai", 1, "dusk");
-  const { game, ui } = makeGame([human, ai]);
-  assert.equal(lightning.targetType, "none");
-  assert.deepEqual(RuleEngine.getCardTargets(game, human, lightning), [], "闪电真实业务 targets 必须保持为空");
-  human.hand.push(lightning);
-  await game.playCard(human, lightning, []);
-  const humanRecord = ui.currentCards.at(-1);
-  assert.equal(humanRecord.targetLabel, "", "闪电不生成业务 targetLabel");
-  assert.deepEqual(humanRecord.displayTargets, [{ id: human.id, name: human.name, isSelf: true }]);
-  const humanMarkup = resolvingCardTemplate(lightning, human.name, humanRecord.targetLabel, humanRecord.displayTargets);
-  assert.match(humanMarkup, /作用对象/);
-  assert.match(humanMarkup, new RegExp(`${human.name}（自己）`), "人类使用闪电时显示（自己）");
-  assert.ok(human.statuses.lightning, "闪电业务效果不变");
-  const aiLightning = instance("lightning");
-  ai.hand.push(aiLightning);
-  game.state.currentPlayerIndex = 1;
-  await game.playCard(ai, aiLightning, []);
-  const aiRecord = ui.currentCards.at(-1);
-  assert.deepEqual(aiRecord.displayTargets, [{ id: ai.id, name: ai.name, isSelf: true }]);
-  const aiMarkup = resolvingCardTemplate(aiLightning, ai.name, aiRecord.targetLabel, aiRecord.displayTargets);
-  assert.match(aiMarkup, new RegExp(`${ai.name}（自己）`));
-  assert.doesNotMatch(aiMarkup, new RegExp(human.name), "其他玩家使用闪电时不得把人类玩家显示为自己");
-  const shield = instance("shield");
-  const shieldMarkup = resolvingCardTemplate(shield, human.name, `${human.name}（自己）`);
-  assert.match(shieldMarkup, /作用对象/);
-  assert.match(shieldMarkup, new RegExp(`${human.name}（自己）`), "护盾原有展示不变");
-  const displayMarkup = resolvingCardTemplate(lightning, ai.name, "", [{ id: ai.id, name: ai.name, isSelf: true }]);
-  assert.match(displayMarkup, /作用对象/);
-  assert.match(displayMarkup, new RegExp(`${ai.name}（自己）`));
-  const bothMarkup = resolvingCardTemplate(lightning, ai.name, "业务目标", [{ id: ai.id, name: ai.name, isSelf: true }]);
-  assert.match(bothMarkup, /业务目标/);
-  assert.doesNotMatch(bothMarkup, /（自己）/, "真实业务目标标签优先于纯展示字段");
+test("牌面 CSS 将长描述标记限制在文字区且不再影响外层插画网格", async () => {
+  const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8"),css=`${cards}\n${characters}`;
+  assert.doesNotMatch(css,/\.card-tags/);assert.match(cards,/\.hand-card \.card-rules\.is-description-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s);assert.match(cards,/\.hand-card \.card-rules\.is-description-very-long \.card-flavor\s*\{[^}]*display:\s*none/s);
+  assert.match(characters,/\.opponent-card-slot \.card-rules\.is-description-very-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s);assert.doesNotMatch(css,/\.\w*-?card(?:-slot)?\.is-description-(?:very-)?long\s*\{[^}]*grid-template-rows/s);assert.match(cards,/overflow-wrap:\s*anywhere/);
+  const lowHeight=cards.match(/@media \(max-height:\s*920px\)[\s\S]*$/)?.[0]??"";assert.doesNotMatch(lowHeight,/\.card-description\s*\{[^}]*display:\s*none/s);assert.doesNotMatch(cards,/\.card-description\s*\{[^}]*overflow:\s*hidden/s);
 });
 
 test("丰收：中央结算卡经 displayTargets 显示自己且真实 targets 仍为空", async () => {
@@ -8383,384 +9017,409 @@ test("none 型主动技能：中央结算卡经 displayTargets 显示自己", as
   }
 });
 
-test("闪电：判定触发日志复用玩家与卡牌名称格式化机制", async () => {
-  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
-  const { game } = makeGame([holder, enemy]);
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  const equipment = instance("defenseDevice");
-  game.state.deck.cards = [equipment];
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  const reveal = game.state.logs.find((entry) => entry.message.includes("判定为"));
-  const trigger = game.state.logs.find((entry) => entry.message.includes("判定触发"));
-  assert.ok(reveal);
-  assert.ok(trigger);
-  assert.equal(reveal.message, `${holder.name}的「闪电」判定为「${equipment.name}」，为装备牌。`);
-  assert.equal(trigger.message, `${holder.name}的「闪电」判定触发。`);
-  assert.ok(reveal.fragments.some((fragment) => fragment.type === "player" && fragment.playerId === holder.id));
-  const rendered = formatLogEntry(reveal);
-  assert.match(rendered, /log-player-name/);
-  assert.match(rendered, /log-card-name/);
-  assert.ok(rendered.includes("「<strong class=\"log-card-name\">闪电</strong>」"));
-  assert.ok(rendered.includes(`「<strong class="log-card-name">${equipment.name}</strong>」`));
-  for (const entry of game.state.logs) {
-    assert.ok(!entry.message.includes("【") && !entry.message.includes("】"), `日志不得使用【】：${entry.message}`);
-    assert.ok(!entry.message.includes("“闪电”"), `日志不得使用弯引号“闪电”：${entry.message}`);
+// ---- 布局与样式 ----
+
+test("装备槽空置和六种装备生成不同可访问 DOM", () => { const p=makePlayer("a",0,"dawn");const empty=equipmentSlotTemplate(p,true);assert.match(empty,/is-empty|装备槽为空/);for(const id of ["energyDevice","recycleDevice","defenseDevice","battleDevice","telescope","barrierDevice"]){p.equipment=instance(id);const markup=equipmentSlotTemplate(p,true);assert.match(markup,new RegExp(CARD_DEFINITIONS[id].name));assert.match(markup,new RegExp(CARD_DEFINITIONS[id].description.slice(0,6)));assert.notEqual(markup,empty);} });
+
+test("UIManager 源码不直接写生命、能量、手牌或胜负", async () => { const source=await readFile(projectFile("js/ui/UIManager.js"),"utf8");for(const forbidden of [/\.hp\s*=/,/\.energy\s*=/,/\.hand\.(?:push|splice|pop|shift|unshift)/,/\.winnerTeam\s*=/,/\.isGameOver\s*=/])assert.doesNotMatch(source,forbidden); });
+
+test("全部卡牌SVG使用统一480x280画布且配置引用均存在", async () => {
+  const files=(await readdir(projectFile("assets/cards"))).filter((name)=>name.endsWith(".svg")).sort();assert.ok(files.length>0);
+  for(const name of files){const source=await readFile(projectFile(`assets/cards/${name}`),"utf8"),root=source.match(/<svg\b[^>]*>/)?.[0]??"";assert.match(root,/\bwidth="480"/i,name);assert.match(root,/\bheight="280"/i,name);assert.match(root,/\bviewBox="0 0 480 280"/i,name);}
+  for(const definition of Object.values(CARD_DEFINITIONS))await access(projectFile(definition.art.replace(/^\.\//,"")));
+  const shield=await readFile(projectFile("assets/cards/shield.svg"),"utf8"),assault=await readFile(projectFile("assets/cards/assault.svg"),"utf8"),transfer=await readFile(projectFile("assets/cards/transfer.svg"),"utf8");
+  for(const source of [shield,assault,transfer])assert.match(source,/^<svg width="480" height="280" viewBox="0 0 480 280"/);
+});
+
+test("卡牌CSS在手牌、结算、私密展示、判定和装备区统一约束图片尺寸", async () => {
+  const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8");
+  for(const selector of [".card-art > img",".resolving-card > img",".judgment-view img"]){const escaped=selector.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");assert.match(cards,new RegExp(`${escaped}\\s*\\{[^}]*display:\\s*block[^}]*width:\\s*[^;]+;[^}]*height:\\s*[^;]+;[^}]*object-fit:\\s*(?:cover|contain)`,"s"),selector);}
+  assert.match(characters,/\.equipment-icon\s*\{[^}]*display:\s*block[^}]*width:\s*[^;]+;[^}]*height:\s*[^;]+;[^}]*object-fit:\s*cover/s);
+});
+
+test("窥隙结果牌与正常手牌共用完整牌面布局且不暴露实体ID", async () => {
+  const card=instance("counter"),normal=handCardTemplate(card),revealed=privateCardTemplate(card),face=(markup)=>markup.replace(/^<[^>]+>\s*/,"").replace(/\s*<\/(?:button|article)>$/,"");
+  for(const className of ["card-topline","card-name","card-category","card-art","card-crest","card-rules","card-description","card-flavor"])assert.match(revealed,new RegExp(`class="[^"]*${className}`),className);
+  assert.equal(face(revealed),face(normal));assert.match(revealed,/class="hand-card private-card frame-seal"/);assert.doesNotMatch(revealed,/data-card-id|data-disabled|aria-pressed/);assert.doesNotMatch(revealed,new RegExp(card.id));
+  const css=await readFile(projectFile("css/cards.css"),"utf8");assert.match(css,/\.private-card\.hand-card\s*\{[^}]*font-weight:\s*400;[^}]*cursor:\s*default;/s);assert.doesNotMatch(css,/\.private-card\s*,\s*\.tableau-card|\.private-card\s+img/);
+});
+
+test("所有牌框保持相同内容宽度且机械双线不再挤压牌面", async () => {
+  const css=await readFile(projectFile("css/cards.css"),"utf8");
+  assert.match(css,/\.hand-card\s*\{[^}]*border:\s*2px\s+solid/s);
+  assert.match(css,/\.frame-machine\s*\{[^}]*border-style:\s*solid;[^}]*border-width:\s*2px;/s);
+  assert.match(css,/\.frame-machine::before\s*\{[^}]*border-style:\s*double;[^}]*border-width:\s*3px;/s);
+  assert.doesNotMatch(css,/\.frame-machine\s*\{[^}]*border-width:\s*4px/s);
+});
+
+test("护盾和反制等长描述牌与普通牌保持相同插画高度", async () => {
+  const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8");
+  assert.match(cards,/\.hand-card\s*\{[^}]*grid-template-rows:\s*37px\s+72px\s+minmax\(0,\s*1fr\)/s);
+  assert.match(cards,/\.hand-card\s*>\s*\.card-art\s*\{[^}]*height:\s*72px;[^}]*min-height:\s*72px;[^}]*max-height:\s*72px;/s);
+  assert.match(cards,/@media\s*\(max-height:\s*920px\)[\s\S]*?\.hand-card\s*\{[^}]*grid-template-rows:\s*32px\s+66px\s+minmax\(0,\s*1fr\)/s);
+  assert.match(cards,/@media\s*\(max-height:\s*920px\)[\s\S]*?\.hand-card\s*>\s*\.card-art\s*\{[^}]*height:\s*66px;[^}]*min-height:\s*66px;[^}]*max-height:\s*66px;/s);
+  assert.match(characters,/\.opponent-card-slot\s*\{[^}]*grid-template-rows:\s*27px\s+70px\s+minmax\(0,\s*1fr\)/s);
+  assert.match(characters,/\.opponent-card-slot\s*>\s*\.card-art\s*\{[^}]*height:\s*70px;[^}]*min-height:\s*70px;[^}]*max-height:\s*70px;/s);
+  assert.doesNotMatch(`${cards}\n${characters}`,/\.\w*-?card(?:-slot)?\.is-description-(?:very-)?long\s*\{[^}]*grid-template-rows/s);
+});
+
+test("长描述牌的长描述标记只进入文字区并由末尾规则锁定插画高度", async () => {
+  const cards=await readFile(projectFile("css/cards.css"),"utf8");
+  for(const definitionId of ["battleDevice","defenseDevice","mutualBenefit","transfer"]){
+    const markup=handCardTemplate(instance(definitionId));
+    assert.doesNotMatch(markup,/^<button class="[^"]*is-description-(?:very-)?long/);
+    assert.match(markup,/class="card-rules is-description-(?:very-)?long"/);
+  }
+  assert.match(cards,/牌面插画高度是跨卡牌不变量/);
+  assert.match(cards,/\.hand-card\s*>\s*\.card-art\s*\{[^}]*block-size:\s*72px\s*!important;[^}]*min-block-size:\s*72px\s*!important;[^}]*max-block-size:\s*72px\s*!important;/s);
+  assert.match(cards,/@media\s*\(max-height:\s*920px\)[\s\S]*?\.hand-card\s*>\s*\.card-art\s*\{[^}]*block-size:\s*66px\s*!important;/s);
+});
+
+// ==================== 生命周期、异常与 Cleanup ====================
+
+// ---- 异常恢复与锁状态 ----
+
+test("手牌实体已离开时 moveHandToResolving 返回失败而不抛异常", async () => {
+  const ai=makePlayer("missing-move-ai",0,"dawn"),enemy=makePlayer("missing-move-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([ai,enemy]);assert.equal(await game.moveHandToResolving(ai,card),false);assert.equal(game.state.resolvingCards.length,0);assert.equal(game.state.discardPile.length,0);
+});
+
+test("beforeCardMove 取消出牌时保持手牌且不产生出牌统计或事件", async () => {
+  const ai=makePlayer("cancel-move-ai",0,"dawn"),enemy=makePlayer("cancel-move-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([ai,enemy]);ai.hand.push(card);let used=0;game.eventBus.on("beforeCardMove","test:cancel-ai-card-move",(event)=>{if(event.card===card)event.cancelled=true;});game.eventBus.on("cardUsed","test:no-card-used-after-cancel",()=>{used+=1;});assert.equal(await game.playCard(ai,card,[]),false);assert.deepEqual(ai.hand,[card]);assert.equal(game.state.resolvingCards.length,0);assert.equal(game.state.discardPile.length,0);assert.equal(ai.statistics.cardsPlayed,0);assert.equal(used,0);assert.equal(game.actionLocked,false);
+});
+
+test("beforeCardMove 取消 AI 动作后游戏循环仍推进至下一角色", async () => {
+  const ai=makePlayer("cancel-loop-ai",0,"dawn"),next=makePlayer("cancel-loop-next",1,"dusk"),card=instance("charge"),{game}=makeGame([ai,next]);ai.hand.push(card);game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>({type:"card",card,targets:[]});game.eventBus.on("beforeCardMove","test:cancel-loop-card",(event)=>{if(event.card===card)event.cancelled=true;});let nextStarted=false;game.eventBus.on("turnStart","test:cancel-loop-next-turn",(event)=>{if(event.player===next){nextStarted=true;game.state.isGameOver=true;}});game.loopPromise=game.runGameLoop();await assert.doesNotReject(game.loopPromise);assert.equal(nextStarted,true);assert.deepEqual(ai.hand,[card]);assert.equal(game.state.resolvingCards.length,0);assert.equal(game.actionLocked,false);
+});
+
+test("beginResolve 失败时 playCard 不移除手牌或产生悬空牌", async () => {
+  const ai=makePlayer("begin-resolve-ai",0,"dawn"),enemy=makePlayer("begin-resolve-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([ai,enemy]);ai.hand.push(card);game.state.deck.beginResolve=()=>false;assert.equal(await game.playCard(ai,card,[]),false);assert.deepEqual(ai.hand,[card]);assert.equal(game.state.resolvingCards.length,0);assert.equal(game.state.discardPile.length,0);assert.equal(ai.statistics.cardsPlayed,0);assert.equal(game.actionLocked,false);
+});
+
+test("beforeCardUse 抛异常后实体牌离开结算区并只进入一次弃牌堆", async () => {
+  const source=makePlayer("before-use-source",0,"dawn"),enemy=makePlayer("before-use-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);
+  game.eventBus.on("beforeCardUse","test:throw-before-use",(event)=>{if(event.card===card)throw new Error("private beforeCardUse failure");});
+  await assert.rejects(game.playCard(source,card,[]),/private beforeCardUse failure/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);assert.doesNotMatch(game.state.logs.map((entry)=>entry.message).join("\n"),/private beforeCardUse failure/);
+});
+
+test("targetSelected 抛异常后不会留下悬空牌", async () => {
+  const source=makePlayer("target-hook-source",0,"dawn"),enemy=makePlayer("target-hook-enemy",1,"dusk"),card=instance("assault"),{game}=makeGame([source,enemy]);source.hand.push(card);
+  game.eventBus.on("targetSelected","test:throw-target-selected",(event)=>{if(event.card===card)throw new Error("target hook failed");});
+  await assert.rejects(game.playCard(source,card,[enemy]),/target hook failed/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+
+test("beforeCardResolve 抛异常后不会留下悬空牌", async () => {
+  const source=makePlayer("resolve-hook-source",0,"dawn"),enemy=makePlayer("resolve-hook-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);
+  game.eventBus.on("beforeCardResolve","test:throw-before-resolve",(event)=>{if(event.card===card)throw new Error("resolve hook failed");});
+  await assert.rejects(game.playCard(source,card,[]),/resolve hook failed/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+
+test("反制流程抛异常后主动牌安全进入弃牌堆", async () => {
+  const source=makePlayer("counter-failure-source",0,"dawn"),enemy=makePlayer("counter-failure-enemy",1,"dusk"),card=instance("harvest"),{game}=makeGame([source,enemy]);source.hand.push(card);game.responseSystem.askForCounter=async()=>{throw new Error("counter flow failed");};
+  await assert.rejects(game.playCard(source,card,[]),/counter flow failed/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+
+test("卡牌效果部分生效后抛异常不回滚效果但会清理实体牌", async () => {
+  const source=makePlayer("partial-effect-source",0,"dawn"),enemy=makePlayer("partial-effect-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.energy=0;source.hand.push(card);
+  game.eventBus.on("afterGainEnergy","test:throw-after-partial-effect",(event)=>{if(event.card===card)throw new Error("effect failed after mutation");});
+  await assert.rejects(game.playCard(source,card,[]),/effect failed after mutation/);assert.equal(source.energy,1);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+
+test("cardUsed 监听器抛异常后不重复弃牌且不重复触发事件", async () => {
+  const source=makePlayer("card-used-source",0,"dawn"),enemy=makePlayer("card-used-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);let calls=0;
+  game.eventBus.on("cardUsed","test:throw-card-used",(event)=>{if(event.card===card){calls+=1;throw new Error("cardUsed failed");}});
+  await assert.rejects(game.playCard(source,card,[]),/cardUsed failed/);assert.equal(calls,1);assertCardOnlyIn(game,card,"discard");assert.equal(game.state.deck.discardPile.filter((entry)=>entry===card).length,1);assert.equal(source.statistics.cardsPlayed,0);
+});
+
+test("finishResolvingToDiscard 虚假成功时 playCard 检测真实区域并执行失败清理", async () => {
+  const source=makePlayer("finish-failure-source",0,"dawn"),enemy=makePlayer("finish-failure-enemy",1,"dusk"),card=instance("charge"),{game}=makeGame([source,enemy]);source.hand.push(card);game.finishResolvingToDiscard=async()=>true;
+  await assert.rejects(game.playCard(source,card,[]),/结算牌未能进入弃牌堆/);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+
+test("equipCard 虚假成功但牌仍在结算区时由调用方拒绝并清理", async () => {
+  const source=makePlayer("equip-result-source",0,"dawn"),enemy=makePlayer("equip-result-enemy",1,"dusk"),card=instance("energyDevice"),{game}=makeGame([source,enemy]);source.hand.push(card);game.equipCard=async()=>true;
+  await assert.rejects(game.playCard(source,card,[]),/装备牌未能进入装备区/);assert.equal(source.equipment,null);assertCardOnlyIn(game,card,"discard");assert.equal(source.statistics.cardsPlayed,0);
+});
+
+test("装备替换预检取消或抛异常时旧装备保持原位且新装备进入弃牌堆", async () => {
+  for(const mode of ["cancel","throw"]){const source=makePlayer(`replace-${mode}-source`,0,"dawn"),enemy=makePlayer(`replace-${mode}-enemy`,1,"dusk"),old=instance("energyDevice"),next=instance("battleDevice"),{game}=makeGame([source,enemy]);source.equipment=old;source.hand.push(next);
+    game.eventBus.on("beforeCardMove",`test:replace-preflight-${mode}`,(event)=>{if(event.card!==old||event.from!=="equipment")return;if(mode==="cancel")event.cancelled=true;else throw new Error("replacement preflight failed");});
+    await assert.rejects(game.playCard(source,next,[]),mode==="cancel"?/装备牌未能进入装备区/:/replacement preflight failed/);assert.equal(source.equipment,old);assertCardOnlyIn(game,old,`equipment:${source.id}`);assertCardOnlyIn(game,next,"discard");assert.equal(source.statistics.cardsPlayed,0);
   }
 });
 
-test("闪电：基础牌与战术牌判定类别日志正确", async () => {
-  const run = (judgmentDefinitionId) => {
-    const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
-    const { game } = makeGame([holder, enemy]);
-    holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-    const judgmentCard = instance(judgmentDefinitionId);
-    game.state.deck.cards = [judgmentCard];
-    return { game, holder, enemy, judgmentCard };
-  };
-  const basic = run("assault");
-  await basic.game.eventBus.emit("beforeStatusResolve", { player: basic.holder, cancelled: false });
-  assert.ok(basic.game.state.logs.some((entry) => entry.message === `${basic.holder.name}的「闪电」判定为「${basic.judgmentCard.name}」，为基础牌。`));
-  assert.ok(basic.game.state.logs.some((entry) => entry.message === `${basic.holder.name}的「闪电」判定未触发，转移给${basic.enemy.name}。`));
-  const tactic = run("harvest");
-  await tactic.game.eventBus.emit("beforeStatusResolve", { player: tactic.holder, cancelled: false });
-  assert.ok(tactic.game.state.logs.some((entry) => entry.message === `${tactic.holder.name}的「闪电」判定为「${tactic.judgmentCard.name}」，为战术牌。`));
-  assert.ok(tactic.game.state.logs.some((entry) => entry.message === `${tactic.holder.name}的「闪电」判定未触发，转移给${tactic.enemy.name}。`));
+test("装备替换成功后旧装备只在弃牌堆且新装备只在装备区", async () => {
+  const source=makePlayer("atomic-equip-source",0,"dawn"),enemy=makePlayer("atomic-equip-enemy",1,"dusk"),old=instance("energyDevice"),next=instance("battleDevice"),{game}=makeGame([source,enemy]);source.equipment=old;source.hand.push(next);
+  assert.equal(await game.playCard(source,next,[]),true);assert.equal(source.equipment,next);assertCardOnlyIn(game,old,"discard");assertCardOnlyIn(game,next,`equipment:${source.id}`);assert.equal(game.resolutionOwners.size,0);
 });
 
-test("闪电：反制路径不输出判定日志", async () => {
-  const holder = makePlayer("a", 0, "dawn", "human"), receiver = makePlayer("b", 1, "dusk");
-  const { game } = makeGame([holder, receiver], { response: () => true });
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  holder.hand.push(instance("counter"));
-  game.state.deck.cards = [instance("energyDevice")];
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.ok(game.state.logs.some((entry) => entry.message === `${holder.name}的「闪电」被反制，转移给${receiver.name}。`));
-  assert.ok(!game.state.logs.some((entry) => entry.message.includes("判定为")));
+test("结算异常后 actionLocked、interactionLocked 与 AI thinking 全部恢复", async () => {
+  const source=makePlayer("lock-restore-source",0,"dawn"),enemy=makePlayer("lock-restore-enemy",1,"dusk"),card=instance("charge"),{game,ui}=makeGame([source,enemy]);source.hand.push(card);game.interactionLocked=true;ui.thinkingPlayerId=source.id;ui.setThinking(true,source,"测试异常恢复");
+  game.eventBus.on("beforeCardUse","test:throw-for-lock-restore",(event)=>{if(event.card===card)throw new Error("restore locks");});await assert.rejects(game.playCard(source,card,[]),/restore locks/);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assertCardOnlyIn(game,card,"discard");
 });
 
-test("闪电：反制后无其他合法接收者时转移回自己", async () => {
-  const holder = makePlayer("a", 0, "dawn", "human"), ally = makePlayer("b", 1, "dawn"), enemy = makePlayer("c", 2, "dusk");
-  const { game } = makeGame([holder, ally, enemy], { response: () => true });
-  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
-  holder.hand.push(instance("counter"));
-  ally.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: ally.id };
-  enemy.alive = false;
-  game.state.deck.cards = [instance("energyDevice")];
-  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
-  assert.deepEqual(holder.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: holder.id });
-  assert.deepEqual(ally.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: ally.id });
-  assert.ok(game.state.logs.some((entry) => entry.message === `${holder.name}的「闪电」被反制，转移给${holder.name}。`));
-  assert.ok(!game.state.logs.some((entry) => entry.message.includes("判定为")));
-  assert.ok(!game.state.logs.some((entry) => entry.message.includes("没有可转移的目标")));
-  assert.ok(!game.state.logs.some((entry) => entry.message.includes("闪电消失")));
+test("实体牌结算异常后游戏循环仍推进到下一角色", async () => {
+  const source=makePlayer("resolution-loop-source",0,"dawn"),next=makePlayer("resolution-loop-next",1,"dusk"),card=instance("charge"),{game,ui}=makeGame([source,next]);source.hand.push(card);game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>({type:"card",card,targets:[]});game.eventBus.on("afterGainEnergy","test:throw-loop-partial",(event)=>{if(event.card===card)throw new Error("loop resolution failed");});let nextStarted=false;game.eventBus.on("turnStart","test:next-after-resolution-failure",(event)=>{if(event.player===next){nextStarted=true;game.state.isGameOver=true;}});
+  game.loopPromise=game.runGameLoop();await assert.doesNotReject(game.loopPromise);assert.equal(nextStarted,true);assertCardOnlyIn(game,card,"discard");assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);
 });
 
-test("闪电：卡牌描述与 README 当前描述完全一致", async () => {
-  const readme = await readFile(projectFile("README.md"), "utf8");
-  const match = readme.match(/- 闪电：([^\n]+)/);
-  assert.ok(match, "README 缺少闪电条目");
-  assert.equal(CARD_DEFINITIONS.lightning.description, match[1].trim());
+test("AI 陈旧手牌动作返回失败后安全结束阶段并清除锁与思考状态", async () => {
+  const ai=makePlayer("stale-action-ai",0,"dawn"),enemy=makePlayer("stale-action-enemy",1,"dusk"),staleCard=instance("charge"),{game,ui}=makeGame([ai,enemy]);let selections=0;game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>{selections+=1;return {type:"card",card:staleCard,targets:[]};};await game.takeAiPlayPhase(ai,game.state.gameId);assert.equal(selections,1);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assert.equal(game.state.resolvingCards.length,0);
 });
 
-test("闪电：AI 无其他合法接收者时按转回自己估值而非消失", () => {
-  const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
-  const state = { remainingCardCounts:{ defenseDevice:1, assault:3 }, players:[holder] };
-  assert.ok(lightningTeamBurden(state, holder, "dawn") > 0);
-  const actor = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
-  assert.ok(lightningUseValue(actor, { remainingCardCounts:{ defenseDevice:1, assault:3 }, players:[actor] }) < lightningUseValue(actor, {
-    remainingCardCounts:{ defenseDevice:1, assault:3 },
-    players:[actor, { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] }]
-  }));
+test("AI 真实出牌异常不会拒绝 loopPromise 且下一名存活角色仍开始回合", async () => {
+  const ai=makePlayer("throw-card-ai",0,"dawn"),next=makePlayer("throw-card-next",1,"dusk"),card=instance("charge"),{game,ui}=makeGame([ai,next]);ai.hand.push(card);game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>({type:"card",card,targets:[]});game.eventBus.on("beforeCardMove","test:throw-real-card-error",(event)=>{if(event.card===card)throw new Error("ai card execution exploded");});let nextStarted=false;game.eventBus.on("turnStart","test:observe-next-turn",(event)=>{if(event.player===next){nextStarted=true;game.state.isGameOver=true;}});game.loopPromise=game.runGameLoop();await assert.doesNotReject(game.loopPromise);assert.equal(nextStarted,true);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assert.doesNotMatch(ui.logs.join("\n"),/ai card execution exploded/);assert.doesNotMatch(game.state.logs.map((entry)=>entry.message).join("\n"),/ai card execution exploded/);
 });
 
-
-test("闪电：lightningTeamBurden 跨阵营接收者按持有者与接收者各自阵营分别签名", () => {
-  const makeState = (holderTeam, receiverTeam) => {
-    const holder = { id:"holder", seatIndex:0, battleTeam:holderTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
-    const players = [holder];
-    if (receiverTeam) players.push({ id:"receiver", seatIndex:1, battleTeam:receiverTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:[] });
-    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, holder };
-  };
-  // 场景 1：己方持有、敌方接收 -> 1.5 - 0.375 = 1.125
-  let built = makeState("dawn", "dusk");
-  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.125);
-  // 场景 2：敌方持有、己方接收 -> -1.5 + 0.375 = -1.125
-  built = makeState("dusk", "dawn");
-  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), -1.125);
-  // 场景 3：己方持有、己方接收 -> 1.5 + 0.375 = 1.875
-  built = makeState("dawn", "dawn");
-  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.875);
-  // 场景 4：无其他接收者，nextLightningReceiver 返回持有者本人 -> 1.5 + 0.375 = 1.875
-  built = makeState("dawn", null);
-  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.875);
+test("AI 主动技能执行异常由出牌阶段捕获并恢复全部锁状态", async () => {
+  const ai=makePlayer("throw-skill-ai",0,"dawn","ai",1),ally=makePlayer("throw-skill-ally",1,"dawn"),enemy=makePlayer("throw-skill-enemy",2,"dusk"),{game,ui}=makeGame([ai,ally,enemy]);ai.energy=4;game.aiController.getLegalActions=()=>[];game.aiController.selectAction=async()=>({type:"skill",skill:ACTIVE_SKILLS.barrier,targets:[ally]});ui.setCurrentCard=()=>{throw new Error("ai skill execution exploded");};await game.takeAiPlayPhase(ai,game.state.gameId);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assert.doesNotMatch(ui.logs.join("\n"),/ai skill execution exploded/);
 });
 
-test("闪电：AI 模拟部分成功保留完整 lightningStatusStateBranches", () => {
-  const state = { remainingCardCounts:null, players:[
-    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
-    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
-  ]};
-  const next = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
-  const actor = next.players[0];
-  const branches = actor.lightningStatusStateBranches;
-  assert.ok(Array.isArray(branches));
-  const presentProbability = branches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0);
-  const absentProbability = branches.reduce((sum, branch) => sum + (branch.present ? 0 : branch.probability), 0);
-  assertClose(presentProbability, 0.6);
-  assertClose(absentProbability, 0.4);
-  assertClose(branches.reduce((sum, branch) => sum + branch.probability, 0), 1);
-  assertClose(actor.lightningStatusProbability, 0.6);
-  assert.ok(!actor.statuses.includes("lightning"));
-  const conditionKeys = [...new Set(branches.flatMap((branch) => Object.keys(branch.conditions)))];
-  assert.equal(conditionKeys.length, 1);
-  assert.ok(conditionKeys[0].includes("counter"));
-  assert.equal(actor.hp, 4);
-  assert.equal(next.players[1].hp, 4);
+test("游戏循环连续回合异常有上限并以 resolved 状态安全停止", async () => {
+  const first=makePlayer("loop-guard-first",0,"dawn"),second=makePlayer("loop-guard-second",1,"dusk"),{game,ui}=makeGame([first,second]),attempts=[];game.takeTurn=async(player)=>{attempts.push(player.id);throw new Error(`turn failure ${player.id}`);};game.loopPromise=game.runGameLoop();await assert.doesNotReject(game.loopPromise);assert.deepEqual(attempts,[first.id,second.id,first.id]);assert.equal(game.actionLocked,false);assert.equal(game.interactionLocked,false);assert.equal(ui.thinking.at(-1)[0],false);assert.doesNotMatch(ui.logs.join("\n"),/turn failure/);
 });
 
-test("闪电：AI 模拟动作不执行时不产生概率闪电状态", () => {
-  const state = { remainingCardCounts:null, players:[
-    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, hand:[instance("lightning")], statuses:[], counterProbability:0 },
-    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:0 }
-  ]};
-  state.players[0].hand[0].availabilityStateBranches = [{ probability:1, conditions:{}, available:false }];
-  state.players[0].hand[0].availabilityBranches = [];
-  const next = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
-  const actor = next.players[0];
-  assert.ok(!actor.statuses.includes("lightning"));
-  assertClose(lightningPresenceProbability(actor), 0);
+// ---- dispose、旧局与重新征召 ----
+
+for (const definitionId of ["duel","provoke"]) test(`旧局${CARD_DEFINITIONS[definitionId].name}响应取消后不会继续造成伤害`, async () => {
+  const ui=makeOwnedUi(),source=makePlayer(`old-${definitionId}-source`,0,"dawn"),target=makePlayer(`old-${definitionId}-target`,1,"dusk","human");
+  const old=configureOwnedGame(new Game(ui),[source,target]);ui.attachGame(old);const use=instance(definitionId);source.hand.push(use);
+  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="counter"){const state=ui.responseState;ui.responseState=null;state.resolve({status:"declined"});}else openedResolve();};
+  const hp=target.hp,pending=old.playCard(source,use,[target]);await opened;
+  old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer(`new-${definitionId}-human`,0,"dawn","human"),makePlayer(`new-${definitionId}-enemy`,1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
+  assert.equal(await pending,false);assert.equal(target.hp,hp);assert.equal(ui.game,fresh);assert.deepEqual(ui.renders,[]);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
 });
 
-test("闪电：深层第二张闪电仅在 absent 世界生成且 executionProbability=1-presence", () => {
-  const state = { remainingCardCounts:null, players:[
-    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
-    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
-  ]};
-  const first = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
-  assert.ok(lightningUseValue(first.players[0], first) > -50);
-  const { game } = makeGame([makePlayer("a",0,"dawn"), makePlayer("b",1,"dusk")]);
-  const actions = game.aiController.actionGenerator.generateFromVisible(first, "a");
-  const second = actions.find((action) => action.card?.definitionId === "lightning");
-  assert.ok(second);
-  assertClose(second.executionProbability, 0.4);
+test("CleanupManager 可取消尚未完成的延迟", async () => { const cleanup=new CleanupManager();const waiting=cleanup.delay(5000);cleanup.cleanup();assert.equal(await waiting,false);assert.equal(cleanup.pending.size,0); });
+
+test("响应窗口超时会按放弃处理并清除响应状态", async () => { const previousWindow=globalThis.window;globalThis.window={setInterval,clearInterval};const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};const fake={responseState:null,elements:{response_panel:panel},game:{cleanupManager:{delay:async()=>true}},render(){}};try{const result=await UIManager.prototype.requestResponse.call(fake,{id:"timeout-response",requiredCount:1,legalCardIds:[],timeoutMs:1,presentation:{eventText:"测试事件",responseText:"需要响应",availabilityText:"当前不足",buttonLabel:"格挡"}},"格挡");assert.equal(result.status,"declined");assert.equal(fake.responseState,null);assert.equal(panel.innerHTML,"");}finally{if(previousWindow===undefined)delete globalThis.window;else globalThis.window=previousWindow;} });
+
+test("销毁对局会以 cancelled 结束未完成响应并清空请求", async () => { const a=makePlayer("a",0,"dawn"),human=makePlayer("human",1,"dusk","human");const {game,ui}=makeGame([a,human]);let settle=null;ui.requestResponse=()=>new Promise((resolve)=>{settle=resolve;});ui.cancelPendingInteractions=()=>{settle?.({status:"cancelled"});};const pending=game.responseSystem.requestCardResponse(human,"block",{source:a,target:human,card:instance("assault")},1);await Promise.resolve();assert.equal(game.state.pendingResponses.length,1);game.dispose();const result=await pending;assert.equal(result.status,"cancelled");assert.deepEqual(result.cards,[]);assert.equal(game.state.pendingResponses.length,0); });
+
+test("旧局格挡窗口取消后不能扣血、刷新新局 UI 或夺回绑定", async () => {
+  const ui=makeOwnedUi(),source=makePlayer("old-attacker",0,"dawn"),target=makePlayer("old-human",1,"dusk","human");
+  const old=configureOwnedGame(new Game(ui),[source,target]);ui.attachGame(old);
+  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="block")openedResolve();};
+  const hp=target.hp,pending=old.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});await opened;
+  old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-human",0,"dawn","human"),makePlayer("new-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
+  assert.equal(await pending,0);assert.equal(target.hp,hp);assert.equal(ui.game,fresh);assert.deepEqual(ui.renders,[]);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
+  assert.equal(old.ui.render(old),undefined);assert.equal(ui.game,fresh);
 });
 
-test("闪电：第二张 executionWorldBranches 继承第一次闪电条件键", () => {
-  const state = { remainingCardCounts:null, players:[
-    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
-    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
-  ]};
-  const first = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
-  const firstBranches = first.players[0].lightningStatusStateBranches;
-  const firstKey = [...new Set(firstBranches.flatMap((branch) => Object.keys(branch.conditions)))][0];
-  assert.ok(firstKey);
-  const { game } = makeGame([makePlayer("a",0,"dawn"), makePlayer("b",1,"dusk")]);
-  const second = game.aiController.actionGenerator.generateFromVisible(first, "a").find((action) => action.card?.definitionId === "lightning");
-  assert.ok(second);
-  const executing = second.executionWorldBranches.filter((branch) => branch.executes);
-  const notExecuting = second.executionWorldBranches.filter((branch) => !branch.executes);
-  assert.ok(executing.length > 0);
-  assert.ok(notExecuting.length > 0);
-  for (const branch of executing) assert.equal(branch.conditions[firstKey], "no");
-  for (const branch of notExecuting) assert.equal(branch.conditions[firstKey], "yes");
+test("旧局护援技能响应取消后不会弃牌或减少新一段伤害", async () => {
+  const ui=makeOwnedUi(),source=makePlayer("old-aid-source",0,"dusk","ai",4),target=makePlayer("old-aid-target",1,"dawn","ai",2),guardian=makePlayer("old-aid-guardian",2,"dawn","human",1);
+  const payment=instance("charge");guardian.hand.push(payment);const old=configureOwnedGame(new Game(ui),[source,target,guardian]);registerPassiveSkills(old);ui.attachGame(old);
+  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="skill")openedResolve();};const hp=target.hp,pending=old.damage(source,target,1,{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill"});await opened;
+  old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-aid-human",0,"dawn","human"),makePlayer("new-aid-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
+  assert.equal(await pending,0);assert.equal(target.hp,hp);assert.ok(guardian.hand.includes(payment));assert.equal(guardian.roundFlags.guardianAidUsed,false);assert.equal(ui.game,fresh);assert.deepEqual(ui.mutations,[]);
 });
 
-test("闪电：第二次使用后状态按 union 更新且不覆盖旧 present 世界", () => {
-  const state = { remainingCardCounts:null, players:[
-    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
-    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
-  ]};
-  const first = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
-  const { game } = makeGame([makePlayer("a",0,"dawn"), makePlayer("b",1,"dusk")]);
-  const second = game.aiController.actionGenerator.generateFromVisible(first, "a").find((action) => action.card?.definitionId === "lightning");
-  assert.ok(second);
-  const after = new AiSimulator(first).apply(first, second, "a");
-  const actor = after.players[0];
-  const presence = actor.lightningStatusStateBranches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0);
-  assertClose(presence, 0.84);
-  assertClose(actor.lightningStatusProbability, 0.84);
-  assert.ok(!actor.statuses.includes("lightning"));
-  const firstBranches = first.players[0].lightningStatusStateBranches;
-  const firstKey = Object.keys(firstBranches[0].conditions)[0];
-  const oldPresentProbability = firstBranches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0);
-  const keptPresentProbability = actor.lightningStatusStateBranches.reduce((sum, branch) => (
-    sum + (branch.present && branch.conditions[firstKey] === "yes" ? branch.probability : 0)
-  ), 0);
-  assertClose(keptPresentProbability, oldPresentProbability);
+test("事件处理器等待中销毁旧局时，雷达判定不会恢复后继续移动牌或伤害", async () => {
+  const ui=makeOwnedUi(),source=makePlayer("old-judge-source",0,"dawn"),target=makePlayer("old-judge-target",1,"dusk");target.equipment=instance("defenseDevice");
+  const old=configureOwnedGame(new Game(ui),[source,target]);ui.attachGame(old);const judgmentCard=instance("charge");old.state.deck.cards.push(judgmentCard);
+  let openedResolve,release;const opened=new Promise((resolve)=>{openedResolve=resolve;});const gate=new Promise((resolve)=>{release=resolve;});old.eventBus.on("judgmentRevealed","test:pause",async()=>{openedResolve();await gate;});
+  const hp=target.hp,pending=old.damage(source,target,1,{card:instance("assault"),canBlock:true,damageType:"normal"});await opened;old.dispose();
+  const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-judge-human",0,"dawn","human"),makePlayer("new-judge-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];release();
+  assert.equal(await pending,0);assert.equal(target.hp,hp);assert.ok(old.state.deck.judgmentZone.includes(judgmentCard));assert.equal(fresh.state.deck.judgmentZone.length,0);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
 });
 
-test("闪电：lightningTeamBurden 按 presence 线性加权", () => {
-  const makeState = (mode) => {
-    const holder = { id:"holder", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
-    const receiver = { id:"receiver", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
-    if (mode === "full") holder.statuses = ["lightning"];
-    if (mode === "partial") {
-      holder.lightningStatusStateBranches = [
-        { probability:0.6, conditions:{}, present:true },
-        { probability:0.4, conditions:{}, present:false }
-      ];
-      holder.lightningStatusProbability = 0.6;
+test("旧局治疗和能量事件等待恢复后不再修改角色", async () => {
+  for (const mode of ["heal","energy"]) {
+    const ui=makeOwnedUi(),actor=makePlayer(`old-${mode}-actor`,0,"dawn"),enemy=makePlayer(`old-${mode}-enemy`,1,"dusk");const old=configureOwnedGame(new Game(ui),[actor,enemy]);ui.attachGame(old);
+    if(mode==="heal")actor.hp-=1;else actor.energy=0;const before=mode==="heal"?actor.hp:actor.energy;let openedResolve,release;const opened=new Promise((resolve)=>{openedResolve=resolve;});const gate=new Promise((resolve)=>{release=resolve;});old.eventBus.on(mode==="heal"?"beforeHeal":"beforeGainEnergy",`test:${mode}`,async()=>{openedResolve();await gate;});
+    const pending=mode==="heal"?old.heal(actor,actor,1):old.gainEnergy(actor,1,{reason:"测试"});await opened;old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer(`new-${mode}-human`,0,"dawn","human"),makePlayer(`new-${mode}-enemy`,1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];release();
+    assert.equal(await pending,0);assert.equal(mode==="heal"?actor.hp:actor.energy,before);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
+  }
+});
+
+test("旧局反制链取消后不会完成战术结算或污染新局中央区域", async () => {
+  const ui=makeOwnedUi(),source=makePlayer("old-counter-source",0,"dawn"),responder=makePlayer("old-counter-human",1,"dusk","human");
+  const old=configureOwnedGame(new Game(ui),[source,responder]);ui.attachGame(old);const use=instance("harvest");source.hand.push(use);
+  let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});ui.onResponse=(request)=>{if(request.type==="counter")openedResolve();};
+  const pending=old.playCard(source,use,[]);await opened;old.dispose();
+  const fresh=configureOwnedGame(new Game(ui),[makePlayer("new-counter-human",0,"dawn","human"),makePlayer("new-counter-enemy",1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
+  assert.equal(await pending,false);assertCardOnlyIn(old,use,"discard");assert.equal(fresh.state.resolvingCards.length,0);assert.equal(ui.game,fresh);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);
+});
+
+test("旧局公共池、目标和弃牌等待取消后不移动实体且不影响新 UI", async () => {
+  for (const mode of ["public","target","discard"]) {
+    const ui=makeOwnedUi(),human=makePlayer(`old-${mode}-human`,0,"dawn","human"),enemy=makePlayer(`old-${mode}-enemy`,1,"dusk");
+    const old=configureOwnedGame(new Game(ui),[human,enemy]);ui.attachGame(old);let openedResolve;const opened=new Promise((resolve)=>{openedResolve=resolve;});let pending,tracked;
+    if (mode==="public") {
+      ui.onResponse=()=>{const state=ui.responseState;ui.responseState=null;state.resolve({status:"declined"});};ui.onPublic=openedResolve;
+      old.state.deck.cards.push(instance("block"),instance("charge"));tracked=instance("mutualBenefit");human.hand.push(tracked);pending=old.playCard(human,tracked,[]);
+    } else if (mode==="target") {
+      ui.onTarget=openedResolve;tracked=instance("assault");human.hand.push(tracked);pending=old.handleHumanCard(tracked.id);
+    } else {
+      ui.onDiscard=openedResolve;tracked=instance("block");human.hand.push(tracked,instance("charge"));human.hp=1;old.state.phase="discard";pending=old.handleDiscardPhase(human,old.state.gameId);
     }
-    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players:[holder, receiver] }, holder };
-  };
-  const full = makeState("full");
-  const fullBurden = lightningTeamBurden(full.state, full.holder, "dawn");
-  assertClose(fullBurden, 1.125);
-  const absent = makeState("absent");
-  assertClose(lightningTeamBurden(absent.state, absent.holder, "dawn"), 0);
-  const partial = makeState("partial");
-  assertClose(lightningTeamBurden(partial.state, partial.holder, "dawn"), fullBurden * 0.6);
+    await opened;old.dispose();const fresh=configureOwnedGame(new Game(ui),[makePlayer(`new-${mode}-human`,0,"dawn","human"),makePlayer(`new-${mode}-enemy`,1,"dusk")]);ui.attachGame(fresh);ui.renders=[];ui.mutations=[];ui.logs=[];
+    await pending;assert.equal(ui.game,fresh);assert.deepEqual(ui.renders,[]);assert.deepEqual(ui.mutations,[]);assert.deepEqual(ui.logs,[]);assert.ok(!human.hand.includes(undefined));if(mode!=="public")assert.ok(human.hand.includes(tracked));
+  }
 });
-test("闪电：有限传播链两人一跳完全兼容", () => {
-  const make = (players) => ({ remainingCardCounts:{ defenseDevice:1, assault:1 }, players });
-  const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
-  const enemy = { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
-  assert.deepEqual(buildLightningPropagationChain([holder, enemy], holder).map((player) => player.id), ["a","b"]);
-  assertClose(lightningTeamBurden(make([holder, enemy]), holder, "dawn"), 1.125);
-  const actor = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
-  assertClose(lightningUseValue(actor, make([actor, enemy])), 2.875);
+
+test("重新征召 cleanup 会清空隐藏令牌、公共池和响应", () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk");const {game}=makeGame([a,b]);b.hand.push(instance("block"));game.cardSelectionSystem.createHiddenSelection(b);game.state.pendingResponses.push({id:"old"});game.dispose();assert.equal(game.cardSelectionSystem.selections.size,0);assert.equal(game.state.pendingResponses.length,0);assert.equal(game.state.publicCardPool.length,0); });
+
+test("重新征召后按新阵营重新设置能量上限和无限调息", async () => { const verify=async(seed)=>{let value=seed;const random=()=>((value=Math.imul(value,1664525)+1013904223>>>0)/4294967296),ui=makeUi(),game=new Game(ui,random);game.simulationMode=true;game.cleanupManager.delay=async()=>!game.state.isDisposed;const candidates=game.startSelection();for(const player of game.state.players)assert.equal(player.maxEnergy,game.teamRules.getTeamSize(player)===2?4:3);await game.confirmGeneral(candidates[0].id);for(const player of game.state.players){assert.equal(player.maxEnergy,game.teamRules.getMaxEnergy(player));assert.equal(player.turnFlags.recoverLimit,null);}game.dispose();await game.loopPromise;};await verify(11);await verify(29); });
+
+// ---- 阵亡与阶段恢复 ----
+
+test("强制救援：濒死上下文会触发灵医回春额外治疗与摸牌", async () => {
+  const human=makePlayer("human",0,"dawn","human"),medic=makePlayer("medic",1,"dawn","ai",2),enemy=makePlayer("enemy",2,"dusk");human.hp=0;medic.hand.push(instance("recover"));
+  const {game}=makeGame([human,medic,enemy]);game.state.deck.cards.push(instance("block"));registerPassiveSkills(game);await game.dyingSystem.enter(human,enemy);
+  assert.equal(human.hp,2);assert.equal(medic.statistics.healingDone,2);assert.equal(medic.hand.length,1);assert.equal(medic.turnFlags.rejuvenationUsed,true);
 });
-test("闪电：有限传播链单人无其他接收者自转移兼容", () => {
-  const make = (players) => ({ remainingCardCounts:{ defenseDevice:1, assault:1 }, players });
-  const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
-  assert.deepEqual(buildLightningPropagationChain([holder], holder).map((player) => player.id), ["a","a"]);
-  assertClose(lightningTeamBurden(make([holder]), holder, "dawn"), 1.875);
-  const actor = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
-  assertClose(lightningUseValue(actor, make([actor])), 2.125);
+
+test("真人在自己的决斗中阵亡会在完整结算后主动结束出牌等待", async () => {
+  const human=makePlayer("human",0,"dawn","human"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
+  human.hp=1;const duel=instance("duel");human.hand.push(duel);enemy.hand.push(instance("assault"));
+  const {game,ui}=makeGame([human,ally,enemy]);const waiting=ui.waitForHumanPlayEnd(game.state.gameId);
+  assert.equal(await game.handleHumanCard(duel.id),true);
+  const ended=await Promise.race([waiting,new Promise((resolve)=>setTimeout(()=>resolve("timeout"),50))]);
+  assert.equal(human.alive,false);assert.equal(game.state.phase,"play");assert.equal(game.state.isGameOver,false);
+  assert.equal(ended,true);assert.equal(ui.playEndState,null);assert.equal(game.pendingHumanPlayEnd,false);
 });
-test("闪电：有限传播链敌多友少自然产生更高使用价值", () => {
-  const make = (teams, holderHasLightning) => {
-    const players = teams.map((team, index) => ({ id:`p${index}`, seatIndex:index, battleTeam:team, alive:true, hp:4, maxHp:4, shield:0, statuses:[] }));
-    if (holderHasLightning) players[0].statuses = ["lightning"];
-    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
-  };
-  const enemyHeavyBurden = make(["dawn","dusk","dusk","dusk"], true);
-  const allyHeavyBurden = make(["dawn","dawn","dawn","dusk"], true);
-  assertClose(lightningTeamBurden(enemyHeavyBurden.state, enemyHeavyBurden.actor, "dawn"), 1.0078125);
-  assertClose(lightningTeamBurden(allyHeavyBurden.state, allyHeavyBurden.actor, "dawn"), 1.9453125);
-  const enemyHeavyUse = make(["dawn","dusk","dusk","dusk"], false);
-  const allyHeavyUse = make(["dawn","dawn","dawn","dusk"], false);
-  const enemyUseValue = lightningUseValue(enemyHeavyUse.actor, enemyHeavyUse.state);
-  const allyUseValue = lightningUseValue(allyHeavyUse.actor, allyHeavyUse.state);
-  assertClose(enemyUseValue, 2.9921875);
-  assertClose(allyUseValue, 2.0546875);
-  assert.ok(enemyUseValue > allyUseValue);
+
+test("互利等待选牌时重新征召不会把 undefined 放入手牌", async () => {
+  const human=makePlayer("human",0,"dawn","human"),enemy=makePlayer("enemy",1,"dusk");const {game,ui}=makeGame([human,enemy]);
+  game.state.deck.cards.push(instance("block"),instance("charge"));game.publicCardPool.reveal(2);
+  let settleSelection=null;
+  ui.requestPublicCard=()=>new Promise((resolve)=>{settleSelection=resolve;});
+  ui.cancelPendingInteractions=()=>{settleSelection?.(undefined);};
+  const drafting=game.publicCardPool.draft(human);await Promise.resolve();game.dispose();
+  assert.equal(await drafting,false);assert.deepEqual(human.hand,[]);assert.equal(human.hand.includes(undefined),false);assert.equal(game.state.publicCardPool.length,0);
 });
-test("闪电：有限传播链相同人数近端敌人更有价值", () => {
-  const make = (teams) => {
-    const players = teams.map((team, index) => ({ id:`p${index}`, seatIndex:index, battleTeam:team, alive:true, hp:4, maxHp:4, shield:0, statuses:[] }));
-    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
-  };
-  const enemyFront = make(["dawn","dusk","dusk","dawn"]);
-  const allyFront = make(["dawn","dawn","dusk","dusk"]);
-  const enemyFrontValue = lightningUseValue(enemyFront.actor, enemyFront.state);
-  const allyFrontValue = lightningUseValue(allyFront.actor, allyFront.state);
-  assertClose(enemyFrontValue, 2.9453125);
-  assertClose(allyFrontValue, 2.2421875);
-  assert.ok(enemyFrontValue > allyFrontValue);
+
+// ==================== 跨模块集成回归 ====================
+
+// ---- 跨模块集成回归 ----
+
+test("全 AI 快速对局能推进到合法胜者", async () => { let seed=77;const random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/4294967296);const ui=makeUi();const game=new Game(ui,random);game.simulationMode=true;game.setAnimationFastMode(true);game.cleanupManager.delay=async()=>!game.state.isDisposed;const candidates=game.startSelection();game.state.players[0].controllerType="ai";await game.confirmGeneral(candidates[0].id);const result=await Promise.race([game.loopPromise.then(()=>"done"),new Promise((resolve)=>setTimeout(()=>resolve("timeout"),10000))]);assert.equal(result,"done");assert.ok(["dawn","dusk"].includes(game.state.winnerTeam));game.dispose(); });
+
+test("掠夺装备收入手牌且不会替换或弃置使用者旧装备", async () => {
+  const actor=makePlayer("actor",0,"dawn","human"),target=makePlayer("target",1,"dusk"),use=instance("plunder");
+  const old=instance("barrierDevice"),moved=instance("energyDevice");actor.equipment=old;actor.hand.push(use);target.equipment=moved;
+  const {game}=makeGame([actor,target]);const selection=game.cardSelectionSystem.createHiddenSelection(target);
+  await game.playCard(actor,use,[target],{zone:"equipment",equipmentCardId:moved.id,selectionId:selection.selectionId});
+  assert.equal(actor.equipment,old);assert.ok(actor.hand.includes(moved));assert.ok(!game.state.deck.discardPile.includes(old));assert.equal(target.equipment,null);
+  assert.equal(await game.playCard(actor,moved,[]),true);assert.equal(actor.equipment,moved);assert.ok(game.state.deck.discardPile.includes(old));
 });
-test("闪电：有限传播链 actor 低血仍压过人数优势", () => {
-  const make = (hp) => {
-    const players = [
-      { id:"p0", seatIndex:0, battleTeam:"dawn", alive:true, hp, maxHp:4, shield:0, statuses:[] },
-      { id:"p1", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
-      { id:"p2", seatIndex:2, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
-      { id:"p3", seatIndex:3, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] }
-    ];
-    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
-  };
-  const lowValue = lightningUseValue(make(1).actor, make(1).state);
-  const highValue = lightningUseValue(make(4).actor, make(4).state);
-  assertClose(lowValue, -9.5078125);
-  assertClose(highValue, 2.9921875);
-  assert.ok(lowValue < highValue);
+
+test("雷达装备判定后仍可正常使用已有格挡", async () => {
+  const attacker=makePlayer("attacker",0,"dawn"),defender=makePlayer("defender",1,"dusk","human");
+  const {game,ui}=makeGame([attacker,defender],{response:(request)=>request.type==="block"});
+  defender.equipment=instance("defenseDevice");defender.hand.push(instance("block"));game.state.deck.cards.push(instance("energyDevice"));
+  const hp=defender.hp;await game.damage(attacker,defender,1,{card:instance("assault"),canBlock:true,damageType:"normal"});
+  assert.equal(defender.hp,hp);assert.equal(defender.hand.length,0);assert.ok(ui.responseRequests.some((request)=>request.type==="block"));
 });
-test("闪电：有限传播链未来低血目标按阵营单调", () => {
-  const make = (teams) => {
-    const players = teams.map((team, index) => ({ id:`p${index}`, seatIndex:index, battleTeam:team, alive:true, hp:4, maxHp:4, shield:0, statuses:[] }));
-    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
-  };
-  const enemyHigh = make(["dawn","dusk","dawn","dawn"]);
-  const enemyLow = make(["dawn","dusk","dawn","dawn"]);
-  enemyLow.state.players[1].hp = 1;
-  const enemyHighValue = lightningUseValue(enemyHigh.actor, enemyHigh.state);
-  const enemyLowValue = lightningUseValue(enemyLow.actor, enemyLow.state);
-  assertClose(enemyHighValue, 2.7578125);
-  assertClose(enemyLowValue, 2.8828125);
-  assert.ok(enemyLowValue > enemyHighValue);
-  const allyHigh = make(["dawn","dawn","dusk","dusk"]);
-  const allyLow = make(["dawn","dawn","dusk","dusk"]);
-  allyLow.state.players[1].hp = 1;
-  const allyHighValue = lightningUseValue(allyHigh.actor, allyHigh.state);
-  const allyLowValue = lightningUseValue(allyLow.actor, allyLow.state);
-  assertClose(allyHighValue, 2.2421875);
-  assertClose(allyLowValue, 2.1171875);
-  assert.ok(allyLowValue < allyHighValue);
+
+test("互利规则目标包含所有存活角色且调律师只触发一次协调", async () => {
+  const tuner=makePlayer("tuner",0,"dawn","ai",7),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
+  const {game}=makeGame([tuner,ally,enemy]);registerPassiveSkills(game);
+  assert.deepEqual(RuleEngine.getCardTargets(game,tuner,CARD_DEFINITIONS.mutualBenefit),[tuner,ally,enemy]);
+  game.state.deck.cards.push(instance("assault"),instance("block"),instance("charge"),instance("shield"));
+  const use=instance("mutualBenefit");tuner.hand.push(use);await game.playCard(tuner,use,[]);
+  assert.equal(tuner.turnFlags.coordinationTriggered,true);assert.equal(tuner.hand.length,2);
 });
-test("闪电：有限传播链跳过已持独立闪电的玩家", () => {
-  const players = [
-    { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, statuses:["lightning"] },
-    { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, statuses:[] },
-    { id:"c", seatIndex:2, battleTeam:"dawn", alive:true, statuses:["lightning"] },
-    { id:"d", seatIndex:3, battleTeam:"dusk", alive:true, statuses:[] }
-  ];
-  assert.deepEqual(buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a","b","d"]);
+
+test("调律师转移给队友把接收者作为有效目标并只触发一次协调", async () => {
+  const tuner=makePlayer("tuner",0,"dawn","ai",7),enemy=makePlayer("enemy",1,"dusk"),ally=makePlayer("ally",2,"dawn");
+  const {game}=makeGame([tuner,enemy,ally]);registerPassiveSkills(game);game.state.deck.cards.push(instance("charge"));let usedEvent=null;game.eventBus.on("cardUsed","test:successful-transfer",(event)=>{usedEvent=event;});
+  const use=instance("transfer"),moved=instance("block");tuner.hand.push(use);enemy.hand.push(moved);enemy.bumpHandVersion();
+  const hidden=game.cardSelectionSystem.createHiddenSelection(enemy);
+  await game.playCard(tuner,use,[],{sourceId:enemy.id,receiverId:ally.id,zone:"hand",tokens:[hidden.tokens[0].token],selectionId:hidden.selectionId});
+  assert.ok(ally.hand.includes(moved));assert.equal(tuner.turnFlags.coordinationTriggered,true);assert.equal(tuner.hand.length,1);assert.equal(usedEvent.cancelled,false);assert.equal(usedEvent.resolved,true);assert.deepEqual(usedEvent.effectiveTargets,[ally]);
 });
-test("闪电：初始持有者自身闪电状态不影响其作为传播链起点", () => {
-  const players = [
-    { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, statuses:["lightning"] },
-    { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, statuses:[] }
-  ];
-  assert.deepEqual(buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a","b"]);
+
+test("AI 破坏与掠夺只生成敌方目标，窃取规则也排除队友", () => {
+  const actor=makePlayer("actor",0,"dawn"),ally=makePlayer("ally",1,"dawn"),enemy=makePlayer("enemy",2,"dusk");
+  ally.hand.push(instance("block"));enemy.hand.push(instance("block"));
+  const destroy=instance("destroy"),plunder=instance("plunder");actor.hand.push(destroy,plunder);
+  const {game}=makeGame([actor,ally,enemy]);
+  const actions=game.aiController.actionGenerator.generate(actor);
+  for(const id of ["destroy","plunder"]){
+    const targets=actions.filter((action)=>action.card?.definitionId===id).map((action)=>action.targets[0]);
+    assert.ok(targets.length>0);assert.ok(targets.every((target)=>target.battleTeam!==actor.battleTeam));
+  }
+  assert.ok(!RuleEngine.getSkillTargets(game,actor,ACTIVE_SKILLS.stealSkill).includes(ally));
 });
-test("闪电：无其他合法接收者时传播链自转移", () => {
-  const players = [
-    { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, statuses:["lightning"] },
-    { id:"b", seatIndex:1, battleTeam:"dusk", alive:false, statuses:[] },
-    { id:"c", seatIndex:2, battleTeam:"dawn", alive:true, statuses:["lightning"] },
-    { id:"d", seatIndex:3, battleTeam:"dusk", alive:false, statuses:[] }
-  ];
-  assert.deepEqual(buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a","a"]);
+
+test("正式击杀敌人额外摸1张牌再判定胜负，救回与队友死亡均不奖励", async () => {
+  const killer=makePlayer("killer",0,"dawn"),enemy=makePlayer("enemy",1,"dusk");
+  const {game}=makeGame([killer,enemy]);game.state.deck.cards.push(instance("charge"),instance("block"));enemy.hp=1;
+  await game.damage(killer,enemy,1,{canBlock:false});
+  assert.equal(enemy.hp,0);assert.equal(enemy.alive,false);assert.equal(killer.hand.length,1);assert.equal(game.state.isGameOver,true);
+  assert.ok(game.state.logs.some((entry)=>entry.message===`${killer.name}击杀了${enemy.name}，额外摸了1张牌。`));
+
+  const source=makePlayer("source",0,"dawn"),rescued=makePlayer("rescued",1,"dusk");rescued.hp=1;rescued.hand.push(instance("recover"));
+  const {game:rescueGame}=makeGame([source,rescued]);rescueGame.state.deck.cards.push(instance("charge"),instance("block"));
+  await rescueGame.damage(source,rescued,1,{canBlock:false});assert.equal(rescued.alive,true);assert.equal(source.hand.length,0);
+
+  const allySource=makePlayer("ally-source",0,"dawn"),allyTarget=makePlayer("ally-target",1,"dawn"),otherEnemy=makePlayer("other-enemy",2,"dusk");
+  const {game:allyGame}=makeGame([allySource,allyTarget,otherEnemy]);allyGame.state.deck.cards.push(instance("charge"),instance("block"));allyTarget.hp=1;
+  await allyGame.damage(allySource,allyTarget,1,{canBlock:false});assert.equal(allySource.hand.length,0);
 });
-test("闪电：概率闪电状态对有限传播链保持线性缩放", () => {
-  const make = (presence) => {
-    const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
-    const players = [
-      holder,
-      { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
-      { id:"c", seatIndex:2, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
-      { id:"d", seatIndex:3, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] }
-    ];
-    if (presence === 1) holder.statuses = ["lightning"];
-    if (presence === 0.6) {
-      holder.lightningStatusStateBranches = [
-        { probability:0.6, conditions:{}, present:true },
-        { probability:0.4, conditions:{}, present:false }
-      ];
-      holder.lightningStatusProbability = 0.6;
-    }
-    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, holder };
-  };
-  const full = lightningTeamBurden(make(1).state, make(1).holder, "dawn");
-  assertClose(full, 1.0078125);
-  assertClose(lightningTeamBurden(make(0).state, make(0).holder, "dawn"), 0);
-  assertClose(lightningTeamBurden(make(0.6).state, make(0.6).holder, "dawn"), full * 0.6);
+
+test("击杀奖励配置为1且AI模拟使用同一奖励数量", () => {
+  const killer=makePlayer("sim-killer",0,"dawn"),target=makePlayer("sim-victim",1,"dusk"),assault=instance("assault");killer.hand.push(assault);target.hp=1;target.statuses={exposeWeakness:{stacks:2},huntMark:{sourceId:"hunter"},allIn:{assaultBonus:1}};target.turnFlags.momentum=2;
+  const {game}=makeGame([killer,target]),visible=createAiVisibleState(killer.id,game.state),next=new AiSimulator(visible).apply(visible,{type:"card",card:assault,targets:[{id:target.id}]},killer.id);
+  const simulatedTarget=next.players.find((player)=>player.id===target.id);
+  assert.equal(GAME_CONFIG.killRewardDrawCount,1);assert.equal(simulatedTarget.alive,false);assert.equal(next.players.find((player)=>player.id===killer.id).handCount,1);assert.deepEqual([simulatedTarget.exposeWeaknessStacks,simulatedTarget.assaultBonus,simulatedTarget.huntMarkSourceId,simulatedTarget.momentum,simulatedTarget.statuses],[0,0,null,0,[]]);
 });
-test("闪电：lightningTransferredBurden 升级为从 receiver 开始的有限传播链", () => {
-  const make = (receiverTeam, nextTeam) => {
-    const receiver = { id:"r", seatIndex:0, battleTeam:receiverTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
-    const next = { id:"n", seatIndex:1, battleTeam:nextTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
-    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players:[receiver, next] }, receiver };
-  };
-  // k=0：D × p × risk(receiver) = 0.5 × 0.5 × 3 = 0.75（己方）
-  // k=1：D × p × (1-p) × D × risk(next) = 0.5 × 0.5 × 0.5 × 0.5 × 3 = 0.1875（敌方）
-  const enemyNext = make("dawn", "dusk");
-  assertClose(lightningTransferredBurden(enemyNext.state, enemyNext.receiver, "dawn"), 0.5625);
-  const allyReceiver = make("dusk", "dawn");
-  assertClose(lightningTransferredBurden(allyReceiver.state, allyReceiver.receiver, "dawn"), -0.5625);
-  const sameTeam = make("dawn", "dawn");
-  assertClose(lightningTransferredBurden(sameTeam.state, sameTeam.receiver, "dawn"), 0.9375);
+
+test("正式阵亡会在首次界面刷新前清空状态和连势", async () => {
+  const source=makePlayer("death-source",0,"dawn"),target=makePlayer("death-target",1,"dusk"),survivor=makePlayer("death-survivor",2,"dusk"),{game,ui}=makeGame([source,target,survivor]);
+  target.hp=0;target.statuses={exposeWeakness:{stacks:2},huntMark:{sourceId:source.id},allIn:{assaultBonus:1}};target.turnFlags.momentum=3;
+  const snapshots=[];const originalRender=ui.render.bind(ui);ui.render=(renderedGame)=>{snapshots.push({statuses:{...target.statuses},momentum:target.turnFlags.momentum,alive:target.alive});return originalRender(renderedGame);};
+  assert.equal(await game.dyingSystem.kill(target,source),true);assert.deepEqual(target.statuses,{});assert.equal(target.turnFlags.momentum,0);assert.equal(target.alive,false);assert.deepEqual(snapshots[0],{statuses:{},momentum:0,alive:false});
 });
+
+test("无明确来源的死亡不奖励且连续击杀两个敌人各奖励1张", async () => {
+  const current=makePlayer("no-source-current",0,"dawn"),victim=makePlayer("no-source-victim",1,"dusk"),other=makePlayer("no-source-other",2,"dusk");victim.hp=0;
+  const noSource=makeGame([current,victim,other]);noSource.game.state.deck.cards.push(instance("charge"));await noSource.game.dyingSystem.kill(victim,null);assert.equal(current.hand.length,0);
+
+  const killer=makePlayer("double-killer",0,"dawn"),ally=makePlayer("double-ally",1,"dawn"),enemyA=makePlayer("double-enemy-a",2,"dusk"),enemyB=makePlayer("double-enemy-b",3,"dusk");enemyA.hp=1;enemyB.hp=1;
+  const fixture=makeGame([killer,ally,enemyA,enemyB]);fixture.game.state.deck.cards.push(instance("charge"),instance("block"));let rewards=0;fixture.game.eventBus.on("enemyKilled","test:count-kill-reward",()=>{rewards+=1;});
+  await fixture.game.damage(killer,enemyA,1,{canBlock:false});await fixture.game.damage(killer,enemyB,1,{canBlock:false});
+  assert.equal(killer.hand.length,2);assert.equal(rewards,2);assert.equal(await fixture.game.dyingSystem.kill(enemyB,killer),false);assert.equal(killer.hand.length,2);
+});
+
+test("击杀奖励README与规则文本统一为额外摸1张", async () => {
+  const readme=await readFile(projectFile("README.md"),"utf8"),sources=(await Promise.all((await listJavaScriptFiles()).map((file)=>readFile(file,"utf8")))).join("\n");
+  assert.match(readme,/杀死敌方角色后.*额外摸 1 张牌/);assert.doesNotMatch(`${readme}\n${sources}`,/击杀[^\n]{0,20}摸(?:了)?2张|杀死敌人[^\n]{0,20}摸2张/);
+});
+
+test("控制器文件名：目录真实文件名为 AiController.js", async () => {
+  const aiDirectoryEntries = await readdir(projectFile("js/ai"));
+  assert.ok(aiDirectoryEntries.includes("AiController.js"));
+  assert.ok(!aiDirectoryEntries.includes(`AI${"Controller.js"}`));
+});
+
+test("控制器文件名：新模块可导入且仍导出 AIController", async () => {
+  const module = await import("../js/ai/AiController.js");
+  assert.equal(typeof module.AIController, "function");
+});
+
+test("控制器文件名：Game 使用新路径且无旧路径", async () => {
+  const source = await readFile(projectFile("js/core/Game.js"), "utf8");
+  assert.match(source, /\.\.\/ai\/AiController\.js\?build=[^"']+/);
+  assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
+});
+
+test("控制器文件名：全资源图无旧文件名", async () => {
+  const oldControllerFilename = `AI${"Controller.js"}`;
+  const files = [...(await listJavaScriptFiles()), projectFile("index.html"), projectFile("tests/run.mjs")];
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    assert.ok(!source.includes(oldControllerFilename), `${file} 包含旧文件名`);
+  }
+});
+
+test("控制器文件名：导出类名仍为 AIController", async () => {
+  const module = await import("../js/ai/AiController.js");
+  assert.equal(typeof module.AIController, "function");
+  assert.equal(module.AiController, undefined);
+});
+
 let passed = 0;
 const testPattern = process.env.TEST_PATTERN ? new RegExp(process.env.TEST_PATTERN, "u") : null;
 const selectedTests = testPattern ? tests.filter(({ name }) => testPattern.test(name)) : tests;
