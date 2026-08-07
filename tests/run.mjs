@@ -7783,7 +7783,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260807-lightning-team-burden-v106"));
+  assert.match(source, /\.\.\/ai\/AiController\.js\?build=[^"']+/);
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 

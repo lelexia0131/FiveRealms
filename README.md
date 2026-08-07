@@ -23,6 +23,8 @@ npm run test:balance
 
 `npm test` 运行快速规则、隐藏信息、AI、UI 模板和完整对局测试。`npm run test:balance` 使用固定种子和固定搜索节点预算运行至少 200 局无 DOM 全 AI 对局；可用环境变量 `FIVE_REALMS_GAMES`、`FIVE_REALMS_SEED_BASE`、`FIVE_REALMS_START_INDEX` 和 `FIVE_REALMS_SEARCH_NODE_BUDGET` 调整样本与每次搜索的最大展开节点数。
 
+详细测试流程、定点测试方法、Balance 备用候选模式、严格固定样本模式、参数说明和报告解释见 [`test.md`](./test.md)。
+
 ## 如何开始和操作
 
 1. 点击封面的“开启本局”。系统先生成公开的 2V3 阵营。

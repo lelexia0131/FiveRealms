@@ -206,7 +206,7 @@ npm run test:balance -- `
   --no-stdout `
   --summary `
   --game-timeout-ms 120000 `
-  --retries 0 `
+  --retries 1 `
   --output reports\balance-200-strict.json
 ```
 
@@ -471,26 +471,24 @@ Ctrl+C
 
 ---
 
-## 16. Node.js 模块类型警告
+## 16. Node.js 模块类型
 
-运行时可能重复显示：
-
-```text
-[MODULE_TYPELESS_PACKAGE_JSON] Warning:
-Module type of .../js/core/Game.js is not specified...
-```
-
-每个 Worker 都会独立加载 `Game.js`，所以警告可能重复多次。
-
-该消息是 Node.js 对 ES Module 识别方式的性能警告，不代表对局失败。只要后续进度正常增加，可以继续测试。
-
-不要仅为了消除警告，未经完整验证就直接给项目 `package.json` 添加：
+项目 `package.json` 已声明：
 
 ```json
 "type": "module"
 ```
 
-这可能改变其他脚本的模块解析方式。应把模块类型调整作为独立任务处理，并运行完整测试验证。
+因此项目 JavaScript 当前按 ES Module 解析。
+
+如果 Balance Worker 或其他 Node.js 测试仍然出现 `MODULE_TYPELESS_PACKAGE_JSON` 一类警告，应优先检查：
+
+- 实际运行目录；
+- 实际加载到的 `package.json`；
+- Worker 的模块加载路径；
+- 是否运行了旧文件或旧工作区。
+
+不得为了消除警告再次修改项目模块类型配置。
 
 ---
 
