@@ -2,11 +2,12 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260807-lightning-team-burden-v106";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-lightning-team-burden-v106";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-team-burden-v106";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260807-lightning-team-burden-v106";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260807-lightning-team-burden-v106";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260807-lightning-probability-state-v107";
+import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260807-lightning-probability-state-v107";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-lightning-probability-state-v107";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-probability-state-v107";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260807-lightning-probability-state-v107";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260807-lightning-probability-state-v107";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -18,7 +19,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260807-lightning-team-burden-v106";
+} from "./AiProbabilityBranches.js?build=20260807-lightning-probability-state-v107";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -222,6 +223,13 @@ export class AiActionGenerator {
     }
 
     const card = action.card;
+    if (card.definitionId === "lightning") {
+      return getLightningStatusStateBranches(actor).map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        matches:!branch.present
+      }));
+    }
     if (card.definitionId === "transfer") {
       const source = game.state.players.find((player) => player.id === action.selection?.sourceId);
       const receiver = game.state.players.find((player) => player.id === action.selection?.receiverId);

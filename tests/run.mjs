@@ -34,7 +34,7 @@ import { chooseBestResourceHandCandidate, chooseResourceZone, getResourceDefinit
 import { AiKnowledge } from "../js/ai/AiKnowledge.js";
 import { AiCardSelector } from "../js/ai/AiCardSelector.js";
 import { joinProbabilityStateBranches } from "../js/ai/AiProbabilityBranches.js";
-import { equipmentJudgmentProbability, lightningTeamBurden, lightningUseValue, nextLightningReceiver } from "../js/ai/lightningScoring.js";
+import { equipmentJudgmentProbability, lightningPresenceProbability, lightningTeamBurden, lightningUseValue, nextLightningReceiver } from "../js/ai/lightningScoring.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 const tests = [];
@@ -8093,6 +8093,8 @@ test("闪电：AiSimulator 成功使用后写入状态且不立即判定或伤�
   ]};
   const next = new AiSimulator(state).apply(state, { type:"card", card:{ id:"use", definitionId:"lightning" }, targets:[] }, "a");
   assert.ok(next.players[0].statuses.includes("lightning"));
+  assertClose(next.players[0].lightningStatusProbability, 1);
+  assertClose(next.players[0].lightningStatusStateBranches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0), 1);
   assert.equal(next.players[0].hp, 4);
   assert.equal(next.players[1].statuses.length, 0);
   assert.equal(next.remainingCardCounts, null);
@@ -8379,6 +8381,123 @@ test("闪电：lightningTeamBurden 跨阵营接收者按持有者与接收者各
   // 场景 4：无其他接收者，nextLightningReceiver 返回持有者本人 -> 1.5 + 0.375 = 1.875
   built = makeState("dawn", null);
   assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.875);
+});
+
+test("闪电：AI 模拟部分成功保留完整 lightningStatusStateBranches", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
+  ]};
+  const next = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
+  const actor = next.players[0];
+  const branches = actor.lightningStatusStateBranches;
+  assert.ok(Array.isArray(branches));
+  const presentProbability = branches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0);
+  const absentProbability = branches.reduce((sum, branch) => sum + (branch.present ? 0 : branch.probability), 0);
+  assertClose(presentProbability, 0.6);
+  assertClose(absentProbability, 0.4);
+  assertClose(branches.reduce((sum, branch) => sum + branch.probability, 0), 1);
+  assertClose(actor.lightningStatusProbability, 0.6);
+  assert.ok(!actor.statuses.includes("lightning"));
+  const conditionKeys = [...new Set(branches.flatMap((branch) => Object.keys(branch.conditions)))];
+  assert.equal(conditionKeys.length, 1);
+  assert.ok(conditionKeys[0].includes("counter"));
+  assert.equal(actor.hp, 4);
+  assert.equal(next.players[1].hp, 4);
+});
+
+test("闪电：AI 模拟动作不执行时不产生概率闪电状态", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:1, hand:[instance("lightning")], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:0 }
+  ]};
+  state.players[0].hand[0].availabilityStateBranches = [{ probability:1, conditions:{}, available:false }];
+  state.players[0].hand[0].availabilityBranches = [];
+  const next = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
+  const actor = next.players[0];
+  assert.ok(!actor.statuses.includes("lightning"));
+  assertClose(lightningPresenceProbability(actor), 0);
+});
+
+test("闪电：深层第二张闪电仅在 absent 世界生成且 executionProbability=1-presence", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
+  ]};
+  const first = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
+  assert.ok(lightningUseValue(first.players[0], first) > -50);
+  const { game } = makeGame([makePlayer("a",0,"dawn"), makePlayer("b",1,"dusk")]);
+  const actions = game.aiController.actionGenerator.generateFromVisible(first, "a");
+  const second = actions.find((action) => action.card?.definitionId === "lightning");
+  assert.ok(second);
+  assertClose(second.executionProbability, 0.4);
+});
+
+test("闪电：第二张 executionWorldBranches 继承第一次闪电条件键", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
+  ]};
+  const first = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
+  const firstBranches = first.players[0].lightningStatusStateBranches;
+  const firstKey = [...new Set(firstBranches.flatMap((branch) => Object.keys(branch.conditions)))][0];
+  assert.ok(firstKey);
+  const { game } = makeGame([makePlayer("a",0,"dawn"), makePlayer("b",1,"dusk")]);
+  const second = game.aiController.actionGenerator.generateFromVisible(first, "a").find((action) => action.card?.definitionId === "lightning");
+  assert.ok(second);
+  const executing = second.executionWorldBranches.filter((branch) => branch.executes);
+  const notExecuting = second.executionWorldBranches.filter((branch) => !branch.executes);
+  assert.ok(executing.length > 0);
+  assert.ok(notExecuting.length > 0);
+  for (const branch of executing) assert.equal(branch.conditions[firstKey], "no");
+  for (const branch of notExecuting) assert.equal(branch.conditions[firstKey], "yes");
+});
+
+test("闪电：第二次使用后状态按 union 更新且不覆盖旧 present 世界", () => {
+  const state = { remainingCardCounts:null, players:[
+    { id:"a", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:2, hand:[instance("lightning"), instance("lightning")], statuses:[], counterProbability:0 },
+    { id:"b", seatIndex:1, battleTeam:"dusk", generalId:"blade-walker", alive:true, hp:4, maxHp:4, handCount:0, statuses:[], counterProbability:8/9 }
+  ]};
+  const first = new AiSimulator(state).apply(state, { type:"card", card:state.players[0].hand[0], targets:[] }, "a");
+  const { game } = makeGame([makePlayer("a",0,"dawn"), makePlayer("b",1,"dusk")]);
+  const second = game.aiController.actionGenerator.generateFromVisible(first, "a").find((action) => action.card?.definitionId === "lightning");
+  assert.ok(second);
+  const after = new AiSimulator(first).apply(first, second, "a");
+  const actor = after.players[0];
+  const presence = actor.lightningStatusStateBranches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0);
+  assertClose(presence, 0.84);
+  assertClose(actor.lightningStatusProbability, 0.84);
+  assert.ok(!actor.statuses.includes("lightning"));
+  const firstBranches = first.players[0].lightningStatusStateBranches;
+  const firstKey = Object.keys(firstBranches[0].conditions)[0];
+  const oldPresentProbability = firstBranches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0);
+  const keptPresentProbability = actor.lightningStatusStateBranches.reduce((sum, branch) => (
+    sum + (branch.present && branch.conditions[firstKey] === "yes" ? branch.probability : 0)
+  ), 0);
+  assertClose(keptPresentProbability, oldPresentProbability);
+});
+
+test("闪电：lightningTeamBurden 按 presence 线性加权", () => {
+  const makeState = (mode) => {
+    const holder = { id:"holder", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+    const receiver = { id:"receiver", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+    if (mode === "full") holder.statuses = ["lightning"];
+    if (mode === "partial") {
+      holder.lightningStatusStateBranches = [
+        { probability:0.6, conditions:{}, present:true },
+        { probability:0.4, conditions:{}, present:false }
+      ];
+      holder.lightningStatusProbability = 0.6;
+    }
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players:[holder, receiver] }, holder };
+  };
+  const full = makeState("full");
+  const fullBurden = lightningTeamBurden(full.state, full.holder, "dawn");
+  assertClose(fullBurden, 1.125);
+  const absent = makeState("absent");
+  assertClose(lightningTeamBurden(absent.state, absent.holder, "dawn"), 0);
+  const partial = makeState("partial");
+  assertClose(lightningTeamBurden(partial.state, partial.holder, "dawn"), fullBurden * 0.6);
 });
 let passed = 0;
 const testPattern = process.env.TEST_PATTERN ? new RegExp(process.env.TEST_PATTERN, "u") : null;

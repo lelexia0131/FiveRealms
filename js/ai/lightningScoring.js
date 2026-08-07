@@ -2,13 +2,35 @@
  * 闪电的 AI 共享纯计算：状态检查、剩余装备类别概率、下一接收者查找与期望负担。
  * 只读取公开/过滤后的字段，不实例化匿名判定牌，不修改 remainingCardCounts 根先验。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260807-lightning-team-burden-v106";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260807-lightning-team-burden-v106";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260807-lightning-probability-state-v107";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260807-lightning-probability-state-v107";
+import { PROBABILITY_EPSILON, clampProbability, mergeProbabilityStateBranches, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260807-lightning-probability-state-v107";
 
 const DISCOUNT = 0.5;
 
 export function hasLightning(player) {
   return RuleEngine.hasStatus(player, "lightning");
+}
+
+/** 返回玩家闪电状态的完整概率分区；无概率分支时回退为确定性状态。 */
+export function getLightningStatusStateBranches(player) {
+  if (Array.isArray(player?.lightningStatusStateBranches) && player.lightningStatusStateBranches.length) {
+    return mergeProbabilityStateBranches(
+      player.lightningStatusStateBranches.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions ?? {},
+        present:Boolean(branch.present)
+      }))
+    );
+  }
+  return [{ probability:1, conditions:{}, present:RuleEngine.hasStatus(player, "lightning") }];
+}
+
+/** 返回 P(lightning present)，范围 [0,1]。 */
+export function lightningPresenceProbability(player) {
+  return clampProbability(totalBranchProbability(
+    getLightningStatusStateBranches(player).filter((branch) => branch.present)
+  ));
 }
 
 /** 剩余装备类别概率：装备牌剩余数量 / 剩余未知牌总数；无动态计数时回退固定初始密度。 */
@@ -46,7 +68,9 @@ function damageRisk(player) {
 
 /** 从 viewerTeam 视角返回持有闪电的期望团队损失（正数为己方损失，负数为敌方损失）。 */
 export function lightningTeamBurden(state, holder, viewerTeam) {
-  if (!holder?.alive || !hasLightning(holder)) return 0;
+  if (!holder?.alive) return 0;
+  const presence = lightningPresenceProbability(holder);
+  if (presence <= PROBABILITY_EPSILON) return 0;
   const probability = equipmentJudgmentProbability(state?.remainingCardCounts);
   const receiver = nextLightningReceiver(state?.players, holder);
   const holderBurden = probability * damageRisk(holder);
@@ -55,8 +79,9 @@ export function lightningTeamBurden(state, holder, viewerTeam) {
     : 0;
   const signedBurden = (player, burden) =>
     player.battleTeam === viewerTeam ? burden : -burden;
-  return signedBurden(holder, holderBurden)
+  const fullSignedBurden = signedBurden(holder, holderBurden)
     + (receiver ? signedBurden(receiver, transferBurden) : 0);
+  return presence * fullSignedBurden;
 }
 
 /** 状态反制成功后立即转移给 receiver 时，从 viewerTeam 视角的后续期望损失。 */

@@ -2,12 +2,13 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260807-lightning-team-burden-v106";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-team-burden-v106";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260807-lightning-team-burden-v106";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260807-lightning-team-burden-v106";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260807-lightning-team-burden-v106";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-lightning-team-burden-v106";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260807-lightning-probability-state-v107";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-probability-state-v107";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260807-lightning-probability-state-v107";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260807-lightning-probability-state-v107";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260807-lightning-probability-state-v107";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260807-lightning-probability-state-v107";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-lightning-probability-state-v107";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,7 +21,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260807-lightning-team-burden-v106";
+} from "./AiProbabilityBranches.js?build=20260807-lightning-probability-state-v107";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -1072,13 +1073,22 @@ export class AiSimulator {
         this.gainUnknownCardsWithCounterState(next, actor, 2, effectEventWorlds, "harvest-draw");
         break;
       case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + scale; break;
-      case "lightning":
-        // 状态数组是模拟状态中闪电的唯一真相来源；仅在效果确定通过的世界写入，不伪造立即判定或伤害。
-        if (scale >= 1 - PROBABILITY_EPSILON) {
-          actor.statuses ??= [];
+      case "lightning": {
+        const oldLightningBranches = getLightningStatusStateBranches(actor);
+        const joinedLightning = joinProbabilityStateBranches(oldLightningBranches, effectEventWorlds);
+        actor.lightningStatusStateBranches = projectProbabilityStateBranches(joinedLightning, (branch) => ({
+          present:Boolean(branch.present || branch.occurs)
+        }));
+        const lightningPresence = lightningPresenceProbability(actor);
+        actor.lightningStatusProbability = lightningPresence;
+        actor.statuses ??= [];
+        if (lightningPresence >= 1 - PROBABILITY_EPSILON) {
           if (!actor.statuses.includes("lightning")) actor.statuses.push("lightning");
+        } else {
+          actor.statuses = actor.statuses.filter((status) => status !== "lightning");
         }
         break;
+      }
       case "scout": {
         if (!target?.alive) break;
         const knownExpectedCount = (target.knownCards ?? [])
