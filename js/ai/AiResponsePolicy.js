@@ -1,13 +1,13 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v114";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260807-burning-field-2x-v114";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260807-burning-field-2x-v114";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v114";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v115";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260807-burning-field-2x-v115";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260807-burning-field-2x-v115";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v115";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260807-burning-field-2x-v114";
+} from "./lightningScoring.js?build=20260807-burning-field-2x-v115";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

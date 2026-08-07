@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260807-burning-field-2x-v114";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260807-burning-field-2x-v114";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260807-burning-field-2x-v114";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260807-burning-field-2x-v114";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260807-burning-field-2x-v114";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260807-burning-field-2x-v114";
-import { AiPlanner } from "./AiPlanner.js?build=20260807-burning-field-2x-v114";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260807-burning-field-2x-v115";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260807-burning-field-2x-v115";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260807-burning-field-2x-v115";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260807-burning-field-2x-v115";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260807-burning-field-2x-v115";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260807-burning-field-2x-v115";
+import { AiPlanner } from "./AiPlanner.js?build=20260807-burning-field-2x-v115";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

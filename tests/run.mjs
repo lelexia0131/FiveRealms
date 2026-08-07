@@ -6090,9 +6090,10 @@ test("AI·搜索：深层结束与重复装备评分读取模拟节点而非根�
   };
   assert.equal(evaluator.actionUtility({ type: "end" }, real, emptyVisible), 0);
   const equipment = instance("energyDevice");
+  // 同款换装按边际公式：新值7 - 旧值7×保留概率1 - 同款调整4 = -4
   assert.equal(
     evaluator.actionUtility({ type: "card", card: equipment, targets: [] }, real, emptyVisible),
-    equipment.aiValue - 4
+    -4
   );
 });
 
@@ -8591,6 +8592,87 @@ test("AI·装备：完全移除时按初始装备价值产生完整损失", () =
   assertClose(partial - removed, value * .1 * .25);
 });
 
+test("AI·装备：无装备时装备动作保留完整角色价值", () => {
+  const { game }
+    = makeGame([makePlayer("equip-acquire-actor", 0, "dawn", "ai", 3)]);
+  const evaluator = game.aiController.evaluator,
+    actor = makePlayer("equip-acquire-actor", 0, "dawn", "ai", 3),
+    radar = instance("defenseDevice"),
+    visible = {
+      players: [
+        {
+          id: actor.id,
+          battleTeam: "dawn",
+          generalId: "shade-agent",
+          alive: true,
+          handCount: 1,
+          hand: [{ id: radar.id, definitionId: radar.definitionId }],
+          equipmentDefinitionId: null,
+          equipmentRetentionProbability: 0
+        }
+      ]
+    },
+    action = { type: "card", card: radar, targets: [] };
+  // shade-agent 对雷达无角色差量：边际值 = 9 - 0
+  assert.equal(evaluator.actionUtility(action, actor, visible), CARD_DEFINITIONS.defenseDevice.aiValue);
+  assert.ok(evaluator.actionUtility(action, actor, visible) > 0);
+});
+
+test("AI·装备：不同装备换装按新值减旧装备期望保留值", () => {
+  const { game }
+    = makeGame([makePlayer("equip-swap-actor", 0, "dawn", "ai", 3)]);
+  const evaluator = game.aiController.evaluator,
+    actor = makePlayer("equip-swap-actor", 0, "dawn", "ai", 3),
+    radar = instance("defenseDevice"),
+    makeVisible = (retention) => ({
+      players: [
+        {
+          id: actor.id,
+          battleTeam: "dawn",
+          generalId: "shade-agent",
+          alive: true,
+          handCount: 1,
+          hand: [{ id: radar.id, definitionId: radar.definitionId }],
+          equipmentDefinitionId: "barrierDevice",
+          equipmentRetentionProbability: retention
+        }
+      ]
+    }),
+    action = { type: "card", card: radar, targets: [] };
+  // shade-agent 对雷达/屏障均无角色差量：雷达9、屏障8
+  assert.equal(evaluator.actionUtility(action, actor, makeVisible(1)), 9 - 8);
+  assert.equal(evaluator.actionUtility(action, actor, makeVisible(.5)), 9 - 8 * .5);
+  assert.equal(evaluator.actionUtility(action, actor, makeVisible(0)), 9);
+  assert.notEqual(
+    evaluator.actionUtility(action, actor, makeVisible(1)), CARD_DEFINITIONS.defenseDevice.aiValue
+  );
+});
+
+test("AI·装备：同款换装不重复获得完整价值并保留同款调整", () => {
+  const { game }
+    = makeGame([makePlayer("equip-same-actor", 0, "dawn", "ai", 3)]);
+  const evaluator = game.aiController.evaluator,
+    actor = makePlayer("equip-same-actor", 0, "dawn", "ai", 3),
+    radar = instance("defenseDevice"),
+    makeVisible = (retention) => ({
+      players: [
+        {
+          id: actor.id,
+          battleTeam: "dawn",
+          generalId: "shade-agent",
+          alive: true,
+          handCount: 1,
+          hand: [{ id: radar.id, definitionId: radar.definitionId }],
+          equipmentDefinitionId: "defenseDevice",
+          equipmentRetentionProbability: retention
+        }
+      ]
+    }),
+    action = { type: "card", card: radar, targets: [] };
+  assert.equal(evaluator.actionUtility(action, actor, makeVisible(1)), -4);
+  assert.equal(evaluator.actionUtility(action, actor, makeVisible(.5)), 9 - 9 * .5 - 4);
+});
+
 // ---- AI 装备行为·回收站 ----
 
 test("AI·回收站：触发期望严格封顶2次", () => {
@@ -10215,6 +10297,144 @@ test("AI·望远镜与屏障：望远镜与目标屏障组合分支各计一次�
   assertClose(
     branches.filter((branch) => branch.matches).reduce((sum, branch) => sum + branch.probability, 0), .3
   );
+});
+
+test("AI·望远镜与屏障：stateUtility 感知屏障挡住多个敌人的攻击暴露", () => {
+  const { game }
+    = makeGame([
+      makePlayer("barrier-score-viewer", 0, "dawn", "ai", 3),
+      makePlayer("barrier-score-b", 1, "dusk"),
+      makePlayer("barrier-score-c", 2, "dusk")
+    ]);
+  const evaluator = game.aiController.evaluator,
+    viewer = {
+      id: "barrier-score-viewer",
+      seatIndex: 0,
+      battleTeam: "dawn",
+      generalId: "shade-agent",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      energy: 0,
+      handCount: 0,
+      hand: [],
+      attackRange: 1,
+      expectedEquipmentGain: 0,
+      expectedEquipmentRoleDelta: 0,
+      huntMarkProbabilities: {},
+      exposeWeaknessStacks: 0,
+      statuses: [],
+      expectedInformationGain: 0
+    },
+    enemy = (id, seatIndex) => ({
+      id,
+      seatIndex,
+      battleTeam: "dusk",
+      generalId: "blade-walker",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      energy: 1,
+      handCount: 3,
+      attackRange: 1,
+      expectedEquipmentGain: 0,
+      expectedEquipmentRoleDelta: 0,
+      huntMarkProbabilities: {},
+      exposeWeaknessStacks: 0,
+      statuses: [],
+      expectedInformationGain: 0
+    });
+  // 敌人对象统一按攻击范围参数重建
+  const enemyWithRange = (id, seatIndex, attackRange) => ({
+    ...enemy(id, seatIndex),
+    attackRange
+  });
+  const buildWorld = (barrier, enemyAttackRange = 1) => ({
+    players: [
+      barrier
+        ? {
+            ...viewer,
+            equipmentDefinitionId: "barrierDevice",
+            equipmentRetentionProbability: 1,
+            initialEquipmentValue: CARD_DEFINITIONS.barrierDevice.aiValue,
+            initialEquipmentRoleDelta: 0
+          }
+        : {
+            ...viewer,
+            equipmentDefinitionId: null,
+            equipmentRetentionProbability: 0,
+            initialEquipmentValue: 0,
+            initialEquipmentRoleDelta: 0
+          },
+      enemyWithRange("barrier-score-b", 1, enemyAttackRange),
+      enemyWithRange("barrier-score-c", 2, enemyAttackRange)
+    ]
+  });
+  const barrierScore = evaluator.stateUtility(buildWorld(true), "barrier-score-viewer"),
+    noBarrierScore = evaluator.stateUtility(buildWorld(false), "barrier-score-viewer");
+  assert.ok(barrierScore > noBarrierScore);
+  // 两名满威胁敌人各贡献 (1 + 3×0.5 + 1×0.3)×5 = 14 暴露分
+  assert.ok(barrierScore - noBarrierScore >= 20);
+  // 控制组：敌人本就不在攻击范围时，屏障不产生任何分数差异，证明差异来自范围暴露而非屏障名加分
+  assert.equal(
+    evaluator.stateUtility(buildWorld(true, 0), "barrier-score-viewer"),
+    evaluator.stateUtility(buildWorld(false, 0), "barrier-score-viewer")
+  );
+});
+
+test("AI·望远镜与屏障：屏障挡住两个敌人时不会为略高静态装备拆掉屏障", async () => {
+  const actor = makePlayer("barrier-decision-actor", 0, "dawn", "ai", 3),
+    b = makePlayer("barrier-decision-b", 1, "dusk"),
+    c = makePlayer("barrier-decision-c", 2, "dusk"),
+    radar = instance("defenseDevice");
+  actor.equipment = instance("barrierDevice");
+  actor.hand.push(radar);
+  b.energy = 1;
+  c.energy = 1;
+  b.hand.push(instance("assault"), instance("assault"), instance("assault"));
+  c.hand.push(instance("assault"), instance("assault"), instance("assault"));
+  const { game }
+    = makeGame([actor, b, c]);
+  game.aiSearchNodeBudgetOverride = 2;
+  game.aiRandomnessRange = 0;
+  const visible = createAiVisibleState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const selected = await game.aiController.planner.plan(
+    actor,
+    visible,
+    [{ type: "card", card: radar, targets: [] }, { type: "end" }],
+    { gameId: game.state.gameId }
+  );
+  assert.equal(selected.type, "end");
+});
+
+test("AI·望远镜与屏障：屏障未挡住任何人且望远镜打开攻击距离时仍允许换装", async () => {
+  const actor = makePlayer("barrier-flex-actor", 0, "dawn", "ai", 0),
+    filler = makePlayer("barrier-flex-filler", 1, "dawn"),
+    b = makePlayer("barrier-flex-b", 2, "dusk"),
+    c = makePlayer("barrier-flex-c", 3, "dusk"),
+    filler2 = makePlayer("barrier-flex-filler2", 4, "dawn"),
+    telescope = instance("telescope");
+  actor.equipment = instance("barrierDevice");
+  actor.hand.push(telescope);
+  const { game }
+    = makeGame([actor, filler, b, c, filler2]);
+  game.aiSearchNodeBudgetOverride = 2;
+  game.aiRandomnessRange = 0;
+  const visible = createAiVisibleState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const selected = await game.aiController.planner.plan(
+    actor,
+    visible,
+    [{ type: "card", card: telescope, targets: [] }, { type: "end" }],
+    { gameId: game.state.gameId }
+  );
+  assert.equal(selected.type, "card");
+  assert.equal(selected.card.id, telescope.id);
 });
 
 // ---- AI 角色行为·刃行者 ----

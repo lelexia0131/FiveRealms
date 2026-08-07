@@ -2,12 +2,13 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v114";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260807-burning-field-2x-v114";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260807-burning-field-2x-v114";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v114";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-burning-field-2x-v114";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260807-burning-field-2x-v114";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v115";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260807-burning-field-2x-v115";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260807-burning-field-2x-v115";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260807-burning-field-2x-v115";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v115";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-burning-field-2x-v115";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260807-burning-field-2x-v115";
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }
@@ -54,6 +55,24 @@ export class AiEvaluator {
     return ThreatCalculator.calculate(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
   }
 
+  /** 敌方攻击暴露：距离可达概率 × 公开威胁强度；只读公开/模拟合法字段，不读取隐藏手牌身份。 */
+  incomingExposure(state, player) {
+    let exposure = 0;
+    for (const enemy of state.players) {
+      if (!enemy?.alive || enemy.battleTeam === player.battleTeam || enemy.id === player.id) continue;
+      const rangeProbability = DistanceSystem.getRangeLegalityProbability(
+        { state }, enemy, player, enemy.attackRange ?? 1
+      );
+      if (rangeProbability <= 0) continue;
+      const handCount = Math.max(0, Number(enemy.handCount ?? enemy.hand?.length ?? 0));
+      const energy = Math.max(0, Number(enemy.energy ?? 0));
+      // 威胁强度：基准1点突袭 + 公开手牌/能量折算的潜在攻击资源，再按 stateUtility 每点 hp=5 权重换算。
+      const expectedDamage = 1 + Math.min(3, handCount) * .5 + Math.min(2, energy) * .3;
+      exposure += expectedDamage * 5 * rangeProbability;
+    }
+    return exposure;
+  }
+
   stateUtility(state, viewerId) {
     const viewer = state.players.find((player) => player.id === viewerId);
     if (!viewer) return -Infinity;
@@ -90,10 +109,11 @@ export class AiEvaluator {
         const source = state.players.find((entry) => entry.id === sourceId);
         return sum + (source?.battleTeam !== player.battleTeam ? Number(probability) || 0 : 0);
       }, 0);
+      const exposure = this.incomingExposure(state, player);
       score += sign * (danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * 1.2
         + player.handCount * 1.1 + handRoleDelta + (player.exposeWeaknessStacks ?? 0) * 1.5
         + equipmentDelta * .25 + equipmentRoleDelta * .25
-        + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5)
+        + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5 - exposure)
       - lightningTeamBurden(state, player, viewer.battleTeam);
     }
     return score;
@@ -164,7 +184,15 @@ export class AiEvaluator {
       value = (net > 0 ? 8 + net : -9 + net) + roleDelta;
     }
     const equippedDefinitionId = actor.equipmentDefinitionId ?? actor.equipment?.definitionId ?? null;
-    if (card.category === "equipment" && equippedDefinitionId === card.definitionId) value -= 4;
+    if (card.category === "equipment" && equippedDefinitionId) {
+      const oldValue = actor?.generalId
+        ? getRoleCardAiValue(actor.generalId, equippedDefinitionId)
+        : (CARD_DEFINITIONS[equippedDefinitionId]?.aiValue ?? 0);
+      const oldRetention = actor.equipmentRetentionProbability ?? (oldValue ? 1 : 0);
+      // 边际装备价值：新装备角色价值 - 旧装备按保留概率折算的期望价值；同款换装保留原有 -4 调整。
+      value -= oldValue * oldRetention;
+      if (equippedDefinitionId === card.definitionId) value -= 4;
+    }
     return value;
   }
 
