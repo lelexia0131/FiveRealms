@@ -1656,17 +1656,42 @@ test("AI 共用突袭模拟消费破势与孤注并保留濒死救援和击杀�
   const killer={id:"killer",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,attackUsed:0},victim={id:"victim",battleTeam:"dusk",alive:true,hp:1,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},killState={players:[killer,victim]};simulator.simulateAssault(killState,killer,victim,1);assert.equal(victim.alive,false);assert.equal(killer.handCount,GAME_CONFIG.killRewardDrawCount);
   const rescuedAttacker={id:"rescued-attacker",battleTeam:"dawn",alive:true,hp:4,maxHp:4,handCount:0,attackUsed:0},rescued={id:"rescued",battleTeam:"dusk",alive:true,hp:1,maxHp:4,shield:0,handCount:0,blockProbability:0,expectedRecoverCount:0},rescuer={id:"rescuer",generalId:"spirit-medic",battleTeam:"dusk",alive:true,hp:3,maxHp:3,shield:0,handCount:1,expectedRecoverCount:1,rejuvenationUsed:false},rescueState={players:[rescuedAttacker,rescued,rescuer]};simulator.simulateAssault(rescueState,rescuedAttacker,rescued,1);assert.equal(rescued.alive,true);assert.equal(rescued.hp,2);assert.equal(rescuedAttacker.handCount,0);
 });
-test("平衡模拟在相同种子和固定节点预算下连续两次结果完全一致", async () => {
-  const env={...process.env,FIVE_REALMS_GAMES:"2",FIVE_REALMS_SEED_BASE:"123456789",FIVE_REALMS_START_INDEX:"8",FIVE_REALMS_SEARCH_NODE_BUDGET:"80",FIVE_REALMS_BALANCE_REPORT_ONLY:"1"};
+test("平衡模拟在相同种子和固定节点预算下连续两次核心报告完全一致", async () => {
+  const env = {
+    ...process.env,
+    FIVE_REALMS_GAMES: "2",
+    FIVE_REALMS_SEED_BASE: "123456789",
+    FIVE_REALMS_START_INDEX: "8",
+    FIVE_REALMS_SEARCH_NODE_BUDGET: "80",
+    FIVE_REALMS_BALANCE_REPORT_ONLY: "1",
+    FIVE_REALMS_BALANCE_RESERVE_GAMES: "0",
+    FIVE_REALMS_BALANCE_WORKERS: "1",
+    FIVE_REALMS_BALANCE_PROGRESS: "0",
+    FIVE_REALMS_BALANCE_SUMMARY: "0",
+    FIVE_REALMS_BALANCE_SLOW_GAME_SAMPLES: "0",
+    FIVE_REALMS_BALANCE_TAIL_SPECULATION: "0"
+  };
   delete env.FIVE_REALMS_SEARCH_BUDGET;
-  const run=async()=>JSON.parse((await execFileAsync(process.execPath,[projectFile("tests/balance-simulation.mjs")],{cwd:projectFile("."),env,encoding:"utf8",maxBuffer:1024*1024})).stdout);
-  const first=await run(),second=await run();
-  assert.deepEqual(second,first);
-  assert.equal(first.games,2);
-  assert.equal(first.completedGames,2);
-  assert.equal(first.stalledGames,0);
-  assert.ok(Number.isFinite(first.smallTeamWinRate)&&Number.isFinite(first.largeTeamWinRate));
-  assert.ok(Math.abs(first.smallTeamWinRate+first.largeTeamWinRate-100)<1e-9);
+  const run = async () => JSON.parse((
+    await execFileAsync(
+      process.execPath,
+      [projectFile("tests/balance.mjs")],
+      { cwd: projectFile("."), env, encoding: "utf8", maxBuffer: 1024 * 1024 }
+    )
+  ).stdout);
+  const deterministicReport = ({ generatedAt, timing, ...report }) => report;
+  const first = await run();
+  const second = await run();
+  assert.deepEqual(deterministicReport(second), deterministicReport(first));
+  assert.equal(first.games, 2);
+  assert.equal(first.completedGames, 2);
+  assert.equal(first.stalledGames, 0);
+  assert.equal(first.config.reserveGames, 0);
+  assert.equal(first.config.workers, 1);
+  assert.equal(first.config.startIndex, 8);
+  assert.equal(first.config.searchNodeBudget, 80);
+  assert.ok(Number.isFinite(first.smallTeamWinRate) && Number.isFinite(first.largeTeamWinRate));
+  assert.ok(Math.abs(first.smallTeamWinRate + first.largeTeamWinRate - 100) < 1e-9);
 });
 test("AI 模拟器识别破势叠加后强化普通突袭", () => { const visible={players:[{id:"a",seatIndex:0,battleTeam:"dawn",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:4,attackRange:1,attackUsed:0,attackLimit:2,recoverUsed:0,recoverLimit:null,exposeWeaknessStacks:0,alive:true,handCount:3,hand:[{id:"x1",definitionId:"exposeWeakness"},{id:"x2",definitionId:"exposeWeakness"},{id:"a1",definitionId:"assault"}]},{id:"b",seatIndex:1,battleTeam:"dusk",hp:4,maxHp:4,shield:0,energy:0,maxEnergy:3,attackRange:1,alive:true,handCount:0}]};const simulator=new AiSimulator(visible);const once=simulator.apply(visible,{type:"card",card:{id:"x1",definitionId:"exposeWeakness"},targets:[]},"a");const twice=simulator.apply(once,{type:"card",card:{id:"x2",definitionId:"exposeWeakness"},targets:[]},"a");const attacked=simulator.apply(twice,{type:"card",card:{id:"a1",definitionId:"assault"},targets:[{id:"b"}]},"a");assert.equal(attacked.players[1].hp,1);assert.equal(attacked.players[0].exposeWeaknessStacks,0);assert.equal(attacked.players[0].recoverLimit,null); });
 test("AI 普通突袭与借势响应共用同一模拟入口", () => {
