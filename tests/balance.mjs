@@ -474,7 +474,7 @@ function buildConfig(cli) {
   );
   const reserveGames = parseInteger(
     "reserve-games",
-    firstDefined(cli["reserve-games"], process.env.FIVE_REALMS_BALANCE_RESERVE_GAMES, 10),
+    firstDefined(cli["reserve-games"], process.env.FIVE_REALMS_BALANCE_RESERVE_GAMES, 24),
     { minimum: 0 }
   );
   const candidateGames = games + reserveGames;
@@ -1397,7 +1397,7 @@ function printHelp() {
 
 核心参数：
   -g, --games <n>                         最终纳入统计的有效对局数，默认 200
-      --reserve-games <n>                 额外候选对局数；默认 10（准备 210 局，先完成 200 局即退出）
+      --reserve-games <n>                 额外候选对局数；默认 24（准备 224 局，先完成 200 局即退出）
   -w, --workers <n|auto>                  Worker 数，默认 auto（使用全部可用线程）
       --reserve-cores <n>                  auto 模式保留逻辑核心数，默认 0
   -n, --search-node-budget <n>            每次 AI 规划节点预算，默认 1000
