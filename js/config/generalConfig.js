@@ -47,7 +47,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
     loreFaction: "赤砂穹庐", maxHp: 3, tags: ["群攻", "爆发"], roleTags: ["damage", "caster"], passiveSkillIds: ["ember"], activeSkillIds: ["burningField"],
     passiveName: "余烬", passiveDescription: "卡牌每次结算首次对敌人造成实际伤害后，获得1点能量。",
     passiveTriggerText: "卡牌结算中首次对敌人造成实际伤害后", passiveLimitText: "每次卡牌结算最多触发1次",
-    activeName: "焚场", activeDescription: "消耗2点能量，对所有存活敌人各造成1点不可格挡伤害；每回合最多发动1次。", activeCost: 2, activeLimitPerTurn: 1,
+    activeName: "焚场", activeDescription: "消耗2点能量，对所有存活敌人各造成1点不可格挡伤害；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
     description: "以赤砂为燃料的术士，能从每一道伤痕里回收燃烧的余烬。",
     aiProfile: profile(1.45, .45, .25, .3, .45, .55, .45, 1.25)
   }),

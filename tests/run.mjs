@@ -238,7 +238,7 @@ test("所有角色技能都存在注册器", () => GENERAL_DEFINITIONS.forEach((
 test("所有角色都用稳定英文 roleTags 供 AI 判断职责", () => GENERAL_DEFINITIONS.forEach((general) => { assert.ok(general.roleTags.length >= 2);general.roleTags.forEach((tag)=>assert.match(tag,/^[a-z-]+$/)); }));
 test("守誓者最大生命为3且壁垒说明为可叠加的永久护盾", () => { const oath=GENERAL_DEFINITIONS.find((general)=>general.id==="oath-warden");assert.equal(oath.maxHp,3);assert.match(oath.activeDescription,/1点可叠加的护盾/);assert.match(oath.activeDescription,/不会随回合消失/);assert.match(oath.activeDescription,/抵消伤害时消耗/); });
 test("壁垒配置、README与实际目标规则保持一致", async () => { const oath=GENERAL_DEFINITIONS.find((general)=>general.id==="oath-warden"),readme=await readFile(projectFile("README.md"),"utf8"),config=await readFile(projectFile("js/config/generalConfig.js"),"utf8"),skills=await readFile(projectFile("js/generals/skillRegistry.js"),"utf8");assert.equal(oath.activeCost,ACTIVE_SKILLS.barrier.cost);assert.equal(oath.activeLimitPerTurn,ACTIVE_SKILLS.barrier.limitPerTurn);for(const text of [readme,config]){assert.doesNotMatch(text,/临时护盾|下次回合开始|回合开始时消散|统一消散/);assert.match(text,/不会随回合(?:数)?消失/);}assert.doesNotMatch(skills,/statuses\.temporaryShield|clearAtTurnStart/);const source=makePlayer("warden",0,"dawn","ai",1),ally=makePlayer("ally",1,"dawn"),deadAlly=makePlayer("dead-ally",2,"dawn"),enemy=makePlayer("enemy",3,"dusk");deadAlly.alive=false;const {game}=makeGame([source,ally,deadAlly,enemy]);assert.deepEqual(RuleEngine.getSkillTargets(game,source,ACTIVE_SKILLS.barrier).map((player)=>player.id),[ally.id]); });
-test("八名角色规则配置与README角色介绍一致", async () => { const readme=await readFile(projectFile("README.md"),"utf8");for(const general of GENERAL_DEFINITIONS){assert.match(readme,new RegExp(`### ${general.name}`));assert.ok(readme.includes(general.description));assert.match(readme,new RegExp(`主动·${general.activeName}`));assert.match(readme,new RegExp(`被动·${general.passiveName}`));}const byId=Object.fromEntries(GENERAL_DEFINITIONS.map((general)=>[general.id,general])),expected={"blade-walker":[4,2,1],"oath-warden":[3,2,2],"spirit-medic":[3,2,2],"shade-agent":[3,1,2],"ember-magus":[3,2,1],"trail-hunter":[4,2,2],"fate-gambler":[4,1,1],"resonance-tuner":[4,2,2]};for(const [id,values] of Object.entries(expected)){const general=byId[id],skill=ACTIVE_SKILLS[general.activeSkillIds[0]];assert.deepEqual([general.maxHp,general.activeCost,general.activeLimitPerTurn],values,id);assert.deepEqual([skill.cost,skill.limitPerTurn],values.slice(1),`${id}实际技能`);} });
+test("八名角色规则配置与README角色介绍一致", async () => { const readme=await readFile(projectFile("README.md"),"utf8");for(const general of GENERAL_DEFINITIONS){assert.match(readme,new RegExp(`### ${general.name}`));assert.ok(readme.includes(general.description));assert.match(readme,new RegExp(`主动·${general.activeName}`));assert.match(readme,new RegExp(`被动·${general.passiveName}`));}const byId=Object.fromEntries(GENERAL_DEFINITIONS.map((general)=>[general.id,general])),expected={"blade-walker":[4,2,1],"oath-warden":[3,2,2],"spirit-medic":[3,2,2],"shade-agent":[3,1,2],"ember-magus":[3,2,2],"trail-hunter":[4,2,2],"fate-gambler":[4,1,1],"resonance-tuner":[4,2,2]};for(const [id,values] of Object.entries(expected)){const general=byId[id],skill=ACTIVE_SKILLS[general.activeSkillIds[0]];assert.deepEqual([general.maxHp,general.activeCost,general.activeLimitPerTurn],values,id);assert.deepEqual([skill.cost,skill.limitPerTurn],values.slice(1),`${id}实际技能`);} });
 test("灵医配置与README同步回春摸牌、濒死触发及滋荣自疗规则", async () => {
   const medic=GENERAL_DEFINITIONS.find((general)=>general.id==="spirit-medic"),readme=await readFile(projectFile("README.md"),"utf8"),medicSection=readme.match(/### 灵医[\s\S]*?(?=\r?\n### )/)?.[0]??"";
   for(const text of [medic.passiveDescription,medicSection]){assert.match(text,/己方阵营角色/);assert.match(text,/额外恢复\s*1\s*点/);assert.match(text,/摸\s*1\s*张牌/);assert.match(text,/濒死救援.*触发|濒死救援也可触发/);assert.doesNotMatch(text,/濒死救援.*不会|阻止灵医.*回春/);}
@@ -1137,41 +1137,66 @@ test("炎术师焚场只伤害存活敌人、队友与本人不受伤且不可�
   assert.equal(observed.damageType, "skill");
   assert.equal(observed.skill, "burningField");
 });
-test("炎术师焚场每回合最多发动一次且第二次不扣费不造成伤害", async () => {
+test("炎术师焚场每回合最多发动两次且第三次不扣费不造成伤害", async () => {
   const ember = makePlayer("ember-limit", 0, "dawn", "human", 4);
   const ally = makePlayer("ember-limit-ally", 1, "dawn", "ai", 0);
   const enemy = makePlayer("ember-limit-enemy", 2, "dusk", "ai", 5);
-  ember.energy = 2;
+  ember.energy = 4;
   const { game } = makeGame([ember, ally, enemy]);
   const hp = enemy.hp;
-  assert.equal(ACTIVE_SKILLS.burningField.limitPerTurn, 1);
+  const emberConfig = GENERAL_DEFINITIONS.find((general) => general.id === "ember-magus");
+  assert.equal(emberConfig.activeLimitPerTurn, 2);
+  assert.equal(ACTIVE_SKILLS.burningField.limitPerTurn, 2);
+  assert.equal(emberConfig.activeCost, 2);
+  assert.equal(ACTIVE_SKILLS.burningField.cost, 2);
   assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
-  assert.equal(ember.energy, 0);
-  assert.equal(enemy.hp, hp - 1);
-  ember.energy = 2;
-  assert.equal(await game.useActiveSkill(ember, "burningField", []), false);
   assert.equal(ember.energy, 2);
   assert.equal(enemy.hp, hp - 1);
   assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 1);
+  assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
+  assert.equal(ember.energy, 0);
+  assert.equal(enemy.hp, hp - 2);
+  assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 2);
+  ember.energy = 2;
+  assert.equal(ACTIVE_SKILLS.burningField.canUse(game, ember).ok, false);
+  assert.equal(await game.useActiveSkill(ember, "burningField", []), false);
+  assert.equal(ember.energy, 2);
+  assert.equal(enemy.hp, hp - 2);
+  assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 2);
 });
-test("AI在炎术师2点能量时生成焚场动作且模拟扣除2点", async () => {
+test("AI在炎术师焚场已使用1次且能量充足时仍生成并模拟第2次，已用2次后不再生成", async () => {
   const ember = makePlayer("ember-ai", 0, "dawn", "ai", 4);
   const ally = makePlayer("ember-ai-ally", 1, "dawn", "ai", 0);
   const enemy = makePlayer("ember-ai-enemy", 2, "dusk", "ai", 5);
-  ember.energy = 2;
+  ember.energy = 3;
   const { game } = makeGame([ember, ally, enemy]);
   const visible = createAiVisibleState(ember.id, game.state);
   const action = game.aiController.actionGenerator.generateFromVisible(visible, ember.id)
     .find((entry) => entry.skill?.id === "burningField");
   assert.ok(action);
   assert.equal(action.skill.cost, 2);
-  ember.energy = 3;
-  const visible3 = createAiVisibleState(ember.id, game.state);
-  const next = new AiSimulator(visible3).apply(visible3, action, ember.id);
+  assert.equal(action.skill.limitPerTurn, 2);
+  const next = new AiSimulator(visible).apply(visible, action, ember.id);
   const nextEmber = next.players.find((player) => player.id === ember.id);
   const nextEnemy = next.players.find((player) => player.id === enemy.id);
   assert.equal(nextEmber.energy, 1);
   assert.equal(nextEnemy.hp, enemy.hp - 1);
+  ember.turnFlags.activeSkillUseCounts.burningField = 1;
+  ember.turnFlags.activeSkillsUsed.add("burningField");
+  const visibleUsedOnce = createAiVisibleState(ember.id, game.state);
+  const actorUsedOnce = visibleUsedOnce.players.find((player) => player.id === ember.id);
+  assert.deepEqual([actorUsedOnce.activeSkillUses, actorUsedOnce.activeSkillLimit, actorUsedOnce.activeSkillUsed], [1, 2, false]);
+  const actionUsedOnce = game.aiController.actionGenerator.generateFromVisible(visibleUsedOnce, ember.id)
+    .find((entry) => entry.skill?.id === "burningField");
+  assert.ok(actionUsedOnce);
+  const nextAfterSecond = new AiSimulator(visibleUsedOnce).apply(visibleUsedOnce, actionUsedOnce, ember.id);
+  const secondEmber = nextAfterSecond.players.find((player) => player.id === ember.id);
+  assert.deepEqual([secondEmber.activeSkillUses, secondEmber.activeSkillUsed], [2, true]);
+  ember.turnFlags.activeSkillUseCounts.burningField = 2;
+  const visibleUsedTwice = createAiVisibleState(ember.id, game.state);
+  const exhaustedAction = game.aiController.actionGenerator.generateFromVisible(visibleUsedTwice, ember.id)
+    .find((entry) => entry.skill?.id === "burningField");
+  assert.equal(exhaustedAction, undefined);
 });
 test("互利在反制窗口之后才展示并按座位每人选1张", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1);assert.equal(game.state.publicCardPool.length,0);assert.equal(ui.publicRequests.length,1); });
 test("互利选牌严格跳过阵亡座位", async () => { const a=makePlayer("a",0,"dawn","human"),dead=makePlayer("dead",1,"dusk"),b=makePlayer("b",2,"dusk"),c=makePlayer("c",3,"dawn");dead.alive=false;const {game}=makeGame([a,dead,b,c]);game.state.deck.cards.push(instance("block"),instance("charge"),instance("recover"));a.hand.push(instance("mutualBenefit"));await game.playCard(a,a.hand[0],[]);assert.equal(dead.hand.length,0);assert.equal(a.hand.length,1);assert.equal(b.hand.length,1);assert.equal(c.hand.length,1); });

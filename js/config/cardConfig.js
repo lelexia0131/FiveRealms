@@ -350,7 +350,7 @@ export const CARD_DEFINITIONS = Object.freeze(
       categoryName: "战术牌",
       targetType: "none",
       subtypes: ["status", "delay"],
-      description: "使用后获得闪电状态；下回合摸牌前进行判定。若结果为装备牌，触发 3 点伤害并消耗状态，否则将状态转移给下一名未进入闪电状态的玩家。",
+      description: "使用后进入闪电状态；下回合摸牌前进行判定。若结果为装备牌，触发 3 点伤害并消耗状态，否则将状态转移给下一名未进入闪电状态的玩家。",
       count: 2,
       aiValue: 5,
       art: "./assets/cards/lightning.svg",

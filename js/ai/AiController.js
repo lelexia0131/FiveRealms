@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260807-human-seat-equal-height-v112";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260807-human-seat-equal-height-v112";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260807-human-seat-equal-height-v112";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260807-human-seat-equal-height-v112";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260807-human-seat-equal-height-v112";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260807-human-seat-equal-height-v112";
-import { AiPlanner } from "./AiPlanner.js?build=20260807-human-seat-equal-height-v112";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260807-burning-field-2x-v113";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260807-burning-field-2x-v113";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260807-burning-field-2x-v113";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260807-burning-field-2x-v113";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260807-burning-field-2x-v113";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260807-burning-field-2x-v113";
+import { AiPlanner } from "./AiPlanner.js?build=20260807-burning-field-2x-v113";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {
