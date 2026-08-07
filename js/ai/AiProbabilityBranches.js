@@ -1,6 +1,106 @@
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v116";
+
 export const PROBABILITY_EPSILON = 1e-12;
 
 export const clampProbability = (value) => Math.max(0, Math.min(1, Number(value) || 0));
+
+/** 雷达判定可进入手牌的五种基础牌；与真实 JudgmentSystem 的基础牌分支保持一致。 */
+export const RADAR_BASIC_DEFINITIONS = Object.freeze(["assault", "recover", "block", "charge", "shield"]);
+
+/**
+ * 雷达判定类别条件概率（给定一次判定发生）：tactic / equipment / 各基础牌身份。
+ * 只读 remainingCardCounts（无动态计数时回退固定初始密度）；override 兼容
+ * { block, otherBasic, equipment }，与 AiSimulator 旧实现语义完全一致。
+ */
+export function buildRadarJudgmentProbabilities(remainingCardCounts = null, overrideProbabilities = null) {
+  const weights = {};
+  let totalWeight = 0;
+  if (remainingCardCounts && typeof remainingCardCounts === "object" && !Array.isArray(remainingCardCounts)) {
+    for (const [definitionId, count] of Object.entries(remainingCardCounts)) {
+      const value = Number(count);
+      if (!Number.isFinite(value) || value <= 0) continue;
+      if (!CARD_DEFINITIONS[definitionId]) continue;
+      weights[definitionId] = (weights[definitionId] ?? 0) + value;
+      totalWeight += value;
+    }
+  } else {
+    for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
+      weights[definitionId] = definition.count;
+      totalWeight += definition.count;
+    }
+  }
+
+  const basicProbabilities = {};
+  for (const definitionId of RADAR_BASIC_DEFINITIONS) {
+    basicProbabilities[definitionId] = totalWeight > PROBABILITY_EPSILON
+      ? (weights[definitionId] ?? 0) / totalWeight
+      : 0;
+  }
+  let tacticProbability = 0;
+  let equipmentProbability = 0;
+  for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
+    const weight = weights[definitionId] ?? 0;
+    if (weight <= 0) continue;
+    if (definition.category === "tactic") tacticProbability += weight / totalWeight;
+    else if (definition.category === "equipment") equipmentProbability += weight / totalWeight;
+  }
+
+  const override = overrideProbabilities && typeof overrideProbabilities === "object"
+    ? overrideProbabilities
+    : null;
+  if (override) {
+    const otherBasicDefinitions = ["assault", "recover", "charge", "shield"];
+    const overrideBlock = clampProbability(override.block ?? basicProbabilities.block);
+    const overrideEquipment = clampProbability(override.equipment ?? equipmentProbability);
+    const overrideOtherBasic = clampProbability(override.otherBasic ?? otherBasicDefinitions
+      .reduce((sum, definitionId) => sum + basicProbabilities[definitionId], 0));
+    const otherBasicWeights = otherBasicDefinitions
+      .reduce((sum, definitionId) => sum + (weights[definitionId] ?? 0), 0);
+    let otherBasicRatios;
+    if (otherBasicWeights > PROBABILITY_EPSILON) {
+      otherBasicRatios = Object.fromEntries(otherBasicDefinitions.map((definitionId) => [
+        definitionId, (weights[definitionId] ?? 0) / otherBasicWeights
+      ]));
+    } else {
+      const fixedTotal = otherBasicDefinitions
+        .reduce((sum, definitionId) => sum + CARD_DEFINITIONS[definitionId].count, 0);
+      otherBasicRatios = Object.fromEntries(otherBasicDefinitions.map((definitionId) => [
+        definitionId, fixedTotal > 0 ? CARD_DEFINITIONS[definitionId].count / fixedTotal : 0.25
+      ]));
+    }
+    basicProbabilities.block = overrideBlock;
+    for (const definitionId of otherBasicDefinitions) {
+      basicProbabilities[definitionId] = overrideOtherBasic * otherBasicRatios[definitionId];
+    }
+    equipmentProbability = overrideEquipment;
+    tacticProbability = Math.max(0, 1 - overrideBlock - overrideOtherBasic - overrideEquipment);
+  }
+
+  let judgmentTotal = tacticProbability + equipmentProbability;
+  for (const definitionId of RADAR_BASIC_DEFINITIONS) {
+    judgmentTotal += basicProbabilities[definitionId];
+  }
+  if (judgmentTotal > PROBABILITY_EPSILON) {
+    tacticProbability /= judgmentTotal;
+    equipmentProbability /= judgmentTotal;
+    for (const definitionId of RADAR_BASIC_DEFINITIONS) {
+      basicProbabilities[definitionId] /= judgmentTotal;
+    }
+  } else {
+    tacticProbability = 0;
+    equipmentProbability = 0;
+    for (const definitionId of RADAR_BASIC_DEFINITIONS) {
+      basicProbabilities[definitionId] = 0;
+    }
+  }
+
+  return {
+    tactic: tacticProbability,
+    equipment: equipmentProbability,
+    basic: basicProbabilities,
+    hasJudgmentPool: totalWeight > PROBABILITY_EPSILON || Boolean(override)
+  };
+}
 
 /** 装备条件键只描述公开模拟世界，不拥有或消耗装备本身。 */
 export const equipmentConditionKey = (playerId, definitionId) => `equipment:${playerId}:${definitionId}`;

@@ -68,7 +68,7 @@ import {
 } from "../js/ai/resourceSelectionValue.js";
 import { AiKnowledge } from "../js/ai/AiKnowledge.js";
 import { AiCardSelector } from "../js/ai/AiCardSelector.js";
-import { joinProbabilityStateBranches } from "../js/ai/AiProbabilityBranches.js";
+import { buildRadarJudgmentProbabilities, joinProbabilityStateBranches } from "../js/ai/AiProbabilityBranches.js";
 import {
   buildLightningPropagationChain,
   equipmentJudgmentProbability,
@@ -9744,6 +9744,416 @@ test("AI·雷达：默认概率：无动态计数保留固定初始类别密度"
     state
   ).applyDamage(state, state.players[0], state.players[1], 1, { canBlock: true, deviceAttack: true, outcome });
   assert.ok(outcome.lifeDamageChance > 0);
+});
+
+test("AI·雷达：动态免伤价值进入 stateUtility 且超过静态装备项", () => {
+  const { game }
+    = makeGame([
+      makePlayer("radar-value-viewer", 0, "dawn", "ai", 3),
+      makePlayer("radar-value-b", 1, "dusk"),
+      makePlayer("radar-value-c", 2, "dusk")
+    ]);
+  const evaluator = game.aiController.evaluator,
+    counts = { counter: 20, shockwave: 10, assault: 3, recover: 1, defenseDevice: 1 },
+    viewer = {
+      id: "radar-value-viewer",
+      seatIndex: 0,
+      battleTeam: "dawn",
+      generalId: "shade-agent",
+      alive: true,
+      hp: 3,
+      maxHp: 4,
+      shield: 0,
+      energy: 0,
+      handCount: 0,
+      hand: [],
+      attackRange: 1,
+      expectedEquipmentGain: 0,
+      expectedEquipmentRoleDelta: 0,
+      huntMarkProbabilities: {},
+      exposeWeaknessStacks: 0,
+      statuses: [],
+      expectedInformationGain: 0
+    },
+    enemy = (id, seatIndex) => ({
+      id,
+      seatIndex,
+      battleTeam: "dusk",
+      generalId: "blade-walker",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      energy: 1,
+      handCount: 3,
+      attackRange: 1,
+      expectedEquipmentGain: 0,
+      expectedEquipmentRoleDelta: 0,
+      huntMarkProbabilities: {},
+      exposeWeaknessStacks: 0,
+      statuses: [],
+      expectedInformationGain: 0
+    }),
+    makeWorld = (radar) => ({
+      remainingCardCounts: counts,
+      players: [
+        radar
+          ? {
+              ...viewer,
+              equipmentDefinitionId: "defenseDevice",
+              equipmentRetentionProbability: 1,
+              initialEquipmentValue: CARD_DEFINITIONS.defenseDevice.aiValue,
+              initialEquipmentRoleDelta: 0
+            }
+          : {
+              ...viewer,
+              equipmentDefinitionId: null,
+              equipmentRetentionProbability: 0,
+              initialEquipmentValue: CARD_DEFINITIONS.defenseDevice.aiValue,
+              initialEquipmentRoleDelta: 0
+            },
+        enemy("radar-value-b", 1),
+        enemy("radar-value-c", 2)
+      ]
+    });
+  const radarWorld = makeWorld(true),
+    noRadarWorld = makeWorld(false),
+    radarScore = evaluator.stateUtility(radarWorld, "radar-value-viewer"),
+    noRadarScore = evaluator.stateUtility(noRadarWorld, "radar-value-viewer"),
+    exposure = evaluator.incomingExposure(radarWorld, radarWorld.players[0]),
+    tacticProbability = buildRadarJudgmentProbabilities(counts).tactic;
+  assert.ok(radarScore > noRadarScore);
+  // 同一初始基线：静态项差 9×0.25，动态免伤项 = exposure × retention(1) × P(tactic)
+  assertClose(radarScore - noRadarScore, 9 * .25 + exposure * 1 * tacticProbability);
+});
+
+test("AI·雷达：没有敌人可攻击时动态免伤价值为0", () => {
+  const { game }
+    = makeGame([
+      makePlayer("radar-safe-viewer", 0, "dawn", "ai", 3),
+      makePlayer("radar-safe-f1", 1, "dawn"),
+      makePlayer("radar-safe-b", 2, "dusk"),
+      makePlayer("radar-safe-c", 3, "dusk"),
+      makePlayer("radar-safe-f4", 4, "dawn")
+    ]);
+  const evaluator = game.aiController.evaluator,
+    viewer = {
+      id: "radar-safe-viewer",
+      seatIndex: 0,
+      battleTeam: "dawn",
+      generalId: "shade-agent",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      energy: 0,
+      handCount: 0,
+      hand: [],
+      attackRange: 1,
+      expectedEquipmentGain: 0,
+      expectedEquipmentRoleDelta: 0,
+      huntMarkProbabilities: {},
+      exposeWeaknessStacks: 0,
+      statuses: [],
+      expectedInformationGain: 0
+    },
+    enemy = (id, seatIndex) => ({
+      id,
+      seatIndex,
+      battleTeam: "dusk",
+      generalId: "blade-walker",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      energy: 1,
+      handCount: 3,
+      attackRange: 1,
+      expectedEquipmentGain: 0,
+      expectedEquipmentRoleDelta: 0,
+      huntMarkProbabilities: {},
+      exposeWeaknessStacks: 0,
+      statuses: [],
+      expectedInformationGain: 0
+    }),
+    makeWorld = (radar) => ({
+      players: [
+        radar
+          ? {
+              ...viewer,
+              equipmentDefinitionId: "defenseDevice",
+              equipmentRetentionProbability: 1,
+              initialEquipmentValue: CARD_DEFINITIONS.defenseDevice.aiValue,
+              initialEquipmentRoleDelta: 0
+            }
+          : {
+              ...viewer,
+              equipmentDefinitionId: null,
+              equipmentRetentionProbability: 0,
+              initialEquipmentValue: CARD_DEFINITIONS.defenseDevice.aiValue,
+              initialEquipmentRoleDelta: 0
+            },
+        { ...viewer, id: "radar-safe-f1", seatIndex: 1, battleTeam: "dawn" },
+        enemy("radar-safe-b", 2),
+        enemy("radar-safe-c", 3),
+        { ...viewer, id: "radar-safe-f4", seatIndex: 4, battleTeam: "dawn" }
+      ]
+    });
+  const radarWorld = makeWorld(true),
+    noRadarWorld = makeWorld(false);
+  assert.equal(evaluator.incomingExposure(radarWorld, radarWorld.players[0]), 0);
+  assert.equal(
+    evaluator.radarMitigationUtility(0, radarWorld.players[0], .5),
+    0
+  );
+  // 无暴露时只有静态项差 9×0.25，动态免伤贡献为 0
+  assertClose(
+    evaluator.stateUtility(radarWorld, "radar-safe-viewer")
+      - evaluator.stateUtility(noRadarWorld, "radar-safe-viewer"),
+    9 * .25
+  );
+});
+
+test("AI·雷达：动态免伤价值随攻击暴露单调增长", () => {
+  const { game }
+    = makeGame([
+      makePlayer("radar-mono-viewer", 0, "dawn", "ai", 3),
+      makePlayer("radar-mono-b", 1, "dusk"),
+      makePlayer("radar-mono-c", 2, "dusk")
+    ]);
+  const evaluator = game.aiController.evaluator,
+    viewer = {
+      id: "radar-mono-viewer",
+      seatIndex: 0,
+      battleTeam: "dawn",
+      generalId: "shade-agent",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      energy: 0,
+      handCount: 0,
+      hand: [],
+      attackRange: 1,
+      expectedEquipmentGain: 0,
+      expectedEquipmentRoleDelta: 0,
+      huntMarkProbabilities: {},
+      exposeWeaknessStacks: 0,
+      statuses: [],
+      expectedInformationGain: 0
+    },
+    enemy = (id, seatIndex) => ({
+      id,
+      seatIndex,
+      battleTeam: "dusk",
+      generalId: "blade-walker",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      energy: 1,
+      handCount: 3,
+      attackRange: 1,
+      expectedEquipmentGain: 0,
+      expectedEquipmentRoleDelta: 0,
+      huntMarkProbabilities: {},
+      exposeWeaknessStacks: 0,
+      statuses: [],
+      expectedInformationGain: 0
+    }),
+    makeWorld = (enemySeats) => ({
+      remainingCardCounts: { counter: 20, shockwave: 10, assault: 3, recover: 1, defenseDevice: 1 },
+      players: [
+        {
+          ...viewer,
+          equipmentDefinitionId: "defenseDevice",
+          equipmentRetentionProbability: 1,
+          initialEquipmentValue: CARD_DEFINITIONS.defenseDevice.aiValue,
+          initialEquipmentRoleDelta: 0
+        },
+        ...enemySeats.map((seatIndex, index) => enemy(`radar-mono-e${index}`, seatIndex))
+      ]
+    });
+  const oneEnemyWorld = makeWorld([1]),
+    twoEnemyWorld = makeWorld([1, 2]),
+    oneEnemyDelta = evaluator.stateUtility(oneEnemyWorld, "radar-mono-viewer")
+      - evaluator.stateUtility(
+        { ...oneEnemyWorld, players: [{ ...oneEnemyWorld.players[0], equipmentDefinitionId: null, equipmentRetentionProbability: 0 }, ...oneEnemyWorld.players.slice(1)] },
+        "radar-mono-viewer"
+      ),
+    twoEnemyDelta = evaluator.stateUtility(twoEnemyWorld, "radar-mono-viewer")
+      - evaluator.stateUtility(
+        { ...twoEnemyWorld, players: [{ ...twoEnemyWorld.players[0], equipmentDefinitionId: null, equipmentRetentionProbability: 0 }, ...twoEnemyWorld.players.slice(1)] },
+        "radar-mono-viewer"
+      );
+  assert.ok(oneEnemyDelta > 0);
+  assert.ok(twoEnemyDelta > oneEnemyDelta);
+});
+
+test("AI·雷达：保留概率1/0.5/0保持连续概率语义", () => {
+  const { game }
+    = makeGame([makePlayer("radar-retention-actor", 0, "dawn")]);
+  const evaluator = game.aiController.evaluator,
+    tacticProbability = buildRadarJudgmentProbabilities(null).tactic,
+    playerWith = (retention) => ({
+      equipmentDefinitionId: "defenseDevice",
+      equipmentRetentionProbability: retention
+    }),
+    full = evaluator.radarMitigationUtility(28, playerWith(1), tacticProbability),
+    half = evaluator.radarMitigationUtility(28, playerWith(.5), tacticProbability),
+    zero = evaluator.radarMitigationUtility(28, playerWith(0), tacticProbability);
+  assertClose(full, 28 * tacticProbability);
+  assertClose(half, full / 2);
+  assert.equal(zero, 0);
+});
+
+test("AI·雷达：战术判定概率来自剩余牌堆且战术牌耗尽时归零", () => {
+  const normal = buildRadarJudgmentProbabilities({ assault: 10, counter: 10, defenseDevice: 1 }),
+    noTactic = buildRadarJudgmentProbabilities({ assault: 10, defenseDevice: 1 }),
+    fixed = buildRadarJudgmentProbabilities(null);
+  assertClose(normal.tactic, 10 / 21);
+  assert.equal(noTactic.tactic, 0);
+  assertClose(fixed.tactic, 53 / 160);
+});
+
+test("AI·雷达：受攻击暴露时不会为静态略高的非防守装备确定性拆雷达", async () => {
+  const actor = makePlayer("radar-swap-actor", 0, "dawn", "ai", 6),
+    b = makePlayer("radar-swap-b", 1, "dusk"),
+    f2 = makePlayer("radar-swap-f2", 2, "dawn"),
+    f3 = makePlayer("radar-swap-f3", 3, "dawn"),
+    d = makePlayer("radar-swap-d", 4, "dusk"),
+    battle = instance("battleDevice"),
+    counts = { counter: 20, shockwave: 10, assault: 3, recover: 1, defenseDevice: 1 };
+  actor.equipment = instance("defenseDevice");
+  actor.hand.push(battle);
+  b.energy = 1;
+  d.energy = 1;
+  b.hand.push(instance("assault"), instance("assault"), instance("assault"));
+  d.hand.push(instance("assault"), instance("assault"), instance("assault"));
+  const { game }
+    = makeGame([actor, b, f2, f3, d]);
+  game.aiController.knowledge.remainingCounts = () => counts;
+  game.aiSearchNodeBudgetOverride = 2;
+  game.aiRandomnessRange = 0;
+  const evaluator = game.aiController.evaluator,
+    before = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)),
+    swapAction = { type: "card", card: battle, targets: [] },
+    after = new AiSimulator(before).apply(before, swapAction, actor.id),
+    swapScore = evaluator.actionUtility(swapAction, actor, before) + evaluator.stateUtility(after, actor.id) * 0.08,
+    endScore = evaluator.actionUtility({ type: "end" }, actor, before) + evaluator.stateUtility(before, actor.id) * 0.08;
+  assert.ok(endScore - swapScore > GAME_CONFIG.aiNearTieRange);
+  const selected = await game.aiController.planner.plan(
+    actor,
+    before,
+    [swapAction, { type: "end" }],
+    { gameId: game.state.gameId }
+  );
+  assert.equal(selected.type, "end");
+});
+
+test("AI·雷达：无暴露且新装备明显更有价值时仍允许换雷达", async () => {
+  const actor = makePlayer("radar-flex-actor", 0, "dawn", "ai", 3),
+    f1 = makePlayer("radar-flex-f1", 1, "dawn"),
+    b = makePlayer("radar-flex-b", 2, "dusk"),
+    c = makePlayer("radar-flex-c", 3, "dusk"),
+    f4 = makePlayer("radar-flex-f4", 4, "dawn"),
+    telescope = instance("telescope"),
+    counts = { counter: 20, shockwave: 10, assault: 3, recover: 1, defenseDevice: 1 };
+  actor.equipment = instance("defenseDevice");
+  actor.hand.push(telescope);
+  const { game }
+    = makeGame([actor, f1, b, c, f4]);
+  game.aiController.knowledge.remainingCounts = () => counts;
+  game.aiSearchNodeBudgetOverride = 2;
+  game.aiRandomnessRange = 0;
+  const evaluator = game.aiController.evaluator,
+    before = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)),
+    swapAction = { type: "card", card: telescope, targets: [] },
+    after = new AiSimulator(before).apply(before, swapAction, actor.id),
+    swapScore = evaluator.actionUtility(swapAction, actor, before) + evaluator.stateUtility(after, actor.id) * 0.08,
+    endScore = evaluator.actionUtility({ type: "end" }, actor, before) + evaluator.stateUtility(before, actor.id) * 0.08;
+  assert.ok(swapScore - endScore > GAME_CONFIG.aiNearTieRange);
+  const selected = await game.aiController.planner.plan(
+    actor,
+    before,
+    [swapAction, { type: "end" }],
+    { gameId: game.state.gameId }
+  );
+  assert.equal(selected.type, "card");
+  assert.equal(selected.card.id, telescope.id);
+});
+
+test("AI·雷达：敌方雷达动态免伤按阵营符号反向计入己方效用", () => {
+  const { game }
+    = makeGame([
+      makePlayer("radar-enemy-viewer", 0, "dawn"),
+      makePlayer("radar-enemy-target", 1, "dusk")
+    ]);
+  const evaluator = game.aiController.evaluator,
+    counts = { counter: 20, shockwave: 10, assault: 3, recover: 1, defenseDevice: 1 },
+    viewer = {
+      id: "radar-enemy-viewer",
+      seatIndex: 0,
+      battleTeam: "dawn",
+      generalId: "shade-agent",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      energy: 0,
+      handCount: 0,
+      hand: [],
+      attackRange: 1,
+      expectedEquipmentGain: 0,
+      expectedEquipmentRoleDelta: 0,
+      huntMarkProbabilities: {},
+      exposeWeaknessStacks: 0,
+      statuses: [],
+      expectedInformationGain: 0
+    },
+    enemy = (radar) => ({
+      id: "radar-enemy-target",
+      seatIndex: 1,
+      battleTeam: "dusk",
+      generalId: "blade-walker",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      energy: 0,
+      handCount: 0,
+      attackRange: 1,
+      expectedEquipmentGain: 0,
+      expectedEquipmentRoleDelta: 0,
+      huntMarkProbabilities: {},
+      exposeWeaknessStacks: 0,
+      statuses: [],
+      expectedInformationGain: 0,
+      ...(radar
+        ? {
+            equipmentDefinitionId: "defenseDevice",
+            equipmentRetentionProbability: 1,
+            initialEquipmentValue: CARD_DEFINITIONS.defenseDevice.aiValue,
+            initialEquipmentRoleDelta: 0
+          }
+        : {
+            equipmentDefinitionId: null,
+            equipmentRetentionProbability: 0,
+            initialEquipmentValue: CARD_DEFINITIONS.defenseDevice.aiValue,
+            initialEquipmentRoleDelta: 0
+          })
+    }),
+    radarScore = evaluator.stateUtility(
+      { remainingCardCounts: counts, players: [viewer, enemy(true)] },
+      "radar-enemy-viewer"
+    ),
+    noRadarScore = evaluator.stateUtility(
+      { remainingCardCounts: counts, players: [viewer, enemy(false)] },
+      "radar-enemy-viewer"
+    );
+  // 敌方雷达降低敌方预期受损 → 己方效用更低；差值包含静态 2.25 与按符号反向的动态免伤
+  assert.ok(noRadarScore > radarScore);
+  assert.ok(noRadarScore - radarScore > 9 * .25);
 });
 
 // ---- AI 装备行为·军火库 ----

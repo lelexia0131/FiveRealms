@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260807-burning-field-2x-v115";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v115";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260807-burning-field-2x-v116";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v116";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

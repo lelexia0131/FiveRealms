@@ -2,16 +2,18 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260807-burning-field-2x-v115";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v115";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260807-burning-field-2x-v115";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260807-burning-field-2x-v115";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260807-burning-field-2x-v115";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260807-burning-field-2x-v115";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-burning-field-2x-v115";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260807-burning-field-2x-v116";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v116";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260807-burning-field-2x-v116";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260807-burning-field-2x-v116";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260807-burning-field-2x-v116";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260807-burning-field-2x-v116";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-burning-field-2x-v116";
 import {
   PROBABILITY_EPSILON,
+  RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
   availableBranchesFromState,
+  buildRadarJudgmentProbabilities,
   expectedBranchValue,
   getAvailabilityBranches,
   getAvailabilityStateBranches,
@@ -21,7 +23,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260807-burning-field-2x-v115";
+} from "./AiProbabilityBranches.js?build=20260807-burning-field-2x-v116";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -2609,7 +2611,7 @@ export class AiSimulator {
 
   /** 五种进入手牌的基础判定定义；战术与装备可聚合，基础牌必须各自成支。 */
   static get RADAR_BASIC_DEFINITIONS() {
-    return ["assault", "recover", "block", "charge", "shield"];
+    return RADAR_BASIC_DEFINITION_IDS;
   }
 
   /**
@@ -2621,87 +2623,12 @@ export class AiSimulator {
    */
   buildRadarOutcomePartition(state, defenseProbability, overrideProbabilities = null) {
     const defense = clampProbability(defenseProbability);
-    const remaining = state?.remainingCardCounts;
-    const weights = {};
-    let totalWeight = 0;
-    if (remaining && typeof remaining === "object" && !Array.isArray(remaining)) {
-      for (const [definitionId, count] of Object.entries(remaining)) {
-        const value = Number(count);
-        if (!Number.isFinite(value) || value <= 0) continue;
-        if (!CARD_DEFINITIONS[definitionId]) continue;
-        weights[definitionId] = (weights[definitionId] ?? 0) + value;
-        totalWeight += value;
-      }
-    } else {
-      for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
-        weights[definitionId] = definition.count;
-        totalWeight += definition.count;
-      }
-    }
-
-    const basicProbabilities = {};
-    for (const definitionId of AiSimulator.RADAR_BASIC_DEFINITIONS) {
-      basicProbabilities[definitionId] = totalWeight > PROBABILITY_EPSILON
-        ? (weights[definitionId] ?? 0) / totalWeight
-        : 0;
-    }
-    let tacticProbability = 0;
-    let equipmentProbability = 0;
-    for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
-      const weight = weights[definitionId] ?? 0;
-      if (weight <= 0) continue;
-      if (definition.category === "tactic") tacticProbability += weight / totalWeight;
-      else if (definition.category === "equipment") equipmentProbability += weight / totalWeight;
-    }
-
-    const override = overrideProbabilities && typeof overrideProbabilities === "object"
-      ? overrideProbabilities
-      : null;
-    if (override) {
-      const otherBasicDefinitions = ["assault", "recover", "charge", "shield"];
-      const overrideBlock = clampProbability(override.block ?? basicProbabilities.block);
-      const overrideEquipment = clampProbability(override.equipment ?? equipmentProbability);
-      const overrideOtherBasic = clampProbability(override.otherBasic ?? otherBasicDefinitions
-        .reduce((sum, definitionId) => sum + basicProbabilities[definitionId], 0));
-      const otherBasicWeights = otherBasicDefinitions
-        .reduce((sum, definitionId) => sum + (weights[definitionId] ?? 0), 0);
-      let otherBasicRatios;
-      if (otherBasicWeights > PROBABILITY_EPSILON) {
-        otherBasicRatios = Object.fromEntries(otherBasicDefinitions.map((definitionId) => [
-          definitionId, (weights[definitionId] ?? 0) / otherBasicWeights
-        ]));
-      } else {
-        const fixedTotal = otherBasicDefinitions
-          .reduce((sum, definitionId) => sum + CARD_DEFINITIONS[definitionId].count, 0);
-        otherBasicRatios = Object.fromEntries(otherBasicDefinitions.map((definitionId) => [
-          definitionId, fixedTotal > 0 ? CARD_DEFINITIONS[definitionId].count / fixedTotal : 0.25
-        ]));
-      }
-      basicProbabilities.block = overrideBlock;
-      for (const definitionId of otherBasicDefinitions) {
-        basicProbabilities[definitionId] = overrideOtherBasic * otherBasicRatios[definitionId];
-      }
-      equipmentProbability = overrideEquipment;
-      tacticProbability = Math.max(0, 1 - overrideBlock - overrideOtherBasic - overrideEquipment);
-    }
-
-    let judgmentTotal = tacticProbability + equipmentProbability;
-    for (const definitionId of AiSimulator.RADAR_BASIC_DEFINITIONS) {
-      judgmentTotal += basicProbabilities[definitionId];
-    }
-    if (judgmentTotal > PROBABILITY_EPSILON) {
-      tacticProbability /= judgmentTotal;
-      equipmentProbability /= judgmentTotal;
-      for (const definitionId of AiSimulator.RADAR_BASIC_DEFINITIONS) {
-        basicProbabilities[definitionId] /= judgmentTotal;
-      }
-    } else {
-      tacticProbability = 0;
-      equipmentProbability = 0;
-      for (const definitionId of AiSimulator.RADAR_BASIC_DEFINITIONS) {
-        basicProbabilities[definitionId] = 0;
-      }
-    }
+    const {
+      tactic: tacticProbability,
+      equipment: equipmentProbability,
+      basic: basicProbabilities,
+      hasJudgmentPool
+    } = buildRadarJudgmentProbabilities(state?.remainingCardCounts ?? null, overrideProbabilities);
 
     const key = this.nextProbabilityEventKey(state, "radar-outcome");
     const branches = [];
@@ -2715,7 +2642,6 @@ export class AiSimulator {
         immuneByRadar:false
       });
     }
-    const hasJudgmentPool = totalWeight > PROBABILITY_EPSILON || Boolean(override);
     if (defense > PROBABILITY_EPSILON) {
       const pushOutcome = (outcome, probability, responseAllowed, immuneByRadar) => {
         const chance = probability * defense;

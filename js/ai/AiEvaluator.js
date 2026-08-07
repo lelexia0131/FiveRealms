@@ -2,13 +2,14 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v115";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260807-burning-field-2x-v115";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260807-burning-field-2x-v115";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260807-burning-field-2x-v115";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v115";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-burning-field-2x-v115";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260807-burning-field-2x-v115";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v116";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260807-burning-field-2x-v116";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260807-burning-field-2x-v116";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260807-burning-field-2x-v116";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260807-burning-field-2x-v116";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v116";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-burning-field-2x-v116";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260807-burning-field-2x-v116";
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }
@@ -73,9 +74,17 @@ export class AiEvaluator {
     return exposure;
   }
 
+  /** 雷达动态免伤：当前攻击暴露 × 雷达存在概率 × 判定为战术牌的条件概率；只对 defenseDevice 的真实规则生效。 */
+  radarMitigationUtility(exposure, player, tacticJudgmentProbability) {
+    if (player?.equipmentDefinitionId !== "defenseDevice") return 0;
+    const retention = player.equipmentRetentionProbability ?? 1;
+    return exposure * retention * tacticJudgmentProbability;
+  }
+
   stateUtility(state, viewerId) {
     const viewer = state.players.find((player) => player.id === viewerId);
     if (!viewer) return -Infinity;
+    const radarTacticProbability = buildRadarJudgmentProbabilities(state?.remainingCardCounts ?? null).tactic;
     let score = 0;
     for (const player of state.players) {
       const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
@@ -110,10 +119,11 @@ export class AiEvaluator {
         return sum + (source?.battleTeam !== player.battleTeam ? Number(probability) || 0 : 0);
       }, 0);
       const exposure = this.incomingExposure(state, player);
+      const radarMitigation = this.radarMitigationUtility(exposure, player, radarTacticProbability);
       score += sign * (danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * 1.2
         + player.handCount * 1.1 + handRoleDelta + (player.exposeWeaknessStacks ?? 0) * 1.5
         + equipmentDelta * .25 + equipmentRoleDelta * .25
-        + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5 - exposure)
+        + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5 - exposure + radarMitigation)
       - lightningTeamBurden(state, player, viewer.battleTeam);
     }
     return score;
