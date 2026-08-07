@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260806-ai-allin-counter-v96";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260806-ai-allin-counter-v96";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260806-ai-allin-counter-v96";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260807-leverage-response-ui-v97";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260807-leverage-response-ui-v97";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260807-leverage-response-ui-v97";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260806-ai-allin-counter-v96";
-import { AnimationController } from "./animationController.js?build=20260806-ai-allin-counter-v96";
-import { InteractionController } from "./InteractionController.js?build=20260806-ai-allin-counter-v96";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260806-ai-allin-counter-v96";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260806-ai-allin-counter-v96";
-import { JudgmentView } from "./JudgmentView.js?build=20260806-ai-allin-counter-v96";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260806-ai-allin-counter-v96";
-import { createOpponentHandView } from "./handVisibility.js?build=20260806-ai-allin-counter-v96";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260806-ai-allin-counter-v96";
-import { SoundManager } from "../audio/SoundManager.js?build=20260806-ai-allin-counter-v96";
+} from "./templates.js?build=20260807-leverage-response-ui-v97";
+import { AnimationController } from "./animationController.js?build=20260807-leverage-response-ui-v97";
+import { InteractionController } from "./InteractionController.js?build=20260807-leverage-response-ui-v97";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260807-leverage-response-ui-v97";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260807-leverage-response-ui-v97";
+import { JudgmentView } from "./JudgmentView.js?build=20260807-leverage-response-ui-v97";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260807-leverage-response-ui-v97";
+import { createOpponentHandView } from "./handVisibility.js?build=20260807-leverage-response-ui-v97";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260807-leverage-response-ui-v97";
+import { SoundManager } from "../audio/SoundManager.js?build=20260807-leverage-response-ui-v97";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -465,22 +465,12 @@ export class UIManager {
     if (!state) return;
     const { request, label } = state;
     const presentation = request.presentation ?? {};
-    const requiresCardChoice = request.type === "leverageAssault";
-    const responder = this.game?.state?.players?.find((player) => player.id === request.targetPlayerId);
-    const legalCards = requiresCardChoice
-      ? (responder?.hand ?? []).filter((card) => request.legalCardIds.includes(card.id))
-      : [];
-    const selectedValid = !requiresCardChoice || (state.selectedCardIds.size === 1
-      && legalCards.some((card) => state.selectedCardIds.has(card.id)));
-    const canUse = canSubmitResponse(request) && selectedValid;
+    const canUse = canSubmitResponse(request);
     const eventText = presentation.eventText ?? "当前有一项行动等待你的响应。";
     const responseText = presentation.responseText ?? "你可以改变即将发生的结算。";
     const availabilityText = presentation.availabilityText ?? "";
-    const cardMarkup = requiresCardChoice
-      ? `<div class="hidden-card-grid leverage-response-cards">${legalCards.map((card) => handCardTemplate(card, { response:true, selected:state.selectedCardIds.has(card.id) })).join("")}</div>`
-      : "";
     const seconds = Math.max(0, Math.ceil((state.deadline - Date.now()) / 1000));
-    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${seconds}s</span></div><div class="response-copy"><p class="response-event">${renderResponseEvent(presentation, eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div>${cardMarkup}<div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">${escapeHtml(presentation.declineLabel ?? "放弃响应")}</button></div>`;
+    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${seconds}s</span></div><div class="response-copy"><p class="response-event">${renderResponseEvent(presentation, eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div><div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">${escapeHtml(presentation.declineLabel ?? "放弃响应")}</button></div>`;
   }
 
   toggleResponseCard(cardId) {

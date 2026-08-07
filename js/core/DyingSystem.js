@@ -1,4 +1,4 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-allin-counter-v96";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-leverage-response-ui-v97";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；

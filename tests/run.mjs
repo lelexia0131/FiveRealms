@@ -783,6 +783,33 @@ test("真人把自己设为借势第二目标并阵亡后不恢复继续出牌�
   const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk","ai"),ally=makePlayer("ally",2,"dawn","ai"),equipment=instance("energyDevice"),assault=instance("assault"),use=instance("leverage");actor.hp=1;actor.hand.push(use);first.hand.push(assault);first.equipment=equipment;const {game,ui}=makeGame([actor,first,ally]);const prompts=[];ui.setPrompt=(message)=>prompts.push(message);game.aiController.responsePolicy.shouldRespond=(_responder,type)=>type==="leverageAssault";
   await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id});assert.equal(actor.alive,false);assert.equal(game.pendingHumanPlayEnd,false);assert.ok(!prompts.some((message)=>message.includes("继续出牌")||message.includes("结束本次出牌阶段")));
 });
+test("借势人类多张突袭无需选牌也能使用且只消耗一张", async () => {
+  const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),assaultA=instance("assault"),assaultB=instance("assault"),use=instance("leverage");
+  actor.hand.push(use);first.hand.push(assaultA,assaultB);first.equipment=equipment;
+  const {game,ui}=makeGame([actor,first],{response:(request)=>request.type==="leverageAssault"});const hp=actor.hp;
+  assert.equal(await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id}),true);
+  assert.equal(first.equipment,equipment);assert.equal(first.turnFlags.attackUsed,1);assert.equal(actor.hp,hp-1);
+  assert.ok(!first.hand.includes(assaultA));assert.ok(first.hand.includes(assaultB));
+  assert.ok(game.state.deck.discardPile.includes(assaultA));assert.ok(!game.state.deck.discardPile.includes(assaultB));assert.ok(game.state.deck.discardPile.includes(use));
+});
+test("借势人类多张突袭拒绝时转移装备且不消耗突袭", async () => {
+  const actor=makePlayer("actor",0,"dawn","human"),first=makePlayer("first",1,"dusk","human"),equipment=instance("energyDevice"),assaultA=instance("assault"),assaultB=instance("assault"),use=instance("leverage");
+  actor.hand.push(use);first.hand.push(assaultA,assaultB);first.equipment=equipment;
+  const {game,ui}=makeGame([actor,first],{response:()=>false});
+  assert.equal(await game.playCard(actor,use,[],{firstTargetId:first.id,equipmentCardId:equipment.id,secondTargetId:actor.id}),true);
+  assert.equal(first.equipment,null);assert.ok(actor.hand.includes(equipment));
+  assert.ok(first.hand.includes(assaultA));assert.ok(first.hand.includes(assaultB));
+  assert.ok(game.state.deck.discardPile.includes(use));
+});
+test("借势响应窗口不再渲染卡牌列表且使用按钮无需选牌即可用", () => {
+  const panel={innerHTML:"",classList:{add(){},remove(){}},querySelector(){return null;}};
+  const fake={responseState:{request:{id:"leverage-ui",type:"leverageAssault",requiredCount:1,legalCardIds:["a1","a2"],timeoutMs:5000,presentation:{eventText:"事件",responseText:"响应说明",availabilityText:"需要 1 张突袭，当前 2 张。",buttonLabel:"使用突袭",declineLabel:"拒绝"}},deadline:Date.now()+5000,label:"使用突袭",selectedCardIds:new Set()},elements:{response_panel:panel},game:null,render(){}};
+  UIManager.prototype.renderResponseRequest.call(fake);
+  const html=panel.innerHTML;
+  assert.doesNotMatch(html,/leverage-response-cards/);assert.doesNotMatch(html,/data-response-card-id/);
+  assert.match(html,/使用突袭/);assert.match(html,/拒绝/);assert.match(html,/需要 1 张突袭，当前 2 张/);
+  assert.equal((html.match(/data-response-choice/g)??[]).length,2);assert.doesNotMatch(html,/disabled/);
+});
 test("群体牌会列出全部作用对象且结算模板显示目标标签", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dusk");const {game,ui}=makeGame([a,b,c]);const shockwave=instance("shockwave");a.hand.push(shockwave);await game.playCard(a,shockwave,[]);assert.equal(ui.currentCards[0].targetLabel,`${b.name}、${c.name}`);const markup=resolvingCardTemplate(shockwave,a.name,ui.currentCards[0].targetLabel);assert.match(markup,/作用对象/);assert.match(markup,new RegExp(`${b.name}、${c.name}`)); });
 test("上方 AI 思考提示出现时隐藏下方重复提示", () => { const classes=()=>{const values=new Set();return {values,toggle(name,force){if(force)values.add(name);else values.delete(name);}};};const thinkingClasses=classes(),promptClasses=classes();const fake={game:null,thinkingPlayerId:null,thinkingMessage:"",elements:{thinking_indicator:{classList:thinkingClasses,innerHTML:""},action_prompt:{classList:promptClasses}},render(){}};const player=makePlayer("ai",0,"dawn");UIManager.prototype.setThinking.call(fake,true,player,"准备使用突袭");assert.ok(promptClasses.values.has("is-hidden"));UIManager.prototype.setThinking.call(fake,false,player);assert.ok(!promptClasses.values.has("is-hidden")); });
 test("多层破势叠加并在下一次主动突袭一次性消耗", async () => { const a=makePlayer("a",0,"dawn"), b=makePlayer("b",1,"dusk"); b.hp=8;b.maxHp=8; const {game}=makeGame([a,b]); for(let i=0;i<2;i+=1){const c=instance("exposeWeakness");a.hand.push(c);await game.playCard(a,c,[]);} assert.equal(a.statuses.exposeWeakness.stacks,2); const attack=instance("assault");a.hand.push(attack);await game.playCard(a,attack,[b]);assert.equal(b.hp,5);assert.equal(a.statuses.exposeWeakness,undefined); });
@@ -7730,7 +7757,7 @@ test("控制器文件名：新模块可导入且仍导出 AIController", async (
 
 test("控制器文件名：Game 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/core/Game.js"), "utf8");
-  assert.ok(source.includes("../ai/AiController.js?build=20260806-ai-allin-counter-v96"));
+  assert.ok(source.includes("../ai/AiController.js?build=20260807-leverage-response-ui-v97"));
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 

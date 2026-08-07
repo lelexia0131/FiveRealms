@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260806-ai-allin-counter-v96";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260806-ai-allin-counter-v96";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260806-ai-allin-counter-v96";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260806-ai-allin-counter-v96";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260806-ai-allin-counter-v96";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260806-ai-allin-counter-v96";
-import { AiPlanner } from "./AiPlanner.js?build=20260806-ai-allin-counter-v96";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260807-leverage-response-ui-v97";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260807-leverage-response-ui-v97";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260807-leverage-response-ui-v97";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260807-leverage-response-ui-v97";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260807-leverage-response-ui-v97";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260807-leverage-response-ui-v97";
+import { AiPlanner } from "./AiPlanner.js?build=20260807-leverage-response-ui-v97";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

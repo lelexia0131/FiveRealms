@@ -2,7 +2,7 @@
  * AI 私有知识与未知牌概率。只减去自己手牌、公开区域和本人合法窥探记忆；
  * 不读取其他 AI 记忆、未来牌堆或敌方真实牌面。实体离手后由 Game 立即失效记忆。
  */
-import { CARD_COUNTS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260806-ai-allin-counter-v96";
+import { CARD_COUNTS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260807-leverage-response-ui-v97";
 
 /** 用公开牌、自己手牌和合法私有记忆估算未知牌概率。 */
 export class AiKnowledge {

@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260806-ai-allin-counter-v96";
-import { createId } from "../utils/helpers.js?build=20260806-ai-allin-counter-v96";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260806-ai-allin-counter-v96";
-import { RuleEngine } from "./RuleEngine.js?build=20260806-ai-allin-counter-v96";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-leverage-response-ui-v97";
+import { createId } from "../utils/helpers.js?build=20260807-leverage-response-ui-v97";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260807-leverage-response-ui-v97";
+import { RuleEngine } from "./RuleEngine.js?build=20260807-leverage-response-ui-v97";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -421,7 +421,7 @@ export class ResponseSystem {
     this.game.state.pendingResponses.push(request);
     const decision = await this.waitForDecision(responder, request, presentation.buttonLabel, { ...context, target }, availableCards);
     const selectedId = responder.controllerType === "human"
-      ? (decision.cardId ?? (availableCards.length === 1 ? availableCards[0].id : null))
+      ? (decision.cardId ?? availableCards[0]?.id)
       : availableCards[0]?.id;
     const selectedCard = availableCards.find((entry) => entry.id === selectedId) ?? null;
     const valid = this.activeRequestIds.has(request.id)

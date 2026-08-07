@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260806-ai-allin-counter-v96";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260806-ai-allin-counter-v96";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260807-leverage-response-ui-v97";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-leverage-response-ui-v97";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
