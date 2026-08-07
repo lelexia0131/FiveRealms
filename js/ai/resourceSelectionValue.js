@@ -12,8 +12,8 @@
  * 本模块不读取游戏状态、不修改传入对象、不调用随机数、不生成真实卡牌实体、
  * 不读取未知牌定义，也不包含角色差值副本。
  */
-import { getRoleCardAiValue } from "./roleCardValue.js?build=20260807-resolving-targets-harvest-v108";
-import { UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260807-resolving-targets-harvest-v108";
+import { getRoleCardAiValue } from "./roleCardValue.js?build=20260807-lightning-propagation-value-v109";
+import { UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260807-lightning-propagation-value-v109";
 
 /**
  * 某张已知定义在破坏/掠夺中的价值。

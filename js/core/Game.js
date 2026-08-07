@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-resolving-targets-harvest-v108";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-resolving-targets-harvest-v108";
-import { createId, clamp } from "../utils/helpers.js?build=20260807-resolving-targets-harvest-v108";
-import { EventBus } from "./EventBus.js?build=20260807-resolving-targets-harvest-v108";
-import { Player } from "./Player.js?build=20260807-resolving-targets-harvest-v108";
-import { Deck } from "./Deck.js?build=20260807-resolving-targets-harvest-v108";
-import { TeamManager } from "./TeamManager.js?build=20260807-resolving-targets-harvest-v108";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260807-resolving-targets-harvest-v108";
-import { RuleEngine } from "./RuleEngine.js?build=20260807-resolving-targets-harvest-v108";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260807-resolving-targets-harvest-v108";
-import { GameLogger } from "./GameLogger.js?build=20260807-resolving-targets-harvest-v108";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260807-resolving-targets-harvest-v108";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-resolving-targets-harvest-v108";
-import { AIController } from "../ai/AiController.js?build=20260807-resolving-targets-harvest-v108";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260807-resolving-targets-harvest-v108";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260807-resolving-targets-harvest-v108";
-import { Debug } from "../utils/debug.js?build=20260807-resolving-targets-harvest-v108";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260807-resolving-targets-harvest-v108";
-import { DyingSystem } from "./DyingSystem.js?build=20260807-resolving-targets-harvest-v108";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260807-resolving-targets-harvest-v108";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260807-resolving-targets-harvest-v108";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260807-resolving-targets-harvest-v108";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260807-resolving-targets-harvest-v108";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-propagation-value-v109";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-propagation-value-v109";
+import { createId, clamp } from "../utils/helpers.js?build=20260807-lightning-propagation-value-v109";
+import { EventBus } from "./EventBus.js?build=20260807-lightning-propagation-value-v109";
+import { Player } from "./Player.js?build=20260807-lightning-propagation-value-v109";
+import { Deck } from "./Deck.js?build=20260807-lightning-propagation-value-v109";
+import { TeamManager } from "./TeamManager.js?build=20260807-lightning-propagation-value-v109";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260807-lightning-propagation-value-v109";
+import { RuleEngine } from "./RuleEngine.js?build=20260807-lightning-propagation-value-v109";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260807-lightning-propagation-value-v109";
+import { GameLogger } from "./GameLogger.js?build=20260807-lightning-propagation-value-v109";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260807-lightning-propagation-value-v109";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260807-lightning-propagation-value-v109";
+import { AIController } from "../ai/AiController.js?build=20260807-lightning-propagation-value-v109";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260807-lightning-propagation-value-v109";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260807-lightning-propagation-value-v109";
+import { Debug } from "../utils/debug.js?build=20260807-lightning-propagation-value-v109";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260807-lightning-propagation-value-v109";
+import { DyingSystem } from "./DyingSystem.js?build=20260807-lightning-propagation-value-v109";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260807-lightning-propagation-value-v109";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260807-lightning-propagation-value-v109";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260807-lightning-propagation-value-v109";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260807-lightning-propagation-value-v109";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {

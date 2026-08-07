@@ -1,13 +1,13 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-resolving-targets-harvest-v108";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260807-resolving-targets-harvest-v108";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260807-resolving-targets-harvest-v108";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-resolving-targets-harvest-v108";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-propagation-value-v109";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260807-lightning-propagation-value-v109";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260807-lightning-propagation-value-v109";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-lightning-propagation-value-v109";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260807-resolving-targets-harvest-v108";
+} from "./lightningScoring.js?build=20260807-lightning-propagation-value-v109";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

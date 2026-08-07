@@ -34,7 +34,7 @@ import { chooseBestResourceHandCandidate, chooseResourceZone, getResourceDefinit
 import { AiKnowledge } from "../js/ai/AiKnowledge.js";
 import { AiCardSelector } from "../js/ai/AiCardSelector.js";
 import { joinProbabilityStateBranches } from "../js/ai/AiProbabilityBranches.js";
-import { equipmentJudgmentProbability, lightningPresenceProbability, lightningTeamBurden, lightningUseValue, nextLightningReceiver } from "../js/ai/lightningScoring.js";
+import { buildLightningPropagationChain, equipmentJudgmentProbability, lightningPresenceProbability, lightningTeamBurden, lightningTransferredBurden, lightningUseValue, nextLightningReceiver } from "../js/ai/lightningScoring.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 const tests = [];
@@ -1208,7 +1208,12 @@ test("互利公共牌揭示触发重洗后两个弃牌堆入口读取同一数�
 });
 test("共生按全体存活角色结算治疗", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk"),c=makePlayer("c",2,"dawn");[a,b,c].forEach((p)=>p.hp-=1);const {game}=makeGame([a,b,c]);a.hand.push(instance("symbiosis"));await game.playCard(a,a.hand[0],[]);[a,b,c].forEach((p)=>assert.equal(p.hp,p.maxHp)); });
 test("反制者包含盟友并按施牌者后的座位顺序", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dawn","human"),c=makePlayer("c",2,"dusk","human");const order=[];const {game}=makeGame([a,b,c],{response:(request)=>(order.push(request.targetPlayerId),request.legalCardIds.length>=request.requiredCount)});a.hand.push(instance("harvest"));b.hand.push(instance("counter"));await game.playCard(a,a.hand[0],[]);assert.deepEqual(order,[b.id,c.id]); });
-test("反制本身可被反制且仍保持响应牌接口", () => { assert.equal(CARD_DEFINITIONS.counter.counterable,true);assert.equal(CARD_DEFINITIONS.counter.usageMode,"response");assert.match(CARD_DEFINITIONS.counter.description,/也可以被其他反制响应/); });
+test("反制本身可被反制且仍保持响应牌接口", () => {
+  assert.equal(CARD_DEFINITIONS.counter.category,"tactic");
+  assert.equal(CARD_DEFINITIONS.counter.usageMode,"response");
+  assert.ok(CARD_DEFINITIONS.counter.responseTypes.includes("counter"));
+  assert.equal(CARD_DEFINITIONS.counter.counterable,true);
+});
 test("震荡的反制只取消当前目标所受效果而不取消整张群伤牌", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.targetPlayerId===b.id});const shockwave=instance("shockwave"),counter=instance("counter"),bHp=b.hp,cHp=c.hp;a.hand.push(shockwave);b.hand.push(counter);await game.playCard(a,shockwave,[b,c]);assert.equal(b.hp,bHp);assert.equal(c.hp,cHp-1);assert.equal(b.hand.includes(counter),false);assert.ok(ui.responseRequests.some((request)=>request.type==="counter"&&request.targetPlayerId===b.id&&request.presentation.responseText.includes("仅取消")&&request.presentation.responseText.includes("其他目标")));assert.ok(ui.logs.some((message)=>message===`${b.name}对${a.name}的「震荡」使用了「反制」，取消了「震荡」对${b.name}的效果。`)); });
 test("挑衅的反制只取消当前目标效果且不能保护队友", async () => { const a=makePlayer("a",0,"dawn"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dusk","human");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.targetPlayerId===b.id});const provoke=instance("provoke"),counter=instance("counter"),bHp=b.hp,cHp=c.hp;a.hand.push(provoke);b.hand.push(counter);await game.playCard(a,provoke,[b,c]);assert.equal(b.hp,bHp);assert.equal(c.hp,cHp-1);assert.equal(b.hand.includes(counter),false);assert.ok(ui.responseRequests.some((request)=>request.type==="counter"&&request.targetPlayerId===b.id&&request.presentation.responseText.includes("仅取消")&&request.presentation.responseText.includes("其他目标")));assert.ok(ui.logs.some((message)=>message===`${b.name}对${a.name}的「挑衅」使用了「反制」，取消了「挑衅」对${b.name}的效果。`)); });
 test("针对震荡目标的反制仍可被后续反制，之后该目标继续承受效果", async () => { const a=makePlayer("a",0,"dawn","human"),b=makePlayer("b",1,"dusk","human"),c=makePlayer("c",2,"dawn");const {game,ui}=makeGame([a,b,c],{response:(request)=>request.type==="counter"&&request.legalCardIds.length>=request.requiredCount});const shockwave=instance("shockwave"),first=instance("counter"),second=instance("counter"),hp=b.hp;a.hand.push(shockwave,second);b.hand.push(first);await game.playCard(a,shockwave,[b]);assert.equal(b.hp,hp-1);assert.equal(b.hand.includes(first),false);assert.equal(a.hand.includes(second),false);assert.ok(ui.logs.some((message)=>message===`${b.name}对${a.name}的「震荡」使用了「反制」，取消了「震荡」对${b.name}的效果。`));assert.ok(ui.logs.some((message)=>message===`${a.name}对${b.name}的「反制」使用了「反制」，取消了「反制」的效果。`));assert.ok(!ui.logs.some((message)=>message.includes("被后续反制抵消"))); });
@@ -2762,12 +2767,15 @@ test("25 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
   }
 });
 test("牌面长描述分类确定且真人与已知对手模板共用同一函数", () => {
-  for(const definitionId of ["counter","defenseDevice","transfer","mutualBenefit","battleDevice","shield","provoke"]){
+  for(const definitionId of ["defenseDevice","transfer","mutualBenefit","battleDevice"]){
     const card=instance(definitionId),descriptionClass=cardDescriptionClass(card.description);
     assert.match(descriptionClass,/^is-description-(?:long|very-long)$/);assert.match(handCardTemplate(card),new RegExp(descriptionClass));assert.match(opponentHandStripTemplate([{known:true,...card}]),new RegExp(descriptionClass));
   }
-  assert.equal(cardDescriptionClass(CARD_DEFINITIONS.harvest.description),"");assert.doesNotMatch(handCardTemplate(instance("harvest")),/is-description-very-long/);
-  assert.equal(cardDescriptionClass(CARD_DEFINITIONS.radar?.description??CARD_DEFINITIONS.defenseDevice.description),"is-description-very-long");
+  for(const definitionId of ["harvest","counter","shield","provoke"]){
+    const card=instance(definitionId);
+    assert.equal(cardDescriptionClass(card.description),"");assert.doesNotMatch(handCardTemplate(card),/is-description-(?:long|very-long)/);assert.doesNotMatch(opponentHandStripTemplate([{known:true,...card}]),/is-description-(?:long|very-long)/);
+  }
+  assert.equal(cardDescriptionClass(CARD_DEFINITIONS.transfer.description),"is-description-very-long");
 });
 test("牌面 CSS 将长描述标记限制在文字区且不再影响外层插画网格", async () => {
   const cards=await readFile(projectFile("css/cards.css"),"utf8"),characters=await readFile(projectFile("css/characters.css"),"utf8"),css=`${cards}\n${characters}`;
@@ -3033,9 +3041,9 @@ test("护盾和反制等长描述牌与普通牌保持相同插画高度", async
   assert.doesNotMatch(`${cards}\n${characters}`,/\.\w*-?card(?:-slot)?\.is-description-(?:very-)?long\s*\{[^}]*grid-template-rows/s);
 });
 
-test("反制护盾和军火库的长描述标记只进入文字区并由末尾规则锁定插画高度", async () => {
+test("长描述牌的长描述标记只进入文字区并由末尾规则锁定插画高度", async () => {
   const cards=await readFile(projectFile("css/cards.css"),"utf8");
-  for(const definitionId of ["counter","shield","battleDevice"]){
+  for(const definitionId of ["battleDevice","defenseDevice","mutualBenefit","transfer"]){
     const markup=handCardTemplate(instance(definitionId));
     assert.doesNotMatch(markup,/^<button class="[^"]*is-description-(?:very-)?long/);
     assert.match(markup,/class="card-rules is-description-(?:very-)?long"/);
@@ -8558,6 +8566,156 @@ test("闪电：lightningTeamBurden 按 presence 线性加权", () => {
   assertClose(lightningTeamBurden(absent.state, absent.holder, "dawn"), 0);
   const partial = makeState("partial");
   assertClose(lightningTeamBurden(partial.state, partial.holder, "dawn"), fullBurden * 0.6);
+});
+test("闪电：有限传播链两人一跳完全兼容", () => {
+  const make = (players) => ({ remainingCardCounts:{ defenseDevice:1, assault:1 }, players });
+  const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
+  const enemy = { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+  assert.deepEqual(buildLightningPropagationChain([holder, enemy], holder).map((player) => player.id), ["a","b"]);
+  assertClose(lightningTeamBurden(make([holder, enemy]), holder, "dawn"), 1.125);
+  const actor = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+  assertClose(lightningUseValue(actor, make([actor, enemy])), 2.875);
+});
+test("闪电：有限传播链单人无其他接收者自转移兼容", () => {
+  const make = (players) => ({ remainingCardCounts:{ defenseDevice:1, assault:1 }, players });
+  const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:["lightning"] };
+  assert.deepEqual(buildLightningPropagationChain([holder], holder).map((player) => player.id), ["a","a"]);
+  assertClose(lightningTeamBurden(make([holder]), holder, "dawn"), 1.875);
+  const actor = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+  assertClose(lightningUseValue(actor, make([actor])), 2.125);
+});
+test("闪电：有限传播链敌多友少自然产生更高使用价值", () => {
+  const make = (teams, holderHasLightning) => {
+    const players = teams.map((team, index) => ({ id:`p${index}`, seatIndex:index, battleTeam:team, alive:true, hp:4, maxHp:4, shield:0, statuses:[] }));
+    if (holderHasLightning) players[0].statuses = ["lightning"];
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
+  };
+  const enemyHeavyBurden = make(["dawn","dusk","dusk","dusk"], true);
+  const allyHeavyBurden = make(["dawn","dawn","dawn","dusk"], true);
+  assertClose(lightningTeamBurden(enemyHeavyBurden.state, enemyHeavyBurden.actor, "dawn"), 1.0078125);
+  assertClose(lightningTeamBurden(allyHeavyBurden.state, allyHeavyBurden.actor, "dawn"), 1.9453125);
+  const enemyHeavyUse = make(["dawn","dusk","dusk","dusk"], false);
+  const allyHeavyUse = make(["dawn","dawn","dawn","dusk"], false);
+  const enemyUseValue = lightningUseValue(enemyHeavyUse.actor, enemyHeavyUse.state);
+  const allyUseValue = lightningUseValue(allyHeavyUse.actor, allyHeavyUse.state);
+  assertClose(enemyUseValue, 2.9921875);
+  assertClose(allyUseValue, 2.0546875);
+  assert.ok(enemyUseValue > allyUseValue);
+});
+test("闪电：有限传播链相同人数近端敌人更有价值", () => {
+  const make = (teams) => {
+    const players = teams.map((team, index) => ({ id:`p${index}`, seatIndex:index, battleTeam:team, alive:true, hp:4, maxHp:4, shield:0, statuses:[] }));
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
+  };
+  const enemyFront = make(["dawn","dusk","dusk","dawn"]);
+  const allyFront = make(["dawn","dawn","dusk","dusk"]);
+  const enemyFrontValue = lightningUseValue(enemyFront.actor, enemyFront.state);
+  const allyFrontValue = lightningUseValue(allyFront.actor, allyFront.state);
+  assertClose(enemyFrontValue, 2.9453125);
+  assertClose(allyFrontValue, 2.2421875);
+  assert.ok(enemyFrontValue > allyFrontValue);
+});
+test("闪电：有限传播链 actor 低血仍压过人数优势", () => {
+  const make = (hp) => {
+    const players = [
+      { id:"p0", seatIndex:0, battleTeam:"dawn", alive:true, hp, maxHp:4, shield:0, statuses:[] },
+      { id:"p1", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
+      { id:"p2", seatIndex:2, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
+      { id:"p3", seatIndex:3, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] }
+    ];
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
+  };
+  const lowValue = lightningUseValue(make(1).actor, make(1).state);
+  const highValue = lightningUseValue(make(4).actor, make(4).state);
+  assertClose(lowValue, -9.5078125);
+  assertClose(highValue, 2.9921875);
+  assert.ok(lowValue < highValue);
+});
+test("闪电：有限传播链未来低血目标按阵营单调", () => {
+  const make = (teams) => {
+    const players = teams.map((team, index) => ({ id:`p${index}`, seatIndex:index, battleTeam:team, alive:true, hp:4, maxHp:4, shield:0, statuses:[] }));
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, actor:players[0] };
+  };
+  const enemyHigh = make(["dawn","dusk","dawn","dawn"]);
+  const enemyLow = make(["dawn","dusk","dawn","dawn"]);
+  enemyLow.state.players[1].hp = 1;
+  const enemyHighValue = lightningUseValue(enemyHigh.actor, enemyHigh.state);
+  const enemyLowValue = lightningUseValue(enemyLow.actor, enemyLow.state);
+  assertClose(enemyHighValue, 2.7578125);
+  assertClose(enemyLowValue, 2.8828125);
+  assert.ok(enemyLowValue > enemyHighValue);
+  const allyHigh = make(["dawn","dawn","dusk","dusk"]);
+  const allyLow = make(["dawn","dawn","dusk","dusk"]);
+  allyLow.state.players[1].hp = 1;
+  const allyHighValue = lightningUseValue(allyHigh.actor, allyHigh.state);
+  const allyLowValue = lightningUseValue(allyLow.actor, allyLow.state);
+  assertClose(allyHighValue, 2.2421875);
+  assertClose(allyLowValue, 2.1171875);
+  assert.ok(allyLowValue < allyHighValue);
+});
+test("闪电：有限传播链跳过已持独立闪电的玩家", () => {
+  const players = [
+    { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, statuses:[] },
+    { id:"c", seatIndex:2, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"d", seatIndex:3, battleTeam:"dusk", alive:true, statuses:[] }
+  ];
+  assert.deepEqual(buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a","b","d"]);
+});
+test("闪电：初始持有者自身闪电状态不影响其作为传播链起点", () => {
+  const players = [
+    { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, statuses:[] }
+  ];
+  assert.deepEqual(buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a","b"]);
+});
+test("闪电：无其他合法接收者时传播链自转移", () => {
+  const players = [
+    { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"b", seatIndex:1, battleTeam:"dusk", alive:false, statuses:[] },
+    { id:"c", seatIndex:2, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"d", seatIndex:3, battleTeam:"dusk", alive:false, statuses:[] }
+  ];
+  assert.deepEqual(buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a","a"]);
+});
+test("闪电：概率闪电状态对有限传播链保持线性缩放", () => {
+  const make = (presence) => {
+    const holder = { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+    const players = [
+      holder,
+      { id:"b", seatIndex:1, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
+      { id:"c", seatIndex:2, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] },
+      { id:"d", seatIndex:3, battleTeam:"dusk", alive:true, hp:4, maxHp:4, shield:0, statuses:[] }
+    ];
+    if (presence === 1) holder.statuses = ["lightning"];
+    if (presence === 0.6) {
+      holder.lightningStatusStateBranches = [
+        { probability:0.6, conditions:{}, present:true },
+        { probability:0.4, conditions:{}, present:false }
+      ];
+      holder.lightningStatusProbability = 0.6;
+    }
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players }, holder };
+  };
+  const full = lightningTeamBurden(make(1).state, make(1).holder, "dawn");
+  assertClose(full, 1.0078125);
+  assertClose(lightningTeamBurden(make(0).state, make(0).holder, "dawn"), 0);
+  assertClose(lightningTeamBurden(make(0.6).state, make(0.6).holder, "dawn"), full * 0.6);
+});
+test("闪电：lightningTransferredBurden 升级为从 receiver 开始的有限传播链", () => {
+  const make = (receiverTeam, nextTeam) => {
+    const receiver = { id:"r", seatIndex:0, battleTeam:receiverTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+    const next = { id:"n", seatIndex:1, battleTeam:nextTeam, alive:true, hp:4, maxHp:4, shield:0, statuses:[] };
+    return { state:{ remainingCardCounts:{ defenseDevice:1, assault:1 }, players:[receiver, next] }, receiver };
+  };
+  // k=0：D × p × risk(receiver) = 0.5 × 0.5 × 3 = 0.75（己方）
+  // k=1：D × p × (1-p) × D × risk(next) = 0.5 × 0.5 × 0.5 × 0.5 × 3 = 0.1875（敌方）
+  const enemyNext = make("dawn", "dusk");
+  assertClose(lightningTransferredBurden(enemyNext.state, enemyNext.receiver, "dawn"), 0.5625);
+  const allyReceiver = make("dusk", "dawn");
+  assertClose(lightningTransferredBurden(allyReceiver.state, allyReceiver.receiver, "dawn"), -0.5625);
+  const sameTeam = make("dawn", "dawn");
+  assertClose(lightningTransferredBurden(sameTeam.state, sameTeam.receiver, "dawn"), 0.9375);
 });
 let passed = 0;
 const testPattern = process.env.TEST_PATTERN ? new RegExp(process.env.TEST_PATTERN, "u") : null;

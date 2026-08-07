@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-resolving-targets-harvest-v108";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-propagation-value-v109";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-resolving-targets-harvest-v108";
-import { createId } from "../utils/helpers.js?build=20260807-resolving-targets-harvest-v108";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260807-resolving-targets-harvest-v108";
-import { RuleEngine } from "./RuleEngine.js?build=20260807-resolving-targets-harvest-v108";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-lightning-propagation-value-v109";
+import { createId } from "../utils/helpers.js?build=20260807-lightning-propagation-value-v109";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260807-lightning-propagation-value-v109";
+import { RuleEngine } from "./RuleEngine.js?build=20260807-lightning-propagation-value-v109";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
