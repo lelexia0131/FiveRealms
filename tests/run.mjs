@@ -31,7 +31,7 @@ import {
   privateCardTemplate,
   resolvingCardTemplate,
   skillDetailsTemplate
-}from "../js/ui/templates.js";
+} from "../js/ui/templates.js";
 import { InteractionController, hiddenSelectionMarkup } from "../js/ui/InteractionController.js";
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
 import {
@@ -39,14 +39,14 @@ import {
   CARD_DEFINITION_DISPLAY_ORDER,
   createHiddenSelectionView,
   createOpponentHandView
-}from "../js/ui/handVisibility.js";
+} from "../js/ui/handVisibility.js";
 import { PublicPoolView } from "../js/ui/PublicPoolView.js";
 import { isCardSelectionValid, toggleCardSelection } from "../js/ui/selectionUtils.js";
 import { buildResponsePresentation } from "../js/core/ResponseSystem.js";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import {
   ACTIVE_SKILLS, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
-}from "../js/generals/skillRegistry.js";
+} from "../js/generals/skillRegistry.js";
 import {
   UNKNOWN_HAND_EXPECTED_VALUE,
   buildTransferCandidates,
@@ -56,16 +56,16 @@ import {
   expectedHandValue,
   scoreTransferCombination,
   threatView
-}from "../js/ai/transferScoring.js";
+} from "../js/ai/transferScoring.js";
 import {
   ROLE_CARD_VALUE_DELTAS, getBaseCardAiValue, getRoleCardAiValue, validateRoleCardValueDeltas
-}from "../js/ai/roleCardValue.js";
+} from "../js/ai/roleCardValue.js";
 import {
   chooseBestResourceHandCandidate,
   chooseResourceZone,
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-}from "../js/ai/resourceSelectionValue.js";
+} from "../js/ai/resourceSelectionValue.js";
 import { AiKnowledge } from "../js/ai/AiKnowledge.js";
 import { AiCardSelector } from "../js/ai/AiCardSelector.js";
 import { joinProbabilityStateBranches } from "../js/ai/AiProbabilityBranches.js";
@@ -77,7 +77,7 @@ import {
   lightningTransferredBurden,
   lightningUseValue,
   nextLightningReceiver
-}from "../js/ai/lightningScoring.js";
+} from "../js/ai/lightningScoring.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 // Test Runner 与公共 Helpers
@@ -99,14 +99,14 @@ async function listJavaScriptFiles(directory = projectFile("js")) {
     const path = `${directory}/${entry.name}`;
     return entry.isDirectory() ? listJavaScriptFiles(
       path
-    ): (entry.isFile() && entry.name.endsWith(".js") ? [path]: []);
+    ) : (entry.isFile() && entry.name.endsWith(".js") ? [path] : []);
   }));
   return nested.flat();
 }
 
 let serial = 0;
 
-const instance = (definitionId) =>(
+const instance = (definitionId) => (
   { ...CARD_DEFINITIONS[definitionId], id: `test-card-${definitionId}-${++serial}` }
 );
 
@@ -124,43 +124,43 @@ function makeUi(response = () => false) {
     thinking: [],
     currentCards: [],
     playEndState: null,
-    render() {},
+    render() { },
     appendLog(entry) { this.logs.push(entry.message); },
     waitForHumanPlayEnd(
       gameId
-    ){ return new Promise((resolve) => { this.playEndState = { gameId, resolve }; }); },
+    ) { return new Promise((resolve) => { this.playEndState = { gameId, resolve }; }); },
     resolveHumanPlayEnd(
       gameId
-    ){ if (!this.playEndState || this.playEndState.gameId !== gameId) return; const resolve = this.playEndState.resolve; this.playEndState = null; resolve(true); },
+    ) { if (!this.playEndState || this.playEndState.gameId !== gameId) return; const resolve = this.playEndState.resolve; this.playEndState = null; resolve(true); },
     cancelPendingInteractions() {
       if (
         this.playEndState
-      ){ const resolve = this.playEndState.resolve; this.playEndState = null; resolve(false); }
+      ) { const resolve = this.playEndState.resolve; this.playEndState = null; resolve(false); }
     },
     async requestResponse(request) { this.responseRequests.push(request); return response(request); },
     async requestDiscard(player, count) { return player.hand.slice(0, count); },
     async requestTarget(players) { return players[0] ?? null; },
     async requestPublicCard(
       _player, cards
-    ){ this.publicRequests.push(cards.map((card) => card.id)); return cards[0] ?? null; },
+    ) { this.publicRequests.push(cards.map((card) => card.id)); return cards[0] ?? null; },
     async requestHiddenCards(
       selection, count, prompt, options = {}
-    ){ this.hiddenRequests.push({ selection, count, prompt, options }); return selection.tokens.slice(0, count).map((entry) => entry.token); },
+    ) { this.hiddenRequests.push({ selection, count, prompt, options }); return selection.tokens.slice(0, count).map((entry) => entry.token); },
     async showPrivateReveal(title, cards = []) { this.reveals.push({ title, cards: [...cards] }); },
     setCurrentCard(
       cardOrName, source, targetLabel = "", displayTargets = null
-    ){ this.currentCards.push({ cardOrName, source, targetLabel, displayTargets }); },
-    setPrompt() {},
+    ) { this.currentCards.push({ cardOrName, source, targetLabel, displayTargets }); },
+    setPrompt() { },
     setThinking(...args) { this.thinking.push(args); },
-    showGameOver() {},
-    queueFeedback() {},
-    showDying() {},
-    hideDying() {},
-    showPublicPool() {},
-    hidePublicPool() {},
-    showJudgment() {},
-    showDuel() {},
-    hideDuel() {}
+    showGameOver() { },
+    queueFeedback() { },
+    showDying() { },
+    hideDying() { },
+    showPublicPool() { },
+    hidePublicPool() { },
+    showJudgment() { },
+    showDuel() { },
+    hideDuel() { }
   };
 }
 
@@ -209,17 +209,17 @@ function makeOwnedUi() {
     createGameSession: UIManager.prototype.createGameSession,
     render(
       game
-    ){ if (!this.isGameAttached(game)) return false; this.renders.push(game.state.gameId); return true; },
+    ) { if (!this.isGameAttached(game)) return false; this.renders.push(game.state.gameId); return true; },
     appendLog(entry) { this.logs.push(entry.message); },
     setPrompt(message) { this.mutations.push(["prompt", message]); },
     setThinking(value) { this.mutations.push(["thinking", value]); },
     setCurrentCard(card) { this.mutations.push(["card", card?.id ?? card]); },
-    queueFeedback() {},
-    setFastMode() {},
-    resolveHumanPlayEnd() {},
+    queueFeedback() { },
+    setFastMode() { },
+    resolveHumanPlayEnd() { },
     requestResponse(
       request
-    ){ return new Promise((resolve) => { this.responseState = { request, resolve }; this.onResponse?.(request); }); },
+    ) { return new Promise((resolve) => { this.responseState = { request, resolve }; this.onResponse?.(request); }); },
     requestTarget() {
       return new Promise((resolve) => { this.targetState = { resolve }; this.onTarget?.(); });
     },
@@ -230,20 +230,20 @@ function makeOwnedUi() {
       return new Promise((resolve) => { this.publicState = { resolve }; this.onPublic?.(); });
     },
     waitForHumanPlayEnd() { return Promise.resolve(true); },
-    showPrivateReveal() {},
-    showPublicPool() {},
-    hidePublicPool() {},
-    showJudgment() {},
-    hideJudgment() {},
-    showDying() {},
-    hideDying() {},
-    showDuel() {},
-    hideDuel() {},
-    showGameOver() {},
+    showPrivateReveal() { },
+    showPublicPool() { },
+    hidePublicPool() { },
+    showJudgment() { },
+    hideJudgment() { },
+    showDying() { },
+    hideDying() { },
+    showDuel() { },
+    hideDuel() { },
+    showGameOver() { },
     cancelPendingInteractions() {
       if (
         this.responseState
-      ){ const { resolve } = this.responseState; this.responseState = null; resolve({ status: "cancelled" }); } if (this.targetState) { const { resolve } = this.targetState; this.targetState = null; resolve(null); } if (this.discardState) { const { resolve } = this.discardState; this.discardState = null; resolve([]); } if (this.publicState) { const { resolve } = this.publicState; this.publicState = null; resolve(null); }
+      ) { const { resolve } = this.responseState; this.responseState = null; resolve({ status: "cancelled" }); } if (this.targetState) { const { resolve } = this.targetState; this.targetState = null; resolve(null); } if (this.discardState) { const { resolve } = this.discardState; this.discardState = null; resolve([]); } if (this.publicState) { const { resolve } = this.publicState; this.publicState = null; resolve(null); }
     }
   };
 }
@@ -292,21 +292,21 @@ function makeInteractiveElement() {
 }
 
 function clickTarget(selector, dataset = {}) {
-  return { dataset, closest: (query) => query === selector ? { dataset }: null };
+  return { dataset, closest: (query) => query === selector ? { dataset } : null };
 }
 
 async function choosePrivateCardThroughInteraction(game, actor, card, target, { handIndexes = [0], equipment = false } = {}) {
   const ui = {
     game,
     elements: { response_panel: makeInteractiveElement() },
-    render() {},
+    render() { },
     async requestTarget(players) { return players[0] ?? null; }
   };
   const controller = new InteractionController(ui);
   controller.requestHiddenCards = async (selection, _count, _prompt, options = {}) => {
     if (
       equipment
-    )return [options.slots.find((slot) => slot.zone === "equipment")?.token].filter(Boolean);
+    ) return [options.slots.find((slot) => slot.zone === "equipment")?.token].filter(Boolean);
     return handIndexes.map((index) => selection.tokens[index]?.token).filter(Boolean);
   };
   return controller.requestCardFlow(game, actor, card, [target]);
@@ -362,7 +362,7 @@ for (const definition of Object.values(CARD_DEFINITIONS)) test(`卡牌资源：$
       "frameStyle",
       "flavorText"
     ]
-  )assert.ok(definition[field] !== undefined, `${definition.definitionId}.${field}`);
+  ) assert.ok(definition[field] !== undefined, `${definition.definitionId}.${field}`);
   assert.ok(Array.isArray(definition.subtypes));
   assert.ok(Array.isArray(definition.responseTypes));
   assert.ok(Array.isArray(definition.selectionFlow));
@@ -485,7 +485,7 @@ test("角色规则：壁垒配置、README与实际目标规则保持一致", as
     enemy = makePlayer("enemy", 3, "dusk");
   deadAlly.alive = false;
   const { game }
-  = makeGame([source, ally, deadAlly, enemy]);
+    = makeGame([source, ally, deadAlly, enemy]);
   assert.deepEqual(
     RuleEngine.getSkillTargets(game, source, ACTIVE_SKILLS.barrier).map((player) => player.id),
     [ally.id]
@@ -511,7 +511,7 @@ test("角色规则：八名角色规则配置与README角色介绍一致", async
       "fate-gambler": [4, 1, 1],
       "resonance-tuner": [4, 2, 2]
     };
-  for (const[id, values] of Object.entries(expected)) {
+  for (const [id, values] of Object.entries(expected)) {
     const general = byId[id], skill = ACTIVE_SKILLS[general.activeSkillIds[0]];
     assert.deepEqual([general.maxHp, general.activeCost, general.activeLimitPerTurn], values, id);
     assert.deepEqual([skill.cost, skill.limitPerTurn], values.slice(1), `${id}实际技能`);
@@ -575,7 +575,7 @@ test("音频：BGM 无保存音量时使用默认值且明确保存零时保持�
   const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   try {
     Object.defineProperty(
-      globalThis, "localStorage", { configurable: true, value: { getItem: () => null, setItem() {} } }
+      globalThis, "localStorage", { configurable: true, value: { getItem: () => null, setItem() { } } }
     );
     assert.equal(new SoundManager().musicVolume, 0.75);
     globalThis.localStorage.getItem = () => "0";
@@ -583,7 +583,7 @@ test("音频：BGM 无保存音量时使用默认值且明确保存零时保持�
   } finally {
     if (
       previous
-    )Object.defineProperty(globalThis, "localStorage", previous); else delete globalThis.localStorage;
+    ) Object.defineProperty(globalThis, "localStorage", previous); else delete globalThis.localStorage;
   }
 });
 
@@ -619,7 +619,7 @@ test("音频：普通手牌出牌不叠加选中提示音", () => {
     discardState: null,
     callbacks: { onCard: (cardId) => played.push(cardId) },
     playSound: (name) => sounds.push(name),
-    render() {}
+    render() { }
   };
   const event = {
     target: clickTarget("[data-card-id]", { cardId: "audio-card", disabled: "false" })
@@ -639,7 +639,7 @@ test("构建一致性：浏览器模块图全部资源使用统一构建版本",
   const entry = index.match(/src="\.\/js\/main\.js\?build=([^"]+)"/);
   assert.ok(entry, "入口模块缺少 build 查询参数");
   const expectedBuild = entry[1];
-  const stylesheetBuilds =[
+  const stylesheetBuilds = [
     ...index.matchAll(/href="\.\/css\/[^"]+\.css\?build=([^"]+)"/g)
   ].map((match) => match[1]);
   assert.equal(stylesheetBuilds.length, 7, "所有样式表都必须带构建版本");
@@ -697,8 +697,8 @@ test("牌堆：重洗计数会准确累加", () => {
 // ---- 阵营与座位 ----
 
 test("阵营：始终严格2V3", () => {
-  for (let i = 0; i < 50; i+=1) {
-    const teams = TeamManager.assignTeams(() =>(i % 17) / 17);
+  for (let i = 0; i < 50; i += 1) {
+    const teams = TeamManager.assignTeams(() => (i % 17) / 17);
     const dawn = teams.filter((t) => t === "dawn").length;
     const dusk = teams.filter((t) => t === "dusk").length;
     assert.deepEqual([dawn, dusk].sort(), [2, 3]);
@@ -706,10 +706,10 @@ test("阵营：始终严格2V3", () => {
 });
 
 test("阵营：小队两名成员在环形座位上不相邻", () => {
-  for (let i = 0; i < 40; i+=1) {
-    const teams = TeamManager.assignTeams(() =>(i % 19) / 19);
+  for (let i = 0; i < 40; i += 1) {
+    const teams = TeamManager.assignTeams(() => (i % 19) / 19);
     const small = ["dawn", "dusk"].find((team) => teams.filter((entry) => entry === team).length === 2);
-    const seats = teams.map((team, index) => team === small ? index: -1).filter((index) => index >= 0);
+    const seats = teams.map((team, index) => team === small ? index : -1).filter((index) => index >= 0);
     const raw = Math.abs(seats[0] - seats[1]);
     assert.ok(Math.min(raw, 5 - raw) > 1);
   }
@@ -717,8 +717,8 @@ test("阵营：小队两名成员在环形座位上不相邻", () => {
 
 test("阵营：真人座位可以随机进入小队或大队", () => {
   const sizes = new Set();
-  for (let i = 0; i < 60; i+=1) {
-    const teams = TeamManager.assignTeams(() =>((i * 7) % 61) / 61);
+  for (let i = 0; i < 60; i += 1) {
+    const teams = TeamManager.assignTeams(() => ((i * 7) % 61) / 61);
     sizes.add(teams.filter((team) => team === teams[0]).length);
   }
   assert.deepEqual([...sizes].sort(), [2, 3]);
@@ -728,7 +728,7 @@ test("阵营：真人座位可以随机进入小队或大队", () => {
 
 test("回合：小队规则为开局5张、每回合摸3张、突袭2、调息无限、回合能量1、能量上限4", () => {
   const { game, small }
-  = makeTeamFixture();
+    = makeTeamFixture();
   const rules = game.teamRules;
   assert.equal(rules.getInitialHandCount(small), 5);
   assert.equal(rules.getDrawCount(small), 3);
@@ -741,7 +741,7 @@ test("回合：小队规则为开局5张、每回合摸3张、突袭2、调息�
 
 test("回合：大队规则为开局4张、每回合摸2张、突袭1、调息无限、回合能量1、能量上限3", () => {
   const { game, large }
-  = makeTeamFixture();
+    = makeTeamFixture();
   const rules = game.teamRules;
   assert.equal(rules.getInitialHandCount(large), 4);
   assert.equal(rules.getDrawCount(large), 2);
@@ -753,7 +753,7 @@ test("回合：大队规则为开局4张、每回合摸2张、突袭1、调息�
 });
 
 test("回合：摸牌事件按二人阵营3张、三人阵营2张取值", async () => {
-  const ps =[
+  const ps = [
     makePlayer("a", 0, "dawn"),
     makePlayer("b", 1, "dusk"),
     makePlayer("c", 2, "dawn"),
@@ -761,10 +761,10 @@ test("回合：摸牌事件按二人阵营3张、三人阵营2张取值", async 
     makePlayer("e", 4, "dusk")
   ];
   const { game }
-  = makeGame(ps);
+    = makeGame(ps);
   const counts = [];
   game.eventBus.on("beforeDraw", "test:team-draw", (event) => counts.push(event.count));
-  game.aiController.selectAction = async () =>({ type: "end" });
+  game.aiController.selectAction = async () => ({ type: "end" });
   game.state.deck.cards.push(instance("block"), instance("charge"), instance("recover"));
   await game.takeTurn(ps[0], game.state.gameId);
   game.state.currentPlayerIndex = 1;
@@ -775,8 +775,8 @@ test("回合：摸牌事件按二人阵营3张、三人阵营2张取值", async 
 
 test("回合：二人小队无装备时每回合实际获得1点能量", async () => {
   const { game, small }
-  = makeTeamFixture();
-  game.aiController.selectAction = async () =>({ type: "end" });
+    = makeTeamFixture();
+  game.aiController.selectAction = async () => ({ type: "end" });
   await game.takeTurn(small, game.state.gameId);
   assert.equal(small.energy, 1);
   assert.deepEqual(
@@ -788,9 +788,9 @@ test("回合：二人小队无装备时每回合实际获得1点能量", async (
 
 test("能量：三人小队无装备时每回合实际获得1点能量", async () => {
   const { game, large }
-  = makeTeamFixture();
+    = makeTeamFixture();
   game.state.currentPlayerIndex = large.seatIndex;
-  game.aiController.selectAction = async () =>({ type: "end" });
+  game.aiController.selectAction = async () => ({ type: "end" });
   await game.takeTurn(large, game.state.gameId);
   assert.equal(large.energy, 1);
   assert.deepEqual(
@@ -800,7 +800,7 @@ test("能量：三人小队无装备时每回合实际获得1点能量", async (
 
 test("能量：二人小队能量最多积累到4", async () => {
   const { game, small }
-  = makeTeamFixture();
+    = makeTeamFixture();
   small.energy = 3;
   assert.equal(await game.gainEnergy(small, 3, { reason: "测试" }), 1);
   assert.equal(small.energy, 4);
@@ -808,7 +808,7 @@ test("能量：二人小队能量最多积累到4", async () => {
 
 test("能量：三人小队能量最多积累到3", async () => {
   const { game, large }
-  = makeTeamFixture();
+    = makeTeamFixture();
   large.energy = 2;
   assert.equal(await game.gainEnergy(large, 3, { reason: "测试" }), 1);
   assert.equal(large.energy, 3);
@@ -816,9 +816,9 @@ test("能量：三人小队能量最多积累到3", async () => {
 
 test("能量：回合基础能量和阵营加成都由规则配置读取而非服务层硬编码", () => {
   const { game, small }
-  = makeTeamFixture();
+    = makeTeamFixture();
   const original = game.teamRules.getRules;
-  game.teamRules.getRules = () =>({ turnEnergyGain: 2, turnEnergyBonus: 3 });
+  game.teamRules.getRules = () => ({ turnEnergyGain: 2, turnEnergyBonus: 3 });
   assert.deepEqual(
     game.teamRules.getTurnEnergyBreakdown(small), { baseAmount: 2, teamBonus: 3, equipmentBonus: 0 }
   );
@@ -828,11 +828,11 @@ test("能量：回合基础能量和阵营加成都由规则配置读取而非�
 
 test("能量：回合能量事件公开配置基础、零阵营加成和装备加成且不能突破上限", async () => {
   const { game, small }
-  = makeTeamFixture();
+    = makeTeamFixture();
   small.energy = 3;
   small.equipment = instance("energyDevice");
   game.cleanupManager.delay = async () => true;
-  game.aiController.selectAction = async () =>({ type: "end" });
+  game.aiController.selectAction = async () => ({ type: "end" });
   let before = null, after = null;
   game.eventBus.on("beforeTurnEnergyGain", "test:before", (event) => {
     before = {
@@ -854,7 +854,7 @@ test("能量：回合能量事件公开配置基础、零阵营加成和装备�
 // ---- 距离 ----
 
 test("距离：环形距离取顺时针与逆时针较小值", () => {
-  const ps = Array.from({ length: 5 }, (_, i) =>({ id: `p${i}`, seatIndex: i, alive: true }));
+  const ps = Array.from({ length: 5 }, (_, i) => ({ id: `p${i}`, seatIndex: i, alive: true }));
   const game = { state: { players: ps } };
   assert.equal(DistanceSystem.getDistance(game, ps[0], ps[4]), 1);
   assert.equal(DistanceSystem.getDistance(game, ps[0], ps[2]), 2);
@@ -873,19 +873,19 @@ test("距离：震荡与挑衅都使用逐目标反制作用域", () => {
 test("距离：七种全局或指定型卡牌显式无视距离", () => {
   for (
     const id of ["shockwave", "provoke", "scout", "destroy", "duel", "mutualBenefit", "symbiosis"]
-  )assert.equal(CARD_DEFINITIONS[id].ignoresDistance, true, id);
+  ) assert.equal(CARD_DEFINITIONS[id].ignoresDistance, true, id);
 });
 
 test("距离：每个主动技能都显式声明距离规则", () => {
   for (
     const skill of Object.values(ACTIVE_SKILLS)
-  )assert.ok(["attack", "fixed", "unlimited", "ally", "self"].includes(skill.rangeRule), skill.id);
+  ) assert.ok(["attack", "fixed", "unlimited", "ally", "self"].includes(skill.rangeRule), skill.id);
 });
 
 // ---- 动态距离 ----
 
 const distanceFixture = () => {
-  const players =[
+  const players = [
     makePlayer("A", 0, "dawn"),
     makePlayer("B", 1, "dusk"),
     makePlayer("C", 2, "dusk"),
@@ -897,26 +897,26 @@ const distanceFixture = () => {
 
 test("动态距离：五人全存活时固定相邻距离为1", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   assert.equal(DistanceSystem.getDistance(game, players[0], players[1]), 1);
 });
 
 test("动态距离：五人全存活时隔一人距离为2", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   assert.equal(DistanceSystem.getDistance(game, players[0], players[2]), 2);
 });
 
 test("动态距离：中间角色阵亡后两侧由2变1", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   players[1].alive = false;
   assert.equal(DistanceSystem.getDistance(game, players[0], players[2]), 1);
 });
 
 test("动态距离：连续两人阵亡后距离继续压缩", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   players[1].alive = false;
   players[3].alive = false;
   assert.equal(DistanceSystem.getDistance(game, players[2], players[4]), 1);
@@ -924,50 +924,50 @@ test("动态距离：连续两人阵亡后距离继续压缩", () => {
 
 test("动态距离：三名存活角色任意两人距离均为1", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   players[1].alive = false;
   players[3].alive = false;
   for (
     const a of [players[0], players[2], players[4]]
-  )for (const b of [players[0], players[2], players[4]]) if (a !== b) assert.equal(DistanceSystem.getDistance(game, a, b), 1);
+  ) for (const b of [players[0], players[2], players[4]]) if (a !== b) assert.equal(DistanceSystem.getDistance(game, a, b), 1);
 });
 
 test("动态距离：两名存活角色之间距离为1", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   players.slice(1, 4).forEach((p) => p.alive = false);
   assert.equal(DistanceSystem.getDistance(game, players[0], players[4]), 1);
 });
 
 test("动态距离：阵亡角色的距离为 Infinity", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   players[1].alive = false;
   assert.equal(DistanceSystem.getDistance(game, players[0], players[1]), Infinity);
 });
 
 test("动态距离：存活角色到自身距离为0", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   assert.equal(DistanceSystem.getDistance(game, players[0], players[0]), 0);
 });
 
 test("动态距离：存活队友仍占据距离，不能穿过队友", () => {
-  const players =[
+  const players = [
     makePlayer("A", 0, "dawn"),
     makePlayer("B", 1, "dawn"),
     makePlayer("C", 2, "dusk"),
     makePlayer("D", 3, "dusk")
   ];
   const { game }
-  = makeGame(players);
+    = makeGame(players);
   assert.equal(DistanceSystem.getDistance(game, players[0], players[2]), 2);
   assert.equal(DistanceSystem.getDistance(game, players[0], players[3]), 1);
 });
 
 test("动态距离：普通突袭在阵亡后立即出现新合法目标", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   const assault = instance("assault");
   players[0].hand.push(assault);
   assert.ok(!RuleEngine.getCardTargets(game, players[0], assault).includes(players[2]));
@@ -982,7 +982,7 @@ test("动态距离：震荡和决斗始终显式忽略距离", () => {
 
 test("动态距离：每次调用都读取实时 alive，不使用整局缓存", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   assert.equal(DistanceSystem.getDistance(game, players[0], players[2]), 2);
   players[1].alive = false;
   assert.equal(DistanceSystem.getDistance(game, players[0], players[2]), 1);
@@ -1002,7 +1002,7 @@ test("动态距离：新 Game 使用自己的全新存活环", () => {
 // ---- 突袭 ----
 
 test("突袭：普通突袭只能选择距离1内敌人", () => {
-  const ps =[
+  const ps = [
     makePlayer("a", 0, "dawn"),
     makePlayer("b", 1, "dusk"),
     makePlayer("c", 2, "dusk"),
@@ -1010,7 +1010,7 @@ test("突袭：普通突袭只能选择距离1内敌人", () => {
     makePlayer("e", 4, "dusk")
   ];
   const { game }
-  = makeGame(ps);
+    = makeGame(ps);
   ps[0].hand.push(instance("assault"));
   assert.deepEqual(
     RuleEngine.getCardTargets(game, ps[0], ps[0].hand[0]).map((p) => p.id), ["b", "e"]
@@ -1020,7 +1020,7 @@ test("突袭：普通突袭只能选择距离1内敌人", () => {
 test("突袭：普通突袭计入次数并造成伤害", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   const c = instance("assault");
   a.hand.push(c);
   await game.playCard(a, c, [b]);
@@ -1032,7 +1032,7 @@ test("突袭：普通突袭计入次数并造成伤害", async () => {
 
 test("调息：满生命角色即使持有调息也不能主动使用", () => {
   const { game, small, large }
-  = makeTeamFixture();
+    = makeTeamFixture();
   for (const player of [small, large]) {
     game.state.currentPlayerIndex = player.seatIndex;
     const recover = instance("recover");
@@ -1043,8 +1043,8 @@ test("调息：满生命角色即使持有调息也不能主动使用", () => {
 
 test("调息：二人小队可在同一出牌阶段连续使用多张调息", async () => {
   const { game, small }
-  = makeTeamFixture();
-  small.hp-=2;
+    = makeTeamFixture();
+  small.hp -= 2;
   small.hand.push(instance("recover"), instance("recover"));
   await game.playCard(small, small.hand[0], []);
   await game.playCard(small, small.hand[0], []);
@@ -1055,9 +1055,9 @@ test("调息：二人小队可在同一出牌阶段连续使用多张调息", as
 
 test("调息：三人小队可在同一出牌阶段连续使用多张调息", async () => {
   const { game, large }
-  = makeTeamFixture();
+    = makeTeamFixture();
   game.state.currentPlayerIndex = large.seatIndex;
-  large.hp-=2;
+  large.hp -= 2;
   large.hand.push(instance("recover"), instance("recover"));
   await game.playCard(large, large.hand[0], []);
   await game.playCard(large, large.hand[0], []);
@@ -1089,7 +1089,7 @@ test("护盾：牌可选择自己或任意存活队友但不能选择敌人和�
     enemy = makePlayer("enemy", 3, "dusk");
   dead.alive = false;
   const { game }
-  = makeGame([source, ally, dead, enemy]), card = instance("shield");
+    = makeGame([source, ally, dead, enemy]), card = instance("shield");
   source.hand.push(card);
   assert.deepEqual(
     RuleEngine.getCardTargets(game, source, card).map((player) => player.id), [source.id, ally.id]
@@ -1102,7 +1102,7 @@ test("护盾：牌可为自己使用并在队友身上永久叠加", async () =>
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game }
-  = makeGame([source, ally, enemy]),
+    = makeGame([source, ally, enemy]),
     selfCard = instance("shield"),
     first = instance("shield"),
     second = instance("shield");
@@ -1120,12 +1120,12 @@ test("护盾：牌提供的护盾不会在目标回合开始时归零", async ()
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game }
-  = makeGame([source, ally, enemy]), card = instance("shield");
+    = makeGame([source, ally, enemy]), card = instance("shield");
   source.hand.push(card);
   await game.playCard(source, card, [ally]);
   game.state.currentPlayerIndex = 1;
   game.state.deck.cards.push(instance("assault"), instance("block"), instance("charge"));
-  game.aiController.selectAction = async () =>({ type: "end" });
+  game.aiController.selectAction = async () => ({ type: "end" });
   await game.takeTurn(ally, game.state.gameId);
   assert.equal(ally.shield, 1);
 });
@@ -1133,7 +1133,7 @@ test("护盾：牌提供的护盾不会在目标回合开始时归零", async ()
 test("护盾：每点护盾免疫1点伤害并在免疫后消耗", async () => {
   const attacker = makePlayer("attacker", 0, "dusk"), target = makePlayer("target", 1, "dawn");
   const { game }
-  = makeGame([attacker, target]);
+    = makeGame([attacker, target]);
   target.shield = 2;
   const hp = target.hp, actual = await game.damage(attacker, target, 3, { canBlock: false });
   assert.equal(target.shield, 0);
@@ -1146,7 +1146,7 @@ test("护盾：牌提交敌方目标会在核心层拒绝且不消耗实体牌",
     enemy = makePlayer("enemy", 1, "dusk"),
     card = instance("shield");
   const { game }
-  = makeGame([source, enemy]);
+    = makeGame([source, enemy]);
   source.hand.push(card);
   assert.equal(await game.playCard(source, card, [enemy]), false);
   assert.ok(source.hand.includes(card));
@@ -1160,7 +1160,7 @@ test("护盾：牌提交敌方目标会在核心层拒绝且不消耗实体牌",
 test("窥探：只向真人私密层展示并把该实体牌标记为已知", async () => {
   const a = makePlayer("a", 0, "dawn", "human"), b = makePlayer("b", 1, "dusk");
   const { game, ui }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   const scout = instance("scout"), secret = instance("counter");
   a.hand.push(scout);
   b.hand.push(secret);
@@ -1181,7 +1181,7 @@ test("转移：支持来源、接收者与指定牌三阶段", async () => {
     b = makePlayer("b", 1, "dusk"),
     c = makePlayer("c", 2, "dawn");
   const { game }
-  = makeGame([a, b, c]);
+    = makeGame([a, b, c]);
   const transfer = instance("transfer"), moved = instance("block");
   a.hand.push(transfer);
   b.hand.push(moved);
@@ -1222,7 +1222,7 @@ test("转移：真人转移选牌界面不提供装备区选项", async () => {
   from.hand.push(held);
   from.equipment = equipment;
   const { game }
-  = makeGame([actor, from, receiver]),
+    = makeGame([actor, from, receiver]),
     chosenPlayers = [from, receiver],
     ui = { requestTarget: async () => chosenPlayers.shift() },
     controller = new InteractionController(ui);
@@ -1247,7 +1247,7 @@ test("转移：与掠夺按统一动态距离限制且转移来源必须持有�
   near.hand.push(instance("block"));
   far.equipment = instance("barrierDevice");
   const { game }
-  = makeGame([actor, near, far, other, tail]);
+    = makeGame([actor, near, far, other, tail]);
   assert.ok(RuleEngine.getTransferSources(game, actor, CARD_DEFINITIONS.transfer).includes(near));
   assert.ok(!RuleEngine.getTransferSources(game, actor, CARD_DEFINITIONS.transfer).includes(far));
   assert.ok(!RuleEngine.getCardTargets(game, actor, CARD_DEFINITIONS.plunder).includes(far));
@@ -1268,7 +1268,7 @@ test("转移：真人和核心都拒绝把装备区实体作为转移牌", async
     oldEquipment = instance("defenseDevice"),
     use = instance("transfer");
   const { game }
-  = makeGame([actor, from, receiver]);
+    = makeGame([actor, from, receiver]);
   actor.hand.push(use);
   from.hand.push(hiddenCard);
   from.equipment = equipment;
@@ -1307,7 +1307,7 @@ test("转移：锁定牌在结算前离开来源时转移失败且没有有效�
   tuner.hand.push(use);
   from.hand.push(locked);
   const { game }
-  = makeGame([tuner, from, escaped, ally]);
+    = makeGame([tuner, from, escaped, ally]);
   game.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(game);
   let usedEvent = null;
@@ -1340,7 +1340,7 @@ test("转移：锁定牌在结算前离开来源时转移失败且没有有效�
     game.state.logs.some(
       (entry) => entry.message.includes(
         `${tuner.name}将${from.name}的`
-      )&& entry.message.includes(`转移给了${ally.name}`)
+      ) && entry.message.includes(`转移给了${ally.name}`)
     ),
     false
   );
@@ -1356,7 +1356,7 @@ test("转移：在反制前的日志和响应上下文包含来源与接收者�
   from.hand.push(secret);
   from.bumpHandVersion();
   const { game, ui }
-  = makeGame([actor, from, responder, receiver], { response: () => false });
+    = makeGame([actor, from, responder, receiver], { response: () => false });
   const hidden = game.cardSelectionSystem.createHiddenSelection(from);
   await game.playCard(
     actor,
@@ -1389,7 +1389,7 @@ test("转移：隐藏转移传给 AI 响应策略的公开上下文不含锁定�
   from.hand.push(secret);
   responder.hand.push(instance("counter"));
   const { game }
-  = makeGame([actor, from, responder, receiver], { random: () => 0 });
+    = makeGame([actor, from, responder, receiver], { random: () => 0 });
   let receivedContext = null;
   game.aiController.responsePolicy.shouldRespond = (_player, _type, context) => {
     receivedContext = context;
@@ -1402,7 +1402,7 @@ test("转移：隐藏转移传给 AI 响应策略的公开上下文不含锁定�
   assert.equal(Object.isFrozen(publicContext), true);
   for (
     const forbidden of ["card", "cardId", "definitionId", "hiddenCardName"]
-  )assert.equal(Object.hasOwn(publicContext, forbidden), false);
+  ) assert.equal(Object.hasOwn(publicContext, forbidden), false);
   const seen = new Set();
   const contains = (value, needle) => {
     if (value === needle) return true;
@@ -1427,7 +1427,7 @@ test("转移：响应期间手牌换序后仍移动反制前锁定的同一实�
   from.hand.push(locked, other);
   responder.hand.push(instance("counter"));
   const { game }
-  = makeGame([actor, from, responder, receiver], { random: () => 0 });
+    = makeGame([actor, from, responder, receiver], { random: () => 0 });
   game.aiController.responsePolicy.shouldRespond = () => {
     from.hand.reverse();
     return false;
@@ -1448,7 +1448,7 @@ test("转移：被反制后锁定手牌仍留在来源区域", async () => {
   from.hand.push(locked);
   responder.hand.push(instance("counter"));
   const { game }
-  = makeGame([actor, from, responder, receiver], { random: () => 0 });
+    = makeGame([actor, from, responder, receiver], { random: () => 0 });
   game.aiController.responsePolicy.shouldRespond = () => true;
   await game.playCard(actor, use, [], { sourceId: from.id, receiverId: receiver.id, zone: "hand" });
   assert.ok(from.hand.includes(locked));
@@ -1466,7 +1466,7 @@ test("转移：伪造装备区转移不会开启反制窗口或生成公开转�
   from.equipment = radar;
   responder.hand.push(instance("counter"));
   const { game }
-  = makeGame([actor, from, responder, receiver]);
+    = makeGame([actor, from, responder, receiver]);
   let publicContext = null;
   game.aiController.responsePolicy.shouldRespond = (_player, _type, context) => {
     publicContext = context.publicTransferContext;
@@ -1501,8 +1501,8 @@ test("破势：多层破势叠加并在下一次主动突袭一次性消耗", as
   b.hp = 8;
   b.maxHp = 8;
   const { game }
-  = makeGame([a, b]);
-  for (let i = 0; i < 2; i+=1) {
+    = makeGame([a, b]);
+  for (let i = 0; i < 2; i += 1) {
     const c = instance("exposeWeakness");
     a.hand.push(c);
     await game.playCard(a, c, []);
@@ -1518,7 +1518,7 @@ test("破势：多层破势叠加并在下一次主动突袭一次性消耗", as
 test("破势：即使突袭被格挡也会消耗", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
-  = makeGame([a, b], { response: () => true });
+    = makeGame([a, b], { response: () => true });
   a.statuses.exposeWeakness = { stacks: 2 };
   a.hand.push(instance("assault"));
   b.hand.push(instance("block"));
@@ -1534,7 +1534,7 @@ test("震荡：不计突袭次数也不消耗破势", async () => {
     b = makePlayer("b", 1, "dusk"),
     c = makePlayer("c", 2, "dusk");
   const { game }
-  = makeGame([a, b, c]);
+    = makeGame([a, b, c]);
   a.statuses.exposeWeakness = { stacks: 2 };
   const card = instance("shockwave");
   a.hand.push(card);
@@ -1550,7 +1550,7 @@ test("挑衅：有突袭者可打出，没有者优先消耗护盾且不触发�
     b = makePlayer("b", 1, "dusk", "human"),
     c = makePlayer("c", 2, "dusk", "human");
   const { game, ui }
-  = makeGame([a, b, c], { response: (r) => r.targetPlayerId === b.id });
+    = makeGame([a, b, c], { response: (r) => r.targetPlayerId === b.id });
   a.hand.push(instance("provoke"));
   b.hand.push(instance("assault"));
   c.shield = 2;
@@ -1578,7 +1578,7 @@ test("借势：第一目标要求真实装备且至少存在一个距离合法�
   dead.alive = false;
   empty.statuses.virtualEquipment = { definitionId: "battleDevice" };
   const { game }
-  = makeGame([actor, valid, empty, dead]);
+    = makeGame([actor, valid, empty, dead]);
   assert.deepEqual(RuleEngine.getLegalAssaultTargets(game, valid), []);
   assert.ok(RuleEngine.getAssaultTargetCandidates(game, valid).includes(actor));
   assert.deepEqual(RuleEngine.getLeverageFirstTargets(game, actor), [valid]);
@@ -1594,7 +1594,7 @@ test("借势：核心第一目标筛选不要求普通突袭敌人且允许同�
   actor.hand.push(use);
   first.equipment = instance("energyDevice");
   const { game }
-  = makeGame([actor, first, ally]);
+    = makeGame([actor, first, ally]);
   assert.deepEqual(RuleEngine.getLegalAssaultTargets(game, first), []);
   assert.ok(RuleEngine.getAssaultTargetCandidates(game, first).includes(actor));
   assert.ok(RuleEngine.getLeverageFirstTargets(game, actor).includes(first));
@@ -1610,14 +1610,14 @@ test("借势：真人借势无普通突袭敌人时仍可选择同阵营第一�
   actor.hand.push(use);
   first.equipment = equipment;
   const { game }
-  = makeGame([actor, first]);
+    = makeGame([actor, first]);
   let call = 0;
   const controller = new InteractionController(
     {
       requestTarget: async (players) => {
-        call+=1; return call === 1 ? players.find(
+        call += 1; return call === 1 ? players.find(
           (player) => player.id === "first"
-        ): players.find((player) => player.id === "actor");
+        ) : players.find((player) => player.id === "actor");
       }
     }
   );
@@ -1640,7 +1640,7 @@ test("借势：第一目标没有距离合法第二目标时仍被排除", () =>
   enemy.equipment = instance("barrierDevice");
   tail.equipment = instance("barrierDevice");
   const { game }
-  = makeGame([actor, first, ally, enemy, tail]);
+    = makeGame([actor, first, ally, enemy, tail]);
   assert.deepEqual(RuleEngine.getAssaultTargetCandidates(game, first), []);
   assert.ok(!RuleEngine.getLeverageFirstTargets(game, actor).includes(first));
 });
@@ -1651,14 +1651,14 @@ test("借势：第一目标筛选完全不读取手牌或突袭次数", () => {
     equipment = instance("energyDevice");
   first.equipment = equipment;
   const { game }
-  = makeGame([actor, first]);
+    = makeGame([actor, first]);
   first.hand = new Proxy([], { get() { throw new Error("候选筛选不应读取手牌"); } });
   first.turnFlags = new Proxy(
     first.turnFlags,
     {
       get(
         target, key
-      ){ if (key === "attackUsed" || key === "attackLimit") throw new Error("候选筛选不应读取突袭次数"); return Reflect.get(target, key); }
+      ) { if (key === "attackUsed" || key === "attackLimit") throw new Error("候选筛选不应读取突袭次数"); return Reflect.get(target, key); }
     }
   );
   assert.deepEqual(RuleEngine.getLeverageFirstTargets(game, actor), [first]);
@@ -1676,7 +1676,7 @@ test("借势：可指定距离外队友为第一目标且只检查其对第二�
   actor.hand.push(use);
   farAlly.equipment = equipment;
   const { game }
-  = makeGame([actor, enemy, farAlly, ally, tail]);
+    = makeGame([actor, enemy, farAlly, ally, tail]);
   assert.equal(DistanceSystem.getDistance(game, actor, farAlly), 2);
   assert.ok(RuleEngine.getLeverageFirstTargets(game, actor).includes(farAlly));
   assert.ok(RuleEngine.getLegalAssaultTargets(game, farAlly).includes(enemy));
@@ -1698,7 +1698,7 @@ test("借势：第二目标只按第一目标攻击距离筛选且允许同阵�
     tail = makePlayer("tail", 4, "dawn");
   first.equipment = instance("energyDevice");
   const { game }
-  = makeGame([actor, first, ally, far, tail]);
+    = makeGame([actor, first, ally, far, tail]);
   const targets = RuleEngine.getAssaultTargetCandidates(game, first);
   assert.ok(targets.includes(actor));
   assert.ok(targets.includes(ally));
@@ -1716,7 +1716,7 @@ test("借势：选择阶段取消不会消耗卡牌或留下状态变化", async
   actor.hand.push(use);
   first.equipment = equipment;
   const { game }
-  = makeGame([actor, first]);
+    = makeGame([actor, first]);
   const controller = new InteractionController({ requestTarget: async () => null });
   const logCount = game.state.logs.length;
   assert.equal(await controller.requestCardFlow(game, actor, use, []), null);
@@ -1734,7 +1734,7 @@ test("借势：无合法突袭时不弹响应窗口并把同一装备实例移�
   actor.hand.push(use);
   first.equipment = equipment;
   const { game, ui }
-  = makeGame([actor, first]);
+    = makeGame([actor, first]);
   const selection = {
     firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id
   };
@@ -1757,7 +1757,7 @@ test("借势：主动拒绝统一转移装备且不消耗第一目标突袭", as
   first.hand.push(assault);
   first.equipment = equipment;
   const { game, ui }
-  = makeGame([actor, first], { response: () => false });
+    = makeGame([actor, first], { response: () => false });
   await game.playCard(
     actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
   );
@@ -1781,10 +1781,10 @@ test("借势：成功响应使用真实突袭并完整复用次数、伤害、�
   first.hand.push(assault);
   first.equipment = equipment;
   const { game, ui }
-  = makeGame(
-    [actor, first],
-    { response: (request) => request.type === "leverageAssault" || request.type === "block" }
-  );
+    = makeGame(
+      [actor, first],
+      { response: (request) => request.type === "leverageAssault" || request.type === "block" }
+    );
   const hp = actor.hp;
   await game.playCard(
     actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
@@ -1813,7 +1813,7 @@ test("借势：忽略第一目标已用突袭次数并完整执行真实突袭",
   first.hand.push(assault);
   first.equipment = equipment;
   const { game, ui }
-  = makeGame([actor, first], { response: (request) => request.type === "leverageAssault" });
+    = makeGame([actor, first], { response: (request) => request.type === "leverageAssault" });
   first.turnFlags.attackUsed = first.turnFlags.attackLimit;
   assert.equal(RuleEngine.canPlayCard(game, actor, use).ok, true);
   assert.equal(RuleEngine.canUseForcedAssault(game, first, assault, actor).ok, true);
@@ -1841,7 +1841,7 @@ test("借势：忽略第一目标已用突袭次数并完整执行真实突袭",
 test("借势：普通主动突袭仍受已用次数限制", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   const assault = instance("assault");
   a.hand.push(assault);
   a.turnFlags.attackUsed = a.turnFlags.attackLimit;
@@ -1860,7 +1860,7 @@ test("借势：忽略已用次数后仍检查距离与目标合法性", () => {
     tail = makePlayer("tail", 3, "dawn"),
     other = makePlayer("other", 4, "dawn");
   const { game }
-  = makeGame([actor, far, first, tail, other]);
+    = makeGame([actor, far, first, tail, other]);
   const assault = instance("assault");
   first.hand.push(assault);
   first.turnFlags.attackUsed = first.turnFlags.attackLimit;
@@ -1882,7 +1882,7 @@ test("借势：已用次数耗尽且手中没有突袭时仍转移装备", async
   actor.hand.push(use);
   first.equipment = equipment;
   const { game, ui }
-  = makeGame([actor, first]);
+    = makeGame([actor, first]);
   first.turnFlags.attackUsed = first.turnFlags.attackLimit;
   assert.equal(
     await game.playCard(
@@ -1909,9 +1909,9 @@ test("借势：锁定望远镜时响应前不卸装，仍按该武器修正后�
   first.hand.push(assault);
   first.equipment = equipment;
   const { game }
-  = makeGame(
-    [actor, first, screen, other, tail], { response: (request) => request.type === "leverageAssault" }
-  );
+    = makeGame(
+      [actor, first, screen, other, tail], { response: (request) => request.type === "leverageAssault" }
+    );
   assert.equal(DistanceSystem.getDistance(game, first, actor), 1);
   assert.ok(RuleEngine.getLegalAssaultTargets(game, first).includes(actor));
   await game.playCard(
@@ -1930,7 +1930,7 @@ test("借势：只接受唯一ID对应的原装备且不会用同名替代", asy
   actor.hand.push(use);
   first.equipment = original;
   const { game }
-  = makeGame([actor, first]);
+    = makeGame([actor, first]);
   assert.equal(
     await game.playCard(
       actor,
@@ -1965,7 +1965,7 @@ test("借势：并发重复提交只结算和转移一次", async () => {
   actor.hand.push(use);
   first.equipment = equipment;
   const { game }
-  = makeGame([actor, first]);
+    = makeGame([actor, first]);
   const selection = {
     firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id
   };
@@ -1988,9 +1988,9 @@ test("借势：响应前任一目标离场会取消且不按拒绝转移装备",
     actor.hand.push(use);
     first.equipment = equipment;
     const { game }
-    = makeGame([actor, first, second]);
+      = makeGame([actor, first, second]);
     game.eventBus.on("beforeCardResolve", `test:leave-before-leverage:${leaving}`, (event) => {
-      if (event.card === use)(leaving === "first" ? first: second).alive = false;
+      if (event.card === use) (leaving === "first" ? first : second).alive = false;
     });
     await game.playCard(
       actor,
@@ -2011,14 +2011,14 @@ test("借势：第二目标选择不读取第一目标手牌或突袭次数", ()
     equipment = instance("energyDevice");
   first.equipment = equipment;
   const { game }
-  = makeGame([actor, first, ally]);
+    = makeGame([actor, first, ally]);
   first.hand = new Proxy([], { get() { throw new Error("借势第二目标筛选不应读取手牌"); } });
   first.turnFlags = new Proxy(
     first.turnFlags,
     {
       get(
         target, key
-      ){ if (key === "attackUsed" || key === "attackLimit") throw new Error("借势第二目标筛选不应读取突袭次数"); return Reflect.get(target, key); }
+      ) { if (key === "attackUsed" || key === "attackLimit") throw new Error("借势第二目标筛选不应读取突袭次数"); return Reflect.get(target, key); }
     }
   );
   const targets = RuleEngine.getAssaultTargetCandidates(game, first);
@@ -2034,7 +2034,7 @@ test("借势：第二目标距离按第一目标到第二目标计算而非借�
     tail = makePlayer("tail", 4, "dawn");
   first.equipment = instance("energyDevice");
   const { game }
-  = makeGame([user, screen, first, second, tail]);
+    = makeGame([user, screen, first, second, tail]);
   assert.equal(DistanceSystem.getDistance(game, first, second), 1);
   assert.equal(DistanceSystem.getDistance(game, user, second), 2);
   const targets = RuleEngine.getAssaultTargetCandidates(game, first);
@@ -2050,7 +2050,7 @@ test("借势：可指定距离内同阵营第二目标且核心接受该选择",
   actor.hand.push(use);
   first.equipment = equipment;
   const { game, ui }
-  = makeGame([actor, first, ally]);
+    = makeGame([actor, first, ally]);
   assert.equal(
     await game.playCard(
       actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: ally.id }
@@ -2071,14 +2071,14 @@ test("借势：真人借势可选择距离内同阵营第二目标", async () =>
   actor.hand.push(use);
   first.equipment = equipment;
   const { game }
-  = makeGame([actor, first, ally]);
+    = makeGame([actor, first, ally]);
   let call = 0;
   const controller = new InteractionController(
     {
       requestTarget: async (players) => {
-        call+=1; return call === 1 ? players.find(
+        call += 1; return call === 1 ? players.find(
           (player) => player.id === "first"
-        ): players.find((player) => player.id === "ally");
+        ) : players.find((player) => player.id === "ally");
       }
     }
   );
@@ -2100,7 +2100,7 @@ test("借势：第二目标候选枚举不提前交出装备或结算突袭", ()
   first.hand.push(assault);
   first.equipment = equipment;
   const { game }
-  = makeGame([actor, first, ally]);
+    = makeGame([actor, first, ally]);
   const logs = game.state.logs.length;
   RuleEngine.getAssaultTargetCandidates(game, first);
   assert.equal(first.equipment, equipment);
@@ -2122,7 +2122,7 @@ test("借势：真人把自己设为借势第二目标并阵亡后不恢复继�
   first.hand.push(assault);
   first.equipment = equipment;
   const { game, ui }
-  = makeGame([actor, first, ally]);
+    = makeGame([actor, first, ally]);
   const prompts = [];
   ui.setPrompt = (message) => prompts.push(message);
   game.aiController.responsePolicy.shouldRespond = (_responder, type) => type === "leverageAssault";
@@ -2145,7 +2145,7 @@ test("借势：人类多张突袭无需选牌也能使用且只消耗一张", as
   first.hand.push(assaultA, assaultB);
   first.equipment = equipment;
   const { game, ui }
-  = makeGame([actor, first], { response: (request) => request.type === "leverageAssault" });
+    = makeGame([actor, first], { response: (request) => request.type === "leverageAssault" });
   const hp = actor.hp;
   assert.equal(
     await game.playCard(
@@ -2174,7 +2174,7 @@ test("借势：人类多张突袭拒绝时转移装备且不消耗突袭", async
   first.hand.push(assaultA, assaultB);
   first.equipment = equipment;
   const { game, ui }
-  = makeGame([actor, first], { response: () => false });
+    = makeGame([actor, first], { response: () => false });
   assert.equal(
     await game.playCard(
       actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
@@ -2190,7 +2190,7 @@ test("借势：人类多张突袭拒绝时转移装备且不消耗突袭", async
 
 test("借势：响应窗口不再渲染卡牌列表且使用按钮无需选牌即可用", () => {
   const panel = {
-    innerHTML: "", classList: { add() {}, remove() {} }, querySelector() { return null; }
+    innerHTML: "", classList: { add() { }, remove() { } }, querySelector() { return null; }
   };
   const fake = {
     responseState: {
@@ -2214,7 +2214,7 @@ test("借势：响应窗口不再渲染卡牌列表且使用按钮无需选牌�
     },
     elements: { response_panel: panel },
     game: null,
-    render() {}
+    render() { }
   };
   UIManager.prototype.renderResponseRequest.call(fake);
   const html = panel.innerHTML;
@@ -2223,7 +2223,7 @@ test("借势：响应窗口不再渲染卡牌列表且使用按钮无需选牌�
   assert.match(html, /使用突袭/);
   assert.match(html, /拒绝/);
   assert.match(html, /需要 1 张突袭，当前 2 张/);
-  assert.equal((html.match(/data-response-choice/g) ??[]).length, 2);
+  assert.equal((html.match(/data-response-choice/g) ?? []).length, 2);
   assert.doesNotMatch(html, /disabled/);
 });
 
@@ -2232,7 +2232,7 @@ test("借势：响应窗口不再渲染卡牌列表且使用按钮无需选牌�
 test("掠夺：真人掠夺指定隐藏牌后按已知公开牌名记录", async () => {
   const a = makePlayer("a", 0, "dawn", "human"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   const use = instance("plunder"), secret = instance("block");
   a.hand.push(use);
   b.hand.push(secret);
@@ -2253,7 +2253,7 @@ test("掠夺：可把距离2内目标装备公开移入施牌者手牌", async (
     original = instance("battleDevice"),
     use = instance("plunder");
   const { game }
-  = makeGame([actor, near, target, other, tail]);
+    = makeGame([actor, near, target, other, tail]);
   actor.equipment = original;
   actor.hand.push(use);
   target.equipment = equipment;
@@ -2283,7 +2283,7 @@ test("掠夺：可把距离2内目标装备公开移入施牌者手牌", async (
 test("破坏：公开牌名并把牌移入弃牌堆", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   const use = instance("destroy"), secret = instance("block");
   a.hand.push(use);
   b.hand.push(secret);
@@ -2303,7 +2303,7 @@ test("破坏：可不限距离弃置装备区装备", async () => {
     equipment = instance("barrierDevice"),
     use = instance("destroy");
   const { game }
-  = makeGame([actor, near, target, other, tail]);
+    = makeGame([actor, near, target, other, tail]);
   actor.hand.push(use);
   target.equipment = equipment;
   assert.equal(DistanceSystem.getDistance(game, actor, target), 3);
@@ -2329,14 +2329,14 @@ test("反制：者包含盟友并按施牌者后的座位顺序", async () => {
     c = makePlayer("c", 2, "dusk", "human");
   const order = [];
   const { game }
-  = makeGame(
-    [a, b, c],
-    {
-      response: (request) =>(
-        order.push(request.targetPlayerId), request.legalCardIds.length >= request.requiredCount
-      )
-    }
-  );
+    = makeGame(
+      [a, b, c],
+      {
+        response: (request) => (
+          order.push(request.targetPlayerId), request.legalCardIds.length >= request.requiredCount
+        )
+      }
+    );
   a.hand.push(instance("harvest"));
   b.hand.push(instance("counter"));
   await game.playCard(a, a.hand[0], []);
@@ -2355,9 +2355,9 @@ test("反制：震荡的反制只取消当前目标所受效果而不取消整�
     b = makePlayer("b", 1, "dusk", "human"),
     c = makePlayer("c", 2, "dusk");
   const { game, ui }
-  = makeGame(
-    [a, b, c], { response: (request) => request.type === "counter" && request.targetPlayerId === b.id }
-  );
+    = makeGame(
+      [a, b, c], { response: (request) => request.type === "counter" && request.targetPlayerId === b.id }
+    );
   const shockwave = instance("shockwave"), counter = instance("counter"), bHp = b.hp, cHp = c.hp;
   a.hand.push(shockwave);
   b.hand.push(counter);
@@ -2369,7 +2369,7 @@ test("反制：震荡的反制只取消当前目标所受效果而不取消整�
     ui.responseRequests.some(
       (request) => request.type === "counter" && request.targetPlayerId === b.id && request.presentation.responseText.includes(
         "仅取消"
-      )&& request.presentation.responseText.includes("其他目标")
+      ) && request.presentation.responseText.includes("其他目标")
     )
   );
   assert.ok(
@@ -2382,9 +2382,9 @@ test("反制：挑衅的反制只取消当前目标效果且不能保护队友",
     b = makePlayer("b", 1, "dusk", "human"),
     c = makePlayer("c", 2, "dusk", "human");
   const { game, ui }
-  = makeGame(
-    [a, b, c], { response: (request) => request.type === "counter" && request.targetPlayerId === b.id }
-  );
+    = makeGame(
+      [a, b, c], { response: (request) => request.type === "counter" && request.targetPlayerId === b.id }
+    );
   const provoke = instance("provoke"), counter = instance("counter"), bHp = b.hp, cHp = c.hp;
   a.hand.push(provoke);
   b.hand.push(counter);
@@ -2396,7 +2396,7 @@ test("反制：挑衅的反制只取消当前目标效果且不能保护队友",
     ui.responseRequests.some(
       (request) => request.type === "counter" && request.targetPlayerId === b.id && request.presentation.responseText.includes(
         "仅取消"
-      )&& request.presentation.responseText.includes("其他目标")
+      ) && request.presentation.responseText.includes("其他目标")
     )
   );
   assert.ok(
@@ -2409,12 +2409,12 @@ test("反制：针对震荡目标的反制仍可被后续反制，之后该目�
     b = makePlayer("b", 1, "dusk", "human"),
     c = makePlayer("c", 2, "dawn");
   const { game, ui }
-  = makeGame(
-    [a, b, c],
-    {
-      response: (request) => request.type === "counter" && request.legalCardIds.length >= request.requiredCount
-    }
-  );
+    = makeGame(
+      [a, b, c],
+      {
+        response: (request) => request.type === "counter" && request.legalCardIds.length >= request.requiredCount
+      }
+    );
   const shockwave = instance("shockwave"),
     first = instance("counter"),
     second = instance("counter"),
@@ -2438,14 +2438,14 @@ test("反制：两次反制后原战术牌恢复生效", async () => {
     c = makePlayer("c", 2, "dawn", "human");
   const order = [];
   const { game, ui }
-  = makeGame(
-    [a, b, c],
-    {
-      response: (request) =>(
-        order.push(request.targetPlayerId), request.legalCardIds.length >= request.requiredCount
-      )
-    }
-  );
+    = makeGame(
+      [a, b, c],
+      {
+        response: (request) => (
+          order.push(request.targetPlayerId), request.legalCardIds.length >= request.requiredCount
+        )
+      }
+    );
   game.state.deck.cards.push(instance("block"), instance("charge"));
   a.hand.push(instance("harvest"));
   b.hand.push(instance("counter"));
@@ -2466,14 +2466,14 @@ test("反制：三次反制后原战术牌仍被取消", async () => {
     d = makePlayer("d", 3, "dusk", "human");
   const order = [];
   const { game }
-  = makeGame(
-    [a, b, c, d],
-    {
-      response: (request) =>(
-        order.push(request.targetPlayerId), request.legalCardIds.length >= request.requiredCount
-      )
-    }
-  );
+    = makeGame(
+      [a, b, c, d],
+      {
+        response: (request) => (
+          order.push(request.targetPlayerId), request.legalCardIds.length >= request.requiredCount
+        )
+      }
+    );
   game.state.deck.cards.push(instance("block"), instance("charge"));
   a.hand.push(instance("harvest"));
   b.hand.push(instance("counter"));
@@ -2494,7 +2494,7 @@ test("反制：三次反制后原战术牌仍被取消", async () => {
 test("丰收：直接摸2且无需弃牌", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   game.state.deck.cards.push(instance("block"), instance("charge"));
   const use = instance("harvest");
   a.hand.push(use);
@@ -2507,7 +2507,7 @@ test("丰收：直接摸2且无需弃牌", async () => {
 test("决斗：轮流打出突袭，先不能响应者承受可被护盾吸收的1伤害", async () => {
   const a = makePlayer("a", 0, "dawn", "human"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
-  = makeGame([a, b], { response: (r) => r.targetPlayerId === b.id });
+    = makeGame([a, b], { response: (r) => r.targetPlayerId === b.id });
   const duel = instance("duel");
   a.hand.push(duel);
   b.hand.push(instance("assault"));
@@ -2525,7 +2525,7 @@ test("互利：在反制窗口之后才展示并按座位每人选1张", async (
     b = makePlayer("b", 1, "dusk"),
     c = makePlayer("c", 2, "dawn");
   const { game, ui }
-  = makeGame([a, b, c]);
+    = makeGame([a, b, c]);
   game.state.deck.cards.push(instance("block"), instance("charge"), instance("recover"));
   a.hand.push(instance("mutualBenefit"));
   await game.playCard(a, a.hand[0], []);
@@ -2543,7 +2543,7 @@ test("互利：选牌严格跳过阵亡座位", async () => {
     c = makePlayer("c", 3, "dawn");
   dead.alive = false;
   const { game }
-  = makeGame([a, dead, b, c]);
+    = makeGame([a, dead, b, c]);
   game.state.deck.cards.push(instance("block"), instance("charge"), instance("recover"));
   a.hand.push(instance("mutualBenefit"));
   await game.playCard(a, a.hand[0], []);
@@ -2558,7 +2558,7 @@ test("互利：触发重洗后弃牌堆别名保持同步", async () => {
     b = makePlayer("b", 1, "dusk"),
     c = makePlayer("c", 2, "dawn");
   const { game }
-  = makeGame([a, b, c]);
+    = makeGame([a, b, c]);
   const discards = [instance("block"), instance("charge"), instance("recover")];
   for (const card of discards) game.state.deck.discard(card);
   let aliasDuringReveal = true;
@@ -2589,7 +2589,7 @@ test("互利：不触发重洗时弃牌堆别名保持不变", async () => {
     b = makePlayer("b", 1, "dusk"),
     c = makePlayer("c", 2, "dawn");
   const { game }
-  = makeGame([a, b, c]);
+    = makeGame([a, b, c]);
   game.state.deck.cards.push(instance("block"), instance("charge"), instance("recover"));
   const mb = instance("mutualBenefit");
   a.hand.push(mb);
@@ -2610,7 +2610,7 @@ test("互利：公共牌揭示触发重洗后两个弃牌堆入口读取同一�
     b = makePlayer("b", 1, "dusk"),
     c = makePlayer("c", 2, "dawn");
   const { game }
-  = makeGame([a, b, c]);
+    = makeGame([a, b, c]);
   const discards = [instance("block"), instance("charge"), instance("recover")];
   for (const card of discards) game.state.deck.discard(card);
   const pool = game.publicCardPool.reveal(3);
@@ -2630,9 +2630,9 @@ test("共生：按全体存活角色结算治疗", async () => {
   const a = makePlayer("a", 0, "dawn"),
     b = makePlayer("b", 1, "dusk"),
     c = makePlayer("c", 2, "dawn");
-  [a, b, c].forEach((p) => p.hp-=1);
+  [a, b, c].forEach((p) => p.hp -= 1);
   const { game }
-  = makeGame([a, b, c]);
+    = makeGame([a, b, c]);
   a.hand.push(instance("symbiosis"));
   await game.playCard(a, a.hand[0], []);
   [a, b, c].forEach((p) => assert.equal(p.hp, p.maxHp));
@@ -2668,7 +2668,7 @@ test("闪电：Deck.build 生成正好两张不同实体 ID", () => {
 test("闪电：无状态时可用，成功后获得状态并进入弃牌堆", async () => {
   const source = makePlayer("a", 0, "dawn", "human"), enemy = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([source, enemy]);
+    = makeGame([source, enemy]);
   const card = instance("lightning");
   source.hand.push(card);
   assert.equal(await game.playCard(source, card, []), true);
@@ -2681,7 +2681,7 @@ test("闪电：无状态时可用，成功后获得状态并进入弃牌堆", as
 test("闪电：已有闪电状态时真实规则拒绝使用", async () => {
   const source = makePlayer("a", 0, "dawn", "human"), enemy = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([source, enemy]);
+    = makeGame([source, enemy]);
   source.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: source.id };
   const card = instance("lightning");
   source.hand.push(card);
@@ -2695,7 +2695,7 @@ test("闪电：使用阶段普通反制成功后不获得状态且不转移", as
     enemy = makePlayer("b", 1, "dusk", "human"),
     receiver = makePlayer("c", 2, "dawn");
   const { game }
-  = makeGame([source, enemy, receiver], { response: () => true });
+    = makeGame([source, enemy, receiver], { response: () => true });
   const card = instance("lightning"), counter = instance("counter");
   source.hand.push(card);
   enemy.hand.push(counter);
@@ -2709,7 +2709,7 @@ test("闪电：使用阶段普通反制成功后不获得状态且不转移", as
 test("闪电：使用回合不立即判定，下一次实际回合在摸牌前结算", async () => {
   const source = makePlayer("a", 0, "dawn", "ai"), enemy = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([source, enemy]);
+    = makeGame([source, enemy]);
   const card = instance("lightning");
   source.hand.push(card);
   await game.playCard(source, card, []);
@@ -2722,7 +2722,7 @@ test("闪电：使用回合不立即判定，下一次实际回合在摸牌前�
     if (event.player === source && source.hp < source.maxHp) damageBeforeDraw = true;
   });
   game.aiController.getLegalActions = () => [{ type: "end" }];
-  game.aiController.selectAction = async () =>({ type: "end" });
+  game.aiController.selectAction = async () => ({ type: "end" });
   await game.takeTurn(source, game.state.gameId);
   assert.equal(damageBeforeDraw, true);
   assert.equal(source.hp, source.maxHp - 3);
@@ -2734,7 +2734,7 @@ test("闪电：判定非装备牌后移除状态并顺时针转移，保留来�
     next = makePlayer("b", 1, "dusk"),
     tail = makePlayer("c", 2, "dawn");
   const { game }
-  = makeGame([holder, next, tail]);
+    = makeGame([holder, next, tail]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   game.state.deck.cards = [instance("assault")];
   game.state.deck.discardPile = [];
@@ -2750,7 +2750,7 @@ test("闪电：判定非装备牌后移除状态并顺时针转移，保留来�
 test("闪电：判定装备牌触发3点中立伤害且状态立即消费", async () => {
   const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([holder, enemy]);
+    = makeGame([holder, enemy]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   const equipment = instance("defenseDevice");
   game.state.deck.cards = [equipment];
@@ -2785,7 +2785,7 @@ test("闪电：判定装备牌触发3点中立伤害且状态立即消费", asyn
 test("闪电：伤害不请求格挡且不触发雷达防御判定", async () => {
   const holder = makePlayer("a", 0, "dawn");
   const { game }
-  = makeGame([holder]);
+    = makeGame([holder]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   holder.equipment = instance("defenseDevice");
   const block = instance("block");
@@ -2793,7 +2793,7 @@ test("闪电：伤害不请求格挡且不触发雷达防御判定", async () =>
   game.state.deck.cards = [instance("energyDevice")];
   let judgmentReveals = 0;
   game.eventBus.on("judgmentRevealed", "test:lightning-judge-count", () => {
-    judgmentReveals+=1;
+    judgmentReveals += 1;
   });
   await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
   assert.equal(holder.hp, holder.maxHp - 3);
@@ -2805,7 +2805,7 @@ test("闪电：伤害不请求格挡且不触发雷达防御判定", async () =>
 test("闪电：护盾吸收后按统一伤害系统记录", async () => {
   const holder = makePlayer("a", 0, "dawn");
   const { game }
-  = makeGame([holder]);
+    = makeGame([holder]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   holder.shield = 1;
   const events = [];
@@ -2828,7 +2828,7 @@ test("闪电：护盾吸收后按统一伤害系统记录", async () => {
 test("闪电：伤害被防止降为0时状态仍被消费且不转移", async () => {
   const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([holder, enemy]);
+    = makeGame([holder, enemy]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   game.state.deck.cards = [instance("energyDevice")];
   game.eventBus.on("beforeDamage", "test:lightning-prevent", (event) => {
@@ -2843,7 +2843,7 @@ test("闪电：伤害被防止降为0时状态仍被消费且不转移", async (
 test("闪电：判定牌先入判定区再入弃牌堆且别名保持同步", async () => {
   const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([holder, enemy]);
+    = makeGame([holder, enemy]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   const card = instance("assault");
   game.state.deck.cards = [card];
@@ -2862,7 +2862,7 @@ test("闪电：判定牌先入判定区再入弃牌堆且别名保持同步", as
 test("闪电：空牌堆重洗弃牌堆后仍能完成判定", async () => {
   const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([holder, enemy]);
+    = makeGame([holder, enemy]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   game.state.deck.cards = [];
   game.state.deck.discardPile = [instance("recover")];
@@ -2875,7 +2875,7 @@ test("闪电：空牌堆重洗弃牌堆后仍能完成判定", async () => {
 test("闪电：状态反制由持有者本人优先响应，成功后不翻判定牌并转移", async () => {
   const holder = makePlayer("a", 0, "dawn", "human"), receiver = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([holder, receiver], { response: () => true });
+    = makeGame([holder, receiver], { response: () => true });
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   const counter = instance("counter");
   holder.hand.push(counter);
@@ -2896,7 +2896,7 @@ test("闪电：状态反制按顺时针响应，反制被反制后继续判定",
     responder = makePlayer("b", 1, "dusk"),
     counterer = makePlayer("c", 2, "dusk");
   const { game }
-  = makeGame([holder, responder, counterer]);
+    = makeGame([holder, responder, counterer]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   responder.hand.push(instance("counter"));
   counterer.hand.push(instance("counter"));
@@ -2917,7 +2917,7 @@ test("闪电：转移跳过死亡与已有闪电玩家且不受阵营影响", as
     already = makePlayer("c", 2, "dawn"),
     target = makePlayer("d", 3, "dusk");
   const { game }
-  = makeGame([holder, dead, already, target]);
+    = makeGame([holder, dead, already, target]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   dead.alive = false;
   already.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: already.id };
@@ -2937,7 +2937,7 @@ test("闪电：判定未触发且无其他合法接收者时转移回自己", as
     ally = makePlayer("b", 1, "dawn"),
     enemy = makePlayer("c", 2, "dusk");
   const { game }
-  = makeGame([holder, ally, enemy]);
+    = makeGame([holder, ally, enemy]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   ally.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: ally.id };
   enemy.alive = false;
@@ -2961,7 +2961,7 @@ test("闪电：中立伤害阵亡不给原使用者或持有者击杀奖励", as
     holder = makePlayer("h", 1, "dusk"),
     medic = makePlayer("m", 2, "dawn");
   const { game }
-  = makeGame([origin, holder, medic]);
+    = makeGame([origin, holder, medic]);
   origin.hand.push(instance("assault"));
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: origin.id };
   holder.hp = 2;
@@ -2976,7 +2976,7 @@ test("闪电：中立伤害阵亡不给原使用者或持有者击杀奖励", as
 test("闪电：判定触发日志复用玩家与卡牌名称格式化机制", async () => {
   const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([holder, enemy]);
+    = makeGame([holder, enemy]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   const equipment = instance("defenseDevice");
   game.state.deck.cards = [equipment];
@@ -3007,7 +3007,7 @@ test("闪电：基础牌与战术牌判定类别日志正确", async () => {
   const run = (judgmentDefinitionId) => {
     const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
     const { game }
-    = makeGame([holder, enemy]);
+      = makeGame([holder, enemy]);
     holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
     const judgmentCard = instance(judgmentDefinitionId);
     game.state.deck.cards = [judgmentCard];
@@ -3042,7 +3042,7 @@ test("闪电：基础牌与战术牌判定类别日志正确", async () => {
 test("闪电：反制路径不输出判定日志", async () => {
   const holder = makePlayer("a", 0, "dawn", "human"), receiver = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([holder, receiver], { response: () => true });
+    = makeGame([holder, receiver], { response: () => true });
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   holder.hand.push(instance("counter"));
   game.state.deck.cards = [instance("energyDevice")];
@@ -3058,7 +3058,7 @@ test("闪电：反制后无其他合法接收者时转移回自己", async () =>
     ally = makePlayer("b", 1, "dawn"),
     enemy = makePlayer("c", 2, "dusk");
   const { game }
-  = makeGame([holder, ally, enemy], { response: () => true });
+    = makeGame([holder, ally, enemy], { response: () => true });
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   holder.hand.push(instance("counter"));
   ally.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: ally.id };
@@ -3093,7 +3093,7 @@ test("闪电：卡牌描述与 README 当前描述完全一致", async () => {
 for (const id of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"]) test(`装备：${CARD_DEFINITIONS[id].name} 会进入唯一装备槽`, async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   const equipment = instance(id);
   a.hand.push(equipment);
   await game.playCard(a, equipment, []);
@@ -3115,7 +3115,7 @@ test("装备：四种旧装备采用README中的新名称且保留稳定definiti
 test("装备：替换装备时旧装备进入弃牌堆且新装备留在槽内", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   const old = instance("energyDevice");
   a.equipment = old;
   const next = instance("battleDevice");
@@ -3134,7 +3134,7 @@ test("装备：望远镜替换为屏障后方向性距离立即按新装备重�
     old = instance("telescope"),
     next = instance("barrierDevice");
   const { game }
-  = makeGame([source, ally, target, other, tail]);
+    = makeGame([source, ally, target, other, tail]);
   source.equipment = old;
   source.hand.push(next);
   assert.equal(DistanceSystem.getDistance(game, source, target), 1);
@@ -3148,7 +3148,7 @@ test("装备：望远镜替换为屏障后方向性距离立即按新装备重�
 
 test("充能桩：只给回合能量额外+1", () => {
   const { game, small }
-  = makeTeamFixture();
+    = makeTeamFixture();
   small.equipment = instance("energyDevice");
   assert.equal(game.teamRules.getTurnEnergyGain(small), 2);
   assert.deepEqual(
@@ -3163,7 +3163,7 @@ test("充能桩：只给回合能量额外+1", () => {
 test("回收站：每回合前两张主动战术各摸1且被反制也触发", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
-  = makeGame([a, b], { response: (request) => request.type === "counter" });
+    = makeGame([a, b], { response: (request) => request.type === "counter" });
   a.equipment = instance("recycleDevice");
   a.hand.push(instance("harvest"), instance("exposeWeakness"), instance("exposeWeakness"));
   b.hand.push(instance("counter"));
@@ -3195,7 +3195,7 @@ test("回收站：次数只在装备区显示并随真实回合状态重置", ()
 test("回收站：仍严格限制每回合最多触发2次", async () => {
   const owner = makePlayer("recycle-rule", 0, "dawn"), enemy = makePlayer("recycle-enemy", 1, "dusk");
   const { game }
-  = makeGame([owner, enemy]);
+    = makeGame([owner, enemy]);
   owner.equipment = instance("recycleDevice");
   owner.hand.push(instance("exposeWeakness"), instance("exposeWeakness"), instance("exposeWeakness"));
   game.state.deck.cards.push(instance("charge"), instance("block"), instance("shield"));
@@ -3211,7 +3211,7 @@ test("回收站：仍严格限制每回合最多触发2次", async () => {
 test("雷达：判定战术牌时免疫原突袭并把判定牌弃置", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   b.equipment = instance("defenseDevice");
   const judgment = instance("harvest");
   game.state.deck.cards.push(judgment);
@@ -3225,7 +3225,7 @@ test("雷达：判定战术牌时免疫原突袭并把判定牌弃置", async ()
 test("雷达：判定基础牌时获得该牌并继续攻击", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   b.equipment = instance("defenseDevice");
   const judgment = instance("charge");
   game.state.deck.cards.push(judgment);
@@ -3238,7 +3238,7 @@ test("雷达：判定基础牌时获得该牌并继续攻击", async () => {
 test("雷达：公开获得的基础牌写入其他 AI 记忆", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   b.equipment = instance("defenseDevice");
   const judgment = instance("charge");
   game.state.deck.cards.push(judgment);
@@ -3249,7 +3249,7 @@ test("雷达：公开获得的基础牌写入其他 AI 记忆", async () => {
 test("雷达：获得的格挡可立即用于当前攻击", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
-  = makeGame([a, b], { response: () => true });
+    = makeGame([a, b], { response: () => true });
   b.equipment = instance("defenseDevice");
   game.state.deck.cards.push(instance("block"));
   const hp = b.hp;
@@ -3261,7 +3261,7 @@ test("雷达：获得的格挡可立即用于当前攻击", async () => {
 test("雷达：判定装备牌时不直接扣血且原攻击继续由护盾吸收", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   b.equipment = instance("defenseDevice");
   const judgment = instance("energyDevice");
   game.state.deck.cards.push(judgment);
@@ -3281,7 +3281,7 @@ test("军火库：响应显示完整数量并原子消耗两张格挡", async ()
   source.equipment = instance("battleDevice");
   target.hand.push(instance("block"), instance("block"), instance("block"));
   const { game, ui }
-  = makeGame([source, target], { response: () => true });
+    = makeGame([source, target], { response: () => true });
   await game.damage(
     source, target, 1, { card: instance("assault"), canBlock: true, damageType: "normal" }
   );
@@ -3295,7 +3295,7 @@ test("军火库：响应显示完整数量并原子消耗两张格挡", async ()
 test("军火库：要求2张格挡；只有1张时仍显示响应但按钮禁用且不会浪费", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game, ui }
-  = makeGame([a, b], { response: () => true });
+    = makeGame([a, b], { response: () => true });
   a.equipment = instance("battleDevice");
   b.hand.push(instance("block"));
   const hp = b.hp;
@@ -3312,7 +3312,7 @@ test("军火库：要求2张格挡；只有1张时仍显示响应但按钮禁用
 test("军火库：面对2张格挡时原子弃置并完全防住", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
-  = makeGame([a, b], { response: () => true });
+    = makeGame([a, b], { response: () => true });
   a.equipment = instance("battleDevice");
   b.hand.push(instance("block"), instance("block"));
   const hp = b.hp;
@@ -3324,9 +3324,9 @@ test("军火库：面对2张格挡时原子弃置并完全防住", async () => {
 // ---- 望远镜与屏障 ----
 
 test("望远镜与屏障：望远镜令装备者计算到其他角色的距离减1且最低为1", () => {
-  const ps = Array.from({ length: 5 }, (_, i) => makePlayer(`p${i}`, i, i < 2 ? "dawn": "dusk"));
+  const ps = Array.from({ length: 5 }, (_, i) => makePlayer(`p${i}`, i, i < 2 ? "dawn" : "dusk"));
   const { game }
-  = makeGame(ps);
+    = makeGame(ps);
   ps[0].equipment = instance("telescope");
   assert.equal(DistanceSystem.getDistance(game, ps[0], ps[2]), 1);
   assert.equal(DistanceSystem.getDistance(game, ps[0], ps[1]), 1);
@@ -3334,18 +3334,18 @@ test("望远镜与屏障：望远镜令装备者计算到其他角色的距离�
 });
 
 test("望远镜与屏障：屏障令其他角色计算到装备者的距离加1但不影响装备者主动测距", () => {
-  const ps = Array.from({ length: 5 }, (_, i) => makePlayer(`p${i}`, i, i < 2 ? "dawn": "dusk"));
+  const ps = Array.from({ length: 5 }, (_, i) => makePlayer(`p${i}`, i, i < 2 ? "dawn" : "dusk"));
   const { game }
-  = makeGame(ps);
+    = makeGame(ps);
   ps[1].equipment = instance("barrierDevice");
   assert.equal(DistanceSystem.getDistance(game, ps[0], ps[1]), 2);
   assert.equal(DistanceSystem.getDistance(game, ps[1], ps[0]), 1);
 });
 
 test("望远镜与屏障：望远镜和屏障在同一条方向距离上依次生效", () => {
-  const ps = Array.from({ length: 5 }, (_, i) => makePlayer(`p${i}`, i, i < 2 ? "dawn": "dusk"));
+  const ps = Array.from({ length: 5 }, (_, i) => makePlayer(`p${i}`, i, i < 2 ? "dawn" : "dusk"));
   const { game }
-  = makeGame(ps);
+    = makeGame(ps);
   ps[0].equipment = instance("telescope");
   ps[2].equipment = instance("barrierDevice");
   assert.equal(DistanceSystem.getDistance(game, ps[0], ps[2]), 2);
@@ -3359,7 +3359,7 @@ test("望远镜与屏障：距离装备即时改变普通突袭合法目标且 A
     tail = makePlayer("tail", 4, "dusk"),
     assault = instance("assault");
   const { game }
-  = makeGame([source, ally, target, other, tail]);
+    = makeGame([source, ally, target, other, tail]);
   source.hand.push(assault);
   assert.ok(!RuleEngine.getCardTargets(game, source, assault).includes(target));
   source.equipment = instance("telescope");
@@ -3384,7 +3384,7 @@ test("刃行者：使用不同类别卡牌会增加并公开显示连势且命�
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk", "ai", 0);
   const { game }
-  = makeGame([blade, ally, enemy]);
+    = makeGame([blade, ally, enemy]);
   registerPassiveSkills(game);
   const charge = instance("charge"), harvest = instance("harvest"), assault = instance("assault");
   blade.hand.push(charge, harvest, assault);
@@ -3406,7 +3406,7 @@ test("刃行者：连势只在本人回合结束时清空", async () => {
     ally = makePlayer("blade-ally", 1, "dawn"),
     enemy = makePlayer("blade-enemy", 2, "dusk"),
     { game }
-  = makeGame([blade, ally, enemy]);
+      = makeGame([blade, ally, enemy]);
   registerPassiveSkills(game);
   blade.turnFlags.momentum = 2;
   await game.eventBus.emit("turnEnd", { type: "turnEnd", player: ally });
@@ -3428,9 +3428,9 @@ test("刃行者：完整回合结束流程会清空未消费的连势", async ()
   const blade = makePlayer("blade-full-turn", 0, "dawn", "ai", 0),
     enemy = makePlayer("blade-full-turn-enemy", 1, "dusk"),
     { game }
-  = makeGame([blade, enemy]);
+      = makeGame([blade, enemy]);
   registerPassiveSkills(game);
-  game.aiController.selectAction = async () =>({ type: "end" });
+  game.aiController.selectAction = async () => ({ type: "end" });
   game.eventBus.on("playPhaseEnd", "test:grant-momentum-before-turn-end", () => {
     blade.turnFlags.momentum = 2;
   });
@@ -3445,7 +3445,7 @@ test("守誓者：壁垒每次提供1点可叠加的永久护盾", async () => {
     target = makePlayer("b", 1, "dawn", "ai", 1),
     enemy = makePlayer("c", 2, "dusk");
   const { game }
-  = makeGame([source, target, enemy]);
+    = makeGame([source, target, enemy]);
   source.energy = 4;
   target.shield = 2;
   await ACTIVE_SKILLS.barrier.execute(game, source, [target]);
@@ -3463,11 +3463,11 @@ test("守誓者：壁垒护盾不会在目标回合开始时消失", async () =>
     target = makePlayer("b", 1, "dawn", "ai", 1),
     enemy = makePlayer("c", 2, "dusk");
   const { game }
-  = makeGame([source, target, enemy]);
+    = makeGame([source, target, enemy]);
   source.energy = 2;
   await ACTIVE_SKILLS.barrier.execute(game, source, [target]);
   game.state.currentPlayerIndex = 1;
-  game.aiController.selectAction = async () =>({ type: "end" });
+  game.aiController.selectAction = async () => ({ type: "end" });
   await game.takeTurn(target, game.state.gameId);
   assert.equal(target.shield, 1);
   assert.equal("temporaryShield" in target.statuses, false);
@@ -3478,7 +3478,7 @@ test("守誓者：壁垒护盾经过完整轮次且守誓者阵亡后仍然保�
     target = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game }
-  = makeGame([source, target, enemy]);
+    = makeGame([source, target, enemy]);
   source.energy = 2;
   target.shield = 1;
   await ACTIVE_SKILLS.barrier.execute(game, source, [target]);
@@ -3486,8 +3486,8 @@ test("守誓者：壁垒护盾经过完整轮次且守誓者阵亡后仍然保�
   source.hp = 0;
   game.state.currentPlayerIndex = 1;
   game.state.startingPlayerIndex = 1;
-  game.aiController.selectAction = async () =>({ type: "end" });
-  for (let turn = 0; turn < 4; turn+=1) {
+  game.aiController.selectAction = async () => ({ type: "end" });
+  for (let turn = 0; turn < 4; turn += 1) {
     await game.takeTurn(game.currentPlayer, game.state.gameId);
     await game.advanceTurn();
   }
@@ -3502,7 +3502,7 @@ test("守誓者：壁垒与护盾牌使用统一伤害吸收规则", async () =>
     enemy = makePlayer("enemy", 2, "dusk"),
     shieldCard = instance("shield");
   const { game }
-  = makeGame([source, target, enemy]);
+    = makeGame([source, target, enemy]);
   source.hand.push(shieldCard);
   source.energy = 2;
   assert.equal(await game.playCard(source, shieldCard, [target]), true);
@@ -3520,7 +3520,7 @@ test("守誓者：README中的主动技能消耗与每回合次数进入实际�
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game }
-  = makeGame([warden, ally, enemy]);
+    = makeGame([warden, ally, enemy]);
   warden.energy = 4;
   assert.equal(await game.useActiveSkill(warden, "barrier", [ally]), true);
   assert.equal(await game.useActiveSkill(warden, "barrier", [ally]), true);
@@ -3531,7 +3531,7 @@ test("守誓者：README中的主动技能消耗与每回合次数进入实际�
     bladeAlly = makePlayer("blade-ally", 1, "dawn"),
     bladeEnemy = makePlayer("blade-enemy", 2, "dusk");
   const { game: bladeGame }
-  = makeGame([blade, bladeAlly, bladeEnemy]);
+    = makeGame([blade, bladeAlly, bladeEnemy]);
   blade.energy = 2;
   assert.equal(await bladeGame.useActiveSkill(blade, "breakArmy", []), true);
   assert.equal(blade.energy, 0);
@@ -3539,13 +3539,13 @@ test("守誓者：README中的主动技能消耗与每回合次数进入实际�
 });
 
 test("守誓者：护援响应区分原技能名称与当前响应技能名称", async () => {
-  for (const[actionName, context] of [["焚场", { skill: "burningField", actionName: "焚场", canBlock: false, damageType: "skill" }], ["猎杀", { skill: "hunt", actionName: "猎杀", canBlock: true, damageType: "skill" }], ["突袭", { card: instance("assault"), canBlock: true, damageType: "normal" }]]) {
+  for (const [actionName, context] of [["焚场", { skill: "burningField", actionName: "焚场", canBlock: false, damageType: "skill" }], ["猎杀", { skill: "hunt", actionName: "猎杀", canBlock: true, damageType: "skill" }], ["突袭", { card: instance("assault"), canBlock: true, damageType: "normal" }]]) {
     const source = makePlayer(`source-${actionName}`, 0, "dusk", "ai", 4),
       target = makePlayer(`target-${actionName}`, 1, "dawn", "ai", 2),
       guardian = makePlayer(`guardian-${actionName}`, 2, "dawn", "human", 1);
     guardian.hand.push(instance("charge"));
     const { game, ui }
-    = makeGame([source, target, guardian], { response: () => false });
+      = makeGame([source, target, guardian], { response: () => false });
     registerPassiveSkills(game);
     await game.damage(source, target, 1, context);
     const request = ui.responseRequests.find((entry) => entry.type === "skill");
@@ -3563,7 +3563,7 @@ test("守誓者：护援同一玩家回合内第二次伤害不能再次触发",
   const guardian = makePlayer("aid-same-guardian", 2, "dawn", "human", 1);
   guardian.hand.push(instance("charge"), instance("charge"));
   const { game, ui }
-  = makeGame([source, target, guardian], { response: () => true });
+    = makeGame([source, target, guardian], { response: () => true });
   registerPassiveSkills(game);
   const hp = target.hp;
   assert.equal(guardian.roundFlags.guardianAidUsed, false);
@@ -3586,7 +3586,7 @@ test("守誓者：护援在下一名非守誓者玩家回合开始后重新可�
   const guardian = makePlayer("aid-next-guardian", 2, "dawn", "human", 1);
   const nextPlayer = makePlayer("aid-next-player", 3, "dawn", "ai", 5);
   const { game, ui }
-  = makeGame([source, ally, guardian, nextPlayer], { response: () => true });
+    = makeGame([source, ally, guardian, nextPlayer], { response: () => true });
   registerPassiveSkills(game);
   guardian.hand.push(instance("charge"), instance("charge"));
   const hp = ally.hp;
@@ -3599,7 +3599,7 @@ test("守誓者：护援在下一名非守誓者玩家回合开始后重新可�
     if (!guardian.roundFlags.guardianAidUsed) resetObserved = true;
   });
   game.state.currentPlayerIndex = 3;
-  game.aiController.selectAction = async () =>({ type: "end" });
+  game.aiController.selectAction = async () => ({ type: "end" });
   await game.takeTurn(nextPlayer, game.state.gameId);
   assert.equal(resetObserved, true);
   assert.equal(guardian.roundFlags.guardianAidUsed, false);
@@ -3622,7 +3622,7 @@ test("灵医：滋荣可选择受伤的自己或队友，治疗队友时自己�
   medic.hp = 1;
   ally.hp = 1;
   const { game }
-  = makeGame([medic, ally, enemy]);
+    = makeGame([medic, ally, enemy]);
   registerPassiveSkills(game);
   game.state.deck.cards.push(instance("block"));
   medic.energy = 4;
@@ -3649,9 +3649,9 @@ test("灵医：回春每回合首次治疗己方额外恢复1点并摸1张", asy
     enemy = makePlayer("enemy-rejuvenation", 2, "dusk");
   medic.hp = 2;
   ally.hp = 1;
-  enemy.hp-=1;
+  enemy.hp -= 1;
   const { game }
-  = makeGame([medic, ally, enemy]);
+    = makeGame([medic, ally, enemy]);
   registerPassiveSkills(game);
   game.state.deck.cards.push(instance("block"), instance("charge"));
   await game.heal(medic, enemy, 1, { reason: "测试敌方治疗" });
@@ -3678,7 +3678,7 @@ test("灵医：回春可在救援濒死队友时额外恢复并摸牌", async ()
   target.hp = -1;
   medic.hand.push(instance("recover"));
   const { game }
-  = makeGame([target, medic, enemy]);
+    = makeGame([target, medic, enemy]);
   game.state.deck.cards.push(instance("block"));
   registerPassiveSkills(game);
   const events = [];
@@ -3703,7 +3703,7 @@ test("灵医：本人濒死时也能以回春强化自救并摸牌", async () =>
   medic.hp = -1;
   medic.hand.push(instance("recover"));
   const { game }
-  = makeGame([medic, enemy]);
+    = makeGame([medic, enemy]);
   game.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(game);
   await game.dyingSystem.enter(medic, enemy);
@@ -3721,7 +3721,7 @@ test("灵医：强制救援：濒死上下文会触发灵医回春额外治疗�
   human.hp = 0;
   medic.hand.push(instance("recover"));
   const { game }
-  = makeGame([human, medic, enemy]);
+    = makeGame([human, medic, enemy]);
   game.state.deck.cards.push(instance("block"));
   registerPassiveSkills(game);
   await game.dyingSystem.enter(human, enemy);
@@ -3737,7 +3737,7 @@ test("影客：为3点生命且窥隙经实际伤害与隐藏选择查看至多2
   const shade = makePlayer("shade", 0, "dawn", "human", 3), enemy = makePlayer("enemy", 1, "dusk");
   enemy.hand.push(instance("assault"), instance("recover"), instance("charge"));
   const { game, ui }
-  = makeGame([shade, enemy], { random: () => 0 });
+    = makeGame([shade, enemy], { random: () => 0 });
   registerPassiveSkills(game);
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(shade.maxHp, 3);
@@ -3759,7 +3759,7 @@ test("影客：窃取可把距离2内敌方装备收入手牌且不替换原装�
     equipment = instance("energyDevice"),
     original = instance("battleDevice");
   const { game }
-  = makeGame([shade, near, target, other, tail], { random: () => 0 });
+    = makeGame([shade, near, target, other, tail], { random: () => 0 });
   shade.energy = 2;
   shade.equipment = original;
   target.equipment = equipment;
@@ -3776,7 +3776,7 @@ test("影客：窃取可把距离2内敌方装备收入手牌且不替换原装�
     blockedTail = makePlayer("blocked-tail", 4, "dawn");
   blocked.equipment = instance("barrierDevice");
   const { game: blockedGame }
-  = makeGame([blockedShade, blockedNear, blocked, blockedOther, blockedTail]);
+    = makeGame([blockedShade, blockedNear, blocked, blockedOther, blockedTail]);
   assert.equal(DistanceSystem.getDistance(blockedGame, blockedShade, blocked), 3);
   assert.ok(
     !RuleEngine.getSkillTargets(blockedGame, blockedShade, ACTIVE_SKILLS.stealSkill).includes(blocked)
@@ -3785,7 +3785,7 @@ test("影客：窃取可把距离2内敌方装备收入手牌且不替换原装�
 
 test("影客：窃取把3张手牌与1张装备组成单一等概率实体集合", async () => {
   const rolls = [0, .26, .51, .76];
-  for (const[expectedIndex, roll] of rolls.entries()) {
+  for (const [expectedIndex, roll] of rolls.entries()) {
     const shade = makePlayer(`uniform-shade-${expectedIndex}`, 0, "dawn", "ai", 3),
       target = makePlayer(`uniform-target-${expectedIndex}`, 1, "dusk");
     const cards = [instance("assault"), instance("recover"), instance("charge")],
@@ -3796,7 +3796,7 @@ test("影客：窃取把3张手牌与1张装备组成单一等概率实体集合
     shade.equipment = original;
     shade.energy = 1;
     const { game }
-    = makeGame([shade, target], { random: () => roll }),
+      = makeGame([shade, target], { random: () => roll }),
       candidate = [...cards, equipment][expectedIndex];
     const shadeVersion = shade.handVersion, targetVersion = target.handVersion;
     assert.equal(await game.useActiveSkill(shade, "stealSkill", [target]), true);
@@ -3807,8 +3807,8 @@ test("影客：窃取把3张手牌与1张装备组成单一等概率实体集合
     assert.equal(target.equipment === candidate, false);
     assert.equal(game.state.deck.discardPile.includes(candidate), false);
     assert.equal(game.state.deck.resolvingCards.includes(candidate), false);
-    assert.equal(target.handVersion, targetVersion +(expectedIndex < 3 ? 1: 0));
-    const zones =[
+    assert.equal(target.handVersion, targetVersion + (expectedIndex < 3 ? 1 : 0));
+    const zones = [
       shade.hand.includes(candidate),
       shade.equipment === candidate,
       target.hand.includes(candidate),
@@ -3831,7 +3831,7 @@ test("影客：真人窃取先选择距离2内敌人再只从该目标随机获�
   otherEnemy.hand.push(untouched);
   shade.energy = 1;
   const { game, ui }
-  = makeGame([shade, allyA, chosen, otherEnemy, allyB], { random: () => 0 });
+    = makeGame([shade, allyA, chosen, otherEnemy, allyB], { random: () => 0 });
   let offered = null, prompt = "";
   ui.requestTarget = async (players, message) => {
     offered = [...players];
@@ -3845,7 +3845,7 @@ test("影客：真人窃取先选择距离2内敌人再只从该目标随机获�
     offered.every(
       (player) => player.battleTeam !== shade.battleTeam && DistanceSystem.getDistance(
         game, shade, player
-      )<= 2
+      ) <= 2
     )
   );
   assert.match(prompt, /窃取.*选择目标/);
@@ -3861,7 +3861,7 @@ test("影客：窃取装备先进入手牌且只有之后正常使用才会装�
     stolen = instance("energyDevice"),
     original = instance("battleDevice");
   const { game }
-  = makeGame([shade, target], { random: () => 0 });
+    = makeGame([shade, target], { random: () => 0 });
   shade.energy = 1;
   shade.equipment = original;
   target.equipment = stolen;
@@ -3884,7 +3884,7 @@ test("影客：窃取消耗1点能量且每回合最多发动2次", async () => 
     target = makePlayer("steal-limit-target", 1, "dusk");
   target.hand.push(instance("block"), instance("charge"), instance("recover"));
   const { game }
-  = makeGame([shade, target], { random: () => 0 });
+    = makeGame([shade, target], { random: () => 0 });
   shade.energy = 3;
   assert.equal(await game.useActiveSkill(shade, "stealSkill", [target]), true);
   assert.equal(shade.energy, 2);
@@ -3920,7 +3920,7 @@ test("影客：窥隙真人选择只私下展示且公共日志与DOM不泄露�
     secrets = [instance("counter"), instance("harvest"), instance("duel")];
   target.hand.push(...secrets);
   const { game, ui }
-  = makeGame([shade, target]);
+    = makeGame([shade, target]);
   registerPassiveSkills(game);
   await game.damage(shade, target, 1, { canBlock: false });
   assert.equal(ui.hiddenRequests.length, 1);
@@ -3962,7 +3962,7 @@ test("影客：窥隙目标仅1张手牌时最多选择并展示1张", async () 
     only = instance("counter");
   target.hand.push(only);
   const { game, ui }
-  = makeGame([shade, target]);
+    = makeGame([shade, target]);
   registerPassiveSkills(game);
   await game.damage(shade, target, 1, { canBlock: false });
   assert.equal(ui.hiddenRequests[0].count, 1);
@@ -3977,7 +3977,7 @@ test("影客：窥隙等待期间已选牌离手时只展示仍在原手牌的�
     third = instance("duel");
   target.hand.push(first, second, third);
   const { game, ui }
-  = makeGame([shade, target]);
+    = makeGame([shade, target]);
   registerPassiveSkills(game);
   ui.requestHiddenCards = async (selection) => {
     target.hand.splice(target.hand.indexOf(first), 1);
@@ -3998,7 +3998,7 @@ test("影客：窥隙同回合仅触发一次且格挡、护盾、队友和空�
     target = makePlayer("peek-once-target", 1, "dusk");
   target.hand.push(instance("charge"), instance("harvest"), instance("duel"));
   const { game, ui }
-  = makeGame([shade, target]);
+    = makeGame([shade, target]);
   registerPassiveSkills(game);
   await game.damage(shade, target, 1, { canBlock: false });
   await game.damage(shade, target, 1, { canBlock: false });
@@ -4043,7 +4043,7 @@ test("影客：窥隙在致命伤害获救后触发且不会在救援前提前�
   enemy.hp = 1;
   enemy.hand.push(instance("recover"), instance("counter"), instance("harvest"));
   const { game, ui }
-  = makeGame([shade, enemy]);
+    = makeGame([shade, enemy]);
   registerPassiveSkills(game);
   game.eventBus.on("playerDying", "test:peek-rescue-no-early", () => {
     assert.equal(ui.hiddenRequests.length, 0);
@@ -4067,7 +4067,7 @@ test("影客：窥隙在致命伤害由队友救援成功后触发", async () =>
   enemy.hand.push(instance("counter"), instance("harvest"), instance("duel"));
   ally.hand.push(instance("recover"));
   const { game, ui }
-  = makeGame([shade, enemy, ally]);
+    = makeGame([shade, enemy, ally]);
   registerPassiveSkills(game);
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(enemy.alive, true);
@@ -4085,7 +4085,7 @@ test("影客：窥隙在致命伤害救援失败阵亡时不触发且不残留�
   enemy.hp = 1;
   enemy.hand.push(instance("counter"), instance("harvest"));
   const { game, ui }
-  = makeGame([shade, enemy]);
+    = makeGame([shade, enemy]);
   registerPassiveSkills(game);
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(enemy.alive, false);
@@ -4105,7 +4105,7 @@ test("影客：窥隙经濒死获救触发后同回合对其他敌人不再触�
   second.hp = 2;
   second.hand.push(instance("charge"), instance("duel"));
   const { game, ui }
-  = makeGame([shade, first, second]);
+    = makeGame([shade, first, second]);
   registerPassiveSkills(game);
   await game.damage(shade, first, 1, { canBlock: false });
   assert.equal(shade.turnFlags.spyGapTriggered, true);
@@ -4122,7 +4122,7 @@ test("影客：非伤害失去生命获救不得触发窥隙", async () => {
   enemy.hp = 1;
   enemy.hand.push(instance("recover"), instance("counter"), instance("harvest"));
   const { game, ui }
-  = makeGame([shade, enemy]);
+    = makeGame([shade, enemy]);
   registerPassiveSkills(game);
   await game.hpLossSystem.lose(enemy, 1, { source: shade, reason: "测试失去生命" });
   assert.equal(enemy.alive, true);
@@ -4139,7 +4139,7 @@ test("影客：护盾完全吸收伤害时窥隙不触发且不写入待处理�
   enemy.shield = 1;
   enemy.hand.push(instance("charge"), instance("duel"));
   const { game, ui }
-  = makeGame([shade, enemy]);
+    = makeGame([shade, enemy]);
   registerPassiveSkills(game);
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(enemy.hp, enemy.maxHp);
@@ -4156,7 +4156,7 @@ test("炎术师：余烬每个卡牌结算ID最多触发1次", async () => {
     enemyA = makePlayer("enemy-a", 1, "dusk"),
     enemyB = makePlayer("enemy-b", 2, "dusk");
   const { game }
-  = makeGame([ember, enemyA, enemyB]);
+    = makeGame([ember, enemyA, enemyB]);
   registerPassiveSkills(game);
   const card = instance("shockwave");
   await game.eventBus.emit(
@@ -4179,12 +4179,12 @@ test("炎术师：焚场2点能量可发动并扣至0、3点能量发动后剩1"
     const enemy = makePlayer("ember-cost-enemy", 2, "dusk", "ai", 5);
     ember.energy = energy;
     const { game }
-    = makeGame([ember, ally, enemy]);
+      = makeGame([ember, ally, enemy]);
     return { ember, enemy, game };
   };
-   {
+  {
     const { ember, enemy, game }
-    = makeEmber(2);
+      = makeEmber(2);
     const hp = enemy.hp;
     assert.equal(ACTIVE_SKILLS.burningField.canUse(game, ember).ok, true);
     assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
@@ -4192,9 +4192,9 @@ test("炎术师：焚场2点能量可发动并扣至0、3点能量发动后剩1"
     assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 1);
     assert.equal(enemy.hp, hp - 1);
   }
-   {
+  {
     const { ember, enemy, game }
-    = makeEmber(3);
+      = makeEmber(3);
     const hp = enemy.hp;
     assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
     assert.equal(ember.energy, 1);
@@ -4208,7 +4208,7 @@ test("炎术师：焚场1点能量不能发动且不扣费不计数不造成伤�
   const enemy = makePlayer("ember-low-enemy", 2, "dusk", "ai", 5);
   ember.energy = 1;
   const { game }
-  = makeGame([ember, ally, enemy]);
+    = makeGame([ember, ally, enemy]);
   const hp = enemy.hp;
   assert.equal(ACTIVE_SKILLS.burningField.canUse(game, ember).ok, false);
   assert.equal(await game.useActiveSkill(ember, "burningField", []), false);
@@ -4227,7 +4227,7 @@ test("炎术师：焚场只伤害存活敌人、队友与本人不受伤且不�
   ember.energy = 2;
   let observed = null;
   const { game }
-  = makeGame([ember, ally, deadEnemy, enemyA, enemyB]);
+    = makeGame([ember, ally, deadEnemy, enemyA, enemyB]);
   game.eventBus.on("beforeDamage", "test:burning-field-options", (event) => {
     observed = { canBlock: event.canBlock, damageType: event.damageType, skill: event.skill };
   });
@@ -4251,7 +4251,7 @@ test("炎术师：焚场每回合最多发动两次且第三次不扣费不造�
   const enemy = makePlayer("ember-limit-enemy", 2, "dusk", "ai", 5);
   ember.energy = 4;
   const { game }
-  = makeGame([ember, ally, enemy]);
+    = makeGame([ember, ally, enemy]);
   const hp = enemy.hp;
   const emberConfig = GENERAL_DEFINITIONS.find((general) => general.id === "ember-magus");
   assert.equal(emberConfig.activeLimitPerTurn, 2);
@@ -4279,7 +4279,7 @@ test("炎术师：余烬按挑衅和震荡的同一resolutionId各只触发一�
     const ember = makePlayer(`ember-${definitionId}`, 0, "dawn", "ai", 4),
       enemies = [1, 2, 3].map((seat) => makePlayer(`${definitionId}-enemy-${seat}`, seat, "dusk"));
     const { game }
-    = makeGame([ember, ...enemies]);
+      = makeGame([ember, ...enemies]);
     registerPassiveSkills(game);
     ember.hand.push(instance(definitionId));
     await game.playCard(ember, ember.hand[0], enemies);
@@ -4288,7 +4288,7 @@ test("炎术师：余烬按挑衅和震荡的同一resolutionId各只触发一�
   const ember = makePlayer("ember-two-cards", 0, "dawn", "ai", 4),
     enemy = makePlayer("ember-two-target", 1, "dusk"),
     { game }
-  = makeGame([ember, enemy]);
+      = makeGame([ember, enemy]);
   registerPassiveSkills(game);
   ember.hand.push(instance("provoke"), instance("provoke"));
   await game.playCard(ember, ember.hand[0], [enemy]);
@@ -4304,7 +4304,7 @@ test("追猎者：每回合最多标记2名敌人且同一敌人最多留下1次
     enemyB = makePlayer("tracking-b", 2, "dusk"),
     enemyC = makePlayer("tracking-c", 3, "dusk"),
     { game }
-  = makeGame([hunter, enemyA, enemyB, enemyC]);
+      = makeGame([hunter, enemyA, enemyB, enemyC]);
   registerPassiveSkills(game);
   const target = (enemy) => game.eventBus.emit(
     "targetSelected", { source: hunter, card: instance("assault"), targets: [enemy] }
@@ -4326,7 +4326,7 @@ test("追猎者：猎印持续到自己的下回合结束", async () => {
   const hunter = makePlayer("tracking-clock-hunter", 0, "dawn", "ai", 5),
     enemy = makePlayer("tracking-clock-enemy", 1, "dusk"),
     { game }
-  = makeGame([hunter, enemy]);
+      = makeGame([hunter, enemy]);
   registerPassiveSkills(game);
   await game.eventBus.emit("turnStart", { player: hunter });
   await game.eventBus.emit(
@@ -4346,7 +4346,7 @@ test("追猎者：追踪配置与README声明每回合限2次、同一敌人限1
     section = readme.match(/### 追猎者[\s\S]*?(?=\r?\n### )/)?.[0] ?? "";
   for (
     const text of [hunter.passiveDescription, hunter.passiveLimitText, section]
-  )assert.match(text, /每回合.*2\s*次/);
+  ) assert.match(text, /每回合.*2\s*次/);
   for (const text of [hunter.passiveDescription, hunter.passiveLimitText, section]) {
     assert.match(text, /同一名?敌人.*(?:每回合|一回合).*(?:1次|1 次)/);
   }
@@ -4360,7 +4360,7 @@ test("追猎者：猎杀被格挡后摸1张且每回合上限为2次", async () 
   target.statuses.huntMark = { sourceId: hunter.id };
   target.hand.push(instance("block"));
   const { game }
-  = makeGame([hunter, target, ally], { response: () => true });
+    = makeGame([hunter, target, ally], { response: () => true });
   game.state.deck.cards.push(instance("charge"));
   hunter.energy = 2;
   assert.equal(await game.useActiveSkill(hunter, "hunt", [target]), true);
@@ -4375,7 +4375,7 @@ test("追猎者：阵亡时统一清理其他角色身上由其留下的猎印",
     killer = makePlayer("hunter-killer", 2, "dusk");
   marked.statuses.huntMark = { sourceId: hunter.id, expireAtTurnEnd: 99 };
   const { game }
-  = makeGame([hunter, marked, killer]);
+    = makeGame([hunter, marked, killer]);
   await game.dyingSystem.kill(hunter, killer);
   assert.equal(marked.statuses.huntMark, undefined);
 });
@@ -4418,7 +4418,7 @@ test("赌命者：冒险失败不再随机弃牌", async () => {
     kept = instance("block");
   gambler.hand.push(kept);
   const { game }
-  = makeGame([gambler, enemy], { random: () => .99 });
+    = makeGame([gambler, enemy], { random: () => .99 });
   registerPassiveSkills(game);
   await game.eventBus.emit("cardUsed", { source: gambler, card: instance("harvest"), targets: [] });
   assert.ok(gambler.hand.includes(kept));
@@ -4426,11 +4426,11 @@ test("赌命者：冒险失败不再随机弃牌", async () => {
 });
 
 test("赌命者：孤注消耗全部能量并摸取等量牌，按30x%概率进入状态", async () => {
-  for (const[energy, roll, expected] of [[1, .29, true], [1, .3, false], [2, .59, true], [2, .6, false], [3, .89, true], [3, .9, false], [4, .999, true]]) {
+  for (const [energy, roll, expected] of [[1, .29, true], [1, .3, false], [2, .59, true], [2, .6, false], [3, .89, true], [3, .9, false], [4, .999, true]]) {
     const gambler = makePlayer(`gambler-${energy}-${roll}`, 0, "dawn", "ai", 6),
       enemy = makePlayer(`enemy-${energy}-${roll}`, 1, "dusk");
     const { game }
-    = makeGame([gambler, enemy], { random: () => roll });
+      = makeGame([gambler, enemy], { random: () => roll });
     registerPassiveSkills(game);
     game.state.deck.cards.push(...Array.from({ length: energy }, () => instance("charge")));
     gambler.energy = energy;
@@ -4453,7 +4453,7 @@ test("赌命者：孤注状态不可叠加、跨回合保留，并在下一次�
     assault = instance("assault");
   gambler.hand.push(assault);
   const { game }
-  = makeGame([gambler, target, ally], { random: () => 0 });
+    = makeGame([gambler, target, ally], { random: () => 0 });
   registerPassiveSkills(game);
   game.state.deck.cards.push(instance("charge"), instance("shield"), instance("block"));
   gambler.energy = 3;
@@ -4475,7 +4475,7 @@ test("赌命者：已有孤注状态时再次发动孤注不叠加也不删除�
     const gambler = makePlayer(`gambler-restack-${roll}`, 0, "dawn", "ai", 6),
       enemy = makePlayer(`enemy-restack-${roll}`, 1, "dusk");
     const { game }
-    = makeGame([gambler, enemy], { random: () => roll });
+      = makeGame([gambler, enemy], { random: () => roll });
     registerPassiveSkills(game);
     game.state.deck.cards.push(instance("charge"));
     gambler.statuses.allIn = { assaultBonus: 1 };
@@ -4494,7 +4494,7 @@ test("赌命者：AI 已有孤注状态时仍生成孤注动作", () => {
   const gambler = makePlayer("ai-gambler", 0, "dawn", "ai", 6),
     enemy = makePlayer("ai-gambler-enemy", 1, "dusk");
   const { game }
-  = makeGame([gambler, enemy]);
+    = makeGame([gambler, enemy]);
   gambler.energy = 1;
   gambler.statuses.allIn = { assaultBonus: 1 };
   const rootActions = game.aiController.getLegalActions(gambler);
@@ -4518,7 +4518,7 @@ test("赌命者：孤注强化的突袭被格挡后也会退出状态", async ()
   gambler.hand.push(assault);
   target.hand.push(instance("block"));
   const { game }
-  = makeGame([gambler, target, ally], { response: () => true, random: () => 0 });
+    = makeGame([gambler, target, ally], { response: () => true, random: () => 0 });
   registerPassiveSkills(game);
   game.state.deck.cards.push(instance("charge"));
   gambler.energy = 1;
@@ -4534,7 +4534,7 @@ test("调律师：协调每回合只触发一次且共鸣可发动2次", async (
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game }
-  = makeGame([tuner, ally, enemy]);
+    = makeGame([tuner, ally, enemy]);
   registerPassiveSkills(game);
   game.state.deck.cards.push(instance("assault"), instance("block"));
   await game.eventBus.emit("cardUsed", { source: tuner, card: instance("shield"), targets: [ally] });
@@ -4558,7 +4558,7 @@ test("调律师：被反制的互利不建立公共牌池且不触发协调", as
   tuner.hand.push(use);
   counterer.hand.push(instance("counter"));
   const { game }
-  = makeGame([tuner, counterer, ally], { response: (request) => request.type === "counter" });
+    = makeGame([tuner, counterer, ally], { response: (request) => request.type === "counter" });
   registerPassiveSkills(game);
   await game.playCard(tuner, use, []);
   assert.equal(game.state.publicCardPool.length, 0);
@@ -4576,7 +4576,7 @@ test("调律师：被反制的转移不移动牌且不触发协调", async () =>
   from.hand.push(locked);
   counterer.hand.push(instance("counter"));
   const { game }
-  = makeGame([tuner, from, counterer, ally], { response: (request) => request.type === "counter" });
+    = makeGame([tuner, from, counterer, ally], { response: (request) => request.type === "counter" });
   registerPassiveSkills(game);
   await game.playCard(tuner, use, [], { sourceId: from.id, receiverId: ally.id, zone: "hand" });
   assert.ok(from.hand.includes(locked));
@@ -4592,7 +4592,7 @@ test("调律师：协调只看转移接收者：给敌人不触发，从敌人�
   noTriggerTuner.hand.push(firstUse);
   allySource.hand.push(firstMoved);
   const { game: firstGame }
-  = makeGame([noTriggerTuner, allySource, enemyReceiver]);
+    = makeGame([noTriggerTuner, allySource, enemyReceiver]);
   registerPassiveSkills(firstGame);
   await firstGame.playCard(
     noTriggerTuner,
@@ -4608,7 +4608,7 @@ test("调律师：协调只看转移接收者：给敌人不触发，从敌人�
   enemyOnlyTuner.hand.push(enemyUse);
   enemySourceOnly.hand.push(enemyMoved);
   const { game: enemyGame }
-  = makeGame([enemyOnlyTuner, enemySourceOnly, enemyReceiverOnly]);
+    = makeGame([enemyOnlyTuner, enemySourceOnly, enemyReceiverOnly]);
   registerPassiveSkills(enemyGame);
   await enemyGame.playCard(
     enemyOnlyTuner,
@@ -4624,7 +4624,7 @@ test("调律师：协调只看转移接收者：给敌人不触发，从敌人�
   triggerTuner.hand.push(secondUse);
   enemySource.hand.push(secondMoved);
   const { game: secondGame }
-  = makeGame([triggerTuner, enemySource, allyReceiver]);
+    = makeGame([triggerTuner, enemySource, allyReceiver]);
   secondGame.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(secondGame);
   await secondGame.playCard(
@@ -4642,7 +4642,7 @@ test("调律师：互利包含多个队友时每次用牌仍只触发一次协�
   const use = instance("mutualBenefit");
   tuner.hand.push(use);
   const { game }
-  = makeGame([tuner, allyA, enemy, allyB]);
+    = makeGame([tuner, allyA, enemy, allyB]);
   game.state.deck.cards.push(
     instance("assault"), instance("block"), instance("charge"), instance("shield"), instance("harvest")
   );
@@ -4660,7 +4660,7 @@ test("调律师：beforeCardUse 与 beforeCardResolve 取消的牌都不触发�
       use = instance("mutualBenefit");
     tuner.hand.push(use);
     const { game }
-    = makeGame([tuner, ally, enemy]);
+      = makeGame([tuner, ally, enemy]);
     registerPassiveSkills(game);
     game.eventBus.on(hook, `test-cancel-${hook}`, (event) => {
       event.cancelled = true;
@@ -4678,7 +4678,7 @@ test("调律师：beforeCardUse 与 beforeCardResolve 取消的牌都不触发�
 test("响应窗口：真人没有格挡时仍出现完整响应窗口，但不能凭空格挡", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game, ui }
-  = makeGame([a, b], { response: () => true });
+    = makeGame([a, b], { response: () => true });
   const hp = b.hp, assault = instance("assault");
   await game.damage(a, b, 1, { card: assault, canBlock: true, damageType: "normal" });
   assert.equal(ui.responseRequests.length, 1);
@@ -4694,7 +4694,7 @@ test("响应窗口：真人没有格挡时仍出现完整响应窗口，但不�
 test("响应窗口：AI 没有合法响应牌时立即跳过且不创建真人响应请求", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "ai");
   const { game, ui }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   const hp = b.hp;
   await game.damage(a, b, 1, { card: instance("assault"), canBlock: true, damageType: "normal" });
   assert.equal(ui.responseRequests.length, 0);
@@ -4707,7 +4707,7 @@ test("响应窗口：真人没有反制也按座次获得一次响应窗口", as
     b = makePlayer("b", 1, "dusk", "human"),
     c = makePlayer("c", 2, "dawn", "human");
   const { game, ui }
-  = makeGame([a, b, c]);
+    = makeGame([a, b, c]);
   a.hand.push(instance("harvest"));
   game.state.deck.cards.push(instance("charge"), instance("block"));
   await game.playCard(a, a.hand[0], []);
@@ -4730,7 +4730,7 @@ test("响应窗口：显示真实持有数量但只消耗所需格挡", async ()
   const source = makePlayer("source", 0, "dusk"), target = makePlayer("target", 1, "dawn", "human");
   target.hand.push(instance("block"), instance("block"), instance("block"));
   const { game, ui }
-  = makeGame([source, target], { response: () => true });
+    = makeGame([source, target], { response: () => true });
   await game.damage(
     source, target, 1, { card: instance("assault"), canBlock: true, damageType: "normal" }
   );
@@ -4746,7 +4746,7 @@ test("响应窗口：反制、强制突袭与濒死调息显示完整持有数�
     responder = makePlayer("responder", 1, "dawn", "human"),
     target = makePlayer("target", 2, "dawn");
   const { game, ui }
-  = makeGame([source, responder, target], { response: () => true });
+    = makeGame([source, responder, target], { response: () => true });
   responder.hand.push(instance("counter"), instance("counter"), instance("counter"));
   await game.responseSystem.requestCardResponse(
     responder, "counter", { source, target, card: instance("harvest") }, 1
@@ -4777,7 +4777,7 @@ test("响应窗口：反制、强制突袭与濒死调息显示完整持有数�
 test("响应窗口：决斗轮到无突袭真人时先显示响应窗口再结算伤害", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game, ui }
-  = makeGame([a, b], { response: () => false });
+    = makeGame([a, b], { response: () => false });
   const duel = instance("duel"), hp = b.hp;
   a.hand.push(duel);
   await game.playCard(a, duel, [b]);
@@ -4792,7 +4792,7 @@ test("响应窗口：决斗轮到无突袭真人时先显示响应窗口再结�
 test("响应窗口：挑衅轮到无突袭真人时仍显示响应窗口", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game, ui }
-  = makeGame([a, b], { response: () => false });
+    = makeGame([a, b], { response: () => false });
   const provoke = instance("provoke"), hp = b.hp;
   a.hand.push(provoke);
   await game.playCard(a, provoke, [b]);
@@ -4809,7 +4809,7 @@ test("反制链：响应牌与装备牌只输出语义日志，不产生底层�
   const attacker = makePlayer("attacker", 0, "dawn"),
     defender = makePlayer("defender", 1, "dusk", "human");
   const { game }
-  = makeGame([attacker, defender], { response: () => true });
+    = makeGame([attacker, defender], { response: () => true });
   defender.hand.push(instance("block"));
   await game.damage(
     attacker, defender, 1, { card: instance("assault"), canBlock: true, damageType: "normal" }
@@ -4841,7 +4841,7 @@ test("反制链：真人破坏预选手牌经过双重反制后仍破坏原实�
   target.hand.push(secret, decoy, firstCounter);
   third.hand.push(secondCounter);
   const { game, ui }
-  = makeGame([source, target, third]), contexts = [];
+    = makeGame([source, target, third]), contexts = [];
   forceAvailableAiCounters(game, contexts);
   const selection = await choosePrivateCardThroughInteraction(
     game, source, use, target, { handIndexes: [0] }
@@ -4871,7 +4871,7 @@ test("反制链：真人掠夺预选手牌经过双重反制后仍获得原实�
   target.hand.push(secret, decoy, firstCounter);
   third.hand.push(secondCounter);
   const { game }
-  = makeGame([source, target, third]);
+    = makeGame([source, target, third]);
   forceAvailableAiCounters(game);
   const selection = await choosePrivateCardThroughInteraction(
     game, source, use, target, { handIndexes: [0] }
@@ -4897,7 +4897,7 @@ test("反制链：真人掠夺预选装备不受目标反制导致的手牌版�
   target.equipment = equipment;
   third.hand.push(secondCounter);
   const { game }
-  = makeGame([source, target, third]);
+    = makeGame([source, target, third]);
   forceAvailableAiCounters(game);
   const selection = await choosePrivateCardThroughInteraction(
     game, source, use, target, { equipment: true }
@@ -4923,7 +4923,7 @@ test("反制链：真人窥探两张手牌经过双重反制后仍只展示反�
   target.hand.push(first, second, counter);
   third.hand.push(thirdCounter);
   const { game, ui }
-  = makeGame([source, target, third]);
+    = makeGame([source, target, third]);
   forceAvailableAiCounters(game);
   const selection = await choosePrivateCardThroughInteraction(
     game, source, use, target, { handIndexes: [0, 1] }
@@ -4949,7 +4949,7 @@ test("反制链：反制期间原预选牌离开区域时破坏安全失败且�
   target.hand.push(selected, decoy, counter);
   third.hand.push(thirdCounter);
   const { game }
-  = makeGame([source, target, third]);
+    = makeGame([source, target, third]);
   forceAvailableAiCounters(game);
   let usedEvent = null, moved = false;
   game.eventBus.on("afterCardMove", "test:remove-private-destroy-selection", async (event) => {
@@ -4986,7 +4986,7 @@ test("反制链：窥探预选两张中一张在反制期间离开时只展示�
   target.hand.push(left, remains, counter);
   third.hand.push(thirdCounter);
   const { game, ui }
-  = makeGame([source, target, third]);
+    = makeGame([source, target, third]);
   forceAvailableAiCounters(game);
   let moved = false;
   game.eventBus.on("afterCardMove", "test:remove-one-private-scout-selection", async (event) => {
@@ -5013,12 +5013,12 @@ test("反制链：每张实际反制只记录一条带明确双方与对象的�
   first.hand.push(instance("counter"));
   second.hand.push(instance("counter"));
   const { game }
-  = makeGame(
-    [source, first, second],
-    {
-      response: (request) => request.type === "counter" && request.legalCardIds.length >= request.requiredCount
-    }
-  );
+    = makeGame(
+      [source, first, second],
+      {
+        response: (request) => request.type === "counter" && request.legalCardIds.length >= request.requiredCount
+      }
+    );
   game.state.deck.cards.push(instance("charge"), instance("block"));
   await game.playCard(source, use, []);
   const logs = game.state.logs.map(
@@ -5047,7 +5047,7 @@ test("原子响应：两张响应牌原子支付成功时统一提交并发送�
     second = instance("block");
   player.hand.push(first, second);
   const { game }
-  = makeGame([player, enemy]), events = [];
+    = makeGame([player, enemy]), events = [];
   game.eventBus.on("afterCardMove", "test:atomic-success", (event) => events.push(event.card));
   const beforeVersion = player.handVersion,
     result = await game.payCardsFromHandAtomically(
@@ -5069,7 +5069,7 @@ test("原子响应：第二张 beforeCardMove 取消时原子响应两张牌都�
     second = instance("block");
   player.hand.push(first, second);
   const { game }
-  = makeGame([player, enemy]);
+    = makeGame([player, enemy]);
   game.eventBus.on("beforeCardMove", "test:atomic-cancel", (event) => {
     if (event.card === second) event.cancelled = true;
   });
@@ -5091,7 +5091,7 @@ test("原子响应：支付拒绝已离手实体和重复实体且不移动其�
     second = instance("block");
   player.hand.push(first, second);
   const { game }
-  = makeGame([player, enemy]);
+    = makeGame([player, enemy]);
   player.hand.splice(player.hand.indexOf(second), 1);
   const missing = await game.payCardsFromHandAtomically(
     player, [first, second], "测试实体已变化", { silent: true, expectedCount: 2 }
@@ -5115,7 +5115,7 @@ test("原子响应：支付验证期间 dispose 返回 cancelled 且不消费任
     second = instance("block");
   player.hand.push(first, second);
   const { game }
-  = makeGame([player, enemy]);
+    = makeGame([player, enemy]);
   let openedResolve, release;
   const opened = new Promise((resolve) => {
     openedResolve = resolve;
@@ -5143,7 +5143,7 @@ test("原子响应：响应系统只有整组原子支付完成后才返回 used
     second = instance("block");
   defender.hand.push(first, second);
   const { game }
-  = makeGame([attacker, defender], { response: () => true });
+    = makeGame([attacker, defender], { response: () => true });
   game.eventBus.on("beforeCardMove", "test:atomic-response-invalid", (event) => {
     if (event.card === second) event.cancelled = true;
   });
@@ -5162,7 +5162,7 @@ test("濒死：救援阶段保留负生命以计算调息，正式阵亡后归�
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   b.hp = 1;
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   let dyingHp = null, need = null;
   game.eventBus.on("playerDying", "test:negative-hp", (event) => {
     dyingHp = event.target.hp;
@@ -5179,7 +5179,7 @@ test("濒死：无人可救时濒死角色在救援窗口后以0生命阵亡", a
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   b.hp = 1;
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   await game.damage(a, b, 1, { canBlock: false });
   assert.equal(b.alive, false);
   assert.equal(b.hp, 0);
@@ -5191,7 +5191,7 @@ test("濒死：合法真人救援者没有调息时仍显示响应窗口", async
     enemy = makePlayer("enemy", 2, "dusk");
   target.hp = 0;
   const { game, ui }
-  = makeGame([target, human, enemy], { response: () => false });
+    = makeGame([target, human, enemy], { response: () => false });
   await game.dyingSystem.enter(target, enemy);
   const request = ui.responseRequests.find(
     (entry) => entry.type === "dyingRescue" && entry.sourcePlayerId === human.id
@@ -5208,7 +5208,7 @@ test("濒死：负1生命需要2张调息并会重复开启救援轮", async () 
   b.hp = 1;
   b.hand.push(instance("recover"), instance("recover"));
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   await game.damage(a, b, 2, { canBlock: false });
   assert.equal(b.hp, 1);
   assert.equal(b.alive, true);
@@ -5223,10 +5223,10 @@ test("濒死：救援顺序为濒死本人后再从下一座位起的盟友", as
   [dying, ally1, enemy, ally2].forEach((p) => p.hand.push(instance("recover")));
   const order = [];
   const { game }
-  = makeGame(
-    [dying, ally1, enemy, ally2],
-    { response: (r) =>(order.push(r.sourcePlayerId), r.sourcePlayerId === ally1.id) }
-  );
+    = makeGame(
+      [dying, ally1, enemy, ally2],
+      { response: (r) => (order.push(r.sourcePlayerId), r.sourcePlayerId === ally1.id) }
+    );
   await game.dyingSystem.enter(dying, enemy);
   assert.deepEqual(order, [dying.id, ally1.id]);
   assert.equal(dying.hp, 1);
@@ -5237,7 +5237,7 @@ test("濒死：敌人永远不会进入濒死救援候选队列", async () => {
   dying.hp = 0;
   enemy.hand.push(instance("recover"));
   const { game, ui }
-  = makeGame([dying, enemy], { response: () => false });
+    = makeGame([dying, enemy], { response: () => false });
   await game.dyingSystem.enter(dying, enemy);
   assert.deepEqual(ui.responseRequests.map((request) => request.sourcePlayerId), [dying.id]);
   assert.ok(!ui.responseRequests.some((request) => request.sourcePlayerId === enemy.id));
@@ -5248,7 +5248,7 @@ test("濒死：beforePlayerDying 取消后会恢复到合法的1点生命", asyn
   const dying = makePlayer("d", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
   dying.hp = 0;
   const { game }
-  = makeGame([dying, enemy]);
+    = makeGame([dying, enemy]);
   game.eventBus.on("beforePlayerDying", "test:cancel", (event) => {
     event.cancelled = true;
   });
@@ -5262,11 +5262,11 @@ test("濒死：成功救援事件顺序包含 dying、rescueUsed、rescued", asy
   dying.hp = 0;
   dying.hand.push(instance("recover"));
   const { game }
-  = makeGame([dying, enemy]);
+    = makeGame([dying, enemy]);
   const events = [];
   for (
     const type of ["playerDying", "dyingRescueUsed", "playerRescued"]
-  )game.eventBus.on(type, `test:${type}`, () => events.push(type));
+  ) game.eventBus.on(type, `test:${type}`, () => events.push(type));
   await game.dyingSystem.enter(dying, enemy);
   assert.deepEqual(events, ["playerDying", "dyingRescueUsed", "playerRescued"]);
 });
@@ -5281,7 +5281,7 @@ test("隐藏信息：装备区选择令牌绑定本次会话、所有者和手�
     equipment = instance("energyDevice");
   owner.equipment = equipment;
   const { game }
-  = makeGame([actor, owner]);
+    = makeGame([actor, owner]);
   const selection = game.cardSelectionSystem.createHiddenSelection(owner);
   owner.bumpHandVersion();
   assert.equal(
@@ -5310,7 +5310,7 @@ test("隐藏信息：非出牌阶段触发阵亡后恢复进入濒死前的真�
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game }
-  = makeGame([target, ally, enemy]);
+    = makeGame([target, ally, enemy]);
   game.state.phase = "energy";
   target.hp = 0;
   await game.dyingSystem.enter(target, enemy);
@@ -5324,7 +5324,7 @@ test("隐藏信息：不透明隐藏牌 DOM 不含牌名、definitionId、类别
   assert.match(markup, /opaque-safe/);
   for (
     const secret of ["反制", "definitionId", "category", "description", "assets\/cards"]
-  )assert.doesNotMatch(markup, new RegExp(secret));
+  ) assert.doesNotMatch(markup, new RegExp(secret));
 });
 
 test("隐藏信息：窥隙选择池的已知牌复用正常完整牌面且仍只使用不透明令牌", async () => {
@@ -5333,7 +5333,7 @@ test("隐藏信息：窥隙选择池的已知牌复用正常完整牌面且仍�
     known = instance("counter"),
     unknown = instance("recover"),
     { game }
-  = makeGame([viewer, owner]);
+      = makeGame([viewer, owner]);
   owner.hand.push(known, unknown);
   game.rememberPrivateCard(viewer, owner, known);
   const selection = game.cardSelectionSystem.createHiddenSelection(owner),
@@ -5352,7 +5352,7 @@ test("隐藏信息：窥隙选择池的已知牌复用正常完整牌面且仍�
       "card-description",
       "card-flavor"
     ]
-  )assert.match(markup, new RegExp(`class="[^"]*${className}`), className);
+  ) assert.match(markup, new RegExp(`class="[^"]*${className}`), className);
   assert.match(markup, new RegExp(selection.tokens[0].token));
   assert.match(markup, /hidden-card-back/);
   assert.match(markup, new RegExp(known.name));
@@ -5361,7 +5361,7 @@ test("隐藏信息：窥隙选择池的已知牌复用正常完整牌面且仍�
   assert.doesNotMatch(markup, new RegExp(known.id));
   for (
     const hidden of [unknown.id, unknown.name, unknown.description, unknown.art]
-  )assert.doesNotMatch(markup, new RegExp(hidden.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  ) assert.doesNotMatch(markup, new RegExp(hidden.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   const css = await readFile(projectFile("css/cards.css"), "utf8");
   assert.match(css, /\.hidden-known-card\.hand-card\s*\{[^}]*cursor:\s*pointer;/s);
   assert.doesNotMatch(css, /\.hidden-known-card\s+img|\.hidden-known-card\s+strong/);
@@ -5389,10 +5389,10 @@ test("隐藏信息：掠夺选择池的公开装备复用正常牌面图标与�
     owner = makePlayer("plunder-pool-owner", 1, "dusk"),
     equipment = instance("defenseDevice"),
     { game }
-  = makeGame([actor, owner]);
+      = makeGame([actor, owner]);
   owner.equipment = equipment;
   const panel = makeInteractiveElement(),
-    controller = new InteractionController({ game, elements: { response_panel: panel }, render() {} });
+    controller = new InteractionController({ game, elements: { response_panel: panel }, render() { } });
   let receivedSelection = null, receivedOptions = null;
   controller.requestHiddenCards = async (selection, _count, _prompt, options) => {
     receivedSelection = selection;
@@ -5419,8 +5419,8 @@ test("隐藏信息：掠夺选择池的公开装备复用正常牌面图标与�
       "card-description",
       "card-flavor"
     ]
-  )assert.match(markup, new RegExp(className));
-  assert.equal((markup.match(/<img\b/g) ??[]).length, 2);
+  ) assert.match(markup, new RegExp(className));
+  assert.equal((markup.match(/<img\b/g) ?? []).length, 2);
   assert.match(markup, new RegExp(equipment.name));
   assert.match(markup, new RegExp(equipment.categoryName));
   assert.match(markup, new RegExp(equipment.description));
@@ -5431,7 +5431,7 @@ test("隐藏信息：掠夺选择池的公开装备复用正常牌面图标与�
 test("隐藏信息：过期手牌版本令不透明令牌失效", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   b.hand.push(instance("block"));
   const selection = game.cardSelectionSystem.createHiddenSelection(b);
   b.bumpHandVersion();
@@ -5441,7 +5441,7 @@ test("隐藏信息：过期手牌版本令不透明令牌失效", () => {
 test("隐藏信息：隐藏牌令牌必须属于本次 selectionId", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   b.hand.push(instance("block"));
   const first = game.cardSelectionSystem.createHiddenSelection(b),
     second = game.cardSelectionSystem.createHiddenSelection(b);
@@ -5456,7 +5456,7 @@ test("隐藏信息：隐藏牌令牌必须属于本次 selectionId", () => {
 test("隐藏信息：核心隐藏牌解析会同时去重 token 和实体牌", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   b.hand.push(instance("block"), instance("recover"));
   const selection = game.cardSelectionSystem.createHiddenSelection(b);
   const duplicate = selection.tokens[0].token;
@@ -5470,12 +5470,12 @@ test("隐藏信息：核心隐藏牌解析会同时去重 token 和实体牌", a
 test("隐藏信息：取消牌背选择会立即清除对应临时令牌", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   b.hand.push(instance("block"));
   const selection = game.cardSelectionSystem.createHiddenSelection(b);
-  const panel = { innerHTML: "", classList: { add() {}, remove() {} } };
+  const panel = { innerHTML: "", classList: { add() { }, remove() { } } };
   let resolved = "pending";
-  const ui = { game, elements: { response_panel: panel }, render() {} };
+  const ui = { game, elements: { response_panel: panel }, render() { } };
   const controller = new InteractionController(ui);
   controller.pending = {
     type: "hidden",
@@ -5501,18 +5501,74 @@ test("隐藏信息：牌背多阶段 pending 会锁住手牌、技能和结束�
   assert.equal(UIManager.prototype.isInteractionActive.call(fake), true);
   const human = makePlayer("h", 0, "dawn", "human"), enemy = makePlayer("e", 1, "dusk");
   const { game }
-  = makeGame([human, enemy]);
+    = makeGame([human, enemy]);
   game.interactionLocked = true;
   assert.equal(game.requestEndHumanPlay(), false);
 });
 
 // ==================== AI 系统 ====================
 
-// ---- AI 核心状态 ----
+// ---- AI 核心状态·可见状态 ----
 
-test("AI·动作生成：动态距离：AI 动作生成不根据固定 seatIndex 攻击", () => {
+test("AI·可见状态：不含其他玩家真实手牌", () => {
+  const ai = makePlayer("ai", 0, "dawn"), other = makePlayer("other", 1, "dusk");
+  ai.hand.push(instance("assault"));
+  other.hand.push(instance("counter"));
+  const { game }
+    = makeGame([ai, other]);
+  const visible = createAiVisibleState(ai.id, game.state);
+  assert.equal(visible.players[1].hand, undefined);
+  assert.equal(visible.players[1].handCount, 1);
+  assert.equal(visible.players[0].hand[0].definitionId, "assault");
+});
+
+test("AI·可见状态：对未知调息只按公开手牌数估算而不读取真实牌面", () => {
+  const ai = makePlayer("ai", 0, "dawn"), other = makePlayer("other", 1, "dusk");
+  const { game }
+    = makeGame([ai, other]);
+  other.hand = [instance("recover")];
+  const first = createAiVisibleState(ai.id, game.state).players[1].expectedRecoverCount;
+  other.hand = [instance("assault")];
+  const second = createAiVisibleState(ai.id, game.state).players[1].expectedRecoverCount;
+  assert.equal(first, second);
+});
+
+test("AI·可见状态：携带剩余计数副本且不修改输入", () => {
+  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
+  const { game }
+    = makeGame([actor, enemy]);
+  const counts = { assault: 3, block: 1 };
+  const snapshot = JSON.stringify(counts);
+  const visible = createAiVisibleState(actor.id, game.state, counts);
+  assert.deepEqual(visible.remainingCardCounts, counts);
+  assert.notEqual(visible.remainingCardCounts, counts);
+  assert.equal(JSON.stringify(counts), snapshot);
+});
+
+test("AI·可见状态：两参数调用兼容且计数为 null", () => {
+  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
+  const { game }
+    = makeGame([actor, enemy]);
+  const visible = createAiVisibleState(actor.id, game.state);
+  assert.equal(visible.remainingCardCounts, null);
+  assert.equal(visible.players.length, 2);
+});
+
+test("AI·可见状态：不自行计算剩余计数", () => {
+  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
+  const { game }
+    = makeGame([actor, enemy]);
+  const visible = createAiVisibleState(actor.id, game.state, { assault: 1 });
+  game.state.publicCardPool.push({ id: "p", definitionId: "block" });
+  assert.deepEqual(visible.remainingCardCounts, { assault: 1 });
+  assert.equal("remainingCounts" in visible, false);
+});
+
+// ---- AI 核心状态·动作生成 ----
+
+test("AI·动作生成：动态距离变化后不根据固定 seatIndex 选择目标", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   const assault = instance("assault");
   players[0].hand.push(assault);
   players[1].alive = false;
@@ -5520,17 +5576,6 @@ test("AI·动作生成：动态距离：AI 动作生成不根据固定 seatIndex
     players[0]
   ).filter((action) => action.card?.id === assault.id).map((action) => action.targets[0].id);
   assert.ok(targets.includes("C"));
-});
-
-test("AI·模拟器：识别先击杀中间角色再攻击新相邻敌人", async () => {
-  const { players, game }
-  = distanceFixture();
-  players[0].turnFlags.attackLimit = 2;
-  players[1].hp = 1;
-  players[0].hand.push(instance("assault"), instance("assault"));
-  game.aiSearchBudgetOverrideMs = 100;
-  await game.aiController.selectAction(players[0], { gameId: game.state.gameId });
-  assert.equal(game.aiController.planner.lastSearchStats.discoveredDynamicTarget, true);
 });
 
 test("AI·动作生成：破坏与掠夺只生成敌方目标，窃取规则也排除队友", () => {
@@ -5542,7 +5587,7 @@ test("AI·动作生成：破坏与掠夺只生成敌方目标，窃取规则也�
   const destroy = instance("destroy"), plunder = instance("plunder");
   actor.hand.push(destroy, plunder);
   const { game }
-  = makeGame([actor, ally, enemy]);
+    = makeGame([actor, ally, enemy]);
   const actions = game.aiController.actionGenerator.generate(actor);
   for (const id of ["destroy", "plunder"]) {
     const targets = actions.filter(
@@ -5554,98 +5599,28 @@ test("AI·动作生成：破坏与掠夺只生成敌方目标，窃取规则也�
   assert.ok(!RuleEngine.getSkillTargets(game, actor, ACTIVE_SKILLS.stealSkill).includes(ally));
 });
 
-test("AI·可见状态：不含其他玩家真实手牌", () => {
-  const ai = makePlayer("ai", 0, "dawn"), other = makePlayer("other", 1, "dusk");
-  ai.hand.push(instance("assault"));
-  other.hand.push(instance("counter"));
+test("AI·动作生成：使用同一距离合法性", () => {
+  const ps = [
+    makePlayer("a", 0, "dawn"),
+    makePlayer("b", 1, "dusk"),
+    makePlayer("c", 2, "dusk"),
+    makePlayer("d", 3, "dawn"),
+    makePlayer("e", 4, "dusk")
+  ];
   const { game }
-  = makeGame([ai, other]);
-  const visible = createAiVisibleState(ai.id, game.state);
-  assert.equal(visible.players[1].hand, undefined);
-  assert.equal(visible.players[1].handCount, 1);
-  assert.equal(visible.players[0].hand[0].definitionId, "assault");
+    = makeGame(ps);
+  ps[0].hand.push(instance("assault"));
+  const targets = game.aiController.getLegalActions(
+    ps[0]
+  ).filter((a) => a.card?.definitionId === "assault").map((a) => a.targets[0].id);
+  assert.deepEqual(targets, ["b", "e"]);
 });
 
-test("AI·可见状态：、动作生成和模拟器正确识别阵营上限与无限调息", () => {
-  const { game, small, large }
-  = makeTeamFixture();
-  large.hp-=1;
-  large.turnFlags.recoverUsed = 7;
-  const recover = instance("recover");
-  large.hand.push(recover);
-  const visible = createAiVisibleState(large.id, game.state),
-    smallView = visible.players.find((player) => player.id === small.id),
-    largeView = visible.players.find((player) => player.id === large.id);
-  assert.deepEqual([smallView.maxEnergy, smallView.recoverLimit], [4, null]);
-  assert.deepEqual([largeView.maxEnergy, largeView.recoverLimit], [3, null]);
-  const action = game.aiController.actionGenerator.generateFromVisible(
-    visible, large.id
-  ).find((entry) => entry.card?.id === recover.id);
-  assert.ok(action);
-  const simulated = new AiSimulator(visible).apply(visible, action, large.id),
-    simulatedLarge = simulated.players.find((player) => player.id === large.id);
-  assert.equal(simulatedLarge.recoverLimit, null);
-  assert.equal(simulatedLarge.hp, large.hp + 1);
-});
+// ---- AI 核心状态·模拟器 ----
 
-test("AI·可见状态：只为自己或存活队友生成护盾目标并在深层模拟中叠加", () => {
-  const actor = makePlayer("actor", 0, "dawn"),
-    ally = makePlayer("ally", 1, "dawn"),
-    enemy = makePlayer("enemy", 2, "dusk"),
-    card = instance("shield");
-  actor.hand.push(card);
-  ally.shield = 1;
-  const { game }
-  = makeGame([actor, ally, enemy]);
-  const visible = createAiVisibleState(actor.id, game.state),
-    actions = game.aiController.actionGenerator.generateFromVisible(
-      visible, actor.id
-    ).filter((action) => action.card?.id === card.id);
-  assert.deepEqual(actions.map((action) => action.targets[0].id), [actor.id, ally.id]);
-  const chosen = actions.find((action) => action.targets[0].id === ally.id),
-    next = new AiSimulator(visible).apply(visible, chosen, actor.id),
-    nextAlly = next.players.find((player) => player.id === ally.id);
-  assert.equal(nextAlly.shield, 2);
-  assert.equal(visible.players.find((player) => player.id === ally.id).shield, 1);
-});
-
-test("AI·可见状态：与模拟器保留主动技能多次发动额度", () => {
-  const warden = makePlayer("warden", 0, "dawn", "ai", 1),
-    ally = makePlayer("ally", 1, "dawn"),
-    enemy = makePlayer("enemy", 2, "dusk");
-  warden.energy = 4;
-  const { game }
-  = makeGame([warden, ally, enemy]);
-  warden.turnFlags.activeSkillUseCounts.barrier = 1;
-  warden.turnFlags.activeSkillsUsed.add("barrier");
-  const visible = createAiVisibleState(warden.id, game.state),
-    actor = visible.players.find((player) => player.id === warden.id);
-  assert.deepEqual(
-    [actor.activeSkillUses, actor.activeSkillLimit, actor.activeSkillUsed], [1, 2, false]
-  );
-  const action = game.aiController.actionGenerator.generateFromVisible(
-    visible, warden.id
-  ).find((entry) => entry.type === "skill" && entry.skill.id === "barrier");
-  assert.ok(action);
-  const next = new AiSimulator(visible).apply(visible, action, warden.id),
-    nextActor = next.players.find((player) => player.id === warden.id);
-  assert.deepEqual([nextActor.activeSkillUses, nextActor.activeSkillUsed], [2, true]);
-});
-
-test("AI·可见状态：对未知调息只按公开手牌数估算而不读取真实牌面", () => {
-  const ai = makePlayer("ai", 0, "dawn"), other = makePlayer("other", 1, "dusk");
-  const { game }
-  = makeGame([ai, other]);
-  other.hand = [instance("recover")];
-  const first = createAiVisibleState(ai.id, game.state).players[1].expectedRecoverCount;
-  other.hand = [instance("assault")];
-  const second = createAiVisibleState(ai.id, game.state).players[1].expectedRecoverCount;
-  assert.equal(first, second);
-});
-
-test("AI·可见状态：模拟器只接收过滤快照并可独立克隆推演", () => {
+test("AI·模拟器：只接收过滤快照并可独立克隆推演", () => {
   const visible = {
-    players:[
+    players: [
       {
         id: "a",
         battleTeam: "dawn",
@@ -5681,51 +5656,9 @@ test("AI·可见状态：模拟器只接收过滤快照并可独立克隆推演"
   assert.equal("game" in simulator, false);
 });
 
-test("AI·动作生成：使用同一距离合法性", () => {
-  const ps =[
-    makePlayer("a", 0, "dawn"),
-    makePlayer("b", 1, "dusk"),
-    makePlayer("c", 2, "dusk"),
-    makePlayer("d", 3, "dawn"),
-    makePlayer("e", 4, "dusk")
-  ];
-  const { game }
-  = makeGame(ps);
-  ps[0].hand.push(instance("assault"));
-  const targets = game.aiController.getLegalActions(
-    ps[0]
-  ).filter((a) => a.card?.definitionId === "assault").map((a) => a.targets[0].id);
-  assert.deepEqual(targets, ["b", "e"]);
-});
-
-test("AI·模拟器：可见动作与模拟器支持装备掠夺进入手牌且不读取隐藏手牌", () => {
-  const actor = makePlayer("actor", 0, "dawn"),
-    near = makePlayer("near", 1, "dawn"),
-    target = makePlayer("target", 2, "dusk"),
-    other = makePlayer("other", 3, "dusk"),
-    tail = makePlayer("tail", 4, "dawn"),
-    plunder = instance("plunder");
-  actor.hand.push(plunder);
-  actor.equipment = instance("battleDevice");
-  target.equipment = instance("energyDevice");
-  const { game }
-  = makeGame([actor, near, target, other, tail]),
-    visible = createAiVisibleState(actor.id, game.state),
-    actions = game.aiController.actionGenerator.generateFromVisible(visible, actor.id);
-  const action = actions.find(
-    (entry) => entry.card?.id === plunder.id && entry.targets[0]?.id === target.id
-  );
-  assert.ok(action);
-  assert.equal(visible.players[2].hand, undefined);
-  const next = new AiSimulator(visible).apply(visible, action, actor.id);
-  assert.equal(next.players[2].equipmentDefinitionId, null);
-  assert.equal(next.players[0].equipmentDefinitionId, "battleDevice");
-  assert.equal(next.players[0].handCount, 1);
-});
-
 test("AI·模拟器：模拟伤害会计算队伍调息并保留可获救角色", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -5776,7 +5709,7 @@ test("AI·模拟器：模拟伤害会计算队伍调息并保留可获救角色"
 
 test("AI·模拟器：模拟调息不足时保持0血离散阵亡而不制造半血存活者", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -5825,7 +5758,7 @@ test("AI·模拟器：模拟调息不足时保持0血离散阵亡而不制造半
 
 test("AI·模拟器：模拟阵亡会清空手牌装备摘要且评估器只保留死亡惩罚", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "killer",
         seatIndex: 0,
@@ -5877,7 +5810,7 @@ test("AI·模拟器：模拟阵亡会清空手牌装备摘要且评估器只保�
     [false, 0, 0, 0, 0, null, 0]
   );
   const { game }
-  = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("dead", 1, "dusk")]),
+    = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("dead", 1, "dusk")]),
     viewer = {
       id: "viewer", battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 0
     },
@@ -5887,7 +5820,7 @@ test("AI·模拟器：模拟阵亡会清空手牌装备摘要且评估器只保�
   const emptyScore = game.aiController.evaluator.stateUtility({ players: [viewer, dead] }, viewer.id),
     richScore = game.aiController.evaluator.stateUtility(
       {
-        players:[
+        players: [
           viewer,
           {
             ...dead,
@@ -5904,43 +5837,46 @@ test("AI·模拟器：模拟阵亡会清空手牌装备摘要且评估器只保�
   assert.equal(richScore, emptyScore);
 });
 
-test("AI·可见状态：携带剩余计数副本且不修改输入", () => {
-  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
-  const { game }
-  = makeGame([actor, enemy]);
-  const counts = { assault: 3, block: 1 };
-  const snapshot = JSON.stringify(counts);
-  const visible = createAiVisibleState(actor.id, game.state, counts);
-  assert.deepEqual(visible.remainingCardCounts, counts);
-  assert.notEqual(visible.remainingCardCounts, counts);
-  assert.equal(JSON.stringify(counts), snapshot);
-});
+// ---- AI 核心状态·核心链路一致性 ----
 
-test("AI·可见状态：两参数调用兼容且计数为 null", () => {
-  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
-  const { game }
-  = makeGame([actor, enemy]);
-  const visible = createAiVisibleState(actor.id, game.state);
-  assert.equal(visible.remainingCardCounts, null);
-  assert.equal(visible.players.length, 2);
-});
-
-test("AI·可见状态：不自行计算剩余计数", () => {
-  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
-  const { game }
-  = makeGame([actor, enemy]);
-  const visible = createAiVisibleState(actor.id, game.state, { assault: 1 });
-  game.state.publicCardPool.push({ id: "p", definitionId: "block" });
-  assert.deepEqual(visible.remainingCardCounts, { assault: 1 });
-  assert.equal("remainingCounts" in visible, false);
+test("AI·核心链路：可见状态、动作生成和模拟器一致识别阵营上限与无限调息", () => {
+  const { game, small, large }
+    = makeTeamFixture();
+  large.hp -= 1;
+  large.turnFlags.recoverUsed = 7;
+  const recover = instance("recover");
+  large.hand.push(recover);
+  const visible = createAiVisibleState(large.id, game.state),
+    smallView = visible.players.find((player) => player.id === small.id),
+    largeView = visible.players.find((player) => player.id === large.id);
+  assert.deepEqual([smallView.maxEnergy, smallView.recoverLimit], [4, null]);
+  assert.deepEqual([largeView.maxEnergy, largeView.recoverLimit], [3, null]);
+  const action = game.aiController.actionGenerator.generateFromVisible(
+    visible, large.id
+  ).find((entry) => entry.card?.id === recover.id);
+  assert.ok(action);
+  const simulated = new AiSimulator(visible).apply(visible, action, large.id),
+    simulatedLarge = simulated.players.find((player) => player.id === large.id);
+  assert.equal(simulatedLarge.recoverLimit, null);
+  assert.equal(simulatedLarge.hp, large.hp + 1);
 });
 
 // ---- AI 搜索与规划 ----
 
+test("AI·搜索：先击杀中间角色后发现新相邻攻击目标", async () => {
+  const { players, game } = distanceFixture();
+  players[0].turnFlags.attackLimit = 2;
+  players[1].hp = 1;
+  players[0].hand.push(instance("assault"), instance("assault"));
+  game.aiSearchBudgetOverrideMs = 100;
+  await game.aiController.selectAction(players[0], { gameId: game.state.gameId });
+  assert.equal(game.aiController.planner.lastSearchStats.discoveredDynamicTarget, true);
+});
+
 test("AI·搜索：束搜索实际达到多层、记录展开节点并采样10个隐藏世界", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   a.hand.push(instance("charge"), instance("exposeWeakness"), instance("assault"));
   const action = await game.aiController.selectAction(a, { gameId: game.state.gameId });
   assert.ok(["card", "skill", "end"].includes(action.type));
@@ -5954,7 +5890,7 @@ test("AI·搜索：固定节点预算达到上限后返回当前最佳动作且�
     enemy = makePlayer("node-budget-enemy", 1, "dusk");
   actor.hand.push(instance("charge"), instance("exposeWeakness"), instance("assault"));
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   game.aiSearchNodeBudgetOverride = 5;
   game.aiSearchBudgetOverrideMs = 0;
   const action = await game.aiController.selectAction(actor, { gameId: game.state.gameId });
@@ -5971,7 +5907,7 @@ test("AI·搜索：固定节点预算截止时保留上一层已发现的全局�
     lower = instance("harvest");
   actor.hand.push(best, lower);
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   const visible = createAiVisibleState(
     actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
   ),
@@ -5979,12 +5915,12 @@ test("AI·搜索：固定节点预算截止时保留上一层已发现的全局�
   game.aiSearchNodeBudgetOverride = 3;
   game.aiRandomnessRange = 0;
   planner.evaluator = {
-    actionUtility: (action) => action.card?.id === best.id ? 10: action.card?.id === lower.id ? 5: -20,
+    actionUtility: (action) => action.card?.id === best.id ? 10 : action.card?.id === lower.id ? 5 : -20,
     stateUtility: () => 0
   };
   game.aiController.actionGenerator.generateFromVisible = (state) => state.players.find(
     (player) => player.id === actor.id
-  ).hand?.some((card) => card.id === best.id) ? [{ type: "end" }]: [];
+  ).hand?.some((card) => card.id === best.id) ? [{ type: "end" }] : [];
   const action = await planner.plan(
     actor,
     visible,
@@ -6002,7 +5938,7 @@ test("AI·搜索：根节点束裁剪会计入模拟后的局面效用", async (
     assault = instance("assault");
   actor.hand.push(charge, assault);
   const { game }
-  = makeGame([actor, enemy]),
+    = makeGame([actor, enemy]),
     visible = createAiVisibleState(
       actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
     ),
@@ -6013,7 +5949,7 @@ test("AI·搜索：根节点束裁剪会计入模拟后的局面效用", async (
   planner.evaluator = {
     actionUtility: () => 0,
     stateUtility: (state) => {
-      stateCalls+=1; return state.players.find((player) => player.id === enemy.id).hp < enemy.hp ? 100: 0;
+      stateCalls += 1; return state.players.find((player) => player.id === enemy.id).hp < enemy.hp ? 100 : 0;
     }
   };
   const action = await planner.plan(
@@ -6035,7 +5971,7 @@ test("AI·搜索：根动作生成受搜索预算约束，不会长期锁住观�
     card = instance("charge");
   actor.hand.push(card);
   const { game }
-  = makeGame([actor, enemy]),
+    = makeGame([actor, enemy]),
     visible = createAiVisibleState(
       actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
     ),
@@ -6043,10 +5979,10 @@ test("AI·搜索：根动作生成受搜索预算约束，不会长期锁住观�
   game.aiSearchBudgetOverrideMs = 0;
   game.aiRandomnessRange = 0;
   let evaluated = 0;
-  planner.evaluator = { actionUtility: () => 0, stateUtility: () => { evaluated+=1; return 0; } };
+  planner.evaluator = { actionUtility: () => 0, stateUtility: () => { evaluated += 1; return 0; } };
   const roots = Array.from(
     { length: 200 },
-    (_, index) =>({ type: "card", card: { ...card, id: `root-${index}` }, targets: [] })
+    (_, index) => ({ type: "card", card: { ...card, id: `root-${index}` }, targets: [] })
   );
   const action = await planner.plan(actor, visible, roots, { gameId: game.state.gameId });
   assert.equal(action.type, "card");
@@ -6058,7 +5994,7 @@ test("AI·搜索：规划异常会安全结束出牌并清理观察状态", asyn
   const ai = makePlayer("planner-fallback-ai", 0, "dawn"),
     enemy = makePlayer("planner-fallback-enemy", 1, "dusk"),
     { game, ui }
-  = makeGame([ai, enemy]);
+      = makeGame([ai, enemy]);
   game.state.currentPlayerIndex = 0;
   game.state.phase = "play";
   game.cleanupManager.delay = async () => true;
@@ -6116,10 +6052,9 @@ test("AI·搜索：深层节点能发现先聚能再发动主动技能", () => {
     ally = makePlayer("ally", 1, "dawn", "ai", 1),
     enemy = makePlayer("e", 2, "dusk");
   actor.energy = 1;
-  ally.hp-=1;
+  ally.hp -= 1;
   actor.hand.push(instance("charge"));
-  const { game }
-  = makeGame([actor, ally, enemy]);
+  const { game } = makeGame([actor, ally, enemy]);
   const visible = createAiVisibleState(actor.id, game.state);
   const simulator = new AiSimulator(visible);
   const charged = simulator.apply(
@@ -6140,10 +6075,10 @@ test("AI·搜索：深层结束与重复装备评分读取模拟节点而非根�
   real.hand.push(instance("assault"), instance("charge"));
   const enemy = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([real, enemy]);
+    = makeGame([real, enemy]);
   const evaluator = game.aiController.evaluator;
   const emptyVisible = {
-    players:[
+    players: [
       { id: real.id, battleTeam: "dawn", handCount: 0, equipmentDefinitionId: "energyDevice" },
       { id: enemy.id, battleTeam: "dusk", alive: true, hp: 3, maxHp: 3 }
     ]
@@ -6159,8 +6094,8 @@ test("AI·搜索：深层结束与重复装备评分读取模拟节点而非根�
 test("AI·搜索：到达搜索预算仍返回当前最佳合法动作", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
-  for (let i = 0; i < 8; i+=1) a.hand.push(instance(i % 2 ? "exposeWeakness": "assault"));
+    = makeGame([a, b]);
+  for (let i = 0; i < 8; i += 1) a.hand.push(instance(i % 2 ? "exposeWeakness" : "assault"));
   game.aiSearchBudgetOverrideMs = 0;
   const action = await game.aiController.selectAction(a, { gameId: game.state.gameId });
   assert.ok(["card", "skill", "end"].includes(action.type));
@@ -6186,13 +6121,13 @@ test("AI·搜索：各可见思考阶段使用集中配置范围且不改变搜�
     discard: [1600, 2800],
     end: [900, 1600]
   };
-  for (const[phase, [minimum, maximum]] of Object.entries(ranges)) {
+  for (const [phase, [minimum, maximum]] of Object.entries(ranges)) {
     const low = getAiDelay({ random: () => 0, simulationMode: false, animationFastMode: false }, phase),
       high = getAiDelay({ random: () => .999999, simulationMode: false, animationFastMode: false }, phase),
       fast = getAiDelay({ random: () => .5, simulationMode: false, animationFastMode: true }, phase);
     assert.equal(low, minimum);
     assert.ok(high <= maximum && high >= maximum - 1);
-    assert.ok(fast <(minimum + maximum) / 4);
+    assert.ok(fast < (minimum + maximum) / 4);
   }
   assert.equal(GAME_CONFIG.aiComplexThinkMaxMs, 7000);
   assert.equal(GAME_CONFIG.aiSearchTimeBudgetMs, 900);
@@ -6209,12 +6144,12 @@ test("AI·搜索：关闭逐动作重规划时会复用仍合法的束搜索牌�
   const charge = instance("charge");
   actor.hand.push(charge);
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   game.aiReplanAfterEveryAction = false;
   let plans = 0;
   game.aiController.selectAction = async () => {
-    plans+=1;
-    game.aiController.planner.lastPlannedSequence =[
+    plans += 1;
+    game.aiController.planner.lastPlannedSequence = [
       { type: "card", cardId: "charge", cardInstanceId: charge.id, targetIds: [] },
       { type: "end", cardId: null, cardInstanceId: null, targetIds: [] }
     ];
@@ -6229,7 +6164,7 @@ test("AI·搜索：关闭逐动作重规划时会复用仍合法的束搜索牌�
 test("AI·搜索：aiRandomnessRange 控制近似同分动作的评分扰动", () => {
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   const beam = [{ score: 10, id: "first" }, { score: 9.9, id: "second" }];
   game.aiRandomnessRange = 0;
   assert.equal(game.aiController.planner.chooseCandidate(beam).id, "first");
@@ -6245,7 +6180,7 @@ test("AI·搜索：模拟 end 会设置终止状态且终止快照不再生成�
     use = instance("harvest");
   actor.hand.push(use);
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   actor.turnFlags.momentum = 2;
   const visible = createAiVisibleState(actor.id, game.state),
     terminal = new AiSimulator(visible).apply(visible, { type: "end" }, actor.id);
@@ -6262,7 +6197,7 @@ test("AI·搜索：Planner 不扩展 end 根节点，即使动作生成器伪造
     fiction = instance("harvest");
   actor.hand.push(fiction);
   const { game }
-  = makeGame([actor, enemy]),
+    = makeGame([actor, enemy]),
     visible = createAiVisibleState(
       actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
     ),
@@ -6270,7 +6205,7 @@ test("AI·搜索：Planner 不扩展 end 根节点，即使动作生成器伪造
   game.aiController.actionGenerator.generateFromVisible = () => [
     { type: "card", card: fiction, targets: [] }
   ];
-  planner.evaluator.actionUtility = (action) => action.type === "card" ? 10000: 0;
+  planner.evaluator.actionUtility = (action) => action.type === "card" ? 10000 : 0;
   planner.evaluator.stateUtility = () => 10000;
   const chosen = await planner.plan(actor, visible, [{ type: "end" }], { gameId: game.state.gameId });
   assert.equal(chosen.type, "end");
@@ -6282,7 +6217,7 @@ test("AI·搜索：规划序列中的 end 始终位于末尾且真实 AI 仍能�
   const actor = makePlayer("terminal-real-actor", 0, "dawn"),
     enemy = makePlayer("terminal-real-enemy", 1, "dusk");
   const { game }
-  = makeGame([actor, enemy]),
+    = makeGame([actor, enemy]),
     visible = createAiVisibleState(
       actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
     ),
@@ -6309,7 +6244,7 @@ test("AI·搜索：关闭逐动作重规划时转移描述只保存稳定ID并�
   actor.hand.push(use);
   from.hand.push(instance("block"));
   const { game }
-  = makeGame([actor, from, receiver]),
+    = makeGame([actor, from, receiver]),
     action = game.aiController.getLegalActions(actor).find((entry) => entry.card?.id === use.id),
     descriptor = game.aiController.planner.describeAction(action);
   assert.deepEqual(
@@ -6506,7 +6441,7 @@ test("AI·突袭：共用突袭模拟消费破势与孤注并保留濒死救援�
 
 test("AI·突袭：模拟器识别破势叠加后强化普通突袭", () => {
   const visible = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -6524,7 +6459,7 @@ test("AI·突袭：模拟器识别破势叠加后强化普通突袭", () => {
         exposeWeaknessStacks: 0,
         alive: true,
         handCount: 3,
-        hand:[
+        hand: [
           { id: "x1", definitionId: "exposeWeakness" },
           { id: "x2", definitionId: "exposeWeakness" },
           { id: "a1", definitionId: "assault" }
@@ -6560,12 +6495,35 @@ test("AI·突袭：模拟器识别破势叠加后强化普通突袭", () => {
   assert.equal(attacked.players[0].recoverLimit, null);
 });
 
+// ---- AI 卡牌行为·护盾 ----
+
+test("AI·护盾：只为自己或存活队友生成目标并在深层模拟中叠加", () => {
+  const actor = makePlayer("actor", 0, "dawn"),
+    ally = makePlayer("ally", 1, "dawn"),
+    enemy = makePlayer("enemy", 2, "dusk"),
+    card = instance("shield");
+  actor.hand.push(card);
+  ally.shield = 1;
+  const { game }
+    = makeGame([actor, ally, enemy]);
+  const visible = createAiVisibleState(actor.id, game.state),
+    actions = game.aiController.actionGenerator.generateFromVisible(
+      visible, actor.id
+    ).filter((action) => action.card?.id === card.id);
+  assert.deepEqual(actions.map((action) => action.targets[0].id), [actor.id, ally.id]);
+  const chosen = actions.find((action) => action.targets[0].id === ally.id),
+    next = new AiSimulator(visible).apply(visible, chosen, actor.id),
+    nextAlly = next.players.find((player) => player.id === ally.id);
+  assert.equal(nextAlly.shield, 2);
+  assert.equal(visible.players.find((player) => player.id === ally.id).shield, 1);
+});
+
 // ---- AI 卡牌行为·窥探 ----
 
 test("AI·窥探：记忆绑定实体 card.id", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b], { random: () => 0 });
+    = makeGame([a, b], { random: () => 0 });
   const scout = instance("scout"), secret = instance("block");
   a.hand.push(scout);
   b.hand.push(secret);
@@ -6576,7 +6534,7 @@ test("AI·窥探：记忆绑定实体 card.id", async () => {
 test("AI·窥探：被窥探牌离开原手牌后实体记忆立即失效", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   const secret = instance("block");
   b.hand.push(secret);
   game.rememberPrivateCard(a, b, secret);
@@ -6587,7 +6545,7 @@ test("AI·窥探：被窥探牌离开原手牌后实体记忆立即失效", asyn
 test("AI·窥探：未知牌按位置采样而不因真实 definitionId 改变选择位置", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b], { random: () => .6 });
+    = makeGame([a, b], { random: () => .6 });
   b.hand = [instance("counter"), instance("charge"), instance("block")];
   const first = game.aiController.cardSelector.chooseHiddenCards(a, b, 1)[0];
   b.hand = [instance("assault"), instance("recover"), instance("energyDevice")];
@@ -6599,7 +6557,7 @@ test("AI·窥探：未知牌按位置采样而不因真实 definitionId 改变�
 test("AI·窥探：优先选择未知手牌位置而非已知低价值牌", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b], { random: () => 0 });
+    = makeGame([a, b], { random: () => 0 });
   const known = instance("counter"), first = instance("charge"), second = instance("assault");
   b.hand = [known, first, second];
   game.rememberPrivateCard(a, b, known);
@@ -6612,15 +6570,15 @@ test("AI·窥探：优先选择未知手牌位置而非已知低价值牌", () =
 test("AI·窥探：未知位置超量时受控随机选择且不读取未知真实牌面", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b], { random: () => 0.6 });
+    = makeGame([a, b], { random: () => 0.6 });
   const known = instance("counter"), first = instance("charge"), second = instance("assault");
   let reads = 0;
   for (const card of [first, second]) {
     const definitionId = card.definitionId, aiValue = card.aiValue;
     Object.defineProperty(
-      card, "definitionId", { configurable: true, get() { reads+=1; return definitionId; } }
+      card, "definitionId", { configurable: true, get() { reads += 1; return definitionId; } }
     );
-    Object.defineProperty(card, "aiValue", { configurable: true, get() { reads+=1; return aiValue; } });
+    Object.defineProperty(card, "aiValue", { configurable: true, get() { reads += 1; return aiValue; } });
   }
   b.hand = [known, first, second];
   game.rememberPrivateCard(a, b, known);
@@ -6634,7 +6592,7 @@ test("AI·窥探：未知位置超量时受控随机选择且不读取未知真�
 test("AI·窥探：未知不足时先选未知再用已知低价值补足且不重复", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b], { random: () => 0 });
+    = makeGame([a, b], { random: () => 0 });
   const high = instance("counter"), low = instance("block"), unknown = instance("charge");
   b.hand = [high, low, unknown];
   game.rememberPrivateCard(a, b, high);
@@ -6651,7 +6609,7 @@ test("AI·窥探：未知不足时先选未知再用已知低价值补足且不�
 test("AI·窥探：全部已知时按低价值顺序稳定回退", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b], { random: () => 0.99 });
+    = makeGame([a, b], { random: () => 0.99 });
   const high = instance("counter"), low = instance("block"), lowest = instance("charge");
   b.hand = [high, low, lowest];
   for (const card of b.hand) game.rememberPrivateCard(a, b, card);
@@ -6664,7 +6622,7 @@ test("AI·窥探：全部已知时按低价值顺序稳定回退", () => {
 test("AI·窥探：遵循 excludedCardIds", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b], { random: () => 0 });
+    = makeGame([a, b], { random: () => 0 });
   const known = instance("counter"), excluded = instance("charge"), target = instance("assault");
   b.hand = [known, excluded, target];
   game.rememberPrivateCard(a, b, known);
@@ -6682,7 +6640,7 @@ test("AI·转移：忽略真人队友装备区的雷达", () => {
   actor.hand.push(instance("transfer"));
   humanAlly.equipment = instance("defenseDevice");
   const { game }
-  = makeGame([actor, humanAlly]);
+    = makeGame([actor, humanAlly]);
   assert.equal(
     game.aiController.actionGenerator.generate(
       actor
@@ -6696,7 +6654,7 @@ test("AI·转移：不会把仅有装备的角色作为来源", () => {
   actor.hand.push(instance("transfer"));
   ally.equipment = instance("defenseDevice");
   const { game }
-  = makeGame([actor, ally]);
+    = makeGame([actor, ally]);
   assert.equal(
     game.aiController.actionGenerator.generate(
       actor
@@ -6709,7 +6667,7 @@ test("AI·转移：最佳方案为负数时不进入实际动作列表", () => {
   const actor = makePlayer("actor", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk");
   actor.hand.push(instance("transfer"));
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   assert.equal(
     game.aiController.actionGenerator.generate(
       actor
@@ -6727,7 +6685,7 @@ test("AI·转移：不会从敌人装备区移走高价值装备", () => {
   actor.equipment = instance("energyDevice");
   enemy.equipment = instance("defenseDevice");
   const { game }
-  = makeGame([actor, enemy, ally]);
+    = makeGame([actor, enemy, ally]);
   const action = game.aiController.actionGenerator.generate(
     actor
   ).find((entry) => entry.card?.id === use.id);
@@ -6747,7 +6705,7 @@ test("AI·转移：在角色同时拥有手牌和装备时只生成手牌选择"
   low.equipment = instance("energyDevice");
   high.equipment = instance("defenseDevice");
   const { game }
-  = makeGame([actor, low, high, ally]);
+    = makeGame([actor, low, high, ally]);
   const action = game.aiController.actionGenerator.generate(
     actor
   ).find((entry) => entry.card?.id === use.id);
@@ -6766,7 +6724,7 @@ test("AI·转移：可将即将溢出的队友手牌移给有空间的队友", (
   overflow.hp = 1;
   overflow.hand.push(instance("harvest"), instance("charge"));
   const { game }
-  = makeGame([actor, overflow, receiver]);
+    = makeGame([actor, overflow, receiver]);
   const action = game.aiController.actionGenerator.generate(
     actor
   ).find((entry) => entry.card?.id === use.id);
@@ -6785,7 +6743,7 @@ test("AI·转移：真实动作与深层模拟对同一公开局面选择一致"
   enemy.hand.push(instance("block"));
   enemy.equipment = instance("defenseDevice");
   const { game }
-  = makeGame([actor, enemy, ally]);
+    = makeGame([actor, enemy, ally]);
   const real = game.aiController.actionGenerator.generate(
     actor
   ).find((entry) => entry.card?.id === use.id);
@@ -6811,7 +6769,7 @@ test("AI·转移：模拟器拒绝伪造的装备区转移选择", () => {
   actor.hand.push(use);
   enemy.equipment = equipment;
   const { game }
-  = makeGame([actor, enemy, ally]),
+    = makeGame([actor, enemy, ally]),
     visible = createAiVisibleState(actor.id, game.state),
     next = new AiSimulator(
       visible
@@ -6831,7 +6789,7 @@ test("AI·转移：交换敌人未知手牌的真实 definitionId 不改变 AI �
   actor.hand.push(use);
   enemy.hand.push(first, second);
   const { game }
-  = makeGame([actor, enemy, ally]);
+    = makeGame([actor, enemy, ally]);
   const choose = () => {
     const action = game.aiController.actionGenerator.generate(
       actor
@@ -6852,7 +6810,7 @@ test("AI·转移：以自己为转移来源时排除正在使用的转移实体"
   actor.hp = 1;
   actor.hand.push(use, otherA, otherB);
   const { game }
-  = makeGame([actor, ally]);
+    = makeGame([actor, ally]);
   const action = game.aiController.actionGenerator.generate(
     actor
   ).find((entry) => entry.card?.id === use.id);
@@ -6872,7 +6830,7 @@ test("AI·转移：真人以自己为来源时核心拒绝选择正在使用的�
     other = instance("harvest");
   actor.hand.push(use, other);
   const { game }
-  = makeGame([actor, ally]);
+    = makeGame([actor, ally]);
   const hidden = game.cardSelectionSystem.createHiddenSelection(actor);
   assert.equal(
     await game.playCard(
@@ -6902,7 +6860,7 @@ test("AI·转移：排除转移牌后没有其他手牌时即使有装备也不�
   actor.hand.push(use);
   actor.equipment = instance("defenseDevice");
   const { game }
-  = makeGame([actor, ally]);
+    = makeGame([actor, ally]);
   assert.equal(RuleEngine.canPlayCard(game, actor, use).ok, false);
   assert.equal(
     await game.playCard(actor, use, [], { sourceId: actor.id, receiverId: ally.id, zone: "hand" }),
@@ -6915,7 +6873,7 @@ test("AI·转移：排除转移牌后没有其他手牌时即使有装备也不�
 
 test("AI·震荡：模拟震荡时按目标分别计算反制而不是取消整张牌", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -6966,7 +6924,7 @@ test("AI·震荡：模拟震荡时按目标分别计算反制而不是取消整�
 
 test("AI·挑衅：模拟挑衅时按目标分别计算反制", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -7023,7 +6981,7 @@ test("AI·借势：根节点在无普通突袭敌人时仍生成同阵营借势�
   actor.hand.push(use);
   first.equipment = instance("energyDevice");
   const { game }
-  = makeGame([actor, first, ally]);
+    = makeGame([actor, first, ally]);
   assert.deepEqual(RuleEngine.getLegalAssaultTargets(game, first), []);
   const actions = game.aiController.actionGenerator.generate(
     actor
@@ -7043,7 +7001,7 @@ test("AI·借势：深层生成在无普通突袭敌人时仍枚举同阵营借�
   actor.hand.push(use);
   first.equipment = instance("energyDevice");
   const { game }
-  = makeGame([actor, first, ally]);
+    = makeGame([actor, first, ally]);
   const visible = createAiVisibleState(actor.id, game.state),
     visibleFirst = visible.players.find((player) => player.id === first.id);
   const simulationGame = { state: { players: visible.players } };
@@ -7074,7 +7032,7 @@ test("AI·借势：在已用次数耗尽时仍能评估并接受残血击杀", (
   first.equipment = equipment;
   second.hp = 1;
   const { game }
-  = makeGame([actor, first, second]);
+    = makeGame([actor, first, second]);
   first.turnFlags.attackUsed = first.turnFlags.attackLimit;
   const usable = RuleEngine.getUsableAssaultCards(game, first, second);
   assert.equal(usable.length, 1);
@@ -7097,7 +7055,7 @@ test("AI·借势：主动借势第一目标需有距离合法第二目标且第�
   actor.hand.push(use);
   first.equipment = instance("energyDevice");
   const { game }
-  = makeGame([actor, first, ally, far, tail]);
+    = makeGame([actor, first, ally, far, tail]);
   const actions = game.aiController.getLegalActions(
     actor
   ).filter((action) => action.card?.id === use.id);
@@ -7120,7 +7078,7 @@ test("AI·借势：不会因估计没有突袭或次数用尽删除合法借势�
   actor.hand.push(use);
   first.equipment = instance("energyDevice");
   const { game }
-  = makeGame([actor, first]);
+    = makeGame([actor, first]);
   first.turnFlags.attackUsed = first.turnFlags.attackLimit;
   const rootActions = game.aiController.getLegalActions(
     actor
@@ -7147,7 +7105,7 @@ test("AI·借势：响应使用统一策略且仍通过普通突袭流程", asyn
   first.hand.push(assault, instance("assault"));
   first.equipment = equipment;
   const { game }
-  = makeGame([actor, first]);
+    = makeGame([actor, first]);
   game.aiController.responsePolicy.shouldRespond = (_responder, type) => type === "leverageAssault";
   await game.playCard(
     actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
@@ -7165,7 +7123,7 @@ test("AI·借势：响应通过可见快照评估真实玩家状态", () => {
   first.hand.push(assault);
   first.equipment = equipment;
   const { game }
-  = makeGame([actor, first]);
+    = makeGame([actor, first]);
   const decision = game.aiController.responsePolicy.shouldRespond(
     first, "leverageAssault", { target: actor, equipment }, [assault]
   );
@@ -7182,7 +7140,7 @@ test("AI·借势：有牌拒绝与无牌拒绝经过相同思考提示且日志�
     first.equipment = equipment;
     if (withAssault) first.hand.push(instance("assault"));
     const { game, ui }
-    = makeGame([actor, first]);
+      = makeGame([actor, first]);
     game.aiController.responsePolicy.shouldRespond = () => false;
     const prompts = [];
     ui.setPrompt = (message) => prompts.push(message);
@@ -7211,13 +7169,13 @@ test("AI·借势：动作粗评分不重复计算后继状态中的伤害与装�
     first = makePlayer("leverage-score-first", 1, "dusk"),
     second = makePlayer("leverage-score-second", 2, "dusk"),
     { game }
-  = makeGame([actor, first, second]),
+      = makeGame([actor, first, second]),
     evaluator = game.aiController.evaluator,
     card = { ...CARD_DEFINITIONS.leverage, id: "leverage-score" },
     action = { type: "card", card, targets: [{ id: first.id }, { id: second.id }] },
-    makeVisible = (equipmentDefinitionId, hp) =>(
+    makeVisible = (equipmentDefinitionId, hp) => (
       {
-        players:[
+        players: [
           { id: actor.id, battleTeam: "dawn", handCount: 1 },
           {
             id: first.id,
@@ -7239,7 +7197,7 @@ test("AI·借势：动作粗评分不重复计算后继状态中的伤害与装�
 
 test("AI·借势：普通突袭与借势响应共用同一模拟入口", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -7315,7 +7273,7 @@ test("AI·借势：普通突袭与借势响应共用同一模拟入口", () => {
 
 test("AI·借势：模拟借势不会对同阵营第二目标使用突袭", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -7397,7 +7355,7 @@ test("AI·借势：模拟借势不会对同阵营第二目标使用突袭", () =
 
 test("AI·借势：模拟借势不会对同阵营使用者本人使用突袭", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -7452,7 +7410,7 @@ test("AI·借势：模拟借势不会对同阵营使用者本人使用突袭", (
 
 test("AI·借势：模拟借势对合法敌方第二目标保留突袭使用", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -7516,7 +7474,7 @@ test("AI·借势：模拟借势对合法敌方第二目标保留突袭使用", (
 
 test("AI·借势：用连续期望模拟使用与拒绝且不按阈值删除装备", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -7582,7 +7540,7 @@ test("AI·借势：用连续期望模拟使用与拒绝且不按阈值删除装�
 
 test("AI·借势：连续借势按装备剩余概率计算且累计获得期望不超过同一件装备", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -7633,7 +7591,7 @@ test("AI·借势：连续借势按装备剩余概率计算且累计获得期望�
     ]
   };
   const simulator = new AiSimulator(state),
-    action = (id) =>(
+    action = (id) => (
       {
         type: "card",
         card: { ...CARD_DEFINITIONS.leverage, id },
@@ -7657,9 +7615,9 @@ test("AI·借势：连续借势按装备剩余概率计算且累计获得期望�
 });
 
 test("AI·借势：模拟借势不受普通突袭次数槽耗尽影响", () => {
-  const basePlayers = (attackUsed) =>(
+  const basePlayers = (attackUsed) => (
     {
-      players:[
+      players: [
         {
           id: "actor",
           seatIndex: 0,
@@ -7739,7 +7697,7 @@ test("AI·借势：模拟借势不受普通突袭次数槽耗尽影响", () => {
 
 test("AI·借势：强制突袭复用真实次数槽且震荡不消费次数槽", () => {
   const leverageState = {
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -7786,7 +7744,7 @@ test("AI·借势：强制突袭复用真实次数槽且震荡不消费次数槽"
     ]
   },
     simulator = new AiSimulator(leverageState),
-    action = (id) =>(
+    action = (id) => (
       {
         type: "card",
         card: { ...CARD_DEFINITIONS.leverage, id },
@@ -7801,7 +7759,7 @@ test("AI·借势：强制突袭复用真实次数槽且震荡不消费次数槽"
   assert.ok(twiceFirst.attackUsed > twiceFirst.attackLimit);
   assert.ok(twiceFirst.attackUsed > onceFirst.attackUsed + 1e-9);
   const shockState = {
-    players:[
+    players: [
       {
         id: "source",
         battleTeam: "dawn",
@@ -7841,10 +7799,10 @@ test("AI·借势：强制突袭复用真实次数槽且震荡不消费次数槽"
 });
 
 test("AI·借势：风险：动态格挡剩余0时防御装备不再抬高非零风险", () => {
-  const makeState = (defense) =>(
+  const makeState = (defense) => (
     {
       remainingCardCounts: { block: 0, assault: 10 },
-      players:[
+      players: [
         {
           id: "actor",
           seatIndex: 0,
@@ -7893,8 +7851,8 @@ test("AI·借势：风险：动态格挡剩余0时防御装备不再抬高非零
           blockProbability: 0,
           twoBlockProbability: 0,
           counterProbability: 0,
-          equipmentDefinitionId: defense ? "defenseDevice": null,
-          equipmentRetentionProbability: defense ? 1: 0
+          equipmentDefinitionId: defense ? "defenseDevice" : null,
+          equipmentRetentionProbability: defense ? 1 : 0
         }
       ]
     }
@@ -7912,12 +7870,38 @@ test("AI·借势：风险：动态格挡剩余0时防御装备不再抬高非零
   assertClose(withDefense.players[2].hp, without.players[2].hp);
 });
 
+// ---- AI 卡牌行为·掠夺 ----
+
+test("AI·掠夺：可见动作与模拟器支持装备掠夺进入手牌且不读取隐藏手牌", () => {
+  const actor = makePlayer("actor", 0, "dawn"),
+    near = makePlayer("near", 1, "dawn"),
+    target = makePlayer("target", 2, "dusk"),
+    other = makePlayer("other", 3, "dusk"),
+    tail = makePlayer("tail", 4, "dawn"),
+    plunder = instance("plunder");
+  actor.hand.push(plunder);
+  actor.equipment = instance("battleDevice");
+  target.equipment = instance("energyDevice");
+  const { game } = makeGame([actor, near, target, other, tail]),
+    visible = createAiVisibleState(actor.id, game.state),
+    actions = game.aiController.actionGenerator.generateFromVisible(visible, actor.id);
+  const action = actions.find(
+    (entry) => entry.card?.id === plunder.id && entry.targets[0]?.id === target.id
+  );
+  assert.ok(action);
+  assert.equal(visible.players[2].hand, undefined);
+  const next = new AiSimulator(visible).apply(visible, action, actor.id);
+  assert.equal(next.players[2].equipmentDefinitionId, null);
+  assert.equal(next.players[0].equipmentDefinitionId, "battleDevice");
+  assert.equal(next.players[0].handCount, 1);
+});
+
 // ---- AI 卡牌行为·决斗 ----
 
 function simulatedDuelPlayer(id, team, count) {
   return {
     id,
-    seatIndex: team === "dawn" ? 0: 1,
+    seatIndex: team === "dawn" ? 0 : 1,
     battleTeam: team,
     alive: true,
     hp: 10,
@@ -7928,26 +7912,26 @@ function simulatedDuelPlayer(id, team, count) {
     expectedRecoverCount: 0,
     assaultCountDistribution: [{ count, probability: 1 }],
     expectedAssaultCount: count,
-    assaultResponseProbability: count > 0 ? 1: 0,
+    assaultResponseProbability: count > 0 ? 1 : 0,
     blockProbability: 0
   };
 }
 
 test("AI·决斗：按目标先出牌关系扣除双方突袭且不额外消费出牌者", () => {
   const run = (actorAssaults, targetAssaults) => {
-    const actorHand =[
+    const actorHand = [
       { id: "duel", definitionId: "duel" },
       ...Array.from(
-        { length: actorAssaults }, (_, index) =>({ id: `actor-assault-${index}`, definitionId: "assault" })
+        { length: actorAssaults }, (_, index) => ({ id: `actor-assault-${index}`, definitionId: "assault" })
       )
     ],
       targetHand = Array.from(
         { length: targetAssaults },
-        (_, index) =>({ id: `target-assault-${index}`, definitionId: "assault" })
+        (_, index) => ({ id: `target-assault-${index}`, definitionId: "assault" })
       ),
       state = {
         playPhaseEnded: false,
-        players:[
+        players: [
           {
             id: "actor",
             seatIndex: 0,
@@ -7990,7 +7974,7 @@ test("AI·决斗：按目标先出牌关系扣除双方突袭且不额外消费�
   assert.equal(next.players[0].expectedAssaultCount, 0);
   assert.equal(next.players[1].expectedAssaultCount, 0);
   assert.ok(
-    next.players.every((player) => !(player.hand ??[]).some((card) => card.definitionId === "assault"))
+    next.players.every((player) => !(player.hand ?? []).some((card) => card.definitionId === "assault"))
   );
   next = run(1, 2);
   assert.equal(next.players[0].expectedAssaultCount, 0);
@@ -8001,7 +7985,7 @@ test("AI·决斗：按目标先出牌关系扣除双方突袭且不额外消费�
 test("AI·决斗：移除的具体突袭不会再次进入深层动作生成", () => {
   const state = {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -8037,7 +8021,7 @@ test("AI·决斗：移除的具体突袭不会再次进入深层动作生成", (
     ]
   },
     { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]),
+      = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]),
     next = new AiSimulator(
       state
     ).apply(state, { type: "card", card: { ...CARD_DEFINITIONS.duel, id: "duel" }, targets: [{ id: "target" }] }, "actor");
@@ -8049,7 +8033,7 @@ test("AI·决斗：移除的具体突袭不会再次进入深层动作生成", (
 });
 
 test("AI·决斗：按整数突袭分布覆盖1对0、1对1、1对2与0对0", () => {
-  const cases =[
+  const cases = [
     [
       1,
       0,
@@ -8071,12 +8055,12 @@ test("AI·决斗：按整数突袭分布覆盖1对0、1对1、1对2与0对0", ()
       { actorLoseProbability: 0, targetLoseProbability: 1, expectedActorSpent: 0, expectedTargetSpent: 0 }
     ]
   ];
-  for (const[actorCount, targetCount, expected] of cases) {
+  for (const [actorCount, targetCount, expected] of cases) {
     const actor = simulatedDuelPlayer(`duel-actor-${actorCount}-${targetCount}`, "dawn", actorCount);
     const target = simulatedDuelPlayer(`duel-target-${actorCount}-${targetCount}`, "dusk", targetCount);
     const state = { players: [actor, target] },
       outcome = new AiSimulator(state).applyDuel(state, actor, target, 1);
-    for (const[field, value] of Object.entries(expected)) assertClose(outcome[field], value);
+    for (const [field, value] of Object.entries(expected)) assertClose(outcome[field], value);
   }
 });
 
@@ -8085,7 +8069,7 @@ test("AI·决斗：未知手牌产生双向非零失败概率且分支严格有�
     target = makePlayer("duel-hidden-target", 1, "dusk");
   target.hand.push(instance("recover"), instance("block"));
   const { game }
-  = makeGame([actor, target]), visible = createAiVisibleState(actor.id, game.state);
+    = makeGame([actor, target]), visible = createAiVisibleState(actor.id, game.state);
   const visibleActor = structuredClone(visible.players[0]),
     visibleTarget = structuredClone(visible.players[1]);
   const state = { players: [visibleActor, visibleTarget] },
@@ -8109,7 +8093,7 @@ test("AI·决斗：1张对4张未知手牌不会确定判负且目标消耗不�
   actor.hand.push(instance("assault"));
   target.hand.push(instance("recover"), instance("block"), instance("charge"), instance("shield"));
   const { game }
-  = makeGame([actor, target]), visible = createAiVisibleState(actor.id, game.state);
+    = makeGame([actor, target]), visible = createAiVisibleState(actor.id, game.state);
   const a = structuredClone(visible.players[0]),
     t = structuredClone(visible.players[1]),
     original = t.expectedAssaultCount;
@@ -8121,7 +8105,7 @@ test("AI·决斗：1张对4张未知手牌不会确定判负且目标消耗不�
 
 test("AI·决斗：前主动突袭会同步为0张突袭", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "assault-then-duel",
         seatIndex: 0,
@@ -8187,10 +8171,10 @@ test("AI·决斗：分布不读取敌方真实隐藏手牌内容", () => {
     target = makePlayer("duel-private-target", 1, "dusk");
   target.hand.push(instance("assault"), instance("assault"), instance("recover"), instance("block"));
   const { game }
-  = makeGame([actor, target]),
+    = makeGame([actor, target]),
     first = createAiVisibleState(actor.id, game.state).players[1].assaultCountDistribution;
   target.hand = target.hand.map(
-    (card, index) =>({ ...instance(["shield", "charge", "counter", "harvest"][index]), id: card.id })
+    (card, index) => ({ ...instance(["shield", "charge", "counter", "harvest"][index]), id: card.id })
   );
   const second = createAiVisibleState(actor.id, game.state).players[1].assaultCountDistribution;
   assert.deepEqual(second, first);
@@ -8201,7 +8185,7 @@ test("AI·决斗：分布不读取敌方真实隐藏手牌内容", () => {
 test("AI·闪电：AI 根节点与深层生成均拒绝已有闪电状态", () => {
   const source = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([source, enemy]);
+    = makeGame([source, enemy]);
   source.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: source.id };
   source.hand.push(instance("lightning"));
   assert.ok(
@@ -8217,7 +8201,7 @@ test("AI·闪电：AI 根节点与深层生成均拒绝已有闪电状态", () =
   );
   const source2 = makePlayer("a2", 0, "dawn"), enemy2 = makePlayer("b2", 1, "dusk");
   const { game: game2 }
-  = makeGame([source2, enemy2]);
+    = makeGame([source2, enemy2]);
   source2.hand.push(instance("lightning"));
   assert.ok(
     game2.aiController.getLegalActions(
@@ -8235,7 +8219,7 @@ test("AI·闪电：AI 根节点与深层生成均拒绝已有闪电状态", () =
 test("AI·闪电：AiSimulator 成功使用后写入状态且不立即判定或伤害", () => {
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -8270,7 +8254,7 @@ test("AI·闪电：AiSimulator 成功使用后写入状态且不立即判定或�
   assertClose(
     next.players[
       0
-    ].lightningStatusStateBranches.reduce((sum, branch) => sum +(branch.present ? branch.probability: 0), 0),
+    ].lightningStatusStateBranches.reduce((sum, branch) => sum + (branch.present ? branch.probability : 0), 0),
     1
   );
   assert.equal(next.players[0].hp, 4);
@@ -8287,7 +8271,7 @@ test("AI·闪电：AI 装备判定概率按类别聚合且不修改计数", () =
     CARD_DEFINITIONS
   ).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
   assertClose(equipmentJudgmentProbability(null), equipmentTotal / TOTAL_CARD_COUNT);
-  const players =[
+  const players = [
     { id: "a", seatIndex: 0, alive: true, battleTeam: "dawn", statuses: [] },
     { id: "b", seatIndex: 1, alive: false, battleTeam: "dusk", statuses: [] },
     { id: "c", seatIndex: 2, alive: true, battleTeam: "dusk", statuses: ["lightning"] },
@@ -8297,13 +8281,13 @@ test("AI·闪电：AI 装备判定概率按类别聚合且不修改计数", () =
 });
 
 test("AI·闪电：AI 使用价值随自身低血惩罚、敌人低血收益和队友低血损失单调变化", () => {
-  const make = (hp, receiver) =>(
+  const make = (hp, receiver) => (
     {
       remainingCardCounts: { defenseDevice: 1, assault: 3 },
-      players:[
+      players: [
         { id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, hp, maxHp: 4, shield: 0, statuses: [] },
         ...(
-          receiver ?[
+          receiver ? [
             {
               id: "b",
               seatIndex: 1,
@@ -8314,7 +8298,7 @@ test("AI·闪电：AI 使用价值随自身低血惩罚、敌人低血收益和�
               shield: 0,
               statuses: []
             }
-          ]: []
+          ] : []
         )
       ]
     }
@@ -8343,10 +8327,10 @@ test("AI·闪电：AI 状态反制决策不是固定 true 或 false", () => {
     receiverEnemy = makePlayer("b", 1, "dusk"),
     responder = makePlayer("r", 2, "dawn");
   const { game }
-  = makeGame([holderAlly, receiverEnemy, responder]);
+    = makeGame([holderAlly, receiverEnemy, responder]);
   holderAlly.hp = 1;
   holderAlly.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holderAlly.id };
-  game.aiController.knowledge.remainingCounts = () =>({ defenseDevice: 9, assault: 1 });
+  game.aiController.knowledge.remainingCounts = () => ({ defenseDevice: 9, assault: 1 });
   const context = { statusCounterContext: { holderId: holderAlly.id, holderName: holderAlly.name } };
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(responder, "counter", context, [instance("counter")]),
@@ -8356,10 +8340,10 @@ test("AI·闪电：AI 状态反制决策不是固定 true 或 false", () => {
     holderEnemy = makePlayer("e", 1, "dusk"),
     receiverAlly = makePlayer("f", 2, "dawn");
   const { game: game2 }
-  = makeGame([responder2, holderEnemy, receiverAlly]);
+    = makeGame([responder2, holderEnemy, receiverAlly]);
   holderEnemy.hp = 4;
   holderEnemy.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holderEnemy.id };
-  game2.aiController.knowledge.remainingCounts = () =>({ defenseDevice: 9, assault: 1 });
+  game2.aiController.knowledge.remainingCounts = () => ({ defenseDevice: 9, assault: 1 });
   const context2 = {
     statusCounterContext: { holderId: holderEnemy.id, holderName: holderEnemy.name }
   };
@@ -8408,7 +8392,7 @@ test("AI·装备：距离与攻防装备效果按装备存在概率加权", () =
   assert.equal(DistanceSystem.getDistance(game, source, target), 2);
   assert.equal(DistanceSystem.getRangeLegalityProbability(game, source, target, 1), .375);
   const damageState = {
-    players:[
+    players: [
       {
         id: "a",
         battleTeam: "dawn",
@@ -8445,9 +8429,9 @@ test("AI·装备：距离与攻防装备效果按装备存在概率加权", () =
 });
 
 test("AI·装备：雷达与回收站效果按装备存在概率加权", () => {
-  const makeDamage = (probability) =>(
+  const makeDamage = (probability) => (
     {
-      players:[
+      players: [
         {
           id: "a",
           battleTeam: "dawn",
@@ -8469,7 +8453,7 @@ test("AI·装备：雷达与回收站效果按装备存在概率加权", () => {
           handCount: 0,
           blockProbability: 0,
           twoBlockProbability: 0,
-          equipmentDefinitionId: probability ? "defenseDevice": null,
+          equipmentDefinitionId: probability ? "defenseDevice" : null,
           equipmentRetentionProbability: probability,
           expectedRecoverCount: 0
         }
@@ -8484,9 +8468,9 @@ test("AI·装备：雷达与回收站效果按装备存在概率加权", () => {
     return state.players[1].hp;
   }, without = damage(0), half = damage(.5), full = damage(1);
   assert.ok(full > half && half > without);
-  assert.ok(Math.abs(half -(full + without) / 2) < 1e-9);
+  assert.ok(Math.abs(half - (full + without) / 2) < 1e-9);
   const recycleState = {
-    players:[
+    players: [
       {
         id: "r",
         battleTeam: "dawn",
@@ -8539,7 +8523,7 @@ test("AI·装备：掠夺破坏窃取与主动装备均通过统一装备状态�
   assert.equal(target.equipmentDefinitionId, null);
   assert.equal(target.equipmentRetentionProbability, 0);
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         alive: true,
@@ -8562,7 +8546,7 @@ test("AI·装备：掠夺破坏窃取与主动装备均通过统一装备状态�
 
 test("AI·装备：完全移除时按初始装备价值产生完整损失", () => {
   const { game }
-  = makeGame([makePlayer("equipment-viewer", 0, "dawn"), makePlayer("equipment-enemy", 1, "dusk")]),
+    = makeGame([makePlayer("equipment-viewer", 0, "dawn"), makePlayer("equipment-enemy", 1, "dusk")]),
     value = CARD_DEFINITIONS.battleDevice.aiValue,
     base = {
       id: "equipment-viewer",
@@ -8588,7 +8572,7 @@ test("AI·装备：完全移除时按初始装备价值产生完整损失", () =
     };
   const partial = game.aiController.evaluator.stateUtility(
     {
-      players:[
+      players: [
         { ...base, equipmentDefinitionId: "battleDevice", equipmentRetentionProbability: .1 }, enemy
       ]
     },
@@ -8606,7 +8590,7 @@ test("AI·装备：完全移除时按初始装备价值产生完整损失", () =
 
 test("AI·回收站：触发期望严格封顶2次", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "r",
         battleTeam: "dawn",
@@ -8632,7 +8616,7 @@ test("AI·回收站：触发期望严格封顶2次", () => {
 
 test("AI·回收站：模拟回收站在前两张战术后补牌且第三张不再触发", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -8642,7 +8626,7 @@ test("AI·回收站：模拟回收站在前两张战术后补牌且第三张不�
         shield: 0,
         alive: true,
         handCount: 3,
-        hand:[
+        hand: [
           { id: "x1", definitionId: "exposeWeakness" },
           { id: "x2", definitionId: "exposeWeakness" },
           { id: "x3", definitionId: "exposeWeakness" }
@@ -8681,7 +8665,7 @@ test("AI·回收站：模拟回收站在前两张战术后补牌且第三张不�
 
 // ---- AI 装备行为·雷达 ----
 
-const radarFixtureTarget = (overrides = {}) =>(
+const radarFixtureTarget = (overrides = {}) => (
   {
     id: "target",
     battleTeam: "dusk",
@@ -8700,7 +8684,7 @@ const radarFixtureTarget = (overrides = {}) =>(
   }
 );
 
-const radarAttacker = (overrides = {}) =>(
+const radarAttacker = (overrides = {}) => (
   {
     id: "attacker",
     battleTeam: "dawn",
@@ -8725,10 +8709,10 @@ const radarApply = (target, attacker = radarAttacker(), options = {}, existingSt
   };
   if (
     options.remainingCardCounts !== undefined
-  )state.remainingCardCounts = options.remainingCardCounts;
+  ) state.remainingCardCounts = options.remainingCardCounts;
   const simulator = new AiSimulator({ players: [] });
   const { remainingCardCounts, ...damageOptions }
-  = options;
+    = options;
   simulator.applyDamage(
     state, attacker, target, 1, { canBlock: true, deviceAttack: true, ...damageOptions }
   );
@@ -8740,7 +8724,7 @@ test("AI·雷达：按判定牌类型计算格挡消耗并保持手牌非负", (
     normalBlockProbability = .1,
     twoBlockProbability = .02,
     state = {
-      players:[
+      players: [
         {
           id: "a",
           battleTeam: "dawn",
@@ -8777,11 +8761,11 @@ test("AI·雷达：按判定牌类型计算格挡消耗并保持手牌非负", (
     blockChance = CARD_DEFINITIONS.block.count / TOTAL_CARD_COUNT,
     otherBasicChance = (basicTotal - CARD_DEFINITIONS.block.count) / TOTAL_CARD_COUNT,
     equipmentChance = equipmentTotal / TOTAL_CARD_COUNT,
-    normalSpent = blockChance +(otherBasicChance + equipmentChance) * normalBlockProbability,
-    battleSpent = 2 *(
-      blockChance * normalBlockProbability +(otherBasicChance + equipmentChance) * twoBlockProbability
+    normalSpent = blockChance + (otherBasicChance + equipmentChance) * normalBlockProbability,
+    battleSpent = 2 * (
+      blockChance * normalBlockProbability + (otherBasicChance + equipmentChance) * twoBlockProbability
     ),
-    expectedSpent = battleProbability * battleSpent +(1 - battleProbability) * normalSpent,
+    expectedSpent = battleProbability * battleSpent + (1 - battleProbability) * normalSpent,
     simulator = new AiSimulator(state);
   simulator.applyDamage(
     state, state.players[0], state.players[1], 1, { canBlock: true, deviceAttack: true }
@@ -8789,14 +8773,14 @@ test("AI·雷达：按判定牌类型计算格挡消耗并保持手牌非负", (
   assert.ok(
     Math.abs(
       state.players[1].handCount - Math.max(0, basicTotal / TOTAL_CARD_COUNT - expectedSpent)
-    )< 1e-9
+    ) < 1e-9
   );
   assert.ok(state.players[1].handCount >= 0);
 });
 
 test("AI·雷达：模拟雷达按当前牌堆配置计算判定概率", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -8836,14 +8820,14 @@ test("AI·雷达：模拟雷达按当前牌堆配置计算判定概率", () => {
     equipment = Object.values(
       CARD_DEFINITIONS
     ).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
-  assert.ok(Math.abs(next.players[1].hp -(3 -(otherBasic + equipment) / TOTAL_CARD_COUNT)) < 1e-9);
+  assert.ok(Math.abs(next.players[1].hp - (3 - (otherBasic + equipment) / TOTAL_CARD_COUNT)) < 1e-9);
 });
 
 test("AI·雷达：战术判定免疫且不消耗原格挡，基础与装备判定按真实顺序结算", () => {
   const simulator = new AiSimulator({ players: [] });
   const run = ({ handCount, blockProbability, judgment }) => {
     const state = {
-      players:[
+      players: [
         { id: "attacker", battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, handCount: 0 },
         {
           id: "target",
@@ -8896,7 +8880,7 @@ test("AI·雷达：军火库雷达判得格挡后仍要求原手牌另有一张�
   const simulator = new AiSimulator({ players: [] });
   const run = (normalBlockChance, handCount) => {
     const state = {
-      players:[
+      players: [
         {
           id: "attacker",
           battleTeam: "dawn",
@@ -8946,7 +8930,7 @@ test("AI·雷达：军火库雷达判得格挡后仍要求原手牌另有一张�
 
 test("AI·雷达：部分概率攻击额外缩放雷达得牌、格挡消耗与最终伤害", () => {
   const state = {
-    players:[
+    players: [
       { id: "attacker", battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, handCount: 0 },
       {
         id: "target",
@@ -8974,7 +8958,7 @@ test("AI·雷达：部分概率攻击额外缩放雷达得牌、格挡消耗与�
 test("AI·雷达：原格挡+判定格挡普通攻击只消费原格挡", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
-  = makeGame([a, b], { response: () => true });
+    = makeGame([a, b], { response: () => true });
   b.equipment = instance("defenseDevice");
   const original = instance("block"), judged = instance("block");
   b.hand.push(original);
@@ -8991,7 +8975,7 @@ test("AI·雷达：原格挡+判定格挡普通攻击只消费原格挡", async 
 test("AI·雷达：军火库两张原格挡+判定格挡只消费两张原格挡", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
-  = makeGame([a, b], { response: () => true });
+    = makeGame([a, b], { response: () => true });
   a.equipment = instance("battleDevice");
   b.equipment = instance("defenseDevice");
   const original1 = instance("block"), original2 = instance("block"), judged = instance("block");
@@ -9010,7 +8994,7 @@ test("AI·雷达：军火库两张原格挡+判定格挡只消费两张原格挡
 test("AI·雷达：军火库一张原格挡+判定格挡两张都消费", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
-  = makeGame([a, b], { response: () => true });
+    = makeGame([a, b], { response: () => true });
   a.equipment = instance("battleDevice");
   b.equipment = instance("defenseDevice");
   const original = instance("block"), judged = instance("block");
@@ -9254,7 +9238,7 @@ test("AI·雷达：50%雷达两分支身份与格挡消费共享条件世界", (
     }
   );
   const { simulator }
-  = radarApply(target, radarAttacker(), { remainingCardCounts: { charge: 1 } });
+    = radarApply(target, radarAttacker(), { remainingCardCounts: { charge: 1 } });
   assert.equal(target.hp, 4);
   assertClose(target.handCount, .5);
   const charge = target.knownCards.find((entry) => entry.definitionId === "charge");
@@ -9280,7 +9264,7 @@ test("AI·雷达：40%攻击未发生世界不判定不消费不受伤", () => {
     }
   );
   const { simulator }
-  = radarApply(target, radarAttacker(), { remainingCardCounts: { charge: 1 }, eventProbability: .4 });
+    = radarApply(target, radarAttacker(), { remainingCardCounts: { charge: 1 }, eventProbability: .4 });
   assert.equal(target.hp, 4);
   assertClose(target.handCount, 1);
   const charge = target.knownCards.find((entry) => entry.definitionId === "charge");
@@ -9299,7 +9283,7 @@ test("AI·雷达：混合判定身份互斥且每个世界最多一张基础牌"
     { blockCountDistribution: [{ probability: 1, conditions: {}, blockCount: 0 }] }
   );
   const { simulator }
-  = radarApply(target, radarBattleAttacker(), { remainingCardCounts: { block: 5, charge: 5 } });
+    = radarApply(target, radarBattleAttacker(), { remainingCardCounts: { block: 5, charge: 5 } });
   assert.equal(target.hp, 3);
   // 军火库只有一张判定格挡不足两张，两个分支都命中
   const block = target.knownCards.find((entry) => entry.definitionId === "block");
@@ -9321,7 +9305,7 @@ test("AI·雷达：混合判定身份互斥且每个世界最多一张基础牌"
 test("AI·雷达：clone 后雷达判定消费状态不恢复", () => {
   const state = {
     remainingCardCounts: { charge: 1 },
-    players:[
+    players: [
       radarAttacker(),
       radarFixtureTarget(
         {
@@ -9352,7 +9336,7 @@ test("AI·雷达：clone 后雷达判定消费状态不恢复", () => {
 test("AI·雷达：判定聚能可被后续破坏定向移除", () => {
   const state = {
     remainingCardCounts: { charge: 1 },
-    players:[
+    players: [
       radarAttacker(),
       radarFixtureTarget({ blockCountDistribution: [{ probability: 1, conditions: {}, blockCount: 0 }] })
     ]
@@ -9378,7 +9362,7 @@ test("AI·雷达：判定聚能可被后续破坏定向移除", () => {
 test("AI·雷达：判定聚能可被后续掠夺转移到行动者", () => {
   const state = {
     remainingCardCounts: { charge: 1 },
-    players:[
+    players: [
       radarAttacker(),
       radarFixtureTarget({ blockCountDistribution: [{ probability: 1, conditions: {}, blockCount: 0 }] })
     ]
@@ -9410,7 +9394,7 @@ test("AI·雷达：判定聚能可被后续转移给接收者", () => {
   );
   const state = {
     remainingCardCounts: { charge: 1 },
-    players:[
+    players: [
       radarAttacker(),
       radarFixtureTarget({ blockCountDistribution: [{ probability: 1, conditions: {}, blockCount: 0 }] }),
       receiver
@@ -9472,7 +9456,7 @@ test("AI·雷达：匿名确定格挡优先于判定格挡被消费", () => {
     }
   );
   const { simulator }
-  = radarApply(target, radarAttacker(), { remainingCardCounts: { block: 1 } });
+    = radarApply(target, radarAttacker(), { remainingCardCounts: { block: 1 } });
   assert.equal(target.hp, 4);
   assert.equal(target.handCount, 1);
   assert.equal(target.knownCards.length, 1);
@@ -9490,14 +9474,14 @@ test("AI·雷达：匿名50%格挡与判定格挡同世界关联", () => {
       handCount: 1,
       blockProbability: .5,
       twoBlockProbability: 0,
-      blockCountDistribution:[
+      blockCountDistribution: [
         { probability: .5, conditions: {}, blockCount: 0 },
         { probability: .5, conditions: {}, blockCount: 1 }
       ]
     }
   );
   const { simulator }
-  = radarApply(target, radarAttacker(), { remainingCardCounts: { block: 1 } });
+    = radarApply(target, radarAttacker(), { remainingCardCounts: { block: 1 } });
   assert.equal(target.hp, 4);
   assert.equal(target.handCount, 1);
   const judged = target.knownCards[0];
@@ -9509,7 +9493,7 @@ test("AI·雷达：匿名50%格挡与判定格挡同世界关联", () => {
   const joint = joinProbabilityStateBranches(
     projectAvailability(judged.availabilityStateBranches, "judgedAvail"),
     target.blockCountDistribution.map(
-      ({ blockCount, probability, conditions }) =>({ probability, conditions, count1: blockCount === 1 })
+      ({ blockCount, probability, conditions }) => ({ probability, conditions, count1: blockCount === 1 })
     )
   );
   const mismatched = joint.filter(
@@ -9529,7 +9513,7 @@ test("AI·雷达：两张匿名格挡+判定格挡军火库只消费原匿名格
     }
   );
   const { simulator }
-  = radarApply(target, radarBattleAttacker(), { remainingCardCounts: { block: 1 } });
+    = radarApply(target, radarBattleAttacker(), { remainingCardCounts: { block: 1 } });
   assert.equal(target.hp, 4);
   assert.equal(target.handCount, 1);
   assert.equal(target.knownCards.length, 1);
@@ -9562,7 +9546,7 @@ test("AI·雷达：默认概率：动态类别密度且耗尽类别为零", () =
   const run = (counts) => {
     const state = {
       remainingCardCounts: counts,
-      players:[
+      players: [
         {
           id: "a",
           battleTeam: "dawn",
@@ -9603,7 +9587,7 @@ test("AI·雷达：默认概率：动态类别密度且耗尽类别为零", () =
 test("AI·雷达：默认概率：显式概率优先于动态计数", () => {
   const state = {
     remainingCardCounts: { assault: 10 },
-    players:[
+    players: [
       {
         id: "a",
         battleTeam: "dawn",
@@ -9640,7 +9624,7 @@ test("AI·雷达：默认概率：显式概率优先于动态计数", () => {
 
 test("AI·雷达：默认概率：无动态计数保留固定初始类别密度", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         battleTeam: "dawn",
@@ -9679,7 +9663,7 @@ test("AI·雷达：默认概率：无动态计数保留固定初始类别密度"
 
 test("AI·军火库：模拟军火库要求两张格挡而不是一张", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -9717,7 +9701,7 @@ test("AI·军火库：模拟军火库要求两张格挡而不是一张", () => {
 
 test("AI·军火库：不会提高猎杀等非设备攻击的格挡需求", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "hunter",
         battleTeam: "dawn",
@@ -9760,7 +9744,7 @@ test("AI·望远镜与屏障：深层模拟装备望远镜后会生成新进入�
     assault = instance("assault");
   source.hand.push(telescope, assault);
   const { game }
-  = makeGame([source, ally, target, other, tail]),
+    = makeGame([source, ally, target, other, tail]),
     visible = createAiVisibleState(source.id, game.state),
     equipAction = game.aiController.actionGenerator.generateFromVisible(
       visible, source.id
@@ -9806,7 +9790,7 @@ test("AI·望远镜与屏障：概率距离合法性枚举离散装备分支且�
 test("AI·望远镜与屏障：概率距离动作按同一概率扣牌结算且未执行分支不能重复攻击同一目标", () => {
   const state = {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -9841,7 +9825,7 @@ test("AI·望远镜与屏障：概率距离动作按同一概率扣牌结算且�
     ]
   };
   const actor = makePlayer("real", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk"), { game }
-  = makeGame([actor, enemy]),
+    = makeGame([actor, enemy]),
     actions = game.aiController.actionGenerator.generateFromVisible(state, "a"),
     attack = actions.find((action) => action.card?.id === "hit" && action.targets[0]?.id === "t");
   assert.equal(attack.executionProbability, .5);
@@ -9865,7 +9849,7 @@ test("AI·望远镜与屏障：概率距离动作按同一概率扣牌结算且�
 test("AI·望远镜与屏障：概率装备依赖的借势同步缩放卡牌成本并禁止再次针对同一装备", () => {
   const state = {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -9904,7 +9888,7 @@ test("AI·望远镜与屏障：概率装备依赖的借势同步缩放卡牌成�
     ]
   };
   const actor = makePlayer("real", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk"), { game }
-  = makeGame([actor, enemy]),
+    = makeGame([actor, enemy]),
     actions = game.aiController.actionGenerator.generateFromVisible(state, "a"),
     leverage = actions.find((action) => action.card?.id === "l");
   assert.equal(leverage.executionProbability, .25);
@@ -9932,7 +9916,7 @@ test("AI·望远镜与屏障：概率装备依赖的借势同步缩放卡牌成�
 test("AI·望远镜与屏障：转移联合距离分支共享同一望远镜且效果按概率缩放", () => {
   const state = {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "z-actor",
         seatIndex: 0,
@@ -9991,7 +9975,7 @@ test("AI·望远镜与屏障：转移联合距离分支共享同一望远镜且�
     ]
   };
   const { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const actions = game.aiController.actionGenerator.generateFromVisible(state, "z-actor");
   const transfer = actions.find((action) => action.card?.id === "move");
   assert.equal(transfer.selection.sourceId, "source");
@@ -10004,7 +9988,7 @@ test("AI·望远镜与屏障：转移联合距离分支共享同一望远镜且�
 });
 
 test("AI·望远镜与屏障：掠夺和固定距离窃取按真实距离分支缩放全部资源", () => {
-  const basePlayers =[
+  const basePlayers = [
     {
       id: "actor",
       seatIndex: 0,
@@ -10043,7 +10027,7 @@ test("AI·望远镜与屏障：掠夺和固定距离窃取按真实距离分支�
     { id: "p5", seatIndex: 5, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, handCount: 0 }
   ];
   const { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const plunder = game.aiController.actionGenerator.generateFromVisible(
     { playPhaseEnded: false, players: structuredClone(basePlayers) }, "actor"
   ).find((action) => action.card?.id === "loot");
@@ -10070,7 +10054,7 @@ test("AI·望远镜与屏障：掠夺和固定距离窃取按真实距离分支�
 test("AI·望远镜与屏障：确定合法距离保持概率1且条件技能次数不会重复消费同一分支", () => {
   const state = {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -10100,7 +10084,7 @@ test("AI·望远镜与屏障：确定合法距离保持概率1且条件技能次
     ]
   };
   const { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const first = game.aiController.actionGenerator.generateFromVisible(
     state, "actor"
   ).find((action) => action.type === "skill");
@@ -10122,7 +10106,7 @@ test("AI·望远镜与屏障：确定合法距离保持概率1且条件技能次
 test("AI·望远镜与屏障：同一卡牌只消费相交分支，另一张牌仍可复用同一望远镜世界", () => {
   const state = {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -10169,7 +10153,7 @@ test("AI·望远镜与屏障：同一卡牌只消费相交分支，另一张牌�
     ]
   };
   const { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const generated = game.aiController.actionGenerator.generateFromVisible(state, "actor");
   const farFirst = generated.find(
     (action) => action.card?.id === "one" && action.targets[0]?.id === "far"
@@ -10211,7 +10195,7 @@ test("AI·望远镜与屏障：望远镜与目标屏障组合分支各计一次�
   };
   const game = {
     state: {
-      players:[
+      players: [
         source,
         { id: "middle", seatIndex: 1, alive: true },
         target,
@@ -10238,7 +10222,7 @@ test("AI·刃行者：模拟按不同类别积累连势且命中的突袭消耗�
     assault = instance("assault");
   blade.hand.push(charge, harvest, assault);
   const { game }
-  = makeGame([blade, enemy]),
+    = makeGame([blade, enemy]),
     visible = createAiVisibleState(blade.id, game.state),
     simulator = new AiSimulator(visible);
   const charged = simulator.apply(visible, { type: "card", card: charge, targets: [] }, blade.id);
@@ -10256,7 +10240,7 @@ test("AI·刃行者：模拟按不同类别积累连势且命中的突袭消耗�
 
 test("AI·刃行者：突袭被格挡或被护盾完全吸收时不消耗连势", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "blade",
         seatIndex: 0,
@@ -10306,7 +10290,7 @@ test("AI·刃行者：突袭被格挡或被护盾完全吸收时不消耗连势"
 
 test("AI·刃行者：突袭部分命中时按生命伤害概率消耗连势", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "blade",
         seatIndex: 0,
@@ -10354,7 +10338,7 @@ test("AI·刃行者：突袭部分命中时按生命伤害概率消耗连势", (
 
 test("AI·刃行者：首次使用基础牌的连势按突袭命中分支计算期望", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "blade",
         seatIndex: 0,
@@ -10404,7 +10388,7 @@ test("AI·刃行者：概率破军只在发动世界新增可用突袭次数槽"
   const shared = "break-army-energy",
     state = {
       playPhaseEnded: false,
-      players:[
+      players: [
         {
           id: "blade",
           seatIndex: 0,
@@ -10415,7 +10399,7 @@ test("AI·刃行者：概率破军只在发动世界新增可用突袭次数槽"
           shield: 0,
           energy: .8,
           maxEnergy: 4,
-          energyBranches:[
+          energyBranches: [
             { probability: .4, conditions: { [shared]: "yes" }, amount: 2 },
             { probability: .6, conditions: { [shared]: "no" }, amount: 0 }
           ],
@@ -10444,7 +10428,7 @@ test("AI·刃行者：概率破军只在发动世界新增可用突袭次数槽"
       ]
     },
     { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+      = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const skill = game.aiController.actionGenerator.generateFromVisible(
     state, "blade"
   ).find((action) => action.skill?.id === "breakArmy");
@@ -10463,7 +10447,7 @@ test("AI·刃行者：破军只在额外攻击槽确实有第二张突袭可用�
   blade.energy = 2;
   blade.hand.push(instance("assault"));
   const { game }
-  = makeGame([blade, enemy]);
+    = makeGame([blade, enemy]);
   blade.energy = 2;
   const skills = () => game.aiController.getLegalActions(
     blade
@@ -10488,14 +10472,14 @@ test("AI·守誓者：护援回合重置后AI新快照读取guardianAidUsedProba
   const guardian = makePlayer("aid-snap-guardian", 1, "dawn", "human", 1);
   const nextPlayer = makePlayer("aid-snap-next", 2, "dawn", "ai", 5);
   const { game }
-  = makeGame([source, guardian, nextPlayer]);
+    = makeGame([source, guardian, nextPlayer]);
   guardian.roundFlags.guardianAidUsed = true;
   const before = createAiVisibleState(source.id, game.state);
   assert.equal(
     before.players.find((player) => player.id === guardian.id).guardianAidUsedProbability, 1
   );
   game.state.currentPlayerIndex = 2;
-  game.aiController.selectAction = async () =>({ type: "end" });
+  game.aiController.selectAction = async () => ({ type: "end" });
   await game.takeTurn(nextPlayer, game.state.gameId);
   assert.equal(guardian.roundFlags.guardianAidUsed, false);
   const after = createAiVisibleState(source.id, game.state);
@@ -10511,7 +10495,7 @@ test("AI·守誓者：壁垒只增加统一护盾且快照不包含专属护盾�
   warden.energy = 2;
   ally.shield = 2;
   const { game }
-  = makeGame([warden, ally, enemy]), visible = createAiVisibleState(warden.id, game.state);
+    = makeGame([warden, ally, enemy]), visible = createAiVisibleState(warden.id, game.state);
   assert.ok(visible.players.every((player) => !("temporaryShieldAmount" in player)));
   const next = new AiSimulator(
     visible
@@ -10522,7 +10506,7 @@ test("AI·守誓者：壁垒只增加统一护盾且快照不包含专属护盾�
 });
 
 test("AI·守誓者：护援统一覆盖突袭、震荡、挑衅、决斗、猎杀与焚场", () => {
-  const runCard = (definitionId, targetSetup = () => {}) => {
+  const runCard = (definitionId, targetSetup = () => { }) => {
     const actor = {
       id: `${definitionId}-actor`,
       seatIndex: 0,
@@ -10537,7 +10521,7 @@ test("AI·守誓者：护援统一覆盖突袭、震荡、挑衅、决斗、猎�
       hand: [{ id: `${definitionId}-card`, definitionId }],
       attackUsed: 0,
       attackLimit: 2,
-      assaultCountDistribution: [{ count: definitionId === "assault" ? 1: 0, probability: 1 }]
+      assaultCountDistribution: [{ count: definitionId === "assault" ? 1 : 0, probability: 1 }]
     };
     const target = {
       id: `${definitionId}-target`,
@@ -10621,7 +10605,7 @@ test("AI·守誓者：护援统一覆盖突袭、震荡、挑衅、决斗、猎�
     };
     const state = { players: [actor, target, guardian] },
       next = new AiSimulator(state).apply(state, { type: "skill", skill, targets: [target] }, actor.id);
-    assert.equal(next.players[1].hp, 5 -(damage - 1));
+    assert.equal(next.players[1].hp, 5 - (damage - 1));
     assert.equal(next.players[2].handCount, 0);
   };
   runSkill(ACTIVE_SKILLS.hunt, "trail-hunter", 2);
@@ -10670,6 +10654,28 @@ test("AI·守誓者：护援在单个模拟快照内只触发一次且零伤害�
   assert.equal(deadTarget.hp, 4);
 });
 
+test("AI·守誓者：可见状态、动作生成和模拟器保留主动技能多次发动额度", () => {
+  const warden = makePlayer("warden", 0, "dawn", "ai", 1),
+    ally = makePlayer("ally", 1, "dawn"),
+    enemy = makePlayer("enemy", 2, "dusk");
+  warden.energy = 4;
+  const { game } = makeGame([warden, ally, enemy]);
+  warden.turnFlags.activeSkillUseCounts.barrier = 1;
+  warden.turnFlags.activeSkillsUsed.add("barrier");
+  const visible = createAiVisibleState(warden.id, game.state),
+    actor = visible.players.find((player) => player.id === warden.id);
+  assert.deepEqual(
+    [actor.activeSkillUses, actor.activeSkillLimit, actor.activeSkillUsed], [1, 2, false]
+  );
+  const action = game.aiController.actionGenerator.generateFromVisible(
+    visible, warden.id
+  ).find((entry) => entry.type === "skill" && entry.skill.id === "barrier");
+  assert.ok(action);
+  const next = new AiSimulator(visible).apply(visible, action, warden.id),
+    nextActor = next.players.find((player) => player.id === warden.id);
+  assert.deepEqual([nextActor.activeSkillUses, nextActor.activeSkillUsed], [2, true]);
+});
+
 // ---- AI 角色行为·灵医 ----
 
 test("AI·灵医：滋荣会生成自疗目标并模拟治疗队友时同步自疗", () => {
@@ -10680,7 +10686,7 @@ test("AI·灵医：滋荣会生成自疗目标并模拟治疗队友时同步自�
   ally.hp = 1;
   medic.energy = 4;
   const { game }
-  = makeGame([medic, ally, enemy]);
+    = makeGame([medic, ally, enemy]);
   const visible = createAiVisibleState(medic.id, game.state),
     generator = game.aiController.actionGenerator;
   const actions = generator.generateFromVisible(
@@ -10708,7 +10714,7 @@ test("AI·灵医：滋荣会生成自疗目标并模拟治疗队友时同步自�
 test("AI·灵医：模拟中的灵医回春也能让一张濒死调息恢复2点并摸牌", () => {
   const state = {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "attacker",
         seatIndex: 0,
@@ -10815,7 +10821,7 @@ test("AI·影客：模拟窃取装备时只增加手牌且保持影客当前装�
   shade.energy = 2;
   target.equipment = instance("energyDevice");
   const { game }
-  = makeGame([shade, target]);
+    = makeGame([shade, target]);
   const visible = createAiVisibleState(shade.id, game.state),
     next = new AiSimulator(
       visible
@@ -10900,12 +10906,12 @@ test("AI·影客：窥隙按未知位置选择且只更新自己的私密记忆"
   for (const card of cards) {
     const value = card.definitionId;
     Object.defineProperty(
-      card, "definitionId", { configurable: true, get() { definitionReads+=1; return value; } }
+      card, "definitionId", { configurable: true, get() { definitionReads += 1; return value; } }
     );
   }
   target.hand.push(...cards);
   const { game, ui }
-  = makeGame([shade, ally, target], { random: () => 0 });
+    = makeGame([shade, ally, target], { random: () => 0 });
   registerPassiveSkills(game);
   await game.damage(shade, target, 1, { canBlock: false });
   assert.equal(definitionReads, 2);
@@ -10939,9 +10945,9 @@ test("AI·影客：窥隙与余烬从统一生命伤害入口覆盖非突袭和�
     handCount: 1,
     hand: [{ id: "ember-provoke", definitionId: "provoke" }]
   };
-  const enemies =[
+  const enemies = [
     1, 2, 3
-  ].map((seat) =>({ id: `ember-group-${seat}`, seatIndex: seat, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, handCount: 0, blockProbability: 0, expectedRecoverCount: 0, assaultCountDistribution: [{ count: 0, probability: 1 }] }));
+  ].map((seat) => ({ id: `ember-group-${seat}`, seatIndex: seat, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, handCount: 0, blockProbability: 0, expectedRecoverCount: 0, assaultCountDistribution: [{ count: 0, probability: 1 }] }));
   const state = { players: [ember, ...enemies] },
     next = new AiSimulator(
       state
@@ -10957,7 +10963,7 @@ test("AI·炎术师：焚场已使用1次且能量充足时仍生成并模拟第
   const enemy = makePlayer("ember-ai-enemy", 2, "dusk", "ai", 5);
   ember.energy = 3;
   const { game }
-  = makeGame([ember, ally, enemy]);
+    = makeGame([ember, ally, enemy]);
   const visible = createAiVisibleState(ember.id, game.state);
   const action = game.aiController.actionGenerator.generateFromVisible(
     visible, ember.id
@@ -10997,10 +11003,10 @@ test("AI·炎术师：焚场已使用1次且能量充足时仍生成并模拟第
 
 // ---- AI 角色行为·追猎者 ----
 
-const conditionalHuntState = (secondMarkBranches) =>(
+const conditionalHuntState = (secondMarkBranches) => (
   {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "hunter",
         seatIndex: 0,
@@ -11030,7 +11036,7 @@ const conditionalHuntState = (secondMarkBranches) =>(
         twoBlockProbability: 0,
         huntMarkProbabilities: { hunter: .4 },
         huntMarkStateBranchesBySource: {
-          hunter:[
+          hunter: [
             { probability: .4, conditions: { shared: "yes" }, marked: true },
             { probability: .6, conditions: { shared: "no" }, marked: false }
           ]
@@ -11064,7 +11070,7 @@ const conditionalHuntState = (secondMarkBranches) =>(
 
 test("AI·追猎者：深层模拟保存追踪目标并允许同回合标记不同敌人", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "hunter",
         seatIndex: 0,
@@ -11076,7 +11082,7 @@ test("AI·追猎者：深层模拟保存追踪目标并允许同回合标记不�
         energy: 4,
         alive: true,
         handCount: 4,
-        hand:[
+        hand: [
           { id: "a1", definitionId: "assault" },
           { id: "a2", definitionId: "assault" },
           { id: "a3", definitionId: "assault" },
@@ -11221,7 +11227,7 @@ test("AI·追猎者：猎印与基础牌类别使用概率采用联合概率累�
 test("AI·追猎者：概率猎印生成猎杀并按0.4缩放成本次数伤害格挡和摸牌", () => {
   const state = {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "hunter",
         seatIndex: 0,
@@ -11257,7 +11263,7 @@ test("AI·追猎者：概率猎印生成猎杀并按0.4缩放成本次数伤害�
     ]
   };
   const { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const hunt = game.aiController.actionGenerator.generateFromVisible(
     state, "hunter"
   ).find((action) => action.skill?.id === "hunt");
@@ -11278,7 +11284,7 @@ test("AI·追猎者：概率猎印生成猎杀并按0.4缩放成本次数伤害�
 
 test("AI·追猎者：完整猎印概率1保持真实猎杀的完整成本和伤害", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "hunter",
         battleTeam: "dawn",
@@ -11320,7 +11326,7 @@ test("AI·追猎者：完整猎印概率1保持真实猎杀的完整成本和伤
 
 test("AI·追猎者：能量分支让后续技能只在仍有足够能量的世界生成", () => {
   const state = conditionalHuntState([{ probability: 1, conditions: {}, marked: true }]), { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const first = game.aiController.actionGenerator.generateFromVisible(
     state, "hunter"
   ).find((action) => action.skill?.id === "hunt" && action.targets[0].id === "marked-a");
@@ -11342,7 +11348,7 @@ test("AI·追猎者：能量分支让后续技能只在仍有足够能量的世�
 
 test("AI·追猎者：完全重叠与互斥猎印分别阻止和允许复用同一份能量", () => {
   const { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]),
+    = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]),
     firstMark = (state) => game.aiController.actionGenerator.generateFromVisible(
       state, "hunter"
     ).find((action) => action.skill?.id === "hunt" && action.targets[0].id === "marked-a");
@@ -11377,7 +11383,7 @@ test("AI·追猎者：概率获得能量与孤注均按各自世界的实际能�
   const shared = "charge-world",
     state = {
       playPhaseEnded: false,
-      players:[
+      players: [
         {
           id: "hunter",
           seatIndex: 0,
@@ -11389,12 +11395,12 @@ test("AI·追猎者：概率获得能量与孤注均按各自世界的实际能�
           energy: 1,
           maxEnergy: 4,
           handCount: 1,
-          hand:[
+          hand: [
             {
               id: "charge",
               definitionId: "charge",
               availabilityBranches: [{ probability: .4, conditions: { [shared]: "yes" } }],
-              availabilityStateBranches:[
+              availabilityStateBranches: [
                 { probability: .4, conditions: { [shared]: "yes" }, available: true },
                 { probability: .6, conditions: { [shared]: "no" }, available: false }
               ]
@@ -11423,7 +11429,7 @@ test("AI·追猎者：概率获得能量与孤注均按各自世界的实际能�
       ]
     },
     { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+      = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const charge = game.aiController.actionGenerator.generateFromVisible(
     state, "hunter"
   ).find((action) => action.card?.id === "charge"),
@@ -11433,7 +11439,7 @@ test("AI·追猎者：概率获得能量与孤注均按各自世界的实际能�
   ).find((action) => action.skill?.id === "hunt");
   assertClose(hunt.executionProbability, .4);
   const allInState = {
-    players:[
+    players: [
       {
         id: "gambler",
         battleTeam: "dawn",
@@ -11443,7 +11449,7 @@ test("AI·追猎者：概率获得能量与孤注均按各自世界的实际能�
         shield: 0,
         energy: 1.2,
         maxEnergy: 4,
-        energyBranches:[
+        energyBranches: [
           { probability: .4, conditions: { rich: "yes" }, amount: 3 },
           { probability: .6, conditions: { rich: "no" }, amount: 0 }
         ],
@@ -11453,7 +11459,7 @@ test("AI·追猎者：概率获得能量与孤注均按各自世界的实际能�
       }
     ]
   };
-  const allInWorlds =[
+  const allInWorlds = [
     { probability: .4, conditions: { rich: "yes" }, executes: true },
     { probability: .6, conditions: { rich: "no" }, executes: false }
   ],
@@ -11467,9 +11473,9 @@ test("AI·追猎者：概率获得能量与孤注均按各自世界的实际能�
 // ---- AI 角色行为·赌命者 ----
 
 test("AI·赌命者：模拟孤注已有状态不叠加且按状态概率合并", () => {
-  const makeState = (assaultBonus) =>(
+  const makeState = (assaultBonus) => (
     {
-      players:[
+      players: [
         {
           id: "gambler",
           battleTeam: "dawn",
@@ -11513,8 +11519,8 @@ test("AI·赌命者：孤注动作评分按当前状态概率计算边际状态�
   const gambler = makePlayer("evaluator-allin", 0, "dawn", "ai", 6),
     enemy = makePlayer("evaluator-allin-enemy", 1, "dusk"),
     { game }
-  = makeGame([gambler, enemy]), evaluator = game.aiController.evaluator;
-  const makeVisible = (assaultBonus) =>(
+      = makeGame([gambler, enemy]), evaluator = game.aiController.evaluator;
+  const makeVisible = (assaultBonus) => (
     { players: [{ id: gambler.id, battleTeam: "dawn", alive: true, energy: 2, assaultBonus }] }
   );
   const action = { type: "skill", skill: ACTIVE_SKILLS.allIn, targets: [] };
@@ -11537,7 +11543,7 @@ test("AI·赌命者：冒险首次战术期望摸0.6且被反制仍触发、同�
     hp: 4,
     maxHp: 4,
     handCount: 2,
-    hand:[
+    hand: [
       { id: "gamble-one", definitionId: "exposeWeakness" },
       { id: "gamble-two", definitionId: "exposeWeakness" }
     ],
@@ -11608,7 +11614,7 @@ test("AI·调律师：协调只依据未取消的其他己方有效目标且同�
   };
   const state = { players: [actor, ally, enemy] },
     simulator = new AiSimulator(state),
-    action = (id, target) =>(
+    action = (id, target) => (
       { type: "card", card: { ...CARD_DEFINITIONS.shield, id }, targets: [target] }
     );
   const once = simulator.apply(state, action("coord-one", ally), actor.id);
@@ -11639,7 +11645,7 @@ test("AI·调律师：协调只依据未取消的其他己方有效目标且同�
 
 // ---- AI 响应模型·反制概率 ----
 
-const makeCounterRiskPlayer = (id, team, overrides = {}) =>(
+const makeCounterRiskPlayer = (id, team, overrides = {}) => (
   {
     id,
     seatIndex: 0,
@@ -11673,13 +11679,13 @@ const makeCounterRiskPlayer = (id, team, overrides = {}) =>(
 const planWithStubEvaluator = async (game, actor, visible, roots, evaluator, nodeBudget = null) => {
   game.aiRandomnessRange = 0;
   game.aiController.actionGenerator.generateFromVisible = () => [];
-  game.aiSearchNodeBudgetOverride = nodeBudget == null ? roots.length: nodeBudget;
+  game.aiSearchNodeBudgetOverride = nodeBudget == null ? roots.length : nodeBudget;
   const planner = game.aiController.planner;
   planner.evaluator = evaluator;
   return planner.plan(actor, visible, roots, { gameId: game.state.gameId });
 };
 
-const counterKnownCard = (cardId) =>(
+const counterKnownCard = (cardId) => (
   {
     cardId,
     definitionId: "counter",
@@ -11688,7 +11694,7 @@ const counterKnownCard = (cardId) =>(
   }
 );
 
-const counterPlayer = (id, team, overrides = {}) =>(
+const counterPlayer = (id, team, overrides = {}) => (
   {
     id,
     seatIndex: 0,
@@ -11713,19 +11719,19 @@ const counterPlayer = (id, team, overrides = {}) =>(
   }
 );
 
-const counterApply = (state, definitionId, actorId = "a") =>(
+const counterApply = (state, definitionId, actorId = "a") => (
   new AiSimulator(
     { players: [] }
   ).apply(state, { type: "card", card: { ...CARD_DEFINITIONS[definitionId], id: `${definitionId}-b1c` }, targets: [] }, actorId)
 );
 
-const counterProbabilityOf = (player) =>(
-  player.counterCountDistribution ??[]
-).reduce((sum, branch) => sum +(branch.counterCount >= 1 ? branch.probability: 0), 0);
+const counterProbabilityOf = (player) => (
+  player.counterCountDistribution ?? []
+).reduce((sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0);
 
 const counterByCount = (player) => {
   const byCount = {};
-  for (const branch of player.counterCountDistribution ??[]) {
+  for (const branch of player.counterCountDistribution ?? []) {
     byCount[branch.counterCount] = (byCount[branch.counterCount] ?? 0) + branch.probability;
   }
   return byCount;
@@ -11737,7 +11743,7 @@ const counterAvailability = (entry) => entry.availabilityStateBranches.filter(
 
 test("AI·反制概率：模拟反制会考虑同阵营响应者的阵营净收益", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -11795,10 +11801,10 @@ test("AI·反制概率：不会反制对己方净治疗明显有利的共生", (
   const a = makePlayer("a", 0, "dawn"),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
-  a.hp-=1;
-  ally.hp-=1;
+  a.hp -= 1;
+  ally.hp -= 1;
   const { game }
-  = makeGame([a, ally, enemy]);
+    = makeGame([a, ally, enemy]);
   const use = game.aiController.responsePolicy.shouldRespond(
     a, "counter", { source: enemy, card: instance("symbiosis") }, [instance("counter")]
   );
@@ -11812,7 +11818,7 @@ test("AI·反制概率：对互利按当前存活敌我人数决定是否反制"
     largeB = makePlayer("large-b", 3, "dusk"),
     largeC = makePlayer("large-c", 4, "dusk");
   const { game }
-  = makeGame([smallA, largeA, smallB, largeB, largeC]);
+    = makeGame([smallA, largeA, smallB, largeB, largeC]);
   const card = instance("mutualBenefit"), counter = instance("counter");
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(
@@ -11842,17 +11848,17 @@ test("AI·反制概率：对共生按双方本次实际治疗人数决定是否�
     enemyB = makePlayer("enemy-b", 3, "dusk"),
     enemyC = makePlayer("enemy-c", 4, "dusk");
   const { game }
-  = makeGame([a, ally, enemyA, enemyB, enemyC]);
+    = makeGame([a, ally, enemyA, enemyB, enemyC]);
   const card = instance("symbiosis"), counter = instance("counter");
-  a.hp-=1;
-  ally.hp-=1;
-  enemyA.hp-=1;
+  a.hp -= 1;
+  ally.hp -= 1;
+  enemyA.hp -= 1;
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
   ally.hp = ally.maxHp;
-  enemyB.hp-=1;
+  enemyB.hp -= 1;
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     true
@@ -11861,7 +11867,7 @@ test("AI·反制概率：对共生按双方本次实际治疗人数决定是否�
 
 test("AI·反制概率：模拟器与真实策略使用相同的全体受益反制判断", () => {
   const state = {
-    players:[
+    players: [
       { id: "small-a", battleTeam: "dawn", alive: true, hp: 4, maxHp: 4 },
       { id: "large-a", battleTeam: "dusk", alive: true, hp: 4, maxHp: 4 },
       { id: "small-b", battleTeam: "dawn", alive: true, hp: 4, maxHp: 4 },
@@ -11885,10 +11891,10 @@ test("AI·反制概率：战术反制风险：队友 counterProbability 不产�
     enemy = makePlayer("e", 2, "dusk");
   const run = async (counterProbability) => {
     const { game }
-    = makeGame([actor, teammate, enemy]);
+      = makeGame([actor, teammate, enemy]);
     const visible = {
       remainingCardCounts: { assault: 30 },
-      players:[
+      players: [
         makeCounterRiskPlayer("a", "dawn", { seatIndex: 0 }),
         makeCounterRiskPlayer(
           "t",
@@ -11909,7 +11915,7 @@ test("AI·反制概率：战术反制风险：队友 counterProbability 不产�
       actor,
       visible,
       [{ type: "card", card: scout, targets: [{ id: "e" }] }, { type: "end" }],
-      { actionUtility: (action) => action.type === "end" ? 0: 0.9, stateUtility: () => 0 }
+      { actionUtility: (action) => action.type === "end" ? 0 : 0.9, stateUtility: () => 0 }
     );
   };
   const without = await run(0), withCounter = await run(1);
@@ -11921,10 +11927,10 @@ test("AI·反制概率：战术反制风险：敌方意愿按结算比例影响�
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
   const run = async (counterProbability) => {
     const { game }
-    = makeGame([actor, enemy]);
+      = makeGame([actor, enemy]);
     const visible = {
       remainingCardCounts: { assault: 30 },
-      players:[
+      players: [
         makeCounterRiskPlayer("a", "dawn", { seatIndex: 0 }),
         makeCounterRiskPlayer("e", "dusk", { seatIndex: 1, counterProbability })
       ]
@@ -11941,7 +11947,7 @@ test("AI·反制概率：战术反制风险：敌方意愿按结算比例影响�
         { type: "card", card: expose, targets: [] },
         { type: "card", card: symbiosis, targets: [{ id: "a" }, { id: "e" }] }
       ],
-      { actionUtility: (action) => action.type === "card" ? 1: 0, stateUtility: () => 0 }
+      { actionUtility: (action) => action.type === "card" ? 1 : 0, stateUtility: () => 0 }
     );
   };
   const withRisk = await run(1), withoutRisk = await run(0);
@@ -11952,10 +11958,10 @@ test("AI·反制概率：战术反制风险：敌方意愿按结算比例影响�
 test("AI·反制概率：战术反制风险：target scope 只按存活实际目标平均结算比例", async () => {
   const actor = makePlayer("a", 0, "dawn");
   const { game }
-  = makeGame([actor]);
+    = makeGame([actor]);
   const visible = {
     remainingCardCounts: { assault: 30 },
-    players:[
+    players: [
       makeCounterRiskPlayer("a", "dawn", { seatIndex: 0 }),
       makeCounterRiskPlayer("b", "dusk", { seatIndex: 1 }),
       makeCounterRiskPlayer("c", "dusk", { seatIndex: 2, counterProbability: 1 }),
@@ -11972,7 +11978,7 @@ test("AI·反制概率：战术反制风险：target scope 只按存活实际目
       { type: "card", card: shock, targets: [{ id: "b" }, { id: "c" }] },
       { type: "card", card: shock, targets: [{ id: "b" }] }
     ],
-    { actionUtility: (action) => action.type === "card" ? 1: 0, stateUtility: () => 0 }
+    { actionUtility: (action) => action.type === "card" ? 1 : 0, stateUtility: () => 0 }
   );
   assert.deepEqual(action.targets.map((target) => target.id), ["b", "d"]);
 });
@@ -11980,9 +11986,9 @@ test("AI·反制概率：战术反制风险：target scope 只按存活实际目
 test("AI·反制概率：战术反制风险：counterable false 的战术牌结算比例为 1", async () => {
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   const state = {
-    players:[
+    players: [
       makeCounterRiskPlayer("a", "dawn", { seatIndex: 0 }),
       makeCounterRiskPlayer("e", "dusk", { seatIndex: 1, counterProbability: 1 })
     ]
@@ -12008,7 +12014,7 @@ test("AI·反制概率：战术反制风险：counterable false 的战术牌结�
     actor,
     visible,
     [{ type: "card", card, targets: [{ id: "e" }] }, { type: "end" }],
-    { actionUtility: (action) => action.type === "end" ? 0: 0.9, stateUtility: () => 0 }
+    { actionUtility: (action) => action.type === "end" ? 0 : 0.9, stateUtility: () => 0 }
   );
   assert.equal(action.card?.definitionId, "test-no-counter");
 });
@@ -12049,7 +12055,7 @@ test("AI·反制概率：战术反制风险：scout 深层部分可用已知牌�
     {
       cardId: "k1",
       definitionId: "block",
-      availabilityStateBranches:[
+      availabilityStateBranches: [
         { probability: 0.5, conditions: {}, available: true },
         { probability: 0.5, conditions: {}, available: false }
       ]
@@ -12057,7 +12063,7 @@ test("AI·反制概率：战术反制风险：scout 深层部分可用已知牌�
   ];
   const run = (counterProbability) => {
     const state = {
-      players:[
+      players: [
         makeCounterRiskPlayer("a", "dawn", { seatIndex: 0 }),
         makeCounterRiskPlayer(
           "t", "dusk", { seatIndex: 1, handCount: 2, knownCards: partialKnown(), counterProbability }
@@ -12077,7 +12083,7 @@ test("AI·反制概率：战术反制风险：scout 深层部分可用已知牌�
 test("AI·反制概率：战术反制风险：深层战术评分使用后续节点状态而非根 counter 状态", async () => {
   const actor = makePlayer("a", 0, "dawn"), holder = makePlayer("h", 1, "dusk");
   const { game }
-  = makeGame([actor, holder]);
+    = makeGame([actor, holder]);
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 3;
   const planner = game.aiController.planner;
@@ -12085,13 +12091,13 @@ test("AI·反制概率：战术反制风险：深层战术评分使用后续节�
     actionUtility: (action) => {
       if (
         action.type === "end"
-      )return 0.4; if (action.card?.definitionId === "assault") return 1; if (action.card?.definitionId === "harvest") return 1; return 0;
+      ) return 0.4; if (action.card?.definitionId === "assault") return 1; if (action.card?.definitionId === "harvest") return 1; return 0;
     },
     stateUtility: () => 0
   };
   const visible = {
     remainingCardCounts: { assault: 30 },
-    players:[
+    players: [
       makeCounterRiskPlayer("a", "dawn", { seatIndex: 0, attackUsed: 0, attackLimit: 1 }),
       makeCounterRiskPlayer(
         "h",
@@ -12110,8 +12116,8 @@ test("AI·反制概率：战术反制风险：深层战术评分使用后续节�
   const harvestCard = { ...CARD_DEFINITIONS.harvest, id: "draw" };
   let calls = 0;
   game.aiController.actionGenerator.generateFromVisible = (nodeState) => {
-    calls+=1;
-    return calls === 1 ? [{ type: "card", card: harvestCard, targets: [] }, { type: "end" }]: [];
+    calls += 1;
+    return calls === 1 ? [{ type: "card", card: harvestCard, targets: [] }, { type: "end" }] : [];
   };
   const action = await planner.plan(
     actor,
@@ -12127,25 +12133,25 @@ test("AI·反制概率：战术反制风险：assault 隐藏格挡调整保持�
   const actor = makePlayer("a", 0, "dawn"), target = makePlayer("t", 1, "dusk");
   const run = async (knownBlock) => {
     const { game }
-    = makeGame([actor, target]);
+      = makeGame([actor, target]);
     game.aiRandomnessRange = 0;
     game.aiSearchNodeBudgetOverride = 2;
     const planner = game.aiController.planner;
     planner.evaluator = {
-      actionUtility: (action) => action.type === "end" ? 0.4: 1, stateUtility: () => 0
+      actionUtility: (action) => action.type === "end" ? 0.4 : 1, stateUtility: () => 0
     };
     game.aiController.actionGenerator.generateFromVisible = () => [];
     const visible = {
       remainingCardCounts: { assault: 30 },
-      players:[
+      players: [
         makeCounterRiskPlayer("a", "dawn", { seatIndex: 0, attackUsed: 0, attackLimit: 1 }),
         makeCounterRiskPlayer(
           "t",
           "dusk",
           {
             seatIndex: 1,
-            handCount: knownBlock ? 1: 0,
-            knownCards: knownBlock ? [{ cardId: "b1", definitionId: "block" }]: []
+            handCount: knownBlock ? 1 : 0,
+            knownCards: knownBlock ? [{ cardId: "b1", definitionId: "block" }] : []
           }
         )
       ]
@@ -12171,7 +12177,7 @@ test("AI·反制概率：战术反制风险：assault 隐藏格挡调整保持�
 test("AI·反制概率：自己反制数量分布准确", () => {
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   actor.hand.push(instance("counter"), instance("counter"));
   const visible = createAiVisibleState(actor.id, game.state), view = visible.players[0];
   assert.deepEqual(view.counterCountDistribution, [{ count: 2, probability: 1 }]);
@@ -12181,7 +12187,7 @@ test("AI·反制概率：自己反制数量分布准确", () => {
 test("AI·反制概率：其他玩家已知反制+匿名二项分布且根计数只读", () => {
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   enemy.hand.push(instance("counter"), instance("charge"), instance("charge"));
   game.rememberPrivateCard(actor, enemy, enemy.hand[0]);
   const counts = { counter: 5, assault: 5 };
@@ -12290,7 +12296,7 @@ test("AI·反制概率：匿名50%反制首次消费后二次不复活", () => {
     "dusk",
     {
       handCount: 1,
-      counterCountDistribution:[
+      counterCountDistribution: [
         { probability: .5, conditions: { anon: "no" }, counterCount: 0 },
         { probability: .5, conditions: { anon: "yes" }, counterCount: 1 }
       ]
@@ -12313,7 +12319,7 @@ test("AI·反制概率：40%事件未发生世界不响应不消费", () => {
   );
   const state = { players: [counterPlayer("a", "dawn"), target] };
   const simulator = new AiSimulator({ players: [] });
-  const effectWorlds =[
+  const effectWorlds = [
     { probability: .4, conditions: { event: "yes" }, occurs: true },
     { probability: .6, conditions: { event: "no" }, occurs: false }
   ];
@@ -12352,7 +12358,7 @@ test("AI·反制概率：desire 40% 消费与取消共用同一条件世界", ()
   const joint = joinProbabilityStateBranches(
     projectAvailability(target.knownCards[0].availabilityStateBranches, "counterAvail"),
     response.outcomeWorlds.map(
-      ({ probability, conditions, effectCancelled }) =>({ probability, conditions, effectCancelled })
+      ({ probability, conditions, effectCancelled }) => ({ probability, conditions, effectCancelled })
     )
   );
   const mismatch = joint.filter(
@@ -12413,7 +12419,7 @@ test("AI·反制概率：已知1+匿名50%反制后身份保留0.25且只存在�
     {
       handCount: 2,
       knownCards: [counterKnownCard("k1")],
-      counterCountDistribution:[
+      counterCountDistribution: [
         { probability: .5, conditions: { anon: "no" }, counterCount: 1 },
         { probability: .5, conditions: { anon: "yes" }, counterCount: 2 }
       ]
@@ -12431,7 +12437,7 @@ test("AI·反制概率：已知1+匿名50%反制后身份保留0.25且只存在�
   const joint = joinProbabilityStateBranches(
     projectAvailability(kept.availabilityStateBranches, "keptAvail"),
     targetAfter.counterCountDistribution.map(
-      ({ probability, conditions, counterCount }) =>(
+      ({ probability, conditions, counterCount }) => (
         { probability, conditions, count1: counterCount === 1 }
       )
     )
@@ -12492,7 +12498,7 @@ test("AI·反制概率：部分可用已知反制只在可用世界进入候选"
     cardId: "pk",
     definitionId: "counter",
     availabilityBranches: [{ probability: .5, conditions: { present: "yes" } }],
-    availabilityStateBranches:[
+    availabilityStateBranches: [
       { probability: .5, conditions: { present: "yes" }, available: true },
       { probability: .5, conditions: { present: "no" }, available: false }
     ]
@@ -12503,7 +12509,7 @@ test("AI·反制概率：部分可用已知反制只在可用世界进入候选"
     {
       handCount: 1,
       knownCards: [partial],
-      counterCountDistribution:[
+      counterCountDistribution: [
         { probability: .5, conditions: { present: "yes" }, counterCount: 1 },
         { probability: .5, conditions: { present: "no" }, counterCount: 0 }
       ]
@@ -12654,12 +12660,12 @@ test("AI·反制概率：匿名反制转移容量守恒且共享条件世界", (
   assert.equal(receiver.handCount, 1);
   const joint = joinProbabilityStateBranches(
     source.counterCountDistribution.map(
-      ({ probability, conditions, counterCount }) =>(
+      ({ probability, conditions, counterCount }) => (
         { probability, conditions, sourceCount: counterCount }
       )
     ),
     receiver.counterCountDistribution.map(
-      ({ probability, conditions, counterCount }) =>(
+      ({ probability, conditions, counterCount }) => (
         { probability, conditions, receiverCount: counterCount }
       )
     )
@@ -12689,7 +12695,7 @@ test("AI·反制概率：整手牌随机移除互斥消费已知或匿名反制"
   const joint = joinProbabilityStateBranches(
     projectAvailability(player.knownCards[0].availabilityStateBranches, "keptAvail"),
     player.counterCountDistribution.map(
-      ({ probability, conditions, counterCount }) =>(
+      ({ probability, conditions, counterCount }) => (
         { probability, conditions, count1: counterCount === 1 }
       )
     )
@@ -12709,7 +12715,7 @@ test("AI·反制概率：新摸一张匿名牌只增加该新牌反制先验且�
   const state = { remainingCardCounts: { counter: 10 }, players: [player] };
   const simulator = new AiSimulator({ players: [] });
   const gainWorlds = [{ probability: 1, conditions: { draw: "yes" }, occurs: true }];
-  player.handCount+=1;
+  player.handCount += 1;
   simulator.addOneUnknownCardToCounterDistribution(state, player, gainWorlds);
   assert.equal(player.counterProbability, 1);
   const byCount = counterByCount(player);
@@ -12730,7 +12736,7 @@ test("AI·反制概率：新摸一张匿名牌只增加该新牌反制先验且�
 
 // ---- AI 响应模型·反制先验 ----
 
-const counterDrawActor = (overrides = {}) =>(
+const counterDrawActor = (overrides = {}) => (
   {
     id: "a",
     seatIndex: 0,
@@ -12832,7 +12838,7 @@ test("AI·反制先验：回收站前两次战术各摸一张第三次不触发"
   const actor = counterDrawActor(
     {
       handCount: 3,
-      hand:[
+      hand: [
         { id: "x1", definitionId: "exposeWeakness" },
         { id: "x2", definitionId: "exposeWeakness" },
         { id: "x3", definitionId: "exposeWeakness" }
@@ -13034,7 +13040,7 @@ test("AI·反制先验：主动孤注摸牌数跟随能量条件世界", () => {
       counterCountDistribution: [{ probability: 1, conditions: {}, counterCount: 0 }]
     }
   );
-  actor.energyBranches =[
+  actor.energyBranches = [
     { probability: .5, conditions: { energyWorld: "one" }, amount: 1 },
     { probability: .5, conditions: { energyWorld: "three" }, amount: 3 }
   ];
@@ -13052,10 +13058,10 @@ test("AI·反制先验：主动孤注摸牌数跟随能量条件世界", () => {
   assertClose(actor.handCount, 2);
   const oneCounter = actor.counterCountDistribution.filter(
     (branch) => branch.conditions?.energyWorld === "one"
-  ).reduce((sum, branch) => sum + branch.probability *(branch.counterCount >= 1 ? 1: 0), 0);
+  ).reduce((sum, branch) => sum + branch.probability * (branch.counterCount >= 1 ? 1 : 0), 0);
   const threeCounter = actor.counterCountDistribution.filter(
     (branch) => branch.conditions?.energyWorld === "three"
-  ).reduce((sum, branch) => sum + branch.probability *(branch.counterCount >= 1 ? 1: 0), 0);
+  ).reduce((sum, branch) => sum + branch.probability * (branch.counterCount >= 1 ? 1 : 0), 0);
   assertClose(oneCounter, .25);
   assertClose(threeCounter, .4375);
   assertClose(actor.counterCountDistribution.reduce((sum, branch) => sum + branch.probability, 0), 1);
@@ -13240,7 +13246,7 @@ test("AI·反制容量：唯一匿名50%反制窃取后与来源同条件世界"
     "dusk",
     {
       handCount: 1,
-      counterCountDistribution:[
+      counterCountDistribution: [
         { probability: .5, conditions: { anon: "no" }, counterCount: 0 },
         { probability: .5, conditions: { anon: "yes" }, counterCount: 1 }
       ]
@@ -13287,12 +13293,12 @@ test("AI·反制容量：手牌与装备各有概率时只转移手牌世界反�
   assertClose(counterProbabilityOf(target), .5);
   const joint = joinProbabilityStateBranches(
     actor.counterCountDistribution.map(
-      ({ probability, conditions, counterCount }) =>(
+      ({ probability, conditions, counterCount }) => (
         { probability, conditions, actorCount1: counterCount === 1 }
       )
     ),
     target.counterCountDistribution.map(
-      ({ probability, conditions, counterCount }) =>(
+      ({ probability, conditions, counterCount }) => (
         { probability, conditions, targetCount1: counterCount === 1 }
       )
     )
@@ -13401,10 +13407,10 @@ test("AI·反制容量：只窃取装备不产生反制容量", () => {
 
 // ---- AI 响应模型·格挡概率 ----
 
-const conditionalAssaultState = (attackLimit) =>(
+const conditionalAssaultState = (attackLimit) => (
   {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -13466,7 +13472,7 @@ const conditionalAssaultState = (attackLimit) =>(
 test("AI·格挡概率：概率伤害先逐世界结算护盾再汇总期望", () => {
   const run = ({ amount, eventProbability, shield, blockProbability = 0 }) => {
     const state = {
-      players:[
+      players: [
         { id: "attacker", battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, handCount: 0 },
         {
           id: "target",
@@ -13475,7 +13481,7 @@ test("AI·格挡概率：概率伤害先逐世界结算护盾再汇总期望", (
           hp: 4,
           maxHp: 4,
           shield,
-          handCount: blockProbability ? 1: 0,
+          handCount: blockProbability ? 1 : 0,
           blockProbability,
           twoBlockProbability: 0,
           expectedRecoverCount: 0
@@ -13517,7 +13523,7 @@ test("AI·格挡概率：概率伤害先逐世界结算护盾再汇总期望", (
 
 test("AI·格挡概率：连续概率伤害不会重复使用已消耗的护盾分支", () => {
   const state = {
-    players:[
+    players: [
       { id: "attacker", battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, handCount: 0 },
       {
         id: "target",
@@ -13554,7 +13560,7 @@ test("AI·格挡概率：当前 AI 的一张确定格挡只使用一次", () => 
     availabilityStateBranches: [{ probability: 1, conditions: {}, available: true }]
   };
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -13603,7 +13609,7 @@ test("AI·格挡概率：其他玩家的一张 knownCards 格挡只使用一次"
     availabilityStateBranches: [{ probability: 1, conditions: {}, available: true }]
   };
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -13645,7 +13651,7 @@ test("AI·格挡概率：其他玩家的一张 knownCards 格挡只使用一次"
 
 test("AI·格挡概率：一张匿名未知手牌的条件概率不会重复使用", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -13683,7 +13689,7 @@ test("AI·格挡概率：一张匿名未知手牌的条件概率不会重复使�
 });
 
 test("AI·格挡概率：军火库的两张确定格挡只阻挡一次", () => {
-  const blockCard = (id) =>(
+  const blockCard = (id) => (
     {
       cardId: id,
       definitionId: "block",
@@ -13692,7 +13698,7 @@ test("AI·格挡概率：军火库的两张确定格挡只阻挡一次", () => {
     }
   );
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -13742,7 +13748,7 @@ test("AI·格挡概率：军火库只有一张格挡时不消费且后续普通�
     availabilityStateBranches: [{ probability: 1, conditions: {}, available: true }]
   };
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -13793,7 +13799,7 @@ test("AI·格挡概率：部分事件世界不得过度消费格挡身份和数�
     availabilityStateBranches: [{ probability: 1, conditions: {}, available: true }]
   };
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -13850,7 +13856,7 @@ test("AI·格挡概率：雷达格挡消费仍由后续雷达判定处理", () =
   };
   const state = {
     remainingCardCounts: { charge: 1 },
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -13891,7 +13897,7 @@ test("AI·格挡概率：雷达格挡消费仍由后续雷达判定处理", () =
 test("AI·格挡概率：普通同步不能恢复已消费概率", () => {
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -13915,7 +13921,7 @@ test("AI·格挡概率：普通同步不能恢复已消费概率", () => {
         blockProbability: .5,
         twoBlockProbability: 0,
         expectedRecoverCount: 0,
-        blockCountDistribution:[
+        blockCountDistribution: [
           { probability: .5, conditions: {}, blockCount: 0 },
           { probability: .5, conditions: {}, blockCount: 1 }
         ]
@@ -13937,7 +13943,7 @@ test("AI·格挡概率：普通同步不能恢复已消费概率", () => {
 test("AI·格挡概率：失去未知牌不能恢复概率", () => {
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -13961,7 +13967,7 @@ test("AI·格挡概率：失去未知牌不能恢复概率", () => {
         blockProbability: .5,
         twoBlockProbability: 0,
         expectedRecoverCount: 0,
-        blockCountDistribution:[
+        blockCountDistribution: [
           { probability: .5, conditions: {}, blockCount: 0 },
           { probability: .5, conditions: {}, blockCount: 1 }
         ]
@@ -13980,7 +13986,7 @@ test("AI·格挡概率：失去未知牌不能恢复概率", () => {
 test("AI·格挡概率：获得确定非格挡牌不能恢复旧概率", () => {
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -14024,7 +14030,7 @@ test("AI·格挡概率：获得确定非格挡牌不能恢复旧概率", () => {
 test("AI·格挡概率：获得确定格挡牌只增加一张", () => {
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -14074,7 +14080,7 @@ test("AI·格挡概率：获得确定格挡牌只增加一张", () => {
 test("AI·格挡概率：获得一张新匿名牌只为新牌增加概率", () => {
   const state = {
     remainingCardCounts: { block: 10, assault: 10 },
-    players:[
+    players: [
       {
         id: "b",
         seatIndex: 1,
@@ -14210,7 +14216,7 @@ test("AI·格挡概率：部分概率匿名转移保持同一条件", () => {
   };
   const state = { remainingCardCounts: null, players: [source, receiver] },
     simulator = new AiSimulator({ players: [] });
-  const effectWorlds =[
+  const effectWorlds = [
     { probability: .5, conditions: { event: "yes" }, occurs: true },
     { probability: .5, conditions: { event: "no" }, occurs: false }
   ];
@@ -14227,7 +14233,7 @@ test("AI·格挡概率：部分概率匿名转移保持同一条件", () => {
 test("AI·格挡概率：clone 后仍不恢复已消费概率", () => {
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -14251,7 +14257,7 @@ test("AI·格挡概率：clone 后仍不恢复已消费概率", () => {
         blockProbability: .5,
         twoBlockProbability: 0,
         expectedRecoverCount: 0,
-        blockCountDistribution:[
+        blockCountDistribution: [
           { probability: .5, conditions: {}, blockCount: 0 },
           { probability: .5, conditions: {}, blockCount: 1 }
         ]
@@ -14270,7 +14276,7 @@ test("AI·格挡概率：clone 后仍不恢复已消费概率", () => {
 });
 
 test("AI·格挡概率：三张确定格挡连续消费", () => {
-  const blockCard = (id) =>(
+  const blockCard = (id) => (
     {
       cardId: id,
       definitionId: "block",
@@ -14280,7 +14286,7 @@ test("AI·格挡概率：三张确定格挡连续消费", () => {
   );
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -14343,7 +14349,7 @@ test("AI·格挡概率：确定格挡 + 匿名50%格挡转移", () => {
     blockProbability: 1,
     twoBlockProbability: .5,
     expectedRecoverCount: 0,
-    blockCountDistribution:[
+    blockCountDistribution: [
       { probability: .5, conditions: {}, blockCount: 1 },
       { probability: .5, conditions: {}, blockCount: 2 }
     ]
@@ -14398,7 +14404,7 @@ test("AI·格挡概率：确定格挡 + 匿名50%格挡随机失去", () => {
     blockProbability: 1,
     twoBlockProbability: .5,
     expectedRecoverCount: 0,
-    blockCountDistribution:[
+    blockCountDistribution: [
       { probability: .5, conditions: {}, blockCount: 1 },
       { probability: .5, conditions: {}, blockCount: 2 }
     ]
@@ -14520,10 +14526,10 @@ test("AI·格挡概率：部分可用确定格挡与匿名牌", () => {
   const known = {
     cardId: "pk",
     definitionId: "block",
-    availabilityBranches:[
+    availabilityBranches: [
       { probability: .4, conditions: { known: "yes" } }, { probability: .6, conditions: { known: "no" } }
     ],
-    availabilityStateBranches:[
+    availabilityStateBranches: [
       { probability: .4, conditions: { known: "yes" }, available: true },
       { probability: .6, conditions: { known: "no" }, available: false }
     ]
@@ -14540,7 +14546,7 @@ test("AI·格挡概率：部分可用确定格挡与匿名牌", () => {
     blockProbability: .7,
     twoBlockProbability: .2,
     expectedRecoverCount: 0,
-    blockCountDistribution:[
+    blockCountDistribution: [
       { probability: .2, conditions: { known: "yes" }, blockCount: 1 },
       { probability: .2, conditions: { known: "yes" }, blockCount: 2 },
       { probability: .3, conditions: { known: "no" }, blockCount: 0 },
@@ -14561,7 +14567,7 @@ test("AI·格挡概率：部分可用确定格挡与匿名牌", () => {
 });
 
 test("AI·格挡概率：两张确定格挡保护", () => {
-  const blockCard = (id) =>(
+  const blockCard = (id) => (
     {
       cardId: id,
       definitionId: "block",
@@ -14604,10 +14610,10 @@ test("AI·格挡概率：格挡决策随可用格挡数单调且先验证实际�
     ally2 = makePlayer("block-ally-2", 3, "dawn"),
     enemy2 = makePlayer("block-enemy-2", 4, "dusk");
   const { game }
-  = makeGame([responder, ally1, enemy1, ally2, enemy2]), policy = game.aiController.responsePolicy;
+    = makeGame([responder, ally1, enemy1, ally2, enemy2]), policy = game.aiController.responsePolicy;
   const decisions = [];
   for (const count of [1, 2, 3]) {
-    responder.hand =[
+    responder.hand = [
       ...Array.from({ length: count }, () => instance("block")),
       ...Array.from({ length: 4 - count }, () => instance("charge"))
     ];
@@ -14649,7 +14655,7 @@ test("AI·格挡概率：格挡决策随可用格挡数单调且先验证实际�
 
 test("AI·突袭次数槽：概率突袭次数槽阻止两张牌重复消费同一望远镜世界", () => {
   const state = conditionalAssaultState(1), { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const first = game.aiController.actionGenerator.generateFromVisible(
     state, "actor"
   ).find((action) => action.card?.id === "one" && action.targets[0]?.id === "far");
@@ -14668,7 +14674,7 @@ test("AI·突袭次数槽：概率突袭次数槽阻止两张牌重复消费同�
 
 test("AI·突袭次数槽：两个概率突袭次数槽可在同一望远镜世界各消费一次", () => {
   const state = conditionalAssaultState(2), { game }
-  = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const first = game.aiController.actionGenerator.generateFromVisible(
     state, "actor"
   ).find((action) => action.card?.id === "one" && action.targets[0]?.id === "far");
@@ -14683,16 +14689,16 @@ test("AI·突袭次数槽：两个概率突袭次数槽可在同一望远镜世�
 });
 
 test("AI·突袭次数槽：攻击与技能次数槽选择执行概率最高的可用槽", () => {
-  const partialSlot =[
+  const partialSlot = [
     { probability: .2, conditions: { partial: "yes" }, available: true },
     { probability: .8, conditions: { partial: "no" }, available: false }
   ],
     fullSlot = [{ probability: 1, conditions: {}, available: true }],
     { game }
-  = makeGame([makePlayer("slot-real-a", 0, "dawn"), makePlayer("slot-real-b", 1, "dusk")]);
+      = makeGame([makePlayer("slot-real-a", 0, "dawn"), makePlayer("slot-real-b", 1, "dusk")]);
   const attackState = {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "attacker",
         seatIndex: 0,
@@ -14730,7 +14736,7 @@ test("AI·突袭次数槽：攻击与技能次数槽选择执行概率最高的�
   assert.equal(attack.executionProbability, 1);
   const skillState = {
     playPhaseEnded: false,
-    players:[
+    players: [
       {
         id: "warden",
         seatIndex: 0,
@@ -14769,7 +14775,7 @@ test("AI·救援：濒死本人有调息时必须自救", async () => {
   b.hp = 1;
   b.hand.push(instance("recover"));
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   const used = b.turnFlags.recoverUsed;
   await game.damage(a, b, 1, { canBlock: false });
   assert.equal(b.alive, true);
@@ -14786,7 +14792,7 @@ test("AI·救援：三人阵营 AI 能协作各交一张调息救回负1血队�
   ally1.hand.push(instance("recover"));
   ally2.hand.push(instance("recover"));
   const { game }
-  = makeGame([target, ally1, ally2, enemy]);
+    = makeGame([target, ally1, ally2, enemy]);
   assert.equal(game.aiController.responsePolicy.assessDyingRescue(ally1, target).strategic, true);
   await game.dyingSystem.enter(target, enemy);
   assert.equal(target.alive, true);
@@ -14804,7 +14810,7 @@ test("AI·救援：按单张边际价值启动负2血的1+2协作救援", async 
   ally1.hand.push(instance("recover"));
   ally2.hand.push(instance("recover"), instance("recover"));
   const { game }
-  = makeGame([target, ally1, ally2, enemy]);
+    = makeGame([target, ally1, ally2, enemy]);
   const assessment = game.aiController.responsePolicy.assessDyingRescue(ally1, target);
   assert.ok(assessment.futureExpectedRecover > 0);
   assert.equal(
@@ -14825,7 +14831,7 @@ test("AI·救援：强制救援：同阵营 AI 持有调息时真人必定获救
   human.hp = 0;
   ally.hand.push(instance("recover"));
   const { game, ui }
-  = makeGame([human, ally, enemy]);
+    = makeGame([human, ally, enemy]);
   await game.dyingSystem.enter(human, enemy);
   assert.equal(human.alive, true);
   assert.equal(human.hp, 1);
@@ -14846,7 +14852,7 @@ test("AI·救援：强制救援：AI 只剩最后一张调息时也必须救真�
   human.hp = 0;
   ally.hand = [instance("recover")];
   const { game }
-  = makeGame([human, ally, enemy]);
+    = makeGame([human, ally, enemy]);
   game.aiController.responsePolicy.shouldRespond = () => false;
   await game.dyingSystem.enter(human, enemy);
   assert.equal(human.hp, 1);
@@ -14861,7 +14867,7 @@ test("AI·救援：强制救援：AI 只有1点生命时也必须救真人", asy
   ally.hp = 1;
   ally.hand.push(instance("recover"));
   const { game }
-  = makeGame([human, ally, enemy]);
+    = makeGame([human, ally, enemy]);
   game.aiController.responsePolicy.shouldRespond = () => false;
   await game.dyingSystem.enter(human, enemy);
   assert.equal(human.hp, 1);
@@ -14876,10 +14882,10 @@ test("AI·救援：强制救援：AI 评分函数返回 false 时仍绕过策略
   human.hp = 0;
   ally.hand.push(instance("recover"));
   const { game }
-  = makeGame([human, ally, enemy]);
+    = makeGame([human, ally, enemy]);
   let policyCalls = 0;
   game.aiController.responsePolicy.shouldRespond = () => {
-    policyCalls+=1;
+    policyCalls += 1;
     return false;
   };
   await game.dyingSystem.enter(human, enemy);
@@ -14894,7 +14900,7 @@ test("AI·救援：强制救援：AI 即使无法独自完全救活也必须先�
   human.hp = -1;
   ally.hand.push(instance("recover"));
   const { game, ui }
-  = makeGame([human, ally, enemy]);
+    = makeGame([human, ally, enemy]);
   game.aiController.responsePolicy.shouldRespond = () => false;
   await game.dyingSystem.enter(human, enemy);
   assert.equal(ally.hand.length, 0);
@@ -14913,7 +14919,7 @@ test("AI·救援：强制救援：真人负1血时两名 AI 各用一张并救�
   allyA.hand.push(instance("recover"));
   allyB.hand.push(instance("recover"));
   const { game }
-  = makeGame([human, allyA, allyB, enemy]);
+    = makeGame([human, allyA, allyB, enemy]);
   game.aiController.responsePolicy.shouldRespond = () => false;
   await game.dyingSystem.enter(human, enemy);
   assert.equal(human.alive, true);
@@ -14929,7 +14935,7 @@ test("AI·救援：强制救援：真人负2血时同一 AI 跨三轮连续使�
   human.hp = -2;
   ally.hand.push(instance("recover"), instance("recover"), instance("recover"));
   const { game }
-  = makeGame([human, ally, enemy]);
+    = makeGame([human, ally, enemy]);
   game.aiController.responsePolicy.shouldRespond = () => false;
   await game.dyingSystem.enter(human, enemy);
   assert.equal(human.alive, true);
@@ -14947,7 +14953,7 @@ test("AI·救援：强制救援：总共仅两张时仍全部使用，真人到0
   allyA.hand.push(instance("recover"));
   allyB.hand.push(instance("recover"));
   const { game }
-  = makeGame([human, allyA, allyB, enemy]);
+    = makeGame([human, allyA, allyB, enemy]);
   game.aiController.responsePolicy.shouldRespond = () => false;
   await game.dyingSystem.enter(human, enemy);
   assert.equal(human.hp, 0);
@@ -14961,7 +14967,7 @@ test("AI·救援：强制救援：敌方 AI 即使持有调息也不能救真人
   human.hp = 0;
   enemy.hand.push(instance("recover"));
   const { game, ui }
-  = makeGame([human, enemy]);
+    = makeGame([human, enemy]);
   await game.dyingSystem.enter(human, enemy);
   assert.equal(human.alive, false);
   assert.equal(enemy.hand.length, 1);
@@ -14974,7 +14980,7 @@ test("AI·救援：强制救援：不同阵营 AI 不能从核心响应入口救
   const card = instance("recover");
   enemy.hand.push(card);
   const { game }
-  = makeGame([human, enemy]);
+    = makeGame([human, enemy]);
   const result = await game.responseSystem.requestDyingRescue(enemy, human, card);
   assert.equal(result.status, "unavailable");
   assert.equal(result.card, null);
@@ -14989,11 +14995,11 @@ test("AI·救援：强制救援：关闭配置后恢复普通 AI 救援策略", 
   human.hp = 0;
   ally.hand.push(instance("recover"));
   const { game }
-  = makeGame([human, ally, enemy]);
+    = makeGame([human, ally, enemy]);
   game.forceAiRescueHuman = false;
   let policyCalls = 0;
   game.aiController.responsePolicy.shouldRespond = () => {
-    policyCalls+=1;
+    policyCalls += 1;
     return false;
   };
   await game.dyingSystem.enter(human, enemy);
@@ -15028,10 +15034,10 @@ test("AI·救援：强制救援：AI 自己濒死时仍然固定自救", async (
   target.hp = 0;
   target.hand.push(instance("recover"));
   const { game }
-  = makeGame([target, enemy]);
+    = makeGame([target, enemy]);
   let policyCalls = 0;
   game.aiController.responsePolicy.shouldRespond = () => {
-    policyCalls+=1;
+    policyCalls += 1;
     return false;
   };
   await game.dyingSystem.enter(target, enemy);
@@ -15048,7 +15054,7 @@ test("AI·救援：强制救援：重新征召会取消尚未完成的 AI 救援
   const card = instance("recover");
   ally.hand.push(card);
   const { game, ui }
-  = makeGame([human, ally, enemy]);
+    = makeGame([human, ally, enemy]);
   game.simulationMode = false;
   game.cleanupManager = new CleanupManager();
   const pending = game.responseSystem.requestDyingRescue(ally, human, card);
@@ -15069,7 +15075,7 @@ test("AI·救援：强制救援：救援经过 Game.heal 并产生治疗事件�
   human.hp = 0;
   ally.hand.push(instance("recover"));
   const { game }
-  = makeGame([human, ally, enemy]);
+    = makeGame([human, ally, enemy]);
   const events = [];
   game.eventBus.on(
     "beforeHeal",
@@ -15090,7 +15096,7 @@ test("AI·救援：自救响应策略为确定必用，敌方救援为拒绝", (
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game }
-  = makeGame([a, ally, enemy]);
+    = makeGame([a, ally, enemy]);
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(
       a, "dyingRescue", { target: a }, [instance("recover")]
@@ -15106,7 +15112,7 @@ test("AI·救援：自救响应策略为确定必用，敌方救援为拒绝", (
 });
 
 test("AI·救援：濒死救援在本人后按相对座位环绕顺序消费调息", () => {
-  const players =[
+  const players = [
     {
       id: "ally-zero",
       seatIndex: 0,
@@ -15211,7 +15217,7 @@ test("AI·救援：轮次让A与B首轮各消耗一张调息", () => {
 
 // ---- AI 隐藏信息与牌身份 ----
 
-const fullKnownCard = (cardId, definitionId) =>(
+const fullKnownCard = (cardId, definitionId) => (
   {
     cardId,
     definitionId,
@@ -15220,7 +15226,7 @@ const fullKnownCard = (cardId, definitionId) =>(
   }
 );
 
-const fullHandCard = (id, definitionId) =>(
+const fullHandCard = (id, definitionId) => (
   {
     id,
     definitionId,
@@ -15238,7 +15244,7 @@ const blockDistributionByCount = (distribution) => {
 };
 
 const projectAvailability = (branches, field) => branches.map(
-  ({ available, probability, conditions }) =>(
+  ({ available, probability, conditions }) => (
     { probability, conditions, [field]: Boolean(available) }
   )
 );
@@ -15247,7 +15253,7 @@ test("AI·资源身份：部分概率转移中来源与接收者身份世界互�
   const state = {
     playPhaseEnded: false,
     remainingCardCounts: { assault: 10 },
-    players:[
+    players: [
       {
         id: "z-actor",
         seatIndex: 0,
@@ -15284,7 +15290,7 @@ test("AI·资源身份：部分概率转移中来源与接收者身份世界互�
         hp: 4,
         maxHp: 4,
         handCount: 1,
-        knownCards:[
+        knownCards: [
           {
             cardId: "known-assault",
             definitionId: "assault",
@@ -15318,7 +15324,7 @@ test("AI·资源身份：部分概率转移中来源与接收者身份世界互�
     ]
   };
   const { game }
-  = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const action = game.aiController.actionGenerator.generateFromVisible(
     state, "z-actor"
   ).find((entry) => entry.card?.id === "move");
@@ -15331,24 +15337,24 @@ test("AI·资源身份：部分概率转移中来源与接收者身份世界互�
   assert.ok(sourceEntry);
   assert.ok(receiverEntry);
   const sourceAvailable = sourceEntry.availabilityStateBranches.reduce(
-    (sum, branch) => sum +(branch.available ? branch.probability: 0), 0
+    (sum, branch) => sum + (branch.available ? branch.probability : 0), 0
   );
   const receiverAvailable = receiverEntry.availabilityStateBranches.reduce(
-    (sum, branch) => sum +(branch.available ? branch.probability: 0), 0
+    (sum, branch) => sum + (branch.available ? branch.probability : 0), 0
   );
   assertClose(sourceAvailable, .6);
   assertClose(receiverAvailable, .4);
   assertClose(sourceAvailable + receiverAvailable, 1);
   const joined = joinProbabilityStateBranches(
     sourceEntry.availabilityStateBranches.map(
-      (branch) =>(
+      (branch) => (
         {
           probability: branch.probability, conditions: branch.conditions, sourceAvailable: branch.available
         }
       )
     ),
     receiverEntry.availabilityStateBranches.map(
-      (branch) =>(
+      (branch) => (
         {
           probability: branch.probability, conditions: branch.conditions, receiverAvailable: branch.available
         }
@@ -15368,7 +15374,7 @@ test("AI·资源身份：部分可用来源身份按未知聚合处理且不创�
   const state = {
     playPhaseEnded: false,
     remainingCardCounts: { assault: 10 },
-    players:[
+    players: [
       {
         id: "z-actor",
         seatIndex: 0,
@@ -15395,12 +15401,12 @@ test("AI·资源身份：部分可用来源身份按未知聚合处理且不创�
         hp: 4,
         maxHp: 4,
         handCount: 1,
-        knownCards:[
+        knownCards: [
           {
             cardId: "partial-assault",
             definitionId: "assault",
             availabilityBranches: [{ probability: .5, conditions: {} }],
-            availabilityStateBranches:[
+            availabilityStateBranches: [
               { probability: .5, conditions: { "src-state": "yes" }, available: true },
               { probability: .5, conditions: { "src-state": "no" }, available: false }
             ]
@@ -15422,7 +15428,7 @@ test("AI·资源身份：部分可用来源身份按未知聚合处理且不创�
     ]
   };
   const { game }
-  = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const action = game.aiController.actionGenerator.generateFromVisible(
     state, "z-actor"
   ).find((entry) => entry.card?.id === "move");
@@ -15436,7 +15442,7 @@ test("AI·资源身份：部分可用来源身份按未知聚合处理且不创�
   assert.equal(nextActor.hand.some((card) => card.id === "partial-assault"), false);
   assert.equal(nextSource.knownCards.some((entry) => entry.cardId === "partial-assault"), false);
   assert.equal(
-    (nextReceiver.knownCards ??[]).some((entry) => entry.cardId === "partial-assault"), false
+    (nextReceiver.knownCards ?? []).some((entry) => entry.cardId === "partial-assault"), false
   );
   assert.equal(nextReceiver.hand, undefined);
   assertClose(nextSource.handCount, 0);
@@ -15451,7 +15457,7 @@ test("AI·资源身份：手牌期望数量按可用概率计算且部分身份�
     generalId: "blade-walker",
     hp: 4,
     maxHp: 4,
-    hand:[
+    hand: [
       {
         id: "full",
         definitionId: "assault",
@@ -15460,7 +15466,7 @@ test("AI·资源身份：手牌期望数量按可用概率计算且部分身份�
       {
         id: "half",
         definitionId: "counter",
-        availabilityStateBranches:[
+        availabilityStateBranches: [
           { probability: .5, conditions: {}, available: true },
           { probability: .5, conditions: {}, available: false }
         ]
@@ -15489,7 +15495,7 @@ test("AI·资源身份：手牌期望数量按可用概率计算且部分身份�
     hp: 4,
     maxHp: 4,
     handCount: 1.5,
-    knownCards:[
+    knownCards: [
       {
         cardId: "full2",
         definitionId: "charge",
@@ -15498,7 +15504,7 @@ test("AI·资源身份：手牌期望数量按可用概率计算且部分身份�
       {
         cardId: "half2",
         definitionId: "counter",
-        availabilityStateBranches:[
+        availabilityStateBranches: [
           { probability: .5, conditions: {}, available: true },
           { probability: .5, conditions: {}, available: false }
         ]
@@ -15519,7 +15525,7 @@ test("AI·资源身份：手牌期望数量按可用概率计算且部分身份�
 test("AI·资源身份：部分概率高价值牌不再按完整确定身份评分", () => {
   const actor = { id: "actor", battleTeam: "dawn" };
   const receiver = { id: "receiver", battleTeam: "dawn", generalId: "spirit-medic", hp: 3, maxHp: 3 };
-  const makeFrom = (cards, handCount) =>(
+  const makeFrom = (cards, handCount) => (
     {
       id: "from",
       battleTeam: "dusk",
@@ -15533,7 +15539,7 @@ test("AI·资源身份：部分概率高价值牌不再按完整确定身份评�
   const partialCard = {
     cardId: "high-20",
     definitionId: "counter",
-    availabilityStateBranches:[
+    availabilityStateBranches: [
       { probability: .2, conditions: {}, available: true },
       { probability: .8, conditions: {}, available: false }
     ]
@@ -15569,7 +15575,7 @@ test("AI·资源身份：防御性旧动作对部分可用 known 身份按未知
   const state = {
     playPhaseEnded: false,
     remainingCardCounts: { assault: 10 },
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -15596,12 +15602,12 @@ test("AI·资源身份：防御性旧动作对部分可用 known 身份按未知
         hp: 4,
         maxHp: 4,
         handCount: .4,
-        knownCards:[
+        knownCards: [
           {
             cardId: "partial-k",
             definitionId: "assault",
             availabilityBranches: [{ probability: .4, conditions: {} }],
-            availabilityStateBranches:[
+            availabilityStateBranches: [
               { probability: .4, conditions: {}, available: true },
               { probability: .6, conditions: {}, available: false }
             ]
@@ -15642,7 +15648,7 @@ test("AI·资源身份：防御性旧动作对部分可用 known 身份按未知
   const next = new AiSimulator(state).apply(state, action, "a");
   const nextSource = next.players[1], nextReceiver = next.players[2];
   assert.equal(nextSource.knownCards.some((entry) => entry.cardId === "partial-k"), false);
-  assert.equal((nextReceiver.knownCards ??[]).some((entry) => entry.cardId === "partial-k"), false);
+  assert.equal((nextReceiver.knownCards ?? []).some((entry) => entry.cardId === "partial-k"), false);
   assert.equal(nextReceiver.hand, undefined);
   assertClose(nextSource.handCount, 0);
   assertClose(nextReceiver.handCount, .4);
@@ -15652,7 +15658,7 @@ test("AI·资源身份：接收者已有同身份部分可用时按新增概率�
   const state = {
     playPhaseEnded: false,
     remainingCardCounts: { block: 10 },
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -15679,7 +15685,7 @@ test("AI·资源身份：接收者已有同身份部分可用时按新增概率�
         hp: 4,
         maxHp: 4,
         handCount: 1,
-        knownCards:[
+        knownCards: [
           {
             cardId: "dup",
             definitionId: "block",
@@ -15698,12 +15704,12 @@ test("AI·资源身份：接收者已有同身份部分可用时按新增概率�
         hp: 3,
         maxHp: 3,
         handCount: .3,
-        knownCards:[
+        knownCards: [
           {
             cardId: "dup",
             definitionId: "block",
             availabilityBranches: [{ probability: .3, conditions: {} }],
-            availabilityStateBranches:[
+            availabilityStateBranches: [
               { probability: .3, conditions: {}, available: true },
               { probability: .7, conditions: {}, available: false }
             ]
@@ -15736,7 +15742,7 @@ test("AI·资源身份：接收者已有同身份部分可用时按新增概率�
   assert.equal(entries.length, 1);
   const merged = entries[
     0
-  ].availabilityStateBranches.reduce((sum, branch) => sum +(branch.available ? branch.probability: 0), 0);
+  ].availabilityStateBranches.reduce((sum, branch) => sum + (branch.available ? branch.probability : 0), 0);
   assertClose(merged, 1);
   assertClose(nextReceiver.handCount, 1);
   const simulator = new AiSimulator({ players: [] });
@@ -15745,7 +15751,7 @@ test("AI·资源身份：接收者已有同身份部分可用时按新增概率�
       { players: [] },
       {
         id: "r2",
-        knownCards:[
+        knownCards: [
           {
             cardId: "dup",
             definitionId: "block",
@@ -15765,7 +15771,7 @@ test("AI·资源身份：未知牌转移只移动聚合数量且不创建身份"
   const state = {
     playPhaseEnded: false,
     remainingCardCounts: { assault: 10 },
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -15813,7 +15819,7 @@ test("AI·资源身份：未知牌转移只移动聚合数量且不创建身份"
     ]
   };
   const { game }
-  = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const action = game.aiController.actionGenerator.generateFromVisible(
     state, "a"
   ).find((entry) => entry.card?.definitionId === "transfer");
@@ -15830,17 +15836,17 @@ test("AI·资源身份：未知牌转移只移动聚合数量且不创建身份"
 });
 
 test("AI·资源身份：已知转移同步来源与接收者四类摘要", () => {
-  const scenarios =[
+  const scenarios = [
     ["recover", "expectedRecoverCount"],
     ["block", "blockProbability"],
     ["counter", "counterProbability"],
     ["assault", "expectedAssaultCount"]
   ];
-  for (const[definitionId, field] of scenarios) {
+  for (const [definitionId, field] of scenarios) {
     const state = {
       playPhaseEnded: false,
       remainingCardCounts: { [definitionId]: 10 },
-      players:[
+      players: [
         {
           id: "a",
           seatIndex: 0,
@@ -15869,7 +15875,7 @@ test("AI·资源身份：已知转移同步来源与接收者四类摘要", () =
           shield: 0,
           energy: 0,
           handCount: 1,
-          knownCards:[
+          knownCards: [
             {
               cardId: `k-${definitionId}`,
               definitionId,
@@ -15930,7 +15936,7 @@ test("AI·资源身份：模拟执行评分阶段选中的同一已知牌身份"
   const state = {
     playPhaseEnded: false,
     remainingCardCounts: { counter: 10 },
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -15959,7 +15965,7 @@ test("AI·资源身份：模拟执行评分阶段选中的同一已知牌身份"
         shield: 0,
         energy: 0,
         handCount: 2,
-        knownCards:[
+        knownCards: [
           {
             cardId: "low-charge",
             definitionId: "charge",
@@ -15991,7 +15997,7 @@ test("AI·资源身份：模拟执行评分阶段选中的同一已知牌身份"
     ]
   };
   const { game }
-  = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const action = game.aiController.actionGenerator.generateFromVisible(
     state, "a"
   ).find((entry) => entry.card?.definitionId === "transfer");
@@ -16017,7 +16023,7 @@ test("AI·资源身份：Planner 描述不保存转移候选身份", () => {
     enemy = makePlayer("enemy", 1, "dusk"),
     ally = makePlayer("ally", 2, "dawn");
   const { game }
-  = makeGame([actor, enemy, ally]);
+    = makeGame([actor, enemy, ally]);
   const descriptor = game.aiController.planner.describeAction(
     {
       type: "card",
@@ -16072,7 +16078,7 @@ test("AI·资源身份：确定性掠夺已知 assault 后可在下一层生成�
   actor.hand = [plunder];
   target.hand = [assault];
   const { game }
-  = makeGame([actor, target]);
+    = makeGame([actor, target]);
   game.rememberPrivateCard(actor, target, assault);
   const visible = createAiVisibleState(actor.id, game.state);
   const action = game.aiController.actionGenerator.generateFromVisible(
@@ -16135,14 +16141,14 @@ test("AI·资源身份：部分概率掠夺双方共享条件分支且所有权�
   let actorOwned = 0, targetOwned = 0;
   for (const actorBranch of actorCard.availabilityStateBranches) {
     const counterpart = targetEntry.availabilityStateBranches.find(
-      (branch) =>(JSON.stringify(branch.conditions) === JSON.stringify(actorBranch.conditions))
+      (branch) => (JSON.stringify(branch.conditions) === JSON.stringify(actorBranch.conditions))
     );
     // 同一条件键代表同一世界：概率必须一致且可用状态互补
     assert.ok(counterpart);
     assertClose(actorBranch.probability, counterpart.probability);
     assert.notEqual(actorBranch.available, counterpart.available);
-    if (actorBranch.available) actorOwned+=actorBranch.probability;
-    if (counterpart.available) targetOwned+=counterpart.probability;
+    if (actorBranch.available) actorOwned += actorBranch.probability;
+    if (counterpart.available) targetOwned += counterpart.probability;
   }
   assertClose(actorOwned, 0.6);
   assertClose(targetOwned, 0.4);
@@ -16157,12 +16163,12 @@ test("AI·资源身份：部分概率已知牌保守并入未知聚合而不作�
     battleTeam: "dusk",
     generalId: "shade-agent",
     handCount: 0.4,
-    knownCards:[
+    knownCards: [
       {
         cardId: "c",
         definitionId: "counter",
         availabilityBranches: [{ probability: 0.4, conditions: {} }],
-        availabilityStateBranches:[
+        availabilityStateBranches: [
           { probability: 0.4, conditions: {}, available: true },
           { probability: 0.6, conditions: {}, available: false }
         ]
@@ -16172,7 +16178,7 @@ test("AI·资源身份：部分概率已知牌保守并入未知聚合而不作�
     equipmentRetentionProbability: 0
   };
   const { knownCards, unknownCount }
-  = simulator.buildSimulatedKnownCards(target);
+    = simulator.buildSimulatedKnownCards(target);
   assert.deepEqual(knownCards, []);
   assert.ok(Math.abs(unknownCount - 0.4) < 1e-9);
   const selection = simulator.chooseSimulatedResourceSelection(
@@ -16187,7 +16193,7 @@ test("AI·资源身份：已知 block/counter/recover/assault 移除后摘要按
   const simulator = new AiSimulator({ players: [] });
   const actor = { id: "a", battleTeam: "dawn", generalId: "blade-walker" };
   const densityOf = (definitionId) => CARD_DEFINITIONS[definitionId].count / TOTAL_CARD_COUNT;
-  const makeTarget = (cardId, definitionId) =>(
+  const makeTarget = (cardId, definitionId) => (
     {
       id: `t-${definitionId}`,
       battleTeam: "dusk",
@@ -16250,7 +16256,7 @@ test("AI·资源身份：掠夺装备加入具体手牌后下一层可生成装�
   actor.hand = [plunder];
   target.equipment = equipment;
   const { game }
-  = makeGame([actor, target]);
+    = makeGame([actor, target]);
   const visible = createAiVisibleState(actor.id, game.state);
   const action = game.aiController.actionGenerator.generateFromVisible(
     visible, actor.id
@@ -16274,7 +16280,7 @@ test("AI·资源身份：真实 Planner 先掠夺已知 assault 再在后续层�
   actor.hand = [plunder];
   target.hand = [assault];
   const { game }
-  = makeGame([actor, target]);
+    = makeGame([actor, target]);
   game.rememberPrivateCard(actor, target, assault);
   game.aiSearchNodeBudgetOverride = 4;
   game.aiRandomnessRange = 0;
@@ -16283,7 +16289,7 @@ test("AI·资源身份：真实 Planner 先掠夺已知 assault 再在后续层�
   const sequence = game.aiController.planner.lastPlannedSequence;
   assert.ok(
     sequence.some(
-      (entry) =>(
+      (entry) => (
         entry.type === "card" && entry.cardId === "assault" && entry.cardInstanceId === assault.id
       )
     )
@@ -16297,12 +16303,12 @@ test("AI·资源身份：部分 known 参与整手牌随机选择且未选中时
     battleTeam: "dusk",
     generalId: "oath-warden",
     handCount: 1.4,
-    knownCards:[
+    knownCards: [
       {
         cardId: "c",
         definitionId: "counter",
         availabilityBranches: [{ probability: 0.4, conditions: { known: "yes" } }],
-        availabilityStateBranches:[
+        availabilityStateBranches: [
           { probability: 0.4, conditions: { known: "yes" }, available: true },
           { probability: 0.6, conditions: { known: "no" }, available: false }
         ]
@@ -16321,7 +16327,7 @@ test("AI·资源身份：部分 known 参与整手牌随机选择且未选中时
   simulator.syncCardEstimates(player, null);
   // B1c：counterProbability 由维护中的 counterCountDistribution 派生，不再从根先验重估。
   const derived = player.counterCountDistribution.reduce(
-    (sum, branch) => sum +(branch.counterCount >= 1 ? branch.probability: 0), 0
+    (sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0
   );
   assert.ok(Math.abs(player.counterProbability - derived) < 1e-9);
   assertClose(
@@ -16376,7 +16382,7 @@ test("AI·资源身份：完整确定 known 参与整手牌随机选择", () => 
   assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 0.5) < 1e-9);
   simulator.syncCardEstimates(player);
   const derived = player.counterCountDistribution.reduce(
-    (sum, branch) => sum +(branch.counterCount >= 1 ? branch.probability: 0), 0
+    (sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0
   );
   assert.ok(Math.abs(player.counterProbability - derived) < 1e-9);
   assertClose(
@@ -16391,7 +16397,7 @@ test("AI·资源身份：零概率 known 条目在随机消费后清理", () => 
     battleTeam: "dusk",
     generalId: "oath-warden",
     handCount: 1,
-    knownCards:[
+    knownCards: [
       {
         cardId: "z",
         definitionId: "counter",
@@ -16488,20 +16494,20 @@ test("AI·资源身份：整手牌随机移除：确定格挡 + 匿名50%格挡�
     battleTeam: "dusk",
     generalId: "oath-warden",
     handCount: 2,
-    knownCards:[
+    knownCards: [
       {
         cardId: "b",
         definitionId: "block",
-        availabilityBranches:[
+        availabilityBranches: [
           { probability: 0.5, conditions: { anon: "no" } }, { probability: 0.5, conditions: { anon: "yes" } }
         ],
-        availabilityStateBranches:[
+        availabilityStateBranches: [
           { probability: 0.5, conditions: { anon: "no" }, available: true },
           { probability: 0.5, conditions: { anon: "yes" }, available: true }
         ]
       }
     ],
-    blockCountDistribution:[
+    blockCountDistribution: [
       { probability: 0.5, conditions: { anon: "no" }, blockCount: 1 },
       { probability: 0.5, conditions: { anon: "yes" }, blockCount: 2 }
     ],
@@ -16542,15 +16548,15 @@ test("AI·资源身份：整手牌随机移除：三类候选互斥且各占三�
   );
   const byWorld = { blockOnly: 0, chargeOnly: 0, both: 0, neither: 0 };
   for (const branch of joined) {
-    const key = branch.blockAvail && branch.chargeAvail ? "both": !branch.blockAvail && !branch.chargeAvail ? "neither": branch.blockAvail ? "blockOnly": "chargeOnly";
-    byWorld[key] +=branch.probability;
+    const key = branch.blockAvail && branch.chargeAvail ? "both" : !branch.blockAvail && !branch.chargeAvail ? "neither" : branch.blockAvail ? "blockOnly" : "chargeOnly";
+    byWorld[key] += branch.probability;
   }
   assert.ok(Math.abs(byWorld.blockOnly - 1 / 3) < 1e-9);
   assert.ok(Math.abs(byWorld.chargeOnly - 1 / 3) < 1e-9);
   assert.ok(Math.abs(byWorld.both - 1 / 3) < 1e-9);
   assert.ok(Math.abs(byWorld.neither) < 1e-9);
   const anonymousRemoved = player.anonymousCountBranches.filter(
-    (branch) =>(branch.anonymousCount ?? 0) === 0
+    (branch) => (branch.anonymousCount ?? 0) === 0
   ).reduce((sum, branch) => sum + branch.probability, 0);
   assert.ok(Math.abs(anonymousRemoved - 1 / 3) < 1e-9);
 });
@@ -16562,18 +16568,18 @@ test("AI·资源身份：整手牌随机移除：部分可用确定格挡按条�
     battleTeam: "dusk",
     generalId: "oath-warden",
     handCount: 1.5,
-    knownCards:[
+    knownCards: [
       {
         cardId: "b",
         definitionId: "block",
         availabilityBranches: [{ probability: 0.5, conditions: { present: "yes" } }],
-        availabilityStateBranches:[
+        availabilityStateBranches: [
           { probability: 0.5, conditions: { present: "yes" }, available: true },
           { probability: 0.5, conditions: { present: "no" }, available: false }
         ]
       }
     ],
-    blockCountDistribution:[
+    blockCountDistribution: [
       { probability: 0.5, conditions: { present: "yes" }, blockCount: 1 },
       { probability: 0.5, conditions: { present: "no" }, blockCount: 0 }
     ],
@@ -16708,13 +16714,13 @@ test("AI·资源身份：unknown 消费只消耗未知部分且不侵蚀完整�
     battleTeam: "dusk",
     generalId: "oath-warden",
     handCount: 1.4,
-    knownCards:[
+    knownCards: [
       { cardId: "c", definitionId: "counter" },
       {
         cardId: "r",
         definitionId: "recover",
         availabilityBranches: [{ probability: 0.4, conditions: {} }],
-        availabilityStateBranches:[
+        availabilityStateBranches: [
           { probability: 0.4, conditions: {}, available: true },
           { probability: 0.6, conditions: {}, available: false }
         ]
@@ -16850,8 +16856,8 @@ test("AI·资源身份：纯 unknown 破坏/掠夺按剩余未知数量同步摘
   assert.equal(actor.hand.length, 0);
   assert.ok(
     Math.abs(
-      plunderTarget.counterProbability - 0.6 *(CARD_DEFINITIONS.counter.count / TOTAL_CARD_COUNT)
-    )< 1e-9
+      plunderTarget.counterProbability - 0.6 * (CARD_DEFINITIONS.counter.count / TOTAL_CARD_COUNT)
+    ) < 1e-9
   );
 });
 
@@ -16919,7 +16925,7 @@ test("AI·剩余牌池：扣除全部公开装备", () => {
   const viewer = { id: "v", hand: [], aiMemory: { knownCardsByPlayer: {} } };
   const state = {
     deck: { discardPile: [], resolvingCards: [], judgmentZone: [] },
-    players:[
+    players: [
       { id: "a", equipment: { id: "e1", definitionId: "energyDevice" } },
       { id: "b", equipment: { id: "e2", definitionId: "telescope" } }
     ],
@@ -16952,7 +16958,7 @@ test("AI·剩余牌池：扣除 viewer 合法记忆", () => {
 test("AI·剩余牌池：不读取其他 AI 私有记忆", () => {
   const viewer = { id: "v", hand: [], aiMemory: { knownCardsByPlayer: {} } };
   let reads = 0;
-  const otherMemory = { get knownCardsByPlayer() { reads+=1; return { enemy: { x: "recover" } }; } };
+  const otherMemory = { get knownCardsByPlayer() { reads += 1; return { enemy: { x: "recover" } }; } };
   const state = {
     deck: { discardPile: [], resolvingCards: [], judgmentZone: [] },
     players: [{ id: "other", aiMemory: otherMemory }],
@@ -17021,7 +17027,7 @@ test("AI·剩余牌池：无 ID 条目分别扣除", () => {
 test("AI·剩余牌池：计数不为负数", () => {
   const viewer = {
     id: "v",
-    hand: Array.from({ length: CARD_COUNTS.assault + 5 }, () =>({ definitionId: "assault" })),
+    hand: Array.from({ length: CARD_COUNTS.assault + 5 }, () => ({ definitionId: "assault" })),
     aiMemory: { knownCardsByPlayer: {} }
   };
   const counts = makeRemainingKnowledge(viewer).remainingCounts(viewer);
@@ -17067,7 +17073,7 @@ test("AI·剩余牌池：probability 兼容包装", () => {
 test("AI·剩余牌池：空剩余池时 probability 返回 0", () => {
   const entries = Object.entries(
     CARD_COUNTS
-  ).flatMap(([definitionId, count]) =>(Array.from({ length: count }, () =>({ definitionId }))));
+  ).flatMap(([definitionId, count]) => (Array.from({ length: count }, () => ({ definitionId }))));
   const viewer = { id: "v", hand: entries, aiMemory: { knownCardsByPlayer: {} } };
   const knowledge = makeRemainingKnowledge(viewer);
   assert.equal(knowledge.probability(viewer, "assault"), 0);
@@ -17084,7 +17090,7 @@ test("AI·剩余牌池：公共牌池改变概率", () => {
   );
   const before = without.probability(viewer, "block");
   const after = withPool.probability(viewer, "block");
-  const expected = (CARD_COUNTS.block - 1) /(TOTAL_CARD_COUNT - 1);
+  const expected = (CARD_COUNTS.block - 1) / (TOTAL_CARD_COUNT - 1);
   assert.ok(Math.abs(after - expected) < 1e-12);
   assert.ok(after < before);
 });
@@ -17120,7 +17126,7 @@ test("AI·剩余牌池：隐藏世界抽样 sampleHiddenWorlds：单 world 同�
     viewer,
     {
       remainingCardCounts: counts,
-      players:[
+      players: [
         viewer, { id: "e1", handCount: 1, knownCards: [] }, { id: "e2", handCount: 1, knownCards: [] }
       ]
     },
@@ -17140,14 +17146,14 @@ test("AI·剩余牌池：隐藏世界抽样 sampleHiddenWorlds：多牌种分别
     viewer,
     {
       remainingCardCounts: counts,
-      players:[
+      players: [
         viewer, { id: "e1", handCount: 2, knownCards: [] }, { id: "e2", handCount: 2, knownCards: [] }
       ]
     },
     1
   );
   const sampled = Object.values(worlds[0]).flat();
-  for (const[definitionId, initialCount] of Object.entries(counts)) {
+  for (const [definitionId, initialCount] of Object.entries(counts)) {
     const sampledCount = sampled.filter((id) => id === definitionId).length;
     assert.ok(sampledCount <= initialCount, `${definitionId} 抽样 ${sampledCount} 超过剩余 ${initialCount}`);
   }
@@ -17161,7 +17167,7 @@ test("AI·剩余牌池：隐藏世界抽样 sampleHiddenWorlds：不同 world �
     viewer,
     {
       remainingCardCounts: counts,
-      players:[
+      players: [
         viewer, { id: "e1", handCount: 1, knownCards: [] }, { id: "e2", handCount: 1, knownCards: [] }
       ]
     },
@@ -17221,7 +17227,7 @@ test("AI·剩余牌池：隐藏世界抽样 sampleHiddenWorlds：world 数量、
   const viewer = { id: "v", hand: [], aiMemory: { knownCardsByPlayer: {} } };
   const counts = { counter: 1, assault: 5 };
   const knowledge = makeRemainingKnowledge(viewer);
-  const players =[
+  const players = [
     viewer,
     { id: "e1", handCount: 3, knownCards: [{ cardId: "k1", definitionId: "block" }] },
     { id: "e2", handCount: 1, knownCards: [] }
@@ -17254,10 +17260,10 @@ test("AI·动态未知：plunder 敌方单定义等于双角色之和", () => {
   const actual = getResourceUnknownUtility("plunder", actor, owner, { recover: 2 });
   assert.ok(
     Math.abs(
-      actual -(
+      actual - (
         getRoleCardAiValue("blade-walker", "recover") + getRoleCardAiValue("spirit-medic", "recover")
       )
-    )< 1e-9
+    ) < 1e-9
   );
 });
 
@@ -17267,10 +17273,10 @@ test("AI·动态未知：plunder 同阵营单定义等于差值且不必为 0", 
   const actual = getResourceUnknownUtility("plunder", actor, owner, { recover: 2 });
   assert.ok(
     Math.abs(
-      actual -(
+      actual - (
         getRoleCardAiValue("blade-walker", "recover") - getRoleCardAiValue("spirit-medic", "recover")
       )
-    )< 1e-9
+    ) < 1e-9
   );
   assert.notEqual(actual, 0);
 });
@@ -17340,14 +17346,14 @@ test("AI·动态未知：剩余池使未知胜出而固定值使已知胜出", (
   assert.equal(
     fixed.chooseHiddenCards(actor, owner, 1, null, { purpose: "destroy" })[0], owner.hand[0]
   );
-  const dynamic = makeSelector({ remainingCounts: () =>({ counter: 7, defenseDevice: 1 }) });
+  const dynamic = makeSelector({ remainingCounts: () => ({ counter: 7, defenseDevice: 1 }) });
   assert.equal(
     dynamic.chooseHiddenCards(actor, owner, 1, null, { purpose: "destroy" })[0], owner.hand[1]
   );
 });
 
 test("AI·动态未知：与已知同分时已知优先", () => {
-  const selector = new AiCardSelector({ random: () => 0 }, { remainingCounts: () =>({ scout: 2 }) });
+  const selector = new AiCardSelector({ random: () => 0 }, { remainingCounts: () => ({ scout: 2 }) });
   const actor = {
     id: "a", battleTeam: "dawn", generalId: "blade-walker", aiMemory: { knownCardsByPlayer: {} }
   };
@@ -17381,13 +17387,13 @@ test("AI·动态未知：影响手牌与装备区域选择", () => {
   };
   const fixed = build(null);
   assert.equal(fixed.chooseZoneCard(actor, owner, { purpose: "destroy" }).zone, "equipment");
-  const dynamic = build({ remainingCounts: () =>({ counter: 7, defenseDevice: 1 }) });
+  const dynamic = build({ remainingCounts: () => ({ counter: 7, defenseDevice: 1 }) });
   assert.equal(dynamic.chooseZoneCard(actor, owner, { purpose: "destroy" }).zone, "hand");
 });
 
 test("AI·动态未知：区域同分仍优先手牌", () => {
   const selector = new AiCardSelector(
-    { random: () => 0 }, { remainingCounts: () =>({ telescope: 3 }) }
+    { random: () => 0 }, { remainingCounts: () => ({ telescope: 3 }) }
   );
   const actor = {
     id: "a",
@@ -17410,7 +17416,7 @@ test("AI·动态未知：区域同分仍优先手牌", () => {
 
 test("AI·动态未知：chooseHiddenCards 每次完整调用只扫描一次剩余计数", () => {
   let calls = 0;
-  const knowledge = { remainingCounts: () => { calls+=1; return { assault: 1 }; } };
+  const knowledge = { remainingCounts: () => { calls += 1; return { assault: 1 }; } };
   const selector = new AiCardSelector({ random: () => 0 }, knowledge);
   const actor = {
     id: "a", battleTeam: "dawn", generalId: "blade-walker", aiMemory: { knownCardsByPlayer: {} }
@@ -17441,7 +17447,7 @@ test("AI·动态未知：chooseZoneCard 只扫描一次剩余计数", () => {
   let calls = 0;
   const knowledge = {
     remainingCounts: () => {
-      calls+=1; if (calls > 1) throw new Error("重复扫描"); return { battleDevice: 1 };
+      calls += 1; if (calls > 1) throw new Error("重复扫描"); return { battleDevice: 1 };
     }
   };
   const selector = new AiCardSelector({ random: () => 0 }, knowledge);
@@ -17480,12 +17486,12 @@ test("AI·动态未知：不修改计数输入", () => {
 test("AI·动态未知：未知实体真实定义不泄漏", () => {
   const build = (hiddenDefinitionId, throwing = false) => {
     const selector = new AiCardSelector(
-      { random: () => 0 }, { remainingCounts: () =>({ counter: 7, defenseDevice: 1 }) }
+      { random: () => 0 }, { remainingCounts: () => ({ counter: 7, defenseDevice: 1 }) }
     );
     const actor = {
       id: "a", battleTeam: "dawn", generalId: "blade-walker", aiMemory: { knownCardsByPlayer: {} }
     };
-    const unknown = throwing ? { id: "u" }: { id: "u", definitionId: hiddenDefinitionId };
+    const unknown = throwing ? { id: "u" } : { id: "u", definitionId: hiddenDefinitionId };
     if (throwing) {
       Object.defineProperty(
         unknown, "definitionId", { enumerable: true, get() { throw new Error("读取未知定义"); } }
@@ -17504,7 +17510,7 @@ test("AI·动态未知：未知实体真实定义不泄漏", () => {
 test("AI·动态未知：未知候选输给装备仍调用一次随机数", () => {
   let randomCalls = 0;
   const selector = new AiCardSelector(
-    { random: () => { randomCalls+=1; return 0; } }, { remainingCounts: () =>({ assault: 1 }) }
+    { random: () => { randomCalls += 1; return 0; } }, { remainingCounts: () => ({ assault: 1 }) }
   );
   const actor = {
     id: "a",
@@ -17530,7 +17536,7 @@ test("AI·动态未知：count>1 冻结同一计数快照", () => {
   let calls = 0;
   const selector = new AiCardSelector(
     { random: () => 0 },
-    { remainingCounts: () => { calls+=1; return { counter: 7, defenseDevice: 1 }; } }
+    { remainingCounts: () => { calls += 1; return { counter: 7, defenseDevice: 1 }; } }
   );
   const actor = {
     id: "a", battleTeam: "dawn", generalId: "blade-walker", aiMemory: { knownCardsByPlayer: {} }
@@ -17572,11 +17578,11 @@ test("AI·动态未知：模拟器未接入动态计数", async () => {
 test("AI·动态密度：模拟器动态：AIController 每次行动只计算一次当前 viewer 计数", async () => {
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   let captured = null, calls = 0;
   game.aiController.knowledge.remainingCounts = (viewer) => {
     captured = viewer;
-    calls+=1;
+    calls += 1;
     return { assault: 1 };
   };
   const plan = {};
@@ -17595,7 +17601,7 @@ test("AI·动态密度：模拟器动态：destroy 使用动态未知 owner 期�
   const run = (counts) => {
     const state = {
       remainingCardCounts: counts,
-      players:[
+      players: [
         {
           id: "a",
           seatIndex: 0,
@@ -17643,7 +17649,7 @@ test("AI·动态密度：模拟器动态：plunder 使用动态 actor+owner 期�
   const run = (counts) => {
     const state = {
       remainingCardCounts: counts,
-      players:[
+      players: [
         {
           id: "a",
           seatIndex: 0,
@@ -17701,7 +17707,7 @@ test("AI·动态密度：模拟器动态：同阵营 plunder 使用动态差值"
   };
   assert.equal(run(null).utility, 0);
   const dynamic = run({ counter: 7, defenseDevice: 1 });
-  assert.ok(Math.abs(dynamic.utility -(-2)) < 1e-9);
+  assert.ok(Math.abs(dynamic.utility - (-2)) < 1e-9);
   // (7*(7-9) + 1*(8-10)) / 8
   assert.notEqual(dynamic.utility, 0);
 });
@@ -17827,7 +17833,7 @@ test("AI·动态密度：模拟器动态：陈旧 knownCards 回退继续生效"
 test("AI·动态密度：模拟器动态：克隆计数引用隔离", () => {
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   const counts = { assault: 3, block: 1 };
   const visible = createAiVisibleState(actor.id, game.state, counts);
   const simulator = new AiSimulator(visible);
@@ -17841,7 +17847,7 @@ test("AI·动态密度：模拟器动态：克隆计数引用隔离", () => {
 
 test("AI·动态密度：模拟器动态：根节点剩余牌池冻结", () => {
   const counts = { assault: 3, block: 1 };
-  const targetState =[
+  const targetState = [
     {
       id: "t",
       seatIndex: 1,
@@ -17860,7 +17866,7 @@ test("AI·动态密度：模拟器动态：根节点剩余牌池冻结", () => {
   const apply = (definitionId) => {
     const state = {
       remainingCardCounts: counts,
-      players:[
+      players: [
         {
           id: "a",
           seatIndex: 0,
@@ -17894,7 +17900,7 @@ test("AI·动态密度：模拟器动态：未知实体真实定义不泄漏", (
   const build = (hidden, throwing = false) => {
     const simulator = new AiSimulator({ remainingCardCounts: counts, players: [] });
     const actor = { id: "a", battleTeam: "dawn", generalId: "blade-walker", alive: true };
-    const unknown = throwing ? { id: "u" }: { id: "u", definitionId: hidden };
+    const unknown = throwing ? { id: "u" } : { id: "u", definitionId: hidden };
     if (throwing) {
       Object.defineProperty(
         unknown, "definitionId", { enumerable: true, get() { throw new Error("读取未知定义"); } }
@@ -17925,7 +17931,7 @@ test("AI·动态密度：模拟器动态：未知实体真实定义不泄漏", (
 test("AI·动态密度：模拟器动态：聚合身份模型保持", () => {
   const state = {
     remainingCardCounts: { counter: 7, defenseDevice: 1 },
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -17971,7 +17977,7 @@ test("AI·动态密度：可见状态动态密度：剩余0与缺失定义按零
     enemy = makePlayer("density-enemy", 1, "dusk");
   enemy.hand = [instance("assault")];
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   const zero = createAiVisibleState(actor.id, game.state, { assault: 0, block: 0 });
   assert.equal(zero.players[1].expectedAssaultCount, 0);
   assert.equal(zero.players[1].assaultResponseProbability, 0);
@@ -17993,7 +17999,7 @@ test("AI·动态密度：可见状态动态密度：有效计数总和为零不�
     enemy = makePlayer("density-empty-enemy", 1, "dusk");
   enemy.hand = [instance("assault")];
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   const target = createAiVisibleState(actor.id, game.state, {}).players[1];
   assert.equal(target.expectedAssaultCount, 0);
   assert.equal(target.assaultResponseProbability, 0);
@@ -18007,7 +18013,7 @@ test("AI·动态密度：可见状态动态密度：无动态计数保留固定�
     enemy = makePlayer("density-fallback-enemy", 1, "dusk");
   enemy.hand = [instance("assault")];
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   const target = createAiVisibleState(actor.id, game.state).players[1];
   const assaultDensity = CARD_DEFINITIONS.assault.count / TOTAL_CARD_COUNT;
   const blockDensity = CARD_DEFINITIONS.block.count / TOTAL_CARD_COUNT;
@@ -18022,7 +18028,7 @@ test("AI·动态密度：可见状态动态密度：已知手牌仍按已知数�
   const held = instance("block");
   enemy.hand = [held];
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   game.rememberPrivateCard(actor, enemy, held);
   const target = createAiVisibleState(actor.id, game.state, { block: 0, assault: 1 }).players[1];
   assert.equal(target.handCount, 1);
@@ -18035,7 +18041,7 @@ test("AI·动态密度：模拟器动态密度：syncCardEstimates 使用剩余�
   const simulator = new AiSimulator({ players: [] });
   const state = {
     remainingCardCounts: { assault: 0, block: 0, counter: 0, recover: 0 },
-    players:[
+    players: [
       {
         id: "t",
         seatIndex: 1,
@@ -18064,7 +18070,7 @@ test("AI·动态密度：模拟器动态密度：syncCardEstimates 使用剩余�
 test("AI·动态密度：模拟器动态密度：资源移动后重算不恢复初始密度", () => {
   const state = {
     remainingCardCounts: { assault: 0, block: 0, counter: 0, recover: 0 },
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -18231,10 +18237,10 @@ test("AI·角色卡牌价值：运行时未知角色或卡牌 ID 抛出可定位
 
 test("AI·角色卡牌价值：差值表顶层与全部角色对象均冻结且保持稀疏", () => {
   assert.equal(Object.isFrozen(ROLE_CARD_VALUE_DELTAS), true);
-  for (const[generalId, roleDeltas] of Object.entries(ROLE_CARD_VALUE_DELTAS)) {
+  for (const [generalId, roleDeltas] of Object.entries(ROLE_CARD_VALUE_DELTAS)) {
     assert.equal(Object.isFrozen(roleDeltas), true);
     assert.ok(Object.keys(roleDeltas).length > 0, `${generalId} 不应为空对象`);
-    for (const[definitionId, delta] of Object.entries(roleDeltas)) {
+    for (const [definitionId, delta] of Object.entries(roleDeltas)) {
       assert.notEqual(delta, 0, `${generalId}/${definitionId} 不应显式配置 0`);
     }
   }
@@ -18253,13 +18259,13 @@ test("AI·角色卡牌价值：Getter 直接拒绝非法差值", () => {
       const message = String(error?.message ?? error);
       return message.includes(
         "blade-walker"
-      )&& message.includes("assault") && message.includes(String(badDelta));
+      ) && message.includes("assault") && message.includes(String(badDelta));
     });
   }
 });
 
 test("AI·角色卡牌价值：Getter 拒绝非法基础值", () => {
-  const badDefinitions =[
+  const badDefinitions = [
     { aiValue: NaN }, { aiValue: Infinity }, { aiValue: "4" }, { definitionId: "badCard" }
   ];
   for (const badDefinition of badDefinitions) {
@@ -18288,7 +18294,7 @@ test("AI·角色卡牌价值：角色牌数加权平均差位于 -0.25 到 +0.25
     const roleDeltas = ROLE_CARD_VALUE_DELTAS[general.id] ?? {};
     const weightedSum = Object.values(
       CARD_DEFINITIONS
-    ).reduce((sum, definition) =>(sum +(roleDeltas[definition.definitionId] ?? 0) * definition.count), 0);
+    ).reduce((sum, definition) => (sum + (roleDeltas[definition.definitionId] ?? 0) * definition.count), 0);
     const average = weightedSum / total;
     assert.ok(average >= -0.25 && average <= 0.25, `${general.id} 加权平均 ${average}`);
   }
@@ -18299,7 +18305,7 @@ test("AI·角色卡牌价值：卡牌跨角色平均差绝对值不超过 0.125"
   for (const definition of Object.values(CARD_DEFINITIONS)) {
     let sum = 0;
     for (const general of GENERAL_DEFINITIONS) {
-      sum+=ROLE_CARD_VALUE_DELTAS[general.id]?.[definition.definitionId] ?? 0;
+      sum += ROLE_CARD_VALUE_DELTAS[general.id]?.[definition.definitionId] ?? 0;
     }
     const average = sum / roleCount;
     assert.ok(Math.abs(average) <= 0.125 + 1e-9, `${definition.definitionId} 平均 ${average}`);
@@ -18310,12 +18316,12 @@ test("AI·角色卡牌价值：卡牌跨角色平均差绝对值不超过 0.125"
 
 test("AI·角色核心评分：动作基础价值使用角色有效值且刃行者与守誓者突袭相差 2", () => {
   const { game }
-  = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("warden", 1, "dawn", "ai", 1)]);
+    = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("warden", 1, "dawn", "ai", 1)]);
   game.aiDifficultyMultiplier = 0;
   const evaluator = game.aiController.evaluator;
-  const makeVisible = (id, generalId) =>(
+  const makeVisible = (id, generalId) => (
     {
-      players:[
+      players: [
         {
           id,
           battleTeam: "dawn",
@@ -18340,17 +18346,17 @@ test("AI·角色核心评分：动作基础价值使用角色有效值且刃行�
   const wardenScore = evaluator.actionUtility(action, warden, makeVisible("warden", "oath-warden"));
   // 刃行者 assault = 4+1，守誓者 assault = 4-1；同一目标时伤害/焦点增量完全一致
   assert.equal(bladeScore - wardenScore, 2);
-  assert.equal(bladeScore, assault.aiValue + 1 + 3 +(4 - 1) * 3 + 5 + 8);
-  assert.equal(wardenScore, assault.aiValue - 1 + 3 +(4 - 1) * 3 + 5 + 8);
+  assert.equal(bladeScore, assault.aiValue + 1 + 3 + (4 - 1) * 3 + 5 + 8);
+  assert.equal(wardenScore, assault.aiValue - 1 + 3 + (4 - 1) * 3 + 5 + 8);
 });
 
 test("AI·角色核心评分：无角色差值的卡牌组合仍等于全局基础值", () => {
   const { game }
-  = makeGame([makePlayer("blade", 0, "dawn")]);
+    = makeGame([makePlayer("blade", 0, "dawn")]);
   const evaluator = game.aiController.evaluator;
   const blade = makePlayer("blade", 0, "dawn");
   const visible = {
-    players:[
+    players: [
       {
         id: "blade",
         battleTeam: "dawn",
@@ -18375,11 +18381,11 @@ test("AI·角色核心评分：无角色差值的卡牌组合仍等于全局基�
 
 test("AI·角色核心评分：共生专用公式保留并额外加入角色差量", () => {
   const { game }
-  = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("medic", 1, "dusk", "ai", 2)]);
+    = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("medic", 1, "dusk", "ai", 2)]);
   const evaluator = game.aiController.evaluator;
-  const makeVisible = (id, generalId) =>(
+  const makeVisible = (id, generalId) => (
     {
-      players:[
+      players: [
         {
           id,
           battleTeam: "dawn",
@@ -18406,12 +18412,12 @@ test("AI·角色核心评分：共生专用公式保留并额外加入角色差�
 
 test("AI·角色核心评分：缺少 generalId 或 definitionId 时回退旧基础评分且不抛错", () => {
   const { game }
-  = makeGame([makePlayer("actor", 0, "dawn")]);
+    = makeGame([makePlayer("actor", 0, "dawn")]);
   game.aiDifficultyMultiplier = 0;
   const evaluator = game.aiController.evaluator;
   const actor = makePlayer("actor", 0, "dawn");
   const visible = {
-    players:[
+    players: [
       {
         id: "actor",
         battleTeam: "dawn",
@@ -18430,7 +18436,7 @@ test("AI·角色核心评分：缺少 generalId 或 definitionId 时回退旧基
   const assaultScore = evaluator.actionUtility(
     { type: "card", card: assault, targets: [{ id: "target" }] }, actor, visible
   );
-  assert.equal(assaultScore, assault.aiValue + 3 +(4 - 1) * 3 + 5 + 8);
+  assert.equal(assaultScore, assault.aiValue + 3 + (4 - 1) * 3 + 5 + 8);
   // 缺少 definitionId 的简化卡牌按旧 aiValue 回退
   assert.doesNotThrow(
     () => evaluator.actionUtility(
@@ -18445,7 +18451,7 @@ test("AI·角色核心评分：缺少 generalId 或 definitionId 时回退旧基
   );
   // 简化状态缺少 generalId 时，stateUtility 的手牌与装备角色差量回退 0
   const simplified = {
-    players:[
+    players: [
       {
         id: "actor",
         battleTeam: "dawn",
@@ -18471,11 +18477,11 @@ test("AI·角色核心评分：缺少 generalId 或 definitionId 时回退旧基
 
 test("AI·角色核心评分：手牌数量相同但组成不同时状态评分体现角色差量", () => {
   const { game }
-  = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
+    = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
   const evaluator = game.aiController.evaluator;
-  const makeState = (cards) =>(
+  const makeState = (cards) => (
     {
-      players:[
+      players: [
         {
           id: "viewer",
           battleTeam: "dawn",
@@ -18499,14 +18505,14 @@ test("AI·角色核心评分：手牌数量相同但组成不同时状态评分�
   assert.equal(
     evaluator.stateUtility(
       makeState([assault, assault]), "viewer"
-    )-evaluator.stateUtility(makeState([scout, scout]), "viewer"),
+    ) - evaluator.stateUtility(makeState([scout, scout]), "viewer"),
     4
   );
 });
 
 test("AI·角色核心评分：手牌部分可用概率按剩余可用概率折算角色差量", () => {
   const { game }
-  = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
+    = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
   const evaluator = game.aiController.evaluator;
   const base = {
     id: "viewer",
@@ -18524,27 +18530,27 @@ test("AI·角色核心评分：手牌部分可用概率按剩余可用概率折�
   };
   const full = {
     ...base,
-    hand:[
+    hand: [
       { id: "a", definitionId: "assault", availabilityBranches: [{ probability: 1, conditions: {} }] }
     ]
   };
   const half = {
     ...base,
-    hand:[
+    hand: [
       { id: "a", definitionId: "assault", availabilityBranches: [{ probability: .5, conditions: {} }] }
     ]
   };
   assertClose(
     evaluator.stateUtility(
       { players: [full, enemy] }, "viewer"
-    )-evaluator.stateUtility({ players: [half, enemy] }, "viewer"),
+    ) - evaluator.stateUtility({ players: [half, enemy] }, "viewer"),
     .5
   );
 });
 
 test("AI·角色核心评分：状态评分不读取其他玩家手牌组成", () => {
   const { game }
-  = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
+    = makeGame([makePlayer("viewer", 0, "dawn"), makePlayer("enemy", 1, "dusk")]);
   const evaluator = game.aiController.evaluator;
   const viewer = {
     id: "viewer",
@@ -18578,7 +18584,7 @@ test("AI·角色核心评分：状态评分不读取其他玩家手牌组成", (
 
 test("AI·角色核心评分：初始装备角色差量基线使未变化装备净差量为 0", () => {
   const { game }
-  = makeGame([makePlayer("viewer", 0, "dawn")]);
+    = makeGame([makePlayer("viewer", 0, "dawn")]);
   const evaluator = game.aiController.evaluator;
   const base = {
     id: "viewer",
@@ -18613,12 +18619,12 @@ test("AI·角色核心评分：初始装备角色差量基线使未变化装备�
 
 test("AI·角色核心评分：同一件新装备由不同角色获得时状态差量不同", () => {
   const { game }
-  = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("medic", 1, "dusk", "ai", 2)]);
+    = makeGame([makePlayer("blade", 0, "dawn"), makePlayer("medic", 1, "dusk", "ai", 2)]);
   const evaluator = game.aiController.evaluator;
   const enemy = {
     id: "enemy", battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 0
   };
-  const makeState = (id, generalId) =>(
+  const makeState = (id, generalId) => (
     {
       id,
       battleTeam: "dawn",
@@ -18647,7 +18653,7 @@ test("AI·角色核心评分：同一件新装备由不同角色获得时状态�
 
 test("AI·角色核心评分：换装、丢失与概率获得装备按角色差量计算", () => {
   const { game }
-  = makeGame([makePlayer("viewer", 0, "dawn")]);
+    = makeGame([makePlayer("viewer", 0, "dawn")]);
   const evaluator = game.aiController.evaluator;
   const enemy = {
     id: "enemy", battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 0
@@ -18667,7 +18673,7 @@ test("AI·角色核心评分：换装、丢失与概率获得装备按角色差�
   // 换装到 energyDevice：blade-walker 差量 -1，初始 battleDevice 差量 +1 → 净差量 -2
   const swapped = evaluator.stateUtility(
     {
-      players:[
+      players: [
         {
           ...base,
           equipmentDefinitionId: "energyDevice",
@@ -18681,7 +18687,7 @@ test("AI·角色核心评分：换装、丢失与概率获得装备按角色差�
   );
   const swappedNoBaseline = evaluator.stateUtility(
     {
-      players:[
+      players: [
         {
           ...base,
           initialEquipmentRoleDelta: 0,
@@ -18698,7 +18704,7 @@ test("AI·角色核心评分：换装、丢失与概率获得装备按角色差�
   // 装备丢失：当前保留概率 0，初始差量 1 相对初始差量 0 的角色装备差量为 -1
   const lostWithBaseline = evaluator.stateUtility(
     {
-      players:[
+      players: [
         {
           ...base,
           equipmentDefinitionId: "battleDevice",
@@ -18712,7 +18718,7 @@ test("AI·角色核心评分：换装、丢失与概率获得装备按角色差�
   );
   const lostNoBaseline = evaluator.stateUtility(
     {
-      players:[
+      players: [
         {
           ...base,
           initialEquipmentRoleDelta: 0,
@@ -18729,7 +18735,7 @@ test("AI·角色核心评分：换装、丢失与概率获得装备按角色差�
   // 概率获得已知装备：expectedEquipmentRoleDelta 按接收者角色差量 × 概率
   const gained = evaluator.stateUtility(
     {
-      players:[
+      players: [
         {
           ...base,
           equipmentDefinitionId: null,
@@ -18744,7 +18750,7 @@ test("AI·角色核心评分：换装、丢失与概率获得装备按角色差�
   );
   const noGain = evaluator.stateUtility(
     {
-      players:[
+      players: [
         {
           ...base,
           equipmentDefinitionId: null,
@@ -18762,7 +18768,7 @@ test("AI·角色核心评分：换装、丢失与概率获得装备按角色差�
 
 test("AI·角色核心评分：借势概率获得装备同步接收者角色装备差量", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "actor",
         seatIndex: 0,
@@ -18829,7 +18835,7 @@ test("AI·角色核心评分：借势概率获得装备同步接收者角色装�
   const declineProbability = 1 - first.equipmentRetentionProbability;
   const bladeBattleDeviceDelta = getRoleCardAiValue(
     "blade-walker", "battleDevice"
-  )-getBaseCardAiValue("battleDevice");
+  ) - getBaseCardAiValue("battleDevice");
   assert.ok(declineProbability > 0 && declineProbability < 1);
   assertClose(actor.expectedEquipmentRoleDelta, bladeBattleDeviceDelta * declineProbability);
   assert.ok(actor.expectedEquipmentGain > 0);
@@ -18843,7 +18849,7 @@ test("AI·角色核心评分：真实 Planner 会按角色权重选择不同动�
     actor.hand = [provoke, harvest];
     enemy.hand = [instance("assault")];
     const { game }
-    = makeGame([actor, enemy]);
+      = makeGame([actor, enemy]);
     game.rememberPrivateCard(actor, enemy, enemy.hand[0]);
     game.aiSearchNodeBudgetOverride = 3;
     game.aiRandomnessRange = 0;
@@ -18861,7 +18867,7 @@ test("AI·角色核心评分：真实 Planner 会按角色权重选择不同动�
 test("AI·角色选牌：低血弃牌会保留调息和格挡", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   a.hp = 1;
   a.hand.push(instance("recover"), instance("block"), instance("charge"), instance("assault"));
   const discarded = game.aiController.chooseDiscards(a, 2).map((card) => card.definitionId);
@@ -18874,7 +18880,7 @@ test("AI·角色选牌：自己隐藏牌选择使用角色有效值且刃行者�
   // blade-walker：assault 5、scout 4
   const ally = makePlayer("ally", 1, "dawn");
   const { game }
-  = makeGame([actor, ally], { random: () => 0 });
+    = makeGame([actor, ally], { random: () => 0 });
   const assault = instance("assault"), scout = instance("scout");
   actor.hand = [assault, scout];
   const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1)[0];
@@ -18886,7 +18892,7 @@ test("AI·角色选牌：自己隐藏牌选择随角色不同而不同", () => {
   // oath-warden：assault 3、scout 5
   const ally = makePlayer("ally", 1, "dawn");
   const { game }
-  = makeGame([warden, ally], { random: () => 0 });
+    = makeGame([warden, ally], { random: () => 0 });
   const assault = instance("assault"), scout = instance("scout");
   warden.hand = [assault, scout];
   const chosen = game.aiController.cardSelector.chooseHiddenCards(warden, warden, 1)[0];
@@ -18898,7 +18904,7 @@ test("AI·角色选牌：自己隐藏牌相同角色价值时保持原始位置"
   // blade-walker：assault 5、transfer 5
   const ally = makePlayer("ally", 1, "dawn");
   const { game }
-  = makeGame([actor, ally], { random: () => 0 });
+    = makeGame([actor, ally], { random: () => 0 });
   const assault = instance("assault"), transfer = instance("transfer");
   actor.hand = [assault, transfer];
   const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1)[0];
@@ -18909,7 +18915,7 @@ test("AI·角色选牌：自己隐藏牌选择仍遵循 excludedCardIds", () => 
   const actor = makePlayer("actor", 0, "dawn");
   const ally = makePlayer("ally", 1, "dawn");
   const { game }
-  = makeGame([actor, ally], { random: () => 0 });
+    = makeGame([actor, ally], { random: () => 0 });
   const assault = instance("assault"), scout = instance("scout");
   actor.hand = [assault, scout];
   const chosen = game.aiController.cardSelector.chooseHiddenCards(
@@ -18923,7 +18929,7 @@ test("AI·角色选牌：自己隐藏牌选择不调用随机数", () => {
   const ally = makePlayer("ally", 1, "dawn");
   let randomCalls = 0;
   const { game }
-  = makeGame([actor, ally], { random: () => { randomCalls+=1; return 0; } });
+    = makeGame([actor, ally], { random: () => { randomCalls += 1; return 0; } });
   const assault = instance("assault"), scout = instance("scout");
   actor.hand = [assault, scout];
   game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1);
@@ -18934,7 +18940,7 @@ test("AI·角色选牌：transfer purpose 不进入自己手牌角色价值分�
   const actor = makePlayer("actor", 0, "dawn");
   const receiver = makePlayer("receiver", 1, "dawn", "ai", 2);
   const { game }
-  = makeGame([actor, receiver], { random: () => 0 });
+    = makeGame([actor, receiver], { random: () => 0 });
   const assault = instance("assault"), recover = instance("recover");
   actor.hand = [assault, recover];
   const candidate = chooseTransferHandCandidate(actor, actor, receiver);
@@ -18949,7 +18955,7 @@ test("AI·角色选牌：expectedCardValue 自己已知手牌返回角色有效�
   const blade = makePlayer("blade", 0, "dawn");
   const warden = makePlayer("warden", 1, "dawn", "ai", 1);
   const { game }
-  = makeGame([blade, warden], { random: () => 0 });
+    = makeGame([blade, warden], { random: () => 0 });
   const assault = instance("assault");
   blade.hand = [assault];
   warden.hand = [assault];
@@ -18962,7 +18968,7 @@ test("AI·角色选牌：expectedCardValue 他人牌仍使用未知固定值与�
   const medic = makePlayer("medic", 1, "dusk", "ai", 2);
   // spirit-medic
   const { game }
-  = makeGame([actor, medic], { random: () => 0 });
+    = makeGame([actor, medic], { random: () => 0 });
   const recover = instance("recover");
   medic.hand = [recover];
   assert.equal(game.aiController.cardSelector.expectedCardValue(actor, medic, recover), 4);
@@ -18974,7 +18980,7 @@ test("AI·角色选牌：公开池影客优先选 scout 而灵医优先选 recov
   const shade = makePlayer("shade", 0, "dawn", "ai", 3);
   const medic = makePlayer("medic", 1, "dawn", "ai", 2);
   const { game }
-  = makeGame([shade, medic], { random: () => 0 });
+    = makeGame([shade, medic], { random: () => 0 });
   const scout = instance("scout"), recover = instance("recover");
   const pool = [scout, recover];
   const before = pool.map((card) => card.id);
@@ -18988,7 +18994,7 @@ test("AI·角色选牌：公开池相同价值保持原始顺序且空池返回 
   const shade = makePlayer("shade", 0, "dawn", "ai", 3);
   const ally = makePlayer("ally", 1, "dawn");
   const { game }
-  = makeGame([shade, ally], { random: () => 0 });
+    = makeGame([shade, ally], { random: () => 0 });
   const plunder = instance("plunder"), destroy = instance("destroy");
   // 影客两者均为 8
   const selector = game.aiController.cardSelector;
@@ -19000,7 +19006,7 @@ test("AI·角色选牌：弃牌使用角色有效值且刃行者弃置 scout", (
   const actor = makePlayer("actor", 0, "dawn");
   const enemy = makePlayer("enemy", 1, "dusk");
   const { game }
-  = makeGame([actor, enemy], { random: () => 0 });
+    = makeGame([actor, enemy], { random: () => 0 });
   const assault = instance("assault"), scout = instance("scout");
   actor.hand = [assault, scout];
   const discarded = game.aiController.chooseDiscards(actor, 1).map((card) => card.definitionId);
@@ -19012,7 +19018,7 @@ test("AI·角色选牌：弃牌不同角色对同一手牌结果不同", () => {
   const warden = makePlayer("warden", 0, "dawn", "ai", 1);
   const enemy = makePlayer("enemy", 1, "dusk");
   const { game }
-  = makeGame([warden, enemy], { random: () => 0 });
+    = makeGame([warden, enemy], { random: () => 0 });
   const assault = instance("assault"), scout = instance("scout");
   warden.hand = [assault, scout];
   const discarded = game.aiController.chooseDiscards(warden, 1).map((card) => card.definitionId);
@@ -19023,7 +19029,7 @@ test("AI·角色选牌：弃牌 count>1 时按角色有效值升序且同分保�
   const actor = makePlayer("actor", 0, "dawn");
   const enemy = makePlayer("enemy", 1, "dusk");
   const { game }
-  = makeGame([actor, enemy], { random: () => 0 });
+    = makeGame([actor, enemy], { random: () => 0 });
   const assault = instance("assault"), scout = instance("scout"), block = instance("block");
   actor.hand = [assault, scout, block];
   const discarded = game.aiController.chooseDiscards(actor, 2).map((card) => card.definitionId);
@@ -19036,7 +19042,7 @@ test("AI·角色选牌：弃牌原有动态修正全部保留", () => {
   // 满血 recover -2：刃行者 recover 6→4、shield 5 → 弃 recover
   const fullHp = makePlayer("full", 0, "dawn");
   const { game: fullGame }
-  = makeGame([fullHp, enemy], { random: () => 0 });
+    = makeGame([fullHp, enemy], { random: () => 0 });
   fullHp.hand = [recover, shield];
   assert.deepEqual(
     fullGame.aiController.chooseDiscards(fullHp, 1).map((card) => card.definitionId), ["recover"]
@@ -19044,7 +19050,7 @@ test("AI·角色选牌：弃牌原有动态修正全部保留", () => {
   // 濒死 recover +7 与 block +6：弃 charge/assault 而保留 recover/block
   const lowHp = makePlayer("low", 0, "dawn");
   const { game: lowGame }
-  = makeGame([lowHp, enemy], { random: () => 0 });
+    = makeGame([lowHp, enemy], { random: () => 0 });
   lowHp.hp = 1;
   const block = instance("block"), charge = instance("charge"), assault = instance("assault");
   lowHp.hand = [recover, block, charge, assault];
@@ -19054,7 +19060,7 @@ test("AI·角色选牌：弃牌原有动态修正全部保留", () => {
   const symbiosis = instance("symbiosis");
   const gambler = makePlayer("gambler", 0, "dawn");
   const { game: symbiosisGame }
-  = makeGame([gambler, enemy], { random: () => 0 });
+    = makeGame([gambler, enemy], { random: () => 0 });
   gambler.hand = [assault, symbiosis];
   assert.deepEqual(
     symbiosisGame.aiController.chooseDiscards(gambler, 1).map((card) => card.definitionId),
@@ -19067,7 +19073,7 @@ test("AI·角色选牌：弃牌原有动态修正全部保留", () => {
   const tailA = makePlayer("tail-a", 3, "dawn");
   const tailB = makePlayer("tail-b", 4, "dawn");
   const { game: strandedGame }
-  = makeGame([stranded, ally, farEnemy, tailA, tailB], { random: () => 0 });
+    = makeGame([stranded, ally, farEnemy, tailA, tailB], { random: () => 0 });
   const scout = instance("scout");
   stranded.hand = [assault, scout];
   assert.deepEqual(
@@ -19079,7 +19085,7 @@ test("AI·角色选牌：其他玩家已知牌排序仍使用全局基础值而�
   const actor = makePlayer("actor", 0, "dawn");
   const shade = makePlayer("shade", 1, "dusk", "ai", 3);
   const { game }
-  = makeGame([actor, shade], { random: () => 0.99 });
+    = makeGame([actor, shade], { random: () => 0.99 });
   const scout = instance("scout"), recover = instance("recover");
   shade.hand = [scout, recover];
   game.rememberPrivateCard(actor, shade, scout);
@@ -19097,7 +19103,7 @@ test("AI·资源选择：破坏已知手牌使用目标角色价值", () => {
   const shade = makePlayer("shade", 1, "dusk", "ai", 3);
   // shade-agent：scout 7、recover 5
   const { game }
-  = makeGame([actor, shade], { random: () => 0 });
+    = makeGame([actor, shade], { random: () => 0 });
   const scout = instance("scout"), recover = instance("recover");
   shade.hand = [scout, recover];
   game.rememberPrivateCard(actor, shade, scout);
@@ -19113,7 +19119,7 @@ test("AI·资源选择：破坏相同牌组随目标角色变化", () => {
   const medic = makePlayer("medic", 1, "dusk", "ai", 2);
   // spirit-medic：scout 6、recover 8
   const { game }
-  = makeGame([actor, medic], { random: () => 0 });
+    = makeGame([actor, medic], { random: () => 0 });
   const scout = instance("scout"), recover = instance("recover");
   medic.hand = [scout, recover];
   game.rememberPrivateCard(actor, medic, scout);
@@ -19130,7 +19136,7 @@ test("AI·资源选择：破坏未知牌仍按固定期望值 4 选择位置且�
   // oath-warden：assault 3 < 未知 4
   let randomCalls = 0;
   const { game }
-  = makeGame([actor, warden], { random: () => { randomCalls+=1; return 0; } });
+    = makeGame([actor, warden], { random: () => { randomCalls += 1; return 0; } });
   const knownAssault = instance("assault"), unknown = instance("counter");
   warden.hand = [knownAssault, unknown];
   game.rememberPrivateCard(actor, warden, knownAssault);
@@ -19152,7 +19158,7 @@ test("AI·资源选择：破坏不因未知实体真实牌面改变选择位置"
     const target = makePlayer("target", 1, "dusk");
     // oath-warden
     const { game }
-    = makeGame([actor, target], { random: () => 0.5 });
+      = makeGame([actor, target], { random: () => 0.5 });
     const knownAssault = instance("assault");
     target.hand = [knownAssault, unknownCard];
     game.rememberPrivateCard(actor, target, knownAssault);
@@ -19175,7 +19181,7 @@ test("AI·资源选择：破坏手牌与装备比较使用目标角色价值", (
   const medic = makePlayer("medic", 1, "dusk", "ai", 2);
   // spirit-medic：recover 8、energyDevice 7
   const { game }
-  = makeGame([actor, medic], { random: () => 0 });
+    = makeGame([actor, medic], { random: () => 0 });
   const recover = instance("recover");
   medic.hand = [recover];
   medic.equipment = instance("energyDevice");
@@ -19189,7 +19195,7 @@ test("AI·资源选择：掠夺使用双角色效用而非破坏的单角色损�
   const actor = makePlayer("actor", 0, "dawn");
   const medic = makePlayer("medic", 1, "dusk", "ai", 2);
   const { game }
-  = makeGame([actor, medic], { random: () => 0 });
+    = makeGame([actor, medic], { random: () => 0 });
   const block = instance("block");
   medic.hand = [block];
   medic.equipment = instance("energyDevice");
@@ -19211,7 +19217,7 @@ test("AI·资源选择：破坏同分时优先手牌且已知手牌同分保持�
   const warden = makePlayer("warden", 1, "dusk", "ai", 1);
   // oath-warden：block 7、transfer 7
   const { game }
-  = makeGame([actor, warden], { random: () => 0 });
+    = makeGame([actor, warden], { random: () => 0 });
   const block = instance("block"), transfer = instance("transfer");
   warden.hand = [block, transfer];
   game.rememberPrivateCard(actor, warden, block);
@@ -19233,7 +19239,7 @@ test("AI·资源选择：非破坏非掠夺的装备阈值分支保持不变", (
   const actor = makePlayer("actor", 0, "dawn");
   const enemy = makePlayer("enemy", 1, "dusk");
   const { game }
-  = makeGame([actor, enemy], { random: () => 0 });
+    = makeGame([actor, enemy], { random: () => 0 });
   enemy.equipment = instance("energyDevice");
   enemy.hand = [];
   const chosen = game.aiController.cardSelector.chooseZoneCard(actor, enemy, null);
@@ -19245,7 +19251,7 @@ test("AI·资源选择：掠夺使用者角色影响已知手牌选择", () => {
   const shade = makePlayer("shade", 0, "dawn", "ai", 3);
   const blade = makePlayer("blade", 1, "dusk", "ai", 0);
   const { game }
-  = makeGame([shade, blade], { random: () => 0 });
+    = makeGame([shade, blade], { random: () => 0 });
   const recover = instance("recover"), block = instance("block");
   blade.hand = [recover, block];
   game.rememberPrivateCard(shade, blade, recover);
@@ -19258,7 +19264,7 @@ test("AI·资源选择：掠夺使用者角色影响已知手牌选择", () => {
   const medic = makePlayer("medic", 2, "dawn", "ai", 2);
   const bladeTwo = makePlayer("blade-two", 3, "dusk", "ai", 0);
   const { game: medicGame }
-  = makeGame([medic, bladeTwo], { random: () => 0 });
+    = makeGame([medic, bladeTwo], { random: () => 0 });
   const recoverTwo = instance("recover"), blockTwo = instance("block");
   bladeTwo.hand = [recoverTwo, blockTwo];
   medicGame.rememberPrivateCard(medic, bladeTwo, recoverTwo);
@@ -19274,7 +19280,7 @@ test("AI·资源选择：掠夺目标角色影响已知手牌选择", () => {
   const blade = makePlayer("blade", 0, "dawn", "ai", 0);
   const ember = makePlayer("ember", 1, "dusk", "ai", 4);
   const { game }
-  = makeGame([blade, ember], { random: () => 0 });
+    = makeGame([blade, ember], { random: () => 0 });
   const assault = instance("assault"), block = instance("block");
   ember.hand = [assault, block];
   game.rememberPrivateCard(blade, ember, assault);
@@ -19287,7 +19293,7 @@ test("AI·资源选择：掠夺目标角色影响已知手牌选择", () => {
   const bladeTwo = makePlayer("blade-two", 0, "dawn", "ai", 0);
   const warden = makePlayer("warden", 1, "dusk", "ai", 1);
   const { game: wardenGame }
-  = makeGame([bladeTwo, warden], { random: () => 0 });
+    = makeGame([bladeTwo, warden], { random: () => 0 });
   const assaultTwo = instance("assault"), blockTwo = instance("block");
   warden.hand = [assaultTwo, blockTwo];
   wardenGame.rememberPrivateCard(bladeTwo, warden, assaultTwo);
@@ -19304,7 +19310,7 @@ test("AI·资源选择：掠夺未知敌方牌组合效用为 8", () => {
   const warden = makePlayer("warden", 1, "dusk", "ai", 1);
   let randomCalls = 0;
   const { game }
-  = makeGame([medic, warden], { random: () => { randomCalls+=1; return 0; } });
+    = makeGame([medic, warden], { random: () => { randomCalls += 1; return 0; } });
   const knownAssault = instance("assault"), unknown = instance("counter");
   warden.hand = [knownAssault, unknown];
   game.rememberPrivateCard(medic, warden, knownAssault);
@@ -19322,7 +19328,7 @@ test("AI·资源选择：掠夺不因未知实体真实牌面改变选择位置"
     const medic = makePlayer("medic", 0, "dawn", "ai", 2);
     const warden = makePlayer("warden", 1, "dusk", "ai", 1);
     const { game }
-    = makeGame([medic, warden], { random: () => 0.5 });
+      = makeGame([medic, warden], { random: () => 0.5 });
     const knownAssault = instance("assault");
     warden.hand = [knownAssault, unknownCard];
     game.rememberPrivateCard(medic, warden, knownAssault);
@@ -19344,7 +19350,7 @@ test("AI·资源选择：掠夺手牌与装备比较使用双角色效用", () =
   const medic = makePlayer("medic", 0, "dawn", "ai", 2);
   const blade = makePlayer("blade", 1, "dusk", "ai", 0);
   const { game }
-  = makeGame([medic, blade], { random: () => 0 });
+    = makeGame([medic, blade], { random: () => 0 });
   const recover = instance("recover");
   blade.hand = [recover];
   blade.equipment = instance("energyDevice");
@@ -19359,7 +19365,7 @@ test("AI·资源选择：掠夺同分时优先手牌", () => {
   const medic = makePlayer("medic", 0, "dawn", "ai", 2);
   const blade = makePlayer("blade", 1, "dusk", "ai", 0);
   const { game }
-  = makeGame([medic, blade], { random: () => 0 });
+    = makeGame([medic, blade], { random: () => 0 });
   const plunder = instance("plunder");
   blade.hand = [plunder];
   blade.equipment = instance("energyDevice");
@@ -19374,7 +19380,7 @@ test("AI·资源选择：同阵营掠夺辅助语义使用差值而非相加", (
   const blade = makePlayer("blade", 0, "dawn", "ai", 0);
   const warden = makePlayer("warden", 1, "dawn", "ai", 1);
   const { game }
-  = makeGame([blade, warden], { random: () => 0 });
+    = makeGame([blade, warden], { random: () => 0 });
   const knownBlock = instance("block"), unknown = instance("counter");
   warden.hand = [knownBlock, unknown];
   game.rememberPrivateCard(blade, warden, knownBlock);
@@ -19429,7 +19435,7 @@ test("AI·资源选择：手牌候选：已知最高、同分保持较早位置"
       purpose: "plunder",
       actor,
       owner,
-      knownCards:[
+      knownCards: [
         { cardId: "r", definitionId: "recover" },
         // 11
         { cardId: "b", definitionId: "block" } // 12
@@ -19563,7 +19569,7 @@ test("AI·资源选择：随机调用：已知手牌胜出不调用随机数", (
   // blade-walker
   let randomCalls = 0;
   const { game }
-  = makeGame([actor, owner], { random: () => { randomCalls+=1; return 0; } });
+    = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
   const recover = instance("recover"), block = instance("block");
   owner.hand = [recover, block];
   game.rememberPrivateCard(actor, owner, recover);
@@ -19580,7 +19586,7 @@ test("AI·资源选择：随机调用：未知手牌胜出调用一次随机数"
   const owner = makePlayer("owner", 1, "dusk", "ai", 1);
   let randomCalls = 0;
   const { game }
-  = makeGame([actor, owner], { random: () => { randomCalls+=1; return 0; } });
+    = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
   const knownAssault = instance("assault"), unknown = instance("counter");
   owner.hand = [knownAssault, unknown];
   game.rememberPrivateCard(actor, owner, knownAssault);
@@ -19597,7 +19603,7 @@ test("AI·资源选择：随机调用：未知候选存在但装备胜出仍调�
   // oath-warden
   let randomCalls = 0;
   const { game }
-  = makeGame([actor, owner], { random: () => { randomCalls+=1; return 0; } });
+    = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
   owner.hand = [instance("counter")];
   // 未知，破坏值 4
   owner.equipment = instance("energyDevice");
@@ -19612,7 +19618,7 @@ test("AI·资源选择：随机调用：只有装备且没有手牌不调用随�
   const owner = makePlayer("owner", 1, "dusk");
   let randomCalls = 0;
   const { game }
-  = makeGame([actor, owner], { random: () => { randomCalls+=1; return 0; } });
+    = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
   owner.equipment = instance("energyDevice");
   owner.hand = [];
   const chosen = game.aiController.cardSelector.chooseZoneCard(actor, owner, { purpose: "destroy" });
@@ -19625,7 +19631,7 @@ test("AI·资源选择：随机调用：多选两张未知牌各调用一次随�
   const owner = makePlayer("owner", 1, "dusk");
   let randomCalls = 0;
   const { game }
-  = makeGame([actor, owner], { random: () => { randomCalls+=1; return 0; } });
+    = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
   owner.hand = [instance("counter"), instance("charge")];
   const chosen = game.aiController.cardSelector.chooseHiddenCards(
     actor, owner, 2, null, { purpose: "destroy" }
@@ -19636,7 +19642,7 @@ test("AI·资源选择：随机调用：多选两张未知牌各调用一次随�
 
 test("AI·资源选择：破坏模拟使用共享区域选择：灵医已知调息优先于充能桩", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         battleTeam: "dawn",
@@ -19671,7 +19677,7 @@ test("AI·资源选择：破坏模拟使用共享区域选择：灵医已知调�
 test("AI·资源选择：破坏模拟区域选择随目标角色变化", () => {
   const run = (generalId) => {
     const state = {
-      players:[
+      players: [
         {
           id: "a",
           battleTeam: "dawn",
@@ -19711,7 +19717,7 @@ test("AI·资源选择：破坏模拟区域选择随目标角色变化", () => {
 
 test("AI·资源选择：破坏模拟同分时优先手牌", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         battleTeam: "dawn",
@@ -19744,7 +19750,7 @@ test("AI·资源选择：破坏模拟同分时优先手牌", () => {
 
 test("AI·资源选择：破坏模拟只有装备时破坏装备", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         battleTeam: "dawn",
@@ -19776,7 +19782,7 @@ test("AI·资源选择：破坏模拟只有装备时破坏装备", () => {
 
 test("AI·资源选择：破坏模拟只有手牌时聚合消费手牌", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         battleTeam: "dawn",
@@ -19808,7 +19814,7 @@ test("AI·资源选择：破坏模拟只有手牌时聚合消费手牌", () => {
 
 test("AI·资源选择：破坏模拟没有资源时状态不变且不抛错", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         battleTeam: "dawn",
@@ -19870,9 +19876,9 @@ test("AI·资源选择：破坏模拟不读取目标隐藏 hand 实体定义", (
     { players: [] }, actor, target, "destroy"
   );
   assert.equal(selection.zone, "equipment");
-  const buildState = (hiddenDefinitionId) =>(
+  const buildState = (hiddenDefinitionId) => (
     {
-      players:[
+      players: [
         {
           id: "a",
           battleTeam: "dawn",
@@ -19911,7 +19917,7 @@ test("AI·资源选择：破坏模拟不读取目标隐藏 hand 实体定义", (
 
 test("AI·资源选择：破坏模拟陈旧 knownCards 保守回退为未知聚合", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         battleTeam: "dawn",
@@ -19945,7 +19951,7 @@ test("AI·资源选择：破坏模拟陈旧 knownCards 保守回退为未知聚�
 
 test("AI·资源选择：破坏模拟 knownCards 数量一致时参与共享选择", () => {
   const state = {
-    players:[
+    players: [
       {
         id: "a",
         battleTeam: "dawn",
@@ -19980,10 +19986,10 @@ test("AI·资源选择：破坏模拟 knownCards 数量一致时参与共享选�
 test("AI·资源选择：破坏模拟 scale 三档：手牌与装备", () => {
   const availability = (entry) => Array.isArray(
     entry?.availabilityStateBranches
-  )? entry.availabilityStateBranches.filter((branch) => branch.available).reduce((sum, branch) => sum + branch.probability, 0): 1;
+  ) ? entry.availabilityStateBranches.filter((branch) => branch.available).reduce((sum, branch) => sum + branch.probability, 0) : 1;
   const runHand = (scale) => {
     const state = {
-      players:[
+      players: [
         {
           id: "a",
           battleTeam: "dawn",
@@ -20023,7 +20029,7 @@ test("AI·资源选择：破坏模拟 scale 三档：手牌与装备", () => {
   assert.deepEqual(fullHand.knownCards, []);
   const runEquipment = (scale) => {
     const state = {
-      players:[
+      players: [
         {
           id: "a",
           battleTeam: "dawn",
@@ -20401,7 +20407,7 @@ test("AI·资源选择：掠夺模拟 knownCards 可信时参与双角色比较"
 test("AI·资源选择：掠夺模拟 scale 三档：手牌", () => {
   const availability = (entry) => Array.isArray(
     entry?.availabilityStateBranches
-  )? entry.availabilityStateBranches.filter((branch) => branch.available).reduce((sum, branch) => sum + branch.probability, 0): 1;
+  ) ? entry.availabilityStateBranches.filter((branch) => branch.available).reduce((sum, branch) => sum + branch.probability, 0) : 1;
   const run = (scale) => {
     const simulator = new AiSimulator({ players: [] });
     const actor = {
@@ -20486,7 +20492,7 @@ test("AI·资源选择：掠夺模拟 scale 三档：装备", () => {
       half.actor.hand[
         0
       ].availabilityStateBranches.filter((branch) => branch.available).reduce((sum, branch) => sum + branch.probability, 0) - 0.5
-    )< 1e-9
+    ) < 1e-9
   );
   assert.equal(full.actor.hand.length, 1);
   assert.equal(full.actor.hand[0].definitionId, "energyDevice");
@@ -20496,7 +20502,7 @@ test("AI·资源选择：掠夺模拟 scale 三档：装备", () => {
       full.actor.hand[
         0
       ].availabilityStateBranches.filter((branch) => branch.available).reduce((sum, branch) => sum + branch.probability, 0) - 1
-    )< 1e-9
+    ) < 1e-9
   );
 });
 
@@ -20511,7 +20517,7 @@ test("AI·资源选择：掠夺模拟共享模块单一公式来源", async () =
 test("AI·转移评分：掠夺选择已知高价值手牌而非较低价值装备", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b], { random: () => 0 });
+    = makeGame([a, b], { random: () => 0 });
   const low = instance("block"), high = instance("counter");
   b.hand = [low, high];
   b.equipment = instance("energyDevice");
@@ -20524,7 +20530,7 @@ test("AI·转移评分：掠夺选择已知高价值手牌而非较低价值装�
 test("AI·转移评分：掠夺装备价值高于手牌与未知期望值时选择装备", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b], { random: () => 0 });
+    = makeGame([a, b], { random: () => 0 });
   b.hand.push(instance("charge"));
   b.equipment = instance("energyDevice");
   const chosen = game.aiController.cardSelector.chooseZoneCard(a, b, { purpose: "plunder" });
@@ -20535,15 +20541,15 @@ test("AI·转移评分：掠夺装备价值高于手牌与未知期望值时选�
 test("AI·转移评分：破坏把未知位置按期望值4比较且不读取真实牌面", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b], { random: () => 0 });
+    = makeGame([a, b], { random: () => 0 });
   const known = instance("block"), unknown = instance("counter");
   let reads = 0;
   const definitionId = unknown.definitionId, aiValue = unknown.aiValue;
   Object.defineProperty(
-    unknown, "definitionId", { configurable: true, get() { reads+=1; return definitionId; } }
+    unknown, "definitionId", { configurable: true, get() { reads += 1; return definitionId; } }
   );
   Object.defineProperty(
-    unknown, "aiValue", { configurable: true, get() { reads+=1; return aiValue; } }
+    unknown, "aiValue", { configurable: true, get() { reads += 1; return aiValue; } }
   );
   b.hand = [known, unknown];
   game.rememberPrivateCard(a, b, known);
@@ -20556,7 +20562,7 @@ test("AI·转移评分：破坏把未知位置按期望值4比较且不读取真
 test("AI·转移评分：choosePlayerZoneCard 向手牌选择传递 excludedCardIds", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b], { random: () => 0 });
+    = makeGame([a, b], { random: () => 0 });
   const high = instance("counter"), low = instance("block");
   b.hand = [high, low];
   game.rememberPrivateCard(a, b, high);
@@ -20574,7 +20580,7 @@ test("AI·转移评分：对己方来源到敌方接收返回负无穷", () => {
     receiver = makePlayer("receiver", 2, "dusk");
   from.hand.push(instance("block"));
   const { game }
-  = makeGame([actor, from, receiver]);
+    = makeGame([actor, from, receiver]);
   assert.equal(
     scoreTransferCombination({ actor, from, receiver, zone: "hand" }), Number.NEGATIVE_INFINITY
   );
@@ -20588,7 +20594,7 @@ test("AI·转移评分：转移候选不包含己方来源到敌方接收组合"
   from.hp = 1;
   from.hand.push(instance("charge"), instance("assault"));
   const { game }
-  = makeGame([actor, from, enemy, ally]);
+    = makeGame([actor, from, enemy, ally]);
   const candidates = buildTransferCandidates(
     { actor, sources: [from], getReceivers: () => [enemy, ally] }
   );
@@ -20609,7 +20615,7 @@ test("AI·转移评分：异常己方给敌方转移计划在准备阶段被拒�
   actor.hand.push(use);
   from.hand.push(held);
   const { game }
-  = makeGame([actor, from, receiver]);
+    = makeGame([actor, from, receiver]);
   assert.equal(
     await game.prepareTransferIntent(
       actor, use, { sourceId: from.id, receiverId: receiver.id, zone: "hand" }
@@ -20629,7 +20635,7 @@ test("AI·转移评分：真人仍可把己方手牌转移给敌方", async () =
   from.hand.push(held);
   from.bumpHandVersion();
   const { game }
-  = makeGame([actor, from, receiver]);
+    = makeGame([actor, from, receiver]);
   const prepared = await game.prepareTransferIntent(
     actor, use, { sourceId: from.id, receiverId: receiver.id, zone: "hand" }
   );
@@ -20643,7 +20649,7 @@ test("AI·转移评分：转移己方到己方选择受伤接收者更需要的�
     from = makePlayer("from", 1, "dawn"),
     receiver = makePlayer("receiver", 2, "dawn");
   const { game }
-  = makeGame([actor, from, receiver], { random: () => 0 });
+    = makeGame([actor, from, receiver], { random: () => 0 });
   const assault = instance("assault"), recover = instance("recover");
   from.hand = [assault, recover];
   game.rememberPrivateCard(actor, from, assault);
@@ -20660,7 +20666,7 @@ test("AI·转移评分：转移己方到己方选择低血接收者更需要的�
     from = makePlayer("from", 1, "dawn"),
     receiver = makePlayer("receiver", 2, "dawn");
   const { game }
-  = makeGame([actor, from, receiver], { random: () => 0 });
+    = makeGame([actor, from, receiver], { random: () => 0 });
   const charge = instance("charge"), block = instance("block");
   from.hand = [charge, block];
   game.rememberPrivateCard(actor, from, charge);
@@ -20677,7 +20683,7 @@ test("AI·转移评分：转移己方到己方不转走来源更需要的已知�
     from = makePlayer("from", 1, "dawn"),
     receiver = makePlayer("receiver", 2, "dawn");
   const { game }
-  = makeGame([actor, from, receiver], { random: () => 0 });
+    = makeGame([actor, from, receiver], { random: () => 0 });
   const recover = instance("recover"), charge = instance("charge");
   from.hand = [recover, charge];
   game.rememberPrivateCard(actor, from, recover);
@@ -20697,7 +20703,7 @@ test("AI·转移评分：转移己方到己方无溢出且无正支援收益时�
   actor.hand.push(use);
   from.hand.push(charge);
   const { game }
-  = makeGame([actor, from, receiver]);
+    = makeGame([actor, from, receiver]);
   game.rememberPrivateCard(actor, from, charge);
   assert.equal(
     game.aiController.actionGenerator.generate(actor).some((entry) => entry.card?.id === use.id), false
@@ -20713,7 +20719,7 @@ test("AI·转移评分：转移己方到己方未知牌只在溢出空间收益�
   const known = instance("block"), unknown = instance("charge");
   from.hand = [known, unknown];
   const { game }
-  = makeGame([actor, from, receiver], { random: () => 0 });
+    = makeGame([actor, from, receiver], { random: () => 0 });
   game.rememberPrivateCard(actor, from, known);
   from.hp = 3;
   assert.equal(
@@ -20735,7 +20741,7 @@ test("AI·转移评分：转移敌方到己方选择团队净收益最高的已�
     from = makePlayer("from", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dawn");
   const { game }
-  = makeGame([actor, from, receiver], { random: () => 0 });
+    = makeGame([actor, from, receiver], { random: () => 0 });
   const low = instance("charge"), high = instance("counter");
   from.hand = [low, high];
   game.rememberPrivateCard(actor, from, low);
@@ -20751,15 +20757,15 @@ test("AI·转移评分：转移敌方到己方已知与未知期望值4混合时
     from = makePlayer("from", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dawn", "ai", 0);
   const { game }
-  = makeGame([actor, from, receiver], { random: () => 0 });
+    = makeGame([actor, from, receiver], { random: () => 0 });
   const known = instance("assault"), unknown = instance("counter");
   let reads = 0;
   const definitionId = unknown.definitionId, aiValue = unknown.aiValue;
   Object.defineProperty(
-    unknown, "definitionId", { configurable: true, get() { reads+=1; return definitionId; } }
+    unknown, "definitionId", { configurable: true, get() { reads += 1; return definitionId; } }
   );
   Object.defineProperty(
-    unknown, "aiValue", { configurable: true, get() { reads+=1; return aiValue; } }
+    unknown, "aiValue", { configurable: true, get() { reads += 1; return aiValue; } }
   );
   from.hand = [known, unknown];
   game.rememberPrivateCard(actor, from, known);
@@ -20775,15 +20781,15 @@ test("AI·转移评分：转移敌方到己方未知候选胜出时只随机未�
     from = makePlayer("from", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dawn");
   const { game }
-  = makeGame([actor, from, receiver], { random: () => 0.6 });
+    = makeGame([actor, from, receiver], { random: () => 0.6 });
   const first = instance("charge"), second = instance("assault");
   let reads = 0;
   for (const card of [first, second]) {
     const definitionId = card.definitionId, aiValue = card.aiValue;
     Object.defineProperty(
-      card, "definitionId", { configurable: true, get() { reads+=1; return definitionId; } }
+      card, "definitionId", { configurable: true, get() { reads += 1; return definitionId; } }
     );
-    Object.defineProperty(card, "aiValue", { configurable: true, get() { reads+=1; return aiValue; } });
+    Object.defineProperty(card, "aiValue", { configurable: true, get() { reads += 1; return aiValue; } });
   } from.hand = [first, second];
   const candidate = chooseTransferHandCandidate(actor, from, receiver);
   assert.equal(candidate.selectionKind, "unknown");
@@ -20800,7 +20806,7 @@ test("AI·转移评分：敌方到敌方高威胁来源低威胁接收者且净�
     source = makePlayer("source", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dusk");
   const { game }
-  = makeGame([actor, source, receiver]);
+    = makeGame([actor, source, receiver]);
   const block = instance("block");
   source.hand.push(block);
   game.rememberPrivateCard(actor, source, block);
@@ -20822,7 +20828,7 @@ test("AI·转移评分：敌方到敌方威胁差不足时不生成", () => {
     source = makePlayer("source", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dusk");
   const { game }
-  = makeGame([actor, source, receiver]);
+    = makeGame([actor, source, receiver]);
   const block = instance("block");
   source.hand.push(block);
   game.rememberPrivateCard(actor, source, block);
@@ -20839,7 +20845,7 @@ test("AI·转移评分：敌方到敌方低威胁来源高威胁接收者不生�
     source = makePlayer("source", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dusk");
   const { game }
-  = makeGame([actor, source, receiver]);
+    = makeGame([actor, source, receiver]);
   const block = instance("block");
   source.hand.push(block);
   game.rememberPrivateCard(actor, source, block);
@@ -20858,7 +20864,7 @@ test("AI·转移评分：敌方到敌方接收者收益抵消来源损失时不�
     source = makePlayer("source", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dusk");
   const { game }
-  = makeGame([actor, source, receiver]);
+    = makeGame([actor, source, receiver]);
   const block = instance("block");
   source.hand.push(block);
   game.rememberPrivateCard(actor, source, block);
@@ -20878,7 +20884,7 @@ test("AI·转移评分：敌方到敌方极小正分被专用门槛拒绝", () =
     source = makePlayer("source", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dusk");
   const { game }
-  = makeGame([actor, source, receiver]);
+    = makeGame([actor, source, receiver]);
   const charge = instance("charge");
   source.hand.push(charge);
   game.rememberPrivateCard(actor, source, charge);
@@ -20901,7 +20907,7 @@ test("AI·转移评分：与执行对同一已知牌选择一致", () => {
     from = makePlayer("from", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dawn");
   const { game }
-  = makeGame([actor, from, receiver], { random: () => 0 });
+    = makeGame([actor, from, receiver], { random: () => 0 });
   const low = instance("block"), high = instance("counter");
   from.hand = [low, high];
   game.rememberPrivateCard(actor, from, low);
@@ -20920,7 +20926,7 @@ test("AI·转移评分：选择未知候选时执行只从未知位置随机选�
     from = makePlayer("from", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dawn");
   const { game }
-  = makeGame([actor, from, receiver], { random: () => 0.6 });
+    = makeGame([actor, from, receiver], { random: () => 0.6 });
   const first = instance("charge"), second = instance("assault");
   from.hand = [first, second];
   const candidate = chooseTransferHandCandidate(actor, from, receiver);
@@ -20957,7 +20963,7 @@ test("AI·转移评分：真实与深层模拟选择相同来源接收者及候�
   actor.hand.push(use);
   enemy.hand.push(held);
   const { game }
-  = makeGame([actor, enemy, ally]);
+    = makeGame([actor, enemy, ally]);
   game.rememberPrivateCard(actor, enemy, held);
   const realAction = game.aiController.actionGenerator.generate(
     actor
@@ -20981,7 +20987,7 @@ test("AI·转移评分：真实与深层模拟选择相同来源接收者及候�
 test("AI·转移评分：自己作为转移来源时执行与评分选择同一张情境最优牌", () => {
   const actor = makePlayer("actor", 0, "dawn"), receiver = makePlayer("receiver", 1, "dawn");
   const { game }
-  = makeGame([actor, receiver], { random: () => 0 });
+    = makeGame([actor, receiver], { random: () => 0 });
   const recover = instance("recover"), charge = instance("charge");
   actor.hand.push(recover, charge);
   receiver.hp = 2;
@@ -20998,7 +21004,7 @@ test("AI·转移评分：自己作为转移来源时执行与评分选择同一�
 test("AI·转移评分：对自己手牌无 transfer purpose 时仍按最低基础价值选择", () => {
   const actor = makePlayer("actor", 0, "dawn"), receiver = makePlayer("receiver", 1, "dawn");
   const { game }
-  = makeGame([actor, receiver], { random: () => 0 });
+    = makeGame([actor, receiver], { random: () => 0 });
   const recover = instance("recover"), charge = instance("charge");
   actor.hand.push(recover, charge);
   const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1)[0];
@@ -21010,7 +21016,7 @@ test("AI·转移评分：预计牌值已知牌接入角色价值且未知牌回�
     from = makePlayer("from", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dawn");
   const { game }
-  = makeGame([actor, from, receiver]);
+    = makeGame([actor, from, receiver]);
   const low = instance("charge"), high = instance("counter"), unknown = instance("assault");
   from.hand = [low, high, unknown];
   game.rememberPrivateCard(actor, from, low);
@@ -21022,7 +21028,7 @@ test("AI·转移评分：预计牌值已知牌接入角色价值且未知牌回�
 test("AI·转移评分：转移角色权重：相同突袭不同来源角色的来源损失精确反映角色差值", () => {
   const actor = { id: "actor", battleTeam: "dawn" };
   const receiver = { id: "receiver", battleTeam: "dawn", generalId: "spirit-medic", hp: 3, maxHp: 3 };
-  const makeFrom = (generalId) =>(
+  const makeFrom = (generalId) => (
     {
       id: "from",
       battleTeam: "dusk",
@@ -21092,10 +21098,10 @@ test("AI·转移评分：转移角色权重：恢复牌同时叠加角色基础�
 
 test("AI·转移评分：转移角色权重：未知牌动态期望随角色与剩余分布变化", () => {
   const actor = { id: "actor", battleTeam: "dawn" };
-  const makeSource = (generalId) =>(
+  const makeSource = (generalId) => (
     { id: "from", battleTeam: "dusk", generalId, hp: 4, maxHp: 4, handCount: 1, knownCards: [] }
   );
-  const makeReceiver = (generalId) =>(
+  const makeReceiver = (generalId) => (
     { id: "receiver", battleTeam: "dawn", generalId, hp: 3, maxHp: 3, handCount: 0 }
   );
   const assaultCounts = { assault: 10 }, recoverCounts = { recover: 10 };
@@ -21116,7 +21122,7 @@ test("AI·转移评分：转移角色权重：未知牌动态期望随角色与�
     recoverCandidate.utility,
     getRoleCardAiValue(
       "blade-walker", "recover"
-    )-2 + getRoleCardAiValue("spirit-medic", "recover") - 2
+    ) - 2 + getRoleCardAiValue("spirit-medic", "recover") - 2
   );
   const wardenSource = chooseTransferHandCandidate(
     actor, makeSource("oath-warden"), makeReceiver("spirit-medic"), null, assaultCounts
@@ -21180,10 +21186,10 @@ test("AI·转移评分：转移角色权重：根节点规划与实际选牌使�
   actor.hand.push(use);
   from.hand = [known, unknown];
   const { game }
-  = makeGame([actor, from, receiver], { random: () => 0 });
+    = makeGame([actor, from, receiver], { random: () => 0 });
   game.rememberPrivateCard(actor, from, known);
   const counts = { recover: 10 };
-  game.aiController.knowledge.remainingCounts = () =>({ ...counts });
+  game.aiController.knowledge.remainingCounts = () => ({ ...counts });
   const plan = game.aiController.cardSelector.chooseTransferCombination(
     actor, CARD_DEFINITIONS.transfer, [from]
   );
@@ -21201,11 +21207,11 @@ test("AI·转移评分：转移角色权重：根节点规划与实际选牌使�
 });
 
 test("AI·转移评分：转移角色权重：深层规划使用可见快照剩余计数", () => {
-  const makeState = (counts) =>(
+  const makeState = (counts) => (
     {
       playPhaseEnded: false,
       remainingCardCounts: counts,
-      players:[
+      players: [
         {
           id: "a",
           seatIndex: 0,
@@ -21261,7 +21267,7 @@ test("AI·转移评分：转移角色权重：深层规划使用可见快照剩�
   );
   const actor = makePlayer("real", 0, "dawn"), enemy = makePlayer("other", 1, "dusk");
   const { game }
-  = makeGame([actor, enemy]);
+    = makeGame([actor, enemy]);
   const generator = game.aiController.actionGenerator;
   const assaultState = makeState({ assault: 10 }), recoverState = makeState({ recover: 10 });
   const assaultAction = generator.generateFromVisible(
@@ -21302,7 +21308,7 @@ test("AI·转移评分：转移动作携带已知候选身份", () => {
   actor.hand.push(use);
   enemy.hand.push(held);
   const { game }
-  = makeGame([actor, enemy, ally]);
+    = makeGame([actor, enemy, ally]);
   game.rememberPrivateCard(actor, enemy, held);
   const action = game.aiController.actionGenerator.generate(
     actor
@@ -21329,7 +21335,7 @@ test("AI·转移评分：转移动作携带未知候选类别与精确未知数�
   actor.hand.push(use);
   enemy.hand.push(instance("counter"), instance("harvest"));
   const { game }
-  = makeGame([actor, enemy, ally]);
+    = makeGame([actor, enemy, ally]);
   const action = game.aiController.actionGenerator.generate(
     actor
   ).find((entry) => entry.card?.id === use.id);
@@ -21346,7 +21352,7 @@ test("AI·转移评分：其他玩家已知突袭转入当前 AI 后下一层可
   const state = {
     playPhaseEnded: false,
     remainingCardCounts: { assault: 10 },
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -21377,7 +21383,7 @@ test("AI·转移评分：其他玩家已知突袭转入当前 AI 后下一层可
         shield: 0,
         energy: 0,
         handCount: 1,
-        knownCards:[
+        knownCards: [
           {
             cardId: "known-assault",
             definitionId: "assault",
@@ -21390,7 +21396,7 @@ test("AI·转移评分：其他玩家已知突袭转入当前 AI 后下一层可
     ]
   };
   const { game }
-  = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const action = game.aiController.actionGenerator.generateFromVisible(
     state, "a"
   ).find((entry) => entry.card?.definitionId === "transfer");
@@ -21415,7 +21421,7 @@ test("AI·转移评分：当前 AI 把已知突袭转给其他玩家且不创建
   const state = {
     playPhaseEnded: false,
     remainingCardCounts: { assault: 10 },
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -21461,7 +21467,7 @@ test("AI·转移评分：当前 AI 把已知突袭转给其他玩家且不创建
     ]
   };
   const { game }
-  = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const action = game.aiController.actionGenerator.generateFromVisible(
     state, "a"
   ).find((entry) => entry.card?.definitionId === "transfer");
@@ -21488,7 +21494,7 @@ test("AI·转移评分：其他玩家之间移动已知身份", () => {
   const state = {
     playPhaseEnded: false,
     remainingCardCounts: { block: 10 },
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -21517,7 +21523,7 @@ test("AI·转移评分：其他玩家之间移动已知身份", () => {
         shield: 0,
         energy: 3,
         handCount: 1,
-        knownCards:[
+        knownCards: [
           {
             cardId: "k5",
             definitionId: "block",
@@ -21544,7 +21550,7 @@ test("AI·转移评分：其他玩家之间移动已知身份", () => {
     ]
   };
   const { game }
-  = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const transferCard = state.players[0].hand[0];
   const action = {
     type: "card",
@@ -21578,7 +21584,7 @@ test("AI·转移评分：目标反制风险下转移部分生效且来源与接�
   const state = {
     playPhaseEnded: false,
     remainingCardCounts: { assault: 10 },
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -21607,7 +21613,7 @@ test("AI·转移评分：目标反制风险下转移部分生效且来源与接�
         shield: 0,
         energy: 0,
         handCount: 1,
-        knownCards:[
+        knownCards: [
           {
             cardId: "known-assault",
             definitionId: "assault",
@@ -21633,7 +21639,7 @@ test("AI·转移评分：目标反制风险下转移部分生效且来源与接�
     ]
   };
   const { game }
-  = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
+    = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const action = game.aiController.actionGenerator.generateFromVisible(
     state, "a"
   ).find((entry) => entry.card?.definitionId === "transfer");
@@ -21759,7 +21765,7 @@ test("AI·威胁评估：ThreatCalculator 的稳定角色标签与近期攻击�
     first = makePlayer("first", 1, "dusk", "ai", 4),
     second = makePlayer("second", 2, "dusk", "ai", 4);
   const { game }
-  = makeGame([actor, first, second]);
+    = makeGame([actor, first, second]);
   actor.aiMemory.recentAggressors[second.id] = 3;
   const visible = createAiVisibleState(actor.id, game.state),
     assault = instance("assault"),
@@ -21793,7 +21799,7 @@ test("AI·闪电评分：闪电：AI 无其他合法接收者时按转回自己�
   assert.ok(
     lightningUseValue(
       actor, { remainingCardCounts: { defenseDevice: 1, assault: 3 }, players: [actor] }
-    )< lightningUseValue(actor, { remainingCardCounts: { defenseDevice: 1, assault: 3 }, players: [actor, { id: "b", seatIndex: 1, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: [] }] })
+    ) < lightningUseValue(actor, { remainingCardCounts: { defenseDevice: 1, assault: 3 }, players: [actor, { id: "b", seatIndex: 1, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: [] }] })
   );
 });
 
@@ -21812,7 +21818,7 @@ test("AI·闪电评分：闪电：lightningTeamBurden 跨阵营接收者按持�
     const players = [holder];
     if (
       receiverTeam
-    )players.push({ id: "receiver", seatIndex: 1, battleTeam: receiverTeam, alive: true, hp: 4, maxHp: 4, shield: 0, statuses: [] });
+    ) players.push({ id: "receiver", seatIndex: 1, battleTeam: receiverTeam, alive: true, hp: 4, maxHp: 4, shield: 0, statuses: [] });
     return { state: { remainingCardCounts: { defenseDevice: 1, assault: 1 }, players }, holder };
   };
   // 场景 1：己方持有、敌方接收 -> 1.5 - 0.375 = 1.125
@@ -21832,7 +21838,7 @@ test("AI·闪电评分：闪电：lightningTeamBurden 跨阵营接收者按持�
 test("AI·闪电评分：部分成功保留完整 lightningStatusStateBranches", () => {
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -21867,10 +21873,10 @@ test("AI·闪电评分：部分成功保留完整 lightningStatusStateBranches",
   const branches = actor.lightningStatusStateBranches;
   assert.ok(Array.isArray(branches));
   const presentProbability = branches.reduce(
-    (sum, branch) => sum +(branch.present ? branch.probability: 0), 0
+    (sum, branch) => sum + (branch.present ? branch.probability : 0), 0
   );
   const absentProbability = branches.reduce(
-    (sum, branch) => sum +(branch.present ? 0: branch.probability), 0
+    (sum, branch) => sum + (branch.present ? 0 : branch.probability), 0
   );
   assertClose(presentProbability, 0.6);
   assertClose(absentProbability, 0.4);
@@ -21887,7 +21893,7 @@ test("AI·闪电评分：部分成功保留完整 lightningStatusStateBranches",
 test("AI·闪电评分：动作不执行时不产生概率闪电状态", () => {
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -21930,7 +21936,7 @@ test("AI·闪电评分：动作不执行时不产生概率闪电状态", () => {
 test("AI·闪电评分：闪电：深层第二张闪电仅在 absent 世界生成且 executionProbability=1-presence", () => {
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -21963,7 +21969,7 @@ test("AI·闪电评分：闪电：深层第二张闪电仅在 absent 世界生�
   ).apply(state, { type: "card", card: state.players[0].hand[0], targets: [] }, "a");
   assert.ok(lightningUseValue(first.players[0], first) > -50);
   const { game }
-  = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
+    = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
   const actions = game.aiController.actionGenerator.generateFromVisible(first, "a");
   const second = actions.find((action) => action.card?.definitionId === "lightning");
   assert.ok(second);
@@ -21973,7 +21979,7 @@ test("AI·闪电评分：闪电：深层第二张闪电仅在 absent 世界生�
 test("AI·闪电评分：闪电：第二张 executionWorldBranches 继承第一次闪电条件键", () => {
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -22008,7 +22014,7 @@ test("AI·闪电评分：闪电：第二张 executionWorldBranches 继承第一�
   const firstKey = [...new Set(firstBranches.flatMap((branch) => Object.keys(branch.conditions)))][0];
   assert.ok(firstKey);
   const { game }
-  = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
+    = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
   const second = game.aiController.actionGenerator.generateFromVisible(
     first, "a"
   ).find((action) => action.card?.definitionId === "lightning");
@@ -22024,7 +22030,7 @@ test("AI·闪电评分：闪电：第二张 executionWorldBranches 继承第一�
 test("AI·闪电评分：闪电：第二次使用后状态按 union 更新且不覆盖旧 present 世界", () => {
   const state = {
     remainingCardCounts: null,
-    players:[
+    players: [
       {
         id: "a",
         seatIndex: 0,
@@ -22056,7 +22062,7 @@ test("AI·闪电评分：闪电：第二次使用后状态按 union 更新且不
     state
   ).apply(state, { type: "card", card: state.players[0].hand[0], targets: [] }, "a");
   const { game }
-  = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
+    = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
   const second = game.aiController.actionGenerator.generateFromVisible(
     first, "a"
   ).find((action) => action.card?.definitionId === "lightning");
@@ -22064,7 +22070,7 @@ test("AI·闪电评分：闪电：第二次使用后状态按 union 更新且不
   const after = new AiSimulator(first).apply(first, second, "a");
   const actor = after.players[0];
   const presence = actor.lightningStatusStateBranches.reduce(
-    (sum, branch) => sum +(branch.present ? branch.probability: 0), 0
+    (sum, branch) => sum + (branch.present ? branch.probability : 0), 0
   );
   assertClose(presence, 0.84);
   assertClose(actor.lightningStatusProbability, 0.84);
@@ -22072,11 +22078,11 @@ test("AI·闪电评分：闪电：第二次使用后状态按 union 更新且不
   const firstBranches = first.players[0].lightningStatusStateBranches;
   const firstKey = Object.keys(firstBranches[0].conditions)[0];
   const oldPresentProbability = firstBranches.reduce(
-    (sum, branch) => sum +(branch.present ? branch.probability: 0), 0
+    (sum, branch) => sum + (branch.present ? branch.probability : 0), 0
   );
   const keptPresentProbability = actor.lightningStatusStateBranches.reduce(
-    (sum, branch) =>(
-      sum +(branch.present && branch.conditions[firstKey] === "yes" ? branch.probability: 0)
+    (sum, branch) => (
+      sum + (branch.present && branch.conditions[firstKey] === "yes" ? branch.probability : 0)
     ),
     0
   );
@@ -22107,7 +22113,7 @@ test("AI·闪电评分：闪电：lightningTeamBurden 按 presence 线性加权"
     };
     if (mode === "full") holder.statuses = ["lightning"];
     if (mode === "partial") {
-      holder.lightningStatusStateBranches =[
+      holder.lightningStatusStateBranches = [
         { probability: 0.6, conditions: {}, present: true },
         { probability: 0.4, conditions: {}, present: false }
       ];
@@ -22128,7 +22134,7 @@ test("AI·闪电评分：闪电：lightningTeamBurden 按 presence 线性加权"
 });
 
 test("AI·闪电评分：闪电：有限传播链两人一跳完全兼容", () => {
-  const make = (players) =>({ remainingCardCounts: { defenseDevice: 1, assault: 1 }, players });
+  const make = (players) => ({ remainingCardCounts: { defenseDevice: 1, assault: 1 }, players });
   const holder = {
     id: "a",
     seatIndex: 0,
@@ -22153,7 +22159,7 @@ test("AI·闪电评分：闪电：有限传播链两人一跳完全兼容", () =
 });
 
 test("AI·闪电评分：闪电：有限传播链单人无其他接收者自转移兼容", () => {
-  const make = (players) =>({ remainingCardCounts: { defenseDevice: 1, assault: 1 }, players });
+  const make = (players) => ({ remainingCardCounts: { defenseDevice: 1, assault: 1 }, players });
   const holder = {
     id: "a",
     seatIndex: 0,
@@ -22177,7 +22183,7 @@ test("AI·闪电评分：闪电：有限传播链单人无其他接收者自转�
 test("AI·闪电评分：闪电：有限传播链敌多友少自然产生更高使用价值", () => {
   const make = (teams, holderHasLightning) => {
     const players = teams.map(
-      (team, index) =>(
+      (team, index) => (
         {
           id: `p${index}`,
           seatIndex: index,
@@ -22211,7 +22217,7 @@ test("AI·闪电评分：闪电：有限传播链敌多友少自然产生更高�
 test("AI·闪电评分：闪电：有限传播链相同人数近端敌人更有价值", () => {
   const make = (teams) => {
     const players = teams.map(
-      (team, index) =>(
+      (team, index) => (
         {
           id: `p${index}`,
           seatIndex: index,
@@ -22239,7 +22245,7 @@ test("AI·闪电评分：闪电：有限传播链相同人数近端敌人更有�
 
 test("AI·闪电评分：闪电：有限传播链 actor 低血仍压过人数优势", () => {
   const make = (hp) => {
-    const players =[
+    const players = [
       { id: "p0", seatIndex: 0, battleTeam: "dawn", alive: true, hp, maxHp: 4, shield: 0, statuses: [] },
       {
         id: "p1", seatIndex: 1, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
@@ -22265,7 +22271,7 @@ test("AI·闪电评分：闪电：有限传播链 actor 低血仍压过人数优
 test("AI·闪电评分：闪电：有限传播链未来低血目标按阵营单调", () => {
   const make = (teams) => {
     const players = teams.map(
-      (team, index) =>(
+      (team, index) => (
         {
           id: `p${index}`,
           seatIndex: index,
@@ -22301,7 +22307,7 @@ test("AI·闪电评分：闪电：有限传播链未来低血目标按阵营单�
 });
 
 test("AI·闪电评分：闪电：有限传播链跳过已持独立闪电的玩家", () => {
-  const players =[
+  const players = [
     { id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, statuses: ["lightning"] },
     { id: "b", seatIndex: 1, battleTeam: "dusk", alive: true, statuses: [] },
     { id: "c", seatIndex: 2, battleTeam: "dawn", alive: true, statuses: ["lightning"] },
@@ -22313,7 +22319,7 @@ test("AI·闪电评分：闪电：有限传播链跳过已持独立闪电的玩�
 });
 
 test("AI·闪电评分：闪电：初始持有者自身闪电状态不影响其作为传播链起点", () => {
-  const players =[
+  const players = [
     { id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, statuses: ["lightning"] },
     { id: "b", seatIndex: 1, battleTeam: "dusk", alive: true, statuses: [] }
   ];
@@ -22323,7 +22329,7 @@ test("AI·闪电评分：闪电：初始持有者自身闪电状态不影响其�
 });
 
 test("AI·闪电评分：闪电：无其他合法接收者时传播链自转移", () => {
-  const players =[
+  const players = [
     { id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, statuses: ["lightning"] },
     { id: "b", seatIndex: 1, battleTeam: "dusk", alive: false, statuses: [] },
     { id: "c", seatIndex: 2, battleTeam: "dawn", alive: true, statuses: ["lightning"] },
@@ -22339,7 +22345,7 @@ test("AI·闪电评分：闪电：概率闪电状态对有限传播链保持线�
     const holder = {
       id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
     };
-    const players =[
+    const players = [
       holder,
       { id: "b", seatIndex: 1, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: [] },
       { id: "c", seatIndex: 2, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: [] },
@@ -22347,7 +22353,7 @@ test("AI·闪电评分：闪电：概率闪电状态对有限传播链保持线�
     ];
     if (presence === 1) holder.statuses = ["lightning"];
     if (presence === 0.6) {
-      holder.lightningStatusStateBranches =[
+      holder.lightningStatusStateBranches = [
         { probability: 0.6, conditions: {}, present: true },
         { probability: 0.4, conditions: {}, present: false }
       ];
@@ -22397,7 +22403,7 @@ test("AI·闪电评分：闪电：lightningTransferredBurden 升级为从 receiv
 
 test("UI·玩家面板：角色面板不再显示突袭和调息次数栏", () => {
   const { small, large }
-  = makeTeamFixture();
+    = makeTeamFixture();
   for (const player of [small, large]) {
     const markup = playerPanelTemplate(player, { isHuman: true });
     assert.doesNotMatch(markup, /turn-usage|突袭 \d+\/|调息 \d+\//);
@@ -22476,7 +22482,7 @@ test("UI·玩家面板：赌命者候选卡将孤注消耗显示为 X 能量", (
 });
 
 test("UI·玩家面板：角色候选卡统一将主动技能显示在被动技能上方", () => {
-  for (const[index, general] of GENERAL_DEFINITIONS.entries()) {
+  for (const [index, general] of GENERAL_DEFINITIONS.entries()) {
     const markup = candidateCardTemplate(general, index),
       active = markup.indexOf(`主动 · ${general.activeName}`),
       passive = markup.indexOf(`被动 · ${general.passiveName}`);
@@ -22486,7 +22492,7 @@ test("UI·玩家面板：角色候选卡统一将主动技能显示在被动技�
 
 test("UI·玩家面板：动态距离：UI 距离文案可在阵亡后从2更新为1", () => {
   const { players, game }
-  = distanceFixture();
+    = distanceFixture();
   let info = DistanceSystem.describe(game, players[0], players[2]);
   let markup = playerPanelTemplate(
     players[2], { humanTeam: "dawn", distanceInfo: info, distanceState: `距离 ${info.distance} · 超出攻击范围` }
@@ -22532,7 +22538,7 @@ test("UI·玩家面板：八名角色使用结构化被动触发条件与限制�
     "fate-gambler": "每回合限触发1次",
     "resonance-tuner": "每回合限触发1次"
   };
-  for (const[index, general] of GENERAL_DEFINITIONS.entries()) {
+  for (const [index, general] of GENERAL_DEFINITIONS.entries()) {
     assert.ok(general.passiveTriggerText);
     assert.equal(general.passiveLimitText, expected[general.id]);
     const player = makePlayer(`structured-${general.id}`, index, "dawn", "human", index),
@@ -22550,26 +22556,26 @@ test("UI·玩家面板：目标选择期间头像与名称优先选择目标且�
     illegal = makePlayer("illegal", 2, "dawn"),
     other = makePlayer("other", 3, "dawn");
   let resolved = null, shown = null, triggerUsed = null, rendered = 0;
-  const makeState = () =>(
+  const makeState = () => (
     { players: [target], legalIds: new Set([target.id]), resolve: (value) => { resolved = value; } }
   );
-  const makeFake = () =>(
+  const makeFake = () => (
     {
       game: { state: { players: [source, target, illegal, other] } },
       targetState: null,
       showSkillDetails: (value, trigger) => { shown = value; triggerUsed = trigger; },
-      render: () => { rendered+=1; },
-      playSound() {}
+      render: () => { rendered += 1; },
+      playSound() { }
     }
   );
-  const panelFor = (player) =>({ dataset: { playerId: player.id } }),
-    skillFor = (player) =>({ dataset: { skillPlayerId: player.id } }),
-    eventFor = (player, kind) =>(
+  const panelFor = (player) => ({ dataset: { playerId: player.id } }),
+    skillFor = (player) => ({ dataset: { skillPlayerId: player.id } }),
+    eventFor = (player, kind) => (
       {
         target: {
-          closest: (query) => query === "[data-skill-player-id]" &&[
+          closest: (query) => query === "[data-skill-player-id]" && [
             "avatar", "name"
-          ].includes(kind) ? skillFor(player): query === "[data-player-id]" ? panelFor(player): null
+          ].includes(kind) ? skillFor(player) : query === "[data-player-id]" ? panelFor(player) : null
         }
       }
     );
@@ -22626,8 +22632,8 @@ test("UI·玩家面板：目标选择期间头像与名称优先选择目标且�
 
 test("UI·玩家面板：关闭技能弹窗后焦点返回原生触发按钮", () => {
   let focused = 0;
-  const overlay = { innerHTML: "dialog", classList: { add() {} } },
-    trigger = { isConnected: true, focus() { focused+=1; } };
+  const overlay = { innerHTML: "dialog", classList: { add() { } } },
+    trigger = { isConnected: true, focus() { focused += 1; } };
   const fake = { elements: { skill_details_overlay: overlay }, skillDetailsTrigger: trigger };
   UIManager.prototype.hideSkillDetails.call(fake);
   assert.equal(overlay.innerHTML, "");
@@ -22667,7 +22673,7 @@ test("UI·手牌：真人识别实体牌后显示已知小卡面和说明", () =
     ai = makePlayer("ai", 1, "dusk"),
     secret = instance("block");
   const { game }
-  = makeGame([human, ai]);
+    = makeGame([human, ai]);
   ai.hand.push(secret);
   game.rememberPrivateCard(human, ai, secret);
   const view = createOpponentHandView(human, ai), markup = opponentHandStripTemplate(view);
@@ -22682,7 +22688,7 @@ test("UI·手牌：真人窥探后持续识别该实体牌，离开原手牌后�
     ai = makePlayer("ai", 1, "dusk"),
     secret = instance("counter");
   const { game }
-  = makeGame([human, ai]);
+    = makeGame([human, ai]);
   ai.hand.push(secret);
   game.rememberPrivateCard(human, ai, secret);
   assert.equal(createOpponentHandView(human, ai)[0].known, true);
@@ -22692,11 +22698,11 @@ test("UI·手牌：真人窥探后持续识别该实体牌，离开原手牌后�
 });
 
 test("UI·手牌：大量对手手牌保持固定卡牌尺寸并在独立区域横向滚动", async () => {
-  const slots = Array.from({ length: 18 }, () =>({ known: false })),
+  const slots = Array.from({ length: 18 }, () => ({ known: false })),
     markup = opponentHandStripTemplate(slots),
     characterCss = await readFile(projectFile("css/characters.css"), "utf8"),
     cardCss = await readFile(projectFile("css/cards.css"), "utf8");
-  assert.equal((markup.match(/hidden-card-back is-compact/g) ??[]).length, 18);
+  assert.equal((markup.match(/hidden-card-back is-compact/g) ?? []).length, 18);
   assert.match(markup, /opponent-hand-strip/);
   assert.match(characterCss, /\.opponent-hand-strip\s*\{[^}]*overflow-x:\s*auto/s);
   assert.match(characterCss, /touch-action:\s*pan-x/);
@@ -22726,7 +22732,7 @@ test("UI·手牌：已知对手手牌保留中文实体卡层级、删除英文�
     ai = makePlayer("ai", 1, "dusk"),
     card = instance("mutualBenefit"),
     { game }
-  = makeGame([human, ai]);
+      = makeGame([human, ai]);
   ai.hand.push(card);
   game.rememberPrivateCard(human, ai, card);
   const markup = opponentHandStripTemplate(createOpponentHandView(human, ai)),
@@ -22742,7 +22748,7 @@ test("UI·手牌：已知对手手牌保留中文实体卡层级、删除英文�
       "card-description",
       "card-flavor"
     ]
-  )assert.match(markup, new RegExp(className));
+  ) assert.match(markup, new RegExp(className));
   assert.doesNotMatch(markup, /card-tags|public-pool|draw/);
   assert.match(markup, new RegExp(card.name));
   assert.match(markup, new RegExp(card.description.slice(0, 6)));
@@ -22838,7 +22844,7 @@ test("UI·手牌：隐藏牌选择窗口不显示牌背编号或真实卡牌资�
     const hidden of [
       secret.id, secret.definitionId, secret.name, secret.description, secret.art, "牌背 1", "未知牌 1", "？牌"
     ]
-  )assert.ok(!markup.includes(hidden));
+  ) assert.ok(!markup.includes(hidden));
   assert.match(markup, /hidden-card-back/);
 });
 
@@ -22857,7 +22863,7 @@ test("UI·手牌：真人已知的实体牌被 AI 窃取后仍在获得者面板
     thief = makePlayer("thief", 1, "dusk", "ai", 3),
     secret = instance("block");
   const { game }
-  = makeGame([human, thief], { random: () => 0 });
+    = makeGame([human, thief], { random: () => 0 });
   human.hand.push(secret);
   thief.energy = 3;
   await ACTIVE_SKILLS.stealSkill.execute(game, thief, [human]);
@@ -22868,7 +22874,7 @@ test("UI·手牌：真人已知的实体牌被 AI 窃取后仍在获得者面板
     game.state.logs.some(
       (entry) => entry.message.includes(
         thief.name
-      )&& entry.message.includes(human.name) && entry.message.includes(secret.name)
+      ) && entry.message.includes(human.name) && entry.message.includes(secret.name)
     )
   );
 });
@@ -22880,7 +22886,7 @@ test("UI·手牌：AI 之间未公开随机获得不会向真人泄露牌面", a
     plunder = instance("plunder"),
     secret = { ...instance("counter"), name: "AI私密牌" };
   const { game }
-  = makeGame([human, thief, owner], { random: () => 0 });
+    = makeGame([human, thief, owner], { random: () => 0 });
   thief.hand.push(plunder);
   owner.hand.push(secret);
   await game.playCard(thief, plunder, [owner]);
@@ -22895,7 +22901,7 @@ test("UI·手牌：已知实体牌进入弃牌等非手牌区域后立即清除�
     ai = makePlayer("ai", 1, "dusk"),
     secret = instance("block");
   const { game }
-  = makeGame([human, ai]);
+    = makeGame([human, ai]);
   ai.hand.push(secret);
   game.rememberPrivateCard(human, ai, secret);
   await game.discardCardFromHand(ai, secret, "公开离手");
@@ -22913,11 +22919,11 @@ test("UI·手牌：AI 面板按README类别及名称顺序排序且未知牌最�
     assault = instance("assault");
   ai.hand.push(unknown, equipment, tactic, block, assault);
   const { game }
-  = makeGame([human, ai]);
+    = makeGame([human, ai]);
   for (const card of [equipment, tactic, block, assault]) game.rememberPrivateCard(human, ai, card);
   const before = ai.hand.map((card) => card.id), view = createOpponentHandView(human, ai);
   assert.deepEqual(
-    view.map((entry) => entry.known ? entry.name: "unknown"),
+    view.map((entry) => entry.known ? entry.name : "unknown"),
     [assault.name, block.name, tactic.name, equipment.name, "unknown"]
   );
   assert.deepEqual(ai.hand.map((card) => card.id), before);
@@ -22927,7 +22933,7 @@ test("UI·手牌：AI 面板按README类别及名称顺序排序且未知牌最�
 test("UI·手牌：同类别已知牌严格采用README定义顺序", () => {
   const human = makePlayer("human", 0, "dawn", "human"),
     ai = makePlayer("ai", 1, "dusk"),
-    ids =[
+    ids = [
       "shield",
       "charge",
       "block",
@@ -22945,7 +22951,7 @@ test("UI·手牌：同类别已知牌严格采用README定义顺序", () => {
     cards = ids.map(instance);
   ai.hand.push(...cards);
   const { game }
-  = makeGame([human, ai]);
+    = makeGame([human, ai]);
   cards.forEach((card) => game.rememberPrivateCard(human, ai, card));
   const ordered = createOpponentHandView(human, ai).map((entry) => entry.name),
     expected = CARD_DEFINITION_DISPLAY_ORDER.filter(
@@ -22962,13 +22968,13 @@ const renderResponseEventHtml = async (presentation) => {
   const previousWindow = globalThis.window;
   globalThis.window = { setInterval, clearInterval };
   const panel = {
-    innerHTML: "", classList: { add() {}, remove() {} }, querySelector() { return null; }
+    innerHTML: "", classList: { add() { }, remove() { } }, querySelector() { return null; }
   };
   const fake = {
     responseState: null,
     elements: { response_panel: panel },
-    game: { cleanupManager: { delay: () => new Promise(() => {}) } },
-    render() {}
+    game: { cleanupManager: { delay: () => new Promise(() => { }) } },
+    render() { }
   };
   try {
     const pending = UIManager.prototype.requestResponse.call(
@@ -23008,13 +23014,13 @@ test("UI·响应窗口：响应事件中的角色和卡牌名称会在写入 DOM
   const previousWindow = globalThis.window;
   globalThis.window = { setInterval, clearInterval };
   const panel = {
-    innerHTML: "", classList: { add() {}, remove() {} }, querySelector() { return null; }
+    innerHTML: "", classList: { add() { }, remove() { } }, querySelector() { return null; }
   };
   const fake = {
     responseState: null,
     elements: { response_panel: panel },
-    game: { cleanupManager: { delay: () => new Promise(() => {}) } },
-    render() {}
+    game: { cleanupManager: { delay: () => new Promise(() => { }) } },
+    render() { }
   };
   try {
     const pending = UIManager.prototype.requestResponse.call(
@@ -23037,9 +23043,9 @@ test("UI·响应窗口：反制链响应说明包含来源、目标、原牌和�
     b = makePlayer("b", 1, "dusk", "human"),
     c = makePlayer("c", 2, "dawn", "human");
   const { game, ui }
-  = makeGame(
-    [a, b, c], { response: (request) => request.legalCardIds.length >= request.requiredCount }
-  );
+    = makeGame(
+      [a, b, c], { response: (request) => request.legalCardIds.length >= request.requiredCount }
+    );
   a.hand.push(instance("harvest"));
   b.hand.push(instance("counter"));
   await game.playCard(a, a.hand[0], []);
@@ -23075,7 +23081,7 @@ test("UI·响应窗口：破势自目标反制响应文案不显示使用者为�
 test("UI·响应窗口：破势真实出牌流程的反制请求不显示自目标", async () => {
   const source = makePlayer("source", 0, "dawn"), responder = makePlayer("human", 1, "dusk", "human");
   const { game, ui }
-  = makeGame([source, responder], { response: () => false });
+    = makeGame([source, responder], { response: () => false });
   const card = instance("exposeWeakness");
   source.hand.push(card);
   await game.playCard(source, card, []);
@@ -23136,7 +23142,7 @@ test("UI·响应窗口：响应窗口不同队伍角色分别渲染队伍颜色�
   const html = await renderResponseEventHtml(presentation);
   assert.match(html, /<strong class="response-player-name team-dawn"[^>]*>角色A<\/strong>/);
   assert.match(html, /<strong class="response-player-name team-dusk"[^>]*>角色B<\/strong>/);
-  assert.equal((html.match(/response-player-name/g) ??[]).length, 2);
+  assert.equal((html.match(/response-player-name/g) ?? []).length, 2);
 });
 
 test("UI·响应窗口：响应窗口同队伍角色仍独立着色", async () => {
@@ -23147,9 +23153,9 @@ test("UI·响应窗口：响应窗口同队伍角色仍独立着色", async () =
     responder, "counter", { source, target, targets: [target], card: instance("duel") }, 1, 0, "反制"
   );
   const html = await renderResponseEventHtml(presentation);
-  assert.equal((html.match(/response-player-name team-dawn/g) ??[]).length, 2);
+  assert.equal((html.match(/response-player-name team-dawn/g) ?? []).length, 2);
   assert.doesNotMatch(html, /team-dusk/);
-  assert.equal((html.match(/response-player-name/g) ??[]).length, 2);
+  assert.equal((html.match(/response-player-name/g) ?? []).length, 2);
 });
 
 test("UI·响应窗口：无目标响应文案只有使用者是角色片段", () => {
@@ -23184,7 +23190,7 @@ test("UI·响应窗口：破势响应片段只有使用者且UI只着色使用�
     ]
   );
   const html = await renderResponseEventHtml(presentation);
-  assert.equal((html.match(/response-player-name/g) ??[]).length, 1);
+  assert.equal((html.match(/response-player-name/g) ?? []).length, 1);
   assert.match(html, /response-player-name team-dawn/);
 });
 
@@ -23233,7 +23239,7 @@ test("UI·响应窗口：响应窗口中的“你”保持普通文本不着色"
     ]
   );
   const html = await renderResponseEventHtml(block);
-  assert.equal((html.match(/response-player-name/g) ??[]).length, 1);
+  assert.equal((html.match(/response-player-name/g) ?? []).length, 1);
   assert.doesNotMatch(html, />你<\/strong>/);
   const leverage = buildResponsePresentation(
     responder, "leverageAssault", { source, target: second, card: instance("leverage") }, 1, 0, "使用突袭"
@@ -23327,7 +23333,7 @@ test("UI·响应窗口：转移响应片段包含来源与接收者的队伍", a
   from.hand.push(secret);
   from.bumpHandVersion();
   const { game, ui }
-  = makeGame([actor, from, responder, receiver], { response: () => false });
+    = makeGame([actor, from, responder, receiver], { response: () => false });
   const hidden = game.cardSelectionSystem.createHiddenSelection(from);
   await game.playCard(
     actor,
@@ -23429,8 +23435,8 @@ test("UI·互利选择：互利公开牌池也复用正常完整牌面", async (
       "card-description",
       "card-flavor"
     ]
-  )assert.match(element.innerHTML, new RegExp(className));
-  assert.equal((element.innerHTML.match(/<img\b/g) ??[]).length, 2);
+  ) assert.match(element.innerHTML, new RegExp(className));
+  assert.equal((element.innerHTML.match(/<img\b/g) ?? []).length, 2);
   assert.match(element.innerHTML, new RegExp(card.description));
   assert.match(element.innerHTML, /data-public-card-id/);
   const css = await readFile(projectFile("css/cards.css"), "utf8");
@@ -23463,14 +23469,14 @@ test("UI·互利选择：有效对局中互利意外返回 null 会重开当前�
     next = makePlayer("next", 1, "dusk"),
     last = makePlayer("last", 2, "dawn"),
     { game, ui }
-  = makeGame([human, next, last]);
+      = makeGame([human, next, last]);
   const cards = [instance("assault"), instance("block"), instance("recover")];
   game.publicCardPool.cards = [...cards];
   game.state.publicCardPool = game.publicCardPool.cards;
   let calls = 0;
   ui.requestPublicCard = async (_player, available) => {
-    calls+=1;
-    return calls === 1 ? null: available[0];
+    calls += 1;
+    return calls === 1 ? null : available[0];
   };
   const result = await game.publicCardPool.draft(human);
   assert.equal(result, true);
@@ -23504,7 +23510,7 @@ test("UI·互利选择：所有隐藏选择池都不显示令牌或核心校验�
   owner.hand.push(secret);
   const selection = { selectionId: "peek-help", tokens: [{ token: "opaque-token" }] },
     panel = makeInteractiveElement();
-  const ui = { game: null, elements: { response_panel: panel }, render() {} };
+  const ui = { game: null, elements: { response_panel: panel }, render() { } };
   const controller = new InteractionController(ui);
   const pending = controller.requestHiddenCards(
     selection, 1, "掠夺：选择手牌或装备", { viewer, owner, helpText: "手牌使用安全令牌；装备牌为公开信息，确认时核心会重新验证所在区域。" }
@@ -23528,7 +23534,7 @@ test("UI·中央结算卡：对局记录计数显示条目单位和明确的辅�
 });
 
 test("UI·中央结算卡：新对局会清空上一局中央结算卡，避免开局显示旧突袭", async () => {
-  const currentCard = { innerHTML: "<div>甲对乙使用了突袭</div>", classList: { remove() {} } };
+  const currentCard = { innerHTML: "<div>甲对乙使用了突袭</div>", classList: { remove() { } } };
   UIManager.prototype.resetCurrentCard.call({ elements: { current_card: currentCard } });
   assert.match(currentCard.innerHTML, /等待第一张牌/);
   assert.doesNotMatch(currentCard.innerHTML, /突袭|作用对象/);
@@ -23540,7 +23546,7 @@ test("UI·中央结算卡：新对局会清空上一局中央结算卡，避免�
 test("UI·中央结算卡：突袭在中央结算区与使用日志中显示作用对象", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game, ui }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   const assault = instance("assault");
   a.hand.push(assault);
   await game.playCard(a, assault, [b]);
@@ -23553,7 +23559,7 @@ test("UI·中央结算卡：群体牌会列出全部作用对象且结算模板�
     b = makePlayer("b", 1, "dusk"),
     c = makePlayer("c", 2, "dusk");
   const { game, ui }
-  = makeGame([a, b, c]);
+    = makeGame([a, b, c]);
   const shockwave = instance("shockwave");
   a.hand.push(shockwave);
   await game.playCard(a, shockwave, []);
@@ -23566,7 +23572,7 @@ test("UI·中央结算卡：群体牌会列出全部作用对象且结算模板�
 test("UI·中央结算卡：日志角色 token 可在同一行分别按阵营安全着色", () => {
   const dawn = makePlayer("晨方角色", 0, "dawn"), dusk = makePlayer("暮方角色", 1, "dusk");
   const { game }
-  = makeGame([dawn, dusk]);
+    = makeGame([dawn, dusk]);
   const entry = game.log(`${dawn.name}对${dusk.name}造成影响。`);
   assert.deepEqual(
     entry.fragments.filter(
@@ -23585,7 +23591,7 @@ test("UI·中央结算卡：闪电：中央结算卡显示作用对象为自己�
   const human = makePlayer("human", 0, "dawn", "human");
   const ai = makePlayer("ai", 1, "dusk");
   const { game, ui }
-  = makeGame([human, ai]);
+    = makeGame([human, ai]);
   assert.equal(lightning.targetType, "none");
   assert.deepEqual(RuleEngine.getCardTargets(game, human, lightning), [], "闪电真实业务 targets 必须保持为空");
   human.hand.push(lightning);
@@ -23630,7 +23636,7 @@ test("UI·中央结算卡：丰收：中央结算卡经 displayTargets 显示自
   const a = makePlayer("a", 0, "dawn", "human");
   const b = makePlayer("b", 1, "dusk");
   const { game, ui }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   game.state.deck.cards.push(instance("block"), instance("charge"));
   const use = instance("harvest");
   a.hand.push(use);
@@ -23658,7 +23664,7 @@ test("UI·中央结算卡：焚场：中央结算卡经 displayTargets 显示全
   const enemyA = makePlayer("enemyA", 2, "dusk");
   const enemyB = makePlayer("enemyB", 3, "dusk");
   const { game, ui }
-  = makeGame([source, ally, enemyA, enemyB]);
+    = makeGame([source, ally, enemyA, enemyB]);
   source.energy = 2;
   const hpA = enemyA.hp, hpB = enemyB.hp;
   await game.useActiveSkill(source, "burningField", []);
@@ -23681,12 +23687,12 @@ test("UI·中央结算卡：焚场：中央结算卡经 displayTargets 显示全
 });
 
 test("UI·中央结算卡：none 型主动技能：中央结算卡经 displayTargets 显示自己", async () => {
-  for (const[generalIndex, skillId, skillName] of [[0, "breakArmy", "破军"], [6, "allIn", "孤注"]]) {
+  for (const [generalIndex, skillId, skillName] of [[0, "breakArmy", "破军"], [6, "allIn", "孤注"]]) {
     const source = makePlayer("source", 0, "dawn", "human", generalIndex);
     const enemy = makePlayer("enemy", 1, "dusk");
     const { game, ui }
-    = makeGame([source, enemy]);
-    source.energy = skillId === "allIn" ? 1: 2;
+      = makeGame([source, enemy]);
+    source.energy = skillId === "allIn" ? 1 : 2;
     await game.useActiveSkill(source, skillId, []);
     const record = ui.currentCards.at(-1);
     assert.equal(record.targetLabel, "", `${skillName}不得获得业务 targetLabel`);
@@ -23715,7 +23721,7 @@ test("UI·布局样式：上方 AI 思考提示出现时隐藏下方重复提示
       thinking_indicator: { classList: thinkingClasses, innerHTML: "" },
       action_prompt: { classList: promptClasses }
     },
-    render() {}
+    render() { }
   };
   const player = makePlayer("ai", 0, "dawn");
   UIManager.prototype.setThinking.call(fake, true, player, "准备使用突袭");
@@ -23747,7 +23753,7 @@ test("UI·布局样式：UIManager 源码不直接写生命、能量、手牌或
       /\.winnerTeam\s*=/,
       /\.isGameOver\s*=/
     ]
-  )assert.doesNotMatch(source, forbidden);
+  ) assert.doesNotMatch(source, forbidden);
 });
 
 test("UI·布局样式：25 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
@@ -23758,8 +23764,8 @@ test("UI·布局样式：25 种牌面均不渲染 card-tags 或可见英文 subt
       assert.doesNotMatch(markup, /card-tags/);
       assert.ok(markup.includes(card.description));
       for (
-        const subtype of card.subtypes ??[]
-      )assert.doesNotMatch(markup, new RegExp(`>\\s*${subtype}\\s*<`, "i"));
+        const subtype of card.subtypes ?? []
+      ) assert.doesNotMatch(markup, new RegExp(`>\\s*${subtype}\\s*<`, "i"));
     }
   }
 });
@@ -23810,7 +23816,7 @@ test("UI·布局样式：牌面 CSS 将长描述标记限制在文字区且不�
 });
 
 test("UI·布局样式：全部卡牌SVG使用统一480x280画布且配置引用均存在", async () => {
-  const files =(
+  const files = (
     await readdir(projectFile("assets/cards"))
   ).filter((name) => name.endsWith(".svg")).sort();
   assert.ok(files.length > 0);
@@ -23823,13 +23829,13 @@ test("UI·布局样式：全部卡牌SVG使用统一480x280画布且配置引用
   }
   for (
     const definition of Object.values(CARD_DEFINITIONS)
-  )await access(projectFile(definition.art.replace(/^\.\//, "")));
+  ) await access(projectFile(definition.art.replace(/^\.\//, "")));
   const shield = await readFile(projectFile("assets/cards/shield.svg"), "utf8"),
     assault = await readFile(projectFile("assets/cards/assault.svg"), "utf8"),
     transfer = await readFile(projectFile("assets/cards/transfer.svg"), "utf8");
   for (
     const source of [shield, assault, transfer]
-  )assert.match(source, /^<svg width="480" height="280" viewBox="0 0 480 280"/);
+  ) assert.match(source, /^<svg width="480" height="280" viewBox="0 0 480 280"/);
 });
 
 test("UI·布局样式：卡牌CSS在手牌、结算、私密展示、判定和装备区统一约束图片尺寸", async () => {
@@ -23868,7 +23874,7 @@ test("UI·布局样式：窥隙结果牌与正常手牌共用完整牌面布局�
       "card-description",
       "card-flavor"
     ]
-  )assert.match(revealed, new RegExp(`class="[^"]*${className}`), className);
+  ) assert.match(revealed, new RegExp(`class="[^"]*${className}`), className);
   assert.equal(face(revealed), face(normal));
   assert.match(revealed, /class="hand-card private-card frame-seal"/);
   assert.doesNotMatch(revealed, /data-card-id|data-disabled|aria-pressed/);
@@ -23962,7 +23968,7 @@ test("UI·布局样式：闪电：SVG 主体恢复为未放大的正常构图", 
   assert.ok(Number(glow[1]) <= 90, `闪电辉光圆仍被放大：r=${glow[1]}`);
   const bolt = source.match(/<path d="([^"]+)" fill="#ffe084"/);
   assert.ok(bolt, "缺少主闪电路径");
-  const tokens = bolt[1].match(/[A-Za-z]|-?\d+/g) ??[];
+  const tokens = bolt[1].match(/[A-Za-z]|-?\d+/g) ?? [];
   let x = 0, y = 0, index = 0, minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const pen = (px, py) => {
     minX = Math.min(minX, px);
@@ -23984,18 +23990,18 @@ test("UI·布局样式：闪电：SVG 主体恢复为未放大的正常构图", 
       }
     } else if (command === "l") {
       while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) {
-        x+=num();
-        y+=num();
+        x += num();
+        y += num();
         pen(x, y);
       }
     } else if (command === "h") {
       while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) {
-        x+=num();
+        x += num();
         pen(x, y);
       }
     } else if (command === "v") {
       while (index < tokens.length && !/[A-Za-z]/.test(tokens[index])) {
-        y+=num();
+        y += num();
         pen(x, y);
       }
     } else if (command === "L") {
@@ -24061,7 +24067,7 @@ test("生命周期：手牌实体已离开时 moveHandToResolving 返回失败�
     enemy = makePlayer("missing-move-enemy", 1, "dusk"),
     card = instance("charge"),
     { game }
-  = makeGame([ai, enemy]);
+      = makeGame([ai, enemy]);
   assert.equal(await game.moveHandToResolving(ai, card), false);
   assert.equal(game.state.resolvingCards.length, 0);
   assert.equal(game.state.discardPile.length, 0);
@@ -24072,14 +24078,14 @@ test("生命周期：beforeCardMove 取消出牌时保持手牌且不产生出�
     enemy = makePlayer("cancel-move-enemy", 1, "dusk"),
     card = instance("charge"),
     { game }
-  = makeGame([ai, enemy]);
+      = makeGame([ai, enemy]);
   ai.hand.push(card);
   let used = 0;
   game.eventBus.on("beforeCardMove", "test:cancel-ai-card-move", (event) => {
     if (event.card === card) event.cancelled = true;
   });
   game.eventBus.on("cardUsed", "test:no-card-used-after-cancel", () => {
-    used+=1;
+    used += 1;
   });
   assert.equal(await game.playCard(ai, card, []), false);
   assert.deepEqual(ai.hand, [card]);
@@ -24095,10 +24101,10 @@ test("生命周期：beforeCardMove 取消 AI 动作后游戏循环仍推进至�
     next = makePlayer("cancel-loop-next", 1, "dusk"),
     card = instance("charge"),
     { game }
-  = makeGame([ai, next]);
+      = makeGame([ai, next]);
   ai.hand.push(card);
   game.aiController.getLegalActions = () => [];
-  game.aiController.selectAction = async () =>({ type: "card", card, targets: [] });
+  game.aiController.selectAction = async () => ({ type: "card", card, targets: [] });
   game.eventBus.on("beforeCardMove", "test:cancel-loop-card", (event) => {
     if (event.card === card) event.cancelled = true;
   });
@@ -24122,7 +24128,7 @@ test("生命周期：beginResolve 失败时 playCard 不移除手牌或产生悬
     enemy = makePlayer("begin-resolve-enemy", 1, "dusk"),
     card = instance("charge"),
     { game }
-  = makeGame([ai, enemy]);
+      = makeGame([ai, enemy]);
   ai.hand.push(card);
   game.state.deck.beginResolve = () => false;
   assert.equal(await game.playCard(ai, card, []), false);
@@ -24138,7 +24144,7 @@ test("生命周期：beforeCardUse 抛异常后实体牌离开结算区并只进
     enemy = makePlayer("before-use-enemy", 1, "dusk"),
     card = instance("charge"),
     { game }
-  = makeGame([source, enemy]);
+      = makeGame([source, enemy]);
   source.hand.push(card);
   game.eventBus.on("beforeCardUse", "test:throw-before-use", (event) => {
     if (event.card === card) throw new Error("private beforeCardUse failure");
@@ -24156,7 +24162,7 @@ test("生命周期：targetSelected 抛异常后不会留下悬空牌", async ()
     enemy = makePlayer("target-hook-enemy", 1, "dusk"),
     card = instance("assault"),
     { game }
-  = makeGame([source, enemy]);
+      = makeGame([source, enemy]);
   source.hand.push(card);
   game.eventBus.on("targetSelected", "test:throw-target-selected", (event) => {
     if (event.card === card) throw new Error("target hook failed");
@@ -24171,7 +24177,7 @@ test("生命周期：beforeCardResolve 抛异常后不会留下悬空牌", async
     enemy = makePlayer("resolve-hook-enemy", 1, "dusk"),
     card = instance("charge"),
     { game }
-  = makeGame([source, enemy]);
+      = makeGame([source, enemy]);
   source.hand.push(card);
   game.eventBus.on("beforeCardResolve", "test:throw-before-resolve", (event) => {
     if (event.card === card) throw new Error("resolve hook failed");
@@ -24186,7 +24192,7 @@ test("生命周期：反制流程抛异常后主动牌安全进入弃牌堆", as
     enemy = makePlayer("counter-failure-enemy", 1, "dusk"),
     card = instance("harvest"),
     { game }
-  = makeGame([source, enemy]);
+      = makeGame([source, enemy]);
   source.hand.push(card);
   game.responseSystem.askForCounter = async () => {
     throw new Error("counter flow failed");
@@ -24201,7 +24207,7 @@ test("生命周期：卡牌效果部分生效后抛异常不回滚效果但会�
     enemy = makePlayer("partial-effect-enemy", 1, "dusk"),
     card = instance("charge"),
     { game }
-  = makeGame([source, enemy]);
+      = makeGame([source, enemy]);
   source.energy = 0;
   source.hand.push(card);
   game.eventBus.on("afterGainEnergy", "test:throw-after-partial-effect", (event) => {
@@ -24218,12 +24224,12 @@ test("生命周期：cardUsed 监听器抛异常后不重复弃牌且不重复�
     enemy = makePlayer("card-used-enemy", 1, "dusk"),
     card = instance("charge"),
     { game }
-  = makeGame([source, enemy]);
+      = makeGame([source, enemy]);
   source.hand.push(card);
   let calls = 0;
   game.eventBus.on("cardUsed", "test:throw-card-used", (event) => {
     if (event.card === card) {
-      calls+=1;
+      calls += 1;
       throw new Error("cardUsed failed");
     }
   });
@@ -24239,7 +24245,7 @@ test("生命周期：finishResolvingToDiscard 虚假成功时 playCard 检测真
     enemy = makePlayer("finish-failure-enemy", 1, "dusk"),
     card = instance("charge"),
     { game }
-  = makeGame([source, enemy]);
+      = makeGame([source, enemy]);
   source.hand.push(card);
   game.finishResolvingToDiscard = async () => true;
   await assert.rejects(game.playCard(source, card, []), /结算牌未能进入弃牌堆/);
@@ -24252,7 +24258,7 @@ test("生命周期：equipCard 虚假成功但牌仍在结算区时由调用方�
     enemy = makePlayer("equip-result-enemy", 1, "dusk"),
     card = instance("energyDevice"),
     { game }
-  = makeGame([source, enemy]);
+      = makeGame([source, enemy]);
   source.hand.push(card);
   game.equipCard = async () => true;
   await assert.rejects(game.playCard(source, card, []), /装备牌未能进入装备区/);
@@ -24268,7 +24274,7 @@ test("生命周期：装备替换预检取消或抛异常时旧装备保持原�
       old = instance("energyDevice"),
       next = instance("battleDevice"),
       { game }
-    = makeGame([source, enemy]);
+        = makeGame([source, enemy]);
     source.equipment = old;
     source.hand.push(next);
     game.eventBus.on("beforeCardMove", `test:replace-preflight-${mode}`, (event) => {
@@ -24276,7 +24282,7 @@ test("生命周期：装备替换预检取消或抛异常时旧装备保持原�
       if (mode === "cancel") event.cancelled = true; else throw new Error("replacement preflight failed");
     });
     await assert.rejects(
-      game.playCard(source, next, []), mode === "cancel" ? /装备牌未能进入装备区/: /replacement preflight failed/
+      game.playCard(source, next, []), mode === "cancel" ? /装备牌未能进入装备区/ : /replacement preflight failed/
     );
     assert.equal(source.equipment, old);
     assertCardOnlyIn(game, old, `equipment:${source.id}`);
@@ -24291,7 +24297,7 @@ test("生命周期：装备替换成功后旧装备只在弃牌堆且新装备�
     old = instance("energyDevice"),
     next = instance("battleDevice"),
     { game }
-  = makeGame([source, enemy]);
+      = makeGame([source, enemy]);
   source.equipment = old;
   source.hand.push(next);
   assert.equal(await game.playCard(source, next, []), true);
@@ -24311,14 +24317,14 @@ test("生命周期：借势内嵌突袭异常只失败清理突袭牌且外层�
   first.hand.push(assault);
   first.equipment = equipment;
   const { game }
-  = makeGame([actor, first], { response: (request) => request.type === "leverageAssault" });
+    = makeGame([actor, first], { response: (request) => request.type === "leverageAssault" });
   let outerUsed = 0, innerUsed = 0;
   game.eventBus.on("beforeCardResolve", "test:throw-nested-assault", (event) => {
     if (event.card === assault) throw new Error("nested assault failed");
   });
   game.eventBus.on("cardUsed", "test:count-nested-resolutions", (event) => {
-    if (event.card === leverage) outerUsed+=1;
-    if (event.card === assault) innerUsed+=1;
+    if (event.card === leverage) outerUsed += 1;
+    if (event.card === assault) innerUsed += 1;
   });
   assert.equal(
     await game.playCard(
@@ -24343,7 +24349,7 @@ test("生命周期：结算异常后 actionLocked、interactionLocked 与 AI thi
     enemy = makePlayer("lock-restore-enemy", 1, "dusk"),
     card = instance("charge"),
     { game, ui }
-  = makeGame([source, enemy]);
+      = makeGame([source, enemy]);
   source.hand.push(card);
   game.interactionLocked = true;
   ui.thinkingPlayerId = source.id;
@@ -24363,10 +24369,10 @@ test("生命周期：实体牌结算异常后游戏循环仍推进到下一角�
     next = makePlayer("resolution-loop-next", 1, "dusk"),
     card = instance("charge"),
     { game, ui }
-  = makeGame([source, next]);
+      = makeGame([source, next]);
   source.hand.push(card);
   game.aiController.getLegalActions = () => [];
-  game.aiController.selectAction = async () =>({ type: "card", card, targets: [] });
+  game.aiController.selectAction = async () => ({ type: "card", card, targets: [] });
   game.eventBus.on("afterGainEnergy", "test:throw-loop-partial", (event) => {
     if (event.card === card) throw new Error("loop resolution failed");
   });
@@ -24391,11 +24397,11 @@ test("生命周期：AI 陈旧手牌动作返回失败后安全结束阶段并�
     enemy = makePlayer("stale-action-enemy", 1, "dusk"),
     staleCard = instance("charge"),
     { game, ui }
-  = makeGame([ai, enemy]);
+      = makeGame([ai, enemy]);
   let selections = 0;
   game.aiController.getLegalActions = () => [];
   game.aiController.selectAction = async () => {
-    selections+=1;
+    selections += 1;
     return { type: "card", card: staleCard, targets: [] };
   };
   await game.takeAiPlayPhase(ai, game.state.gameId);
@@ -24411,10 +24417,10 @@ test("生命周期：AI 真实出牌异常不会拒绝 loopPromise 且下一名�
     next = makePlayer("throw-card-next", 1, "dusk"),
     card = instance("charge"),
     { game, ui }
-  = makeGame([ai, next]);
+      = makeGame([ai, next]);
   ai.hand.push(card);
   game.aiController.getLegalActions = () => [];
-  game.aiController.selectAction = async () =>({ type: "card", card, targets: [] });
+  game.aiController.selectAction = async () => ({ type: "card", card, targets: [] });
   game.eventBus.on("beforeCardMove", "test:throw-real-card-error", (event) => {
     if (event.card === card) throw new Error("ai card execution exploded");
   });
@@ -24442,10 +24448,10 @@ test("生命周期：AI 主动技能执行异常由出牌阶段捕获并恢复�
     ally = makePlayer("throw-skill-ally", 1, "dawn"),
     enemy = makePlayer("throw-skill-enemy", 2, "dusk"),
     { game, ui }
-  = makeGame([ai, ally, enemy]);
+      = makeGame([ai, ally, enemy]);
   ai.energy = 4;
   game.aiController.getLegalActions = () => [];
-  game.aiController.selectAction = async () =>(
+  game.aiController.selectAction = async () => (
     { type: "skill", skill: ACTIVE_SKILLS.barrier, targets: [ally] }
   );
   ui.setCurrentCard = () => {
@@ -24462,7 +24468,7 @@ test("生命周期：游戏循环连续回合异常有上限并以 resolved 状�
   const first = makePlayer("loop-guard-first", 0, "dawn"),
     second = makePlayer("loop-guard-second", 1, "dusk"),
     { game, ui }
-  = makeGame([first, second]), attempts = [];
+      = makeGame([first, second]), attempts = [];
   game.takeTurn = async (player) => {
     attempts.push(player.id);
     throw new Error(`turn failure ${player.id}`);
@@ -24531,13 +24537,13 @@ test("生命周期：响应窗口超时会按放弃处理并清除响应状态",
   const previousWindow = globalThis.window;
   globalThis.window = { setInterval, clearInterval };
   const panel = {
-    innerHTML: "", classList: { add() {}, remove() {} }, querySelector() { return null; }
+    innerHTML: "", classList: { add() { }, remove() { } }, querySelector() { return null; }
   };
   const fake = {
     responseState: null,
     elements: { response_panel: panel },
     game: { cleanupManager: { delay: async () => true } },
-    render() {}
+    render() { }
   };
   try {
     const result = await UIManager.prototype.requestResponse.call(
@@ -24564,7 +24570,7 @@ test("生命周期：响应窗口超时会按放弃处理并清除响应状态",
 test("生命周期：销毁对局会以 cancelled 结束未完成响应并清空请求", async () => {
   const a = makePlayer("a", 0, "dawn"), human = makePlayer("human", 1, "dusk", "human");
   const { game, ui }
-  = makeGame([a, human]);
+    = makeGame([a, human]);
   let settle = null;
   ui.requestResponse = () => new Promise((resolve) => {
     settle = resolve;
@@ -24709,8 +24715,8 @@ test("生命周期：旧局治疗和能量事件等待恢复后不再修改角�
       enemy = makePlayer(`old-${mode}-enemy`, 1, "dusk");
     const old = configureOwnedGame(new Game(ui), [actor, enemy]);
     ui.attachGame(old);
-    if (mode === "heal") actor.hp-=1; else actor.energy = 0;
-    const before = mode === "heal" ? actor.hp: actor.energy;
+    if (mode === "heal") actor.hp -= 1; else actor.energy = 0;
+    const before = mode === "heal" ? actor.hp : actor.energy;
     let openedResolve, release;
     const opened = new Promise((resolve) => {
       openedResolve = resolve;
@@ -24718,13 +24724,13 @@ test("生命周期：旧局治疗和能量事件等待恢复后不再修改角�
     const gate = new Promise((resolve) => {
       release = resolve;
     });
-    old.eventBus.on(mode === "heal" ? "beforeHeal": "beforeGainEnergy", `test:${mode}`, async () => {
+    old.eventBus.on(mode === "heal" ? "beforeHeal" : "beforeGainEnergy", `test:${mode}`, async () => {
       openedResolve();
       await gate;
     });
     const pending = mode === "heal" ? old.heal(
       actor, actor, 1
-    ): old.gainEnergy(actor, 1, { reason: "测试" });
+    ) : old.gainEnergy(actor, 1, { reason: "测试" });
     await opened;
     old.dispose();
     const fresh = configureOwnedGame(
@@ -24737,7 +24743,7 @@ test("生命周期：旧局治疗和能量事件等待恢复后不再修改角�
     ui.logs = [];
     release();
     assert.equal(await pending, 0);
-    assert.equal(mode === "heal" ? actor.hp: actor.energy, before);
+    assert.equal(mode === "heal" ? actor.hp : actor.energy, before);
     assert.deepEqual(ui.mutations, []);
     assert.deepEqual(ui.logs, []);
   }
@@ -24836,7 +24842,7 @@ test("生命周期：旧局公共池、目标和弃牌等待取消后不移动�
 test("生命周期：重新征召 cleanup 会清空隐藏令牌、公共池和响应", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
-  = makeGame([a, b]);
+    = makeGame([a, b]);
   b.hand.push(instance("block"));
   game.cardSelectionSystem.createHiddenSelection(b);
   game.state.pendingResponses.push({ id: "old" });
@@ -24849,7 +24855,7 @@ test("生命周期：重新征召 cleanup 会清空隐藏令牌、公共池和�
 test("生命周期：重新征召后按新阵营重新设置能量上限和无限调息", async () => {
   const verify = async (seed) => {
     let value = seed;
-    const random = () =>((value = Math.imul(value, 1664525) + 1013904223 >>> 0) / 4294967296),
+    const random = () => ((value = Math.imul(value, 1664525) + 1013904223 >>> 0) / 4294967296),
       ui = makeUi(),
       game = new Game(ui, random);
     game.simulationMode = true;
@@ -24857,7 +24863,7 @@ test("生命周期：重新征召后按新阵营重新设置能量上限和无�
     const candidates = game.startSelection();
     for (
       const player of game.state.players
-    )assert.equal(player.maxEnergy, game.teamRules.getTeamSize(player) === 2 ? 4: 3);
+    ) assert.equal(player.maxEnergy, game.teamRules.getTeamSize(player) === 2 ? 4 : 3);
     await game.confirmGeneral(candidates[0].id);
     for (const player of game.state.players) {
       assert.equal(player.maxEnergy, game.teamRules.getMaxEnergy(player));
@@ -24875,7 +24881,7 @@ test("生命周期：窥隙隐藏选择期间dispose会收束Promise并清理令
     target = makePlayer("peek-dispose-target", 1, "dusk");
   target.hand.push(instance("charge"), instance("harvest"));
   const { game, ui }
-  = makeGame([shade, target]);
+    = makeGame([shade, target]);
   registerPassiveSkills(game);
   let openedResolve, settle;
   const opened = new Promise((resolve) => {
@@ -24911,7 +24917,7 @@ test("生命周期：真人在自己的决斗中阵亡会在完整结算后主�
   human.hand.push(duel);
   enemy.hand.push(instance("assault"));
   const { game, ui }
-  = makeGame([human, ally, enemy]);
+    = makeGame([human, ally, enemy]);
   const waiting = ui.waitForHumanPlayEnd(game.state.gameId);
   assert.equal(await game.handleHumanCard(duel.id), true);
   const ended = await Promise.race(
@@ -24928,7 +24934,7 @@ test("生命周期：真人在自己的决斗中阵亡会在完整结算后主�
 test("生命周期：互利等待选牌时重新征召不会把 undefined 放入手牌", async () => {
   const human = makePlayer("human", 0, "dawn", "human"), enemy = makePlayer("enemy", 1, "dusk");
   const { game, ui }
-  = makeGame([human, enemy]);
+    = makeGame([human, enemy]);
   game.state.deck.cards.push(instance("block"), instance("charge"));
   game.publicCardPool.reveal(2);
   let settleSelection = null;
@@ -24953,7 +24959,7 @@ test("生命周期：互利等待选牌时重新征召不会把 undefined 放入
 
 test("集成：全 AI 快速对局能推进到合法胜者", async () => {
   let seed = 77;
-  const random = () =>((seed = Math.imul(seed, 1664525) + 1013904223 >>> 0) / 4294967296);
+  const random = () => ((seed = Math.imul(seed, 1664525) + 1013904223 >>> 0) / 4294967296);
   const ui = makeUi();
   const game = new Game(ui, random);
   game.simulationMode = true;
@@ -24982,7 +24988,7 @@ test("集成：掠夺装备收入手牌且不会替换或弃置使用者旧装�
   actor.hand.push(use);
   target.equipment = moved;
   const { game }
-  = makeGame([actor, target]);
+    = makeGame([actor, target]);
   const selection = game.cardSelectionSystem.createHiddenSelection(target);
   await game.playCard(
     actor,
@@ -25003,7 +25009,7 @@ test("集成：雷达装备判定后仍可正常使用已有格挡", async () =>
   const attacker = makePlayer("attacker", 0, "dawn"),
     defender = makePlayer("defender", 1, "dusk", "human");
   const { game, ui }
-  = makeGame([attacker, defender], { response: (request) => request.type === "block" });
+    = makeGame([attacker, defender], { response: (request) => request.type === "block" });
   defender.equipment = instance("defenseDevice");
   defender.hand.push(instance("block"));
   game.state.deck.cards.push(instance("energyDevice"));
@@ -25021,7 +25027,7 @@ test("集成：互利规则目标包含所有存活角色且调律师只触发�
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game }
-  = makeGame([tuner, ally, enemy]);
+    = makeGame([tuner, ally, enemy]);
   registerPassiveSkills(game);
   assert.deepEqual(
     RuleEngine.getCardTargets(game, tuner, CARD_DEFINITIONS.mutualBenefit), [tuner, ally, enemy]
@@ -25041,7 +25047,7 @@ test("集成：调律师转移给队友把接收者作为有效目标并只触�
     enemy = makePlayer("enemy", 1, "dusk"),
     ally = makePlayer("ally", 2, "dawn");
   const { game }
-  = makeGame([tuner, enemy, ally]);
+    = makeGame([tuner, enemy, ally]);
   registerPassiveSkills(game);
   game.state.deck.cards.push(instance("charge"));
   let usedEvent = null;
@@ -25076,7 +25082,7 @@ test("集成：调律师转移给队友把接收者作为有效目标并只触�
 test("集成：正式击杀敌人额外摸1张牌再判定胜负，救回与队友死亡均不奖励", async () => {
   const killer = makePlayer("killer", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk");
   const { game }
-  = makeGame([killer, enemy]);
+    = makeGame([killer, enemy]);
   game.state.deck.cards.push(instance("charge"), instance("block"));
   enemy.hp = 1;
   await game.damage(killer, enemy, 1, { canBlock: false });
@@ -25091,7 +25097,7 @@ test("集成：正式击杀敌人额外摸1张牌再判定胜负，救回与队�
   rescued.hp = 1;
   rescued.hand.push(instance("recover"));
   const { game: rescueGame }
-  = makeGame([source, rescued]);
+    = makeGame([source, rescued]);
   rescueGame.state.deck.cards.push(instance("charge"), instance("block"));
   await rescueGame.damage(source, rescued, 1, { canBlock: false });
   assert.equal(rescued.alive, true);
@@ -25100,7 +25106,7 @@ test("集成：正式击杀敌人额外摸1张牌再判定胜负，救回与队�
     allyTarget = makePlayer("ally-target", 1, "dawn"),
     otherEnemy = makePlayer("other-enemy", 2, "dusk");
   const { game: allyGame }
-  = makeGame([allySource, allyTarget, otherEnemy]);
+    = makeGame([allySource, allyTarget, otherEnemy]);
   allyGame.state.deck.cards.push(instance("charge"), instance("block"));
   allyTarget.hp = 1;
   await allyGame.damage(allySource, allyTarget, 1, { canBlock: false });
@@ -25118,7 +25124,7 @@ test("集成：击杀奖励配置为1且 AI 模拟使用同一奖励数量", () 
   };
   target.turnFlags.momentum = 2;
   const { game }
-  = makeGame([killer, target]),
+    = makeGame([killer, target]),
     visible = createAiVisibleState(killer.id, game.state),
     next = new AiSimulator(
       visible
@@ -25144,7 +25150,7 @@ test("集成：正式阵亡会在首次界面刷新前清空状态和连势", as
     target = makePlayer("death-target", 1, "dusk"),
     survivor = makePlayer("death-survivor", 2, "dusk"),
     { game, ui }
-  = makeGame([source, target, survivor]);
+      = makeGame([source, target, survivor]);
   target.hp = 0;
   target.statuses = {
     exposeWeakness: { stacks: 2 }, huntMark: { sourceId: source.id }, allIn: { assaultBonus: 1 }
@@ -25184,7 +25190,7 @@ test("集成：无明确来源的死亡不奖励且连续击杀两个敌人各�
   fixture.game.state.deck.cards.push(instance("charge"), instance("block"));
   let rewards = 0;
   fixture.game.eventBus.on("enemyKilled", "test:count-kill-reward", () => {
-    rewards+=1;
+    rewards += 1;
   });
   await fixture.game.damage(killer, enemyA, 1, { canBlock: false });
   await fixture.game.damage(killer, enemyB, 1, { canBlock: false });
@@ -25196,7 +25202,7 @@ test("集成：无明确来源的死亡不奖励且连续击杀两个敌人各�
 
 test("集成：击杀奖励README与规则文本统一为额外摸1张", async () => {
   const readme = await readFile(projectFile("README.md"), "utf8"),
-    sources =(
+    sources = (
       await Promise.all((await listJavaScriptFiles()).map((file) => readFile(file, "utf8")))
     ).join("\n");
   assert.match(readme, /杀死敌方角色后.*额外摸 1 张牌/);
@@ -25222,7 +25228,7 @@ test("集成：控制器文件名：Game 使用新路径且无旧路径", async 
 
 test("集成：控制器文件名：全资源图无旧文件名", async () => {
   const oldControllerFilename = `AI${"Controller.js"}`;
-  const files =[
+  const files = [
     ...(await listJavaScriptFiles()), projectFile("index.html"), projectFile("tests/run.mjs")
   ];
   for (const file of files) {
@@ -25241,14 +25247,14 @@ test("集成：控制器文件名：导出类名仍为 AIController", async () =
 
 let passed = 0;
 
-const testPattern = process.env.TEST_PATTERN ? new RegExp(process.env.TEST_PATTERN, "u"): null;
+const testPattern = process.env.TEST_PATTERN ? new RegExp(process.env.TEST_PATTERN, "u") : null;
 
-const selectedTests = testPattern ? tests.filter(({ name }) => testPattern.test(name)): tests;
+const selectedTests = testPattern ? tests.filter(({ name }) => testPattern.test(name)) : tests;
 
 for (const { name, fn } of selectedTests) {
   try {
     await fn();
-    passed+=1;
+    passed += 1;
     process.stdout.write(`✓ ${name}\n`);
   } catch (error) {
     process.stderr.write(`✗ ${name}\n${error.stack}\n`);
