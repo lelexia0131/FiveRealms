@@ -2,14 +2,19 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260807-burning-field-2x-v116";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260807-burning-field-2x-v116";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260807-burning-field-2x-v116";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260807-burning-field-2x-v116";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260807-burning-field-2x-v116";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260807-burning-field-2x-v116";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260807-burning-field-2x-v116";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260807-burning-field-2x-v116";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260808-burning-field-2x-v117";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260808-burning-field-2x-v117";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260808-burning-field-2x-v117";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260808-burning-field-2x-v117";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260808-burning-field-2x-v117";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260808-burning-field-2x-v117";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260808-burning-field-2x-v117";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260808-burning-field-2x-v117";
+
+/** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
+const ENERGY_STATE_WEIGHT = 1.2;
+/** 额外 1 点能量跨过主动技能成本门槛时的选择权价值；与聚能现有启发式保持一致。 */
+const SKILL_THRESHOLD_OPTION_VALUE = 4;
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }
@@ -81,6 +86,45 @@ export class AiEvaluator {
     return exposure * retention * tacticJudgmentProbability;
   }
 
+  /**
+   * 充能桩下一回合有效能量与技能选择权的动态价值。
+   *
+   * 只对 energyDevice 产生；按真实规则（TeamRuleService）计算两个反事实世界的
+   * 下一回合开始能量，不修改任何状态，也不预测未来摸牌、目标或猎印。
+   * 当前回合已使用的技能次数不会影响下一回合容量：主动技能均在自己回合开始
+   * 时随 resetTurnFlags 重置。
+   */
+  energyDeviceFutureUtility(player) {
+    if (player?.equipmentDefinitionId !== "energyDevice" || !player?.battleTeam || !this.game?.teamRules) return 0;
+    const retention = player.equipmentRetentionProbability
+      ?? (player.equipmentDefinitionId ? 1 : 0);
+    if (retention <= 0) return 0;
+    const ruleStub = { battleTeam: player.battleTeam };
+    const cap = Math.max(0, Number(this.game.teamRules.getMaxEnergy(ruleStub)) || 0);
+    const withoutBreakdown = this.game.teamRules.getTurnEnergyBreakdown(ruleStub);
+    const withBreakdown = this.game.teamRules.getTurnEnergyBreakdown({
+      ...ruleStub,
+      equipment: { definitionId: "energyDevice" }
+    });
+    const currentEnergy = Math.max(0, Number(player.energy) || 0);
+    const withoutGain = Number(withoutBreakdown.baseAmount) + Number(withoutBreakdown.teamBonus);
+    const withGain = Number(withBreakdown.baseAmount) + Number(withBreakdown.teamBonus)
+      + Number(withBreakdown.equipmentBonus);
+    const withoutEnergy = Math.min(cap, currentEnergy + withoutGain);
+    const withEnergy = Math.min(cap, currentEnergy + withGain);
+    const effectiveGain = Math.max(0, withEnergy - withoutEnergy);
+    const baseValue = effectiveGain * ENERGY_STATE_WEIGHT;
+    const skillCost = Math.max(0, Number(player.activeSkillCost) || 0);
+    const skillLimit = Math.max(0, Number(player.activeSkillLimit) || 0);
+    let optionValue = 0;
+    if (player.activeSkillId && skillCost > 0 && skillLimit > 0) {
+      const affordableUses = (energy) => Math.min(skillLimit, Math.floor(energy / skillCost));
+      const additionalUses = affordableUses(withEnergy) - affordableUses(withoutEnergy);
+      optionValue = Math.max(0, additionalUses) * SKILL_THRESHOLD_OPTION_VALUE;
+    }
+    return retention * (baseValue + optionValue);
+  }
+
   stateUtility(state, viewerId) {
     const viewer = state.players.find((player) => player.id === viewerId);
     if (!viewer) return -Infinity;
@@ -120,10 +164,12 @@ export class AiEvaluator {
       }, 0);
       const exposure = this.incomingExposure(state, player);
       const radarMitigation = this.radarMitigationUtility(exposure, player, radarTacticProbability);
-      score += sign * (danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * 1.2
+      const energyDeviceFuture = this.energyDeviceFutureUtility(player);
+      score += sign * (danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * ENERGY_STATE_WEIGHT
         + player.handCount * 1.1 + handRoleDelta + (player.exposeWeaknessStacks ?? 0) * 1.5
         + equipmentDelta * .25 + equipmentRoleDelta * .25
-        + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5 - exposure + radarMitigation)
+        + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5 - exposure + radarMitigation
+        + energyDeviceFuture)
       - lightningTeamBurden(state, player, viewer.battleTeam);
     }
     return score;
@@ -181,7 +227,7 @@ export class AiEvaluator {
       }
     }
     if (card.definitionId === "recover") value += (actor.maxHp - actor.hp) * 4;
-    if (card.definitionId === "charge") value += (actor.maxEnergy - actor.energy) * 1.5 + (actor.activeSkillId && !actor.activeSkillUsed && actor.energy + 1 >= actor.activeSkillCost ? 4 : 0);
+    if (card.definitionId === "charge") value += (actor.maxEnergy - actor.energy) * 1.5 + (actor.activeSkillId && !actor.activeSkillUsed && actor.energy + 1 >= actor.activeSkillCost ? SKILL_THRESHOLD_OPTION_VALUE : 0);
     if (card.definitionId === "shield" && target) value += (target.hp <= 1 ? 6 : target.hp <= 2 ? 3 : 0) + Math.max(0, 2 - (target.shield ?? 0));
     if (card.definitionId === "exposeWeakness") value += (actor.hand ?? []).filter((entry) => entry.definitionId === "assault").length * 2;
     if (card.definitionId === "shockwave") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam && enemy.hp <= 1).length * 7;

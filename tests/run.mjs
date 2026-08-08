@@ -10156,6 +10156,326 @@ test("AI·雷达：敌方雷达动态免伤按阵营符号反向计入己方效�
   assert.ok(noRadarScore - radarScore > 9 * .25);
 });
 
+// ---- AI 装备行为·充能桩 ----
+
+const energyEvaluatorFixture = () => {
+  const actor = makePlayer("energy-actor", 0, "dawn", "ai", 2),
+    ally1 = makePlayer("energy-ally-1", 1, "dawn", "ai", 1),
+    ally2 = makePlayer("energy-ally-2", 2, "dawn", "ai", 0),
+    enemy1 = makePlayer("energy-enemy-1", 3, "dusk", "ai", 0),
+    enemy2 = makePlayer("energy-enemy-2", 4, "dusk", "ai", 1);
+  const { game } = makeGame([actor, ally1, ally2, enemy1, enemy2]);
+  return game.aiController.evaluator;
+};
+
+const energyDevicePlayer = (energy, options = {}) => ({
+  id: "energy-player",
+  seatIndex: 0,
+  battleTeam: "dawn",
+  generalId: "spirit-medic",
+  alive: true,
+  hp: 3,
+  maxHp: 3,
+  shield: 0,
+  energy,
+  handCount: 0,
+  hand: [],
+  attackRange: 1,
+  equipmentDefinitionId: "energyDevice",
+  equipmentRetentionProbability: options.retention ?? 1,
+  initialEquipmentValue: CARD_DEFINITIONS.energyDevice.aiValue,
+  initialEquipmentRoleDelta: 0,
+  activeSkillId: (options.skillCost ?? 2) > 0 ? "symbiosis" : null,
+  activeSkillCost: options.skillCost ?? 2,
+  activeSkillLimit: options.skillLimit ?? 2,
+  activeSkillUses: options.activeSkillUses ?? 0,
+  expectedEquipmentGain: 0,
+  expectedEquipmentRoleDelta: 0,
+  huntMarkProbabilities: {},
+  exposeWeaknessStacks: 0,
+  statuses: [],
+  expectedInformationGain: 0
+});
+
+const energyDeviceAlly = () => ({
+  id: "energy-ally",
+  seatIndex: 1,
+  battleTeam: "dawn",
+  generalId: "oath-warden",
+  alive: true,
+  hp: 2,
+  maxHp: 3,
+  shield: 0,
+  energy: 0,
+  handCount: 0,
+  hand: [],
+  attackRange: 1,
+  equipmentDefinitionId: null,
+  equipmentRetentionProbability: 0,
+  initialEquipmentValue: 0,
+  initialEquipmentRoleDelta: 0,
+  expectedEquipmentGain: 0,
+  expectedEquipmentRoleDelta: 0,
+  huntMarkProbabilities: {},
+  exposeWeaknessStacks: 0,
+  statuses: [],
+  expectedInformationGain: 0
+});
+
+const energyDeviceEnemy = () => ({
+  id: "energy-enemy",
+  seatIndex: 2,
+  battleTeam: "dusk",
+  generalId: "blade-walker",
+  alive: true,
+  hp: 4,
+  maxHp: 4,
+  shield: 0,
+  energy: 0,
+  handCount: 0,
+  hand: [],
+  attackRange: 1,
+  equipmentDefinitionId: null,
+  equipmentRetentionProbability: 0,
+  initialEquipmentValue: 0,
+  initialEquipmentRoleDelta: 0,
+  expectedEquipmentGain: 0,
+  expectedEquipmentRoleDelta: 0,
+  huntMarkProbabilities: {},
+  exposeWeaknessStacks: 0,
+  statuses: [],
+  expectedInformationGain: 0
+});
+
+const energyDeviceWorld = (player, enemy = energyDeviceEnemy()) => ({
+  players: [player, energyDeviceAlly(), enemy]
+});
+
+const energyDeviceNoneWorld = (player) => ({
+  players: [
+    {
+      ...player,
+      equipmentDefinitionId: null,
+      equipmentRetentionProbability: 0,
+      initialEquipmentValue: 0,
+      initialEquipmentRoleDelta: 0
+    },
+    energyDeviceAlly(),
+    energyDeviceEnemy()
+  ]
+});
+
+test("AI·充能桩：低能量 cost2 技能门槛获得未来能量与技能选择权价值", () => {
+  const evaluator = energyEvaluatorFixture(),
+    player = energyDevicePlayer(0),
+    withWorld = energyDeviceWorld(player),
+    withoutWorld = energyDeviceNoneWorld(player);
+  assertClose(evaluator.energyDeviceFutureUtility(player), 5.2);
+  assertClose(
+    evaluator.stateUtility(withWorld, "energy-player")
+      - evaluator.stateUtility(withoutWorld, "energy-player"),
+    5.2
+  );
+});
+
+test("AI·充能桩：已足够发动技能时不再获得完整技能门槛价值", () => {
+  const evaluator = energyEvaluatorFixture(),
+    player = energyDevicePlayer(1),
+    withWorld = energyDeviceWorld(player),
+    withoutWorld = energyDeviceNoneWorld(player);
+  assertClose(evaluator.energyDeviceFutureUtility(player), 1.2);
+  assertClose(
+    evaluator.stateUtility(withWorld, "energy-player")
+      - evaluator.stateUtility(withoutWorld, "energy-player"),
+    1.2
+  );
+});
+
+test("AI·充能桩：接近 cap 时充能桩未来动态价值归零", () => {
+  const evaluator = energyEvaluatorFixture(),
+    player = energyDevicePlayer(2),
+    withWorld = energyDeviceWorld(player),
+    withoutWorld = energyDeviceNoneWorld(player);
+  assertClose(evaluator.energyDeviceFutureUtility(player), 0);
+  assertClose(
+    evaluator.stateUtility(withWorld, "energy-player")
+      - evaluator.stateUtility(withoutWorld, "energy-player"),
+    0
+  );
+});
+
+test("AI·充能桩：cost1 limit2 额外可负担次数产生选择权价值", () => {
+  const evaluator = energyEvaluatorFixture(),
+    player = energyDevicePlayer(0, { skillCost: 1, skillLimit: 2 });
+  assertClose(evaluator.energyDeviceFutureUtility(player), 5.2);
+});
+
+test("AI·充能桩：cost1 limit1 只有基础能量价值", () => {
+  const evaluator = energyEvaluatorFixture(),
+    player = energyDevicePlayer(0, { skillCost: 1, skillLimit: 1 });
+  assertClose(evaluator.energyDeviceFutureUtility(player), 1.2);
+});
+
+test("AI·充能桩：下一回合技能次数按回合重置而不误用当前已用次数", () => {
+  const evaluator = energyEvaluatorFixture(),
+    player = energyDevicePlayer(0, { skillCost: 2, skillLimit: 2, activeSkillUses: 2 });
+  assertClose(evaluator.energyDeviceFutureUtility(player), 5.2);
+});
+
+test("AI·充能桩：保留概率 1/0.5/0 连续缩放动态价值", () => {
+  const evaluator = energyEvaluatorFixture(),
+    full = energyDevicePlayer(0, { retention: 1 }),
+    half = energyDevicePlayer(0, { retention: .5 }),
+    zero = energyDevicePlayer(0, { retention: 0 });
+  assertClose(evaluator.energyDeviceFutureUtility(full), 5.2);
+  assertClose(evaluator.energyDeviceFutureUtility(half), 2.6);
+  assertClose(evaluator.energyDeviceFutureUtility(zero), 0);
+});
+
+test("AI·充能桩：门槛场景 Planner 保留充能桩而非换静态相近装备", async () => {
+  // 炎术师：充能桩有效 8，屏障有效 7（静态相近）；敌人位于距离 2，屏障的距离
+  // 防守效果与充能桩都不改变本局暴露，避免候选装备真实效果干扰对比。
+  const actor = makePlayer("energy-keep-actor", 0, "dawn", "ai", 4),
+    ally1 = makePlayer("energy-keep-ally-1", 1, "dawn", "ai", 1),
+    enemy1 = makePlayer("energy-keep-enemy-1", 2, "dusk", "ai", 0),
+    enemy2 = makePlayer("energy-keep-enemy-2", 3, "dusk", "ai", 1),
+    ally2 = makePlayer("energy-keep-ally-2", 4, "dawn", "ai", 0);
+  actor.equipment = instance("energyDevice");
+  actor.hand = [instance("barrierDevice"), instance("charge"), instance("charge"), instance("charge")];
+  const { game } = makeGame([actor, ally1, ally2, enemy1, enemy2]);
+  game.aiSearchNodeBudgetOverride = 2;
+  game.aiRandomnessRange = 0;
+  const evaluator = game.aiController.evaluator,
+    before = createAiVisibleState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    ),
+    beforeActor = before.players.find((entry) => entry.id === actor.id),
+    swapAction = { type: "card", card: actor.hand[0], targets: [] },
+    after = new AiSimulator(before).apply(before, swapAction, actor.id),
+    swapScore = evaluator.actionUtility(swapAction, actor, before)
+      + evaluator.stateUtility(after, actor.id) * 0.08,
+    endScore = evaluator.actionUtility({ type: "end" }, actor, before)
+      + evaluator.stateUtility(before, actor.id) * 0.08;
+  assertClose(evaluator.energyDeviceFutureUtility(beforeActor), 5.2);
+  assert.ok(endScore - swapScore > GAME_CONFIG.aiNearTieRange);
+  const selected = await game.aiController.planner.plan(
+    actor, before, [swapAction, { type: "end" }], { gameId: game.state.gameId }
+  );
+  assert.equal(selected.type, "end");
+});
+
+test("AI·充能桩：接近 cap 时允许换掉充能桩", async () => {
+  const actor = makePlayer("energy-swap-actor", 0, "dawn", "ai", 4),
+    ally1 = makePlayer("energy-swap-ally-1", 1, "dawn", "ai", 1),
+    enemy1 = makePlayer("energy-swap-enemy-1", 2, "dusk", "ai", 0),
+    enemy2 = makePlayer("energy-swap-enemy-2", 3, "dusk", "ai", 1),
+    ally2 = makePlayer("energy-swap-ally-2", 4, "dawn", "ai", 0);
+  actor.energy = 2;
+  actor.equipment = instance("energyDevice");
+  const battle = instance("battleDevice");
+  actor.hand = [battle, instance("charge"), instance("charge"), instance("charge")];
+  const { game } = makeGame([actor, ally1, ally2, enemy1, enemy2]);
+  game.aiSearchNodeBudgetOverride = 2;
+  game.aiRandomnessRange = 0;
+  const evaluator = game.aiController.evaluator,
+    before = createAiVisibleState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    ),
+    beforeActor = before.players.find((entry) => entry.id === actor.id),
+    swapAction = { type: "card", card: battle, targets: [] },
+    after = new AiSimulator(before).apply(before, swapAction, actor.id),
+    swapScore = evaluator.actionUtility(swapAction, actor, before)
+      + evaluator.stateUtility(after, actor.id) * 0.08,
+    endScore = evaluator.actionUtility({ type: "end" }, actor, before)
+      + evaluator.stateUtility(before, actor.id) * 0.08;
+  assertClose(evaluator.energyDeviceFutureUtility(beforeActor), 0);
+  assert.ok(swapScore - endScore > GAME_CONFIG.aiNearTieRange);
+  const selected = await game.aiController.planner.plan(
+    actor, before, [swapAction, { type: "end" }], { gameId: game.state.gameId }
+  );
+  assert.equal(selected.type, "card");
+  assert.equal(selected.card.id, battle.id);
+});
+
+test("AI·充能桩：空槽装备充能桩保持合理正价值", async () => {
+  const actor = makePlayer("energy-acquire-actor", 0, "dawn", "ai", 2),
+    ally1 = makePlayer("energy-acquire-ally-1", 1, "dawn", "ai", 1),
+    ally2 = makePlayer("energy-acquire-ally-2", 2, "dawn", "ai", 0),
+    enemy1 = makePlayer("energy-acquire-enemy-1", 3, "dusk", "ai", 0),
+    enemy2 = makePlayer("energy-acquire-enemy-2", 4, "dusk", "ai", 1);
+  const device = instance("energyDevice");
+  actor.hand = [device];
+  const { game } = makeGame([actor, ally1, ally2, enemy1, enemy2]);
+  game.aiSearchNodeBudgetOverride = 2;
+  game.aiRandomnessRange = 0;
+  const evaluator = game.aiController.evaluator,
+    before = createAiVisibleState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    ),
+    equipAction = { type: "card", card: device, targets: [] },
+    after = new AiSimulator(before).apply(before, equipAction, actor.id),
+    equipScore = evaluator.actionUtility(equipAction, actor, before)
+      + evaluator.stateUtility(after, actor.id) * 0.08,
+    endScore = evaluator.actionUtility({ type: "end" }, actor, before)
+      + evaluator.stateUtility(before, actor.id) * 0.08;
+  assert.ok(equipScore - endScore > GAME_CONFIG.aiNearTieRange);
+  const selected = await game.aiController.planner.plan(
+    actor, before, [equipAction, { type: "end" }], { gameId: game.state.gameId }
+  );
+  assert.equal(selected.type, "card");
+  assert.equal(selected.card.id, device.id);
+});
+
+test("AI·充能桩：敌方充能桩未来能量按阵营符号反向计入", () => {
+  const evaluator = energyEvaluatorFixture(),
+    viewer = {
+      ...energyDevicePlayer(0),
+      id: "viewer",
+      battleTeam: "dawn",
+      equipmentDefinitionId: null,
+      equipmentRetentionProbability: 0,
+      initialEquipmentValue: 0,
+      initialEquipmentRoleDelta: 0
+    },
+    enemyWith = {
+      ...energyDeviceEnemy(),
+      equipmentDefinitionId: "energyDevice",
+      equipmentRetentionProbability: 1,
+      initialEquipmentValue: CARD_DEFINITIONS.energyDevice.aiValue,
+      initialEquipmentRoleDelta: getRoleCardAiValue("blade-walker", "energyDevice")
+        - CARD_DEFINITIONS.energyDevice.aiValue,
+      activeSkillId: "breakArmy",
+      activeSkillCost: 2,
+      activeSkillLimit: 1,
+      activeSkillUses: 0
+    },
+    enemyWithout = { ...enemyWith, equipmentDefinitionId: null, equipmentRetentionProbability: 0, initialEquipmentValue: 0, initialEquipmentRoleDelta: 0 },
+    withWorld = { players: [viewer, energyDeviceAlly(), enemyWith] },
+    withoutWorld = { players: [viewer, energyDeviceAlly(), enemyWithout] };
+  assertClose(
+    evaluator.stateUtility(withoutWorld, "viewer") - evaluator.stateUtility(withWorld, "viewer"),
+    5.2
+  );
+});
+
+test("AI·充能桩：聚能门槛常量提取后 actionUtility 数值不变", () => {
+  const actor = makePlayer("energy-charge-actor", 0, "dawn", "ai", 2),
+    enemy = makePlayer("energy-charge-enemy", 1, "dusk");
+  actor.energy = 1;
+  const { game } = makeGame([actor, enemy]);
+  const charge = instance("charge");
+  actor.hand = [charge];
+  const visible = createAiVisibleState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  assert.equal(
+    game.aiController.evaluator.actionUtility(
+      { type: "card", card: charge, targets: [] }, actor, visible
+    ),
+    11
+  );
+});
+
 // ---- AI 装备行为·军火库 ----
 
 test("AI·军火库：模拟军火库要求两张格挡而不是一张", () => {
