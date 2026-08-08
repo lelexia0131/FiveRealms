@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260808-burning-field-2x-v117";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260808-card-ai-values-v118";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

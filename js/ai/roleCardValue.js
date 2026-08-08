@@ -6,19 +6,19 @@
  * 价值模型：全局基础 aiValue + 稀疏角色差值；未配置的组合自动回退 0。
  * 后续新增角色或卡牌时，未配置差值即可立即使用基础值。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260808-burning-field-2x-v117";
-import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260808-burning-field-2x-v117";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260808-card-ai-values-v118";
+import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260808-card-ai-values-v118";
 
 /**
  * 角色 × 卡牌稀疏差值表。
  *
- * 当前保存首版稀疏角色差值：只记录非零项，未配置组合自动回退 0。
+ * 当前保存正式稀疏角色差值：只记录非零项，未配置组合自动回退 0。
  * 新角色和新卡牌不要求立即配置差值；禁止写入完整矩阵。
  * 未来添加角色条目时，必须同时 Object.freeze 该角色的嵌套差值对象。
  */
 export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
   "blade-walker": Object.freeze({
-    assault: 1,
+    assault: 2,
     block: -1,
     charge: -1,
     scout: -1,
@@ -27,16 +27,14 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     shockwave: 1,
     provoke: 1,
     leverage: 1,
+    plunder: 1,
     destroy: 1,
-    counter: -1,
-    harvest: -1,
-    duel: 1,
+    duel: -1,
     mutualBenefit: -1,
     symbiosis: -1,
     energyDevice: -1,
-    recycleDevice: -1,
     defenseDevice: -1,
-    battleDevice: 1,
+    battleDevice: 2,
     telescope: 1,
     barrierDevice: -1
   }),
@@ -51,12 +49,13 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     shockwave: -1,
     provoke: -1,
     leverage: -1,
-    plunder: -1,
-    destroy: -1,
+    plunder: 1,
     counter: 1,
+    harvest: 1,
     duel: -1,
     mutualBenefit: -1,
     symbiosis: 1,
+    lightning: -1,
     recycleDevice: -1,
     defenseDevice: 1,
     battleDevice: -1,
@@ -68,6 +67,7 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     assault: -1,
     recover: 2,
     block: 1,
+    charge: 1,
     shield: 1,
     scout: 1,
     transfer: 1,
@@ -76,11 +76,11 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     provoke: -1,
     leverage: -1,
     plunder: -1,
-    destroy: -1,
     counter: 1,
     harvest: 1,
     duel: -1,
     symbiosis: 2,
+    lightning: -1,
     recycleDevice: -1,
     defenseDevice: 1,
     battleDevice: -1,
@@ -89,36 +89,31 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
   }),
 
   "shade-agent": Object.freeze({
-    recover: -1,
     block: 1,
-    charge: -1,
-    scout: 2,
+    charge: 2,
     exposeWeakness: 1,
     leverage: 1,
-    plunder: 1,
-    destroy: 1,
-    energyDevice: -1,
+    destroy: -1,
+    duel: 1,
+    lightning: -1,
+    energyDevice: 1,
     recycleDevice: 1,
     telescope: 1
   }),
 
   "ember-magus": Object.freeze({
     assault: 1,
-    recover: -1,
-    block: -1,
-    charge: 1,
-    shield: -1,
+    block: 1,
+    charge: 2,
     scout: -1,
     transfer: -1,
-    exposeWeakness: -1,
     shockwave: 1,
     provoke: 1,
     destroy: 1,
     counter: -1,
-    harvest: -1,
-    duel: -1,
     mutualBenefit: -1,
     symbiosis: -1,
+    lightning: -1,
     energyDevice: 1,
     recycleDevice: 1,
     defenseDevice: -1,
@@ -127,9 +122,10 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
   }),
 
   "trail-hunter": Object.freeze({
-    assault: 1,
+    assault: 2,
     recover: -1,
     block: -1,
+    charge: 1,
     shield: -1,
     scout: -1,
     transfer: -1,
@@ -137,8 +133,6 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     leverage: 1,
     destroy: 1,
     counter: -1,
-    harvest: -1,
-    duel: 1,
     mutualBenefit: -1,
     symbiosis: -1,
     recycleDevice: -1,
@@ -151,7 +145,7 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
   "fate-gambler": Object.freeze({
     recover: -1,
     block: -1,
-    charge: 1,
+    charge: 2,
     shield: -1,
     scout: -1,
     transfer: -1,
@@ -159,7 +153,6 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     shockwave: 1,
     provoke: 1,
     plunder: 1,
-    destroy: -1,
     counter: -1,
     harvest: 1,
     duel: 1,
@@ -173,6 +166,7 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
   "resonance-tuner": Object.freeze({
     assault: -1,
     block: 1,
+    charge: 1,
     shield: 1,
     scout: 1,
     transfer: 2,

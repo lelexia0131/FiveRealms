@@ -2,13 +2,13 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260808-burning-field-2x-v117";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260808-burning-field-2x-v117";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260808-burning-field-2x-v117";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260808-burning-field-2x-v117";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260808-burning-field-2x-v117";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260808-burning-field-2x-v117";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260808-burning-field-2x-v117";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260808-card-ai-values-v118";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260808-card-ai-values-v118";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260808-card-ai-values-v118";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260808-card-ai-values-v118";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260808-card-ai-values-v118";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260808-card-ai-values-v118";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260808-card-ai-values-v118";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -23,7 +23,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260808-burning-field-2x-v117";
+} from "./AiProbabilityBranches.js?build=20260808-card-ai-values-v118";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);

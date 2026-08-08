@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260808-burning-field-2x-v117";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260808-burning-field-2x-v117";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260808-burning-field-2x-v117";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260808-card-ai-values-v118";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260808-card-ai-values-v118";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260808-card-ai-values-v118";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260808-burning-field-2x-v117";
-import { AnimationController } from "./animationController.js?build=20260808-burning-field-2x-v117";
-import { InteractionController } from "./InteractionController.js?build=20260808-burning-field-2x-v117";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260808-burning-field-2x-v117";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260808-burning-field-2x-v117";
-import { JudgmentView } from "./JudgmentView.js?build=20260808-burning-field-2x-v117";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260808-burning-field-2x-v117";
-import { createOpponentHandView } from "./handVisibility.js?build=20260808-burning-field-2x-v117";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260808-burning-field-2x-v117";
-import { SoundManager } from "../audio/SoundManager.js?build=20260808-burning-field-2x-v117";
+} from "./templates.js?build=20260808-card-ai-values-v118";
+import { AnimationController } from "./animationController.js?build=20260808-card-ai-values-v118";
+import { InteractionController } from "./InteractionController.js?build=20260808-card-ai-values-v118";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260808-card-ai-values-v118";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260808-card-ai-values-v118";
+import { JudgmentView } from "./JudgmentView.js?build=20260808-card-ai-values-v118";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260808-card-ai-values-v118";
+import { createOpponentHandView } from "./handVisibility.js?build=20260808-card-ai-values-v118";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260808-card-ai-values-v118";
+import { SoundManager } from "../audio/SoundManager.js?build=20260808-card-ai-values-v118";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
