@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-coordination-target-audit-v138";
-import { createId } from "../utils/helpers.js?build=20260809-coordination-target-audit-v138";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-coordination-target-audit-v138";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-coordination-target-audit-v138";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-ai-card-value-table-v139";
+import { createId } from "../utils/helpers.js?build=20260809-ai-card-value-table-v139";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-ai-card-value-table-v139";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-ai-card-value-table-v139";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

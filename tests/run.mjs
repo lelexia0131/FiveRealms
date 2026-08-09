@@ -446,8 +446,8 @@ test(
   )
 );
 
-test("卡牌定义：护盾全局基础 aiValue 为 6 且不低于调息", () => {
-  assert.equal(CARD_DEFINITIONS.shield.aiValue, 6);
+test("卡牌定义：护盾全局基础 aiValue 为 7 且不低于调息", () => {
+  assert.equal(CARD_DEFINITIONS.shield.aiValue, 7);
   assert.ok(CARD_DEFINITIONS.shield.aiValue >= CARD_DEFINITIONS.recover.aiValue);
 });
 
@@ -3181,7 +3181,7 @@ test("闪电：定义、数量与牌堆总数正确", () => {
   assert.equal(lightning.counterable, false);
   assert.equal(lightning.count, 2);
   assert.equal(lightning.targetType, "none");
-  assert.equal(lightning.aiValue, 4);
+  assert.equal(lightning.aiValue, 3);
   assert.ok(lightning.description.includes("闪电"));
   assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("lightning"));
   assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
@@ -8341,7 +8341,7 @@ test("AI·窥探：未知不足时先选未知再用已知低价值补足且不�
   assert.notEqual(chosen[0], chosen[1]);
 });
 
-test("AI·窥探：全部已知时按低价值顺序稳定回退", () => {
+test("AI·窥探：全部已知时按价值升序且同分保持原顺序", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
     = makeGame([a, b], { random: () => 0.99 });
@@ -8351,7 +8351,7 @@ test("AI·窥探：全部已知时按低价值顺序稳定回退", () => {
   const chosen = game.aiController.cardSelector.chooseHiddenCards(
     a, b, 2, null, { purpose: "spy-gap" }
   );
-  assert.deepEqual(chosen, [lowest, low]);
+  assert.deepEqual(chosen, [low, lowest]);
 });
 
 test("AI·窥探：遵循 excludedCardIds", () => {
@@ -10371,11 +10371,21 @@ test("AI·封印：只在状态触发时为己方评估反制机会成本", () =
   );
 });
 
-test("AI·封印：全局基础价为 7 且八名角色差量均为零", () => {
+test("AI·封印：基础值与八名角色差值全部纳入权威估值表", () => {
+  const expectedDeltas = {
+    "blade-walker": 0,
+    "oath-warden": 0,
+    "spirit-medic": 0,
+    "shade-agent": -1,
+    "ember-magus": 1,
+    "trail-hunter": 1,
+    "fate-gambler": 0,
+    "resonance-tuner": -1
+  };
   assert.equal(getBaseCardAiValue("seal"), 7);
-  for (const general of GENERAL_DEFINITIONS) {
-    assert.equal(Object.hasOwn(ROLE_CARD_VALUE_DELTAS[general.id], "seal"), false);
-    assert.equal(getRoleCardAiValue(general.id, "seal"), 7);
+  for (const [generalId, expectedDelta] of Object.entries(expectedDeltas)) {
+    assert.equal(ROLE_CARD_VALUE_DELTAS[generalId]?.seal ?? 0, expectedDelta);
+    assert.equal(getRoleCardAiValue(generalId, "seal"), 7 + expectedDelta);
   }
 });
 
@@ -12259,7 +12269,7 @@ test("AI·雷达：战术判定概率来自剩余牌堆且战术牌耗尽时归�
 });
 
 test("AI·雷达：受攻击暴露时不会为静态略高的非防守装备确定性拆雷达", async () => {
-  const actor = makePlayer("radar-swap-actor", 0, "dawn", "ai", 6),
+  const actor = makePlayer("radar-swap-actor", 0, "dawn", "ai", 3),
     b = makePlayer("radar-swap-b", 1, "dusk"),
     f2 = makePlayer("radar-swap-f2", 2, "dawn"),
     f3 = makePlayer("radar-swap-f3", 3, "dawn"),
@@ -12426,7 +12436,8 @@ const energyDevicePlayer = (energy, options = {}) => ({
   equipmentDefinitionId: "energyDevice",
   equipmentRetentionProbability: options.retention ?? 1,
   initialEquipmentValue: CARD_DEFINITIONS.energyDevice.aiValue,
-  initialEquipmentRoleDelta: 0,
+  initialEquipmentRoleDelta: getRoleCardAiValue("spirit-medic", "energyDevice")
+    - CARD_DEFINITIONS.energyDevice.aiValue,
   activeSkillId: (options.skillCost ?? 2) > 0 ? "symbiosis" : null,
   activeSkillCost: options.skillCost ?? 2,
   activeSkillLimit: options.skillLimit ?? 2,
@@ -12702,7 +12713,7 @@ test("AI·充能桩：敌方充能桩未来能量按阵营符号反向计入", (
   );
 });
 
-test("AI·充能桩：聚能门槛常量提取后 actionUtility 数值不变", () => {
+test("AI·充能桩：聚能 actionUtility 叠加角色静态值与门槛价值", () => {
   const actor = makePlayer("energy-charge-actor", 0, "dawn", "ai", 2),
     enemy = makePlayer("energy-charge-enemy", 1, "dusk");
   actor.energy = 1;
@@ -12716,7 +12727,7 @@ test("AI·充能桩：聚能门槛常量提取后 actionUtility 数值不变", (
     game.aiController.evaluator.actionUtility(
       { type: "card", card: charge, targets: [] }, actor, visible
     ),
-    12
+    getRoleCardAiValue("spirit-medic", "charge") + 7
   );
 });
 
@@ -19201,7 +19212,7 @@ test("AI·资源身份：手牌期望数量按可用概率计算且部分身份�
     knownCards: [
       {
         cardId: "full2",
-        definitionId: "charge",
+        definitionId: "lightning",
         availabilityStateBranches: [{ probability: 1, conditions: {}, available: true }]
       },
       {
@@ -21841,10 +21852,10 @@ const EXPECTED_CARD_AI_VALUES = Object.freeze({
   assault: ["突袭", 4],
   recover: ["调息", 6],
   block: ["格挡", 5],
-  charge: ["聚能", 4],
-  shield: ["护盾", 6],
+  charge: ["聚能", 5],
+  shield: ["护盾", 7],
   scout: ["窥探", 5],
-  transfer: ["转移", 6],
+  transfer: ["转移", 7],
   exposeWeakness: ["破势", 6],
   shockwave: ["震荡", 8],
   provoke: ["挑衅", 8],
@@ -21857,7 +21868,7 @@ const EXPECTED_CARD_AI_VALUES = Object.freeze({
   mutualBenefit: ["互利", 6],
   symbiosis: ["共生", 5],
   seal: ["封印", 7],
-  lightning: ["闪电", 4],
+  lightning: ["闪电", 3],
   energyDevice: ["充能桩", 7],
   recycleDevice: ["回收站", 8],
   defenseDevice: ["雷达", 9],
@@ -21882,8 +21893,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     assault: 2,
     block: -1,
     charge: -1,
-    scout: -1,
-    transfer: -1,
+    scout: 1,
     exposeWeakness: 1,
     shockwave: 1,
     provoke: 1,
@@ -21891,7 +21901,6 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     plunder: 1,
     destroy: 1,
     duel: -1,
-    mutualBenefit: -1,
     symbiosis: -1,
     energyDevice: -1,
     defenseDevice: -1,
@@ -21908,14 +21917,12 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     exposeWeakness: -1,
     shockwave: -1,
     provoke: -1,
-    leverage: -1,
     plunder: 1,
     counter: 1,
     harvest: 1,
     duel: -1,
     mutualBenefit: -1,
     symbiosis: 1,
-    lightning: -1,
     recycleDevice: -1,
     defenseDevice: 1,
     battleDevice: -1,
@@ -21926,20 +21933,18 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     assault: -1,
     recover: 2,
     block: 1,
-    charge: 1,
+    charge: 2,
     shield: 1,
-    scout: 1,
     transfer: 1,
     exposeWeakness: -1,
     shockwave: -1,
     provoke: -1,
-    leverage: -1,
     plunder: -1,
     counter: 1,
     harvest: 1,
     duel: -1,
     symbiosis: 2,
-    lightning: -1,
+    energyDevice: 1,
     recycleDevice: -1,
     defenseDevice: 1,
     battleDevice: -1,
@@ -21947,50 +21952,45 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     barrierDevice: 1
   },
   "shade-agent": {
+    recover: 1,
     block: 1,
     charge: 2,
+    scout: -1,
     exposeWeakness: 1,
-    leverage: 1,
     destroy: -1,
     duel: 1,
-    lightning: -1,
+    seal: -1,
     energyDevice: 1,
-    recycleDevice: 1,
+    battleDevice: 1,
     telescope: 1
   },
   "ember-magus": {
-    assault: 1,
+    recover: 1,
     block: 1,
-    charge: 2,
-    scout: -1,
+    charge: 1,
+    scout: -2,
     transfer: -1,
     shockwave: 1,
     provoke: 1,
-    destroy: 1,
     counter: -1,
-    mutualBenefit: -1,
     symbiosis: -1,
-    lightning: -1,
+    seal: 1,
     energyDevice: 1,
-    recycleDevice: 1,
-    defenseDevice: -1,
-    battleDevice: 1,
-    barrierDevice: -1
+    recycleDevice: 1
   },
   "trail-hunter": {
     assault: 2,
-    recover: -1,
     block: -1,
     charge: 1,
-    shield: -1,
     scout: -1,
-    transfer: -1,
     exposeWeakness: 1,
     leverage: 1,
+    plunder: 1,
     destroy: 1,
     counter: -1,
-    mutualBenefit: -1,
     symbiosis: -1,
+    seal: 1,
+    energyDevice: 1,
     recycleDevice: -1,
     defenseDevice: -1,
     battleDevice: 1,
@@ -21998,11 +21998,9 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     barrierDevice: -1
   },
   "fate-gambler": {
-    recover: -1,
+    assault: 1,
     block: -1,
-    charge: 2,
-    shield: -1,
-    scout: -1,
+    charge: 1,
     transfer: -1,
     exposeWeakness: 1,
     shockwave: 1,
@@ -22015,29 +22013,31 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     symbiosis: -1,
     energyDevice: 1,
     recycleDevice: 1,
-    defenseDevice: -1
+    defenseDevice: -1,
+    battleDevice: 1,
+    barrierDevice: -1
   },
   "resonance-tuner": {
     assault: -1,
     block: 1,
-    charge: 1,
+    charge: 2,
     shield: 1,
     scout: 1,
     transfer: 2,
     exposeWeakness: -1,
-    shockwave: -1,
-    provoke: -1,
-    leverage: -1,
-    destroy: -1,
-    counter: 1,
+    leverage: 2,
+    plunder: 2,
+    destroy: 1,
+    counter: 2,
     harvest: 1,
     duel: -1,
     mutualBenefit: 2,
     symbiosis: 1,
+    seal: -1,
     recycleDevice: 1,
     defenseDevice: 1,
     battleDevice: -1,
-    telescope: -1,
+    telescope: 1,
     barrierDevice: 1
   }
 });
@@ -22054,7 +22054,7 @@ test("AI·角色卡牌价值：26 张正式基础值与名称、definitionId 全
   }
 });
 
-test("AI·角色卡牌价值：八名角色 ID 与 146 项正式非零差值全部匹配", () => {
+test("AI·角色卡牌价值：八名角色 ID 与 135 项正式非零差值全部匹配", () => {
   assert.deepEqual(
     Object.fromEntries(GENERAL_DEFINITIONS.map((general) => [general.id, general.name])),
     EXPECTED_ROLE_NAMES
@@ -22063,7 +22063,7 @@ test("AI·角色卡牌价值：八名角色 ID 与 146 项正式非零差值全�
   assert.deepEqual(ROLE_CARD_VALUE_DELTAS, EXPECTED_ROLE_CARD_VALUE_DELTAS);
   assert.equal(
     Object.values(ROLE_CARD_VALUE_DELTAS).reduce((sum, deltas) => sum + Object.keys(deltas).length, 0),
-    146
+    135
   );
 });
 
@@ -22407,12 +22407,12 @@ test("AI·角色核心评分：手牌数量相同但组成不同时状态评分�
     }
   );
   const assault = instance("assault"), scout = instance("scout");
-  // blade-walker：assault 差量 +2、scout 差量 -1，两组手牌差量总和相差 6
+  // blade-walker：assault 差量 +2、scout 差量 +1，两组手牌差量总和相差 2
   assert.equal(
     evaluator.stateUtility(
       makeState([assault, assault]), "viewer"
     ) - evaluator.stateUtility(makeState([scout, scout]), "viewer"),
-    6
+    2
   );
 });
 
@@ -22781,16 +22781,16 @@ test("AI·角色选牌：低血弃牌会保留调息和格挡", () => {
   assert.ok(!discarded.includes("block"));
 });
 
-test("AI·角色选牌：自己隐藏牌选择使用角色有效值且刃行者选中更低的 scout", () => {
+test("AI·角色选牌：刃行者突袭与窥探同值时保持原始顺序", () => {
   const actor = makePlayer("actor", 0, "dawn");
-  // blade-walker：assault 6、scout 4
+  // blade-walker：assault 6、scout 6
   const ally = makePlayer("ally", 1, "dawn");
   const { game }
     = makeGame([actor, ally], { random: () => 0 });
   const assault = instance("assault"), scout = instance("scout");
   actor.hand = [assault, scout];
   const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1)[0];
-  assert.equal(chosen, scout);
+  assert.equal(chosen, assault);
 });
 
 test("AI·角色选牌：自己隐藏牌选择随角色不同而不同", () => {
@@ -22908,7 +22908,7 @@ test("AI·角色选牌：公开池相同价值保持原始顺序且空池返回 
   assert.equal(selector.choosePublicCard(shade, []), null);
 });
 
-test("AI·角色选牌：弃牌使用角色有效值且刃行者弃置 scout", () => {
+test("AI·角色选牌：弃牌按角色有效值排序且同分保持原始顺序", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const enemy = makePlayer("enemy", 1, "dusk");
   const { game }
@@ -22916,7 +22916,7 @@ test("AI·角色选牌：弃牌使用角色有效值且刃行者弃置 scout", (
   const assault = instance("assault"), scout = instance("scout");
   actor.hand = [assault, scout];
   const discarded = game.aiController.chooseDiscards(actor, 1).map((card) => card.definitionId);
-  assert.deepEqual(discarded, ["scout"]);
+  assert.deepEqual(discarded, ["assault"]);
   assert.deepEqual(actor.hand.map((card) => card.definitionId), ["assault", "scout"]);
 });
 
@@ -22939,13 +22939,13 @@ test("AI·角色选牌：弃牌 count>1 时按角色有效值升序且同分保�
   const assault = instance("assault"), scout = instance("scout"), block = instance("block");
   actor.hand = [assault, scout, block];
   const discarded = game.aiController.chooseDiscards(actor, 2).map((card) => card.definitionId);
-  assert.deepEqual(discarded, ["scout", "block"]);
+  assert.deepEqual(discarded, ["block", "assault"]);
 });
 
 test("AI·角色选牌：弃牌原有动态修正全部保留", () => {
   const enemy = makePlayer("enemy", 1, "dusk");
   const recover = instance("recover"), shield = instance("shield");
-  // 满血 recover -2：刃行者 recover 6→4、shield 6 → 弃 recover
+  // 满血 recover -2：刃行者 recover 6→4、shield 7 → 弃 recover
   const fullHp = makePlayer("full", 0, "dawn");
   const { game: fullGame }
     = makeGame([fullHp, enemy], { random: () => 0 });
@@ -23085,7 +23085,7 @@ test("AI·资源选择：破坏不因未知实体真实牌面改变选择位置"
 test("AI·资源选择：破坏手牌与装备比较使用目标角色价值", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const medic = makePlayer("medic", 1, "dusk", "ai", 2);
-  // spirit-medic：recover 8、energyDevice 7
+  // spirit-medic：recover 8、energyDevice 8
   const { game }
     = makeGame([actor, medic], { random: () => 0 });
   const recover = instance("recover");
@@ -23102,32 +23102,32 @@ test("AI·资源选择：掠夺使用双角色效用而非破坏的单角色损�
   const medic = makePlayer("medic", 1, "dusk", "ai", 2);
   const { game }
     = makeGame([actor, medic], { random: () => 0 });
-  const transfer = instance("transfer");
-  medic.hand = [transfer];
-  medic.equipment = instance("energyDevice");
-  game.rememberPrivateCard(actor, medic, transfer);
+  const recover = instance("recover");
+  medic.hand = [recover];
+  medic.equipment = instance("battleDevice");
+  game.rememberPrivateCard(actor, medic, recover);
   const destroyChoice = game.aiController.cardSelector.chooseZoneCard(
     actor, medic, { purpose: "destroy" }
   );
   assert.equal(destroyChoice.zone, "hand");
-  // 破坏：transfer 7 与 energyDevice 7 同分，优先手牌
+  // 破坏：recover 8 与 battleDevice 8 同分，优先手牌
   const plunderChoice = game.aiController.cardSelector.chooseZoneCard(
     actor, medic, { purpose: "plunder" }
   );
   assert.equal(plunderChoice.zone, "equipment");
-  // 掠夺：transfer 5+7=12 < energyDevice 6+7=13
+  // 掠夺：recover 6+8=14 < battleDevice 11+8=19
 });
 
 test("AI·资源选择：破坏同分时优先手牌且已知手牌同分保持较早位置", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const warden = makePlayer("warden", 1, "dusk", "ai", 1);
-  // oath-warden：recover 7、transfer 7
+  // oath-warden：recover 7、leverage 7
   const { game }
     = makeGame([actor, warden], { random: () => 0 });
-  const recover = instance("recover"), transfer = instance("transfer");
-  warden.hand = [recover, transfer];
+  const recover = instance("recover"), leverage = instance("leverage");
+  warden.hand = [recover, leverage];
   game.rememberPrivateCard(actor, warden, recover);
-  game.rememberPrivateCard(actor, warden, transfer);
+  game.rememberPrivateCard(actor, warden, leverage);
   const chosen = game.aiController.cardSelector.chooseHiddenCards(
     actor, warden, 1, null, { purpose: "destroy" }
   )[0];
@@ -23426,22 +23426,22 @@ test("AI·资源选择：区域：手牌更高、装备更高、同分优先手�
   const owner = makePlayer("owner", 1, "dusk", "ai", 0);
   // blade-walker
   const equipmentDefinitionId = "energyDevice";
-  // medic 7 + blade 6 = 13
-  const highHand = { selectionKind: "known", cardId: "r", definitionId: "recover", utility: 14 };
+  // medic 8 + blade 6 = 14
+  const highHand = { selectionKind: "known", cardId: "r", definitionId: "recover", utility: 15 };
   assert.equal(
     chooseResourceZone(
       { purpose: "plunder", actor, owner, handCandidate: highHand, equipmentDefinitionId }
     ).zone,
     "hand"
   );
-  const lowHand = { selectionKind: "known", cardId: "b", definitionId: "block", utility: 12 };
+  const lowHand = { selectionKind: "known", cardId: "b", definitionId: "block", utility: 13 };
   assert.equal(
     chooseResourceZone(
       { purpose: "plunder", actor, owner, handCandidate: lowHand, equipmentDefinitionId }
     ).zone,
     "equipment"
   );
-  const tieHand = { selectionKind: "known", cardId: "p", definitionId: "plunder", utility: 13 };
+  const tieHand = { selectionKind: "known", cardId: "p", definitionId: "plunder", utility: 14 };
   assert.equal(
     chooseResourceZone(
       { purpose: "plunder", actor, owner, handCandidate: tieHand, equipmentDefinitionId }
@@ -24093,10 +24093,10 @@ test("AI·资源选择：掠夺模拟区域选择随目标角色变化", () => {
   // counter 17 < battleDevice 19 → 装备
   assert.equal(blade.actor.handCount, 1);
   assert.ok(Math.abs(blade.target.equipmentRetentionProbability - 0) < 1e-9);
-  const shade = run("shade-agent");
-  // counter 17 == battleDevice 17 → 手牌
-  assert.ok(Math.abs(shade.target.handCount - 0) < 1e-9);
-  assert.equal(shade.target.equipmentRetentionProbability, 1);
+  const warden = run("oath-warden");
+  // counter 18 > battleDevice 16 → 手牌
+  assert.ok(Math.abs(warden.target.handCount - 0) < 1e-9);
+  assert.equal(warden.target.equipmentRetentionProbability, 1);
 });
 
 test("AI·资源选择：掠夺模拟同分时优先手牌", () => {
@@ -24648,7 +24648,7 @@ test("AI·转移评分：转移敌方到己方选择团队净收益最高的已�
     receiver = makePlayer("receiver", 2, "dawn");
   const { game }
     = makeGame([actor, from, receiver], { random: () => 0 });
-  const low = instance("charge"), high = instance("counter");
+  const low = instance("lightning"), high = instance("counter");
   from.hand = [low, high];
   game.rememberPrivateCard(actor, from, low);
   game.rememberPrivateCard(actor, from, high);
@@ -26071,7 +26071,7 @@ test("AI·闪电评分：闪电：有限传播链两人一跳完全兼容", () =
   const actor = {
     id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
   };
-  assertClose(lightningUseValue(actor, make([actor, enemy])), 1.875);
+  assertClose(lightningUseValue(actor, make([actor, enemy])), 0.875);
 });
 
 test("AI·闪电评分：闪电：有限传播链单人无其他接收者自转移兼容", () => {
@@ -26093,7 +26093,7 @@ test("AI·闪电评分：闪电：有限传播链单人无其他接收者自转�
   const actor = {
     id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
   };
-  assertClose(lightningUseValue(actor, make([actor])), 1.125);
+  assertClose(lightningUseValue(actor, make([actor])), 0.125);
 });
 
 test("AI·闪电评分：闪电：有限传播链敌多友少自然产生更高使用价值", () => {
@@ -26125,8 +26125,8 @@ test("AI·闪电评分：闪电：有限传播链敌多友少自然产生更高�
   const allyHeavyUse = make(["dawn", "dawn", "dawn", "dusk"], false);
   const enemyUseValue = lightningUseValue(enemyHeavyUse.actor, enemyHeavyUse.state);
   const allyUseValue = lightningUseValue(allyHeavyUse.actor, allyHeavyUse.state);
-  assertClose(enemyUseValue, 1.9921875);
-  assertClose(allyUseValue, 1.0546875);
+  assertClose(enemyUseValue, 0.9921875);
+  assertClose(allyUseValue, 0.0546875);
   assert.ok(enemyUseValue > allyUseValue);
 });
 
@@ -26154,8 +26154,8 @@ test("AI·闪电评分：闪电：有限传播链相同人数近端敌人更有�
   const allyFront = make(["dawn", "dawn", "dusk", "dusk"]);
   const enemyFrontValue = lightningUseValue(enemyFront.actor, enemyFront.state);
   const allyFrontValue = lightningUseValue(allyFront.actor, allyFront.state);
-  assertClose(enemyFrontValue, 1.9453125);
-  assertClose(allyFrontValue, 1.2421875);
+  assertClose(enemyFrontValue, 0.9453125);
+  assertClose(allyFrontValue, 0.2421875);
   assert.ok(enemyFrontValue > allyFrontValue);
 });
 
@@ -26179,8 +26179,8 @@ test("AI·闪电评分：闪电：有限传播链 actor 低血仍压过人数优
   };
   const lowValue = lightningUseValue(make(1).actor, make(1).state);
   const highValue = lightningUseValue(make(4).actor, make(4).state);
-  assertClose(lowValue, -10.5078125);
-  assertClose(highValue, 1.9921875);
+  assertClose(lowValue, -11.5078125);
+  assertClose(highValue, 0.9921875);
   assert.ok(lowValue < highValue);
 });
 
@@ -26209,16 +26209,16 @@ test("AI·闪电评分：闪电：有限传播链未来低血目标按阵营单�
   enemyLow.state.players[1].hp = 1;
   const enemyHighValue = lightningUseValue(enemyHigh.actor, enemyHigh.state);
   const enemyLowValue = lightningUseValue(enemyLow.actor, enemyLow.state);
-  assertClose(enemyHighValue, 1.7578125);
-  assertClose(enemyLowValue, 1.8828125);
+  assertClose(enemyHighValue, 0.7578125);
+  assertClose(enemyLowValue, 0.8828125);
   assert.ok(enemyLowValue > enemyHighValue);
   const allyHigh = make(["dawn", "dawn", "dusk", "dusk"]);
   const allyLow = make(["dawn", "dawn", "dusk", "dusk"]);
   allyLow.state.players[1].hp = 1;
   const allyHighValue = lightningUseValue(allyHigh.actor, allyHigh.state);
   const allyLowValue = lightningUseValue(allyLow.actor, allyLow.state);
-  assertClose(allyHighValue, 1.2421875);
-  assertClose(allyLowValue, 1.1171875);
+  assertClose(allyHighValue, 0.2421875);
+  assertClose(allyLowValue, 0.1171875);
   assert.ok(allyLowValue < allyHighValue);
 });
 

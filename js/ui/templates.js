@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-coordination-target-audit-v138";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-coordination-target-audit-v138";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-ai-card-value-table-v139";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-ai-card-value-table-v139";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

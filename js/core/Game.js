@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-coordination-target-audit-v138";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-coordination-target-audit-v138";
-import { createId, clamp } from "../utils/helpers.js?build=20260809-coordination-target-audit-v138";
-import { EventBus } from "./EventBus.js?build=20260809-coordination-target-audit-v138";
-import { Player } from "./Player.js?build=20260809-coordination-target-audit-v138";
-import { Deck } from "./Deck.js?build=20260809-coordination-target-audit-v138";
-import { TeamManager } from "./TeamManager.js?build=20260809-coordination-target-audit-v138";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260809-coordination-target-audit-v138";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-coordination-target-audit-v138";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-coordination-target-audit-v138";
-import { GameLogger } from "./GameLogger.js?build=20260809-coordination-target-audit-v138";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-coordination-target-audit-v138";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-coordination-target-audit-v138";
-import { AIController } from "../ai/AiController.js?build=20260809-coordination-target-audit-v138";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-coordination-target-audit-v138";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-coordination-target-audit-v138";
-import { Debug } from "../utils/debug.js?build=20260809-coordination-target-audit-v138";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260809-coordination-target-audit-v138";
-import { DyingSystem } from "./DyingSystem.js?build=20260809-coordination-target-audit-v138";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-coordination-target-audit-v138";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-coordination-target-audit-v138";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260809-coordination-target-audit-v138";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260809-coordination-target-audit-v138";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-ai-card-value-table-v139";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-ai-card-value-table-v139";
+import { createId, clamp } from "../utils/helpers.js?build=20260809-ai-card-value-table-v139";
+import { EventBus } from "./EventBus.js?build=20260809-ai-card-value-table-v139";
+import { Player } from "./Player.js?build=20260809-ai-card-value-table-v139";
+import { Deck } from "./Deck.js?build=20260809-ai-card-value-table-v139";
+import { TeamManager } from "./TeamManager.js?build=20260809-ai-card-value-table-v139";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260809-ai-card-value-table-v139";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-ai-card-value-table-v139";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-ai-card-value-table-v139";
+import { GameLogger } from "./GameLogger.js?build=20260809-ai-card-value-table-v139";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-ai-card-value-table-v139";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-ai-card-value-table-v139";
+import { AIController } from "../ai/AiController.js?build=20260809-ai-card-value-table-v139";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-ai-card-value-table-v139";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-ai-card-value-table-v139";
+import { Debug } from "../utils/debug.js?build=20260809-ai-card-value-table-v139";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260809-ai-card-value-table-v139";
+import { DyingSystem } from "./DyingSystem.js?build=20260809-ai-card-value-table-v139";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-ai-card-value-table-v139";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-ai-card-value-table-v139";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260809-ai-card-value-table-v139";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260809-ai-card-value-table-v139";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
