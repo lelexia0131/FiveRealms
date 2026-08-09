@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-unified-character-hp-v135";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260809-unified-character-hp-v135";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260809-unified-character-hp-v135";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-healer-tuner-balance-v136";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260809-healer-tuner-balance-v136";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260809-healer-tuner-balance-v136";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

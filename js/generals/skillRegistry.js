@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-unified-character-hp-v135";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-unified-character-hp-v135";
-import { randomChoice } from "../utils/helpers.js?build=20260809-unified-character-hp-v135";
-import { Debug } from "../utils/debug.js?build=20260809-unified-character-hp-v135";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-healer-tuner-balance-v136";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-healer-tuner-balance-v136";
+import { randomChoice } from "../utils/helpers.js?build=20260809-healer-tuner-balance-v136";
+import { Debug } from "../utils/debug.js?build=20260809-healer-tuner-balance-v136";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -80,19 +80,17 @@ const PASSIVE_SKILLS = {
   },
 
   rejuvenation(game, owner) {
-    game.eventBus.on("beforeHeal", `${owner.id}:rejuvenation`, (event) => {
-      if (!owner.alive || event.source?.id !== owner.id || event.target?.battleTeam !== owner.battleTeam
-        || event.amount <= 0 || owner.turnFlags.rejuvenationUsed) return;
-      owner.turnFlags.rejuvenationUsed = true;
-      event.metadata.rejuvenationOwnerId = owner.id;
-      event.amount += 1;
+    game.eventBus.on("turnStart", `${owner.id}:rejuvenation:reset`, () => {
+      owner.turnFlags.rejuvenationUsed = false;
     });
-    game.eventBus.on("afterHeal", `${owner.id}:rejuvenation:draw`, async (event) => {
-      if (event.metadata?.rejuvenationOwnerId !== owner.id || event.actualAmount <= 0) return;
+    game.eventBus.on("afterHeal", `${owner.id}:rejuvenation`, async (event) => {
+      if (!owner.alive || event.source?.id !== owner.id || event.target?.battleTeam !== owner.battleTeam
+        || event.actualAmount <= 0 || owner.turnFlags.rejuvenationUsed) return;
+      owner.turnFlags.rejuvenationUsed = true;
       const gameId = game.state.gameId;
       const drawn = await game.drawCards(owner, 1, "回春", { silent:true });
       if (!game.isSessionValid(gameId)) return;
-      game.log(`${owner.name}触发「回春」，本次治疗量+1，${drawn ? `并摸${drawn}张牌` : "但未摸到牌"}。`, "heal");
+      game.log(`${owner.name}触发「回春」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`, "heal");
     });
   },
 
@@ -240,11 +238,10 @@ export const ACTIVE_SKILLS = Object.freeze({
     }
   }),
   symbiosis: Object.freeze({
-    id: "symbiosis", name: "滋荣", cost: 2, limitPerTurn: 2, targetType: "injuredAlly", rangeRule: "ally",
+    id: "symbiosis", name: "滋荣", cost: 1, limitPerTurn: 2, targetType: "injuredAlly", rangeRule: "ally",
     canUse(game, source) { const base = baseCanUse(game, source, this); if (!base.ok) return base; return RuleEngine.getSkillTargets(game, source, this).length ? base : {ok:false,reason:"自己和队友都未受伤"}; },
     async execute(game, source, targets) {
-      const gameId = game.state.gameId;
-      source.changeEnergy(-2);
+      source.changeEnergy(-1);
       const target = targets[0];
       game.log(
         target.id === source.id
@@ -253,7 +250,6 @@ export const ACTIVE_SKILLS = Object.freeze({
         "important"
       );
       await game.heal(source, target, 1, { skill:"symbiosis" });
-      if (game.isSessionValid(gameId) && target.id !== source.id) await game.heal(source, source, 1, { skill:"symbiosis" });
     }
   }),
   stealSkill: Object.freeze({
@@ -301,9 +297,9 @@ export const ACTIVE_SKILLS = Object.freeze({
     }
   }),
   resonance: Object.freeze({
-    id: "resonance", name: "共鸣", cost: 2, limitPerTurn: 2, targetType: "ally", rangeRule: "ally",
+    id: "resonance", name: "共鸣", cost: 1, limitPerTurn: 2, targetType: "ally", rangeRule: "ally",
     canUse(game, source) { const base = baseCanUse(game, source, this); return base.ok && !RuleEngine.getSkillTargets(game, source, this).length ? {ok:false,reason:"没有存活队友"} : base; },
-    async execute(game, source, targets) { const gameId=game.state.gameId;source.changeEnergy(-2);const drawn=await game.drawCards(targets[0],2,"共鸣",{silent:true});if(game.isSessionValid(gameId))game.log(`${source.name}发动「共鸣」，令${targets[0].name}${drawn ? `摸${drawn}张牌` : "未摸到牌"}。`); }
+    async execute(game, source, targets) { const gameId=game.state.gameId;source.changeEnergy(-1);const drawn=await game.drawCards(targets[0],1,"共鸣",{silent:true});if(game.isSessionValid(gameId))game.log(`${source.name}发动「共鸣」，令${targets[0].name}${drawn ? `摸${drawn}张牌` : "未摸到牌"}。`); }
   })
 });
 

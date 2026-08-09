@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260809-unified-character-hp-v135";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-unified-character-hp-v135";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260809-healer-tuner-balance-v136";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-healer-tuner-balance-v136";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
@@ -186,7 +186,8 @@ export class RuleEngine {
     const skillId = skill.id;
     const alive = game.state.players.filter((player) => player.alive);
     let candidates = [];
-    if (["barrier", "resonance"].includes(skillId)) candidates = alive.filter((player) => player.id !== source.id && player.battleTeam === source.battleTeam);
+    if (skillId === "barrier") candidates = alive.filter((player) => player.id !== source.id && player.battleTeam === source.battleTeam);
+    else if (skillId === "resonance") candidates = alive.filter((player) => player.battleTeam === source.battleTeam);
     else if (skillId === "symbiosis") candidates = alive.filter((player) => player.battleTeam === source.battleTeam && player.hp < player.maxHp);
     else if (skillId === "stealSkill") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && this.hasHandOrEquipment(player));
     else if (skillId === "hunt") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && player.statuses.huntMark?.sourceId === source.id);
