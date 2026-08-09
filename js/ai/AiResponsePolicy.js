@@ -1,13 +1,14 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260808-card-ai-values-v118";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260808-card-ai-values-v118";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260808-card-ai-values-v118";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260808-card-ai-values-v118";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-lightning-hit-copy-v122";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-lightning-hit-copy-v122";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-lightning-hit-copy-v122";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260808-card-ai-values-v118";
+} from "./lightningScoring.js?build=20260809-lightning-hit-copy-v122";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260809-lightning-hit-copy-v122";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
@@ -69,7 +70,11 @@ export class AiResponsePolicy {
       return lethal || lowHp || blocksAreAbundant;
     }
     if (type === "counter") {
-      if (context.statusCounterContext) return this.shouldCounterLightning(responder, context);
+      if (context.statusCounterContext) {
+        return context.statusCounterContext.statusId === "sealed"
+          ? this.shouldCounterSeal(responder, context)
+          : this.shouldCounterLightning(responder, context);
+      }
       const sourceEnemy = context.source?.battleTeam !== responder.battleTeam;
       const id = context.card?.definitionId;
       const globalBenefitDesire = globalBenefitCounterDesire(this.game.state.players, responder.battleTeam, id);
@@ -122,5 +127,17 @@ export class AiResponsePolicy {
       : 0;
     const counterCost = (CARD_DEFINITIONS.counter.aiValue ?? 8) * 0.35;
     return withCounterBurden + counterCost < noCounterBurden;
+  }
+
+  /** 封印状态反制：仅为己方解除未来 skip-action 风险，并计入反制牌机会成本。 */
+  shouldCounterSeal(responder, context) {
+    const statusContext = context.statusCounterContext;
+    const holder = this.game.state.players.find((player) => player.id === statusContext?.holderId && player.alive);
+    if (!holder || !hasSeal(holder) || holder.battleTeam !== responder.battleTeam) return false;
+    const remainingCardCounts = this.knowledge.remainingCounts(responder);
+    const skipProbability = 1 - tacticJudgmentProbability(remainingCardCounts);
+    const preventedBurden = skipProbability * turnOpportunityValue(holder);
+    const counterCost = (CARD_DEFINITIONS.counter.aiValue ?? 8) * 0.35;
+    return preventedBurden > counterCost;
   }
 }

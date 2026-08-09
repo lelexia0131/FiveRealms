@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260808-card-ai-values-v118";
-import { createId } from "../utils/helpers.js?build=20260808-card-ai-values-v118";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260808-card-ai-values-v118";
-import { RuleEngine } from "./RuleEngine.js?build=20260808-card-ai-values-v118";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-lightning-hit-copy-v122";
+import { createId } from "../utils/helpers.js?build=20260809-lightning-hit-copy-v122";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-lightning-hit-copy-v122";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-lightning-hit-copy-v122";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -70,22 +70,59 @@ function responseTargetFragments(responder, context = {}) {
   return fragments;
 }
 
+/** 延迟状态事件只以当前状态持有者和状态本身为主体，不借用普通出牌 source。 */
+function delayedStatusEventFragments(responder, context = {}) {
+  const delayedStatus = context.delayedStatusContext ?? (context.statusCounterContext
+    ? {
+        ownerId:context.statusCounterContext.holderId,
+        ownerName:context.statusCounterContext.holderName,
+        ownerBattleTeam:context.statusCounterContext.holderBattleTeam,
+        statusId:context.statusCounterContext.statusId,
+        statusName:context.statusCounterContext.statusName,
+        event:"beforeJudgment"
+      }
+    : null);
+  if (!delayedStatus) return null;
+  const ownerDisplay = publicPlayerName(
+    responder, delayedStatus.ownerId, delayedStatus.ownerName
+  );
+  const ownerFragment = ownerDisplay === "你"
+    ? textFragment("你的")
+    : playerFragment(
+        { id:delayedStatus.ownerId, name:delayedStatus.ownerName },
+        `${delayedStatus.ownerName}的`,
+        delayedStatus.ownerBattleTeam
+      );
+  const eventSuffix = delayedStatus.event === "judgmentSuccess"
+    ? delayedStatus.statusId === "lightning"
+      ? "判定成功，被「闪电」击中。"
+      : "判定成功。"
+    : delayedStatus.event === "judgmentFailure"
+      ? "判定未生效。"
+      : "即将判定。";
+  return [ownerFragment, textFragment(`「${delayedStatus.statusName}」${eventSuffix}`)];
+}
+
 /** 只包含公开名称与数量的响应展示数据；UI 不接收任何隐藏牌内容。 */
 export function buildResponsePresentation(responder, type, context = {}, requiredCount = 1, availableCount = 0, fallbackLabel = "响应") {
-  const sourceName = responsePlayerName(responder, context.source);
   const actionName = context.card?.name ?? context.actionName ?? "伤害";
-  const sourceFragment = sourceName === "你"
-    ? textFragment("你")
-    : playerFragment(context.source, sourceName);
-  let eventFragments = [sourceFragment];
-  if (context.card?.targetType !== "self") {
-    const targetFragments = responseTargetFragments(responder, context);
-    if (targetFragments.length) {
-      eventFragments.push(textFragment("对"));
-      eventFragments.push(...targetFragments);
+  let eventFragments = delayedStatusEventFragments(responder, context);
+  let sourceFragment = null;
+  if (!eventFragments) {
+    const sourceName = responsePlayerName(responder, context.source);
+    sourceFragment = sourceName === "你"
+      ? textFragment("你")
+      : playerFragment(context.source, sourceName);
+    eventFragments = [sourceFragment];
+    if (context.card?.targetType !== "self") {
+      const targetFragments = responseTargetFragments(responder, context);
+      if (targetFragments.length) {
+        eventFragments.push(textFragment("对"));
+        eventFragments.push(...targetFragments);
+      }
     }
+    eventFragments.push(textFragment(`使用了「${actionName}」。`));
   }
-  eventFragments.push(textFragment(`使用了「${actionName}」。`));
   let responseText = `你可以进行${fallbackLabel}。`;
   let responseCardName = fallbackLabel;
   let buttonLabel = fallbackLabel;
@@ -99,16 +136,12 @@ export function buildResponsePresentation(responder, type, context = {}, require
     buttonLabel = "反制";
     if (context.statusCounterContext) {
       const statusCounter = context.statusCounterContext;
-      const holderDisplay = publicPlayerName(responder, statusCounter.holderId, statusCounter.holderName);
-      const holderFragment = holderDisplay === "你"
-        ? textFragment("你的")
-        : playerFragment({ id:statusCounter.holderId, name:statusCounter.holderName }, `${statusCounter.holderName}的`);
-      eventFragments = [
-        textFragment("是否使用「反制」，令"),
-        holderFragment,
-        textFragment("“闪电”转移？")
-      ];
-      responseText = `是否使用「反制」，令${holderDisplay === "你" ? "你的" : `${statusCounter.holderName}的`}“闪电”转移？`;
+      const statusName = statusCounter.statusName;
+      if (statusCounter.counterOutcome === "cancel") {
+        responseText = `是否使用「反制」，取消本次判定并解除「${statusName}」？`;
+      } else {
+        responseText = `是否使用「反制」，取消本次判定并转移「${statusName}」？`;
+      }
     } else if (context.card?.definitionId === "transfer" && context.publicTransferContext) {
       const transfer = context.publicTransferContext;
       const fromDisplay = publicPlayerName(responder, transfer.fromPlayerId, transfer.fromName);
@@ -250,7 +283,11 @@ export class ResponseSystem {
     if (payment.status !== RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.INVALID, { cards:[] });
     if (type === "counter") {
       const targetSuffix = context.targetScoped ? `（仅取消对${responder.name}的效果）` : "";
-      this.game.ui.setCurrentCard?.(cardsToUse[0], responder.name, `反制「${context.card?.name ?? "战术牌"}」${targetSuffix}`);
+      const delayedStatus = context.delayedStatusContext;
+      const counterTarget = delayedStatus
+        ? `${delayedStatus.ownerName}的「${delayedStatus.statusName}」判定`
+        : `「${context.card?.name ?? "战术牌"}」${targetSuffix}`;
+      this.game.ui.setCurrentCard?.(cardsToUse[0], responder.name, `反制${counterTarget}`);
     } else {
       this.game.log(cardsToUse.length === 1
         ? `${responder.name}使用了「格挡」。`
@@ -308,33 +345,45 @@ export class ResponseSystem {
   }
 
   /**
-   * 闪电状态判定前的独立反制窗口。响应者从当前闪电持有者本人开始，再按顺时针询问其余存活玩家；
+   * 延迟战术状态判定前的独立反制窗口。响应者从当前状态持有者本人开始，再按顺时针询问其余存活玩家；
    * 反制成功则返回 USED，反制被反制或无人响应则返回 DECLINED。
-   * 不构造虚构闪电实体牌，也不走普通 askForCounter 的排除施放者逻辑。
+   * 不构造虚构实体牌，也不走普通 askForCounter 的排除施放者逻辑。
    */
   async askForStatusCounter(holder, context = {}) {
     const gameId = this.game.state.gameId;
     if (!this.game.isSessionValid(gameId) || !holder?.alive || this.game.state.isGameOver) return responseResult(RESPONSE_STATUS.DECLINED);
+    const statusName = context.statusName;
     const responders = [holder, ...this.game.seatOrderFrom(holder, false)].filter((player) => player.alive);
     for (const responder of responders) {
       if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-      const publicHolder = publicPlayerContext(holder);
+      const delayedStatusContext = Object.freeze({
+        ownerId:holder.id,
+        ownerName:holder.name,
+        ownerBattleTeam:holder.battleTeam,
+        statusId:context.statusId,
+        statusName,
+        event:"beforeJudgment"
+      });
       const response = await this.requestCardResponse(responder, "counter", {
-        source:publicHolder,
-        target:publicHolder,
-        targets:[publicHolder],
+        source:null,
+        target:null,
+        targets:[],
         card:null,
+        delayedStatusContext,
         statusCounterContext:{
           holderId:holder.id,
           holderName:holder.name,
-          statusId:context.statusId ?? "lightning",
+          holderBattleTeam:holder.battleTeam,
+          statusId:context.statusId,
+          statusName,
+          counterOutcome:context.counterOutcome,
           originPlayerId:context.originPlayerId ?? null
         }
       }, 1);
       if (isCancelledResponse(response) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       const [counterCard] = response.cards ?? [];
       if (response.status !== RESPONSE_STATUS.USED || !counterCard) continue;
-      this.game.log(`${responder.name}对${holder.name}的「闪电」使用了「反制」。`, "important");
+      this.game.log(`${responder.name}对${holder.name}的「${statusName}」使用了「反制」。`, "important");
       const counterWasCountered = await this.askForCounter(responder, counterCard, [holder], { targetCard:null, statusCounterChain:true });
       if (isCancelledResponse(counterWasCountered) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       if (counterWasCountered.status === RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.DECLINED);

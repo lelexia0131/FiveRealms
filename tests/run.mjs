@@ -34,6 +34,7 @@ import {
 } from "../js/ui/templates.js";
 import { InteractionController, hiddenSelectionMarkup } from "../js/ui/InteractionController.js";
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
+import { JudgmentView } from "../js/ui/JudgmentView.js";
 import {
   CARD_CATEGORY_DISPLAY_ORDER,
   CARD_DEFINITION_DISPLAY_ORDER,
@@ -78,6 +79,15 @@ import {
   lightningUseValue,
   nextLightningReceiver
 } from "../js/ai/lightningScoring.js";
+import {
+  getSealStatusStateBranches,
+  sealCounterProbability,
+  sealOutcomeProbabilities,
+  sealPresenceProbability,
+  sealTeamBurden,
+  sealUseValue,
+  tacticJudgmentProbability
+} from "../js/ai/sealScoring.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
 // Test Runner 与公共 Helpers
@@ -123,6 +133,7 @@ function makeUi(response = () => false) {
     hiddenRequests: [],
     thinking: [],
     currentCards: [],
+    judgments: [],
     playEndState: null,
     render() { },
     appendLog(entry) { this.logs.push(entry.message); },
@@ -158,7 +169,8 @@ function makeUi(response = () => false) {
     hideDying() { },
     showPublicPool() { },
     hidePublicPool() { },
-    showJudgment() { },
+    showJudgment(player, card, context = {}) { this.judgments.push({ player, card, context }); },
+    hideJudgment() { },
     showDuel() { },
     hideDuel() { }
   };
@@ -373,9 +385,9 @@ for (const definition of Object.values(CARD_DEFINITIONS)) test(`卡牌资源：$
 
 // ---- 卡牌定义与数量 ----
 
-test("卡牌定义：牌组恰有25种定义和160张实体牌", () => {
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 25);
-  assert.equal(TOTAL_CARD_COUNT, 160);
+test("卡牌定义：牌组恰有26种定义和163张实体牌", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
+  assert.equal(TOTAL_CARD_COUNT, 163);
 });
 
 test(
@@ -414,12 +426,12 @@ test(
 );
 
 test(
-  "卡牌定义：战术牌数量合计53",
+  "卡牌定义：战术牌数量合计56",
   () => assert.equal(
     Object.values(
       CARD_DEFINITIONS
     ).filter((card) => card.category === "tactic").reduce((sum, card) => sum + card.count, 0),
-    53
+    56
   )
 );
 
@@ -661,10 +673,10 @@ test("构建一致性：浏览器模块图全部资源使用统一构建版本",
 
 // ---- 牌堆、区域与重洗 ----
 
-test("牌堆：Deck 创建160个唯一实体 card.id", () => {
+test("牌堆：Deck 创建163个唯一实体 card.id", () => {
   const deck = new Deck(() => .4);
-  assert.equal(deck.build(), 160);
-  assert.equal(new Set(deck.cards.map((card) => card.id)).size, 160);
+  assert.equal(deck.build(), 163);
+  assert.equal(new Set(deck.cards.map((card) => card.id)).size, 163);
 });
 
 test("牌堆：结算区不会进入重洗", () => {
@@ -2643,6 +2655,262 @@ test("共生：按全体存活角色结算治疗", async () => {
   [a, b, c].forEach((p) => assert.equal(p.hp, p.maxHp));
 });
 
+// ---- 封印 ----
+
+test("封印：定义、数量、牌堆与原有牌数量正确", () => {
+  const seal = CARD_DEFINITIONS.seal;
+  assert.ok(seal);
+  assert.equal(seal.category, "tactic");
+  assert.equal(seal.targetType, "singleUnsealedEnemy");
+  assert.equal(seal.counterable, false);
+  assert.equal(seal.count, 3);
+  assert.equal(seal.aiValue, 7);
+  assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("seal"));
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
+  assert.equal(TOTAL_CARD_COUNT, 163);
+  assert.equal(TOTAL_CARD_COUNT - CARD_COUNTS.seal, 160);
+  const deck = new Deck(() => 0);
+  assert.equal(deck.build(), 163);
+  const cards = deck.cards.filter((card) => card.definitionId === "seal");
+  assert.equal(cards.length, 3);
+  assert.equal(new Set(cards.map((card) => card.id)).size, 3);
+});
+
+test("封印：统一目标规则只允许未封印的存活敌人且无目标时不可用", () => {
+  const source = makePlayer("source", 0, "dawn"),
+    ally = makePlayer("ally", 1, "dawn"),
+    enemy = makePlayer("enemy", 2, "dusk"),
+    sealedEnemy = makePlayer("sealed", 3, "dusk"),
+    deadEnemy = makePlayer("dead", 4, "dusk");
+  sealedEnemy.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:source.id };
+  deadEnemy.alive = false;
+  const { game } = makeGame([source, ally, enemy, sealedEnemy, deadEnemy]);
+  const card = instance("seal");
+  source.hand.push(card);
+  assert.deepEqual(RuleEngine.getCardTargets(game, source, card), [enemy]);
+  assert.equal(RuleEngine.targetLegality(game, source, card, source).ok, false);
+  assert.equal(RuleEngine.targetLegality(game, source, card, ally).ok, false);
+  assert.equal(RuleEngine.targetLegality(game, source, card, sealedEnemy).ok, false);
+  assert.equal(RuleEngine.canPlayCard(game, source, card).ok, true);
+  enemy.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:source.id };
+  assert.deepEqual(RuleEngine.getCardTargets(game, source, card), []);
+  assert.equal(RuleEngine.canPlayCard(game, source, card).ok, false);
+});
+
+test("封印：打出阶段绝不询问反制且目标立即获得不可叠加状态", async () => {
+  const source = makePlayer("source", 0, "dawn", "human"),
+    target = makePlayer("target", 1, "dusk", "human");
+  const { game, ui } = makeGame([source, target], { response:() => true });
+  const first = instance("seal"), second = instance("seal"), counter = instance("counter");
+  source.hand.push(first, second);
+  target.hand.push(counter);
+  assert.equal(await game.playCard(source, first, [target]), true);
+  assert.deepEqual(target.statuses.sealed, { cardDefinitionId:"seal", originPlayerId:source.id });
+  assert.equal(ui.responseRequests.length, 0);
+  assert.ok(target.hand.includes(counter));
+  assert.ok(game.state.deck.discardPile.includes(first));
+  assert.equal(RuleEngine.canPlayCard(game, source, second).ok, false);
+  assert.equal(await game.playCard(source, second, [target]), false);
+  assert.ok(source.hand.includes(second));
+});
+
+test("封印：触发时被反制则不抽判定并继续处理闪电", async () => {
+  const holder = makePlayer("holder", 0, "dawn", "human"),
+    receiver = makePlayer("receiver", 1, "dusk");
+  const { game, ui } = makeGame([holder, receiver], {
+    response:(request) => request.presentation.eventText.includes("封印")
+  });
+  holder.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:receiver.id };
+  holder.statuses.lightning = { cardDefinitionId:"lightning", originPlayerId:holder.id };
+  const sealCounter = instance("counter"), lightningCounter = instance("counter");
+  holder.hand.push(sealCounter, lightningCounter);
+  const lightningJudgment = instance("energyDevice"), revealed = [];
+  game.state.deck.cards = [lightningJudgment];
+  game.eventBus.on("judgmentRevealed", "test:seal-counter-order", (event) => revealed.push(event.statusId));
+  await game.eventBus.emit("beforeStatusResolve", { player:holder, cancelled:false });
+  assert.equal(holder.statuses.sealed, undefined);
+  assert.equal(holder.turnFlags.skipActionPhase, false);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.deepEqual(revealed, ["lightning"]);
+  assert.ok(game.state.deck.discardPile.includes(lightningJudgment));
+  assert.ok(game.state.deck.discardPile.includes(sealCounter));
+  assert.ok(holder.hand.includes(lightningCounter));
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${holder.name}的「封印」即将判定，进入反制窗口。`
+  ));
+  const sealRequest = ui.responseRequests[0], lightningRequest = ui.responseRequests[1];
+  assert.equal(sealRequest.presentation.eventText, "你的「封印」即将判定。");
+  assert.equal(sealRequest.presentation.responseText, "是否使用「反制」，取消本次判定并解除「封印」？");
+  assert.equal(lightningRequest.presentation.eventText, "你的「闪电」即将判定。");
+  assert.equal(lightningRequest.presentation.responseText, "是否使用「反制」，取消本次判定并转移「闪电」？");
+  for (const request of [sealRequest, lightningRequest]) {
+    assert.doesNotMatch(request.presentation.eventText, /未知角色|不知道谁|使用了|对.*使用/);
+  }
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${holder.name}的「封印」被反制，本次封印解除。`
+  ));
+});
+
+test("封印：反制被反制后继续判定且完整链复用公共响应顺序", async () => {
+  const holder = makePlayer("holder", 0, "dawn"),
+    responder = makePlayer("responder", 1, "dawn"),
+    counterer = makePlayer("counterer", 2, "dusk");
+  const { game } = makeGame([holder, responder, counterer]);
+  holder.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:counterer.id };
+  responder.hand.push(instance("counter"));
+  counterer.hand.push(instance("counter"));
+  forceAvailableAiCounters(game);
+  const judgment = instance("harvest");
+  game.state.deck.cards = [judgment];
+  await game.eventBus.emit("beforeStatusResolve", { player:holder, cancelled:false });
+  assert.equal(holder.statuses.sealed, undefined);
+  assert.equal(holder.turnFlags.skipActionPhase, false);
+  assert.equal(responder.hand.length, 0);
+  assert.equal(counterer.hand.length, 0);
+  assert.ok(game.state.deck.discardPile.includes(judgment));
+  assert.ok(game.state.logs.some((entry) => entry.message.includes("封印") && entry.message.includes("判定成功")));
+});
+
+test("封印：战术判定成功后以状态持有者展示并在闪电前完成", async () => {
+  const holder = makePlayer("holder", 0, "dawn"), receiver = makePlayer("receiver", 1, "dusk");
+  const { game, ui } = makeGame([holder, receiver]);
+  holder.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:receiver.id };
+  holder.statuses.lightning = { cardDefinitionId:"lightning", originPlayerId:holder.id };
+  const sealJudgment = instance("harvest"), lightningJudgment = instance("assault"), revealed = [];
+  game.state.deck.cards = [lightningJudgment, sealJudgment];
+  game.eventBus.on("judgmentRevealed", "test:seal-success-order", (event) => revealed.push(event.statusId));
+  await game.eventBus.emit("beforeStatusResolve", { player:holder, cancelled:false });
+  assert.deepEqual(revealed, ["sealed", "lightning"]);
+  assert.equal(holder.statuses.sealed, undefined);
+  assert.equal(holder.turnFlags.skipActionPhase, false);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.ok(receiver.statuses.lightning);
+  assert.ok(game.state.deck.discardPile.includes(sealJudgment));
+  assert.ok(game.state.deck.discardPile.includes(lightningJudgment));
+  assert.ok(ui.currentCards.some(
+    (entry) => entry.cardOrName?.definitionId === "seal"
+      && entry.source === `${holder.name}的延迟状态 · 判定成功`
+  ));
+  const sealDisplay = ui.judgments.find(
+    (entry) => entry.context.delayedStatusContext?.statusId === "sealed"
+  );
+  assert.equal(sealDisplay.context.delayedStatusContext.ownerId, holder.id);
+  assert.equal(sealDisplay.context.delayedStatusContext.statusName, "封印");
+  assert.ok(!game.state.logs.some((entry) => /未知角色|不知道谁/.test(entry.message)));
+});
+
+test("封印：非战术判定失败后以状态持有者展示并保留跳过行动标记", async () => {
+  const holder = makePlayer("holder", 0, "dawn"), receiver = makePlayer("receiver", 1, "dusk");
+  const { game, ui } = makeGame([holder, receiver]);
+  holder.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:receiver.id };
+  holder.statuses.lightning = { cardDefinitionId:"lightning", originPlayerId:holder.id };
+  const sealJudgment = instance("assault"), lightningJudgment = instance("harvest"), revealed = [];
+  game.state.deck.cards = [lightningJudgment, sealJudgment];
+  game.eventBus.on("judgmentRevealed", "test:seal-failure-order", (event) => revealed.push(event.statusId));
+  await game.eventBus.emit("beforeStatusResolve", { player:holder, cancelled:false });
+  assert.deepEqual(revealed, ["sealed", "lightning"]);
+  assert.equal(holder.statuses.sealed, undefined);
+  assert.equal(holder.turnFlags.skipActionPhase, true);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.ok(receiver.statuses.lightning);
+  assert.ok(ui.currentCards.some(
+    (entry) => entry.cardOrName?.definitionId === "seal"
+      && entry.source === `${holder.name}的延迟状态 · 判定失败`
+  ));
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${holder.name}的「封印」判定失败，本回合摸牌后跳过行动阶段。`
+  ));
+  assert.ok(!game.state.logs.some((entry) => /未知角色|不知道谁/.test(entry.message)));
+});
+
+test("封印：判定失败后仍处理闪电、摸牌、跳过行动并正常弃牌结束", async () => {
+  const holder = makePlayer("holder", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.hp = 1;
+  holder.maxHp = 1;
+  holder.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:enemy.id };
+  holder.statuses.lightning = { cardDefinitionId:"lightning", originPlayerId:holder.id };
+  const drawA = instance("charge"), drawB = instance("shield"),
+    lightningJudgment = instance("harvest"), sealJudgment = instance("assault");
+  game.state.deck.cards = [drawB, drawA, lightningJudgment, sealJudgment];
+  let playStarts = 0, sawSkipBeforeDraw = false, turnEnds = 0;
+  game.eventBus.on("playPhaseStart", "test:seal-no-play", () => { playStarts += 1; });
+  game.eventBus.on("beforeDraw", "test:seal-before-draw", () => {
+    sawSkipBeforeDraw = holder.turnFlags.skipActionPhase;
+  });
+  game.eventBus.on("turnEnd", "test:seal-turn-end", () => { turnEnds += 1; });
+  game.takeAiPlayPhase = async () => { throw new Error("封印失败后不得进入 AI 行动阶段"); };
+  await game.takeTurn(holder, game.state.gameId);
+  assert.equal(sawSkipBeforeDraw, true);
+  assert.equal(playStarts, 0);
+  assert.equal(turnEnds, 1);
+  assert.equal(holder.statuses.sealed, undefined);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.ok(enemy.statuses.lightning);
+  assert.equal(holder.turnFlags.skipActionPhase, true);
+  assert.equal(holder.hand.length, 1);
+  assert.equal(game.state.phase, "turnEnd");
+  assert.ok(game.state.deck.discardPile.includes(sealJudgment));
+  assert.ok(game.state.deck.discardPile.includes(lightningJudgment));
+  assert.ok(game.state.deck.discardPile.includes(drawA) || game.state.deck.discardPile.includes(drawB));
+  holder.resetTurnFlags(game.teamRules.getRules(holder));
+  assert.equal(holder.turnFlags.skipActionPhase, false);
+});
+
+test("封印：被反制或判定成功后都正常摸牌并进入行动阶段", async () => {
+  for (const mode of ["countered", "success"]) {
+    const holder = makePlayer(`seal-normal-${mode}`, 0, "dawn"),
+      enemy = makePlayer(`seal-normal-enemy-${mode}`, 1, "dusk");
+    const { game } = makeGame([holder, enemy]);
+    holder.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:enemy.id };
+    if (mode === "countered") {
+      holder.hand.push(instance("counter"));
+      forceAvailableAiCounters(game);
+    }
+    const drawA = instance("charge"), drawB = instance("shield"),
+      judgment = mode === "success" ? instance("harvest") : null;
+    game.state.deck.cards = judgment ? [drawB, drawA, judgment] : [drawB, drawA];
+    let playStarts = 0, playCalls = 0, beforeDrawHandCount = null;
+    game.eventBus.on("playPhaseStart", `test:seal-normal-play-${mode}`, () => { playStarts += 1; });
+    game.eventBus.on("beforeDraw", `test:seal-normal-draw-${mode}`, () => {
+      beforeDrawHandCount = holder.hand.length;
+    });
+    game.takeAiPlayPhase = async () => { playCalls += 1; };
+    await game.takeTurn(holder, game.state.gameId);
+    assert.equal(holder.statuses.sealed, undefined);
+    assert.equal(holder.turnFlags.skipActionPhase, false);
+    assert.equal(beforeDrawHandCount, 0);
+    assert.equal(holder.hand.length, 2);
+    assert.equal(playStarts, 1);
+    assert.equal(playCalls, 1);
+    assert.equal(game.state.phase, "turnEnd");
+    if (judgment) assert.ok(game.state.deck.discardPile.includes(judgment));
+  }
+});
+
+test("封印：失败后闪电导致阵亡时立即清理状态与临时阶段标记", async () => {
+  const holder = makePlayer("holder", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk");
+  const { game } = makeGame([holder, enemy]);
+  holder.hp = 2;
+  holder.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:enemy.id };
+  holder.statuses.lightning = { cardDefinitionId:"lightning", originPlayerId:holder.id };
+  game.state.deck.cards = [instance("energyDevice"), instance("assault")];
+  await game.eventBus.emit("beforeStatusResolve", { player:holder, cancelled:false });
+  assert.equal(holder.alive, false);
+  assert.deepEqual(holder.statuses, {});
+  assert.equal(holder.turnFlags.skipActionPhase, false);
+});
+
+test("封印：状态展示与 README 文案使用当前规则", async () => {
+  const player = makePlayer("sealed-player", 0, "dawn");
+  player.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:"enemy" };
+  assert.match(playerPanelTemplate(player, { isHuman:true }), /封印/);
+  const readme = await readFile(projectFile("README.md"), "utf8");
+  const match = readme.match(/- 封印：([^\n]+)/);
+  assert.ok(match, "README 缺少封印条目");
+  assert.equal(CARD_DEFINITIONS.seal.description, match[1].trim());
+});
+
 // ---- 闪电 ----
 
 test("闪电：定义、数量与牌堆总数正确", () => {
@@ -2654,17 +2922,17 @@ test("闪电：定义、数量与牌堆总数正确", () => {
   assert.equal(lightning.aiValue, 4);
   assert.ok(lightning.description.includes("闪电"));
   assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("lightning"));
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 25);
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
   const tacticTotal = Object.values(
     CARD_DEFINITIONS
   ).filter((card) => card.category === "tactic").reduce((sum, card) => sum + card.count, 0);
-  assert.equal(tacticTotal, 53);
-  assert.equal(TOTAL_CARD_COUNT, 160);
+  assert.equal(tacticTotal, 56);
+  assert.equal(TOTAL_CARD_COUNT, 163);
 });
 
 test("闪电：Deck.build 生成正好两张不同实体 ID", () => {
   const deck = new Deck(() => 0);
-  assert.equal(deck.build(), 160);
+  assert.equal(deck.build(), 163);
   const cards = deck.cards.filter((card) => card.definitionId === "lightning");
   assert.equal(cards.length, 2);
   assert.equal(new Set(cards.map((card) => card.id)).size, 2);
@@ -2738,7 +3006,7 @@ test("闪电：判定非装备牌后移除状态并顺时针转移，保留来�
   const holder = makePlayer("a", 0, "dawn"),
     next = makePlayer("b", 1, "dusk"),
     tail = makePlayer("c", 2, "dawn");
-  const { game }
+  const { game, ui }
     = makeGame([holder, next, tail]);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   game.state.deck.cards = [instance("assault")];
@@ -2750,6 +3018,14 @@ test("闪电：判定非装备牌后移除状态并顺时针转移，保留来�
   );
   assert.equal(tail.statuses.lightning, undefined);
   assert.ok(game.state.deck.discardPile.some((entry) => entry.definitionId === "assault"));
+  assert.ok(ui.currentCards.some(
+    (entry) => entry.cardOrName?.definitionId === "lightning"
+      && entry.source === `${holder.name}的延迟状态 · 判定未生效`
+  ));
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${holder.name}的「闪电」判定未生效，转移给${next.name}。`
+  ));
+  assert.ok(!game.state.logs.some((entry) => /未知角色|不知道谁/.test(entry.message)));
 });
 
 test("闪电：判定装备牌触发3点中立伤害且状态立即消费", async () => {
@@ -2785,6 +3061,33 @@ test("闪电：判定装备牌触发3点中立伤害且状态立即消费", asyn
   assert.equal(events[0][3].judgmentCategory, "equipment");
   assert.equal(events[1][3].statusId, "lightning");
   assert.ok(game.state.deck.discardPile.includes(equipment));
+});
+
+test("闪电：判中后的护援响应沿用状态持有者语义而不构造未知来源", async () => {
+  const holder = makePlayer("lightning-holder", 0, "dawn", "ai", 0),
+    guardian = makePlayer("lightning-guardian", 1, "dawn", "human", 1),
+    enemy = makePlayer("lightning-enemy", 2, "dusk", "ai", 2);
+  const { game, ui } = makeGame([holder, guardian, enemy], { response:() => false });
+  registerPassiveSkills(game);
+  guardian.hand.push(instance("charge"));
+  holder.statuses.lightning = { cardDefinitionId:"lightning", originPlayerId:enemy.id };
+  game.state.deck.cards = [instance("energyDevice")];
+  await game.eventBus.emit("beforeStatusResolve", { player:holder, cancelled:false });
+  const statusRequest = ui.responseRequests.find((request) => request.type === "counter");
+  assert.equal(statusRequest.presentation.eventText, `${holder.name}的「闪电」即将判定。`);
+  assert.doesNotMatch(statusRequest.presentation.eventText, /未知角色|不知道谁|使用了|对.*使用/);
+  const skillRequest = ui.responseRequests.find((request) => request.type === "skill");
+  assert.ok(skillRequest);
+  assert.equal(
+    skillRequest.presentation.eventText,
+    `${holder.name}的「闪电」判定成功，被「闪电」击中。`
+  );
+  assert.doesNotMatch(skillRequest.presentation.eventText, /未知角色|不知道谁|使用了|对.*使用/);
+  assert.equal(skillRequest.presentation.responseText, "你可以发动「护援」。");
+  assert.ok(ui.currentCards.some(
+    (entry) => entry.cardOrName?.definitionId === "lightning"
+      && entry.source === `${holder.name}的延迟状态 · 判定成功`
+  ));
 });
 
 test("闪电：伤害不请求格挡且不触发雷达防御判定", async () => {
@@ -2879,7 +3182,7 @@ test("闪电：空牌堆重洗弃牌堆后仍能完成判定", async () => {
 
 test("闪电：状态反制由持有者本人优先响应，成功后不翻判定牌并转移", async () => {
   const holder = makePlayer("a", 0, "dawn", "human"), receiver = makePlayer("b", 1, "dusk");
-  const { game }
+  const { game, ui }
     = makeGame([holder, receiver], { response: () => true });
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   const counter = instance("counter");
@@ -2894,6 +3197,13 @@ test("闪电：状态反制由持有者本人优先响应，成功后不翻判�
   assert.ok(game.state.deck.discardPile.includes(counter));
   assert.ok(game.state.deck.cards.includes(equipment));
   assert.equal(holder.hp, holder.maxHp);
+  const request = ui.responseRequests[0];
+  assert.equal(request.presentation.eventText, "你的「闪电」即将判定。");
+  assert.equal(request.presentation.responseText, "是否使用「反制」，取消本次判定并转移「闪电」？");
+  assert.doesNotMatch(request.presentation.eventText, /未知角色|不知道谁|使用了|对.*使用/);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${holder.name}的「闪电」被反制，转移给${receiver.name}。`
+  ));
 });
 
 test("闪电：状态反制按顺时针响应，反制被反制后继续判定", async () => {
@@ -2937,7 +3247,7 @@ test("闪电：转移跳过死亡与已有闪电玩家且不受阵营影响", as
   );
 });
 
-test("闪电：判定未触发且无其他合法接收者时转移回自己", async () => {
+test("闪电：判定未生效且无其他合法接收者时转移回自己", async () => {
   const holder = makePlayer("a", 0, "dawn"),
     ally = makePlayer("b", 1, "dawn"),
     enemy = makePlayer("c", 2, "dusk");
@@ -2955,7 +3265,7 @@ test("闪电：判定未触发且无其他合法接收者时转移回自己", as
     ally.statuses.lightning, { cardDefinitionId: "lightning", originPlayerId: ally.id }
   );
   assert.ok(
-    game.state.logs.some((entry) => entry.message === `${holder.name}的「闪电」判定未触发，转移给${holder.name}。`)
+    game.state.logs.some((entry) => entry.message === `${holder.name}的「闪电」判定未生效，转移给${holder.name}。`)
   );
   assert.ok(!game.state.logs.some((entry) => entry.message.includes("没有可转移的目标")));
   assert.ok(!game.state.logs.some((entry) => entry.message.includes("闪电消失")));
@@ -2978,7 +3288,7 @@ test("闪电：中立伤害阵亡不给原使用者或持有者击杀奖励", as
   assert.equal(holder.statistics.damageDealt, 0);
 });
 
-test("闪电：判定触发日志复用玩家与卡牌名称格式化机制", async () => {
+test("闪电：判定成功日志复用玩家与卡牌名称格式化机制", async () => {
   const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
   const { game }
     = makeGame([holder, enemy]);
@@ -2987,11 +3297,11 @@ test("闪电：判定触发日志复用玩家与卡牌名称格式化机制", as
   game.state.deck.cards = [equipment];
   await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
   const reveal = game.state.logs.find((entry) => entry.message.includes("判定为"));
-  const trigger = game.state.logs.find((entry) => entry.message.includes("判定触发"));
+  const trigger = game.state.logs.find((entry) => entry.message.includes("判定成功"));
   assert.ok(reveal);
   assert.ok(trigger);
   assert.equal(reveal.message, `${holder.name}的「闪电」判定为「${equipment.name}」，为装备牌。`);
-  assert.equal(trigger.message, `${holder.name}的「闪电」判定触发。`);
+  assert.equal(trigger.message, `${holder.name}的「闪电」判定成功，被「闪电」击中。`);
   assert.ok(
     reveal.fragments.some((fragment) => fragment.type === "player" && fragment.playerId === holder.id)
   );
@@ -3027,7 +3337,7 @@ test("闪电：基础牌与战术牌判定类别日志正确", async () => {
   );
   assert.ok(
     basic.game.state.logs.some(
-      (entry) => entry.message === `${basic.holder.name}的「闪电」判定未触发，转移给${basic.enemy.name}。`
+      (entry) => entry.message === `${basic.holder.name}的「闪电」判定未生效，转移给${basic.enemy.name}。`
     )
   );
   const tactic = run("harvest");
@@ -3039,7 +3349,7 @@ test("闪电：基础牌与战术牌判定类别日志正确", async () => {
   );
   assert.ok(
     tactic.game.state.logs.some(
-      (entry) => entry.message === `${tactic.holder.name}的「闪电」判定未触发，转移给${tactic.enemy.name}。`
+      (entry) => entry.message === `${tactic.holder.name}的「闪电」判定未生效，转移给${tactic.enemy.name}。`
     )
   );
 });
@@ -8186,6 +8496,204 @@ test("AI·决斗：分布不读取敌方真实隐藏手牌内容", () => {
   assert.deepEqual(second, first);
 });
 
+// ---- AI 卡牌行为·封印 ----
+
+test("AI·封印：根节点与深层生成都只选未封印的存活敌人", () => {
+  const source = makePlayer("seal-ai-source", 0, "dawn", "ai"),
+    ally = makePlayer("seal-ai-ally", 1, "dawn"),
+    enemy = makePlayer("seal-ai-enemy", 2, "dusk"),
+    sealedEnemy = makePlayer("seal-ai-sealed", 3, "dusk"),
+    deadEnemy = makePlayer("seal-ai-dead", 4, "dusk");
+  sealedEnemy.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:source.id };
+  deadEnemy.alive = false;
+  source.hand.push(instance("seal"));
+  const { game } = makeGame([source, ally, enemy, sealedEnemy, deadEnemy]);
+  const rootSealActions = game.aiController.getLegalActions(
+    source
+  ).filter((action) => action.card?.definitionId === "seal");
+  assert.deepEqual(rootSealActions.map((action) => action.targets[0]?.id), [enemy.id]);
+  const visible = createAiVisibleState(source.id, game.state);
+  const deepSealActions = game.aiController.actionGenerator.generateFromVisible(
+    visible, source.id
+  ).filter((action) => action.card?.definitionId === "seal");
+  assert.deepEqual(deepSealActions.map((action) => action.targets[0]?.id), [enemy.id]);
+});
+
+test("AI·封印：AiSimulator 无视打出时反制概率并确定写入延迟状态", () => {
+  const state = {
+    remainingCardCounts:{ assault:4, counter:1, seal:1 },
+    players:[
+      {
+        id:"seal-sim-actor", seatIndex:0, battleTeam:"dawn", generalId:"blade-walker",
+        alive:true, hp:4, maxHp:4, handCount:1,
+        hand:[{ id:"seal-use", definitionId:"seal" }], statuses:[], counterProbability:0
+      },
+      {
+        id:"seal-sim-target", seatIndex:1, battleTeam:"dusk", generalId:"oath-warden",
+        alive:true, hp:4, maxHp:4, handCount:1,
+        hand:[{ id:"seal-target-counter", definitionId:"counter" }],
+        statuses:[], counterProbability:1
+      }
+    ]
+  };
+  const snapshot = structuredClone(state.remainingCardCounts);
+  const next = new AiSimulator(state).apply(
+    state,
+    { type:"card", card:{ ...CARD_DEFINITIONS.seal, id:"seal-use" }, targets:[{ id:"seal-sim-target" }] },
+    "seal-sim-actor"
+  );
+  const target = next.players[1];
+  assert.ok(target.statuses.includes("sealed"));
+  assertClose(target.sealedStatusProbability, 1);
+  assertClose(sealPresenceProbability(target), 1);
+  assert.equal(target.handCount, 1);
+  assertClose(target.counterProbability, 1);
+  assert.equal(target.hp, 4);
+  assert.deepEqual(next.remainingCardCounts, snapshot);
+});
+
+test("AI·封印：未来反制先于剩余牌类别判定且全部概率互斥", () => {
+  const counts = { harvest:2, assault:3, seal:1 }, snapshot = JSON.stringify(counts);
+  const holder = {
+    id:"seal-prob-holder", battleTeam:"dusk", alive:true, handCount:3, energy:1,
+    statuses:["sealed"], counterProbability:.25
+  };
+  const ally = {
+    id:"seal-prob-ally", battleTeam:"dusk", alive:true, statuses:[], counterProbability:.2
+  };
+  const state = { players:[holder, ally], remainingCardCounts:counts };
+  assertClose(tacticJudgmentProbability(counts), .5);
+  assertClose(sealCounterProbability(state, holder), .4);
+  const outcome = sealOutcomeProbabilities(state, holder);
+  assertClose(outcome.present, 1);
+  assertClose(outcome.countered, .4);
+  assertClose(outcome.judgment, .6);
+  assertClose(outcome.success, .3);
+  assertClose(outcome.skipAction, .3);
+  assertClose(outcome.cleared, 1);
+  assertClose(outcome.countered + outcome.success + outcome.skipAction, 1);
+  assert.deepEqual(getSealStatusStateBranches(holder), [
+    { probability:1, conditions:{}, present:true }
+  ]);
+  assert.equal(JSON.stringify(counts), snapshot);
+});
+
+test("AI·封印：判定概率随 remainingCardCounts 类别组成动态变化且输入只读", () => {
+  const tacticLight = { seal:1, assault:8, energyDevice:1 },
+    tacticHeavy = { seal:4, harvest:5, assault:1 },
+    lightSnapshot = structuredClone(tacticLight),
+    heavySnapshot = structuredClone(tacticHeavy);
+  assertClose(tacticJudgmentProbability(tacticLight), .1);
+  assertClose(tacticJudgmentProbability(tacticHeavy), .9);
+  assert.deepEqual(tacticLight, lightSnapshot);
+  assert.deepEqual(tacticHeavy, heavySnapshot);
+});
+
+test("AI·封印：fallback 从权威牌堆组成动态推导且无固定概率字面量", async () => {
+  const definitions = Object.values(CARD_DEFINITIONS),
+    tacticTotal = definitions.filter(
+      (definition) => definition.category === "tactic"
+    ).reduce((sum, definition) => sum + definition.count, 0),
+    total = definitions.reduce((sum, definition) => sum + definition.count, 0),
+    authoritativeCounts = Object.fromEntries(
+      definitions.map((definition) => [definition.definitionId, definition.count])
+    ),
+    adjustedDefinitions = definitions.map(
+      (definition) => definition.definitionId === "seal"
+        ? { ...definition, count:definition.count + 4 }
+        : definition
+    ),
+    adjustedTacticTotal = adjustedDefinitions.filter(
+      (definition) => definition.category === "tactic"
+    ).reduce((sum, definition) => sum + definition.count, 0),
+    adjustedTotal = adjustedDefinitions.reduce((sum, definition) => sum + definition.count, 0);
+  assertClose(tacticJudgmentProbability(null), tacticTotal / total);
+  assertClose(tacticJudgmentProbability(undefined), tacticTotal / total);
+  assertClose(tacticJudgmentProbability(authoritativeCounts), tacticTotal / total);
+  assertClose(adjustedTacticTotal / adjustedTotal, (tacticTotal + 4) / (total + 4));
+  assert.notEqual(adjustedTacticTotal / adjustedTotal, tacticTotal / total);
+
+  const source = await readFile(projectFile("js/ai/sealScoring.js"), "utf8"),
+    configSource = await readFile(projectFile("js/config/cardConfig.js"), "utf8");
+  assert.doesNotMatch(source, /\b(?:56|163)\b/);
+  assert.match(
+    source,
+    /Object\.values\(CARD_DEFINITIONS\)[\s\S]*definition\.category === "tactic"[\s\S]*definition\.count[\s\S]*tacticTotal \/ TOTAL_CARD_COUNT/
+  );
+  assert.match(
+    configSource,
+    /CARD_COUNTS = Object\.freeze\(Object\.fromEntries\(Object\.values\(CARD_DEFINITIONS\)[\s\S]*definition\.count[\s\S]*TOTAL_CARD_COUNT = Object\.values\(CARD_COUNTS\)\.reduce/
+  );
+});
+
+test("AI·封印：战术牌映射正常行动而非战术牌映射 skip-action 收益", () => {
+  const holder = {
+    id:"seal-direction-holder", battleTeam:"dusk", alive:true,
+    handCount:3, energy:1, statuses:["sealed"], counterProbability:0
+  };
+  const tacticHeavy = sealOutcomeProbabilities(
+    { players:[holder], remainingCardCounts:{ harvest:3, assault:1 } }, holder
+  );
+  const nonTacticHeavy = sealOutcomeProbabilities(
+    { players:[holder], remainingCardCounts:{ harvest:1, assault:3 } }, holder
+  );
+  assertClose(tacticHeavy.success, .75);
+  assertClose(tacticHeavy.skipAction, .25);
+  assertClose(nonTacticHeavy.success, .25);
+  assertClose(nonTacticHeavy.skipAction, .75);
+  assert.ok(nonTacticHeavy.skipAction > tacticHeavy.skipAction);
+});
+
+test("AI·封印：使用价值随未来反制增多而下降且团队负担符号正确", () => {
+  const actor = {
+    id:"seal-score-actor", battleTeam:"dawn", alive:true, statuses:[], handCount:1, energy:0
+  };
+  const target = {
+    id:"seal-score-target", battleTeam:"dusk", alive:true, statuses:[], handCount:4, energy:2,
+    counterProbability:0
+  };
+  const noCounterState = {
+    players:[actor, target], remainingCardCounts:{ assault:9, harvest:1 }
+  };
+  const counterState = {
+    players:[actor, { ...target, counterProbability:1 }], remainingCardCounts:{ assault:9, harvest:1 }
+  };
+  assert.ok(sealUseValue(actor, target, noCounterState) > sealUseValue(actor, target, counterState));
+  const sealedTarget = { ...target, statuses:["sealed"] };
+  const burdenState = { ...noCounterState, players:[actor, sealedTarget] };
+  assert.ok(sealTeamBurden(burdenState, sealedTarget, "dusk") > 0);
+  assert.ok(sealTeamBurden(burdenState, sealedTarget, "dawn") < 0);
+  assert.equal(sealUseValue(actor, { ...target, statuses:["sealed"] }, noCounterState), -50);
+});
+
+test("AI·封印：只在状态触发时为己方评估反制机会成本", () => {
+  const holder = makePlayer("seal-response-holder", 0, "dawn"),
+    ally = makePlayer("seal-response-ally", 1, "dawn"),
+    enemy = makePlayer("seal-response-enemy", 2, "dusk");
+  holder.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:enemy.id };
+  const { game } = makeGame([holder, ally, enemy]);
+  game.aiController.knowledge.remainingCounts = () => ({ assault:10 });
+  const context = {
+    statusCounterContext:{ statusId:"sealed", holderId:holder.id, holderName:holder.name }
+  };
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(ally, "counter", context, [instance("counter")]),
+    true
+  );
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(enemy, "counter", context, [instance("counter")]),
+    false
+  );
+});
+
+test("AI·封印：全局基础价为 7 且八名角色差量均为零", () => {
+  assert.equal(getBaseCardAiValue("seal"), 7);
+  for (const general of GENERAL_DEFINITIONS) {
+    assert.equal(Object.hasOwn(ROLE_CARD_VALUE_DELTAS[general.id], "seal"), false);
+    assert.equal(getRoleCardAiValue(general.id, "seal"), 7);
+  }
+});
+
 // ---- AI 卡牌行为·闪电 ----
 
 test("AI·闪电：AI 根节点与深层生成均拒绝已有闪电状态", () => {
@@ -10010,10 +10518,15 @@ test("AI·雷达：保留概率1/0.5/0保持连续概率语义", () => {
 test("AI·雷达：战术判定概率来自剩余牌堆且战术牌耗尽时归零", () => {
   const normal = buildRadarJudgmentProbabilities({ assault: 10, counter: 10, defenseDevice: 1 }),
     noTactic = buildRadarJudgmentProbabilities({ assault: 10, defenseDevice: 1 }),
-    fixed = buildRadarJudgmentProbabilities(null);
+    fixed = buildRadarJudgmentProbabilities(null),
+    definitions = Object.values(CARD_DEFINITIONS),
+    tacticTotal = definitions.filter(
+      (definition) => definition.category === "tactic"
+    ).reduce((sum, definition) => sum + definition.count, 0),
+    total = definitions.reduce((sum, definition) => sum + definition.count, 0);
   assertClose(normal.tactic, 10 / 21);
   assert.equal(noTactic.tactic, 0);
-  assertClose(fixed.tactic, 53 / 160);
+  assertClose(fixed.tactic, tacticTotal / total);
 });
 
 test("AI·雷达：受攻击暴露时不会为静态略高的非防守装备确定性拆雷达", async () => {
@@ -19110,6 +19623,7 @@ const EXPECTED_CARD_AI_VALUES = Object.freeze({
   duel: ["决斗", 6],
   mutualBenefit: ["互利", 6],
   symbiosis: ["共生", 5],
+  seal: ["封印", 7],
   lightning: ["闪电", 4],
   energyDevice: ["充能桩", 7],
   recycleDevice: ["回收站", 8],
@@ -19295,7 +19809,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
   }
 });
 
-test("AI·角色卡牌价值：25 张正式基础值与名称、definitionId 全部匹配", () => {
+test("AI·角色卡牌价值：26 张正式基础值与名称、definitionId 全部匹配", () => {
   const actual = Object.fromEntries(
     Object.values(CARD_DEFINITIONS).map(
       (definition) => [definition.definitionId, [definition.name, definition.aiValue]]
@@ -19320,7 +19834,7 @@ test("AI·角色卡牌价值：八名角色 ID 与 146 项正式非零差值全�
   );
 });
 
-test("AI·角色卡牌价值：八名角色乘 25 张牌的差值与最终值全部匹配", () => {
+test("AI·角色卡牌价值：八名角色乘 26 张牌的差值与最终值全部匹配", () => {
   for (const [generalId, expectedDeltas] of Object.entries(EXPECTED_ROLE_CARD_VALUE_DELTAS)) {
     for (const [definitionId, [, baseValue]] of Object.entries(EXPECTED_CARD_AI_VALUES)) {
       const expectedDelta = expectedDeltas[definitionId] ?? 0;
@@ -24539,13 +25053,24 @@ test("UI·响应窗口：响应窗口队伍颜色复用现有主题变量", asyn
   );
 });
 
-test("UI·响应窗口：闪电：状态反制响应展示文案正确", () => {
+test("UI·响应窗口：延迟状态反制只用持有者与判定语义", () => {
   const responder = { id: "r", name: "响应者" };
-  const presentation = buildResponsePresentation(
-    responder, "counter", { statusCounterContext: { holderId: "a", holderName: "甲" } }, 1, 1, "反制"
-  );
-  assert.equal(presentation.eventText, "是否使用「反制」，令甲的“闪电”转移？");
-  assert.equal(presentation.responseText, "是否使用「反制」，令甲的“闪电”转移？");
+  for (const [statusId, statusName, counterOutcome, responseText] of [
+    ["lightning", "闪电", "transfer", "是否使用「反制」，取消本次判定并转移「闪电」？"],
+    ["sealed", "封印", "cancel", "是否使用「反制」，取消本次判定并解除「封印」？"]
+  ]) {
+    const presentation = buildResponsePresentation(
+      responder,
+      "counter",
+      { statusCounterContext:{ holderId:"a", holderName:"甲", statusId, statusName, counterOutcome } },
+      1,
+      1,
+      "反制"
+    );
+    assert.equal(presentation.eventText, `甲的「${statusName}」即将判定。`);
+    assert.equal(presentation.responseText, responseText);
+    assert.doesNotMatch(presentation.eventText, /未知角色|不知道谁|使用了|对.*使用/);
+  }
 });
 
 // ---- 互利选择交互 ----
@@ -24700,6 +25225,32 @@ test("UI·中央结算卡：新对局会清空上一局中央结算卡，避免�
   const source = await readFile(projectFile("js/ui/UIManager.js"), "utf8");
   assert.match(source, /showSelection\([^)]*\)\s*\{[\s\S]*?this\.resetCurrentCard\(\)/);
   assert.match(source, /showGame\([^)]*\)\s*\{[\s\S]*?this\.resetCurrentCard\(\)/);
+});
+
+test("UI·判定窗口：延迟状态显示持有者与状态且雷达仍显示防御判定", () => {
+  const element = {
+      innerHTML:"",
+      classList:{ remove() { }, add() { } }
+    },
+    holder = makePlayer("judgment-holder", 0, "dawn"),
+    card = instance("assault"),
+    view = new JudgmentView(element);
+  for (const [statusId, statusName] of [["lightning", "闪电"], ["sealed", "封印"]]) {
+    view.show(holder, card, {
+      delayedStatusContext:{
+        ownerId:holder.id,
+        ownerName:holder.name,
+        ownerBattleTeam:holder.battleTeam,
+        statusId,
+        statusName,
+        event:"judging"
+      }
+    });
+    assert.match(element.innerHTML, new RegExp(`${holder.name}的「${statusName}」正在判定`));
+    assert.doesNotMatch(element.innerHTML, /未知角色|不知道谁|防御判定/);
+  }
+  view.show(holder, card);
+  assert.match(element.innerHTML, new RegExp(`防御判定 · ${holder.name}`));
 });
 
 test("UI·中央结算卡：突袭在中央结算区与使用日志中显示作用对象", async () => {
@@ -24915,8 +25466,8 @@ test("UI·布局样式：UIManager 源码不直接写生命、能量、手牌或
   ) assert.doesNotMatch(source, forbidden);
 });
 
-test("UI·布局样式：25 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 25);
+test("UI·布局样式：26 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
   for (const definition of Object.values(CARD_DEFINITIONS)) {
     const card = { ...definition, id: `layout-${definition.definitionId}` };
     for (const markup of [handCardTemplate(card), opponentHandStripTemplate([{ known: true, ...card }])]) {
@@ -24995,6 +25546,21 @@ test("UI·布局样式：全部卡牌SVG使用统一480x280画布且配置引用
   for (
     const source of [shield, assault, transfer]
   ) assert.match(source, /^<svg width="480" height="280" viewBox="0 0 480 280"/);
+});
+
+test("UI·布局样式：封印 SVG 背景与其他卡牌一致为直角矩形", async () => {
+  const source = await readFile(projectFile("assets/cards/seal.svg"), "utf8"),
+    background = source.match(/<rect\b[^>]*width="480"[^>]*height="280"[^>]*\/>/)?.[0] ?? "";
+  assert.ok(background, "封印 SVG 缺少全画布背景矩形");
+  assert.doesNotMatch(background, /\b(?:rx|ry)=/i);
+});
+
+test("UI·布局样式：封印 SVG 外圈与中央锁保持放大构图", async () => {
+  const source = await readFile(projectFile("assets/cards/seal.svg"), "utf8");
+  assert.match(source, /<circle\b[^>]*cx="160"[^>]*cy="205"[^>]*r="160"/);
+  assert.match(source, /<circle\b[^>]*cx="160"[^>]*cy="205"[^>]*r="134"/);
+  assert.match(source, /<circle\b[^>]*cx="160"[^>]*cy="205"[^>]*r="55"/);
+  assert.match(source, /translate\(160 211\) scale\(2\.4\) translate\(-160 -211\)/);
 });
 
 test("UI·布局样式：卡牌CSS在手牌、结算、私密展示、判定和装备区统一约束图片尺寸", async () => {

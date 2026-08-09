@@ -1,5 +1,5 @@
 /**
- * 二十五种公开卡牌数据。art/icon 等字段只用于展示；规则只读取显式规则字段。
+ * 二十六种公开卡牌数据。art/icon 等字段只用于展示；规则只读取显式规则字段。
  * 三类牌为 basic / tactic / equipment，响应时机由 usageMode 与 responseTypes 描述。
  */
 const card = (definition) => Object.freeze({
@@ -341,6 +341,24 @@ export const CARD_DEFINITIONS = Object.freeze(
       accent: "#45856b",
       frameStyle: "vital",
       flavorText: "万脉同息，枯处亦生。"
+    }),
+
+    seal: card({
+      definitionId: "seal",
+      name: "封印",
+      category: "tactic",
+      categoryName: "战术牌",
+      targetType: "singleUnsealedEnemy",
+      subtypes: ["status", "delay", "control"],
+      description: "对一名未处于封印状态的敌人使用，使其进入封印状态。其下个回合摸牌阶段前判定：为战术牌时本回合正常进行，否则摸牌后直接进入弃牌阶段。",
+      count: 3,
+      aiValue: 7,
+      counterable: false,
+      art: "./assets/cards/seal.svg",
+      icon: "./assets/cards/seal.svg",
+      accent: "#7655a8",
+      frameStyle: "seal",
+      flavorText: "印落于身，来日方知枷锁轻重。"
     }),
 
     lightning: card({

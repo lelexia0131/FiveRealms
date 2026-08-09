@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260808-card-ai-values-v118";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260808-card-ai-values-v118";
-import { createId, clamp } from "../utils/helpers.js?build=20260808-card-ai-values-v118";
-import { EventBus } from "./EventBus.js?build=20260808-card-ai-values-v118";
-import { Player } from "./Player.js?build=20260808-card-ai-values-v118";
-import { Deck } from "./Deck.js?build=20260808-card-ai-values-v118";
-import { TeamManager } from "./TeamManager.js?build=20260808-card-ai-values-v118";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260808-card-ai-values-v118";
-import { RuleEngine } from "./RuleEngine.js?build=20260808-card-ai-values-v118";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260808-card-ai-values-v118";
-import { GameLogger } from "./GameLogger.js?build=20260808-card-ai-values-v118";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260808-card-ai-values-v118";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260808-card-ai-values-v118";
-import { AIController } from "../ai/AiController.js?build=20260808-card-ai-values-v118";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260808-card-ai-values-v118";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260808-card-ai-values-v118";
-import { Debug } from "../utils/debug.js?build=20260808-card-ai-values-v118";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260808-card-ai-values-v118";
-import { DyingSystem } from "./DyingSystem.js?build=20260808-card-ai-values-v118";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260808-card-ai-values-v118";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260808-card-ai-values-v118";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260808-card-ai-values-v118";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260808-card-ai-values-v118";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-lightning-hit-copy-v122";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
+import { createId, clamp } from "../utils/helpers.js?build=20260809-lightning-hit-copy-v122";
+import { EventBus } from "./EventBus.js?build=20260809-lightning-hit-copy-v122";
+import { Player } from "./Player.js?build=20260809-lightning-hit-copy-v122";
+import { Deck } from "./Deck.js?build=20260809-lightning-hit-copy-v122";
+import { TeamManager } from "./TeamManager.js?build=20260809-lightning-hit-copy-v122";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260809-lightning-hit-copy-v122";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-lightning-hit-copy-v122";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-lightning-hit-copy-v122";
+import { GameLogger } from "./GameLogger.js?build=20260809-lightning-hit-copy-v122";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-lightning-hit-copy-v122";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-lightning-hit-copy-v122";
+import { AIController } from "../ai/AiController.js?build=20260809-lightning-hit-copy-v122";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-lightning-hit-copy-v122";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-lightning-hit-copy-v122";
+import { Debug } from "../utils/debug.js?build=20260809-lightning-hit-copy-v122";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260809-lightning-hit-copy-v122";
+import { DyingSystem } from "./DyingSystem.js?build=20260809-lightning-hit-copy-v122";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-lightning-hit-copy-v122";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-lightning-hit-copy-v122";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260809-lightning-hit-copy-v122";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260809-lightning-hit-copy-v122";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -48,6 +48,13 @@ function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = 
     if (first && second) return `${first.name} → ${second.name}`;
   }
   return "";
+}
+
+/** 中央结算区用状态持有者 + 延迟状态事件展示，不伪造普通出牌者。 */
+function showDelayedStatusCard(game, holder, definitionId, eventLabel) {
+  const card = CARD_DEFINITIONS[definitionId];
+  if (!holder || !card) return;
+  game.ui.setCurrentCard?.(card, `${holder.name}的延迟状态 · ${eventLabel}`);
 }
 
 /** 纯展示：为中央结算卡生成 displayTargets，不进入业务 targets、规则判断或 AI。 */
@@ -197,13 +204,52 @@ export class Game {
       }
       this.ui.render(this);
     });
+    this.eventBus.on("beforeStatusResolve", "global:seal", async (event) => {
+      const holder = event.player;
+      const status = holder?.statuses?.sealed;
+      if (!status || event.cancelled || !holder?.alive || this.state.isGameOver) return;
+      const gameId = this.state.gameId;
+      showDelayedStatusCard(this, holder, "seal", "即将判定");
+      this.log(`${holder.name}的「封印」即将判定，进入反制窗口。`, "important");
+      const counterResult = await this.responseSystem.askForStatusCounter(holder, {
+        statusId:"sealed",
+        statusName:"封印",
+        counterOutcome:"cancel",
+        originPlayerId:status.originPlayerId ?? null
+      });
+      if (!this.isSessionValid(gameId) || this.state.isGameOver || !holder.alive) return;
+      if (isCancelledResponse(counterResult)) return;
+      if (counterResult.status === RESPONSE_STATUS.USED) {
+        delete holder.statuses.sealed;
+        showDelayedStatusCard(this, holder, "seal", "被反制");
+        this.log(`${holder.name}的「封印」被反制，本次封印解除。`, "important");
+        this.ui.render(this);
+        return;
+      }
+      const judgment = await this.judgmentSystem.judgeSeal(holder, { status });
+      if (!this.isSessionValid(gameId) || this.state.isGameOver || !holder.alive || !judgment.handled) return;
+      delete holder.statuses.sealed;
+      if (judgment.triggered) {
+        showDelayedStatusCard(this, holder, "seal", "判定成功");
+        this.log(`${holder.name}的「封印」判定成功，本回合正常行动。`, "important");
+      } else {
+        holder.turnFlags.skipActionPhase = true;
+        showDelayedStatusCard(this, holder, "seal", "判定失败");
+        this.log(`${holder.name}的「封印」判定失败，本回合摸牌后跳过行动阶段。`, "important");
+      }
+      this.ui.render(this);
+    });
     this.eventBus.on("beforeStatusResolve", "global:lightning", async (event) => {
       const holder = event.player;
       const status = holder?.statuses?.lightning;
       if (!status || event.cancelled || !holder?.alive || this.state.isGameOver) return;
       const gameId = this.state.gameId;
+      showDelayedStatusCard(this, holder, "lightning", "即将判定");
+      this.log(`${holder.name}的「闪电」即将判定，进入反制窗口。`, "important");
       const counterResult = await this.responseSystem.askForStatusCounter(holder, {
         statusId:"lightning",
+        statusName:"闪电",
+        counterOutcome:"transfer",
         originPlayerId:status.originPlayerId ?? null
       });
       if (!this.isSessionValid(gameId) || this.state.isGameOver || !holder.alive) return;
@@ -213,6 +259,7 @@ export class Game {
         const receiver = RuleEngine.nextLightningReceiver(this.state.players, holder);
         if (receiver) {
           receiver.statuses.lightning = { ...status, cardDefinitionId:"lightning", originPlayerId:status.originPlayerId ?? holder.id };
+          showDelayedStatusCard(this, holder, "lightning", "被反制");
           this.log(`${holder.name}的「闪电」被反制，转移给${receiver.name}。`, "important");
         }
         this.ui.render(this);
@@ -222,11 +269,20 @@ export class Game {
       if (!this.isSessionValid(gameId) || this.state.isGameOver || !holder.alive || !judgment.handled) return;
       if (judgment.triggered) {
         delete holder.statuses.lightning;
+        showDelayedStatusCard(this, holder, "lightning", "判定成功");
         await this.damage(null, holder, 3, {
           damageType:"lightning",
           reason:"lightning",
           canBlock:false,
           actionName:"闪电",
+          delayedStatusContext:{
+            ownerId:holder.id,
+            ownerName:holder.name,
+            ownerBattleTeam:holder.battleTeam,
+            statusId:"lightning",
+            statusName:"闪电",
+            event:"judgmentSuccess"
+          },
           metadata:{
             statusId:"lightning",
             cardDefinitionId:"lightning",
@@ -242,7 +298,8 @@ export class Game {
       const receiver = RuleEngine.nextLightningReceiver(this.state.players, holder);
       if (receiver) {
         receiver.statuses.lightning = { ...status, cardDefinitionId:"lightning", originPlayerId:status.originPlayerId ?? holder.id };
-        this.log(`${holder.name}的「闪电」判定未触发，转移给${receiver.name}。`, "important");
+        showDelayedStatusCard(this, holder, "lightning", "判定未生效");
+        this.log(`${holder.name}的「闪电」判定未生效，转移给${receiver.name}。`, "important");
       }
       this.ui.render(this);
     });
@@ -347,20 +404,24 @@ export class Game {
     await this.eventBus.emit("afterDraw", { ...drawEvent, type: "afterDraw" });
     if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
 
-    this.state.phase = "play";
-    await this.eventBus.emit("playPhaseStart", { type: "playPhaseStart", player });
-    if (!this.isSessionValid(gameId)) return;
-    this.ui.render(this);
-    if (player.controllerType === "human") {
-      this.ui.setPrompt("你的出牌阶段：选择手牌、发动技能，或结束出牌。", "从手牌中选择可用牌");
-      const completed = await this.ui.waitForHumanPlayEnd(gameId);
-      if (!completed || !this.isSessionValid(gameId)) return;
+    if (player.turnFlags.skipActionPhase) {
+      this.log(`${player.name}因「封印」判定失败，跳过行动阶段并进入弃牌阶段。`, "important");
     } else {
-      await this.takeAiPlayPhase(player, gameId);
+      this.state.phase = "play";
+      await this.eventBus.emit("playPhaseStart", { type: "playPhaseStart", player });
+      if (!this.isSessionValid(gameId)) return;
+      this.ui.render(this);
+      if (player.controllerType === "human") {
+        this.ui.setPrompt("你的出牌阶段：选择手牌、发动技能，或结束出牌。", "从手牌中选择可用牌");
+        const completed = await this.ui.waitForHumanPlayEnd(gameId);
+        if (!completed || !this.isSessionValid(gameId)) return;
+      } else {
+        await this.takeAiPlayPhase(player, gameId);
+      }
+      if (!this.isSessionValid(gameId) || this.state.isGameOver || !player.alive) return;
+      await this.eventBus.emit("playPhaseEnd", { type: "playPhaseEnd", player });
+      if (!this.isSessionValid(gameId)) return;
     }
-    if (!this.isSessionValid(gameId) || this.state.isGameOver || !player.alive) return;
-    await this.eventBus.emit("playPhaseEnd", { type: "playPhaseEnd", player });
-    if (!this.isSessionValid(gameId)) return;
 
     this.state.phase = "discard";
     await this.handleDiscardPhase(player, gameId);
@@ -1049,6 +1110,7 @@ export class Game {
       type: "beforeDamage", source, target, amount: Math.max(0, amount), card: context.card ?? null,
       skill: context.skill ?? null, damageType: context.damageType ?? "normal", canBlock: context.canBlock ?? false,
       actionName: context.card?.name ?? context.actionName ?? context.reason ?? "伤害",
+      delayedStatusContext:context.delayedStatusContext ?? null,
       cancelled: false, metadata, resolutionId: context.resolutionId ?? createId("skill-resolution")
     };
     await this.eventBus.emit("beforeDamage", event);

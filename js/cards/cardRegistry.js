@@ -1,5 +1,5 @@
-/** 二十五种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260808-card-ai-values-v118";
+/** 二十六种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-lightning-hit-copy-v122";
 
 /** 只在最终效果解析时读取私密意图，并按原角色、原区域复验实体牌。 */
 function resolvePrivateSelectionIntent(game, source, card, target, context, expectedZone = null) {
@@ -200,6 +200,13 @@ const CARD_EFFECTS = {
       await game.heal(source, target, 1, { card });
       if (!game.isSessionValid(gameId)) return { resolved:false };
     }
+  },
+
+  async seal(game, source, card, targets) {
+    const target = targets[0];
+    if (!RuleEngine.getCardTargets(game, source, card).includes(target)) return { resolved:false };
+    target.statuses.sealed = { cardDefinitionId:card.definitionId, originPlayerId:source.id };
+    game.log(`${source.name}对${target.name}施加了「封印」状态。`, "important");
   },
 
   async energyDevice(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },

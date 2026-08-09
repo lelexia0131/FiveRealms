@@ -1,0 +1,40 @@
+<svg width="480" height="280" viewBox="0 0 480 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">封印</title>
+  <desc id="desc">紫色封印符文与交叠锁链</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="68%">
+      <stop offset="0" stop-color="#8f72c8"/>
+      <stop offset="0.55" stop-color="#4e356f"/>
+      <stop offset="1" stop-color="#171326"/>
+    </radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e2d8f4"/>
+      <stop offset="0.5" stop-color="#8064a8"/>
+      <stop offset="1" stop-color="#332544"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="480" height="280" fill="url(#bg)"/>
+  <g transform="translate(133 -1) scale(.67)">
+  <path d="M38 72C91 34 229 34 282 72M38 348c53 38 191 38 244 0" fill="none" stroke="#cbb9e7" stroke-opacity=".35" stroke-width="3"/>
+  <circle cx="160" cy="205" r="160" fill="none" stroke="#cbb9e7" stroke-width="7" stroke-opacity=".8" filter="url(#glow)"/>
+  <circle cx="160" cy="205" r="134" fill="#241a36" fill-opacity=".72" stroke="#8064a8" stroke-width="3"/>
+  <path d="M160 119l18 55 58 1-47 34 17 56-46-34-46 34 17-56-47-34 58-1z" fill="none" stroke="#eadffc" stroke-width="6" stroke-linejoin="round" filter="url(#glow)"/>
+  <path d="M89 136l142 138M231 136L89 274" stroke="url(#metal)" stroke-width="18" stroke-linecap="round"/>
+  <g fill="none" stroke="#d9c9ef" stroke-width="5">
+    <ellipse cx="100" cy="147" rx="18" ry="11" transform="rotate(44 100 147)"/>
+    <ellipse cx="128" cy="175" rx="18" ry="11" transform="rotate(44 128 175)"/>
+    <ellipse cx="192" cy="175" rx="18" ry="11" transform="rotate(-44 192 175)"/>
+    <ellipse cx="220" cy="147" rx="18" ry="11" transform="rotate(-44 220 147)"/>
+    <ellipse cx="100" cy="263" rx="18" ry="11" transform="rotate(-44 100 263)"/>
+    <ellipse cx="220" cy="263" rx="18" ry="11" transform="rotate(44 220 263)"/>
+  </g>
+  <circle cx="160" cy="205" r="55" fill="#c7a9ef" stroke="#f2eaff" stroke-width="5" filter="url(#glow)"/>
+  <g transform="translate(160 211) scale(2.4) translate(-160 -211)">
+    <path d="M151 203v-9a9 9 0 0118 0v9m-22 0h26v24h-26z" fill="#332544" stroke="#f2eaff" stroke-width="4" stroke-linejoin="round"/>
+  </g>
+  </g>
+</svg>

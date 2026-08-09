@@ -2,7 +2,7 @@
 
 《五域纷争》是一款原创、离线可运行的单人五人阵营卡牌游戏。真人与四名电脑角色被公开随机分为 2 人和 3 人阵营，在环形桌面上通过基础牌、战术牌、装备、角色技能、即时响应和濒死救援消灭敌方全部角色。
 
-项目只使用 HTML、CSS、原生 JavaScript、ES Module 和浏览器 API；没有后端、在线素材或运行时第三方依赖。角色肖像与二十五种卡牌插画均为项目内原创 SVG。
+项目只使用 HTML、CSS、原生 JavaScript、ES Module 和浏览器 API；没有后端、在线素材或运行时第三方依赖。角色肖像与二十六种卡牌插画均为项目内原创 SVG。
 
 ## 启动与测试
 
@@ -157,7 +157,7 @@ const aliveRing = game.state.players
 
 能量增长发生在摸牌之前，并触发 `beforeTurnEnergyGain` 和 `afterTurnEnergyGain`。二人、三人阵营无装备时均为 `baseAmount: 1`、`teamBonus: 0`、`equipmentBonus: 0`；充能桩令 `equipmentBonus` 变为 1。事件继续公开 `amount`、`actualAmount`、`cancelled` 与 `metadata`，所有来源最终分别受二人阵营 4 点、三人阵营 3 点的能量上限约束。
 
-## 二十五种卡牌与精确牌堆
+## 二十六种卡牌与精确牌堆
 
 全游戏只有 `basic`、`tactic` 和 `equipment` 三种类别。响应身份由 `usageMode` 与 `responseTypes` 表示。
 
@@ -181,6 +181,7 @@ const aliveRing = game.state.players
 | 战术 | duel | 决斗 | 3 |
 | 战术 | mutualBenefit | 互利 | 2 |
 | 战术 | symbiosis | 共生 | 1 |
+| 战术 | seal | 封印 | 3 |
 | 战术 | lightning | 闪电 | 2 |
 | 装备 | energyDevice | 充能桩 | 2 |
 | 装备 | recycleDevice | 回收站 | 3 |
@@ -189,7 +190,7 @@ const aliveRing = game.state.players
 | 装备 | telescope | 望远镜 | 3 |
 | 装备 | barrierDevice | 屏障 | 3 |
 
-合计：基础牌 92、战术牌 53、装备牌 15，共 160 张。每个实体具有唯一 `card.id`；配置与规则使用稳定 `definitionId`。
+合计：基础牌 92、战术牌 56、装备牌 15，共 163 张。每个实体具有唯一 `card.id`；配置与规则使用稳定 `definitionId`。
 
 ## 主要卡牌结算
 
@@ -213,6 +214,7 @@ const aliveRing = game.state.players
 - 决斗：目标先开始，双方轮流打出突袭；先放弃或无牌者受到 1 点普通伤害。
 - 互利：规则目标为所有存活角色；反制窗口后展示等同存活人数的公共牌，从施牌者起按座位每人选 1 张。调律师使用时，只要有另一名存活队友就能触发一次协调。
 - 共生：按座位令所有受伤存活角色恢复 1 点生命。
+- 封印：对一名未处于封印状态的敌人使用，使其进入封印状态。其下个回合摸牌阶段前判定：为战术牌时本回合正常进行，否则摸牌后直接进入弃牌阶段。
 - 闪电：使用后进入闪电状态；下回合摸牌前进行判定。若结果为装备牌，触发 3 点伤害并消耗状态，否则将状态转移给下一名未进入闪电状态的玩家。
 
 ## 牌区与重洗
@@ -283,7 +285,7 @@ AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/�
 - `AiEvaluator`：按整队存活、生命、资源、斩杀、治疗净收益和状态评分。
 - `AiPlanner`：深度 4、宽度 10 的 beam search，默认 900ms 时间预算。
 - `AiSimulator`：只克隆过滤后的快照，无 UI、日志、事件或真实状态副作用。
-- `AiKnowledge`：从 160 张组成减去公开/合法已知牌，采样 10 个隐藏世界。
+- `AiKnowledge`：从 163 张组成减去公开/合法已知牌，采样 10 个隐藏世界。
 - `AiResponsePolicy`：评估格挡、反制、借势突袭、交牌、决斗和救援的团队效用。
 - `AiCardSelector`：处理弃牌、公共牌与隐藏位置；未知牌不能按真实牌面筛选。
 
@@ -303,7 +305,7 @@ AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/�
 
 ## 角色、卡牌和 UI 资源
 
-八名角色配置位于 `js/config/generalConfig.js`，肖像位于 `assets/characters/`；二十五种卡牌的展示与规则元数据位于 `js/config/cardConfig.js`，插画位于 `assets/cards/`。`art`、`icon`、`accent`、`frameStyle` 和 `flavorText` 只用于展示，不参与规则或 AI 合法性。
+八名角色配置位于 `js/config/generalConfig.js`，肖像位于 `assets/characters/`；二十六种卡牌的展示与规则元数据位于 `js/config/cardConfig.js`，插画位于 `assets/cards/`。`art`、`icon`、`accent`、`frameStyle` 和 `flavorText` 只用于展示，不参与规则或 AI 合法性。
 
 所有卡牌 SVG 必须使用统一的 `width="480"`、`height="280"` 和 `viewBox="0 0 480 280"`。新增资源应在该画布内等比缩放并居中构图，禁止依靠非等比拉伸适配。
 
@@ -315,7 +317,7 @@ AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/�
 FiveRealms/
 ├── index.html
 ├── assets/
-│   ├── cards/                    # 25 张原创本地 SVG
+│   ├── cards/                    # 26 张原创本地 SVG
 │   └── characters/               # 8 名角色原创本地 SVG
 ├── css/
 │   ├── theme.css                 # 设计令牌
@@ -327,7 +329,7 @@ FiveRealms/
 ├── js/
 │   ├── config/                   # 游戏、牌和角色配置
 │   ├── core/                     # Game 与独立规则系统
-│   ├── cards/cardRegistry.js     # 25 种牌的结算器
+│   ├── cards/cardRegistry.js     # 26 种牌的结算器
 │   ├── generals/skillRegistry.js # 8 名角色的被动/主动技能
 │   ├── ai/                       # 可见状态、生成、评估、规划、知识与响应
 │   ├── ui/                       # 模板、交互、牌池、判定、私密层和动画
@@ -388,7 +390,7 @@ FiveRealms/
 
 ## 已实现功能与当前限制
 
-已实现完整 2V3 对局、八名角色、二十五种牌、动态距离、负生命濒死救援、六件装备、多阶段隐藏选牌、公共牌池、深度牌序规划、可取消自然节奏、桌游 UI、键盘焦点、重开清理、规则测试和固定种子平衡模拟。
+已实现完整 2V3 对局、八名角色、二十六种牌、动态距离、负生命濒死救援、六件装备、多阶段隐藏选牌、公共牌池、深度牌序规划、可取消自然节奏、桌游 UI、键盘焦点、重开清理、规则测试和固定种子平衡模拟。
 
 当前限制：不保存中途对局；没有复活（距离系统已按实时 `alive` 支持未来接入）；AI 是有限深度启发式与概率采样，不是穷举求解器；未专门适配手机，宽度低于 1200px 使用紧凑桌面布局；角色技能仍集中在一个注册文件，继续扩展时可按技能拆文件。
 

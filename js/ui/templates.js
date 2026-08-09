@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260808-card-ai-values-v118";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-lightning-hit-copy-v122";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -93,6 +93,7 @@ export function playerPanelTemplate(player, options = {}) {
   const statuses = player.alive ? [
     player.statuses?.exposeWeakness ? [`破势 ${player.statuses.exposeWeakness.stacks}`, "danger"] : null,
     player.statuses?.huntMark ? ["猎印", "mark"] : null,
+    player.statuses?.sealed ? ["封印", "danger"] : null,
     player.statuses?.lightning ? ["闪电", "danger"] : null,
     player.statuses?.allIn ? ["孤注", "danger"] : null,
     player.turnFlags?.momentum > 0 ? [`连势 ${player.turnFlags.momentum}`, "mark"] : null,

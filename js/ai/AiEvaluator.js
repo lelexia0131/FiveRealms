@@ -2,14 +2,15 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260808-card-ai-values-v118";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260808-card-ai-values-v118";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260808-card-ai-values-v118";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260808-card-ai-values-v118";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260808-card-ai-values-v118";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260808-card-ai-values-v118";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260808-card-ai-values-v118";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260808-card-ai-values-v118";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-lightning-hit-copy-v122";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-lightning-hit-copy-v122";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260809-lightning-hit-copy-v122";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260809-lightning-hit-copy-v122";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260809-lightning-hit-copy-v122";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-lightning-hit-copy-v122";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260809-lightning-hit-copy-v122";
+import { sealTeamBurden, sealUseValue } from "./sealScoring.js?build=20260809-lightning-hit-copy-v122";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -170,7 +171,8 @@ export class AiEvaluator {
         + equipmentDelta * .25 + equipmentRoleDelta * .25
         + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5 - exposure + radarMitigation
         + energyDeviceFuture)
-      - lightningTeamBurden(state, player, viewer.battleTeam);
+      - lightningTeamBurden(state, player, viewer.battleTeam)
+      - sealTeamBurden(state, player, viewer.battleTeam);
     }
     return score;
   }
@@ -210,6 +212,9 @@ export class AiEvaluator {
     }
     const actionTarget = action.targets?.[0];
     const target = visible.players.find((entry) => entry.id === actionTarget?.id) ?? actionTarget;
+    if (card.definitionId === "seal") {
+      value = sealUseValue(actor, target, visible) + roleDelta;
+    }
     if (target) {
       const enemy = target.battleTeam !== player.battleTeam;
       if (card.subtypes.includes("attack") || card.definitionId === "duel") {

@@ -2,12 +2,13 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260808-card-ai-values-v118";
-import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260808-card-ai-values-v118";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260808-card-ai-values-v118";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260808-card-ai-values-v118";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260808-card-ai-values-v118";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260808-card-ai-values-v118";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-lightning-hit-copy-v122";
+import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260809-lightning-hit-copy-v122";
+import { getSealStatusStateBranches } from "./sealScoring.js?build=20260809-lightning-hit-copy-v122";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-lightning-hit-copy-v122";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260809-lightning-hit-copy-v122";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-lightning-hit-copy-v122";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -19,7 +20,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260808-card-ai-values-v118";
+} from "./AiProbabilityBranches.js?build=20260809-lightning-hit-copy-v122";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -89,7 +90,7 @@ export class AiActionGenerator {
         if (selection) actions.push({ type:"card", card, targets:[], selection });
         continue;
       }
-      if (["singleEnemy", "singleEnemyInRange", "singleAlly", "otherWithCards", "otherWithCardsOrEquipment"].includes(card.targetType)) {
+      if (["singleEnemy", "singleEnemyInRange", "singleUnsealedEnemy", "singleAlly", "otherWithCards", "otherWithCardsOrEquipment"].includes(card.targetType)) {
         const aiTargets = ["destroy","plunder"].includes(card.definitionId)
           ? targets.filter((target) => target.battleTeam !== player.battleTeam)
           : targets;
@@ -157,8 +158,11 @@ export class AiActionGenerator {
         }
         continue;
       }
-      if (["singleEnemy"].includes(card.targetType)) for (const target of enemies) actions.push({ type:"card", card, targets:[target] });
-      else if (card.targetType === "singleAlly") for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) actions.push({ type:"card", card, targets:[target] });
+      if (["singleEnemy","singleUnsealedEnemy"].includes(card.targetType)) {
+        for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) {
+          actions.push({ type:"card", card, targets:[target] });
+        }
+      } else if (card.targetType === "singleAlly") for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) actions.push({ type:"card", card, targets:[target] });
       else if (card.targetType === "otherWithCards") for (const target of alive.filter((entry) => entry.id !== actor.id && entry.handCount > 0)) actions.push({ type:"card", card, targets:[target] });
       else if (card.targetType === "otherWithCardsOrEquipment") {
         const targets = RuleEngine.getCardTargets(simulationGame, actor, card);
@@ -225,6 +229,14 @@ export class AiActionGenerator {
     const card = action.card;
     if (card.definitionId === "lightning") {
       return getLightningStatusStateBranches(actor).map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        matches:!branch.present
+      }));
+    }
+    if (card.definitionId === "seal") {
+      const target = game.state.players.find((player) => player.id === action.targets?.[0]?.id);
+      return getSealStatusStateBranches(target).map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         matches:!branch.present

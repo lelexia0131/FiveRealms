@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260808-card-ai-values-v118";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260808-card-ai-values-v118";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260809-lightning-hit-copy-v122";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
@@ -123,6 +123,7 @@ export class RuleEngine {
     switch (card.targetType) {
       case "singleEnemyInRange": return enemies.filter((target) => DistanceSystem.inAttackRange(game, source, target, card));
       case "singleEnemy": return enemies;
+      case "singleUnsealedEnemy": return enemies.filter((target) => !this.hasStatus(target, "sealed"));
       case "otherWithCards": return alive.filter((player) => player.id !== source.id && player.hand.length > 0);
       case "otherWithCardsOrEquipment": return alive.filter((player) => player.id !== source.id && this.hasHandOrEquipment(player) && this.isWithinCardEffectRange(game, source, player, card));
       case "anyWithCards": return alive.filter((player) => player.hand.length > 0);
@@ -155,7 +156,7 @@ export class RuleEngine {
     if (card.targetType === "otherWithCards" && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有可选择手牌的其他角色" };
     if (card.targetType === "otherWithCardsOrEquipment" && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"范围内没有可选择手牌或装备的其他角色" };
     if (card.targetType === "singleAlly" && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有可选择的存活队友" };
-    if (["singleEnemy","singleEnemyInRange","allEnemies"].includes(card.targetType) && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有合法敌方目标" };
+    if (["singleEnemy","singleEnemyInRange","singleUnsealedEnemy","allEnemies"].includes(card.targetType) && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有合法敌方目标" };
     if (card.definitionId === "transfer") {
       const sources = this.getTransferSources(game, source, card);
       if (!sources.some((from) => this.getTransferReceivers(game, source, from, card).length)) return { ok:false, reason:"距离1内没有可转移手牌的来源和接收者" };

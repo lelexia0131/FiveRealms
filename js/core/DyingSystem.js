@@ -1,4 +1,4 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260808-card-ai-values-v118";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-lightning-hit-copy-v122";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；
@@ -111,7 +111,10 @@ export class DyingSystem {
     target.hp = 0;
     target.alive = false;
     target.statuses = {};
-    if (target.turnFlags) target.turnFlags.momentum = 0;
+    if (target.turnFlags) {
+      target.turnFlags.momentum = 0;
+      target.turnFlags.skipActionPhase = false;
+    }
     this.game.requestHumanPlayEndForDefeat?.(target);
     this.game.ui.render(this.game);
     this.game.log(`${target.name}救援失败，阵亡。`, "important");

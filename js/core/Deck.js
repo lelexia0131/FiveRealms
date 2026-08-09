@@ -3,9 +3,9 @@
  * 它依赖卡牌配置和随机工具，不负责合法性、日志或卡牌效果。
  * 所有在手牌、装备区或 resolvingCards 中的卡都不会进入重洗来源。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260808-card-ai-values-v118";
-import { createId, shuffled } from "../utils/helpers.js?build=20260808-card-ai-values-v118";
-import { Debug } from "../utils/debug.js?build=20260808-card-ai-values-v118";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
+import { createId, shuffled } from "../utils/helpers.js?build=20260809-lightning-hit-copy-v122";
+import { Debug } from "../utils/debug.js?build=20260809-lightning-hit-copy-v122";
 
 export class Deck {
   constructor(random = Math.random) {
