@@ -1,5 +1,5 @@
 /** AI 展示节奏的纯函数入口。实际等待仍统一由 CleanupManager 执行。 */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-guardian-aid-order-v131";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-delayed-tactic-counter-v132";
 
 const RANGES = Object.freeze({
   initial: ["aiInitialThinkMinMs", "aiInitialThinkMaxMs"],

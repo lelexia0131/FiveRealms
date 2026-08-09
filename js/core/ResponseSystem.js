@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-guardian-aid-order-v131";
-import { createId } from "../utils/helpers.js?build=20260809-guardian-aid-order-v131";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-guardian-aid-order-v131";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-guardian-aid-order-v131";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-delayed-tactic-counter-v132";
+import { createId } from "../utils/helpers.js?build=20260809-delayed-tactic-counter-v132";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-delayed-tactic-counter-v132";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-delayed-tactic-counter-v132";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

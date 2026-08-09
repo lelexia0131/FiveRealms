@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-guardian-aid-order-v131";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-guardian-aid-order-v131";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-delayed-tactic-counter-v132";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-delayed-tactic-counter-v132";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

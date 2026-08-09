@@ -1,5 +1,5 @@
 /** 二十六种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-guardian-aid-order-v131";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-delayed-tactic-counter-v132";
 
 /** 只在最终效果解析时读取私密意图，并按原角色、原区域复验实体牌。 */
 function resolvePrivateSelectionIntent(game, source, card, target, context, expectedZone = null) {

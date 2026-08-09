@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-guardian-aid-order-v131";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-delayed-tactic-counter-v132";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

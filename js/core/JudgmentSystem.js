@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-guardian-aid-order-v131";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-delayed-tactic-counter-v132";
 
 /**
  * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；

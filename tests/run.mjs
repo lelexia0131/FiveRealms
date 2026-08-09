@@ -2515,6 +2515,26 @@ test("反制：本身可被反制且仍保持响应牌接口", () => {
   assert.equal(CARD_DEFINITIONS.counter.counterable, true);
 });
 
+test("反制：普通可反制战术牌首次打出仍进入普通反制窗口", async () => {
+  const source = makePlayer("normal-tactic-source", 0, "dawn", "human"),
+    responder = makePlayer("normal-tactic-responder", 1, "dusk", "human"),
+    harvest = instance("harvest"), counter = instance("counter");
+  const { game, ui } = makeGame([source, responder], {
+    response:(request) => request.type === "counter" && request.cardId === harvest.id
+  });
+  source.hand.push(harvest);
+  responder.hand.push(counter);
+  assert.equal(CARD_DEFINITIONS.harvest.counterable, true);
+  assert.equal(await game.playCard(source, harvest, []), true);
+  assert.ok(ui.responseRequests.some(
+    (request) => request.type === "counter" && request.cardId === harvest.id
+      && request.targetPlayerId === responder.id
+  ));
+  assert.equal(responder.hand.includes(counter), false);
+  assert.ok(game.state.deck.discardPile.includes(counter));
+  assert.ok(game.state.deck.discardPile.includes(harvest));
+});
+
 test("反制：震荡的反制只取消当前目标所受效果而不取消整张群伤牌", async () => {
   const a = makePlayer("a", 0, "dawn"),
     b = makePlayer("b", 1, "dusk", "human"),
@@ -2810,7 +2830,7 @@ test("封印：定义、数量、牌堆与原有牌数量正确", () => {
   assert.ok(seal);
   assert.equal(seal.category, "tactic");
   assert.equal(seal.targetType, "singleUnsealedEnemy");
-  assert.equal(seal.counterable, true);
+  assert.equal(seal.counterable, false);
   assert.equal(seal.count, 3);
   assert.equal(seal.aiValue, 7);
   assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("seal"));
@@ -2845,59 +2865,42 @@ test("封印：统一目标规则只允许未封印的存活敌人且无目标�
   assert.equal(RuleEngine.canPlayCard(game, source, card).ok, false);
 });
 
-test("封印：首次打出先记录行动声明且被普通反制后不写入延迟状态", async () => {
+test("封印：首次打出不进入普通反制且保留反制牌并建立延迟状态", async () => {
   const source = makePlayer("source", 0, "dawn", "human"),
     target = makePlayer("target", 1, "dusk", "human");
   const first = instance("seal"), counter = instance("counter");
-  let gameRef = null, declarationVisibleInCounterWindow = false;
+  let normalCounterCalls = 0;
   const { game, ui } = makeGame([source, target], {
     response:(request) => {
-      if (request.type !== "counter" || !request.legalCardIds.length) return false;
-      declarationVisibleInCounterWindow = gameRef.state.logs.some(
-        (entry) => entry.message === `${source.name}对${target.name}使用了「封印」。`
-      );
+      if (request.type === "counter" && request.cardId === first.id) normalCounterCalls += 1;
       return true;
     }
   });
-  gameRef = game;
   source.hand.push(first);
   target.hand.push(counter);
   assert.equal(await game.playCard(source, first, [target]), true);
-  assert.equal(declarationVisibleInCounterWindow, true);
-  assert.equal(target.statuses.sealed, undefined);
-  assert.ok(ui.responseRequests.some(
-    (request) => request.type === "counter" && request.targetPlayerId === target.id
-      && request.cardId === first.id
-  ));
-  assert.equal(target.hand.includes(counter), false);
-  assert.ok(game.state.deck.discardPile.includes(first));
-  assert.ok(game.state.deck.discardPile.includes(counter));
-  assert.equal(
-    game.state.logs.filter(
-      (entry) => entry.message === `${source.name}对${target.name}使用了「封印」。`
-    ).length,
-    1
-  );
-  assert.equal(
-    game.state.logs.some((entry) => entry.message === `${source.name}使${target.name}进入「封印」状态。`),
-    false
-  );
-});
-
-test("封印：首次打出未被反制时行动声明先于状态结果且状态不可叠加", async () => {
-  const source = makePlayer("source", 0, "dawn", "human"),
-    target = makePlayer("target", 1, "dusk", "human");
-  const { game, ui } = makeGame([source, target], { response:() => false });
-  const first = instance("seal"), second = instance("seal"), counter = instance("counter");
-  source.hand.push(first, second);
-  target.hand.push(counter);
-  assert.equal(await game.playCard(source, first, [target]), true);
+  assert.equal(normalCounterCalls, 0);
   assert.deepEqual(target.statuses.sealed, { cardDefinitionId:"seal", originPlayerId:source.id });
-  assert.ok(ui.responseRequests.some(
-    (request) => request.type === "counter" && request.targetPlayerId === target.id
-      && request.cardId === first.id
+  assert.ok(!ui.responseRequests.some(
+    (request) => request.type === "counter" && request.cardId === first.id
   ));
   assert.ok(target.hand.includes(counter));
+  assert.ok(game.state.deck.discardPile.includes(first));
+  assert.ok(!game.state.deck.discardPile.includes(counter));
+  const messages = game.state.logs.map((entry) => entry.message),
+    declarationIndex = messages.indexOf(`${source.name}对${target.name}使用了「封印」。`),
+    statusIndex = messages.indexOf(`${source.name}使${target.name}进入「封印」状态。`);
+  assert.ok(declarationIndex >= 0 && statusIndex > declarationIndex);
+});
+
+test("封印：首次打出后行动声明先于状态结果且状态不可叠加", async () => {
+  const source = makePlayer("source", 0, "dawn", "human"),
+    target = makePlayer("target", 1, "dusk", "human");
+  const { game } = makeGame([source, target]);
+  const first = instance("seal"), second = instance("seal");
+  source.hand.push(first, second);
+  assert.equal(await game.playCard(source, first, [target]), true);
+  assert.deepEqual(target.statuses.sealed, { cardDefinitionId:"seal", originPlayerId:source.id });
   const messages = game.state.logs.map((entry) => entry.message);
   const declarationIndex = messages.indexOf(`${source.name}对${target.name}使用了「封印」。`);
   const resultIndex = messages.indexOf(`${source.name}使${target.name}进入「封印」状态。`);
@@ -3146,6 +3149,7 @@ test("闪电：定义、数量与牌堆总数正确", () => {
   const lightning = CARD_DEFINITIONS.lightning;
   assert.ok(lightning);
   assert.equal(lightning.category, "tactic");
+  assert.equal(lightning.counterable, false);
   assert.equal(lightning.count, 2);
   assert.equal(lightning.targetType, "none");
   assert.equal(lightning.aiValue, 4);
@@ -3192,20 +3196,34 @@ test("闪电：已有闪电状态时真实规则拒绝使用", async () => {
   assert.ok(source.hand.includes(card));
 });
 
-test("闪电：使用阶段普通反制成功后不获得状态且不转移", async () => {
+test("闪电：首次打出不进入普通反制且保留反制牌并建立延迟状态", async () => {
   const source = makePlayer("a", 0, "dawn", "human"),
     enemy = makePlayer("b", 1, "dusk", "human"),
     receiver = makePlayer("c", 2, "dawn");
-  const { game }
-    = makeGame([source, enemy, receiver], { response: () => true });
   const card = instance("lightning"), counter = instance("counter");
+  let normalCounterCalls = 0;
+  const { game, ui } = makeGame([source, enemy, receiver], {
+    response:(request) => {
+      if (request.type === "counter" && request.cardId === card.id) normalCounterCalls += 1;
+      return true;
+    }
+  });
   source.hand.push(card);
   enemy.hand.push(counter);
   assert.equal(await game.playCard(source, card, []), true);
-  assert.equal(source.statuses.lightning, undefined);
+  assert.equal(normalCounterCalls, 0);
+  assert.deepEqual(source.statuses.lightning, { cardDefinitionId:"lightning", originPlayerId:source.id });
   assert.equal(receiver.statuses.lightning, undefined);
+  assert.ok(!ui.responseRequests.some(
+    (request) => request.type === "counter" && request.cardId === card.id
+  ));
+  assert.ok(enemy.hand.includes(counter));
   assert.ok(game.state.deck.discardPile.includes(card));
-  assert.ok(game.state.deck.discardPile.includes(counter));
+  assert.ok(!game.state.deck.discardPile.includes(counter));
+  const messages = game.state.logs.map((entry) => entry.message),
+    declarationIndex = messages.indexOf(`${source.name}使用了「闪电」。`),
+    statusIndex = messages.indexOf(`${source.name}获得了「闪电」状态。`);
+  assert.ok(declarationIndex >= 0 && statusIndex > declarationIndex);
 });
 
 test("闪电：使用回合不立即判定，下一次实际回合在摸牌前结算", async () => {
@@ -9145,7 +9163,7 @@ test("AI·封印：根节点与深层生成都只选未封印的存活敌人", (
   assert.deepEqual(deepSealActions.map((action) => action.targets[0]?.id), [enemy.id]);
 });
 
-test("AI·封印：AiSimulator 计入首次打出时的普通反制概率", () => {
+test("AI·封印：AiSimulator 首次放置不应用普通战术反制概率", () => {
   const state = {
     remainingCardCounts:{ assault:4, counter:1, seal:1 },
     players:[
@@ -9168,7 +9186,7 @@ test("AI·封印：AiSimulator 计入首次打出时的普通反制概率", () =
     simulator.tacticResolutionChance(
       state, state.players[0], CARD_DEFINITIONS.seal, [state.players[1]]
     ),
-    .2
+    1
   );
   const next = simulator.apply(
     state,
@@ -9176,9 +9194,9 @@ test("AI·封印：AiSimulator 计入首次打出时的普通反制概率", () =
     "seal-sim-actor"
   );
   const target = next.players[1];
-  assert.equal(target.statuses.includes("sealed"), false);
-  assertClose(target.sealedStatusProbability, .2);
-  assertClose(sealPresenceProbability(target), .2);
+  assert.equal(target.statuses.includes("sealed"), true);
+  assertClose(target.sealedStatusProbability, 1);
+  assertClose(sealPresenceProbability(target), 1);
   assert.equal(target.handCount, 1);
   assertClose(target.counterProbability, 1);
   assert.equal(target.hp, 4);
@@ -9656,7 +9674,7 @@ test("AI·闪电：AI 根节点与深层生成均拒绝已有闪电状态", () =
   );
 });
 
-test("AI·闪电：AiSimulator 成功使用后写入状态且不立即判定或伤害", () => {
+test("AI·闪电：AiSimulator 首次放置不应用普通战术反制概率且不立即判定", () => {
   const state = {
     remainingCardCounts: null,
     players: [
@@ -9681,14 +9699,22 @@ test("AI·闪电：AiSimulator 成功使用后写入状态且不立即判定或�
         alive: true,
         hp: 4,
         maxHp: 4,
-        handCount: 0,
-        statuses: []
+        handCount: 1,
+        hand: [{ id: "counter", definitionId: "counter" }],
+        statuses: [],
+        counterProbability: 1
       }
     ]
   };
-  const next = new AiSimulator(
-    state
-  ).apply(state, { type: "card", card: { id: "use", definitionId: "lightning" }, targets: [] }, "a");
+  const simulator = new AiSimulator(state);
+  assert.equal(simulator.tacticResolutionChance(
+    state, state.players[0], CARD_DEFINITIONS.lightning, []
+  ), 1);
+  const next = simulator.apply(
+    state,
+    { type: "card", card: { ...CARD_DEFINITIONS.lightning, id: "use" }, targets: [] },
+    "a"
+  );
   assert.ok(next.players[0].statuses.includes("lightning"));
   assertClose(next.players[0].lightningStatusProbability, 1);
   assertClose(
@@ -9699,6 +9725,8 @@ test("AI·闪电：AiSimulator 成功使用后写入状态且不立即判定或�
   );
   assert.equal(next.players[0].hp, 4);
   assert.equal(next.players[1].statuses.length, 0);
+  assert.equal(next.players[1].handCount, 1);
+  assertClose(next.players[1].counterProbability, 1);
   assert.equal(next.remainingCardCounts, null);
 });
 
@@ -24502,7 +24530,7 @@ test("AI·闪电评分：闪电：lightningTeamBurden 跨阵营接收者按持�
   assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.875);
 });
 
-test("AI·闪电评分：部分成功保留完整 lightningStatusStateBranches", () => {
+test("AI·闪电评分：部分执行保留完整 lightningStatusStateBranches 且不产生普通反制分支", () => {
   const state = {
     remainingCardCounts: null,
     players: [
@@ -24529,13 +24557,15 @@ test("AI·闪电评分：部分成功保留完整 lightningStatusStateBranches",
         maxHp: 4,
         handCount: 0,
         statuses: [],
-        counterProbability: 8 / 9
+        counterProbability: 1
       }
     ]
   };
   const next = new AiSimulator(
     state
-  ).apply(state, { type: "card", card: state.players[0].hand[0], targets: [] }, "a");
+  ).apply(state, {
+    type: "card", card: state.players[0].hand[0], targets: [], executionProbability:0.6
+  }, "a");
   const actor = next.players[0];
   const branches = actor.lightningStatusStateBranches;
   assert.ok(Array.isArray(branches));
@@ -24552,7 +24582,8 @@ test("AI·闪电评分：部分成功保留完整 lightningStatusStateBranches",
   assert.ok(!actor.statuses.includes("lightning"));
   const conditionKeys = [...new Set(branches.flatMap((branch) => Object.keys(branch.conditions)))];
   assert.equal(conditionKeys.length, 1);
-  assert.ok(conditionKeys[0].includes("counter"));
+  assert.ok(conditionKeys[0].includes("card"));
+  assert.ok(!conditionKeys[0].includes("counter"));
   assert.equal(actor.hp, 4);
   assert.equal(next.players[1].hp, 4);
 });
@@ -24627,13 +24658,15 @@ test("AI·闪电评分：闪电：深层第二张闪电仅在 absent 世界生�
         maxHp: 4,
         handCount: 0,
         statuses: [],
-        counterProbability: 8 / 9
+        counterProbability: 1
       }
     ]
   };
   const first = new AiSimulator(
     state
-  ).apply(state, { type: "card", card: state.players[0].hand[0], targets: [] }, "a");
+  ).apply(state, {
+    type: "card", card: state.players[0].hand[0], targets: [], executionProbability:0.6
+  }, "a");
   assert.ok(lightningUseValue(first.players[0], first) > -50);
   const { game }
     = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
@@ -24670,16 +24703,19 @@ test("AI·闪电评分：闪电：第二张 executionWorldBranches 继承第一�
         maxHp: 4,
         handCount: 0,
         statuses: [],
-        counterProbability: 8 / 9
+        counterProbability: 1
       }
     ]
   };
   const first = new AiSimulator(
     state
-  ).apply(state, { type: "card", card: state.players[0].hand[0], targets: [] }, "a");
+  ).apply(state, {
+    type: "card", card: state.players[0].hand[0], targets: [], executionProbability:0.6
+  }, "a");
   const firstBranches = first.players[0].lightningStatusStateBranches;
   const firstKey = [...new Set(firstBranches.flatMap((branch) => Object.keys(branch.conditions)))][0];
   assert.ok(firstKey);
+  assert.ok(!firstKey.includes("counter"));
   const { game }
     = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
   const second = game.aiController.actionGenerator.generateFromVisible(
@@ -24694,7 +24730,7 @@ test("AI·闪电评分：闪电：第二张 executionWorldBranches 继承第一�
   for (const branch of notExecuting) assert.equal(branch.conditions[firstKey], "yes");
 });
 
-test("AI·闪电评分：闪电：第二次使用后状态按 union 更新且不覆盖旧 present 世界", () => {
+test("AI·闪电评分：闪电：第二次使用后状态按 union 填满旧 absent 世界", () => {
   const state = {
     remainingCardCounts: null,
     players: [
@@ -24721,13 +24757,15 @@ test("AI·闪电评分：闪电：第二次使用后状态按 union 更新且不
         maxHp: 4,
         handCount: 0,
         statuses: [],
-        counterProbability: 8 / 9
+        counterProbability: 1
       }
     ]
   };
   const first = new AiSimulator(
     state
-  ).apply(state, { type: "card", card: state.players[0].hand[0], targets: [] }, "a");
+  ).apply(state, {
+    type: "card", card: state.players[0].hand[0], targets: [], executionProbability:0.6
+  }, "a");
   const { game }
     = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
   const second = game.aiController.actionGenerator.generateFromVisible(
@@ -24739,9 +24777,9 @@ test("AI·闪电评分：闪电：第二次使用后状态按 union 更新且不
   const presence = actor.lightningStatusStateBranches.reduce(
     (sum, branch) => sum + (branch.present ? branch.probability : 0), 0
   );
-  assertClose(presence, 0.84);
-  assertClose(actor.lightningStatusProbability, 0.84);
-  assert.ok(!actor.statuses.includes("lightning"));
+  assertClose(presence, 1);
+  assertClose(actor.lightningStatusProbability, 1);
+  assert.ok(actor.statuses.includes("lightning"));
   const firstBranches = first.players[0].lightningStatusStateBranches;
   const firstKey = Object.keys(firstBranches[0].conditions)[0];
   const oldPresentProbability = firstBranches.reduce(
