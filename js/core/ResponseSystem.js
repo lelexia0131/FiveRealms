@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-all-in-exit-guard-v134";
-import { createId } from "../utils/helpers.js?build=20260809-all-in-exit-guard-v134";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-all-in-exit-guard-v134";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-all-in-exit-guard-v134";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-unified-character-hp-v135";
+import { createId } from "../utils/helpers.js?build=20260809-unified-character-hp-v135";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-unified-character-hp-v135";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-unified-character-hp-v135";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

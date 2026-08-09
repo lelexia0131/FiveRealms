@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-all-in-exit-guard-v134";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-all-in-exit-guard-v134";
-import { createId, clamp } from "../utils/helpers.js?build=20260809-all-in-exit-guard-v134";
-import { EventBus } from "./EventBus.js?build=20260809-all-in-exit-guard-v134";
-import { Player } from "./Player.js?build=20260809-all-in-exit-guard-v134";
-import { Deck } from "./Deck.js?build=20260809-all-in-exit-guard-v134";
-import { TeamManager } from "./TeamManager.js?build=20260809-all-in-exit-guard-v134";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260809-all-in-exit-guard-v134";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-all-in-exit-guard-v134";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-all-in-exit-guard-v134";
-import { GameLogger } from "./GameLogger.js?build=20260809-all-in-exit-guard-v134";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-all-in-exit-guard-v134";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-all-in-exit-guard-v134";
-import { AIController } from "../ai/AiController.js?build=20260809-all-in-exit-guard-v134";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-all-in-exit-guard-v134";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-all-in-exit-guard-v134";
-import { Debug } from "../utils/debug.js?build=20260809-all-in-exit-guard-v134";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260809-all-in-exit-guard-v134";
-import { DyingSystem } from "./DyingSystem.js?build=20260809-all-in-exit-guard-v134";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-all-in-exit-guard-v134";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-all-in-exit-guard-v134";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260809-all-in-exit-guard-v134";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260809-all-in-exit-guard-v134";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-unified-character-hp-v135";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-unified-character-hp-v135";
+import { createId, clamp } from "../utils/helpers.js?build=20260809-unified-character-hp-v135";
+import { EventBus } from "./EventBus.js?build=20260809-unified-character-hp-v135";
+import { Player } from "./Player.js?build=20260809-unified-character-hp-v135";
+import { Deck } from "./Deck.js?build=20260809-unified-character-hp-v135";
+import { TeamManager } from "./TeamManager.js?build=20260809-unified-character-hp-v135";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260809-unified-character-hp-v135";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-unified-character-hp-v135";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-unified-character-hp-v135";
+import { GameLogger } from "./GameLogger.js?build=20260809-unified-character-hp-v135";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-unified-character-hp-v135";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-unified-character-hp-v135";
+import { AIController } from "../ai/AiController.js?build=20260809-unified-character-hp-v135";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-unified-character-hp-v135";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-unified-character-hp-v135";
+import { Debug } from "../utils/debug.js?build=20260809-unified-character-hp-v135";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260809-unified-character-hp-v135";
+import { DyingSystem } from "./DyingSystem.js?build=20260809-unified-character-hp-v135";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-unified-character-hp-v135";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-unified-character-hp-v135";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260809-unified-character-hp-v135";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260809-unified-character-hp-v135";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {

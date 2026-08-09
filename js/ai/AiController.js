@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-all-in-exit-guard-v134";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260809-all-in-exit-guard-v134";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260809-all-in-exit-guard-v134";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260809-all-in-exit-guard-v134";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260809-all-in-exit-guard-v134";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260809-all-in-exit-guard-v134";
-import { AiPlanner } from "./AiPlanner.js?build=20260809-all-in-exit-guard-v134";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-unified-character-hp-v135";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260809-unified-character-hp-v135";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260809-unified-character-hp-v135";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260809-unified-character-hp-v135";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260809-unified-character-hp-v135";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260809-unified-character-hp-v135";
+import { AiPlanner } from "./AiPlanner.js?build=20260809-unified-character-hp-v135";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

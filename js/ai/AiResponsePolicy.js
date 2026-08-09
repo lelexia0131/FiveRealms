@@ -1,14 +1,14 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-all-in-exit-guard-v134";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-all-in-exit-guard-v134";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-all-in-exit-guard-v134";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-all-in-exit-guard-v134";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-unified-character-hp-v135";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-unified-character-hp-v135";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-unified-character-hp-v135";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-unified-character-hp-v135";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260809-all-in-exit-guard-v134";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260809-all-in-exit-guard-v134";
+} from "./lightningScoring.js?build=20260809-unified-character-hp-v135";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260809-unified-character-hp-v135";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

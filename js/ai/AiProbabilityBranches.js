@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-all-in-exit-guard-v134";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-unified-character-hp-v135";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

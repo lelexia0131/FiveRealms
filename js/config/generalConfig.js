@@ -17,7 +17,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "oath-warden", name: "守誓者", glyph: "誓", portrait: "./assets/characters/oath-warden.svg",
-    loreFaction: "曜石城垒", maxHp: 3, tags: ["防御", "保护"], roleTags: ["tank", "support"], passiveSkillIds: ["guardianAid"], activeSkillIds: ["barrier"],
+    loreFaction: "曜石城垒", maxHp: 4, tags: ["防御", "保护"], roleTags: ["tank", "support"], passiveSkillIds: ["guardianAid"], activeSkillIds: ["barrier"],
     passiveName: "护援", passiveDescription: "每回合一次，弃置1张手牌令队友即将受到的伤害-1。",
     passiveTriggerText: "队友即将受到伤害且你可弃置1张手牌时", passiveLimitText: "每回合限触发1次",
     activeName: "壁垒", activeDescription: "消耗2点能量，使一名存活队友获得1点可叠加的护盾；该护盾不会随回合消失，只会在抵消伤害时消耗，每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
@@ -26,7 +26,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "spirit-medic", name: "灵医", glyph: "灵", portrait: "./assets/characters/spirit-medic.svg",
-    loreFaction: "雾泉庭", maxHp: 3, tags: ["恢复", "辅助"], roleTags: ["support", "healer"], passiveSkillIds: ["rejuvenation"], activeSkillIds: ["symbiosis"],
+    loreFaction: "雾泉庭", maxHp: 4, tags: ["恢复", "辅助"], roleTags: ["support", "healer"], passiveSkillIds: ["rejuvenation"], activeSkillIds: ["symbiosis"],
     passiveName: "回春", passiveDescription: "每回合第一次由你使自己或队友恢复生命时，本次治疗量+1并摸1张牌；濒死救援也可触发。",
     passiveTriggerText: "由你使自己或队友恢复生命时", passiveLimitText: "每回合限触发1次",
     activeName: "滋荣", activeDescription: "消耗2点能量，使自己或一名受伤队友恢复1点生命；若目标不是自己，自己同样恢复1点生命；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
@@ -35,7 +35,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "shade-agent", name: "影客", glyph: "影", portrait: "./assets/characters/shade-agent.svg",
-    loreFaction: "无灯港", maxHp: 3, tags: ["控制", "谍报"], roleTags: ["control", "utility"], passiveSkillIds: ["spyGap"], activeSkillIds: ["stealSkill"],
+    loreFaction: "无灯港", maxHp: 4, tags: ["控制", "谍报"], roleTags: ["control", "utility"], passiveSkillIds: ["spyGap"], activeSkillIds: ["stealSkill"],
     passiveName: "窥隙", passiveDescription: "每回合首次对敌人造成实际伤害后，私下查看其至多2张手牌。",
     passiveTriggerText: "对敌人造成实际伤害后", passiveLimitText: "每回合限触发1次",
     activeName: "窃取", activeDescription: "消耗1点能量，选择距离2内一名持有手牌或装备的敌人作为目标，将其全部手牌与装备区牌组成统一候选集合，等概率随机获得其中1张并收入手牌；每回合最多发动2次。", activeCost: 1, activeLimitPerTurn: 2,
@@ -44,7 +44,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     id: "ember-magus", name: "炎术师", glyph: "炎", portrait: "./assets/characters/ember-magus.svg",
-    loreFaction: "赤砂穹庐", maxHp: 3, tags: ["群攻", "爆发"], roleTags: ["damage", "caster"], passiveSkillIds: ["ember"], activeSkillIds: ["burningField"],
+    loreFaction: "赤砂穹庐", maxHp: 4, tags: ["群攻", "爆发"], roleTags: ["damage", "caster"], passiveSkillIds: ["ember"], activeSkillIds: ["burningField"],
     passiveName: "余烬", passiveDescription: "卡牌每次结算首次对敌人造成实际伤害后，获得1点能量。",
     passiveTriggerText: "卡牌结算中首次对敌人造成实际伤害后", passiveLimitText: "每次卡牌结算最多触发1次",
     activeName: "焚场", activeDescription: "消耗2点能量，对所有存活敌人各造成1点不可格挡伤害；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,

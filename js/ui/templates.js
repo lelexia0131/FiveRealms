@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-all-in-exit-guard-v134";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-all-in-exit-guard-v134";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-unified-character-hp-v135";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-unified-character-hp-v135";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

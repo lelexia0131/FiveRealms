@@ -487,9 +487,9 @@ test("角色规则：所有角色都用稳定英文 roleTags 供 AI 判断职责
   general.roleTags.forEach((tag) => assert.match(tag, /^[a-z-]+$/));
 }));
 
-test("角色规则：守誓者最大生命为3且壁垒说明为可叠加的永久护盾", () => {
+test("角色规则：守誓者最大生命为4且壁垒说明为可叠加的永久护盾", () => {
   const oath = GENERAL_DEFINITIONS.find((general) => general.id === "oath-warden");
-  assert.equal(oath.maxHp, 3);
+  assert.equal(oath.maxHp, 4);
   assert.match(oath.activeDescription, /1点可叠加的护盾/);
   assert.match(oath.activeDescription, /不会随回合消失/);
   assert.match(oath.activeDescription, /抵消伤害时消耗/);
@@ -522,6 +522,7 @@ test("角色规则：壁垒配置、README与实际目标规则保持一致", as
 
 test("角色规则：八名角色规则配置与README角色介绍一致", async () => {
   const readme = await readFile(projectFile("README.md"), "utf8");
+  assert.equal(GENERAL_DEFINITIONS.length, 8);
   for (const general of GENERAL_DEFINITIONS) {
     assert.match(readme, new RegExp(`### ${general.name}`));
     assert.ok(readme.includes(general.description));
@@ -531,10 +532,10 @@ test("角色规则：八名角色规则配置与README角色介绍一致", async
   const byId = Object.fromEntries(GENERAL_DEFINITIONS.map((general) => [general.id, general])),
     expected = {
       "blade-walker": [4, 2, 1],
-      "oath-warden": [3, 2, 2],
-      "spirit-medic": [3, 2, 2],
-      "shade-agent": [3, 1, 2],
-      "ember-magus": [3, 2, 2],
+      "oath-warden": [4, 2, 2],
+      "spirit-medic": [4, 2, 2],
+      "shade-agent": [4, 1, 2],
+      "ember-magus": [4, 2, 2],
       "trail-hunter": [4, 2, 2],
       "fate-gambler": [4, 1, 1],
       "resonance-tuner": [4, 2, 2]
@@ -543,6 +544,9 @@ test("角色规则：八名角色规则配置与README角色介绍一致", async
     const general = byId[id], skill = ACTIVE_SKILLS[general.activeSkillIds[0]];
     assert.deepEqual([general.maxHp, general.activeCost, general.activeLimitPerTurn], values, id);
     assert.deepEqual([skill.cost, skill.limitPerTurn], values.slice(1), `${id}实际技能`);
+    const player = new Player({ id: `initial-${id}`, seatIndex: 0, battleTeam: "dawn", controllerType: "ai" });
+    player.applyGeneral(general);
+    assert.deepEqual([player.hp, player.maxHp], [4, 4], `${id}初始生命`);
   }
 });
 
@@ -4531,7 +4535,7 @@ test("灵医：滋荣可选择受伤的自己或队友，治疗队友时自己�
     ).length,
     1
   );
-  assert.equal(medic.hp, medic.maxHp);
+  assert.equal(medic.hp, 3);
   assert.equal(medic.hand.length, 1);
   assert.equal(medic.energy, 0);
   medic.energy = 2;
@@ -4661,15 +4665,15 @@ test("灵医：强制救援：濒死上下文会触发灵医回春额外治疗�
 
 // ---- 影客 ----
 
-test("影客：为3点生命且窥隙经实际伤害与隐藏选择查看至多2张实体牌", async () => {
+test("影客：为4点生命且窥隙经实际伤害与隐藏选择查看至多2张实体牌", async () => {
   const shade = makePlayer("shade", 0, "dawn", "human", 3), enemy = makePlayer("enemy", 1, "dusk");
   enemy.hand.push(instance("assault"), instance("recover"), instance("charge"));
   const { game, ui }
     = makeGame([shade, enemy], { random: () => 0 });
   registerPassiveSkills(game);
   await game.damage(shade, enemy, 1, { canBlock: false });
-  assert.equal(shade.maxHp, 3);
-  assert.equal(shade.hp, 3);
+  assert.equal(shade.maxHp, 4);
+  assert.equal(shade.hp, 4);
   assert.equal(ACTIVE_SKILLS.stealSkill.cost, 1);
   assert.equal(ui.hiddenRequests.length, 1);
   assert.equal(ui.hiddenRequests[0].count, 2);
@@ -7407,8 +7411,8 @@ test("AI·突袭：共用突袭模拟覆盖护援弃牌、窥隙信息和余烬�
       generalId: "oath-warden",
       battleTeam: "dawn",
       alive: true,
-      hp: 3,
-      maxHp: 3,
+      hp: 4,
+      maxHp: 4,
       shield: 0,
       handCount: 1,
       guardianAidUsedProbability: 0
@@ -7424,8 +7428,8 @@ test("AI·突袭：共用突袭模拟覆盖护援弃牌、窥隙信息和余烬�
     generalId: "shade-agent",
     battleTeam: "dawn",
     alive: true,
-    hp: 3,
-    maxHp: 3,
+    hp: 4,
+    maxHp: 4,
     handCount: 0,
     attackUsed: 0,
     spyGapTriggeredProbability: 0,
@@ -7451,8 +7455,8 @@ test("AI·突袭：共用突袭模拟覆盖护援弃牌、窥隙信息和余烬�
     generalId: "ember-magus",
     battleTeam: "dawn",
     alive: true,
-    hp: 3,
-    maxHp: 3,
+    hp: 4,
+    maxHp: 4,
     energy: 1,
     maxEnergy: 3,
     handCount: 0,
@@ -7544,8 +7548,8 @@ test("AI·突袭：共用突袭模拟消费破势与孤注并保留濒死救援�
       generalId: "spirit-medic",
       battleTeam: "dusk",
       alive: true,
-      hp: 3,
-      maxHp: 3,
+      hp: 4,
+      maxHp: 4,
       shield: 0,
       handCount: 1,
       expectedRecoverCount: 1,
@@ -11800,8 +11804,8 @@ const energyDevicePlayer = (energy, options = {}) => ({
   battleTeam: "dawn",
   generalId: "spirit-medic",
   alive: true,
-  hp: 3,
-  maxHp: 3,
+  hp: 4,
+  maxHp: 4,
   shield: 0,
   energy,
   handCount: 0,
@@ -11830,7 +11834,7 @@ const energyDeviceAlly = () => ({
   generalId: "oath-warden",
   alive: true,
   hp: 2,
-  maxHp: 3,
+  maxHp: 4,
   shield: 0,
   energy: 0,
   handCount: 0,
@@ -13125,8 +13129,8 @@ test("AI·守誓者：护援统一覆盖突袭、震荡、挑衅、决斗、猎�
       generalId: "oath-warden",
       battleTeam: "dusk",
       alive: true,
-      hp: 3,
-      maxHp: 3,
+      hp: 4,
+      maxHp: 4,
       shield: 0,
       handCount: 1,
       hand: [{ id: `${definitionId}-aid`, definitionId: "charge" }],
@@ -13179,8 +13183,8 @@ test("AI·守誓者：护援统一覆盖突袭、震荡、挑衅、决斗、猎�
       generalId: "oath-warden",
       battleTeam: "dusk",
       alive: true,
-      hp: 3,
-      maxHp: 3,
+      hp: 4,
+      maxHp: 4,
       shield: 0,
       handCount: 1,
       hand: [{ id: `${skill.id}-aid`, definitionId: "charge" }],
@@ -13215,8 +13219,8 @@ test("AI·守誓者：护援在单个模拟快照内只触发一次且零伤害�
     generalId: "oath-warden",
     battleTeam: "dusk",
     alive: true,
-    hp: 3,
-    maxHp: 3,
+    hp: 4,
+    maxHp: 4,
     handCount: 2,
     guardianAidUsedProbability: 0
   };
@@ -13251,7 +13255,7 @@ test("AI·守誓者：格挡后仅以剩余伤害世界消耗护援资源与次�
       },
       {
         id:"aid-order-ai-guardian", generalId:"oath-warden", battleTeam:"dusk", alive:true,
-        hp:3, maxHp:3, handCount:1, guardianAidUsedProbability:0
+        hp:4, maxHp:4, handCount:1, guardianAidUsedProbability:0
       }
     ]
   },
@@ -13285,7 +13289,7 @@ test("AI·守誓者：部分格挡概率只把未格挡概率质量交给护援"
       },
       {
         id:"aid-probability-guardian", generalId:"oath-warden", battleTeam:"dusk", alive:true,
-        hp:3, maxHp:3, handCount:1, guardianAidUsedProbability:0
+        hp:4, maxHp:4, handCount:1, guardianAidUsedProbability:0
       }
     ]
   },
@@ -13389,7 +13393,7 @@ test("AI·灵医：模拟中的灵医回春也能让一张濒死调息恢复2点
         battleTeam: "dawn",
         alive: true,
         hp: 1,
-        maxHp: 3,
+        maxHp: 4,
         shield: 0,
         handCount: 0,
         expectedRecoverCount: 0,
@@ -13402,8 +13406,8 @@ test("AI·灵医：模拟中的灵医回春也能让一张濒死调息恢复2点
         generalId: "spirit-medic",
         battleTeam: "dawn",
         alive: true,
-        hp: 3,
-        maxHp: 3,
+        hp: 4,
+        maxHp: 4,
         shield: 0,
         handCount: 1,
         expectedRecoverCount: 1,
@@ -13444,8 +13448,8 @@ test("AI·灵医：共生顺序从非0号出牌者开始并让回春命中首个
     generalId: "spirit-medic",
     battleTeam: "dawn",
     alive: true,
-    hp: 3,
-    maxHp: 3,
+    hp: 4,
+    maxHp: 4,
     handCount: 1,
     hand: [{ id: "ordered-symbiosis", definitionId: "symbiosis" }],
     rejuvenationUsed: false
@@ -13493,8 +13497,8 @@ test("AI·影客：窥隙在目标濒死获救后仍结算且救援失败不结�
     generalId: "shade-agent",
     battleTeam: "dawn",
     alive: true,
-    hp: 3,
-    maxHp: 3,
+    hp: 4,
+    maxHp: 4,
     handCount: 0,
     attackUsed: 0,
     spyGapTriggeredProbability: 0,
@@ -13522,8 +13526,8 @@ test("AI·影客：窥隙在目标濒死获救后仍结算且救援失败不结�
     generalId: "shade-agent",
     battleTeam: "dawn",
     alive: true,
-    hp: 3,
-    maxHp: 3,
+    hp: 4,
+    maxHp: 4,
     handCount: 0,
     attackUsed: 0,
     spyGapTriggeredProbability: 0,
@@ -17440,8 +17444,8 @@ test("AI·突袭次数槽：攻击与技能次数槽选择执行概率最高的�
         seatIndex: 0,
         battleTeam: "dawn",
         alive: true,
-        hp: 3,
-        maxHp: 3,
+        hp: 4,
+        maxHp: 4,
         shield: 0,
         energy: 2,
         activeSkillId: "barrier",
@@ -18004,8 +18008,8 @@ test("AI·资源身份：部分概率转移中来源与接收者身份世界互�
         battleTeam: "dawn",
         generalId: "spirit-medic",
         alive: true,
-        hp: 3,
-        maxHp: 3,
+        hp: 4,
+        maxHp: 4,
         handCount: 0,
         counterProbability: 0
       },
@@ -18118,8 +18122,8 @@ test("AI·资源身份：部分可用来源身份按未知聚合处理且不创�
         battleTeam: "dawn",
         generalId: "spirit-medic",
         alive: true,
-        hp: 3,
-        maxHp: 3,
+        hp: 4,
+        maxHp: 4,
         handCount: 0,
         counterProbability: 0
       }
@@ -18222,7 +18226,7 @@ test("AI·资源身份：手牌期望数量按可用概率计算且部分身份�
 
 test("AI·资源身份：部分概率高价值牌不再按完整确定身份评分", () => {
   const actor = { id: "actor", battleTeam: "dawn" };
-  const receiver = { id: "receiver", battleTeam: "dawn", generalId: "spirit-medic", hp: 3, maxHp: 3 };
+  const receiver = { id: "receiver", battleTeam: "dawn", generalId: "spirit-medic", hp: 4, maxHp: 4 };
   const makeFrom = (cards, handCount) => (
     {
       id: "from",
@@ -18319,8 +18323,8 @@ test("AI·资源身份：防御性旧动作对部分可用 known 身份按未知
         battleTeam: "dawn",
         generalId: "spirit-medic",
         alive: true,
-        hp: 3,
-        maxHp: 3,
+        hp: 4,
+        maxHp: 4,
         handCount: 0,
         counterProbability: 0
       }
@@ -18399,8 +18403,8 @@ test("AI·资源身份：接收者已有同身份部分可用时按新增概率�
         battleTeam: "dawn",
         generalId: "spirit-medic",
         alive: true,
-        hp: 3,
-        maxHp: 3,
+        hp: 4,
+        maxHp: 4,
         handCount: .3,
         knownCards: [
           {
@@ -18507,8 +18511,8 @@ test("AI·资源身份：未知牌转移只移动聚合数量且不创建身份"
         battleTeam: "dawn",
         generalId: "spirit-medic",
         alive: true,
-        hp: 3,
-        maxHp: 3,
+        hp: 4,
+        maxHp: 4,
         shield: 0,
         energy: 0,
         handCount: 0,
@@ -18589,8 +18593,8 @@ test("AI·资源身份：已知转移同步来源与接收者四类摘要", () =
           battleTeam: "dawn",
           generalId: "spirit-medic",
           alive: true,
-          hp: 3,
-          maxHp: 3,
+          hp: 4,
+          maxHp: 4,
           shield: 0,
           energy: 0,
           handCount: 0,
@@ -18685,8 +18689,8 @@ test("AI·资源身份：模拟执行评分阶段选中的同一已知牌身份"
         battleTeam: "dawn",
         generalId: "spirit-medic",
         alive: true,
-        hp: 3,
-        maxHp: 3,
+        hp: 4,
+        maxHp: 4,
         shield: 0,
         energy: 0,
         handCount: 0,
@@ -23928,14 +23932,14 @@ test("AI·转移评分：预计牌值已知牌接入角色价值且未知牌回�
 
 test("AI·转移评分：转移角色权重：相同突袭不同来源角色的来源损失精确反映角色差值", () => {
   const actor = { id: "actor", battleTeam: "dawn" };
-  const receiver = { id: "receiver", battleTeam: "dawn", generalId: "spirit-medic", hp: 3, maxHp: 3 };
+  const receiver = { id: "receiver", battleTeam: "dawn", generalId: "spirit-medic", hp: 4, maxHp: 4 };
   const makeFrom = (generalId) => (
     {
       id: "from",
       battleTeam: "dusk",
       generalId,
-      hp: 3,
-      maxHp: 3,
+      hp: 4,
+      maxHp: 4,
       handCount: 1,
       knownCards: [{ cardId: "k", definitionId: "assault" }]
     }
@@ -23961,13 +23965,13 @@ test("AI·转移评分：转移角色权重：已知牌接收者角色价值进�
     id: "source",
     battleTeam: "dusk",
     generalId: "blade-walker",
-    hp: 3,
-    maxHp: 3,
+    hp: 4,
+    maxHp: 4,
     handCount: 1,
     knownCards: [{ cardId: "k", definitionId: "counter" }]
   };
   const bladeReceiver = { id: "r1", battleTeam: "dawn", generalId: "blade-walker", hp: 4, maxHp: 4 };
-  const medicReceiver = { id: "r2", battleTeam: "dawn", generalId: "spirit-medic", hp: 3, maxHp: 3 };
+  const medicReceiver = { id: "r2", battleTeam: "dawn", generalId: "spirit-medic", hp: 4, maxHp: 4 };
   const bladeCandidate = chooseTransferHandCandidate(actor, source, bladeReceiver);
   const medicCandidate = chooseTransferHandCandidate(actor, source, medicReceiver);
   const bladeValue = getRoleCardAiValue("blade-walker", "counter"),
@@ -23982,8 +23986,8 @@ test("AI·转移评分：转移角色权重：已知牌接收者角色价值进�
 });
 
 test("AI·转移评分：转移角色权重：恢复牌同时叠加角色基础价值与生命情境修正", () => {
-  const full = { generalId: "spirit-medic", hp: 3, maxHp: 3 };
-  const low = { generalId: "spirit-medic", hp: 1, maxHp: 3 };
+  const full = { generalId: "spirit-medic", hp: 4, maxHp: 4 };
+  const low = { generalId: "spirit-medic", hp: 1, maxHp: 4 };
   const bladeFull = { generalId: "blade-walker", hp: 4, maxHp: 4 };
   assert.equal(
     cardSituationValue("recover", full), getRoleCardAiValue("spirit-medic", "recover") - 2
@@ -24003,7 +24007,7 @@ test("AI·转移评分：转移角色权重：未知牌动态期望随角色与�
     { id: "from", battleTeam: "dusk", generalId, hp: 4, maxHp: 4, handCount: 1, knownCards: [] }
   );
   const makeReceiver = (generalId) => (
-    { id: "receiver", battleTeam: "dawn", generalId, hp: 3, maxHp: 3, handCount: 0 }
+    { id: "receiver", battleTeam: "dawn", generalId, hp: 4, maxHp: 4, handCount: 0 }
   );
   const assaultCounts = { assault: 10 }, recoverCounts = { recover: 10 };
   const assaultCandidate = chooseTransferHandCandidate(
@@ -24058,7 +24062,7 @@ test("AI·转移评分：转移角色权重：无有效剩余计数时未知值�
     knownCards: []
   };
   const receiver = {
-    id: "receiver", battleTeam: "dawn", generalId: "spirit-medic", hp: 3, maxHp: 3, handCount: 0
+    id: "receiver", battleTeam: "dawn", generalId: "spirit-medic", hp: 4, maxHp: 4, handCount: 0
   };
   for (const counts of [null, undefined, {}, { assault: 0 }, { assault: -1 }]) {
     const candidate = chooseTransferHandCandidate(actor, from, receiver, null, counts);
@@ -24153,8 +24157,8 @@ test("AI·转移评分：转移角色权重：深层规划使用可见快照剩�
           battleTeam: "dawn",
           generalId: "spirit-medic",
           alive: true,
-          hp: 3,
-          maxHp: 3,
+          hp: 4,
+          maxHp: 4,
           shield: 0,
           energy: 0,
           handCount: 0,
@@ -24329,8 +24333,8 @@ test("AI·转移评分：当前 AI 把已知突袭转给其他玩家且不创建
         battleTeam: "dawn",
         generalId: "spirit-medic",
         alive: true,
-        hp: 3,
-        maxHp: 3,
+        hp: 4,
+        maxHp: 4,
         shield: 0,
         energy: 0,
         handCount: 2,
@@ -24420,7 +24424,7 @@ test("AI·转移评分：其他玩家之间移动已知身份", () => {
         generalId: "oath-warden",
         alive: true,
         hp: 1,
-        maxHp: 3,
+        maxHp: 4,
         shield: 0,
         energy: 3,
         handCount: 1,
@@ -24440,8 +24444,8 @@ test("AI·转移评分：其他玩家之间移动已知身份", () => {
         battleTeam: "dusk",
         generalId: "spirit-medic",
         alive: true,
-        hp: 3,
-        maxHp: 3,
+        hp: 4,
+        maxHp: 4,
         shield: 0,
         energy: 0,
         handCount: 0,
@@ -24530,8 +24534,8 @@ test("AI·转移评分：目标反制风险下转移部分生效且来源与接�
         battleTeam: "dawn",
         generalId: "spirit-medic",
         alive: true,
-        hp: 3,
-        maxHp: 3,
+        hp: 4,
+        maxHp: 4,
         shield: 0,
         energy: 0,
         handCount: 0,
