@@ -1,14 +1,14 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-delayed-tactic-counter-v132";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-delayed-tactic-counter-v132";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-delayed-tactic-counter-v132";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-delayed-tactic-counter-v132";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-ai-block-damage-preview-v133";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-ai-block-damage-preview-v133";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-ai-block-damage-preview-v133";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-ai-block-damage-preview-v133";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260809-delayed-tactic-counter-v132";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260809-delayed-tactic-counter-v132";
+} from "./lightningScoring.js?build=20260809-ai-block-damage-preview-v133";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260809-ai-block-damage-preview-v133";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
@@ -42,6 +42,21 @@ export class AiResponsePolicy {
     return { need, ownRecover, recoverDensity, futureExpectedRecover, remainingAfterThisCard, strategic, immediateDefeatRisk, likelyFollowUp, actionValue, score };
   }
 
+  /** 格挡早于 beforeDamage；这里只读预览公开且确定的突袭加伤，不触发任何伤害监听器。 */
+  knownPendingAssaultBonus(context) {
+    const source = context.source;
+    if (!source?.alive || context.card?.definitionId !== "assault") return 0;
+    const passiveSkillIds = source.general?.passiveSkillIds ?? [];
+    let bonus = 0;
+    if (passiveSkillIds.includes("momentum")) {
+      bonus += Math.max(0, Number(source.turnFlags?.momentum) || 0);
+    }
+    if (passiveSkillIds.includes("gamble")) {
+      bonus += Math.max(0, Number(source.statuses?.allIn?.assaultBonus) || 0);
+    }
+    return bonus;
+  }
+
   shouldRespond(responder, type, context, cards = []) {
     const target = context.target ?? responder;
     if (type === "dyingRescue") {
@@ -58,7 +73,8 @@ export class AiResponsePolicy {
       return assessment.immediateDefeatRisk || assessment.likelyFollowUp || assessment.strategic || assessment.ownRecover > 1 || assessment.score > 0;
     }
     if (type === "block") {
-      const incoming = context.amount ?? 1;
+      const incoming = Math.max(0, Number(context.amount ?? 1) || 0)
+        + this.knownPendingAssaultBonus(context);
       const lethal = incoming - target.shield >= target.hp;
       const availableBlocks = cards.length;
       const requiredBlocks = Math.max(1, context.requiredCount ?? 1);

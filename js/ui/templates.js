@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-delayed-tactic-counter-v132";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-delayed-tactic-counter-v132";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-ai-block-damage-preview-v133";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-ai-block-damage-preview-v133";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

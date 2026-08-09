@@ -4046,6 +4046,43 @@ test("刃行者：使用不同类别卡牌会增加并公开显示连势且命�
   assert.doesNotMatch(playerPanelTemplate(blade, { humanTeam: "dawn" }), /连势 \d/);
 });
 
+test("刃行者：连势在格挡和雷达免疫后保留至后续命中", async () => {
+  const run = async (prevention) => {
+    const blade = makePlayer(`momentum-${prevention}-blade`, 0, "dawn", "ai", 0),
+      target = makePlayer(`momentum-${prevention}-target`, 1, "dusk", "ai", 3),
+      { game } = makeGame([blade, target]);
+    registerPassiveSkills(game);
+    blade.turnFlags.momentum = 2;
+    blade.turnFlags.categoriesUsed.add("basic");
+    if (prevention === "block") target.hand.push(instance("block"));
+    else {
+      target.equipment = instance("defenseDevice");
+      game.state.deck.cards.push(instance("harvest"));
+    }
+    const hp = target.hp;
+    await game.damage(
+      blade, target, 1, { card:instance("assault"), canBlock:true, damageType:"normal" }
+    );
+    assert.equal(target.hp, hp);
+    assert.equal(blade.turnFlags.momentum, 2);
+    assert.ok(!game.state.logs.some((entry) => entry.message.includes("消耗2层「连势」")));
+
+    target.equipment = null;
+    await game.damage(
+      blade, target, 1, { card:instance("assault"), canBlock:true, damageType:"normal" }
+    );
+    assert.equal(target.hp, hp - 3);
+    assert.equal(blade.turnFlags.momentum, 0);
+    assert.equal(
+      game.state.logs.filter((entry) => entry.message.includes("消耗2层「连势」")).length,
+      1
+    );
+  };
+
+  await run("block");
+  await run("radar");
+});
+
 test("刃行者：连势只在本人回合结束时清空", async () => {
   const blade = makePlayer("blade-turn-end", 0, "dawn", "ai", 0),
     ally = makePlayer("blade-ally", 1, "dawn"),
@@ -4261,6 +4298,36 @@ test("守誓者：突袭先结算格挡且被格挡攻击不消耗护援", async
   assert.ok(secondAttackIndex >= 0 && secondAttackIndex < discardIndex);
   assert.ok(discardIndex < aidIndex && aidIndex < zeroIndex);
   assert.equal(messages.filter((message) => message === `${target.name}没有受到生命伤害。`).length, 1);
+});
+
+test("守誓者：护援先于护盾减伤且减至0时不消耗护盾", async () => {
+  const run = async (amount) => {
+    const source = makePlayer(`aid-shield-source-${amount}`, 0, "dusk", "ai", 4),
+      target = makePlayer(`aid-shield-target-${amount}`, 1, "dawn", "ai", 3),
+      guardian = makePlayer(`aid-shield-guardian-${amount}`, 2, "dawn", "human", 1),
+      cost = instance("charge"),
+      { game } = makeGame([source, target, guardian], {
+        response:(request) => request.type === "skill"
+      });
+    registerPassiveSkills(game);
+    target.shield = 1;
+    guardian.hand.push(cost);
+    const hp = target.hp;
+    await game.damage(source, target, amount, {
+      canBlock:false, damageType:"skill", actionName:"测试"
+    });
+    return { game, target, guardian, cost, hp };
+  };
+
+  const reducedToZero = await run(1);
+  assert.equal(reducedToZero.target.hp, reducedToZero.hp);
+  assert.equal(reducedToZero.target.shield, 1);
+  assert.equal(reducedToZero.guardian.hand.includes(reducedToZero.cost), false);
+
+  const absorbedAfterAid = await run(2);
+  assert.equal(absorbedAfterAid.target.hp, absorbedAfterAid.hp);
+  assert.equal(absorbedAfterAid.target.shield, 0);
+  assert.equal(absorbedAfterAid.guardian.hand.includes(absorbedAfterAid.cost), false);
 });
 
 test("守誓者：猎杀在格挡响应结束后才决定是否护援", async () => {
@@ -5472,6 +5539,28 @@ test("赌命者：孤注强化的突袭被格挡后也会退出状态", async ()
   assert.equal(gambler.statuses.allIn, undefined);
 });
 
+test("赌命者：孤注强化的突袭被雷达免疫后只退出一次", async () => {
+  const gambler = makePlayer("radar-all-in-gambler", 0, "dawn", "ai", 6),
+    target = makePlayer("radar-all-in-target", 1, "dusk", "ai", 3),
+    assault = instance("assault"),
+    judgment = instance("harvest"),
+    { game } = makeGame([gambler, target]);
+  registerPassiveSkills(game);
+  gambler.hand.push(assault);
+  gambler.statuses.allIn = { assaultBonus:1 };
+  target.equipment = instance("defenseDevice");
+  game.state.deck.cards.push(judgment);
+  const hp = target.hp;
+  assert.equal(await game.playCard(gambler, assault, [target]), true);
+  assert.equal(target.hp, hp);
+  assert.equal(gambler.statuses.allIn, undefined);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${gambler.name}退出「孤注」状态。`).length,
+    1
+  );
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("孤注") && entry.message.includes("伤害+1")));
+});
+
 // ---- 调律师 ----
 
 test("调律师：协调每回合只触发一次、共鸣可发动2次且摸牌日志不重复", async () => {
@@ -6113,6 +6202,41 @@ test("原子响应：响应系统只有整组原子支付完成后才返回 used
   assert.deepEqual(result.cards, []);
   assert.deepEqual(defender.hand, [first, second]);
   assert.equal(game.state.deck.discardPile.length, 0);
+});
+
+// ---- 直接失去生命 ----
+
+test("失去生命：独立路径不触发雷达、格挡、护援或伤害事件", async () => {
+  const source = makePlayer("hp-loss-source", 0, "dusk", "ai", 4),
+    target = makePlayer("hp-loss-target", 1, "dawn", "ai", 3),
+    guardian = makePlayer("hp-loss-guardian", 2, "dawn", "human", 1),
+    block = instance("block"),
+    aidCost = instance("charge"),
+    { game, ui } = makeGame([source, target, guardian], {
+      response:() => true
+    });
+  registerPassiveSkills(game);
+  target.equipment = instance("defenseDevice");
+  target.shield = 2;
+  target.hand.push(block);
+  guardian.hand.push(aidCost);
+  game.state.deck.cards.push(instance("harvest"));
+  const damageEvents = [];
+  for (const type of ["beforeDamage", "afterDamage", "judgmentRevealed"]) {
+    game.eventBus.on(type, `test:hp-loss:${type}`, () => damageEvents.push(type));
+  }
+  const hp = target.hp;
+  assert.equal(
+    await game.hpLossSystem.lose(target, 1, { source, reason:"测试失去生命" }),
+    1
+  );
+  assert.equal(target.hp, hp - 1);
+  assert.equal(target.shield, 2);
+  assert.ok(target.hand.includes(block));
+  assert.ok(guardian.hand.includes(aidCost));
+  assert.equal(guardian.roundFlags.guardianAidUsed, false);
+  assert.deepEqual(damageEvents, []);
+  assert.ok(!ui.responseRequests.some((request) => ["block", "skill"].includes(request.type)));
 });
 
 // ---- 濒死与救援 ----
@@ -17141,6 +17265,53 @@ test("AI·格挡概率：格挡决策随可用格挡数单调且先验证实际�
     ),
     false
   );
+});
+
+test("AI·格挡概率：真实响应预览连势孤注且不重复计算破势", async () => {
+  const run = async ({ generalIndex, momentum = 0, allIn = false, exposeWeakness = 0 }) => {
+    const source = makePlayer(`block-preview-source-${generalIndex}`, 0, "dawn", "ai", generalIndex),
+      target = makePlayer(`block-preview-target-${generalIndex}`, 1, "dusk", "ai", 3),
+      targetAllyA = makePlayer(`block-preview-target-ally-a-${generalIndex}`, 2, "dusk", "ai", 5),
+      targetAllyB = makePlayer(`block-preview-target-ally-b-${generalIndex}`, 3, "dusk", "ai", 7),
+      sourceAlly = makePlayer(`block-preview-source-ally-${generalIndex}`, 4, "dawn", "ai", 4),
+      assault = instance("assault"),
+      block = instance("block");
+    const { game } = makeGame([source, target, targetAllyA, targetAllyB, sourceAlly]);
+    registerPassiveSkills(game);
+    source.hand.push(assault);
+    source.turnFlags.momentum = momentum;
+    if (momentum) source.turnFlags.categoriesUsed.add("basic");
+    if (allIn) source.statuses.allIn = { assaultBonus:1 };
+    if (exposeWeakness) source.statuses.exposeWeakness = { stacks:exposeWeakness };
+    target.hp = 3;
+    target.hand.push(block, instance("charge"), instance("shield"), instance("assault"));
+    const rawAmounts = [], policy = game.aiController.responsePolicy,
+      originalShouldRespond = policy.shouldRespond.bind(policy);
+    policy.shouldRespond = (responder, type, context, cards) => {
+      if (type === "block") rawAmounts.push(context.amount);
+      return originalShouldRespond(responder, type, context, cards);
+    };
+    assert.equal(await game.playCard(source, assault, [target]), true);
+    return { source, target, block, rawAmounts };
+  };
+
+  const momentum = await run({ generalIndex:0, momentum:2 });
+  assert.deepEqual(momentum.rawAmounts, [1]);
+  assert.equal(momentum.target.hp, 3);
+  assert.equal(momentum.target.alive, true);
+  assert.equal(momentum.target.hand.includes(momentum.block), false);
+  assert.equal(momentum.source.turnFlags.momentum, 2);
+
+  const allIn = await run({ generalIndex:6, allIn:true, exposeWeakness:1 });
+  assert.deepEqual(allIn.rawAmounts, [2]);
+  assert.equal(allIn.target.hp, 3);
+  assert.equal(allIn.target.hand.includes(allIn.block), false);
+  assert.equal(allIn.source.statuses.allIn, undefined);
+
+  const exposeWeakness = await run({ generalIndex:4, exposeWeakness:2 });
+  assert.deepEqual(exposeWeakness.rawAmounts, [3]);
+  assert.equal(exposeWeakness.target.hp, 3);
+  assert.equal(exposeWeakness.target.hand.includes(exposeWeakness.block), false);
 });
 
 // ---- AI 响应模型·突袭次数槽 ----

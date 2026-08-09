@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-delayed-tactic-counter-v132";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260809-delayed-tactic-counter-v132";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260809-delayed-tactic-counter-v132";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260809-delayed-tactic-counter-v132";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260809-delayed-tactic-counter-v132";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260809-delayed-tactic-counter-v132";
-import { AiPlanner } from "./AiPlanner.js?build=20260809-delayed-tactic-counter-v132";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-ai-block-damage-preview-v133";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260809-ai-block-damage-preview-v133";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260809-ai-block-damage-preview-v133";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260809-ai-block-damage-preview-v133";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260809-ai-block-damage-preview-v133";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260809-ai-block-damage-preview-v133";
+import { AiPlanner } from "./AiPlanner.js?build=20260809-ai-block-damage-preview-v133";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {
