@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-momentum-log-fix-v130";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260809-momentum-log-fix-v130";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260809-momentum-log-fix-v130";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-guardian-aid-order-v131";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260809-guardian-aid-order-v131";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260809-guardian-aid-order-v131";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

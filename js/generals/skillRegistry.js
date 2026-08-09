@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-momentum-log-fix-v130";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-momentum-log-fix-v130";
-import { randomChoice } from "../utils/helpers.js?build=20260809-momentum-log-fix-v130";
-import { Debug } from "../utils/debug.js?build=20260809-momentum-log-fix-v130";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-guardian-aid-order-v131";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-guardian-aid-order-v131";
+import { randomChoice } from "../utils/helpers.js?build=20260809-guardian-aid-order-v131";
+import { Debug } from "../utils/debug.js?build=20260809-guardian-aid-order-v131";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -188,7 +188,10 @@ const PASSIVE_SKILLS = {
       game.log(`${owner.name}的「孤注」状态令此次「突袭」伤害+1。`, "important");
     });
     game.eventBus.on("afterDamage", `${owner.id}:allIn:consume`, (event) => {
-      if (event.source?.id === owner.id && event.metadata.consumeAssaultBonus) {
+      const assaultFinishedWithoutDamage = event.card?.definitionId === "assault"
+        && ["block", "defenseDevice"].includes(event.preventedBy);
+      if (event.source?.id === owner.id
+        && (event.metadata.consumeAssaultBonus || assaultFinishedWithoutDamage)) {
         delete owner.statuses.allIn;
         game.log(`${owner.name}退出「孤注」状态。`);
       }

@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-momentum-log-fix-v130";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-momentum-log-fix-v130";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-guardian-aid-order-v131";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-guardian-aid-order-v131";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

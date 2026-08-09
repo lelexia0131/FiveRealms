@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-momentum-log-fix-v130";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-momentum-log-fix-v130";
-import { createId, clamp } from "../utils/helpers.js?build=20260809-momentum-log-fix-v130";
-import { EventBus } from "./EventBus.js?build=20260809-momentum-log-fix-v130";
-import { Player } from "./Player.js?build=20260809-momentum-log-fix-v130";
-import { Deck } from "./Deck.js?build=20260809-momentum-log-fix-v130";
-import { TeamManager } from "./TeamManager.js?build=20260809-momentum-log-fix-v130";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260809-momentum-log-fix-v130";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-momentum-log-fix-v130";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-momentum-log-fix-v130";
-import { GameLogger } from "./GameLogger.js?build=20260809-momentum-log-fix-v130";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-momentum-log-fix-v130";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-momentum-log-fix-v130";
-import { AIController } from "../ai/AiController.js?build=20260809-momentum-log-fix-v130";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-momentum-log-fix-v130";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-momentum-log-fix-v130";
-import { Debug } from "../utils/debug.js?build=20260809-momentum-log-fix-v130";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260809-momentum-log-fix-v130";
-import { DyingSystem } from "./DyingSystem.js?build=20260809-momentum-log-fix-v130";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-momentum-log-fix-v130";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-momentum-log-fix-v130";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260809-momentum-log-fix-v130";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260809-momentum-log-fix-v130";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-guardian-aid-order-v131";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-guardian-aid-order-v131";
+import { createId, clamp } from "../utils/helpers.js?build=20260809-guardian-aid-order-v131";
+import { EventBus } from "./EventBus.js?build=20260809-guardian-aid-order-v131";
+import { Player } from "./Player.js?build=20260809-guardian-aid-order-v131";
+import { Deck } from "./Deck.js?build=20260809-guardian-aid-order-v131";
+import { TeamManager } from "./TeamManager.js?build=20260809-guardian-aid-order-v131";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260809-guardian-aid-order-v131";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-guardian-aid-order-v131";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-guardian-aid-order-v131";
+import { GameLogger } from "./GameLogger.js?build=20260809-guardian-aid-order-v131";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-guardian-aid-order-v131";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-guardian-aid-order-v131";
+import { AIController } from "../ai/AiController.js?build=20260809-guardian-aid-order-v131";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-guardian-aid-order-v131";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-guardian-aid-order-v131";
+import { Debug } from "../utils/debug.js?build=20260809-guardian-aid-order-v131";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260809-guardian-aid-order-v131";
+import { DyingSystem } from "./DyingSystem.js?build=20260809-guardian-aid-order-v131";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-guardian-aid-order-v131";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-guardian-aid-order-v131";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260809-guardian-aid-order-v131";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260809-guardian-aid-order-v131";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -1115,7 +1115,8 @@ export class Game {
   }
 
   /**
-   * 对目标造成伤害。beforeDamage 可修改数值，之后依次经过格挡、护盾、生命、afterDamage 和阵亡。
+   * 对目标造成伤害。可格挡攻击先完成防御判定与格挡，未被抵消时才进入
+   * beforeDamage、护盾、生命、afterDamage 和阵亡结算。
    * @returns {Promise<number>} 实际扣除的生命值。
    */
   async damage(source, target, amount, context = {}) {
@@ -1130,20 +1131,8 @@ export class Game {
       delayedStatusContext:context.delayedStatusContext ?? null,
       cancelled: false, metadata, resolutionId: context.resolutionId ?? createId("skill-resolution")
     };
-    await this.eventBus.emit("beforeDamage", event);
-    if (!this.isSessionValid(gameId)) return 0;
-    if (event.cancelled || !target.alive) return 0;
-    if (event.amount <= 0) {
-      this.log(`${target.name}没有受到生命伤害。`);
-      await this.eventBus.emit("afterDamage", {
-        ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"damageReduction"
-      });
-      if (!this.isSessionValid(gameId)) return 0;
-      this.ui.render(this);
-      return 0;
-    }
     const isDeviceAttack = context.card?.subtypes?.includes("assault") && ["normal", "area"].includes(event.damageType);
-    if (isDeviceAttack) {
+    if (event.amount > 0 && isDeviceAttack) {
       const judgment = await this.judgmentSystem.judgeDefense(source, target, event);
       if (!this.isSessionValid(gameId) || judgment.cancelled) return 0;
       if (judgment.immune || !target.alive || this.state.isGameOver) {
@@ -1156,6 +1145,18 @@ export class Game {
     if (blockResult.status === RESPONSE_STATUS.USED) {
       context.blockedByCard = true;
       await this.eventBus.emit("afterDamage", { ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"block" });
+      if (!this.isSessionValid(gameId)) return 0;
+      this.ui.render(this);
+      return 0;
+    }
+    await this.eventBus.emit("beforeDamage", event);
+    if (!this.isSessionValid(gameId)) return 0;
+    if (event.cancelled || !target.alive) return 0;
+    if (event.amount <= 0) {
+      this.log(`${target.name}没有受到生命伤害。`);
+      await this.eventBus.emit("afterDamage", {
+        ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"damageReduction"
+      });
       if (!this.isSessionValid(gameId)) return 0;
       this.ui.render(this);
       return 0;

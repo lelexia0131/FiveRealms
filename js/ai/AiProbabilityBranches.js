@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-momentum-log-fix-v130";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-guardian-aid-order-v131";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

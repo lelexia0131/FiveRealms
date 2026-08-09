@@ -4184,6 +4184,178 @@ test("守誓者：护援响应区分原技能名称与当前响应技能名称",
   }
 });
 
+test("守誓者：突袭先结算格挡且被格挡攻击不消耗护援", async () => {
+  const attacker = makePlayer("aid-order-attacker", 0, "dusk", "ai", 2),
+    target = makePlayer("aid-order-target", 1, "dawn", "human", 2),
+    guardian = makePlayer("aid-order-guardian", 2, "dawn", "human", 1),
+    attackerAlly = makePlayer("aid-order-attacker-ally", 3, "dusk", "ai", 4),
+    firstAssault = instance("assault"),
+    secondAssault = instance("assault"),
+    block = instance("block"),
+    aidCost = instance("charge");
+  attacker.hand.push(firstAssault, secondAssault);
+  target.hand.push(block);
+  guardian.hand.push(aidCost);
+  let blockRequests = 0;
+  const responseOrder = [];
+  const { game } = makeGame([attacker, target, guardian, attackerAlly], {
+    response:(request) => {
+      if (request.type === "block") {
+        blockRequests += 1;
+        responseOrder.push(`block:${blockRequests}`);
+        return blockRequests === 1;
+      }
+      if (request.type === "skill") {
+        responseOrder.push("guardianAid");
+        return true;
+      }
+      return false;
+    }
+  });
+  registerPassiveSkills(game);
+  const hp = target.hp;
+
+  assert.equal(await game.playCard(attacker, firstAssault, [target]), true);
+  assert.equal(target.hp, hp);
+  assert.equal(target.hand.includes(block), false);
+  assert.equal(guardian.hand.includes(aidCost), true);
+  assert.equal(guardian.roundFlags.guardianAidUsed, false);
+  assert.deepEqual(responseOrder, ["block:1"]);
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("「护援」")));
+  assert.ok(!game.state.logs.some(
+    (entry) => entry.message === `${target.name}没有受到生命伤害。`
+  ));
+
+  assert.equal(await game.playCard(attacker, secondAssault, [target]), true);
+  assert.equal(target.hp, hp);
+  assert.equal(guardian.hand.length, 0);
+  assert.ok(game.state.deck.discardPile.includes(aidCost));
+  assert.equal(guardian.roundFlags.guardianAidUsed, true);
+  assert.deepEqual(responseOrder, ["block:1", "block:2", "guardianAid"]);
+  const messages = game.state.logs.map((entry) => entry.message),
+    attackMessage = `${attacker.name}对${target.name}使用了「突袭」。`,
+    secondAttackIndex = messages.lastIndexOf(attackMessage),
+    discardIndex = messages.indexOf(`${guardian.name}因「护援」弃置了「${aidCost.name}」。`),
+    aidIndex = messages.indexOf(
+      `${guardian.name}发动「护援」，令${target.name}受到的伤害减少1点。`
+    ),
+    zeroIndex = messages.indexOf(`${target.name}没有受到生命伤害。`);
+  assert.ok(secondAttackIndex >= 0 && secondAttackIndex < discardIndex);
+  assert.ok(discardIndex < aidIndex && aidIndex < zeroIndex);
+  assert.equal(messages.filter((message) => message === `${target.name}没有受到生命伤害。`).length, 1);
+});
+
+test("守誓者：猎杀在格挡响应结束后才决定是否护援", async () => {
+  const run = async (blocked) => {
+    const hunter = makePlayer(`aid-hunt-source-${blocked}`, 0, "dawn", "ai", 5),
+      target = makePlayer(`aid-hunt-target-${blocked}`, 1, "dusk", "human", 2),
+      guardian = makePlayer(`aid-hunt-guardian-${blocked}`, 2, "dusk", "human", 1),
+      block = instance("block"),
+      aidCost = instance("charge"),
+      responseOrder = [];
+    target.statuses.huntMark = { sourceId:hunter.id };
+    target.hand.push(block);
+    guardian.hand.push(aidCost);
+    const { game } = makeGame([hunter, target, guardian], {
+      response:(request) => {
+        if (request.type === "block") {
+          responseOrder.push("block");
+          return blocked;
+        }
+        if (request.type === "skill") {
+          responseOrder.push("guardianAid");
+          return true;
+        }
+        return false;
+      }
+    });
+    registerPassiveSkills(game);
+    game.state.deck.cards.push(instance("shield"));
+    hunter.energy = 2;
+    const hp = target.hp;
+    assert.equal(await game.useActiveSkill(hunter, "hunt", [target]), true);
+    return { game, hunter, target, guardian, block, aidCost, responseOrder, hp };
+  };
+
+  const blocked = await run(true);
+  assert.equal(blocked.target.hp, blocked.hp);
+  assert.equal(blocked.target.hand.includes(blocked.block), false);
+  assert.equal(blocked.guardian.hand.includes(blocked.aidCost), true);
+  assert.equal(blocked.guardian.roundFlags.guardianAidUsed, false);
+  assert.deepEqual(blocked.responseOrder, ["block"]);
+  assert.ok(!blocked.game.state.logs.some((entry) => entry.message.includes("「护援」")));
+
+  const unblocked = await run(false);
+  assert.equal(unblocked.target.hp, unblocked.hp - 1);
+  assert.equal(unblocked.target.hand.includes(unblocked.block), true);
+  assert.equal(unblocked.guardian.hand.length, 0);
+  assert.ok(unblocked.game.state.deck.discardPile.includes(unblocked.aidCost));
+  assert.equal(unblocked.guardian.roundFlags.guardianAidUsed, true);
+  assert.deepEqual(unblocked.responseOrder, ["block", "guardianAid"]);
+  const messages = unblocked.game.state.logs.map((entry) => entry.message),
+    declarationIndex = messages.indexOf(
+      `${unblocked.hunter.name}对${unblocked.target.name}发动「猎杀」。`
+    ),
+    discardIndex = messages.indexOf(
+      `${unblocked.guardian.name}因「护援」弃置了「${unblocked.aidCost.name}」。`
+    ),
+    aidIndex = messages.indexOf(
+      `${unblocked.guardian.name}发动「护援」，令${unblocked.target.name}受到的伤害减少1点。`
+    );
+  assert.ok(declarationIndex >= 0 && declarationIndex < discardIndex && discardIndex < aidIndex);
+});
+
+test("守誓者：震荡逐目标完成格挡后仅护援未挡住的目标", async () => {
+  const source = makePlayer("aid-shockwave-source", 0, "dawn", "ai", 2),
+    blockedTarget = makePlayer("aid-shockwave-blocked", 1, "dusk", "human", 2),
+    insufficientTarget = makePlayer("aid-shockwave-insufficient", 2, "dusk", "human", 3),
+    guardian = makePlayer("aid-shockwave-guardian", 3, "dusk", "human", 1),
+    shockwave = instance("shockwave"),
+    aidCost = instance("charge");
+  source.equipment = instance("battleDevice");
+  source.hand.push(shockwave);
+  blockedTarget.hand.push(instance("block"), instance("block"));
+  const insufficientBlock = instance("block");
+  insufficientTarget.hand.push(insufficientBlock);
+  guardian.hand.push(aidCost);
+  const responseOrder = [];
+  const { game } = makeGame([source, blockedTarget, insufficientTarget, guardian], {
+    response:(request) => {
+      if (request.type === "block") {
+        responseOrder.push(`block:${request.targetPlayerId}`);
+        return request.targetPlayerId !== guardian.id;
+      }
+      if (request.type === "skill") {
+        responseOrder.push(`guardianAid:${request.presentation.eventText}`);
+        return true;
+      }
+      return false;
+    }
+  });
+  registerPassiveSkills(game);
+  const blockedHp = blockedTarget.hp,
+    insufficientHp = insufficientTarget.hp;
+  assert.equal(await game.playCard(source, shockwave, []), true);
+  assert.equal(blockedTarget.hp, blockedHp);
+  assert.equal(blockedTarget.hand.length, 0);
+  assert.equal(insufficientTarget.hp, insufficientHp);
+  assert.equal(insufficientTarget.hand.includes(insufficientBlock), true);
+  assert.equal(guardian.hand.length, 0);
+  assert.ok(game.state.deck.discardPile.includes(aidCost));
+  assert.equal(guardian.roundFlags.guardianAidUsed, true);
+  const aidLogs = game.state.logs.filter((entry) => entry.message.includes("发动「护援」"));
+  assert.deepEqual(
+    aidLogs.map((entry) => entry.message),
+    [`${guardian.name}发动「护援」，令${insufficientTarget.name}受到的伤害减少1点。`]
+  );
+  assert.ok(!aidLogs.some((entry) => entry.message.includes(blockedTarget.name)));
+  const firstBlockIndex = responseOrder.indexOf(`block:${blockedTarget.id}`),
+    secondBlockIndex = responseOrder.indexOf(`block:${insufficientTarget.id}`),
+    aidIndex = responseOrder.findIndex((entry) => entry.startsWith("guardianAid:"));
+  assert.ok(firstBlockIndex >= 0 && firstBlockIndex < secondBlockIndex && secondBlockIndex < aidIndex);
+  assert.match(responseOrder[aidIndex], new RegExp(insufficientTarget.name));
+});
+
 test("守誓者：护援同一玩家回合内第二次伤害不能再次触发", async () => {
   const source = makePlayer("aid-same-source", 0, "dusk", "ai", 4);
   const target = makePlayer("aid-same-target", 1, "dawn", "ai", 5);
@@ -12876,6 +13048,74 @@ test("AI·守誓者：护援在单个模拟快照内只触发一次且零伤害�
   simulator.applyDamage(deadState, attacker, deadTarget, 1, { canBlock: false });
   assert.equal(dead.handCount, 1);
   assert.equal(deadTarget.hp, 4);
+});
+
+test("AI·守誓者：格挡后仅以剩余伤害世界消耗护援资源与次数", () => {
+  const state = {
+    players: [
+      {
+        id:"aid-order-ai-attacker", battleTeam:"dawn", alive:true,
+        hp:5, maxHp:5, handCount:0
+      },
+      {
+        id:"aid-order-ai-target", battleTeam:"dusk", alive:true,
+        hp:5, maxHp:5, shield:0, handCount:1,
+        blockProbability:1, twoBlockProbability:0, expectedRecoverCount:0
+      },
+      {
+        id:"aid-order-ai-guardian", generalId:"oath-warden", battleTeam:"dusk", alive:true,
+        hp:3, maxHp:3, handCount:1, guardianAidUsedProbability:0
+      }
+    ]
+  },
+    simulator = new AiSimulator(state),
+    attacker = state.players[0],
+    target = state.players[1],
+    guardian = state.players[2];
+  simulator.applyDamage(state, attacker, target, 1, { canBlock:true, deviceAttack:false });
+  assert.equal(target.hp, 5);
+  assert.equal(target.handCount, 0);
+  assert.equal(guardian.handCount, 1);
+  assert.equal(guardian.guardianAidUsedProbability, 0);
+
+  simulator.applyDamage(state, attacker, target, 1, { canBlock:true, deviceAttack:false });
+  assert.equal(target.hp, 5);
+  assert.equal(guardian.handCount, 0);
+  assert.equal(guardian.guardianAidUsedProbability, 1);
+});
+
+test("AI·守誓者：部分格挡概率只把未格挡概率质量交给护援", () => {
+  const state = {
+    players: [
+      {
+        id:"aid-probability-attacker", battleTeam:"dawn", alive:true,
+        hp:5, maxHp:5, handCount:0
+      },
+      {
+        id:"aid-probability-target", battleTeam:"dusk", alive:true,
+        hp:5, maxHp:5, shield:0, handCount:1,
+        blockProbability:.5, twoBlockProbability:0, expectedRecoverCount:0
+      },
+      {
+        id:"aid-probability-guardian", generalId:"oath-warden", battleTeam:"dusk", alive:true,
+        hp:3, maxHp:3, handCount:1, guardianAidUsedProbability:0
+      }
+    ]
+  },
+    outcome = {},
+    simulator = new AiSimulator(state),
+    attacker = state.players[0],
+    target = state.players[1],
+    guardian = state.players[2];
+  simulator.applyDamage(
+    state, attacker, target, 1, { canBlock:true, deviceAttack:false, outcome }
+  );
+  assert.equal(target.hp, 5);
+  assertClose(target.handCount, .5);
+  assertClose(guardian.handCount, .5);
+  assertClose(guardian.guardianAidUsedProbability, .5);
+  assertClose(outcome.blockedByCardChance, .5);
+  assert.equal(outcome.lifeDamageChance, 0);
 });
 
 test("AI·守誓者：可见状态、动作生成和模拟器保留主动技能多次发动额度", () => {

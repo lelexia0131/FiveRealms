@@ -2,14 +2,14 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-momentum-log-fix-v130";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-momentum-log-fix-v130";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-momentum-log-fix-v130";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260809-momentum-log-fix-v130";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260809-momentum-log-fix-v130";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-momentum-log-fix-v130";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260809-momentum-log-fix-v130";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-momentum-log-fix-v130";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-guardian-aid-order-v131";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-guardian-aid-order-v131";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-guardian-aid-order-v131";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260809-guardian-aid-order-v131";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260809-guardian-aid-order-v131";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-guardian-aid-order-v131";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260809-guardian-aid-order-v131";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-guardian-aid-order-v131";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -24,7 +24,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260809-momentum-log-fix-v130";
+} from "./AiProbabilityBranches.js?build=20260809-guardian-aid-order-v131";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -2195,7 +2195,7 @@ export class AiSimulator {
     }
   }
 
-  /** 护援在格挡、雷达和护盾之前减少伤害，并同步计算一次弃牌与每轮次数的期望代价。 */
+  /** 护援只作用于通过雷达与格挡的伤害世界，并在护盾前计算弃牌与每轮次数的期望代价。 */
   simulateGuardianAid(state, target, incomingDamage, eventProbability) {
     const probability = clampProbability(eventProbability);
     if (incomingDamage <= PROBABILITY_EPSILON || probability <= PROBABILITY_EPSILON) return Math.max(0, incomingDamage);
@@ -2974,20 +2974,6 @@ export class AiSimulator {
       `damage-event:${attacker?.id ?? "unknown"}:${target.id}`);
     const eventProbability = this.eventProbability(eventWorlds);
     if (eventProbability <= 0) return 0;
-    const aidedExpectedDamage = this.simulateGuardianAid(
-      state, target, amount * eventProbability, eventProbability
-    );
-    amount = aidedExpectedDamage / eventProbability;
-    if (amount <= PROBABILITY_EPSILON) {
-      if (options.outcome) {
-        options.outcome.lifeDamageBranches = projectProbabilityStateBranches(
-          eventWorlds, () => ({ occurs:false })
-        );
-        options.outcome.lifeDamageChance = 0;
-        options.outcome.blockedByCardChance = 0;
-      }
-      return 0;
-    }
     const battleProbability = clampProbability(options.deviceAttack
       && attacker.equipmentDefinitionId === "battleDevice"
       ? (options.attackerEquipmentProbability ?? this.getSimulatedEquipmentProbability(attacker, "battleDevice"))
@@ -3107,6 +3093,15 @@ export class AiSimulator {
       }));
       this.consumeBlockIdentities(state, target, identityWorlds);
       target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
+    }
+    const damagePassProbability = attackOutcomeWorlds
+      ? totalBranchProbability(attackOutcomeWorlds.filter((branch) => branch.occurs && branch.passes))
+      : eventProbability * passChance;
+    if (damagePassProbability > PROBABILITY_EPSILON) {
+      const aidedExpectedDamage = this.simulateGuardianAid(
+        state, target, amount * damagePassProbability, damagePassProbability
+      );
+      amount = aidedExpectedDamage / damagePassProbability;
     }
     const shieldState = getValueBranches(target, "shield", target.shield).map((branch) => ({
       probability:branch.probability,
