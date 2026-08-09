@@ -3,8 +3,9 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-lightning-hit-copy-v122";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { TeamRuleService } from "../core/TeamRuleService.js?build=20260809-seal-ai-threat-fix-v124";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-seal-ai-threat-fix-v124";
 
 const equipmentRoleDelta = (player, definitionId) => {
   if (!player?.generalId || !definitionId) return 0;
@@ -92,6 +93,7 @@ export function createAiVisibleState(viewerId, state, remainingCardCounts = null
     && !Array.isArray(remainingCardCounts)
     ? Object.freeze({ ...remainingCardCounts })
     : null;
+  const teamRules = new TeamRuleService({ state });
   return Object.freeze({
     gameId: state.gameId,
     currentRound: state.currentRound,
@@ -111,6 +113,11 @@ export function createAiVisibleState(viewerId, state, remainingCardCounts = null
       const activeSkillId = player.general.activeSkillIds[0] ?? null;
       const activeSkillUses = player.turnFlags.activeSkillUseCounts?.[activeSkillId] ?? 0;
       const activeSkillLimit = player.general.activeLimitPerTurn ?? 1;
+      const energyBreakdown = teamRules.getTurnEnergyBreakdown(player);
+      const energyDeviceBreakdown = teamRules.getTurnEnergyBreakdown({
+        ...player,
+        equipment:{ definitionId:"energyDevice" }
+      });
       return Object.freeze({
       id: player.id,
       seatIndex: player.seatIndex,
@@ -127,7 +134,10 @@ export function createAiVisibleState(viewerId, state, remainingCardCounts = null
       energy: player.energy,
       energyBranches:[{ probability:1, conditions:{}, amount:player.energy }],
       maxEnergy: player.maxEnergy,
+      turnEnergyGainWithoutEquipment: energyBreakdown.baseAmount + energyBreakdown.teamBonus,
+      energyDeviceTurnEnergyGain: energyDeviceBreakdown.equipmentBonus,
       attackRange: player.attackRange,
+      nextTurnBaseAttackLimit: teamRules.getAttackLimit(player),
       attackUsed: player.turnFlags.attackUsed,
       attackLimit: player.turnFlags.attackLimit,
       attackUseSlots:Array.from(

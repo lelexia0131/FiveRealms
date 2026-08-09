@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-seal-ai-threat-fix-v124";
 
 /**
  * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；

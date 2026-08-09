@@ -80,13 +80,23 @@ import {
   nextLightningReceiver
 } from "../js/ai/lightningScoring.js";
 import {
+  assaultThreat,
+  equipmentThreatSynergy,
+  expectedUsableAssaultsNextTurn,
+  futureSkillReadinessProbability,
   getSealStatusStateBranches,
+  roleThreatSynergy,
   sealCounterProbability,
+  sealEarlyUsePenalty,
   sealOutcomeProbabilities,
   sealPresenceProbability,
   sealTeamBurden,
   sealUseValue,
-  tacticJudgmentProbability
+  skillReadinessThreat,
+  tacticJudgmentProbability,
+  turnOpportunityValue,
+  turnOrderGap,
+  turnTimingFactor
 } from "../js/ai/sealScoring.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
 
@@ -8664,6 +8674,265 @@ test("AI·封印：使用价值随未来反制增多而下降且团队负担符�
   assert.ok(sealTeamBurden(burdenState, sealedTarget, "dusk") > 0);
   assert.ok(sealTeamBurden(burdenState, sealedTarget, "dawn") < 0);
   assert.equal(sealUseValue(actor, { ...target, statuses:["sealed"] }, noCounterState), -50);
+});
+
+test("AI·封印：按真实存活行动环温和折扣更晚目标", () => {
+  const actor = {
+      id:"seal-turn-actor", seatIndex:0, battleTeam:"dawn", alive:true, statuses:[]
+    },
+    dead = {
+      id:"seal-turn-dead", seatIndex:1, battleTeam:"dusk", alive:false, statuses:[]
+    },
+    next = {
+      id:"seal-turn-next", seatIndex:2, battleTeam:"dusk", alive:true, statuses:[],
+      handCount:3, energy:1, counterProbability:0, expectedAssaultCount:1
+    },
+    between = {
+      id:"seal-turn-between", seatIndex:3, battleTeam:"dawn", alive:true, statuses:[]
+    },
+    later = { ...next, id:"seal-turn-later", seatIndex:4 },
+    state = {
+      players:[actor, dead, next, between, later],
+      remainingCardCounts:{ assault:9, harvest:1 }
+    };
+  assert.equal(turnOrderGap(state, actor, next), 0);
+  assert.equal(turnOrderGap(state, actor, later), 2);
+  assert.equal(turnTimingFactor(state, actor, next), 1);
+  assert.equal(turnTimingFactor(state, actor, later), .8);
+  assert.ok(sealUseValue(actor, next, state) > sealUseValue(actor, later, state));
+});
+
+test("AI·封印：下一回合技能次数按 fresh availability 且能量门槛正确", () => {
+  const base = {
+      activeSkillId:"burningField", activeSkillCost:2, activeSkillLimit:2,
+      maxEnergy:3, turnEnergyGainWithoutEquipment:1
+    },
+    ready = { ...base, energy:2 },
+    readyAfterGain = {
+      ...base, energy:1, activeSkillUses:0, activeSkillUsed:false,
+      activeSkillUseSlots:[[{ probability:1, available:true }]]
+    },
+    usedThisTurn = {
+      ...readyAfterGain, activeSkillUses:2, activeSkillUsed:true,
+      activeSkillUseSlots:[[{ probability:1, available:false }]]
+    },
+    unavailable = { ...base, energy:0 };
+  assertClose(futureSkillReadinessProbability(readyAfterGain), 1);
+  assertClose(futureSkillReadinessProbability(usedThisTurn), 1);
+  assertClose(skillReadinessThreat(usedThisTurn), skillReadinessThreat(readyAfterGain));
+  assert.ok(skillReadinessThreat(ready) > skillReadinessThreat(readyAfterGain));
+  assert.ok(skillReadinessThreat(readyAfterGain) > skillReadinessThreat(unavailable));
+  assert.ok(turnOpportunityValue(readyAfterGain) > turnOpportunityValue(unavailable));
+});
+
+test("AI·封印：突袭库存受新回合次数限制且破军只增加真实可用容量", () => {
+  const one = {
+      expectedAssaultCount:1,
+      assaultCountDistribution:[{ count:1, probability:1 }],
+      nextTurnBaseAttackLimit:1
+    },
+    three = {
+      ...one, expectedAssaultCount:3,
+      assaultCountDistribution:[{ count:3, probability:1 }]
+    },
+    blade = {
+      ...three, activeSkillId:"breakArmy", activeSkillCost:2, activeSkillLimit:1,
+      energy:1, maxEnergy:3, turnEnergyGainWithoutEquipment:1
+    },
+    bladeUsedThisTurn = {
+      ...blade, activeSkillUses:1, activeSkillUsed:true,
+      activeSkillUseSlots:[[{ probability:1, available:false }]]
+    };
+  assertClose(expectedUsableAssaultsNextTurn(one), 1);
+  assertClose(expectedUsableAssaultsNextTurn(three), 1);
+  assertClose(expectedUsableAssaultsNextTurn(blade), 2);
+  assertClose(expectedUsableAssaultsNextTurn(bladeUsedThisTurn), 2);
+  assert.ok(assaultThreat(three) > assaultThreat(one));
+  assert.ok(assaultThreat(three) < assaultThreat(one) * 3);
+  assert.ok(assaultThreat(blade) > assaultThreat(three));
+});
+
+test("AI·封印：深层移除充能桩会降低技能威胁且部分存在概率不布尔化", () => {
+  const actor = makePlayer("seal-energy-actor", 0, "dawn", "ai", 0),
+    ally = makePlayer("seal-energy-ally", 1, "dawn", "ai", 1),
+    target = makePlayer("seal-energy-target", 2, "dusk", "ai", 4),
+    enemy = makePlayer("seal-energy-enemy", 3, "dusk", "ai", 3);
+  actor.hand.push(instance("destroy"));
+  target.energy = 0;
+  target.equipment = instance("energyDevice");
+  const { game } = makeGame([actor, ally, target, enemy]),
+    visible = createAiVisibleState(actor.id, game.state),
+    visibleActor = visible.players.find((player) => player.id === actor.id),
+    before = visible.players.find((player) => player.id === target.id);
+  assert.equal(before.nextTurnBaseAttackLimit, game.teamRules.getAttackLimit(target));
+  assertClose(futureSkillReadinessProbability(before), 1);
+  const partial = { ...before, equipmentRetentionProbability:.5 };
+  assertClose(futureSkillReadinessProbability(partial), .5);
+  assertClose(skillReadinessThreat(partial), skillReadinessThreat(before) * .5);
+
+  const afterState = new AiSimulator(visible).apply(visible, {
+      type:"card", card:visibleActor.hand[0], targets:[before]
+    }, visibleActor.id),
+    after = afterState.players.find((player) => player.id === target.id);
+  assert.equal(after.equipmentDefinitionId, null);
+  assert.equal(after.equipmentRetentionProbability, 0);
+  assertClose(futureSkillReadinessProbability(after), 0);
+  assert.ok(skillReadinessThreat(after) < skillReadinessThreat(before));
+});
+
+test("AI·封印：合法已知突袭提高威胁且真实隐藏牌内容不影响评分", () => {
+  const actor = makePlayer("seal-known-actor", 0, "dawn", "ai", 1),
+    target = makePlayer("seal-known-target", 1, "dusk", "ai", 0);
+  target.hand.push(
+    instance("assault"), instance("assault"), instance("recover"), instance("block")
+  );
+  const { game } = makeGame([actor, target]),
+    counts = { assault:1, block:9 },
+    unknownVisible = createAiVisibleState(actor.id, game.state, counts),
+    unknownTarget = unknownVisible.players[1],
+    unknownScore = sealUseValue(unknownVisible.players[0], unknownTarget, unknownVisible);
+  actor.aiMemory.knownCardsByPlayer[target.id] = {
+    [target.hand[0].id]:"assault",
+    [target.hand[1].id]:"assault"
+  };
+  const knownVisible = createAiVisibleState(actor.id, game.state, counts),
+    knownTarget = knownVisible.players[1],
+    knownScore = sealUseValue(knownVisible.players[0], knownTarget, knownVisible);
+  assert.ok(knownTarget.expectedAssaultCount > unknownTarget.expectedAssaultCount);
+  assert.ok(assaultThreat(knownTarget) > assaultThreat(unknownTarget));
+  assert.ok(knownScore > unknownScore);
+
+  actor.aiMemory.knownCardsByPlayer[target.id] = {};
+  const beforeHiddenChange = createAiVisibleState(actor.id, game.state, counts);
+  target.hand = target.hand.map((card, index) => ({
+    ...instance(["charge", "shield", "counter", "harvest"][index]),
+    id:card.id
+  }));
+  const afterHiddenChange = createAiVisibleState(actor.id, game.state, counts);
+  assertClose(
+    sealUseValue(beforeHiddenChange.players[0], beforeHiddenChange.players[1], beforeHiddenChange),
+    sealUseValue(afterHiddenChange.players[0], afterHiddenChange.players[1], afterHiddenChange)
+  );
+});
+
+test("AI·封印：攻击角色与军火库只协同放大下一回合可用突袭", () => {
+  const neutral = {
+      handCount:4, energy:1, expectedAssaultCount:2, roleTags:["support"],
+      assaultCountDistribution:[{ count:2, probability:1 }],
+      nextTurnBaseAttackLimit:1,
+      equipmentDefinitionId:null, equipmentRetentionProbability:0
+    },
+    attacker = { ...neutral, roleTags:["damage", "attacker"] },
+    armed = {
+      ...attacker, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1
+    },
+    bladeArmed = {
+      ...armed, expectedAssaultCount:3,
+      assaultCountDistribution:[{ count:3, probability:1 }],
+      activeSkillId:"breakArmy", activeSkillCost:2, activeSkillLimit:1,
+      maxEnergy:3, turnEnergyGainWithoutEquipment:1
+    },
+    emptyAttacker = {
+      ...attacker, handCount:1, expectedAssaultCount:0,
+      assaultCountDistribution:[{ count:0, probability:1 }]
+    },
+    emptyArmed = {
+      ...armed, ...emptyAttacker,
+      equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1
+    };
+  assert.ok(roleThreatSynergy(attacker) > roleThreatSynergy(neutral));
+  assert.equal(roleThreatSynergy(emptyAttacker), 0);
+  assert.ok(turnOpportunityValue(attacker) > turnOpportunityValue(neutral));
+  assert.ok(equipmentThreatSynergy(armed) > equipmentThreatSynergy(attacker));
+  assertClose(equipmentThreatSynergy(armed), .75);
+  assertClose(equipmentThreatSynergy(bladeArmed), 1.5);
+  assert.equal(equipmentThreatSynergy(emptyArmed), 0);
+  assert.ok(
+    turnOpportunityValue(armed) - turnOpportunityValue(attacker)
+      > turnOpportunityValue(emptyArmed) - turnOpportunityValue(emptyAttacker)
+  );
+});
+
+test("AI·封印：高价值即时动作触发软性后置且消耗后惩罚消失", async () => {
+  const actor = makePlayer("seal-late-actor", 0, "dawn", "ai", 1),
+    target = makePlayer("seal-late-target", 1, "dusk", "ai", 7),
+    recover = instance("recover"),
+    seal = instance("seal");
+  actor.hp = 1;
+  actor.hand.push(recover, seal);
+  const { game } = makeGame([actor, target]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 40;
+  const visible = createAiVisibleState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    ),
+    rootActions = game.aiController.getLegalActions(actor),
+    recoverAction = rootActions.find((action) => action.card?.id === recover.id),
+    sealAction = rootActions.find((action) => action.card?.id === seal.id),
+    evaluator = game.aiController.evaluator,
+    sealWithoutTimingPreference = evaluator.actionUtility(sealAction, actor, visible),
+    sealWithTimingPreference = evaluator.actionUtility(
+      sealAction, actor, visible, { availableActions:rootActions }
+    );
+  assert.ok(sealEarlyUsePenalty(evaluator.actionUtility(recoverAction, actor, visible)) > 0);
+  assert.ok(sealWithTimingPreference < sealWithoutTimingPreference);
+
+  const selected = await game.aiController.planner.plan(
+    actor, visible, rootActions, { gameId:game.state.gameId }
+  );
+  assert.equal(selected.card?.id, recover.id);
+  const afterRecover = new AiSimulator(visible).apply(visible, recoverAction, actor.id),
+    followActions = game.aiController.actionGenerator.generateFromVisible(afterRecover, actor.id),
+    followSeal = followActions.find((action) => action.card?.id === seal.id);
+  assert.ok(followSeal);
+  assertClose(
+    evaluator.actionUtility(followSeal, actor, afterRecover, { availableActions:followActions }),
+    evaluator.actionUtility(followSeal, actor, afterRecover)
+  );
+});
+
+test("AI·封印：马上行动的极高威胁目标可抵消软性后置", async () => {
+  const actor = makePlayer("seal-urgent-actor", 0, "dawn", "ai", 1),
+    target = makePlayer("seal-urgent-target", 1, "dusk", "ai", 0),
+    seal = instance("seal"),
+    charge = instance("charge");
+  actor.hand.push(seal, charge);
+  target.energy = 2;
+  target.equipment = instance("battleDevice");
+  target.hand.push(instance("assault"), instance("assault"), instance("assault"), instance("assault"));
+  const { game } = makeGame([actor, target]);
+  actor.energy = Math.max(0, actor.maxEnergy - 1);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 30;
+  game.aiController.knowledge.remainingCounts = () => ({ assault:20 });
+  const visible = createAiVisibleState(actor.id, game.state, { assault:20 }),
+    rootActions = game.aiController.getLegalActions(actor),
+    selected = await game.aiController.planner.plan(
+      actor, visible, rootActions, { gameId:game.state.gameId }
+    );
+  assert.ok(rootActions.some((action) => action.card?.id === charge.id));
+  assert.equal(selected.card?.id, seal.id);
+});
+
+test("AI·封印：确定击杀序列优先直接击杀而非先封印", async () => {
+  const actor = makePlayer("seal-kill-actor", 0, "dawn", "ai", 0),
+    target = makePlayer("seal-kill-target", 1, "dusk", "ai", 1),
+    assault = instance("assault"),
+    seal = instance("seal");
+  actor.hand.push(assault, seal);
+  target.hp = 1;
+  const { game } = makeGame([actor, target]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 30;
+  game.aiController.knowledge.remainingCounts = () => ({ assault:20 });
+  const visible = createAiVisibleState(actor.id, game.state, { assault:20 }),
+    rootActions = game.aiController.getLegalActions(actor),
+    selected = await game.aiController.planner.plan(
+      actor, visible, rootActions, { gameId:game.state.gameId }
+    );
+  assert.equal(visible.players[1].blockProbability, 0);
+  assert.equal(selected.card?.id, assault.id);
+  assert.notEqual(game.aiController.planner.lastPlannedSequence[0]?.cardId, "seal");
 });
 
 test("AI·封印：只在状态触发时为己方评估反制机会成本", () => {

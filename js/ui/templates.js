@@ -1,4 +1,4 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-lightning-hit-copy-v122";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

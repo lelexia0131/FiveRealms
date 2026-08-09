@@ -2,13 +2,13 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-lightning-hit-copy-v122";
-import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260809-lightning-hit-copy-v122";
-import { getSealStatusStateBranches } from "./sealScoring.js?build=20260809-lightning-hit-copy-v122";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-lightning-hit-copy-v122";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260809-lightning-hit-copy-v122";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-lightning-hit-copy-v122";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-seal-ai-threat-fix-v124";
+import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260809-seal-ai-threat-fix-v124";
+import { getSealStatusStateBranches } from "./sealScoring.js?build=20260809-seal-ai-threat-fix-v124";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-seal-ai-threat-fix-v124";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260809-seal-ai-threat-fix-v124";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-seal-ai-threat-fix-v124";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,7 +20,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260809-lightning-hit-copy-v122";
+} from "./AiProbabilityBranches.js?build=20260809-seal-ai-threat-fix-v124";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {

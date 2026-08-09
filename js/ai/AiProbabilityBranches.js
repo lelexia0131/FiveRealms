@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-seal-ai-threat-fix-v124";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

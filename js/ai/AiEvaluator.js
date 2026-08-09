@@ -2,15 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-lightning-hit-copy-v122";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-lightning-hit-copy-v122";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260809-lightning-hit-copy-v122";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260809-lightning-hit-copy-v122";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260809-lightning-hit-copy-v122";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-lightning-hit-copy-v122";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260809-lightning-hit-copy-v122";
-import { sealTeamBurden, sealUseValue } from "./sealScoring.js?build=20260809-lightning-hit-copy-v122";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-seal-ai-threat-fix-v124";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260809-seal-ai-threat-fix-v124";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260809-seal-ai-threat-fix-v124";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260809-seal-ai-threat-fix-v124";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-seal-ai-threat-fix-v124";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260809-seal-ai-threat-fix-v124";
+import {
+  sealEarlyUsePenalty, sealTeamBurden, sealUseValue
+} from "./sealScoring.js?build=20260809-seal-ai-threat-fix-v124";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -177,7 +179,7 @@ export class AiEvaluator {
     return score;
   }
 
-  actionUtility(action, player, visible) {
+  actionUtility(action, player, visible, options = {}) {
     const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
     if (action.type === "end") {
       const remainingCards = actor.handCount ?? actor.hand?.length ?? player.hand.length;
@@ -214,6 +216,18 @@ export class AiEvaluator {
     const target = visible.players.find((entry) => entry.id === actionTarget?.id) ?? actionTarget;
     if (card.definitionId === "seal") {
       value = sealUseValue(actor, target, visible) + roleDelta;
+      if (Array.isArray(options.availableActions)) {
+        const alternatives = options.availableActions.filter((candidate) => (
+          candidate !== action
+          && candidate.type !== "end"
+          && candidate.card?.definitionId !== "seal"
+        ));
+        const bestImmediateAlternative = alternatives.reduce((best, candidate) => (
+          Math.max(best, this.actionUtility(candidate, player, visible)
+            * (candidate.executionProbability ?? 1))
+        ), -Infinity);
+        value -= sealEarlyUsePenalty(bestImmediateAlternative);
+      }
     }
     if (target) {
       const enemy = target.battleTeam !== player.battleTeam;

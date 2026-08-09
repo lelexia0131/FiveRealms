@@ -1,14 +1,14 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-lightning-hit-copy-v122";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-lightning-hit-copy-v122";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-lightning-hit-copy-v122";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-lightning-hit-copy-v122";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-seal-ai-threat-fix-v124";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-seal-ai-threat-fix-v124";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-seal-ai-threat-fix-v124";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260809-lightning-hit-copy-v122";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260809-lightning-hit-copy-v122";
+} from "./lightningScoring.js?build=20260809-seal-ai-threat-fix-v124";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260809-seal-ai-threat-fix-v124";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

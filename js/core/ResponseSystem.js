@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-lightning-hit-copy-v122";
-import { createId } from "../utils/helpers.js?build=20260809-lightning-hit-copy-v122";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-lightning-hit-copy-v122";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-lightning-hit-copy-v122";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { createId } from "../utils/helpers.js?build=20260809-seal-ai-threat-fix-v124";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-seal-ai-threat-fix-v124";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-seal-ai-threat-fix-v124";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

@@ -2,8 +2,8 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-lightning-hit-copy-v122";
-import { AiSimulator } from "./AiSimulator.js?build=20260809-lightning-hit-copy-v122";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { AiSimulator } from "./AiSimulator.js?build=20260809-seal-ai-threat-fix-v124";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -82,9 +82,9 @@ export class AiPlanner {
         .filter(Boolean);
       return simulator.tacticResolutionChance(state, actor, card, mappedTargets);
     };
-    const transitionScore = (action, beforeState, afterState, depth = 1) => {
+    const transitionScore = (action, beforeState, afterState, depth = 1, availableActions = []) => {
       const executionProbability = action.executionProbability ?? 1;
-      const actionValue = this.evaluator.actionUtility(action, player, beforeState);
+      const actionValue = this.evaluator.actionUtility(action, player, beforeState, { availableActions });
       const resolutionScale = tacticResolutionScale(action, beforeState);
       const immediate = (actionValue * resolutionScale + hiddenAdjustment(action))
         * executionProbability;
@@ -104,7 +104,7 @@ export class AiPlanner {
         state,
         terminal:Boolean(state.playPhaseEnded),
         // 根节点也必须看到模拟后的伤害、装备和资源变化，否则第一次束裁剪会丢掉真正优质的动作。
-        score:transitionScore(action, visibleState, state),
+        score:transitionScore(action, visibleState, state, 1, rootActions),
         sequence:[action]
       });
       expanded += 1;
@@ -132,7 +132,7 @@ export class AiPlanner {
           if (limitReached()) break;
           if (follow.card?.definitionId === "assault" && !rootAssaultTargets.has(follow.targets?.[0]?.id)) discoveredDynamicTarget = true;
           const state = simulator.apply(node.state, follow, player.id);
-          const score = node.score + transitionScore(follow, node.state, state, depth);
+          const score = node.score + transitionScore(follow, node.state, state, depth, followActions);
           candidates.push({
             action:node.action,
             state,
