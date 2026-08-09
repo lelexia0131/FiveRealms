@@ -2,7 +2,7 @@
  * 本文件负责 2V3 阵营生成与阵营查询，依赖游戏配置和洗牌工具。
  * 它不根据角色、名字或座位推断阵营；battleTeam 是唯一判断来源。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-ai-block-damage-preview-v133";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-all-in-exit-guard-v134";
 
 export class TeamManager {
   /**

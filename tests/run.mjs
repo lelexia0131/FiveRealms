@@ -5458,6 +5458,33 @@ test("赌命者：孤注消耗全部能量并摸取等量牌，按30x%概率进�
   }
 });
 
+test("赌命者：未处于孤注时突袭命中、格挡或雷达免疫均不记录退出日志", async () => {
+  const run = async (result) => {
+    const gambler = makePlayer(`no-all-in-${result}-gambler`, 0, "dawn", "ai", 6),
+      target = makePlayer(`no-all-in-${result}-target`, 1, "dusk", result === "block" ? "human" : "ai", 3),
+      assault = instance("assault"),
+      { game } = makeGame([gambler, target], { response: () => true });
+    registerPassiveSkills(game);
+    gambler.hand.push(assault);
+    if (result === "block") target.hand.push(instance("block"));
+    if (result === "radar") {
+      target.equipment = instance("defenseDevice");
+      game.state.deck.cards.push(instance("harvest"));
+    }
+    const hp = target.hp;
+    assert.equal(gambler.statuses.allIn, undefined);
+    assert.equal(await game.playCard(gambler, assault, [target]), true);
+    assert.equal(target.hp, result === "normal" ? hp - 1 : hp);
+    assert.equal(gambler.statuses.allIn, undefined);
+    assert.equal(
+      game.state.logs.filter((entry) => entry.message === `${gambler.name}退出「孤注」状态。`).length,
+      0
+    );
+  };
+
+  for (const result of ["normal", "block", "radar"]) await run(result);
+});
+
 test("赌命者：孤注状态不可叠加、跨回合保留，并在下一次突袭完毕后退出", async () => {
   const gambler = makePlayer("gambler", 0, "dawn", "ai", 6),
     target = makePlayer("target", 1, "dusk", "human"),
@@ -5480,6 +5507,10 @@ test("赌命者：孤注状态不可叠加、跨回合保留，并在下一次�
   await game.playCard(gambler, assault, [target]);
   assert.equal(target.hp, hp - 2);
   assert.equal(gambler.statuses.allIn, undefined);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${gambler.name}退出「孤注」状态。`).length,
+    1
+  );
 });
 
 test("赌命者：已有孤注状态时再次发动孤注不叠加也不删除状态", async () => {
@@ -5537,6 +5568,10 @@ test("赌命者：孤注强化的突袭被格挡后也会退出状态", async ()
   await game.useActiveSkill(gambler, "allIn", []);
   await game.playCard(gambler, assault, [target]);
   assert.equal(gambler.statuses.allIn, undefined);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${gambler.name}退出「孤注」状态。`).length,
+    1
+  );
 });
 
 test("赌命者：孤注强化的突袭被雷达免疫后只退出一次", async () => {

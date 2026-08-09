@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260809-ai-block-damage-preview-v133";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-ai-block-damage-preview-v133";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260809-all-in-exit-guard-v134";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-all-in-exit-guard-v134";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

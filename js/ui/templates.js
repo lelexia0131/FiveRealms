@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-ai-block-damage-preview-v133";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-ai-block-damage-preview-v133";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-all-in-exit-guard-v134";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-all-in-exit-guard-v134";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
