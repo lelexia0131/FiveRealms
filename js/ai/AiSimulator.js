@@ -2,14 +2,14 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-healer-tuner-balance-v136";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-healer-tuner-balance-v136";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-healer-tuner-balance-v136";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260809-healer-tuner-balance-v136";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260809-healer-tuner-balance-v136";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-healer-tuner-balance-v136";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260809-healer-tuner-balance-v136";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-healer-tuner-balance-v136";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-coordination-target-audit-v138";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-coordination-target-audit-v138";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-coordination-target-audit-v138";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260809-coordination-target-audit-v138";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260809-coordination-target-audit-v138";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-coordination-target-audit-v138";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260809-coordination-target-audit-v138";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-coordination-target-audit-v138";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -24,7 +24,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260809-healer-tuner-balance-v136";
+} from "./AiProbabilityBranches.js?build=20260809-coordination-target-audit-v138";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -1119,6 +1119,8 @@ export class AiSimulator {
         const unknownCount = Math.max(0, (Number(target.handCount) || 0) - knownExpectedCount);
         const informationGain = Math.min(2, unknownCount);
         actor.expectedInformationGain = (actor.expectedInformationGain ?? 0) + informationGain * scale;
+        coordinationProbability = scale;
+        coordinationTargets = [target];
         break;
       }
       case "assault":
@@ -1222,9 +1224,18 @@ export class AiSimulator {
         coordinationTargets = [first, second];
         break;
       }
-      case "plunder":
-        if (target) this.takeResourceToHand(next, actor, target, effectEventWorlds, `plunder:${card.id ?? card.definitionId}`);
+      case "plunder": {
+        const plundered = target
+          ? this.takeResourceToHand(
+              next, actor, target, effectEventWorlds, `plunder:${card.id ?? card.definitionId}`
+            )
+          : 0;
+        if (plundered > PROBABILITY_EPSILON) {
+          coordinationProbability = plundered;
+          coordinationTargets = [target];
+        }
         break;
+      }
       case "transfer": {
         const source = next.players.find((player) => player.id === abstractAction.selection?.sourceId)
           ?? null;
@@ -1245,11 +1256,26 @@ export class AiSimulator {
                   ? Math.max(0, Number(selection.availableUnknownCount))
                   : this.availableUnknownCountFor(source, excludedTransferCard));
           coordinationProbability = transferred;
-          coordinationTargets = [receiver];
+          coordinationTargets = [source, receiver];
         }
         break;
       }
-      case "destroy": if (target) this.destroyResource(next, actor, target, effectEventWorlds, `destroy:${card.id ?? card.definitionId}`); break;
+      case "counter":
+        coordinationProbability = scale;
+        coordinationTargets = abstractAction.targets ?? [];
+        break;
+      case "destroy": {
+        const destroyed = target
+          ? this.destroyResource(
+              next, actor, target, effectEventWorlds, `destroy:${card.id ?? card.definitionId}`
+            )
+          : 0;
+        if (destroyed > PROBABILITY_EPSILON) {
+          coordinationProbability = destroyed;
+          coordinationTargets = [target];
+        }
+        break;
+      }
       case "duel": if (target) this.applyDuel(next, actor, target, scale, cardDamageContext); break;
       case "mutualBenefit": {
         coordinationTargets = next.players.filter((player) => player.alive);
@@ -1260,9 +1286,10 @@ export class AiSimulator {
         break;
       }
       case "symbiosis": {
-        coordinationTargets = this.seatOrderFrom(next, actor, true);
+        const targets = this.seatOrderFrom(next, actor, true);
+        coordinationTargets = targets.filter((player) => player.hp < player.maxHp);
         coordinationProbability = scale;
-        for (const player of coordinationTargets) this.healFrom(next, actor, player, scale);
+        for (const player of targets) this.healFrom(next, actor, player, scale);
         break;
       }
       default:
@@ -2317,7 +2344,7 @@ export class AiSimulator {
     }
     const effectWorlds = this.normalizeResourceEffectWorlds(state, resolution, label);
     const selection = this.chooseSimulatedResourceSelection(state, actor, target, "plunder");
-    if (!selection) return;
+    if (!selection) return 0;
     if (selection.zone === "equipment") {
       const existenceProbability = this.getSimulatedEquipmentProbability(target);
       const equipmentTransferWorlds = this.gateEventWorlds(
@@ -2331,11 +2358,12 @@ export class AiSimulator {
         this.setSimulatedEquipment(target, target.equipmentDefinitionId, existenceProbability - transferProbability);
         this.addSimulatedCardToHand(state, actor, { definitionId: selection.definitionId }, equipmentTransferWorlds);
       }
+      return transferProbability;
     } else if (selection.zone === "hand" && selection.selectionKind === "known") {
       const entry = this.findKnownCardEntry(target, selection.cardId, selection.definitionId);
       if (entry && this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON) {
         const acquisitionProbability = this.eventProbability(effectWorlds);
-        if (acquisitionProbability <= PROBABILITY_EPSILON) return;
+        if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
         if (selection.definitionId === "block") {
           this.removeKnownBlockFromDistribution(state, target, effectWorlds);
         }
@@ -2355,12 +2383,13 @@ export class AiSimulator {
           id: selection.cardId,
           definitionId: selection.definitionId
         }, effectWorlds);
-        return;
+        return acquisitionProbability;
       }
       const transferred = this.consumeRandomHandCards(state, target, this.eventProbability(effectWorlds));
       actor.handCount = (actor.handCount ?? 0) + transferred;
+      return transferred;
     } else if (selection.zone === "hand") {
-      this.transferUnknownBlockCapacity(
+      return this.transferUnknownBlockCapacity(
         state,
         target,
         actor,
@@ -2368,6 +2397,7 @@ export class AiSimulator {
         selection.availableUnknownCount
       );
     }
+    return 0;
   }
 
   /**
@@ -2380,16 +2410,18 @@ export class AiSimulator {
     }
     const effectWorlds = this.normalizeResourceEffectWorlds(state, resolution, label);
     const selection = this.chooseSimulatedResourceSelection(state, actor, target, "destroy");
-    if (!selection) return;
+    if (!selection) return 0;
     if (selection.zone === "equipment") {
       const existenceProbability = this.getSimulatedEquipmentProbability(target);
+      const removalProbability = existenceProbability * this.eventProbability(effectWorlds);
       this.setSimulatedEquipment(target, target.equipmentDefinitionId,
         existenceProbability * (1 - this.eventProbability(effectWorlds)));
+      return removalProbability;
     } else if (selection.zone === "hand" && selection.selectionKind === "known") {
       const entry = this.findKnownCardEntry(target, selection.cardId, selection.definitionId);
       if (entry && this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON) {
         const removalProbability = this.eventProbability(effectWorlds);
-        if (removalProbability <= PROBABILITY_EPSILON) return;
+        if (removalProbability <= PROBABILITY_EPSILON) return 0;
         if (selection.definitionId === "block") {
           this.removeKnownBlockFromDistribution(state, target, effectWorlds);
         }
@@ -2405,11 +2437,11 @@ export class AiSimulator {
         }
         target.handCount = Math.max(0, (target.handCount ?? 0) - removalProbability);
         this.syncCardEstimates(target, state?.remainingCardCounts);
-        return;
+        return removalProbability;
       }
-      this.consumeRandomHandCards(state, target, this.eventProbability(effectWorlds));
+      return this.consumeRandomHandCards(state, target, this.eventProbability(effectWorlds));
     } else if (selection.zone === "hand") {
-      this.consumeUnknownResourceCard(
+      return this.consumeUnknownResourceCard(
         state,
         target,
         this.eventProbability(effectWorlds),
@@ -2417,6 +2449,7 @@ export class AiSimulator {
         effectWorlds
       );
     }
+    return 0;
   }
 
   tacticResolutionChance(state, actor, card, targets = []) {
@@ -3222,6 +3255,7 @@ export class AiSimulator {
         }
         if (canRejuvenate) rescuer.rejuvenationUsed = true;
         this.consumeKnownCardsFromHand(state, rescuer, "recover", spent);
+        this.simulateCoordination(state, rescuer, [target], spent);
       }
       rounds += 1;
       if (!usedThisRound) break;

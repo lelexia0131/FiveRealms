@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-healer-tuner-balance-v136";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-healer-tuner-balance-v136";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-coordination-target-audit-v138";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-coordination-target-audit-v138";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

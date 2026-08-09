@@ -1,14 +1,14 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-healer-tuner-balance-v136";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-healer-tuner-balance-v136";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-healer-tuner-balance-v136";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-healer-tuner-balance-v136";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-coordination-target-audit-v138";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-coordination-target-audit-v138";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-coordination-target-audit-v138";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-coordination-target-audit-v138";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260809-healer-tuner-balance-v136";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260809-healer-tuner-balance-v136";
+} from "./lightningScoring.js?build=20260809-coordination-target-audit-v138";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260809-coordination-target-audit-v138";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

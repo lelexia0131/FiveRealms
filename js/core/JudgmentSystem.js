@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-healer-tuner-balance-v136";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-coordination-target-audit-v138";
 
 /**
  * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；

@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-healer-tuner-balance-v136";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-healer-tuner-balance-v136";
-import { createId, clamp } from "../utils/helpers.js?build=20260809-healer-tuner-balance-v136";
-import { EventBus } from "./EventBus.js?build=20260809-healer-tuner-balance-v136";
-import { Player } from "./Player.js?build=20260809-healer-tuner-balance-v136";
-import { Deck } from "./Deck.js?build=20260809-healer-tuner-balance-v136";
-import { TeamManager } from "./TeamManager.js?build=20260809-healer-tuner-balance-v136";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260809-healer-tuner-balance-v136";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-healer-tuner-balance-v136";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-healer-tuner-balance-v136";
-import { GameLogger } from "./GameLogger.js?build=20260809-healer-tuner-balance-v136";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-healer-tuner-balance-v136";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-healer-tuner-balance-v136";
-import { AIController } from "../ai/AiController.js?build=20260809-healer-tuner-balance-v136";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-healer-tuner-balance-v136";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-healer-tuner-balance-v136";
-import { Debug } from "../utils/debug.js?build=20260809-healer-tuner-balance-v136";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260809-healer-tuner-balance-v136";
-import { DyingSystem } from "./DyingSystem.js?build=20260809-healer-tuner-balance-v136";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-healer-tuner-balance-v136";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-healer-tuner-balance-v136";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260809-healer-tuner-balance-v136";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260809-healer-tuner-balance-v136";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-coordination-target-audit-v138";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-coordination-target-audit-v138";
+import { createId, clamp } from "../utils/helpers.js?build=20260809-coordination-target-audit-v138";
+import { EventBus } from "./EventBus.js?build=20260809-coordination-target-audit-v138";
+import { Player } from "./Player.js?build=20260809-coordination-target-audit-v138";
+import { Deck } from "./Deck.js?build=20260809-coordination-target-audit-v138";
+import { TeamManager } from "./TeamManager.js?build=20260809-coordination-target-audit-v138";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260809-coordination-target-audit-v138";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-coordination-target-audit-v138";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-coordination-target-audit-v138";
+import { GameLogger } from "./GameLogger.js?build=20260809-coordination-target-audit-v138";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-coordination-target-audit-v138";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-coordination-target-audit-v138";
+import { AIController } from "../ai/AiController.js?build=20260809-coordination-target-audit-v138";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-coordination-target-audit-v138";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-coordination-target-audit-v138";
+import { Debug } from "../utils/debug.js?build=20260809-coordination-target-audit-v138";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260809-coordination-target-audit-v138";
+import { DyingSystem } from "./DyingSystem.js?build=20260809-coordination-target-audit-v138";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-coordination-target-audit-v138";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-coordination-target-audit-v138";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260809-coordination-target-audit-v138";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260809-coordination-target-audit-v138";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -905,13 +905,17 @@ export class Game {
       const counterResult = !cancelledBeforeResolve && card.counterScope !== "target"
         ? await this.responseSystem.askForCounter(source, card, targets, {
           publicTransferContext:preparedTransfer?.publicContext ?? null,
-          publicSelectionContext:preparedPrivateSelection?.publicContext ?? null
+          publicSelectionContext:preparedPrivateSelection?.publicContext ?? null,
+          relatedTargets:preparedTransfer
+            ? [preparedTransfer.privateIntent.from, preparedTransfer.privateIntent.receiver]
+            : targets
         })
         : { status:RESPONSE_STATUS.UNAVAILABLE };
       if (!this.isSessionValid(gameId) || isCancelledResponse(counterResult)) return false;
       const countered = counterResult?.status === RESPONSE_STATUS.USED;
       let destination = "discard";
       let effectResolved = false;
+      let effectEffectiveTargets = null;
       if (cancelledBeforeResolve) {
         this.log(`「${card.name}」的效果被取消。`, "important");
       } else if (!countered) {
@@ -924,6 +928,9 @@ export class Game {
         if (!this.isSessionValid(gameId)) return false;
         destination = effectResult.destination;
         effectResolved = effectResult.resolved ?? true;
+        effectEffectiveTargets = Array.isArray(effectResult.effectiveTargets)
+          ? effectResult.effectiveTargets
+          : null;
       }
       expectedDestination = destination;
       if (destination === "discard") {
@@ -937,20 +944,19 @@ export class Game {
         throw new Error("未知的卡牌结算目标区域");
       }
       if (!this.isSessionValid(gameId)) return false;
-      const effectiveTargets = preparedTransfer
-        ? (effectResolved ? [preparedTransfer.privateIntent.receiver] : [])
-        : preparedLeverage
-          ? (effectResolved ? [preparedLeverage.firstTarget, preparedLeverage.secondTarget] : [])
-        : preparedPrivateSelection && !effectResolved
-          ? []
-        : card.definitionId === "mutualBenefit"
-          ? this.state.players.filter((player) => player.alive)
-          : targets;
-      const cancelled = countered || cancelledBeforeResolve
-        || Boolean((preparedTransfer || preparedPrivateSelection || preparedLeverage) && !effectResolved);
+      const resolved = !countered && !cancelledBeforeResolve && effectResolved;
+      const effectiveTargets = !resolved
+        ? []
+        : effectEffectiveTargets ?? (preparedTransfer
+          ? [preparedTransfer.privateIntent.from, preparedTransfer.privateIntent.receiver]
+          : preparedLeverage
+            ? [preparedLeverage.firstTarget, preparedLeverage.secondTarget]
+            : card.definitionId === "mutualBenefit"
+              ? this.state.players.filter((player) => player.alive)
+              : targets);
       await this.eventBus.emit("cardUsed", {
         type:"cardUsed", source, card, targets, effectiveTargets,
-        cancelled, resolved:!cancelled && effectResolved, resolutionId
+        cancelled:!resolved, resolved, resolutionId
       });
       if (!this.isSessionValid(gameId)) return false;
       source.statistics.cardsPlayed += 1;

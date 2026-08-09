@@ -1,5 +1,5 @@
 /** 二十六种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-healer-tuner-balance-v136";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-coordination-target-audit-v138";
 
 /** 只在最终效果解析时读取私密意图，并按原角色、原区域复验实体牌。 */
 function resolvePrivateSelectionIntent(game, source, card, target, context, expectedZone = null) {
@@ -49,11 +49,12 @@ const CARD_EFFECTS = {
 
   async shield(game, source, card, targets) {
     const target = targets[0];
-    if (!target?.alive || target.battleTeam !== source.battleTeam) return;
+    if (!target?.alive || target.battleTeam !== source.battleTeam) return { resolved:false };
     target.shield += 1;
     game.ui.queueFeedback?.("shield", target.id, 1);
     const targetLabel = target.id === source.id ? "自己" : target.name;
     game.log(`${source.name}使用「${card.name}」，令${targetLabel}获得1点护盾，现有${target.shield}点。`, "heal");
+    return { resolved:true };
   },
 
   async scout(game, source, card, targets, context) {
@@ -93,6 +94,7 @@ const CARD_EFFECTS = {
 
   async shockwave(game, source, card, targets, context) {
     const gameId = game.state.gameId;
+    const effectiveTargets = [];
     source.statistics.assaultsUsed += 1;
     const enemies = game.seatOrderFrom(source, false).filter((target) => target.alive && target.battleTeam !== source.battleTeam);
     for (const target of enemies) {
@@ -105,13 +107,16 @@ const CARD_EFFECTS = {
       if (counteredForTarget.status === "used") {
         continue;
       }
+      effectiveTargets.push(target);
       await game.damage(source, target, 1, { card, canBlock:true, damageType:"area", resolutionId:context.resolutionId });
       if (!game.isSessionValid(gameId)) return { resolved:false };
     }
+    return { effectiveTargets };
   },
 
   async provoke(game, source, card, _targets, context) {
     const gameId = game.state.gameId;
+    const effectiveTargets = [];
     for (const target of game.seatOrderFrom(source, false).filter((player) => player.alive && player.battleTeam !== source.battleTeam)) {
       if (game.state.isGameOver) break;
       if (!target.alive) continue;
@@ -124,11 +129,13 @@ const CARD_EFFECTS = {
       }
       const discarded = await game.responseSystem.requestAssaultDiscard(target, "响应挑衅并打出突袭", { source, target, card });
       if (!game.isSessionValid(gameId) || discarded.status === "cancelled") return { resolved:false };
+      effectiveTargets.push(target);
       if (discarded.status !== "used") await game.damage(source, target, 1, {
         card, canBlock:false, damageType:"provoke", actionName:"挑衅", resolutionId:context.resolutionId
       });
       if (!game.isSessionValid(gameId)) return { resolved:false };
     }
+    return { effectiveTargets };
   },
 
   /** 借势只编排统一响应、普通突袭和装备转移入口，不在卡牌层复制底层规则。 */
@@ -163,7 +170,7 @@ const CARD_EFFECTS = {
     if (!destroyed) return { resolved:false };
     game.ui.setCurrentCard?.(chosen.card, `${source.name}破坏的${chosen.zone === "equipment" ? "装备" : "手牌"}`, target.name);
     game.log(`${source.name}破坏了${target.name}的${chosen.zone === "equipment" ? "装备" : "手牌"}「${chosen.card.name}」。`, "important");
-    return { resolved:true };
+    return { resolved:true, effectiveTargets:[target] };
   },
 
   async harvest(game, source) { await game.drawCards(source, 2, "丰收"); },
@@ -203,10 +210,13 @@ const CARD_EFFECTS = {
 
   async symbiosis(game, source, card) {
     const gameId = game.state.gameId;
+    const effectiveTargets = [];
     for (const target of game.seatOrderFrom(source, true).filter((player) => player.alive)) {
-      await game.heal(source, target, 1, { card });
+      const healed = await game.heal(source, target, 1, { card });
       if (!game.isSessionValid(gameId)) return { resolved:false };
+      if (healed > 0) effectiveTargets.push(target);
     }
+    return { resolved:effectiveTargets.length > 0, effectiveTargets };
   },
 
   async seal(game, source, card, targets) {

@@ -550,6 +550,18 @@ test("角色规则：八名角色规则配置与README角色介绍一致", async
   }
 });
 
+test("角色规则：调律师协调的配置、技能详情与README统一使用有效作用目标文案", async () => {
+  const expected = "每回合首次令另一名队友成为卡牌的有效作用目标后，自己摸1张牌。",
+    tuner = GENERAL_DEFINITIONS.find((general) => general.id === "resonance-tuner"),
+    player = makePlayer("description-tuner", 0, "dawn", "human", 7),
+    readme = await readFile(projectFile("README.md"), "utf8"),
+    tunerSection = readme.match(/### 调律师[\s\S]*?(?=\r?\n### |\r?\n## )/)?.[0] ?? "";
+  assert.equal(tuner.passiveDescription, expected);
+  assert.ok(skillDetailsTemplate(player).includes(expected));
+  assert.ok(tunerSection.includes(`**被动·协调：** ${expected}`));
+  assert.doesNotMatch(tunerSection, /互利.*协调|转移.*协调|借势.*协调|只把接收者/);
+});
+
 test("角色规则：灵医配置与README同步回春摸牌、濒死触发及滋荣治疗规则", async () => {
   const medic = GENERAL_DEFINITIONS.find((general) => general.id === "spirit-medic"),
     readme = await readFile(projectFile("README.md"), "utf8"),
@@ -2551,10 +2563,16 @@ test("反制：震荡的反制只取消当前目标所受效果而不取消整�
   const shockwave = instance("shockwave"), counter = instance("counter"), bHp = b.hp, cHp = c.hp;
   a.hand.push(shockwave);
   b.hand.push(counter);
+  let usedEvent = null;
+  game.eventBus.on("cardUsed", "test:shockwave-effective-targets", (event) => {
+    if (event.card === shockwave) usedEvent = event;
+  });
   await game.playCard(a, shockwave, [b, c]);
   assert.equal(b.hp, bHp);
   assert.equal(c.hp, cHp - 1);
   assert.equal(b.hand.includes(counter), false);
+  assert.equal(usedEvent?.resolved, true);
+  assert.deepEqual(usedEvent?.effectiveTargets, [c]);
   assert.ok(
     ui.responseRequests.some(
       (request) => request.type === "counter" && request.targetPlayerId === b.id && request.presentation.responseText.includes(
@@ -2578,10 +2596,16 @@ test("反制：挑衅的反制只取消当前目标效果且不能保护队友",
   const provoke = instance("provoke"), counter = instance("counter"), bHp = b.hp, cHp = c.hp;
   a.hand.push(provoke);
   b.hand.push(counter);
+  let usedEvent = null;
+  game.eventBus.on("cardUsed", "test:provoke-effective-targets", (event) => {
+    if (event.card === provoke) usedEvent = event;
+  });
   await game.playCard(a, provoke, [b, c]);
   assert.equal(b.hp, bHp);
   assert.equal(c.hp, cHp - 1);
   assert.equal(b.hand.includes(counter), false);
+  assert.equal(usedEvent?.resolved, true);
+  assert.deepEqual(usedEvent?.effectiveTargets, [c]);
   assert.ok(
     ui.responseRequests.some(
       (request) => request.type === "counter" && request.targetPlayerId === b.id && request.presentation.responseText.includes(
@@ -5652,23 +5676,308 @@ test("调律师：协调每回合只触发一次且摸牌日志不重复", async
   const tuner = makePlayer("tuner", 0, "dawn", "ai", 7),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
-  const { game }
-    = makeGame([tuner, ally, enemy]);
+  const { game } = makeGame([tuner, ally, enemy]),
+    first = instance("shield"),
+    second = instance("shield");
+  tuner.hand.push(first, second);
   const drawReasons = [];
   game.eventBus.on("afterCardMove", "test:tuner-standard-draw", (event) => {
     if (event.from === "deck" && event.to === "hand") drawReasons.push(event.reason);
   });
   registerPassiveSkills(game);
-  game.state.deck.cards.push(instance("assault"), instance("block"));
-  await game.eventBus.emit("cardUsed", { source: tuner, card: instance("shield"), targets: [ally] });
-  await game.eventBus.emit("cardUsed", { source: tuner, card: instance("shield"), targets: [ally] });
+  game.state.deck.cards.push(instance("assault"));
+  assert.equal(await game.playCard(tuner, first, [ally]), true);
+  assert.equal(await game.playCard(tuner, second, [ally]), true);
   assert.equal(tuner.hand.length, 1);
+  assert.equal(ally.shield, 2);
   assert.equal(
     game.state.logs.filter((entry) => entry.message === `${tuner.name}触发「协调」，摸1张牌。`).length,
     1
   );
   assert.equal(game.state.logs.filter((entry) => entry.message.includes("摸了")).length, 0);
   assert.deepEqual(drawReasons, ["协调"]);
+});
+
+test("调律师：护盾以自己为有效目标时不触发协调", async () => {
+  const tuner = makePlayer("self-shield-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("self-shield-ally", 1, "dawn"),
+    enemy = makePlayer("self-shield-enemy", 2, "dusk"),
+    use = instance("shield"),
+    { game } = makeGame([tuner, ally, enemy]);
+  tuner.hand.push(use);
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  assert.equal(await game.playCard(tuner, use, [tuner]), true);
+  assert.equal(tuner.shield, 1);
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+  assert.equal(tuner.hand.length, 0);
+});
+
+test("调律师：共生只把实际恢复生命的队友作为有效目标并触发协调", async () => {
+  const tuner = makePlayer("symbiosis-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("symbiosis-ally", 1, "dawn"),
+    enemy = makePlayer("symbiosis-enemy", 2, "dusk"),
+    use = instance("symbiosis"),
+    { game } = makeGame([tuner, ally, enemy]);
+  ally.hp -= 1;
+  tuner.hand.push(use);
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  let usedEvent = null;
+  game.eventBus.on("cardUsed", "test:symbiosis-actual-effective-target", (event) => {
+    if (event.card === use) usedEvent = event;
+  });
+  assert.equal(await game.playCard(tuner, use, []), true);
+  assert.equal(ally.hp, ally.maxHp);
+  assert.equal(tuner.turnFlags.coordinationTriggered, true);
+  assert.equal(tuner.hand.length, 1);
+  assert.equal(usedEvent?.resolved, true);
+  assert.deepEqual(usedEvent?.effectiveTargets, [ally]);
+});
+
+test("调律师：共生只有敌人实际恢复生命时不触发协调", async () => {
+  const tuner = makePlayer("enemy-symbiosis-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("enemy-symbiosis-ally", 1, "dawn"),
+    enemy = makePlayer("enemy-symbiosis-target", 2, "dusk"),
+    use = instance("symbiosis"),
+    { game } = makeGame([tuner, ally, enemy]);
+  enemy.hp -= 1;
+  tuner.hand.push(use);
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  let usedEvent = null;
+  game.eventBus.on("cardUsed", "test:symbiosis-enemy-only-target", (event) => {
+    if (event.card === use) usedEvent = event;
+  });
+  assert.equal(await game.playCard(tuner, use, []), true);
+  assert.equal(enemy.hp, enemy.maxHp);
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+  assert.equal(tuner.hand.length, 0);
+  assert.equal(usedEvent?.resolved, true);
+  assert.deepEqual(usedEvent?.effectiveTargets, [enemy]);
+});
+
+test("调律师：共生被反制时没有有效目标且不触发协调", async () => {
+  const tuner = makePlayer("countered-symbiosis-tuner", 0, "dawn", "ai", 7),
+    counterer = makePlayer("countered-symbiosis-counterer", 1, "dusk", "human"),
+    ally = makePlayer("countered-symbiosis-ally", 2, "dawn"),
+    use = instance("symbiosis"),
+    counter = instance("counter"),
+    { game } = makeGame([tuner, counterer, ally], {
+      response:(request) => request.type === "counter" && request.cardId === use.id
+        && request.targetPlayerId === counterer.id
+    });
+  ally.hp -= 1;
+  tuner.hand.push(use);
+  counterer.hand.push(counter);
+  registerPassiveSkills(game);
+  let usedEvent = null;
+  game.eventBus.on("cardUsed", "test:countered-symbiosis-targets", (event) => {
+    if (event.card === use) usedEvent = event;
+  });
+  assert.equal(await game.playCard(tuner, use, []), true);
+  assert.equal(ally.hp, ally.maxHp - 1);
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+  assert.equal(usedEvent?.resolved, false);
+  assert.deepEqual(usedEvent?.effectiveTargets, []);
+});
+
+test("调律师：共生没有实际治疗时没有有效目标且不触发协调", async () => {
+  const tuner = makePlayer("empty-symbiosis-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("empty-symbiosis-ally", 1, "dawn"),
+    enemy = makePlayer("empty-symbiosis-enemy", 2, "dusk"),
+    use = instance("symbiosis"),
+    { game } = makeGame([tuner, ally, enemy]);
+  tuner.hand.push(use);
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  let usedEvent = null;
+  game.eventBus.on("cardUsed", "test:empty-symbiosis-targets", (event) => {
+    if (event.card === use) usedEvent = event;
+  });
+  assert.equal(await game.playCard(tuner, use, []), true);
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+  assert.equal(tuner.hand.length, 0);
+  assert.equal(usedEvent?.resolved, false);
+  assert.deepEqual(usedEvent?.effectiveTargets, []);
+});
+
+test("调律师：协调已由护盾触发后共生治疗队友不重复摸牌", async () => {
+  const tuner = makePlayer("once-symbiosis-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("once-symbiosis-ally", 1, "dawn"),
+    enemy = makePlayer("once-symbiosis-enemy", 2, "dusk"),
+    shield = instance("shield"),
+    symbiosis = instance("symbiosis"),
+    { game } = makeGame([tuner, ally, enemy]);
+  ally.hp -= 1;
+  tuner.hand.push(shield, symbiosis);
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  assert.equal(await game.playCard(tuner, shield, [ally]), true);
+  assert.equal(await game.playCard(tuner, symbiosis, []), true);
+  assert.equal(ally.hp, ally.maxHp);
+  assert.equal(tuner.hand.length, 1);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message.includes("触发「协调」")).length,
+    1
+  );
+});
+
+test("调律师：破坏队友资源成功时以队友为有效目标并触发协调", async () => {
+  const tuner = makePlayer("destroy-ally-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("destroy-ally-target", 1, "dawn"),
+    enemy = makePlayer("destroy-ally-enemy", 2, "dusk"),
+    use = instance("destroy"),
+    equipment = instance("energyDevice"),
+    { game } = makeGame([tuner, ally, enemy]);
+  tuner.hand.push(use);
+  ally.equipment = equipment;
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  let usedEvent = null;
+  game.eventBus.on("cardUsed", "test:destroy-ally-effective-target", (event) => {
+    if (event.card === use) usedEvent = event;
+  });
+  const hidden = game.cardSelectionSystem.createHiddenSelection(ally);
+  assert.equal(await game.playCard(tuner, use, [ally], {
+    zone:"equipment", equipmentCardId:equipment.id, selectionId:hidden.selectionId
+  }), true);
+  assert.equal(ally.equipment, null);
+  assert.equal(tuner.turnFlags.coordinationTriggered, true);
+  assert.equal(tuner.hand.length, 1);
+  assert.equal(usedEvent?.resolved, true);
+  assert.deepEqual(usedEvent?.effectiveTargets, [ally]);
+});
+
+test("调律师：破坏敌人资源成功时不触发协调", async () => {
+  const tuner = makePlayer("destroy-enemy-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("destroy-enemy-ally", 1, "dawn"),
+    enemy = makePlayer("destroy-enemy-target", 2, "dusk"),
+    use = instance("destroy"),
+    equipment = instance("energyDevice"),
+    { game } = makeGame([tuner, ally, enemy]);
+  tuner.hand.push(use);
+  enemy.equipment = equipment;
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  let usedEvent = null;
+  game.eventBus.on("cardUsed", "test:destroy-enemy-effective-target", (event) => {
+    if (event.card === use) usedEvent = event;
+  });
+  const hidden = game.cardSelectionSystem.createHiddenSelection(enemy);
+  assert.equal(await game.playCard(tuner, use, [enemy], {
+    zone:"equipment", equipmentCardId:equipment.id, selectionId:hidden.selectionId
+  }), true);
+  assert.equal(enemy.equipment, null);
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+  assert.equal(tuner.hand.length, 0);
+  assert.equal(usedEvent?.resolved, true);
+  assert.deepEqual(usedEvent?.effectiveTargets, [enemy]);
+});
+
+test("调律师：破坏被反制时不破坏资源且不触发协调", async () => {
+  const tuner = makePlayer("countered-destroy-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("countered-destroy-ally", 1, "dawn"),
+    counterer = makePlayer("countered-destroy-counterer", 2, "dusk", "human"),
+    use = instance("destroy"),
+    equipment = instance("energyDevice"),
+    counter = instance("counter"),
+    { game } = makeGame([tuner, ally, counterer], {
+      response:(request) => request.type === "counter" && request.cardId === use.id
+        && request.targetPlayerId === counterer.id
+    });
+  tuner.hand.push(use);
+  ally.equipment = equipment;
+  counterer.hand.push(counter);
+  registerPassiveSkills(game);
+  let usedEvent = null;
+  game.eventBus.on("cardUsed", "test:countered-destroy-targets", (event) => {
+    if (event.card === use) usedEvent = event;
+  });
+  const hidden = game.cardSelectionSystem.createHiddenSelection(ally);
+  assert.equal(await game.playCard(tuner, use, [ally], {
+    zone:"equipment", equipmentCardId:equipment.id, selectionId:hidden.selectionId
+  }), true);
+  assert.equal(ally.equipment, equipment);
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+  assert.equal(usedEvent?.resolved, false);
+  assert.deepEqual(usedEvent?.effectiveTargets, []);
+});
+
+test("调律师：破坏预选资源在结算前失效时不触发协调", async () => {
+  const tuner = makePlayer("missing-destroy-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("missing-destroy-ally", 1, "dawn"),
+    enemy = makePlayer("missing-destroy-enemy", 2, "dusk"),
+    use = instance("destroy"),
+    equipment = instance("energyDevice"),
+    { game } = makeGame([tuner, ally, enemy]);
+  tuner.hand.push(use);
+  ally.equipment = equipment;
+  registerPassiveSkills(game);
+  let usedEvent = null;
+  game.eventBus.on("beforeCardResolve", "test:remove-destroy-equipment-before-resolve", async (event) => {
+    if (event.card === use) await game.discardEquipment(ally, equipment, "测试预先移除");
+  });
+  game.eventBus.on("cardUsed", "test:missing-destroy-targets", (event) => {
+    if (event.card === use) usedEvent = event;
+  });
+  const hidden = game.cardSelectionSystem.createHiddenSelection(ally);
+  assert.equal(await game.playCard(tuner, use, [ally], {
+    zone:"equipment", equipmentCardId:equipment.id, selectionId:hidden.selectionId
+  }), true);
+  assert.equal(ally.equipment, null);
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+  assert.equal(usedEvent?.resolved, false);
+  assert.deepEqual(usedEvent?.effectiveTargets, []);
+});
+
+test("调律师：协调已由护盾触发后破坏队友资源不重复摸牌", async () => {
+  const tuner = makePlayer("once-destroy-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("once-destroy-ally", 1, "dawn"),
+    enemy = makePlayer("once-destroy-enemy", 2, "dusk"),
+    shield = instance("shield"),
+    destroy = instance("destroy"),
+    equipment = instance("energyDevice"),
+    { game } = makeGame([tuner, ally, enemy]);
+  tuner.hand.push(shield, destroy);
+  ally.equipment = equipment;
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  assert.equal(await game.playCard(tuner, shield, [ally]), true);
+  const hidden = game.cardSelectionSystem.createHiddenSelection(ally);
+  assert.equal(await game.playCard(tuner, destroy, [ally], {
+    zone:"equipment", equipmentCardId:equipment.id, selectionId:hidden.selectionId
+  }), true);
+  assert.equal(ally.equipment, null);
+  assert.equal(tuner.hand.length, 1);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message.includes("触发「协调」")).length,
+    1
+  );
+});
+
+test("调律师：用调息救援濒死队友时产生真实有效目标并触发协调", async () => {
+  const target = makePlayer("rescue-coordination-target", 0, "dawn", "human"),
+    tuner = makePlayer("rescue-coordination-tuner", 1, "dawn", "ai", 7),
+    enemy = makePlayer("rescue-coordination-enemy", 2, "dusk"),
+    recover = instance("recover"),
+    { game } = makeGame([target, tuner, enemy]);
+  target.hp = 0;
+  tuner.hand.push(recover);
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  let usedEvent = null;
+  game.eventBus.on("cardUsed", "test:rescue-recover-effective-target", (event) => {
+    if (event.card === recover) usedEvent = event;
+  });
+  assert.equal(await game.dyingSystem.enter(target, enemy), true);
+  assert.equal(target.hp, 1);
+  assert.equal(target.alive, true);
+  assert.equal(tuner.turnFlags.coordinationTriggered, true);
+  assert.equal(tuner.hand.length, 1);
+  assert.equal(usedEvent?.usageContext, "dyingRescue");
+  assert.equal(usedEvent?.resolved, true);
+  assert.deepEqual(usedEvent?.effectiveTargets, [target]);
 });
 
 test("调律师：共鸣前两次各耗1能量并各摸1张，第三次失败且新回合重置", async () => {
@@ -5736,23 +6045,25 @@ test("调律师：被反制的转移不移动牌且不触发协调", async () =>
   assert.equal(tuner.turnFlags.coordinationTriggered, false);
 });
 
-test("调律师：协调只看转移接收者：给敌人不触发，从敌人给队友才触发", async () => {
-  const noTriggerTuner = makePlayer("no-trigger", 0, "dawn", "human", 7),
+test("调律师：转移的来源与接收者任一为其他队友即可触发且两个队友仍只触发一次", async () => {
+  const sourceTriggerTuner = makePlayer("source-trigger", 0, "dawn", "human", 7),
     allySource = makePlayer("ally-source", 1, "dawn"),
     enemyReceiver = makePlayer("enemy-receiver", 2, "dusk");
   const firstUse = instance("transfer"), firstMoved = instance("harvest");
-  noTriggerTuner.hand.push(firstUse);
+  sourceTriggerTuner.hand.push(firstUse);
   allySource.hand.push(firstMoved);
   const { game: firstGame }
-    = makeGame([noTriggerTuner, allySource, enemyReceiver]);
+    = makeGame([sourceTriggerTuner, allySource, enemyReceiver]);
+  firstGame.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(firstGame);
   await firstGame.playCard(
-    noTriggerTuner,
+    sourceTriggerTuner,
     firstUse,
     [],
     { sourceId: allySource.id, receiverId: enemyReceiver.id, zone: "hand" }
   );
-  assert.equal(noTriggerTuner.turnFlags.coordinationTriggered, false);
+  assert.equal(sourceTriggerTuner.turnFlags.coordinationTriggered, true);
+  assert.ok(enemyReceiver.hand.includes(firstMoved));
   const enemyOnlyTuner = makePlayer("enemy-only", 0, "dawn", "ai", 7),
     enemySourceOnly = makePlayer("enemy-source-only", 1, "dusk"),
     enemyReceiverOnly = makePlayer("enemy-receiver-only", 2, "dusk");
@@ -5784,6 +6095,30 @@ test("调律师：协调只看转移接收者：给敌人不触发，从敌人�
   );
   assert.equal(triggerTuner.turnFlags.coordinationTriggered, true);
   assert.ok(allyReceiver.hand.includes(secondMoved));
+
+  const doubleTuner = makePlayer("double-target", 0, "dawn", "ai", 7),
+    allyFrom = makePlayer("double-source", 1, "dawn"),
+    doubleEnemy = makePlayer("double-enemy", 2, "dusk"),
+    allyTo = makePlayer("double-receiver", 3, "dawn"),
+    doubleUse = instance("transfer"),
+    doubleMoved = instance("block"),
+    { game:doubleGame } = makeGame([doubleTuner, allyFrom, doubleEnemy, allyTo]);
+  doubleTuner.hand.push(doubleUse);
+  allyFrom.hand.push(doubleMoved);
+  doubleGame.state.deck.cards.push(instance("recover"));
+  registerPassiveSkills(doubleGame);
+  assert.equal(await doubleGame.playCard(
+    doubleTuner,
+    doubleUse,
+    [],
+    { sourceId:allyFrom.id, receiverId:allyTo.id, zone:"hand" }
+  ), true);
+  assert.ok(allyTo.hand.includes(doubleMoved));
+  assert.equal(doubleTuner.turnFlags.coordinationTriggered, true);
+  assert.equal(
+    doubleGame.state.logs.filter((entry) => entry.message.includes("触发「协调」")).length,
+    1
+  );
 });
 
 test("调律师：互利包含多个队友时每次用牌仍只触发一次协调", async () => {
@@ -5802,6 +6137,216 @@ test("调律师：互利包含多个队友时每次用牌仍只触发一次协�
   await game.playCard(tuner, use, []);
   assert.equal(tuner.turnFlags.coordinationTriggered, true);
   assert.equal(tuner.hand.length, 2);
+});
+
+test("调律师：掠夺实际作用于队友时触发协调", async () => {
+  const tuner = makePlayer("ally-plunder-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("ally-plunder-target", 1, "dawn"),
+    enemy = makePlayer("ally-plunder-enemy", 2, "dusk"),
+    use = instance("plunder"),
+    moved = instance("block"),
+    { game } = makeGame([tuner, ally, enemy]);
+  tuner.hand.push(use);
+  ally.hand.push(moved);
+  ally.bumpHandVersion();
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  const hidden = game.cardSelectionSystem.createHiddenSelection(ally);
+  assert.equal(await game.playCard(tuner, use, [ally], {
+    tokens:[hidden.tokens[0].token], selectionId:hidden.selectionId
+  }), true);
+  assert.ok(tuner.hand.includes(moved));
+  assert.equal(tuner.turnFlags.coordinationTriggered, true);
+});
+
+test("调律师：掠夺实际作用于敌人时不触发协调", async () => {
+  const tuner = makePlayer("enemy-plunder-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("enemy-plunder-ally", 1, "dawn"),
+    enemy = makePlayer("enemy-plunder-target", 2, "dusk"),
+    use = instance("plunder"),
+    moved = instance("block"),
+    { game } = makeGame([tuner, ally, enemy]);
+  tuner.hand.push(use);
+  enemy.hand.push(moved);
+  enemy.bumpHandVersion();
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  const hidden = game.cardSelectionSystem.createHiddenSelection(enemy);
+  assert.equal(await game.playCard(tuner, use, [enemy], {
+    tokens:[hidden.tokens[0].token], selectionId:hidden.selectionId
+  }), true);
+  assert.ok(tuner.hand.includes(moved));
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+});
+
+test("调律师：窥探实际作用于队友时触发协调", async () => {
+  const tuner = makePlayer("ally-scout-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("ally-scout-target", 1, "dawn"),
+    enemy = makePlayer("ally-scout-enemy", 2, "dusk"),
+    use = instance("scout"),
+    secret = instance("counter"),
+    { game } = makeGame([tuner, ally, enemy]);
+  tuner.hand.push(use);
+  ally.hand.push(secret);
+  ally.bumpHandVersion();
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  const hidden = game.cardSelectionSystem.createHiddenSelection(ally);
+  assert.equal(await game.playCard(tuner, use, [ally], {
+    tokens:[hidden.tokens[0].token], selectionId:hidden.selectionId
+  }), true);
+  assert.equal(tuner.turnFlags.coordinationTriggered, true);
+  assert.equal(tuner.hand.length, 1);
+});
+
+test("调律师：窥探实际作用于敌人时不触发协调", async () => {
+  const tuner = makePlayer("enemy-scout-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("enemy-scout-ally", 1, "dawn"),
+    enemy = makePlayer("enemy-scout-target", 2, "dusk"),
+    use = instance("scout"),
+    secret = instance("counter"),
+    { game } = makeGame([tuner, ally, enemy]);
+  tuner.hand.push(use);
+  enemy.hand.push(secret);
+  enemy.bumpHandVersion();
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  const hidden = game.cardSelectionSystem.createHiddenSelection(enemy);
+  assert.equal(await game.playCard(tuner, use, [enemy], {
+    tokens:[hidden.tokens[0].token], selectionId:hidden.selectionId
+  }), true);
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+  assert.equal(tuner.hand.length, 0);
+});
+
+test("调律师：借势第一目标或第二目标为队友均触发且两个目标都是队友仍只触发一次", async () => {
+  const cases = [
+    { id:"first", firstTeam:"dawn", secondTeam:"dusk" },
+    { id:"second", firstTeam:"dusk", secondTeam:"dawn" },
+    { id:"both", firstTeam:"dawn", secondTeam:"dawn" }
+  ];
+  for (const current of cases) {
+    const tuner = makePlayer(`leverage-${current.id}-tuner`, 0, "dawn", "ai", 7),
+      first = makePlayer(`leverage-${current.id}-first`, 1, current.firstTeam),
+      second = makePlayer(`leverage-${current.id}-second`, 2, current.secondTeam),
+      enemy = makePlayer(`leverage-${current.id}-enemy`, 3, "dusk"),
+      use = instance("leverage"),
+      equipment = instance("energyDevice"),
+      { game } = makeGame([tuner, first, second, enemy]);
+    tuner.hand.push(use);
+    first.equipment = equipment;
+    game.state.deck.cards.push(instance("charge"));
+    registerPassiveSkills(game);
+    assert.equal(await game.playCard(tuner, use, [], {
+      firstTargetId:first.id,
+      equipmentCardId:equipment.id,
+      secondTargetId:second.id
+    }), true, current.id);
+    assert.equal(tuner.turnFlags.coordinationTriggered, true, current.id);
+    assert.equal(
+      game.state.logs.filter((entry) => entry.message.includes("触发「协调」")).length,
+      1,
+      current.id
+    );
+  }
+});
+
+test("调律师：借势被反制取消时没有有效目标且不触发协调", async () => {
+  const tuner = makePlayer("cancelled-leverage-tuner", 0, "dawn", "ai", 7),
+    counterer = makePlayer("cancelled-leverage-counterer", 1, "dusk", "human"),
+    first = makePlayer("cancelled-leverage-first", 2, "dawn"),
+    second = makePlayer("cancelled-leverage-second", 3, "dusk"),
+    use = instance("leverage"),
+    equipment = instance("energyDevice"),
+    counter = instance("counter"),
+    { game } = makeGame([tuner, counterer, first, second], {
+      response:(request) => request.type === "counter" && request.cardId === use.id
+        && request.targetPlayerId === counterer.id
+    });
+  tuner.hand.push(use);
+  counterer.hand.push(counter);
+  first.equipment = equipment;
+  registerPassiveSkills(game);
+  let usedEvent = null;
+  game.eventBus.on("cardUsed", "test:cancelled-leverage-targets", (event) => {
+    if (event.card.id === use.id) usedEvent = event;
+  });
+  assert.equal(await game.playCard(tuner, use, [], {
+    firstTargetId:first.id,
+    equipmentCardId:equipment.id,
+    secondTargetId:second.id
+  }), true);
+  assert.equal(first.equipment, equipment);
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+  assert.deepEqual(usedEvent.effectiveTargets, []);
+  assert.equal(usedEvent.resolved, false);
+});
+
+test("调律师：最终生效的反制把原施牌者与原目标纳入有效作用目标并触发协调", async () => {
+  const enemy = makePlayer("counter-source", 0, "dusk", "human"),
+    tuner = makePlayer("counter-tuner", 1, "dawn", "human", 7),
+    ally = makePlayer("counter-ally", 2, "dawn"),
+    use = instance("scout"),
+    tunerCounter = instance("counter"),
+    secret = instance("block"),
+    { game } = makeGame([enemy, tuner, ally], {
+      response:(request) => request.type === "counter" && request.cardId === use.id
+        && request.targetPlayerId === tuner.id
+    });
+  enemy.hand.push(use);
+  tuner.hand.push(tunerCounter);
+  ally.hand.push(secret);
+  ally.bumpHandVersion();
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  let counterEvent = null;
+  game.eventBus.on("cardUsed", "test:resolved-counter-targets", (event) => {
+    if (event.card.id === tunerCounter.id) counterEvent = event;
+  });
+  const hidden = game.cardSelectionSystem.createHiddenSelection(ally);
+  assert.equal(await game.playCard(enemy, use, [ally], {
+    tokens:[hidden.tokens[0].token], selectionId:hidden.selectionId
+  }), true);
+  assert.equal(tuner.turnFlags.coordinationTriggered, true);
+  assert.equal(tuner.hand.length, 1);
+  assert.equal(counterEvent.resolved, true);
+  assert.deepEqual(counterEvent.effectiveTargets, [enemy, ally]);
+});
+
+test("调律师：被下一层反制取消的反制不产生有效结算且不触发协调", async () => {
+  const enemy = makePlayer("counter-chain-source", 0, "dusk", "human"),
+    tuner = makePlayer("counter-chain-tuner", 1, "dawn", "human", 7),
+    counterer = makePlayer("counter-chain-counterer", 2, "dusk", "human"),
+    ally = makePlayer("counter-chain-ally", 3, "dawn"),
+    use = instance("scout"),
+    tunerCounter = instance("counter"),
+    nextCounter = instance("counter"),
+    secret = instance("block"),
+    { game } = makeGame([enemy, tuner, counterer, ally], {
+      response:(request) => (
+        request.type === "counter"
+        && ((request.cardId === use.id && request.targetPlayerId === tuner.id)
+          || (request.cardId === tunerCounter.id && request.targetPlayerId === counterer.id))
+      )
+    });
+  enemy.hand.push(use);
+  tuner.hand.push(tunerCounter);
+  counterer.hand.push(nextCounter);
+  ally.hand.push(secret);
+  ally.bumpHandVersion();
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+  const resolvedCounterIds = [];
+  game.eventBus.on("cardUsed", "test:counter-chain-effective-use", (event) => {
+    if (event.card.definitionId === "counter") resolvedCounterIds.push(event.card.id);
+  });
+  const hidden = game.cardSelectionSystem.createHiddenSelection(ally);
+  assert.equal(await game.playCard(enemy, use, [ally], {
+    tokens:[hidden.tokens[0].token], selectionId:hidden.selectionId
+  }), true);
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+  assert.ok(!resolvedCounterIds.includes(tunerCounter.id));
+  assert.deepEqual(resolvedCounterIds, [nextCounter.id]);
 });
 
 test("调律师：beforeCardUse 与 beforeCardResolve 取消的牌都不触发协调", async () => {
@@ -14442,6 +14987,315 @@ test("AI·调律师：协调只依据未取消的其他己方有效目标且同�
     counterState
   ).apply(counterState, { type: "card", card: { ...CARD_DEFINITIONS.mutualBenefit, id: "coord-mutual" }, targets: counterState.players }, counterActor.id);
   assert.equal(countered.players[0].coordinationTriggered, false);
+});
+
+test("AI·调律师：转移来源、借势双目标与反制关系都使用统一有效目标语义", () => {
+  const basePlayer = (id, seatIndex, battleTeam, overrides = {}) => ({
+    id,
+    seatIndex,
+    battleTeam,
+    generalId:"blade-walker",
+    alive:true,
+    hp:4,
+    maxHp:4,
+    shield:0,
+    energy:0,
+    handCount:0,
+    attackRange:1,
+    counterProbability:0,
+    blockProbability:0,
+    assaultResponseProbability:0,
+    ...overrides
+  });
+  const transferState = {
+    remainingCardCounts:{ block:0, counter:0 },
+    players:[
+      basePlayer("ai-transfer-tuner", 0, "dawn", {
+        generalId:"resonance-tuner",
+        handCount:1,
+        hand:[{ ...CARD_DEFINITIONS.transfer, id:"ai-transfer-use" }],
+        coordinationTriggered:false
+      }),
+      basePlayer("ai-transfer-ally", 1, "dawn", { handCount:1 }),
+      basePlayer("ai-transfer-enemy", 2, "dusk")
+    ]
+  };
+  const transfer = new AiSimulator(transferState).apply(transferState, {
+    type:"card",
+    card:transferState.players[0].hand[0],
+    targets:[],
+    selection:{
+      sourceId:"ai-transfer-ally",
+      receiverId:"ai-transfer-enemy",
+      zone:"hand",
+      selectionKind:"unknown",
+      availableUnknownCount:1
+    }
+  }, "ai-transfer-tuner");
+  assert.equal(transfer.players[0].coordinationTriggered, true);
+
+  const leverageState = {
+    players:[
+      basePlayer("ai-leverage-tuner", 0, "dawn", {
+        generalId:"resonance-tuner",
+        handCount:1,
+        hand:[{ ...CARD_DEFINITIONS.leverage, id:"ai-leverage-use" }],
+        coordinationTriggered:false
+      }),
+      basePlayer("ai-leverage-ally", 1, "dawn", {
+        equipmentDefinitionId:"energyDevice",
+        equipmentRetentionProbability:1
+      }),
+      basePlayer("ai-leverage-enemy", 2, "dusk")
+    ]
+  };
+  const leverage = new AiSimulator(leverageState).apply(leverageState, {
+    type:"card",
+    card:leverageState.players[0].hand[0],
+    targets:[leverageState.players[1], leverageState.players[2]],
+    selection:{
+      firstTargetId:"ai-leverage-ally",
+      secondTargetId:"ai-leverage-enemy"
+    }
+  }, "ai-leverage-tuner");
+  assert.equal(leverage.players[0].coordinationTriggered, true);
+
+  const counterState = {
+    players:[
+      basePlayer("ai-counter-tuner", 0, "dawn", {
+        generalId:"resonance-tuner",
+        handCount:1,
+        hand:[{ ...CARD_DEFINITIONS.counter, id:"ai-counter-use" }],
+        coordinationTriggered:false
+      }),
+      basePlayer("ai-counter-enemy", 1, "dusk"),
+      basePlayer("ai-counter-ally", 2, "dawn")
+    ]
+  };
+  const counter = new AiSimulator(counterState).apply(counterState, {
+    type:"card",
+    card:counterState.players[0].hand[0],
+    targets:[counterState.players[1], counterState.players[2]]
+  }, "ai-counter-tuner");
+  assert.equal(counter.players[0].coordinationTriggered, true);
+});
+
+test("AI·调律师：窥探与掠夺按实际队友目标触发且敌方目标不触发", () => {
+  const simulate = (definitionId, targetTeam) => {
+    const actor = {
+      id:`ai-${definitionId}-${targetTeam}-tuner`,
+      seatIndex:0,
+      battleTeam:"dawn",
+      generalId:"resonance-tuner",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      shield:0,
+      handCount:1,
+      hand:[{ ...CARD_DEFINITIONS[definitionId], id:`ai-${definitionId}-${targetTeam}-use` }],
+      counterProbability:0,
+      coordinationTriggered:false
+    };
+    const target = {
+      id:`ai-${definitionId}-${targetTeam}-target`,
+      seatIndex:1,
+      battleTeam:targetTeam,
+      generalId:"blade-walker",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      shield:0,
+      handCount:1,
+      counterProbability:0,
+      blockProbability:0,
+      knownCards:[]
+    };
+    const other = {
+      id:`ai-${definitionId}-${targetTeam}-other`,
+      seatIndex:2,
+      battleTeam:targetTeam === "dawn" ? "dusk" : "dawn",
+      generalId:"blade-walker",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      shield:0,
+      handCount:0,
+      counterProbability:0,
+      blockProbability:0
+    };
+    const state = { remainingCardCounts:{ block:0, counter:0 }, players:[actor, target, other] };
+    return new AiSimulator(state).apply(state, {
+      type:"card",
+      card:actor.hand[0],
+      targets:[target]
+    }, actor.id).players[0];
+  };
+  for (const definitionId of ["scout", "plunder"]) {
+    assert.equal(simulate(definitionId, "dawn").coordinationTriggered, true, definitionId);
+    assert.equal(simulate(definitionId, "dusk").coordinationTriggered, false, definitionId);
+  }
+});
+
+test("AI·调律师：共生只按实际治疗的队友触发协调", () => {
+  const simulate = (allyHp, enemyHp) => {
+    const actor = {
+      id:"ai-symbiosis-tuner",
+      seatIndex:0,
+      battleTeam:"dawn",
+      generalId:"resonance-tuner",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      shield:0,
+      handCount:1,
+      hand:[{ ...CARD_DEFINITIONS.symbiosis, id:"ai-symbiosis-use" }],
+      coordinationTriggered:false,
+      counterProbability:0
+    };
+    const ally = {
+      id:"ai-symbiosis-ally",
+      seatIndex:1,
+      battleTeam:"dawn",
+      generalId:"blade-walker",
+      alive:true,
+      hp:allyHp,
+      maxHp:4,
+      shield:0,
+      handCount:0,
+      counterProbability:0
+    };
+    const enemy = {
+      id:"ai-symbiosis-enemy",
+      seatIndex:2,
+      battleTeam:"dusk",
+      generalId:"blade-walker",
+      alive:true,
+      hp:enemyHp,
+      maxHp:4,
+      shield:0,
+      handCount:0,
+      counterProbability:0
+    };
+    const state = { remainingCardCounts:{ counter:0 }, players:[actor, ally, enemy] };
+    return new AiSimulator(state).apply(state, {
+      type:"card", card:actor.hand[0], targets:state.players
+    }, actor.id);
+  };
+  const allyHealed = simulate(3, 4);
+  assert.equal(allyHealed.players[0].coordinationTriggered, true);
+  assert.equal(allyHealed.players[0].handCount, 1);
+  assert.equal(allyHealed.players[1].hp, 4);
+
+  const enemyOnly = simulate(4, 3);
+  assert.equal(enemyOnly.players[0].coordinationTriggered, false);
+  assert.equal(enemyOnly.players[0].handCount, 0);
+  assert.equal(enemyOnly.players[2].hp, 4);
+});
+
+test("AI·调律师：破坏队友资源成功时触发协调且无资源时不触发", () => {
+  const simulate = (hasEquipment) => {
+    const actor = {
+      id:"ai-destroy-tuner",
+      seatIndex:0,
+      battleTeam:"dawn",
+      generalId:"resonance-tuner",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      shield:0,
+      handCount:1,
+      hand:[{ ...CARD_DEFINITIONS.destroy, id:"ai-destroy-use" }],
+      coordinationTriggered:false,
+      counterProbability:0
+    };
+    const ally = {
+      id:"ai-destroy-ally",
+      seatIndex:1,
+      battleTeam:"dawn",
+      generalId:"blade-walker",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      shield:0,
+      handCount:0,
+      knownCards:[],
+      equipmentDefinitionId:hasEquipment ? "energyDevice" : null,
+      equipmentRetentionProbability:hasEquipment ? 1 : 0,
+      counterProbability:0
+    };
+    const enemy = {
+      id:"ai-destroy-enemy",
+      seatIndex:2,
+      battleTeam:"dusk",
+      generalId:"blade-walker",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      shield:0,
+      handCount:0,
+      counterProbability:0
+    };
+    const state = { remainingCardCounts:{ counter:0 }, players:[actor, ally, enemy] };
+    return new AiSimulator(state).apply(state, {
+      type:"card", card:actor.hand[0], targets:[ally]
+    }, actor.id);
+  };
+  const destroyed = simulate(true);
+  assert.equal(destroyed.players[0].coordinationTriggered, true);
+  assert.equal(destroyed.players[0].handCount, 1);
+  assert.equal(destroyed.players[1].equipmentDefinitionId, null);
+
+  const missing = simulate(false);
+  assert.equal(missing.players[0].coordinationTriggered, false);
+  assert.equal(missing.players[0].handCount, 0);
+});
+
+test("AI·调律师：用调息救援濒死队友时触发协调", () => {
+  const target = {
+    id:"ai-rescue-coordination-target",
+    seatIndex:0,
+    battleTeam:"dawn",
+    generalId:"blade-walker",
+    alive:true,
+    hp:0,
+    maxHp:4,
+    handCount:0,
+    hand:[],
+    expectedRecoverCount:0
+  };
+  const tuner = {
+    id:"ai-rescue-coordination-tuner",
+    seatIndex:1,
+    battleTeam:"dawn",
+    generalId:"resonance-tuner",
+    alive:true,
+    hp:4,
+    maxHp:4,
+    handCount:1,
+    hand:[{ id:"ai-rescue-recover", definitionId:"recover" }],
+    expectedRecoverCount:1,
+    coordinationTriggered:false,
+    counterProbability:0
+  };
+  const enemy = {
+    id:"ai-rescue-coordination-enemy",
+    seatIndex:2,
+    battleTeam:"dusk",
+    generalId:"blade-walker",
+    alive:true,
+    hp:4,
+    maxHp:4,
+    handCount:0,
+    expectedRecoverCount:0,
+    counterProbability:0
+  };
+  const state = { remainingCardCounts:{ counter:0 }, players:[target, tuner, enemy] };
+  new AiSimulator(state).resolveFatal(state, target, enemy);
+  assert.equal(target.alive, true);
+  assert.equal(target.hp, 1);
+  assert.equal(tuner.expectedRecoverCount, 0);
+  assert.equal(tuner.coordinationTriggered, true);
+  assert.equal(tuner.handCount, 1);
 });
 
 // ---- AI 响应模型·反制概率 ----
@@ -28296,7 +29150,7 @@ test("集成：互利规则目标包含所有存活角色且调律师只触发�
   assert.equal(tuner.hand.length, 2);
 });
 
-test("集成：调律师转移给队友把接收者作为有效目标并只触发一次协调", async () => {
+test("集成：调律师转移把来源与接收者都作为有效目标并只触发一次协调", async () => {
   const tuner = makePlayer("tuner", 0, "dawn", "ai", 7),
     enemy = makePlayer("enemy", 1, "dusk"),
     ally = makePlayer("ally", 2, "dawn");
@@ -28330,7 +29184,7 @@ test("集成：调律师转移给队友把接收者作为有效目标并只触�
   assert.equal(tuner.hand.length, 1);
   assert.equal(usedEvent.cancelled, false);
   assert.equal(usedEvent.resolved, true);
-  assert.deepEqual(usedEvent.effectiveTargets, [ally]);
+  assert.deepEqual(usedEvent.effectiveTargets, [enemy, ally]);
 });
 
 test("集成：正式击杀敌人额外摸1张牌再判定胜负，救回与队友死亡均不奖励", async () => {

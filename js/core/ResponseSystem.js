@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-healer-tuner-balance-v136";
-import { createId } from "../utils/helpers.js?build=20260809-healer-tuner-balance-v136";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-healer-tuner-balance-v136";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-healer-tuner-balance-v136";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-coordination-target-audit-v138";
+import { createId } from "../utils/helpers.js?build=20260809-coordination-target-audit-v138";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-coordination-target-audit-v138";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-coordination-target-audit-v138";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -309,6 +309,29 @@ export class ResponseSystem {
     return this.requestCardResponse(target, "block", { source, target, ...context }, required);
   }
 
+  /** 响应牌只在整条反制链确认其最终生效后，才公开本次真实关联的存活角色。 */
+  async emitResolvedCounterUse(responder, counterCard, relatedPlayers = []) {
+    const seen = new Set();
+    const effectiveTargets = [];
+    for (const related of relatedPlayers) {
+      const player = this.game.state.players.find((candidate) => candidate.id === related?.id);
+      if (!player?.alive || seen.has(player.id)) continue;
+      seen.add(player.id);
+      effectiveTargets.push(player);
+    }
+    await this.game.eventBus.emit("cardUsed", {
+      type:"cardUsed",
+      source:responder,
+      card:counterCard,
+      targets:effectiveTargets,
+      effectiveTargets,
+      cancelled:false,
+      resolved:true,
+      resolutionId:createId("counter-resolution"),
+      usageContext:"response"
+    });
+  }
+
   async askForCounter(source, card, targets, chainContext = {}) {
     const gameId = this.game.state.gameId;
     if (card.category !== "tactic" || !card.counterable) return responseResult(RESPONSE_STATUS.UNAVAILABLE);
@@ -345,6 +368,10 @@ export class ResponseSystem {
       if (counterWasCountered.status === RESPONSE_STATUS.USED) {
         return responseResult(RESPONSE_STATUS.DECLINED);
       }
+      await this.emitResolvedCounterUse(
+        responder, counterCard, [source, ...(chainContext.relatedTargets ?? targets)]
+      );
+      if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       return responseResult(RESPONSE_STATUS.USED, { card:counterCard });
     }
     return responseResult(RESPONSE_STATUS.DECLINED);
@@ -393,6 +420,8 @@ export class ResponseSystem {
       const counterWasCountered = await this.askForCounter(responder, counterCard, [holder], { targetCard:null, statusCounterChain:true });
       if (isCancelledResponse(counterWasCountered) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       if (counterWasCountered.status === RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.DECLINED);
+      await this.emitResolvedCounterUse(responder, counterCard, [holder]);
+      if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       return responseResult(RESPONSE_STATUS.USED, { card:counterCard });
     }
     return responseResult(RESPONSE_STATUS.DECLINED);

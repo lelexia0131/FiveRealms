@@ -72,8 +72,8 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "resonance-tuner", name: "调律师", glyph: "律", portrait: "./assets/characters/resonance-tuner.svg",
     loreFaction: "鸣风塔", maxHp: 4, tags: ["辅助", "过牌"], roleTags: ["support", "control"], passiveSkillIds: ["coordination"], activeSkillIds: ["resonance"],
-    passiveName: "协调", passiveDescription: "每回合首次令另一名队友成为卡牌的有效作用目标后，自己摸1张牌；互利的所有存活角色与转移的接收者均按此规则计入。",
-    passiveTriggerText: "对另一名队友使用卡牌后", passiveLimitText: "每回合限触发1次",
+    passiveName: "协调", passiveDescription: "每回合首次令另一名队友成为卡牌的有效作用目标后，自己摸1张牌。",
+    passiveTriggerText: "令另一名队友成为卡牌的有效作用目标后", passiveLimitText: "每回合限触发1次",
     activeName: "共鸣", activeDescription: "消耗1点能量，令自己或一名存活队友摸1张牌；每回合最多发动2次。", activeCost: 1, activeLimitPerTurn: 2,
     description: "借风塔谐振器校准队友的行动，让每一次协作都产生新的回响。",
     aiProfile: profile(.6, .8, 1.45, .9, .7, .8, .75, .55)

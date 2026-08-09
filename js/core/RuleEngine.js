@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260809-healer-tuner-balance-v136";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-healer-tuner-balance-v136";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260809-coordination-target-audit-v138";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-coordination-target-audit-v138";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

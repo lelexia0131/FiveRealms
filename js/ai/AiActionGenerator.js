@@ -2,13 +2,13 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-healer-tuner-balance-v136";
-import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260809-healer-tuner-balance-v136";
-import { getSealStatusStateBranches } from "./sealScoring.js?build=20260809-healer-tuner-balance-v136";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-healer-tuner-balance-v136";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-healer-tuner-balance-v136";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260809-healer-tuner-balance-v136";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-healer-tuner-balance-v136";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-coordination-target-audit-v138";
+import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260809-coordination-target-audit-v138";
+import { getSealStatusStateBranches } from "./sealScoring.js?build=20260809-coordination-target-audit-v138";
+import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-coordination-target-audit-v138";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-coordination-target-audit-v138";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260809-coordination-target-audit-v138";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-coordination-target-audit-v138";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,7 +20,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260809-healer-tuner-balance-v136";
+} from "./AiProbabilityBranches.js?build=20260809-coordination-target-audit-v138";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {

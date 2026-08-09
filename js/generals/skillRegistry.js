@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-healer-tuner-balance-v136";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-healer-tuner-balance-v136";
-import { randomChoice } from "../utils/helpers.js?build=20260809-healer-tuner-balance-v136";
-import { Debug } from "../utils/debug.js?build=20260809-healer-tuner-balance-v136";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-coordination-target-audit-v138";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-coordination-target-audit-v138";
+import { randomChoice } from "../utils/helpers.js?build=20260809-coordination-target-audit-v138";
+import { Debug } from "../utils/debug.js?build=20260809-coordination-target-audit-v138";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -199,10 +199,10 @@ const PASSIVE_SKILLS = {
 
   coordination(game, owner) {
     game.eventBus.on("cardUsed", `${owner.id}:coordination`, async (event) => {
-      if (event.cancelled) return;
-      if (!owner.alive || event.source.id !== owner.id || owner.turnFlags.coordinationTriggered) return;
-      const effectiveTargets = event.effectiveTargets ?? event.targets ?? [];
-      if (!effectiveTargets.some((target) => target.id !== owner.id && target.battleTeam === owner.battleTeam)) return;
+      if (!owner.alive || event.resolved !== true || event.source?.id !== owner.id
+        || owner.turnFlags.coordinationTriggered) return;
+      if (!(event.effectiveTargets ?? []).some((target) => target?.alive && target.id !== owner.id
+        && target.battleTeam === owner.battleTeam)) return;
       owner.turnFlags.coordinationTriggered = true;
       const gameId = game.state.gameId;
       const drawn = await game.drawCards(owner, 1, "协调", { silent:true });
