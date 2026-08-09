@@ -2,15 +2,15 @@
  * 封印的 AI 共享纯计算：只读取过滤后的状态、反制概率与剩余牌类别计数，
  * 不实例化匿名判定牌，也不修改 remainingCardCounts 根先验。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-seal-ai-threat-fix-v124";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-seal-ai-threat-fix-v124";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-seal-ai-threat-fix-v124";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-momentum-log-fix-v130";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-momentum-log-fix-v130";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-momentum-log-fix-v130";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
   mergeProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260809-seal-ai-threat-fix-v124";
+} from "./AiProbabilityBranches.js?build=20260809-momentum-log-fix-v130";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;
@@ -238,7 +238,7 @@ export function sealOutcomeProbabilities(state, holder) {
   });
 }
 
-/** 从 viewerTeam 视角返回封印导致失去行动阶段的期望团队负担。 */
+/** 从 viewerTeam 视角返回封印导致跳过出牌阶段的期望团队负担。 */
 export function sealTeamBurden(state, holder, viewerTeam) {
   if (!holder?.alive) return 0;
   const skipAction = sealOutcomeProbabilities(state, holder).skipAction;
@@ -256,7 +256,7 @@ export function sealEarlyUsePenalty(bestImmediateAlternativeValue) {
   return Math.min(3, surplus * 0.35);
 }
 
-/** 主动使用封印的价值：基础牌值加未来未被反制且判定失败时的行动机会收益。 */
+/** 主动使用封印的价值：基础牌值加未来未被反制且判定生效时的出牌机会收益。 */
 export function sealUseValue(actor, target, state) {
   if (!actor?.alive || !target?.alive || target.battleTeam === actor.battleTeam || hasSeal(target)) return -50;
   const futureTarget = {

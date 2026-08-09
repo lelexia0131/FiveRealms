@@ -135,6 +135,6 @@ export const TEAM_CONFIG = Object.freeze({
 
 export const PHASE_NAMES = Object.freeze({
   idle: "等待", turnStart: "回合开始", status: "状态处理", energy: "获得能量",
-  draw: "摸牌", play: "出牌", dying: "濒死救援", judgment: "装置判定",
+  draw: "摸牌", play: "出牌", dying: "濒死救援", judgment: "判定",
   discard: "弃牌", turnEnd: "回合结束", gameOver: "对局结束"
 });

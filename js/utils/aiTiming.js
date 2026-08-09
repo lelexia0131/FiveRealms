@@ -1,5 +1,5 @@
 /** AI 展示节奏的纯函数入口。实际等待仍统一由 CleanupManager 执行。 */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-momentum-log-fix-v130";
 
 const RANGES = Object.freeze({
   initial: ["aiInitialThinkMinMs", "aiInitialThinkMaxMs"],

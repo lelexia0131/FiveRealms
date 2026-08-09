@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-seal-ai-threat-fix-v124";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260809-seal-ai-threat-fix-v124";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260809-momentum-log-fix-v130";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-momentum-log-fix-v130";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260809-momentum-log-fix-v130";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260809-seal-ai-threat-fix-v124";
-import { AnimationController } from "./animationController.js?build=20260809-seal-ai-threat-fix-v124";
-import { InteractionController } from "./InteractionController.js?build=20260809-seal-ai-threat-fix-v124";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260809-seal-ai-threat-fix-v124";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260809-seal-ai-threat-fix-v124";
-import { JudgmentView } from "./JudgmentView.js?build=20260809-seal-ai-threat-fix-v124";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-seal-ai-threat-fix-v124";
-import { createOpponentHandView } from "./handVisibility.js?build=20260809-seal-ai-threat-fix-v124";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260809-seal-ai-threat-fix-v124";
-import { SoundManager } from "../audio/SoundManager.js?build=20260809-seal-ai-threat-fix-v124";
+} from "./templates.js?build=20260809-momentum-log-fix-v130";
+import { AnimationController } from "./animationController.js?build=20260809-momentum-log-fix-v130";
+import { InteractionController } from "./InteractionController.js?build=20260809-momentum-log-fix-v130";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260809-momentum-log-fix-v130";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260809-momentum-log-fix-v130";
+import { JudgmentView } from "./JudgmentView.js?build=20260809-momentum-log-fix-v130";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-momentum-log-fix-v130";
+import { createOpponentHandView } from "./handVisibility.js?build=20260809-momentum-log-fix-v130";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260809-momentum-log-fix-v130";
+import { SoundManager } from "../audio/SoundManager.js?build=20260809-momentum-log-fix-v130";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -299,7 +299,7 @@ export class UIManager {
       return handCardTemplate(card, { selected, disabled });
     }).join("") || '<div class="empty-hand"><span aria-hidden="true">◇</span><strong>手牌为空</strong><small>下一次摸牌会从牌堆飞入这里</small></div>';
     if (this.discardState) this.elements.hand_hint.textContent = `已选 ${this.discardState.selectedIds.size} / ${this.discardState.count}`;
-    else if (!this.targetState) this.elements.hand_hint.textContent = `${human.hand.length} 张 · 不可用的牌仍可聚焦查看`;
+    else if (!this.targetState) this.elements.hand_hint.textContent = `${human.hand.length}张 · 不可用的牌仍可聚焦查看`;
   }
 
   renderControls(game, human) {
@@ -417,7 +417,7 @@ export class UIManager {
   requestDiscard(player, count, prompt) {
     return new Promise((resolve) => {
       this.discardState = { player, count, selectedIds: new Set(), resolve };
-      this.setPrompt(prompt, `还需选择 ${count} 张`);
+      this.setPrompt(prompt, `还需选择${count}张`);
       this.render(this.game);
     });
   }
@@ -541,7 +541,7 @@ export class UIManager {
   showJudgment(player, card, context = {}) { this.judgmentView.show(player, card, context); }
   hideJudgment() { this.judgmentView.hide(); }
   showDying(target, context) {
-    this.elements.dying_view.innerHTML = `<strong>${escapeHtml(target.name)}濒死</strong><span>当前生命 ${context.currentHp}</span><b>还需 ${context.need} 张调息</b>`;
+    this.elements.dying_view.innerHTML = `<strong>${escapeHtml(target.name)}濒死</strong><span>当前生命 ${context.currentHp}</span><b>还需恢复${context.need}点生命</b>`;
     this.elements.dying_view.classList.remove("is-hidden");
   }
   hideDying() { this.elements.dying_view.classList.add("is-hidden"); this.elements.dying_view.innerHTML = ""; }

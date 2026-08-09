@@ -2,11 +2,11 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260809-seal-ai-threat-fix-v124";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260809-seal-ai-threat-fix-v124";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260809-seal-ai-threat-fix-v124";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-seal-ai-threat-fix-v124";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260809-momentum-log-fix-v130";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260809-momentum-log-fix-v130";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260809-momentum-log-fix-v130";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-momentum-log-fix-v130";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-momentum-log-fix-v130";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 
@@ -39,7 +39,7 @@ export class InteractionController {
     if (card.definitionId === "leverage") {
       // 项目当前每人只有一个公开装备槽，故装备阶段可按规则自动选中唯一真实实例。
       const firstTargets = RuleEngine.getLeverageFirstTargets(game, actor);
-      const firstTarget = await this.ui.requestTarget(firstTargets, "选择一名装备区有装备且能够使用突袭的其他玩家", {
+      const firstTarget = await this.ui.requestTarget(firstTargets, "选择一名有装备且有可选第二目标的其他角色", {
         source:actor, card, confirmSelection:true, stepTitle:"借势 · 第一目标"
       });
       if (!game.isSessionValid(gameId) || !firstTarget) return null;
@@ -47,7 +47,7 @@ export class InteractionController {
       if (!equipment?.id || !RuleEngine.getLeverageFirstTargets(game, actor).includes(firstTarget)) return null;
 
       const secondTargets = RuleEngine.getAssaultTargetCandidates(game, firstTarget);
-      const secondTarget = await this.ui.requestTarget(secondTargets, "选择其使用突袭的目标", {
+      const secondTarget = await this.ui.requestTarget(secondTargets, "选择其攻击范围内的一名其他角色", {
         source:firstTarget, card:CARD_DEFINITIONS.assault, confirmSelection:true, stepTitle:"借势 · 第二目标"
       });
       if (!game.isSessionValid(gameId) || !secondTarget) return null;
@@ -56,7 +56,7 @@ export class InteractionController {
 
       const confirmed = await this.requestConfirmation(
         "借势 · 确认",
-        `${actor.name}指定${firstTarget.name}以「${equipment.name}」为代价，对${secondTarget.name}使用「突袭」。`
+        `${actor.name}要求${firstTarget.name}对${secondTarget.name}使用「突袭」；若拒绝，${actor.name}将获得其「${equipment.name}」。`
       );
       if (!confirmed || !game.isSessionValid(gameId)) return null;
       return {
@@ -134,7 +134,7 @@ export class InteractionController {
       const selected = new Set();
       const slots = options.slots ?? createHiddenSelectionView(options.viewer, options.owner, selection);
       this.pending = { type:"hidden", selection, count, exact:Boolean(options.exact), selected, resolve };
-      this.ui.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(prompt)}</strong><span>${options.totalCount ?? selection.tokens.length} 张</span></div>
+      this.ui.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(prompt)}</strong><span>${options.totalCount ?? selection.tokens.length}张</span></div>
         <div class="hidden-card-grid">${hiddenSelectionMarkup(selection, slots)}</div>
         <div class="response-actions"><button class="primary-button" type="button" data-interaction-confirm disabled>确认选择</button><button class="ghost-button" type="button" data-interaction-cancel>取消</button></div>`;
       this.ui.elements.response_panel.classList.remove("is-hidden");

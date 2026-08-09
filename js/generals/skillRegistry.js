@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-seal-ai-threat-fix-v124";
-import { randomChoice } from "../utils/helpers.js?build=20260809-seal-ai-threat-fix-v124";
-import { Debug } from "../utils/debug.js?build=20260809-seal-ai-threat-fix-v124";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-momentum-log-fix-v130";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-momentum-log-fix-v130";
+import { randomChoice } from "../utils/helpers.js?build=20260809-momentum-log-fix-v130";
+import { Debug } from "../utils/debug.js?build=20260809-momentum-log-fix-v130";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -30,8 +30,11 @@ const PASSIVE_SKILLS = {
       if (!owner.alive || event.source.id !== owner.id) return;
       if (!owner.turnFlags.categoriesUsed.has(event.card.category)) {
         owner.turnFlags.categoriesUsed.add(event.card.category);
-        owner.turnFlags.momentum = Math.min(GAME_CONFIG.momentumMaxStacks, owner.turnFlags.momentum + 1);
-        game.log(`${owner.name}通过「连势」积累了${owner.turnFlags.momentum}层连势。`);
+        const previousMomentum = owner.turnFlags.momentum;
+        owner.turnFlags.momentum = Math.min(GAME_CONFIG.momentumMaxStacks, previousMomentum + 1);
+        if (owner.turnFlags.momentum > previousMomentum) {
+          game.log(`${owner.name}触发「连势」，现有${owner.turnFlags.momentum}层「连势」。`);
+        }
       }
     });
     game.eventBus.on("beforeDamage", `${owner.id}:momentum:damage`, (event) => {
@@ -39,13 +42,17 @@ const PASSIVE_SKILLS = {
       const bonus = owner.turnFlags.momentum;
       if (bonus > 0) {
         event.amount += bonus;
-        event.metadata.consumeMomentum = owner.turnFlags.momentum > 0;
-        game.log(`${owner.name}的突袭获得${bonus}点额外伤害。`, "important");
+        event.metadata.consumeMomentum = true;
+        event.metadata.momentumBonus = bonus;
       }
     });
     game.eventBus.on("afterDamage", `${owner.id}:momentum:consume`, (event) => {
       if (event.source?.id !== owner.id || event.actualAmount <= 0) return;
-      if (event.metadata.consumeMomentum) owner.turnFlags.momentum = 0;
+      if (event.metadata.consumeMomentum) {
+        const consumed = event.metadata.momentumBonus;
+        owner.turnFlags.momentum = 0;
+        game.log(`${owner.name}消耗${consumed}层「连势」，本次「突袭」伤害+${consumed}。`, "important");
+      }
     });
     game.eventBus.on("turnEnd", `${owner.id}:momentum:turnEnd`, (event) => {
       if (event.player?.id === owner.id) owner.turnFlags.momentum = 0;
@@ -64,11 +71,11 @@ const PASSIVE_SKILLS = {
       else discard = game.aiController.chooseDiscards(owner, 1)[0] ?? null;
       if (!game.isSessionValid(gameId)) return;
       if (!discard) return;
-      const moved = await game.discardCardFromHand(owner, discard, "护援");
+      const moved = await game.discardCardFromHand(owner, discard, "护援", { logReason:"「护援」" });
       if (!game.isSessionValid(gameId) || !moved) return;
       owner.roundFlags.guardianAidUsed = true;
       event.amount = Math.max(0, event.amount - 1);
-      game.log(`${owner.name}发动护援，令${event.target.name}受到的伤害减少1点。`, "important");
+      game.log(`${owner.name}发动「护援」，令${event.target.name}受到的伤害减少1点。`, "important");
     });
   },
 
@@ -82,8 +89,10 @@ const PASSIVE_SKILLS = {
     });
     game.eventBus.on("afterHeal", `${owner.id}:rejuvenation:draw`, async (event) => {
       if (event.metadata?.rejuvenationOwnerId !== owner.id || event.actualAmount <= 0) return;
-      game.log(`${owner.name}的回春令治疗额外恢复1点，并摸1张牌。`, "heal");
-      await game.drawCards(owner, 1, "回春");
+      const gameId = game.state.gameId;
+      const drawn = await game.drawCards(owner, 1, "回春", { silent:true });
+      if (!game.isSessionValid(gameId)) return;
+      game.log(`${owner.name}触发「回春」，本次治疗量+1，${drawn ? `并摸${drawn}张牌` : "但未摸到牌"}。`, "heal");
     });
   },
 
@@ -101,7 +110,7 @@ const PASSIVE_SKILLS = {
       for (const card of seen) game.rememberPrivateCard(owner, target, card);
       if (owner.controllerType === "human") await game.ui.showPrivateReveal(`窥隙：${target.name}的手牌`, seen);
       if (!game.isSessionValid(gameId)) return;
-      game.log(`${owner.name}发动窥隙，查看了${target.name}的${seen.length}张手牌。`);
+      game.log(`${owner.name}触发「窥隙」，查看了${target.name}的${seen.length}张手牌。`);
     }
 
     game.eventBus.on("afterDamage", `${owner.id}:spyGap`, async (event) => {
@@ -149,7 +158,7 @@ const PASSIVE_SKILLS = {
       owner.turnFlags.trackingTargetIds.add(target.id);
       const currentTrackingTurn = owner.gameFlags.trackingTurnNumber ?? 0;
       target.statuses.huntMark = { sourceId: owner.id, expireAtTurnEnd: currentTrackingTurn + 1 };
-      game.log(`${owner.name}在${target.name}身上留下了猎印。`, "important");
+      game.log(`${owner.name}触发「追踪」，在${target.name}身上留下了「猎印」。`, "important");
     });
     game.eventBus.on("turnEnd", `${owner.id}:tracking:cleanup`, (event) => {
       if (event.player.id !== owner.id) return;
@@ -165,21 +174,23 @@ const PASSIVE_SKILLS = {
       if (!owner.alive || event.source.id !== owner.id || event.card.category !== "tactic" || owner.turnFlags.gambleTriggered) return;
       owner.turnFlags.gambleTriggered = true;
       if (game.random() < GAME_CONFIG.gamblerDrawChance) {
-        game.log(`${owner.name}的冒险带来了收益。`);
-        await game.drawCards(owner, 1, "冒险");
-      } else game.log(`${owner.name}的冒险没有带来额外收益。`);
+        const gameId = game.state.gameId;
+        const drawn = await game.drawCards(owner, 1, "冒险", { silent:true });
+        if (!game.isSessionValid(gameId)) return;
+        game.log(`${owner.name}触发「冒险」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
+      } else game.log(`${owner.name}触发「冒险」，但未获得额外收益。`);
     });
     game.eventBus.on("beforeDamage", `${owner.id}:allIn:damage`, (event) => {
       const allIn = owner.statuses.allIn;
       if (!owner.alive || event.source?.id !== owner.id || event.card?.definitionId !== "assault" || !allIn) return;
       event.amount += allIn.assaultBonus;
       event.metadata.consumeAssaultBonus = true;
-      game.log(`${owner.name}的孤注令此次突袭伤害+1。`, "important");
+      game.log(`${owner.name}的「孤注」状态令此次「突袭」伤害+1。`, "important");
     });
     game.eventBus.on("afterDamage", `${owner.id}:allIn:consume`, (event) => {
       if (event.source?.id === owner.id && event.metadata.consumeAssaultBonus) {
         delete owner.statuses.allIn;
-        game.log(`${owner.name}的孤注状态已结束。`);
+        game.log(`${owner.name}退出「孤注」状态。`);
       }
     });
   },
@@ -191,8 +202,10 @@ const PASSIVE_SKILLS = {
       const effectiveTargets = event.effectiveTargets ?? event.targets ?? [];
       if (!effectiveTargets.some((target) => target.id !== owner.id && target.battleTeam === owner.battleTeam)) return;
       owner.turnFlags.coordinationTriggered = true;
-      game.log(`${owner.name}通过协调摸1张牌。`);
-      await game.drawCards(owner, 1, "协调");
+      const gameId = game.state.gameId;
+      const drawn = await game.drawCards(owner, 1, "协调", { silent:true });
+      if (!game.isSessionValid(gameId)) return;
+      game.log(`${owner.name}触发「协调」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
     });
   }
 };
@@ -209,7 +222,7 @@ export const ACTIVE_SKILLS = Object.freeze({
   breakArmy: Object.freeze({
     id: "breakArmy", name: "破军", cost: 2, limitPerTurn: 1, targetType: "none", rangeRule: "self",
     canUse(game, source) { return baseCanUse(game, source, this); },
-    async execute(game, source) { source.changeEnergy(-2); source.turnFlags.attackLimit += 1; game.log(`${source.name}发动破军，本回合可额外突袭一次。`, "important"); }
+    async execute(game, source) { source.changeEnergy(-2); source.turnFlags.attackLimit += 1; game.log(`${source.name}发动「破军」，本回合可额外使用1张「突袭」。`, "important"); }
   }),
   barrier: Object.freeze({
     id: "barrier", name: "壁垒", cost: 2, limitPerTurn: 2, targetType: "ally", rangeRule: "ally",
@@ -219,16 +232,22 @@ export const ACTIVE_SKILLS = Object.freeze({
       const target = targets[0];
       target.shield = (target.shield ?? 0) + 1;
       game.ui.queueFeedback?.("shield", target.id, 1);
-      game.log(`${source.name}为${target.name}构筑壁垒，${target.name}获得1点护盾。`, "heal");
+      game.log(`${source.name}发动「壁垒」，令${target.name}获得1点护盾。`, "heal");
     }
   }),
   symbiosis: Object.freeze({
     id: "symbiosis", name: "滋荣", cost: 2, limitPerTurn: 2, targetType: "injuredAlly", rangeRule: "ally",
-    canUse(game, source) { const base = baseCanUse(game, source, this); if (!base.ok) return base; return RuleEngine.getSkillTargets(game, source, this).length ? base : {ok:false,reason:"没有受伤的己方阵营角色"}; },
+    canUse(game, source) { const base = baseCanUse(game, source, this); if (!base.ok) return base; return RuleEngine.getSkillTargets(game, source, this).length ? base : {ok:false,reason:"自己和队友都未受伤"}; },
     async execute(game, source, targets) {
       const gameId = game.state.gameId;
       source.changeEnergy(-2);
       const target = targets[0];
+      game.log(
+        target.id === source.id
+          ? `${source.name}对自己发动「滋荣」。`
+          : `${source.name}对${target.name}发动「滋荣」。`,
+        "important"
+      );
       await game.heal(source, target, 1, { skill:"symbiosis" });
       if (game.isSessionValid(gameId) && target.id !== source.id) await game.heal(source, source, 1, { skill:"symbiosis" });
     }
@@ -247,18 +266,18 @@ export const ACTIVE_SKILLS = Object.freeze({
         ? await game.moveEquipmentToHand(target, source, chosen.card, "窃取")
         : await game.moveCardBetweenHands(target, source, chosen.card, "窃取");
       if (!game.isSessionValid(gameId)) return;
-      if (stolen) game.log(`${source.name}从${target.name}处窃取了${game.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
+      if (stolen) game.log(`${source.name}发动「窃取」，从${target.name}处获得${game.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
     }
   }),
   burningField: Object.freeze({
     id: "burningField", name: "焚场", cost: 2, limitPerTurn: 2, targetType: "allEnemies", rangeRule: "unlimited",
     canUse(game, source) { return baseCanUse(game, source, this); },
-    async execute(game, source, _targets, context = {}) { const gameId=game.state.gameId;source.changeEnergy(-2);game.log(`${source.name}发动焚场！`, "important");for(const target of game.getEnemies(source)){if(!game.isSessionValid(gameId)||game.state.isGameOver)break;if(target.alive)await game.damage(source,target,1,{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill",resolutionId:context.resolutionId});} }
+    async execute(game, source, _targets, context = {}) { const gameId=game.state.gameId;source.changeEnergy(-2);game.log(`${source.name}发动「焚场」。`, "important");for(const target of game.getEnemies(source)){if(!game.isSessionValid(gameId)||game.state.isGameOver)break;if(target.alive)await game.damage(source,target,1,{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill",resolutionId:context.resolutionId});} }
   }),
   hunt: Object.freeze({
     id: "hunt", name: "猎杀", cost: 2, limitPerTurn: 2, targetType: "markedEnemy", rangeRule: "unlimited",
     canUse(game, source) { const base = baseCanUse(game, source, this); return base.ok && !RuleEngine.getSkillTargets(game, source, this).length ? {ok:false,reason:"没有猎印目标"} : base; },
-    async execute(game, source, targets) { const gameId=game.state.gameId;source.changeEnergy(-2);delete targets[0].statuses.huntMark;const context={skill:"hunt",actionName:"猎杀",canBlock:true,damageType:"skill"};await game.damage(source,targets[0],2,context);if(!game.isSessionValid(gameId))return;if(context.blockedByCard&&source.alive)await game.drawCards(source,1,"猎杀被格挡"); }
+    async execute(game, source, targets) { const gameId=game.state.gameId;const target=targets[0];game.log(`${source.name}对${target.name}发动「猎杀」。`,"important");source.changeEnergy(-2);delete target.statuses.huntMark;const context={skill:"hunt",actionName:"猎杀",canBlock:true,damageType:"skill"};await game.damage(source,target,2,context);if(!game.isSessionValid(gameId))return;if(context.blockedByCard&&source.alive)await game.drawCards(source,1,"猎杀被格挡"); }
   }),
   allIn: Object.freeze({
     id: "allIn", name: "孤注", cost: 1, limitPerTurn: 1, targetType: "none", rangeRule: "self",
@@ -270,17 +289,17 @@ export const ACTIVE_SKILLS = Object.freeze({
       const energy = source.energy;
       const chance = Math.min(1, energy * .3);
       source.changeEnergy(-energy);
-      await game.drawCards(source, energy, "孤注");
+      const drawn = await game.drawCards(source, energy, "孤注", { silent:true });
       if (!game.isSessionValid(gameId)) return;
       const entered = game.random() < chance;
       if (entered) source.statuses.allIn = { assaultBonus:1 };
-      game.log(`${source.name}以${energy}点能量发动孤注并摸${energy}张牌，${entered ? "进入" : "未进入"}孤注状态（${Math.round(chance * 100)}%）。`, "important");
+      game.log(`${source.name}消耗${energy}点能量发动「孤注」，${drawn ? `摸${drawn}张牌` : "未摸到牌"}，${entered ? "并进入" : "但未进入"}「孤注」状态。`, "important");
     }
   }),
   resonance: Object.freeze({
     id: "resonance", name: "共鸣", cost: 2, limitPerTurn: 2, targetType: "ally", rangeRule: "ally",
     canUse(game, source) { const base = baseCanUse(game, source, this); return base.ok && !RuleEngine.getSkillTargets(game, source, this).length ? {ok:false,reason:"没有存活队友"} : base; },
-    async execute(game, source, targets) { const gameId=game.state.gameId;source.changeEnergy(-2);await game.drawCards(targets[0],2,"共鸣");if(game.isSessionValid(gameId))game.log(`${source.name}与${targets[0].name}共鸣，令其摸2张牌。`); }
+    async execute(game, source, targets) { const gameId=game.state.gameId;source.changeEnergy(-2);const drawn=await game.drawCards(targets[0],2,"共鸣",{silent:true});if(game.isSessionValid(gameId))game.log(`${source.name}发动「共鸣」，令${targets[0].name}${drawn ? `摸${drawn}张牌` : "未摸到牌"}。`); }
   })
 });
 

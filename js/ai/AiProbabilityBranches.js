@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-momentum-log-fix-v130";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

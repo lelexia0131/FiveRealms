@@ -19,6 +19,7 @@
   --danger: #aa3c32;
   --success: #3e7f58;
   --shield: #486f95;
+  --log-skill-name: #486f95;
   --energy: #a8771e;
   --shadow-card: 0 13px 28px rgba(68, 50, 27, .18), 0 3px 7px rgba(68, 50, 27, .12);
   --shadow-soft: 0 8px 24px rgba(64, 49, 31, .1);
@@ -42,4 +43,3 @@ body {
 button, [tabindex="0"] { outline: none; }
 button:focus-visible, [tabindex="0"]:focus-visible, summary:focus-visible { box-shadow: var(--focus-ring); }
 ::selection { color: #fff; background: var(--dawn); }
-

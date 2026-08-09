@@ -1,4 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-momentum-log-fix-v130";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-momentum-log-fix-v130";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -16,6 +17,9 @@ export function hiddenCardBackTemplate(options = {}) {
 const image = (src, alt, className) => `<img class="${className}" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" draggable="false">`;
 
 const LONG_DESCRIPTION_THRESHOLD = 38;
+const SKILL_NAMES = new Set(GENERAL_DEFINITIONS.flatMap(
+  (general) => [general.activeName, general.passiveName].filter(Boolean)
+));
 const VERY_LONG_DESCRIPTION_THRESHOLD = 48;
 
 /** 真人手牌与已知对手牌共用的确定性规则文字长度分类。 */
@@ -192,7 +196,14 @@ export function thinkingTemplate(player, message) {
 
 export function formatLogMessage(message) {
   return escapeHtml(message)
-    .replace(/「([^」]+)」/g, "「<strong class=\"log-card-name\">$1</strong>」")
+    .replace(/(发动|触发|因)?「([^」]+)」(状态)?/g, (_match, verb = "", name, suffix = "") => {
+      const isSkillContext = SKILL_NAMES.has(name)
+        && (verb === "发动" || verb === "触发" || (verb === "因" && !suffix));
+      if (isSkillContext) {
+        return `${verb}<strong class="log-skill-name">「${name}」</strong>${suffix}`;
+      }
+      return `${verb}「<strong class="log-card-name">${name}</strong>」${suffix}`;
+    })
     .replace(/(\d+)(点伤害)/g, "<strong class=\"log-damage-value\">$1</strong>$2")
     .replace(/(恢复)(\d+)(点生命)/g, "$1<strong class=\"log-heal-value\">$2</strong>$3");
 }

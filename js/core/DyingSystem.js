@@ -1,4 +1,4 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-momentum-log-fix-v130";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；
@@ -60,7 +60,7 @@ export class DyingSystem {
     if (target.hp > 0 || !target.alive) return target.hp > 0;
     this.game.state.phase = "dying";
     this.game.state.dyingContext = { targetId:target.id, need:1 - target.hp, currentHp:target.hp };
-    this.game.log(`${target.name}进入濒死，需要${1 - target.hp}张调息才能获救。`, "important");
+    this.game.log(`${target.name}进入濒死，还需恢复${1 - target.hp}点生命才能脱离濒死。`, "important");
     await this.game.eventBus.emit("playerDying", { type:"playerDying", target, source, need:1 - target.hp, context });
     if (!this.game.isSessionValid(gameId)) return false;
     this.game.ui.showDying?.(target, this.game.state.dyingContext);
@@ -80,8 +80,8 @@ export class DyingSystem {
         await this.game.heal(rescuer, target, 1, { card:response.card, reason:"dyingRescue", isDyingRescue:true, silentLog:true });
         if (!this.game.isSessionValid(gameId)) return false;
         this.game.state.dyingContext = { targetId:target.id, need:Math.max(0, 1 - target.hp), currentHp:target.hp };
-        this.game.log(`${rescuer.name}使用调息救援${target.name}，其生命变为${target.hp}。`, "heal");
-        if (target.hp <= 0) this.game.log(`${target.name}仍处于濒死，还需${1 - target.hp}张调息。`, "important");
+        this.game.log(`${rescuer.name}使用「调息」救援${target.name}，使其恢复至${target.hp}点生命。`, "heal");
+        if (target.hp <= 0) this.game.log(`${target.name}仍处于濒死，还需恢复${1 - target.hp}点生命。`, "important");
         await this.game.eventBus.emit("dyingRescueUsed", { type:"dyingRescueUsed", target, rescuer, card:response.card, currentHp:target.hp });
         if (!this.game.isSessionValid(gameId)) return false;
         this.game.ui.showDying?.(target, this.game.state.dyingContext);

@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-seal-ai-threat-fix-v124";
-import { createId, clamp } from "../utils/helpers.js?build=20260809-seal-ai-threat-fix-v124";
-import { EventBus } from "./EventBus.js?build=20260809-seal-ai-threat-fix-v124";
-import { Player } from "./Player.js?build=20260809-seal-ai-threat-fix-v124";
-import { Deck } from "./Deck.js?build=20260809-seal-ai-threat-fix-v124";
-import { TeamManager } from "./TeamManager.js?build=20260809-seal-ai-threat-fix-v124";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260809-seal-ai-threat-fix-v124";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-seal-ai-threat-fix-v124";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-seal-ai-threat-fix-v124";
-import { GameLogger } from "./GameLogger.js?build=20260809-seal-ai-threat-fix-v124";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-seal-ai-threat-fix-v124";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-seal-ai-threat-fix-v124";
-import { AIController } from "../ai/AiController.js?build=20260809-seal-ai-threat-fix-v124";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-seal-ai-threat-fix-v124";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-seal-ai-threat-fix-v124";
-import { Debug } from "../utils/debug.js?build=20260809-seal-ai-threat-fix-v124";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260809-seal-ai-threat-fix-v124";
-import { DyingSystem } from "./DyingSystem.js?build=20260809-seal-ai-threat-fix-v124";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-seal-ai-threat-fix-v124";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-seal-ai-threat-fix-v124";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260809-seal-ai-threat-fix-v124";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260809-seal-ai-threat-fix-v124";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-momentum-log-fix-v130";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-momentum-log-fix-v130";
+import { createId, clamp } from "../utils/helpers.js?build=20260809-momentum-log-fix-v130";
+import { EventBus } from "./EventBus.js?build=20260809-momentum-log-fix-v130";
+import { Player } from "./Player.js?build=20260809-momentum-log-fix-v130";
+import { Deck } from "./Deck.js?build=20260809-momentum-log-fix-v130";
+import { TeamManager } from "./TeamManager.js?build=20260809-momentum-log-fix-v130";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260809-momentum-log-fix-v130";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-momentum-log-fix-v130";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-momentum-log-fix-v130";
+import { GameLogger } from "./GameLogger.js?build=20260809-momentum-log-fix-v130";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-momentum-log-fix-v130";
+import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-momentum-log-fix-v130";
+import { AIController } from "../ai/AiController.js?build=20260809-momentum-log-fix-v130";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-momentum-log-fix-v130";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-momentum-log-fix-v130";
+import { Debug } from "../utils/debug.js?build=20260809-momentum-log-fix-v130";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260809-momentum-log-fix-v130";
+import { DyingSystem } from "./DyingSystem.js?build=20260809-momentum-log-fix-v130";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-momentum-log-fix-v130";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-momentum-log-fix-v130";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260809-momentum-log-fix-v130";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260809-momentum-log-fix-v130";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -50,11 +50,24 @@ function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = 
   return "";
 }
 
+/** 右侧战斗日志使用自然句式；中央结算区仍保留独立的结构化目标标签。 */
+function actionLogMessage(source, card, targets = []) {
+  const singleTarget = !["allEnemies", "allLiving"].includes(card.targetType)
+    && targets.length === 1 && targets[0]?.id !== source.id
+    ? targets[0]
+    : null;
+  return singleTarget
+    ? `${source.name}对${singleTarget.name}使用了「${card.name}」。`
+    : `${source.name}使用了「${card.name}」。`;
+}
+
+const RESULT_ONLY_CARD_IDS = new Set(["charge", "recover", "shield"]);
+
 /** 中央结算区用状态持有者 + 延迟状态事件展示，不伪造普通出牌者。 */
 function showDelayedStatusCard(game, holder, definitionId, eventLabel) {
   const card = CARD_DEFINITIONS[definitionId];
   if (!holder || !card) return;
-  game.ui.setCurrentCard?.(card, `${holder.name}的延迟状态 · ${eventLabel}`);
+  game.ui.setCurrentCard?.(card, eventLabel, holder.name);
 }
 
 /** 纯展示：为中央结算卡生成 displayTargets，不进入业务 targets、规则判断或 AI。 */
@@ -167,7 +180,7 @@ export class Game {
     for (const player of this.state.players) {
       player.resetTurnFlags(this.teamRules.getRules(player));
       player.resetRoundFlags();
-      await this.drawCards(player, this.teamRules.getInitialHandCount(player), "初始发牌");
+      await this.drawCards(player, this.teamRules.getInitialHandCount(player), "初始发牌", { silent:true });
       if (!this.isSessionValid(gameId)) return false;
     }
     this.state.startingPlayerIndex = Math.floor(this.random() * this.state.players.length);
@@ -192,11 +205,13 @@ export class Game {
   registerGlobalRules() {
     this.eventBus.on("cardUsed", "global:recycleDevice", async (event) => {
       const owner = event.source;
+      const gameId = this.state.gameId;
       if (!owner.alive || this.currentPlayer?.id !== owner.id || owner.equipment?.definitionId !== "recycleDevice"
         || event.card.category !== "tactic" || event.card.usageMode !== "active" || (owner.turnFlags.recycleDeviceUses ?? 0) >= 2) return;
       owner.turnFlags.recycleDeviceUses = (owner.turnFlags.recycleDeviceUses ?? 0) + 1;
-      this.log(`${owner.name}的回收站启动（${owner.turnFlags.recycleDeviceUses}/2），摸1张牌。`);
-      await this.drawCards(owner, 1, "回收站");
+      const drawn = await this.drawCards(owner, 1, "回收站", { silent:true });
+      if (!this.isSessionValid(gameId)) return;
+      this.log(`${owner.name}的「回收站」触发（${owner.turnFlags.recycleDeviceUses}/2），${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
     });
     this.eventBus.on("playerDead", "global:huntMarkSourceCleanup", (event) => {
       for (const player of this.state.players) {
@@ -230,12 +245,13 @@ export class Game {
       if (!this.isSessionValid(gameId) || this.state.isGameOver || !holder.alive || !judgment.handled) return;
       delete holder.statuses.sealed;
       if (judgment.triggered) {
-        showDelayedStatusCard(this, holder, "seal", "判定成功");
-        this.log(`${holder.name}的「封印」判定成功，本回合正常行动。`, "important");
+        showDelayedStatusCard(this, holder, "seal", "未生效");
+        this.log(`${holder.name}的「封印」判定牌为「${judgment.card.name}」（战术牌），「封印」未生效，本回合正常进行。`, "important");
       } else {
         holder.turnFlags.skipActionPhase = true;
-        showDelayedStatusCard(this, holder, "seal", "判定失败");
-        this.log(`${holder.name}的「封印」判定失败，本回合摸牌后跳过行动阶段。`, "important");
+        showDelayedStatusCard(this, holder, "seal", "生效");
+        const categoryLabel = judgment.category === "basic" ? "基础牌" : "装备牌";
+        this.log(`${holder.name}的「封印」判定牌为「${judgment.card.name}」（${categoryLabel}），「封印」生效。`, "important");
       }
       this.ui.render(this);
     });
@@ -405,7 +421,7 @@ export class Game {
     if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
 
     if (player.turnFlags.skipActionPhase) {
-      this.log(`${player.name}因「封印」判定失败，跳过行动阶段并进入弃牌阶段。`, "important");
+      this.log(`${player.name}因「封印」生效，跳过出牌阶段并进入弃牌阶段。`, "important");
     } else {
       this.state.phase = "play";
       await this.eventBus.emit("playPhaseStart", { type: "playPhaseStart", player });
@@ -864,11 +880,12 @@ export class Game {
       this.ui.playSound?.("playCard");
       if (preparedTransfer) {
         const publicContext = preparedTransfer.publicContext;
-        this.log(`${source.name}使用了「${card.name}」，准备将${publicContext.fromName}的${publicContext.safeItemLabel}转移给${publicContext.receiverName}。`);
+        const receiverLabel = publicContext.receiverPlayerId === source.id ? "自己" : publicContext.receiverName;
+        this.log(`${source.name}使用了「${card.name}」，准备将${publicContext.fromName}的${publicContext.safeItemLabel}转移给${receiverLabel}。`);
       } else if (preparedLeverage) {
-        this.log(`${source.name}对${preparedLeverage.firstTarget.name}使用「借势」，令其对${preparedLeverage.secondTarget.name}使用「突袭」。`);
-      } else if (card.category !== "equipment") {
-        this.log(`${source.name}使用了「${card.name}」${targetLabel ? `，作用对象：${targetLabel}` : ""}。`);
+        this.log(`${source.name}对${preparedLeverage.firstTarget.name}使用「借势」，要求其对${preparedLeverage.secondTarget.name}使用「突袭」；若拒绝，${source.name}将获得其「${preparedLeverage.equipmentCard.name}」。`);
+      } else if (card.category !== "equipment" && !RESULT_ONLY_CARD_IDS.has(card.definitionId)) {
+        this.log(actionLogMessage(source, card, targets));
       }
       const useEvent = await this.eventBus.emit("beforeCardUse", { type: "beforeCardUse", source, card, targets, cancelled: false, metadata: {}, resolutionId });
       if (!this.isSessionValid(gameId)) return false;
@@ -1115,7 +1132,16 @@ export class Game {
     };
     await this.eventBus.emit("beforeDamage", event);
     if (!this.isSessionValid(gameId)) return 0;
-    if (event.cancelled || event.amount <= 0 || !target.alive) return 0;
+    if (event.cancelled || !target.alive) return 0;
+    if (event.amount <= 0) {
+      this.log(`${target.name}没有受到生命伤害。`);
+      await this.eventBus.emit("afterDamage", {
+        ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"damageReduction"
+      });
+      if (!this.isSessionValid(gameId)) return 0;
+      this.ui.render(this);
+      return 0;
+    }
     const isDeviceAttack = context.card?.subtypes?.includes("assault") && ["normal", "area"].includes(event.damageType);
     if (isDeviceAttack) {
       const judgment = await this.judgmentSystem.judgeDefense(source, target, event);
@@ -1185,7 +1211,17 @@ export class Game {
     if (!this.isSessionValid(gameId)) return 0;
     if (event.cancelled) return 0;
     const actualAmount = player.changeEnergy(event.amount);
-    if (actualAmount > 0) { this.log(`${player.name}通过${event.reason}获得${actualAmount}点能量。`); this.ui.queueFeedback?.("energy", player.id, actualAmount); }
+    if (actualAmount > 0) {
+      const message = event.reason === "回合开始"
+        ? `${player.name}在回合开始时获得${actualAmount}点能量。`
+        : event.reason === "聚能"
+          ? `${player.name}使用「聚能」，获得${actualAmount}点能量。`
+          : event.reason === "余烬"
+            ? `${player.name}触发「余烬」，获得${actualAmount}点能量。`
+            : `${player.name}通过${event.reason}获得${actualAmount}点能量。`;
+      this.log(message);
+      this.ui.queueFeedback?.("energy", player.id, actualAmount);
+    }
     await this.eventBus.emit("afterGainEnergy", { ...event, type: "afterGainEnergy", actualAmount });
     if (!this.isSessionValid(gameId)) return actualAmount;
     this.ui.render(this);
@@ -1270,7 +1306,7 @@ export class Game {
     this.invalidateCardKnowledge(card.id, player.id);
     this.state.deck.discard(card);
     this.syncDeckAliases();
-    if (!options.silent) this.log(`${player.name}因${reason}弃置了「${card.name}」。`);
+    if (!options.silent) this.log(`${player.name}因${options.logReason ?? reason}弃置了「${card.name}」。`);
     this.ui.queueFeedback?.("discard", player.id);
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     if (!this.isSessionValid(gameId)) return true;

@@ -2,9 +2,9 @@
  * 本文件是页面入口，只负责连接 UIManager 与每局新建的 Game。
  * 它不实现卡牌、AI 或技能规则；重新开始时必须先 dispose 旧局，再创建新 gameId。
  */
-import { Game } from "./core/Game.js?build=20260809-seal-ai-threat-fix-v124";
-import { UIManager } from "./ui/UIManager.js?build=20260809-seal-ai-threat-fix-v124";
-import { Debug } from "./utils/debug.js?build=20260809-seal-ai-threat-fix-v124";
+import { Game } from "./core/Game.js?build=20260809-momentum-log-fix-v130";
+import { UIManager } from "./ui/UIManager.js?build=20260809-momentum-log-fix-v130";
+import { Debug } from "./utils/debug.js?build=20260809-momentum-log-fix-v130";
 
 const ui = new UIManager();
 let game = null;

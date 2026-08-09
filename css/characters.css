@@ -11,7 +11,7 @@
 .hp-chip { flex: 0 0 auto; padding: 5px 8px; color: var(--danger); border: 1px solid #e0b4ad; border-radius: 999px; background: #f8e8e4; font-size: 13px; font-weight: 800; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 11px 0; }
 .tag { padding: 3px 8px; color: #4c5f59; border: 1px solid #bfd3cc; border-radius: 999px; background: #edf5f1; font-size: 12px; }
-.character-description { color: var(--text-secondary); font-size: 14px; line-height: 1.65; }
+.character-description { min-height: 3.3em; color: var(--text-secondary); font-size: 14px; line-height: 1.65; }
 .candidate-skills { display: grid; gap: 8px; margin: 14px 0; }
 .skill-copy { padding: 9px 10px; border-left: 2px solid var(--gold); background: #f7f0df; }
 .skill-copy h4 { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }

@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-seal-ai-threat-fix-v124";
-import { createId } from "../utils/helpers.js?build=20260809-seal-ai-threat-fix-v124";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-seal-ai-threat-fix-v124";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-seal-ai-threat-fix-v124";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-momentum-log-fix-v130";
+import { createId } from "../utils/helpers.js?build=20260809-momentum-log-fix-v130";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-momentum-log-fix-v130";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-momentum-log-fix-v130";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -129,8 +129,8 @@ export function buildResponsePresentation(responder, type, context = {}, require
 
   if (type === "block") {
     responseCardName = "格挡";
-    buttonLabel = requiredCount > 1 ? `使用${requiredCount}张格挡` : "格挡";
-    responseText = `你需要打出 ${requiredCount} 张格挡。`;
+    buttonLabel = requiredCount > 1 ? `使用${requiredCount}张「格挡」` : "格挡";
+    responseText = `你需要打出${requiredCount}张「格挡」。`;
   } else if (type === "counter") {
     responseCardName = "反制";
     buttonLabel = "反制";
@@ -182,23 +182,23 @@ export function buildResponsePresentation(responder, type, context = {}, require
         ...responseTargetFragments(responder, context),
         textFragment("发起了「决斗」。")
       ];
-      responseText = "现在轮到你打出 1 张突袭。";
+      responseText = "现在轮到你打出1张「突袭」。";
     } else {
-      responseText = "你需要打出 1 张突袭。";
+      responseText = "你需要打出1张「突袭」。";
     }
   } else if (type === "leverageAssault") {
     responseCardName = "突袭";
-    buttonLabel = "使用突袭";
+    buttonLabel = "使用「突袭」";
     eventFragments = [
       sourceFragment,
       textFragment("对你使用了「借势」，要求你对"),
       ...responseTargetFragments(responder, context),
       textFragment("使用「突袭」。")
     ];
-    responseText = `你可以使用一张真实突袭；若拒绝，将失去「${context.equipment?.name ?? "指定装备"}」。`;
+    responseText = `你可以使用1张「突袭」；若拒绝，对方将获得你的「${context.equipment?.name ?? "指定装备"}」。`;
   } else if (type === "dyingRescue") {
     responseCardName = "调息";
-    buttonLabel = "使用调息";
+    buttonLabel = "使用「调息」";
     eventFragments = [
       ...responseTargetFragments(responder, context),
       textFragment("已进入濒死状态。")
@@ -212,10 +212,16 @@ export function buildResponsePresentation(responder, type, context = {}, require
 
   let availabilityText = "";
   if (requiredCount > 0) {
-    if (responseCardName === "反制" && availableCount === 0) availabilityText = "你当前没有反制，但仍可查看并放弃响应。";
-    else {
-      availabilityText = `需要 ${requiredCount} 张${responseCardName}，当前 ${availableCount} 张`;
-      availabilityText += availableCount < requiredCount ? "；当前数量不足，你仍可查看并放弃响应。" : "。";
+    if (responseCardName === "反制" && availableCount === 0) {
+      availabilityText = "你没有可用的「反制」，只能放弃响应。";
+    } else if (availableCount < requiredCount) {
+      const heldText = availableCount > 0 ? `只有${availableCount}张` : "没有";
+      const unavailableAction = type === "block" ? "格挡"
+        : type === "dyingRescue" ? "救援"
+          : type === "assaultDiscard" || type === "leverageAssault" ? "使用「突袭」" : "完成响应";
+      availabilityText = `需要${requiredCount}张「${responseCardName}」，你当前${heldText}，无法${unavailableAction}。`;
+    } else {
+      availabilityText = `需要${requiredCount}张「${responseCardName}」，当前有${availableCount}张。`;
     }
   }
   const eventText = eventFragments.map((fragment) => fragment.text).join("");
@@ -256,7 +262,7 @@ export class ResponseSystem {
     if (!responder.alive || this.game.state.isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
     // 规则轮到真人响应时始终显示窗口；AI 没牌仍立即跳过。
     if (availableCards.length < requiredCount && responder.controllerType !== "human") return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
-    const fallbackLabel = type === "block" ? (requiredCount === 2 ? "使用2张格挡" : "格挡") : "反制";
+    const fallbackLabel = type === "block" ? (requiredCount === 2 ? "使用2张「格挡」" : "格挡") : "反制";
     const request = { id:createId("response"), type, sourcePlayerId:context.source?.id ?? null, targetPlayerId:responder.id,
       cardId:context.card?.id ?? null, legalCardIds:availableCards.map((card) => card.id), requiredCount,
       legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true,
@@ -403,7 +409,7 @@ export class ResponseSystem {
     const request = { id:createId("dying-response"), type:"dyingRescue", sourcePlayerId:rescuer.id, targetPlayerId:target.id,
       cardId:null, legalCardIds:availableCards.map((entry) => entry.id), requiredCount:1, legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true,
       need:1 - target.hp, currentHp:target.hp,
-      presentation:buildResponsePresentation(rescuer, "dyingRescue", { target }, 1, availableCards.length, "使用调息") };
+      presentation:buildResponsePresentation(rescuer, "dyingRescue", { target }, 1, availableCards.length, "使用「调息」") };
     this.activeRequestIds.add(request.id);
     this.game.state.pendingResponses.push(request);
     let decision;
@@ -497,7 +503,7 @@ export class ResponseSystem {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
     const presentation = {
-      ...buildResponsePresentation(responder, "leverageAssault", { ...context, target }, 1, availableCards.length, "使用突袭"),
+      ...buildResponsePresentation(responder, "leverageAssault", { ...context, target }, 1, availableCards.length, "使用「突袭」"),
       declineLabel:"拒绝"
     };
     const request = {
@@ -537,7 +543,7 @@ export class ResponseSystem {
     const gameId = this.game.state.gameId;
     if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
     if (!responder.alive || this.game.state.isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE);
-    const buttonLabel = `发动${responseName}`;
+    const buttonLabel = `发动「${responseName}」`;
     const request = { id:createId("skill-response"), type:"skill", sourcePlayerId:context.source?.id ?? null,
       targetPlayerId:responder.id, cardId:context.card?.id ?? null, legalCardIds:[], legalSkillIds:[skillId],
       requiredCount:0, timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true,

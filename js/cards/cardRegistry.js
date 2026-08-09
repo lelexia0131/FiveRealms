@@ -1,5 +1,5 @@
 /** 二十六种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-seal-ai-threat-fix-v124";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-momentum-log-fix-v130";
 
 /** 只在最终效果解析时读取私密意图，并按原角色、原区域复验实体牌。 */
 function resolvePrivateSelectionIntent(game, source, card, target, context, expectedZone = null) {
@@ -30,14 +30,19 @@ const CARD_EFFECTS = {
     const stacks = source.statuses.exposeWeakness?.stacks ?? 0;
     if (stacks) {
       delete source.statuses.exposeWeakness;
-      game.log(`${source.name}消耗${stacks}层破势，本次突袭伤害+${stacks}。`, "important");
+      game.log(`${source.name}消耗${stacks}层「破势」，本次「突袭」伤害+${stacks}。`, "important");
     }
     await game.damage(source, targets[0], 1 + stacks, { card, canBlock:true, damageType:"normal", resolutionId:context.resolutionId });
   },
 
   async recover(game, source, card, targets, context) {
     source.turnFlags.recoverUsed += 1;
-    await game.heal(source, source, 1, { card, resolutionId:context.resolutionId });
+    const recovered = await game.heal(source, source, 1, {
+      card, resolutionId:context.resolutionId, silentLog:true
+    });
+    if (game.isSessionValid(game.state.gameId) && recovered > 0) {
+      game.log(`${source.name}使用「${card.name}」，恢复${recovered}点生命。`, "heal");
+    }
   },
 
   async charge(game, source, card) { await game.gainEnergy(source, 1, { card, reason:"聚能" }); },
@@ -47,7 +52,8 @@ const CARD_EFFECTS = {
     if (!target?.alive || target.battleTeam !== source.battleTeam) return;
     target.shield += 1;
     game.ui.queueFeedback?.("shield", target.id, 1);
-    game.log(`${source.name}使用「${card.name}」令${target.name}获得1点护盾，现有${target.shield}点。`, "heal");
+    const targetLabel = target.id === source.id ? "自己" : target.name;
+    game.log(`${source.name}使用「${card.name}」，令${targetLabel}获得1点护盾，现有${target.shield}点。`, "heal");
   },
 
   async scout(game, source, card, targets, context) {
@@ -73,7 +79,8 @@ const CARD_EFFECTS = {
     const transferred = await game.moveCardBetweenHands(intent.from, intent.receiver, intent.card, "转移");
     if (!game.isSessionValid(game.state.gameId)) return { destination:"discard", resolved:false };
     if (transferred) {
-      game.log(`${source.name}将${intent.from.name}的${game.cardLabelForHuman(intent.receiver, intent.card)}转移给了${intent.receiver.name}。`, "important");
+      const receiverLabel = intent.receiver.id === source.id ? "自己" : intent.receiver.name;
+      game.log(`${source.name}将${intent.from.name}的${game.cardLabelForHuman(intent.receiver, intent.card)}转移给了${receiverLabel}。`, "important");
     }
     return { destination:"discard", resolved:Boolean(transferred) };
   },
@@ -81,7 +88,7 @@ const CARD_EFFECTS = {
   async exposeWeakness(game, source) {
     const status = source.statuses.exposeWeakness ??= { stacks:0 };
     status.stacks += 1;
-    game.log(`${source.name}积累了${status.stacks}层破势。`, "important");
+    game.log(`${source.name}获得${status.stacks}层「破势」。`, "important");
   },
 
   async shockwave(game, source, card, targets, context) {
@@ -139,7 +146,7 @@ const CARD_EFFECTS = {
       ? await game.moveEquipmentToHand(target, source, chosen.card, "掠夺")
       : await game.moveCardBetweenHands(target, source, chosen.card, "掠夺");
     if (!game.isSessionValid(gameId)) return { resolved:false };
-    if (plundered) game.log(`${source.name}从${target.name}处掠夺了${game.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
+    if (plundered) game.log(`${source.name}从${target.name}处掠夺了${game.cardLabelForHuman(source, chosen.card)}。`, "important");
     return { resolved:Boolean(plundered) };
   },
 
@@ -151,7 +158,7 @@ const CARD_EFFECTS = {
     if (!chosen) return { resolved:false };
     const destroyed = chosen.zone === "equipment"
       ? await game.discardEquipment(target, chosen.card, `被${source.name}破坏`)
-      : await game.discardCardFromHand(target, chosen.card, `被${source.name}破坏`);
+      : await game.discardCardFromHand(target, chosen.card, `被${source.name}破坏`, { silent:true });
     if (!game.isSessionValid(gameId)) return { resolved:false };
     if (!destroyed) return { resolved:false };
     game.ui.setCurrentCard?.(chosen.card, `${source.name}破坏的${chosen.zone === "equipment" ? "装备" : "手牌"}`, target.name);
@@ -206,7 +213,7 @@ const CARD_EFFECTS = {
     const target = targets[0];
     if (!RuleEngine.getCardTargets(game, source, card).includes(target)) return { resolved:false };
     target.statuses.sealed = { cardDefinitionId:card.definitionId, originPlayerId:source.id };
-    game.log(`${source.name}对${target.name}施加了「封印」状态。`, "important");
+    game.log(`${source.name}使${target.name}进入「封印」状态。`, "important");
   },
 
   async energyDevice(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },

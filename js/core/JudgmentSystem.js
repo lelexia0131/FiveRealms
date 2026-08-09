@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-seal-ai-threat-fix-v124";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-momentum-log-fix-v130";
 
 /**
  * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；
@@ -18,23 +18,23 @@ export class JudgmentSystem {
     this.game.state.phase = "judgment";
     this.game.state.currentJudgment = { card, defenderId:defender.id, attackerId:attacker?.id ?? null };
     this.game.ui.showJudgment?.(defender, card);
-    this.game.log(`${defender.name}的雷达判定为「${card.name}」（${card.categoryName}）。`, "important");
+    this.game.log(`${defender.name}的「雷达」判定为「${card.name}」（${card.categoryName}）。`, "important");
     await this.game.eventBus.emit("judgmentRevealed", { type:"judgmentRevealed", attacker, defender, card, attackContext });
     if (!this.game.isSessionValid(gameId)) return { handled:false, immune:false, cancelled:true };
     let result;
     if (card.category === "tactic") {
       this.game.state.deck.finishJudgmentToDiscard(card);
-      this.game.log(`战术判定令${defender.name}免疫此次突袭。`, "important");
+      this.game.log(`${defender.name}的「雷达」生效，此次攻击无效。`, "important");
       result = { handled:true, immune:true, category:"tactic" };
     } else if (card.category === "basic") {
       this.game.state.deck.finishJudgmentToHand(card, defender);
       defender.bumpHandVersion();
       for (const viewer of this.game.state.players) if (viewer.id !== defender.id) this.game.rememberPrivateCard(viewer, defender, card);
-      this.game.log(`${defender.name}获得了判定牌，原突袭继续。`);
+      this.game.log(`${defender.name}获得判定牌，此次攻击继续结算。`);
       result = { handled:true, immune:false, category:"basic" };
     } else {
       this.game.state.deck.finishJudgmentToDiscard(card);
-      this.game.log(`装备判定失败，判定牌进入弃牌堆；${defender.name}不直接失去生命，原突袭继续。`, "important");
+      this.game.log(`${defender.name}的「雷达」未生效，判定牌进入弃牌堆，此次攻击继续结算。`, "important");
       result = { handled:true, immune:false, category:"equipment" };
     }
     this.game.state.currentJudgment = null;
@@ -52,6 +52,7 @@ export class JudgmentSystem {
       statusName,
       triggerCategory,
       context = {},
+      logReveal = true,
       triggerMessage = null,
       statusCard = null
     } = options;
@@ -71,7 +72,7 @@ export class JudgmentSystem {
     this.game.state.phase = "judgment";
     this.game.state.currentJudgment = { card, defenderId:holder.id, attackerId:null, statusId };
     if (statusCard) this.game.ui.setCurrentCard?.(
-      statusCard, `${holder.name}的延迟状态 · 正在判定`
+      statusCard, "判定中", holder.name
     );
     this.game.ui.showJudgment?.(holder, card, {
       delayedStatusContext:{
@@ -83,7 +84,7 @@ export class JudgmentSystem {
         event:"judging"
       }
     });
-    this.game.log(`${holder.name}的「${statusName}」判定为「${card.name}」，为${categoryLabel}。`, "important");
+    if (logReveal) this.game.log(`${holder.name}的「${statusName}」判定为「${card.name}」，为${categoryLabel}。`, "important");
     const revealEvent = {
       type:"judgmentRevealed", attacker:null, defender:holder, card, statusId, statusContext:context
     };
@@ -119,6 +120,7 @@ export class JudgmentSystem {
       statusName:"封印",
       triggerCategory:"tactic",
       context,
+      logReveal:false,
       statusCard:CARD_DEFINITIONS.seal
     });
   }

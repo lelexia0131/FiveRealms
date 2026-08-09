@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { access, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { GAME_CONFIG } from "../js/config/gameConfig.js";
+import { GAME_CONFIG, PHASE_NAMES } from "../js/config/gameConfig.js";
 import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../js/config/cardConfig.js";
 import { GENERAL_DEFINITIONS } from "../js/config/generalConfig.js";
 import { Game } from "../js/core/Game.js";
@@ -24,6 +24,7 @@ import {
   cardDescriptionClass,
   equipmentSlotTemplate,
   formatLogEntry,
+  formatLogMessage,
   handCardTemplate,
   hiddenCardBackTemplate,
   opponentHandStripTemplate,
@@ -550,8 +551,8 @@ test("角色规则：灵医配置与README同步回春摸牌、濒死触发及�
     readme = await readFile(projectFile("README.md"), "utf8"),
     medicSection = readme.match(/### 灵医[\s\S]*?(?=\r?\n### )/)?.[0] ?? "";
   for (const text of [medic.passiveDescription, medicSection]) {
-    assert.match(text, /己方阵营角色/);
-    assert.match(text, /额外恢复\s*1\s*点/);
+    assert.match(text, /自己或队友/);
+    assert.match(text, /治疗量\s*\+1/);
     assert.match(text, /摸\s*1\s*张牌/);
     assert.match(text, /濒死救援.*触发|濒死救援也可触发/);
     assert.doesNotMatch(text, /濒死救援.*不会|阻止灵医.*回春/);
@@ -559,8 +560,7 @@ test("角色规则：灵医配置与README同步回春摸牌、濒死触发及�
   assert.equal(medic.activeName, "滋荣");
   assert.equal(ACTIVE_SKILLS.symbiosis.name, "滋荣");
   for (const text of [medic.activeDescription, medicSection]) {
-    assert.match(text, /受伤的己方阵营角色/);
-    assert.match(text, /包括自己/);
+    assert.match(text, /自己或一名受伤队友/);
     assert.match(text, /目标不是自己.*自己同样恢复\s*1\s*点生命/);
     assert.match(text, /消耗\s*2\s*点能量/);
     assert.match(text, /最多(?:使用|发动)\s*2\s*次/);
@@ -779,6 +779,32 @@ test("回合：大队规则为开局4张、每回合摸2张、突袭1、调息�
   assert.equal(large.maxEnergy, 3);
 });
 
+test("回合：初始发牌静默但仍走标准移动事件且正式摸牌继续记录", async () => {
+  const ui = makeUi(), game = new Game(ui, () => 0.25), moveReasons = [];
+  game.simulationMode = true;
+  game.runGameLoop = async () => { };
+  game.eventBus.on("afterCardMove", "test:initial-deal-standard-moves", (event) => {
+    if (event.from === "deck" && event.to === "hand") moveReasons.push(event.reason);
+  });
+  const candidates = game.startSelection();
+  await game.confirmGeneral(candidates[0].id);
+  const initialHandCount = game.state.players.reduce((sum, player) => sum + player.hand.length, 0);
+  assert.equal(
+    initialHandCount,
+    game.state.players.reduce(
+      (sum, player) => sum + game.teamRules.getInitialHandCount(player), 0
+    )
+  );
+  assert.equal(moveReasons.filter((reason) => reason === "初始发牌").length, initialHandCount);
+  assert.equal(ui.logs.filter((message) => /摸了\d+张牌/.test(message)).length, 0);
+  const player = game.state.players[0], handBefore = player.hand.length, deckBefore = game.state.deck.cards.length;
+  await game.drawCards(player, 1, "正式摸牌");
+  assert.equal(player.hand.length, handBefore + 1);
+  assert.equal(game.state.deck.cards.length, deckBefore - 1);
+  assert.ok(ui.logs.includes(`${player.name}摸了1张牌。`));
+  game.dispose();
+});
+
 test("回合：摸牌事件按二人阵营3张、三人阵营2张取值", async () => {
   const ps = [
     makePlayer("a", 0, "dawn"),
@@ -806,6 +832,10 @@ test("回合：二人小队无装备时每回合实际获得1点能量", async (
   game.aiController.selectAction = async () => ({ type: "end" });
   await game.takeTurn(small, game.state.gameId);
   assert.equal(small.energy, 1);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${small.name}在回合开始时获得1点能量。`
+  ));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("通过回合开始")));
   assert.deepEqual(
     game.teamRules.getTurnEnergyBreakdown(small), { baseAmount: 1, teamBonus: 0, equipmentBonus: 0 }
   );
@@ -823,6 +853,18 @@ test("能量：三人小队无装备时每回合实际获得1点能量", async (
   assert.deepEqual(
     game.teamRules.getTurnEnergyBreakdown(large), { baseAmount: 1, teamBonus: 0, equipmentBonus: 0 }
   );
+});
+
+test("能量：充能桩加成后的回合日志记录实际获得2点", async () => {
+  const { game, small }
+    = makeTeamFixture();
+  small.equipment = instance("energyDevice");
+  game.aiController.selectAction = async () => ({ type: "end" });
+  await game.takeTurn(small, game.state.gameId);
+  assert.equal(small.energy, 2);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${small.name}在回合开始时获得2点能量。`
+  ));
 });
 
 test("能量：二人小队能量最多积累到4", async () => {
@@ -876,6 +918,9 @@ test("能量：回合能量事件公开配置基础、零阵营加成和装备�
   assert.deepEqual(before, { baseAmount: 1, teamBonus: 0, equipmentBonus: 1, amount: 2 });
   assert.equal(after, 1);
   assert.equal(small.energy, 4);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${small.name}在回合开始时获得1点能量。`
+  ));
 });
 
 // ---- 距离 ----
@@ -1078,6 +1123,14 @@ test("调息：二人小队可在同一出牌阶段连续使用多张调息", as
   assert.equal(small.hp, small.maxHp);
   assert.equal(small.turnFlags.recoverUsed, 2);
   assert.equal(small.turnFlags.recoverLimit, null);
+  assert.deepEqual(
+    game.state.logs.filter((entry) => entry.message.includes("「调息」")).map((entry) => entry.message),
+    [
+      `${small.name}使用「调息」，恢复1点生命。`,
+      `${small.name}使用「调息」，恢复1点生命。`
+    ]
+  );
+  assert.ok(!game.state.logs.some((entry) => entry.message === `${small.name}恢复1点生命。`));
 });
 
 test("调息：三人小队可在同一出牌阶段连续使用多张调息", async () => {
@@ -1104,6 +1157,11 @@ test("聚能：不能突破二人或三人阵营的能量上限", async () => {
     await fixture.game.playCard(player, player.hand[0], []);
     assert.equal(player.energy, player.maxEnergy);
     assert.equal(RuleEngine.canPlayCard(fixture.game, player, player.hand[0]).ok, false);
+    assert.deepEqual(
+      fixture.game.state.logs.filter((entry) => entry.message.includes("「聚能」")).map((entry) => entry.message),
+      [`${player.name}使用「聚能」，获得1点能量。`]
+    );
+    assert.ok(!fixture.game.state.logs.some((entry) => entry.message.includes("通过聚能")));
   }
 });
 
@@ -1136,9 +1194,15 @@ test("护盾：牌可为自己使用并在队友身上永久叠加", async () =>
   source.hand.push(selfCard, first, second);
   assert.equal(await game.playCard(source, selfCard, [source]), true);
   assert.equal(source.shield, 1);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${source.name}使用「护盾」，令自己获得1点护盾，现有1点。`
+  ));
   assert.equal(await game.playCard(source, first, [ally]), true);
   assert.equal(await game.playCard(source, second, [ally]), true);
   assert.equal(ally.shield, 2);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${source.name}使用「护盾」，令${ally.name}获得1点护盾，现有2点。`
+  ));
   assert.equal(ally.statuses.temporaryShield, undefined);
 });
 
@@ -1223,7 +1287,37 @@ test("转移：支持来源、接收者与指定牌三阶段", async () => {
     }
   );
   assert.ok(c.hand.includes(moved));
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${a.name}使用了「转移」，准备将${b.name}的1张牌转移给${c.name}。`
+  ));
+  assert.equal(game.state.logs.at(-1).message, `${a.name}将${b.name}的1张手牌转移给了${c.name}。`);
   assert.ok(!game.state.logs.at(-1).message.includes(moved.name));
+});
+
+test("转移：接收者为使用者时声明与结果都显示自己", async () => {
+  const actor = makePlayer("self-receiver", 0, "dawn", "human"),
+    from = makePlayer("self-receiver-from", 1, "dusk"),
+    other = makePlayer("self-receiver-other", 2, "dusk"),
+    use = instance("transfer"), moved = instance("recover");
+  actor.hand.push(use);
+  from.hand.push(moved);
+  from.bumpHandVersion();
+  const { game } = makeGame([actor, from, other]), selection = game.cardSelectionSystem.createHiddenSelection(from);
+  assert.equal(await game.playCard(actor, use, [], {
+    sourceId:from.id,
+    receiverId:actor.id,
+    tokens:[selection.tokens[0].token],
+    selectionId:selection.selectionId
+  }), true);
+  assert.ok(actor.hand.includes(moved));
+  assert.ok(!from.hand.includes(moved));
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${actor.name}使用了「转移」，准备将${from.name}的1张牌转移给自己。`
+  ));
+  assert.equal(
+    game.state.logs.at(-1).message,
+    `${actor.name}将${from.name}的「${moved.name}」转移给了自己。`
+  );
 });
 
 test("转移：配置和README明确只允许移动手牌", async () => {
@@ -1638,21 +1732,32 @@ test("借势：真人借势无普通突袭敌人时仍可选择同阵营第一�
   first.equipment = equipment;
   const { game }
     = makeGame([actor, first]);
-  let call = 0;
+  let call = 0, confirmation = "";
+  const prompts = [];
   const controller = new InteractionController(
     {
-      requestTarget: async (players) => {
+      requestTarget: async (players, prompt) => {
+        prompts.push(prompt);
         call += 1; return call === 1 ? players.find(
           (player) => player.id === "first"
         ) : players.find((player) => player.id === "actor");
       }
     }
   );
-  controller.requestConfirmation = async () => true;
+  controller.requestConfirmation = async (_title, summary) => { confirmation = summary; return true; };
   const selection = await controller.requestCardFlow(game, actor, use, []);
   assert.deepEqual(
     selection, { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
   );
+  assert.deepEqual(prompts, [
+    "选择一名有装备且有可选第二目标的其他角色",
+    "选择其攻击范围内的一名其他角色"
+  ]);
+  assert.equal(
+    confirmation,
+    `${actor.name}要求${first.name}对${actor.name}使用「突袭」；若拒绝，${actor.name}将获得其「${equipment.name}」。`
+  );
+  assert.doesNotMatch(confirmation, /以.*为代价|真实突袭/);
 });
 
 test("借势：第一目标没有距离合法第二目标时仍被排除", () => {
@@ -2230,13 +2335,13 @@ test("借势：响应窗口不再渲染卡牌列表且使用按钮无需选牌�
         presentation: {
           eventText: "事件",
           responseText: "响应说明",
-          availabilityText: "需要 1 张突袭，当前 2 张。",
-          buttonLabel: "使用突袭",
+          availabilityText: "需要1张「突袭」，当前有2张。",
+          buttonLabel: "使用「突袭」",
           declineLabel: "拒绝"
         }
       },
       deadline: Date.now() + 5000,
-      label: "使用突袭",
+      label: "使用「突袭」",
       selectedCardIds: new Set()
     },
     elements: { response_panel: panel },
@@ -2247,9 +2352,9 @@ test("借势：响应窗口不再渲染卡牌列表且使用按钮无需选牌�
   const html = panel.innerHTML;
   assert.doesNotMatch(html, /leverage-response-cards/);
   assert.doesNotMatch(html, /data-response-card-id/);
-  assert.match(html, /使用突袭/);
+  assert.match(html, /使用「突袭」/);
   assert.match(html, /拒绝/);
-  assert.match(html, /需要 1 张突袭，当前 2 张/);
+  assert.match(html, /需要1张「突袭」，当前有2张/);
   assert.equal((html.match(/data-response-choice/g) ?? []).length, 2);
   assert.doesNotMatch(html, /disabled/);
 });
@@ -2267,7 +2372,27 @@ test("掠夺：真人掠夺指定隐藏牌后按已知公开牌名记录", async
   const h = game.cardSelectionSystem.createHiddenSelection(b);
   await game.playCard(a, use, [b], { tokens: [h.tokens[0].token], selectionId: h.selectionId });
   assert.ok(a.hand.includes(secret));
-  assert.ok(game.state.logs.some((entry) => entry.message.includes(secret.name)));
+  assert.equal(game.state.logs.at(-1).message, `${a.name}从${b.name}处掠夺了「${secret.name}」。`);
+  assert.ok(!game.state.logs.at(-1).message.includes("收入手牌"));
+});
+
+test("掠夺：旁观真人未知的敌方手牌只记录1张手牌且归属正常转移", async () => {
+  const observer = makePlayer("plunder-observer", 0, "dawn", "human"),
+    actor = makePlayer("plunder-actor", 1, "dusk", "human"),
+    target = makePlayer("plunder-target", 2, "dawn"),
+    use = instance("plunder"), secret = instance("shield");
+  actor.hand.push(use);
+  target.hand.push(secret);
+  const { game } = makeGame([observer, actor, target]);
+  game.state.currentPlayerIndex = actor.seatIndex;
+  const selection = game.cardSelectionSystem.createHiddenSelection(target);
+  assert.equal(await game.playCard(actor, use, [target], {
+    tokens:[selection.tokens[0].token], selectionId:selection.selectionId
+  }), true);
+  assert.ok(actor.hand.includes(secret));
+  assert.ok(!target.hand.includes(secret));
+  assert.equal(game.state.logs.at(-1).message, `${actor.name}从${target.name}处掠夺了1张手牌。`);
+  assert.ok(!game.state.logs.at(-1).message.includes("手牌并收入手牌"));
 });
 
 test("掠夺：可把距离2内目标装备公开移入施牌者手牌", async () => {
@@ -2300,9 +2425,9 @@ test("掠夺：可把距离2内目标装备公开移入施牌者手牌", async (
   assert.ok(actor.hand.includes(equipment));
   assert.ok(!game.state.deck.discardPile.includes(original));
   assert.ok(actor.handVersion > handVersion);
-  assert.ok(
-    game.state.logs.some((entry) => entry.message.includes("充能桩") && entry.message.includes("收入手牌"))
-  );
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${actor.name}从${target.name}处掠夺了「${equipment.name}」。`
+  ));
 });
 
 // ---- 破坏 ----
@@ -2315,10 +2440,19 @@ test("破坏：公开牌名并把牌移入弃牌堆", async () => {
   a.hand.push(use);
   b.hand.push(secret);
   b.bumpHandVersion();
+  const moved = [];
+  game.eventBus.on("afterCardMove", "test:destroy-keeps-standard-move", (event) => {
+    if (event.card === secret) moved.push([event.from, event.to, event.reason]);
+  });
   const h = game.cardSelectionSystem.createHiddenSelection(b);
   await game.playCard(a, use, [b], { tokens: [h.tokens[0].token], selectionId: h.selectionId });
   assert.ok(game.state.deck.discardPile.includes(secret));
-  assert.ok(game.state.logs.some((entry) => entry.message.includes(secret.name)));
+  assert.deepEqual(moved, [["hand", "discard", `被${a.name}破坏`]]);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${a.name}对${b.name}使用了「破坏」。`
+  ));
+  assert.equal(game.state.logs.at(-1).message, `${a.name}破坏了${b.name}的手牌「${secret.name}」。`);
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes(`因被${a.name}破坏弃置`)));
 });
 
 test("破坏：可不限距离弃置装备区装备", async () => {
@@ -2346,6 +2480,10 @@ test("破坏：可不限距离弃置装备区装备", async () => {
   );
   assert.equal(target.equipment, null);
   assert.ok(game.state.deck.discardPile.includes(equipment));
+  assert.equal(
+    game.state.logs.at(-1).message,
+    `${actor.name}破坏了${target.name}的装备「${equipment.name}」。`
+  );
 });
 
 // ---- 反制（真实规则） ----
@@ -2672,7 +2810,7 @@ test("封印：定义、数量、牌堆与原有牌数量正确", () => {
   assert.ok(seal);
   assert.equal(seal.category, "tactic");
   assert.equal(seal.targetType, "singleUnsealedEnemy");
-  assert.equal(seal.counterable, false);
+  assert.equal(seal.counterable, true);
   assert.equal(seal.count, 3);
   assert.equal(seal.aiValue, 7);
   assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("seal"));
@@ -2707,18 +2845,63 @@ test("封印：统一目标规则只允许未封印的存活敌人且无目标�
   assert.equal(RuleEngine.canPlayCard(game, source, card).ok, false);
 });
 
-test("封印：打出阶段绝不询问反制且目标立即获得不可叠加状态", async () => {
+test("封印：首次打出先记录行动声明且被普通反制后不写入延迟状态", async () => {
   const source = makePlayer("source", 0, "dawn", "human"),
     target = makePlayer("target", 1, "dusk", "human");
-  const { game, ui } = makeGame([source, target], { response:() => true });
+  const first = instance("seal"), counter = instance("counter");
+  let gameRef = null, declarationVisibleInCounterWindow = false;
+  const { game, ui } = makeGame([source, target], {
+    response:(request) => {
+      if (request.type !== "counter" || !request.legalCardIds.length) return false;
+      declarationVisibleInCounterWindow = gameRef.state.logs.some(
+        (entry) => entry.message === `${source.name}对${target.name}使用了「封印」。`
+      );
+      return true;
+    }
+  });
+  gameRef = game;
+  source.hand.push(first);
+  target.hand.push(counter);
+  assert.equal(await game.playCard(source, first, [target]), true);
+  assert.equal(declarationVisibleInCounterWindow, true);
+  assert.equal(target.statuses.sealed, undefined);
+  assert.ok(ui.responseRequests.some(
+    (request) => request.type === "counter" && request.targetPlayerId === target.id
+      && request.cardId === first.id
+  ));
+  assert.equal(target.hand.includes(counter), false);
+  assert.ok(game.state.deck.discardPile.includes(first));
+  assert.ok(game.state.deck.discardPile.includes(counter));
+  assert.equal(
+    game.state.logs.filter(
+      (entry) => entry.message === `${source.name}对${target.name}使用了「封印」。`
+    ).length,
+    1
+  );
+  assert.equal(
+    game.state.logs.some((entry) => entry.message === `${source.name}使${target.name}进入「封印」状态。`),
+    false
+  );
+});
+
+test("封印：首次打出未被反制时行动声明先于状态结果且状态不可叠加", async () => {
+  const source = makePlayer("source", 0, "dawn", "human"),
+    target = makePlayer("target", 1, "dusk", "human");
+  const { game, ui } = makeGame([source, target], { response:() => false });
   const first = instance("seal"), second = instance("seal"), counter = instance("counter");
   source.hand.push(first, second);
   target.hand.push(counter);
   assert.equal(await game.playCard(source, first, [target]), true);
   assert.deepEqual(target.statuses.sealed, { cardDefinitionId:"seal", originPlayerId:source.id });
-  assert.equal(ui.responseRequests.length, 0);
+  assert.ok(ui.responseRequests.some(
+    (request) => request.type === "counter" && request.targetPlayerId === target.id
+      && request.cardId === first.id
+  ));
   assert.ok(target.hand.includes(counter));
-  assert.ok(game.state.deck.discardPile.includes(first));
+  const messages = game.state.logs.map((entry) => entry.message);
+  const declarationIndex = messages.indexOf(`${source.name}对${target.name}使用了「封印」。`);
+  const resultIndex = messages.indexOf(`${source.name}使${target.name}进入「封印」状态。`);
+  assert.ok(declarationIndex >= 0 && resultIndex > declarationIndex);
   assert.equal(RuleEngine.canPlayCard(game, source, second).ok, false);
   assert.equal(await game.playCard(source, second, [target]), false);
   assert.ok(source.hand.includes(second));
@@ -2759,6 +2942,15 @@ test("封印：触发时被反制则不抽判定并继续处理闪电", async ()
   assert.ok(game.state.logs.some(
     (entry) => entry.message === `${holder.name}的「封印」被反制，本次封印解除。`
   ));
+  assert.deepEqual(
+    ui.currentCards
+      .filter((entry) => entry.cardOrName?.definitionId === "seal")
+      .map((entry) => ({ source:entry.source, targetLabel:entry.targetLabel })),
+    [
+      { source:"即将判定", targetLabel:holder.name },
+      { source:"被反制", targetLabel:holder.name }
+    ]
+  );
 });
 
 test("封印：反制被反制后继续判定且完整链复用公共响应顺序", async () => {
@@ -2778,17 +2970,21 @@ test("封印：反制被反制后继续判定且完整链复用公共响应顺�
   assert.equal(responder.hand.length, 0);
   assert.equal(counterer.hand.length, 0);
   assert.ok(game.state.deck.discardPile.includes(judgment));
-  assert.ok(game.state.logs.some((entry) => entry.message.includes("封印") && entry.message.includes("判定成功")));
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${holder.name}的「封印」判定牌为「${judgment.name}」（战术牌），「封印」未生效，本回合正常进行。`
+  ));
+  assert.equal(game.state.logs.filter((entry) => entry.message.includes("的「封印」判定牌为")).length, 1);
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("的「封印」判定为「")));
 });
 
-test("封印：战术判定成功后以状态持有者展示并在闪电前完成", async () => {
+test("封印：战术判定未生效后以状态持有者展示并在闪电前完成", async () => {
   const holder = makePlayer("holder", 0, "dawn"), receiver = makePlayer("receiver", 1, "dusk");
   const { game, ui } = makeGame([holder, receiver]);
   holder.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:receiver.id };
   holder.statuses.lightning = { cardDefinitionId:"lightning", originPlayerId:holder.id };
   const sealJudgment = instance("harvest"), lightningJudgment = instance("assault"), revealed = [];
   game.state.deck.cards = [lightningJudgment, sealJudgment];
-  game.eventBus.on("judgmentRevealed", "test:seal-success-order", (event) => revealed.push(event.statusId));
+  game.eventBus.on("judgmentRevealed", "test:seal-ineffective-order", (event) => revealed.push(event.statusId));
   await game.eventBus.emit("beforeStatusResolve", { player:holder, cancelled:false });
   assert.deepEqual(revealed, ["sealed", "lightning"]);
   assert.equal(holder.statuses.sealed, undefined);
@@ -2797,43 +2993,63 @@ test("封印：战术判定成功后以状态持有者展示并在闪电前完�
   assert.ok(receiver.statuses.lightning);
   assert.ok(game.state.deck.discardPile.includes(sealJudgment));
   assert.ok(game.state.deck.discardPile.includes(lightningJudgment));
-  assert.ok(ui.currentCards.some(
-    (entry) => entry.cardOrName?.definitionId === "seal"
-      && entry.source === `${holder.name}的延迟状态 · 判定成功`
-  ));
+  assert.deepEqual(
+    ui.currentCards
+      .filter((entry) => entry.cardOrName?.definitionId === "seal")
+      .map((entry) => ({ source:entry.source, targetLabel:entry.targetLabel })),
+    [
+      { source:"即将判定", targetLabel:holder.name },
+      { source:"判定中", targetLabel:holder.name },
+      { source:"未生效", targetLabel:holder.name }
+    ]
+  );
   const sealDisplay = ui.judgments.find(
     (entry) => entry.context.delayedStatusContext?.statusId === "sealed"
   );
   assert.equal(sealDisplay.context.delayedStatusContext.ownerId, holder.id);
   assert.equal(sealDisplay.context.delayedStatusContext.statusName, "封印");
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${holder.name}的「封印」判定牌为「${sealJudgment.name}」（战术牌），「封印」未生效，本回合正常进行。`
+  ));
+  assert.equal(game.state.logs.filter((entry) => entry.message.includes("的「封印」判定牌为")).length, 1);
   assert.ok(!game.state.logs.some((entry) => /未知角色|不知道谁/.test(entry.message)));
 });
 
-test("封印：非战术判定失败后以状态持有者展示并保留跳过行动标记", async () => {
+test("封印：非战术判定生效后以状态持有者展示并保留跳过出牌标记", async () => {
   const holder = makePlayer("holder", 0, "dawn"), receiver = makePlayer("receiver", 1, "dusk");
   const { game, ui } = makeGame([holder, receiver]);
   holder.statuses.sealed = { cardDefinitionId:"seal", originPlayerId:receiver.id };
   holder.statuses.lightning = { cardDefinitionId:"lightning", originPlayerId:holder.id };
   const sealJudgment = instance("assault"), lightningJudgment = instance("harvest"), revealed = [];
   game.state.deck.cards = [lightningJudgment, sealJudgment];
-  game.eventBus.on("judgmentRevealed", "test:seal-failure-order", (event) => revealed.push(event.statusId));
+  game.eventBus.on("judgmentRevealed", "test:seal-effective-order", (event) => revealed.push(event.statusId));
   await game.eventBus.emit("beforeStatusResolve", { player:holder, cancelled:false });
   assert.deepEqual(revealed, ["sealed", "lightning"]);
   assert.equal(holder.statuses.sealed, undefined);
   assert.equal(holder.turnFlags.skipActionPhase, true);
   assert.equal(holder.statuses.lightning, undefined);
   assert.ok(receiver.statuses.lightning);
-  assert.ok(ui.currentCards.some(
-    (entry) => entry.cardOrName?.definitionId === "seal"
-      && entry.source === `${holder.name}的延迟状态 · 判定失败`
-  ));
+  assert.deepEqual(
+    ui.currentCards
+      .filter((entry) => entry.cardOrName?.definitionId === "seal")
+      .map((entry) => ({ source:entry.source, targetLabel:entry.targetLabel })),
+    [
+      { source:"即将判定", targetLabel:holder.name },
+      { source:"判定中", targetLabel:holder.name },
+      { source:"生效", targetLabel:holder.name }
+    ]
+  );
   assert.ok(game.state.logs.some(
-    (entry) => entry.message === `${holder.name}的「封印」判定失败，本回合摸牌后跳过行动阶段。`
+    (entry) => entry.message === `${holder.name}的「封印」判定牌为「${sealJudgment.name}」（基础牌），「封印」生效。`
   ));
+  assert.ok(!game.state.logs.some(
+    (entry) => entry.message.includes("的「封印」判定牌为") && entry.message.includes("跳过出牌阶段")
+  ));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("的「封印」判定为「")));
   assert.ok(!game.state.logs.some((entry) => /未知角色|不知道谁/.test(entry.message)));
 });
 
-test("封印：判定失败后仍处理闪电、摸牌、跳过行动并正常弃牌结束", async () => {
+test("封印：判定生效后仍处理闪电、摸牌、跳过出牌并正常弃牌结束", async () => {
   const holder = makePlayer("holder", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk");
   const { game } = makeGame([holder, enemy]);
   holder.hp = 1;
@@ -2849,7 +3065,7 @@ test("封印：判定失败后仍处理闪电、摸牌、跳过行动并正常�
     sawSkipBeforeDraw = holder.turnFlags.skipActionPhase;
   });
   game.eventBus.on("turnEnd", "test:seal-turn-end", () => { turnEnds += 1; });
-  game.takeAiPlayPhase = async () => { throw new Error("封印失败后不得进入 AI 行动阶段"); };
+  game.takeAiPlayPhase = async () => { throw new Error("封印生效后不得进入 AI 出牌阶段"); };
   await game.takeTurn(holder, game.state.gameId);
   assert.equal(sawSkipBeforeDraw, true);
   assert.equal(playStarts, 0);
@@ -2863,12 +3079,15 @@ test("封印：判定失败后仍处理闪电、摸牌、跳过行动并正常�
   assert.ok(game.state.deck.discardPile.includes(sealJudgment));
   assert.ok(game.state.deck.discardPile.includes(lightningJudgment));
   assert.ok(game.state.deck.discardPile.includes(drawA) || game.state.deck.discardPile.includes(drawB));
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${holder.name}因「封印」生效，跳过出牌阶段并进入弃牌阶段。`
+  ));
   holder.resetTurnFlags(game.teamRules.getRules(holder));
   assert.equal(holder.turnFlags.skipActionPhase, false);
 });
 
-test("封印：被反制或判定成功后都正常摸牌并进入行动阶段", async () => {
-  for (const mode of ["countered", "success"]) {
+test("封印：被反制或未生效后都正常摸牌并进入出牌阶段", async () => {
+  for (const mode of ["countered", "ineffective"]) {
     const holder = makePlayer(`seal-normal-${mode}`, 0, "dawn"),
       enemy = makePlayer(`seal-normal-enemy-${mode}`, 1, "dusk");
     const { game } = makeGame([holder, enemy]);
@@ -2878,7 +3097,7 @@ test("封印：被反制或判定成功后都正常摸牌并进入行动阶段",
       forceAvailableAiCounters(game);
     }
     const drawA = instance("charge"), drawB = instance("shield"),
-      judgment = mode === "success" ? instance("harvest") : null;
+      judgment = mode === "ineffective" ? instance("harvest") : null;
     game.state.deck.cards = judgment ? [drawB, drawA, judgment] : [drawB, drawA];
     let playStarts = 0, playCalls = 0, beforeDrawHandCount = null;
     game.eventBus.on("playPhaseStart", `test:seal-normal-play-${mode}`, () => { playStarts += 1; });
@@ -3028,10 +3247,16 @@ test("闪电：判定非装备牌后移除状态并顺时针转移，保留来�
   );
   assert.equal(tail.statuses.lightning, undefined);
   assert.ok(game.state.deck.discardPile.some((entry) => entry.definitionId === "assault"));
-  assert.ok(ui.currentCards.some(
-    (entry) => entry.cardOrName?.definitionId === "lightning"
-      && entry.source === `${holder.name}的延迟状态 · 判定未生效`
-  ));
+  assert.deepEqual(
+    ui.currentCards
+      .filter((entry) => entry.cardOrName?.definitionId === "lightning")
+      .map((entry) => ({ source:entry.source, targetLabel:entry.targetLabel })),
+    [
+      { source:"即将判定", targetLabel:holder.name },
+      { source:"判定中", targetLabel:holder.name },
+      { source:"判定未生效", targetLabel:holder.name }
+    ]
+  );
   assert.ok(game.state.logs.some(
     (entry) => entry.message === `${holder.name}的「闪电」判定未生效，转移给${next.name}。`
   ));
@@ -3094,10 +3319,16 @@ test("闪电：判中后的护援响应沿用状态持有者语义而不构造�
   );
   assert.doesNotMatch(skillRequest.presentation.eventText, /未知角色|不知道谁|使用了|对.*使用/);
   assert.equal(skillRequest.presentation.responseText, "你可以发动「护援」。");
-  assert.ok(ui.currentCards.some(
-    (entry) => entry.cardOrName?.definitionId === "lightning"
-      && entry.source === `${holder.name}的延迟状态 · 判定成功`
-  ));
+  assert.deepEqual(
+    ui.currentCards
+      .filter((entry) => entry.cardOrName?.definitionId === "lightning")
+      .map((entry) => ({ source:entry.source, targetLabel:entry.targetLabel })),
+    [
+      { source:"即将判定", targetLabel:holder.name },
+      { source:"判定中", targetLabel:holder.name },
+      { source:"判定成功", targetLabel:holder.name }
+    ]
+  );
 });
 
 test("闪电：伤害不请求格挡且不触发雷达防御判定", async () => {
@@ -3214,6 +3445,15 @@ test("闪电：状态反制由持有者本人优先响应，成功后不翻判�
   assert.ok(game.state.logs.some(
     (entry) => entry.message === `${holder.name}的「闪电」被反制，转移给${receiver.name}。`
   ));
+  assert.deepEqual(
+    ui.currentCards
+      .filter((entry) => entry.cardOrName?.definitionId === "lightning")
+      .map((entry) => ({ source:entry.source, targetLabel:entry.targetLabel })),
+    [
+      { source:"即将判定", targetLabel:holder.name },
+      { source:"被反制", targetLabel:holder.name }
+    ]
+  );
 });
 
 test("闪电：状态反制按顺时针响应，反制被反制后继续判定", async () => {
@@ -3312,6 +3552,7 @@ test("闪电：判定成功日志复用玩家与卡牌名称格式化机制", as
   assert.ok(trigger);
   assert.equal(reveal.message, `${holder.name}的「闪电」判定为「${equipment.name}」，为装备牌。`);
   assert.equal(trigger.message, `${holder.name}的「闪电」判定成功，被「闪电」击中。`);
+  assert.equal(game.state.logs.filter((entry) => entry.message.includes("装备牌")).length, 1);
   assert.ok(
     reveal.fragments.some((fragment) => fragment.type === "player" && fragment.playerId === holder.id)
   );
@@ -3362,6 +3603,7 @@ test("闪电：基础牌与战术牌判定类别日志正确", async () => {
       (entry) => entry.message === `${tactic.holder.name}的「闪电」判定未生效，转移给${tactic.enemy.name}。`
     )
   );
+  assert.equal(tactic.game.state.logs.filter((entry) => entry.message.includes("战术牌")).length, 1);
 });
 
 test("闪电：反制路径不输出判定日志", async () => {
@@ -3489,6 +3731,10 @@ test("回收站：每回合前两张主动战术各摸1且被反制也触发", a
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
     = makeGame([a, b], { response: (request) => request.type === "counter" });
+  const drawReasons = [];
+  game.eventBus.on("afterCardMove", "test:recycle-standard-draw", (event) => {
+    if (event.from === "deck" && event.to === "hand") drawReasons.push(event.reason);
+  });
   a.equipment = instance("recycleDevice");
   a.hand.push(instance("harvest"), instance("exposeWeakness"), instance("exposeWeakness"));
   b.hand.push(instance("counter"));
@@ -3498,6 +3744,14 @@ test("回收站：每回合前两张主动战术各摸1且被反制也触发", a
   await game.playCard(a, a.hand[0], []);
   assert.equal(a.turnFlags.recycleDeviceUses, 2);
   assert.equal(a.hand.length, 2);
+  assert.deepEqual(drawReasons, ["回收站", "回收站"]);
+  assert.deepEqual(
+    game.state.logs.filter((entry) => entry.message.includes("的「回收站」触发")).map((entry) => entry.message),
+    [
+      `${a.name}的「回收站」触发（1/2），摸1张牌。`,
+      `${a.name}的「回收站」触发（2/2），摸1张牌。`
+    ]
+  );
 });
 
 test("回收站：次数只在装备区显示并随真实回合状态重置", () => {
@@ -3528,12 +3782,15 @@ test("回收站：仍严格限制每回合最多触发2次", async () => {
   await game.playCard(owner, owner.hand[0], []);
   await game.playCard(owner, owner.hand[0], []);
   assert.equal(owner.turnFlags.recycleDeviceUses, 2);
-  assert.equal(game.state.logs.filter((entry) => entry.message.includes("回收站启动")).length, 2);
+  const recycleLogs = game.state.logs.filter((entry) => entry.message.includes("的「回收站」触发"));
+  assert.equal(recycleLogs.length, 2);
+  assert.ok(recycleLogs.every((entry) => /（[12]\/2），摸1张牌。/.test(entry.message)));
+  assert.equal(game.state.logs.filter((entry) => entry.message.includes(`${owner.name}摸了`)).length, 0);
 });
 
 // ---- 雷达 ----
 
-test("雷达：判定战术牌时免疫原突袭并把判定牌弃置", async () => {
+test("雷达：判定战术牌时令此次攻击无效并把判定牌弃置", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
     = makeGame([a, b]);
@@ -3545,6 +3802,10 @@ test("雷达：判定战术牌时免疫原突袭并把判定牌弃置", async ()
   assert.equal(b.hp, hp);
   assert.ok(game.state.deck.discardPile.includes(judgment));
   assert.equal(game.state.deck.judgmentZone.length, 0);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${b.name}的「雷达」生效，此次攻击无效。`
+  ));
+  assert.ok(!game.state.logs.some((entry) => /原突袭/.test(entry.message)));
 });
 
 test("雷达：判定基础牌时获得该牌并继续攻击", async () => {
@@ -3558,6 +3819,9 @@ test("雷达：判定基础牌时获得该牌并继续攻击", async () => {
   await game.damage(a, b, 1, { card: instance("assault"), canBlock: true, damageType: "normal" });
   assert.ok(b.hand.includes(judgment));
   assert.equal(b.hp, hp - 1);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${b.name}获得判定牌，此次攻击继续结算。`
+  ));
 });
 
 test("雷达：公开获得的基础牌写入其他 AI 记忆", async () => {
@@ -3597,6 +3861,26 @@ test("雷达：判定装备牌时不直接扣血且原攻击继续由护盾吸�
   assert.equal(b.shield, 1);
   assert.ok(game.state.deck.discardPile.includes(judgment));
   assert.equal(b.equipment.definitionId, "defenseDevice");
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${b.name}的「雷达」未生效，判定牌进入弃牌堆，此次攻击继续结算。`
+  ));
+});
+
+test("雷达：震荡造成的攻击同样触发判定且日志不冒充突袭", async () => {
+  const a = makePlayer("radar-shockwave-source", 0, "dawn"),
+    b = makePlayer("radar-shockwave-target", 1, "dusk");
+  const { game }
+    = makeGame([a, b]);
+  b.equipment = instance("defenseDevice");
+  const judgment = instance("harvest"), shockwave = instance("shockwave"), hp = b.hp;
+  game.state.deck.cards.push(judgment);
+  a.hand.push(shockwave);
+  await game.playCard(a, shockwave, []);
+  assert.equal(b.hp, hp);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${b.name}的「雷达」生效，此次攻击无效。`
+  ));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("原突袭")));
 });
 
 // ---- 军火库 ----
@@ -3613,7 +3897,7 @@ test("军火库：响应显示完整数量并原子消耗两张格挡", async ()
   const request = ui.responseRequests.find((entry) => entry.type === "block");
   assert.equal(request.requiredCount, 2);
   assert.equal(request.presentation.availableCount, 3);
-  assert.match(request.presentation.availabilityText, /需要 2 张格挡，当前 3 张/);
+  assert.match(request.presentation.availabilityText, /需要2张「格挡」，当前有3张/);
   assert.equal(target.hand.filter((card) => card.definitionId === "block").length, 1);
 });
 
@@ -3629,7 +3913,7 @@ test("军火库：要求2张格挡；只有1张时仍显示响应但按钮禁用
   assert.equal(request.requiredCount, 2);
   assert.equal(request.legalCardIds.length, 1);
   assert.equal(canSubmitResponse(request), false);
-  assert.match(request.presentation.availabilityText, /不足/);
+  assert.equal(request.presentation.availabilityText, "需要2张「格挡」，你当前只有1张，无法格挡。");
   assert.equal(b.hp, hp - 1);
   assert.equal(b.hand.length, 1);
 });
@@ -3711,18 +3995,36 @@ test("刃行者：使用不同类别卡牌会增加并公开显示连势且命�
   const { game }
     = makeGame([blade, ally, enemy]);
   registerPassiveSkills(game);
-  const charge = instance("charge"), harvest = instance("harvest"), assault = instance("assault");
-  blade.hand.push(charge, harvest, assault);
+  const charge = instance("charge"), harvest = instance("harvest"),
+    equipment = instance("energyDevice"), assault = instance("assault");
+  blade.hand.push(charge, harvest, equipment, assault);
   game.state.deck.cards.push(instance("block"), instance("shield"));
   assert.equal(await game.playCard(blade, charge, [blade]), true);
   assert.equal(blade.turnFlags.momentum, 1);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${blade.name}触发「连势」，现有1层「连势」。`
+  ));
   assert.equal(await game.playCard(blade, harvest, []), true);
   assert.equal(blade.turnFlags.momentum, 2);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${blade.name}触发「连势」，现有2层「连势」。`
+  ));
+  assert.equal(await game.playCard(blade, equipment, []), true);
+  assert.equal(blade.turnFlags.momentum, 2);
+  assert.deepEqual([...blade.turnFlags.categoriesUsed], ["basic", "tactic", "equipment"]);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message.includes("触发「连势」")).length,
+    2
+  );
   assert.match(playerPanelTemplate(blade, { humanTeam: "dawn" }), /状态<\/small><b>连势 2<\/b>/);
   const hp = enemy.hp;
   assert.equal(await game.playCard(blade, assault, [enemy]), true);
   assert.equal(enemy.hp, hp - 3);
   assert.equal(blade.turnFlags.momentum, 0);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${blade.name}消耗2层「连势」，本次「突袭」伤害+2。`
+  ));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("的「突袭」获得2点额外伤害")));
   assert.doesNotMatch(playerPanelTemplate(blade, { humanTeam: "dawn" }), /连势 \d/);
 });
 
@@ -3745,7 +4047,7 @@ test("刃行者：配置与README都声明回合结束清空连势", async () =>
   const blade = GENERAL_DEFINITIONS.find((general) => general.id === "blade-walker"),
     readme = await readFile(projectFile("README.md"), "utf8"),
     bladeSection = readme.match(/### 刃行者[\s\S]*?(?=\r?\n### )/)?.[0] ?? "";
-  assert.match(blade.passiveDescription, /回合结束后清空连势/);
+  assert.match(blade.passiveDescription, /回合结束后清空「连势」/);
   assert.match(bladeSection, /回合结束后清空连势/);
 });
 
@@ -3779,7 +4081,7 @@ test("守誓者：壁垒每次提供1点可叠加的永久护盾", async () => {
   assert.equal(target.shield, 4);
   assert.equal("temporaryShield" in target.statuses, false);
   const log = game.state.logs.at(-1)?.message ?? "";
-  assert.match(log, /构筑壁垒.*获得1点护盾/);
+  assert.equal(log, `${source.name}发动「壁垒」，令${target.name}获得1点护盾。`);
   assert.doesNotMatch(log, /持续|消散/);
 });
 
@@ -3877,7 +4179,7 @@ test("守誓者：护援响应区分原技能名称与当前响应技能名称",
     assert.ok(request);
     assert.equal(request.presentation.eventText, `${source.name}对${target.name}使用了「${actionName}」。`);
     assert.equal(request.presentation.responseText, "你可以发动「护援」。");
-    assert.equal(request.presentation.buttonLabel, "发动护援");
+    assert.equal(request.presentation.buttonLabel, "发动「护援」");
     assert.doesNotMatch(request.presentation.eventText, /发动护援|burningField|hunt/);
   }
 });
@@ -3956,10 +4258,22 @@ test("灵医：滋荣可选择受伤的自己或队友，治疗队友时自己�
     [medic.id, ally.id]
   );
   assert.equal(await game.useActiveSkill(medic, "symbiosis", [ally]), true);
+  assert.equal(
+    game.state.logs.filter(
+      (entry) => entry.message === `${medic.name}对${ally.name}发动「滋荣」。`
+    ).length,
+    1
+  );
   assert.equal(ally.hp, 3);
   assert.equal(medic.hp, 2);
   assert.equal(medic.hand.length, 1);
   assert.equal(await game.useActiveSkill(medic, "symbiosis", [medic]), true);
+  assert.equal(
+    game.state.logs.filter(
+      (entry) => entry.message === `${medic.name}对自己发动「滋荣」。`
+    ).length,
+    1
+  );
   assert.equal(medic.hp, medic.maxHp);
   assert.equal(medic.hand.length, 1);
   assert.equal(medic.energy, 0);
@@ -3968,7 +4282,7 @@ test("灵医：滋荣可选择受伤的自己或队友，治疗队友时自己�
   assert.equal(medic.turnFlags.activeSkillUseCounts.symbiosis, 2);
 });
 
-test("灵医：回春每回合首次治疗己方额外恢复1点并摸1张", async () => {
+test("灵医：回春每回合首次治疗自己或队友时治疗量+1并只记录一条摸牌日志", async () => {
   const medic = makePlayer("medic-rejuvenation", 0, "dawn", "ai", 2),
     ally = makePlayer("ally-rejuvenation", 1, "dawn"),
     enemy = makePlayer("enemy-rejuvenation", 2, "dusk");
@@ -3986,6 +4300,11 @@ test("灵医：回春每回合首次治疗己方额外恢复1点并摸1张", asy
   assert.equal(ally.hp, 3);
   assert.equal(medic.hand.length, 1);
   assert.equal(medic.turnFlags.rejuvenationUsed, true);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${medic.name}触发「回春」，本次治疗量+1，并摸1张牌。`).length,
+    1
+  );
+  assert.equal(game.state.logs.filter((entry) => entry.message.includes(`${medic.name}摸了`)).length, 0);
   assert.equal(await game.heal(medic, medic, 1, { reason: "测试自我治疗" }), 1);
   assert.equal(medic.hp, 3);
   assert.equal(medic.hand.length, 1);
@@ -3996,13 +4315,30 @@ test("灵医：回春每回合首次治疗己方额外恢复1点并摸1张", asy
   assert.equal(medic.turnFlags.rejuvenationUsed, true);
 });
 
+test("灵医：主动调息合并日志记录回春后的实际恢复量", async () => {
+  const medic = makePlayer("medic-active-recover", 0, "dawn", "ai", 2),
+    enemy = makePlayer("medic-active-recover-enemy", 1, "dusk"),
+    recover = instance("recover");
+  medic.hp -= 2;
+  medic.hand.push(recover);
+  const { game } = makeGame([medic, enemy]);
+  game.state.deck.cards.push(instance("block"));
+  registerPassiveSkills(game);
+  assert.equal(await game.playCard(medic, recover, []), true);
+  assert.equal(medic.hp, medic.maxHp);
+  assert.deepEqual(
+    game.state.logs.filter((entry) => entry.message.includes("「调息」")).map((entry) => entry.message),
+    [`${medic.name}使用「调息」，恢复2点生命。`]
+  );
+});
+
 test("灵医：回春可在救援濒死队友时额外恢复并摸牌", async () => {
   const target = makePlayer("d", 0, "dawn", "human", 1),
     medic = makePlayer("m", 1, "dawn", "ai", 2),
     enemy = makePlayer("e", 2, "dusk");
   target.hp = -1;
   medic.hand.push(instance("recover"));
-  const { game }
+  const { game, ui }
     = makeGame([target, medic, enemy]);
   game.state.deck.cards.push(instance("block"));
   registerPassiveSkills(game);
@@ -4020,6 +4356,13 @@ test("灵医：回春可在救援濒死队友时额外恢复并摸牌", async ()
   assert.equal(medic.hand.length, 1);
   assert.deepEqual(events, [["beforeHeal", true], ["afterHeal", 2]]);
   assert.equal(medic.turnFlags.rejuvenationUsed, true);
+  assert.ok(ui.logs.some(
+    (message) => message === `${target.name}进入濒死，还需恢复2点生命才能脱离濒死。`
+  ));
+  assert.ok(ui.logs.some(
+    (message) => message === `${medic.name}使用「调息」救援${target.name}，使其恢复至1点生命。`
+  ));
+  assert.ok(!ui.logs.some((message) => /还需.*张调息/.test(message)));
 });
 
 test("灵医：本人濒死时也能以回春强化自救并摸牌", async () => {
@@ -4054,6 +4397,9 @@ test("灵医：强制救援：濒死上下文会触发灵医回春额外治疗�
   assert.equal(medic.statistics.healingDone, 2);
   assert.equal(medic.hand.length, 1);
   assert.equal(medic.turnFlags.rejuvenationUsed, true);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${medic.name}使用「调息」救援${human.name}，使其恢复至2点生命。`
+  ));
 });
 
 // ---- 影客 ----
@@ -4261,8 +4607,8 @@ test("影客：窥隙真人选择只私下展示且公共日志与DOM不泄露�
   assert.deepEqual(ui.reveals[0].cards, secrets.slice(0, 2));
   assert.equal(game.cardSelectionSystem.sessions.size, 0);
   assert.equal(game.cardSelectionSystem.selections.size, 0);
-  const publicLog = game.state.logs.find((entry) => entry.message.includes("发动窥隙"));
-  assert.equal(publicLog.message, `${shade.name}发动窥隙，查看了${target.name}的2张手牌。`);
+  const publicLog = game.state.logs.find((entry) => entry.message.includes("触发「窥隙」"));
+  assert.equal(publicLog.message, `${shade.name}触发「窥隙」，查看了${target.name}的2张手牌。`);
   for (const card of secrets) assert.doesNotMatch(publicLog.message, new RegExp(card.name));
 });
 
@@ -4495,6 +4841,14 @@ test("炎术师：余烬每个卡牌结算ID最多触发1次", async () => {
     "afterDamage", { source: ember, target: enemyB, actualAmount: 1, card, resolutionId: "next" }
   );
   assert.equal(ember.energy, 2);
+  assert.deepEqual(
+    game.state.logs.filter((entry) => entry.message.includes("「余烬」")).map((entry) => entry.message),
+    [
+      `${ember.name}触发「余烬」，获得1点能量。`,
+      `${ember.name}触发「余烬」，获得1点能量。`
+    ]
+  );
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("通过余烬")));
 });
 
 test("炎术师：焚场2点能量可发动并扣至0、3点能量发动后剩1", async () => {
@@ -4684,14 +5038,63 @@ test("追猎者：猎杀被格挡后摸1张且每回合上限为2次", async () 
     ally = makePlayer("ally", 2, "dawn");
   target.statuses.huntMark = { sourceId: hunter.id };
   target.hand.push(instance("block"));
-  const { game }
-    = makeGame([hunter, target, ally], { response: () => true });
+  let gameRef = null, declarationVisibleInResponse = false;
+  const { game, ui }
+    = makeGame([hunter, target, ally], {
+      response: (request) => {
+        if (request.type === "block") {
+          declarationVisibleInResponse = gameRef.state.logs.some(
+            (entry) => entry.message === `${hunter.name}对${target.name}发动「猎杀」。`
+          );
+        }
+        return true;
+      }
+    });
+  gameRef = game;
   game.state.deck.cards.push(instance("charge"));
   hunter.energy = 2;
   assert.equal(await game.useActiveSkill(hunter, "hunt", [target]), true);
+  assert.equal(declarationVisibleInResponse, true);
+  assert.ok(ui.responseRequests.some((request) => request.type === "block"));
+  assert.equal(
+    game.state.logs.filter(
+      (entry) => entry.message === `${hunter.name}对${target.name}发动「猎杀」。`
+    ).length,
+    1
+  );
   assert.equal(hunter.hand.length, 1);
   assert.equal(hunter.turnFlags.activeSkillUseCounts.hunt, 1);
   assert.equal(ACTIVE_SKILLS.hunt.limitPerTurn, 2);
+});
+
+test("追猎者：猎杀命中前记录一次带目标的行动声明", async () => {
+  const hunter = makePlayer("hit-hunter", 0, "dawn", "ai", 5),
+    target = makePlayer("hit-target", 1, "dusk", "human"),
+    ally = makePlayer("hit-ally", 2, "dawn");
+  target.statuses.huntMark = { sourceId:hunter.id };
+  let gameRef = null, declarationVisibleInResponse = false;
+  const { game } = makeGame([hunter, target, ally], {
+    response:(request) => {
+      if (request.type === "block") {
+        declarationVisibleInResponse = gameRef.state.logs.some(
+          (entry) => entry.message === `${hunter.name}对${target.name}发动「猎杀」。`
+        );
+      }
+      return false;
+    }
+  });
+  gameRef = game;
+  hunter.energy = 2;
+  const hpBefore = target.hp;
+  assert.equal(await game.useActiveSkill(hunter, "hunt", [target]), true);
+  assert.equal(declarationVisibleInResponse, true);
+  assert.equal(target.hp, hpBefore - 2);
+  assert.equal(
+    game.state.logs.filter(
+      (entry) => entry.message === `${hunter.name}对${target.name}发动「猎杀」。`
+    ).length,
+    1
+  );
 });
 
 test("追猎者：阵亡时统一清理其他角色身上由其留下的猎印", async () => {
@@ -4750,19 +5153,46 @@ test("赌命者：冒险失败不再随机弃牌", async () => {
   assert.equal(gambler.hand.length, 1);
 });
 
+test("赌命者：冒险成功只记录一条包含结果的摸牌日志", async () => {
+  const gambler = makePlayer("gambler-success", 0, "dawn", "ai", 6),
+    enemy = makePlayer("enemy-success", 1, "dusk");
+  const { game }
+    = makeGame([gambler, enemy], { random: () => 0 });
+  registerPassiveSkills(game);
+  game.state.deck.cards.push(instance("charge"));
+  await game.eventBus.emit("cardUsed", { source: gambler, card: instance("harvest"), targets: [] });
+  assert.equal(gambler.hand.length, 1);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${gambler.name}触发「冒险」，摸1张牌。`).length,
+    1
+  );
+  assert.equal(game.state.logs.filter((entry) => entry.message.includes(`${gambler.name}摸了`)).length, 0);
+});
+
 test("赌命者：孤注消耗全部能量并摸取等量牌，按30x%概率进入状态", async () => {
   for (const [energy, roll, expected] of [[1, .29, true], [1, .3, false], [2, .59, true], [2, .6, false], [3, .89, true], [3, .9, false], [4, .999, true]]) {
     const gambler = makePlayer(`gambler-${energy}-${roll}`, 0, "dawn", "ai", 6),
       enemy = makePlayer(`enemy-${energy}-${roll}`, 1, "dusk");
     const { game }
       = makeGame([gambler, enemy], { random: () => roll });
+    const drawReasons = [];
+    game.eventBus.on("afterCardMove", `test:all-in-standard-draw:${energy}:${roll}`, (event) => {
+      if (event.from === "deck" && event.to === "hand") drawReasons.push(event.reason);
+    });
     registerPassiveSkills(game);
     game.state.deck.cards.push(...Array.from({ length: energy }, () => instance("charge")));
     gambler.energy = energy;
     assert.equal(await game.useActiveSkill(gambler, "allIn", []), true);
     assert.equal(gambler.energy, 0);
     assert.equal(gambler.hand.length, energy);
+    assert.deepEqual(drawReasons, Array.from({ length:energy }, () => "孤注"));
     assert.equal(Boolean(gambler.statuses.allIn), expected, `${energy}点能量，随机数${roll}`);
+    const allInLogs = game.state.logs.filter(
+      (entry) => entry.message.startsWith(gambler.name) && entry.message.includes("发动「孤注」")
+    );
+    assert.equal(allInLogs.length, 1);
+    assert.doesNotMatch(allInLogs[0].message, /%/);
+    assert.equal(game.state.logs.filter((entry) => entry.message.includes(`${gambler.name}摸了`)).length, 0);
     gambler.energy = 1;
     assert.equal(await game.useActiveSkill(gambler, "allIn", []), false, "一回合只能使用1次");
     assert.deepEqual(
@@ -4854,17 +5284,25 @@ test("赌命者：孤注强化的突袭被格挡后也会退出状态", async ()
 
 // ---- 调律师 ----
 
-test("调律师：协调每回合只触发一次且共鸣可发动2次", async () => {
+test("调律师：协调每回合只触发一次、共鸣可发动2次且摸牌日志不重复", async () => {
   const tuner = makePlayer("tuner", 0, "dawn", "ai", 7),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game }
     = makeGame([tuner, ally, enemy]);
+  const drawReasons = [];
+  game.eventBus.on("afterCardMove", "test:tuner-standard-draw", (event) => {
+    if (event.from === "deck" && event.to === "hand") drawReasons.push(event.reason);
+  });
   registerPassiveSkills(game);
   game.state.deck.cards.push(instance("assault"), instance("block"));
   await game.eventBus.emit("cardUsed", { source: tuner, card: instance("shield"), targets: [ally] });
   await game.eventBus.emit("cardUsed", { source: tuner, card: instance("shield"), targets: [ally] });
   assert.equal(tuner.hand.length, 1);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${tuner.name}触发「协调」，摸1张牌。`).length,
+    1
+  );
   game.state.deck.cards.push(
     instance("assault"), instance("block"), instance("charge"), instance("shield")
   );
@@ -4873,6 +5311,12 @@ test("调律师：协调每回合只触发一次且共鸣可发动2次", async (
   assert.equal(await game.useActiveSkill(tuner, "resonance", [ally]), true);
   assert.equal(ally.hand.length, 4);
   assert.equal(tuner.turnFlags.activeSkillUseCounts.resonance, 2);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${tuner.name}发动「共鸣」，令${ally.name}摸2张牌。`).length,
+    2
+  );
+  assert.equal(game.state.logs.filter((entry) => entry.message.includes("摸了")).length, 0);
+  assert.deepEqual(drawReasons, ["协调", "共鸣", "共鸣", "共鸣", "共鸣"]);
 });
 
 test("调律师：被反制的互利不建立公共牌池且不触发协调", async () => {
@@ -5011,7 +5455,7 @@ test("响应窗口：真人没有格挡时仍出现完整响应窗口，但不�
   assert.deepEqual(request.legalCardIds, []);
   assert.equal(request.requiredCount, 1);
   assert.match(request.presentation.eventText, new RegExp(`${a.name}.*你.*突袭`));
-  assert.match(request.presentation.availabilityText, /当前 0 张/);
+  assert.equal(request.presentation.availabilityText, "需要1张「格挡」，你当前没有，无法格挡。");
   assert.equal(canSubmitResponse(request), false);
   assert.equal(b.hp, hp - 1);
 });
@@ -5062,7 +5506,7 @@ test("响应窗口：显示真实持有数量但只消耗所需格挡", async ()
   const request = ui.responseRequests.find((entry) => entry.type === "block");
   assert.equal(request.presentation.availableCount, 3);
   assert.equal(request.legalCardIds.length, 3);
-  assert.match(request.presentation.availabilityText, /需要 1 张格挡，当前 3 张/);
+  assert.match(request.presentation.availabilityText, /需要1张「格挡」，当前有3张/);
   assert.equal(target.hand.filter((card) => card.definitionId === "block").length, 2);
 });
 
@@ -5087,7 +5531,7 @@ test("响应窗口：反制、强制突袭与濒死调息显示完整持有数�
   );
   request = ui.responseRequests.at(-1);
   assert.equal(request.presentation.availableCount, 4);
-  assert.match(request.presentation.availabilityText, /当前 4 张/);
+  assert.match(request.presentation.availabilityText, /当前有4张/);
   target.hp = 0;
   responder.hand.push(instance("recover"), instance("recover"));
   await game.responseSystem.requestDyingRescue(
@@ -5095,7 +5539,7 @@ test("响应窗口：反制、强制突袭与濒死调息显示完整持有数�
   );
   request = ui.responseRequests.at(-1);
   assert.equal(request.presentation.availableCount, 2);
-  assert.match(request.presentation.availabilityText, /当前 2 张/);
+  assert.match(request.presentation.availabilityText, /当前有2张/);
   assert.equal(responder.hand.filter((card) => card.definitionId === "recover").length, 1);
 });
 
@@ -5110,7 +5554,7 @@ test("响应窗口：决斗轮到无突袭真人时先显示响应窗口再结�
   assert.ok(request);
   assert.deepEqual(request.legalCardIds, []);
   assert.match(request.presentation.eventText, new RegExp(`${a.name}.*你.*决斗`));
-  assert.match(request.presentation.responseText, /1 张突袭/);
+  assert.match(request.presentation.responseText, /1张「突袭」/);
   assert.equal(b.hp, hp - 1);
 });
 
@@ -5124,7 +5568,7 @@ test("响应窗口：挑衅轮到无突袭真人时仍显示响应窗口", async
   const request = ui.responseRequests.find((entry) => entry.type === "assaultDiscard");
   assert.ok(request);
   assert.equal(request.presentation.responseCardName, "突袭");
-  assert.match(request.presentation.availabilityText, /当前 0 张/);
+  assert.equal(request.presentation.availabilityText, "需要1张「突袭」，你当前没有，无法使用「突袭」。");
   assert.equal(b.hp, hp - 1);
 });
 
@@ -5525,10 +5969,10 @@ test("濒死：合法真人救援者没有调息时仍显示响应窗口", async
   assert.deepEqual(request.legalCardIds, []);
   assert.match(request.presentation.eventText, new RegExp(`${target.name}.*濒死`));
   assert.match(request.presentation.responseText, /调息.*救援/);
-  assert.match(request.presentation.availabilityText, /当前 0 张/);
+  assert.equal(request.presentation.availabilityText, "需要1张「调息」，你当前没有，无法救援。");
 });
 
-test("濒死：负1生命需要2张调息并会重复开启救援轮", async () => {
+test("濒死：负1生命需恢复2点生命并以两次普通救援脱离濒死", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   b.hp = 1;
   b.hand.push(instance("recover"), instance("recover"));
@@ -8529,7 +8973,7 @@ test("AI·封印：根节点与深层生成都只选未封印的存活敌人", (
   assert.deepEqual(deepSealActions.map((action) => action.targets[0]?.id), [enemy.id]);
 });
 
-test("AI·封印：AiSimulator 无视打出时反制概率并确定写入延迟状态", () => {
+test("AI·封印：AiSimulator 计入首次打出时的普通反制概率", () => {
   const state = {
     remainingCardCounts:{ assault:4, counter:1, seal:1 },
     players:[
@@ -8547,15 +8991,22 @@ test("AI·封印：AiSimulator 无视打出时反制概率并确定写入延迟�
     ]
   };
   const snapshot = structuredClone(state.remainingCardCounts);
-  const next = new AiSimulator(state).apply(
+  const simulator = new AiSimulator(state);
+  assertClose(
+    simulator.tacticResolutionChance(
+      state, state.players[0], CARD_DEFINITIONS.seal, [state.players[1]]
+    ),
+    .2
+  );
+  const next = simulator.apply(
     state,
     { type:"card", card:{ ...CARD_DEFINITIONS.seal, id:"seal-use" }, targets:[{ id:"seal-sim-target" }] },
     "seal-sim-actor"
   );
   const target = next.players[1];
-  assert.ok(target.statuses.includes("sealed"));
-  assertClose(target.sealedStatusProbability, 1);
-  assertClose(sealPresenceProbability(target), 1);
+  assert.equal(target.statuses.includes("sealed"), false);
+  assertClose(target.sealedStatusProbability, .2);
+  assertClose(sealPresenceProbability(target), .2);
   assert.equal(target.handCount, 1);
   assertClose(target.counterProbability, 1);
   assert.equal(target.hp, 4);
@@ -8961,6 +9412,40 @@ test("AI·封印：全局基础价为 7 且八名角色差量均为零", () => {
     assert.equal(Object.hasOwn(ROLE_CARD_VALUE_DELTAS[general.id], "seal"), false);
     assert.equal(getRoleCardAiValue(general.id, "seal"), 7);
   }
+});
+
+test("守誓者：护援减伤至0仍完成统一伤害收尾且只记录一次零伤害", async () => {
+  const source = makePlayer("aid-zero-source", 0, "dusk", "ai", 6),
+    target = makePlayer("aid-zero-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-zero-guardian", 2, "dawn", "human", 1),
+    discarded = instance("charge");
+  guardian.hand.push(discarded);
+  const { game } = makeGame([source, target, guardian], {
+    response:(request) => request.type === "skill"
+  });
+  registerPassiveSkills(game);
+  const afterDamage = [];
+  game.eventBus.on("afterDamage", "test:guardian-aid-zero-finalization", (event) => {
+    afterDamage.push({ actualAmount:event.actualAmount, shieldAbsorbed:event.shieldAbsorbed });
+  });
+  const hp = target.hp;
+  assert.equal(await game.damage(source, target, 1, {
+    canBlock:false, damageType:"skill", actionName:"测试"
+  }), 0);
+  assert.equal(target.hp, hp);
+  assert.equal(guardian.hand.length, 0);
+  assert.ok(game.state.deck.discardPile.includes(discarded));
+  assert.deepEqual(afterDamage, [{ actualAmount:0, shieldAbsorbed:0 }]);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${guardian.name}因「护援」弃置了「${discarded.name}」。`
+  ));
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${guardian.name}发动「护援」，令${target.name}受到的伤害减少1点。`
+  ));
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${target.name}没有受到生命伤害。`).length,
+    1
+  );
 });
 
 // ---- AI 卡牌行为·闪电 ----
@@ -16580,7 +17065,7 @@ test("AI·救援：强制救援：同阵营 AI 持有调息时真人必定获救
       ([active, player, message]) => active && player.id === ally.id && message === `正在准备救援${human.name}`
     )
   );
-  assert.ok(ui.logs.some((message) => message.includes(`${ally.name}使用调息救援${human.name}`)));
+  assert.ok(ui.logs.some((message) => message.includes(`${ally.name}使用「调息」救援${human.name}`)));
   assert.ok(ui.logs.some((message) => message.includes(`${human.name}脱离濒死`)));
 });
 
@@ -16646,7 +17131,7 @@ test("AI·救援：强制救援：AI 即使无法独自完全救活也必须先�
   assert.equal(ally.statistics.healingDone, 1);
   assert.equal(human.hp, 0);
   assert.equal(human.alive, false);
-  assert.ok(ui.logs.some((message) => message.includes(`${human.name}仍处于濒死，还需1张调息`)));
+  assert.ok(ui.logs.some((message) => message.includes(`${human.name}仍处于濒死，还需恢复1点生命`)));
 });
 
 test("AI·救援：强制救援：真人负1血时两名 AI 各用一张并救活", async () => {
@@ -24343,6 +24828,33 @@ test("AI·闪电评分：闪电：lightningTransferredBurden 升级为从 receiv
 
 // ---- 玩家面板与技能详情 ----
 
+test("UI·玩家文案：阶段、队友与关键卡牌描述采用统一玩家术语", () => {
+  const medic = GENERAL_DEFINITIONS.find((general) => general.id === "spirit-medic");
+  assert.equal(PHASE_NAMES.judgment, "判定");
+  assert.match(CARD_DEFINITIONS.shield.description, /自己或一名存活队友/);
+  assert.doesNotMatch(CARD_DEFINITIONS.shield.description, /友方玩家|己方阵营角色/);
+  assert.match(CARD_DEFINITIONS.leverage.description, /有装备且攻击范围内存在其他角色/);
+  assert.doesNotMatch(CARD_DEFINITIONS.leverage.description, /能够突袭|其他玩家|真实突袭/);
+  assert.match(medic.passiveDescription, /自己或队友.*治疗量\+1/);
+  assert.match(medic.activeDescription, /自己或一名受伤队友/);
+  assert.doesNotMatch(`${medic.passiveDescription}${medic.activeDescription}`, /己方阵营角色|友方玩家/);
+});
+
+test("UI·濒死提示：显示仍需恢复的生命值而不推算调息张数", () => {
+  const dyingView = {
+    innerHTML: "",
+    classList: { remove() { } }
+  };
+  UIManager.prototype.showDying.call(
+    { elements: { dying_view: dyingView } },
+    { name: "测试角色" },
+    { currentHp: -1, need: 2 }
+  );
+  assert.match(dyingView.innerHTML, /当前生命 -1/);
+  assert.match(dyingView.innerHTML, /还需恢复2点生命/);
+  assert.doesNotMatch(dyingView.innerHTML, /张调息|需要 2|2 张/);
+});
+
 test("UI·玩家面板：角色面板不再显示突袭和调息次数栏", () => {
   const { small, large }
     = makeTeamFixture();
@@ -24432,6 +24944,25 @@ test("UI·玩家面板：角色候选卡统一将主动技能显示在被动技�
   }
 });
 
+test("UI·玩家面板：角色候选简介保留两行占位且技能与按钮结构保持稳定", async () => {
+  const css = await readFile(projectFile("css/characters.css"), "utf8"),
+    descriptionRule = css.match(/\.character-description\s*\{([^}]*)\}/)?.[1] ?? "";
+  assert.match(descriptionRule, /min-height:\s*3\.3em/);
+  assert.match(descriptionRule, /font-size:\s*14px/);
+  assert.match(descriptionRule, /line-height:\s*1\.65/);
+  assert.doesNotMatch(descriptionRule, /(?:^|[;\s])height:\s*\d+px/);
+  for (const [index, general] of GENERAL_DEFINITIONS.entries()) {
+    const markup = candidateCardTemplate(general, index),
+      description = markup.indexOf('class="character-description"'),
+      skills = markup.indexOf('class="candidate-skills"'),
+      select = markup.indexOf('class="primary-button candidate-select"');
+    assert.ok(description >= 0 && description < skills && skills < select, general.name);
+  }
+  assert.match(css, /\.candidate-select\s*\{[^}]*margin-top:\s*auto/s);
+  assert.match(css, /\.candidate-skills\s*\{[^}]*display:\s*grid/s);
+  assert.match(css, /\.candidate-skills\s*\{[^}]*max-height:\s*132px;[^}]*overflow:\s*auto/s);
+});
+
 test("UI·玩家面板：动态距离：UI 距离文案可在阵亡后从2更新为1", () => {
   const { players, game }
     = distanceFixture();
@@ -24467,6 +24998,30 @@ test("UI·玩家面板：角色技能详情完整展示主动与被动公开信�
   assert.match(markup, new RegExp(player.general.passiveName));
   assert.match(markup, new RegExp(player.general.passiveDescription));
   assert.doesNotMatch(markup, /隐藏决策资料|knownCardsByPlayer|aiMemory|decision|weight/);
+});
+
+test("UI·布局样式：日志技能蓝色不扩散到其他技能界面", async () => {
+  const [theme, components, characters, cards] = await Promise.all([
+    readFile(projectFile("css/theme.css"), "utf8"),
+    readFile(projectFile("css/components.css"), "utf8"),
+    readFile(projectFile("css/characters.css"), "utf8"),
+    readFile(projectFile("css/cards.css"), "utf8")
+  ]);
+  const allCss = [theme, components, characters, cards].join("\n");
+  assert.equal((theme.match(/--log-skill-name\s*:/g) ?? []).length, 1);
+  assert.match(theme, /--log-skill-name:\s*#486f95/);
+  assert.doesNotMatch(theme, /--skill\s*:|--log-skill-name:\s*var\(--shield\)/);
+  assert.equal((allCss.match(/var\(--log-skill-name\)/g) ?? []).length, 1);
+  assert.match(components, /\.log-skill-name\s*\{[^}]*color:\s*var\(--log-skill-name\)/s);
+  assert.match(components, /\.log-card-name\s*\{[^}]*color:\s*#5f4779/s);
+  assert.match(components, /\.skill-button\s*\{[^}]*background:\s*linear-gradient\(135deg, #9d6e25, #7c5319\)/s);
+  assert.match(components, /\.skill-detail-section\s*\{[^}]*border-left:\s*4px solid var\(--gold\)/s);
+  assert.match(components, /\.skill-detail-heading strong\s*\{[^}]*color:\s*var\(--gold\)/s);
+  assert.match(components, /\.skill-detail-section\.is-passive \.skill-detail-heading strong\s*\{[^}]*color:\s*var\(--dawn\)/s);
+  assert.match(characters, /\.skill-copy\s*\{[^}]*border-left:\s*2px solid var\(--gold\)/s);
+  assert.doesNotMatch(characters, /\.skill-copy h4 span\s*\{[^}]*color:/s);
+  assert.match(cards, /\.skill-sigil\s*\{[^}]*color:\s*var\(--gold\)[^}]*border:\s*2px solid var\(--gold\)/s);
+  assert.doesNotMatch(cards, /\.resolving-card\.is-skill\s*\{[^}]*--card-accent:/s);
 });
 
 test("UI·玩家面板：八名角色使用结构化被动触发条件与限制文案", async () => {
@@ -25184,9 +25739,11 @@ test("UI·响应窗口：响应窗口中的“你”保持普通文本不着色"
   assert.equal((html.match(/response-player-name/g) ?? []).length, 1);
   assert.doesNotMatch(html, />你<\/strong>/);
   const leverage = buildResponsePresentation(
-    responder, "leverageAssault", { source, target: second, card: instance("leverage") }, 1, 0, "使用突袭"
+    responder, "leverageAssault", { source, target: second, card: instance("leverage") }, 1, 0, "使用「突袭」"
   );
   assert.equal(leverage.eventText, "角色A对你使用了「借势」，要求你对角色B使用「突袭」。");
+  assert.match(leverage.responseText, /你可以使用1张「突袭」；若拒绝，对方将获得你的「指定装备」/);
+  assert.doesNotMatch(leverage.responseText, /真实突袭|以.*为代价/);
   assert.deepEqual(
     leverage.eventFragments,
     [
@@ -25263,6 +25820,27 @@ test("UI·响应窗口：旧响应 presentation 无结构化片段时回退整�
   );
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&lt;script&gt;bad\(\)&lt;\/script&gt;/);
+});
+
+test("UI·响应窗口：技能响应保持原有文本视觉且不使用日志技能样式", async () => {
+  const responder = { id:"responder", name:"守誓者", battleTeam:"dawn" },
+    source = { id:"source", name:"炎术师", battleTeam:"dusk" };
+  const presentation = buildResponsePresentation(
+    responder,
+    "skill",
+    {
+      source, target:responder, actionName:"焚场", skill:"burningField",
+      responseName:"护援", buttonLabel:"发动「护援」"
+    },
+    0,
+    0,
+    "发动「护援」"
+  );
+  assert.equal(Object.hasOwn(presentation, "skillNames"), false);
+  const html = await renderResponseEventHtml(presentation);
+  assert.match(html, /焚场/);
+  assert.match(html, /护援/);
+  assert.doesNotMatch(html, /log-skill-name|skill-name/);
 });
 
 test("UI·响应窗口：转移响应片段包含来源与接收者的队伍", async () => {
@@ -25522,7 +26100,7 @@ test("UI·判定窗口：延迟状态显示持有者与状态且雷达仍显示�
   assert.match(element.innerHTML, new RegExp(`防御判定 · ${holder.name}`));
 });
 
-test("UI·中央结算卡：突袭在中央结算区与使用日志中显示作用对象", async () => {
+test("UI·中央结算卡：突袭在中央结算区保留结构目标且使用日志采用自然语序", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game, ui }
     = makeGame([a, b]);
@@ -25530,7 +26108,22 @@ test("UI·中央结算卡：突袭在中央结算区与使用日志中显示作�
   a.hand.push(assault);
   await game.playCard(a, assault, [b]);
   assert.equal(ui.currentCards[0].targetLabel, b.name);
-  assert.ok(ui.logs.some((message) => message === `${a.name}使用了「突袭」，作用对象：${b.name}。`));
+  assert.ok(ui.logs.some((message) => message === `${a.name}对${b.name}使用了「突袭」。`));
+  assert.ok(!ui.logs.some((message) => message.includes("作用对象：")));
+});
+
+test("UI·中央结算卡：护盾只保留一条包含目标与结果的完整日志", async () => {
+  const a = makePlayer("shield-source", 0, "dawn"), b = makePlayer("shield-target", 1, "dawn");
+  const { game, ui }
+    = makeGame([a, b]);
+  const shield = instance("shield");
+  a.hand.push(shield);
+  await game.playCard(a, shield, [b]);
+  assert.equal(b.shield, 1);
+  assert.deepEqual(
+    ui.logs.filter((message) => message.includes("「护盾」")),
+    [`${a.name}使用「护盾」，令${b.name}获得1点护盾，现有1点。`]
+  );
 });
 
 test("UI·中央结算卡：群体牌会列出全部作用对象且结算模板显示目标标签", async () => {
@@ -25546,6 +26139,8 @@ test("UI·中央结算卡：群体牌会列出全部作用对象且结算模板�
   const markup = resolvingCardTemplate(shockwave, a.name, ui.currentCards[0].targetLabel);
   assert.match(markup, /作用对象/);
   assert.match(markup, new RegExp(`${b.name}、${c.name}`));
+  assert.ok(ui.logs.some((message) => message === `${a.name}使用了「震荡」。`));
+  assert.ok(!ui.logs.some((message) => message.includes("作用对象：")));
 });
 
 test("UI·中央结算卡：日志角色 token 可在同一行分别按阵营安全着色", () => {
@@ -25563,6 +26158,34 @@ test("UI·中央结算卡：日志角色 token 可在同一行分别按阵营安
   assert.match(markup, /log-player-name team-dawn/);
   assert.match(markup, /log-player-name team-dusk/);
   assert.match(markup, /造成影响/);
+});
+
+test("UI·日志：仅已识别技能的括号与名称使用技能蓝色", () => {
+  const activeAndStatus = formatLogMessage(
+    "赌命者发动「孤注」，并进入「孤注」状态。"
+  );
+  assert.ok(activeAndStatus.includes('发动<strong class="log-skill-name">「孤注」</strong>'));
+  assert.doesNotMatch(activeAndStatus, /class="log-skill-name">发动/);
+  assert.ok(activeAndStatus.includes('进入「<strong class="log-card-name">孤注</strong>」状态'));
+  const passive = formatLogMessage("调律师触发「协调」，摸1张牌。");
+  assert.ok(passive.includes('触发<strong class="log-skill-name">「协调」</strong>'));
+  assert.doesNotMatch(passive, /class="log-skill-name">触发/);
+  const guardianAid = formatLogMessage("守誓者因「护援」弃置了「突袭」。");
+  assert.ok(guardianAid.includes('因<strong class="log-skill-name">「护援」</strong>'));
+  assert.ok(guardianAid.includes('「<strong class="log-card-name">突袭</strong>」'));
+  const equipment = formatLogMessage("调律师的「回收站」触发（1/2），摸1张牌。");
+  assert.ok(equipment.includes('的「<strong class="log-card-name">回收站</strong>」触发'));
+  assert.doesNotMatch(equipment, /log-skill-name/);
+  const card = formatLogMessage("调律师使用了「突袭」。");
+  assert.ok(card.includes('「<strong class="log-card-name">突袭</strong>」'));
+});
+
+test("UI·日志：同句连势技能名为蓝色而累计状态名保持卡牌色", () => {
+  const rendered = formatLogMessage("刃行者触发「连势」，现有2层「连势」。");
+  assert.ok(rendered.includes('触发<strong class="log-skill-name">「连势」</strong>'));
+  assert.ok(rendered.includes('现有2层「<strong class="log-card-name">连势</strong>」'));
+  assert.equal((rendered.match(/log-skill-name/g) ?? []).length, 1);
+  assert.equal((rendered.match(/log-card-name/g) ?? []).length, 1);
 });
 
 test("UI·中央结算卡：闪电：中央结算卡显示作用对象为自己且不进入业务 targets", async () => {
