@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-guardian-aid-turn-v161";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-guardian-aid-turn-v161";
-import { createId, clamp } from "../utils/helpers.js?build=20260810-guardian-aid-turn-v161";
-import { EventBus } from "./EventBus.js?build=20260810-guardian-aid-turn-v161";
-import { Player } from "./Player.js?build=20260810-guardian-aid-turn-v161";
-import { Deck } from "./Deck.js?build=20260810-guardian-aid-turn-v161";
-import { TeamManager } from "./TeamManager.js?build=20260810-guardian-aid-turn-v161";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260810-guardian-aid-turn-v161";
-import { RuleEngine } from "./RuleEngine.js?build=20260810-guardian-aid-turn-v161";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260810-guardian-aid-turn-v161";
-import { GameLogger } from "./GameLogger.js?build=20260810-guardian-aid-turn-v161";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260810-guardian-aid-turn-v161";
-import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260810-guardian-aid-turn-v161";
-import { AIController } from "../ai/AiController.js?build=20260810-guardian-aid-turn-v161";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260810-guardian-aid-turn-v161";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260810-guardian-aid-turn-v161";
-import { Debug } from "../utils/debug.js?build=20260810-guardian-aid-turn-v161";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260810-guardian-aid-turn-v161";
-import { DyingSystem } from "./DyingSystem.js?build=20260810-guardian-aid-turn-v161";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260810-guardian-aid-turn-v161";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260810-guardian-aid-turn-v161";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260810-guardian-aid-turn-v161";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260810-guardian-aid-turn-v161";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-planner-delta-v162";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-planner-delta-v162";
+import { createId, clamp } from "../utils/helpers.js?build=20260810-planner-delta-v162";
+import { EventBus } from "./EventBus.js?build=20260810-planner-delta-v162";
+import { Player } from "./Player.js?build=20260810-planner-delta-v162";
+import { Deck } from "./Deck.js?build=20260810-planner-delta-v162";
+import { TeamManager } from "./TeamManager.js?build=20260810-planner-delta-v162";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260810-planner-delta-v162";
+import { RuleEngine } from "./RuleEngine.js?build=20260810-planner-delta-v162";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260810-planner-delta-v162";
+import { GameLogger } from "./GameLogger.js?build=20260810-planner-delta-v162";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260810-planner-delta-v162";
+import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260810-planner-delta-v162";
+import { AIController } from "../ai/AiController.js?build=20260810-planner-delta-v162";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260810-planner-delta-v162";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260810-planner-delta-v162";
+import { Debug } from "../utils/debug.js?build=20260810-planner-delta-v162";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260810-planner-delta-v162";
+import { DyingSystem } from "./DyingSystem.js?build=20260810-planner-delta-v162";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260810-planner-delta-v162";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260810-planner-delta-v162";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260810-planner-delta-v162";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260810-planner-delta-v162";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {

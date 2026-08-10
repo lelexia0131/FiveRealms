@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260810-guardian-aid-turn-v161";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-guardian-aid-turn-v161";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260810-planner-delta-v162";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-planner-delta-v162";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

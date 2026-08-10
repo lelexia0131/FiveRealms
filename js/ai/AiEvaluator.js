@@ -2,17 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-guardian-aid-turn-v161";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-guardian-aid-turn-v161";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-guardian-aid-turn-v161";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-guardian-aid-turn-v161";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-guardian-aid-turn-v161";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-guardian-aid-turn-v161";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-guardian-aid-turn-v161";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-guardian-aid-turn-v161";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-planner-delta-v162";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-planner-delta-v162";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-planner-delta-v162";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-planner-delta-v162";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-planner-delta-v162";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-planner-delta-v162";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-planner-delta-v162";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-planner-delta-v162";
 import {
   sealEarlyUsePenalty, sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260810-guardian-aid-turn-v161";
+} from "./sealScoring.js?build=20260810-planner-delta-v162";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;

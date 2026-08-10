@@ -8606,7 +8606,220 @@ test("AI·搜索：根节点束裁剪会计入模拟后的局面效用", async (
     { gameId: game.state.gameId }
   );
   assert.equal(action.card.id, assault.id);
-  assert.equal(stateCalls, 2);
+  assert.equal(stateCalls, 4);
+});
+
+test("AI·搜索：transition state credit 为边际 delta 且 end 零变化不获绝对分", () => {
+  const actor = makePlayer("delta-end-actor", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("delta-end-enemy", 1, "dusk", "ai", 5);
+  const { game }
+    = makeGame([actor, enemy]);
+  const before = createAiVisibleState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const after = new AiSimulator(before).apply(before, { type: "end" }, actor.id);
+  assert.equal(
+    game.aiController.evaluator.stateUtility(after, actor.id)
+      - game.aiController.evaluator.stateUtility(before, actor.id),
+    0
+  );
+});
+
+test("AI·搜索：transition state credit 与无关局面 baseline 无关", () => {
+  const build = (enemyHp) => {
+    const actor = makePlayer(`delta-base-actor-${enemyHp}`, 0, "dawn", "ai", 0);
+    const enemy = makePlayer(`delta-base-enemy-${enemyHp}`, 1, "dusk", "ai", 5);
+    const assault = instance("assault");
+    actor.hand.push(assault);
+    enemy.hp = enemyHp;
+    const { game }
+      = makeGame([actor, enemy]);
+    return { game, actor, enemy, assault };
+  };
+  const run = ({ game, actor, enemy, assault }) => {
+    const before = createAiVisibleState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    );
+    const after = new AiSimulator(before).apply(
+      before,
+      { type: "card", card: assault, targets: [{ id: enemy.id }] },
+      actor.id
+    );
+    return game.aiController.evaluator.stateUtility(after, actor.id)
+      - game.aiController.evaluator.stateUtility(before, actor.id);
+  };
+  assertClose(run(build(4)), run(build(3)));
+});
+
+test("AI·搜索：零变化 transition 重复展开不再获得绝对状态分", () => {
+  const actor = makePlayer("delta-zero-actor", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("delta-zero-enemy", 1, "dusk", "ai", 5);
+  const { game }
+    = makeGame([actor, enemy]);
+  const before = createAiVisibleState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const evaluator = game.aiController.evaluator;
+  const U0 = evaluator.stateUtility(before, actor.id);
+  const once = new AiSimulator(before).apply(before, { type: "end" }, actor.id);
+  const twice = new AiSimulator(before).apply(once, { type: "end" }, actor.id);
+  assert.equal(evaluator.stateUtility(once, actor.id) - U0, 0);
+  assert.equal(evaluator.stateUtility(twice, actor.id) - evaluator.stateUtility(once, actor.id), 0);
+});
+
+test("AI·搜索：state delta 方向随局面改善与恶化正确变化", () => {
+  const buildPositive = () => {
+    const ember = makePlayer("delta-pos-ember", 0, "dawn", "ai", 4);
+    const ally = makePlayer("delta-pos-ally", 1, "dawn", "ai", 0);
+    const enemies = [2, 3, 4].map(
+      (seat) => makePlayer(`delta-pos-e${seat}`, seat, "dusk", "ai", 5)
+    );
+    ember.energy = 3;
+    const { game }
+      = makeGame([ember, ally, ...enemies]);
+    const before = createAiVisibleState(
+      ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+    );
+    const after = new AiSimulator(before).apply(
+      before,
+      { type: "skill", skill: ACTIVE_SKILLS.burningField, targets: [] },
+      ember.id
+    );
+    return game.aiController.evaluator.stateUtility(after, ember.id)
+      - game.aiController.evaluator.stateUtility(before, ember.id);
+  };
+  const buildNegative = () => {
+    const actor = makePlayer("delta-neg-actor", 0, "dawn", "ai", 0);
+    const enemy = makePlayer("delta-neg-enemy", 1, "dusk", "ai", 5);
+    const assault = instance("assault");
+    const block = instance("block");
+    actor.hand.push(assault);
+    enemy.hand.push(block);
+    actor.aiMemory.knownCardsByPlayer[enemy.id] = { [block.id]: "block" };
+    const { game }
+      = makeGame([actor, enemy]);
+    const before = createAiVisibleState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    );
+    const after = new AiSimulator(before).apply(
+      before,
+      { type: "card", card: assault, targets: [{ id: enemy.id }] },
+      actor.id
+    );
+    return game.aiController.evaluator.stateUtility(after, actor.id)
+      - game.aiController.evaluator.stateUtility(before, actor.id);
+  };
+  assert.ok(buildPositive() > 0, "skill damage should improve viewer state");
+  assert.ok(buildNegative() < 0, "blocked assault should worsen viewer state");
+});
+
+test("AI·搜索：概率 transition 的 state delta 已是期望值不被重复乘执行概率", () => {
+  const shared = "delta-energy";
+  const basePlayer = (id, seatIndex, battleTeam, generalId, hp, overrides = {}) => ({
+    id, seatIndex, battleTeam, generalId, alive: true, hp, maxHp: hp, shield: 0,
+    energy: 0, maxEnergy: 4, handCount: 0, hand: [], attackUsed: 0, attackLimit: 1,
+    attackRange: 1, statuses: [], equipmentDefinitionId: null, equipmentRetentionProbability: 0,
+    initialEquipmentValue: 0, initialEquipmentRoleDelta: 0, expectedEquipmentGain: 0,
+    expectedEquipmentRoleDelta: 0, expectedInformationGain: 0, exposeWeaknessStacks: 0,
+    huntMarkProbabilities: {}, huntMarkStateBranchesBySource: {},
+    blockProbability: 0, twoBlockProbability: 0, counterProbability: 0,
+    counterCountDistribution: [{ probability: 1, conditions: {}, counterCount: 0 }],
+    expectedRecoverCount: 0, expectedAssaultCount: 0, assaultResponseProbability: 0,
+    ...overrides
+  });
+  const state = {
+    remainingCardCounts: { assault: 10 },
+    playPhaseEnded: false,
+    players: [
+      basePlayer("ember", 0, "dawn", "ember-magus", 4, {
+        energyBranches: [
+          { probability: 0.4, conditions: { [shared]: "yes" }, amount: 3 },
+          { probability: 0.6, conditions: { [shared]: "no" }, amount: 0 }
+        ],
+        activeSkillId: "burningField", activeSkillUses: 0, activeSkillLimit: 2
+      }),
+      basePlayer("e1", 1, "dusk", "trail-hunter", 5),
+      basePlayer("e2", 2, "dusk", "fate-gambler", 5),
+      basePlayer("e3", 3, "dusk", "resonance-tuner", 5)
+    ]
+  };
+  const { game }
+    = makeGame([makePlayer("delta-prob-dummy-a", 0, "dawn"), makePlayer("delta-prob-dummy-e", 1, "dusk")]);
+  const evaluator = game.aiController.evaluator;
+  const bf = game.aiController.actionGenerator.generateFromVisible(
+    state, "ember"
+  ).find((action) => action.skill?.id === "burningField");
+  assert.ok(bf);
+  assertClose(bf.executionProbability, 0.4);
+  const beforeU = evaluator.stateUtility(state, "ember");
+  const partialDelta = evaluator.stateUtility(
+    new AiSimulator(state).apply(state, bf, "ember"), "ember"
+  ) - beforeU;
+  const fullState = structuredClone(state);
+  fullState.players[0].energyBranches = [{ probability: 1, conditions: {}, amount: 3 }];
+  const fullBeforeU = evaluator.stateUtility(fullState, "ember");
+  const fullDelta = evaluator.stateUtility(
+    new AiSimulator(fullState).apply(
+      fullState,
+      { ...bf, executionProbability: 1, executionWorldBranches: [{ probability: 1, conditions: {}, executes: true }] },
+      "ember"
+    ),
+    "ember"
+  ) - fullBeforeU;
+  assertClose(partialDelta, fullDelta * 0.4);
+});
+
+test("AI·搜索：战术反制概率已折进期望 after-state 不被重复折算", () => {
+  const makeTarget = (counterProbability) => ({
+    id: "t", seatIndex: 1, battleTeam: "dusk", generalId: "trail-hunter", alive: true,
+    hp: 5, maxHp: 5, shield: 0, energy: 0, maxEnergy: 4, handCount: 4,
+    knownCards: [{ cardId: "k1", definitionId: "block" }],
+    counterProbability, counterCountDistribution: [
+      { probability: 1 - counterProbability, conditions: {}, counterCount: 0 },
+      { probability: counterProbability, conditions: {}, counterCount: 1 }
+    ],
+    blockProbability: 0, twoBlockProbability: 0, expectedRecoverCount: 0,
+    expectedAssaultCount: 0, assaultResponseProbability: 0, expectedInformationGain: 0,
+    equipmentDefinitionId: null, equipmentRetentionProbability: 0, initialEquipmentValue: 0,
+    initialEquipmentRoleDelta: 0, expectedEquipmentGain: 0, expectedEquipmentRoleDelta: 0,
+    exposeWeaknessStacks: 0, huntMarkProbabilities: {}, huntMarkStateBranchesBySource: {},
+    statuses: [], attackRange: 1
+  });
+  const makeActor = () => ({
+    id: "a", seatIndex: 0, battleTeam: "dawn", generalId: "blade-walker", alive: true,
+    hp: 4, maxHp: 4, shield: 0, energy: 0, maxEnergy: 4, handCount: 0, hand: [],
+    attackUsed: 0, attackLimit: 1, attackRange: 1, statuses: [],
+    equipmentDefinitionId: null, equipmentRetentionProbability: 0, initialEquipmentValue: 0,
+    initialEquipmentRoleDelta: 0, expectedEquipmentGain: 0, expectedEquipmentRoleDelta: 0,
+    expectedInformationGain: 0, exposeWeaknessStacks: 0, huntMarkProbabilities: {},
+    huntMarkStateBranchesBySource: {}, blockProbability: 0, twoBlockProbability: 0,
+    counterProbability: 0, counterCountDistribution: [{ probability: 1, conditions: {}, counterCount: 0 }],
+    expectedRecoverCount: 0, expectedAssaultCount: 0, assaultResponseProbability: 0
+  });
+  const { game }
+    = makeGame([makePlayer("delta-tactic-dummy-a", 0, "dawn"), makePlayer("delta-tactic-dummy-e", 1, "dusk")]);
+  const evaluator = game.aiController.evaluator;
+  const card = { ...CARD_DEFINITIONS.scout, id: "s" };
+  const run = (counterProbability) => {
+    const state = {
+      remainingCardCounts: { assault: 30 },
+      players: [makeActor(), makeTarget(counterProbability)]
+    };
+    const before = evaluator.stateUtility(state, "a");
+    const after = new AiSimulator(state).apply(
+      state, { type: "card", card, targets: [{ id: "t" }] }, "a"
+    );
+    return {
+      info: after.players[0].expectedInformationGain,
+      delta: evaluator.stateUtility(after, "a") - before
+    };
+  };
+  const full = run(0), half = run(0.5), zero = run(1);
+  assert.ok(Math.abs(full.info - 2) < 1e-9);
+  assert.ok(Math.abs(half.info - 1) < 1e-9);
+  assert.ok(zero.info < 1e-9);
+  assert.ok(half.delta < full.delta && zero.delta < half.delta,
+    "counter probability must already reduce the expected state delta");
 });
 
 test("AI·搜索：根动作生成受搜索预算约束，不会长期锁住观察战场界面", async () => {
@@ -8630,7 +8843,7 @@ test("AI·搜索：根动作生成受搜索预算约束，不会长期锁住观�
   );
   const action = await planner.plan(actor, visible, roots, { gameId: game.state.gameId });
   assert.equal(action.type, "card");
-  assert.equal(evaluated, 1);
+  assert.equal(evaluated, 2);
   assert.equal(planner.lastSearchStats.expanded, 1);
 });
 

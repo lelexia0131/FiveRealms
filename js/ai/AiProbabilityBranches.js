@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-guardian-aid-turn-v161";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-planner-delta-v162";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

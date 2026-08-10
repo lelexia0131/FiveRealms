@@ -2,8 +2,8 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-guardian-aid-turn-v161";
-import { AiSimulator } from "./AiSimulator.js?build=20260810-guardian-aid-turn-v161";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-planner-delta-v162";
+import { AiSimulator } from "./AiSimulator.js?build=20260810-planner-delta-v162";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -182,7 +182,11 @@ export class AiPlanner {
       const resolutionScale = tacticResolutionScale(action, beforeState);
       const immediate = (actionValue * resolutionScale + hiddenAdjustment(action))
         * executionProbability;
-      return (immediate + this.evaluator.stateUtility(afterState, player.id) * 0.08) / depth;
+      // state credit 使用边际局面改善量；afterState 已是按执行概率/反制概率折算的期望状态，
+      // 因此这里不再重复乘 executionProbability 或 resolutionScale。
+      const stateDelta = this.evaluator.stateUtility(afterState, player.id)
+        - this.evaluator.stateUtility(beforeState, player.id);
+      return (immediate + stateDelta * 0.08) / depth;
     };
     let expanded = 0;
     const limitReached = () => nodeBudget === null

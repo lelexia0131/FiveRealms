@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-guardian-aid-turn-v161";
-import { createId } from "../utils/helpers.js?build=20260810-guardian-aid-turn-v161";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260810-guardian-aid-turn-v161";
-import { RuleEngine } from "./RuleEngine.js?build=20260810-guardian-aid-turn-v161";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-planner-delta-v162";
+import { createId } from "../utils/helpers.js?build=20260810-planner-delta-v162";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260810-planner-delta-v162";
+import { RuleEngine } from "./RuleEngine.js?build=20260810-planner-delta-v162";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-guardian-aid-turn-v161";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-guardian-aid-turn-v161";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260810-guardian-aid-turn-v161";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-planner-delta-v162";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-planner-delta-v162";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260810-planner-delta-v162";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

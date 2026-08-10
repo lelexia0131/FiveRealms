@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260810-guardian-aid-turn-v161";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-guardian-aid-turn-v161";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260810-guardian-aid-turn-v161";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260810-planner-delta-v162";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-planner-delta-v162";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260810-planner-delta-v162";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260810-guardian-aid-turn-v161";
-import { AnimationController } from "./animationController.js?build=20260810-guardian-aid-turn-v161";
-import { InteractionController } from "./InteractionController.js?build=20260810-guardian-aid-turn-v161";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260810-guardian-aid-turn-v161";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260810-guardian-aid-turn-v161";
-import { JudgmentView } from "./JudgmentView.js?build=20260810-guardian-aid-turn-v161";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-guardian-aid-turn-v161";
-import { createOpponentHandView } from "./handVisibility.js?build=20260810-guardian-aid-turn-v161";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260810-guardian-aid-turn-v161";
-import { SoundManager } from "../audio/SoundManager.js?build=20260810-guardian-aid-turn-v161";
+} from "./templates.js?build=20260810-planner-delta-v162";
+import { AnimationController } from "./animationController.js?build=20260810-planner-delta-v162";
+import { InteractionController } from "./InteractionController.js?build=20260810-planner-delta-v162";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260810-planner-delta-v162";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260810-planner-delta-v162";
+import { JudgmentView } from "./JudgmentView.js?build=20260810-planner-delta-v162";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-planner-delta-v162";
+import { createOpponentHandView } from "./handVisibility.js?build=20260810-planner-delta-v162";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260810-planner-delta-v162";
+import { SoundManager } from "../audio/SoundManager.js?build=20260810-planner-delta-v162";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);

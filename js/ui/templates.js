@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-guardian-aid-turn-v161";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-guardian-aid-turn-v161";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-planner-delta-v162";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-planner-delta-v162";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
