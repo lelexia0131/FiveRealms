@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-expose-marginal-v146";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-assault-provenance-v148";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

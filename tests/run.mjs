@@ -8480,6 +8480,364 @@ test("AI·搜索：破势边际：反事实 baseline 与 boosted 仅相差一层
   );
 });
 
+// ---- 已有破势的突袭消费侧反事实（AI 搜索与规划） ----
+
+function exposeAssaultMarginalOf({ actor, enemy, ally = null, players = null, rootStacks }) {
+  const list = players ?? (ally ? [actor, ally, enemy] : [actor, enemy]);
+  const state = { playPhaseEnded: false, players: list };
+  if (rootStacks > 0) actor.exposeWeaknessStacks = rootStacks;
+  const simulator = new AiSimulator(state);
+  const action = exposeMarginalGame.aiController.actionGenerator.generateFromVisible(state, actor.id)
+    .find((entry) => entry.card?.definitionId === "assault" && entry.targets?.[0]?.id === enemy.id);
+  const marginal = action
+    ? exposeMarginalGame.aiController.planner.evaluateAssaultStacksMarginal(
+      state, action, actor.id, rootStacks, simulator
+    )
+    : 0;
+  return { marginal, candidates: exposeMarginalGame.aiController.actionGenerator
+    .generateFromVisible(state, actor.id).filter((entry) => entry.card?.definitionId === "assault") };
+}
+
+async function exposeAssaultBehavior({ rootStacks, enemyHp, hand, energy = 1, limit = 1, extraEnemies = false }) {
+  const actor = makePlayer("poshi-assault-actor", 0, "dawn", "ai", 1);
+  actor.energy = energy;
+  actor.hand.push(...hand.map(instance));
+  if (rootStacks > 0) actor.statuses.exposeWeakness = { stacks: rootStacks };
+  let enemy;
+  const players = [actor];
+  if (extraEnemies) {
+    players.push(
+      makePlayer("poshi-assault-ally-a", 1, "dawn"),
+      makePlayer("poshi-assault-ea", 2, "dusk", "ai", 2),
+      makePlayer("poshi-assault-eb", 3, "dusk", "ai", 3),
+      makePlayer("poshi-assault-ally-b", 4, "dawn")
+    );
+    enemy = players[2];
+  } else {
+    enemy = makePlayer("poshi-assault-enemy", 1, "dusk", "ai", 2);
+    players.push(enemy);
+  }
+  enemy.hp = enemyHp;
+  const { game } = makeGame(players);
+  actor.turnFlags.attackLimit = limit;
+  actor.attackLimit = limit;
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  const executed = [];
+  for (let count = 0; count < 8; count += 1) {
+    const action = await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+    if (action.type === "end") break;
+    const ok = action.type === "card"
+      ? await game.playCard(actor, action.card, action.targets, action.selection ?? null)
+      : await game.useActiveSkill(actor, action.skill.id, action.targets);
+    executed.push(action.card?.definitionId ?? action.skill?.id ?? action.type);
+    if (!ok) break;
+  }
+  return { executed, enemyAlive: enemy.alive, enemyHp: enemy.hp };
+}
+
+test("AI·搜索：已有破势提高有价值突袭的兑现倾向", async () => {
+  const marginal = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }), enemy: exposeMarginalEnemy({ hp: 3 }), rootStacks: 1
+  });
+  assert.ok(marginal.marginal > 5, `3 血目标上已有 1 层应明显提高突袭兑现价值，实际 ${marginal.marginal}`);
+  const behavior = await exposeAssaultBehavior({ rootStacks: 1, enemyHp: 3, hand: ["charge", "assault"] });
+  assert.equal(behavior.executed[0], "assault", "已有破势时应优先兑现突袭而不是先聚能");
+});
+
+test("AI·搜索：已有破势形成即时击杀", async () => {
+  const marginal = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }), enemy: exposeMarginalEnemy({ hp: 2 }), rootStacks: 1
+  });
+  assert.ok(marginal.marginal > 15, `2 血目标上已有 1 层应形成击杀边际，实际 ${marginal.marginal}`);
+  const behavior = await exposeAssaultBehavior({ rootStacks: 1, enemyHp: 2, hand: ["assault"] });
+  assert.equal(behavior.enemyAlive, false);
+  assert.equal(behavior.enemyHp, 0);
+});
+
+test("AI·搜索：已有破势但伤害纯溢出时边际接近零", () => {
+  const marginal = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }), enemy: exposeMarginalEnemy({ hp: 1 }), rootStacks: 1
+  });
+  assert.equal(marginal.marginal, 0, "普通突袭已最终击杀且无救援时，额外层不产生边际");
+});
+
+test("AI·搜索：已有破势与调息救援的兑现价值", () => {
+  const noRescue = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }), enemy: exposeMarginalEnemy({ hp: 1 }), rootStacks: 1
+  });
+  const withHeal = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }), enemy: exposeMarginalEnemy({ hp: 1 }), rootStacks: 1,
+    players: [
+      exposeMarginalActor({ exposeWeaknessStacks: 1 }),
+      exposeMarginalEnemy({ hp: 1 }),
+      exposeMarginalAlly({ id: "rescuer", seatIndex: 2, expectedRecoverCount: 1, handCount: 1, generalId: "fate-gambler" }),
+      exposeMarginalAlly({ id: "dawn-guard", seatIndex: 3, battleTeam: "dawn" })
+    ]
+  });
+  assert.equal(noRescue.marginal, 0);
+  assert.ok(withHeal.marginal > 15, `1 张调息可救时，已有 1 层应形成可救→不可救的击杀差，实际 ${withHeal.marginal}`);
+});
+
+test("AI·搜索：已有破势与守誓者护援的兑现价值", () => {
+  const guardian = (guardianAidUsedProbability) => exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }), enemy: exposeMarginalEnemy({ hp: 1 }), rootStacks: 1,
+    players: [
+      exposeMarginalActor({ exposeWeaknessStacks: 1 }),
+      exposeMarginalEnemy({ hp: 1 }),
+      exposeMarginalAlly({ id: "guardian", seatIndex: 2, handCount: 1, expectedRecoverCount: 0, generalId: "oath-warden", guardianAidUsedProbability }),
+      exposeMarginalAlly({ id: "dawn-guard", seatIndex: 3, battleTeam: "dawn" })
+    ]
+  });
+  const available = guardian(0);
+  const used = guardian(1);
+  assert.ok(available.marginal > 15, `护援可用时已有破势应突破护援，实际 ${available.marginal}`);
+  assert.equal(used.marginal, 0, "护援已耗尽时两层突袭结果相同，边际应为 0");
+  assert.notEqual(available.marginal, used.marginal);
+});
+
+test("AI·搜索：已有破势与格挡概率的兑现价值", () => {
+  const full = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }),
+    enemy: exposeMarginalEnemy({ hp: 2, blockProbability: 1, twoBlockProbability: 1 }), rootStacks: 1
+  });
+  const half = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }),
+    enemy: exposeMarginalEnemy({ hp: 2, blockProbability: 0.5, twoBlockProbability: 0.5 }), rootStacks: 1
+  });
+  const none = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }), enemy: exposeMarginalEnemy({ hp: 2 }), rootStacks: 1
+  });
+  assert.equal(full.marginal, 0, "确定被格挡时已有破势不产生边际");
+  assert.ok(half.marginal > 0 && half.marginal < none.marginal,
+    `概率格挡应介于 0 与无格挡之间，实际 ${half.marginal}/${none.marginal}`);
+});
+
+test("AI·搜索：已有破势与护盾的兑现价值", () => {
+  const absorbed = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }),
+    enemy: exposeMarginalEnemy({ hp: 2, shield: 3 }), rootStacks: 1
+  });
+  const pierced = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }),
+    enemy: exposeMarginalEnemy({ hp: 2, shield: 1 }), rootStacks: 1
+  });
+  assert.ok(absorbed.marginal < pierced.marginal,
+    `完全吸收应低于穿盾边际，实际 ${absorbed.marginal}/${pierced.marginal}`);
+  assert.ok(pierced.marginal > 0, `穿盾应产生正边际，实际 ${pierced.marginal}`);
+});
+
+test("AI·搜索：已有破势评价全部已有层而非只算一层", async () => {
+  const one = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 1 }), enemy: exposeMarginalEnemy({ hp: 3 }), rootStacks: 1
+  });
+  const two = exposeAssaultMarginalOf({
+    actor: exposeMarginalActor({ exposeWeaknessStacks: 2 }), enemy: exposeMarginalEnemy({ hp: 3 }), rootStacks: 2
+  });
+  assert.ok(two.marginal > one.marginal,
+    `两层破势的消费价值应高于一层，实际 ${one.marginal}/${two.marginal}`);
+  const behavior = await exposeAssaultBehavior({ rootStacks: 2, enemyHp: 3, hand: ["charge", "assault"] });
+  assert.equal(behavior.enemyAlive, false);
+  assert.equal(behavior.enemyHp, 0);
+});
+
+test("AI·搜索：已有破势但无合法突袭时不强制兑现", async () => {
+  const behavior = await exposeAssaultBehavior({
+    rootStacks: 1, enemyHp: 2, hand: ["charge", "assault"], extraEnemies: true
+  });
+  assert.ok(!behavior.executed.includes("assault"), "无合法突袭目标时不应强制出突袭");
+  assert.equal(behavior.executed[0], "charge");
+});
+
+// ---- 已有破势消费侧 provenance（Planner 节点级 remainingRootExposeStacks） ----
+
+const provenanceActor = (stacks, handDefs, extra = {}) => ({
+  id: "actor",
+  seatIndex: 0,
+  battleTeam: "dawn",
+  alive: true,
+  hp: 4,
+  maxHp: 4,
+  shield: 0,
+  energy: 0,
+  maxEnergy: 4,
+  handCount: handDefs.length,
+  hand: handDefs.map((definitionId, index) => ({ id: `h${index}`, definitionId })),
+  attackUsed: 0,
+  attackLimit: 2,
+  attackRange: 1,
+  exposeWeaknessStacks: stacks,
+  assaultBonus: 0,
+  momentum: 0,
+  generalId: "oath-warden",
+  categoriesUsed: [],
+  categoryUsedProbabilities: {},
+  ...extra
+});
+
+const provenanceEnemy = (hp, overrides = {}) => ({
+  id: "enemy",
+  seatIndex: 1,
+  battleTeam: "dusk",
+  alive: true,
+  hp,
+  maxHp: 8,
+  shield: 0,
+  energy: 0,
+  maxEnergy: 3,
+  handCount: 0,
+  blockProbability: 0,
+  twoBlockProbability: 0,
+  expectedRecoverCount: 0,
+  counterProbability: 0,
+  assaultResponseProbability: 0,
+  generalId: "spirit-medic",
+  ...overrides
+});
+
+const provenancePoshiCard = () => ({ ...CARD_DEFINITIONS.exposeWeakness, id: "poshi" });
+
+function provenanceAssaults(state) {
+  return exposeMarginalGame.aiController.actionGenerator.generateFromVisible(state, "actor")
+    .filter((entry) => entry.card?.definitionId === "assault");
+}
+
+function provenanceAdvance(before, after, remaining, actorId = "actor") {
+  return exposeMarginalGame.aiController.planner.advanceRemainingRootExposeStacks(
+    before, after, actorId, remaining
+  );
+}
+
+function provenanceCredit(state, action, remaining, simulator) {
+  return exposeMarginalGame.aiController.planner.evaluateAssaultStacksMarginal(
+    state, action, "actor", remaining, simulator
+  );
+}
+
+test("AI·搜索：旧1层连续两次突袭，第二次消费侧边际为0", () => {
+  const state = { playPhaseEnded: false, players: [provenanceActor(1, ["assault", "assault"]), provenanceEnemy(4)] };
+  const simulator = new AiSimulator(state);
+  const first = provenanceAssaults(state)[0];
+  const afterFirst = simulator.apply(state, first, "actor");
+  const remaining = provenanceAdvance(state, afterFirst, 1);
+  assert.equal(afterFirst.players[0].exposeWeaknessStacks, 0, "真实状态旧层已消费");
+  assert.equal(remaining, 0, "节点 remaining 应随消费归零");
+  const second = provenanceAssaults(afterFirst).find((entry) => entry.card?.id !== first.card?.id)
+    ?? provenanceAssaults(afterFirst)[0];
+  assert.equal(provenanceCredit(afterFirst, second, remaining, simulator), 0, "第二次突袭不得再次获得旧层边际");
+});
+
+test("AI·搜索：旧1层→突袭→新破势→突袭，新层只计准备侧", () => {
+  const state = { playPhaseEnded: false, players: [provenanceActor(1, ["assault", "exposeWeakness", "assault"]), provenanceEnemy(4)] };
+  const simulator = new AiSimulator(state);
+  const first = provenanceAssaults(state)[0];
+  const afterFirst = simulator.apply(state, first, "actor");
+  const remainingAfterFirst = provenanceAdvance(state, afterFirst, 1);
+  const afterPoshi = simulator.apply(afterFirst, { type: "card", card: provenancePoshiCard(), targets: [] }, "actor");
+  const prepare = exposeMarginalGame.aiController.planner.evaluateExposeMarginal(
+    afterFirst, afterPoshi, "actor", simulator
+  );
+  // 新破势后真实 stacks=1，但 remaining 仍为 0（新层不是回合开始旧层）
+  assert.equal(afterPoshi.players[0].exposeWeaknessStacks, 1);
+  assert.equal(remainingAfterFirst, 0);
+  assert.ok(prepare > 15, `新层准备侧信用应存在，实际 ${prepare}`);
+  const second = provenanceAssaults(afterPoshi).find((entry) => entry.card?.id !== first.card?.id)
+    ?? provenanceAssaults(afterPoshi)[0];
+  assert.equal(
+    provenanceCredit(afterPoshi, second, remainingAfterFirst, simulator),
+    0,
+    "第二次突袭不得把新层当旧层重复计分"
+  );
+});
+
+test("AI·搜索：旧2层连续两次突袭，第二次消费侧边际为0", () => {
+  const state = { playPhaseEnded: false, players: [provenanceActor(2, ["assault", "assault"]), provenanceEnemy(6)] };
+  const simulator = new AiSimulator(state);
+  const first = provenanceAssaults(state)[0];
+  const afterFirst = simulator.apply(state, first, "actor");
+  const remaining = provenanceAdvance(state, afterFirst, 2);
+  assert.equal(remaining, 0, "2 层全部消费后 remaining 应为 0");
+  const second = provenanceAssaults(afterFirst).find((entry) => entry.card?.id !== first.card?.id)
+    ?? provenanceAssaults(afterFirst)[0];
+  assert.equal(provenanceCredit(afterFirst, second, remaining, simulator), 0);
+});
+
+test("AI·搜索：部分执行后 remaining 按真实保留比例衰减", () => {
+  const middle = { id: "middle", seatIndex: 1, battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, maxEnergy: 4, handCount: 0, blockProbability: 0, twoBlockProbability: 0, expectedRecoverCount: 0, counterProbability: 0, assaultResponseProbability: 0, generalId: "oath-warden" };
+  const far = provenanceEnemy(6, { seatIndex: 2 });
+  const guard = { ...middle, id: "guard", seatIndex: 3 };
+  const actor = provenanceActor(1, ["assault", "assault"], {
+    equipmentDefinitionId: "telescope", equipmentRetentionProbability: 0.4
+  });
+  const state = { playPhaseEnded: false, players: [actor, middle, far, guard] };
+  const simulator = new AiSimulator(state);
+  const first = provenanceAssaults(state)[0];
+  assert.ok(first.executionProbability < 1, "应存在概率执行候选");
+  const afterFirst = simulator.apply(state, first, "actor");
+  const remaining = provenanceAdvance(state, afterFirst, 1);
+  assertClose(remaining, 0.6, 1e-9, `剩余旧层应为 0.6，实际 ${remaining}`);
+  const second = provenanceAssaults(afterFirst)[0];
+  const creditRemaining = provenanceCredit(afterFirst, second, remaining, simulator);
+  const creditFull = provenanceCredit(afterFirst, second, 1, simulator);
+  assert.ok(creditRemaining > 0 && creditRemaining < creditFull,
+    `按剩余 0.6 计应低于按完整 1 计，实际 ${creditRemaining}/${creditFull}`);
+});
+
+test("AI·搜索：旧1层+新1层的非线性信用干净 telescoping", () => {
+  const state = { playPhaseEnded: false, players: [provenanceActor(1, ["assault", "exposeWeakness"]), provenanceEnemy(3)] };
+  const simulator = new AiSimulator(state);
+  const afterPoshi = simulator.apply(state, { type: "card", card: provenancePoshiCard(), targets: [] }, "actor");
+  const prepare = exposeMarginalGame.aiController.planner.evaluateExposeMarginal(
+    state, afterPoshi, "actor", simulator
+  );
+  const assaultAction = provenanceAssaults(afterPoshi)[0];
+  const consumeOld = provenanceCredit(state, assaultAction, 1, simulator);
+  const full = provenanceCredit(afterPoshi, assaultAction, 2, simulator);
+  assertClose(prepare + consumeOld, full, 1e-9,
+    `prepare+consume 应等于 U(2)-U(0)，实际 ${prepare + consumeOld}/${full}`);
+});
+
+test("AI·搜索：分数旧层+新层的信用 telescoping", () => {
+  const state = { playPhaseEnded: false, players: [provenanceActor(0.6, ["assault", "exposeWeakness"]), provenanceEnemy(4)] };
+  const simulator = new AiSimulator(state);
+  const afterPoshi = simulator.apply(state, { type: "card", card: provenancePoshiCard(), targets: [] }, "actor");
+  const prepare = exposeMarginalGame.aiController.planner.evaluateExposeMarginal(
+    state, afterPoshi, "actor", simulator
+  );
+  const assaultAction = provenanceAssaults(afterPoshi)[0];
+  const consumeOld = provenanceCredit(state, assaultAction, 0.6, simulator);
+  const full = provenanceCredit(afterPoshi, assaultAction, 1.6, simulator);
+  assertClose(prepare + consumeOld, full, 1e-9,
+    `分数旧层分解应成立，实际 ${prepare + consumeOld}/${full}`);
+});
+
+test("AI·搜索：不同搜索分支的 remaining 互不影响且旧层未消费分支保持原值", () => {
+  const state = { playPhaseEnded: false, players: [provenanceActor(1, ["assault", "charge"]), provenanceEnemy(4)] };
+  const simulator = new AiSimulator(state);
+  // 分支 A：先突袭 → 消费旧层
+  const assaultAction = provenanceAssaults(state)[0];
+  const afterAssault = simulator.apply(state, assaultAction, "actor");
+  const branchA = provenanceAdvance(state, afterAssault, 1);
+  // 分支 B：先聚能（非消费动作）→ remaining 保持不变
+  const chargeAction = exposeMarginalGame.aiController.actionGenerator.generateFromVisible(state, "actor")
+    .find((entry) => entry.card?.definitionId === "charge");
+  const afterCharge = simulator.apply(state, chargeAction, "actor");
+  const branchB = provenanceAdvance(state, afterCharge, 1);
+  assert.equal(branchA, 0, "突袭分支旧层应归零");
+  assertClose(branchB, 1, 1e-9, "聚能分支旧层应保持不变");
+  assert.notEqual(branchA, branchB, "分支间不得共享 remaining 值");
+});
+
+test("AI·搜索：回合开始无旧层时消费侧始终为0", () => {
+  const state = { playPhaseEnded: false, players: [provenanceActor(0, ["assault"]), provenanceEnemy(4)] };
+  const simulator = new AiSimulator(state);
+  const action = provenanceAssaults(state)[0];
+  assert.equal(provenanceCredit(state, action, 0, simulator), 0);
+  const after = simulator.apply(state, action, "actor");
+  assert.equal(provenanceAdvance(state, after, 0), 0);
+});
+
 // ---- AI 卡牌行为·突袭 ----
 
 test("AI·突袭：共用突袭模拟覆盖护援弃牌、窥隙信息和余烬能量", () => {

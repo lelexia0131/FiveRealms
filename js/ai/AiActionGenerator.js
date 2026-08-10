@@ -2,15 +2,15 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-expose-marginal-v146";
-import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260810-expose-marginal-v146";
-import { getSealStatusStateBranches } from "./sealScoring.js?build=20260810-expose-marginal-v146";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-assault-provenance-v148";
+import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260810-assault-provenance-v148";
+import { getSealStatusStateBranches } from "./sealScoring.js?build=20260810-assault-provenance-v148";
 import {
   ACTIVE_SKILLS, getActiveSkill, getActiveSkillCost
-} from "../generals/skillRegistry.js?build=20260810-expose-marginal-v146";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-expose-marginal-v146";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260810-expose-marginal-v146";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-expose-marginal-v146";
+} from "../generals/skillRegistry.js?build=20260810-assault-provenance-v148";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-assault-provenance-v148";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260810-assault-provenance-v148";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-assault-provenance-v148";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -22,7 +22,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260810-expose-marginal-v146";
+} from "./AiProbabilityBranches.js?build=20260810-assault-provenance-v148";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {

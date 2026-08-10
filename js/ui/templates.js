@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-expose-marginal-v146";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-expose-marginal-v146";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-assault-provenance-v148";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-assault-provenance-v148";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

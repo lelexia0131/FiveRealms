@@ -2,17 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-expose-marginal-v146";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-expose-marginal-v146";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-expose-marginal-v146";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-expose-marginal-v146";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-expose-marginal-v146";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-expose-marginal-v146";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-expose-marginal-v146";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-expose-marginal-v146";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-assault-provenance-v148";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-assault-provenance-v148";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-assault-provenance-v148";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-assault-provenance-v148";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-assault-provenance-v148";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-assault-provenance-v148";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-assault-provenance-v148";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-assault-provenance-v148";
 import {
   sealEarlyUsePenalty, sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260810-expose-marginal-v146";
+} from "./sealScoring.js?build=20260810-assault-provenance-v148";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;

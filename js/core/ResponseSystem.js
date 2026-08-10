@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-expose-marginal-v146";
-import { createId } from "../utils/helpers.js?build=20260810-expose-marginal-v146";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260810-expose-marginal-v146";
-import { RuleEngine } from "./RuleEngine.js?build=20260810-expose-marginal-v146";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-assault-provenance-v148";
+import { createId } from "../utils/helpers.js?build=20260810-assault-provenance-v148";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260810-assault-provenance-v148";
+import { RuleEngine } from "./RuleEngine.js?build=20260810-assault-provenance-v148";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
