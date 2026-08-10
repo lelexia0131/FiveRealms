@@ -2,17 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-burning-field-search-prior-v165";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-burning-field-search-prior-v165";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-burning-field-search-prior-v165";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-burning-field-search-prior-v165";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-burning-field-search-prior-v165";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-burning-field-search-prior-v165";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-burning-field-search-prior-v165";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-burning-field-search-prior-v165";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-symbiosis-prior-v166";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-symbiosis-prior-v166";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-symbiosis-prior-v166";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-symbiosis-prior-v166";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-symbiosis-prior-v166";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-symbiosis-prior-v166";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-symbiosis-prior-v166";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-symbiosis-prior-v166";
 import {
   sealEarlyUsePenalty, sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260810-burning-field-search-prior-v165";
+} from "./sealScoring.js?build=20260810-symbiosis-prior-v166";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -195,7 +195,10 @@ export class AiEvaluator {
       const values = {
         breakArmy: this.breakArmyUtility(actor),
         barrier: 4 + (target?.hp <= 2 ? 4 : 0),
-        symbiosis: missing * 4,
+        // 滋荣真实价值（治疗 1 HP、danger 消除、回春摸牌）全部由 stateDelta 表达；
+        // 旧 `missing × 4` 把“总缺血量”误当成“本次实际恢复量”，必须显式为 0。
+        // SM1-SM6 实测无需 temporary search prior（零先验下临界治疗仍稳进 beam）。
+        symbiosis: 0,
         stealSkill: 5 + Math.min(4, (target?.handCount ?? 0) + (target?.equipmentDefinitionId ? 1 : 0)),
         // 焚场真实价值（伤害/击杀/救援/能量）全部由 stateDelta 表达；此处必须显式为 0，
         // 避免回退到 `?? 4` 的默认先验。临时 beam 排序信用放在 actionSearchPrior。

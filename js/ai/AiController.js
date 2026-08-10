@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260810-burning-field-search-prior-v165";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260810-burning-field-search-prior-v165";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260810-burning-field-search-prior-v165";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260810-burning-field-search-prior-v165";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260810-burning-field-search-prior-v165";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260810-burning-field-search-prior-v165";
-import { AiPlanner } from "./AiPlanner.js?build=20260810-burning-field-search-prior-v165";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260810-symbiosis-prior-v166";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260810-symbiosis-prior-v166";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260810-symbiosis-prior-v166";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260810-symbiosis-prior-v166";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260810-symbiosis-prior-v166";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260810-symbiosis-prior-v166";
+import { AiPlanner } from "./AiPlanner.js?build=20260810-symbiosis-prior-v166";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

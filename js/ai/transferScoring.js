@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-burning-field-search-prior-v165";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-burning-field-search-prior-v165";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260810-burning-field-search-prior-v165";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-symbiosis-prior-v166";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-symbiosis-prior-v166";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260810-symbiosis-prior-v166";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260810-burning-field-search-prior-v165";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-burning-field-search-prior-v165";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260810-symbiosis-prior-v166";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-symbiosis-prior-v166";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

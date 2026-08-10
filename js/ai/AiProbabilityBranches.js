@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-burning-field-search-prior-v165";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-symbiosis-prior-v166";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

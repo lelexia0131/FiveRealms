@@ -16325,6 +16325,198 @@ test("AI·灵医：共生顺序从非0号出牌者开始并让回春命中首个
   assert.equal(next.players[2].rejuvenationTriggerCount, 2);
 });
 
+const medicSymbiosisFixture = (opts = {}) => {
+  const medic = makePlayer("medic", 0, "dawn", "ai", 2);
+  const ally = makePlayer("ally", 1, "dawn", "ai", 0);
+  const e1 = makePlayer("sym-e1", 2, "dusk", "ai", 5);
+  const e2 = makePlayer("sym-e2", 3, "dusk", "ai", 6);
+  medic.energy = 2;
+  ally.hp = opts.allyHp ?? 3;
+  medic.hp = opts.medicHp ?? 4;
+  const { game }
+    = makeGame([medic, ally, e1, e2]);
+  if (opts.rejuvenationTriggerCount != null) {
+    medic.turnFlags.rejuvenationTriggerCount = opts.rejuvenationTriggerCount;
+  }
+  if (opts.activeSkillUses != null) {
+    medic.turnFlags.activeSkillUseCounts.symbiosis = opts.activeSkillUses;
+  }
+  registerPassiveSkills(game);
+  const before = createAiVisibleState(
+    medic.id, game.state, game.aiController.knowledge.remainingCounts(medic)
+  );
+  return { game, medic, ally, before };
+};
+
+const symbiosisStateDelta = (fixture, targetId) => {
+  const { game, medic, before } = fixture;
+  const evaluator = game.aiController.evaluator;
+  const U0 = evaluator.stateUtility(before, medic.id);
+  const after = new AiSimulator(before).apply(
+    before,
+    { type: "skill", skill: ACTIVE_SKILLS.symbiosis, targets: [{ id: targetId }] },
+    medic.id
+  );
+  return evaluator.stateUtility(after, medic.id) - U0;
+};
+
+test("AI·灵医：滋荣对 HP2→3 与 HP3→4 的 stateDelta 不再因 missing 翻倍", () => {
+  const fixture2 = medicSymbiosisFixture({ allyHp: 2 });
+  const fixture3 = medicSymbiosisFixture({ allyHp: 3 });
+  const action = { type: "skill", skill: ACTIVE_SKILLS.symbiosis, targets: [{ id: "ally" }] };
+  assert.equal(
+    fixture2.game.aiController.evaluator.actionUtility(action, fixture2.medic, fixture2.before),
+    0,
+    "symbiosis actionUtility must be 0 (no missing-based game value prior)"
+  );
+  // HP2->3 与 HP3->4 均只恢复 1 HP，且无 danger 阈值差异时，stateDelta 应一致。
+  assertClose(symbiosisStateDelta(fixture2, "ally"), symbiosisStateDelta(fixture3, "ally"));
+});
+
+test("AI·灵医：HP1→2 经 danger/stateDelta 自然高于普通治疗", () => {
+  const critical = symbiosisStateDelta(medicSymbiosisFixture({ allyHp: 1 }), "ally");
+  const ordinary = symbiosisStateDelta(medicSymbiosisFixture({ allyHp: 2 }), "ally");
+  assert.ok(critical > ordinary, "HP1 heal must naturally beat HP2 heal through danger removal");
+});
+
+test("AI·灵医：回春可触发时滋荣 stateDelta 自然高于回春已耗尽", () => {
+  const available = symbiosisStateDelta(
+    medicSymbiosisFixture({ allyHp: 2, rejuvenationTriggerCount: 0 }), "ally"
+  );
+  const exhausted = symbiosisStateDelta(
+    medicSymbiosisFixture({ allyHp: 2, rejuvenationTriggerCount: 2 }), "ally"
+  );
+  assert.ok(available > exhausted, "rejuvenation draw must flow through stateDelta");
+});
+
+test("AI·灵医：第二次滋荣仍按真实规则正确估值", () => {
+  const second = medicSymbiosisFixture({ allyHp: 2, activeSkillUses: 1 });
+  const visibleActor = second.before.players.find((player) => player.id === second.medic.id);
+  assert.deepEqual([visibleActor.activeSkillUses, visibleActor.activeSkillUsed], [1, false]);
+  const secondAction = second.game.aiController.getLegalActions(second.medic)
+    .find((action) => action.skill?.id === "symbiosis");
+  assert.ok(secondAction, "second symbiosis use must still be generated");
+  const after = new AiSimulator(second.before).apply(
+    second.before,
+    { type: "skill", skill: ACTIVE_SKILLS.symbiosis, targets: [{ id: "ally" }] },
+    second.medic.id
+  );
+  const secondMedic = after.players.find((player) => player.id === second.medic.id);
+  assert.deepEqual(
+    [secondMedic.energy, secondMedic.rejuvenationTriggerCount, secondMedic.handCount],
+    [0, 1, 1],
+    "second use costs real 2 energy, heals 1 and draws via rejuvenation when available"
+  );
+  assertClose(
+    symbiosisStateDelta(second, "ally"),
+    symbiosisStateDelta(medicSymbiosisFixture({ allyHp: 2, activeSkillUses: 0 }), "ally")
+  );
+});
+
+test("AI·灵医：零先验下临界滋荣在超过束宽度的根动作中仍进入 beam", () => {
+  const medic = makePlayer("bf-medic", 0, "dawn", "ai", 2);
+  const allyA = makePlayer("bf-allyA", 1, "dawn", "ai", 0);
+  const allyB = makePlayer("bf-allyB", 2, "dawn", "ai", 1);
+  const e1 = makePlayer("bf-e1", 3, "dusk", "ai", 5);
+  const e2 = makePlayer("bf-e2", 4, "dusk", "ai", 6);
+  medic.energy = 2;
+  medic.hp = 4;
+  allyA.hp = 1;
+  allyB.hp = 4;
+  [allyA, allyB].forEach((a) => a.hand.push(instance("recover")));
+  [e1, e2].forEach((e) => e.hand.push(instance("block")));
+  medic.hand = ["seal", "plunder", "destroy", "scout"].map((definitionId) => instance(definitionId));
+  const { game }
+    = makeGame([medic, allyA, allyB, e1, e2]);
+  registerPassiveSkills(game);
+  const before = createAiVisibleState(
+    medic.id, game.state, game.aiController.knowledge.remainingCounts(medic)
+  );
+  const evaluator = game.aiController.evaluator;
+  const sim = new AiSimulator(before);
+  const U0 = evaluator.stateUtility(before, medic.id);
+  const roots = game.aiController.getLegalActions(medic);
+  assert.ok(roots.length > GAME_CONFIG.aiBeamWidth, "fixture must exceed beam width");
+  const rows = roots.map((action) => {
+    const after = sim.apply(before, action, medic.id);
+    return {
+      action,
+      valueScore: evaluator.actionUtility(action, medic, before, { availableActions: roots })
+        + (evaluator.stateUtility(after, medic.id) - U0) * 0.08
+    };
+  }).sort((left, right) => right.valueScore - left.valueScore);
+  const symRank = rows.findIndex((entry) => entry.action.skill?.id === "symbiosis") + 1;
+  assert.ok(
+    symRank <= GAME_CONFIG.aiBeamWidth,
+    `zero game-value prior must keep the critical symbiosis inside the root beam (rank ${symRank})`
+  );
+});
+
+test("AI·灵医：临界滋荣端到端被 Planner 按真实价值选择", async () => {
+  const fixture = medicSymbiosisFixture({ allyHp: 1 });
+  const { game, medic, before } = fixture;
+  const roots = game.aiController.getLegalActions(medic);
+  assert.ok(
+    roots.some((action) => action.skill?.id === "symbiosis"),
+    "critical symbiosis must be a legal root action with zero game-value prior"
+  );
+  game.aiSearchNodeBudgetOverride = 100;
+  game.aiRandomnessRange = 0;
+  await game.aiController.planner.plan(medic, before, roots, { gameId: game.state.gameId });
+  const stats = game.aiController.planner.lastSearchStats;
+  assert.equal(
+    stats.bestSequence[0].cardId ?? stats.bestSequence[0].type,
+    "symbiosis",
+    "with no competing card the value-based planner must choose the critical heal"
+  );
+});
+
+test("AI·灵医：多目标滋荣按真实价值自然入 beam 不产生 crowding", () => {
+  const medic = makePlayer("crowd-medic", 0, "dawn", "ai", 2);
+  const allyA = makePlayer("crowd-allyA", 1, "dawn", "ai", 0);
+  const allyB = makePlayer("crowd-allyB", 2, "dawn", "ai", 1);
+  const e1 = makePlayer("crowd-e1", 3, "dusk", "ai", 5);
+  const e2 = makePlayer("crowd-e2", 4, "dusk", "ai", 6);
+  medic.energy = 2;
+  medic.hp = 1;
+  allyA.hp = 2;
+  allyB.hp = 3;
+  [allyA, allyB].forEach((a) => a.hand.push(instance("recover")));
+  [e1, e2].forEach((e) => e.hand.push(instance("block")));
+  medic.hand = ["seal", "plunder", "destroy", "scout"].map((definitionId) => instance(definitionId));
+  const { game }
+    = makeGame([medic, allyA, allyB, e1, e2]);
+  registerPassiveSkills(game);
+  const before = createAiVisibleState(
+    medic.id, game.state, game.aiController.knowledge.remainingCounts(medic)
+  );
+  const evaluator = game.aiController.evaluator;
+  const sim = new AiSimulator(before);
+  const U0 = evaluator.stateUtility(before, medic.id);
+  const roots = game.aiController.getLegalActions(medic);
+  const symbiosisActions = roots.filter((action) => action.skill?.id === "symbiosis");
+  assert.equal(symbiosisActions.length, 3, "three injured allied targets must generate three actions");
+  const rows = roots.map((action) => {
+    const after = sim.apply(before, action, medic.id);
+    return {
+      target: action.skill?.id === "symbiosis" ? action.targets[0].id : null,
+      valueScore: evaluator.actionUtility(action, medic, before, { availableActions: roots })
+        + (evaluator.stateUtility(after, medic.id) - U0) * 0.08
+    };
+  }).sort((left, right) => right.valueScore - left.valueScore);
+  const symRanks = rows.map((row, index) => ({ target: row.target, rank: index + 1 }))
+    .filter((entry) => entry.target);
+  const inTop10 = symRanks.filter((entry) => entry.rank <= GAME_CONFIG.aiBeamWidth).length;
+  assert.ok(
+    inTop10 <= 2,
+    `multi-target symbiosis must not crowd the beam (${inTop10} of 3 inside top-10)`
+  );
+  const rankOf = (target) => symRanks.find((entry) => entry.target === target).rank;
+  assert.ok(
+    rankOf("crowd-medic") < rankOf("crowd-allyA") && rankOf("crowd-allyA") < rankOf("crowd-allyB"),
+    "heal target ranking must follow real state value (critical > ordinary > near-full)");
+});
+
 // ---- AI 角色行为·影客 ----
 
 test("AI·影客：模拟窃取装备时只增加手牌且保持影客当前装备", () => {
