@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-ai-card-value-table-v139";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-ai-card-value-table-v139";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-general-balance-v140";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-general-balance-v140";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -31,7 +31,9 @@ export function cardDescriptionClass(description) {
 }
 
 export function candidateCardTemplate(general, index) {
-  const activeCostLabel = general.activeSkillIds?.[0] === "allIn" ? "X" : general.activeCost;
+  const activeCostLabel = general.activeSkillIds?.[0] === "allIn"
+    ? "X 能量"
+    : general.activeCostText ?? `${general.activeCost ?? 0} 能量`;
   return `<article class="candidate-card" style="--candidate-order:${index}">
     <div class="candidate-art">${image(general.portrait, `${general.name}半身像`, "candidate-portrait")}<span class="candidate-index">候选 0${index + 1}</span></div>
     <div class="candidate-body">
@@ -39,7 +41,7 @@ export function candidateCardTemplate(general, index) {
       <div class="tag-row">${general.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>
       <p class="character-description">${escapeHtml(general.description)}</p>
       <div class="candidate-skills">
-        <div class="skill-copy"><h4><span>主动 · ${escapeHtml(general.activeName)}</span><small>${escapeHtml(activeCostLabel)} 能量</small></h4><p>${escapeHtml(general.activeDescription)}</p></div>
+        <div class="skill-copy"><h4><span>主动 · ${escapeHtml(general.activeName)}</span><small>${escapeHtml(activeCostLabel)}</small></h4><p>${escapeHtml(general.activeDescription)}</p></div>
         <div class="skill-copy"><h4><span>被动 · ${escapeHtml(general.passiveName)}</span><small>持续</small></h4><p>${escapeHtml(general.passiveDescription)}</p></div>
       </div>
       <button class="primary-button candidate-select" type="button" data-general-id="${escapeHtml(general.id)}">选择 ${escapeHtml(general.name)}</button>
@@ -84,7 +86,9 @@ export function opponentHandStripTemplate(slots = []) {
 export function skillDetailsTemplate(player) {
   const general = player?.general ?? {};
   const activeId = general.activeSkillIds?.[0] ?? null;
-  const activeCost = activeId === "allIn" ? "至少1点；发动时消耗全部能量" : `${general.activeCost ?? 0}点能量`;
+  const activeCost = activeId === "allIn"
+    ? "至少1点；发动时消耗全部能量"
+    : general.activeCostText ?? `${general.activeCost ?? 0}点能量`;
   const activeLimit = `每回合限发动${general.activeLimitPerTurn ?? 1}次`;
   const active = general.activeName ? `<section class="skill-detail-section is-active"><div class="skill-detail-heading"><span>主动技能</span><strong>${escapeHtml(general.activeName)}</strong></div><p>${escapeHtml(general.activeDescription)}</p><dl><div><dt>能量消耗</dt><dd>${escapeHtml(activeCost)}</dd></div><div><dt>次数限制</dt><dd>${escapeHtml(activeLimit)}</dd></div></dl></section>` : '<section class="skill-detail-empty">无主动技能</section>';
   const passive = general.passiveName ? `<section class="skill-detail-section is-passive"><div class="skill-detail-heading"><span>被动技能</span><strong>${escapeHtml(general.passiveName)}</strong></div><p>${escapeHtml(general.passiveDescription)}</p><dl><div><dt>发动条件</dt><dd>${escapeHtml(general.passiveTriggerText ?? "满足技能公开条件")}</dd></div><div><dt>触发限制</dt><dd>${escapeHtml(general.passiveLimitText ?? "依技能配置触发")}</dd></div></dl></section>` : '<section class="skill-detail-empty">无被动技能</section>';

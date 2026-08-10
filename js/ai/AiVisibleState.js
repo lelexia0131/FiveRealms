@@ -3,9 +3,10 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-ai-card-value-table-v139";
-import { TeamRuleService } from "../core/TeamRuleService.js?build=20260809-ai-card-value-table-v139";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-ai-card-value-table-v139";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-general-balance-v140";
+import { TeamRuleService } from "../core/TeamRuleService.js?build=20260809-general-balance-v140";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260809-general-balance-v140";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-general-balance-v140";
 
 const equipmentRoleDelta = (player, definitionId) => {
   if (!player?.generalId || !definitionId) return 0;
@@ -111,6 +112,7 @@ export function createAiVisibleState(viewerId, state, remainingCardCounts = null
       const counterEstimate = estimateCard(viewer, player, "counter", validRemainingCardCounts);
       const assaultEstimate = estimateCard(viewer, player, "assault", validRemainingCardCounts);
       const activeSkillId = player.general.activeSkillIds[0] ?? null;
+      const activeSkill = ACTIVE_SKILLS[activeSkillId] ?? null;
       const activeSkillUses = player.turnFlags.activeSkillUseCounts?.[activeSkillId] ?? 0;
       const activeSkillLimit = player.general.activeLimitPerTurn ?? 1;
       const energyBreakdown = teamRules.getTurnEnergyBreakdown(player);
@@ -164,7 +166,7 @@ export function createAiVisibleState(viewerId, state, remainingCardCounts = null
       exposeWeaknessStacks: player.statuses.exposeWeakness?.stacks ?? 0,
       assaultBonus: player.statuses.allIn?.assaultBonus ?? 0,
       activeSkillId,
-      activeSkillCost: player.general.activeCost ?? 0,
+      activeSkillCost: getActiveSkillCost(state, player, activeSkill),
       activeSkillUses,
       activeSkillLimit,
       activeSkillUsed: activeSkillUses >= activeSkillLimit,

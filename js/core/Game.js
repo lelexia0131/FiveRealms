@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-ai-card-value-table-v139";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-ai-card-value-table-v139";
-import { createId, clamp } from "../utils/helpers.js?build=20260809-ai-card-value-table-v139";
-import { EventBus } from "./EventBus.js?build=20260809-ai-card-value-table-v139";
-import { Player } from "./Player.js?build=20260809-ai-card-value-table-v139";
-import { Deck } from "./Deck.js?build=20260809-ai-card-value-table-v139";
-import { TeamManager } from "./TeamManager.js?build=20260809-ai-card-value-table-v139";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260809-ai-card-value-table-v139";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-ai-card-value-table-v139";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-ai-card-value-table-v139";
-import { GameLogger } from "./GameLogger.js?build=20260809-ai-card-value-table-v139";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-ai-card-value-table-v139";
-import { registerPassiveSkills, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-ai-card-value-table-v139";
-import { AIController } from "../ai/AiController.js?build=20260809-ai-card-value-table-v139";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-ai-card-value-table-v139";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-ai-card-value-table-v139";
-import { Debug } from "../utils/debug.js?build=20260809-ai-card-value-table-v139";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260809-ai-card-value-table-v139";
-import { DyingSystem } from "./DyingSystem.js?build=20260809-ai-card-value-table-v139";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-ai-card-value-table-v139";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-ai-card-value-table-v139";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260809-ai-card-value-table-v139";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260809-ai-card-value-table-v139";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-general-balance-v140";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-general-balance-v140";
+import { createId, clamp } from "../utils/helpers.js?build=20260809-general-balance-v140";
+import { EventBus } from "./EventBus.js?build=20260809-general-balance-v140";
+import { Player } from "./Player.js?build=20260809-general-balance-v140";
+import { Deck } from "./Deck.js?build=20260809-general-balance-v140";
+import { TeamManager } from "./TeamManager.js?build=20260809-general-balance-v140";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260809-general-balance-v140";
+import { RuleEngine } from "./RuleEngine.js?build=20260809-general-balance-v140";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260809-general-balance-v140";
+import { GameLogger } from "./GameLogger.js?build=20260809-general-balance-v140";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260809-general-balance-v140";
+import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260809-general-balance-v140";
+import { AIController } from "../ai/AiController.js?build=20260809-general-balance-v140";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260809-general-balance-v140";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260809-general-balance-v140";
+import { Debug } from "../utils/debug.js?build=20260809-general-balance-v140";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260809-general-balance-v140";
+import { DyingSystem } from "./DyingSystem.js?build=20260809-general-balance-v140";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260809-general-balance-v140";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260809-general-balance-v140";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260809-general-balance-v140";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260809-general-balance-v140";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -996,14 +996,15 @@ export class Game {
   }
 
   /**
-   * 发动玩家的主动技能。技能接口自行扣能量，Game 负责次数锁和目标二次验证。
+   * 发动玩家的主动技能。Game 固定本次能量成本并负责次数锁与目标二次验证，技能接口完成扣费。
    */
   async useActiveSkill(source, skillId, targets = []) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId) || this.state.isGameOver) return false;
     const skill = getActiveSkill(source);
     if (!skill || skill.id !== skillId || this.actionLocked) return false;
-    const legality = skill.canUse(this, source);
+    const energyCost = getActiveSkillCost(this, source, skill);
+    const legality = skill.canUse(this, source, energyCost);
     if (!legality.ok) return false;
     const legalTargets = RuleEngine.getSkillTargets(this, source, skill);
     if (!["none", "allEnemies"].includes(skill.targetType) && (!targets[0] || !legalTargets.includes(targets[0]))) return false;
@@ -1014,7 +1015,9 @@ export class Game {
       const targetLabel = actionTargetLabel(this, source, skill, targets);
       this.ui.setCurrentCard(skill.name, `${source.name} · 技能`, targetLabel, resolveActionDisplayTargets(this, source, skill, targets));
       this.ui.playSound?.("skill");
-      await skill.execute(this, source, targets, { resolutionId:createId("skill-resolution") });
+      await skill.execute(this, source, targets, {
+        resolutionId:createId("skill-resolution"), energyCost
+      });
       if (!this.isSessionValid(gameId)) return false;
       this.ui.render(this);
       return true;

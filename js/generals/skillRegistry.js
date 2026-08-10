@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-ai-card-value-table-v139";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-ai-card-value-table-v139";
-import { randomChoice } from "../utils/helpers.js?build=20260809-ai-card-value-table-v139";
-import { Debug } from "../utils/debug.js?build=20260809-ai-card-value-table-v139";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-general-balance-v140";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-general-balance-v140";
+import { randomChoice } from "../utils/helpers.js?build=20260809-general-balance-v140";
+import { Debug } from "../utils/debug.js?build=20260809-general-balance-v140";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -212,7 +212,16 @@ const PASSIVE_SKILLS = {
   }
 };
 
-const baseCanUse = (game, source, skill, minimumEnergy = skill.cost) => {
+/** 解析主动技能在当前真实或模拟状态中的实际能量成本。 */
+export function getActiveSkillCost(gameOrState, source, skill) {
+  if (!skill) return 0;
+  const rawCost = typeof skill.getCost === "function"
+    ? skill.getCost(gameOrState, source)
+    : skill.cost;
+  return Math.max(0, Number(rawCost) || 0);
+}
+
+const baseCanUse = (game, source, skill, minimumEnergy = getActiveSkillCost(game, source, skill)) => {
   if (!source.alive || game.state.phase !== "play" || game.currentPlayer?.id !== source.id) return { ok: false, reason: "只能在自己的出牌阶段发动" };
   const used = source.turnFlags.activeSkillUseCounts?.[skill.id] ?? (source.turnFlags.activeSkillsUsed.has(skill.id) ? 1 : 0);
   if (used >= (skill.limitPerTurn ?? 1)) return { ok: false, reason: "本回合发动次数已用尽" };
@@ -230,7 +239,7 @@ export const ACTIVE_SKILLS = Object.freeze({
     id: "barrier", name: "壁垒", cost: 2, limitPerTurn: 2, targetType: "ally", rangeRule: "ally",
     canUse(game, source) { const base = baseCanUse(game, source, this); return base.ok && !RuleEngine.getSkillTargets(game, source, this).length ? { ok:false, reason:"没有存活队友" } : base; },
     async execute(game, source, targets) {
-      source.changeEnergy(-2);
+      source.changeEnergy(-this.cost);
       const target = targets[0];
       target.shield = (target.shield ?? 0) + 1;
       game.ui.queueFeedback?.("shield", target.id, 1);
@@ -238,10 +247,10 @@ export const ACTIVE_SKILLS = Object.freeze({
     }
   }),
   symbiosis: Object.freeze({
-    id: "symbiosis", name: "滋荣", cost: 1, limitPerTurn: 2, targetType: "injuredAlly", rangeRule: "ally",
+    id: "symbiosis", name: "滋荣", cost: 2, limitPerTurn: 2, targetType: "injuredAlly", rangeRule: "ally",
     canUse(game, source) { const base = baseCanUse(game, source, this); if (!base.ok) return base; return RuleEngine.getSkillTargets(game, source, this).length ? base : {ok:false,reason:"自己和队友都未受伤"}; },
     async execute(game, source, targets) {
-      source.changeEnergy(-1);
+      source.changeEnergy(-this.cost);
       const target = targets[0];
       game.log(
         target.id === source.id
@@ -253,11 +262,11 @@ export const ACTIVE_SKILLS = Object.freeze({
     }
   }),
   stealSkill: Object.freeze({
-    id: "stealSkill", name: "窃取", cost: 1, limitPerTurn: 2, targetType: "enemyWithCardsOrEquipment", rangeRule: "fixed", range: 2,
+    id: "stealSkill", name: "窃取", cost: 2, limitPerTurn: 2, targetType: "enemyWithCardsOrEquipment", rangeRule: "fixed", range: 2,
     canUse(game, source) { const base = baseCanUse(game, source, this); return base.ok && !RuleEngine.getSkillTargets(game, source, this).length ? {ok:false,reason:"距离2内没有持有手牌或装备的敌人"} : base; },
     async execute(game, source, targets) {
       const gameId = game.state.gameId;
-      source.changeEnergy(-1);
+      source.changeEnergy(-this.cost);
       const target = targets[0];
       const options = [...target.hand.map((card) => ({ card, zone:"hand" })), ...(target.equipment ? [{ card:target.equipment, zone:"equipment" }] : [])];
       const chosen = randomChoice(options, game.random);
@@ -270,9 +279,29 @@ export const ACTIVE_SKILLS = Object.freeze({
     }
   }),
   burningField: Object.freeze({
-    id: "burningField", name: "焚场", cost: 2, limitPerTurn: 2, targetType: "allEnemies", rangeRule: "unlimited",
-    canUse(game, source) { return baseCanUse(game, source, this); },
-    async execute(game, source, _targets, context = {}) { const gameId=game.state.gameId;source.changeEnergy(-2);game.log(`${source.name}发动「焚场」。`, "important");for(const target of game.getEnemies(source)){if(!game.isSessionValid(gameId)||game.state.isGameOver)break;if(target.alive)await game.damage(source,target,1,{skill:"burningField",actionName:"焚场",canBlock:false,damageType:"skill",resolutionId:context.resolutionId});} }
+    id: "burningField", name: "焚场", cost: null, costText: "当前存活敌人数点能量", limitPerTurn: 2, targetType: "allEnemies", rangeRule: "unlimited",
+    getCost(gameOrState, source) {
+      const state = gameOrState?.state ?? gameOrState;
+      return (state?.players ?? []).filter(
+        (player) => player.alive && player.battleTeam !== source.battleTeam
+      ).length;
+    },
+    canUse(game, source, energyCost = getActiveSkillCost(game, source, this)) {
+      return baseCanUse(game, source, this, energyCost);
+    },
+    async execute(game, source, _targets, context = {}) {
+      const gameId = game.state.gameId;
+      const energyCost = context.energyCost ?? getActiveSkillCost(game, source, this);
+      source.changeEnergy(-energyCost);
+      game.log(`${source.name}发动「焚场」。`, "important");
+      for (const target of game.getEnemies(source)) {
+        if (!game.isSessionValid(gameId) || game.state.isGameOver) break;
+        if (target.alive) await game.damage(source, target, 1, {
+          skill:"burningField", actionName:"焚场", canBlock:false,
+          damageType:"skill", resolutionId:context.resolutionId
+        });
+      }
+    }
   }),
   hunt: Object.freeze({
     id: "hunt", name: "猎杀", cost: 2, limitPerTurn: 2, targetType: "markedEnemy", rangeRule: "unlimited",
@@ -287,9 +316,10 @@ export const ACTIVE_SKILLS = Object.freeze({
     async execute(game, source) {
       const gameId = game.state.gameId;
       const energy = source.energy;
-      const chance = Math.min(1, energy * .3);
+      const drawCount = Math.max(0, energy - 1);
+      const chance = Math.min(1, energy * .25);
       source.changeEnergy(-energy);
-      const drawn = await game.drawCards(source, energy, "孤注", { silent:true });
+      const drawn = await game.drawCards(source, drawCount, "孤注", { silent:true });
       if (!game.isSessionValid(gameId)) return;
       const entered = game.random() < chance;
       if (entered) source.statuses.allIn = { assaultBonus:1 };
@@ -297,9 +327,9 @@ export const ACTIVE_SKILLS = Object.freeze({
     }
   }),
   resonance: Object.freeze({
-    id: "resonance", name: "共鸣", cost: 1, limitPerTurn: 2, targetType: "ally", rangeRule: "ally",
+    id: "resonance", name: "共鸣", cost: 2, limitPerTurn: 2, targetType: "ally", rangeRule: "ally",
     canUse(game, source) { const base = baseCanUse(game, source, this); return base.ok && !RuleEngine.getSkillTargets(game, source, this).length ? {ok:false,reason:"没有存活队友"} : base; },
-    async execute(game, source, targets) { const gameId=game.state.gameId;source.changeEnergy(-1);const drawn=await game.drawCards(targets[0],1,"共鸣",{silent:true});if(game.isSessionValid(gameId))game.log(`${source.name}发动「共鸣」，令${targets[0].name}${drawn ? `摸${drawn}张牌` : "未摸到牌"}。`); }
+    async execute(game, source, targets) { const gameId=game.state.gameId;source.changeEnergy(-this.cost);const drawn=await game.drawCards(targets[0],1,"共鸣",{silent:true});if(game.isSessionValid(gameId))game.log(`${source.name}发动「共鸣」，令${targets[0].name}${drawn ? `摸${drawn}张牌` : "未摸到牌"}。`); }
   })
 });
 

@@ -2,14 +2,15 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-ai-card-value-table-v139";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-ai-card-value-table-v139";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-ai-card-value-table-v139";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260809-ai-card-value-table-v139";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260809-ai-card-value-table-v139";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-ai-card-value-table-v139";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260809-ai-card-value-table-v139";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-ai-card-value-table-v139";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-general-balance-v140";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-general-balance-v140";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-general-balance-v140";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260809-general-balance-v140";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260809-general-balance-v140";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260809-general-balance-v140";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-general-balance-v140";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260809-general-balance-v140";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-general-balance-v140";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -24,7 +25,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260809-ai-card-value-table-v139";
+} from "./AiProbabilityBranches.js?build=20260809-general-balance-v140";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -100,7 +101,16 @@ export class AiSimulator {
     this.initializeAssaultSummaries(cloned);
     this.initializeBlockCountDistributions(cloned);
     this.initializeCounterCountDistributions(cloned);
+    this.syncActiveSkillCosts(cloned);
     return cloned;
+  }
+
+  /** 动态主动成本随模拟状态中的存活角色变化，供后续动作与机会成本评估共用。 */
+  syncActiveSkillCosts(state) {
+    for (const player of state?.players ?? []) {
+      const skill = ACTIVE_SKILLS[player.activeSkillId];
+      if (skill) player.activeSkillCost = getActiveSkillCost(state, player, skill);
+    }
   }
 
   initializeEquipmentBaselines(state) {
@@ -1011,6 +1021,7 @@ export class AiSimulator {
         (actor.activeSkillUses ?? (actor.activeSkillUsed ? 1 : 0)) + executionProbability);
       actor.activeSkillUsed = actor.activeSkillUses >= skillLimit - PROBABILITY_EPSILON;
       this.applySkill(next, actor, abstractAction, skillEventWorlds);
+      this.syncActiveSkillCosts(next);
       return next;
     }
     const card = abstractAction.card;
@@ -1314,6 +1325,7 @@ export class AiSimulator {
       const category = card.category ?? CARD_DEFINITIONS[card.definitionId]?.category;
       this.simulateCategoryUse(actor, category, executionProbability);
     }
+    this.syncActiveSkillCosts(next);
     return next;
   }
 
@@ -2490,18 +2502,19 @@ export class AiSimulator {
       this.gainUnknownCardsWithCounterState(
         state,
         actor,
-        (branch) => (branch.occurs ? branch.energyAmount : 0),
+        (branch) => (branch.occurs ? Math.max(0, branch.energyAmount - 1) : 0),
         joined,
         "allIn-draw"
       );
       const currentAssaultBonus = actor.assaultBonus ?? 0;
       const joinedExpectedValue = joined.reduce((sum, branch) => (
-        sum + (branch.occurs ? branch.probability * Math.min(1, branch.energyAmount * .3) : 0)
+        sum + (branch.occurs ? branch.probability * Math.min(1, branch.energyAmount * .25) : 0)
       ), 0);
       actor.assaultBonus = currentAssaultBonus + joinedExpectedValue * (1 - currentAssaultBonus);
       return;
     }
-    this.changeEnergy(state, actor, -(Number(skill.cost) || 0), eventWorlds);
+    const energyCost = action.energyCost ?? getActiveSkillCost(state, actor, skill);
+    this.changeEnergy(state, actor, -energyCost, eventWorlds);
     if (skill.id === "breakArmy") {
       const attackSlots = this.ensureAttackUseSlots(actor);
       attackSlots.push(projectProbabilityStateBranches(eventWorlds, (branch) => ({

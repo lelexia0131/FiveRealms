@@ -1,14 +1,14 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-ai-card-value-table-v139";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-ai-card-value-table-v139";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-ai-card-value-table-v139";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-ai-card-value-table-v139";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-general-balance-v140";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-general-balance-v140";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260809-general-balance-v140";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-general-balance-v140";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260809-ai-card-value-table-v139";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260809-ai-card-value-table-v139";
+} from "./lightningScoring.js?build=20260809-general-balance-v140";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260809-general-balance-v140";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

@@ -47,7 +47,7 @@ import { isCardSelectionValid, toggleCardSelection } from "../js/ui/selectionUti
 import { buildResponsePresentation } from "../js/core/ResponseSystem.js";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import {
-  ACTIVE_SKILLS, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
+  ACTIVE_SKILLS, getActiveSkillCost, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
 } from "../js/generals/skillRegistry.js";
 import {
   UNKNOWN_HAND_EXPECTED_VALUE,
@@ -487,25 +487,24 @@ test("角色规则：所有角色都用稳定英文 roleTags 供 AI 判断职责
   general.roleTags.forEach((tag) => assert.match(tag, /^[a-z-]+$/));
 }));
 
-test("角色规则：守誓者最大生命为4且壁垒说明为可叠加的永久护盾", () => {
+test("角色规则：守誓者最大生命为4且壁垒正文只保留技能效果", () => {
   const oath = GENERAL_DEFINITIONS.find((general) => general.id === "oath-warden");
   assert.equal(oath.maxHp, 4);
-  assert.match(oath.activeDescription, /1点可叠加的护盾/);
-  assert.match(oath.activeDescription, /不会随回合消失/);
-  assert.match(oath.activeDescription, /抵消伤害时消耗/);
+  assert.equal(oath.activeDescription, "消耗2点能量，使一名己方阵营角色（包括自己）获得1点护盾。");
+  assert.doesNotMatch(oath.activeDescription, /不会随回合消失|抵消伤害时消耗|每回合.*2次/);
 });
 
 test("角色规则：壁垒配置、README与实际目标规则保持一致", async () => {
   const oath = GENERAL_DEFINITIONS.find((general) => general.id === "oath-warden"),
     readme = await readFile(projectFile("README.md"), "utf8"),
     config = await readFile(projectFile("js/config/generalConfig.js"), "utf8"),
-    skills = await readFile(projectFile("js/generals/skillRegistry.js"), "utf8");
+    skills = await readFile(projectFile("js/generals/skillRegistry.js"), "utf8"),
+    oathConfig = config.match(/id: "oath-warden"[\s\S]*?(?=\n  Object\.freeze\(\{)/)?.[0] ?? "";
   assert.equal(oath.activeCost, ACTIVE_SKILLS.barrier.cost);
   assert.equal(oath.activeLimitPerTurn, ACTIVE_SKILLS.barrier.limitPerTurn);
-  for (const text of [readme, config]) {
-    assert.doesNotMatch(text, /临时护盾|下次回合开始|回合开始时消散|统一消散/);
-    assert.match(text, /不会随回合(?:数)?消失/);
-  }
+  assert.doesNotMatch(oathConfig, /临时护盾|不会随回合(?:数)?消失|抵消伤害时消耗|每回合最多发动2次/);
+  assert.match(readme, /主动·壁垒：\*\* 消耗 2 点能量，使一名己方阵营角色（包括自己）获得 1 点护盾。/);
+  assert.match(readme, /主动限制：\*\* 每回合最多发动 2 次/);
   assert.doesNotMatch(skills, /statuses\.temporaryShield|clearAtTurnStart/);
   const source = makePlayer("warden", 0, "dawn", "ai", 1),
     ally = makePlayer("ally", 1, "dawn"),
@@ -516,7 +515,7 @@ test("角色规则：壁垒配置、README与实际目标规则保持一致", as
     = makeGame([source, ally, deadAlly, enemy]);
   assert.deepEqual(
     RuleEngine.getSkillTargets(game, source, ACTIVE_SKILLS.barrier).map((player) => player.id),
-    [ally.id]
+    [source.id, ally.id]
   );
 });
 
@@ -533,12 +532,12 @@ test("角色规则：八名角色规则配置与README角色介绍一致", async
     expected = {
       "blade-walker": [4, 2, 1],
       "oath-warden": [4, 2, 2],
-      "spirit-medic": [4, 1, 2],
-      "shade-agent": [4, 1, 2],
-      "ember-magus": [4, 2, 2],
+      "spirit-medic": [4, 2, 2],
+      "shade-agent": [4, 2, 2],
+      "ember-magus": [4, null, 2],
       "trail-hunter": [4, 2, 2],
       "fate-gambler": [4, 1, 1],
-      "resonance-tuner": [4, 1, 2]
+      "resonance-tuner": [4, 2, 2]
     };
   for (const [id, values] of Object.entries(expected)) {
     const general = byId[id], skill = ACTIVE_SKILLS[general.activeSkillIds[0]];
@@ -579,7 +578,7 @@ test("角色规则：灵医配置与README同步回春摸牌、濒死触发及�
   for (const text of [medic.activeDescription, medicSection]) {
     assert.match(text, /自己或一名受伤队友/);
     assert.doesNotMatch(text, /目标不是自己.*自己同样恢复\s*1\s*点生命/);
-    assert.match(text, /消耗\s*1\s*点能量/);
+    assert.match(text, /消耗\s*2\s*点能量/);
     assert.match(text, /最多(?:使用|发动)\s*2\s*次/);
   }
 });
@@ -4226,15 +4225,24 @@ test("守誓者：壁垒与护盾牌使用统一伤害吸收规则", async () =>
   assert.equal("temporaryShield" in target.statuses, false);
 });
 
-test("守誓者：README中的主动技能消耗与每回合次数进入实际规则", async () => {
+test("守誓者：壁垒1能量非法、2能量可对自己或队友发动且每回合限2次", async () => {
   const warden = makePlayer("warden", 0, "dawn", "ai", 1),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game }
     = makeGame([warden, ally, enemy]);
+  warden.energy = 1;
+  assert.equal(ACTIVE_SKILLS.barrier.canUse(game, warden).ok, false);
+  assert.equal(await game.useActiveSkill(warden, "barrier", [warden]), false);
+  assert.equal(warden.energy, 1);
   warden.energy = 4;
+  assert.equal(ACTIVE_SKILLS.barrier.canUse(game, warden).ok, true);
+  assert.equal(await game.useActiveSkill(warden, "barrier", [warden]), true);
+  assert.equal(warden.shield, 1);
+  assert.equal(warden.energy, 2);
   assert.equal(await game.useActiveSkill(warden, "barrier", [ally]), true);
-  assert.equal(await game.useActiveSkill(warden, "barrier", [ally]), true);
+  assert.equal(ally.shield, 1);
+  assert.equal(warden.energy, 0);
   warden.energy = 2;
   assert.equal(await game.useActiveSkill(warden, "barrier", [ally]), false);
   assert.equal(warden.turnFlags.activeSkillUseCounts.barrier, 2);
@@ -4528,7 +4536,7 @@ test("守誓者：护援在下一名非守誓者玩家回合开始后重新可�
 
 // ---- 灵医 ----
 
-test("灵医：滋荣前两次各耗1能量且仅治疗所选受伤己方目标，第三次失败并可跨回合重置", async () => {
+test("灵医：滋荣1能量非法、前两次各耗2能量且仅治疗所选受伤己方目标", async () => {
   const medic = makePlayer("medic", 0, "dawn", "ai", 2),
     ally = makePlayer("ally", 1, "dawn"),
     fullAlly = makePlayer("full-ally", 2, "dawn"),
@@ -4540,7 +4548,11 @@ test("灵医：滋荣前两次各耗1能量且仅治疗所选受伤己方目标�
     = makeGame([medic, ally, fullAlly, enemy]);
   registerPassiveSkills(game);
   game.state.deck.cards.push(instance("block"));
-  medic.energy = 3;
+  medic.energy = 1;
+  assert.equal(ACTIVE_SKILLS.symbiosis.canUse(game, medic).ok, false);
+  assert.equal(await game.useActiveSkill(medic, "symbiosis", [ally]), false);
+  assert.equal(medic.energy, 1);
+  medic.energy = 4;
   assert.deepEqual(
     RuleEngine.getSkillTargets(game, medic, ACTIVE_SKILLS.symbiosis).map((player) => player.id),
     [medic.id, ally.id]
@@ -4566,12 +4578,13 @@ test("灵医：滋荣前两次各耗1能量且仅治疗所选受伤己方目标�
   );
   assert.equal(medic.hp, 2);
   assert.equal(medic.hand.length, 1);
-  assert.equal(medic.energy, 1);
+  assert.equal(medic.energy, 0);
   assert.equal(medic.turnFlags.activeSkillUseCounts.symbiosis, 2);
   assert.equal(await game.useActiveSkill(medic, "symbiosis", [ally]), false);
-  assert.equal(medic.energy, 1);
+  assert.equal(medic.energy, 0);
   assert.equal(medic.turnFlags.activeSkillUseCounts.symbiosis, 2);
   medic.resetTurnFlags(game.teamRules.getRules(medic));
+  medic.energy = 2;
   assert.equal(await game.useActiveSkill(medic, "symbiosis", [ally]), true);
   assert.equal(ally.hp, 3);
   assert.equal(medic.energy, 0);
@@ -4744,7 +4757,7 @@ test("影客：为4点生命且窥隙经实际伤害与隐藏选择查看至多2
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(shade.maxHp, 4);
   assert.equal(shade.hp, 4);
-  assert.equal(ACTIVE_SKILLS.stealSkill.cost, 1);
+  assert.equal(ACTIVE_SKILLS.stealSkill.cost, 2);
   assert.equal(ui.hiddenRequests.length, 1);
   assert.equal(ui.hiddenRequests[0].count, 2);
   assert.equal(ui.reveals.length, 1);
@@ -4796,7 +4809,7 @@ test("影客：窃取把3张手牌与1张装备组成单一等概率实体集合
     target.hand.push(...cards);
     target.equipment = equipment;
     shade.equipment = original;
-    shade.energy = 1;
+    shade.energy = 2;
     const { game }
       = makeGame([shade, target], { random: () => roll }),
       candidate = [...cards, equipment][expectedIndex];
@@ -4831,7 +4844,7 @@ test("影客：真人窃取先选择距离2内敌人再只从该目标随机获�
     untouched = instance("block");
   chosen.equipment = chosenEquipment;
   otherEnemy.hand.push(untouched);
-  shade.energy = 1;
+  shade.energy = 2;
   const { game, ui }
     = makeGame([shade, allyA, chosen, otherEnemy, allyB], { random: () => 0 });
   let offered = null, prompt = "";
@@ -4864,7 +4877,7 @@ test("影客：窃取装备先进入手牌且只有之后正常使用才会装�
     original = instance("battleDevice");
   const { game }
     = makeGame([shade, target], { random: () => 0 });
-  shade.energy = 1;
+  shade.energy = 2;
   shade.equipment = original;
   target.equipment = stolen;
   const moves = [];
@@ -4881,21 +4894,25 @@ test("影客：窃取装备先进入手牌且只有之后正常使用才会装�
   assert.ok(game.state.deck.discardPile.includes(original));
 });
 
-test("影客：窃取消耗1点能量且每回合最多发动2次", async () => {
+test("影客：窃取1能量非法、每次消耗2点且每回合最多发动2次", async () => {
   const shade = makePlayer("steal-limit", 0, "dawn", "ai", 3),
     target = makePlayer("steal-limit-target", 1, "dusk");
   target.hand.push(instance("block"), instance("charge"), instance("recover"));
   const { game }
     = makeGame([shade, target], { random: () => 0 });
-  shade.energy = 3;
+  shade.energy = 1;
+  assert.equal(ACTIVE_SKILLS.stealSkill.canUse(game, shade).ok, false);
+  assert.equal(await game.useActiveSkill(shade, "stealSkill", [target]), false);
+  assert.equal(shade.energy, 1);
+  shade.energy = 4;
   assert.equal(await game.useActiveSkill(shade, "stealSkill", [target]), true);
   assert.equal(shade.energy, 2);
   assert.equal(await game.useActiveSkill(shade, "stealSkill", [target]), true);
-  assert.equal(shade.energy, 1);
+  assert.equal(shade.energy, 0);
   assert.equal(await game.useActiveSkill(shade, "stealSkill", [target]), false);
   assert.equal(shade.turnFlags.activeSkillUseCounts.stealSkill, 2);
   assert.equal(target.hand.length, 1);
-  assert.equal(ACTIVE_SKILLS.stealSkill.cost, 1);
+  assert.equal(ACTIVE_SKILLS.stealSkill.cost, 2);
   assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn, 2);
   assert.doesNotMatch(GENERAL_DEFINITIONS[3].activeDescription, /直接进入.*装备区|直接装备/);
 });
@@ -4903,16 +4920,16 @@ test("影客：窃取消耗1点能量且每回合最多发动2次", async () => 
 test("影客：窃取说明与README均使用收入手牌的新规则", async () => {
   const readme = await readFile(projectFile("README.md"), "utf8"),
     description = GENERAL_DEFINITIONS[3].activeDescription;
-  assert.equal(GENERAL_DEFINITIONS[3].activeCost, 1);
+  assert.equal(GENERAL_DEFINITIONS[3].activeCost, 2);
   assert.equal(GENERAL_DEFINITIONS[3].activeLimitPerTurn, 2);
-  assert.equal(ACTIVE_SKILLS.stealSkill.cost, 1);
+  assert.equal(ACTIVE_SKILLS.stealSkill.cost, 2);
   assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn, 2);
-  assert.match(description, /消耗1点能量.*选择距离2内.*敌人作为目标/);
+  assert.match(description, /消耗2点能量.*选择距离2内.*敌人作为目标/);
   assert.match(description, /统一候选集合.*等概率随机获得.*收入手牌/);
   assert.match(description, /每回合最多发动2次/);
   assert.doesNotMatch(`${description}\n${readme}`, /装备牌直接进入.*装备区|窃取.*直接装备/);
   assert.match(
-    readme, /主动·窃取[^\n]*消耗 1 点能量[^\n]*选择距离 2 内[^\n]*敌人作为目标[^\n]*统一候选集合[^\n]*等概率随机获得[^\n]*一回合最多使用 2 次/
+    readme, /主动·窃取[^\n]*消耗 2 点能量[^\n]*选择距离 2 内[^\n]*敌人作为目标[^\n]*统一候选集合[^\n]*等概率随机获得[^\n]*一回合最多使用 2 次/
   );
 });
 
@@ -5182,49 +5199,29 @@ test("炎术师：余烬每个卡牌结算ID最多触发1次", async () => {
   assert.ok(!game.state.logs.some((entry) => entry.message.includes("通过余烬")));
 });
 
-test("炎术师：焚场2点能量可发动并扣至0、3点能量发动后剩1", async () => {
-  const makeEmber = (energy) => {
-    const ember = makePlayer("ember-cost", 0, "dawn", "human", 4);
-    const ally = makePlayer("ember-cost-ally", 1, "dawn", "ai", 0);
-    const enemy = makePlayer("ember-cost-enemy", 2, "dusk", "ai", 5);
-    ember.energy = energy;
-    const { game }
-      = makeGame([ember, ally, enemy]);
-    return { ember, enemy, game };
-  };
-  {
-    const { ember, enemy, game }
-      = makeEmber(2);
-    const hp = enemy.hp;
+test("炎术师：焚场按1、2、3名存活敌人动态判定并扣除同一成本", async () => {
+  for (const enemyCount of [1, 2, 3]) {
+    const ember = makePlayer(`ember-cost-${enemyCount}`, 0, "dawn", "human", 4),
+      ally = makePlayer(`ember-cost-ally-${enemyCount}`, 1, "dawn", "ai", 0),
+      enemies = Array.from(
+        { length:enemyCount },
+        (_, index) => makePlayer(`ember-cost-enemy-${enemyCount}-${index}`, index + 2, "dusk", "ai", 5)
+      );
+    const { game } = makeGame([ember, ally, ...enemies]);
+    assert.equal(getActiveSkillCost(game, ember, ACTIVE_SKILLS.burningField), enemyCount);
+    ember.energy = enemyCount - 1;
+    assert.equal(ACTIVE_SKILLS.burningField.canUse(game, ember).ok, false);
+    assert.equal(await game.useActiveSkill(ember, "burningField", []), false);
+    assert.equal(ember.energy, enemyCount - 1);
+    assert.equal(ember.turnFlags.activeSkillUseCounts.burningField ?? 0, 0);
+    const hpBefore = enemies.map((enemy) => enemy.hp);
+    ember.energy = enemyCount;
     assert.equal(ACTIVE_SKILLS.burningField.canUse(game, ember).ok, true);
     assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
     assert.equal(ember.energy, 0);
     assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 1);
-    assert.equal(enemy.hp, hp - 1);
+    assert.deepEqual(enemies.map((enemy) => enemy.hp), hpBefore.map((hp) => hp - 1));
   }
-  {
-    const { ember, enemy, game }
-      = makeEmber(3);
-    const hp = enemy.hp;
-    assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
-    assert.equal(ember.energy, 1);
-    assert.equal(enemy.hp, hp - 1);
-  }
-});
-
-test("炎术师：焚场1点能量不能发动且不扣费不计数不造成伤害", async () => {
-  const ember = makePlayer("ember-low", 0, "dawn", "human", 4);
-  const ally = makePlayer("ember-low-ally", 1, "dawn", "ai", 0);
-  const enemy = makePlayer("ember-low-enemy", 2, "dusk", "ai", 5);
-  ember.energy = 1;
-  const { game }
-    = makeGame([ember, ally, enemy]);
-  const hp = enemy.hp;
-  assert.equal(ACTIVE_SKILLS.burningField.canUse(game, ember).ok, false);
-  assert.equal(await game.useActiveSkill(ember, "burningField", []), false);
-  assert.equal(ember.energy, 1);
-  assert.equal(ember.turnFlags.activeSkillUseCounts.burningField ?? 0, 0);
-  assert.equal(enemy.hp, hp);
 });
 
 test("炎术师：焚场只伤害存活敌人、队友与本人不受伤且不可格挡", async () => {
@@ -5238,6 +5235,7 @@ test("炎术师：焚场只伤害存活敌人、队友与本人不受伤且不�
   let observed = null;
   const { game }
     = makeGame([ember, ally, deadEnemy, enemyA, enemyB]);
+  assert.equal(getActiveSkillCost(game, ember, ACTIVE_SKILLS.burningField), 2);
   game.eventBus.on("beforeDamage", "test:burning-field-options", (event) => {
     observed = { canBlock: event.canBlock, damageType: event.damageType, skill: event.skill };
   });
@@ -5266,14 +5264,15 @@ test("炎术师：焚场每回合最多发动两次且第三次不扣费不造�
   const emberConfig = GENERAL_DEFINITIONS.find((general) => general.id === "ember-magus");
   assert.equal(emberConfig.activeLimitPerTurn, 2);
   assert.equal(ACTIVE_SKILLS.burningField.limitPerTurn, 2);
-  assert.equal(emberConfig.activeCost, 2);
-  assert.equal(ACTIVE_SKILLS.burningField.cost, 2);
+  assert.equal(emberConfig.activeCost, null);
+  assert.equal(emberConfig.activeCostText, "当前存活敌人数点能量");
+  assert.equal(ACTIVE_SKILLS.burningField.cost, null);
   assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
-  assert.equal(ember.energy, 2);
+  assert.equal(ember.energy, 3);
   assert.equal(enemy.hp, hp - 1);
   assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 1);
   assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
-  assert.equal(ember.energy, 0);
+  assert.equal(ember.energy, 2);
   assert.equal(enemy.hp, hp - 2);
   assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 2);
   ember.energy = 2;
@@ -5500,8 +5499,14 @@ test("赌命者：冒险成功只记录一条包含结果的摸牌日志", async
   assert.equal(game.state.logs.filter((entry) => entry.message.includes(`${gambler.name}摸了`)).length, 0);
 });
 
-test("赌命者：孤注消耗全部能量并摸取等量牌，按30x%概率进入状态", async () => {
-  for (const [energy, roll, expected] of [[1, .29, true], [1, .3, false], [2, .59, true], [2, .6, false], [3, .89, true], [3, .9, false], [4, .999, true]]) {
+test("赌命者：孤注按实际消耗能量摸E-1张并以每点25%概率进入状态", async () => {
+  const cases = [
+    [1, .249, true], [1, .25, false],
+    [2, .499, true], [2, .5, false],
+    [3, .749, true], [3, .75, false],
+    [4, .999, true], [5, .999, true]
+  ];
+  for (const [energy, roll, expected] of cases) {
     const gambler = makePlayer(`gambler-${energy}-${roll}`, 0, "dawn", "ai", 6),
       enemy = makePlayer(`enemy-${energy}-${roll}`, 1, "dusk");
     const { game }
@@ -5511,12 +5516,13 @@ test("赌命者：孤注消耗全部能量并摸取等量牌，按30x%概率进�
       if (event.from === "deck" && event.to === "hand") drawReasons.push(event.reason);
     });
     registerPassiveSkills(game);
-    game.state.deck.cards.push(...Array.from({ length: energy }, () => instance("charge")));
+    const drawCount = Math.max(0, energy - 1);
+    game.state.deck.cards.push(...Array.from({ length: drawCount }, () => instance("charge")));
     gambler.energy = energy;
     assert.equal(await game.useActiveSkill(gambler, "allIn", []), true);
     assert.equal(gambler.energy, 0);
-    assert.equal(gambler.hand.length, energy);
-    assert.deepEqual(drawReasons, Array.from({ length:energy }, () => "孤注"));
+    assert.equal(gambler.hand.length, drawCount);
+    assert.deepEqual(drawReasons, Array.from({ length:drawCount }, () => "孤注"));
     assert.equal(Boolean(gambler.statuses.allIn), expected, `${energy}点能量，随机数${roll}`);
     const allInLogs = game.state.logs.filter(
       (entry) => entry.message.startsWith(gambler.name) && entry.message.includes("发动「孤注」")
@@ -5594,7 +5600,6 @@ test("赌命者：已有孤注状态时再次发动孤注不叠加也不删除�
     const { game }
       = makeGame([gambler, enemy], { random: () => roll });
     registerPassiveSkills(game);
-    game.state.deck.cards.push(instance("charge"));
     gambler.statuses.allIn = { assaultBonus: 1 };
     gambler.energy = 1;
     assert.deepEqual(
@@ -5602,7 +5607,7 @@ test("赌命者：已有孤注状态时再次发动孤注不叠加也不删除�
     );
     assert.equal(await game.useActiveSkill(gambler, "allIn", []), true);
     assert.equal(gambler.energy, 0);
-    assert.equal(gambler.hand.length, 1);
+    assert.equal(gambler.hand.length, 0);
     assert.deepEqual(gambler.statuses.allIn, { assaultBonus: 1 }, `随机数${roll}时仍只保留单层孤注状态`);
   }
 });
@@ -5980,7 +5985,7 @@ test("调律师：用调息救援濒死队友时产生真实有效目标并触�
   assert.deepEqual(usedEvent?.effectiveTargets, [target]);
 });
 
-test("调律师：共鸣前两次各耗1能量并各摸1张，第三次失败且新回合重置", async () => {
+test("调律师：共鸣1能量非法、前两次各耗2能量并各摸1张", async () => {
   const tuner = makePlayer("resonance-tuner-real", 0, "dawn", "ai", 7),
     ally = makePlayer("resonance-tuner-ally", 1, "dawn"),
     enemy = makePlayer("resonance-tuner-enemy", 2, "dusk");
@@ -5988,7 +5993,11 @@ test("调律师：共鸣前两次各耗1能量并各摸1张，第三次失败且
   game.state.deck.cards.push(
     instance("assault"), instance("block"), instance("charge")
   );
-  tuner.energy = 3;
+  tuner.energy = 1;
+  assert.equal(ACTIVE_SKILLS.resonance.canUse(game, tuner).ok, false);
+  assert.equal(await game.useActiveSkill(tuner, "resonance", [tuner]), false);
+  assert.equal(tuner.energy, 1);
+  tuner.energy = 4;
   assert.deepEqual(
     RuleEngine.getSkillTargets(game, tuner, ACTIVE_SKILLS.resonance).map((player) => player.id),
     [tuner.id, ally.id]
@@ -5998,13 +6007,14 @@ test("调律师：共鸣前两次各耗1能量并各摸1张，第三次失败且
   assert.equal(tuner.hand.length, 1);
   assert.equal(tuner.turnFlags.activeSkillUseCounts.resonance, 1);
   assert.equal(await game.useActiveSkill(tuner, "resonance", [ally]), true);
-  assert.equal(tuner.energy, 1);
+  assert.equal(tuner.energy, 0);
   assert.equal(ally.hand.length, 1);
   assert.equal(tuner.turnFlags.activeSkillUseCounts.resonance, 2);
   assert.equal(await game.useActiveSkill(tuner, "resonance", [ally]), false);
-  assert.equal(tuner.energy, 1);
+  assert.equal(tuner.energy, 0);
   assert.equal(ally.hand.length, 1);
   tuner.resetTurnFlags(game.teamRules.getRules(tuner));
+  tuner.energy = 2;
   assert.equal(await game.useActiveSkill(tuner, "resonance", [tuner]), true);
   assert.equal(tuner.energy, 0);
   assert.equal(tuner.hand.length, 2);
@@ -7783,7 +7793,7 @@ test("AI·搜索：深层节点能发现先聚能再发动主动技能", () => {
   const actor = makePlayer("a", 0, "dawn", "ai", 2),
     ally = makePlayer("ally", 1, "dawn", "ai", 1),
     enemy = makePlayer("e", 2, "dusk");
-  actor.energy = 0;
+  actor.energy = 1;
   ally.hp -= 1;
   actor.hand.push(instance("charge"));
   const { game } = makeGame([actor, ally, enemy]);
@@ -10120,7 +10130,7 @@ test("AI·封印：按真实存活行动环温和折扣更晚目标", () => {
 
 test("AI·封印：下一回合技能次数按 fresh availability 且能量门槛正确", () => {
   const base = {
-      activeSkillId:"burningField", activeSkillCost:2, activeSkillLimit:2,
+      activeSkillId:"breakArmy", activeSkillCost:2, activeSkillLimit:1,
       maxEnergy:3, turnEnergyGainWithoutEquipment:1
     },
     ready = { ...base, energy:2 },
@@ -10129,7 +10139,7 @@ test("AI·封印：下一回合技能次数按 fresh availability 且能量门�
       activeSkillUseSlots:[[{ probability:1, available:true }]]
     },
     usedThisTurn = {
-      ...readyAfterGain, activeSkillUses:2, activeSkillUsed:true,
+      ...readyAfterGain, activeSkillUses:1, activeSkillUsed:true,
       activeSkillUseSlots:[[{ probability:1, available:false }]]
     },
     unavailable = { ...base, energy:0 };
@@ -13117,7 +13127,7 @@ test("AI·望远镜与屏障：掠夺和固定距离窃取按真实距离分支�
   ).find((action) => action.type === "skill" && action.skill.id === "stealSkill" && action.targets[0].id === "target");
   assertClose(steal.executionProbability, .4);
   const stolen = new AiSimulator(skillState).apply(skillState, steal, "actor");
-  assertClose(stolen.players[0].energy, 1.6);
+  assertClose(stolen.players[0].energy, 1.2);
   assertClose(stolen.players[0].activeSkillUses, .4);
   assertClose(stolen.players[0].handCount, .4);
   assertClose(stolen.players[3].handCount, .6);
@@ -13135,7 +13145,7 @@ test("AI·望远镜与屏障：确定合法距离保持概率1且条件技能次
         hp: 4,
         maxHp: 4,
         shield: 0,
-        energy: 2,
+        energy: 4,
         handCount: 0,
         hand: [],
         activeSkillId: "stealSkill",
@@ -13940,14 +13950,24 @@ test("AI·守誓者：可见状态、动作生成和模拟器保留主动技能�
   const { game } = makeGame([warden, ally, enemy]);
   warden.turnFlags.activeSkillUseCounts.barrier = 1;
   warden.turnFlags.activeSkillsUsed.add("barrier");
+  warden.energy = 1;
+  const lowVisible = createAiVisibleState(warden.id, game.state);
+  assert.equal(
+    game.aiController.actionGenerator.generateFromVisible(lowVisible, warden.id)
+      .filter((entry) => entry.skill?.id === "barrier").length,
+    0
+  );
+  warden.energy = 4;
   const visible = createAiVisibleState(warden.id, game.state),
     actor = visible.players.find((player) => player.id === warden.id);
   assert.deepEqual(
     [actor.activeSkillUses, actor.activeSkillLimit, actor.activeSkillUsed], [1, 2, false]
   );
-  const action = game.aiController.actionGenerator.generateFromVisible(
+  const actions = game.aiController.actionGenerator.generateFromVisible(
     visible, warden.id
-  ).find((entry) => entry.type === "skill" && entry.skill.id === "barrier");
+  ).filter((entry) => entry.type === "skill" && entry.skill.id === "barrier");
+  assert.deepEqual(actions.map((entry) => entry.targets[0].id), [warden.id, ally.id]);
+  const action = actions[0];
   assert.ok(action);
   const next = new AiSimulator(visible).apply(visible, action, warden.id),
     nextActor = next.players.find((player) => player.id === warden.id);
@@ -13967,6 +13987,14 @@ test("AI·灵医：滋荣在0、1、2次使用状态正确生成动作且只治�
     = makeGame([medic, ally, enemy]);
   const visible = createAiVisibleState(medic.id, game.state),
     generator = game.aiController.actionGenerator;
+  medic.energy = 1;
+  const lowVisible = createAiVisibleState(medic.id, game.state);
+  assert.equal(
+    generator.generateFromVisible(lowVisible, medic.id)
+      .filter((action) => action.type === "skill" && action.skill.id === "symbiosis").length,
+    0
+  );
+  medic.energy = 4;
   const actions = generator.generateFromVisible(
     visible, medic.id
   ).filter((action) => action.type === "skill" && action.skill.id === "symbiosis");
@@ -13980,7 +14008,7 @@ test("AI·灵医：滋荣在0、1、2次使用状态正确生成动作且只治�
   assert.equal(simMedic.hp, 1);
   assert.equal(simMedic.handCount, 1);
   assert.equal(simMedic.rejuvenationUsed, true);
-  assert.equal(simMedic.energy, 3);
+  assert.equal(simMedic.energy, 2);
   assert.equal(simMedic.activeSkillUses, 1);
   const actionsAfterOne = generator.generateFromVisible(
     afterAlly, medic.id
@@ -13991,7 +14019,7 @@ test("AI·灵医：滋荣在0、1、2次使用状态正确生成动作且只治�
     simMedicAgain = afterSelf.players.find((player) => player.id === medic.id);
   assert.equal(simMedicAgain.hp, 2);
   assert.equal(simMedicAgain.handCount, 1);
-  assert.equal(simMedicAgain.energy, 2);
+  assert.equal(simMedicAgain.energy, 0);
   assert.equal(simMedicAgain.activeSkillUses, 2);
   assert.equal(
     generator.generateFromVisible(afterSelf, medic.id)
@@ -14154,11 +14182,18 @@ test("AI·影客：模拟窃取装备时只增加手牌且保持影客当前装�
   const actor = next.players.find((player) => player.id === shade.id),
     victim = next.players.find((player) => player.id === target.id);
   assert.equal(actor.handCount, 1);
-  assert.equal(actor.energy, 1);
+  assert.equal(actor.energy, 0);
   assert.equal(actor.activeSkillUses, 1);
   assert.equal(actor.activeSkillUsed, false);
   assert.equal(actor.equipmentDefinitionId, current.definitionId);
   assert.equal(victim.equipmentDefinitionId, null);
+  shade.energy = 1;
+  const lowVisible = createAiVisibleState(shade.id, game.state);
+  assert.equal(
+    game.aiController.actionGenerator.generateFromVisible(lowVisible, shade.id)
+      .filter((action) => action.skill?.id === "stealSkill").length,
+    0
+  );
 });
 
 test("AI·影客：窥隙在目标濒死获救后仍结算且救援失败不结算", () => {
@@ -14282,48 +14317,83 @@ test("AI·影客：窥隙与余烬从统一生命伤害入口覆盖非突袭和�
 
 // ---- AI 角色行为·炎术师 ----
 
-test("AI·炎术师：焚场已使用1次且能量充足时仍生成并模拟第2次，已用2次后不再生成", async () => {
-  const ember = makePlayer("ember-ai", 0, "dawn", "ai", 4);
-  const ally = makePlayer("ember-ai-ally", 1, "dawn", "ai", 0);
-  const enemy = makePlayer("ember-ai-enemy", 2, "dusk", "ai", 5);
-  ember.energy = 3;
-  const { game }
-    = makeGame([ember, ally, enemy]);
-  const visible = createAiVisibleState(ember.id, game.state);
-  const action = game.aiController.actionGenerator.generateFromVisible(
-    visible, ember.id
-  ).find((entry) => entry.skill?.id === "burningField");
-  assert.ok(action);
-  assert.equal(action.skill.cost, 2);
-  assert.equal(action.skill.limitPerTurn, 2);
-  const next = new AiSimulator(visible).apply(visible, action, ember.id);
-  const nextEmber = next.players.find((player) => player.id === ember.id);
-  const nextEnemy = next.players.find((player) => player.id === enemy.id);
-  assert.equal(nextEmber.energy, 1);
-  assert.equal(nextEnemy.hp, enemy.hp - 1);
+test("AI·炎术师：动作生成、模拟和价值状态共用焚场动态成本", () => {
+  for (const enemyCount of [1, 2, 3]) {
+    const ember = makePlayer(`ember-ai-${enemyCount}`, 0, "dawn", "ai", 4),
+      ally = makePlayer(`ember-ai-ally-${enemyCount}`, 1, "dawn", "ai", 0),
+      enemies = Array.from(
+        { length:enemyCount },
+        (_, index) => makePlayer(`ember-ai-enemy-${enemyCount}-${index}`, index + 2, "dusk", "ai", 5)
+      ),
+      { game } = makeGame([ember, ally, ...enemies]);
+    ember.energy = enemyCount - 1;
+    const lowVisible = createAiVisibleState(ember.id, game.state);
+    assert.equal(lowVisible.players.find((player) => player.id === ember.id).activeSkillCost, enemyCount);
+    assert.equal(
+      game.aiController.actionGenerator.generateFromVisible(lowVisible, ember.id)
+        .filter((entry) => entry.skill?.id === "burningField").length,
+      0
+    );
+    ember.energy = enemyCount;
+    const visible = createAiVisibleState(ember.id, game.state),
+      action = game.aiController.actionGenerator.generateFromVisible(
+        visible, ember.id
+      ).find((entry) => entry.skill?.id === "burningField");
+    assert.ok(action);
+    assert.equal(action.skill.cost, null);
+    assert.equal(action.energyCost, enemyCount);
+    assert.equal(action.skill.limitPerTurn, 2);
+    const next = new AiSimulator(visible).apply(visible, action, ember.id),
+      nextEmber = next.players.find((player) => player.id === ember.id);
+    assert.equal(nextEmber.energy, 0);
+    for (const enemy of enemies) {
+      assert.equal(next.players.find((player) => player.id === enemy.id).hp, enemy.hp - 1);
+    }
+  }
+
+  const changingEmber = makePlayer("ember-ai-changing", 0, "dawn", "ai", 4),
+    dyingEnemy = makePlayer("ember-ai-dying", 1, "dusk", "ai", 5),
+    survivingEnemy = makePlayer("ember-ai-surviving", 2, "dusk", "ai", 5),
+    { game:changingGame } = makeGame([changingEmber, dyingEnemy, survivingEnemy]);
+  changingEmber.energy = 3;
+  dyingEnemy.hp = 1;
+  const changingVisible = createAiVisibleState(changingEmber.id, changingGame.state),
+    firstField = changingGame.aiController.actionGenerator.generateFromVisible(
+      changingVisible, changingEmber.id
+    ).find((entry) => entry.skill?.id === "burningField"),
+    afterFirstField = new AiSimulator(changingVisible).apply(
+      changingVisible, firstField, changingEmber.id
+    ),
+    changingActor = afterFirstField.players.find((player) => player.id === changingEmber.id),
+    secondField = changingGame.aiController.actionGenerator.generateFromVisible(
+      afterFirstField, changingEmber.id
+    ).find((entry) => entry.skill?.id === "burningField");
+  assert.deepEqual([changingActor.energy, changingActor.activeSkillCost], [1, 1]);
+  assert.equal(secondField.energyCost, 1);
+
+  const ember = makePlayer("ember-ai-limit", 0, "dawn", "ai", 4),
+    enemy = makePlayer("ember-ai-limit-enemy", 1, "dusk", "ai", 5),
+    { game } = makeGame([ember, enemy]);
+  ember.energy = 2;
   ember.turnFlags.activeSkillUseCounts.burningField = 1;
   ember.turnFlags.activeSkillsUsed.add("burningField");
-  const visibleUsedOnce = createAiVisibleState(ember.id, game.state);
-  const actorUsedOnce = visibleUsedOnce.players.find((player) => player.id === ember.id);
-  assert.deepEqual(
-    [actorUsedOnce.activeSkillUses, actorUsedOnce.activeSkillLimit, actorUsedOnce.activeSkillUsed],
-    [1, 2, false]
-  );
-  const actionUsedOnce = game.aiController.actionGenerator.generateFromVisible(
-    visibleUsedOnce, ember.id
-  ).find((entry) => entry.skill?.id === "burningField");
+  const visibleUsedOnce = createAiVisibleState(ember.id, game.state),
+    actionUsedOnce = game.aiController.actionGenerator.generateFromVisible(
+      visibleUsedOnce, ember.id
+    ).find((entry) => entry.skill?.id === "burningField");
   assert.ok(actionUsedOnce);
-  const nextAfterSecond = new AiSimulator(
-    visibleUsedOnce
-  ).apply(visibleUsedOnce, actionUsedOnce, ember.id);
-  const secondEmber = nextAfterSecond.players.find((player) => player.id === ember.id);
+  const nextAfterSecond = new AiSimulator(visibleUsedOnce).apply(
+      visibleUsedOnce, actionUsedOnce, ember.id
+    ),
+    secondEmber = nextAfterSecond.players.find((player) => player.id === ember.id);
   assert.deepEqual([secondEmber.activeSkillUses, secondEmber.activeSkillUsed], [2, true]);
   ember.turnFlags.activeSkillUseCounts.burningField = 2;
   const visibleUsedTwice = createAiVisibleState(ember.id, game.state);
-  const exhaustedAction = game.aiController.actionGenerator.generateFromVisible(
-    visibleUsedTwice, ember.id
-  ).find((entry) => entry.skill?.id === "burningField");
-  assert.equal(exhaustedAction, undefined);
+  assert.equal(
+    game.aiController.actionGenerator.generateFromVisible(visibleUsedTwice, ember.id)
+      .find((entry) => entry.skill?.id === "burningField"),
+    undefined
+  );
 });
 
 // ---- AI 角色行为·追猎者 ----
@@ -14791,14 +14861,14 @@ test("AI·追猎者：概率获得能量与孤注均按各自世界的实际能�
     allIn = new AiSimulator(
       allInState
     ).apply(allInState, { type: "skill", skill: ACTIVE_SKILLS.allIn, targets: [], executionProbability: .4, executionWorldBranches: allInWorlds }, "gambler");
-  assertClose(allIn.players[0].handCount, 1.2);
+  assertClose(allIn.players[0].handCount, .8);
   assertClose(allIn.players[0].energy, 0);
 });
 
 // ---- AI 角色行为·赌命者 ----
 
-test("AI·赌命者：模拟孤注已有状态不叠加且按状态概率合并", () => {
-  const makeState = (assaultBonus) => (
+test("AI·赌命者：模拟孤注按E-1摸牌并按25%概率质量合并非叠加状态", () => {
+  const makeState = (energy, assaultBonus = 0) => (
     {
       players: [
         {
@@ -14808,9 +14878,9 @@ test("AI·赌命者：模拟孤注已有状态不叠加且按状态概率合并"
           hp: 4,
           maxHp: 4,
           shield: 0,
-          energy: 2,
+          energy,
           maxEnergy: 4,
-          energyBranches: [{ probability: 1, conditions: {}, amount: 2 }],
+          energyBranches: [{ probability: 1, conditions: {}, amount: energy }],
           assaultBonus,
           handCount: 0,
           activeSkillUses: 0,
@@ -14826,18 +14896,23 @@ test("AI·赌命者：模拟孤注已有状态不叠加且按状态概率合并"
     executionProbability: 1,
     executionWorldBranches: [{ probability: 1, conditions: {}, executes: true }]
   };
-  const empty = new AiSimulator(makeState(0)).apply(makeState(0), action, "gambler");
-  const full = new AiSimulator(makeState(1)).apply(makeState(1), action, "gambler");
-  const partial = new AiSimulator(makeState(.5)).apply(makeState(.5), action, "gambler");
-  assertClose(empty.players[0].assaultBonus, .6);
-  assertClose(empty.players[0].energy, 0);
-  assertClose(empty.players[0].handCount, 2);
+  for (const energy of [1, 2, 3, 4]) {
+    const state = makeState(energy),
+      next = new AiSimulator(state).apply(state, action, "gambler");
+    assertClose(next.players[0].assaultBonus, Math.min(1, energy * .25));
+    assertClose(next.players[0].energy, 0);
+    assertClose(next.players[0].handCount, energy - 1);
+  }
+  const fullState = makeState(2, 1),
+    partialState = makeState(2, .5),
+    full = new AiSimulator(fullState).apply(fullState, action, "gambler"),
+    partial = new AiSimulator(partialState).apply(partialState, action, "gambler");
   assertClose(full.players[0].assaultBonus, 1);
   assertClose(full.players[0].energy, 0);
-  assertClose(full.players[0].handCount, 2);
-  assertClose(partial.players[0].assaultBonus, .8);
+  assertClose(full.players[0].handCount, 1);
+  assertClose(partial.players[0].assaultBonus, .75);
   assertClose(partial.players[0].energy, 0);
-  assertClose(partial.players[0].handCount, 2);
+  assertClose(partial.players[0].handCount, 1);
 });
 
 test("AI·赌命者：孤注动作评分按当前状态概率计算边际状态收益", () => {
@@ -14852,10 +14927,10 @@ test("AI·赌命者：孤注动作评分按当前状态概率计算边际状态�
   const none = evaluator.actionUtility(action, gambler, makeVisible(0));
   const full = evaluator.actionUtility(action, gambler, makeVisible(1));
   const partial = evaluator.actionUtility(action, gambler, makeVisible(.5));
-  assertClose(none, 8.4);
-  assertClose(full, 6);
-  assertClose(partial, 7.2);
-  assertClose(none - full, 2.4);
+  assertClose(none, 5);
+  assertClose(full, 3);
+  assertClose(partial, 4);
+  assertClose(none - full, 2);
 });
 
 test("AI·赌命者：冒险首次战术期望摸0.6且被反制仍触发、同回合不重复", () => {
@@ -14906,10 +14981,17 @@ test("AI·调律师：共鸣包含自己并在0、1、2次使用状态正确生�
   const tuner = makePlayer("ai-tuner", 0, "dawn", "ai", 7),
     ally = makePlayer("ai-tuner-ally", 1, "dawn"),
     enemy = makePlayer("ai-tuner-enemy", 2, "dusk");
-  tuner.energy = 3;
+  tuner.energy = 1;
   const { game } = makeGame([tuner, ally, enemy]),
-    generator = game.aiController.actionGenerator,
-    visible = createAiVisibleState(tuner.id, game.state),
+    generator = game.aiController.actionGenerator;
+  const lowVisible = createAiVisibleState(tuner.id, game.state);
+  assert.equal(
+    generator.generateFromVisible(lowVisible, tuner.id)
+      .filter((action) => action.type === "skill" && action.skill.id === "resonance").length,
+    0
+  );
+  tuner.energy = 4;
+  const visible = createAiVisibleState(tuner.id, game.state),
     actionsAtZero = generator.generateFromVisible(visible, tuner.id)
       .filter((action) => action.type === "skill" && action.skill.id === "resonance");
   assert.deepEqual(actionsAtZero.map((action) => action.targets[0].id), [tuner.id, ally.id]);
@@ -14925,7 +15007,7 @@ test("AI·调律师：共鸣包含自己并在0、1、2次使用状态正确生�
     afterAlly = new AiSimulator(afterSelf).apply(afterSelf, allyAction, tuner.id),
     simTunerAfterTwo = afterAlly.players.find((player) => player.id === tuner.id),
     simAlly = afterAlly.players.find((player) => player.id === ally.id);
-  assert.deepEqual([simTunerAfterTwo.energy, simTunerAfterTwo.activeSkillUses], [1, 2]);
+  assert.deepEqual([simTunerAfterTwo.energy, simTunerAfterTwo.activeSkillUses], [0, 2]);
   assert.equal(simAlly.handCount, 1);
   assert.equal(
     generator.generateFromVisible(afterAlly, tuner.id)
@@ -16610,12 +16692,12 @@ test("AI·反制先验：主动技能孤注摸牌增加反制先验", () => {
     [{ probability: 1, conditions: {}, occurs: true }]
   );
   assert.equal(actor.energy, 0);
-  assert.equal(actor.handCount, 2);
+  assert.equal(actor.handCount, 1);
   const byCount = counterByCount(actor);
-  assertClose(byCount[0] ?? 0, .25);
+  assertClose(byCount[0] ?? 0, .5);
   assertClose(byCount[1] ?? 0, .5);
-  assertClose(byCount[2] ?? 0, .25);
-  assertClose(actor.counterProbability, .75);
+  assertClose(byCount[2] ?? 0, 0);
+  assertClose(actor.counterProbability, .5);
   assertClose(actor.counterCountDistribution.reduce((sum, branch) => sum + branch.probability, 0), 1);
 });
 
@@ -16643,13 +16725,13 @@ test("AI·反制先验：40%概率主动孤注只在发动世界增加反制", (
       { probability: .6, conditions: { allIn: "no" }, occurs: false }
     ]
   );
-  assertClose(actor.handCount, .8);
+  assertClose(actor.handCount, .4);
   assertClose(actor.energy, 1.2);
   const byCount = counterByCount(actor);
-  assertClose(byCount[0] ?? 0, .7);
+  assertClose(byCount[0] ?? 0, .8);
   assertClose(byCount[1] ?? 0, .2);
-  assertClose(byCount[2] ?? 0, .1);
-  assertClose(actor.counterProbability, .3);
+  assertClose(byCount[2] ?? 0, 0);
+  assertClose(actor.counterProbability, .2);
   assertClose(actor.counterCountDistribution.reduce((sum, branch) => sum + branch.probability, 0), 1);
   const triggerGain = actor.counterCountDistribution.filter(
     (branch) => branch.counterCount > 0 && branch.conditions?.allIn === "yes"
@@ -16657,7 +16739,7 @@ test("AI·反制先验：40%概率主动孤注只在发动世界增加反制", (
   const noTriggerGain = actor.counterCountDistribution.filter(
     (branch) => branch.counterCount > 0 && branch.conditions?.allIn === "no"
   ).reduce((sum, branch) => sum + branch.probability, 0);
-  assertClose(triggerGain, .3);
+  assertClose(triggerGain, .2);
   assertClose(noTriggerGain, 0);
 });
 
@@ -16686,12 +16768,12 @@ test("AI·反制先验：旧反制消费后主动孤注只产生新牌先验", (
     { type: "skill", skill: { id: "allIn" }, targets: [] },
     [{ probability: 1, conditions: {}, occurs: true }]
   );
-  assert.equal(actor.handCount, 3);
+  assert.equal(actor.handCount, 2);
   const byCount = counterByCount(actor);
-  assertClose(byCount[0] ?? 0, .25);
+  assertClose(byCount[0] ?? 0, .5);
   assertClose(byCount[1] ?? 0, .5);
-  assertClose(byCount[2] ?? 0, .25);
-  assertClose(actor.counterProbability, .75);
+  assertClose(byCount[2] ?? 0, 0);
+  assertClose(actor.counterProbability, .5);
   assert.equal(actor.hand.some((card) => card.definitionId === "counter"), false);
 });
 
@@ -16721,15 +16803,15 @@ test("AI·反制先验：主动孤注摸牌数跟随能量条件世界", () => {
     [{ probability: 1, conditions: {}, occurs: true }]
   );
   assert.equal(actor.energy, 0);
-  assertClose(actor.handCount, 2);
+  assertClose(actor.handCount, 1);
   const oneCounter = actor.counterCountDistribution.filter(
     (branch) => branch.conditions?.energyWorld === "one"
   ).reduce((sum, branch) => sum + branch.probability * (branch.counterCount >= 1 ? 1 : 0), 0);
   const threeCounter = actor.counterCountDistribution.filter(
     (branch) => branch.conditions?.energyWorld === "three"
   ).reduce((sum, branch) => sum + branch.probability * (branch.counterCount >= 1 ? 1 : 0), 0);
-  assertClose(oneCounter, .25);
-  assertClose(threeCounter, .4375);
+  assertClose(oneCounter, 0);
+  assertClose(threeCounter, .375);
   assertClose(actor.counterCountDistribution.reduce((sum, branch) => sum + branch.probability, 0), 1);
 });
 
@@ -26407,14 +26489,18 @@ test("UI·玩家面板：阵亡角色面板不显示残留状态和距离环文�
 
 test("UI·玩家面板：技能详情使用结构化的每回合发动次数", () => {
   const warden = makePlayer("warden", 0, "dawn", "human", 1), markup = skillDetailsTemplate(warden);
+  assert.match(markup, /能量消耗<\/dt><dd>2点能量/);
   assert.match(markup, /每回合限发动2次/);
+  assert.equal((markup.match(/每回合限发动2次/g) ?? []).length, 1);
+  assert.doesNotMatch(warden.general.activeDescription, /每回合|不会随回合消失|抵消伤害时消耗/);
 });
 
-test("UI·玩家面板：赌命者技能详情显示等量摸牌、30x%概率和每回合1次", () => {
+test("UI·玩家面板：赌命者技能详情显示E-1摸牌、25%概率和每回合1次", () => {
   const gambler = makePlayer("gambler", 0, "dawn", "human", 6),
     markup = skillDetailsTemplate(gambler);
-  assert.match(markup, /摸取等量牌/);
-  assert.match(markup, /30×消耗能量%/);
+  assert.match(markup, /比实际消耗能量少1张/);
+  assert.match(markup, /25×实际消耗能量%/);
+  assert.match(markup, /最高100%/);
   assert.match(markup, /每回合限发动1次/);
 });
 
@@ -26424,6 +26510,15 @@ test("UI·玩家面板：赌命者候选卡将孤注消耗显示为 X 能量", (
   assert.match(markup, /主动 · 孤注/);
   assert.match(markup, /<small>X 能量<\/small>/);
   assert.doesNotMatch(markup, /<small>1 能量<\/small>/);
+});
+
+test("UI·玩家面板：炎术师候选卡与技能详情显示焚场动态消耗", () => {
+  const ember = GENERAL_DEFINITIONS.find((general) => general.id === "ember-magus"),
+    candidate = candidateCardTemplate(ember, 0),
+    details = skillDetailsTemplate(makePlayer("ui-ember-cost", 0, "dawn", "human", 4));
+  assert.match(candidate, /<small>当前存活敌人数点能量<\/small>/);
+  assert.match(details, /能量消耗<\/dt><dd>当前存活敌人数点能量/);
+  assert.doesNotMatch(`${candidate}\n${details}`, /焚场[\s\S]{0,120}<small>[23] 能量|能量消耗<\/dt><dd>[23]点能量/);
 });
 
 test("UI·玩家面板：角色候选卡统一将主动技能显示在被动技能上方", () => {

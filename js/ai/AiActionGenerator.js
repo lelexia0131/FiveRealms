@@ -2,13 +2,15 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-ai-card-value-table-v139";
-import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260809-ai-card-value-table-v139";
-import { getSealStatusStateBranches } from "./sealScoring.js?build=20260809-ai-card-value-table-v139";
-import { ACTIVE_SKILLS, getActiveSkill } from "../generals/skillRegistry.js?build=20260809-ai-card-value-table-v139";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-ai-card-value-table-v139";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260809-ai-card-value-table-v139";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-ai-card-value-table-v139";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260809-general-balance-v140";
+import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260809-general-balance-v140";
+import { getSealStatusStateBranches } from "./sealScoring.js?build=20260809-general-balance-v140";
+import {
+  ACTIVE_SKILLS, getActiveSkill, getActiveSkillCost
+} from "../generals/skillRegistry.js?build=20260809-general-balance-v140";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-general-balance-v140";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260809-general-balance-v140";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260809-general-balance-v140";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -20,7 +22,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260809-ai-card-value-table-v139";
+} from "./AiProbabilityBranches.js?build=20260809-general-balance-v140";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -101,8 +103,12 @@ export class AiActionGenerator {
     if (skill?.canUse(this.game, player).ok
       && (skill.id !== "breakArmy" || this.canBenefitFromBreakArmy(player))) {
       const targets = RuleEngine.getSkillTargets(this.game, player, skill);
-      if (skill.targetType === "none" || skill.targetType === "allEnemies") actions.push({ type:"skill", skill, targets });
-      else for (const target of targets) actions.push({ type:"skill", skill, targets:[target] });
+      const energyCost = getActiveSkillCost(this.game, player, skill);
+      if (skill.targetType === "none" || skill.targetType === "allEnemies") {
+        actions.push({ type:"skill", skill, targets, energyCost });
+      } else {
+        for (const target of targets) actions.push({ type:"skill", skill, targets:[target], energyCost });
+      }
     }
     actions.push({ type:"end" });
     return actions;
@@ -176,9 +182,8 @@ export class AiActionGenerator {
     if (skill
       && (skill.id !== "breakArmy" || this.canBenefitFromBreakArmy(actor))) {
       const friendlies = alive.filter((player) => player.battleTeam === actor.battleTeam);
-      const allies = friendlies.filter((player) => player.id !== actor.id);
       let targets = [];
-      if (skill.id === "barrier") targets = allies;
+      if (skill.id === "barrier") targets = friendlies;
       else if (skill.id === "resonance") targets = friendlies;
       else if (skill.id === "symbiosis") targets = friendlies.filter((player) => player.hp < player.maxHp);
       else if (skill.id === "stealSkill") targets = RuleEngine.getSkillTargets(simulationGame, actor, skill);
@@ -379,7 +384,9 @@ export class AiActionGenerator {
       conditions:branch.conditions,
       energyAmount:branch.amount
     }));
-    const minimumEnergy = action.skill.id === "allIn" ? 1 : Number(action.skill.cost) || 0;
+    const minimumEnergy = action.skill.id === "allIn"
+      ? 1
+      : getActiveSkillCost(game, actor, action.skill);
     let bestResult = null;
     for (let skillUseSlot = 0; skillUseSlot < slots.length; skillUseSlot += 1) {
       const slotState = slots[skillUseSlot].map((branch) => ({
@@ -398,6 +405,7 @@ export class AiActionGenerator {
       }));
       const result = {
         ...action,
+        energyCost:minimumEnergy,
         conditionBranches,
         executionWorldBranches:worlds,
         ...summary,

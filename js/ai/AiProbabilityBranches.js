@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-ai-card-value-table-v139";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-general-balance-v140";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

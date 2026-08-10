@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260809-ai-card-value-table-v139";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-ai-card-value-table-v139";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260809-general-balance-v140";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-general-balance-v140";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
@@ -186,7 +186,7 @@ export class RuleEngine {
     const skillId = skill.id;
     const alive = game.state.players.filter((player) => player.alive);
     let candidates = [];
-    if (skillId === "barrier") candidates = alive.filter((player) => player.id !== source.id && player.battleTeam === source.battleTeam);
+    if (skillId === "barrier") candidates = alive.filter((player) => player.battleTeam === source.battleTeam);
     else if (skillId === "resonance") candidates = alive.filter((player) => player.battleTeam === source.battleTeam);
     else if (skillId === "symbiosis") candidates = alive.filter((player) => player.battleTeam === source.battleTeam && player.hp < player.maxHp);
     else if (skillId === "stealSkill") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && this.hasHandOrEquipment(player));
