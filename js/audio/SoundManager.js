@@ -3,9 +3,13 @@
  * AudioContext 只会在用户首次交互后创建，以符合浏览器的自动播放策略。
  */
 
+import { Debug } from "../utils/debug.js?build=20260810-lightning-audio-loop-v160";
+
 const STORAGE_KEY = "five-realms-audio-enabled";
 const MUSIC_VOLUME_KEY = "five-realms-music-volume";
 const DEFAULT_MUSIC_VOLUME = 0.75;
+/** 真实雷击采样（用户选定素材），URL 带当前统一 build 防止浏览器缓存旧声音。 */
+const LIGHTNING_SOURCE = "../../assets/audio/lightning.wav?build=20260810-lightning-audio-loop-v160";
 
 // 0–75% 保持原来的线性手感，最后四分之一提供额外余量，让需要更响 BGM 的玩家可以继续推高。
 const musicGainForVolume = (volume) => {
@@ -28,7 +32,8 @@ const DAWN_MELODY = longMelody(
   [60,64,67,72,71,null,69,67,64,null,67,69,72,null,74,null],
   [69,null,72,74,76,null,74,72,69,67,64,null,67,69,72,null],
   [72,null,69,67,64,null,62,64,67,69,67,null,64,62,60,null],
-  [67,64,62,null,60,null,64,67,69,null,67,64,62,null,60,null]
+  // 末句停在属音 G4：把收尾从“终止式”改成“导回开头”，循环回第一乐句的 C4 时形成 V→I 自然衔接。
+  [67,64,62,null,60,null,64,67,69,null,67,64,62,null,67,null]
 );
 
 const DUSK_MELODY = longMelody(
@@ -43,14 +48,16 @@ const DUSK_MELODY = longMelody(
   [45,52,57,60,59,null,57,53,52,null,55,57,60,null,62,null],
   [60,null,64,65,67,null,65,64,60,57,55,null,57,60,64,null],
   [64,null,60,57,53,null,52,53,55,57,55,null,53,52,48,null],
-  [57,53,52,null,48,null,52,55,57,null,55,52,50,null,45,null]
+  // 末句停在 A3：避免旋律跌到最低音 A2 再重新跳回，循环回第一乐句的 A3 时保持同一音区连续。
+  [57,53,52,null,48,null,52,55,57,null,55,52,50,null,57,null]
 );
 
 export const MUSIC_PROFILES = Object.freeze({
   dawn: Object.freeze({
     tempo: 78,
     lead: DAWN_MELODY,
-    bass: Object.freeze([48,45,43,48,45,50,48,43,45,48,50,47,48,45,43,50,45,48,43,47,48,45,43,48]),
+    // 尾段 G→C 改为 G→G：结束在属和弦上，跨循环点再解决到开头的 C。
+    bass: Object.freeze([48,45,43,48,45,50,48,43,45,48,50,47,48,45,43,50,45,48,43,47,48,45,43,43]),
     thirds: Object.freeze([4,3,4,2,4,4,3,4,3,4,4,3,4,3,4,4,3,4,2,3,4,3,4,4]),
     wave: "triangle",
     leadLevel: 0.036,
@@ -59,7 +66,8 @@ export const MUSIC_PROFILES = Object.freeze({
   dusk: Object.freeze({
     tempo: 72,
     lead: DUSK_MELODY,
-    bass: Object.freeze([45,41,43,40,41,45,43,40,45,41,38,43,45,40,41,43,38,45,41,40,43,41,38,45]),
+    // 尾段 Dm→Am 改为 Dm→Dm：结束在下属和弦上，跨循环点再解决到开头的 Am。
+    bass: Object.freeze([45,41,43,40,41,45,43,40,45,41,38,43,45,40,41,43,38,45,41,40,43,41,38,38]),
     thirds: Object.freeze([3,3,4,3,3,3,4,3,3,3,3,4,3,3,3,4,3,3,4,3,4,3,3,3]),
     wave: "sine",
     leadLevel: 0.042,
@@ -108,6 +116,9 @@ export class SoundManager {
     this.nextMusicTime = 0;
     this.musicStep = 0;
     this.musicStepsByTeam = { dawn:0, dusk:0 };
+    this.musicSources = new Set();
+    this.lightningBuffer = null;
+    this.lightningBufferPromise = null;
     this.lastPlayedAt = new Map();
   }
 
@@ -120,6 +131,8 @@ export class SoundManager {
     if (!this.context) this.createGraph();
     if (this.context.state === "suspended") await this.context.resume();
     if (this.musicTeam) this.startScheduler();
+    // 首次解锁后后台预加载真实雷击采样，避免第一声闪电因 fetch+decode 明显延迟。
+    if (!this.lightningBuffer && !this.lightningBufferPromise) void this.loadLightningBuffer();
     return this.context.state === "running";
   }
 
@@ -166,6 +179,7 @@ export class SoundManager {
     const changed = this.musicTeam !== team;
     if (changed) {
       if (this.musicTeam) this.musicStepsByTeam[this.musicTeam] = this.musicStep;
+      this.stopMusicSources();
       this.musicTeam = team;
       this.stopScheduler();
       this.musicStep = this.musicStepsByTeam[team] ?? 0;
@@ -177,13 +191,28 @@ export class SoundManager {
 
   stopMusic() {
     if (this.musicTeam) this.musicStepsByTeam[this.musicTeam] = this.musicStep;
+    this.stopMusicSources();
     this.musicTeam = null;
     this.stopScheduler();
   }
 
+  /** 停止已提前排程但仍存活的音乐节点，避免阵营切换时新旧 BGM 叠音。 */
+  stopMusicSources() {
+    if (!this.musicSources.size) return;
+    const now = this.context?.currentTime ?? 0;
+    for (const gain of this.musicSources) {
+      try {
+        gain.gain.cancelScheduledValues(now);
+        // 用短交叉淡化而非瞬时截断：新主题紧接着启动，避免切歌产生可听的停顿/重启感。
+        gain.gain.setTargetAtTime(0.0001, now, 0.05);
+      } catch { /* 节点已自然结束，忽略。 */ }
+    }
+    this.musicSources.clear();
+  }
+
   startScheduler() {
     if (this.musicTimer || !this.context || this.context.state !== "running" || !this.musicTeam) return;
-    this.nextMusicTime = Math.max(this.context.currentTime + 0.08, this.nextMusicTime);
+    this.nextMusicTime = Math.max(this.context.currentTime + 0.02, this.nextMusicTime);
     this.scheduleMusic();
     this.musicTimer = globalThis.setInterval(() => this.scheduleMusic(), 250);
   }
@@ -207,27 +236,28 @@ export class SoundManager {
   scheduleMusicStep(profile, step, time, duration) {
     const note = profile.lead[step % profile.lead.length];
     if (note != null && (step % 2 === 0 || step % 8 === 7)) {
-      this.tone(note, time, duration * 1.55, profile.wave, profile.leadLevel, this.musicGain);
+      this.tone(note, time, duration * 1.55, profile.wave, profile.leadLevel, this.musicGain, undefined, true);
     }
     if (step % 8 === 0) {
       const measure = Math.floor(step / 8);
       const bass = profile.bass[measure % profile.bass.length];
       const third = profile.thirds[measure % profile.thirds.length];
-      this.tone(bass, time, duration * 7.2, "sine", profile.padLevel, this.musicGain, 0.18);
-      this.tone(bass + 12 + third, time, duration * 7.2, "triangle", profile.padLevel * 0.32, this.musicGain, 0.24);
-      this.tone(bass + 19, time, duration * 7.2, "sine", profile.padLevel * 0.2, this.musicGain, 0.28);
+      this.tone(bass, time, duration * 7.2, "sine", profile.padLevel, this.musicGain, 0.18, true);
+      this.tone(bass + 12 + third, time, duration * 7.2, "triangle", profile.padLevel * 0.32, this.musicGain, 0.24, true);
+      this.tone(bass + 19, time, duration * 7.2, "sine", profile.padLevel * 0.2, this.musicGain, 0.28, true);
     }
     if (this.musicTeam === "dawn" && note != null && step % 16 === 12) {
-      this.tone(note + 12, time, duration * 2.4, "sine", 0.018, this.musicGain, 0.08);
+      this.tone(note + 12, time, duration * 2.4, "sine", 0.018, this.musicGain, 0.08, true);
     }
     if (this.musicTeam === "dusk" && note != null && step % 32 === 28) {
-      this.tone(note + 7, time, duration * 3.2, "triangle", 0.012, this.musicGain, 0.12);
+      this.tone(note + 7, time, duration * 3.2, "triangle", 0.012, this.musicGain, 0.12, true);
     }
   }
 
   async play(name, options = {}) {
     if (!this.enabled && !options.force) return false;
     if (!await this.unlock()) return false;
+    if (name === "lightning") return this.playLightningSample();
     const throttle = { select:35, draw:75, playCard:55, hit:45, discard:65 }[name] ?? 0;
     const nowMs = globalThis.performance?.now?.() ?? Date.now();
     if (!options.force && nowMs - (this.lastPlayedAt.get(name) ?? -Infinity) < throttle) return false;
@@ -238,7 +268,40 @@ export class SoundManager {
     return true;
   }
 
-  tone(note, time, duration, type = "sine", level = 0.1, destination = this.sfxGain, attack = 0.008) {
+  /** 加载并缓存真实雷击采样；失败安全降级为静音，不阻塞任何游戏流程。 */
+  async loadLightningBuffer() {
+    if (this.lightningBuffer) return this.lightningBuffer;
+    if (this.lightningBufferPromise) return this.lightningBufferPromise;
+    this.lightningBufferPromise = (async () => {
+      const response = await fetch(new URL(LIGHTNING_SOURCE, import.meta.url));
+      if (!response.ok) throw new Error(`lightning 素材请求失败：${response.status}`);
+      const data = await response.arrayBuffer();
+      const buffer = await this.context.decodeAudioData(data);
+      this.lightningBuffer = buffer;
+      return buffer;
+    })().catch((error) => {
+      Debug.log("audio", "lightning 素材加载/解码失败，本次雷击静音", error);
+      this.lightningBufferPromise = null;
+      return null;
+    });
+    return this.lightningBufferPromise;
+  }
+
+  /** 播放真实雷击采样：每次命中创建独立 BufferSource，经 local gain 接入 sfxGain。 */
+  async playLightningSample() {
+    if (!this.enabled || !this.context || this.context.state !== "running") return false;
+    const buffer = await this.loadLightningBuffer();
+    if (!buffer) return false;
+    const source = this.context.createBufferSource();
+    const gain = this.context.createGain();
+    source.buffer = buffer;
+    gain.gain.value = 0.9; // lightning 独立 local gain，响度留给浏览器试听后调整
+    source.connect(gain).connect(this.sfxGain);
+    source.start(this.context.currentTime + 0.005);
+    return true;
+  }
+
+  tone(note, time, duration, type = "sine", level = 0.1, destination = this.sfxGain, attack = 0.008, tracked = false) {
     const oscillator = this.context.createOscillator();
     const gain = this.context.createGain();
     oscillator.type = type;
@@ -249,6 +312,10 @@ export class SoundManager {
     oscillator.connect(gain).connect(destination);
     oscillator.start(time);
     oscillator.stop(time + duration + 0.03);
+    if (tracked) {
+      this.musicSources.add(gain);
+      oscillator.onended = () => this.musicSources.delete(gain);
+    }
   }
 
   sweep(fromHz, toHz, time, duration, type, level) {

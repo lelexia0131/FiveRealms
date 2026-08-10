@@ -2,15 +2,15 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-allin-heal-log-v153";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-allin-heal-log-v153";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-allin-heal-log-v153";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260810-allin-heal-log-v153";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260810-allin-heal-log-v153";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260810-allin-heal-log-v153";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260810-allin-heal-log-v153";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260810-allin-heal-log-v153";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-allin-heal-log-v153";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-lightning-audio-loop-v160";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-lightning-audio-loop-v160";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-lightning-audio-loop-v160";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260810-lightning-audio-loop-v160";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260810-lightning-audio-loop-v160";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260810-lightning-audio-loop-v160";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260810-lightning-audio-loop-v160";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260810-lightning-audio-loop-v160";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-lightning-audio-loop-v160";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -25,7 +25,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260810-allin-heal-log-v153";
+} from "./AiProbabilityBranches.js?build=20260810-lightning-audio-loop-v160";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -3023,7 +3023,9 @@ export class AiSimulator {
       && attacker.equipmentDefinitionId === "battleDevice"
       ? (options.attackerEquipmentProbability ?? this.getSimulatedEquipmentProbability(attacker, "battleDevice"))
       : 0);
-    const defenseProbability = options.deviceAttack
+    // 雷达按统一“需要打出格挡”语义生效：只要本次伤害可格挡（options.canBlock），
+    // 目标装备 defenseDevice 时就进入雷达判定路径，不再依赖 assault/shock 牌名白名单。
+    const defenseProbability = options.canBlock
       ? this.getSimulatedEquipmentProbability(target, "defenseDevice")
       : 0;
     let blockedByCardChance = 0;

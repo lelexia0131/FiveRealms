@@ -3,9 +3,9 @@
  * 它依赖卡牌配置和随机工具，不负责合法性、日志或卡牌效果。
  * 所有在手牌、装备区或 resolvingCards 中的卡都不会进入重洗来源。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-allin-heal-log-v153";
-import { createId, shuffled } from "../utils/helpers.js?build=20260810-allin-heal-log-v153";
-import { Debug } from "../utils/debug.js?build=20260810-allin-heal-log-v153";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-lightning-audio-loop-v160";
+import { createId, shuffled } from "../utils/helpers.js?build=20260810-lightning-audio-loop-v160";
+import { Debug } from "../utils/debug.js?build=20260810-lightning-audio-loop-v160";
 
 export class Deck {
   constructor(random = Math.random) {

@@ -589,11 +589,13 @@ test("角色规则：强制 AI 救援真人配置默认开启", () => assert.equ
 
 // ---- 音频与 BGM ----
 
-test("音频：声音系统覆盖八类反馈且在无 Web Audio 环境安全降级", async () => {
+test("音频：合成声音覆盖八类反馈且 lightning 改为采样播放", async () => {
   const sound = new SoundManager();
   for (const name of ["draw", "select", "playCard", "hit", "skill", "discard", "heal", "shield"]) {
     assert.equal(typeof sound[`sound_${name}`], "function", name);
   }
+  assert.equal(sound.sound_lightning, undefined, "lightning 不应再使用合成方法");
+  assert.equal(typeof sound.playLightningSample, "function", "lightning 应走采样播放路径");
   if (!sound.isSupported) assert.equal(await sound.play("draw"), false);
 });
 
@@ -644,6 +646,323 @@ test("音频：晨昏主题切换后分别续播而不是反复从开头播放",
   assert.equal(sound.musicStep, 42);
 });
 
+/** 构造最小 Web Audio 假实现，用于验证 BGM 排程连续性、索引回绕与旧节点停止。 */
+function makeFakeAudioContext() {
+  const param = () => {
+    const calls = [];
+    return {
+      calls,
+      setValueAtTime(value, time) { calls.push(["set", value, time]); },
+      exponentialRampToValueAtTime(value, time) { calls.push(["ramp", value, time]); },
+      setTargetAtTime(value, time, constant) { calls.push(["target", value, time, constant]); },
+      cancelScheduledValues(time) { calls.push(["cancel", time]); }
+    };
+  };
+  const makeGain = () => {
+    const node = { gain: param(), connected: [], connect(destination) { node.connected.push(destination); return destination; }, disconnect() { } };
+    return node;
+  };
+  const oscillators = [];
+  const makeOscillator = () => {
+    const node = {
+      type: "",
+      frequency: param(),
+      connect(destination) { return destination; },
+      start(time) { node.startTime = time; },
+      stop(time) { node.stopTime = time; },
+      onended: null,
+      startTime: null,
+      stopTime: null
+    };
+    oscillators.push(node);
+    return node;
+  };
+  const bufferSources = [];
+  const decodeCalls = [];
+  return {
+    currentTime: 0,
+    state: "running",
+    sampleRate: 44100,
+    destination: makeGain(),
+    oscillators,
+    bufferSources,
+    decodeCalls,
+    createOscillator: makeOscillator,
+    createGain: makeGain,
+    createBiquadFilter: () => ({ type: "", frequency: param(), Q: param(), connect(destination) { return destination; } }),
+    createBuffer: () => ({ getChannelData: () => new Float32Array(44100) }),
+    createBufferSource: () => {
+      const node = { buffer: null, connected: [], connect(destination) { node.connected.push(destination); return destination; }, start() { }, stop() { } };
+      bufferSources.push(node);
+      return node;
+    },
+    async decodeAudioData() { decodeCalls.push(1); return { numberOfChannels: 2, length: 44100, sampleRate: 44100, duration: 1 }; }
+  };
+}
+
+/** 临时提供 AudioContext 全局，使 SoundManager.play 在假实现下走完整播放路径。 */
+async function withAudioContextStub(run) {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "AudioContext");
+  try {
+    Object.defineProperty(globalThis, "AudioContext", { configurable: true, value: function FakeAudioContextCtor() { } });
+    return await run();
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "AudioContext", previous); else delete globalThis.AudioContext;
+  }
+}
+
+/** 临时替换全局 fetch，用于采样音效加载测试。 */
+async function withFetchStub(fetchImpl, run) {
+  const previous = globalThis.fetch;
+  globalThis.fetch = fetchImpl;
+  try { return await run(); } finally { globalThis.fetch = previous; }
+}
+
+/** 构造带主题记录的 Game，供 BGM 阵营规则测试使用。 */
+function makeMusicRuleGame(players) {
+  const { game, ui } = makeGame(players);
+  const musicCalls = [];
+  let theme = null;
+  ui.setMusicTeam = (team) => { theme = team; musicCalls.push(team); };
+  game.state.deck.cards = Array.from({ length: 24 }, () => instance("recover"));
+  return { game, ui, get theme() { return theme; }, musicCalls };
+}
+
+test("音频：BGM 排程跨乐句循环时保持时间轴连续且旋律/低音索引正确回绕", () => {
+  const sound = new SoundManager();
+  const fake = makeFakeAudioContext();
+  sound.context = fake;
+  sound.musicGain = fake.destination;
+  sound.sfxGain = fake.destination;
+  sound.enabled = true;
+  sound.musicTeam = "dawn";
+  const profile = MUSIC_PROFILES.dawn;
+  const stepDuration = 30 / profile.tempo;
+  const startTime = 99;
+  fake.currentTime = startTime;
+  sound.musicStep = profile.lead.length - 2; // 190：下一次排程必然跨过 192 步循环点
+  sound.nextMusicTime = startTime;
+  sound.scheduleMusic();
+  const loopStepTime = startTime + 2 * stepDuration; // 192 % 192 === 0，回到第一乐句
+  const freq = (note) => 440 * (2 ** ((note - 69) / 12));
+  assert.ok(sound.musicStep > profile.lead.length, "musicStep 应跨过循环点继续前进");
+  assert.ok(sound.nextMusicTime > startTime, "nextMusicTime 应持续推进而不回退");
+  assert.ok(fake.oscillators.some(
+    (node) => Math.abs(node.startTime - loopStepTime) < 1e-9
+      && node.frequency.calls.some(([op, value]) => op === "set" && value === freq(profile.lead[0]))
+  ), "循环点应排程第一乐句的第一个主旋律音");
+  assert.ok(fake.oscillators.some(
+    (node) => Math.abs(node.startTime - loopStepTime) < 1e-9
+      && node.frequency.calls.some(([op, value]) => op === "set" && value === freq(profile.bass[0]))
+  ), "循环点低音应按 bass[0] 回绕");
+  const times = fake.oscillators.map((node) => node.startTime).sort((a, b) => a - b);
+  for (let index = 1; index < times.length; index += 1) {
+    assert.ok(times[index] >= times[index - 1] - 1e-9, "排程开始时间不应回退");
+  }
+  const before = sound.nextMusicTime;
+  sound.scheduleMusic();
+  assert.equal(sound.nextMusicTime, before, "重复排程不应重置时间轴");
+});
+
+test("音频：阵营切换停止已排程的旧音乐节点而非仅停 scheduler", () => {
+  const sound = new SoundManager();
+  const fake = makeFakeAudioContext();
+  sound.context = fake;
+  sound.musicGain = fake.destination;
+  sound.sfxGain = fake.destination;
+  sound.enabled = true;
+  sound.musicTeam = "dawn";
+  const profile = MUSIC_PROFILES.dawn;
+  const stepDuration = 30 / profile.tempo;
+  for (let step = 0; step < 8; step += 1) {
+    sound.scheduleMusicStep(profile, step, 10 + step * stepDuration, stepDuration);
+  }
+  assert.ok(sound.musicSources.size > 0, "排程后应跟踪到音乐节点");
+  const tracked = [...sound.musicSources];
+  sound.setMusicTeam("dusk");
+  assert.equal(sound.musicSources.size, 0, "切歌后旧节点应从跟踪集合移除");
+  for (const gain of tracked) {
+    assert.ok(gain.gain.calls.some((call) => call[0] === "cancel"), "旧节点应取消原包络");
+    assert.ok(gain.gain.calls.some((call) => call[0] === "target"), "旧节点应快速淡出");
+  }
+});
+
+test("音频：stopMusic 停止已排程音乐节点并清除主题", () => {
+  const sound = new SoundManager();
+  const fake = makeFakeAudioContext();
+  sound.context = fake;
+  sound.musicGain = fake.destination;
+  sound.sfxGain = fake.destination;
+  sound.musicTeam = "dusk";
+  sound.scheduleMusicStep(MUSIC_PROFILES.dusk, 0, 10, 30 / MUSIC_PROFILES.dusk.tempo);
+  assert.ok(sound.musicSources.size > 0);
+  sound.stopMusic();
+  assert.equal(sound.musicSources.size, 0);
+  assert.equal(sound.musicTeam, null);
+});
+
+test("音频：播放 playCard 不会停止或重启已运行的 BGM", async () => {
+  await withAudioContextStub(async () => {
+    const sound = new SoundManager();
+    const fake = makeFakeAudioContext();
+    sound.context = fake;
+    sound.musicGain = fake.destination;
+    sound.sfxGain = fake.destination;
+    sound.enabled = true;
+    sound.musicTeam = "dawn";
+    sound.startScheduler();
+    sound.musicTimer?.unref?.();
+    assert.ok(sound.musicTimer, "scheduler 应已运行");
+    assert.ok(sound.musicSources.size > 0, "应已有排程中的音乐节点");
+    const timer = sound.musicTimer;
+    const step = sound.musicStep;
+    const nextTime = sound.nextMusicTime;
+    const sources = sound.musicSources.size;
+    const musicGainCalls = sound.musicGain.gain.calls.length;
+    assert.equal(await sound.play("playCard"), true);
+    assert.equal(sound.musicTimer, timer, "playCard 不得重启 scheduler");
+    assert.equal(sound.musicStep, step, "playCard 不得重置 musicStep");
+    assert.equal(sound.nextMusicTime, nextTime, "playCard 不得重置 nextMusicTime");
+    assert.equal(sound.musicSources.size, sources, "playCard 不得清理音乐节点");
+    assert.equal(sound.musicTeam, "dawn", "playCard 不得改变阵营主题");
+    assert.equal(sound.musicGain.gain.calls.length, musicGainCalls, "playCard 不得触碰 musicGain");
+  });
+});
+
+test("音频：同阵营重复 setMusicTeam 保持幂等", async () => {
+  await withAudioContextStub(async () => {
+    const sound = new SoundManager();
+    const fake = makeFakeAudioContext();
+    sound.context = fake;
+    sound.musicGain = fake.destination;
+    sound.sfxGain = fake.destination;
+    sound.enabled = true;
+    sound.musicTeam = "dawn";
+    sound.startScheduler();
+    sound.musicTimer?.unref?.();
+    assert.ok(sound.musicTimer);
+    assert.ok(sound.musicSources.size > 0);
+    const timer = sound.musicTimer;
+    const step = sound.musicStep;
+    const nextTime = sound.nextMusicTime;
+    const sources = sound.musicSources.size;
+    sound.setMusicTeam("dawn");
+    assert.equal(sound.musicTimer, timer, "同阵营 setMusicTeam 不得停止 scheduler");
+    assert.equal(sound.musicSources.size, sources, "同阵营 setMusicTeam 不得清理音乐节点");
+    assert.equal(sound.musicStep, step, "同阵营 setMusicTeam 不得重置 musicStep");
+    assert.equal(sound.nextMusicTime, nextTime, "同阵营 setMusicTeam 不得重置 nextMusicTime");
+    assert.equal(sound.musicTeam, "dawn");
+  });
+});
+
+test("音频：全部 SFX 只走 sfxGain 且不触碰 musicGain", async () => {
+  await withAudioContextStub(async () => {
+    await withFetchStub(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) }), async () => {
+      const sound = new SoundManager();
+      const fake = makeFakeAudioContext();
+      sound.context = fake;
+      sound.musicGain = fake.destination;
+      sound.sfxGain = fake.destination;
+      sound.enabled = true;
+      sound.musicTeam = "dawn";
+      sound.startScheduler();
+      sound.musicTimer?.unref?.();
+      const timer = sound.musicTimer;
+      const sources = sound.musicSources.size;
+      for (const name of ["select", "draw", "playCard", "hit", "skill", "discard", "heal", "shield", "lightning"]) {
+        const before = sound.musicGain.gain.calls.length;
+        assert.equal(await sound.play(name, { force: true }), true, name);
+        assert.equal(sound.musicGain.gain.calls.length, before, `${name} 不得触碰 musicGain`);
+        assert.equal(sound.musicSources.size, sources, `${name} 不得污染 musicSources`);
+        assert.equal(sound.musicTimer, timer, `${name} 不得重启 scheduler`);
+      }
+    });
+  });
+});
+
+test("音频：lightning 采样经 AudioBufferSource 到 sfxGain 且缓存复用", async () => {
+  await withAudioContextStub(async () => {
+    await withFetchStub(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) }), async () => {
+      const sound = new SoundManager();
+      const fake = makeFakeAudioContext();
+      sound.context = fake;
+      sound.musicGain = fake.destination;
+      sound.sfxGain = fake.destination;
+      sound.enabled = true;
+      assert.equal(await sound.play("lightning"), true);
+      assert.equal(await sound.play("lightning"), true);
+      assert.equal(fake.bufferSources.length, 2, "每次播放应创建独立 BufferSource");
+      assert.equal(fake.decodeCalls.length, 1, "重复播放只 decode 一次");
+      assert.ok(fake.bufferSources.every(
+        (source) => source.connected.some((node) => node && node.connected && node.connected.includes(sound.sfxGain))
+      ), "采样应经 local gain 连到 sfxGain");
+      assert.equal(sound.musicGain.gain.calls.length, 0, "不得触碰 musicGain");
+      assert.equal(sound.musicSources.size, 0, "不得污染 musicSources");
+      assert.equal(sound.musicTeam, null);
+      assert.equal(sound.musicTimer, null);
+    });
+  });
+});
+
+test("音频：lightning 素材加载失败安全静音且不产生未处理拒绝", async () => {
+  await withAudioContextStub(async () => {
+    await withFetchStub(async () => { throw new Error("network down"); }, async () => {
+      const sound = new SoundManager();
+      const fake = makeFakeAudioContext();
+      sound.context = fake;
+      sound.musicGain = fake.destination;
+      sound.sfxGain = fake.destination;
+      sound.enabled = true;
+      assert.equal(await sound.play("lightning"), false, "加载失败应安全返回 false");
+      assert.equal(fake.bufferSources.length, 0);
+      assert.equal(sound.musicGain.gain.calls.length, 0);
+      assert.equal(sound.musicSources.size, 0);
+    });
+  });
+});
+
+test("音频：关闭声音后 lightning 不播放", async () => {
+  await withAudioContextStub(async () => {
+    const sound = new SoundManager();
+    const fake = makeFakeAudioContext();
+    sound.context = fake;
+    sound.sfxGain = fake.destination;
+    sound.musicGain = fake.destination;
+    sound.enabled = false;
+    assert.equal(await sound.play("lightning"), false);
+    assert.equal(fake.bufferSources.length, 0);
+  });
+});
+
+test("音频：unlock 后台预加载 lightning 且不阻塞其它声音", async () => {
+  await withAudioContextStub(async () => {
+    let fetchCount = 0;
+    await withFetchStub(async () => { fetchCount += 1; return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) }; }, async () => {
+      const sound = new SoundManager();
+      const fake = makeFakeAudioContext();
+      sound.context = fake;
+      sound.sfxGain = fake.destination;
+      sound.musicGain = fake.destination;
+      sound.enabled = true;
+      await sound.unlock();
+      assert.ok(fetchCount >= 1, "解锁后应后台预加载 lightning");
+      assert.equal(await sound.play("draw"), true, "预加载不得阻塞其它声音");
+    });
+  });
+});
+
+test("音频：lightning 资源 URL 带统一 build 且文件存在", async () => {
+  const [soundSource, index] = await Promise.all([
+    readFile(projectFile("js/audio/SoundManager.js"), "utf8"),
+    readFile(projectFile("index.html"), "utf8")
+  ]);
+  const build = index.match(/src="\.\/js\/main\.js\?build=([^"]+)"/)?.[1];
+  assert.ok(build, "index.html 应声明统一 build");
+  assert.ok(soundSource.includes(`lightning.wav?build=${build}`), "音频 URL 应带当前 build");
+  assert.ok(soundSource.includes(`../utils/debug.js?build=${build}`), "新 import 应带当前 build");
+  await access(projectFile("assets/audio/lightning.wav"));
+});
+
 test("音频：抽牌音效只使用柔和纸张噪声而不含持续滑音", async () => {
   const source = await readFile(projectFile("js/audio/SoundManager.js"), "utf8");
   const drawBody = source.match(/sound_draw\(time\)\s*\{([\s\S]*?)\n\s*\}/)?.[1] ?? "";
@@ -675,6 +994,68 @@ test("音频：普通手牌出牌不叠加选中提示音", () => {
   context.discardState = { selectedIds: new Set(), count: 1 };
   UIManager.prototype.handleHandClick.call(context, event);
   assert.deepEqual(sounds, ["select"]);
+});
+
+test("BGM：真人晨星时暮影角色回合不改变音乐主题", async () => {
+  const human = makePlayer("human", 0, "dawn", "human"), dusk = makePlayer("dusk", 1, "dusk");
+  const fixture = makeMusicRuleGame([human, dusk]);
+  fixture.ui.setMusicTeam("dawn"); // 角色选择阶段按真人阵营启动主题
+  assert.equal(fixture.theme, "dawn");
+  fixture.musicCalls.length = 0;
+  await fixture.game.takeTurn(dusk, fixture.game.state.gameId);
+  assert.equal(fixture.theme, "dawn", "暮影角色回合后主题必须保持晨星");
+  assert.deepEqual(fixture.musicCalls, [], "暮影角色回合不得调用 setMusicTeam");
+  fixture.game.dispose();
+});
+
+test("BGM：真人暮影时晨星角色回合不改变音乐主题", async () => {
+  const human = makePlayer("human", 0, "dusk", "human"), dawn = makePlayer("dawn", 1, "dawn");
+  const fixture = makeMusicRuleGame([human, dawn]);
+  fixture.ui.setMusicTeam("dusk");
+  assert.equal(fixture.theme, "dusk");
+  fixture.musicCalls.length = 0;
+  await fixture.game.takeTurn(dawn, fixture.game.state.gameId);
+  assert.equal(fixture.theme, "dusk", "晨星角色回合后主题必须保持暮影");
+  assert.deepEqual(fixture.musicCalls, [], "晨星角色回合不得调用 setMusicTeam");
+  fixture.game.dispose();
+});
+
+test("BGM：多阵营角色轮流行动全程保持真人主题", async () => {
+  const human = makePlayer("human", 0, "dawn", "human"),
+    dusk1 = makePlayer("dusk1", 1, "dusk"),
+    dawn1 = makePlayer("dawn1", 2, "dawn"),
+    dusk2 = makePlayer("dusk2", 3, "dusk");
+  const fixture = makeMusicRuleGame([human, dusk1, dawn1, dusk2]);
+  fixture.ui.setMusicTeam("dawn");
+  fixture.musicCalls.length = 0;
+  for (const player of [dusk1, dawn1, dusk2, dawn1, dusk1]) {
+    await fixture.game.takeTurn(player, fixture.game.state.gameId);
+    assert.equal(fixture.theme, "dawn", `${player.name}回合后主题必须保持晨星`);
+  }
+  assert.deepEqual(fixture.musicCalls, [], "整个回合循环不得按行动者阵营调用 setMusicTeam");
+  fixture.game.dispose();
+});
+
+test("BGM：重新征召时按新局真人阵营切换主题", () => {
+  const themes = [];
+  const classList = { add() { }, remove() { } };
+  const context = {
+    sound: { setMusicTeam: (team) => themes.push(team) },
+    cancelPendingInteractions() { },
+    resetCurrentCard() { },
+    clearLog() { },
+    elements: {
+      start_screen: { classList },
+      game_screen: { classList },
+      selection_screen: { classList },
+      game_over_overlay: { classList },
+      team_preview: { innerHTML: "" },
+      candidate_grid: { innerHTML: "" }
+    }
+  };
+  UIManager.prototype.showSelection.call(context, [], "dawn");
+  UIManager.prototype.showSelection.call(context, [], "dusk");
+  assert.deepEqual(themes, ["dawn", "dusk"]);
 });
 
 // ---- 浏览器构建一致性 ----
@@ -3346,6 +3727,59 @@ test("闪电：判定装备牌触发3点中立伤害且状态立即消费", asyn
   assert.ok(game.state.deck.discardPile.includes(equipment));
 });
 
+test("闪电：判定成功恰好播放一次专用 lightning 音效", async () => {
+  const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
+  const { game, ui } = makeGame([holder, enemy]);
+  const sounds = [];
+  ui.playSound = (name) => sounds.push(name);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  game.state.deck.cards = [instance("energyDevice")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.hp, holder.maxHp - 3);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.deepEqual(sounds, ["lightning"], "一次真实命中只能触发一次专用雷击音效");
+  game.ui.render(game);
+  assert.deepEqual(sounds, ["lightning"], "后续 render 不应重复播放雷击音效");
+});
+
+test("闪电：判定失败并转移时不播放 lightning 音效", async () => {
+  const holder = makePlayer("a", 0, "dawn"), next = makePlayer("b", 1, "dusk");
+  const { game, ui } = makeGame([holder, next]);
+  const sounds = [];
+  ui.playSound = (name) => sounds.push(name);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  game.state.deck.cards = [instance("assault")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.ok(next.statuses.lightning);
+  assert.deepEqual(sounds, []);
+});
+
+test("闪电：状态被反制时不播放 lightning 音效", async () => {
+  const holder = makePlayer("a", 0, "dawn", "human"), receiver = makePlayer("b", 1, "dusk");
+  const { game, ui } = makeGame([holder, receiver], { response: () => true });
+  const sounds = [];
+  ui.playSound = (name) => sounds.push(name);
+  holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
+  holder.hand.push(instance("counter"));
+  game.state.deck.cards = [instance("energyDevice")];
+  await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.equal(holder.hp, holder.maxHp);
+  assert.ok(receiver.statuses.lightning);
+  assert.deepEqual(sounds, []);
+});
+
+test("闪电：普通伤害不额外播放 lightning 音效", async () => {
+  const source = makePlayer("a", 0, "dawn"), target = makePlayer("b", 1, "dusk");
+  const { game, ui } = makeGame([source, target]);
+  const sounds = [];
+  ui.playSound = (name) => sounds.push(name);
+  await game.damage(source, target, 2, { damageType: "normal" });
+  assert.equal(target.hp, target.maxHp - 2);
+  assert.ok(!sounds.includes("lightning"));
+});
+
 test("闪电：判中后的护援响应沿用状态持有者语义而不构造未知来源", async () => {
   const holder = makePlayer("lightning-holder", 0, "dawn", "ai", 0),
     guardian = makePlayer("lightning-guardian", 1, "dawn", "human", 1),
@@ -3929,6 +4363,56 @@ test("雷达：震荡造成的攻击同样触发判定且日志不冒充突袭",
     (entry) => entry.message === `${b.name}的「雷达」生效，此次攻击无效。`
   ));
   assert.ok(!game.state.logs.some((entry) => entry.message.includes("原突袭")));
+});
+
+test("雷达：焚场需要格挡时同样触发判定且日志不冒充突袭", async () => {
+  const tacticRun = async () => {
+    const ember = makePlayer("radar-burning-ember", 0, "dawn", "ai", 4),
+      target = makePlayer("radar-burning-target", 1, "dusk");
+    const { game } = makeGame([ember, target]);
+    registerPassiveSkills(game);
+    ember.energy = 2;
+    target.equipment = instance("defenseDevice");
+    const judgment = instance("harvest");
+    game.state.deck.cards.push(judgment);
+    const hp = target.hp;
+    await game.useActiveSkill(ember, "burningField", []);
+    assert.equal(target.hp, hp);
+    assert.ok(game.state.deck.discardPile.includes(judgment));
+    assert.ok(game.state.logs.some(
+      (entry) => entry.message === `${target.name}的「雷达」生效，此次攻击无效。`
+    ));
+    assert.ok(!game.state.logs.some((entry) => entry.message.includes("原突袭")));
+  };
+  const equipmentRun = async () => {
+    const ember = makePlayer("radar-burning-equipment-ember", 0, "dawn", "ai", 4),
+      target = makePlayer("radar-burning-equipment-target", 1, "dusk");
+    const { game } = makeGame([ember, target]);
+    registerPassiveSkills(game);
+    ember.energy = 2;
+    target.equipment = instance("defenseDevice");
+    target.shield = 1;
+    const judgment = instance("energyDevice");
+    game.state.deck.cards.push(judgment);
+    const hp = target.hp;
+    await game.useActiveSkill(ember, "burningField", []);
+    assert.equal(target.hp, hp);
+    assert.equal(target.shield, 0);
+    assert.ok(game.state.logs.some(
+      (entry) => entry.message === `${target.name}的「雷达」未生效，判定牌进入弃牌堆，此次攻击继续结算。`
+    ));
+  };
+  await tacticRun();
+  await equipmentRun();
+});
+
+test("雷达：描述与 README 统一为需要格挡时判定而不枚举具体卡牌", async () => {
+  const readme = await readFile(projectFile("README.md"), "utf8");
+  const description = CARD_DEFINITIONS.defenseDevice.description;
+  assert.match(description, /当需要打出「格挡」/);
+  assert.doesNotMatch(description, /「突袭」|「震荡」/);
+  assert.match(readme, /雷达：当需要打出「格挡」进行响应时公开判定/);
+  assert.doesNotMatch(readme, /雷达：受到「突袭」或「震荡」/);
 });
 
 // ---- 军火库 ----
@@ -13669,6 +14153,32 @@ test("AI·雷达：敌方雷达动态免伤按阵营符号反向计入己方效�
   // 敌方雷达降低敌方预期受损 → 己方效用更低；差值包含静态 2.25 与按符号反向的动态免伤
   assert.ok(noRadarScore > radarScore);
   assert.ok(noRadarScore - radarScore > 9 * .25);
+});
+
+test("AI·雷达：焚场技能伤害同样进入统一雷达判定路径", () => {
+  const simulator = new AiSimulator({ players: [] });
+  const run = (radarProbability) => {
+    const state = {
+      players: [
+        {
+          id: "burning-a", battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, shield: 0,
+          handCount: 0, equipmentDefinitionId: null, equipmentRetentionProbability: 0,
+          blockProbability: 0, twoBlockProbability: 0, expectedRecoverCount: 0
+        },
+        {
+          id: "burning-b", battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0,
+          handCount: 0, blockProbability: 0, twoBlockProbability: 0,
+          equipmentDefinitionId: radarProbability ? "defenseDevice" : null,
+          equipmentRetentionProbability: radarProbability, expectedRecoverCount: 0
+        }
+      ]
+    };
+    simulator.applyDamage(state, state.players[0], state.players[1], 1, { canBlock: true });
+    return state.players[1].hp;
+  };
+  const without = run(0), half = run(0.5), full = run(1);
+  assert.ok(full > half && half > without);
+  assert.ok(Math.abs(half - (full + without) / 2) < 1e-9);
 });
 
 // ---- AI 装备行为·充能桩 ----

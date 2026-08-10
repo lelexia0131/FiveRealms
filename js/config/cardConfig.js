@@ -422,7 +422,7 @@ export const CARD_DEFINITIONS = Object.freeze(
       categoryName: "装备牌",
       targetType: "self",
       subtypes: ["equipment", "judgment", "defense"],
-      description: "受到「突袭」或「震荡」攻击前判定：战术牌令此次攻击无效；基础牌进入手牌后继续结算；装备牌进入弃牌堆且此次攻击继续结算。",
+      description: "当需要打出「格挡」进行响应时判定：战术牌令此次攻击无效；基础牌进入手牌后继续结算；装备牌进入弃牌堆且此次攻击继续结算。",
       count: 2,
       aiValue: 9,
       counterable: false,

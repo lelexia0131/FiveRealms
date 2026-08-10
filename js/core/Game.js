@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-allin-heal-log-v153";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-allin-heal-log-v153";
-import { createId, clamp } from "../utils/helpers.js?build=20260810-allin-heal-log-v153";
-import { EventBus } from "./EventBus.js?build=20260810-allin-heal-log-v153";
-import { Player } from "./Player.js?build=20260810-allin-heal-log-v153";
-import { Deck } from "./Deck.js?build=20260810-allin-heal-log-v153";
-import { TeamManager } from "./TeamManager.js?build=20260810-allin-heal-log-v153";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260810-allin-heal-log-v153";
-import { RuleEngine } from "./RuleEngine.js?build=20260810-allin-heal-log-v153";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260810-allin-heal-log-v153";
-import { GameLogger } from "./GameLogger.js?build=20260810-allin-heal-log-v153";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260810-allin-heal-log-v153";
-import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260810-allin-heal-log-v153";
-import { AIController } from "../ai/AiController.js?build=20260810-allin-heal-log-v153";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260810-allin-heal-log-v153";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260810-allin-heal-log-v153";
-import { Debug } from "../utils/debug.js?build=20260810-allin-heal-log-v153";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260810-allin-heal-log-v153";
-import { DyingSystem } from "./DyingSystem.js?build=20260810-allin-heal-log-v153";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260810-allin-heal-log-v153";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260810-allin-heal-log-v153";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260810-allin-heal-log-v153";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260810-allin-heal-log-v153";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-lightning-audio-loop-v160";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-lightning-audio-loop-v160";
+import { createId, clamp } from "../utils/helpers.js?build=20260810-lightning-audio-loop-v160";
+import { EventBus } from "./EventBus.js?build=20260810-lightning-audio-loop-v160";
+import { Player } from "./Player.js?build=20260810-lightning-audio-loop-v160";
+import { Deck } from "./Deck.js?build=20260810-lightning-audio-loop-v160";
+import { TeamManager } from "./TeamManager.js?build=20260810-lightning-audio-loop-v160";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260810-lightning-audio-loop-v160";
+import { RuleEngine } from "./RuleEngine.js?build=20260810-lightning-audio-loop-v160";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260810-lightning-audio-loop-v160";
+import { GameLogger } from "./GameLogger.js?build=20260810-lightning-audio-loop-v160";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260810-lightning-audio-loop-v160";
+import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260810-lightning-audio-loop-v160";
+import { AIController } from "../ai/AiController.js?build=20260810-lightning-audio-loop-v160";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260810-lightning-audio-loop-v160";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260810-lightning-audio-loop-v160";
+import { Debug } from "../utils/debug.js?build=20260810-lightning-audio-loop-v160";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260810-lightning-audio-loop-v160";
+import { DyingSystem } from "./DyingSystem.js?build=20260810-lightning-audio-loop-v160";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260810-lightning-audio-loop-v160";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260810-lightning-audio-loop-v160";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260810-lightning-audio-loop-v160";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260810-lightning-audio-loop-v160";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -286,6 +286,8 @@ export class Game {
       if (judgment.triggered) {
         delete holder.statuses.lightning;
         showDelayedStatusCard(this, holder, "lightning", "判定成功");
+        // 判定已确认命中：绑定真实结算状态播放专用雷击音效，失败/转移/反制路径均不会到达此处。
+        this.ui.playSound?.("lightning");
         await this.damage(null, holder, 3, {
           damageType:"lightning",
           reason:"lightning",
@@ -384,7 +386,6 @@ export class Game {
    */
   async takeTurn(player, gameId) {
     if (!this.isSessionValid(gameId) || !player?.alive || this.state.isGameOver) return;
-    this.ui.setMusicTeam?.(player.battleTeam);
     this.state.phase = "turnStart";
     player.resetTurnFlags(this.teamRules.getRules(player));
     for (const entry of this.state.players) entry.roundFlags.guardianAidUsed = false;
@@ -1143,8 +1144,9 @@ export class Game {
       delayedStatusContext:context.delayedStatusContext ?? null,
       cancelled: false, metadata, resolutionId: context.resolutionId ?? createId("skill-resolution")
     };
-    const isDeviceAttack = context.card?.subtypes?.includes("assault") && ["normal", "area"].includes(event.damageType);
-    if (event.amount > 0 && isDeviceAttack) {
+    // 雷达跟随统一“需要打出格挡”规则：只要本次结算要求目标以「格挡」响应（event.canBlock），
+    // 就进行雷达判定，不依赖具体卡牌名（突袭、震荡、焚场、猎杀等可格挡效果均适用）。
+    if (event.amount > 0 && event.canBlock) {
       const judgment = await this.judgmentSystem.judgeDefense(source, target, event);
       if (!this.isSessionValid(gameId) || judgment.cancelled) return 0;
       if (judgment.immune || !target.alive || this.state.isGameOver) {

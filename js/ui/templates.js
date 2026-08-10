@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-allin-heal-log-v153";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-allin-heal-log-v153";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-lightning-audio-loop-v160";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-lightning-audio-loop-v160";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -57,7 +57,7 @@ export function equipmentSlotTemplate(player, isHuman = false) {
     </div>`;
   }
   const equipment = player.equipment;
-  const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"战术后摸1张·每回合2次", defenseDevice:"受突袭前公开判定", battleDevice:"突袭需2张格挡", telescope:"对外距离-1", barrierDevice:"他人对你距离+1" };
+  const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"战术后摸1张·每回合2次", defenseDevice:"需要格挡时公开判定", battleDevice:"突袭需2张格挡", telescope:"对外距离-1", barrierDevice:"他人对你距离+1" };
   const stateLabels = { energyDevice:"持续供能", recycleDevice:"待回收", defenseDevice:"待判定", battleDevice:"强化中", telescope:"观测中", barrierDevice:"屏障展开" };
   const recycleUses = player.turnFlags?.recycleDeviceUses ?? 0;
   const triggered = equipment.definitionId === "recycleDevice" && recycleUses >= 2;
