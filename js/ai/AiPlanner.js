@@ -2,8 +2,8 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-ruletext-v143";
-import { AiSimulator } from "./AiSimulator.js?build=20260810-ruletext-v143";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-expose-marginal-v146";
+import { AiSimulator } from "./AiSimulator.js?build=20260810-expose-marginal-v146";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -32,6 +32,45 @@ export class AiPlanner {
       targetIds: (action.targets ?? []).map((target) => target.id),
       selection
     };
+  }
+
+  /**
+   * 破势单步反事实边际价值：对本回合合法下一次突袭候选逐一模拟
+   * “N 层”与“N+1 层”的同一突袭，取结果效用差的最大正值。
+   *
+   * 候选必须来自真实动作生成（generateFromVisible），因此自动包含距离/目标/
+   * 次数槽/牌可用概率等合法性；两次 apply 走 AiSimulator 的真实伤害链
+   * （格挡、护盾、雷达、护援、濒死、救援、击杀奖励），不在此手写任何防御判断。
+   *
+   * baseline 必须是 afterState 的克隆、仅回退“这张破势实际新增的层数”
+   * （after.stacks - before.stacks），而不是 beforeState：破势牌的消耗、
+   * 手牌数量、卡牌可用性等“打出破势的成本”属于普通 transition 的职责，
+   * 不能混进这一层的边际测量。两个反事实世界在模拟突袭前除 exposeWeaknessStacks
+   * 相差该增量外完全一致。
+   *
+   * 一张破势只增加 1 层，且被下一次突袭一次性消费，因此只比较下一次突袭，
+   * 并对多个候选取 max（不是 sum）；无合法候选或边际为负时返回 0。
+   */
+  evaluateExposeMarginal(beforeState, afterState, actorId, simulator = null) {
+    const sim = simulator ?? new AiSimulator(afterState);
+    const beforeActor = beforeState.players.find((entry) => entry.id === actorId);
+    const afterActor = afterState.players.find((entry) => entry.id === actorId);
+    const addedStacks = (afterActor?.exposeWeaknessStacks ?? 0) - (beforeActor?.exposeWeaknessStacks ?? 0);
+    if (!(addedStacks > 0)) return 0;
+    const baselineState = structuredClone(afterState);
+    const baselineActor = baselineState.players.find((entry) => entry.id === actorId);
+    baselineActor.exposeWeaknessStacks = Math.max(0, (baselineActor.exposeWeaknessStacks ?? 0) - addedStacks);
+    const candidates = this.game.aiController.actionGenerator.generateFromVisible(afterState, actorId);
+    let best = 0;
+    for (const candidate of candidates) {
+      if (candidate.card?.definitionId !== "assault") continue;
+      const base = sim.apply(baselineState, candidate, actorId);
+      const boosted = sim.apply(afterState, candidate, actorId);
+      const marginal = this.evaluator.stateUtility(boosted, actorId)
+        - this.evaluator.stateUtility(base, actorId);
+      if (marginal > best) best = marginal;
+    }
+    return best;
   }
 
   chooseCandidate(beam) {
@@ -99,12 +138,15 @@ export class AiPlanner {
     for (const action of rootActions) {
       if (beam.length && limitReached()) break;
       const state = simulator.apply(visibleState, action, player.id);
+      const exposeMarginal = action.card?.definitionId === "exposeWeakness"
+        ? this.evaluateExposeMarginal(visibleState, state, player.id, simulator)
+        : 0;
       beam.push({
         action,
         state,
         terminal:Boolean(state.playPhaseEnded),
         // 根节点也必须看到模拟后的伤害、装备和资源变化，否则第一次束裁剪会丢掉真正优质的动作。
-        score:transitionScore(action, visibleState, state, 1, rootActions),
+        score:transitionScore(action, visibleState, state, 1, rootActions) + exposeMarginal,
         sequence:[action]
       });
       expanded += 1;
@@ -132,7 +174,11 @@ export class AiPlanner {
           if (limitReached()) break;
           if (follow.card?.definitionId === "assault" && !rootAssaultTargets.has(follow.targets?.[0]?.id)) discoveredDynamicTarget = true;
           const state = simulator.apply(node.state, follow, player.id);
-          const score = node.score + transitionScore(follow, node.state, state, depth, followActions);
+          const exposeMarginal = follow.card?.definitionId === "exposeWeakness"
+            ? this.evaluateExposeMarginal(node.state, state, player.id, simulator) / depth
+            : 0;
+          const score = node.score + transitionScore(follow, node.state, state, depth, followActions)
+            + exposeMarginal;
           candidates.push({
             action:node.action,
             state,

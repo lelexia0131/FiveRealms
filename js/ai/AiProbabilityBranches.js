@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-ruletext-v143";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-expose-marginal-v146";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

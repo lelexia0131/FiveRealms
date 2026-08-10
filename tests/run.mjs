@@ -8079,6 +8079,407 @@ test("AI·搜索：关闭逐动作重规划时转移描述只保存稳定ID并�
   assert.ok(game.aiController.resolvePlannedAction(actor, structuredClone(descriptor)));
 });
 
+test("AI·搜索：破势在多次突袭中进入最后一次可兑现突袭之前", async () => {
+  const actor = makePlayer("poshi-window-actor", 0, "dawn", "ai", 1),
+    enemy = makePlayer("poshi-window-enemy", 1, "dusk", "ai", 2);
+  enemy.hp = 3;
+  actor.hand.push(instance("assault"), instance("assault"), instance("exposeWeakness"));
+  const { game } = makeGame([actor, enemy]);
+  actor.turnFlags.attackLimit = 2;
+  actor.attackLimit = 2;
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+  const sequence = game.aiController.planner.lastPlannedSequence;
+  const poshiIndex = sequence.findIndex((entry) => entry.cardId === "exposeWeakness");
+  const lastAssaultIndex = sequence.findLastIndex((entry) => entry.cardId === "assault");
+  assert.ok(poshiIndex >= 0, `计划应包含破势，实际 ${JSON.stringify(sequence)}`);
+  assert.ok(
+    lastAssaultIndex > poshiIndex,
+    `破势应进入本回合最后一次可兑现突袭之前，实际 ${JSON.stringify(sequence)}`
+  );
+});
+
+test("AI·搜索：多目标时破势进入后续突袭之前而非全部突袭之后", async () => {
+  const actor = makePlayer("poshi-multi-actor", 0, "dawn", "ai", 1),
+    enemyA = makePlayer("poshi-multi-enemy-a", 1, "dusk", "ai", 2),
+    enemyB = makePlayer("poshi-multi-enemy-b", 2, "dusk", "ai", 3);
+  enemyA.hp = 1;
+  enemyB.hp = 3;
+  actor.hand.push(instance("assault"), instance("assault"), instance("exposeWeakness"));
+  const { game } = makeGame([actor, enemyA, enemyB]);
+  actor.turnFlags.attackLimit = 2;
+  actor.attackLimit = 2;
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  const executed = [];
+  for (let count = 0; count < 8; count += 1) {
+    const action = await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+    if (action.type === "end") break;
+    const ok = action.type === "card"
+      ? await game.playCard(actor, action.card, action.targets, action.selection ?? null)
+      : await game.useActiveSkill(actor, action.skill.id, action.targets);
+    executed.push(action.card?.definitionId ?? action.skill?.id ?? action.type);
+    if (!ok) break;
+  }
+  const poshiIndex = executed.findIndex((entry) => entry === "exposeWeakness");
+  const assaultAfterPoshi = executed.slice(poshiIndex + 1).some((entry) => entry === "assault");
+  assert.ok(poshiIndex >= 0, `本回合应使用破势，实际 ${JSON.stringify(executed)}`);
+  assert.ok(
+    assaultAfterPoshi,
+    `破势后应仍有本回合突袭兑现收益，实际 ${JSON.stringify(executed)}`
+  );
+  assert.ok(enemyA.hp === 0 && enemyB.hp < 3, `实际 ${JSON.stringify(executed)}`);
+});
+
+test("AI·搜索：破势形成当前回合击杀线时选择即时击杀", async () => {
+  const actor = makePlayer("poshi-kill-actor", 0, "dawn", "ai", 1),
+    enemy = makePlayer("poshi-kill-enemy", 1, "dusk", "ai", 2);
+  enemy.hp = 2;
+  actor.hand.push(instance("assault"), instance("exposeWeakness"));
+  const { game } = makeGame([actor, enemy]);
+  actor.turnFlags.attackLimit = 1;
+  actor.attackLimit = 1;
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  const executed = [];
+  for (let count = 0; count < 8; count += 1) {
+    const action = await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+    if (action.type === "end") break;
+    const ok = action.type === "card"
+      ? await game.playCard(actor, action.card, action.targets, action.selection ?? null)
+      : await game.useActiveSkill(actor, action.skill.id, action.targets);
+    executed.push(action.card?.definitionId ?? action.skill?.id ?? action.type);
+    if (!ok) break;
+  }
+  assert.deepEqual(
+    executed,
+    ["exposeWeakness", "assault"],
+    `本回合击杀线只有破势后接突袭一条路径，实际 ${JSON.stringify(executed)}`
+  );
+  assert.equal(enemy.alive, false);
+  assert.equal(enemy.hp, 0);
+  assert.equal(actor.statuses.exposeWeakness?.stacks ?? 0, 0);
+});
+
+test("AI·搜索：本回合无法兑现破势时仍保留为合法未来选择", async () => {
+  const actor = makePlayer("poshi-hold-actor", 0, "dawn", "ai", 1),
+    enemy = makePlayer("poshi-hold-enemy", 1, "dusk", "ai", 2);
+  enemy.hp = 4;
+  actor.hand.push(instance("exposeWeakness"));
+  const { game } = makeGame([actor, enemy]);
+  actor.turnFlags.attackLimit = 2;
+  actor.attackLimit = 2;
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  const legal = game.aiController.getLegalActions(actor);
+  assert.ok(
+    legal.some((entry) => entry.type === "card" && entry.card?.definitionId === "exposeWeakness"),
+    "破势仍是合法候选"
+  );
+  await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+  assert.equal(
+    game.aiController.planner.lastPlannedSequence[0]?.cardId,
+    "exposeWeakness",
+    "本回合无突袭可兑现时，破势仍可作为留给未来的合法选择"
+  );
+});
+
+// ---- 破势反事实边际（AI 搜索与规划） ----
+
+const exposeMarginalActor = (overrides = {}) => ({
+  id: "actor",
+  seatIndex: 0,
+  battleTeam: "dawn",
+  alive: true,
+  hp: 4,
+  maxHp: 4,
+  shield: 0,
+  energy: 0,
+  maxEnergy: 4,
+  handCount: 2,
+  hand: [{ id: "one", definitionId: "assault" }, { id: "poshi", definitionId: "exposeWeakness" }],
+  attackUsed: 0,
+  attackLimit: 1,
+  attackRange: 1,
+  exposeWeaknessStacks: 0,
+  assaultBonus: 0,
+  momentum: 0,
+  generalId: "oath-warden",
+  categoriesUsed: [],
+  categoryUsedProbabilities: {},
+  ...overrides
+});
+
+const exposeMarginalEnemy = (overrides = {}) => ({
+  id: "enemy",
+  seatIndex: 1,
+  battleTeam: "dusk",
+  alive: true,
+  hp: 2,
+  maxHp: 4,
+  shield: 0,
+  energy: 0,
+  maxEnergy: 3,
+  handCount: 0,
+  blockProbability: 0,
+  twoBlockProbability: 0,
+  expectedRecoverCount: 0,
+  counterProbability: 0,
+  assaultResponseProbability: 0,
+  generalId: "spirit-medic",
+  ...overrides
+});
+
+const exposeMarginalAlly = (overrides = {}) => ({
+  id: "ally",
+  seatIndex: 2,
+  battleTeam: "dusk",
+  alive: true,
+  hp: 4,
+  maxHp: 4,
+  shield: 0,
+  energy: 0,
+  maxEnergy: 3,
+  handCount: 0,
+  blockProbability: 0,
+  twoBlockProbability: 0,
+  expectedRecoverCount: 0,
+  counterProbability: 0,
+  assaultResponseProbability: 0,
+  generalId: "spirit-medic",
+  ...overrides
+});
+
+const exposeMarginalGame = makeGame([
+  makePlayer("expose-dummy-a", 0, "dawn"),
+  makePlayer("expose-dummy-b", 1, "dusk")
+]).game;
+
+/** 构造 before（N 层破势）与 after（打出破势后 N+1 层），返回反事实边际与合法突袭候选。 */
+function exposeMarginalOf({ actor, enemy, ally = null, players = null, stack = 0 }) {
+  const list = players ?? (ally ? [actor, ally, enemy] : [actor, enemy]);
+  const before = { playPhaseEnded: false, players: list };
+  if (stack > 0) actor.exposeWeaknessStacks = stack;
+  const simulator = new AiSimulator(before);
+  const after = simulator.apply(
+    before, { type: "card", card: { ...CARD_DEFINITIONS.exposeWeakness, id: "poshi" }, targets: [] }, actor.id
+  );
+  const marginal = exposeMarginalGame.aiController.planner.evaluateExposeMarginal(
+    before, after, actor.id, simulator
+  );
+  const candidates = exposeMarginalGame.aiController.actionGenerator.generateFromVisible(after, actor.id)
+    .filter((entry) => entry.card?.definitionId === "assault");
+  return { marginal, candidates, simulator, before, after, actorId: actor.id, enemyId: enemy.id };
+}
+
+test("AI·搜索：破势边际：普通突袭已击杀时新增一层接近零", () => {
+  const noRescue = exposeMarginalOf({ actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 1 }) });
+  assert.equal(noRescue.marginal, 0);
+  const killLine = exposeMarginalOf({ actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 2 }) });
+  assert.ok(killLine.marginal > 15, `两血击杀线边际应明显为正，实际 ${killLine.marginal}`);
+});
+
+test("AI·搜索：破势边际：调息存在与否改变边际且随救援能力变化", () => {
+  const noRescue = exposeMarginalOf({ actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 1 }) });
+  // 救援/护援角色放在攻击范围外（救援与护援均不限距离），保证候选只剩敌人，
+  // 从而隔离“对下一次突袭的边际”而不是“对可攻击队友的 +1 伤害”选项。
+  const isolated = (allyEntry) => {
+    const actor = exposeMarginalActor();
+    const enemy = exposeMarginalEnemy({ hp: 1 });
+    return exposeMarginalOf({
+      actor,
+      enemy,
+      players: [actor, enemy, allyEntry, exposeMarginalAlly({ id: "dawn-guard", seatIndex: 3, battleTeam: "dawn" })]
+    });
+  };
+  const weakHeal = exposeMarginalOf({
+    actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 1 }),
+    players: [
+      exposeMarginalActor(),
+      exposeMarginalEnemy({ hp: 1 }),
+      exposeMarginalAlly({ id: "rescuer", seatIndex: 2, expectedRecoverCount: 0.5, handCount: 1, generalId: "fate-gambler" }),
+      exposeMarginalAlly({ id: "dawn-guard", seatIndex: 3, battleTeam: "dawn" })
+    ]
+  });
+  const enoughHeal = exposeMarginalOf({
+    actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 1 }),
+    players: [
+      exposeMarginalActor(),
+      exposeMarginalEnemy({ hp: 1 }),
+      exposeMarginalAlly({ id: "rescuer", seatIndex: 2, expectedRecoverCount: 1, handCount: 1, generalId: "fate-gambler" }),
+      exposeMarginalAlly({ id: "dawn-guard", seatIndex: 3, battleTeam: "dawn" })
+    ]
+  });
+  const plentyHeal = exposeMarginalOf({
+    actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 1 }),
+    players: [
+      exposeMarginalActor(),
+      exposeMarginalEnemy({ hp: 1 }),
+      exposeMarginalAlly({ id: "rescuer", seatIndex: 2, expectedRecoverCount: 2, handCount: 2, generalId: "fate-gambler" }),
+      exposeMarginalAlly({ id: "dawn-guard", seatIndex: 3, battleTeam: "dawn" })
+    ]
+  });
+  assert.deepEqual(
+    weakHeal.candidates.map((entry) => entry.targets?.[0]?.id),
+    ["enemy"],
+    "救援者不在突袭范围内"
+  );
+  assert.equal(weakHeal.marginal, 0, "调息不足以救援时两层突袭结果相同，边际应为 0");
+  assert.ok(enoughHeal.marginal > weakHeal.marginal, "可救回 vs 无法救回的击杀差应大于调息不足");
+  assert.ok(enoughHeal.marginal > 15, `确定调息 1 张时边际应明显为正，实际 ${enoughHeal.marginal}`);
+  assert.ok(plentyHeal.marginal > 0, `2 张调息时额外消耗救援资源应为正边际，实际 ${plentyHeal.marginal}`);
+  assert.ok(plentyHeal.marginal < enoughHeal.marginal, "救援资源足够时边际不应高于转死场景");
+});
+
+test("AI·搜索：破势边际：守誓者护援可用与已耗尽结果不同", () => {
+  const isolatedGuardian = (guardianAidUsedProbability) => {
+    const actor = exposeMarginalActor();
+    const enemy = exposeMarginalEnemy({ hp: 1 });
+    return exposeMarginalOf({
+      actor,
+      enemy,
+      players: [
+        actor,
+        enemy,
+        exposeMarginalAlly({ id: "guardian", seatIndex: 2, handCount: 1, expectedRecoverCount: 0, generalId: "oath-warden", guardianAidUsedProbability }),
+        exposeMarginalAlly({ id: "dawn-guard", seatIndex: 3, battleTeam: "dawn" })
+      ]
+    });
+  };
+  const available = isolatedGuardian(0);
+  const used = isolatedGuardian(1);
+  assert.ok(available.marginal > 15, `可用护援时边际应明显为正，实际 ${available.marginal}`);
+  assert.equal(used.marginal, 0, "护援已耗尽时两层突袭结果相同，边际应为 0");
+  assert.notEqual(available.marginal, used.marginal);
+});
+
+test("AI·搜索：破势边际：格挡概率提高时边际下降", () => {
+  const full = exposeMarginalOf({
+    actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 2, blockProbability: 1, twoBlockProbability: 1 })
+  });
+  const half = exposeMarginalOf({
+    actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 2, blockProbability: 0.5, twoBlockProbability: 0.5 })
+  });
+  const none = exposeMarginalOf({ actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 2 }) });
+  assert.equal(full.marginal, 0, "确定被格挡时两层结果相同，边际应为 0");
+  assert.ok(half.marginal > 0 && half.marginal < none.marginal,
+    `概率格挡边际应介于 0 与无格挡之间，实际 ${half.marginal}/${none.marginal}`);
+});
+
+test("AI·搜索：破势边际：护盾吸收降低边际", () => {
+  const shield = exposeMarginalOf({ actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 2, shield: 1 }) });
+  const none = exposeMarginalOf({ actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 2 }) });
+  assert.ok(shield.marginal > 0 && shield.marginal < none.marginal,
+    `护盾吸收应降低但不归零边际，实际 ${shield.marginal}/${none.marginal}`);
+});
+
+test("AI·搜索：破势边际：无合法突袭目标时为零且多候选取最大不求和", () => {
+  const actor = exposeMarginalActor();
+  const ally1 = exposeMarginalAlly({ id: "ally1", seatIndex: 1, battleTeam: "dawn" });
+  const ally2 = exposeMarginalAlly({ id: "ally2", seatIndex: 4, battleTeam: "dawn" });
+  const enemyA = exposeMarginalEnemy({ id: "enemyA", seatIndex: 2, hp: 1 });
+  const enemyB = exposeMarginalEnemy({ id: "enemyB", seatIndex: 3, hp: 2 });
+  const noTarget = exposeMarginalOf({
+    actor, enemy: enemyA,
+    players: [actor, ally1, enemyA, enemyB, ally2]
+  });
+  assert.deepEqual(noTarget.candidates, [], "距离 2 的敌人不应成为合法突袭候选");
+  assert.equal(noTarget.marginal, 0, "无合法突袭目标时即时边际应为 0");
+
+  // 两个均非必杀的目标：逐个候选计算同局面边际，验证生产方法取 max 而非 sum。
+  const multiActor = exposeMarginalActor();
+  const multiEnemyA = exposeMarginalEnemy({ id: "multiEnemyA", hp: 2 });
+  const multiEnemyB = exposeMarginalEnemy({ id: "multiEnemyB", seatIndex: 2, hp: 2 });
+  const before = { playPhaseEnded: false, players: [multiActor, multiEnemyA, multiEnemyB] };
+  const simulator = new AiSimulator(before);
+  const after = simulator.apply(
+    before, { type: "card", card: { ...CARD_DEFINITIONS.exposeWeakness, id: "poshi" }, targets: [] }, multiActor.id
+  );
+  const addedStacks = after.players[0].exposeWeaknessStacks - before.players[0].exposeWeaknessStacks;
+  const baseline = structuredClone(after);
+  baseline.players[0].exposeWeaknessStacks -= addedStacks;
+  const candidates = exposeMarginalGame.aiController.actionGenerator.generateFromVisible(after, multiActor.id)
+    .filter((entry) => entry.card?.definitionId === "assault");
+  const perCandidate = candidates.map((candidate) => (
+    exposeMarginalGame.aiController.evaluator.stateUtility(
+      simulator.apply(after, candidate, multiActor.id), multiActor.id
+    ) - exposeMarginalGame.aiController.evaluator.stateUtility(
+      simulator.apply(baseline, candidate, multiActor.id), multiActor.id
+    )
+  ));
+  const best = Math.max(0, ...perCandidate);
+  const sum = perCandidate.reduce((total, value) => total + Math.max(0, value), 0);
+  const marginal = exposeMarginalGame.aiController.planner.evaluateExposeMarginal(
+    before, after, multiActor.id, simulator
+  );
+  assert.ok(perCandidate.length >= 2, "应存在两个合法突袭候选");
+  assert.ok(Math.abs(marginal - best) < 1e-9, `多候选取最大，实际 ${marginal} vs ${best}`);
+  assert.ok(marginal < sum, `多候选不能求和，实际 ${marginal} vs sum ${sum}`);
+});
+
+test("AI·搜索：破势边际：深层执行概率缩放边际", () => {
+  const probabilistic = exposeMarginalOf({
+    actor: exposeMarginalActor({ equipmentDefinitionId: "telescope", equipmentRetentionProbability: 0.4 }),
+    enemy: exposeMarginalEnemy({ id: "far", seatIndex: 2, hp: 2 }),
+    players: [
+      exposeMarginalActor({ equipmentDefinitionId: "telescope", equipmentRetentionProbability: 0.4 }),
+      exposeMarginalAlly({ id: "middle", seatIndex: 1, battleTeam: "dawn" }),
+      exposeMarginalEnemy({ id: "far", seatIndex: 2, hp: 2 }),
+      exposeMarginalAlly({ id: "guard", seatIndex: 3, battleTeam: "dawn" })
+    ]
+  });
+  const deterministic = exposeMarginalOf({
+    actor: exposeMarginalActor({ equipmentDefinitionId: "telescope", equipmentRetentionProbability: 1 }),
+    enemy: exposeMarginalEnemy({ id: "far", seatIndex: 2, hp: 2 }),
+    players: [
+      exposeMarginalActor({ equipmentDefinitionId: "telescope", equipmentRetentionProbability: 1 }),
+      exposeMarginalAlly({ id: "middle", seatIndex: 1, battleTeam: "dawn" }),
+      exposeMarginalEnemy({ id: "far", seatIndex: 2, hp: 2 }),
+      exposeMarginalAlly({ id: "guard", seatIndex: 3, battleTeam: "dawn" })
+    ]
+  });
+  assert.ok(probabilistic.candidates[0]?.executionProbability < 1,
+    `概率候选应存在，实际 ${JSON.stringify(probabilistic.candidates)}`);
+  assert.ok(probabilistic.marginal > 0 && probabilistic.marginal < deterministic.marginal,
+    `低执行概率应降低但不归零边际，实际 ${probabilistic.marginal}/${deterministic.marginal}`);
+});
+
+test("AI·搜索：破势边际：已有 N>0 层时比较 N 与 N+1", () => {
+  const fromOne = exposeMarginalOf({ actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 3 }), stack: 1 });
+  const fromTwo = exposeMarginalOf({ actor: exposeMarginalActor(), enemy: exposeMarginalEnemy({ hp: 3 }), stack: 2 });
+  assert.ok(fromOne.marginal > 0, `1→2 层在 3 血目标上应产生击杀差，实际 ${fromOne.marginal}`);
+  assert.equal(fromTwo.marginal, 0, "2→3 层在 3 血目标上两层都击杀，边际应为 0（证明比较的是 N vs N+1 而非 0 vs 1）");
+});
+
+test("AI·搜索：破势边际：反事实 baseline 与 boosted 仅相差一层破势", () => {
+  const actor = exposeMarginalActor();
+  const enemy = exposeMarginalEnemy({ hp: 2 });
+  const before = { playPhaseEnded: false, players: [actor, enemy] };
+  const simulator = new AiSimulator(before);
+  const after = simulator.apply(
+    before, { type: "card", card: { ...CARD_DEFINITIONS.exposeWeakness, id: "poshi" }, targets: [] }, actor.id
+  );
+  const addedStacks = after.players[0].exposeWeaknessStacks - before.players[0].exposeWeaknessStacks;
+  const baseline = structuredClone(after);
+  baseline.players[0].exposeWeaknessStacks -= addedStacks;
+  assert.equal(addedStacks, 1, "一张破势实际新增 1 层");
+  assert.equal(
+    baseline.players[0].exposeWeaknessStacks,
+    after.players[0].exposeWeaknessStacks - 1
+  );
+  const normalized = (player) => JSON.stringify({ ...player, exposeWeaknessStacks: "S" });
+  assert.equal(
+    JSON.stringify(baseline.players.map(normalized)),
+    JSON.stringify(after.players.map(normalized)),
+    "除 exposeWeaknessStacks 相差 1 层外，两个反事实世界在模拟突袭前应完全一致"
+  );
+});
+
 // ---- AI 卡牌行为·突袭 ----
 
 test("AI·突袭：共用突袭模拟覆盖护援弃牌、窥隙信息和余烬能量", () => {

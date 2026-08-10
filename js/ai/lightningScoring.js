@@ -2,9 +2,9 @@
  * 闪电的 AI 共享纯计算：状态检查、剩余装备类别概率、下一接收者查找与期望负担。
  * 只读取公开/过滤后的字段，不实例化匿名判定牌，不修改 remainingCardCounts 根先验。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-ruletext-v143";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-ruletext-v143";
-import { PROBABILITY_EPSILON, clampProbability, mergeProbabilityStateBranches, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260810-ruletext-v143";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-expose-marginal-v146";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-expose-marginal-v146";
+import { PROBABILITY_EPSILON, clampProbability, mergeProbabilityStateBranches, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260810-expose-marginal-v146";
 
 const DISCOUNT = 0.5;
 
