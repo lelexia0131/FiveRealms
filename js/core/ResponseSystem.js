@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-planner-delta-v162";
-import { createId } from "../utils/helpers.js?build=20260810-planner-delta-v162";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260810-planner-delta-v162";
-import { RuleEngine } from "./RuleEngine.js?build=20260810-planner-delta-v162";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-charge-threshold-v163";
+import { createId } from "../utils/helpers.js?build=20260810-charge-threshold-v163";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260810-charge-threshold-v163";
+import { RuleEngine } from "./RuleEngine.js?build=20260810-charge-threshold-v163";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

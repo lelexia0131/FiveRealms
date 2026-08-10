@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260810-planner-delta-v162";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-planner-delta-v162";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260810-charge-threshold-v163";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-charge-threshold-v163";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

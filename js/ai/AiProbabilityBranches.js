@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-planner-delta-v162";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-charge-threshold-v163";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

@@ -2,17 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-planner-delta-v162";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-planner-delta-v162";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-planner-delta-v162";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-planner-delta-v162";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-planner-delta-v162";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-planner-delta-v162";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-planner-delta-v162";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-planner-delta-v162";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-charge-threshold-v163";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-charge-threshold-v163";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-charge-threshold-v163";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-charge-threshold-v163";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-charge-threshold-v163";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-charge-threshold-v163";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-charge-threshold-v163";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-charge-threshold-v163";
 import {
   sealEarlyUsePenalty, sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260810-planner-delta-v162";
+} from "./sealScoring.js?build=20260810-charge-threshold-v163";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -247,7 +247,7 @@ export class AiEvaluator {
       }
     }
     if (card.definitionId === "recover") value += (actor.maxHp - actor.hp) * 4;
-    if (card.definitionId === "charge") value += (actor.maxEnergy - actor.energy) * 1.5 + (actor.activeSkillId && !actor.activeSkillUsed && actor.energy + 1 >= actor.activeSkillCost ? SKILL_THRESHOLD_OPTION_VALUE : 0);
+    if (card.definitionId === "charge") value += (actor.maxEnergy - actor.energy) * 1.5 + (actor.activeSkillId && !actor.activeSkillUsed && actor.energy < actor.activeSkillCost && actor.energy + 1 >= actor.activeSkillCost ? SKILL_THRESHOLD_OPTION_VALUE : 0);
     if (card.definitionId === "shield" && target) value += (target.hp <= 1 ? 6 : target.hp <= 2 ? 3 : 0) + Math.max(0, 2 - (target.shield ?? 0));
     if (card.definitionId === "shockwave") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam && enemy.hp <= 1).length * 7;
     if (card.definitionId === "provoke") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam).reduce((sum, enemy) => sum + (1 - (enemy.assaultResponseProbability ?? 0)) * 3, 0);

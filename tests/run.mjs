@@ -14719,6 +14719,87 @@ test("AI·充能桩：聚能 actionUtility 叠加角色静态值与门槛价值"
   );
 });
 
+test("AI·充能桩：聚能仅在能量真正跨过主动技能门槛时获得选择权价值", () => {
+  const run = (energy, uses) => {
+    const actor = makePlayer(`charge-threshold-actor-${energy}-${uses}`, 0, "dawn", "ai", 2);
+    const enemy = makePlayer(`charge-threshold-enemy-${energy}-${uses}`, 1, "dusk");
+    actor.energy = energy;
+    const { game }
+      = makeGame([actor, enemy]);
+    actor.turnFlags.activeSkillUseCounts.symbiosis = uses;
+    const charge = instance("charge");
+    actor.hand = [charge];
+    const visible = createAiVisibleState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    );
+    const actorView = visible.players.find((entry) => entry.id === actor.id);
+    return {
+      value: game.aiController.evaluator.actionUtility(
+        { type: "card", card: charge, targets: [] }, actor, visible
+      ),
+      energy: actorView.energy,
+      maxEnergy: actorView.maxEnergy,
+      activeSkillCost: actorView.activeSkillCost,
+      activeSkillUsed: actorView.activeSkillUsed,
+      activeSkillUses: actorView.activeSkillUses,
+      activeSkillLimit: actorView.activeSkillLimit
+    };
+  };
+  const roleValue = getRoleCardAiValue("spirit-medic", "charge");
+  const crossing = run(1, 0);
+  assert.deepEqual([crossing.activeSkillCost, crossing.activeSkillUsed], [2, false]);
+  assert.equal(
+    crossing.value,
+    roleValue + (crossing.maxEnergy - crossing.energy) * 1.5 + 4,
+    "energy 1 -> 2 crosses cost 2, threshold credit must remain"
+  );
+  const alreadyAffordable = run(2, 0);
+  assert.equal(
+    alreadyAffordable.value,
+    roleValue + (alreadyAffordable.maxEnergy - alreadyAffordable.energy) * 1.5,
+    "energy 2 already affordable, no threshold credit"
+  );
+  const stillBelow = run(0, 0);
+  assert.equal(
+    stillBelow.value,
+    roleValue + (stillBelow.maxEnergy - stillBelow.energy) * 1.5,
+    "energy 0 -> 1 still below cost 2, no threshold credit"
+  );
+  const exhausted = run(1, 2);
+  assert.deepEqual([exhausted.activeSkillUsed, exhausted.activeSkillLimit], [true, 2]);
+  assert.equal(
+    exhausted.value,
+    roleValue + (exhausted.maxEnergy - exhausted.energy) * 1.5,
+    "skill uses exhausted, no threshold credit"
+  );
+});
+
+test("AI·充能桩：limit=2 已用1次时第二次技能机会仍获得门槛选择权", () => {
+  const actor = makePlayer("charge-limit2-actor", 0, "dawn", "ai", 2);
+  const enemy = makePlayer("charge-limit2-enemy", 1, "dusk");
+  actor.energy = 1;
+  const { game }
+    = makeGame([actor, enemy]);
+  actor.turnFlags.activeSkillUseCounts.symbiosis = 1;
+  const charge = instance("charge");
+  actor.hand = [charge];
+  const visible = createAiVisibleState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const actorView = visible.players.find((entry) => entry.id === actor.id);
+  assert.equal(actorView.activeSkillUses, 1);
+  assert.equal(actorView.activeSkillLimit, 2);
+  assert.equal(actorView.activeSkillUsed, false);
+  assert.equal(
+    game.aiController.evaluator.actionUtility(
+      { type: "card", card: charge, targets: [] }, actor, visible
+    ),
+    getRoleCardAiValue("spirit-medic", "charge")
+      + (actorView.maxEnergy - actorView.energy) * 1.5
+      + 4
+  );
+});
+
 // ---- AI 装备行为·军火库 ----
 
 test("AI·军火库：模拟军火库要求两张格挡而不是一张", () => {
