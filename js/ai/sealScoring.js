@@ -2,15 +2,15 @@
  * 封印的 AI 共享纯计算：只读取过滤后的状态、反制概率与剩余牌类别计数，
  * 不实例化匿名判定牌，也不修改 remainingCardCounts 根先验。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-lightning-audio-loop-v160";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-lightning-audio-loop-v160";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-lightning-audio-loop-v160";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-guardian-aid-turn-v161";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-guardian-aid-turn-v161";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-guardian-aid-turn-v161";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
   mergeProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260810-lightning-audio-loop-v160";
+} from "./AiProbabilityBranches.js?build=20260810-guardian-aid-turn-v161";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;

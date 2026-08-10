@@ -1,14 +1,14 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-lightning-audio-loop-v160";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260810-lightning-audio-loop-v160";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260810-lightning-audio-loop-v160";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-lightning-audio-loop-v160";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-guardian-aid-turn-v161";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260810-guardian-aid-turn-v161";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260810-guardian-aid-turn-v161";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-guardian-aid-turn-v161";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260810-lightning-audio-loop-v160";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260810-lightning-audio-loop-v160";
+} from "./lightningScoring.js?build=20260810-guardian-aid-turn-v161";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260810-guardian-aid-turn-v161";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

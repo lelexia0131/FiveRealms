@@ -3,10 +3,10 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-lightning-audio-loop-v160";
-import { TeamRuleService } from "../core/TeamRuleService.js?build=20260810-lightning-audio-loop-v160";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260810-lightning-audio-loop-v160";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-lightning-audio-loop-v160";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-guardian-aid-turn-v161";
+import { TeamRuleService } from "../core/TeamRuleService.js?build=20260810-guardian-aid-turn-v161";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260810-guardian-aid-turn-v161";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-guardian-aid-turn-v161";
 
 const equipmentRoleDelta = (player, definitionId) => {
   if (!player?.generalId || !definitionId) return 0;
@@ -156,7 +156,7 @@ export function createAiVisibleState(viewerId, state, remainingCardCounts = null
       categoriesUsed: [...(player.turnFlags.categoriesUsed ?? [])],
       categoryUsedProbabilities: Object.fromEntries(["basic","tactic","equipment"]
         .map((category) => [category, player.turnFlags.categoriesUsed?.has(category) ? 1 : 0])),
-      guardianAidUsedProbability: player.roundFlags.guardianAidUsed ? 1 : 0,
+      guardianAidUsedProbability: player.turnFlags.guardianAidUsed ? 1 : 0,
       spyGapTriggeredProbability: player.turnFlags.spyGapTriggered ? 1 : 0,
       gambleTriggered: Boolean(player.turnFlags.gambleTriggered),
       gambleTriggeredProbability: player.turnFlags.gambleTriggered ? 1 : 0,

@@ -3,8 +3,8 @@
  * Player 只保存数据并提供安全的资源变更，不决定目标合法性、伤害响应或胜负。
  * 每局都会重新创建 Player，因此无需跨局保留实例。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-lightning-audio-loop-v160";
-import { clamp } from "../utils/helpers.js?build=20260810-lightning-audio-loop-v160";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-guardian-aid-turn-v161";
+import { clamp } from "../utils/helpers.js?build=20260810-guardian-aid-turn-v161";
 
 export class Player {
   /**
@@ -63,6 +63,7 @@ export class Player {
       activeSkillsUsed: new Set(),
       activeSkillUseCounts: {},
       recycleDeviceUses: 0,
+      guardianAidUsed: false,
       coordinationTriggered: false,
       gambleTriggered: false,
       rejuvenationTriggerCount: 0,
@@ -81,6 +82,7 @@ export class Player {
   resetGlobalTurnReactiveFlags() {
     this.turnFlags.categoriesUsed = new Set();
     this.turnFlags.momentum = 0;
+    this.turnFlags.guardianAidUsed = false;
     this.turnFlags.coordinationTriggered = false;
     this.turnFlags.gambleTriggered = false;
     this.turnFlags.rejuvenationTriggerCount = 0;
@@ -93,7 +95,8 @@ export class Player {
 
   /** 重置每轮技能标记；新轮开始时调用。 */
   resetRoundFlags() {
-    this.roundFlags = { guardianAidUsed: false };
+    // Guardian aid is per-global-turn and lives in turnFlags (resetGlobalTurnReactiveFlags).
+    this.roundFlags = {};
   }
 
   /**

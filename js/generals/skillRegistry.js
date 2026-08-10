@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-lightning-audio-loop-v160";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-lightning-audio-loop-v160";
-import { randomChoice } from "../utils/helpers.js?build=20260810-lightning-audio-loop-v160";
-import { Debug } from "../utils/debug.js?build=20260810-lightning-audio-loop-v160";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-guardian-aid-turn-v161";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-guardian-aid-turn-v161";
+import { randomChoice } from "../utils/helpers.js?build=20260810-guardian-aid-turn-v161";
+import { Debug } from "../utils/debug.js?build=20260810-guardian-aid-turn-v161";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -65,7 +65,7 @@ const PASSIVE_SKILLS = {
     game.eventBus.on("beforeDamage", `${owner.id}:guardianAid`, async (event) => {
       const gameId = game.state.gameId;
       if (!owner.alive || !event.target?.alive || owner.id === event.target.id) return;
-      if (owner.battleTeam !== event.target.battleTeam || owner.roundFlags.guardianAidUsed || !owner.hand.length || event.amount <= 0) return;
+      if (owner.battleTeam !== event.target.battleTeam || owner.turnFlags.guardianAidUsed || !owner.hand.length || event.amount <= 0) return;
       const response = await game.responseSystem.requestSkillResponse(owner, "guardianAid", "护援", event);
       if (!game.isSessionValid(gameId) || response.status !== "used" || !owner.alive || !owner.hand.length) return;
       let discard = null;
@@ -75,7 +75,7 @@ const PASSIVE_SKILLS = {
       if (!discard) return;
       const moved = await game.discardCardFromHand(owner, discard, "护援", { logReason:"「护援」" });
       if (!game.isSessionValid(gameId) || !moved) return;
-      owner.roundFlags.guardianAidUsed = true;
+      owner.turnFlags.guardianAidUsed = true;
       event.amount = Math.max(0, event.amount - 1);
       game.log(`${owner.name}发动「护援」，令${event.target.name}受到的伤害减少1点。`, "important");
     });

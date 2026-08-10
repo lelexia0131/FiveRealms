@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-lightning-audio-loop-v160";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-lightning-audio-loop-v160";
-import { createId, clamp } from "../utils/helpers.js?build=20260810-lightning-audio-loop-v160";
-import { EventBus } from "./EventBus.js?build=20260810-lightning-audio-loop-v160";
-import { Player } from "./Player.js?build=20260810-lightning-audio-loop-v160";
-import { Deck } from "./Deck.js?build=20260810-lightning-audio-loop-v160";
-import { TeamManager } from "./TeamManager.js?build=20260810-lightning-audio-loop-v160";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260810-lightning-audio-loop-v160";
-import { RuleEngine } from "./RuleEngine.js?build=20260810-lightning-audio-loop-v160";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260810-lightning-audio-loop-v160";
-import { GameLogger } from "./GameLogger.js?build=20260810-lightning-audio-loop-v160";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260810-lightning-audio-loop-v160";
-import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260810-lightning-audio-loop-v160";
-import { AIController } from "../ai/AiController.js?build=20260810-lightning-audio-loop-v160";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260810-lightning-audio-loop-v160";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260810-lightning-audio-loop-v160";
-import { Debug } from "../utils/debug.js?build=20260810-lightning-audio-loop-v160";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260810-lightning-audio-loop-v160";
-import { DyingSystem } from "./DyingSystem.js?build=20260810-lightning-audio-loop-v160";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260810-lightning-audio-loop-v160";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260810-lightning-audio-loop-v160";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260810-lightning-audio-loop-v160";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260810-lightning-audio-loop-v160";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-guardian-aid-turn-v161";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-guardian-aid-turn-v161";
+import { createId, clamp } from "../utils/helpers.js?build=20260810-guardian-aid-turn-v161";
+import { EventBus } from "./EventBus.js?build=20260810-guardian-aid-turn-v161";
+import { Player } from "./Player.js?build=20260810-guardian-aid-turn-v161";
+import { Deck } from "./Deck.js?build=20260810-guardian-aid-turn-v161";
+import { TeamManager } from "./TeamManager.js?build=20260810-guardian-aid-turn-v161";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260810-guardian-aid-turn-v161";
+import { RuleEngine } from "./RuleEngine.js?build=20260810-guardian-aid-turn-v161";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260810-guardian-aid-turn-v161";
+import { GameLogger } from "./GameLogger.js?build=20260810-guardian-aid-turn-v161";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260810-guardian-aid-turn-v161";
+import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260810-guardian-aid-turn-v161";
+import { AIController } from "../ai/AiController.js?build=20260810-guardian-aid-turn-v161";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260810-guardian-aid-turn-v161";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260810-guardian-aid-turn-v161";
+import { Debug } from "../utils/debug.js?build=20260810-guardian-aid-turn-v161";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260810-guardian-aid-turn-v161";
+import { DyingSystem } from "./DyingSystem.js?build=20260810-guardian-aid-turn-v161";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260810-guardian-aid-turn-v161";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260810-guardian-aid-turn-v161";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260810-guardian-aid-turn-v161";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260810-guardian-aid-turn-v161";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -388,7 +388,6 @@ export class Game {
     if (!this.isSessionValid(gameId) || !player?.alive || this.state.isGameOver) return;
     this.state.phase = "turnStart";
     player.resetTurnFlags(this.teamRules.getRules(player));
-    for (const entry of this.state.players) entry.roundFlags.guardianAidUsed = false;
     // 每个新全局回合开始：所有角色的 global-turn reactive 额度统一重置，
     // 必须在 emit("turnStart") 之前完成，避免 turnStart 监听器读取上一回合残留状态。
     for (const entry of this.state.players) entry.resetGlobalTurnReactiveFlags();
