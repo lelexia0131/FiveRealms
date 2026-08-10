@@ -1,5 +1,5 @@
 /** AI 展示节奏的纯函数入口。实际等待仍统一由 CleanupManager 执行。 */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-symbiosis-prior-v166";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-shield-state-value-v167";
 
 const RANGES = Object.freeze({
   initial: ["aiInitialThinkMinMs", "aiInitialThinkMaxMs"],

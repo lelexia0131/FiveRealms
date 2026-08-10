@@ -25535,6 +25535,157 @@ test("AI·角色核心评分：真实 Planner 会按角色权重选择不同动�
   assert.equal(await run(2), "harvest");
 });
 
+const shieldValueFixture = () => {
+  const warden = makePlayer("sv-warden", 0, "dawn", "ai", 1);
+  const allyA = makePlayer("sv-allyA", 1, "dawn", "ai", 0);
+  const allyB = makePlayer("sv-allyB", 2, "dawn", "ai", 2);
+  const e1 = makePlayer("sv-e1", 3, "dusk", "ai", 5);
+  const e2 = makePlayer("sv-e2", 4, "dusk", "ai", 6);
+  warden.energy = 2;
+  warden.hand = [{ ...CARD_DEFINITIONS.shield, id: "sh" }];
+  const { game }
+    = makeGame([warden, allyA, allyB, e1, e2]);
+  registerPassiveSkills(game);
+  const before = createAiVisibleState(
+    warden.id, game.state, game.aiController.knowledge.remainingCounts(warden)
+  );
+  return { game, before };
+};
+
+const shieldState = (before, { hp = 4, shield = 0, threat = "low", radar = false } = {}) => {
+  const c = structuredClone(before);
+  const target = c.players.find((p) => p.id === "sv-allyA");
+  target.hp = hp;
+  target.shield = shield;
+  target.shieldBranches = [{ probability: 1, conditions: {}, amount: shield }];
+  for (const enemyId of ["sv-e1", "sv-e2"]) {
+    const enemy = c.players.find((p) => p.id === enemyId);
+    if (threat === "high") {
+      enemy.handCount = 3;
+      enemy.energy = 3;
+      enemy.equipmentDefinitionId = "telescope";
+      enemy.equipmentRetentionProbability = 1;
+    } else {
+      enemy.handCount = 0;
+      enemy.energy = 0;
+      enemy.equipmentDefinitionId = null;
+      enemy.equipmentRetentionProbability = 0;
+    }
+  }
+  if (radar) {
+    target.equipmentDefinitionId = "defenseDevice";
+    target.equipmentRetentionProbability = 1;
+    target.initialEquipmentValue = CARD_DEFINITIONS.defenseDevice.aiValue;
+    target.initialEquipmentRoleDelta = 0;
+    target.expectedEquipmentGain = 0;
+    target.expectedEquipmentRoleDelta = 0;
+  }
+  return c;
+};
+
+const shieldValueU = (game, state, shield) => {
+  const c = structuredClone(state);
+  const target = c.players.find((p) => p.id === "sv-allyA");
+  target.shield = shield;
+  target.shieldBranches = [{ probability: 1, conditions: {}, amount: shield }];
+  return game.aiController.evaluator.stateUtility(c, "sv-warden");
+};
+
+test("AI·评分：高威胁下 shield value 高于低威胁", () => {
+  const { game, before } = shieldValueFixture();
+  const lowGain = shieldValueU(game, shieldState(before, { threat: "low" }), 1)
+    - shieldValueU(game, shieldState(before, { threat: "low" }), 0);
+  const highGain = shieldValueU(game, shieldState(before, { threat: "high" }), 1)
+    - shieldValueU(game, shieldState(before, { threat: "high" }), 0);
+  assert.ok(highGain > lowGain, "shield must be worth more under visible threat");
+});
+
+test("AI·评分：低血目标的 shield 获得合理但非无条件的 survival option", () => {
+  const { game, before } = shieldValueFixture();
+  const hp4High = shieldValueU(game, shieldState(before, { hp: 4, threat: "high" }), 1)
+    - shieldValueU(game, shieldState(before, { hp: 4, threat: "high" }), 0);
+  const hp1High = shieldValueU(game, shieldState(before, { hp: 1, threat: "high" }), 1)
+    - shieldValueU(game, shieldState(before, { hp: 1, threat: "high" }), 0);
+  const hp1NoThreat = shieldValueU(game, shieldState(before, { hp: 1, threat: "low" }), 1)
+    - shieldValueU(game, shieldState(before, { hp: 1, threat: "low" }), 0);
+  assert.ok(hp1High > hp4High, "HP1 shield must beat HP4 shield under the same threat");
+  assert.ok(hp1NoThreat < hp1High, "no-threat HP1 must not receive the full survival premium");
+  assert.ok(hp1NoThreat < 4, "no-threat HP1 shield keeps only a small stored-defense value");
+});
+
+test("AI·评分：低威胁下新增 shield 的边际价值递减", () => {
+  const { game, before } = shieldValueFixture();
+  const first = shieldValueU(game, shieldState(before, { threat: "low" }), 1)
+    - shieldValueU(game, shieldState(before, { threat: "low" }), 0);
+  const second = shieldValueU(game, shieldState(before, { threat: "low" }), 2)
+    - shieldValueU(game, shieldState(before, { threat: "low" }), 1);
+  assert.ok(second < first, "when visible risk is covered the extra shield must clearly diminish");
+});
+
+test("AI·评分：高威胁下多个 shield 仍可保持实际价值", () => {
+  const { game, before } = shieldValueFixture();
+  const secondHigh = shieldValueU(game, shieldState(before, { threat: "high" }), 2)
+    - shieldValueU(game, shieldState(before, { threat: "high" }), 1);
+  assert.ok(secondHigh > 0, "a second shield must retain value while visible threat exceeds capacity");
+});
+
+test("AI·评分：radar 与 shield 不重复抵扣同一 exposure", () => {
+  const { game, before } = shieldValueFixture();
+  const withoutRadar = shieldValueU(game, shieldState(before, { threat: "high", shield: 5 }), 5)
+    - shieldValueU(game, shieldState(before, { threat: "high" }), 0);
+  const withRadar = shieldValueU(game, shieldState(before, { threat: "high", shield: 5, radar: true }), 5)
+    - shieldValueU(game, shieldState(before, { threat: "high", radar: true }), 0);
+  assert.ok(
+    withRadar < withoutRadar,
+    "shield must only value the residual threat after radar mitigation (no double deduction)"
+  );
+});
+
+test("AI·评分：敌方 shield 增加会降低 viewer utility", () => {
+  const { game, before } = shieldValueFixture();
+  const enemyShield0 = shieldValueU(game, shieldState(before, { threat: "high" }), 0);
+  const c = structuredClone(shieldState(before, { threat: "high" }));
+  const enemy = c.players.find((p) => p.id === "sv-e1");
+  enemy.shield = 2;
+  enemy.shieldBranches = [{ probability: 1, conditions: {}, amount: 2 }];
+  assert.ok(
+    game.aiController.evaluator.stateUtility(c, "sv-warden") < enemyShield0,
+    "enemy shield must lower the viewer's state utility"
+  );
+});
+
+test("AI·评分：壁垒对高威胁少盾目标 stateDelta 高于低威胁已有盾目标", () => {
+  const { game, before } = shieldValueFixture();
+  const barrierDelta = (state) => {
+    const action = { type: "skill", skill: ACTIVE_SKILLS.barrier, targets: [{ id: "sv-allyA" }] };
+    const U0 = game.aiController.evaluator.stateUtility(state, "sv-warden");
+    const after = new AiSimulator(state).apply(state, action, "sv-warden");
+    return game.aiController.evaluator.stateUtility(after, "sv-warden") - U0;
+  };
+  const highLowShield = barrierDelta(shieldState(before, { hp: 2, shield: 0, threat: "high" }));
+  const lowHighShield = barrierDelta(shieldState(before, { hp: 2, shield: 2, threat: "low" }));
+  assert.ok(
+    highLowShield > lowHighShield,
+    "barrier target ranking must follow real need (high threat, low shield) over (low threat, already shielded)"
+  );
+});
+
+test("AI·评分：普通护盾卡同样获得威胁感知的 state representation 改善", () => {
+  const { game, before } = shieldValueFixture();
+  const cardDelta = (state) => {
+    const card = state.players.find((p) => p.id === "sv-warden").hand[0];
+    const action = { type: "card", card, targets: [{ id: "sv-allyA" }] };
+    const U0 = game.aiController.evaluator.stateUtility(state, "sv-warden");
+    const after = new AiSimulator(state).apply(state, action, "sv-warden");
+    return game.aiController.evaluator.stateUtility(after, "sv-warden") - U0;
+  };
+  assert.ok(
+    cardDelta(shieldState(before, { threat: "high" }))
+      > cardDelta(shieldState(before, { threat: "low" })),
+    "the shield card must benefit from the same threat-aware shield representation"
+  );
+});
+
 // ---- AI 评分·角色选牌 ----
 
 test("AI·角色选牌：低血弃牌会保留调息和格挡", () => {

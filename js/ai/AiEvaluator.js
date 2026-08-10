@@ -2,17 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-symbiosis-prior-v166";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-symbiosis-prior-v166";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-symbiosis-prior-v166";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-symbiosis-prior-v166";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-symbiosis-prior-v166";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-symbiosis-prior-v166";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-symbiosis-prior-v166";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-symbiosis-prior-v166";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-shield-state-value-v167";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-shield-state-value-v167";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-shield-state-value-v167";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-shield-state-value-v167";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-shield-state-value-v167";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-shield-state-value-v167";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-shield-state-value-v167";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-shield-state-value-v167";
 import {
   sealEarlyUsePenalty, sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260810-symbiosis-prior-v166";
+} from "./sealScoring.js?build=20260810-shield-state-value-v167";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -20,6 +20,16 @@ const ENERGY_STATE_WEIGHT = 1.2;
 const SKILL_THRESHOLD_OPTION_VALUE = 4;
 /** 焚场的临时 beam 排序信用：只服务当前层 pruning/ranking，不进入真实累计价值。 */
 const BURNING_FIELD_SEARCH_PRIOR = 8;
+/** stateUtility 与 shieldStateValue 共用：每点 HP 的效用权重。 */
+const HP_VALUE = 5;
+/** stateUtility 与 shieldStateValue 共用：HP<=1 danger 阈值惩罚。 */
+const DANGER_VALUE = 7;
+/** stateUtility 与 shieldStateValue 共用：阵亡惩罚。 */
+const DEATH_VALUE = 28;
+/** 通用 shield state value：第 1 点盾的基础储备（stored defense）权重。 */
+const SHIELD_RESERVE_WEIGHT = 2;
+/** 通用 shield state value：残余威胁容量的保护实现权重（保守；exposure 是威胁 proxy 而非确定伤害）。 */
+const SHIELD_PROTECTION_WEIGHT = 0.5;
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }
@@ -79,7 +89,7 @@ export class AiEvaluator {
       const energy = Math.max(0, Number(enemy.energy ?? 0));
       // 威胁强度：基准1点突袭 + 公开手牌/能量折算的潜在攻击资源，再按 stateUtility 每点 hp=5 权重换算。
       const expectedDamage = 1 + Math.min(3, handCount) * .5 + Math.min(2, energy) * .3;
-      exposure += expectedDamage * 5 * rangeProbability;
+      exposure += expectedDamage * HP_VALUE * rangeProbability;
     }
     return exposure;
   }
@@ -138,10 +148,10 @@ export class AiEvaluator {
     for (const player of state.players) {
       const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
       if (!player.alive) {
-        score += sign * -28;
+        score += sign * -DEATH_VALUE;
         continue;
       }
-      const danger = player.hp <= 1 ? -7 : 0;
+      const danger = player.hp <= 1 ? -DANGER_VALUE : 0;
       const rescueOutlook = player.survivalChance === undefined ? 0 : (player.survivalChance - 0.5) * 8;
       const equipmentValue = player.equipmentDefinitionId ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7) : 0;
       const initialEquipmentValue = player.initialEquipmentValue ?? equipmentValue;
@@ -169,8 +179,11 @@ export class AiEvaluator {
       }, 0);
       const exposure = this.incomingExposure(state, player);
       const radarMitigation = this.radarMitigationUtility(exposure, player, radarTacticProbability);
+      const residualExposure = Math.max(0, exposure - radarMitigation);
       const energyDeviceFuture = this.energyDeviceFutureUtility(player);
-      score += sign * (danger + rescueOutlook + player.hp * 5 + player.shield * 2 + player.energy * ENERGY_STATE_WEIGHT
+      score += sign * (danger + rescueOutlook + player.hp * HP_VALUE
+        + this.shieldStateValue(player, residualExposure)
+        + player.energy * ENERGY_STATE_WEIGHT
         + player.handCount * 1.1 + handRoleDelta + (player.exposeWeaknessStacks ?? 0) * 1.5
         + equipmentDelta * .25 + equipmentRoleDelta * .25
         + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5 - exposure + radarMitigation
@@ -179,6 +192,30 @@ export class AiEvaluator {
       - sealTeamBurden(state, player, viewer.battleTeam);
     }
     return score;
+  }
+
+  /**
+   * 通用 shield state value（只读、无随机、无 Simulator、无隐藏信息，O(1)）。
+   *
+   * 设计：
+   * - 第 1 点盾保留基础储备价值（stored defense），后续盾只按“当前可见残余威胁容量”计价；
+   * - residualExposure = raw exposure - radarMitigation，避免 radar 与 shield 重复抵扣同一风险；
+   * - absorbed = min(shield, residualExposure / HP_VALUE)：盾不能无限抵消可见威胁；
+   * - HP1/HP2 目标在确有可见威胁时获得有上限的 danger/death option 加成（受威胁量调节，
+   *   威胁≈0 时不会自动获得完整免死奖金）。
+   */
+  shieldStateValue(player, residualExposure) {
+    const shield = Math.max(0, Number(player.shield) || 0);
+    if (!shield || !player?.alive) return 0;
+    const reserve = SHIELD_RESERVE_WEIGHT * Math.min(shield, 1);
+    const threatPoints = Math.max(0, residualExposure) / HP_VALUE;
+    const absorbed = Math.min(shield, threatPoints);
+    const hpProtection = absorbed * HP_VALUE * SHIELD_PROTECTION_WEIGHT;
+    const lifePremium = player.hp === 1 ? DEATH_VALUE - HP_VALUE
+      : player.hp === 2 ? DANGER_VALUE - HP_VALUE
+        : 0;
+    const lifeProtection = Math.min(1, absorbed) * lifePremium * SHIELD_PROTECTION_WEIGHT;
+    return reserve + hpProtection + lifeProtection;
   }
 
   actionUtility(action, player, visible, options = {}) {

@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260810-symbiosis-prior-v166";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260810-symbiosis-prior-v166";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260810-symbiosis-prior-v166";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260810-symbiosis-prior-v166";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260810-symbiosis-prior-v166";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260810-symbiosis-prior-v166";
-import { AiPlanner } from "./AiPlanner.js?build=20260810-symbiosis-prior-v166";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260810-shield-state-value-v167";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260810-shield-state-value-v167";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260810-shield-state-value-v167";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260810-shield-state-value-v167";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260810-shield-state-value-v167";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260810-shield-state-value-v167";
+import { AiPlanner } from "./AiPlanner.js?build=20260810-shield-state-value-v167";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

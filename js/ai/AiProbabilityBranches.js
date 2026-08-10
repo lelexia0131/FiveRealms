@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-symbiosis-prior-v166";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-shield-state-value-v167";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

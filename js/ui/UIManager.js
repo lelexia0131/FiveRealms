@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260810-symbiosis-prior-v166";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-symbiosis-prior-v166";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260810-symbiosis-prior-v166";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260810-shield-state-value-v167";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-shield-state-value-v167";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260810-shield-state-value-v167";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260810-symbiosis-prior-v166";
-import { AnimationController } from "./animationController.js?build=20260810-symbiosis-prior-v166";
-import { InteractionController } from "./InteractionController.js?build=20260810-symbiosis-prior-v166";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260810-symbiosis-prior-v166";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260810-symbiosis-prior-v166";
-import { JudgmentView } from "./JudgmentView.js?build=20260810-symbiosis-prior-v166";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-symbiosis-prior-v166";
-import { createOpponentHandView } from "./handVisibility.js?build=20260810-symbiosis-prior-v166";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260810-symbiosis-prior-v166";
-import { SoundManager } from "../audio/SoundManager.js?build=20260810-symbiosis-prior-v166";
+} from "./templates.js?build=20260810-shield-state-value-v167";
+import { AnimationController } from "./animationController.js?build=20260810-shield-state-value-v167";
+import { InteractionController } from "./InteractionController.js?build=20260810-shield-state-value-v167";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260810-shield-state-value-v167";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260810-shield-state-value-v167";
+import { JudgmentView } from "./JudgmentView.js?build=20260810-shield-state-value-v167";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-shield-state-value-v167";
+import { createOpponentHandView } from "./handVisibility.js?build=20260810-shield-state-value-v167";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260810-shield-state-value-v167";
+import { SoundManager } from "../audio/SoundManager.js?build=20260810-shield-state-value-v167";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);

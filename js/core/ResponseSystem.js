@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-symbiosis-prior-v166";
-import { createId } from "../utils/helpers.js?build=20260810-symbiosis-prior-v166";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260810-symbiosis-prior-v166";
-import { RuleEngine } from "./RuleEngine.js?build=20260810-symbiosis-prior-v166";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-shield-state-value-v167";
+import { createId } from "../utils/helpers.js?build=20260810-shield-state-value-v167";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260810-shield-state-value-v167";
+import { RuleEngine } from "./RuleEngine.js?build=20260810-shield-state-value-v167";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-symbiosis-prior-v166";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-symbiosis-prior-v166";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-shield-state-value-v167";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-shield-state-value-v167";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

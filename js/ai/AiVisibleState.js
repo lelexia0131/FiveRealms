@@ -3,10 +3,10 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-symbiosis-prior-v166";
-import { TeamRuleService } from "../core/TeamRuleService.js?build=20260810-symbiosis-prior-v166";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260810-symbiosis-prior-v166";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-symbiosis-prior-v166";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-shield-state-value-v167";
+import { TeamRuleService } from "../core/TeamRuleService.js?build=20260810-shield-state-value-v167";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260810-shield-state-value-v167";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-shield-state-value-v167";
 
 const equipmentRoleDelta = (player, definitionId) => {
   if (!player?.generalId || !definitionId) return 0;
