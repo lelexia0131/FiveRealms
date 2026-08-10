@@ -2,9 +2,9 @@
  * 本文件封装真人候选与电脑角色分配，依赖角色配置和随机工具。
  * 它不进入对局循环，也不改变阵营；角色与 battleTeam 始终保持独立。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-assault-provenance-v148";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-assault-provenance-v148";
-import { shuffled } from "../utils/helpers.js?build=20260810-assault-provenance-v148";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-root-provenance-v149";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-root-provenance-v149";
+import { shuffled } from "../utils/helpers.js?build=20260810-root-provenance-v149";
 
 export class GeneralSelection {
   constructor(random = Math.random) {

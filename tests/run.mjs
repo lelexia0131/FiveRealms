@@ -8838,6 +8838,84 @@ test("AI·搜索：回合开始无旧层时消费侧始终为0", () => {
   assert.equal(provenanceAdvance(state, after, 0), 0);
 });
 
+// ---- 根 transition provenance 推进（真实 AiPlanner.plan 数据流） ----
+
+async function planRootProvenance({ stacks, hand, enemyHp, limit, forceAssaultRoot = false }) {
+  const actor = makePlayer("root-prov-actor", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("root-prov-enemy", 1, "dusk", "ai", 2);
+  enemy.hp = enemyHp;
+  actor.hand.push(...hand.map(instance));
+  if (stacks > 0) actor.statuses.exposeWeakness = { stacks };
+  const { game } = makeGame([actor, enemy]);
+  actor.turnFlags.attackLimit = limit;
+  actor.attackLimit = limit;
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  const visible = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  let rootActions = game.aiController.getLegalActions(actor);
+  if (forceAssaultRoot) {
+    const assault = rootActions.find((entry) => entry.card?.definitionId === "assault");
+    rootActions = [assault, { type: "end" }].filter(Boolean);
+  }
+  await game.aiController.planner.plan(actor, visible, rootActions, { gameId: game.state.gameId });
+  const stats = game.aiController.planner.lastSearchStats;
+  return {
+    sequence: stats.bestSequence.map((entry) => entry.cardId ?? entry.type),
+    provenance: stats.bestRemainingProvenance.map((value) => Number(value.toFixed(4)))
+  };
+}
+
+test("AI·搜索：根动作是突袭时推进旧层剩余（确定消费）", async () => {
+  const result = await planRootProvenance({ stacks: 1, hand: ["assault", "assault"], enemyHp: 4, limit: 2, forceAssaultRoot: true });
+  assert.equal(result.sequence[0], "assault");
+  assert.equal(result.provenance[0], 0, `根突袭后 remaining 应为 0，实际 ${result.provenance[0]}`);
+  assert.equal(result.provenance[1], 0, "第二次突袭节点 remaining 应为 0");
+});
+
+test("AI·搜索：根突袭部分执行时旧层剩余按真实保留比例衰减", async () => {
+  const actor = makePlayer("root-prov-prob-actor", 0, "dawn", "ai", 1);
+  const middle = makePlayer("root-prov-middle", 1, "dawn");
+  const far = makePlayer("root-prov-far", 2, "dusk", "ai", 2);
+  const guard = makePlayer("root-prov-guard", 3, "dawn");
+  far.hp = 6;
+  actor.statuses.exposeWeakness = { stacks: 1 };
+  actor.hand.push(instance("assault"));
+  actor.equipment = instance("telescope");
+  const { game } = makeGame([actor, middle, far, guard]);
+  actor.turnFlags.attackLimit = 1;
+  actor.attackLimit = 1;
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  const visible = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const cloned = structuredClone(visible);
+  cloned.players[0].equipmentRetentionProbability = 0.4;
+  const rootActions = game.aiController.actionGenerator.generateFromVisible(cloned, actor.id)
+    .filter((entry) => entry.card?.definitionId === "assault");
+  assert.ok(rootActions[0]?.executionProbability < 1, "根突袭应存在概率执行");
+  await game.aiController.planner.plan(actor, cloned, [...rootActions, { type: "end" }], { gameId: game.state.gameId });
+  const stats = game.aiController.planner.lastSearchStats;
+  assert.ok(stats.bestRemainingProvenance[0] > 0.5 && stats.bestRemainingProvenance[0] < 0.7,
+    `根突袭部分执行后 remaining 应约 0.6，实际 ${stats.bestRemainingProvenance[0]}`);
+});
+
+test("AI·搜索：根突袭消费旧层后新破势不混入 provenance", async () => {
+  const result = await planRootProvenance({ stacks: 1, hand: ["assault", "exposeWeakness", "assault"], enemyHp: 4, limit: 2, forceAssaultRoot: true });
+  assert.equal(result.sequence[0], "assault");
+  const poshiIndex = result.sequence.indexOf("exposeWeakness");
+  assert.ok(poshiIndex > 0, "序列中应出现新破势");
+  assert.equal(result.provenance[0], 0, "根突袭消费旧层后 remaining 应为 0");
+  assert.equal(result.provenance[poshiIndex], 0, "新破势步骤不得把新层塞入旧层 remaining");
+});
+
+test("AI·搜索：根突袭一次性消费多层旧破势", async () => {
+  const result = await planRootProvenance({ stacks: 2, hand: ["assault", "assault"], enemyHp: 6, limit: 2, forceAssaultRoot: true });
+  assert.equal(result.sequence[0], "assault");
+  assert.equal(result.provenance[0], 0, `根突袭后 2 层旧层 remaining 应为 0，实际 ${result.provenance[0]}`);
+  assert.equal(result.provenance[1], 0);
+});
+
 // ---- AI 卡牌行为·突袭 ----
 
 test("AI·突袭：共用突袭模拟覆盖护援弃牌、窥隙信息和余烬能量", () => {

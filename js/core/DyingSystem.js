@@ -1,5 +1,5 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-assault-provenance-v148";
-import { createId } from "../utils/helpers.js?build=20260810-assault-provenance-v148";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-root-provenance-v149";
+import { createId } from "../utils/helpers.js?build=20260810-root-provenance-v149";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；

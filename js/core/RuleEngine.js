@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260810-assault-provenance-v148";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-assault-provenance-v148";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260810-root-provenance-v149";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-root-provenance-v149";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

@@ -2,8 +2,8 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-assault-provenance-v148";
-import { AiSimulator } from "./AiSimulator.js?build=20260810-assault-provenance-v148";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-root-provenance-v149";
+import { AiSimulator } from "./AiSimulator.js?build=20260810-root-provenance-v149";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -201,6 +201,14 @@ export class AiPlanner {
           visibleState, action, player.id, rootRemainingExposeStacks, simulator
         )
         : 0;
+      // 根 transition 与深层 transition 对称：根动作若是突袭，必须按真实 Simulator
+      // 前后 stacks 保留比例推进旧层剩余量，否则已被根突袭消费的旧层会继续
+      // 在 depth>=2 的后续突袭上重复获得消费侧信用。
+      const remainingRootExposeStacks = action.card?.definitionId === "assault"
+        ? this.advanceRemainingRootExposeStacks(
+          visibleState, state, player.id, rootRemainingExposeStacks
+        )
+        : rootRemainingExposeStacks;
       beam.push({
         action,
         state,
@@ -209,7 +217,8 @@ export class AiPlanner {
         score:transitionScore(action, visibleState, state, 1, rootActions) + exposeMarginal
           + assaultStacksCredit,
         sequence:[action],
-        remainingRootExposeStacks:rootRemainingExposeStacks
+        remainingRootExposeStacks,
+        remainingHistory:[remainingRootExposeStacks]
       });
       expanded += 1;
       if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
@@ -257,7 +266,8 @@ export class AiPlanner {
             terminal:Boolean(state.playPhaseEnded),
             score,
             sequence:[...node.sequence, follow],
-            remainingRootExposeStacks
+            remainingRootExposeStacks,
+            remainingHistory:[...node.remainingHistory, remainingRootExposeStacks]
           });
           if (!bestCandidate || score > bestCandidate.score) bestCandidate = candidates.at(-1);
           expanded += 1;
@@ -282,7 +292,8 @@ export class AiPlanner {
       .map((action) => this.describeAction(action));
     this.lastSearchStats = { elapsedMs:(globalThis.performance?.now?.() ?? Date.now()) - started, expanded, depth:Math.max(1, choice?.sequence.length ?? 1), beamWidth:GAME_CONFIG.aiBeamWidth,
       budgetType:nodeBudget === null ? "time" : "nodes", nodeBudget,
-      discoveredDynamicTarget, hiddenSamples:hiddenWorlds.length, bestSequence:this.lastPlannedSequence };
+      discoveredDynamicTarget, hiddenSamples:hiddenWorlds.length, bestSequence:this.lastPlannedSequence,
+      bestRemainingProvenance:choice?.remainingHistory ?? [] };
     return choice?.action ?? { type:"end" };
   }
 }
