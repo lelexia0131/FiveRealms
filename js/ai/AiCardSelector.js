@@ -2,17 +2,17 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-discard-marginal-value-v152";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-discard-marginal-value-v152";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-discard-marginal-value-v152";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260810-discard-marginal-value-v152";
-import { getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-discard-marginal-value-v152";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-allin-heal-log-v153";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-allin-heal-log-v153";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-allin-heal-log-v153";
+import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260810-allin-heal-log-v153";
+import { getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-allin-heal-log-v153";
 import {
   chooseBestResourceHandCandidate,
   chooseResourceZone,
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-} from "./resourceSelectionValue.js?build=20260810-discard-marginal-value-v152";
+} from "./resourceSelectionValue.js?build=20260810-allin-heal-log-v153";
 
 const globalKnownValue = (definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
 

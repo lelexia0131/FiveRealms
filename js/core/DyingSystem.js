@@ -1,5 +1,5 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-discard-marginal-value-v152";
-import { createId } from "../utils/helpers.js?build=20260810-discard-marginal-value-v152";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-allin-heal-log-v153";
+import { createId } from "../utils/helpers.js?build=20260810-allin-heal-log-v153";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；
@@ -79,11 +79,11 @@ export class DyingSystem {
         if (response.status !== "used" || !response.card) continue;
         usedThisRound = true;
         const healed = await this.game.heal(rescuer, target, 1, {
-          card:response.card, reason:"dyingRescue", isDyingRescue:true, silentLog:true
+          card:response.card, reason:"dyingRescue", isDyingRescue:true, silentLog:true,
+          resultLog:() => `${rescuer.name}使用「调息」救援${target.name}，使其恢复至${target.hp}点生命。`
         });
         if (!this.game.isSessionValid(gameId)) return false;
         this.game.state.dyingContext = { targetId:target.id, need:Math.max(0, 1 - target.hp), currentHp:target.hp };
-        this.game.log(`${rescuer.name}使用「调息」救援${target.name}，使其恢复至${target.hp}点生命。`, "heal");
         if (target.hp <= 0) this.game.log(`${target.name}仍处于濒死，还需恢复${1 - target.hp}点生命。`, "important");
         await this.game.eventBus.emit("dyingRescueUsed", { type:"dyingRescueUsed", target, rescuer, card:response.card, currentHp:target.hp });
         if (!this.game.isSessionValid(gameId)) return false;

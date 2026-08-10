@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-discard-marginal-value-v152";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-discard-marginal-value-v152";
-import { randomChoice } from "../utils/helpers.js?build=20260810-discard-marginal-value-v152";
-import { Debug } from "../utils/debug.js?build=20260810-discard-marginal-value-v152";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-allin-heal-log-v153";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-allin-heal-log-v153";
+import { randomChoice } from "../utils/helpers.js?build=20260810-allin-heal-log-v153";
+import { Debug } from "../utils/debug.js?build=20260810-allin-heal-log-v153";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -317,6 +317,7 @@ export const ACTIVE_SKILLS = Object.freeze({
     },
     async execute(game, source) {
       const gameId = game.state.gameId;
+      const hadAllInBefore = Boolean(source.statuses.allIn);
       const energy = source.energy;
       const drawCount = Math.max(0, energy - 1);
       const chance = Math.min(1, energy * .25);
@@ -325,7 +326,11 @@ export const ACTIVE_SKILLS = Object.freeze({
       if (!game.isSessionValid(gameId)) return;
       const entered = game.random() < chance;
       if (entered) source.statuses.allIn = { assaultBonus:1 };
-      game.log(`${source.name}消耗${energy}点能量发动「孤注」，${drawn ? `摸${drawn}张牌` : "未摸到牌"}，${entered ? "并进入" : "但未进入"}「孤注」状态。`, "important");
+      if (hadAllInBefore) {
+        game.log(`${source.name}消耗${energy}点能量发动「孤注」，${drawn ? `摸${drawn}张牌` : "未摸到牌"}，原有「孤注」状态保持不变。`, "important");
+      } else {
+        game.log(`${source.name}消耗${energy}点能量发动「孤注」，${drawn ? `摸${drawn}张牌` : "未摸到牌"}，${entered ? "并进入" : "但未进入"}「孤注」状态。`, "important");
+      }
     }
   }),
   resonance: Object.freeze({

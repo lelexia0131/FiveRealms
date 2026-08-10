@@ -4753,6 +4753,59 @@ test("灵医：主动调息只恢复1点且回春独立摸1张牌", async () => 
   );
 });
 
+test("灵医：主动调息的结果日志严格先于回春触发日志且治疗与回春各一次", async () => {
+  const medic = makePlayer("medic-recover-order", 0, "dawn", "ai", 2),
+    enemy = makePlayer("medic-recover-order-enemy", 1, "dusk"),
+    recover = instance("recover");
+  medic.hp -= 2;
+  medic.hand.push(recover);
+  const { game } = makeGame([medic, enemy]);
+  game.state.deck.cards.push(instance("block"));
+  registerPassiveSkills(game);
+  assert.equal(await game.playCard(medic, recover, []), true);
+  const logs = game.state.logs.map((entry) => entry.message);
+  const recoverIndex = logs.findIndex((message) => message === `${medic.name}使用「调息」，恢复1点生命。`);
+  const rejuvenationIndex = logs.findIndex((message) => message === `${medic.name}触发「回春」，摸1张牌。`);
+  assert.ok(recoverIndex >= 0 && rejuvenationIndex >= 0, "调息与回春日志都应存在");
+  assert.ok(recoverIndex < rejuvenationIndex, "调息结果日志必须严格早于回春触发日志");
+  assert.equal(
+    logs.filter((message) => message === `${medic.name}使用「调息」，恢复1点生命。`).length,
+    1,
+    "不得产生重复调息结果日志"
+  );
+  assert.equal(
+    logs.filter((message) => message === `${medic.name}触发「回春」，摸1张牌。`).length,
+    1,
+    "回春只触发一次"
+  );
+  assert.equal(medic.statistics.healingDone, 1, "治疗只发生一次");
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 1);
+});
+
+test("灵医：滋荣的发动、恢复与回春日志保持既有顺序", async () => {
+  const medic = makePlayer("medic-symbiosis-order", 0, "dawn", "ai", 2),
+    ally = makePlayer("medic-symbiosis-order-ally", 1, "dawn"),
+    enemy = makePlayer("medic-symbiosis-order-enemy", 2, "dusk");
+  medic.hp -= 2;
+  ally.hp -= 2;
+  const { game } = makeGame([medic, ally, enemy]);
+  game.state.deck.cards.push(instance("block"));
+  registerPassiveSkills(game);
+  medic.energy = 2;
+  assert.equal(await game.useActiveSkill(medic, "symbiosis", [medic]), true);
+  const logs = game.state.logs.map((entry) => entry.message);
+  const activationIndex = logs.findIndex((message) => message === `${medic.name}对自己发动「滋荣」。`);
+  const healIndex = logs.findIndex((message) => message === `${medic.name}恢复1点生命。`);
+  const rejuvenationIndex = logs.findIndex((message) => message === `${medic.name}触发「回春」，摸1张牌。`);
+  assert.ok(activationIndex >= 0 && healIndex >= 0 && rejuvenationIndex >= 0, "滋荣三阶段日志都应存在");
+  assert.ok(activationIndex < healIndex && healIndex < rejuvenationIndex, "滋荣发动早于恢复、恢复早于回春");
+  assert.equal(
+    logs.filter((message) => message === `${medic.name}恢复1点生命。`).length,
+    1,
+    "滋荣治疗只打印一条恢复日志"
+  );
+});
+
 test("灵医：另一个角色回合中的首次濒死救援恢复1点并触发回春摸牌", async () => {
   const target = makePlayer("d", 0, "dawn", "human", 1),
     medic = makePlayer("m", 1, "dawn", "ai", 2),
@@ -5864,23 +5917,61 @@ test("赌命者：已有孤注状态时再次发动孤注不叠加也不删除�
   }
 });
 
-test("赌命者：AI 已有孤注状态时仍生成孤注动作", () => {
+test("赌命者：孤注日志区分原有状态且每次发动仍只消费一次随机判定", async () => {
+  const cases = [
+    { label: "原无孤注成功", roll: 0, preStatus: false, expectEntered: true },
+    { label: "原无孤注失败", roll: .9, preStatus: false, expectEntered: false },
+    { label: "原有孤注失败", roll: .9, preStatus: true, expectEntered: false },
+    { label: "原有孤注成功", roll: 0, preStatus: true, expectEntered: true }
+  ];
+  for (const scenario of cases) {
+    const gambler = makePlayer(`gambler-log-${scenario.label}`, 0, "dawn", "ai", 6),
+      enemy = makePlayer(`enemy-log-${scenario.label}`, 1, "dusk"),
+      { game }
+        = makeGame([gambler, enemy], { random: () => scenario.roll });
+    registerPassiveSkills(game);
+    if (scenario.preStatus) gambler.statuses.allIn = { assaultBonus: 1 };
+    gambler.energy = 1;
+    const randomCalls = [];
+    const originalRandom = game.random;
+    game.random = () => { randomCalls.push(1); return scenario.roll; };
+    assert.equal(await game.useActiveSkill(gambler, "allIn", []), true);
+    assert.equal(randomCalls.length, 1, `${scenario.label}：每次发动孤注仍只消费一次随机判定`);
+    const log = game.state.logs
+      .filter((entry) => entry.message.includes("发动「孤注」"))
+      .map((entry) => entry.message)[0];
+    assert.ok(log, `${scenario.label}：应产生孤注发动日志`);
+    assert.equal(gambler.energy, 0);
+    if (scenario.preStatus) {
+      assert.deepEqual(gambler.statuses.allIn, { assaultBonus: 1 }, `${scenario.label}：原有孤注状态保持不变`);
+      assert.match(log, /原有「孤注」状态保持不变/);
+      assert.doesNotMatch(log, /(并进入|但未进入)「孤注」状态/);
+    } else {
+      assert.equal(Boolean(gambler.statuses.allIn), scenario.expectEntered);
+      assert.match(log, scenario.expectEntered ? /并进入「孤注」状态/ : /但未进入「孤注」状态/);
+      assert.doesNotMatch(log, /原有「孤注」状态保持不变/);
+    }
+    game.random = originalRandom;
+  }
+});
+
+test("赌命者：AI 已有孤注状态且能量2以上时仍生成孤注动作", () => {
   const gambler = makePlayer("ai-gambler", 0, "dawn", "ai", 6),
     enemy = makePlayer("ai-gambler-enemy", 1, "dusk");
   const { game }
     = makeGame([gambler, enemy]);
-  gambler.energy = 1;
+  gambler.energy = 2;
   gambler.statuses.allIn = { assaultBonus: 1 };
   const rootActions = game.aiController.getLegalActions(gambler);
   assert.ok(
     rootActions.some((action) => action.type === "skill" && action.skill?.id === "allIn"),
-    "根动作生成不得因已有孤注状态排除孤注"
+    "根动作生成不得因已有孤注状态无条件排除孤注"
   );
   const visible = createAiVisibleState(gambler.id, game.state);
   const deepActions = game.aiController.actionGenerator.generateFromVisible(visible, gambler.id);
   assert.ok(
     deepActions.some((action) => action.type === "skill" && action.skill?.id === "allIn"),
-    "深层动作生成不得因 assaultBonus 排除孤注"
+    "深层动作生成不得因 assaultBonus 无条件排除孤注"
   );
 });
 
@@ -16177,6 +16268,39 @@ test("AI·赌命者：孤注动作评分按当前状态概率计算边际状态�
   assertClose(full, 3);
   assertClose(partial, 4);
   assertClose(none - full, 2);
+});
+
+test("AI·赌命者：已有孤注且仅剩1能量时不生成孤注，能量2以上或无状态时仍生成", () => {
+  const gambler = makePlayer("ai-allin-filter", 0, "dawn", "ai", 6),
+    enemy = makePlayer("ai-allin-filter-enemy", 1, "dusk"),
+    { game }
+      = makeGame([gambler, enemy]),
+    generator = game.aiController.actionGenerator;
+  const hasAllIn = (actions) => actions.some(
+    (action) => action.type === "skill" && action.skill?.id === "allIn"
+  );
+
+  gambler.energy = 1;
+  gambler.statuses.allIn = undefined;
+  assert.ok(hasAllIn(generator.generate(gambler)), "能量1且无孤注时仍可生成孤注");
+  assert.ok(
+    hasAllIn(generator.generateFromVisible(createAiVisibleState(gambler.id, game.state), gambler.id)),
+    "深层：能量1且无孤注时仍可生成孤注"
+  );
+
+  gambler.statuses.allIn = { assaultBonus: 1 };
+  assert.ok(!hasAllIn(generator.generate(gambler)), "已有孤注且能量1时不得生成零收益孤注");
+  assert.ok(
+    !hasAllIn(generator.generateFromVisible(createAiVisibleState(gambler.id, game.state), gambler.id)),
+    "深层：assaultBonus已满且能量1时不得生成零收益孤注"
+  );
+
+  gambler.energy = 2;
+  assert.ok(hasAllIn(generator.generate(gambler)), "已有孤注且能量2时仍可生成孤注摸牌");
+  assert.ok(
+    hasAllIn(generator.generateFromVisible(createAiVisibleState(gambler.id, game.state), gambler.id)),
+    "深层：assaultBonus已满且能量2时仍可生成孤注摸牌"
+  );
 });
 
 test("AI·赌命者：冒险首次战术期望摸0.6且被反制仍触发、同回合不重复", () => {

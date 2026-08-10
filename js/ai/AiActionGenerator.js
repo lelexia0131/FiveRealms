@@ -2,15 +2,15 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-discard-marginal-value-v152";
-import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260810-discard-marginal-value-v152";
-import { getSealStatusStateBranches } from "./sealScoring.js?build=20260810-discard-marginal-value-v152";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-allin-heal-log-v153";
+import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260810-allin-heal-log-v153";
+import { getSealStatusStateBranches } from "./sealScoring.js?build=20260810-allin-heal-log-v153";
 import {
   ACTIVE_SKILLS, getActiveSkill, getActiveSkillCost
-} from "../generals/skillRegistry.js?build=20260810-discard-marginal-value-v152";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-discard-marginal-value-v152";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260810-discard-marginal-value-v152";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-discard-marginal-value-v152";
+} from "../generals/skillRegistry.js?build=20260810-allin-heal-log-v153";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-allin-heal-log-v153";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260810-allin-heal-log-v153";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-allin-heal-log-v153";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -22,7 +22,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260810-discard-marginal-value-v152";
+} from "./AiProbabilityBranches.js?build=20260810-allin-heal-log-v153";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -51,6 +51,18 @@ export class AiActionGenerator {
   canBenefitFromBreakArmy(actor) {
     return this.expectedAvailableAssaults(actor)
       > this.expectedAvailableAttackUses(actor) + PROBABILITY_EPSILON;
+  }
+
+  /**
+   * 孤注的确定零收益场景：已有完整「孤注」状态且确定能量不超过1。
+   * 真人仍允许发动；这里只禁止 AI 把该动作生成出来。
+   * 真实根节点使用 player.statuses.allIn，深层模拟使用 actor.assaultBonus 期望值，
+   * 只过滤「确定已有完整孤注」的分支，不误杀 assaultBonus < 1 的部分概率状态。
+   */
+  isZeroBenefitAllIn(actor) {
+    const hasCompleteStatus = Boolean(actor?.statuses?.allIn)
+      || Number(actor?.assaultBonus) >= 1 - PROBABILITY_EPSILON;
+    return hasCompleteStatus && Number(actor?.energy) <= 1;
   }
 
   chooseVisibleTransferPlan(game, actor, card, remainingCardCounts = null) {
@@ -101,7 +113,8 @@ export class AiActionGenerator {
     }
     const skill = getActiveSkill(player);
     if (skill?.canUse(this.game, player).ok
-      && (skill.id !== "breakArmy" || this.canBenefitFromBreakArmy(player))) {
+      && (skill.id !== "breakArmy" || this.canBenefitFromBreakArmy(player))
+      && !(skill.id === "allIn" && this.isZeroBenefitAllIn(player))) {
       const targets = RuleEngine.getSkillTargets(this.game, player, skill);
       const energyCost = getActiveSkillCost(this.game, player, skill);
       if (skill.targetType === "none" || skill.targetType === "allEnemies") {
@@ -180,7 +193,8 @@ export class AiActionGenerator {
     }
     const skill = ACTIVE_SKILLS[actor.activeSkillId];
     if (skill
-      && (skill.id !== "breakArmy" || this.canBenefitFromBreakArmy(actor))) {
+      && (skill.id !== "breakArmy" || this.canBenefitFromBreakArmy(actor))
+      && !(skill.id === "allIn" && this.isZeroBenefitAllIn(actor))) {
       const friendlies = alive.filter((player) => player.battleTeam === actor.battleTeam);
       let targets = [];
       if (skill.id === "barrier") targets = friendlies;

@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-discard-marginal-value-v152";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-allin-heal-log-v153";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260810-discard-marginal-value-v152";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-discard-marginal-value-v152";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260810-allin-heal-log-v153";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-allin-heal-log-v153";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

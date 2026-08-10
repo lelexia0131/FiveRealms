@@ -2,7 +2,7 @@
  * 本文件负责 2V3 阵营生成与阵营查询，依赖游戏配置和洗牌工具。
  * 它不根据角色、名字或座位推断阵营；battleTeam 是唯一判断来源。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-discard-marginal-value-v152";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-allin-heal-log-v153";
 
 export class TeamManager {
   /**

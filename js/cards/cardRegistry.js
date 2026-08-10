@@ -1,5 +1,5 @@
 /** 二十六种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-discard-marginal-value-v152";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-allin-heal-log-v153";
 
 /** 只在最终效果解析时读取私密意图，并按原角色、原区域复验实体牌。 */
 function resolvePrivateSelectionIntent(game, source, card, target, context, expectedZone = null) {
@@ -37,12 +37,10 @@ const CARD_EFFECTS = {
 
   async recover(game, source, card, targets, context) {
     source.turnFlags.recoverUsed += 1;
-    const recovered = await game.heal(source, source, 1, {
-      card, resolutionId:context.resolutionId, silentLog:true
+    await game.heal(source, source, 1, {
+      card, resolutionId:context.resolutionId, silentLog:true,
+      resultLog:(actualAmount) => `${source.name}使用「${card.name}」，恢复${actualAmount}点生命。`
     });
-    if (game.isSessionValid(game.state.gameId) && recovered > 0) {
-      game.log(`${source.name}使用「${card.name}」，恢复${recovered}点生命。`, "heal");
-    }
   },
 
   async charge(game, source, card) { await game.gainEnergy(source, 1, { card, reason:"聚能" }); },
