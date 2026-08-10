@@ -2,9 +2,9 @@
  * 本文件是页面入口，只负责连接 UIManager 与每局新建的 Game。
  * 它不实现卡牌、AI 或技能规则；重新开始时必须先 dispose 旧局，再创建新 gameId。
  */
-import { Game } from "./core/Game.js?build=20260810-charge-threshold-v163";
-import { UIManager } from "./ui/UIManager.js?build=20260810-charge-threshold-v163";
-import { Debug } from "./utils/debug.js?build=20260810-charge-threshold-v163";
+import { Game } from "./core/Game.js?build=20260810-burning-field-search-prior-v165";
+import { UIManager } from "./ui/UIManager.js?build=20260810-burning-field-search-prior-v165";
+import { Debug } from "./utils/debug.js?build=20260810-burning-field-search-prior-v165";
 
 const ui = new UIManager();
 let game = null;

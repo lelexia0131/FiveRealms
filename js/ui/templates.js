@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-charge-threshold-v163";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-charge-threshold-v163";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-burning-field-search-prior-v165";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-burning-field-search-prior-v165";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

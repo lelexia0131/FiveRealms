@@ -2,22 +2,24 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-charge-threshold-v163";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-charge-threshold-v163";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-charge-threshold-v163";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-charge-threshold-v163";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-charge-threshold-v163";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-charge-threshold-v163";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-charge-threshold-v163";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-charge-threshold-v163";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-burning-field-search-prior-v165";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-burning-field-search-prior-v165";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-burning-field-search-prior-v165";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-burning-field-search-prior-v165";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-burning-field-search-prior-v165";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-burning-field-search-prior-v165";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-burning-field-search-prior-v165";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-burning-field-search-prior-v165";
 import {
   sealEarlyUsePenalty, sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260810-charge-threshold-v163";
+} from "./sealScoring.js?build=20260810-burning-field-search-prior-v165";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
 /** 额外 1 点能量跨过主动技能成本门槛时的选择权价值；与聚能现有启发式保持一致。 */
 const SKILL_THRESHOLD_OPTION_VALUE = 4;
+/** 焚场的临时 beam 排序信用：只服务当前层 pruning/ranking，不进入真实累计价值。 */
+const BURNING_FIELD_SEARCH_PRIOR = 8;
 
 export class AiEvaluator {
   constructor(game) { this.game = game; }
@@ -195,7 +197,9 @@ export class AiEvaluator {
         barrier: 4 + (target?.hp <= 2 ? 4 : 0),
         symbiosis: missing * 4,
         stealSkill: 5 + Math.min(4, (target?.handCount ?? 0) + (target?.equipmentDefinitionId ? 1 : 0)),
-        burningField: enemies.reduce((sum, enemy) => sum + 2 + (enemy.hp <= 1 ? 8 : 0), 0),
+        // 焚场真实价值（伤害/击杀/救援/能量）全部由 stateDelta 表达；此处必须显式为 0，
+        // 避免回退到 `?? 4` 的默认先验。临时 beam 排序信用放在 actionSearchPrior。
+        burningField: 0,
         hunt: 7 + (target?.hp <= 2 ? 7 : 0),
         allIn: Math.max(0, actor.energy - 1) * 3
           + Math.min(1, actor.energy * .25) * (1 - (actor.assaultBonus ?? 0)) * 4,
@@ -278,5 +282,16 @@ export class AiEvaluator {
 
   symbiosisNetFromState(player, state) {
     return (assessGlobalBenefit(state.players, player.battleTeam, "symbiosis")?.netBenefit ?? 0) * 4;
+  }
+
+  /**
+   * 临时 search / ranking credit：只用于当前这一层的 beam pruning / ranking，
+   * 不进入 transition 的真实累计价值，也不影响最终 valueScore 决策。
+   * 当前第一位消费者：焚场（8 是在 beamWidth=10 且已构造的高分支场景下，
+   * 经实验确认足以降低合理候选过早被剪风险的经验值，并非游戏价值）。
+   */
+  actionSearchPrior(action, player, visible) {
+    if (action.skill?.id === "burningField") return BURNING_FIELD_SEARCH_PRIOR;
+    return 0;
   }
 }

@@ -9023,7 +9023,7 @@ test("AI·搜索：aiRandomnessRange 控制近似同分动作的评分扰动", (
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
   const { game }
     = makeGame([actor, enemy]);
-  const beam = [{ score: 10, id: "first" }, { score: 9.9, id: "second" }];
+  const beam = [{ valueScore: 10, id: "first" }, { valueScore: 9.9, id: "second" }];
   game.aiRandomnessRange = 0;
   assert.equal(game.aiController.planner.chooseCandidate(beam).id, "first");
   const rolls = [0, 1];
@@ -16587,6 +16587,273 @@ test("AI·炎术师：模拟焚场时按每个目标独立格挡概率折算伤�
   assert.equal(next.players[1].hp, 4, "必挡目标不因焚场扣血");
   assertClose(next.players[2].hp, 3.5);
   assert.equal(next.players[3].hp, 3, "无格挡目标正常受1点伤害");
+});
+
+test("AI·炎术师：普通焚场明显优于 end 且优于零收益动作", () => {
+  const ember = makePlayer("bf-choice-ember", 0, "dawn", "ai", 4);
+  const ally = makePlayer("bf-choice-ally", 1, "dawn", "ai", 0);
+  const enemies = [2, 3, 4].map(
+    (seat) => makePlayer(`bf-choice-e${seat}`, seat, "dusk", "ai", 5)
+  );
+  ember.energy = 3;
+  const { game }
+    = makeGame([ember, ally, ...enemies]);
+  registerPassiveSkills(game);
+  const before = createAiVisibleState(
+    ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+  );
+  const evaluator = game.aiController.evaluator;
+  const sim = new AiSimulator(before);
+  const U0 = evaluator.stateUtility(before, ember.id);
+  const burnAfter = sim.apply(
+    before, { type: "skill", skill: ACTIVE_SKILLS.burningField, targets: [] }, ember.id
+  );
+  const endAfter = sim.apply(before, { type: "end" }, ember.id);
+  const burnScore = evaluator.actionUtility(
+    { type: "skill", skill: ACTIVE_SKILLS.burningField, targets: [] }, ember, before
+  ) + (evaluator.stateUtility(burnAfter, ember.id) - U0) * 0.08;
+  const endScore = evaluator.actionUtility({ type: "end" }, ember, before)
+    + (evaluator.stateUtility(endAfter, ember.id) - U0) * 0.08;
+  assert.ok(burnScore > endScore, "burningField must clearly beat end without a damage-scaled prior");
+});
+
+test("AI·炎术师：致命焚场由 state delta 自然高于非致命焚场", () => {
+  const run = (hps) => {
+    const ember = makePlayer("bf-lethal-ember", 0, "dawn", "ai", 4);
+    const ally = makePlayer("bf-lethal-ally", 1, "dawn", "ai", 0);
+    const enemies = [2, 3, 4].map(
+      (seat, index) => {
+        const enemy = makePlayer(`bf-lethal-e${seat}`, seat, "dusk", "ai", 5);
+        enemy.hp = hps[index];
+        return enemy;
+      }
+    );
+    ember.energy = 3;
+    const { game }
+      = makeGame([ember, ally, ...enemies]);
+    registerPassiveSkills(game);
+    const before = createAiVisibleState(
+      ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+    );
+    const evaluator = game.aiController.evaluator;
+    const U0 = evaluator.stateUtility(before, ember.id);
+    const after = new AiSimulator(before).apply(
+      before, { type: "skill", skill: ACTIVE_SKILLS.burningField, targets: [] }, ember.id
+    );
+    return evaluator.stateUtility(after, ember.id) - U0;
+  };
+  assert.ok(
+    run([1, 5, 5]) > run([5, 5, 5]),
+    "lethal burn value must come from stateDelta, not a fixed hp<=1 prior"
+  );
+});
+
+test("AI·炎术师：焚场价值随真实格挡概率降低", () => {
+  const run = (blockDist) => {
+    const ember = makePlayer("bf-block-ember", 0, "dawn", "ai", 4);
+    const ally = makePlayer("bf-block-ally", 1, "dawn", "ai", 0);
+    const enemies = [2, 3, 4].map(
+      (seat) => makePlayer(`bf-block-e${seat}`, seat, "dusk", "ai", 5)
+    );
+    ember.energy = 3;
+    const { game }
+      = makeGame([ember, ally, ...enemies]);
+    registerPassiveSkills(game);
+    const before = structuredClone(createAiVisibleState(
+      ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+    ));
+    const target = before.players.find((player) => player.id === "bf-block-e2");
+    target.blockProbability = blockDist.reduce(
+      (sum, branch) => sum + (branch.blockCount >= 1 ? branch.probability : 0), 0
+    );
+    target.blockCountDistribution = blockDist;
+    const evaluator = game.aiController.evaluator;
+    const U0 = evaluator.stateUtility(before, ember.id);
+    const after = new AiSimulator(before).apply(
+      before, { type: "skill", skill: ACTIVE_SKILLS.burningField, targets: [] }, ember.id
+    );
+    return evaluator.stateUtility(after, ember.id) - U0;
+  };
+  const open = run([{ probability: 1, conditions: {}, blockCount: 0 }]);
+  const partial = run([
+    { probability: 0.25, conditions: {}, blockCount: 0 },
+    { probability: 0.75, conditions: {}, blockCount: 1 }
+  ]);
+  const full = run([{ probability: 1, conditions: {}, blockCount: 1 }]);
+  assert.ok(open > partial && partial > full,
+    "burn value must shrink with real expected damage from the simulator");
+});
+
+test("AI·炎术师：余烬能量通过 state delta 进入后继状态价值", () => {
+  const run = (generalIndex) => {
+    const caster = makePlayer(`bf-ember-${generalIndex}`, 0, "dawn", "ai", generalIndex);
+    const ally = makePlayer("bf-ember-ally", 1, "dawn", "ai", 0);
+    const enemies = [2, 3, 4].map(
+      (seat) => makePlayer(`bf-ember-e${seat}`, seat, "dusk", "ai", 5)
+    );
+    caster.energy = 2;
+    caster.hand = [{ ...CARD_DEFINITIONS.shockwave, id: "sw" }];
+    const { game }
+      = makeGame([caster, ally, ...enemies]);
+    registerPassiveSkills(game);
+    const before = createAiVisibleState(
+      caster.id, game.state, game.aiController.knowledge.remainingCounts(caster)
+    );
+    const evaluator = game.aiController.evaluator;
+    const U0 = evaluator.stateUtility(before, caster.id);
+    const after = new AiSimulator(before).apply(
+      before, { type: "card", card: before.players.find((p) => p.id === caster.id).hand[0], targets: [] }, caster.id
+    );
+    return {
+      energyDelta: after.players.find((p) => p.id === caster.id).energy
+        - before.players.find((p) => p.id === caster.id).energy,
+      stateDelta: evaluator.stateUtility(after, caster.id) - U0
+    };
+  };
+  const ember = run(4);
+  const nonEmber = run(0);
+  assert.equal(ember.energyDelta, 1, "余烬在真实模拟中 +1 能量");
+  assert.ok(
+    ember.stateDelta > nonEmber.stateDelta,
+    "余烬能量增益必须已经进入 state delta，无需额外 heuristic"
+  );
+});
+
+const buildBurningFieldWideFixture = () => {
+  const ember = makePlayer("bf-wide-ember", 0, "dawn", "ai", 4);
+  const ally = makePlayer("bf-wide-ally", 1, "dawn", "ai", 0);
+  const e1 = makePlayer("bf-wide-e1", 2, "dusk", "ai", 5);
+  const e2 = makePlayer("bf-wide-e2", 3, "dusk", "ai", 6);
+  const e3 = makePlayer("bf-wide-e3", 4, "dusk", "ai", 7);
+  ember.energy = 3;
+  ember.hp = 3;
+  [e1, e2, e3].forEach((enemy) => { enemy.hp = 1; enemy.hand.push(instance("block")); });
+  ally.hand.push(instance("recover"));
+  ember.hand = ["seal", "plunder", "destroy", "harvest"].map((definitionId) => instance(definitionId));
+  const { game }
+    = makeGame([ember, ally, e1, e2, e3]);
+  registerPassiveSkills(game);
+  const before = createAiVisibleState(
+    ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+  );
+  return { game, ember, before };
+};
+
+test("AI·炎术师：search credit 把焚场从 value top-10 外拉回 beam 并继续探索", async () => {
+  const { game, ember, before }
+    = buildBurningFieldWideFixture();
+  const evaluator = game.aiController.evaluator;
+  const sim = new AiSimulator(before);
+  const U0 = evaluator.stateUtility(before, ember.id);
+  const roots = game.aiController.getLegalActions(ember);
+  assert.ok(roots.length > GAME_CONFIG.aiBeamWidth, "fixture must exceed beam width");
+  const rows = roots.map((action) => {
+    const after = sim.apply(before, action, ember.id);
+    const valueScore = evaluator.actionUtility(action, ember, before, { availableActions: roots })
+      + (evaluator.stateUtility(after, ember.id) - U0) * 0.08;
+    return {
+      action,
+      valueScore,
+      pruneScore:valueScore + evaluator.actionSearchPrior(action, ember, before)
+    };
+  });
+  const rankOf = (list, key) => list.findIndex(
+    (entry) => entry.action.skill?.id === "burningField"
+  ) + 1;
+  const valueRank = rankOf([...rows].sort((a, b) => b.valueScore - a.valueScore));
+  const pruneRank = rankOf([...rows].sort((a, b) => b.pruneScore - a.pruneScore));
+  assert.ok(
+    valueRank > GAME_CONFIG.aiBeamWidth,
+    `without credit burningField must fall outside the root beam (value rank ${valueRank})`
+  );
+  assert.ok(
+    pruneRank <= GAME_CONFIG.aiBeamWidth,
+    `temporary credit must bring burningField inside the root beam (prune rank ${pruneRank})`
+  );
+  const run = async (credit) => {
+    game.aiController.planner.evaluator = credit
+      ? evaluator
+      : Object.assign(Object.create(evaluator), { actionSearchPrior: () => 0 });
+    game.aiSearchNodeBudgetOverride = 1000;
+    game.aiRandomnessRange = 0;
+    await game.aiController.planner.plan(ember, before, roots, { gameId: game.state.gameId });
+    return game.aiController.planner.lastSearchStats;
+  };
+  const withCredit = await run(true);
+  const withoutCredit = await run(false);
+  assert.ok(
+    withCredit.expanded > withoutCredit.expanded,
+    "with credit the burningField node must be retained and its follow-up actions explored"
+  );
+});
+
+test("AI·炎术师：search credit 能救候选但不能替候选赢比赛", async () => {
+  const { game, ember, before }
+    = buildBurningFieldWideFixture();
+  const evaluator = game.aiController.evaluator;
+  const sim = new AiSimulator(before);
+  const U0 = evaluator.stateUtility(before, ember.id);
+  const roots = game.aiController.getLegalActions(ember);
+  const burnValue = roots.reduce((best, action) => {
+    if (action.skill?.id !== "burningField") return best;
+    const after = sim.apply(before, action, ember.id);
+    return evaluator.actionUtility(action, ember, before, { availableActions: roots })
+      + (evaluator.stateUtility(after, ember.id) - U0) * 0.08;
+  }, null);
+  assert.ok(burnValue != null);
+  game.aiController.planner.evaluator = evaluator;
+  game.aiSearchNodeBudgetOverride = 1000;
+  game.aiRandomnessRange = 0;
+  await game.aiController.planner.plan(ember, before, roots, { gameId: game.state.gameId });
+  const stats = game.aiController.planner.lastSearchStats;
+  const chosenRoot = stats.bestSequence[0];
+  assert.notEqual(
+    chosenRoot.cardId ?? chosenRoot.type,
+    "burningField",
+    "search credit must not win the final value comparison"
+  );
+  assert.ok(
+    stats.bestValueScore > burnValue,
+    "the chosen path's real value must clearly exceed burningField's own value score"
+  );
+});
+
+test("AI·炎术师：search credit 不跨层累计进真实价值", async () => {
+  const ember = makePlayer("bf-c-ember", 0, "dawn", "ai", 4);
+  const enemy = makePlayer("bf-c-enemy", 1, "dusk", "ai", 5);
+  ember.energy = 1;
+  ember.hand = [
+    { ...CARD_DEFINITIONS.harvest, id: "h1" }
+  ];
+  const { game }
+    = makeGame([ember, enemy]);
+  registerPassiveSkills(game);
+  const before = createAiVisibleState(
+    ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+  );
+  const roots = game.aiController.getLegalActions(ember);
+  game.aiController.planner.evaluator = {
+    actionUtility: (action) => (
+      action.type === "end" ? 0 : (action.skill?.id === "burningField" ? 5 : 6)
+    ),
+    actionSearchPrior: (action) => action.skill?.id === "burningField" ? 8 : 0,
+    stateUtility: () => 0
+  };
+  game.aiSearchNodeBudgetOverride = 200;
+  game.aiRandomnessRange = 0;
+  await game.aiController.planner.plan(ember, before, roots, { gameId: game.state.gameId });
+  const stats = game.aiController.planner.lastSearchStats;
+  assert.ok(
+    stats.bestSequence.some((entry) => entry.cardId === "burningField"),
+    "burningField follow-up must be explored after beam retention"
+  );
+  // card root (6) + burningField depth-2 (5/2) = 8.5；若 +8 跨层累计则应为 12.5。
+  assertClose(stats.bestValueScore, 8.5);
+  assert.notEqual(
+    stats.bestSequence[0].cardId ?? stats.bestSequence[0].type,
+    "burningField",
+    "the value-best path roots at a card, not the credit-boosted skill"
+  );
 });
 
 // ---- AI 角色行为·追猎者 ----

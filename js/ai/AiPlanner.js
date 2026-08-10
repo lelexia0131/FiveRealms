@@ -2,8 +2,8 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-charge-threshold-v163";
-import { AiSimulator } from "./AiSimulator.js?build=20260810-charge-threshold-v163";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-burning-field-search-prior-v165";
+import { AiSimulator } from "./AiSimulator.js?build=20260810-burning-field-search-prior-v165";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -126,14 +126,14 @@ export class AiPlanner {
   }
 
   chooseCandidate(beam) {
-    const bestScore = beam[0]?.score ?? -Infinity;
-    const near = beam.filter((node) => bestScore - node.score <= GAME_CONFIG.aiNearTieRange);
+    const bestScore = beam[0]?.valueScore ?? -Infinity;
+    const near = beam.filter((node) => bestScore - node.valueScore <= GAME_CONFIG.aiNearTieRange);
     if (near.length <= 1 || !GAME_CONFIG.enableAiRandomness) return near[0] ?? beam[0];
     const randomness = Math.max(0, Number(this.game.aiRandomnessRange ?? GAME_CONFIG.aiRandomnessRange) || 0);
     if (!randomness) return near[0];
     const scale = Math.max(1, Math.abs(bestScore));
     return near.reduce((best, node) => {
-      const adjusted = node.score + (this.game.random() * 2 - 1) * scale * randomness;
+      const adjusted = node.valueScore + (this.game.random() * 2 - 1) * scale * randomness;
       return !best || adjusted > best.adjusted ? { node, adjusted } : best;
     }, null).node;
   }
@@ -176,6 +176,12 @@ export class AiPlanner {
         .filter(Boolean);
       return simulator.tacticResolutionChance(state, actor, card, mappedTargets);
     };
+    // 临时 search credit：只用于当前层 beam pruning/ranking，不进入真实累计价值。
+    const searchPrior = (action, state) => (
+      typeof this.evaluator.actionSearchPrior === "function"
+        ? this.evaluator.actionSearchPrior(action, player, state)
+        : 0
+    );
     const transitionScore = (action, beforeState, afterState, depth = 1, availableActions = []) => {
       const executionProbability = action.executionProbability ?? 1;
       const actionValue = this.evaluator.actionUtility(action, player, beforeState, { availableActions });
@@ -213,13 +219,15 @@ export class AiPlanner {
           visibleState, state, player.id, rootRemainingExposeStacks
         )
         : rootRemainingExposeStacks;
+      const valueScore = transitionScore(action, visibleState, state, 1, rootActions)
+        + exposeMarginal + assaultStacksCredit;
       beam.push({
         action,
         state,
         terminal:Boolean(state.playPhaseEnded),
         // 根节点也必须看到模拟后的伤害、装备和资源变化，否则第一次束裁剪会丢掉真正优质的动作。
-        score:transitionScore(action, visibleState, state, 1, rootActions) + exposeMarginal
-          + assaultStacksCredit,
+        valueScore,
+        pruneScore:valueScore + searchPrior(action, visibleState),
         sequence:[action],
         remainingRootExposeStacks,
         remainingHistory:[remainingRootExposeStacks]
@@ -231,9 +239,11 @@ export class AiPlanner {
         }
       }
     }
-    beam.sort((a,b) => b.score - a.score);
+    beam.sort((a,b) => b.pruneScore - a.pruneScore);
     let activeBeam = beam.slice(0, GAME_CONFIG.aiBeamWidth);
-    let bestCandidate = activeBeam[0];
+    let bestCandidate = beam.reduce((best, node) => (
+      !best || node.valueScore > best.valueScore ? node : best
+    ), null) ?? activeBeam[0];
     const rootAssaultTargets = new Set(rootActions.filter((action) => action.card?.definitionId === "assault").map((action) => action.targets?.[0]?.id));
     let discoveredDynamicTarget = false;
     for (let depth = 2; depth <= GAME_CONFIG.aiSearchDepth; depth += 1) {
@@ -241,7 +251,7 @@ export class AiPlanner {
       const candidates = [];
       for (const node of activeBeam) {
         if (node.terminal) {
-          candidates.push(node);
+          candidates.push({ ...node, pruneScore:node.valueScore });
           continue;
         }
         const followActions = this.game.aiController.actionGenerator.generateFromVisible(node.state, player.id);
@@ -262,18 +272,19 @@ export class AiPlanner {
               node.state, state, player.id, node.remainingRootExposeStacks
             )
             : node.remainingRootExposeStacks;
-          const score = node.score + transitionScore(follow, node.state, state, depth, followActions)
+          const valueScore = node.valueScore + transitionScore(follow, node.state, state, depth, followActions)
             + exposeMarginal + assaultStacksCredit;
           candidates.push({
             action:node.action,
             state,
             terminal:Boolean(state.playPhaseEnded),
-            score,
+            valueScore,
+            pruneScore:valueScore + searchPrior(follow, node.state) / depth,
             sequence:[...node.sequence, follow],
             remainingRootExposeStacks,
             remainingHistory:[...node.remainingHistory, remainingRootExposeStacks]
           });
-          if (!bestCandidate || score > bestCandidate.score) bestCandidate = candidates.at(-1);
+          if (!bestCandidate || valueScore > bestCandidate.valueScore) bestCandidate = candidates.at(-1);
           expanded += 1;
           if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
             if (!(await this.game.cleanupManager.delay(0)) || !this.game.isSessionValid(options.gameId ?? this.game.state.gameId)) return { type:"end" };
@@ -283,10 +294,12 @@ export class AiPlanner {
         if (limitReached()) break;
       }
       if (!candidates.length) break;
-      candidates.sort((a,b) => b.score - a.score);
+      candidates.sort((a,b) => b.pruneScore - a.pruneScore);
       activeBeam = candidates.slice(0, GAME_CONFIG.aiBeamWidth);
       if (limitReached()) break;
     }
+    // 终局选择必须只按真实 valueScore 重新排序，search credit 不得影响最终比较。
+    activeBeam.sort((a,b) => b.valueScore - a.valueScore);
     const choice = nodeBudget !== null && limitReached()
       ? bestCandidate
       : this.chooseCandidate(activeBeam);
@@ -297,7 +310,7 @@ export class AiPlanner {
     this.lastSearchStats = { elapsedMs:(globalThis.performance?.now?.() ?? Date.now()) - started, expanded, depth:Math.max(1, choice?.sequence.length ?? 1), beamWidth:GAME_CONFIG.aiBeamWidth,
       budgetType:nodeBudget === null ? "time" : "nodes", nodeBudget,
       discoveredDynamicTarget, hiddenSamples:hiddenWorlds.length, bestSequence:this.lastPlannedSequence,
-      bestRemainingProvenance:choice?.remainingHistory ?? [] };
+      bestRemainingProvenance:choice?.remainingHistory ?? [], bestValueScore:choice?.valueScore ?? null };
     return choice?.action ?? { type:"end" };
   }
 }

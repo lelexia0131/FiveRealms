@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-charge-threshold-v163";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-burning-field-search-prior-v165";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

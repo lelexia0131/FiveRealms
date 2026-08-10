@@ -1,14 +1,14 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-charge-threshold-v163";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260810-charge-threshold-v163";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260810-charge-threshold-v163";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-charge-threshold-v163";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-burning-field-search-prior-v165";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260810-burning-field-search-prior-v165";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260810-burning-field-search-prior-v165";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-burning-field-search-prior-v165";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260810-charge-threshold-v163";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260810-charge-threshold-v163";
+} from "./lightningScoring.js?build=20260810-burning-field-search-prior-v165";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260810-burning-field-search-prior-v165";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

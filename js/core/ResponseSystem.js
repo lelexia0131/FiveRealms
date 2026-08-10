@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-charge-threshold-v163";
-import { createId } from "../utils/helpers.js?build=20260810-charge-threshold-v163";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260810-charge-threshold-v163";
-import { RuleEngine } from "./RuleEngine.js?build=20260810-charge-threshold-v163";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-burning-field-search-prior-v165";
+import { createId } from "../utils/helpers.js?build=20260810-burning-field-search-prior-v165";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260810-burning-field-search-prior-v165";
+import { RuleEngine } from "./RuleEngine.js?build=20260810-burning-field-search-prior-v165";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
