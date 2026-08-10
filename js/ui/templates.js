@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260809-general-balance-v140";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260809-general-balance-v140";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-ruletext-v143";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-ruletext-v143";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

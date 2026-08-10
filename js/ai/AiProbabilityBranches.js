@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-general-balance-v140";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-ruletext-v143";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

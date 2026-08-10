@@ -3,10 +3,10 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-general-balance-v140";
-import { TeamRuleService } from "../core/TeamRuleService.js?build=20260809-general-balance-v140";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260809-general-balance-v140";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-general-balance-v140";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-ruletext-v143";
+import { TeamRuleService } from "../core/TeamRuleService.js?build=20260810-ruletext-v143";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260810-ruletext-v143";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-ruletext-v143";
 
 const equipmentRoleDelta = (player, definitionId) => {
   if (!player?.generalId || !definitionId) return 0;
@@ -162,7 +162,7 @@ export function createAiVisibleState(viewerId, state, remainingCardCounts = null
       gambleTriggeredProbability: player.turnFlags.gambleTriggered ? 1 : 0,
       coordinationTriggered: Boolean(player.turnFlags.coordinationTriggered),
       coordinationTriggeredProbability: player.turnFlags.coordinationTriggered ? 1 : 0,
-      rejuvenationUsed: Boolean(player.turnFlags.rejuvenationUsed),
+      rejuvenationTriggerCount: player.turnFlags.rejuvenationTriggerCount ?? 0,
       exposeWeaknessStacks: player.statuses.exposeWeakness?.stacks ?? 0,
       assaultBonus: player.statuses.allIn?.assaultBonus ?? 0,
       activeSkillId,

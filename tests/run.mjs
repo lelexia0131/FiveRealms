@@ -575,12 +575,14 @@ test("角色规则：灵医配置与README同步回春摸牌、濒死触发及�
   }
   assert.equal(medic.activeName, "滋荣");
   assert.equal(ACTIVE_SKILLS.symbiosis.name, "滋荣");
-  for (const text of [medic.activeDescription, medicSection]) {
-    assert.match(text, /自己或一名受伤队友/);
-    assert.doesNotMatch(text, /目标不是自己.*自己同样恢复\s*1\s*点生命/);
-    assert.match(text, /消耗\s*2\s*点能量/);
-    assert.match(text, /最多(?:使用|发动)\s*2\s*次/);
-  }
+  assert.match(medic.activeDescription, /自己或一名受伤队友/);
+  assert.doesNotMatch(medic.activeDescription, /目标不是自己.*自己同样恢复\s*1\s*点生命/);
+  assert.match(medic.activeDescription, /消耗\s*2\s*点能量/);
+  assert.doesNotMatch(medic.activeDescription, /每回合|一回合/);
+  assert.match(medicSection, /自己或一名受伤队友/);
+  assert.doesNotMatch(medicSection, /目标不是自己.*自己同样恢复\s*1\s*点生命/);
+  assert.match(medicSection, /消耗\s*2\s*点能量/);
+  assert.match(medicSection, /最多(?:使用|发动)\s*2\s*次/);
 });
 
 test("角色规则：强制 AI 救援真人配置默认开启", () => assert.equal(GAME_CONFIG.forceAiRescueHuman, true));
@@ -4258,7 +4260,7 @@ test("守誓者：壁垒1能量非法、2能量可对自己或队友发动且每
 });
 
 test("守誓者：护援响应区分原技能名称与当前响应技能名称", async () => {
-  for (const [actionName, context] of [["焚场", { skill: "burningField", actionName: "焚场", canBlock: false, damageType: "skill" }], ["猎杀", { skill: "hunt", actionName: "猎杀", canBlock: true, damageType: "skill" }], ["突袭", { card: instance("assault"), canBlock: true, damageType: "normal" }]]) {
+  for (const [actionName, context] of [["焚场", { skill: "burningField", actionName: "焚场", canBlock: true, damageType: "skill" }], ["猎杀", { skill: "hunt", actionName: "猎杀", canBlock: true, damageType: "skill" }], ["突袭", { card: instance("assault"), canBlock: true, damageType: "normal" }]]) {
     const source = makePlayer(`source-${actionName}`, 0, "dusk", "ai", 4),
       target = makePlayer(`target-${actionName}`, 1, "dawn", "ai", 2),
       guardian = makePlayer(`guardian-${actionName}`, 2, "dawn", "human", 1);
@@ -4591,7 +4593,7 @@ test("灵医：滋荣1能量非法、前两次各耗2能量且仅治疗所选受
   assert.equal(medic.turnFlags.activeSkillUseCounts.symbiosis, 1);
 });
 
-test("灵医：回春每回合首次实际治疗己方只摸1张且在另一角色turnStart重置", async () => {
+test("灵医：回春每回合前两次实际治疗己方各摸1张、第三次不触发且在另一角色turnStart重置", async () => {
   const medic = makePlayer("medic-rejuvenation", 0, "dawn", "ai", 2),
     ally = makePlayer("ally-rejuvenation", 1, "dawn"),
     enemy = makePlayer("enemy-rejuvenation", 2, "dusk");
@@ -4601,38 +4603,44 @@ test("灵医：回春每回合首次实际治疗己方只摸1张且在另一角�
   const { game }
     = makeGame([medic, ally, enemy]);
   registerPassiveSkills(game);
-  game.state.deck.cards.push(instance("block"), instance("charge"));
+  game.state.deck.cards.push(instance("block"), instance("charge"), instance("assault"), instance("shield"));
   await game.heal(medic, enemy, 1, { reason: "测试敌方治疗" });
-  assert.equal(medic.turnFlags.rejuvenationUsed, false);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 0);
   assert.equal(medic.hand.length, 0);
   assert.equal(await game.heal(medic, ally, 1, { reason: "测试队友治疗" }), 1);
   assert.equal(ally.hp, 2);
   assert.equal(medic.hand.length, 1);
-  assert.equal(medic.turnFlags.rejuvenationUsed, true);
-  assert.equal(
-    game.state.logs.filter((entry) => entry.message === `${medic.name}触发「回春」，摸1张牌。`).length,
-    1
-  );
-  assert.equal(game.state.logs.filter((entry) => entry.message.includes(`${medic.name}摸了`)).length, 0);
-  assert.equal(await game.heal(medic, medic, 1, { reason: "测试自我治疗" }), 1);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 1);
+  assert.equal(await game.heal(medic, medic, 1, { reason: "测试第二次治疗" }), 1);
   assert.equal(medic.hp, 3);
-  assert.equal(medic.hand.length, 1);
-  await game.eventBus.emit("turnStart", { player: enemy });
-  assert.equal(medic.turnFlags.rejuvenationUsed, false);
-  assert.equal(await game.heal(medic, ally, 1, { reason: "测试另一角色的新回合" }), 1);
+  assert.equal(medic.hand.length, 2);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 2);
+  assert.equal(await game.heal(medic, ally, 1, { reason: "测试第三次治疗" }), 1);
   assert.equal(ally.hp, 3);
   assert.equal(medic.hand.length, 2);
-  assert.equal(medic.turnFlags.rejuvenationUsed, true);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 2);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${medic.name}触发「回春」，摸1张牌。`).length,
+    2
+  );
+  assert.equal(game.state.logs.filter((entry) => entry.message.includes(`${medic.name}摸了`)).length, 0);
+  await game.eventBus.emit("turnStart", { player: enemy });
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 0);
+  assert.equal(await game.heal(medic, ally, 1, { reason: "测试另一角色的新回合" }), 1);
+  assert.equal(ally.hp, 4);
+  assert.equal(medic.hand.length, 3);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 1);
 });
 
 test("灵医：回春在实际治疗量为0时不占次数，随后有效治疗仍可触发", async () => {
   const medic = makePlayer("medic-zero-heal", 0, "dawn", "ai", 2),
     ally = makePlayer("ally-zero-heal", 1, "dawn"),
     enemy = makePlayer("enemy-zero-heal", 2, "dusk");
+  medic.hp = 2;
   ally.hp = 1;
   const { game } = makeGame([medic, ally, enemy]);
   registerPassiveSkills(game);
-  game.state.deck.cards.push(instance("block"));
+  game.state.deck.cards.push(instance("block"), instance("charge"));
   let cancelNextHeal = true;
   game.eventBus.on("beforeHeal", "test:zero-actual-heal", (event) => {
     if (cancelNextHeal && event.source?.id === medic.id && event.target?.id === ally.id) {
@@ -4642,12 +4650,15 @@ test("灵医：回春在实际治疗量为0时不占次数，随后有效治疗�
   });
   assert.equal(await game.heal(medic, ally, 1, { reason: "测试零实际治疗" }), 0);
   assert.equal(ally.hp, 1);
-  assert.equal(medic.turnFlags.rejuvenationUsed, false);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 0);
   assert.equal(medic.hand.length, 0);
   assert.equal(await game.heal(medic, ally, 1, { reason: "测试后续有效治疗" }), 1);
   assert.equal(ally.hp, 2);
-  assert.equal(medic.turnFlags.rejuvenationUsed, true);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 1);
   assert.equal(medic.hand.length, 1);
+  assert.equal(await game.heal(medic, medic, 1, { reason: "测试第二次有效治疗" }), 1);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 2);
+  assert.equal(medic.hand.length, 2);
 });
 
 test("灵医：主动调息只恢复1点且回春独立摸1张牌", async () => {
@@ -4692,7 +4703,7 @@ test("灵医：另一个角色回合中的首次濒死救援恢复1点并触发�
   assert.equal(medic.statistics.healingDone, 1);
   assert.equal(medic.hand.length, 1);
   assert.deepEqual(events, [["beforeHeal", true], ["afterHeal", 1]]);
-  assert.equal(medic.turnFlags.rejuvenationUsed, true);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 1);
   assert.ok(ui.logs.some(
     (message) => message === `${target.name}进入濒死，还需恢复1点生命才能脱离濒死。`
   ));
@@ -4716,10 +4727,10 @@ test("灵医：本人濒死时回春不增疗但会在实际自救后摸牌", as
   assert.equal(medic.hp, 1);
   assert.equal(medic.statistics.healingDone, 1);
   assert.equal(medic.hand.length, 1);
-  assert.equal(medic.turnFlags.rejuvenationUsed, true);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 1);
 });
 
-test("灵医：同回合已触发回春后再强制救援不会重复摸牌", async () => {
+test("灵医：回春前两次机会分别由普通治疗与濒死救援占用，第三次治疗不再摸牌", async () => {
   const human = makePlayer("human", 0, "dawn", "human"),
     medic = makePlayer("medic", 1, "dawn", "ai", 2),
     enemy = makePlayer("enemy", 2, "dusk");
@@ -4728,22 +4739,31 @@ test("灵医：同回合已触发回春后再强制救援不会重复摸牌", as
   medic.hand.push(instance("recover"));
   const { game }
     = makeGame([human, medic, enemy]);
-  game.state.deck.cards.push(instance("block"), instance("charge"));
+  game.state.deck.cards.push(instance("block"), instance("charge"), instance("assault"), instance("shield"));
   registerPassiveSkills(game);
-  assert.equal(await game.heal(medic, medic, 1, { reason: "测试预先触发回春" }), 1);
+  assert.equal(await game.heal(medic, medic, 1, { reason: "测试第一次触发回春" }), 1);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 1);
   assert.equal(medic.hand.length, 2);
   await game.dyingSystem.enter(human, enemy);
   assert.equal(human.hp, 1);
   assert.equal(medic.statistics.healingDone, 2);
-  assert.equal(medic.hand.length, 1);
-  assert.equal(medic.turnFlags.rejuvenationUsed, true);
+  assert.equal(medic.hand.length, 2);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 2);
   assert.equal(
     game.state.logs.filter((entry) => entry.message === `${medic.name}触发「回春」，摸1张牌。`).length,
-    1
+    2
   );
   assert.ok(game.state.logs.some(
     (entry) => entry.message === `${medic.name}使用「调息」救援${human.name}，使其恢复至1点生命。`
   ));
+  assert.equal(await game.heal(medic, medic, 1, { reason: "测试第三次治疗" }), 1);
+  assert.equal(medic.hp, 4);
+  assert.equal(medic.hand.length, 2);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 2);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${medic.name}触发「回春」，摸1张牌。`).length,
+    2
+  );
 });
 
 // ---- 影客 ----
@@ -5224,7 +5244,7 @@ test("炎术师：焚场按1、2、3名存活敌人动态判定并扣除同一�
   }
 });
 
-test("炎术师：焚场只伤害存活敌人、队友与本人不受伤且不可格挡", async () => {
+test("炎术师：焚场只伤害存活敌人、队友与本人不受伤且伤害可格挡", async () => {
   const ember = makePlayer("ember-field", 0, "dawn", "human", 4);
   const ally = makePlayer("ember-field-ally", 1, "dawn", "ai", 0);
   const deadEnemy = makePlayer("ember-field-dead", 2, "dusk", "ai", 5);
@@ -5248,9 +5268,69 @@ test("炎术师：焚场只伤害存活敌人、队友与本人不受伤且不�
   assert.equal(ember.hp, emberHp);
   assert.equal(deadEnemy.hp, deadHp);
   assert.ok(observed);
-  assert.equal(observed.canBlock, false);
+  assert.equal(observed.canBlock, true);
   assert.equal(observed.damageType, "skill");
   assert.equal(observed.skill, "burningField");
+});
+
+test("炎术师：焚场每个目标独立响应，格挡抵消自身伤害且不影响其他目标", async () => {
+  const ember = makePlayer("ember-block-field", 0, "dawn", "human", 4),
+    ally = makePlayer("ember-block-ally", 1, "dawn", "ai", 0),
+    blocker = makePlayer("ember-blocker", 2, "dusk", "human", 5),
+    open = makePlayer("ember-open", 3, "dusk", "human", 5);
+  blocker.hand.push(instance("block"));
+  ember.energy = 2;
+  const { game, ui } = makeGame([ember, ally, blocker, open], {
+    response: (request) => request.type === "block" && request.targetPlayerId === blocker.id
+  });
+  const allyHp = ally.hp, blockerHp = blocker.hp, openHp = open.hp;
+  assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
+  const blockRequests = ui.responseRequests.filter((entry) => entry.type === "block");
+  assert.equal(blockRequests.length, 2);
+  assert.deepEqual(
+    blockRequests.map((entry) => entry.targetPlayerId),
+    [blocker.id, open.id]
+  );
+  assert.equal(blocker.hp, blockerHp);
+  assert.equal(blocker.hand.length, 0);
+  assert.equal(open.hp, openHp - 1);
+  assert.equal(ally.hp, allyHp);
+  assert.equal(ember.hp, ember.maxHp);
+});
+
+test("炎术师：焚场先结算格挡且被格挡目标不消耗护援", async () => {
+  const ember = makePlayer("ember-order", 0, "dusk", "ai", 4),
+    blocker = makePlayer("order-blocker", 1, "dawn", "human", 5),
+    guardian = makePlayer("order-guardian", 2, "dawn", "human", 1),
+    open = makePlayer("order-open", 3, "dawn", "human", 5);
+  blocker.hand.push(instance("block"));
+  guardian.hand.push(instance("charge"));
+  ember.energy = 3;
+  const order = [];
+  const { game } = makeGame([ember, blocker, guardian, open], {
+    response: (request) => {
+      if (request.type === "block") {
+        order.push(`block:${request.targetPlayerId}`);
+        return request.targetPlayerId === blocker.id;
+      }
+      if (request.type === "skill") {
+        order.push(`aid:${request.targetPlayerId}`);
+        return false;
+      }
+      return false;
+    }
+  });
+  registerPassiveSkills(game);
+  const blockerHp = blocker.hp, openHp = open.hp, guardianHand = guardian.hand.length;
+  assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
+  assert.equal(blocker.hp, blockerHp);
+  assert.equal(open.hp, openHp - 1);
+  assert.equal(guardian.hand.length, guardianHand);
+  assert.equal(guardian.roundFlags.guardianAidUsed, false);
+  const aidRequests = order.filter((entry) => entry.startsWith("aid:"));
+  assert.equal(aidRequests.length, 1, "只有未格挡目标触发护援响应");
+  assert.equal(aidRequests[0], `aid:${guardian.id}`);
+  assert.ok(order.indexOf(`aid:${guardian.id}`) > order.indexOf(`block:${open.id}`));
 });
 
 test("炎术师：焚场每回合最多发动两次且第三次不扣费不造成伤害", async () => {
@@ -8173,14 +8253,14 @@ test("AI·突袭：共用突袭模拟消费破势与孤注并保留濒死救援�
       shield: 0,
       handCount: 1,
       expectedRecoverCount: 1,
-      rejuvenationUsed: false
+      rejuvenationTriggerCount: 0
     },
     rescueState = { players: [rescuedAttacker, rescued, rescuer] };
   simulator.simulateAssault(rescueState, rescuedAttacker, rescued, 1);
   assert.equal(rescued.alive, true);
   assert.equal(rescued.hp, 1);
   assert.equal(rescuer.handCount, 1);
-  assert.equal(rescuer.rejuvenationUsed, true);
+  assert.equal(rescuer.rejuvenationTriggerCount, 1);
   assert.equal(rescuedAttacker.handCount, 0);
 });
 
@@ -14007,7 +14087,7 @@ test("AI·灵医：滋荣在0、1、2次使用状态正确生成动作且只治�
   assert.equal(simAlly.hp, 2);
   assert.equal(simMedic.hp, 1);
   assert.equal(simMedic.handCount, 1);
-  assert.equal(simMedic.rejuvenationUsed, true);
+  assert.equal(simMedic.rejuvenationTriggerCount, 1);
   assert.equal(simMedic.energy, 2);
   assert.equal(simMedic.activeSkillUses, 1);
   const actionsAfterOne = generator.generateFromVisible(
@@ -14018,7 +14098,8 @@ test("AI·灵医：滋荣在0、1、2次使用状态正确生成动作且只治�
   const afterSelf = new AiSimulator(afterAlly).apply(afterAlly, selfAction, medic.id),
     simMedicAgain = afterSelf.players.find((player) => player.id === medic.id);
   assert.equal(simMedicAgain.hp, 2);
-  assert.equal(simMedicAgain.handCount, 1);
+  assert.equal(simMedicAgain.handCount, 2);
+  assert.equal(simMedicAgain.rejuvenationTriggerCount, 2);
   assert.equal(simMedicAgain.energy, 0);
   assert.equal(simMedicAgain.activeSkillUses, 2);
   assert.equal(
@@ -14073,7 +14154,7 @@ test("AI·灵医：濒死模拟不再把回春计作额外治疗容量", () => {
         shield: 0,
         handCount: 1,
         expectedRecoverCount: 1,
-        rejuvenationUsed: false
+        rejuvenationTriggerCount: 0
       }
     ]
   };
@@ -14087,7 +14168,7 @@ test("AI·灵医：濒死模拟不再把回春计作额外治疗容量", () => {
   assert.equal(target.hp, 0);
   assert.equal(medic.expectedRecoverCount, 1);
   assert.equal(medic.handCount, 1);
-  assert.equal(medic.rejuvenationUsed, false);
+  assert.equal(medic.rejuvenationTriggerCount, 0);
 });
 
 test("AI·灵医：首次成功濒死救援恢复1点并触发回春摸牌", () => {
@@ -14108,7 +14189,7 @@ test("AI·灵医：首次成功濒死救援恢复1点并触发回春摸牌", () 
       {
         id: "rescue-medic", seatIndex: 2, generalId: "spirit-medic", battleTeam: "dawn",
         alive: true, hp: 4, maxHp: 4, shield: 0, handCount: 1,
-        expectedRecoverCount: 1, rejuvenationUsed: false
+        expectedRecoverCount: 1, rejuvenationTriggerCount: 0
       }
     ]
   };
@@ -14123,7 +14204,57 @@ test("AI·灵医：首次成功濒死救援恢复1点并触发回春摸牌", () 
   assert.equal(target.hp, 1);
   assert.equal(medic.expectedRecoverCount, 0);
   assert.equal(medic.handCount, 1);
-  assert.equal(medic.rejuvenationUsed, true);
+  assert.equal(medic.rejuvenationTriggerCount, 1);
+});
+
+test("AI·灵医：第二次濒死救援仍占用回春第二次机会", () => {
+  const attacker = {
+    id: "rescue2-attacker", seatIndex: 0, generalId: "blade-walker", battleTeam: "dusk",
+    alive: true, hp: 4, maxHp: 4, shield: 0, handCount: 1,
+    hand: [{ id: "rescue2-assault", definitionId: "assault" }], attackUsed: 0, attackLimit: 2,
+    exposeWeaknessStacks: 0, assaultBonus: 0
+  };
+  const target = {
+    id: "rescue2-target", seatIndex: 1, generalId: "oath-warden", battleTeam: "dawn",
+    alive: true, hp: 0, maxHp: 4, shield: 0, handCount: 0, expectedRecoverCount: 0,
+    blockProbability: 0, twoBlockProbability: 0
+  };
+  const medic = {
+    id: "rescue2-medic", seatIndex: 2, generalId: "spirit-medic", battleTeam: "dawn",
+    alive: true, hp: 4, maxHp: 4, shield: 0, handCount: 2,
+    expectedRecoverCount: 2, rejuvenationTriggerCount: 0
+  };
+  const state = { players: [attacker, target, medic] },
+    simulator = new AiSimulator(state);
+  simulator.simulateAssault(state, attacker, target, 1);
+  assert.equal(target.alive, true);
+  assert.equal(target.hp, 1);
+  assert.equal(medic.expectedRecoverCount, 0);
+  assert.equal(medic.rejuvenationTriggerCount, 2);
+});
+
+test("AI·灵医：模拟普通治疗前两次各触发回春摸牌且第三次不触发", () => {
+  const medic = {
+    id: "healfrom-medic", generalId: "spirit-medic", battleTeam: "dawn",
+    alive: true, hp: 4, maxHp: 4, handCount: 0, rejuvenationTriggerCount: 0
+  };
+  const ally = {
+    id: "healfrom-ally", battleTeam: "dawn", alive: true, hp: 1, maxHp: 4, handCount: 0
+  };
+  const state = { players: [medic, ally] },
+    simulator = new AiSimulator(state);
+  simulator.healFrom(state, medic, ally, 1);
+  assert.equal(ally.hp, 2);
+  assert.equal(medic.rejuvenationTriggerCount, 1);
+  assert.equal(medic.handCount, 1);
+  simulator.healFrom(state, medic, ally, 1);
+  assert.equal(ally.hp, 3);
+  assert.equal(medic.rejuvenationTriggerCount, 2);
+  assert.equal(medic.handCount, 2);
+  simulator.healFrom(state, medic, ally, 1);
+  assert.equal(ally.hp, 4);
+  assert.equal(medic.rejuvenationTriggerCount, 2);
+  assert.equal(medic.handCount, 2);
 });
 
 test("AI·灵医：共生顺序从非0号出牌者开始并让回春命中首个合法目标", () => {
@@ -14150,7 +14281,7 @@ test("AI·灵医：共生顺序从非0号出牌者开始并让回春命中首个
     maxHp: 4,
     handCount: 1,
     hand: [{ id: "ordered-symbiosis", definitionId: "symbiosis" }],
-    rejuvenationUsed: false
+    rejuvenationTriggerCount: 0
   };
   const ally3 = {
     id: "symbiosis-seat-3", seatIndex: 3, battleTeam: "dawn", alive: true, hp: 1, maxHp: 4, handCount: 0
@@ -14161,7 +14292,8 @@ test("AI·灵医：共生顺序从非0号出牌者开始并让回春命中首个
     ).apply(state, { type: "card", card: { ...CARD_DEFINITIONS.symbiosis, id: "ordered-symbiosis" }, targets: state.players }, medic.id);
   assert.equal(next.players[3].hp, 2);
   assert.equal(next.players[0].hp, 2);
-  assert.equal(next.players[2].handCount, 1);
+  assert.equal(next.players[2].handCount, 2);
+  assert.equal(next.players[2].rejuvenationTriggerCount, 2);
 });
 
 // ---- AI 角色行为·影客 ----
@@ -14394,6 +14526,38 @@ test("AI·炎术师：动作生成、模拟和价值状态共用焚场动态成�
       .find((entry) => entry.skill?.id === "burningField"),
     undefined
   );
+});
+
+test("AI·炎术师：模拟焚场时按每个目标独立格挡概率折算伤害", () => {
+  const actor = {
+    id: "bf-actor", seatIndex: 0, generalId: "ember-magus", battleTeam: "dawn",
+    alive: true, hp: 4, maxHp: 4, shield: 0, energy: 3, maxEnergy: 4, handCount: 0,
+    activeSkillUses: 0
+  };
+  const blocked = {
+    id: "bf-blocked", seatIndex: 1, battleTeam: "dusk", alive: true,
+    hp: 4, maxHp: 4, shield: 0, handCount: 1,
+    blockProbability: 1, twoBlockProbability: 0, expectedRecoverCount: 0
+  };
+  const partial = {
+    id: "bf-partial", seatIndex: 2, battleTeam: "dusk", alive: true,
+    hp: 4, maxHp: 4, shield: 0, handCount: 1,
+    blockProbability: .5, twoBlockProbability: 0, expectedRecoverCount: 0
+  };
+  const open = {
+    id: "bf-open", seatIndex: 3, battleTeam: "dusk", alive: true,
+    hp: 4, maxHp: 4, shield: 0, handCount: 0,
+    blockProbability: 0, twoBlockProbability: 0, expectedRecoverCount: 0
+  };
+  const state = { players: [actor, blocked, partial, open] },
+    next = new AiSimulator(state).apply(
+      state,
+      { type: "skill", skill: ACTIVE_SKILLS.burningField, targets: [] },
+      actor.id
+    );
+  assert.equal(next.players[1].hp, 4, "必挡目标不因焚场扣血");
+  assertClose(next.players[2].hp, 3.5);
+  assert.equal(next.players[3].hp, 3, "无格挡目标正常受1点伤害");
 });
 
 // ---- AI 角色行为·追猎者 ----
@@ -16881,7 +17045,7 @@ test("AI·反制先验：灵医回春摸牌增加反制先验", () => {
   assert.equal(ally.hp, 3);
   assert.equal(medic.handCount, 1);
   assertClose(medic.counterProbability, .5);
-  assert.equal(medic.rejuvenationUsed, true);
+  assert.equal(medic.rejuvenationTriggerCount, 1);
 });
 
 test("AI·反制先验：猎杀被格挡后摸牌增加反制先验", () => {
@@ -26614,7 +26778,7 @@ test("UI·玩家面板：八名角色使用结构化被动触发条件与限制�
   const expected = {
     "blade-walker": "每回合按不同卡牌类别分别触发",
     "oath-warden": "每回合限触发1次",
-    "spirit-medic": "每回合限触发1次",
+    "spirit-medic": "每回合限触发2次",
     "shade-agent": "每回合限触发1次",
     "ember-magus": "每次卡牌结算最多触发1次",
     "trail-hunter": "每回合限触发2次；同一敌人每回合限1次",
@@ -28848,7 +29012,7 @@ test("生命周期：旧局护援技能响应取消后不会弃牌或减少新�
   };
   const hp = target.hp,
     pending = old.damage(
-      source, target, 1, { skill: "burningField", actionName: "焚场", canBlock: false, damageType: "skill" }
+      source, target, 1, { skill: "burningField", actionName: "焚场", canBlock: true, damageType: "skill" }
     );
   await opened;
   old.dispose();

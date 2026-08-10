@@ -18,7 +18,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "oath-warden", name: "守誓者", glyph: "誓", portrait: "./assets/characters/oath-warden.svg",
     loreFaction: "曜石城垒", maxHp: 4, tags: ["防护", "辅助"], roleTags: ["tank", "support"], passiveSkillIds: ["guardianAid"], activeSkillIds: ["barrier"],
-    passiveName: "护援", passiveDescription: "每回合一次，弃置1张手牌令队友即将受到的伤害-1。",
+    passiveName: "护援", passiveDescription: "每回合1次，弃置1张手牌令队友即将受到的伤害-1。",
     passiveTriggerText: "队友即将受到伤害且你可弃置1张手牌时", passiveLimitText: "每回合限触发1次",
     activeName: "壁垒", activeDescription: "消耗2点能量，使一名己方阵营角色获得1点护盾；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
     description: "背负古誓的城垒守卫，擅长将危险拦截在盟友身前。",
@@ -27,9 +27,9 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "spirit-medic", name: "灵医", glyph: "灵", portrait: "./assets/characters/spirit-medic.svg",
     loreFaction: "雾泉庭", maxHp: 4, tags: ["恢复", "辅助"], roleTags: ["support", "healer"], passiveSkillIds: ["rejuvenation"], activeSkillIds: ["symbiosis"],
-    passiveName: "回春", passiveDescription: "每回合首次使一名己方阵营角色实际恢复生命时，你摸1张牌；濒死救援也可触发。",
-    passiveTriggerText: "由你使自己或队友恢复生命时", passiveLimitText: "每回合限触发1次",
-    activeName: "滋荣", activeDescription: "消耗2点能量，使一名己方阵营角色恢复1点生命；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
+    passiveName: "回春", passiveDescription: "每回合前两次由你使自己或队友实际恢复生命时，你各摸1张牌；濒死救援也可触发。",
+    passiveTriggerText: "由你使自己或队友恢复生命时", passiveLimitText: "每回合限触发2次",
+    activeName: "滋荣", activeDescription: "消耗2点能量，使一名己方阵营角色恢复1点生命；每回合最多发动2次", activeCost: 2, activeLimitPerTurn: 2,
     description: "听见生命回声的游医，以自己的元息换取同伴继续作战。",
     aiProfile: profile(.45, .95, 1.45, 1.5, .75, .9, .85, .35)
   }),
@@ -47,7 +47,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
     loreFaction: "赤砂穹庐", maxHp: 4, tags: ["群攻", "爆发"], roleTags: ["damage", "caster"], passiveSkillIds: ["ember"], activeSkillIds: ["burningField"],
     passiveName: "余烬", passiveDescription: "卡牌每次结算首次对敌人造成实际伤害后，获得1点能量。",
     passiveTriggerText: "卡牌结算中首次对敌人造成实际伤害后", passiveLimitText: "每次卡牌结算最多触发1次",
-    activeName: "焚场", activeDescription: "消耗等同于当前存活敌方角色数量的能量，对所有存活敌人各造成1点不可格挡伤害；每回合最多发动2次。", activeCost: null, activeCostText: "当前存活敌人数点能量", activeLimitPerTurn: 2,
+    activeName: "焚场", activeDescription: "消耗等同于当前存活敌方角色数量的能量，对所有存活敌人各造成1点可格挡伤害；每回合最多发动2次。", activeCost: null, activeCostText: "当前存活敌人数点能量", activeLimitPerTurn: 2,
     description: "以赤砂为燃料的术士，能从每一道伤痕里回收燃烧的余烬。",
     aiProfile: profile(1.45, .45, .25, .3, .45, .55, .45, 1.25)
   }),

@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260809-general-balance-v140";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-general-balance-v140";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260810-ruletext-v143";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-ruletext-v143";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

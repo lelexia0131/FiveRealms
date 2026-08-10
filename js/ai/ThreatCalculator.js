@@ -19,8 +19,8 @@ export class ThreatCalculator {
     const statuses = target.statuses ?? [];
     const handCount = target.handCount ?? target.hand?.length ?? 0;
     let score = ((target.maxHp ?? 0) - (target.hp ?? 0)) * 2.5 + handCount * 1.4 + (target.energy ?? 0) * 2;
-    if (roleTags.some((tag) => ["damage","attacker","caster","hunter"].includes(tag)) || displayTags.some((tag) => ["进攻","群攻","爆发"].includes(tag))) score += 4;
-    if (roleTags.some((tag) => ["support","healer","tank","protector","control"].includes(tag)) || displayTags.some((tag) => ["恢复","辅助","保护","控制"].includes(tag))) score += 3;
+    if (roleTags.some((tag) => ["damage","attacker","caster","hunter"].includes(tag)) || displayTags.some((tag) => ["输出","群攻","爆发","突破"].includes(tag))) score += 4;
+    if (roleTags.some((tag) => ["support","healer","tank","protector","control"].includes(tag)) || displayTags.some((tag) => ["防护","恢复","辅助","控制","过牌"].includes(tag))) score += 3;
     if ((target.hp ?? 0) + (target.shield ?? 0) <= expectedDamage) score += 24;
     if (statuses.includes("exposed") || statuses.includes("exposeWeakness") || statuses.includes("huntMark")) score += 4;
     score += (memory?.recentAggressors?.[target.id] ?? 0) * 2;

@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-general-balance-v140";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-general-balance-v140";
-import { randomChoice } from "../utils/helpers.js?build=20260809-general-balance-v140";
-import { Debug } from "../utils/debug.js?build=20260809-general-balance-v140";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-ruletext-v143";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-ruletext-v143";
+import { randomChoice } from "../utils/helpers.js?build=20260810-ruletext-v143";
+import { Debug } from "../utils/debug.js?build=20260810-ruletext-v143";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -81,12 +81,12 @@ const PASSIVE_SKILLS = {
 
   rejuvenation(game, owner) {
     game.eventBus.on("turnStart", `${owner.id}:rejuvenation:reset`, () => {
-      owner.turnFlags.rejuvenationUsed = false;
+      owner.turnFlags.rejuvenationTriggerCount = 0;
     });
     game.eventBus.on("afterHeal", `${owner.id}:rejuvenation`, async (event) => {
       if (!owner.alive || event.source?.id !== owner.id || event.target?.battleTeam !== owner.battleTeam
-        || event.actualAmount <= 0 || owner.turnFlags.rejuvenationUsed) return;
-      owner.turnFlags.rejuvenationUsed = true;
+        || event.actualAmount <= 0 || (owner.turnFlags.rejuvenationTriggerCount ?? 0) >= 2) return;
+      owner.turnFlags.rejuvenationTriggerCount = (owner.turnFlags.rejuvenationTriggerCount ?? 0) + 1;
       const gameId = game.state.gameId;
       const drawn = await game.drawCards(owner, 1, "回春", { silent:true });
       if (!game.isSessionValid(gameId)) return;
@@ -297,7 +297,7 @@ export const ACTIVE_SKILLS = Object.freeze({
       for (const target of game.getEnemies(source)) {
         if (!game.isSessionValid(gameId) || game.state.isGameOver) break;
         if (target.alive) await game.damage(source, target, 1, {
-          skill:"burningField", actionName:"焚场", canBlock:false,
+          skill:"burningField", actionName:"焚场", canBlock:true,
           damageType:"skill", resolutionId:context.resolutionId
         });
       }

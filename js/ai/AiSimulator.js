@@ -2,15 +2,15 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260809-general-balance-v140";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-general-balance-v140";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260809-general-balance-v140";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260809-general-balance-v140";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260809-general-balance-v140";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260809-general-balance-v140";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260809-general-balance-v140";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260809-general-balance-v140";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260809-general-balance-v140";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260810-ruletext-v143";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-ruletext-v143";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-ruletext-v143";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260810-ruletext-v143";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260810-ruletext-v143";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260810-ruletext-v143";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260810-ruletext-v143";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260810-ruletext-v143";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-ruletext-v143";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -25,7 +25,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260809-general-balance-v140";
+} from "./AiProbabilityBranches.js?build=20260810-ruletext-v143";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -2531,7 +2531,7 @@ export class AiSimulator {
       this.stealResourceToHand(state, actor, target, chance);
     } else if (skill.id === "burningField") {
       for (const enemy of state.players) if (enemy.alive && enemy.battleTeam !== actor.battleTeam) {
-        this.applyDamage(state, actor, enemy, 1, { canBlock:false, eventBranches:eventWorlds });
+        this.applyDamage(state, actor, enemy, 1, { canBlock:true, eventBranches:eventWorlds });
       }
     } else if (skill.id === "hunt" && target) {
       target.huntMarkProbabilities ??= {};
@@ -3253,7 +3253,8 @@ export class AiSimulator {
         if (remaining <= PROBABILITY_EPSILON) break;
         const available = Math.max(0, rescuer.expectedRecoverCount ?? 0);
         if (available <= PROBABILITY_EPSILON) continue;
-        const canRejuvenate = rescuer.generalId === "spirit-medic" && !rescuer.rejuvenationUsed;
+        const canRejuvenate = rescuer.generalId === "spirit-medic"
+          && (rescuer.rejuvenationTriggerCount ?? 0) < 2;
         const healingPerCard = 1;
         const spent = Math.min(1, available);
         if (spent <= PROBABILITY_EPSILON) continue;
@@ -3265,8 +3266,8 @@ export class AiSimulator {
         rescuer.handCount = Math.max(0, (rescuer.handCount ?? 0) - spent);
         if (canRejuvenate) {
           this.gainUnknownCardsWithCounterState(state, rescuer, spent, null, "rejuvenation-rescue-draw");
+          rescuer.rejuvenationTriggerCount = (rescuer.rejuvenationTriggerCount ?? 0) + 1;
         }
-        if (canRejuvenate) rescuer.rejuvenationUsed = true;
         this.consumeKnownCardsFromHand(state, rescuer, "recover", spent);
         this.simulateCoordination(state, rescuer, [target], spent);
       }
@@ -3301,10 +3302,11 @@ export class AiSimulator {
     const beforeHp = target.hp;
     this.heal(target, amount);
     const actualAmount = Math.max(0, target.hp - beforeHp);
-    if (source?.generalId === "spirit-medic" && source.battleTeam === target.battleTeam && !source.rejuvenationUsed) {
+    if (source?.generalId === "spirit-medic" && source.battleTeam === target.battleTeam
+      && (source.rejuvenationTriggerCount ?? 0) < 2) {
       const triggerWeight = Math.min(1, actualAmount);
       if (triggerWeight <= PROBABILITY_EPSILON) return;
-      source.rejuvenationUsed = true;
+      source.rejuvenationTriggerCount = (source.rejuvenationTriggerCount ?? 0) + 1;
       this.gainUnknownCardsWithCounterState(state, source, triggerWeight, null, "rejuvenation-draw");
     }
   }

@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260809-general-balance-v140";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-ruletext-v143";
 
 /**
  * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；

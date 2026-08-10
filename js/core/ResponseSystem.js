@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260809-general-balance-v140";
-import { createId } from "../utils/helpers.js?build=20260809-general-balance-v140";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260809-general-balance-v140";
-import { RuleEngine } from "./RuleEngine.js?build=20260809-general-balance-v140";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-ruletext-v143";
+import { createId } from "../utils/helpers.js?build=20260810-ruletext-v143";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260810-ruletext-v143";
+import { RuleEngine } from "./RuleEngine.js?build=20260810-ruletext-v143";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
