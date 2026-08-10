@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260810-global-turn-reactive-v150";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-global-turn-reactive-v150";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260810-distance-combined-v151";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-distance-combined-v151";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

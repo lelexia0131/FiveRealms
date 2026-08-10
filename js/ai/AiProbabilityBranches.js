@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-global-turn-reactive-v150";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-distance-combined-v151";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

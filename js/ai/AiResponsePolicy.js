@@ -1,14 +1,14 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-global-turn-reactive-v150";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260810-global-turn-reactive-v150";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260810-global-turn-reactive-v150";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-global-turn-reactive-v150";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-distance-combined-v151";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260810-distance-combined-v151";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260810-distance-combined-v151";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-distance-combined-v151";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260810-global-turn-reactive-v150";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260810-global-turn-reactive-v150";
+} from "./lightningScoring.js?build=20260810-distance-combined-v151";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260810-distance-combined-v151";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-global-turn-reactive-v150";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-global-turn-reactive-v150";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260810-distance-combined-v151";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-distance-combined-v151";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

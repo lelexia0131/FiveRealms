@@ -38,9 +38,9 @@ export class DistanceSystem {
     let distance = this.getBaseDistance(game, source, target);
     if (!Number.isFinite(distance) || distance === 0) return distance;
     // 真实距离保持整数规则；概率装备只能通过 getRangeLegalityProbability 参与 AI 推演。
-    if (this.getEquipmentDefinitionId(source) === "telescope") distance = Math.max(1, distance - 1);
+    if (this.getEquipmentDefinitionId(source) === "telescope") distance -= 1;
     if (this.getEquipmentDefinitionId(target) === "barrierDevice") distance += 1;
-    return distance;
+    return Math.max(1, distance);
   }
 
   /**
@@ -98,8 +98,9 @@ export class DistanceSystem {
         const baseDistance = this.getBaseDistance(game, source, target);
         if (!Number.isFinite(baseDistance)) return false;
         if (baseDistance === 0) return true;
-        const distance = Math.max(1, baseDistance - (isPresent(branch.conditions, source, "telescope") ? 1 : 0))
-          + (isPresent(branch.conditions, target, "barrierDevice") ? 1 : 0);
+        const distance = Math.max(1, baseDistance
+          - (isPresent(branch.conditions, source, "telescope") ? 1 : 0)
+          + (isPresent(branch.conditions, target, "barrierDevice") ? 1 : 0));
         return distance <= range;
       });
       const equipmentLegal = (options.equipmentRequirements ?? []).every(({ player, definitionId, present = true }) => (

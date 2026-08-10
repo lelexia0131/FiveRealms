@@ -4008,6 +4008,25 @@ test("望远镜与屏障：望远镜和屏障在同一条方向距离上依次�
   assert.equal(DistanceSystem.getDistance(game, ps[0], ps[2]), 2);
 });
 
+test("望远镜与屏障：有角色死亡压缩存活环时基础距离1仍组合修正为1且突袭可选中", () => {
+  const blade = makePlayer("blade", 0, "dawn"),
+    dead = makePlayer("dead", 1, "dusk"),
+    medic = makePlayer("medic", 2, "dusk"),
+    pyro = makePlayer("pyro", 3, "dawn"),
+    tail = makePlayer("tail", 4, "dusk"),
+    assault = instance("assault");
+  dead.alive = false;
+  const { game }
+    = makeGame([blade, dead, medic, pyro, tail]);
+  blade.hand.push(assault);
+  blade.equipment = instance("telescope");
+  medic.equipment = instance("barrierDevice");
+  assert.equal(DistanceSystem.getBaseDistance(game, blade, medic), 1);
+  assert.equal(DistanceSystem.getDistance(game, blade, medic), 1);
+  assert.equal(DistanceSystem.getRangeLegalityProbability(game, blade, medic, blade.attackRange), 1);
+  assert.ok(RuleEngine.getCardTargets(game, blade, assault).includes(medic));
+});
+
 test("望远镜与屏障：距离装备即时改变普通突袭合法目标且 AI 快照使用相同修正", () => {
   const source = makePlayer("source", 0, "dawn"),
     ally = makePlayer("ally", 1, "dawn"),
