@@ -4113,7 +4113,7 @@ test("刃行者：连势在格挡和雷达免疫后保留至后续命中", async
   await run("radar");
 });
 
-test("刃行者：连势只在本人回合结束时清空", async () => {
+test("刃行者：连势在任意玩家回合结束的 turnEnd 立即清空", async () => {
   const blade = makePlayer("blade-turn-end", 0, "dawn", "ai", 0),
     ally = makePlayer("blade-ally", 1, "dawn"),
     enemy = makePlayer("blade-enemy", 2, "dusk"),
@@ -4122,7 +4122,8 @@ test("刃行者：连势只在本人回合结束时清空", async () => {
   registerPassiveSkills(game);
   blade.turnFlags.momentum = 2;
   await game.eventBus.emit("turnEnd", { type: "turnEnd", player: ally });
-  assert.equal(blade.turnFlags.momentum, 2);
+  assert.equal(blade.turnFlags.momentum, 0);
+  blade.turnFlags.momentum = 2;
   await game.eventBus.emit("turnEnd", { type: "turnEnd", player: blade });
   assert.equal(blade.turnFlags.momentum, 0);
   assert.doesNotMatch(playerPanelTemplate(blade, { humanTeam: "dawn" }), /连势 \d/);
@@ -4148,6 +4149,60 @@ test("刃行者：完整回合结束流程会清空未消费的连势", async ()
   });
   await game.takeTurn(blade, game.state.gameId);
   assert.equal(blade.turnFlags.momentum, 0);
+});
+
+test("刃行者：连势额度每个全局回合开始重置且回合外产生的连势不跨回合", async () => {
+  const a = makePlayer("momentum-global-turn-a", 0, "dusk", "ai"),
+    blade = makePlayer("momentum-global-turn-blade", 1, "dawn", "ai", 0),
+    b = makePlayer("momentum-global-turn-b", 2, "dusk", "ai");
+  const { game } = makeGame([a, blade, b]);
+  registerPassiveSkills(game);
+  game.aiController.selectAction = async () => ({ type: "end" });
+  game.state.deck.cards.push(instance("block"), instance("charge"), instance("assault"));
+  // A 回合：刃行者通过借势在他人回合使用 tactic / equipment 卡，产生本回合连势额度。
+  await game.eventBus.emit("cardUsed", { source: blade, card: instance("harvest"), targets: [] });
+  assert.equal(blade.turnFlags.momentum, 1);
+  await game.eventBus.emit("cardUsed", { source: blade, card: instance("energyDevice"), targets: [] });
+  assert.equal(blade.turnFlags.momentum, 2);
+  // 同一回合内类别唯一且不超过上限：重复 tactic 不再叠加。
+  await game.eventBus.emit("cardUsed", { source: blade, card: instance("harvest"), targets: [] });
+  assert.equal(blade.turnFlags.momentum, 2);
+  assert.deepEqual([...blade.turnFlags.categoriesUsed], ["tactic", "equipment"]);
+  // B 新回合开始：categoriesUsed / momentum 已重置。
+  await game.takeTurn(b, game.state.gameId);
+  assert.equal(blade.turnFlags.categoriesUsed.size, 0);
+  assert.equal(blade.turnFlags.momentum, 0);
+  // A 回合连势加成不得进入 B 回合：B 回合突袭不再带连势加成。
+  const damageEvent = { amount: 1, source: blade, card: instance("assault"), metadata: {} };
+  await game.eventBus.emit("beforeDamage", damageEvent);
+  assert.equal(damageEvent.amount, 1);
+  assert.equal(damageEvent.metadata.consumeMomentum, undefined);
+  // B 回合再次产生连势，从 0 重新开始。
+  await game.eventBus.emit("cardUsed", { source: blade, card: instance("charge"), targets: [] });
+  assert.equal(blade.turnFlags.momentum, 1);
+});
+
+test("刃行者：回合外连势在当前全局回合结束的 turnEnd 立即清空", async () => {
+  const a = makePlayer("momentum-turn-end-a", 0, "dusk", "ai"),
+    blade = makePlayer("momentum-turn-end-blade", 1, "dawn", "ai", 0),
+    b = makePlayer("momentum-turn-end-b", 2, "dusk", "ai");
+  const { game } = makeGame([a, blade, b]);
+  registerPassiveSkills(game);
+  game.aiController.selectAction = async () => ({ type: "end" });
+  game.state.deck.cards.push(instance("block"), instance("charge"), instance("assault"));
+  // A 回合出牌阶段：刃行者在他人回合通过借势真正使用 tactic 卡，获得本回合连势。
+  game.eventBus.on("playPhaseStart", "test:momentum-off-turn-gain", async (event) => {
+    if (event.player?.id !== a.id) return;
+    await game.eventBus.emit("cardUsed", { source: blade, card: instance("harvest"), targets: [] });
+  });
+  await game.takeTurn(a, game.state.gameId);
+  // A 的全局回合在 turnEnd 结束时立即清空 momentum，尚未进入 B turnStart。
+  assert.equal(blade.turnFlags.momentum, 0);
+  // categoriesUsed 不依赖 turnEnd 清空，保留到下一全局 turnStart 统一重置。
+  assert.equal(blade.turnFlags.categoriesUsed.size, 1);
+  // B 新回合开始后 categoriesUsed 统一重置。
+  await game.takeTurn(b, game.state.gameId);
+  assert.equal(blade.turnFlags.categoriesUsed.size, 0);
 });
 
 // ---- 守誓者 ----
@@ -4766,6 +4821,44 @@ test("灵医：回春前两次机会分别由普通治疗与濒死救援占用�
   );
 });
 
+test("灵医：回春额度每个新全局回合开始重置且每回合仍最多触发2次", async () => {
+  const a = makePlayer("rejuvenation-global-turn-a", 0, "dusk", "ai"),
+    medic = makePlayer("rejuvenation-global-turn-medic", 1, "dawn", "ai", 2),
+    b = makePlayer("rejuvenation-global-turn-b", 2, "dusk", "ai"),
+    ally = makePlayer("rejuvenation-global-turn-ally", 3, "dawn");
+  medic.hp = 1;
+  ally.hp = 1;
+  const { game } = makeGame([a, medic, b, ally]);
+  registerPassiveSkills(game);
+  game.aiController.selectAction = async () => ({ type: "end" });
+  game.state.deck.cards.push(
+    instance("block"), instance("charge"), instance("assault"),
+    instance("shield"), instance("duel"), instance("recover"),
+    instance("harvest"), instance("energyDevice"), instance("mutualBenefit"),
+    instance("leverage"), instance("telescope"), instance("lightning")
+  );
+  // A 回合：灵医在他人回合治疗，占满本回合两次回春额度。
+  assert.equal(await game.heal(medic, ally, 1, { reason: "测试A回合第一次回春" }), 1);
+  assert.equal(await game.heal(medic, medic, 1, { reason: "测试A回合第二次回春" }), 1);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 2);
+  assert.equal(medic.hand.length, 2);
+  assert.equal(await game.heal(medic, medic, 1, { reason: "测试A回合第三次治疗" }), 1);
+  assert.equal(medic.hand.length, 2);
+  // B 新回合开始：统一 reset 重新给予两次机会，不清空灵医其他状态。
+  await game.takeTurn(b, game.state.gameId);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 0);
+  assert.equal(await game.heal(medic, ally, 1, { reason: "测试B回合第一次回春" }), 1);
+  assert.equal(await game.heal(medic, medic, 1, { reason: "测试B回合第二次回春" }), 1);
+  assert.equal(medic.hand.length, 4);
+  assert.equal(await game.heal(medic, ally, 1, { reason: "测试B回合第三次治疗" }), 1);
+  assert.equal(medic.hand.length, 4);
+  assert.equal(medic.turnFlags.rejuvenationTriggerCount, 2);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${medic.name}触发「回春」，摸1张牌。`).length,
+    4
+  );
+});
+
 // ---- 影客 ----
 
 test("影客：为4点生命且窥隙经实际伤害与隐藏选择查看至多2张实体牌", async () => {
@@ -5188,6 +5281,31 @@ test("影客：护盾完全吸收伤害时窥隙不触发且不写入待处理�
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id] ?? {}).length, 0);
 });
 
+test("影客：窥隙额度每个全局回合开始重置且回合外伤害可再次触发", async () => {
+  const a = makePlayer("spy-gap-global-turn-a", 0, "dusk", "ai"),
+    shade = makePlayer("spy-gap-global-turn-shade", 1, "dawn", "human", 3),
+    b = makePlayer("spy-gap-global-turn-b", 2, "dusk", "ai"),
+    target = makePlayer("spy-gap-global-turn-target", 3, "dusk");
+  target.hand.push(instance("charge"), instance("harvest"), instance("duel"));
+  const { game, ui } = makeGame([a, shade, b, target]);
+  registerPassiveSkills(game);
+  game.aiController.selectAction = async () => ({ type: "end" });
+  // A 回合：影客在他人回合造成实际伤害触发窥隙。
+  await game.damage(shade, target, 1, { canBlock: false });
+  assert.equal(ui.hiddenRequests.length, 1);
+  assert.equal(shade.turnFlags.spyGapTriggered, true);
+  // 同一回合第二次实际伤害不再触发。
+  await game.damage(shade, target, 1, { canBlock: false });
+  assert.equal(ui.hiddenRequests.length, 1);
+  // B 新回合开始：窥隙额度与待处理目标状态重置。
+  await game.takeTurn(b, game.state.gameId);
+  assert.equal(shade.turnFlags.spyGapTriggered, false);
+  assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
+  // B 回合再次造成实际伤害可重新触发。
+  await game.damage(shade, target, 1, { canBlock: false });
+  assert.equal(ui.hiddenRequests.length, 2);
+});
+
 // ---- 炎术师 ----
 
 test("炎术师：余烬每个卡牌结算ID最多触发1次", async () => {
@@ -5548,6 +5666,41 @@ test("追猎者：猎印到期覆盖正常回合与首次回合前借势时钟",
   assert.equal(earlyTarget.statuses.huntMark, undefined);
 });
 
+test("追猎者：追踪额度每个全局回合重置且猎印持续按自己回合计算", async () => {
+  const a = makePlayer("tracking-global-turn-a", 0, "dusk", "ai"),
+    hunter = makePlayer("tracking-global-turn-hunter", 1, "dawn", "ai", 5),
+    b = makePlayer("tracking-global-turn-b", 2, "dusk", "ai"),
+    enemyA = makePlayer("tracking-global-turn-enemy-a", 3, "dusk"),
+    enemyB = makePlayer("tracking-global-turn-enemy-b", 4, "dusk");
+  const { game } = makeGame([a, hunter, b, enemyA, enemyB]);
+  registerPassiveSkills(game);
+  game.aiController.selectAction = async () => ({ type: "end" });
+  game.state.deck.cards.push(instance("block"), instance("charge"), instance("assault"));
+  const target = (enemy) => game.eventBus.emit(
+    "targetSelected", { source: hunter, card: instance("assault"), targets: [enemy] }
+  );
+  // A 回合：追猎者在他人回合以突袭指定两名敌人，本回合额度用满。
+  await target(enemyA);
+  await target(enemyB);
+  assert.equal(hunter.turnFlags.trackingTargetIds.size, 2);
+  await target(enemyA);
+  assert.equal(hunter.turnFlags.trackingTargetIds.size, 2);
+  assert.deepEqual(
+    [...hunter.turnFlags.trackingTargetIds].sort(), [enemyA.id, enemyB.id].sort()
+  );
+  // B 新回合开始：trackingTargetIds 清空，可重新对同一敌人留下猎印。
+  await game.takeTurn(b, game.state.gameId);
+  assert.equal(hunter.turnFlags.trackingTargetIds.size, 0);
+  await target(enemyA);
+  assert.equal(enemyA.statuses.huntMark?.sourceId, hunter.id);
+  // 已有猎印不因另一个玩家开始新回合消失。
+  await game.takeTurn(a, game.state.gameId);
+  assert.ok(enemyA.statuses.huntMark);
+  // 猎印仍持续到追猎者自己的下回合结束。
+  await game.takeTurn(hunter, game.state.gameId);
+  assert.equal(enemyA.statuses.huntMark, undefined);
+});
+
 // ---- 赌命者 ----
 
 test("赌命者：冒险失败不再随机弃牌", async () => {
@@ -5753,6 +5906,40 @@ test("赌命者：孤注强化的突袭被雷达免疫后只退出一次", async
     1
   );
   assert.ok(!game.state.logs.some((entry) => entry.message.includes("孤注") && entry.message.includes("伤害+1")));
+});
+
+test("赌命者：冒险额度每个全局回合开始重置且跨回合可再次触发", async () => {
+  const a = makePlayer("gamble-global-turn-a", 0, "dusk", "ai"),
+    gambler = makePlayer("gamble-global-turn-gambler", 1, "dawn", "ai", 6),
+    b = makePlayer("gamble-global-turn-b", 2, "dusk", "ai");
+  const { game } = makeGame([a, gambler, b], { random: () => 0 });
+  registerPassiveSkills(game);
+  game.aiController.selectAction = async () => ({ type: "end" });
+  game.state.deck.cards.push(
+    instance("block"), instance("charge"), instance("assault"),
+    instance("shield"), instance("duel"), instance("recover"),
+    instance("harvest"), instance("energyDevice"), instance("mutualBenefit"),
+    instance("leverage"), instance("telescope"), instance("lightning")
+  );
+  const drawReasons = [];
+  game.eventBus.on("afterCardMove", "test:gamble-cross-turn-draws", (event) => {
+    if (event.from === "deck" && event.to === "hand") drawReasons.push(event.reason);
+  });
+  const tacticUse = () => game.eventBus.emit(
+    "cardUsed", { source: gambler, card: instance("harvest"), targets: [] }
+  );
+  // A 回合：赌命者通过反制产生正式 cardUsed，触发冒险。
+  await tacticUse();
+  assert.equal(gambler.turnFlags.gambleTriggered, true);
+  assert.equal(drawReasons.filter((reason) => reason === "冒险").length, 1);
+  // 同一回合再次使用战术牌不再触发。
+  await tacticUse();
+  assert.equal(drawReasons.filter((reason) => reason === "冒险").length, 1);
+  // B 新回合开始：冒险额度重置，可再次触发。
+  await game.takeTurn(b, game.state.gameId);
+  assert.equal(gambler.turnFlags.gambleTriggered, false);
+  await tacticUse();
+  assert.equal(drawReasons.filter((reason) => reason === "冒险").length, 2);
 });
 
 // ---- 调律师 ----
@@ -6456,6 +6643,45 @@ test("调律师：beforeCardUse 与 beforeCardResolve 取消的牌都不触发�
     assert.equal(tuner.turnFlags.coordinationTriggered, false);
     assert.equal(game.state.publicCardPool.length, 0);
   }
+});
+
+test("调律师：协调额度每个全局回合开始重置且跨两个玩家回合可再次触发", async () => {
+  const a = makePlayer("coordination-global-turn-a", 0, "dusk", "ai"),
+    tuner = makePlayer("coordination-global-turn-tuner", 1, "dawn", "ai", 7),
+    b = makePlayer("coordination-global-turn-b", 2, "dusk", "ai"),
+    ally = makePlayer("coordination-global-turn-ally", 3, "dawn");
+  const { game } = makeGame([a, tuner, b, ally]);
+  registerPassiveSkills(game);
+  game.aiController.selectAction = async () => ({ type: "end" });
+  game.state.deck.cards.push(
+    instance("block"), instance("charge"), instance("assault"),
+    instance("shield"), instance("duel"), instance("recover"),
+    instance("harvest"), instance("energyDevice"), instance("mutualBenefit"),
+    instance("leverage"), instance("telescope"), instance("lightning")
+  );
+  const drawReasons = [];
+  game.eventBus.on("afterCardMove", "test:coordination-cross-turn-draws", (event) => {
+    if (event.from === "deck" && event.to === "hand") drawReasons.push(event.reason);
+  });
+  const validEvent = () => game.eventBus.emit(
+    "cardUsed", {
+      source: tuner, card: instance("shield"), targets: [ally],
+      resolved: true, effectiveTargets: [ally]
+    }
+  );
+  // A 回合：调律师通过成功反制使队友成为有效目标并触发协调。
+  await validEvent();
+  assert.equal(tuner.turnFlags.coordinationTriggered, true);
+  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 1);
+  // 同一回合第二次合法事件不再触发。
+  await validEvent();
+  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 1);
+  // B 新回合开始：协调额度重置。
+  await game.takeTurn(b, game.state.gameId);
+  assert.equal(tuner.turnFlags.coordinationTriggered, false);
+  // B 回合再次形成合法协调事件可再次触发。
+  await validEvent();
+  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 2);
 });
 
 // ==================== 响应、伤害与濒死 ====================
@@ -29262,6 +29488,35 @@ test("UI·布局样式：闪电：响应卡片信息框与其他战术牌共用�
 });
 
 // ==================== 生命周期、异常与 Cleanup ====================
+
+// ---- 回合生命周期与全局额度重置 ----
+
+test("生命周期：新全局回合只重置 global-turn reactive 额度而不重置非行动角色 actor-turn 状态", async () => {
+  const a = makePlayer("actor-turn-a", 0, "dawn", "ai", 0),
+    b = makePlayer("actor-turn-b", 1, "dusk", "ai", 1);
+  const { game } = makeGame([a, b]);
+  registerPassiveSkills(game);
+  game.aiController.selectAction = async () => ({ type: "end" });
+  // A 已在本回合消耗过 actor-turn 状态，并积累过 global-turn 额度。
+  a.turnFlags.attackUsed = 1;
+  a.turnFlags.recoverUsed = 1;
+  a.turnFlags.activeSkillUseCounts.breakArmy = 1;
+  a.turnFlags.activeSkillsUsed.add("breakArmy");
+  a.turnFlags.skipActionPhase = true;
+  a.turnFlags.coordinationTriggered = true;
+  a.turnFlags.momentum = 2;
+  // B 新回合开始。
+  await game.takeTurn(b, game.state.gameId);
+  assert.equal(a.turnFlags.attackUsed, 1);
+  assert.equal(a.turnFlags.recoverUsed, 1);
+  assert.equal(a.turnFlags.activeSkillUseCounts.breakArmy, 1);
+  assert.equal(a.turnFlags.activeSkillsUsed.has("breakArmy"), true);
+  assert.equal(a.turnFlags.skipActionPhase, true);
+  // 只有 global-turn reactive 额度被刷新。
+  assert.equal(a.turnFlags.coordinationTriggered, false);
+  assert.equal(a.turnFlags.momentum, 0);
+  assert.equal(a.turnFlags.categoriesUsed.size, 0);
+});
 
 // ---- 异常恢复与锁状态 ----
 

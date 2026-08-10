@@ -43,10 +43,12 @@ function board(general, overrides = {}, others = {}) {
 }
 
 registerScenario({
-  id: "skills.blade-momentum-order",
+id: "skills.blade-momentum-order",
   name: "刃行者：先铺垫后突袭",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "tactical",
   setup: () => board("blade-walker", {
     energy: 3,
     hand: [makeCard("assault"), makeCard("exposeWeakness"), makeCard("charge")]
@@ -60,10 +62,12 @@ registerScenario({
 });
 
 registerScenario({
-  id: "skills.blade-break-army-combo",
+id: "skills.blade-break-army-combo",
   name: "刃行者：破军补足突袭次数",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "tactical",
   setup: () => board("blade-walker", {
     energy: 3,
     turnFlags: { attackUsed: 1, attackLimit: 1 },
@@ -128,10 +132,12 @@ registerScenario({
 });
 
 registerScenario({
-  id: "skills.ember-burning-field",
+id: "skills.ember-burning-field",
   name: "炎术师：焚场多目标价值",
   category: "synergy",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "tactical",
   setup: () => board("ember-magus", {
     energy: 3,
     hand: [makeCard("assault")]
@@ -161,10 +167,12 @@ registerScenario({
 });
 
 registerScenario({
-  id: "skills.gambler-all-in-value",
+id: "skills.gambler-all-in-value",
   name: "赌命者：孤注价值判断",
   category: "resources",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "resource",
   setup: () => board("fate-gambler", {
     energy: 3,
     hand: [makeCard("assault"), makeCard("charge")]
@@ -211,10 +219,12 @@ registerScenario({
 });
 
 registerScenario({
-  id: "skills.hunter-tracking-mark",
+id: "skills.hunter-tracking-mark",
   name: "追猎者：突袭留印记",
   category: "synergy",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "tactical",
   setup: () => board("trail-hunter", {
     energy: 2,
     hand: [makeCard("assault"), makeCard("assault")]
@@ -227,10 +237,12 @@ registerScenario({
 });
 
 registerScenario({
-  id: "skills.medic-rejuvenation-trigger",
+id: "skills.medic-rejuvenation-trigger",
   name: "灵医：治疗触发回春",
   category: "synergy",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "tactical",
   setup: () => board("spirit-medic", {
     hp: 2,
     energy: 2,

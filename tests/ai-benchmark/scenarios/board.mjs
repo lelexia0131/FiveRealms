@@ -34,6 +34,7 @@ function board(actorOverrides = {}, others = {}) {
   const actor = players[0];
   actor.hp = actorOverrides.hp ?? 4;
   actor.energy = actorOverrides.energy ?? 2;
+  // maxEnergy 由 makeGame 按生产 TeamRuleService 计算。
   actor.hand = actorOverrides.hand ?? [];
   actor.turnFlags = actorOverrides.turnFlags ?? {};
   actor.statuses = actorOverrides.statuses ?? {};
@@ -45,6 +46,8 @@ registerScenario({
   name: "威胁优先：装备强敌优先",
   category: "board",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "tactical",
   setup: () => board({
     hand: [makeCard("assault")]
   }, { b: { hp: 4, equipment: makeCard("battleDevice") }, c: { hp: 2 } }),
@@ -60,6 +63,8 @@ registerScenario({
   name: "封印目标不浪费伤害",
   category: "board",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "tactical",
   setup: () => board({
     hand: [makeCard("assault")]
   }, { b: { hp: 1, statuses: { sealed: true } }, c: { hp: 2 } }),
@@ -168,6 +173,8 @@ registerScenario({
   name: "面对高威胁敌人优先防守",
   category: "board",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "tactical",
   setup: () => board({
     hp: 2,
     hand: [makeCard("shield"), makeCard("assault")]

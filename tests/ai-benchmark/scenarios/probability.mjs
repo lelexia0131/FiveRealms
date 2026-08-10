@@ -31,6 +31,7 @@ function board(actorOverrides = {}, others = {}, viewerMemory = null) {
   const actor = players[0];
   actor.hp = actorOverrides.hp ?? 4;
   actor.energy = actorOverrides.energy ?? 2;
+  // maxEnergy 由 makeGame 按生产 TeamRuleService 计算。
   actor.hand = actorOverrides.hand ?? [];
   actor.statuses = actorOverrides.statuses ?? {};
   if (viewerMemory) actor.aiMemory = { ...actor.aiMemory, ...viewerMemory };
@@ -44,6 +45,8 @@ registerScenario({
   name: "确定有格挡时避免直突袭",
   category: "probability",
   depth: 2,
+  difficulty: "advanced",
+  discrimination: "probability",
   setup: () => board(
     { hand: [makeCard("assault"), makeCard("exposeWeakness")] },
     { b: { hp: 2, hand: [makeCard("block", "kb1")] } },
@@ -61,6 +64,8 @@ registerScenario({
   name: "确定有反制时避免战术牌",
   category: "probability",
   depth: 2,
+  difficulty: "advanced",
+  discrimination: "probability",
   setup: () => board(
     { hand: [makeCard("shockwave"), makeCard("assault")] },
     { b: { hp: 2, hand: [makeCard("counter", "kc1")] } },
@@ -78,6 +83,8 @@ registerScenario({
   name: "未知反制风险下的战术牌取舍",
   category: "probability",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "probability",
   setup: () => board(
     { hand: [makeCard("provoke"), makeCard("assault")] },
     { b: { hp: 2, hand: [makeCard("assault"), makeCard("assault")] } }
@@ -95,6 +102,8 @@ registerScenario({
   name: "雷达装备概率影响突袭",
   category: "probability",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "probability",
   setup: () => board(
     { hand: [makeCard("assault"), makeCard("exposeWeakness")] },
     { b: { hp: 2, equipment: makeCard("defenseDevice"), hand: [makeCard("assault")] } }
@@ -111,6 +120,8 @@ registerScenario({
   name: "大概率反制下的战术牌风险",
   category: "probability",
   depth: 2,
+  difficulty: "advanced",
+  discrimination: "probability",
   setup: () => board(
     { hand: [makeCard("provoke"), makeCard("assault")] },
     {
@@ -131,6 +142,8 @@ registerScenario({
   name: "无反制风险时战术牌优先",
   category: "probability",
   depth: 2,
+  difficulty: "advanced",
+  discrimination: "probability",
   setup: () => board(
     { hand: [makeCard("provoke"), makeCard("assault")] },
     { b: { hp: 2, hand: [makeCard("assault"), makeCard("assault")] } }
@@ -157,6 +170,8 @@ registerScenario({
   depth: 2,
   family: "block-probability",
   expectedClass: "card:assault",
+  difficulty: "intermediate",
+  discrimination: "probability",
   setup: () => blockVariantBoard([makeCard("assault"), makeCard("assault")], []),
   grade: ({ action }) => {
     if (isCard(action, "assault") && targetsOnly(action, "b")) return quality(QUALITY.OPTIMAL, "0% 格挡，双突袭必杀");
@@ -171,6 +186,8 @@ registerScenario({
   depth: 2,
   family: "block-probability",
   expectedClass: "card:exposeWeakness",
+  difficulty: "intermediate",
+  discrimination: "probability",
   setup: () => blockVariantBoard([makeCard("block", "kb"), makeCard("assault")], [{ id: "kb", definitionId: "block" }]),
   grade: ({ action }) => {
     if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "破势绕过格挡风险");
@@ -186,6 +203,8 @@ registerScenario({
   depth: 2,
   family: "block-probability",
   expectedClass: "card:exposeWeakness",
+  difficulty: "advanced",
+  discrimination: "probability",
   setup: () => blockVariantBoard([makeCard("block", "kb2")], [{ id: "kb2", definitionId: "block" }]),
   grade: ({ action }) => {
     if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "100% 格挡下用破势突破");
@@ -211,6 +230,8 @@ registerScenario({
   depth: 1,
   family: "target-hp",
   expectedClass: "card:assault",
+  difficulty: "basic",
+  discrimination: "counterfactual",
   setup: () => hpVariantBoard(1),
   grade: ({ action }) => {
     if (isCard(action, "assault") && targetsOnly(action, "b")) return quality(QUALITY.OPTIMAL, "1HP 直接击杀");
@@ -225,6 +246,8 @@ registerScenario({
   depth: 2,
   family: "target-hp",
   expectedClass: "card:exposeWeakness",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => hpVariantBoard(2),
   grade: ({ action }) => {
     if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "2HP 先破势再突袭");
@@ -240,6 +263,8 @@ registerScenario({
   depth: 2,
   family: "target-hp",
   expectedClass: "card:exposeWeakness",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => hpVariantBoard(3),
   grade: ({ action }) => {
     if (isCard(action, "exposeWeakness")) return quality(QUALITY.STRONG, "3HP 铺垫合理");

@@ -38,6 +38,7 @@ function board(general, actorOverrides = {}, others = {}, viewerMemory = null, s
   const actor = players[0];
   actor.hp = actorOverrides.hp ?? 4;
   actor.energy = actorOverrides.energy ?? 2;
+  // maxEnergy 由 makeGame 按生产 TeamRuleService 计算。
   actor.hand = actorOverrides.hand ?? [];
   actor.turnFlags = actorOverrides.turnFlags ?? {};
   actor.statuses = actorOverrides.statuses ?? {};
@@ -69,6 +70,8 @@ registerScenario({
   depth: 1,
   family: "expose-vs-assault",
   expectedClass: "card:assault",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => exposeBase({ hp: 1 }),
   grade: ({ action }) => {
     if (isCard(action, "assault") && targetsOnly(action, "b")) return quality(QUALITY.OPTIMAL, "1 点伤害必杀，破势是浪费");
@@ -84,6 +87,8 @@ registerScenario({
   depth: 2,
   family: "expose-vs-assault",
   expectedClass: "card:exposeWeakness",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => exposeBase({ hp: 2 }),
   grade: ({ action }) => {
     if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "2HP 先破势再突袭必杀");
@@ -99,6 +104,8 @@ registerScenario({
   depth: 2,
   family: "expose-vs-assault",
   expectedClass: "card:exposeWeakness",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => exposeBase({ hp: 3 }),
   grade: ({ action }) => {
     if (isCard(action, "exposeWeakness")) return quality(QUALITY.STRONG, "3HP 铺垫合理（为后续突袭）");
@@ -114,6 +121,8 @@ registerScenario({
   depth: 2,
   family: "expose-vs-assault",
   expectedClass: "card:exposeWeakness",
+  difficulty: "advanced",
+  discrimination: "counterfactual",
   setup: () => exposeBase({ hp: 2, shield: 1 }),
   grade: ({ action }) => {
     if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "破势后突袭 2 点穿透盾+血");
@@ -129,6 +138,8 @@ registerScenario({
   depth: 3,
   family: "expose-vs-assault",
   expectedClass: "card:exposeWeakness",
+  difficulty: "advanced",
+  discrimination: "counterfactual",
   setup: () => exposeBase({ hp: 2, guardian: true }),
   grade: ({ action }) => {
     if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "护援可能减 1 伤，破势保证 2 伤击杀");
@@ -144,6 +155,8 @@ registerScenario({
   depth: 2,
   family: "expose-vs-assault",
   expectedClass: "card:exposeWeakness",
+  difficulty: "advanced",
+  discrimination: "probability",
   setup: () => exposeBase({
     hp: 2,
     hand: [makeCard("block", "kbb")],
@@ -172,6 +185,8 @@ registerScenario({
   depth: 2,
   family: "charge-threshold",
   expectedClass: "card:charge",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => chargeBase(1, [makeCard("charge"), makeCard("assault"), makeCard("assault")]),
   grade: ({ action }) => {
     if (isCard(action, "charge")) return quality(QUALITY.OPTIMAL, "聚能解锁破军，双突袭连段");
@@ -187,11 +202,14 @@ registerScenario({
   depth: 2,
   family: "charge-threshold",
   expectedClass: "skill:breakArmy",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => chargeBase(3, [makeCard("charge"), makeCard("assault"), makeCard("assault")]),
   grade: ({ action }) => {
+    // maxEnergy=4 下聚能上限为 4，能量未溢出；直接破军与先聚能均不构成严重错误。
     if (isSkill(action, "breakArmy")) return quality(QUALITY.OPTIMAL, "能量足够直接破军");
-    if (isCard(action, "charge")) return quality(QUALITY.SEVERE, "能量已够破军仍聚能，浪费");
-    if (isCard(action, "assault")) return quality(QUALITY.ACCEPTABLE, "直接突袭可接受但漏掉破军");
+    if (isCard(action, "charge")) return quality(QUALITY.ACCEPTABLE, "先聚能可接受，能量未溢出");
+    if (isCard(action, "assault")) return quality(QUALITY.ACCEPTABLE, "直接突袭可接受");
     return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);
   }
 });
@@ -203,6 +221,8 @@ registerScenario({
   depth: 2,
   family: "charge-threshold",
   expectedClass: "card:assault",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => board("oath-warden", {
     energy: 1,
     hand: [makeCard("charge"), makeCard("assault")]
@@ -225,6 +245,8 @@ registerScenario({
   depth: 1,
   family: "all-in-value",
   expectedClass: "card:assault",
+  difficulty: "basic",
+  discrimination: "counterfactual",
   setup: () => board("fate-gambler", {
     energy: 1,
     hand: [makeCard("assault")]
@@ -243,6 +265,8 @@ registerScenario({
   depth: 2,
   family: "all-in-value",
   expectedClass: "skill:allIn",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => board("fate-gambler", {
     energy: 3,
     hand: [makeCard("assault")]
@@ -261,6 +285,8 @@ registerScenario({
   depth: 1,
   family: "all-in-value",
   expectedClass: "card:assault",
+  difficulty: "basic",
+  discrimination: "counterfactual",
   setup: () => board("fate-gambler", {
     energy: 3,
     statuses: { allIn: { assaultBonus: 1 } },
@@ -284,6 +310,8 @@ registerScenario({
   depth: 2,
   family: "medic-heal-priority",
   expectedClass: "skill:symbiosis",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => board("spirit-medic", {
     hp: 2,
     energy: 3,
@@ -303,6 +331,8 @@ registerScenario({
   depth: 1,
   family: "medic-heal-priority",
   expectedClass: "end",
+  difficulty: "basic",
+  discrimination: "counterfactual",
   setup: () => board("spirit-medic", {
     hp: 4,
     energy: 3,
@@ -322,6 +352,8 @@ registerScenario({
   depth: 1,
   family: "medic-heal-priority",
   expectedClass: "card:recover",
+  difficulty: "basic",
+  discrimination: "counterfactual",
   setup: () => board("spirit-medic", {
     hp: 1,
     energy: 3,
@@ -353,6 +385,8 @@ registerScenario({
   depth: 1,
   family: "hunt-vs-assault",
   expectedClass: "card:assault",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => huntBase(1),
   grade: ({ action }) => {
     if (isCard(action, "assault") && targetsOnly(action, "b")) return quality(QUALITY.OPTIMAL, "突袭 1 点击杀即可，节省猎杀");
@@ -368,6 +402,8 @@ registerScenario({
   depth: 2,
   family: "hunt-vs-assault",
   expectedClass: "skill:hunt",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => huntBase(3),
   grade: ({ action }) => {
     if (isSkill(action, "hunt") && targetsOnly(action, "b")) return quality(QUALITY.OPTIMAL, "猎杀 2 伤大幅逼近击杀");
@@ -401,6 +437,8 @@ registerScenario({
   depth: 2,
   family: "burning-field-value",
   expectedClass: "skill:burningField",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => burnBase(4, 3),
   grade: ({ action }) => {
     if (isSkill(action, "burningField")) return quality(QUALITY.OPTIMAL, "3 目标共 3 伤，优于单点");
@@ -416,6 +454,8 @@ registerScenario({
   depth: 1,
   family: "burning-field-value",
   expectedClass: "card:assault",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => burnBase(4, 1),
   grade: ({ action }) => {
     if (isCard(action, "assault") && targetsOnly(action, "b")) return quality(QUALITY.OPTIMAL, "单目标焚场费 1 伤不划算");
@@ -431,6 +471,8 @@ registerScenario({
   depth: 2,
   family: "burning-field-value",
   expectedClass: "skill:burningField",
+  difficulty: "advanced",
+  discrimination: "counterfactual",
   setup: () => {
     const others = { b: { hp: 1 }, c: { hp: 1 }, e: { hp: 0, alive: false } };
     return board("ember-magus", {
@@ -462,6 +504,8 @@ registerScenario({
   depth: 2,
   family: "shield-vs-attack",
   expectedClass: "card:shield",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => shieldBase(1),
   grade: ({ action }) => {
     if (isCard(action, "shield") && targetsOnly(action, "a")) return quality(QUALITY.OPTIMAL, "1HP 面对军火库先护盾");
@@ -477,6 +521,8 @@ registerScenario({
   depth: 1,
   family: "shield-vs-attack",
   expectedClass: "card:assault",
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   setup: () => shieldBase(4),
   grade: ({ action }) => {
     if (isCard(action, "assault") && targetsOnly(action, "b")) return quality(QUALITY.OPTIMAL, "满血无防守压力直接进攻");
@@ -490,10 +536,13 @@ registerScenario({
 // ---------------------------------------------------------------
 
 registerScenario({
-  id: "bait.assault-vs-expose-setup",
+id: "bait.assault-vs-expose-setup",
   name: "诱饵：立即突袭价值高但先破势更优",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "planning",
+  adversarial: "setup",
   setup: () => board("blade-walker", {
     energy: 2,
     hand: [makeCard("assault"), makeCard("assault"), makeCard("exposeWeakness")]
@@ -506,10 +555,13 @@ registerScenario({
 });
 
 registerScenario({
-  id: "bait.provoke-before-finish",
+id: "bait.provoke-before-finish",
   name: "诱饵：挑衅诱出响应再终结",
   category: "combos",
   depth: 4,
+  difficulty: "expert",
+  discrimination: "planning",
+  adversarial: "response-bait",
   setup: () => board("blade-walker", {
     energy: 3,
     hand: [makeCard("provoke"), makeCard("assault")]
@@ -522,10 +574,13 @@ registerScenario({
 });
 
 registerScenario({
-  id: "bait.medic-delay-heal",
+id: "bait.medic-delay-heal",
   name: "诱饵：先制造触发条件再治疗",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "tactical",
+  adversarial: "healing",
   setup: () => board("spirit-medic", {
     hp: 2,
     energy: 3,

@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-root-provenance-v149";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-global-turn-reactive-v150";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

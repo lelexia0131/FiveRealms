@@ -57,6 +57,8 @@ registerScenario({
   name: "聚能保留以解锁技能",
   category: "resources",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "resource",
   setup: () => {
     const players = fillOthers(basePlayers(), 1);
     const actor = players[0];
@@ -78,6 +80,8 @@ registerScenario({
   name: "群体伤害的溢出价值",
   category: "synergy",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "tactical",
   setup: () => {
     const players = fillOthers(basePlayers(), 1);
     const actor = players[0];
@@ -102,6 +106,8 @@ registerScenario({
   name: "掠夺关键装备",
   category: "synergy",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "tactical",
   setup: () => {
     const players = fillOthers(basePlayers(), 1);
     const actor = players[0];
@@ -124,6 +130,8 @@ registerScenario({
   name: "破坏关键装备",
   category: "synergy",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "tactical",
   setup: () => {
     const players = fillOthers(basePlayers(), 1);
     const actor = players[0];
@@ -168,6 +176,8 @@ registerScenario({
   name: "决斗的突袭持有价值",
   category: "synergy",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "tactical",
   setup: () => {
     const players = fillOthers(basePlayers(), 1);
     const actor = players[0];

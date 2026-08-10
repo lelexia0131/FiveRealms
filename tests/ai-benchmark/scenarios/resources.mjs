@@ -33,6 +33,7 @@ function board(actorOverrides = {}, others = {}) {
   if (actorOverrides.general) actor.general = actorOverrides.general;
   actor.hp = actorOverrides.hp ?? 4;
   actor.energy = actorOverrides.energy ?? 3;
+  // maxEnergy 由 makeGame 按生产 TeamRuleService 计算。
   actor.hand = actorOverrides.hand ?? [];
   actor.turnFlags = actorOverrides.turnFlags ?? {};
   actor.statuses = actorOverrides.statuses ?? {};
@@ -44,6 +45,8 @@ registerScenario({
   name: "能量阈值：为技能保留能量",
   category: "resources",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "resource",
   setup: () => board({
     energy: 1,
     hand: [makeCard("assault"), makeCard("charge")]
@@ -76,6 +79,8 @@ registerScenario({
   name: "护盾价值高于普通突袭",
   category: "resources",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "resource",
   setup: () => board({
     energy: 2,
     hand: [makeCard("shield"), makeCard("assault")]
@@ -109,6 +114,8 @@ registerScenario({
   name: "突袭数量决定攻防节奏",
   category: "resources",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "resource",
   setup: () => board({
     energy: 2,
     hand: [makeCard("assault"), makeCard("assault"), makeCard("exposeWeakness")]
@@ -125,6 +132,8 @@ registerScenario({
   name: "充能塔节奏价值",
   category: "resources",
   depth: 2,
+  difficulty: "advanced",
+  discrimination: "tactical",
   setup: () => board({
     energy: 1,
     hand: [makeCard("energyDevice"), makeCard("assault")]
@@ -174,6 +183,8 @@ registerScenario({
   name: "低血量放弃弃牌压力",
   category: "resources",
   depth: 1,
+  difficulty: "intermediate",
+  discrimination: "resource",
   setup: () => board({
     hp: 2,
     energy: 2,

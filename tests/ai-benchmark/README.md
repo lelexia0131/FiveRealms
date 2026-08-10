@@ -24,12 +24,113 @@ npm run test:ai -- --node-budget 1200
 npm run test:ai -- --category combos
 npm run test:ai -- --verbose
 npm run test:ai -- --full          # 额外运行少量完整对局诊断（不计分）
+npm run test:ai -- --calibration   # 输出完整三 Agent 标定表（默认已包含，此参数用于显式强调）
+npm run test:ai -- --chance-audit  # 输出 Chance Floor 详细审计
+npm run test:ai -- --planner-audit # 输出 Planner Effectiveness 详细审计
 npm run test:ai -- --output reports\ai-benchmark.json
 ```
 
 默认正式运行使用固定 seed，保证 AI 修改前后分数可比较。
 `--seed N` 会混入每个 Scenario 的随机种子，用于比较不同随机样本；
 `--full` 额外运行少量完整对局（使用减半的搜索预算），仅观察胜率/轮数/失败动作等辅助指标。
+
+## Chance-Corrected Scoring（v0.4）
+
+Raw Score 会因"随机猜中"而虚高。v0.4 引入每个 Scenario 的
+**Random Legal Expected（Chance Floor）**：
+
+```text
+C = (P - R) / (1 - R)
+```
+
+其中 P = Agent raw quality，R = Random Legal Expected quality。
+含义：0 = 仅达到随机合法选择期望，1 = 达到该场景最优。
+
+- Random Legal Expected 通过**精确枚举生产合法动作**并逐动作评分取平均得到，
+  与 seed 无关（当前 131 个计分 Scenario 全部可精确枚举，无需 Monte Carlo）；
+- R >= 0.99 的场景无能力区分度，不参与 corrected 计分（仍参与 raw）；
+- P < R（低于随机期望）的场景单独列为 Below Random Expectation 诊断，
+  corrected 贡献按 0 计，不制造负总分；
+- 总分同时输出 Raw 与 Chance-Corrected 两套，Raw 用于与历史版本比较。
+
+## 跨回合资源（AiPlanner Phase 1）修复记录
+
+曾出现两条"Planner Regression"（Greedy=100 / Production=10）：
+
+- `hard.cross-turn-energy`
+- `adv.save-energy-next-turn`
+
+根因审计结论：**不是 Planner 缺陷，而是 Benchmark 场景构造错误**。
+`tests/ai-benchmark/helpers.mjs` 的 `makeGame` 在填充 `state.players` 之前
+调用 `teamRules.getMaxEnergy`，导致全部场景的 maxEnergy 错误回退为 3
+（生产规则中 2 人小队的 maxEnergy=4）。在该错误状态下：
+
+- 场景判定的"正确"答案（突袭保留能量）基于不存在的规则；
+- Planner 搜索在错误规则下选择聚能→焚场，被误判为严重错误。
+
+修复：
+
+1. `makeGame` 先填充 `state.players` 再按生产 `TeamRuleService` 计算 maxEnergy；
+2. 受影响场景（`hard.cross-turn-energy`、`adv.save-energy-next-turn`、
+   `planning.d4-energy-save-next-turn`、`cf.charge-at-threshold`）的评分基准
+   改为反映真实规则：这些局面下"先聚能/先突袭"终态等价，均为合理行动。
+
+修复后：
+
+- 原两条 Regression 消除（Greedy 与 Production 决策一致）；
+- Cross-turn 题集 Regression 0%、净提升 0pp；
+- Setup/Combo Planner Lift 保持 +32.1pp（未把 Planner 退化成 Greedy）；
+- Expert Planner Lift 从 -3.0pp 改善为 +15.0pp。
+
+本轮未修改任何生产 AI 代码；该修复属于 Benchmark 场景正确性修正。
+
+## Planner Effectiveness Audit（v0.4）
+
+逐 Scenario 比较 Production 与 Greedy/D1 的质量：
+
+- Planner Win：P > G；
+- No Lift：P == G；
+- Planner Regression：P < G。
+
+报告输出 Win / No Lift / Regression 比例、净提升（pp）、按题集（planning /
+adversarial / cross-turn / response-bait / setup）与按难度（basic~expert）
+的细分，以及 Top Wins / Top Regressions 清单，供后续优化 Planner 使用。
+
+## 多级 Agent 标定（v0.3）
+
+Benchmark 在完全相同的 Scenario 集上运行三个 Agent：
+
+| Agent | 允许的能力 | 禁止的能力 |
+| --- | --- | --- |
+| Random Legal | 读取生产合法动作集合、均匀随机选择（deterministic seed） | 任何 evaluator / simulator / planner / 估值 |
+| Greedy / D1 | 生产 AiEvaluator + AiSimulator 的一步评估 | AiPlanner / AIController.selectAction（无搜索、无前瞻） |
+| Production AI | AIController → AiPlanner → AiSimulator → AiEvaluator 原样 | 无（这是被测对象） |
+
+三个 Agent 使用完全相同的局面、完全相同的可见信息与完全相同的评分函数。
+报告输出：
+
+- Agent Calibration（三 Agent 总分）；
+- Capability Lift（Random→Greedy、Greedy→Production、Random→Production）；
+- Module Comparison（每模块三 Agent 分数）；
+- Greedy Saturation（Greedy/Production，>80% 的模块列为 discrimination warning）；
+- Decision Quality（Optimal/Strong/Acceptable/Poor/Severe/Catastrophic 分布，
+  含 Severe+Catastrophic 错误率）；
+- Planning Lift over D1（all / planning / adversarial planning 三个题集）；
+- Difficulty Pass Rate（basic/intermediate/advanced/expert 各 Agent 通过率）；
+- Adversarial Performance（Immediate Reward / Resource / Buff Waste / Response Bait /
+  Target / Healing / Cross-turn / Setup 分类通过率）。
+
+## Difficulty / Discrimination 标签
+
+每个 Scenario 带诊断字段：
+
+```js
+difficulty: "basic" | "intermediate" | "advanced" | "expert"
+discrimination: "legality" | "static-value" | "tactical" | "planning" | "probability" | "counterfactual"
+adversarial: null | "immediate-reward" | "resource" | "buff-waste" | "response-bait" | "target" | "healing" | "cross-turn" | "setup"
+```
+
+标签只用于报告分层统计，不直接参与计分。
 
 ## 评分结构（总分 1000）
 
@@ -113,8 +214,9 @@ registerScenario({
 
 ## Human Target 说明
 
-报告中的 "~800 / ~850 / ~900" 是目标标尺（Reference Scale），
-目前不是人类实测数据。尚未进行真实 Human Calibration，未来可扩展。
+报告中的 "~800 / ~850 / ~900" 是 **Reference target —— NOT human calibrated**。
+尚未进行真实 Human Calibration，不能据此推断"接近真人"。
+Total Score 仅代表当前 Benchmark Scenario 集上的能力分。
 
 ## 已知边界
 
@@ -124,4 +226,6 @@ registerScenario({
 - 规划深度以行为达标率（D1~D4）输出；该统计按全部 Scenario 的 depth 标签聚合
   （不限于 planning 模块），不做虚假的连续深度精度。
 - 默认运行不产生任何结果文件；`--output` 为可选显式导出。
+- 规划深度报告为不同难度/规划需求题集的达标率（D1-set ~ D4-set），
+  不保证严格单调，也不代表统一深度能力曲线。
 - 完整对局（`--full`）只作为辅助诊断，不计入总分。

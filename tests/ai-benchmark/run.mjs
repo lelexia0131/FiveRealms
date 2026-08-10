@@ -17,10 +17,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { makeRandom, createHeadlessUi } from "./helpers.mjs";
 import {
-  runBenchmark, aggregateResults, listScenarios, CATEGORIES
+  runBenchmark, aggregateResults, listScenarios, CATEGORIES, AGENTS
 } from "./benchmark.mjs";
 import { formatReport } from "./reporters.mjs";
-import { baselineModule } from "./baseline.mjs";
+import { createSeededRandom } from "./baseline.mjs";
 
 import "./scenarios/rules.mjs";
 import "./scenarios/cards.mjs";
@@ -41,7 +41,10 @@ function parseCli(argv) {
     category: null,
     verbose: false,
     full: false,
-    output: null
+    output: null,
+    calibration: false,
+    chanceAudit: false,
+    plannerAudit: false
   };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -51,9 +54,12 @@ function parseCli(argv) {
     else if (token === "--category" && value != null) { parsed.category = value; index += 1; }
     else if (token === "--verbose") parsed.verbose = true;
     else if (token === "--full") parsed.full = true;
+    else if (token === "--calibration") parsed.calibration = true;
+    else if (token === "--chance-audit") parsed.chanceAudit = true;
+    else if (token === "--planner-audit") parsed.plannerAudit = true;
     else if (token === "--output" && value != null) { parsed.output = value; index += 1; }
     else if (token === "--help" || token === "-h") {
-      console.log("用法：node ./tests/ai-benchmark/run.mjs [--seed N] [--node-budget N] [--category id] [--verbose] [--full] [--output path]");
+      console.log("用法：node ./tests/ai-benchmark/run.mjs [--seed N] [--node-budget N] [--category id] [--verbose] [--full] [--calibration] [--chance-audit] [--planner-audit] [--output path]");
       process.exit(0);
     } else {
       console.error(`未知参数：${token}（使用 --help 查看用法）`);
@@ -136,16 +142,21 @@ async function main() {
     + `${cli.category ? `, category=${cli.category}` : ""}（共 ${scenarioCount} 个 Scenario）`);
   console.log("");
 
+  const randomForRun = (runSeed) => createSeededRandom((runSeed ^ 0x51ed270b) >>> 0);
   const aggregate = await runBenchmark({
     categories,
     nodeBudget: cli.nodeBudget,
     globalSeed: seed,
-    baselineModule,
+    agents: cli.calibration
+      ? [AGENTS.production, AGENTS.greedy, AGENTS.random]
+      : [AGENTS.production, AGENTS.greedy, AGENTS.random],
+    randomForRun,
     onScenario: (result) => {
       if (cli.verbose) {
         const categoryLabel = CATEGORIES[result.category]?.id ?? result.category;
         console.log(`  [${categoryLabel}] ${result.name}: ${(result.quality * 100).toFixed(0)} 分`
-          + (result.results?.[0]?.reason ? ` — ${result.results[0].reason}` : ""));
+          + (result.results?.[0]?.agents?.[AGENTS.production]?.reason
+            ? ` — ${result.results[0].agents[AGENTS.production].reason}` : ""));
       }
     }
   });
@@ -159,6 +170,8 @@ async function main() {
   const durationMs = performance.now() - started;
   const report = formatReport(aggregate, {
     verbose: cli.verbose,
+    chanceAudit: cli.chanceAudit,
+    plannerAudit: cli.plannerAudit,
     seed,
     nodeBudget: cli.nodeBudget,
     durationMs

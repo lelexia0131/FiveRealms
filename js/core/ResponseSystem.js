@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-root-provenance-v149";
-import { createId } from "../utils/helpers.js?build=20260810-root-provenance-v149";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260810-root-provenance-v149";
-import { RuleEngine } from "./RuleEngine.js?build=20260810-root-provenance-v149";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-global-turn-reactive-v150";
+import { createId } from "../utils/helpers.js?build=20260810-global-turn-reactive-v150";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260810-global-turn-reactive-v150";
+import { RuleEngine } from "./RuleEngine.js?build=20260810-global-turn-reactive-v150";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

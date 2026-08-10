@@ -3,8 +3,8 @@
  * Player 只保存数据并提供安全的资源变更，不决定目标合法性、伤害响应或胜负。
  * 每局都会重新创建 Player，因此无需跨局保留实例。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-root-provenance-v149";
-import { clamp } from "../utils/helpers.js?build=20260810-root-provenance-v149";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-global-turn-reactive-v150";
+import { clamp } from "../utils/helpers.js?build=20260810-global-turn-reactive-v150";
 
 export class Player {
   /**
@@ -71,6 +71,22 @@ export class Player {
       trackingTargetIds: new Set(),
       skipActionPhase: false
     };
+  }
+
+  /**
+   * 重置所有角色都可能在任意玩家回合触发的“每回合”被动额度；
+   * Game 在每个新全局回合开始时对全部玩家调用一次，必须在 turnStart 监听器执行前完成。
+   * 不触碰 actor-turn state（攻击次数、主动技能次数、调息次数、skipActionPhase 等）。
+   */
+  resetGlobalTurnReactiveFlags() {
+    this.turnFlags.categoriesUsed = new Set();
+    this.turnFlags.momentum = 0;
+    this.turnFlags.coordinationTriggered = false;
+    this.turnFlags.gambleTriggered = false;
+    this.turnFlags.rejuvenationTriggerCount = 0;
+    this.turnFlags.spyGapTriggered = false;
+    this.turnFlags.spyGapPendingTargetIds = new Set();
+    this.turnFlags.trackingTargetIds = new Set();
   }
 
   bumpHandVersion() { this.handVersion += 1; return this.handVersion; }

@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-root-provenance-v149";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-global-turn-reactive-v150";
 
 /**
  * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；

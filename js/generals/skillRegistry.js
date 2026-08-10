@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-root-provenance-v149";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-root-provenance-v149";
-import { randomChoice } from "../utils/helpers.js?build=20260810-root-provenance-v149";
-import { Debug } from "../utils/debug.js?build=20260810-root-provenance-v149";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-global-turn-reactive-v150";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-global-turn-reactive-v150";
+import { randomChoice } from "../utils/helpers.js?build=20260810-global-turn-reactive-v150";
+import { Debug } from "../utils/debug.js?build=20260810-global-turn-reactive-v150";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -54,8 +54,10 @@ const PASSIVE_SKILLS = {
         game.log(`${owner.name}消耗${consumed}层「连势」，本次「突袭」伤害+${consumed}。`, "important");
       }
     });
-    game.eventBus.on("turnEnd", `${owner.id}:momentum:turnEnd`, (event) => {
-      if (event.player?.id === owner.id) owner.turnFlags.momentum = 0;
+    game.eventBus.on("turnEnd", `${owner.id}:momentum:turnEnd`, () => {
+      // 「回合结束后清空连势」指任意行动角色的全局回合结束，而非只清空刃行者自己的回合。
+      // 回合外借势等路径产生的 momentum 必须在当前全局回合 turnEnd 立即归零。
+      owner.turnFlags.momentum = 0;
     });
   },
 

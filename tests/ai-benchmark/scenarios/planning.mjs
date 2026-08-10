@@ -36,6 +36,7 @@ function board(general = "blade-walker", actorOverrides = {}, others = {}) {
   const actor = players[0];
   actor.hp = actorOverrides.hp ?? 4;
   actor.energy = actorOverrides.energy ?? 3;
+  // maxEnergy 由 makeGame 按生产 TeamRuleService 计算。
   actor.hand = actorOverrides.hand ?? [];
   actor.turnFlags = actorOverrides.turnFlags ?? {};
   actor.statuses = actorOverrides.statuses ?? {};
@@ -73,10 +74,12 @@ registerScenario({
 // ---------- D2：必须考虑下一动作 ----------
 
 registerScenario({
-  id: "planning.d2-charge-then-skill",
+id: "planning.d2-charge-then-skill",
   name: "D2：聚能解锁技能",
   category: "planning",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "planning",
   setup: () => board("blade-walker", {
     energy: 1,
     hand: [makeCard("charge"), makeCard("assault"), makeCard("assault")]
@@ -89,10 +92,12 @@ registerScenario({
 });
 
 registerScenario({
-  id: "planning.d2-buff-before-double",
+id: "planning.d2-buff-before-double",
   name: "D2：强化先于双突袭",
   category: "planning",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "planning",
   setup: () => board("blade-walker", {
     hand: [makeCard("assault"), makeCard("assault"), makeCard("exposeWeakness")]
   }),
@@ -106,10 +111,12 @@ registerScenario({
 // ---------- D3：铺垫→中间→终结 ----------
 
 registerScenario({
-  id: "planning.d3-full-combo",
+id: "planning.d3-full-combo",
   name: "D3：聚能→破势→终结",
   category: "planning",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "planning",
   setup: () => board("blade-walker", {
     energy: 1,
     hand: [makeCard("charge"), makeCard("exposeWeakness"), makeCard("assault")]
@@ -123,10 +130,12 @@ registerScenario({
 });
 
 registerScenario({
-  id: "planning.d3-all-in-chain",
+id: "planning.d3-all-in-chain",
   name: "D3：孤注→突袭连段",
   category: "planning",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "planning",
   setup: () => board("fate-gambler", {
     energy: 3,
     hand: [makeCard("assault"), makeCard("assault")]
@@ -139,10 +148,12 @@ registerScenario({
 });
 
 registerScenario({
-  id: "planning.d3-medic-chain",
+id: "planning.d3-medic-chain",
   name: "D3：治疗→回春→再行动",
   category: "planning",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "planning",
   setup: () => board("spirit-medic", {
     energy: 3,
     hand: [makeCard("recover"), makeCard("assault")]
@@ -158,10 +169,12 @@ registerScenario({
 // ---------- D4：跨响应 / 下一回合 ----------
 
 registerScenario({
-  id: "planning.d4-seal-then-kill",
+id: "planning.d4-seal-then-kill",
   name: "D4：封印封锁后再击杀",
   category: "planning",
   depth: 4,
+  difficulty: "expert",
+  discrimination: "planning",
   setup: () => board("shade-agent", {
     energy: 3,
     hand: [makeCard("seal"), makeCard("assault")]
@@ -178,10 +191,12 @@ registerScenario({
 });
 
 registerScenario({
-  id: "planning.d4-provoke-response",
+id: "planning.d4-provoke-response",
   name: "D4：挑衅诱出响应",
   category: "planning",
   depth: 4,
+  difficulty: "advanced",
+  discrimination: "planning",
   setup: () => board("blade-walker", {
     energy: 3,
     hand: [makeCard("provoke"), makeCard("assault")]
@@ -198,23 +213,29 @@ registerScenario({
   name: "D4：为下一回合保留能量",
   category: "planning",
   depth: 4,
+  difficulty: "advanced",
+  discrimination: "planning",
   setup: () => board("ember-magus", {
     energy: 3,
     hand: [makeCard("charge"), makeCard("assault")]
   }, { b: { hp: 3 }, c: { hp: 3 }, e: { hp: 3 } }),
   grade: ({ action }) => {
-    if (isSkill(action, "burningField")) return quality(QUALITY.OPTIMAL, "本回合焚场已是最优");
-    if (isCard(action, "charge")) return quality(QUALITY.SEVERE, "能量溢出，聚能浪费");
-    if (isCard(action, "assault")) return quality(QUALITY.ACCEPTABLE, "突袭可接受但不如焚场");
+    // 真实规则（maxEnergy=4 + 余烬）下，charge→焚场 与 突袭→charge→焚场 终态等价，
+    // 直接焚场/突袭均为合理行动；聚能并不构成"能量溢出"级别的严重错误。
+    if (isSkill(action, "burningField")) return quality(QUALITY.OPTIMAL, "直接焚场，立即收益");
+    if (isCard(action, "charge")) return quality(QUALITY.ACCEPTABLE, "先聚能再焚场，终态等价");
+    if (isCard(action, "assault")) return quality(QUALITY.ACCEPTABLE, "先突袭再焚场，终态等价");
     return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);
   }
 });
 
 registerScenario({
-  id: "planning.d4-tracking-setup",
+id: "planning.d4-tracking-setup",
   name: "D4：追踪印记为下回合铺垫",
   category: "planning",
   depth: 4,
+  difficulty: "advanced",
+  discrimination: "planning",
   setup: () => board("trail-hunter", {
     energy: 3,
     hand: [makeCard("assault"), makeCard("assault")]
@@ -227,10 +248,12 @@ registerScenario({
 });
 
 registerScenario({
-  id: "planning.d4-shield-before-enemy-turn",
+id: "planning.d4-shield-before-enemy-turn",
   name: "D4：跨回合保护低血队友",
   category: "planning",
   depth: 4,
+  difficulty: "advanced",
+  discrimination: "planning",
   setup: () => board("oath-warden", {
     energy: 3,
     hand: [makeCard("shield"), makeCard("assault")]

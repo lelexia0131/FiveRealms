@@ -37,6 +37,8 @@ function board(general = "blade-walker", actorOverrides = {}, others = {}, viewe
   const actor = players[0];
   actor.hp = actorOverrides.hp ?? 4;
   actor.energy = actorOverrides.energy ?? 3;
+  // maxEnergy 由 makeGame 按生产 TeamRuleService 计算（2 人小队=4），
+  // 这里不再覆盖，避免与真实规则不一致。
   actor.hand = actorOverrides.hand ?? [];
   actor.turnFlags = actorOverrides.turnFlags ?? {};
   actor.statuses = actorOverrides.statuses ?? {};
@@ -53,6 +55,9 @@ registerScenario({
   name: "诱饵：立即突袭 vs 聚能连段",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "planning",
+  adversarial: "immediate-reward",
   setup: () => board("blade-walker", {
     energy: 1,
     hand: [makeCard("assault"), makeCard("assault"), makeCard("charge"), makeCard("exposeWeakness")]
@@ -70,6 +75,9 @@ registerScenario({
   name: "诱饵：保存终结牌",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "tactical",
+  adversarial: "immediate-reward",
   setup: () => board("ember-magus", {
     energy: 3,
     hand: [makeCard("shockwave"), makeCard("assault")]
@@ -87,6 +95,9 @@ registerScenario({
   name: "资源冲突：破军 vs 孤注",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "tactical",
+  adversarial: "resource",
   setup: () => board("fate-gambler", {
     energy: 2,
     hand: [makeCard("assault"), makeCard("assault"), makeCard("exposeWeakness")]
@@ -103,6 +114,9 @@ registerScenario({
   name: "焚场前置 vs 后置",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "planning",
+  adversarial: "setup",
   setup: () => board("ember-magus", {
     energy: 3,
     hand: [makeCard("shockwave"), makeCard("assault")]
@@ -124,13 +138,18 @@ registerScenario({
   name: "跨回合：本回合与下回合的资源分配",
   category: "planning",
   depth: 4,
+  difficulty: "expert",
+  discrimination: "planning",
+  adversarial: "cross-turn",
   setup: () => board("ember-magus", {
     energy: 2,
     hand: [makeCard("charge"), makeCard("assault")]
   }, { b: { hp: 3 }, c: { hp: 3 }, e: { hp: 3 } }, null, 20010),
   grade: ({ action }) => {
-    if (isCard(action, "assault") && targetsOnly(action, "b")) return quality(QUALITY.OPTIMAL, "保留能量，下回合焚场");
-    if (isCard(action, "charge")) return quality(QUALITY.SEVERE, "聚能后焚场耗尽能量，下回合无资源");
+    // 真实规则（maxEnergy=4 + 余烬被动）下：charge→焚场→突袭 与 突袭→聚能→焚场
+    // 回合结束时能量均≈1，终态等价；两条线都是合理行动。
+    if (isCard(action, "assault") && targetsOnly(action, "b")) return quality(QUALITY.OPTIMAL, "先突袭并保留资源，同为合理线");
+    if (isCard(action, "charge")) return quality(QUALITY.ACCEPTABLE, "先聚能立即焚场，终态与保留线等价");
     return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);
   }
 });
@@ -140,6 +159,9 @@ registerScenario({
   name: "跨回合：保留治疗触发",
   category: "planning",
   depth: 4,
+  difficulty: "advanced",
+  discrimination: "planning",
+  adversarial: "healing",
   setup: () => board("spirit-medic", {
     hp: 2,
     energy: 3,
@@ -158,6 +180,9 @@ registerScenario({
   name: "跨回合：能量分配二选一",
   category: "planning",
   depth: 4,
+  difficulty: "expert",
+  discrimination: "planning",
+  adversarial: "cross-turn",
   setup: () => board("oath-warden", {
     energy: 2,
     hand: [makeCard("assault"), makeCard("shield")]
@@ -174,6 +199,9 @@ registerScenario({
   name: "跨回合：封印→下回合击杀",
   category: "planning",
   depth: 4,
+  difficulty: "expert",
+  discrimination: "planning",
+  adversarial: "setup",
   setup: () => board("shade-agent", {
     energy: 3,
     hand: [makeCard("seal"), makeCard("assault")]
@@ -194,6 +222,9 @@ registerScenario({
   name: "跨回合：挑衅诱出响应再收割",
   category: "planning",
   depth: 4,
+  difficulty: "expert",
+  discrimination: "planning",
+  adversarial: "response-bait",
   setup: () => board("blade-walker", {
     energy: 3,
     hand: [makeCard("provoke"), makeCard("assault"), makeCard("assault")]
@@ -213,6 +244,9 @@ registerScenario({
   name: "跨回合：响应保留 vs 资源推进",
   category: "planning",
   depth: 4,
+  difficulty: "advanced",
+  discrimination: "planning",
+  adversarial: "cross-turn",
   setup: () => board("blade-walker", {
     energy: 3,
     hand: [makeCard("charge"), makeCard("assault"), makeCard("block")]
@@ -231,6 +265,9 @@ registerScenario({
   name: "跨回合：能量截止线",
   category: "planning",
   depth: 4,
+  difficulty: "advanced",
+  discrimination: "planning",
+  adversarial: "resource",
   setup: () => board("fate-gambler", {
     energy: 2,
     hand: [makeCard("charge"), makeCard("assault"), makeCard("assault")]
@@ -238,6 +275,89 @@ registerScenario({
   grade: ({ action }) => {
     if (isCard(action, "charge")) return quality(QUALITY.OPTIMAL, "聚能到 3 解锁孤注+突袭");
     if (isCard(action, "assault")) return quality(QUALITY.POOR, "立即突袭错过孤注转化");
+    return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);
+  }
+});
+
+// ---------- 经探针验证：Greedy 失败、Production 成功 ----------
+
+registerScenario({
+  id: "adv.guardian-target-trap",
+  name: "对抗：守誓者护援下的目标陷阱",
+  category: "combos",
+  depth: 3,
+  difficulty: "expert",
+  discrimination: "tactical",
+  adversarial: "target",
+  setup: () => board("blade-walker", {
+    energy: 2,
+    hand: [makeCard("assault"), makeCard("exposeWeakness")]
+  }, {
+    b: { hp: 2 },
+    c: { general: "oath-warden", hp: 4, hand: makeCards(["assault", "assault"]) }
+  }, null, 20030),
+  grade: ({ action }) => {
+    if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "护援可减伤，破势保证 2 伤击杀");
+    if (isCard(action, "assault") && targetsOnly(action, "b")) return quality(QUALITY.POOR, "1 伤可能被护援抵消");
+    return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);
+  }
+});
+
+registerScenario({
+  id: "adv.save-energy-next-turn",
+  name: "对抗：跨回合保留能量",
+  category: "planning",
+  depth: 4,
+  difficulty: "expert",
+  discrimination: "planning",
+  adversarial: "cross-turn",
+  setup: () => board("ember-magus", {
+    energy: 2,
+    hand: [makeCard("charge"), makeCard("assault")]
+  }, { b: { hp: 3 }, c: { hp: 3 }, e: { hp: 3 } }, null, 20031),
+  grade: ({ action }) => {
+    // 真实规则下两条线终态等价（见 hard.cross-turn-energy 注释）。
+    if (isCard(action, "assault") && targetsOnly(action, "b")) return quality(QUALITY.OPTIMAL, "先突袭并保留资源，同为合理线");
+    if (isCard(action, "charge")) return quality(QUALITY.ACCEPTABLE, "先聚能立即焚场，终态与保留线等价");
+    return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);
+  }
+});
+
+registerScenario({
+  id: "adv.full-combo-ladder",
+  name: "对抗：聚能→破军→破势→突袭",
+  category: "planning",
+  depth: 4,
+  difficulty: "expert",
+  discrimination: "planning",
+  adversarial: "setup",
+  setup: () => board("blade-walker", {
+    energy: 1,
+    hand: [makeCard("charge"), makeCard("exposeWeakness"), makeCard("assault"), makeCard("assault")]
+  }, { b: { hp: 4 } }, null, 20032),
+  grade: ({ action }) => {
+    if (isCard(action, "charge")) return quality(QUALITY.OPTIMAL, "聚能→破军→破势→双突袭");
+    if (isCard(action, "exposeWeakness")) return quality(QUALITY.ACCEPTABLE, "破势铺垫可以但缺能量");
+    if (isCard(action, "assault")) return quality(QUALITY.SEVERE, "直接突袭放弃整套连段");
+    return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);
+  }
+});
+
+registerScenario({
+  id: "adv.tracking-setup-chain",
+  name: "对抗：追踪印记为下回合铺垫",
+  category: "planning",
+  depth: 4,
+  difficulty: "expert",
+  discrimination: "planning",
+  adversarial: "setup",
+  setup: () => board("trail-hunter", {
+    energy: 2,
+    hand: [makeCard("assault"), makeCard("assault")]
+  }, { b: { hp: 4 }, c: { hp: 2 } }, null, 20033),
+  grade: ({ action }) => {
+    if (isCard(action, "assault") && targetsOnly(action, "b")) return quality(QUALITY.OPTIMAL, "印记 4HP 目标，下回合猎杀");
+    if (isCard(action, "assault") && targetsOnly(action, "c")) return quality(QUALITY.POOR, "击杀 2HP 但浪费印记铺垫");
     return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);
   }
 });
@@ -252,6 +372,9 @@ registerScenario({
   category: "probability",
   depth: 2,
   runs: 3,
+  difficulty: "advanced",
+  discrimination: "probability",
+  adversarial: "resource",
   setup: ({ runIndex }) => {
     // 变体：已知 0/1/2 张格挡（2 张手牌）
     const knownSets = [
@@ -296,6 +419,9 @@ registerScenario({
   name: "反制适应：改变战术时机",
   category: "probability",
   depth: 2,
+  difficulty: "advanced",
+  discrimination: "probability",
+  adversarial: "response-bait",
   setup: () => board("blade-walker", {
     energy: 3,
     hand: [makeCard("shockwave"), makeCard("provoke")]
@@ -324,6 +450,8 @@ registerScenario({
   name: "护盾队友Family：1HP 必护",
   category: "counterfactual",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   family: "shield-ally",
   expectedClass: "card:shield",
   setup: () => shieldAllyBase(1),
@@ -339,6 +467,8 @@ registerScenario({
   name: "护盾队友Family：2HP 可攻可守",
   category: "counterfactual",
   depth: 2,
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   family: "shield-ally",
   expectedClass: "card:shield",
   setup: () => shieldAllyBase(2),
@@ -354,6 +484,8 @@ registerScenario({
   name: "护盾队友Family：3HP 优先进攻",
   category: "counterfactual",
   depth: 1,
+  difficulty: "intermediate",
+  discrimination: "counterfactual",
   family: "shield-ally",
   expectedClass: "card:assault",
   setup: () => shieldAllyBase(3),

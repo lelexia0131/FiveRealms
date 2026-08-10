@@ -47,6 +47,8 @@ registerScenario({
   name: "聚能→破军→突袭三连",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "planning",
   setup: () => board({
     energy: 1,
     hand: [makeCard("charge"), makeCard("assault"), makeCard("assault")]
@@ -63,6 +65,8 @@ registerScenario({
   name: "破势→双突袭顺序",
   category: "combos",
   depth: 3,
+  difficulty: "intermediate",
+  discrimination: "tactical",
   setup: () => board({
     energy: 2,
     hand: [makeCard("assault"), makeCard("assault"), makeCard("exposeWeakness")]
@@ -79,6 +83,8 @@ registerScenario({
   name: "刃行者连势：类别顺序",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "tactical",
   setup: () => board({
     energy: 2,
     hand: [makeCard("charge"), makeCard("assault"), makeCard("exposeWeakness")]
@@ -96,6 +102,8 @@ registerScenario({
   name: "挑衅后击杀的响应压力",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "planning",
   setup: () => board({
     energy: 3,
     hand: [makeCard("provoke"), makeCard("assault")]
@@ -112,6 +120,8 @@ registerScenario({
   name: "护盾后安全换血",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "tactical",
   setup: () => board({
     hp: 1,
     energy: 2,
@@ -145,6 +155,8 @@ registerScenario({
   name: "猎杀→击杀抽牌连锁",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "planning",
   setup: () => board({
     general: "trail-hunter",
     energy: 3,
@@ -162,6 +174,8 @@ registerScenario({
   name: "焚场多目标铺垫",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "tactical",
   setup: () => board({
     general: "ember-magus",
     energy: 3,
@@ -180,6 +194,8 @@ registerScenario({
   name: "赌命者战术牌触发冒险",
   category: "combos",
   depth: 3,
+  difficulty: "advanced",
+  discrimination: "planning",
   setup: () => board({
     general: "fate-gambler",
     energy: 2,

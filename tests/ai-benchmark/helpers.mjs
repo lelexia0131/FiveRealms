@@ -103,7 +103,7 @@ export function makeGame({ players, options = {} }, runtimeOptions = {}) {
   const nodeBudget = runtimeOptions.nodeBudget ?? options.nodeBudget ?? null;
   if (nodeBudget) game.aiSearchNodeBudgetOverride = nodeBudget;
 
-  game.state.players = players.map((config, index) => {
+  const builtPlayers = players.map((config, index) => {
     const player = new Player({
       id: config.id ?? `p${index}`,
       seatIndex: config.seatIndex ?? index,
@@ -113,7 +113,6 @@ export function makeGame({ players, options = {} }, runtimeOptions = {}) {
     const general = GENERAL_BY_ID[config.general];
     if (!general) throw new Error(`未知角色：${config.general}`);
     player.applyGeneral(general);
-    player.maxEnergy = config.maxEnergy ?? game.teamRules.getMaxEnergy(player);
     player.hp = config.hp ?? general.maxHp;
     player.shield = config.shield ?? 0;
     player.energy = config.energy ?? 0;
@@ -141,6 +140,14 @@ export function makeGame({ players, options = {} }, runtimeOptions = {}) {
     }
     return player;
   });
+  // 先填充 state.players，再按生产 TeamRuleService 计算 maxEnergy，
+  // 避免 teamRules 在空 players 上错误回退为默认值。
+  game.state.players = builtPlayers;
+  for (let index = 0; index < builtPlayers.length; index += 1) {
+    const player = builtPlayers[index];
+    const config = players[index];
+    player.maxEnergy = config.maxEnergy ?? game.teamRules.getMaxEnergy(player);
+  }
 
   game.state.currentPlayerIndex = options.actorId
     ? game.state.players.findIndex((player) => player.id === options.actorId)
