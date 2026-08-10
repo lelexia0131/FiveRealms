@@ -27,7 +27,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
   Object.freeze({
     id: "spirit-medic", name: "灵医", glyph: "灵", portrait: "./assets/characters/spirit-medic.svg",
     loreFaction: "雾泉庭", maxHp: 4, tags: ["恢复", "辅助"], roleTags: ["support", "healer"], passiveSkillIds: ["rejuvenation"], activeSkillIds: ["symbiosis"],
-    passiveName: "回春", passiveDescription: "每回合前两次由你使自己或队友实际恢复生命时，你各摸1张牌；濒死救援也可触发。",
+    passiveName: "回春", passiveDescription: "由你使一名己方阵营角色恢复生命时，你摸1张牌；濒死救援也可触发；每回合最多触发2次。",
     passiveTriggerText: "由你使自己或队友恢复生命时", passiveLimitText: "每回合限触发2次",
     activeName: "滋荣", activeDescription: "消耗2点能量，使一名己方阵营角色恢复1点生命；每回合最多发动2次", activeCost: 2, activeLimitPerTurn: 2,
     description: "听见生命回声的游医，以自己的元息换取同伴继续作战。",
@@ -65,7 +65,7 @@ export const GENERAL_DEFINITIONS = Object.freeze([
     loreFaction: "镜轮市", maxHp: 4, tags: ["输出", "爆发"], roleTags: ["damage", "resource"], passiveSkillIds: ["gamble"], activeSkillIds: ["allIn"],
     passiveName: "冒险", passiveDescription: "每回合首次使用战术牌后，有60%概率摸1张牌。",
     passiveTriggerText: "使用战术牌后", passiveLimitText: "每回合限触发1次",
-    activeName: "孤注", activeDescription: "消耗全部能量，摸取比实际消耗能量少1张的牌；有25×实际消耗能量%的概率进入不可叠加的「孤注」状态（最高100%），令下一次「突袭」伤害+1，「突袭」完毕后退出；每回合最多发动1次。", activeCost: 1, activeLimitPerTurn: 1,
+    activeName: "孤注", activeDescription: "消耗全部能量，摸取比实际消耗能量少1张的牌；有25×实际消耗能量%的概率进入不可叠加的「孤注」状态，令下一次「突袭」伤害+1，「突袭」完毕后退出；每回合最多发动1次。", activeCost: 1, activeLimitPerTurn: 1,
     description: "在镜轮赌局中输掉姓名的旅人，习惯把剩下的一切推向桌面中央。",
     aiProfile: profile(1.05, .55, .4, .4, .35, .25, .4, 1.5)
   }),

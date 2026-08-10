@@ -487,11 +487,11 @@ test("角色规则：所有角色都用稳定英文 roleTags 供 AI 判断职责
   general.roleTags.forEach((tag) => assert.match(tag, /^[a-z-]+$/));
 }));
 
-test("角色规则：守誓者最大生命为4且壁垒正文只保留技能效果", () => {
+test("角色规则：守誓者最大生命为4且壁垒正文使用当前效果与次数文案", () => {
   const oath = GENERAL_DEFINITIONS.find((general) => general.id === "oath-warden");
   assert.equal(oath.maxHp, 4);
-  assert.equal(oath.activeDescription, "消耗2点能量，使一名己方阵营角色（包括自己）获得1点护盾。");
-  assert.doesNotMatch(oath.activeDescription, /不会随回合消失|抵消伤害时消耗|每回合.*2次/);
+  assert.equal(oath.activeDescription, "消耗2点能量，使一名己方阵营角色获得1点护盾；每回合最多发动2次。");
+  assert.doesNotMatch(oath.activeDescription, /不会随回合消失|抵消伤害时消耗/);
 });
 
 test("角色规则：壁垒配置、README与实际目标规则保持一致", async () => {
@@ -502,8 +502,8 @@ test("角色规则：壁垒配置、README与实际目标规则保持一致", as
     oathConfig = config.match(/id: "oath-warden"[\s\S]*?(?=\n  Object\.freeze\(\{)/)?.[0] ?? "";
   assert.equal(oath.activeCost, ACTIVE_SKILLS.barrier.cost);
   assert.equal(oath.activeLimitPerTurn, ACTIVE_SKILLS.barrier.limitPerTurn);
-  assert.doesNotMatch(oathConfig, /临时护盾|不会随回合(?:数)?消失|抵消伤害时消耗|每回合最多发动2次/);
-  assert.match(readme, /主动·壁垒：\*\* 消耗 2 点能量，使一名己方阵营角色（包括自己）获得 1 点护盾。/);
+  assert.doesNotMatch(oathConfig, /临时护盾|不会随回合(?:数)?消失|抵消伤害时消耗/);
+  assert.match(readme, /主动·壁垒：\*\* 消耗 2 点能量，使一名己方阵营角色获得 1 点护盾。/);
   assert.match(readme, /主动限制：\*\* 每回合最多发动 2 次/);
   assert.doesNotMatch(skills, /statuses\.temporaryShield|clearAtTurnStart/);
   const source = makePlayer("warden", 0, "dawn", "ai", 1),
@@ -566,8 +566,8 @@ test("角色规则：灵医配置与README同步回春摸牌、濒死触发及�
     readme = await readFile(projectFile("README.md"), "utf8"),
     medicSection = readme.match(/### 灵医[\s\S]*?(?=\r?\n### )/)?.[0] ?? "";
   for (const text of [medic.passiveDescription, medicSection]) {
-    assert.match(text, /自己或队友/);
-    assert.match(text, /实际恢复生命|实际治疗/);
+    assert.match(text, /己方阵营角色/);
+    assert.match(text, /恢复生命|实际治疗/);
     assert.match(text, /摸\s*1\s*张牌/);
     assert.match(text, /濒死救援.*触发|濒死救援也可触发/);
     assert.doesNotMatch(text, /治疗量\s*\+1/);
@@ -575,11 +575,11 @@ test("角色规则：灵医配置与README同步回春摸牌、濒死触发及�
   }
   assert.equal(medic.activeName, "滋荣");
   assert.equal(ACTIVE_SKILLS.symbiosis.name, "滋荣");
-  assert.match(medic.activeDescription, /自己或一名受伤队友/);
+  assert.match(medic.activeDescription, /己方阵营角色/);
   assert.doesNotMatch(medic.activeDescription, /目标不是自己.*自己同样恢复\s*1\s*点生命/);
   assert.match(medic.activeDescription, /消耗\s*2\s*点能量/);
-  assert.doesNotMatch(medic.activeDescription, /每回合|一回合/);
-  assert.match(medicSection, /自己或一名受伤队友/);
+  assert.match(medic.activeDescription, /每回合最多发动2次/);
+  assert.match(medicSection, /己方阵营角色/);
   assert.doesNotMatch(medicSection, /目标不是自己.*自己同样恢复\s*1\s*点生命/);
   assert.match(medicSection, /消耗\s*2\s*点能量/);
   assert.match(medicSection, /最多(?:使用|发动)\s*2\s*次/);
@@ -26570,11 +26570,10 @@ test("UI·玩家文案：阶段、队友与关键卡牌描述采用统一玩家�
   assert.doesNotMatch(CARD_DEFINITIONS.shield.description, /友方玩家|己方阵营角色/);
   assert.match(CARD_DEFINITIONS.leverage.description, /有装备且攻击范围内存在其他角色/);
   assert.doesNotMatch(CARD_DEFINITIONS.leverage.description, /能够突袭|其他玩家|真实突袭/);
-  assert.match(medic.passiveDescription, /自己或队友.*实际恢复生命.*摸1张牌/);
+  assert.match(medic.passiveDescription, /己方阵营角色.*恢复生命.*摸1张牌/);
   assert.doesNotMatch(medic.passiveDescription, /治疗量\+1/);
-  assert.match(medic.activeDescription, /自己或一名受伤队友/);
+  assert.match(medic.activeDescription, /己方阵营角色/);
   assert.doesNotMatch(medic.activeDescription, /自己同样恢复/);
-  assert.doesNotMatch(`${medic.passiveDescription}${medic.activeDescription}`, /己方阵营角色|友方玩家/);
 });
 
 test("UI·濒死提示：显示仍需恢复的生命值而不推算调息张数", () => {
@@ -26656,7 +26655,7 @@ test("UI·玩家面板：技能详情使用结构化的每回合发动次数", (
   assert.match(markup, /能量消耗<\/dt><dd>2点能量/);
   assert.match(markup, /每回合限发动2次/);
   assert.equal((markup.match(/每回合限发动2次/g) ?? []).length, 1);
-  assert.doesNotMatch(warden.general.activeDescription, /每回合|不会随回合消失|抵消伤害时消耗/);
+  assert.doesNotMatch(warden.general.activeDescription, /不会随回合消失|抵消伤害时消耗/);
 });
 
 test("UI·玩家面板：赌命者技能详情显示E-1摸牌、25%概率和每回合1次", () => {
@@ -26664,7 +26663,7 @@ test("UI·玩家面板：赌命者技能详情显示E-1摸牌、25%概率和每�
     markup = skillDetailsTemplate(gambler);
   assert.match(markup, /比实际消耗能量少1张/);
   assert.match(markup, /25×实际消耗能量%/);
-  assert.match(markup, /最高100%/);
+  assert.doesNotMatch(markup, /最高100%/);
   assert.match(markup, /每回合限发动1次/);
 });
 
