@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-distance-combined-v151";
-import { createId } from "../utils/helpers.js?build=20260810-distance-combined-v151";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260810-distance-combined-v151";
-import { RuleEngine } from "./RuleEngine.js?build=20260810-distance-combined-v151";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-discard-marginal-value-v152";
+import { createId } from "../utils/helpers.js?build=20260810-discard-marginal-value-v152";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260810-discard-marginal-value-v152";
+import { RuleEngine } from "./RuleEngine.js?build=20260810-discard-marginal-value-v152";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

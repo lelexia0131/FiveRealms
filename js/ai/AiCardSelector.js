@@ -2,19 +2,23 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-distance-combined-v151";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260810-distance-combined-v151";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-distance-combined-v151";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260810-distance-combined-v151";
-import { getRoleCardAiValue } from "./roleCardValue.js?build=20260810-distance-combined-v151";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-discard-marginal-value-v152";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260810-discard-marginal-value-v152";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-discard-marginal-value-v152";
+import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260810-discard-marginal-value-v152";
+import { getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-discard-marginal-value-v152";
 import {
   chooseBestResourceHandCandidate,
   chooseResourceZone,
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-} from "./resourceSelectionValue.js?build=20260810-distance-combined-v151";
+} from "./resourceSelectionValue.js?build=20260810-discard-marginal-value-v152";
 
 const globalKnownValue = (definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
+
+/** 低生命时即时响应牌（usageMode "response"）的边际生存价值；按危险程度分档，非绝对规则。*/
+const RESPONSE_SURVIVAL_BONUS_DANGER = 1;
+const RESPONSE_SURVIVAL_BONUS_LETHAL = 2;
 
 /** 把真实手牌实体整理为共享模块可用的手牌候选（仅合法记忆或自己手牌）。 */
 const buildResourceHandCandidate = (actor, owner, card, purpose, remainingCardCounts = null) => {
@@ -207,8 +211,23 @@ export class AiCardSelector {
   chooseDiscards(player, count) {
     const enemies = this.game.getEnemies(player);
     const stranded = enemies.length > 0 && !enemies.some((enemy) => DistanceSystem.inAttackRange(this.game, player, enemy));
+    const equippedDefinitionId = player.equipment?.definitionId ?? player.equipmentDefinitionId ?? null;
     const value = (card) => {
       let score = getRoleCardAiValue(player.generalId, card.definitionId);
+      // 已有装备时，装备牌只按替换/冗余的净增量计值，而不是重新获得一次完整装备价值
+      // （与 AiEvaluator.actionUtility 共用同一边际折损语义）。
+      if (card.category === "equipment") {
+        score -= getEquipmentKeepValueDeduction(
+          player.generalId,
+          card.definitionId,
+          equippedDefinitionId,
+          player.equipmentRetentionProbability ?? 1
+        );
+      }
+      // 低生命时，能即时阻断/抵消敌方效果的响应牌其保留价值随生存压力上升；满血或高血时为零。
+      if (player.hp <= 2 && card.usageMode === "response") {
+        score += player.hp <= 1 ? RESPONSE_SURVIVAL_BONUS_LETHAL : RESPONSE_SURVIVAL_BONUS_DANGER;
+      }
       if (stranded && card.definitionId === "assault") score += 5;
       if (player.hp >= player.maxHp && card.definitionId === "recover") score -= 2;
       if (player.hp <= 2 && card.definitionId === "recover") score += 7;

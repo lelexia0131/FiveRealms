@@ -24315,6 +24315,54 @@ test("AI·角色选牌：弃牌原有动态修正全部保留", () => {
   );
 });
 
+test("AI·角色选牌：低血已装备时保留反制并弃冗余充能桩", () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 4); // 炎术师：counter 7、energyDevice 8
+  const enemy = makePlayer("enemy", 1, "dusk");
+  const { game }
+    = makeGame([actor, enemy], { random: () => 0 });
+  actor.hp = 1;
+  const counter = instance("counter"), energyDevice = instance("energyDevice");
+  // 同款冗余：已装备充能桩时，手中充能桩只按替换净增量计值
+  actor.equipment = instance("energyDevice");
+  actor.hand = [energyDevice, counter];
+  assert.deepEqual(
+    game.aiController.chooseDiscards(actor, 1).map((card) => card.definitionId), ["energyDevice"]
+  );
+  assert.deepEqual(actor.hand.map((card) => card.definitionId), ["energyDevice", "counter"]);
+  // 不同装备：已装备雷达时，充能桩的边际保留价值仍低于反制
+  actor.equipment = instance("defenseDevice");
+  actor.hand = [instance("energyDevice"), instance("counter")];
+  assert.deepEqual(
+    game.aiController.chooseDiscards(actor, 1).map((card) => card.definitionId), ["energyDevice"]
+  );
+});
+
+test("AI·角色选牌：满血时反制仍可被弃置", () => {
+  const actor = makePlayer("actor", 0, "dawn", "ai", 4); // 炎术师：counter 7、energyDevice 8
+  const enemy = makePlayer("enemy", 1, "dusk");
+  const { game }
+    = makeGame([actor, enemy], { random: () => 0 });
+  const counter = instance("counter"), energyDevice = instance("energyDevice");
+  actor.hand = [counter, energyDevice];
+  assert.deepEqual(
+    game.aiController.chooseDiscards(actor, 1).map((card) => card.definitionId), ["counter"]
+  );
+});
+
+test("AI·角色选牌：新装备明显优于旧装备时保留价值仍为正", () => {
+  const actor = makePlayer("actor", 0, "dawn"); // 刃行者
+  const enemy = makePlayer("enemy", 1, "dusk");
+  const { game }
+    = makeGame([actor, enemy], { random: () => 0 });
+  // 刃行者 energyDevice 6、battleDevice 11：边际保留 11-6=5，仍高于 symbiosis -1
+  actor.equipment = instance("energyDevice");
+  const battleDevice = instance("battleDevice"), symbiosis = instance("symbiosis");
+  actor.hand = [battleDevice, symbiosis];
+  assert.deepEqual(
+    game.aiController.chooseDiscards(actor, 1).map((card) => card.definitionId), ["symbiosis"]
+  );
+});
+
 test("AI·角色选牌：其他玩家已知牌排序仍使用全局基础值而非目标角色差值", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const shade = makePlayer("shade", 1, "dusk", "ai", 3);

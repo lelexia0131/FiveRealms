@@ -1,5 +1,5 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-distance-combined-v151";
-import { createId } from "../utils/helpers.js?build=20260810-distance-combined-v151";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-discard-marginal-value-v152";
+import { createId } from "../utils/helpers.js?build=20260810-discard-marginal-value-v152";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；

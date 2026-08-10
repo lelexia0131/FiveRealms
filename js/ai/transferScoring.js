@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-distance-combined-v151";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-distance-combined-v151";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260810-distance-combined-v151";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-discard-marginal-value-v152";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-discard-marginal-value-v152";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260810-discard-marginal-value-v152";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

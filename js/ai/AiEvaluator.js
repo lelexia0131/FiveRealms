@@ -2,17 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-distance-combined-v151";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-distance-combined-v151";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-distance-combined-v151";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-distance-combined-v151";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-distance-combined-v151";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-distance-combined-v151";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-distance-combined-v151";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-distance-combined-v151";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-discard-marginal-value-v152";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-discard-marginal-value-v152";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-discard-marginal-value-v152";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-discard-marginal-value-v152";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-discard-marginal-value-v152";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-discard-marginal-value-v152";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-discard-marginal-value-v152";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-discard-marginal-value-v152";
 import {
   sealEarlyUsePenalty, sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260810-distance-combined-v151";
+} from "./sealScoring.js?build=20260810-discard-marginal-value-v152";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -260,13 +260,14 @@ export class AiEvaluator {
     }
     const equippedDefinitionId = actor.equipmentDefinitionId ?? actor.equipment?.definitionId ?? null;
     if (card.category === "equipment" && equippedDefinitionId) {
-      const oldValue = actor?.generalId
-        ? getRoleCardAiValue(actor.generalId, equippedDefinitionId)
-        : (CARD_DEFINITIONS[equippedDefinitionId]?.aiValue ?? 0);
-      const oldRetention = actor.equipmentRetentionProbability ?? (oldValue ? 1 : 0);
-      // 边际装备价值：新装备角色价值 - 旧装备按保留概率折算的期望价值；同款换装保留原有 -4 调整。
-      value -= oldValue * oldRetention;
-      if (equippedDefinitionId === card.definitionId) value -= 4;
+      // 边际装备价值：与弃牌保留价值共用同一折损语义（replacement / redundancy 净增量）。
+      value -= getEquipmentKeepValueDeduction(
+        actor?.generalId ?? null,
+        card.definitionId,
+        equippedDefinitionId,
+        actor.equipmentRetentionProbability ?? 1,
+        { cardDefinitions: CARD_DEFINITIONS }
+      );
     }
     return value;
   }

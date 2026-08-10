@@ -6,8 +6,8 @@
  * 价值模型：全局基础 aiValue + 稀疏角色差值；未配置的组合自动回退 0。
  * 后续新增角色或卡牌时，未配置差值即可立即使用基础值。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-distance-combined-v151";
-import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-distance-combined-v151";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-discard-marginal-value-v152";
+import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260810-discard-marginal-value-v152";
 
 /**
  * 角色 × 卡牌稀疏差值表。
@@ -230,6 +230,39 @@ export function getRoleCardAiValue(generalId, definitionId, options = {}) {
     );
   }
   return base + delta;
+}
+
+/**
+ * 装备牌在手牌中的边际保留价值折损。
+ *
+ * 语义：当前已装备时，保留并未来装备该牌只会产生 replacement / redundancy 的净状态变化，
+ * 而不是重新获得一次完整装备价值；与 AiEvaluator 行动评分中的边际装备价值共用同一语义。
+ * 返回值为应从保留价值中扣除的折损，无已装备牌时返回 0。
+ *
+ * @param {string|null} generalId 角色 ID（可空）
+ * @param {string} newDefinitionId 手中装备牌 definitionId
+ * @param {string|null} equippedDefinitionId 当前已装备牌 definitionId
+ * @param {number} [retention=1] 旧装备保留概率
+ * @param {Object} [options] 测试注入用配置
+ * @param {Object} [options.cardDefinitions] 默认 CARD_DEFINITIONS
+ * @param {Array} [options.generalDefinitions] 默认 GENERAL_DEFINITIONS
+ * @param {Object} [options.deltas] 默认 ROLE_CARD_VALUE_DELTAS
+ * @returns {number} 边际折损（0 表示无已装备牌）
+ */
+export function getEquipmentKeepValueDeduction(
+  generalId,
+  newDefinitionId,
+  equippedDefinitionId,
+  retention = 1,
+  options = {}
+) {
+  if (!equippedDefinitionId) return 0;
+  const cardDefinitions = options.cardDefinitions ?? CARD_DEFINITIONS;
+  const oldValue = generalId
+    ? getRoleCardAiValue(generalId, equippedDefinitionId, options)
+    : (cardDefinitions[equippedDefinitionId]?.aiValue ?? 0);
+  const deduction = oldValue * Math.max(0, Number(retention) || 0);
+  return equippedDefinitionId === newDefinitionId ? deduction + 4 : deduction;
 }
 
 /**
