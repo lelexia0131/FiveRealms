@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260810-shield-state-value-v167";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-shield-state-value-v167";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260811-offensive-exposure-v168";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260811-offensive-exposure-v168";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

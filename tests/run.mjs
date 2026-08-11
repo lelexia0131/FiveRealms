@@ -4927,6 +4927,40 @@ test("守誓者：护援先于护盾减伤且减至0时不消耗护盾", async (
   assert.equal(absorbedAfterAid.guardian.hand.includes(absorbedAfterAid.cost), false);
 });
 
+test("守誓者：护援减伤至0仍完成统一伤害收尾且只记录一次零伤害", async () => {
+  const source = makePlayer("aid-zero-source", 0, "dusk", "ai", 6),
+    target = makePlayer("aid-zero-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-zero-guardian", 2, "dawn", "human", 1),
+    discarded = instance("charge");
+  guardian.hand.push(discarded);
+  const { game } = makeGame([source, target, guardian], {
+    response:(request) => request.type === "skill"
+  });
+  registerPassiveSkills(game);
+  const afterDamage = [];
+  game.eventBus.on("afterDamage", "test:guardian-aid-zero-finalization", (event) => {
+    afterDamage.push({ actualAmount:event.actualAmount, shieldAbsorbed:event.shieldAbsorbed });
+  });
+  const hp = target.hp;
+  assert.equal(await game.damage(source, target, 1, {
+    canBlock:false, damageType:"skill", actionName:"测试"
+  }), 0);
+  assert.equal(target.hp, hp);
+  assert.equal(guardian.hand.length, 0);
+  assert.ok(game.state.deck.discardPile.includes(discarded));
+  assert.deepEqual(afterDamage, [{ actualAmount:0, shieldAbsorbed:0 }]);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${guardian.name}因「护援」弃置了「${discarded.name}」。`
+  ));
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${guardian.name}发动「护援」，令${target.name}受到的伤害减少1点。`
+  ));
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message === `${target.name}没有受到生命伤害。`).length,
+    1
+  );
+});
+
 test("守誓者：猎杀在格挡响应结束后才决定是否护援", async () => {
   const run = async (blocked) => {
     const hunter = makePlayer(`aid-hunt-source-${blocked}`, 0, "dawn", "ai", 5),
@@ -9224,7 +9258,7 @@ test("AI·搜索：本回合无法兑现破势时仍保留为合法未来选择"
   );
 });
 
-// ---- 破势反事实边际（AI 搜索与规划） ----
+// ---- AI 搜索·破势边际反事实 ----
 
 const exposeMarginalActor = (overrides = {}) => ({
   id: "actor",
@@ -9515,7 +9549,7 @@ test("AI·搜索：破势边际：反事实 baseline 与 boosted 仅相差一层
   );
 });
 
-// ---- 已有破势的突袭消费侧反事实（AI 搜索与规划） ----
+// ---- AI 搜索·已有破势的消费价值 ----
 
 function exposeAssaultMarginalOf({ actor, enemy, ally = null, players = null, rootStacks }) {
   const list = players ?? (ally ? [actor, ally, enemy] : [actor, enemy]);
@@ -9685,7 +9719,7 @@ test("AI·搜索：已有破势但无合法突袭时不强制兑现", async () =
   assert.equal(behavior.executed[0], "charge");
 });
 
-// ---- 已有破势消费侧 provenance（Planner 节点级 remainingRootExposeStacks） ----
+// ---- AI 搜索·破势剩余层分支归属 ----
 
 const provenanceActor = (stacks, handDefs, extra = {}) => ({
   id: "actor",
@@ -9873,7 +9907,7 @@ test("AI·搜索：回合开始无旧层时消费侧始终为0", () => {
   assert.equal(provenanceAdvance(state, after, 0), 0);
 });
 
-// ---- 根 transition provenance 推进（真实 AiPlanner.plan 数据流） ----
+// ---- AI 搜索·根动作推进破势剩余层 ----
 
 async function planRootProvenance({ stacks, hand, enemyHp, limit, forceAssaultRoot = false }) {
   const actor = makePlayer("root-prov-actor", 0, "dawn", "ai", 1);
@@ -12351,40 +12385,6 @@ test("AI·封印：基础值与八名角色差值全部纳入权威估值表", (
   }
 });
 
-test("守誓者：护援减伤至0仍完成统一伤害收尾且只记录一次零伤害", async () => {
-  const source = makePlayer("aid-zero-source", 0, "dusk", "ai", 6),
-    target = makePlayer("aid-zero-target", 1, "dawn", "ai", 0),
-    guardian = makePlayer("aid-zero-guardian", 2, "dawn", "human", 1),
-    discarded = instance("charge");
-  guardian.hand.push(discarded);
-  const { game } = makeGame([source, target, guardian], {
-    response:(request) => request.type === "skill"
-  });
-  registerPassiveSkills(game);
-  const afterDamage = [];
-  game.eventBus.on("afterDamage", "test:guardian-aid-zero-finalization", (event) => {
-    afterDamage.push({ actualAmount:event.actualAmount, shieldAbsorbed:event.shieldAbsorbed });
-  });
-  const hp = target.hp;
-  assert.equal(await game.damage(source, target, 1, {
-    canBlock:false, damageType:"skill", actionName:"测试"
-  }), 0);
-  assert.equal(target.hp, hp);
-  assert.equal(guardian.hand.length, 0);
-  assert.ok(game.state.deck.discardPile.includes(discarded));
-  assert.deepEqual(afterDamage, [{ actualAmount:0, shieldAbsorbed:0 }]);
-  assert.ok(game.state.logs.some(
-    (entry) => entry.message === `${guardian.name}因「护援」弃置了「${discarded.name}」。`
-  ));
-  assert.ok(game.state.logs.some(
-    (entry) => entry.message === `${guardian.name}发动「护援」，令${target.name}受到的伤害减少1点。`
-  ));
-  assert.equal(
-    game.state.logs.filter((entry) => entry.message === `${target.name}没有受到生命伤害。`).length,
-    1
-  );
-});
-
 // ---- AI 卡牌行为·闪电 ----
 
 test("AI·闪电：AI 根节点与深层生成均拒绝已有闪电状态", () => {
@@ -14244,6 +14244,10 @@ test("AI·雷达：受攻击暴露时不会为静态略高的非防守装备确�
   d.energy = 1;
   b.hand.push(instance("assault"), instance("assault"), instance("assault"));
   d.hand.push(instance("assault"), instance("assault"), instance("assault"));
+  // 让 AI 合法记忆敌人的突袭身份：新 exposure 模型用已知 assault summary 计价威胁，
+  // 未知手牌只会按剩余牌池密度折抵，测试需要确认的是「已知敌人持有大量突袭」时保留雷达。
+  actor.aiMemory.knownCardsByPlayer[b.id] = Object.fromEntries(b.hand.map((card) => [card.id, "assault"]));
+  actor.aiMemory.knownCardsByPlayer[d.id] = Object.fromEntries(d.hand.map((card) => [card.id, "assault"]));
   const { game }
     = makeGame([actor, b, f2, f3, d]);
   game.aiController.knowledge.remainingCounts = () => counts;
@@ -14255,7 +14259,10 @@ test("AI·雷达：受攻击暴露时不会为静态略高的非防守装备确�
     after = new AiSimulator(before).apply(before, swapAction, actor.id),
     swapScore = evaluator.actionUtility(swapAction, actor, before) + evaluator.stateUtility(after, actor.id) * 0.08,
     endScore = evaluator.actionUtility({ type: "end" }, actor, before) + evaluator.stateUtility(before, actor.id) * 0.08;
-  assert.ok(endScore - swapScore > GAME_CONFIG.aiNearTieRange);
+  assert.ok(endScore - swapScore > 0);
+  // 暴露模型已改为按 assault summary 计价（非攻击出牌不再无条件降低攻击 pressure）：
+  // 换装 battleDevice 本身不再被当作「损失一张攻击牌」，因此换装代价比旧 handCount 模型更低，
+  // 但雷达在 28 暴露下仍应被保留（score 为正，且 planner 固定选 end）。
   const selected = await game.aiController.planner.plan(
     actor,
     before,
@@ -14315,7 +14322,9 @@ test("AI·雷达：敌方雷达动态免伤按阵营符号反向计入己方效�
       maxHp: 4,
       shield: 0,
       energy: 0,
-      handCount: 0,
+      handCount: 1,
+      expectedAssaultCount: 1,
+      assaultResponseProbability: 1,
       hand: [],
       attackRange: 1,
       expectedEquipmentGain: 0,
@@ -14335,7 +14344,9 @@ test("AI·雷达：敌方雷达动态免伤按阵营符号反向计入己方效�
       maxHp: 4,
       shield: 0,
       energy: 0,
-      handCount: 0,
+      handCount: 1,
+      expectedAssaultCount: 1,
+      assaultResponseProbability: 1,
       attackRange: 1,
       expectedEquipmentGain: 0,
       expectedEquipmentRoleDelta: 0,
@@ -15392,6 +15403,8 @@ test("AI·望远镜与屏障：stateUtility 感知屏障挡住多个敌人的攻
       shield: 0,
       energy: 1,
       handCount: 3,
+      expectedAssaultCount: 3,
+      assaultResponseProbability: 1,
       attackRange: 1,
       expectedEquipmentGain: 0,
       expectedEquipmentRoleDelta: 0,
@@ -15449,6 +15462,9 @@ test("AI·望远镜与屏障：屏障挡住两个敌人时不会为略高静态�
   c.energy = 1;
   b.hand.push(instance("assault"), instance("assault"), instance("assault"));
   c.hand.push(instance("assault"), instance("assault"), instance("assault"));
+  // 让 AI 合法记忆敌人的突袭身份：新 exposure 模型用已知 assault summary 计价威胁。
+  actor.aiMemory.knownCardsByPlayer[b.id] = Object.fromEntries(b.hand.map((card) => [card.id, "assault"]));
+  actor.aiMemory.knownCardsByPlayer[c.id] = Object.fromEntries(c.hand.map((card) => [card.id, "assault"]));
   const { game }
     = makeGame([actor, b, c]);
   game.aiSearchNodeBudgetOverride = 2;
@@ -25591,6 +25607,148 @@ const shieldValueU = (game, state, shield) => {
   return game.aiController.evaluator.stateUtility(c, "sv-warden");
 };
 
+/** 构造 viewer + 一个持牌敌人，返回 visible 快照与 evaluator。 */
+const exposureFixture = (enemyHand = [], counts = null) => {
+  const { game } = makeGame([
+    makePlayer("exp-viewer", 0, "dawn", "ai", 3),
+    makePlayer("exp-enemy", 1, "dusk", "ai", 0)
+  ]);
+  const viewer = game.state.players[0];
+  const enemy = game.state.players[1];
+  enemy.hand.push(...enemyHand.map((id) => instance(id)));
+  const known = {};
+  enemy.hand.forEach((card) => { known[card.id] = card.definitionId; });
+  viewer.aiMemory.knownCardsByPlayer[enemy.id] = known;
+  if (counts) game.aiController.knowledge.remainingCounts = () => counts;
+  const visible = createAiVisibleState(
+    viewer.id, game.state, game.aiController.knowledge.remainingCounts(viewer)
+  );
+  return { game, visible, viewer: visible.players[0], enemy: visible.players[1], evaluator: game.aiController.evaluator };
+};
+
+test("AI·评分：非攻击牌消耗不会因手牌数下降而降低攻击暴露", () => {
+  const { game: g1, enemy: e1, viewer: v1, visible: vis1, evaluator } = exposureFixture(["assault", "assault", "charge"]);
+  const expWithCharge = evaluator.incomingExposure(vis1, v1);
+  g1.dispose();
+  const { game: g2, enemy: e2, viewer: v2, visible: vis2, evaluator: e2v } = exposureFixture(["assault", "assault"]);
+  const expWithoutCharge = e2v.incomingExposure(vis2, v2);
+  g2.dispose();
+  assert.equal(e1.expectedAssaultCount, e2.expectedAssaultCount);
+  assertClose(expWithCharge, expWithoutCharge);
+});
+
+test("AI·评分：突袭牌消耗会降低剩余攻击暴露", () => {
+  const { game: g1, viewer: v1, visible: vis1, evaluator: e1v } = exposureFixture(["assault", "assault", "charge"]);
+  const exp2 = e1v.incomingExposure(vis1, v1);
+  g1.dispose();
+  const { game: g2, viewer: v2, visible: vis2, evaluator: e2v } = exposureFixture(["assault", "charge"]);
+  const exp1 = e2v.incomingExposure(vis2, v2);
+  g2.dispose();
+  assert.ok(exp1 < exp2 - 1e-9, "失去一张 assault 应降低 exposure");
+});
+
+test("AI·评分：相同手牌数下预期突袭更多时攻击暴露更高", () => {
+  const { game: g1, viewer: v1, visible: vis1, evaluator: e1v } = exposureFixture(["assault", "assault", "assault"]);
+  const exp3 = e1v.incomingExposure(vis1, v1);
+  g1.dispose();
+  const { game: g2, viewer: v2, visible: vis2, evaluator: e2v } = exposureFixture(["charge", "recover", "shield"]);
+  const exp0 = e2v.incomingExposure(vis2, v2);
+  g2.dispose();
+  assert.ok(exp3 > exp0 + 1e-9, "3 张 assault 应高于 3 张非攻击牌");
+});
+
+test("AI·评分：攻击暴露按预期突袭数量有界且不随非攻击手牌膨胀", () => {
+  // 同样 3 张 assault，手牌再塞任意多非攻击牌，exposure 不应增长（不再用 raw handCount 计价）。
+  const { game: g1, viewer: v1, visible: vis1, evaluator: e1v } = exposureFixture(["assault", "assault", "assault", "charge", "recover", "shield"]);
+  const exp6 = e1v.incomingExposure(vis1, v1);
+  g1.dispose();
+  const { game: g2, viewer: v2, visible: vis2, evaluator: e2v } = exposureFixture(["assault", "assault", "assault"]);
+  const exp3 = e2v.incomingExposure(vis2, v2);
+  g2.dispose();
+  assertClose(exp6, exp3);
+});
+
+test("AI·评分：隐藏敌人的攻击暴露只使用合法概率摘要而不读取真实牌面", () => {
+  const { game, visible, enemy, viewer, evaluator } = exposureFixture(["assault", "assault", "block"]);
+  // visible 快照中隐藏敌人不得携带具体 hand（聚合摘要代替）。
+  assert.equal(enemy.hand, undefined);
+  assert.equal(typeof enemy.expectedAssaultCount, "number");
+  assert.equal(typeof enemy.assaultResponseProbability, "number");
+  assert.ok(evaluator.incomingExposure(visible, viewer) > 0);
+  game.dispose();
+});
+
+test("AI·评分：使用聚能后突袭能力不变且攻击暴露不因手牌数下降", () => {
+  const { game } = makeGame([
+    makePlayer("exp-charge-viewer", 0, "dawn", "ai", 1),
+    makePlayer("exp-charge-b", 1, "dusk"),
+    makePlayer("exp-charge-f2", 2, "dawn"),
+    makePlayer("exp-charge-f3", 3, "dawn"),
+    makePlayer("exp-charge-d", 4, "dusk")
+  ]);
+  const actor = game.state.players.find((p) => p.id === "exp-charge-viewer");
+  actor.energy = 2;
+  actor.hand.push(instance("charge"));
+  const evaluator = game.aiController.evaluator;
+  const before = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const chargeCard = before.players.find((p) => p.id === "exp-charge-viewer").hand[0];
+  const after = new AiSimulator(before).apply(before, { type: "card", card: chargeCard, targets: [] }, actor.id);
+  const actorA = before.players.find((p) => p.id === "exp-charge-viewer");
+  const actorB = after.players.find((p) => p.id === "exp-charge-viewer");
+  // handCount -1 但 expectedAssaultCount 不变
+  assert.equal(actorB.handCount, actorA.handCount - 1);
+  assert.equal(actorB.expectedAssaultCount, actorA.expectedAssaultCount);
+  // 敌人 exposure（来自 actor）不得因 actor 少一张 charge 而下降
+  const enemyB = after.players.find((p) => p.id === "exp-charge-d");
+  const enemyA = before.players.find((p) => p.id === "exp-charge-d");
+  const expBefore = evaluator.incomingExposure(before, enemyA);
+  const expAfter = evaluator.incomingExposure(after, enemyB);
+  assert.ok(expAfter >= expBefore - 1e-9,
+    `charge 不改变 assault capability，exposure 不应下降 (${expBefore.toFixed(3)} → ${expAfter.toFixed(3)})`);
+  game.dispose();
+});
+
+test("AI·评分：攻击暴露在敌我镜像状态下保持阵营符号方向", () => {
+  const { game, visible, viewer, evaluator } = exposureFixture(["assault", "assault"]);
+  // 敌方 expectedAssaultCount 提升 → viewer utility 应下降（exposure 只读概率摘要，可克隆纯数据快照）
+  const enemyBoosted = structuredClone(visible);
+  const eb = enemyBoosted.players.find((p) => p.id === "exp-enemy");
+  eb.expectedAssaultCount = 4;
+  eb.assaultResponseProbability = 1;
+  const viewerBase = evaluator.stateUtility(visible, "exp-viewer");
+  const viewerEnemyUp = evaluator.stateUtility(enemyBoosted, "exp-viewer");
+  assert.ok(viewerEnemyUp < viewerBase, "敌方威胁↑ → 己方 utility 下降");
+  game.dispose();
+});
+
+test("AI·评分：突袭摘要模型下护盾与雷达评分结构保持稳定", () => {
+  const { game, viewer, enemy, evaluator } = exposureFixture(["assault", "assault"]);
+  // 护盾：HP1+盾1 在有可见威胁时仍有危险/死亡保护价值
+  const shieldValue = evaluator.shieldStateValue({ ...viewer, hp: 1, shield: 1 }, 14);
+  assert.ok(shieldValue > 0, "HP1+盾1 在有可见威胁时仍有保护价值");
+  // 雷达：exposure × retention × P(tactic)
+  const radarWorld = {
+    players: [
+      {
+        ...viewer,
+        equipmentDefinitionId: "defenseDevice",
+        equipmentRetentionProbability: 1,
+        initialEquipmentValue: CARD_DEFINITIONS.defenseDevice.aiValue,
+        initialEquipmentRoleDelta: 0
+      },
+      { ...enemy }
+    ]
+  };
+  const exposure = evaluator.incomingExposure(radarWorld, radarWorld.players[0]);
+  assert.ok(exposure > 0);
+  assertClose(
+    evaluator.radarMitigationUtility(exposure, radarWorld.players[0], 0.5),
+    exposure * 1 * 0.5,
+    1e-9
+  );
+  game.dispose();
+});
+
 test("AI·评分：高威胁下 shield value 高于低威胁", () => {
   const { game, before } = shieldValueFixture();
   const lowGain = shieldValueU(game, shieldState(before, { threat: "low" }), 1)
@@ -29469,30 +29627,6 @@ test("UI·玩家面板：角色技能详情完整展示主动与被动公开信�
   assert.doesNotMatch(markup, /隐藏决策资料|knownCardsByPlayer|aiMemory|decision|weight/);
 });
 
-test("UI·布局样式：日志技能蓝色不扩散到其他技能界面", async () => {
-  const [theme, components, characters, cards] = await Promise.all([
-    readFile(projectFile("css/theme.css"), "utf8"),
-    readFile(projectFile("css/components.css"), "utf8"),
-    readFile(projectFile("css/characters.css"), "utf8"),
-    readFile(projectFile("css/cards.css"), "utf8")
-  ]);
-  const allCss = [theme, components, characters, cards].join("\n");
-  assert.equal((theme.match(/--log-skill-name\s*:/g) ?? []).length, 1);
-  assert.match(theme, /--log-skill-name:\s*#486f95/);
-  assert.doesNotMatch(theme, /--skill\s*:|--log-skill-name:\s*var\(--shield\)/);
-  assert.equal((allCss.match(/var\(--log-skill-name\)/g) ?? []).length, 1);
-  assert.match(components, /\.log-skill-name\s*\{[^}]*color:\s*var\(--log-skill-name\)/s);
-  assert.match(components, /\.log-card-name\s*\{[^}]*color:\s*#5f4779/s);
-  assert.match(components, /\.skill-button\s*\{[^}]*background:\s*linear-gradient\(135deg, #9d6e25, #7c5319\)/s);
-  assert.match(components, /\.skill-detail-section\s*\{[^}]*border-left:\s*4px solid var\(--gold\)/s);
-  assert.match(components, /\.skill-detail-heading strong\s*\{[^}]*color:\s*var\(--gold\)/s);
-  assert.match(components, /\.skill-detail-section\.is-passive \.skill-detail-heading strong\s*\{[^}]*color:\s*var\(--dawn\)/s);
-  assert.match(characters, /\.skill-copy\s*\{[^}]*border-left:\s*2px solid var\(--gold\)/s);
-  assert.doesNotMatch(characters, /\.skill-copy h4 span\s*\{[^}]*color:/s);
-  assert.match(cards, /\.skill-sigil\s*\{[^}]*color:\s*var\(--gold\)[^}]*border:\s*2px solid var\(--gold\)/s);
-  assert.doesNotMatch(cards, /\.resolving-card\.is-skill\s*\{[^}]*--card-accent:/s);
-});
-
 test("UI·玩家面板：八名角色使用结构化被动触发条件与限制文案", async () => {
   const expected = {
     "blade-walker": "每回合按不同卡牌类别分别触发",
@@ -30389,6 +30523,32 @@ test("UI·响应窗口：延迟状态反制只用持有者与判定语义", () =
   }
 });
 
+test("UI·判定窗口：延迟状态显示持有者与状态且雷达仍显示防御判定", () => {
+  const element = {
+      innerHTML:"",
+      classList:{ remove() { }, add() { } }
+    },
+    holder = makePlayer("judgment-holder", 0, "dawn"),
+    card = instance("assault"),
+    view = new JudgmentView(element);
+  for (const [statusId, statusName] of [["lightning", "闪电"], ["sealed", "封印"]]) {
+    view.show(holder, card, {
+      delayedStatusContext:{
+        ownerId:holder.id,
+        ownerName:holder.name,
+        ownerBattleTeam:holder.battleTeam,
+        statusId,
+        statusName,
+        event:"judging"
+      }
+    });
+    assert.match(element.innerHTML, new RegExp(`${holder.name}的「${statusName}」正在判定`));
+    assert.doesNotMatch(element.innerHTML, /未知角色|不知道谁|防御判定/);
+  }
+  view.show(holder, card);
+  assert.match(element.innerHTML, new RegExp(`防御判定 · ${holder.name}`));
+});
+
 // ---- 互利选择交互 ----
 
 test("UI·互利选择：互利必须先选择再确认且可直接切换选择", async () => {
@@ -30543,32 +30703,6 @@ test("UI·中央结算卡：新对局会清空上一局中央结算卡，避免�
   assert.match(source, /showGame\([^)]*\)\s*\{[\s\S]*?this\.resetCurrentCard\(\)/);
 });
 
-test("UI·判定窗口：延迟状态显示持有者与状态且雷达仍显示防御判定", () => {
-  const element = {
-      innerHTML:"",
-      classList:{ remove() { }, add() { } }
-    },
-    holder = makePlayer("judgment-holder", 0, "dawn"),
-    card = instance("assault"),
-    view = new JudgmentView(element);
-  for (const [statusId, statusName] of [["lightning", "闪电"], ["sealed", "封印"]]) {
-    view.show(holder, card, {
-      delayedStatusContext:{
-        ownerId:holder.id,
-        ownerName:holder.name,
-        ownerBattleTeam:holder.battleTeam,
-        statusId,
-        statusName,
-        event:"judging"
-      }
-    });
-    assert.match(element.innerHTML, new RegExp(`${holder.name}的「${statusName}」正在判定`));
-    assert.doesNotMatch(element.innerHTML, /未知角色|不知道谁|防御判定/);
-  }
-  view.show(holder, card);
-  assert.match(element.innerHTML, new RegExp(`防御判定 · ${holder.name}`));
-});
-
 test("UI·中央结算卡：突袭在中央结算区保留结构目标且使用日志采用自然语序", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game, ui }
@@ -30627,34 +30761,6 @@ test("UI·中央结算卡：日志角色 token 可在同一行分别按阵营安
   assert.match(markup, /log-player-name team-dawn/);
   assert.match(markup, /log-player-name team-dusk/);
   assert.match(markup, /造成影响/);
-});
-
-test("UI·日志：仅已识别技能的括号与名称使用技能蓝色", () => {
-  const activeAndStatus = formatLogMessage(
-    "赌命者发动「孤注」，并进入「孤注」状态。"
-  );
-  assert.ok(activeAndStatus.includes('发动<strong class="log-skill-name">「孤注」</strong>'));
-  assert.doesNotMatch(activeAndStatus, /class="log-skill-name">发动/);
-  assert.ok(activeAndStatus.includes('进入「<strong class="log-card-name">孤注</strong>」状态'));
-  const passive = formatLogMessage("调律师触发「协调」，摸1张牌。");
-  assert.ok(passive.includes('触发<strong class="log-skill-name">「协调」</strong>'));
-  assert.doesNotMatch(passive, /class="log-skill-name">触发/);
-  const guardianAid = formatLogMessage("守誓者因「护援」弃置了「突袭」。");
-  assert.ok(guardianAid.includes('因<strong class="log-skill-name">「护援」</strong>'));
-  assert.ok(guardianAid.includes('「<strong class="log-card-name">突袭</strong>」'));
-  const equipment = formatLogMessage("调律师的「回收站」触发（1/2），摸1张牌。");
-  assert.ok(equipment.includes('的「<strong class="log-card-name">回收站</strong>」触发'));
-  assert.doesNotMatch(equipment, /log-skill-name/);
-  const card = formatLogMessage("调律师使用了「突袭」。");
-  assert.ok(card.includes('「<strong class="log-card-name">突袭</strong>」'));
-});
-
-test("UI·日志：同句连势技能名为蓝色而累计状态名保持卡牌色", () => {
-  const rendered = formatLogMessage("刃行者触发「连势」，现有2层「连势」。");
-  assert.ok(rendered.includes('触发<strong class="log-skill-name">「连势」</strong>'));
-  assert.ok(rendered.includes('现有2层「<strong class="log-card-name">连势</strong>」'));
-  assert.equal((rendered.match(/log-skill-name/g) ?? []).length, 1);
-  assert.equal((rendered.match(/log-card-name/g) ?? []).length, 1);
 });
 
 test("UI·中央结算卡：闪电：中央结算卡显示作用对象为自己且不进入业务 targets", async () => {
@@ -30776,7 +30882,59 @@ test("UI·中央结算卡：none 型主动技能：中央结算卡经 displayTar
   }
 });
 
+test("UI·日志：仅已识别技能的括号与名称使用技能蓝色", () => {
+  const activeAndStatus = formatLogMessage(
+    "赌命者发动「孤注」，并进入「孤注」状态。"
+  );
+  assert.ok(activeAndStatus.includes('发动<strong class="log-skill-name">「孤注」</strong>'));
+  assert.doesNotMatch(activeAndStatus, /class="log-skill-name">发动/);
+  assert.ok(activeAndStatus.includes('进入「<strong class="log-card-name">孤注</strong>」状态'));
+  const passive = formatLogMessage("调律师触发「协调」，摸1张牌。");
+  assert.ok(passive.includes('触发<strong class="log-skill-name">「协调」</strong>'));
+  assert.doesNotMatch(passive, /class="log-skill-name">触发/);
+  const guardianAid = formatLogMessage("守誓者因「护援」弃置了「突袭」。");
+  assert.ok(guardianAid.includes('因<strong class="log-skill-name">「护援」</strong>'));
+  assert.ok(guardianAid.includes('「<strong class="log-card-name">突袭</strong>」'));
+  const equipment = formatLogMessage("调律师的「回收站」触发（1/2），摸1张牌。");
+  assert.ok(equipment.includes('的「<strong class="log-card-name">回收站</strong>」触发'));
+  assert.doesNotMatch(equipment, /log-skill-name/);
+  const card = formatLogMessage("调律师使用了「突袭」。");
+  assert.ok(card.includes('「<strong class="log-card-name">突袭</strong>」'));
+});
+
+test("UI·日志：同句连势技能名为蓝色而累计状态名保持卡牌色", () => {
+  const rendered = formatLogMessage("刃行者触发「连势」，现有2层「连势」。");
+  assert.ok(rendered.includes('触发<strong class="log-skill-name">「连势」</strong>'));
+  assert.ok(rendered.includes('现有2层「<strong class="log-card-name">连势</strong>」'));
+  assert.equal((rendered.match(/log-skill-name/g) ?? []).length, 1);
+  assert.equal((rendered.match(/log-card-name/g) ?? []).length, 1);
+});
+
 // ---- 布局与样式 ----
+
+test("UI·布局样式：日志技能蓝色不扩散到其他技能界面", async () => {
+  const [theme, components, characters, cards] = await Promise.all([
+    readFile(projectFile("css/theme.css"), "utf8"),
+    readFile(projectFile("css/components.css"), "utf8"),
+    readFile(projectFile("css/characters.css"), "utf8"),
+    readFile(projectFile("css/cards.css"), "utf8")
+  ]);
+  const allCss = [theme, components, characters, cards].join("\n");
+  assert.equal((theme.match(/--log-skill-name\s*:/g) ?? []).length, 1);
+  assert.match(theme, /--log-skill-name:\s*#486f95/);
+  assert.doesNotMatch(theme, /--skill\s*:|--log-skill-name:\s*var\(--shield\)/);
+  assert.equal((allCss.match(/var\(--log-skill-name\)/g) ?? []).length, 1);
+  assert.match(components, /\.log-skill-name\s*\{[^}]*color:\s*var\(--log-skill-name\)/s);
+  assert.match(components, /\.log-card-name\s*\{[^}]*color:\s*#5f4779/s);
+  assert.match(components, /\.skill-button\s*\{[^}]*background:\s*linear-gradient\(135deg, #9d6e25, #7c5319\)/s);
+  assert.match(components, /\.skill-detail-section\s*\{[^}]*border-left:\s*4px solid var\(--gold\)/s);
+  assert.match(components, /\.skill-detail-heading strong\s*\{[^}]*color:\s*var\(--gold\)/s);
+  assert.match(components, /\.skill-detail-section\.is-passive \.skill-detail-heading strong\s*\{[^}]*color:\s*var\(--dawn\)/s);
+  assert.match(characters, /\.skill-copy\s*\{[^}]*border-left:\s*2px solid var\(--gold\)/s);
+  assert.doesNotMatch(characters, /\.skill-copy h4 span\s*\{[^}]*color:/s);
+  assert.match(cards, /\.skill-sigil\s*\{[^}]*color:\s*var\(--gold\)[^}]*border:\s*2px solid var\(--gold\)/s);
+  assert.doesNotMatch(cards, /\.resolving-card\.is-skill\s*\{[^}]*--card-accent:/s);
+});
 
 test("UI·布局样式：上方 AI 思考提示出现时隐藏下方重复提示", () => {
   const classes = () => {

@@ -2,17 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260810-shield-state-value-v167";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260810-shield-state-value-v167";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260810-shield-state-value-v167";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260810-shield-state-value-v167";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260810-shield-state-value-v167";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-shield-state-value-v167";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260810-shield-state-value-v167";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260810-shield-state-value-v167";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-offensive-exposure-v168";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260811-offensive-exposure-v168";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260811-offensive-exposure-v168";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260811-offensive-exposure-v168";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260811-offensive-exposure-v168";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260811-offensive-exposure-v168";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260811-offensive-exposure-v168";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260811-offensive-exposure-v168";
 import {
   sealEarlyUsePenalty, sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260810-shield-state-value-v167";
+} from "./sealScoring.js?build=20260811-offensive-exposure-v168";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -76,7 +76,7 @@ export class AiEvaluator {
     return ThreatCalculator.calculate(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
   }
 
-  /** 敌方攻击暴露：距离可达概率 × 公开威胁强度；只读公开/模拟合法字段，不读取隐藏手牌身份。 */
+  /** 敌方攻击暴露：距离可达概率 × 公开突袭资源强度；只读公开/模拟合法字段，不读取隐藏手牌身份。 */
   incomingExposure(state, player) {
     let exposure = 0;
     for (const enemy of state.players) {
@@ -85,10 +85,15 @@ export class AiEvaluator {
         { state }, enemy, player, enemy.attackRange ?? 1
       );
       if (rangeProbability <= 0) continue;
-      const handCount = Math.max(0, Number(enemy.handCount ?? enemy.hand?.length ?? 0));
       const energy = Math.max(0, Number(enemy.energy ?? 0));
-      // 威胁强度：基准1点突袭 + 公开手牌/能量折算的潜在攻击资源，再按 stateUtility 每点 hp=5 权重换算。
-      const expectedDamage = 1 + Math.min(3, handCount) * .5 + Math.min(2, energy) * .3;
+      // 攻击资源用 assault summary（己方=真实可见手牌，他人=已知身份+剩余牌池密度估计），
+      // 不再把 raw handCount 当作攻击牌 proxy：打出非攻击牌不应无条件降低攻击 pressure。
+      const expectedAssault = Math.max(0, Number(enemy.expectedAssaultCount ?? 0));
+      const response = Math.max(0, Math.min(1, Number(enemy.assaultResponseProbability) || 0));
+      // 威胁强度：基准1点突袭(以概率持有) + 突袭期望 + 能量折算的潜在攻击资源，再按 hp=5 权重换算。
+      // 不做次数截断：expectedAssaultCount 已是有界的具体突袭数量，多张突袭代表跨回合的持续威胁；
+      // 单回合剩余次数由 Simulator 的 attackUseSlots 消费处理，不在此重复计价。
+      const expectedDamage = response + Math.min(3, expectedAssault) * 0.5 + Math.min(2, energy) * 0.3;
       exposure += expectedDamage * HP_VALUE * rangeProbability;
     }
     return exposure;

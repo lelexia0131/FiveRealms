@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260810-shield-state-value-v167";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260811-offensive-exposure-v168";
 
 export const PROBABILITY_EPSILON = 1e-12;
 
