@@ -2,17 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-offensive-exposure-v168";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260811-offensive-exposure-v168";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260811-offensive-exposure-v168";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260811-offensive-exposure-v168";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260811-offensive-exposure-v168";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260811-offensive-exposure-v168";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260811-offensive-exposure-v168";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260811-offensive-exposure-v168";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-seal-consumer-v170";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260811-seal-consumer-v170";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260811-seal-consumer-v170";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260811-seal-consumer-v170";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260811-seal-consumer-v170";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260811-seal-consumer-v170";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260811-seal-consumer-v170";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260811-seal-consumer-v170";
 import {
-  sealEarlyUsePenalty, sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260811-offensive-exposure-v168";
+  sealTeamBurden, sealUseValue
+} from "./sealScoring.js?build=20260811-seal-consumer-v170";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -265,25 +265,24 @@ export class AiEvaluator {
     const actionTarget = action.targets?.[0];
     const target = visible.players.find((entry) => entry.id === actionTarget?.id) ?? actionTarget;
     if (card.definitionId === "seal") {
+      // 封印的软性后置（现在先封印会让最佳非封印即时动作延迟一步）属于跨候选
+      // timing 比较，由 AiPlanner 在同一 parent 物化候选后用真实 base transition
+      // 计算 delayCost 再调整 seal transition；actionUtility 只读单动作先验，
+      // 不再递归比较替代动作。
       value = sealUseValue(actor, target, visible) + roleDelta;
-      if (Array.isArray(options.availableActions)) {
-        const alternatives = options.availableActions.filter((candidate) => (
-          candidate !== action
-          && candidate.type !== "end"
-          && candidate.card?.definitionId !== "seal"
-        ));
-        const bestImmediateAlternative = alternatives.reduce((best, candidate) => (
-          Math.max(best, this.actionUtility(candidate, player, visible)
-            * (candidate.executionProbability ?? 1))
-        ), -Infinity);
-        value -= sealEarlyUsePenalty(bestImmediateAlternative);
-      }
     }
     if (target) {
       const enemy = target.battleTeam !== player.battleTeam;
       if (card.subtypes.includes("attack") || card.definitionId === "duel") {
         const focus = (target.maxHp - target.hp) * 3 + (target.hp <= 2 ? 5 : 0) + (target.hp <= 1 ? 8 : 0);
-        value += enemy ? 3 + focus : -12;
+        // 突袭的基础伤害与击杀收益已由 AiSimulator 写入 after-state，并经 stateUtility
+        // 以 HP/危险/阵亡价值表达，不再按缺失血量重复计价；只保留近杀目标选择先验
+        // （2HP/1HP 目标的边际击杀倾向，属于独立的目标选取 contextual prior）。
+        // 震荡为多目标牌，逐目标伤害/击杀已由 stateDelta 自然累积，不设单目标先验。
+        // 决斗等其它攻击类卡牌仍沿用原即时先验。
+        if (enemy && card.definitionId === "assault") value += (target.hp <= 2 ? 5 : 0) + (target.hp <= 1 ? 8 : 0);
+        else if (enemy && !["assault","shockwave"].includes(card.definitionId)) value += 3 + focus;
+        else if (!enemy) value -= 12;
       }
       if (["plunder","destroy","scout"].includes(card.definitionId)) {
         const equipmentValue = target.equipmentDefinitionId || target.equipment ? (card.definitionId === "plunder" ? 1 : 2) : 0;
@@ -295,10 +294,16 @@ export class AiEvaluator {
         value += this.threatPriority(actor, target, player.aiMemory, ["assault","duel"].includes(card.definitionId) ? 1 : 0);
       }
     }
-    if (card.definitionId === "recover") value += (actor.maxHp - actor.hp) * 4;
+    // 调息的真实价值（恢复1HP、danger/死亡消除）已由 AiSimulator 写入 after-state，
+    // 由 stateUtility 的 HP/危险/阵亡价值表达；旧 `(maxHp - hp) * 4` 把"总缺血量"
+    // 误当成"本次实际恢复量"且与 stateDelta 重复计价，与滋荣同一语义缺陷，必须删除。
     if (card.definitionId === "charge") value += (actor.maxEnergy - actor.energy) * 1.5 + (actor.activeSkillId && !actor.activeSkillUsed && actor.energy < actor.activeSkillCost && actor.energy + 1 >= actor.activeSkillCost ? SKILL_THRESHOLD_OPTION_VALUE : 0);
-    if (card.definitionId === "shield" && target) value += (target.hp <= 1 ? 6 : target.hp <= 2 ? 3 : 0) + Math.max(0, 2 - (target.shield ?? 0));
-    if (card.definitionId === "shockwave") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam && enemy.hp <= 1).length * 7;
+    // 护盾的真实价值（+1 盾、低血目标在可见威胁下的危险/死亡保护）已由 AiSimulator
+    // 写入 after-state，并经 shieldStateValue 以暴露感知的储备+保护价值表达；
+    // 旧的固定 `(hp<=1 ? 6 : hp<=2 ? 3 : 0) + max(0, 2-shield)` 与 stateDelta 重复，
+    // 且无视暴露感知（低威胁下仍给完整危险奖金），必须删除。
+    // 震荡对每名敌人的基础伤害与击杀收益已由 AiSimulator 逐目标写入 after-state，
+    // 由 stateDelta 自然累积；旧的 `近杀敌人数 × 7` 与多目标击杀重复计价，必须删除。
     if (card.definitionId === "provoke") value += visible.players.filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam).reduce((sum, enemy) => sum + (1 - (enemy.assaultResponseProbability ?? 0)) * 3, 0);
     // 借势造成的伤害、手牌与装备变化已经由 AiSimulator 写入后继状态，统一交给 stateUtility 计分。
     if (card.definitionId === "duel" && target) value += ((actor.expectedAssaultCount ?? 0) - (target.expectedAssaultCount ?? 0)) * 2;

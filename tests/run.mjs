@@ -88,6 +88,7 @@ import {
   getSealStatusStateBranches,
   roleThreatSynergy,
   sealCounterProbability,
+  sealDelayCost,
   sealEarlyUsePenalty,
   sealOutcomeProbabilities,
   sealPresenceProbability,
@@ -12265,42 +12266,111 @@ test("AI·封印：攻击角色与军火库只协同放大下一回合可用突�
   );
 });
 
-test("AI·封印：高价值即时动作触发软性后置且消耗后惩罚消失", async () => {
+test("AI·封印：Planner 物化根候选后对封印应用软性后置且消耗后惩罚消失", async () => {
   const actor = makePlayer("seal-late-actor", 0, "dawn", "ai", 1),
     target = makePlayer("seal-late-target", 1, "dusk", "ai", 7),
-    recover = instance("recover"),
+    charge = instance("charge"),
     seal = instance("seal");
-  actor.hp = 1;
-  actor.hand.push(recover, seal);
+  actor.hand.push(charge, seal);
   const { game } = makeGame([actor, target]);
+  actor.energy = 1;
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 40;
   const visible = createAiVisibleState(
       actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
     ),
     rootActions = game.aiController.getLegalActions(actor),
+    // 调息/突袭等基础牌的执行价值已迁移到 stateDelta，actionUtility 只剩静态先验，
+    // 不再适合作为 seal 的"高价值即时动作"信号；这里用低能量聚能（保留即时能量价值）
+    // 验证 seal 软性后置机制本身。
+    chargeAction = rootActions.find((action) => action.card?.id === charge.id),
+    sealAction = rootActions.find((action) => action.card?.id === seal.id),
+    evaluator = game.aiController.evaluator;
+  assert.ok(chargeAction && sealAction, "charge 与 seal 都必须是合法根动作");
+  // 软性后置已从 actionUtility 迁到 Planner 的跨候选 timing 比较：
+  // actionUtility 不再读取 availableActions，同一动作是否传候选返回相同。
+  assert.equal(
+    evaluator.actionUtility(sealAction, actor, visible, { availableActions:rootActions }),
+    evaluator.actionUtility(sealAction, actor, visible)
+  );
+  // 高价值即时动作（charge 仍保留即时能量价值）存在时，封印先出会把它延迟一步，
+  // 因此 Planner 首动作必须是 charge 而不是 seal。
+  const selected = await game.aiController.planner.plan(
+    actor, visible, rootActions, { gameId:game.state.gameId }
+  );
+  assert.equal(selected.card?.id, charge.id);
+  // 消耗后：follow parent 已无高价值非封印即时动作，封印不再被惩罚并紧随其后。
+  assert.equal(game.aiController.planner.lastPlannedSequence[1]?.cardId, "seal");
+});
+
+test("AI·封印：软性后置按真实 depth 折算 delayCost 并受既有上限约束", () => {
+  // 非正或非法 delayCost -> 0，不惩罚
+  assert.equal(sealEarlyUsePenalty(0), 0);
+  assert.equal(sealEarlyUsePenalty(-4), 0);
+  assert.equal(sealEarlyUsePenalty(Number.NaN), 0);
+  // 生产计算：delayCost = alternativeTransitionScore / (depth + 1)（AiPlanner 与测试共用）
+  // depth=1（根层）、alternative transition=6 -> delayCost=3 -> penalty=3
+  assert.equal(sealDelayCost(6, 1), 3);
+  assert.equal(sealEarlyUsePenalty(sealDelayCost(6, 1)), 3);
+  // depth=2、alternative transition=6 -> delayCost=2 -> penalty=2
+  assert.equal(sealDelayCost(6, 2), 2);
+  assert.equal(sealEarlyUsePenalty(sealDelayCost(6, 2)), 2);
+  // 大 delayCost 不越过既有上限
+  assert.equal(sealEarlyUsePenalty(sealDelayCost(100, 1)), 3);
+});
+
+test("AI·封印：紧急调息与封印并存时 Planner 先调息救命再封印", async () => {
+  const actor = makePlayer("seal-recover-actor", 0, "dawn", "ai", 0),
+    target = makePlayer("seal-recover-target", 1, "dusk", "ai", 0),
+    recover = instance("recover"),
+    seal = instance("seal");
+  // 排除刃行者「连势/破军」等角色特殊技能与相关状态对场景的影响：只保留基础属性，
+  // 不携带主动技能，也不带被动监听器（本 fixture 不注册被动）。
+  actor.general = { ...actor.general, passiveSkillIds: [], activeSkillIds: [] };
+  target.general = { ...target.general, passiveSkillIds: [], activeSkillIds: [] };
+  actor.hand.push(recover, seal);
+  actor.hp = 1;
+  target.hp = 3;
+  const { game } = makeGame([actor, target]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 40;
+  game.aiController.knowledge.remainingCounts = () => ({ assault:20 });
+  const visible = createAiVisibleState(actor.id, game.state, { assault:20 }),
+    rootActions = game.aiController.getLegalActions(actor),
     recoverAction = rootActions.find((action) => action.card?.id === recover.id),
     sealAction = rootActions.find((action) => action.card?.id === seal.id),
-    evaluator = game.aiController.evaluator,
-    sealWithoutTimingPreference = evaluator.actionUtility(sealAction, actor, visible),
-    sealWithTimingPreference = evaluator.actionUtility(
-      sealAction, actor, visible, { availableActions:rootActions }
-    );
-  assert.ok(sealEarlyUsePenalty(evaluator.actionUtility(recoverAction, actor, visible)) > 0);
-  assert.ok(sealWithTimingPreference < sealWithoutTimingPreference);
-
+    visibleActor = visible.players.find((player) => player.id === actor.id),
+    visibleTarget = visible.players.find((player) => player.id === target.id);
+  // 排除干扰：无角色主动技能、无格挡、无护盾、无装备雷达、无随机扰动
+  assert.equal(visibleActor.activeSkillId, null);
+  assert.equal(visibleActor.equipmentDefinitionId ?? null, null);
+  assert.equal(visibleActor.shield ?? 0, 0);
+  assert.equal(visible.players[1].blockProbability, 0);
+  assert.equal(visible.players[1].equipmentDefinitionId ?? null, null);
+  assert.equal(visible.players[1].shield ?? 0, 0);
+  // seal 有合法敌方目标：目标是存活敌人、未处于封印状态，动作生成为合法候选
+  assert.ok(sealAction, "seal 必须是合法根动作");
+  assert.equal(sealAction.targets?.[0]?.id, target.id);
+  assert.equal(visibleTarget.battleTeam, "dusk");
+  assert.ok(visibleTarget.alive);
+  assert.equal(sealPresenceProbability(visibleTarget), 0);
+  // recover 只恢复 1 HP：hp 1 -> 2，且不超过 maxHp
+  assert.ok(recoverAction, "recover 必须是合法根动作");
+  const afterRecover = new AiSimulator(visible).apply(visible, recoverAction, actor.id),
+    afterRecoverActor = afterRecover.players.find((player) => player.id === actor.id);
+  assert.equal(visibleActor.hp, 1);
+  assert.equal(afterRecoverActor.hp, 2);
+  assert.equal(afterRecoverActor.hp - visibleActor.hp, 1);
+  // 救命调息 transition（6 + 10.9×0.08 ≈ 6.87）是根层最佳非封印即时动作，
+  // 封印先出会把它延迟一步（delayCost ≈ 3.43，封顶 3），因此必须先调息再封印。
   const selected = await game.aiController.planner.plan(
     actor, visible, rootActions, { gameId:game.state.gameId }
   );
   assert.equal(selected.card?.id, recover.id);
-  const afterRecover = new AiSimulator(visible).apply(visible, recoverAction, actor.id),
-    followActions = game.aiController.actionGenerator.generateFromVisible(afterRecover, actor.id),
-    followSeal = followActions.find((action) => action.card?.id === seal.id);
-  assert.ok(followSeal);
-  assertClose(
-    evaluator.actionUtility(followSeal, actor, afterRecover, { availableActions:followActions }),
-    evaluator.actionUtility(followSeal, actor, afterRecover)
+  const sequence = game.aiController.planner.lastPlannedSequence.map(
+    (entry) => entry.cardId ?? entry.type
   );
+  assert.deepEqual(sequence, ["recover", "seal", "end"]);
 });
 
 test("AI·封印：马上行动的极高威胁目标可抵消软性后置", async () => {
@@ -25033,10 +25103,12 @@ test("AI·角色核心评分：动作基础价值使用角色有效值且刃行�
   const action = { type: "card", card: assault, targets: [{ id: "target" }] };
   const bladeScore = evaluator.actionUtility(action, blade, makeVisible("blade", "blade-walker"));
   const wardenScore = evaluator.actionUtility(action, warden, makeVisible("warden", "oath-warden"));
-  // 刃行者 assault = 4+2，守誓者 assault = 4-1；同一目标时伤害/焦点增量完全一致
+  // 刃行者 assault = 4+2，守誓者 assault = 4-1；同一 hp1 目标的近杀目标选择先验一致（+5+8）。
+  // 突袭的基础伤害与击杀收益已由 AiSimulator 写入 after-state 并由 stateDelta 表达，
+  // actionUtility 不再按缺失血量重复计价，只保留近杀目标选择先验。
   assert.equal(bladeScore - wardenScore, 3);
-  assert.equal(bladeScore, assault.aiValue + 2 + 3 + (4 - 1) * 3 + 5 + 8);
-  assert.equal(wardenScore, assault.aiValue - 1 + 3 + (4 - 1) * 3 + 5 + 8);
+  assert.equal(bladeScore, assault.aiValue + 2 + 5 + 8);
+  assert.equal(wardenScore, assault.aiValue - 1 + 5 + 8);
 });
 
 test("AI·角色核心评分：无角色差值的卡牌组合仍等于全局基础值", () => {
@@ -25125,7 +25197,9 @@ test("AI·角色核心评分：缺少 generalId 或 definitionId 时回退旧基
   const assaultScore = evaluator.actionUtility(
     { type: "card", card: assault, targets: [{ id: "target" }] }, actor, visible
   );
-  assert.equal(assaultScore, assault.aiValue + 3 + (4 - 1) * 3 + 5 + 8);
+  // 无 generalId 时回退基础 aiValue；hp1 目标仅保留近杀目标选择先验（+5+8），
+  // 基础伤害与击杀执行值已由 stateDelta 表达。
+  assert.equal(assaultScore, assault.aiValue + 5 + 8);
   // 缺少 definitionId 的简化卡牌按旧 aiValue 回退
   assert.doesNotThrow(
     () => evaluator.actionUtility(
@@ -25842,6 +25916,167 @@ test("AI·评分：普通护盾卡同样获得威胁感知的 state representati
       > cardDelta(shieldState(before, { threat: "low" })),
     "the shield card must benefit from the same threat-aware shield representation"
   );
+});
+
+// ---- AI 评分·基础牌执行价值 ----
+
+test("AI·评分：调息实际恢复量由 stateDelta 表达且不再按总缺血量加固定分", () => {
+  const run = (actorHp) => {
+    const actor = makePlayer(`rc-del-actor-${actorHp}`, 0, "dawn", "ai", 0);
+    const enemy = makePlayer("rc-del-enemy", 1, "dusk", "ai", 5);
+    actor.hp = actorHp; actor.maxHp = 4;
+    const card = instance("recover");
+    actor.hand.push(card);
+    const { game } = makeGame([actor, enemy]);
+    const visible = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+    const action = { type: "card", card, targets: [] };
+    const delta = game.aiController.evaluator.stateUtility(
+      new AiSimulator(visible).apply(visible, action, actor.id), actor.id
+    ) - game.aiController.evaluator.stateUtility(visible, actor.id);
+    const actionUtility = game.aiController.evaluator.actionUtility(action, actor, visible);
+    game.dispose();
+    return { delta, actionUtility };
+  };
+  const missing1 = run(3), missing2 = run(2), missing0 = run(4);
+  // 缺1HP 与缺2HP 都只恢复1HP：stateDelta 一致；满血无实际恢复则明显更低
+  assertClose(missing1.delta, missing2.delta, 1e-9);
+  assert.ok(missing1.delta > missing0.delta, "有实际恢复的 after-state 必须高于无恢复");
+  // actionUtility 不再按总缺血量加固定分：三个状态一致
+  assert.equal(missing1.actionUtility, missing2.actionUtility);
+  assert.equal(missing2.actionUtility, missing0.actionUtility);
+});
+
+test("AI·评分：低血时 Planner 仍选择调息且实际恢复由 stateDelta 驱动", async () => {
+  const actor = makePlayer("rc-plan-actor", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("rc-plan-enemy", 1, "dusk", "ai", 5);
+  actor.hp = 1; actor.maxHp = 4;
+  actor.hand.push(instance("recover"));
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 40;
+  const visible = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const selected = await game.aiController.planner.plan(
+    actor, visible, game.aiController.getLegalActions(actor), { gameId: game.state.gameId }
+  );
+  assert.equal(selected.card?.definitionId, "recover");
+  game.dispose();
+});
+
+test("AI·评分：突袭击杀 stateDelta 高于普通伤害且近杀先验只服务目标选择", () => {
+  const actor = makePlayer("as-rel-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("as-rel-enemy", 1, "dusk", "ai", 5);
+  const card = instance("assault");
+  actor.hand.push(card);
+  const { game } = makeGame([actor, enemy]);
+  game.aiDifficultyMultiplier = 0;
+  const ev = game.aiController.evaluator;
+  const base = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const action = { type: "card", card, targets: [{ id: enemy.id }] };
+  const stateWith = (hp) => {
+    const c = structuredClone(base);
+    c.players[1].hp = hp;
+    return c;
+  };
+  const delta = (hp) => ev.stateUtility(
+    new AiSimulator(stateWith(hp)).apply(stateWith(hp), action, actor.id), actor.id
+  ) - ev.stateUtility(stateWith(hp), actor.id);
+  assert.ok(delta(1) > delta(4), "击杀 stateDelta 必须显著高于普通伤害");
+  // hp1 目标相对 hp4 目标仅多近杀目标选择先验（5+8）；缺失血量固定分已删除
+  assert.equal(
+    ev.actionUtility(action, actor, stateWith(1)) - ev.actionUtility(action, actor, stateWith(4)),
+    5 + 8
+  );
+  game.dispose();
+});
+
+test("AI·评分：震荡多目标真实 after-state 高于单目标且 actionUtility 不重复计价", () => {
+  const build = (enemyCount) => {
+    const actor = makePlayer("sw-rel-actor", 0, "dawn", "ai", 0);
+    const card = instance("shockwave");
+    actor.hand.push(card);
+    const players = [actor];
+    for (let i = 0; i < enemyCount; i += 1) {
+      players.push(makePlayer(`sw-rel-e${i}`, 1 + i, "dusk", "ai", 5 + i));
+    }
+    const { game } = makeGame(players);
+    game.aiDifficultyMultiplier = 0;
+    const state = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+    return { game, state, card, actor };
+  };
+  const run = (enemyCount) => {
+    const { game, state, card, actor } = build(enemyCount);
+    const ev = game.aiController.evaluator;
+    const enemies = state.players.filter((p) => p.alive && p.battleTeam !== actor.battleTeam);
+    const action = { type: "card", card, targets: enemies.map((p) => ({ id: p.id })) };
+    const delta = ev.stateUtility(
+      new AiSimulator(state).apply(state, action, actor.id), actor.id
+    ) - ev.stateUtility(state, actor.id);
+    const actionUtility = ev.actionUtility(action, actor, state);
+    game.dispose();
+    return { delta, actionUtility };
+  };
+  const one = run(1), two = run(2), three = run(3);
+  assert.ok(three.delta > two.delta && two.delta > one.delta, "震荡 stateDelta 必须随命中敌人数递增");
+  assert.equal(three.actionUtility, one.actionUtility, "震荡 actionUtility 不随目标数重复计价");
+});
+
+test("AI·评分：护盾卡 actionUtility 不再含固定护盾分且执行价值由 stateDelta 表达", () => {
+  const { game, before } = shieldValueFixture();
+  const ev = game.aiController.evaluator;
+  const actor = before.players.find((p) => p.id === "sv-warden");
+  const card = { ...CARD_DEFINITIONS.shield, id: "sh" };
+  const action = { type: "card", card, targets: [{ id: "sv-allyA" }] };
+  const lowHp = structuredClone(before);
+  lowHp.players.find((p) => p.id === "sv-allyA").hp = 1;
+  const shielded = structuredClone(before);
+  shielded.players.find((p) => p.id === "sv-allyA").shield = 2;
+  assert.equal(ev.actionUtility(action, actor, before), ev.actionUtility(action, actor, lowHp));
+  assert.equal(ev.actionUtility(action, actor, before), ev.actionUtility(action, actor, shielded));
+  game.dispose();
+});
+
+test("AI·评分：明显有防御价值时 Planner 仍选择护盾", async () => {
+  const actor = makePlayer("sh-plan-actor", 0, "dawn", "ai", 1);
+  const ally = makePlayer("sh-plan-ally", 1, "dawn", "ai", 0);
+  const e1 = makePlayer("sh-plan-e1", 2, "dusk", "ai", 5);
+  const e2 = makePlayer("sh-plan-e2", 3, "dusk", "ai", 6);
+  actor.hp = 4; ally.hp = 1;
+  actor.hand.push(instance("shield"));
+  const { game } = makeGame([actor, ally, e1, e2]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 40;
+  // 高威胁：可见状态给敌人攻击资源，使低血盟友获得明显防护价值
+  const visible = structuredClone(
+    createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor))
+  );
+  for (const enemy of visible.players.filter((p) => p.battleTeam === "dusk")) {
+    enemy.handCount = 3;
+    enemy.energy = 3;
+    enemy.expectedAssaultCount = 2;
+    enemy.assaultResponseProbability = 1;
+  }
+  const selected = await game.aiController.planner.plan(
+    actor, visible, game.aiController.getLegalActions(actor), { gameId: game.state.gameId }
+  );
+  assert.equal(selected.card?.definitionId, "shield");
+  game.dispose();
+});
+
+test("AI·评分：多目标时 Planner 优先震荡而非单体突袭", async () => {
+  const actor = makePlayer("sw-plan-actor", 0, "dawn", "ai", 0);
+  const e0 = makePlayer("sw-plan-e0", 1, "dusk", "ai", 5);
+  const e1 = makePlayer("sw-plan-e1", 2, "dusk", "ai", 6);
+  const e2 = makePlayer("sw-plan-e2", 3, "dusk", "ai", 7);
+  actor.hand.push(instance("shockwave"), instance("assault"));
+  const { game } = makeGame([actor, e0, e1, e2]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 40;
+  const visible = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const selected = await game.aiController.planner.plan(
+    actor, visible, game.aiController.getLegalActions(actor), { gameId: game.state.gameId }
+  );
+  assert.equal(selected.card?.definitionId, "shockwave");
+  game.dispose();
 });
 
 // ---- AI 评分·角色选牌 ----

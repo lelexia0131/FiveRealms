@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-offensive-exposure-v168";
-import { createId } from "../utils/helpers.js?build=20260811-offensive-exposure-v168";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260811-offensive-exposure-v168";
-import { RuleEngine } from "./RuleEngine.js?build=20260811-offensive-exposure-v168";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-seal-consumer-v170";
+import { createId } from "../utils/helpers.js?build=20260811-seal-consumer-v170";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260811-seal-consumer-v170";
+import { RuleEngine } from "./RuleEngine.js?build=20260811-seal-consumer-v170";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

@@ -2,8 +2,9 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-offensive-exposure-v168";
-import { AiSimulator } from "./AiSimulator.js?build=20260811-offensive-exposure-v168";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-seal-consumer-v170";
+import { AiSimulator } from "./AiSimulator.js?build=20260811-seal-consumer-v170";
+import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260811-seal-consumer-v170";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -182,9 +183,14 @@ export class AiPlanner {
         ? this.evaluator.actionSearchPrior(action, player, state)
         : 0
     );
-    const transitionScore = (action, beforeState, afterState, depth = 1, availableActions = []) => {
+    /**
+     * 未调整的 base transition score（U/d）。封印的软性后置 penalty 不在这里
+     * 计算：同一 parent 下的跨候选 timing 比较由调用方在物化同层候选后完成，
+     * 只对 seal 候选用“最佳非封印即时动作延迟一步”的 delayCost 做减法。
+     */
+    const transitionScore = (action, beforeState, afterState, depth = 1) => {
       const executionProbability = action.executionProbability ?? 1;
-      const actionValue = this.evaluator.actionUtility(action, player, beforeState, { availableActions });
+      const actionValue = this.evaluator.actionUtility(action, player, beforeState);
       const resolutionScale = tacticResolutionScale(action, beforeState);
       const immediate = (actionValue * resolutionScale + hiddenAdjustment(action))
         * executionProbability;
@@ -200,8 +206,15 @@ export class AiPlanner {
       : expanded >= nodeBudget;
     const beam = [];
     // 根动作也受时间/节点预算约束并定期让出主线程；复杂手牌不能把界面锁死在“观察战场”。
+    // 先在同一 parent 物化所有已处理根候选的 base transition，再对 seal 候选应用
+    // “最佳非封印即时动作延迟一步”的 timing penalty：每张牌只 apply 一次，
+    // 不因 seal 候选对替代动作重复 apply。
+    const rootCandidates = [];
+    let bestRootNonSealBase = -Infinity;
     for (const action of rootActions) {
-      if (beam.length && limitReached()) break;
+      // 与旧实现一致：至少处理一个根动作，随后到达时间/节点预算立即停止；
+      // beam 在第二遍才填充，因此用 rootCandidates.length 作为“已处理”信号。
+      if (rootCandidates.length && limitReached()) break;
       const state = simulator.apply(visibleState, action, player.id);
       const exposeMarginal = action.card?.definitionId === "exposeWeakness"
         ? this.evaluateExposeMarginal(visibleState, state, player.id, simulator)
@@ -219,18 +232,12 @@ export class AiPlanner {
           visibleState, state, player.id, rootRemainingExposeStacks
         )
         : rootRemainingExposeStacks;
-      const valueScore = transitionScore(action, visibleState, state, 1, rootActions)
-        + exposeMarginal + assaultStacksCredit;
-      beam.push({
-        action,
-        state,
-        terminal:Boolean(state.playPhaseEnded),
-        // 根节点也必须看到模拟后的伤害、装备和资源变化，否则第一次束裁剪会丢掉真正优质的动作。
-        valueScore,
-        pruneScore:valueScore + searchPrior(action, visibleState),
-        sequence:[action],
-        remainingRootExposeStacks,
-        remainingHistory:[remainingRootExposeStacks]
+      const baseTransition = transitionScore(action, visibleState, state, 1);
+      if (action.card?.definitionId !== "seal" && action.type !== "end") {
+        bestRootNonSealBase = Math.max(bestRootNonSealBase, baseTransition);
+      }
+      rootCandidates.push({
+        action, state, exposeMarginal, assaultStacksCredit, remainingRootExposeStacks, baseTransition
       });
       expanded += 1;
       if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
@@ -238,6 +245,25 @@ export class AiPlanner {
           return { type:"end" };
         }
       }
+    }
+    for (const candidate of rootCandidates) {
+      // 根 depth=1：delayCost = 最佳非封印 base transition / (1 + 1)。
+      const sealTimingPenalty = candidate.action.card?.definitionId === "seal"
+        ? sealEarlyUsePenalty(sealDelayCost(bestRootNonSealBase, 1))
+        : 0;
+      const valueScore = candidate.baseTransition - sealTimingPenalty
+        + candidate.exposeMarginal + candidate.assaultStacksCredit;
+      beam.push({
+        action:candidate.action,
+        state:candidate.state,
+        terminal:Boolean(candidate.state.playPhaseEnded),
+        // 根节点也必须看到模拟后的伤害、装备和资源变化，否则第一次束裁剪会丢掉真正优质的动作。
+        valueScore,
+        pruneScore:valueScore + searchPrior(candidate.action, visibleState),
+        sequence:[candidate.action],
+        remainingRootExposeStacks:candidate.remainingRootExposeStacks,
+        remainingHistory:[candidate.remainingRootExposeStacks]
+      });
     }
     beam.sort((a,b) => b.pruneScore - a.pruneScore);
     let activeBeam = beam.slice(0, GAME_CONFIG.aiBeamWidth);
@@ -255,6 +281,10 @@ export class AiPlanner {
           continue;
         }
         const followActions = this.game.aiController.actionGenerator.generateFromVisible(node.state, player.id);
+        // 每张 follow 只 apply 一次并记录未调整 base transition；找到该 parent 下
+        // 最佳非封印即时动作后，再只对 seal 候选应用“延迟一步”的 timing penalty。
+        const nodeCandidates = [];
+        let bestNonSealBase = -Infinity;
         for (const follow of followActions) {
           if (limitReached()) break;
           if (follow.card?.definitionId === "assault" && !rootAssaultTargets.has(follow.targets?.[0]?.id)) discoveredDynamicTarget = true;
@@ -272,24 +302,38 @@ export class AiPlanner {
               node.state, state, player.id, node.remainingRootExposeStacks
             )
             : node.remainingRootExposeStacks;
-          const valueScore = node.valueScore + transitionScore(follow, node.state, state, depth, followActions)
-            + exposeMarginal + assaultStacksCredit;
-          candidates.push({
-            action:node.action,
-            state,
-            terminal:Boolean(state.playPhaseEnded),
-            valueScore,
-            pruneScore:valueScore + searchPrior(follow, node.state) / depth,
-            sequence:[...node.sequence, follow],
-            remainingRootExposeStacks,
-            remainingHistory:[...node.remainingHistory, remainingRootExposeStacks]
+          const baseTransition = transitionScore(follow, node.state, state, depth);
+          if (follow.card?.definitionId !== "seal" && follow.type !== "end") {
+            bestNonSealBase = Math.max(bestNonSealBase, baseTransition);
+          }
+          nodeCandidates.push({
+            follow, state, exposeMarginal, assaultStacksCredit, remainingRootExposeStacks, baseTransition
           });
-          if (!bestCandidate || valueScore > bestCandidate.valueScore) bestCandidate = candidates.at(-1);
           expanded += 1;
           if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
             if (!(await this.game.cleanupManager.delay(0)) || !this.game.isSessionValid(options.gameId ?? this.game.state.gameId)) return { type:"end" };
           }
           if (limitReached()) break;
+        }
+        for (const candidate of nodeCandidates) {
+          // 当前 depth=d：替代 base transition 已是 U/d，延迟一步贡献 U/(d+1)，
+          // 因此 delayCost = bestNonSealBase / (d + 1)。
+          const sealTimingPenalty = candidate.follow.card?.definitionId === "seal"
+            ? sealEarlyUsePenalty(sealDelayCost(bestNonSealBase, depth))
+            : 0;
+          const valueScore = node.valueScore + candidate.baseTransition - sealTimingPenalty
+            + candidate.exposeMarginal + candidate.assaultStacksCredit;
+          candidates.push({
+            action:node.action,
+            state:candidate.state,
+            terminal:Boolean(candidate.state.playPhaseEnded),
+            valueScore,
+            pruneScore:valueScore + searchPrior(candidate.follow, node.state) / depth,
+            sequence:[...node.sequence, candidate.follow],
+            remainingRootExposeStacks:candidate.remainingRootExposeStacks,
+            remainingHistory:[...node.remainingHistory, candidate.remainingRootExposeStacks]
+          });
+          if (!bestCandidate || valueScore > bestCandidate.valueScore) bestCandidate = candidates.at(-1);
         }
         if (limitReached()) break;
       }

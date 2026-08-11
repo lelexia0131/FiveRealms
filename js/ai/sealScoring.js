@@ -2,19 +2,21 @@
  * 封印的 AI 共享纯计算：只读取过滤后的状态、反制概率与剩余牌类别计数，
  * 不实例化匿名判定牌，也不修改 remainingCardCounts 根先验。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260811-offensive-exposure-v168";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260811-offensive-exposure-v168";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260811-offensive-exposure-v168";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260811-seal-consumer-v170";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260811-seal-consumer-v170";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260811-seal-consumer-v170";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
   mergeProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260811-offensive-exposure-v168";
+} from "./AiProbabilityBranches.js?build=20260811-seal-consumer-v170";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;
 const TURN_TIMING_STEP = 0.1;
+/** 封印软性后置 penalty 的既有合理上限：timing cost 不无限放大。 */
+const SEAL_EARLY_USE_CAP = 3;
 
 const availableCardCount = (cards, definitionId) => (Array.isArray(cards) ? cards : [])
   .filter((card) => card?.definitionId === definitionId)
@@ -247,13 +249,27 @@ export function sealTeamBurden(state, holder, viewerTeam) {
   return skipAction * turnOpportunityValue(holder) * sign;
 }
 
-/** 只惩罚仍存在的明确高价值即时动作；普通动作不触发，且惩罚有上限。 */
-export function sealEarlyUsePenalty(bestImmediateAlternativeValue) {
-  const base = CARD_DEFINITIONS.seal?.aiValue ?? 7;
-  const alternative = Number(bestImmediateAlternativeValue);
-  if (!Number.isFinite(alternative)) return 0;
-  const surplus = Math.max(0, alternative - base);
-  return Math.min(3, surplus * 0.35);
+/**
+ * 把“最佳非封印即时动作已除 depth 的 base transition（S = U/d）”按真实搜索
+ * depth 折算为封印软性后置的 delayCost：现在先封印会令该动作从 depth d 延迟到
+ * d+1，损失 U/d - U/(d+1) = S/(d+1)。由 AiPlanner 在物化同层候选后调用，
+ * 保证正式测试可直接覆盖生产路径的 depth 关系（depth=1 → /2、depth=2 → /3）。
+ */
+export function sealDelayCost(alternativeTransitionScore, depth) {
+  return Number(alternativeTransitionScore) / (Number(depth) + 1);
+}
+
+/**
+ * 封印软性后置的通用 timing helper：把 delayCost 转成 penalty。
+ *
+ * delayCost 由 sealDelayCost 按真实 depth 计算（S/(d+1)）。非正或非法 delayCost
+ * 返回 0，只对 timing cost 设既有合理上限。不读取 recover/shield/assault、
+ * hp/missingHp 或 card definitions，也不与 seal.aiValue 重新比较。
+ */
+export function sealEarlyUsePenalty(delayCost) {
+  const cost = Number(delayCost);
+  if (!Number.isFinite(cost) || cost <= 0) return 0;
+  return Math.min(SEAL_EARLY_USE_CAP, cost);
 }
 
 /** 主动使用封印的价值：基础牌值加未来未被反制且判定生效时的出牌机会收益。 */

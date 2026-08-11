@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260811-offensive-exposure-v168";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260811-offensive-exposure-v168";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260811-seal-consumer-v170";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260811-seal-consumer-v170";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

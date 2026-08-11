@@ -2,7 +2,7 @@
  * 阵营补偿的唯一查询服务。依赖 Game 状态与 gameConfig，不修改玩家状态；
  * 初始牌、回合额度和能量阶段都应调用这里，避免散落 teamSize === 2 判断。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-offensive-exposure-v168";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-seal-consumer-v170";
 
 /** 阵营人数补偿的唯一规则入口。 */
 export class TeamRuleService {

@@ -1,14 +1,14 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-offensive-exposure-v168";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260811-offensive-exposure-v168";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260811-offensive-exposure-v168";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260811-offensive-exposure-v168";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-seal-consumer-v170";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260811-seal-consumer-v170";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260811-seal-consumer-v170";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260811-seal-consumer-v170";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260811-offensive-exposure-v168";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260811-offensive-exposure-v168";
+} from "./lightningScoring.js?build=20260811-seal-consumer-v170";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260811-seal-consumer-v170";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
