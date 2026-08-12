@@ -2,17 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-owner-ledger-v171";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260812-owner-ledger-v171";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260812-owner-ledger-v171";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260812-owner-ledger-v171";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260812-owner-ledger-v171";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-owner-ledger-v171";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260812-owner-ledger-v171";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260812-owner-ledger-v171";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260812-dynamic-root-outcome-v2";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260812-dynamic-root-outcome-v2";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260812-dynamic-root-outcome-v2";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260812-dynamic-root-outcome-v2";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-dynamic-root-outcome-v2";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260812-dynamic-root-outcome-v2";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260812-dynamic-root-outcome-v2";
 import {
   sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260812-owner-ledger-v171";
+} from "./sealScoring.js?build=20260812-dynamic-root-outcome-v2";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -20,6 +20,12 @@ const ENERGY_STATE_WEIGHT = 1.2;
 const SKILL_THRESHOLD_OPTION_VALUE = 4;
 /** 焚场的临时 beam 排序信用：只服务当前层 pruning/ranking，不进入真实累计价值。 */
 const BURNING_FIELD_SEARCH_PRIOR = 8;
+/**
+ * stateDelta 进入最终 candidate value 的既有缩放（transitionScore 中的 ×0.08）。
+ * 响应价值与前沿未实现价值复用同一缩放，保证已实现/响应/前沿三类价值在同一尺度上
+ * 互斥计价——不引入新的独立权重，避免"同一价值在不同入口用不同权重"的双算。
+ */
+export const STATE_DELTA_SCALE = 0.08;
 /** stateUtility 与 shieldStateValue 共用：每点 HP 的效用权重。 */
 export const HP_VALUE = 5;
 /** stateUtility 与 shieldStateValue 共用：HP<=1 danger 阈值惩罚。 */
@@ -134,14 +140,22 @@ export class AiEvaluator {
   }
 
   /**
-   * Owner-local value ledger 的原始状态项：某名玩家的 stateUtility 未签名字项
-   * （镜像 stateUtility 逐行，除以团队 sign 与 team burden）。threat 按
-   * currentThreat / futureInventory / energyPressure 分解，不再混在一个 exposure 标量。
+   * 单个玩家的 stateUtility 未签名字项（stateUtility 与 owner ledger 的共同来源）。
    *
-   * handRole 与 stateUtility 一致：只有 viewer 自己的手牌可被身份评分，因此该子项
-   * 只归属 viewer 自身的 entry（这是当前模型"只能对自己手牌身份估值"的忠实保留）。
+   * 抽取理由：ownerStateTerms 与 stateUtility 此前逐行镜像，会形成两个价值世界——
+   * 修改某个 primitive 时忘记同步另一处，就会出现"全局投影 == stateDelta"恒等式
+   * 被破坏却难以定位的维护风险。本方法返回该玩家自身的未签名分项（不含团队 sign、
+   * 不含 lightning/seal burden），stateUtility 在求和时施加 sign 与 burden，
+   * owner ledger 直接消费同一份 terms。
+   *
+   * 威胁按 currentThreat / futureInventory / energyPressure 三分量记账（均为负值），
+   * 三者之和恒等于 -incomingExposure；因此 stateUtility 的单标量 -exposure 与
+   * owner ledger 的威胁分项在代数上完全一致，不因表示差异产生数值漂移。
+   *
+   * handRole 与既有语义一致：只有 viewer 自己的手牌可被身份评分，因此该子项
+   * 只归属 viewer 自身的 entry（当前模型"只能对自己手牌身份估值"的忠实保留）。
    */
-  ownerStateTerms(state, player, viewerId, radarTacticProbability) {
+  playerValueTerms(state, player, viewerId, radarTacticProbability) {
     if (!player.alive) return { death: -DEATH_VALUE, terms: {} };
     const danger = player.hp <= 1 ? -DANGER_VALUE : 0;
     const rescueOutlook = player.survivalChance === undefined ? 0 : (player.survivalChance - 0.5) * 8;
@@ -178,7 +192,8 @@ export class AiEvaluator {
         rescueOutlook,
         hp: player.hp * HP_VALUE,
         shield,
-        energy: player.energy * ENERGY_STATE_WEIGHT,
+        // energy 对缺失字段回退 0：真实可见状态始终带 energy，此处防御不完整测试状态。
+        energy: Math.max(0, Number(player.energy) || 0) * ENERGY_STATE_WEIGHT,
         handCount: player.handCount * 1.1,
         handRole: handRoleDelta,
         stacks: (player.exposeWeaknessStacks ?? 0) * 1.5,
@@ -191,9 +206,17 @@ export class AiEvaluator {
         futureInventory: -futureInventory,
         energyPressure: -energyPressure,
         radar: radarMitigation,
-        energyDeviceFuture
+        energyDeviceFuture,
+        // 互利选牌期望价值：互利按真实座位顺序从预期剩余牌池选牌，先手取高价值、后手
+        // 只能选剩余集合；该值直接消费既有的角色卡牌价值 primitive，不是新的权重体系。
+        mutualDraft: player.mutualBenefitDraftValue ?? 0
       }
     };
+  }
+
+  /** owner ledger 的原始状态项：直接复用共享 primitive，避免与 stateUtility 形成两个价值世界。 */
+  ownerStateTerms(state, player, viewerId, radarTacticProbability) {
+    return this.playerValueTerms(state, player, viewerId, radarTacticProbability);
   }
 
   /**
@@ -303,7 +326,14 @@ export class AiEvaluator {
     const viewer = state.players.find((player) => player.id === viewerId);
     if (!viewer || !viewer.alive) return null;
     const { futureInventory, energyPressure } = this.exposureComponents(state, viewer);
-    const recover = Math.max(0, Math.min(1, Math.max(0, viewer.maxHp - viewer.hp))) * HP_VALUE;
+    // 未来治疗选项必须持有调息卡才成立：持有张数与当前缺血量共同决定可兑现的治愈量，
+    // 不能对没有调息来源的缺口无条件赋予完整治疗价值（否则前沿会给"无治疗手段的受伤态"
+    // 凭空加分，与"特定未来选项"语义不符）。
+    const recoverCards = (viewer.hand ?? []).filter((card) => card.definitionId === "recover")
+      .reduce((sum, card) => sum + this.cardAvailability(card), 0);
+    const recover = recoverCards > 0
+      ? Math.max(0, Math.min(recoverCards, Math.max(0, viewer.maxHp - viewer.hp))) * HP_VALUE
+      : 0;
     const recycle = viewer.equipmentDefinitionId === "recycleDevice"
       ? Math.max(0, 2 - (viewer.recycleDeviceUses ?? 0))
         * Math.min(1, (viewer.hand ?? []).filter((card) => card.category === "tactic" && card.counterable !== false).length)
@@ -315,6 +345,57 @@ export class AiEvaluator {
       futureInventory: futureInventoryTotal,
       held: { recover, recycle },
       total: futureInventoryTotal + recover + recycle
+    };
+  }
+
+  /**
+   * 打出某张牌的卡片机会成本分解（只读辅助，不直接进入生产评分）。
+   *
+   * 语义：牌的成本是"放弃该牌未来最好用途的机会成本"，而不是印在牌上的固定静态分。
+   * 本方法用既有 representation 把一次打出拆成互斥的几层，任一层都不重复计价：
+   *
+   *   generic          —— 一张泛用手牌资源（handCount×1.1 单位）；打出任何牌都付出这一层。
+   *   specific         —— 该牌对本角色的身份差量（roleCardDelta，与 handRole 同语义）；
+   *                       只记相对全局基础值的边际，与 generic 互补（"计数" vs "身份"是
+   *                       两个不同对象，永远不完整双算）。
+   *   futureOption     —— 调息/回收站等具体未来选项的边际，与 frontierResidual.held 同语义；
+   *                       打出后 after-state 的 frontier 持有值自然下降，此处给出"打出即
+   *                       失去的未来选项"分解，不额外进入评分。
+   *   responseCapacity —— 格挡/反制/调息作为响应牌时对应的未来响应容量，打出即失去一次；
+   *                       容量在 after-state 的 block/counter/expectedRecover 字段下降，
+   *                       由响应/反制未来预期计价。capacity 不是泛用资源，因此不会叠加
+   *                       到 generic 上——同一张牌"作为手牌资源"与"作为响应容量"是两个
+   *                       语义，各计一次，永不因同一用途被 generic 与 specific 双收。
+   *
+   * 该分解不对应任何新增静态分值，也不进入 candidate value；它把既有账目对"打出一张牌
+   * 到底损失了什么"逐层摊开，供测试证明 generic/specific/futureOption/responseCapacity
+   * 之间不重复。
+   */
+  cardOpportunityCost(card, player) {
+    const definitionId = card?.definitionId ?? null;
+    const generic = 1.1;
+    const specific = definitionId ? this.roleCardDelta(player?.generalId, definitionId) : 0;
+    const recoverOption = definitionId === "recover"
+      ? Math.max(0, Math.min(1, Math.max(0, (player?.maxHp ?? 0) - (player?.hp ?? 0)))) * HP_VALUE
+      : 0;
+    const recycleOption = definitionId
+      && player?.equipmentDefinitionId === "recycleDevice"
+      && Array.isArray(player?.hand)
+      && player.hand.some((entry) => entry.definitionId === definitionId
+        && entry.category === "tactic" && entry.counterable !== false)
+      ? Math.max(0, 2 - (player.recycleDeviceUses ?? 0)) * 1.1
+        * Math.max(0, Number(player.equipmentRetentionProbability) || 1)
+      : 0;
+    return {
+      definitionId,
+      generic,
+      specific,
+      futureOption: { recover: recoverOption, recycle: recycleOption },
+      responseCapacity: {
+        block: definitionId === "block" ? 1 : 0,
+        counter: definitionId === "counter" ? 1 : 0,
+        recover: definitionId === "recover" ? 1 : 0
+      }
     };
   }
 
@@ -371,49 +452,12 @@ export class AiEvaluator {
     let score = 0;
     for (const player of state.players) {
       const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
-      if (!player.alive) {
-        score += sign * -DEATH_VALUE;
-        continue;
-      }
-      const danger = player.hp <= 1 ? -DANGER_VALUE : 0;
-      const rescueOutlook = player.survivalChance === undefined ? 0 : (player.survivalChance - 0.5) * 8;
-      const equipmentValue = player.equipmentDefinitionId ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7) : 0;
-      const initialEquipmentValue = player.initialEquipmentValue ?? equipmentValue;
-      const equipmentDelta = equipmentValue * (player.equipmentRetentionProbability ?? (equipmentValue ? 1 : 0))
-        - initialEquipmentValue
-        + (player.expectedEquipmentGain ?? 0);
-      const currentEquipmentRoleDelta = player.equipmentDefinitionId
-        ? this.roleCardDelta(player.generalId, player.equipmentDefinitionId)
-        : 0;
-      const initialEquipmentRoleDelta = Number.isFinite(player.initialEquipmentRoleDelta)
-        ? player.initialEquipmentRoleDelta
-        : currentEquipmentRoleDelta;
-      const equipmentRoleDelta = currentEquipmentRoleDelta
-          * (player.equipmentRetentionProbability ?? (currentEquipmentRoleDelta ? 1 : 0))
-        - initialEquipmentRoleDelta
-        + (player.expectedEquipmentRoleDelta ?? 0);
-      const handRoleDelta = player.id === viewerId
-        ? (player.hand ?? []).reduce((sum, card) => (
-            sum + this.roleCardDelta(player.generalId, card?.definitionId) * this.cardAvailability(card)
-          ), 0)
-        : 0;
-      const markThreat = Object.entries(player.huntMarkProbabilities ?? {}).reduce((sum, [sourceId, probability]) => {
-        const source = state.players.find((entry) => entry.id === sourceId);
-        return sum + (source?.battleTeam !== player.battleTeam ? Number(probability) || 0 : 0);
-      }, 0);
-      const exposure = this.incomingExposure(state, player);
-      const radarMitigation = this.radarMitigationUtility(exposure, player, radarTacticProbability);
-      const residualExposure = Math.max(0, exposure - radarMitigation);
-      const energyDeviceFuture = this.energyDeviceFutureUtility(player);
-      score += sign * (danger + rescueOutlook + player.hp * HP_VALUE
-        + this.shieldStateValue(player, residualExposure)
-        + player.energy * ENERGY_STATE_WEIGHT
-        + player.handCount * 1.1 + handRoleDelta + (player.exposeWeaknessStacks ?? 0) * 1.5
-        + equipmentDelta * .25 + equipmentRoleDelta * .25
-        + (player.expectedInformationGain ?? 0) * .35 - markThreat * 1.5 - exposure + radarMitigation
-        + energyDeviceFuture)
-      - lightningTeamBurden(state, player, viewer.battleTeam)
-      - sealTeamBurden(state, player, viewer.battleTeam);
+      // 未签名分项来自共享 primitive：equipmentDelta/equipmentRoleDelta 已含 ×0.25、
+      // 威胁三分量之和 == -incomingExposure，与 owner ledger 完全一致。
+      const { death, terms } = this.playerValueTerms(state, player, viewerId, radarTacticProbability);
+      score += sign * (death + Object.values(terms).reduce((sum, value) => sum + value, 0))
+        - lightningTeamBurden(state, player, viewer.battleTeam)
+        - sealTeamBurden(state, player, viewer.battleTeam);
     }
     return score;
   }
@@ -442,6 +486,46 @@ export class AiEvaluator {
     return reserve + hpProtection + lifeProtection;
   }
 
+  /**
+   * 动作的真实经济先验：只包含"不在 stateDelta 中、但确有经济语义"的项。
+   *
+   * 原则：final candidate value = realized transition + response + frontier，历史先验
+   * （静态卡牌分、目标焦点、威胁优先级等）只用于 beam 排序（见 actionUtility 注释），
+   * 不得进入最终 root valueScore。这里只保留两类 stateDelta 看不到的经济量：
+   *
+   *   - 结束出牌但仍有手牌：-0.8。结束不改状态（stateDelta≈0），但结束 = 浪费本次
+   *     出牌机会；该成本只能在此表达，否则所有负经济动作都会让 AI 选择结束而停滞。
+   *   - 聚能跨过主动技能成本门槛：+4。能量 +1 已在 stateDelta 计价，但"主动技能现在
+   *     可用"这一未来选项不在 stateDelta，与充能桩的未来有效能量价值同一语义。
+   *
+   * 其余所有 actionUtility 项都迁移到 beam 排序先验，不再进入最终价值。
+   */
+  actionEconomicValue(action, player, visible) {
+    const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
+    if (action.type === "end") {
+      const remainingCards = actor.handCount ?? actor.hand?.length ?? player.hand.length;
+      return remainingCards > 0 ? -0.8 : 0;
+    }
+    if (action.type === "skill") return 0;
+    const card = action.card;
+    if (card?.definitionId === "charge") {
+      return (actor.activeSkillId && !actor.activeSkillUsed && actor.energy < actor.activeSkillCost
+        && actor.energy + 1 >= actor.activeSkillCost) ? SKILL_THRESHOLD_OPTION_VALUE : 0;
+    }
+    return 0;
+  }
+
+  /**
+   * 动作的 beam 排序先验（search prior，不进入最终 candidate value）。
+   *
+   * 历史沿革：actionUtility 曾是最终评分的支配项，其中的静态卡牌分（getRoleCardAiValue）
+   * 会与 stateDelta 的 card-spend opportunity cost（handCount/角色身份差量）对同一张牌
+   * 重复计价。现在该函数只服务候选的搜索顺序（pruneScore = valueScore + actionUtility
+   * + actionSearchPrior），帮助 beam 优先展开"值得打的牌"与"优先击杀的目标"；最终 root
+   * 选择只按 valueScore（真实经济 = stateDelta + response ledger + frontier）。
+   * 真实价值一律由 stateDelta 表达，本函数保留的 static base 只在 beam 层给卡片打出
+   * 一个展开偏置，绝不进入最终 root valueScore。
+   */
   actionUtility(action, player, visible, options = {}) {
     const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
     if (action.type === "end") {

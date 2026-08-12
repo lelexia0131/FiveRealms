@@ -2,15 +2,20 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260812-owner-ledger-v171";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-owner-ledger-v171";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260812-owner-ledger-v171";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260812-owner-ledger-v171";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260812-owner-ledger-v171";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260812-owner-ledger-v171";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260812-owner-ledger-v171";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260812-owner-ledger-v171";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260812-owner-ledger-v171";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260812-dynamic-root-outcome-v2";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260812-dynamic-root-outcome-v2";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260812-dynamic-root-outcome-v2";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260812-dynamic-root-outcome-v2";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260812-dynamic-root-outcome-v2";
+import {
+  counterOpportunityCost,
+  globalBenefitCounterDesire,
+  mutualBenefitDraftValues
+} from "./AiGlobalBenefit.js?build=20260812-dynamic-root-outcome-v2";
+import { HP_VALUE } from "./AiEvaluator.js?build=20260812-dynamic-root-outcome-v2";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260812-dynamic-root-outcome-v2";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260812-dynamic-root-outcome-v2";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -25,7 +30,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260812-owner-ledger-v171";
+} from "./AiProbabilityBranches.js?build=20260812-dynamic-root-outcome-v2";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -93,12 +98,13 @@ export class AiSimulator {
     this.initializeAssaultSummaries(this.initial);
     this.initializeBlockCountDistributions(this.initial);
     this.initializeCounterCountDistributions(this.initial);
+    // root 结算模拟守卫：目标级 root 的 apply 群伤循环会再次调用 counterDesire，避免递归。
+    this._simulatingRootResolution = false;
   }
 
   clone(state = this.initial) {
     const cloned = structuredClone(state);
     this.initializeEquipmentBaselines(cloned);
-    this.initializeAssaultSummaries(cloned);
     this.initializeBlockCountDistributions(cloned);
     this.initializeCounterCountDistributions(cloned);
     this.syncActiveSkillCosts(cloned);
@@ -1060,12 +1066,15 @@ export class AiSimulator {
       this.consumeAssaultForOpportunity(actor,
         Math.min(1, executionProbability / assaultAvailabilityBeforeUse));
     }
-    actor.handCount = Math.max(0, (actor.handCount ?? 0) - executionProbability);
+    // restoreActorHand：root 效果估值专用。当前状态中 root 卡牌已经打出（资源已沉没），
+    // 结算模拟时把这张卡的打出成本还原再扣，使资源账目净变化为 0，只体现 root 效果价值。
+    const handRestore = abstractAction.restoreActorHand && executionProbability > PROBABILITY_EPSILON ? 1 : 0;
+    actor.handCount = Math.max(0, (actor.handCount ?? 0) - executionProbability + handRestore);
     if (executionProbability <= 0) return next;
     const effectEventWorlds = card.counterScope === "target"
       ? cardEventWorlds
       : this.gateEventWorlds(next, cardEventWorlds,
-        this.tacticResolutionChance(next, actor, card, abstractAction.targets ?? []),
+        this.tacticResolutionChance(next, actor, card, abstractAction.targets ?? [], abstractAction.selection ?? null),
         `counter:${card.id ?? card.definitionId}`);
     const scale = this.eventProbability(effectEventWorlds);
     // 反制容量双算修复：card-scope 战术的效果已由 tacticResolutionChance 按
@@ -1074,7 +1083,7 @@ export class AiSimulator {
     // 概率实际消费反制容量：容量耗尽后 counterProbability / sealCounterProbability
     // 等未来预期自然归零，不再出现 realized + expected 针对同一张反制并存。
     if (card.category === "tactic" && card.counterable !== false && card.counterScope !== "target") {
-      this.consumeCountersForCardScope(next, actor, card, abstractAction.targets ?? []);
+      this.consumeCountersForCardScope(next, actor, card, abstractAction.targets ?? [], abstractAction.selection ?? null);
     }
     const cardDamageContext = { cardDamage:true, emberTriggeredProbabilities:{} };
     let coordinationProbability = 0;
@@ -1299,8 +1308,17 @@ export class AiSimulator {
       case "mutualBenefit": {
         coordinationTargets = next.players.filter((player) => player.alive);
         coordinationProbability = scale;
+        // 互利按真实公开选牌顺序估值：从施放者开始逐个存活角色从预期剩余牌池选走自己
+        // 角色价值最高的牌并消耗一张；后手只能从剩余集合选，顺序优势来自可选集合逐步
+        // 缩小。规划阶段牌未翻开，禁止读取真实未来牌堆或 RNG，只能用公共剩余牌计数做
+        // 确定性期望。
+        const draftValues = mutualBenefitDraftValues(next.players, actor, next?.remainingCardCounts ?? null);
         for (const player of coordinationTargets) {
           this.gainUnknownCardsWithCounterState(next, player, 1, effectEventWorlds, "mutual-benefit-draw");
+          // 把本次选牌期望价值记入角色状态：owner ledger 据此区分"己方先选/敌方先选"
+          // 两种座位排列，后手因可选集合缩小而自然更低，不引入座位奖励常数。
+          player.mutualBenefitDraftValue = (player.mutualBenefitDraftValue ?? 0)
+            + (draftValues[player.id] ?? 0) * scale;
         }
         break;
       }
@@ -2472,10 +2490,10 @@ export class AiSimulator {
     return 0;
   }
 
-  tacticResolutionChance(state, actor, card, targets = []) {
+  tacticResolutionChance(state, actor, card, targets = [], selection = null) {
     if (card.category !== "tactic" || card.counterable === false) return 1;
     return state.players.filter((player) => player.alive && player.id !== actor.id)
-      .reduce((chance, player) => chance * (1 - (player.counterProbability ?? 0) * this.counterDesire(state, player, actor, card, targets)), 1);
+      .reduce((chance, player) => chance * (1 - (player.counterProbability ?? 0) * this.counterDesire(state, player, actor, card, targets, selection)), 1);
   }
 
   /**
@@ -2486,12 +2504,12 @@ export class AiSimulator {
    * 消费量守恒：Σ marginal(e) = 1 - Π(1 - p_e) = 取消概率（与 tacticResolutionChance 一致）。
    * 只消费实际可能反制的玩家（p > 0）；与 tacticResolutionChance 使用相同的响应顺序。
    */
-  consumeCountersForCardScope(state, actor, card, targets) {
+  consumeCountersForCardScope(state, actor, card, targets, selection = null) {
     const contenders = [];
     for (const player of state.players) {
       if (!player.alive || player.id === actor.id) continue;
       const p = clampProbability((player.counterProbability ?? 0)
-        * this.counterDesire(state, player, actor, card, targets));
+        * this.counterDesire(state, player, actor, card, targets, selection));
       if (p > PROBABILITY_EPSILON) contenders.push({ player, p });
     }
     if (!contenders.length) return;
@@ -2548,19 +2566,117 @@ export class AiSimulator {
     return 1 - (target.counterProbability ?? 0) * this.counterDesire(state, target, actor, card, [target]);
   }
 
-  counterDesire(state, responder, actor, card, targets) {
-    const sourceEnemy = responder.battleTeam !== actor.battleTeam;
-    const target = state.players.find((player) => player.id === targets[0]?.id);
-    const globalBenefitDesire = globalBenefitCounterDesire(state.players, responder.battleTeam, card.definitionId);
+  counterDesire(state, responder, actor, card, targets, selection = null) {
+    // 全体受益牌共用真实响应策略的 root-outcome 判断：actor 即 root source，规划模拟
+    // 中只评估首张反制（depth=0），其余与真实策略同语义。
+    const globalBenefitDesire = globalBenefitCounterDesire(state.players, responder.battleTeam, card.definitionId, {
+      rootSourceId: actor?.id ?? null,
+      counterDepth: 0,
+      remainingCardCounts: state?.remainingCardCounts ?? null
+    });
     if (globalBenefitDesire !== null) return globalBenefitDesire;
-    if (["shockwave","provoke"].includes(card.definitionId)) return sourceEnemy ? 1 : 0;
-    if (card.definitionId === "duel") return target?.battleTeam === responder.battleTeam ? 0.9 : sourceEnemy ? 0.35 : 0;
-    if (["scout","plunder","destroy"].includes(card.definitionId) && target) {
-      if (target.battleTeam === responder.battleTeam) return sourceEnemy ? 1 : 0.75;
-      return sourceEnemy ? 0.25 : 0;
+    // root 结算模拟内部（resolveRootState 的嵌套 apply）不再评估二次反制，直接返回 0，
+    // 避免目标级 root 的群伤循环与动态估值相互递归。
+    if (this._simulatingRootResolution) return 0;
+    // 没有反制容量时意愿必为 0：避免对无牌玩家重复构建 root 效果估值（昂贵且无意义）。
+    // 容量以 counterCountDistribution（可能条件分布）与 counterProbability 任一为准。
+    const hasCounter = (responder.counterCountDistribution ?? [])
+      .some((branch) => (branch.counterCount ?? 0) >= 1 && (branch.probability ?? 0) > 0)
+      || (responder.counterProbability ?? 0) > 0;
+    if (!hasCounter) return 0;
+    // 其余真实可反制牌统一走 dynamic root-outcome 经济比较：反制意愿 = clamp(gain / cost)。
+    // 这是把真实侧布尔经济决策投影为规划概率的唯一映射，不再使用 card.aiValue / target team
+    // 拼成的第二套启发式；规划与真实响应从同一 root 效果价值来源取值。
+    const gain = this.dynamicCounterGain(state, responder, actor, card, targets, selection);
+    if (!Number.isFinite(gain)) return 0;
+    return clampProbability(gain / counterOpportunityCost());
+  }
+
+  /**
+   * 规划侧 dynamic root 估值（depth=0，root 生效 → 反制即取消，gain = -rootEffectValue）。
+   *
+   * 与真实侧 dynamicRootFlipGain 使用同一 root 效果价值来源（同一经济单位与 stay/flip
+   * 语义）。规划搜索热路径会以高频率调用本函数，不能承担真实侧"克隆完整状态 + apply +
+   * 全量 stateUtility"的代价，因此这里提供同一经济语义的轻量估值：直接按当前可见状态的
+   * 字段计算各 effect family 的效果价值（手牌×1.1、HP×HP_VALUE、信息×0.35、能量×1.2、
+   * 层数×1.5 与角色身份差量，均与 AiEvaluator.playerValueTerms 同单位），并保留资源牌
+   * 剥夺敌方攻击能力带来的威胁折算。它是对真实侧 rootEffectValue 的轻量近似，不是另一
+   * 套决策模型；是否反制的总决策仍统一为 clamp(gain / cost)。
+   */
+  dynamicCounterGain(state, responder, actor, card, targets, selection = null) {
+    const definitionId = card?.definitionId;
+    if (!definitionId) return 0;
+    const team = responder.battleTeam;
+    const actorEnemy = actor?.battleTeam !== team;
+    // 队友打出的卡牌对所有 family 的收益都为负（反制只会让己方更差），desire 必为 0；
+    // 这里直接短路，避免为半数响应者重复走 switch（规划热路径开销）。
+    if (!actorEnemy) return 0;
+    const target = (targets ?? []).find((entry) => entry?.id)
+      ? state.players.find((player) => player.id === targets[0].id) : null;
+    const hasResource = (player) => Number(player?.handCount ?? 0) > 0 || Boolean(player?.equipmentDefinitionId);
+    const knownAssault = (player) => Array.isArray(player?.knownCards)
+      && player.knownCards.some((entry) => entry.definitionId === "assault");
+
+    switch (definitionId) {
+      case "shockwave": {
+        // 目标级反制：防止对当前目标 1 点可格挡伤害（盾吸收、格挡概率折算）。
+        if (!target?.alive) return 0;
+        const blockChance = Math.min(1, Number(target.blockProbability) || 0);
+        return HP_VALUE * (1 - blockChance) * (Number(target.shield) >= 1 ? 0 : 1);
+      }
+      case "provoke": {
+        // 无突袭可出则受 1 伤；有突袭则消耗突袭（价值在此处不高于反制成本）。
+        if (!target?.alive) return 0;
+        return (Number(target.assaultResponseProbability) || 0) > 0 ? 1.1 : HP_VALUE;
+      }
+      case "duel": {
+        if (!target?.alive) return 0;
+        // 决斗中双方轮流突袭，先放弃者受 1 伤；目标无突袭时更可能受伤。
+        return HP_VALUE * ((Number(target.assaultResponseProbability) || 0) > 0 ? 0.5 : 1);
+      }
+      case "scout": {
+        if (!target?.alive) return 0;
+        const knownCount = Array.isArray(target.knownCards) ? target.knownCards.length : 0;
+        const unknownCount = Math.max(0, Number(target.handCount) - knownCount);
+        const info = Math.min(2, unknownCount) * 0.35;
+        return actorEnemy ? info : -info;
+      }
+      case "harvest":
+        return actorEnemy ? 2 * 1.1 : -2 * 1.1;
+      case "charge":
+        return actorEnemy ? 1.2 : -1.2;
+      case "exposeWeakness":
+        return actorEnemy ? 1.5 : -1.5;
+      case "plunder": {
+        if (!target?.alive || !hasResource(target)) return 0;
+        // 目标失去 1 张、施放者获得 1 张（generic 双方各 1.1）；若拿走的是已知突袭，
+        // 敌方施放者的攻击威胁上升，折算 HP_VALUE 威胁价值。
+        const threat = actorEnemy && knownAssault(target) ? HP_VALUE : 0;
+        return actorEnemy ? 2.2 + threat : -(2.2 + threat);
+      }
+      case "destroy": {
+        if (!target?.alive || !hasResource(target)) return 0;
+        // 目标失去 1 张（generic 1.1）；目标是己方且其已知突袭被毁时威胁下降。
+        const threat = !actorEnemy && knownAssault(target) ? HP_VALUE : 0;
+        return (target.battleTeam === team ? 1.1 + threat : 1.1) * (actorEnemy ? 1 : -1);
+      }
+      case "transfer": {
+        // 转移把 1 张手牌从来源移到接收者：generic 双方各 1.1，方向由施放者阵营决定。
+        return actorEnemy ? 2.2 : -2.2;
+      }
+      case "seal":
+        return actorEnemy ? 2.8 : -2.8;
+      case "lightning":
+        return actorEnemy ? 2.8 : -2.8;
+      case "leverage":
+        // 借势的收益取决于第一目标是否仍持有装备与合法突袭目标；此处只估算装备转移价值。
+        if (!target?.alive) return 0;
+        return actorEnemy && target.equipmentDefinitionId ? 2 : -2;
+      default:
+        // 所有真实可反制战术牌都在上方 family 中显式建模；未建模的新卡安全回退为 0，
+        // 不允许回退到 aiValue / target team 拼启发式（统一经济比较才是唯一决策来源）。
+        return 0;
     }
-    if (card.definitionId === "transfer") return sourceEnemy ? 0.45 : 0.15;
-    return sourceEnemy ? ((card.aiValue ?? 0) >= 7 ? 0.8 : 0.45) : 0;
   }
 
   applySkill(state, actor, action, eventWorlds) {

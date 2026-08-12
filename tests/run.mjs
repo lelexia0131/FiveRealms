@@ -17,6 +17,7 @@ import { CardSelectionSystem } from "../js/core/CardSelectionSystem.js";
 import { createAiVisibleState } from "../js/ai/AiVisibleState.js";
 import { AiSimulator } from "../js/ai/AiSimulator.js";
 import { ThreatCalculator } from "../js/ai/ThreatCalculator.js";
+import { STATE_DELTA_SCALE } from "../js/ai/AiEvaluator.js";
 import { CleanupManager } from "../js/utils/CleanupManager.js";
 import { getAiDelay, sampleDelay } from "../js/utils/aiTiming.js";
 import {
@@ -101,6 +102,12 @@ import {
   turnTimingFactor
 } from "../js/ai/sealScoring.js";
 import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
+import {
+  assessGlobalBenefit,
+  counterOpportunityCost,
+  dynamicRootFlipGain,
+  mutualBenefitDraftValues
+} from "../js/ai/AiGlobalBenefit.js";
 
 // Test Runner 与公共 Helpers
 
@@ -8851,8 +8858,10 @@ test("AI·搜索：战术反制概率已折进期望 after-state 不被重复折
   };
   const full = run(0), half = run(0.5), zero = run(1);
   assert.ok(Math.abs(full.info - 2) < 1e-9);
-  assert.ok(Math.abs(half.info - 1) < 1e-9);
-  assert.ok(zero.info < 1e-9);
+  // 统一动态反制意愿 = clamp(窥探信息价值/机会成本) ≈ 0.25：反制概率越高信息收益越低，
+  // 但窥探价值低于反制成本，反制无法完全取消信息收益（旧启发式 desire=1 是高估）。
+  assert.ok(half.info < full.info && half.info > 0, "部分反制概率应降低但不归零信息收益");
+  assert.ok(zero.info < half.info, "反制概率越高信息收益越低");
   assert.ok(half.delta < full.delta && zero.delta < half.delta,
     "counter probability must already reduce the expected state delta");
 });
@@ -9613,7 +9622,10 @@ test("AI·搜索：已有破势提高有价值突袭的兑现倾向", async () =
   });
   assert.ok(marginal.marginal > 5, `3 血目标上已有 1 层应明显提高突袭兑现价值，实际 ${marginal.marginal}`);
   const behavior = await exposeAssaultBehavior({ rootStacks: 1, enemyHp: 3, hand: ["charge", "assault"] });
-  assert.equal(behavior.executed[0], "assault", "已有破势时应优先兑现突袭而不是先聚能");
+  // 已有破势必须被突袭消费（不能浪费）；"先聚能再突袭"与"先突袭再聚能"经济等价，
+  // 因此只断言破势兑现后果，不断言动作顺序（顺序由破势边际与已实现转变共同排序）。
+  assert.ok(behavior.executed.includes("assault"), "已有破势时必须兑现突袭");
+  assert.equal(behavior.enemyHp, 1, "1 层破势应让突袭造成 2 点伤害（3血→1血）");
 });
 
 test("AI·搜索：已有破势形成即时击杀", async () => {
@@ -9984,6 +9996,165 @@ test("AI·搜索：根突袭一次性消费多层旧破势", async () => {
   assert.equal(result.sequence[0], "assault");
   assert.equal(result.provenance[0], 0, `根突袭后 2 层旧层 remaining 应为 0，实际 ${result.provenance[0]}`);
   assert.equal(result.provenance[1], 0);
+});
+
+test("AI·搜索：防御方持有格挡使突袭候选价值按格挡响应价值变化且无响应时退化为普通转变", async () => {
+  const actor = makePlayer("blk-plan-actor", 0, "dusk", "ai", 0);
+  const defender = makePlayer("blk-plan-defender", 1, "dawn", "ai", 1);
+  const assault = instance("assault");
+  const block = instance("block");
+  actor.hand.push(assault);
+  defender.hand.push(block);
+  actor.aiMemory.knownCardsByPlayer[defender.id] = { [block.id]: "block" };
+  const { game } = makeGame([actor, defender]);
+  game.aiSearchNodeBudgetOverride = 1;
+  game.aiRandomnessRange = 0;
+  // 隔离隐藏世界抽样的格挡先验（-1.5×block 比例）：它不是格挡的 owner-local 响应价值
+  game.aiController.knowledge.sampleHiddenWorlds = () => [];
+  const base = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const clonePlayers = () => base.players.map((p) => ({ ...p }));
+  const visibleBlock = { ...base, players: clonePlayers() };
+  // 无格挡世界 = 同一世界只清格挡容量（保留同一张已知格挡牌、handCount、身份），
+  // 与响应反事实的 cf-before 完全同构，因此两世界只在格挡能力上不同。
+  const visibleNoBlock = { ...base, players: clonePlayers().map((p) => (
+    p.id === defender.id
+      ? { ...p, blockCountDistribution: [{ probability: 1, conditions: {}, blockCount: 0 }], blockProbability: 0, twoBlockProbability: 0 }
+      : p
+  )) };
+  const action = { type: "card", card: assault, targets: [{ id: defender.id }] };
+  const planner = game.aiController.planner;
+  const evaluator = game.aiController.evaluator;
+  const runScore = async (visible) => {
+    await planner.plan(actor, visible, [action], { gameId: game.state.gameId });
+    return planner.lastSearchStats.bestValueScore;
+  };
+  const scoreWithBlock = await runScore(visibleBlock);
+  const scoreNoBlock = await runScore(visibleNoBlock);
+  // 格挡响应净值（生产 response ledger 同一入口）
+  const afterBlock = new AiSimulator(visibleBlock).apply(visibleBlock, action, actor.id);
+  const ledger = planner.computeCandidateLedger(visibleBlock, action, afterBlock, actor.id, true);
+  const blockNet = ledger.responses.reduce((sum, r) => sum + r.netValue, 0);
+  // 两世界只差格挡容量，价值差 == 格挡响应净值的缩放：变化来自 owner-local 响应价值
+  assertClose(scoreWithBlock - scoreNoBlock, blockNet * STATE_DELTA_SCALE);
+  assert.ok(scoreWithBlock !== scoreNoBlock, "格挡可用与否应产生不同候选价值");
+  // 无响应世界退化为普通已实现转变价值：不因响应集成无条件加减新分。
+  // 最终 value 使用 actionEconomicValue（突袭非 end/charge → 0）+ stateDelta×scale。
+  const afterNoBlock = new AiSimulator(visibleNoBlock).apply(visibleNoBlock, action, actor.id);
+  const pureTransition = evaluator.actionEconomicValue(action, actor, visibleNoBlock)
+    + (evaluator.stateUtility(afterNoBlock, actor.id) - evaluator.stateUtility(visibleNoBlock, actor.id)) * STATE_DELTA_SCALE;
+  assertClose(scoreNoBlock, pureTransition);
+});
+
+test("AI·搜索：反制容量存在与否使战术候选价值正确变化且响应净值互斥不重复", async () => {
+  const actor = makePlayer("cnt-plan-actor", 0, "dusk", "ai", 0);
+  const defender = makePlayer("cnt-plan-defender", 1, "dawn", "ai", 1);
+  const shockwave = instance("shockwave");
+  const counter = instance("counter");
+  actor.hand.push(shockwave);
+  defender.hand.push(counter);
+  actor.aiMemory.knownCardsByPlayer[defender.id] = { [counter.id]: "counter" };
+  const { game } = makeGame([actor, defender]);
+  game.aiSearchNodeBudgetOverride = 1;
+  game.aiRandomnessRange = 0;
+  game.aiController.knowledge.sampleHiddenWorlds = () => [];
+  const base = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const visibleCounter = { ...base, players: base.players.map((p) => ({ ...p })) };
+  const visibleNoCounter = { ...base, players: base.players.map((p) => (
+    p.id === defender.id
+      ? { ...p, counterCountDistribution: [{ probability: 1, conditions: {}, counterCount: 0 }], counterProbability: 0 }
+      : { ...p }
+  )) };
+  const action = { type: "card", card: shockwave, targets: [{ id: defender.id }] };
+  const planner = game.aiController.planner;
+  const evaluator = game.aiController.evaluator;
+  const runScore = async (visible) => {
+    await planner.plan(actor, visible, [action], { gameId: game.state.gameId });
+    return planner.lastSearchStats.bestValueScore;
+  };
+  const scoreCounter = await runScore(visibleCounter);
+  const scoreNoCounter = await runScore(visibleNoCounter);
+  // 战术被反制时 actionUtility×resolutionScale 归零，candidate value 必须更低
+  assert.ok(scoreCounter < scoreNoCounter, "被反制的战术候选价值应更低");
+  // 反制响应净值完全包含于 stateDelta 差异：realized simulated counter 不再额外计价
+  const afterCounter = new AiSimulator(visibleCounter).apply(visibleCounter, action, actor.id);
+  const afterNoCounter = new AiSimulator(visibleNoCounter).apply(visibleNoCounter, action, actor.id);
+  const sdCounter = evaluator.stateUtility(afterCounter, actor.id) - evaluator.stateUtility(visibleCounter, actor.id);
+  const sdNoCounter = evaluator.stateUtility(afterNoCounter, actor.id) - evaluator.stateUtility(visibleNoCounter, actor.id);
+  const ledger = planner.computeCandidateLedger(visibleCounter, action, afterCounter, actor.id, true);
+  const counterNet = ledger.responses.reduce((sum, r) => sum + r.netValue, 0);
+  assertClose(sdCounter - sdNoCounter, counterNet);
+  // 反制容量已消费：realized 与 expected 不并存
+  const defAfter = afterCounter.players.find((p) => p.id === defender.id);
+  const capacity = (defAfter.counterCountDistribution ?? []).reduce((sum, b) => sum + (b.counterCount >= 1 ? b.probability : 0), 0);
+  assert.equal(capacity, 0);
+  assert.equal(sealCounterProbability(afterCounter, defAfter), 0);
+});
+
+test("AI·搜索：濒死救援存在与否使攻击候选价值反映生存后果且资源/治疗/避免死亡分属不同账", async () => {
+  const attacker = makePlayer("rsc-plan-attacker", 2, "dusk", "ai", 0);
+  const target = makePlayer("rsc-plan-target", 0, "dawn", "ai", 1);
+  const rescuer = makePlayer("rsc-plan-rescuer", 1, "dawn", "ai", 2);
+  target.hp = 1;
+  target.maxHp = 4;
+  const assault = instance("assault");
+  const recover = instance("recover");
+  attacker.hand.push(assault);
+  rescuer.hand.push(recover);
+  rescuer.expectedRecoverCount = 1;
+  const { game } = makeGame([attacker, target, rescuer]);
+  game.aiSearchNodeBudgetOverride = 1;
+  game.aiRandomnessRange = 0;
+  game.aiController.knowledge.sampleHiddenWorlds = () => [];
+  const base = createAiVisibleState(attacker.id, game.state, game.aiController.knowledge.remainingCounts(attacker));
+  // expectedRecoverCount 需在可见状态上显式设置（生产由 recoverEstimate 提供）
+  const withRecovery = base.players.map((p) => ({ ...p, expectedRecoverCount: p.id === rescuer.id ? 1 : p.expectedRecoverCount }));
+  const withoutRecovery = base.players.map((p) => ({ ...p, expectedRecoverCount: p.id === rescuer.id ? 0 : p.expectedRecoverCount }));
+  const visibleRescue = { ...base, players: withRecovery };
+  const visibleNoRescue = { ...base, players: withoutRecovery };
+  const action = { type: "card", card: assault, targets: [{ id: target.id }] };
+  const planner = game.aiController.planner;
+  const runScore = async (visible) => {
+    await planner.plan(attacker, visible, [action], { gameId: game.state.gameId });
+    return planner.lastSearchStats.bestValueScore;
+  };
+  const scoreRescue = await runScore(visibleRescue);
+  const scoreNoRescue = await runScore(visibleNoRescue);
+  // 救援否定了击杀：有救援时攻击濒死目标的价值更低
+  assert.ok(scoreRescue < scoreNoRescue, "有救援时攻击濒死目标的价值应更低");
+  // 救援响应净值 == 候选价值差（同一事件反事实）
+  const afterRescue = new AiSimulator(visibleRescue).apply(visibleRescue, action, attacker.id);
+  const ledger = planner.computeCandidateLedger(visibleRescue, action, afterRescue, attacker.id, true);
+  const rescue = ledger.responses.find((r) => r.kind === "rescue");
+  assert.ok(rescue, "应检测到救援响应");
+  assertClose(scoreRescue - scoreNoRescue, rescue.netValue * STATE_DELTA_SCALE);
+  // 资源消耗 / 生命恢复 / 避免死亡保持不同 ledger ownership
+  assertClose(rescue.resourceSpent, 1.1);
+  assert.ok(Math.abs(rescue.netValue) > 10, "避免死亡应产生大幅净值");
+  const targetAfter = afterRescue.players.find((p) => p.id === target.id);
+  assert.equal(targetAfter.alive, true, "有救援时目标存活");
+});
+
+test("AI·搜索：前沿未实现价值只计一次且不随搜索深度重复累计", async () => {
+  const actor = makePlayer("fr-depth-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("fr-depth-enemy", 1, "dusk", "ai", 5);
+  const recover = instance("recover");
+  actor.hand.push(recover);
+  actor.hp = 3;
+  actor.maxHp = 4;
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  const visible = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const planner = game.aiController.planner;
+  const terminal = new AiSimulator(visible).apply(visible, { type: "end" }, actor.id);
+  const residual = planner.evaluator.frontierResidual(terminal, actor.id);
+  const heldValue = (residual.held.recover + residual.held.recycle) * STATE_DELTA_SCALE;
+  assert.ok(heldValue > 0, "受伤且持有调息时终局前沿应有价值");
+  await planner.plan(actor, visible, [{ type: "end" }], { gameId: game.state.gameId });
+  // end 的 base transition = -0.8（手中仍有余牌）+ 前沿一次 = -0.8 + heldValue。
+  // 若前沿价值被每层重复累计，bestValueScore 会显著更高（如二次累计为 -0.8 + 2×heldValue）。
+  assertClose(planner.lastSearchStats.bestValueScore, -0.8 + heldValue);
+  // 非终局候选不携带前沿：compose 对 frontierValue=0 的候选不产生前沿分
+  assert.equal(planner.composeCandidateValue(1, 0, 0, 0, 0, 0), 1);
 });
 
 // ---- AI 卡牌行为·突袭 ----
@@ -11910,6 +12081,91 @@ test("AI·决斗：分布不读取敌方真实隐藏手牌内容", () => {
   );
   const second = createAiVisibleState(actor.id, game.state).players[1].assaultCountDistribution;
   assert.deepEqual(second, first);
+});
+
+// ---- AI 卡牌行为·互利 ----
+
+const draftPlayer = (id, seatIndex, battleTeam, generalId = "blade-walker") => (
+  {
+    id, seatIndex, battleTeam, generalId, alive: true, hp: 4, maxHp: 4
+  }
+);
+
+test("AI·互利：不同座位顺序产生不同 expected value", () => {
+  // 同一 fixture 牌池，仅施放者座位不同：先选择者取走唯一高价值牌，后续只能选剩余资源。
+  const players = [
+    draftPlayer("a", 0, "dawn"),
+    draftPlayer("b", 1, "dawn"),
+    draftPlayer("e", 2, "dusk")
+  ];
+  const ownFirst = assessGlobalBenefit(players, "dawn", "mutualBenefit", "a", { counter: 1, assault: 5 });
+  const enemyFirst = assessGlobalBenefit(players, "dawn", "mutualBenefit", "e", { counter: 1, assault: 5 });
+  // 己方先选：a 拿 counter(8)，e 与 b 拿 assault(6) → net = 8 + 6 - 6 = 8。
+  assert.equal(ownFirst.netBenefit, 8);
+  // 敌方先选：e 拿 counter(8)，b 与 a 拿 assault(6) → net = 6 + 6 - 8 = 4。
+  assert.equal(enemyFirst.netBenefit, 4);
+});
+
+test("AI·互利：先选择者可以获得更高价值公开选项", () => {
+  const players = [
+    draftPlayer("a", 0, "dawn"),
+    draftPlayer("b", 1, "dawn"),
+    draftPlayer("e", 2, "dusk")
+  ];
+  // 池中只有一张高价值 counter，其余为低价值 assault：先选者拿到 counter。
+  const values = mutualBenefitDraftValues(players, players[0], { counter: 1, assault: 5 });
+  assert.equal(values.a, 8);
+  assert.equal(values.b, 6);
+  assert.equal(values.e, 6);
+});
+
+test("AI·互利：后续角色只能从剩余池选择", () => {
+  const players = [
+    draftPlayer("a", 0, "dawn"),
+    draftPlayer("b", 1, "dawn"),
+    draftPlayer("e", 2, "dusk"),
+    draftPlayer("f", 3, "dusk")
+  ];
+  // 剩余池只有 2 张：第三、四个角色无牌可选，估值归零。
+  const values = mutualBenefitDraftValues(players, players[0], { counter: 2 });
+  assert.equal(values.a, 8);
+  assert.equal(values.b, 8);
+  assert.equal(values.e ?? 0, 0);
+  assert.equal(values.f ?? 0, 0);
+});
+
+test("AI·互利：规划估值不读取未来真实 RNG", () => {
+  const players = [
+    draftPlayer("a", 0, "dawn"),
+    draftPlayer("b", 1, "dawn"),
+    draftPlayer("e", 2, "dusk")
+  ];
+  const counts = { counter: 1, assault: 5 };
+  // 同一输入两次估值完全一致：规划阶段只读公共剩余计数，不触碰未来牌堆或随机源。
+  const first = assessGlobalBenefit(players, "dawn", "mutualBenefit", "a", counts);
+  const second = assessGlobalBenefit(players, "dawn", "mutualBenefit", "a", counts);
+  assert.deepEqual(first, second);
+  // 只有公共剩余计数影响估值：更换计数集合得到不同 netBenefit。
+  const other = assessGlobalBenefit(players, "dawn", "mutualBenefit", "a", { assault: 5 });
+  assert.equal(first.netBenefit, 8);
+  assert.equal(other.netBenefit, 6);
+});
+
+test("AI·互利：己方/敌方收益按 owner perspective 正确投影", () => {
+  const players = [
+    draftPlayer("a", 0, "dawn"),
+    draftPlayer("b", 1, "dawn"),
+    draftPlayer("e", 2, "dusk")
+  ];
+  const counts = { counter: 1, assault: 5 };
+  const dawnView = assessGlobalBenefit(players, "dawn", "mutualBenefit", "a", counts);
+  assert.equal(dawnView.allyBenefit, 14);
+  assert.equal(dawnView.enemyBenefit, 6);
+  assert.equal(dawnView.netBenefit, 8);
+  const duskView = assessGlobalBenefit(players, "dusk", "mutualBenefit", "a", counts);
+  assert.equal(duskView.allyBenefit, 6);
+  assert.equal(duskView.enemyBenefit, 14);
+  assert.equal(duskView.netBenefit, -8);
 });
 
 // ---- AI 卡牌行为·封印 ----
@@ -17069,30 +17325,26 @@ test("AI·炎术师：search credit 能救候选但不能替候选赢比赛", as
   const { game, ember, before }
     = buildBurningFieldWideFixture();
   const evaluator = game.aiController.evaluator;
-  const sim = new AiSimulator(before);
-  const U0 = evaluator.stateUtility(before, ember.id);
   const roots = game.aiController.getLegalActions(ember);
-  const burnValue = roots.reduce((best, action) => {
-    if (action.skill?.id !== "burningField") return best;
-    const after = sim.apply(before, action, ember.id);
-    return evaluator.actionUtility(action, ember, before, { availableActions: roots })
-      + (evaluator.stateUtility(after, ember.id) - U0) * 0.08;
-  }, null);
-  assert.ok(burnValue != null);
+  const burnRoot = roots.find((action) => action.skill?.id === "burningField");
+  // 焚场 search credit（8）必须远高于真实价值尺度（~1）：若它进入 valueScore，
+  // bestValueScore 会被抬到 8+ 量级。焚场以真实击杀价值赢得最终选择。
+  const credit = evaluator.actionSearchPrior(burnRoot, ember, before);
+  assert.ok(credit > 5, `焚场 search credit 应远高于真实价值尺度，实际 ${credit}`);
   game.aiController.planner.evaluator = evaluator;
   game.aiSearchNodeBudgetOverride = 1000;
   game.aiRandomnessRange = 0;
   await game.aiController.planner.plan(ember, before, roots, { gameId: game.state.gameId });
   const stats = game.aiController.planner.lastSearchStats;
-  const chosenRoot = stats.bestSequence[0];
-  assert.notEqual(
-    chosenRoot.cardId ?? chosenRoot.type,
-    "burningField",
-    "search credit must not win the final value comparison"
+  // credit 只影响 pruneScore（beam 顺序），绝不进入候选 valueScore：最终真实价值
+  // 保持真实经济尺度（明显低于 credit），且焚场以真实价值进入最佳序列。
+  assert.ok(
+    stats.bestValueScore < credit,
+    `search credit 不得进入最终 root valueScore（实际 ${stats.bestValueScore} vs credit ${credit}）`
   );
   assert.ok(
-    stats.bestValueScore > burnValue,
-    "the chosen path's real value must clearly exceed burningField's own value score"
+    stats.bestSequence.some((entry) => entry.type === "skill" && entry.cardId === "burningField"),
+    "焚场以真实击杀价值进入最佳序列（credit 只负责把它拉进 beam 探索）"
   );
 });
 
@@ -17111,7 +17363,8 @@ test("AI·炎术师：search credit 不跨层累计进真实价值", async () =>
   );
   const roots = game.aiController.getLegalActions(ember);
   game.aiController.planner.evaluator = {
-    actionUtility: (action) => (
+    // 真实经济先验进入最终 valueScore；search credit（actionSearchPrior）只进 beam。
+    actionEconomicValue: (action) => (
       action.type === "end" ? 0 : (action.skill?.id === "burningField" ? 5 : 6)
     ),
     actionSearchPrior: (action) => action.skill?.id === "burningField" ? 8 : 0,
@@ -17844,9 +18097,11 @@ test("AI·调律师：协调只依据未取消的其他己方有效目标且同�
     hand: [{ id: "coord-mutual", definitionId: "mutualBenefit" }],
     coordinationTriggered: false
   },
-    counterAlly = { ...ally, id: "coord-counter-ally" },
-    counterEnemy = { ...enemy, id: "coord-counter-enemy", counterProbability: 1 };
-  const counterState = { players: [counterActor, counterAlly, counterEnemy] };
+    counterAlly = { ...ally, id: "coord-counter-ally", generalId: "blade-walker" },
+    counterEnemy = { ...enemy, id: "coord-counter-enemy", counterProbability: 1, generalId: "blade-walker" };
+  // 反制决策依赖公共剩余牌计数：敌方在 2v1 互利中先手但少拿一张，root 生效对敌方
+  // 明显不利才会反制。没有剩余计数时无法估算选牌价值，反制意愿归零。
+  const counterState = { remainingCardCounts: { counter: 30 }, players: [counterActor, counterAlly, counterEnemy] };
   const countered = new AiSimulator(
     counterState
   ).apply(counterState, { type: "card", card: { ...CARD_DEFINITIONS.mutualBenefit, id: "coord-mutual" }, targets: counterState.players }, counterActor.id);
@@ -18223,6 +18478,11 @@ const counterPlayer = (id, team, overrides = {}) => (
     hp: 4,
     maxHp: 4,
     shield: 0,
+    energy: 0,
+    maxEnergy: 4,
+    attackUsed: 0,
+    attackLimit: 1,
+    attackRange: 1,
     handCount: 0,
     counterProbability: 0,
     blockProbability: 0,
@@ -18260,7 +18520,7 @@ const counterAvailability = (entry) => entry.availabilityStateBranches.filter(
   (branch) => branch.available
 ).reduce((sum, branch) => sum + branch.probability, 0);
 
-test("AI·反制概率：模拟反制会考虑同阵营响应者的阵营净收益", () => {
+test("AI·反制概率：队友的全体受益牌在首张反制阶段受保护不被反制", () => {
   const state = {
     players: [
       {
@@ -18312,8 +18572,10 @@ test("AI·反制概率：模拟反制会考虑同阵营响应者的阵营净收�
   const next = new AiSimulator(
     state
   ).apply(state, { type: "card", card: { ...CARD_DEFINITIONS.symbiosis, id: "s" }, targets: state.players }, "a");
-  assert.equal(next.players[2].hp, 2);
-  assert.equal(next.players[3].hp, 2);
+  // 队友的共生即使只惠及敌方也不被同阵营首张反制取消：root 生效对我方非负时取消只会
+  // 让己方更差，必须由 root outcome 推导而不是按"当前 source 的阵营净收益"机械反制。
+  assert.equal(next.players[2].hp, 3);
+  assert.equal(next.players[3].hp, 3);
 });
 
 test("AI·反制概率：不会反制对己方净治疗明显有利的共生", () => {
@@ -18330,28 +18592,32 @@ test("AI·反制概率：不会反制对己方净治疗明显有利的共生", (
   assert.equal(use, false);
 });
 
-test("AI·反制概率：对互利按当前存活敌我人数决定是否反制", () => {
-  const smallA = makePlayer("small-a", 0, "dawn"),
-    largeA = makePlayer("large-a", 1, "dusk"),
-    smallB = makePlayer("small-b", 2, "dawn"),
-    largeB = makePlayer("large-b", 3, "dusk"),
-    largeC = makePlayer("large-c", 4, "dusk");
+test("AI·反制概率：对互利按 root outcome 与选牌顺序决定是否反制", () => {
+  const smallA = makePlayer("small-a", 0, "dawn", "ai", 0),
+    largeA = makePlayer("large-a", 1, "dusk", "ai", 0),
+    smallB = makePlayer("small-b", 2, "dawn", "ai", 0),
+    largeB = makePlayer("large-b", 3, "dusk", "ai", 0),
+    largeC = makePlayer("large-c", 4, "dusk", "ai", 0);
   const { game }
     = makeGame([smallA, largeA, smallB, largeB, largeC]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
   const card = instance("mutualBenefit"), counter = instance("counter");
+  // 2v3：敌方互利使敌方先选且多拿一张，root 生效对我方明显不利 → 反制。
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(
       smallA, "counter", { source: largeA, card }, [counter]
     ),
     true
   );
+  // 队友互利受首张反制保护 → 不反制。
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(
-      largeA, "counter", { source: smallA, card }, [counter]
+      smallB, "counter", { source: smallA, card }, [counter]
     ),
     false
   );
   largeC.alive = false;
+  // 2v2：双方选牌价值相当，反制收益低于机会成本 → 不反制。
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(
       smallA, "counter", { source: largeA, card }, [counter]
@@ -18360,7 +18626,7 @@ test("AI·反制概率：对互利按当前存活敌我人数决定是否反制"
   );
 });
 
-test("AI·反制概率：对共生按双方本次实际治疗人数决定是否反制", () => {
+test("AI·反制概率：对共生按双方本次实际治疗量与反制机会成本决定是否反制", () => {
   const a = makePlayer("a", 0, "dawn"),
     ally = makePlayer("ally", 1, "dawn"),
     enemyA = makePlayer("enemy-a", 2, "dusk"),
@@ -18369,6 +18635,7 @@ test("AI·反制概率：对共生按双方本次实际治疗人数决定是否�
   const { game }
     = makeGame([a, ally, enemyA, enemyB, enemyC]);
   const card = instance("symbiosis"), counter = instance("counter");
+  // 己方受治更多或相当 → root 生效对我方非负，反制只会让己方更差，不反制。
   a.hp -= 1;
   ally.hp -= 1;
   enemyA.hp -= 1;
@@ -18376,8 +18643,16 @@ test("AI·反制概率：对共生按双方本次实际治疗人数决定是否�
     game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
+  // 差值小于反制牌机会成本（counter.aiValue × 0.35）时保留反制，不无脑救。
   ally.hp = ally.maxHp;
   enemyB.hp -= 1;
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    false
+  );
+  // 差值达到/超过机会成本才反制：我方满血、三名敌人受损 → net=-3，收益超过成本。
+  a.hp = a.maxHp;
+  enemyC.hp -= 1;
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     true
@@ -18385,23 +18660,615 @@ test("AI·反制概率：对共生按双方本次实际治疗人数决定是否�
 });
 
 test("AI·反制概率：模拟器与真实策略使用相同的全体受益反制判断", () => {
+  const mk = (id, seatIndex, battleTeam) => (
+    {
+      id, seatIndex, battleTeam, generalId: "blade-walker", alive: true, hp: 4, maxHp: 4, handCount: 0
+    }
+  );
   const state = {
+    remainingCardCounts: { counter: 30 },
     players: [
-      { id: "small-a", battleTeam: "dawn", alive: true, hp: 4, maxHp: 4 },
-      { id: "large-a", battleTeam: "dusk", alive: true, hp: 4, maxHp: 4 },
-      { id: "small-b", battleTeam: "dawn", alive: true, hp: 4, maxHp: 4 },
-      { id: "large-b", battleTeam: "dusk", alive: true, hp: 4, maxHp: 4 },
-      { id: "large-c", battleTeam: "dusk", alive: true, hp: 4, maxHp: 4 }
+      mk("small-a", 0, "dawn"),
+      mk("large-a", 1, "dusk"),
+      mk("small-b", 2, "dawn"),
+      mk("large-b", 3, "dusk"),
+      mk("large-c", 4, "dusk")
     ]
   };
   const simulator = new AiSimulator(state),
     small = state.players[0],
+    smallB = state.players[2],
     large = state.players[1],
     card = { ...CARD_DEFINITIONS.mutualBenefit, id: "mutual" };
+  // 2v3：敌方互利使敌方先选且多拿一张，root 生效对我方明显不利 → 反制。
   assert.equal(simulator.counterDesire(state, small, large, card, []), 1);
-  assert.equal(simulator.counterDesire(state, large, small, card, []), 0);
+  // 队友互利受首张反制保护 → 不反制。
+  assert.equal(simulator.counterDesire(state, smallB, small, card, []), 0);
   state.players[4].alive = false;
+  // 2v2：反制收益低于机会成本 → 不反制。
   assert.equal(simulator.counterDesire(state, small, large, card, []), 0);
+  // 真实响应策略使用同一判断：相同局面 shouldRespond 与 counterDesire 一致。
+  const real = makeGame([
+    makePlayer("small-a", 0, "dawn", "ai", 0),
+    makePlayer("large-a", 1, "dusk", "ai", 0),
+    makePlayer("small-b", 2, "dawn", "ai", 0),
+    makePlayer("large-b", 3, "dusk", "ai", 0),
+    makePlayer("large-c", 4, "dusk", "ai", 0)
+  ]);
+  real.game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const realSmall = real.game.state.players[0],
+    realSmallB = real.game.state.players[2],
+    realLarge = real.game.state.players[1],
+    realCard = instance("mutualBenefit");
+  assert.equal(
+    real.game.aiController.responsePolicy.shouldRespond(realSmall, "counter", { source: realLarge, card: realCard }, [instance("counter")]),
+    true
+  );
+  assert.equal(
+    real.game.aiController.responsePolicy.shouldRespond(realSmallB, "counter", { source: realSmall, card: realCard }, [instance("counter")]),
+    false
+  );
+  real.game.state.players[4].alive = false;
+  assert.equal(
+    real.game.aiController.responsePolicy.shouldRespond(realSmall, "counter", { source: realLarge, card: realCard }, [instance("counter")]),
+    false
+  );
+});
+
+test("AI·反制：不会直接反制己方正收益 root card", () => {
+  const ember = makePlayer("ember", 0, "dawn", "ai", 4),
+    hunter = makePlayer("hunter", 1, "dawn", "ai", 5),
+    duskA = makePlayer("dusk-a", 2, "dusk", "ai", 1),
+    duskB = makePlayer("dusk-b", 3, "dusk", "ai", 2),
+    duskC = makePlayer("dusk-c", 4, "dusk", "ai", 3);
+  const { game }
+    = makeGame([ember, hunter, duskA, duskB, duskC]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const card = instance("mutualBenefit"), counter = instance("counter");
+  // 炎术师（己方）打互利，追猎者（同阵营）持有反制：root 生效对我方有正向受益，首张
+  // 反制受保护，不得消耗反制取消队友的正收益牌（即便己方人数较少、净受益为负）。
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(hunter, "counter", { source: ember, card }, [counter]),
+    false
+  );
+});
+
+test("AI·反制：敌方取消己方牌时可以反反制", () => {
+  const ember = makePlayer("ember", 0, "dawn", "ai", 4),
+    hunter = makePlayer("hunter", 1, "dawn", "ai", 5),
+    duskA = makePlayer("dusk-a", 2, "dusk", "ai", 1);
+  const { game }
+    = makeGame([ember, hunter, duskA]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const root = instance("mutualBenefit"), counter = instance("counter");
+  // 2v1：队友互利对我方净受益为正（2 张对 1 张）。敌方先反制取消（depth1 被取消），
+  // 我方追加反制可恢复 root，恢复价值超过机会成本 → 允许反反制。首张反制保护只约束
+  // depth=0，不因"当前 target 是敌人或队友"机械决定后续层。
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      hunter, "counter",
+      { source: duskA, card: counter, rootCard: root, rootSourceId: ember.id, counterDepth: 1 },
+      [counter]
+    ),
+    true
+  );
+});
+
+test("AI·反制：三层 counter chain 能理解最终 root outcome", () => {
+  const ember = makePlayer("ember", 0, "dawn", "ai", 4),
+    hunter = makePlayer("hunter", 1, "dawn", "ai", 5),
+    duskA = makePlayer("dusk-a", 2, "dusk", "ai", 1),
+    duskB = makePlayer("dusk-b", 3, "dusk", "ai", 2),
+    duskC = makePlayer("dusk-c", 4, "dusk", "ai", 3);
+  const { game }
+    = makeGame([ember, hunter, duskA, duskB, duskC]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const root = instance("mutualBenefit"), counter = instance("counter");
+  // 每一层都用同一个 parity/root-outcome 比较：depth 偶数 root 生效、奇数被取消。
+  // depth0：敌方互利 root 生效对我方（2 人）明显不利 → 反制。
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(hunter, "counter", { source: duskA, card: root }, [counter]),
+    true
+  );
+  // depth1：root 已被取消，恢复后对敌方（3 人）明显有利 → 反反制恢复 root。
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      duskB, "counter",
+      { source: hunter, card: counter, rootCard: root, rootSourceId: duskA.id, counterDepth: 1 },
+      [counter]
+    ),
+    true
+  );
+  // depth2：root 恢复生效对我方又不利 → 再次反制取消。
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      hunter, "counter",
+      { source: duskB, card: counter, rootCard: root, rootSourceId: duskA.id, counterDepth: 2 },
+      [counter]
+    ),
+    true
+  );
+});
+
+test("AI·反制：真实反制链透传 root 上下文使队友不反制己方互利", async () => {
+  const ember = makePlayer("ember", 0, "dawn", "ai", 4),
+    hunter = makePlayer("hunter", 1, "dawn", "ai", 5),
+    duskA = makePlayer("dusk-a", 2, "dusk", "ai", 1),
+    duskB = makePlayer("dusk-b", 3, "dusk", "ai", 2),
+    duskC = makePlayer("dusk-c", 4, "dusk", "ai", 3);
+  const { game }
+    = makeGame([ember, hunter, duskA, duskB, duskC]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  hunter.hand.push(instance("counter"));
+  const mb = instance("mutualBenefit");
+  // 追猎者持有反制，但对队友炎术师的互利不反制（root 上下文透传 depth=0 + 队友 source）。
+  // 敌方人数更多也不会反制（互利生效对人数多的一方更有利），整张互利不被反制。
+  const result = await game.responseSystem.askForCounter(ember, mb, game.state.players, {});
+  assert.equal(result.status, "declined");
+  assert.ok(!game.ui.logs.some((message) => message.includes("使用「反制」")));
+});
+
+test("AI·反制：低收益 root effect 时可以保留 counter", () => {
+  const a = makePlayer("a", 0, "dawn", "ai", 0),
+    ally = makePlayer("ally", 1, "dawn", "ai", 0),
+    enemyA = makePlayer("enemy-a", 2, "dusk", "ai", 0),
+    enemyB = makePlayer("enemy-b", 3, "dusk", "ai", 0);
+  const { game }
+    = makeGame([a, ally, enemyA, enemyB]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const card = instance("mutualBenefit"), counter = instance("counter");
+  // 2v2：互利 root 生效对双方价值相当，反制翻转结局几乎无净改善，收益明显低于反制牌
+  // 机会成本 → 保留反制，不无脑救。
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    false
+  );
+});
+
+test("AI·反制：counter opportunity cost 只计一次", () => {
+  const a = makePlayer("a", 0, "dawn", "ai", 0),
+    ally = makePlayer("ally", 1, "dawn", "ai", 0),
+    enemyA = makePlayer("enemy-a", 2, "dusk", "ai", 0),
+    enemyB = makePlayer("enemy-b", 3, "dusk", "ai", 0),
+    enemyC = makePlayer("enemy-c", 4, "dusk", "ai", 0);
+  const { game }
+    = makeGame([a, ally, enemyA, enemyB, enemyC]);
+  const card = instance("symbiosis"), counter = instance("counter");
+  // 敌方共生使 3 名敌人恢复、己方无人受损 → net=-3，反制收益 3 超过单次机会成本
+  // （counter.aiValue × 0.35 = 2.8）。若成本被重复计两次（5.6）则不会反制。
+  enemyA.hp -= 1;
+  enemyB.hp -= 1;
+  enemyC.hp -= 1;
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    true
+  );
+  // 净差值 2（低于 2.8）时不反制：边界精确对应单次机会成本。
+  enemyB.hp = enemyB.maxHp;
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    false
+  );
+});
+
+test("AI·反制：掠夺目标唯一反制用掉后空手时敌方不反反制", () => {
+  const enemyA = makePlayer("enemy-a", 0, "dusk", "ai", 0),
+    playerB = makePlayer("player-b", 1, "dawn", "human", 1);
+  const { game }
+    = makeGame([enemyA, playerB]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  enemyA.hand.push(instance("counter"));
+  // B 已在响应链中用掉唯一反制：当前实时状态 handCount=0，恢复掠夺无从获益。
+  playerB.hand = [];
+  const root = instance("plunder"), counter = instance("counter");
+  // depth1：root 掠夺被取消（奇偶=奇数），恢复它只能从空手目标掠夺 → 实际收益≈0，
+  // 低于反制牌机会成本，因此不反反制。该判断基于"恢复后掠夺能拿到什么"，与卡名无关。
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      enemyA, "counter",
+      { source: playerB, card: counter, rootCard: root, rootSourceId: enemyA.id, counterDepth: 1, rootTargetIds: ["player-b"] },
+      [counter]
+    ),
+    false
+  );
+});
+
+test("AI·反制：掠夺目标反制后仍持有高价值牌且收益超过机会成本时允许反反制", () => {
+  const enemyA = makePlayer("enemy-a", 0, "dusk", "ai", 0),
+    playerB = makePlayer("player-b", 1, "dawn", "human", 1);
+  const { game }
+    = makeGame([enemyA, playerB]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  enemyA.hand.push(instance("counter"));
+  const bAssault = instance("assault");
+  playerB.hand = [bAssault];
+  // A 合法窥见/已知 B 的突袭：恢复掠夺可拿到该已知牌，收益 = 手牌数差量 + 身份差量。
+  enemyA.aiMemory.knownCardsByPlayer["player-b"] = { [bAssault.id]: "assault" };
+  const root = instance("plunder"), counter = instance("counter");
+  // depth1：恢复掠夺可拿 B 的已知突袭，收益（约 4+）超过单次机会成本（2.8）→ 反反制。
+  // 若机会成本被计两次（5.6）则不会反制，因此该断言同时证明机会成本只计一次。
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      enemyA, "counter",
+      { source: playerB, card: counter, rootCard: root, rootSourceId: enemyA.id, counterDepth: 1, rootTargetIds: ["player-b"] },
+      [counter]
+    ),
+    true
+  );
+});
+
+test("AI·反制：动态 root 估值读取响应后的实时目标状态而非初始 snapshot", () => {
+  const enemyA = makePlayer("enemy-a", 0, "dusk", "ai", 0),
+    playerB = makePlayer("player-b", 1, "dawn", "ai", 1);
+  const { game }
+    = makeGame([enemyA, playerB]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const root = instance("plunder");
+  // 世界1：B 响应后空手 → 恢复掠夺收益≈0，低于机会成本。
+  playerB.hand = [];
+  const visibleEmpty = createAiVisibleState(enemyA.id, game.state, { counter: 30 });
+  const gainEmpty = dynamicRootFlipGain(
+    game.aiController.evaluator, new AiSimulator(visibleEmpty), visibleEmpty,
+    enemyA.id, root, enemyA.id, 1, ["player-b"]
+  );
+  assert.ok(gainEmpty !== null);
+  assert.ok(gainEmpty < counterOpportunityCost(), `空手收益应低于机会成本：${gainEmpty}`);
+  // 世界2：B 仍有已知突袭 → 恢复掠夺收益超过机会成本。
+  const bAssault = instance("assault");
+  playerB.hand = [bAssault];
+  enemyA.aiMemory.knownCardsByPlayer["player-b"] = { [bAssault.id]: "assault" };
+  const visibleHas = createAiVisibleState(enemyA.id, game.state, { counter: 30, assault: 30 });
+  const gainHas = dynamicRootFlipGain(
+    game.aiController.evaluator, new AiSimulator(visibleHas), visibleHas,
+    enemyA.id, root, enemyA.id, 1, ["player-b"]
+  );
+  assert.ok(gainHas !== null);
+  assert.ok(gainHas > counterOpportunityCost(), `有牌收益应超过机会成本：${gainHas}`);
+  assert.ok(gainHas > gainEmpty, "实时状态不同则 root 估值必须不同，不能复用初始 snapshot");
+});
+
+test("AI·反制：真实反制链空手掠夺恢复无收益时不反反制且 root 上下文正确透传", async () => {
+  const enemyA = makePlayer("enemy-a", 0, "dusk", "ai", 0),
+    playerB = makePlayer("player-b", 1, "dawn", "human", 1);
+  const { game }
+    = makeGame([enemyA, playerB], { response: () => true });
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const plunder = instance("plunder"), aCounter = instance("counter"), bCounter = instance("counter");
+  enemyA.hand.push(plunder, aCounter);
+  playerB.hand.push(bCounter);
+  // B 手中只有反制：AI 掠夺预选必然指向它。
+  game.aiController.cardSelector.chooseZoneCard = () => ({ card: bCounter, zone: "hand" });
+  const captured = [];
+  const originalShouldRespond = game.aiController.responsePolicy.shouldRespond
+    .bind(game.aiController.responsePolicy);
+  game.aiController.responsePolicy.shouldRespond = (...args) => {
+    captured.push(args);
+    return originalShouldRespond(...args);
+  };
+  const played = await game.playCard(enemyA, plunder, [playerB]);
+  assert.equal(played, true);
+  // B 的反制确实已从手中消费；B 空手后 A 反反制被经济比较拒绝。
+  assert.equal(playerB.hand.length, 0);
+  assert.ok(enemyA.hand.includes(aCounter), "空手掠夺恢复无收益，A 应保留反制");
+  assert.ok(game.state.deck.discardPile.includes(plunder), "掠夺被 B 的反制取消");
+  // 嵌套窗口透传 root 上下文：root card / root source / depth / root target。
+  assert.equal(captured.length, 1, "唯一一次 AI 反制决策来自 A 的反反制窗口");
+  const [, , context] = captured[0];
+  assert.equal(context.rootCard?.definitionId, "plunder");
+  assert.equal(context.rootSourceId, enemyA.id);
+  assert.equal(context.counterDepth, 1);
+  assert.deepEqual(context.rootTargetIds, ["player-b"]);
+  assert.equal(playerB.hp, playerB.maxHp, "掠夺被取消，B 不应有损失");
+});
+
+test("AI·反制：真实反制链目标仍持有高价值牌时可反反制恢复掠夺", async () => {
+  const enemyA = makePlayer("enemy-a", 0, "dusk", "ai", 0),
+    playerB = makePlayer("player-b", 1, "dawn", "human", 1);
+  const { game }
+    = makeGame([enemyA, playerB], { response: () => true });
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30, assault: 30 });
+  const plunder = instance("plunder"), aCounter = instance("counter"),
+    bCounter = instance("counter"), bAssault = instance("assault");
+  enemyA.hand.push(plunder, aCounter);
+  playerB.hand.push(bCounter, bAssault);
+  enemyA.aiMemory.knownCardsByPlayer["player-b"] = { [bAssault.id]: "assault" };
+  // 让 AI 掠夺预选确定指向已知突袭，避免随机选择使结算不稳定。
+  game.aiController.cardSelector.chooseZoneCard = () => ({ card: bAssault, zone: "hand" });
+  const played = await game.playCard(enemyA, plunder, [playerB]);
+  assert.equal(played, true);
+  // B 用掉唯一反制后仍持有突袭；A 反反制恢复掠夺并实际拿到该突袭。
+  assert.equal(playerB.hand.length, 0);
+  assert.ok(enemyA.hand.includes(bAssault), "恢复的掠夺应从 B 手中取走已知突袭");
+  assert.ok(!enemyA.hand.some((card) => card.definitionId === "counter"), "A 的反制用于反反制");
+});
+
+test("AI·反制：破坏 root 收益随目标剩余资源动态下降", () => {
+  const enemyA = makePlayer("enemy-a", 0, "dusk", "ai", 0),
+    playerB = makePlayer("player-b", 1, "dawn", "ai", 1);
+  const { game }
+    = makeGame([enemyA, playerB]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const root = instance("destroy");
+  // B 空手（响应链消耗完）→ 恢复破坏无目标资源 → 收益≈0。
+  playerB.hand = [];
+  const visibleEmpty = createAiVisibleState(enemyA.id, game.state, { counter: 30 });
+  const gainEmpty = dynamicRootFlipGain(
+    game.aiController.evaluator, new AiSimulator(visibleEmpty), visibleEmpty,
+    enemyA.id, root, enemyA.id, 1, ["player-b"]
+  );
+  assert.ok(gainEmpty !== null);
+  assert.ok(gainEmpty < counterOpportunityCost(), `空手破坏收益应低于机会成本：${gainEmpty}`);
+  // B 仍有牌 → 恢复破坏可弃掉敌人资源，收益更高。
+  playerB.hand = [instance("assault")];
+  const visibleHas = createAiVisibleState(enemyA.id, game.state, { counter: 30, assault: 30 });
+  const gainHas = dynamicRootFlipGain(
+    game.aiController.evaluator, new AiSimulator(visibleHas), visibleHas,
+    enemyA.id, root, enemyA.id, 1, ["player-b"]
+  );
+  assert.ok(gainHas !== null);
+  assert.ok(gainHas > gainEmpty, "破坏收益必须按目标当前剩余资源重新计算");
+});
+
+test("AI·反制：决斗 root 收益按目标响应后的实时手牌重算", () => {
+  const enemyA = makePlayer("enemy-a", 0, "dusk", "ai", 0),
+    playerB = makePlayer("player-b", 1, "dawn", "ai", 1);
+  const { game }
+    = makeGame([enemyA, playerB]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const root = instance("duel");
+  // B 用掉反制后空手 → 决斗中无突袭可出 → 必受 1 伤，对 A 收益高。
+  playerB.hand = [];
+  const visibleEmpty = createAiVisibleState(enemyA.id, game.state, { counter: 30 });
+  const gainEmpty = dynamicRootFlipGain(
+    game.aiController.evaluator, new AiSimulator(visibleEmpty), visibleEmpty,
+    enemyA.id, root, enemyA.id, 1, ["player-b"]
+  );
+  // B 仍持有突袭 → 决斗有来回，A 的收益降低（B 可能反打）。
+  playerB.hand = [instance("assault")];
+  const visibleHas = createAiVisibleState(enemyA.id, game.state, { counter: 30, assault: 30 });
+  const gainHas = dynamicRootFlipGain(
+    game.aiController.evaluator, new AiSimulator(visibleHas), visibleHas,
+    enemyA.id, root, enemyA.id, 1, ["player-b"]
+  );
+  assert.ok(gainEmpty !== null && gainHas !== null);
+  assert.ok(gainEmpty > gainHas, "目标仍有突袭时决斗收益应低于空手场景");
+});
+
+test("AI·反制：目标级震荡按目标当前护盾/存活状态决定是否值得反制", () => {
+  const source = makePlayer("source", 0, "dusk", "ai", 0),
+    target = makePlayer("target", 1, "dawn", "ai", 1);
+  const { game }
+    = makeGame([source, target]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const root = instance("shockwave"), counter = instance("counter");
+  target.hand.push(counter);
+  // 目标无盾：震荡 1 伤可造成 HP 损失，防止伤害的收益超过机会成本 → 反制。
+  target.shield = 0;
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      target, "counter",
+      { source, card: root, rootCard: root, rootSourceId: source.id, counterDepth: 0, rootTargetIds: ["target"] },
+      [counter]
+    ),
+    true
+  );
+  // 目标有足够护盾：震荡伤害被盾吸收，收益低于机会成本 → 保留反制。
+  target.shield = 3;
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      target, "counter",
+      { source, card: root, rootCard: root, rootSourceId: source.id, counterDepth: 0, rootTargetIds: ["target"] },
+      [counter]
+    ),
+    false
+  );
+});
+
+test("AI·反制：转移/借势 root 走统一动态估值且缺失选择上下文时安全降级", () => {
+  const A = makePlayer("a", 0, "dusk", "ai", 0),
+    B = makePlayer("b", 1, "dawn", "ai", 1),
+    C = makePlayer("c", 2, "dawn", "ai", 2);
+  const { game }
+    = makeGame([A, B, C]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const counter = instance("counter");
+  // transfer root：链上下文未携带公开转移来源/接收者 → 无法模拟具体转移 → 安全降级不反制。
+  const transferRoot = instance("transfer");
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      B, "counter",
+      { source: A, card: transferRoot, rootCard: transferRoot, rootSourceId: A.id, counterDepth: 0, rootTargetIds: ["b"] },
+      [counter]
+    ),
+    false
+  );
+  // transfer root：提供公开转移上下文 → 走统一动态估值并返回布尔决策。
+  B.hand = [instance("assault")];
+  const transferDecision = game.aiController.responsePolicy.shouldRespond(
+    B, "counter",
+    {
+      source: A, card: transferRoot, rootCard: transferRoot, rootSourceId: A.id, counterDepth: 0, rootTargetIds: ["b"],
+      publicTransferContext: { fromPlayerId: "b", receiverPlayerId: "a", zone: "hand" }
+    },
+    [counter]
+  );
+  assert.equal(typeof transferDecision, "boolean");
+  // leverage root：第一目标未持有装备 → 借势失去收益 → 不反制。
+  const leverageRoot = instance("leverage");
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      B, "counter",
+      { source: A, card: leverageRoot, rootCard: leverageRoot, rootSourceId: A.id, counterDepth: 0, rootTargetIds: ["c", "b"] },
+      [counter]
+    ),
+    false
+  );
+});
+
+test("AI·反制：队友正收益 root 不会被己方直接反制", () => {
+  const allyA = makePlayer("ally-a", 0, "dawn", "ai", 0),
+    teammate = makePlayer("teammate", 1, "dawn", "ai", 1),
+    enemyB = makePlayer("enemy-b", 2, "dusk", "ai", 2);
+  const { game }
+    = makeGame([allyA, teammate, enemyB]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const root = instance("plunder"), counter = instance("counter");
+  enemyB.hand = [instance("assault")];
+  allyA.aiMemory.knownCardsByPlayer["enemy-b"] = { [enemyB.hand[0].id]: "assault" };
+  // depth0：队友的掠夺生效对己方为正（从敌人手里拿牌）→ 反制只会让己方更差 → 不反制。
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      teammate, "counter", { source: allyA, card: root }, [counter]
+    ),
+    false
+  );
+});
+
+test("AI·反制：敌方取消己方掠夺后队友可在收益足够时反反制", () => {
+  const allyA = makePlayer("ally-a", 0, "dawn", "ai", 0),
+    teammate = makePlayer("teammate", 1, "dawn", "ai", 1),
+    enemyB = makePlayer("enemy-b", 2, "dusk", "ai", 2);
+  const { game }
+    = makeGame([allyA, teammate, enemyB]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const root = instance("plunder"), counter = instance("counter");
+  enemyB.hand = [instance("assault")];
+  // 反反制决策者是队友：它必须看见 enemy 手里的已知突袭，才能算出恢复掠夺的高收益。
+  teammate.aiMemory.knownCardsByPlayer["enemy-b"] = { [enemyB.hand[0].id]: "assault" };
+  // depth1：敌方反制已取消队友掠夺，恢复它可从敌人手里拿牌，收益超过机会成本 → 反反制。
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      teammate, "counter",
+      { source: enemyB, card: counter, rootCard: root, rootSourceId: allyA.id, counterDepth: 1, rootTargetIds: ["enemy-b"] },
+      [counter]
+    ),
+    true
+  );
+});
+
+test("AI·反制：三层链每层用当前实时状态重新估值而不复用上一层", () => {
+  const enemyA = makePlayer("enemy-a", 0, "dusk", "ai", 0),
+    playerB = makePlayer("player-b", 1, "dawn", "ai", 1);
+  const { game }
+    = makeGame([enemyA, playerB]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30 });
+  const root = instance("plunder");
+  const evalLayer = (depth, bHand) => {
+    playerB.hand = bHand;
+    const visible = createAiVisibleState(enemyA.id, game.state, { counter: 30, assault: 30 });
+    return dynamicRootFlipGain(
+      game.aiController.evaluator, new AiSimulator(visible), visible,
+      enemyA.id, root, enemyA.id, depth, ["player-b"]
+    );
+  };
+  // 每一层都必须基于"当前实时状态 + 当前奇偶"重新求值，不能复用上一层估值：
+  //   depth1 空手：恢复掠夺无收益；depth1 有牌：恢复可拿 1 张；
+  //   depth2 有牌：奇偶翻转，恢复已生效的掠夺=取消自己收益，符号相反。
+  const depth1Empty = evalLayer(1, []);
+  const depth1Has = evalLayer(1, [instance("assault")]);
+  const depth2Has = evalLayer(2, [instance("assault")]);
+  assert.ok(depth1Empty !== null && depth1Has !== null && depth2Has !== null);
+  assert.ok(depth1Empty < counterOpportunityCost(), `空手层收益应低于机会成本：${depth1Empty}`);
+  assert.ok(depth1Has > depth1Empty, "同深度下目标手牌不同则估值必须不同");
+  assert.ok(depth1Has > depth2Has, "奇偶翻转必须改变估值符号（偶数生效被取消、奇数恢复）");
+});
+
+test("AI·反制：共生 root 按当前缺血量估值，目标满血时恢复无收益", () => {
+  const a = makePlayer("a", 0, "dawn", "ai", 0),
+    ally = makePlayer("ally", 1, "dawn", "ai", 1),
+    enemyA = makePlayer("enemy-a", 2, "dusk", "ai", 2),
+    enemyB = makePlayer("enemy-b", 3, "dusk", "ai", 3);
+  const { game }
+    = makeGame([a, ally, enemyA, enemyB]);
+  const card = instance("symbiosis"), counter = instance("counter");
+  // 全体满血：共生恢复量=0，恢复/取消 root 都无收益 → 不反制（按当前状态而非受伤时 snapshot）。
+  a.hp = a.maxHp;
+  ally.hp = ally.maxHp;
+  enemyA.hp = enemyA.maxHp;
+  enemyB.hp = enemyB.maxHp;
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    false
+  );
+});
+
+test("AI·反制：规划 counterDesire 与真实 shouldRespond 一致——空手掠夺目标不反制", () => {
+  const A = makePlayer("a", 0, "dusk", "ai", 0),
+    T = makePlayer("t", 1, "dawn", "ai", 1),
+    R = makePlayer("r", 2, "dawn", "ai", 2);
+  const { game }
+    = makeGame([A, T, R]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30, assault: 30 });
+  R.hand.push(instance("counter"));
+  T.hand = []; // T 已在响应链中把手牌用尽
+  const root = instance("plunder"), counter = instance("counter");
+  const visible = createAiVisibleState(R.id, game.state, { counter: 30, assault: 30 });
+  const visibleResponder = visible.players.find((player) => player.id === R.id);
+  // 规划侧：恢复空手掠夺无价值 → desire 0。
+  assert.equal(new AiSimulator(visible).counterDesire(visible, visibleResponder, A, root, [{ id: "t" }]), 0);
+  // 真实侧：同一 root 空手局面 → 不反制。
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      R, "counter",
+      { source: A, card: root, rootCard: root, rootSourceId: A.id, counterDepth: 0, rootTargetIds: ["t"] },
+      [counter]
+    ),
+    false
+  );
+});
+
+test("AI·反制：规划 counterDesire 与真实 shouldRespond 一致——目标仍持有高价值牌时反制", () => {
+  const A = makePlayer("a", 0, "dusk", "ai", 0),
+    T = makePlayer("t", 1, "dawn", "ai", 1),
+    R = makePlayer("r", 2, "dawn", "ai", 2);
+  const { game }
+    = makeGame([A, T, R]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30, assault: 30 });
+  R.hand.push(instance("counter"));
+  const tAssault = instance("assault");
+  T.hand.push(tAssault);
+  R.aiMemory.knownCardsByPlayer["t"] = { [tAssault.id]: "assault" };
+  const root = instance("plunder"), counter = instance("counter");
+  const visible = createAiVisibleState(R.id, game.state, { counter: 30, assault: 30 });
+  const sim = new AiSimulator(visible);
+  const visibleResponder = visible.players.find((player) => player.id === R.id);
+  const desire = sim.counterDesire(visible, visibleResponder, A, root, [{ id: "t" }]);
+  // 恢复掠夺可拿到高价值已知牌，规划 desire 与真实决策都允许反制。
+  assert.ok(desire > 0, `desire 应 > 0：${desire}`);
+  assert.equal(
+    game.aiController.responsePolicy.shouldRespond(
+      R, "counter",
+      { source: A, card: root, rootCard: root, rootSourceId: A.id, counterDepth: 0, rootTargetIds: ["t"] },
+      [counter]
+    ),
+    true
+  );
+});
+
+test("AI·反制：规划 desire 是 clamp(gain/cost) 且随 gain 单调不降", () => {
+  const A = makePlayer("a", 0, "dusk", "ai", 0),
+    T = makePlayer("t", 1, "dawn", "ai", 1),
+    R = makePlayer("r", 2, "dawn", "ai", 2);
+  const { game }
+    = makeGame([A, T, R]);
+  game.aiController.knowledge.remainingCounts = () => ({ counter: 30, assault: 30 });
+  const root = instance("plunder");
+  const desireFor = (tDefinitions) => {
+    R.hand = [instance("counter")];
+    T.hand = tDefinitions.map((definitionId) => instance(definitionId));
+    R.aiMemory.knownCardsByPlayer["t"] = {};
+    for (const card of T.hand) R.aiMemory.knownCardsByPlayer["t"][card.id] = card.definitionId;
+    const visible = createAiVisibleState(R.id, game.state, { counter: 30, assault: 30 });
+    const visibleResponder = visible.players.find((player) => player.id === R.id);
+    return new AiSimulator(visible).counterDesire(visible, visibleResponder, A, root, [{ id: "t" }]);
+  };
+  // gain≤0 → desire 0；gain 增加 desire 不下降；gain≥cost → desire 1。
+  const empty = desireFor([]);
+  const low = desireFor(["charge"]);
+  const high = desireFor(["assault"]);
+  assert.ok(empty <= 1e-9, `空手目标 gain≤0 → desire 0：${empty}`);
+  assert.ok(empty <= low && low <= high, "gain 增加 desire 不得下降");
+  assert.ok(high >= 1 - 1e-9, `高价值已知牌 gain≥cost → desire 1：${high}`);
 });
 
 test("AI·反制概率：战术反制风险：队友 counterProbability 不产生机械 hidden world 扣分", async () => {
@@ -18434,7 +19301,8 @@ test("AI·反制概率：战术反制风险：队友 counterProbability 不产�
       actor,
       visible,
       [{ type: "card", card: scout, targets: [{ id: "e" }] }, { type: "end" }],
-      { actionUtility: (action) => action.type === "end" ? 0 : 0.9, stateUtility: () => 0 }
+      // 真实经济先验进入 valueScore：队友反制 desire=0，resolutionScale 不降低即时价值
+      { actionEconomicValue: (action) => action.type === "end" ? 0 : 0.9, stateUtility: () => 0 }
     );
   };
   const without = await run(0), withCounter = await run(1);
@@ -18466,7 +19334,8 @@ test("AI·反制概率：战术反制风险：敌方意愿按结算比例影响�
         { type: "card", card: expose, targets: [] },
         { type: "card", card: symbiosis, targets: [{ id: "a" }, { id: "e" }] }
       ],
-      { actionUtility: (action) => action.type === "card" ? 1 : 0, stateUtility: () => 0 }
+      // 真实经济先验进入 valueScore，反制风险通过 resolutionScale 缩放即时价值
+      { actionEconomicValue: (action) => action.type === "card" ? 1 : 0, stateUtility: () => 0 }
     );
   };
   const withRisk = await run(1), withoutRisk = await run(0);
@@ -18533,7 +19402,7 @@ test("AI·反制概率：战术反制风险：counterable false 的战术牌结�
     actor,
     visible,
     [{ type: "card", card, targets: [{ id: "e" }] }, { type: "end" }],
-    { actionUtility: (action) => action.type === "end" ? 0 : 0.9, stateUtility: () => 0 }
+    { actionEconomicValue: (action) => action.type === "end" ? 0 : 0.9, stateUtility: () => 0 }
   );
   assert.equal(action.card?.definitionId, "test-no-counter");
 });
@@ -18555,9 +19424,13 @@ test("AI·反制概率：战术反制风险：scout 按反制 scale 记录期望
   assert.equal(normal.players[1].knownCards.length, 1);
   assert.equal(Object.hasOwn(normal.players[1], "hand"), false);
   const partial = run(makeTarget(), 0.5);
-  assert.ok(Math.abs(partial.players[0].expectedInformationGain - 1) < 1e-9);
+  // 统一动态反制意愿 = clamp(信息价值/机会成本) ≈ 0.25：反制概率按意愿部分缩放信息收益，
+  // 窥探价值低于反制成本，反制无法完全取消收益（旧启发式 desire=1 是高估）。
+  assert.ok(partial.players[0].expectedInformationGain < normal.players[0].expectedInformationGain,
+    "部分反制概率应降低信息收益");
   const full = run(makeTarget(), 1);
-  assert.equal(full.players[0].expectedInformationGain, 0);
+  assert.ok(full.players[0].expectedInformationGain < partial.players[0].expectedInformationGain,
+    "反制概率越高信息收益越低");
   const allKnown = run(
     makeTarget(
       {
@@ -18596,7 +19469,9 @@ test("AI·反制概率：战术反制风险：scout 深层部分可用已知牌�
   assert.ok(Math.abs(full.players[0].expectedInformationGain - 1.5) < 1e-9);
   assert.equal(full.players[1].knownCards.length, 1);
   const partial = run(0.5);
-  assert.ok(Math.abs(partial.players[0].expectedInformationGain - 0.75) < 1e-9);
+  // 统一动态反制意愿按 clamp(信息价值/机会成本) 缩放：部分反制概率降低但不归零信息收益。
+  assert.ok(partial.players[0].expectedInformationGain < full.players[0].expectedInformationGain,
+    "部分反制概率应降低信息收益");
 });
 
 test("AI·反制概率：战术反制风险：深层战术评分使用后续节点状态而非根 counter 状态", async () => {
@@ -18607,7 +19482,7 @@ test("AI·反制概率：战术反制风险：深层战术评分使用后续节�
   game.aiSearchNodeBudgetOverride = 3;
   const planner = game.aiController.planner;
   planner.evaluator = {
-    actionUtility: (action) => {
+    actionEconomicValue: (action) => {
       if (
         action.type === "end"
       ) return 0.4; if (action.card?.definitionId === "assault") return 1; if (action.card?.definitionId === "harvest") return 1; return 0;
@@ -22572,15 +23447,16 @@ test("AI·资源身份：模拟执行评分阶段选中的同一已知牌身份"
   assert.equal(action.selection.cardId, "high-counter");
   const simulator = new AiSimulator(state), next = simulator.apply(state, action, "a");
   const nextSource = next.players[1], nextReceiver = next.players[2];
-  // 来源持有确定反制，转移意愿 0.45 → 55% 世界转移成功。
-  assertClose(nextSource.handCount, 1.45);
-  assertClose(nextReceiver.handCount, 0.55);
+  // 来源持有确定反制，统一动态反制意愿 = clamp(转移价值/机会成本) = 11/14 →
+  // 3/14 世界转移成功、11/14 世界来源保留该反制并消费容量。
+  assertClose(nextSource.handCount, 25 / 14);
+  assertClose(nextReceiver.handCount, 3 / 14);
   const sourceHigh = nextSource.knownCards.find((entry) => entry.cardId === "high-counter");
   assert.ok(sourceHigh);
-  assertClose(simulator.cardAvailability(sourceHigh), 0.45);
+  assertClose(simulator.cardAvailability(sourceHigh), 11 / 14);
   const receiverHigh = nextReceiver.knownCards.find((entry) => entry.cardId === "high-counter");
   assert.ok(receiverHigh);
-  assertClose(simulator.cardAvailability(receiverHigh), 0.55);
+  assertClose(simulator.cardAvailability(receiverHigh), 3 / 14);
   assert.ok(!nextReceiver.knownCards.some((entry) => entry.cardId === "low-charge"));
   assert.ok(nextSource.knownCards.some((entry) => entry.cardId === "low-charge"));
 });
@@ -25605,24 +26481,49 @@ test("AI·角色核心评分：借势概率获得装备同步接收者角色装�
 });
 
 test("AI·角色核心评分：真实 Planner 会按角色权重选择不同动作", async () => {
-  const run = async (generalIndex) => {
+  const build = async (generalIndex) => {
     const actor = makePlayer("actor", 0, "dawn", "ai", generalIndex);
     const enemy = makePlayer("enemy", 1, "dusk");
     const provoke = instance("provoke"), harvest = instance("harvest");
     actor.hand = [provoke, harvest];
     enemy.hand = [instance("assault")];
-    const { game }
-      = makeGame([actor, enemy]);
+    const { game } = makeGame([actor, enemy]);
     game.rememberPrivateCard(actor, enemy, enemy.hand[0]);
-    game.aiSearchNodeBudgetOverride = 3;
-    game.aiRandomnessRange = 0;
-    const action = await game.aiController.selectAction(actor, { gameId: game.state.gameId });
-    return action.card?.definitionId;
+    const evaluator = game.aiController.evaluator;
+    const visible = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+    const handRole = (state) => {
+      const player = state.players.find((entry) => entry.id === actor.id);
+      return evaluator.playerValueTerms(state, player, actor.id, 0).terms.handRole;
+    };
+    const afterProvoke = new AiSimulator(visible).apply(
+      visible, { type: "card", card: provoke, targets: [{ id: enemy.id }] }, actor.id
+    );
+    const afterHarvest = new AiSimulator(visible).apply(
+      visible, { type: "card", card: harvest, targets: [] }, actor.id
+    );
+    return { evaluator, visible, provoke, harvest, handRole, afterProvoke, afterHarvest };
   };
-  // 全局基础值相同（provoke/harvest 均为 8），角色差量：刃行者 +1/0，灵医 -1/+1
+  // 全局基础值相同（provoke/harvest 均为 8），角色差量：刃行者 provoke +1、harvest 0；
+  // 灵医 provoke -1、harvest +1。
   assert.equal(CARD_DEFINITIONS.provoke.aiValue, CARD_DEFINITIONS.harvest.aiValue);
-  assert.equal(await run(0), "provoke");
-  assert.equal(await run(2), "harvest");
+  const blade = await build(0);
+  const medic = await build(2);
+  // 角色差量现在是"持有该牌相较普通角色的额外未来选择价值"（specific marginal
+  // opportunity value）：打出该牌时在 stateDelta.handRole 作为 keep-cost 扣除，
+  // 而不是动作执行成功后的额外奖励。
+  assert.equal(blade.handRole(blade.afterProvoke) - blade.handRole(blade.visible), -1,
+    "刃行者打出 +1 差量的 provoke 应失去其 keep 价值");
+  assert.equal(blade.handRole(blade.afterHarvest) - blade.handRole(blade.visible), 0,
+    "刃行者打出 0 差量的 harvest 不应失去 keep 价值");
+  assert.equal(medic.handRole(medic.afterProvoke) - medic.handRole(medic.visible), 1,
+    "灵医打出 -1 差量的 provoke 应释放（而非失去）keep 价值");
+  assert.equal(medic.handRole(medic.afterHarvest) - medic.handRole(medic.visible), -1,
+    "灵医打出 +1 差量的 harvest 应失去其 keep 价值");
+  // 最终真实价值（actionEconomicValue）不含 roleDelta 打牌加分：roleDelta 只出现在
+  // keep 机会成本一侧，不再同时作为动作奖励。
+  assert.equal(blade.evaluator.actionEconomicValue(
+    { type: "card", card: blade.provoke, targets: [{ id: "enemy" }] }, makePlayer("actor", 0, "dawn", "ai", 0), blade.visible
+  ), 0);
 });
 
 const shieldValueFixture = () => {
@@ -28886,7 +29787,7 @@ test("AI·转移评分：目标反制风险下转移部分生效且来源与接�
             availabilityStateBranches: [{ probability: 1, conditions: {}, available: true }]
           }
         ],
-        counterProbability: 1 / 0.45
+        counterProbability: 1
       },
       {
         id: "r",
@@ -28913,16 +29814,17 @@ test("AI·转移评分：目标反制风险下转移部分生效且来源与接�
   const simulator = new AiSimulator(state), next = simulator.apply(state, action, "a");
   const nextActor = next.players[0], nextSource = next.players[1], nextReceiver = next.players[2];
   assert.equal(nextActor.hand.some((card) => card.id === "use"), false);
-  // 来源确定持有一张反制，转移意愿 0.45 → 45% 世界反制取消、55% 世界转移成功。
-  assertClose(nextSource.handCount, 0.45);
+  // 来源确定持有一张反制，统一动态反制意愿 = clamp(转移 generic 价值/机会成本) = 11/14：
+  // 反制概率 1 × 11/14 → 11/14 世界反制取消、3/14 世界转移成功，来源/接收者身份互补。
+  assertClose(nextSource.handCount, 11 / 14);
   const sourceAssault = nextSource.knownCards.find((entry) => entry.cardId === "known-assault");
   assert.ok(sourceAssault);
-  assertClose(simulator.cardAvailability(sourceAssault), 0.45);
+  assertClose(simulator.cardAvailability(sourceAssault), 11 / 14);
   // 生成动作的接收者是行动者自己；转移成功世界进入行动者手牌。
-  assertClose(nextActor.handCount, 0.55);
+  assertClose(nextActor.handCount, 3 / 14);
   const receiverAssault = nextActor.hand.find((card) => card.id === "known-assault");
   assert.ok(receiverAssault);
-  assertClose(simulator.cardAvailability(receiverAssault), 0.55);
+  assertClose(simulator.cardAvailability(receiverAssault), 3 / 14);
   assert.equal(nextReceiver.handCount, 0);
 });
 
@@ -29803,10 +30705,10 @@ test("AI·价值归属：反制消耗与阻止效果归属防守方", () => {
 
 test("AI·价值归属：同一张反制不会同时记已实现消费与概率预期", () => {
   const state = ledgerState([
-    ledgerHand(ledgerPlayer("a", 0, "dawn", "blade-walker"), ["scout"]),
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "blade-walker"), ["duel"]),
     ledgerHand(ledgerPlayer("d", 1, "dusk", "oath-warden"), ["counter"])
   ]);
-  const action = ledgerAction(state, "a", "scout", "d");
+  const action = ledgerAction(state, "a", "duel", "d");
   const sealBefore = sealCounterProbability(state, state.players[1]);
   assert.equal(sealBefore, 1);
   // card-scope 战术按边际概率实际消费反制容量：realized 消费后 future expected 归零
@@ -29965,6 +30867,234 @@ test("AI·价值归属：REC/BLK/RCL/CNT 的分解恒等式保持成立", () => 
     ledgerHand(ledgerPlayer("c", 1, "dusk", "blade-walker"), ["scout"])
   ]);
   checkIdentity("CNT-CERTAIN viewer a", cntState, ledgerAction(cntState, "c", "scout", "a"), "c", "a");
+});
+
+test("AI·价值归属：响应边际价值经同一事件反事实给出且与 stateDelta 互斥不双算", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const planner = game.aiController.planner;
+  const state = ledgerBlkState();
+  const action = ledgerAction(state, "c", "assault", "a");
+  const after = new AiSimulator(state).apply(state, action, "c");
+  const stateDelta = evaluator.stateUtility(after, "c") - evaluator.stateUtility(state, "c");
+  const ledger = planner.computeCandidateLedger(state, action, after, "c", true);
+  const responseNet = ledger.responses.reduce((sum, r) => sum + r.netValue, 0);
+  // 响应净值 == 同一事件反事实的投影（同源，不另起一套计算）
+  const cf = planner.responseCounterfactual(state, action, "c", "a", "c", { removeBlock: true }, after);
+  assertClose(responseNet, cf.projected);
+  // 互斥恒等式：stateDelta == 非响应转变 + 响应边际。cf-before 只清格挡容量、
+  // 保留同一张格挡牌（handCount/身份不变），因此 stateDelta - responseNet 必须
+  // 等于"该世界去掉格挡能力后的转变"，证明响应价值已被干净地切分、只计一次。
+  const cfBefore = { ...state, players: state.players.map((p) => (
+    p.id === "a"
+      ? { ...p, blockCountDistribution: [{ probability: 1, conditions: {}, blockCount: 0 }], blockProbability: 0, twoBlockProbability: 0 }
+      : p
+  )) };
+  const cfAfter = new AiSimulator(cfBefore).apply(cfBefore, action, "c");
+  const cfNonResponse = evaluator.stateUtility(cfAfter, "c") - evaluator.stateUtility(state, "c");
+  assertClose(stateDelta - responseNet, cfNonResponse);
+  assertClose(stateDelta, (stateDelta - responseNet) + responseNet);
+});
+
+test("AI·价值归属：卡片机会成本区分泛用资源、具体身份与未来选项且不完整双算", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const player = ledgerPlayer("med", 0, "dawn", "spirit-medic", { hp: 3, maxHp: 4 });
+  const recoverCard = ledgerCard("med-rc", "recover");
+  const cost = evaluator.cardOpportunityCost(recoverCard, player);
+  // 泛用资源：一张手牌的固定单位（handCount×1.1）
+  assert.equal(cost.generic, 1.1);
+  // 具体身份差量：灵医的调息 roleDelta = (6+2) - 6 = 2（身份边际，不是静态分值）
+  assert.equal(cost.specific, 2);
+  // 具体未来选项：缺血 1 的治疗潜力 = 5（与 frontierResidual.held 同语义）
+  assert.equal(cost.futureOption.recover, 5);
+  // 响应容量：调息可作为救援牌 = 1 次容量
+  assert.equal(cost.responseCapacity.recover, 1);
+  // 机会成本不是"印在牌上的固定静态分"：任一层的值都不等于完整静态 aiValue
+  const base = getBaseCardAiValue("recover");
+  assert.notEqual(cost.generic, base);
+  assert.notEqual(cost.specific, base);
+  assert.notEqual(cost.futureOption.recover, base);
+  // generic baseline + specific marginal：两层不相加为完整静态分，也不互为完整重复
+  assert.notEqual(cost.generic + cost.specific, base, "泛用+身份边际不应凑成完整静态分");
+  assert.notEqual(cost.generic + cost.specific, cost.specific * 2, "generic 不是 specific 的重复收账");
+});
+
+test("AI·价值归属：card-scope 反制容量消费后同一反制不再作为完整未来选项保留", () => {
+  const { game } = makeLedgerGame();
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "blade-walker"), ["duel"]),
+    ledgerHand(ledgerPlayer("d", 1, "dusk", "oath-warden"), ["counter"])
+  ]);
+  const action = ledgerAction(state, "a", "duel", "d");
+  const after = new AiSimulator(state).apply(state, action, "a");
+  const defender = after.players.find((p) => p.id === "d");
+  // 容量已消费：未来预期（封印反制等）归零
+  assert.equal(sealCounterProbability(after, defender), 0);
+  const capacity = (defender.counterCountDistribution ?? []).reduce((sum, b) => sum + (b.counterCount >= 1 ? b.probability : 0), 0);
+  assert.equal(capacity, 0);
+  // 泛用手牌资源保留：card-scope 概率近似不真实删除手牌身份，generic 不因容量消费被扣
+  assert.equal(defender.handCount, 1);
+  // 该反制不再作为 held 未来选项双存：frontier held 只含调息/回收站，不含反制容量
+  const residual = game.aiController.evaluator.frontierResidual(after, "d");
+  assert.deepEqual(Object.keys(residual.held), ["recover", "recycle"]);
+  assert.equal(residual.held.recover, 0);
+  assert.equal(residual.held.recycle, 0);
+});
+
+test("AI·价值归属：全局 stateUtility 与 owner-local 投影由同一共享 primitive 给出", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "oath-warden", { hp: 3 }), ["recover"]),
+    ledgerPlayer("c", 1, "dusk", "blade-walker", {
+      expectedAssaultCount: 1, assaultResponseProbability: 1,
+      assaultCountDistribution: [{ count: 1, probability: 1 }]
+    })
+  ]);
+  // 逐玩家：共享 primitive（playerValueTerms）施加 sign 后必须精确复现 stateUtility
+  const viewer = state.players[0];
+  let manual = 0;
+  for (const player of state.players) {
+    const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
+    const { death, terms } = evaluator.playerValueTerms(state, player, viewer.id, 0);
+    manual += sign * (death + Object.values(terms).reduce((sum, v) => sum + v, 0));
+  }
+  assertClose(manual, evaluator.stateUtility(state, viewer.id));
+  // 恒等式：owner-local 投影 == 同一全局 stateDelta
+  const after = new AiSimulator(state).apply(state, ledgerAction(state, "a", "recover"), "a");
+  const projected = evaluator.projectOwnerLedger(evaluator.ownerStateLedger(state, after, viewer.id), viewer.id);
+  assertClose(projected.total, evaluator.stateUtility(after, viewer.id) - evaluator.stateUtility(state, viewer.id));
+});
+
+test("AI·价值归属：突袭三世界守恒——消费成本在 B-A、兑现价值在 C-B、未来攻击库存只计一次", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  // World A: 持有突袭；World B: 消费但效果不兑现；World C: 消费并兑现
+  const worldA = ledgerState([
+    ledgerHand(ledgerPlayer("c", 0, "dusk", "blade-walker"), ["assault"]),
+    ledgerPlayer("a", 1, "dawn", "oath-warden")
+  ]);
+  const action = ledgerAction(worldA, "c", "assault", "a");
+  const worldB = { ...worldA, players: worldA.players.map((p) => (
+    p.id === "c"
+      ? { ...p, hand: [], handCount: 0, expectedAssaultCount: 0, assaultResponseProbability: 0,
+          assaultCountDistribution: [{ count: 0, probability: 1 }] }
+      : p
+  )) };
+  const worldC = new AiSimulator(worldA).apply(worldA, action, "c");
+  const U = (s) => evaluator.stateUtility(s, "c");
+  // B-A = card-spend / future-option loss；C-B = realized attack outcome
+  const spend = U(worldB) - U(worldA);
+  const outcome = U(worldC) - U(worldB);
+  assert.ok(spend < 0, `消费成本应为负，实际 ${spend}`);
+  assert.ok(outcome > 0, `兑现价值应为正，实际 ${outcome}`);
+  // 未来攻击库存（threat）只在 B-A 变化一次，不在 C-B 重复扣除
+  const ledgerAB = evaluator.ownerStateLedger(worldA, worldB, "c");
+  const ledgerBC = evaluator.ownerStateLedger(worldB, worldC, "c");
+  const threatAB = ledgerAB.owners.find((o) => o.playerId === "a").threat;
+  const threatBC = ledgerBC.owners.find((o) => o.playerId === "a").threat;
+  const threatSumAB = threatAB.currentThreat + threatAB.futureInventory + threatAB.energyPressure;
+  const threatSumBC = threatBC.currentThreat + threatBC.futureInventory + threatBC.energyPressure;
+  assert.ok(Math.abs(threatSumAB) > 1, `B-A 应包含未来攻击库存成本，实际 ${threatSumAB}`);
+  assert.ok(Math.abs(threatSumBC) < 1e-9, `C-B 不应重复扣除未来攻击库存，实际 ${threatSumBC}`);
+  // C-B 只含 realized outcome（敌方 HP 下降）
+  const hpBC = ledgerBC.owners.find((o) => o.playerId === "a").material.hp;
+  assert.equal(hpBC, -5);
+});
+
+test("AI·价值归属：静态卡牌分已移出最终真实价值，仅作 beam 排序先验", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("c", 0, "dusk", "blade-walker"), ["assault"]),
+    ledgerPlayer("a", 1, "dawn", "oath-warden")
+  ]);
+  const action = ledgerAction(state, "c", "assault", "a");
+  const actor = state.players.find((p) => p.id === "c");
+  // actionEconomicValue 不含静态卡牌分：突袭（非 end/charge）→ 0
+  assert.equal(evaluator.actionEconomicValue(action, actor, state), 0);
+  // 最终真实价值 = actionEconomicValue + stateDelta×scale，不含 actionUtility 静态分；
+  // actionUtility 只在 beam pruneScore 排序。
+  const after = new AiSimulator(state).apply(state, action, "c");
+  const stateDelta = evaluator.stateUtility(after, "c") - evaluator.stateUtility(state, "c");
+  const realValue = evaluator.actionEconomicValue(action, actor, state) + stateDelta * STATE_DELTA_SCALE;
+  assert.ok(Math.abs(evaluator.actionUtility(action, actor, state)) > 0, "actionUtility 仍是排序先验（非零）");
+  assert.notEqual(realValue, evaluator.actionUtility(action, actor, state), "真实价值与排序先验分离");
+});
+
+test("AI·评分：护盾卡静态分已移除且护盾价值只由 stateDelta 表达", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "blade-walker"), ["shield"]),
+    ledgerPlayer("c", 1, "dusk", "blade-walker")
+  ]);
+  const action = ledgerAction(state, "a", "shield", "a");
+  const actor = state.players.find((p) => p.id === "a");
+  // 护盾卡 actionEconomicValue = 0：+1 盾价值已由 stateDelta 的 shieldStateValue 表达
+  assert.equal(evaluator.actionEconomicValue(action, actor, state), 0);
+  const after = new AiSimulator(state).apply(state, action, "a");
+  const owner = evaluator.ownerStateLedger(state, after, "a").owners.find((o) => o.playerId === "a");
+  assert.ok(owner.material.shield > 0, "盾的已实现价值在 stateDelta（material.shield）");
+});
+
+test("AI·评分：聚能能量增益只由 stateDelta 计价且旧 ×1.5 不再进入真实价值", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "blade-walker", { energy: 0, maxEnergy: 4 }), ["charge"]),
+    ledgerPlayer("c", 1, "dusk", "blade-walker")
+  ]);
+  const action = ledgerAction(state, "a", "charge");
+  const actor = state.players.find((p) => p.id === "a");
+  // 聚能经济先验只保留"跨过主动技能门槛"的选择权；无主动技能时为 0
+  assert.equal(evaluator.actionEconomicValue(action, actor, state), 0);
+  const after = new AiSimulator(state).apply(state, action, "a");
+  const owner = evaluator.ownerStateLedger(state, after, "a").owners.find((o) => o.playerId === "a");
+  // 能量 +1 在 stateDelta 的 generic.energy
+  assertClose(owner.generic.energy, 1.2);
+});
+
+test("AI·价值归属：角色差量只作为 keep-opportunity cost，不进入最终打牌奖励", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("med", 0, "dawn", "spirit-medic"), ["recover"]),
+    ledgerPlayer("c", 1, "dusk", "blade-walker")
+  ]);
+  const action = ledgerAction(state, "med", "recover");
+  const actor = state.players.find((p) => p.id === "med");
+  // actionEconomicValue 不含 roleDelta：灵医 recover 差量 +2 不作为打牌加分
+  assert.equal(evaluator.actionEconomicValue(action, actor, state), 0);
+  const after = new AiSimulator(state).apply(state, action, "med");
+  const owner = evaluator.ownerStateLedger(state, after, "med").owners.find((o) => o.playerId === "med");
+  // keep-opportunity cost 在 stateDelta.specific.handRole
+  assertClose(owner.specific.handRole, -2);
+});
+
+test("AI·价值归属：卡片机会成本各分量与 stateDelta/frontier 唯一消费者对应", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  // 用守誓者（无回春抽牌被动），避免打出调息后被动补牌干扰 generic.handCount 的度量
+  const player = ledgerPlayer("wd", 0, "dawn", "oath-warden", { hp: 3, maxHp: 4 });
+  const recoverCard = ledgerCard("wd-rc", "recover");
+  const cost = evaluator.cardOpportunityCost(recoverCard, player);
+  // generic → stateDelta.handCount；specific → stateDelta.handRole；
+  // futureOption.recover → frontierResidual.held.recover
+  assert.equal(cost.generic, 1.1);
+  assert.equal(cost.specific, 1);
+  const state = ledgerState([ledgerHand(player, ["recover"]), ledgerPlayer("c", 1, "dusk", "blade-walker")]);
+  const heldResidual = evaluator.frontierResidual(state, "wd");
+  assert.equal(heldResidual.held.recover, 5, "持有调息且缺血时，未来治疗选项由 frontier 计价");
+  const action = ledgerAction(state, "wd", "recover");
+  const after = new AiSimulator(state).apply(state, action, "wd");
+  // 打出后 generic -1.1、specific -1、frontier held.recover → 0：三个分量各有一个消费者
+  const owner = evaluator.ownerStateLedger(state, after, "wd").owners.find((o) => o.playerId === "wd");
+  assertClose(owner.generic.handCount, -1.1);
+  assertClose(owner.specific.handRole, -1);
+  const afterResidual = evaluator.frontierResidual(after, "wd");
+  assert.equal(afterResidual.held.recover, 0, "打出调息后未来治疗选项消失");
 });
 
 

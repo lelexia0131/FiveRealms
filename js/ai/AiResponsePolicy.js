@@ -1,14 +1,14 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-owner-ledger-v171";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260812-owner-ledger-v171";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260812-owner-ledger-v171";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-owner-ledger-v171";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
+import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260812-dynamic-root-outcome-v2";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260812-dynamic-root-outcome-v2";
+import { AiSimulator } from "./AiSimulator.js?build=20260812-dynamic-root-outcome-v2";
 import {
   hasLightning,
   lightningTeamBurden,
   lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260812-owner-ledger-v171";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260812-owner-ledger-v171";
+} from "./lightningScoring.js?build=20260812-dynamic-root-outcome-v2";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260812-dynamic-root-outcome-v2";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
@@ -91,13 +91,34 @@ export class AiResponsePolicy {
           ? this.shouldCounterSeal(responder, context)
           : this.shouldCounterLightning(responder, context);
       }
-      const sourceEnemy = context.source?.battleTeam !== responder.battleTeam;
-      const id = context.card?.definitionId;
-      const globalBenefitDesire = globalBenefitCounterDesire(this.game.state.players, responder.battleTeam, id);
+      // 反制决策围绕最终 root outcome：嵌套反制时当前 card 是上一张反制，root 定义与
+      // 来源必须来自链上下文（首张反制时 root 就是当前 card/source）。反制链深度决定
+      // 当前 parity 下 root 最终生效还是被取消，由 globalBenefitCounterDesire / 统一
+      // 动态 root 估值比较 stay/flip 两个世界，真实响应与规划模拟共用同一判断。
+      const rootId = context.rootCard?.definitionId ?? context.card?.definitionId;
+      // 真实反制链上下文以 rootSourceId（字符串）透传 root source；首张反制时回退当前 source。
+      const rootSourceId = context.rootSourceId ?? context.rootSource?.id ?? context.source?.id ?? null;
+      const globalBenefitDesire = globalBenefitCounterDesire(
+        this.game.state.players,
+        responder.battleTeam,
+        rootId,
+        {
+          rootSourceId,
+          counterDepth: context.counterDepth ?? 0,
+          remainingCardCounts: this.knowledge.remainingCounts(responder)
+        }
+      );
       if (globalBenefitDesire !== null) return globalBenefitDesire > 0;
-      const teamSwing = ["shockwave","provoke","duel"].includes(id);
-      if (sourceEnemy && this.game.teamRules.isSmallTeam(responder)) return teamSwing || (context.card?.aiValue ?? 0) >= 5;
-      return sourceEnemy ? teamSwing || (context.card?.aiValue ?? 0) >= 7 : false;
+      // counter root 只出现在"状态判定（封印/闪电）反制的反反制"窗口：root 本身是一张
+      // 反制牌，其效果是取消一次状态判定，而该窗口不携带状态上下文，无法进入动态 root
+      // 效果估值。保持既有状态反制路径的意愿（按当前被反制卡价值），不纳入经济比较。
+      if (rootId === "counter") {
+        const sourceEnemy = context.source?.battleTeam !== responder.battleTeam;
+        return sourceEnemy ? (context.card?.aiValue ?? 0) >= 7 : false;
+      }
+      // 其余可反制牌统一走动态 root 估值：按"当前响应链消耗后的实时状态"模拟 root 结算
+      // 的 stay/flip 两世界经济差，只有收益超过反制牌机会成本才反制。
+      return this.dynamicRootCounterDecision(responder, context);
     }
     if (type === "assaultDiscard") {
       if (context.card?.definitionId === "provoke") return responder.hp <= 2 || responder.hand.length > 2;
@@ -141,7 +162,8 @@ export class AiResponsePolicy {
     const withCounterBurden = receiver
       ? lightningTransferredBurden(state, receiver, responder.battleTeam)
       : 0;
-    const counterCost = (CARD_DEFINITIONS.counter.aiValue ?? 8) * 0.35;
+    // 反制牌机会成本与全体受益/动态 root 反制共用同一统一入口，只计一次。
+    const counterCost = counterOpportunityCost();
     return withCounterBurden + counterCost < noCounterBurden;
   }
 
@@ -153,7 +175,31 @@ export class AiResponsePolicy {
     const remainingCardCounts = this.knowledge.remainingCounts(responder);
     const skipProbability = 1 - tacticJudgmentProbability(remainingCardCounts);
     const preventedBurden = skipProbability * turnOpportunityValue(holder);
-    const counterCost = (CARD_DEFINITIONS.counter.aiValue ?? 8) * 0.35;
+    // 反制牌机会成本与全体受益/动态 root 反制共用同一统一入口，只计一次。
+    const counterCost = counterOpportunityCost();
     return preventedBurden > counterCost;
+  }
+
+  /**
+   * 其余可反制牌的统一反制决策入口。基于"当前响应链实际消耗资源后的实时状态"构建
+   * 可见状态与模拟器，交给 dynamicRootFlipGain 做 stay/flip 经济比较。每个反制窗口
+   * 只构建一次可见状态，不做完整搜索。
+   */
+  dynamicRootCounterDecision(responder, context) {
+    const rootCard = context.rootCard ?? context.card;
+    if (!rootCard?.definitionId || rootCard.category !== "tactic") return false;
+    const rootSourceId = context.rootSourceId ?? context.rootSource?.id ?? context.source?.id ?? null;
+    const counterDepth = context.counterDepth ?? 0;
+    const rootTargetIds = Array.isArray(context.rootTargetIds) ? context.rootTargetIds : [];
+    const remainingCardCounts = this.knowledge.remainingCounts(responder);
+    const visible = createAiVisibleState(responder.id, this.game.state, remainingCardCounts);
+    const simulator = new AiSimulator(visible);
+    const gain = dynamicRootFlipGain(
+      this.evaluator, simulator, visible, responder.id, rootCard, rootSourceId, counterDepth, rootTargetIds, {
+        publicTransferContext:context.publicTransferContext ?? null
+      }
+    );
+    if (gain === null) return false;
+    return gain > counterOpportunityCost();
   }
 }

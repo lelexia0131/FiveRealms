@@ -2,10 +2,10 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-owner-ledger-v171";
-import { AiSimulator } from "./AiSimulator.js?build=20260812-owner-ledger-v171";
-import { HP_VALUE } from "./AiEvaluator.js?build=20260812-owner-ledger-v171";
-import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260812-owner-ledger-v171";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
+import { AiSimulator } from "./AiSimulator.js?build=20260812-dynamic-root-outcome-v2";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260812-dynamic-root-outcome-v2";
+import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260812-dynamic-root-outcome-v2";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -256,6 +256,34 @@ export class AiPlanner {
       : null;
   }
 
+  /**
+   * 候选价值的互斥组成（测试与生产共用同一入口，避免公式漂移）。
+   *
+   *   realizedTransition = baseTransition - responseNet × scale
+   *                        已实现转变：stateDelta 扣除响应边际后的非响应部分
+   *   realizedResponse   = responseNet × scale
+   *                        已实现响应/避免损失：与转变同权重显式计回
+   *   frontierValue      = 前沿未实现价值（只计 held 未来选项，仅终局一次）
+   *
+   * responseNet 已完整包含在 stateDelta 中（containment 恒等式），因此先扣减再
+   * 显式计回，代数上恒等于 baseTransition——不引入新权重、不重复计价；"能看出来
+   * 响应价值占多少"正是本入口存在的意义。无响应时 responseNet=0，退化为普通
+   * 已实现转变价值。封印 timing 修正保持原语义；破势边际信用按下文与
+   * stateDelta 同 scale。
+   *
+   * 破势边际信用（exposeMarginal / assaultStacksCredit）测量的是 stateUtility 差值
+   * （N 层 vs N+1 层的下一次突袭），必须与 stateDelta 同乘 scale：否则同一份破势
+   * 兑现价值会被"stateDelta 已含层数伤害 + 全权重边际"双重计价，且相对已实现转变
+   * 被放大到 1/scale 倍，扭曲目标优先与击杀判断。
+   */
+  composeCandidateValue(baseTransition, responseNet, frontierValue, sealTimingPenalty, exposeMarginal, assaultStacksCredit) {
+    const realizedTransition = baseTransition - responseNet * STATE_DELTA_SCALE;
+    const realizedResponse = responseNet * STATE_DELTA_SCALE;
+    return realizedTransition + realizedResponse + frontierValue
+      - sealTimingPenalty
+      + (exposeMarginal + assaultStacksCredit) * STATE_DELTA_SCALE;
+  }
+
   chooseCandidate(beam) {
     const bestScore = beam[0]?.valueScore ?? -Infinity;
     const near = beam.filter((node) => bestScore - node.valueScore <= GAME_CONFIG.aiNearTieRange);
@@ -308,21 +336,29 @@ export class AiPlanner {
       return simulator.tacticResolutionChance(state, actor, card, mappedTargets);
     };
     // 临时 search credit：只用于当前层 beam pruning/ranking，不进入真实累计价值。
+    // 静态卡牌分（actionUtility）与隐藏世界格挡先验（hiddenAdjustment）都在这里，
+    // 帮助 beam 优先展开"值得打的牌"；最终 root 选择只看 valueScore。
     const searchPrior = (action, state) => (
-      typeof this.evaluator.actionSearchPrior === "function"
-        ? this.evaluator.actionSearchPrior(action, player, state)
-        : 0
+      hiddenAdjustment(action)
+      + (typeof this.evaluator.actionUtility === "function"
+        ? this.evaluator.actionUtility(action, player, state) : 0)
+      + (typeof this.evaluator.actionSearchPrior === "function"
+        ? this.evaluator.actionSearchPrior(action, player, state) : 0)
     );
     /**
      * 未调整的 base transition score（U/d）。封印的软性后置 penalty 不在这里
      * 计算：同一 parent 下的跨候选 timing 比较由调用方在物化同层候选后完成，
      * 只对 seal 候选用“最佳非封印即时动作延迟一步”的 delayCost 做减法。
+     * immediate 只取 actionEconomicValue（不在 stateDelta 中的经济量）；静态先验
+     * 与隐藏世界格挡先验都移到 searchPrior，避免与 stateDelta 的卡片机会成本重复计价。
      */
     const transitionScore = (action, beforeState, afterState, depth = 1) => {
       const executionProbability = action.executionProbability ?? 1;
-      const actionValue = this.evaluator.actionUtility(action, player, beforeState);
+      const economicValue = this.evaluator.actionEconomicValue
+        ? this.evaluator.actionEconomicValue(action, player, beforeState)
+        : 0;
       const resolutionScale = tacticResolutionScale(action, beforeState);
-      const immediate = (actionValue * resolutionScale + hiddenAdjustment(action))
+      const immediate = (economicValue * resolutionScale)
         * executionProbability;
       // state credit 使用边际局面改善量；afterState 已是按执行概率/反制概率折算的期望状态，
       // 因此这里不再重复乘 executionProbability 或 resolutionScale。
@@ -367,20 +403,32 @@ export class AiPlanner {
       // owner-local value ledger：根候选携带完整的响应侧价值（block/counter/rescue
       // 的 owner-scored 避免损失），可供投影进候选价值；终局候选附加 frontier-only residual。
       const candidateLedger = this.computeCandidateLedger(visibleState, action, state, player.id, true);
+      // 响应边际净值为 viewer(=actor) 视角投影。该值已包含在 stateDelta 中
+      // （恒等式 stateDelta == (stateDelta - responseNet) + responseNet），
+      // 因此在评分时先扣减再显式计回，保证已实现响应价值只计一次。
+      const responseNet = (candidateLedger.responses ?? []).reduce((sum, r) => sum + (r.netValue ?? 0), 0);
       const frontierResidual = Boolean(state.playPhaseEnded)
         ? this.frontierResidualOf(state, player.id)
         : null;
+      // 前沿未实现价值只取 held 未来选项（调息治疗 / 回收站抽牌）；futureInventory 是
+      // 敌方未来攻击库存，已经由终局 stateUtility 的 exposure 分项计价，在前沿再叠加
+      // 会针对同一威胁双算，因此前沿积分只计入 held，且只在 playPhaseEnded 计一次。
+      const frontierValue = frontierResidual
+        ? (frontierResidual.held.recover + frontierResidual.held.recycle) * STATE_DELTA_SCALE
+        : 0;
       if (action.card?.definitionId !== "seal" && action.type !== "end") {
         bestRootNonSealBase = Math.max(bestRootNonSealBase, baseTransition);
       }
       rootCandidates.push({
         action, state, exposeMarginal, assaultStacksCredit, remainingRootExposeStacks, baseTransition,
-        candidateLedger, frontierResidual
+        candidateLedger, frontierResidual, responseNet, frontierValue
       });
       rootLedgers.push({
         action: this.describeAction(action),
         projected: candidateLedger.projected,
-        responses: candidateLedger.responses
+        responses: candidateLedger.responses,
+        responseNet,
+        frontierValue
       });
       expanded += 1;
       if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
@@ -394,8 +442,14 @@ export class AiPlanner {
       const sealTimingPenalty = candidate.action.card?.definitionId === "seal"
         ? sealEarlyUsePenalty(sealDelayCost(bestRootNonSealBase, 1))
         : 0;
-      const valueScore = candidate.baseTransition - sealTimingPenalty
-        + candidate.exposeMarginal + candidate.assaultStacksCredit;
+      const valueScore = this.composeCandidateValue(
+        candidate.baseTransition,
+        candidate.responseNet,
+        candidate.frontierValue,
+        sealTimingPenalty,
+        candidate.exposeMarginal,
+        candidate.assaultStacksCredit
+      );
       beam.push({
         action:candidate.action,
         state:candidate.state,
@@ -453,12 +507,16 @@ export class AiPlanner {
           const frontierResidual = Boolean(state.playPhaseEnded)
             ? this.frontierResidualOf(state, player.id)
             : null;
+          // 前沿积分只计入 held 未来选项（与根候选同一口径），只在终局计一次。
+          const frontierValue = frontierResidual
+            ? (frontierResidual.held.recover + frontierResidual.held.recycle) * STATE_DELTA_SCALE
+            : 0;
           if (follow.card?.definitionId !== "seal" && follow.type !== "end") {
             bestNonSealBase = Math.max(bestNonSealBase, baseTransition);
           }
           nodeCandidates.push({
             follow, state, exposeMarginal, assaultStacksCredit, remainingRootExposeStacks, baseTransition,
-            frontierResidual
+            frontierResidual, frontierValue
           });
           expanded += 1;
           if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
@@ -472,8 +530,14 @@ export class AiPlanner {
           const sealTimingPenalty = candidate.follow.card?.definitionId === "seal"
             ? sealEarlyUsePenalty(sealDelayCost(bestNonSealBase, depth))
             : 0;
-          const valueScore = node.valueScore + candidate.baseTransition - sealTimingPenalty
-            + candidate.exposeMarginal + candidate.assaultStacksCredit;
+          const valueScore = node.valueScore + this.composeCandidateValue(
+            candidate.baseTransition,
+            0,
+            candidate.frontierValue,
+            sealTimingPenalty,
+            candidate.exposeMarginal,
+            candidate.assaultStacksCredit
+          );
           candidates.push({
             action:node.action,
             state:candidate.state,

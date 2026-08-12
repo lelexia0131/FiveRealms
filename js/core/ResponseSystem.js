@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-owner-ledger-v171";
-import { createId } from "../utils/helpers.js?build=20260812-owner-ledger-v171";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260812-owner-ledger-v171";
-import { RuleEngine } from "./RuleEngine.js?build=20260812-owner-ledger-v171";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
+import { createId } from "../utils/helpers.js?build=20260812-dynamic-root-outcome-v2";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260812-dynamic-root-outcome-v2";
+import { RuleEngine } from "./RuleEngine.js?build=20260812-dynamic-root-outcome-v2";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -336,6 +336,19 @@ export class ResponseSystem {
     const gameId = this.game.state.gameId;
     if (card.category !== "tactic" || !card.counterable) return responseResult(RESPONSE_STATUS.UNAVAILABLE);
     const responders = chainContext.responders ?? this.game.seatOrderFrom(source, false);
+    // 反制链上下文：把 root card、root source 与当前深度透传给每一层的 AI 决策。
+    // root=0 表示当前被反制的是 root 本身；每追加一层反制深度 +1。AI 按 depth 奇偶
+    // 判断最终 root 生效/取消，再决定是否追加反制；这里只透传，不改变响应顺序、
+    // 合法性或人类响应窗口。
+    const rootCard = chainContext.rootCard ?? card;
+    const rootSourceId = chainContext.rootSourceId ?? source.id;
+    const counterDepth = chainContext.counterDepth ?? 0;
+    // 首层 root 目标 = 根牌原始目标的 id 列表；嵌套层继续保留透传。rootTargetIds 描述
+    // root 的目标（估值时从当前状态重新解析，可能已死亡/清空资源），与"当前被反制对象"
+    // 是两个概念，不得混淆。
+    const rootTargetIds = chainContext.rootTargetIds !== undefined
+      ? chainContext.rootTargetIds
+      : targets.map((target) => target?.id).filter(Boolean);
     for (const responder of responders) {
       if (!responder.alive || responder.id === source.id) continue;
       const publicSource = publicPlayerContext(source);
@@ -353,7 +366,12 @@ export class ResponseSystem {
         counteredCardName:chainContext.targetCard?.name ?? null,
         targetScoped:Boolean(chainContext.targetScoped),
         publicTransferContext:enrichedTransferContext,
-        publicSelectionContext:chainContext.publicSelectionContext ?? null
+        publicSelectionContext:chainContext.publicSelectionContext ?? null,
+        // root outcome 决策上下文：只读，供 AI 评价最终 root 结局，不影响展示与合法性。
+        rootCard,
+        rootSourceId,
+        counterDepth,
+        rootTargetIds
       }, 1);
       if (isCancelledResponse(response) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       const [counterCard] = response.cards ?? [];
@@ -363,7 +381,11 @@ export class ResponseSystem {
         : "的效果";
       this.game.log(`${responder.name}对${source.name}的「${card.name}」使用了「反制」，取消了「${card.name}」${cancelledTarget}。`, "important");
       // 反制牌已经从手牌移入弃牌堆，因此递归链必然受实体牌数量限制，不会无限循环。
-      const counterWasCountered = await this.askForCounter(responder, counterCard, [source], { targetCard:card });
+      // 嵌套层只透传 root outcome 链上下文（root card、root source、深度、root 目标）；
+      // targetScoped、responders 等针对"当前被反制牌"的字段在本层即消费完毕，不向下一层泄漏。
+      const counterWasCountered = await this.askForCounter(responder, counterCard, [source], {
+        targetCard:card, rootCard, rootSourceId, counterDepth:counterDepth + 1, rootTargetIds
+      });
       if (isCancelledResponse(counterWasCountered) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       if (counterWasCountered.status === RESPONSE_STATUS.USED) {
         return responseResult(RESPONSE_STATUS.DECLINED);
