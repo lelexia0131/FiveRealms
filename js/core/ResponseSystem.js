@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-seal-consumer-v170";
-import { createId } from "../utils/helpers.js?build=20260811-seal-consumer-v170";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260811-seal-consumer-v170";
-import { RuleEngine } from "./RuleEngine.js?build=20260811-seal-consumer-v170";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-owner-ledger-v171";
+import { createId } from "../utils/helpers.js?build=20260812-owner-ledger-v171";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260812-owner-ledger-v171";
+import { RuleEngine } from "./RuleEngine.js?build=20260812-owner-ledger-v171";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

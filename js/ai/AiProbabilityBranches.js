@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260811-seal-consumer-v170";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-owner-ledger-v171";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

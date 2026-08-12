@@ -29672,7 +29672,302 @@ test("AI·闪电评分：闪电：lightningTransferredBurden 升级为从 receiv
   assertClose(lightningTransferredBurden(sameTeam.state, sameTeam.receiver, "dawn"), 0.9375);
 });
 
-// ==================== UI 与模板 ====================
+// ---- AI 价值归属与响应消费 ----
+
+// 价值归属 fixture 构建器：构造 evaluator / simulator 可直接读取的可见状态。
+const ledgerCard = (id, definitionId) => ({ id, definitionId, ...CARD_DEFINITIONS[definitionId] });
+const ledgerPlayer = (id, seat, team, generalId, overrides = {}) => ({
+  id,
+  seatIndex: seat,
+  battleTeam: team,
+  generalId,
+  alive: true,
+  hp: 4,
+  maxHp: 4,
+  shield: 0,
+  energy: 0,
+  maxEnergy: 4,
+  handCount: 0,
+  hand: [],
+  attackRange: 1,
+  attackLimit: 1,
+  attackUsed: 0,
+  blockProbability: 0,
+  twoBlockProbability: 0,
+  counterProbability: 0,
+  blockCountDistribution: [{ probability: 1, conditions: {}, blockCount: 0 }],
+  counterCountDistribution: [{ probability: 1, conditions: {}, counterCount: 0 }],
+  expectedRecoverCount: 0,
+  expectedAssaultCount: 0,
+  assaultResponseProbability: 0,
+  assaultCountDistribution: [{ count: 0, probability: 1 }],
+  expectedInformationGain: 0,
+  equipmentDefinitionId: null,
+  equipmentRetentionProbability: 0,
+  initialEquipmentValue: 0,
+  initialEquipmentRoleDelta: 0,
+  expectedEquipmentGain: 0,
+  expectedEquipmentRoleDelta: 0,
+  exposeWeaknessStacks: 0,
+  huntMarkProbabilities: {},
+  huntMarkStateBranchesBySource: {},
+  statuses: [],
+  ...overrides
+});
+const ledgerHand = (player, defIds) => {
+  const hand = defIds.map((definitionId, index) => (
+    ledgerCard(`${player.id}-c${index}-${definitionId}`, definitionId)
+  ));
+  const assault = hand.filter((c) => c.definitionId === "assault").length;
+  const block = hand.filter((c) => c.definitionId === "block").length;
+  const counter = hand.filter((c) => c.definitionId === "counter").length;
+  return {
+    ...player,
+    handCount: hand.length,
+    hand,
+    expectedAssaultCount: assault,
+    assaultResponseProbability: assault > 0 ? 1 : 0,
+    assaultCountDistribution: [{ count: assault, probability: 1 }],
+    blockCountDistribution: [{ probability: 1, conditions: {}, blockCount: block }],
+    counterCountDistribution: [{ probability: 1, conditions: {}, counterCount: counter }],
+    blockProbability: block > 0 ? 1 : 0,
+    twoBlockProbability: block > 1 ? 1 : 0,
+    counterProbability: counter > 0 ? 1 : 0
+  };
+};
+const ledgerState = (players) => ({ players, probabilityEventCounter: 0, simulatedCardCounter: 0 });
+const ledgerAction = (state, actorId, definitionId, targetId = null) => {
+  const actor = state.players.find((p) => p.id === actorId);
+  const card = actor?.hand?.find((c) => c.definitionId === definitionId) ?? null;
+  if (!card) return null;
+  return { type: "card", card, targets: targetId ? [{ id: targetId }] : [] };
+};
+const makeLedgerGame = () => makeGame([makePlayer("ledger-g0", 0, "dawn"), makePlayer("ledger-g1", 1, "dusk")]);
+const ledgerBlkState = () => ledgerState([
+  ledgerHand(ledgerPlayer("a", 0, "dawn", "oath-warden"), ["block"]),
+  ledgerPlayer("d", 1, "dawn", "spirit-medic"),
+  ledgerHand(ledgerPlayer("c", 2, "dusk", "blade-walker"), ["assault"])
+]);
+
+test("AI·价值归属：突袭消耗与格挡消耗归属不同 owner 不相互抵消", () => {
+  const { game } = makeLedgerGame();
+  const state = ledgerBlkState();
+  const action = ledgerAction(state, "c", "assault", "a");
+  const after = new AiSimulator(state).apply(state, action, "c");
+  const ledger = game.aiController.evaluator.ownerStateLedger(state, after, "a");
+  const attacker = ledger.owners.find((o) => o.playerId === "c");
+  const defender = ledger.owners.find((o) => o.playerId === "a");
+  // 两笔 -1.1 分属不同 owner（attacker 消耗突袭、defender 消耗格挡），不在全局求和时抵消
+  assert.equal(defender.generic.handCount, -1.1);
+  assert.equal(attacker.generic.handCount, -1.1);
+  assert.notEqual(defender.relation, attacker.relation);
+});
+
+test("AI·价值归属：格挡避免伤害作为独立响应价值归属防守方", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const planner = game.aiController.planner;
+  const state = ledgerBlkState();
+  const action = ledgerAction(state, "c", "assault", "a");
+  const after = new AiSimulator(state).apply(state, action, "c");
+  // 同事件反事实：去掉防守方格挡能力后的 avoid loss 独立记账
+  const cf = planner.responseCounterfactual(state, action, "c", "a", "a", { removeBlock: true }, after);
+  assert.equal(cf.grossAvoided, 5);
+  assertClose(cf.ownerValue, 2.9);
+  // 不是通过 assault inventory exposure removal 间接获得：threat 移除是另一条记账
+  const ledger = evaluator.ownerStateLedger(state, after, "a");
+  const defender = ledger.owners.find((o) => o.playerId === "a");
+  assert.equal(defender.threat.currentThreat, 5);
+  assert.equal(defender.generic.handCount, -1.1);
+});
+
+test("AI·价值归属：反制消耗与阻止效果归属防守方", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const planner = game.aiController.planner;
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "oath-warden"), ["counter"]),
+    ledgerHand(ledgerPlayer("c", 1, "dusk", "blade-walker"), ["shockwave"])
+  ]);
+  const action = ledgerAction(state, "c", "shockwave", "a");
+  const after = new AiSimulator(state).apply(state, action, "c");
+  const ledger = evaluator.ownerStateLedger(state, after, "a");
+  const defender = ledger.owners.find((o) => o.playerId === "a");
+  // 反制资源消耗归属防守方
+  assert.equal(defender.generic.handCount, -1.1);
+  // 反制阻止的效果（避免伤害）由同事件反事实归属
+  const cf = planner.responseCounterfactual(state, action, "c", "a", "a", { removeCounter: true }, after);
+  assert.equal(cf.grossAvoided, 5);
+  assert.ok(cf.ownerValue > 0);
+});
+
+test("AI·价值归属：同一张反制不会同时记已实现消费与概率预期", () => {
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "blade-walker"), ["scout"]),
+    ledgerHand(ledgerPlayer("d", 1, "dusk", "oath-warden"), ["counter"])
+  ]);
+  const action = ledgerAction(state, "a", "scout", "d");
+  const sealBefore = sealCounterProbability(state, state.players[1]);
+  assert.equal(sealBefore, 1);
+  // card-scope 战术按边际概率实际消费反制容量：realized 消费后 future expected 归零
+  const after = new AiSimulator(state).apply(state, action, "a");
+  const afterDefender = after.players[1];
+  assert.equal(sealCounterProbability(after, afterDefender), 0);
+  const counterCapacity = (afterDefender.counterCountDistribution ?? [])
+    .reduce((sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0);
+  assert.equal(counterCapacity, 0);
+});
+
+test("AI·价值归属：濒死救援区分资源消耗、生命恢复与避免死亡", () => {
+  const { game } = makeLedgerGame();
+  const planner = game.aiController.planner;
+  const state = ledgerState([
+    ledgerPlayer("e", 0, "dawn", "spirit-medic", { hp: 1 }),
+    ledgerHand(ledgerPlayer("d", 1, "dawn", "blade-walker"), ["recover"]),
+    ledgerHand(ledgerPlayer("c", 2, "dusk", "blade-walker"), ["assault"])
+  ]);
+  const rescuer = state.players.find((p) => p.id === "d");
+  rescuer.expectedRecoverCount = 1;
+  const action = ledgerAction(state, "c", "assault", "e");
+  const after = new AiSimulator(state).apply(state, action, "c");
+  const target = after.players.find((p) => p.id === "e");
+  // 生命恢复：目标存活且恢复
+  assert.equal(target.alive, true);
+  assert.equal(target.hp, 1);
+  const ledger = planner.computeCandidateLedger(state, action, after, "c", true);
+  const rescue = ledger.responses.find((r) => r.kind === "rescue");
+  assert.ok(rescue, "应检测到救援响应");
+  // 资源消耗与避免死亡分别记账
+  assertClose(rescue.resourceSpent, 1.1);
+  assert.ok(Math.abs(rescue.netValue) > 10, "避免死亡应产生大幅净值");
+});
+
+test("AI·价值归属：当前威胁与未来攻击库存可分别变化", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const viewer = ledgerPlayer("a", 0, "dawn", "oath-warden");
+  const withInventory = ledgerState([
+    viewer,
+    ledgerPlayer("c", 1, "dusk", "blade-walker", { expectedAssaultCount: 1, assaultResponseProbability: 1 })
+  ]);
+  const comps1 = evaluator.exposureComponents(withInventory, withInventory.players[0]);
+  assert.ok(comps1.currentThreat > 0, "已形成威胁应 > 0");
+  assert.ok(comps1.futureInventory > 0, "未来库存应 > 0");
+  const energyOnly = ledgerState([
+    ledgerPlayer("a2", 0, "dawn", "oath-warden"),
+    ledgerPlayer("c2", 1, "dusk", "blade-walker", { energy: 2 })
+  ]);
+  const comps2 = evaluator.exposureComponents(energyOnly, energyOnly.players[0]);
+  assert.equal(comps2.currentThreat, 0);
+  assert.ok(comps2.energyPressure > 0, "能量折算的未来压力应 > 0");
+  // 分解汇总恒等于 incomingExposure 总值
+  assertClose(
+    comps2.currentThreat + comps2.futureInventory + comps2.energyPressure,
+    evaluator.incomingExposure(energyOnly, energyOnly.players[0])
+  );
+});
+
+test("AI·价值归属：同一 owner ledger 从队友/敌方视角投影符号正确", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerBlkState();
+  const action = ledgerAction(state, "c", "assault", "a");
+  const after = new AiSimulator(state).apply(state, action, "c");
+  for (const viewer of ["a", "c"]) {
+    const projected = evaluator.projectOwnerLedger(evaluator.ownerStateLedger(state, after, viewer), viewer);
+    assertClose(
+      projected.total,
+      evaluator.stateUtility(after, viewer) - evaluator.stateUtility(state, viewer)
+    );
+  }
+  const viewerA = evaluator.projectOwnerLedger(evaluator.ownerStateLedger(state, after, "a"), "a");
+  const viewerC = evaluator.projectOwnerLedger(evaluator.ownerStateLedger(state, after, "c"), "c");
+  assert.ok(viewerA.self > 0, "防守方视角下自身威胁移除为正");
+  assert.ok(viewerC.self < 0, "攻击方视角下自身资源消耗为负");
+});
+
+test("AI·价值归属：residual 只在前沿计入且不随路径深度重复累计", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerBlkState();
+  // 同一状态不同到达路径得到同一 residual（路径无关）
+  const r1 = evaluator.frontierResidual(state, "a");
+  const r2 = evaluator.frontierResidual(structuredClone(state), "a");
+  assert.equal(r1.total, r2.total);
+  // 事件已兑现后对应 residual 减少或消失
+  const action = ledgerAction(state, "c", "assault", "a");
+  const after = new AiSimulator(state).apply(state, action, "c");
+  const rAfter = evaluator.frontierResidual(after, "a");
+  assert.ok(rAfter.futureInventory < r1.futureInventory, "未来攻击库存兑现后应减少");
+});
+
+test("AI·价值归属：泛用手牌资源与具体响应选项不重复计价", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "oath-warden", { hp: 3 }), ["recover"]),
+    ledgerPlayer("b", 1, "dusk", "blade-walker")
+  ]);
+  const action = ledgerAction(state, "a", "recover");
+  const after = new AiSimulator(state).apply(state, action, "a");
+  const owner = evaluator.ownerStateLedger(state, after, "a").owners.find((o) => o.playerId === "a");
+  // 泛用资源（handCount×1.1）与具体身份先验（handRole）是两条独立记账
+  assert.equal(owner.generic.handCount, -1.1);
+  assert.equal(owner.specific.handRole, -1);
+  assert.equal(owner.material.hp, 5);
+  assertClose(owner.total, 2.9);
+});
+
+test("AI·价值归属：REC/BLK/RCL/CNT 的分解恒等式保持成立", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const checkIdentity = (name, state, action, actorId, viewerId) => {
+    const after = new AiSimulator(state).apply(state, action, actorId);
+    const projected = evaluator.projectOwnerLedger(
+      evaluator.ownerStateLedger(state, after, viewerId), viewerId
+    );
+    assertClose(
+      projected.total,
+      evaluator.stateUtility(after, viewerId) - evaluator.stateUtility(state, viewerId),
+      1e-9,
+      `${name} 投影总值应等于 stateUtility delta`
+    );
+  };
+  // REC-A：守誓者恢复
+  checkIdentity(
+    "REC-A",
+    ledgerState([
+      ledgerHand(ledgerPlayer("a", 0, "dawn", "oath-warden", { hp: 3 }), ["recover"]),
+      ledgerPlayer("b", 1, "dusk", "blade-walker")
+    ]),
+    ledgerAction(ledgerState([ledgerHand(ledgerPlayer("a", 0, "dawn", "oath-warden", { hp: 3 }), ["recover"]), ledgerPlayer("b", 1, "dusk", "blade-walker")]), "a", "recover"),
+    "a", "a"
+  );
+  // BLK-A：攻击被格挡（防守方与攻击方视角）
+  checkIdentity("BLK-A viewer a", ledgerBlkState(), ledgerAction(ledgerBlkState(), "c", "assault", "a"), "c", "a");
+  checkIdentity("BLK-A viewer c", ledgerBlkState(), ledgerAction(ledgerBlkState(), "c", "assault", "a"), "c", "c");
+  // RCL-A：回收站 + 战术
+  const rclState = ledgerState([
+    {
+      ...ledgerHand(ledgerPlayer("a", 0, "dawn", "blade-walker"), ["scout"]),
+      equipmentDefinitionId: "recycleDevice",
+      equipmentRetentionProbability: 1,
+      recycleDeviceUses: 1,
+      initialEquipmentValue: 8,
+      initialEquipmentRoleDelta: 0
+    },
+    ledgerPlayer("b", 1, "dusk", "blade-walker", { handCount: 1 })
+  ]);
+  checkIdentity("RCL-A", rclState, ledgerAction(rclState, "a", "scout", "b"), "a", "a");
+  // CNT-CERTAIN：窥探被反制（card-scope 反制容量消费）
+  const cntState = ledgerState([
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "oath-warden"), ["counter"]),
+    ledgerHand(ledgerPlayer("c", 1, "dusk", "blade-walker"), ["scout"])
+  ]);
+  checkIdentity("CNT-CERTAIN viewer a", cntState, ledgerAction(cntState, "c", "scout", "a"), "c", "a");
+});
+
+
 
 // ---- 玩家面板与技能详情 ----
 

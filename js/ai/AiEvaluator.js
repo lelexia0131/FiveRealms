@@ -2,17 +2,17 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-seal-consumer-v170";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260811-seal-consumer-v170";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260811-seal-consumer-v170";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260811-seal-consumer-v170";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260811-seal-consumer-v170";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260811-seal-consumer-v170";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260811-seal-consumer-v170";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260811-seal-consumer-v170";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-owner-ledger-v171";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260812-owner-ledger-v171";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260812-owner-ledger-v171";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260812-owner-ledger-v171";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260812-owner-ledger-v171";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-owner-ledger-v171";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260812-owner-ledger-v171";
+import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260812-owner-ledger-v171";
 import {
   sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260811-seal-consumer-v170";
+} from "./sealScoring.js?build=20260812-owner-ledger-v171";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -21,7 +21,7 @@ const SKILL_THRESHOLD_OPTION_VALUE = 4;
 /** 焚场的临时 beam 排序信用：只服务当前层 pruning/ranking，不进入真实累计价值。 */
 const BURNING_FIELD_SEARCH_PRIOR = 8;
 /** stateUtility 与 shieldStateValue 共用：每点 HP 的效用权重。 */
-const HP_VALUE = 5;
+export const HP_VALUE = 5;
 /** stateUtility 与 shieldStateValue 共用：HP<=1 danger 阈值惩罚。 */
 const DANGER_VALUE = 7;
 /** stateUtility 与 shieldStateValue 共用：阵亡惩罚。 */
@@ -76,9 +76,26 @@ export class AiEvaluator {
     return ThreatCalculator.calculate(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
   }
 
-  /** 敌方攻击暴露：距离可达概率 × 公开突袭资源强度；只读公开/模拟合法字段，不读取隐藏手牌身份。 */
-  incomingExposure(state, player) {
-    let exposure = 0;
+  /**
+   * 敌方攻击暴露的语义分解。
+   *
+   * 把原 incomingExposure 混合标量拆成三个可独立归属的威胁分量，任何分量的
+   * 汇总恒等于 incomingExposure 总值（保持 stateUtility 既有数值不变）：
+   *
+   *   currentThreat   当前已经形成 / imminent 的威胁：敌方以 assaultResponseProbability
+   *                   持有至少一张突袭（概率加权，此刻即可发动）。
+   *   futureInventory 尚未执行的 future hostile action inventory：额外突袭牌构成
+   *                   跨回合未来攻击压力。
+   *   energyPressure  能量折算的未来攻击资源（未来回合可转化为攻击）。
+   *
+   * 三者与雷达/shield 等 mitigation 分属不同 representation：threat 与 mitigation
+   * 不再在同一不可解释标量中相互抵消。只读公开/模拟合法字段，不读取隐藏手牌身份。
+   */
+  exposureComponents(state, player) {
+    const perEnemy = [];
+    let currentThreat = 0;
+    let futureInventory = 0;
+    let energyPressure = 0;
     for (const enemy of state.players) {
       if (!enemy?.alive || enemy.battleTeam === player.battleTeam || enemy.id === player.id) continue;
       const rangeProbability = DistanceSystem.getRangeLegalityProbability(
@@ -93,10 +110,212 @@ export class AiEvaluator {
       // 威胁强度：基准1点突袭(以概率持有) + 突袭期望 + 能量折算的潜在攻击资源，再按 hp=5 权重换算。
       // 不做次数截断：expectedAssaultCount 已是有界的具体突袭数量，多张突袭代表跨回合的持续威胁；
       // 单回合剩余次数由 Simulator 的 attackUseSlots 消费处理，不在此重复计价。
-      const expectedDamage = response + Math.min(3, expectedAssault) * 0.5 + Math.min(2, energy) * 0.3;
-      exposure += expectedDamage * HP_VALUE * rangeProbability;
+      const current = response * HP_VALUE * rangeProbability;
+      const future = Math.min(3, expectedAssault) * 0.5 * HP_VALUE * rangeProbability;
+      const energyTerm = Math.min(2, energy) * 0.3 * HP_VALUE * rangeProbability;
+      currentThreat += current;
+      futureInventory += future;
+      energyPressure += energyTerm;
+      perEnemy.push({
+        enemyId: enemy.id,
+        rangeProbability,
+        currentThreat: current,
+        futureInventory: future,
+        energyPressure: energyTerm
+      });
     }
-    return exposure;
+    return { currentThreat, futureInventory, energyPressure, perEnemy };
+  }
+
+  /** 敌方攻击暴露：三个已分解威胁分量的汇总；只读公开/模拟合法字段，不读取隐藏手牌身份。 */
+  incomingExposure(state, player) {
+    const { currentThreat, futureInventory, energyPressure } = this.exposureComponents(state, player);
+    return currentThreat + futureInventory + energyPressure;
+  }
+
+  /**
+   * Owner-local value ledger 的原始状态项：某名玩家的 stateUtility 未签名字项
+   * （镜像 stateUtility 逐行，除以团队 sign 与 team burden）。threat 按
+   * currentThreat / futureInventory / energyPressure 分解，不再混在一个 exposure 标量。
+   *
+   * handRole 与 stateUtility 一致：只有 viewer 自己的手牌可被身份评分，因此该子项
+   * 只归属 viewer 自身的 entry（这是当前模型"只能对自己手牌身份估值"的忠实保留）。
+   */
+  ownerStateTerms(state, player, viewerId, radarTacticProbability) {
+    if (!player.alive) return { death: -DEATH_VALUE, terms: {} };
+    const danger = player.hp <= 1 ? -DANGER_VALUE : 0;
+    const rescueOutlook = player.survivalChance === undefined ? 0 : (player.survivalChance - 0.5) * 8;
+    const equipmentValue = player.equipmentDefinitionId ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7) : 0;
+    const initialEquipmentValue = player.initialEquipmentValue ?? equipmentValue;
+    const equipmentDelta = (equipmentValue * (player.equipmentRetentionProbability ?? (equipmentValue ? 1 : 0))
+      - initialEquipmentValue + (player.expectedEquipmentGain ?? 0)) * 0.25;
+    const currentEquipmentRoleDelta = player.equipmentDefinitionId
+      ? this.roleCardDelta(player.generalId, player.equipmentDefinitionId) : 0;
+    const initialEquipmentRoleDelta = Number.isFinite(player.initialEquipmentRoleDelta)
+      ? player.initialEquipmentRoleDelta : currentEquipmentRoleDelta;
+    const equipmentRoleDelta = (currentEquipmentRoleDelta
+        * (player.equipmentRetentionProbability ?? (currentEquipmentRoleDelta ? 1 : 0))
+      - initialEquipmentRoleDelta + (player.expectedEquipmentRoleDelta ?? 0)) * 0.25;
+    const handRoleDelta = player.id === viewerId
+      ? (player.hand ?? []).reduce((sum, card) => (
+          sum + this.roleCardDelta(player.generalId, card?.definitionId) * this.cardAvailability(card)
+        ), 0)
+      : 0;
+    const markThreat = Object.entries(player.huntMarkProbabilities ?? {}).reduce((sum, [sourceId, probability]) => {
+      const source = state.players.find((entry) => entry.id === sourceId);
+      return sum + (source?.battleTeam !== player.battleTeam ? Number(probability) || 0 : 0);
+    }, 0);
+    const exposure = this.incomingExposure(state, player);
+    const radarMitigation = this.radarMitigationUtility(exposure, player, radarTacticProbability);
+    const residualExposure = Math.max(0, exposure - radarMitigation);
+    const { currentThreat, futureInventory, energyPressure } = this.exposureComponents(state, player);
+    const shield = this.shieldStateValue(player, residualExposure);
+    const energyDeviceFuture = this.energyDeviceFutureUtility(player);
+    return {
+      death: 0,
+      terms: {
+        danger,
+        rescueOutlook,
+        hp: player.hp * HP_VALUE,
+        shield,
+        energy: player.energy * ENERGY_STATE_WEIGHT,
+        handCount: player.handCount * 1.1,
+        handRole: handRoleDelta,
+        stacks: (player.exposeWeaknessStacks ?? 0) * 1.5,
+        equipmentDelta,
+        equipmentRoleDelta,
+        info: (player.expectedInformationGain ?? 0) * .35,
+        markThreat: -markThreat * 1.5,
+        // 威胁三分量之和 == -exposure，保证 owner ledger 总值与 stateUtility 完全一致
+        currentThreat: -currentThreat,
+        futureInventory: -futureInventory,
+        energyPressure: -energyPressure,
+        radar: radarMitigation,
+        energyDeviceFuture
+      }
+    };
+  }
+
+  /**
+   * Owner-local state ledger：把一次 transition（before→after）的 stateUtility delta
+   * 分解到每个 owner 名下（self / ally / enemy），先记账、后投影。
+   *
+   * 与把所有角色变化带符号直接求和的 signed-global 方式相反：block 的 -1.1 与
+   * assault 的 -1.1 分属不同 owner，不在求和时互相抵消。owner.total 是该 owner 的
+   * 未签名原始变化；projectOwnerLedger 再从 planner perspective 决定符号。
+   *
+   * 每个 owner 的分项按语义归入六类：generic（手牌数、能量）只表达泛用资源量；
+   * specific（手牌/装备的角色身份差量）只记录相对全局基础 aiValue 的 delta 部分，
+   * 身份差量未被估价时为 0，因此与 generic 互补、不重复计价；material 为 HP/盾/
+   * 信息/层数等实体资源，threat 为敌方威胁分量，outcome 为危险/救援处境，
+   * teamBurden 为闪电/封印的团队负担。
+   */
+  ownerStateLedger(before, after, viewerId) {
+    const radarTactic = buildRadarJudgmentProbabilities(after?.remainingCardCounts ?? null).tactic;
+    const viewer = after.players.find((p) => p.id === viewerId) ?? before.players.find((p) => p.id === viewerId);
+    const beforePlayers = new Map(before.players.map((p) => [p.id, p]));
+    const owners = [];
+    for (const afterPlayer of after.players) {
+      const beforePlayer = beforePlayers.get(afterPlayer.id);
+      if (!beforePlayer) continue;
+      const relation = afterPlayer.battleTeam === viewer.battleTeam
+        ? (afterPlayer.id === viewerId ? "self" : "ally")
+        : "enemy";
+      const beforeTerms = this.ownerStateTerms(before, beforePlayer, viewerId, radarTactic);
+      const afterTerms = this.ownerStateTerms(after, afterPlayer, viewerId, radarTactic);
+      const beforeBurden = {
+        lightning: lightningTeamBurden(before, beforePlayer, viewer.battleTeam),
+        seal: sealTeamBurden(before, beforePlayer, viewer.battleTeam)
+      };
+      const afterBurden = {
+        lightning: lightningTeamBurden(after, afterPlayer, viewer.battleTeam),
+        seal: sealTeamBurden(after, afterPlayer, viewer.battleTeam)
+      };
+      const fields = {};
+      for (const key of new Set([...Object.keys(beforeTerms.terms), ...Object.keys(afterTerms.terms)])) {
+        fields[key] = (afterTerms.terms[key] ?? 0) - (beforeTerms.terms[key] ?? 0);
+      }
+      fields.death = afterTerms.death - beforeTerms.death;
+      fields.lightning = afterBurden.lightning - beforeBurden.lightning;
+      fields.seal = afterBurden.seal - beforeBurden.seal;
+      const total = Object.values(fields).reduce((sum, value) => sum + value, 0);
+      owners.push({
+        playerId: afterPlayer.id,
+        relation,
+        total,
+        generic: { handCount: fields.handCount ?? 0, energy: fields.energy ?? 0 },
+        material: {
+          hp: fields.hp ?? 0,
+          shield: fields.shield ?? 0,
+          info: fields.info ?? 0,
+          stacks: fields.stacks ?? 0,
+          equipmentDelta: fields.equipmentDelta ?? 0,
+          energyDeviceFuture: fields.energyDeviceFuture ?? 0,
+          death: fields.death ?? 0
+        },
+        threat: {
+          currentThreat: fields.currentThreat ?? 0,
+          futureInventory: fields.futureInventory ?? 0,
+          energyPressure: fields.energyPressure ?? 0,
+          markThreat: fields.markThreat ?? 0,
+          radar: fields.radar ?? 0
+        },
+        specific: { handRole: fields.handRole ?? 0, equipmentRole: fields.equipmentRoleDelta ?? 0 },
+        outcome: { danger: fields.danger ?? 0, rescueOutlook: fields.rescueOutlook ?? 0 },
+        teamBurden: { lightning: fields.lightning ?? 0, seal: fields.seal ?? 0 }
+      });
+    }
+    const total = owners.reduce((sum, owner) => sum + owner.total, 0);
+    return { perspectiveId: viewerId, owners, total };
+  }
+
+  /**
+   * Perspective projection：把 owner-local ledger 从 viewerId 视角投影为
+   * self / ally / enemy 三块。enemy 收益对 viewer 为负，投影时取反。
+   * projected.total == stateUtility(after, viewerId) - stateUtility(before, viewerId)。
+   */
+  projectOwnerLedger(ledger, viewerId) {
+    const self = ledger.owners.find((owner) => owner.playerId === viewerId);
+    const allies = ledger.owners.filter((owner) => owner.relation === "ally");
+    const enemies = ledger.owners.filter((owner) => owner.relation === "enemy");
+    const selfValue = self?.total ?? 0;
+    const allyValue = allies.reduce((sum, owner) => sum + owner.total, 0);
+    const enemyValue = enemies.reduce((sum, owner) => sum + owner.total, 0);
+    return {
+      perspectiveId: viewerId,
+      self: selfValue,
+      ally: allyValue,
+      enemy: enemyValue,
+      total: selfValue + allyValue - enemyValue
+    };
+  }
+
+  /**
+   * Frontier-only residual（递归 / 路径安全边界）。
+   *
+   * realized event value 在发生的 transition 计一次；unresolved / future state
+   * residual 只在前沿 / 终局评估计一次。本函数只读当前状态，返回该状态下
+   * 尚未兑现的未来价值（future hostile inventory 与 held 未来 option）。
+   * 它不随路径深度重复累计：同一状态不同到达路径得到同一 residual；若沿每条路径
+   * 逐 depth 各加一次，同一未兑现价值会在多个深度被重复计价，因此只能在前沿评估。
+   */
+  frontierResidual(state, viewerId) {
+    const viewer = state.players.find((player) => player.id === viewerId);
+    if (!viewer || !viewer.alive) return null;
+    const { futureInventory, energyPressure } = this.exposureComponents(state, viewer);
+    const recover = Math.max(0, Math.min(1, Math.max(0, viewer.maxHp - viewer.hp))) * HP_VALUE;
+    const recycle = viewer.equipmentDefinitionId === "recycleDevice"
+      ? Math.max(0, 2 - (viewer.recycleDeviceUses ?? 0))
+        * Math.min(1, (viewer.hand ?? []).filter((card) => card.category === "tactic" && card.counterable !== false).length)
+        * 1.1
+        * Math.max(0, Number(viewer.equipmentRetentionProbability) || 1)
+      : 0;
+    const futureInventoryTotal = futureInventory + energyPressure;
+    return {
+      futureInventory: futureInventoryTotal,
+      held: { recover, recycle },
+      total: futureInventoryTotal + recover + recycle
+    };
   }
 
   /** 雷达动态免伤：当前攻击暴露 × 雷达存在概率 × 判定为战术牌的条件概率；只对 defenseDevice 的真实规则生效。 */
@@ -239,7 +458,7 @@ export class AiEvaluator {
         barrier: 4 + (target?.hp <= 2 ? 4 : 0),
         // 滋荣真实价值（治疗 1 HP、danger 消除、回春摸牌）全部由 stateDelta 表达；
         // 旧 `missing × 4` 把“总缺血量”误当成“本次实际恢复量”，必须显式为 0。
-        // SM1-SM6 实测无需 temporary search prior（零先验下临界治疗仍稳进 beam）。
+        // 无需搜索先验：零先验下临界治疗仍能稳定进入 beam。
         symbiosis: 0,
         stealSkill: 5 + Math.min(4, (target?.handCount ?? 0) + (target?.equipmentDefinitionId ? 1 : 0)),
         // 焚场真实价值（伤害/击杀/救援/能量）全部由 stateDelta 表达；此处必须显式为 0，

@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260811-seal-consumer-v170";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260811-seal-consumer-v170";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260812-owner-ledger-v171";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-owner-ledger-v171";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

@@ -2,9 +2,10 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-seal-consumer-v170";
-import { AiSimulator } from "./AiSimulator.js?build=20260811-seal-consumer-v170";
-import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260811-seal-consumer-v170";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-owner-ledger-v171";
+import { AiSimulator } from "./AiSimulator.js?build=20260812-owner-ledger-v171";
+import { HP_VALUE } from "./AiEvaluator.js?build=20260812-owner-ledger-v171";
+import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260812-owner-ledger-v171";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -126,6 +127,135 @@ export class AiPlanner {
     return Math.max(0, remainingRootStacks * retainRatio);
   }
 
+  /**
+   * 同一事件世界的响应反事实：对"去掉该玩家响应能力"的 before 世界重新 apply
+   * 同一个 action，比较实际 after 与反事实 after，得到该响应为受保护侧创造的
+   * 避免损失。1-ply，不嵌套完整搜索，不修改任何输入状态。
+   *
+   * grossAvoided = 纯避免伤害（HP 差 × HP_VALUE）；
+   * ownerValue = 响应从响应方自身视角的净值（含避免死亡、资源消耗、身份变化）；
+   * projected = 从调用方 viewer 视角的投影（敌我符号由投影决定）。
+   * 该值不是通过 assault inventory exposure removal 间接假装：两条世界除响应能力
+   * 外完全一致，差值只来自响应本身。
+   */
+  responseCounterfactual(before, action, actorId, defenderId, viewerId, opts = {}, after = null) {
+    if (!action) return { grossAvoided: 0, ownerValue: 0, projected: 0 };
+    const sim = new AiSimulator(before);
+    const actualAfter = after ?? sim.apply(before, action, actorId);
+    const cfState = before.players.map((p) => {
+      if (p.id !== defenderId) return p;
+      const next = { ...p };
+      if (opts.removeBlock) {
+        next.blockCountDistribution = [{ probability: 1, conditions: {}, blockCount: 0 }];
+        next.blockProbability = 0;
+        next.twoBlockProbability = 0;
+      }
+      if (opts.removeCounter) {
+        next.counterCountDistribution = [{ probability: 1, conditions: {}, counterCount: 0 }];
+        next.counterProbability = 0;
+      }
+      if (opts.removeRecover) {
+        next.expectedRecoverCount = 0;
+        if (Array.isArray(next.hand)) next.hand = next.hand.filter((c) => c.definitionId !== "recover");
+      }
+      return next;
+    });
+    const cfBefore = { ...before, players: cfState };
+    const cfAfter = new AiSimulator(cfBefore).apply(cfBefore, action, actorId);
+    const actualDefender = actualAfter.players.find((p) => p.id === defenderId);
+    const cfDefender = cfAfter.players.find((p) => p.id === defenderId);
+    const grossAvoided = Math.max(0, (actualDefender?.hp ?? 0) - (cfDefender?.hp ?? 0)) * HP_VALUE;
+    const ownerValue = this.evaluator.stateUtility(actualAfter, defenderId)
+      - this.evaluator.stateUtility(cfAfter, defenderId);
+    const projected = this.evaluator.stateUtility(actualAfter, viewerId)
+      - this.evaluator.stateUtility(cfAfter, viewerId);
+    return { grossAvoided, ownerValue, projected };
+  }
+
+  /**
+   * 响应侧消费链：block / counter / dying rescue 的 owner-scored value。
+   *
+   * 检测本次 transition 中实际发生的响应（block/counter 容量下降、rescue 消耗
+   * recover），并用同一事件反事实计算该响应为受保护侧创造的避免损失，归属到
+   * 响应方 / 受保护侧。只读输入，不修改任何状态。
+   */
+  computeResponseLedger(before, action, after, viewerId) {
+    if (!action) return { responses: [] };
+    const beforeById = new Map(before.players.map((p) => [p.id, p]));
+    const actorId = viewerId;
+    const responses = [];
+    for (const player of after.players) {
+      if (player.id === actorId || !player.alive) continue;
+      const beforePlayer = beforeById.get(player.id);
+      if (!beforePlayer) continue;
+      const blockDropped = (beforePlayer.blockProbability ?? 0) - (player.blockProbability ?? 0) > 1e-9;
+      const counterDropped = (beforePlayer.counterProbability ?? 0) - (player.counterProbability ?? 0) > 1e-9;
+      if (blockDropped || counterDropped) {
+        const cf = this.responseCounterfactual(before, action, actorId, player.id, viewerId, {
+          removeBlock: blockDropped,
+          removeCounter: counterDropped
+        }, after);
+        responses.push({
+          kind: blockDropped && counterDropped ? "blockAndCounter" : blockDropped ? "block" : "counter",
+          responderId: player.id,
+          protectedId: player.id,
+          resourceSpent: Math.max(0, (beforePlayer.handCount ?? 0) - (player.handCount ?? 0)) * 1.1,
+          grossAvoided: cf.grossAvoided,
+          ownerValue: cf.ownerValue,
+          netValue: cf.projected
+        });
+      }
+    }
+    // dying rescue：救援者消耗 recover，受保护侧是濒死目标（由反事实决定）。
+    for (const rescuer of after.players) {
+      if (rescuer.id === actorId || !rescuer.alive) continue;
+      const beforeRescuer = beforeById.get(rescuer.id);
+      if (!beforeRescuer) continue;
+      const recoverSpent = (beforeRescuer.expectedRecoverCount ?? 0) - (rescuer.expectedRecoverCount ?? 0);
+      if (recoverSpent > 1e-9) {
+        const cf = this.responseCounterfactual(before, action, actorId, rescuer.id, viewerId, {
+          removeRecover: true
+        }, after);
+        responses.push({
+          kind: "rescue",
+          responderId: rescuer.id,
+          protectedId: null,
+          resourceSpent: recoverSpent * 1.1,
+          grossAvoided: cf.grossAvoided,
+          ownerValue: cf.ownerValue,
+          netValue: cf.projected
+        });
+      }
+    }
+    return { responses };
+  }
+
+  /**
+   * 单个候选的 owner-local value ledger：state delta 分解（ownerStateLedger +
+   * perspective projection）叠加响应侧价值（computeResponseLedger）。只对根候选
+   * 计算（响应反事实代价有界）；深层候选只附加 frontier-only residual，不再携带
+   * 完整 ledger。返回的 ledger 数据挂在根候选节点上，供评分流程随后把响应侧价值
+   * 投影进候选价值。
+   */
+  computeCandidateLedger(before, action, after, viewerId, includeResponse) {
+    if (typeof this.evaluator.ownerStateLedger !== "function") {
+      return { ownerLedger: null, projected: null, responses: [] };
+    }
+    const ownerLedger = this.evaluator.ownerStateLedger(before, after, viewerId);
+    const projected = this.evaluator.projectOwnerLedger(ownerLedger, viewerId);
+    const responses = includeResponse
+      ? this.computeResponseLedger(before, action, after, viewerId).responses
+      : [];
+    return { ownerLedger, projected, responses };
+  }
+
+  /** frontier-only residual；evaluator 未提供该 API 时安全降级为 null。 */
+  frontierResidualOf(state, viewerId) {
+    return typeof this.evaluator.frontierResidual === "function"
+      ? this.evaluator.frontierResidual(state, viewerId)
+      : null;
+  }
+
   chooseCandidate(beam) {
     const bestScore = beam[0]?.valueScore ?? -Infinity;
     const near = beam.filter((node) => bestScore - node.valueScore <= GAME_CONFIG.aiNearTieRange);
@@ -210,6 +340,7 @@ export class AiPlanner {
     // “最佳非封印即时动作延迟一步”的 timing penalty：每张牌只 apply 一次，
     // 不因 seal 候选对替代动作重复 apply。
     const rootCandidates = [];
+    const rootLedgers = [];
     let bestRootNonSealBase = -Infinity;
     for (const action of rootActions) {
       // 与旧实现一致：至少处理一个根动作，随后到达时间/节点预算立即停止；
@@ -233,11 +364,23 @@ export class AiPlanner {
         )
         : rootRemainingExposeStacks;
       const baseTransition = transitionScore(action, visibleState, state, 1);
+      // owner-local value ledger：根候选携带完整的响应侧价值（block/counter/rescue
+      // 的 owner-scored 避免损失），可供投影进候选价值；终局候选附加 frontier-only residual。
+      const candidateLedger = this.computeCandidateLedger(visibleState, action, state, player.id, true);
+      const frontierResidual = Boolean(state.playPhaseEnded)
+        ? this.frontierResidualOf(state, player.id)
+        : null;
       if (action.card?.definitionId !== "seal" && action.type !== "end") {
         bestRootNonSealBase = Math.max(bestRootNonSealBase, baseTransition);
       }
       rootCandidates.push({
-        action, state, exposeMarginal, assaultStacksCredit, remainingRootExposeStacks, baseTransition
+        action, state, exposeMarginal, assaultStacksCredit, remainingRootExposeStacks, baseTransition,
+        candidateLedger, frontierResidual
+      });
+      rootLedgers.push({
+        action: this.describeAction(action),
+        projected: candidateLedger.projected,
+        responses: candidateLedger.responses
       });
       expanded += 1;
       if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
@@ -262,7 +405,9 @@ export class AiPlanner {
         pruneScore:valueScore + searchPrior(candidate.action, visibleState),
         sequence:[candidate.action],
         remainingRootExposeStacks:candidate.remainingRootExposeStacks,
-        remainingHistory:[candidate.remainingRootExposeStacks]
+        remainingHistory:[candidate.remainingRootExposeStacks],
+        candidateLedger:candidate.candidateLedger,
+        frontierResidual:candidate.frontierResidual
       });
     }
     beam.sort((a,b) => b.pruneScore - a.pruneScore);
@@ -303,11 +448,17 @@ export class AiPlanner {
             )
             : node.remainingRootExposeStacks;
           const baseTransition = transitionScore(follow, node.state, state, depth);
+          // 深层候选只附加 frontier-only residual：owner ledger / 响应反事实只对根
+          // 候选计算（代价有界），深层节点以恒定小开销推进，避免拉长搜索时延。
+          const frontierResidual = Boolean(state.playPhaseEnded)
+            ? this.frontierResidualOf(state, player.id)
+            : null;
           if (follow.card?.definitionId !== "seal" && follow.type !== "end") {
             bestNonSealBase = Math.max(bestNonSealBase, baseTransition);
           }
           nodeCandidates.push({
-            follow, state, exposeMarginal, assaultStacksCredit, remainingRootExposeStacks, baseTransition
+            follow, state, exposeMarginal, assaultStacksCredit, remainingRootExposeStacks, baseTransition,
+            frontierResidual
           });
           expanded += 1;
           if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
@@ -331,7 +482,8 @@ export class AiPlanner {
             pruneScore:valueScore + searchPrior(candidate.follow, node.state) / depth,
             sequence:[...node.sequence, candidate.follow],
             remainingRootExposeStacks:candidate.remainingRootExposeStacks,
-            remainingHistory:[...node.remainingHistory, candidate.remainingRootExposeStacks]
+            remainingHistory:[...node.remainingHistory, candidate.remainingRootExposeStacks],
+            frontierResidual:candidate.frontierResidual
           });
           if (!bestCandidate || valueScore > bestCandidate.valueScore) bestCandidate = candidates.at(-1);
         }
@@ -354,7 +506,10 @@ export class AiPlanner {
     this.lastSearchStats = { elapsedMs:(globalThis.performance?.now?.() ?? Date.now()) - started, expanded, depth:Math.max(1, choice?.sequence.length ?? 1), beamWidth:GAME_CONFIG.aiBeamWidth,
       budgetType:nodeBudget === null ? "time" : "nodes", nodeBudget,
       discoveredDynamicTarget, hiddenSamples:hiddenWorlds.length, bestSequence:this.lastPlannedSequence,
-      bestRemainingProvenance:choice?.remainingHistory ?? [], bestValueScore:choice?.valueScore ?? null };
+      bestRemainingProvenance:choice?.remainingHistory ?? [], bestValueScore:choice?.valueScore ?? null,
+      // 根候选的 owner-local ledger 与响应侧价值（block/counter/rescue），供外部/测试
+      // 读取本次搜索如何把响应价值归属到各 owner 并投影。
+      rootLedgers };
     return choice?.action ?? { type:"end" };
   }
 }

@@ -2,15 +2,15 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260811-seal-consumer-v170";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260811-seal-consumer-v170";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260811-seal-consumer-v170";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260811-seal-consumer-v170";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260811-seal-consumer-v170";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260811-seal-consumer-v170";
-import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260811-seal-consumer-v170";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260811-seal-consumer-v170";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260811-seal-consumer-v170";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260812-owner-ledger-v171";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-owner-ledger-v171";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260812-owner-ledger-v171";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260812-owner-ledger-v171";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260812-owner-ledger-v171";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260812-owner-ledger-v171";
+import { globalBenefitCounterDesire } from "./AiGlobalBenefit.js?build=20260812-owner-ledger-v171";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260812-owner-ledger-v171";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260812-owner-ledger-v171";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -25,7 +25,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260811-seal-consumer-v170";
+} from "./AiProbabilityBranches.js?build=20260812-owner-ledger-v171";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -1068,6 +1068,14 @@ export class AiSimulator {
         this.tacticResolutionChance(next, actor, card, abstractAction.targets ?? []),
         `counter:${card.id ?? card.definitionId}`);
     const scale = this.eventProbability(effectEventWorlds);
+    // 反制容量双算修复：card-scope 战术的效果已由 tacticResolutionChance 按
+    // counterProbability×desire 概率折算，但旧实现不消费反制容量，同一张反制会被
+    // "取消本次战术"与"封印反制"等未来预期重复计价。这里按边际取消
+    // 概率实际消费反制容量：容量耗尽后 counterProbability / sealCounterProbability
+    // 等未来预期自然归零，不再出现 realized + expected 针对同一张反制并存。
+    if (card.category === "tactic" && card.counterable !== false && card.counterScope !== "target") {
+      this.consumeCountersForCardScope(next, actor, card, abstractAction.targets ?? []);
+    }
     const cardDamageContext = { cardDamage:true, emberTriggeredProbabilities:{} };
     let coordinationProbability = 0;
     let coordinationTargets = [];
@@ -2468,6 +2476,71 @@ export class AiSimulator {
     if (card.category !== "tactic" || card.counterable === false) return 1;
     return state.players.filter((player) => player.alive && player.id !== actor.id)
       .reduce((chance, player) => chance * (1 - (player.counterProbability ?? 0) * this.counterDesire(state, player, actor, card, targets)), 1);
+  }
+
+  /**
+   * card-scope 战术的反制容量消费（反制容量双算修复）。
+   *
+   * 按"第一个成功反制者"把取消概率归属到对应敌人，并按边际概率扣减其反制容量：
+   *   marginal(e) = Π_{f before e}(1 - p_f) × p_e，p_e = counterProbability_e × desire_e
+   * 消费量守恒：Σ marginal(e) = 1 - Π(1 - p_e) = 取消概率（与 tacticResolutionChance 一致）。
+   * 只消费实际可能反制的玩家（p > 0）；与 tacticResolutionChance 使用相同的响应顺序。
+   */
+  consumeCountersForCardScope(state, actor, card, targets) {
+    const contenders = [];
+    for (const player of state.players) {
+      if (!player.alive || player.id === actor.id) continue;
+      const p = clampProbability((player.counterProbability ?? 0)
+        * this.counterDesire(state, player, actor, card, targets));
+      if (p > PROBABILITY_EPSILON) contenders.push({ player, p });
+    }
+    if (!contenders.length) return;
+    let notYetCancelled = 1;
+    for (const { player, p } of contenders) {
+      const marginal = notYetCancelled * p;
+      if (marginal > PROBABILITY_EPSILON) {
+        this.consumeExpectedCounters(state, player, marginal);
+      }
+      notYetCancelled *= 1 - p;
+      if (notYetCancelled <= PROBABILITY_EPSILON) break;
+    }
+  }
+
+  /**
+   * 按期望数量消费一名玩家的反制容量（card-scope 概率近似中的"反制实际使用"）。
+   *
+   * 只扣减反制数量分布（counterCountDistribution → counterProbability）：这是
+   * counterProbability 与 sealCounterProbability 的唯一来源，扣减后未来反制预期
+   * 自然归零，消除"取消战术"与"封印反制"对同一张反制的重复计价。
+   *
+   * 不改动 handCount 与具体反制身份：card-scope 的反制本就是概率近似（敌手未必
+   * 真持有反制卡），泛用手牌资源与具体身份由 target-scope 的真实消费路径处理，
+   * 避免在这里对概率近似事件产生与真实消费重复的资源/身份记账。
+   *
+   * 期望扣减守恒：在 counterCount>=1 的世界内按条件概率 amount / P(count>=1)
+   * 消费 1 张，总期望扣减恰等于 amount，且不会在无反制的世界浪费移除。
+   */
+  consumeExpectedCounters(state, player, expectedAmount) {
+    const amount = Math.min(Math.max(0, Number(expectedAmount) || 0), 1);
+    if (amount <= PROBABILITY_EPSILON || !player) return 0;
+    const counterState = this.getCounterCountBranches(player, state?.remainingCardCounts ?? null);
+    const existence = counterState.reduce((sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0);
+    if (existence <= PROBABILITY_EPSILON) return 0;
+    const conditional = Math.min(1, amount / existence);
+    if (conditional <= PROBABILITY_EPSILON) return 0;
+    const gate = probabilityEventPartition(
+      this.nextProbabilityEventKey(state, `card-scope-counter:${player.id}`), conditional, "counterUsed"
+    );
+    const joined = joinProbabilityStateBranches(counterState, gate);
+    player.counterCountDistribution = projectProbabilityStateBranches(joined, (branch) => ({
+      counterCount: Boolean(branch.counterUsed) && branch.counterCount >= 1
+        ? Math.max(0, branch.counterCount - 1)
+        : branch.counterCount
+    }));
+    this.syncCounterSummary(player);
+    return totalBranchProbability(projectProbabilityStateBranches(joined, (branch) => ({
+      occurs: Boolean(branch.counterUsed) && branch.counterCount >= 1
+    })).filter((branch) => branch.occurs));
   }
 
   targetResolutionChance(state, actor, card, target) {
