@@ -20,8 +20,8 @@
  *   得到，而不是 root 最初打出时的 snapshot，也不是静态 card value。例如掠夺的目标在
  *   响应链中已把手牌用尽时，恢复掠夺的实际收益已从"可能获得 1 张牌"降为 0。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-blade-walker-planning";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-blade-walker-planning";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-oath-warden-planning";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-oath-warden-planning";
 
 const GLOBAL_BENEFIT_CARDS = new Set(["mutualBenefit", "symbiosis"]);
 

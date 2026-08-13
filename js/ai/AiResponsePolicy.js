@@ -1,12 +1,13 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-blade-walker-planning";
-import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260813-blade-walker-planning";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260813-blade-walker-planning";
-import { AiSimulator } from "./AiSimulator.js?build=20260813-blade-walker-planning";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-oath-warden-planning";
+import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260813-oath-warden-planning";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260813-oath-warden-planning";
+import { AiSimulator } from "./AiSimulator.js?build=20260813-oath-warden-planning";
+import { HP_VALUE } from "./AiEconomics.js?build=20260813-oath-warden-planning";
 import {
   hasLightning,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260813-blade-walker-planning";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260813-blade-walker-planning";
+} from "./lightningScoring.js?build=20260813-oath-warden-planning";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260813-oath-warden-planning";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
@@ -144,8 +145,59 @@ export class AiResponsePolicy {
       const score = attackBenefit + equipmentValue * 1.05 - assaultCost - blockRisk * 2.5;
       return score > 0;
     }
-    if (type === "skill") return (context.amount ?? 1) > 0;
+    if (type === "skill") return this.shouldUseGuardianAid(responder, context);
     return false;
+  }
+
+  /**
+   * 护援响应决策：比较"不使用护援"（STAY）与"使用护援"（AID）两个真实 after-state
+   * 的团队状态价值，只在 AID 严格更优时才弃牌。此前 `(context.amount ?? 1) > 0`
+   * 等价于"合法即自动护援"，会无脑消耗唯一额度与手牌；这里改成边际比较后，
+   * 护盾可吸收、目标健康且后续还有更高暴露时都会选择保留额度与手牌。
+   *
+   * 复用统一模拟器：STAY 世界按 id 排除本守誓者（额度与手牌保留、伤害原样通过），
+   * AID 世界让其自然护援（伤害-1、弃1牌、额度消耗），其余守誓者在两个世界自然结算。
+   * 格挡/雷达已在真实伤害链中先于 beforeDamage 完成，因此这里固定 canBlock:false。
+   */
+  shouldUseGuardianAid(responder, context) {
+    const target = context.target;
+    // 与 skillRegistry.guardianAid 的 beforeDamage 硬守卫一致，先满足真实合法性再比较。
+    if (!responder?.alive || !target?.alive || responder.id === target.id) return false;
+    if (responder.battleTeam !== target.battleTeam) return false;
+    if (!responder.hand?.length) return false;
+    const amount = Math.max(0, Number(context.amount) || 0);
+    if (amount <= 0) return false;
+    if ((responder.turnFlags.guardianAidUsed ? 1 : 0) >= 1) return false;
+
+    const remainingCardCounts = this.knowledge.remainingCounts(responder);
+    const visible = createAiVisibleState(responder.id, this.game.state, remainingCardCounts);
+    const simulator = new AiSimulator(visible);
+    const stayState = simulator.clone();
+    const aidState = simulator.clone();
+    const stayTarget = stayState.players.find((player) => player.id === target.id);
+    const aidTarget = aidState.players.find((player) => player.id === target.id);
+    const staySource = context.source ? stayState.players.find((player) => player.id === context.source.id) : null;
+    const aidSource = context.source ? aidState.players.find((player) => player.id === context.source.id) : null;
+    simulator.applyDamage(stayState, staySource, stayTarget, amount, {
+      canBlock:false,
+      excludedGuardianIds:new Set([responder.id])
+    });
+    simulator.applyDamage(aidState, aidSource, aidTarget, amount, { canBlock:false });
+
+    const stayValue = this.evaluator.stateUtility(stayState, responder.id);
+    const aidValue = this.evaluator.stateUtility(aidState, responder.id);
+
+    // 剩余额度未来价值：护援每全局回合仅一次，且每次都要弃一张手牌。若目标后续
+    // 仍面临未兑现的攻击库存（futureInventory，来自 exposureComponents 的敌方未来
+    // 突袭压力），现在消耗唯一额度就放弃了在更高暴露伤害上再护援一次的机会。这里用
+    // "未来攻击库存中至多可再被护援抵消的那部分"近似额度机会成本，只乘 HP_VALUE 单价，
+    // 不引入无条件角色常数。futureInventory 是期望压力而非确定伤害，且不含格挡/护盾
+    // 抵消，故该值偏保守——只会让低价值伤害放弃唯一额度，不会误拒阵亡/濒死伤害。
+    const visibleTarget = visible.players.find((player) => player.id === target.id);
+    const { futureInventory } = this.evaluator.exposureComponents(visible, visibleTarget);
+    const quotaFutureValue = Math.min(HP_VALUE, futureInventory);
+
+    return (aidValue - stayValue) > quotaFutureValue;
   }
 
   /** 闪电状态反制：比较不反制继续判定的团队期望与反制转移后的团队期望加反制牌机会成本。 */

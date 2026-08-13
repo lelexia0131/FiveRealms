@@ -16680,6 +16680,138 @@ test("AI·守誓者：可见状态、动作生成和模拟器保留主动技能�
   assert.deepEqual([nextActor.activeSkillUses, nextActor.activeSkillUsed], [2, true]);
 });
 
+test("AI·守誓者：1HP队友面临将通过的真实伤害时使用护援", () => {
+  const source = makePlayer("aid-lethal-source", 0, "dusk", "ai", 4),
+    target = makePlayer("aid-lethal-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-lethal-guardian", 2, "dawn", "ai", 1);
+  target.hp = 1;
+  guardian.hand.push(instance("charge"));
+  const { game } = makeGame([source, target, guardian]);
+  assert.equal(
+    game.aiController.responsePolicy.shouldUseGuardianAid(
+      guardian, { target, source, amount: 1 }
+    ),
+    true,
+    "阵亡风险的伤害应获得正边际并护援"
+  );
+});
+
+test("AI·守誓者：伤害会被目标护盾完全吸收时不使用护援", () => {
+  const source = makePlayer("aid-shield-source", 0, "dusk", "ai", 4),
+    target = makePlayer("aid-shield-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-shield-guardian", 2, "dawn", "ai", 1);
+  target.hp = 4;
+  target.shield = 2;
+  guardian.hand.push(instance("charge"));
+  const { game } = makeGame([source, target, guardian]);
+  assert.equal(
+    game.aiController.responsePolicy.shouldUseGuardianAid(
+      guardian, { target, source, amount: 1 }
+    ),
+    false,
+    "护盾可吸收时护援边际为负，不应弃牌"
+  );
+});
+
+test("AI·守誓者：目标健康且后续仍有攻击库存时保留唯一额度", () => {
+  const source = makePlayer("aid-conserve-source", 0, "dusk", "ai", 4),
+    target = makePlayer("aid-conserve-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-conserve-guardian", 2, "dawn", "ai", 1),
+    assault1 = instance("assault"),
+    assault2 = instance("assault");
+  target.hp = 4;
+  guardian.hand.push(instance("charge"));
+  source.hand.push(assault1, assault2);
+  // 让守誓者已知敌方持有两张突袭，形成未来攻击库存（futureInventory），
+  // 使本回合唯一额度的机会成本高于这次非致命 1 点伤害的价值。
+  guardian.aiMemory.knownCardsByPlayer[source.id] = {
+    [assault1.id]: "assault",
+    [assault2.id]: "assault"
+  };
+  const { game } = makeGame([source, target, guardian]);
+  assert.equal(
+    game.aiController.responsePolicy.shouldUseGuardianAid(
+      guardian, { target, source, amount: 1 }
+    ),
+    false,
+    "低价值非致命伤害不消耗唯一额度，保留给更高暴露"
+  );
+});
+
+test("AI·守誓者：护援额度本全局回合已用时不重复使用", () => {
+  const source = makePlayer("aid-used-source", 0, "dusk", "ai", 4),
+    target = makePlayer("aid-used-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-used-guardian", 2, "dawn", "ai", 1);
+  target.hp = 1;
+  guardian.hand.push(instance("charge"));
+  const { game } = makeGame([source, target, guardian]);
+  guardian.turnFlags.guardianAidUsed = true;
+  assert.equal(
+    game.aiController.responsePolicy.shouldUseGuardianAid(
+      guardian, { target, source, amount: 1 }
+    ),
+    false,
+    "额度已用即使致命伤害也不能重复护援"
+  );
+});
+
+test("AI·守誓者：护援拒绝非合法场景（自己/敌方/无手牌/零伤害）", () => {
+  const source = makePlayer("aid-guard-source", 0, "dusk", "ai", 4),
+    ally = makePlayer("aid-guard-ally", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-guard-guardian", 2, "dawn", "ai", 1);
+  guardian.hand.push(instance("charge"));
+  const { game } = makeGame([source, ally, guardian]);
+  const policy = game.aiController.responsePolicy;
+  assert.equal(policy.shouldUseGuardianAid(guardian, { target: guardian, source, amount: 1 }), false, "不能护援自己");
+  assert.equal(policy.shouldUseGuardianAid(guardian, { target: source, source, amount: 1 }), false, "不能护援敌方");
+  assert.equal(policy.shouldUseGuardianAid(guardian, { target: ally, source, amount: 0 }), false, "零伤害不护援");
+  const emptyGuardian = makePlayer("aid-guard-empty", 3, "dawn", "ai", 1);
+  const { game: game2 } = makeGame([source, ally, emptyGuardian]);
+  assert.equal(
+    game2.aiController.responsePolicy.shouldUseGuardianAid(emptyGuardian, { target: ally, source, amount: 1 }),
+    false,
+    "无手牌不能护援"
+  );
+});
+
+test("AI·守誓者：连续伤害下第一笔低价值伤害保留额度到更危险的一笔", async () => {
+  const source = makePlayer("aid-order-source", 0, "dusk", "ai", 4),
+    target = makePlayer("aid-order-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-order-guardian", 2, "dawn", "ai", 1);
+  target.hp = 1;
+  target.shield = 2;
+  guardian.hand.push(instance("charge"), instance("charge"));
+  const { game } = makeGame([source, target, guardian]);
+  registerPassiveSkills(game);
+  // 第一笔 1 点伤害被 2 点护盾完全吸收：护援边际为负，拒绝并保留额度与手牌。
+  await game.damage(source, target, 1, { canBlock: false, damageType: "skill", actionName: "测试" });
+  assert.equal(guardian.turnFlags.guardianAidUsed, false);
+  assert.equal(guardian.hand.length, 2);
+  assert.equal(target.shield, 1);
+  assert.equal(target.hp, 1);
+  // 第二笔 2 点伤害越过护盾形成阵亡风险：护援正边际，消耗额度与手牌救下队友。
+  await game.damage(source, target, 2, { canBlock: false, damageType: "skill", actionName: "测试" });
+  assert.equal(guardian.turnFlags.guardianAidUsed, true);
+  assert.equal(guardian.hand.length, 1);
+  assert.equal(target.hp, 1);
+});
+
+test("AI·守誓者：壁垒能量不足或次数耗尽时不生成", () => {
+  const warden = makePlayer("barrier-legal-warden", 0, "dawn", "ai", 1),
+    ally = makePlayer("barrier-legal-ally", 1, "dawn", "ai", 0),
+    enemy = makePlayer("barrier-legal-enemy", 2, "dusk", "ai", 4);
+  const { game } = makeGame([warden, ally, enemy]);
+  const generator = game.aiController.actionGenerator;
+  const barrierActions = (visible) => generator.generateFromVisible(visible, warden.id)
+    .filter((entry) => entry.skill?.id === "barrier");
+  warden.energy = 1;
+  assert.equal(barrierActions(createAiVisibleState(warden.id, game.state)).length, 0, "能量不足不生成壁垒");
+  warden.energy = 4;
+  warden.turnFlags.activeSkillUseCounts.barrier = 2;
+  warden.turnFlags.activeSkillsUsed.add("barrier");
+  assert.equal(barrierActions(createAiVisibleState(warden.id, game.state)).length, 0, "次数耗尽不生成壁垒");
+});
+
 // ---- AI 角色行为·灵医 ----
 
 test("AI·灵医：滋荣在0、1、2次使用状态正确生成动作且只治疗所选目标", () => {

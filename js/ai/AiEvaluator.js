@@ -2,19 +2,19 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-blade-walker-planning";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-blade-walker-planning";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260813-blade-walker-planning";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260813-blade-walker-planning";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260813-blade-walker-planning";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-blade-walker-planning";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-blade-walker-planning";
-import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-blade-walker-planning";
-import { AiSimulator } from "./AiSimulator.js?build=20260813-blade-walker-planning";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260813-blade-walker-planning";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-oath-warden-planning";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-oath-warden-planning";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260813-oath-warden-planning";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260813-oath-warden-planning";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260813-oath-warden-planning";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-oath-warden-planning";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-oath-warden-planning";
+import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-oath-warden-planning";
+import { AiSimulator } from "./AiSimulator.js?build=20260813-oath-warden-planning";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260813-oath-warden-planning";
 import {
   sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260813-blade-walker-planning";
+} from "./sealScoring.js?build=20260813-oath-warden-planning";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -657,7 +657,10 @@ export class AiEvaluator {
       const missing = target ? Math.max(0, target.maxHp - target.hp) : 0;
       const values = {
         breakArmy: this.breakArmyUtility(actor),
-        barrier: 4 + (target?.hp <= 2 ? 4 : 0),
+        // 壁垒真实价值（+1 盾、暴露下的储备/危险保护、濒死/阵亡规避）全部由 after-state
+        // 的 shieldStateValue 与状态边际表达；旧 `4 + (hp<=2 ? 4 : 0)` 按血量机械加分，
+        // 会把"安全低血目标"错排到"高暴露目标"之前，且与 stateDelta 重复计价，必须显式为 0。
+        barrier: 0,
         // 滋荣真实价值（治疗 1 HP、danger 消除、回春摸牌）全部由 stateDelta 表达；
         // 旧 `missing × 4` 把“总缺血量”误当成“本次实际恢复量”，必须显式为 0。
         // 无需搜索先验：零先验下临界治疗仍能稳定进入 beam。

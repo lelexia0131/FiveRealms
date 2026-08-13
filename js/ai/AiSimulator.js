@@ -2,20 +2,20 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-blade-walker-planning";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-blade-walker-planning";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-blade-walker-planning";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-blade-walker-planning";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-blade-walker-planning";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-blade-walker-planning";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-oath-warden-planning";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-oath-warden-planning";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-oath-warden-planning";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-oath-warden-planning";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-oath-warden-planning";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-oath-warden-planning";
 import {
   counterOpportunityCost,
   globalBenefitCounterDesire,
   mutualBenefitDraftValues
-} from "./AiGlobalBenefit.js?build=20260813-blade-walker-planning";
-import { HP_VALUE } from "./AiEconomics.js?build=20260813-blade-walker-planning";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-blade-walker-planning";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-blade-walker-planning";
+} from "./AiGlobalBenefit.js?build=20260813-oath-warden-planning";
+import { HP_VALUE } from "./AiEconomics.js?build=20260813-oath-warden-planning";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-oath-warden-planning";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-oath-warden-planning";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -30,7 +30,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260813-blade-walker-planning";
+} from "./AiProbabilityBranches.js?build=20260813-oath-warden-planning";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -2374,8 +2374,12 @@ export class AiSimulator {
     }
   }
 
-  /** 护援只作用于通过雷达与格挡的伤害世界，并在护盾前计算弃牌与每轮次数的期望代价。 */
-  simulateGuardianAid(state, target, incomingDamage, eventProbability) {
+  /**
+   * 护援只作用于通过雷达与格挡的伤害世界，并在护盾前计算弃牌与每轮次数的期望代价。
+   * excludedGuardianIds 让调用方（护援响应决策）在 STAY 世界按 id 排除某位守誓者，
+   * 使其拒绝护援、额度与手牌保留，而不为此另建第二套防御模拟。
+   */
+  simulateGuardianAid(state, target, incomingDamage, eventProbability, excludedGuardianIds = null) {
     const probability = clampProbability(eventProbability);
     if (incomingDamage <= PROBABILITY_EPSILON || probability <= PROBABILITY_EPSILON) return Math.max(0, incomingDamage);
     const conditionalReduction = Math.min(1, incomingDamage / probability);
@@ -2383,6 +2387,7 @@ export class AiSimulator {
     let expectedReduction = 0;
     for (const guardian of state.players) {
       if (remainingTriggerProbability <= PROBABILITY_EPSILON) break;
+      if (excludedGuardianIds?.has(guardian.id)) continue;
       if (!guardian.alive || guardian.generalId !== "oath-warden" || guardian.id === target.id
         || guardian.battleTeam !== target.battleTeam) continue;
       const oldUsedProbability = clampProbability(guardian.guardianAidUsedProbability
@@ -3493,7 +3498,7 @@ export class AiSimulator {
           sum + (branch.occurs && branch.passes ? branch.probability * branch.damageAmount : 0)
         ), 0);
       const aidedExpectedDamage = this.simulateGuardianAid(
-        state, target, incomingExpectedDamage, damagePassProbability
+        state, target, incomingExpectedDamage, damagePassProbability, options.excludedGuardianIds
       );
       aidReductionPerPass = Math.max(0,
         (incomingExpectedDamage - aidedExpectedDamage) / damagePassProbability);

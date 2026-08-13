@@ -34,6 +34,7 @@ import "./scenarios/stability.mjs";
 import "./scenarios/counterfactualFamilies.mjs";
 import "./scenarios/hardScenarios.mjs";
 import "./scenarios/bladeWalker.mjs";
+import "./scenarios/oathWarden.mjs";
 
 function parseCli(argv) {
   const parsed = {

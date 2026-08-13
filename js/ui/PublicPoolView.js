@@ -3,8 +3,8 @@
  * pending Promise 只允许在重开、销毁或游戏结束时由 UIManager 收束；
  * 正常互利结算必须由当前存活角色确认一张牌。
  */
-import { publicPoolCardTemplate } from "./templates.js?build=20260813-blade-walker-planning";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260813-blade-walker-planning";
+import { publicPoolCardTemplate } from "./templates.js?build=20260813-oath-warden-planning";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260813-oath-warden-planning";
 
 export class PublicPoolView {
   constructor(element, onSelect = null) { this.element = element; this.pending = null; this.onSelect = onSelect; }
