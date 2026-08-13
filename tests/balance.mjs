@@ -127,7 +127,8 @@ function createLocalResult(index) {
       resolvedByDefinition: {},
       cancelledByDefinition: {},
       byCategory: {},
-      byGeneral: {}
+      byGeneral: {},
+      byDefinitionAndAliveStructure: {}
     },
     cardMoves: {
       total: 0,
@@ -200,6 +201,13 @@ async function runOneGame(Game, index, config) {
       increment(local.cardUses.byDefinition, definitionId);
       increment(local.cardUses.byCategory, category);
       incrementNested(local.cardUses.byGeneral, generalId, definitionId);
+      const alive = game.state.players.filter((player) => player.alive);
+      const allies = alive.filter((player) => player.battleTeam === event.source?.battleTeam).length;
+      incrementNested(
+        local.cardUses.byDefinitionAndAliveStructure,
+        definitionId,
+        `${allies}v${alive.length - allies}`
+      );
       if (event.resolved && !event.cancelled) {
         local.cardUses.resolved += 1;
         increment(local.cardUses.resolvedByDefinition, definitionId);
@@ -550,7 +558,7 @@ function createTotals() {
     smallTeamIdentity: { dawn: 0, dusk: 0 },
     startingSide: { small: { games: 0, wins: 0 }, large: { games: 0, wins: 0 } },
     startingSeat: {},
-    cardUses: { total: 0, resolved: 0, cancelled: 0, byDefinition: {}, resolvedByDefinition: {}, cancelledByDefinition: {}, byCategory: {}, byGeneral: {} },
+    cardUses: { total: 0, resolved: 0, cancelled: 0, byDefinition: {}, resolvedByDefinition: {}, cancelledByDefinition: {}, byCategory: {}, byGeneral: {}, byDefinitionAndAliveStructure: {} },
     cardMoves: { total: 0, byTransition: {}, byReason: {} },
     damageEvents: { events: 0, hpDamage: 0, shieldAbsorbed: 0, byType: {}, preventedBy: {} },
     healEvents: { events: 0, amount: 0, dyingRescueAmount: 0, byReason: {} },
@@ -649,6 +657,10 @@ function mergeResult(totals, result, config) {
   mergeNumericMap(totals.cardUses.cancelledByDefinition, result.cardUses?.cancelledByDefinition);
   mergeNumericMap(totals.cardUses.byCategory, result.cardUses?.byCategory);
   mergeNestedNumericMap(totals.cardUses.byGeneral, result.cardUses?.byGeneral);
+  mergeNestedNumericMap(
+    totals.cardUses.byDefinitionAndAliveStructure,
+    result.cardUses?.byDefinitionAndAliveStructure
+  );
 
   totals.cardMoves.total += result.cardMoves?.total ?? 0;
   mergeNumericMap(totals.cardMoves.byTransition, result.cardMoves?.byTransition);

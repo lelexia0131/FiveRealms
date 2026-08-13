@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { createId } from "../utils/helpers.js?build=20260812-dynamic-root-outcome-v2";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260812-dynamic-root-outcome-v2";
-import { RuleEngine } from "./RuleEngine.js?build=20260812-dynamic-root-outcome-v2";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { createId } from "../utils/helpers.js?build=20260813-lightning-strategy-electric-discharge";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260813-lightning-strategy-electric-discharge";
+import { RuleEngine } from "./RuleEngine.js?build=20260813-lightning-strategy-electric-discharge";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

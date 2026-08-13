@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-dynamic-root-outcome-v2";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-lightning-strategy-electric-discharge";
 
 /**
  * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；

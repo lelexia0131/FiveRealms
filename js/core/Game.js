@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { createId, clamp } from "../utils/helpers.js?build=20260812-dynamic-root-outcome-v2";
-import { EventBus } from "./EventBus.js?build=20260812-dynamic-root-outcome-v2";
-import { Player } from "./Player.js?build=20260812-dynamic-root-outcome-v2";
-import { Deck } from "./Deck.js?build=20260812-dynamic-root-outcome-v2";
-import { TeamManager } from "./TeamManager.js?build=20260812-dynamic-root-outcome-v2";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260812-dynamic-root-outcome-v2";
-import { RuleEngine } from "./RuleEngine.js?build=20260812-dynamic-root-outcome-v2";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260812-dynamic-root-outcome-v2";
-import { GameLogger } from "./GameLogger.js?build=20260812-dynamic-root-outcome-v2";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260812-dynamic-root-outcome-v2";
-import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260812-dynamic-root-outcome-v2";
-import { AIController } from "../ai/AiController.js?build=20260812-dynamic-root-outcome-v2";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260812-dynamic-root-outcome-v2";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260812-dynamic-root-outcome-v2";
-import { Debug } from "../utils/debug.js?build=20260812-dynamic-root-outcome-v2";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260812-dynamic-root-outcome-v2";
-import { DyingSystem } from "./DyingSystem.js?build=20260812-dynamic-root-outcome-v2";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260812-dynamic-root-outcome-v2";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260812-dynamic-root-outcome-v2";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260812-dynamic-root-outcome-v2";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260812-dynamic-root-outcome-v2";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { createId, clamp } from "../utils/helpers.js?build=20260813-lightning-strategy-electric-discharge";
+import { EventBus } from "./EventBus.js?build=20260813-lightning-strategy-electric-discharge";
+import { Player } from "./Player.js?build=20260813-lightning-strategy-electric-discharge";
+import { Deck } from "./Deck.js?build=20260813-lightning-strategy-electric-discharge";
+import { TeamManager } from "./TeamManager.js?build=20260813-lightning-strategy-electric-discharge";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260813-lightning-strategy-electric-discharge";
+import { RuleEngine } from "./RuleEngine.js?build=20260813-lightning-strategy-electric-discharge";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260813-lightning-strategy-electric-discharge";
+import { GameLogger } from "./GameLogger.js?build=20260813-lightning-strategy-electric-discharge";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260813-lightning-strategy-electric-discharge";
+import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260813-lightning-strategy-electric-discharge";
+import { AIController } from "../ai/AiController.js?build=20260813-lightning-strategy-electric-discharge";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260813-lightning-strategy-electric-discharge";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260813-lightning-strategy-electric-discharge";
+import { Debug } from "../utils/debug.js?build=20260813-lightning-strategy-electric-discharge";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260813-lightning-strategy-electric-discharge";
+import { DyingSystem } from "./DyingSystem.js?build=20260813-lightning-strategy-electric-discharge";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260813-lightning-strategy-electric-discharge";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260813-lightning-strategy-electric-discharge";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260813-lightning-strategy-electric-discharge";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260813-lightning-strategy-electric-discharge";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -286,8 +286,9 @@ export class Game {
       if (judgment.triggered) {
         delete holder.statuses.lightning;
         showDelayedStatusCard(this, holder, "lightning", "判定成功");
-        // 判定已确认命中：绑定真实结算状态播放专用雷击音效，失败/转移/反制路径均不会到达此处。
-        this.ui.playSound?.("lightning");
+        // 判定已确认命中：音效与人物框电弧共享同一语义入口，失败、转移和反制路径
+        // 均不会触发；后续即使护援或其他减伤把生命伤害降到 0，仍属于真实雷击命中。
+        this.ui.playLightningHit?.(holder.id);
         await this.damage(null, holder, 3, {
           damageType:"lightning",
           reason:"lightning",

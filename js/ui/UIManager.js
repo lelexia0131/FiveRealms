@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260812-dynamic-root-outcome-v2";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260812-dynamic-root-outcome-v2";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-lightning-strategy-electric-discharge";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260813-lightning-strategy-electric-discharge";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260812-dynamic-root-outcome-v2";
-import { AnimationController } from "./animationController.js?build=20260812-dynamic-root-outcome-v2";
-import { InteractionController } from "./InteractionController.js?build=20260812-dynamic-root-outcome-v2";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260812-dynamic-root-outcome-v2";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260812-dynamic-root-outcome-v2";
-import { JudgmentView } from "./JudgmentView.js?build=20260812-dynamic-root-outcome-v2";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260812-dynamic-root-outcome-v2";
-import { createOpponentHandView } from "./handVisibility.js?build=20260812-dynamic-root-outcome-v2";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260812-dynamic-root-outcome-v2";
-import { SoundManager } from "../audio/SoundManager.js?build=20260812-dynamic-root-outcome-v2";
+} from "./templates.js?build=20260813-lightning-strategy-electric-discharge";
+import { AnimationController } from "./animationController.js?build=20260813-lightning-strategy-electric-discharge";
+import { InteractionController } from "./InteractionController.js?build=20260813-lightning-strategy-electric-discharge";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260813-lightning-strategy-electric-discharge";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260813-lightning-strategy-electric-discharge";
+import { JudgmentView } from "./JudgmentView.js?build=20260813-lightning-strategy-electric-discharge";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-lightning-strategy-electric-discharge";
+import { createOpponentHandView } from "./handVisibility.js?build=20260813-lightning-strategy-electric-discharge";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260813-lightning-strategy-electric-discharge";
+import { SoundManager } from "../audio/SoundManager.js?build=20260813-lightning-strategy-electric-discharge";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -572,6 +572,12 @@ export class UIManager {
   }
 
   playSound(name) { void this.sound.play(name); }
+
+  /** 闪电判中唯一反馈入口：声音和人物框电弧从同一事件同时开始。 */
+  playLightningHit(playerId) {
+    this.playSound("lightning");
+    this.animationController.startLightning(playerId, globalThis.document);
+  }
 
   setMusicTeam(team) { this.sound.setMusicTeam(team); }
 

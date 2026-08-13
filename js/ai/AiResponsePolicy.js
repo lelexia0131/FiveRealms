@@ -1,14 +1,12 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260812-dynamic-root-outcome-v2";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260812-dynamic-root-outcome-v2";
-import { AiSimulator } from "./AiSimulator.js?build=20260812-dynamic-root-outcome-v2";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260813-lightning-strategy-electric-discharge";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260813-lightning-strategy-electric-discharge";
+import { AiSimulator } from "./AiSimulator.js?build=20260813-lightning-strategy-electric-discharge";
 import {
   hasLightning,
-  lightningTeamBurden,
-  lightningTransferredBurden,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260812-dynamic-root-outcome-v2";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260812-dynamic-root-outcome-v2";
+} from "./lightningScoring.js?build=20260813-lightning-strategy-electric-discharge";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260813-lightning-strategy-electric-discharge";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
@@ -156,11 +154,17 @@ export class AiResponsePolicy {
     const holder = this.game.state.players.find((player) => player.id === statusContext?.holderId && player.alive);
     if (!holder || !hasLightning(holder)) return false;
     const remainingCardCounts = this.knowledge.remainingCounts(responder);
-    const state = { players:this.game.state.players, remainingCardCounts };
-    const noCounterBurden = lightningTeamBurden(state, holder, responder.battleTeam);
+    const state = createAiVisibleState(responder.id, this.game.state, remainingCardCounts);
+    const visibleHolder = state.players.find((player) => player.id === holder.id);
+    const noCounterBurden = this.evaluator.lightningTeamBurden(
+      state, visibleHolder, responder.id
+    );
     const receiver = nextLightningReceiver(this.game.state.players, holder);
-    const withCounterBurden = receiver
-      ? lightningTransferredBurden(state, receiver, responder.battleTeam)
+    const visibleReceiver = state.players.find((player) => player.id === receiver?.id);
+    const withCounterBurden = visibleReceiver
+      ? this.evaluator.lightningTransferredBurden(
+          state, visibleHolder, visibleReceiver, responder.id
+        )
       : 0;
     // 反制牌机会成本与全体受益/动态 root 反制共用同一统一入口，只计一次。
     const counterCost = counterOpportunityCost();

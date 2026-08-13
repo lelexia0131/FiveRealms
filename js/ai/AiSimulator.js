@@ -2,20 +2,20 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260812-dynamic-root-outcome-v2";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260812-dynamic-root-outcome-v2";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260812-dynamic-root-outcome-v2";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260812-dynamic-root-outcome-v2";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-lightning-strategy-electric-discharge";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-lightning-strategy-electric-discharge";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-lightning-strategy-electric-discharge";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-lightning-strategy-electric-discharge";
 import {
   counterOpportunityCost,
   globalBenefitCounterDesire,
   mutualBenefitDraftValues
-} from "./AiGlobalBenefit.js?build=20260812-dynamic-root-outcome-v2";
-import { HP_VALUE } from "./AiEvaluator.js?build=20260812-dynamic-root-outcome-v2";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260812-dynamic-root-outcome-v2";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260812-dynamic-root-outcome-v2";
+} from "./AiGlobalBenefit.js?build=20260813-lightning-strategy-electric-discharge";
+import { HP_VALUE } from "./AiEconomics.js?build=20260813-lightning-strategy-electric-discharge";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-lightning-strategy-electric-discharge";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-lightning-strategy-electric-discharge";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -30,7 +30,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260812-dynamic-root-outcome-v2";
+} from "./AiProbabilityBranches.js?build=20260813-lightning-strategy-electric-discharge";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -3384,6 +3384,27 @@ export class AiSimulator {
     if (!target.alive || amount <= 0) return;
     target.hp -= amount;
     this.resolveFatal(state, target);
+  }
+
+  /**
+   * 闪电判中复用统一伤害模拟：不可格挡，因此雷达和格挡不会介入；护援在护盾前、
+   * 护盾吸收、调息救援与死亡清理都继续走 applyDamage 的正式 AI 语义。
+   */
+  applyLightningHit(state, targetId) {
+    const next = this.clone(state);
+    const target = next.players.find((player) => player.id === targetId);
+    if (!target?.alive) return next;
+    // 真实结算在伤害前已消费命中的闪电；分支 after-state 也必须清除此状态，
+    // 否则后续评估会把已经兑现的风险继续留在场上。
+    if (Array.isArray(target.statuses)) {
+      target.statuses = target.statuses.filter((statusId) => statusId !== "lightning");
+    } else if (target.statuses) {
+      delete target.statuses.lightning;
+    }
+    target.lightningStatusStateBranches = [{ probability:1, conditions:{}, present:false }];
+    target.lightningStatusProbability = 0;
+    this.applyDamage(next, null, target, 3, { canBlock:false });
+    return next;
   }
 
   resolveFatal(state, target, attacker = null) {

@@ -516,7 +516,7 @@ async function writeReport(results, holdByCardStratum) {
   lines.push("| AiSimulator | 装备基线/角色差值 | 模拟装备与角色偏好 | 角色值 | 无 | 否 | 否 | 否 | 是 |");
   lines.push("| resourceSelectionValue | getResourceDefinitionUtility | 破坏/掠夺目标价值 | 角色值 | 无 | 否 | 否 | 是 | 否 |");
   lines.push("| transferScoring | cardSituationValue / 转移评分 | 转移选牌与组合评分 | 角色值 | 有（HP/能量/破势/攻击槽） | 否 | 否 | 是 | 否 |");
-  lines.push("| lightningScoring | lightningUseValue / lightningTeamBurden | 闪电主动与状态负担 | 基础值 | 有 | 是 | 否 | 否 | 是 |");
+  lines.push("| lightningScoring + AiEvaluator | buildLightningHitDistribution / lightningLifecycleValue | 闪电流转概率与 owner-local 状态经济 | 不使用独立基础值 | 有 | 搜索先验/状态差值 | 否 | 否 | 是 |");
   lines.push("| AiResponsePolicy | shouldRespond（反制/借势） | 响应决策 | 基础值 | 有 | 否 | 否 | 否 | 否 |");
   lines.push("| AiGlobalBenefit | assessGlobalBenefit | 互利/共生全局净收益 | 不使用 aiValue | 有 | 是 | 否 | 否 | 否 |");
   lines.push("| ThreatCalculator | calculate | 威胁评分 | 不使用 aiValue | 有 | 是 | 否 | 否 | 否 |");

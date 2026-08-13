@@ -2,9 +2,9 @@
  * 本文件是页面入口，只负责连接 UIManager 与每局新建的 Game。
  * 它不实现卡牌、AI 或技能规则；重新开始时必须先 dispose 旧局，再创建新 gameId。
  */
-import { Game } from "./core/Game.js?build=20260812-dynamic-root-outcome-v2";
-import { UIManager } from "./ui/UIManager.js?build=20260812-dynamic-root-outcome-v2";
-import { Debug } from "./utils/debug.js?build=20260812-dynamic-root-outcome-v2";
+import { Game } from "./core/Game.js?build=20260813-lightning-strategy-electric-discharge";
+import { UIManager } from "./ui/UIManager.js?build=20260813-lightning-strategy-electric-discharge";
+import { Debug } from "./utils/debug.js?build=20260813-lightning-strategy-electric-discharge";
 
 const ui = new UIManager();
 let game = null;

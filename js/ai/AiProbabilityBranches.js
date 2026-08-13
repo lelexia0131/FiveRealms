@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-dynamic-root-outcome-v2";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-lightning-strategy-electric-discharge";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

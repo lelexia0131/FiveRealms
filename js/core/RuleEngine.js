@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260812-dynamic-root-outcome-v2";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-dynamic-root-outcome-v2";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260813-lightning-strategy-electric-discharge";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-lightning-strategy-electric-discharge";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

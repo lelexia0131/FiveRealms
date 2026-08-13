@@ -2,11 +2,9 @@
  * 闪电的 AI 共享纯计算：状态检查、剩余装备类别概率、下一接收者查找与期望负担。
  * 只读取公开/过滤后的字段，不实例化匿名判定牌，不修改 remainingCardCounts 根先验。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260812-dynamic-root-outcome-v2";
-import { PROBABILITY_EPSILON, clampProbability, mergeProbabilityStateBranches, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260812-dynamic-root-outcome-v2";
-
-const DISCOUNT = 0.5;
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-lightning-strategy-electric-discharge";
+import { PROBABILITY_EPSILON, clampProbability, mergeProbabilityStateBranches, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260813-lightning-strategy-electric-discharge";
 
 export function hasLightning(player) {
   return RuleEngine.hasStatus(player, "lightning");
@@ -33,8 +31,8 @@ export function lightningPresenceProbability(player) {
   ));
 }
 
-/** 剩余装备类别概率：装备牌剩余数量 / 剩余未知牌总数；无动态计数时回退固定初始密度。 */
-export function equipmentJudgmentProbability(remainingCardCounts = null) {
+/** 返回当前可见剩余牌中的装备牌数与总数；无动态计数时回退初始牌库构成。 */
+function judgmentCategoryCounts(remainingCardCounts = null) {
   if (remainingCardCounts && typeof remainingCardCounts === "object" && !Array.isArray(remainingCardCounts)) {
     let equipment = 0;
     let total = 0;
@@ -46,12 +44,18 @@ export function equipmentJudgmentProbability(remainingCardCounts = null) {
       total += value;
       if (definition.category === "equipment") equipment += value;
     }
-    return total > 0 ? Math.max(0, Math.min(1, equipment / total)) : 0;
+    return { equipment, total };
   }
   const equipmentTotal = Object.values(CARD_DEFINITIONS)
     .filter((definition) => definition.category === "equipment")
     .reduce((sum, definition) => sum + definition.count, 0);
-  return TOTAL_CARD_COUNT > 0 ? equipmentTotal / TOTAL_CARD_COUNT : 0;
+  return { equipment:equipmentTotal, total:TOTAL_CARD_COUNT };
+}
+
+/** 剩余装备类别概率：装备牌剩余数量 / 剩余未知牌总数；无动态计数时回退固定初始密度。 */
+export function equipmentJudgmentProbability(remainingCardCounts = null) {
+  const { equipment, total } = judgmentCategoryCounts(remainingCardCounts);
+  return total > 0 ? Math.max(0, Math.min(1, equipment / total)) : 0;
 }
 
 export function nextLightningReceiver(players, holder) {
@@ -59,10 +63,9 @@ export function nextLightningReceiver(players, holder) {
 }
 
 /**
- * 构造一枚移动闪电的有限传播链（纯 AI 估值 helper，不替代真实规则）：
- * 从 initialHolder 开始顺时针扫描一次，每名当前可参与玩家最多进入一次，
- * 扫描到 initialHolder 前停止；除 initialHolder 外没有其他合法接收者时
- * 返回 [holder, holder]，与真实“转移回自己”及旧模型 k=1 兼容。
+ * 构造一枚移动闪电当前可达的一圈持有者顺序。真实规则没有最大流转次数，
+ * 因此这里只列一圈；无限次绕环的命中概率由 buildLightningHitDistribution
+ * 解析求和，而不是把一圈误当成状态自然终止。
  */
 export function buildLightningPropagationChain(players, initialHolder) {
   if (!initialHolder?.alive || !Array.isArray(players) || !players.length) return [];
@@ -74,60 +77,38 @@ export function buildLightningPropagationChain(players, initialHolder) {
     if (hasLightning(candidate)) continue;
     chain.push(candidate);
   }
-  if (chain.length === 1) chain.push(initialHolder);
   return chain;
 }
 
-/** 3 点闪电伤害对一名玩家的期望生命负担，含低生命/致死额外风险。 */
-function damageRisk(player) {
-  const protect = Math.max(0, Number(player?.hp ?? 0) + Number(player?.shield ?? 0));
-  const lost = Math.min(3, protect);
-  const lethal = protect <= 3 ? 4 - protect : 0;
-  return lost + lethal;
-}
-
 /**
- * 有限传播链 signed burden：从 initialHolder 的 k=0 开始，
- * weight(k) = p × [(1-p) × DISCOUNT]^k，己方为正、敌方为负；
- * futureOnly 时只累计 k>=1（供主动使用价值的未来传播项使用）。
+ * 当前座位环稳定时，返回闪电最终命中每名 holder 的概率。判定牌离开牌堆后
+ * 才进入弃牌堆，因此连续未命中会逐张消耗非装备牌；这里按剩余类别数量做
+ * 无放回传播，直到第一张装备牌命中，并把每次未命中后的下一次判定交给真实
+ * 顺时针 holder。顺序因此会直接改变风险分布，且无需任意跳数折扣或最大步数。
+ * 若当前可见剩余牌没有装备牌，不猜测后续玩家出牌与重洗造成的新构成。
  */
-function lightningPropagationBurden(state, initialHolder, viewerTeam, futureOnly = false) {
-  const probability = equipmentJudgmentProbability(state?.remainingCardCounts);
+export function buildLightningHitDistribution(state, initialHolder) {
   const chain = buildLightningPropagationChain(state?.players, initialHolder);
-  let burden = 0;
-  let weight = probability;
-  for (let hop = 0; hop < chain.length; hop += 1) {
-    if (hop > 0 || !futureOnly) {
-      const holder = chain[hop];
-      const sign = holder.battleTeam === viewerTeam ? 1 : -1;
-      burden += weight * damageRisk(holder) * sign;
-    }
-    weight *= (1 - probability) * DISCOUNT;
+  const counts = judgmentCategoryCounts(state?.remainingCardCounts);
+  if (!chain.length || counts.equipment <= PROBABILITY_EPSILON || counts.total <= 0) return [];
+  const outcomeProbability = new Map(chain.map((holder) => [holder.id, 0]));
+  let remainingTotal = counts.total;
+  let reachProbability = 1;
+  let drawIndex = 0;
+  while (remainingTotal > 0 && reachProbability > PROBABILITY_EPSILON) {
+    const hitProbability = Math.max(0, Math.min(1, counts.equipment / remainingTotal));
+    const holder = chain[drawIndex % chain.length];
+    outcomeProbability.set(
+      holder.id,
+      (outcomeProbability.get(holder.id) ?? 0) + reachProbability * hitProbability
+    );
+    reachProbability *= 1 - hitProbability;
+    remainingTotal -= 1;
+    drawIndex += 1;
   }
-  return burden;
-}
-
-/** 从 viewerTeam 视角返回持有闪电的期望团队损失（正数为己方损失，负数为敌方损失）。 */
-export function lightningTeamBurden(state, holder, viewerTeam) {
-  if (!holder?.alive) return 0;
-  const presence = lightningPresenceProbability(holder);
-  if (presence <= PROBABILITY_EPSILON) return 0;
-  return presence * lightningPropagationBurden(state, holder, viewerTeam);
-}
-
-/** 状态反制成功后立即转移给 receiver 时，从 viewerTeam 视角的后续期望损失。 */
-export function lightningTransferredBurden(state, receiver, viewerTeam) {
-  if (!receiver?.alive) return 0;
-  return DISCOUNT * lightningPropagationBurden(state, receiver, viewerTeam);
-}
-
-/** 主动使用闪电的情境价值：基础 aiValue - 自身触发风险 + 转移收益 - 致死惩罚 - 手牌机会成本。 */
-export function lightningUseValue(actor, state) {
-  if (!actor?.alive || hasLightning(actor)) return -50;
-  const probability = equipmentJudgmentProbability(state?.remainingCardCounts);
-  const selfBurden = probability * damageRisk(actor);
-  const futureValue = -lightningPropagationBurden(state, actor, actor.battleTeam, true);
-  const protect = Math.max(0, Number(actor?.hp ?? 0) + Number(actor?.shield ?? 0));
-  const lethalPenalty = protect <= 3 ? 8 + (3 - protect) * 2 : 0;
-  return (CARD_DEFINITIONS.lightning?.aiValue ?? 5) - selfBurden + futureValue - lethalPenalty - 1;
+  return chain.map((holder, hop) => ({
+    holder,
+    hop,
+    probability:outcomeProbability.get(holder.id) ?? 0
+  })).filter((outcome) => outcome.probability > PROBABILITY_EPSILON);
 }

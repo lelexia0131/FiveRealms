@@ -2,15 +2,15 @@
  * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
  * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
  */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260812-dynamic-root-outcome-v2";
-import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260812-dynamic-root-outcome-v2";
-import { getSealStatusStateBranches } from "./sealScoring.js?build=20260812-dynamic-root-outcome-v2";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-lightning-strategy-electric-discharge";
+import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260813-lightning-strategy-electric-discharge";
+import { getSealStatusStateBranches } from "./sealScoring.js?build=20260813-lightning-strategy-electric-discharge";
 import {
   ACTIVE_SKILLS, getActiveSkill, getActiveSkillCost
-} from "../generals/skillRegistry.js?build=20260812-dynamic-root-outcome-v2";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260812-dynamic-root-outcome-v2";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260812-dynamic-root-outcome-v2";
+} from "../generals/skillRegistry.js?build=20260813-lightning-strategy-electric-discharge";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260813-lightning-strategy-electric-discharge";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-lightning-strategy-electric-discharge";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -22,7 +22,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260812-dynamic-root-outcome-v2";
+} from "./AiProbabilityBranches.js?build=20260813-lightning-strategy-electric-discharge";
 
 /** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
@@ -65,6 +65,18 @@ export class AiActionGenerator {
     return hasCompleteStatus && Number(actor?.energy) <= 1;
   }
 
+  /**
+   * 当一方已经形成 3 对 1 的绝对人数优势时，该阵营 AI 不主动引入会在存活环中
+   * 继续流转的闪电风险。这是明确的 AI 战略约束，不由血量或短期击杀期望覆盖；
+   * 人类玩家的正式合法性不受影响。
+   */
+  isLightningStrategicallyForbidden(players, actor) {
+    const alive = (players ?? []).filter((player) => player.alive);
+    const allies = alive.filter((player) => player.battleTeam === actor?.battleTeam).length;
+    const enemies = alive.length - allies;
+    return allies === 3 && enemies === 1;
+  }
+
   chooseVisibleTransferPlan(game, actor, card, remainingCardCounts = null) {
     const sources = RuleEngine.getTransferSources(game, actor, card);
     const excludedCardIds = card.id ? new Set([card.id]) : null;
@@ -78,6 +90,8 @@ export class AiActionGenerator {
     const actions = [];
     for (const card of player.hand) {
       if (!RuleEngine.canPlayCard(this.game, player, card).ok) continue;
+      if (card.definitionId === "lightning"
+        && this.isLightningStrategicallyForbidden(this.game.state.players, player)) continue;
       if (card.definitionId === "lightning" && RuleEngine.hasStatus(player, "lightning")) continue;
       const targets = RuleEngine.getCardTargets(this.game, player, card);
       if (card.definitionId === "leverage") {
@@ -141,6 +155,8 @@ export class AiActionGenerator {
       const definition = CARD_DEFINITIONS[held.definitionId];
       if (!definition || definition.usageMode === "response") continue;
       const card = { ...definition, ...held, id:held.id };
+      if (card.definitionId === "lightning"
+        && this.isLightningStrategicallyForbidden(state.players, actor)) continue;
       if (card.definitionId === "lightning" && RuleEngine.hasStatus(actor, "lightning")) continue;
       if (card.definitionId === "assault") {
         for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) {

@@ -36,6 +36,7 @@ import {
 } from "../js/ui/templates.js";
 import { InteractionController, hiddenSelectionMarkup } from "../js/ui/InteractionController.js";
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
+import { AnimationController, LIGHTNING_HIT_DURATION_MS } from "../js/ui/animationController.js";
 import { JudgmentView } from "../js/ui/JudgmentView.js";
 import {
   CARD_CATEGORY_DISPLAY_ORDER,
@@ -73,12 +74,10 @@ import { AiKnowledge } from "../js/ai/AiKnowledge.js";
 import { AiCardSelector } from "../js/ai/AiCardSelector.js";
 import { buildRadarJudgmentProbabilities, joinProbabilityStateBranches } from "../js/ai/AiProbabilityBranches.js";
 import {
+  buildLightningHitDistribution,
   buildLightningPropagationChain,
   equipmentJudgmentProbability,
   lightningPresenceProbability,
-  lightningTeamBurden,
-  lightningTransferredBurden,
-  lightningUseValue,
   nextLightningReceiver
 } from "../js/ai/lightningScoring.js";
 import {
@@ -3738,36 +3737,36 @@ test("闪电：判定装备牌触发3点中立伤害且状态立即消费", asyn
 test("闪电：判定成功恰好播放一次专用 lightning 音效", async () => {
   const holder = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
   const { game, ui } = makeGame([holder, enemy]);
-  const sounds = [];
-  ui.playSound = (name) => sounds.push(name);
+  const hits = [];
+  ui.playLightningHit = (playerId) => hits.push(playerId);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   game.state.deck.cards = [instance("energyDevice")];
   await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
   assert.equal(holder.hp, holder.maxHp - 3);
   assert.equal(holder.statuses.lightning, undefined);
-  assert.deepEqual(sounds, ["lightning"], "一次真实命中只能触发一次专用雷击音效");
+  assert.deepEqual(hits, [holder.id], "一次真实命中只能触发一次共享雷击反馈");
   game.ui.render(game);
-  assert.deepEqual(sounds, ["lightning"], "后续 render 不应重复播放雷击音效");
+  assert.deepEqual(hits, [holder.id], "后续 render 不应重复触发雷击反馈");
 });
 
 test("闪电：判定失败并转移时不播放 lightning 音效", async () => {
   const holder = makePlayer("a", 0, "dawn"), next = makePlayer("b", 1, "dusk");
   const { game, ui } = makeGame([holder, next]);
-  const sounds = [];
-  ui.playSound = (name) => sounds.push(name);
+  const hits = [];
+  ui.playLightningHit = (playerId) => hits.push(playerId);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   game.state.deck.cards = [instance("assault")];
   await game.eventBus.emit("beforeStatusResolve", { player: holder, cancelled: false });
   assert.equal(holder.statuses.lightning, undefined);
   assert.ok(next.statuses.lightning);
-  assert.deepEqual(sounds, []);
+  assert.deepEqual(hits, []);
 });
 
 test("闪电：状态被反制时不播放 lightning 音效", async () => {
   const holder = makePlayer("a", 0, "dawn", "human"), receiver = makePlayer("b", 1, "dusk");
   const { game, ui } = makeGame([holder, receiver], { response: () => true });
-  const sounds = [];
-  ui.playSound = (name) => sounds.push(name);
+  const hits = [];
+  ui.playLightningHit = (playerId) => hits.push(playerId);
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holder.id };
   holder.hand.push(instance("counter"));
   game.state.deck.cards = [instance("energyDevice")];
@@ -3775,17 +3774,45 @@ test("闪电：状态被反制时不播放 lightning 音效", async () => {
   assert.equal(holder.statuses.lightning, undefined);
   assert.equal(holder.hp, holder.maxHp);
   assert.ok(receiver.statuses.lightning);
-  assert.deepEqual(sounds, []);
+  assert.deepEqual(hits, []);
 });
 
 test("闪电：普通伤害不额外播放 lightning 音效", async () => {
   const source = makePlayer("a", 0, "dawn"), target = makePlayer("b", 1, "dusk");
   const { game, ui } = makeGame([source, target]);
-  const sounds = [];
-  ui.playSound = (name) => sounds.push(name);
+  const hits = [];
+  ui.playLightningHit = (playerId) => hits.push(playerId);
   await game.damage(source, target, 2, { damageType: "normal" });
   assert.equal(target.hp, target.maxHp - 2);
-  assert.ok(!sounds.includes("lightning"));
+  assert.deepEqual(hits, []);
+});
+
+test("闪电：共享判中反馈把声音与实际命中玩家框绑定到同一入口", () => {
+  const calls = [];
+  UIManager.prototype.playLightningHit.call({
+    playSound:(name) => calls.push(["sound", name]),
+    animationController:{ startLightning:(playerId, root) => calls.push(["arc", playerId, root]) }
+  }, "actual-holder");
+  assert.equal(calls[0][0], "sound");
+  assert.equal(calls[0][1], "lightning");
+  assert.equal(calls[1][0], "arc");
+  assert.equal(calls[1][1], "actual-holder");
+  assert.equal(calls[1][2], undefined);
+});
+
+test("闪电：即使统一伤害链把伤害降为 0，真实判中仍触发同一人物框反馈", async () => {
+  const holder = makePlayer("zero-hit", 0, "dawn"), enemy = makePlayer("zero-enemy", 1, "dusk");
+  const { game, ui } = makeGame([holder, enemy]);
+  const hits = [];
+  ui.playLightningHit = (playerId) => hits.push(playerId);
+  holder.statuses.lightning = { cardDefinitionId:"lightning", originPlayerId:holder.id };
+  game.state.deck.cards = [instance("energyDevice")];
+  game.eventBus.on("beforeDamage", "test:lightning-zero-hit-feedback", (event) => {
+    if (event.damageType === "lightning") event.amount = 0;
+  });
+  await game.eventBus.emit("beforeStatusResolve", { player:holder, cancelled:false });
+  assert.equal(holder.hp, holder.maxHp);
+  assert.deepEqual(hits, [holder.id]);
 });
 
 test("闪电：判中后的护援响应沿用状态持有者语义而不构造未知来源", async () => {
@@ -8946,6 +8973,7 @@ test("AI·搜索：平衡模拟在相同种子和固定节点预算下连续两�
   assert.equal(first.config.searchNodeBudget, 80);
   assert.ok(Number.isFinite(first.smallTeamWinRate) && Number.isFinite(first.largeTeamWinRate));
   assert.ok(Math.abs(first.smallTeamWinRate + first.largeTeamWinRate - 100) < 1e-9);
+  assert.equal(typeof first.cards.uses.byDefinitionAndAliveStructure, "object");
 });
 
 test("AI·搜索：深层节点能发现先聚能再发动主动技能", () => {
@@ -12819,48 +12847,6 @@ test("AI·闪电：AI 装备判定概率按类别聚合且不修改计数", () =
     { id: "d", seatIndex: 3, alive: true, battleTeam: "dawn", statuses: [] }
   ];
   assert.equal(nextLightningReceiver(players, players[0]).id, "d");
-});
-
-test("AI·闪电：AI 使用价值随自身低血惩罚、敌人低血收益和队友低血损失单调变化", () => {
-  const make = (hp, receiver) => (
-    {
-      remainingCardCounts: { defenseDevice: 1, assault: 3 },
-      players: [
-        { id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, hp, maxHp: 4, shield: 0, statuses: [] },
-        ...(
-          receiver ? [
-            {
-              id: "b",
-              seatIndex: 1,
-              battleTeam: receiver.team,
-              alive: true,
-              hp: receiver.hp,
-              maxHp: 4,
-              shield: 0,
-              statuses: []
-            }
-          ] : []
-        )
-      ]
-    }
-  );
-  const lowSelf = lightningUseValue(make(1, null).players[0], make(1, null));
-  const highSelf = lightningUseValue(make(4, null).players[0], make(4, null));
-  assert.ok(lowSelf < highSelf);
-  const enemyLow = lightningUseValue(
-    make(4, { team: "dusk", hp: 1 }).players[0], make(4, { team: "dusk", hp: 1 })
-  );
-  const enemyHigh = lightningUseValue(
-    make(4, { team: "dusk", hp: 4 }).players[0], make(4, { team: "dusk", hp: 4 })
-  );
-  assert.ok(enemyLow > enemyHigh);
-  const allyLow = lightningUseValue(
-    make(4, { team: "dawn", hp: 1 }).players[0], make(4, { team: "dawn", hp: 1 })
-  );
-  const allyHigh = lightningUseValue(
-    make(4, { team: "dawn", hp: 4 }).players[0], make(4, { team: "dawn", hp: 4 })
-  );
-  assert.ok(allyLow < allyHigh);
 });
 
 test("AI·闪电：AI 状态反制决策不是固定 true 或 false", () => {
@@ -29947,632 +29933,355 @@ test("AI·威胁评估：ThreatCalculator 的稳定角色标签与近期攻击�
 
 // ---- AI 评分·闪电评分 ----
 
-test("AI·闪电评分：闪电：AI 无其他合法接收者时按转回自己估值而非消失", () => {
-  const holder = {
-    id: "a",
-    seatIndex: 0,
-    battleTeam: "dawn",
-    alive: true,
-    hp: 4,
-    maxHp: 4,
-    shield: 0,
-    statuses: ["lightning"]
-  };
-  const state = { remainingCardCounts: { defenseDevice: 1, assault: 3 }, players: [holder] };
-  assert.ok(lightningTeamBurden(state, holder, "dawn") > 0);
-  const actor = {
-    id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
-  };
-  assert.ok(
-    lightningUseValue(
-      actor, { remainingCardCounts: { defenseDevice: 1, assault: 3 }, players: [actor] }
-    ) < lightningUseValue(actor, { remainingCardCounts: { defenseDevice: 1, assault: 3 }, players: [actor, { id: "b", seatIndex: 1, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: [] }] })
+const makeLightningFixture = (teams, options = {}) => {
+  const fixtureId = ++serial;
+  const players = teams.map((team, index) => {
+    const player = makePlayer(
+      `lightning-ai-${fixtureId}-${index}`,
+      index,
+      team,
+      options.controllerTypes?.[index] ?? "ai",
+      options.generalIndexes?.[index] ?? 0
+    );
+    player.hand = [];
+    player.hp = options.hps?.[index] ?? player.maxHp;
+    player.shield = options.shields?.[index] ?? 0;
+    if (options.deadIndexes?.includes(index)) {
+      player.alive = false;
+      player.hp = 0;
+    }
+    return player;
+  });
+  const actor = players[0];
+  if (options.withCard !== false) actor.hand.push(instance("lightning"));
+  const { game } = makeGame(players);
+  const counts = options.counts ?? { defenseDevice:2, assault:4 };
+  game.aiController.knowledge.remainingCounts = () => ({ ...counts });
+  const visible = createAiVisibleState(actor.id, game.state, counts);
+  return { game, actor, players, visible, counts };
+};
+
+const lightningValue = (fixture, holderIndex = 0, presence = 1) => {
+  const holder = fixture.visible.players[holderIndex];
+  return fixture.game.aiController.evaluator.lightningLifecycleValue(
+    fixture.visible, holder, fixture.actor.id, presence
+  );
+};
+
+const planLightningFixture = async (fixture) => {
+  fixture.game.aiRandomnessRange = 0;
+  const roots = fixture.game.aiController.getLegalActions(fixture.actor);
+  fixture.game.aiSearchNodeBudgetOverride = roots.length;
+  const selected = await fixture.game.aiController.planner.plan(
+    fixture.actor, fixture.visible, roots, { gameId:fixture.game.state.gameId }
+  );
+  return { selected, roots };
+};
+
+const assertLightningCandidatePresence = (fixture, expected) => {
+  const roots = fixture.game.aiController.getLegalActions(fixture.actor);
+  const deep = fixture.game.aiController.actionGenerator.generateFromVisible(
+    fixture.visible, fixture.actor.id
+  );
+  assert.equal(
+    roots.some((action) => action.card?.definitionId === "lightning"), expected,
+    "真实根节点候选资格不符合预期"
+  );
+  assert.equal(
+    deep.some((action) => action.card?.definitionId === "lightning"), expected,
+    "深层搜索候选资格不符合预期"
+  );
+};
+
+test("AI·闪电评分：闪电：无放回判定按真实存活座次传播至首张装备牌", () => {
+  const fixture = makeLightningFixture(["dawn", "dusk", "dawn", "dusk"], {
+    counts:{ defenseDevice:2, assault:3 }, withCard:false
+  });
+  const distribution = buildLightningHitDistribution(fixture.visible, fixture.visible.players[0]);
+  assert.deepEqual(distribution.map((outcome) => outcome.holder.id), fixture.visible.players.map((p) => p.id));
+  assertClose(distribution.reduce((sum, outcome) => sum + outcome.probability, 0), 1);
+  [0.4, 0.3, 0.2, 0.1].forEach((expected, index) => (
+    assertClose(distribution[index].probability, expected)
+  ));
+});
+
+test("AI·闪电评分：闪电：传播环跳过死亡角色与已持独立闪电的角色", () => {
+  const players = [
+    { id:"a", seatIndex:0, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"b", seatIndex:1, battleTeam:"dusk", alive:false, statuses:[] },
+    { id:"c", seatIndex:2, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"d", seatIndex:3, battleTeam:"dusk", alive:true, statuses:[] }
+  ];
+  assert.deepEqual(
+    buildLightningPropagationChain(players, players[0]).map((player) => player.id),
+    ["a", "d"]
+  );
+  assert.equal(nextLightningReceiver(players, players[0]).id, "d");
+});
+
+test("AI·闪电评分：闪电：无其他合法接收者时持续回到当前持有者而非消失", () => {
+  const fixture = makeLightningFixture(["dawn"], { withCard:false });
+  const distribution = buildLightningHitDistribution(fixture.visible, fixture.visible.players[0]);
+  assert.deepEqual(distribution.map((outcome) => outcome.holder.id), [fixture.actor.id]);
+  assertClose(distribution[0].probability, 1);
+  assert.ok(lightningValue(fixture) < 0);
+});
+
+test("AI·闪电评分：闪电：概率状态对完整生命周期价值保持线性缩放", () => {
+  const fixture = makeLightningFixture(["dawn", "dusk", "dusk", "dusk"], { withCard:false });
+  const evaluator = fixture.game.aiController.evaluator;
+  const holder = fixture.visible.players[0];
+  const full = evaluator.lightningTeamBurden(fixture.visible, holder, fixture.actor.id, 1);
+  const partial = structuredClone(fixture.visible);
+  const partialHolder = partial.players[0];
+  partialHolder.lightningStatusStateBranches = [
+    { probability:0.6, conditions:{}, present:true },
+    { probability:0.4, conditions:{}, present:false }
+  ];
+  partialHolder.lightningStatusProbability = 0.6;
+  partialHolder.statuses = [];
+  assertClose(evaluator.lightningTeamBurden(partial, partialHolder, fixture.actor.id), full * 0.6);
+});
+
+test("AI·闪电评分：闪电：3友1敌全满血时生产 AIController 链硬拒绝主动闪电", async () => {
+  const fixture = makeLightningFixture(["dawn", "dawn", "dawn", "dusk"], {
+    hps:[4, 4, 4, 4]
+  });
+  assertLightningCandidatePresence(fixture, false);
+  fixture.game.aiRandomnessRange = 0;
+  fixture.game.aiSearchNodeBudgetOverride = 8;
+  const selected = await fixture.game.aiController.selectAction(
+    fixture.actor, { gameId:fixture.game.state.gameId }
+  );
+  assert.equal(selected.type, "end");
+  assert.ok(!fixture.game.aiController.planner.lastSearchStats.rootLedgers
+    .some((entry) => entry.action?.cardId === "lightning"));
+});
+
+test("AI·闪电评分：闪电：3友1敌有一名友军受伤时仍硬拒绝", () => {
+  assertLightningCandidatePresence(
+    makeLightningFixture(["dawn", "dawn", "dawn", "dusk"], { hps:[4, 2, 4, 4] }),
+    false
   );
 });
 
-test("AI·闪电评分：闪电：lightningTeamBurden 跨阵营接收者按持有者与接收者各自阵营分别签名", () => {
-  const makeState = (holderTeam, receiverTeam) => {
-    const holder = {
-      id: "holder",
-      seatIndex: 0,
-      battleTeam: holderTeam,
-      alive: true,
-      hp: 4,
-      maxHp: 4,
-      shield: 0,
-      statuses: ["lightning"]
-    };
-    const players = [holder];
-    if (
-      receiverTeam
-    ) players.push({ id: "receiver", seatIndex: 1, battleTeam: receiverTeam, alive: true, hp: 4, maxHp: 4, shield: 0, statuses: [] });
-    return { state: { remainingCardCounts: { defenseDevice: 1, assault: 1 }, players }, holder };
-  };
-  // 场景 1：己方持有、敌方接收 -> 1.5 - 0.375 = 1.125
-  let built = makeState("dawn", "dusk");
-  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.125);
-  // 场景 2：敌方持有、己方接收 -> -1.5 + 0.375 = -1.125
-  built = makeState("dusk", "dawn");
-  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), -1.125);
-  // 场景 3：己方持有、己方接收 -> 1.5 + 0.375 = 1.875
-  built = makeState("dawn", "dawn");
-  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.875);
-  // 场景 4：无其他接收者，nextLightningReceiver 返回持有者本人 -> 1.5 + 0.375 = 1.875
-  built = makeState("dawn", null);
-  assertClose(lightningTeamBurden(built.state, built.holder, "dawn"), 1.875);
+test("AI·闪电评分：闪电：3友1敌有两名友军残血时仍硬拒绝", () => {
+  assertLightningCandidatePresence(
+    makeLightningFixture(["dawn", "dawn", "dawn", "dusk"], { hps:[4, 1, 2, 4] }),
+    false
+  );
 });
 
-test("AI·闪电评分：部分执行保留完整 lightningStatusStateBranches 且不产生普通反制分支", () => {
-  const state = {
-    remainingCardCounts: null,
-    players: [
-      {
-        id: "a",
-        seatIndex: 0,
-        battleTeam: "dawn",
-        generalId: "blade-walker",
-        alive: true,
-        hp: 4,
-        maxHp: 4,
-        handCount: 2,
-        hand: [instance("lightning"), instance("lightning")],
-        statuses: [],
-        counterProbability: 0
-      },
-      {
-        id: "b",
-        seatIndex: 1,
-        battleTeam: "dusk",
-        generalId: "blade-walker",
-        alive: true,
-        hp: 4,
-        maxHp: 4,
-        handCount: 0,
-        statuses: [],
-        counterProbability: 1
-      }
-    ]
-  };
-  const next = new AiSimulator(
-    state
-  ).apply(state, {
-    type: "card", card: state.players[0].hand[0], targets: [], executionProbability:0.6
-  }, "a");
-  const actor = next.players[0];
-  const branches = actor.lightningStatusStateBranches;
-  assert.ok(Array.isArray(branches));
-  const presentProbability = branches.reduce(
-    (sum, branch) => sum + (branch.present ? branch.probability : 0), 0
+test("AI·闪电评分：闪电：1友3敌且敌方致死风险占优时 Planner 仍可主动使用", async () => {
+  const fixture = makeLightningFixture(["dawn", "dusk", "dusk", "dusk"], {
+    hps:[4, 3, 3, 3]
+  });
+  const { selected } = await planLightningFixture(fixture);
+  assert.ok(lightningValue(fixture) > 0);
+  assert.equal(selected.card?.definitionId, "lightning");
+});
+
+test("AI·闪电评分：闪电：3友1敌即使敌方仅1HP且生命周期收益为正也硬拒绝", () => {
+  const fixture = makeLightningFixture(["dawn", "dusk", "dawn", "dawn"], {
+    hps:[4, 1, 4, 4], shields:[3, 0, 3, 3]
+  });
+  const enemyId = fixture.players[1].id;
+  const hit = new AiSimulator(fixture.visible).applyLightningHit(fixture.visible, enemyId);
+  assert.equal(hit.players[1].alive, false);
+  assert.ok(lightningValue(fixture) > 0);
+  assertLightningCandidatePresence(fixture, false);
+});
+
+test("AI·闪电评分：闪电：3友2敌不触发人数硬禁令", () => {
+  assertLightningCandidatePresence(
+    makeLightningFixture(["dawn", "dawn", "dawn", "dusk", "dusk"]),
+    true
   );
-  const absentProbability = branches.reduce(
-    (sum, branch) => sum + (branch.present ? 0 : branch.probability), 0
+});
+
+test("AI·闪电评分：闪电：2友1敌且死亡友军不计入存活人数", () => {
+  assertLightningCandidatePresence(
+    makeLightningFixture(["dawn", "dawn", "dawn", "dusk"], { deadIndexes:[2] }),
+    true
   );
-  assertClose(presentProbability, 0.6);
-  assertClose(absentProbability, 0.4);
-  assertClose(branches.reduce((sum, branch) => sum + branch.probability, 0), 1);
-  assertClose(actor.lightningStatusProbability, 0.6);
-  assert.ok(!actor.statuses.includes("lightning"));
-  const conditionKeys = [...new Set(branches.flatMap((branch) => Object.keys(branch.conditions)))];
-  assert.equal(conditionKeys.length, 1);
-  assert.ok(conditionKeys[0].includes("card"));
-  assert.ok(!conditionKeys[0].includes("counter"));
-  assert.equal(actor.hp, 4);
-  assert.equal(next.players[1].hp, 4);
+});
+
+test("AI·闪电评分：闪电：人类玩家3友1敌时正式合法性与结算不受 AI 禁令影响", async () => {
+  const fixture = makeLightningFixture(["dawn", "dawn", "dawn", "dusk"], {
+    controllerTypes:["human", "ai", "ai", "ai"]
+  });
+  const card = fixture.actor.hand[0];
+  assert.equal(RuleEngine.canPlayCard(fixture.game, fixture.actor, card).ok, true);
+  await fixture.game.playCard(fixture.actor, card, []);
+  assert.ok(fixture.actor.statuses.lightning);
+});
+
+test("AI·闪电评分：闪电：己方 3 HP 致死分支显著差于 4 HP 非致死分支", () => {
+  const lethal = makeLightningFixture(["dawn", "dawn", "dusk", "dusk"], {
+    hps:[4, 3, 4, 4], withCard:false
+  });
+  const nonLethal = makeLightningFixture(["dawn", "dawn", "dusk", "dusk"], {
+    hps:[4, 4, 4, 4], withCard:false
+  });
+  const lethalHit = new AiSimulator(lethal.visible).applyLightningHit(
+    lethal.visible, lethal.visible.players[1].id
+  );
+  const safeHit = new AiSimulator(nonLethal.visible).applyLightningHit(
+    nonLethal.visible, nonLethal.visible.players[1].id
+  );
+  assert.equal(lethalHit.players[1].alive, false);
+  assert.equal(safeHit.players[1].alive, true);
+  assert.equal(safeHit.players[1].hp, 1);
+  assert.ok(lightningValue(lethal) < lightningValue(nonLethal));
+});
+
+test("AI·闪电评分：闪电：相同角色集合改变座位顺序会改变 expected value", () => {
+  const enemyFirst = makeLightningFixture(["dawn", "dusk", "dawn", "dusk"], {
+    hps:[4, 3, 3, 4], withCard:false
+  });
+  const allyFirst = makeLightningFixture(["dawn", "dawn", "dusk", "dusk"], {
+    hps:[4, 3, 3, 4], withCard:false
+  });
+  assert.ok(lightningValue(enemyFirst) > lightningValue(allyFirst));
+});
+
+test("AI·闪电评分：闪电：护盾通过统一伤害 after-state 降低己方流转损失", () => {
+  const bare = makeLightningFixture(["dawn", "dawn", "dusk", "dusk"], {
+    hps:[4, 3, 4, 4], withCard:false
+  });
+  const protectedFixture = makeLightningFixture(["dawn", "dawn", "dusk", "dusk"], {
+    hps:[4, 3, 4, 4], shields:[0, 1, 0, 0], withCard:false
+  });
+  const protectedHit = new AiSimulator(protectedFixture.visible).applyLightningHit(
+    protectedFixture.visible, protectedFixture.visible.players[1].id
+  );
+  assert.equal(protectedHit.players[1].alive, true);
+  assert.equal(protectedHit.players[1].hp, 1);
+  assert.equal(protectedHit.players[1].shield, 0);
+  assert.ok(lightningValue(protectedFixture) > lightningValue(bare));
+});
+
+test("AI·闪电评分：闪电：守誓者护援沿统一伤害链消耗资源并降低命中伤害", () => {
+  const fixture = makeLightningFixture(["dawn", "dawn", "dusk"], {
+    hps:[4, 3, 4], generalIndexes:[0, 0, 0], withCard:false
+  });
+  const state = structuredClone(fixture.visible);
+  const guardian = state.players[0];
+  guardian.generalId = "oath-warden";
+  guardian.handCount = 1;
+  guardian.hand = [{ id:"aid-cost", definitionId:"charge" }];
+  guardian.guardianAidUsedProbability = 0;
+  const after = new AiSimulator(state).applyLightningHit(state, state.players[1].id);
+  assert.equal(after.players[1].alive, true);
+  assert.equal(after.players[1].hp, 1);
+  assert.equal(after.players[0].handCount, 0);
+  assert.equal(after.players[0].guardianAidUsed, true);
+});
+
+test("AI·闪电评分：闪电：状态反制先移除旧 holder 再从 receiver 重建回流环", () => {
+  const fixture = makeLightningFixture(["dawn", "dusk", "dawn"], { withCard:false });
+  const state = structuredClone(fixture.visible);
+  const holder = state.players[0];
+  const receiver = state.players[1];
+  holder.statuses = ["lightning"];
+  const evaluator = fixture.game.aiController.evaluator;
+  const actual = evaluator.lightningTransferredBurden(state, holder, receiver, fixture.actor.id);
+  const transferred = structuredClone(state);
+  transferred.players[0].statuses = [];
+  transferred.players[1].statuses = ["lightning"];
+  const expected = evaluator.lightningTeamBurden(
+    transferred, transferred.players[1], fixture.actor.id
+  );
+  assertClose(actual, expected);
+  assert.deepEqual(
+    buildLightningPropagationChain(transferred.players, transferred.players[1]).map((p) => p.id),
+    [receiver.id, state.players[2].id, holder.id]
+  );
+});
+
+test("AI·闪电评分：闪电：生命周期、手牌机会成本、frontier 与 searchPrior 保持单一消费者", () => {
+  const fixture = makeLightningFixture(["dawn", "dusk", "dusk", "dusk"]);
+  const evaluator = fixture.game.aiController.evaluator;
+  const planner = fixture.game.aiController.planner;
+  const action = fixture.game.aiController.getLegalActions(fixture.actor)
+    .find((candidate) => candidate.card?.definitionId === "lightning");
+  const after = new AiSimulator(fixture.visible).apply(fixture.visible, action, fixture.actor.id);
+  const withoutStatus = structuredClone(after);
+  const afterActor = after.players.find((player) => player.id === fixture.actor.id);
+  const plainActor = withoutStatus.players.find((player) => player.id === fixture.actor.id);
+  plainActor.statuses = plainActor.statuses.filter((statusId) => statusId !== "lightning");
+  plainActor.lightningStatusStateBranches = [{ probability:1, conditions:{}, present:false }];
+  plainActor.lightningStatusProbability = 0;
+  const U = (state) => evaluator.stateUtility(state, fixture.actor.id);
+  const lifecycle = evaluator.lightningLifecycleValue(after, afterActor, fixture.actor.id);
+  assertClose(U(after) - U(withoutStatus), lifecycle);
+  assertClose(U(after) - U(fixture.visible), (U(withoutStatus) - U(fixture.visible)) + lifecycle);
+  const owner = evaluator.ownerStateLedger(fixture.visible, after, fixture.actor.id).owners
+    .find((entry) => entry.playerId === fixture.actor.id);
+  assertClose(owner.generic.handCount, -1.1);
+  const projected = evaluator.projectOwnerLedger(
+    evaluator.ownerStateLedger(fixture.visible, after, fixture.actor.id), fixture.actor.id
+  );
+  assertClose(projected.total, U(after) - U(fixture.visible));
+  assert.equal(evaluator.actionEconomicValue(action, fixture.actor, fixture.visible), 0);
+  const finalValue = (U(after) - U(fixture.visible)) * STATE_DELTA_SCALE;
+  assertClose(planner.composeCandidateValue(finalValue, 0, 0, 0, 0, 0), finalValue);
+  assert.notEqual(evaluator.actionUtility(action, fixture.actor, fixture.visible), finalValue);
+  assert.deepEqual(Object.keys(evaluator.frontierResidual(after, fixture.actor.id).held), ["recover", "recycle"]);
+});
+
+test("AI·闪电评分：闪电：部分执行保留状态概率且第二张只在 absent 世界合法", () => {
+  const fixture = makeLightningFixture(["dawn", "dusk"]);
+  const state = structuredClone(fixture.visible);
+  const actor = state.players[0];
+  actor.hand.push({ ...actor.hand[0], id:`${actor.hand[0].id}-second` });
+  actor.handCount = 2;
+  const first = new AiSimulator(state).apply(state, {
+    type:"card", card:actor.hand[0], targets:[], executionProbability:0.6
+  }, actor.id);
+  assertClose(lightningPresenceProbability(first.players[0]), 0.6);
+  const second = fixture.game.aiController.actionGenerator.generateFromVisible(first, actor.id)
+    .find((action) => action.card?.definitionId === "lightning");
+  assert.ok(second);
+  assertClose(second.executionProbability, 0.4);
+  const afterSecond = new AiSimulator(first).apply(first, second, actor.id);
+  assertClose(lightningPresenceProbability(afterSecond.players[0]), 1);
 });
 
 test("AI·闪电评分：动作不执行时不产生概率闪电状态", () => {
-  const state = {
-    remainingCardCounts: null,
-    players: [
-      {
-        id: "a",
-        seatIndex: 0,
-        battleTeam: "dawn",
-        generalId: "blade-walker",
-        alive: true,
-        hp: 4,
-        maxHp: 4,
-        handCount: 1,
-        hand: [instance("lightning")],
-        statuses: [],
-        counterProbability: 0
-      },
-      {
-        id: "b",
-        seatIndex: 1,
-        battleTeam: "dusk",
-        generalId: "blade-walker",
-        alive: true,
-        hp: 4,
-        maxHp: 4,
-        handCount: 0,
-        statuses: [],
-        counterProbability: 0
-      }
-    ]
-  };
-  state.players[
-    0
-  ].hand[0].availabilityStateBranches = [{ probability: 1, conditions: {}, available: false }];
-  state.players[0].hand[0].availabilityBranches = [];
-  const next = new AiSimulator(
-    state
-  ).apply(state, { type: "card", card: state.players[0].hand[0], targets: [] }, "a");
-  const actor = next.players[0];
-  assert.ok(!actor.statuses.includes("lightning"));
-  assertClose(lightningPresenceProbability(actor), 0);
-});
-
-test("AI·闪电评分：闪电：深层第二张闪电仅在 absent 世界生成且 executionProbability=1-presence", () => {
-  const state = {
-    remainingCardCounts: null,
-    players: [
-      {
-        id: "a",
-        seatIndex: 0,
-        battleTeam: "dawn",
-        generalId: "blade-walker",
-        alive: true,
-        hp: 4,
-        maxHp: 4,
-        handCount: 2,
-        hand: [instance("lightning"), instance("lightning")],
-        statuses: [],
-        counterProbability: 0
-      },
-      {
-        id: "b",
-        seatIndex: 1,
-        battleTeam: "dusk",
-        generalId: "blade-walker",
-        alive: true,
-        hp: 4,
-        maxHp: 4,
-        handCount: 0,
-        statuses: [],
-        counterProbability: 1
-      }
-    ]
-  };
-  const first = new AiSimulator(
-    state
-  ).apply(state, {
-    type: "card", card: state.players[0].hand[0], targets: [], executionProbability:0.6
-  }, "a");
-  assert.ok(lightningUseValue(first.players[0], first) > -50);
-  const { game }
-    = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
-  const actions = game.aiController.actionGenerator.generateFromVisible(first, "a");
-  const second = actions.find((action) => action.card?.definitionId === "lightning");
-  assert.ok(second);
-  assertClose(second.executionProbability, 0.4);
+  const fixture = makeLightningFixture(["dawn", "dusk"]);
+  const state = structuredClone(fixture.visible);
+  const actor = state.players[0];
+  const skipped = new AiSimulator(state).apply(state, {
+    type:"card", card:actor.hand[0], targets:[], executionProbability:0
+  }, actor.id);
+  assertClose(lightningPresenceProbability(skipped.players[0]), 0);
+  assert.ok(!skipped.players[0].statuses.includes("lightning"));
 });
 
 test("AI·闪电评分：闪电：第二张 executionWorldBranches 继承第一次闪电条件键", () => {
-  const state = {
-    remainingCardCounts: null,
-    players: [
-      {
-        id: "a",
-        seatIndex: 0,
-        battleTeam: "dawn",
-        generalId: "blade-walker",
-        alive: true,
-        hp: 4,
-        maxHp: 4,
-        handCount: 2,
-        hand: [instance("lightning"), instance("lightning")],
-        statuses: [],
-        counterProbability: 0
-      },
-      {
-        id: "b",
-        seatIndex: 1,
-        battleTeam: "dusk",
-        generalId: "blade-walker",
-        alive: true,
-        hp: 4,
-        maxHp: 4,
-        handCount: 0,
-        statuses: [],
-        counterProbability: 1
-      }
-    ]
-  };
-  const first = new AiSimulator(
-    state
-  ).apply(state, {
-    type: "card", card: state.players[0].hand[0], targets: [], executionProbability:0.6
-  }, "a");
-  const firstBranches = first.players[0].lightningStatusStateBranches;
-  const firstKey = [...new Set(firstBranches.flatMap((branch) => Object.keys(branch.conditions)))][0];
-  assert.ok(firstKey);
-  assert.ok(!firstKey.includes("counter"));
-  const { game }
-    = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
-  const second = game.aiController.actionGenerator.generateFromVisible(
-    first, "a"
-  ).find((action) => action.card?.definitionId === "lightning");
+  const fixture = makeLightningFixture(["dawn", "dusk"]);
+  const state = structuredClone(fixture.visible);
+  const actor = state.players[0];
+  actor.hand.push({ ...actor.hand[0], id:`${actor.hand[0].id}-second` });
+  actor.handCount = 2;
+  const first = new AiSimulator(state).apply(state, {
+    type:"card", card:actor.hand[0], targets:[], executionProbability:0.6
+  }, actor.id);
+  const firstKeys = [...new Set(
+    first.players[0].lightningStatusStateBranches.flatMap((branch) => Object.keys(branch.conditions))
+  )];
+  assert.equal(firstKeys.length, 1);
+  assert.ok(firstKeys[0].includes("card"));
+  assert.ok(!firstKeys[0].includes("counter"));
+  const second = fixture.game.aiController.actionGenerator.generateFromVisible(first, actor.id)
+    .find((action) => action.card?.definitionId === "lightning");
   assert.ok(second);
-  const executing = second.executionWorldBranches.filter((branch) => branch.executes);
-  const notExecuting = second.executionWorldBranches.filter((branch) => !branch.executes);
-  assert.ok(executing.length > 0);
-  assert.ok(notExecuting.length > 0);
-  for (const branch of executing) assert.equal(branch.conditions[firstKey], "no");
-  for (const branch of notExecuting) assert.equal(branch.conditions[firstKey], "yes");
+  assert.ok(second.executionWorldBranches.every((branch) => (
+    Object.keys(branch.conditions).includes(firstKeys[0])
+  )));
 });
 
-test("AI·闪电评分：闪电：第二次使用后状态按 union 填满旧 absent 世界", () => {
-  const state = {
-    remainingCardCounts: null,
-    players: [
-      {
-        id: "a",
-        seatIndex: 0,
-        battleTeam: "dawn",
-        generalId: "blade-walker",
-        alive: true,
-        hp: 4,
-        maxHp: 4,
-        handCount: 2,
-        hand: [instance("lightning"), instance("lightning")],
-        statuses: [],
-        counterProbability: 0
-      },
-      {
-        id: "b",
-        seatIndex: 1,
-        battleTeam: "dusk",
-        generalId: "blade-walker",
-        alive: true,
-        hp: 4,
-        maxHp: 4,
-        handCount: 0,
-        statuses: [],
-        counterProbability: 1
-      }
-    ]
-  };
-  const first = new AiSimulator(
-    state
-  ).apply(state, {
-    type: "card", card: state.players[0].hand[0], targets: [], executionProbability:0.6
-  }, "a");
-  const { game }
-    = makeGame([makePlayer("a", 0, "dawn"), makePlayer("b", 1, "dusk")]);
-  const second = game.aiController.actionGenerator.generateFromVisible(
-    first, "a"
-  ).find((action) => action.card?.definitionId === "lightning");
-  assert.ok(second);
-  const after = new AiSimulator(first).apply(first, second, "a");
-  const actor = after.players[0];
-  const presence = actor.lightningStatusStateBranches.reduce(
-    (sum, branch) => sum + (branch.present ? branch.probability : 0), 0
-  );
-  assertClose(presence, 1);
-  assertClose(actor.lightningStatusProbability, 1);
-  assert.ok(actor.statuses.includes("lightning"));
-  const firstBranches = first.players[0].lightningStatusStateBranches;
-  const firstKey = Object.keys(firstBranches[0].conditions)[0];
-  const oldPresentProbability = firstBranches.reduce(
-    (sum, branch) => sum + (branch.present ? branch.probability : 0), 0
-  );
-  const keptPresentProbability = actor.lightningStatusStateBranches.reduce(
-    (sum, branch) => (
-      sum + (branch.present && branch.conditions[firstKey] === "yes" ? branch.probability : 0)
-    ),
-    0
-  );
-  assertClose(keptPresentProbability, oldPresentProbability);
-});
-
-test("AI·闪电评分：闪电：lightningTeamBurden 按 presence 线性加权", () => {
-  const makeState = (mode) => {
-    const holder = {
-      id: "holder",
-      seatIndex: 0,
-      battleTeam: "dawn",
-      alive: true,
-      hp: 4,
-      maxHp: 4,
-      shield: 0,
-      statuses: []
-    };
-    const receiver = {
-      id: "receiver",
-      seatIndex: 1,
-      battleTeam: "dusk",
-      alive: true,
-      hp: 4,
-      maxHp: 4,
-      shield: 0,
-      statuses: []
-    };
-    if (mode === "full") holder.statuses = ["lightning"];
-    if (mode === "partial") {
-      holder.lightningStatusStateBranches = [
-        { probability: 0.6, conditions: {}, present: true },
-        { probability: 0.4, conditions: {}, present: false }
-      ];
-      holder.lightningStatusProbability = 0.6;
-    }
-    return {
-      state: { remainingCardCounts: { defenseDevice: 1, assault: 1 }, players: [holder, receiver] },
-      holder
-    };
-  };
-  const full = makeState("full");
-  const fullBurden = lightningTeamBurden(full.state, full.holder, "dawn");
-  assertClose(fullBurden, 1.125);
-  const absent = makeState("absent");
-  assertClose(lightningTeamBurden(absent.state, absent.holder, "dawn"), 0);
-  const partial = makeState("partial");
-  assertClose(lightningTeamBurden(partial.state, partial.holder, "dawn"), fullBurden * 0.6);
-});
-
-test("AI·闪电评分：闪电：有限传播链两人一跳完全兼容", () => {
-  const make = (players) => ({ remainingCardCounts: { defenseDevice: 1, assault: 1 }, players });
-  const holder = {
-    id: "a",
-    seatIndex: 0,
-    battleTeam: "dawn",
-    alive: true,
-    hp: 4,
-    maxHp: 4,
-    shield: 0,
-    statuses: ["lightning"]
-  };
-  const enemy = {
-    id: "b", seatIndex: 1, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
-  };
-  assert.deepEqual(
-    buildLightningPropagationChain([holder, enemy], holder).map((player) => player.id), ["a", "b"]
-  );
-  assertClose(lightningTeamBurden(make([holder, enemy]), holder, "dawn"), 1.125);
-  const actor = {
-    id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
-  };
-  assertClose(lightningUseValue(actor, make([actor, enemy])), 0.875);
-});
-
-test("AI·闪电评分：闪电：有限传播链单人无其他接收者自转移兼容", () => {
-  const make = (players) => ({ remainingCardCounts: { defenseDevice: 1, assault: 1 }, players });
-  const holder = {
-    id: "a",
-    seatIndex: 0,
-    battleTeam: "dawn",
-    alive: true,
-    hp: 4,
-    maxHp: 4,
-    shield: 0,
-    statuses: ["lightning"]
-  };
-  assert.deepEqual(
-    buildLightningPropagationChain([holder], holder).map((player) => player.id), ["a", "a"]
-  );
-  assertClose(lightningTeamBurden(make([holder]), holder, "dawn"), 1.875);
-  const actor = {
-    id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
-  };
-  assertClose(lightningUseValue(actor, make([actor])), 0.125);
-});
-
-test("AI·闪电评分：闪电：有限传播链敌多友少自然产生更高使用价值", () => {
-  const make = (teams, holderHasLightning) => {
-    const players = teams.map(
-      (team, index) => (
-        {
-          id: `p${index}`,
-          seatIndex: index,
-          battleTeam: team,
-          alive: true,
-          hp: 4,
-          maxHp: 4,
-          shield: 0,
-          statuses: []
-        }
-      )
-    );
-    if (holderHasLightning) players[0].statuses = ["lightning"];
-    return {
-      state: { remainingCardCounts: { defenseDevice: 1, assault: 1 }, players }, actor: players[0]
-    };
-  };
-  const enemyHeavyBurden = make(["dawn", "dusk", "dusk", "dusk"], true);
-  const allyHeavyBurden = make(["dawn", "dawn", "dawn", "dusk"], true);
-  assertClose(lightningTeamBurden(enemyHeavyBurden.state, enemyHeavyBurden.actor, "dawn"), 1.0078125);
-  assertClose(lightningTeamBurden(allyHeavyBurden.state, allyHeavyBurden.actor, "dawn"), 1.9453125);
-  const enemyHeavyUse = make(["dawn", "dusk", "dusk", "dusk"], false);
-  const allyHeavyUse = make(["dawn", "dawn", "dawn", "dusk"], false);
-  const enemyUseValue = lightningUseValue(enemyHeavyUse.actor, enemyHeavyUse.state);
-  const allyUseValue = lightningUseValue(allyHeavyUse.actor, allyHeavyUse.state);
-  assertClose(enemyUseValue, 0.9921875);
-  assertClose(allyUseValue, 0.0546875);
-  assert.ok(enemyUseValue > allyUseValue);
-});
-
-test("AI·闪电评分：闪电：有限传播链相同人数近端敌人更有价值", () => {
-  const make = (teams) => {
-    const players = teams.map(
-      (team, index) => (
-        {
-          id: `p${index}`,
-          seatIndex: index,
-          battleTeam: team,
-          alive: true,
-          hp: 4,
-          maxHp: 4,
-          shield: 0,
-          statuses: []
-        }
-      )
-    );
-    return {
-      state: { remainingCardCounts: { defenseDevice: 1, assault: 1 }, players }, actor: players[0]
-    };
-  };
-  const enemyFront = make(["dawn", "dusk", "dusk", "dawn"]);
-  const allyFront = make(["dawn", "dawn", "dusk", "dusk"]);
-  const enemyFrontValue = lightningUseValue(enemyFront.actor, enemyFront.state);
-  const allyFrontValue = lightningUseValue(allyFront.actor, allyFront.state);
-  assertClose(enemyFrontValue, 0.9453125);
-  assertClose(allyFrontValue, 0.2421875);
-  assert.ok(enemyFrontValue > allyFrontValue);
-});
-
-test("AI·闪电评分：闪电：有限传播链 actor 低血仍压过人数优势", () => {
-  const make = (hp) => {
-    const players = [
-      { id: "p0", seatIndex: 0, battleTeam: "dawn", alive: true, hp, maxHp: 4, shield: 0, statuses: [] },
-      {
-        id: "p1", seatIndex: 1, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
-      },
-      {
-        id: "p2", seatIndex: 2, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
-      },
-      {
-        id: "p3", seatIndex: 3, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
-      }
-    ];
-    return {
-      state: { remainingCardCounts: { defenseDevice: 1, assault: 1 }, players }, actor: players[0]
-    };
-  };
-  const lowValue = lightningUseValue(make(1).actor, make(1).state);
-  const highValue = lightningUseValue(make(4).actor, make(4).state);
-  assertClose(lowValue, -11.5078125);
-  assertClose(highValue, 0.9921875);
-  assert.ok(lowValue < highValue);
-});
-
-test("AI·闪电评分：闪电：有限传播链未来低血目标按阵营单调", () => {
-  const make = (teams) => {
-    const players = teams.map(
-      (team, index) => (
-        {
-          id: `p${index}`,
-          seatIndex: index,
-          battleTeam: team,
-          alive: true,
-          hp: 4,
-          maxHp: 4,
-          shield: 0,
-          statuses: []
-        }
-      )
-    );
-    return {
-      state: { remainingCardCounts: { defenseDevice: 1, assault: 1 }, players }, actor: players[0]
-    };
-  };
-  const enemyHigh = make(["dawn", "dusk", "dawn", "dawn"]);
-  const enemyLow = make(["dawn", "dusk", "dawn", "dawn"]);
-  enemyLow.state.players[1].hp = 1;
-  const enemyHighValue = lightningUseValue(enemyHigh.actor, enemyHigh.state);
-  const enemyLowValue = lightningUseValue(enemyLow.actor, enemyLow.state);
-  assertClose(enemyHighValue, 0.7578125);
-  assertClose(enemyLowValue, 0.8828125);
-  assert.ok(enemyLowValue > enemyHighValue);
-  const allyHigh = make(["dawn", "dawn", "dusk", "dusk"]);
-  const allyLow = make(["dawn", "dawn", "dusk", "dusk"]);
-  allyLow.state.players[1].hp = 1;
-  const allyHighValue = lightningUseValue(allyHigh.actor, allyHigh.state);
-  const allyLowValue = lightningUseValue(allyLow.actor, allyLow.state);
-  assertClose(allyHighValue, 0.2421875);
-  assertClose(allyLowValue, 0.1171875);
-  assert.ok(allyLowValue < allyHighValue);
-});
-
-test("AI·闪电评分：闪电：有限传播链跳过已持独立闪电的玩家", () => {
-  const players = [
-    { id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, statuses: ["lightning"] },
-    { id: "b", seatIndex: 1, battleTeam: "dusk", alive: true, statuses: [] },
-    { id: "c", seatIndex: 2, battleTeam: "dawn", alive: true, statuses: ["lightning"] },
-    { id: "d", seatIndex: 3, battleTeam: "dusk", alive: true, statuses: [] }
-  ];
-  assert.deepEqual(
-    buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a", "b", "d"]
-  );
-});
-
-test("AI·闪电评分：闪电：初始持有者自身闪电状态不影响其作为传播链起点", () => {
-  const players = [
-    { id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, statuses: ["lightning"] },
-    { id: "b", seatIndex: 1, battleTeam: "dusk", alive: true, statuses: [] }
-  ];
-  assert.deepEqual(
-    buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a", "b"]
-  );
-});
-
-test("AI·闪电评分：闪电：无其他合法接收者时传播链自转移", () => {
-  const players = [
-    { id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, statuses: ["lightning"] },
-    { id: "b", seatIndex: 1, battleTeam: "dusk", alive: false, statuses: [] },
-    { id: "c", seatIndex: 2, battleTeam: "dawn", alive: true, statuses: ["lightning"] },
-    { id: "d", seatIndex: 3, battleTeam: "dusk", alive: false, statuses: [] }
-  ];
-  assert.deepEqual(
-    buildLightningPropagationChain(players, players[0]).map((player) => player.id), ["a", "a"]
-  );
-});
-
-test("AI·闪电评分：闪电：概率闪电状态对有限传播链保持线性缩放", () => {
-  const make = (presence) => {
-    const holder = {
-      id: "a", seatIndex: 0, battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
-    };
-    const players = [
-      holder,
-      { id: "b", seatIndex: 1, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: [] },
-      { id: "c", seatIndex: 2, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: [] },
-      { id: "d", seatIndex: 3, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, shield: 0, statuses: [] }
-    ];
-    if (presence === 1) holder.statuses = ["lightning"];
-    if (presence === 0.6) {
-      holder.lightningStatusStateBranches = [
-        { probability: 0.6, conditions: {}, present: true },
-        { probability: 0.4, conditions: {}, present: false }
-      ];
-      holder.lightningStatusProbability = 0.6;
-    }
-    return { state: { remainingCardCounts: { defenseDevice: 1, assault: 1 }, players }, holder };
-  };
-  const full = lightningTeamBurden(make(1).state, make(1).holder, "dawn");
-  assertClose(full, 1.0078125);
-  assertClose(lightningTeamBurden(make(0).state, make(0).holder, "dawn"), 0);
-  assertClose(lightningTeamBurden(make(0.6).state, make(0.6).holder, "dawn"), full * 0.6);
-});
-
-test("AI·闪电评分：闪电：lightningTransferredBurden 升级为从 receiver 开始的有限传播链", () => {
-  const make = (receiverTeam, nextTeam) => {
-    const receiver = {
-      id: "r",
-      seatIndex: 0,
-      battleTeam: receiverTeam,
-      alive: true,
-      hp: 4,
-      maxHp: 4,
-      shield: 0,
-      statuses: []
-    };
-    const next = {
-      id: "n", seatIndex: 1, battleTeam: nextTeam, alive: true, hp: 4, maxHp: 4, shield: 0, statuses: []
-    };
-    return {
-      state: { remainingCardCounts: { defenseDevice: 1, assault: 1 }, players: [receiver, next] },
-      receiver
-    };
-  };
-  // k=0：D × p × risk(receiver) = 0.5 × 0.5 × 3 = 0.75（己方）
-  // k=1：D × p × (1-p) × D × risk(next) = 0.5 × 0.5 × 0.5 × 0.5 × 3 = 0.1875（敌方）
-  const enemyNext = make("dawn", "dusk");
-  assertClose(lightningTransferredBurden(enemyNext.state, enemyNext.receiver, "dawn"), 0.5625);
-  const allyReceiver = make("dusk", "dawn");
-  assertClose(lightningTransferredBurden(allyReceiver.state, allyReceiver.receiver, "dawn"), -0.5625);
-  const sameTeam = make("dawn", "dawn");
-  assertClose(lightningTransferredBurden(sameTeam.state, sameTeam.receiver, "dawn"), 0.9375);
-});
 
 // ---- AI 价值归属与响应消费 ----
 
@@ -32571,6 +32280,108 @@ test("UI·日志：同句连势技能名为蓝色而累计状态名保持卡牌�
 });
 
 // ---- 布局与样式 ----
+
+test("UI·闪电反馈：电弧 overlay 跟随人物框、可重复触发并完整清理", () => {
+  const makeClassList = (initial = []) => {
+    const values = new Set(initial);
+    return { add:(name) => values.add(name), remove:(name) => values.delete(name), contains:(name) => values.has(name) };
+  };
+  const makeElement = (className = "") => {
+    const children = [];
+    const listeners = new Map();
+    const styleValues = new Map();
+    const element = {
+      className,
+      classList:makeClassList(className ? className.split(" ") : []),
+      children,
+      isConnected:true,
+      owner:null,
+      style:{
+        setProperty:(name, value) => styleValues.set(name, value),
+        getPropertyValue:(name) => styleValues.get(name),
+        removeProperty:(name) => styleValues.delete(name)
+      },
+      setAttribute(name, value) { this[name] = value; },
+      getAttribute(name) { return this[name]; },
+      addEventListener(type, handler) { listeners.set(type, handler); },
+      append(child) { child.owner = this; children.push(child); },
+      querySelectorAll(selector) { return selector === ".lightning-hit-overlay" ? children.filter((child) => child.className === "lightning-hit-overlay") : []; },
+      remove() {
+        this.isConnected = false;
+        if (this.owner) this.owner.children.splice(this.owner.children.indexOf(this), 1);
+      },
+      listeners
+    };
+    return element;
+  };
+  const panel = makeElement("player-seat");
+  panel.getBoundingClientRect = () => ({ left:100, top:200, width:300, height:180 });
+  const body = makeElement("body");
+  const viewListeners = new Map();
+  const doc = {
+    createElement:() => makeElement(),
+    createElementNS:() => makeElement(),
+    querySelector:(selector) => selector.includes("hit-player") ? panel : null,
+    ownerDocument:null,
+    body,
+    defaultView:{
+      addEventListener:(type, handler) => viewListeners.set(type, handler),
+      removeEventListener:(type, handler) => {
+        if (viewListeners.get(type) === handler) viewListeners.delete(type);
+      }
+    }
+  };
+  const controller = new AnimationController();
+  controller.startLightning("hit-player", doc);
+  const first = body.children[0];
+  assert.equal(first.className, "lightning-hit-overlay");
+  assert.equal(first.children.filter((child) => child.getAttribute("class")?.includes("lightning-bolt")).length, 6);
+  assert.equal(first.children.filter((child) => child.className.includes("lightning-spark")).length, 10);
+  assert.equal(first.children[0].className, "lightning-impact-flash");
+  const firstBolt = first.children.find((child) => child.getAttribute("class")?.includes("bolt-top-a"));
+  assert.ok(firstBolt.children.some((child) => child.getAttribute("class") === "lightning-bolt-core"));
+  assert.ok(firstBolt.children.some((child) => child.getAttribute("class") === "lightning-bolt-branch"));
+  assert.equal(first["aria-hidden"], "true");
+  assert.equal(first.style.getPropertyValue("--lightning-left"), "90px");
+  assert.equal(first.style.getPropertyValue("--lightning-top"), "190px");
+  assert.equal(first.style.getPropertyValue("--lightning-width"), "320px");
+  assert.equal(first.style.getPropertyValue("--lightning-height"), "200px");
+  assert.ok(panel.style.getPropertyValue("--lightning-hit-duration").endsWith("ms"));
+  assert.equal(viewListeners.has("resize"), true);
+  assert.equal(viewListeners.has("scroll"), true);
+  assert.equal(panel.classList.contains("has-lightning-hit"), true);
+  const duration = Number.parseInt(first.style.getPropertyValue("--lightning-hit-duration"), 10);
+  assert.ok(duration <= LIGHTNING_HIT_DURATION_MS && duration >= LIGHTNING_HIT_DURATION_MS - 20);
+  assert.equal(LIGHTNING_HIT_DURATION_MS, 3000);
+  controller.startLightning("hit-player", doc);
+  assert.equal(first.isConnected, false, "重复命中必须清理旧实例并重启动画");
+  assert.equal(body.children.length, 1);
+  const second = body.children[0];
+  second.listeners.get("animationend")({ target:second, animationName:"lightningHitLifetime" });
+  assert.equal(body.children.length, 0, "生命周期动画结束后必须自动移除 overlay");
+  assert.equal(panel.classList.contains("has-lightning-hit"), false);
+  assert.equal(panel.style.getPropertyValue("--lightning-hit-duration"), undefined);
+  assert.equal(controller.activeLightning.size, 0);
+  assert.equal(viewListeners.size, 0);
+  controller.startLightning("hit-player", doc);
+  controller.clear();
+  assert.equal(body.children.length, 0);
+  assert.equal(controller.activeLightning.size, 0);
+});
+
+test("UI·闪电反馈：样式包含外扩锯齿主弧、分叉、火花且不参与布局或指针事件", async () => {
+  const source = await readFile(projectFile("css/animations.css"), "utf8");
+  assert.match(source, /\.lightning-hit-overlay\s*\{[^}]*position:\s*fixed/);
+  assert.match(source, /\.lightning-hit-overlay\s*\{[^}]*overflow:\s*visible/);
+  assert.match(source, /\.lightning-hit-overlay\s*\{[^}]*pointer-events:\s*none/);
+  assert.match(source, /\.player-seat\.has-lightning-hit\s*\{[^}]*lightningPanelGlow/);
+  assert.match(source, /lightningHitLifetime var\(--lightning-hit-duration\)/);
+  assert.match(source, /\.lightning-bolt-core\s*\{[^}]*stroke:\s*#f5feff/);
+  assert.match(source, /\.lightning-bolt-branch\s*\{/);
+  assert.match(source, /\.lightning-spark\s*\{/);
+  assert.match(source, /@keyframes lightningImpactFlash/);
+  assert.match(source, /@keyframes lightningPanelShock/);
+});
 
 test("UI·布局样式：日志技能蓝色不扩散到其他技能界面", async () => {
   const [theme, components, characters, cards] = await Promise.all([

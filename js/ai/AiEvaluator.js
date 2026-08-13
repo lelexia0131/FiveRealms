@@ -2,17 +2,19 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260812-dynamic-root-outcome-v2";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260812-dynamic-root-outcome-v2";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260812-dynamic-root-outcome-v2";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260812-dynamic-root-outcome-v2";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260812-dynamic-root-outcome-v2";
-import { lightningTeamBurden, lightningUseValue } from "./lightningScoring.js?build=20260812-dynamic-root-outcome-v2";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-lightning-strategy-electric-discharge";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260813-lightning-strategy-electric-discharge";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260813-lightning-strategy-electric-discharge";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260813-lightning-strategy-electric-discharge";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-lightning-strategy-electric-discharge";
+import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-lightning-strategy-electric-discharge";
+import { AiSimulator } from "./AiSimulator.js?build=20260813-lightning-strategy-electric-discharge";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260813-lightning-strategy-electric-discharge";
 import {
   sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260812-dynamic-root-outcome-v2";
+} from "./sealScoring.js?build=20260813-lightning-strategy-electric-discharge";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -25,9 +27,7 @@ const BURNING_FIELD_SEARCH_PRIOR = 8;
  * 响应价值与前沿未实现价值复用同一缩放，保证已实现/响应/前沿三类价值在同一尺度上
  * 互斥计价——不引入新的独立权重，避免"同一价值在不同入口用不同权重"的双算。
  */
-export const STATE_DELTA_SCALE = 0.08;
-/** stateUtility 与 shieldStateValue 共用：每点 HP 的效用权重。 */
-export const HP_VALUE = 5;
+export { HP_VALUE, STATE_DELTA_SCALE };
 /** stateUtility 与 shieldStateValue 共用：HP<=1 danger 阈值惩罚。 */
 const DANGER_VALUE = 7;
 /** stateUtility 与 shieldStateValue 共用：阵亡惩罚。 */
@@ -38,7 +38,10 @@ const SHIELD_RESERVE_WEIGHT = 2;
 const SHIELD_PROTECTION_WEIGHT = 0.5;
 
 export class AiEvaluator {
-  constructor(game) { this.game = game; }
+  constructor(game) {
+    this.game = game;
+    this.lightningLifecycleCache = new WeakMap();
+  }
 
   /** 角色对某张卡牌相对全局基础值的差量；缺少 generalId 或 definitionId 时回退 0。 */
   roleCardDelta(generalId, definitionId) {
@@ -219,6 +222,110 @@ export class AiEvaluator {
     return this.playerValueTerms(state, player, viewerId, radarTacticProbability);
   }
 
+  /** 单个 owner 在不含延迟状态负担时的统一经济总值。 */
+  ownerMaterialValue(state, player, viewerId, radarTacticProbability) {
+    const { death, terms } = this.ownerStateTerms(state, player, viewerId, radarTacticProbability);
+    return death + Object.values(terms).reduce((sum, value) => sum + value, 0);
+  }
+
+  /**
+   * 一枚闪电的完整生命周期 owner ledger。
+   *
+   * 只看当前 holder 会遗漏未命中后顺时针回流的风险；这里先按真实座位环求出
+   * 最终命中分布，再让每个命中分支走 AiSimulator.applyLightningHit。HP、护盾、
+   * 守誓者护援、调息救援与死亡清理由统一 after-state 经济自然定价，不另设闪电
+   * 伤害或击杀常量。当前近似假设命中前存活环和其他闪电占位不变；剩余牌类别则
+   * 按判定牌无放回消耗传播，直到第一张装备牌命中，不用随跳数衰减的任意折扣。
+   *
+   * unresolved value 只作为当前状态的一部分进入 stateUtility；路径上的已实现伤害仍
+   * 只由真实 transition 计价，frontier 不再追加闪电 residual，避免 future risk 重复。
+   */
+  lightningLifecycleOwnerDeltas(state, initialHolder, viewerId, presenceOverride = null) {
+    if (!state || !initialHolder?.alive) return new Map();
+    let stateCache = this.lightningLifecycleCache.get(state);
+    if (!stateCache) {
+      stateCache = new Map();
+      this.lightningLifecycleCache.set(state, stateCache);
+    }
+    const presence = presenceOverride == null
+      ? lightningPresenceProbability(initialHolder)
+      : Math.max(0, Math.min(1, Number(presenceOverride) || 0));
+    const cacheKey = `${initialHolder.id}:${viewerId}:${presence}`;
+    if (stateCache.has(cacheKey)) return stateCache.get(cacheKey);
+    const deltas = new Map(state.players.map((player) => [player.id, 0]));
+    if (presence <= 0) {
+      stateCache.set(cacheKey, deltas);
+      return deltas;
+    }
+    const distribution = buildLightningHitDistribution(state, initialHolder);
+    const beforeRadar = buildRadarJudgmentProbabilities(state?.remainingCardCounts ?? null).tactic;
+    const beforeValues = new Map(state.players.map((player) => [
+      player.id,
+      this.ownerMaterialValue(state, player, viewerId, beforeRadar)
+    ]));
+    const simulator = new AiSimulator(state);
+    for (const outcome of distribution) {
+      const after = simulator.applyLightningHit(state, outcome.holder.id);
+      const afterRadar = buildRadarJudgmentProbabilities(after?.remainingCardCounts ?? null).tactic;
+      for (const afterPlayer of after.players) {
+        const delta = this.ownerMaterialValue(after, afterPlayer, viewerId, afterRadar)
+          - (beforeValues.get(afterPlayer.id) ?? 0);
+        deltas.set(
+          afterPlayer.id,
+          (deltas.get(afterPlayer.id) ?? 0) + presence * outcome.probability * delta
+        );
+      }
+    }
+    stateCache.set(cacheKey, deltas);
+    return deltas;
+  }
+
+  /** 从 viewer 视角投影一枚闪电整个流转生命周期的预期局面变化。 */
+  lightningLifecycleValue(state, initialHolder, viewerId, presenceOverride = null) {
+    const viewer = state?.players?.find((player) => player.id === viewerId);
+    if (!viewer) return 0;
+    const deltas = this.lightningLifecycleOwnerDeltas(state, initialHolder, viewerId, presenceOverride);
+    return state.players.reduce((sum, player) => {
+      const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
+      return sum + sign * (deltas.get(player.id) ?? 0);
+    }, 0);
+  }
+
+  /** 正数表示该闪电给 viewer 阵营造成的预期负担。 */
+  lightningTeamBurden(state, holder, viewerId, presenceOverride = null) {
+    return -this.lightningLifecycleValue(state, holder, viewerId, presenceOverride);
+  }
+
+  /**
+   * 状态反制成功的过渡态会先移除旧 holder，再把同一枚闪电交给 receiver。
+   * 必须在该过渡态估值，否则旧 holder 会被误当成另一枚闪电的占位而从回流环跳过。
+   */
+  lightningTransferredBurden(state, holder, receiver, viewerId) {
+    if (!state || !holder || !receiver) return 0;
+    const transferred = structuredClone(state);
+    const previous = transferred.players.find((player) => player.id === holder.id);
+    const nextHolder = transferred.players.find((player) => player.id === receiver.id);
+    if (!previous || !nextHolder) return 0;
+    if (Array.isArray(previous.statuses)) {
+      previous.statuses = previous.statuses.filter((statusId) => statusId !== "lightning");
+    } else if (previous.statuses) {
+      delete previous.statuses.lightning;
+    }
+    previous.lightningStatusStateBranches = [{ probability:1, conditions:{}, present:false }];
+    previous.lightningStatusProbability = 0;
+    return this.lightningTeamBurden(transferred, nextHolder, viewerId, 1);
+  }
+
+  /** 当前状态中所有独立闪电对指定 owner 的未兑现经济变化。 */
+  lightningOwnerDelta(state, ownerId, viewerId) {
+    let total = 0;
+    for (const holder of state.players) {
+      if (!holder?.alive || lightningPresenceProbability(holder) <= 0) continue;
+      total += this.lightningLifecycleOwnerDeltas(state, holder, viewerId).get(ownerId) ?? 0;
+    }
+    return total;
+  }
+
   /**
    * Owner-local state ledger：把一次 transition（before→after）的 stateUtility delta
    * 分解到每个 owner 名下（self / ally / enemy），先记账、后投影。
@@ -247,11 +354,11 @@ export class AiEvaluator {
       const beforeTerms = this.ownerStateTerms(before, beforePlayer, viewerId, radarTactic);
       const afterTerms = this.ownerStateTerms(after, afterPlayer, viewerId, radarTactic);
       const beforeBurden = {
-        lightning: lightningTeamBurden(before, beforePlayer, viewer.battleTeam),
+        lightning: this.lightningOwnerDelta(before, beforePlayer.id, viewerId),
         seal: sealTeamBurden(before, beforePlayer, viewer.battleTeam)
       };
       const afterBurden = {
-        lightning: lightningTeamBurden(after, afterPlayer, viewer.battleTeam),
+        lightning: this.lightningOwnerDelta(after, afterPlayer.id, viewerId),
         seal: sealTeamBurden(after, afterPlayer, viewer.battleTeam)
       };
       const fields = {};
@@ -456,8 +563,12 @@ export class AiEvaluator {
       // 威胁三分量之和 == -incomingExposure，与 owner ledger 完全一致。
       const { death, terms } = this.playerValueTerms(state, player, viewerId, radarTacticProbability);
       score += sign * (death + Object.values(terms).reduce((sum, value) => sum + value, 0))
-        - lightningTeamBurden(state, player, viewer.battleTeam)
         - sealTeamBurden(state, player, viewer.battleTeam);
+    }
+    for (const holder of state.players) {
+      if (holder?.alive && lightningPresenceProbability(holder) > 0) {
+        score += this.lightningLifecycleValue(state, holder, viewerId);
+      }
     }
     return score;
   }
@@ -563,7 +674,11 @@ export class AiEvaluator {
       ? getRoleCardAiValue(actor.generalId, card.definitionId)
       : (card.aiValue ?? 0);
     if (card.definitionId === "lightning") {
-      value = lightningUseValue(actor, visible) + roleDelta;
+      // 静态牌值只负责 beam 排序；整个流转链的真实价值已经作为 after-state
+      // unresolved lifecycle 进入 stateDelta，最终 valueScore 不读取本先验。
+      value = (card.aiValue ?? 0)
+        + this.lightningLifecycleValue(visible, actor, actor.id, 1) * STATE_DELTA_SCALE
+        + roleDelta;
     }
     const actionTarget = action.targets?.[0];
     const target = visible.players.find((entry) => entry.id === actionTarget?.id) ?? actionTarget;

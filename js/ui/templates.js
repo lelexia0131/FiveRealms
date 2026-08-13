@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260812-dynamic-root-outcome-v2";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260812-dynamic-root-outcome-v2";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260813-lightning-strategy-electric-discharge";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
