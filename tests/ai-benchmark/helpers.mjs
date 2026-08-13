@@ -115,7 +115,7 @@ export function makeGame({ players, options = {} }, runtimeOptions = {}) {
     player.applyGeneral(general);
     player.hp = config.hp ?? general.maxHp;
     player.shield = config.shield ?? 0;
-    player.energy = config.energy ?? 0;
+    player.energy = config.energy ?? general.initialEnergy;
     player.attackRange = config.attackRange ?? 1;
     player.hand = config.hand ? [...config.hand] : [];
     player.equipment = config.equipment ?? null;

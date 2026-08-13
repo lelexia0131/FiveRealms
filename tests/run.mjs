@@ -51,6 +51,7 @@ import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import {
   ACTIVE_SKILLS, getActiveSkillCost, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
 } from "../js/generals/skillRegistry.js";
+import { makeGame as makeBenchmarkGame } from "./ai-benchmark/helpers.mjs";
 import {
   UNKNOWN_HAND_EXPECTED_VALUE,
   buildTransferCandidates,
@@ -541,7 +542,7 @@ test("角色规则：八名角色规则配置与README角色介绍一致", async
       "oath-warden": [4, 2, 2],
       "spirit-medic": [4, 2, 2],
       "shade-agent": [4, 2, 2],
-      "ember-magus": [4, null, 2],
+      "ember-magus": [4, 3, 2],
       "trail-hunter": [4, 2, 2],
       "fate-gambler": [4, 1, 1],
       "resonance-tuner": [4, 2, 2]
@@ -554,6 +555,49 @@ test("角色规则：八名角色规则配置与README角色介绍一致", async
     player.applyGeneral(general);
     assert.deepEqual([player.hp, player.maxHp], [4, 4], `${id}初始生命`);
   }
+});
+
+test("角色规则：八名角色初始能量配置与规则一致", () => {
+  const byId = Object.fromEntries(GENERAL_DEFINITIONS.map((general) => [general.id, general])),
+    expected = {
+      "blade-walker": 0,
+      "oath-warden": 0,
+      "spirit-medic": 1,
+      "shade-agent": 0,
+      "ember-magus": 1,
+      "trail-hunter": 0,
+      "fate-gambler": 0,
+      "resonance-tuner": 1
+    };
+  assert.equal(GENERAL_DEFINITIONS.length, 8);
+  for (const [id, energy] of Object.entries(expected)) {
+    assert.equal(byId[id].initialEnergy, energy, id);
+  }
+});
+
+test("角色规则：applyGeneral 按配置初始化灵医、炎术师、调律师与刃行者的初始能量", () => {
+  for (const [id, expectedEnergy] of [["spirit-medic", 1], ["ember-magus", 1], ["resonance-tuner", 1], ["blade-walker", 0]]) {
+    const general = GENERAL_DEFINITIONS.find((entry) => entry.id === id),
+      player = new Player({ id: `init-${id}`, seatIndex: 0, battleTeam: "dawn", controllerType: "ai" });
+    assert.equal(player.energy, 0, `${id} 构造后能量为0`);
+    player.applyGeneral(general);
+    assert.equal(player.energy, expectedEnergy, `${id} applyGeneral 后初始能量`);
+    assert.equal(player.maxHp, general.maxHp);
+    assert.equal(player.hp, general.maxHp);
+  }
+});
+
+test("角色规则：README 记录八名角色初始能量且焚场固定消耗3点能量", async () => {
+  const readme = await readFile(projectFile("README.md"), "utf8");
+  for (const general of GENERAL_DEFINITIONS) {
+    const section = readme.match(
+      new RegExp(`### ${general.name}[\\s\\S]*?(?=\\r?\\n### |\\r?\\n## )`)
+    )?.[0] ?? "";
+    assert.match(section, new RegExp(`／${general.maxHp} 点生命／${general.initialEnergy} 点能量。`), general.name);
+  }
+  const emberSection = readme.match(/### 炎术师[\s\S]*?(?=\r?\n### |\r?\n## )/)?.[0] ?? "";
+  assert.match(emberSection, /主动·焚场：\*\* 消耗 3 点能量，对所有存活敌人各造成 1 点可格挡伤害，一回合最多使用 2 次。/);
+  assert.doesNotMatch(emberSection, /当前存活敌方角色数量/);
 });
 
 test("角色规则：调律师协调的配置、技能详情与README统一使用有效作用目标文案", async () => {
@@ -1259,6 +1303,25 @@ test("能量：三人小队无装备时每回合实际获得1点能量", async (
   assert.deepEqual(
     game.teamRules.getTurnEnergyBreakdown(large), { baseAmount: 1, teamBonus: 0, equipmentBonus: 0 }
   );
+});
+
+test("能量：初始能量1的角色首次回合后为2、初始能量0的角色为1", async () => {
+  const medic = makePlayer("start-medic", 0, "dawn", "ai", 2),
+    blade = makePlayer("start-blade", 1, "dawn", "ai", 0),
+    enemy = makePlayer("start-enemy", 2, "dusk", "ai", 5);
+  const { game }
+    = makeGame([medic, blade, enemy]);
+  assert.equal(medic.energy, 1, "灵医初始能量1");
+  assert.equal(blade.energy, 0, "刃行者初始能量0");
+  game.aiController.selectAction = async () => ({ type: "end" });
+  game.state.deck.cards.push(
+    instance("block"), instance("block"), instance("block"),
+    instance("block"), instance("block"), instance("block")
+  );
+  await game.takeTurn(medic, game.state.gameId);
+  assert.equal(medic.energy, 2, "初始能量1的角色首次回合后为2");
+  await game.takeTurn(blade, game.state.gameId);
+  assert.equal(blade.energy, 1, "初始能量0的角色首次回合后为1");
 });
 
 test("能量：充能桩加成后的回合日志记录实际获得2点", async () => {
@@ -4406,7 +4469,7 @@ test("雷达：焚场需要格挡时同样触发判定且日志不冒充突袭",
       target = makePlayer("radar-burning-target", 1, "dusk");
     const { game } = makeGame([ember, target]);
     registerPassiveSkills(game);
-    ember.energy = 2;
+    ember.energy = 3;
     target.equipment = instance("defenseDevice");
     const judgment = instance("harvest");
     game.state.deck.cards.push(judgment);
@@ -4424,7 +4487,7 @@ test("雷达：焚场需要格挡时同样触发判定且日志不冒充突袭",
       target = makePlayer("radar-burning-equipment-target", 1, "dusk");
     const { game } = makeGame([ember, target]);
     registerPassiveSkills(game);
-    ember.energy = 2;
+    ember.energy = 3;
     target.equipment = instance("defenseDevice");
     target.shield = 1;
     const judgment = instance("energyDevice");
@@ -5942,6 +6005,7 @@ test("炎术师：余烬每个卡牌结算ID最多触发1次", async () => {
   const { game }
     = makeGame([ember, enemyA, enemyB]);
   registerPassiveSkills(game);
+  ember.energy = 0;
   const card = instance("shockwave");
   await game.eventBus.emit(
     "afterDamage", { source: ember, target: enemyA, actualAmount: 1, card, resolutionId: "same" }
@@ -5964,7 +6028,7 @@ test("炎术师：余烬每个卡牌结算ID最多触发1次", async () => {
   assert.ok(!game.state.logs.some((entry) => entry.message.includes("通过余烬")));
 });
 
-test("炎术师：焚场按1、2、3名存活敌人动态判定并扣除同一成本", async () => {
+test("炎术师：焚场对1、2、3名存活敌人固定消耗3点能量，2点非法、3点合法并扣至0", async () => {
   for (const enemyCount of [1, 2, 3]) {
     const ember = makePlayer(`ember-cost-${enemyCount}`, 0, "dawn", "human", 4),
       ally = makePlayer(`ember-cost-ally-${enemyCount}`, 1, "dawn", "ai", 0),
@@ -5973,14 +6037,14 @@ test("炎术师：焚场按1、2、3名存活敌人动态判定并扣除同一�
         (_, index) => makePlayer(`ember-cost-enemy-${enemyCount}-${index}`, index + 2, "dusk", "ai", 5)
       );
     const { game } = makeGame([ember, ally, ...enemies]);
-    assert.equal(getActiveSkillCost(game, ember, ACTIVE_SKILLS.burningField), enemyCount);
-    ember.energy = enemyCount - 1;
+    assert.equal(getActiveSkillCost(game, ember, ACTIVE_SKILLS.burningField), 3);
+    ember.energy = 2;
     assert.equal(ACTIVE_SKILLS.burningField.canUse(game, ember).ok, false);
     assert.equal(await game.useActiveSkill(ember, "burningField", []), false);
-    assert.equal(ember.energy, enemyCount - 1);
+    assert.equal(ember.energy, 2);
     assert.equal(ember.turnFlags.activeSkillUseCounts.burningField ?? 0, 0);
     const hpBefore = enemies.map((enemy) => enemy.hp);
-    ember.energy = enemyCount;
+    ember.energy = 3;
     assert.equal(ACTIVE_SKILLS.burningField.canUse(game, ember).ok, true);
     assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
     assert.equal(ember.energy, 0);
@@ -5996,11 +6060,11 @@ test("炎术师：焚场只伤害存活敌人、队友与本人不受伤且伤�
   const enemyA = makePlayer("ember-field-enemy-a", 3, "dusk", "ai", 5);
   const enemyB = makePlayer("ember-field-enemy-b", 4, "dusk", "ai", 5);
   deadEnemy.alive = false;
-  ember.energy = 2;
+  ember.energy = 3;
   let observed = null;
   const { game }
     = makeGame([ember, ally, deadEnemy, enemyA, enemyB]);
-  assert.equal(getActiveSkillCost(game, ember, ACTIVE_SKILLS.burningField), 2);
+  assert.equal(getActiveSkillCost(game, ember, ACTIVE_SKILLS.burningField), 3);
   game.eventBus.on("beforeDamage", "test:burning-field-options", (event) => {
     observed = { canBlock: event.canBlock, damageType: event.damageType, skill: event.skill };
   });
@@ -6024,7 +6088,7 @@ test("炎术师：焚场每个目标独立响应，格挡抵消自身伤害且�
     blocker = makePlayer("ember-blocker", 2, "dusk", "human", 5),
     open = makePlayer("ember-open", 3, "dusk", "human", 5);
   blocker.hand.push(instance("block"));
-  ember.energy = 2;
+  ember.energy = 3;
   const { game, ui } = makeGame([ember, ally, blocker, open], {
     response: (request) => request.type === "block" && request.targetPlayerId === blocker.id
   });
@@ -6089,21 +6153,25 @@ test("炎术师：焚场每回合最多发动两次且第三次不扣费不造�
   const emberConfig = GENERAL_DEFINITIONS.find((general) => general.id === "ember-magus");
   assert.equal(emberConfig.activeLimitPerTurn, 2);
   assert.equal(ACTIVE_SKILLS.burningField.limitPerTurn, 2);
-  assert.equal(emberConfig.activeCost, null);
-  assert.equal(emberConfig.activeCostText, "当前存活敌人数点能量");
-  assert.equal(ACTIVE_SKILLS.burningField.cost, null);
+  assert.equal(emberConfig.activeCost, 3);
+  assert.equal(ACTIVE_SKILLS.burningField.cost, 3);
   assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
-  assert.equal(ember.energy, 3);
+  assert.equal(ember.energy, 1);
   assert.equal(enemy.hp, hp - 1);
   assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 1);
+  assert.equal(await game.useActiveSkill(ember, "burningField", []), false);
+  assert.equal(ember.energy, 1);
+  assert.equal(enemy.hp, hp - 1);
+  assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 1);
+  ember.energy = 4;
   assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
-  assert.equal(ember.energy, 2);
+  assert.equal(ember.energy, 1);
   assert.equal(enemy.hp, hp - 2);
   assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 2);
-  ember.energy = 2;
+  ember.energy = 4;
   assert.equal(ACTIVE_SKILLS.burningField.canUse(game, ember).ok, false);
   assert.equal(await game.useActiveSkill(ember, "burningField", []), false);
-  assert.equal(ember.energy, 2);
+  assert.equal(ember.energy, 4);
   assert.equal(enemy.hp, hp - 2);
   assert.equal(ember.turnFlags.activeSkillUseCounts.burningField, 2);
 });
@@ -6115,6 +6183,7 @@ test("炎术师：余烬按挑衅和震荡的同一resolutionId各只触发一�
     const { game }
       = makeGame([ember, ...enemies]);
     registerPassiveSkills(game);
+    ember.energy = 0;
     ember.hand.push(instance(definitionId));
     await game.playCard(ember, ember.hand[0], enemies);
     assert.equal(ember.energy, 1);
@@ -6124,6 +6193,7 @@ test("炎术师：余烬按挑衅和震荡的同一resolutionId各只触发一�
     { game }
       = makeGame([ember, enemy]);
   registerPassiveSkills(game);
+  ember.energy = 0;
   ember.hand.push(instance("provoke"), instance("provoke"));
   await game.playCard(ember, ember.hand[0], [enemy]);
   await game.playCard(ember, ember.hand[0], [enemy]);
@@ -8572,6 +8642,27 @@ test("AI·核心链路：可见状态、动作生成和模拟器一致识别阵�
     simulatedLarge = simulated.players.find((player) => player.id === large.id);
   assert.equal(simulatedLarge.recoverLimit, null);
   assert.equal(simulatedLarge.hp, large.hp + 1);
+});
+
+test("AI·核心链路：benchmark helper 默认能量来自 general.initialEnergy 且显式 energy 优先", () => {
+  const game = makeBenchmarkGame({
+    players: [
+      { id: "bench-pyro", team: "dawn", general: "ember-magus" },
+      { id: "bench-medic", team: "dawn", general: "spirit-medic" },
+      { id: "bench-tuner", team: "dawn", general: "resonance-tuner" },
+      { id: "bench-blade", team: "dusk", general: "blade-walker" },
+      { id: "bench-zero", team: "dusk", general: "ember-magus", energy: 0 },
+      { id: "bench-two", team: "dusk", general: "spirit-medic", energy: 2 }
+    ]
+  });
+  const byId = (id) => game.state.players.find((player) => player.id === id);
+  assert.equal(byId("bench-pyro").energy, 1, "未指定能量的炎术师默认1");
+  assert.equal(byId("bench-medic").energy, 1, "未指定能量的灵医默认1");
+  assert.equal(byId("bench-tuner").energy, 1, "未指定能量的调律师默认1");
+  assert.equal(byId("bench-blade").energy, 0, "未指定能量的刃行者默认0");
+  assert.equal(byId("bench-zero").energy, 0, "显式 energy:0 不被覆盖");
+  assert.equal(byId("bench-two").energy, 2, "显式 energy:2 不被覆盖");
+  game.dispose();
 });
 
 // ---- AI 搜索与规划 ----
@@ -12455,7 +12546,7 @@ test("AI·封印：深层移除充能桩会降低技能威胁且部分存在概�
     target = makePlayer("seal-energy-target", 2, "dusk", "ai", 4),
     enemy = makePlayer("seal-energy-enemy", 3, "dusk", "ai", 3);
   actor.hand.push(instance("destroy"));
-  target.energy = 0;
+  target.energy = 1;
   target.equipment = instance("energyDevice");
   const { game } = makeGame([actor, ally, target, enemy]),
     visible = createAiVisibleState(actor.id, game.state),
@@ -16998,7 +17089,7 @@ test("AI·影客：窥隙与余烬从统一生命伤害入口覆盖非突袭和�
 
 // ---- AI 角色行为·炎术师 ----
 
-test("AI·炎术师：动作生成、模拟和价值状态共用焚场动态成本", () => {
+test("AI·炎术师：动作生成、模拟和价值状态共用焚场固定3点能量", () => {
   for (const enemyCount of [1, 2, 3]) {
     const ember = makePlayer(`ember-ai-${enemyCount}`, 0, "dawn", "ai", 4),
       ally = makePlayer(`ember-ai-ally-${enemyCount}`, 1, "dawn", "ai", 0),
@@ -17007,22 +17098,22 @@ test("AI·炎术师：动作生成、模拟和价值状态共用焚场动态成�
         (_, index) => makePlayer(`ember-ai-enemy-${enemyCount}-${index}`, index + 2, "dusk", "ai", 5)
       ),
       { game } = makeGame([ember, ally, ...enemies]);
-    ember.energy = enemyCount - 1;
+    ember.energy = 2;
     const lowVisible = createAiVisibleState(ember.id, game.state);
-    assert.equal(lowVisible.players.find((player) => player.id === ember.id).activeSkillCost, enemyCount);
+    assert.equal(lowVisible.players.find((player) => player.id === ember.id).activeSkillCost, 3);
     assert.equal(
       game.aiController.actionGenerator.generateFromVisible(lowVisible, ember.id)
         .filter((entry) => entry.skill?.id === "burningField").length,
       0
     );
-    ember.energy = enemyCount;
+    ember.energy = 3;
     const visible = createAiVisibleState(ember.id, game.state),
       action = game.aiController.actionGenerator.generateFromVisible(
         visible, ember.id
       ).find((entry) => entry.skill?.id === "burningField");
     assert.ok(action);
-    assert.equal(action.skill.cost, null);
-    assert.equal(action.energyCost, enemyCount);
+    assert.equal(action.skill.cost, 3);
+    assert.equal(action.energyCost, 3);
     assert.equal(action.skill.limitPerTurn, 2);
     const next = new AiSimulator(visible).apply(visible, action, ember.id),
       nextEmber = next.players.find((player) => player.id === ember.id);
@@ -17032,30 +17123,28 @@ test("AI·炎术师：动作生成、模拟和价值状态共用焚场动态成�
     }
   }
 
-  const changingEmber = makePlayer("ember-ai-changing", 0, "dawn", "ai", 4),
-    dyingEnemy = makePlayer("ember-ai-dying", 1, "dusk", "ai", 5),
-    survivingEnemy = makePlayer("ember-ai-surviving", 2, "dusk", "ai", 5),
-    { game:changingGame } = makeGame([changingEmber, dyingEnemy, survivingEnemy]);
-  changingEmber.energy = 3;
-  dyingEnemy.hp = 1;
-  const changingVisible = createAiVisibleState(changingEmber.id, changingGame.state),
-    firstField = changingGame.aiController.actionGenerator.generateFromVisible(
-      changingVisible, changingEmber.id
+  const spentEmber = makePlayer("ember-ai-spent", 0, "dawn", "ai", 4),
+    spentEnemy = makePlayer("ember-ai-spent-enemy", 1, "dusk", "ai", 5),
+    { game:spentGame } = makeGame([spentEmber, spentEnemy]);
+  spentEmber.energy = 3;
+  const spentVisible = createAiVisibleState(spentEmber.id, spentGame.state),
+    spentAction = spentGame.aiController.actionGenerator.generateFromVisible(
+      spentVisible, spentEmber.id
     ).find((entry) => entry.skill?.id === "burningField"),
-    afterFirstField = new AiSimulator(changingVisible).apply(
-      changingVisible, firstField, changingEmber.id
-    ),
-    changingActor = afterFirstField.players.find((player) => player.id === changingEmber.id),
-    secondField = changingGame.aiController.actionGenerator.generateFromVisible(
-      afterFirstField, changingEmber.id
-    ).find((entry) => entry.skill?.id === "burningField");
-  assert.deepEqual([changingActor.energy, changingActor.activeSkillCost], [1, 1]);
-  assert.equal(secondField.energyCost, 1);
+    afterSpent = new AiSimulator(spentVisible).apply(spentVisible, spentAction, spentEmber.id),
+    spentActor = afterSpent.players.find((player) => player.id === spentEmber.id);
+  assert.equal(spentActor.energy, 0);
+  assert.equal(
+    spentGame.aiController.actionGenerator.generateFromVisible(
+      afterSpent, spentEmber.id
+    ).filter((entry) => entry.skill?.id === "burningField").length,
+    0
+  );
 
   const ember = makePlayer("ember-ai-limit", 0, "dawn", "ai", 4),
     enemy = makePlayer("ember-ai-limit-enemy", 1, "dusk", "ai", 5),
     { game } = makeGame([ember, enemy]);
-  ember.energy = 2;
+  ember.energy = 3;
   ember.turnFlags.activeSkillUseCounts.burningField = 1;
   ember.turnFlags.activeSkillsUsed.add("burningField");
   const visibleUsedOnce = createAiVisibleState(ember.id, game.state),
@@ -17337,7 +17426,7 @@ test("AI·炎术师：search credit 能救候选但不能替候选赢比赛", as
 test("AI·炎术师：search credit 不跨层累计进真实价值", async () => {
   const ember = makePlayer("bf-c-ember", 0, "dawn", "ai", 4);
   const enemy = makePlayer("bf-c-enemy", 1, "dusk", "ai", 5);
-  ember.energy = 1;
+  ember.energy = 3;
   ember.hand = [
     { ...CARD_DEFINITIONS.harvest, id: "h1" }
   ];
@@ -30922,13 +31011,51 @@ test("UI·玩家面板：赌命者候选卡将孤注消耗显示为 X 能量", (
   assert.doesNotMatch(markup, /<small>1 能量<\/small>/);
 });
 
-test("UI·玩家面板：炎术师候选卡与技能详情显示焚场动态消耗", () => {
+test("UI·玩家面板：炎术师候选卡与技能详情显示焚场固定3点能量", () => {
   const ember = GENERAL_DEFINITIONS.find((general) => general.id === "ember-magus"),
     candidate = candidateCardTemplate(ember, 0),
     details = skillDetailsTemplate(makePlayer("ui-ember-cost", 0, "dawn", "human", 4));
-  assert.match(candidate, /<small>当前存活敌人数点能量<\/small>/);
-  assert.match(details, /能量消耗<\/dt><dd>当前存活敌人数点能量/);
-  assert.doesNotMatch(`${candidate}\n${details}`, /焚场[\s\S]{0,120}<small>[23] 能量|能量消耗<\/dt><dd>[23]点能量/);
+  assert.match(candidate, /<small>3 能量<\/small>/);
+  assert.match(details, /能量消耗<\/dt><dd>3点能量/);
+  assert.doesNotMatch(`${candidate}\n${details}`, /当前存活敌人|敌人数点能量/);
+});
+
+test("UI·玩家面板：角色候选卡能量徽标位于生命左侧且直接来自初始能量", () => {
+  const byId = Object.fromEntries(GENERAL_DEFINITIONS.map((general) => [general.id, general]));
+  for (const general of GENERAL_DEFINITIONS) {
+    const markup = candidateCardTemplate(general, 0),
+      energyIndex = markup.indexOf('class="candidate-stat-badge energy-chip"'),
+      hpIndex = markup.indexOf('class="candidate-stat-badge hp-chip"');
+    assert.ok(energyIndex >= 0 && hpIndex >= 0 && energyIndex < hpIndex, general.name);
+    assert.match(markup, new RegExp(`class="candidate-stat-badge energy-chip"[^>]*>能量 ${general.initialEnergy}</span>`), general.name);
+    assert.match(markup, /class="candidate-stat-badge hp-chip"/, general.name);
+    assert.doesNotMatch(markup, /能量 \d\/\d|初始能量|开局能量/, general.name);
+  }
+  for (const id of ["spirit-medic", "ember-magus", "resonance-tuner"]) {
+    assert.match(candidateCardTemplate(byId[id], 0), />能量 1<\/span>/, id);
+  }
+  for (const id of ["blade-walker", "oath-warden", "shade-agent", "trail-hunter", "fate-gambler"]) {
+    assert.match(candidateCardTemplate(byId[id], 0), />能量 0<\/span>/, id);
+  }
+});
+
+test("UI·玩家面板：能量徽标复用共享候选徽标基础样式并以黄色modifier呈现", async () => {
+  const css = await readFile(projectFile("css/characters.css"), "utf8"),
+    base = css.match(/\.candidate-stat-badge\s*\{([^}]*)\}/)?.[1] ?? "",
+    energy = css.match(/\.energy-chip\s*\{([^}]*)\}/)?.[1] ?? "",
+    hp = css.match(/\.hp-chip\s*\{([^}]*)\}/)?.[1] ?? "";
+  assert.match(base, /flex:\s*0\s*0\s*auto/);
+  assert.match(base, /padding:\s*5px\s*8px/);
+  assert.match(base, /border:\s*1px\s+solid/);
+  assert.match(base, /border-radius:\s*999px/);
+  assert.match(base, /font-size:\s*13px/);
+  assert.match(base, /font-weight:\s*800/);
+  assert.match(energy, /border-color:\s*#d9b54a/);
+  assert.match(energy, /background:\s*#fdf3d7/);
+  assert.match(energy, /color:\s*#8a5a12/);
+  assert.match(energy, /white-space:\s*nowrap/);
+  assert.match(hp, /color:\s*var\(--danger\)/);
+  assert.match(hp, /background:\s*#f8e8e4/);
 });
 
 test("UI·玩家面板：角色候选卡统一将主动技能显示在被动技能上方", () => {
@@ -32211,7 +32338,7 @@ test("UI·中央结算卡：焚场：中央结算卡经 displayTargets 显示全
   const enemyB = makePlayer("enemyB", 3, "dusk");
   const { game, ui }
     = makeGame([source, ally, enemyA, enemyB]);
-  source.energy = 2;
+  source.energy = 3;
   const hpA = enemyA.hp, hpB = enemyB.hp;
   await game.useActiveSkill(source, "burningField", []);
   const record = ui.currentCards.at(-1);

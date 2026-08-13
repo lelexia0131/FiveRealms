@@ -8,7 +8,10 @@
 .candidate-name-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .candidate-name-row small { color: var(--text-secondary); font-size: 12px; }
 .candidate-name-row h3 { font: 700 26px/1.15 var(--serif); }
-.hp-chip { flex: 0 0 auto; padding: 5px 8px; color: var(--danger); border: 1px solid #e0b4ad; border-radius: 999px; background: #f8e8e4; font-size: 13px; font-weight: 800; }
+.candidate-badges { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.candidate-stat-badge { flex: 0 0 auto; padding: 5px 8px; border: 1px solid; border-radius: 999px; font-size: 13px; font-weight: 800; }
+.hp-chip { color: var(--danger); border-color: #e0b4ad; background: #f8e8e4; }
+.energy-chip { color: #8a5a12; border-color: #d9b54a; background: #fdf3d7; white-space: nowrap; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 11px 0; }
 .tag { padding: 3px 8px; color: #4c5f59; border: 1px solid #bfd3cc; border-radius: 999px; background: #edf5f1; font-size: 12px; }
 .character-description { min-height: 3.3em; color: var(--text-secondary); font-size: 14px; line-height: 1.65; }

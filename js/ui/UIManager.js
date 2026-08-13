@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-lightning-strategy-electric-discharge";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260813-lightning-strategy-electric-discharge";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260813-initial-energy-burn-fixed";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-initial-energy-burn-fixed";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260813-initial-energy-burn-fixed";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260813-lightning-strategy-electric-discharge";
-import { AnimationController } from "./animationController.js?build=20260813-lightning-strategy-electric-discharge";
-import { InteractionController } from "./InteractionController.js?build=20260813-lightning-strategy-electric-discharge";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260813-lightning-strategy-electric-discharge";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260813-lightning-strategy-electric-discharge";
-import { JudgmentView } from "./JudgmentView.js?build=20260813-lightning-strategy-electric-discharge";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-lightning-strategy-electric-discharge";
-import { createOpponentHandView } from "./handVisibility.js?build=20260813-lightning-strategy-electric-discharge";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260813-lightning-strategy-electric-discharge";
-import { SoundManager } from "../audio/SoundManager.js?build=20260813-lightning-strategy-electric-discharge";
+} from "./templates.js?build=20260813-initial-energy-burn-fixed";
+import { AnimationController } from "./animationController.js?build=20260813-initial-energy-burn-fixed";
+import { InteractionController } from "./InteractionController.js?build=20260813-initial-energy-burn-fixed";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260813-initial-energy-burn-fixed";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260813-initial-energy-burn-fixed";
+import { JudgmentView } from "./JudgmentView.js?build=20260813-initial-energy-burn-fixed";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-initial-energy-burn-fixed";
+import { createOpponentHandView } from "./handVisibility.js?build=20260813-initial-energy-burn-fixed";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260813-initial-energy-burn-fixed";
+import { SoundManager } from "../audio/SoundManager.js?build=20260813-initial-energy-burn-fixed";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);

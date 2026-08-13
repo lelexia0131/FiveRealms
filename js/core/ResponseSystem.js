@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
-import { createId } from "../utils/helpers.js?build=20260813-lightning-strategy-electric-discharge";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260813-lightning-strategy-electric-discharge";
-import { RuleEngine } from "./RuleEngine.js?build=20260813-lightning-strategy-electric-discharge";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-initial-energy-burn-fixed";
+import { createId } from "../utils/helpers.js?build=20260813-initial-energy-burn-fixed";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260813-initial-energy-burn-fixed";
+import { RuleEngine } from "./RuleEngine.js?build=20260813-initial-energy-burn-fixed";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

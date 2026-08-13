@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260813-lightning-strategy-electric-discharge";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260813-initial-energy-burn-fixed";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260813-initial-energy-burn-fixed";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -37,7 +37,7 @@ export function candidateCardTemplate(general, index) {
   return `<article class="candidate-card" style="--candidate-order:${index}">
     <div class="candidate-art">${image(general.portrait, `${general.name}半身像`, "candidate-portrait")}<span class="candidate-index">候选 0${index + 1}</span></div>
     <div class="candidate-body">
-      <div class="candidate-name-row"><div><small>${escapeHtml(general.loreFaction)}</small><h3>${escapeHtml(general.name)}</h3></div><span class="hp-chip" aria-label="${general.maxHp}点生命">生命 ${general.maxHp}</span></div>
+      <div class="candidate-name-row"><div><small>${escapeHtml(general.loreFaction)}</small><h3>${escapeHtml(general.name)}</h3></div><div class="candidate-badges"><span class="candidate-stat-badge energy-chip" aria-label="能量 ${general.initialEnergy}">能量 ${general.initialEnergy}</span><span class="candidate-stat-badge hp-chip" aria-label="${general.maxHp}点生命">生命 ${general.maxHp}</span></div></div>
       <div class="tag-row">${general.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>
       <p class="character-description">${escapeHtml(general.description)}</p>
       <div class="candidate-skills">

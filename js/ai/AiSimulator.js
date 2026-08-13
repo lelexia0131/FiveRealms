@@ -2,20 +2,20 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-lightning-strategy-electric-discharge";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-lightning-strategy-electric-discharge";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-lightning-strategy-electric-discharge";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-lightning-strategy-electric-discharge";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-lightning-strategy-electric-discharge";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-initial-energy-burn-fixed";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-initial-energy-burn-fixed";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-initial-energy-burn-fixed";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-initial-energy-burn-fixed";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-initial-energy-burn-fixed";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-initial-energy-burn-fixed";
 import {
   counterOpportunityCost,
   globalBenefitCounterDesire,
   mutualBenefitDraftValues
-} from "./AiGlobalBenefit.js?build=20260813-lightning-strategy-electric-discharge";
-import { HP_VALUE } from "./AiEconomics.js?build=20260813-lightning-strategy-electric-discharge";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-lightning-strategy-electric-discharge";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-lightning-strategy-electric-discharge";
+} from "./AiGlobalBenefit.js?build=20260813-initial-energy-burn-fixed";
+import { HP_VALUE } from "./AiEconomics.js?build=20260813-initial-energy-burn-fixed";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-initial-energy-burn-fixed";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-initial-energy-burn-fixed";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -30,7 +30,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260813-lightning-strategy-electric-discharge";
+} from "./AiProbabilityBranches.js?build=20260813-initial-energy-burn-fixed";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -111,7 +111,7 @@ export class AiSimulator {
     return cloned;
   }
 
-  /** 动态主动成本随模拟状态中的存活角色变化，供后续动作与机会成本评估共用。 */
+  /** 克隆或结算后按当前技能定义重新同步每个玩家的主动技能成本，供后续动作与机会成本评估共用。 */
   syncActiveSkillCosts(state) {
     for (const player of state?.players ?? []) {
       const skill = ACTIVE_SKILLS[player.activeSkillId];

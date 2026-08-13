@@ -3,10 +3,10 @@
  * 角色配置只保存技能 ID；核心伤害与回合模块不会出现角色名称分支。
  * 重新开始时 EventBus.clear 会移除全部监听器，随后新玩家重新注册。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-lightning-strategy-electric-discharge";
-import { randomChoice } from "../utils/helpers.js?build=20260813-lightning-strategy-electric-discharge";
-import { Debug } from "../utils/debug.js?build=20260813-lightning-strategy-electric-discharge";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-initial-energy-burn-fixed";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-initial-energy-burn-fixed";
+import { randomChoice } from "../utils/helpers.js?build=20260813-initial-energy-burn-fixed";
+import { Debug } from "../utils/debug.js?build=20260813-initial-energy-burn-fixed";
 
 /**
  * 为本局全部角色注册被动技能。每个监听器使用 playerId:skillId 唯一键，防止重复注册。
@@ -281,13 +281,7 @@ export const ACTIVE_SKILLS = Object.freeze({
     }
   }),
   burningField: Object.freeze({
-    id: "burningField", name: "焚场", cost: null, costText: "当前存活敌人数点能量", limitPerTurn: 2, targetType: "allEnemies", rangeRule: "unlimited",
-    getCost(gameOrState, source) {
-      const state = gameOrState?.state ?? gameOrState;
-      return (state?.players ?? []).filter(
-        (player) => player.alive && player.battleTeam !== source.battleTeam
-      ).length;
-    },
+    id: "burningField", name: "焚场", cost: 3, limitPerTurn: 2, targetType: "allEnemies", rangeRule: "unlimited",
     canUse(game, source, energyCost = getActiveSkillCost(game, source, this)) {
       return baseCanUse(game, source, this, energyCost);
     },

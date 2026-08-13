@@ -2,19 +2,19 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-lightning-strategy-electric-discharge";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260813-lightning-strategy-electric-discharge";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260813-lightning-strategy-electric-discharge";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260813-lightning-strategy-electric-discharge";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-lightning-strategy-electric-discharge";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-lightning-strategy-electric-discharge";
-import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-lightning-strategy-electric-discharge";
-import { AiSimulator } from "./AiSimulator.js?build=20260813-lightning-strategy-electric-discharge";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260813-lightning-strategy-electric-discharge";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-initial-energy-burn-fixed";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-initial-energy-burn-fixed";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260813-initial-energy-burn-fixed";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260813-initial-energy-burn-fixed";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260813-initial-energy-burn-fixed";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-initial-energy-burn-fixed";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-initial-energy-burn-fixed";
+import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-initial-energy-burn-fixed";
+import { AiSimulator } from "./AiSimulator.js?build=20260813-initial-energy-burn-fixed";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260813-initial-energy-burn-fixed";
 import {
   sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260813-lightning-strategy-electric-discharge";
+} from "./sealScoring.js?build=20260813-initial-energy-burn-fixed";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;

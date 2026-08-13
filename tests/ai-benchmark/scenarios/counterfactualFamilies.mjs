@@ -476,7 +476,7 @@ registerScenario({
   setup: () => {
     const others = { b: { hp: 1 }, c: { hp: 1 }, e: { hp: 0, alive: false } };
     return board("ember-magus", {
-      energy: 2,
+      energy: 3,
       hand: [makeCard("assault")]
     }, others, null, 10012);
   },

@@ -3,8 +3,8 @@
  * Player 只保存数据并提供安全的资源变更，不决定目标合法性、伤害响应或胜负。
  * 每局都会重新创建 Player，因此无需跨局保留实例。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-lightning-strategy-electric-discharge";
-import { clamp } from "../utils/helpers.js?build=20260813-lightning-strategy-electric-discharge";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-initial-energy-burn-fixed";
+import { clamp } from "../utils/helpers.js?build=20260813-initial-energy-burn-fixed";
 
 export class Player {
   /**
@@ -38,7 +38,7 @@ export class Player {
   }
 
   /**
-   * 将角色配置应用到座位并恢复至满生命。只在角色分配阶段调用，会修改玩家状态。
+   * 将角色配置应用到座位并恢复至满生命、初始能量。只在角色分配阶段调用，会修改玩家状态。
    * @param {Object} general 角色配置。
    * @returns {void}
    */
@@ -49,6 +49,7 @@ export class Player {
     this.loreFaction = general.loreFaction;
     this.maxHp = general.maxHp;
     this.hp = general.maxHp;
+    this.energy = general.initialEnergy ?? 0;
   }
 
   /** 重置每回合次数与技能标记；TurnManager 在回合开始调用。 */
