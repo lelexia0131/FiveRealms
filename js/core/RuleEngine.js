@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260813-initial-energy-burn-fixed";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-initial-energy-burn-fixed";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260813-ai-hotpath-reuse";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-ai-hotpath-reuse";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

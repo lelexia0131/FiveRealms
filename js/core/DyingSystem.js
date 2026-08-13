@@ -1,5 +1,5 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-initial-energy-burn-fixed";
-import { createId } from "../utils/helpers.js?build=20260813-initial-energy-burn-fixed";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-ai-hotpath-reuse";
+import { createId } from "../utils/helpers.js?build=20260813-ai-hotpath-reuse";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；

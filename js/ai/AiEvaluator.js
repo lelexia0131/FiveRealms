@@ -2,19 +2,19 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-initial-energy-burn-fixed";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-initial-energy-burn-fixed";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260813-initial-energy-burn-fixed";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260813-initial-energy-burn-fixed";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260813-initial-energy-burn-fixed";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-initial-energy-burn-fixed";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-initial-energy-burn-fixed";
-import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-initial-energy-burn-fixed";
-import { AiSimulator } from "./AiSimulator.js?build=20260813-initial-energy-burn-fixed";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260813-initial-energy-burn-fixed";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-ai-hotpath-reuse";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-ai-hotpath-reuse";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260813-ai-hotpath-reuse";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260813-ai-hotpath-reuse";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260813-ai-hotpath-reuse";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-ai-hotpath-reuse";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-ai-hotpath-reuse";
+import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-ai-hotpath-reuse";
+import { AiSimulator } from "./AiSimulator.js?build=20260813-ai-hotpath-reuse";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260813-ai-hotpath-reuse";
 import {
   sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260813-initial-energy-burn-fixed";
+} from "./sealScoring.js?build=20260813-ai-hotpath-reuse";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -182,10 +182,10 @@ export class AiEvaluator {
       const source = state.players.find((entry) => entry.id === sourceId);
       return sum + (source?.battleTeam !== player.battleTeam ? Number(probability) || 0 : 0);
     }, 0);
-    const exposure = this.incomingExposure(state, player);
+    const { currentThreat, futureInventory, energyPressure } = this.exposureComponents(state, player);
+    const exposure = currentThreat + futureInventory + energyPressure;
     const radarMitigation = this.radarMitigationUtility(exposure, player, radarTacticProbability);
     const residualExposure = Math.max(0, exposure - radarMitigation);
-    const { currentThreat, futureInventory, energyPressure } = this.exposureComponents(state, player);
     const shield = this.shieldStateValue(player, residualExposure);
     const energyDeviceFuture = this.energyDeviceFutureUtility(player);
     return {

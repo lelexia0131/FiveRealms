@@ -2,20 +2,20 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-initial-energy-burn-fixed";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-initial-energy-burn-fixed";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-initial-energy-burn-fixed";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-initial-energy-burn-fixed";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-initial-energy-burn-fixed";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-initial-energy-burn-fixed";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-ai-hotpath-reuse";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-ai-hotpath-reuse";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-ai-hotpath-reuse";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-ai-hotpath-reuse";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-ai-hotpath-reuse";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-ai-hotpath-reuse";
 import {
   counterOpportunityCost,
   globalBenefitCounterDesire,
   mutualBenefitDraftValues
-} from "./AiGlobalBenefit.js?build=20260813-initial-energy-burn-fixed";
-import { HP_VALUE } from "./AiEconomics.js?build=20260813-initial-energy-burn-fixed";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-initial-energy-burn-fixed";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-initial-energy-burn-fixed";
+} from "./AiGlobalBenefit.js?build=20260813-ai-hotpath-reuse";
+import { HP_VALUE } from "./AiEconomics.js?build=20260813-ai-hotpath-reuse";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-ai-hotpath-reuse";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-ai-hotpath-reuse";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -30,7 +30,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260813-initial-energy-burn-fixed";
+} from "./AiProbabilityBranches.js?build=20260813-ai-hotpath-reuse";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -1071,11 +1071,22 @@ export class AiSimulator {
     const handRestore = abstractAction.restoreActorHand && executionProbability > PROBABILITY_EPSILON ? 1 : 0;
     actor.handCount = Math.max(0, (actor.handCount ?? 0) - executionProbability + handRestore);
     if (executionProbability <= 0) return next;
+    // card-scope 的取消概率与容量消费必须使用同一份 responder 评估；两者之间没有
+    // 状态变化，因此重复计算 counterDesire 只会增加开销，不会提供新信息。
+    const cardScopeCounterEvaluation = card.category === "tactic"
+      && card.counterable !== false && card.counterScope !== "target"
+      ? this.evaluateCardScopeCounterResponses(
+        next, actor, card, abstractAction.targets ?? [], abstractAction.selection ?? null
+      )
+      : null;
     const effectEventWorlds = card.counterScope === "target"
       ? cardEventWorlds
-      : this.gateEventWorlds(next, cardEventWorlds,
-        this.tacticResolutionChance(next, actor, card, abstractAction.targets ?? [], abstractAction.selection ?? null),
-        `counter:${card.id ?? card.definitionId}`);
+      : this.gateEventWorlds(
+        next,
+        cardEventWorlds,
+        cardScopeCounterEvaluation?.resolutionChance ?? 1,
+        `counter:${card.id ?? card.definitionId}`
+      );
     const scale = this.eventProbability(effectEventWorlds);
     // 反制容量双算修复：card-scope 战术的效果已由 tacticResolutionChance 按
     // counterProbability×desire 概率折算，但旧实现不消费反制容量，同一张反制会被
@@ -1083,7 +1094,14 @@ export class AiSimulator {
     // 概率实际消费反制容量：容量耗尽后 counterProbability / sealCounterProbability
     // 等未来预期自然归零，不再出现 realized + expected 针对同一张反制并存。
     if (card.category === "tactic" && card.counterable !== false && card.counterScope !== "target") {
-      this.consumeCountersForCardScope(next, actor, card, abstractAction.targets ?? [], abstractAction.selection ?? null);
+      this.consumeCountersForCardScope(
+        next,
+        actor,
+        card,
+        abstractAction.targets ?? [],
+        abstractAction.selection ?? null,
+        cardScopeCounterEvaluation
+      );
     }
     const cardDamageContext = { cardDamage:true, emberTriggeredProbabilities:{} };
     let coordinationProbability = 0;
@@ -2492,8 +2510,27 @@ export class AiSimulator {
 
   tacticResolutionChance(state, actor, card, targets = [], selection = null) {
     if (card.category !== "tactic" || card.counterable === false) return 1;
-    return state.players.filter((player) => player.alive && player.id !== actor.id)
-      .reduce((chance, player) => chance * (1 - (player.counterProbability ?? 0) * this.counterDesire(state, player, actor, card, targets, selection)), 1);
+    return this.evaluateCardScopeCounterResponses(state, actor, card, targets, selection).resolutionChance;
+  }
+
+  /**
+   * 同一 card-scope transition 的响应评估快照。
+   *
+   * responder 顺序严格沿用 state.players；effectiveProbability 同时决定边际取消概率
+   * 与对应玩家的期望容量消费。结果只在当前 apply 调用内传递，不跨状态缓存。
+   */
+  evaluateCardScopeCounterResponses(state, actor, card, targets = [], selection = null) {
+    const contenders = [];
+    let resolutionChance = 1;
+    for (const player of state.players) {
+      if (!player.alive || player.id === actor.id) continue;
+      const counterProbability = clampProbability(player.counterProbability ?? 0);
+      const desire = this.counterDesire(state, player, actor, card, targets, selection);
+      const effectiveProbability = clampProbability(counterProbability * desire);
+      contenders.push({ player, counterProbability, desire, effectiveProbability });
+      resolutionChance *= 1 - effectiveProbability;
+    }
+    return { resolutionChance, contenders };
   }
 
   /**
@@ -2504,17 +2541,13 @@ export class AiSimulator {
    * 消费量守恒：Σ marginal(e) = 1 - Π(1 - p_e) = 取消概率（与 tacticResolutionChance 一致）。
    * 只消费实际可能反制的玩家（p > 0）；与 tacticResolutionChance 使用相同的响应顺序。
    */
-  consumeCountersForCardScope(state, actor, card, targets, selection = null) {
-    const contenders = [];
-    for (const player of state.players) {
-      if (!player.alive || player.id === actor.id) continue;
-      const p = clampProbability((player.counterProbability ?? 0)
-        * this.counterDesire(state, player, actor, card, targets, selection));
-      if (p > PROBABILITY_EPSILON) contenders.push({ player, p });
-    }
-    if (!contenders.length) return;
+  consumeCountersForCardScope(state, actor, card, targets, selection = null, responseEvaluation = null) {
+    const evaluation = responseEvaluation
+      ?? this.evaluateCardScopeCounterResponses(state, actor, card, targets, selection);
     let notYetCancelled = 1;
-    for (const { player, p } of contenders) {
+    for (const { player, effectiveProbability } of evaluation.contenders) {
+      const p = effectiveProbability;
+      if (p <= PROBABILITY_EPSILON) continue;
       const marginal = notYetCancelled * p;
       if (marginal > PROBABILITY_EPSILON) {
         this.consumeExpectedCounters(state, player, marginal);

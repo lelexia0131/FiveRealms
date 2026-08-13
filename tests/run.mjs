@@ -10117,6 +10117,64 @@ test("AI·搜索：根突袭一次性消费多层旧破势", async () => {
   assert.equal(result.provenance[1], 0);
 });
 
+test("AI·搜索：固定节点下生产与诊断 ledger 的候选价值、序列和选择完全一致", async () => {
+  const actor = makePlayer("ledger-lazy-actor", 0, "dusk", "ai", 0);
+  const defender = makePlayer("ledger-lazy-defender", 1, "dawn", "ai", 1);
+  const assault = instance("assault");
+  const block = instance("block");
+  actor.hand.push(assault);
+  defender.hand.push(block);
+  actor.aiMemory.knownCardsByPlayer[defender.id] = { [block.id]: "block" };
+  const { game } = makeGame([actor, defender]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 20;
+  game.aiController.knowledge.sampleHiddenWorlds = () => [];
+  const visible = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const roots = game.aiController.getLegalActions(actor);
+  const planner = game.aiController.planner;
+
+  const productionChoice = await planner.plan(actor, visible, roots, { gameId: game.state.gameId });
+  const productionStats = structuredClone(planner.lastSearchStats);
+  assert.deepEqual(productionStats.rootLedgers, [], "production 不应构造审计 ledger");
+
+  const diagnosticChoice = await planner.plan(actor, visible, roots, {
+    gameId: game.state.gameId,
+    collectAiDecisionDiagnostics: true
+  });
+  const diagnosticStats = planner.lastSearchStats;
+  assert.ok(diagnosticStats.rootLedgers.length > 0, "显式诊断应按需构造 root ledger");
+  assert.deepEqual(planner.describeAction(diagnosticChoice), planner.describeAction(productionChoice));
+  assert.equal(diagnosticStats.expanded, productionStats.expanded);
+  assert.equal(diagnosticStats.bestValueScore, productionStats.bestValueScore);
+  assert.deepEqual(diagnosticStats.bestSequence, productionStats.bestSequence);
+});
+
+test("AI·搜索：零经济项不重复推导 transition resolution scale", async () => {
+  const actor = makePlayer("resolution-shortcut-actor", 0, "dawn", "ai", 0);
+  const defender = makePlayer("resolution-shortcut-defender", 1, "dusk", "ai", 1);
+  const scout = instance("scout");
+  actor.hand.push(scout);
+  const { game } = makeGame([actor, defender]);
+  game.aiSearchNodeBudgetOverride = 1;
+  game.aiRandomnessRange = 0;
+  game.aiController.knowledge.sampleHiddenWorlds = () => [];
+  const visible = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const action = { type: "card", card: scout, targets: [{ id: defender.id }] };
+  const original = AiSimulator.prototype.tacticResolutionChance;
+  let calls = 0;
+  AiSimulator.prototype.tacticResolutionChance = function (...args) {
+    calls += 1;
+    return original.apply(this, args);
+  };
+  try {
+    await game.aiController.planner.plan(actor, visible, [action], { gameId: game.state.gameId });
+  } finally {
+    AiSimulator.prototype.tacticResolutionChance = original;
+  }
+  assert.equal(game.aiController.evaluator.actionEconomicValue(action, actor, visible), 0);
+  assert.equal(calls, 0, "真实 apply 使用 transition-local 响应评估，零经济项不应再调用旧 resolution 入口");
+});
+
 test("AI·搜索：防御方持有格挡使突袭候选价值按格挡响应价值变化且无响应时退化为普通转变", async () => {
   const actor = makePlayer("blk-plan-actor", 0, "dusk", "ai", 0);
   const defender = makePlayer("blk-plan-defender", 1, "dawn", "ai", 1);
@@ -20682,6 +20740,37 @@ test("AI·反制先验：已知牌移动不按匿名根先验重复增加反制"
 
 // ---- AI 响应模型·反制容量 ----
 
+test("AI·反制容量：card-scope 取消概率与容量消费复用同一组响应评估", () => {
+  const actor = counterPlayer("reuse-a", "dawn", { handCount: 1 });
+  const first = counterPlayer("reuse-b", "dusk", {
+    handCount: 1,
+    counterCountDistribution: [{ probability: 1, conditions: {}, counterCount: 1 }]
+  });
+  const second = counterPlayer("reuse-c", "dusk", {
+    handCount: 1,
+    counterCountDistribution: [{ probability: 1, conditions: {}, counterCount: 1 }]
+  });
+  const card = { ...CARD_DEFINITIONS.duel, id: "reuse-duel" };
+  actor.hand = [card];
+  const state = { players: [actor, first, second] };
+  const simulator = new AiSimulator(state);
+  let desireCalls = 0;
+  simulator.counterDesire = (_state, responder) => {
+    desireCalls += 1;
+    return responder.id === first.id ? 0.5 : 0.25;
+  };
+  const next = simulator.apply(
+    state,
+    { type: "card", card, targets: [{ id: first.id }] },
+    actor.id
+  );
+  assert.equal(desireCalls, 2, "每名 responder 在同一 transition 中只评估一次");
+  const firstAfter = next.players.find((player) => player.id === first.id);
+  const secondAfter = next.players.find((player) => player.id === second.id);
+  assertClose(counterProbabilityOf(firstAfter), 0.5);
+  assertClose(counterProbabilityOf(secondAfter), 0.875);
+});
+
 test("AI·反制容量：唯一匿名确定反制窃取后容量守恒", () => {
   const actor = counterPlayer(
     "a",
@@ -30565,6 +30654,29 @@ test("AI·价值归属：当前威胁与未来攻击库存可分别变化", () =
     comps2.currentThreat + comps2.futureInventory + comps2.energyPressure,
     evaluator.incomingExposure(energyOnly, energyOnly.players[0])
   );
+});
+
+test("AI·价值归属：单次玩家估值只计算一次暴露分量并复用汇总", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerState([
+    ledgerPlayer("a", 0, "dawn", "oath-warden"),
+    ledgerPlayer("c", 1, "dusk", "blade-walker", {
+      energy: 2,
+      expectedAssaultCount: 1,
+      assaultResponseProbability: 0.5
+    })
+  ]);
+  const original = evaluator.exposureComponents.bind(evaluator);
+  let calls = 0;
+  evaluator.exposureComponents = (...args) => {
+    calls += 1;
+    return original(...args);
+  };
+  const { terms } = evaluator.playerValueTerms(state, state.players[0], "a", 0);
+  assert.equal(calls, 1);
+  assertClose(-(terms.currentThreat + terms.futureInventory + terms.energyPressure),
+    evaluator.incomingExposure(state, state.players[0]));
 });
 
 test("AI·价值归属：同一 owner ledger 从队友/敌方视角投影符号正确", () => {

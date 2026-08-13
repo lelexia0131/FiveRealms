@@ -2,10 +2,10 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-initial-energy-burn-fixed";
-import { AiSimulator } from "./AiSimulator.js?build=20260813-initial-energy-burn-fixed";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260813-initial-energy-burn-fixed";
-import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260813-initial-energy-burn-fixed";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-ai-hotpath-reuse";
+import { AiSimulator } from "./AiSimulator.js?build=20260813-ai-hotpath-reuse";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260813-ai-hotpath-reuse";
+import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260813-ai-hotpath-reuse";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -234,8 +234,8 @@ export class AiPlanner {
    * 单个候选的 owner-local value ledger：state delta 分解（ownerStateLedger +
    * perspective projection）叠加响应侧价值（computeResponseLedger）。只对根候选
    * 计算（响应反事实代价有界）；深层候选只附加 frontier-only residual，不再携带
-   * 完整 ledger。返回的 ledger 数据挂在根候选节点上，供评分流程随后把响应侧价值
-   * 投影进候选价值。
+   * 完整 ledger。该 representation 只在显式决策诊断中构造，用于解释 owner 归属，
+   * 不参与生产候选评分。
    */
   computeCandidateLedger(before, action, after, viewerId, includeResponse) {
     if (typeof this.evaluator.ownerStateLedger !== "function") {
@@ -277,9 +277,9 @@ export class AiPlanner {
    * 被放大到 1/scale 倍，扭曲目标优先与击杀判断。
    */
   composeCandidateValue(baseTransition, responseNet, frontierValue, sealTimingPenalty, exposeMarginal, assaultStacksCredit) {
-    const realizedTransition = baseTransition - responseNet * STATE_DELTA_SCALE;
-    const realizedResponse = responseNet * STATE_DELTA_SCALE;
-    return realizedTransition + realizedResponse + frontierValue
+    // responseNet 只用于 ledger 分解：realizedTransition + realizedResponse 恒等于
+    // baseTransition。直接返回化简结果，确保诊断开关连浮点舍入都不会改变候选价值。
+    return baseTransition + frontierValue
       - sealTimingPenalty
       + (exposeMarginal + assaultStacksCredit) * STATE_DELTA_SCALE;
   }
@@ -299,6 +299,7 @@ export class AiPlanner {
 
   async plan(player, visibleState, rootActions, options = {}) {
     this.lastPlannedSequence = [];
+    const collectDiagnostics = Boolean(options.collectAiDecisionDiagnostics);
     const started = globalThis.performance?.now?.() ?? Date.now();
     const timeBudget = this.game.aiSearchBudgetOverrideMs ?? GAME_CONFIG.aiSearchTimeBudgetMs;
     const configuredNodeBudget = Number(this.game.aiSearchNodeBudgetOverride);
@@ -357,7 +358,9 @@ export class AiPlanner {
       const economicValue = this.evaluator.actionEconomicValue
         ? this.evaluator.actionEconomicValue(action, player, beforeState)
         : 0;
-      const resolutionScale = tacticResolutionScale(action, beforeState);
+      // 只有 economicValue 会读取 resolutionScale；值为 0 时继续推导反制概率最终只会乘 0。
+      // 真实 Counter outcome 已在 simulator.apply(afterState) 中完整结算，不能在此删减。
+      const resolutionScale = economicValue === 0 ? 1 : tacticResolutionScale(action, beforeState);
       const immediate = (economicValue * resolutionScale)
         * executionProbability;
       // state credit 使用边际局面改善量；afterState 已是按执行概率/反制概率折算的期望状态，
@@ -400,13 +403,14 @@ export class AiPlanner {
         )
         : rootRemainingExposeStacks;
       const baseTransition = transitionScore(action, visibleState, state, 1);
-      // owner-local value ledger：根候选携带完整的响应侧价值（block/counter/rescue
-      // 的 owner-scored 避免损失），可供投影进候选价值；终局候选附加 frontier-only residual。
-      const candidateLedger = this.computeCandidateLedger(visibleState, action, state, player.id, true);
-      // 响应边际净值为 viewer(=actor) 视角投影。该值已包含在 stateDelta 中
-      // （恒等式 stateDelta == (stateDelta - responseNet) + responseNet），
-      // 因此在评分时先扣减再显式计回，保证已实现响应价值只计一次。
-      const responseNet = (candidateLedger.responses ?? []).reduce((sum, r) => sum + (r.netValue ?? 0), 0);
+      // owner-local ledger 是诊断 representation；响应净值在 composeCandidateValue 中
+      // 先减后加，最终严格回到 baseTransition。生产评分不需要为每个根候选构造反事实，
+      // 只有显式审计时才按需生成，评分公式仍由同一入口验证该恒等式。
+      const candidateLedger = collectDiagnostics
+        ? this.computeCandidateLedger(visibleState, action, state, player.id, true)
+        : null;
+      const responseNet = (candidateLedger?.responses ?? [])
+        .reduce((sum, response) => sum + (response.netValue ?? 0), 0);
       const frontierResidual = Boolean(state.playPhaseEnded)
         ? this.frontierResidualOf(state, player.id)
         : null;
@@ -423,13 +427,15 @@ export class AiPlanner {
         action, state, exposeMarginal, assaultStacksCredit, remainingRootExposeStacks, baseTransition,
         candidateLedger, frontierResidual, responseNet, frontierValue
       });
-      rootLedgers.push({
-        action: this.describeAction(action),
-        projected: candidateLedger.projected,
-        responses: candidateLedger.responses,
-        responseNet,
-        frontierValue
-      });
+      if (collectDiagnostics) {
+        rootLedgers.push({
+          action: this.describeAction(action),
+          projected: candidateLedger.projected,
+          responses: candidateLedger.responses,
+          responseNet,
+          frontierValue
+        });
+      }
       expanded += 1;
       if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
         if (!(await this.game.cleanupManager.delay(0)) || !this.game.isSessionValid(options.gameId ?? this.game.state.gameId)) {
@@ -571,8 +577,7 @@ export class AiPlanner {
       budgetType:nodeBudget === null ? "time" : "nodes", nodeBudget,
       discoveredDynamicTarget, hiddenSamples:hiddenWorlds.length, bestSequence:this.lastPlannedSequence,
       bestRemainingProvenance:choice?.remainingHistory ?? [], bestValueScore:choice?.valueScore ?? null,
-      // 根候选的 owner-local ledger 与响应侧价值（block/counter/rescue），供外部/测试
-      // 读取本次搜索如何把响应价值归属到各 owner 并投影。
+      // 仅在 collectAiDecisionDiagnostics=true 时包含 owner-local root ledger；生产为空数组。
       rootLedgers };
     return choice?.action ?? { type:"end" };
   }

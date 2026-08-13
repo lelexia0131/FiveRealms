@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260813-initial-energy-burn-fixed";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260813-initial-energy-burn-fixed";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260813-initial-energy-burn-fixed";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260813-initial-energy-burn-fixed";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260813-initial-energy-burn-fixed";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260813-initial-energy-burn-fixed";
-import { AiPlanner } from "./AiPlanner.js?build=20260813-initial-energy-burn-fixed";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260813-ai-hotpath-reuse";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260813-ai-hotpath-reuse";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260813-ai-hotpath-reuse";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260813-ai-hotpath-reuse";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260813-ai-hotpath-reuse";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260813-ai-hotpath-reuse";
+import { AiPlanner } from "./AiPlanner.js?build=20260813-ai-hotpath-reuse";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

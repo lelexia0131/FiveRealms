@@ -2,7 +2,7 @@
  * 将非本地玩家手牌转换为脱敏展示模型。未知槽位不携带实体 ID、定义、名称、
  * 类别、描述或图片；已知信息只读取本地真人自己的实体牌记忆。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-initial-energy-burn-fixed";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-ai-hotpath-reuse";
 
 // 与 README 卡牌表保持一致的纯展示顺序；任何排序都只作用于 ViewModel。
 export const CARD_CATEGORY_DISPLAY_ORDER = Object.freeze({ basic:0, tactic:1, equipment:2, unknown:3 });
