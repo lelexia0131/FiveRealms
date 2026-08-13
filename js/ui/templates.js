@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260813-ai-hotpath-reuse";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260813-ai-hotpath-reuse";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260813-human-response-indefinite";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260813-human-response-indefinite";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

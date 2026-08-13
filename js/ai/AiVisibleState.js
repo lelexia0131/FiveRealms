@@ -3,10 +3,10 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-ai-hotpath-reuse";
-import { TeamRuleService } from "../core/TeamRuleService.js?build=20260813-ai-hotpath-reuse";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-ai-hotpath-reuse";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-ai-hotpath-reuse";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-human-response-indefinite";
+import { TeamRuleService } from "../core/TeamRuleService.js?build=20260813-human-response-indefinite";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-human-response-indefinite";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-human-response-indefinite";
 
 const equipmentRoleDelta = (player, definitionId) => {
   if (!player?.generalId || !definitionId) return 0;

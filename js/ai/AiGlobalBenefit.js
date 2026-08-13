@@ -20,8 +20,8 @@
  *   得到，而不是 root 最初打出时的 snapshot，也不是静态 card value。例如掠夺的目标在
  *   响应链中已把手牌用尽时，恢复掠夺的实际收益已从"可能获得 1 张牌"降为 0。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-ai-hotpath-reuse";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-ai-hotpath-reuse";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-human-response-indefinite";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-human-response-indefinite";
 
 const GLOBAL_BENEFIT_CARDS = new Set(["mutualBenefit", "symbiosis"]);
 

@@ -2,10 +2,10 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-ai-hotpath-reuse";
-import { AiSimulator } from "./AiSimulator.js?build=20260813-ai-hotpath-reuse";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260813-ai-hotpath-reuse";
-import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260813-ai-hotpath-reuse";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-human-response-indefinite";
+import { AiSimulator } from "./AiSimulator.js?build=20260813-human-response-indefinite";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260813-human-response-indefinite";
+import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260813-human-response-indefinite";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {

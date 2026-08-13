@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260813-ai-hotpath-reuse";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-ai-hotpath-reuse";
-import { createId, clamp } from "../utils/helpers.js?build=20260813-ai-hotpath-reuse";
-import { EventBus } from "./EventBus.js?build=20260813-ai-hotpath-reuse";
-import { Player } from "./Player.js?build=20260813-ai-hotpath-reuse";
-import { Deck } from "./Deck.js?build=20260813-ai-hotpath-reuse";
-import { TeamManager } from "./TeamManager.js?build=20260813-ai-hotpath-reuse";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260813-ai-hotpath-reuse";
-import { RuleEngine } from "./RuleEngine.js?build=20260813-ai-hotpath-reuse";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260813-ai-hotpath-reuse";
-import { GameLogger } from "./GameLogger.js?build=20260813-ai-hotpath-reuse";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260813-ai-hotpath-reuse";
-import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260813-ai-hotpath-reuse";
-import { AIController } from "../ai/AiController.js?build=20260813-ai-hotpath-reuse";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260813-ai-hotpath-reuse";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260813-ai-hotpath-reuse";
-import { Debug } from "../utils/debug.js?build=20260813-ai-hotpath-reuse";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260813-ai-hotpath-reuse";
-import { DyingSystem } from "./DyingSystem.js?build=20260813-ai-hotpath-reuse";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260813-ai-hotpath-reuse";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260813-ai-hotpath-reuse";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260813-ai-hotpath-reuse";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260813-ai-hotpath-reuse";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260813-human-response-indefinite";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-human-response-indefinite";
+import { createId, clamp } from "../utils/helpers.js?build=20260813-human-response-indefinite";
+import { EventBus } from "./EventBus.js?build=20260813-human-response-indefinite";
+import { Player } from "./Player.js?build=20260813-human-response-indefinite";
+import { Deck } from "./Deck.js?build=20260813-human-response-indefinite";
+import { TeamManager } from "./TeamManager.js?build=20260813-human-response-indefinite";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260813-human-response-indefinite";
+import { RuleEngine } from "./RuleEngine.js?build=20260813-human-response-indefinite";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260813-human-response-indefinite";
+import { GameLogger } from "./GameLogger.js?build=20260813-human-response-indefinite";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260813-human-response-indefinite";
+import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260813-human-response-indefinite";
+import { AIController } from "../ai/AiController.js?build=20260813-human-response-indefinite";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260813-human-response-indefinite";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260813-human-response-indefinite";
+import { Debug } from "../utils/debug.js?build=20260813-human-response-indefinite";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260813-human-response-indefinite";
+import { DyingSystem } from "./DyingSystem.js?build=20260813-human-response-indefinite";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260813-human-response-indefinite";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260813-human-response-indefinite";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260813-human-response-indefinite";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260813-human-response-indefinite";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {

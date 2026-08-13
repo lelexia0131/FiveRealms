@@ -2,19 +2,19 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-ai-hotpath-reuse";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-ai-hotpath-reuse";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260813-ai-hotpath-reuse";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260813-ai-hotpath-reuse";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260813-ai-hotpath-reuse";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-ai-hotpath-reuse";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-ai-hotpath-reuse";
-import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-ai-hotpath-reuse";
-import { AiSimulator } from "./AiSimulator.js?build=20260813-ai-hotpath-reuse";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260813-ai-hotpath-reuse";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-human-response-indefinite";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-human-response-indefinite";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260813-human-response-indefinite";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260813-human-response-indefinite";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260813-human-response-indefinite";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-human-response-indefinite";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-human-response-indefinite";
+import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-human-response-indefinite";
+import { AiSimulator } from "./AiSimulator.js?build=20260813-human-response-indefinite";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260813-human-response-indefinite";
 import {
   sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260813-ai-hotpath-reuse";
+} from "./sealScoring.js?build=20260813-human-response-indefinite";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;

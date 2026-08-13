@@ -2,17 +2,17 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-ai-hotpath-reuse";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-ai-hotpath-reuse";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-ai-hotpath-reuse";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260813-ai-hotpath-reuse";
-import { getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-ai-hotpath-reuse";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-human-response-indefinite";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-human-response-indefinite";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-human-response-indefinite";
+import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260813-human-response-indefinite";
+import { getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-human-response-indefinite";
 import {
   chooseBestResourceHandCandidate,
   chooseResourceZone,
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-} from "./resourceSelectionValue.js?build=20260813-ai-hotpath-reuse";
+} from "./resourceSelectionValue.js?build=20260813-human-response-indefinite";
 
 const globalKnownValue = (definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
 

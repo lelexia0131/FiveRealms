@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-ai-hotpath-reuse";
-import { createId } from "../utils/helpers.js?build=20260813-ai-hotpath-reuse";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260813-ai-hotpath-reuse";
-import { RuleEngine } from "./RuleEngine.js?build=20260813-ai-hotpath-reuse";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-human-response-indefinite";
+import { createId } from "../utils/helpers.js?build=20260813-human-response-indefinite";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260813-human-response-indefinite";
+import { RuleEngine } from "./RuleEngine.js?build=20260813-human-response-indefinite";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

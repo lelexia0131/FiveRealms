@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-ai-hotpath-reuse";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-human-response-indefinite";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

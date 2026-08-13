@@ -2,20 +2,20 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-ai-hotpath-reuse";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-ai-hotpath-reuse";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-ai-hotpath-reuse";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-ai-hotpath-reuse";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-ai-hotpath-reuse";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-ai-hotpath-reuse";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-human-response-indefinite";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-human-response-indefinite";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-human-response-indefinite";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-human-response-indefinite";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-human-response-indefinite";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-human-response-indefinite";
 import {
   counterOpportunityCost,
   globalBenefitCounterDesire,
   mutualBenefitDraftValues
-} from "./AiGlobalBenefit.js?build=20260813-ai-hotpath-reuse";
-import { HP_VALUE } from "./AiEconomics.js?build=20260813-ai-hotpath-reuse";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-ai-hotpath-reuse";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-ai-hotpath-reuse";
+} from "./AiGlobalBenefit.js?build=20260813-human-response-indefinite";
+import { HP_VALUE } from "./AiEconomics.js?build=20260813-human-response-indefinite";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-human-response-indefinite";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-human-response-indefinite";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -30,7 +30,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260813-ai-hotpath-reuse";
+} from "./AiProbabilityBranches.js?build=20260813-human-response-indefinite";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);

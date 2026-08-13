@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260813-ai-hotpath-reuse";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-ai-hotpath-reuse";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260813-ai-hotpath-reuse";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260813-human-response-indefinite";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-human-response-indefinite";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260813-human-response-indefinite";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260813-ai-hotpath-reuse";
-import { AnimationController } from "./animationController.js?build=20260813-ai-hotpath-reuse";
-import { InteractionController } from "./InteractionController.js?build=20260813-ai-hotpath-reuse";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260813-ai-hotpath-reuse";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260813-ai-hotpath-reuse";
-import { JudgmentView } from "./JudgmentView.js?build=20260813-ai-hotpath-reuse";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-ai-hotpath-reuse";
-import { createOpponentHandView } from "./handVisibility.js?build=20260813-ai-hotpath-reuse";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260813-ai-hotpath-reuse";
-import { SoundManager } from "../audio/SoundManager.js?build=20260813-ai-hotpath-reuse";
+} from "./templates.js?build=20260813-human-response-indefinite";
+import { AnimationController } from "./animationController.js?build=20260813-human-response-indefinite";
+import { InteractionController } from "./InteractionController.js?build=20260813-human-response-indefinite";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260813-human-response-indefinite";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260813-human-response-indefinite";
+import { JudgmentView } from "./JudgmentView.js?build=20260813-human-response-indefinite";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-human-response-indefinite";
+import { createOpponentHandView } from "./handVisibility.js?build=20260813-human-response-indefinite";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260813-human-response-indefinite";
+import { SoundManager } from "../audio/SoundManager.js?build=20260813-human-response-indefinite";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -434,10 +434,12 @@ export class UIManager {
   requestResponse(request, label) {
     if (this.responseState) this.resolveResponse({ status:"cancelled" });
     return new Promise((resolve) => {
-      const deadline = Date.now() + request.timeoutMs;
+      // null 是当前单机模式的无限等待；正有限值保留未来限时模式的原倒计时与 fallback。
+      const timeoutEnabled = Number.isFinite(request.timeoutMs) && request.timeoutMs > 0;
+      const deadline = timeoutEnabled ? Date.now() + request.timeoutMs : null;
       const settle = (choice) => {
         if (!this.responseState || this.responseState.request.id !== request.id) return;
-        window.clearInterval(this.responseState.interval);
+        if (this.responseState.interval !== null) window.clearInterval(this.responseState.interval);
         this.responseState = null;
         this.elements.response_panel.classList.add("is-hidden");
         this.elements.response_panel.innerHTML = "";
@@ -448,14 +450,16 @@ export class UIManager {
         const node = this.elements.response_panel.querySelector(".countdown");
         if (node) node.textContent = `${Math.max(0, Math.ceil((deadline - Date.now()) / 1000))}s`;
       };
-      const interval = window.setInterval(update, 200);
+      const interval = timeoutEnabled ? window.setInterval(update, 200) : null;
       this.responseState = { request, resolve: settle, interval, deadline, label, selectedCardIds:new Set() };
       UIManager.prototype.renderResponseRequest.call(this);
       this.elements.response_panel.classList.remove("is-hidden");
-      this.game.cleanupManager.delay(request.timeoutMs).then((completed) => {
-        if (completed) settle({ status:"declined" });
-      });
-      update();
+      if (timeoutEnabled) {
+        this.game.cleanupManager.delay(request.timeoutMs).then((completed) => {
+          if (completed) settle({ status:"declined" });
+        });
+        update();
+      }
       this.render(this.game);
     });
   }
@@ -469,8 +473,10 @@ export class UIManager {
     const eventText = presentation.eventText ?? "当前有一项行动等待你的响应。";
     const responseText = presentation.responseText ?? "你可以改变即将发生的结算。";
     const availabilityText = presentation.availabilityText ?? "";
-    const seconds = Math.max(0, Math.ceil((state.deadline - Date.now()) / 1000));
-    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong><span class="countdown">${seconds}s</span></div><div class="response-copy"><p class="response-event">${renderResponseEvent(presentation, eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div><div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">${escapeHtml(presentation.declineLabel ?? "放弃响应")}</button></div>`;
+    const countdown = Number.isFinite(state.deadline)
+      ? `<span class="countdown">${Math.max(0, Math.ceil((state.deadline - Date.now()) / 1000))}s</span>`
+      : "";
+    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong>${countdown}</div><div class="response-copy"><p class="response-event">${renderResponseEvent(presentation, eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div><div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">${escapeHtml(presentation.declineLabel ?? "放弃响应")}</button></div>`;
   }
 
   toggleResponseCard(cardId) {

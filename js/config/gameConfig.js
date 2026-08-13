@@ -24,8 +24,8 @@ export const GAME_CONFIG = Object.freeze({
   defaultMaxEnergy: 3,
   // 普通突袭射程；当前动态存活环以 1 为核心，增大会明显削弱座位战术。
   defaultAttackRange: 1,
-  // 真人响应窗口毫秒数；推荐 8000～20000，只影响操作宽容度，不改 AI 合法性。
-  responseTimeoutMs: 12000,
+  // 真人响应窗口时限；null 表示无限等待，正有限毫秒数可重新启用限时模式。
+  responseTimeoutMs: null,
   // 是否强制同阵营 AI 队友救援濒死真人。
   // true：真人玩家濒死时，所有持有调息的存活 AI 队友必须救援。
   // false：恢复使用普通 AI 救援策略。

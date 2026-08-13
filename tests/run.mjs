@@ -7423,6 +7423,57 @@ test("调律师：协调额度每个全局回合开始重置且跨两个玩家�
 
 // ---- 响应窗口与格挡 ----
 
+test("响应窗口：默认真人响应不设置超时", () => {
+  assert.equal(GAME_CONFIG.responseTimeoutMs, null);
+});
+
+test("响应窗口：所有真人响应请求统一使用默认无限等待", async () => {
+  const source = makePlayer("source", 0, "dusk"),
+    responder = makePlayer("responder", 1, "dawn", "human"),
+    target = makePlayer("target", 2, "dusk"),
+    { game, ui } = makeGame([source, responder, target]);
+  responder.hand.push(instance("block"), instance("counter"), instance("recover"), instance("assault"));
+
+  const capture = async (start) => {
+    let request, settle;
+    ui.requestResponse = (nextRequest) => new Promise((resolve) => {
+      request = nextRequest;
+      settle = resolve;
+    });
+    const pending = start();
+    await Promise.resolve();
+    assert.equal(request.timeoutMs, null, `${request.type} 应无限等待`);
+    settle({ status: "declined" });
+    await pending;
+    return request.type;
+  };
+
+  const types = [];
+  types.push(await capture(() => game.responseSystem.requestCardResponse(
+    responder, "block", { source, target: responder, card: instance("assault") }, 1
+  )));
+  types.push(await capture(() => game.responseSystem.requestCardResponse(
+    responder, "counter", { source, target: responder, card: instance("harvest") }, 1
+  )));
+  responder.hp = 0;
+  types.push(await capture(() => game.responseSystem.requestDyingRescue(
+    responder, responder, responder.hand.find((card) => card.definitionId === "recover")
+  )));
+  responder.hp = 1;
+  types.push(await capture(() => game.responseSystem.requestAssaultDiscard(
+    responder, "决斗", { source, target: responder, card: instance("duel") }
+  )));
+  types.push(await capture(() => game.responseSystem.requestLeverageAssault(
+    responder, target, { source, equipment: instance("energyDevice"), card: instance("leverage") }
+  )));
+  types.push(await capture(() => game.responseSystem.requestSkillResponse(
+    responder, "aid", "护援", { source, target: responder, actionName: "伤害" }
+  )));
+
+  assert.deepEqual(types, ["block", "counter", "dyingRescue", "assaultDiscard", "leverageAssault", "skill"]);
+  assert.equal(game.state.pendingResponses.length, 0);
+});
+
 test("响应窗口：真人没有格挡时仍出现完整响应窗口，但不能凭空格挡", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game, ui }
@@ -31672,6 +31723,90 @@ test("UI·手牌：同类别已知牌严格采用README定义顺序", () => {
 
 // ---- 响应窗口 ----
 
+test("UI·响应窗口：默认各类真人响应无限等待且不创建倒计时", async () => {
+  const previousWindow = globalThis.window;
+  let intervalStarts = 0, timeoutStarts = 0;
+  globalThis.window = {
+    setInterval() { intervalStarts += 1; return intervalStarts; },
+    clearInterval() { }
+  };
+  const panel = {
+    innerHTML: "", classList: { add() { }, remove() { } }, querySelector() { return null; }
+  };
+  const fake = {
+    responseState: null,
+    elements: { response_panel: panel },
+    game: { cleanupManager: { delay() { timeoutStarts += 1; return Promise.resolve(true); } } },
+    render() { }
+  };
+  try {
+    for (const type of ["block", "counter", "dyingRescue", "assaultDiscard", "leverageAssault", "skill"]) {
+      let settled = false;
+      const pending = UIManager.prototype.requestResponse.call(
+        fake,
+        {
+          id: `indefinite-${type}`,
+          type,
+          requiredCount: type === "skill" ? 0 : 1,
+          legalCardIds: type === "skill" ? [] : ["card"],
+          timeoutMs: GAME_CONFIG.responseTimeoutMs,
+          presentation: {
+            eventText: "测试事件", responseText: "需要响应", availabilityText: "", buttonLabel: "确认"
+          }
+        },
+        "确认"
+      ).then((result) => {
+        settled = true;
+        return result;
+      });
+      await Promise.resolve();
+      assert.equal(settled, false, `${type} 不应自动结束`);
+      assert.doesNotMatch(panel.innerHTML, /countdown|\d+s/);
+      UIManager.prototype.resolveResponse.call(fake, { status: "cancelled" });
+      assert.equal((await pending).status, "cancelled");
+    }
+    assert.equal(intervalStarts, 0);
+    assert.equal(timeoutStarts, 0);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+  }
+});
+
+test("UI·响应窗口：默认格挡在明确使用或放弃后正常结束", async () => {
+  const previousWindow = globalThis.window;
+  globalThis.window = { setInterval() { throw new Error("默认响应不应启动倒计时"); }, clearInterval() { } };
+  const panel = {
+    innerHTML: "", classList: { add() { }, remove() { } }, querySelector() { return null; }
+  };
+  const fake = {
+    responseState: null,
+    elements: { response_panel: panel },
+    game: { cleanupManager: { delay() { throw new Error("默认响应不应启动超时"); } } },
+    render() { }
+  };
+  const request = {
+    id: "explicit-block",
+    type: "block",
+    requiredCount: 1,
+    legalCardIds: ["block-card"],
+    timeoutMs: GAME_CONFIG.responseTimeoutMs,
+    presentation: {
+      eventText: "敌人对你使用了突袭。", responseText: "你可以格挡。", availabilityText: "", buttonLabel: "格挡"
+    }
+  };
+  try {
+    const declined = UIManager.prototype.requestResponse.call(fake, request, "格挡");
+    UIManager.prototype.resolveResponse.call(fake, false);
+    assert.equal((await declined).status, "declined");
+
+    const used = UIManager.prototype.requestResponse.call(fake, { ...request, id: "explicit-block-use" }, "格挡");
+    UIManager.prototype.resolveResponse.call(fake, true);
+    assert.equal((await used).status, "used");
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+  }
+});
+
 const renderResponseEventHtml = async (presentation) => {
   const previousWindow = globalThis.window;
   globalThis.window = { setInterval, clearInterval };
@@ -33518,18 +33653,22 @@ test("生命周期：CleanupManager 可取消尚未完成的延迟", async () =>
 
 test("生命周期：响应窗口超时会按放弃处理并清除响应状态", async () => {
   const previousWindow = globalThis.window;
-  globalThis.window = { setInterval, clearInterval };
+  let intervalStarts = 0, finishTimeout;
+  globalThis.window = {
+    setInterval() { intervalStarts += 1; return intervalStarts; },
+    clearInterval() { }
+  };
   const panel = {
     innerHTML: "", classList: { add() { }, remove() { } }, querySelector() { return null; }
   };
   const fake = {
     responseState: null,
     elements: { response_panel: panel },
-    game: { cleanupManager: { delay: async () => true } },
+    game: { cleanupManager: { delay: () => new Promise((resolve) => { finishTimeout = resolve; }) } },
     render() { }
   };
   try {
-    const result = await UIManager.prototype.requestResponse.call(
+    const pending = UIManager.prototype.requestResponse.call(
       fake,
       {
         id: "timeout-response",
@@ -33542,9 +33681,74 @@ test("生命周期：响应窗口超时会按放弃处理并清除响应状态",
       },
       "格挡"
     );
+    assert.equal(intervalStarts, 1);
+    assert.match(panel.innerHTML, /class="countdown">1s/);
+    finishTimeout(true);
+    const result = await pending;
     assert.equal(result.status, "declined");
     assert.equal(fake.responseState, null);
     assert.equal(panel.innerHTML, "");
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+  }
+});
+
+test("生命周期：默认无限等待响应可由 teardown 取消并清理 UI", async () => {
+  const previousWindow = globalThis.window;
+  let intervalStarts = 0, timeoutStarts = 0;
+  globalThis.window = {
+    setInterval() { intervalStarts += 1; return intervalStarts; },
+    clearInterval() { }
+  };
+  const classes = new Set(["is-hidden"]), panel = {
+    innerHTML: "",
+    classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) },
+    querySelector() { return null; }
+  };
+  const fake = {
+    responseState: null,
+    targetState: null,
+    discardState: null,
+    playEndState: null,
+    privateRevealToken: 0,
+    thinkingPlayerId: null,
+    elements: {
+      response_panel: panel,
+      private_reveal: { classList: { add() { } } },
+      thinking_indicator: { classList: { add() { } } },
+      action_prompt: { classList: { remove() { } } }
+    },
+    game: { cleanupManager: { delay() { timeoutStarts += 1; return Promise.resolve(true); } } },
+    animationController: { clear() { } },
+    interactionController: { cancel() { } },
+    publicPoolView: { cancel() { } },
+    privateRevealView: { hide() { } },
+    judgmentView: { hide() { } },
+    hideDying() { },
+    hideDuel() { },
+    hideSkillDetails() { },
+    render() { }
+  };
+  try {
+    const pending = UIManager.prototype.requestResponse.call(
+      fake,
+      {
+        id: "teardown-response", type: "block", requiredCount: 1, legalCardIds: ["block-card"],
+        timeoutMs: null,
+        presentation: {
+          eventText: "测试事件", responseText: "需要响应", availabilityText: "", buttonLabel: "格挡"
+        }
+      },
+      "格挡"
+    );
+    assert.equal(classes.has("is-hidden"), false);
+    UIManager.prototype.cancelPendingInteractions.call(fake);
+    assert.equal((await pending).status, "cancelled");
+    assert.equal(fake.responseState, null);
+    assert.equal(panel.innerHTML, "");
+    assert.equal(classes.has("is-hidden"), true);
+    assert.equal(intervalStarts, 0);
+    assert.equal(timeoutStarts, 0);
   } finally {
     if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
   }
