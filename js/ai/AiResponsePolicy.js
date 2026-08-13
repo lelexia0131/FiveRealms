@@ -1,12 +1,12 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-human-response-indefinite";
-import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260813-human-response-indefinite";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260813-human-response-indefinite";
-import { AiSimulator } from "./AiSimulator.js?build=20260813-human-response-indefinite";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-blade-walker-planning";
+import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260813-blade-walker-planning";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260813-blade-walker-planning";
+import { AiSimulator } from "./AiSimulator.js?build=20260813-blade-walker-planning";
 import {
   hasLightning,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260813-human-response-indefinite";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260813-human-response-indefinite";
+} from "./lightningScoring.js?build=20260813-blade-walker-planning";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260813-blade-walker-planning";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

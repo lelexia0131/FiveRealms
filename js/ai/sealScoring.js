@@ -2,15 +2,15 @@
  * 封印的 AI 共享纯计算：只读取过滤后的状态、反制概率与剩余牌类别计数，
  * 不实例化匿名判定牌，也不修改 remainingCardCounts 根先验。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-human-response-indefinite";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-human-response-indefinite";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-human-response-indefinite";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-blade-walker-planning";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-blade-walker-planning";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-blade-walker-planning";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
   mergeProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260813-human-response-indefinite";
+} from "./AiProbabilityBranches.js?build=20260813-blade-walker-planning";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;

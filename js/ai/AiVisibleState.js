@@ -3,10 +3,10 @@
  * AIController 必须通过此视图评估敌人；即使完整状态在同一内存中，也不能读取隐藏牌定义。
  * 技能合法窥见的牌只以 knownCardDefinitionIds 暴露，不会写入公开日志。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-human-response-indefinite";
-import { TeamRuleService } from "../core/TeamRuleService.js?build=20260813-human-response-indefinite";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-human-response-indefinite";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-human-response-indefinite";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-blade-walker-planning";
+import { TeamRuleService } from "../core/TeamRuleService.js?build=20260813-blade-walker-planning";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-blade-walker-planning";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-blade-walker-planning";
 
 const equipmentRoleDelta = (player, definitionId) => {
   if (!player?.generalId || !definitionId) return 0;
@@ -153,9 +153,16 @@ export function createAiVisibleState(viewerId, state, remainingCardCounts = null
       recoverUsed: player.turnFlags.recoverUsed,
       recoverLimit: player.turnFlags.recoverLimit,
       momentum: player.turnFlags.momentum ?? 0,
+      momentumBranches:[{ probability:1, conditions:{}, amount:player.turnFlags.momentum ?? 0 }],
       categoriesUsed: [...(player.turnFlags.categoriesUsed ?? [])],
       categoryUsedProbabilities: Object.fromEntries(["basic","tactic","equipment"]
         .map((category) => [category, player.turnFlags.categoriesUsed?.has(category) ? 1 : 0])),
+      categoryUsedStateBranchesByCategory:Object.fromEntries(["basic","tactic","equipment"]
+        .map((category) => [category, [{
+          probability:1,
+          conditions:{},
+          used:Boolean(player.turnFlags.categoriesUsed?.has(category))
+        }]])),
       guardianAidUsedProbability: player.turnFlags.guardianAidUsed ? 1 : 0,
       spyGapTriggeredProbability: player.turnFlags.spyGapTriggered ? 1 : 0,
       gambleTriggered: Boolean(player.turnFlags.gambleTriggered),

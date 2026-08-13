@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260813-human-response-indefinite";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260813-human-response-indefinite";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260813-human-response-indefinite";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260813-human-response-indefinite";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260813-human-response-indefinite";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260813-human-response-indefinite";
-import { AiPlanner } from "./AiPlanner.js?build=20260813-human-response-indefinite";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260813-blade-walker-planning";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260813-blade-walker-planning";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260813-blade-walker-planning";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260813-blade-walker-planning";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260813-blade-walker-planning";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260813-blade-walker-planning";
+import { AiPlanner } from "./AiPlanner.js?build=20260813-blade-walker-planning";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

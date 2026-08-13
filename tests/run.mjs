@@ -16191,6 +16191,75 @@ test("AI·刃行者：首次使用基础牌的连势按突袭命中分支计算�
   assert.equal(new AiSimulator(missState).apply(missState, action, "blade").players[0].momentum, 2);
 });
 
+test("AI·刃行者：首击概率格挡后保留连势的世界会把加伤传给第二击", () => {
+  const state = {
+    players: [
+      {
+        id:"blade", seatIndex:0, generalId:"blade-walker", battleTeam:"dawn",
+        hp:4, maxHp:4, shield:0, alive:true, handCount:2,
+        hand:[{ id:"first", definitionId:"assault" }, { id:"second", definitionId:"assault" }],
+        attackUsed:0, attackLimit:2, momentum:2, categoriesUsed:["basic"], expectedRecoverCount:0
+      },
+      {
+        id:"block-target", seatIndex:1, battleTeam:"dusk", hp:4, maxHp:4,
+        shield:0, alive:true, handCount:1, blockProbability:.5,
+        twoBlockProbability:0, expectedRecoverCount:0
+      },
+      {
+        id:"shield-target", seatIndex:2, battleTeam:"dusk", hp:4, maxHp:4,
+        shield:2, alive:true, handCount:0, blockProbability:0,
+        twoBlockProbability:0, expectedRecoverCount:0
+      }
+    ]
+  };
+  const simulator = new AiSimulator(state);
+  const afterFirst = simulator.apply(state, {
+    type:"card", card:{ ...CARD_DEFINITIONS.assault, id:"first" }, targets:[{ id:"block-target" }]
+  }, "blade");
+  assertClose(afterFirst.players[0].momentum, 1);
+  assert.deepEqual(
+    afterFirst.players[0].momentumBranches.map((branch) => branch.amount).sort(),
+    [0, 2]
+  );
+
+  const afterSecond = simulator.apply(afterFirst, {
+    type:"card", card:{ ...CARD_DEFINITIONS.assault, id:"second" }, targets:[{ id:"shield-target" }]
+  }, "blade");
+  const secondTarget = afterSecond.players.find((player) => player.id === "shield-target");
+  // 首击未被格挡的世界已消费连势，第二击只打掉2点盾；首击被格挡的世界保留2层，
+  // 第二击造成3点伤害，穿过2点盾并扣1点生命。两世界等概率，所以期望生命为3.5。
+  assertClose(secondTarget.hp, 3.5);
+  assertClose(secondTarget.shield, .5);
+  assertClose(afterSecond.players[0].momentum, 0);
+});
+
+test("AI·刃行者：即将清空的连势不强迫无生命收益突袭且正收益仍会兑现", async () => {
+  const run = async ({ shield, hp }) => {
+    const blade = makePlayer(`expiry-blade-${shield}`, 0, "dawn", "ai", 0),
+      target = makePlayer(`expiry-target-${shield}`, 1, "dusk", "ai", 1),
+      assault = instance("assault"),
+      { game } = makeGame([blade, target]);
+    blade.hand.push(assault);
+    blade.energy = 2;
+    blade.turnFlags.momentum = 2;
+    blade.turnFlags.categoriesUsed.add("basic");
+    target.hp = hp;
+    target.shield = shield;
+    game.aiSearchNodeBudgetOverride = 800;
+    game.aiRandomnessRange = 0;
+    const action = await game.aiController.selectAction(blade, { gameId:game.state.gameId });
+    const sequence = game.aiController.planner.lastSearchStats.bestSequence;
+    game.dispose();
+    return { action, sequence };
+  };
+
+  const noLifeDamage = await run({ shield:3, hp:4 });
+  assert.equal(noLifeDamage.action.type, "end");
+  const lethal = await run({ shield:0, hp:3 });
+  assert.equal(lethal.action.card?.definitionId, "assault");
+  assert.equal(lethal.sequence[0].cardId, "assault");
+});
+
 test("AI·刃行者：概率破军只在发动世界新增可用突袭次数槽", () => {
   const shared = "break-army-energy",
     state = {
@@ -16262,13 +16331,13 @@ test("AI·刃行者：破军只在额外攻击槽确实有第二张突袭可用�
   assert.equal(skills().length, 0);
   assert.equal(
     game.aiController.evaluator.breakArmyUtility(createAiVisibleState(blade.id, game.state).players[0]),
-    -4
+    0
   );
   blade.turnFlags.attackUsed = blade.turnFlags.attackLimit;
   assert.equal(skills().length, 1);
   assert.equal(
     game.aiController.evaluator.breakArmyUtility(createAiVisibleState(blade.id, game.state).players[0]),
-    8
+    getRoleCardAiValue("blade-walker", "assault")
   );
 });
 

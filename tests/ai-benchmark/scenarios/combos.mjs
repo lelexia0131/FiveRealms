@@ -70,10 +70,10 @@ registerScenario({
   setup: () => board({
     energy: 2,
     hand: [makeCard("assault"), makeCard("assault"), makeCard("exposeWeakness")]
-  }),
+  }, { b:{ hp:2, hand:[] }, c:{ hand:[] }, d:{ hand:[] }, e:{ hand:[] } }),
   grade: ({ action }) => {
-    if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "先破势使双突袭伤害+2");
-    if (isCard(action, "assault")) return quality(QUALITY.POOR, "先突袭浪费破势收益");
+    if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "先破势使下一次突袭跨过2HP击杀线");
+    if (isCard(action, "assault")) return quality(QUALITY.POOR, "普通突袭未跨过当前击杀线");
     return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);
   }
 });

@@ -2,19 +2,19 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-human-response-indefinite";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-human-response-indefinite";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260813-human-response-indefinite";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260813-human-response-indefinite";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260813-human-response-indefinite";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-human-response-indefinite";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-human-response-indefinite";
-import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-human-response-indefinite";
-import { AiSimulator } from "./AiSimulator.js?build=20260813-human-response-indefinite";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260813-human-response-indefinite";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-blade-walker-planning";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-blade-walker-planning";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260813-blade-walker-planning";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260813-blade-walker-planning";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260813-blade-walker-planning";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-blade-walker-planning";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-blade-walker-planning";
+import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-blade-walker-planning";
+import { AiSimulator } from "./AiSimulator.js?build=20260813-blade-walker-planning";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260813-blade-walker-planning";
 import {
   sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260813-human-response-indefinite";
+} from "./sealScoring.js?build=20260813-blade-walker-planning";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -76,7 +76,11 @@ export class AiEvaluator {
         ), 0), 0)
       : Math.max(0, (Number(actor.attackLimit ?? actor.turnFlags?.attackLimit) || 0)
         - (Number(actor.attackUsed ?? actor.turnFlags?.attackUsed) || 0));
-    return assaultCount > availableAttackUses + Number.EPSILON ? 8 : -4;
+    const redeemableExtraCapacity = Math.min(1, Math.max(0, assaultCount - availableAttackUses));
+    const assaultSearchValue = actor.generalId
+      ? getRoleCardAiValue(actor.generalId, "assault")
+      : getBaseCardAiValue("assault");
+    return redeemableExtraCapacity * assaultSearchValue;
   }
 
   threatPriority(viewer, target, memory, expectedDamage = 1) {
@@ -615,6 +619,9 @@ export class AiEvaluator {
     const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
     if (action.type === "end") {
       const remainingCards = actor.handCount ?? actor.hand?.length ?? player.hand.length;
+      // 连势在 turnEnd 清空，属于已经取得但即将到期的选择权。此时结束不能因通用
+      // “仍有手牌”罚分而被强迫换成无生命收益的垃圾突袭；有价值的兑现仍由 after-state 胜出。
+      if (actor.generalId === "blade-walker" && (actor.momentum ?? 0) > 0) return 0;
       return remainingCards > 0 ? -0.8 : 0;
     }
     if (action.type === "skill") return 0;

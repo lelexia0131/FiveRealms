@@ -74,9 +74,9 @@ id: "skills.blade-break-army-combo",
     hand: [makeCard("assault"), makeCard("assault"), makeCard("charge")]
   }),
   grade: ({ action }) => {
-    if (isSkill(action, "breakArmy")) return quality(QUALITY.OPTIMAL, "破军解锁额外突袭，双突袭连段");
+    if (isSkill(action, "breakArmy")) return quality(QUALITY.OPTIMAL, "破军解锁当前唯一可兑现的额外突袭");
     if (isCard(action, "assault")) return quality(QUALITY.SEVERE, "次数已尽仍选择突袭");
-    if (isCard(action, "charge")) return quality(QUALITY.ACCEPTABLE, "聚能合理但未利用破军");
+    if (isCard(action, "charge")) return quality(QUALITY.OPTIMAL, "先聚能触发新类别连势，后续仍能破军并突袭");
     return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);
   }
 });

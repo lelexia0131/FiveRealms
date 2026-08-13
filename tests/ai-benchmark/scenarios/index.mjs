@@ -10,3 +10,4 @@ import "./board.mjs";
 import "./probability.mjs";
 import "./planning.mjs";
 import "./stability.mjs";
+import "./bladeWalker.mjs";

@@ -2,20 +2,20 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-human-response-indefinite";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-human-response-indefinite";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-human-response-indefinite";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-human-response-indefinite";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-human-response-indefinite";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-human-response-indefinite";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-blade-walker-planning";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-blade-walker-planning";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260813-blade-walker-planning";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-blade-walker-planning";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-blade-walker-planning";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-blade-walker-planning";
 import {
   counterOpportunityCost,
   globalBenefitCounterDesire,
   mutualBenefitDraftValues
-} from "./AiGlobalBenefit.js?build=20260813-human-response-indefinite";
-import { HP_VALUE } from "./AiEconomics.js?build=20260813-human-response-indefinite";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-human-response-indefinite";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-human-response-indefinite";
+} from "./AiGlobalBenefit.js?build=20260813-blade-walker-planning";
+import { HP_VALUE } from "./AiEconomics.js?build=20260813-blade-walker-planning";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-blade-walker-planning";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-blade-walker-planning";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -30,7 +30,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260813-human-response-indefinite";
+} from "./AiProbabilityBranches.js?build=20260813-blade-walker-planning";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -98,6 +98,7 @@ export class AiSimulator {
     this.initializeAssaultSummaries(this.initial);
     this.initializeBlockCountDistributions(this.initial);
     this.initializeCounterCountDistributions(this.initial);
+    this.initializeMomentumBranches(this.initial);
     // root 结算模拟守卫：目标级 root 的 apply 群伤循环会再次调用 counterDesire，避免递归。
     this._simulatingRootResolution = false;
   }
@@ -107,8 +108,67 @@ export class AiSimulator {
     this.initializeEquipmentBaselines(cloned);
     this.initializeBlockCountDistributions(cloned);
     this.initializeCounterCountDistributions(cloned);
+    this.initializeMomentumBranches(cloned);
     this.syncActiveSkillCosts(cloned);
     return cloned;
+  }
+
+  /** 连势必须保留防御结果的条件键；只存期望标量会让后续突袭把加伤摊到错误世界。 */
+  initializeMomentumBranches(state) {
+    for (const player of state?.players ?? []) {
+      if (player.generalId !== "blade-walker") continue;
+      if (!Array.isArray(player.momentumBranches) || !player.momentumBranches.length) {
+        player.momentumBranches = [{
+          probability:1,
+          conditions:{},
+          amount:Math.max(0, Math.min(GAME_CONFIG.momentumMaxStacks, Number(player.momentum) || 0))
+        }];
+      }
+      this.syncMomentumSummary(player);
+      player.categoryUsedStateBranchesByCategory ??= {};
+      player.categoryUsedProbabilities ??= {};
+      player.categoriesUsed ??= [];
+      for (const category of ["basic", "tactic", "equipment"]) {
+        if (!Array.isArray(player.categoryUsedStateBranchesByCategory[category])
+          || !player.categoryUsedStateBranchesByCategory[category].length) {
+          const usedProbability = clampProbability(player.categoryUsedProbabilities[category]
+            ?? (player.categoriesUsed.includes(category) ? 1 : 0));
+          player.categoryUsedStateBranchesByCategory[category] = usedProbability <= PROBABILITY_EPSILON
+            ? [{ probability:1, conditions:{}, used:false }]
+            : usedProbability >= 1 - PROBABILITY_EPSILON
+              ? [{ probability:1, conditions:{}, used:true }]
+              : [
+                  { probability:usedProbability, conditions:{}, used:true },
+                  { probability:1 - usedProbability, conditions:{}, used:false }
+                ];
+        }
+        this.syncCategoryUsedSummary(player, category);
+      }
+    }
+  }
+
+  syncMomentumSummary(player) {
+    player.momentumBranches = projectProbabilityStateBranches(
+      getValueBranches(player, "momentum", player.momentum),
+      (branch) => ({
+        amount:Math.max(0, Math.min(GAME_CONFIG.momentumMaxStacks, Number(branch.amount) || 0))
+      })
+    );
+    player.momentum = expectedBranchValue(player.momentumBranches);
+    return player.momentumBranches;
+  }
+
+  syncCategoryUsedSummary(player, category) {
+    const branches = mergeProbabilityStateBranches(
+      player.categoryUsedStateBranchesByCategory?.[category] ?? []
+    );
+    player.categoryUsedStateBranchesByCategory[category] = branches;
+    const probability = totalBranchProbability(branches.filter((branch) => branch.used));
+    player.categoryUsedProbabilities[category] = probability;
+    const index = player.categoriesUsed.indexOf(category);
+    if (probability >= 1 - PROBABILITY_EPSILON && index < 0) player.categoriesUsed.push(category);
+    else if (probability < 1 - PROBABILITY_EPSILON && index >= 0) player.categoriesUsed.splice(index, 1);
+    return branches;
   }
 
   /** 克隆或结算后按当前技能定义重新同步每个玩家的主动技能成本，供后续动作与机会成本评估共用。 */
@@ -1005,7 +1065,10 @@ export class AiSimulator {
     if (next.playPhaseEnded) return next;
     const actor = next.players.find((player) => player.id === viewerId);
     if (abstractAction.type === "end") {
-      if (actor?.generalId === "blade-walker") actor.momentum = 0;
+      if (actor?.generalId === "blade-walker") {
+        actor.momentumBranches = [{ probability:1, conditions:{}, amount:0 }];
+        actor.momentum = 0;
+      }
       next.playPhaseEnded = true;
       return next;
     }
@@ -1367,7 +1430,7 @@ export class AiSimulator {
     }
     if (actor.generalId === "blade-walker" && actor.alive && card.definitionId !== "assault") {
       const category = card.category ?? CARD_DEFINITIONS[card.definitionId]?.category;
-      this.simulateCategoryUse(actor, category, executionProbability);
+      this.simulateCategoryUse(next, actor, category, cardEventWorlds);
     }
     this.syncActiveSkillCosts(next);
     return next;
@@ -2164,30 +2227,63 @@ export class AiSimulator {
     return totalSpent;
   }
 
-  /** 连势按“该类别此前已使用”的概率累计，避免多个部分概率动作重复获得完整首次收益。 */
-  simulateCategoryUse(player, category, useProbability = 1, lifeDamageProbability = 0) {
+  /**
+   * 连势与类别首次使用都沿用动作/伤害的完整条件世界。命中生命时先消费旧连势，
+   * 随后的 cardUsed 若是该类别首次使用再获得1层；未命中世界保留旧层并正常叠层。
+   */
+  simulateCategoryUse(state, player, category, useResolution = 1, lifeDamageResolution = null) {
     if (!category || player?.generalId !== "blade-walker") return 0;
-    const chance = clampProbability(useProbability);
-    const lifeDamageChance = Math.min(chance, clampProbability(lifeDamageProbability));
-    player.categoriesUsed ??= [];
-    player.categoryUsedProbabilities ??= {};
-    const oldUsedProbability = clampProbability(player.categoryUsedProbabilities[category]
-      ?? (player.categoriesUsed.includes(category) ? 1 : 0));
-    const newUsedProbability = unionProbability(oldUsedProbability, chance);
-    const firstUseProbability = Math.max(0, newUsedProbability - oldUsedProbability);
-    player.categoryUsedProbabilities[category] = newUsedProbability;
-    if (newUsedProbability >= 1 - Number.EPSILON && !player.categoriesUsed.includes(category)) {
-      player.categoriesUsed.push(category);
-    }
-
-    const currentMomentum = Math.max(0, Number(player.momentum) || 0);
-    const unusedProbability = 1 - oldUsedProbability;
-    const firstUseOnHit = lifeDamageChance * unusedProbability;
-    const firstUseWithoutHit = Math.max(0, chance - lifeDamageChance) * unusedProbability;
-    const nonHitGain = Math.min(1, Math.max(0, GAME_CONFIG.momentumMaxStacks - currentMomentum));
-    // 命中生命时旧连势先被消耗，随后本次首次类别仍会积累1层；未命中分支只补足剩余层数。
-    player.momentum = Math.min(GAME_CONFIG.momentumMaxStacks,
-      currentMomentum * (1 - lifeDamageChance) + firstUseOnHit + firstUseWithoutHit * nonHitGain);
+    this.initializeMomentumBranches({ players:[player] });
+    const useWorlds = Array.isArray(useResolution)
+      ? this.getEventWorlds(state, 1, useResolution, `momentum-use:${player.id}:${category}`)
+      : this.getEventWorlds(state, clampProbability(useResolution), null,
+        `momentum-use:${player.id}:${category}`);
+    const lifeDamageWorlds = Array.isArray(lifeDamageResolution)
+      ? this.getEventWorlds(state, 1, lifeDamageResolution,
+        `momentum-life-damage:${player.id}:${category}`)
+      : this.getEventWorlds(state, clampProbability(lifeDamageResolution), null,
+        `momentum-life-damage:${player.id}:${category}`);
+    const momentumState = this.syncMomentumSummary(player).map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions,
+      momentumAmount:branch.amount
+    }));
+    const categoryState = this.syncCategoryUsedSummary(player, category).map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions,
+      categoryUsed:Boolean(branch.used)
+    }));
+    const joined = joinProbabilityStateBranches(
+      momentumState,
+      categoryState,
+      useWorlds.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        cardUsed:Boolean(branch.occurs)
+      })),
+      lifeDamageWorlds.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        lifeDamage:Boolean(branch.occurs)
+      }))
+    );
+    const firstUseProbability = totalBranchProbability(
+      joined.filter((branch) => branch.cardUsed && !branch.categoryUsed)
+    );
+    player.momentumBranches = projectProbabilityStateBranches(joined, (branch) => {
+      if (!branch.cardUsed) return { amount:branch.momentumAmount };
+      const retained = branch.lifeDamage ? 0 : branch.momentumAmount;
+      return {
+        amount:Math.min(GAME_CONFIG.momentumMaxStacks,
+          retained + (!branch.categoryUsed ? 1 : 0))
+      };
+    });
+    player.categoryUsedStateBranchesByCategory[category] = projectProbabilityStateBranches(
+      joined,
+      (branch) => ({ used:Boolean(branch.categoryUsed || branch.cardUsed) })
+    );
+    this.syncMomentumSummary(player);
+    this.syncCategoryUsedSummary(player, category);
     return firstUseProbability;
   }
 
@@ -2373,13 +2469,22 @@ export class AiSimulator {
       source.attackUsed = (source.attackUsed ?? 0) + chance;
     }
     this.simulateTracking(state, source, target, assaultWorlds);
-    const momentum = source.generalId === "blade-walker" ? (source.momentum ?? 0) : 0;
+    const momentumBranches = source.generalId === "blade-walker"
+      ? this.syncMomentumSummary(source)
+      : [{ probability:1, conditions:{}, amount:0 }];
     const damageOutcome = {};
-    const damage = 1 + (source.exposeWeaknessStacks ?? 0) + (source.assaultBonus ?? 0) + momentum;
+    const baseDamage = 1 + (source.exposeWeaknessStacks ?? 0) + (source.assaultBonus ?? 0);
+    const damageBranches = momentumBranches.map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions,
+      amount:baseDamage + branch.amount
+    }));
+    const damage = expectedBranchValue(damageBranches);
     this.applyDamage(state, source, target, damage, {
       canBlock:true,
       deviceAttack:true,
       eventBranches:assaultWorlds,
+      amountBranches:damageBranches,
       outcome:damageOutcome,
       attackerEquipmentProbability:options.sourceEquipmentConditional ? 1 : undefined,
       damageContext:options.damageContext ?? { cardDamage:true, emberTriggeredProbabilities:{} }
@@ -2387,7 +2492,9 @@ export class AiSimulator {
     const lifeDamageChance = clampProbability(damageOutcome.lifeDamageChance ?? 0);
     source.exposeWeaknessStacks = (source.exposeWeaknessStacks ?? 0) * (1 - chance);
     source.assaultBonus = (source.assaultBonus ?? 0) * (1 - chance);
-    this.simulateCategoryUse(source, "basic", chance, lifeDamageChance);
+    this.simulateCategoryUse(
+      state, source, "basic", assaultWorlds, damageOutcome.lifeDamageBranches ?? null
+    );
     return lifeDamageChance;
   }
 
@@ -3241,6 +3348,13 @@ export class AiSimulator {
       `damage-event:${attacker?.id ?? "unknown"}:${target.id}`);
     const eventProbability = this.eventProbability(eventWorlds);
     if (eventProbability <= 0) return 0;
+    const amountState = (Array.isArray(options.amountBranches) && options.amountBranches.length
+      ? mergeProbabilityStateBranches(options.amountBranches)
+      : [{ probability:1, conditions:{}, amount }]).map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions,
+      damageAmount:Math.max(0, Number(branch.amount) || 0)
+    }));
     const battleProbability = clampProbability(options.deviceAttack
       && attacker.equipmentDefinitionId === "battleDevice"
       ? (options.attackerEquipmentProbability ?? this.getSimulatedEquipmentProbability(attacker, "battleDevice"))
@@ -3366,11 +3480,23 @@ export class AiSimulator {
     const damagePassProbability = attackOutcomeWorlds
       ? totalBranchProbability(attackOutcomeWorlds.filter((branch) => branch.occurs && branch.passes))
       : eventProbability * passChance;
+    let aidReductionPerPass = 0;
     if (damagePassProbability > PROBABILITY_EPSILON) {
+      const passWorlds = attackOutcomeWorlds
+        ?? joinProbabilityStateBranches(eventWorlds, probabilityEventPartition(
+          this.nextProbabilityEventKey(state, `damage-pass-aid:${attacker?.id ?? "unknown"}:${target.id}`),
+          passChance,
+          "passes"
+        ));
+      const incomingExpectedDamage = joinProbabilityStateBranches(passWorlds, amountState)
+        .reduce((sum, branch) => (
+          sum + (branch.occurs && branch.passes ? branch.probability * branch.damageAmount : 0)
+        ), 0);
       const aidedExpectedDamage = this.simulateGuardianAid(
-        state, target, amount * damagePassProbability, damagePassProbability
+        state, target, incomingExpectedDamage, damagePassProbability
       );
-      amount = aidedExpectedDamage / damagePassProbability;
+      aidReductionPerPass = Math.max(0,
+        (incomingExpectedDamage - aidedExpectedDamage) / damagePassProbability);
     }
     const shieldState = getValueBranches(target, "shield", target.shield).map((branch) => ({
       probability:branch.probability,
@@ -3378,18 +3504,19 @@ export class AiSimulator {
       shieldAmount:branch.amount
     }));
     const damageWorlds = attackOutcomeWorlds
-      ? joinProbabilityStateBranches(attackOutcomeWorlds, shieldState)
+      ? joinProbabilityStateBranches(attackOutcomeWorlds, shieldState, amountState)
       : joinProbabilityStateBranches(eventWorlds, probabilityEventPartition(
           this.nextProbabilityEventKey(state, `damage-pass:${attacker?.id ?? "unknown"}:${target.id}`),
           passChance,
           "passes"
-        ), shieldState);
+        ), shieldState, amountState);
+    const effectiveDamageFor = (branch) => Math.max(0, branch.damageAmount - aidReductionPerPass);
     const hpDamageFor = (branch) => branch.occurs && branch.passes
-      ? Math.max(0, amount - branch.shieldAmount)
+      ? Math.max(0, effectiveDamageFor(branch) - branch.shieldAmount)
       : 0;
     target.shieldBranches = projectProbabilityStateBranches(damageWorlds, (branch) => ({
       amount:branch.occurs && branch.passes
-        ? Math.max(0, branch.shieldAmount - amount)
+        ? Math.max(0, branch.shieldAmount - effectiveDamageFor(branch))
         : branch.shieldAmount
     }));
     target.shield = expectedBranchValue(target.shieldBranches);
@@ -3464,6 +3591,7 @@ export class AiSimulator {
       target.huntMarkProbability = 0;
       target.huntMarkProbabilities = {};
       target.momentum = 0;
+      target.momentumBranches = [{ probability:1, conditions:{}, amount:0 }];
       target.statuses = [];
       target.handCount = 0;
       target.hand = [];

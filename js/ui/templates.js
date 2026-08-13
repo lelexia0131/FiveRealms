@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260813-human-response-indefinite";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260813-human-response-indefinite";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260813-blade-walker-planning";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260813-blade-walker-planning";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

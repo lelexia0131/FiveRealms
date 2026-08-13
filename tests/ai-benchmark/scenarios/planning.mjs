@@ -100,10 +100,10 @@ id: "planning.d2-buff-before-double",
   discrimination: "planning",
   setup: () => board("blade-walker", {
     hand: [makeCard("assault"), makeCard("assault"), makeCard("exposeWeakness")]
-  }),
+  }, { b:{ hp:2, hand:[] }, c:{ hand:[] }, d:{ hand:[] }, e:{ hand:[] } }),
   grade: ({ action }) => {
-    if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "破势使两次突袭受益");
-    if (isCard(action, "assault")) return quality(QUALITY.POOR, "顺序错误");
+    if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "破势只强化下一次突袭，并使其跨过2HP击杀线");
+    if (isCard(action, "assault")) return quality(QUALITY.POOR, "普通1点伤害未跨过击杀线");
     return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);
   }
 });
