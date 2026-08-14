@@ -21,14 +21,14 @@ import {
   buildLightningHitDistribution as buildDomainLightningHitDistribution,
   buildLightningPropagationChainIds,
   nextLightningReceiverId
-} from "./domain/LightningModel.js?build=20260814-ai-policy-domain";
+} from "./domain/LightningModel.js?build=20260814-ai-simulation-engine";
 
 export {
   equipmentJudgmentProbability,
   getLightningStatusStateBranches,
   hasLightning,
   lightningPresenceProbability
-} from "./domain/LightningModel.js?build=20260814-ai-policy-domain";
+} from "./domain/LightningModel.js?build=20260814-ai-simulation-engine";
 
 /*
 功能

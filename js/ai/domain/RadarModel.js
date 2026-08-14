@@ -17,11 +17,11 @@ AiSimulator、AiValueSimulationQuery、Evaluator、ValueLedger 与兼容门面�
 架构约束
 本模型不是 Game authority；真实雷达判定与牌移动仍由 JudgmentSystem/Game 负责。不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-policy-domain";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "../state/Probability.js?build=20260814-ai-policy-domain";
+} from "../state/Probability.js?build=20260814-ai-simulation-engine";
 
 export const RADAR_BASIC_DEFINITIONS = Object.freeze(["assault", "recover", "block", "charge", "shield"]);
 

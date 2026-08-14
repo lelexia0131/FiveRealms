@@ -1,8 +1,8 @@
 # FiveRealms AI Engine 2.0
 
-当前状态：AI-ARCH-0、AI-ARCH-1、AI-ARCH-2、AI-ARCH-2.1、AI-ARCH-3、AI-ARCH-4 已完成；下一阶段为 AI-ARCH-5 评审。
+当前状态：AI-ARCH-0 至 AI-ARCH-8 已完成；下一阶段为 AI-ARCH-9 评审。
 当前实现起点：`7696f16 ARCH-0.1.2`
-当前浏览器构建标识：`20260814-ai-value-ownership`
+当前浏览器构建标识：`20260814-ai-simulation-engine`
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
 审计日期：2026-08-14
 范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；第 2 至 10 节保留最初只读审计及迁移设计作为历史基线，后续完成事实在对应阶段章节持续更新。
@@ -904,3 +904,193 @@ Architecture Guard 已覆盖 `policy/**` 与 `domain/**`：禁止 UI、Controlle
 ARCH-6 完整测试为 `1377/1377`，统一 build 为 `20260814-ai-policy-domain`。没有修改 Value/Transition 数值、搜索参数、规则或平衡；没有创建 Simulation split，也没有清理 Planner core。
 
 Remaining debt：旧 `getLegalActions` 命名仍把 policy candidate set 称作 legal；`sealScoring` 仍承载 value/prior compatibility adapter；GlobalBenefit root flip 仍通过 `AiValueSimulationQuery` 使用完整 Simulator；旧 façade 的最终移除待 AI-ARCH-10。Simulator/Response/Combat 的正式拆分从 AI-ARCH-7 开始，本阶段到此停止。
+
+## 28. AI-ARCH-7/8 Simulation Responsibility Freeze Table
+
+本表冻结于 `2a339f9 ARCH-5.6`，生产代码迁移尚未开始。分类依据是函数实际读取、写入和规则镜像职责，而不是旧文件位置。`AiSimulator` 只接收过滤后的 `SearchState`；表中 `AUTHORITY` 是真实游戏规则来源，`SIMULATION MIRROR` 是 AI 对该来源的显式近似，`DERIVED MODEL` 只提供概率/领域事实。迁移不得改变调用次数、分支顺序、概率合并顺序或任何策略阈值。
+
+| Function / Group | Category | Current Responsibility | Reads | Writes | Current Callers | Rule Authority Source | Policy Dependency | Domain Dependency | Value Dependency | Target Component | Migration Order | Characterization Test | Risk |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `constructor`、`clone` | STATE_LIFECYCLE | 建立与克隆隔离的 SearchState 世界，并同步兼容摘要 | 输入 SearchState | 新 clone、`initial`、root guard | Planner、ValueSimulationQuery、测试 | `state/SearchState.cloneSearchState` | 无 | 无 | 无 | `simulation/Simulator` facade | ARCH-7 first | 根/兄弟 clone 深隔离、旧/新入口逐字段一致 | 高：共享引用会污染兄弟分支 |
+| `initializeMomentumBranches`、`syncMomentumSummary`、`syncCategoryUsedSummary`、`syncActiveSkillCosts`、`initializeEquipmentBaselines`、`equipmentRoleDelta`、`initializeAssaultSummaries` | STATE_LIFECYCLE | 初始化/投影历史标量与条件分支兼容摘要 | player/status/equipment/skill config | SearchState 派生字段 | constructor、clone、效果方法 | `skillRegistry`、`cardRegistry`、`getActiveSkillCost` | 无 | Lightning/Seal 无关 | CardValue 只供装备角色差量 | `simulation/StatusSimulation`；技能成本同步留 facade | ARCH-8 status/skill | momentum、equipment、skill cost 与旧入口逐字段一致 | 中：摘要与分支双写顺序 |
+| `initializeBlockCountDistributions`、`buildInitialBlockCountDistribution`、`syncBlockSummary`、`getBlockCountBranches`、`getKnownBlockCountBranches`、`ensureBlockCountDistribution` | RESPONSE_SIMULATION | 从可见/未知牌构造格挡数量分布与兼容概率 | hand/knownCards/remaining counts | block distribution/probability/expected count | constructor、damage/resource mutation、测试 | `ResponseSystem.askForBlock`、card config | 无 | Probability algebra | 无 | `simulation/ResponseSimulation` | ARCH-7 response | 已知/未知/雷达获得格挡的质量与期望守恒 | 高：条件世界键与容量守恒 |
+| `initializeCounterCountDistributions`、`buildInitialCounterCountDistribution`、`syncCounterSummary`、`getCounterCountBranches`、`getKnownCounterCountBranches`、`ensureCounterCountDistribution`、`clearCountersWhenHandEmpty` | RESPONSE_SIMULATION | 构造反制数量分布并投影封印/普通反制共享容量 | hand/knownCards/remaining counts | counter distribution/probability/expected count | constructor、counter/resource mutation、测试 | `ResponseSystem.askForCounter/askForStatusCounter` | ResponsePolicy 只决定意愿 | SealModel 使用相同容量输入 | 无 | `simulation/ResponseSimulation` | ARCH-7 response | 普通反制后封印反制容量不重复、空手归零 | 高：响应容量双算 |
+| `addKnownCounterToDistribution`、`addTransferredCounterCapacity`、`removeKnownCounterFromDistribution`、`addOneUnknownCardToCounterDistribution`、`gainUnknownCardsWithCounterState` | RESOURCE_MUTATION | 卡牌获得/转移时同步反制身份与数量世界 | event worlds、known identity、remaining counts | hand/counter 分支和摘要 | card/skill/status effects | Game 卡牌移动与 draw；card config | 无 | Probability algebra | 无 | `simulation/ResponseSimulation` | ARCH-7 response | 获得/转移/未知摸牌后 hand 与 counter 联合质量守恒 | 高：跨资源分布相关性 |
+| `addKnownBlockToDistribution`、`removeKnownBlockFromDistribution`、`addOneUnknownCardToBlockDistribution`、`removeUnknownCardsFromBlockDistribution`、`transferUnknownBlockCapacity` | RESOURCE_MUTATION | 卡牌获得/移除/转移时同步格挡身份与数量世界 | event worlds、known identity、remaining counts | hand/block 分支和摘要 | card/skill/status effects | Game 卡牌移动与 draw；card config | 无 | Probability algebra | 无 | `simulation/ResponseSimulation` | ARCH-7 response | known/unknown block 转移与随机损失逐字段一致 | 高：联合概率与排除 ID |
+| `removeUnknownCardsFromCounterDistribution` | RESOURCE_MUTATION | 随机损失未知牌时同步反制数量世界 | removal worlds、counter distribution | counter distribution/summary | random resource consumption | Game 随机弃牌语义；card config | 无 | Probability algebra | 无 | `simulation/ResponseSimulation` | ARCH-7 response | 多张随机损失的条件质量与旧结果一致 | 高：无放回近似顺序 |
+| `nextProbabilityEventKey`、`getEventWorlds`、`gateEventWorlds`、`eventProbability` | PROBABILITY_HELPER | 创建、门控并汇总条件事件世界 | state sequence、概率分支 | state event sequence；新分支 | 全部 effect components | 无真实规则；AI `state/Probability` DERIVED MODEL | 无 | Probability algebra | 无 | `simulation/Simulator` shared runtime | ARCH-7 facade | 概率质量、condition key 与调用次序一致 | 高：改变 key 次序会改变 join 语义 |
+| `updateEnergyFromWorlds`、`changeEnergy`、`updateShieldFromWorlds`、`changeShield` | RESOURCE_MUTATION | 在条件世界中写能量/护盾并同步期望标量 | world branches、player caps | energy/shield branches 与标量 | card/skill/combat/status | `Game.gainEnergy`、Player 能量上限、`Game.damage` 护盾 | 无 | Probability algebra | 无 | `simulation/Simulator` shared runtime | ARCH-7 facade | 条件能量/护盾分支、上限和期望一致 | 高：先 clamp 后 merge 的顺序 |
+| `ensureAttackUseSlots`、`ensureSkillUseSlots`、`consumeSlot`、`consumeAttackUse` | RESOURCE_MUTATION | 表示次数额度的条件占用 | turn flags、skill limit、event worlds | attack/skill slots 与兼容 used count | apply、skill/card effects | RuleEngine、Player turn flags、skill config | 无 | Probability algebra | 无 | `simulation/Simulator` shared runtime；skill wrapper 由 SkillEffect 调用 | ARCH-7 facade | partial execution 下 slot 消费概率与旧值一致 | 高：重复占用导致非法深层动作 |
+| `apply` | ACTION_DISPATCH | 克隆根状态、消费动作条件，按 card/skill/end 分派并执行公共后置触发 | SearchState、abstract action | 仅新 SearchState clone | Planner、ValueSimulationQuery、测试 | RuleEngine 合法集合；cardRegistry/skillRegistry/Game lifecycle | ActionCandidatePolicy 已在生成前过滤；不在此重判 | 各 Domain 只供事实 | 无 final value | `simulation/Simulator` facade | ARCH-7 建 facade；ARCH-8 移出 card/skill/status branch | 固定 D4 与四场景；旧/新 facade 深状态 parity | 极高：当前单体总调度顺序 |
+| `setSimulatedEquipment`、`getSimulatedEquipmentProbability`、`cardAvailability`、`normalizeResourceEffectWorlds`、`nextSimulatedCardId`、`findKnownCardEntry`、`addSimulatedCardToHand`、`availableUnknownCountFor`、`findTransferCardEntry`、`addSimulatedKnownCard`、`transferKnownCardIdentity`、`transferUnknownCardIdentity`、`cardEstimateDistribution`、`syncCardEstimates`、`buildSimulatedKnownCards` | RESOURCE_MUTATION | 维护装备、手牌实体/期望、转移身份和兼容估计 | SearchState 可见身份、remaining counts、effect worlds | equipment/knownCards/handCount/estimates/response distributions | card/skill/combat/status effects、测试 | Game card move/equip/draw；card config | 无 | Probability algebra | CardValue 仅装备角色差量 | `simulation/CardEffectSimulation` | ARCH-8 card | transfer/plunder/destroy/equip 的 identity、hand、distribution parity | 极高：实体与期望不可双计 |
+| `chooseSimulatedResourceSelection`、`buildDiscardKeepValueContext` | POLICY_LEAK | 为模拟效果请求正式资源选择策略所需的只读上下文 | SearchState、known cards、range facts | 无 | resource/card/combat methods | RuleEngine/DistanceSystem 只供事实 | `policy/ResourceSelectionPolicy` 是唯一选择 owner | 无 | CardValue/keep value 由 Policy 消费 | 保持 Policy owner；`CardEffectSimulation` 仅调用 | ARCH-8 card | 已知/未知换面、选择次数和结果相同 | 中：Simulation 不得复制选择公式 |
+| `consumeKnownCardsFromHand`、`consumeBlockIdentities`、`normalizeAssaultCountDistribution`、`syncAssaultSummary`、`consumeAssaultForOpportunity`、`downgradePartialKnownCardsAfterRandomLoss`、`consumeUnknownResourceCard`、`removeOneRandomCardFromHand`、`consumeRandomHandCards`、`hasCompleteCertainHand`、`consumeChosenHandCard` | RESOURCE_MUTATION | 按确定/概率事件支付、弃置和降级卡身份 | hand/knownCards/count distributions | handCount、knownCards、block/counter/assault distributions | response/combat/card/skill/status | Game discard/payment/move；ResponseSystem 实体支付 | `ResourceSelectionPolicy` 只决定 chosen card | Probability algebra | discard keep value 只作策略输入 | `simulation/ResponseSimulation`（响应支付）与 `CardEffectSimulation`（普通资源支付），公共实现不复制 | ARCH-7 response 后 ARCH-8 card | 资源消费前后联合分布与旧值一致 | 极高：同一张牌跨三种容量双计 |
+| `simulateCategoryUse`、`simulateGamble`、`simulateCoordination`、`simulateTracking`、`clearHuntMarksBySource` | STATUS_EFFECT | 镜像 cardUsed/targetSelected/turn 生命周期被动状态与触发 | category、targets、turn/game flags | momentum/gamble/coordination/huntMark/unknown draw | apply、combat fatal、测试 | `skillRegistry` EventBus listeners、Game turn lifecycle | 无 | 无 | 无 | `simulation/StatusSimulation` | ARCH-8 status | 被阻止/部分生效/死亡清理下的触发次数与概率 parity | 高：监听器顺序和有效目标语义 |
+| `seatOrderFrom` | DOMAIN_LEAK | 在 SearchState 上投影 source-first/after-source 座次 | players、seatIndex | 新数组 | combat/card/status | `Game.seatOrderFrom`、`RuleEngine.nextLightningReceiver` | 无 | GlobalBenefit/Lightning 也有 ID 级派生 | 无 | `simulation/Simulator` shared rule projection | ARCH-7 facade | 死亡/环回座次固定测试 | 低 |
+| `simulateGuardianAid` | RESPONSE_SIMULATION | 按真实 beforeDamage 监听顺序执行一次合法护援并支付资源 | players、incoming damage、flags、effect worlds | guardian used、hand/distributions、damage amount | applyDamage、测试 | `skillRegistry.guardianAid` + EventBus 注册顺序 | discard candidate 来自 ResourceSelectionPolicy | Probability algebra | keep value 只作策略输入 | `simulation/ResponseSimulation`，Combat 负责调用位置 | ARCH-7 response before combat | 多护援者、零伤害、已用/死亡、部分概率 parity | 极高：护援顺序与消费世界 |
+| `simulateAfterLifeDamage`、`simulateSpyGapAfterLifeDamage`、`simulateAssaultAfterDamage` | STATUS_EFFECT | 镜像 afterDamage 的余烬、窥隙、连势/孤注消费 | life-damage branches、resolution flags | energy、spy flags、momentum/allIn | applyDamage | `skillRegistry` afterDamage listeners + DyingSystem rescue events | 无 | Probability algebra | 无 | `simulation/StatusSimulation`，Combat 负责调用位置 | ARCH-8 status（ARCH-7 先由 Combat 保持调用） | afterDamage→fatal→spyGap 的顺序与次数 parity | 极高：濒死前后监听语义 |
+| `simulateAssault`、`applyDuel` | COMBAT_SIMULATION | 镜像突袭/决斗的响应、伤害与轮流支付 | attacker/target、response distributions | combat/resource/status fields | apply/card effects、测试 | `cardRegistry.assault/duel`、ResponseSystem、Game.damage | counter/block desire 来自 ResponsePolicy | Probability algebra、RadarModel | 无 | `simulation/CombatSimulation` | ARCH-7 combat | 普通/战斗装置/雷达/决斗完整状态 parity | 极高：嵌套响应与伤害顺序 |
+| `takeResourceToHand`、`destroyResource`、`stealResourceToHand` | CARD_EFFECT | 镜像掠夺、破坏、窃取的实体/未知资源移动 | selection、identity、worlds | hand/equipment/distributions | apply、applySkill、测试 | `cardRegistry`、`ACTIVE_SKILLS.stealSkill`、Game move APIs | ResourceSelectionPolicy | Probability algebra | CardValue 由 Policy 消费 | CardEffectSimulation；窃取 orchestration 在 SkillEffectSimulation | ARCH-8 card/skill | hand/equipment/known identity 与旧结果一致 | 高 |
+| `tacticResolutionChance`、`evaluateCardScopeCounterResponses`、`consumeCountersForCardScope`、`consumeExpectedCounters`、`targetResolutionChance` | RESPONSE_SIMULATION | 计算并消费 card-scope/target-scope 反制的首个成功响应世界 | responders、counter distributions、desire | counter capacity/distribution | apply/card/combat、测试 | `ResponseSystem.askForCounter` 响应顺序与递归结果 | ResponsePolicy 决定 desire | Probability algebra | 无 | `simulation/ResponseSimulation` | ARCH-7 response | scope 顺序、边际和、容量消费、概率质量 parity | 极高：首个响应者归属和重复消费 |
+| `counterDesire`、`dynamicCounterGain` | POLICY_LEAK | 把 root 效果经济收益映射为规划侧反制意愿 | public SearchState、root context | 无；root guard 只读 | response evaluation、测试 | 无规则权威；仅 AI 策略 | `policy/ResponsePolicy` 应为唯一 owner | GlobalBenefitModel | Economics/CardValue 单位 | 公式移至 `policy/ResponsePolicy`，ResponseSimulation 仅调用纯策略函数 | ARCH-7 before response move | 原函数/新 owner 逐输入精确相等；调用次数不增加 | 高：不能在 Simulation 留第二套策略 |
+| `applySkill` | SKILL_EFFECT | 按条件世界镜像全部主动技能及次数/能量支付 | action、skill config、targets | energy/slots/hand/shield/status/combat | apply、测试 | `ACTIVE_SKILLS.execute`、RuleEngine skill targets | 无 | Probability algebra | 无 | `simulation/SkillEffectSimulation` | ARCH-8 skill | 每技能固定输入完整状态 parity | 极高：技能支付与效果顺序 |
+| `buildRadarOutcomePartition` | DOMAIN_LEAK | 把 RadarModel 类别概率绑定到当前攻击条件世界 | remaining counts、override、attack worlds | 新分支 | applyDamage、测试 | `JudgmentSystem.judgeDefense` + card config | 无 | `domain/RadarModel` | 无 | `simulation/StatusSimulation` | ARCH-8 status | tactic/basic/equipment 质量与 basic 获牌 parity | 高 |
+| `consumeBlockResponseWorlds`、`consumeTargetCounterResponseWorlds` | RESPONSE_SIMULATION | 在已知/未知响应分布中消费实际格挡/目标反制牌及条件容量 | attack/effect worlds、response distributions | hand/known identities/block/counter distributions | combat/card effects、测试 | `ResponseSystem.requestCardResponse` 原子支付 | desire 由 ResponsePolicy | Probability algebra | 无 | `simulation/ResponseSimulation` | ARCH-7 response | battle-device 双格挡、known/unknown、排除 ID parity | 极高 |
+| `applyDamage` | COMBAT_SIMULATION | 镜像雷达→格挡→beforeDamage/护援→护盾→HP→afterDamage→濒死 | attacker/target/options、response/status worlds | shield/HP/resources/status/death | card/skill/status/Value query、测试 | `Game.damage`、EventBus、JudgmentSystem、ResponseSystem、DyingSystem | ResourceSelectionPolicy 仅护援弃牌选择 | RadarModel、Probability algebra | 无 | `simulation/CombatSimulation` | ARCH-7 combat after response | 普通攻击、战斗装置、雷达、护援、盾、致死全状态 parity | 极高：系统主结算顺序 |
+| `applyHpLoss` | COMBAT_SIMULATION | 镜像失去生命并绕过雷达/格挡/护盾 | target/amount | HP/death | skill/card effects、测试 | `HpLossSystem.lose`、DyingSystem | 无 | 无 | 无 | `simulation/CombatSimulation` | ARCH-7 combat | 与伤害路径差异、致死救援 parity | 高 |
+| `applyLightningHit` | STATUS_EFFECT | 从独立 clone 清除命中者闪电并执行 3 点不可格挡伤害 | state/holder ID | clone status/combat/death | ValueSimulationQuery、测试 | Game global lightning listener、JudgmentSystem、Game.damage | 无 | LightningModel/RadarModel | 无 | `simulation/StatusSimulation`，调用 Combat | ARCH-8 status | 生命周期命中分布各 holder owner delta parity | 高 |
+| `resolveFatal` | COMBAT_SIMULATION | 镜像本人优先、顺时针队友的循环调息救援，失败则清理/击杀奖励 | HP、recover capacity、seat order、teams | HP/alive/hand/equipment/status/flags/reward | damage/hp loss、测试 | `DyingSystem.enter/resolve/kill`、ResponseSystem、Game.heal/draw | 无 | Probability algebra | 无 | `simulation/CombatSimulation` | ARCH-7 combat | 多轮救援、负 HP、击杀奖励、猎印清理 parity | 极高：救援次序与死亡后置触发 |
+| `heal`、`healFrom` | COMBAT_SIMULATION | 镜像治疗上限及回春/协调等来源触发 | target/source/amount/flags | HP、healing side effects | card/skill/fatal、测试 | `Game.heal`、`skillRegistry.rejuvenation/coordination` | 无 | 无 | 无 | `simulation/CombatSimulation` | ARCH-7 combat | 自疗/队友疗/濒死救援与触发次数 parity | 高 |
+
+### Freeze conclusions
+
+- `Simulator` 是唯一对 Planner/ValueSimulationQuery 暴露的 simulation facade；旧 `AiSimulator` 只允许保留重导出兼容，不能保留第二套算法。
+- `ResponseSimulation` 拥有响应概率世界、容量消费和响应资源支付；它调用正式 Policy 的纯意愿函数，但不拥有任何策略公式。
+- `CombatSimulation` 拥有伤害、失去生命、治疗、濒死/救援/死亡的顺序；它按真实 `Game.damage`/`DyingSystem` 顺序调用 Response 与状态钩子。
+- Card/Skill/Status 组件只镜像各自真实 authority；跨组件效果通过 facade 的显式共享运行时调用，不能复制概率、资源或价值公式。
+- ARCH-7 先迁 facade、Response、Combat，并在独立测试和固定规划轨迹精确通过后，才允许进入 ARCH-8。
+
+## 29. AI-ARCH-7 Simulation Facade / Response / Combat 落地结果
+
+### Physical architecture and compatibility
+
+- `simulation/Simulator.js` 是 Planner 与 `AiValueSimulationQuery` 的唯一正式 simulation 入口。它负责 clone、action type dispatch、共享事件世界/能量/护盾/次数槽，以及组件组合。
+- `simulation/ResponseSimulation.js` 唯一拥有 block/counter 数量世界、响应身份与容量消费、card/target scope 响应结果 application；规划侧反制意愿公式已移到正式 `policy/ResponsePolicy.js`，Simulation 只调用纯策略查询。
+- `simulation/CombatSimulation.js` 唯一拥有攻击、damage、HP loss、heal、dying/rescue/death 的 SearchState 镜像。
+- `AiSimulator.js` 只重导出 `Simulator as AiSimulator`，不创建包装对象，也不保留算法。主要生产消费者已改为正式路径；历史测试仍可使用旧名。
+- 五个 effect component 使用模块加载期的无状态 class mixin 组合；每个 Simulator 仍只有一个实例，没有每 node/action 创建 component object。
+
+### Combat Lifecycle Contract
+
+| Order | Combat step | SearchState mirror | Real authority | Response/Status boundary |
+|---:|---|---|---|---|
+| 1 | effect worlds | 绑定 action execution 条件与 damage amount branches | cardRegistry / skillRegistry | Card/Skill 只提供 effect worlds |
+| 2 | radar judgment | 生成互斥 noRadar/noJudgment/tactic/equipment/basic 分区，基础牌先进入目标资源身份 | `JudgmentSystem.judgeDefense`、card config | StatusSimulation 提供 Radar outcome partition |
+| 3 | block response | 按军火库条件消费 1/2 张格挡；雷达判得格挡可立即使用 | `ResponseSystem.askForBlock/requestCardResponse` | ResponseSimulation 消费容量与身份 |
+| 4 | before-damage modifiers | 突袭已有破势、连势、孤注加伤在通过响应的世界中生效 | skillRegistry beforeDamage listeners / cardRegistry assault | Status/Combat hook；不重新决定 Policy |
+| 5 | guardian aid | 存活己方守誓者按当前 `state.players` 注册/座次顺序尝试一次，支付一张手牌并减伤 | skillRegistry `guardianAid` + EventBus registration order | ResponseSimulation 拥有触发资源；Combat 固定调用位置 |
+| 6 | shield | 每个条件世界用减伤后的 amount 消耗护盾 | `Game.damage` | CombatSimulation |
+| 7 | actual HP damage | 只汇总穿过 response、modifier、guardian、shield 的生命伤害 | `Game.damage` | CombatSimulation |
+| 8 | after-damage hooks | 余烬、连势/孤注消费按 actual life damage 世界推进 | skillRegistry afterDamage listeners | StatusSimulation，由 Combat 在 fatal 前调用 |
+| 9 | dying/rescue/death | HP<=0 时本人优先、再顺时针存活队友循环调息；失败清状态/资源/装备并给合法击杀者奖励 | `DyingSystem.enter/resolve/kill` | CombatSimulation；Response capacity 只消费一次 |
+| 10 | rescued spy gap | 目标最终存活才推进窥隙；死亡则不残留触发资格 | skillRegistry spyGap + playerRescued/playerDead | StatusSimulation，由 Combat 在 fatal 后调用 |
+
+真实 `Game.damage` 的宏观顺序为 Radar → Block → beforeDamage（含护援）→ Shield/HP → afterDamage → Dying。Simulation 对条件世界的细化没有改变该顺序。`applyHpLoss` 继续绕过 Radar、Block、Guardian 和 Shield，只扣 HP 后进入同一 fatal lifecycle；不得与 damage 合并。
+
+### Response Trigger Matrix
+
+| Trigger | Scope / order | Resource | Probability application | Effect owner | Policy owner | Authority |
+|---|---|---|---|---|---|---|
+| normal block | damage target；一次 | block，通常 1 | damage event × count distribution | ResponseSimulation | real ResponsePolicy only decides response | ResponseSystem / Game.damage |
+| battle-device block | damage target；一次 | block，要求 2 且原子支付 | equipment existence × count>=2 | ResponseSimulation | ResponsePolicy | ResponseSystem.askForBlock |
+| radar block | judgment 后 target | 判定基础牌身份 + 原容量 | 同一 radar outcome key | ResponseSimulation + Status outcome | ResponsePolicy | JudgmentSystem + ResponseSystem |
+| card-scope counter | actor 后 `state.players` 顺序，第一个成功者 | counter expected capacity | marginal = previous failures × current effective probability | ResponseSimulation | ResponsePolicy planning desire | ResponseSystem.askForCounter |
+| target-scope counter | 每个存活实际目标独立 | 该目标 counter identity/capacity | target effect worlds × desire | ResponseSimulation | ResponsePolicy | cardRegistry shockwave/provoke + ResponseSystem |
+| delayed-status counter | holder first，再顺时针 | 与普通反制共享 counter capacity | Seal/Lightning lifecycle 输入消费同一容量 | ResponseSimulation / StatusSimulation | ResponsePolicy | Game global status listeners |
+| guardian aid | block 之后、shield 之前；首个可用己方 guardian | 一张选定/期望手牌 + global-turn quota | 只在通过伤害世界消费 | ResponseSimulation | ResourceSelectionPolicy supplies discard choice；真实响应 Policy 不复制效果 | skillRegistry.guardianAid |
+| dying rescue | target first，再顺时针存活队友，逐轮每人一张 | recover | 现有 expected capacity approximation | CombatSimulation using Card resource helpers | ResponsePolicy is real response decision owner | DyingSystem / ResponseSystem |
+
+Response 与 Combat characterization、完整 SearchState 指纹、block/counter/guardian/radar/dying 宽回归以及固定搜索轨迹均保持不变。ARCH-7 验证通过后才执行下节 ARCH-8。
+
+## 30. AI-ARCH-8 Card / Skill / Status Simulation 落地结果
+
+### Physical Simulation Architecture
+
+```text
+Planner / AiValueSimulationQuery
+              |
+              v
+     simulation/Simulator
+       |   |   |   |   |
+       v   v   v   v   v
+ Response Combat Card Skill Status
+       \   |    |    |   /
+        state/Probability + Domain facts + explicit Policy query
+```
+
+组件是无状态 mixin：组合只在模块加载时各执行一次，实例仍是单一 `Simulator`。组件互不 import facade 或彼此；跨领域效果通过同一个实例的显式方法调用。`Simulator.apply` 只做 clone、end/skill/card dispatch、动作支付与 card-scope 响应门控，然后委托 `applySkill` / `applyCardEffect`。未知 card 的既有默认语义仍是：equipment 走统一装备写入，其余 no-op；未知/空 skill 仍 no-op。
+
+### Card Simulation Coverage Matrix
+
+| definitionId | Authority source | Simulation owner / handler | Combat | Response | Domain | Direct coverage |
+|---|---|---|---|---|---|---|
+| assault | cardRegistry.assault / Game.damage | CardEffect → Combat `simulateAssault` | damage + slots | block/radar | RadarModel | assault、momentum、expose、allIn、block/radar |
+| recover | cardRegistry.recover / Game.heal | CardEffect `healFrom` | heal | dying resource identity shared | none | recover/rejuvenation/dying |
+| block | ResponseSystem only | ResponseSimulation response payment | prevents damage | owner | none | block count/identity matrices |
+| charge | cardRegistry.charge / Game.gainEnergy | CardEffect `changeEnergy` | none | card-scope if applicable | none | energy branches/caps |
+| shield | cardRegistry.shield | CardEffect target validation + shared shield worlds | absorbed in Combat | none | none | ally/self/shield damage |
+| scout | cardRegistry.scout | CardEffect information result | none | card-scope counter | none | known/unknown information |
+| transfer | cardRegistry.transfer / RuleEngine | CardEffect identity transfer from supplied descriptor | none | card-scope counter | none | transfer identity/capacity/hidden parity |
+| exposeWeakness | cardRegistry.exposeWeakness | CardEffect stack producer | consumed by assault Combat | card-scope counter | none | expose stack/search parity |
+| shockwave | cardRegistry.shockwave | CardEffect per-target orchestration | shared damage | target-scope counter + block | RadarModel | multi-target response/combat |
+| provoke | cardRegistry.provoke | CardEffect per-target assault payment | shared no-block damage | target-scope counter | none | assault response/capacity |
+| leverage | cardRegistry.leverage / RuleEngine | CardEffect forced-assault/equipment transfer mirror | shared assault | card-scope counter | none | source/target/equipment probability |
+| plunder | cardRegistry.plunder | CardEffect `takeResourceToHand` | none | card-scope counter | none | hand/equipment known/unknown |
+| destroy | cardRegistry.destroy | CardEffect `destroyResource` | none | card-scope counter | none | identity/removal distributions |
+| counter | ResponseSystem only | ResponseSimulation；active descriptor keeps legacy coordination result | none | owner | none | recursive/scope/capacity tests |
+| harvest | cardRegistry.harvest | CardEffect unknown draw | none | card-scope counter | none | hand/counter/block density |
+| duel | cardRegistry.duel | CardEffect → Combat `applyDuel` | shared damage/fatal | assault response | none | integer/unknown assault distributions |
+| mutualBenefit | cardRegistry / PublicCardPool | CardEffect applies GlobalBenefit recipient values and draws | none | card-scope counter | GlobalBenefitModel via compatibility value adapter | seat order/pool/counter/fixed scene |
+| symbiosis | cardRegistry.symbiosis | CardEffect seat-order heal loop | shared heal | card-scope counter | GlobalBenefitModel | per-target heal/rejuvenation |
+| seal | cardRegistry.seal / Game status listener | CardEffect delegates state placement to StatusSimulation | none | first placement intentionally no normal counter | SealModel | placement/lifecycle/counter/fixed scene |
+| lightning | cardRegistry.lightning / Game status listener | CardEffect delegates state placement to StatusSimulation | hit uses Combat | first placement intentionally no normal counter | LightningModel | placement/hit/transfer/clear |
+| energyDevice | cardRegistry equipment resolver | CardEffect unified equipment write | none | card-scope counter | none | equip/replace/energy value |
+| recycleDevice | cardRegistry + Game recycle listener | CardEffect equipment + post-tactic trigger | none | card-scope counter | none | two-use cap/draw |
+| defenseDevice | cardRegistry + JudgmentSystem | CardEffect equipment state | Combat radar path | block after judgment | RadarModel | radar outcome/identity |
+| battleDevice | cardRegistry + ResponseSystem | CardEffect equipment state | attack dependency | two-block requirement | none | battle block matrix |
+| telescope | cardRegistry + DistanceSystem | CardEffect equipment state | range-dependent attack | none | none | discrete range branches |
+| barrierDevice | cardRegistry + DistanceSystem | CardEffect equipment state | incoming range exposure | none | none | range/value parity |
+
+CardEffect 不生成或评分 selection。`chooseSimulatedResourceSelection` 只组装只读上下文并消费正式 ResourceSelectionPolicy 的结果；transfer 只消费 action descriptor。所有伤害仍经 Combat，所有 response capacity 仍经 Response。
+
+### General / Skill Simulation Coverage Matrix
+
+| generalId | skill | kind | Simulation component / state fields | Lifecycle owner | Authority | Direct coverage |
+|---|---|---|---|---|---|---|
+| blade-walker | breakArmy | active | SkillEffect：energy、attack slots/limit | per turn skill/attack slots | ACTIVE_SKILLS.breakArmy | conditional slots、deep chain |
+| blade-walker | momentum | passive | Status：category/momentum branches；Combat：actual damage consume | global turn end / actual assault HP damage | skillRegistry.momentum | block/radar/miss/hit/partial |
+| oath-warden | barrier | active | SkillEffect：energy、skill slots、shield | per turn skill slots | ACTIVE_SKILLS.barrier | two uses、target/shield |
+| oath-warden | guardianAid | passive response | Response：quota、discard、reduction；Combat fixes window | every global turn | skillRegistry.guardianAid | guardian matrix / fingerprint |
+| spirit-medic | symbiosis | active | SkillEffect：energy/slot + Combat heal | per turn skill slots | ACTIVE_SKILLS.symbiosis | selected ally / repeated use |
+| spirit-medic | rejuvenation | passive | Combat heal/fatal rescue：draw + trigger count | every global turn, cap 2 | skillRegistry.rejuvenation | heal/rescue/probability |
+| shade-agent | stealSkill | active | SkillEffect orchestration + Card resource transfer | per turn skill slots | ACTIVE_SKILLS.stealSkill | hand/equipment/distance |
+| shade-agent | spyGap | passive | Status after actual damage and post-rescue | every global turn, once | skillRegistry.spyGap | normal/lethal/rescued/dead |
+| ember-magus | burningField | active | SkillEffect target loop + Combat damage | per turn skill slots | ACTIVE_SKILLS.burningField | cost 3/multi-target/block |
+| ember-magus | ember | passive | Status after-damage energy by resolution | once per card resolution ID | skillRegistry.ember | multi-target same resolution |
+| trail-hunter | hunt | active | SkillEffect mark consume + Combat damage/draw on block | per turn skill slots | ACTIVE_SKILLS.hunt | block/hit/mark cleanup |
+| trail-hunter | tracking | passive | Status targetSelected mark branches | two new enemies/global turn; expires own next turn end | skillRegistry.tracking | mark overlap/expiry/death |
+| fate-gambler | allIn | active/status | SkillEffect energy/draw/status probability；Combat/Status consume | non-stackable; next assault finishes status | ACTIVE_SKILLS.allIn + skillRegistry.gamble | draw/probability/block/radar/hit |
+| fate-gambler | gamble | passive | Status tactic-use draw probability | once per global turn | skillRegistry.gamble | success/failure/cap |
+| resonance-tuner | resonance | active | SkillEffect energy/slot + unknown draw | per turn skill slots | ACTIVE_SKILLS.resonance | self/ally repeated use |
+| resonance-tuner | coordination | passive | Status effective ally target draw | once per global turn | skillRegistry.coordination | card/skill/response target semantics |
+
+### Status Lifecycle Coverage Matrix
+
+| Status / flag | Producer | Consumer | Reset / clear boundary | Simulation owner | Domain | Combat hook | Direct test |
+|---|---|---|---|---|---|---|---|
+| momentum + category-used | distinct card category | next assault actual HP damage | every global turn end; death | StatusSimulation | none | damage modifier/afterDamage | hit/block/radar/partial/end |
+| exposeWeakness stacks | exposeWeakness card | next assault damage amount | consumed by next assault even if blocked; death clear | CardEffect + Combat | none | assault entry | stack/consume/search marginal parity |
+| allIn assaultBonus | allIn skill probability | next assault completion | consumed on hit/block/radar prevention; death | SkillEffect + Status/Combat | none | before/after damage | nonstack/draw/consume |
+| huntMark | tracking target select | hunt skill/action generation | source own next turn end or source death | StatusSimulation | none | hunt damage | mark/expiry/cleanup |
+| lightning | lightning card | next holder status phase | counter/judgment hit clears；miss transfers | StatusSimulation | LightningModel | hit calls Combat | placement/transfer/hit/death |
+| sealed | seal card | holder next status phase | counter or judgment always clears；may set skipAction | StatusSimulation | SealModel | none | placement/counter/judgment/skip |
+| guardianAidUsed | guardian response | later damage in same global turn | every player turn start global reset | ResponseSimulation | none | before shield | repeated/global reset |
+| gambleTriggered | first tactic cardUsed | later tactic uses | every global turn start | StatusSimulation | none | none | success/failure/once |
+| coordinationTriggered | resolved ally-target action | later card/skill/rescue | every global turn start | StatusSimulation | none | heal/rescue may trigger | valid/effective targets |
+| rejuvenationTriggerCount | actual allied healing | later heal/rescue | every global turn start；cap 2 | CombatSimulation | none | heal/fatal rescue | ordinary/rescue/probability |
+| recycleDeviceUses | active tactic cardUsed while equipped | later tactics | owner turn reset；cap 2 | CardEffectSimulation | none | none | first two/third no draw |
+
+### Domain / Simulation and authority boundary
+
+RadarModel、LightningModel、SealModel、GlobalBenefitModel 仍只返回概率/ID/outcome 事实。Status/Card components 只把这些显式结果写入 SearchState；没有把传播、判定概率或 recipient value 公式复制回 Simulation。RuleEngine、Game、ResponseSystem、DyingSystem、JudgmentSystem、cardRegistry、skillRegistry、TeamRuleService 和配置继续是唯一真实 authority。
+
+### Validation and remaining boundary
+
+- 四类完整 SearchState SHA-256 characterization 覆盖 combat response、transfer、barrier skill、lightning hit；去除随机 gameId 后指纹逐字节不变。
+- 固定 D4 保持 `seal c -> stealSkill c -> assault b -> end`、expanded `102`、depth `4`、hidden samples `10`、`bestValueScore=0.04919669968375734`。
+- Lightning、Response、Transfer、GlobalBenefit 四个既有 fixed scenario 与 Combat-heavy、Skill-heavy、Status-heavy 三个新增 fixed scenario 均锁定 root、sequence、expanded、depth、hidden samples 和 bestValueScore。
+- Architecture Guard 锁定主要消费者只 import facade、compatibility 仅重导出、组件不 import UI/Controller/Planner/Game/facade、facade 不 import Policy/Value/Domain 细节、五个 mixin 各组合一次且无 component `new`。
+- 同一组 32 个 planning scenarios 的 HEAD 单体/当前 facade 插桩结果：constructor `64→64`、clone `1583→1583`、apply `1583→1583`、expanded `1325→1325`、clones/node `1.1947169811320755→1.1947169811320755`、Response calls `27686→27686`、Combat calls `1860→1860`、Skill calls `2905→2905`、probability branch outputs `11689→11689`。Card calls `8550→9276` 与 Status calls `12684→12729` 的增长只来自 `applyCardEffect` / `applyDelayedStatusCard` 组件边界；没有额外 clone、apply 或 probability world。
+- 未修改的 `cloneSearchState` 在五人代表局面预热后执行 10×1000 次共 `659.3532 ms`，平均 `65.93532 µs/clone`。planning benchmark（seed `20260814`、node budget `200`）保持 raw `126/1000`、corrected `106/1000`、平均节点 `41.4`、平均深度 `2.8`；非插桩运行 AI 决策约 `0.8s`、总耗时 `0.9s`。
+- 最终宽范围 Simulation 回归为 `258/258`，完整测试为 `1380/1380`（墙钟 `41133.5 ms`）；新模块 `node --check`、checker self-test、`check:code-quality --changed`、Architecture Guard、build consistency 与 `git diff --check` 均作为本阶段验收门禁。
+- Planner 中 expose/assault stack marginal、seal sibling、end opportunity、candidate materialization 与 descriptor helpers 均未迁移；这是 AI-ARCH-9 的明确 remaining debt。兼容路径的最终删除留 AI-ARCH-10。

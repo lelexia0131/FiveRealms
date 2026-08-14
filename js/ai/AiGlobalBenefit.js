@@ -20,16 +20,16 @@
  *   得到，而不是 root 最初打出时的 snapshot，也不是静态 card value。例如掠夺的目标在
  *   响应链中已把手牌用尽时，恢复掠夺的实际收益已从"可能获得 1 张牌"降为 0。
  */
-import { getBaseCardAiValue, getRoleCardAiValue } from "./value/CardValue.js?build=20260814-ai-policy-domain";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./value/CardValue.js?build=20260814-ai-simulation-engine";
 import {
   assessGlobalBenefitOutcome,
   buildMutualBenefitDraftOutcome,
   isGlobalBenefitCard
-} from "./domain/GlobalBenefitModel.js?build=20260814-ai-policy-domain";
+} from "./domain/GlobalBenefitModel.js?build=20260814-ai-simulation-engine";
 import {
   counterOpportunityCost as responseCounterOpportunityCost,
   globalBenefitCounterDesire as decideGlobalBenefitCounter
-} from "./policy/ResponsePolicy.js?build=20260814-ai-policy-domain";
+} from "./policy/ResponsePolicy.js?build=20260814-ai-simulation-engine";
 
 /** 角色对该牌的有效价值；缺少角色身份时回退全局基础值。 */
 function cardValueFor(generalId, definitionId) {

@@ -17,14 +17,14 @@ RuleEngine、卡牌定义配置与 state/Probability。
 架构约束
 本模型不是 Game authority；RuleEngine 是真实状态与接收者规则权威，真实状态移动/伤害仍由 Game 卡牌生命周期负责。不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-policy-domain";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-policy-domain";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-simulation-engine";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
   mergeProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-policy-domain";
+} from "../state/Probability.js?build=20260814-ai-simulation-engine";
 
 /*
 功能

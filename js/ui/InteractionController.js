@@ -2,11 +2,11 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260814-ai-policy-domain";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260814-ai-policy-domain";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260814-ai-policy-domain";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-policy-domain";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-policy-domain";
+import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260814-ai-simulation-engine";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260814-ai-simulation-engine";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260814-ai-simulation-engine";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-simulation-engine";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 

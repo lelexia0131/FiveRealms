@@ -17,20 +17,20 @@ policy/ResponsePolicy、AiValueSimulationQuery、状态组合与既有 Domain/Va
 架构约束
 本文件是 compatibility façade；不得保留第二份响应阈值、分数或选择公式。
 */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-policy-domain";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-ai-policy-domain";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-policy-domain";
-import { AiValueSimulationQuery } from "./AiValueSimulationQuery.js?build=20260814-ai-policy-domain";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-simulation-engine";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-ai-simulation-engine";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-simulation-engine";
+import { AiValueSimulationQuery } from "./AiValueSimulationQuery.js?build=20260814-ai-simulation-engine";
 import {
   hasLightning,
   nextLightningReceiverId
-} from "./domain/LightningModel.js?build=20260814-ai-policy-domain";
+} from "./domain/LightningModel.js?build=20260814-ai-simulation-engine";
 import {
   hasSeal,
   tacticJudgmentProbability
-} from "./domain/SealModel.js?build=20260814-ai-policy-domain";
-import { turnOpportunityValue } from "./sealScoring.js?build=20260814-ai-policy-domain";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260814-ai-policy-domain";
+} from "./domain/SealModel.js?build=20260814-ai-simulation-engine";
+import { turnOpportunityValue } from "./sealScoring.js?build=20260814-ai-simulation-engine";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260814-ai-simulation-engine";
 
 /*
 功能

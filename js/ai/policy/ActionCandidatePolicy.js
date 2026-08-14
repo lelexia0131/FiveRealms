@@ -21,7 +21,7 @@ import {
   PROBABILITY_EPSILON,
   getAvailabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-policy-domain";
+} from "../state/Probability.js?build=20260814-ai-simulation-engine";
 
 export class ActionCandidatePolicy {
   /*

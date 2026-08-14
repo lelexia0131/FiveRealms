@@ -17,26 +17,26 @@ Game、ResponseSystem、PublicCardPool、角色技能与测试。
 架构约束
 子组件不得回指 AIController；公开子组件字段仅作迁移期兼容，生产上游应使用门面。
 */
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-policy-domain";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260814-ai-policy-domain";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260814-ai-policy-domain";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260814-ai-policy-domain";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260814-ai-policy-domain";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260814-ai-policy-domain";
-import { AiPlanner } from "./AiPlanner.js?build=20260814-ai-policy-domain";
-import { AiStateValue } from "./AiStateValue.js?build=20260814-ai-policy-domain";
-import { AiValueSimulationQuery } from "./AiValueSimulationQuery.js?build=20260814-ai-policy-domain";
-import { FrontierValue } from "./search/FrontierValue.js?build=20260814-ai-policy-domain";
-import { SearchPrior } from "./search/SearchPrior.js?build=20260814-ai-policy-domain";
-import { TransitionValue } from "./search/TransitionValue.js?build=20260814-ai-policy-domain";
-import { Evaluator } from "./value/Evaluator.js?build=20260814-ai-policy-domain";
-import { ValueLedger } from "./value/ValueLedger.js?build=20260814-ai-policy-domain";
-import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260814-ai-policy-domain";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260814-ai-policy-domain";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-policy-domain";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260814-ai-policy-domain";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-policy-domain";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-ai-policy-domain";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-simulation-engine";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260814-ai-simulation-engine";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260814-ai-simulation-engine";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260814-ai-simulation-engine";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260814-ai-simulation-engine";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260814-ai-simulation-engine";
+import { AiPlanner } from "./AiPlanner.js?build=20260814-ai-simulation-engine";
+import { AiStateValue } from "./AiStateValue.js?build=20260814-ai-simulation-engine";
+import { AiValueSimulationQuery } from "./AiValueSimulationQuery.js?build=20260814-ai-simulation-engine";
+import { FrontierValue } from "./search/FrontierValue.js?build=20260814-ai-simulation-engine";
+import { SearchPrior } from "./search/SearchPrior.js?build=20260814-ai-simulation-engine";
+import { TransitionValue } from "./search/TransitionValue.js?build=20260814-ai-simulation-engine";
+import { Evaluator } from "./value/Evaluator.js?build=20260814-ai-simulation-engine";
+import { ValueLedger } from "./value/ValueLedger.js?build=20260814-ai-simulation-engine";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260814-ai-simulation-engine";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260814-ai-simulation-engine";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-simulation-engine";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260814-ai-simulation-engine";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-simulation-engine";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-ai-simulation-engine";
 
 export class AIController {
   /*

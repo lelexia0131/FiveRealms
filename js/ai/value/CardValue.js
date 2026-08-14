@@ -17,9 +17,9 @@
 架构约束
 静态卡片值不得直接成为最终 transition value；旧路径只能兼容重导出本模块公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-policy-domain";
-import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../../config/generalConfig.js?build=20260814-ai-policy-domain";
-import { HP_VALUE } from "./Economics.js?build=20260814-ai-policy-domain";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../../config/generalConfig.js?build=20260814-ai-simulation-engine";
+import { HP_VALUE } from "./Economics.js?build=20260814-ai-simulation-engine";
 
 /**
  * 角色 × 卡牌稀疏差值表。

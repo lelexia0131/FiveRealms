@@ -27,4 +27,4 @@ export {
   expectedHandValue,
   scoreTransferCombination,
   threatView
-} from "./policy/TransferPolicy.js?build=20260814-ai-policy-domain";
+} from "./policy/TransferPolicy.js?build=20260814-ai-simulation-engine";

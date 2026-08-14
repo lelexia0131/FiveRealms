@@ -17,15 +17,15 @@ Economics、CardValue、ThreatValue 以及封印、雷达的现有纯领域 help
 架构约束
 不得导入或构造 Simulator、Planner、Controller；闪电等模拟结果必须由调用层先计算为纯值。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-policy-domain";
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260814-ai-policy-domain";
-import { sealTeamBurden } from "../sealScoring.js?build=20260814-ai-policy-domain";
-import { cardAvailability, roleCardDelta } from "./CardValue.js?build=20260814-ai-policy-domain";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260814-ai-simulation-engine";
+import { sealTeamBurden } from "../sealScoring.js?build=20260814-ai-simulation-engine";
+import { cardAvailability, roleCardDelta } from "./CardValue.js?build=20260814-ai-simulation-engine";
 import {
   ENERGY_STATE_WEIGHT,
   HP_VALUE,
   energyDeviceFutureUtility
-} from "./Economics.js?build=20260814-ai-policy-domain";
+} from "./Economics.js?build=20260814-ai-simulation-engine";
 import {
   DANGER_VALUE,
   DEATH_VALUE,
@@ -33,7 +33,7 @@ import {
   hp2ThreatRiskValue,
   radarMitigationUtility,
   shieldStateValue
-} from "./ThreatValue.js?build=20260814-ai-policy-domain";
+} from "./ThreatValue.js?build=20260814-ai-simulation-engine";
 
 export class Evaluator {
   /*

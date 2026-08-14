@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-policy-domain";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-simulation-engine";
 
 /**
  * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；

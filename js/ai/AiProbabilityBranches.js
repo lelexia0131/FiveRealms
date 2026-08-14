@@ -17,8 +17,8 @@ state/Probability 与 domain/RadarModel。
 架构约束
 不得复制概率或雷达算法；新生产调用方应直接导入正式 owner。
 */
-export * from "./state/Probability.js?build=20260814-ai-policy-domain";
+export * from "./state/Probability.js?build=20260814-ai-simulation-engine";
 export {
   RADAR_BASIC_DEFINITIONS,
   buildRadarJudgmentProbabilities
-} from "./domain/RadarModel.js?build=20260814-ai-policy-domain";
+} from "./domain/RadarModel.js?build=20260814-ai-simulation-engine";

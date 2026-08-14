@@ -20,12 +20,12 @@ value/CardValue、value/ThreatValue 与 state/Probability。
 import {
   getBaseCardAiValue,
   getRoleCardAiValue
-} from "../value/CardValue.js?build=20260814-ai-policy-domain";
-import { ThreatCalculator } from "../value/ThreatValue.js?build=20260814-ai-policy-domain";
+} from "../value/CardValue.js?build=20260814-ai-simulation-engine";
+import { ThreatCalculator } from "../value/ThreatValue.js?build=20260814-ai-simulation-engine";
 import {
   PROBABILITY_EPSILON,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-policy-domain";
+} from "../state/Probability.js?build=20260814-ai-simulation-engine";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

@@ -17,10 +17,10 @@ AiSimulator、TransitionValue、ValueLedger、FrontierValue、SearchPrior、封�
 架构约束
 不得持有 Game 或回指 AIController；不得拥有 state delta、final composition 或 ledger schema。
 */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-policy-domain";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-policy-domain";
-import { END_OPPORTUNITY_CAP } from "./value/Economics.js?build=20260814-ai-policy-domain";
-import { sealDelayCost, sealEarlyUsePenalty } from "./search/SealTiming.js?build=20260814-ai-policy-domain";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-simulation-engine";
+import { Simulator } from "./simulation/Simulator.js?build=20260814-ai-simulation-engine";
+import { END_OPPORTUNITY_CAP } from "./value/Economics.js?build=20260814-ai-simulation-engine";
+import { sealDelayCost, sealEarlyUsePenalty } from "./search/SealTiming.js?build=20260814-ai-simulation-engine";
 
 export class AiPlanner {
   /*
@@ -130,7 +130,7 @@ export class AiPlanner {
   baseline 只回退本动作新增层数；候选来自合法生成，一张破势只比较下一次突袭并取 max 而非 sum。
   */
   evaluateExposeMarginal(beforeState, afterState, actorId, simulator = null) {
-    const sim = simulator ?? new AiSimulator(afterState);
+    const sim = simulator ?? new Simulator(afterState);
     const beforeActor = beforeState.players.find((entry) => entry.id === actorId);
     const afterActor = afterState.players.find((entry) => entry.id === actorId);
     const addedStacks = (afterActor?.exposeWeaknessStacks ?? 0) - (beforeActor?.exposeWeaknessStacks ?? 0);
@@ -168,9 +168,34 @@ export class AiPlanner {
    * 反事实通过真实 AiSimulator 覆盖格挡、护盾、护援、调息、救援、击杀与
    * 概率执行；无合法突袭候选或边际为负时返回 0，不强制出突袭。
    */
+  /*
+  功能
+  保持 evaluateAssaultStacksMarginal 的既有搜索反事实语义。
+
+  调用方
+  AiPlanner 搜索评分路径与相关回归测试。
+
+  输入
+  SearchState、action、actor 与显式层数。
+
+  输出
+  非负边际价值。
+
+  读取状态
+  只读输入状态和注入的 simulation/value 能力。
+
+  写入状态
+  无；只写独立模拟 clone。
+
+  调用函数
+  Simulator、动作生成与 evaluator。
+
+  边界与不变量
+  不得改变搜索深度、beam、tie-break 或既有价值组合顺序。
+  */
   evaluateAssaultStacksMarginal(currentState, action, actorId, remainingRootExposeStacks, simulator = null) {
     if (!(remainingRootExposeStacks > 0)) return 0;
-    const sim = simulator ?? new AiSimulator(currentState);
+    const sim = simulator ?? new Simulator(currentState);
     const boostedState = structuredClone(currentState);
     const baselineState = structuredClone(currentState);
     const boostedActor = boostedState.players.find((entry) => entry.id === actorId);
@@ -448,7 +473,7 @@ export class AiPlanner {
     const nodeBudget = Number.isFinite(configuredNodeBudget) && configuredNodeBudget >= 1
       ? Math.floor(configuredNodeBudget)
       : null;
-    const simulator = new AiSimulator(visibleState);
+    const simulator = new Simulator(visibleState);
     // 回合开始已存在的旧破势层，作为根节点的 remainingRootExposeStacks 初值。
     const rootRemainingExposeStacks = (visibleState.players.find((entry) => entry.id === player.id)
       ?.exposeWeaknessStacks ?? 0);

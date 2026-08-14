@@ -20,7 +20,7 @@ Planner 与价值等价测试。
 import {
   STATE_DELTA_SCALE,
   actionEconomicValue
-} from "../value/Economics.js?build=20260814-ai-policy-domain";
+} from "../value/Economics.js?build=20260814-ai-simulation-engine";
 
 export class TransitionValue {
   /*

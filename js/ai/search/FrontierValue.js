@@ -17,12 +17,12 @@ ThreatValue、CardValue 与 Economics。
 架构约束
 held recover/recycle 只能在 frontier/terminal 一次进入 final value，不能逐 depth 累计。
 */
-import { cardAvailability } from "../value/CardValue.js?build=20260814-ai-policy-domain";
+import { cardAvailability } from "../value/CardValue.js?build=20260814-ai-simulation-engine";
 import {
   HP_VALUE,
   STATE_DELTA_SCALE
-} from "../value/Economics.js?build=20260814-ai-policy-domain";
-import { exposureComponents } from "../value/ThreatValue.js?build=20260814-ai-policy-domain";
+} from "../value/Economics.js?build=20260814-ai-simulation-engine";
+import { exposureComponents } from "../value/ThreatValue.js?build=20260814-ai-simulation-engine";
 
 export class FrontierValue {
   /*

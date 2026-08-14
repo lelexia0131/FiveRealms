@@ -17,12 +17,12 @@ RuleEngine、DistanceSystem 与 policy/CardSelectionPolicy、ResourceSelectionPo
 架构约束
 选择公式只存在于 policy/**；本文件只负责合法集合、公开上下文与实体 ID 解析。
 */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-policy-domain";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-policy-domain";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-policy-domain";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260814-ai-policy-domain";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-policy-domain";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-policy-domain";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-simulation-engine";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260814-ai-simulation-engine";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-simulation-engine";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-simulation-engine";
 
 export class AiCardSelector {
   /*

@@ -17,8 +17,8 @@ DistanceSystem 与 value/Economics 的生命尺度。
 架构约束
 威胁公式只能在本模块出现；状态 primitive 可被 Evaluator 组合，但不得独立追加到 final transition。
 */
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260814-ai-policy-domain";
-import { HP_VALUE } from "./Economics.js?build=20260814-ai-policy-domain";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260814-ai-simulation-engine";
+import { HP_VALUE } from "./Economics.js?build=20260814-ai-simulation-engine";
 
 export const DANGER_VALUE = 7;
 export const DEATH_VALUE = 28;

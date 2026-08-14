@@ -22,4 +22,4 @@ export {
   chooseResourceZone,
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-} from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-policy-domain";
+} from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-simulation-engine";

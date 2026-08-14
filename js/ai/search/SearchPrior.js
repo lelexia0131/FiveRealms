@@ -17,21 +17,21 @@ CardValue、ThreatValue、现有领域纯 helper 与闪电 simulation query。
 架构约束
 本模块所有返回值都是 SEARCH_PRIOR；TransitionValue 不得调用或累计这些值。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-policy-domain";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-policy-domain";
-import { assessGlobalBenefit } from "../AiGlobalBenefit.js?build=20260814-ai-policy-domain";
-import { sealUseValue } from "../sealScoring.js?build=20260814-ai-policy-domain";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { assessGlobalBenefit } from "../AiGlobalBenefit.js?build=20260814-ai-simulation-engine";
+import { sealUseValue } from "../sealScoring.js?build=20260814-ai-simulation-engine";
 import {
   getBaseCardAiValue,
   getEquipmentKeepValueDeduction,
   getRoleCardAiValue,
   roleCardDelta
-} from "../value/CardValue.js?build=20260814-ai-policy-domain";
+} from "../value/CardValue.js?build=20260814-ai-simulation-engine";
 import {
   SKILL_THRESHOLD_OPTION_VALUE,
   STATE_DELTA_SCALE
-} from "../value/Economics.js?build=20260814-ai-policy-domain";
-import { ThreatCalculator } from "../value/ThreatValue.js?build=20260814-ai-policy-domain";
+} from "../value/Economics.js?build=20260814-ai-simulation-engine";
+import { ThreatCalculator } from "../value/ThreatValue.js?build=20260814-ai-simulation-engine";
 
 export const BURNING_FIELD_SEARCH_PRIOR = 8;
 

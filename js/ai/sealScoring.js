@@ -2,16 +2,16 @@
  * 封印的 AI 共享纯计算：只读取过滤后的状态、反制概率与剩余牌类别计数，
  * 不实例化匿名判定牌，也不修改 remainingCardCounts 根先验。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-policy-domain";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-policy-domain";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-simulation-engine";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "./state/Probability.js?build=20260814-ai-policy-domain";
+} from "./state/Probability.js?build=20260814-ai-simulation-engine";
 import {
   hasSeal,
   sealOutcomeProbabilities
-} from "./domain/SealModel.js?build=20260814-ai-policy-domain";
+} from "./domain/SealModel.js?build=20260814-ai-simulation-engine";
 
 export {
   getSealStatusStateBranches,
@@ -20,11 +20,11 @@ export {
   sealOutcomeProbabilities,
   sealPresenceProbability,
   tacticJudgmentProbability
-} from "./domain/SealModel.js?build=20260814-ai-policy-domain";
+} from "./domain/SealModel.js?build=20260814-ai-simulation-engine";
 export {
   sealDelayCost,
   sealEarlyUsePenalty
-} from "./search/SealTiming.js?build=20260814-ai-policy-domain";
+} from "./search/SealTiming.js?build=20260814-ai-simulation-engine";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;

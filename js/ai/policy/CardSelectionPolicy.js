@@ -17,13 +17,13 @@ ResourceSelectionPolicy、TransferPolicy 与 value/CardValue。
 架构约束
 不执行规则、不投影 State、不依赖 Planner/Controller/UI，也不构造 Simulator。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-policy-domain";
-import { getRoleCardAiValue } from "../value/CardValue.js?build=20260814-ai-policy-domain";
-import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260814-ai-policy-domain";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { getRoleCardAiValue } from "../value/CardValue.js?build=20260814-ai-simulation-engine";
+import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260814-ai-simulation-engine";
 import {
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-} from "./ResourceSelectionPolicy.js?build=20260814-ai-policy-domain";
+} from "./ResourceSelectionPolicy.js?build=20260814-ai-simulation-engine";
 
 /*
 功能

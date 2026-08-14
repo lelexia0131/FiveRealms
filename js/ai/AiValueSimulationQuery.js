@@ -17,14 +17,14 @@ AiSimulator、闪电概率 helper 与纯 value/Evaluator。
 架构约束
 本模块只做有界 simulation query，不搜索、不生成动作，也不拥有最终价值组合公式。
 */
-import { buildRadarJudgmentProbabilities } from "./domain/RadarModel.js?build=20260814-ai-policy-domain";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-policy-domain";
+import { buildRadarJudgmentProbabilities } from "./domain/RadarModel.js?build=20260814-ai-simulation-engine";
+import { Simulator } from "./simulation/Simulator.js?build=20260814-ai-simulation-engine";
 import {
   buildLightningHitDistribution,
   lightningPresenceProbability
-} from "./domain/LightningModel.js?build=20260814-ai-policy-domain";
-import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./AiGlobalBenefit.js?build=20260814-ai-policy-domain";
-import { HP_VALUE } from "./value/Economics.js?build=20260814-ai-policy-domain";
+} from "./domain/LightningModel.js?build=20260814-ai-simulation-engine";
+import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./AiGlobalBenefit.js?build=20260814-ai-simulation-engine";
+import { HP_VALUE } from "./value/Economics.js?build=20260814-ai-simulation-engine";
 
 export class AiValueSimulationQuery {
   /*
@@ -107,7 +107,7 @@ export class AiValueSimulationQuery {
       player.id,
       this.evaluator.ownerMaterialValue(state, player, viewerId, beforeRadar)
     ]));
-    const simulator = new AiSimulator(state);
+    const simulator = new Simulator(state);
     for (const outcome of distribution) {
       const after = simulator.applyLightningHit(state, outcome.holderId);
       const afterRadar = buildRadarJudgmentProbabilities(
@@ -342,7 +342,7 @@ export class AiValueSimulationQuery {
     amount,
     stateValue
   ) {
-    const simulator = new AiSimulator(state);
+    const simulator = new Simulator(state);
     const stayState = simulator.clone();
     const aidState = simulator.clone();
     const stayTarget = stayState.players.find((player) => player.id === targetId);
@@ -402,7 +402,7 @@ export class AiValueSimulationQuery {
     options,
     stateValue
   ) {
-    const simulator = new AiSimulator(state);
+    const simulator = new Simulator(state);
     return evaluateDynamicRootFlipGain(
       stateValue,
       simulator,
@@ -452,7 +452,7 @@ export class AiValueSimulationQuery {
     stateValue
   ) {
     if (!action) return { grossAvoided: 0, ownerValue: 0, projected: 0 };
-    const simulator = new AiSimulator(before);
+    const simulator = new Simulator(before);
     const actualAfter = after ?? simulator.apply(before, action, actorId);
     const counterfactualPlayers = before.players.map((player) => {
       if (player.id !== defenderId) return player;
@@ -475,7 +475,7 @@ export class AiValueSimulationQuery {
       return next;
     });
     const counterfactualBefore = { ...before, players: counterfactualPlayers };
-    const counterfactualAfter = new AiSimulator(counterfactualBefore).apply(
+    const counterfactualAfter = new Simulator(counterfactualBefore).apply(
       counterfactualBefore,
       action,
       actorId

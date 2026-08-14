@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260814-ai-policy-domain";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-policy-domain";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260814-ai-policy-domain";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260814-ai-simulation-engine";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-simulation-engine";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260814-ai-simulation-engine";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260814-ai-policy-domain";
-import { AnimationController } from "./animationController.js?build=20260814-ai-policy-domain";
-import { InteractionController } from "./InteractionController.js?build=20260814-ai-policy-domain";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260814-ai-policy-domain";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260814-ai-policy-domain";
-import { JudgmentView } from "./JudgmentView.js?build=20260814-ai-policy-domain";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-policy-domain";
-import { createOpponentHandView } from "./handVisibility.js?build=20260814-ai-policy-domain";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260814-ai-policy-domain";
-import { SoundManager } from "../audio/SoundManager.js?build=20260814-ai-policy-domain";
+} from "./templates.js?build=20260814-ai-simulation-engine";
+import { AnimationController } from "./animationController.js?build=20260814-ai-simulation-engine";
+import { InteractionController } from "./InteractionController.js?build=20260814-ai-simulation-engine";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260814-ai-simulation-engine";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260814-ai-simulation-engine";
+import { JudgmentView } from "./JudgmentView.js?build=20260814-ai-simulation-engine";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-simulation-engine";
+import { createOpponentHandView } from "./handVisibility.js?build=20260814-ai-simulation-engine";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260814-ai-simulation-engine";
+import { SoundManager } from "../audio/SoundManager.js?build=20260814-ai-simulation-engine";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);

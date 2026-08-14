@@ -17,8 +17,8 @@ value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query�
 架构约束
 不执行规则、不依赖 Planner/Controller/UI，不 import 或构造 concrete Simulator。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-policy-domain";
-import { HP_VALUE } from "../value/Economics.js?build=20260814-ai-policy-domain";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { HP_VALUE } from "../value/Economics.js?build=20260814-ai-simulation-engine";
 
 /*
 功能
@@ -100,6 +100,202 @@ export function globalBenefitCounterDesire(
     }
   }
   return (flip - stay) > counterOpportunityCost() ? 1 : 0;
+}
+
+/*
+功能
+用与真实响应相同的经济单位估算规划世界中取消一张 root 战术的收益。
+
+调用方
+ResponseSimulation 的 planning counter query 与直接 parity 测试。
+
+输入
+只读 SearchState、响应者、施放者、root 卡牌、目标和可选资源选择。
+
+输出
+以现有 HP_VALUE、手牌、能量和状态尺度表示的非规格化收益。
+
+读取状态
+仅输入 SearchState 的公开/概率摘要字段。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+这是既有规划策略的轻量近似；不得读取隐藏实体牌，不得改动 family、常量或分支顺序。
+*/
+export function planningDynamicCounterGain(
+  state,
+  responder,
+  actor,
+  card,
+  targets,
+  selection = null
+) {
+  const definitionId = card?.definitionId;
+  if (!definitionId) return 0;
+  const team = responder.battleTeam;
+  const actorEnemy = actor?.battleTeam !== team;
+  if (!actorEnemy) return 0;
+  const target = (targets ?? []).find((entry) => entry?.id)
+    ? state.players.find((player) => player.id === targets[0].id) : null;
+  /*
+  功能
+  执行规划反制策略内部纯 helper hasResource。
+
+  调用方
+  planningDynamicCounterGain。
+
+  输入
+  只读公开 SearchState player。
+
+  输出
+  布尔值。
+
+  读取状态
+  只读公开资源摘要或 knownCards。
+
+  写入状态
+  无。
+
+  调用函数
+  JavaScript 数值/数组查询。
+
+  边界与不变量
+  不得读取未知手牌 definitionId 或修改 Simulation 状态。
+  */
+  const hasResource = (player) => Number(player?.handCount ?? 0) > 0
+    || Boolean(player?.equipmentDefinitionId);
+  /*
+  功能
+  执行规划反制策略内部纯 helper knownAssault。
+
+  调用方
+  planningDynamicCounterGain。
+
+  输入
+  只读公开 SearchState player。
+
+  输出
+  布尔值。
+
+  读取状态
+  只读公开资源摘要或 knownCards。
+
+  写入状态
+  无。
+
+  调用函数
+  JavaScript 数值/数组查询。
+
+  边界与不变量
+  不得读取未知手牌 definitionId 或修改 Simulation 状态。
+  */
+  const knownAssault = (player) => Array.isArray(player?.knownCards)
+    && player.knownCards.some((entry) => entry.definitionId === "assault");
+
+  switch (definitionId) {
+    case "shockwave": {
+      if (!target?.alive) return 0;
+      const blockChance = Math.min(1, Number(target.blockProbability) || 0);
+      return HP_VALUE * (1 - blockChance) * (Number(target.shield) >= 1 ? 0 : 1);
+    }
+    case "provoke": {
+      if (!target?.alive) return 0;
+      return (Number(target.assaultResponseProbability) || 0) > 0 ? 1.1 : HP_VALUE;
+    }
+    case "duel": {
+      if (!target?.alive) return 0;
+      return HP_VALUE * ((Number(target.assaultResponseProbability) || 0) > 0 ? 0.5 : 1);
+    }
+    case "scout": {
+      if (!target?.alive) return 0;
+      const knownCount = Array.isArray(target.knownCards) ? target.knownCards.length : 0;
+      const unknownCount = Math.max(0, Number(target.handCount) - knownCount);
+      const info = Math.min(2, unknownCount) * 0.35;
+      return actorEnemy ? info : -info;
+    }
+    case "harvest": return actorEnemy ? 2 * 1.1 : -2 * 1.1;
+    case "charge": return actorEnemy ? 1.2 : -1.2;
+    case "exposeWeakness": return actorEnemy ? 1.5 : -1.5;
+    case "plunder": {
+      if (!target?.alive || !hasResource(target)) return 0;
+      const threat = actorEnemy && knownAssault(target) ? HP_VALUE : 0;
+      return actorEnemy ? 2.2 + threat : -(2.2 + threat);
+    }
+    case "destroy": {
+      if (!target?.alive || !hasResource(target)) return 0;
+      const threat = !actorEnemy && knownAssault(target) ? HP_VALUE : 0;
+      return (target.battleTeam === team ? 1.1 + threat : 1.1) * (actorEnemy ? 1 : -1);
+    }
+    case "transfer": return actorEnemy ? 2.2 : -2.2;
+    case "seal": return actorEnemy ? 2.8 : -2.8;
+    case "lightning": return actorEnemy ? 2.8 : -2.8;
+    case "leverage": {
+      if (!target?.alive) return 0;
+      return actorEnemy && target.equipmentDefinitionId ? 2 : -2;
+    }
+    default: return 0;
+  }
+}
+
+/*
+功能
+把规划世界的 root 效果收益映射为当前响应者的反制意愿。
+
+调用方
+ResponseSimulation 的 card-scope 与 target-scope 响应评估。
+
+输入
+SearchState、响应上下文、全体受益 assessment、root guard 与动态收益查询。
+
+输出
+零到一之间的反制意愿。
+
+读取状态
+输入状态的反制容量、阵营与 root 上下文。
+
+写入状态
+无。
+
+调用函数
+globalBenefitCounterDesire、counterOpportunityCost、dynamicCounterGain。
+
+边界与不变量
+先处理全体受益，再执行递归守卫和无容量短路；映射顺序与严格成本尺度保持不变。
+*/
+export function planningCounterDesire(
+  state,
+  responder,
+  actor,
+  card,
+  targets,
+  selection,
+  { assessGlobalBenefit, simulatingRootResolution = false, dynamicCounterGain }
+) {
+  const globalDesire = globalBenefitCounterDesire(
+    assessGlobalBenefit,
+    state.players,
+    responder.battleTeam,
+    card.definitionId,
+    {
+      rootSourceId:actor?.id ?? null,
+      counterDepth:0,
+      remainingCardCounts:state?.remainingCardCounts ?? null
+    }
+  );
+  if (globalDesire !== null) return globalDesire;
+  if (simulatingRootResolution) return 0;
+  const hasCounter = (responder.counterCountDistribution ?? [])
+    .some((branch) => (branch.counterCount ?? 0) >= 1 && (branch.probability ?? 0) > 0)
+    || (responder.counterProbability ?? 0) > 0;
+  if (!hasCounter) return 0;
+  const gain = dynamicCounterGain(state, responder, actor, card, targets, selection);
+  if (!Number.isFinite(gain)) return 0;
+  return Math.max(0, Math.min(1, (Number(gain) || 0) / counterOpportunityCost()));
 }
 
 export class ResponsePolicy {

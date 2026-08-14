@@ -23,4 +23,4 @@ export {
   chooseDiscardCandidates,
   getDiscardKeepValue,
   rankDiscardCandidates
-} from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-policy-domain";
+} from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-simulation-engine";

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -24,6 +25,7 @@ import {
   totalBranchProbability
 } from "../js/ai/state/Probability.js";
 import { AiSimulator } from "../js/ai/AiSimulator.js";
+import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260814-ai-simulation-engine";
 import { AiPlanner } from "../js/ai/AiPlanner.js";
 import { AiActionGenerator } from "../js/ai/AiActionGenerator.js";
 import { ThreatCalculator } from "../js/ai/ThreatCalculator.js";
@@ -8770,7 +8772,7 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
 
 test("AI·依赖注入：Planner 脱离 Game 与 Controller 后保持固定种子搜索轨迹", testPlannerExplicitDependenciesPreserveTrace);
 
-test("AI·搜索：领域迁移后四类固定场景保持根动作、序列与搜索统计", async () => {
+test("AI·搜索：Simulation 七类固定场景保持根动作、序列与搜索统计", async () => {
   const end = {
     type:"end", cardId:null, cardInstanceId:null, targetId:null, targetIds:[], selection:null
   };
@@ -8839,6 +8841,92 @@ test("AI·搜索：领域迁移后四类固定场景保持根动作、序列与�
         { id:"d", team:"dusk", general:"ember-magus", hand:[makeBenchmarkCard("counter", "trace-g-d")], hp:4 }
       ],
       expected:{ root:end, sequence:[end], expanded:3, depth:1, hiddenSamples:10, bestValueScore:0 }
+    },
+    {
+      name:"combat",
+      players:[
+        {
+          id:"a", team:"dawn", general:"blade-walker",
+          hand:[
+            makeBenchmarkCard("exposeWeakness", "trace-combat-expose"),
+            makeBenchmarkCard("assault", "trace-combat-assault")
+          ],
+          hp:4
+        },
+        { id:"b", team:"dusk", general:"shade-agent", hand:[], hp:2 },
+        { id:"c", team:"dusk", general:"spirit-medic", hand:[], hp:4 }
+      ],
+      expected:{
+        root:{
+          type:"card", cardId:"exposeWeakness", cardInstanceId:"trace-combat-expose",
+          targetId:null, targetIds:[], selection:null
+        },
+        sequence:[
+          {
+            type:"card", cardId:"exposeWeakness", cardInstanceId:"trace-combat-expose",
+            targetId:null, targetIds:[], selection:null
+          },
+          {
+            type:"card", cardId:"assault", cardInstanceId:"trace-combat-assault",
+            targetId:"b", targetIds:["b"], selection:null
+          },
+          end
+        ],
+        expanded:15, depth:3, hiddenSamples:10, bestValueScore:1.6920000000000002
+      }
+    },
+    {
+      name:"skill",
+      players:[
+        { id:"a", team:"dawn", general:"oath-warden", hand:[], hp:4, energy:2 },
+        { id:"b", team:"dawn", general:"spirit-medic", hand:[], hp:1 },
+        {
+          id:"c", team:"dusk", general:"blade-walker",
+          hand:[makeBenchmarkCard("assault", "trace-skill-enemy")], hp:4
+        }
+      ],
+      expected:{
+        root:{
+          type:"skill", cardId:"barrier", cardInstanceId:null,
+          targetId:"b", targetIds:["b"], selection:null
+        },
+        sequence:[
+          {
+            type:"skill", cardId:"barrier", cardInstanceId:null,
+            targetId:"b", targetIds:["b"], selection:null
+          },
+          end
+        ],
+        expanded:5, depth:2, hiddenSamples:10, bestValueScore:0.14026993865030676
+      }
+    },
+    {
+      name:"status",
+      players:[
+        {
+          id:"a", team:"dawn", general:"shade-agent",
+          hand:[makeBenchmarkCard("seal", "trace-status-seal")], hp:4
+        },
+        {
+          id:"b", team:"dusk", general:"blade-walker",
+          hand:[makeBenchmarkCard("assault", "trace-status-enemy")], hp:4
+        },
+        { id:"c", team:"dawn", general:"spirit-medic", hand:[], hp:3 }
+      ],
+      expected:{
+        root:{
+          type:"card", cardId:"seal", cardInstanceId:"trace-status-seal",
+          targetId:"b", targetIds:["b"], selection:null
+        },
+        sequence:[
+          {
+            type:"card", cardId:"seal", cardInstanceId:"trace-status-seal",
+            targetId:"b", targetIds:["b"], selection:null
+          },
+          end
+        ],
+        expanded:3, depth:2, hiddenSamples:10, bestValueScore:0.33107061178945546
+      }
     }
   ];
   for (const scene of scenes) {
@@ -8858,6 +8946,235 @@ test("AI·搜索：领域迁移后四类固定场景保持根动作、序列与�
       disposeBenchmarkGame(game);
     }
   }
+});
+
+test("AI·搜索：Simulation 拆分保持固定 D4 封印链逐字段一致", async () => {
+  const game = makeBenchmarkGame({
+    players:[
+      {
+        id:"a", team:"dawn", general:"shade-agent", energy:3,
+        hand:[
+          makeBenchmarkCard("seal", "d4-seal"),
+          makeBenchmarkCard("assault", "d4-assault")
+        ]
+      },
+      {
+        id:"b", team:"dusk", general:"oath-warden", hp:2, energy:1,
+        hand:[makeBenchmarkCard("block", "d4-block")]
+      },
+      {
+        id:"c", team:"dusk", general:"fate-gambler", hp:1, energy:1,
+        hand:[makeBenchmarkCard("assault", "d4-c-assault")]
+      },
+      {
+        id:"d", team:"dawn", general:"spirit-medic", hp:4, energy:1,
+        hand:[makeBenchmarkCard("assault", "d4-d-assault")]
+      },
+      {
+        id:"e", team:"dusk", general:"ember-magus", hp:4, energy:1,
+        hand:[makeBenchmarkCard("assault", "d4-e-assault")]
+      }
+    ],
+    options:{ actorId:"a", seed:20260814, nodeBudget:200 }
+  });
+  try {
+    const { action, stats } = await runBenchmarkAiDecision(game, "a");
+    assert.deepEqual(describeBenchmarkAction(action), {
+      type:"card", cardId:"seal", cardInstanceId:"d4-seal",
+      targetId:"c", targetIds:["c"], selection:null
+    });
+    assert.deepEqual(stats.bestSequence.map((entry) => [entry.type, entry.cardId, entry.targetId]), [
+      ["card", "seal", "c"],
+      ["skill", "stealSkill", "c"],
+      ["card", "assault", "b"],
+      ["end", null, null]
+    ]);
+    assert.equal(stats.expanded, 102);
+    assert.equal(stats.depth, 4);
+    assert.equal(stats.hiddenSamples, 10);
+    assert.equal(stats.bestValueScore, 0.04919669968375734);
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+});
+
+/*
+功能
+冻结拆分前模拟器对完整 SearchState 的序列化结果。
+
+调用方
+Simulation 架构迁移 characterization 回归测试。
+
+输入
+固定战斗响应、卡牌资源、主动技能与延迟状态四类场景。
+
+输出
+去除会话随机 ID 后的完整状态 SHA-256 指纹。
+
+读取状态
+测试 GameState、Knowledge remaining counts 与 AiSimulator 输出。
+
+写入状态
+仅写独立模拟 clone 的稳定 gameId 占位符。
+
+调用函数
+createAiVisibleState、AiSimulator.apply/applyLightningHit、createHash。
+
+边界与不变量
+指纹覆盖全部深层字段、概率条件键与数组顺序；迁移不得通过挑选摘要字段掩盖状态差异。
+*/
+function testSimulationPreMigrationCharacterization() {
+  assert.equal(AiSimulator, Simulator);
+  const fingerprint = (state) => {
+    state.gameId = "<stable>";
+    return createHash("sha256").update(JSON.stringify(state)).digest("hex");
+  };
+  const makeFixture = (players) => makeBenchmarkGame({
+    players,
+    options:{ actorId:"a", nodeBudget:200, seed:20260814 }
+  });
+  const visibleState = (game) => {
+    const actor = game.state.players.find((player) => player.id === "a");
+    return createAiVisibleState(
+      actor.id,
+      game.state,
+      game.aiController.knowledge.remainingCounts(actor)
+    );
+  };
+  const fingerprints = {};
+
+  const combat = makeFixture([
+    { id:"a", team:"dawn", general:"blade-walker", hand:[makeBenchmarkCard("assault", "char-assault")], hp:4 },
+    { id:"b", team:"dusk", general:"shade-agent", hand:[makeBenchmarkCard("block", "char-block")], hp:2, shield:1 },
+    { id:"c", team:"dusk", general:"oath-warden", hand:[makeBenchmarkCard("recover", "char-recover")], hp:3 }
+  ]);
+  try {
+    const state = visibleState(combat);
+    fingerprints.combat = fingerprint(new Simulator(state).apply(state, {
+      type:"card",
+      card:state.players[0].hand[0],
+      targets:[state.players[1]],
+      executionProbability:1
+    }, "a"));
+  } finally {
+    disposeBenchmarkGame(combat);
+  }
+
+  const card = makeFixture([
+    { id:"a", team:"dawn", general:"shade-agent", hand:[makeBenchmarkCard("transfer", "char-transfer")], hp:4 },
+    { id:"b", team:"dawn", general:"spirit-medic", hand:[], hp:2 },
+    { id:"c", team:"dusk", general:"blade-walker", hand:[makeBenchmarkCard("assault", "char-transfer-source")], hp:4 }
+  ]);
+  try {
+    const state = visibleState(card);
+    fingerprints.card = fingerprint(new Simulator(state).apply(state, {
+      type:"card",
+      card:state.players[0].hand[0],
+      targets:[],
+      selection:{
+        sourceId:"c", receiverId:"b", zone:"hand", selectionKind:"unknown",
+        availableUnknownCount:1
+      },
+      executionProbability:1
+    }, "a"));
+  } finally {
+    disposeBenchmarkGame(card);
+  }
+
+  const skill = makeFixture([
+    { id:"a", team:"dawn", general:"oath-warden", hand:[], hp:4, energy:3 },
+    { id:"b", team:"dawn", general:"shade-agent", hand:[], hp:3 },
+    { id:"c", team:"dusk", general:"blade-walker", hand:[], hp:4 }
+  ]);
+  try {
+    const state = visibleState(skill);
+    fingerprints.skill = fingerprint(new Simulator(state).apply(state, {
+      type:"skill",
+      skill:ACTIVE_SKILLS.barrier,
+      targets:[state.players[1]],
+      executionProbability:1
+    }, "a"));
+  } finally {
+    disposeBenchmarkGame(skill);
+  }
+
+  const status = makeFixture([
+    { id:"a", team:"dawn", general:"blade-walker", hand:[], hp:4 },
+    { id:"b", team:"dusk", general:"shade-agent", hand:[], hp:2 },
+    { id:"c", team:"dusk", general:"spirit-medic", hand:[makeBenchmarkCard("recover", "char-status-recover")], hp:3 }
+  ]);
+  status.state.players[1].statuses.lightning = {
+    cardDefinitionId:"lightning", originPlayerId:"a"
+  };
+  try {
+    const state = visibleState(status);
+    fingerprints.status = fingerprint(new Simulator(state).applyLightningHit(state, "b"));
+  } finally {
+    disposeBenchmarkGame(status);
+  }
+
+  assert.deepEqual(fingerprints, {
+    combat:"023a84bebdde19ed05c8d38ad73b40cbeb90de9671d597b87409b19196d44c1e",
+    card:"fb9b0c3c8f1562d2c36f590cf4cf173a2f32a822ed3f5e009366fb115430587a",
+    skill:"9a31d487ced17ebf9ecfd79265a39741fe9b102658e50a739a228a486dadd668",
+    status:"3f82b2efdda32b59cf698548849d83640268eadc56eb61aa02eb66578b897f15"
+  });
+}
+
+test(
+  "AI·模拟器：拆分前四类完整 SearchState 指纹保持冻结",
+  testSimulationPreMigrationCharacterization
+);
+
+test("AI·架构：Simulation facade 与五个效果组件保持单向依赖和唯一 owner", async () => {
+  const paths = {
+    facade:"js/ai/simulation/Simulator.js",
+    response:"js/ai/simulation/ResponseSimulation.js",
+    combat:"js/ai/simulation/CombatSimulation.js",
+    card:"js/ai/simulation/CardEffectSimulation.js",
+    skill:"js/ai/simulation/SkillEffectSimulation.js",
+    status:"js/ai/simulation/StatusSimulation.js",
+    support:"js/ai/simulation/SimulationSupport.js",
+    compatibility:"js/ai/AiSimulator.js",
+    planner:"js/ai/AiPlanner.js",
+    valueQuery:"js/ai/AiValueSimulationQuery.js"
+  };
+  const source = Object.fromEntries(await Promise.all(
+    Object.entries(paths).map(async ([name, path]) => [name, await readFile(projectFile(path), "utf8")])
+  ));
+  assert.doesNotMatch(source.facade, /\.\.\/policy\/|\.\.\/value\/|\.\.\/domain\/|RuleEngine|CARD_DEFINITIONS/);
+  for (const name of ["response", "combat", "card", "skill", "status", "support"]) {
+    assert.doesNotMatch(
+      source[name],
+      /AiController|AiPlanner|UIManager|core\/Game\.js|simulation\/Simulator\.js|\.\.\/AiSimulator\.js/,
+      name
+    );
+  }
+  assert.match(source.planner, /\.\/simulation\/Simulator\.js\?build=/);
+  assert.match(source.valueQuery, /\.\/simulation\/Simulator\.js\?build=/);
+  assert.doesNotMatch(source.planner, /from "\.\/AiSimulator\.js/);
+  assert.doesNotMatch(source.valueQuery, /from "\.\/AiSimulator\.js/);
+  assert.match(
+    source.compatibility,
+    /^\/\*[\s\S]*?\*\/\s*export \{ Simulator, Simulator as AiSimulator \} from "\.\/simulation\/Simulator\.js\?build=[^"]+";\s*$/
+  );
+  assert.match(source.response, /consumeBlockResponseWorlds[\s\S]*consumeTargetCounterResponseWorlds/);
+  assert.match(source.combat, /applyDamage[\s\S]*resolveFatal[\s\S]*healFrom/);
+  assert.match(source.card, /applyCardEffect[\s\S]*takeResourceToHand[\s\S]*destroyResource/);
+  assert.match(source.skill, /applySkill/);
+  assert.match(source.status, /applyDelayedStatusCard[\s\S]*$/);
+  for (const moved of [
+    "applyDamage", "resolveFatal", "consumeBlockResponseWorlds", "applyCardEffect",
+    "applySkill", "applyDelayedStatusCard"
+  ]) {
+    assert.doesNotMatch(source.facade, new RegExp(`^  ${moved}\\s*\\(`, "m"), moved);
+  }
+  assert.equal((source.facade.match(/withResponseSimulation\(/g) ?? []).length, 1);
+  assert.equal((source.facade.match(/withCombatSimulation\(/g) ?? []).length, 1);
+  assert.equal((source.facade.match(/withCardEffectSimulation\(/g) ?? []).length, 1);
+  assert.equal((source.facade.match(/withSkillEffectSimulation\(/g) ?? []).length, 1);
+  assert.equal((source.facade.match(/withStatusSimulation\(/g) ?? []).length, 1);
+  assert.doesNotMatch(source.facade, /new (?:Response|Combat|CardEffect|SkillEffect|Status)Simulation/);
 });
 
 /*
@@ -30265,7 +30582,7 @@ test("AI·资源选择：破坏模拟同步后掠夺模拟保留具体身份", (
 });
 
 test("AI·资源选择：破坏模拟共享模块单一公式来源", async () => {
-  const source = await readFile(projectFile("js/ai/AiSimulator.js"), "utf8");
+  const source = await readFile(projectFile("js/ai/simulation/CardEffectSimulation.js"), "utf8");
   assert.match(source, /chooseBestResourceHandCandidate/);
   assert.match(source, /chooseResourceZone/);
   assert.doesNotMatch(source, /const destroyEquipment =/);
@@ -30678,7 +30995,7 @@ test("AI·资源选择：掠夺模拟 scale 三档：装备", () => {
 });
 
 test("AI·资源选择：掠夺模拟共享模块单一公式来源", async () => {
-  const source = await readFile(projectFile("js/ai/AiSimulator.js"), "utf8");
+  const source = await readFile(projectFile("js/ai/simulation/CardEffectSimulation.js"), "utf8");
   assert.match(source, /chooseSimulatedResourceSelection/);
   assert.doesNotMatch(source, /const takeEquipment =/);
 });

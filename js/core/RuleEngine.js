@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260814-ai-policy-domain";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-policy-domain";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-simulation-engine";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

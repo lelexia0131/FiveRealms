@@ -17,16 +17,16 @@ RuleEngine、技能注册器、领域概率与策略评分模块。
 架构约束
 不得依赖 AIController；转移资源选择必须由构造时注入的窄能力提供。
 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-policy-domain";
-import { getLightningStatusStateBranches } from "./domain/LightningModel.js?build=20260814-ai-policy-domain";
-import { getSealStatusStateBranches } from "./domain/SealModel.js?build=20260814-ai-policy-domain";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-simulation-engine";
+import { getLightningStatusStateBranches } from "./domain/LightningModel.js?build=20260814-ai-simulation-engine";
+import { getSealStatusStateBranches } from "./domain/SealModel.js?build=20260814-ai-simulation-engine";
 import {
   ACTIVE_SKILLS, getActiveSkill, getActiveSkillCost
-} from "../generals/skillRegistry.js?build=20260814-ai-policy-domain";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-policy-domain";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-policy-domain";
-import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260814-ai-policy-domain";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-policy-domain";
+} from "../generals/skillRegistry.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-simulation-engine";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260814-ai-simulation-engine";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-simulation-engine";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -38,7 +38,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./state/Probability.js?build=20260814-ai-policy-domain";
+} from "./state/Probability.js?build=20260814-ai-simulation-engine";
 
 export class AiActionGenerator {
   /*

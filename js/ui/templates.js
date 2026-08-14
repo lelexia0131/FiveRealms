@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-ai-policy-domain";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260814-ai-policy-domain";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-ai-simulation-engine";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260814-ai-simulation-engine";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

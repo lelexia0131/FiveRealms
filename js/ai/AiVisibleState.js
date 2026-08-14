@@ -17,14 +17,14 @@ AiController、AiResponsePolicy、测试与尚未迁移的搜索调用方。
 架构约束
 旧 createAiVisibleState 只做 SearchState 兼容外观，不得另存一份投影或概率逻辑。
 */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-policy-domain";
-import { TeamRuleService } from "../core/TeamRuleService.js?build=20260814-ai-policy-domain";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-ai-policy-domain";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./value/CardValue.js?build=20260814-ai-policy-domain";
-import { createBeliefState } from "./state/BeliefState.js?build=20260814-ai-policy-domain";
-import { createKnowledgeState } from "./state/Knowledge.js?build=20260814-ai-policy-domain";
-import { createSearchState } from "./state/SearchState.js?build=20260814-ai-policy-domain";
-import { createVisibleState } from "./state/VisibleState.js?build=20260814-ai-policy-domain";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { TeamRuleService } from "../core/TeamRuleService.js?build=20260814-ai-simulation-engine";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-ai-simulation-engine";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./value/CardValue.js?build=20260814-ai-simulation-engine";
+import { createBeliefState } from "./state/BeliefState.js?build=20260814-ai-simulation-engine";
+import { createKnowledgeState } from "./state/Knowledge.js?build=20260814-ai-simulation-engine";
+import { createSearchState } from "./state/SearchState.js?build=20260814-ai-simulation-engine";
+import { createVisibleState } from "./state/VisibleState.js?build=20260814-ai-simulation-engine";
 
 /*
 功能
