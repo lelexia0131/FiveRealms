@@ -17,8 +17,8 @@ Planner 诊断、兼容 façade 与价值归属测试。
 架构约束
 Ledger 解释已有价值，不是第二个 Evaluator；所有 response/candidate 字段均为 DIAGNOSTIC_ONLY。
 */
-import { buildRadarJudgmentProbabilities } from "../AiProbabilityBranches.js?build=20260814-ai-value-ownership";
-import { sealTeamBurden } from "../sealScoring.js?build=20260814-ai-value-ownership";
+import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260814-ai-policy-domain";
+import { sealTeamBurden } from "../sealScoring.js?build=20260814-ai-policy-domain";
 
 export class ValueLedger {
   /*

@@ -17,13 +17,14 @@ AiSimulator、闪电概率 helper 与纯 value/Evaluator。
 架构约束
 本模块只做有界 simulation query，不搜索、不生成动作，也不拥有最终价值组合公式。
 */
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260814-ai-value-ownership";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-value-ownership";
+import { buildRadarJudgmentProbabilities } from "./domain/RadarModel.js?build=20260814-ai-policy-domain";
+import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-policy-domain";
 import {
   buildLightningHitDistribution,
   lightningPresenceProbability
-} from "./lightningScoring.js?build=20260814-ai-value-ownership";
-import { HP_VALUE } from "./value/Economics.js?build=20260814-ai-value-ownership";
+} from "./domain/LightningModel.js?build=20260814-ai-policy-domain";
+import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./AiGlobalBenefit.js?build=20260814-ai-policy-domain";
+import { HP_VALUE } from "./value/Economics.js?build=20260814-ai-policy-domain";
 
 export class AiValueSimulationQuery {
   /*
@@ -108,7 +109,7 @@ export class AiValueSimulationQuery {
     ]));
     const simulator = new AiSimulator(state);
     for (const outcome of distribution) {
-      const after = simulator.applyLightningHit(state, outcome.holder.id);
+      const after = simulator.applyLightningHit(state, outcome.holderId);
       const afterRadar = buildRadarJudgmentProbabilities(
         after?.remainingCardCounts ?? null
       ).tactic;
@@ -306,6 +307,113 @@ export class AiValueSimulationQuery {
       }
     }
     return values;
+  }
+
+  /*
+  功能
+  为护援 Policy 构造 STAY/AID 两个配对模拟世界并返回纯价值结果。
+
+  调用方
+  AiResponsePolicy compatibility façade 注入的 guardianAidValues query。
+
+  输入
+  过滤状态、守誓者/目标/来源 ID、伤害量与完整 State Value 入口。
+
+  输出
+  `{stayValue, aidValue, futureInventory}` 纯数值对象。
+
+  读取状态
+  只读传入 SearchState 与公开伤害上下文。
+
+  写入状态
+  只修改两个独立 Simulator clone。
+
+  调用函数
+  AiSimulator.clone/applyDamage、stateValue.stateUtility、Evaluator.exposureComponents。
+
+  边界与不变量
+  STAY 只排除指定守誓者，AID 走既有模拟护援；固定 canBlock:false 且不修改真实 GameState。
+  */
+  guardianAidValues(
+    state,
+    responderId,
+    targetId,
+    sourceId,
+    amount,
+    stateValue
+  ) {
+    const simulator = new AiSimulator(state);
+    const stayState = simulator.clone();
+    const aidState = simulator.clone();
+    const stayTarget = stayState.players.find((player) => player.id === targetId);
+    const aidTarget = aidState.players.find((player) => player.id === targetId);
+    const staySource = sourceId
+      ? stayState.players.find((player) => player.id === sourceId)
+      : null;
+    const aidSource = sourceId
+      ? aidState.players.find((player) => player.id === sourceId)
+      : null;
+    simulator.applyDamage(stayState, staySource, stayTarget, amount, {
+      canBlock: false,
+      excludedGuardianIds: new Set([responderId])
+    });
+    simulator.applyDamage(aidState, aidSource, aidTarget, amount, { canBlock: false });
+    const visibleTarget = state.players.find((player) => player.id === targetId);
+    const { futureInventory } = this.evaluator.exposureComponents(state, visibleTarget);
+    return {
+      stayValue: stateValue.stateUtility(stayState, responderId),
+      aidValue: stateValue.stateUtility(aidState, responderId),
+      futureInventory
+    };
+  }
+
+  /*
+  功能
+  为 ResponsePolicy 查询追加一张反制翻转 root 结局的纯价值增量。
+
+  调用方
+  AiResponsePolicy compatibility façade 注入的 dynamicRootFlipGain query。
+
+  输入
+  当前过滤 response state、响应者/root 信息、目标 ID、公开选择上下文与 State Value。
+
+  输出
+  FLIP-STAY 数值；全体受益牌返回 null。
+
+  读取状态
+  只读当前 SearchState 与 root 公开上下文。
+
+  写入状态
+  只写 AiSimulator 生成的独立克隆。
+
+  调用函数
+  AiSimulator、AiGlobalBenefit.dynamicRootFlipGain compatibility query。
+
+  边界与不变量
+  每个响应窗口只构造一个 concrete Simulator；Policy 本身不知道或构造 Simulator。
+  */
+  dynamicRootFlipGain(
+    state,
+    responderId,
+    rootCard,
+    rootSourceId,
+    counterDepth,
+    rootTargetIds,
+    options,
+    stateValue
+  ) {
+    const simulator = new AiSimulator(state);
+    return evaluateDynamicRootFlipGain(
+      stateValue,
+      simulator,
+      state,
+      responderId,
+      rootCard,
+      rootSourceId,
+      counterDepth,
+      rootTargetIds,
+      options
+    );
   }
 
   /*

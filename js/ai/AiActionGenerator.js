@@ -17,15 +17,16 @@ RuleEngine、技能注册器、领域概率与策略评分模块。
 架构约束
 不得依赖 AIController；转移资源选择必须由构造时注入的窄能力提供。
 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-value-ownership";
-import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260814-ai-value-ownership";
-import { getSealStatusStateBranches } from "./sealScoring.js?build=20260814-ai-value-ownership";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-policy-domain";
+import { getLightningStatusStateBranches } from "./domain/LightningModel.js?build=20260814-ai-policy-domain";
+import { getSealStatusStateBranches } from "./domain/SealModel.js?build=20260814-ai-policy-domain";
 import {
   ACTIVE_SKILLS, getActiveSkill, getActiveSkillCost
-} from "../generals/skillRegistry.js?build=20260814-ai-value-ownership";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-value-ownership";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260814-ai-value-ownership";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-value-ownership";
+} from "../generals/skillRegistry.js?build=20260814-ai-policy-domain";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-policy-domain";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-policy-domain";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260814-ai-policy-domain";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-policy-domain";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -37,7 +38,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./state/Probability.js?build=20260814-ai-value-ownership";
+} from "./state/Probability.js?build=20260814-ai-policy-domain";
 
 export class AiActionGenerator {
   /*
@@ -65,71 +66,64 @@ export class AiActionGenerator {
   边界与不变量
   只保存具体能力，不接收或查找 AIController。
   */
-  constructor(game, { chooseTransferCombination } = {}) {
+  constructor(game, {
+    chooseTransferCombination,
+    transferPolicy,
+    actionCandidatePolicy
+  } = {}) {
     if (!game) throw new TypeError("AiActionGenerator 缺少依赖：game");
     if (typeof chooseTransferCombination !== "function") {
       throw new TypeError("AiActionGenerator 缺少依赖：chooseTransferCombination");
     }
+    const resolvedTransferPolicy = transferPolicy ?? new TransferPolicy();
+    const resolvedActionCandidatePolicy = actionCandidatePolicy ?? new ActionCandidatePolicy();
+    if (typeof resolvedTransferPolicy.choose !== "function") {
+      throw new TypeError("AiActionGenerator 缺少依赖：transferPolicy");
+    }
+    if (typeof resolvedActionCandidatePolicy.isLightningStrategicallyForbidden !== "function") {
+      throw new TypeError("AiActionGenerator 缺少依赖：actionCandidatePolicy");
+    }
     this.game = game;
     this.chooseTransferCombination = chooseTransferCombination;
+    this.transferPolicy = resolvedTransferPolicy;
+    this.actionCandidatePolicy = resolvedActionCandidatePolicy;
   }
 
-  expectedAvailableAssaults(actor) {
-    return (actor.hand ?? []).filter((card) => card.definitionId === "assault")
-      .reduce((sum, card) => sum + totalBranchProbability(getAvailabilityStateBranches(card)
-        .filter((branch) => branch.available)), 0);
-  }
+  /*
+  功能
+  从 RuleEngine 提供的深层合法 source/receiver 集合选择转移计划。
 
-  expectedAvailableAttackUses(actor) {
-    const slots = Array.isArray(actor.attackUseSlots)
-      ? actor.attackUseSlots
-      : null;
-    if (slots) {
-      return slots.reduce((sum, slot) => sum + totalBranchProbability(
-        (slot ?? []).filter((branch) => branch.available)
-      ), 0);
-    }
-    const limit = Number(actor.attackLimit ?? actor.turnFlags?.attackLimit) || 0;
-    const used = Number(actor.attackUsed ?? actor.turnFlags?.attackUsed) || 0;
-    return Math.max(0, limit - used);
-  }
+  调用方
+  generateFromVisible。
 
-  canBenefitFromBreakArmy(actor) {
-    return this.expectedAvailableAssaults(actor)
-      > this.expectedAvailableAttackUses(actor) + PROBABILITY_EPSILON;
-  }
+  输入
+  过滤 simulation game、行动者、转移牌与 Belief remaining counts。
 
-  /**
-   * 孤注的确定零收益场景：已有完整「孤注」状态且确定能量不超过1。
-   * 真人仍允许发动；这里只禁止 AI 把该动作生成出来。
-   * 真实根节点使用 player.statuses.allIn，深层模拟使用 actor.assaultBonus 期望值，
-   * 只过滤「确定已有完整孤注」的分支，不误杀 assaultBonus < 1 的部分概率状态。
-   */
-  isZeroBenefitAllIn(actor) {
-    const hasCompleteStatus = Boolean(actor?.statuses?.allIn)
-      || Number(actor?.assaultBonus) >= 1 - PROBABILITY_EPSILON;
-    return hasCompleteStatus && Number(actor?.energy) <= 1;
-  }
+  输出
+  TransferPolicy 选择描述或 null。
 
-  /**
-   * 当一方已经形成 3 对 1 的绝对人数优势时，该阵营 AI 不主动引入会在存活环中
-   * 继续流转的闪电风险。这是明确的 AI 战略约束，不由血量或短期击杀期望覆盖；
-   * 人类玩家的正式合法性不受影响。
-   */
-  isLightningStrategicallyForbidden(players, actor) {
-    const alive = (players ?? []).filter((player) => player.alive);
-    const allies = alive.filter((player) => player.battleTeam === actor?.battleTeam).length;
-    const enemies = alive.length - allies;
-    return allies === 3 && enemies === 1;
-  }
+  读取状态
+  RuleEngine 合法集合、SearchState 公开/合法信息与 Belief。
 
+  写入状态
+  无。
+
+  调用函数
+  RuleEngine.getTransferSources/getTransferReceivers、TransferPolicy.choose。
+
+  边界与不变量
+  Generator 只提供合法集合；正收益过滤和 tie-break 属正式 Policy，真实实体移动不在此发生。
+  */
   chooseVisibleTransferPlan(game, actor, card, remainingCardCounts = null) {
     const sources = RuleEngine.getTransferSources(game, actor, card);
     const excludedCardIds = card.id ? new Set([card.id]) : null;
-    return chooseBestPositiveTransfer(buildTransferCandidates({
-      actor, sources, excludedCardIds, remainingCardCounts,
+    return this.transferPolicy.choose({
+      actor,
+      sources,
+      excludedCardIds,
+      remainingCardCounts,
       getReceivers:(from) => RuleEngine.getTransferReceivers(game, actor, from, card)
-    }));
+    });
   }
 
   /*
@@ -162,7 +156,10 @@ export class AiActionGenerator {
     for (const card of player.hand) {
       if (!RuleEngine.canPlayCard(this.game, player, card).ok) continue;
       if (card.definitionId === "lightning"
-        && this.isLightningStrategicallyForbidden(this.game.state.players, player)) continue;
+        && this.actionCandidatePolicy.isLightningStrategicallyForbidden(
+          this.game.state.players,
+          player
+        )) continue;
       if (card.definitionId === "lightning" && RuleEngine.hasStatus(player, "lightning")) continue;
       const targets = RuleEngine.getCardTargets(this.game, player, card);
       if (card.definitionId === "leverage") {
@@ -190,16 +187,15 @@ export class AiActionGenerator {
         continue;
       }
       if (["singleEnemy", "singleEnemyInRange", "singleUnsealedEnemy", "singleAlly", "otherWithCards", "otherWithCardsOrEquipment"].includes(card.targetType)) {
-        const aiTargets = ["destroy","plunder"].includes(card.definitionId)
-          ? targets.filter((target) => target.battleTeam !== player.battleTeam)
-          : targets;
+        const aiTargets = this.actionCandidatePolicy.filterCardTargets(card, player, targets);
         for (const target of aiTargets) actions.push({ type:"card", card, targets:[target] });
       } else actions.push({ type:"card", card, targets:card.targetType === "allEnemies" || card.targetType === "allLiving" ? targets : [] });
     }
     const skill = getActiveSkill(player);
     if (skill?.canUse(this.game, player).ok
-      && (skill.id !== "breakArmy" || this.canBenefitFromBreakArmy(player))
-      && !(skill.id === "allIn" && this.isZeroBenefitAllIn(player))) {
+      && (skill.id !== "breakArmy"
+        || this.actionCandidatePolicy.canBenefitFromBreakArmy(player))
+      && !(skill.id === "allIn" && this.actionCandidatePolicy.isZeroBenefitAllIn(player))) {
       const targets = RuleEngine.getSkillTargets(this.game, player, skill);
       const energyCost = getActiveSkillCost(this.game, player, skill);
       if (skill.targetType === "none" || skill.targetType === "allEnemies") {
@@ -212,7 +208,31 @@ export class AiActionGenerator {
     return actions;
   }
 
-  /** 从过滤快照重新生成深层动作；动态距离只使用快照中的实时 aliveRing。 */
+  /*
+  功能
+  从过滤 SearchState 重新生成深层 AI 候选动作。
+
+  调用方
+  AiPlanner 注入的 generateFromVisible 能力。
+
+  输入
+  SearchState 与当前行动者 ID。
+
+  输出
+  带执行概率分支的 AI policy candidate action 数组。
+
+  读取状态
+  过滤玩家、Belief、RuleEngine 共享纯规则、正式 Policy 与概率代数。
+
+  写入状态
+  无。
+
+  调用函数
+  RuleEngine、ActionCandidatePolicy、TransferPolicy、attachProbabilityBranches。
+
+  边界与不变量
+  动态距离只使用实时 alive ring；Policy 过滤不改变 Game authority 的合法性定义。
+  */
   generateFromVisible(state, playerId) {
     if (state.playPhaseEnded) return [];
     const actor = state.players.find((player) => player.id === playerId && player.alive);
@@ -227,7 +247,10 @@ export class AiActionGenerator {
       if (!definition || definition.usageMode === "response") continue;
       const card = { ...definition, ...held, id:held.id };
       if (card.definitionId === "lightning"
-        && this.isLightningStrategicallyForbidden(state.players, actor)) continue;
+        && this.actionCandidatePolicy.isLightningStrategicallyForbidden(
+          state.players,
+          actor
+        )) continue;
       if (card.definitionId === "lightning" && RuleEngine.hasStatus(actor, "lightning")) continue;
       if (card.definitionId === "assault") {
         for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) {
@@ -272,16 +295,19 @@ export class AiActionGenerator {
       else if (card.targetType === "otherWithCards") for (const target of alive.filter((entry) => entry.id !== actor.id && entry.handCount > 0)) actions.push({ type:"card", card, targets:[target] });
       else if (card.targetType === "otherWithCardsOrEquipment") {
         const targets = RuleEngine.getCardTargets(simulationGame, actor, card);
-        for (const target of ["destroy","plunder"].includes(card.definitionId)
-          ? targets.filter((entry) => entry.battleTeam !== actor.battleTeam)
-          : targets) actions.push({ type:"card", card, targets:[target] });
+        for (const target of this.actionCandidatePolicy.filterCardTargets(
+          card,
+          actor,
+          targets
+        )) actions.push({ type:"card", card, targets:[target] });
       }
       else actions.push({ type:"card", card, targets:["allEnemies","allLiving"].includes(card.targetType) ? (card.targetType === "allEnemies" ? enemies : alive) : [] });
     }
     const skill = ACTIVE_SKILLS[actor.activeSkillId];
     if (skill
-      && (skill.id !== "breakArmy" || this.canBenefitFromBreakArmy(actor))
-      && !(skill.id === "allIn" && this.isZeroBenefitAllIn(actor))) {
+      && (skill.id !== "breakArmy"
+        || this.actionCandidatePolicy.canBenefitFromBreakArmy(actor))
+      && !(skill.id === "allIn" && this.actionCandidatePolicy.isZeroBenefitAllIn(actor))) {
       const friendlies = alive.filter((player) => player.battleTeam === actor.battleTeam);
       let targets = [];
       if (skill.id === "barrier") targets = friendlies;

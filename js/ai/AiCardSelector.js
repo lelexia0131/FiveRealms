@@ -1,219 +1,445 @@
-/**
- * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
- * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
- */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-value-ownership";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-value-ownership";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-value-ownership";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260814-ai-value-ownership";
-import { getRoleCardAiValue } from "./value/CardValue.js?build=20260814-ai-value-ownership";
-import { chooseDiscardCandidates } from "./discardScoring.js?build=20260814-ai-value-ownership";
-import {
-  chooseBestResourceHandCandidate,
-  chooseResourceZone,
-  getResourceDefinitionUtility,
-  getResourceUnknownUtility
-} from "./resourceSelectionValue.js?build=20260814-ai-value-ownership";
+/*
+模块职责
+作为真实选牌执行边界，把合法实体候选转换为正式 Policy 输入，再把选择 ID 解析回当前实体。
 
-const globalKnownValue = (definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
+上游
+AIController、Game、PublicCardPool、角色技能与兼容测试。
 
-/** 把真实手牌实体整理为共享模块可用的手牌候选（仅合法记忆或自己手牌）。 */
-const buildResourceHandCandidate = (actor, owner, card, purpose, remainingCardCounts = null) => {
-  const definitionId = actor.id === owner.id
-    ? card.definitionId
-    : (actor.aiMemory.knownCardsByPlayer[owner.id]?.[card.id] ?? null);
-  if (definitionId) {
-    return {
-      selectionKind: "known",
-      cardId: card.id,
-      definitionId,
-      utility: getResourceDefinitionUtility(purpose, actor, owner, definitionId)
-    };
-  }
-  return {
-    selectionKind: "unknown",
-    cardId: null,
-    definitionId: null,
-    utility: getResourceUnknownUtility(purpose, actor, owner, remainingCardCounts)
-  };
-};
+下游
+RuleEngine、DistanceSystem 与 policy/CardSelectionPolicy、ResourceSelectionPolicy、TransferPolicy。
 
-/** 未知手牌只按位置采样，绝不按真实定义筛选。 */
+状态边界
+只读当前 Game/Player 实体；不移动卡牌，实体移动仍由真实规则调用方执行。
+
+信息边界
+门面只把自己手牌、合法 aiMemory、公开装备和 Belief 交给 Policy，未知牌只能按位置解析。
+
+架构约束
+选择公式只存在于 policy/**；本文件只负责合法集合、公开上下文与实体 ID 解析。
+*/
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-policy-domain";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-policy-domain";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-policy-domain";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260814-ai-policy-domain";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-policy-domain";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-policy-domain";
+
 export class AiCardSelector {
-  constructor(game, knowledge) { this.game = game; this.knowledge = knowledge; }
+  /*
+  功能
+  绑定真实规则边界、Knowledge 与 Controller 构造的正式 Policy。
 
-  chooseHiddenCards(actor, owner, count, excludedCardIds = null, context = null, resourceCounts = null) {
-    const selected = [];
-    const known = actor.aiMemory.knownCardsByPlayer[owner.id] ?? {};
+  调用方
+  AIController composition root 与历史直接构造测试。
+
+  输入
+  Game、Knowledge 及可选正式 Policy 实例。
+
+  输出
+  可解析真实实体的 compatibility façade。
+
+  读取状态
+  保存显式依赖。
+
+  写入状态
+  写实例依赖字段。
+
+  调用函数
+  ResourceSelectionPolicy、TransferPolicy、CardSelectionPolicy 构造函数。
+
+  边界与不变量
+  生产装配由 Controller 注入正式 Policy；fallback 仅保持历史直接构造兼容。
+  */
+  constructor(game, knowledge, policies = {}) {
+    this.game = game;
+    this.knowledge = knowledge;
+    this.resourcePolicy = policies.resourcePolicy ?? new ResourceSelectionPolicy();
+    this.transferPolicy = policies.transferPolicy ?? new TransferPolicy();
+    this.cardSelectionPolicy = policies.cardSelectionPolicy ?? new CardSelectionPolicy({
+      random: () => this.game.random(),
+      remainingCounts: (actor) => this.knowledge?.remainingCounts?.(actor) ?? null,
+      resourcePolicy: this.resourcePolicy,
+      transferPolicy: this.transferPolicy
+    });
+  }
+
+  /*
+  功能
+  从当前合法手牌实体中按 Policy 选择位置并解析为实体数组。
+
+  调用方
+  AIController、Game 资源选择、chooseZoneCard 与兼容测试。
+
+  输入
+  观察者、拥有者、数量、排除 ID、用途上下文和可选 remaining counts。
+
+  输出
+  仍存在于本次候选集合中的真实 Card 实体数组。
+
+  读取状态
+  owner.hand、合法 aiMemory、Knowledge 与注入随机源。
+
+  写入状态
+  仅 Policy 随机源序列。
+
+  调用函数
+  CardSelectionPolicy.chooseHiddenCardIds。
+
+  边界与不变量
+  执行边界先过滤实体再按 ID 解析；未知 definitionId 不进入 Policy 比较。
+  */
+  chooseHiddenCards(
+    actor,
+    owner,
+    count,
+    excludedCardIds = null,
+    context = null,
+    resourceCounts = null
+  ) {
     const cards = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
-    const purpose = context?.purpose ?? null;
-    const remainingCardCounts = resourceCounts !== null
-      ? resourceCounts
-      : ((purpose === "transfer" || purpose === "destroy" || purpose === "plunder")
-        ? (this.knowledge?.remainingCounts?.(actor) ?? null)
-        : null);
-    while (selected.length < count && cards.length) {
-      let index = -1;
-      if (purpose === "transfer") {
-        const candidate = chooseTransferHandCandidate(actor, owner, context?.receiver, excludedCardIds, remainingCardCounts);
-        if (!candidate) return selected;
-        if (candidate.selectionKind === "known") {
-          index = cards.findIndex((card) => card.id === candidate.cardId);
-        } else {
-          const unknownIndices = [];
-          for (let current = 0; current < cards.length; current += 1) {
-            if (!known[cards[current].id]) unknownIndices.push(current);
-          }
-          index = unknownIndices[Math.floor(this.game.random() * unknownIndices.length)] ?? 0;
-        }
-        if (index < 0) return selected;
-      } else if (actor.id === owner.id) {
-        index = cards.reduce((best, card, current) => (
-          getRoleCardAiValue(actor.generalId, card.definitionId)
-            < getRoleCardAiValue(actor.generalId, cards[best].definitionId) ? current : best
-        ), 0);
-      } else if (purpose === "scout" || purpose === "spy-gap") {
-        index = this.peekIndex(known, cards);
-      } else if (purpose === "destroy" || purpose === "plunder") {
-        const knownCards = [];
-        for (let current = 0; current < cards.length; current += 1) {
-          const definitionId = known[cards[current].id];
-          if (definitionId) knownCards.push({ cardId: cards[current].id, definitionId });
-        }
-        const candidate = chooseBestResourceHandCandidate({
-          purpose,
-          actor,
-          owner,
-          knownCards,
-          unknownCount: cards.length - knownCards.length,
-          remainingCardCounts
-        });
-        if (!candidate) return selected;
-        if (candidate.selectionKind === "known") {
-          index = cards.findIndex((card) => card.id === candidate.cardId);
-        } else {
-          const unknownIndices = [];
-          for (let current = 0; current < cards.length; current += 1) {
-            if (!known[cards[current].id]) unknownIndices.push(current);
-          }
-          index = unknownIndices[Math.floor(this.game.random() * unknownIndices.length)] ?? 0;
-        }
-        if (index < 0) return selected;
-      } else {
-        const knownCards = cards.map((card, current) => ({ card, current, definitionId:known[card.id] }))
-          .filter((entry) => entry.definitionId)
-          .sort((a, b) => (CARD_DEFINITIONS[a.definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE) - (CARD_DEFINITIONS[b.definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE));
-        index = knownCards[0]?.current ?? Math.floor(this.game.random() * cards.length);
-      }
-      selected.push(cards.splice(Math.max(0, index), 1)[0]);
-    }
-    return selected;
+    const selectedIds = this.cardSelectionPolicy.chooseHiddenCardIds({
+      actor,
+      owner,
+      cards,
+      count,
+      excludedCardIds,
+      context,
+      resourceCounts
+    });
+    const byId = new Map(cards.map((card) => [card.id, card]));
+    return selectedIds.map((cardId) => byId.get(cardId)).filter(Boolean);
   }
 
-  /** 窥探/窥隙：优先从未知位置随机采样，未知耗尽后按已知低价值补足。 */
+  /*
+  功能
+  保留历史窥探位置选择入口并委托正式 Policy。
+
+  调用方
+  历史测试与 chooseHiddenCards 的兼容调用。
+
+  输入
+  合法记忆映射与已过滤候选卡数组。
+
+  输出
+  候选数组下标。
+
+  读取状态
+  只读输入与 Policy 随机源。
+
+  写入状态
+  可能推进随机源。
+
+  调用函数
+  CardSelectionPolicy.peekIndex。
+
+  边界与不变量
+  本门面不复制选择公式。
+  */
   peekIndex(known, cards) {
-    const unknownIndices = [];
-    for (let current = 0; current < cards.length; current += 1) {
-      if (!known[cards[current].id]) unknownIndices.push(current);
-    }
-    if (unknownIndices.length) {
-      return unknownIndices[Math.floor(this.game.random() * unknownIndices.length)];
-    }
-    const knownCards = cards
-      .map((card, current) => ({ card, current, definitionId:known[card.id] }))
-      .filter((entry) => entry.definitionId)
-      .sort((a, b) => (CARD_DEFINITIONS[a.definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE) - (CARD_DEFINITIONS[b.definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE));
-    return knownCards[0]?.current ?? 0;
+    return this.cardSelectionPolicy.peekIndex(known, cards);
   }
 
-  /** 已知/未知混合时按价值方向选一个位置；未知位置只按固定期望值参与，不读真实牌面。 */
-  extremeIndex(known, cards, direction, knownValueForDefinition = globalKnownValue, unknownValue = UNKNOWN_HAND_EXPECTED_VALUE) {
-    const knownEntries = [];
-    const unknownIndices = [];
-    for (let current = 0; current < cards.length; current += 1) {
-      const definitionId = known[cards[current].id];
-      if (definitionId) {
-        knownEntries.push({ current, value:knownValueForDefinition(definitionId) });
-      } else {
-        unknownIndices.push(current);
-      }
-    }
-    if (!knownEntries.length) return unknownIndices[Math.floor(this.game.random() * unknownIndices.length)] ?? 0;
-    const bestKnown = knownEntries.reduce((best, entry) => (
-      direction === "highest" ? (entry.value > best.value ? entry : best) : (entry.value < best.value ? entry : best)
-    ), knownEntries[0]);
-    const unknownWins = unknownIndices.length > 0
-      && (direction === "highest" ? unknownValue > bestKnown.value : unknownValue < bestKnown.value);
-    if (unknownWins) return unknownIndices[Math.floor(this.game.random() * unknownIndices.length)];
-    return bestKnown.current;
+  /*
+  功能
+  保留历史已知/未知极值位置选择入口并委托正式 Policy。
+
+  调用方
+  历史测试。
+
+  输入
+  合法记忆、候选、方向、估值函数与未知期望。
+
+  输出
+  候选数组下标。
+
+  读取状态
+  只读输入与 Policy 随机源。
+
+  写入状态
+  可能推进随机源。
+
+  调用函数
+  CardSelectionPolicy.extremeIndex。
+
+  边界与不变量
+  本门面不读取未知定义或复制 tie-break。
+  */
+  extremeIndex(...args) {
+    return this.cardSelectionPolicy.extremeIndex(...args);
   }
 
-  /** 装备是公开信息；掠夺/破坏按预计价值比较，未知手牌仍只按既有不透明位置策略选择。 */
+  /*
+  功能
+  在真实手牌与公开装备区之间解析 Resource Policy 的区域选择。
+
+  调用方
+  AIController、Game 破坏/掠夺边界与测试。
+
+  输入
+  行动者、资源拥有者、用途上下文和排除 ID。
+
+  输出
+  `{card, zone}` 或 null。
+
+  读取状态
+  当前实体区域、Knowledge 与公开装备。
+
+  写入状态
+  可能推进未知位置随机源。
+
+  调用函数
+  chooseHiddenCards、CardSelectionPolicy.chooseZoneSelection。
+
+  边界与不变量
+  Policy 只返回描述；本门面必须从当前候选重新解析真实实体。
+  */
   chooseZoneCard(actor, owner, context = null, excludedCardIds = null) {
     if (!owner?.alive) return null;
     const purpose = context?.purpose ?? null;
-    if (purpose === "plunder" || purpose === "destroy") {
-      const remainingCardCounts = this.knowledge?.remainingCounts?.(actor) ?? null;
-      const [card] = this.chooseHiddenCards(actor, owner, 1, excludedCardIds, context, remainingCardCounts);
-      const handCandidate = card ? buildResourceHandCandidate(actor, owner, card, purpose, remainingCardCounts) : null;
-      const zoneChoice = chooseResourceZone({
-        purpose,
-        actor,
-        owner,
-        handCandidate,
-        equipmentDefinitionId: owner.equipment?.definitionId ?? null
-      });
-      if (zoneChoice?.zone === "equipment" && owner.equipment) return { card: owner.equipment, zone: "equipment" };
-      if (zoneChoice?.zone === "hand" && card) return { card, zone: "hand" };
-      return null;
+    const remainingCardCounts = purpose === "plunder" || purpose === "destroy"
+      ? (this.knowledge?.remainingCounts?.(actor) ?? null)
+      : null;
+    const [handCard] = this.chooseHiddenCards(
+      actor,
+      owner,
+      1,
+      excludedCardIds,
+      context,
+      remainingCardCounts
+    );
+    const selection = this.cardSelectionPolicy.chooseZoneSelection({
+      actor,
+      owner,
+      purpose,
+      handCard: handCard ?? null,
+      equipment: owner.equipment ?? null,
+      remainingCardCounts
+    });
+    if (selection?.zone === "equipment" && owner.equipment) {
+      return { card: owner.equipment, zone: "equipment" };
     }
-    if (owner.equipment && (!owner.hand.length || (actor.id !== owner.id && owner.equipment.aiValue >= 7))) {
-      return { card:owner.equipment, zone:"equipment" };
+    if (selection?.zone === "hand" && handCard?.id === selection.cardId) {
+      return { card: handCard, zone: "hand" };
     }
-    const [card] = this.chooseHiddenCards(actor, owner, 1, excludedCardIds, context);
-    return card ? { card, zone:"hand" } : owner.equipment ? { card:owner.equipment, zone:"equipment" } : null;
+    return null;
   }
 
-  /** 仅从合法记忆或自己手牌估值；对他人未知位置只返回固定期望值。 */
+  /*
+  功能
+  保留观察者对手牌实体的合法期望值入口。
+
+  调用方
+  历史测试与迁移期调用方。
+
+  输入
+  观察者、拥有者与 Card 实体。
+
+  输出
+  合法已知值或未知固定期望。
+
+  读取状态
+  自己手牌或合法 aiMemory。
+
+  写入状态
+  无。
+
+  调用函数
+  CardSelectionPolicy.expectedCardValue。
+
+  边界与不变量
+  本门面不读取其他玩家未知 definitionId。
+  */
   expectedCardValue(actor, owner, card) {
-    if (actor.id === owner.id) return getRoleCardAiValue(actor.generalId, card.definitionId);
-    const definitionId = actor.aiMemory.knownCardsByPlayer[owner.id]?.[card.id] ?? null;
-    return definitionId ? (CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE) : UNKNOWN_HAND_EXPECTED_VALUE;
+    return this.cardSelectionPolicy.expectedCardValue(actor, owner, card);
   }
 
+  /*
+  功能
+  从合法来源候选中解析最佳转移来源实体。
+
+  调用方
+  历史分阶段转移选择。
+
+  输入
+  行动者与合法来源数组。
+
+  输出
+  当前来源实体或 null。
+
+  读取状态
+  RuleEngine 合法接收者与 TransferPolicy。
+
+  写入状态
+  无。
+
+  调用函数
+  chooseTransferCombination。
+
+  边界与不变量
+  不移动手牌，最终真实结算仍需实体复核。
+  */
   chooseTransferSource(actor, candidates) {
     const plan = this.chooseTransferCombination(actor, CARD_DEFINITIONS.transfer, candidates);
     return candidates.find((player) => player.id === plan?.sourceId) ?? null;
   }
+
+  /*
+  功能
+  从合法接收者候选中解析最佳转移接收者实体。
+
+  调用方
+  历史分阶段转移选择。
+
+  输入
+  行动者、已选来源和合法接收者数组。
+
+  输出
+  当前接收者实体或 null。
+
+  读取状态
+  RuleEngine 合法集合与 TransferPolicy。
+
+  写入状态
+  无。
+
+  调用函数
+  chooseTransferCombination。
+
+  边界与不变量
+  只限制调用方已经给出的 receiver ID。
+  */
   chooseTransferReceiver(actor, from, candidates) {
-    const plan = this.chooseTransferCombination(actor, CARD_DEFINITIONS.transfer, [from], new Set(candidates.map((player) => player.id)));
+    const plan = this.chooseTransferCombination(
+      actor,
+      CARD_DEFINITIONS.transfer,
+      [from],
+      new Set(candidates.map((player) => player.id))
+    );
     return candidates.find((player) => player.id === plan?.receiverId) ?? null;
   }
 
-  /** 联合评估来源、接收者和手牌；未知牌只使用数量、上限压力与合法已知概率。 */
-  chooseTransferCombination(actor, card, sources, allowedReceiverIds = null, excludedCardIds = null) {
+  /*
+  功能
+  从 RuleEngine 给出的合法 source/receiver 集合选择最佳转移描述。
+
+  调用方
+  AIController、AiActionGenerator 与分阶段选择入口。
+
+  输入
+  行动者、转移牌、合法来源、接收者限制与排除 ID。
+
+  输出
+  冻结 transfer selection 或 null。
+
+  读取状态
+  RuleEngine 合法集合、Knowledge remaining counts 与 TransferPolicy。
+
+  写入状态
+  无。
+
+  调用函数
+  RuleEngine.getTransferReceivers、TransferPolicy.choose。
+
+  边界与不变量
+  合法性由 RuleEngine 提供，Policy 只评分；正在使用的转移实体通过排除集合保持不可选。
+  */
+  chooseTransferCombination(
+    actor,
+    card,
+    sources,
+    allowedReceiverIds = null,
+    excludedCardIds = null
+  ) {
     const remainingCardCounts = this.knowledge?.remainingCounts?.(actor) ?? null;
-    const candidates = buildTransferCandidates({
-      actor, sources, allowedReceiverIds, excludedCardIds, remainingCardCounts,
-      getReceivers:(from) => RuleEngine.getTransferReceivers(this.game, actor, from, card)
+    return this.transferPolicy.choose({
+      actor,
+      sources,
+      allowedReceiverIds,
+      excludedCardIds,
+      remainingCardCounts,
+      getReceivers: (from) => RuleEngine.getTransferReceivers(
+        this.game,
+        actor,
+        from,
+        card
+      )
     });
-    return chooseBestPositiveTransfer(candidates);
   }
+
+  /*
+  功能
+  从公开合法牌池解析 CardSelectionPolicy 选择的实体。
+
+  调用方
+  AIController 与 PublicCardPool。
+
+  输入
+  当前玩家与公开卡牌数组。
+
+  输出
+  当前公开 Card 实体或 null。
+
+  读取状态
+  公开候选与 CardValue。
+
+  写入状态
+  无。
+
+  调用函数
+  CardSelectionPolicy.choosePublicCardId。
+
+  边界与不变量
+  只按 ID 解析，不改变公开池顺序或内容。
+  */
   choosePublicCard(player, cards) {
-    return [...cards].sort((a, b) => (
-      getRoleCardAiValue(player.generalId, b.definitionId)
-        - getRoleCardAiValue(player.generalId, a.definitionId)
-    ))[0] ?? null;
+    const cardId = this.cardSelectionPolicy.choosePublicCardId(player, cards);
+    return cards.find((card) => card.id === cardId) ?? null;
   }
+
+  /*
+  功能
+  构造公开弃牌上下文并解析 ResourceSelectionPolicy 的实体 ID 结果。
+
+  调用方
+  AIController、Game 与角色规则。
+
+  输入
+  付款 Player 与弃牌数量。
+
+  输出
+  当前手牌中的真实 Card 实体数组。
+
+  读取状态
+  当前敌人距离、装备与玩家手牌。
+
+  写入状态
+  无。
+
+  调用函数
+  DistanceSystem.inAttackRange、CardSelectionPolicy.chooseDiscardIds。
+
+  边界与不变量
+  距离事实由真实规则边界提供；评分只存在于正式 ResourceSelectionPolicy。
+  */
   chooseDiscards(player, count) {
     const enemies = this.game.getEnemies(player);
-    const stranded = enemies.length > 0 && !enemies.some((enemy) => DistanceSystem.inAttackRange(this.game, player, enemy));
-    const equippedDefinitionId = player.equipment?.definitionId ?? player.equipmentDefinitionId ?? null;
-    // 真实执行与护援反事实共用 discardScoring 的同一套保留价值排序。
-    return chooseDiscardCandidates(player, player.hand, count, {
-      stranded,
-      equippedDefinitionId,
-      equipmentRetentionProbability: player.equipmentRetentionProbability ?? 1
-    });
+    const stranded = enemies.length > 0 && !enemies.some(
+      (enemy) => DistanceSystem.inAttackRange(this.game, player, enemy)
+    );
+    const equippedDefinitionId = player.equipment?.definitionId
+      ?? player.equipmentDefinitionId
+      ?? null;
+    const selectedIds = this.cardSelectionPolicy.chooseDiscardIds(
+      player,
+      player.hand,
+      count,
+      {
+        stranded,
+        equippedDefinitionId,
+        equipmentRetentionProbability: player.equipmentRetentionProbability ?? 1
+      }
+    );
+    const byId = new Map(player.hand.map((card) => [card.id, card]));
+    return selectedIds.map((cardId) => byId.get(cardId)).filter(Boolean);
   }
 }

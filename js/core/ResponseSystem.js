@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-value-ownership";
-import { createId } from "../utils/helpers.js?build=20260814-ai-value-ownership";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260814-ai-value-ownership";
-import { RuleEngine } from "./RuleEngine.js?build=20260814-ai-value-ownership";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-policy-domain";
+import { createId } from "../utils/helpers.js?build=20260814-ai-policy-domain";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260814-ai-policy-domain";
+import { RuleEngine } from "./RuleEngine.js?build=20260814-ai-policy-domain";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

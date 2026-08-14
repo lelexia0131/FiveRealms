@@ -23,9 +23,11 @@ const MODULE_FIELDS = Object.freeze([
   "架构约束",
 ]);
 const SOURCE_PATTERN = /^js\/.*\.(?:js|mjs|cjs)$/i;
-const LAYERED_AI_PATTERN = /^js\/ai\/(?:state|search|simulation|value)\//i;
+const LAYERED_AI_PATTERN = /^js\/ai\/(?:state|search|simulation|value|policy|domain)\//i;
 const STATE_AI_PATTERN = /^js\/ai\/state\//i;
 const VALUE_AI_PATTERN = /^js\/ai\/value\//i;
+const POLICY_AI_PATTERN = /^js\/ai\/policy\//i;
+const DOMAIN_AI_PATTERN = /^js\/ai\/domain\//i;
 const TRANSITION_VALUE_PATTERN = /^js\/ai\/search\/TransitionValue\.js$/i;
 
 /*
@@ -762,7 +764,7 @@ function inspectSource(file, source, changed) {
 
   if (LAYERED_AI_PATTERN.test(file)) {
     const uiImport = importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:\/ui\/|\/ui\.|\.\.\/ui\/)/i);
-    if (uiImport) errors.push({ file, functionName: "<module>", line: source.slice(0, uiImport.index).split(/\r?\n/).length, missing: ["架构约束：search/simulation/value 禁止 UI import"] });
+    if (uiImport) errors.push({ file, functionName: "<module>", line: source.slice(0, uiImport.index).split(/\r?\n/).length, missing: ["架构约束：AI 分层目录禁止 UI import"] });
     const missing = missingModuleFields(source);
     if (missing.length) errors.push({ file, functionName: "<module>", line: 1, missing });
   }
@@ -800,6 +802,52 @@ function inspectSource(file, source, changed) {
         functionName: "<architecture>",
         line: source.slice(0, concreteConstruction.index).split(/\r?\n/).length,
         missing: ["架构约束：value 禁止构造 concrete Simulator"],
+      });
+    }
+  }
+
+  if (POLICY_AI_PATTERN.test(file)) {
+    const orchestrationImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*\/(?:AiController|AIController|AiPlanner|Planner|AiSimulator)\.js(?:\?[^"']*)?["']/i,
+    );
+    if (orchestrationImport) {
+      errors.push({
+        file,
+        functionName: "<module>",
+        line: source.slice(0, orchestrationImport.index).split(/\r?\n/).length,
+        missing: ["架构约束：policy 禁止依赖 Controller/Planner/concrete Simulator"],
+      });
+    }
+    const concreteConstruction = maskNonCode(source).match(/\bnew\s+AiSimulator\s*\(/);
+    if (concreteConstruction) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, concreteConstruction.index).split(/\r?\n/).length,
+        missing: ["架构约束：policy 禁止构造 concrete Simulator"],
+      });
+    }
+  }
+
+  if (DOMAIN_AI_PATTERN.test(file)) {
+    const orchestrationImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*(?:\/value\/|\/(?:AiController|AIController|AiPlanner|Planner|AiSimulator|AiEvaluator|Evaluator)\.js)(?:\?[^"']*)?["']/i,
+    );
+    if (orchestrationImport) {
+      errors.push({
+        file,
+        functionName: "<module>",
+        line: source.slice(0, orchestrationImport.index).split(/\r?\n/).length,
+        missing: ["架构约束：domain 禁止依赖 value/Controller/Planner/Simulator/Evaluator"],
+      });
+    }
+    const concreteConstruction = maskNonCode(source).match(/\bnew\s+AiSimulator\s*\(/);
+    if (concreteConstruction) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, concreteConstruction.index).split(/\r?\n/).length,
+        missing: ["架构约束：domain 禁止构造 concrete Simulator"],
       });
     }
   }
@@ -890,7 +938,7 @@ main 的 --self-test 模式。
 inspectSource。
 
 边界与不变量
-夹具必须覆盖头格式、注释遮罩、UI/state 方向、value purity 与 TransitionValue 依赖边界。
+夹具必须覆盖头格式、注释遮罩、UI/state 方向、value/policy/domain purity 与 TransitionValue 依赖边界。
 */
 function runSelfTest() {
   const pass = `/*
@@ -1048,6 +1096,62 @@ function identity(value) { return value; }`;
   if (valueCommentErrors.some((error) => error.missing.some((item) => item.includes("Simulator")))) {
     throw new Error("value guard incorrectly scanned comment text");
   }
+  const validPolicyErrors = inspectSource(
+    "js/ai/policy/GoodPolicy.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (validPolicyErrors.length) {
+    throw new Error(`valid policy fixture failed: ${JSON.stringify(validPolicyErrors)}`);
+  }
+  const policyPlannerErrors = inspectSource(
+    "js/ai/policy/BadPlannerPolicy.js",
+    `${moduleHeader}\nimport { AiPlanner } from "../AiPlanner.js";\n${pass}`,
+    null,
+  );
+  if (!policyPlannerErrors.some((error) => error.missing.some((item) => item.includes("policy 禁止依赖")))) {
+    throw new Error("policy fixture did not detect Planner import");
+  }
+  const policySimulatorErrors = inspectSource(
+    "js/ai/policy/BadSimulatorPolicy.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return new AiSimulator(value);")}`,
+    null,
+  );
+  if (!policySimulatorErrors.some((error) => error.missing.some((item) => item.includes("policy 禁止构造")))) {
+    throw new Error("policy fixture did not detect concrete Simulator construction");
+  }
+  const validDomainErrors = inspectSource(
+    "js/ai/domain/GoodDomain.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (validDomainErrors.length) {
+    throw new Error(`valid domain fixture failed: ${JSON.stringify(validDomainErrors)}`);
+  }
+  const domainValueErrors = inspectSource(
+    "js/ai/domain/BadValueDomain.js",
+    `${moduleHeader}\nimport { Evaluator } from "../value/Evaluator.js";\n${pass}`,
+    null,
+  );
+  if (!domainValueErrors.some((error) => error.missing.some((item) => item.includes("domain 禁止依赖")))) {
+    throw new Error("domain fixture did not detect value import");
+  }
+  const domainPlannerErrors = inspectSource(
+    "js/ai/domain/BadPlannerDomain.js",
+    `${moduleHeader}\nimport { AiPlanner } from "../AiPlanner.js";\n${pass}`,
+    null,
+  );
+  if (!domainPlannerErrors.some((error) => error.missing.some((item) => item.includes("domain 禁止依赖")))) {
+    throw new Error("domain fixture did not detect Planner import");
+  }
+  const domainSimulatorErrors = inspectSource(
+    "js/ai/domain/BadSimulatorDomain.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return new AiSimulator(value);")}`,
+    null,
+  );
+  if (!domainSimulatorErrors.some((error) => error.missing.some((item) => item.includes("domain 禁止构造")))) {
+    throw new Error("domain fixture did not detect concrete Simulator construction");
+  }
   const transitionGameErrors = inspectSource(
     "js/ai/search/TransitionValue.js",
     `${moduleHeader}\nimport { Game } from "../../core/Game.js";\n${pass}`,
@@ -1064,7 +1168,7 @@ function identity(value) { return value; }`;
   if (!transitionControllerErrors.some((error) => error.missing.some((item) => item.includes("Game/AIController")))) {
     throw new Error("TransitionValue fixture did not detect AIController import");
   }
-  process.stdout.write("code-quality self-test passed: headers, modules, backreferences, ignored comments, UI/state direction, value purity, and TransitionValue boundaries\n");
+  process.stdout.write("code-quality self-test passed: headers, modules, backreferences, ignored comments, UI/state direction, value/policy/domain purity, and TransitionValue boundaries\n");
 }
 
 /*

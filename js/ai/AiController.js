@@ -17,20 +17,26 @@ Game、ResponseSystem、PublicCardPool、角色技能与测试。
 架构约束
 子组件不得回指 AIController；公开子组件字段仅作迁移期兼容，生产上游应使用门面。
 */
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-value-ownership";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260814-ai-value-ownership";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260814-ai-value-ownership";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260814-ai-value-ownership";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260814-ai-value-ownership";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260814-ai-value-ownership";
-import { AiPlanner } from "./AiPlanner.js?build=20260814-ai-value-ownership";
-import { AiStateValue } from "./AiStateValue.js?build=20260814-ai-value-ownership";
-import { AiValueSimulationQuery } from "./AiValueSimulationQuery.js?build=20260814-ai-value-ownership";
-import { FrontierValue } from "./search/FrontierValue.js?build=20260814-ai-value-ownership";
-import { SearchPrior } from "./search/SearchPrior.js?build=20260814-ai-value-ownership";
-import { TransitionValue } from "./search/TransitionValue.js?build=20260814-ai-value-ownership";
-import { Evaluator } from "./value/Evaluator.js?build=20260814-ai-value-ownership";
-import { ValueLedger } from "./value/ValueLedger.js?build=20260814-ai-value-ownership";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-policy-domain";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260814-ai-policy-domain";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260814-ai-policy-domain";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260814-ai-policy-domain";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260814-ai-policy-domain";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260814-ai-policy-domain";
+import { AiPlanner } from "./AiPlanner.js?build=20260814-ai-policy-domain";
+import { AiStateValue } from "./AiStateValue.js?build=20260814-ai-policy-domain";
+import { AiValueSimulationQuery } from "./AiValueSimulationQuery.js?build=20260814-ai-policy-domain";
+import { FrontierValue } from "./search/FrontierValue.js?build=20260814-ai-policy-domain";
+import { SearchPrior } from "./search/SearchPrior.js?build=20260814-ai-policy-domain";
+import { TransitionValue } from "./search/TransitionValue.js?build=20260814-ai-policy-domain";
+import { Evaluator } from "./value/Evaluator.js?build=20260814-ai-policy-domain";
+import { ValueLedger } from "./value/ValueLedger.js?build=20260814-ai-policy-domain";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260814-ai-policy-domain";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260814-ai-policy-domain";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-policy-domain";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260814-ai-policy-domain";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-policy-domain";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-ai-policy-domain";
 
 export class AIController {
   /*
@@ -53,7 +59,7 @@ export class AIController {
   仅写控制器组件字段。
 
 调用函数
-Value owners、AiKnowledge、AiEvaluator façade、AiCardSelector、AiResponsePolicy、AiActionGenerator 与 AiPlanner 构造函数。
+Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGenerator 与 AiPlanner 构造函数。
 
   边界与不变量
   装配无事后补丁；闭包持有具体组件或 Game 能力，不把 Controller 传给任何子组件。
@@ -88,12 +94,32 @@ Value owners、AiKnowledge、AiEvaluator façade、AiCardSelector、AiResponsePo
       searchPrior: this.searchPrior,
       transitionValue: this.transitionValue
     });
-    this.cardSelector = new AiCardSelector(game, this.knowledge);
-    this.responsePolicy = new AiResponsePolicy(game, this.evaluator, this.knowledge);
+    this.resourceSelectionPolicy = new ResourceSelectionPolicy();
+    this.transferPolicy = new TransferPolicy();
+    this.cardSelectionPolicy = new CardSelectionPolicy({
+      random: () => game.random(),
+      remainingCounts: (actor) => this.knowledge.remainingCounts(actor),
+      resourcePolicy: this.resourceSelectionPolicy,
+      transferPolicy: this.transferPolicy
+    });
+    this.actionCandidatePolicy = new ActionCandidatePolicy();
+    this.responseDecisionPolicy = new ResponsePolicy({ assessGlobalBenefit });
+    this.cardSelector = new AiCardSelector(game, this.knowledge, {
+      cardSelectionPolicy: this.cardSelectionPolicy,
+      resourcePolicy: this.resourceSelectionPolicy,
+      transferPolicy: this.transferPolicy
+    });
+    this.responsePolicy = new AiResponsePolicy(game, this.evaluator, this.knowledge, {
+      responsePolicy: this.responseDecisionPolicy,
+      simulationQuery: this.valueSimulationQuery,
+      stateValue: this.stateValue
+    });
 
     const cardSelector = this.cardSelector;
     this.actionGenerator = new AiActionGenerator(game, {
       chooseTransferCombination: (...args) => cardSelector.chooseTransferCombination(...args),
+      transferPolicy: this.transferPolicy,
+      actionCandidatePolicy: this.actionCandidatePolicy
     });
 
     const actionGenerator = this.actionGenerator;

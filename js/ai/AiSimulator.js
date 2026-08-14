@@ -2,26 +2,26 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260814-ai-value-ownership";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-value-ownership";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-value-ownership";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-value-ownership";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-ai-value-ownership";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-ai-value-ownership";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260814-ai-value-ownership";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260814-ai-policy-domain";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-policy-domain";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-policy-domain";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-policy-domain";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-ai-policy-domain";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./domain/LightningModel.js?build=20260814-ai-policy-domain";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./domain/SealModel.js?build=20260814-ai-policy-domain";
 import {
   counterOpportunityCost,
   globalBenefitCounterDesire,
   mutualBenefitDraftValues
-} from "./AiGlobalBenefit.js?build=20260814-ai-value-ownership";
-import { HP_VALUE } from "./value/Economics.js?build=20260814-ai-value-ownership";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260814-ai-value-ownership";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./value/CardValue.js?build=20260814-ai-value-ownership";
-import { getDiscardKeepValue } from "./discardScoring.js?build=20260814-ai-value-ownership";
+} from "./AiGlobalBenefit.js?build=20260814-ai-policy-domain";
+import { HP_VALUE } from "./value/Economics.js?build=20260814-ai-policy-domain";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260814-ai-policy-domain";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./value/CardValue.js?build=20260814-ai-policy-domain";
+import { getDiscardKeepValue } from "./discardScoring.js?build=20260814-ai-policy-domain";
 import {
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
   buildRadarJudgmentProbabilities
-} from "./AiProbabilityBranches.js?build=20260814-ai-value-ownership";
+} from "./domain/RadarModel.js?build=20260814-ai-policy-domain";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -34,8 +34,8 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./state/Probability.js?build=20260814-ai-value-ownership";
-import { cloneSearchState } from "./state/SearchState.js?build=20260814-ai-value-ownership";
+} from "./state/Probability.js?build=20260814-ai-policy-domain";
+import { cloneSearchState } from "./state/SearchState.js?build=20260814-ai-policy-domain";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);

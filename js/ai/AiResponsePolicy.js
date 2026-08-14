@@ -1,261 +1,552 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-value-ownership";
-import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260814-ai-value-ownership";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-value-ownership";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-value-ownership";
-import { HP_VALUE } from "./value/Economics.js?build=20260814-ai-value-ownership";
+/*
+模块职责
+把真实响应窗口投影为不含 Game 引用的 DecisionContext，并委托正式 ResponsePolicy。
+
+上游
+AIController、ResponseSystem 与历史直接组件测试。
+
+下游
+policy/ResponsePolicy、AiValueSimulationQuery、状态组合与既有 Domain/Value 查询。
+
+状态边界
+只读当前 GameState；状态投影和模拟查询均在 Policy 外完成，绝不修改真实状态。
+
+信息边界
+只向 Policy 提供公开玩家视图、响应者自己的牌定义、合法记忆、Belief 与纯数值查询结果。
+
+架构约束
+本文件是 compatibility façade；不得保留第二份响应阈值、分数或选择公式。
+*/
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-policy-domain";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-ai-policy-domain";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-policy-domain";
+import { AiValueSimulationQuery } from "./AiValueSimulationQuery.js?build=20260814-ai-policy-domain";
 import {
   hasLightning,
-  nextLightningReceiver
-} from "./lightningScoring.js?build=20260814-ai-value-ownership";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260814-ai-value-ownership";
+  nextLightningReceiverId
+} from "./domain/LightningModel.js?build=20260814-ai-policy-domain";
+import {
+  hasSeal,
+  tacticJudgmentProbability
+} from "./domain/SealModel.js?build=20260814-ai-policy-domain";
+import { turnOpportunityValue } from "./sealScoring.js?build=20260814-ai-policy-domain";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260814-ai-policy-domain";
 
-/**
- * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、
- * 决斗和救援，不消费卡牌。未知信息只能来自传入概率/合法记忆。
- */
+/*
+功能
+把真实或过滤 Player 转成响应 Policy 可读的公开 plain object。
+
+调用方
+AiResponsePolicy.buildDecisionContext。
+
+输入
+Player 或玩家快照。
+
+输出
+不含 hand 实体和 Game 引用的公开响应视图。
+
+读取状态
+公开生命、护盾、能量、阵营、角色、状态、装备和手牌数量。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+其他玩家真实 hand definitionId 永不进入输出；响应者自己的合法定义另行显式提供。
+*/
+function responsePlayerView(player) {
+  if (!player) return null;
+  return {
+    id: player.id,
+    seatIndex: player.seatIndex,
+    alive: Boolean(player.alive),
+    battleTeam: player.battleTeam,
+    controllerType: player.controllerType,
+    generalId: player.generalId ?? player.general?.id ?? null,
+    roleTags: [...(player.roleTags ?? player.general?.roleTags ?? [])],
+    tags: [...(player.tags ?? player.general?.tags ?? [])],
+    hp: Number(player.hp ?? 0),
+    maxHp: Number(player.maxHp ?? player.hp ?? 0),
+    shield: Number(player.shield ?? 0),
+    energy: Number(player.energy ?? 0),
+    handCount: Number(player.handCount ?? player.hand?.length ?? 0),
+    hasEquipment: Boolean(player.equipment ?? player.equipmentDefinitionId),
+    equipmentDefinitionId: player.equipment?.definitionId
+      ?? player.equipmentDefinitionId
+      ?? null,
+    statuses: Array.isArray(player.statuses)
+      ? [...player.statuses]
+      : { ...(player.statuses ?? {}) },
+    passiveSkillIds: [...(player.general?.passiveSkillIds ?? [])],
+    momentum: Number(player.turnFlags?.momentum ?? player.momentum ?? 0),
+    assaultBonus: Number(player.statuses?.allIn?.assaultBonus ?? player.assaultBonus ?? 0),
+    guardianAidUsed: Boolean(
+      player.turnFlags?.guardianAidUsed
+      ?? ((player.guardianAidUsedProbability ?? 0) >= 1)
+    )
+  };
+}
+
 export class AiResponsePolicy {
-  constructor(game, evaluator, knowledge) { this.game = game; this.evaluator = evaluator; this.knowledge = knowledge; }
+  /*
+  功能
+  绑定真实响应边界、正式 ResponsePolicy 与窄 simulation query。
 
-  assessDyingRescue(responder, target) {
-    const need = Math.max(1, 1 - target.hp);
-    const ownRecover = responder.hand.filter((card) => card.definitionId === "recover").length;
-    const order = this.game.dyingSystem.rescueOrder(target);
-    const responderIndex = order.findIndex((player) => player.id === responder.id);
-    const later = responderIndex < 0 ? [] : order.slice(responderIndex + 1);
-    const recoverDensity = this.knowledge.probability(responder, "recover");
-    const futureExpectedRecover = later.reduce((sum, player) => {
-      const known = responder.aiMemory.knownCardsByPlayer[player.id] ?? {};
-      const knownRecover = Object.values(known).filter((definitionId) => definitionId === "recover").length;
-      const unknownCards = Math.max(0, player.hand.length - Object.keys(known).length);
-      return sum + knownRecover + unknownCards * recoverDensity;
-    }, 0);
-    const remainingAfterThisCard = Math.max(0, need - 1);
-    const aliveTeam = this.game.state.players.filter((player) => player.alive && player.battleTeam === target.battleTeam);
-    const roleTags = target.general?.roleTags ?? [];
-    const strategic = roleTags.some((tag) => ["support", "healer", "damage", "control", "tank"].includes(tag));
-    const actionValue = target.hand.length * 1.25 + target.energy * 1.1 + (target.equipment ? 2 : 0) + (strategic ? 3 : 0);
-    const immediateDefeatRisk = aliveTeam.length <= 2;
-    const likelyFollowUp = futureExpectedRecover > 0;
-    const lastRecoverPenalty = ownRecover === 1 ? (responder.hp <= 2 ? 3 : 1.5) : 0;
-    const score = 3 + actionValue + (immediateDefeatRisk ? 8 : 0) + (likelyFollowUp ? 4 : 0) + (ownRecover > 1 ? 3 : 0) - lastRecoverPenalty - remainingAfterThisCard;
-    return { need, ownRecover, recoverDensity, futureExpectedRecover, remainingAfterThisCard, strategic, immediateDefeatRisk, likelyFollowUp, actionValue, score };
-  }
+  调用方
+  AIController composition root 与兼容测试。
 
-  /** 格挡早于 beforeDamage；这里只读预览公开且确定的突袭加伤，不触发任何伤害监听器。 */
-  knownPendingAssaultBonus(context) {
-    const source = context.source;
-    if (!source?.alive || context.card?.definitionId !== "assault") return 0;
-    const passiveSkillIds = source.general?.passiveSkillIds ?? [];
-    let bonus = 0;
-    if (passiveSkillIds.includes("momentum")) {
-      bonus += Math.max(0, Number(source.turnFlags?.momentum) || 0);
-    }
-    if (passiveSkillIds.includes("gamble")) {
-      bonus += Math.max(0, Number(source.statuses?.allIn?.assaultBonus) || 0);
-    }
-    return bonus;
-  }
+  输入
+  Game、Evaluator façade、Knowledge 及可选正式依赖。
 
-  shouldRespond(responder, type, context, cards = []) {
-    const target = context.target ?? responder;
-    if (type === "dyingRescue") {
-      if (target.id === responder.id) return true;
-      if (target.battleTeam !== responder.battleTeam) return false;
-      // 第二层保障；默认流程会在 ResponseSystem 中更早执行硬规则并绕过本策略。
-      if (
-        (this.game.forceAiRescueHuman ?? GAME_CONFIG.forceAiRescueHuman) &&
-        responder.controllerType === "ai" &&
-        target.controllerType === "human"
-      ) return true;
-      const assessment = this.assessDyingRescue(responder, target);
-      if (!assessment.ownRecover) return false;
-      return assessment.immediateDefeatRisk || assessment.likelyFollowUp || assessment.strategic || assessment.ownRecover > 1 || assessment.score > 0;
-    }
-    if (type === "block") {
-      const incoming = Math.max(0, Number(context.amount ?? 1) || 0)
-        + this.knownPendingAssaultBonus(context);
-      const lethal = incoming - target.shield >= target.hp;
-      const availableBlocks = cards.length;
-      const requiredBlocks = Math.max(1, context.requiredCount ?? 1);
-      const canPay = availableBlocks >= requiredBlocks;
-      if (!canPay) return false;
-      const lowHp = target.hp <= 2;
-      const blocksAreAbundant = availableBlocks * 2 >= responder.hand.length;
-      if (this.game.teamRules.isSmallTeam(responder)) return true;
-      return lethal || lowHp || blocksAreAbundant;
-    }
-    if (type === "counter") {
-      if (context.statusCounterContext) {
-        return context.statusCounterContext.statusId === "sealed"
-          ? this.shouldCounterSeal(responder, context)
-          : this.shouldCounterLightning(responder, context);
-      }
-      // 反制决策围绕最终 root outcome：嵌套反制时当前 card 是上一张反制，root 定义与
-      // 来源必须来自链上下文（首张反制时 root 就是当前 card/source）。反制链深度决定
-      // 当前 parity 下 root 最终生效还是被取消，由 globalBenefitCounterDesire / 统一
-      // 动态 root 估值比较 stay/flip 两个世界，真实响应与规划模拟共用同一判断。
-      const rootId = context.rootCard?.definitionId ?? context.card?.definitionId;
-      // 真实反制链上下文以 rootSourceId（字符串）透传 root source；首张反制时回退当前 source。
-      const rootSourceId = context.rootSourceId ?? context.rootSource?.id ?? context.source?.id ?? null;
-      const globalBenefitDesire = globalBenefitCounterDesire(
-        this.game.state.players,
-        responder.battleTeam,
-        rootId,
-        {
-          rootSourceId,
-          counterDepth: context.counterDepth ?? 0,
-          remainingCardCounts: this.knowledge.remainingCounts(responder)
-        }
-      );
-      if (globalBenefitDesire !== null) return globalBenefitDesire > 0;
-      // counter root 只出现在"状态判定（封印/闪电）反制的反反制"窗口：root 本身是一张
-      // 反制牌，其效果是取消一次状态判定，而该窗口不携带状态上下文，无法进入动态 root
-      // 效果估值。保持既有状态反制路径的意愿（按当前被反制卡价值），不纳入经济比较。
-      if (rootId === "counter") {
-        const sourceEnemy = context.source?.battleTeam !== responder.battleTeam;
-        return sourceEnemy ? (context.card?.aiValue ?? 0) >= 7 : false;
-      }
-      // 其余可反制牌统一走动态 root 估值：按"当前响应链消耗后的实时状态"模拟 root 结算
-      // 的 stay/flip 两世界经济差，只有收益超过反制牌机会成本才反制。
-      return this.dynamicRootCounterDecision(responder, context);
-    }
-    if (type === "assaultDiscard") {
-      if (context.card?.definitionId === "provoke") return responder.hp <= 2 || responder.hand.length > 2;
-      if (context.card?.definitionId === "duel") return true;
-      return responder.hp <= 2 || responder.hand.filter((card) => card.definitionId === "assault").length > 1;
-    }
-    if (type === "leverageAssault") {
-      if (!cards.length || !target?.alive) return false;
-      const enemyTarget = target.battleTeam !== responder.battleTeam;
-      // 借势响应同样只能依据 AI 可见快照评分，不能把真实手牌或内部状态对象交给评估器。
-      const visible = createAiVisibleState(responder.id, this.game.state);
-      const visibleResponder = visible.players.find((player) => player.id === responder.id);
-      const visibleTarget = visible.players.find((player) => player.id === target.id);
-      const threat = enemyTarget && visibleResponder && visibleTarget
-        ? this.evaluator.threatPriority(visibleResponder, visibleTarget, responder.aiMemory, 1)
-        : 0;
-      const attackBenefit = enemyTarget
-        ? 4 + threat + Math.max(0, target.maxHp - target.hp) * 1.5 + (target.hp <= 1 ? 5 : 0)
-        : -10;
-      const equipmentValue = Number(context.equipment?.aiValue ?? 5);
-      const assaultCount = cards.length;
-      const assaultCost = assaultCount <= 1 ? 4.5 : 2.5;
-      // 只用公开手牌数与未知牌密度估算防御，不读取目标真实手牌牌面。
-      const blockRisk = Math.min(.85, (target.hand?.length ?? 0) * this.knowledge.probability(responder, "block"));
-      const score = attackBenefit + equipmentValue * 1.05 - assaultCost - blockRisk * 2.5;
-      return score > 0;
-    }
-    if (type === "skill") return this.shouldUseGuardianAid(responder, context);
-    return false;
-  }
+  输出
+  保持历史 shouldRespond API 的 compatibility façade。
 
-  /**
-   * 护援响应决策：比较"不使用护援"（STAY）与"使用护援"（AID）两个真实 after-state
-   * 的团队状态价值，只在 AID 严格更优时才弃牌。此前 `(context.amount ?? 1) > 0`
-   * 等价于"合法即自动护援"，会无脑消耗唯一额度与手牌；这里改成边际比较后，
-   * 护盾可吸收、目标健康且后续还有更高暴露时都会选择保留额度与手牌。
-   *
-   * 复用统一模拟器：STAY 世界按 id 排除本守誓者（额度与手牌保留、伤害原样通过），
-   * AID 世界让其自然护援（伤害-1、弃1牌、额度消耗），其余守誓者在两个世界自然结算。
-   * 格挡/雷达已在真实伤害链中先于 beforeDamage 完成，因此这里固定 canBlock:false。
-   */
-  shouldUseGuardianAid(responder, context) {
-    const target = context.target;
-    // 与 skillRegistry.guardianAid 的 beforeDamage 硬守卫一致，先满足真实合法性再比较。
-    if (!responder?.alive || !target?.alive || responder.id === target.id) return false;
-    if (responder.battleTeam !== target.battleTeam) return false;
-    if (!responder.hand?.length) return false;
-    const amount = Math.max(0, Number(context.amount) || 0);
-    if (amount <= 0) return false;
-    if ((responder.turnFlags.guardianAidUsed ? 1 : 0) >= 1) return false;
+  读取状态
+  保存显式依赖。
 
-    const remainingCardCounts = this.knowledge.remainingCounts(responder);
-    const visible = createAiVisibleState(responder.id, this.game.state, remainingCardCounts);
-    const simulator = new AiSimulator(visible);
-    const stayState = simulator.clone();
-    const aidState = simulator.clone();
-    const stayTarget = stayState.players.find((player) => player.id === target.id);
-    const aidTarget = aidState.players.find((player) => player.id === target.id);
-    const staySource = context.source ? stayState.players.find((player) => player.id === context.source.id) : null;
-    const aidSource = context.source ? aidState.players.find((player) => player.id === context.source.id) : null;
-    simulator.applyDamage(stayState, staySource, stayTarget, amount, {
-      canBlock:false,
-      excludedGuardianIds:new Set([responder.id])
+  写入状态
+  写实例依赖字段。
+
+  调用函数
+  ResponsePolicy、AiValueSimulationQuery 构造函数。
+
+  边界与不变量
+  生产装配由 Controller 注入正式实例；fallback 仅服务历史直接构造兼容。
+  */
+  constructor(game, evaluator, knowledge, dependencies = {}) {
+    this.game = game;
+    this.evaluator = evaluator;
+    this.knowledge = knowledge;
+    this.responsePolicy = dependencies.responsePolicy ?? new ResponsePolicy({
+      assessGlobalBenefit
     });
-    simulator.applyDamage(aidState, aidSource, aidTarget, amount, { canBlock:false });
-
-    const stayValue = this.evaluator.stateUtility(stayState, responder.id);
-    const aidValue = this.evaluator.stateUtility(aidState, responder.id);
-
-    // 剩余额度未来价值：护援每全局回合仅一次，且每次都要弃一张手牌。若目标后续
-    // 仍面临未兑现的攻击库存（futureInventory，来自 exposureComponents 的敌方未来
-    // 突袭压力），现在消耗唯一额度就放弃了在更高暴露伤害上再护援一次的机会。这里用
-    // "未来攻击库存中至多可再被护援抵消的那部分"近似额度机会成本，只乘 HP_VALUE 单价，
-    // 不引入无条件角色常数。futureInventory 是期望压力而非确定伤害，且不含格挡/护盾
-    // 抵消，故该值偏保守——只会让低价值伤害放弃唯一额度，不会误拒阵亡/濒死伤害。
-    const visibleTarget = visible.players.find((player) => player.id === target.id);
-    const { futureInventory } = this.evaluator.exposureComponents(visible, visibleTarget);
-    const quotaFutureValue = Math.min(HP_VALUE, futureInventory);
-
-    return (aidValue - stayValue) > quotaFutureValue;
+    this.simulationQuery = dependencies.simulationQuery
+      ?? new AiValueSimulationQuery(evaluator);
+    this.stateValue = dependencies.stateValue ?? evaluator;
   }
 
-  /** 闪电状态反制：比较不反制继续判定的团队期望与反制转移后的团队期望加反制牌机会成本。 */
-  shouldCounterLightning(responder, context) {
-    const statusContext = context.statusCounterContext;
-    const holder = this.game.state.players.find((player) => player.id === statusContext?.holderId && player.alive);
-    if (!holder || !hasLightning(holder)) return false;
-    const remainingCardCounts = this.knowledge.remainingCounts(responder);
-    const state = createAiVisibleState(responder.id, this.game.state, remainingCardCounts);
-    const visibleHolder = state.players.find((player) => player.id === holder.id);
-    const noCounterBurden = this.evaluator.lightningTeamBurden(
-      state, visibleHolder, responder.id
-    );
-    const receiver = nextLightningReceiver(this.game.state.players, holder);
-    const visibleReceiver = state.players.find((player) => player.id === receiver?.id);
-    const withCounterBurden = visibleReceiver
-      ? this.evaluator.lightningTransferredBurden(
-          state, visibleHolder, visibleReceiver, responder.id
-        )
-      : 0;
-    // 反制牌机会成本与全体受益/动态 root 反制共用同一统一入口，只计一次。
-    const counterCost = counterOpportunityCost();
-    return withCounterBurden + counterCost < noCounterBurden;
-  }
+  /*
+  功能
+  把真实响应参数转换成正式 Policy 的 plain DecisionContext。
 
-  /** 封印状态反制：仅为己方解除未来 skip-action 风险，并计入反制牌机会成本。 */
-  shouldCounterSeal(responder, context) {
-    const statusContext = context.statusCounterContext;
-    const holder = this.game.state.players.find((player) => player.id === statusContext?.holderId && player.alive);
-    if (!holder || !hasSeal(holder) || holder.battleTeam !== responder.battleTeam) return false;
-    const remainingCardCounts = this.knowledge.remainingCounts(responder);
-    const skipProbability = 1 - tacticJudgmentProbability(remainingCardCounts);
-    const preventedBurden = skipProbability * turnOpportunityValue(holder);
-    // 反制牌机会成本与全体受益/动态 root 反制共用同一统一入口，只计一次。
-    const counterCost = counterOpportunityCost();
-    return preventedBurden > counterCost;
-  }
+  调用方
+  shouldRespond、assessDyingRescue 与历史专项方法。
 
-  /**
-   * 其余可反制牌的统一反制决策入口。基于"当前响应链实际消耗资源后的实时状态"构建
-   * 可见状态与模拟器，交给 dynamicRootFlipGain 做 stay/flip 经济比较。每个反制窗口
-   * 只构建一次可见状态，不做完整搜索。
-   */
-  dynamicRootCounterDecision(responder, context) {
-    const rootCard = context.rootCard ?? context.card;
-    if (!rootCard?.definitionId || rootCard.category !== "tactic") return false;
-    const rootSourceId = context.rootSourceId ?? context.rootSource?.id ?? context.source?.id ?? null;
-    const counterDepth = context.counterDepth ?? 0;
-    const rootTargetIds = Array.isArray(context.rootTargetIds) ? context.rootTargetIds : [];
-    const remainingCardCounts = this.knowledge.remainingCounts(responder);
-    const visible = createAiVisibleState(responder.id, this.game.state, remainingCardCounts);
-    const simulator = new AiSimulator(visible);
-    const gain = dynamicRootFlipGain(
-      this.evaluator, simulator, visible, responder.id, rootCard, rootSourceId, counterDepth, rootTargetIds, {
-        publicTransferContext:context.publicTransferContext ?? null
+  输入
+  响应者、响应类型、真实公开上下文和合法响应卡数组。
+
+  输出
+  不含 Game/Simulator 引用且只暴露合法信息的 DecisionContext。
+
+  读取状态
+  当前 GameState、Knowledge、TeamRules、DyingSystem 与显式 Value/Domain query。
+
+  写入状态
+  只有被调用的未知位置/状态查询可能写 query 私有缓存；真实状态不变。
+
+  调用函数
+  responsePlayerView、createAiVisibleState、AiValueSimulationQuery 与既有 Domain/Value helper。
+
+  边界与不变量
+  所有昂贵查询惰性执行且每个响应分支至多一次，避免迁移引入无条件 State 投影或双算。
+  */
+  buildDecisionContext(responder, type, rawContext, cards = []) {
+    const rawPlayers = this.game.state.players;
+    const players = rawPlayers.map(responsePlayerView);
+    const byId = new Map(players.map((player) => [player.id, player]));
+    const responderView = byId.get(responder.id);
+    const publicContext = {
+      ...rawContext,
+      target: byId.get(rawContext.target?.id) ?? null,
+      source: byId.get(rawContext.source?.id) ?? null,
+      rootSource: byId.get(rawContext.rootSource?.id) ?? null,
+      statusCounterContext: rawContext.statusCounterContext
+        ? { ...rawContext.statusCounterContext }
+        : null
+    };
+    let remainingCardCounts;
+    /*
+    功能
+    在一次响应决策内惰性读取并复用同一份 Belief remaining counts。
+
+    调用方
+    buildDecisionContext 的状态、guardian 与 dynamic query 闭包。
+
+    输入
+    无；闭包捕获当前 responder。
+
+    输出
+    Knowledge 返回的剩余牌计数。
+
+    读取状态
+    Knowledge 与观察者合法信息。
+
+    写入状态
+    只写本次 DecisionContext 构造的局部缓存。
+
+    调用函数
+    AiKnowledge.remainingCounts。
+
+    边界与不变量
+    同一响应窗口最多计算一次，不跨决策复用或暴露真实未知牌。
+    */
+    const getRemainingCardCounts = () => {
+      if (remainingCardCounts === undefined) {
+        remainingCardCounts = this.knowledge.remainingCounts(responder);
       }
+      return remainingCardCounts;
+    };
+    const needsRemainingCounts = type === "counter" || type === "skill";
+    if (needsRemainingCounts) getRemainingCardCounts();
+    const rescueOrder = type === "dyingRescue"
+      ? this.game.dyingSystem.rescueOrder(rawContext.target ?? responder)
+          .map((player) => byId.get(player.id))
+          .filter(Boolean)
+      : [];
+    return {
+      responder: responderView,
+      responseType: type,
+      context: publicContext,
+      cards,
+      players,
+      rescueOrder,
+      responderHandDefinitionIds: (responder.hand ?? [])
+        .map((card) => card.definitionId),
+      knownCardsByPlayer: responder.aiMemory.knownCardsByPlayer,
+      recoverDensity: type === "dyingRescue"
+        ? this.knowledge.probability(responder, "recover")
+        : 0,
+      remainingCardCounts: needsRemainingCounts ? remainingCardCounts : null,
+      isSmallTeam: this.game.teamRules.isSmallTeam(responder),
+      forceAiRescueHuman: this.game.forceAiRescueHuman ?? GAME_CONFIG.forceAiRescueHuman,
+      leverageMetrics: () => {
+        const target = rawContext.target ?? responder;
+        const enemyTarget = target.battleTeam !== responder.battleTeam;
+        const visible = createAiVisibleState(responder.id, this.game.state);
+        const visibleResponder = visible.players.find((player) => player.id === responder.id);
+        const visibleTarget = visible.players.find((player) => player.id === target.id);
+        const threat = enemyTarget && visibleResponder && visibleTarget
+          ? this.evaluator.threatPriority(
+              visibleResponder,
+              visibleTarget,
+              responder.aiMemory,
+              1
+            )
+          : 0;
+        const blockRisk = Math.min(
+          .85,
+          (target.hand?.length ?? 0) * this.knowledge.probability(responder, "block")
+        );
+        return { threat, blockRisk };
+      },
+      guardianAidValues: () => {
+        const target = rawContext.target;
+        const visible = createAiVisibleState(
+          responder.id,
+          this.game.state,
+          getRemainingCardCounts()
+        );
+        return this.simulationQuery.guardianAidValues(
+          visible,
+          responder.id,
+          target.id,
+          rawContext.source?.id ?? null,
+          Math.max(0, Number(rawContext.amount) || 0),
+          this.stateValue
+        );
+      },
+      lightningCounterTerms: () => {
+        const holder = rawPlayers.find((player) => (
+          player.id === rawContext.statusCounterContext?.holderId && player.alive
+        ));
+        if (!holder || !hasLightning(holder)) {
+          return { valid: false, noCounterBurden: 0, withCounterBurden: 0 };
+        }
+        const state = createAiVisibleState(
+          responder.id,
+          this.game.state,
+          getRemainingCardCounts()
+        );
+        const visibleHolder = state.players.find((player) => player.id === holder.id);
+        const receiverId = nextLightningReceiverId(rawPlayers, holder);
+        const visibleReceiver = state.players.find((player) => player.id === receiverId);
+        return {
+          valid: true,
+          noCounterBurden: this.evaluator.lightningTeamBurden(
+            state,
+            visibleHolder,
+            responder.id
+          ),
+          withCounterBurden: visibleReceiver
+            ? this.evaluator.lightningTransferredBurden(
+                state,
+                visibleHolder,
+                visibleReceiver,
+                responder.id
+              )
+            : 0
+        };
+      },
+      sealCounterTerms: () => {
+        const holder = rawPlayers.find((player) => (
+          player.id === rawContext.statusCounterContext?.holderId && player.alive
+        ));
+        if (!holder || !hasSeal(holder) || holder.battleTeam !== responder.battleTeam) {
+          return { valid: false, preventedBurden: 0 };
+        }
+        const skipProbability = 1 - tacticJudgmentProbability(getRemainingCardCounts());
+        return {
+          valid: true,
+          preventedBurden: skipProbability * turnOpportunityValue(holder)
+        };
+      },
+      dynamicRootFlipGain: () => {
+        const rootCard = rawContext.rootCard ?? rawContext.card;
+        if (!rootCard?.definitionId || rootCard.category !== "tactic") return null;
+        const rootSourceId = rawContext.rootSourceId
+          ?? rawContext.rootSource?.id
+          ?? rawContext.source?.id
+          ?? null;
+        const visible = createAiVisibleState(
+          responder.id,
+          this.game.state,
+          getRemainingCardCounts()
+        );
+        return this.simulationQuery.dynamicRootFlipGain(
+          visible,
+          responder.id,
+          rootCard,
+          rootSourceId,
+          rawContext.counterDepth ?? 0,
+          Array.isArray(rawContext.rootTargetIds) ? rawContext.rootTargetIds : [],
+          { publicTransferContext: rawContext.publicTransferContext ?? null },
+          this.stateValue
+        );
+      }
+    };
+  }
+
+  /*
+  功能
+  保留历史救援 assessment API 并委托正式 ResponsePolicy。
+
+  调用方
+  直接救援策略测试。
+
+  输入
+  响应者与濒死目标真实实体。
+
+  输出
+  正式 Policy 的救援 assessment object。
+
+  读取状态
+  当前救援顺序、合法记忆与 recover density。
+
+  写入状态
+  无。
+
+  调用函数
+  buildDecisionContext、ResponsePolicy.assessDyingRescue。
+
+  边界与不变量
+  不保留第二份救援评分公式。
+  */
+  assessDyingRescue(responder, target) {
+    const decision = this.buildDecisionContext(
+      responder,
+      "dyingRescue",
+      { target },
+      []
     );
-    if (gain === null) return false;
-    return gain > counterOpportunityCost();
+    return this.responsePolicy.assessDyingRescue({
+      responder: decision.responder,
+      target: decision.context.target,
+      rescueOrder: decision.rescueOrder,
+      responderHandDefinitionIds: decision.responderHandDefinitionIds,
+      knownCardsByPlayer: decision.knownCardsByPlayer,
+      recoverDensity: decision.recoverDensity
+    });
+  }
+
+  /*
+  功能
+  保留历史突袭加伤预览 API 并委托正式 ResponsePolicy。
+
+  调用方
+  兼容测试与迁移期调用方。
+
+  输入
+  真实公开 response context。
+
+  输出
+  非负已知加伤。
+
+  读取状态
+  仅公开 source 状态。
+
+  写入状态
+  无。
+
+  调用函数
+  responsePlayerView、ResponsePolicy.knownPendingAssaultBonus。
+
+  边界与不变量
+  不触发真实伤害监听器。
+  */
+  knownPendingAssaultBonus(context) {
+    return this.responsePolicy.knownPendingAssaultBonus({
+      ...context,
+      source: responsePlayerView(context.source)
+    });
+  }
+
+  /*
+  功能
+  将真实响应窗口委托给正式 ResponsePolicy。
+
+  调用方
+  AIController 与 ResponseSystem。
+
+  输入
+  响应者、响应类型、公开上下文和合法 Cards。
+
+  输出
+  是否响应的布尔值。
+
+  读取状态
+  通过 buildDecisionContext 读取当前合法/公开信息。
+
+  写入状态
+  无；simulation query 只写独立 clone 或私有缓存。
+
+  调用函数
+  buildDecisionContext、ResponsePolicy.shouldRespond。
+
+  边界与不变量
+  门面不增加阈值、重排或 fallback 决策。
+  */
+  shouldRespond(responder, type, context, cards = []) {
+    return this.responsePolicy.shouldRespond(
+      this.buildDecisionContext(responder, type, context, cards)
+    );
+  }
+
+  /*
+  功能
+  保留历史护援专项入口并走同一 ResponsePolicy 决策。
+
+  调用方
+  护援直接回归测试。
+
+  输入
+  守誓者与公开伤害上下文。
+
+  输出
+  是否使用护援。
+
+  读取状态
+  当前 GameState、Knowledge 与窄 simulation query。
+
+  写入状态
+  无。
+
+  调用函数
+  shouldRespond。
+
+  边界与不变量
+  与 ResponseSystem 的 skill 分支完全共用一份策略。
+  */
+  shouldUseGuardianAid(responder, context) {
+    return this.shouldRespond(responder, "skill", context, []);
+  }
+
+  /*
+  功能
+  保留历史闪电状态反制专项入口。
+
+  调用方
+  迁移期调用方。
+
+  输入
+  响应者与含 lightning statusCounterContext 的上下文。
+
+  输出
+  是否反制。
+
+  读取状态
+  当前状态、Belief、Lightning Domain 与 Value query。
+
+  写入状态
+  无。
+
+  调用函数
+  shouldRespond。
+
+  边界与不变量
+  不保留第二份 burden 比较。
+  */
+  shouldCounterLightning(responder, context) {
+    return this.shouldRespond(responder, "counter", context, []);
+  }
+
+  /*
+  功能
+  保留历史封印状态反制专项入口。
+
+  调用方
+  迁移期调用方。
+
+  输入
+  响应者与含 sealed statusCounterContext 的上下文。
+
+  输出
+  是否反制。
+
+  读取状态
+  当前状态、Belief 与 Seal Domain/Policy query。
+
+  写入状态
+  无。
+
+  调用函数
+  shouldRespond。
+
+  边界与不变量
+  不保留第二份判定概率或机会成本。
+  */
+  shouldCounterSeal(responder, context) {
+    return this.shouldRespond(responder, "counter", context, []);
+  }
+
+  /*
+  功能
+  保留历史动态 root 反制专项入口并经正式 Policy 与窄 query 比较。
+
+  调用方
+  迁移期调用方。
+
+  输入
+  响应者与当前 response root context。
+
+  输出
+  是否追加反制。
+
+  读取状态
+  当前过滤 response state 与 State Value。
+
+  写入状态
+  仅窄 query 的独立模拟 clone。
+
+  调用函数
+  shouldRespond。
+
+  边界与不变量
+  不 import 或构造 concrete Simulator，不建立 ARCH-7 ResponseSimulation。
+  */
+  dynamicRootCounterDecision(responder, context) {
+    return this.shouldRespond(responder, "counter", context, []);
   }
 }

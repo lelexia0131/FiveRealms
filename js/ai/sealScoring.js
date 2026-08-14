@@ -2,21 +2,33 @@
  * 封印的 AI 共享纯计算：只读取过滤后的状态、反制概率与剩余牌类别计数，
  * 不实例化匿名判定牌，也不修改 remainingCardCounts 根先验。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260814-ai-value-ownership";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-value-ownership";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-value-ownership";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-policy-domain";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-policy-domain";
 import {
   PROBABILITY_EPSILON,
-  clampProbability,
-  mergeProbabilityStateBranches,
-  totalBranchProbability
-} from "./state/Probability.js?build=20260814-ai-value-ownership";
+  clampProbability
+} from "./state/Probability.js?build=20260814-ai-policy-domain";
+import {
+  hasSeal,
+  sealOutcomeProbabilities
+} from "./domain/SealModel.js?build=20260814-ai-policy-domain";
+
+export {
+  getSealStatusStateBranches,
+  hasSeal,
+  sealCounterProbability,
+  sealOutcomeProbabilities,
+  sealPresenceProbability,
+  tacticJudgmentProbability
+} from "./domain/SealModel.js?build=20260814-ai-policy-domain";
+export {
+  sealDelayCost,
+  sealEarlyUsePenalty
+} from "./search/SealTiming.js?build=20260814-ai-policy-domain";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;
 const TURN_TIMING_STEP = 0.1;
-/** 封印软性后置 penalty 的既有合理上限：timing cost 不无限放大。 */
-const SEAL_EARLY_USE_CAP = 3;
 
 const availableCardCount = (cards, definitionId) => (Array.isArray(cards) ? cards : [])
   .filter((card) => card?.definitionId === definitionId)
@@ -73,59 +85,6 @@ const expectedUsableFromInventory = (inventory, limit, extraAttackProbability) =
   const extraUses = Math.min(1, Math.max(0, count - limit));
   return baseUses + extraUses * extraAttackProbability;
 };
-
-export function hasSeal(player) {
-  return RuleEngine.hasStatus(player, "sealed");
-}
-
-export function getSealStatusStateBranches(player) {
-  if (Array.isArray(player?.sealedStatusStateBranches) && player.sealedStatusStateBranches.length) {
-    return mergeProbabilityStateBranches(
-      player.sealedStatusStateBranches.map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions ?? {},
-        present:Boolean(branch.present)
-      }))
-    );
-  }
-  return [{ probability:1, conditions:{}, present:hasSeal(player) }];
-}
-
-export function sealPresenceProbability(player) {
-  return clampProbability(totalBranchProbability(
-    getSealStatusStateBranches(player).filter((branch) => branch.present)
-  ));
-}
-
-/** 战术牌剩余数量 / 剩余未知牌总数；缺少动态计数时回退正式初始牌堆。 */
-export function tacticJudgmentProbability(remainingCardCounts = null) {
-  if (remainingCardCounts && typeof remainingCardCounts === "object" && !Array.isArray(remainingCardCounts)) {
-    let tactic = 0;
-    let total = 0;
-    for (const [definitionId, count] of Object.entries(remainingCardCounts)) {
-      const value = Number(count);
-      if (!Number.isFinite(value) || value <= 0) continue;
-      const definition = CARD_DEFINITIONS[definitionId];
-      if (!definition) continue;
-      total += value;
-      if (definition.category === "tactic") tactic += value;
-    }
-    return total > 0 ? clampProbability(tactic / total) : 0;
-  }
-  const tacticTotal = Object.values(CARD_DEFINITIONS)
-    .filter((definition) => definition.category === "tactic")
-    .reduce((sum, definition) => sum + definition.count, 0);
-  return TOTAL_CARD_COUNT > 0 ? tacticTotal / TOTAL_CARD_COUNT : 0;
-}
-
-/** 估算封印触发时，持有者或其存活队友至少拥有一张反制的概率。 */
-export function sealCounterProbability(state, holder) {
-  if (!holder?.alive) return 0;
-  const noCounter = (state?.players ?? [])
-    .filter((player) => player.alive && player.battleTeam === holder.battleTeam)
-    .reduce((probability, player) => probability * (1 - clampProbability(player.counterProbability ?? 0)), 1);
-  return clampProbability(1 - noCounter);
-}
 
 /** 从当前行动者之后计算目标前还隔着多少名存活角色。 */
 export function turnOrderGap(state, actor, target) {
@@ -222,24 +181,6 @@ export function turnOpportunityValue(player) {
     + roleThreatSynergy(player) + equipmentThreatSynergy(player);
 }
 
-/**
- * 封印未来触发的互斥概率摘要：先反制，未反制才判定；两种判定分支均消费状态。
- */
-export function sealOutcomeProbabilities(state, holder) {
-  const present = sealPresenceProbability(holder);
-  const counter = sealCounterProbability(state, holder);
-  const tactic = tacticJudgmentProbability(state?.remainingCardCounts);
-  const judgment = present * (1 - counter);
-  return Object.freeze({
-    present,
-    countered:present * counter,
-    judgment,
-    success:judgment * tactic,
-    skipAction:judgment * (1 - tactic),
-    cleared:present
-  });
-}
-
 /** 从 viewerTeam 视角返回封印导致跳过出牌阶段的期望团队负担。 */
 export function sealTeamBurden(state, holder, viewerTeam) {
   if (!holder?.alive) return 0;
@@ -247,29 +188,6 @@ export function sealTeamBurden(state, holder, viewerTeam) {
   if (skipAction <= PROBABILITY_EPSILON) return 0;
   const sign = holder.battleTeam === viewerTeam ? 1 : -1;
   return skipAction * turnOpportunityValue(holder) * sign;
-}
-
-/**
- * 把“最佳非封印即时动作已除 depth 的 base transition（S = U/d）”按真实搜索
- * depth 折算为封印软性后置的 delayCost：现在先封印会令该动作从 depth d 延迟到
- * d+1，损失 U/d - U/(d+1) = S/(d+1)。由 AiPlanner 在物化同层候选后调用，
- * 保证正式测试可直接覆盖生产路径的 depth 关系（depth=1 → /2、depth=2 → /3）。
- */
-export function sealDelayCost(alternativeTransitionScore, depth) {
-  return Number(alternativeTransitionScore) / (Number(depth) + 1);
-}
-
-/**
- * 封印软性后置的通用 timing helper：把 delayCost 转成 penalty。
- *
- * delayCost 由 sealDelayCost 按真实 depth 计算（S/(d+1)）。非正或非法 delayCost
- * 返回 0，只对 timing cost 设既有合理上限。不读取 recover/shield/assault、
- * hp/missingHp 或 card definitions，也不与 seal.aiValue 重新比较。
- */
-export function sealEarlyUsePenalty(delayCost) {
-  const cost = Number(delayCost);
-  if (!Number.isFinite(cost) || cost <= 0) return 0;
-  return Math.min(SEAL_EARLY_USE_CAP, cost);
 }
 
 /** 主动使用封印的价值：基础牌值加未来未被反制且判定生效时的出牌机会收益。 */

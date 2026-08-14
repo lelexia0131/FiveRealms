@@ -20,30 +20,16 @@
  *   得到，而不是 root 最初打出时的 snapshot，也不是静态 card value。例如掠夺的目标在
  *   响应链中已把手牌用尽时，恢复掠夺的实际收益已从"可能获得 1 张牌"降为 0。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-value-ownership";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./value/CardValue.js?build=20260814-ai-value-ownership";
-
-const GLOBAL_BENEFIT_CARDS = new Set(["mutualBenefit", "symbiosis"]);
-
-function benefitForPlayer(player, definitionId) {
-  if (definitionId === "symbiosis") {
-    return Math.min(1, Math.max(0, (player.maxHp ?? 0) - (player.hp ?? 0)));
-  }
-  return 0;
-}
-
-/** 互利公开选牌的真实座位顺序：施放者优先，其余按环形座位顺时针；只保留存活角色。 */
-function mutualBenefitSeatOrder(players, source) {
-  const all = Array.isArray(players) ? players : [];
-  const seatCount = Math.max(1, all.length);
-  const sourceSeat = Number(source?.seatIndex) || 0;
-  const ordered = [];
-  for (let offset = 0; offset < seatCount; offset += 1) {
-    const player = all[(sourceSeat + offset) % seatCount];
-    if (player?.alive) ordered.push(player);
-  }
-  return ordered;
-}
+import { getBaseCardAiValue, getRoleCardAiValue } from "./value/CardValue.js?build=20260814-ai-policy-domain";
+import {
+  assessGlobalBenefitOutcome,
+  buildMutualBenefitDraftOutcome,
+  isGlobalBenefitCard
+} from "./domain/GlobalBenefitModel.js?build=20260814-ai-policy-domain";
+import {
+  counterOpportunityCost as responseCounterOpportunityCost,
+  globalBenefitCounterDesire as decideGlobalBenefitCounter
+} from "./policy/ResponsePolicy.js?build=20260814-ai-policy-domain";
 
 /** 角色对该牌的有效价值；缺少角色身份时回退全局基础值。 */
 function cardValueFor(generalId, definitionId) {
@@ -55,121 +41,154 @@ function cardValueFor(generalId, definitionId) {
   }
 }
 
-/**
- * 互利按真实选牌顺序的确定性期望：从剩余牌计数构建预期牌池，每个存活角色按座位顺序
- * 取自己角色价值最高的剩余定义并消耗一张。先手能取到更高价值，后手只能从剩余集合选；
- * 顺序优势来自可选集合逐步缩小，而不是任何座位奖励常数。规划/反制阶段不读取真实未来牌。
- */
+/*
+功能
+保留互利每名接收者价值摘要的历史签名并委托正式 GlobalBenefitModel。
+
+调用方
+AiSimulator、历史测试与迁移期调用方。
+
+输入
+玩家、来源与公开剩余牌计数。
+
+输出
+以玩家 ID 为键的期望选牌价值对象。
+
+读取状态
+玩家角色 ID 与正式 CardValue。
+
+写入状态
+无。
+
+调用函数
+domain/GlobalBenefitModel.buildMutualBenefitDraftOutcome、cardValueFor。
+
+边界与不变量
+座次、公开池消耗与 recipient 算法只存在于正式 Domain owner；本适配器只注入价值并投影旧输出。
+*/
 export function mutualBenefitDraftValues(players, source, remainingCounts) {
-  const pool = {};
-  let total = 0;
-  if (remainingCounts && typeof remainingCounts === "object" && !Array.isArray(remainingCounts)) {
-    for (const [definitionId, count] of Object.entries(remainingCounts)) {
-      if (!Number.isFinite(count) || count <= 0) continue;
-      pool[definitionId] = count;
-      total += count;
-    }
-  }
-  const values = {};
-  for (const player of mutualBenefitSeatOrder(players, source)) {
-    if (total <= 0) break;
-    let bestDefinitionId = null;
-    let bestValue = -Infinity;
-    for (const definitionId of Object.keys(pool)) {
-      if (pool[definitionId] <= 0) continue;
-      const value = cardValueFor(player.generalId, definitionId);
-      if (value > bestValue) {
-        bestValue = value;
-        bestDefinitionId = definitionId;
-      }
-    }
-    if (bestDefinitionId === null) break;
-    pool[bestDefinitionId] -= 1;
-    total -= 1;
-    values[player.id] = bestValue;
-  }
-  return values;
+  const playersById = new Map((players ?? []).map((player) => [player.id, player]));
+  const outcome = buildMutualBenefitDraftOutcome(
+    players,
+    source,
+    remainingCounts,
+    (playerId, definitionId) => cardValueFor(
+      playersById.get(playerId)?.generalId,
+      definitionId
+    )
+  );
+  return Object.fromEntries(
+    outcome.recipients.map((recipient) => [recipient.playerId, recipient.benefit])
+  );
 }
 
-/**
- * 只依据当前可见局面评估全体受益牌，不读取隐藏手牌或未来牌堆。
- * 互利按真实选牌顺序给出每名角色拿到牌的期望价值；共生按双方本次能实际恢复的生命总量。
- * sourceId 是互利施放者（决定选牌顺序起点）；其余牌不依赖施放者。
- */
+/*
+功能
+保留全体受益牌团队价值摘要的历史签名并委托正式 GlobalBenefitModel。
+
+调用方
+Controller、Response façade、SearchPrior、AiSimulator 与历史测试。
+
+输入
+玩家、观察阵营、定义 ID、来源 ID 与公开剩余牌计数。
+
+输出
+非全体受益牌为 null，否则返回历史团队计数与净受益字段。
+
+读取状态
+玩家公开字段与正式 CardValue。
+
+写入状态
+无。
+
+调用函数
+domain/GlobalBenefitModel.assessGlobalBenefitOutcome、cardValueFor。
+
+边界与不变量
+Domain 拥有座次/recipient/受益结构；本适配器只注入价值并移除新增结构字段以保持兼容。
+*/
 export function assessGlobalBenefit(players, battleTeam, definitionId, sourceId = null, remainingCounts = null) {
-  if (!GLOBAL_BENEFIT_CARDS.has(definitionId)) return null;
-  const alive = (players ?? []).filter((player) => player?.alive);
-  const source = alive.find((player) => player?.id === sourceId) ?? null;
-  const result = {
-    allyAliveCount:0,
-    enemyAliveCount:0,
-    allyBenefit:0,
-    enemyBenefit:0,
-    netBenefit:0
+  const playersById = new Map((players ?? []).map((player) => [player.id, player]));
+  const result = assessGlobalBenefitOutcome(players, battleTeam, definitionId, {
+    sourceId,
+    remainingCounts,
+    definitionValue:(playerId, candidateDefinitionId) => cardValueFor(
+      playersById.get(playerId)?.generalId,
+      candidateDefinitionId
+    )
+  });
+  if (!result) return null;
+  return {
+    allyAliveCount:result.allyAliveCount,
+    enemyAliveCount:result.enemyAliveCount,
+    allyBenefit:result.allyBenefit,
+    enemyBenefit:result.enemyBenefit,
+    netBenefit:result.netBenefit
   };
-  const draftValues = definitionId === "mutualBenefit"
-    ? mutualBenefitDraftValues(alive, source, remainingCounts)
-    : {};
-  for (const player of alive) {
-    const allied = player.battleTeam === battleTeam;
-    const benefit = definitionId === "mutualBenefit"
-      ? (draftValues[player.id] ?? 0)
-      : benefitForPlayer(player, definitionId);
-    if (allied) {
-      result.allyAliveCount += 1;
-      result.allyBenefit += benefit;
-    } else {
-      result.enemyAliveCount += 1;
-      result.enemyBenefit += benefit;
-    }
-  }
-  result.netBenefit = result.allyBenefit - result.enemyBenefit;
-  return result;
 }
 
-/**
- * 全体受益牌的反制意愿（真实响应与规划模拟共用的同一判断）。
- *
- * root 的最终结局由当前反制链深度奇偶决定：偶数深度 root 生效、奇数深度 root 被取消。
- * stay 是"不再追加反制"时 root 结局对 responder 阵营的 netBenefit，flip 是追加一张
- * 反制翻转结局后的 netBenefit；仅当 (flip - stay) 超过反制牌机会成本才反制。
- *
- * 队友正收益 root 的首张反制保护：depth=0 且 root 由队友打出、root 生效对我方非负时
- * 不得反制（队友 root 生效时己方价值为正，取消只会让己方更差）。该保护必须由
- * parity + root outcome 推导，只约束首张反制：嵌套链中"敌方取消己方牌后的反反制"
- * 与"直接反制队友的牌"是不同语义，不能因为当前 source 是队友就机械放弃。
- */
+/*
+功能
+保留全体受益牌反制意愿的历史函数签名并委托正式 ResponsePolicy owner。
+
+调用方
+AiSimulator、历史测试与迁移期调用方。
+
+输入
+公开玩家、响应阵营、root 定义和反制链上下文。
+
+输出
+非全体受益牌为 null，否则为零或一。
+
+读取状态
+只读公开玩家、Belief 与本文件的 GlobalBenefit assessment adapter。
+
+写入状态
+无。
+
+调用函数
+policy/ResponsePolicy.globalBenefitCounterDesire、assessGlobalBenefit。
+
+边界与不变量
+反制 parity、队友首层保护和成本公式只存在于正式 Policy。
+*/
 export function globalBenefitCounterDesire(players, battleTeam, definitionId, options = {}) {
-  if (!GLOBAL_BENEFIT_CARDS.has(definitionId)) return null;
-  const { rootSourceId = null, counterDepth = 0, remainingCardCounts = null } = options ?? {};
-  const assessment = assessGlobalBenefit(players, battleTeam, definitionId, rootSourceId, remainingCardCounts);
-  if (!assessment) return null;
-  const resolvesAtStay = (counterDepth % 2) === 0;
-  const stay = resolvesAtStay ? assessment.netBenefit : 0;
-  const flip = resolvesAtStay ? 0 : assessment.netBenefit;
-  if (counterDepth === 0 && rootSourceId) {
-    const rootSource = (players ?? []).find((player) => player?.id === rootSourceId);
-    if (rootSource?.battleTeam === battleTeam && (assessment.allyBenefit ?? 0) >= 0) {
-      return 0;
-    }
-  }
-  // 反制牌机会成本与闪电/封印反制路径同尺度（counter.aiValue × 0.35），只计一次。
-  const counterCost = (CARD_DEFINITIONS.counter.aiValue ?? 8) * 0.35;
-  return (flip - stay) > counterCost ? 1 : 0;
+  return decideGlobalBenefitCounter(
+    assessGlobalBenefit,
+    players,
+    battleTeam,
+    definitionId,
+    options
+  );
 }
 
-/**
- * 反制牌机会成本：统一只计一次的固定近似。
- *
- * 边界：仍是 legacy 近似（counter.aiValue × 0.35），不是统一分解的完整迁移。之所以
- * 保留：互利的 globalBenefit 模型、封印/闪电状态反制路径与动态 root 框架都使用同一个
- * 0.35 尺度，单独为动态路径换成本会破坏各反制入口之间的成本一致；且统一分解的
- * responseCapacity 项与 stateUtility 单位不对齐，完整迁移会扩大为另一套权重校准。
- * 该近似在每条反制决策路径中只计算一次：stay/flip 两世界本身不消耗反制牌，反制的
- * 资源损失只由这一项表达，因此"本层已花掉的反制"不会与"未来响应容量"重复计价。
- */
+/*
+功能
+保留反制机会成本的历史入口并委托正式 ResponsePolicy owner。
+
+调用方
+AiSimulator、动态 root 测试与迁移期调用方。
+
+输入
+无。
+
+输出
+冻结的反制机会成本。
+
+读取状态
+正式 Policy 的 CardValue 尺度。
+
+写入状态
+无。
+
+调用函数
+policy/ResponsePolicy.counterOpportunityCost。
+
+边界与不变量
+本文件不得复制 counter.aiValue × 0.35 公式。
+*/
 export function counterOpportunityCost() {
-  return (CARD_DEFINITIONS.counter.aiValue ?? 8) * 0.35;
+  return responseCounterOpportunityCost();
 }
 
 /** 目标级反制（震荡/挑衅）：apply 的群伤循环会命中所有敌人，必须收敛到当前目标。 */
@@ -258,17 +277,34 @@ export function resolveRootState(simulator, state, rootCard, rootSourceId, targe
   }
 }
 
-/**
- * 计算"追加一张反制翻转 root 结局"的经济收益（FLIP 价值 - STAY 价值）。
- *
- * state 必须是当前响应时刻的可见/模拟状态；rootTargetIds 从该状态重新解析 root 目标
- * （目标可能已死亡、已清空资源或失去装备），绝不复用 root 最初的目标对象。返回 null
- * 表示该 root 属于既有 globalBenefit 模型，不适用本框架。这是只读辅助函数，可直接
- * 作为测试探针验证"root resolve 使用当前 response-state"。
- */
+/*
+功能
+计算追加一张反制翻转 root 结局的经济收益。
+
+调用方
+AiValueSimulationQuery、历史测试与迁移期调用方。
+
+输入
+Evaluator、注入 Simulator、当前响应状态、响应者、root 卡与来源/深度/目标上下文。
+
+输出
+全体受益牌或非法 root 为 null，否则返回 FLIP 价值减 STAY 价值。
+
+读取状态
+当前响应时刻的过滤/模拟状态与实时 root 目标。
+
+写入状态
+仅由注入 Simulator 写入独立克隆。
+
+调用函数
+domain/GlobalBenefitModel.isGlobalBenefitCard、buildTargetScopedBase、resolveRootState、Evaluator.stateUtility。
+
+边界与不变量
+不得复用 root 初始目标快照；全体受益牌由正式 Domain/Policy 路径处理，本函数不构造 Simulator。
+*/
 export function dynamicRootFlipGain(evaluator, simulator, state, responderId, rootCard, rootSourceId, counterDepth, rootTargetIds, options = {}) {
   const definitionId = rootCard?.definitionId;
-  if (!definitionId || rootCard.category !== "tactic" || GLOBAL_BENEFIT_CARDS.has(definitionId)) return null;
+  if (!definitionId || rootCard.category !== "tactic" || isGlobalBenefitCard(definitionId)) return null;
   const actor = state.players.find((player) => player.id === rootSourceId);
   if (!actor?.alive) return 0;
   const targets = (rootTargetIds ?? [])

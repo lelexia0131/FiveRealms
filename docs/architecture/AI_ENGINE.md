@@ -780,3 +780,127 @@ Expose、assault-stack 与 seal timing 的领域 producer 暂留 Planner/既有 
 - Planner 仍保留 beam、根/深层候选 materialization、end sibling、临时 domain term producer 和 compatibility delegation；正式 Search Core 清理属于 AI-ARCH-9。
 
 AI-ARCH-4 没有修改权重、规则、策略、搜索参数、概率常量或隐藏信息边界，也没有提前进入 AI-ARCH-5。
+
+## 25. AI-ARCH-5/6 Policy / Domain Responsibility Freeze
+
+本表冻结于 `8e1dfb0 ARCH-4`。分类按函数的实际输出用途确定，而不是按旧文件名确定；同一旧文件中的不同函数可以有不同 owner。`Migration Decision` 只授权 AI-ARCH-5/6 的物理迁移，未列为 MOVE 的职责必须保持原位。
+
+| Current File / Function | Current Responsibility | State / Input | Output | Current Consumers | Target Classification | Target Owner | Migration Decision |
+|---|---|---|---|---|---|---|---|
+| `AiCardSelector.constructor` | 持有 Game、Knowledge 与随机源 | Game、Knowledge | 选择门面实例 | AIController、测试 | EXECUTION_BOUNDARY | `AiCardSelector` façade | KEEP；Controller 改为注入正式 Policy，门面继续解析真实实体 |
+| `AiCardSelector.chooseHiddenCards` | 混合合法实体过滤、合法记忆、未知位置随机和用途选择 | Player 实体、排除 ID、purpose、remaining counts | 真实 Card 实体数组 | AIController、Game/技能 | EXECUTION_BOUNDARY + POLICY | façade + `policy/CardSelectionPolicy` | SPLIT；过滤/实体返回留门面，已知/未知候选与位置策略迁 Policy |
+| `AiCardSelector.peekIndex/extremeIndex` | 已知/未知位置的稳定选择和受控随机 | known map、候选位置、方向 | 数组下标 | `chooseHiddenCards`、测试 | POLICY | `policy/CardSelectionPolicy` | MOVE；随机次数与同分顺序冻结 |
+| `AiCardSelector.chooseZoneCard` | 混合真实区域实体检查与资源区域偏好 | actor/owner 实体、purpose、排除 ID | `{card, zone}` | AIController、Game | EXECUTION_BOUNDARY + POLICY | façade + `policy/ResourceSelectionPolicy` | SPLIT；实体存在/返回留门面，hand/equipment 比较归 Policy |
+| `AiCardSelector.expectedCardValue/choosePublicCard` | 合法已知牌与公开池的局部价值选择 | 合法记忆或公开卡、CardValue | 数值或 Card | 测试、PublicCardPool | POLICY | `policy/CardSelectionPolicy` | MOVE；CardValue 仍是 VALUE owner |
+| `AiCardSelector.chooseTransferSource/Receiver/Combination` | 取得 RuleEngine 合法集合并选最佳转移描述 | Game、合法 source/receiver、Belief counts | transfer selection | AIController、ActionGenerator、测试 | EXECUTION_BOUNDARY + POLICY | façade + `policy/TransferPolicy` | SPLIT；RuleEngine 合法集合留边界，组合评分/选择迁 Policy |
+| `AiCardSelector.chooseDiscards` | 计算真实距离上下文并选择弃牌 | Game、Player.hand | Card 数组 | AIController、角色规则 | EXECUTION_BOUNDARY + POLICY | façade + `policy/ResourceSelectionPolicy` | SPLIT；距离事实由门面提供，保留价值排序归 Policy |
+| `AiResponsePolicy.assessDyingRescue` | 救援资源、后续救援密度与角色价值意愿 | 响应者/目标、救援顺序、Belief | assessment object | `shouldRespond`、测试 | POLICY | `policy/ResponsePolicy` | MOVE；救援顺序与玩家快照通过 DecisionContext 提供 |
+| `AiResponsePolicy.knownPendingAssaultBonus` | 只读公开突袭加伤预览 | response context | bonus | `shouldRespond` | POLICY | `policy/ResponsePolicy` | MOVE；不触发真实监听器 |
+| `AiResponsePolicy.shouldRespond` | block/counter/dying/leverage/guardian 的局部响应选择 | 合法响应窗口、Cards、DecisionContext | boolean | ResponseSystem、AIController | POLICY | `policy/ResponsePolicy` | MOVE；不得投影 State 或构造 Simulator |
+| `AiResponsePolicy.shouldUseGuardianAid` | 混合合法前置、State 投影、配对模拟和值比较 | GameState、Knowledge、damage context | boolean | `shouldRespond` | POLICY + SIMULATION + STATE | `policy/ResponsePolicy` + `AiValueSimulationQuery` + Controller | SPLIT；合法事实/快照由 composition boundary 提供，配对模拟经窄 query，Policy 只比较结果 |
+| `AiResponsePolicy.shouldCounterLightning/Seal` | 状态反制意愿 | holder、Domain facts、Value query、counter cost | boolean | `shouldRespond` | POLICY | `policy/ResponsePolicy` | MOVE；Lightning/Seal facts 改从 Domain 消费 |
+| `AiResponsePolicy.dynamicRootCounterDecision` | 混合 State 投影、root-effect simulation 与反制成本比较 | 当前 response state、root context | boolean | `shouldRespond` | POLICY + SIMULATION + STATE | `policy/ResponsePolicy` + `AiValueSimulationQuery` + Controller | SPLIT；root simulation 保持窄 query，不建立 ARCH-7 ResponseSimulation |
+| `AiActionGenerator.expectedAvailableAssaults/expectedAvailableAttackUses/canBenefitFromBreakArmy/isZeroBenefitAllIn` | 零收益技能候选过滤 | SearchState actor | boolean/number | 根/深层动作生成 | POLICY | `policy/ActionCandidatePolicy` | MOVE；不改变合法性，只过滤 AI 候选 |
+| `AiActionGenerator.isLightningStrategicallyForbidden` | 3v1 主动闪电硬禁令 | 存活玩家、actor team | boolean | 根/深层动作生成 | POLICY | `policy/ActionCandidatePolicy` | MOVE；唯一 owner，保持 hard constraint，绝不降为 penalty |
+| `AiActionGenerator.chooseVisibleTransferPlan` | 在调用方提供的合法 source/receiver 中选转移计划 | SearchState、RuleEngine 合法集合 | transfer selection | 深层动作生成 | LEGALITY + POLICY | Generator + `policy/TransferPolicy` | SPLIT；合法集合由 Generator/RuleEngine，选择归 TransferPolicy |
+| `AiActionGenerator.generate/generateFromVisible` | 混合 RuleEngine 合法枚举与 AI 候选过滤 | GameState 或 SearchState | policy-filtered action set | AIController、Planner | LEGALITY + POLICY | Generator + `policy/ActionCandidatePolicy` | KEEP/SPLIT；Generator 仍枚举，策略判断委托；历史 `getLegalActions` 名称暂为兼容债务 |
+| `AiActionGenerator.getActionConditionPartition/attachProbabilityBranches` 等 | 深层执行概率与资源条件世界 | SearchState、Probability algebra | annotated candidate | Planner | STATE | ActionGenerator（ARCH-8/9 前） | KEEP；不属于局部选择迁移 |
+| `discardScoring.*` | 自主弃牌保留价值、排序与选择 | player/cards/context、CardValue | score/ranked/cards | CardSelector、Simulator、测试 | POLICY | `policy/ResourceSelectionPolicy` | MOVE；旧文件只重导出，Simulator 继续复用同一 owner |
+| `resourceSelectionValue.*` | destroy/plunder 的已知/未知资源效用与区域选择 | actor/owner、Belief counts、CardValue | utility/candidate/zone | CardSelector、Simulator、测试 | POLICY | `policy/ResourceSelectionPolicy` | MOVE；不复制 CardValue 或 Belief probability |
+| `transferScoring.cardAvailability/handCount/known*` | 把合法观察、记忆和概率身份整理为转移候选摘要 | actor/owner、排除 ID | counts/known entries | transfer functions | POLICY | `policy/TransferPolicy` | MOVE；未知牌绝不携带真实 definitionId |
+| `transferScoring.cardSituationValue/expectedUnknownSituationValue` | 转移用途的 CardValue 情境解释 | player、definition/counts | policy value | transfer scoring/tests | POLICY | `policy/TransferPolicy` | MOVE；基础/角色值仍由 `value/CardValue` 提供 |
+| `transferScoring.chooseTransferHandCandidate/evaluate/score/build/chooseBest` | 合法转移组合的评分、稳定排序与正收益门槛 | legal source/receiver/zone、Belief | candidate/score/selection | CardSelector、Generator、测试 | POLICY | `policy/TransferPolicy` | MOVE；RuleEngine 合法性与真实移动不进入 Policy |
+| `lightningScoring.has/status/presence` | 闪电状态的确定/概率存在事实 | filtered player | boolean/branches/probability | Generator、Simulator、Value query | DOMAIN | `domain/LightningModel` | MOVE；状态写入仍由 Simulator |
+| `lightningScoring.equipmentJudgmentProbability` | 剩余未知池的装备判定概率 | remaining counts/card config | probability | tests/domain query | DOMAIN | `domain/LightningModel` | MOVE；通用概率代数仍由 State Probability |
+| `lightningScoring.nextReceiver/propagationChain/hitDistribution` | 存活座位环、跳过已有闪电、无放回命中分布 | players/state/holder | holder ring/distribution | Value simulation query、测试 | DOMAIN | `domain/LightningModel` | MOVE；RuleEngine 是 seat receiver authority，模型为 AI DERIVED MODEL |
+| `sealScoring.has/status/presence/tacticJudgmentProbability/sealCounterProbability/sealOutcomeProbabilities` | 封印状态、判定与先反制后判定生命周期摘要 | filtered state/holder/remaining counts | status branches/probability schema | Generator、Simulator、Response、Value | DOMAIN | `domain/SealModel` | MOVE；输入只读、输出独立 |
+| `sealScoring.turnOrderGap/turnTimingFactor/futureSkill*/assault*/turnOpportunityValue/sealUseValue` | 目标时机、未来行动威胁与主动使用先验 | SearchState player/actor/target | policy/prior value | Response、SearchPrior、测试 | POLICY + VALUE | 旧 `sealScoring`（迁移期） | KEEP；不得因文件名提前移入 Domain |
+| `sealScoring.sealTeamBurden` | 把 Domain skip probability 解释为团队价值 | state/holder/viewer team | signed burden | Evaluator、ValueLedger | VALUE | 旧 `sealScoring`（后续可收敛 Value） | KEEP；Domain 不反向依赖 Value |
+| `sealScoring.sealDelayCost/sealEarlyUsePenalty` | sibling opportunity 的 depth timing penalty | alternative transition/depth | search penalty | AiPlanner/Transition composition | SEARCH | Planner producer / TransitionValue consumer | KEEP；明确不进 SealModel |
+| `AiGlobalBenefit.mutualBenefitSeatOrder` | 互利真实公开池选择座次 | players/source | living seat order | draft model | DOMAIN | `domain/GlobalBenefitModel` | MOVE；顺序保持 source-first clockwise |
+| `AiGlobalBenefit.mutualBenefitDraftValues/assessGlobalBenefit` | 混合公开池顺序、recipient outcome 与 CardValue | players/team/counts/value | per-player value/team outcome | Simulator、SearchPrior、Response、测试 | DOMAIN + VALUE adapter | Domain model + compatibility façade | SPLIT；Domain 接受窄 `definitionValue` 查询，旧 façade 注入 CardValue；保持原逐候选调用次数且 Domain 不反向 import Value |
+| `AiGlobalBenefit.globalBenefitCounterDesire/counterOpportunityCost` | root parity 与反制机会成本的局部意愿 | domain outcome、counter depth | desire/cost | ResponsePolicy、Simulator | POLICY | `policy/ResponsePolicy` | MOVE；旧文件重导出，不进入 Domain |
+| `AiGlobalBenefit.buildTargetScopedBase/buildRootSelection/resolveRootState/dynamicRootFlipGain` | root-effect 配对状态构造与模拟 | SearchState、Simulator、Evaluator、root | cloned/resolved state/gain | ResponsePolicy、测试 | SIMULATION | `AiValueSimulationQuery` / 兼容入口 | MOVE query 入口但不拆 Simulator；ARCH-7 前不建 ResponseSimulation |
+| `AiProbabilityBranches.buildRadarJudgmentProbabilities/RADAR_BASIC_DEFINITIONS` | 雷达判定池的类别/定义分布 | remaining counts/override/card config | Radar outcome | Simulator、Evaluator、ValueLedger | DOMAIN | `domain/RadarModel` | MOVE；旧文件继续重导出通用 Probability 与 Radar API |
+| `AiSimulator` 对 Resource Policy 的调用 | 模拟 destroy/plunder/guardian discard 选择 | SearchState | 资源选择/消费 | Simulator effects | SIMULATION consuming POLICY | AiSimulator -> formal Policy functions | IMPORT UPDATE ONLY；状态修改和效果执行不移动 |
+| `AiSimulator` 对 Lightning/Seal/Radar 的调用 | 读取状态分支与判定分布后推进模拟状态 | SearchState | mutated cloned SearchState | Planner/Value query | SIMULATION consuming DOMAIN | AiSimulator -> domain models | IMPORT UPDATE ONLY；实际写状态留 Simulator |
+| `AiSimulator` 对 GlobalBenefit/response desire 的调用 | 互利 recipient 值写入、规划反制概率 | SearchState | simulated outcome | Planner | SIMULATION consuming DOMAIN/POLICY | AiSimulator -> façade/domain/policy | IMPORT UPDATE；dynamic counter simulation 仍留 Simulator |
+| `AiPlanner.evaluateExposeMarginal/evaluateAssaultStacksMarginal` | search-specific 配对反事实 producer | sibling SearchState/Simulator | domain marginal number | TransitionValue | SEARCH | AiPlanner（ARCH-9 前） | KEEP；不进入 Domain Models |
+| `AiPlanner` seal sibling producer | 物化同层候选后计算 delay/timing | sibling base transition/depth | sealTimingPenalty | TransitionValue | SEARCH | AiPlanner + TransitionValue slot | KEEP；不改变 apply 次数 |
+| `value/Evaluator` 与 `ValueLedger` 的 radar/seal 消费 | 用 Domain facts 解释 state/ledger value | SearchState + Radar/Seal result | State Value / diagnostics | Planner/diagnostics | VALUE consuming DOMAIN | value owners -> domain models | IMPORT UPDATE ONLY；公式与累加顺序冻结 |
+| `TransitionValue.composeCandidateValue` | 组合显式 seal/expose/assault terms | numeric terms | final transition value | Planner | VALUE | `search/TransitionValue` | KEEP；ARCH-5/6 不修改公式 |
+
+### Freeze 结论
+
+- `Legal Actions` 是 RuleEngine/Generator 权威允许的集合；当前历史 `AIController.getLegalActions` 实际返回经过 3v1、零收益技能、敌我目标和正收益转移过滤的 **AI policy candidate set**。AI-ARCH-5 只把过滤判断交给 Policy，不把策略拒绝描述成游戏非法；历史方法名留作兼容债务。
+- 3v1 主动闪电禁令唯一归 `policy/ActionCandidatePolicy`。LightningModel 只描述状态、座位环和概率分布，不再复制战略判断。
+- Domain 是 AI 的 `DERIVED MODEL` 或 `SIMULATION MIRROR` 输入，不是 Game authority。RuleEngine、真实判定/卡牌/伤害生命周期继续是 `AUTHORITY`。
+- Simulator 仍完整负责 SearchState 效果写入；Planner 仍负责 expose/assault/seal sibling 的 search-specific producer；Value 与 Transition 公式全部冻结。
+
+## 26. AI-ARCH-5 Policy Extraction 落地结果
+
+### Physical Policy Architecture
+
+- `policy/ResponsePolicy.js`：只消费 DecisionContext、纯 Domain/Value 结果和窄 query；不投影 GameState、不构造 Simulator。
+- `policy/CardSelectionPolicy.js`：拥有合法候选内的已知/未知位置、公开池和资源选择；未知敌方牌只按位置或聚合期望处理。
+- `policy/ResourceSelectionPolicy.js`：唯一拥有 discard、destroy/plunder resource、hand/equipment zone 的局部策略公式。
+- `policy/TransferPolicy.js`：唯一拥有 source/receiver/zone 合法集合内的转移评分、未知期望、稳定排序和正收益门槛。
+- `policy/ActionCandidatePolicy.js`：拥有零收益技能过滤、敌方资源目标过滤与 3v1 主动闪电硬约束。
+
+`AIController` 仍是唯一 composition root：每个正式 Policy 实例只构造一次，再注入 CardSelector façade、Response façade 和 ActionGenerator。Policy 不接收 Controller/Game/Planner；需要真实实体、RuleEngine 合法集合、State projection 或 simulation query 的工作均留在边界层。
+
+### Legal / Policy 与 Compatibility
+
+RuleEngine/Generator 产生规则合法集合；历史 `AIController.getLegalActions` 返回的是进一步经过 AI 战略过滤的 policy candidate set。3v1 禁雷是 `ActionCandidatePolicy.isLightningStrategicallyForbidden` 的唯一硬约束，不属于 LightningModel，也不是 soft penalty。
+
+`AiCardSelector.js`、`AiResponsePolicy.js`、`discardScoring.js`、`resourceSelectionValue.js`、`transferScoring.js` 保留旧签名；前三类 façade 只负责真实实体/状态/query 适配，后三个旧评分路径只重导出正式 owner。不存在旧新双公式。
+
+### 行为与隐藏信息证据
+
+- 正式 Policy 直接测试锁定 Response、Card、Resource、Transfer 和 3v1 owner；兼容 façade 与正式 owner 的固定输入结果一致。
+- 敌方未知 `definitionId` 换面不会改变 Response/Card/Transfer 选择；DecisionContext 不包含其他玩家真实未知手牌定义。
+- Response/反制/借势/互利/救援/格挡宽覆盖 `210/210`；Policy/selector/resource/transfer/hidden/lightning/seal/build 覆盖 `204/204`。
+- ARCH-5 完整入口为 `1371/1371`；固定 planning benchmark 保持 raw `126/1000`、corrected `106/1000`、平均扩展 `41.4`、平均深度 `2.8`。
+
+## 27. AI-ARCH-6 Domain Models 落地结果
+
+### Physical Domain Architecture 与输出契约
+
+| Owner | 正式事实/派生 | 输出 schema | 明确保留在外部 |
+|---|---|---|---|
+| `domain/RadarModel.js` | 剩余判定池的 tactic/equipment/basic 概率 | `{ tactic, equipment, basic, hasJudgmentPool }` | 雷达真实判定/移动由 JudgmentSystem/Game；价值解释由 Evaluator |
+| `domain/LightningModel.js` | 状态分支、装备概率、接收者 ID、存活传播环、无放回命中分布 | status branches；`{ holderId, hop, probability }[]` | 3v1/反制意愿在 Policy；SearchState 写入与伤害在 Simulator |
+| `domain/SealModel.js` | 状态分支、战术判定、团队反制输入、先反制后判定/清除生命周期 | frozen `{ present, countered, judgment, success, skipAction, cleared }` | burden/use/threat 留 value/prior adapter；delay/early 移至 `search/SealTiming.js` |
+| `domain/GlobalBenefitModel.js` | 全体受益识别、来源优先顺时针座次、公开池定义顺序、recipient outcome、团队收益结构 | `{ seatOrderIds, publicPoolDefinitionOrder, recipients, ...benefit }` | CardValue 由 façade 注入；counter desire 在 Policy；root flip/apply 留 simulation query/Simulator |
+
+所有 Domain 输出均为普通值、ID 或新对象，不持有 Game/Player/Card 引用。输入只读测试会修改返回对象再核对输入未变化。Radar/Lightning/Seal 的通用 merge/normalize/概率质量仍由 `state/Probability` 提供；各 Domain 只构造领域分支。
+
+### Authority / Mirror / Derived Classification
+
+- `AUTHORITY`：RuleEngine 的状态/下一闪电接收者规则、JudgmentSystem/Game 的真实判定与状态移动、card config 的类别/数量、真实伤害和公共池结算。
+- `SIMULATION MIRROR`：Simulator 按上述权威事实把 Domain outcome 应用到 SearchState；本阶段只更新 import/字段消费，没有拆 Simulator。
+- `DERIVED MODEL`：Radar/Lightning/Seal 概率与 GlobalBenefit 期望 recipient 结构。它们服务 AI 推理，不宣称成为 Game rule authority。
+
+### 依赖、兼容与 Guard
+
+`domain/**` 只向 card config、RuleEngine 与 `state/Probability` 等规则/纯状态源依赖，不 import value、Controller、Planner、Simulator、Evaluator 或 UI，也不 `new AiSimulator`。Value 只向 Domain 消费概率事实；GlobalBenefit 通过 façade 注入窄 `definitionValue` 查询，避免 `Domain -> Value -> Domain` 循环并保持旧逐候选调用次数。
+
+`AiProbabilityBranches.js` 仅重导出 State Probability 与 RadarModel；`lightningScoring.js` 只把正式 `holderId` 回绑为旧 Player 输出；`sealScoring.js` 重导出 SealModel/SealTiming，并暂存既有非 Domain value/prior adapter；`AiGlobalBenefit.js` 注入 CardValue、投影旧摘要并保留 ARCH-7 前的 root simulation helper。
+
+Architecture Guard 已覆盖 `policy/**` 与 `domain/**`：禁止 UI、Controller、Planner、concrete Simulator；Domain 额外禁止 concrete Evaluator/value import。Self-test 同时包含合法夹具和非法 value/Planner/Simulator 夹具。
+
+### 概率、固定轨迹与性能观察
+
+- Radar、Lightning、Seal、GlobalBenefit 直接契约 `4/4`；领域/Policy/Value/Simulator/build 广覆盖 `185/185`。Radar 总质量、Lightning 命中质量、Seal 的 `countered + success + skipAction = present` 均在 tolerance 内守恒。
+- D4 `planning.d4-seal-then-kill`（seed `20260814`、node budget `200`）保持 `seal c -> stealSkill c -> assault b -> end`，扩展 `102`、深度 `4`、hidden samples `10`、`bestValueScore=0.04919669968375734`。
+- Lightning/Response/Transfer/GlobalBenefit 四个固定场景逐字段锁定 root descriptor、planned sequence、expanded、depth、hidden samples 与 bestValueScore；迁移后测试 `1/1`。对应 `(expanded, depth, hidden)` 分别为 `(3,2,10)`、`(3,2,10)`、`(3,2,10)`、`(3,1,10)`。
+- Response 分支每次只执行一个适用 status/guardian query；global counter 执行一次 assessment 且不执行 dynamic root query，普通 tactic 最多一次 assessment 判别加一次 dynamic query。ActionGenerator 注入测试锁定每张 transfer 动作只调用一次 transfer selection。
+- TransferPolicy 每个合法 source/receiver 组合只构造/评分一次，最终排序不重算；Card/resource 的 remaining counts 仍由现有测试锁定为每次完整选择扫描一次。
+- Lightning lifecycle 以 `(SearchState, holderId, viewerId, presence)` 缓存，同键第二次返回同一结果对象；兼容 façade 只适配正式结果，不再计算一次。Seal lifecycle 每次各求一次 presence/counter/tactic；Radar 在原消费点直接调用正式 owner，没有 façade+Domain 双算。
+- 最终 planning benchmark 仍为 raw `126/1000`、corrected `106/1000`，32 次决策平均扩展 `41.4`、平均深度 `2.8`，报告决策耗时约 `0.9s`、总耗时约 `1.0s`。
+
+### 最终验证与 Remaining Debt
+
+ARCH-6 完整测试为 `1377/1377`，统一 build 为 `20260814-ai-policy-domain`。没有修改 Value/Transition 数值、搜索参数、规则或平衡；没有创建 Simulation split，也没有清理 Planner core。
+
+Remaining debt：旧 `getLegalActions` 命名仍把 policy candidate set 称作 legal；`sealScoring` 仍承载 value/prior compatibility adapter；GlobalBenefit root flip 仍通过 `AiValueSimulationQuery` 使用完整 Simulator；旧 façade 的最终移除待 AI-ARCH-10。Simulator/Response/Combat 的正式拆分从 AI-ARCH-7 开始，本阶段到此停止。

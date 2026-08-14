@@ -17,10 +17,10 @@ AiSimulator、TransitionValue、ValueLedger、FrontierValue、SearchPrior、封�
 架构约束
 不得持有 Game 或回指 AIController；不得拥有 state delta、final composition 或 ledger schema。
 */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-value-ownership";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-value-ownership";
-import { END_OPPORTUNITY_CAP } from "./value/Economics.js?build=20260814-ai-value-ownership";
-import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260814-ai-value-ownership";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-policy-domain";
+import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-policy-domain";
+import { END_OPPORTUNITY_CAP } from "./value/Economics.js?build=20260814-ai-policy-domain";
+import { sealDelayCost, sealEarlyUsePenalty } from "./search/SealTiming.js?build=20260814-ai-policy-domain";
 
 export class AiPlanner {
   /*

@@ -17,15 +17,15 @@ AIController、响应策略、测试与迁移期旧调用路径。
 架构约束
 本文件不得保留价值公式、导入 Simulator 或成为新的 composition root；只允许兼容转发。
 */
-import * as CardValue from "./value/CardValue.js?build=20260814-ai-value-ownership";
-import * as Economics from "./value/Economics.js?build=20260814-ai-value-ownership";
-import * as ThreatValue from "./value/ThreatValue.js?build=20260814-ai-value-ownership";
+import * as CardValue from "./value/CardValue.js?build=20260814-ai-policy-domain";
+import * as Economics from "./value/Economics.js?build=20260814-ai-policy-domain";
+import * as ThreatValue from "./value/ThreatValue.js?build=20260814-ai-policy-domain";
 
 export {
   HP_VALUE,
   STATE_DELTA_SCALE
-} from "./value/Economics.js?build=20260814-ai-value-ownership";
-export { HP_RISK_OPTION_WEIGHT } from "./value/ThreatValue.js?build=20260814-ai-value-ownership";
+} from "./value/Economics.js?build=20260814-ai-policy-domain";
+export { HP_RISK_OPTION_WEIGHT } from "./value/ThreatValue.js?build=20260814-ai-policy-domain";
 
 const OWNER_METHODS = Object.freeze([
   ["evaluator", ["playerValueTerms", "ownerStateTerms", "ownerMaterialValue"]],

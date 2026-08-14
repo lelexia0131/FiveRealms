@@ -73,8 +73,12 @@ import {
   ACTIVE_SKILLS, getActiveSkillCost, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
 } from "../js/generals/skillRegistry.js";
 import {
+  describeAction as describeBenchmarkAction,
+  disposeGame as disposeBenchmarkGame,
+  makeCard as makeBenchmarkCard,
   makeGame as makeBenchmarkGame,
-  makeRandom as makeBenchmarkRandom
+  makeRandom as makeBenchmarkRandom,
+  runAiDecision as runBenchmarkAiDecision
 } from "./ai-benchmark/helpers.mjs";
 import {
   UNKNOWN_HAND_EXPECTED_VALUE,
@@ -138,6 +142,25 @@ import {
   dynamicRootFlipGain,
   mutualBenefitDraftValues
 } from "../js/ai/AiGlobalBenefit.js";
+import { ActionCandidatePolicy } from "../js/ai/policy/ActionCandidatePolicy.js";
+import { CardSelectionPolicy } from "../js/ai/policy/CardSelectionPolicy.js";
+import { ResourceSelectionPolicy } from "../js/ai/policy/ResourceSelectionPolicy.js";
+import { ResponsePolicy } from "../js/ai/policy/ResponsePolicy.js";
+import { TransferPolicy } from "../js/ai/policy/TransferPolicy.js";
+import { buildRadarJudgmentProbabilities as buildDomainRadarJudgmentProbabilities } from "../js/ai/domain/RadarModel.js";
+import {
+  buildLightningHitDistribution as buildDomainLightningHitDistribution,
+  buildLightningPropagationChainIds,
+  nextLightningReceiverId
+} from "../js/ai/domain/LightningModel.js";
+import {
+  getSealStatusStateBranches as getDomainSealStatusStateBranches,
+  sealOutcomeProbabilities as domainSealOutcomeProbabilities
+} from "../js/ai/domain/SealModel.js";
+import {
+  assessGlobalBenefitOutcome,
+  buildMutualBenefitDraftOutcome
+} from "../js/ai/domain/GlobalBenefitModel.js";
 
 // Test Runner 与公共 Helpers
 
@@ -8747,6 +8770,96 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
 
 test("AI·依赖注入：Planner 脱离 Game 与 Controller 后保持固定种子搜索轨迹", testPlannerExplicitDependenciesPreserveTrace);
 
+test("AI·搜索：领域迁移后四类固定场景保持根动作、序列与搜索统计", async () => {
+  const end = {
+    type:"end", cardId:null, cardInstanceId:null, targetId:null, targetIds:[], selection:null
+  };
+  const scenes = [
+    {
+      name:"lightning",
+      players:[
+        { id:"a", team:"dawn", general:"blade-walker", hand:[makeBenchmarkCard("lightning", "trace-lightning")], hp:4 },
+        { id:"b", team:"dusk", general:"shade-agent", hand:[makeBenchmarkCard("assault", "trace-l-b")], hp:2 },
+        { id:"c", team:"dusk", general:"ember-magus", hand:[makeBenchmarkCard("assault", "trace-l-c")], hp:2 },
+        { id:"d", team:"dusk", general:"trail-hunter", hand:[makeBenchmarkCard("assault", "trace-l-d")], hp:2 }
+      ],
+      expected:{
+        root:{ type:"card", cardId:"lightning", cardInstanceId:"trace-lightning", targetId:null, targetIds:[], selection:null },
+        sequence:[{ type:"card", cardId:"lightning", cardInstanceId:"trace-lightning", targetId:null, targetIds:[], selection:null }, end],
+        expanded:3, depth:2, hiddenSamples:10, bestValueScore:1.6011184646730436
+      }
+    },
+    {
+      name:"response",
+      players:[
+        {
+          id:"a", team:"dawn", general:"blade-walker", hand:[makeBenchmarkCard("shockwave", "trace-shock")],
+          aiMemory:{ knownCardsByPlayer:{ b:[{ id:"trace-counter", definitionId:"counter" }] } }
+        },
+        { id:"b", team:"dusk", general:"shade-agent", hand:[makeBenchmarkCard("counter", "trace-counter")], hp:2 },
+        { id:"c", team:"dawn", general:"oath-warden", hand:[makeBenchmarkCard("block", "trace-r-c")] },
+        { id:"d", team:"dusk", general:"spirit-medic", hand:[makeBenchmarkCard("recover", "trace-r-d")], hp:2 }
+      ],
+      expected:{
+        root:{ type:"card", cardId:"shockwave", cardInstanceId:"trace-shock", targetId:"b", targetIds:["b", "d"], selection:null },
+        sequence:[{ type:"card", cardId:"shockwave", cardInstanceId:"trace-shock", targetId:"b", targetIds:["b", "d"], selection:null }, end],
+        expanded:3, depth:2, hiddenSamples:10, bestValueScore:0.260624512943173
+      }
+    },
+    {
+      name:"transfer",
+      players:[
+        { id:"a", team:"dawn", general:"resonance-tuner", hand:[makeBenchmarkCard("transfer", "trace-transfer"), makeBenchmarkCard("block", "trace-block")], hp:4 },
+        { id:"b", team:"dawn", general:"spirit-medic", hand:[], hp:1 },
+        { id:"c", team:"dusk", general:"shade-agent", hand:[makeBenchmarkCard("assault", "trace-t-c")], hp:4 },
+        { id:"d", team:"dusk", general:"ember-magus", hand:[makeBenchmarkCard("counter", "trace-t-d")], hp:4 }
+      ],
+      expected:{
+        root:{
+          type:"card", cardId:"transfer", cardInstanceId:"trace-transfer", targetId:null, targetIds:[],
+          selection:{
+            sourceId:"d", receiverId:"b", zone:"hand", score:14.273291925465838,
+            selectionKind:"unknown", cardId:null, definitionId:null,
+            expectedValue:8.031055900621118, availableUnknownCount:1
+          }
+        },
+        sequence:[{
+          type:"card", cardId:"transfer", cardInstanceId:"trace-transfer", targetId:null, targetIds:[],
+          selection:{ sourceId:"d", receiverId:"b", zone:"hand" }
+        }, end],
+        expanded:3, depth:2, hiddenSamples:10, bestValueScore:0.2763858120265567
+      }
+    },
+    {
+      name:"globalBenefit",
+      players:[
+        { id:"a", team:"dawn", general:"spirit-medic", hand:[makeBenchmarkCard("mutualBenefit", "trace-mutual")], hp:3 },
+        { id:"b", team:"dusk", general:"shade-agent", hand:[makeBenchmarkCard("assault", "trace-g-b")], hp:4 },
+        { id:"c", team:"dawn", general:"oath-warden", hand:[makeBenchmarkCard("block", "trace-g-c")], hp:3 },
+        { id:"d", team:"dusk", general:"ember-magus", hand:[makeBenchmarkCard("counter", "trace-g-d")], hp:4 }
+      ],
+      expected:{ root:end, sequence:[end], expanded:3, depth:1, hiddenSamples:10, bestValueScore:0 }
+    }
+  ];
+  for (const scene of scenes) {
+    const game = makeBenchmarkGame({
+      players:scene.players,
+      options:{ actorId:"a", nodeBudget:200, seed:20260814 }
+    });
+    try {
+      const { action, stats } = await runBenchmarkAiDecision(game, "a");
+      assert.deepEqual(describeBenchmarkAction(action), scene.expected.root, `${scene.name} root`);
+      assert.deepEqual(stats.bestSequence, scene.expected.sequence, `${scene.name} sequence`);
+      assert.equal(stats.expanded, scene.expected.expanded, `${scene.name} expanded`);
+      assert.equal(stats.depth, scene.expected.depth, `${scene.name} depth`);
+      assert.equal(stats.hiddenSamples, scene.expected.hiddenSamples, `${scene.name} hiddenSamples`);
+      assert.equal(stats.bestValueScore, scene.expected.bestValueScore, `${scene.name} bestValueScore`);
+    } finally {
+      disposeBenchmarkGame(game);
+    }
+  }
+});
+
 /*
 功能
 验证 ActionGenerator 只调用构造时注入的转移选择能力。
@@ -12950,6 +13063,46 @@ const draftPlayer = (id, seatIndex, battleTeam, generalId = "blade-walker") => (
   }
 );
 
+test("AI·互利：正式 GlobalBenefitModel 保持来源优先座次、公开池顺序与独立 recipient 输出", () => {
+  const players = [
+    draftPlayer("a", 0, "dawn"),
+    draftPlayer("b", 1, "dusk"),
+    draftPlayer("c", 2, "dawn")
+  ];
+  const counts = { counter:1, assault:2 };
+  const snapshot = structuredClone({ players, counts });
+  const playersById = new Map(players.map((player) => [player.id, player]));
+  const value = (playerId, definitionId) => getRoleCardAiValue(
+    playersById.get(playerId).generalId,
+    definitionId
+  );
+  const outcome = buildMutualBenefitDraftOutcome(players, players[1], counts, value);
+  assert.deepEqual(outcome.seatOrderIds, ["b", "c", "a"]);
+  assert.deepEqual(outcome.publicPoolDefinitionOrder, ["counter", "assault"]);
+  assert.deepEqual(outcome.recipients, [
+    { playerId:"b", definitionId:"counter", benefit:8 },
+    { playerId:"c", definitionId:"assault", benefit:6 },
+    { playerId:"a", definitionId:"assault", benefit:6 }
+  ]);
+  const assessment = assessGlobalBenefitOutcome(players, "dawn", "mutualBenefit", {
+    sourceId:"b", remainingCounts:counts, definitionValue:value
+  });
+  assert.deepEqual(
+    {
+      allyAliveCount:assessment.allyAliveCount,
+      enemyAliveCount:assessment.enemyAliveCount,
+      allyBenefit:assessment.allyBenefit,
+      enemyBenefit:assessment.enemyBenefit,
+      netBenefit:assessment.netBenefit
+    },
+    assessGlobalBenefit(players, "dawn", "mutualBenefit", "b", counts)
+  );
+  outcome.recipients[0].playerId = "mutated-output";
+  outcome.seatOrderIds.push("mutated-output");
+  assert.deepEqual({ players, counts }, snapshot);
+  assert.equal(JSON.stringify(outcome).includes("game"), false);
+});
+
 test("AI·互利：不同座位顺序产生不同 expected value", () => {
   // 同一 fixture 牌池，仅施放者座位不同：先选择者取走唯一高价值牌，后续只能选剩余资源。
   const players = [
@@ -13116,6 +13269,29 @@ test("AI·封印：未来反制先于剩余牌类别判定且全部概率互斥"
   assert.equal(JSON.stringify(counts), snapshot);
 });
 
+test("AI·封印：正式 SealModel 输出概率守恒、输入只读且与兼容门面一致", () => {
+  const holder = {
+    id:"domain-seal-holder", battleTeam:"dawn", alive:true, statuses:[], counterProbability:.25,
+    sealedStatusStateBranches:[
+      { probability:.75, conditions:{ branch:"present" }, present:true },
+      { probability:.25, conditions:{ branch:"absent" }, present:false }
+    ]
+  };
+  const ally = {
+    id:"domain-seal-ally", battleTeam:"dawn", alive:true, statuses:[], counterProbability:.2
+  };
+  const state = { players:[holder, ally], remainingCardCounts:{ harvest:3, assault:1 } };
+  const snapshot = structuredClone(state);
+  const branches = getDomainSealStatusStateBranches(holder);
+  const outcome = domainSealOutcomeProbabilities(state, holder);
+  assert.deepEqual(outcome, sealOutcomeProbabilities(state, holder));
+  assertClose(outcome.countered + outcome.success + outcome.skipAction, outcome.present);
+  branches[0].conditions.mutated = true;
+  assert.deepEqual(state, snapshot);
+  assert.equal(Object.isFrozen(outcome), true);
+  assert.equal(JSON.stringify(outcome).includes("game"), false);
+});
+
 test("AI·封印：判定概率随 remainingCardCounts 类别组成动态变化且输入只读", () => {
   const tacticLight = { seal:1, assault:8, energyDevice:1 },
     tacticHeavy = { seal:4, harvest:5, assault:1 },
@@ -13151,7 +13327,7 @@ test("AI·封印：fallback 从权威牌堆组成动态推导且无固定概率�
   assertClose(adjustedTacticTotal / adjustedTotal, (tacticTotal + 4) / (total + 4));
   assert.notEqual(adjustedTacticTotal / adjustedTotal, tacticTotal / total);
 
-  const source = await readFile(projectFile("js/ai/sealScoring.js"), "utf8"),
+  const source = await readFile(projectFile("js/ai/domain/SealModel.js"), "utf8"),
     configSource = await readFile(projectFile("js/config/cardConfig.js"), "utf8");
   assert.doesNotMatch(source, /\b(?:56|163)\b/);
   assert.match(
@@ -15371,6 +15547,21 @@ test("AI·雷达：战术判定概率来自剩余牌堆且战术牌耗尽时归�
   assertClose(normal.tactic, 10 / 21);
   assert.equal(noTactic.tactic, 0);
   assertClose(fixed.tactic, tacticTotal / total);
+});
+
+test("AI·雷达：正式 RadarModel 概率守恒、输入只读且与兼容门面一致", () => {
+  const counts = { assault:3, block:2, counter:4, defenseDevice:1 };
+  const snapshot = structuredClone(counts);
+  const outcome = buildDomainRadarJudgmentProbabilities(counts);
+  assert.deepEqual(outcome, buildRadarJudgmentProbabilities(counts));
+  assertClose(
+    outcome.tactic + outcome.equipment
+      + Object.values(outcome.basic).reduce((sum, probability) => sum + probability, 0),
+    1
+  );
+  outcome.basic.assault = -1;
+  assert.deepEqual(counts, snapshot);
+  assert.equal(JSON.stringify(outcome).includes("game"), false);
 });
 
 test("AI·雷达：受攻击暴露时不会为静态略高的非防守装备确定性拆雷达", async () => {
@@ -20092,6 +20283,42 @@ test("AI·调律师：用调息救援濒死队友时触发协调", () => {
 });
 
 // ---- AI 响应模型·反制概率 ----
+
+test("AI·反制概率：正式 ResponsePolicy 对未知敌方换面保持相同响应", () => {
+  const policy = new ResponsePolicy({ assessGlobalBenefit });
+  const makeDecision = (hiddenDefinitionId) => ({
+    responder: {
+      id: "r", battleTeam: "dawn", controllerType: "ai", alive: true,
+      hp: 4, maxHp: 4, shield: 0, energy: 1, handCount: 1
+    },
+    responseType: "counter",
+    context: {
+      rootCard: CARD_DEFINITIONS.mutualBenefit,
+      rootSourceId: "e",
+      counterDepth: 0,
+      target: null,
+      source: { id: "e", battleTeam: "dusk", alive: true }
+    },
+    cards: [{ id: "counter", definitionId: "counter" }],
+    players: [
+      { id: "r", seatIndex: 0, battleTeam: "dawn", generalId: "blade-walker", alive: true, hp: 4, maxHp: 4 },
+      { id: "e", seatIndex: 1, battleTeam: "dusk", generalId: "spirit-medic", alive: true, hp: 3, maxHp: 4, hiddenDefinitionId }
+    ],
+    rescueOrder: [],
+    responderHandDefinitionIds: ["counter"],
+    knownCardsByPlayer: {},
+    recoverDensity: 0,
+    remainingCardCounts: { assault: 2, recover: 1 },
+    isSmallTeam: true,
+    forceAiRescueHuman: true,
+    leverageMetrics: () => { throw new Error("unexpected leverage query"); },
+    guardianAidValues: () => { throw new Error("unexpected guardian query"); },
+    lightningCounterTerms: () => { throw new Error("unexpected lightning query"); },
+    sealCounterTerms: () => { throw new Error("unexpected seal query"); },
+    dynamicRootFlipGain: () => { throw new Error("unexpected dynamic query"); }
+  });
+  assert.equal(policy.shouldRespond(makeDecision("recover")), policy.shouldRespond(makeDecision("counter")));
+});
 
 const makeCounterRiskPlayer = (id, team, overrides = {}) => (
   {
@@ -28731,6 +28958,35 @@ test("AI·评分：多目标时 Planner 优先震荡而非单体突袭", async (
 
 // ---- AI 评分·角色选牌 ----
 
+test("AI·角色选牌：正式 CardSelectionPolicy 的未知位置分布不随真实换面改变", () => {
+  const buildPolicy = () => {
+    const resourcePolicy = new ResourceSelectionPolicy();
+    const transferPolicy = new TransferPolicy();
+    return new CardSelectionPolicy({
+      random: () => .75,
+      remainingCounts: () => null,
+      resourcePolicy,
+      transferPolicy
+    });
+  };
+  const actor = {
+    id: "a", battleTeam: "dawn", generalId: "blade-walker",
+    aiMemory: { knownCardsByPlayer: { e: {} } }
+  };
+  const owner = {
+    id: "e", battleTeam: "dusk", generalId: "spirit-medic",
+    hand: [{ id: "x", definitionId: "recover" }, { id: "y", definitionId: "counter" }]
+  };
+  const first = buildPolicy().chooseHiddenCardIds({ actor, owner, cards: owner.hand, count: 1 });
+  const swapped = {
+    ...owner,
+    hand: [{ id: "x", definitionId: "counter" }, { id: "y", definitionId: "recover" }]
+  };
+  const second = buildPolicy().chooseHiddenCardIds({ actor, owner: swapped, cards: swapped.hand, count: 1 });
+  assert.deepEqual(first, ["y"]);
+  assert.deepEqual(second, first);
+});
+
 test("AI·角色选牌：低血弃牌会保留调息和格挡", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
@@ -30429,6 +30685,31 @@ test("AI·资源选择：掠夺模拟共享模块单一公式来源", async () =
 
 // ---- AI 评分·转移评分 ----
 
+test("AI·转移评分：正式 TransferPolicy 与 compatibility façade 使用同一选择 owner", () => {
+  const policy = new TransferPolicy();
+  const actor = {
+    id: "a", seatIndex: 0, battleTeam: "dawn", generalId: "blade-walker",
+    hp: 4, maxHp: 4, alive: true, aiMemory: { knownCardsByPlayer: {} }
+  };
+  const source = {
+    id: "e", seatIndex: 1, battleTeam: "dusk", generalId: "spirit-medic",
+    hp: 2, maxHp: 4, alive: true, handCount: 1,
+    knownCards: [{ cardId: "known", definitionId: "recover" }]
+  };
+  const receiver = {
+    id: "a", seatIndex: 0, battleTeam: "dawn", generalId: "blade-walker",
+    hp: 2, maxHp: 4, alive: true, handCount: 0
+  };
+  const context = {
+    actor,
+    sources: [source],
+    getReceivers: () => [receiver],
+    remainingCardCounts: null
+  };
+  const candidates = buildTransferCandidates(context);
+  assert.deepEqual(policy.choose(context), chooseBestPositiveTransfer(candidates));
+});
+
 test("AI·转移评分：掠夺选择已知高价值手牌而非较低价值装备", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
@@ -31696,6 +31977,19 @@ test("AI·威胁评估：ThreatCalculator 的稳定角色标签与近期攻击�
 
 // ---- AI 评分·闪电评分 ----
 
+test("AI·闪电评分：3v1 主动闪电硬约束唯一归属 ActionCandidatePolicy", () => {
+  const policy = new ActionCandidatePolicy();
+  const players = [
+    { id: "a", battleTeam: "dawn", alive: true },
+    { id: "b", battleTeam: "dawn", alive: true },
+    { id: "c", battleTeam: "dawn", alive: true },
+    { id: "d", battleTeam: "dusk", alive: true },
+    { id: "e", battleTeam: "dusk", alive: false }
+  ];
+  assert.equal(policy.isLightningStrategicallyForbidden(players, players[0]), true);
+  assert.equal(policy.isLightningStrategicallyForbidden(players, players[3]), false);
+});
+
 const makeLightningFixture = (teams, options = {}) => {
   const fixtureId = ++serial;
   const players = teams.map((team, index) => {
@@ -31766,6 +32060,47 @@ test("AI·闪电评分：闪电：无放回判定按真实存活座次传播至�
   [0.4, 0.3, 0.2, 0.1].forEach((expected, index) => (
     assertClose(distribution[index].probability, expected)
   ));
+});
+
+test("AI·闪电评分：正式 LightningModel 仅输出 ID、概率守恒且兼容门面不复制算法", () => {
+  const fixture = makeLightningFixture(["dawn", "dusk", "dawn", "dusk"], {
+    counts:{ defenseDevice:2, assault:3 }, withCard:false
+  });
+  const snapshot = structuredClone(fixture.visible);
+  const holder = fixture.visible.players[0];
+  const distribution = buildDomainLightningHitDistribution(fixture.visible, holder);
+  const legacy = buildLightningHitDistribution(fixture.visible, holder);
+  assert.deepEqual(
+    distribution,
+    legacy.map((outcome) => ({
+      holderId:outcome.holder.id, hop:outcome.hop, probability:outcome.probability
+    }))
+  );
+  assert.deepEqual(
+    buildLightningPropagationChainIds(fixture.visible.players, holder),
+    legacy.map((outcome) => outcome.holder.id)
+  );
+  assert.equal(nextLightningReceiverId(fixture.visible.players, holder), fixture.visible.players[1].id);
+  assertClose(distribution.reduce((sum, outcome) => sum + outcome.probability, 0), 1);
+  assert.ok(distribution.every((outcome) => Object.keys(outcome).sort().join(",") === "holderId,hop,probability"));
+  distribution[0].holderId = "mutated-output";
+  assert.deepEqual(fixture.visible, snapshot);
+  assert.equal(JSON.stringify(distribution).includes("game"), false);
+});
+
+test("AI·闪电评分：同一状态的生命周期 query 复用 Domain distribution 结果", () => {
+  const fixture = makeLightningFixture(["dawn", "dusk", "dawn", "dusk"], {
+    counts:{ defenseDevice:2, assault:3 }, withCard:false
+  });
+  const query = fixture.game.aiController.valueSimulationQuery;
+  const holder = fixture.visible.players[0];
+  const first = query.lightningLifecycleOwnerDeltas(
+    fixture.visible, holder, fixture.actor.id, 1
+  );
+  const second = query.lightningLifecycleOwnerDeltas(
+    fixture.visible, holder, fixture.actor.id, 1
+  );
+  assert.strictEqual(second, first);
 });
 
 test("AI·闪电评分：闪电：传播环跳过死亡角色与已持独立闪电的角色", () => {

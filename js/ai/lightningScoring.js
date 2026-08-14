@@ -1,114 +1,129 @@
-/**
- * 闪电的 AI 共享纯计算：状态检查、剩余装备类别概率、下一接收者查找与期望负担。
- * 只读取公开/过滤后的字段，不实例化匿名判定牌，不修改 remainingCardCounts 根先验。
- */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260814-ai-value-ownership";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-value-ownership";
-import { PROBABILITY_EPSILON, clampProbability, mergeProbabilityStateBranches, totalBranchProbability } from "./state/Probability.js?build=20260814-ai-value-ownership";
+/*
+模块职责
+保留闪电领域查询的历史函数签名，并把 ID 型正式输出适配为旧 Player 引用输出。
 
-export function hasLightning(player) {
-  return RuleEngine.hasStatus(player, "lightning");
-}
+上游
+历史测试与尚未迁移的外部调用方。
 
-/** 返回玩家闪电状态的完整概率分区；无概率分支时回退为确定性状态。 */
-export function getLightningStatusStateBranches(player) {
-  if (Array.isArray(player?.lightningStatusStateBranches) && player.lightningStatusStateBranches.length) {
-    return mergeProbabilityStateBranches(
-      player.lightningStatusStateBranches.map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions ?? {},
-        present:Boolean(branch.present)
-      }))
-    );
-  }
-  return [{ probability:1, conditions:{}, present:RuleEngine.hasStatus(player, "lightning") }];
-}
+下游
+domain/LightningModel。
 
-/** 返回 P(lightning present)，范围 [0,1]。 */
-export function lightningPresenceProbability(player) {
-  return clampProbability(totalBranchProbability(
-    getLightningStatusStateBranches(player).filter((branch) => branch.present)
-  ));
-}
+状态边界
+只读调用方玩家数组；所有概率与传播算法均由正式 Domain owner 执行。
 
-/** 返回当前可见剩余牌中的装备牌数与总数；无动态计数时回退初始牌库构成。 */
-function judgmentCategoryCounts(remainingCardCounts = null) {
-  if (remainingCardCounts && typeof remainingCardCounts === "object" && !Array.isArray(remainingCardCounts)) {
-    let equipment = 0;
-    let total = 0;
-    for (const [definitionId, count] of Object.entries(remainingCardCounts)) {
-      const value = Number(count);
-      if (!Number.isFinite(value) || value <= 0) continue;
-      const definition = CARD_DEFINITIONS[definitionId];
-      if (!definition) continue;
-      total += value;
-      if (definition.category === "equipment") equipment += value;
-    }
-    return { equipment, total };
-  }
-  const equipmentTotal = Object.values(CARD_DEFINITIONS)
-    .filter((definition) => definition.category === "equipment")
-    .reduce((sum, definition) => sum + definition.count, 0);
-  return { equipment:equipmentTotal, total:TOTAL_CARD_COUNT };
-}
+信息边界
+不增加隐藏信息；对象引用仅是旧 API 边界的 ID 回绑。
 
-/** 剩余装备类别概率：装备牌剩余数量 / 剩余未知牌总数；无动态计数时回退固定初始密度。 */
-export function equipmentJudgmentProbability(remainingCardCounts = null) {
-  const { equipment, total } = judgmentCategoryCounts(remainingCardCounts);
-  return total > 0 ? Math.max(0, Math.min(1, equipment / total)) : 0;
-}
+架构约束
+不得复制闪电状态、判定、座位环或命中分布算法。
+*/
+import {
+  buildLightningHitDistribution as buildDomainLightningHitDistribution,
+  buildLightningPropagationChainIds,
+  nextLightningReceiverId
+} from "./domain/LightningModel.js?build=20260814-ai-policy-domain";
 
+export {
+  equipmentJudgmentProbability,
+  getLightningStatusStateBranches,
+  hasLightning,
+  lightningPresenceProbability
+} from "./domain/LightningModel.js?build=20260814-ai-policy-domain";
+
+/*
+功能
+保留返回 Player 的历史下一闪电接收者签名。
+
+调用方
+历史测试与迁移期外部调用方。
+
+输入
+玩家数组与当前持有者。
+
+输出
+与正式 holderId 匹配的输入玩家；不存在时为 null。
+
+读取状态
+玩家 ID。
+
+写入状态
+无。
+
+调用函数
+domain/LightningModel.nextLightningReceiverId、Array.find。
+
+边界与不变量
+接收者算法只在正式 Domain owner 中；本函数只做 ID 回绑。
+*/
 export function nextLightningReceiver(players, holder) {
-  return RuleEngine.nextLightningReceiver(players, holder);
+  const receiverId = nextLightningReceiverId(players, holder);
+  return (players ?? []).find((player) => player?.id === receiverId) ?? null;
 }
 
-/**
- * 构造一枚移动闪电当前可达的一圈持有者顺序。真实规则没有最大流转次数，
- * 因此这里只列一圈；无限次绕环的命中概率由 buildLightningHitDistribution
- * 解析求和，而不是把一圈误当成状态自然终止。
- */
+/*
+功能
+保留返回 Player 数组的历史闪电传播链签名。
+
+调用方
+历史测试与迁移期外部调用方。
+
+输入
+玩家数组与初始持有者。
+
+输出
+按正式 ID 顺序回绑的输入玩家数组。
+
+读取状态
+玩家 ID。
+
+写入状态
+无。
+
+调用函数
+domain/LightningModel.buildLightningPropagationChainIds、Map.get。
+
+边界与不变量
+传播算法只在正式 Domain owner 中；本函数不改变顺序或过滤结果。
+*/
 export function buildLightningPropagationChain(players, initialHolder) {
-  if (!initialHolder?.alive || !Array.isArray(players) || !players.length) return [];
-  const chain = [initialHolder];
-  const count = players.length;
-  for (let offset = 1; offset < count; offset += 1) {
-    const candidate = players[(initialHolder.seatIndex + offset) % count];
-    if (!candidate?.alive || candidate.id === initialHolder.id) continue;
-    if (hasLightning(candidate)) continue;
-    chain.push(candidate);
-  }
-  return chain;
+  const playersById = new Map((players ?? []).map((player) => [player.id, player]));
+  return buildLightningPropagationChainIds(players, initialHolder)
+    .map((playerId) => playersById.get(playerId))
+    .filter(Boolean);
 }
 
-/**
- * 当前座位环稳定时，返回闪电最终命中每名 holder 的概率。判定牌离开牌堆后
- * 才进入弃牌堆，因此连续未命中会逐张消耗非装备牌；这里按剩余类别数量做
- * 无放回传播，直到第一张装备牌命中，并把每次未命中后的下一次判定交给真实
- * 顺时针 holder。顺序因此会直接改变风险分布，且无需任意跳数折扣或最大步数。
- * 若当前可见剩余牌没有装备牌，不猜测后续玩家出牌与重洗造成的新构成。
- */
+/*
+功能
+保留 holder 字段为 Player 的历史闪电命中分布签名。
+
+调用方
+历史测试与迁移期外部调用方。
+
+输入
+过滤状态与初始持有者。
+
+输出
+将正式 holderId 回绑为 holder 的概率结果数组。
+
+读取状态
+state.players 的玩家 ID。
+
+写入状态
+无。
+
+调用函数
+domain/LightningModel.buildLightningHitDistribution、Map.get。
+
+边界与不变量
+概率算法与质量只来自正式 Domain owner；本函数仅恢复旧字段形状。
+*/
 export function buildLightningHitDistribution(state, initialHolder) {
-  const chain = buildLightningPropagationChain(state?.players, initialHolder);
-  const counts = judgmentCategoryCounts(state?.remainingCardCounts);
-  if (!chain.length || counts.equipment <= PROBABILITY_EPSILON || counts.total <= 0) return [];
-  const outcomeProbability = new Map(chain.map((holder) => [holder.id, 0]));
-  let remainingTotal = counts.total;
-  let reachProbability = 1;
-  let drawIndex = 0;
-  while (remainingTotal > 0 && reachProbability > PROBABILITY_EPSILON) {
-    const hitProbability = Math.max(0, Math.min(1, counts.equipment / remainingTotal));
-    const holder = chain[drawIndex % chain.length];
-    outcomeProbability.set(
-      holder.id,
-      (outcomeProbability.get(holder.id) ?? 0) + reachProbability * hitProbability
-    );
-    reachProbability *= 1 - hitProbability;
-    remainingTotal -= 1;
-    drawIndex += 1;
-  }
-  return chain.map((holder, hop) => ({
-    holder,
-    hop,
-    probability:outcomeProbability.get(holder.id) ?? 0
-  })).filter((outcome) => outcome.probability > PROBABILITY_EPSILON);
+  const playersById = new Map((state?.players ?? []).map((player) => [player.id, player]));
+  return buildDomainLightningHitDistribution(state, initialHolder)
+    .map((outcome) => ({
+      holder:playersById.get(outcome.holderId),
+      hop:outcome.hop,
+      probability:outcome.probability
+    }))
+    .filter((outcome) => Boolean(outcome.holder));
 }
