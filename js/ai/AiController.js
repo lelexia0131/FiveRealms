@@ -15,28 +15,36 @@ Game、ResponseSystem、PublicCardPool、角色技能与测试。
 隐藏信息只能经 Knowledge 和状态组合入口进入决策，门面不得暴露敌方未知牌面。
 
 架构约束
-子组件不得回指 AIController；公开子组件字段仅作迁移期兼容，生产上游应使用门面。
+子组件不得回指 AIController；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
 */
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-simulation-engine";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260814-ai-simulation-engine";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260814-ai-simulation-engine";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260814-ai-simulation-engine";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260814-ai-simulation-engine";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260814-ai-simulation-engine";
-import { AiPlanner } from "./AiPlanner.js?build=20260814-ai-simulation-engine";
-import { AiStateValue } from "./AiStateValue.js?build=20260814-ai-simulation-engine";
-import { AiValueSimulationQuery } from "./AiValueSimulationQuery.js?build=20260814-ai-simulation-engine";
-import { FrontierValue } from "./search/FrontierValue.js?build=20260814-ai-simulation-engine";
-import { SearchPrior } from "./search/SearchPrior.js?build=20260814-ai-simulation-engine";
-import { TransitionValue } from "./search/TransitionValue.js?build=20260814-ai-simulation-engine";
-import { Evaluator } from "./value/Evaluator.js?build=20260814-ai-simulation-engine";
-import { ValueLedger } from "./value/ValueLedger.js?build=20260814-ai-simulation-engine";
-import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260814-ai-simulation-engine";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260814-ai-simulation-engine";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-simulation-engine";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260814-ai-simulation-engine";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-simulation-engine";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-ai-simulation-engine";
+import { createInitialSearchState } from "./state/StateContracts.js?build=20260814-ai-code-hygiene-final";
+import { Knowledge } from "./state/Knowledge.js?build=20260814-ai-code-hygiene-final";
+import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260814-ai-code-hygiene-final";
+import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260814-ai-code-hygiene-final";
+import { ActionGenerator } from "./search/ActionGenerator.js?build=20260814-ai-code-hygiene-final";
+import { ValueService } from "./value/ValueService.js?build=20260814-ai-code-hygiene-final";
+import { StateValue } from "./value/StateValue.js?build=20260814-ai-code-hygiene-final";
+import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260814-ai-code-hygiene-final";
+import { Simulator } from "./simulation/Simulator.js?build=20260814-ai-code-hygiene-final";
+import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260814-ai-code-hygiene-final";
+import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260814-ai-code-hygiene-final";
+import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260814-ai-code-hygiene-final";
+import { Planner } from "./search/Planner.js?build=20260814-ai-code-hygiene-final";
+import { SearchBudget } from "./search/SearchBudget.js?build=20260814-ai-code-hygiene-final";
+import { SearchPolicy } from "./search/SearchPolicy.js?build=20260814-ai-code-hygiene-final";
+import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260814-ai-code-hygiene-final";
+import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260814-ai-code-hygiene-final";
+import { FrontierValue } from "./search/FrontierValue.js?build=20260814-ai-code-hygiene-final";
+import { SearchPrior } from "./search/SearchPrior.js?build=20260814-ai-code-hygiene-final";
+import { TransitionValue } from "./search/TransitionValue.js?build=20260814-ai-code-hygiene-final";
+import { Evaluator } from "./value/Evaluator.js?build=20260814-ai-code-hygiene-final";
+import { ValueLedger } from "./value/ValueLedger.js?build=20260814-ai-code-hygiene-final";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260814-ai-code-hygiene-final";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260814-ai-code-hygiene-final";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-code-hygiene-final";
+import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260814-ai-code-hygiene-final";
 
 export class AIController {
   /*
@@ -59,20 +67,20 @@ export class AIController {
   仅写控制器组件字段。
 
 调用函数
-Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGenerator 与 AiPlanner 构造函数。
+Value owners、Knowledge、正式 Policy、执行边界、ActionGenerator 与 Planner 构造函数。
 
   边界与不变量
   装配无事后补丁；闭包持有具体组件或 Game 能力，不把 Controller 传给任何子组件。
   */
   constructor(game) {
     this.game = game;
-    this.knowledge = new AiKnowledge(game);
+    this.knowledge = new Knowledge(game);
     this.stateEvaluator = new Evaluator({
       getMaxEnergy: (player) => game.teamRules.getMaxEnergy(player),
       getTurnEnergyBreakdown: (player) => game.teamRules.getTurnEnergyBreakdown(player)
     });
-    this.valueSimulationQuery = new AiValueSimulationQuery(this.stateEvaluator);
-    this.stateValue = new AiStateValue(this.stateEvaluator, this.valueSimulationQuery);
+    this.valueSimulationQuery = new ValueSimulationQuery(this.stateEvaluator);
+    this.stateValue = new StateValue(this.stateEvaluator, this.valueSimulationQuery);
     this.valueLedger = new ValueLedger({
       evaluator: this.stateEvaluator,
       stateValue: this.stateValue,
@@ -81,11 +89,10 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
     this.frontierValue = new FrontierValue();
     this.searchPrior = new SearchPrior({
       getDifficultyMultiplier: () => game.aiDifficultyMultiplier,
-      simulationQuery: this.valueSimulationQuery,
-      getCurrentState: () => game.state
+      simulationQuery: this.valueSimulationQuery
     });
     this.transitionValue = new TransitionValue(this.stateValue);
-    this.evaluator = new AiEvaluator({
+    this.evaluator = new ValueService({
       evaluator: this.stateEvaluator,
       stateValue: this.stateValue,
       simulationQuery: this.valueSimulationQuery,
@@ -104,19 +111,19 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
     });
     this.actionCandidatePolicy = new ActionCandidatePolicy();
     this.responseDecisionPolicy = new ResponsePolicy({ assessGlobalBenefit });
-    this.cardSelector = new AiCardSelector(game, this.knowledge, {
+    this.cardSelector = new CardSelectionBoundary(game, this.knowledge, {
       cardSelectionPolicy: this.cardSelectionPolicy,
       resourcePolicy: this.resourceSelectionPolicy,
       transferPolicy: this.transferPolicy
     });
-    this.responsePolicy = new AiResponsePolicy(game, this.evaluator, this.knowledge, {
+    this.responsePolicy = new ResponseBoundary(game, this.evaluator, this.knowledge, {
       responsePolicy: this.responseDecisionPolicy,
       simulationQuery: this.valueSimulationQuery,
       stateValue: this.stateValue
     });
 
     const cardSelector = this.cardSelector;
-    this.actionGenerator = new AiActionGenerator(game, {
+    this.actionGenerator = new ActionGenerator(game, {
       chooseTransferCombination: (...args) => cardSelector.chooseTransferCombination(...args),
       transferPolicy: this.transferPolicy,
       actionCandidatePolicy: this.actionCandidatePolicy
@@ -124,18 +131,36 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
 
     const actionGenerator = this.actionGenerator;
     const knowledge = this.knowledge;
-    this.planner = new AiPlanner({
-      evaluator: this.evaluator,
+    this.searchPolicy = new SearchPolicy({
+      random:() => game.random(),
+      getRandomnessRange:() => game.aiRandomnessRange
+    });
+    this.counterfactualTerms = new CounterfactualTerms({
+      evaluator:this.evaluator,
+      generateFromVisible:(...args) => actionGenerator.generateFromVisible(...args),
+      sampleHiddenWorlds:(...args) => knowledge.sampleHiddenWorlds(...args),
+      hiddenSampleCount:this.searchPolicy.structure().hiddenSamples
+    });
+    this.siblingTransitionTerms = new SiblingTransitionTerms();
+    this.candidateMaterializer = new CandidateMaterializer({
       transitionValue: this.transitionValue,
       valueLedger: this.valueLedger,
       frontierValue: this.frontierValue,
       searchPrior: this.searchPrior,
+      counterfactualTerms:this.counterfactualTerms,
+      siblingTerms:this.siblingTransitionTerms,
+      actionDescriptor:ActionDescriptor,
+      getResolutionScale:tacticResolutionScale
+    });
+    this.planner = new Planner({
+      candidateMaterializer:this.candidateMaterializer,
+      searchPolicy:this.searchPolicy,
+      simulatorFactory:(state) => new Simulator(state),
+      searchBudgetFactory:() => new SearchBudget({
+        timeBudget:game.aiSearchBudgetOverrideMs,
+        nodeBudget:game.aiSearchNodeBudgetOverride
+      }),
       generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
-      sampleHiddenWorlds: (...args) => knowledge.sampleHiddenWorlds(...args),
-      random: () => game.random(),
-      getRandomnessRange: () => game.aiRandomnessRange,
-      getSearchTimeBudget: () => game.aiSearchBudgetOverrideMs,
-      getSearchNodeBudget: () => game.aiSearchNodeBudgetOverride,
       yieldControl: async (gameId) => (
         await game.cleanupManager.delay(0)
       ) && game.isSessionValid(gameId ?? game.state.gameId),
@@ -162,12 +187,12 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   无。
 
   调用函数
-  AiActionGenerator.generate。
+  ActionGenerator.generate。
 
   边界与不变量
   门面不得额外筛选或重排动作。
   */
-  getLegalActions(player) {
+  getActionCandidates(player) {
     return this.actionGenerator.generate(player);
   }
 
@@ -191,15 +216,15 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   Planner 最近搜索诊断与计划序列。
 
   调用函数
-  AiKnowledge.remainingCounts、createAiVisibleState、getLegalActions、AiPlanner.plan。
+  Knowledge.remainingCounts、createInitialSearchState、getActionCandidates、Planner.plan。
 
   边界与不变量
   剩余牌计数每次真实决策只计算一次，Planner 不获得 Game 或 Controller。
   */
   async selectAction(player, options = {}) {
     const remainingCardCounts = this.knowledge.remainingCounts(player);
-    const visible = createAiVisibleState(player.id, this.game.state, remainingCardCounts);
-    return this.planner.plan(player, visible, this.getLegalActions(player), options);
+    const visible = createInitialSearchState(player.id, this.game.state, remainingCardCounts);
+    return this.planner.plan(player, visible, this.getActionCandidates(player), options);
   }
 
   /*
@@ -222,14 +247,14 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   无。
 
   调用函数
-  getLegalActions。
+  getActionCandidates。
 
   边界与不变量
   实体牌优先按实例 ID 重绑，目标顺序和选择字段必须完全一致。
   */
   resolvePlannedAction(player, descriptor) {
     if (!descriptor) return null;
-    return this.getLegalActions(player).find((action) => {
+    return this.getActionCandidates(player).find((action) => {
       if (action.type !== descriptor.type) return false;
       if (action.type === "end") return true;
       if (action.type === "skill" && action.skill?.id !== descriptor.cardId) return false;
@@ -265,7 +290,7 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   无。
 
   调用函数
-  Array 展开。
+  无。
 
   边界与不变量
   调用方不得通过返回数组修改 Planner 内部序列。
@@ -294,7 +319,7 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   无。
 
   调用函数
-  AiCardSelector.chooseDiscards。
+  CardSelectionBoundary.chooseDiscards。
 
   边界与不变量
   门面不改动选择结果或牌序。
@@ -308,7 +333,7 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   为转移牌选择来源、接收者和资源类别。
 
   调用方
-  Game 转移准备与 AiActionGenerator 注入能力。
+  Game 转移准备与 ActionGenerator 注入能力。
 
   输入
   转移行动者、卡牌、合法来源及可选接收者和排除集合。
@@ -323,7 +348,7 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   无。
 
   调用函数
-  AiCardSelector.chooseTransferCombination。
+  CardSelectionBoundary.chooseTransferCombination。
 
   边界与不变量
   不解析或移动实体牌，真实执行仍必须重新验证。
@@ -352,7 +377,7 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   随机源序列。
 
   调用函数
-  AiCardSelector.chooseHiddenCards。
+  CardSelectionBoundary.chooseHiddenCards。
 
   边界与不变量
   未知牌只能按位置采样，调用次数和随机数顺序保持选择器既有语义。
@@ -381,7 +406,7 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   可能消费随机源序列。
 
   调用函数
-  AiCardSelector.chooseZoneCard。
+  CardSelectionBoundary.chooseZoneCard。
 
   边界与不变量
   不读取未知牌定义，真实执行仍按实体身份复核。
@@ -410,7 +435,7 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   无。
 
   调用函数
-  AiCardSelector.choosePublicCard。
+  CardSelectionBoundary.choosePublicCard。
 
   边界与不变量
   门面不改变同分时的原始顺序。
@@ -424,7 +449,7 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   判断 AI 是否在当前响应窗口使用候选响应。
 
   调用方
-  ResponseSystem 与兼容测试。
+  ResponseSystem 与直接测试。
 
   输入
   响应者、响应类型、公开上下文与合法候选牌。
@@ -439,7 +464,7 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   无。
 
   调用函数
-  AiResponsePolicy.shouldRespond。
+  ResponseBoundary.shouldRespond。
 
   边界与不变量
   候选牌默认空数组；门面不得构造或泄露额外隐藏信息。
@@ -453,7 +478,7 @@ Value owners、AiKnowledge、正式 Policy、compatibility façade、AiActionGen
   在重定向备选目标中保持既有首项选择语义。
 
   调用方
-  兼容响应流程。
+  统一响应流程。
 
   输入
   当前 Player 与合法替代目标数组。

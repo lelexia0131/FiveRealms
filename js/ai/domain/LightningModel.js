@@ -3,7 +3,7 @@
 派生闪电状态、装备判定概率、存活座位传播环与最终命中分布。
 
 上游
-ActionGenerator、Simulator、Response façade、Value simulation query 与兼容门面。
+ActionGenerator、Simulator、ResponseBoundary 与 ValueSimulationQuery。
 
 下游
 RuleEngine、卡牌定义配置与 state/Probability。
@@ -17,21 +17,21 @@ RuleEngine、卡牌定义配置与 state/Probability。
 架构约束
 本模型不是 Game authority；RuleEngine 是真实状态与接收者规则权威，真实状态移动/伤害仍由 Game 卡牌生命周期负责。不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-code-hygiene-final";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
   mergeProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-simulation-engine";
+} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
 
 /*
 功能
 判断过滤玩家是否持有闪电状态。
 
 调用方
-传播链、兼容门面与直接领域测试。
+传播链、正式边界与直接领域测试。
 
 输入
 真实 Player 或过滤玩家摘要。
@@ -144,7 +144,7 @@ CARD_DEFINITIONS 与剩余牌计数。
 无。
 
 调用函数
-Object.entries、Object.values。
+无。
 
 边界与不变量
 忽略非法定义与非正计数，不修改输入；缺失计数时使用正式初始牌堆。
@@ -174,7 +174,7 @@ function judgmentCategoryCounts(remainingCardCounts = null) {
 计算下一张判定牌为装备牌的概率。
 
 调用方
-兼容门面与直接领域测试。
+正式边界与直接领域测试。
 
 输入
 可选剩余牌计数。
@@ -204,7 +204,7 @@ export function equipmentJudgmentProbability(remainingCardCounts = null) {
 返回真实规则确定的下一名闪电接收者 ID。
 
 调用方
-Response façade、兼容门面与直接领域测试。
+ResponseBoundary 与直接领域测试。
 
 输入
 座位顺序玩家数组与当前持有者。
@@ -233,7 +233,7 @@ export function nextLightningReceiverId(players, holder) {
 构造闪电在当前存活座位环的一圈合法持有者 ID 顺序。
 
 调用方
-buildLightningHitDistribution、兼容门面与直接领域测试。
+buildLightningHitDistribution、正式边界与直接领域测试。
 
 输入
 座位顺序玩家数组与初始持有者。
@@ -271,7 +271,7 @@ export function buildLightningPropagationChainIds(players, initialHolder) {
 按无放回判定与存活座位环计算闪电最终命中各持有者的概率。
 
 调用方
-AiValueSimulationQuery、兼容门面与直接领域测试。
+ValueSimulationQuery、正式边界与直接领域测试。
 
 输入
 含 players/remainingCardCounts 的过滤状态与初始持有者。

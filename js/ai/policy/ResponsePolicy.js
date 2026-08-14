@@ -3,7 +3,7 @@
 拥有合法响应窗口中的 block、counter、guardian aid、dying rescue、leverage 与状态反制选择。
 
 上游
-AIController、AiResponsePolicy compatibility façade 与 AiSimulator 的共享全体受益反制入口。
+AIController、ResponseBoundary 正式边界 与 Simulator 的共享全体受益反制入口。
 
 下游
 value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query。
@@ -15,17 +15,17 @@ value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query�
 只消费合法响应牌、公开玩家视图、合法记忆摘要和 Belief；不接收敌方未知手牌定义。
 
 架构约束
-不执行规则、不依赖 Planner/Controller/UI，不 import 或构造 concrete Simulator。
+不执行规则、不依赖 Planner/Controller/UI，不 import 或构造 具体 Simulator。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { HP_VALUE } from "../value/Economics.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { HP_VALUE } from "../value/Economics.js?build=20260814-ai-code-hygiene-final";
 
 /*
 功能
 返回所有响应入口共用且只计一次的反制牌机会成本。
 
 调用方
-ResponsePolicy、AiSimulator 与 AiGlobalBenefit compatibility façade。
+ResponsePolicy、Simulator 与 GlobalBenefitValue 正式边界。
 
 输入
 无。
@@ -43,7 +43,7 @@ CARD_DEFINITIONS.counter。
 无。
 
 边界与不变量
-这是 legacy policy 近似，不进入 final transition，也不得在 stay/flip 两世界重复扣除。
+这是既定的局部策略近似，只用于响应选择，不进入最终 Transition Value；STAY/FLIP 配对世界不得重复扣除。
 */
 export function counterOpportunityCost() {
   return (CARD_DEFINITIONS.counter.aiValue ?? 8) * 0.35;
@@ -54,7 +54,7 @@ export function counterOpportunityCost() {
 根据全体受益 Domain/Value assessment 与反制链 parity 决定局部反制意愿。
 
 调用方
-ResponsePolicy 与 AiGlobalBenefit compatibility façade。
+ResponsePolicy 与 GlobalBenefitValue 正式边界。
 
 输入
 显式 assessment 查询、公开玩家、响应者阵营、root 定义和链上下文。
@@ -144,7 +144,7 @@ export function planningDynamicCounterGain(
     ? state.players.find((player) => player.id === targets[0].id) : null;
   /*
   功能
-  执行规划反制策略内部纯 helper hasResource。
+  执行规划反制策略内部纯 辅助函数 hasResource。
 
   调用方
   planningDynamicCounterGain。
@@ -162,7 +162,7 @@ export function planningDynamicCounterGain(
   无。
 
   调用函数
-  JavaScript 数值/数组查询。
+  无。
 
   边界与不变量
   不得读取未知手牌 definitionId 或修改 Simulation 状态。
@@ -171,7 +171,7 @@ export function planningDynamicCounterGain(
     || Boolean(player?.equipmentDefinitionId);
   /*
   功能
-  执行规划反制策略内部纯 helper knownAssault。
+  执行规划反制策略内部纯 辅助函数 knownAssault。
 
   调用方
   planningDynamicCounterGain。
@@ -189,7 +189,7 @@ export function planningDynamicCounterGain(
   无。
 
   调用函数
-  JavaScript 数值/数组查询。
+  无。
 
   边界与不变量
   不得读取未知手牌 definitionId 或修改 Simulation 状态。
@@ -304,7 +304,7 @@ export class ResponsePolicy {
   绑定响应策略所需的全体受益 assessment 查询。
 
   调用方
-  AIController composition root 与直接策略测试。
+  AIController 组合根（统一组装依赖的位置） 与直接策略测试。
 
   输入
   assessGlobalBenefit 纯查询。
@@ -453,7 +453,7 @@ export class ResponsePolicy {
   判断一次合法响应窗口是否应使用给定响应资源。
 
   调用方
-  AiResponsePolicy compatibility façade 与直接策略测试。
+  ResponseBoundary 正式边界 与直接策略测试。
 
   输入
   plain DecisionContext，含 responseType、公开玩家、合法 Cards、Belief 与窄查询。

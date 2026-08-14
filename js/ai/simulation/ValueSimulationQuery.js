@@ -3,10 +3,10 @@
 承接价值计算上游仍需模拟的闪电生命周期与响应反事实查询。
 
 上游
-AIController、状态价值适配器、ValueLedger 与兼容 façade。
+AIController、状态价值适配器、ValueLedger 与正式边界。
 
 下游
-AiSimulator、闪电概率 helper 与纯 value/Evaluator。
+Simulator、闪电概率 辅助函数 与纯 value/Evaluator。
 
 状态边界
 只克隆并写入 SearchState；不持有或修改真实 GameState。
@@ -17,22 +17,22 @@ AiSimulator、闪电概率 helper 与纯 value/Evaluator。
 架构约束
 本模块只做有界 simulation query，不搜索、不生成动作，也不拥有最终价值组合公式。
 */
-import { buildRadarJudgmentProbabilities } from "./domain/RadarModel.js?build=20260814-ai-simulation-engine";
-import { Simulator } from "./simulation/Simulator.js?build=20260814-ai-simulation-engine";
+import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260814-ai-code-hygiene-final";
+import { Simulator } from "./Simulator.js?build=20260814-ai-code-hygiene-final";
 import {
   buildLightningHitDistribution,
   lightningPresenceProbability
-} from "./domain/LightningModel.js?build=20260814-ai-simulation-engine";
-import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./AiGlobalBenefit.js?build=20260814-ai-simulation-engine";
-import { HP_VALUE } from "./value/Economics.js?build=20260814-ai-simulation-engine";
+} from "../domain/LightningModel.js?build=20260814-ai-code-hygiene-final";
+import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./RootResolutionQuery.js?build=20260814-ai-code-hygiene-final";
+import { HP_VALUE } from "../value/Economics.js?build=20260814-ai-code-hygiene-final";
 
-export class AiValueSimulationQuery {
+export class ValueSimulationQuery {
   /*
   功能
   绑定闪电查询所需的纯 owner material evaluator 并建立状态缓存。
 
   调用方
-  AIController composition root。
+  AIController 组合根（统一组装依赖的位置）。
 
   输入
   不含 Simulator 的 value/Evaluator。
@@ -62,7 +62,7 @@ export class AiValueSimulationQuery {
   计算一枚闪电完整生命周期对每个 owner 的预期经济变化。
 
   调用方
-  lightningLifecycleValue、ValueLedger 与兼容 façade。
+  lightningLifecycleValue、ValueLedger 与正式边界。
 
   输入
   状态、初始 holder、viewer ID 与可选存在概率覆盖。
@@ -77,7 +77,7 @@ export class AiValueSimulationQuery {
   仅写本查询实例的 WeakMap 缓存；模拟写入独立克隆。
 
   调用函数
-  buildLightningHitDistribution、AiSimulator.applyLightningHit、Evaluator.ownerMaterialValue。
+  buildLightningHitDistribution、Simulator.applyLightningHit、Evaluator.ownerMaterialValue。
 
   边界与不变量
   每个分支除最终命中 holder 外保持同一基线；不把 unresolved lifecycle 再加入 frontier。
@@ -135,7 +135,7 @@ export class AiValueSimulationQuery {
   从 viewer 视角投影一枚闪电整个流转生命周期的预期局面变化。
 
   调用方
-  状态价值适配器、SearchPrior、响应策略与兼容 façade。
+  状态价值适配器、SearchPrior、响应策略与正式边界。
 
   输入
   状态、初始 holder、viewer ID 与可选存在概率覆盖。
@@ -175,7 +175,7 @@ export class AiValueSimulationQuery {
   计算一枚闪电对 viewer 阵营造成的预期负担。
 
   调用方
-  AiResponsePolicy 与兼容 façade。
+  ResponseBoundary 与正式边界。
 
   输入
   状态、holder、viewer ID 与可选存在概率。
@@ -204,7 +204,7 @@ export class AiValueSimulationQuery {
   计算状态反制把同一枚闪电转交 receiver 后的阵营负担。
 
   调用方
-  AiResponsePolicy 与兼容 façade。
+  ResponseBoundary 与正式边界。
 
   输入
   状态、旧 holder、新 receiver 与 viewer ID。
@@ -245,7 +245,7 @@ export class AiValueSimulationQuery {
   汇总当前状态中所有独立闪电对指定 owner 的未兑现变化。
 
   调用方
-  ValueLedger 与兼容 façade。
+  ValueLedger 与正式边界。
 
   输入
   状态、owner ID 与 viewer ID。
@@ -279,7 +279,7 @@ export class AiValueSimulationQuery {
   为纯 Evaluator 生成当前状态中按 holder 顺序排列的闪电生命周期值。
 
   调用方
-  AiStateValue。
+  StateValue。
 
   输入
   状态与 viewer ID。
@@ -314,7 +314,7 @@ export class AiValueSimulationQuery {
   为护援 Policy 构造 STAY/AID 两个配对模拟世界并返回纯价值结果。
 
   调用方
-  AiResponsePolicy compatibility façade 注入的 guardianAidValues query。
+  ResponseBoundary 正式边界 注入的 guardianAidValues query。
 
   输入
   过滤状态、守誓者/目标/来源 ID、伤害量与完整 State Value 入口。
@@ -329,7 +329,7 @@ export class AiValueSimulationQuery {
   只修改两个独立 Simulator clone。
 
   调用函数
-  AiSimulator.clone/applyDamage、stateValue.stateUtility、Evaluator.exposureComponents。
+  Simulator.clone/applyDamage、stateValue.stateUtility、Evaluator.exposureComponents。
 
   边界与不变量
   STAY 只排除指定守誓者，AID 走既有模拟护援；固定 canBlock:false 且不修改真实 GameState。
@@ -372,7 +372,7 @@ export class AiValueSimulationQuery {
   为 ResponsePolicy 查询追加一张反制翻转 root 结局的纯价值增量。
 
   调用方
-  AiResponsePolicy compatibility façade 注入的 dynamicRootFlipGain query。
+  ResponseBoundary 正式边界 注入的 dynamicRootFlipGain query。
 
   输入
   当前过滤 response state、响应者/root 信息、目标 ID、公开选择上下文与 State Value。
@@ -384,13 +384,13 @@ export class AiValueSimulationQuery {
   只读当前 SearchState 与 root 公开上下文。
 
   写入状态
-  只写 AiSimulator 生成的独立克隆。
+  只写 Simulator 生成的独立克隆。
 
   调用函数
-  AiSimulator、AiGlobalBenefit.dynamicRootFlipGain compatibility query。
+  Simulator、GlobalBenefitValue.dynamicRootFlipGain 有界配对查询。
 
   边界与不变量
-  每个响应窗口只构造一个 concrete Simulator；Policy 本身不知道或构造 Simulator。
+  每个响应窗口只构造一个 具体 Simulator；Policy 本身不知道或构造 Simulator。
   */
   dynamicRootFlipGain(
     state,
@@ -436,7 +436,7 @@ export class AiValueSimulationQuery {
   只修改反事实浅克隆及 Simulator 生成的独立 SearchState。
 
   调用函数
-  AiSimulator.apply、stateValue.stateUtility。
+  Simulator.apply、stateValue.stateUtility。
 
   边界与不变量
   反事实只改变正在测量的响应能力；其他资源、概率条件与实体身份保持配对。

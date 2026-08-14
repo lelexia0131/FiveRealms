@@ -6,7 +6,7 @@ import { GENERAL_DEFINITIONS } from "../../../js/config/generalConfig.js";
 import { RuleEngine } from "../../../js/core/RuleEngine.js";
 import { DistanceSystem } from "../../../js/core/DistanceSystem.js";
 import { registerPassiveSkills } from "../../../js/generals/skillRegistry.js";
-import { createAiVisibleState } from "../../../js/ai/AiVisibleState.js";
+import { createInitialSearchState } from "../../../js/ai/state/StateContracts.js";
 import { TrackedRng } from "./rng.js";
 import { createHeadlessUi } from "./ui.js";
 
@@ -481,7 +481,7 @@ export function installForcedFirstAction(game, definitionId) {
   game.takeAiPlayPhase = async (player, gameId) => {
     if (!used && player.alive && game.currentPlayer?.id === player.id && game.state.phase === "play") {
       used = true;
-      const actions = controller.getLegalActions(player);
+      const actions = controller.getActionCandidates(player);
       const forced = actions.find((action) => action.type === "card" && action.card?.definitionId === definitionId);
       if (forced) {
         game.__forcedLegal = true;
@@ -509,8 +509,8 @@ export function installBestOtherFirstAction(game, definitionId) {
         player.bumpHandVersion();
         try {
           const remainingCardCounts = controller.knowledge.remainingCounts(player);
-          const visible = createAiVisibleState(player.id, controller.game.state, remainingCardCounts);
-          const rootActions = controller.getLegalActions(player);
+          const visible = createInitialSearchState(player.id, controller.game.state, remainingCardCounts);
+          const rootActions = controller.getActionCandidates(player);
           return controller.planner.plan(player, visible, rootActions, options);
         } finally {
           player.hand.splice(Math.min(cardIndex, player.hand.length), 0, held);

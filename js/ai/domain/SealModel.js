@@ -3,7 +3,7 @@
 派生封印状态、判定类别、团队反制输入与先反制后判定的生命周期概率。
 
 上游
-ActionGenerator、Simulator、Response façade、value adapter 与兼容门面。
+ActionGenerator、Simulator、ResponseBoundary 与 Seal value 查询。
 
 下游
 RuleEngine、卡牌定义配置与 state/Probability。
@@ -17,20 +17,20 @@ RuleEngine、卡牌定义配置与 state/Probability。
 架构约束
 本模型不是 Game authority；RuleEngine 与真实判定/状态生命周期仍是规则权威。不得包含回合机会价值、封印负担、使用价值或搜索延迟，也不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-code-hygiene-final";
 import {
   clampProbability,
   mergeProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-simulation-engine";
+} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
 
 /*
 功能
 判断过滤玩家是否持有封印状态。
 
 调用方
-状态分支、兼容门面与直接领域测试。
+状态分支、正式边界与直接领域测试。
 
 输入
 真实 Player 或过滤玩家摘要。
@@ -128,7 +128,7 @@ export function sealPresenceProbability(player) {
 计算公开剩余判定池中战术牌的概率。
 
 调用方
-sealOutcomeProbabilities、Response façade、兼容门面与直接领域测试。
+sealOutcomeProbabilities、ResponseBoundary 与直接领域测试。
 
 输入
 可选剩余牌计数。
@@ -143,7 +143,7 @@ CARD_DEFINITIONS、TOTAL_CARD_COUNT 与公开剩余牌计数。
 无。
 
 调用函数
-clampProbability、Object.entries、Object.values。
+clampProbability。
 
 边界与不变量
 忽略非法定义与非正计数，不修改输入；缺失计数时回退正式初始牌堆。
@@ -173,7 +173,7 @@ export function tacticJudgmentProbability(remainingCardCounts = null) {
 估算封印触发时持有者阵营至少拥有一张反制的概率。
 
 调用方
-sealOutcomeProbabilities、兼容门面与直接领域测试。
+sealOutcomeProbabilities、正式边界与直接领域测试。
 
 输入
 过滤状态与封印持有者。
@@ -188,7 +188,7 @@ sealOutcomeProbabilities、兼容门面与直接领域测试。
 无。
 
 调用函数
-clampProbability、Array.filter、Array.reduce。
+clampProbability。
 
 边界与不变量
 不同队友的公开反制容量概率沿用既有独立近似；死亡持有者返回零。
@@ -206,7 +206,7 @@ export function sealCounterProbability(state, holder) {
 汇总封印先反制、未反制再判定且最终清除的互斥生命周期概率。
 
 调用方
-value adapter、兼容门面与直接领域测试。
+value adapter、正式边界与直接领域测试。
 
 输入
 过滤状态与封印持有者。

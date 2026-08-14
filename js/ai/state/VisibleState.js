@@ -38,7 +38,7 @@ createVisibleState、projectVisiblePlayer。
 无。
 
 调用函数
-Object.freeze。
+无。
 
 边界与不变量
 输入内容必须已完成信息过滤，不负责深层投影。
@@ -67,7 +67,7 @@ createVisibleState、projectVisiblePlayer。
 无。
 
 调用函数
-Object.freeze。
+无。
 
 边界与不变量
 不得复制牌面之外的可变运行时字段。
@@ -152,7 +152,7 @@ function projectVisiblePlayer(viewerId, player) {
 创建指定观察者的不可变 VisibleState 快照。
 
 调用方
-createAiStateContracts、状态契约测试。
+createStateContracts、状态契约测试。
 
 输入
 合法玩家 ID 与当前 GameState。

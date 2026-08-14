@@ -1,12 +1,12 @@
 /*
 模块职责
-唯一拥有 owner、response 与 candidate 的价值归属诊断 schema 和投影规则。
+唯一拥有 Diagnostic Ledger（诊断账本：解释价值来源但不参与选牌）的角色归属、响应与候选 schema 和投影规则。
 
 上游
-Planner 诊断、兼容 façade 与价值归属测试。
+Planner 诊断、正式边界 与价值归属测试。
 
 下游
-纯 Evaluator、运行时 State Value、闪电/响应 simulation query 与封印纯 helper。
+纯 Evaluator、运行时 State Value、闪电/响应模拟查询与封印纯函数。
 
 状态边界
 只读 before/after SearchState；不修改输入状态。
@@ -15,10 +15,10 @@ Planner 诊断、兼容 façade 与价值归属测试。
 只使用过滤后的玩家字段和合法概率摘要。
 
 架构约束
-Ledger 解释已有价值，不是第二个 Evaluator；所有 response/candidate 字段均为 DIAGNOSTIC_ONLY。
+账本解释已有价值，不是第二个 Evaluator；所有响应/候选字段仅供诊断，开关不得改变最终价值或选择。
 */
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260814-ai-simulation-engine";
-import { sealTeamBurden } from "../sealScoring.js?build=20260814-ai-simulation-engine";
+import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260814-ai-code-hygiene-final";
+import { sealTeamBurden } from "./SealValue.js?build=20260814-ai-code-hygiene-final";
 
 export class ValueLedger {
   /*
@@ -26,7 +26,7 @@ export class ValueLedger {
   绑定共享状态 primitive、完整 State Value 与上游 simulation query。
 
   调用方
-  AIController composition root。
+  AIController 组合根（统一组装依赖的位置）。
 
   输入
   evaluator、stateValue 与 simulationQuery 三个显式依赖。
@@ -57,7 +57,7 @@ export class ValueLedger {
   把一次 state transition 分解到每个 owner 的互斥价值类别。
 
   调用方
-  computeCandidateLedger、兼容 façade 与价值归属测试。
+  computeCandidateLedger、正式边界 与价值归属测试。
 
   输入
   before、after 与 viewer ID。
@@ -167,7 +167,7 @@ export class ValueLedger {
   把 owner-local ledger 投影为 viewer 的 self、ally、enemy 与 total。
 
   调用方
-  computeCandidateLedger、兼容 façade 与测试。
+  computeCandidateLedger、正式边界 与测试。
 
   输入
   owner ledger 与 viewer ID。
@@ -182,7 +182,7 @@ export class ValueLedger {
   无。
 
   调用函数
-  Array.find、Array.filter、Array.reduce。
+  无。
 
   边界与不变量
   projected.total 必须等于同一 before/after 的完整 state delta。
@@ -205,10 +205,10 @@ export class ValueLedger {
 
   /*
   功能
-  暴露同一事件响应反事实的兼容入口。
+  暴露同一事件响应反事实的正式查询入口。
 
   调用方
-  Planner 兼容方法与 computeResponseLedger。
+  Planner 与 computeResponseLedger。
 
   输入
   before、动作、actor/defender/viewer ID、移除项与可选 actual after。
@@ -223,10 +223,10 @@ export class ValueLedger {
   无；simulation query 只写独立克隆。
 
   调用函数
-  AiValueSimulationQuery.responseCounterfactual。
+  ValueSimulationQuery.responseCounterfactual。
 
   边界与不变量
-  本层不模拟也不改公式，只把正式 State Value 显式交给查询适配器。
+  本层不模拟也不改公式，只把正式 State Value 显式交给 ValueSimulationQuery。
   */
   responseCounterfactual(before, action, actorId, defenderId, viewerId, opts = {}, after = null) {
     return this.simulationQuery.responseCounterfactual(

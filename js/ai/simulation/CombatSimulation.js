@@ -3,13 +3,13 @@
 镜像 SearchState 中的攻击、伤害、失去生命、治疗、濒死救援和死亡结算顺序。
 
 上游
-Simulator facade 及 Card/Skill/Status simulation components。
+Simulator 正式模拟门面及 Card/Skill/Status 模拟组件。
 
 下游
 ResponseSimulation、Radar domain、state/Probability 与共享 simulation runtime。
 
 状态边界
-只修改 facade 提供的独立 SearchState clone，不持有真实 GameState。
+只修改 Simulator 门面提供的独立 SearchState 副本，不持有真实 GameState。
 
 信息边界
 只消费可见/概率摘要，不读取隐藏实体牌或未来牌堆。
@@ -17,63 +17,62 @@ ResponseSimulation、Radar domain、state/Probability 与共享 simulation runti
 架构约束
 结算顺序以 Game.damage、HpLossSystem 与 DyingSystem 为权威；不得拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-simulation-engine";
-import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260814-ai-simulation-engine";
-import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260814-ai-simulation-engine";
-import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-code-hygiene-final";
+import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260814-ai-code-hygiene-final";
+import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
+import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260814-ai-code-hygiene-final";
 
 /*
 功能
 把 Base class 与 CombatSimulation 的无状态方法组合成单一 Simulator 类型。
 
 调用方
-Simulator 模块加载期的唯一组件组合表达式。
+Simulator.js 文件末尾的组合表达式：在模块加载时把 CombatSimulation 方法加入正式模拟门面。
 
 输入
-承载上一层方法的 Base class。
+已经包含上一层模拟能力的 Base class；传入的是类定义，不是搜索节点实例。
 
 输出
-增加本组件方法的派生 class。
+继承 Base 并新增 攻击、伤害、濒死与治疗方法 的 class 定义；不创建 Simulator 实例。
 
 读取状态
-不读取运行时状态。
+无。
 
 写入状态
-不写 SearchState；只在模块加载时创建 class。
+无。
 
 调用函数
-JavaScript class inheritance。
+无。
 
 边界与不变量
-每个组件只组合一次，不得在搜索 node 或 action 中创建额外实例。
+只在模块加载时组合一次；搜索节点不得重复创建组件类或改变方法覆盖顺序。
 */
 export const withCombatSimulation = (Base) => class CombatSimulation extends Base {
-  /** 普通突袭与借势响应共用同一次数槽、伤害与后续收益结算入口。 */
   /*
   功能
-  推进战斗生命周期步骤 simulateAssault。
+  联合突袭执行、格挡响应与增伤世界，结算命中伤害并返回生命伤害概率。
 
   调用方
-  Card/Skill/Status components、Simulator query 与 combat characterization 测试。
+  CardEffectSimulation 与搜索模拟：结算一张突袭或等价攻击效果。
 
   输入
-  独立 SearchState、攻击/治疗参与者和显式效果世界。
+  独立 SearchState、存活来源/目标、发生概率或事件世界，以及已消费槽位等选项。
 
   输出
-  更新后的 combat state 或结算摘要。
+  目标实际受到生命伤害的概率；状态原地推进。
 
   读取状态
-  只读 SearchState 的 HP、shield、response、equipment 与状态分支。
+  攻击槽、势能、破势层、装备概率、格挡容量与目标生存状态。
 
   写入状态
-  只写独立 SearchState 的战斗、救援、死亡和相关资源字段。
+  攻击次数、追猎标记、伤害/响应资源、破势与类别使用摘要。
 
   调用函数
-  ResponseSimulation、Status hooks、Card resource helpers 与 state/Probability。
+  consumeAttackUse、simulateTracking、applyDamage、simulateCategoryUse。
 
   边界与不变量
-  严格保持 Game.damage、HpLossSystem、DyingSystem 的既有顺序；死亡只结算一次。
+  次数槽先于伤害消费；破势层和突袭加成只按实际执行质量消费一次。
   */
   simulateAssault(state, source, target, resolution = 1, options = {}) {
     const desiredWorlds = Array.isArray(resolution)
@@ -120,28 +119,28 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
 
   /*
   功能
-  推进战斗生命周期步骤 applyDuel。
+  按双方可用突袭身份和概率世界轮流结算对决，直至一方无法继续响应。
 
   调用方
-  Card/Skill/Status components、Simulator query 与 combat characterization 测试。
+  CardEffectSimulation.applyCardEffect：结算已经通过反制门控的对决。
 
   输入
-  独立 SearchState、攻击/治疗参与者和显式效果世界。
+  独立 SearchState、对决双方、生效概率与伤害上下文。
 
   输出
-  更新后的 combat state 或结算摘要。
+  双方失败概率、期望突袭消耗和剩余数量分布的新摘要对象。
 
   读取状态
-  只读 SearchState 的 HP、shield、response、equipment 与状态分支。
+  双方突袭数量分布、手牌数量与合法已知突袭身份。
 
   写入状态
-  只写独立 SearchState 的战斗、救援、死亡和相关资源字段。
+  双方突袭容量、手牌计数/身份及条件伤害结果。
 
   调用函数
-  ResponseSimulation、Status hooks、Card resource helpers 与 state/Probability。
+  syncAssaultSummary、consumeKnownCardsFromHand、applyDamage。
 
   边界与不变量
-  严格保持 Game.damage、HpLossSystem、DyingSystem 的既有顺序；死亡只结算一次。
+  双方同一概率世界必须成对比较；先手多响应一次的既有顺序和分布质量不得改变。
   */
   applyDuel(state, actor, target, scale, damageContext = { cardDamage:true, emberTriggeredProbabilities:{} }) {
     const resolutionProbability = clampProbability(scale);
@@ -151,28 +150,28 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     const targetRemaining = new Map();
     /*
     功能
-    推进战斗生命周期步骤 addBranch。
+    把一个对决状态写入同条件聚合桶，累加其联合概率质量。
 
     调用方
-    Card/Skill/Status components、Simulator query 与 combat characterization 测试。
+    applyDuel 的未发生世界与每个对决配对世界：聚合相同剩余数量。
 
     输入
-    独立 SearchState、攻击/治疗参与者和显式效果世界。
+    局部 Map、非负剩余数量与联合概率。
 
     输出
-    更新后的 combat state 或结算摘要。
+    无返回值；局部聚合桶已更新。
 
     读取状态
-    只读 SearchState 的 HP、shield、response、equipment 与状态分支。
+    仅局部 Map 现有概率。
 
     写入状态
-    只写独立 SearchState 的战斗、救援、死亡和相关资源字段。
+    仅写 applyDuel 的局部 Map。
 
     调用函数
-    ResponseSimulation、Status hooks、Card resource helpers 与 state/Probability。
+    无。
 
     边界与不变量
-    严格保持 Game.damage、HpLossSystem、DyingSystem 的既有顺序；死亡只结算一次。
+    小于等于概率容差的分支不进入桶；相同数量只累加质量，不改变条件外状态。
     */
     const addBranch = (map, count, probability) => {
       if (probability <= PROBABILITY_EPSILON) return;
@@ -209,28 +208,28 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
 
     /*
     功能
-    推进战斗生命周期步骤 toDistribution。
+    将对决聚合桶规范化为供后续伤害结算使用的概率分布。
 
     调用方
-    Card/Skill/Status components、Simulator query 与 combat characterization 测试。
+    applyDuel：把双方局部聚合桶交回正式突袭摘要同步入口。
 
     输入
-    独立 SearchState、攻击/治疗参与者和显式效果世界。
+    按剩余突袭数量聚合的局部 Map。
 
     输出
-    更新后的 combat state 或结算摘要。
+    新的 count/probability 分支数组。
 
     读取状态
-    只读 SearchState 的 HP、shield、response、equipment 与状态分支。
+    仅局部 Map。
 
     写入状态
-    只写独立 SearchState 的战斗、救援、死亡和相关资源字段。
+    无。
 
     调用函数
-    ResponseSimulation、Status hooks、Card resource helpers 与 state/Probability。
+    无。
 
     边界与不变量
-    严格保持 Game.damage、HpLossSystem、DyingSystem 的既有顺序；死亡只结算一次。
+    只改变表示形式，不归一化或重排对决结果的概率含义。
     */
     const toDistribution = (map) => [...map.entries()].map(([count, probability]) => ({ count, probability }));
     const actorRemainingDistribution = this.syncAssaultSummary(actor, toDistribution(actorRemaining));
@@ -261,28 +260,28 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
 
   /*
   功能
-  推进战斗生命周期步骤 applyDamage。
+  按护盾、生命、救援与伤后钩子的真实顺序结算条件化伤害世界。
 
   调用方
-  Card/Skill/Status components、Simulator query 与 combat characterization 测试。
+  CardEffect、SkillEffect、Status、ValueSimulationQuery 与本模块攻击入口：镜像一次条件化伤害。
 
   输入
-  独立 SearchState、攻击/治疗参与者和显式效果世界。
+  独立 SearchState、可空攻击者、存活目标、正伤害量与格挡/装备/事件选项。
 
   输出
-  更新后的 combat state 或结算摘要。
+  期望生命伤害量；可选 outcome 同步得到伤害与格挡概率分支。
 
   读取状态
-  只读 SearchState 的 HP、shield、response、equipment 与状态分支。
+  事件世界、攻防装备、格挡容量、护援能力、护盾/生命分支与状态钩子。
 
   写入状态
-  只写独立 SearchState 的战斗、救援、死亡和相关资源字段。
+  格挡身份和容量、护援资源、护盾、生命、濒死/死亡及伤后状态。
 
   调用函数
-  ResponseSimulation、Status hooks、Card resource helpers 与 state/Probability。
+  buildRadarOutcomePartition、consumeBlockResponseWorlds、simulateGuardianAid、resolveFatal 与伤后钩子。
 
   边界与不变量
-  严格保持 Game.damage、HpLossSystem、DyingSystem 的既有顺序；死亡只结算一次。
+  顺序固定为响应/护援→护盾→生命→伤后钩子→濒死；同一格挡或反制资源不得重复消费。
   */
   applyDamage(state, attacker, target, amount, options = {}) {
     if (!target.alive || amount <= 0) {
@@ -341,8 +340,8 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
         ...branch,
         responseAllowed:Boolean(options.canBlock) && branch.responseAllowed !== false
       }));
-      // 先基于判定前的身份保存格挡容量：既避免旧快照在判定身份加入后才
-      // 用“全部已知”捷径重建分布并重复计数，也用于决定判定格挡是否被消费。
+      // 先保存判定前的格挡容量：若在判定身份加入后重建分布，新身份会同时进入
+      // 根容量和本次增量；该快照也用于判断判定得到的格挡是否真的被消费。
       // 无条件的匿名容量分支在这里显式键化，使判定格挡身份、判定前容量和
       // 最终 blockCount 在后续世界中保持同一条件关联。
       const preJudgmentKey = this.nextProbabilityEventKey(state, "pre-judgment-blocks");
@@ -462,54 +461,54 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
         ), shieldState, amountState);
     /*
     功能
-    推进战斗生命周期步骤 effectiveDamageFor。
+    读取指定条件世界中扣除免伤后的实际伤害量。
 
     调用方
-    Card/Skill/Status components、Simulator query 与 combat characterization 测试。
+    applyDamage 的护盾与生命投影：在每个条件世界复用同一护援减免。
 
     输入
-    独立 SearchState、攻击/治疗参与者和显式效果世界。
+    含 damageAmount 的当前伤害分支。
 
     输出
-    更新后的 combat state 或结算摘要。
+    扣除本次护援减免后的非负伤害量。
 
     读取状态
-    只读 SearchState 的 HP、shield、response、equipment 与状态分支。
+    闭包中的 aidReductionPerPass。
 
     写入状态
-    只写独立 SearchState 的战斗、救援、死亡和相关资源字段。
+    无。
 
     调用函数
-    ResponseSimulation、Status hooks、Card resource helpers 与 state/Probability。
+    无。
 
     边界与不变量
-    严格保持 Game.damage、HpLossSystem、DyingSystem 的既有顺序；死亡只结算一次。
+    只在当前 applyDamage 调用内使用；不得再次应用格挡或护盾减免。
     */
     const effectiveDamageFor = (branch) => Math.max(0, branch.damageAmount - aidReductionPerPass);
     /*
     功能
-    推进战斗生命周期步骤 hpDamageFor。
+    读取指定条件世界中穿过护盾并落到生命值的伤害量。
 
     调用方
-    Card/Skill/Status components、Simulator query 与 combat characterization 测试。
+    applyDamage：计算每个条件世界真正落到生命值的部分。
 
     输入
-    独立 SearchState、攻击/治疗参与者和显式效果世界。
+    含 occurs、passes、damageAmount 与 shieldAmount 的伤害分支。
 
     输出
-    更新后的 combat state 或结算摘要。
+    该分支的非负生命伤害量。
 
     读取状态
-    只读 SearchState 的 HP、shield、response、equipment 与状态分支。
+    闭包中的 effectiveDamageFor。
 
     写入状态
-    只写独立 SearchState 的战斗、救援、死亡和相关资源字段。
+    无。
 
     调用函数
-    ResponseSimulation、Status hooks、Card resource helpers 与 state/Probability。
+    effectiveDamageFor。
 
     边界与不变量
-    严格保持 Game.damage、HpLossSystem、DyingSystem 的既有顺序；死亡只结算一次。
+    未发生或未穿过响应的世界必须返回零；护盾只在这里扣一次。
     */
     const hpDamageFor = (branch) => branch.occurs && branch.passes
       ? Math.max(0, effectiveDamageFor(branch) - branch.shieldAmount)
@@ -542,28 +541,28 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
 
   /*
   功能
-  推进战斗生命周期步骤 applyHpLoss。
+  扣减生命值分支并同步确定生命摘要，不在此重复结算救援。
 
   调用方
-  Card/Skill/Status components、Simulator query 与 combat characterization 测试。
+  需要绕过伤害/护盾响应的生命流失镜像入口。
 
   输入
-  独立 SearchState、攻击/治疗参与者和显式效果世界。
+  独立 SearchState、存活目标与正生命流失量。
 
   输出
-  更新后的 combat state 或结算摘要。
+  无返回值；目标生命与濒死结果已推进。
 
   读取状态
-  只读 SearchState 的 HP、shield、response、equipment 与状态分支。
+  目标 alive 与 hp。
 
   写入状态
-  只写独立 SearchState 的战斗、救援、死亡和相关资源字段。
+  目标 hp，以及 resolveFatal 产生的救援/死亡状态。
 
   调用函数
-  ResponseSimulation、Status hooks、Card resource helpers 与 state/Probability。
+  resolveFatal。
 
   边界与不变量
-  严格保持 Game.damage、HpLossSystem、DyingSystem 的既有顺序；死亡只结算一次。
+  本函数不触发格挡、护盾或伤后伤害钩子；救援只由 resolveFatal 结算一次。
   */
   applyHpLoss(state, target, amount) {
     if (!target.alive || amount <= 0) return;
@@ -573,28 +572,28 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
 
   /*
   功能
-  推进战斗生命周期步骤 resolveFatal。
+  在濒死世界中按合法救援资源和角色被动结算存活、死亡及资源消耗。
 
   调用方
-  Card/Skill/Status components、Simulator query 与 combat characterization 测试。
+  applyDamage 与 applyHpLoss：在目标生命不大于零时结算救援和死亡。
 
   输入
-  独立 SearchState、攻击/治疗参与者和显式效果世界。
+  独立 SearchState、濒死目标与可空伤害来源。
 
   输出
-  更新后的 combat state 或结算摘要。
+  无返回值；目标存活、死亡或被救援后的状态已完成。
 
   读取状态
-  只读 SearchState 的 HP、shield、response、equipment 与状态分支。
+  同阵营座次、调息容量、角色被动、击杀来源与奖励配置。
 
   写入状态
-  只写独立 SearchState 的战斗、救援、死亡和相关资源字段。
+  救援者手牌/调息/回春，目标生命与全部死亡清理字段，攻击者击杀摸牌。
 
   调用函数
-  ResponseSimulation、Status hooks、Card resource helpers 与 state/Probability。
+  consumeKnownCardsFromHand、simulateCoordination、setSimulatedEquipment、clearHuntMarksBySource、gainUnknownCardsWithCounterState。
 
   边界与不变量
-  严格保持 Game.damage、HpLossSystem、DyingSystem 的既有顺序；死亡只结算一次。
+  救援按目标优先再顺时针盟友顺序；死亡清理和击杀奖励最多执行一次，不产生半存活状态。
   */
   resolveFatal(state, target, attacker = null) {
     if (target.hp > 0 || !target.alive) return;
@@ -689,58 +688,56 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
 
   /*
   功能
-  推进战斗生命周期步骤 heal。
+  将确定治疗量写入目标生命值分支并限制在最大生命值内。
 
   调用方
-  Card/Skill/Status components、Simulator query 与 combat characterization 测试。
+  healFrom 与直接治疗镜像：只推进确定生命恢复。
 
   输入
-  独立 SearchState、攻击/治疗参与者和显式效果世界。
+  目标玩家与正治疗量。
 
   输出
-  更新后的 combat state 或结算摘要。
+  无返回值；目标 hp 可能增加。
 
   读取状态
-  只读 SearchState 的 HP、shield、response、equipment 与状态分支。
+  目标 alive、hp 与 maxHp。
 
   写入状态
-  只写独立 SearchState 的战斗、救援、死亡和相关资源字段。
+  仅目标 hp。
 
   调用函数
-  ResponseSimulation、Status hooks、Card resource helpers 与 state/Probability。
+  无。
 
   边界与不变量
-  严格保持 Game.damage、HpLossSystem、DyingSystem 的既有顺序；死亡只结算一次。
+  死亡或已满生命目标不变化；生命不得超过 maxHp。
   */
   heal(target, amount) {
     if (target.alive && amount > 0) target.hp = Math.min(target.maxHp, target.hp + amount);
   }
-
-  /** 模拟由角色发起的治疗；灵医首次实际治疗己方时同步计算回春的摸牌收益。 */
   /*
   功能
-  推进战斗生命周期步骤 healFrom。
+  结算带来源的治疗，同时推进与治疗来源和目标相关的角色被动。
 
   调用方
-  Card/Skill/Status components、Simulator query 与 combat characterization 测试。
+  CardEffectSimulation 与 SkillEffectSimulation：结算带来源的治疗及回春被动。
 
   输入
-  独立 SearchState、攻击/治疗参与者和显式效果世界。
+  独立 SearchState、治疗来源、存活目标与正治疗量。
 
   输出
-  更新后的 combat state 或结算摘要。
+  无返回值；治疗和可能的回春摸牌已结算。
 
   读取状态
-  只读 SearchState 的 HP、shield、response、equipment 与状态分支。
+  治疗前后生命、来源角色/阵营与回春次数。
 
   写入状态
-  只写独立 SearchState 的战斗、救援、死亡和相关资源字段。
+  目标 hp；满足条件时写来源回春次数、手牌与响应摘要。
 
   调用函数
-  ResponseSimulation、Status hooks、Card resource helpers 与 state/Probability。
+  heal、gainUnknownCardsWithCounterState。
 
   边界与不变量
-  严格保持 Game.damage、HpLossSystem、DyingSystem 的既有顺序；死亡只结算一次。
+  回春只按实际治疗量触发且每回合不超过两次；摸牌与次数消费共享同一概率权重。
   */
   healFrom(state, source, target, amount) {
     if (!target?.alive || target.hp >= target.maxHp || amount <= 0) return;

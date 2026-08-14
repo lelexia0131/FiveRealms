@@ -3,7 +3,7 @@
 提供 SearchState 概率分支的规范化、联合、投影与资源可用性纯函数。
 
 上游
-ActionGenerator、Simulator、领域评分模块、概率兼容外观与状态契约测试。
+ActionGenerator、Simulator、领域评分模块、概率正式组合入口与状态契约测试。
 
 下游
 无。
@@ -40,7 +40,7 @@ export const PROBABILITY_EPSILON = 1e-12;
 无。
 
 调用函数
-Number、Math.min、Math.max。
+无。
 
 边界与不变量
 非数值按零处理。
@@ -127,7 +127,7 @@ export function huntMarkConditionKey(sourceId, targetId) {
 无。
 
 调用函数
-Object.entries、localeCompare。
+localeCompare。
 
 边界与不变量
 不得修改输入条件对象。
@@ -158,7 +158,7 @@ mergeProbabilityBranches。
 无。
 
 调用函数
-normalizeConditions、JSON.stringify。
+normalizeConditions。
 
 边界与不变量
 键顺序不同但语义相同的条件必须得到同一签名。
@@ -216,7 +216,7 @@ export function conditionsCompatible(left = {}, right = {}) {
 无。
 
 调用函数
-Object.entries、localeCompare。
+localeCompare。
 
 边界与不变量
 不得修改原分支，概率与条件不得进入状态签名。
@@ -247,7 +247,7 @@ mergeProbabilityStateBranches。
 无。
 
 调用函数
-normalizeConditions、branchState、JSON.stringify。
+normalizeConditions、branchState。
 
 边界与不变量
 只有条件和所有状态字段均相同的分支才共享签名。
@@ -352,7 +352,7 @@ export function mergeProbabilityBranches(branches = []) {
 无。
 
 调用函数
-Number、Math.max。
+无。
 
 边界与不变量
 非法概率按零处理，不擅自归一化。
@@ -512,7 +512,7 @@ resource 对应 Branches 字段。
 无。
 
 调用函数
-mergeProbabilityStateBranches、Number。
+mergeProbabilityStateBranches。
 
 边界与不变量
 缺失或空分支时返回一个概率为一的 amount 回退分支。
@@ -545,7 +545,7 @@ Simulator 与价值计算模块。
 无。
 
 调用函数
-Number。
+无。
 
 边界与不变量
 非法概率或数值按零处理，不擅自补足缺失概率质量。

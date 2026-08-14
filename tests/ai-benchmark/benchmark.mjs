@@ -106,7 +106,7 @@ export async function runScenario(scenario, runOptions = {}) {
       seed: runSeed
     });
     try {
-      const legalActions = game.aiController.getLegalActions(
+      const legalActions = game.aiController.getActionCandidates(
         game.state.players.find((p) => p.id === prepared.options?.actorId)
       );
       const player = game.state.players.find((p) => p.id === prepared.options?.actorId);

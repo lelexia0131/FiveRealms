@@ -3,13 +3,13 @@
 镜像延迟状态、雷达判定和角色被动状态钩子的 SearchState 生命周期。
 
 上游
-Simulator facade、CardEffectSimulation 与 CombatSimulation。
+Simulator 正式模拟门面、CardEffectSimulation 与 CombatSimulation。
 
 下游
 Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
 
 状态边界
-只修改 facade 提供的独立 SearchState clone。
+只修改 Simulator 门面提供的独立 SearchState 副本。
 
 信息边界
 只消费过滤状态和显式概率分支，不读取未来判定实体牌。
@@ -17,14 +17,14 @@ Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
 架构约束
 真实状态/监听顺序以 Game、JudgmentSystem 与 skillRegistry 为权威；不拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-simulation-engine";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260814-ai-simulation-engine";
-import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-code-hygiene-final";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260814-ai-code-hygiene-final";
+import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260814-ai-code-hygiene-final";
 import {
   RADAR_BASIC_DEFINITIONS,
   buildRadarJudgmentProbabilities
-} from "../domain/RadarModel.js?build=20260814-ai-simulation-engine";
+} from "../domain/RadarModel.js?build=20260814-ai-code-hygiene-final";
 import {
   PROBABILITY_EPSILON,
   expectedBranchValue,
@@ -34,60 +34,59 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-simulation-engine";
-import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260814-ai-simulation-engine";
+} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
+import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260814-ai-code-hygiene-final";
 
 /*
 功能
 把 Base class 与 StatusSimulation 的无状态方法组合成单一 Simulator 类型。
 
 调用方
-Simulator 模块加载期的唯一组件组合表达式。
+Simulator.js 文件末尾的组合表达式：在模块加载时把 StatusSimulation 方法加入正式模拟门面。
 
 输入
-承载上一层方法的 Base class。
+已经包含上一层模拟能力的 Base class；传入的是类定义，不是搜索节点实例。
 
 输出
-增加本组件方法的派生 class。
+继承 Base 并新增 势能、角色被动、雷达与延迟状态方法 的 class 定义；不创建 Simulator 实例。
 
 读取状态
-不读取运行时状态。
+无。
 
 写入状态
-不写 SearchState；只在模块加载时创建 class。
+无。
 
 调用函数
-JavaScript class inheritance。
+无。
 
 边界与不变量
-每个组件只组合一次，不得在搜索 node 或 action 中创建额外实例。
+只在模块加载时组合一次；搜索节点不得重复创建组件类或改变方法覆盖顺序。
 */
 export const withStatusSimulation = (Base) => class StatusSimulation extends Base {
-  /** 连势必须保留防御结果的条件键；只存期望标量会让后续突袭把加伤摊到错误世界。 */
   /*
   功能
-  推进状态/被动生命周期步骤 initializeMomentumBranches。
+  为刀客补齐势能与本回合卡牌类别使用的概率分支，并同步确定摘要。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  Simulator 构造/clone 与 simulateCategoryUse：补齐刀客概率状态。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  独立 SearchState。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  无返回值；刀客的势能和类别使用分支已存在并同步。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  玩家 generalId、momentum、categoriesUsed 及已有概率分支。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  momentumBranches、categoryUsedStateBranchesByCategory 及摘要字段。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  syncMomentumSummary、syncCategoryUsedSummary。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  已有正式分支只规范不重采样；非刀客不获得额外势能状态。
   */
   initializeMomentumBranches(state) {
     for (const player of state?.players ?? []) {
@@ -124,28 +123,28 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
 
   /*
   功能
-  推进状态/被动生命周期步骤 syncMomentumSummary。
+  规范势能数量分支并把其期望值同步到玩家势能摘要。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  CombatSimulation 与本模块势能推进：读取规范化刀客势能世界。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  包含势能确定值或 momentumBranches 的玩家摘要。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  规范化后的 amount 概率分支数组。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  player.momentumBranches 与 momentum。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  momentumBranches 与期望 momentum。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  mergeProbabilityStateBranches、expectedBranchValue。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  势能量不得为负；摘要必须由完整分支投影，不能另行累加。
   */
   syncMomentumSummary(player) {
     player.momentumBranches = projectProbabilityStateBranches(
@@ -160,28 +159,28 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
 
   /*
   功能
-  推进状态/被动生命周期步骤 syncCategoryUsedSummary。
+  合并指定卡牌类别的已用分支，并同步概率与确定类别列表。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  initializeMomentumBranches 与 simulateCategoryUse：同步一种卡牌类别的本回合使用状态。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  玩家摘要与卡牌 category。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  规范化后的 used 概率分支数组。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  类别分支、类别概率与确定 categoriesUsed。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  categoryUsedStateBranchesByCategory、categoryUsedProbabilities 与 categoriesUsed。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  mergeProbabilityStateBranches、totalBranchProbability。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  只有概率一的类别才进入确定列表；不同类别的条件身份不得互相覆盖。
   */
   syncCategoryUsedSummary(player, category) {
     const branches = mergeProbabilityStateBranches(
@@ -195,35 +194,30 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     else if (probability < 1 - PROBABILITY_EPSILON && index >= 0) player.categoriesUsed.splice(index, 1);
     return branches;
   }
-
-  /**
-   * 连势与类别首次使用都沿用动作/伤害的完整条件世界。命中生命时先消费旧连势，
-   * 随后的 cardUsed 若是该类别首次使用再获得1层；未命中世界保留旧层并正常叠层。
-   */
   /*
   功能
-  推进状态/被动生命周期步骤 simulateCategoryUse。
+  联合卡牌使用、类别历史与生命伤害世界，结算刀客势能获得或清空。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  CardEffectSimulation 与 CombatSimulation：在牌实际使用后推进刀客势能。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  SearchState、行动者、卡牌类别、使用世界与可选生命伤害世界。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  无返回值；类别使用和势能分支已推进。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  刀客身份、当前类别/势能分支与本次使用/伤害条件。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  类别已用分支、类别概率、categoriesUsed、momentumBranches 与 momentum。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  initializeMomentumBranches、getEventWorlds、joinProbabilityStateBranches、syncMomentumSummary、syncCategoryUsedSummary。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  同类首次且造成生命伤害才增加势能，重复类别在相交世界清空；条件质量必须守恒。
   */
   simulateCategoryUse(state, player, category, useResolution = 1, lifeDamageResolution = null) {
     if (!category || player?.generalId !== "blade-walker") return 0;
@@ -283,28 +277,28 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
 
   /*
   功能
-  推进状态/被动生命周期步骤 simulateGamble。
+  按赌徒判定颜色世界结算弃牌收益、能量变化与后续状态。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  CardEffectSimulation.applyCardEffect：结算赌徒卡牌在生效世界中的判定收益。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  SearchState、行动者、已使用卡牌与生效概率。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  无返回值；弃牌、摸牌、能量和触发概率已推进。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  卡牌颜色、gambleTriggeredProbability 与行动者资源。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  手牌/响应摘要、能量、gambleTriggeredProbability 和触发标记。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  getEventWorlds、gainUnknownCardsWithCounterState、changeEnergy。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  颜色分支与卡牌生效世界共享条件；一次行动的奖励和惩罚不能同时重复结算。
   */
   simulateGamble(state, actor, card, useProbability) {
     if (actor?.generalId !== "fate-gambler" || card?.category !== "tactic") return 0;
@@ -325,28 +319,28 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
 
   /*
   功能
-  推进状态/被动生命周期步骤 simulateCoordination。
+  按协同生效世界为有效目标结算团队资源增益。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  CardEffectSimulation、CombatSimulation 与 SkillEffectSimulation：在有效目标世界结算协同收益。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  SearchState、来源、有效目标列表与结算概率。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  无返回值；团队目标资源与协同触发摘要已更新。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  来源/目标阵营、存活状态与 coordinationTriggeredProbability。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  目标手牌/响应摘要、能量或协同触发字段。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  gainUnknownCardsWithCounterState、changeEnergy。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  只作用于调用方确认的有效目标；同一触发质量不得对同一目标重复发放。
   */
   simulateCoordination(state, actor, effectiveTargets, resolutionProbability) {
     if (actor?.generalId !== "resonance-tuner") return 0;
@@ -366,32 +360,30 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     }
     return triggerProbability;
   }
-
-  /** 目标指定阶段的猎印概率使用联合概率；同一猎手每回合最多留下两次猎印。 */
   /*
   功能
-  推进状态/被动生命周期步骤 simulateTracking。
+  按追猎命中世界写入来源绑定的猎物标记及其概率分支。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  CombatSimulation.simulateAssault：在突袭执行世界写入追猎标记。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  SearchState、攻击来源、目标与突袭事件世界。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  无返回值；目标的来源绑定标记分支已推进。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  目标已有 huntMark 分支和来源 ID。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  huntMarkStateBranchesBySource、huntMarkProbabilities、huntMarkProbability、huntMarkSourceId 与 statuses。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  joinProbabilityStateBranches、projectProbabilityStateBranches、totalBranchProbability。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  不同来源的标记分别记账；确定摘要只能来自概率一世界，未命中世界保持原标记。
   */
   simulateTracking(state, source, target, eventWorlds) {
     if (source.generalId !== "trail-hunter" || target.battleTeam === source.battleTeam) return;
@@ -430,32 +422,30 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       if (Array.isArray(target.statuses) && !target.statuses.includes("huntMark")) target.statuses.push("huntMark");
     }
   }
-
-  /** 统一处理实际生命伤害后的角色收益。 */
   /*
   功能
-  推进状态/被动生命周期步骤 simulateAfterLifeDamage。
+  在生命伤害世界中按真实钩子顺序结算受伤后的角色被动效果。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  CombatSimulation.applyDamage：生命伤害落地后按权威顺序触发角色被动。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  SearchState、可空来源、目标、生命伤害概率/分支与伤害上下文。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  无返回值；所有与生命伤害相关的被动状态已推进。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  双方角色、伤害来源、上下文去重标记与生命伤害条件。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  角色被动对应的手牌、能量、标记、势能或一次性触发字段。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  simulateSpyGapAfterLifeDamage、simulateAssaultAfterDamage 及资源/概率 辅助函数。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  只在生命伤害世界触发；同一 damageContext 的一次性被动不得重复执行，调用顺序保持真实监听顺序。
   */
   simulateAfterLifeDamage(state, source, target, lifeDamageProbability, lifeDamageBranches = null, damageContext = {}) {
     const chance = clampProbability(lifeDamageProbability);
@@ -490,32 +480,30 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       }
     }
   }
-
-  /** 濒死救援结算后再结算窥隙，避免目标获救后继续存活时被漏算。 */
   /*
   功能
-  推进状态/被动生命周期步骤 simulateSpyGapAfterLifeDamage。
+  根据双方手牌差与生命伤害概率结算间谍的补牌效果。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  CombatSimulation.applyDamage：结算生命伤害后的间谍手牌差收益。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  SearchState、伤害来源、受伤目标与生命伤害概率。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  无返回值；满足手牌差条件的一方可能获得未知牌。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  双方 generalId、handCount 与生命伤害概率。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  受益玩家手牌、remaining counts 与响应摘要。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  gainUnknownCardsWithCounterState。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  只使用公开手牌数量差，不读取未知牌定义；收益按生命伤害概率权重结算。
   */
   simulateSpyGapAfterLifeDamage(state, source, target, lifeDamageProbability) {
     const chance = clampProbability(lifeDamageProbability);
@@ -533,65 +521,57 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
 
   /*
   功能
-  推进状态/被动生命周期步骤 simulateAssaultAfterDamage。
+  在突袭造成生命伤害后推进与伤害来源绑定的后置被动。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  simulateAfterLifeDamage：只处理突袭来源绑定的伤后被动。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  SearchState、来源、目标、生命伤害概率与可选条件分支。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  无返回值；突袭伤后相关状态已推进。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  来源/目标角色、追猎标记与生命伤害世界。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  突袭后摸牌、标记清理或角色被动字段。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  gainUnknownCardsWithCounterState、clearHuntMarksBySource。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  非突袭或无生命伤害世界不得触发；同一来源标记只能消费一次。
   */
   simulateAssaultAfterDamage(state, source, target, lifeDamageProbability, lifeDamageBranches = null) {
     return this.simulateAfterLifeDamage(state, source, target, lifeDamageProbability,
       lifeDamageBranches, { cardDamage:true, emberTriggeredProbabilities:{} });
   }
-
-  /**
-   * 构造单一互斥雷达结果分区：noRadar / noJudgment / tactic / equipment /
-   * basic:assault / basic:recover / basic:block / basic:charge / basic:shield。
-   * 所有结果共享同一个条件键，不同结果值互斥，概率合计为 1。
-   * 默认概率来自 remainingCardCounts（只读）；override 兼容
-   * { block, otherBasic, equipment }，其中 otherBasic 按剩余密度拆分到四种非格挡基础牌。
-   */
   /*
   功能
-  推进状态/被动生命周期步骤 buildRadarOutcomePartition。
+  组合防御结果与雷达判定类别，生成互斥且概率守恒的结果分区。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  CombatSimulation.applyDamage：在防御装置存在世界中建立雷达判定结果。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  SearchState、防御装置存在概率与可选显式判定概率。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  新的互斥雷达结果概率分支数组。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  remainingCardCounts 或调用方 override，不读取未来判定实体。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  仅为中间概率事件分配条件键。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  buildRadarJudgmentProbabilities、nextProbabilityEventKey、mergeProbabilityStateBranches。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  防御装置不存在、各基础牌、战术和装备结果互斥且总质量为一。
   */
   buildRadarOutcomePartition(state, defenseProbability, overrideProbabilities = null) {
     const defense = clampProbability(defenseProbability);
@@ -617,28 +597,28 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     if (defense > PROBABILITY_EPSILON) {
       /*
       功能
-      推进状态/被动生命周期步骤 pushOutcome。
+      向雷达结果分区追加一个带联合条件的非零概率结果。
 
       调用方
-      Simulator、Card/Combat components、Value query 与 status characterization 测试。
+      buildRadarOutcomePartition：向局部结果数组追加一种非零雷达结局。
 
       输入
-      独立 SearchState、状态 holder/target 与显式条件世界。
+      结果标签、概率、是否允许格挡与是否由雷达免疫。
 
       输出
-      更新后的状态概率、兼容摘要或后置触发结果。
+      无返回值；闭包中的 outcomes 可能追加一个分支。
 
       读取状态
-      只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+      闭包事件键。
 
       写入状态
-      只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+      仅写 buildRadarOutcomePartition 的局部 outcomes 数组。
 
       调用函数
-      Domain models、Combat/Response/Card helpers 与 state/Probability。
+      无。
 
       边界与不变量
-      不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+      零概率结果不创建分支；每个结果必须使用同一事件键保持互斥。
       */
       const pushOutcome = (outcome, probability, responseAllowed, immuneByRadar) => {
         const chance = probability * defense;
@@ -667,35 +647,30 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       ? branches.map((branch) => ({ ...branch, probability:branch.probability / branchTotal }))
       : [{ probability:1, conditions:{ [key]:"noRadar" }, radarOutcome:"noRadar", responseAllowed:true, immuneByRadar:false }];
   }
-
-  /**
-   * 闪电判中复用统一伤害模拟：不可格挡，因此雷达和格挡不会介入；护援在护盾前、
-   * 护盾吸收、调息救援与死亡清理都继续走 applyDamage 的正式 AI 语义。
-   */
   /*
   功能
-  推进状态/被动生命周期步骤 applyLightningHit。
+  结算闪电命中目标的伤害与延迟状态移除，并保持状态分支一致。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  ValueSimulationQuery：推进一枚闪电在指定持有者命中的模拟世界。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  独立 SearchState 与命中目标 ID。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  无返回值；闪电伤害和状态移除已结算。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  目标存活、闪电状态分支与伤害资源。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  目标伤害/濒死字段及闪电 statuses/概率分支。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  applyDamage、Probability 状态投影 辅助函数。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  只移除当前目标的闪电状态；命中伤害与状态清除顺序保持领域生命周期。
   */
   applyLightningHit(state, targetId) {
     const next = this.clone(state);
@@ -716,28 +691,28 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
 
   /*
   功能
-  推进状态/被动生命周期步骤 clearHuntMarksBySource。
+  清除指定来源创建的全部追猎标记，避免死亡或失效来源继续触发。
 
   调用方
-  Simulator、Card/Combat components、Value query 与 status characterization 测试。
+  CombatSimulation.resolveFatal 与追猎消费路径：让失效来源不再保留标记。
 
   输入
-  独立 SearchState、状态 holder/target 与显式条件世界。
+  SearchState 与标记来源 ID。
 
   输出
-  更新后的状态概率、兼容摘要或后置触发结果。
+  无返回值；所有玩家上该来源的追猎标记已清除。
 
   读取状态
-  只读 SearchState 与 Lightning/Seal/Radar domain outcome。
+  players 的来源绑定标记分支和摘要。
 
   写入状态
-  只写独立 SearchState 的 status、turn/game flags 和相关资源摘要。
+  huntMarkStateBranchesBySource、huntMarkProbabilities、huntMarkProbability、huntMarkSourceId 与 statuses。
 
   调用函数
-  Domain models、Combat/Response/Card helpers 与 state/Probability。
+  projectProbabilityStateBranches、totalBranchProbability。
 
   边界与不变量
-  不复制 Domain 概率；reset、damage hook 与 clear 时机必须保持真实 authority 顺序。
+  只清除指定来源，不影响其他来源；确定摘要必须由剩余分支重新投影。
   */
   clearHuntMarksBySource(state, sourceId) {
     for (const player of state.players ?? []) {
@@ -757,25 +732,25 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   把闪电或封印卡牌的条件生效世界合并进目标延迟状态分支。
 
   调用方
-  CardEffectSimulation.applyCardEffect。
+  CardEffectSimulation.applyCardEffect：在延迟牌已通过反制门控后写入状态。
 
   输入
-  SearchState、施放者、目标、状态 ID 与效果世界。
+  SearchState、行动者、目标、statusId 与条件生效世界。
 
   输出
-  无；更新目标状态概率与确定状态兼容数组。
+  无返回值；目标延迟状态分支和确定摘要已推进。
 
   读取状态
-  LightningModel/SealModel 状态分支与效果条件世界。
+  目标已有 status 分支与本次 effectEventWorlds。
 
   写入状态
-  lightning/sealed 状态分支、概率与 statuses 兼容字段。
+  对应 status 状态分支、存在概率与 statuses。
 
   调用函数
-  getLightningStatusStateBranches、getSealStatusStateBranches、Probability projection。
+  joinProbabilityStateBranches、projectProbabilityStateBranches、totalBranchProbability。
 
   边界与不变量
-  首次放置不执行普通战术反制或立即判定；确定状态只在概率为一时写入 statuses。
+  闪电/封印状态只按同一效果世界加入；概率小于一时不得误写为确定状态。
   */
   applyDelayedStatusCard(state, actor, target, statusId, effectEventWorlds) {
     const holder = statusId === "lightning" ? actor : target;

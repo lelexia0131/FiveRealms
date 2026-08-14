@@ -1,6 +1,6 @@
 /*
 模块职责
-提供 Simulation components 共用的卡牌密度与概率标量 helper。
+提供模拟组件共用的卡牌密度与概率标量辅助函数。
 
 上游
 Simulator、ResponseSimulation、CombatSimulation 与效果组件。
@@ -20,7 +20,7 @@ Simulator、ResponseSimulation、CombatSimulation 与效果组件。
 import {
   CARD_DEFINITIONS,
   TOTAL_CARD_COUNT
-} from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
+} from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS)
   .filter((card) => card.category === "basic")
@@ -33,28 +33,28 @@ const OTHER_BASIC_CARD_COUNT = BASIC_CARD_COUNT - BLOCK_CARD_COUNT;
 
 /*
 功能
-执行 Simulation 共用的纯概率/密度步骤 fixedCardDensity。
+根据确定手牌计数计算指定卡牌类型在已知手牌中的密度。
 
 调用方
-Simulator 及其 Response、Combat、Card、Skill、Status components。
+BeliefState 与响应/卡牌模拟：在没有剩余牌快照时取得指定牌的固定先验密度。
 
 输入
-显式数值、卡牌定义 ID 或 remaining card counts。
+卡牌定义 ID；允许未知 ID。
 
 输出
-新概率值或独立概率摘要。
+定义数量占完整牌堆的比例；未知定义返回零。
 
 读取状态
-只读参数与 card config。
+只读不可变 CARD_DEFINITIONS 与 TOTAL_CARD_COUNT。
 
 写入状态
 无。
 
 调用函数
-同文件纯 helper 或 JavaScript 数值运算。
+无。
 
 边界与不变量
-不得读取隐藏牌堆实体；概率必须限制在合法范围并保持既有 fallback。
+这是配置先验，不是对真实牌堆的观察；不得读取牌堆实体或随机顺序。
 */
 export const fixedCardDensity = (definitionId) => (
   (CARD_DEFINITIONS[definitionId]?.count ?? 0) / TOTAL_CARD_COUNT
@@ -62,28 +62,28 @@ export const fixedCardDensity = (definitionId) => (
 
 /*
 功能
-执行 Simulation 共用的纯概率/密度步骤 remainingCardDensity。
+从剩余牌计数计算指定类型在未知牌池中的条件密度。
 
 调用方
-Simulator 及其 Response、Combat、Card、Skill、Status components。
+BeliefState、ResponseSimulation 与 CardEffectSimulation：从当前未知池估算下一张指定牌的条件概率。
 
 输入
-显式数值、卡牌定义 ID 或 remaining card counts。
+公开推导的 remainingCardCounts 快照与卡牌定义 ID。
 
 输出
-新概率值或独立概率摘要。
+零到一的条件密度；缺少合法计数对象时退回固定先验。
 
 读取状态
-只读参数与 card config。
+只读传入的剩余定义计数。
 
 写入状态
 无。
 
 调用函数
-同文件纯 helper 或 JavaScript 数值运算。
+fixedCardDensity。
 
 边界与不变量
-不得读取隐藏牌堆实体；概率必须限制在合法范围并保持既有 fallback。
+忽略负数和非法计数；总质量为零时返回零，不得用真实隐藏牌补全。
 */
 export const remainingCardDensity = (remainingCardCounts, definitionId) => {
   if (!remainingCardCounts || typeof remainingCardCounts !== "object"
@@ -102,28 +102,28 @@ export const remainingCardDensity = (remainingCardCounts, definitionId) => {
 
 /*
 功能
-执行 Simulation 共用的纯概率/密度步骤 fixedRadarJudgmentProbabilities。
+把确定雷达判定牌映射为基础、锦囊与装备三类互斥概率。
 
 调用方
-Simulator 及其 Response、Combat、Card、Skill、Status components。
+remainingRadarJudgmentProbabilities：剩余牌快照缺失时提供雷达判定类别先验。
 
 输入
-显式数值、卡牌定义 ID 或 remaining card counts。
+无。
 
 输出
-新概率值或独立概率摘要。
+新的 block、otherBasic、equipment 三类概率对象。
 
 读取状态
-只读参数与 card config。
+只读模块加载时由卡牌配置计算的类别数量常量。
 
 写入状态
 无。
 
 调用函数
-同文件纯 helper 或 JavaScript 数值运算。
+无。
 
 边界与不变量
-不得读取隐藏牌堆实体；概率必须限制在合法范围并保持既有 fallback。
+三类互斥并使用完整牌堆作分母；战术牌不属于雷达可获得的三类结果。
 */
 export const fixedRadarJudgmentProbabilities = () => ({
   block:BLOCK_CARD_COUNT / TOTAL_CARD_COUNT,
@@ -133,28 +133,28 @@ export const fixedRadarJudgmentProbabilities = () => ({
 
 /*
 功能
-执行 Simulation 共用的纯概率/密度步骤 remainingRadarJudgmentProbabilities。
+按剩余牌池密度构造雷达判定的三类互斥概率。
 
 调用方
-Simulator 及其 Response、Combat、Card、Skill、Status components。
+雷达判定兼容查询：从当前剩余牌池派生基础牌与装备类别概率。
 
 输入
-显式数值、卡牌定义 ID 或 remaining card counts。
+公开推导的 remainingCardCounts；允许缺失或空池。
 
 输出
-新概率值或独立概率摘要。
+新的 block、otherBasic、equipment 概率对象。
 
 读取状态
-只读参数与 card config。
+只读剩余定义计数与 CARD_DEFINITIONS 的类别。
 
 写入状态
 无。
 
 调用函数
-同文件纯 helper 或 JavaScript 数值运算。
+fixedRadarJudgmentProbabilities。
 
 边界与不变量
-不得读取隐藏牌堆实体；概率必须限制在合法范围并保持既有 fallback。
+仅统计仍为正数且有正式定义的牌；输出三类互斥，空池全部为零。
 */
 export const remainingRadarJudgmentProbabilities = (remainingCardCounts) => {
   if (!remainingCardCounts || typeof remainingCardCounts !== "object"
@@ -189,55 +189,55 @@ export const remainingRadarJudgmentProbabilities = (remainingCardCounts) => {
 
 /*
 功能
-执行 Simulation 共用的纯概率/密度步骤 clampProbability。
+把任意数值规范化到闭区间零到一，非法值按零处理。
 
 调用方
-Simulator 及其 Response、Combat、Card、Skill、Status components。
+Simulation 与 Domain 概率边界：在组合条件世界前规范外部标量。
 
 输入
-显式数值、卡牌定义 ID 或 remaining card counts。
+任意可转为数值的概率候选。
 
 输出
-新概率值或独立概率摘要。
+零到一的数值；NaN、空值与非法输入返回零。
 
 读取状态
-只读参数与 card config。
+无。
 
 写入状态
 无。
 
 调用函数
-同文件纯 helper 或 JavaScript 数值运算。
+无。
 
 边界与不变量
-不得读取隐藏牌堆实体；概率必须限制在合法范围并保持既有 fallback。
+只做边界截断，不归一化概率分支，也不创造隐藏信息。
 */
 export const clampProbability = (value) => Math.max(0, Math.min(1, Number(value) || 0));
 
 /*
 功能
-执行 Simulation 共用的纯概率/密度步骤 unionProbability。
+计算多个独立事件至少发生一次的联合概率。
 
 调用方
-Simulator 及其 Response、Combat、Card、Skill、Status components。
+StatusSimulation：合并同一状态由多个独立来源触发的存在概率。
 
 输入
-显式数值、卡牌定义 ID 或 remaining card counts。
+两个分别表示事件发生概率的标量。
 
 输出
-新概率值或独立概率摘要。
+至少一个事件发生的联合概率。
 
 读取状态
-只读参数与 card config。
+无。
 
 写入状态
 无。
 
 调用函数
-同文件纯 helper 或 JavaScript 数值运算。
+clampProbability。
 
 边界与不变量
-不得读取隐藏牌堆实体；概率必须限制在合法范围并保持既有 fallback。
+公式只适用于调用方已确认独立的事件；相关条件世界必须使用 Probability 分支连接而不能调用本函数。
 */
 export const unionProbability = (oldProbability, newProbability) => 1
   - (1 - clampProbability(oldProbability)) * (1 - clampProbability(newProbability));

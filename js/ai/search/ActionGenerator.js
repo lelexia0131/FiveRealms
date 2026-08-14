@@ -3,7 +3,7 @@
 生成真实根局面与 SearchState 深层节点的 AI 候选动作。
 
 上游
-AIController 与 AiPlanner 注入能力。
+AIController 与 Planner 注入能力。
 
 下游
 RuleEngine、技能注册器、领域概率与策略评分模块。
@@ -17,16 +17,16 @@ RuleEngine、技能注册器、领域概率与策略评分模块。
 架构约束
 不得依赖 AIController；转移资源选择必须由构造时注入的窄能力提供。
 */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-simulation-engine";
-import { getLightningStatusStateBranches } from "./domain/LightningModel.js?build=20260814-ai-simulation-engine";
-import { getSealStatusStateBranches } from "./domain/SealModel.js?build=20260814-ai-simulation-engine";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-code-hygiene-final";
+import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260814-ai-code-hygiene-final";
+import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260814-ai-code-hygiene-final";
 import {
   ACTIVE_SKILLS, getActiveSkill, getActiveSkillCost
-} from "../generals/skillRegistry.js?build=20260814-ai-simulation-engine";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-simulation-engine";
-import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260814-ai-simulation-engine";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-simulation-engine";
+} from "../../generals/skillRegistry.js?build=20260814-ai-code-hygiene-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260814-ai-code-hygiene-final";
+import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260814-ai-code-hygiene-final";
+import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260814-ai-code-hygiene-final";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -38,9 +38,9 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./state/Probability.js?build=20260814-ai-simulation-engine";
+} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
 
-export class AiActionGenerator {
+export class ActionGenerator {
   /*
   功能
   创建动作生成器并绑定真实规则边界与转移选择能力。
@@ -52,7 +52,7 @@ export class AiActionGenerator {
   Game 规则上下文，以及包含 chooseTransferCombination 的依赖对象。
 
   输出
-  可生成根与深层动作的 AiActionGenerator；缺少依赖时立即抛错。
+  可生成根与深层动作的 ActionGenerator；缺少依赖时立即抛错。
 
   读取状态
   无。
@@ -71,17 +71,17 @@ export class AiActionGenerator {
     transferPolicy,
     actionCandidatePolicy
   } = {}) {
-    if (!game) throw new TypeError("AiActionGenerator 缺少依赖：game");
+    if (!game) throw new TypeError("ActionGenerator 缺少依赖：game");
     if (typeof chooseTransferCombination !== "function") {
-      throw new TypeError("AiActionGenerator 缺少依赖：chooseTransferCombination");
+      throw new TypeError("ActionGenerator 缺少依赖：chooseTransferCombination");
     }
     const resolvedTransferPolicy = transferPolicy ?? new TransferPolicy();
     const resolvedActionCandidatePolicy = actionCandidatePolicy ?? new ActionCandidatePolicy();
     if (typeof resolvedTransferPolicy.choose !== "function") {
-      throw new TypeError("AiActionGenerator 缺少依赖：transferPolicy");
+      throw new TypeError("ActionGenerator 缺少依赖：transferPolicy");
     }
     if (typeof resolvedActionCandidatePolicy.isLightningStrategicallyForbidden !== "function") {
-      throw new TypeError("AiActionGenerator 缺少依赖：actionCandidatePolicy");
+      throw new TypeError("ActionGenerator 缺少依赖：actionCandidatePolicy");
     }
     this.game = game;
     this.chooseTransferCombination = chooseTransferCombination;
@@ -131,7 +131,7 @@ export class AiActionGenerator {
   从当前真实局面生成行动者的合法根动作。
 
   调用方
-  AIController.getLegalActions 与直接动作生成测试。
+  AIController.getActionCandidates 与直接动作生成测试。
 
   输入
   当前行动 Player。
@@ -213,7 +213,7 @@ export class AiActionGenerator {
   从过滤 SearchState 重新生成深层 AI 候选动作。
 
   调用方
-  AiPlanner 注入的 generateFromVisible 能力。
+  Planner 注入的 generateFromVisible 能力。
 
   输入
   SearchState 与当前行动者 ID。
@@ -331,6 +331,31 @@ export class AiActionGenerator {
       .filter(Boolean);
   }
 
+  /*
+  功能
+  把距离、延迟状态和选择约束投影为动作是否匹配的互斥条件分区。
+
+  调用方
+  attachProbabilityBranches。
+
+  输入
+  过滤 simulation game、行动者与候选动作。
+
+  输出
+  带 probability、conditions 与 matches 的条件分支。
+
+  读取状态
+  攻击距离、猎印、封印、闪电和转移/借势公开条件。
+
+  写入状态
+  无。
+
+  调用函数
+  DistanceSystem、LightningModel、SealModel、binaryConditionPartition。
+
+  边界与不变量
+  这里只投影既有条件世界，不重新判断 Policy 价值或执行真实规则。
+  */
   getActionConditionPartition(game, actor, action) {
     if (action.type === "skill") {
       if (action.skill.id === "hunt") {
@@ -416,6 +441,31 @@ export class AiActionGenerator {
     return [{ probability:1, conditions:{}, matches:true }];
   }
 
+  /*
+  功能
+  将攻击次数容量规范为逐槽可用性概率分支。
+
+  调用方
+  attachProbabilityBranches。
+
+  输入
+  过滤后的行动者状态。
+
+  输出
+  每个攻击槽的互斥 available 分支数组。
+
+  读取状态
+  attackUseSlots；输入未携带正式槽位时回退读取 attackLimit 与 attackUsed。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  正式槽位原样返回；标量次数回退只用专用条件键保持已用质量，不改变期望容量。
+  */
   getAttackUseSlots(actor) {
     if (Array.isArray(actor.attackUseSlots)) return actor.attackUseSlots;
     const limit = Math.max(0, Math.ceil(Number(actor.attackLimit) || 0));
@@ -433,6 +483,31 @@ export class AiActionGenerator {
     });
   }
 
+  /*
+  功能
+  将主动技能次数容量规范为逐槽可用性概率分支。
+
+  调用方
+  attachProbabilityBranches。
+
+  输入
+  过滤后的行动者状态与技能定义。
+
+  输出
+  每个技能使用槽的互斥 available 分支数组。
+
+  读取状态
+  正式技能槽、availability branches 或使用次数/上限。
+
+  写入状态
+  无。
+
+  调用函数
+  getAvailabilityStateBranches。
+
+  边界与不变量
+  只投影次数容量；能量与目标条件由其他分区在同一世界联合。
+  */
   getSkillUseSlots(actor, skill) {
     if (Array.isArray(actor.activeSkillUseSlots)) return actor.activeSkillUseSlots;
     if (Array.isArray(actor.activeSkillAvailabilityBranches)) {
@@ -449,6 +524,31 @@ export class AiActionGenerator {
     }]);
   }
 
+  /*
+  功能
+  联合多个共享条件分区并标记每个完整世界是否执行动作。
+
+  调用方
+  attachProbabilityBranches。
+
+  输入
+  概率分区数组与对联合分支的执行谓词。
+
+  输出
+  新的完整世界数组，每项带 executes 标记。
+
+  读取状态
+  只读调用方提供的分支与条件键。
+
+  写入状态
+  无。
+
+  调用函数
+  joinProbabilityStateBranches、predicate。
+
+  边界与不变量
+  相同条件键必须先联合再求谓词，避免相关资源容量被独立相乘。
+  */
   buildExecutionWorlds(partitions, predicate) {
     return joinProbabilityStateBranches(...partitions).map((branch) => ({
       ...branch,
@@ -456,12 +556,61 @@ export class AiActionGenerator {
     }));
   }
 
+  /*
+  功能
+  从完整执行世界提取动作实际执行的规范分支与总概率。
+
+  调用方
+  attachProbabilityBranches。
+
+  输入
+  带 executes 标记的完整世界数组。
+
+  输出
+  executionBranches 与 executionProbability。
+
+  读取状态
+  世界概率、条件键与 executes 标记。
+
+  写入状态
+  无。
+
+  调用函数
+  mergeProbabilityBranches、totalBranchProbability。
+
+  边界与不变量
+  合并只发生在已执行世界，条件质量守恒且不改变动作排序。
+  */
   summarizeExecution(worlds) {
     const executionBranches = mergeProbabilityBranches(worlds.filter((branch) => branch.executes));
     return { executionBranches, executionProbability:totalBranchProbability(executionBranches) };
   }
 
-  /** 把条件、卡牌、次数槽和数量资源作为完整世界分区联合判断。 */
+  /*
+  功能
+  联合动作条件、卡牌可用性、次数槽和数量资源，构造互斥的完整执行世界。
+
+  调用方
+  根与深层候选生成路径。
+
+  输入
+  SearchState、行动者、动作及其条件/卡牌/技能/次数槽约束。
+
+  输出
+  带 executionWorldBranches 与 executionProbability 的新动作描述。
+
+  读取状态
+  只读动作条件、资源概率分支和 SearchState 槽位。
+
+  写入状态
+  无；返回浅复制动作与新的世界分支数组。
+
+  调用函数
+  getActionConditionPartition、getAvailabilityStateBranches、getAttackUseSlots、getSkillUseSlots、joinProbabilityStateBranches。
+
+  边界与不变量
+  所有约束必须在同一条件世界联合，不能把相关概率当作独立标量相乘。
+  */
   attachProbabilityBranches(game, actor, action) {
     if (action.type === "end") return action;
     const conditionBranches = this.getActionConditionPartition(game, actor, action);

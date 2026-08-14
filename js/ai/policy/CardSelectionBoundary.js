@@ -3,7 +3,7 @@
 作为真实选牌执行边界，把合法实体候选转换为正式 Policy 输入，再把选择 ID 解析回当前实体。
 
 上游
-AIController、Game、PublicCardPool、角色技能与兼容测试。
+AIController、Game、PublicCardPool、角色技能与直接测试。
 
 下游
 RuleEngine、DistanceSystem 与 policy/CardSelectionPolicy、ResourceSelectionPolicy、TransferPolicy。
@@ -12,31 +12,31 @@ RuleEngine、DistanceSystem 与 policy/CardSelectionPolicy、ResourceSelectionPo
 只读当前 Game/Player 实体；不移动卡牌，实体移动仍由真实规则调用方执行。
 
 信息边界
-门面只把自己手牌、合法 aiMemory、公开装备和 Belief 交给 Policy，未知牌只能按位置解析。
+边界只把自己手牌、合法 aiMemory、公开装备和 Belief 交给 Policy，未知牌只能按位置解析。
 
 架构约束
-选择公式只存在于 policy/**；本文件只负责合法集合、公开上下文与实体 ID 解析。
+选择公式只存在于 policy 目录；本文件只负责合法集合、公开上下文与实体 ID 解析。
 */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-simulation-engine";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-simulation-engine";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260814-ai-simulation-engine";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-simulation-engine";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-simulation-engine";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260814-ai-code-hygiene-final";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-code-hygiene-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
+import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
+import { TransferPolicy } from "./TransferPolicy.js?build=20260814-ai-code-hygiene-final";
 
-export class AiCardSelector {
+export class CardSelectionBoundary {
   /*
   功能
   绑定真实规则边界、Knowledge 与 Controller 构造的正式 Policy。
 
   调用方
-  AIController composition root 与历史直接构造测试。
+  AIController 组合根（统一组装依赖的位置） 与边界专项测试。
 
   输入
   Game、Knowledge 及可选正式 Policy 实例。
 
   输出
-  可解析真实实体的 compatibility façade。
+  可解析真实实体的 正式边界。
 
   读取状态
   保存显式依赖。
@@ -48,7 +48,7 @@ export class AiCardSelector {
   ResourceSelectionPolicy、TransferPolicy、CardSelectionPolicy 构造函数。
 
   边界与不变量
-  生产装配由 Controller 注入正式 Policy；fallback 仅保持历史直接构造兼容。
+  生产装配由 Controller 注入正式 Policy；未注入时构造同一 Policy，保证边界可独立测试。
   */
   constructor(game, knowledge, policies = {}) {
     this.game = game;
@@ -68,7 +68,7 @@ export class AiCardSelector {
   从当前合法手牌实体中按 Policy 选择位置并解析为实体数组。
 
   调用方
-  AIController、Game 资源选择、chooseZoneCard 与兼容测试。
+  AIController、Game 资源选择、chooseZoneCard 与直接测试。
 
   输入
   观察者、拥有者、数量、排除 ID、用途上下文和可选 remaining counts。
@@ -112,10 +112,10 @@ export class AiCardSelector {
 
   /*
   功能
-  保留历史窥探位置选择入口并委托正式 Policy。
+  选择窥探位置并委托正式 Policy 排序。
 
   调用方
-  历史测试与 chooseHiddenCards 的兼容调用。
+  专项测试与 chooseHiddenCards。
 
   输入
   合法记忆映射与已过滤候选卡数组。
@@ -133,7 +133,7 @@ export class AiCardSelector {
   CardSelectionPolicy.peekIndex。
 
   边界与不变量
-  本门面不复制选择公式。
+  本边界不复制选择公式。
   */
   peekIndex(known, cards) {
     return this.cardSelectionPolicy.peekIndex(known, cards);
@@ -141,10 +141,10 @@ export class AiCardSelector {
 
   /*
   功能
-  保留历史已知/未知极值位置选择入口并委托正式 Policy。
+  选择已知/未知极值位置并委托正式 Policy。
 
   调用方
-  历史测试。
+  边界专项测试。
 
   输入
   合法记忆、候选、方向、估值函数与未知期望。
@@ -162,7 +162,7 @@ export class AiCardSelector {
   CardSelectionPolicy.extremeIndex。
 
   边界与不变量
-  本门面不读取未知定义或复制 tie-break。
+  本边界不读取未知定义或复制 tie-break。
   */
   extremeIndex(...args) {
     return this.cardSelectionPolicy.extremeIndex(...args);
@@ -191,7 +191,7 @@ export class AiCardSelector {
   chooseHiddenCards、CardSelectionPolicy.chooseZoneSelection。
 
   边界与不变量
-  Policy 只返回描述；本门面必须从当前候选重新解析真实实体。
+  Policy 只返回描述；本边界必须从当前候选重新解析真实实体。
   */
   chooseZoneCard(actor, owner, context = null, excludedCardIds = null) {
     if (!owner?.alive) return null;
@@ -229,7 +229,7 @@ export class AiCardSelector {
   保留观察者对手牌实体的合法期望值入口。
 
   调用方
-  历史测试与迁移期调用方。
+  边界专项测试与正式调用方。
 
   输入
   观察者、拥有者与 Card 实体。
@@ -247,7 +247,7 @@ export class AiCardSelector {
   CardSelectionPolicy.expectedCardValue。
 
   边界与不变量
-  本门面不读取其他玩家未知 definitionId。
+  本边界不读取其他玩家未知 definitionId。
   */
   expectedCardValue(actor, owner, card) {
     return this.cardSelectionPolicy.expectedCardValue(actor, owner, card);
@@ -258,7 +258,7 @@ export class AiCardSelector {
   从合法来源候选中解析最佳转移来源实体。
 
   调用方
-  历史分阶段转移选择。
+  分阶段转移选择流程。
 
   输入
   行动者与合法来源数组。
@@ -288,7 +288,7 @@ export class AiCardSelector {
   从合法接收者候选中解析最佳转移接收者实体。
 
   调用方
-  历史分阶段转移选择。
+  分阶段转移选择流程。
 
   输入
   行动者、已选来源和合法接收者数组。
@@ -323,7 +323,7 @@ export class AiCardSelector {
   从 RuleEngine 给出的合法 source/receiver 集合选择最佳转移描述。
 
   调用方
-  AIController、AiActionGenerator 与分阶段选择入口。
+  AIController、ActionGenerator 与分阶段选择入口。
 
   输入
   行动者、转移牌、合法来源、接收者限制与排除 ID。

@@ -3,7 +3,7 @@
 描述全体受益牌、互利公开池选择顺序与每名存活角色的实际受益结构。
 
 上游
-AiGlobalBenefit 价值适配器、ResponsePolicy 适配器与直接领域测试。
+GlobalBenefitValue 价值适配器、ResponsePolicy 适配器与直接领域测试。
 
 下游
 无。
@@ -25,7 +25,7 @@ const GLOBAL_BENEFIT_CARDS = new Set(["mutualBenefit", "symbiosis"]);
 判断卡牌定义是否属于全体受益模型。
 
 调用方
-AiGlobalBenefit 兼容/模拟适配器与 assessGlobalBenefitOutcome。
+GlobalBenefitValue 价值与模拟查询与 assessGlobalBenefitOutcome。
 
 输入
 卡牌定义 ID。
@@ -40,7 +40,7 @@ AiGlobalBenefit 兼容/模拟适配器与 assessGlobalBenefitOutcome。
 无。
 
 调用函数
-Set.has。
+无。
 
 边界与不变量
 只包含互利与共生，不扩张真实卡牌规则。
@@ -91,7 +91,7 @@ export function mutualBenefitSeatOrderIds(players, source) {
 按真实接收顺序从公开剩余定义池构造互利的确定性期望选择结果。
 
 调用方
-AiGlobalBenefit 价值适配器与直接领域测试。
+GlobalBenefitValue 价值适配器与直接领域测试。
 
 输入
 玩家、来源、公开剩余定义计数，以及由调用方注入的角色定义价值查询。
@@ -170,7 +170,7 @@ player.hp 与 maxHp。
 无。
 
 调用函数
-Math.min、Math.max。
+无。
 
 边界与不变量
 互利受益由公开池 recipient 模型提供；本函数不承担卡牌价值。
@@ -187,7 +187,7 @@ export function directBenefitForPlayer(player, definitionId) {
 从指定阵营视角汇总全体受益牌的盟友、敌方与净受益结构。
 
 调用方
-AiGlobalBenefit 价值适配器与直接领域测试。
+GlobalBenefitValue 价值适配器与直接领域测试。
 
 输入
 玩家、观察阵营、定义 ID，以及来源、剩余计数和注入定义价值查询。

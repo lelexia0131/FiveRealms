@@ -3,7 +3,7 @@
 从合法可见事实、私有记忆与剩余牌计数推导隐藏牌概率和采样世界。
 
 上游
-AI 状态组合入口、Knowledge 兼容服务、Planner 隐藏世界采样、状态契约测试。
+AI 状态组合入口、Knowledge、Planner 隐藏世界采样与状态契约测试。
 
 下游
 卡牌数量配置。
@@ -17,7 +17,7 @@ AI 状态组合入口、Knowledge 兼容服务、Planner 隐藏世界采样、�
 架构约束
 不得生成动作、计算价值、写 GameState，概率分布必须归一且不持有输入计数引用。
 */
-import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
 
 /*
 功能
@@ -39,7 +39,7 @@ createBeliefState。
 无。
 
 调用函数
-Object.freeze。
+无。
 
 边界与不变量
 不得修改或保留调用方对象引用。
@@ -178,7 +178,7 @@ createCardEstimate。
 无。
 
 调用函数
-Object.freeze。
+无。
 
 边界与不变量
 槽位与偏移按非负整数处理，极端密度只产生一个确定分支。
@@ -259,7 +259,7 @@ function createCardEstimate(viewerId, player, knownCards, definitionId, remainin
 从观察者依法可见的 GameState 区域扣除已知实体，得到剩余牌计数。
 
 调用方
-AiKnowledge.remainingCounts。
+Knowledge.remainingCounts。
 
 输入
 观察者 Player 与当前 GameState。
@@ -302,7 +302,7 @@ export function deriveRemainingCardCounts(viewer, gameState) {
   扣减闭包 remaining，并登记已消费实体 ID。
 
   调用函数
-  Object.hasOwn。
+  无。
 
   边界与不变量
   非法定义忽略，同一实体 ID 最多消费一次，计数不得为负。
@@ -336,7 +336,7 @@ export function deriveRemainingCardCounts(viewer, gameState) {
 从剩余牌计数计算下一未知牌为指定定义的概率。
 
 调用方
-AiKnowledge.probability。
+Knowledge.probability。
 
 输入
 剩余牌计数与卡牌定义 ID。
@@ -368,7 +368,7 @@ export function probabilityFromRemainingCounts(remaining, definitionId) {
 组合不可变 BeliefState，集中保存剩余牌池和逐玩家隐藏牌分布。
 
 调用方
-createAiStateContracts、状态契约测试。
+createStateContracts、状态契约测试。
 
 输入
 观察者 ID、VisibleState、Knowledge 与可选剩余牌计数。
@@ -462,7 +462,7 @@ function pickDefinition(remaining, random) {
 从 SearchState 的合法 Belief 信息采样彼此独立的隐藏手牌世界。
 
 调用方
-AiKnowledge.sampleHiddenWorlds、AiPlanner。
+Knowledge.sampleHiddenWorlds、Planner。
 
 输入
 观察者、SearchState、非负样本数与随机数函数。

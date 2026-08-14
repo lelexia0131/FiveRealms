@@ -1,12 +1,12 @@
 /*
 模块职责
-唯一把过滤后的状态与已计算领域项转换为团队 State Value。
+唯一把过滤后的状态与已计算领域项转换为 State Value（从指定观察者阵营评估一个完整状态的存量价值）。
 
 上游
 AIController 组合的状态价值适配器、ValueLedger 与测试。
 
 下游
-Economics、CardValue、ThreatValue 以及封印、雷达的现有纯领域 helper。
+Economics、CardValue、ThreatValue 以及封印、雷达的现有纯领域函数。
 
 状态边界
 只读 VisibleState/SearchState 和显式传入的领域值；不持有 Game，不写状态。
@@ -15,17 +15,17 @@ Economics、CardValue、ThreatValue 以及封印、雷达的现有纯领域 help
 只使用公开字段、合法概率摘要与 viewer 自身的可见卡牌身份。
 
 架构约束
-不得导入或构造 Simulator、Planner、Controller；闪电等模拟结果必须由调用层先计算为纯值。
+不得导入或构造 Simulator、Planner、Controller；State Value 只读一个状态，闪电等生命周期结果必须由调用层先计算为纯值。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260814-ai-simulation-engine";
-import { sealTeamBurden } from "../sealScoring.js?build=20260814-ai-simulation-engine";
-import { cardAvailability, roleCardDelta } from "./CardValue.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260814-ai-code-hygiene-final";
+import { sealTeamBurden } from "./SealValue.js?build=20260814-ai-code-hygiene-final";
+import { cardAvailability, roleCardDelta } from "./CardValue.js?build=20260814-ai-code-hygiene-final";
 import {
   ENERGY_STATE_WEIGHT,
   HP_VALUE,
   energyDeviceFutureUtility
-} from "./Economics.js?build=20260814-ai-simulation-engine";
+} from "./Economics.js?build=20260814-ai-code-hygiene-final";
 import {
   DANGER_VALUE,
   DEATH_VALUE,
@@ -33,7 +33,7 @@ import {
   hp2ThreatRiskValue,
   radarMitigationUtility,
   shieldStateValue
-} from "./ThreatValue.js?build=20260814-ai-simulation-engine";
+} from "./ThreatValue.js?build=20260814-ai-code-hygiene-final";
 
 export class Evaluator {
   /*
@@ -41,7 +41,7 @@ export class Evaluator {
   绑定状态估值所需的稳定规则查询能力。
 
   调用方
-  AIController composition root 与纯价值测试。
+  AIController 组合根（统一组装依赖的位置） 与纯价值测试。
 
   输入
   getMaxEnergy、getTurnEnergyBreakdown 两个显式规则函数。
@@ -250,7 +250,7 @@ export class Evaluator {
   无。
 
   调用函数
-  ownerStateTerms、Object.values。
+  ownerStateTerms。
 
   边界与不变量
   不包含封印与闪电自身 burden，避免生命周期查询递归调用 stateUtility。

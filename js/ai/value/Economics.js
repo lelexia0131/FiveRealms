@@ -29,10 +29,10 @@ export const END_OPPORTUNITY_CAP = 0.8;
 计算 after-state 无法表达的既有动作经济流。
 
 调用方
-TransitionValue 与兼容 façade。
+TransitionValue 与正式边界。
 
 输入
-候选动作、真实 actor 门面与过滤后的 before state。
+候选动作、真实 actor 执行视图与过滤后的 before state。
 
 输出
 未缩放 economic value。

@@ -1,12 +1,12 @@
 /*
 模块职责
-唯一拥有 actionUtility 与临时 actionSearchPrior 的候选展开优先级。
+唯一拥有 Search Prior（只决定候选展开/裁剪先后的搜索先验），包括 actionUtility 与临时 actionSearchPrior。
 
 上游
-Planner pruneScore、兼容 façade 与测试。
+Planner 计算 pruneScore 时请求本模块提供展开优先级；正式边界与测试只做同一用途查询。
 
 下游
-CardValue、ThreatValue、现有领域纯 helper 与闪电 simulation query。
+CardValue、ThreatValue、现有领域纯函数与闪电模拟查询。
 
 状态边界
 只读 VisibleState/SearchState；不写状态、不执行动作。
@@ -15,36 +15,36 @@ CardValue、ThreatValue、现有领域纯 helper 与闪电 simulation query。
 只使用过滤后的状态、viewer 合法记忆与显式难度参数。
 
 架构约束
-本模块所有返回值都是 SEARCH_PRIOR；TransitionValue 不得调用或累计这些值。
+本模块所有返回值只用于剪枝和排序；不得进入最终价值，TransitionValue 也不得调用或累计这些值。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-simulation-engine";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { assessGlobalBenefit } from "../AiGlobalBenefit.js?build=20260814-ai-simulation-engine";
-import { sealUseValue } from "../sealScoring.js?build=20260814-ai-simulation-engine";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-code-hygiene-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260814-ai-code-hygiene-final";
+import { sealUseValue } from "./SealPrior.js?build=20260814-ai-code-hygiene-final";
 import {
   getBaseCardAiValue,
   getEquipmentKeepValueDeduction,
   getRoleCardAiValue,
   roleCardDelta
-} from "../value/CardValue.js?build=20260814-ai-simulation-engine";
+} from "../value/CardValue.js?build=20260814-ai-code-hygiene-final";
 import {
   SKILL_THRESHOLD_OPTION_VALUE,
   STATE_DELTA_SCALE
-} from "../value/Economics.js?build=20260814-ai-simulation-engine";
-import { ThreatCalculator } from "../value/ThreatValue.js?build=20260814-ai-simulation-engine";
+} from "../value/Economics.js?build=20260814-ai-code-hygiene-final";
+import { ThreatCalculator } from "../value/ThreatValue.js?build=20260814-ai-code-hygiene-final";
 
 export const BURNING_FIELD_SEARCH_PRIOR = 8;
 
 export class SearchPrior {
   /*
   功能
-  绑定动态难度、闪电生命周期查询与可选当前状态能力。
+  绑定动态难度与闪电生命周期查询能力。
 
   调用方
-  AIController composition root。
+  AIController 组合根（统一组装依赖的位置）。
 
   输入
-  getDifficultyMultiplier、simulationQuery 与可选 getCurrentState。
+  getDifficultyMultiplier 与 simulationQuery。
 
   输出
   搜索先验服务实例。
@@ -59,16 +59,14 @@ export class SearchPrior {
   无。
 
   边界与不变量
-  不持有 Game、Planner 或 Controller；动态能力只提供当前公开配置和兼容状态。
+  不持有 Game、Planner、Controller 或隐式 GameState callback。
   */
   constructor({
     getDifficultyMultiplier = () => GAME_CONFIG.aiDifficultyMultiplier,
-    simulationQuery,
-    getCurrentState = null
+    simulationQuery
   } = {}) {
     this.getDifficultyMultiplier = getDifficultyMultiplier;
     this.simulationQuery = simulationQuery;
-    this.getCurrentState = getCurrentState;
   }
 
   /*
@@ -76,7 +74,7 @@ export class SearchPrior {
   计算破军新增一次攻击容量在当前手牌中的展开优先级。
 
   调用方
-  actionUtility 与兼容 façade。
+  actionUtility 与正式边界。
 
   输入
   actor 的过滤后状态。
@@ -130,7 +128,7 @@ export class SearchPrior {
   把公开目标威胁按当前 AI 难度缩放为目标选择 prior。
 
   调用方
-  actionUtility、响应策略与兼容 façade。
+  actionUtility、响应策略与正式边界。
 
   输入
   viewer、target、合法记忆与预计伤害。
@@ -164,10 +162,10 @@ export class SearchPrior {
   计算动作在 beam pruning/ranking 中的既有静态与上下文 prior。
 
   调用方
-  Planner pruneScore、兼容 façade 与测试。
+  Planner pruneScore、正式边界 与测试。
 
   输入
-  候选动作、真实 player 门面、过滤状态与兼容 options。
+  候选动作、真实 player 执行视图、过滤状态与显式 options。
 
   输出
   仅用于搜索顺序的数值 prior。
@@ -314,40 +312,10 @@ export class SearchPrior {
 
   /*
   功能
-  保留旧无显式 state 参数互利 prior 的兼容入口。
-
-  调用方
-  兼容 façade。
-
-  输入
-  玩家。
-
-  输出
-  当前状态中的互利净 prior；没有当前状态能力时返回零。
-
-  读取状态
-  通过显式 getCurrentState 能力读取当前公开状态。
-
-  写入状态
-  无。
-
-  调用函数
-  symbiosisNetFromState。
-
-  边界与不变量
-  仅兼容旧接口，不进入 final transition；生产动作评分使用显式 visible state。
-  */
-  symbiosisNet(player) {
-    const state = this.getCurrentState?.();
-    return state ? this.symbiosisNetFromState(player, state) : 0;
-  }
-
-  /*
-  功能
   从显式状态计算互利全局收益的搜索 prior。
 
   调用方
-  actionUtility 与兼容 façade。
+  actionUtility 与正式边界。
 
   输入
   actor 与过滤后的状态。
@@ -380,7 +348,7 @@ export class SearchPrior {
   返回只服务当前层 beam pruning 的临时搜索信用。
 
   调用方
-  Planner pruneScore 与兼容 façade。
+  Planner pruneScore 与正式边界。
 
   输入
   动作、player 与 visible state。

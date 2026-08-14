@@ -1,9 +1,9 @@
 /*
 模块职责
-唯一计算搜索前沿尚未兑现的 future inventory 与 held option 表示。
+唯一计算 frontier（搜索前沿：已经物化但尚未继续展开的节点集合）中未兑现的未来库存与持有选项表示。
 
 上游
-Planner、TransitionValue 诊断与兼容 façade。
+Planner、TransitionValue 诊断与正式边界。
 
 下游
 ThreatValue、CardValue 与 Economics。
@@ -15,14 +15,14 @@ ThreatValue、CardValue 与 Economics。
 只使用 viewer 自身手牌身份与过滤后的敌方威胁摘要。
 
 架构约束
-held recover/recycle 只能在 frontier/terminal 一次进入 final value，不能逐 depth 累计。
+持有的调息/回收选项只能在前沿或终止节点一次进入最终价值，不能按搜索深度逐层累计。
 */
-import { cardAvailability } from "../value/CardValue.js?build=20260814-ai-simulation-engine";
+import { cardAvailability } from "../value/CardValue.js?build=20260814-ai-code-hygiene-final";
 import {
   HP_VALUE,
   STATE_DELTA_SCALE
-} from "../value/Economics.js?build=20260814-ai-simulation-engine";
-import { exposureComponents } from "../value/ThreatValue.js?build=20260814-ai-simulation-engine";
+} from "../value/Economics.js?build=20260814-ai-code-hygiene-final";
+import { exposureComponents } from "../value/ThreatValue.js?build=20260814-ai-code-hygiene-final";
 
 export class FrontierValue {
   /*
@@ -30,7 +30,7 @@ export class FrontierValue {
   计算当前前沿状态尚未兑现的威胁库存与持有选项。
 
   调用方
-  Planner 与兼容 façade。
+  Planner 与正式边界。
 
   输入
   SearchState 与 viewer ID。

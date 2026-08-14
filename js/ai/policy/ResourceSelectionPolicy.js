@@ -3,7 +3,7 @@
 拥有 AI 弃牌、支付资源与手牌/装备区域选择的局部策略。
 
 上游
-AIController、CardSelectionPolicy、AiSimulator 与兼容 façade。
+AIController、CardSelectionPolicy、Simulator 与正式边界。
 
 下游
 value/CardValue 与 TransferPolicy 的共享未知牌期望常量。
@@ -17,12 +17,12 @@ value/CardValue 与 TransferPolicy 的共享未知牌期望常量。
 架构约束
 不执行规则、不生成合法集合、不依赖 Planner/Controller/UI，也不构造 Simulator。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
 import {
   getEquipmentKeepValueDeduction,
   getRoleCardAiValue
-} from "../value/CardValue.js?build=20260814-ai-simulation-engine";
-import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260814-ai-simulation-engine";
+} from "../value/CardValue.js?build=20260814-ai-code-hygiene-final";
+import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260814-ai-code-hygiene-final";
 
 export const RESPONSE_SURVIVAL_BONUS_DANGER = 1;
 export const RESPONSE_SURVIVAL_BONUS_LETHAL = 2;
@@ -32,7 +32,7 @@ export const RESPONSE_SURVIVAL_BONUS_LETHAL = 2;
 计算单张手牌在自主弃牌场景下的保留价值。
 
 调用方
-rankDiscardCandidates、AiSimulator 与直接策略测试。
+rankDiscardCandidates、Simulator 与直接策略测试。
 
 输入
 资源拥有者、合法候选卡和距离/装备上下文。
@@ -98,7 +98,7 @@ chooseDiscardCandidates 与直接策略测试。
 无；不修改原数组。
 
 调用函数
-getDiscardKeepValue、Array.sort。
+getDiscardKeepValue。
 
 边界与不变量
 同价值保持输入顺序，保证真实选择与模拟消费确定性一致。
@@ -114,7 +114,7 @@ export function rankDiscardCandidates(player, cards, context = {}) {
 选择指定数量的最低保留价值弃牌候选。
 
 调用方
-ResourceSelectionPolicy.chooseDiscards、兼容 façade 与测试。
+ResourceSelectionPolicy.chooseDiscards、正式边界 与测试。
 
 输入
 玩家、合法卡牌、数量与弃牌上下文。
@@ -232,7 +232,7 @@ export function getResourceUnknownUtility(
 在合法已知手牌候选与一个聚合未知候选之间选择最高效用者。
 
 调用方
-CardSelectionPolicy、AiSimulator 与直接策略测试。
+CardSelectionPolicy、Simulator 与直接策略测试。
 
 输入
 用途、双方公开信息、合法已知候选、未知数量与 Belief 计数。
@@ -306,7 +306,7 @@ export function chooseBestResourceHandCandidate({
 在合法手牌候选与公开装备候选之间选择资源区域。
 
 调用方
-CardSelectionPolicy、AiSimulator 与直接策略测试。
+CardSelectionPolicy、Simulator 与直接策略测试。
 
 输入
 用途、双方公开信息、手牌候选和装备 definitionId。

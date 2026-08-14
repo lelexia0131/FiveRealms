@@ -3,13 +3,13 @@
 镜像全部主动技能的能量、次数、资源和效果结算。
 
 上游
-Simulator facade。
+Simulator 正式模拟门面。
 
 下游
-Card/Combat/Response/Status components、主动技能配置与 Probability。
+Card/Combat/Response/Status 组件、主动技能配置与 Probability。
 
 状态边界
-只修改 facade 提供的独立 SearchState clone。
+只修改 Simulator 门面提供的独立 SearchState 副本。
 
 信息边界
 只消费动作携带的合法技能、目标和执行世界。
@@ -20,67 +20,66 @@ Card/Combat/Response/Status components、主动技能配置与 Probability。
 import {
   ACTIVE_SKILLS,
   getActiveSkillCost
-} from "../../generals/skillRegistry.js?build=20260814-ai-simulation-engine";
+} from "../../generals/skillRegistry.js?build=20260814-ai-code-hygiene-final";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
   joinProbabilityStateBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-simulation-engine";
-import { clampProbability } from "./SimulationSupport.js?build=20260814-ai-simulation-engine";
+} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
+import { clampProbability } from "./SimulationSupport.js?build=20260814-ai-code-hygiene-final";
 
 /*
 功能
 把 Base class 与 SkillEffectSimulation 的无状态方法组合成单一 Simulator 类型。
 
 调用方
-Simulator 模块加载期的唯一组件组合表达式。
+Simulator.js 文件末尾的组合表达式：在模块加载时把 SkillEffectSimulation 方法加入正式模拟门面。
 
 输入
-承载上一层方法的 Base class。
+已经包含上一层模拟能力的 Base class；传入的是类定义，不是搜索节点实例。
 
 输出
-增加本组件方法的派生 class。
+继承 Base 并新增 主动技能资源和效果方法 的 class 定义；不创建 Simulator 实例。
 
 读取状态
-不读取运行时状态。
+无。
 
 写入状态
-不写 SearchState；只在模块加载时创建 class。
+无。
 
 调用函数
-JavaScript class inheritance。
+无。
 
 边界与不变量
-每个组件只组合一次，不得在搜索 node 或 action 中创建额外实例。
+只在模块加载时组合一次；搜索节点不得重复创建组件类或改变方法覆盖顺序。
 */
 export const withSkillEffectSimulation = (Base) => class SkillEffectSimulation extends Base {
-  /** 克隆或结算后按当前技能定义重新同步每个玩家的主动技能成本，供后续动作与机会成本评估共用。 */
   /*
   功能
-  推进主动技能效果步骤 syncActiveSkillCosts。
+  按技能费用与显式使用世界同步主动技能次数、可用概率和摘要字段。
 
   调用方
-  Simulator facade 与 skill characterization 测试。
+  Simulator 构造/clone 与 CardEffectSimulation 的装备变化：刷新装备可能影响的技能费用。
 
   输入
-  独立 SearchState、技能 action 与执行世界。
+  独立 SearchState。
 
   输出
-  更新后的技能资源、次数、状态或 combat result。
+  无返回值；每名拥有正式主动技能的玩家费用已同步。
 
   读取状态
-  只读 ACTIVE_SKILLS、目标与 SearchState skill slots。
+  players、activeSkillId、装备/阵营等 getActiveSkillCost 所需公开规则字段。
 
   写入状态
-  只写独立 SearchState 的 energy、skill slots 和技能效果字段。
+  player.activeSkillCost。
 
   调用函数
-  Card/Combat/Response/Status components 与 state/Probability。
+  getActiveSkillCost。
 
   边界与不变量
-  不决定是否使用技能，不改变 cost、limit、目标或策略阈值。
+  只更新费用摘要，不消费能量、次数或动作；技能定义不存在时保持原字段。
   */
   syncActiveSkillCosts(state) {
     for (const player of state?.players ?? []) {
@@ -91,28 +90,28 @@ export const withSkillEffectSimulation = (Base) => class SkillEffectSimulation e
 
   /*
   功能
-  推进主动技能效果步骤 applySkill。
+  按技能标识分派主动效果，在独立 SearchState 中结算资源、目标和状态变化。
 
   调用方
-  Simulator facade 与 skill characterization 测试。
+  Simulator.apply：在技能次数槽与执行世界确定后结算主动技能。
 
   输入
-  独立 SearchState、技能 action 与执行世界。
+  独立 SearchState、行动者、已合法的技能动作与实际执行事件世界。
 
   输出
-  更新后的技能资源、次数、状态或 combat result。
+  无返回值；对应技能的资源、目标和状态效果已推进。
 
   读取状态
-  只读 ACTIVE_SKILLS、目标与 SearchState skill slots。
+  ACTIVE_SKILLS、技能目标、能量/次数槽、猎印与相关战斗资源。
 
   写入状态
-  只写独立 SearchState 的 energy、skill slots 和技能效果字段。
+  能量、技能次数、护盾/生命、手牌、猎印及委托组件产生的效果字段。
 
   调用函数
-  Card/Combat/Response/Status components 与 state/Probability。
+  changeEnergy、consume/ensure slot 辅助函数、changeShield、healFrom、stealResourceToHand、applyDamage、gainUnknownCardsWithCounterState。
 
   边界与不变量
-  不决定是否使用技能，不改变 cost、limit、目标或策略阈值。
+  技能分派顺序、费用、目标和随机/概率分支不在此重新决定；每个执行世界只消费一次技能容量。
   */
   applySkill(state, actor, action, eventWorlds) {
     const skill = action.skill;

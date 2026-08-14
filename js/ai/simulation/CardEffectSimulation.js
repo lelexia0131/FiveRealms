@@ -3,13 +3,13 @@
 镜像卡牌效果、装备与手牌资源身份在 SearchState 中的变化。
 
 上游
-Simulator facade、CombatSimulation 与 SkillEffectSimulation。
+Simulator 正式模拟门面、CombatSimulation 与 SkillEffectSimulation。
 
 下游
-Response/Combat/Status components、RuleEngine、正式资源 Policy、CardValue 与 Probability。
+Response/Combat/Status 组件、RuleEngine、正式资源 Policy、CardValue 与 Probability。
 
 状态边界
-只修改 facade 提供的独立 SearchState clone。
+只修改 Simulator 门面提供的独立 SearchState 副本。
 
 信息边界
 未知手牌只按位置、数量与概率身份处理，不读取真实 definitionId。
@@ -17,66 +17,66 @@ Response/Combat/Status components、RuleEngine、正式资源 Policy、CardValue
 架构约束
 不生成动作、不搜索、不拥有规则合法性或最终价值公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-simulation-engine";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260814-ai-simulation-engine";
-import { mutualBenefitDraftValues } from "../AiGlobalBenefit.js?build=20260814-ai-simulation-engine";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "../resourceSelectionValue.js?build=20260814-ai-simulation-engine";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260814-ai-simulation-engine";
-import { getDiscardKeepValue } from "../discardScoring.js?build=20260814-ai-simulation-engine";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260814-ai-simulation-engine";
-import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-code-hygiene-final";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260814-ai-code-hygiene-final";
+import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260814-ai-code-hygiene-final";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260814-ai-code-hygiene-final";
+import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
+import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260814-ai-code-hygiene-final";
 
 /*
 功能
 把 Base class 与 CardEffectSimulation 的无状态方法组合成单一 Simulator 类型。
 
 调用方
-Simulator 模块加载期的唯一组件组合表达式。
+Simulator.js 文件末尾的组合表达式：在模块加载时把卡牌效果方法加入正式模拟门面。
 
 输入
-承载上一层方法的 Base class。
+已经包含响应与战斗能力的 Base class；传入的是类定义，不是搜索节点实例。
 
 输出
-增加本组件方法的派生 class。
+继承 Base 并新增卡牌、装备与资源方法的 class 定义；不创建 Simulator 实例。
 
 读取状态
-不读取运行时状态。
+无。
 
 写入状态
-不写 SearchState；只在模块加载时创建 class。
+无。
 
 调用函数
-JavaScript class inheritance。
+无。
 
 边界与不变量
-每个组件只组合一次，不得在搜索 node 或 action 中创建额外实例。
+只在模块加载时组合一次；搜索节点不得重复创建组件类或改变方法覆盖顺序。
 */
 export const withCardEffectSimulation = (Base) => class CardEffectSimulation extends Base {
   /*
   功能
-  推进卡牌/资源效果步骤 initializeEquipmentBaselines。
+  为每名玩家冻结搜索根的装备基础值与角色差量，供后续换装计算边际变化。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  Simulator 构造与 clone：在任何装备变化前冻结根装备比较基线。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  独立 SearchState；玩家可能已带或未带装备。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  无返回值；缺失的初始装备价值字段已补齐。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  players 的装备定义、角色 ID 与已有 baseline 字段。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  仅写缺失的 initialEquipmentValue 和 initialEquipmentRoleDelta。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  equipmentRoleDelta、CardValue 配置。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  已存在的基线绝不覆盖；后续换装只能相对同一搜索根比较。
   */
   initializeEquipmentBaselines(state) {
     for (const player of state?.players ?? []) {
@@ -92,32 +92,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       }
     }
   }
-
-  /** 角色对装备卡牌相对全局基础值的差量；缺少 generalId 或 definitionId 时回退 0。 */
   /*
   功能
-  推进卡牌/资源效果步骤 equipmentRoleDelta。
+  计算一件装备相对全局基础值的角色专属差量。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  initializeEquipmentBaselines、换装结算与 StateContracts：计算角色对装备的相对偏好。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  玩家摘要与装备定义 ID。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  角色静态装备价值减去全局基础值的数值；缺少身份时为零。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  player.generalId 与 CardValue 正式公式。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  getRoleCardAiValue、getBaseCardAiValue。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  只返回静态差量，不把它直接加入最终行动价值。
   */
   equipmentRoleDelta(player, definitionId) {
     if (!player?.generalId || !definitionId) return 0;
@@ -126,28 +124,28 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
-  推进卡牌/资源效果步骤 initializeAssaultSummaries。
+  从合法已知牌和未知牌密度初始化突袭、格挡、反制与调息的数量摘要。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  Simulator 构造：在搜索开始前为所有玩家建立突袭数量摘要。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  独立 SearchState。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  无返回值；每名玩家的突袭分布与派生摘要已同步。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  players 的手牌身份、handCount、existing assault distribution 与 remaining counts。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  assaultCountDistribution、expectedAssaultCount、assaultResponseProbability。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  syncAssaultSummary。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  只规范已有合法信息；不得读取敌方未知牌定义或额外采样。
   */
   initializeAssaultSummaries(state) {
     for (const player of state?.players ?? []) this.syncAssaultSummary(player);
@@ -161,7 +159,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   Simulator.apply 唯一动作分派入口。
 
   输入
-  独立 SearchState、行动者、抽象动作以及 facade 计算出的共享事件世界。
+  独立 SearchState、行动者、抽象动作以及 Simulator 门面计算出的共享事件世界。
 
   输出
   同一独立 SearchState。
@@ -173,7 +171,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   仅输入 SearchState 的卡牌效果、资源和触发摘要。
 
   调用函数
-  CombatSimulation、ResponseSimulation、Skill/Status hooks 与资源 helper。
+  CombatSimulation、ResponseSimulation、Skill/Status 后置钩子与资源辅助函数。
 
   边界与不变量
   不重新计算动作支付或 card-scope 响应；switch 顺序与既有后置触发顺序保持不变。
@@ -430,32 +428,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
     return next;
   }
-
-  /** AI 模拟中装备定义与存在概率的唯一写入口；换装固定重置为完整的新装备。 */
   /*
   功能
-  推进卡牌/资源效果步骤 setSimulatedEquipment。
+  在概率世界中写入玩家当前模拟装备，并同步价值、角色差量与保留概率。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  卡牌资源效果、Combat 死亡清理与换装结算：统一写装备存在摘要。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  玩家摘要、可空装备定义 ID 与存在概率。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  无返回值；装备定义和保留概率已同步。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  无；只使用显式参数。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  equipmentDefinitionId 与 equipmentRetentionProbability。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  无。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  概率为零或定义缺失时必须同时清空身份；不在此结算换装价值。
   */
   setSimulatedEquipment(player, definitionId, probability = 1) {
     const normalized = Math.max(0, Math.min(1, Number(probability) || 0));
@@ -470,59 +466,57 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
-  推进卡牌/资源效果步骤 getSimulatedEquipmentProbability。
+  读取指定装备在玩家当前条件世界中存在的联合概率。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  Combat、卡牌资源与技能模拟：判断指定装备在当前条件世界中的存在质量。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  玩家摘要与可选装备定义 ID 过滤器。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  零到一的装备存在概率。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  equipmentDefinitionId 与 equipmentRetentionProbability。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  无。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  定义不匹配或无装备时返回零；不推测其他装备。
   */
   getSimulatedEquipmentProbability(player, definitionId = null) {
     if (!player?.equipmentDefinitionId || (definitionId && player.equipmentDefinitionId !== definitionId)) return 0;
     return Math.max(0, Math.min(1, Number(player.equipmentRetentionProbability ?? 1) || 0));
   }
-
-  /** 读取抽象牌或已知牌条目的剩余可用概率；字段缺失时按完整可用 1。 */
   /*
   功能
-  推进卡牌/资源效果步骤 cardAvailability。
+  汇总一张抽象牌在其可用性分支中的剩余概率。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  Simulation、CardValue 与资源选择：读取一张已过滤卡牌仍可消费的概率。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  可含完整 availabilityStateBranches、兼容 availabilityBranches 或无分支的卡牌摘要。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  卡牌可用世界的总概率；无分支时为一。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  只读卡牌 availability 状态。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  totalBranchProbability。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  完整状态分支优先；只做投影，不改变身份或概率质量。
   */
   cardAvailability(card) {
     const stateBranches = Array.isArray(card?.availabilityStateBranches)
@@ -536,95 +530,89 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return 1;
   }
-
-  /** 将标量或已有世界统一为带条件键的效果世界；目标移除与行动者获得必须复用同一数组。 */
   /*
   功能
-  推进卡牌/资源效果步骤 normalizeResourceEffectWorlds。
+  将资源效果的标量概率或既有条件世界规范成同一 occurs 分区。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  takeResourceToHand 与 destroyResource：把资源效果的执行尺度交给统一事件世界。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、概率标量或已有事件分支、条件标签。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  原分支数组或新建的 occurs 事件分支。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  只读显式 resolution；标量路径由 getEventWorlds 读取事件计数。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  getEventWorlds。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  已有条件世界必须原样复用；标量只建立一次互补事件。
   */
   normalizeResourceEffectWorlds(state, resolution, label) {
     if (Array.isArray(resolution) && resolution.length) return resolution;
     const probability = Math.max(0, Math.min(1, Number(resolution) || 0));
     return this.getEventWorlds(state, probability, null, label);
   }
-
-  /** 生成仅用于模拟的唯一卡牌 ID，避免与真实实体 ID 冲突。 */
   /*
   功能
-  推进卡牌/资源效果步骤 nextSimulatedCardId。
+  生成不会与真实实体牌冲突的单调模拟卡牌 ID。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  摸牌、雷达与资源转移模拟：为没有真实实体 ID 的确定牌创建身份。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState 与正式卡牌定义 ID。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  不会与真实牌 ID 冲突的单调字符串 ID。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  simulatedCardCounter。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  simulatedCardCounter 加一。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  无。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  同一状态内不复用计数；定义 ID 只进入模拟身份，不读取牌堆实体。
   */
   nextSimulatedCardId(state, definitionId) {
     state.simulatedCardCounter = Math.max(0, Number(state.simulatedCardCounter) || 0) + 1;
     return `simulated-resource:${state.simulatedCardCounter}:${definitionId}`;
   }
-
-  /** 在目标 knownCards 中按 cardId + definitionId 查找条目。 */
   /*
   功能
-  推进卡牌/资源效果步骤 findKnownCardEntry。
+  按实体 ID 与定义 ID 在合法 knownCards 中定位抽象牌条目。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  转移、掠夺与破坏模拟：按合法记忆定位确定牌身份。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  目标玩家、cardId 与 definitionId。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  同一实体/定义的 knownCards 条目；找不到返回 null。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  仅目标 knownCards。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  无。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  ID 与定义必须同时相等，不能只按牌名匹配未知位置。
   */
   findKnownCardEntry(target, cardId, definitionId) {
     if (!Array.isArray(target?.knownCards) || !cardId || !definitionId) return null;
@@ -632,32 +620,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       entry?.cardId === cardId && entry?.definitionId === definitionId
     )) ?? null;
   }
-
-  /** 将一张已知身份或模拟身份的抽象牌加入玩家手牌，可用性来自 acquisitionWorlds 的 occurs 分支。 */
   /*
   功能
-  推进卡牌/资源效果步骤 addSimulatedCardToHand。
+  按获得世界把一张已知或模拟身份牌加入玩家自己的搜索手牌。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  雷达、掠夺与已知转移：把确定身份加入行动者自己的搜索手牌。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、拥有 hand 数组的玩家、牌身份与获得事件世界。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  实际新增可用质量；无效输入或零质量返回零。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  玩家现有 hand/handCount、响应分布与 remaining counts。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  hand、handCount、牌 availability、block/counter/assault/recover 摘要。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  nextSimulatedCardId、响应容量增量 辅助函数、syncCardEstimates。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  同一获得世界同时驱动身份、手牌数与响应容量；新增身份不能在初始分布中重复计数。
   */
   addSimulatedCardToHand(state, player, cardIdentity, acquisitionWorlds) {
     if (!player || !cardIdentity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
@@ -668,7 +654,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
     const id = cardIdentity.id ?? this.nextSimulatedCardId(state, cardIdentity.definitionId);
     player.hand ??= [];
-    // 先基于加入前的身份初始化反制分布，避免旧快照把新身份计入初始分布后重复 +1。
+    // 必须先用加入前的身份初始化反制分布；否则新身份会同时进入根分布和本次增量，造成重复计数。
     this.ensureCounterCountDistribution(player, state?.remainingCardCounts ?? null);
     player.hand.push({
       id,
@@ -682,32 +668,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     this.syncCardEstimates(player, state?.remainingCardCounts);
     return acquisitionProbability;
   }
-
-  /** 计算来源在当前可见表示中的未知聚合数量；可选排除正在使用的转移牌。 */
   /*
   功能
-  推进卡牌/资源效果步骤 availableUnknownCountFor。
+  计算玩家手牌数量扣除确定已知身份后的未知聚合容量。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  未知资源转移与消费路径：计算除确定身份外仍可操作的聚合手牌容量。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  玩家摘要与可选排除 card ID 集合。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  非负未知期望容量。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  自己的 hand availability，或其他玩家的合法 knownCards 与 handCount。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  cardAvailability、buildSimulatedKnownCards。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  排除实体后仍不得把合法已知身份再次计入未知容量。
   */
   availableUnknownCountFor(player, excludedCardIds = null) {
     if (!player) return 0;
@@ -720,32 +704,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     const { unknownCount } = this.buildSimulatedKnownCards(player);
     return Math.max(0, unknownCount);
   }
-
-  /** 定位来源中的已知转移实体：自己手牌按 id，其他玩家 knownCards 按 cardId+definitionId。 */
   /*
   功能
-  推进卡牌/资源效果步骤 findTransferCardEntry。
+  按来源可见性定位转移使用的真实自有牌或合法已知他人牌。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  transferKnownCardIdentity：在来源可见表示中重绑待转移实体。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  来源玩家、cardId 与 definitionId。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  自己的 hand 卡或合法 knownCards 条目；找不到返回 null。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  source.hand 或 source.knownCards。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  findKnownCardEntry。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  只访问来源允许的表示；未知他人手牌不得按真实实体重绑。
   */
   findTransferCardEntry(source, cardId, definitionId) {
     if (!cardId || !definitionId) return null;
@@ -754,32 +736,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return this.findKnownCardEntry(source, cardId, definitionId);
   }
-
-  /** 只给其他玩家写入合法已知身份；绝不创建其完整 hand。 */
   /*
   功能
-  推进卡牌/资源效果步骤 addSimulatedKnownCard。
+  只向其他玩家的合法 knownCards 表示写入新获得的确定身份。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  转移、雷达与非观察者摸牌：向合法 knownCards 表示加入确定身份。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、目标玩家、cardId/definitionId 与获得世界。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  实际新增可用质量；无效或零质量返回零。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  knownCards、handCount、响应分布与 remaining counts。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  knownCards availability、handCount 与 block/counter/card estimates。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  响应容量增量 辅助函数、syncCardEstimates。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  同一 cardId 不能对应不同 definitionId；重复获得只并联合并可用世界。
   */
   addSimulatedKnownCard(state, player, identity, acquisitionWorlds) {
     if (!player || !identity?.cardId || !identity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
@@ -842,32 +822,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     this.syncCardEstimates(player, state?.remainingCardCounts);
     return acquisitionProbability;
   }
-
-  /** 已知转移：同一 joined branches 决定来源剩余与接收者获得，身份不在同世界双存。 */
   /*
   功能
-  推进卡牌/资源效果步骤 transferKnownCardIdentity。
+  用同一联合条件世界从来源移除并向接收者增加确定牌身份。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  CardEffectSimulation 的转移牌结算：在同一世界搬运一张确定身份。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、来源/接收者、牌身份、效果世界、接收者可见性与排除集合。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  实际转移概率。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  来源实体 availability、双方手牌/响应摘要。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  来源 availability/handCount 与接收者 hand 或 knownCards、响应容量。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  findTransferCardEntry、addSimulatedCardToHand/addSimulatedKnownCard、响应容量移除 辅助函数。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  来源移除和接收者增加必须共享同一条件世界；实体 ID 在任一世界只能归一个持有者。
   */
   transferKnownCardIdentity(state, source, receiver, identity, effectWorlds, receiverIsActor, excludedCardIds = null) {
     const entry = (!excludedCardIds?.has(identity.cardId))
@@ -915,62 +893,58 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return this.addSimulatedKnownCard(state, receiver, identity, acquisitionWorlds);
   }
-
-  /** 未知转移：来源与接收者共享同一组匿名牌身份条件。 */
   /*
   功能
-  推进卡牌/资源效果步骤 transferUnknownCardIdentity。
+  用共享匿名身份条件将一张未知牌容量从来源转给接收者。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  转移牌与未知手牌资源路径：搬运一个匿名手牌容量。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、来源/接收者、效果世界与来源可用未知数量。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  实际转移的期望数量。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  双方 handCount、未知 block/counter 容量与 remaining counts。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  双方 handCount、block/counter 分布及派生摘要。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  transferUnknownBlockCapacity。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  来源减少与接收者增加必须条件耦合；不得生成 definitionId。
   */
   transferUnknownCardIdentity(state, source, receiver, effectWorlds, availableUnknownCount) {
     return this.transferUnknownBlockCapacity(state, source, receiver, effectWorlds, availableUnknownCount);
   }
-
-  /** 按具体牌与未知聚合重建四类派生摘要；只用于定向已知牌转移/移除与装备入手路径。 */
   /*
   功能
-  推进卡牌/资源效果步骤 cardEstimateDistribution。
+  根据确定牌和未知聚合牌建立指定定义的数量概率分布。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  syncCardEstimates 与响应初始化：估计指定牌在当前手牌中的数量分布。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  玩家过滤摘要、卡牌定义 ID 与可选 remainingCardCounts。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  按 count 升序、概率归一的新分布数组。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  合法确定身份的 availability、handCount 与未知池密度。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  cardAvailability、remainingCardDensity。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  确定身份逐张进入分布；未知槽只用聚合密度，不访问真实未知牌。
   */
   cardEstimateDistribution(player, definitionId, remainingCardCounts = null) {
     const explicitEntries = Array.isArray(player.hand)
@@ -989,28 +963,28 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     let distribution = [{ count:0, probability:1 }];
     /*
     功能
-    推进卡牌/资源效果步骤 convolve。
+    将一张牌的定义概率卷积进当前数量分布，并合并相同条件世界。
 
     调用方
-    Simulator facade、Combat/Skill components 与 card characterization 测试。
+    cardEstimateDistribution：逐个把确定身份或未知槽的命中概率加入局部计数分布。
 
     输入
-    独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+    当前槽为指定定义的概率。
 
     输出
-    更新后的卡牌、装备或资源状态。
+    无返回值；闭包中的局部 distribution 替换为卷积结果。
 
     读取状态
-    只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+    仅闭包局部 distribution。
 
     写入状态
-    只写独立 SearchState 的 hand/equipment/resource/effect fields。
+    仅写 cardEstimateDistribution 的局部 distribution。
 
     调用函数
-    Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+    无。
 
     边界与不变量
-    不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+    每个槽只卷积一次；不修改玩家状态或重新归一化中间质量。
     */
     const convolve = (probability) => {
       const next = [];
@@ -1040,83 +1014,83 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
-  推进卡牌/资源效果步骤 syncCardEstimates。
+  从当前手牌身份和剩余牌先验重建调息、格挡、反制与突袭摘要。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  摸牌、失牌、转移与响应容量变化后：重建玩家的卡牌数量派生摘要。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  玩家过滤摘要与可选 remainingCardCounts。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  无返回值；调息、格挡、反制和突袭摘要已同步。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  手牌身份/availability、handCount、已有响应分布与未知池密度。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  expectedRecoverCount、block/counter summaries、assaultCountDistribution/expectation/responseProbability。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  cardEstimateDistribution、ResponseSimulation 的 block/counter 辅助函数、syncAssaultSummary。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  所有摘要必须来自同一当前手牌表示；不得把身份损失和聚合损失重复扣除。
   */
   syncCardEstimates(player, remainingCardCounts = null) {
     if (!player) return;
     /*
     功能
-    推进卡牌/资源效果步骤 expectation。
+    计算数量分布的一阶期望。
 
     调用方
-    Simulator facade、Combat/Skill components 与 card characterization 测试。
+    syncCardEstimates：把数量分布投影为派生期望库存。
 
     输入
-    独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+    count/probability 数量分布。
 
     输出
-    更新后的卡牌、装备或资源状态。
+    未归一化的一阶期望数值。
 
     读取状态
-    只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+    仅局部分布。
 
     写入状态
-    只写独立 SearchState 的 hand/equipment/resource/effect fields。
+    无。
 
     调用函数
-    Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+    无。
 
     边界与不变量
-    不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+    调用方负责传入规范化分布；本函数不修改或重新缩放概率。
     */
     const expectation = (distribution) => distribution.reduce(
       (sum, branch) => sum + branch.count * branch.probability, 0
     );
     /*
     功能
-    推进卡牌/资源效果步骤 atLeast。
+    计算数量分布达到给定阈值的概率。
 
     调用方
-    Simulator facade、Combat/Skill components 与 card characterization 测试。
+    syncCardEstimates：计算至少拥有指定张数的响应概率。
 
     输入
-    独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+    count/probability 数量分布与非负阈值。
 
     输出
-    更新后的卡牌、装备或资源状态。
+    count 大于等于阈值的概率质量。
 
     读取状态
-    只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+    仅局部分布。
 
     写入状态
-    只写独立 SearchState 的 hand/equipment/resource/effect fields。
+    无。
 
     调用函数
-    Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+    无。
 
     边界与不变量
-    不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+    只汇总已有分支，不把期望数量误当作命中概率。
     */
     const atLeast = (distribution, required) => distribution.reduce(
       (sum, branch) => sum + (branch.count >= required ? branch.probability : 0), 0
@@ -1136,35 +1110,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     player.expectedAssaultCount = expectation(assaultDistribution);
     player.assaultResponseProbability = atLeast(assaultDistribution, 1);
   }
-
-  /**
-   * 从模拟可见状态整理合法已知手牌与未知数量。
-   * 身份数量超过聚合手牌时保守回退：剩余期望手牌全部按未知聚合处理，不猜测哪张已知牌消失。
-   */
   /*
   功能
-  推进卡牌/资源效果步骤 buildSimulatedKnownCards。
+  将合法已知手牌整理成确定身份与未知聚合数量，处理身份数量失配的保守回退。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  资源选择与未知容量计算：把合法身份和匿名容量整理为策略输入。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  过滤后的目标玩家摘要。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  包含 knownCards 与 unknownCount 的新对象。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  target.hand 或 knownCards、handCount 与各牌 availability。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  cardAvailability。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  knownCards 只能来自自己 hand 或合法记忆；身份总量超过 handCount 时按手牌容量保守截断。
   */
   buildSimulatedKnownCards(target) {
     const knownCards = Array.isArray(target.knownCards) ? target.knownCards : [];
@@ -1176,32 +1145,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return { knownCards: certainKnown, unknownCount: Math.max(0, handCount - certainKnownCount) };
   }
-
-  /** 模拟破坏/掠夺的抽象资源选择；用于 destroy 与 plunder，不读取 target.hand。 */
   /*
   功能
-  推进卡牌/资源效果步骤 chooseSimulatedResourceSelection。
+  为破坏或掠夺构造公开资源上下文并委托正式 ResourceSelectionPolicy。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  takeResourceToHand 与 destroyResource：在公开资源上下文中请求正式资源策略。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、行动者、目标与 purpose（plunder 或 destroy）。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  选中区域/身份描述；无正收益候选时为 null。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  公开装备、合法已知手牌、匿名容量、距离与 remaining counts。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  chooseBestResourceHandCandidate、chooseResourceZone、buildSimulatedKnownCards。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  本函数只选择，不移动资源；未知候选不携带真实 definitionId。
   */
   chooseSimulatedResourceSelection(state, actor, target, purpose) {
     const { knownCards, unknownCount } = this.buildSimulatedKnownCards(target);
@@ -1227,32 +1194,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     // 仅供模拟器未知消费使用；不修改资源选择模块的公共语义
     return { ...selection, availableUnknownCount: unknownCount };
   }
-
-  /** 从 AI 自己的具体模拟手牌中同步消费响应牌；部分期望消费会保留对应可用概率。 */
   /*
   功能
-  推进卡牌/资源效果步骤 consumeKnownCardsFromHand。
+  按共享效果世界从自己的模拟手牌消费指定已知牌身份。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  对决、格挡/反制与救援资源消耗：按期望量扣减自己的确定手牌。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、拥有 hand 的玩家、definitionId 与非负期望消耗量。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  无返回值；匹配牌的可用世界已按顺序消费。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  匹配实体的 availabilityStateBranches。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  牌 availability 分支，并在质量归零时移出 hand。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  getEventWorlds、join/project Probability 辅助函数。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  按 hand 顺序消费且每张身份最多一次；不直接改变 handCount，由拥有该流量的调用方统一记账。
   */
   consumeKnownCardsFromHand(state, player, definitionId, expectedAmount) {
     let remaining = Math.max(0, Number(expectedAmount) || 0);
@@ -1281,28 +1246,28 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
-  推进卡牌/资源效果步骤 normalizeAssaultCountDistribution。
+  规范玩家突袭数量分布；输入未携带正式分支时从现有确定/期望摘要回退。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  syncAssaultSummary、Combat 对决与响应路径：取得正式突袭数量分布。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  玩家摘要与可选原始 count/probability 分布。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  按 count 聚合并归一的新分布。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  优先 rawDistribution，其次 hand availability，最后确定/期望摘要回退。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  cardAvailability、Probability 辅助函数。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  分布 count 不得超过 handCount；输入未含正式分支时的回退不能增加期望容量。
   */
   normalizeAssaultCountDistribution(player, rawDistribution = null) {
     let source = Array.isArray(rawDistribution) && rawDistribution.length
@@ -1356,28 +1321,28 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
-  推进卡牌/资源效果步骤 syncAssaultSummary。
+  从突袭数量分布同步期望库存与至少一张的响应概率。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  Simulator 初始化、Combat 对决和随机失牌路径：同步突袭库存表示。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  玩家摘要与可选数量分布。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  规范化后的突袭数量分布。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  给定分布或 player.assaultCountDistribution。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  assaultCountDistribution、expectedAssaultCount 与 assaultResponseProbability。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  normalizeAssaultCountDistribution。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  期望数量和至少一张概率必须由同一分布投影，不能独立更新。
   */
   syncAssaultSummary(player, distribution = null) {
     const normalized = this.normalizeAssaultCountDistribution(
@@ -1396,28 +1361,28 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
-  推进卡牌/资源效果步骤 consumeAssaultForOpportunity。
+  在可兑现的条件世界消费一张突袭容量并保持条件相关性。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  卡牌结算、对决与 Simulator 动作支付：消费一次可兑现突袭容量。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  玩家摘要与本次机会发生概率。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  实际消费的期望突袭数量。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  当前突袭数量分布。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  assaultCountDistribution 及其期望/响应摘要。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  syncAssaultSummary。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  只在 count>0 的机会世界扣一张；同一机会不能按期望数再次扣除。
   */
   consumeAssaultForOpportunity(player, opportunityProbability = 1) {
     const chance = clampProbability(opportunityProbability);
@@ -1436,36 +1401,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     this.syncAssaultSummary(player, remaining);
     return expectedSpent;
   }
-
-  /**
-   * 聚合随机消费后对部分概率 knownCards 做保守身份降级。
-   * 完整确定条目保留；零概率与部分概率条目移除（其概率质量已包含在 handCount 中，转为未知聚合）。
-   * @returns {boolean} knownCards 是否发生变化
-   */
   /*
   功能
-  推进卡牌/资源效果步骤 downgradePartialKnownCardsAfterRandomLoss。
+  随机失牌后降级部分已知身份，避免已知牌与聚合手牌容量双计。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  随机未知失牌后：删除无法继续证明身份仍存在的部分 knownCards。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  其他玩家的过滤摘要。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  knownCards 是否发生变化。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  knownCards 的 availability 与定义。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  必要时替换 knownCards 数组。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  cardAvailability。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  只保留确定身份和仍有格挡用途的合法部分身份；不补看未知牌面。
   */
   downgradePartialKnownCardsAfterRandomLoss(player) {
     if (!Array.isArray(player?.knownCards)) return false;
@@ -1477,36 +1436,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     if (changed) player.knownCards = retained;
     return changed;
   }
-
-  /**
-   * 资源专用未知消费：只消费 availableUnknownCount 范围内的未知聚合数量，
-   * 不按整手牌比例侵蚀完整确定 known；消费后始终重算摘要。
-   * @returns {number} 实际消费的期望数量
-   */
   /*
   功能
-  推进卡牌/资源效果步骤 consumeUnknownResourceCard。
+  从未知聚合容量中消费一张资源牌，并同步各类响应数量分布。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  destroyResource 与匿名资源消费：从聚合未知手牌中扣减一次资源。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、玩家、期望消耗、可用匿名容量与可选事件世界。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  实际移除的期望数量。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  handCount、block/counter 分布、knownCards 与 remaining counts。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  handCount、block/counter/assault/recover 摘要和 knownCards 降级。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  removeUnknownCardsFromBlockDistribution、removeUnknownCardsFromCounterDistribution、syncCardEstimates。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  两种响应容量必须复用同一身份损失世界；未知消费不得生成或选择 definitionId。
   */
   consumeUnknownResourceCard(state, player, expectedAmount, availableUnknownCount, eventWorlds = null) {
     if (!player) return 0;
@@ -1540,35 +1493,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     this.syncCardEstimates(player, state?.remainingCardCounts);
     return removed;
   }
-
-  /**
-   * 从整副手牌中随机移除一张：hand / knownCards 身份与匿名桶组成互斥候选池。
-   * 一次移除只可能选中一个候选，并返回本次实际移除的期望数量。
-   */
   /*
   功能
-  推进卡牌/资源效果步骤 removeOneRandomCardFromHand。
+  按当前已知/未知身份概率移除一张随机手牌并返回效果世界。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  consumeRandomHandCards 与 guardian aid 弃牌路径：镜像一次随机失牌。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、玩家、零到一的移除质量与可选结果收集器。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  实际移除的期望数量。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  确定身份 availability、匿名容量、block/counter 分布与 handCount。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  牌/匿名 availability、响应数量分布、handCount 与可选结果世界。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  Probability 连接/投影 辅助函数、syncBlockSummary、syncCounterSummary、clearCountersWhenHandEmpty。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  身份选择分区必须互斥；同一张牌在一个世界最多移除一次，响应容量与手牌身份共享条件。
   */
   removeOneRandomCardFromHand(state, player, spend, options = {}) {
     const amount = Math.min(
@@ -1804,28 +1752,28 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
-  推进卡牌/资源效果步骤 consumeRandomHandCards。
+  重复应用单张随机移除，得到多张随机弃置后的联合状态。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  破坏、掠夺、窃取与守护援助：按期望数量连续执行随机失牌。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、玩家、非负期望数量与可选结果收集器。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  实际移除的期望总数。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  当前 handCount 与突袭数量分布。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  由单张移除 辅助函数 推进的手牌/响应状态。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  removeOneRandomCardFromHand、syncAssaultSummary。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  每轮最多移除一张并使用更新后的手牌作下一轮分母；不越过当前 handCount。
   */
   consumeRandomHandCards(state, player, expectedAmount, options = {}) {
     let remaining = Math.max(0, Number(expectedAmount) || 0);
@@ -1848,32 +1796,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return totalSpent;
   }
-
-  /** 由 AI 自主选择弃牌时的共享上下文：距离 stranded 与装备边际与真实 chooseDiscards 等价。 */
   /*
   功能
-  推进卡牌/资源效果步骤 buildDiscardKeepValueContext。
+  从搜索状态构造与真实弃牌策略一致的距离、装备与资源保留上下文。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  consumeChosenHandCard：为守护援助的确定弃牌调用正式保留价值策略。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState 与待弃牌玩家。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  新的 stranded、装备定义与装备保留概率上下文。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  存活敌人、攻击距离与玩家公开装备。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  DistanceSystem.inAttackRange。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  只提供公开距离/装备事实，不在 Simulation 中复制弃牌评分。
   */
   buildDiscardKeepValueContext(state, player) {
     const enemies = state.players.filter((entry) => entry.alive && entry.battleTeam !== player.battleTeam);
@@ -1885,36 +1831,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       equipmentRetentionProbability: player.equipmentRetentionProbability ?? 1
     };
   }
-
-  /**
-   * 护援确定性弃牌的前置守卫：只有具体手牌全部 100% 确定存在，且具体身份数量
-   * 与 handCount 完全一致（无匿名/未知容量）时，才允许按共享保留价值智能选牌；
-   * 概率/部分身份手牌必须回退随机期望消费。
-   */
   /*
   功能
-  推进卡牌/资源效果步骤 hasCompleteCertainHand。
+  判断聚合手牌是否已被完整且确定的合法身份覆盖。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  ResponseSimulation.simulateGuardianAid：判断能否安全使用确定实体弃牌策略。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  玩家手牌摘要。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  全部手牌身份确定且数量完全覆盖 handCount 时为 true。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  hand、handCount 与每张牌 availability。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  无。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  cardAvailability。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  任何部分可用身份或匿名容量都返回 false，避免按未知 definitionId 选牌。
   */
   hasCompleteCertainHand(player) {
     if (!Array.isArray(player?.hand) || !player.hand.length) return false;
@@ -1926,36 +1866,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       Math.max(0, Number(player.handCount) || 0) - player.hand.length
     ) <= PROBABILITY_EPSILON;
   }
-
-  /**
-   * 按共享保留价值定向消费已知手牌：护援反事实中 responder 自己的手牌身份合法可见，
-   * 因此应选择最低 keep-value 的牌，而不是把已知手牌当作随机损失。
-   * 只用于明确由 AI 自主选牌支付的路径；真正随机的弃牌/未知损失仍走 consumeRandomHandCards。
-   */
   /*
   功能
-  推进卡牌/资源效果步骤 consumeChosenHandCard。
+  按 ResourceSelectionPolicy 的选择从模拟手牌消费确定实体或未知位置。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  ResponseSimulation.simulateGuardianAid：在完整确定手牌中按正式保留策略弃牌。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、玩家、期望弃牌量与可选结果收集器。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  实际消费的期望数量。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  确定 hand、保留价值上下文及各响应/突袭/调息摘要。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  牌 availability、hand/handCount 与 block/counter/assault/recover 摘要。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  buildDiscardKeepValueContext、getDiscardKeepValue、响应容量移除 辅助函数。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  每轮只消费当前最低保留值实体；选择与移除共享事件世界，匿名手牌不得进入本路径。
   */
   consumeChosenHandCard(state, player, spend, options = {}) {
     let remaining = Math.max(0, Number(spend) || 0);
@@ -2033,28 +1967,28 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
-  推进卡牌/资源效果步骤 takeResourceToHand。
+  镜像掠夺：从目标资源区移除所选资源并加入行动者手牌表示。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  applyCardEffect 的掠夺分支：把策略选中的目标资源转入行动者手牌。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、行动者、目标、效果概率/分支与标签。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  实际转移的期望质量。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  策略选择、目标装备/手牌身份与响应容量。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  双方装备、hand/knownCards、handCount 与响应/卡牌摘要。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  normalizeResourceEffectWorlds、chooseSimulatedResourceSelection、身份/匿名转移 辅助函数。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  来源减少与行动者获得必须共享同一世界；未知手牌只能作为匿名容量转移。
   */
   takeResourceToHand(state, actor, target, resolution = 1, label = "plunder-resource") {
     if (!Array.isArray(state?.players)) {
@@ -2120,35 +2054,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return 0;
   }
-
-  /**
-   * 同步破坏的手牌/装备区域选择；确定已知牌按 cardId 定向移除，
-   * 部分概率保留互补可用分支，未知牌继续走聚合随机消耗。
-   */
   /*
   功能
-  推进卡牌/资源效果步骤 destroyResource。
+  镜像破坏：按所选区域和身份从目标状态删除一项资源。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  applyCardEffect 的破坏分支：删除策略选中的目标资源。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  完整 SearchState、行动者、目标、效果概率/分支与标签。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  实际移除的期望质量。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  策略选择、目标装备/手牌身份与响应容量。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  目标装备、hand/knownCards、handCount 与响应/卡牌摘要。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  normalizeResourceEffectWorlds、chooseSimulatedResourceSelection、确定/匿名消费 辅助函数。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  要求完整 state/actor/target 签名；只删除目标资源，不向行动者创建牌身份。
   */
   destroyResource(state, actor, target, resolution = 1, label = "destroy-resource") {
     if (!Array.isArray(state?.players)) {
@@ -2197,32 +2126,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return 0;
   }
-
-  /** 窃取所得资源只增加手牌；目标仅有装备时，模拟中明确移除装备且不替换施术者装备。 */
   /*
   功能
-  推进卡牌/资源效果步骤 stealResourceToHand。
+  镜像窃取技能：移除目标资源并只把所得资源加入施术者手牌。
 
   调用方
-  Simulator facade、Combat/Skill components 与 card characterization 测试。
+  SkillEffectSimulation 的窃取技能：按现有随机区域模型搬运目标资源。
 
   输入
-  独立 SearchState、卡牌 action/effect worlds 或已选 selection descriptor。
+  SearchState、行动者、目标与执行概率。
 
   输出
-  更新后的卡牌、装备或资源状态。
+  无返回值；目标损失和行动者手牌收益已推进。
 
   读取状态
-  只读 SearchState、card config、RuleEngine facts 与显式选择结果。
+  目标 handCount、装备存在概率与随机失牌响应结果。
 
   写入状态
-  只写独立 SearchState 的 hand/equipment/resource/effect fields。
+  双方 handCount、目标装备与 block/counter 摘要。
 
   调用函数
-  Combat、Response、Status components、正式 Resource Policy helper 与 state/Probability。
+  consumeRandomHandCards、addTransferredCounterCapacity、setSimulatedEquipment。
 
   边界与不变量
-  不生成或评分动作；伤害与响应必须委托唯一 Combat/Response owner。
+  只把实际窃取到反制的世界转移为反制容量；不得根据根先验重新猜测身份。
   */
   stealResourceToHand(state, actor, target, scale = 1) {
     if (!Array.isArray(state?.players)) {

@@ -3,7 +3,7 @@
 拥有 Planner 同层候选中封印动作的搜索时序折扣。
 
 上游
-AiPlanner 与 sealScoring 兼容门面。
+Planner：同层候选完整物化后请求封印时机项；直接测试验证相同边界。
 
 下游
 无。
@@ -25,7 +25,7 @@ const SEAL_EARLY_USE_CAP = 3;
 把最佳非封印即时动作的 base transition 按真实 depth 折算为延迟成本。
 
 调用方
-AiPlanner 与兼容门面。
+Planner 与正式边界。
 
 输入
 同层替代动作分数与当前搜索深度。
@@ -40,7 +40,7 @@ AiPlanner 与兼容门面。
 无。
 
 调用函数
-Number。
+无。
 
 边界与不变量
 沿用 S/(d+1) 的既有公式，不混入领域状态或最终价值。
@@ -54,7 +54,7 @@ export function sealDelayCost(alternativeTransitionScore, depth) {
 把封印延迟成本转换为有界的搜索软性后置惩罚。
 
 调用方
-AiPlanner 与兼容门面。
+Planner 与正式边界。
 
 输入
 延迟成本。
@@ -69,7 +69,7 @@ AiPlanner 与兼容门面。
 无。
 
 调用函数
-Number、Math.min。
+无。
 
 边界与不变量
 非正或非法成本返回零；既有上限三保持不变。

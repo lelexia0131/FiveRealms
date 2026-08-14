@@ -1,9 +1,9 @@
 /*
 模块职责
-保留历史 AiEvaluator 公共方法，同时把每个调用透明转发给唯一正式 value/search owner。
+集中暴露跨 value/search owner（某项数值的唯一归属模块）的只读查询，并把每个调用透明转发给唯一公式实现。
 
 上游
-AIController、响应策略、测试与迁移期旧调用路径。
+AIController、响应策略与直接价值查询测试。
 
 下游
 显式注入的 Evaluator、StateValue、ValueLedger、SimulationQuery、FrontierValue 与 SearchPrior。
@@ -12,20 +12,20 @@ AIController、响应策略、测试与迁移期旧调用路径。
 只保存显式服务引用；不持有 Game，不读写 GameState。
 
 信息边界
-由各正式 owner 执行其 VisibleState/SearchState 与合法记忆边界。
+由各正式归属模块执行其 VisibleState/SearchState 与合法记忆边界。
 
 架构约束
-本文件不得保留价值公式、导入 Simulator 或成为新的 composition root；只允许兼容转发。
+本文件不得保留价值公式、导入 Simulator 或成为新的组合根（统一组装依赖的位置）；只允许无损转发。
 */
-import * as CardValue from "./value/CardValue.js?build=20260814-ai-simulation-engine";
-import * as Economics from "./value/Economics.js?build=20260814-ai-simulation-engine";
-import * as ThreatValue from "./value/ThreatValue.js?build=20260814-ai-simulation-engine";
+import * as CardValue from "./CardValue.js?build=20260814-ai-code-hygiene-final";
+import * as Economics from "./Economics.js?build=20260814-ai-code-hygiene-final";
+import * as ThreatValue from "./ThreatValue.js?build=20260814-ai-code-hygiene-final";
 
 export {
   HP_VALUE,
   STATE_DELTA_SCALE
-} from "./value/Economics.js?build=20260814-ai-simulation-engine";
-export { HP_RISK_OPTION_WEIGHT } from "./value/ThreatValue.js?build=20260814-ai-simulation-engine";
+} from "./Economics.js?build=20260814-ai-code-hygiene-final";
+export { HP_RISK_OPTION_WEIGHT } from "./ThreatValue.js?build=20260814-ai-code-hygiene-final";
 
 const OWNER_METHODS = Object.freeze([
   ["evaluator", ["playerValueTerms", "ownerStateTerms", "ownerMaterialValue"]],
@@ -43,7 +43,6 @@ const OWNER_METHODS = Object.freeze([
     "breakArmyUtility",
     "threatPriority",
     "actionUtility",
-    "symbiosisNet",
     "symbiosisNetFromState",
     "actionSearchPrior"
   ]]
@@ -51,13 +50,13 @@ const OWNER_METHODS = Object.freeze([
 
 /*
 功能
-把正式 owner 的方法绑定到兼容 façade 实例。
+把正式归属模块的方法绑定到正式边界实例。
 
 调用方
-AiEvaluator 构造函数。
+ValueService 构造函数。
 
 输入
-目标 façade、owner 实例和方法名数组。
+目标服务、owner 实例和方法名数组。
 
 输出
 无；缺失正式方法时抛出异常。
@@ -66,7 +65,7 @@ AiEvaluator 构造函数。
 只读 owner 方法。
 
 写入状态
-写入 façade 上的 bound method 字段。
+写入服务实例上的 bound method 字段。
 
 调用函数
 Function.bind。
@@ -77,25 +76,25 @@ Function.bind。
 function bindOwnerMethods(target, owner, methodNames) {
   for (const methodName of methodNames) {
     if (typeof owner?.[methodName] !== "function") {
-      throw new Error(`AiEvaluator 缺少价值 owner 方法：${methodName}`);
+      throw new Error(`ValueService 缺少价值 owner 方法：${methodName}`);
     }
     target[methodName] = owner[methodName].bind(owner);
   }
 }
 
-export class AiEvaluator {
+export class ValueService {
   /*
   功能
-  组装不含价值公式的历史 AiEvaluator 方法门面。
+  组装不含价值公式的统一 ValueService 查询边界。
 
   调用方
-  AIController composition root。
+  AIController 组合根（统一组装依赖的位置）。
 
   输入
   已由 Controller 构造的全部正式 value/search owner。
 
   输出
-  与历史调用方法兼容的 façade。
+  具有稳定查询方法的 ValueService 实例。
 
   读取状态
   只保存显式服务引用与纯模块函数。
@@ -107,7 +106,7 @@ export class AiEvaluator {
   bindOwnerMethods、Function.bind。
 
   边界与不变量
-  不接受或持有 Game；所有公式只存在于正式 owner，兼容路径不得出现第二份实现。
+  不接受或持有 Game；所有公式只存在于正式 owner，本服务不得出现第二份实现。
   */
   constructor({
     evaluator,

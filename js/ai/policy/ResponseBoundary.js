@@ -3,10 +3,10 @@
 把真实响应窗口投影为不含 Game 引用的 DecisionContext，并委托正式 ResponsePolicy。
 
 上游
-AIController、ResponseSystem 与历史直接组件测试。
+AIController、ResponseSystem 与边界专项测试。
 
 下游
-policy/ResponsePolicy、AiValueSimulationQuery、状态组合与既有 Domain/Value 查询。
+policy/ResponsePolicy、ValueSimulationQuery、状态组合与既有 Domain/Value 查询。
 
 状态边界
 只读当前 GameState；状态投影和模拟查询均在 Policy 外完成，绝不修改真实状态。
@@ -15,29 +15,29 @@ policy/ResponsePolicy、AiValueSimulationQuery、状态组合与既有 Domain/Va
 只向 Policy 提供公开玩家视图、响应者自己的牌定义、合法记忆、Belief 与纯数值查询结果。
 
 架构约束
-本文件是 compatibility façade；不得保留第二份响应阈值、分数或选择公式。
+本文件是唯一响应执行边界；不得保留第二份响应阈值、分数或选择公式。
 */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-simulation-engine";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-ai-simulation-engine";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-simulation-engine";
-import { AiValueSimulationQuery } from "./AiValueSimulationQuery.js?build=20260814-ai-simulation-engine";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-code-hygiene-final";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260814-ai-code-hygiene-final";
+import { createInitialSearchState } from "../state/StateContracts.js?build=20260814-ai-code-hygiene-final";
+import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js?build=20260814-ai-code-hygiene-final";
 import {
   hasLightning,
   nextLightningReceiverId
-} from "./domain/LightningModel.js?build=20260814-ai-simulation-engine";
+} from "../domain/LightningModel.js?build=20260814-ai-code-hygiene-final";
 import {
   hasSeal,
   tacticJudgmentProbability
-} from "./domain/SealModel.js?build=20260814-ai-simulation-engine";
-import { turnOpportunityValue } from "./sealScoring.js?build=20260814-ai-simulation-engine";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260814-ai-simulation-engine";
+} from "../domain/SealModel.js?build=20260814-ai-code-hygiene-final";
+import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260814-ai-code-hygiene-final";
+import { ResponsePolicy } from "./ResponsePolicy.js?build=20260814-ai-code-hygiene-final";
 
 /*
 功能
 把真实或过滤 Player 转成响应 Policy 可读的公开 plain object。
 
 调用方
-AiResponsePolicy.buildDecisionContext。
+ResponseBoundary.buildDecisionContext。
 
 输入
 Player 或玩家快照。
@@ -90,19 +90,19 @@ function responsePlayerView(player) {
   };
 }
 
-export class AiResponsePolicy {
+export class ResponseBoundary {
   /*
   功能
   绑定真实响应边界、正式 ResponsePolicy 与窄 simulation query。
 
   调用方
-  AIController composition root 与兼容测试。
+  AIController 组合根（统一组装依赖的位置） 与直接测试。
 
   输入
-  Game、Evaluator façade、Knowledge 及可选正式依赖。
+  Game、Evaluator、Knowledge 及可选正式依赖。
 
   输出
-  保持历史 shouldRespond API 的 compatibility façade。
+  建立稳定的 shouldRespond 执行边界。
 
   读取状态
   保存显式依赖。
@@ -111,10 +111,10 @@ export class AiResponsePolicy {
   写实例依赖字段。
 
   调用函数
-  ResponsePolicy、AiValueSimulationQuery 构造函数。
+  ResponsePolicy、ValueSimulationQuery 构造函数。
 
   边界与不变量
-  生产装配由 Controller 注入正式实例；fallback 仅服务历史直接构造兼容。
+  生产装配由 Controller 注入正式实例；未注入时构造同一依赖，保证边界可独立测试。
   */
   constructor(game, evaluator, knowledge, dependencies = {}) {
     this.game = game;
@@ -124,7 +124,7 @@ export class AiResponsePolicy {
       assessGlobalBenefit
     });
     this.simulationQuery = dependencies.simulationQuery
-      ?? new AiValueSimulationQuery(evaluator);
+      ?? new ValueSimulationQuery(evaluator);
     this.stateValue = dependencies.stateValue ?? evaluator;
   }
 
@@ -133,7 +133,7 @@ export class AiResponsePolicy {
   把真实响应参数转换成正式 Policy 的 plain DecisionContext。
 
   调用方
-  shouldRespond、assessDyingRescue 与历史专项方法。
+  shouldRespond、assessDyingRescue 与响应专项查询。
 
   输入
   响应者、响应类型、真实公开上下文和合法响应卡数组。
@@ -148,10 +148,10 @@ export class AiResponsePolicy {
   只有被调用的未知位置/状态查询可能写 query 私有缓存；真实状态不变。
 
   调用函数
-  responsePlayerView、createAiVisibleState、AiValueSimulationQuery 与既有 Domain/Value helper。
+  responsePlayerView、createInitialSearchState、ValueSimulationQuery 与既有 Domain/Value 辅助函数。
 
   边界与不变量
-  所有昂贵查询惰性执行且每个响应分支至多一次，避免迁移引入无条件 State 投影或双算。
+  所有昂贵查询惰性执行且每个响应分支至多一次，避免无条件 State 投影或重复计算。
   */
   buildDecisionContext(responder, type, rawContext, cards = []) {
     const rawPlayers = this.game.state.players;
@@ -188,7 +188,7 @@ export class AiResponsePolicy {
     只写本次 DecisionContext 构造的局部缓存。
 
     调用函数
-    AiKnowledge.remainingCounts。
+    Knowledge.remainingCounts。
 
     边界与不变量
     同一响应窗口最多计算一次，不跨决策复用或暴露真实未知牌。
@@ -225,7 +225,7 @@ export class AiResponsePolicy {
       leverageMetrics: () => {
         const target = rawContext.target ?? responder;
         const enemyTarget = target.battleTeam !== responder.battleTeam;
-        const visible = createAiVisibleState(responder.id, this.game.state);
+        const visible = createInitialSearchState(responder.id, this.game.state);
         const visibleResponder = visible.players.find((player) => player.id === responder.id);
         const visibleTarget = visible.players.find((player) => player.id === target.id);
         const threat = enemyTarget && visibleResponder && visibleTarget
@@ -244,7 +244,7 @@ export class AiResponsePolicy {
       },
       guardianAidValues: () => {
         const target = rawContext.target;
-        const visible = createAiVisibleState(
+        const visible = createInitialSearchState(
           responder.id,
           this.game.state,
           getRemainingCardCounts()
@@ -265,7 +265,7 @@ export class AiResponsePolicy {
         if (!holder || !hasLightning(holder)) {
           return { valid: false, noCounterBurden: 0, withCounterBurden: 0 };
         }
-        const state = createAiVisibleState(
+        const state = createInitialSearchState(
           responder.id,
           this.game.state,
           getRemainingCardCounts()
@@ -310,7 +310,7 @@ export class AiResponsePolicy {
           ?? rawContext.rootSource?.id
           ?? rawContext.source?.id
           ?? null;
-        const visible = createAiVisibleState(
+        const visible = createInitialSearchState(
           responder.id,
           this.game.state,
           getRemainingCardCounts()
@@ -331,7 +331,7 @@ export class AiResponsePolicy {
 
   /*
   功能
-  保留历史救援 assessment API 并委托正式 ResponsePolicy。
+  评估濒死救援并委托正式 ResponsePolicy。
 
   调用方
   直接救援策略测试。
@@ -373,10 +373,10 @@ export class AiResponsePolicy {
 
   /*
   功能
-  保留历史突袭加伤预览 API 并委托正式 ResponsePolicy。
+  评估突袭加伤预览并委托正式 ResponsePolicy。
 
   调用方
-  兼容测试与迁移期调用方。
+  直接测试与正式调用方。
 
   输入
   真实公开 response context。
@@ -426,7 +426,7 @@ export class AiResponsePolicy {
   buildDecisionContext、ResponsePolicy.shouldRespond。
 
   边界与不变量
-  门面不增加阈值、重排或 fallback 决策。
+  边界不增加阈值、重排或 fallback 决策。
   */
   shouldRespond(responder, type, context, cards = []) {
     return this.responsePolicy.shouldRespond(
@@ -436,7 +436,7 @@ export class AiResponsePolicy {
 
   /*
   功能
-  保留历史护援专项入口并走同一 ResponsePolicy 决策。
+  评估护援专项响应并走同一 ResponsePolicy 决策。
 
   调用方
   护援直接回归测试。
@@ -465,10 +465,10 @@ export class AiResponsePolicy {
 
   /*
   功能
-  保留历史闪电状态反制专项入口。
+  评估闪电状态反制的专项入口。
 
   调用方
-  迁移期调用方。
+  正式调用方。
 
   输入
   响应者与含 lightning statusCounterContext 的上下文。
@@ -494,10 +494,10 @@ export class AiResponsePolicy {
 
   /*
   功能
-  保留历史封印状态反制专项入口。
+  评估封印状态反制的专项入口。
 
   调用方
-  迁移期调用方。
+  正式调用方。
 
   输入
   响应者与含 sealed statusCounterContext 的上下文。
@@ -523,10 +523,10 @@ export class AiResponsePolicy {
 
   /*
   功能
-  保留历史动态 root 反制专项入口并经正式 Policy 与窄 query 比较。
+  经正式 Policy 与窄 query 评估动态 root 反制。
 
   调用方
-  迁移期调用方。
+  正式调用方。
 
   输入
   响应者与当前 response root context。
@@ -544,7 +544,7 @@ export class AiResponsePolicy {
   shouldRespond。
 
   边界与不变量
-  不 import 或构造 concrete Simulator，不建立 ARCH-7 ResponseSimulation。
+  不 import 或构造 具体 Simulator，不建立第二套 ResponseSimulation。
   */
   dynamicRootCounterDecision(responder, context) {
     return this.shouldRespond(responder, "counter", context, []);

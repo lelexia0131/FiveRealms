@@ -23,12 +23,41 @@ const MODULE_FIELDS = Object.freeze([
   "架构约束",
 ]);
 const SOURCE_PATTERN = /^js\/.*\.(?:js|mjs|cjs)$/i;
+const AI_PATTERN = /^js\/ai\/.*\.(?:js|mjs|cjs)$/i;
 const LAYERED_AI_PATTERN = /^js\/ai\/(?:state|search|simulation|value|policy|domain)\//i;
 const STATE_AI_PATTERN = /^js\/ai\/state\//i;
 const VALUE_AI_PATTERN = /^js\/ai\/value\//i;
 const POLICY_AI_PATTERN = /^js\/ai\/policy\//i;
 const DOMAIN_AI_PATTERN = /^js\/ai\/domain\//i;
 const TRANSITION_VALUE_PATTERN = /^js\/ai\/search\/TransitionValue\.js$/i;
+const SEARCH_PLANNER_PATTERN = /^js\/ai\/search\/Planner\.js$/i;
+const SEARCH_PRIOR_PATTERN = /^js\/ai\/search\/SearchPrior\.js$/i;
+const SEARCH_AI_PATTERN = /^js\/ai\/search\//i;
+const SIMULATION_AI_PATTERN = /^js\/ai\/simulation\//i;
+const AI_ROOT_PATTERN = /^js\/ai\/[^/]+\.js$/i;
+const AI_ROOT_ALLOWLIST = new Set(["js/ai/AiController.js"]);
+const REMOVED_COMPATIBILITY_NAMES = Object.freeze([
+  "AiSimulator",
+  "AiEvaluator",
+  "AiStateValue",
+  "AiVisibleState",
+  "AiKnowledge",
+  "AiProbabilityBranches",
+  "AiEconomics",
+  "ThreatCalculator",
+  "roleCardValue",
+  "discardScoring",
+  "resourceSelectionValue",
+  "transferScoring",
+  "sealScoring",
+  "lightningScoring",
+  "AiGlobalBenefit",
+  "AiPlanner",
+  "AiActionGenerator",
+  "AiCardSelector",
+  "AiResponsePolicy",
+  "AiValueSimulationQuery",
+]);
 
 /*
 功能
@@ -762,11 +791,45 @@ function inspectSource(file, source, changed) {
     if (missing.length) errors.push({ file, functionName: fn.name, line: fn.startLine, missing });
   }
 
-  if (LAYERED_AI_PATTERN.test(file)) {
+  if (AI_PATTERN.test(file)) {
     const uiImport = importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:\/ui\/|\/ui\.|\.\.\/ui\/)/i);
     if (uiImport) errors.push({ file, functionName: "<module>", line: source.slice(0, uiImport.index).split(/\r?\n/).length, missing: ["架构约束：AI 分层目录禁止 UI import"] });
     const missing = missingModuleFields(source);
     if (missing.length) errors.push({ file, functionName: "<module>", line: 1, missing });
+    if (changed === null) {
+      const jsdoc = source.indexOf("/**");
+      if (jsdoc >= 0) {
+        errors.push({
+          file,
+          functionName:"<comments>",
+          line:source.slice(0, jsdoc).split(/\r?\n/).length,
+          missing:["注释规范：AI 全量模式禁止 JSDoc / ** 混用"],
+        });
+      }
+    }
+  }
+
+  if (AI_ROOT_PATTERN.test(file) && !AI_ROOT_ALLOWLIST.has(file)) {
+    errors.push({
+      file,
+      functionName:"<architecture>",
+      line:1,
+      missing:["架构约束：AI 根目录只允许 composition root AiController.js"],
+    });
+  }
+
+  const removedCompatibilityPattern = new RegExp(
+    `(?:from\\s*|import\\s*\\()\\s*["'][^"']*(?:${REMOVED_COMPATIBILITY_NAMES.join("|")})\\.js(?:\\?[^"']*)?["']`,
+    "i",
+  );
+  const removedCompatibilityImport = importSource.match(removedCompatibilityPattern);
+  if (removedCompatibilityImport) {
+    errors.push({
+      file,
+      functionName:"<architecture>",
+      line:source.slice(0, removedCompatibilityImport.index).split(/\r?\n/).length,
+      missing:["架构约束：禁止恢复已删除的 compatibility 路径"],
+    });
   }
 
   if (STATE_AI_PATTERN.test(file)) {
@@ -875,6 +938,78 @@ function inspectSource(file, source, changed) {
     }
   }
 
+  if (SEARCH_PLANNER_PATTERN.test(file)) {
+    const forbiddenImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*(?:\/core\/(?:Game|RuleEngine)\.js|\/config\/(?:cardConfig|gameConfig|generalConfig)\.js|\/generals\/skillRegistry\.js|\/policy\/|\/domain\/|\/simulation\/(?:Simulator|CombatSimulation|ResponseSimulation|CardEffectSimulation|SkillEffectSimulation|StatusSimulation)\.js|\/(?:AiController|AIController)\.js)(?:\?[^"']*)?["']/i,
+    );
+    if (forbiddenImport) {
+      errors.push({
+        file,
+        functionName: "<module>",
+        line: source.slice(0, forbiddenImport.index).split(/\r?\n/).length,
+        missing: ["架构约束：Planner 禁止依赖 Game/Rule/Config/Policy/Domain/concrete Simulation"],
+      });
+    }
+    const concreteConstruction = maskNonCode(source).match(/\bnew\s+(?:Ai)?Simulator\s*\(/);
+    if (concreteConstruction) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, concreteConstruction.index).split(/\r?\n/).length,
+        missing: ["架构约束：Planner 禁止构造 concrete Simulator"],
+      });
+    }
+  }
+
+  if (SEARCH_PRIOR_PATTERN.test(file)) {
+    const implicitStateCallback = maskNonCode(source).match(/\bgetCurrentState\b/);
+    if (implicitStateCallback) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, implicitStateCallback.index).split(/\r?\n/).length,
+        missing: ["架构约束：SearchPrior 禁止隐式 GameState callback"],
+      });
+    }
+  }
+
+  if (SEARCH_AI_PATTERN.test(file)) {
+    const concreteSimulationImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*\/simulation\/(?:Simulator|CombatSimulation|ResponseSimulation|CardEffectSimulation|SkillEffectSimulation|StatusSimulation)\.js(?:\?[^"']*)?["']/i,
+    );
+    if (concreteSimulationImport) {
+      errors.push({
+        file,
+        functionName:"<module>",
+        line:source.slice(0, concreteSimulationImport.index).split(/\r?\n/).length,
+        missing:["架构约束：search 禁止依赖 concrete Simulation"],
+      });
+    }
+  }
+
+  if (SIMULATION_AI_PATTERN.test(file)) {
+    const orchestrationImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*(?:\/core\/Game\.js|\/(?:AiController|AIController)\.js|\/search\/(?:Planner|SearchPolicy)\.js)(?:\?[^"']*)?["']/i,
+    );
+    if (orchestrationImport) {
+      errors.push({
+        file,
+        functionName:"<module>",
+        line:source.slice(0, orchestrationImport.index).split(/\r?\n/).length,
+        missing:["架构约束：simulation 禁止依赖 Game/Controller/Planner/SearchPolicy"],
+      });
+    }
+    const finalComposition = maskNonCode(source).match(/\b(?:composeCandidateValue|TransitionValue)\b/);
+    if (finalComposition) {
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:source.slice(0, finalComposition.index).split(/\r?\n/).length,
+        missing:["架构约束：simulation 禁止拥有 final value composition"],
+      });
+    }
+  }
+
   if (/^js\/ai\//i.test(file)) maskedLines.forEach((line, index) => {
     if (/\b(?:this\.)?game\.aiController\b/.test(line)) {
       errors.push({ file, functionName: "<architecture>", line: index + 1, missing: ["架构约束：AI 内部禁止 game.aiController 回指"] });
@@ -938,7 +1073,7 @@ main 的 --self-test 模式。
 inspectSource。
 
 边界与不变量
-夹具必须覆盖头格式、注释遮罩、UI/state 方向、value/policy/domain purity 与 TransitionValue 依赖边界。
+夹具必须覆盖头格式、注释遮罩、分层 purity、TransitionValue、Planner 与 SearchPrior 边界。
 */
 function runSelfTest() {
   const pass = `/*
@@ -1041,8 +1176,8 @@ function identity(value) { return value; }`;
     throw new Error("controller fixture did not detect game.aiController backreference");
   }
   const controllerCommentErrors = inspectSource(
-    "js/ai/AiCommentFixture.js",
-    pass.replace("return value;", "/* game.aiController 只是架构说明。 */\n  return value;"),
+    "js/ai/search/CommentFixture.js",
+    `${moduleHeader}\n${pass.replace("return value;", "/* game.aiController 只是架构说明。 */\n  return value;")}`,
     null,
   );
   if (controllerCommentErrors.some((error) => error.functionName === "<architecture>")) {
@@ -1168,7 +1303,87 @@ function identity(value) { return value; }`;
   if (!transitionControllerErrors.some((error) => error.missing.some((item) => item.includes("Game/AIController")))) {
     throw new Error("TransitionValue fixture did not detect AIController import");
   }
-  process.stdout.write("code-quality self-test passed: headers, modules, backreferences, ignored comments, UI/state direction, value/policy/domain purity, and TransitionValue boundaries\n");
+  const validPlannerErrors = inspectSource(
+    "js/ai/search/Planner.js",
+    `${moduleHeader}\nimport { SearchBudget } from "./SearchBudget.js";\n${pass}`,
+    null,
+  );
+  if (validPlannerErrors.length) {
+    throw new Error(`valid Planner fixture failed: ${JSON.stringify(validPlannerErrors)}`);
+  }
+  const plannerSimulatorErrors = inspectSource(
+    "js/ai/search/Planner.js",
+    `${moduleHeader}\nimport { Simulator } from "../simulation/Simulator.js";\n${pass}`,
+    null,
+  );
+  if (!plannerSimulatorErrors.some((error) => error.missing.some((item) => item.includes("Planner 禁止依赖")))) {
+    throw new Error("Planner fixture did not detect concrete Simulator import");
+  }
+  const plannerConstructionErrors = inspectSource(
+    "js/ai/search/Planner.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return new Simulator(value);")}`,
+    null,
+  );
+  if (!plannerConstructionErrors.some((error) => error.missing.some((item) => item.includes("Planner 禁止构造")))) {
+    throw new Error("Planner fixture did not detect concrete Simulator construction");
+  }
+  const plannerCommentErrors = inspectSource(
+    "js/ai/search/Planner.js",
+    `${moduleHeader}\n/* import { Simulator } from "../simulation/Simulator.js"; new Simulator(); */\n${pass}`,
+    null,
+  );
+  if (plannerCommentErrors.some((error) => error.missing.some((item) => item.includes("Planner 禁止")))) {
+    throw new Error("Planner guard incorrectly scanned comment text");
+  }
+  const searchPriorCallbackErrors = inspectSource(
+    "js/ai/search/SearchPrior.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return getCurrentState();")}`,
+    null,
+  );
+  if (!searchPriorCallbackErrors.some((error) => error.missing.some((item) => item.includes("GameState callback")))) {
+    throw new Error("SearchPrior fixture did not detect implicit GameState callback");
+  }
+  const simulationPlannerErrors = inspectSource(
+    "js/ai/simulation/BadSimulation.js",
+    `${moduleHeader}\nimport { SearchPolicy } from "../search/SearchPolicy.js";\n${pass}`,
+    null,
+  );
+  if (!simulationPlannerErrors.some((error) => error.missing.some((item) => item.includes("simulation 禁止依赖")))) {
+    throw new Error("simulation fixture did not detect SearchPolicy import");
+  }
+  const simulationCompositionErrors = inspectSource(
+    "js/ai/simulation/BadComposition.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return composeCandidateValue(value);")}`,
+    null,
+  );
+  if (!simulationCompositionErrors.some((error) => error.missing.some((item) => item.includes("final value composition")))) {
+    throw new Error("simulation fixture did not detect final value composition");
+  }
+  const simulationCommentErrors = inspectSource(
+    "js/ai/simulation/CommentSimulation.js",
+    `${moduleHeader}\n/* composeCandidateValue and TransitionValue are forbidden here. */\n${pass}`,
+    null,
+  );
+  if (simulationCommentErrors.some((error) => error.missing.some((item) => item.includes("final value composition")))) {
+    throw new Error("simulation guard incorrectly scanned comment text");
+  }
+  const compatibilityErrors = inspectSource(
+    "js/ai/search/BadCompatibility.js",
+    `${moduleHeader}\nimport { AiSimulator } from "../AiSimulator.js";\n${pass}`,
+    null,
+  );
+  if (!compatibilityErrors.some((error) => error.missing.some((item) => item.includes("compatibility 路径")))) {
+    throw new Error("compatibility fixture did not detect removed path");
+  }
+  const rootLayoutErrors = inspectSource(
+    "js/ai/Misc.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (!rootLayoutErrors.some((error) => error.missing.some((item) => item.includes("AI 根目录")))) {
+    throw new Error("root layout fixture did not detect non-allowlisted root file");
+  }
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, Simulation/Search boundaries, compatibility removal, and root layout\n");
 }
 
 /*
@@ -1198,10 +1413,11 @@ changedProductionFiles、allProductionFiles、inspectFile、runSelfTest。
 */
 function main() {
   const args = process.argv.slice(2);
-  const allowed = new Set(["--changed", "--all", "--self-test"]);
+  const allowed = new Set(["--changed", "--all", "--ai-all", "--self-test"]);
   const unknown = args.filter((arg) => !allowed.has(arg));
-  if (unknown.length || (args.includes("--all") && args.includes("--changed"))) {
-    process.stderr.write(`Usage: node tools/check-code-quality.mjs [--changed|--all|--self-test]\n`);
+  const selectedModes = ["--changed", "--all", "--ai-all"].filter((mode) => args.includes(mode));
+  if (unknown.length || selectedModes.length > 1) {
+    process.stderr.write(`Usage: node tools/check-code-quality.mjs [--changed|--all|--ai-all|--self-test]\n`);
     process.exitCode = 2;
     return;
   }
@@ -1209,13 +1425,17 @@ function main() {
     runSelfTest();
     return;
   }
-  const mode = args.includes("--all") ? "all" : "changed";
-  const files = mode === "all" ? allProductionFiles() : changedProductionFiles();
+  const mode = args.includes("--all") ? "all"
+    : args.includes("--ai-all") ? "ai-all"
+      : "changed";
+  const files = mode === "all" ? allProductionFiles()
+    : mode === "ai-all" ? allProductionFiles().filter((file) => AI_PATTERN.test(file))
+      : changedProductionFiles();
   if (!files.length) {
     process.stdout.write(`code-quality passed (--${mode}): no production JavaScript files to inspect\n`);
     return;
   }
-  const errors = files.flatMap((file) => inspectFile(file, mode));
+  const errors = files.flatMap((file) => inspectFile(file, mode === "changed" ? mode : "all"));
   if (errors.length) {
     for (const error of errors) {
       process.stderr.write(`${error.file}:${error.line} ${error.functionName} missing: ${error.missing.join(", ")}\n`);

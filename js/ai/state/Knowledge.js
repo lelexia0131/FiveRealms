@@ -1,28 +1,28 @@
 /*
 模块职责
-拥有观察者合法私有记忆的快照，并提供历史 AiKnowledge API 的单一实现。
+拥有观察者合法私有记忆的快照，并提供 Knowledge API 的单一实现。
 
 上游
-AIController、状态组合入口、状态契约测试、旧 AiKnowledge 兼容导出。
+AIController、状态组合入口与状态契约测试。
 
 下游
 BeliefState 的剩余牌计数、概率与隐藏世界采样纯函数。
 
 状态边界
-读取观察者 aiMemory；兼容类只为失效操作写入该观察者记忆。
+读取观察者 aiMemory；本服务只为失效操作写入该观察者记忆。
 
 信息边界
 只允许观察者合法记录的实体牌记忆，禁止用真实敌方手牌补全未知位置。
 
 架构约束
-不得拥有概率公式或搜索状态转换；旧 API 必须委托给 BeliefState 权威实现。
+不得拥有概率公式或搜索状态转换；概率查询必须委托给 BeliefState 权威实现。
 */
-import { TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
 import {
   deriveRemainingCardCounts,
   probabilityFromRemainingCounts,
   sampleHiddenWorlds
-} from "./BeliefState.js?build=20260814-ai-simulation-engine";
+} from "./BeliefState.js?build=20260814-ai-code-hygiene-final";
 
 /*
 功能
@@ -44,7 +44,7 @@ createKnowledgeState。
 无。
 
 调用函数
-Object.freeze。
+无。
 
 边界与不变量
 只复制现有合法记忆，不检查或读取目标真实手牌。
@@ -62,7 +62,7 @@ function projectKnownCards(viewer, ownerId) {
 创建观察者当前合法私有记忆的不可变 Knowledge 快照。
 
 调用方
-createAiStateContracts、状态契约测试。
+createStateContracts、状态契约测试。
 
 输入
 观察者 Player 与只含合法玩家身份的 VisibleState。
@@ -77,7 +77,7 @@ createAiStateContracts、状态契约测试。
 无。
 
 调用函数
-projectKnownCards、Object.freeze。
+projectKnownCards。
 
 边界与不变量
 Knowledge 不推断未知牌，也不保留 aiMemory 的可变引用。
@@ -93,10 +93,10 @@ export function createKnowledgeState(viewer, visibleState) {
   });
 }
 
-export class AiKnowledge {
+export class Knowledge {
   /*
   功能
-  创建绑定当前 Game 生命周期的 Knowledge 兼容服务。
+  创建绑定当前 Game 生命周期的 Knowledge 服务。
 
   调用方
   AiController 构造流程、Knowledge 单元测试。
@@ -105,7 +105,7 @@ export class AiKnowledge {
   当前 Game 服务对象。
 
   输出
-  新的 AiKnowledge 实例。
+  绑定观察者记忆的 Knowledge 实例。
 
   读取状态
   无。
@@ -146,7 +146,7 @@ export class AiKnowledge {
   projectKnownCards。
 
   边界与不变量
-  不得读取持牌者真实手牌；返回数组可由旧调用方独立使用。
+  不得读取持牌者真实手牌；返回数组与内部记忆相互隔离。
   */
   knownCards(viewer, ownerId) {
     return projectKnownCards(viewer, ownerId).map((entry) => ({ ...entry }));
@@ -273,7 +273,7 @@ export class AiKnowledge {
   从 SearchState 的合法 Belief 信息采样隐藏手牌世界。
 
   调用方
-  AiPlanner、隐藏信息测试。
+  Planner、隐藏信息测试。
 
   输入
   观察者 Player、SearchState 与非负样本数。

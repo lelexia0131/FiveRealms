@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-ai-simulation-engine";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { createId, clamp } from "../utils/helpers.js?build=20260814-ai-simulation-engine";
-import { EventBus } from "./EventBus.js?build=20260814-ai-simulation-engine";
-import { Player } from "./Player.js?build=20260814-ai-simulation-engine";
-import { Deck } from "./Deck.js?build=20260814-ai-simulation-engine";
-import { TeamManager } from "./TeamManager.js?build=20260814-ai-simulation-engine";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260814-ai-simulation-engine";
-import { RuleEngine } from "./RuleEngine.js?build=20260814-ai-simulation-engine";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260814-ai-simulation-engine";
-import { GameLogger } from "./GameLogger.js?build=20260814-ai-simulation-engine";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260814-ai-simulation-engine";
-import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260814-ai-simulation-engine";
-import { AIController } from "../ai/AiController.js?build=20260814-ai-simulation-engine";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260814-ai-simulation-engine";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260814-ai-simulation-engine";
-import { Debug } from "../utils/debug.js?build=20260814-ai-simulation-engine";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260814-ai-simulation-engine";
-import { DyingSystem } from "./DyingSystem.js?build=20260814-ai-simulation-engine";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260814-ai-simulation-engine";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260814-ai-simulation-engine";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260814-ai-simulation-engine";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260814-ai-simulation-engine";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-ai-code-hygiene-final";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { createId, clamp } from "../utils/helpers.js?build=20260814-ai-code-hygiene-final";
+import { EventBus } from "./EventBus.js?build=20260814-ai-code-hygiene-final";
+import { Player } from "./Player.js?build=20260814-ai-code-hygiene-final";
+import { Deck } from "./Deck.js?build=20260814-ai-code-hygiene-final";
+import { TeamManager } from "./TeamManager.js?build=20260814-ai-code-hygiene-final";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260814-ai-code-hygiene-final";
+import { RuleEngine } from "./RuleEngine.js?build=20260814-ai-code-hygiene-final";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260814-ai-code-hygiene-final";
+import { GameLogger } from "./GameLogger.js?build=20260814-ai-code-hygiene-final";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260814-ai-code-hygiene-final";
+import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260814-ai-code-hygiene-final";
+import { AIController } from "../ai/AiController.js?build=20260814-ai-code-hygiene-final";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260814-ai-code-hygiene-final";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260814-ai-code-hygiene-final";
+import { Debug } from "../utils/debug.js?build=20260814-ai-code-hygiene-final";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260814-ai-code-hygiene-final";
+import { DyingSystem } from "./DyingSystem.js?build=20260814-ai-code-hygiene-final";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260814-ai-code-hygiene-final";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260814-ai-code-hygiene-final";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260814-ai-code-hygiene-final";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260814-ai-code-hygiene-final";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -486,7 +486,7 @@ export class Game {
       this.ui.setThinking(true, player, "正在观察战场与可用资源");
       let complexPosition = false;
       try {
-        complexPosition = this.aiController.getLegalActions(player).length > GAME_CONFIG.aiBeamWidth;
+        complexPosition = this.aiController.getActionCandidates(player).length > GAME_CONFIG.aiBeamWidth;
       } catch (error) {
         Debug.log("AI", `${player.name}生成合法动作失败，安全结束出牌阶段`, error);
         return;

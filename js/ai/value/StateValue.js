@@ -1,12 +1,12 @@
 /*
 模块职责
-把上游闪电 simulation query 的纯数值结果送入正式 value/Evaluator。
+作为运行时适配器，把上游闪电模拟查询的纯数值结果送入唯一 State Value 公式 value/Evaluator。
 
 上游
-AIController、TransitionValue、ValueLedger、响应策略与兼容 façade。
+AIController、TransitionValue、ValueLedger、响应策略与正式边界。
 
 下游
-value/Evaluator 与 AiValueSimulationQuery。
+value/Evaluator 与 ValueSimulationQuery。
 
 状态边界
 只读过滤后的状态；不持有 Game，不写状态。
@@ -15,22 +15,22 @@ value/Evaluator 与 AiValueSimulationQuery。
 只接受 VisibleState/SearchState，不访问未过滤的真实手牌。
 
 架构约束
-本适配器不拥有 State Value 公式；stateUtility 公式只存在于 value/Evaluator。
+本服务只补齐运行时领域输入，不拥有第二套 State Value 公式；stateUtility 公式只存在于 value/Evaluator。
 */
 
-export class AiStateValue {
+export class StateValue {
   /*
   功能
   绑定纯 Evaluator 与闪电查询能力。
 
   调用方
-  AIController composition root。
+  AIController 组合根（统一组装依赖的位置）。
 
   输入
-  value/Evaluator 与 AiValueSimulationQuery 实例。
+  value/Evaluator 与 ValueSimulationQuery 实例。
 
   输出
-  稳定的运行时 State Value 门面。
+  稳定的运行时 State Value 查询服务。
 
   读取状态
   保存显式依赖引用。
@@ -54,7 +54,7 @@ export class AiStateValue {
   计算包含闪电生命周期项的完整 State Value。
 
   调用方
-  TransitionValue、ValueLedger、Search/Policy 兼容入口与测试。
+  TransitionValue、ValueLedger、Search/Policy 查询入口与测试。
 
   输入
   过滤后的状态与 viewer ID。
@@ -69,7 +69,7 @@ export class AiStateValue {
   无。
 
   调用函数
-  AiValueSimulationQuery.lightningValues、Evaluator.stateUtility。
+  ValueSimulationQuery.lightningValues、Evaluator.stateUtility。
 
   边界与不变量
   模拟结果先物化为纯值再交给 Evaluator；本层不复制任何估值公式。

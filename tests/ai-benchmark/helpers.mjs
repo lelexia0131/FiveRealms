@@ -5,7 +5,7 @@
  * - 局面构造只使用生产 Player / generalConfig / cardConfig / Game 权威定义；
  * - 不重新实现任何规则；
  * - 其他玩家的手牌仅作为"计数"参与 AI 决策，AI 可见信息由 AiVisibleState /
- *   AiKnowledge 过滤，本文件不写入任何作弊信息。
+ *   Knowledge 过滤，本文件不写入任何作弊信息。
  */
 import { Game } from "../../js/core/Game.js";
 import { Player } from "../../js/core/Player.js";
@@ -13,8 +13,8 @@ import { GENERAL_BY_ID } from "../../js/config/generalConfig.js";
 import { CARD_DEFINITIONS } from "../../js/config/cardConfig.js";
 import { registerPassiveSkills } from "../../js/generals/skillRegistry.js";
 import { createId } from "../../js/utils/helpers.js";
-import { createAiVisibleState } from "../../js/ai/AiVisibleState.js";
-import { AiSimulator } from "../../js/ai/AiSimulator.js";
+import { createInitialSearchState } from "../../js/ai/state/StateContracts.js";
+import { Simulator } from "../../js/ai/simulation/Simulator.js";
 
 let cardSerial = 0;
 
@@ -164,11 +164,11 @@ export function makeGame({ players, options = {} }, runtimeOptions = {}) {
   return game;
 }
 
-/** 查询指定玩家全部合法动作（生产 AiActionGenerator）。 */
-export function getLegalActions(game, playerId) {
+/** 查询指定玩家全部合法动作（生产 ActionGenerator）。 */
+export function getActionCandidates(game, playerId) {
   const player = game.state.players.find((entry) => entry.id === playerId);
   if (!player) return [];
-  return game.aiController.getLegalActions(player);
+  return game.aiController.getActionCandidates(player);
 }
 
 /**
@@ -178,22 +178,22 @@ export function getLegalActions(game, playerId) {
 export async function runAiDecision(game, playerId = null) {
   const player = game.state.players.find((entry) => entry.id === (playerId ?? game.state.players[game.state.currentPlayerIndex]?.id));
   if (!player) throw new Error("AI 决策失败：找不到行动者");
-  const legalActions = getLegalActions(game, player.id);
+  const legalActions = getActionCandidates(game, player.id);
   const remainingCardCounts = game.aiController.knowledge.remainingCounts(player);
   const action = await game.aiController.selectAction(player, { gameId: game.state.gameId });
   const stats = { ...(game.aiController.planner.lastSearchStats ?? {}) };
   return { action, legalActions, stats, remainingCardCounts, player };
 }
 
-/** 返回 AI 可见状态（生产 createAiVisibleState 输出）。 */
+/** 返回 AI 可见状态（生产 createInitialSearchState 输出）。 */
 export function getVisibleState(game, playerId) {
   const player = game.state.players.find((entry) => entry.id === playerId);
   if (!player) return null;
   const remainingCardCounts = game.aiController.knowledge.remainingCounts(player);
-  return createAiVisibleState(player.id, game.state, remainingCardCounts);
+  return createInitialSearchState(player.id, game.state, remainingCardCounts);
 }
 
-/** 动作描述：与 AiPlanner.describeAction 一致，便于场景评价。 */
+/** 动作描述：与 Planner.describeAction 一致，便于场景评价。 */
 export function describeAction(action) {
   if (!action) return null;
   return {
@@ -215,16 +215,16 @@ export function disposeGame(game) {
  * Depth-1（贪心）消融：在完全相同的可见状态下，只比较每个动作的
  * "立即执行后状态效用"，不做任何前瞻，选择贪心动作。
  *
- * 注意：这里使用生产 AiSimulator + AiEvaluator 的组合作为"浅层启发式"参照，
+ * 注意：这里使用生产 Simulator + AiEvaluator 的组合作为"浅层启发式"参照，
  * 仅用于证明某 Scenario 需要更深规划；最终评分从不读取本函数的输出。
  */
 export function runGreedyDepth1(game, playerId = null) {
   const player = game.state.players.find((entry) => entry.id === (playerId ?? game.state.players[game.state.currentPlayerIndex]?.id));
   if (!player) return { type: "end" };
-  const legal = game.aiController.getLegalActions(player);
+  const legal = game.aiController.getActionCandidates(player);
   const remainingCardCounts = game.aiController.knowledge.remainingCounts(player);
-  const visible = createAiVisibleState(player.id, game.state, remainingCardCounts);
-  const simulator = new AiSimulator(visible);
+  const visible = createInitialSearchState(player.id, game.state, remainingCardCounts);
+  const simulator = new Simulator(visible);
   const evaluator = game.aiController.evaluator;
   let best = null;
   let bestScore = -Infinity;

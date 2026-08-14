@@ -1,26 +1,26 @@
 /*
 模块职责
-唯一把 before/action/after 与已计算领域项组合为最终 Transition Value。
+唯一把动作前状态、动作与动作后状态组合为 Transition Value（一次动作带来的最终搜索价值）。
 
 上游
 Planner 与价值等价测试。
 
 下游
-运行时 State Value 与 value/Economics。
+运行时 State Value 与 value/Economics 的既定流量项。
 
 状态边界
 只读 before/after SearchState；不写状态、不生成或执行动作。
 
 信息边界
-只使用过滤后的状态、显式 actor/viewer 和调用层提供的概率/domain/frontier 数值。
+只使用过滤后的状态、显式行动者/观察者，以及调用层提供的概率、领域和前沿数值。
 
 架构约束
-不读取 Game/Controller，不搜索、不决定 beam/tie-break，也绝不消费 SearchPrior。
+不读取 Game/Controller，不搜索、不决定束裁剪或同分裁决，也绝不消费仅用于剪枝的 SearchPrior。
 */
 import {
   STATE_DELTA_SCALE,
   actionEconomicValue
-} from "../value/Economics.js?build=20260814-ai-simulation-engine";
+} from "../value/Economics.js?build=20260814-ai-code-hygiene-final";
 
 export class TransitionValue {
   /*
@@ -28,7 +28,7 @@ export class TransitionValue {
   绑定 State Value 的唯一运行时入口。
 
   调用方
-  AIController composition root 与直接测试。
+  AIController 组合根（统一组装依赖的位置） 与直接测试。
 
   输入
   提供 stateUtility(state, viewerId) 的显式依赖。
@@ -142,7 +142,7 @@ export class TransitionValue {
   组合 base transition、terminal frontier、封印 timing 与领域边际为最终候选值。
 
   调用方
-  Planner 与兼容测试入口。
+  Planner 与直接测试入口。
 
   输入
   baseTransition、诊断 responseNet、frontier、seal penalty、expose 与 assault stack 边际。

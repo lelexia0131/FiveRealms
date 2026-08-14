@@ -1,8 +1,8 @@
 # FiveRealms AI Engine 2.0
 
-当前状态：AI-ARCH-0 至 AI-ARCH-8 已完成；下一阶段为 AI-ARCH-9 评审。
+当前状态：AI-ARCH-0 至 AI-ARCH-9 已完成；下一阶段为 AI-ARCH-10 最终清理。
 当前实现起点：`7696f16 ARCH-0.1.2`
-当前浏览器构建标识：`20260814-ai-simulation-engine`
+当前浏览器构建标识：`20260814-ai-engine-2-final`
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
 审计日期：2026-08-14
 范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；第 2 至 10 节保留最初只读审计及迁移设计作为历史基线，后续完成事实在对应阶段章节持续更新。
@@ -1094,3 +1094,105 @@ RadarModel、LightningModel、SealModel、GlobalBenefitModel 仍只返回概率/
 - 未修改的 `cloneSearchState` 在五人代表局面预热后执行 10×1000 次共 `659.3532 ms`，平均 `65.93532 µs/clone`。planning benchmark（seed `20260814`、node budget `200`）保持 raw `126/1000`、corrected `106/1000`、平均节点 `41.4`、平均深度 `2.8`；非插桩运行 AI 决策约 `0.8s`、总耗时 `0.9s`。
 - 最终宽范围 Simulation 回归为 `258/258`，完整测试为 `1380/1380`（墙钟 `41133.5 ms`）；新模块 `node --check`、checker self-test、`check:code-quality --changed`、Architecture Guard、build consistency 与 `git diff --check` 均作为本阶段验收门禁。
 - Planner 中 expose/assault stack marginal、seal sibling、end opportunity、candidate materialization 与 descriptor helpers 均未迁移；这是 AI-ARCH-9 的明确 remaining debt。兼容路径的最终删除留 AI-ARCH-10。
+
+## 31. AI-ARCH-9 Search Core 落地结果
+
+### Search Responsibility Freeze
+
+| 职责 | 正式 owner | 输入 | 输出 | Planner 是否拥有 |
+|---|---|---|---|---|
+| 束搜索遍历与节点编排 | `search/Planner` | SearchState、根候选、显式 capability | 根动作、稳定计划、结构诊断 | 是 |
+| TIME/NODE/COMPLETE/CANCELLED 判定与计数 | `search/SearchBudget` | 时钟、预算、结构事件 | stop reason、原始计数 | 否，只消费 |
+| depth/beam/prune/tie-break/final selection | `search/SearchPolicy` | 完整候选与 stop reason | 搜索结构、排序和选择 | 否，只消费 |
+| 通用候选物化与 final term 组合 | `search/CandidateMaterializer` | before/after、显式 value/search owners | 完整候选记录 | 否，只编排调用 |
+| expose/assault/provenance 配对反事实 | `search/CounterfactualTerms` | SearchState、Simulator capability | 命名 transition terms | 否 |
+| end opportunity 与 seal sibling timing | `search/SiblingTransitionTerms` | 同 parent 的完整候选集 | sibling terms、fallback base | 否 |
+| 战术结算概率查询 | `search/TacticResolutionQuery` | 显式 Simulator capability | resolution scale | 否 |
+| 稳定动作描述 | `search/ActionDescriptor` | abstract action | descriptor | 否 |
+| 模拟状态推进 | `simulation/Simulator` | SearchState、abstract action | 独立 after-state | 否；factory 注入 |
+
+正式 Planner 不 import Game、RuleEngine、Controller、Domain、Policy、Value owner 或 concrete Simulator，也不构造 Simulator。`AIController` 组合根为一次 plan 注入 `simulatorFactory`、`searchBudgetFactory`、深层动作生成和可取消让步能力；Planner 每次 plan 恰好从 factory 建立一个 Simulator。
+
+### Budget 与 best-seen 语义
+
+`SearchBudget` 是预算和结构计数的唯一 owner。`expandedNodes` 表示已完整物化的搜索候选，不等同 CPU work units；`simulationCalls`、`counterfactualCalls`、`stateUtilityCalls` 与 `yieldCount` 只作诊断，不参与排序、截断或价值计算。
+
+候选只有在模拟、全部 transition terms、frontier/prior 和同层 sibling terms 完成后，才可登记为 `bestSeenCandidate`。正常 `COMPLETE` 保持既有 final beam、near-tie 和随机选择；`TIME` 与 `NODE` 统一返回全局 best-seen，不再从被截断的 partial active beam 重选；`CANCELLED` 安全返回终止动作。此次唯一行为更改只影响 TIME 中断曾选中 partial frontier 的分支，NODE 与完整搜索行为保持冻结。
+
+### Validation 与剩余边界
+
+- 固定 D4 仍为 `seal c -> stealSkill c -> assault b -> end`、expanded `102`、depth `4`、hidden samples `10`、`bestValueScore=0.04919669968375734`；正式诊断新增 `stopReason=COMPLETE`、`simulationCalls=103`。
+- 确定性时钟回归覆盖 COMPLETE/TIME/NODE，另有 TIME/NODE 同一全局 best-seen 回归；Planner factory 测试证明每次 plan 只创建一个 Simulator 和一个 SearchBudget。
+- planning benchmark（seed `20260814`、node budget `200`、planning category、planner audit）保持 raw `126/1000`、corrected `106/1000`、32 次决策平均节点 `41.4`、平均深度 `2.8`。
+- Architecture Guard 禁止 Planner 依赖具体游戏/模拟实现，并禁止 SearchPrior 保存 `getCurrentState` service locator；self-test 同时覆盖合法、非法及注释遮蔽夹具。
+- ARCH-9 独立验证出口仍保留 `AiPlanner` 临时组合层；该出口债务已由下一节的 ARCH-10 最终布局关闭，正式 Search Core 不得回迁算法。
+
+## 32. AI-ARCH-10 Engine Closure 最终事实
+
+### 最终物理目录
+
+`js/ai/` 根目录只保留 composition root：
+
+```text
+js/ai/
+├─ AiController.js
+├─ state/       # Visible / Knowledge / Belief / Search contracts 与概率代数
+├─ search/      # 候选生成、预算、策略、反事实、物化与 Planner
+├─ simulation/  # 唯一 Simulator、五类效果组件与窄状态查询
+├─ value/       # 状态、卡牌、威胁、经济、账本与领域价值
+├─ policy/      # 动作、选牌、资源、响应与转移策略/执行边界
+└─ domain/      # Radar / Lightning / Seal / GlobalBenefit 纯领域事实
+```
+
+正式生产文件共 `50` 个。根目录 allowlist 为且仅为 `AiController.js`；任何新增根级 AI JavaScript 文件都会被 Architecture Guard 拒绝。
+
+### 物理移动与兼容路径删除
+
+| 旧位置/名称 | 最终 owner |
+|---|---|
+| `AiActionGenerator` | `search/ActionGenerator` |
+| `AiCardSelector` | `policy/CardSelectionBoundary` |
+| `AiResponsePolicy` | `policy/ResponseBoundary` |
+| `AiValueSimulationQuery` | `simulation/ValueSimulationQuery` |
+| `AiStateValue` | `value/StateValue` |
+| `AiVisibleState` | `state/StateContracts` |
+| `AiEvaluator` 聚合门面 | `value/ValueService` |
+| `AiKnowledge` | `state/Knowledge` |
+
+下列旧兼容文件已从生产目录删除，生产 import 为零：`AiSimulator`、`AiEvaluator`、`AiStateValue`、`AiVisibleState`、`AiKnowledge`、`AiProbabilityBranches`、`AiEconomics`、`ThreatCalculator`、`roleCardValue`、`discardScoring`、`resourceSelectionValue`、`transferScoring`、`sealScoring`、`lightningScoring`、`AiGlobalBenefit`、`AiPlanner`、`AiActionGenerator`、`AiCardSelector`、`AiResponsePolicy`、`AiValueSimulationQuery`。
+
+保留的边界均为正式职责而非 compatibility 算法副本：`AiController` 是唯一 composition/execution root；`Simulator` 是效果组件 facade；`ValueService` 与 `StateValue` 只转发到唯一公式 owner；`CardSelectionBoundary` 与 `ResponseBoundary` 把真实实体和 Game 执行上下文隔离在 Policy 外侧。它们不得拥有第二份搜索、价值、概率或选择公式。
+
+### 最终所有权
+
+| Layer | 最终 owner 与职责 |
+|---|---|
+| State | `VisibleState` 过滤公开信息；`Knowledge` 持有观察者合法记忆；`BeliefState` 推导未知分布；`StateContracts` 一次组合；`SearchState` 提供可克隆搜索世界；`Probability` 提供条件分支代数。 |
+| Search | `ActionGenerator` 枚举候选；`SearchBudget` 管预算；`SearchPolicy` 管束搜索结构；`CounterfactualTerms` 与 `SiblingTransitionTerms` 生成命名项；`CandidateMaterializer` 组合候选；`Planner` 只编排。 |
+| Simulation | `Simulator` 管 clone、共享概率 runtime 与 action dispatch；Response、Combat、Card、Skill、Status 五个组件各自拥有状态变换；`ValueSimulationQuery`、`RootResolutionQuery` 只做窄反事实查询。 |
+| Value | `Evaluator` 拥有纯状态公式；`StateValue` 提供显式状态查询；`ValueLedger` 管 owner ledger；`Economics`、`CardValue`、`ThreatValue`、`SealValue`、`GlobalBenefitValue` 各拥有对应价值 primitive；`ValueService` 只聚合查询。 |
+| Policy | `ActionCandidatePolicy` 管 AI 专属候选约束；`CardSelectionPolicy`、`ResourceSelectionPolicy`、`ResponsePolicy`、`TransferPolicy` 各拥有唯一选择公式；两个 Boundary 只解析真实实体与执行上下文。 |
+| Domain | `RadarModel`、`LightningModel`、`SealModel`、`GlobalBenefitModel` 只返回只读概率、ID 与 outcome 事实。 |
+| Execution | `AiController` 读取当前 GameState、组合全部 owner、向 Planner 注入窄 capability，并把 descriptor 重新绑定到当前合法实体。 |
+
+`getLegalActions` 已改为 `getActionCandidates`：该集合包含 RuleEngine 合法动作和 AI Policy 过滤后的候选，不再误称为完整游戏合法集。
+
+### 最终依赖图与门禁
+
+生产静态 import 图已执行 DFS 审计，无循环依赖。Search 不 import concrete Simulation；Planner 没有任何 import，并只消费 `simulatorFactory`、`searchBudgetFactory` 与显式 capability。Simulation component 只在 `simulation/` 内被 import，禁止 Game、Controller、Planner、SearchPolicy 与 final value composition。AI 内部禁止 `game.aiController` 回指；SearchPrior 不保存 GameState callback。
+
+`tools/check-code-quality.mjs` 的 `--ai-all` 会扫描全部 AI 生产文件，而非只看 changed lines。门禁覆盖六段式 Module Header、八段式 Function Header、JSDoc 拒绝、注释/字符串遮蔽、Simulation/Search/State/Value/Policy/Domain 分层、旧兼容路径和根目录布局；self-test 同时包含正负夹具。
+
+全部 AI 模块已统一为正式注释格式。复杂 Search/Simulation 说明明确记录 counterfactual、best-seen、pruning、概率分区、资源身份、伤害/救援顺序和状态生命周期；生产 AI 中不存在 `/**`、`@param`、`@returns` 或开发阶段型注释，旧 owner 名称扫描为零。
+
+### 行为、性能与回归冻结
+
+除 TIME 中断选择全局 fully-materialized best-seen 外，未修改规则、阈值、权重、随机次数或 AI 数值。COMPLETE 与 NODE 行为保持冻结；固定 D4 仍为 `seal c -> stealSkill c -> assault b -> end`，expanded `102`、depth `4`、hidden samples `10`、`bestValueScore=0.04919669968375734`、`stopReason=COMPLETE`、`simulationCalls=103`。
+
+planning benchmark（seed `20260814`、node budget `200`、`planning` category、planner audit）为 raw `126/1000`、chance-corrected `106/1000`；`32` 次决策平均 expanded `41.4`、depth `2.8`。
+
+同一 planning 场景的结构计数为 constructor `64`、clone `1583`、apply `1583`、expanded `1325`、clones/node `1.1947169811320755`。Response `27686`、Combat `1860`、Skill `2905`、Status `12729`；Card raw `9340`，其中 `64` 是每个 Simulator 一次的 `initializeAssaultSummaries` 状态初始化，按 ARCH-8 可比 component 口径排除后为 `9276`，与冻结值一致。
+
+最终非 Balance 验证：Search `71/71`、Simulation `137/137`、Value/Policy/Domain `227/227`、隐藏信息 `59/59`、全部 AI `816/816`、显式排除 `AI·搜索：平衡模拟` 的普通 unit/integration `1383/1383`。浏览器模块图统一使用 `20260814-ai-engine-2-final`，旧浏览器 build 引用为零。
+
+Remaining debt 不包含兼容算法或缺失 owner。尚需人工浏览器 smoke 验证观察战场、动作执行、响应、状态结算与重新开始流程；Git 提交、推送与合并仍由维护者执行。

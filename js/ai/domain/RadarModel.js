@@ -3,7 +3,7 @@
 根据公开剩余牌计数派生雷达判定的类别与基础牌定义概率。
 
 上游
-AiSimulator、AiValueSimulationQuery、Evaluator、ValueLedger 与兼容门面。
+Simulator、ValueSimulationQuery、Evaluator、ValueLedger 与正式边界。
 
 下游
 卡牌定义配置与 state/Probability。
@@ -17,11 +17,11 @@ AiSimulator、AiValueSimulationQuery、Evaluator、ValueLedger 与兼容门面�
 架构约束
 本模型不是 Game authority；真实雷达判定与牌移动仍由 JudgmentSystem/Game 负责。不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "../state/Probability.js?build=20260814-ai-simulation-engine";
+} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
 
 export const RADAR_BASIC_DEFINITIONS = Object.freeze(["assault", "recover", "block", "charge", "shield"]);
 
@@ -30,10 +30,10 @@ export const RADAR_BASIC_DEFINITIONS = Object.freeze(["assault", "recover", "blo
 计算一次雷达判定落入战术、装备或各基础牌定义的条件概率。
 
 调用方
-Simulator、Value query、Evaluator、ValueLedger、兼容门面与领域测试。
+Simulator、Value query、Evaluator、ValueLedger、正式边界与领域测试。
 
 输入
-可选剩余牌计数与兼容的 block、otherBasic、equipment 概率覆盖。
+可选剩余牌计数，以及 block、otherBasic、equipment 的显式概率覆盖。
 
 输出
 归一化的新雷达类别概率、基础牌概率与判定池可用标记。

@@ -3,7 +3,7 @@
 把 VisibleState、Knowledge、Belief 与已注入领域派生值组合成可克隆的扁平 SearchState。
 
 上游
-AI 状态组合入口、AiSimulator、状态契约测试。
+AI 状态组合入口、Simulator 与状态契约测试。
 
 下游
 无。
@@ -15,7 +15,7 @@ AI 状态组合入口、AiSimulator、状态契约测试。
 只组合已过滤的公开事实、合法记忆和 Belief，不得访问 GameState。
 
 架构约束
-不得计算领域规则或价值；兼容扁平字段只在此处组装，克隆不得回读 Game。
+不得计算领域规则或价值；搜索所需扁平字段只在此处组装，克隆不得回读 Game。
 */
 
 const CATEGORIES = Object.freeze(["basic", "tactic", "equipment"]);
@@ -60,7 +60,7 @@ createSearchPlayer。
 VisibleState 本人卡牌或 Knowledge 已知牌记录。
 
 输出
-带完整与兼容可用分支的新卡牌记录。
+带完整资源状态与可用分支投影的新卡牌记录。
 
 读取状态
 卡牌实体与定义 ID。
@@ -84,7 +84,7 @@ function projectSearchCard(card) {
 
 /*
 功能
-为一名玩家组合旧 Planner 与 Simulator 所需的扁平 SearchState 记录。
+为一名玩家组合 Planner 与 Simulator 所需的扁平 SearchState 记录。
 
 调用方
 createSearchState。
@@ -105,7 +105,7 @@ VisibleState、Knowledge、BeliefState 与 derivedPlayersById。
 certainStateBranch、projectSearchCard。
 
 边界与不变量
-只组装一次兼容对象；不得在此重新计算规则、概率或价值。
+只组装一次搜索记录；不得在此重新计算规则、概率或价值。
 */
 function createSearchPlayer(visiblePlayer, knownCards, beliefPlayer, viewerId, derivedPlayer) {
   const categoriesUsed = visiblePlayer.categoriesUsed;
@@ -175,7 +175,7 @@ function createSearchPlayer(visiblePlayer, knownCards, beliefPlayer, viewerId, d
 组合四层状态契约为现有搜索链可直接消费的 SearchState 根快照。
 
 调用方
-createAiStateContracts、状态契约测试。
+createStateContracts、状态契约测试。
 
 输入
 VisibleState、Knowledge、BeliefState 与按玩家 ID 注入的领域派生值。
@@ -193,7 +193,7 @@ VisibleState、Knowledge、BeliefState 与按玩家 ID 注入的领域派生值�
 createSearchPlayer。
 
 边界与不变量
-SearchState 不持有 Game 引用；旧字段形状在迁移期保持兼容。
+SearchState 不持有 Game 引用；字段形状由状态契约保持稳定。
 */
 export function createSearchState(visibleState, knowledgeState, beliefState, derivedPlayersById = {}) {
   return Object.freeze({
@@ -222,7 +222,7 @@ export function createSearchState(visibleState, knowledgeState, beliefState, der
 为一次搜索分支创建与根快照完全隔离的可变 SearchState。
 
 调用方
-AiSimulator 构造与 clone、状态契约测试。
+Simulator 构造、clone 与状态契约测试。
 
 输入
 不含 Game 或类实例引用的 SearchState 普通对象图。

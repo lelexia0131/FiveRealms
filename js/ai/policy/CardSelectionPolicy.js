@@ -3,7 +3,7 @@
 拥有 AI 在已合法给出的手牌位置、公开牌池和资源候选中的局部选择策略。
 
 上游
-AIController 与 AiCardSelector compatibility façade。
+AIController 与 CardSelectionBoundary 正式边界。
 
 下游
 ResourceSelectionPolicy、TransferPolicy 与 value/CardValue。
@@ -17,13 +17,13 @@ ResourceSelectionPolicy、TransferPolicy 与 value/CardValue。
 架构约束
 不执行规则、不投影 State、不依赖 Planner/Controller/UI，也不构造 Simulator。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { getRoleCardAiValue } from "../value/CardValue.js?build=20260814-ai-simulation-engine";
-import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { getRoleCardAiValue } from "../value/CardValue.js?build=20260814-ai-code-hygiene-final";
+import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260814-ai-code-hygiene-final";
 import {
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-} from "./ResourceSelectionPolicy.js?build=20260814-ai-simulation-engine";
+} from "./ResourceSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
 
 /*
 功能
@@ -105,7 +105,7 @@ export class CardSelectionPolicy {
   绑定局部选择所需随机、Belief、资源和转移能力。
 
   调用方
-  AIController composition root 与直接策略测试。
+  AIController 组合根（统一组装依赖的位置） 与直接策略测试。
 
   输入
   random、remainingCounts、ResourceSelectionPolicy、TransferPolicy。
@@ -149,7 +149,7 @@ export class CardSelectionPolicy {
   为窥探/窥隙从合法手牌位置中选择一个下标。
 
   调用方
-  chooseHiddenCardIds 与 compatibility façade。
+  chooseHiddenCardIds 与 正式边界。
 
   输入
   合法记忆映射与已过滤候选卡数组。
@@ -192,7 +192,7 @@ export class CardSelectionPolicy {
   在合法已知与聚合未知位置间按价值方向选择下标。
 
   调用方
-  compatibility façade 与直接策略测试。
+  正式边界 与直接策略测试。
 
   输入
   合法记忆、候选卡、方向、已知估值函数与未知期望。
@@ -252,7 +252,7 @@ export class CardSelectionPolicy {
   从执行边界已过滤的合法手牌位置中选择指定数量的实体 ID。
 
   调用方
-  AiCardSelector compatibility façade。
+  CardSelectionBoundary 正式边界。
 
   输入
   观察者、拥有者、合法候选、数量、排除 ID、用途与可选 Belief counts。
@@ -367,7 +367,7 @@ export class CardSelectionPolicy {
   在执行边界提供的手牌候选与公开装备之间选择资源区域描述。
 
   调用方
-  AiCardSelector compatibility façade。
+  CardSelectionBoundary 正式边界。
 
   输入
   观察者、拥有者、用途、一个已选手牌候选、装备定义与 Belief counts。
@@ -432,7 +432,7 @@ export class CardSelectionPolicy {
   计算观察者对一张自己或他人手牌的合法期望值。
 
   调用方
-  AiCardSelector compatibility façade 与直接测试。
+  CardSelectionBoundary 正式边界 与直接测试。
 
   输入
   观察者、拥有者与卡牌实体。
@@ -467,7 +467,7 @@ export class CardSelectionPolicy {
   从公开牌池按角色卡牌价值选择最佳实体 ID。
 
   调用方
-  AiCardSelector compatibility façade。
+  CardSelectionBoundary 正式边界。
 
   输入
   当前玩家和公开合法卡牌数组。
@@ -482,7 +482,7 @@ export class CardSelectionPolicy {
   无；不修改原数组。
 
   调用函数
-  getRoleCardAiValue、Array.sort。
+  getRoleCardAiValue。
 
   边界与不变量
   同分保持原始公开池顺序。
@@ -499,7 +499,7 @@ export class CardSelectionPolicy {
   从执行边界已确认的合法卡牌中选择弃牌实体 ID。
 
   调用方
-  AiCardSelector compatibility façade。
+  CardSelectionBoundary 正式边界。
 
   输入
   玩家、合法卡牌、数量与公开弃牌上下文。

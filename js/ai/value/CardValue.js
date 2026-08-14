@@ -1,6 +1,6 @@
 /*
 模块职责
-唯一拥有卡牌静态基础值、角色差量、装备保留折损与卡片机会成本的稳定公式。
+唯一拥有 Policy Value（用于选择/保留而非最终结算的策略价值）所需的卡牌静态基础值、角色差量、装备保留折损与机会成本公式。
 
 上游
 价值评估、弃牌、资源选择、转移策略、模拟器与搜索先验。
@@ -15,19 +15,16 @@
 只使用公开配置、当前角色自己的卡牌或已经过滤的可见卡牌条目。
 
 架构约束
-静态卡片值不得直接成为最终 transition value；旧路径只能兼容重导出本模块公式。
+静态卡片值不得直接成为最终 Transition Value；状态存量只可经 State Value 的前后差进入最终价值，所有调用路径必须复用本模块的唯一公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-simulation-engine";
-import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../../config/generalConfig.js?build=20260814-ai-simulation-engine";
-import { HP_VALUE } from "./Economics.js?build=20260814-ai-simulation-engine";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../../config/generalConfig.js?build=20260814-ai-code-hygiene-final";
+import { HP_VALUE } from "./Economics.js?build=20260814-ai-code-hygiene-final";
 
-/**
- * 角色 × 卡牌稀疏差值表。
- *
- * 当前保存正式稀疏角色差值：只记录非零项，未配置组合自动回退 0。
- * 新角色和新卡牌不要求立即配置差值；禁止写入完整矩阵。
- * 未来添加角色条目时，必须同时 Object.freeze 该角色的嵌套差值对象。
- */
+/*
+角色 × 卡牌差值只记录非零项，未配置组合自动回退零；新角色和新卡牌不需要补完整矩阵。
+新增角色条目必须同时冻结嵌套差值对象，避免运行期改写静态价值。
+*/
 export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
   "blade-walker": Object.freeze({
     assault: 2,
@@ -194,7 +191,7 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
 读取卡牌定义中的全局静态基础价值。
 
 调用方
-弃牌、资源选择、搜索先验与兼容入口。
+弃牌、资源选择、搜索先验与直接价值查询入口。
 
 输入
 卡牌定义 ID 与可选的测试定义表。
@@ -209,7 +206,7 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
 无。
 
 调用函数
-Number.isFinite。
+无。
 
 边界与不变量
 静态卡牌价值只服务保留、策略与搜索先验，不直接成为最终 transition value。
@@ -334,7 +331,7 @@ export function getEquipmentKeepValueDeduction(
 无。
 
 调用函数
-Object.entries、Number.isInteger。
+无。
 
 边界与不变量
 空表合法；未知引用和超出 -2..2 的非整数差量必须报告。
@@ -382,7 +379,7 @@ export function validateRoleCardValueDeltas(deltas = ROLE_CARD_VALUE_DELTAS, opt
 计算角色卡牌价值相对全局基础值的身份差量。
 
 调用方
-Evaluator、SearchPrior 与兼容 façade。
+Evaluator、SearchPrior 与正式边界。
 
 输入
 角色 ID 与卡牌定义 ID。
@@ -412,7 +409,7 @@ export function roleCardDelta(generalId, definitionId) {
 读取具体可见卡牌条目的剩余可用概率。
 
 调用方
-Evaluator、FrontierValue 与兼容 façade。
+Evaluator、FrontierValue 与正式边界。
 
 输入
 可见卡牌或概率卡牌条目。
@@ -427,7 +424,7 @@ Evaluator、FrontierValue 与兼容 façade。
 无。
 
 调用函数
-Array.isArray、Array.reduce。
+无。
 
 边界与不变量
 优先 availabilityStateBranches；不得读取未过滤的敌方手牌身份。
@@ -454,7 +451,7 @@ export function cardAvailability(card) {
 把打出一张牌的现有机会成本拆成互斥的诊断分量。
 
 调用方
-Value ownership 诊断、测试与兼容 façade。
+Value ownership 诊断、测试与正式边界。
 
 输入
 卡牌条目与其当前持有者的可见状态。

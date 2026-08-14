@@ -3,7 +3,7 @@
 拥有 AI 在合法转移来源、接收者与手牌候选之间的局部评分和稳定选择。
 
 上游
-AIController、CardSelectionPolicy、AiActionGenerator 与兼容 façade。
+AIController、CardSelectionPolicy、ActionGenerator 与正式边界。
 
 下游
 value/CardValue、value/ThreatValue 与 state/Probability。
@@ -20,12 +20,12 @@ value/CardValue、value/ThreatValue 与 state/Probability。
 import {
   getBaseCardAiValue,
   getRoleCardAiValue
-} from "../value/CardValue.js?build=20260814-ai-simulation-engine";
-import { ThreatCalculator } from "../value/ThreatValue.js?build=20260814-ai-simulation-engine";
+} from "../value/CardValue.js?build=20260814-ai-code-hygiene-final";
+import { ThreatCalculator } from "../value/ThreatValue.js?build=20260814-ai-code-hygiene-final";
 import {
   PROBABILITY_EPSILON,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-simulation-engine";
+} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
@@ -377,7 +377,7 @@ function expectedUnknownSituationValue(player, remainingCardCounts) {
 计算已知与聚合未知候选中指定方向的手牌预计价值。
 
 调用方
-兼容测试与转移策略诊断。
+直接测试与转移策略诊断。
 
 输入
 观察者、拥有者、方向、排除 ID 与 remaining counts。
@@ -681,7 +681,7 @@ function evaluateTransferCombination({
 返回一个已合法枚举转移组合的完整策略分数。
 
 调用方
-兼容 façade 与直接测试。
+正式边界 与直接测试。
 
 输入
 evaluateTransferCombination 所需上下文。
@@ -710,7 +710,7 @@ export function scoreTransferCombination(options) {
 从调用方提供的合法来源与接收者集合构建稳定转移候选。
 
 调用方
-AiCardSelector、AiActionGenerator 与直接测试。
+CardSelectionBoundary、ActionGenerator 与直接测试。
 
 输入
 行动者、合法 sources、接收者查询和可选限制/Belief。
@@ -775,7 +775,7 @@ export function buildTransferCandidates({
 从已评分合法候选中按冻结 tie-break 选择达到最低效用的最佳方案。
 
 调用方
-TransferPolicy、AiCardSelector、AiActionGenerator 与测试。
+TransferPolicy、CardSelectionBoundary、ActionGenerator 与测试。
 
 输入
 候选数组与可选最低效用。
@@ -790,7 +790,7 @@ TransferPolicy、AiCardSelector、AiActionGenerator 与测试。
 无。
 
 调用函数
-Array.sort、Object.freeze。
+无。
 
 边界与不变量
 顺序为分数降序、来源座次升序、receiver ID 升序；不重算候选分数。
@@ -820,7 +820,7 @@ export class TransferPolicy {
   从调用方提供的合法 source/receiver 集合选择最佳转移描述。
 
   调用方
-  AIController、AiCardSelector 与 AiActionGenerator。
+  AIController、CardSelectionBoundary 与 ActionGenerator。
 
   输入
   buildTransferCandidates 所需的合法候选上下文。

@@ -3,7 +3,7 @@
 拥有 AI 对已通过规则合法性检查的动作和目标做局部候选过滤的战略约束。
 
 上游
-AIController 与 AiActionGenerator。
+AIController 与 ActionGenerator。
 
 下游
 state/Probability。
@@ -21,7 +21,7 @@ import {
   PROBABILITY_EPSILON,
   getAvailabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-simulation-engine";
+} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
 
 export class ActionCandidatePolicy {
   /*
@@ -99,7 +99,7 @@ export class ActionCandidatePolicy {
   判断破军增加一次攻击容量是否有可兑现的额外突袭。
 
   调用方
-  AiActionGenerator 根/深层技能候选过滤。
+  ActionGenerator 根/深层技能候选过滤。
 
   输入
   行动者公开/过滤状态。
@@ -129,7 +129,7 @@ export class ActionCandidatePolicy {
   判断孤注是否处于既有确定零收益场景。
 
   调用方
-  AiActionGenerator 根/深层技能候选过滤。
+  ActionGenerator 根/深层技能候选过滤。
 
   输入
   行动者公开/过滤状态。
@@ -160,7 +160,7 @@ export class ActionCandidatePolicy {
   应用 3v1 主动闪电的唯一 AI 战略硬禁令。
 
   调用方
-  AiActionGenerator 根/深层卡牌候选过滤与直接测试。
+  ActionGenerator 根/深层卡牌候选过滤与直接测试。
 
   输入
   当前玩家数组与行动者。
@@ -175,7 +175,7 @@ export class ActionCandidatePolicy {
   无。
 
   调用函数
-  Array.filter。
+  无。
 
   边界与不变量
   这是不可被 HP、Expected Value 或 Search Prior 覆盖的 hard constraint；唯一 owner 在本方法。
@@ -194,7 +194,7 @@ export class ActionCandidatePolicy {
   从 RuleEngine 已确认合法的卡牌目标中应用既有敌我候选偏好。
 
   调用方
-  AiActionGenerator 根/深层卡牌枚举。
+  ActionGenerator 根/深层卡牌枚举。
 
   输入
   卡牌、行动者与合法目标数组。
@@ -209,7 +209,7 @@ export class ActionCandidatePolicy {
   无；不修改合法目标数组。
 
   调用函数
-  Array.filter。
+  无。
 
   边界与不变量
   destroy/plunder 只保留敌方；其他牌原样保留。被过滤目标仍是游戏规则上的合法目标。
