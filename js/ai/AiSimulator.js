@@ -2,20 +2,22 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260813-oath-warden-planning";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-oath-warden-planning";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-oath-warden-planning";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260813-oath-warden-planning";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260813-oath-warden-planning";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260813-oath-warden-planning";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260814-guardian-aid-discard";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-discard";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-guardian-aid-discard";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-guardian-aid-discard";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-guardian-aid-discard";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-guardian-aid-discard";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260814-guardian-aid-discard";
 import {
   counterOpportunityCost,
   globalBenefitCounterDesire,
   mutualBenefitDraftValues
-} from "./AiGlobalBenefit.js?build=20260813-oath-warden-planning";
-import { HP_VALUE } from "./AiEconomics.js?build=20260813-oath-warden-planning";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260813-oath-warden-planning";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260813-oath-warden-planning";
+} from "./AiGlobalBenefit.js?build=20260814-guardian-aid-discard";
+import { HP_VALUE } from "./AiEconomics.js?build=20260814-guardian-aid-discard";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260814-guardian-aid-discard";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-guardian-aid-discard";
+import { getDiscardKeepValue } from "./discardScoring.js?build=20260814-guardian-aid-discard";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -30,7 +32,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260813-oath-warden-planning";
+} from "./AiProbabilityBranches.js?build=20260814-guardian-aid-discard";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -2227,6 +2229,97 @@ export class AiSimulator {
     return totalSpent;
   }
 
+  /** 由 AI 自主选择弃牌时的共享上下文：距离 stranded 与装备边际与真实 chooseDiscards 等价。 */
+  buildDiscardKeepValueContext(state, player) {
+    const enemies = state.players.filter((entry) => entry.alive && entry.battleTeam !== player.battleTeam);
+    const stranded = enemies.length > 0
+      && !enemies.some((enemy) => DistanceSystem.inAttackRange({ state }, player, enemy));
+    return {
+      stranded,
+      equippedDefinitionId: player.equipmentDefinitionId ?? null,
+      equipmentRetentionProbability: player.equipmentRetentionProbability ?? 1
+    };
+  }
+
+  /**
+   * 按共享保留价值定向消费已知手牌：护援反事实中 responder 自己的手牌身份合法可见，
+   * 因此应选择最低 keep-value 的牌，而不是把已知手牌当作随机损失。
+   * 只用于明确由 AI 自主选牌支付的路径；真正随机的弃牌/未知损失仍走 consumeRandomHandCards。
+   */
+  consumeChosenHandCard(state, player, spend, options = {}) {
+    let remaining = Math.max(0, Number(spend) || 0);
+    let totalSpent = 0;
+    const result = options.result ?? null;
+    while (remaining > PROBABILITY_EPSILON && (player.handCount ?? 0) > PROBABILITY_EPSILON) {
+      const context = this.buildDiscardKeepValueContext(state, player);
+      const candidates = player.hand
+        .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON)
+        .sort((left, right) => (
+          getDiscardKeepValue(player, left, context) - getDiscardKeepValue(player, right, context)
+        ));
+      if (!candidates.length) break;
+      const chosen = candidates[0];
+      const availableProbability = this.cardAvailability(chosen);
+      const spent = Math.min(1, remaining, availableProbability);
+      const spendWorlds = this.getEventWorlds(
+        state,
+        Math.min(1, spent / availableProbability),
+        null,
+        `guardian-aid-discard:${player.id}:${chosen.id}`
+      );
+      const removalPartition = spendWorlds.map((branch) => ({
+        probability: branch.probability,
+        conditions: branch.conditions,
+        removed: Boolean(branch.occurs)
+      }));
+      const availabilityState = getAvailabilityStateBranches(chosen).map((branch) => ({
+        probability: branch.probability,
+        conditions: branch.conditions,
+        available: Boolean(branch.available)
+      }));
+      const joinedAvailability = joinProbabilityStateBranches(availabilityState, removalPartition);
+      chosen.availabilityStateBranches = projectProbabilityStateBranches(joinedAvailability, (branch) => ({
+        available: Boolean(branch.available && !branch.removed)
+      }));
+      chosen.availabilityBranches = availableBranchesFromState(chosen.availabilityStateBranches);
+      if (chosen.definitionId === "block") this.removeKnownBlockFromDistribution(state, player, spendWorlds);
+      if (chosen.definitionId === "counter") this.removeKnownCounterFromDistribution(state, player, spendWorlds);
+      if (chosen.definitionId === "assault") {
+        const assaultState = this.syncAssaultSummary(player).map((branch) => ({
+          probability: branch.probability,
+          conditions: branch.conditions,
+          count: branch.count
+        }));
+        const joinedAssault = joinProbabilityStateBranches(assaultState, removalPartition);
+        player.assaultCountDistribution = projectProbabilityStateBranches(joinedAssault, (branch) => ({
+          count: Math.max(0, branch.count - (branch.removed && branch.count > 0 ? 1 : 0))
+        }));
+        this.syncAssaultSummary(player);
+      }
+      if (chosen.definitionId === "recover") {
+        player.expectedRecoverCount = Math.max(
+          0,
+          (player.expectedRecoverCount ?? 0) - this.eventProbability(spendWorlds)
+        );
+      }
+      if (Array.isArray(player.hand)) {
+        player.hand = player.hand.filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON);
+      }
+      player.handCount = Math.max(0, (player.handCount ?? 0) - spent);
+      this.clearCountersWhenHandEmpty(player);
+      if (result) {
+        result.guardianAidDiscards ??= [];
+        result.guardianAidDiscards.push({
+          cardId: chosen.id ?? null,
+          definitionId: chosen.definitionId
+        });
+      }
+      remaining -= spent;
+      totalSpent += spent;
+    }
+    return totalSpent;
+  }
+
   /**
    * 连势与类别首次使用都沿用动作/伤害的完整条件世界。命中生命时先消费旧连势，
    * 随后的 cardUsed 若是该类别首次使用再获得1层；未命中世界保留旧层并正常叠层。
@@ -2378,8 +2471,10 @@ export class AiSimulator {
    * 护援只作用于通过雷达与格挡的伤害世界，并在护盾前计算弃牌与每轮次数的期望代价。
    * excludedGuardianIds 让调用方（护援响应决策）在 STAY 世界按 id 排除某位守誓者，
    * 使其拒绝护援、额度与手牌保留，而不为此另建第二套防御模拟。
+   * 当守护者拥有完整手牌身份（responder 自己的可见手牌）时，按共享保留价值
+   * 确定性弃掉最低 keep-value 的牌；只有身份不完整时才对未知牌做随机损失。
    */
-  simulateGuardianAid(state, target, incomingDamage, eventProbability, excludedGuardianIds = null) {
+  simulateGuardianAid(state, target, incomingDamage, eventProbability, excludedGuardianIds = null, options = {}) {
     const probability = clampProbability(eventProbability);
     if (incomingDamage <= PROBABILITY_EPSILON || probability <= PROBABILITY_EPSILON) return Math.max(0, incomingDamage);
     const conditionalReduction = Math.min(1, incomingDamage / probability);
@@ -2395,7 +2490,11 @@ export class AiSimulator {
       const handAvailability = Math.min(1, Math.max(0, Number(guardian.handCount) || 0));
       const triggerProbability = remainingTriggerProbability * (1 - oldUsedProbability) * handAvailability;
       if (triggerProbability <= 0) continue;
-      this.consumeRandomHandCards(state, guardian, triggerProbability);
+      if (Array.isArray(guardian.hand) && guardian.hand.length > 0) {
+        this.consumeChosenHandCard(state, guardian, triggerProbability, options);
+      } else {
+        this.consumeRandomHandCards(state, guardian, triggerProbability);
+      }
       guardian.guardianAidUsedProbability = clampProbability(oldUsedProbability + triggerProbability);
       guardian.guardianAidUsed = guardian.guardianAidUsedProbability >= 1 - Number.EPSILON;
       expectedReduction += triggerProbability * conditionalReduction;
@@ -3498,7 +3597,7 @@ export class AiSimulator {
           sum + (branch.occurs && branch.passes ? branch.probability * branch.damageAmount : 0)
         ), 0);
       const aidedExpectedDamage = this.simulateGuardianAid(
-        state, target, incomingExpectedDamage, damagePassProbability, options.excludedGuardianIds
+        state, target, incomingExpectedDamage, damagePassProbability, options.excludedGuardianIds, options
       );
       aidReductionPerPass = Math.max(0,
         (incomingExpectedDamage - aidedExpectedDamage) / damagePassProbability);

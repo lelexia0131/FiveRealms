@@ -1,13 +1,13 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-oath-warden-planning";
-import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260813-oath-warden-planning";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260813-oath-warden-planning";
-import { AiSimulator } from "./AiSimulator.js?build=20260813-oath-warden-planning";
-import { HP_VALUE } from "./AiEconomics.js?build=20260813-oath-warden-planning";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-discard";
+import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260814-guardian-aid-discard";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-guardian-aid-discard";
+import { AiSimulator } from "./AiSimulator.js?build=20260814-guardian-aid-discard";
+import { HP_VALUE } from "./AiEconomics.js?build=20260814-guardian-aid-discard";
 import {
   hasLightning,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260813-oath-warden-planning";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260813-oath-warden-planning";
+} from "./lightningScoring.js?build=20260814-guardian-aid-discard";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260814-guardian-aid-discard";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

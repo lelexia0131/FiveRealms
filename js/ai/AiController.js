@@ -1,10 +1,10 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260813-oath-warden-planning";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260813-oath-warden-planning";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260813-oath-warden-planning";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260813-oath-warden-planning";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260813-oath-warden-planning";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260813-oath-warden-planning";
-import { AiPlanner } from "./AiPlanner.js?build=20260813-oath-warden-planning";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-guardian-aid-discard";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260814-guardian-aid-discard";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260814-guardian-aid-discard";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260814-guardian-aid-discard";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260814-guardian-aid-discard";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260814-guardian-aid-discard";
+import { AiPlanner } from "./AiPlanner.js?build=20260814-guardian-aid-discard";
 
 /** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
 export class AIController {

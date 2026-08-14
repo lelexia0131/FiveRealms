@@ -73,6 +73,7 @@ import {
 } from "../js/ai/resourceSelectionValue.js";
 import { AiKnowledge } from "../js/ai/AiKnowledge.js";
 import { AiCardSelector } from "../js/ai/AiCardSelector.js";
+import { getDiscardKeepValue, rankDiscardCandidates } from "../js/ai/discardScoring.js";
 import { buildRadarJudgmentProbabilities, joinProbabilityStateBranches } from "../js/ai/AiProbabilityBranches.js";
 import {
   buildLightningHitDistribution,
@@ -16771,6 +16772,218 @@ test("AI·守誓者：护援拒绝非合法场景（自己/敌方/无手牌/零�
     game2.aiController.responsePolicy.shouldUseGuardianAid(emptyGuardian, { target: ally, source, amount: 1 }),
     false,
     "无手牌不能护援"
+  );
+});
+
+/** 护援反事实翻转夹具：剩余牌池只保留突袭/充能各 9 张，使敌方未知 1 张手牌中突袭密度为 0.5。 */
+const makeGuardianAidFlipGame = (guardianDefinitionIds) => {
+  const source = makePlayer("aid-flip-source", 0, "dusk", "ai", 4),
+    target = makePlayer("aid-flip-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-flip-guardian", 2, "dawn", "ai", 1);
+  source.hp = 5;
+  target.hp = 3;
+  target.shield = 0;
+  guardian.hp = 1;
+  for (const definitionId of guardianDefinitionIds) guardian.hand.push(instance(definitionId));
+  const knownAssault = instance("assault");
+  source.hand.push(knownAssault, instance("charge"));
+  guardian.aiMemory.knownCardsByPlayer[source.id] = { [knownAssault.id]: "assault" };
+  const { game } = makeGame([source, target, guardian]);
+  const targetRemaining = { assault: 9, charge: 9 };
+  const inHand = {};
+  for (const card of guardian.hand) inHand[card.definitionId] = (inHand[card.definitionId] ?? 0) + 1;
+  const known = {};
+  for (const definitionId of Object.values(guardian.aiMemory.knownCardsByPlayer[source.id] ?? {})) {
+    known[definitionId] = (known[definitionId] ?? 0) + 1;
+  }
+  const pile = [];
+  for (const [definitionId, count] of Object.entries(CARD_COUNTS)) {
+    const drop = Math.max(0, count - (targetRemaining[definitionId] ?? 0)
+      - (inHand[definitionId] ?? 0) - (known[definitionId] ?? 0));
+    for (let index = 0; index < drop; index += 1) {
+      pile.push({ id: `craft-${definitionId}-${index}`, definitionId });
+    }
+  }
+  game.state.deck.cards = [];
+  game.state.deck.discardPile = pile;
+  return { game, source, target, guardian };
+};
+
+test("AI·守誓者：护援弃牌与真实选牌共享保留价值——低血垃圾牌换格挡且摘要同步", () => {
+  const source = makePlayer("aid-parity-source", 0, "dusk", "ai", 4),
+    target = makePlayer("aid-parity-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-parity-guardian", 2, "dawn", "ai", 1);
+  target.hp = 3;
+  guardian.hp = 1;
+  const garbage = instance("charge"),
+    block = instance("block"),
+    counter = instance("counter");
+  guardian.hand.push(garbage, block, counter);
+  const { game } = makeGame([source, target, guardian]);
+  const realDiscard = game.aiController.chooseDiscards(guardian, 1)[0];
+  assert.equal(realDiscard.id, garbage.id, "真实护援支付应弃低保留价值牌");
+  assert.deepEqual(
+    rankDiscardCandidates(guardian, guardian.hand, {
+      stranded:false,
+      equippedDefinitionId:null,
+      equipmentRetentionProbability:1
+    }).map((card) => card.id),
+    [garbage.id, counter.id, block.id],
+    "共享保留价值排序应与真实选牌一致"
+  );
+  const visible = createAiVisibleState(guardian.id, game.state);
+  const state = structuredClone(visible);
+  const simulator = new AiSimulator(state),
+    outcome = {};
+  const vSource = state.players.find((player) => player.id === source.id),
+    vTarget = state.players.find((player) => player.id === target.id),
+    vGuardian = state.players.find((player) => player.id === guardian.id);
+  simulator.applyDamage(state, vSource, vTarget, 1, { canBlock: false, result: outcome });
+  assert.deepEqual(
+    outcome.guardianAidDiscards,
+    [{ cardId: garbage.id, definitionId: "charge" }],
+    "模拟护援必须弃同一张最低保留价值牌"
+  );
+  assert.deepEqual(
+    vGuardian.hand.map((card) => card.definitionId),
+    ["block", "counter"],
+    "格挡与反制应保留"
+  );
+  assert.equal(vGuardian.handCount, 2);
+  assert.equal(vGuardian.blockProbability, 1, "格挡摘要应保留 1 张可用");
+  assert.equal(vGuardian.counterProbability, 1, "反制摘要应保留 1 张可用");
+  assert.equal(vGuardian.expectedAssaultCount, 0);
+});
+
+test("AI·守誓者：护援低血时弃低价值牌保留调息并同步恢复摘要", () => {
+  const source = makePlayer("aid-recover-source", 0, "dusk", "ai", 4),
+    target = makePlayer("aid-recover-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-recover-guardian", 2, "dawn", "ai", 1);
+  target.hp = 3;
+  guardian.hp = 1;
+  const garbage = instance("charge"),
+    recover = instance("recover");
+  guardian.hand.push(garbage, recover);
+  const { game } = makeGame([source, target, guardian]);
+  const realDiscard = game.aiController.chooseDiscards(guardian, 1)[0];
+  assert.equal(realDiscard.id, garbage.id, "真实护援支付应弃低保留价值牌");
+  const visible = createAiVisibleState(guardian.id, game.state);
+  const state = structuredClone(visible);
+  const simulator = new AiSimulator(state),
+    outcome = {};
+  const vSource = state.players.find((player) => player.id === source.id),
+    vTarget = state.players.find((player) => player.id === target.id),
+    vGuardian = state.players.find((player) => player.id === guardian.id);
+  assert.equal(vGuardian.expectedRecoverCount, 1, "可见快照应含完整调息身份");
+  simulator.applyDamage(state, vSource, vTarget, 1, { canBlock: false, result: outcome });
+  assert.deepEqual(
+    outcome.guardianAidDiscards,
+    [{ cardId: garbage.id, definitionId: "charge" }],
+    "模拟护援必须弃同一张最低保留价值牌"
+  );
+  assert.deepEqual(vGuardian.hand.map((card) => card.definitionId), ["recover"], "调息应保留");
+  assert.equal(vGuardian.expectedRecoverCount, 1, "调息摘要应保留 1 张");
+});
+
+test("AI·守誓者：护援与真实选牌一致弃装备替换冗余牌", () => {
+  const source = makePlayer("aid-equip-source", 0, "dusk", "ai", 4),
+    target = makePlayer("aid-equip-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-equip-guardian", 2, "dawn", "ai", 1);
+  target.hp = 3;
+  const redundant = instance("energyDevice"),
+    garbage = instance("charge");
+  guardian.hand.push(redundant, garbage);
+  guardian.equipment = { id: "equip-defense", definitionId: "defenseDevice" };
+  const { game } = makeGame([source, target, guardian]);
+  const realDiscard = game.aiController.chooseDiscards(guardian, 1)[0];
+  assert.equal(realDiscard.id, redundant.id, "已装备时另一装备仅按替换冗余边际计值");
+  const visible = createAiVisibleState(guardian.id, game.state);
+  const state = structuredClone(visible);
+  const simulator = new AiSimulator(state),
+    outcome = {};
+  const vSource = state.players.find((player) => player.id === source.id),
+    vTarget = state.players.find((player) => player.id === target.id),
+    vGuardian = state.players.find((player) => player.id === guardian.id);
+  simulator.applyDamage(state, vSource, vTarget, 1, { canBlock: false, result: outcome });
+  assert.deepEqual(
+    outcome.guardianAidDiscards,
+    [{ cardId: redundant.id, definitionId: "energyDevice" }],
+    "模拟护援必须弃同一张冗余装备"
+  );
+  assert.deepEqual(vGuardian.hand.map((card) => card.definitionId), ["charge"]);
+});
+
+test("AI·守誓者：护援与真实选牌共享超距突袭保留价值", () => {
+  const run = (seatByRole) => {
+    const ally = makePlayer("aid-range-ally", seatByRole.ally, "dawn", "ai", 0),
+      target = makePlayer("aid-range-target", seatByRole.target, "dawn", "ai", 0),
+      guardian = makePlayer("aid-range-guardian", seatByRole.guardian, "dawn", "ai", 1),
+      source = makePlayer("aid-range-source", seatByRole.source, "dusk", "ai", 4);
+    target.hp = 3;
+    const assault = instance("assault"),
+      garbage = instance("charge");
+    guardian.hand.push(assault, garbage);
+    const { game } = makeGame([ally, target, guardian, source]);
+    const realDiscard = game.aiController.chooseDiscards(guardian, 1)[0];
+    const visible = createAiVisibleState(guardian.id, game.state);
+    const state = structuredClone(visible);
+    const simulator = new AiSimulator(state),
+      outcome = {};
+    const vSource = state.players.find((player) => player.id === source.id),
+      vTarget = state.players.find((player) => player.id === target.id),
+      vGuardian = state.players.find((player) => player.id === guardian.id);
+    simulator.applyDamage(state, vSource, vTarget, 1, { canBlock: false, result: outcome });
+    return { assault, garbage, realDiscard, outcome, vGuardian };
+  };
+  // 敌人在距离 2（超距）：突袭保留价值 +5，弃垃圾牌保留突袭。
+  const stranded = run({ ally:0, target:2, guardian:1, source:3 });
+  assert.equal(stranded.realDiscard.id, stranded.garbage.id);
+  assert.deepEqual(stranded.outcome.guardianAidDiscards, [
+    { cardId: stranded.garbage.id, definitionId: "charge" }
+  ]);
+  assert.deepEqual(stranded.vGuardian.hand.map((card) => card.definitionId), ["assault"]);
+  assert.equal(stranded.vGuardian.expectedAssaultCount, 1);
+  assert.equal(stranded.vGuardian.assaultResponseProbability, 1);
+  // 敌人在距离 1（可攻击）：突袭可保留价值恢复，弃突袭并同步突袭摘要归零。
+  const inRange = run({ ally:0, target:1, guardian:2, source:3 });
+  assert.equal(inRange.realDiscard.id, inRange.assault.id);
+  assert.deepEqual(inRange.outcome.guardianAidDiscards, [
+    { cardId: inRange.assault.id, definitionId: "assault" }
+  ]);
+  assert.deepEqual(inRange.vGuardian.hand.map((card) => card.definitionId), ["charge"]);
+  assert.equal(inRange.vGuardian.expectedAssaultCount, 0);
+  assert.equal(inRange.vGuardian.assaultResponseProbability, 0);
+});
+
+test("AI·守誓者：护援反事实按真实弃牌语义使决策翻转", () => {
+  // 便宜牌 + 高价值格挡：确定性反事实知道会弃便宜牌，AID 收益超过未来额度成本。
+  const cheap = makeGuardianAidFlipGame(["charge", "block"]);
+  assert.equal(
+    cheap.game.aiController.responsePolicy.shouldUseGuardianAid(
+      cheap.guardian, { target: cheap.target, source: cheap.source, amount: 1 }
+    ),
+    true,
+    "能弃便宜牌时应正确护援"
+  );
+  // 若被迫弃高价值格挡（旧随机模拟可能高估成本），同一额度成本下应拒绝护援。
+  const forcedExpensive = makeGuardianAidFlipGame(["block"]);
+  assert.equal(
+    forcedExpensive.game.aiController.responsePolicy.shouldUseGuardianAid(
+      forcedExpensive.guardian, { target: forcedExpensive.target, source: forcedExpensive.source, amount: 1 }
+    ),
+    false,
+    "被迫弃高价值防御牌时不应护援"
+  );
+});
+
+test("AI·守誓者：手牌全为关键防御牌时即使确定性弃牌仍拒绝护援", () => {
+  const fixture = makeGuardianAidFlipGame(["block", "counter"]);
+  assert.equal(
+    fixture.game.aiController.responsePolicy.shouldUseGuardianAid(
+      fixture.guardian, { target: fixture.target, source: fixture.source, amount: 1 }
+    ),
+    false,
+    "所有手牌都关键且伤害收益低时仍应保留额度与手牌"
   );
 });
 

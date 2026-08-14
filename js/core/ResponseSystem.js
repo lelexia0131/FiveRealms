@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260813-oath-warden-planning";
-import { createId } from "../utils/helpers.js?build=20260813-oath-warden-planning";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260813-oath-warden-planning";
-import { RuleEngine } from "./RuleEngine.js?build=20260813-oath-warden-planning";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-discard";
+import { createId } from "../utils/helpers.js?build=20260814-guardian-aid-discard";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260814-guardian-aid-discard";
+import { RuleEngine } from "./RuleEngine.js?build=20260814-guardian-aid-discard";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

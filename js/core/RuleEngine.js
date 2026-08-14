@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260813-oath-warden-planning";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260813-oath-warden-planning";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260814-guardian-aid-discard";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-guardian-aid-discard";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

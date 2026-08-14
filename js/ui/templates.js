@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260813-oath-warden-planning";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260813-oath-warden-planning";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-discard";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260814-guardian-aid-discard";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

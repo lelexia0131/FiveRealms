@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260813-oath-warden-planning";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260813-oath-warden-planning";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260813-oath-warden-planning";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260814-guardian-aid-discard";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-guardian-aid-discard";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260814-guardian-aid-discard";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260813-oath-warden-planning";
-import { AnimationController } from "./animationController.js?build=20260813-oath-warden-planning";
-import { InteractionController } from "./InteractionController.js?build=20260813-oath-warden-planning";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260813-oath-warden-planning";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260813-oath-warden-planning";
-import { JudgmentView } from "./JudgmentView.js?build=20260813-oath-warden-planning";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260813-oath-warden-planning";
-import { createOpponentHandView } from "./handVisibility.js?build=20260813-oath-warden-planning";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260813-oath-warden-planning";
-import { SoundManager } from "../audio/SoundManager.js?build=20260813-oath-warden-planning";
+} from "./templates.js?build=20260814-guardian-aid-discard";
+import { AnimationController } from "./animationController.js?build=20260814-guardian-aid-discard";
+import { InteractionController } from "./InteractionController.js?build=20260814-guardian-aid-discard";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260814-guardian-aid-discard";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260814-guardian-aid-discard";
+import { JudgmentView } from "./JudgmentView.js?build=20260814-guardian-aid-discard";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-guardian-aid-discard";
+import { createOpponentHandView } from "./handVisibility.js?build=20260814-guardian-aid-discard";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260814-guardian-aid-discard";
+import { SoundManager } from "../audio/SoundManager.js?build=20260814-guardian-aid-discard";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
