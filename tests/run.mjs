@@ -10386,6 +10386,74 @@ test("AI·搜索：前沿未实现价值只计一次且不随搜索深度重复�
   assert.equal(planner.composeCandidateValue(1, 0, 0, 0, 0, 0), 1);
 });
 
+// ---- 通用 Planner end 机会成本语义（END-A / END-B）----
+
+test("AI·搜索：END-A 真实负收益 sibling 不被固定 end 惩罚强制执行", async () => {
+  // 非灵医角色（刃行者）：唯一非 end 合法动作是打破弱点，真实经济结果为负；
+  // 直接结束不应因“存在合法 sibling”被固定 -0.8 惩罚而被迫执行负收益动作。
+  const players = [
+    {
+      id: "a", team: "dawn", general: "blade-walker", hp: 4, energy: 2,
+      hand: [instance("exposeWeakness")], turnFlags: {}, aiMemory: { knownCardsByPlayer: {} }, seatIndex: 0
+    },
+    { id: "b", team: "dusk", general: "oath-warden", hp: 4, energy: 1, hand: [], seatIndex: 1 },
+    { id: "c", team: "dusk", general: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 2 },
+    { id: "d", team: "dawn", general: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 3 },
+    { id: "e", team: "dusk", general: "ember-magus", hp: 4, energy: 1, hand: [], seatIndex: 4 }
+  ];
+  const game = makeBenchmarkGame({ players, options: { actorId: "a" } });
+  const actor = game.state.players[0];
+  game.aiSearchNodeBudgetOverride = 800;
+  game.aiRandomnessRange = 0;
+  const visible = createAiVisibleState(
+    "a", game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const roots = game.aiController.getLegalActions(actor);
+  const nonEnd = roots.find((action) => action.type !== "end");
+  assert.ok(nonEnd, "局面应存在合法 non-end 动作");
+  const sim = new AiSimulator(visible);
+  const after = sim.apply(visible, nonEnd, actor.id);
+  const ev = game.aiController.evaluator;
+  const realMarginal = ev.stateUtility(after, "a") - ev.stateUtility(visible, "a");
+  assert.ok(realMarginal < 0, `non-end 动作真实经济结果必须为负（实际 ${realMarginal.toFixed(3)}）`);
+  await game.aiController.planner.plan(actor, visible, roots, { gameId: game.state.gameId });
+  const stats = game.aiController.planner.lastSearchStats;
+  assert.equal(stats.bestSequence[0].type, "end", "负收益 sibling 存在时仍应选择 end");
+  assert.ok(stats.bestValueScore >= -1e-9, "无正收益机会时 end 不应被固定 -0.8 负向惩罚");
+});
+
+test("AI·搜索：END-B 零/近零收益 sibling 不被固定 end 惩罚强制行动", async () => {
+  // 破坏装备的真实经济边际约等于 0（轻微负值）：不得因存在该 sibling 给 end 固定 -0.8 而被迫执行。
+  const players = [
+    {
+      id: "a", team: "dawn", general: "blade-walker", hp: 4, energy: 2,
+      hand: [instance("destroy")], turnFlags: {}, aiMemory: { knownCardsByPlayer: {} }, seatIndex: 0
+    },
+    { id: "b", team: "dusk", general: "oath-warden", hp: 4, energy: 1, hand: [], equipment: instance("battleDevice"), seatIndex: 1 },
+    { id: "c", team: "dusk", general: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 2 },
+    { id: "d", team: "dawn", general: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 3 },
+    { id: "e", team: "dusk", general: "ember-magus", hp: 4, energy: 1, hand: [], seatIndex: 4 }
+  ];
+  const game = makeBenchmarkGame({ players, options: { actorId: "a" } });
+  const actor = game.state.players[0];
+  game.aiSearchNodeBudgetOverride = 800;
+  game.aiRandomnessRange = 0;
+  const visible = createAiVisibleState(
+    "a", game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const roots = game.aiController.getLegalActions(actor);
+  const nonEnd = roots.find((action) => action.type !== "end");
+  assert.ok(nonEnd, "局面应存在合法 non-end 动作");
+  const sim = new AiSimulator(visible);
+  const after = sim.apply(visible, nonEnd, actor.id);
+  const ev = game.aiController.evaluator;
+  const realMarginal = ev.stateUtility(after, "a") - ev.stateUtility(visible, "a");
+  assert.ok(Math.abs(realMarginal) < 1, `近零 sibling 的真实边际应接近 0（实际 ${realMarginal.toFixed(3)}）`);
+  await game.aiController.planner.plan(actor, visible, roots, { gameId: game.state.gameId });
+  const stats = game.aiController.planner.lastSearchStats;
+  assert.equal(stats.bestSequence[0].type, "end", "近零/负 sibling 存在时 end 仍可被选择，不得被固定惩罚强制行动");
+});
+
 // ---- AI 卡牌行为·突袭 ----
 
 test("AI·突袭：共用突袭模拟覆盖护援弃牌、窥隙信息和余烬能量", () => {
@@ -14785,7 +14853,7 @@ test("AI·雷达：受攻击暴露时不会为静态略高的非防守装备确�
   assert.equal(selected.type, "end");
 });
 
-test("AI·雷达：无暴露且新装备明显更有价值时仍允许换雷达", async () => {
+test("AI·雷达：无暴露时不会因固定 end 惩罚被强制执行静态降级换装", async () => {
   const actor = makePlayer("radar-flex-actor", 0, "dawn", "ai", 3),
     f1 = makePlayer("radar-flex-f1", 1, "dawn"),
     b = makePlayer("radar-flex-b", 2, "dusk"),
@@ -14804,17 +14872,17 @@ test("AI·雷达：无暴露且新装备明显更有价值时仍允许换雷达"
     before = createAiVisibleState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)),
     swapAction = { type: "card", card: telescope, targets: [] },
     after = new AiSimulator(before).apply(before, swapAction, actor.id),
-    swapScore = evaluator.actionUtility(swapAction, actor, before) + evaluator.stateUtility(after, actor.id) * 0.08,
-    endScore = evaluator.actionUtility({ type: "end" }, actor, before) + evaluator.stateUtility(before, actor.id) * 0.08;
-  assert.ok(swapScore - endScore > GAME_CONFIG.aiNearTieRange);
+    swapDelta = evaluator.stateUtility(after, actor.id) - evaluator.stateUtility(before, actor.id);
+  // 统一价值中 defenseDevice(9)→telescope(8) 是静态降级，无暴露时真实边际为负；
+  // 旧实现靠“存在合法 sibling 就给 end 固定 -0.8”强制换装，新语义按真实价值拒绝。
+  assert.ok(swapDelta < 0, `换装真实边际必须为负（实际 ${swapDelta.toFixed(3)}）`);
   const selected = await game.aiController.planner.plan(
     actor,
     before,
     [swapAction, { type: "end" }],
     { gameId: game.state.gameId }
   );
-  assert.equal(selected.type, "card");
-  assert.equal(selected.card.id, telescope.id);
+  assert.equal(selected.type, "end", "静态降级换装（真实负收益 sibling）不应被固定 end 惩罚强制执行");
 });
 
 test("AI·雷达：敌方雷达动态免伤按阵营符号反向计入己方效用", () => {
@@ -15097,7 +15165,7 @@ test("AI·充能桩：保留概率 1/0.5/0 连续缩放动态价值", () => {
   assertClose(evaluator.energyDeviceFutureUtility(zero), 0);
 });
 
-test("AI·充能桩：门槛场景 Planner 在静态同值换装时仍计入未来价值损失", async () => {
+test("AI·充能桩：门槛场景静态同值换装因未来价值损失被拒绝", async () => {
   // 守誓者：充能桩与回收站有效值均为 7；手中没有战术牌，避免候选装备
   // 的动态摸牌效果干扰充能桩未来能量价值对比。
   const actor = makePlayer("energy-keep-actor", 0, "dawn", "ai", 1),
@@ -15117,21 +15185,18 @@ test("AI·充能桩：门槛场景 Planner 在静态同值换装时仍计入未�
     beforeActor = before.players.find((entry) => entry.id === actor.id),
     swapAction = { type: "card", card: actor.hand[0], targets: [] },
     after = new AiSimulator(before).apply(before, swapAction, actor.id),
-    swapScore = evaluator.actionUtility(swapAction, actor, before)
-      + evaluator.stateUtility(after, actor.id) * 0.08,
-    endScore = evaluator.actionUtility({ type: "end" }, actor, before)
-      + evaluator.stateUtility(before, actor.id) * 0.08;
+    swapDelta = evaluator.stateUtility(after, actor.id) - evaluator.stateUtility(before, actor.id);
   assertClose(evaluator.energyDeviceFutureUtility(beforeActor), 5.2);
-  assert.ok(swapScore > endScore);
-  assert.ok(swapScore - endScore < evaluator.energyDeviceFutureUtility(beforeActor) * .08);
+  // 同值换装（充能桩→回收站）的真实边际应体现充能桩未来能量价值损失（约 -5.2 量级），
+  // 因此 Planner 按新机会成本语义拒绝该负收益换装，而不是靠 end 固定 -0.8 强制。
+  assert.ok(swapDelta < -1, `换装应计入未来价值损失（实际 ${swapDelta.toFixed(3)}）`);
   const selected = await game.aiController.planner.plan(
     actor, before, [swapAction, { type: "end" }], { gameId: game.state.gameId }
   );
-  assert.equal(selected.type, "card");
-  assert.equal(selected.card.id, actor.hand[0].id);
+  assert.equal(selected.type, "end", "负收益换装（未来价值损失）不应被固定 end 惩罚强制执行");
 });
 
-test("AI·充能桩：接近 cap 时允许换掉充能桩", async () => {
+test("AI·充能桩：接近 cap 时静态等值换装仍按真实边际拒绝", async () => {
   const actor = makePlayer("energy-swap-actor", 0, "dawn", "ai", 4),
     ally1 = makePlayer("energy-swap-ally-1", 1, "dawn", "ai", 1),
     enemy1 = makePlayer("energy-swap-enemy-1", 2, "dusk", "ai", 0),
@@ -15151,17 +15216,15 @@ test("AI·充能桩：接近 cap 时允许换掉充能桩", async () => {
     beforeActor = before.players.find((entry) => entry.id === actor.id),
     swapAction = { type: "card", card: battle, targets: [] },
     after = new AiSimulator(before).apply(before, swapAction, actor.id),
-    swapScore = evaluator.actionUtility(swapAction, actor, before)
-      + evaluator.stateUtility(after, actor.id) * 0.08,
-    endScore = evaluator.actionUtility({ type: "end" }, actor, before)
-      + evaluator.stateUtility(before, actor.id) * 0.08;
+    swapDelta = evaluator.stateUtility(after, actor.id) - evaluator.stateUtility(before, actor.id);
   assertClose(evaluator.energyDeviceFutureUtility(beforeActor), 0);
-  assert.ok(swapScore - endScore > GAME_CONFIG.aiNearTieRange);
+  // 接近 cap 时充能桩未来价值为 0，但等值换装仍消耗手牌、无净收益，真实边际为负；
+  // 旧实现靠 end 固定 -0.8 强制换装，新机会成本语义按真实价值拒绝。
+  assert.ok(swapDelta < 0, `等值换装真实边际应为负（实际 ${swapDelta.toFixed(3)}）`);
   const selected = await game.aiController.planner.plan(
     actor, before, [swapAction, { type: "end" }], { gameId: game.state.gameId }
   );
-  assert.equal(selected.type, "card");
-  assert.equal(selected.card.id, battle.id);
+  assert.equal(selected.type, "end", "负收益等值换装不应被固定 end 惩罚强制执行");
 });
 
 test("AI·充能桩：空槽装备充能桩保持合理正价值", async () => {
@@ -15994,7 +16057,7 @@ test("AI·望远镜与屏障：屏障挡住两个敌人时不会为略高静态�
   assert.equal(selected.type, "end");
 });
 
-test("AI·望远镜与屏障：屏障未挡住任何人且望远镜打开攻击距离时仍允许换装", async () => {
+test("AI·望远镜与屏障：屏障未挡住任何人时静态降级换装按真实价值拒绝", async () => {
   const actor = makePlayer("barrier-flex-actor", 0, "dawn", "ai", 0),
     filler = makePlayer("barrier-flex-filler", 1, "dawn"),
     b = makePlayer("barrier-flex-b", 2, "dusk"),
@@ -16016,8 +16079,9 @@ test("AI·望远镜与屏障：屏障未挡住任何人且望远镜打开攻击�
     [{ type: "card", card: telescope, targets: [] }, { type: "end" }],
     { gameId: game.state.gameId }
   );
-  assert.equal(selected.type, "card");
-  assert.equal(selected.card.id, telescope.id);
+  // 屏障(9)→望远镜(8) 在统一价值中为静态降级（无敌人被屏障挡住时尤其如此），
+  // 旧实现靠 end 固定 -0.8 强制换装；新机会成本语义按真实边际拒绝负收益 sibling。
+  assert.equal(selected.type, "end", "静态降级换装（真实负收益 sibling）不应被固定 end 惩罚强制执行");
 });
 
 // ---- AI 角色行为·刃行者 ----

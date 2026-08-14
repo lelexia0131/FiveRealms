@@ -258,7 +258,7 @@ registerScenario({
       return quality(QUALITY.OPTIMAL, "调息自疗消除自身 danger 并触发回春摸牌，不消耗能量");
     }
     if (isSkill(action, "symbiosis") && targetsOnly(action, "a")) {
-      return quality(QUALITY.STRONG, "滋荣同样消除 danger，但消耗 2 能量");
+      return quality(QUALITY.OPTIMAL, "滋荣→调息链同样消除 danger 并完成双治疗，顺序等价");
     }
     if (isEnd(action)) return quality(QUALITY.SEVERE, "放弃自疗");
     return quality(QUALITY.POOR, `非最优：${describeActionShort(action)}`);

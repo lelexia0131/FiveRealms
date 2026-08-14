@@ -7,6 +7,9 @@ import { AiSimulator } from "./AiSimulator.js?build=20260814-spirit-medic-heal-e
 import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260814-spirit-medic-heal-economics";
 import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260814-spirit-medic-heal-economics";
 
+/** end 机会成本上限（未缩放）：与 actionEconomicValue(end) 的旧默认 -0.8 同量纲。 */
+const END_OPPORTUNITY_CAP = 0.8;
+
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
   constructor(game, evaluator) {
@@ -353,13 +356,13 @@ export class AiPlanner {
      * immediate 只取 actionEconomicValue（不在 stateDelta 中的经济量）；静态先验
      * 与隐藏世界格挡先验都移到 searchPrior，避免与 stateDelta 的卡片机会成本重复计价。
      */
-    const transitionScore = (action, beforeState, afterState, depth = 1, endHasPlayableSibling = false) => {
+    const transitionScore = (action, beforeState, afterState, depth = 1, endOpportunityCost = 0) => {
       const executionProbability = action.executionProbability ?? 1;
-      // end 的 -0.8 只表达“放弃仍可兑现的出牌机会”：当本 parent 不存在任何可执行的
-      // 非 end 候选（如回春摸到的未知牌、仅剩响应牌）时，结束没有可放弃的机会，
-      // 经济价值为 0，避免“治疗 + 回春摸牌 → end”被反向压制（BLOCKER 1）。
-      const economicValue = action.type === "end" && !endHasPlayableSibling
-        ? 0
+      // end 的最终机会成本来自同一 parent 的真实正收益 sibling 边际（已封顶），
+      // 而不是“存在任意合法 non-end action”：负收益/近零 sibling 不应让 end 被固定
+      // -0.8 惩罚而强制 AI 执行负收益动作；有 +10 机会时成本也不超过 END_OPPORTUNITY_CAP。
+      const economicValue = action.type === "end"
+        ? -endOpportunityCost
         : (this.evaluator.actionEconomicValue
           ? this.evaluator.actionEconomicValue(action, player, beforeState)
           : 0);
@@ -386,7 +389,8 @@ export class AiPlanner {
     const rootCandidates = [];
     const rootLedgers = [];
     let bestRootNonSealBase = -Infinity;
-    const hasPlayableRoot = rootActions.some((entry) => entry.type !== "end");
+    // 根层 end 机会成本：只累计真实正收益 non-end sibling 的未缩放边际（depth=1，baseTransition 即未缩放）。
+    let bestPositiveRootMarginal = 0;
     for (const action of rootActions) {
       // 与旧实现一致：至少处理一个根动作，随后到达时间/节点预算立即停止；
       // beam 在第二遍才填充，因此用 rootCandidates.length 作为“已处理”信号。
@@ -408,7 +412,7 @@ export class AiPlanner {
           visibleState, state, player.id, rootRemainingExposeStacks
         )
         : rootRemainingExposeStacks;
-      const baseTransition = transitionScore(action, visibleState, state, 1, hasPlayableRoot);
+      const baseTransition = transitionScore(action, visibleState, state, 1, 0);
       // owner-local ledger 是诊断 representation；响应净值在 composeCandidateValue 中
       // 先减后加，最终严格回到 baseTransition。生产评分不需要为每个根候选构造反事实，
       // 只有显式审计时才按需生成，评分公式仍由同一入口验证该恒等式。
@@ -429,6 +433,9 @@ export class AiPlanner {
       if (action.card?.definitionId !== "seal" && action.type !== "end") {
         bestRootNonSealBase = Math.max(bestRootNonSealBase, baseTransition);
       }
+      if (action.type !== "end") {
+        bestPositiveRootMarginal = Math.max(bestPositiveRootMarginal, baseTransition);
+      }
       rootCandidates.push({
         action, state, exposeMarginal, assaultStacksCredit, remainingRootExposeStacks, baseTransition,
         candidateLedger, frontierResidual, responseNet, frontierValue
@@ -448,6 +455,11 @@ export class AiPlanner {
           return { type:"end" };
         }
       }
+    }
+    // end 根候选的机会成本按真实正收益 sibling 边际计算（封顶），而不是 sibling 存在性。
+    const endRootCandidate = rootCandidates.find((candidate) => candidate.action.type === "end");
+    if (endRootCandidate) {
+      endRootCandidate.baseTransition = -Math.min(END_OPPORTUNITY_CAP, bestPositiveRootMarginal);
     }
     for (const candidate of rootCandidates) {
       // 根 depth=1：delayCost = 最佳非封印 base transition / (1 + 1)。
@@ -496,7 +508,8 @@ export class AiPlanner {
         // 最佳非封印即时动作后，再只对 seal 候选应用“延迟一步”的 timing penalty。
         const nodeCandidates = [];
         let bestNonSealBase = -Infinity;
-        const hasPlayableFollow = followActions.some((entry) => entry.type !== "end");
+        // 深层 end 机会成本：只累计真实正收益 non-end follow 的未缩放边际（baseTransition×depth）。
+        let bestPositiveFollowMarginal = 0;
         for (const follow of followActions) {
           if (limitReached()) break;
           if (follow.card?.definitionId === "assault" && !rootAssaultTargets.has(follow.targets?.[0]?.id)) discoveredDynamicTarget = true;
@@ -514,7 +527,7 @@ export class AiPlanner {
               node.state, state, player.id, node.remainingRootExposeStacks
             )
             : node.remainingRootExposeStacks;
-          const baseTransition = transitionScore(follow, node.state, state, depth, hasPlayableFollow);
+          const baseTransition = transitionScore(follow, node.state, state, depth, 0);
           // 深层候选只附加 frontier-only residual：owner ledger / 响应反事实只对根
           // 候选计算（代价有界），深层节点以恒定小开销推进，避免拉长搜索时延。
           const frontierResidual = Boolean(state.playPhaseEnded)
@@ -527,6 +540,9 @@ export class AiPlanner {
           if (follow.card?.definitionId !== "seal" && follow.type !== "end") {
             bestNonSealBase = Math.max(bestNonSealBase, baseTransition);
           }
+          if (follow.type !== "end") {
+            bestPositiveFollowMarginal = Math.max(bestPositiveFollowMarginal, baseTransition * depth);
+          }
           nodeCandidates.push({
             follow, state, exposeMarginal, assaultStacksCredit, remainingRootExposeStacks, baseTransition,
             frontierResidual, frontierValue
@@ -536,6 +552,11 @@ export class AiPlanner {
             if (!(await this.game.cleanupManager.delay(0)) || !this.game.isSessionValid(options.gameId ?? this.game.state.gameId)) return { type:"end" };
           }
           if (limitReached()) break;
+        }
+        // end follow 的机会成本按真实正收益 sibling 边际计算（封顶），而不是 sibling 存在性。
+        const endFollowCandidate = nodeCandidates.find((candidate) => candidate.follow.type === "end");
+        if (endFollowCandidate) {
+          endFollowCandidate.baseTransition = -Math.min(END_OPPORTUNITY_CAP, bestPositiveFollowMarginal) / depth;
         }
         for (const candidate of nodeCandidates) {
           // 当前 depth=d：替代 base transition 已是 U/d，延迟一步贡献 U/(d+1)，
@@ -573,9 +594,37 @@ export class AiPlanner {
     }
     // 终局选择必须只按真实 valueScore 重新排序，search credit 不得影响最终比较。
     activeBeam.sort((a,b) => b.valueScore - a.valueScore);
-    const choice = nodeBudget !== null && limitReached()
+    let choice = nodeBudget !== null && limitReached()
       ? bestCandidate
       : this.chooseCandidate(activeBeam);
+    // end fallback：即使 end 因 search prior 被 beam 剪掉，只要搜索到的候选真实价值
+    // 都不超过 end 的机会成本修正价值（root depth=1），最终仍必须能选择 end，
+    // 保证负收益动作永远不会因为“end 被剪枝”而被强制执行。
+    const rootEndAction = rootActions.find((action) => action.type === "end");
+    const endInFinalBeam = activeBeam.some((node) => node.action?.type === "end");
+    if (rootEndAction && !endInFinalBeam) {
+      const endFallbackBase = -Math.min(END_OPPORTUNITY_CAP, bestPositiveRootMarginal);
+      const endTerminal = simulator.apply(visibleState, rootEndAction, player.id);
+      const endFrontier = Boolean(endTerminal.playPhaseEnded)
+        ? this.frontierResidualOf(endTerminal, player.id)
+        : null;
+      const endFallbackValue = endFallbackBase
+        + (endFrontier
+          ? (endFrontier.held.recover + endFrontier.held.recycle) * STATE_DELTA_SCALE
+          : 0);
+      if (!choice || endFallbackValue > choice.valueScore) {
+        choice = {
+          action: rootEndAction,
+          state: endTerminal,
+          terminal: true,
+          valueScore: endFallbackValue,
+          pruneScore: endFallbackValue,
+          sequence: [rootEndAction],
+          remainingHistory: [],
+          frontierResidual: endFrontier
+        };
+      }
+    }
     const selectedSequence = [...(choice?.sequence ?? [])];
     const endIndex = selectedSequence.findIndex((action) => action.type === "end");
     this.lastPlannedSequence = (endIndex >= 0 ? selectedSequence.slice(0, endIndex + 1) : selectedSequence)
