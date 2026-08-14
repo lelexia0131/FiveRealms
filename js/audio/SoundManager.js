@@ -3,13 +3,13 @@
  * AudioContext 只会在用户首次交互后创建，以符合浏览器的自动播放策略。
  */
 
-import { Debug } from "../utils/debug.js?build=20260814-spirit-medic-heal-economics";
+import { Debug } from "../utils/debug.js?build=20260814-ai-state-contract";
 
 const STORAGE_KEY = "five-realms-audio-enabled";
 const MUSIC_VOLUME_KEY = "five-realms-music-volume";
 const DEFAULT_MUSIC_VOLUME = 0.75;
 /** 真实雷击采样（用户选定素材），URL 带当前统一 build 防止浏览器缓存旧声音。 */
-const LIGHTNING_SOURCE = "../../assets/audio/lightning.wav?build=20260814-spirit-medic-heal-economics";
+const LIGHTNING_SOURCE = "../../assets/audio/lightning.wav?build=20260814-ai-state-contract";
 
 // 0–75% 保持原来的线性手感，最后四分之一提供额外余量，让需要更响 BGM 的玩家可以继续推高。
 const musicGainForVolume = (volume) => {

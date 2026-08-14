@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claude Supervisor"
+  short_description: "Supervise Claude Code work safely"
+  default_prompt: "Use $claude-supervisor to delegate this FiveRealms task to Claude Code, supervise it, and verify the result."

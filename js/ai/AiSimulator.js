@@ -2,27 +2,29 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260814-spirit-medic-heal-economics";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-spirit-medic-heal-economics";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-spirit-medic-heal-economics";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-spirit-medic-heal-economics";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-spirit-medic-heal-economics";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-spirit-medic-heal-economics";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260814-spirit-medic-heal-economics";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260814-ai-state-contract";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-state-contract";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-state-contract";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-state-contract";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-ai-state-contract";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-ai-state-contract";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260814-ai-state-contract";
 import {
   counterOpportunityCost,
   globalBenefitCounterDesire,
   mutualBenefitDraftValues
-} from "./AiGlobalBenefit.js?build=20260814-spirit-medic-heal-economics";
-import { HP_VALUE } from "./AiEconomics.js?build=20260814-spirit-medic-heal-economics";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260814-spirit-medic-heal-economics";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-spirit-medic-heal-economics";
-import { getDiscardKeepValue } from "./discardScoring.js?build=20260814-spirit-medic-heal-economics";
+} from "./AiGlobalBenefit.js?build=20260814-ai-state-contract";
+import { HP_VALUE } from "./AiEconomics.js?build=20260814-ai-state-contract";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260814-ai-state-contract";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-ai-state-contract";
+import { getDiscardKeepValue } from "./discardScoring.js?build=20260814-ai-state-contract";
+import {
+  RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
+  buildRadarJudgmentProbabilities
+} from "./AiProbabilityBranches.js?build=20260814-ai-state-contract";
 import {
   PROBABILITY_EPSILON,
-  RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
   availableBranchesFromState,
-  buildRadarJudgmentProbabilities,
   expectedBranchValue,
   getAvailabilityBranches,
   getAvailabilityStateBranches,
@@ -32,7 +34,8 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260814-spirit-medic-heal-economics";
+} from "./state/Probability.js?build=20260814-ai-state-contract";
+import { cloneSearchState } from "./state/SearchState.js?build=20260814-ai-state-contract";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -94,8 +97,18 @@ const unionProbability = (oldProbability, newProbability) => 1
   - (1 - clampProbability(oldProbability)) * (1 - clampProbability(newProbability));
 
 export class AiSimulator {
+  /*
+   * 功能：创建只拥有独立 SearchState 根世界的轻量模拟器。
+   * 调用方：AiPlanner、模拟器测试与性能基准。
+   * 输入：不含 Game 引用的合法 SearchState 根快照。
+   * 输出：新的 AiSimulator 实例并完成既有兼容摘要初始化。
+   * 读取状态：仅输入 SearchState。
+   * 写入状态：实例 initial 与递归结算守卫。
+   * 调用函数：cloneSearchState、各 initialize 兼容初始化器。
+   * 边界与不变量：构造过程不得回读 GameState，初始世界不得与根快照共享可变状态。
+   */
   constructor(visibleState) {
-    this.initial = structuredClone(visibleState);
+    this.initial = cloneSearchState(visibleState);
     this.initializeEquipmentBaselines(this.initial);
     this.initializeAssaultSummaries(this.initial);
     this.initializeBlockCountDistributions(this.initial);
@@ -105,8 +118,18 @@ export class AiSimulator {
     this._simulatingRootResolution = false;
   }
 
+  /*
+   * 功能：创建一个与输入和兄弟分支隔离的可变 SearchState 模拟世界。
+   * 调用方：AiPlanner 搜索节点展开、Simulator 内部反事实分支与测试。
+   * 输入：可选 SearchState；缺省使用模拟器初始世界。
+   * 输出：完成兼容摘要同步的独立 SearchState 克隆。
+   * 读取状态：仅输入或实例 initial SearchState。
+   * 写入状态：仅写新克隆的初始化字段。
+   * 调用函数：cloneSearchState、既有初始化器、syncActiveSkillCosts。
+   * 边界与不变量：不得回读 GameState，任何写入不得污染输入、initial 或其他克隆。
+   */
   clone(state = this.initial) {
-    const cloned = structuredClone(state);
+    const cloned = cloneSearchState(state);
     this.initializeEquipmentBaselines(cloned);
     this.initializeBlockCountDistributions(cloned);
     this.initializeCounterCountDistributions(cloned);

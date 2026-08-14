@@ -14,7 +14,15 @@ import { TeamRuleService } from "../js/core/TeamRuleService.js";
 import { DistanceSystem } from "../js/core/DistanceSystem.js";
 import { RuleEngine } from "../js/core/RuleEngine.js";
 import { CardSelectionSystem } from "../js/core/CardSelectionSystem.js";
-import { createAiVisibleState } from "../js/ai/AiVisibleState.js";
+import { createAiStateContracts, createAiVisibleState } from "../js/ai/AiVisibleState.js";
+import { createVisibleState } from "../js/ai/state/VisibleState.js";
+import { createKnowledgeState } from "../js/ai/state/Knowledge.js";
+import { createBeliefState } from "../js/ai/state/BeliefState.js";
+import { cloneSearchState } from "../js/ai/state/SearchState.js";
+import {
+  joinProbabilityStateBranches as joinStateProbabilityBranches,
+  totalBranchProbability
+} from "../js/ai/state/Probability.js";
 import { AiSimulator } from "../js/ai/AiSimulator.js";
 import { ThreatCalculator } from "../js/ai/ThreatCalculator.js";
 import { STATE_DELTA_SCALE, HP_RISK_OPTION_WEIGHT } from "../js/ai/AiEvaluator.js";
@@ -8342,6 +8350,187 @@ test("隐藏信息：牌背多阶段 pending 会锁住手牌、技能和结束�
 });
 
 // ==================== AI 系统 ====================
+
+// ---- AI 系统·State Contract ----
+
+/*
+ * 功能：验证 VisibleState 只由公开事实与观察者自己的手牌决定。
+ * 调用方：AI 状态契约回归测试。
+ * 输入：手牌数量相同但敌方未知牌定义不同的两个 GameState 时刻。
+ * 输出：两个投影完全一致，且敌方投影不含手牌与推测字段。
+ * 读取状态：测试 GameState、VisibleState。
+ * 写入状态：测试夹具中的敌方手牌。
+ * 调用函数：createVisibleState。
+ * 边界与不变量：敌方未知牌定义变化不得影响 VisibleState。
+ */
+function testVisibleStateExcludesHiddenDefinitions() {
+  const actor = makePlayer("state-actor", 0, "dawn"), enemy = makePlayer("state-enemy", 1, "dusk");
+  actor.hand.push(instance("assault"));
+  enemy.hand.push(instance("recover"));
+  const { game } = makeGame([actor, enemy]);
+  const first = createVisibleState(actor.id, game.state);
+  enemy.hand = [instance("counter")];
+  const second = createVisibleState(actor.id, game.state);
+
+  assert.deepEqual(second, first);
+  assert.equal(first.players[1].hand, undefined);
+  assert.equal(first.players[1].handCount, 1);
+  assert.equal(first.players[1].expectedRecoverCount, undefined);
+  assert.equal(first.remainingCardCounts, undefined);
+  assert.equal(first.playPhaseEnded, undefined);
+  assert.equal(first.players[0].hand[0].definitionId, "assault");
+  assert.equal(Object.isFrozen(first.players[1]), true);
+}
+
+test("AI·状态契约：VisibleState 不泄漏敌方未知牌定义", testVisibleStateExcludesHiddenDefinitions);
+
+/*
+ * 功能：验证 Knowledge 只投影观察者合法记录的实体牌记忆。
+ * 调用方：AI 状态契约回归测试。
+ * 输入：包含一张合法已知牌与一张未知牌的敌方手牌。
+ * 输出：Knowledge 仅包含合法记忆中的牌实体与定义。
+ * 读取状态：玩家 aiMemory、VisibleState 玩家身份。
+ * 写入状态：测试夹具中的合法 AI 记忆。
+ * 调用函数：createVisibleState、createKnowledgeState。
+ * 边界与不变量：Knowledge 不得用真实敌方手牌补全未知位置。
+ */
+function testKnowledgeStateUsesOnlyLegalMemory() {
+  const actor = makePlayer("knowledge-actor", 0, "dawn"), enemy = makePlayer("knowledge-enemy", 1, "dusk");
+  const known = instance("block"), unknown = instance("recover");
+  enemy.hand.push(known, unknown);
+  actor.aiMemory.knownCardsByPlayer[enemy.id] = { [known.id]:known.definitionId };
+  const { game } = makeGame([actor, enemy]);
+  const visible = createVisibleState(actor.id, game.state);
+  const knowledge = createKnowledgeState(actor, visible);
+
+  assert.deepEqual(knowledge.knownCardsByPlayer[enemy.id], [
+    { cardId:known.id, definitionId:"block" }
+  ]);
+  assert.equal(JSON.stringify(knowledge).includes("recover"), false);
+  assert.equal(Object.isFrozen(knowledge.knownCardsByPlayer[enemy.id]), true);
+}
+
+test("AI·状态契约：Knowledge 只保存合法实体记忆", testKnowledgeStateUsesOnlyLegalMemory);
+
+/*
+ * 功能：验证 BeliefState 从合法记忆、未知槽位数量和剩余牌计数推导概率。
+ * 调用方：AI 状态契约回归测试。
+ * 输入：敌方一张已知格挡、一张未知牌及固定剩余牌计数。
+ * 输出：符合二项分布的期望值，且真实未知牌换面不改变结果。
+ * 读取状态：VisibleState、Knowledge、剩余牌计数。
+ * 写入状态：测试夹具中的敌方未知手牌。
+ * 调用函数：createBeliefState、createKnowledgeState、createVisibleState。
+ * 边界与不变量：Belief 不读取真实未知牌，且不持有调用方计数对象的可变引用。
+ */
+function testBeliefStateDerivesLegalDistribution() {
+  const actor = makePlayer("belief-actor", 0, "dawn"), enemy = makePlayer("belief-enemy", 1, "dusk");
+  const known = instance("block");
+  enemy.hand.push(known, instance("recover"));
+  actor.aiMemory.knownCardsByPlayer[enemy.id] = { [known.id]:known.definitionId };
+  const { game } = makeGame([actor, enemy]);
+  const counts = { block:1, assault:3 };
+  const firstVisible = createVisibleState(actor.id, game.state);
+  const knowledge = createKnowledgeState(actor, firstVisible);
+  const first = createBeliefState(actor.id, firstVisible, knowledge, counts);
+  enemy.hand = [known, instance("counter")];
+  const secondVisible = createVisibleState(actor.id, game.state);
+  const second = createBeliefState(actor.id, secondVisible, knowledge, counts);
+
+  assertClose(first.playersById[enemy.id].expectedBlockCount, 1.25);
+  assert.equal(first.playersById[enemy.id].blockProbability, 1);
+  assertClose(first.playersById[enemy.id].twoBlockProbability, 0.25);
+  assert.deepEqual(second, first);
+  counts.block = 99;
+  assert.equal(first.remainingCardCounts.block, 1);
+  assert.equal(Object.isFrozen(first.remainingCardCounts), true);
+}
+
+test("AI·状态契约：Belief 从合法计数与记忆推导", testBeliefStateDerivesLegalDistribution);
+
+/*
+ * 功能：验证 SearchState 克隆生成与 GameState 无关的独立可变搜索世界。
+ * 调用方：AI 状态契约回归测试。
+ * 输入：由兼容入口组合完成的 SearchState。
+ * 输出：克隆可独立变更，原快照与后续克隆不受污染。
+ * 读取状态：SearchState。
+ * 写入状态：仅写第一个克隆的玩家、牌分支和剩余计数。
+ * 调用函数：cloneSearchState、createAiStateContracts。
+ * 边界与不变量：SearchState 不保留 Game 引用，任一克隆的写入不得串扰。
+ */
+function testSearchStateCloneIsolation() {
+  const actor = makePlayer("search-actor", 0, "dawn"), enemy = makePlayer("search-enemy", 1, "dusk");
+  actor.hand.push(instance("assault"));
+  enemy.hand.push(instance("block"));
+  const { game } = makeGame([actor, enemy]);
+  const contracts = createAiStateContracts(actor.id, game.state, { assault:2, block:3 });
+  const firstClone = cloneSearchState(contracts.searchState);
+  const secondClone = cloneSearchState(contracts.searchState);
+
+  firstClone.players[0].hp = 1;
+  firstClone.players[0].hand[0].availabilityStateBranches[0].available = false;
+  firstClone.remainingCardCounts.assault = 0;
+  assert.notEqual(firstClone.players[0].hp, contracts.searchState.players[0].hp);
+  assert.equal(contracts.searchState.players[0].hand[0].availabilityStateBranches[0].available, true);
+  assert.equal(secondClone.remainingCardCounts.assault, 2);
+  assert.equal("game" in contracts.searchState, false);
+  assert.equal("game" in firstClone, false);
+}
+
+test("AI·状态契约：SearchState 克隆隔离且不回读 Game", testSearchStateCloneIsolation);
+
+/*
+ * 功能：验证通用概率分支迁移后仍按共享世界条件联合并守恒概率质量。
+ * 调用方：AI 状态契约回归测试。
+ * 输入：两个共享同一二元条件、各自携带独立状态字段的完整分区。
+ * 输出：联合结果保持两个世界分支及总概率一。
+ * 读取状态：无。
+ * 写入状态：无。
+ * 调用函数：joinStateProbabilityBranches、totalBranchProbability。
+ * 边界与不变量：共享条件不得重复相乘，互斥条件不得错误合并。
+ */
+function testStateProbabilityPreservesSharedConditions() {
+  const left = [
+    { probability:0.3, conditions:{ radar:"present" }, attackUsed:0 },
+    { probability:0.7, conditions:{ radar:"absent" }, attackUsed:0 }
+  ];
+  const right = [
+    { probability:0.3, conditions:{ radar:"present" }, energy:2 },
+    { probability:0.7, conditions:{ radar:"absent" }, energy:1 }
+  ];
+  const joined = joinStateProbabilityBranches(left, right);
+
+  assert.equal(joined.length, 2);
+  assertClose(totalBranchProbability(joined), 1);
+  assert.deepEqual(joined.map((branch) => branch.conditions.radar).sort(), ["absent", "present"]);
+}
+
+test("AI·状态契约：Probability 联合共享条件时质量守恒", testStateProbabilityPreservesSharedConditions);
+
+/*
+ * 功能：验证旧可见状态入口严格委托给新的四层状态契约组合结果。
+ * 调用方：AI 状态契约回归测试。
+ * 输入：同一观察者、GameState 与剩余牌计数。
+ * 输出：兼容入口与显式 SearchState 结果深度一致。
+ * 读取状态：GameState、状态契约快照。
+ * 写入状态：无。
+ * 调用函数：createAiStateContracts、createAiVisibleState。
+ * 边界与不变量：迁移期间 Planner 与 Simulator 接收的扁平字段和值不得改变。
+ */
+function testStateContractCompatibilityFacade() {
+  const actor = makePlayer("facade-actor", 0, "dawn"), enemy = makePlayer("facade-enemy", 1, "dusk");
+  actor.hand.push(instance("recover"));
+  enemy.hand.push(instance("counter"));
+  const { game } = makeGame([actor, enemy]);
+  const counts = { recover:2, counter:4 };
+  const contracts = createAiStateContracts(actor.id, game.state, counts);
+
+  assert.deepEqual(createAiVisibleState(actor.id, game.state, counts), contracts.searchState);
+  assert.equal(contracts.visibleState.remainingCardCounts, undefined);
+  assert.equal(contracts.knowledgeState.knownCardsByPlayer[enemy.id].length, 0);
+  assert.equal(contracts.beliefState.playersById[enemy.id].counterProbability > 0, true);
+}
+
+test("AI·状态契约：兼容入口等价于显式 SearchState", testStateContractCompatibilityFacade);
 
 // ---- AI 核心状态·可见状态 ----
 

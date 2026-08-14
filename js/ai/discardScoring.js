@@ -6,8 +6,8 @@
  * 纯计算：不修改 state、不访问隐藏敌方手牌、不调用随机数、不依赖 UI。
  * 分数越低，越应被优先弃置。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-spirit-medic-heal-economics";
-import { getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-spirit-medic-heal-economics";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-state-contract";
+import { getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-ai-state-contract";
 
 /** 低生命时即时响应牌（usageMode "response"）的边际生存价值；按危险程度分档，非绝对规则。 */
 export const RESPONSE_SURVIVAL_BONUS_DANGER = 1;

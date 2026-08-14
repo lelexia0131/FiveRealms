@@ -2,10 +2,10 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-spirit-medic-heal-economics";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-spirit-medic-heal-economics";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260814-spirit-medic-heal-economics";
-import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260814-spirit-medic-heal-economics";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-state-contract";
+import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-state-contract";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260814-ai-state-contract";
+import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260814-ai-state-contract";
 
 /** end 机会成本上限（未缩放）：与 actionEconomicValue(end) 的旧默认 -0.8 同量纲。 */
 const END_OPPORTUNITY_CAP = 0.8;

@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-spirit-medic-heal-economics";
-import { createId } from "../utils/helpers.js?build=20260814-spirit-medic-heal-economics";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260814-spirit-medic-heal-economics";
-import { RuleEngine } from "./RuleEngine.js?build=20260814-spirit-medic-heal-economics";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-state-contract";
+import { createId } from "../utils/helpers.js?build=20260814-ai-state-contract";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260814-ai-state-contract";
+import { RuleEngine } from "./RuleEngine.js?build=20260814-ai-state-contract";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

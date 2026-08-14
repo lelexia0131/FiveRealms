@@ -1,5 +1,18 @@
 # FiveRealms Skill
 
+## 任务模式与长期事实来源
+
+开始工作前先判断本次任务模式，并在计划中明确写出：
+
+- `BUGFIX MODE`：单 Bug、回归修复与最小行为更改，继续遵守本文的根因、最小范围和测试流程。
+- `ARCHITECTURE/QUALITY MODE`：架构迁移、质量门禁、职责拆分或长期治理。以用户指定阶段为边界，不得顺带修改业务行为；除本文外，必须先读 `docs/architecture/CODE_STANDARD.md`，涉及 AI 时再读 `docs/architecture/AI_ENGINE.md`。
+- `BALANCE MODE`：规则、权重、数量或策略平衡；必须先读 `test.md` 的当前 Balance 入口与解释口径。
+- `DOCUMENTATION MODE`：只维护文档、工作流或治理文件；不得借机改生产逻辑。
+
+冲突优先级为：用户本次明确要求 > `AGENTS.md` > `docs/architecture/CODE_STANDARD.md` > 领域架构文档 > `test.md` > 现有实现与测试。发现文档和代码不一致时，先记录证据；只有本次任务明确授权时才迁移代码。
+
+`docs/architecture/CODE_STANDARD.md` 是函数头、模块头、内部注释和自动检查的唯一长期规范。`docs/architecture/AI_ENGINE.md` 是 AI 当前审计基线、目标边界、迁移顺序和验收规则的唯一长期架构事实来源。不要在本文件、Skill 或 Supervisor 提示中复制整份规范。
+
 ## 一、任务目标
 
 本规范主要用于 FiveRealms 的单 Bug 修复任务。

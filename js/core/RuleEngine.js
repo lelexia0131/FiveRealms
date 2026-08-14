@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260814-spirit-medic-heal-economics";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-spirit-medic-heal-economics";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260814-ai-state-contract";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-state-contract";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

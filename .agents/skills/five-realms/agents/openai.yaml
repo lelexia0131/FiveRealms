@@ -1,0 +1,4 @@
+interface:
+  display_name: "FiveRealms"
+  short_description: "Apply FiveRealms project workflow and quality gates"
+  default_prompt: "Use $five-realms to handle this FiveRealms repository task within the documented mode, scope, and verification rules."

@@ -230,8 +230,7 @@ $RECYCLE.BIN/
 .cursor/
 .windsurf/
 
-# Local Codex -> Claude Code supervisor (machine-specific workflow)
-.agents/skills/claude-supervisor/
+# Project agent skills under .agents/skills are architecture-controlled workflow files.
 
 # Local AI instruction scratch files
 
