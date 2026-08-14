@@ -2,18 +2,18 @@
  * AI 实体选牌策略。处理弃牌、公共牌和隐藏位置；已知实体可定向选择，未知牌只能
  * 按位置/随机源选择，绝不能通过 owner.hand 中的 definitionId 偷看后再决定位置。
  */
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-state-contract";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-state-contract";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-state-contract";
-import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260814-ai-state-contract";
-import { getRoleCardAiValue } from "./roleCardValue.js?build=20260814-ai-state-contract";
-import { chooseDiscardCandidates } from "./discardScoring.js?build=20260814-ai-state-contract";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-controller-di";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-controller-di";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-controller-di";
+import { buildTransferCandidates, chooseBestPositiveTransfer, chooseTransferHandCandidate, UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260814-ai-controller-di";
+import { getRoleCardAiValue } from "./roleCardValue.js?build=20260814-ai-controller-di";
+import { chooseDiscardCandidates } from "./discardScoring.js?build=20260814-ai-controller-di";
 import {
   chooseBestResourceHandCandidate,
   chooseResourceZone,
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-} from "./resourceSelectionValue.js?build=20260814-ai-state-contract";
+} from "./resourceSelectionValue.js?build=20260814-ai-controller-di";
 
 const globalKnownValue = (definitionId) => CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
 

@@ -19,6 +19,31 @@ export class PublicCardPool {
     return this.cards;
   }
 
+  /*
+  功能
+  按存活座次完成公开牌池轮选并清理剩余牌。
+
+  调用方
+  互利卡牌真实结算。
+
+  输入
+  发起轮选的 Player。
+
+  输出
+  完成返回 true；会话失效或游戏结束返回 false。
+
+  读取状态
+  当前 GameState、公开牌池、UI 与 AIController 公开选牌门面。
+
+  写入状态
+  玩家手牌、合法记忆、公开牌池、弃牌堆与 UI。
+
+  调用函数
+  Game.seatOrderFrom、UI.requestPublicCard、AIController.choosePublicCard、Deck.discard。
+
+  边界与不变量
+  真人的无效选择会在有效会话内重开；AI 无效返回安全退化为当前首牌。
+  */
   async draft(source) {
     const gameId = this.game.state.gameId;
     const living = this.game.seatOrderFrom(source, true).filter((player) => player.alive);
@@ -35,7 +60,7 @@ export class PublicCardPool {
           // 有效对局中的意外 null 或过期选择不能中止整张互利，重新请求当前角色选择。
           if (!card || !this.cards.includes(card)) card = null;
         }
-      } else card = this.game.aiController.cardSelector.choosePublicCard(player, this.cards);
+      } else card = this.game.aiController.choosePublicCard(player, this.cards);
       if (!this.game.isSessionValid(gameId) || this.game.state.isGameOver) return false;
       if (!player.alive) continue;
       if (!this.cards.length) break;

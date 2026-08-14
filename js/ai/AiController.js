@@ -1,30 +1,169 @@
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-state-contract";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260814-ai-state-contract";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260814-ai-state-contract";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260814-ai-state-contract";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260814-ai-state-contract";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260814-ai-state-contract";
-import { AiPlanner } from "./AiPlanner.js?build=20260814-ai-state-contract";
+/*
+模块职责
+作为 AI 组合根一次性构造组件、注入窄能力，并向真实执行边界提供稳定门面。
 
-/** AI 门面：负责组合生成、知识、评估、规划、响应和选牌模块。 */
+上游
+Game、ResponseSystem、PublicCardPool、角色技能与测试。
+
+下游
+状态组合、Knowledge、选择、响应、动作生成、评估与 Planner。
+
+状态边界
+只在门面入口读取当前 GameState；搜索组件仅接收 SearchState 与显式能力。
+
+信息边界
+隐藏信息只能经 Knowledge 和状态组合入口进入决策，门面不得暴露敌方未知牌面。
+
+架构约束
+子组件不得回指 AIController；公开子组件字段仅作迁移期兼容，生产上游应使用门面。
+*/
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-controller-di";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260814-ai-controller-di";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260814-ai-controller-di";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260814-ai-controller-di";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260814-ai-controller-di";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260814-ai-controller-di";
+import { AiPlanner } from "./AiPlanner.js?build=20260814-ai-controller-di";
+
 export class AIController {
+  /*
+  功能
+  按明确顺序构造 AI 组件，并把窄能力一次性注入依赖方。
+
+  调用方
+  Game 构造函数与直接构造测试。
+
+  输入
+  当前 Game 实例。
+
+  输出
+  完成装配的 AIController；缺少必要运行能力时由子组件构造立即失败。
+
+  读取状态
+  Game 的随机源、搜索覆盖配置、CleanupManager 与会话状态。
+
+  写入状态
+  仅写控制器组件字段。
+
+  调用函数
+  AiKnowledge、AiEvaluator、AiCardSelector、AiResponsePolicy、AiActionGenerator、AiPlanner 构造函数。
+
+  边界与不变量
+  装配无事后补丁；闭包持有具体组件或 Game 能力，不把 Controller 传给任何子组件。
+  */
   constructor(game) {
     this.game = game;
     this.knowledge = new AiKnowledge(game);
     this.evaluator = new AiEvaluator(game);
     this.cardSelector = new AiCardSelector(game, this.knowledge);
     this.responsePolicy = new AiResponsePolicy(game, this.evaluator, this.knowledge);
-    this.actionGenerator = new AiActionGenerator(game);
-    this.planner = new AiPlanner(game, this.evaluator);
+
+    const cardSelector = this.cardSelector;
+    this.actionGenerator = new AiActionGenerator(game, {
+      chooseTransferCombination: (...args) => cardSelector.chooseTransferCombination(...args),
+    });
+
+    const actionGenerator = this.actionGenerator;
+    const knowledge = this.knowledge;
+    this.planner = new AiPlanner({
+      evaluator: this.evaluator,
+      generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
+      sampleHiddenWorlds: (...args) => knowledge.sampleHiddenWorlds(...args),
+      random: () => game.random(),
+      getRandomnessRange: () => game.aiRandomnessRange,
+      getSearchTimeBudget: () => game.aiSearchBudgetOverrideMs,
+      getSearchNodeBudget: () => game.aiSearchNodeBudgetOverride,
+      yieldControl: async (gameId) => (
+        await game.cleanupManager.delay(0)
+      ) && game.isSessionValid(gameId ?? game.state.gameId),
+    });
   }
 
-  getLegalActions(player) { return this.actionGenerator.generate(player); }
+  /*
+  功能
+  通过动作生成器返回当前真实局面的合法 AI 动作。
+
+  调用方
+  Game、selectAction、动作重绑与测试。
+
+  输入
+  当前行动 Player。
+
+  输出
+  合法动作数组。
+
+  读取状态
+  当前 GameState 与 RuleEngine 权威。
+
+  写入状态
+  无。
+
+  调用函数
+  AiActionGenerator.generate。
+
+  边界与不变量
+  门面不得额外筛选或重排动作。
+  */
+  getLegalActions(player) {
+    return this.actionGenerator.generate(player);
+  }
+
+  /*
+  功能
+  从当前真实状态构造搜索快照并请求 Planner 选择动作。
+
+  调用方
+  Game AI 出牌循环与测试。
+
+  输入
+  当前行动 Player 与可选搜索上下文。
+
+  输出
+  Planner 选择的合法动作。
+
+  读取状态
+  当前 GameState、合法 Knowledge 与搜索配置。
+
+  写入状态
+  Planner 最近搜索诊断与计划序列。
+
+  调用函数
+  AiKnowledge.remainingCounts、createAiVisibleState、getLegalActions、AiPlanner.plan。
+
+  边界与不变量
+  剩余牌计数每次真实决策只计算一次，Planner 不获得 Game 或 Controller。
+  */
   async selectAction(player, options = {}) {
     const remainingCardCounts = this.knowledge.remainingCounts(player);
     const visible = createAiVisibleState(player.id, this.game.state, remainingCardCounts);
     return this.planner.plan(player, visible, this.getLegalActions(player), options);
   }
-  /** 将上一棵搜索树里的动作描述重新绑定到当前真实合法动作；状态变化后匹配失败即要求重规划。 */
+
+  /*
+  功能
+  将搜索树动作描述重新绑定到当前真实合法动作。
+
+  调用方
+  Game 复用计划序列时。
+
+  输入
+  当前行动 Player 与稳定动作描述。
+
+  输出
+  匹配的当前动作；状态变化导致不匹配时返回 null。
+
+  读取状态
+  当前合法动作集合。
+
+  写入状态
+  无。
+
+  调用函数
+  getLegalActions。
+
+  边界与不变量
+  实体牌优先按实例 ID 重绑，目标顺序和选择字段必须完全一致。
+  */
   resolvePlannedAction(player, descriptor) {
     if (!descriptor) return null;
     return this.getLegalActions(player).find((action) => {
@@ -42,7 +181,236 @@ export class AIController {
       return true;
     }) ?? null;
   }
-  chooseDiscards(player, count) { return this.cardSelector.chooseDiscards(player, count); }
-  shouldRespond(player, type, context) { return this.responsePolicy.shouldRespond(player, type, context, []); }
-  chooseRedirectTarget(_player, alternatives) { return alternatives[0] ?? null; }
+
+  /*
+  功能
+  返回 Planner 最近生成计划序列的隔离副本。
+
+  调用方
+  Game 可选连续计划执行路径。
+
+  输入
+  无。
+
+  输出
+  动作序列浅副本。
+
+  读取状态
+  Planner.lastPlannedSequence。
+
+  写入状态
+  无。
+
+  调用函数
+  Array 展开。
+
+  边界与不变量
+  调用方不得通过返回数组修改 Planner 内部序列。
+  */
+  getPlannedSequence() {
+    return [...this.planner.lastPlannedSequence];
+  }
+
+  /*
+  功能
+  选择需要弃置的实体牌。
+
+  调用方
+  Game 与角色被动规则。
+
+  输入
+  付款 Player 与弃牌数量。
+
+  输出
+  按既有保留价值排序的实体牌数组。
+
+  读取状态
+  当前 GameState、Knowledge 与选择策略。
+
+  写入状态
+  无。
+
+  调用函数
+  AiCardSelector.chooseDiscards。
+
+  边界与不变量
+  门面不改动选择结果或牌序。
+  */
+  chooseDiscards(player, count) {
+    return this.cardSelector.chooseDiscards(player, count);
+  }
+
+  /*
+  功能
+  为转移牌选择来源、接收者和资源类别。
+
+  调用方
+  Game 转移准备与 AiActionGenerator 注入能力。
+
+  输入
+  转移行动者、卡牌、合法来源及可选接收者和排除集合。
+
+  输出
+  最佳正收益选择描述；无正收益时为 null。
+
+  读取状态
+  当前 GameState、Knowledge 与转移评分。
+
+  写入状态
+  无。
+
+  调用函数
+  AiCardSelector.chooseTransferCombination。
+
+  边界与不变量
+  不解析或移动实体牌，真实执行仍必须重新验证。
+  */
+  chooseTransferCombination(...args) {
+    return this.cardSelector.chooseTransferCombination(...args);
+  }
+
+  /*
+  功能
+  从合法隐藏手牌位置中选择实体牌。
+
+  调用方
+  Game 的隐藏选择边界。
+
+  输入
+  观察者、持有者、数量及可选排除和用途上下文。
+
+  输出
+  合法实体牌数组。
+
+  读取状态
+  观察者合法记忆、剩余牌计数与随机源。
+
+  写入状态
+  随机源序列。
+
+  调用函数
+  AiCardSelector.chooseHiddenCards。
+
+  边界与不变量
+  未知牌只能按位置采样，调用次数和随机数顺序保持选择器既有语义。
+  */
+  chooseHiddenCards(...args) {
+    return this.cardSelector.chooseHiddenCards(...args);
+  }
+
+  /*
+  功能
+  在目标手牌与装备区之间选择资源实体。
+
+  调用方
+  Game 的区域选择边界。
+
+  输入
+  行动者、资源持有者、用途上下文与排除集合。
+
+  输出
+  带实体牌和区域的选择；无资源时为 null。
+
+  读取状态
+  合法记忆、公开装备与资源选择价值。
+
+  写入状态
+  可能消费随机源序列。
+
+  调用函数
+  AiCardSelector.chooseZoneCard。
+
+  边界与不变量
+  不读取未知牌定义，真实执行仍按实体身份复核。
+  */
+  chooseZoneCard(...args) {
+    return this.cardSelector.chooseZoneCard(...args);
+  }
+
+  /*
+  功能
+  从公开牌池选择最适合当前角色的牌。
+
+  调用方
+  PublicCardPool。
+
+  输入
+  当前 Player 与公开实体牌数组。
+
+  输出
+  被选实体牌；空牌池时为 null。
+
+  读取状态
+  角色卡牌价值。
+
+  写入状态
+  无。
+
+  调用函数
+  AiCardSelector.choosePublicCard。
+
+  边界与不变量
+  门面不改变同分时的原始顺序。
+  */
+  choosePublicCard(...args) {
+    return this.cardSelector.choosePublicCard(...args);
+  }
+
+  /*
+  功能
+  判断 AI 是否在当前响应窗口使用候选响应。
+
+  调用方
+  ResponseSystem 与兼容测试。
+
+  输入
+  响应者、响应类型、公开上下文与合法候选牌。
+
+  输出
+  是否响应的布尔值。
+
+  读取状态
+  当前 GameState、Knowledge、评估与响应策略。
+
+  写入状态
+  无。
+
+  调用函数
+  AiResponsePolicy.shouldRespond。
+
+  边界与不变量
+  候选牌默认空数组；门面不得构造或泄露额外隐藏信息。
+  */
+  shouldRespond(player, type, context, cards = []) {
+    return this.responsePolicy.shouldRespond(player, type, context, cards);
+  }
+
+  /*
+  功能
+  在重定向备选目标中保持既有首项选择语义。
+
+  调用方
+  兼容响应流程。
+
+  输入
+  当前 Player 与合法替代目标数组。
+
+  输出
+  首个目标；空数组时为 null。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不增加评分、随机或目标重排。
+  */
+  chooseRedirectTarget(_player, alternatives) {
+    return alternatives[0] ?? null;
+  }
 }

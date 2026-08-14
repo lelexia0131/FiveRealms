@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-ai-state-contract";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-state-contract";
-import { createId, clamp } from "../utils/helpers.js?build=20260814-ai-state-contract";
-import { EventBus } from "./EventBus.js?build=20260814-ai-state-contract";
-import { Player } from "./Player.js?build=20260814-ai-state-contract";
-import { Deck } from "./Deck.js?build=20260814-ai-state-contract";
-import { TeamManager } from "./TeamManager.js?build=20260814-ai-state-contract";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260814-ai-state-contract";
-import { RuleEngine } from "./RuleEngine.js?build=20260814-ai-state-contract";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260814-ai-state-contract";
-import { GameLogger } from "./GameLogger.js?build=20260814-ai-state-contract";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260814-ai-state-contract";
-import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260814-ai-state-contract";
-import { AIController } from "../ai/AiController.js?build=20260814-ai-state-contract";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260814-ai-state-contract";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260814-ai-state-contract";
-import { Debug } from "../utils/debug.js?build=20260814-ai-state-contract";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260814-ai-state-contract";
-import { DyingSystem } from "./DyingSystem.js?build=20260814-ai-state-contract";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260814-ai-state-contract";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260814-ai-state-contract";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260814-ai-state-contract";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260814-ai-state-contract";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-ai-controller-di";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-controller-di";
+import { createId, clamp } from "../utils/helpers.js?build=20260814-ai-controller-di";
+import { EventBus } from "./EventBus.js?build=20260814-ai-controller-di";
+import { Player } from "./Player.js?build=20260814-ai-controller-di";
+import { Deck } from "./Deck.js?build=20260814-ai-controller-di";
+import { TeamManager } from "./TeamManager.js?build=20260814-ai-controller-di";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260814-ai-controller-di";
+import { RuleEngine } from "./RuleEngine.js?build=20260814-ai-controller-di";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260814-ai-controller-di";
+import { GameLogger } from "./GameLogger.js?build=20260814-ai-controller-di";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260814-ai-controller-di";
+import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260814-ai-controller-di";
+import { AIController } from "../ai/AiController.js?build=20260814-ai-controller-di";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260814-ai-controller-di";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260814-ai-controller-di";
+import { Debug } from "../utils/debug.js?build=20260814-ai-controller-di";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260814-ai-controller-di";
+import { DyingSystem } from "./DyingSystem.js?build=20260814-ai-controller-di";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260814-ai-controller-di";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260814-ai-controller-di";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260814-ai-controller-di";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260814-ai-controller-di";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -454,7 +454,31 @@ export class Game {
     this.ui.render(this);
   }
 
-  /** AI 先公开思考，再取样可清理等待，随后公开行动意图并执行。 */
+  /*
+  功能
+  驱动一名 AI 玩家完成当前出牌阶段。
+
+  调用方
+  Game 回合流程。
+
+  输入
+  当前行动 Player 与所属 gameId。
+
+  输出
+  异步完成；取消、异常或陈旧动作时安全收束阶段。
+
+  读取状态
+  GameState、AIController 门面、时延配置与会话状态。
+
+  写入状态
+  UI 思考状态、真实卡牌/技能结算及可选局部计划队列。
+
+  调用函数
+  AIController 合法动作、动作选择、描述重绑和计划序列门面，以及 playCard、useActiveSkill。
+
+  边界与不变量
+  搜索失败不得悬空回合；计划重用必须重新绑定当前合法实体，执行失败立即停止重试。
+  */
   async takeAiPlayPhase(player, gameId) {
     let queuedPlan = [];
     try {
@@ -487,7 +511,7 @@ export class Game {
           }
           if (!this.isSessionValid(gameId)) return;
           searchElapsed = (globalThis.performance?.now?.() ?? Date.now()) - searchStarted;
-          if (!this.aiReplanAfterEveryAction) queuedPlan = this.aiController.planner.lastPlannedSequence.slice(1);
+          if (!this.aiReplanAfterEveryAction) queuedPlan = this.aiController.getPlannedSequence().slice(1);
         }
         if (action.type === "end") {
           this.ui.setPrompt(`${player.name}准备结束出牌阶段。`);
@@ -575,10 +599,31 @@ export class Game {
     this.state.currentPlayerIndex = next;
   }
 
-  /**
-   * 在反制窗口前固定转移的来源、接收者和手牌实体。私密结算对象与公开响应对象
-   * 使用不同引用；AI 的组合计划仍会在这里通过 RuleEngine 复核。
-   */
+  /*
+  功能
+  在反制窗口前锁定转移来源、接收者和手牌实体，并分离私密与公开上下文。
+
+  调用方
+  转移卡牌真实结算入口。
+
+  输入
+  使用者、转移实体牌与可选预先规划选择。
+
+  输出
+  冻结的私密意图和公开上下文；无效、取消或状态变化时为 null。
+
+  读取状态
+  当前 GameState、RuleEngine 权威、CardSelectionSystem 与 AIController 选择门面。
+
+  写入状态
+  仅可能清理短期隐藏选择会话。
+
+  调用函数
+  RuleEngine 转移目标入口、AIController.chooseTransferCombination、chooseHiddenCards。
+
+  边界与不变量
+  AI 计划必须在真实边界复核；未知手牌不进入公开上下文，锁定实体不得按名称替代。
+  */
   async prepareTransferIntent(source, card, selection = null) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return null;
@@ -587,7 +632,7 @@ export class Game {
       .filter((from) => RuleEngine.getTransferReceivers(this, source, from, card).length);
     const planned = selection?.sourceId && selection?.receiverId
       ? selection
-      : this.aiController.cardSelector.chooseTransferCombination(source, card, sources, null, excludedCardIds);
+      : this.aiController.chooseTransferCombination(source, card, sources, null, excludedCardIds);
     if (planned?.zone && planned.zone !== "hand") {
       if (planned.selectionId) this.cardSelectionSystem.clearSelection(planned.selectionId);
       return null;
@@ -601,7 +646,7 @@ export class Game {
       && receiver.battleTeam !== source.battleTeam) return null;
 
     const [hiddenCard] = source.controllerType === "ai"
-      ? this.aiController.cardSelector.chooseHiddenCards(source, from, 1, excludedCardIds, { purpose:"transfer", receiver })
+      ? this.aiController.chooseHiddenCards(source, from, 1, excludedCardIds, { purpose:"transfer", receiver })
       : await this.chooseHiddenCards(source, from, 1, "选择要转移的手牌", planned, excludedCardIds);
     const chosen = hiddenCard ? { card:hiddenCard, zone:"hand" } : null;
     if (!this.isSessionValid(gameId)) return null;
@@ -699,16 +744,37 @@ export class Game {
     }
   }
 
-  /**
-   * 被动技能的私密窥牌入口：真人复用不透明牌背选择，AI 只按合法记忆或隐藏位置选择。
-   * 确认后立即清除 UI token，只把稳定实体意图留在当前异步调用栈中。
-   */
+  /*
+  功能
+  为被动技能准备一次不泄漏牌面的私密窥牌意图。
+
+  调用方
+  私密窥牌被动技能流程。
+
+  输入
+  观察者、手牌持有者、最大数量与真人提示文本。
+
+  输出
+  冻结的实体牌意图；无合法选择或会话失效时为 null。
+
+  读取状态
+  当前 GameState、CardSelectionSystem、UI 与 AIController 隐藏选择门面。
+
+  写入状态
+  创建并清理真人短期选择令牌。
+
+  调用函数
+  AIController.chooseHiddenCards、UI.requestHiddenCards、CardSelectionSystem 令牌入口。
+
+  边界与不变量
+  AI 只按合法记忆或隐藏位置选择；确认后令牌立即清理，实体意图只留在当前调用栈。
+  */
   async preparePrivateHandPeekIntent(viewer, owner, count, reason) {
     const gameId = this.state.gameId;
     const maximum = Math.min(Math.max(0, count), owner?.hand?.length ?? 0);
     if (!this.isSessionValid(gameId) || !viewer?.alive || !owner?.alive || !maximum) return null;
     if (viewer.controllerType !== "human") {
-      const cards = this.aiController.cardSelector.chooseHiddenCards(viewer, owner, maximum, null, { purpose:"spy-gap" });
+      const cards = this.aiController.chooseHiddenCards(viewer, owner, maximum, null, { purpose:"spy-gap" });
       return cards.length ? Object.freeze({ owner, zone:"hand", cards:Object.freeze([...cards]), selectionId:null }) : null;
     }
 
@@ -1662,6 +1728,31 @@ export class Game {
     return this.isCardKnownTo(human, owner, card) ? `「${card.name}」` : "1张手牌";
   }
 
+  /*
+  功能
+  在真人令牌选择与 AI 隐藏位置策略之间统一选择手牌实体。
+
+  调用方
+  掠夺、破坏、转移、窥牌与其他隐藏手牌流程。
+
+  输入
+  行动者、持有者、数量、提示、可选选择描述、排除集合与 AI 用途上下文。
+
+  输出
+  已去重且仍在合法位置的实体牌数组。
+
+  读取状态
+  当前 GameState、CardSelectionSystem、UI 与 AIController 隐藏选择门面。
+
+  写入状态
+  创建或清理短期选择令牌，AI 路径可能消费随机源。
+
+  调用函数
+  CardSelectionSystem、UI.requestHiddenCards、AIController.chooseHiddenCards。
+
+  边界与不变量
+  真人选择按令牌和实体 ID 复核；AI 未知牌不得按真实定义筛选。
+  */
   async chooseHiddenCards(actor, owner, count, reason, selection = null, excludedCardIds = null, aiContext = null) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return [];
@@ -1691,10 +1782,34 @@ export class Game {
       this.cardSelectionSystem.clearSelection(hidden.selectionId);
       return cards;
     }
-    return this.aiController.cardSelector.chooseHiddenCards(actor, owner, maximum, excludedCardIds, aiContext);
+    return this.aiController.chooseHiddenCards(actor, owner, maximum, excludedCardIds, aiContext);
   }
 
-  /** 在隐藏手牌与公开装备之间选择一张；核心始终重新验证所选实体仍在原区域。 */
+  /*
+  功能
+  在目标隐藏手牌与公开装备之间选择一个资源实体。
+
+  调用方
+  掠夺、破坏和其他区域资源流程。
+
+  输入
+  行动者、持有者、提示、可选选择描述、排除集合与 AI 用途上下文。
+
+  输出
+  带 card 和 zone 的选择；无合法资源时为 null。
+
+  读取状态
+  当前 GameState、CardSelectionSystem、UI 与 AIController 区域选择门面。
+
+  写入状态
+  可能创建或清理短期选择令牌。
+
+  调用函数
+  chooseHiddenCards、UI.requestZoneCard、AIController.chooseZoneCard。
+
+  边界与不变量
+  核心始终重新验证实体仍在原区域；AI 未知手牌不得按真实定义比较。
+  */
   async choosePlayerZoneCard(actor, owner, reason, selection = null, excludedCardIds = null, aiContext = null) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return null;
@@ -1717,7 +1832,7 @@ export class Game {
       if (!this.isSessionValid(gameId)) return null;
       return requested ? this.choosePlayerZoneCard(actor, owner, reason, requested, excludedCardIds) : null;
     }
-    return this.aiController.cardSelector.chooseZoneCard(actor, owner, aiContext, excludedCardIds);
+    return this.aiController.chooseZoneCard(actor, owner, aiContext, excludedCardIds);
   }
 
   /** 统一添加公开日志。 */

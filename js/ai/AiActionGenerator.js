@@ -1,16 +1,31 @@
-/**
- * AI 合法动作生成器。真实根节点依赖 RuleEngine，深层节点使用同一 RuleEngine
- * 读取过滤快照；不评分、不执行动作，也不接触其他玩家真实手牌。
- */
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-state-contract";
-import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260814-ai-state-contract";
-import { getSealStatusStateBranches } from "./sealScoring.js?build=20260814-ai-state-contract";
+/*
+模块职责
+生成真实根局面与 SearchState 深层节点的 AI 候选动作。
+
+上游
+AIController 与 AiPlanner 注入能力。
+
+下游
+RuleEngine、技能注册器、领域概率与策略评分模块。
+
+状态边界
+根生成只读 GameState，深层生成只读 SearchState，不执行或结算动作。
+
+信息边界
+深层动作只使用 SearchState 的合法可见、记忆与 Belief 字段。
+
+架构约束
+不得依赖 AIController；转移资源选择必须由构造时注入的窄能力提供。
+*/
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-controller-di";
+import { getLightningStatusStateBranches } from "./lightningScoring.js?build=20260814-ai-controller-di";
+import { getSealStatusStateBranches } from "./sealScoring.js?build=20260814-ai-controller-di";
 import {
   ACTIVE_SKILLS, getActiveSkill, getActiveSkillCost
-} from "../generals/skillRegistry.js?build=20260814-ai-state-contract";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-state-contract";
-import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260814-ai-state-contract";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-state-contract";
+} from "../generals/skillRegistry.js?build=20260814-ai-controller-di";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-controller-di";
+import { buildTransferCandidates, chooseBestPositiveTransfer } from "./transferScoring.js?build=20260814-ai-controller-di";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-controller-di";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -22,11 +37,42 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./state/Probability.js?build=20260814-ai-state-contract";
+} from "./state/Probability.js?build=20260814-ai-controller-di";
 
-/** 生成当前真实局面与模拟后续局面的合法动作。 */
 export class AiActionGenerator {
-  constructor(game) { this.game = game; }
+  /*
+  功能
+  创建动作生成器并绑定真实规则边界与转移选择能力。
+
+  调用方
+  AIController 组合根与直接独立性测试。
+
+  输入
+  Game 规则上下文，以及包含 chooseTransferCombination 的依赖对象。
+
+  输出
+  可生成根与深层动作的 AiActionGenerator；缺少依赖时立即抛错。
+
+  读取状态
+  无。
+
+  写入状态
+  实例 game 与转移选择能力。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只保存具体能力，不接收或查找 AIController。
+  */
+  constructor(game, { chooseTransferCombination } = {}) {
+    if (!game) throw new TypeError("AiActionGenerator 缺少依赖：game");
+    if (typeof chooseTransferCombination !== "function") {
+      throw new TypeError("AiActionGenerator 缺少依赖：chooseTransferCombination");
+    }
+    this.game = game;
+    this.chooseTransferCombination = chooseTransferCombination;
+  }
 
   expectedAvailableAssaults(actor) {
     return (actor.hand ?? []).filter((card) => card.definitionId === "assault")
@@ -86,6 +132,31 @@ export class AiActionGenerator {
     }));
   }
 
+  /*
+  功能
+  从当前真实局面生成行动者的合法根动作。
+
+  调用方
+  AIController.getLegalActions 与直接动作生成测试。
+
+  输入
+  当前行动 Player。
+
+  输出
+  包含卡牌、技能和结束阶段的候选动作数组。
+
+  读取状态
+  当前 GameState、RuleEngine 权威、角色技能与转移选择策略。
+
+  写入状态
+  无。
+
+  调用函数
+  RuleEngine 合法性与目标入口、getActiveSkill、getActiveSkillCost、chooseTransferCombination。
+
+  边界与不变量
+  保持既有枚举顺序与动作集合；转移只记录选择描述，不移动实体牌。
+  */
   generate(player) {
     const actions = [];
     for (const card of player.hand) {
@@ -114,7 +185,7 @@ export class AiActionGenerator {
       if (card.definitionId === "transfer") {
         const sources = RuleEngine.getTransferSources(this.game, player, card)
           .filter((from) => RuleEngine.getTransferReceivers(this.game, player, from, card).length);
-        const selection = this.game.aiController.cardSelector.chooseTransferCombination(player, card, sources, null, new Set([card.id]));
+        const selection = this.chooseTransferCombination(player, card, sources, null, new Set([card.id]));
         if (selection) actions.push({ type:"card", card, targets:[], selection });
         continue;
       }

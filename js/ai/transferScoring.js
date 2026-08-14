@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-ai-state-contract";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260814-ai-state-contract";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./state/Probability.js?build=20260814-ai-state-contract";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-ai-controller-di";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260814-ai-controller-di";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./state/Probability.js?build=20260814-ai-controller-di";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

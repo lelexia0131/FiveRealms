@@ -1,20 +1,81 @@
-/**
- * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
- * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
- */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-state-contract";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-state-contract";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260814-ai-state-contract";
-import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260814-ai-state-contract";
+/*
+模块职责
+在 SearchState 上执行有限深度束搜索并返回当前最佳根动作与稳定描述序列。
+
+上游
+AIController 组合根与搜索回归测试。
+
+下游
+AiSimulator、AiEvaluator、封印时序模型及构造时注入的动作、Belief 和运行控制能力。
+
+状态边界
+只读输入 SearchState，所有分支写入由 AiSimulator 创建的独立克隆承担。
+
+信息边界
+隐藏世界只能来自注入的合法 Belief 采样能力，Planner 不读取 GameState。
+
+架构约束
+不得持有 Game 或回指 AIController；预算、随机、让步和搜索服务必须显式注入。
+*/
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-controller-di";
+import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-controller-di";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260814-ai-controller-di";
+import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260814-ai-controller-di";
 
 /** end 机会成本上限（未缩放）：与 actionEconomicValue(end) 的旧默认 -0.8 同量纲。 */
 const END_OPPORTUNITY_CAP = 0.8;
 
-/** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
-  constructor(game, evaluator) {
-    this.game = game;
+  /*
+  功能
+  创建只依赖显式窄能力的束搜索 Planner。
+
+  调用方
+  AIController 组合根与直接独立性测试。
+
+  输入
+  评估器、深层动作生成、隐藏世界采样、随机、配置读取和可取消让步能力。
+
+  输出
+  可执行 plan 的 AiPlanner；任一必要依赖缺失时立即抛错。
+
+  读取状态
+  无。
+
+  写入状态
+  实例依赖、最近搜索统计与计划序列。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不接收或保存 Game、AIController，也不在搜索节点中重新构造依赖对象。
+  */
+  constructor({
+    evaluator,
+    generateFromVisible,
+    sampleHiddenWorlds,
+    random,
+    getRandomnessRange,
+    getSearchTimeBudget,
+    getSearchNodeBudget,
+    yieldControl,
+  } = {}) {
+    const capabilities = {
+      generateFromVisible,
+      sampleHiddenWorlds,
+      random,
+      getRandomnessRange,
+      getSearchTimeBudget,
+      getSearchNodeBudget,
+      yieldControl,
+    };
+    if (!evaluator) throw new TypeError("AiPlanner 缺少依赖：evaluator");
+    for (const [name, capability] of Object.entries(capabilities)) {
+      if (typeof capability !== "function") throw new TypeError(`AiPlanner 缺少依赖：${name}`);
+    }
     this.evaluator = evaluator;
+    Object.assign(this, capabilities);
     this.lastSearchStats = null;
     this.lastPlannedSequence = [];
   }
@@ -39,23 +100,31 @@ export class AiPlanner {
     };
   }
 
-  /**
-   * 破势单步反事实边际价值：对本回合合法下一次突袭候选逐一模拟
-   * “N 层”与“N+1 层”的同一突袭，取结果效用差的最大正值。
-   *
-   * 候选必须来自真实动作生成（generateFromVisible），因此自动包含距离/目标/
-   * 次数槽/牌可用概率等合法性；两次 apply 走 AiSimulator 的真实伤害链
-   * （格挡、护盾、雷达、护援、濒死、救援、击杀奖励），不在此手写任何防御判断。
-   *
-   * baseline 必须是 afterState 的克隆、仅回退“这张破势实际新增的层数”
-   * （after.stacks - before.stacks），而不是 beforeState：破势牌的消耗、
-   * 手牌数量、卡牌可用性等“打出破势的成本”属于普通 transition 的职责，
-   * 不能混进这一层的边际测量。两个反事实世界在模拟突袭前除 exposeWeaknessStacks
-   * 相差该增量外完全一致。
-   *
-   * 一张破势只增加 1 层，且被下一次突袭一次性消费，因此只比较下一次突袭，
-   * 并对多个候选取 max（不是 sum）；无合法候选或边际为负时返回 0。
-   */
+  /*
+  功能
+  用真实模拟计算新增一层破势对下一次合法突袭的最大正边际。
+
+  调用方
+  plan 的根节点与深层候选评分。
+
+  输入
+  动作前后 SearchState、行动者 ID 与可选复用模拟器。
+
+  输出
+  下一次突袭的最大非负效用增量。
+
+  读取状态
+  输入 SearchState、注入的深层动作生成能力与 evaluator。
+
+  写入状态
+  无；模拟器只写独立克隆。
+
+  调用函数
+  generateFromVisible、AiSimulator.apply、AiEvaluator.stateUtility。
+
+  边界与不变量
+  baseline 只回退本动作新增层数；候选来自合法生成，一张破势只比较下一次突袭并取 max 而非 sum。
+  */
   evaluateExposeMarginal(beforeState, afterState, actorId, simulator = null) {
     const sim = simulator ?? new AiSimulator(afterState);
     const beforeActor = beforeState.players.find((entry) => entry.id === actorId);
@@ -65,7 +134,7 @@ export class AiPlanner {
     const baselineState = structuredClone(afterState);
     const baselineActor = baselineState.players.find((entry) => entry.id === actorId);
     baselineActor.exposeWeaknessStacks = Math.max(0, (baselineActor.exposeWeaknessStacks ?? 0) - addedStacks);
-    const candidates = this.game.aiController.actionGenerator.generateFromVisible(afterState, actorId);
+    const candidates = this.generateFromVisible(afterState, actorId);
     let best = 0;
     for (const candidate of candidates) {
       if (candidate.card?.definitionId !== "assault") continue;
@@ -287,25 +356,75 @@ export class AiPlanner {
       + (exposeMarginal + assaultStacksCredit) * STATE_DELTA_SCALE;
   }
 
+  /*
+  功能
+  从最终束中按既有近似平局与随机扰动规则选择候选。
+
+  调用方
+  plan 搜索收束阶段。
+
+  输入
+  已按价值排序的候选束。
+
+  输出
+  被选候选节点；空束时为 undefined。
+
+  读取状态
+  GAME_CONFIG 与注入的随机、随机幅度能力。
+
+  写入状态
+  随机源序列。
+
+  调用函数
+  getRandomnessRange、random。
+
+  边界与不变量
+  随机调用次数、调用位置、近似平局集合与 tie-break 顺序保持既有语义。
+  */
   chooseCandidate(beam) {
     const bestScore = beam[0]?.valueScore ?? -Infinity;
     const near = beam.filter((node) => bestScore - node.valueScore <= GAME_CONFIG.aiNearTieRange);
     if (near.length <= 1 || !GAME_CONFIG.enableAiRandomness) return near[0] ?? beam[0];
-    const randomness = Math.max(0, Number(this.game.aiRandomnessRange ?? GAME_CONFIG.aiRandomnessRange) || 0);
+    const randomness = Math.max(0, Number(this.getRandomnessRange() ?? GAME_CONFIG.aiRandomnessRange) || 0);
     if (!randomness) return near[0];
     const scale = Math.max(1, Math.abs(bestScore));
     return near.reduce((best, node) => {
-      const adjusted = node.valueScore + (this.game.random() * 2 - 1) * scale * randomness;
+      const adjusted = node.valueScore + (this.random() * 2 - 1) * scale * randomness;
       return !best || adjusted > best.adjusted ? { node, adjusted } : best;
     }, null).node;
   }
 
+  /*
+  功能
+  在固定时间或节点预算内执行有限深度束搜索并选择根动作。
+
+  调用方
+  AIController.selectAction、搜索回归与直接依赖注入测试。
+
+  输入
+  行动者、根 SearchState、根合法动作与可选会话/诊断上下文。
+
+  输出
+  当前最佳根动作；取消或无候选时安全结束阶段。
+
+  读取状态
+  SearchState、evaluator、注入的动作生成、Belief 采样、预算、随机和会话能力。
+
+  写入状态
+  lastSearchStats、lastPlannedSequence 与随机源序列。
+
+  调用函数
+  AiSimulator、generateFromVisible、sampleHiddenWorlds、yieldControl 及本类评分 helper。
+
+  边界与不变量
+  搜索深度、束顺序、采样时机、随机顺序、最终评分与 descriptor 序列不得因装配迁移改变。
+  */
   async plan(player, visibleState, rootActions, options = {}) {
     this.lastPlannedSequence = [];
     const collectDiagnostics = Boolean(options.collectAiDecisionDiagnostics);
     const started = globalThis.performance?.now?.() ?? Date.now();
-    const timeBudget = this.game.aiSearchBudgetOverrideMs ?? GAME_CONFIG.aiSearchTimeBudgetMs;
-    const configuredNodeBudget = Number(this.game.aiSearchNodeBudgetOverride);
+    const timeBudget = this.getSearchTimeBudget() ?? GAME_CONFIG.aiSearchTimeBudgetMs;
+    const configuredNodeBudget = Number(this.getSearchNodeBudget());
     const nodeBudget = Number.isFinite(configuredNodeBudget) && configuredNodeBudget >= 1
       ? Math.floor(configuredNodeBudget)
       : null;
@@ -313,7 +432,7 @@ export class AiPlanner {
     // 回合开始已存在的旧破势层，作为根节点的 remainingRootExposeStacks 初值。
     const rootRemainingExposeStacks = (visibleState.players.find((entry) => entry.id === player.id)
       ?.exposeWeaknessStacks ?? 0);
-    const hiddenWorlds = this.game.aiController.knowledge.sampleHiddenWorlds(player, visibleState, GAME_CONFIG.aiHiddenStateSamples);
+    const hiddenWorlds = this.sampleHiddenWorlds(player, visibleState, GAME_CONFIG.aiHiddenStateSamples);
     const hiddenAdjustment = (action) => {
       if (action.card?.definitionId !== "assault" || !hiddenWorlds.length) return 0;
       const targetId = action.targets?.[0]?.id;
@@ -451,7 +570,7 @@ export class AiPlanner {
       }
       expanded += 1;
       if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
-        if (!(await this.game.cleanupManager.delay(0)) || !this.game.isSessionValid(options.gameId ?? this.game.state.gameId)) {
+        if (!(await this.yieldControl(options.gameId))) {
           return { type:"end" };
         }
       }
@@ -503,7 +622,7 @@ export class AiPlanner {
           candidates.push({ ...node, pruneScore:node.valueScore });
           continue;
         }
-        const followActions = this.game.aiController.actionGenerator.generateFromVisible(node.state, player.id);
+        const followActions = this.generateFromVisible(node.state, player.id);
         // 每张 follow 只 apply 一次并记录未调整 base transition；找到该 parent 下
         // 最佳非封印即时动作后，再只对 seal 候选应用“延迟一步”的 timing penalty。
         const nodeCandidates = [];
@@ -549,7 +668,7 @@ export class AiPlanner {
           });
           expanded += 1;
           if (expanded % GAME_CONFIG.aiSearchYieldEvery === 0) {
-            if (!(await this.game.cleanupManager.delay(0)) || !this.game.isSessionValid(options.gameId ?? this.game.state.gameId)) return { type:"end" };
+            if (!(await this.yieldControl(options.gameId))) return { type:"end" };
           }
           if (limitReached()) break;
         }

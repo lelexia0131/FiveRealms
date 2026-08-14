@@ -1,31 +1,57 @@
 /*
- * 模块职责：拥有雷达判定这一领域概率模型，并保留通用概率工具的历史导入路径。
- * 上游调用方：AiEvaluator、AiSimulator、现有测试与尚未迁移的 AI 模块。
- * 下游依赖：卡牌定义配置、state/Probability 通用纯函数。
- * 状态边界：只读剩余牌计数与卡牌配置，不读写 GameState 或 SearchState。
- * 信息边界：仅使用调用方提供的合法剩余牌计数；无计数时显式退化为固定牌组密度。
- * 架构约束：通用概率逻辑只能由 state/Probability 实现，本文件不得复制其算法。
- */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-state-contract";
+模块职责
+拥有雷达判定这一领域概率模型，并保留通用概率工具的历史导入路径。
+
+上游
+AiEvaluator、AiSimulator、现有测试与尚未迁移的 AI 模块。
+
+下游
+卡牌定义配置、state/Probability 通用纯函数。
+
+状态边界
+只读剩余牌计数与卡牌配置，不读写 GameState 或 SearchState。
+
+信息边界
+仅使用调用方提供的合法剩余牌计数；无计数时显式退化为固定牌组密度。
+
+架构约束
+通用概率逻辑只能由 state/Probability 实现，本文件不得复制其算法。
+*/
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-controller-di";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "./state/Probability.js?build=20260814-ai-state-contract";
+} from "./state/Probability.js?build=20260814-ai-controller-di";
 
-export * from "./state/Probability.js?build=20260814-ai-state-contract";
+export * from "./state/Probability.js?build=20260814-ai-controller-di";
 
 export const RADAR_BASIC_DEFINITIONS = Object.freeze(["assault", "recover", "block", "charge", "shield"]);
 
 /*
- * 功能：计算一次雷达判定落入战术、装备或各基础牌定义的条件概率。
- * 调用方：AiEvaluator、AiSimulator 与雷达概率回归测试。
- * 输入：可选剩余牌计数与兼容的 block、otherBasic、equipment 概率覆盖。
- * 输出：归一化的雷达类别概率、基础牌概率与判定池可用标记。
- * 读取状态：CARD_DEFINITIONS、合法剩余牌计数。
- * 写入状态：无。
- * 调用函数：clampProbability。
- * 边界与不变量：动态计数缺失时使用固定牌组密度；概率质量非空时总和必须为一。
- */
+功能
+计算一次雷达判定落入战术、装备或各基础牌定义的条件概率。
+
+调用方
+AiEvaluator、AiSimulator 与雷达概率回归测试。
+
+输入
+可选剩余牌计数与兼容的 block、otherBasic、equipment 概率覆盖。
+
+输出
+归一化的雷达类别概率、基础牌概率与判定池可用标记。
+
+读取状态
+CARD_DEFINITIONS、合法剩余牌计数。
+
+写入状态
+无。
+
+调用函数
+clampProbability。
+
+边界与不变量
+动态计数缺失时使用固定牌组密度；概率质量非空时总和必须为一。
+*/
 export function buildRadarJudgmentProbabilities(remainingCardCounts = null, overrideProbabilities = null) {
   const weights = {};
   let totalWeight = 0;

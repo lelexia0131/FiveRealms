@@ -1,9 +1,11 @@
 # FiveRealms AI Engine 2.0
 
-状态：AI-ARCH-1 只读审计基线
-基线提交：`e16a429 fix: preserve end fallback against non-positive actions`
+当前状态：AI-ARCH-0、AI-ARCH-1、AI-ARCH-2、AI-ARCH-2.1、AI-ARCH-3 已完成；AI-ARCH-4 尚未开始。
+当前实现起点：`7696f16 ARCH-0.1.2`
+当前浏览器构建标识：`20260814-ai-controller-di`
+历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
 审计日期：2026-08-14
-范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；本文件不宣称已完成任何生产迁移。
+范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；第 2 至 10 节保留最初只读审计及迁移设计作为历史基线，后续完成事实在对应阶段章节持续更新。
 
 ## 1. 文档职责
 
@@ -99,7 +101,9 @@ GlobalBenefit -> CardValue
 
 ## 5. 当前运行时依赖与回指
 
-真实运行时存在服务定位器式环：
+### 历史审计基线
+
+AI-ARCH-1 审计时真实运行时存在以下服务定位器式环：
 
 ```text
 Game -> AIController -> Planner
@@ -120,11 +124,39 @@ Game -> AIController -> Planner
 - ActionGenerator 根转移选择回取 `cardSelector.chooseTransferCombination`。
 - `Game`、`ResponseSystem`、`PublicCardPool` 和 `skillRegistry` 直接访问控制器子组件。
 
-这不是语法层 import cycle，却形成 Controller → Planner/Generator → Controller 的运行时依赖环，导致组件无法独立构造、测试和替换。
+这不是语法层 import cycle，却形成 Controller → Planner/Generator → Controller 的运行时依赖环，导致组件无法独立构造、测试和替换。这一段保留为迁移前证据，不描述当前实现。
+
+### AI-ARCH-3 当前运行图
+
+```text
+Game -> AIController (composition root / facade)
+          |
+          +--> Knowledge
+          +--> Evaluator
+          +--> CardSelector
+          +--> ResponsePolicy
+          +--> ActionGenerator(game, chooseTransferCombination)
+          +--> Planner(
+                 evaluator,
+                 generateFromVisible,
+                 sampleHiddenWorlds,
+                 random,
+                 search setting readers,
+                 yieldControl
+               )
+
+Game/ResponseSystem/PublicCardPool/skillRegistry -> AIController facade methods
+```
+
+- `AiPlanner` 不再接收或保存 `Game`，也不持有 `AIController`；深层动作、隐藏世界、随机、预算与会话让步全部是构造时注入的窄能力。
+- `AiActionGenerator` 为真实根动作保留 `Game` 规则上下文，但转移选择由 `chooseTransferCombination` 显式注入，不再从 `game.aiController` 查找 CardSelector。
+- Controller 先构造 Knowledge/Evaluator/CardSelector/ResponsePolicy，再构造 ActionGenerator，最后构造 Planner；没有 post-construction patch，也没有搜索节点内组件构造。
+- 生产 `js/ai/**` 已无 `game.aiController` 或 `this.game.aiController` 回指。上游通过 Controller 的稳定门面访问响应、公开选牌、隐藏选择、区域选择、转移选择和计划序列。
+- `.knowledge`、`.evaluator`、`.cardSelector`、`.responsePolicy`、`.actionGenerator`、`.planner` 公共字段暂留一个兼容阶段，保证历史测试猴子补丁仍作用于同一实例；生产上游不再直接访问这些字段。
 
 ## 6. 依赖矩阵
 
-`R` 为直接静态依赖，`I` 为构造注入，`B` 为 `game.aiController` 回指，`—` 为无直接依赖。
+下表是 AI-ARCH-1 的历史矩阵。`R` 为直接静态依赖，`I` 为构造注入，`B` 为当时的 `game.aiController` 回指，`—` 为无直接依赖。
 
 | 调用方 | State/Knowledge | Search | Simulation | Value | Policy | Domain | Core rules | Controller |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -139,6 +171,19 @@ Game -> AIController -> Planner
 | Domain models | — | — | I（GlobalBenefit） | R | — | — | R | — |
 
 目标是单向：Controller 组装；Search 依赖显式的 State、ActionGenerator、Simulator、Value 接口；Simulation 依赖 Rule Projection 与无副作用 domain helpers；Value 只能读取 State/Domain 派生值，不能启动 Simulation；Policy 可请求受限的 Simulation query，但不能构造整套 Controller。
+
+AI-ARCH-3 已把矩阵中的三个 `B` 清零，当前注入映射为：
+
+| 接收组件 | 显式构造依赖 | 仍持有 Game | Controller 回指 |
+|---|---|---:|---:|
+| `AiPlanner` | Evaluator、`generateFromVisible`、`sampleHiddenWorlds`、random、搜索配置读取、`yieldControl` | 否 | 否 |
+| `AiActionGenerator` | Game 规则上下文、`chooseTransferCombination` | 是 | 否 |
+| `AiCardSelector` | Game、Knowledge | 是 | 否 |
+| `AiResponsePolicy` | Game、Evaluator、Knowledge | 是 | 否 |
+| `AiEvaluator` | Game | 是 | 否 |
+| `AiKnowledge` | Game | 是 | 否 |
+
+Planner 去除 Game 是本阶段唯一完整 Game 解耦；其余组件的 Game 收窄属于后续既定阶段，不得在 AI-ARCH-3 顺带改写业务职责。
 
 ## 7. 规则权威、模拟镜像与派生模型
 
@@ -361,7 +406,7 @@ UI is outside every search/simulation/value dependency cone.
 当前门禁只执行可可靠判定的规则：
 
 1. `js/ai/state/**`、`search/**`、`simulation/**`、`value/**` 新增 UI import 时失败。
-2. 变更的 `js/ai/**` 新增 `game.aiController`/`this.game.aiController` 回指时失败。
+2. `js/ai/**` 任意文件出现 `game.aiController`/`this.game.aiController` 回指时失败；该项扫描整份文件，不限变更行。
 3. 变更函数缺 Function Header v1 字段时失败。
 4. `js/ai/state/**` 反向 import `AiController`、`AiPlanner`、`AiSimulator` 或 `AiEvaluator` 时失败。
 
@@ -390,6 +435,8 @@ Guard 必须从解析到的 import、路径层和明确语法事实得出结论�
 - 风险/回滚：字段遗漏和样本 seed 漂移；保留旧工厂并做双构造深比较后切换。
 
 ### AI-ARCH-3：Dependency Injection and Controller Boundary
+
+状态：已完成。落地事实与验证证据见第 23 节；本节保留原迁移契约。
 
 - 来源 → 目标：Planner/Generator 的 `game.aiController` 回指 → Controller 显式注入。
 - 移动：descriptor resolver 与 composition；不移动搜索/评分逻辑。
@@ -557,6 +604,53 @@ Architecture Guard 现已覆盖 `state/**` 的模块头与 UI import 禁令，�
 - 同一进程五轮中位数下，1,000 次状态组合：HEAD 旧工厂 19.883 ms，新四层组合 27.494 ms；根状态每次组合增加约 7.611 微秒。该入口每次 AI 决策只执行一次，新增成本来自显式创建小型分层契约。
 - 同一进程五轮中位数下，1,000 次 `AiSimulator.clone()`：HEAD 旧实现 110.411 ms，新实现 108.526 ms；搜索热点克隆未退化。直接深克隆中位数为旧 67.480 ms、新 73.233 ms，差异属于相同 `structuredClone` 外增加一层稳定入口的观测成本。
 - State/Knowledge/动态密度关键回归：改造前 56 项耗时 190 ms；改造后同组加 6 项 State Contract 共 62 项耗时 166 ms。
+
+## 23. AI-ARCH-3 落地结果
+
+### Source / target 与构造顺序
+
+| 迁移前来源 | 当前目标 | 移动内容 | 明确保留原位 |
+|---|---|---|---|
+| `AiPlanner -> game.aiController.actionGenerator` | Controller 注入 `generateFromVisible` | 深层展开和破势边际所需动作生成能力 | 动作枚举、beam、评分与遍历顺序 |
+| `AiPlanner -> game.aiController.knowledge` | Controller 注入 `sampleHiddenWorlds` | 合法隐藏世界采样能力 | 采样实现、样本数量、时机和随机调用顺序 |
+| `AiPlanner -> Game` | random、配置 getter、`yieldControl` 窄能力 | 随机、预算覆盖和可取消让步 | 时间/节点预算语义、会话取消与 tie-break |
+| `AiActionGenerator -> game.aiController.cardSelector` | Controller 注入 `chooseTransferCombination` | 根转移动作所需选择能力 | TransferPolicy/评分、合法动作集合和实体复核 |
+| 上游直接取 Controller 子组件 | Controller 稳定门面 | 响应、公开/隐藏/区域/转移选择、计划序列读取 | 兼容子组件字段与历史测试替换点 |
+
+构造顺序固定为 `Knowledge -> Evaluator -> CardSelector -> ResponsePolicy -> ActionGenerator -> Planner`。ActionGenerator 注入闭包捕获具体 CardSelector，Planner 注入闭包捕获具体 ActionGenerator/Knowledge 与 Game 的窄运行能力；任何子组件都不接收 Controller。必要能力在构造阶段按名称校验，缺失即抛 `TypeError`，不存在半装配对象或事后回填。
+
+### Controller 边界
+
+- 生产上游只使用 `getLegalActions`、`selectAction`、`resolvePlannedAction`、`getPlannedSequence`、`chooseDiscards`、`chooseTransferCombination`、`chooseHiddenCards`、`chooseZoneCard`、`choosePublicCard`、`shouldRespond`。
+- Descriptor resolver 保留在 Controller 的真实执行边界：它必须读取“当前合法动作”并按实体 ID、目标顺序和选择字段重绑，不属于纯 Planner。
+- 兼容子组件字段不是新的推荐 API。它们只保证历史测试与诊断工具仍能读取或替换同一组件，计划在 AI-ARCH-10 有调用证据后移除。
+
+### 行为冻结证据
+
+- 新增直接构造测试证明 Planner 实例没有 `game`/`aiController` 字段，ActionGenerator 在 `game.aiController = null` 时仍通过注入能力生成转移动作，缺依赖在构造时明确失败。
+- 固定种子 `20260814` 的生产装配与直接注入 Planner 对照：根动作 descriptor、10 个隐藏世界、每层深层动作 descriptor 集合和完整计划序列一致。
+- 转移选择门面、ActionGenerator 注入闭包和 descriptor 重绑使用同一当前 CardSelector/合法动作集合；兼容方法替换继续动态生效。
+- 功能测试在新增 4 项依赖注入测试后为 `1362/1362`；未修改规则、权重、搜索深度、束宽、hidden sample 数、prior、最终评分或 tie-break。
+
+### Architecture Guard
+
+质量门禁现对 `js/ai/**` 的每份被检查源码扫描完整文件，只要出现 `game.aiController` 或 `this.game.aiController` 即失败，不再仅检查变更行。Guard 自测同时覆盖合法无星号 Function/Module Header、缺字段、旧星号、JSDoc、标题同行、State 逆向 import、Controller 回指和 UI import。
+
+### 性能观察
+
+同一进程、同一固定局面、seed `20260814`、node budget 50 的单次改造前后观测：
+
+| 项目 | 改造前 | 改造后 | 结构结论 |
+|---|---:|---:|---|
+| `Planner.plan` 20 次均值 | 9.854 ms | 10.711 ms | 都扩展 31 节点、深度 4；无算法或节点对象变化 |
+| `AIController` 构造 2,000 次均值 | 0.232 μs | 1.143 μs | 增加固定闭包与依赖校验；只在 Game 构造时发生一次 |
+| 10-world 隐藏采样 2,000 次均值 | 27.683 μs | 33.126 μs | 采样实现未改；差值作为单次进程噪声记录，不据此优化 |
+
+固定 benchmark `seed=20260814`、`node-budget=200`、`category=planning` 在改造前后完全一致：Production raw `126/1000`、corrected `106/1000`，32 次决策平均扩展 `41.4` 节点、平均深度 `2.8`、报告决策耗时约 `0.9s`。本阶段没有在搜索节点中构造组件或 dependency object，也没有基于微基准做优化。
+
+### 构建与后续边界
+
+浏览器模块图从 `20260814-ai-state-contract` 统一更新为 `20260814-ai-controller-di`。AI-ARCH-3 没有拆 TransferPolicy、Value owner、Simulator、Response DecisionContext 或目录；这些仍按 AI-ARCH-4 之后的既定顺序处理。
 
 以上观测用于发现结构迁移造成的明显退化，不构成跨机器性能承诺，也没有在本阶段引入缓存或主动性能优化。
 

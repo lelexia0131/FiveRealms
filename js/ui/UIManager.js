@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260814-ai-state-contract";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-state-contract";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260814-ai-state-contract";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260814-ai-controller-di";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-ai-controller-di";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260814-ai-controller-di";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260814-ai-state-contract";
-import { AnimationController } from "./animationController.js?build=20260814-ai-state-contract";
-import { InteractionController } from "./InteractionController.js?build=20260814-ai-state-contract";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260814-ai-state-contract";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260814-ai-state-contract";
-import { JudgmentView } from "./JudgmentView.js?build=20260814-ai-state-contract";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-state-contract";
-import { createOpponentHandView } from "./handVisibility.js?build=20260814-ai-state-contract";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260814-ai-state-contract";
-import { SoundManager } from "../audio/SoundManager.js?build=20260814-ai-state-contract";
+} from "./templates.js?build=20260814-ai-controller-di";
+import { AnimationController } from "./animationController.js?build=20260814-ai-controller-di";
+import { InteractionController } from "./InteractionController.js?build=20260814-ai-controller-di";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260814-ai-controller-di";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260814-ai-controller-di";
+import { JudgmentView } from "./JudgmentView.js?build=20260814-ai-controller-di";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-controller-di";
+import { createOpponentHandView } from "./handVisibility.js?build=20260814-ai-controller-di";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260814-ai-controller-di";
+import { SoundManager } from "../audio/SoundManager.js?build=20260814-ai-controller-di";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);

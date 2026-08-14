@@ -16,8 +16,8 @@ const HEADER_FIELDS = Object.freeze([
 ]);
 const MODULE_FIELDS = Object.freeze([
   "模块职责",
-  "上游调用方",
-  "下游依赖",
+  "上游",
+  "下游",
   "状态边界",
   "信息边界",
   "架构约束",
@@ -27,15 +27,30 @@ const LAYERED_AI_PATTERN = /^js\/ai\/(?:state|search|simulation|value)\//i;
 const STATE_AI_PATTERN = /^js\/ai\/state\//i;
 
 /*
- * 功能：执行只读 Git 命令并返回标准输出。
- * 调用方：changedProductionFiles、changedLines。
- * 输入：Git 参数数组。
- * 输出：成功时返回 UTF-8 文本，命令失败时返回空字符串。
- * 读取状态：当前仓库 Git 索引与工作区。
- * 写入状态：无。
- * 调用函数：execFileSync。
- * 边界与不变量：只允许调用本文件写死的只读 Git 子命令。
- */
+功能
+执行只读 Git 命令并返回标准输出。
+
+调用方
+changedProductionFiles、changedLines。
+
+输入
+Git 参数数组。
+
+输出
+成功时返回 UTF-8 文本，命令失败时返回空字符串。
+
+读取状态
+当前仓库 Git 索引与工作区。
+
+写入状态
+无。
+
+调用函数
+execFileSync。
+
+边界与不变量
+只允许调用本文件写死的只读 Git 子命令。
+*/
 function gitOutput(args) {
   try {
     return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", windowsHide: true });
@@ -45,29 +60,59 @@ function gitOutput(args) {
 }
 
 /*
- * 功能：把平台路径统一为仓库内使用的正斜杠路径。
- * 调用方：文件发现、错误报告和架构检查。
- * 输入：任意路径字符串。
- * 输出：使用正斜杠的路径字符串。
- * 读取状态：无。
- * 写入状态：无。
- * 调用函数：String.replaceAll。
- * 边界与不变量：不解析或访问路径，只做分隔符归一化。
- */
+功能
+把平台路径统一为仓库内使用的正斜杠路径。
+
+调用方
+文件发现、错误报告和架构检查。
+
+输入
+任意路径字符串。
+
+输出
+使用正斜杠的路径字符串。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+String.replaceAll。
+
+边界与不变量
+不解析或访问路径，只做分隔符归一化。
+*/
 function normalizePath(value) {
   return String(value).replaceAll("\\", "/");
 }
 
 /*
- * 功能：列出相对 HEAD 已修改或未跟踪的生产 JavaScript 文件。
- * 调用方：main。
- * 输入：无。
- * 输出：排序、去重后的仓库相对路径数组。
- * 读取状态：Git HEAD、索引、工作区与 ignore 规则。
- * 写入状态：无。
- * 调用函数：gitOutput。
- * 边界与不变量：只检查 js 目录；删除文件不会进入结果。
- */
+功能
+列出相对 HEAD 已修改或未跟踪的生产 JavaScript 文件。
+
+调用方
+main。
+
+输入
+无。
+
+输出
+排序、去重后的仓库相对路径数组。
+
+读取状态
+Git HEAD、索引、工作区与 ignore 规则。
+
+写入状态
+无。
+
+调用函数
+gitOutput。
+
+边界与不变量
+只检查 js 目录；删除文件不会进入结果。
+*/
 function changedProductionFiles() {
   const tracked = gitOutput(["diff", "--name-only", "--diff-filter=ACMR", "HEAD", "--", "js"]);
   const untracked = gitOutput(["ls-files", "--others", "--exclude-standard", "--", "js"]);
@@ -77,15 +122,30 @@ function changedProductionFiles() {
 }
 
 /*
- * 功能：列出 js 目录下全部生产 JavaScript 文件，用于历史欠债盘点。
- * 调用方：main 的 --all 模式。
- * 输入：起始目录，默认仓库 js 目录。
- * 输出：排序后的仓库相对路径数组。
- * 读取状态：工作区 js 目录树。
- * 写入状态：无。
- * 调用函数：fs.readdirSync、allProductionFiles。
- * 边界与不变量：不跟随目录符号链接，不读取 js 目录之外的文件。
- */
+功能
+列出 js 目录下全部生产 JavaScript 文件，用于历史欠债盘点。
+
+调用方
+main 的 --all 模式。
+
+输入
+起始目录，默认仓库 js 目录。
+
+输出
+排序后的仓库相对路径数组。
+
+读取状态
+工作区 js 目录树。
+
+写入状态
+无。
+
+调用函数
+fs.readdirSync、allProductionFiles。
+
+边界与不变量
+不跟随目录符号链接，不读取 js 目录之外的文件。
+*/
 function allProductionFiles(directory = path.join(ROOT, "js")) {
   const files = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -99,15 +159,30 @@ function allProductionFiles(directory = path.join(ROOT, "js")) {
 }
 
 /*
- * 功能：判断文件是否已由 Git 跟踪。
- * 调用方：changedLines。
- * 输入：仓库相对路径。
- * 输出：已跟踪返回 true，否则返回 false。
- * 读取状态：Git 索引。
- * 写入状态：无。
- * 调用函数：execFileSync。
- * 边界与不变量：失败只表示未跟踪，不改变索引。
- */
+功能
+判断文件是否已由 Git 跟踪。
+
+调用方
+changedLines。
+
+输入
+仓库相对路径。
+
+输出
+已跟踪返回 true，否则返回 false。
+
+读取状态
+Git 索引。
+
+写入状态
+无。
+
+调用函数
+execFileSync。
+
+边界与不变量
+失败只表示未跟踪，不改变索引。
+*/
 function isTracked(file) {
   try {
     execFileSync("git", ["ls-files", "--error-unmatch", "--", file], {
@@ -123,15 +198,30 @@ function isTracked(file) {
 }
 
 /*
- * 功能：提取文件相对 HEAD 的新增或修改行号。
- * 调用方：inspectFile。
- * 输入：仓库相对路径与当前行数。
- * 输出：一基行号 Set；未跟踪文件包含全部行。
- * 读取状态：Git HEAD 与工作区文件。
- * 写入状态：无。
- * 调用函数：isTracked、gitOutput。
- * 边界与不变量：删除行没有新行号；零长度 hunk 不制造伪变更。
- */
+功能
+提取文件相对 HEAD 的新增或修改行号。
+
+调用方
+inspectFile。
+
+输入
+仓库相对路径与当前行数。
+
+输出
+一基行号 Set；未跟踪文件包含全部行。
+
+读取状态
+Git HEAD 与工作区文件。
+
+写入状态
+无。
+
+调用函数
+isTracked、gitOutput。
+
+边界与不变量
+删除行没有新行号；零长度 hunk 不制造伪变更。
+*/
 function changedLines(file, lineCount) {
   if (!isTracked(file)) return new Set(Array.from({ length: lineCount }, (_, index) => index + 1));
   const diff = gitOutput(["diff", "--unified=0", "--no-ext-diff", "HEAD", "--", file]);
@@ -145,15 +235,30 @@ function changedLines(file, lineCount) {
 }
 
 /*
- * 功能：把字符串和注释替换为空格，同时保留换行与代码花括号位置。
- * 调用方：functionRange。
- * 输入：JavaScript 源码。
- * 输出：与输入等长的轻量词法遮罩文本。
- * 读取状态：无。
- * 写入状态：局部扫描状态。
- * 调用函数：无。
- * 边界与不变量：这是范围定位器而非完整 parser；模板字符串整体视为字符串。
- */
+功能
+把字符串和注释替换为空格，同时保留换行与代码花括号位置。
+
+调用方
+functionRange。
+
+输入
+JavaScript 源码。
+
+输出
+与输入等长的轻量词法遮罩文本。
+
+读取状态
+无。
+
+写入状态
+局部扫描状态。
+
+调用函数
+无。
+
+边界与不变量
+这是范围定位器而非完整 parser；模板字符串整体视为字符串。
+*/
 function maskNonCode(source) {
   const chars = [...source];
   let mode = "code";
@@ -206,15 +311,30 @@ function maskNonCode(source) {
 }
 
 /*
- * 功能：识别一行中可维护函数声明的名称与签名位置。
- * 调用方：findFunctions。
- * 输入：单行源码。
- * 输出：识别成功时返回名称与列偏移，否则返回 null。
- * 读取状态：无。
- * 写入状态：无。
- * 调用函数：RegExp.match。
- * 边界与不变量：排除控制流；单行匿名 lambda 豁免，具名箭头函数不豁免。
- */
+功能
+识别一行中可维护函数声明的名称与签名位置。
+
+调用方
+findFunctions。
+
+输入
+单行源码。
+
+输出
+识别成功时返回名称与列偏移，否则返回 null。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+RegExp.match。
+
+边界与不变量
+排除控制流；单行匿名 lambda 豁免，具名箭头函数不豁免。
+*/
 function functionSignature(line) {
   const declaration = line.match(/\b(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/);
   if (declaration) return { name: declaration[1], column: declaration.index ?? 0, kind: "declaration" };
@@ -228,15 +348,30 @@ function functionSignature(line) {
 }
 
 /*
- * 功能：计算函数从签名行到匹配闭括号的近似范围。
- * 调用方：findFunctions。
- * 输入：源码行、遮罩行、函数起始行。
- * 输出：包含 startLine 和 endLine 的一基范围。
- * 读取状态：无。
- * 写入状态：局部花括号深度。
- * 调用函数：无。
- * 边界与不变量：无块体的具名箭头函数范围仅为签名行。
- */
+功能
+计算函数从签名行到匹配闭括号的近似范围。
+
+调用方
+findFunctions。
+
+输入
+源码行、遮罩行、函数起始行。
+
+输出
+包含 startLine 和 endLine 的一基范围。
+
+读取状态
+无。
+
+写入状态
+局部花括号深度。
+
+调用函数
+无。
+
+边界与不变量
+无块体的具名箭头函数范围仅为签名行。
+*/
 function functionRange(lines, maskedLines, startIndex, kind) {
   const tail = maskedLines.slice(startIndex).join("\n");
   let bodyStart = -1;
@@ -284,15 +419,30 @@ function functionRange(lines, maskedLines, startIndex, kind) {
 }
 
 /*
- * 功能：找出文件中的函数名称和近似源代码范围。
- * 调用方：inspectSource。
- * 输入：JavaScript 源码。
- * 输出：函数记录数组。
- * 读取状态：无。
- * 写入状态：无。
- * 调用函数：maskNonCode、functionSignature、functionRange。
- * 边界与不变量：同一签名行只产生一个记录；不把一行匿名回调当独立函数。
- */
+功能
+找出文件中的函数名称和近似源代码范围。
+
+调用方
+inspectSource。
+
+输入
+JavaScript 源码。
+
+输出
+函数记录数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+maskNonCode、functionSignature、functionRange。
+
+边界与不变量
+同一签名行只产生一个记录；不把一行匿名回调当独立函数。
+*/
 function findFunctions(source) {
   const lines = source.split(/\r?\n/);
   const maskedLines = maskNonCode(source).split(/\r?\n/);
@@ -307,82 +457,233 @@ function findFunctions(source) {
 }
 
 /*
- * 功能：读取函数正上方的普通块注释并校验固定字段。
- * 调用方：inspectSource。
- * 输入：源码行与函数起始行。
- * 输出：缺失字段数组；JSDoc 另报普通块注释格式缺失。
- * 读取状态：无。
- * 写入状态：无。
- * 调用函数：RegExp.test。
- * 边界与不变量：允许函数头与签名之间有空行，不越过其他代码寻找注释。
- */
-function missingHeaderFields(lines, startLine) {
-  let end = startLine - 2;
+功能
+读取函数正上方与文件开头的相邻块注释。
+
+调用方
+missingHeaderFields、missingModuleFields。
+
+输入
+源码行、向前搜索的独占结束索引；文件头校验可省略结束索引。
+
+输出
+包含起止行的块注释行数组；不存在完整相邻块时返回 null。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+函数头允许与签名之间有空行，但不得越过代码；模块头必须是文件第一个非空内容。
+*/
+function adjacentHeaderBlock(lines, exclusiveEnd = null) {
+  if (exclusiveEnd === null) {
+    let start = 0;
+    while (start < lines.length && !lines[start].trim()) start += 1;
+    if (lines[start]?.trim() !== "/*" && !lines[start]?.trim().startsWith("/**")) return null;
+    let end = start;
+    while (end < lines.length && lines[end].trim() !== "*/") end += 1;
+    return end < lines.length ? lines.slice(start, end + 1) : null;
+  }
+  let end = exclusiveEnd - 1;
   while (end >= 0 && !lines[end].trim()) end -= 1;
-  if (end < 0 || !lines[end].includes("*/")) return [...HEADER_FIELDS];
+  if (end < 0 || lines[end].trim() !== "*/") return null;
   let start = end;
-  while (start >= 0 && !lines[start].includes("/*")) start -= 1;
-  if (start < 0) return [...HEADER_FIELDS];
-  const header = lines.slice(start, end + 1).join("\n");
-  const missing = HEADER_FIELDS.filter((field) => {
-    const pattern = new RegExp(`^\\s*\\*?\\s*${field}\\s*[：:]\\s*\\S`, "m");
-    return !pattern.test(header);
-  });
-  if (/^\s*\/\*\*/.test(lines[start])) missing.unshift("普通块注释（禁止 JSDoc）");
-  return missing;
+  while (start >= 0 && lines[start].trim() !== "/*" && !lines[start].trim().startsWith("/**")) start -= 1;
+  return start >= 0 ? lines.slice(start, end + 1) : null;
 }
 
 /*
- * 功能：校验目标分层模块的模块头字段。
- * 调用方：inspectSource。
- * 输入：完整源码。
- * 输出：缺失模块头字段数组。
- * 读取状态：无。
- * 写入状态：无。
- * 调用函数：RegExp.test。
- * 边界与不变量：只校验文件首个 import 之前的普通块注释。
- */
+功能
+校验普通块头是否严格采用无星号、标题独占行和固定顺序格式。
+
+调用方
+missingHeaderFields、missingModuleFields。
+
+输入
+完整块注释行与期望字段标题数组。
+
+输出
+缺失字段和格式问题数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+每个字段必须恰好出现一次且正文非空；缩进合法，但星号、JSDoc、冒号标题均非法。
+*/
+function headerFormatIssues(block, fields) {
+  if (!block) return [...fields];
+  const issues = [];
+  if (block[0].trim() !== "/*") issues.push("普通块注释（禁止 JSDoc）");
+  const body = block.slice(1, -1);
+  if (body.some((line) => /^\s*\*/.test(line))) issues.push("无星号前缀格式（禁止旧式 *）");
+  const positions = fields.map((field) => body.reduce((found, line, index) => (
+    line.trim() === field ? [...found, index] : found
+  ), []));
+  fields.forEach((field, index) => {
+    if (positions[index].length !== 1) issues.push(field);
+  });
+  const ordered = positions.every((matches, index) => (
+    matches.length === 1 && (index === 0 || positions[index - 1].length !== 1 || positions[index - 1][0] < matches[0])
+  ));
+  if (!ordered && positions.every((matches) => matches.length === 1)) issues.push("字段顺序");
+  positions.forEach((matches, index) => {
+    if (matches.length !== 1) return;
+    const next = index + 1 < positions.length && positions[index + 1].length === 1
+      ? positions[index + 1][0]
+      : body.length;
+    if (!body.slice(matches[0] + 1, next).some((line) => line.trim())) {
+      issues.push(`${fields[index]}正文`);
+    }
+  });
+  return [...new Set(issues)];
+}
+
+/*
+功能
+读取函数正上方的普通块注释并校验 Function Header v1。
+
+调用方
+inspectSource。
+
+输入
+源码行与函数起始行。
+
+输出
+缺失字段和严格格式问题数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+adjacentHeaderBlock、headerFormatIssues。
+
+边界与不变量
+允许函数头与签名之间有空行，不越过其他代码寻找注释。
+*/
+function missingHeaderFields(lines, startLine) {
+  return headerFormatIssues(adjacentHeaderBlock(lines, startLine - 1), HEADER_FIELDS);
+}
+
+/*
+功能
+校验目标分层模块的 Module Header v1。
+
+调用方
+inspectSource。
+
+输入
+完整源码。
+
+输出
+缺失字段和严格格式问题数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+adjacentHeaderBlock、headerFormatIssues。
+
+边界与不变量
+模块头必须是文件第一个非空内容，且不允许用后续函数头补齐字段。
+*/
 function missingModuleFields(source) {
-  const beforeImport = source.split(/^\s*import\b/m, 1)[0];
-  return MODULE_FIELDS.filter((field) => {
-    const pattern = new RegExp(`^\\s*\\*?\\s*${field}\\s*[：:]\\s*\\S`, "m");
-    return !pattern.test(beforeImport);
-  });
+  const lines = source.split(/\r?\n/);
+  return headerFormatIssues(adjacentHeaderBlock(lines), MODULE_FIELDS);
 }
 
 /*
- * 功能：判断函数范围是否与本次变更行相交。
- * 调用方：inspectSource。
- * 输入：函数记录和变更行 Set。
- * 输出：相交返回 true。
- * 读取状态：无。
- * 写入状态：无。
- * 调用函数：Set.has。
- * 边界与不变量：--all 使用 null 表示所有函数都需检查。
- */
-function functionWasChanged(fn, changed) {
+功能
+判断函数范围是否与本次变更行相交。
+
+调用方
+inspectSource。
+
+输入
+函数记录、变更行 Set 与源码行。
+
+输出
+相交返回 true。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+Set.has。
+
+边界与不变量
+--all 使用 null 表示所有函数都需检查。
+*/
+function functionWasChanged(fn, changed, lines) {
   if (changed === null) return true;
   for (let line = fn.startLine; line <= fn.endLine; line += 1) {
+    if (changed.has(line)) return true;
+  }
+  let headerEnd = fn.startLine - 2;
+  while (headerEnd >= 0 && !lines[headerEnd].trim()) headerEnd -= 1;
+  if (lines[headerEnd]?.trim() !== "*/") return false;
+  let headerStart = headerEnd;
+  while (headerStart >= 0 && lines[headerStart].trim() !== "/*" && !lines[headerStart].trim().startsWith("/**")) {
+    headerStart -= 1;
+  }
+  for (let line = headerStart + 1; line <= headerEnd + 1; line += 1) {
     if (changed.has(line)) return true;
   }
   return false;
 }
 
 /*
- * 功能：对单份源码执行 Function Header 和首版 Architecture Guard。
- * 调用方：inspectFile、runSelfTest。
- * 输入：仓库路径、源码、变更行 Set 或 null、是否为新文件。
- * 输出：结构化错误数组。
- * 读取状态：无。
- * 写入状态：无。
- * 调用函数：findFunctions、missingHeaderFields、missingModuleFields。
- * 边界与不变量：Guard 只使用路径、import 和明确回指语法，避免扫描注释关键词。
- */
-function inspectSource(file, source, changed, isNewFile = false) {
+功能
+对单份源码执行 Function Header 和首版 Architecture Guard。
+
+调用方
+inspectFile、runSelfTest。
+
+输入
+仓库路径、源码、变更行 Set 或 null。
+
+输出
+结构化错误数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+findFunctions、missingHeaderFields、missingModuleFields。
+
+边界与不变量
+Guard 只使用路径、import 和明确回指语法；AI 内部回指扫描覆盖完整文件，其余函数头仍按变更范围执行。
+*/
+function inspectSource(file, source, changed) {
   const lines = source.split(/\r?\n/);
+  const maskedLines = maskNonCode(source).split(/\r?\n/);
   const errors = [];
   for (const fn of findFunctions(source)) {
-    if (!functionWasChanged(fn, changed)) continue;
+    if (!functionWasChanged(fn, changed, lines)) continue;
     const missing = missingHeaderFields(lines, fn.startLine);
     if (missing.length) errors.push({ file, functionName: fn.name, line: fn.startLine, missing });
   }
@@ -390,10 +691,8 @@ function inspectSource(file, source, changed, isNewFile = false) {
   if (LAYERED_AI_PATTERN.test(file)) {
     const uiImport = source.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:\/ui\/|\/ui\.|\.\.\/ui\/)/i);
     if (uiImport) errors.push({ file, functionName: "<module>", line: source.slice(0, uiImport.index).split(/\r?\n/).length, missing: ["架构约束：search/simulation/value 禁止 UI import"] });
-    if (isNewFile) {
-      const missing = missingModuleFields(source);
-      if (missing.length) errors.push({ file, functionName: "<module>", line: 1, missing });
-    }
+    const missing = missingModuleFields(source);
+    if (missing.length) errors.push({ file, functionName: "<module>", line: 1, missing });
   }
 
   if (STATE_AI_PATTERN.test(file)) {
@@ -410,45 +709,127 @@ function inspectSource(file, source, changed, isNewFile = false) {
     }
   }
 
-  lines.forEach((line, index) => {
-    if (changed !== null && !changed.has(index + 1)) return;
-    const code = line.replace(/\/\/.*$/, "");
-    if (/\b(?:this\.)?game\.aiController\b/.test(code)) {
-      errors.push({ file, functionName: "<architecture>", line: index + 1, missing: ["架构约束：禁止新增 game.aiController 回指"] });
+  if (/^js\/ai\//i.test(file)) maskedLines.forEach((line, index) => {
+    if (/\b(?:this\.)?game\.aiController\b/.test(line)) {
+      errors.push({ file, functionName: "<architecture>", line: index + 1, missing: ["架构约束：AI 内部禁止 game.aiController 回指"] });
     }
   });
   return errors;
 }
 
 /*
- * 功能：读取并检查一个工作区生产文件。
- * 调用方：main。
- * 输入：仓库相对路径与检查模式。
- * 输出：结构化错误数组。
- * 读取状态：工作区文件与 Git 变更行。
- * 写入状态：无。
- * 调用函数：changedLines、inspectSource。
- * 边界与不变量：--changed 只约束实际变更函数；--all 约束全部历史函数。
- */
+功能
+读取并检查一个工作区生产文件。
+
+调用方
+main。
+
+输入
+仓库相对路径与检查模式。
+
+输出
+结构化错误数组。
+
+读取状态
+工作区文件与 Git 变更行。
+
+写入状态
+无。
+
+调用函数
+changedLines、inspectSource。
+
+边界与不变量
+--changed 只约束实际变更函数；--all 约束全部历史函数。
+*/
 function inspectFile(file, mode) {
   const source = fs.readFileSync(path.join(ROOT, file), "utf8");
   const lineCount = source.split(/\r?\n/).length;
   const changed = mode === "all" ? null : changedLines(file, lineCount);
-  return inspectSource(file, source, changed, !isTracked(file));
+  return inspectSource(file, source, changed);
 }
 
 /*
- * 功能：运行内置通过/失败夹具，防止检查器静默失效。
- * 调用方：main 的 --self-test 模式。
- * 输入：无。
- * 输出：断言失败时抛错，成功时打印摘要。
- * 读取状态：无。
- * 写入状态：标准输出。
- * 调用函数：inspectSource。
- * 边界与不变量：夹具必须同时覆盖完整头、缺字段、JSDoc、UI import、state 逆向 import 和控制器回指。
- */
+功能
+运行内置通过/失败夹具，防止检查器静默失效。
+
+调用方
+main 的 --self-test 模式。
+
+输入
+无。
+
+输出
+断言失败时抛错，成功时打印摘要。
+
+读取状态
+无。
+
+写入状态
+标准输出。
+
+调用函数
+inspectSource。
+
+边界与不变量
+夹具必须同时覆盖完整头、缺字段、JSDoc、UI import、state 逆向 import 和控制器回指。
+*/
 function runSelfTest() {
   const pass = `/*
+功能
+返回输入。
+
+调用方
+自测。
+
+输入
+数值。
+
+输出
+原数值。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+保持输入不变。
+*/
+function identity(value) { return value; }`;
+  const moduleHeader = `/*
+模块职责
+提供质量检查夹具。
+
+上游
+检查器自测。
+
+下游
+无。
+
+状态边界
+无。
+
+信息边界
+无隐藏信息。
+
+架构约束
+不得依赖 UI 或编排层。
+*/`;
+  const passErrors = inspectSource("js/fixture-pass.js", pass, null);
+  if (passErrors.length) throw new Error(`valid no-star fixture failed: ${JSON.stringify(passErrors)}`);
+
+  const missing = pass.replace("\n输入\n数值。\n", "\n");
+  const missingErrors = inspectSource("js/fixture-missing.js", missing, null);
+  if (!missingErrors.some((error) => error.functionName === "identity" && error.missing.includes("输入"))) {
+    throw new Error("missing-field fixture did not detect absent Function Header field");
+  }
+
+  const oldStar = `/*
  * 功能：返回输入。
  * 调用方：自测。
  * 输入：数值。
@@ -459,53 +840,92 @@ function runSelfTest() {
  * 边界与不变量：保持输入不变。
  */
 function identity(value) { return value; }`;
-  const fail = `/**
- * 功能：错误夹具。
- */
-function broken() { return game.aiController; }`;
-  const passErrors = inspectSource("js/fixture-pass.js", pass, null, true);
-  if (passErrors.length) throw new Error(`passing fixture failed: ${JSON.stringify(passErrors)}`);
-  const failErrors = inspectSource("js/fixture-fail.js", fail, null, true);
-  if (!failErrors.some((error) => error.functionName === "broken" && error.missing.includes("输入"))) {
-    throw new Error("failing fixture did not detect missing Function Header fields");
+  const oldStarErrors = inspectSource("js/fixture-old-star.js", oldStar, null);
+  if (!oldStarErrors.some((error) => error.missing.some((item) => item.includes("星号")))) {
+    throw new Error("old-star fixture was not rejected");
   }
-  if (!failErrors.some((error) => error.missing.some((item) => item.includes("JSDoc")))) {
-    throw new Error("failing fixture did not reject JSDoc");
+
+  const jsdoc = pass.replace("/*\n", "/**\n");
+  const jsdocErrors = inspectSource("js/fixture-jsdoc.js", jsdoc, null);
+  if (!jsdocErrors.some((error) => error.missing.some((item) => item.includes("JSDoc")))) {
+    throw new Error("JSDoc fixture was not rejected");
   }
-  if (!failErrors.some((error) => error.functionName === "<architecture>")) {
-    throw new Error("failing fixture did not detect game.aiController backreference");
+
+  const sameLine = pass.replace("功能\n返回输入。", "功能：返回输入。");
+  const sameLineErrors = inspectSource("js/fixture-same-line.js", sameLine, null);
+  if (!sameLineErrors.some((error) => error.functionName === "identity" && error.missing.includes("功能"))) {
+    throw new Error("same-line title fixture was not rejected");
+  }
+
+  const validModuleErrors = inspectSource(
+    "js/ai/state/GoodState.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (validModuleErrors.length) {
+    throw new Error(`valid Module Header fixture failed: ${JSON.stringify(validModuleErrors)}`);
+  }
+
+  const controllerErrors = inspectSource(
+    "js/ai/AiFixture.js",
+    pass.replace("return value;", "return game.aiController;"),
+    null,
+  );
+  if (!controllerErrors.some((error) => error.functionName === "<architecture>")) {
+    throw new Error("controller fixture did not detect game.aiController backreference");
+  }
+  const controllerCommentErrors = inspectSource(
+    "js/ai/AiCommentFixture.js",
+    pass.replace("return value;", "/* game.aiController 只是架构说明。 */\n  return value;"),
+    null,
+  );
+  if (controllerCommentErrors.some((error) => error.functionName === "<architecture>")) {
+    throw new Error("controller guard incorrectly scanned comment text");
   }
   const uiErrors = inspectSource(
     "js/ai/search/BadSearch.js",
-    `import { UI } from "../../ui/UI.js";\n${pass}`,
+    `${moduleHeader}\nimport { UI } from "../../ui/UI.js";\n${pass}`,
     null,
-    true,
   );
   if (!uiErrors.some((error) => error.missing.some((item) => item.includes("UI import")))) {
     throw new Error("failing fixture did not detect layered UI import");
   }
   const stateErrors = inspectSource(
     "js/ai/state/BadState.js",
-    `import { AiPlanner } from "../AiPlanner.js";\n${pass}`,
+    `${moduleHeader}\nimport { AiPlanner } from "../AiPlanner.js";\n${pass}`,
     null,
-    true,
   );
   if (!stateErrors.some((error) => error.missing.some((item) => item.includes("state 禁止依赖")))) {
     throw new Error("failing fixture did not detect state orchestration import");
   }
-  process.stdout.write("code-quality self-test passed: complete header, missing fields, JSDoc, controller backreference, layered UI import, and state dependency direction\n");
+  process.stdout.write("code-quality self-test passed: valid no-star headers, missing field, old-star, JSDoc, same-line title, valid module, controller backreference, ignored comment text, layered UI import, and state dependency direction\n");
 }
 
 /*
- * 功能：解析命令行模式、运行检查并设置进程退出码。
- * 调用方：Node.js 入口。
- * 输入：process.argv 中的 --changed、--all 或 --self-test。
- * 输出：标准输出/错误与退出码。
- * 读取状态：生产源码和只读 Git 状态。
- * 写入状态：process.exitCode。
- * 调用函数：changedProductionFiles、allProductionFiles、inspectFile、runSelfTest。
- * 边界与不变量：默认模式永远是 --changed；未知参数立即失败。
- */
+功能
+解析命令行模式、运行检查并设置进程退出码。
+
+调用方
+Node.js 入口。
+
+输入
+process.argv 中的 --changed、--all 或 --self-test。
+
+输出
+标准输出/错误与退出码。
+
+读取状态
+生产源码和只读 Git 状态。
+
+写入状态
+process.exitCode。
+
+调用函数
+changedProductionFiles、allProductionFiles、inspectFile、runSelfTest。
+
+边界与不变量
+默认模式永远是 --changed；未知参数立即失败。
+*/
 function main() {
   const args = process.argv.slice(2);
   const allowed = new Set(["--changed", "--all", "--self-test"]);

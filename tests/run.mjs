@@ -24,6 +24,8 @@ import {
   totalBranchProbability
 } from "../js/ai/state/Probability.js";
 import { AiSimulator } from "../js/ai/AiSimulator.js";
+import { AiPlanner } from "../js/ai/AiPlanner.js";
+import { AiActionGenerator } from "../js/ai/AiActionGenerator.js";
 import { ThreatCalculator } from "../js/ai/ThreatCalculator.js";
 import { STATE_DELTA_SCALE, HP_RISK_OPTION_WEIGHT } from "../js/ai/AiEvaluator.js";
 import { CleanupManager } from "../js/utils/CleanupManager.js";
@@ -59,7 +61,10 @@ import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import {
   ACTIVE_SKILLS, getActiveSkillCost, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
 } from "../js/generals/skillRegistry.js";
-import { makeGame as makeBenchmarkGame } from "./ai-benchmark/helpers.mjs";
+import {
+  makeGame as makeBenchmarkGame,
+  makeRandom as makeBenchmarkRandom
+} from "./ai-benchmark/helpers.mjs";
 import {
   UNKNOWN_HAND_EXPECTED_VALUE,
   buildTransferCandidates,
@@ -8354,15 +8359,30 @@ test("隐藏信息：牌背多阶段 pending 会锁住手牌、技能和结束�
 // ---- AI 系统·State Contract ----
 
 /*
- * 功能：验证 VisibleState 只由公开事实与观察者自己的手牌决定。
- * 调用方：AI 状态契约回归测试。
- * 输入：手牌数量相同但敌方未知牌定义不同的两个 GameState 时刻。
- * 输出：两个投影完全一致，且敌方投影不含手牌与推测字段。
- * 读取状态：测试 GameState、VisibleState。
- * 写入状态：测试夹具中的敌方手牌。
- * 调用函数：createVisibleState。
- * 边界与不变量：敌方未知牌定义变化不得影响 VisibleState。
- */
+功能
+验证 VisibleState 只由公开事实与观察者自己的手牌决定。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+手牌数量相同但敌方未知牌定义不同的两个 GameState 时刻。
+
+输出
+两个投影完全一致，且敌方投影不含手牌与推测字段。
+
+读取状态
+测试 GameState、VisibleState。
+
+写入状态
+测试夹具中的敌方手牌。
+
+调用函数
+createVisibleState。
+
+边界与不变量
+敌方未知牌定义变化不得影响 VisibleState。
+*/
 function testVisibleStateExcludesHiddenDefinitions() {
   const actor = makePlayer("state-actor", 0, "dawn"), enemy = makePlayer("state-enemy", 1, "dusk");
   actor.hand.push(instance("assault"));
@@ -8385,15 +8405,30 @@ function testVisibleStateExcludesHiddenDefinitions() {
 test("AI·状态契约：VisibleState 不泄漏敌方未知牌定义", testVisibleStateExcludesHiddenDefinitions);
 
 /*
- * 功能：验证 Knowledge 只投影观察者合法记录的实体牌记忆。
- * 调用方：AI 状态契约回归测试。
- * 输入：包含一张合法已知牌与一张未知牌的敌方手牌。
- * 输出：Knowledge 仅包含合法记忆中的牌实体与定义。
- * 读取状态：玩家 aiMemory、VisibleState 玩家身份。
- * 写入状态：测试夹具中的合法 AI 记忆。
- * 调用函数：createVisibleState、createKnowledgeState。
- * 边界与不变量：Knowledge 不得用真实敌方手牌补全未知位置。
- */
+功能
+验证 Knowledge 只投影观察者合法记录的实体牌记忆。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+包含一张合法已知牌与一张未知牌的敌方手牌。
+
+输出
+Knowledge 仅包含合法记忆中的牌实体与定义。
+
+读取状态
+玩家 aiMemory、VisibleState 玩家身份。
+
+写入状态
+测试夹具中的合法 AI 记忆。
+
+调用函数
+createVisibleState、createKnowledgeState。
+
+边界与不变量
+Knowledge 不得用真实敌方手牌补全未知位置。
+*/
 function testKnowledgeStateUsesOnlyLegalMemory() {
   const actor = makePlayer("knowledge-actor", 0, "dawn"), enemy = makePlayer("knowledge-enemy", 1, "dusk");
   const known = instance("block"), unknown = instance("recover");
@@ -8413,15 +8448,30 @@ function testKnowledgeStateUsesOnlyLegalMemory() {
 test("AI·状态契约：Knowledge 只保存合法实体记忆", testKnowledgeStateUsesOnlyLegalMemory);
 
 /*
- * 功能：验证 BeliefState 从合法记忆、未知槽位数量和剩余牌计数推导概率。
- * 调用方：AI 状态契约回归测试。
- * 输入：敌方一张已知格挡、一张未知牌及固定剩余牌计数。
- * 输出：符合二项分布的期望值，且真实未知牌换面不改变结果。
- * 读取状态：VisibleState、Knowledge、剩余牌计数。
- * 写入状态：测试夹具中的敌方未知手牌。
- * 调用函数：createBeliefState、createKnowledgeState、createVisibleState。
- * 边界与不变量：Belief 不读取真实未知牌，且不持有调用方计数对象的可变引用。
- */
+功能
+验证 BeliefState 从合法记忆、未知槽位数量和剩余牌计数推导概率。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+敌方一张已知格挡、一张未知牌及固定剩余牌计数。
+
+输出
+符合二项分布的期望值，且真实未知牌换面不改变结果。
+
+读取状态
+VisibleState、Knowledge、剩余牌计数。
+
+写入状态
+测试夹具中的敌方未知手牌。
+
+调用函数
+createBeliefState、createKnowledgeState、createVisibleState。
+
+边界与不变量
+Belief 不读取真实未知牌，且不持有调用方计数对象的可变引用。
+*/
 function testBeliefStateDerivesLegalDistribution() {
   const actor = makePlayer("belief-actor", 0, "dawn"), enemy = makePlayer("belief-enemy", 1, "dusk");
   const known = instance("block");
@@ -8448,15 +8498,30 @@ function testBeliefStateDerivesLegalDistribution() {
 test("AI·状态契约：Belief 从合法计数与记忆推导", testBeliefStateDerivesLegalDistribution);
 
 /*
- * 功能：验证 SearchState 克隆生成与 GameState 无关的独立可变搜索世界。
- * 调用方：AI 状态契约回归测试。
- * 输入：由兼容入口组合完成的 SearchState。
- * 输出：克隆可独立变更，原快照与后续克隆不受污染。
- * 读取状态：SearchState。
- * 写入状态：仅写第一个克隆的玩家、牌分支和剩余计数。
- * 调用函数：cloneSearchState、createAiStateContracts。
- * 边界与不变量：SearchState 不保留 Game 引用，任一克隆的写入不得串扰。
- */
+功能
+验证 SearchState 克隆生成与 GameState 无关的独立可变搜索世界。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+由兼容入口组合完成的 SearchState。
+
+输出
+克隆可独立变更，原快照与后续克隆不受污染。
+
+读取状态
+SearchState。
+
+写入状态
+仅写第一个克隆的玩家、牌分支和剩余计数。
+
+调用函数
+cloneSearchState、createAiStateContracts。
+
+边界与不变量
+SearchState 不保留 Game 引用，任一克隆的写入不得串扰。
+*/
 function testSearchStateCloneIsolation() {
   const actor = makePlayer("search-actor", 0, "dawn"), enemy = makePlayer("search-enemy", 1, "dusk");
   actor.hand.push(instance("assault"));
@@ -8479,15 +8544,30 @@ function testSearchStateCloneIsolation() {
 test("AI·状态契约：SearchState 克隆隔离且不回读 Game", testSearchStateCloneIsolation);
 
 /*
- * 功能：验证通用概率分支迁移后仍按共享世界条件联合并守恒概率质量。
- * 调用方：AI 状态契约回归测试。
- * 输入：两个共享同一二元条件、各自携带独立状态字段的完整分区。
- * 输出：联合结果保持两个世界分支及总概率一。
- * 读取状态：无。
- * 写入状态：无。
- * 调用函数：joinStateProbabilityBranches、totalBranchProbability。
- * 边界与不变量：共享条件不得重复相乘，互斥条件不得错误合并。
- */
+功能
+验证通用概率分支迁移后仍按共享世界条件联合并守恒概率质量。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+两个共享同一二元条件、各自携带独立状态字段的完整分区。
+
+输出
+联合结果保持两个世界分支及总概率一。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+joinStateProbabilityBranches、totalBranchProbability。
+
+边界与不变量
+共享条件不得重复相乘，互斥条件不得错误合并。
+*/
 function testStateProbabilityPreservesSharedConditions() {
   const left = [
     { probability:0.3, conditions:{ radar:"present" }, attackUsed:0 },
@@ -8507,15 +8587,30 @@ function testStateProbabilityPreservesSharedConditions() {
 test("AI·状态契约：Probability 联合共享条件时质量守恒", testStateProbabilityPreservesSharedConditions);
 
 /*
- * 功能：验证旧可见状态入口严格委托给新的四层状态契约组合结果。
- * 调用方：AI 状态契约回归测试。
- * 输入：同一观察者、GameState 与剩余牌计数。
- * 输出：兼容入口与显式 SearchState 结果深度一致。
- * 读取状态：GameState、状态契约快照。
- * 写入状态：无。
- * 调用函数：createAiStateContracts、createAiVisibleState。
- * 边界与不变量：迁移期间 Planner 与 Simulator 接收的扁平字段和值不得改变。
- */
+功能
+验证旧可见状态入口严格委托给新的四层状态契约组合结果。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+同一观察者、GameState 与剩余牌计数。
+
+输出
+兼容入口与显式 SearchState 结果深度一致。
+
+读取状态
+GameState、状态契约快照。
+
+写入状态
+无。
+
+调用函数
+createAiStateContracts、createAiVisibleState。
+
+边界与不变量
+迁移期间 Planner 与 Simulator 接收的扁平字段和值不得改变。
+*/
 function testStateContractCompatibilityFacade() {
   const actor = makePlayer("facade-actor", 0, "dawn"), enemy = makePlayer("facade-enemy", 1, "dusk");
   actor.hand.push(instance("recover"));
@@ -8531,6 +8626,249 @@ function testStateContractCompatibilityFacade() {
 }
 
 test("AI·状态契约：兼容入口等价于显式 SearchState", testStateContractCompatibilityFacade);
+
+// ---- AI 系统·依赖注入 ----
+
+/*
+功能
+验证直接构造的 Planner 不持有 Game 或 Controller，且与生产装配产生相同搜索轨迹。
+
+调用方
+AI 依赖注入回归测试。
+
+输入
+固定玩家、手牌、随机种子、节点预算与同一组生产组件能力。
+
+输出
+根动作、隐藏世界、深层动作集合和计划描述全部一致。
+
+读取状态
+测试 GameState、Knowledge、ActionGenerator、Evaluator 与 SearchState。
+
+写入状态
+测试期间临时替换并恢复组件方法与随机源。
+
+调用函数
+AiPlanner、createAiVisibleState、sampleHiddenWorlds、generateFromVisible。
+
+边界与不变量
+Planner 实例不得保存 Game；固定种子下采样时机、动作顺序和最终描述不得因装配方式改变。
+*/
+async function testPlannerExplicitDependenciesPreserveTrace() {
+  const actor = makePlayer("di-planner-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("di-planner-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("charge"), instance("exposeWeakness"), instance("assault"));
+  enemy.hand.push(instance("block"));
+  const seed = 20260814;
+  const { game } = makeGame([actor, enemy], { random:makeBenchmarkRandom(seed) });
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 30;
+  const controller = game.aiController;
+  const actionGenerator = controller.actionGenerator;
+  const knowledge = controller.knowledge;
+  const productionPlanner = controller.planner;
+  const remainingCardCounts = knowledge.remainingCounts(actor);
+  const visible = createAiVisibleState(actor.id, game.state, remainingCardCounts);
+  const roots = controller.getLegalActions(actor);
+  const originalGenerate = actionGenerator.generateFromVisible.bind(actionGenerator);
+  const originalSample = knowledge.sampleHiddenWorlds.bind(knowledge);
+  const deepActionSets = { production:[], direct:[] };
+  const hiddenSamples = { production:[], direct:[] };
+  let mode = "production";
+  actionGenerator.generateFromVisible = (state, actorId) => {
+    const actions = originalGenerate(state, actorId);
+    deepActionSets[mode].push(actions.map((action) => productionPlanner.describeAction(action)));
+    return actions;
+  };
+  knowledge.sampleHiddenWorlds = (...args) => {
+    const worlds = originalSample(...args);
+    hiddenSamples[mode].push({ count:args[2], worlds:structuredClone(worlds) });
+    return worlds;
+  };
+  const directPlanner = new AiPlanner({
+    evaluator: controller.evaluator,
+    generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
+    sampleHiddenWorlds: (...args) => knowledge.sampleHiddenWorlds(...args),
+    random: () => 0.5,
+    getRandomnessRange: () => 0,
+    getSearchTimeBudget: () => GAME_CONFIG.aiSearchTimeBudgetMs,
+    getSearchNodeBudget: () => 30,
+    yieldControl: async () => true,
+  });
+  try {
+    game.random = makeBenchmarkRandom(seed);
+    const productionAction = await productionPlanner.plan(
+      actor, visible, roots, { gameId:game.state.gameId }
+    );
+    const productionDescriptor = productionPlanner.describeAction(productionAction);
+    const productionSequence = productionPlanner.lastPlannedSequence.map(
+      (action) => productionPlanner.describeAction(action)
+    );
+
+    mode = "direct";
+    game.random = makeBenchmarkRandom(seed);
+    const directAction = await directPlanner.plan(actor, visible, roots, { gameId:game.state.gameId });
+    assert.equal("game" in directPlanner, false);
+    assert.equal("aiController" in directPlanner, false);
+    assert.deepEqual(directPlanner.describeAction(directAction), productionDescriptor);
+    assert.deepEqual(
+      directPlanner.lastPlannedSequence.map((action) => directPlanner.describeAction(action)),
+      productionSequence
+    );
+    assert.ok(deepActionSets.production.length > 0);
+    assert.deepEqual(deepActionSets.direct, deepActionSets.production);
+    assert.deepEqual(hiddenSamples.direct, hiddenSamples.production);
+    assert.equal(hiddenSamples.direct[0].count, GAME_CONFIG.aiHiddenStateSamples);
+  } finally {
+    actionGenerator.generateFromVisible = originalGenerate;
+    knowledge.sampleHiddenWorlds = originalSample;
+  }
+}
+
+test("AI·依赖注入：Planner 脱离 Game 与 Controller 后保持固定种子搜索轨迹", testPlannerExplicitDependenciesPreserveTrace);
+
+/*
+功能
+验证 ActionGenerator 只调用构造时注入的转移选择能力。
+
+调用方
+AI 依赖注入回归测试。
+
+输入
+没有可用 aiController 的 Game、转移牌行动者与固定选择描述。
+
+输出
+生成的转移动作携带注入选择，且能力只调用一次。
+
+读取状态
+测试 GameState 与 RuleEngine 合法性。
+
+写入状态
+测试期间临时清空并恢复 game.aiController。
+
+调用函数
+AiActionGenerator.generate。
+
+边界与不变量
+生成器不得通过 Game 回取 CardSelector，转移选择不触发实体移动或额外随机调用。
+*/
+function testActionGeneratorUsesInjectedTransferSelection() {
+  const actor = makePlayer("di-generator-actor", 0, "dawn", "ai", 0);
+  const ally = makePlayer("di-generator-ally", 1, "dawn", "ai", 1);
+  const enemy = makePlayer("di-generator-enemy", 2, "dusk", "ai", 2);
+  const transfer = instance("transfer");
+  actor.hand.push(transfer);
+  ally.hand.push(instance("block"));
+  enemy.hand.push(instance("assault"));
+  const { game } = makeGame([actor, ally, enemy]);
+  const selection = { sourceId:ally.id, receiverId:actor.id, zone:"hand" };
+  let calls = 0;
+  const generator = new AiActionGenerator(game, {
+    chooseTransferCombination: () => {
+      calls += 1;
+      return selection;
+    },
+  });
+  const controller = game.aiController;
+  game.aiController = null;
+  try {
+    const action = generator.generate(actor).find((entry) => entry.card?.id === transfer.id);
+    assert.equal(calls, 1);
+    assert.deepEqual(action?.selection, selection);
+  } finally {
+    game.aiController = controller;
+  }
+}
+
+test("AI·依赖注入：ActionGenerator 无 Controller CardSelector 仍生成转移动作", testActionGeneratorUsesInjectedTransferSelection);
+
+/*
+功能
+验证 Planner 与 ActionGenerator 的必要依赖在构造阶段明确失败。
+
+调用方
+AI 依赖注入回归测试。
+
+输入
+缺少 evaluator、动作生成或转移选择能力的构造参数。
+
+输出
+包含具体依赖名的 TypeError。
+
+读取状态
+测试 Game fixture。
+
+写入状态
+无。
+
+调用函数
+AiPlanner、AiActionGenerator 构造函数。
+
+边界与不变量
+不得创建半装配组件或依赖首次运行时才暴露错误。
+*/
+function testMissingAiDependenciesFailAtConstruction() {
+  const actor = makePlayer("di-missing-actor", 0, "dawn");
+  const enemy = makePlayer("di-missing-enemy", 1, "dusk");
+  const { game } = makeGame([actor, enemy]);
+  assert.throws(() => new AiPlanner(), /evaluator/);
+  assert.throws(() => new AiPlanner({ evaluator:{} }), /generateFromVisible/);
+  assert.throws(() => new AiActionGenerator(game), /chooseTransferCombination/);
+}
+
+test("AI·依赖注入：缺少必要能力时构造立即给出依赖名", testMissingAiDependenciesFailAtConstruction);
+
+/*
+功能
+验证迁移期 Controller 门面与兼容子组件使用同一转移选择和 descriptor 重绑语义。
+
+调用方
+AI 依赖注入回归测试。
+
+输入
+固定转移选择、合法转移牌与当前 GameState。
+
+输出
+门面、生成器和描述重绑返回同一选择及当前动作。
+
+读取状态
+AIController、CardSelector、ActionGenerator 与当前合法动作集合。
+
+写入状态
+测试期间临时替换并恢复 CardSelector 转移方法。
+
+调用函数
+AIController.chooseTransferCombination、getLegalActions、resolvePlannedAction、AiPlanner.describeAction。
+
+边界与不变量
+兼容字段暂留不得形成第二套策略，Controller 门面只透明转发且 descriptor 必须按当前实体重绑。
+*/
+function testControllerFacadePreservesTransferAndDescriptor() {
+  const actor = makePlayer("di-facade-actor", 0, "dawn", "ai", 0);
+  const ally = makePlayer("di-facade-ally", 1, "dawn", "ai", 1);
+  const enemy = makePlayer("di-facade-enemy", 2, "dusk", "ai", 2);
+  const transfer = instance("transfer");
+  actor.hand.push(transfer);
+  ally.hand.push(instance("block"));
+  enemy.hand.push(instance("assault"));
+  const { game } = makeGame([actor, ally, enemy]);
+  const controller = game.aiController;
+  const selection = { sourceId:ally.id, receiverId:actor.id, zone:"hand" };
+  const originalChoose = controller.cardSelector.chooseTransferCombination;
+  controller.cardSelector.chooseTransferCombination = () => selection;
+  try {
+    assert.equal(controller.chooseTransferCombination(actor, transfer, [ally]), selection);
+    const action = controller.getLegalActions(actor).find((entry) => entry.card?.id === transfer.id);
+    assert.deepEqual(action?.selection, selection);
+    const descriptor = controller.planner.describeAction(action);
+    const rebound = controller.resolvePlannedAction(actor, descriptor);
+    assert.deepEqual(controller.planner.describeAction(rebound), descriptor);
+  } finally {
+    controller.cardSelector.chooseTransferCombination = originalChoose;
+  }
+}
+
+test("AI·依赖注入：Controller 门面保持转移选择与 descriptor 重绑", testControllerFacadePreservesTransferAndDescriptor);
 
 // ---- AI 核心状态·可见状态 ----
 

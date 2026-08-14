@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-ai-state-contract";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260814-ai-state-contract";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-ai-controller-di";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260814-ai-controller-di";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

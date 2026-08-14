@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-state-contract";
-import { createId } from "../utils/helpers.js?build=20260814-ai-state-contract";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260814-ai-state-contract";
-import { RuleEngine } from "./RuleEngine.js?build=20260814-ai-state-contract";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-controller-di";
+import { createId } from "../utils/helpers.js?build=20260814-ai-controller-di";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260814-ai-controller-di";
+import { RuleEngine } from "./RuleEngine.js?build=20260814-ai-controller-di";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 
@@ -236,6 +236,31 @@ export function buildResponsePresentation(responder, type, context = {}, require
 export class ResponseSystem {
   constructor(game) { this.game = game; this.activeRequestIds = new Set(); }
 
+  /*
+  功能
+  等待真人响应或通过 AI 门面取得响应决策。
+
+  调用方
+  各类卡牌、弃置、技能与濒死响应入口。
+
+  输入
+  响应者、请求、显示标签、公开上下文与合法候选牌。
+
+  输出
+  规范化的 USED、DECLINED 或 CANCELLED 结果。
+
+  读取状态
+  当前会话、UI、CleanupManager 与 AIController 响应门面。
+
+  写入状态
+  UI 思考与提示状态。
+
+  调用函数
+  UI.requestResponse、AIController.shouldRespond、responseResult。
+
+  边界与不变量
+  会话失效必须返回取消；AI 放弃借势时不得用中间提示泄漏手牌。
+  */
   async waitForDecision(responder, request, label, context, cards) {
     const gameId = this.game.state.gameId;
     if (responder.controllerType === "human") {
@@ -245,8 +270,7 @@ export class ResponseSystem {
     this.game.ui.setThinking(true, responder, `正在考虑是否${label}`);
     const waited = await this.game.cleanupManager.delay(getAiDelay(this.game, "response"));
     if (!waited || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-    let use = false;
-    use = this.game.aiController.responsePolicy.shouldRespond(responder, request.type, context, cards);
+    const use = this.game.aiController.shouldRespond(responder, request.type, context, cards);
     this.game.ui.setThinking(false);
     // 借势的所有拒绝原因只在最终结算处统一公开，不能用中间提示暴露 AI 手牌。
     if (!use && request.type !== "leverageAssault") this.game.ui.setPrompt(`${responder.name}放弃${label}。`);

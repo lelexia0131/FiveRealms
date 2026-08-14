@@ -2,19 +2,19 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-state-contract";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-state-contract";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260814-ai-state-contract";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260814-ai-state-contract";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-ai-state-contract";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-state-contract";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-ai-state-contract";
-import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-ai-state-contract";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-state-contract";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260814-ai-state-contract";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-controller-di";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-ai-controller-di";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260814-ai-controller-di";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260814-ai-controller-di";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-ai-controller-di";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-controller-di";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-ai-controller-di";
+import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-ai-controller-di";
+import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-controller-di";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260814-ai-controller-di";
 import {
   sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260814-ai-state-contract";
+} from "./sealScoring.js?build=20260814-ai-controller-di";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
