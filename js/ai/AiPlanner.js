@@ -2,10 +2,10 @@
  * AI 有限深度束搜索。依赖过滤快照、AiSimulator、AiEvaluator 与可取消 yield；
  * 到达时间或固定节点预算时返回当前最佳根动作。真实动作执行后由 AIController 重新调用。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-certain-hand";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-guardian-aid-certain-hand";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260814-guardian-aid-certain-hand";
-import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260814-guardian-aid-certain-hand";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-spirit-medic-heal-economics";
+import { AiSimulator } from "./AiSimulator.js?build=20260814-spirit-medic-heal-economics";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260814-spirit-medic-heal-economics";
+import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260814-spirit-medic-heal-economics";
 
 /** 有限深度束搜索；不保存跨真实动作的陈旧计划。 */
 export class AiPlanner {
@@ -353,11 +353,16 @@ export class AiPlanner {
      * immediate 只取 actionEconomicValue（不在 stateDelta 中的经济量）；静态先验
      * 与隐藏世界格挡先验都移到 searchPrior，避免与 stateDelta 的卡片机会成本重复计价。
      */
-    const transitionScore = (action, beforeState, afterState, depth = 1) => {
+    const transitionScore = (action, beforeState, afterState, depth = 1, endHasPlayableSibling = false) => {
       const executionProbability = action.executionProbability ?? 1;
-      const economicValue = this.evaluator.actionEconomicValue
-        ? this.evaluator.actionEconomicValue(action, player, beforeState)
-        : 0;
+      // end 的 -0.8 只表达“放弃仍可兑现的出牌机会”：当本 parent 不存在任何可执行的
+      // 非 end 候选（如回春摸到的未知牌、仅剩响应牌）时，结束没有可放弃的机会，
+      // 经济价值为 0，避免“治疗 + 回春摸牌 → end”被反向压制（BLOCKER 1）。
+      const economicValue = action.type === "end" && !endHasPlayableSibling
+        ? 0
+        : (this.evaluator.actionEconomicValue
+          ? this.evaluator.actionEconomicValue(action, player, beforeState)
+          : 0);
       // 只有 economicValue 会读取 resolutionScale；值为 0 时继续推导反制概率最终只会乘 0。
       // 真实 Counter outcome 已在 simulator.apply(afterState) 中完整结算，不能在此删减。
       const resolutionScale = economicValue === 0 ? 1 : tacticResolutionScale(action, beforeState);
@@ -381,6 +386,7 @@ export class AiPlanner {
     const rootCandidates = [];
     const rootLedgers = [];
     let bestRootNonSealBase = -Infinity;
+    const hasPlayableRoot = rootActions.some((entry) => entry.type !== "end");
     for (const action of rootActions) {
       // 与旧实现一致：至少处理一个根动作，随后到达时间/节点预算立即停止；
       // beam 在第二遍才填充，因此用 rootCandidates.length 作为“已处理”信号。
@@ -402,7 +408,7 @@ export class AiPlanner {
           visibleState, state, player.id, rootRemainingExposeStacks
         )
         : rootRemainingExposeStacks;
-      const baseTransition = transitionScore(action, visibleState, state, 1);
+      const baseTransition = transitionScore(action, visibleState, state, 1, hasPlayableRoot);
       // owner-local ledger 是诊断 representation；响应净值在 composeCandidateValue 中
       // 先减后加，最终严格回到 baseTransition。生产评分不需要为每个根候选构造反事实，
       // 只有显式审计时才按需生成，评分公式仍由同一入口验证该恒等式。
@@ -490,6 +496,7 @@ export class AiPlanner {
         // 最佳非封印即时动作后，再只对 seal 候选应用“延迟一步”的 timing penalty。
         const nodeCandidates = [];
         let bestNonSealBase = -Infinity;
+        const hasPlayableFollow = followActions.some((entry) => entry.type !== "end");
         for (const follow of followActions) {
           if (limitReached()) break;
           if (follow.card?.definitionId === "assault" && !rootAssaultTargets.has(follow.targets?.[0]?.id)) discoveredDynamicTarget = true;
@@ -507,7 +514,7 @@ export class AiPlanner {
               node.state, state, player.id, node.remainingRootExposeStacks
             )
             : node.remainingRootExposeStacks;
-          const baseTransition = transitionScore(follow, node.state, state, depth);
+          const baseTransition = transitionScore(follow, node.state, state, depth, hasPlayableFollow);
           // 深层候选只附加 frontier-only residual：owner ledger / 响应反事实只对根
           // 候选计算（代价有界），深层节点以恒定小开销推进，避免拉长搜索时延。
           const frontierResidual = Boolean(state.playPhaseEnded)

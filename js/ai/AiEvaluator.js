@@ -2,19 +2,19 @@
  * AI 团队效用评估器。只读取公开或过滤后的字段并返回分数，不生成、执行动作，
  * 不写 GameState；权重修改会影响阵营平衡，之后必须重跑 200 局模拟。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-certain-hand";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-guardian-aid-certain-hand";
-import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260814-guardian-aid-certain-hand";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260814-guardian-aid-certain-hand";
-import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-guardian-aid-certain-hand";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-guardian-aid-certain-hand";
-import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-guardian-aid-certain-hand";
-import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-guardian-aid-certain-hand";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-guardian-aid-certain-hand";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260814-guardian-aid-certain-hand";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-spirit-medic-heal-economics";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-spirit-medic-heal-economics";
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260814-spirit-medic-heal-economics";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260814-spirit-medic-heal-economics";
+import { assessGlobalBenefit } from "./AiGlobalBenefit.js?build=20260814-spirit-medic-heal-economics";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-spirit-medic-heal-economics";
+import { getBaseCardAiValue, getEquipmentKeepValueDeduction, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-spirit-medic-heal-economics";
+import { buildLightningHitDistribution, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-spirit-medic-heal-economics";
+import { AiSimulator } from "./AiSimulator.js?build=20260814-spirit-medic-heal-economics";
+import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEconomics.js?build=20260814-spirit-medic-heal-economics";
 import {
   sealTeamBurden, sealUseValue
-} from "./sealScoring.js?build=20260814-guardian-aid-certain-hand";
+} from "./sealScoring.js?build=20260814-spirit-medic-heal-economics";
 
 /** stateUtility 中每点能量的单位价值；充能桩未来有效能量复用同一语义，不另设常数。 */
 const ENERGY_STATE_WEIGHT = 1.2;
@@ -27,7 +27,7 @@ const BURNING_FIELD_SEARCH_PRIOR = 8;
  * 响应价值与前沿未实现价值复用同一缩放，保证已实现/响应/前沿三类价值在同一尺度上
  * 互斥计价——不引入新的独立权重，避免"同一价值在不同入口用不同权重"的双算。
  */
-export { HP_VALUE, STATE_DELTA_SCALE };
+export { HP_VALUE, STATE_DELTA_SCALE, HP_RISK_OPTION_WEIGHT };
 /** stateUtility 与 shieldStateValue 共用：HP<=1 danger 阈值惩罚。 */
 const DANGER_VALUE = 7;
 /** stateUtility 与 shieldStateValue 共用：阵亡惩罚。 */
@@ -36,6 +36,8 @@ const DEATH_VALUE = 28;
 const SHIELD_RESERVE_WEIGHT = 2;
 /** 通用 shield state value：残余威胁容量的保护实现权重（保守；exposure 是威胁 proxy 而非确定伤害）。 */
 const SHIELD_PROTECTION_WEIGHT = 0.5;
+/** 通用 hp2 威胁风险权重：防止与 hp<=1 danger / death 对同一伤害量完整双重计价。 */
+const HP_RISK_OPTION_WEIGHT = 0.05;
 
 export class AiEvaluator {
   constructor(game) {
@@ -186,16 +188,29 @@ export class AiEvaluator {
       const source = state.players.find((entry) => entry.id === sourceId);
       return sum + (source?.battleTeam !== player.battleTeam ? Number(probability) || 0 : 0);
     }, 0);
-    const { currentThreat, futureInventory, energyPressure } = this.exposureComponents(state, player);
+    const { currentThreat, futureInventory, energyPressure, perEnemy } = this.exposureComponents(state, player);
     const exposure = currentThreat + futureInventory + energyPressure;
     const radarMitigation = this.radarMitigationUtility(exposure, player, radarTacticProbability);
     const residualExposure = Math.max(0, exposure - radarMitigation);
     const shield = this.shieldStateValue(player, residualExposure);
+    // hp2 风险标记只对“不随 viewer 自身资源变化”的威胁敏感：排除 viewer 对敌方玩家的
+    // 进攻/能量贡献，避免进攻或花资源动作通过“敌方 hp2 风险联动”把同一资源消耗
+    // 在 threat 负债之外再重复计价一次；再应用与 shield 相同的雷达减免，使防御装备
+    // 降低威胁时同步收缩风险（不产生“保留威胁反而更值”的倒挂）。
+    const bufferExposure = (perEnemy ?? [])
+      .filter((entry) => entry.enemyId !== viewerId)
+      .reduce((sum, entry) => (
+        sum + entry.currentThreat + entry.futureInventory + entry.energyPressure
+      ), 0);
+    const bufferResidualExposure = Math.max(0, bufferExposure
+      - this.radarMitigationUtility(bufferExposure, player, radarTacticProbability));
+    const hp2Risk = this.hp2ThreatRiskValue(player, bufferResidualExposure);
     const energyDeviceFuture = this.energyDeviceFutureUtility(player);
     return {
       death: 0,
       terms: {
         danger,
+        hp2Risk,
         rescueOutlook,
         hp: player.hp * HP_VALUE,
         shield,
@@ -381,6 +396,7 @@ export class AiEvaluator {
         material: {
           hp: fields.hp ?? 0,
           shield: fields.shield ?? 0,
+          hp2Risk: fields.hp2Risk ?? 0,
           info: fields.info ?? 0,
           stacks: fields.stacks ?? 0,
           equipmentDelta: fields.equipmentDelta ?? 0,
@@ -578,6 +594,25 @@ export class AiEvaluator {
   }
 
   /**
+   * 通用 hp2 威胁风险标记（risk-adjusted HP state primitive）：HP 恰为 2 且存在真实
+   * 可见威胁时，角色处于“距 danger 线一步”的高风险区，给一个有界负标记；治疗使其
+   * 进入 hp3 后该标记消失，因此暴露 2HP 目标的治疗价值真实高于安全 2HP 目标。
+   *
+   * - threat<=0 时恒为 0；
+   * - 幅度 = min(1, 威胁伤害当量) × DANGER_VALUE × HP_RISK_OPTION_WEIGHT，单调有界，
+   *   上限 DANGER_VALUE×0.5 小于 hp<=1 的完整 danger 惩罚，且二者互斥（hp2 与 hp<=1 不同时成立）；
+   * - 与 shieldStateValue 的 lifePremium（hp===2 时 DANGER_VALUE-HP_VALUE）同源语义，
+   *   是对无盾角色“距 danger 一步”风险的通用表达，不是灵医专属 bonus；
+   * - 近似边界：用期望伤害当量代替完整伤害分布，属启发式估值，不是精确模拟。
+   */
+  hp2ThreatRiskValue(player, bufferResidualExposure) {
+    if (!player?.alive || player.hp !== 2) return 0;
+    const threatDamage = Math.max(0, bufferResidualExposure) / HP_VALUE;
+    if (threatDamage <= 1e-9) return 0;
+    return -Math.min(1, threatDamage) * DANGER_VALUE * HP_RISK_OPTION_WEIGHT;
+  }
+
+  /**
    * 通用 shield state value（只读、无随机、无 Simulator、无隐藏信息，O(1)）。
    *
    * 设计：
@@ -619,9 +654,13 @@ export class AiEvaluator {
     const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
     if (action.type === "end") {
       const remainingCards = actor.handCount ?? actor.hand?.length ?? player.hand.length;
-      // 连势在 turnEnd 清空，属于已经取得但即将到期的选择权。此时结束不能因通用
-      // “仍有手牌”罚分而被强迫换成无生命收益的垃圾突袭；有价值的兑现仍由 after-state 胜出。
+      // 连势在 turnEnd 清空，属于已经取得但即将到期的选择权；此时结束不应因通用
+      // “仍有手牌”罚分而被强迫换成无生命收益的突袭。
       if (actor.generalId === "blade-walker" && (actor.momentum ?? 0) > 0) return 0;
+      // 结束的 -0.8 表达“放弃仍可兑现的出牌机会”。当本 parent 不存在任何可执行的非 end
+      // 候选时（例如回春摸到的未知牌、仅剩响应牌），该值由 Planner 置 0；
+      // 这里保留 -0.8 作为默认机会成本，避免“治疗 + 回春摸牌 → end”被反向压制的前提
+      // 是 Planner 先判定没有可放弃的机会。
       return remainingCards > 0 ? -0.8 : 0;
     }
     if (action.type === "skill") return 0;

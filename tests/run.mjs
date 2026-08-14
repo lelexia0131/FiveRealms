@@ -17,7 +17,7 @@ import { CardSelectionSystem } from "../js/core/CardSelectionSystem.js";
 import { createAiVisibleState } from "../js/ai/AiVisibleState.js";
 import { AiSimulator } from "../js/ai/AiSimulator.js";
 import { ThreatCalculator } from "../js/ai/ThreatCalculator.js";
-import { STATE_DELTA_SCALE } from "../js/ai/AiEvaluator.js";
+import { STATE_DELTA_SCALE, HP_RISK_OPTION_WEIGHT } from "../js/ai/AiEvaluator.js";
 import { CleanupManager } from "../js/utils/CleanupManager.js";
 import { getAiDelay, sampleDelay } from "../js/utils/aiTiming.js";
 import {
@@ -10379,9 +10379,9 @@ test("AI·搜索：前沿未实现价值只计一次且不随搜索深度重复�
   const heldValue = (residual.held.recover + residual.held.recycle) * STATE_DELTA_SCALE;
   assert.ok(heldValue > 0, "受伤且持有调息时终局前沿应有价值");
   await planner.plan(actor, visible, [{ type: "end" }], { gameId: game.state.gameId });
-  // end 的 base transition = -0.8（手中仍有余牌）+ 前沿一次 = -0.8 + heldValue。
-  // 若前沿价值被每层重复累计，bestValueScore 会显著更高（如二次累计为 -0.8 + 2×heldValue）。
-  assertClose(planner.lastSearchStats.bestValueScore, -0.8 + heldValue);
+  // end 的 base transition = 0（结束不再因“手中仍有余牌”被计为实质经济损失）
+  // + 前沿一次 = heldValue。若前沿价值被每层重复累计，bestValueScore 会显著更高（如二次累计为 2×heldValue）。
+  assertClose(planner.lastSearchStats.bestValueScore, heldValue);
   // 非终局候选不携带前沿：compose 对 frontierValue=0 的候选不产生前沿分
   assert.equal(planner.composeCandidateValue(1, 0, 0, 0, 0, 0), 1);
 });
@@ -17573,6 +17573,339 @@ test("AI·灵医：多目标滋荣按真实价值自然入 beam 不产生 crowdi
   assert.ok(
     rankOf("crowd-medic") < rankOf("crowd-allyA") && rankOf("crowd-allyA") < rankOf("crowd-allyB"),
     "heal target ranking must follow real state value (critical > ordinary > near-full)");
+});
+
+test("AI·灵医：概率滋荣的摸牌与回春次数消耗共享同一权重", () => {
+  const medic = {
+    id: "prob-heal-medic",
+    generalId: "spirit-medic",
+    battleTeam: "dawn",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    handCount: 0,
+    rejuvenationTriggerCount: 0
+  };
+  const ally = {
+    id: "prob-heal-ally",
+    battleTeam: "dawn",
+    alive: true,
+    hp: 1,
+    maxHp: 4,
+    handCount: 0
+  };
+  const state = { players: [medic, ally] },
+    simulator = new AiSimulator(state);
+  // 深层世界滋荣只有 50% 概率执行时，healFrom 收到 0.5 的治疗量期望；
+  // 摸牌按 0.5 计，回春次数也必须只消耗 0.5，而不是完整消耗一次额度。
+  simulator.healFrom(state, medic, ally, 0.5);
+  assertClose(ally.hp, 1.5);
+  assertClose(medic.rejuvenationTriggerCount, 0.5);
+  assertClose(medic.handCount, 0.5);
+});
+
+test("AI·灵医：概率救援中回春按实际调息消耗共享权重", () => {
+  const attacker = {
+    id: "prob-rescue-attacker",
+    seatIndex: 0,
+    generalId: "blade-walker",
+    battleTeam: "dusk",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    shield: 0,
+    handCount: 1,
+    hand: [{ id: "prob-rescue-assault", definitionId: "assault" }],
+    attackUsed: 0,
+    attackLimit: 2,
+    exposeWeaknessStacks: 0,
+    assaultBonus: 0
+  };
+  const target = {
+    id: "prob-rescue-target",
+    seatIndex: 1,
+    generalId: "oath-warden",
+    battleTeam: "dawn",
+    alive: true,
+    hp: 1,
+    maxHp: 4,
+    shield: 0,
+    handCount: 0,
+    expectedRecoverCount: 0,
+    blockProbability: 0,
+    twoBlockProbability: 0
+  };
+  const allyRescuer = {
+    id: "prob-rescue-ally",
+    seatIndex: 2,
+    generalId: "fate-gambler",
+    battleTeam: "dawn",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    shield: 0,
+    handCount: 0.6,
+    expectedRecoverCount: 0.6,
+    blockProbability: 0,
+    twoBlockProbability: 0
+  };
+  const medic = {
+    id: "prob-rescue-medic",
+    seatIndex: 3,
+    generalId: "spirit-medic",
+    battleTeam: "dawn",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    shield: 0,
+    handCount: 0.6,
+    expectedRecoverCount: 0.6,
+    rejuvenationTriggerCount: 0
+  };
+  const state = { players: [attacker, target, allyRescuer, medic] };
+  new AiSimulator(state).simulateAssault(state, attacker, target, 1);
+  assert.equal(target.alive, true);
+  assert.ok(target.hp >= 1, "目标必须被救回至少 1 点生命");
+  // 盟友先消耗 0.6 期望调息后，灵医以 0.6 的分数期望调息参与救援；
+  // 回春次数与摸牌必须都按 0.6 推进，而不是完整消耗一次额度。
+  assertClose(medic.expectedRecoverCount, 0);
+  assertClose(medic.rejuvenationTriggerCount, 0.6);
+  assertClose(medic.handCount, 0.6);
+});
+
+test("AI·灵医：回春期望次数以 2 为上限且摸牌同步截断", () => {
+  const medic = {
+    id: "cap-heal-medic",
+    generalId: "spirit-medic",
+    battleTeam: "dawn",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    handCount: 0,
+    rejuvenationTriggerCount: 1.8
+  };
+  const ally = {
+    id: "cap-heal-ally",
+    battleTeam: "dawn",
+    alive: true,
+    hp: 1,
+    maxHp: 4,
+    handCount: 0
+  };
+  const state = { players: [medic, ally] },
+    simulator = new AiSimulator(state);
+  simulator.healFrom(state, medic, ally, 0.5);
+  assertClose(medic.rejuvenationTriggerCount, 2);
+  assertClose(medic.handCount, 0.2);
+});
+
+const medicEconBoard = (count) => [
+  {
+    id: "a", team: "dawn", general: "spirit-medic", hp: 2, energy: 2, hand: [],
+    turnFlags: { rejuvenationTriggerCount: count }, aiMemory: { knownCardsByPlayer: {} }
+  },
+  { id: "b", team: "dawn", general: "oath-warden", hp: 4, energy: 1, hand: [] },
+  { id: "c", team: "dusk", general: "blade-walker", hp: 4, energy: 1, hand: [] },
+  { id: "d", team: "dawn", general: "fate-gambler", hp: 4, energy: 1, hand: [] },
+  { id: "e", team: "dusk", general: "ember-magus", hp: 4, energy: 1, hand: [] },
+  { id: "f", team: "dawn", general: "resonance-tuner", hp: 4, energy: 1, hand: [] }
+];
+
+const planFirstAction = async (players, actorId) => {
+  const game = makeBenchmarkGame({ players, options: { actorId } });
+  const actor = game.state.players.find((player) => player.id === actorId);
+  const visible = createAiVisibleState(
+    actorId, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const roots = game.aiController.getLegalActions(actor);
+  game.aiSearchNodeBudgetOverride = 800;
+  game.aiRandomnessRange = 0;
+  await game.aiController.planner.plan(actor, visible, roots, { gameId: game.state.gameId });
+  return game.aiController.planner.lastSearchStats.bestSequence[0];
+};
+
+test("AI·灵医：E1 正收益治疗不再被结束惩罚反向压制（回春可用）", async () => {
+  const first = await planFirstAction(medicEconBoard(0), "a");
+  assert.equal(first.type, "skill", "必须选择治疗而非直接结束");
+  assert.equal(first.cardId, "symbiosis");
+  assert.equal(first.targetIds?.[0], "a");
+});
+
+test("AI·灵医：E2 回春耗尽仍按真实治疗收益决定滋荣（非回春 bonus）", async () => {
+  const first = await planFirstAction(medicEconBoard(2), "a");
+  assert.equal(first.type, "skill", "回春耗尽时治疗仍按真实收益选择，而非依赖摸牌");
+  assert.equal(first.cardId, "symbiosis");
+});
+
+test("AI·灵医：E3 存在明显正收益行动时不会提前结束", async () => {
+  const first = await planFirstAction([
+    {
+      id: "a", team: "dawn", general: "spirit-medic", hp: 4, energy: 2,
+      hand: [instance("assault")], turnFlags: { rejuvenationTriggerCount: 0 },
+      aiMemory: { knownCardsByPlayer: {} }
+    },
+    { id: "b", team: "dusk", general: "oath-warden", hp: 1, energy: 1, hand: [] },
+    { id: "c", team: "dusk", general: "fate-gambler", hp: 4, energy: 1, hand: [] },
+    { id: "d", team: "dawn", general: "fate-gambler", hp: 4, energy: 1, hand: [] },
+    { id: "e", team: "dusk", general: "ember-magus", hp: 4, energy: 1, hand: [] },
+    { id: "f", team: "dawn", general: "resonance-tuner", hp: 4, energy: 1, hand: [] }
+  ], "a");
+  assert.equal(first.type, "card", "明显正收益击杀必须优先于提前结束");
+  assert.equal(first.cardId, "assault");
+});
+
+test("AI·灵医：E4 仅剩不可兑现手牌时结束无实质经济损失", async () => {
+  const game = makeBenchmarkGame({
+    players: medicEconBoard(0).map((player, index) => (
+      index === 0 ? { ...player, hp: 4, hand: [instance("block")] } : player
+    )),
+    options: { actorId: "a" }
+  });
+  const medic = game.state.players[0];
+  const visible = createAiVisibleState(
+    "a", game.state, game.aiController.knowledge.remainingCounts(medic)
+  );
+  const legal = game.aiController.getLegalActions(medic);
+  assert.ok(
+    legal.length === 1 && legal[0].type === "end",
+    "响应牌（格挡）在出牌阶段不可兑现，应只剩结束动作"
+  );
+  game.aiSearchNodeBudgetOverride = 800;
+  game.aiRandomnessRange = 0;
+  await game.aiController.planner.plan(medic, visible, legal, { gameId: game.state.gameId });
+  const stats = game.aiController.planner.lastSearchStats;
+  assert.ok(
+    stats.bestValueScore >= 0,
+    `仅剩不可兑现手牌时，结束的最终价值不应为负（实际 ${stats.bestValueScore}）`
+  );
+});
+
+const medicRiskHealDelta = (players, targetId) => {
+  const game = makeBenchmarkGame({ players, options: { actorId: "a" } });
+  const medic = game.state.players[0];
+  const evaluator = game.aiController.evaluator;
+  const visible = createAiVisibleState(
+    "a", game.state, game.aiController.knowledge.remainingCounts(medic)
+  );
+  const action = game.aiController.getLegalActions(medic)
+    .find((entry) => entry.type === "skill" && entry.skill?.id === "symbiosis"
+      && entry.targets?.[0]?.id === targetId);
+  assert.ok(action, `目标 ${targetId} 应存在合法滋荣动作`);
+  const U0 = evaluator.stateUtility(visible, "a");
+  const after = new AiSimulator(visible).apply(visible, action, "a");
+  return evaluator.stateUtility(after, "a") - U0;
+};
+
+const medicRiskBoard = (exposedSeat, safeSeat, options = {}) => {
+  const knownAssaults = options.knownAssaults ?? ["p"];
+  const pEnergy = options.pEnergy ?? 2;
+  const players = [
+    {
+      id: "a", team: "dawn", general: "spirit-medic", hp: 4, energy: 2, hand: [],
+      turnFlags: { rejuvenationTriggerCount: 2 }, aiMemory: { knownCardsByPlayer: {} }
+    },
+    { id: "p", team: "dusk", general: "blade-walker", hp: 4, energy: pEnergy, hand: [] },
+    { id: "q", team: "dusk", general: "ember-magus", hp: 4, energy: 0, hand: [] },
+    { id: "x", team: "dawn", general: "fate-gambler", hp: 2, energy: 1, hand: [] },
+    { id: "y", team: "dawn", general: "resonance-tuner", hp: 2, energy: 1, hand: [] }
+  ];
+  for (const enemyId of knownAssaults) {
+    players[0].aiMemory.knownCardsByPlayer[enemyId] = [
+      { id: `known-${enemyId}-assault`, definitionId: "assault" }
+    ];
+  }
+  // 威胁跟随目标身份而非座位：暴露目标的邻座放持突击敌人 p，安全目标邻座放无害敌人 q。
+  const exposedEnemySeat = exposedSeat === 1 ? 2 : 4;
+  const safeEnemySeat = exposedEnemySeat === 2 ? 4 : 2;
+  const bySeat = (seat, config) => ({ ...config, seatIndex: seat });
+  return [
+    bySeat(0, players[0]),
+    bySeat(exposedSeat, players[3]),
+    bySeat(exposedEnemySeat, players[1]),
+    bySeat(3, { id: "m", team: "dawn", general: "oath-warden", hp: 4, energy: 1, hand: [] }),
+    bySeat(safeEnemySeat, players[2]),
+    bySeat(safeSeat, players[4])
+  ];
+};
+
+test("AI·灵医：R1/R2 暴露 2HP 治疗价值高于安全 2HP 且与座位顺序无关", () => {
+  // R1：暴露目标 x 先于安全目标 y 被生成。
+  const deltaExposedFirst = medicRiskHealDelta(medicRiskBoard(1, 5), "x");
+  const deltaSafeFirst = medicRiskHealDelta(medicRiskBoard(1, 5), "y");
+  assert.ok(deltaExposedFirst > deltaSafeFirst,
+    `R1 value(heal exposed)=${deltaExposedFirst.toFixed(3)} 必须大于 value(heal safe)=${deltaSafeFirst.toFixed(3)}`);
+  // R2：交换座位，安全目标 y 先生成，暴露目标 x 后生成，价值序不变。
+  const deltaExposedSwapped = medicRiskHealDelta(medicRiskBoard(5, 1), "x");
+  const deltaSafeSwapped = medicRiskHealDelta(medicRiskBoard(5, 1), "y");
+  assert.ok(deltaExposedSwapped > deltaSafeSwapped,
+    `R2 座位交换后 value(heal exposed)=${deltaExposedSwapped.toFixed(3)} 仍必须大于 value(heal safe)=${deltaSafeSwapped.toFixed(3)}`);
+});
+
+test("AI·灵医：R3 同威胁目标不产生无理由目标偏向", () => {
+  const players = medicRiskBoard(1, 5, { knownAssaults: ["p", "q"] })
+    .map((player) => (player.id === "q" ? { ...player, energy: 2, hand: [instance("assault")] } : player));
+  const deltaX = medicRiskHealDelta(players, "x");
+  const deltaY = medicRiskHealDelta(players, "y");
+  assertClose(deltaX, deltaY, 1e-6);
+});
+
+test("AI·灵医：R4 暴露很小时治疗溢价平滑无跳变", () => {
+  // q 无突袭、能量 0 → y 完全安全；x 邻座 p 无突袭、能量 1 → 极小的 energyPressure 暴露。
+  const tinyPlayers = medicRiskBoard(1, 5, { knownAssaults: [], pEnergy: 1 });
+  const deltaTiny = medicRiskHealDelta(tinyPlayers, "x");
+  const deltaNone = medicRiskHealDelta(tinyPlayers, "y");
+  const premium = deltaTiny - deltaNone;
+  // 期望伤害当量 D=0.3：风险标记 = min(1, D)×DANGER_VALUE×权重，随威胁平滑缩放。
+  assertClose(premium, Math.min(1, 1.5 / 5) * 7 * HP_RISK_OPTION_WEIGHT, 1e-6);
+  // 中等暴露（D=2.1）的溢价同样有界，不产生巨大不连续。
+  const basePlayers = medicRiskBoard(1, 5);
+  const midPremium = medicRiskHealDelta(basePlayers, "x")
+    - medicRiskHealDelta(basePlayers, "y");
+  assert.ok(midPremium > 0 && midPremium <= 7 * HP_RISK_OPTION_WEIGHT + 1e-6,
+    `中等暴露溢价应平滑有界（实际 ${midPremium.toFixed(3)}）`);
+});
+
+test("AI·灵医：R5 1HP danger 仍主导真正的生死边界", () => {
+  const players = medicRiskBoard(1, 5).map((player) => (
+    player.id === "x" ? { ...player, hp: 1 } : player
+  ));
+  const deltaDanger = medicRiskHealDelta(players, "x");
+  const deltaExposed = medicRiskHealDelta(players, "y");
+  assert.ok(deltaDanger > deltaExposed,
+    `1HP danger 消除（${deltaDanger.toFixed(3)}）必须高于同暴露 2HP 治疗（${deltaExposed.toFixed(3)}）`);
+});
+
+test("AI·灵医：energyPressure 归因诊断——灵医花能量是相邻敌人的未来进攻威胁下降（VALID OPPORTUNITY COST）", () => {
+  const players = [
+    {
+      id: "a", team: "dawn", general: "spirit-medic", hp: 2, energy: 2, hand: [],
+      turnFlags: { rejuvenationTriggerCount: 0 }, aiMemory: { knownCardsByPlayer: {} }
+    },
+    { id: "b", team: "dusk", general: "blade-walker", hp: 4, energy: 1, hand: [] },
+    { id: "c", team: "dusk", general: "fate-gambler", hp: 4, energy: 1, hand: [] },
+    { id: "d", team: "dawn", general: "fate-gambler", hp: 4, energy: 1, hand: [] },
+    { id: "e", team: "dusk", general: "ember-magus", hp: 4, energy: 1, hand: [] },
+    { id: "f", team: "dawn", general: "resonance-tuner", hp: 4, energy: 1, hand: [] }
+  ];
+  const game = makeBenchmarkGame({ players, options: { actorId: "a" } });
+  const medic = game.state.players[0];
+  const evaluator = game.aiController.evaluator;
+  const visible = createAiVisibleState(
+    "a", game.state, game.aiController.knowledge.remainingCounts(medic)
+  );
+  const action = game.aiController.getLegalActions(medic)
+    .find((entry) => entry.type === "skill" && entry.skill?.id === "symbiosis"
+      && entry.targets?.[0]?.id === "a");
+  const after = new AiSimulator(visible).apply(visible, action, "a");
+  const ledger = evaluator.ownerStateLedger(visible, after, "a");
+  const owner = (id) => ledger.owners.find((entry) => entry.playerId === id);
+  const adjacentEnemy = owner("b");
+  const distantEnemy = owner("e");
+  assert.ok(adjacentEnemy && distantEnemy, "应能找到相邻与不相邻敌人 owner");
+  assertClose(adjacentEnemy.threat.energyPressure, Math.min(2, 2) * 0.3 * 5);
+  assertClose(adjacentEnemy.generic.energy, 0, 1e-9);
+  assertClose(distantEnemy.threat.energyPressure, 0, 1e-9);
+  assertClose(owner("a").generic.energy, -2 * 1.2, 1e-9);
 });
 
 // ---- AI 角色行为·影客 ----

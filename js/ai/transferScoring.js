@@ -1,6 +1,6 @@
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-guardian-aid-certain-hand";
-import { ThreatCalculator } from "./ThreatCalculator.js?build=20260814-guardian-aid-certain-hand";
-import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260814-guardian-aid-certain-hand";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-spirit-medic-heal-economics";
+import { ThreatCalculator } from "./ThreatCalculator.js?build=20260814-spirit-medic-heal-economics";
+import { PROBABILITY_EPSILON, totalBranchProbability } from "./AiProbabilityBranches.js?build=20260814-spirit-medic-heal-economics";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

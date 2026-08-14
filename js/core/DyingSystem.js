@@ -1,5 +1,5 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-certain-hand";
-import { createId } from "../utils/helpers.js?build=20260814-guardian-aid-certain-hand";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-spirit-medic-heal-economics";
+import { createId } from "../utils/helpers.js?build=20260814-spirit-medic-heal-economics";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；

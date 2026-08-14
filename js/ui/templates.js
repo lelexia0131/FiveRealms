@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-certain-hand";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260814-guardian-aid-certain-hand";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-spirit-medic-heal-economics";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260814-spirit-medic-heal-economics";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

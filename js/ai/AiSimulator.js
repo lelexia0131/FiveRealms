@@ -2,22 +2,22 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260814-guardian-aid-certain-hand";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-certain-hand";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-guardian-aid-certain-hand";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-guardian-aid-certain-hand";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-guardian-aid-certain-hand";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-guardian-aid-certain-hand";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260814-guardian-aid-certain-hand";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260814-spirit-medic-heal-economics";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-spirit-medic-heal-economics";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-spirit-medic-heal-economics";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-spirit-medic-heal-economics";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-spirit-medic-heal-economics";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-spirit-medic-heal-economics";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260814-spirit-medic-heal-economics";
 import {
   counterOpportunityCost,
   globalBenefitCounterDesire,
   mutualBenefitDraftValues
-} from "./AiGlobalBenefit.js?build=20260814-guardian-aid-certain-hand";
-import { HP_VALUE } from "./AiEconomics.js?build=20260814-guardian-aid-certain-hand";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260814-guardian-aid-certain-hand";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-guardian-aid-certain-hand";
-import { getDiscardKeepValue } from "./discardScoring.js?build=20260814-guardian-aid-certain-hand";
+} from "./AiGlobalBenefit.js?build=20260814-spirit-medic-heal-economics";
+import { HP_VALUE } from "./AiEconomics.js?build=20260814-spirit-medic-heal-economics";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260814-spirit-medic-heal-economics";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-spirit-medic-heal-economics";
+import { getDiscardKeepValue } from "./discardScoring.js?build=20260814-spirit-medic-heal-economics";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -32,7 +32,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260814-guardian-aid-certain-hand";
+} from "./AiProbabilityBranches.js?build=20260814-spirit-medic-heal-economics";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -3758,8 +3758,14 @@ export class AiSimulator {
         rescuer.expectedRecoverCount = Math.max(0, available - spent);
         rescuer.handCount = Math.max(0, (rescuer.handCount ?? 0) - spent);
         if (canRejuvenate) {
-          this.gainUnknownCardsWithCounterState(state, rescuer, spent, null, "rejuvenation-rescue-draw");
-          rescuer.rejuvenationTriggerCount = (rescuer.rejuvenationTriggerCount ?? 0) + 1;
+          // 概率救援按实际消耗的期望调息推进回春：摸牌与次数消耗必须共享同一概率权重，
+          // 并以每回合 2 次为上限，避免“摸牌按分数计、次数却完整消耗”的条件世界失配。
+          const remainingSlots = Math.max(0, 2 - (rescuer.rejuvenationTriggerCount ?? 0));
+          const consume = Math.min(spent, remainingSlots);
+          if (consume > PROBABILITY_EPSILON) {
+            this.gainUnknownCardsWithCounterState(state, rescuer, consume, null, "rejuvenation-rescue-draw");
+            rescuer.rejuvenationTriggerCount = (rescuer.rejuvenationTriggerCount ?? 0) + consume;
+          }
         }
         this.consumeKnownCardsFromHand(state, rescuer, "recover", spent);
         this.simulateCoordination(state, rescuer, [target], spent);
@@ -3799,8 +3805,13 @@ export class AiSimulator {
       && (source.rejuvenationTriggerCount ?? 0) < 2) {
       const triggerWeight = Math.min(1, actualAmount);
       if (triggerWeight <= PROBABILITY_EPSILON) return;
-      source.rejuvenationTriggerCount = (source.rejuvenationTriggerCount ?? 0) + 1;
-      this.gainUnknownCardsWithCounterState(state, source, triggerWeight, null, "rejuvenation-draw");
+      // 概率执行的治疗只按触发权重推进回春次数，与摸牌共享同一概率权重；
+      // 剩余额度按 2 - 期望次数截断，保证期望次数不越过每回合 2 次上限。
+      const remainingSlots = Math.max(0, 2 - (source.rejuvenationTriggerCount ?? 0));
+      const consume = Math.min(triggerWeight, remainingSlots);
+      if (consume <= PROBABILITY_EPSILON) return;
+      source.rejuvenationTriggerCount = (source.rejuvenationTriggerCount ?? 0) + consume;
+      this.gainUnknownCardsWithCounterState(state, source, consume, null, "rejuvenation-draw");
     }
   }
 }

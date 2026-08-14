@@ -12,8 +12,8 @@
  * 本模块不读取游戏状态、不修改传入对象、不调用随机数、不生成真实卡牌实体、
  * 不读取未知牌定义，也不包含角色差值副本。
  */
-import { getRoleCardAiValue } from "./roleCardValue.js?build=20260814-guardian-aid-certain-hand";
-import { UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260814-guardian-aid-certain-hand";
+import { getRoleCardAiValue } from "./roleCardValue.js?build=20260814-spirit-medic-heal-economics";
+import { UNKNOWN_HAND_EXPECTED_VALUE } from "./transferScoring.js?build=20260814-spirit-medic-heal-economics";
 
 /**
  * 某张已知定义在破坏/掠夺中的价值。
