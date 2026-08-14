@@ -16987,6 +16987,122 @@ test("AI·守誓者：手牌全为关键防御牌时即使确定性弃牌仍拒�
   );
 });
 
+test("AI·守誓者：完整确定手牌继续按共享保留价值智能弃牌", () => {
+  const source = makePlayer("aid-certain-source", 0, "dusk", "ai", 4),
+    target = makePlayer("aid-certain-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-certain-guardian", 2, "dawn", "ai", 1);
+  target.hp = 3;
+  guardian.hp = 1;
+  const garbage = instance("charge"),
+    block = instance("block");
+  guardian.hand.push(garbage, block);
+  const { game } = makeGame([source, target, guardian]);
+  const visible = createAiVisibleState(guardian.id, game.state);
+  const state = structuredClone(visible);
+  const simulator = new AiSimulator(state),
+    outcome = {};
+  const vSource = state.players.find((player) => player.id === source.id),
+    vTarget = state.players.find((player) => player.id === target.id),
+    vGuardian = state.players.find((player) => player.id === guardian.id);
+  assert.equal(simulator.hasCompleteCertainHand(vGuardian), true, "完整确定手牌应允许智能弃牌");
+  simulator.applyDamage(state, vSource, vTarget, 1, { canBlock: false, result: outcome });
+  assert.deepEqual(
+    outcome.guardianAidDiscards,
+    [{ cardId: garbage.id, definitionId: "charge" }],
+    "完整确定手牌仍应弃最低保留价值牌"
+  );
+  assert.deepEqual(vGuardian.hand.map((card) => card.definitionId), ["block"], "格挡应保留");
+});
+
+test("AI·守誓者：含概率身份的手牌回退随机期望消费", () => {
+  const state = {
+    players: [
+      { id: "aid-partial-attacker", seatIndex: 0, battleTeam: "dusk", alive: true, hp: 5, maxHp: 5, handCount: 0 },
+      { id: "aid-partial-target", seatIndex: 1, battleTeam: "dawn", alive: true, hp: 3, maxHp: 4, shield: 0, handCount: 0, blockProbability: 0, expectedRecoverCount: 0 },
+      {
+        id: "aid-partial-guardian", seatIndex: 2, generalId: "oath-warden", battleTeam: "dawn", alive: true,
+        hp: 1, maxHp: 4, shield: 0, handCount: 1.5, guardianAidUsedProbability: 0,
+        hand: [
+          {
+            id: "aid-partial-a", definitionId: "charge",
+            availabilityBranches: [{ probability: 0.5, conditions: {} }],
+            availabilityStateBranches: [
+              { probability: 0.5, conditions: {}, available: true },
+              { probability: 0.5, conditions: {}, available: false }
+            ]
+          },
+          {
+            id: "aid-partial-b", definitionId: "block",
+            availabilityBranches: [{ probability: 1, conditions: {} }],
+            availabilityStateBranches: [{ probability: 1, conditions: {}, available: true }]
+          }
+        ]
+      }
+    ]
+  };
+  const simulator = new AiSimulator(state);
+  const simState = simulator.initial,
+    outcome = {};
+  const vGuardian = simState.players[2];
+  assert.equal(simulator.hasCompleteCertainHand(vGuardian), false, "概率身份手牌不允许智能弃牌");
+  simulator.simulateGuardianAid(simState, simState.players[1], 1, 1, null, { result: outcome });
+  assert.equal(outcome.guardianAidDiscards, undefined, "概率手牌不得记录确定选中的弃牌");
+  assert.equal(vGuardian.guardianAidUsedProbability, 1);
+  assertClose(vGuardian.handCount, 0.5, 1e-9);
+});
+
+test("AI·守誓者：handCount 含匿名容量时回退随机期望消费", () => {
+  const state = {
+    players: [
+      { id: "aid-anon-attacker", seatIndex: 0, battleTeam: "dusk", alive: true, hp: 5, maxHp: 5, handCount: 0 },
+      { id: "aid-anon-target", seatIndex: 1, battleTeam: "dawn", alive: true, hp: 3, maxHp: 4, shield: 0, handCount: 0, blockProbability: 0, expectedRecoverCount: 0 },
+      {
+        id: "aid-anon-guardian", seatIndex: 2, generalId: "oath-warden", battleTeam: "dawn", alive: true,
+        hp: 1, maxHp: 4, shield: 0, handCount: 2, guardianAidUsedProbability: 0,
+        hand: [{ id: "aid-anon-b", definitionId: "block" }]
+      }
+    ]
+  };
+  const simulator = new AiSimulator(state);
+  const simState = simulator.initial,
+    outcome = {};
+  const vGuardian = simState.players[2];
+  assert.equal(simulator.hasCompleteCertainHand(vGuardian), false, "手牌身份未覆盖 handCount 时不允许智能弃牌");
+  simulator.simulateGuardianAid(simState, simState.players[1], 1, 1, null, { result: outcome });
+  assert.equal(outcome.guardianAidDiscards, undefined, "匿名容量手牌不得记录确定选中的弃牌");
+  assert.equal(vGuardian.guardianAidUsedProbability, 1);
+  assertClose(vGuardian.handCount, 1, 1e-9);
+});
+
+test("AI·守誓者：handCount 与身份数量在数值容差内仍视为完整确定手牌", () => {
+  const state = {
+    players: [
+      { id: "aid-eps-attacker", seatIndex: 0, battleTeam: "dusk", alive: true, hp: 5, maxHp: 5, handCount: 0 },
+      { id: "aid-eps-target", seatIndex: 1, battleTeam: "dawn", alive: true, hp: 3, maxHp: 4, shield: 0, handCount: 0, blockProbability: 0, expectedRecoverCount: 0 },
+      {
+        id: "aid-eps-guardian", seatIndex: 2, generalId: "oath-warden", battleTeam: "dawn", alive: true,
+        hp: 1, maxHp: 4, shield: 0, handCount: 2.0000000000001, guardianAidUsedProbability: 0,
+        hand: [
+          { id: "aid-eps-a", definitionId: "charge" },
+          { id: "aid-eps-b", definitionId: "block" }
+        ]
+      }
+    ]
+  };
+  const simulator = new AiSimulator(state);
+  const simState = simulator.initial,
+    outcome = {};
+  const vGuardian = simState.players[2];
+  assert.equal(simulator.hasCompleteCertainHand(vGuardian), true, "容差内差值不应误判为不完整");
+  simulator.simulateGuardianAid(simState, simState.players[1], 1, 1, null, { result: outcome });
+  assert.deepEqual(
+    outcome.guardianAidDiscards,
+    [{ cardId: "aid-eps-a", definitionId: "charge" }],
+    "容差内仍应走确定性智能弃牌"
+  );
+  assert.deepEqual(vGuardian.hand.map((card) => card.definitionId), ["block"], "格挡应保留");
+});
+
 test("AI·守誓者：连续伤害下第一笔低价值伤害保留额度到更危险的一笔", async () => {
   const source = makePlayer("aid-order-source", 0, "dusk", "ai", 4),
     target = makePlayer("aid-order-target", 1, "dawn", "ai", 0),

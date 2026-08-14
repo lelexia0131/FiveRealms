@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-discard";
-import { createId } from "../utils/helpers.js?build=20260814-guardian-aid-discard";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260814-guardian-aid-discard";
-import { RuleEngine } from "./RuleEngine.js?build=20260814-guardian-aid-discard";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-certain-hand";
+import { createId } from "../utils/helpers.js?build=20260814-guardian-aid-certain-hand";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260814-guardian-aid-certain-hand";
+import { RuleEngine } from "./RuleEngine.js?build=20260814-guardian-aid-certain-hand";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

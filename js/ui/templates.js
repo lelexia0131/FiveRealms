@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-discard";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260814-guardian-aid-discard";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-certain-hand";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260814-guardian-aid-certain-hand";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

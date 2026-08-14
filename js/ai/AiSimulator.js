@@ -2,22 +2,22 @@
  * 轻量期望值模拟器。只消费过滤后的可见快照；未知格挡、反制、突袭和救援牌
  * 通过快照概率折算，绝不读取其他玩家真实手牌或未来牌堆。
  */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260814-guardian-aid-discard";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-discard";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-guardian-aid-discard";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-guardian-aid-discard";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-guardian-aid-discard";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-guardian-aid-discard";
-import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260814-guardian-aid-discard";
+import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../config/cardConfig.js?build=20260814-guardian-aid-certain-hand";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-certain-hand";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-guardian-aid-certain-hand";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-guardian-aid-certain-hand";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-guardian-aid-certain-hand";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "./lightningScoring.js?build=20260814-guardian-aid-certain-hand";
+import { getSealStatusStateBranches, sealPresenceProbability } from "./sealScoring.js?build=20260814-guardian-aid-certain-hand";
 import {
   counterOpportunityCost,
   globalBenefitCounterDesire,
   mutualBenefitDraftValues
-} from "./AiGlobalBenefit.js?build=20260814-guardian-aid-discard";
-import { HP_VALUE } from "./AiEconomics.js?build=20260814-guardian-aid-discard";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260814-guardian-aid-discard";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-guardian-aid-discard";
-import { getDiscardKeepValue } from "./discardScoring.js?build=20260814-guardian-aid-discard";
+} from "./AiGlobalBenefit.js?build=20260814-guardian-aid-certain-hand";
+import { HP_VALUE } from "./AiEconomics.js?build=20260814-guardian-aid-certain-hand";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "./resourceSelectionValue.js?build=20260814-guardian-aid-certain-hand";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-guardian-aid-certain-hand";
+import { getDiscardKeepValue } from "./discardScoring.js?build=20260814-guardian-aid-certain-hand";
 import {
   PROBABILITY_EPSILON,
   RADAR_BASIC_DEFINITIONS as RADAR_BASIC_DEFINITION_IDS,
@@ -32,7 +32,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "./AiProbabilityBranches.js?build=20260814-guardian-aid-discard";
+} from "./AiProbabilityBranches.js?build=20260814-guardian-aid-certain-hand";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "basic").reduce((sum, card) => sum + card.count, 0);
 const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment").reduce((sum, card) => sum + card.count, 0);
@@ -2242,6 +2242,22 @@ export class AiSimulator {
   }
 
   /**
+   * 护援确定性弃牌的前置守卫：只有具体手牌全部 100% 确定存在，且具体身份数量
+   * 与 handCount 完全一致（无匿名/未知容量）时，才允许按共享保留价值智能选牌；
+   * 概率/部分身份手牌必须回退随机期望消费。
+   */
+  hasCompleteCertainHand(player) {
+    if (!Array.isArray(player?.hand) || !player.hand.length) return false;
+    const allCertain = player.hand.every(
+      (card) => this.cardAvailability(card) >= 1 - PROBABILITY_EPSILON
+    );
+    if (!allCertain) return false;
+    return Math.abs(
+      Math.max(0, Number(player.handCount) || 0) - player.hand.length
+    ) <= PROBABILITY_EPSILON;
+  }
+
+  /**
    * 按共享保留价值定向消费已知手牌：护援反事实中 responder 自己的手牌身份合法可见，
    * 因此应选择最低 keep-value 的牌，而不是把已知手牌当作随机损失。
    * 只用于明确由 AI 自主选牌支付的路径；真正随机的弃牌/未知损失仍走 consumeRandomHandCards。
@@ -2471,8 +2487,8 @@ export class AiSimulator {
    * 护援只作用于通过雷达与格挡的伤害世界，并在护盾前计算弃牌与每轮次数的期望代价。
    * excludedGuardianIds 让调用方（护援响应决策）在 STAY 世界按 id 排除某位守誓者，
    * 使其拒绝护援、额度与手牌保留，而不为此另建第二套防御模拟。
-   * 当守护者拥有完整手牌身份（responder 自己的可见手牌）时，按共享保留价值
-   * 确定性弃掉最低 keep-value 的牌；只有身份不完整时才对未知牌做随机损失。
+   * 当守护者拥有完整且 100% 确定的手牌身份时，按共享保留价值确定性弃掉最低
+   * keep-value 的牌；概率/匿名/身份不完整的手牌仍走随机期望消费。
    */
   simulateGuardianAid(state, target, incomingDamage, eventProbability, excludedGuardianIds = null, options = {}) {
     const probability = clampProbability(eventProbability);
@@ -2490,7 +2506,7 @@ export class AiSimulator {
       const handAvailability = Math.min(1, Math.max(0, Number(guardian.handCount) || 0));
       const triggerProbability = remainingTriggerProbability * (1 - oldUsedProbability) * handAvailability;
       if (triggerProbability <= 0) continue;
-      if (Array.isArray(guardian.hand) && guardian.hand.length > 0) {
+      if (this.hasCompleteCertainHand(guardian)) {
         this.consumeChosenHandCard(state, guardian, triggerProbability, options);
       } else {
         this.consumeRandomHandCards(state, guardian, triggerProbability);

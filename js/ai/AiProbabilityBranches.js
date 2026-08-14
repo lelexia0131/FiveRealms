@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-guardian-aid-discard";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-guardian-aid-certain-hand";
 
 export const PROBABILITY_EPSILON = 1e-12;
 

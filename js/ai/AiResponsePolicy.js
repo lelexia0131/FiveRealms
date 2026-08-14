@@ -1,13 +1,13 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-discard";
-import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260814-guardian-aid-discard";
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-guardian-aid-discard";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-guardian-aid-discard";
-import { HP_VALUE } from "./AiEconomics.js?build=20260814-guardian-aid-discard";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-guardian-aid-certain-hand";
+import { globalBenefitCounterDesire, dynamicRootFlipGain, counterOpportunityCost } from "./AiGlobalBenefit.js?build=20260814-guardian-aid-certain-hand";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-guardian-aid-certain-hand";
+import { AiSimulator } from "./AiSimulator.js?build=20260814-guardian-aid-certain-hand";
+import { HP_VALUE } from "./AiEconomics.js?build=20260814-guardian-aid-certain-hand";
 import {
   hasLightning,
   nextLightningReceiver
-} from "./lightningScoring.js?build=20260814-guardian-aid-discard";
-import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260814-guardian-aid-discard";
+} from "./lightningScoring.js?build=20260814-guardian-aid-certain-hand";
+import { hasSeal, tacticJudgmentProbability, turnOpportunityValue } from "./sealScoring.js?build=20260814-guardian-aid-certain-hand";
 
 /**
  * AI 响应效用策略。依赖公开上下文、团队规则与评估器；决定格挡、反制、交牌、

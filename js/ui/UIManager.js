@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260814-guardian-aid-discard";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260814-guardian-aid-discard";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260814-guardian-aid-discard";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260814-guardian-aid-certain-hand";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260814-guardian-aid-certain-hand";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260814-guardian-aid-certain-hand";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260814-guardian-aid-discard";
-import { AnimationController } from "./animationController.js?build=20260814-guardian-aid-discard";
-import { InteractionController } from "./InteractionController.js?build=20260814-guardian-aid-discard";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260814-guardian-aid-discard";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260814-guardian-aid-discard";
-import { JudgmentView } from "./JudgmentView.js?build=20260814-guardian-aid-discard";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-guardian-aid-discard";
-import { createOpponentHandView } from "./handVisibility.js?build=20260814-guardian-aid-discard";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260814-guardian-aid-discard";
-import { SoundManager } from "../audio/SoundManager.js?build=20260814-guardian-aid-discard";
+} from "./templates.js?build=20260814-guardian-aid-certain-hand";
+import { AnimationController } from "./animationController.js?build=20260814-guardian-aid-certain-hand";
+import { InteractionController } from "./InteractionController.js?build=20260814-guardian-aid-certain-hand";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260814-guardian-aid-certain-hand";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260814-guardian-aid-certain-hand";
+import { JudgmentView } from "./JudgmentView.js?build=20260814-guardian-aid-certain-hand";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260814-guardian-aid-certain-hand";
+import { createOpponentHandView } from "./handVisibility.js?build=20260814-guardian-aid-certain-hand";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260814-guardian-aid-certain-hand";
+import { SoundManager } from "../audio/SoundManager.js?build=20260814-guardian-aid-certain-hand";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
