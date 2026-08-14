@@ -17,14 +17,14 @@ AiController、AiResponsePolicy、测试与尚未迁移的搜索调用方。
 架构约束
 旧 createAiVisibleState 只做 SearchState 兼容外观，不得另存一份投影或概率逻辑。
 */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-controller-di";
-import { TeamRuleService } from "../core/TeamRuleService.js?build=20260814-ai-controller-di";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-ai-controller-di";
-import { getBaseCardAiValue, getRoleCardAiValue } from "./roleCardValue.js?build=20260814-ai-controller-di";
-import { createBeliefState } from "./state/BeliefState.js?build=20260814-ai-controller-di";
-import { createKnowledgeState } from "./state/Knowledge.js?build=20260814-ai-controller-di";
-import { createSearchState } from "./state/SearchState.js?build=20260814-ai-controller-di";
-import { createVisibleState } from "./state/VisibleState.js?build=20260814-ai-controller-di";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-value-ownership";
+import { TeamRuleService } from "../core/TeamRuleService.js?build=20260814-ai-value-ownership";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260814-ai-value-ownership";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./value/CardValue.js?build=20260814-ai-value-ownership";
+import { createBeliefState } from "./state/BeliefState.js?build=20260814-ai-value-ownership";
+import { createKnowledgeState } from "./state/Knowledge.js?build=20260814-ai-value-ownership";
+import { createSearchState } from "./state/SearchState.js?build=20260814-ai-value-ownership";
+import { createVisibleState } from "./state/VisibleState.js?build=20260814-ai-value-ownership";
 
 /*
 功能

@@ -1,0 +1,389 @@
+/*
+模块职责
+承接价值计算上游仍需模拟的闪电生命周期与响应反事实查询。
+
+上游
+AIController、状态价值适配器、ValueLedger 与兼容 façade。
+
+下游
+AiSimulator、闪电概率 helper 与纯 value/Evaluator。
+
+状态边界
+只克隆并写入 SearchState；不持有或修改真实 GameState。
+
+信息边界
+只接受过滤后的状态和合法概率摘要，不读取 Game 隐藏手牌。
+
+架构约束
+本模块只做有界 simulation query，不搜索、不生成动作，也不拥有最终价值组合公式。
+*/
+import { buildRadarJudgmentProbabilities } from "./AiProbabilityBranches.js?build=20260814-ai-value-ownership";
+import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-value-ownership";
+import {
+  buildLightningHitDistribution,
+  lightningPresenceProbability
+} from "./lightningScoring.js?build=20260814-ai-value-ownership";
+import { HP_VALUE } from "./value/Economics.js?build=20260814-ai-value-ownership";
+
+export class AiValueSimulationQuery {
+  /*
+  功能
+  绑定闪电查询所需的纯 owner material evaluator 并建立状态缓存。
+
+  调用方
+  AIController composition root。
+
+  输入
+  不含 Simulator 的 value/Evaluator。
+
+  输出
+  可复用的有界模拟查询实例。
+
+  读取状态
+  保存纯 evaluator 引用。
+
+  写入状态
+  初始化实例级 WeakMap 缓存。
+
+  调用函数
+  WeakMap。
+
+  边界与不变量
+  缓存仅以 SearchState 对象生命周期为界，不跨状态对象复用结果。
+  */
+  constructor(evaluator) {
+    this.evaluator = evaluator;
+    this.lightningLifecycleCache = new WeakMap();
+  }
+
+  /*
+  功能
+  计算一枚闪电完整生命周期对每个 owner 的预期经济变化。
+
+  调用方
+  lightningLifecycleValue、ValueLedger 与兼容 façade。
+
+  输入
+  状态、初始 holder、viewer ID 与可选存在概率覆盖。
+
+  输出
+  player ID 到未签名 owner delta 的 Map。
+
+  读取状态
+  只读 SearchState、剩余牌计数与存活座位环。
+
+  写入状态
+  仅写本查询实例的 WeakMap 缓存；模拟写入独立克隆。
+
+  调用函数
+  buildLightningHitDistribution、AiSimulator.applyLightningHit、Evaluator.ownerMaterialValue。
+
+  边界与不变量
+  每个分支除最终命中 holder 外保持同一基线；不把 unresolved lifecycle 再加入 frontier。
+  */
+  lightningLifecycleOwnerDeltas(state, initialHolder, viewerId, presenceOverride = null) {
+    if (!state || !initialHolder?.alive) return new Map();
+    let stateCache = this.lightningLifecycleCache.get(state);
+    if (!stateCache) {
+      stateCache = new Map();
+      this.lightningLifecycleCache.set(state, stateCache);
+    }
+    const presence = presenceOverride == null
+      ? lightningPresenceProbability(initialHolder)
+      : Math.max(0, Math.min(1, Number(presenceOverride) || 0));
+    const cacheKey = `${initialHolder.id}:${viewerId}:${presence}`;
+    if (stateCache.has(cacheKey)) return stateCache.get(cacheKey);
+    const deltas = new Map(state.players.map((player) => [player.id, 0]));
+    if (presence <= 0) {
+      stateCache.set(cacheKey, deltas);
+      return deltas;
+    }
+    const distribution = buildLightningHitDistribution(state, initialHolder);
+    const beforeRadar = buildRadarJudgmentProbabilities(
+      state?.remainingCardCounts ?? null
+    ).tactic;
+    const beforeValues = new Map(state.players.map((player) => [
+      player.id,
+      this.evaluator.ownerMaterialValue(state, player, viewerId, beforeRadar)
+    ]));
+    const simulator = new AiSimulator(state);
+    for (const outcome of distribution) {
+      const after = simulator.applyLightningHit(state, outcome.holder.id);
+      const afterRadar = buildRadarJudgmentProbabilities(
+        after?.remainingCardCounts ?? null
+      ).tactic;
+      for (const afterPlayer of after.players) {
+        const delta = this.evaluator.ownerMaterialValue(
+          after,
+          afterPlayer,
+          viewerId,
+          afterRadar
+        ) - (beforeValues.get(afterPlayer.id) ?? 0);
+        deltas.set(
+          afterPlayer.id,
+          (deltas.get(afterPlayer.id) ?? 0) + presence * outcome.probability * delta
+        );
+      }
+    }
+    stateCache.set(cacheKey, deltas);
+    return deltas;
+  }
+
+  /*
+  功能
+  从 viewer 视角投影一枚闪电整个流转生命周期的预期局面变化。
+
+  调用方
+  状态价值适配器、SearchPrior、响应策略与兼容 façade。
+
+  输入
+  状态、初始 holder、viewer ID 与可选存在概率覆盖。
+
+  输出
+  viewer 团队视角的闪电生命周期值。
+
+  读取状态
+  只读存活玩家和队伍关系。
+
+  写入状态
+  无；底层查询只写缓存。
+
+  调用函数
+  lightningLifecycleOwnerDeltas。
+
+  边界与不变量
+  owner delta 只在此施加敌我符号，保持当前玩家顺序的浮点累加顺序。
+  */
+  lightningLifecycleValue(state, initialHolder, viewerId, presenceOverride = null) {
+    const viewer = state?.players?.find((player) => player.id === viewerId);
+    if (!viewer) return 0;
+    const deltas = this.lightningLifecycleOwnerDeltas(
+      state,
+      initialHolder,
+      viewerId,
+      presenceOverride
+    );
+    return state.players.reduce((sum, player) => {
+      const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
+      return sum + sign * (deltas.get(player.id) ?? 0);
+    }, 0);
+  }
+
+  /*
+  功能
+  计算一枚闪电对 viewer 阵营造成的预期负担。
+
+  调用方
+  AiResponsePolicy 与兼容 façade。
+
+  输入
+  状态、holder、viewer ID 与可选存在概率。
+
+  输出
+  生命周期价值的相反数。
+
+  读取状态
+  与 lightningLifecycleValue 相同。
+
+  写入状态
+  无。
+
+  调用函数
+  lightningLifecycleValue。
+
+  边界与不变量
+  只改变表示符号，不新增任何价值项。
+  */
+  lightningTeamBurden(state, holder, viewerId, presenceOverride = null) {
+    return -this.lightningLifecycleValue(state, holder, viewerId, presenceOverride);
+  }
+
+  /*
+  功能
+  计算状态反制把同一枚闪电转交 receiver 后的阵营负担。
+
+  调用方
+  AiResponsePolicy 与兼容 façade。
+
+  输入
+  状态、旧 holder、新 receiver 与 viewer ID。
+
+  输出
+  过渡态中的闪电阵营负担。
+
+  读取状态
+  只读并克隆传入状态。
+
+  写入状态
+  仅修改独立克隆中的旧 holder 闪电状态。
+
+  调用函数
+  structuredClone、lightningTeamBurden。
+
+  边界与不变量
+  必须先移除旧 holder 再计算新流转环，不能把同一枚闪电当作两个占位。
+  */
+  lightningTransferredBurden(state, holder, receiver, viewerId) {
+    if (!state || !holder || !receiver) return 0;
+    const transferred = structuredClone(state);
+    const previous = transferred.players.find((player) => player.id === holder.id);
+    const nextHolder = transferred.players.find((player) => player.id === receiver.id);
+    if (!previous || !nextHolder) return 0;
+    if (Array.isArray(previous.statuses)) {
+      previous.statuses = previous.statuses.filter((statusId) => statusId !== "lightning");
+    } else if (previous.statuses) {
+      delete previous.statuses.lightning;
+    }
+    previous.lightningStatusStateBranches = [{ probability: 1, conditions: {}, present: false }];
+    previous.lightningStatusProbability = 0;
+    return this.lightningTeamBurden(transferred, nextHolder, viewerId, 1);
+  }
+
+  /*
+  功能
+  汇总当前状态中所有独立闪电对指定 owner 的未兑现变化。
+
+  调用方
+  ValueLedger 与兼容 façade。
+
+  输入
+  状态、owner ID 与 viewer ID。
+
+  输出
+  未签名 owner delta 总和。
+
+  读取状态
+  只读存活 holder 与闪电存在概率。
+
+  写入状态
+  无；底层查询只写缓存。
+
+  调用函数
+  lightningLifecycleOwnerDeltas、lightningPresenceProbability。
+
+  边界与不变量
+  每枚独立闪电恰好计一次，按状态玩家顺序累加。
+  */
+  lightningOwnerDelta(state, ownerId, viewerId) {
+    let total = 0;
+    for (const holder of state.players) {
+      if (!holder?.alive || lightningPresenceProbability(holder) <= 0) continue;
+      total += this.lightningLifecycleOwnerDeltas(state, holder, viewerId).get(ownerId) ?? 0;
+    }
+    return total;
+  }
+
+  /*
+  功能
+  为纯 Evaluator 生成当前状态中按 holder 顺序排列的闪电生命周期值。
+
+  调用方
+  AiStateValue。
+
+  输入
+  状态与 viewer ID。
+
+  输出
+  只包含存在概率大于零 holder 的纯数值数组。
+
+  读取状态
+  只读存活 holder 与闪电概率状态。
+
+  写入状态
+  无；底层查询只写缓存。
+
+  调用函数
+  lightningLifecycleValue、lightningPresenceProbability。
+
+  边界与不变量
+  顺序必须与旧 stateUtility 的 holder 循环一致，以保持浮点运算顺序。
+  */
+  lightningValues(state, viewerId) {
+    const values = [];
+    for (const holder of state.players) {
+      if (holder?.alive && lightningPresenceProbability(holder) > 0) {
+        values.push(this.lightningLifecycleValue(state, holder, viewerId));
+      }
+    }
+    return values;
+  }
+
+  /*
+  功能
+  比较实际响应世界与只移除指定响应能力的配对反事实世界。
+
+  调用方
+  ValueLedger。
+
+  输入
+  before、动作、actor/defender/viewer ID、移除项、可选 actual after 与状态价值入口。
+
+  输出
+  grossAvoided、ownerValue 与 viewer projected value。
+
+  读取状态
+  只读 before/after 和指定响应概率字段。
+
+  写入状态
+  只修改反事实浅克隆及 Simulator 生成的独立 SearchState。
+
+  调用函数
+  AiSimulator.apply、stateValue.stateUtility。
+
+  边界与不变量
+  反事实只改变正在测量的响应能力；其他资源、概率条件与实体身份保持配对。
+  */
+  responseCounterfactual(
+    before,
+    action,
+    actorId,
+    defenderId,
+    viewerId,
+    opts = {},
+    after = null,
+    stateValue
+  ) {
+    if (!action) return { grossAvoided: 0, ownerValue: 0, projected: 0 };
+    const simulator = new AiSimulator(before);
+    const actualAfter = after ?? simulator.apply(before, action, actorId);
+    const counterfactualPlayers = before.players.map((player) => {
+      if (player.id !== defenderId) return player;
+      const next = { ...player };
+      if (opts.removeBlock) {
+        next.blockCountDistribution = [{ probability: 1, conditions: {}, blockCount: 0 }];
+        next.blockProbability = 0;
+        next.twoBlockProbability = 0;
+      }
+      if (opts.removeCounter) {
+        next.counterCountDistribution = [{ probability: 1, conditions: {}, counterCount: 0 }];
+        next.counterProbability = 0;
+      }
+      if (opts.removeRecover) {
+        next.expectedRecoverCount = 0;
+        if (Array.isArray(next.hand)) {
+          next.hand = next.hand.filter((card) => card.definitionId !== "recover");
+        }
+      }
+      return next;
+    });
+    const counterfactualBefore = { ...before, players: counterfactualPlayers };
+    const counterfactualAfter = new AiSimulator(counterfactualBefore).apply(
+      counterfactualBefore,
+      action,
+      actorId
+    );
+    const actualDefender = actualAfter.players.find((player) => player.id === defenderId);
+    const counterfactualDefender = counterfactualAfter.players.find(
+      (player) => player.id === defenderId
+    );
+    const grossAvoided = Math.max(
+      0,
+      (actualDefender?.hp ?? 0) - (counterfactualDefender?.hp ?? 0)
+    ) * HP_VALUE;
+    const ownerValue = stateValue.stateUtility(actualAfter, defenderId)
+      - stateValue.stateUtility(counterfactualAfter, defenderId);
+    const projected = stateValue.stateUtility(actualAfter, viewerId)
+      - stateValue.stateUtility(counterfactualAfter, viewerId);
+    return { grossAvoided, ownerValue, projected };
+  }
+}

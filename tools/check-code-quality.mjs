@@ -25,6 +25,8 @@ const MODULE_FIELDS = Object.freeze([
 const SOURCE_PATTERN = /^js\/.*\.(?:js|mjs|cjs)$/i;
 const LAYERED_AI_PATTERN = /^js\/ai\/(?:state|search|simulation|value)\//i;
 const STATE_AI_PATTERN = /^js\/ai\/state\//i;
+const VALUE_AI_PATTERN = /^js\/ai\/value\//i;
+const TRANSITION_VALUE_PATTERN = /^js\/ai\/search\/TransitionValue\.js$/i;
 
 /*
 功能
@@ -304,6 +306,75 @@ function maskNonCode(source) {
     } else if (current === "\"" || current === "'" || current === "`") {
       quote = current;
       chars[index] = " ";
+      mode = "string";
+    }
+  }
+  return chars.join("");
+}
+
+/*
+功能
+把注释替换为空格但保留字符串内容，供真实 import 语法守卫使用。
+
+调用方
+inspectSource。
+
+输入
+JavaScript 源码。
+
+输出
+与输入等长、保留换行和字符串的注释遮罩文本。
+
+读取状态
+无。
+
+写入状态
+局部词法扫描状态。
+
+调用函数
+无。
+
+边界与不变量
+字符串中的 import/Simulator 文本不会被当成语法，注释中的伪 import 也不会触发规则。
+*/
+function maskComments(source) {
+  const chars = [...source];
+  let mode = "code";
+  let quote = null;
+  for (let index = 0; index < chars.length; index += 1) {
+    const current = chars[index];
+    const next = chars[index + 1];
+    if (mode === "line-comment") {
+      if (current === "\n") mode = "code";
+      else chars[index] = " ";
+      continue;
+    }
+    if (mode === "block-comment") {
+      if (current === "*" && next === "/") {
+        chars[index] = " ";
+        chars[index + 1] = " ";
+        index += 1;
+        mode = "code";
+      } else if (current !== "\n") chars[index] = " ";
+      continue;
+    }
+    if (mode === "string") {
+      if (current === "\\") index += 1;
+      else if (current === quote) mode = "code";
+      continue;
+    }
+    if (current === "/" && next === "/") {
+      chars[index] = " ";
+      chars[index + 1] = " ";
+      index += 1;
+      mode = "line-comment";
+    } else if (current === "/" && next === "*") {
+      chars[index] = " ";
+      chars[index + 1] = " ";
+      index += 1;
+      mode = "block-comment";
+    } else if (current === "\"" || current === "'" || current === "`") {
+      quote = current;
       mode = "string";
     }
   }
@@ -673,13 +744,14 @@ inspectFile、runSelfTest。
 无。
 
 调用函数
-findFunctions、missingHeaderFields、missingModuleFields。
+findFunctions、missingHeaderFields、missingModuleFields、maskComments。
 
 边界与不变量
 Guard 只使用路径、import 和明确回指语法；AI 内部回指扫描覆盖完整文件，其余函数头仍按变更范围执行。
 */
 function inspectSource(file, source, changed) {
   const lines = source.split(/\r?\n/);
+  const importSource = maskComments(source);
   const maskedLines = maskNonCode(source).split(/\r?\n/);
   const errors = [];
   for (const fn of findFunctions(source)) {
@@ -689,14 +761,14 @@ function inspectSource(file, source, changed) {
   }
 
   if (LAYERED_AI_PATTERN.test(file)) {
-    const uiImport = source.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:\/ui\/|\/ui\.|\.\.\/ui\/)/i);
+    const uiImport = importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:\/ui\/|\/ui\.|\.\.\/ui\/)/i);
     if (uiImport) errors.push({ file, functionName: "<module>", line: source.slice(0, uiImport.index).split(/\r?\n/).length, missing: ["架构约束：search/simulation/value 禁止 UI import"] });
     const missing = missingModuleFields(source);
     if (missing.length) errors.push({ file, functionName: "<module>", line: 1, missing });
   }
 
   if (STATE_AI_PATTERN.test(file)) {
-    const orchestrationImport = source.match(
+    const orchestrationImport = importSource.match(
       /(?:from\s*|import\s*\()\s*["'][^"']*\/(?:AiController|AiPlanner|AiSimulator|AiEvaluator)\.js(?:\?[^"']*)?["']/i,
     );
     if (orchestrationImport) {
@@ -705,6 +777,52 @@ function inspectSource(file, source, changed) {
         functionName: "<module>",
         line: source.slice(0, orchestrationImport.index).split(/\r?\n/).length,
         missing: ["架构约束：state 禁止依赖 Controller/Planner/Simulator/Evaluator"],
+      });
+    }
+  }
+
+  if (VALUE_AI_PATTERN.test(file)) {
+    const orchestrationImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*\/(?:AiController|AiPlanner|AiSimulator)\.js(?:\?[^"']*)?["']/i,
+    );
+    if (orchestrationImport) {
+      errors.push({
+        file,
+        functionName: "<module>",
+        line: source.slice(0, orchestrationImport.index).split(/\r?\n/).length,
+        missing: ["架构约束：value 禁止依赖 Controller/Planner/concrete Simulator"],
+      });
+    }
+    const concreteConstruction = maskNonCode(source).match(/\bnew\s+AiSimulator\s*\(/);
+    if (concreteConstruction) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, concreteConstruction.index).split(/\r?\n/).length,
+        missing: ["架构约束：value 禁止构造 concrete Simulator"],
+      });
+    }
+  }
+
+  if (TRANSITION_VALUE_PATTERN.test(file)) {
+    const orchestrationImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*\/(?:Game|AiController|AIController)\.js(?:\?[^"']*)?["']/i,
+    );
+    if (orchestrationImport) {
+      errors.push({
+        file,
+        functionName: "<module>",
+        line: source.slice(0, orchestrationImport.index).split(/\r?\n/).length,
+        missing: ["架构约束：TransitionValue 禁止依赖 Game/AIController"],
+      });
+    }
+    const gameBackreference = maskNonCode(source).match(/\bthis\.game\b/);
+    if (gameBackreference) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, gameBackreference.index).split(/\r?\n/).length,
+        missing: ["架构约束：TransitionValue 禁止 Game 回指"],
       });
     }
   }
@@ -772,7 +890,7 @@ main 的 --self-test 模式。
 inspectSource。
 
 边界与不变量
-夹具必须同时覆盖完整头、缺字段、JSDoc、UI import、state 逆向 import 和控制器回指。
+夹具必须覆盖头格式、注释遮罩、UI/state 方向、value purity 与 TransitionValue 依赖边界。
 */
 function runSelfTest() {
   const pass = `/*
@@ -898,7 +1016,55 @@ function identity(value) { return value; }`;
   if (!stateErrors.some((error) => error.missing.some((item) => item.includes("state 禁止依赖")))) {
     throw new Error("failing fixture did not detect state orchestration import");
   }
-  process.stdout.write("code-quality self-test passed: valid no-star headers, missing field, old-star, JSDoc, same-line title, valid module, controller backreference, ignored comment text, layered UI import, and state dependency direction\n");
+  const validValueErrors = inspectSource(
+    "js/ai/value/GoodValue.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (validValueErrors.length) {
+    throw new Error(`valid value fixture failed: ${JSON.stringify(validValueErrors)}`);
+  }
+  const valueImportErrors = inspectSource(
+    "js/ai/value/BadValueImport.js",
+    `${moduleHeader}\nimport { AiSimulator } from "../AiSimulator.js";\n${pass}`,
+    null,
+  );
+  if (!valueImportErrors.some((error) => error.missing.some((item) => item.includes("concrete Simulator")))) {
+    throw new Error("value fixture did not detect concrete Simulator import");
+  }
+  const valueConstructionErrors = inspectSource(
+    "js/ai/value/BadValueConstruction.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return new AiSimulator(value);")}`,
+    null,
+  );
+  if (!valueConstructionErrors.some((error) => error.missing.some((item) => item.includes("构造 concrete Simulator")))) {
+    throw new Error("value fixture did not detect concrete Simulator construction");
+  }
+  const valueCommentErrors = inspectSource(
+    "js/ai/value/ValueComment.js",
+    `${moduleHeader}\n/* import { AiSimulator } from "../AiSimulator.js"; new AiSimulator(); */\n${pass}`,
+    null,
+  );
+  if (valueCommentErrors.some((error) => error.missing.some((item) => item.includes("Simulator")))) {
+    throw new Error("value guard incorrectly scanned comment text");
+  }
+  const transitionGameErrors = inspectSource(
+    "js/ai/search/TransitionValue.js",
+    `${moduleHeader}\nimport { Game } from "../../core/Game.js";\n${pass}`,
+    null,
+  );
+  if (!transitionGameErrors.some((error) => error.missing.some((item) => item.includes("Game/AIController")))) {
+    throw new Error("TransitionValue fixture did not detect Game import");
+  }
+  const transitionControllerErrors = inspectSource(
+    "js/ai/search/TransitionValue.js",
+    `${moduleHeader}\nimport { AIController } from "../AiController.js";\n${pass}`,
+    null,
+  );
+  if (!transitionControllerErrors.some((error) => error.missing.some((item) => item.includes("Game/AIController")))) {
+    throw new Error("TransitionValue fixture did not detect AIController import");
+  }
+  process.stdout.write("code-quality self-test passed: headers, modules, backreferences, ignored comments, UI/state direction, value purity, and TransitionValue boundaries\n");
 }
 
 /*

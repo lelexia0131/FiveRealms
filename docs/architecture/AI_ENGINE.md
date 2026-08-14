@@ -1,8 +1,8 @@
 # FiveRealms AI Engine 2.0
 
-当前状态：AI-ARCH-0、AI-ARCH-1、AI-ARCH-2、AI-ARCH-2.1、AI-ARCH-3 已完成；AI-ARCH-4 尚未开始。
+当前状态：AI-ARCH-0、AI-ARCH-1、AI-ARCH-2、AI-ARCH-2.1、AI-ARCH-3、AI-ARCH-4 已完成；下一阶段为 AI-ARCH-5 评审。
 当前实现起点：`7696f16 ARCH-0.1.2`
-当前浏览器构建标识：`20260814-ai-controller-di`
+当前浏览器构建标识：`20260814-ai-value-ownership`
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
 审计日期：2026-08-14
 范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；第 2 至 10 节保留最初只读审计及迁移设计作为历史基线，后续完成事实在对应阶段章节持续更新。
@@ -657,3 +657,126 @@ Architecture Guard 现已覆盖 `state/**` 的模块头与 UI import 禁令，�
 ### 当前回滚与兼容边界
 
 可独立回滚的物理边界是 `state/**`、`AiVisibleState` composition façade、`AiKnowledge` 重导出、通用 Probability 重导出和 Simulator clone 委托。仍需后续移除的债务包括旧 `createAiVisibleState` 命名、Planner 对扁平 SearchState 的直接字段依赖、DOMAIN/VALUE 派生注入以及 Simulator 内部状态初始化兼容函数。
+
+## 24. AI-ARCH-4 Value Ownership 落地结果
+
+### Value Ownership Freeze Table
+
+下表中的“冻结时”指 AI-ARCH-4 修改前的 `68f51d7 ARCH-3`。分类和 final 资格均按消费目的冻结；共享 primitive 若服务不同目的，以独立目的行表示，避免“有时 prior、有时 final”的模糊归属。
+
+| Name | Current Producer（冻结时） | Current Consumers | Current Formula | Current Scale | Current Timing | Current Perspective / Owner | Current Destination | Target Owner | Final-value classification / Final | Migration Decision |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `actionUtility` | `AiEvaluator` | Planner root/depth pruning、兼容测试 | 卡牌/技能/目标/身份/装备等既有启发式之和 | 原始 prior 分；深层除以 depth | apply 前，用于候选排序和 beam 裁剪 | actor 的可见策略视角 | `pruneScore` | `search/SearchPrior` | `SEARCH_PRIOR` / 否 | 公式原样迁移；不进入 `valueScore` |
+| `actionSearchPrior` | `AiEvaluator` | Planner pruning | `burningField ? 8 : 0` | 8 分；深层除以 depth | apply 前、同层排序 | actor | `pruneScore` | `search/SearchPrior` | `SEARCH_PRIOR` / 否 | 原样迁移，与 final algebra 断开 |
+| `actionEconomicValue` | `AiEvaluator` | Planner transition | 聚能跨主动技能门槛 `+4`；旧 end 入口为有剩余牌 `-0.8`，刃行者有连势例外 | economic 先乘结算概率和执行概率；随后随 transition 除 depth | transition apply 后组合；end 生产路径使用正收益 sibling 机会成本并封顶 `0.8` | actor | `immediate` / `baseTransition` | `value/Economics` | `TRANSITION_FINAL` / 是 | 无损迁移并标记 **LEGACY FINAL FLOW**；未重解释数值 |
+| `stateUtility` | `AiEvaluator` | Planner、响应反事实、ledger、策略兼容调用 | 逐玩家 `sign × (death + state terms) - seal burden`，再按 holder 顺序加闪电纯值 | 原始 state value；transition 中仅 delta 乘 `0.08` | before/after、反事实与状态查询 | viewer 团队；owner primitive 先保持未签名 | state value | `value/Evaluator`，运行时由 `AiStateValue` 注入闪电纯值 | `STATE_VALUE` / 仅经 delta | 唯一公式迁移；纯 Evaluator 不再模拟 |
+| `stateDelta` | `AiPlanner` | Planner final candidate algebra | `stateUtility(after, viewer) - stateUtility(before, viewer)` | `× STATE_DELTA_SCALE(0.08)`；base 再除 depth | 每次 transition 恰好一次 | viewer 团队 | `baseTransition` | `search/TransitionValue` | `TRANSITION_FINAL` / 是 | 公式和运算顺序整体迁移；Planner 删除实现 |
+| owner ledger | `AiEvaluator` | Planner diagnostics、测试 | 同一 owner 的 before/after state terms、death、seal、lightning 差值 | 未缩放 owner-local 数值 | 显式 diagnostics 的根候选 | owner-local；投影时才施加 self/ally/enemy 符号 | `lastSearchStats.rootLedgers` | `value/ValueLedger` | `DIAGNOSTIC_ONLY` / 否 | schema 与投影迁移；复用 Evaluator primitive |
+| response ledger | `AiPlanner` | root diagnostics、测试 | actual world 与只移除 block/counter/recover 的配对世界之差 | 未缩放；记录 resource/gross/owner/net | diagnostics 开启时的根候选 | responder owner + viewer projection | diagnostic responses | `value/ValueLedger`；模拟查询在 `AiValueSimulationQuery` | `DIAGNOSTIC_ONLY` / 否 | attribution 迁移；`responseNet` 明确不再加进 final，因为已含于 state delta |
+| candidate ledger | `AiPlanner` | diagnostics | `{ ownerLedger, projected, responses }` | 表示层，不缩放 | diagnostics 开启时 | viewer + owners | root diagnostics | `value/ValueLedger` | `DIAGNOSTIC_ONLY` / 否 | schema/构造迁移；关闭 diagnostics 时不计算 |
+| `cardOpportunityCost` | `AiEvaluator` | 价值归属诊断、测试 | generic `1.1`、role delta、recover/recycle future option、block/counter/recover capacity | 原始诊断分量 | 卡牌消费解释时 | 当前持有者 | diagnostic decomposition | `value/CardValue` | `DIAGNOSTIC_ONLY` / 否 | 原样迁移；手牌减少只由 state delta 进入 final |
+| frontier future inventory | `AiEvaluator` + Planner | frontier diagnostics | `futureInventory + energyPressure` | 原始 threat value | frontier/terminal 表示 | viewer | residual diagnostic | `search/FrontierValue` | `DIAGNOSTIC_ONLY` / 否 | 保留表示但不加 final，因已在 State Value 暴露项中 |
+| frontier held recover/recycle | `AiEvaluator` + Planner | terminal candidate | recover 可兑现治疗 + recycle 剩余次数与战术牌机会 | held 总和 `×0.08` | 仅 `playPhaseEnded` terminal 一次 | viewer | `frontierValue` | `search/FrontierValue` | `TRANSITION_FINAL` / 是 | 独立 owner；非 terminal 为零且路径中不累计 |
+| seal delay / timing | `sealScoring` + Planner | final transition | 最佳非 seal sibling 的延迟成本，经既有 `sealDelayCost` / `sealEarlyUsePenalty` | 既有 penalty；不再乘 state scale | 同一 parent 全部候选 materialize 后 | actor/viewer | final candidate | producer 暂留 domain/Planner；composition 在 `TransitionValue` | `DOMAIN_TERM` / 是 | producer 不动，避免提前 ARCH-6；final composition 已迁移 |
+| expose marginal | Planner + Simulator | final transition | baseline 与仅新增一层破势的配对反事实 state-value 差 | 根为原值；深层先除 depth；组合再 `×0.08` | expose transition | actor/viewer | final candidate | producer 暂留 Planner；composition 在 `TransitionValue` | `DOMAIN_TERM` / 是 | 只迁移组合；反事实 producer 留待 ARCH-6/9 |
+| assault stack marginal | Planner + Simulator | final transition | baseline 与只改变可兑现旧破势层的配对反事实差，按 remaining provenance 推进 | 根为原值；深层先除 depth；组合再 `×0.08` | assault transition | actor/viewer | final candidate | producer暂留 Planner；composition 在 `TransitionValue` | `DOMAIN_TERM` / 是 | 只迁移组合；保持 telescoping 与一次消费 |
+| static base card value | `roleCardValue` / card config | discard、resource、unknown expectation、Search Prior | `CARD_DEFINITIONS[id].aiValue` | 配置原值 | 选择/保留/排序时 | card owner/actor | policy/prior 输入 | `value/CardValue` | `POLICY_VALUE` / 否 | 单份公式迁移；不得直接成为 final action value |
+| role card delta / equipment keep | `roleCardValue` | Evaluator state terms、discard/resource/prior | 稀疏角色差量；装备替换为旧装备值×保留概率，同装备再 `+4` | state 中 role/equipment delta 保持既有 `0.25` 缩放 | state 读取或资源保留决策 | card/equipment owner | State Value primitive 或 policy input | `value/CardValue` | `DOMAIN_TERM` / 仅经 State Value | 单份公式迁移；不作为额外打牌奖励 |
+| target threat priority | `ThreatCalculator` | AiEvaluator action prior、transfer scoring | 缺血、手牌数、能量、角色标签、致死线、状态与近期攻击者加权 | 原始策略分 | 目标选择/排序 | viewer 对敌方 | policy/prior input | `value/ThreatValue` | `POLICY_VALUE` / 否 | 安全移动 + 旧路径重导出；公式唯一 |
+| exposure / radar | `AiEvaluator` | State Value、frontier diagnostics、响应策略 | 按距离概率拆 current/future/energy exposure；雷达以保留概率×战术判定概率抵扣 | `HP_VALUE=5` 的威胁尺度 | 单状态估值 | 被评估 owner；最终由 viewer 投影 | State Value terms | `value/ThreatValue` primitive + `value/Evaluator` composition | `STATE_VALUE` / 仅经 delta | primitive 迁移；单次玩家估值只分解一次 |
+| shield / HP risk | `AiEvaluator` | State Value | 第一盾储备 `2`、受威胁保护 `0.5`、HP=2 风险 `0.05×danger`，保持既有上界 | state value 原始尺度 | 单状态估值 | 被评估 owner | State Value terms | `value/ThreatValue` primitive + `value/Evaluator` composition | `STATE_VALUE` / 仅经 delta | 原样迁移；不另加伤害避免奖励 |
+| lightning lifecycle state value | `AiEvaluator` 内构造 `AiSimulator` | `stateUtility`、ledger | 按合法判定/传播分布模拟最终 holder，累计 owner material delta | 概率质量×owner delta；transition 仅随 state delta `×0.08` | 单状态估值的延迟状态生命周期 | holder owner，随后 viewer 团队投影 | State Value/domain burden | query 在 `AiValueSimulationQuery`，纯值由 `value/Evaluator` 消费 | `DOMAIN_TERM` / 经 State Value | 模拟上移；Evaluator 只接收纯数值数组，未提前拆 LightningModel |
+| lightning policy/prior value | `AiEvaluator` + `lightningScoring` | Search Prior、ResponsePolicy | 同一生命周期值/负担及转移后负担 | 既有 prior/policy 尺度 | 主动使用、状态反制决策 | actor/viewer | prior/policy | query 在 `AiValueSimulationQuery`；domain helper 暂留 | `POLICY_VALUE` / 否 | 与 final State Value 入口分离，保留后续 ARCH-6 债务 |
+| GlobalBenefit value | `AiGlobalBenefit` | Search Prior、ResponsePolicy、Simulator | `assessGlobalBenefit` 的座次/阵营 net 与 counter desire/root flip helper | 既有模块内缩放；symbiosis prior `×4` | policy、prior 或 simulation 结果建模 | actor/team | policy/domain result，不直接进 transition | domain producer 暂留 `AiGlobalBenefit` | `DOMAIN_TERM` / 不直接 final | 生产 CardValue import 指向正式 owner；不提前执行 ARCH-6 |
+| resource keep value | `discardScoring` / `resourceSelectionValue` / `transferScoring` | CardSelector、Simulator | 静态卡值、角色差量、装备折损、未知期望与具体用途组合 | 既有 policy 权重 | 支付、弃置、转移选择 | 资源 owner | selection policy | policy 文件暂留；稳定静态输入改用 `value/CardValue` | `POLICY_VALUE` / 否 | 仅收敛价值依赖；Policy Extraction 留给 ARCH-5 |
+
+### Physical Value Architecture
+
+正式物理 owner 为：
+
+- `value/Economics.js`：`HP_VALUE`、`STATE_DELTA_SCALE`、能量/技能门槛尺度与 `actionEconomicValue`。
+- `value/CardValue.js`：静态卡值、角色差量、装备保留、availability 与诊断机会成本。
+- `value/ThreatValue.js`：目标威胁以及 exposure/radar/shield/HP-risk primitives。
+- `value/Evaluator.js`：纯 State Value、owner state terms 与 owner material value。
+- `value/ValueLedger.js`：owner/response/candidate 的诊断 schema 与投影。
+- `search/TransitionValue.js`：唯一 final transition algebra。
+- `search/FrontierValue.js`：frontier representation 与 terminal held value。
+- `search/SearchPrior.js`：`actionUtility`、`actionSearchPrior` 与 target prior。
+- `AiValueSimulationQuery.js`：价值上游仍需的闪电生命周期和响应配对模拟查询；它不属于纯 value 层。
+- `AiStateValue.js`：把闪电纯值送入 Evaluator 的薄运行时适配器，不复制公式。
+
+Controller 的构造顺序固定为 `Knowledge -> Evaluator -> ValueSimulationQuery -> AiStateValue -> ValueLedger/FrontierValue/SearchPrior/TransitionValue -> AiEvaluator façade -> Policy/Generator -> Planner`。每个正式 owner 只构造一次，再显式注入消费者；搜索节点不构造 owner object。
+
+旧 `AiEconomics.js`、`ThreatCalculator.js`、`roleCardValue.js` 只重导出正式 owner。旧 `AiEvaluator.js` 只动态绑定正式 owner 方法，不持有 Game、不含任何价值公式，也不 import/new Simulator。生产价值调用链已优先改为正式路径；这些旧入口仅为迁移期测试和上游兼容，计划在 AI-ARCH-10 以调用证据删除。
+
+### Evaluator、TransitionValue 与 Ledger 边界
+
+`value/Evaluator.stateUtility(state, viewerId, lightningValues)` 是 State Value 的唯一正式公式入口。它只依赖稳定卡牌配置、合法概率/封印 helper、CardValue、ThreatValue、Economics 和显式注入的团队能量规则函数；没有 Game、Controller、Planner 或 concrete Simulator import，也没有上述对象的运行时回指。闪电模拟在上游完成后只以纯数值数组进入。
+
+Final transition 的既有运算顺序冻结为：
+
+```text
+stateDelta = stateUtility(after, viewer) - stateUtility(before, viewer)
+immediate = economic * resolutionScale * executionProbability
+baseTransition = (immediate + stateDelta * 0.08) / depth
+finalTransition = baseTransition
+                + terminalFrontierHeldValue
+                - sealTimingPenalty
+                + (exposeMarginal + assaultStacksCredit) * 0.08
+```
+
+`responseNet` 仍可作为显式诊断输入进入 schema，但 `TransitionValue` 不把它加到 final；实际响应结果已经在 after-state 中，二次相加会重复计价。根/深层 end 的正收益 sibling 机会成本仍由 Planner 产生，最终组合必须经过 TransitionValue。TransitionValue 不读取 Game/Controller，不生成动作、不模拟、不搜索、不决定 beam/tie-break，也不依赖 SearchPrior。
+
+ValueLedger 的生产语义是“解释同一 State Value 世界”，不是第二套分数。owner schema 包含 `generic`、`material`、`threat`、`specific`、`outcome`、`teamBurden`；projection 包含 `self/ally/enemy/total`；response schema 包含 `kind/responderId/protectedId/resourceSpent/grossAvoided/ownerValue/netValue`。以上全部为 `DIAGNOSTIC_ONLY`，只在 `collectAiDecisionDiagnostics=true` 的根候选生成。
+
+### Search Prior、Frontier 与 domain marginal
+
+根节点 `pruneScore = valueScore + hiddenAdjustment + actionUtility + actionSearchPrior`，深层 prior 仍按既有 depth 除法进入 `pruneScore`。最终 beam 重排、root choice、end fallback 与 `bestValueScore` 只比较 `valueScore`；TransitionValue 没有 SearchPrior 依赖。
+
+FrontierValue 始终生成可解释 residual，但 `futureInventory` 已在 State Value 的 exposure 中，只作诊断；只有 held recover/recycle 在 terminal 一次乘 `0.08` 进入 final。非 terminal 返回零，路径节点不会累计 residual。
+
+Expose、assault-stack 与 seal timing 的领域 producer 暂留 Planner/既有 domain helper；它们只把命名数值交给 TransitionValue 组合。闪电 probability/lifecycle helper 和 GlobalBenefit producer 也保留原位。这样完成 Value Ownership，又没有提前实施 ARCH-6 Domain Models、ARCH-7 Simulation Split 或 ARCH-9 Search Core。
+
+### 防重复计分不变量
+
+- HP、死亡、盾、能量、手牌数、装备和实际响应消费：只通过 after-before State Value 进入 final。
+- 静态卡值用于选择/prior；角色手牌/装备差量若是状态存量，只经 State Value 变化进入 final。
+- `cardOpportunityCost` 和 response ledger 只诊断，不能重复扣除同一实体或响应资源。
+- `actionEconomicValue` 只保留 after-state 不表达的历史 end/技能门槛 flow，并以 **LEGACY FINAL FLOW** 记录；ARCH-4 未借机修正或重新平衡。
+- frontier future inventory 不进入 final；held option 仅 terminal 一次。
+- expose/assault/seal 只在 TransitionValue 的显式 domain slots 进入一次；配对反事实只改变被测层数或响应能力。
+
+### 行为、数值与性能证据
+
+逐 term legacy/new 测试锁定 `economic`、`resolutionScale`、`executionProbability`、`immediate`、`stateDelta`、`stateDeltaValue`、`depth`、`baseTransition` 和 final composition。现有 value snapshots 继续覆盖普通/确定突袭、格挡、反制、濒死救援、击杀、调息、装备、破势新增/消费、封印 timing、frontier recover/recycle、end fallback、闪电与 GlobalBenefit。Diagnostics off/on 的 root action、计划序列、节点、深度、hidden samples、final value 和 tie-break 相同。
+
+固定 D4 场景 `planning.d4-seal-then-kill`、seed `20260814`、node budget `200`，改造前后均选择 `seal -> c`，计划为 `seal c -> stealSkill c -> assault b -> end`，扩展 `102` 节点、深度 `4`、hidden samples `10`、`bestValueScore=0.04919669968375734`。
+
+同一进程各 10 次的结构观测如下；时间只用于发现数量级退化，不作为跨机器承诺。Simulator 构造数按已审计构造路径计数：每次 plan 一个，diagnostics 中每次 response counterfactual 两个；该 D4 场景没有 lightning query。
+
+| Diagnostics | 阶段 | Planner 均值 | `Simulator.apply` | `new Simulator` | 活跃 Simulator | `stateUtility` | final composition | response query |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| off | 改造前 | 64.790 ms | 103 | 1 | 1 | 204 | 102 | 0 |
+| off | 改造后 | 61.801 ms | 103 | 1 | 1 | 204 | 103 | 0 |
+| on | 改造前 | 57.639 ms | 109 | 13 | 7 | 228 | 102 | 6 |
+| on | 改造后 | 61.163 ms | 109 | 13 | 7 | 228 | 103 | 6 |
+
+完整 simulation、stateUtility 与响应反事实次数没有增加。Final composition 增加一次是 end fallback 从 Planner 内联代数改为经过唯一 TransitionValue owner；它是不模拟、不读取状态的常数次纯数值组合。Diagnostics 的额外 6 次 apply、12 次 stateUtility 和 12 个响应反事实 Simulator 构造仅在开关开启时发生，生产关闭路径保持原计数。
+
+固定 benchmark `seed=20260814`、`node-budget=200`、`category=planning` 在改造前后均为 raw `126/1000`、corrected `106/1000`，32 次决策平均扩展 `41.4` 节点、平均深度 `2.8`；报告决策耗时由约 `0.9s` 观测为约 `0.8s`，总耗时均约 `1.0s`。没有引入缓存或主动性能优化。
+
+最终验证为 Value/依赖/搜索专项 `142/142`、炎术师与反制补充专项 `46/46`、完整功能入口 `1367/1367`、浏览器 build 一致性 `1/1`；10 个新增核心模块通过 `node --check`，quality self-test 与 `--changed`（57 个生产文件）通过，`git diff --check` 通过。
+
+### Architecture Guard、构建与 Remaining Debt
+
+质量门禁使用去注释后的真实 import/new 语法检查 `value/**`，禁止 UI、Controller、Planner 和 concrete Simulator 依赖或 `new AiSimulator`；注释中的相同文本不会误报。`search/TransitionValue.js` 额外禁止 Game/AIController import 与 `this.game`。Guard self-test 覆盖合法 value、非法 import/new、注释忽略和 TransitionValue 边界。
+
+浏览器模块图从 `20260814-ai-controller-di` 统一更新为 `20260814-ai-value-ownership`。Remaining Debt 明确为：
+
+- `AiEvaluator`、`AiStateValue`、旧 Card/Economics/Threat 路径仍是 compatibility façade，待 AI-ARCH-10 删除。
+- resource/discard/transfer 与 ResponsePolicy 的正式 policy 目录迁移属于 AI-ARCH-5，本阶段只把稳定价值输入指向正式 owner。
+- expose/assault/seal/Lightning/GlobalBenefit 的 domain producer 仍在既有文件或 Planner，属于 AI-ARCH-6；本阶段只迁移 final composition。
+- response counterfactual 仍通过 `AiValueSimulationQuery` 构造 concrete Simulator；正式 ResponseSimulation split 属于 AI-ARCH-7。
+- Planner 仍保留 beam、根/深层候选 materialization、end sibling、临时 domain term producer 和 compatibility delegation；正式 Search Core 清理属于 AI-ARCH-9。
+
+AI-ARCH-4 没有修改权重、规则、策略、搜索参数、概率常量或隐藏信息边界，也没有提前进入 AI-ARCH-5。

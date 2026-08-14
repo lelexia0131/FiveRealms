@@ -28,6 +28,17 @@ import { AiPlanner } from "../js/ai/AiPlanner.js";
 import { AiActionGenerator } from "../js/ai/AiActionGenerator.js";
 import { ThreatCalculator } from "../js/ai/ThreatCalculator.js";
 import { STATE_DELTA_SCALE, HP_RISK_OPTION_WEIGHT } from "../js/ai/AiEvaluator.js";
+import { TransitionValue } from "../js/ai/search/TransitionValue.js";
+import { Evaluator } from "../js/ai/value/Evaluator.js";
+import {
+  HP_VALUE as OWNED_HP_VALUE,
+  STATE_DELTA_SCALE as OWNED_STATE_DELTA_SCALE,
+  actionEconomicValue as ownedActionEconomicValue
+} from "../js/ai/value/Economics.js";
+import {
+  ThreatCalculator as OwnedThreatCalculator,
+  exposureComponents as ownedExposureComponents
+} from "../js/ai/value/ThreatValue.js";
 import { CleanupManager } from "../js/utils/CleanupManager.js";
 import { getAiDelay, sampleDelay } from "../js/utils/aiTiming.js";
 import {
@@ -78,6 +89,11 @@ import {
 import {
   ROLE_CARD_VALUE_DELTAS, getBaseCardAiValue, getRoleCardAiValue, validateRoleCardValueDeltas
 } from "../js/ai/roleCardValue.js";
+import {
+  ROLE_CARD_VALUE_DELTAS as OWNED_ROLE_CARD_VALUE_DELTAS,
+  getBaseCardAiValue as ownedBaseCardAiValue,
+  getRoleCardAiValue as ownedRoleCardAiValue
+} from "../js/ai/value/CardValue.js";
 import {
   chooseBestResourceHandCandidate,
   chooseResourceZone,
@@ -8687,6 +8703,10 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
   };
   const directPlanner = new AiPlanner({
     evaluator: controller.evaluator,
+    transitionValue: controller.transitionValue,
+    valueLedger: controller.valueLedger,
+    frontierValue: controller.frontierValue,
+    searchPrior: controller.searchPrior,
     generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
     sampleHiddenWorlds: (...args) => knowledge.sampleHiddenWorlds(...args),
     random: () => 0.5,
@@ -8812,7 +8832,13 @@ function testMissingAiDependenciesFailAtConstruction() {
   const enemy = makePlayer("di-missing-enemy", 1, "dusk");
   const { game } = makeGame([actor, enemy]);
   assert.throws(() => new AiPlanner(), /evaluator/);
-  assert.throws(() => new AiPlanner({ evaluator:{} }), /generateFromVisible/);
+  assert.throws(() => new AiPlanner({
+    evaluator: game.aiController.evaluator,
+    transitionValue: game.aiController.transitionValue,
+    valueLedger: game.aiController.valueLedger,
+    frontierValue: game.aiController.frontierValue,
+    searchPrior: game.aiController.searchPrior
+  }), /generateFromVisible/);
   assert.throws(() => new AiActionGenerator(game), /chooseTransferCombination/);
 }
 
@@ -9297,10 +9323,10 @@ test("AI·搜索：固定节点预算截止时保留上一层已发现的全局�
     planner = game.aiController.planner;
   game.aiSearchNodeBudgetOverride = 3;
   game.aiRandomnessRange = 0;
-  planner.evaluator = {
+  configurePlannerValueStubs(planner, {
     actionUtility: (action) => action.card?.id === best.id ? 10 : action.card?.id === lower.id ? 5 : -20,
     stateUtility: () => 0
-  };
+  });
   game.aiController.actionGenerator.generateFromVisible = (state) => state.players.find(
     (player) => player.id === actor.id
   ).hand?.some((card) => card.id === best.id) ? [{ type: "end" }] : [];
@@ -9329,12 +9355,15 @@ test("AI·搜索：根节点束裁剪会计入模拟后的局面效用", async (
   game.aiSearchNodeBudgetOverride = 2;
   game.aiRandomnessRange = 0;
   let stateCalls = 0;
-  planner.evaluator = {
+  const evaluatorStub = {
     actionUtility: () => 0,
     stateUtility: (state) => {
       stateCalls += 1; return state.players.find((player) => player.id === enemy.id).hp < enemy.hp ? 100 : 0;
     }
   };
+  planner.evaluator = evaluatorStub;
+  planner.transitionValue.stateValue = evaluatorStub;
+  planner.searchPrior = { actionUtility: () => 0, actionSearchPrior: () => 0 };
   const action = await planner.plan(
     actor,
     visible,
@@ -9577,7 +9606,13 @@ test("AI·搜索：根动作生成受搜索预算约束，不会长期锁住观�
   game.aiSearchBudgetOverrideMs = 0;
   game.aiRandomnessRange = 0;
   let evaluated = 0;
-  planner.evaluator = { actionUtility: () => 0, stateUtility: () => { evaluated += 1; return 0; } };
+  const evaluatorStub = {
+    actionUtility: () => 0,
+    stateUtility: () => { evaluated += 1; return 0; }
+  };
+  planner.evaluator = evaluatorStub;
+  planner.transitionValue.stateValue = evaluatorStub;
+  planner.searchPrior = { actionUtility: () => 0, actionSearchPrior: () => 0 };
   const roots = Array.from(
     { length: 200 },
     (_, index) => ({ type: "card", card: { ...card, id: `root-${index}` }, targets: [] })
@@ -18921,18 +18956,19 @@ test("AI·炎术师：search credit 把焚场从 value top-10 外拉回 beam 并
   assert.ok(roots.length > GAME_CONFIG.aiBeamWidth, "fixture must exceed beam width");
   const rows = roots.map((action) => {
     const after = sim.apply(before, action, ember.id);
-    const valueScore = evaluator.actionUtility(action, ember, before, { availableActions: roots })
-      + (evaluator.stateUtility(after, ember.id) - U0) * 0.08;
+    const valueScore = (evaluator.stateUtility(after, ember.id) - U0) * 0.08;
+    const pruneWithoutCredit = valueScore
+      + evaluator.actionUtility(action, ember, before, { availableActions: roots });
     return {
       action,
-      valueScore,
-      pruneScore:valueScore + evaluator.actionSearchPrior(action, ember, before)
+      pruneWithoutCredit,
+      pruneScore:pruneWithoutCredit + evaluator.actionSearchPrior(action, ember, before)
     };
   });
   const rankOf = (list, key) => list.findIndex(
     (entry) => entry.action.skill?.id === "burningField"
   ) + 1;
-  const valueRank = rankOf([...rows].sort((a, b) => b.valueScore - a.valueScore));
+  const valueRank = rankOf([...rows].sort((a, b) => b.pruneWithoutCredit - a.pruneWithoutCredit));
   const pruneRank = rankOf([...rows].sort((a, b) => b.pruneScore - a.pruneScore));
   assert.ok(
     valueRank > GAME_CONFIG.aiBeamWidth,
@@ -18943,9 +18979,10 @@ test("AI·炎术师：search credit 把焚场从 value top-10 外拉回 beam 并
     `temporary credit must bring burningField inside the root beam (prune rank ${pruneRank})`
   );
   const run = async (credit) => {
-    game.aiController.planner.evaluator = credit
-      ? evaluator
-      : Object.assign(Object.create(evaluator), { actionSearchPrior: () => 0 });
+    game.aiController.planner.searchPrior = {
+      actionUtility: evaluator.actionUtility.bind(evaluator),
+      actionSearchPrior: credit ? evaluator.actionSearchPrior.bind(evaluator) : () => 0
+    };
     game.aiSearchNodeBudgetOverride = 1000;
     game.aiRandomnessRange = 0;
     await game.aiController.planner.plan(ember, before, roots, { gameId: game.state.gameId });
@@ -18969,7 +19006,6 @@ test("AI·炎术师：search credit 能救候选但不能替候选赢比赛", as
   // bestValueScore 会被抬到 8+ 量级。焚场以真实击杀价值赢得最终选择。
   const credit = evaluator.actionSearchPrior(burnRoot, ember, before);
   assert.ok(credit > 5, `焚场 search credit 应远高于真实价值尺度，实际 ${credit}`);
-  game.aiController.planner.evaluator = evaluator;
   game.aiSearchNodeBudgetOverride = 1000;
   game.aiRandomnessRange = 0;
   await game.aiController.planner.plan(ember, before, roots, { gameId: game.state.gameId });
@@ -19000,14 +19036,14 @@ test("AI·炎术师：search credit 不跨层累计进真实价值", async () =>
     ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
   );
   const roots = game.aiController.getLegalActions(ember);
-  game.aiController.planner.evaluator = {
+  configurePlannerValueStubs(game.aiController.planner, {
     // 真实经济先验进入最终 valueScore；search credit（actionSearchPrior）只进 beam。
     actionEconomicValue: (action) => (
       action.type === "end" ? 0 : (action.skill?.id === "burningField" ? 5 : 6)
     ),
     actionSearchPrior: (action) => action.skill?.id === "burningField" ? 8 : 0,
     stateUtility: () => 0
-  };
+  });
   game.aiSearchNodeBudgetOverride = 200;
   game.aiRandomnessRange = 0;
   await game.aiController.planner.plan(ember, before, roots, { gameId: game.state.gameId });
@@ -20088,12 +20124,56 @@ const makeCounterRiskPlayer = (id, team, overrides = {}) => (
   }
 );
 
+const configurePlannerValueStubs = (planner, evaluator) => {
+  const stateValue = {
+    stateUtility: evaluator.stateUtility?.bind(evaluator) ?? (() => 0)
+  };
+  const ownedTransitionValue = planner.transitionValue;
+  planner.evaluator = evaluator;
+  planner.searchPrior = {
+    actionUtility: evaluator.actionUtility?.bind(evaluator) ?? (() => 0),
+    actionSearchPrior: evaluator.actionSearchPrior?.bind(evaluator) ?? (() => 0)
+  };
+  planner.transitionValue = Object.assign(Object.create(ownedTransitionValue), {
+    stateValue,
+    evaluateBase({
+      action,
+      player,
+      beforeState,
+      afterState,
+      depth = 1,
+      endOpportunityCost = 0,
+      getResolutionScale = () => 1
+    }) {
+      const executionProbability = action.executionProbability ?? 1;
+      const economic = action.type === "end"
+        ? -endOpportunityCost
+        : (evaluator.actionEconomicValue?.(action, player, beforeState) ?? 0);
+      const resolutionScale = economic === 0 ? 1 : getResolutionScale();
+      const immediate = economic * resolutionScale * executionProbability;
+      const stateDelta = stateValue.stateUtility(afterState, player.id)
+        - stateValue.stateUtility(beforeState, player.id);
+      const stateDeltaValue = stateDelta * STATE_DELTA_SCALE;
+      return {
+        economic,
+        resolutionScale,
+        executionProbability,
+        immediate,
+        stateDelta,
+        stateDeltaValue,
+        depth,
+        baseTransition: (immediate + stateDeltaValue) / depth
+      };
+    }
+  });
+};
+
 const planWithStubEvaluator = async (game, actor, visible, roots, evaluator, nodeBudget = null) => {
   game.aiRandomnessRange = 0;
   game.aiController.actionGenerator.generateFromVisible = () => [];
   game.aiSearchNodeBudgetOverride = nodeBudget == null ? roots.length : nodeBudget;
   const planner = game.aiController.planner;
-  planner.evaluator = evaluator;
+  configurePlannerValueStubs(planner, evaluator);
   return planner.plan(actor, visible, roots, { gameId: game.state.gameId });
 };
 
@@ -21119,14 +21199,14 @@ test("AI·反制概率：战术反制风险：深层战术评分使用后续节�
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 3;
   const planner = game.aiController.planner;
-  planner.evaluator = {
+  configurePlannerValueStubs(planner, {
     actionEconomicValue: (action) => {
       if (
         action.type === "end"
       ) return 0.4; if (action.card?.definitionId === "assault") return 1; if (action.card?.definitionId === "harvest") return 1; return 0;
     },
     stateUtility: () => 0
-  };
+  });
   const visible = {
     remainingCardCounts: { assault: 30 },
     players: [
@@ -21169,9 +21249,9 @@ test("AI·反制概率：战术反制风险：assault 隐藏格挡调整保持�
     game.aiRandomnessRange = 0;
     game.aiSearchNodeBudgetOverride = 2;
     const planner = game.aiController.planner;
-    planner.evaluator = {
+    configurePlannerValueStubs(planner, {
       actionUtility: (action) => action.type === "end" ? 0.4 : 1, stateUtility: () => 0
-    };
+    });
     game.aiController.actionGenerator.generateFromVisible = () => [];
     const visible = {
       remainingCardCounts: { assault: 30 },
@@ -32164,6 +32244,7 @@ test("AI·价值归属：当前威胁与未来攻击库存可分别变化", () =
 test("AI·价值归属：单次玩家估值只计算一次暴露分量并复用汇总", () => {
   const { game } = makeLedgerGame();
   const evaluator = game.aiController.evaluator;
+  const stateEvaluator = game.aiController.stateEvaluator;
   const state = ledgerState([
     ledgerPlayer("a", 0, "dawn", "oath-warden"),
     ledgerPlayer("c", 1, "dusk", "blade-walker", {
@@ -32172,9 +32253,9 @@ test("AI·价值归属：单次玩家估值只计算一次暴露分量并复用�
       assaultResponseProbability: 0.5
     })
   ]);
-  const original = evaluator.exposureComponents.bind(evaluator);
+  const original = stateEvaluator.exposureComponents.bind(stateEvaluator);
   let calls = 0;
-  evaluator.exposureComponents = (...args) => {
+  stateEvaluator.exposureComponents = (...args) => {
     calls += 1;
     return original(...args);
   };
@@ -32510,6 +32591,128 @@ test("AI·价值归属：卡片机会成本各分量与 stateDelta/frontier 唯�
   assertClose(owner.specific.handRole, -1);
   const afterResidual = evaluator.frontierResidual(after, "wd");
   assert.equal(afterResidual.held.recover, 0, "打出调息后未来治疗选项消失");
+});
+
+test("AI·价值归属：旧经济、卡牌与威胁路径透明重导出正式 owner", () => {
+  const { game } = makeLedgerGame();
+  assert.equal(STATE_DELTA_SCALE, OWNED_STATE_DELTA_SCALE);
+  assert.equal(OWNED_HP_VALUE, 5);
+  assert.deepEqual(ROLE_CARD_VALUE_DELTAS, OWNED_ROLE_CARD_VALUE_DELTAS);
+  assert.equal(getBaseCardAiValue("recover"), ownedBaseCardAiValue("recover"));
+  assert.equal(
+    getRoleCardAiValue("spirit-medic", "recover"),
+    ownedRoleCardAiValue("spirit-medic", "recover")
+  );
+  const state = ledgerState([
+    ledgerPlayer("a", 0, "dawn", "oath-warden"),
+    ledgerPlayer("c", 1, "dusk", "blade-walker", {
+      energy: 1,
+      expectedAssaultCount: 1,
+      assaultResponseProbability: 0.5
+    })
+  ]);
+  assert.deepEqual(
+    game.aiController.evaluator.exposureComponents(state, state.players[0]),
+    ownedExposureComponents(state, state.players[0])
+  );
+  const memory = { recentAggressors: { c: 2 } };
+  assert.equal(
+    ThreatCalculator.calculate(state.players[0], state.players[1], memory, 1),
+    OwnedThreatCalculator.calculate(state.players[0], state.players[1], memory, 1)
+  );
+});
+
+test("AI·价值归属：纯 Evaluator 不持有 Game 且只消费上游闪电纯值", () => {
+  const fixture = makeLightningFixture(["dawn", "dusk", "dusk"], { withCard: false });
+  const controller = fixture.game.aiController;
+  const lightningValues = controller.valueSimulationQuery.lightningValues(
+    fixture.visible,
+    fixture.actor.id
+  );
+  assert.equal("game" in controller.stateEvaluator, false);
+  assertClose(
+    controller.stateEvaluator.stateUtility(fixture.visible, fixture.actor.id, lightningValues),
+    controller.evaluator.stateUtility(fixture.visible, fixture.actor.id)
+  );
+  const standalone = new Evaluator();
+  assert.equal("game" in standalone, false);
+});
+
+test("AI·价值归属：TransitionValue 的逐 term 与迁移前公式完全一致", () => {
+  const actor = {
+    id: "transition-owner",
+    hand: [{ definitionId: "charge" }],
+    handCount: 1,
+    generalId: "spirit-medic",
+    energy: 1,
+    activeSkillId: "symbiosis",
+    activeSkillUsed: false,
+    activeSkillCost: 2
+  };
+  const before = { score: 10, players: [actor] };
+  const after = { score: 17, players: [{ ...actor, energy: 2, hand: [], handCount: 0 }] };
+  const action = {
+    type: "card",
+    card: { definitionId: "charge" },
+    targets: [],
+    executionProbability: 0.75
+  };
+  const stateValue = { stateUtility: (state) => state.score };
+  const transition = new TransitionValue(stateValue);
+  const terms = transition.evaluateBase({
+    action,
+    player: actor,
+    beforeState: before,
+    afterState: after,
+    depth: 2,
+    getResolutionScale: () => 0.6
+  });
+  const legacyEconomic = ownedActionEconomicValue(action, actor, before);
+  const legacyStateDelta = stateValue.stateUtility(after) - stateValue.stateUtility(before);
+  const legacyImmediate = (legacyEconomic * 0.6) * action.executionProbability;
+  const legacyBase = (legacyImmediate + legacyStateDelta * OWNED_STATE_DELTA_SCALE) / 2;
+  assert.equal(terms.economic, legacyEconomic);
+  assert.equal(terms.resolutionScale, 0.6);
+  assert.equal(terms.executionProbability, action.executionProbability);
+  assert.equal(terms.immediate, legacyImmediate);
+  assert.equal(terms.stateDelta, legacyStateDelta);
+  assert.equal(terms.stateDeltaValue, legacyStateDelta * OWNED_STATE_DELTA_SCALE);
+  assert.equal(terms.baseTransition, legacyBase);
+  const inputs = {
+    baseTransition: terms.baseTransition,
+    responseNet: 91,
+    frontierValue: 0.4,
+    sealTimingPenalty: 0.2,
+    exposeMarginal: 3,
+    assaultStacksCredit: 2
+  };
+  const legacyFinal = legacyBase + 0.4 - 0.2 + (3 + 2) * OWNED_STATE_DELTA_SCALE;
+  assert.equal(transition.composeCandidateValue(inputs), legacyFinal);
+});
+
+test("AI·价值归属：Search Prior 与 response diagnostics 都不进入 final transition", () => {
+  const transition = new TransitionValue({ stateUtility: () => 0 });
+  const common = {
+    baseTransition: 2,
+    frontierValue: 0.3,
+    sealTimingPenalty: 0.1,
+    exposeMarginal: 1,
+    assaultStacksCredit: 2
+  };
+  const withoutDiagnostics = transition.composeCandidateValue({ ...common, responseNet: 0 });
+  const withDiagnostics = transition.composeCandidateValue({ ...common, responseNet: 12345 });
+  const searchPrior = 999;
+  assert.equal(withDiagnostics, withoutDiagnostics);
+  assert.notEqual(withoutDiagnostics + searchPrior, withoutDiagnostics);
+  assert.equal(Object.hasOwn(common, "searchPrior"), false);
+});
+
+test("AI·价值归属：正式 Evaluator 源码不存在 Game、Controller 或 concrete Simulator 依赖", async () => {
+  const source = await readFile(projectFile("js/ai/value/Evaluator.js"), "utf8");
+  assert.doesNotMatch(source, /from\s+["'][^"']*(?:Game|AIController|AiSimulator)[^"']*["']/u);
+  assert.doesNotMatch(source, /new\s+AiSimulator\s*\(/u);
+  assert.doesNotMatch(source, /\.aiController\b/u);
+  assert.doesNotMatch(source, /\.game\b/u);
 });
 
 

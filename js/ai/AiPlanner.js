@@ -6,7 +6,7 @@
 AIController 组合根与搜索回归测试。
 
 下游
-AiSimulator、AiEvaluator、封印时序模型及构造时注入的动作、Belief 和运行控制能力。
+AiSimulator、TransitionValue、ValueLedger、FrontierValue、SearchPrior、封印时序模型及显式运行能力。
 
 状态边界
 只读输入 SearchState，所有分支写入由 AiSimulator 创建的独立克隆承担。
@@ -15,15 +15,12 @@ AiSimulator、AiEvaluator、封印时序模型及构造时注入的动作、Beli
 隐藏世界只能来自注入的合法 Belief 采样能力，Planner 不读取 GameState。
 
 架构约束
-不得持有 Game 或回指 AIController；预算、随机、让步和搜索服务必须显式注入。
+不得持有 Game 或回指 AIController；不得拥有 state delta、final composition 或 ledger schema。
 */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-controller-di";
-import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-controller-di";
-import { HP_VALUE, STATE_DELTA_SCALE } from "./AiEvaluator.js?build=20260814-ai-controller-di";
-import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260814-ai-controller-di";
-
-/** end 机会成本上限（未缩放）：与 actionEconomicValue(end) 的旧默认 -0.8 同量纲。 */
-const END_OPPORTUNITY_CAP = 0.8;
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-value-ownership";
+import { AiSimulator } from "./AiSimulator.js?build=20260814-ai-value-ownership";
+import { END_OPPORTUNITY_CAP } from "./value/Economics.js?build=20260814-ai-value-ownership";
+import { sealDelayCost, sealEarlyUsePenalty } from "./sealScoring.js?build=20260814-ai-value-ownership";
 
 export class AiPlanner {
   /*
@@ -34,7 +31,7 @@ export class AiPlanner {
   AIController 组合根与直接独立性测试。
 
   输入
-  评估器、深层动作生成、隐藏世界采样、随机、配置读取和可取消让步能力。
+  Value owners、深层动作生成、隐藏世界采样、随机、配置读取和可取消让步能力。
 
   输出
   可执行 plan 的 AiPlanner；任一必要依赖缺失时立即抛错。
@@ -53,6 +50,10 @@ export class AiPlanner {
   */
   constructor({
     evaluator,
+    transitionValue,
+    valueLedger,
+    frontierValue,
+    searchPrior,
     generateFromVisible,
     sampleHiddenWorlds,
     random,
@@ -70,11 +71,14 @@ export class AiPlanner {
       getSearchNodeBudget,
       yieldControl,
     };
-    if (!evaluator) throw new TypeError("AiPlanner 缺少依赖：evaluator");
+    const services = { evaluator, transitionValue, valueLedger, frontierValue, searchPrior };
+    for (const [name, service] of Object.entries(services)) {
+      if (!service) throw new TypeError(`AiPlanner 缺少依赖：${name}`);
+    }
     for (const [name, capability] of Object.entries(capabilities)) {
       if (typeof capability !== "function") throw new TypeError(`AiPlanner 缺少依赖：${name}`);
     }
-    this.evaluator = evaluator;
+    Object.assign(this, services);
     Object.assign(this, capabilities);
     this.lastSearchStats = null;
     this.lastPlannedSequence = [];
@@ -199,161 +203,177 @@ export class AiPlanner {
     return Math.max(0, remainingRootStacks * retainRatio);
   }
 
-  /**
-   * 同一事件世界的响应反事实：对"去掉该玩家响应能力"的 before 世界重新 apply
-   * 同一个 action，比较实际 after 与反事实 after，得到该响应为受保护侧创造的
-   * 避免损失。1-ply，不嵌套完整搜索，不修改任何输入状态。
-   *
-   * grossAvoided = 纯避免伤害（HP 差 × HP_VALUE）；
-   * ownerValue = 响应从响应方自身视角的净值（含避免死亡、资源消耗、身份变化）；
-   * projected = 从调用方 viewer 视角的投影（敌我符号由投影决定）。
-   * 该值不是通过 assault inventory exposure removal 间接假装：两条世界除响应能力
-   * 外完全一致，差值只来自响应本身。
-   */
+  /*
+  功能
+  保留 Planner 历史响应反事实调用入口并转交正式账本服务。
+
+  调用方
+  兼容测试与 computeResponseLedger。
+
+  输入
+  before、动作、actor/defender/viewer ID、移除项与可选 actual after。
+
+  输出
+  grossAvoided、ownerValue 与 projected value。
+
+  读取状态
+  只读过滤后的配对状态。
+
+  写入状态
+  无。
+
+  调用函数
+  ValueLedger.responseCounterfactual。
+
+  边界与不变量
+  Planner 不再模拟或归属响应价值；参数与返回值保持历史兼容。
+  */
   responseCounterfactual(before, action, actorId, defenderId, viewerId, opts = {}, after = null) {
-    if (!action) return { grossAvoided: 0, ownerValue: 0, projected: 0 };
-    const sim = new AiSimulator(before);
-    const actualAfter = after ?? sim.apply(before, action, actorId);
-    const cfState = before.players.map((p) => {
-      if (p.id !== defenderId) return p;
-      const next = { ...p };
-      if (opts.removeBlock) {
-        next.blockCountDistribution = [{ probability: 1, conditions: {}, blockCount: 0 }];
-        next.blockProbability = 0;
-        next.twoBlockProbability = 0;
-      }
-      if (opts.removeCounter) {
-        next.counterCountDistribution = [{ probability: 1, conditions: {}, counterCount: 0 }];
-        next.counterProbability = 0;
-      }
-      if (opts.removeRecover) {
-        next.expectedRecoverCount = 0;
-        if (Array.isArray(next.hand)) next.hand = next.hand.filter((c) => c.definitionId !== "recover");
-      }
-      return next;
-    });
-    const cfBefore = { ...before, players: cfState };
-    const cfAfter = new AiSimulator(cfBefore).apply(cfBefore, action, actorId);
-    const actualDefender = actualAfter.players.find((p) => p.id === defenderId);
-    const cfDefender = cfAfter.players.find((p) => p.id === defenderId);
-    const grossAvoided = Math.max(0, (actualDefender?.hp ?? 0) - (cfDefender?.hp ?? 0)) * HP_VALUE;
-    const ownerValue = this.evaluator.stateUtility(actualAfter, defenderId)
-      - this.evaluator.stateUtility(cfAfter, defenderId);
-    const projected = this.evaluator.stateUtility(actualAfter, viewerId)
-      - this.evaluator.stateUtility(cfAfter, viewerId);
-    return { grossAvoided, ownerValue, projected };
+    return this.valueLedger.responseCounterfactual(
+      before,
+      action,
+      actorId,
+      defenderId,
+      viewerId,
+      opts,
+      after
+    );
   }
 
-  /**
-   * 响应侧消费链：block / counter / dying rescue 的 owner-scored value。
-   *
-   * 检测本次 transition 中实际发生的响应（block/counter 容量下降、rescue 消耗
-   * recover），并用同一事件反事实计算该响应为受保护侧创造的避免损失，归属到
-   * 响应方 / 受保护侧。只读输入，不修改任何状态。
-   */
+  /*
+  功能
+  保留 Planner 历史响应账本入口并转交正式 ValueLedger。
+
+  调用方
+  兼容测试。
+
+  输入
+  before、动作、after 与 viewer ID。
+
+  输出
+  DIAGNOSTIC_ONLY responses 数组。
+
+  读取状态
+  只读过滤后的 before/after。
+
+  写入状态
+  无。
+
+  调用函数
+  ValueLedger.computeResponseLedger。
+
+  边界与不变量
+  Planner 不拥有响应归属 schema，账本结果不进入 final value。
+  */
   computeResponseLedger(before, action, after, viewerId) {
-    if (!action) return { responses: [] };
-    const beforeById = new Map(before.players.map((p) => [p.id, p]));
-    const actorId = viewerId;
-    const responses = [];
-    for (const player of after.players) {
-      if (player.id === actorId || !player.alive) continue;
-      const beforePlayer = beforeById.get(player.id);
-      if (!beforePlayer) continue;
-      const blockDropped = (beforePlayer.blockProbability ?? 0) - (player.blockProbability ?? 0) > 1e-9;
-      const counterDropped = (beforePlayer.counterProbability ?? 0) - (player.counterProbability ?? 0) > 1e-9;
-      if (blockDropped || counterDropped) {
-        const cf = this.responseCounterfactual(before, action, actorId, player.id, viewerId, {
-          removeBlock: blockDropped,
-          removeCounter: counterDropped
-        }, after);
-        responses.push({
-          kind: blockDropped && counterDropped ? "blockAndCounter" : blockDropped ? "block" : "counter",
-          responderId: player.id,
-          protectedId: player.id,
-          resourceSpent: Math.max(0, (beforePlayer.handCount ?? 0) - (player.handCount ?? 0)) * 1.1,
-          grossAvoided: cf.grossAvoided,
-          ownerValue: cf.ownerValue,
-          netValue: cf.projected
-        });
-      }
-    }
-    // dying rescue：救援者消耗 recover，受保护侧是濒死目标（由反事实决定）。
-    for (const rescuer of after.players) {
-      if (rescuer.id === actorId || !rescuer.alive) continue;
-      const beforeRescuer = beforeById.get(rescuer.id);
-      if (!beforeRescuer) continue;
-      const recoverSpent = (beforeRescuer.expectedRecoverCount ?? 0) - (rescuer.expectedRecoverCount ?? 0);
-      if (recoverSpent > 1e-9) {
-        const cf = this.responseCounterfactual(before, action, actorId, rescuer.id, viewerId, {
-          removeRecover: true
-        }, after);
-        responses.push({
-          kind: "rescue",
-          responderId: rescuer.id,
-          protectedId: null,
-          resourceSpent: recoverSpent * 1.1,
-          grossAvoided: cf.grossAvoided,
-          ownerValue: cf.ownerValue,
-          netValue: cf.projected
-        });
-      }
-    }
-    return { responses };
+    return this.valueLedger.computeResponseLedger(before, action, after, viewerId);
   }
 
-  /**
-   * 单个候选的 owner-local value ledger：state delta 分解（ownerStateLedger +
-   * perspective projection）叠加响应侧价值（computeResponseLedger）。只对根候选
-   * 计算（响应反事实代价有界）；深层候选只附加 frontier-only residual，不再携带
-   * 完整 ledger。该 representation 只在显式决策诊断中构造，用于解释 owner 归属，
-   * 不参与生产候选评分。
-   */
+  /*
+  功能
+  保留 Planner 历史候选账本入口并转交正式 ValueLedger。
+
+  调用方
+  显式 diagnostics 路径与兼容测试。
+
+  输入
+  before、动作、after、viewer ID 与是否计算响应。
+
+  输出
+  ownerLedger、projected 与 responses。
+
+  读取状态
+  只读过滤后的 before/after。
+
+  写入状态
+  无。
+
+  调用函数
+  ValueLedger.computeCandidateLedger。
+
+  边界与不变量
+  只在 diagnostics 开启时由生产搜索调用，Planner 不拥有 schema。
+  */
   computeCandidateLedger(before, action, after, viewerId, includeResponse) {
-    if (typeof this.evaluator.ownerStateLedger !== "function") {
-      return { ownerLedger: null, projected: null, responses: [] };
-    }
-    const ownerLedger = this.evaluator.ownerStateLedger(before, after, viewerId);
-    const projected = this.evaluator.projectOwnerLedger(ownerLedger, viewerId);
-    const responses = includeResponse
-      ? this.computeResponseLedger(before, action, after, viewerId).responses
-      : [];
-    return { ownerLedger, projected, responses };
+    return this.valueLedger.computeCandidateLedger(
+      before,
+      action,
+      after,
+      viewerId,
+      includeResponse
+    );
   }
 
-  /** frontier-only residual；evaluator 未提供该 API 时安全降级为 null。 */
+  /*
+  功能
+  保留 Planner 历史前沿表示入口并转交 FrontierValue。
+
+  调用方
+  Planner 搜索与兼容测试。
+
+  输入
+  SearchState 与 viewer ID。
+
+  输出
+  frontier residual 或 null。
+
+  读取状态
+  只读过滤后的 SearchState。
+
+  写入状态
+  无。
+
+  调用函数
+  FrontierValue.frontierResidual。
+
+  边界与不变量
+  本方法只转发；是否进入 final 由 terminal 边界决定。
+  */
   frontierResidualOf(state, viewerId) {
-    return typeof this.evaluator.frontierResidual === "function"
-      ? this.evaluator.frontierResidual(state, viewerId)
-      : null;
+    return this.frontierValue.frontierResidual(state, viewerId);
   }
 
-  /**
-   * 候选价值的互斥组成（测试与生产共用同一入口，避免公式漂移）。
-   *
-   *   realizedTransition = baseTransition - responseNet × scale
-   *                        已实现转变：stateDelta 扣除响应边际后的非响应部分
-   *   realizedResponse   = responseNet × scale
-   *                        已实现响应/避免损失：与转变同权重显式计回
-   *   frontierValue      = 前沿未实现价值（只计 held 未来选项，仅终局一次）
-   *
-   * responseNet 已完整包含在 stateDelta 中（containment 恒等式），因此先扣减再
-   * 显式计回，代数上恒等于 baseTransition——不引入新权重、不重复计价；"能看出来
-   * 响应价值占多少"正是本入口存在的意义。无响应时 responseNet=0，退化为普通
-   * 已实现转变价值。封印 timing 修正保持原语义；破势边际信用按下文与
-   * stateDelta 同 scale。
-   *
-   * 破势边际信用（exposeMarginal / assaultStacksCredit）测量的是 stateUtility 差值
-   * （N 层 vs N+1 层的下一次突袭），必须与 stateDelta 同乘 scale：否则同一份破势
-   * 兑现价值会被"stateDelta 已含层数伤害 + 全权重边际"双重计价，且相对已实现转变
-   * 被放大到 1/scale 倍，扭曲目标优先与击杀判断。
-   */
-  composeCandidateValue(baseTransition, responseNet, frontierValue, sealTimingPenalty, exposeMarginal, assaultStacksCredit) {
-    // responseNet 只用于 ledger 分解：realizedTransition + realizedResponse 恒等于
-    // baseTransition。直接返回化简结果，确保诊断开关连浮点舍入都不会改变候选价值。
-    return baseTransition + frontierValue
-      - sealTimingPenalty
-      + (exposeMarginal + assaultStacksCredit) * STATE_DELTA_SCALE;
+  /*
+  功能
+  保留 Planner 历史候选组合入口并转交唯一 TransitionValue 公式。
+
+  调用方
+  Planner 根/深层组合与兼容测试。
+
+  输入
+  base、response、frontier、seal penalty、expose 与 assault stack 数值。
+
+  输出
+  最终候选 Transition Value。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  TransitionValue.composeCandidateValue。
+
+  边界与不变量
+  Planner 不拥有组合代数；response 只作诊断分解且不重复加入 final。
+  */
+  composeCandidateValue(
+    baseTransition,
+    responseNet,
+    frontierValue,
+    sealTimingPenalty,
+    exposeMarginal,
+    assaultStacksCredit
+  ) {
+    return this.transitionValue.composeCandidateValue({
+      baseTransition,
+      responseNet,
+      frontierValue,
+      sealTimingPenalty,
+      exposeMarginal,
+      assaultStacksCredit
+    });
   }
 
   /*
@@ -408,13 +428,13 @@ export class AiPlanner {
   当前最佳根动作；取消或无候选时安全结束阶段。
 
   读取状态
-  SearchState、evaluator、注入的动作生成、Belief 采样、预算、随机和会话能力。
+  SearchState、显式 value/search owners、动作生成、Belief 采样、预算、随机和会话能力。
 
   写入状态
   lastSearchStats、lastPlannedSequence 与随机源序列。
 
   调用函数
-  AiSimulator、generateFromVisible、sampleHiddenWorlds、yieldControl 及本类评分 helper。
+  AiSimulator、TransitionValue、ValueLedger、FrontierValue、SearchPrior 及注入的运行能力。
 
   边界与不变量
   搜索深度、束顺序、采样时机、随机顺序、最终评分与 descriptor 序列不得因装配迁移改变。
@@ -463,38 +483,46 @@ export class AiPlanner {
     // 帮助 beam 优先展开"值得打的牌"；最终 root 选择只看 valueScore。
     const searchPrior = (action, state) => (
       hiddenAdjustment(action)
-      + (typeof this.evaluator.actionUtility === "function"
-        ? this.evaluator.actionUtility(action, player, state) : 0)
-      + (typeof this.evaluator.actionSearchPrior === "function"
-        ? this.evaluator.actionSearchPrior(action, player, state) : 0)
+      + this.searchPrior.actionUtility(action, player, state)
+      + this.searchPrior.actionSearchPrior(action, player, state)
     );
-    /**
-     * 未调整的 base transition score（U/d）。封印的软性后置 penalty 不在这里
-     * 计算：同一 parent 下的跨候选 timing 比较由调用方在物化同层候选后完成，
-     * 只对 seal 候选用“最佳非封印即时动作延迟一步”的 delayCost 做减法。
-     * immediate 只取 actionEconomicValue（不在 stateDelta 中的经济量）；静态先验
-     * 与隐藏世界格挡先验都移到 searchPrior，避免与 stateDelta 的卡片机会成本重复计价。
-     */
+    // Planner 只提供 tactic resolution query；经济、state delta 与缩放顺序由
+    // TransitionValue 唯一拥有，domain timing 仍在同层候选物化后计算。
+    /*
+    功能
+    把当前候选及 Planner 已有的战术结算概率查询交给 TransitionValue。
+
+    调用方
+    plan 的根节点和深层候选展开循环。
+
+    输入
+    动作、before/after SearchState、搜索深度与 end 机会成本。
+
+    输出
+    TransitionValue 计算的 base transition 数值。
+
+    读取状态
+    只读候选状态、player 与 tacticResolutionScale 查询。
+
+    写入状态
+    无。
+
+    调用函数
+    TransitionValue.evaluateBase、tacticResolutionScale。
+
+    边界与不变量
+    本 helper 不拥有价值公式；resolution 查询只在非零 economic term 时由 owner 调用。
+    */
     const transitionScore = (action, beforeState, afterState, depth = 1, endOpportunityCost = 0) => {
-      const executionProbability = action.executionProbability ?? 1;
-      // end 的最终机会成本来自同一 parent 的真实正收益 sibling 边际（已封顶），
-      // 而不是“存在任意合法 non-end action”：负收益/近零 sibling 不应让 end 被固定
-      // -0.8 惩罚而强制 AI 执行负收益动作；有 +10 机会时成本也不超过 END_OPPORTUNITY_CAP。
-      const economicValue = action.type === "end"
-        ? -endOpportunityCost
-        : (this.evaluator.actionEconomicValue
-          ? this.evaluator.actionEconomicValue(action, player, beforeState)
-          : 0);
-      // 只有 economicValue 会读取 resolutionScale；值为 0 时继续推导反制概率最终只会乘 0。
-      // 真实 Counter outcome 已在 simulator.apply(afterState) 中完整结算，不能在此删减。
-      const resolutionScale = economicValue === 0 ? 1 : tacticResolutionScale(action, beforeState);
-      const immediate = (economicValue * resolutionScale)
-        * executionProbability;
-      // state credit 使用边际局面改善量；afterState 已是按执行概率/反制概率折算的期望状态，
-      // 因此这里不再重复乘 executionProbability 或 resolutionScale。
-      const stateDelta = this.evaluator.stateUtility(afterState, player.id)
-        - this.evaluator.stateUtility(beforeState, player.id);
-      return (immediate + stateDelta * 0.08) / depth;
+      return this.transitionValue.evaluateBase({
+        action,
+        player,
+        beforeState,
+        afterState,
+        depth,
+        endOpportunityCost,
+        getResolutionScale: () => tacticResolutionScale(action, beforeState)
+      }).baseTransition;
     };
     let expanded = 0;
     const limitReached = () => nodeBudget === null
@@ -546,9 +574,7 @@ export class AiPlanner {
       // 前沿未实现价值只取 held 未来选项（调息治疗 / 回收站抽牌）；futureInventory 是
       // 敌方未来攻击库存，已经由终局 stateUtility 的 exposure 分项计价，在前沿再叠加
       // 会针对同一威胁双算，因此前沿积分只计入 held，且只在 playPhaseEnded 计一次。
-      const frontierValue = frontierResidual
-        ? (frontierResidual.held.recover + frontierResidual.held.recycle) * STATE_DELTA_SCALE
-        : 0;
+      const frontierValue = this.frontierValue.finalValue(frontierResidual, Boolean(state.playPhaseEnded));
       if (action.card?.definitionId !== "seal" && action.type !== "end") {
         bestRootNonSealBase = Math.max(bestRootNonSealBase, baseTransition);
       }
@@ -653,9 +679,10 @@ export class AiPlanner {
             ? this.frontierResidualOf(state, player.id)
             : null;
           // 前沿积分只计入 held 未来选项（与根候选同一口径），只在终局计一次。
-          const frontierValue = frontierResidual
-            ? (frontierResidual.held.recover + frontierResidual.held.recycle) * STATE_DELTA_SCALE
-            : 0;
+          const frontierValue = this.frontierValue.finalValue(
+            frontierResidual,
+            Boolean(state.playPhaseEnded)
+          );
           if (follow.card?.definitionId !== "seal" && follow.type !== "end") {
             bestNonSealBase = Math.max(bestNonSealBase, baseTransition);
           }
@@ -727,10 +754,14 @@ export class AiPlanner {
       const endFrontier = Boolean(endTerminal.playPhaseEnded)
         ? this.frontierResidualOf(endTerminal, player.id)
         : null;
-      const endFallbackValue = endFallbackBase
-        + (endFrontier
-          ? (endFrontier.held.recover + endFrontier.held.recycle) * STATE_DELTA_SCALE
-          : 0);
+      const endFallbackValue = this.composeCandidateValue(
+        endFallbackBase,
+        0,
+        this.frontierValue.finalValue(endFrontier, Boolean(endTerminal.playPhaseEnded)),
+        0,
+        0,
+        0
+      );
       if (!choice || endFallbackValue > choice.valueScore) {
         choice = {
           action: rootEndAction,

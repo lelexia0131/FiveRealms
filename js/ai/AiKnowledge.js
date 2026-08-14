@@ -17,4 +17,4 @@ state/Knowledge。
 架构约束
 不得复制 Knowledge 或 Belief 逻辑，只允许兼容重导出。
 */
-export { AiKnowledge, createKnowledgeState } from "./state/Knowledge.js?build=20260814-ai-controller-di";
+export { AiKnowledge, createKnowledgeState } from "./state/Knowledge.js?build=20260814-ai-value-ownership";

@@ -17,13 +17,13 @@ AiEvaluator、AiSimulator、现有测试与尚未迁移的 AI 模块。
 架构约束
 通用概率逻辑只能由 state/Probability 实现，本文件不得复制其算法。
 */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-controller-di";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-value-ownership";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "./state/Probability.js?build=20260814-ai-controller-di";
+} from "./state/Probability.js?build=20260814-ai-value-ownership";
 
-export * from "./state/Probability.js?build=20260814-ai-controller-di";
+export * from "./state/Probability.js?build=20260814-ai-value-ownership";
 
 export const RADAR_BASIC_DEFINITIONS = Object.freeze(["assault", "recover", "block", "charge", "shield"]);
 

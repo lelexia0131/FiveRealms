@@ -9,7 +9,7 @@ Game、ResponseSystem、PublicCardPool、角色技能与测试。
 状态组合、Knowledge、选择、响应、动作生成、评估与 Planner。
 
 状态边界
-只在门面入口读取当前 GameState；搜索组件仅接收 SearchState 与显式能力。
+只在门面入口读取当前 GameState；价值与搜索组件仅接收 SearchState 与显式能力。
 
 信息边界
 隐藏信息只能经 Knowledge 和状态组合入口进入决策，门面不得暴露敌方未知牌面。
@@ -17,13 +17,20 @@ Game、ResponseSystem、PublicCardPool、角色技能与测试。
 架构约束
 子组件不得回指 AIController；公开子组件字段仅作迁移期兼容，生产上游应使用门面。
 */
-import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-controller-di";
-import { AiKnowledge } from "./AiKnowledge.js?build=20260814-ai-controller-di";
-import { AiCardSelector } from "./AiCardSelector.js?build=20260814-ai-controller-di";
-import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260814-ai-controller-di";
-import { AiActionGenerator } from "./AiActionGenerator.js?build=20260814-ai-controller-di";
-import { AiEvaluator } from "./AiEvaluator.js?build=20260814-ai-controller-di";
-import { AiPlanner } from "./AiPlanner.js?build=20260814-ai-controller-di";
+import { createAiVisibleState } from "./AiVisibleState.js?build=20260814-ai-value-ownership";
+import { AiKnowledge } from "./AiKnowledge.js?build=20260814-ai-value-ownership";
+import { AiCardSelector } from "./AiCardSelector.js?build=20260814-ai-value-ownership";
+import { AiResponsePolicy } from "./AiResponsePolicy.js?build=20260814-ai-value-ownership";
+import { AiActionGenerator } from "./AiActionGenerator.js?build=20260814-ai-value-ownership";
+import { AiEvaluator } from "./AiEvaluator.js?build=20260814-ai-value-ownership";
+import { AiPlanner } from "./AiPlanner.js?build=20260814-ai-value-ownership";
+import { AiStateValue } from "./AiStateValue.js?build=20260814-ai-value-ownership";
+import { AiValueSimulationQuery } from "./AiValueSimulationQuery.js?build=20260814-ai-value-ownership";
+import { FrontierValue } from "./search/FrontierValue.js?build=20260814-ai-value-ownership";
+import { SearchPrior } from "./search/SearchPrior.js?build=20260814-ai-value-ownership";
+import { TransitionValue } from "./search/TransitionValue.js?build=20260814-ai-value-ownership";
+import { Evaluator } from "./value/Evaluator.js?build=20260814-ai-value-ownership";
+import { ValueLedger } from "./value/ValueLedger.js?build=20260814-ai-value-ownership";
 
 export class AIController {
   /*
@@ -45,8 +52,8 @@ export class AIController {
   写入状态
   仅写控制器组件字段。
 
-  调用函数
-  AiKnowledge、AiEvaluator、AiCardSelector、AiResponsePolicy、AiActionGenerator、AiPlanner 构造函数。
+调用函数
+Value owners、AiKnowledge、AiEvaluator façade、AiCardSelector、AiResponsePolicy、AiActionGenerator 与 AiPlanner 构造函数。
 
   边界与不变量
   装配无事后补丁；闭包持有具体组件或 Game 能力，不把 Controller 传给任何子组件。
@@ -54,7 +61,33 @@ export class AIController {
   constructor(game) {
     this.game = game;
     this.knowledge = new AiKnowledge(game);
-    this.evaluator = new AiEvaluator(game);
+    this.stateEvaluator = new Evaluator({
+      getMaxEnergy: (player) => game.teamRules.getMaxEnergy(player),
+      getTurnEnergyBreakdown: (player) => game.teamRules.getTurnEnergyBreakdown(player)
+    });
+    this.valueSimulationQuery = new AiValueSimulationQuery(this.stateEvaluator);
+    this.stateValue = new AiStateValue(this.stateEvaluator, this.valueSimulationQuery);
+    this.valueLedger = new ValueLedger({
+      evaluator: this.stateEvaluator,
+      stateValue: this.stateValue,
+      simulationQuery: this.valueSimulationQuery
+    });
+    this.frontierValue = new FrontierValue();
+    this.searchPrior = new SearchPrior({
+      getDifficultyMultiplier: () => game.aiDifficultyMultiplier,
+      simulationQuery: this.valueSimulationQuery,
+      getCurrentState: () => game.state
+    });
+    this.transitionValue = new TransitionValue(this.stateValue);
+    this.evaluator = new AiEvaluator({
+      evaluator: this.stateEvaluator,
+      stateValue: this.stateValue,
+      simulationQuery: this.valueSimulationQuery,
+      valueLedger: this.valueLedger,
+      frontierValue: this.frontierValue,
+      searchPrior: this.searchPrior,
+      transitionValue: this.transitionValue
+    });
     this.cardSelector = new AiCardSelector(game, this.knowledge);
     this.responsePolicy = new AiResponsePolicy(game, this.evaluator, this.knowledge);
 
@@ -67,6 +100,10 @@ export class AIController {
     const knowledge = this.knowledge;
     this.planner = new AiPlanner({
       evaluator: this.evaluator,
+      transitionValue: this.transitionValue,
+      valueLedger: this.valueLedger,
+      frontierValue: this.frontierValue,
+      searchPrior: this.searchPrior,
       generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
       sampleHiddenWorlds: (...args) => knowledge.sampleHiddenWorlds(...args),
       random: () => game.random(),

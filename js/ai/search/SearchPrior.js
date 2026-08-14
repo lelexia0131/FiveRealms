@@ -1,0 +1,407 @@
+/*
+模块职责
+唯一拥有 actionUtility 与临时 actionSearchPrior 的候选展开优先级。
+
+上游
+Planner pruneScore、兼容 façade 与测试。
+
+下游
+CardValue、ThreatValue、现有领域纯 helper 与闪电 simulation query。
+
+状态边界
+只读 VisibleState/SearchState；不写状态、不执行动作。
+
+信息边界
+只使用过滤后的状态、viewer 合法记忆与显式难度参数。
+
+架构约束
+本模块所有返回值都是 SEARCH_PRIOR；TransitionValue 不得调用或累计这些值。
+*/
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-value-ownership";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-value-ownership";
+import { assessGlobalBenefit } from "../AiGlobalBenefit.js?build=20260814-ai-value-ownership";
+import { sealUseValue } from "../sealScoring.js?build=20260814-ai-value-ownership";
+import {
+  getBaseCardAiValue,
+  getEquipmentKeepValueDeduction,
+  getRoleCardAiValue,
+  roleCardDelta
+} from "../value/CardValue.js?build=20260814-ai-value-ownership";
+import {
+  SKILL_THRESHOLD_OPTION_VALUE,
+  STATE_DELTA_SCALE
+} from "../value/Economics.js?build=20260814-ai-value-ownership";
+import { ThreatCalculator } from "../value/ThreatValue.js?build=20260814-ai-value-ownership";
+
+export const BURNING_FIELD_SEARCH_PRIOR = 8;
+
+export class SearchPrior {
+  /*
+  功能
+  绑定动态难度、闪电生命周期查询与可选当前状态能力。
+
+  调用方
+  AIController composition root。
+
+  输入
+  getDifficultyMultiplier、simulationQuery 与可选 getCurrentState。
+
+  输出
+  搜索先验服务实例。
+
+  读取状态
+  保存显式能力引用。
+
+  写入状态
+  写入实例依赖字段。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不持有 Game、Planner 或 Controller；动态能力只提供当前公开配置和兼容状态。
+  */
+  constructor({
+    getDifficultyMultiplier = () => GAME_CONFIG.aiDifficultyMultiplier,
+    simulationQuery,
+    getCurrentState = null
+  } = {}) {
+    this.getDifficultyMultiplier = getDifficultyMultiplier;
+    this.simulationQuery = simulationQuery;
+    this.getCurrentState = getCurrentState;
+  }
+
+  /*
+  功能
+  计算破军新增一次攻击容量在当前手牌中的展开优先级。
+
+  调用方
+  actionUtility 与兼容 façade。
+
+  输入
+  actor 的过滤后状态。
+
+  输出
+  可兑现额外容量乘角色突袭静态值的 prior。
+
+  读取状态
+  只读突袭概率手牌与剩余攻击次数分支。
+
+  写入状态
+  无。
+
+  调用函数
+  CardValue 静态入口。
+
+  边界与不变量
+  只用于搜索展开，不能进入 final transition。
+  */
+  breakArmyUtility(actor) {
+    const assaultCount = (actor.hand ?? [])
+      .filter((card) => card.definitionId === "assault")
+      .reduce((sum, card) => sum + (Array.isArray(card.availabilityBranches)
+        ? card.availabilityBranches.reduce(
+            (total, branch) => total + (Number(branch.probability) || 0),
+            0
+          )
+        : 1), 0);
+    const availableAttackUses = Array.isArray(actor.attackUseSlots)
+      ? actor.attackUseSlots.reduce((sum, slot) => sum + (slot ?? []).reduce(
+          (total, branch) => total + (branch.available ? Number(branch.probability) || 0 : 0),
+          0
+        ), 0)
+      : Math.max(
+          0,
+          (Number(actor.attackLimit ?? actor.turnFlags?.attackLimit) || 0)
+            - (Number(actor.attackUsed ?? actor.turnFlags?.attackUsed) || 0)
+        );
+    const redeemableExtraCapacity = Math.min(
+      1,
+      Math.max(0, assaultCount - availableAttackUses)
+    );
+    const assaultSearchValue = actor.generalId
+      ? getRoleCardAiValue(actor.generalId, "assault")
+      : getBaseCardAiValue("assault");
+    return redeemableExtraCapacity * assaultSearchValue;
+  }
+
+  /*
+  功能
+  把公开目标威胁按当前 AI 难度缩放为目标选择 prior。
+
+  调用方
+  actionUtility、响应策略与兼容 façade。
+
+  输入
+  viewer、target、合法记忆与预计伤害。
+
+  输出
+  非负难度缩放 prior；非敌方或零倍率返回零。
+
+  读取状态
+  只读显式难度能力、可见目标和合法记忆。
+
+  写入状态
+  无。
+
+  调用函数
+  ThreatCalculator.calculate。
+
+  边界与不变量
+  属于 POLICY_VALUE/SEARCH_PRIOR，不得进入 state delta 或 final transition。
+  */
+  threatPriority(viewer, target, memory, expectedDamage = 1) {
+    const multiplier = Math.max(
+      0,
+      Number(this.getDifficultyMultiplier?.() ?? GAME_CONFIG.aiDifficultyMultiplier) || 0
+    );
+    if (!multiplier || !target || target.battleTeam === viewer.battleTeam) return 0;
+    return ThreatCalculator.calculate(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
+  }
+
+  /*
+  功能
+  计算动作在 beam pruning/ranking 中的既有静态与上下文 prior。
+
+  调用方
+  Planner pruneScore、兼容 façade 与测试。
+
+  输入
+  候选动作、真实 player 门面、过滤状态与兼容 options。
+
+  输出
+  仅用于搜索顺序的数值 prior。
+
+  读取状态
+  只读公开动作、合法记忆、可见状态及闪电生命周期查询结果。
+
+  写入状态
+  无；闪电查询只写自身缓存。
+
+  调用函数
+  CardValue、ThreatValue、sealUseValue、assessGlobalBenefit 与 lightningLifecycleValue。
+
+  边界与不变量
+  静态牌值、目标焦点和领域启发式绝不进入 valueScore；已在 after-state 的收益这里只能作展开偏置。
+  */
+  actionUtility(action, player, visible, options = {}) {
+    const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
+    if (action.type === "end") {
+      const remainingCards = actor.handCount ?? actor.hand?.length ?? player.hand.length;
+      return remainingCards > 0 ? -0.8 : 0;
+    }
+    if (action.type === "skill") {
+      const actionTarget = action.targets?.[0];
+      const target = visible.players.find((entry) => entry.id === actionTarget?.id)
+        ?? actionTarget;
+      const missing = target ? Math.max(0, target.maxHp - target.hp) : 0;
+      const values = {
+        breakArmy: this.breakArmyUtility(actor),
+        barrier: 0,
+        symbiosis: 0,
+        stealSkill: 5 + Math.min(
+          4,
+          (target?.handCount ?? 0) + (target?.equipmentDefinitionId ? 1 : 0)
+        ),
+        burningField: 0,
+        hunt: 7 + (target?.hp <= 2 ? 7 : 0),
+        allIn: Math.max(0, actor.energy - 1) * 3
+          + Math.min(1, actor.energy * 0.25) * (1 - (actor.assaultBonus ?? 0)) * 4,
+        resonance: 5 + (target?.handCount <= 1 ? 3 : 0)
+      };
+      let value = values[action.skill.id] ?? 4;
+      if (["stealSkill", "hunt"].includes(action.skill.id)) {
+        value += this.threatPriority(actor, target, player.aiMemory, 1);
+      }
+      return value;
+    }
+    const card = action.card;
+    const identityDelta = roleCardDelta(actor?.generalId, card?.definitionId);
+    let value = actor?.generalId && card?.definitionId
+      ? getRoleCardAiValue(actor.generalId, card.definitionId)
+      : (card.aiValue ?? 0);
+    if (card.definitionId === "lightning") {
+      value = (card.aiValue ?? 0)
+        + this.simulationQuery.lightningLifecycleValue(
+          visible,
+          actor,
+          actor.id,
+          1
+        ) * STATE_DELTA_SCALE
+        + identityDelta;
+    }
+    const actionTarget = action.targets?.[0];
+    const target = visible.players.find((entry) => entry.id === actionTarget?.id)
+      ?? actionTarget;
+    if (card.definitionId === "seal") {
+      value = sealUseValue(actor, target, visible) + identityDelta;
+    }
+    if (target) {
+      const enemy = target.battleTeam !== player.battleTeam;
+      if (card.subtypes.includes("attack") || card.definitionId === "duel") {
+        const focus = (target.maxHp - target.hp) * 3
+          + (target.hp <= 2 ? 5 : 0)
+          + (target.hp <= 1 ? 8 : 0);
+        if (enemy && card.definitionId === "assault") {
+          value += (target.hp <= 2 ? 5 : 0) + (target.hp <= 1 ? 8 : 0);
+        } else if (enemy && !["assault", "shockwave"].includes(card.definitionId)) {
+          value += 3 + focus;
+        } else if (!enemy) {
+          value -= 12;
+        }
+      }
+      if (["plunder", "destroy", "scout"].includes(card.definitionId)) {
+        const equipmentValue = target.equipmentDefinitionId || target.equipment
+          ? (card.definitionId === "plunder" ? 1 : 2)
+          : 0;
+        value += Math.min(
+          5,
+          (target.hand?.length ?? target.handCount ?? 0) + equipmentValue
+        );
+      }
+      if (!enemy && ["plunder", "destroy"].includes(card.definitionId)) value -= 30;
+      if (!enemy && card.definitionId === "scout") {
+        value -= actor.activeSkillId === "resonance" ? 5 : 12;
+      }
+      if (enemy && ["assault", "duel", "plunder", "destroy", "scout"].includes(card.definitionId)) {
+        value += this.threatPriority(
+          actor,
+          target,
+          player.aiMemory,
+          ["assault", "duel"].includes(card.definitionId) ? 1 : 0
+        );
+      }
+    }
+    if (card.definitionId === "charge") {
+      value += (actor.maxEnergy - actor.energy) * 1.5
+        + (actor.activeSkillId && !actor.activeSkillUsed
+          && actor.energy < actor.activeSkillCost
+          && actor.energy + 1 >= actor.activeSkillCost
+          ? SKILL_THRESHOLD_OPTION_VALUE
+          : 0);
+    }
+    if (card.definitionId === "provoke") {
+      value += visible.players
+        .filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam)
+        .reduce(
+          (sum, enemy) => sum + (1 - (enemy.assaultResponseProbability ?? 0)) * 3,
+          0
+        );
+    }
+    if (card.definitionId === "duel" && target) {
+      value += ((actor.expectedAssaultCount ?? 0)
+        - (target.expectedAssaultCount ?? 0)) * 2;
+    }
+    if (card.definitionId === "transfer") value += Number(action.selection?.score ?? 0);
+    if (card.definitionId === "symbiosis") {
+      const net = this.symbiosisNetFromState(actor, visible);
+      value = (net > 0 ? 8 + net : -9 + net) + identityDelta;
+    }
+    const equippedDefinitionId = actor.equipmentDefinitionId
+      ?? actor.equipment?.definitionId
+      ?? null;
+    if (card.category === "equipment" && equippedDefinitionId) {
+      value -= getEquipmentKeepValueDeduction(
+        actor?.generalId ?? null,
+        card.definitionId,
+        equippedDefinitionId,
+        actor.equipmentRetentionProbability ?? 1,
+        { cardDefinitions: CARD_DEFINITIONS }
+      );
+    }
+    return value;
+  }
+
+  /*
+  功能
+  保留旧无显式 state 参数互利 prior 的兼容入口。
+
+  调用方
+  兼容 façade。
+
+  输入
+  玩家。
+
+  输出
+  当前状态中的互利净 prior；没有当前状态能力时返回零。
+
+  读取状态
+  通过显式 getCurrentState 能力读取当前公开状态。
+
+  写入状态
+  无。
+
+  调用函数
+  symbiosisNetFromState。
+
+  边界与不变量
+  仅兼容旧接口，不进入 final transition；生产动作评分使用显式 visible state。
+  */
+  symbiosisNet(player) {
+    const state = this.getCurrentState?.();
+    return state ? this.symbiosisNetFromState(player, state) : 0;
+  }
+
+  /*
+  功能
+  从显式状态计算互利全局收益的搜索 prior。
+
+  调用方
+  actionUtility 与兼容 façade。
+
+  输入
+  actor 与过滤后的状态。
+
+  输出
+  assessGlobalBenefit 净收益乘既有缩放四。
+
+  读取状态
+  只读传入状态的公开玩家字段。
+
+  写入状态
+  无。
+
+  调用函数
+  assessGlobalBenefit。
+
+  边界与不变量
+  属于 SEARCH_PRIOR/POLICY_VALUE，不进入最终 transition。
+  */
+  symbiosisNetFromState(player, state) {
+    return (assessGlobalBenefit(
+      state.players,
+      player.battleTeam,
+      "symbiosis"
+    )?.netBenefit ?? 0) * 4;
+  }
+
+  /*
+  功能
+  返回只服务当前层 beam pruning 的临时搜索信用。
+
+  调用方
+  Planner pruneScore 与兼容 façade。
+
+  输入
+  动作、player 与 visible state。
+
+  输出
+  焚场返回既有八点 prior，其余返回零。
+
+  读取状态
+  只读动作技能 ID。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  BURNING_FIELD_SEARCH_PRIOR 是剪枝经验值，不是游戏价值，绝不进入 final valueScore。
+  */
+  actionSearchPrior(action, player, visible) {
+    if (action.skill?.id === "burningField") return BURNING_FIELD_SEARCH_PRIOR;
+    return 0;
+  }
+}
