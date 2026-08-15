@@ -29,15 +29,15 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-residual-end-threat-fix";
-import { cloneSearchState } from "../state/SearchState.js?build=20260815-residual-end-threat-fix";
+} from "../state/Probability.js?build=20260815-card-estimate-parity-fix";
+import { cloneSearchState } from "../state/SearchState.js?build=20260815-card-estimate-parity-fix";
 
-import { clampProbability } from "./SimulationSupport.js?build=20260815-residual-end-threat-fix";
-import { withResponseSimulation } from "./ResponseSimulation.js?build=20260815-residual-end-threat-fix";
-import { withCombatSimulation } from "./CombatSimulation.js?build=20260815-residual-end-threat-fix";
-import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260815-residual-end-threat-fix";
-import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260815-residual-end-threat-fix";
-import { withStatusSimulation } from "./StatusSimulation.js?build=20260815-residual-end-threat-fix";
+import { clampProbability } from "./SimulationSupport.js?build=20260815-card-estimate-parity-fix";
+import { withResponseSimulation } from "./ResponseSimulation.js?build=20260815-card-estimate-parity-fix";
+import { withCombatSimulation } from "./CombatSimulation.js?build=20260815-card-estimate-parity-fix";
+import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260815-card-estimate-parity-fix";
+import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260815-card-estimate-parity-fix";
+import { withStatusSimulation } from "./StatusSimulation.js?build=20260815-card-estimate-parity-fix";
 
 class SimulatorCore {
   /*

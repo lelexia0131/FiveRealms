@@ -1,22 +1,22 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260815-residual-end-threat-fix";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260815-residual-end-threat-fix";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260815-residual-end-threat-fix";
+import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260815-card-estimate-parity-fix";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260815-card-estimate-parity-fix";
+import { getActiveSkill } from "../generals/skillRegistry.js?build=20260815-card-estimate-parity-fix";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260815-residual-end-threat-fix";
-import { AnimationController } from "./animationController.js?build=20260815-residual-end-threat-fix";
-import { InteractionController } from "./InteractionController.js?build=20260815-residual-end-threat-fix";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260815-residual-end-threat-fix";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260815-residual-end-threat-fix";
-import { JudgmentView } from "./JudgmentView.js?build=20260815-residual-end-threat-fix";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260815-residual-end-threat-fix";
-import { createOpponentHandView } from "./handVisibility.js?build=20260815-residual-end-threat-fix";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260815-residual-end-threat-fix";
-import { SoundManager } from "../audio/SoundManager.js?build=20260815-residual-end-threat-fix";
+} from "./templates.js?build=20260815-card-estimate-parity-fix";
+import { AnimationController } from "./animationController.js?build=20260815-card-estimate-parity-fix";
+import { InteractionController } from "./InteractionController.js?build=20260815-card-estimate-parity-fix";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260815-card-estimate-parity-fix";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260815-card-estimate-parity-fix";
+import { JudgmentView } from "./JudgmentView.js?build=20260815-card-estimate-parity-fix";
+import { DistanceSystem } from "../core/DistanceSystem.js?build=20260815-card-estimate-parity-fix";
+import { createOpponentHandView } from "./handVisibility.js?build=20260815-card-estimate-parity-fix";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260815-card-estimate-parity-fix";
+import { SoundManager } from "../audio/SoundManager.js?build=20260815-card-estimate-parity-fix";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);

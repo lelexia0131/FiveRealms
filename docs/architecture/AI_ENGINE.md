@@ -3,7 +3,7 @@
 当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE。
 架构结论：FiveRealms AI Engine 2.0 — MASTER ARCHITECTURE COMPLETE。
 本轮整理基线：`7f73a03 ARCH-9.10`
-当前浏览器构建标识：`20260815-residual-end-threat-fix`
+当前浏览器构建标识：`20260815-card-estimate-parity-fix`
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
 最新校验日期：2026-08-15
 范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；下方 Current Architecture Snapshot 与第 32 节描述当前架构，第 2 至 31 节保留阶段审计、迁移设计和落地证据。

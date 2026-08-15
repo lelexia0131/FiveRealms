@@ -20,15 +20,15 @@ Card/Combat/Response/Status 组件、主动技能配置与 Probability。
 import {
   ACTIVE_SKILLS,
   getActiveSkillCost
-} from "../../generals/skillRegistry.js?build=20260815-residual-end-threat-fix";
+} from "../../generals/skillRegistry.js?build=20260815-card-estimate-parity-fix";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
   joinProbabilityStateBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-residual-end-threat-fix";
-import { clampProbability } from "./SimulationSupport.js?build=20260815-residual-end-threat-fix";
+} from "../state/Probability.js?build=20260815-card-estimate-parity-fix";
+import { clampProbability } from "./SimulationSupport.js?build=20260815-card-estimate-parity-fix";
 
 /*
 功能

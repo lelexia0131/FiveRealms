@@ -17,20 +17,20 @@ policy/ResponsePolicy、ValueSimulationQuery、状态组合与既有 Domain/Valu
 架构约束
 本文件是唯一响应执行边界；不得保留第二份响应阈值、分数或选择公式。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-residual-end-threat-fix";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260815-residual-end-threat-fix";
-import { createInitialSearchState } from "../state/StateContracts.js?build=20260815-residual-end-threat-fix";
-import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js?build=20260815-residual-end-threat-fix";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-card-estimate-parity-fix";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260815-card-estimate-parity-fix";
+import { createInitialSearchState } from "../state/StateContracts.js?build=20260815-card-estimate-parity-fix";
+import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js?build=20260815-card-estimate-parity-fix";
 import {
   hasLightning,
   nextLightningReceiverId
-} from "../domain/LightningModel.js?build=20260815-residual-end-threat-fix";
+} from "../domain/LightningModel.js?build=20260815-card-estimate-parity-fix";
 import {
   hasSeal,
   tacticJudgmentProbability
-} from "../domain/SealModel.js?build=20260815-residual-end-threat-fix";
-import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260815-residual-end-threat-fix";
-import { ResponsePolicy } from "./ResponsePolicy.js?build=20260815-residual-end-threat-fix";
+} from "../domain/SealModel.js?build=20260815-card-estimate-parity-fix";
+import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260815-card-estimate-parity-fix";
+import { ResponsePolicy } from "./ResponsePolicy.js?build=20260815-card-estimate-parity-fix";
 
 /*
 功能

@@ -20,7 +20,7 @@ Planner 与价值等价测试。
 import {
   STATE_DELTA_SCALE,
   actionEconomicValue
-} from "../value/Economics.js?build=20260815-residual-end-threat-fix";
+} from "../value/Economics.js?build=20260815-card-estimate-parity-fix";
 
 export class TransitionValue {
   /*

@@ -25,7 +25,7 @@ import {
   joinProbabilityStateBranches as joinStateProbabilityBranches,
   totalBranchProbability
 } from "../js/ai/state/Probability.js";
-import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260815-residual-end-threat-fix";
+import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260815-card-estimate-parity-fix";
 import { Planner } from "../js/ai/search/Planner.js";
 import { SearchBudget } from "../js/ai/search/SearchBudget.js";
 import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
@@ -9904,6 +9904,15 @@ test("AI·模拟器：丰收获得匿名容量后 end 仍按 handCount 压到生
   assert.equal(afterEnd.playPhaseEnded, true);
   assert.equal(actorAfterEnd.handCount, 3);
   assert.ok(actorAfterEnd.handCount <= actorAfterEnd.hp);
+  // END 闭包后匿名容量归零，卡牌估计必须与最终确定实体完全一致。
+  assert.deepEqual(actorAfterEnd.assaultCountDistribution, [{ count: 1, probability: 1 }]);
+  assert.equal(actorAfterEnd.expectedAssaultCount, 1);
+  assert.equal(actorAfterEnd.assaultResponseProbability, 1);
+  assert.equal(actorAfterEnd.expectedRecoverCount, 0);
+  assert.deepEqual(
+    simulator.cardEstimateDistribution(actorAfterEnd, "recover", afterEnd.remainingCardCounts),
+    [{ count: 0, probability: 1 }]
+  );
   // 强制弃牌必须真实进入状态价值：行动者 own ledger 的手牌容量损失为 2 × 1.1。
   const ledger = game.aiController.evaluator.ownerStateLedger(
     afterHarvest, afterEnd, actor.id
@@ -28295,6 +28304,165 @@ test("AI·动态密度：模拟器动态密度：syncCardEstimates 使用剩余�
   assert.equal(target.counterProbability, 0);
   assert.equal(target.expectedAssaultCount, 0);
   assert.equal(target.assaultResponseProbability, 0);
+});
+
+test("AI·动态密度：完全已知手牌不得把非目标确定牌重新当作匿名槽", () => {
+  const simulator = new Simulator({ players: [] }),
+    counts = { assault: 1, block: 1, counter: 1, recover: 1 },
+    player = {
+      id: "known-full",
+      seatIndex: 0,
+      battleTeam: "dawn",
+      generalId: "blade-walker",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      handCount: 3,
+      hand: [
+        { id: "known-assault", definitionId: "assault" },
+        { id: "known-block", definitionId: "block" },
+        { id: "known-counter", definitionId: "counter" }
+      ],
+      knownCards: undefined,
+      equipmentDefinitionId: null,
+      equipmentRetentionProbability: 0
+    };
+  assert.deepEqual(
+    simulator.cardEstimateDistribution(player, "recover", counts),
+    [{ count: 0, probability: 1 }]
+  );
+  assert.deepEqual(
+    simulator.cardEstimateDistribution(player, "assault", counts),
+    [{ count: 1, probability: 1 }]
+  );
+  simulator.syncCardEstimates(player, counts);
+  assert.equal(player.expectedRecoverCount, 0);
+  assert.equal(player.expectedAssaultCount, 1);
+  assert.equal(player.assaultResponseProbability, 1);
+});
+
+test("AI·动态密度：一个真实匿名槽只参与一次牌种密度估计", () => {
+  const simulator = new Simulator({ players: [] }),
+    counts = { assault: 1, block: 1, counter: 1, recover: 1 },
+    density = 1 / 4,
+    player = {
+      id: "known-plus-one",
+      seatIndex: 0,
+      battleTeam: "dawn",
+      generalId: "blade-walker",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      handCount: 4,
+      hand: [
+        { id: "one-assault", definitionId: "assault" },
+        { id: "one-block", definitionId: "block" },
+        { id: "one-counter", definitionId: "counter" }
+      ],
+      knownCards: undefined,
+      equipmentDefinitionId: null,
+      equipmentRetentionProbability: 0
+    };
+  assert.deepEqual(
+    simulator.cardEstimateDistribution(player, "recover", counts),
+    [{ count: 0, probability: 1 - density }, { count: 1, probability: density }]
+  );
+  assert.deepEqual(
+    simulator.cardEstimateDistribution(player, "assault", counts),
+    [{ count: 1, probability: 1 - density }, { count: 2, probability: density }]
+  );
+  simulator.syncCardEstimates(player, counts);
+  assertClose(player.expectedRecoverCount, density);
+  assertClose(player.expectedAssaultCount, 1 + density);
+  assert.equal(player.assaultResponseProbability, 1);
+});
+
+test("AI·动态密度：敌方已知牌占用容量但剩余槽保持隐藏不确定性", () => {
+  const simulator = new Simulator({ players: [] }),
+    counts = { assault: 1, block: 1, counter: 1, recover: 1 },
+    density = 1 / 4,
+    player = {
+      id: "partial-opponent",
+      seatIndex: 0,
+      battleTeam: "dusk",
+      generalId: "oath-warden",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      handCount: 4,
+      hand: undefined,
+      knownCards: [
+        { cardId: "mem-assault", definitionId: "assault" },
+        { cardId: "mem-block", definitionId: "block" }
+      ],
+      equipmentDefinitionId: null,
+      equipmentRetentionProbability: 0
+    };
+  // 已知两张占两个槽，只有 2 个未观察槽可参与密度估计。
+  assert.deepEqual(
+    simulator.cardEstimateDistribution(player, "recover", counts),
+    [
+      { count: 0, probability: (1 - density) ** 2 },
+      { count: 1, probability: 2 * density * (1 - density) },
+      { count: 2, probability: density ** 2 }
+    ]
+  );
+  assert.deepEqual(
+    simulator.cardEstimateDistribution(player, "assault", counts),
+    [
+      { count: 1, probability: (1 - density) ** 2 },
+      { count: 2, probability: 2 * density * (1 - density) },
+      { count: 3, probability: density ** 2 }
+    ]
+  );
+  simulator.syncCardEstimates(player, counts);
+  assertClose(player.expectedRecoverCount, 2 * density);
+  assertClose(player.expectedAssaultCount, 1 + 2 * density);
+  assert.equal(player.assaultResponseProbability, 1);
+  assert.equal(player.knownCards.length, 2);
+  assert.deepEqual(player.knownCards.map((entry) => entry.definitionId), ["assault", "block"]);
+});
+
+test("AI·动态密度：fractional availability 按占用质量而非实体数量扣除", () => {
+  const simulator = new Simulator({ players: [] }),
+    counts = { assault: 1, block: 1, counter: 1, recover: 1 },
+    density = 1 / 4,
+    player = {
+      id: "fractional-known",
+      seatIndex: 0,
+      battleTeam: "dawn",
+      generalId: "blade-walker",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      handCount: 2,
+      hand: [
+        {
+          id: "half-assault",
+          definitionId: "assault",
+          availabilityStateBranches: [
+            { probability: 0.5, conditions: {}, available: true },
+            { probability: 0.5, conditions: {}, available: false }
+          ]
+        },
+        { id: "full-block", definitionId: "block" }
+      ],
+      knownCards: undefined,
+      equipmentDefinitionId: null,
+      equipmentRetentionProbability: 0
+    };
+  // 已知占用 = 0.5 + 1 = 1.5，真实匿名容量 = 0.5，而不是 handCount - 匹配定义占用。
+  assert.deepEqual(
+    simulator.cardEstimateDistribution(player, "recover", counts),
+    [
+      { count: 0, probability: 1 - 0.5 * density },
+      { count: 1, probability: 0.5 * density }
+    ]
+  );
+  simulator.syncCardEstimates(player, counts);
+  assertClose(player.expectedRecoverCount, 0.5 * density);
+  assertClose(player.expectedAssaultCount, 0.5 + 0.5 * density);
+  assertClose(player.assaultResponseProbability, 1 - 0.5 * (1 - 0.5 * density));
 });
 
 test("AI·动态密度：模拟器动态密度：资源移动后重算不恢复初始密度", () => {

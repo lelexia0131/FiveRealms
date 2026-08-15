@@ -17,15 +17,15 @@ Response/Combat/Status 组件、RuleEngine、正式资源 Policy、CardValue 与
 架构约束
 不生成动作、不搜索、不拥有规则合法性或最终价值公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-residual-end-threat-fix";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-residual-end-threat-fix";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-residual-end-threat-fix";
-import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260815-residual-end-threat-fix";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260815-residual-end-threat-fix";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-residual-end-threat-fix";
-import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260815-residual-end-threat-fix";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-residual-end-threat-fix";
-import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260815-residual-end-threat-fix";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-card-estimate-parity-fix";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-card-estimate-parity-fix";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-card-estimate-parity-fix";
+import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260815-card-estimate-parity-fix";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260815-card-estimate-parity-fix";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-card-estimate-parity-fix";
+import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260815-card-estimate-parity-fix";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-card-estimate-parity-fix";
+import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260815-card-estimate-parity-fix";
 
 /*
 功能
@@ -948,7 +948,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   按 count 升序、概率归一的新分布数组。
 
   读取状态
-  合法确定身份的 availability、handCount 与未知池密度。
+  全部已知身份的 availability、handCount 与未知池密度。
 
   写入状态
   无。
@@ -957,21 +957,25 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   cardAvailability、remainingCardDensity。
 
   边界与不变量
-  确定身份逐张进入分布；未知槽只用聚合密度，不访问真实未知牌。
+  确定身份逐张进入分布；只有扣除全部已知身份占用后的真实匿名容量才使用聚合密度，
+  不得把已知但属于其它定义的手牌重新当作未知槽；不访问真实未知牌。
   */
   cardEstimateDistribution(player, definitionId, remainingCardCounts = null) {
     const explicitEntries = Array.isArray(player.hand)
-      ? player.hand.filter((card) => card?.definitionId === definitionId)
+      ? player.hand
       : Array.isArray(player.knownCards)
-        ? player.knownCards.filter((entry) => entry?.definitionId === definitionId)
+        ? player.knownCards
         : [];
-    const explicitExpectedCount = explicitEntries.reduce(
+    const matchingEntries = explicitEntries.filter(
+      (entry) => entry?.definitionId === definitionId
+    );
+    const totalExplicitOccupancy = explicitEntries.reduce(
       (sum, card) => sum + this.cardAvailability(card), 0
     );
     const handCount = Math.max(0, Number(player.handCount) || 0);
-    const unknownExpectedCount = Math.max(0, handCount - explicitExpectedCount);
-    const wholeSlots = Math.floor(unknownExpectedCount);
-    const fractionalSlot = unknownExpectedCount - wholeSlots;
+    const anonymousExpectedCount = Math.max(0, handCount - totalExplicitOccupancy);
+    const wholeSlots = Math.floor(anonymousExpectedCount);
+    const fractionalSlot = anonymousExpectedCount - wholeSlots;
     const density = remainingCardDensity(remainingCardCounts, definitionId);
     let distribution = [{ count:0, probability:1 }];
     /*
@@ -1007,7 +1011,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       }
       distribution = next;
     };
-    for (const card of explicitEntries) convolve(this.cardAvailability(card));
+    for (const card of matchingEntries) convolve(this.cardAvailability(card));
     for (let slot = 0; slot < wholeSlots; slot += 1) convolve(density);
     if (fractionalSlot > PROBABILITY_EPSILON) convolve(fractionalSlot * density);
     const maxCount = Math.max(0, Math.ceil(handCount));
