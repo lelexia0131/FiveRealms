@@ -17,11 +17,11 @@ domain/GlobalBenefitModel 与 value/CardValue。
 架构约束
 只负责 Value 投影；不决定响应、不执行模拟、不持有 Game 或 Controller。
 */
-import { getBaseCardAiValue, getRoleCardAiValue } from "./CardValue.js?build=20260815-ai-residue-cleanup-final";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./CardValue.js?build=20260815-threat-exposure-fix-final";
 import {
   assessGlobalBenefitOutcome,
   buildMutualBenefitDraftOutcome
-} from "../domain/GlobalBenefitModel.js?build=20260815-ai-residue-cleanup-final";
+} from "../domain/GlobalBenefitModel.js?build=20260815-threat-exposure-fix-final";
 
 /*
 功能

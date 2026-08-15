@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-ai-residue-cleanup-final";
-import { createId } from "../utils/helpers.js?build=20260815-ai-residue-cleanup-final";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260815-ai-residue-cleanup-final";
-import { RuleEngine } from "./RuleEngine.js?build=20260815-ai-residue-cleanup-final";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-threat-exposure-fix-final";
+import { createId } from "../utils/helpers.js?build=20260815-threat-exposure-fix-final";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260815-threat-exposure-fix-final";
+import { RuleEngine } from "./RuleEngine.js?build=20260815-threat-exposure-fix-final";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

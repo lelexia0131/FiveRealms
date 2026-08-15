@@ -29,15 +29,15 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
-import { cloneSearchState } from "../state/SearchState.js?build=20260815-ai-residue-cleanup-final";
+} from "../state/Probability.js?build=20260815-threat-exposure-fix-final";
+import { cloneSearchState } from "../state/SearchState.js?build=20260815-threat-exposure-fix-final";
 
-import { clampProbability } from "./SimulationSupport.js?build=20260815-ai-residue-cleanup-final";
-import { withResponseSimulation } from "./ResponseSimulation.js?build=20260815-ai-residue-cleanup-final";
-import { withCombatSimulation } from "./CombatSimulation.js?build=20260815-ai-residue-cleanup-final";
-import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260815-ai-residue-cleanup-final";
-import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260815-ai-residue-cleanup-final";
-import { withStatusSimulation } from "./StatusSimulation.js?build=20260815-ai-residue-cleanup-final";
+import { clampProbability } from "./SimulationSupport.js?build=20260815-threat-exposure-fix-final";
+import { withResponseSimulation } from "./ResponseSimulation.js?build=20260815-threat-exposure-fix-final";
+import { withCombatSimulation } from "./CombatSimulation.js?build=20260815-threat-exposure-fix-final";
+import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260815-threat-exposure-fix-final";
+import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260815-threat-exposure-fix-final";
+import { withStatusSimulation } from "./StatusSimulation.js?build=20260815-threat-exposure-fix-final";
 
 class SimulatorCore {
   /*
@@ -601,6 +601,9 @@ class SimulatorCore {
         actor.momentum = 0;
       }
       next.playPhaseEnded = true;
+      // 真实 Game 在出牌阶段结束后立即进入弃牌阶段并把手牌压到生命上限；
+      // 搜索世界必须投影同一结算，否则 end 会把马上被强制弃置的牌仍计为可保留资源。
+      this.applyMandatoryDiscard(next, actor);
       return next;
     }
     if (!actor) return next;
@@ -702,6 +705,52 @@ class SimulatorCore {
       effectEventWorlds,
       executionProbability,
       scale
+    });
+  }
+
+  /*
+  功能
+  在搜索世界的 end 动作后投影真实弃牌阶段的手牌上限结算。
+
+  调用方
+  apply 的 end 分支。
+
+  输入
+  独立 SearchState 与行动者。
+
+  输出
+  无；行动者手牌按正式保留价值弃置到生命上限，并同步相关概率摘要。
+
+  读取状态
+  行动者手牌、生命与公开装备上下文。
+
+  写入状态
+  手牌 availability、hand/handCount、突袭/格挡/反制/调息摘要。
+
+  调用函数
+  consumeChosenHandCard、buildDiscardKeepValueContext。
+
+  边界与不变量
+  与真实 Game.handleDiscardPhase 的 required=hand.length-hp 及正式弃牌策略保持一致；
+  行动者未存活或手牌不超上限时为空操作，不制造新状态字段。
+  */
+  applyMandatoryDiscard(state, actor) {
+    if (!actor?.alive) return;
+    const handSize = Array.isArray(actor.hand)
+      ? actor.hand.length
+      : Math.max(0, Number(actor.handCount) || 0);
+    const required = Math.max(0, handSize - Math.max(0, actor.hp));
+    if (required <= 0) return;
+    if (!Array.isArray(actor.hand)) {
+      // 无身份信息的摘要状态（测试夹具）无法按保留价值选牌，只投影数量上限。
+      actor.handCount = Math.min(
+        Math.max(0, Number(actor.handCount) || 0),
+        Math.max(0, actor.hp)
+      );
+      return;
+    }
+    this.consumeChosenHandCard(state, actor, required, {
+      label:"end-hand-limit-discard"
     });
   }
 

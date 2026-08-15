@@ -17,11 +17,11 @@ ResponseSimulation、Radar domain、state/Probability 与共享 simulation runti
 架构约束
 结算顺序以 Game.damage、HpLossSystem 与 DyingSystem 为权威；不得拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-ai-residue-cleanup-final";
-import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260815-ai-residue-cleanup-final";
-import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
-import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260815-ai-residue-cleanup-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-threat-exposure-fix-final";
+import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260815-threat-exposure-fix-final";
+import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-threat-exposure-fix-final";
+import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260815-threat-exposure-fix-final";
 
 /*
 功能

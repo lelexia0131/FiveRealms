@@ -17,9 +17,9 @@
 架构约束
 静态卡片值不得直接成为最终 Transition Value；状态存量只可经 State Value 的前后差进入最终价值，所有调用路径必须复用本模块的唯一公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
-import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../../config/generalConfig.js?build=20260815-ai-residue-cleanup-final";
-import { HP_VALUE } from "./Economics.js?build=20260815-ai-residue-cleanup-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
+import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../../config/generalConfig.js?build=20260815-threat-exposure-fix-final";
+import { HP_VALUE } from "./Economics.js?build=20260815-threat-exposure-fix-final";
 
 /*
 角色 × 卡牌差值只记录非零项，未配置组合自动回退零；新角色和新卡牌不需要补完整矩阵。

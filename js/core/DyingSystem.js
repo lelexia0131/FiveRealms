@@ -1,5 +1,5 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-ai-residue-cleanup-final";
-import { createId } from "../utils/helpers.js?build=20260815-ai-residue-cleanup-final";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-threat-exposure-fix-final";
+import { createId } from "../utils/helpers.js?build=20260815-threat-exposure-fix-final";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；

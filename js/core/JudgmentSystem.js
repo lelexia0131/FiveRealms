@@ -1,4 +1,4 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
 
 /**
  * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；

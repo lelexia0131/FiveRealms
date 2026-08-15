@@ -17,8 +17,8 @@ Economics 的既有 END cap 与 SealTiming。
 架构约束
 不得执行模拟、组合最终价值、决定 beam 或拥有 Seal 领域概率模型。
 */
-import { END_OPPORTUNITY_CAP } from "../value/Economics.js?build=20260815-ai-residue-cleanup-final";
-import { sealDelayCost, sealEarlyUsePenalty } from "./SealTiming.js?build=20260815-ai-residue-cleanup-final";
+import { END_OPPORTUNITY_CAP } from "../value/Economics.js?build=20260815-threat-exposure-fix-final";
+import { sealDelayCost, sealEarlyUsePenalty } from "./SealTiming.js?build=20260815-threat-exposure-fix-final";
 
 export class SiblingTransitionTerms {
   /*
@@ -44,7 +44,8 @@ export class SiblingTransitionTerms {
   sealDelayCost、sealEarlyUsePenalty。
 
   边界与不变量
-  END cap、正收益 non-end sibling、non-seal sibling 与 depth 公式保持既有运算顺序。
+  END cap、正收益 non-end sibling、non-seal sibling 与 depth 公式保持既有运算顺序；
+  end 自身的 base（含手牌上限弃牌等状态变化）叠加在机会成本之上，不能被覆盖丢失。
   */
   finalize(candidates, depth) {
     let bestNonSealBase = -Infinity;
@@ -67,7 +68,11 @@ export class SiblingTransitionTerms {
     ) / depth;
     for (const candidate of candidates) {
       if (this.isTerminalAction(candidate.action)) {
-        candidate.baseTransition = endFallbackBase;
+        // 机会成本只覆盖“放弃继续出牌”的部分；end 自身状态变化（例如手牌上限弃牌）
+        // 仍必须保留在最终 base 中，否则会被 end 的 sibling 项整段覆盖丢失。
+        const ownBase = Number(candidate.baseTerms?.baseTransition);
+        candidate.baseTransition = endFallbackBase
+          + (Number.isFinite(ownBase) ? ownBase : 0);
       }
       candidate.sealTimingPenalty = candidate.action.card?.definitionId === "seal"
         ? sealEarlyUsePenalty(sealDelayCost(bestNonSealBase, depth))

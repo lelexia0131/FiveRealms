@@ -17,8 +17,8 @@ value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query�
 架构约束
 不执行规则、不依赖 Planner/Controller/UI，不 import 或构造 具体 Simulator。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
-import { HP_VALUE } from "../value/Economics.js?build=20260815-ai-residue-cleanup-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
+import { HP_VALUE } from "../value/Economics.js?build=20260815-threat-exposure-fix-final";
 
 /*
 功能

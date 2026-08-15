@@ -17,15 +17,15 @@ Response/Combat/Status 组件、RuleEngine、正式资源 Policy、CardValue 与
 架构约束
 不生成动作、不搜索、不拥有规则合法性或最终价值公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-ai-residue-cleanup-final";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-ai-residue-cleanup-final";
-import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260815-ai-residue-cleanup-final";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260815-ai-residue-cleanup-final";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-ai-residue-cleanup-final";
-import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260815-ai-residue-cleanup-final";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
-import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260815-ai-residue-cleanup-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-threat-exposure-fix-final";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-threat-exposure-fix-final";
+import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260815-threat-exposure-fix-final";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260815-threat-exposure-fix-final";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-threat-exposure-fix-final";
+import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260815-threat-exposure-fix-final";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-threat-exposure-fix-final";
+import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260815-threat-exposure-fix-final";
 
 /*
 功能
@@ -1896,7 +1896,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   ResponseSimulation.simulateGuardianAid：在完整确定手牌中按正式保留策略弃牌。
 
   输入
-  SearchState、玩家、期望弃牌量与可选结果收集器。
+  SearchState、玩家、期望弃牌量与可选结果收集器/事件标签。
 
   输出
   实际消费的期望数量。
@@ -1932,7 +1932,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         state,
         Math.min(1, spent / availableProbability),
         null,
-        `guardian-aid-discard:${player.id}:${chosen.id}`
+        `${options.label ?? "guardian-aid-discard"}:${player.id}:${chosen.id}`
       );
       const removalPartition = spendWorlds.map((branch) => ({
         probability: branch.probability,

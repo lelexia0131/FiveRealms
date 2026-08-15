@@ -17,13 +17,13 @@ DistanceSystem 与 value/Economics 的生命尺度。
 架构约束
 威胁公式只能在本模块出现；基础数值项可被 Evaluator 组合进 State Value，但不得绕过它独立追加到最终 Transition Value。
 */
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-ai-residue-cleanup-final";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-threat-exposure-fix-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
-import { HP_VALUE } from "./Economics.js?build=20260815-ai-residue-cleanup-final";
+} from "../state/Probability.js?build=20260815-threat-exposure-fix-final";
+import { HP_VALUE } from "./Economics.js?build=20260815-threat-exposure-fix-final";
 
 export const DANGER_VALUE = 7;
 export const DEATH_VALUE = 28;
@@ -526,6 +526,8 @@ DistanceSystem.getRangeLegalityProbability。
 
 边界与不变量
 三个分量之和恒等于既有 incoming exposure；不得用 raw handCount 推断敌方突袭身份。
+同一张突袭牌不得同时计入当前威胁与未来库存，且同一库存按该敌人可到达的目标分摊，
+避免对每个目标重复计全额而放大真实可实现威胁。
 */
 export function exposureComponents(state, player) {
   const perEnemy = [];
@@ -541,8 +543,23 @@ export function exposureComponents(state, player) {
     const energy = Math.max(0, Number(enemy.energy ?? 0));
     const expectedAssault = Math.max(0, Number(enemy.expectedAssaultCount ?? 0));
     const response = Math.max(0, Math.min(1, Number(enemy.assaultResponseProbability) || 0));
-    const current = response * HP_VALUE * rangeProbability;
-    const future = Math.min(3, expectedAssault) * 0.5 * HP_VALUE * rangeProbability;
+    // 同一张突袭牌不能同时充当“本次响应”和“下回合库存”：
+    // 第一张（response 概率质量）已按当前威胁计满，未来库存只计超出响应保留的期望数量。
+    const futureCount = Math.min(3, Math.max(0, expectedAssault - response));
+    // 一个敌人每回合可兑现的攻击次数有限，同一库存不得对每个可到达目标重复计全额；
+    // 按该敌人当前可到达的全部敌对目标分摊突袭暴露，能量压力仍按逐目标口径保留。
+    let reachableTotal = 0;
+    for (const victim of state.players) {
+      if (!victim?.alive || victim.battleTeam === enemy.battleTeam || victim.id === enemy.id) continue;
+      reachableTotal += victim.id === player.id
+        ? rangeProbability
+        : DistanceSystem.getRangeLegalityProbability(
+          { state }, enemy, victim, enemy.attackRange ?? 1
+        );
+    }
+    const share = reachableTotal > 0 ? rangeProbability / reachableTotal : 0;
+    const current = response * HP_VALUE * rangeProbability * share;
+    const future = futureCount * 0.5 * HP_VALUE * rangeProbability * share;
     const energyTerm = Math.min(2, energy) * 0.3 * HP_VALUE * rangeProbability;
     currentThreat += current;
     futureInventory += future;

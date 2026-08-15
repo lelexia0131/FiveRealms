@@ -17,16 +17,16 @@ RuleEngine、技能注册器、领域概率与策略评分模块。
 架构约束
 不得依赖 AIController；转移资源选择必须由构造时注入的窄能力提供。
 */
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-ai-residue-cleanup-final";
-import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260815-ai-residue-cleanup-final";
-import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260815-ai-residue-cleanup-final";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-threat-exposure-fix-final";
+import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260815-threat-exposure-fix-final";
+import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260815-threat-exposure-fix-final";
 import {
   ACTIVE_SKILLS, getActiveSkill, getActiveSkillCost
-} from "../../generals/skillRegistry.js?build=20260815-ai-residue-cleanup-final";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-ai-residue-cleanup-final";
-import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260815-ai-residue-cleanup-final";
-import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260815-ai-residue-cleanup-final";
+} from "../../generals/skillRegistry.js?build=20260815-threat-exposure-fix-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-threat-exposure-fix-final";
+import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260815-threat-exposure-fix-final";
+import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260815-threat-exposure-fix-final";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -38,7 +38,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
+} from "../state/Probability.js?build=20260815-threat-exposure-fix-final";
 
 export class ActionGenerator {
   /*

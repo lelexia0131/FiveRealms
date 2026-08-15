@@ -25,7 +25,7 @@ import {
   joinProbabilityStateBranches as joinStateProbabilityBranches,
   totalBranchProbability
 } from "../js/ai/state/Probability.js";
-import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260815-ai-residue-cleanup-final";
+import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260815-threat-exposure-fix-final";
 import { Planner } from "../js/ai/search/Planner.js";
 import { SearchBudget } from "../js/ai/search/SearchBudget.js";
 import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
@@ -8802,7 +8802,7 @@ test("AI·搜索：Simulation 七类固定场景保持根动作、序列与搜�
       expected: {
         root: { type: "card", cardId: "shockwave", cardInstanceId: "trace-shock", targetId: "b", targetIds: ["b", "d"], selection: null },
         sequence: [{ type: "card", cardId: "shockwave", cardInstanceId: "trace-shock", targetId: "b", targetIds: ["b", "d"], selection: null }, end],
-        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.260624512943173
+        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.2675810346823039
       }
     },
     {
@@ -8826,7 +8826,7 @@ test("AI·搜索：Simulation 七类固定场景保持根动作、序列与搜�
           type: "card", cardId: "transfer", cardInstanceId: "trace-transfer", targetId: null, targetIds: [],
           selection: { sourceId: "d", receiverId: "b", zone: "hand" }
         }, end],
-        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.2763858120265567
+        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.18368081564601085
       }
     },
     {
@@ -8869,7 +8869,7 @@ test("AI·搜索：Simulation 七类固定场景保持根动作、序列与搜�
           },
           end
         ],
-        expanded: 15, depth: 3, hiddenSamples: 10, bestValueScore: 1.6920000000000002
+        expanded: 15, depth: 3, hiddenSamples: 10, bestValueScore: 2.092
       }
     },
     {
@@ -8883,18 +8883,9 @@ test("AI·搜索：Simulation 七类固定场景保持根动作、序列与搜�
         }
       ],
       expected: {
-        root: {
-          type: "skill", cardId: "barrier", cardInstanceId: null,
-          targetId: "b", targetIds: ["b"], selection: null
-        },
-        sequence: [
-          {
-            type: "skill", cardId: "barrier", cardInstanceId: null,
-            targetId: "b", targetIds: ["b"], selection: null
-          },
-          end
-        ],
-        expanded: 5, depth: 2, hiddenSamples: 10, bestValueScore: 0.14026993865030676
+        root: end,
+        sequence: [end],
+        expanded: 5, depth: 1, hiddenSamples: 10, bestValueScore: 0
       }
     },
     {
@@ -8922,7 +8913,7 @@ test("AI·搜索：Simulation 七类固定场景保持根动作、序列与搜�
           },
           end
         ],
-        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.33107061178945546
+        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.3310706117894553
       }
     }
   ];
@@ -8982,16 +8973,16 @@ test("AI·搜索：Simulation 拆分保持固定 D4 封印链逐字段一致", a
     });
     assert.deepEqual(stats.bestSequence.map((entry) => [entry.type, entry.cardId, entry.targetId]), [
       ["card", "seal", "c"],
-      ["skill", "stealSkill", "c"],
       ["card", "assault", "b"],
+      ["skill", "stealSkill", "c"],
       ["end", null, null]
     ]);
-    assert.equal(stats.expanded, 102);
+    assert.equal(stats.expanded, 105);
     assert.equal(stats.depth, 4);
     assert.equal(stats.hiddenSamples, 10);
-    assert.equal(stats.bestValueScore, 0.04919669968375734);
+    assert.equal(stats.bestValueScore, 0.3196666269865943);
     assert.equal(stats.stopReason, "COMPLETE");
-    assert.equal(stats.simulationCalls, 103);
+    assert.equal(stats.simulationCalls, 106);
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -9754,6 +9745,35 @@ test("AI·模拟器：模拟阵亡会清空手牌装备摘要且评估器只保�
   assert.equal(richScore, emptyScore);
 });
 
+test("AI·模拟器：end 动作按真实弃牌阶段把手牌压到生命上限并同步突袭摘要", () => {
+  const actor = makePlayer("end-limit-actor", 0, "dawn", "ai", 1),
+    enemy1 = makePlayer("end-limit-enemy-1", 1, "dusk", "ai", 5),
+    enemy2 = makePlayer("end-limit-enemy-2", 2, "dusk", "ai", 5);
+  actor.hp = 3;
+  actor.hand.push(
+    instance("assault"), instance("assault"), instance("scout"),
+    instance("scout"), instance("block"), instance("destroy")
+  );
+  const { game }
+    = makeGame([actor, enemy1, enemy2]),
+    visible = createInitialSearchState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    ),
+    after = new Simulator(visible).apply(visible, { type: "end" }, actor.id),
+    actorAfter = after.players.find((player) => player.id === actor.id);
+  assert.equal(after.playPhaseEnded, true);
+  assert.equal(actorAfter.hand.length, 3);
+  assert.equal(actorAfter.handCount, 3);
+  // 守誓者保留价值最低的三张是两张突袭与一张窥探，格挡与破坏必须保留
+  assert.deepEqual(
+    actorAfter.hand.map((card) => card.definitionId).sort(),
+    ["block", "destroy", "scout"].sort()
+  );
+  // 弃掉最后一张突袭后，敌方可见的突袭库存必须同步归零
+  assert.equal(actorAfter.expectedAssaultCount, 0);
+  assert.equal(actorAfter.assaultResponseProbability, 0);
+});
+
 // ---- AI 核心状态·核心链路一致性 ----
 
 test("AI·核心链路：可见状态、动作生成和模拟器一致识别阵营上限与无限调息", () => {
@@ -10493,6 +10513,71 @@ test("AI·搜索：规划序列中的 end 始终位于末尾且真实 AI 仍能�
   await game.takeAiPlayPhase(actor, game.state.gameId);
   assert.equal(actor.hand.length, 0);
   assert.equal(game.state.phase, "play");
+});
+
+test("AI·搜索：手牌超过生命上限时 end 不再因虚假保留将弃资源而胜出合法动作", async () => {
+  const actor = makePlayer("overflow-end-actor", 0, "dawn", "ai", 1),
+    enemy1 = makePlayer("overflow-end-enemy-1", 1, "dusk", "ai", 5),
+    enemy2 = makePlayer("overflow-end-enemy-2", 2, "dusk", "ai", 5);
+  actor.hp = 3;
+  actor.hand.push(
+    instance("assault"), instance("assault"), instance("scout"),
+    instance("scout"), instance("block"), instance("destroy")
+  );
+  const { game }
+    = makeGame([actor, enemy1, enemy2]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  game.aiController.knowledge.sampleHiddenWorlds = () => [];
+  const visible = createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  ),
+    roots = game.aiController.getActionCandidates(actor),
+    planner = game.aiController.planner,
+    chosen = await planner.plan(actor, visible, roots, { gameId: game.state.gameId });
+
+  // 状态投影不变量：END 世界的状态价值必须等于真实弃牌阶段的投影
+  const endWorld = new Simulator(visible).apply(visible, { type: "end" }, actor.id),
+    projection = structuredClone(endWorld),
+    actorInProjection = projection.players.find((player) => player.id === actor.id),
+    required = Math.max(0, actor.hand.length - actor.hp),
+    discardedIds = new Set(
+      rankDiscardCandidates(actor, actor.hand).slice(0, required).map((card) => card.id)
+    );
+  actorInProjection.hand = actorInProjection.hand.filter(
+    (card) => !discardedIds.has(card.id)
+  );
+  actorInProjection.handCount = actorInProjection.hand.length;
+  assert.equal(
+    game.aiController.evaluator.stateUtility(endWorld, actor.id),
+    game.aiController.evaluator.stateUtility(projection, actor.id)
+  );
+
+  // 价值关系：END 候选的最终值低于合法动作，选择不再由虚假保留的弃牌资源决定
+  const simulator = new Simulator(visible),
+    context = planner.candidateMaterializer.createContext(actor, visible, roots),
+    candidates = roots.map((action) => (
+      planner.candidateMaterializer.materialize({
+        action,
+        beforeState: visible,
+        afterState: simulator.apply(visible, action, actor.id),
+        player: actor,
+        depth: 1,
+        remainingProvenance: context.rootProvenance,
+        simulator,
+        context,
+        collectDiagnostics: false
+      })
+    ));
+  planner.candidateMaterializer.finalizeSiblings(candidates, 1);
+  const endCandidate = candidates.find((candidate) => candidate.action.type === "end");
+  assert.ok(
+    planner.lastSearchStats.bestValueScore > endCandidate.transitionValue,
+    `end 候选值 ${endCandidate.transitionValue} 应低于选择值 ${planner.lastSearchStats.bestValueScore}`
+  );
+  assert.equal(chosen.type, "card");
+  assert.equal(chosen.card.definitionId, "assault");
 });
 
 test("AI·搜索：关闭逐动作重规划时转移描述只保存稳定ID并可重新绑定", () => {
@@ -16115,12 +16200,13 @@ test("AI·雷达：受攻击暴露时不会为静态略高的非防守装备确�
     before = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)),
     swapAction = { type: "card", card: battle, targets: [] },
     after = new Simulator(before).apply(before, swapAction, actor.id),
-    swapScore = evaluator.actionUtility(swapAction, actor, before) + evaluator.stateUtility(after, actor.id) * 0.08,
-    endScore = evaluator.actionUtility({ type: "end" }, actor, before) + evaluator.stateUtility(before, actor.id) * 0.08;
-  assert.ok(endScore - swapScore > 0);
+    swapDelta = evaluator.stateUtility(after, actor.id) - evaluator.stateUtility(before, actor.id);
+  // 最终真实价值只由 stateDelta 决定（不混入 beam 排序先验）：已知敌人仍有突袭暴露时，
+  // 拆雷达的真实边际为负，planner 固定选 end 保留雷达。
+  assert.ok(swapDelta < 0, `拆雷达真实边际必须为负（实际 ${swapDelta.toFixed(3)}）`);
   // 暴露模型已改为按 assault summary 计价（非攻击出牌不再无条件降低攻击 pressure）：
   // 换装 battleDevice 本身不再被当作「损失一张攻击牌」，因此换装代价比旧 handCount 模型更低，
-  // 但雷达在 28 暴露下仍应被保留（score 为正，且 planner 固定选 end）。
+  // 但雷达在修正后的突袭暴露下仍应被保留（真实边际为负，且 planner 固定选 end）。
   const selected = await game.aiController.planner.plan(
     actor,
     before,
@@ -18055,7 +18141,7 @@ test("AI·守誓者：伤害会被目标护盾完全吸收时不使用护援", (
   );
 });
 
-test("AI·守誓者：目标健康且后续仍有攻击库存时保留唯一额度", () => {
+test("AI·守誓者：敌方已兑现突袭不再重复计未来库存时非致命伤害护援为正收益", () => {
   const source = makePlayer("aid-conserve-source", 0, "dusk", "ai", 4),
     target = makePlayer("aid-conserve-target", 1, "dawn", "ai", 0),
     guardian = makePlayer("aid-conserve-guardian", 2, "dawn", "ai", 1),
@@ -18064,8 +18150,8 @@ test("AI·守誓者：目标健康且后续仍有攻击库存时保留唯一额�
   target.hp = 4;
   guardian.hand.push(instance("charge"));
   source.hand.push(assault1, assault2);
-  // 让守誓者已知敌方持有两张突袭，形成未来攻击库存（futureInventory），
-  // 使本回合唯一额度的机会成本高于这次非致命 1 点伤害的价值。
+  // 敌方已知两张突袭：第一张已作为当前/响应威胁计满，只有第二张计入未来库存；
+  // 修正后唯一额度的机会成本（futureInventory）小于本次确定伤害的收益，护援为正。
   guardian.aiMemory.knownCardsByPlayer[source.id] = {
     [assault1.id]: "assault",
     [assault2.id]: "assault"
@@ -18075,8 +18161,8 @@ test("AI·守誓者：目标健康且后续仍有攻击库存时保留唯一额�
     game.aiController.responsePolicy.shouldUseGuardianAid(
       guardian, { target, source, amount: 1 }
     ),
-    false,
-    "低价值非致命伤害不消耗唯一额度，保留给更高暴露"
+    true,
+    "兑现后的突袭不重复计未来库存时，护援本次确定伤害为净正收益"
   );
 });
 
@@ -18296,7 +18382,7 @@ test("AI·守誓者：护援与真实选牌共享超距突袭保留价值", () =
   assert.equal(inRange.vGuardian.assaultResponseProbability, 0);
 });
 
-test("AI·守誓者：护援反事实按真实弃牌语义使决策翻转", () => {
+test("AI·守誓者：护援反事实按真实弃牌语义且不把已兑现突袭重复计未来库存", () => {
   // 便宜牌 + 高价值格挡：确定性反事实知道会弃便宜牌，AID 收益超过未来额度成本。
   const cheap = makeGuardianAidFlipGame(["charge", "block"]);
   assert.equal(
@@ -18306,25 +18392,26 @@ test("AI·守誓者：护援反事实按真实弃牌语义使决策翻转", () =
     true,
     "能弃便宜牌时应正确护援"
   );
-  // 若被迫弃高价值格挡（旧随机模拟可能高估成本），同一额度成本下应拒绝护援。
+  // 被迫弃高价值格挡：敌方已兑现的突袭不再重复计入未来库存，剩余未来威胁很小，
+  // 同一额度成本下护援本次确定伤害仍为净正收益。
   const forcedExpensive = makeGuardianAidFlipGame(["block"]);
   assert.equal(
     forcedExpensive.game.aiController.responsePolicy.shouldUseGuardianAid(
       forcedExpensive.guardian, { target: forcedExpensive.target, source: forcedExpensive.source, amount: 1 }
     ),
-    false,
-    "被迫弃高价值防御牌时不应护援"
+    true,
+    "已兑现突袭不重复计未来库存时，弃高价值格挡护援仍为正收益"
   );
 });
 
-test("AI·守誓者：手牌全为关键防御牌时即使确定性弃牌仍拒绝护援", () => {
+test("AI·守誓者：敌方已兑现突袭时即使弃关键防御牌护援仍为正收益", () => {
   const fixture = makeGuardianAidFlipGame(["block", "counter"]);
   assert.equal(
     fixture.game.aiController.responsePolicy.shouldUseGuardianAid(
       fixture.guardian, { target: fixture.target, source: fixture.source, amount: 1 }
     ),
-    false,
-    "所有手牌都关键且伤害收益低时仍应保留额度与手牌"
+    true,
+    "敌方已兑现突袭不重复计未来库存时，弃关键防御牌护援本次确定伤害仍为正"
   );
 });
 
@@ -18911,9 +18998,12 @@ test("AI·灵医：多目标滋荣按真实价值自然入 beam 不产生 crowdi
     `multi-target symbiosis must not crowd the beam (${inTop10} of 3 inside top-10)`
   );
   const rankOf = (target) => symRanks.find((entry) => entry.target === target).rank;
+  // 本夹具中 hp2 的 allyA 不在敌方攻击范围内（exposure=0），其治疗价值与 hp3 的
+  // allyB 基本持平；断言只锁定“临界 hp1 必须排在最前”这一真实价值序，
+  // 避免依赖浮点末位差异的稳定排序。
   assert.ok(
-    rankOf("crowd-medic") < rankOf("crowd-allyA") && rankOf("crowd-allyA") < rankOf("crowd-allyB"),
-    "heal target ranking must follow real state value (critical > ordinary > near-full)");
+    rankOf("crowd-medic") < rankOf("crowd-allyA") && rankOf("crowd-medic") < rankOf("crowd-allyB"),
+    "critical heal must rank before ordinary/near-full heals");
 });
 
 test("AI·灵医：概率滋荣的摸牌与回春次数消耗共享同一权重", () => {
@@ -33011,7 +33101,9 @@ test("AI·价值归属：格挡避免伤害作为独立响应价值归属防守�
   // 不是通过 assault inventory exposure removal 间接获得：threat 移除是另一条记账
   const ledger = evaluator.ownerStateLedger(state, after, "a");
   const defender = ledger.owners.find((o) => o.playerId === "a");
-  assert.equal(defender.threat.currentThreat, 5);
+  // c 可同时攻击 a 与 d 两个黎明目标，同一张突袭的威胁按可到达目标分摊（5/2）。
+  assert.equal(defender.threat.currentThreat, 2.5);
+  assert.equal(defender.threat.futureInventory, 0);
   assert.equal(defender.generic.handCount, -1.1);
 });
 
@@ -33082,11 +33174,12 @@ test("AI·价值归属：当前威胁与未来攻击库存可分别变化", () =
   const viewer = ledgerPlayer("a", 0, "dawn", "oath-warden");
   const withInventory = ledgerState([
     viewer,
-    ledgerPlayer("c", 1, "dusk", "blade-walker", { expectedAssaultCount: 1, assaultResponseProbability: 1 })
+    ledgerPlayer("c", 1, "dusk", "blade-walker", { expectedAssaultCount: 2, assaultResponseProbability: 1 })
   ]);
   const comps1 = evaluator.exposureComponents(withInventory, withInventory.players[0]);
   assert.ok(comps1.currentThreat > 0, "已形成威胁应 > 0");
-  assert.ok(comps1.futureInventory > 0, "未来库存应 > 0");
+  // 第一张突袭已按当前响应威胁计满，未来库存只计超出响应保留的第二张。
+  assert.ok(comps1.futureInventory > 0, "超出响应保留的库存应 > 0");
   const energyOnly = ledgerState([
     ledgerPlayer("a2", 0, "dawn", "oath-warden"),
     ledgerPlayer("c2", 1, "dusk", "blade-walker", { energy: 2 })
@@ -33147,7 +33240,11 @@ test("AI·价值归属：同一 owner ledger 从队友/敌方视角投影符号�
 test("AI·价值归属：residual 只在前沿计入且不随路径深度重复累计", () => {
   const { game } = makeLedgerGame();
   const evaluator = game.aiController.evaluator;
-  const state = ledgerBlkState();
+  // 敌人持有两张突袭：一张作为响应保留，另一张形成可兑现的未来库存。
+  const state = ledgerState([
+    ledgerPlayer("a", 0, "dawn", "oath-warden"),
+    ledgerHand(ledgerPlayer("c", 1, "dusk", "blade-walker"), ["assault", "assault"])
+  ]);
   // 同一状态不同到达路径得到同一 residual（路径无关）
   const r1 = evaluator.frontierResidual(state, "a");
   const r2 = evaluator.frontierResidual(structuredClone(state), "a");
@@ -33363,6 +33460,129 @@ test("AI·价值归属：突袭三世界守恒——消费成本在 B-A、兑现
   // C-B 只含 realized outcome（敌方 HP 下降）
   const hpBC = ledgerBC.owners.find((o) => o.playerId === "a").material.hp;
   assert.equal(hpBC, -5);
+});
+
+test("AI·价值归属：确定命中的非击杀突袭不得让敌方净 State Value 上升", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  // 报告的最小场景：actor 3HP 单突袭，enemy 4HP，无格挡/护盾/护援，assault 确定命中。
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "oath-warden", { hp: 3, maxHp: 4 }), ["assault"]),
+    ledgerPlayer("e", 1, "dusk", "blade-walker", { hp: 4, maxHp: 4 })
+  ]);
+  const action = ledgerAction(state, "a", "assault", "e");
+  const after = new Simulator(state).apply(state, action, "a");
+  const owner = evaluator.ownerStateLedger(state, after, "a")
+    .owners.find((entry) => entry.playerId === "e");
+  // 修正前账本：hp -5 + currentThreat relief +5 + futureInventory relief +2.5 = +2.5（净改善）。
+  // 修正后：同一张牌只按响应威胁计一次，futureInventory 为 0，敌方净变化为 0。
+  assert.equal(owner.material.hp, -5);
+  assert.equal(owner.threat.currentThreat, 5);
+  assert.equal(owner.threat.futureInventory, 0);
+  assert.equal(owner.total, 0);
+});
+
+test("AI·价值归属：单突袭 4HP 的正式最终值由修正后真实 accounting 决定", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "oath-warden", { hp: 3, maxHp: 4 }), ["assault"]),
+    ledgerPlayer("e", 1, "dusk", "blade-walker", { hp: 4, maxHp: 4 })
+  ]);
+  const action = ledgerAction(state, "a", "assault", "e");
+  const after = new Simulator(state).apply(state, action, "a");
+  const projected = evaluator.projectOwnerLedger(
+    evaluator.ownerStateLedger(state, after, "a"), "a"
+  );
+  const stateDelta = evaluator.stateUtility(after, "a") - evaluator.stateUtility(state, "a");
+  // 正式最终值关系必须由真实 accounting 决定：owner 投影恒等于 stateUtility delta，
+  // 最终 transition = stateDelta × STATE_DELTA_SCALE，不按动作类型硬断言选择。
+  assertClose(projected.total, stateDelta);
+  assertClose(projected.total, -0.1);
+  const finalValue = stateDelta * STATE_DELTA_SCALE;
+  assertClose(
+    game.aiController.planner.candidateMaterializer.transitionValue.composeCandidateValue({
+      baseTransition: finalValue,
+      responseNet: 0,
+      frontierValue: 0,
+      sealTimingPenalty: 0,
+      exposeMarginal: 0,
+      assaultStacksCredit: 0
+    }),
+    finalValue
+  );
+});
+
+test("AI·价值归属：突袭击杀/2HP 危险/确定格挡场景在修正后不回归", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const run = (enemyOverrides) => {
+    const state = ledgerState([
+      ledgerHand(ledgerPlayer("a", 0, "dawn", "oath-warden", { hp: 3, maxHp: 4 }), ["assault"]),
+      ledgerPlayer("e", 1, "dusk", "blade-walker", { hp: 4, maxHp: 4, ...enemyOverrides })
+    ]);
+    const action = ledgerAction(state, "a", "assault", "e");
+    const after = new Simulator(state).apply(state, action, "a");
+    const ledger = evaluator.ownerStateLedger(state, after, "a");
+    return {
+      after,
+      enemyOwner: ledger.owners.find((entry) => entry.playerId === "e"),
+      projected: evaluator.projectOwnerLedger(ledger, "a")
+    };
+  };
+  // 1HP 击杀：敌方死亡，owner 总值为大幅负值，viewer 投影为正。
+  const kill = run({ hp: 1 });
+  assert.ok(!kill.after.players.find((player) => player.id === "e").alive);
+  assert.ok(kill.enemyOwner.total < 0 && kill.projected.total > 0,
+    `击杀应大幅改善 viewer（实际 enemy=${kill.enemyOwner.total} projected=${kill.projected.total}）`);
+  // 2HP danger：伤害把敌方压到 1HP，danger 项使敌方净值为负。
+  const danger = run({ hp: 2 });
+  assert.ok(danger.enemyOwner.total < 0 && danger.projected.total > 0,
+    `2HP danger 不应让敌方净改善（实际 ${danger.enemyOwner.total}）`);
+  // 确定格挡：敌方不受伤，只有已兑现突袭的威胁 relief；打被格挡的突袭是净损失。
+  const blocked = run({
+    hp: 4,
+    hand: [ledgerCard("e-block", "block")],
+    handCount: 1,
+    blockCountDistribution: [{ probability: 1, conditions: {}, blockCount: 1 }],
+    blockProbability: 1,
+    twoBlockProbability: 0
+  });
+  assert.equal(blocked.after.players.find((player) => player.id === "e").hp, 4);
+  assert.equal(blocked.enemyOwner.threat.currentThreat, 5);
+  assert.ok(blocked.projected.total < 0,
+    `突袭被确定格挡时 viewer 应为负（实际 ${blocked.projected.total}）`);
+});
+
+test("AI·价值归属：多敌人时同一突袭库存分摊而不逐目标重复全额", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerState([
+    ledgerHand(ledgerPlayer("a", 0, "dawn", "oath-warden", { hp: 3, maxHp: 4 }), ["assault"]),
+    ledgerPlayer("e1", 1, "dusk", "blade-walker", { hp: 4, maxHp: 4 }),
+    ledgerPlayer("e2", 2, "dusk", "blade-walker", { hp: 4, maxHp: 4 })
+  ]);
+  // a 位于座位 0，e1/e2 均在攻击范围内：同一张突袭只能对其中一个目标兑现，
+  // exposure 必须按可到达目标分摊（每目标 2.5），而不是各自计全额 5。
+  const comps1 = evaluator.exposureComponents(state, state.players[1]);
+  const comps2 = evaluator.exposureComponents(state, state.players[2]);
+  assertClose(comps1.currentThreat, 2.5);
+  assertClose(comps2.currentThreat, 2.5);
+  assert.equal(comps1.futureInventory, 0);
+  assertClose(comps1.currentThreat + comps2.currentThreat, 5);
+  const action = ledgerAction(state, "a", "assault", "e1");
+  const after = new Simulator(state).apply(state, action, "a");
+  const ledger = evaluator.ownerStateLedger(state, after, "a");
+  const e1 = ledger.owners.find((entry) => entry.playerId === "e1");
+  const e2 = ledger.owners.find((entry) => entry.playerId === "e2");
+  // 被命中目标：hp -5 + 分摊 relief 2.5 = -2.5；未命中目标只获得分摊 relief 2.5。
+  assertClose(e1.threat.currentThreat, 2.5);
+  assertClose(e2.threat.currentThreat, 2.5);
+  assertClose(e1.total, -2.5);
+  assertClose(e2.total, 2.5);
+  const projected = evaluator.projectOwnerLedger(ledger, "a");
+  assertClose(projected.enemy, 0);
+  assertClose(projected.total, -0.1);
 });
 
 test("AI·价值归属：静态卡牌分已移出最终真实价值，仅作 beam 排序先验", () => {

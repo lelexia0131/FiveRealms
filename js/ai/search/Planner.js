@@ -322,7 +322,8 @@ export class Planner {
         const fallback = this.candidateMaterializer.terminalFallback(
           terminalState,
           player.id,
-          rootSummary.endFallbackBase
+          rootSummary.endFallbackBase,
+          visibleState
         );
         if (!choice || fallback.valueScore > choice.valueScore) {
           choice = {

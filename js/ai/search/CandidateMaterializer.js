@@ -210,7 +210,7 @@ export class CandidateMaterializer {
       simulator,
       searchBudget
     });
-    const baseTransition = this.transitionValue.evaluateBase({
+    const baseTerms = this.transitionValue.evaluateBase({
       action,
       player,
       beforeState,
@@ -223,7 +223,8 @@ export class CandidateMaterializer {
         player.id,
         simulator
       )
-    }).baseTransition;
+    });
+    const baseTransition = baseTerms.baseTransition;
     const candidateLedger = collectDiagnostics
       ? this.valueLedger.computeCandidateLedger(
           beforeState,
@@ -247,6 +248,7 @@ export class CandidateMaterializer {
       action,
       state:afterState,
       terminal,
+      baseTerms,
       baseTransition,
       exposeMarginal:terms.exposeMarginal,
       assaultStacksCredit:terms.assaultStacksCredit,
@@ -435,7 +437,7 @@ export class CandidateMaterializer {
   Planner 最终选择。
 
   输入
-  终止后的状态、观察者 ID 与同层结束回退基值。
+  终止后的状态、观察者 ID、同层结束回退基值与可选的终止前状态。
 
   输出
   前沿残值与最终 valueScore。
@@ -447,19 +449,30 @@ export class CandidateMaterializer {
   无。
 
   调用函数
-  FrontierValue、TransitionValue.composeCandidateValue。
+  FrontierValue、TransitionValue.composeCandidateValue/evaluateBase。
 
   边界与不变量
-  不重新计算基础转移或领域边际，保留原回退路径的一次最终组合。
+  不重新计算领域边际；end 自身状态变化由终止前状态经 evaluateBase 一次性计入，
+  与机会成本共同组成最终 base，保留原回退路径的一次最终组合。
   */
-  terminalFallback(afterState, viewerId, endFallbackBase) {
+  terminalFallback(afterState, viewerId, endFallbackBase, beforeState = null) {
     const terminal = Boolean(afterState.playPhaseEnded);
     const frontierResidual = terminal
       ? this.frontierValue.frontierResidual(afterState, viewerId)
       : null;
     const frontierValue = this.frontierValue.finalValue(frontierResidual, terminal);
+    // end 自身状态变化（例如手牌上限弃牌）与放弃正收益 sibling 的机会成本共同构成最终 base。
+    const ownBase = beforeState
+      ? this.transitionValue.evaluateBase({
+          action:{ type:"end" },
+          player:{ id:viewerId },
+          beforeState,
+          afterState,
+          depth:1
+        }).baseTransition
+      : 0;
     const valueScore = this.transitionValue.composeCandidateValue({
-      baseTransition:endFallbackBase,
+      baseTransition:endFallbackBase + ownBase,
       responseNet:0,
       frontierValue,
       sealTimingPenalty:0,

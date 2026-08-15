@@ -17,10 +17,10 @@ domain/SealModel、value/ThreatValue、DistanceSystem 与卡牌配置。
 架构约束
 返回值只用于 SEARCH_PRIOR；不得进入 State Value、TransitionValue 或 sibling timing。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-ai-residue-cleanup-final";
-import { hasSeal, sealOutcomeProbabilities } from "../domain/SealModel.js?build=20260815-ai-residue-cleanup-final";
-import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260815-ai-residue-cleanup-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-threat-exposure-fix-final";
+import { hasSeal, sealOutcomeProbabilities } from "../domain/SealModel.js?build=20260815-threat-exposure-fix-final";
+import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260815-threat-exposure-fix-final";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;

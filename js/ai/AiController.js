@@ -17,34 +17,34 @@ Game、ResponseSystem、PublicCardPool、角色技能与测试。
 架构约束
 子组件不得回指 AIController；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
 */
-import { createInitialSearchState } from "./state/StateContracts.js?build=20260815-ai-residue-cleanup-final";
-import { Knowledge } from "./state/Knowledge.js?build=20260815-ai-residue-cleanup-final";
-import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260815-ai-residue-cleanup-final";
-import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260815-ai-residue-cleanup-final";
-import { ActionGenerator } from "./search/ActionGenerator.js?build=20260815-ai-residue-cleanup-final";
-import { ValueService } from "./value/ValueService.js?build=20260815-ai-residue-cleanup-final";
-import { StateValue } from "./value/StateValue.js?build=20260815-ai-residue-cleanup-final";
-import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260815-ai-residue-cleanup-final";
-import { Simulator } from "./simulation/Simulator.js?build=20260815-ai-residue-cleanup-final";
-import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260815-ai-residue-cleanup-final";
-import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260815-ai-residue-cleanup-final";
-import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260815-ai-residue-cleanup-final";
-import { Planner } from "./search/Planner.js?build=20260815-ai-residue-cleanup-final";
-import { SearchBudget } from "./search/SearchBudget.js?build=20260815-ai-residue-cleanup-final";
-import { SearchPolicy } from "./search/SearchPolicy.js?build=20260815-ai-residue-cleanup-final";
-import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260815-ai-residue-cleanup-final";
-import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260815-ai-residue-cleanup-final";
-import { FrontierValue } from "./search/FrontierValue.js?build=20260815-ai-residue-cleanup-final";
-import { SearchPrior } from "./search/SearchPrior.js?build=20260815-ai-residue-cleanup-final";
-import { TransitionValue } from "./search/TransitionValue.js?build=20260815-ai-residue-cleanup-final";
-import { Evaluator } from "./value/Evaluator.js?build=20260815-ai-residue-cleanup-final";
-import { ValueLedger } from "./value/ValueLedger.js?build=20260815-ai-residue-cleanup-final";
-import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260815-ai-residue-cleanup-final";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260815-ai-residue-cleanup-final";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260815-ai-residue-cleanup-final";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260815-ai-residue-cleanup-final";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260815-ai-residue-cleanup-final";
-import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260815-ai-residue-cleanup-final";
+import { createInitialSearchState } from "./state/StateContracts.js?build=20260815-threat-exposure-fix-final";
+import { Knowledge } from "./state/Knowledge.js?build=20260815-threat-exposure-fix-final";
+import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260815-threat-exposure-fix-final";
+import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260815-threat-exposure-fix-final";
+import { ActionGenerator } from "./search/ActionGenerator.js?build=20260815-threat-exposure-fix-final";
+import { ValueService } from "./value/ValueService.js?build=20260815-threat-exposure-fix-final";
+import { StateValue } from "./value/StateValue.js?build=20260815-threat-exposure-fix-final";
+import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260815-threat-exposure-fix-final";
+import { Simulator } from "./simulation/Simulator.js?build=20260815-threat-exposure-fix-final";
+import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260815-threat-exposure-fix-final";
+import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260815-threat-exposure-fix-final";
+import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260815-threat-exposure-fix-final";
+import { Planner } from "./search/Planner.js?build=20260815-threat-exposure-fix-final";
+import { SearchBudget } from "./search/SearchBudget.js?build=20260815-threat-exposure-fix-final";
+import { SearchPolicy } from "./search/SearchPolicy.js?build=20260815-threat-exposure-fix-final";
+import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260815-threat-exposure-fix-final";
+import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260815-threat-exposure-fix-final";
+import { FrontierValue } from "./search/FrontierValue.js?build=20260815-threat-exposure-fix-final";
+import { SearchPrior } from "./search/SearchPrior.js?build=20260815-threat-exposure-fix-final";
+import { TransitionValue } from "./search/TransitionValue.js?build=20260815-threat-exposure-fix-final";
+import { Evaluator } from "./value/Evaluator.js?build=20260815-threat-exposure-fix-final";
+import { ValueLedger } from "./value/ValueLedger.js?build=20260815-threat-exposure-fix-final";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260815-threat-exposure-fix-final";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260815-threat-exposure-fix-final";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260815-threat-exposure-fix-final";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260815-threat-exposure-fix-final";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260815-threat-exposure-fix-final";
+import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260815-threat-exposure-fix-final";
 
 export class AIController {
   /*
@@ -132,14 +132,14 @@ export class AIController {
     const actionGenerator = this.actionGenerator;
     const knowledge = this.knowledge;
     this.searchPolicy = new SearchPolicy({
-      random:() => game.random(),
-      getRandomnessRange:() => game.aiRandomnessRange
+      random: () => game.random(),
+      getRandomnessRange: () => game.aiRandomnessRange
     });
     this.counterfactualTerms = new CounterfactualTerms({
-      evaluator:this.evaluator,
-      generateFromVisible:(...args) => actionGenerator.generateFromVisible(...args),
-      sampleHiddenWorlds:(...args) => knowledge.sampleHiddenWorlds(...args),
-      hiddenSampleCount:this.searchPolicy.structure().hiddenSamples
+      evaluator: this.evaluator,
+      generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
+      sampleHiddenWorlds: (...args) => knowledge.sampleHiddenWorlds(...args),
+      hiddenSampleCount: this.searchPolicy.structure().hiddenSamples
     });
     this.siblingTransitionTerms = new SiblingTransitionTerms();
     this.candidateMaterializer = new CandidateMaterializer({
@@ -147,18 +147,18 @@ export class AIController {
       valueLedger: this.valueLedger,
       frontierValue: this.frontierValue,
       searchPrior: this.searchPrior,
-      counterfactualTerms:this.counterfactualTerms,
-      siblingTerms:this.siblingTransitionTerms,
-      actionDescriptor:ActionDescriptor,
-      getResolutionScale:tacticResolutionScale
+      counterfactualTerms: this.counterfactualTerms,
+      siblingTerms: this.siblingTransitionTerms,
+      actionDescriptor: ActionDescriptor,
+      getResolutionScale: tacticResolutionScale
     });
     this.planner = new Planner({
-      candidateMaterializer:this.candidateMaterializer,
-      searchPolicy:this.searchPolicy,
-      simulatorFactory:(state) => new Simulator(state),
-      searchBudgetFactory:() => new SearchBudget({
-        timeBudget:game.aiSearchBudgetOverrideMs,
-        nodeBudget:game.aiSearchNodeBudgetOverride
+      candidateMaterializer: this.candidateMaterializer,
+      searchPolicy: this.searchPolicy,
+      simulatorFactory: (state) => new Simulator(state),
+      searchBudgetFactory: () => new SearchBudget({
+        timeBudget: game.aiSearchBudgetOverrideMs,
+        nodeBudget: game.aiSearchNodeBudgetOverride
       }),
       generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
       yieldControl: async (gameId) => (
@@ -229,7 +229,7 @@ export class AIController {
 
   /*
   功能
-  将搜索树动作描述重新绑定到当前真实合法动作。
+  将搜索计划中的动作描述重新绑定到当前真实局面的 AI 候选动作。
 
   调用方
   Game 复用计划序列时。
@@ -241,7 +241,7 @@ export class AIController {
   匹配的当前动作；状态变化导致不匹配时返回 null。
 
   读取状态
-  当前合法动作集合。
+  当前通过规则校验并经 AI 候选策略过滤的动作集合。
 
   写入状态
   无。
