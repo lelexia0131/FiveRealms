@@ -7,6 +7,7 @@
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
 最新校验日期：2026-08-15
 范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；下方 Current Architecture Snapshot 与第 32 节描述当前架构，第 2 至 31 节保留阶段审计、迁移设计和落地证据。
+仓库级三层目标架构以 `FR_ARCHITECTURE.md` 为唯一 authority；本文件只拥有 AI 内部架构与历史证据。
 
 ## 1. 文档职责
 

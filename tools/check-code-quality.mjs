@@ -29,6 +29,13 @@ const STATE_AI_PATTERN = /^js\/ai\/state\//i;
 const VALUE_AI_PATTERN = /^js\/ai\/value\//i;
 const POLICY_AI_PATTERN = /^js\/ai\/policy\//i;
 const DOMAIN_AI_PATTERN = /^js\/ai\/domain\//i;
+const FUTURE_DOMAIN_PATTERN = /^js\/domain\//i;
+const FUTURE_APPLICATION_PATTERN = /^js\/application\//i;
+const FUTURE_ADAPTERS_PATTERN = /^js\/adapters\//i;
+const DOMAIN_TRANSITIONS_PATTERN = /^js\/domain\/state\/transitions\//i;
+const LEGACY_UTILS_PATTERN = /^js\/utils(?:\/|$)/i;
+const FORBIDDEN_ROOT_BUCKET_PATTERN = /^js\/(?:common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
+const FUTURE_LAYER_BUCKET_PATTERN = /^js\/(?:domain|application|adapters)\/(?:.*\/)?(?:utils|common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
 const TRANSITION_VALUE_PATTERN = /^js\/ai\/search\/TransitionValue\.js$/i;
 const SEARCH_PLANNER_PATTERN = /^js\/ai\/search\/Planner\.js$/i;
 const SEARCH_PRIOR_PATTERN = /^js\/ai\/search\/SearchPrior\.js$/i;
@@ -757,7 +764,141 @@ function functionWasChanged(fn, changed, lines) {
 
 /*
 功能
-对单份源码执行 Function Header 和首版 Architecture Guard。
+返回源码中某绝对偏移对应的首行号。
+
+调用方
+targetArchitectureErrors。
+
+输入
+源码与零基字符偏移。
+
+输出
+一基行号。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+String.slice、String.split。
+
+边界与不变量
+偏移按掩码后与源等长文本传入，不得截断换行。
+*/
+function sourceLineAt(source, offset) {
+  return source.slice(0, Math.max(0, offset)).split(/\r?\n/).length;
+}
+
+/*
+功能
+执行 FR-ARCH 冻结三层架构的 migration-aware import 与语法 guard。
+
+调用方
+inspectSource。
+
+输入
+仓库路径、注释掩码源码、非代码掩码源码与原始源码。
+
+输出
+结构化错误数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+sourceLineAt、RegExp.match。
+
+边界与不变量
+只对未来 domain/application/adapters 目录启用；当前 js/utils 作为历史 baseline 不判失败；未来新兜底目录立即拒绝。
+*/
+function targetArchitectureErrors(file, importSource, maskedSource, source) {
+  const errors = [];
+  const pushImportError = (match, message) => {
+    if (!match) return;
+    errors.push({
+      file,
+      functionName: "<architecture>",
+      line: sourceLineAt(source, match.index),
+      missing: [message]
+    });
+  };
+  const pushPatternError = (match, message) => {
+    if (!match) return;
+    errors.push({
+      file,
+      functionName: "<architecture>",
+      line: sourceLineAt(source, match.index),
+      missing: [message]
+    });
+  };
+
+  if (FUTURE_DOMAIN_PATTERN.test(file)) {
+    pushImportError(
+      importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:\/application\/|\/adapters\/|\/ui\/|\/audio\/|\/ai\/|\/core\/Game\.js|UIManager\.js|SoundManager\.js)[^"']*(?:\?[^"']*)?["']/i),
+      "架构约束：domain 禁止依赖 application/adapters/ui/audio/ai/Game/UIManager/SoundManager"
+    );
+    pushPatternError(
+      maskedSource.match(/\bthis\.game\b/),
+      "架构约束：domain 禁止 Game 实例回指"
+    );
+    pushPatternError(
+      maskedSource.match(/Array\.isArray\(\s*(?:player\.)?statuses\s*\)/),
+      "架构约束：domain 禁止 Real Player/SearchState statuses 双 schema 兼容分支"
+    );
+  }
+
+  if (FUTURE_APPLICATION_PATTERN.test(file)) {
+    pushImportError(
+      importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:\/adapters\/|\/ui\/|\/audio\/|\/ai\/|UIManager\.js|SoundManager\.js|AiController\.js|AIController\.js)[^"']*(?:\?[^"']*)?["']/i),
+      "架构约束：application 禁止 concrete UI/Audio/AI adapter import，外部能力必须走 Port"
+    );
+  }
+
+  if (FUTURE_ADAPTERS_PATTERN.test(file)) {
+    const currentAdapter = file.split("/")[2] ?? null;
+    const importPattern = /(?:from\s*|import\s*\()\s*["']([^"']+)["']/gi;
+    for (const match of importSource.matchAll(importPattern)) {
+      const specifier = match[1].split("?")[0];
+      const crossImport = specifier.match(/(?:^|\/)\.\.\/(ai|ui|audio|diagnostics)\//i);
+      if (crossImport && currentAdapter && crossImport[1].toLowerCase() !== currentAdapter.toLowerCase()) {
+        pushImportError(match, "架构约束：adapters 禁止跨 concrete adapter 直接耦合");
+        break;
+      }
+    }
+  }
+
+  if (DOMAIN_TRANSITIONS_PATTERN.test(file)) {
+    pushImportError(
+      importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:cards\/cardRegistry\.js|generals\/skillRegistry\.js|core\/(?:ResponseSystem|DyingSystem|JudgmentSystem)\.js)(?:\?[^"']*)?["']/i),
+      "架构约束：state/transitions 禁止依赖 cardRegistry/skillRegistry/ResponseSystem/DyingSystem/JudgmentSystem"
+    );
+    pushPatternError(
+      maskedSource.match(/\b(?:definitionId|cardId|skillId)\s*===/),
+      "架构约束：state/transitions 禁止 cardId/skillId-specific 规则分支"
+    );
+  }
+
+  if (
+    (!LEGACY_UTILS_PATTERN.test(file) && FORBIDDEN_ROOT_BUCKET_PATTERN.test(file))
+    || FUTURE_LAYER_BUCKET_PATTERN.test(file)
+  ) {
+    pushPatternError(
+      maskedSource.match(/./s),
+      "架构约束：禁止新增 utils/common/helpers/misc/shared/legacy/compat 兜底目录"
+    );
+  }
+
+  return errors;
+}
+
+/*
+功能
+对单份源码执行 Function Header 与 FR-ARCH 分层 Architecture Guard。
 
 调用方
 inspectFile、runSelfTest。
@@ -775,15 +916,16 @@ inspectFile、runSelfTest。
 无。
 
 调用函数
-findFunctions、missingHeaderFields、missingModuleFields、maskComments。
+findFunctions、missingHeaderFields、missingModuleFields、maskComments、targetArchitectureErrors。
 
 边界与不变量
-Guard 只使用路径、import 和明确回指语法；AI 内部回指扫描覆盖完整文件，其余函数头仍按变更范围执行。
+Guard 只使用路径、import 和明确回指语法；新三层规则仅对未来 domain/application/adapters 目录启用；AI 内部回指扫描覆盖完整文件，其余函数头仍按变更范围执行。
 */
 function inspectSource(file, source, changed) {
   const lines = source.split(/\r?\n/);
   const importSource = maskComments(source);
-  const maskedLines = maskNonCode(source).split(/\r?\n/);
+  const maskedSource = maskNonCode(source);
+  const maskedLines = maskedSource.split(/\r?\n/);
   const errors = [];
   for (const fn of findFunctions(source)) {
     if (!functionWasChanged(fn, changed, lines)) continue;
@@ -817,6 +959,8 @@ function inspectSource(file, source, changed) {
       missing:["架构约束：AI 根目录只允许 composition root AiController.js"],
     });
   }
+
+  errors.push(...targetArchitectureErrors(file, importSource, maskedSource, source));
 
   const removedCompatibilityPattern = new RegExp(
     `(?:from\\s*|import\\s*\\()\\s*["'][^"']*(?:${REMOVED_COMPATIBILITY_NAMES.join("|")})\\.js(?:\\?[^"']*)?["']`,
@@ -1073,7 +1217,7 @@ main 的 --self-test 模式。
 inspectSource。
 
 边界与不变量
-夹具必须覆盖头格式、注释遮罩、分层 purity、TransitionValue、Planner 与 SearchPrior 边界。
+夹具必须覆盖头格式、注释遮罩、分层 purity、未来 domain/application/adapter/transition/garbage/dual-schema 边界、TransitionValue、Planner 与 SearchPrior 边界。
 */
 function runSelfTest() {
   const pass = `/*
@@ -1367,6 +1511,131 @@ function identity(value) { return value; }`;
   if (simulationCommentErrors.some((error) => error.missing.some((item) => item.includes("final value composition")))) {
     throw new Error("simulation guard incorrectly scanned comment text");
   }
+  const validDomainTargetErrors = inspectSource(
+    "js/domain/rules/distance/GoodDistance.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (validDomainTargetErrors.length) {
+    throw new Error(`valid future domain fixture failed: ${JSON.stringify(validDomainTargetErrors)}`);
+  }
+  const domainApplicationImportErrors = inspectSource(
+    "js/domain/rules/BadApplicationDomain.js",
+    `${moduleHeader}\nimport { ChoicePort } from "../../application/ports/ChoicePort.js";\n${pass}`,
+    null,
+  );
+  if (!domainApplicationImportErrors.some((error) => error.missing.some((item) => item.includes("domain 禁止依赖")))) {
+    throw new Error("future domain fixture did not detect application import");
+  }
+  const domainUiImportErrors = inspectSource(
+    "js/domain/rules/BadUiDomain.js",
+    `${moduleHeader}\nimport { UIManager } from "../../ui/UIManager.js";\n${pass}`,
+    null,
+  );
+  if (!domainUiImportErrors.some((error) => error.missing.some((item) => item.includes("domain 禁止依赖")))) {
+    throw new Error("future domain fixture did not detect legacy UI import");
+  }
+  const domainGameBackreferenceErrors = inspectSource(
+    "js/domain/rules/BadGameDomain.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return this.game;")}`,
+    null,
+  );
+  if (!domainGameBackreferenceErrors.some((error) => error.missing.some((item) => item.includes("Game 实例回指")))) {
+    throw new Error("future domain fixture did not detect Game instance backreference");
+  }
+  const domainDualSchemaErrors = inspectSource(
+    "js/domain/rules/BadDualSchemaDomain.js",
+    `${moduleHeader}\n${pass.replace("return value;", "if (Array.isArray(player.statuses)) return value;")}`,
+    null,
+  );
+  if (!domainDualSchemaErrors.some((error) => error.missing.some((item) => item.includes("statuses 双 schema")))) {
+    throw new Error("future domain fixture did not detect dual-schema statuses branch");
+  }
+
+  const validApplicationTargetErrors = inspectSource(
+    "js/application/action/GoodAction.js",
+    `${moduleHeader}\nimport { DamageRule } from "../../domain/rules/combat/DamageRule.js";\n${pass}`,
+    null,
+  );
+  if (validApplicationTargetErrors.length) {
+    throw new Error(`valid future application fixture failed: ${JSON.stringify(validApplicationTargetErrors)}`);
+  }
+  const applicationConcreteUiErrors = inspectSource(
+    "js/application/action/BadUiApplication.js",
+    `${moduleHeader}\nimport { UIManager } from "../../ui/UIManager.js";\n${pass}`,
+    null,
+  );
+  if (!applicationConcreteUiErrors.some((error) => error.missing.some((item) => item.includes("concrete UI/Audio/AI")))) {
+    throw new Error("future application fixture did not detect concrete UI import");
+  }
+  const applicationConcreteAiErrors = inspectSource(
+    "js/application/action/BadAiApplication.js",
+    `${moduleHeader}\nimport { AIController } from "../../ai/AiController.js";\n${pass}`,
+    null,
+  );
+  if (!applicationConcreteAiErrors.some((error) => error.missing.some((item) => item.includes("concrete UI/Audio/AI")))) {
+    throw new Error("future application fixture did not detect concrete AI import");
+  }
+
+  const validAdapterTargetErrors = inspectSource(
+    "js/adapters/ui/GoodUiAdapter.js",
+    `${moduleHeader}\nimport { PlayCard } from "../../application/action/PlayCard.js";\nimport { CardState } from "../../domain/state/model/CardState.js";\n${pass}`,
+    null,
+  );
+  if (validAdapterTargetErrors.length) {
+    throw new Error(`valid future adapter fixture failed: ${JSON.stringify(validAdapterTargetErrors)}`);
+  }
+  const adapterCrossCouplingErrors = inspectSource(
+    "js/adapters/ui/BadCrossAdapter.js",
+    `${moduleHeader}\nimport { SoundManager } from "../audio/SoundManager.js";\n${pass}`,
+    null,
+  );
+  if (!adapterCrossCouplingErrors.some((error) => error.missing.some((item) => item.includes("跨 concrete adapter")))) {
+    throw new Error("future adapter fixture did not detect cross-adapter concrete coupling");
+  }
+
+  const validTransitionTargetErrors = inspectSource(
+    "js/domain/state/transitions/GoodTransition.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (validTransitionTargetErrors.length) {
+    throw new Error(`valid future transition fixture failed: ${JSON.stringify(validTransitionTargetErrors)}`);
+  }
+  const transitionRegistryImportErrors = inspectSource(
+    "js/domain/state/transitions/BadTransition.js",
+    `${moduleHeader}\nimport { resolveCardEffect } from "../../../cards/cardRegistry.js";\n${pass}`,
+    null,
+  );
+  if (!transitionRegistryImportErrors.some((error) => error.missing.some((item) => item.includes("transitions 禁止依赖")))) {
+    throw new Error("future transition fixture did not detect cardRegistry import");
+  }
+  const transitionSpecificRuleErrors = inspectSource(
+    "js/domain/state/transitions/BadSpecificTransition.js",
+    `${moduleHeader}\n${pass.replace("return value;", "if (definitionId === \"assault\") return value;")}`,
+    null,
+  );
+  if (!transitionSpecificRuleErrors.some((error) => error.missing.some((item) => item.includes("cardId/skillId-specific")))) {
+    throw new Error("future transition fixture did not detect cardId-specific rule branch");
+  }
+
+  const garbageRootErrors = inspectSource(
+    "js/common/GodBucket.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (!garbageRootErrors.some((error) => error.missing.some((item) => item.includes("兜底目录")))) {
+    throw new Error("garbage-bucket fixture did not detect future root bucket directory");
+  }
+  const garbageLayerErrors = inspectSource(
+    "js/domain/shared/GodBucket.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (!garbageLayerErrors.some((error) => error.missing.some((item) => item.includes("兜底目录")))) {
+    throw new Error("garbage-bucket fixture did not detect future layer bucket directory");
+  }
+
   const compatibilityErrors = inspectSource(
     "js/ai/search/BadCompatibility.js",
     `${moduleHeader}\nimport { AiSimulator } from "../AiSimulator.js";\n${pass}`,
@@ -1383,7 +1652,7 @@ function identity(value) { return value; }`;
   if (!rootLayoutErrors.some((error) => error.missing.some((item) => item.includes("AI 根目录")))) {
     throw new Error("root layout fixture did not detect non-allowlisted root file");
   }
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, Simulation/Search boundaries, compatibility removal, and root layout\n");
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/adapter/transition/garbage/dual-schema guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
 }
 
 /*

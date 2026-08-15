@@ -1,0 +1,323 @@
+{
+  "contract": "FR-ARCH-1 current ~900ms search-quality baseline",
+  "capturedAt": "2026-08-15T00:00:00.000Z",
+  "method": "fixed-state / fixed-seed 0x5eed / production makeGame + runAiDecision / aiSearchBudgetOverrideMs=900 / aiRandomnessRange=0",
+  "note": "elapsedMs is auxiliary evidence only. Decision quality fields are the baseline.",
+  "fixtures": [
+    {
+      "name": "fr-arch-baseline-a",
+      "fixture": {
+        "seed": 24301,
+        "actorId": "fr-a-actor",
+        "players": [
+          {
+            "id": "fr-a-actor",
+            "team": "dawn",
+            "general": "blade-walker",
+            "hp": 4,
+            "energy": 0,
+            "hand": [
+              {
+                "id": "fr-a-assault",
+                "definitionId": "assault"
+              },
+              {
+                "id": "fr-a-charge",
+                "definitionId": "charge"
+              },
+              {
+                "id": "fr-a-expose",
+                "definitionId": "exposeWeakness"
+              }
+            ]
+          },
+          {
+            "id": "fr-a-target",
+            "team": "dusk",
+            "general": "oath-warden",
+            "hp": 2,
+            "energy": 0,
+            "hand": []
+          },
+          {
+            "id": "fr-a-ally",
+            "team": "dusk",
+            "general": "spirit-medic",
+            "hp": 4,
+            "energy": 0,
+            "hand": []
+          }
+        ]
+      },
+      "config": {
+        "timeBudgetMs": 900,
+        "nodeBudget": null
+      },
+      "result": {
+        "legalActionCount": 5,
+        "action": {
+          "type": "card",
+          "cardId": "charge",
+          "cardInstanceId": "fr-a-charge",
+          "targetIds": [],
+          "selection": null
+        },
+        "stats": {
+          "elapsedMs": 33.183808,
+          "expanded": 51,
+          "depth": 4,
+          "beamWidth": 10,
+          "budgetType": "time",
+          "timeBudget": 900,
+          "nodeBudget": null,
+          "stopReason": "COMPLETE",
+          "simulationCalls": 60,
+          "counterfactualCalls": 4,
+          "stateUtilityCalls": 8,
+          "yieldCount": 1,
+          "discoveredDynamicTarget": false,
+          "hiddenSamples": 10,
+          "bestSequence": [
+            {
+              "type": "card",
+              "cardId": "charge",
+              "cardInstanceId": "fr-a-charge",
+              "targetId": null,
+              "targetIds": [],
+              "selection": null
+            },
+            {
+              "type": "card",
+              "cardId": "exposeWeakness",
+              "cardInstanceId": "fr-a-expose",
+              "targetId": null,
+              "targetIds": [],
+              "selection": null
+            },
+            {
+              "type": "card",
+              "cardId": "assault",
+              "cardInstanceId": "fr-a-assault",
+              "targetId": "fr-a-ally",
+              "targetIds": [
+                "fr-a-ally"
+              ],
+              "selection": null
+            },
+            {
+              "type": "end",
+              "cardId": null,
+              "cardInstanceId": null,
+              "targetId": null,
+              "targetIds": [],
+              "selection": null
+            }
+          ],
+          "bestRemainingProvenance": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "bestValueScore": 2.5213333333333328,
+          "rootLedgers": []
+        }
+      }
+    },
+    {
+      "name": "fr-arch-baseline-b",
+      "fixture": {
+        "seed": 24301,
+        "actorId": "fr-b-actor",
+        "players": [
+          {
+            "id": "fr-b-actor",
+            "team": "dawn",
+            "general": "shade-agent",
+            "hp": 4,
+            "energy": 2,
+            "hand": [
+              {
+                "id": "fr-b-scout",
+                "definitionId": "scout"
+              },
+              {
+                "id": "fr-b-plunder",
+                "definitionId": "plunder"
+              },
+              {
+                "id": "fr-b-assault",
+                "definitionId": "assault"
+              }
+            ]
+          },
+          {
+            "id": "fr-b-target",
+            "team": "dusk",
+            "general": "blade-walker",
+            "hp": 3,
+            "energy": 0,
+            "hand": [
+              {
+                "id": "fr-b-block",
+                "definitionId": "block"
+              }
+            ]
+          },
+          {
+            "id": "fr-b-other",
+            "team": "dusk",
+            "general": "resonance-tuner",
+            "hp": 4,
+            "energy": 0,
+            "hand": []
+          }
+        ]
+      },
+      "config": {
+        "timeBudgetMs": 900,
+        "nodeBudget": null
+      },
+      "result": {
+        "legalActionCount": 6,
+        "action": {
+          "type": "end",
+          "cardId": null,
+          "cardInstanceId": null,
+          "targetIds": [],
+          "selection": null
+        },
+        "stats": {
+          "elapsedMs": 520.939082,
+          "expanded": 464,
+          "depth": 1,
+          "beamWidth": 10,
+          "budgetType": "time",
+          "timeBudget": 900,
+          "nodeBudget": null,
+          "stopReason": "COMPLETE",
+          "simulationCalls": 663,
+          "counterfactualCalls": 72,
+          "stateUtilityCalls": 144,
+          "yieldCount": 9,
+          "discoveredDynamicTarget": false,
+          "hiddenSamples": 10,
+          "bestSequence": [
+            {
+              "type": "end",
+              "cardId": null,
+              "cardInstanceId": null,
+              "targetId": null,
+              "targetIds": [],
+              "selection": null
+            }
+          ],
+          "bestRemainingProvenance": [],
+          "bestValueScore": -0.22317265625000005,
+          "rootLedgers": []
+        }
+      }
+    },
+    {
+      "name": "fr-arch-baseline-c",
+      "fixture": {
+        "seed": 24301,
+        "actorId": "fr-c-actor",
+        "players": [
+          {
+            "id": "fr-c-actor",
+            "team": "dawn",
+            "general": "blade-walker",
+            "hp": 4,
+            "energy": 0,
+            "hand": [
+              {
+                "id": "fr-c-assault",
+                "definitionId": "assault"
+              },
+              {
+                "id": "fr-c-charge",
+                "definitionId": "charge"
+              }
+            ]
+          },
+          {
+            "id": "fr-c-target",
+            "team": "dusk",
+            "general": "oath-warden",
+            "hp": 1,
+            "energy": 0,
+            "hand": []
+          }
+        ]
+      },
+      "config": {
+        "timeBudgetMs": 900,
+        "nodeBudget": null
+      },
+      "result": {
+        "legalActionCount": 3,
+        "action": {
+          "type": "card",
+          "cardId": "assault",
+          "cardInstanceId": "fr-c-assault",
+          "targetIds": [
+            "fr-c-target"
+          ],
+          "selection": null
+        },
+        "stats": {
+          "elapsedMs": 11.165908999999992,
+          "expanded": 9,
+          "depth": 3,
+          "beamWidth": 10,
+          "budgetType": "time",
+          "timeBudget": 900,
+          "nodeBudget": null,
+          "stopReason": "COMPLETE",
+          "simulationCalls": 9,
+          "counterfactualCalls": 0,
+          "stateUtilityCalls": 0,
+          "yieldCount": 0,
+          "discoveredDynamicTarget": false,
+          "hiddenSamples": 10,
+          "bestSequence": [
+            {
+              "type": "card",
+              "cardId": "assault",
+              "cardInstanceId": "fr-c-assault",
+              "targetId": "fr-c-target",
+              "targetIds": [
+                "fr-c-target"
+              ],
+              "selection": null
+            },
+            {
+              "type": "card",
+              "cardId": "charge",
+              "cardInstanceId": "fr-c-charge",
+              "targetId": null,
+              "targetIds": [],
+              "selection": null
+            },
+            {
+              "type": "end",
+              "cardId": null,
+              "cardInstanceId": null,
+              "targetId": null,
+              "targetIds": [],
+              "selection": null
+            }
+          ],
+          "bestRemainingProvenance": [
+            0,
+            0,
+            0
+          ],
+          "bestValueScore": 1.564,
+          "rootLedgers": []
+        }
+      }
+    }
+  ]
+}

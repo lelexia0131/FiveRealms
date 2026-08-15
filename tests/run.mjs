@@ -5,9 +5,14 @@ import { access, readFile, readdir } from "node:fs/promises";
 import * as nodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { GAME_CONFIG, PHASE_NAMES } from "../js/config/gameConfig.js";
+import { GAME_CONFIG, PHASE_NAMES, TEAM_CONFIG } from "../js/config/gameConfig.js";
 import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../js/config/cardConfig.js";
-import { GENERAL_DEFINITIONS } from "../js/config/generalConfig.js";
+import { GENERAL_DEFINITIONS, GENERAL_BY_ID } from "../js/config/generalConfig.js";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../js/domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { CHARACTER_DEFINITIONS } from "../js/domain/definitions/characters/CharacterDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { STATUS_DEFINITIONS } from "../js/domain/definitions/statuses/StatusDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { RULESET_DEFINITION } from "../js/domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
 import { Game } from "../js/core/Game.js";
 import { Player } from "../js/core/Player.js";
 import { Deck } from "../js/core/Deck.js";
@@ -14154,10 +14159,9 @@ test("AI·封印：fallback 从权威牌堆组成动态推导且无固定概率�
     source,
     /Object\.values\(CARD_DEFINITIONS\)[\s\S]*definition\.category === "tactic"[\s\S]*definition\.count[\s\S]*tacticTotal \/ TOTAL_CARD_COUNT/
   );
-  assert.match(
-    configSource,
-    /CARD_COUNTS = Object\.freeze\(Object\.fromEntries\(Object\.values\(CARD_DEFINITIONS\)[\s\S]*definition\.count[\s\S]*TOTAL_CARD_COUNT = Object\.values\(CARD_COUNTS\)\.reduce/
-  );
+  assert.match(configSource, /RULESET_DEFINITION\.deckComposition/);
+  assert.match(configSource, /TOTAL_CARD_COUNT = Object\.values\(CARD_COUNTS\)\.reduce/);
+  assert.doesNotMatch(configSource, /Object\.values\(CARD_DEFINITIONS\)[\s\S]*definition\.count/);
 });
 
 test("AI·封印：战术牌映射正常行动而非战术牌映射 skip-action 收益", () => {
@@ -38006,6 +38010,979 @@ test("集成：控制器文件名：导出类名仍为 AIController", async () =
   assert.equal(typeof module.AIController, "function");
   assert.equal(module.AiController, undefined);
 });
+
+
+// ==================== FR-ARCH-1 Governance & Characterization ====================
+
+/*
+功能
+为现有 Game 安装只读 trace harness，记录 EventBus 事件顺序与公开日志顺序。
+
+调用方
+FR-ARCH-1 characterization tests。
+
+输入
+当前 Game 实例。
+
+输出
+包含 events 与 logs 数组的 trace 对象。
+
+读取状态
+Game.eventBus、Game.log。
+
+写入状态
+仅写返回的 trace 数组。
+
+调用函数
+EventBus.emit、Game.log。
+
+边界与不变量
+包装函数保持 this 绑定与原始返回值；记录先于原调用，日志 kind 以原始返回值为准。
+*/
+function installFrArchTrace(game) {
+  const trace = { events: [], logs: [] };
+  const originalEmit = game.eventBus.emit.bind(game.eventBus);
+  const originalLog = game.log.bind(game);
+  game.eventBus.emit = async (eventName, event) => {
+    trace.events.push(eventName);
+    return originalEmit(eventName, event);
+  };
+  game.log = (message, kind = "normal") => {
+    const entry = originalLog(message, kind);
+    trace.logs.push({ message, kind: entry.kind });
+    return entry;
+  };
+  return trace;
+}
+
+/*
+功能
+创建五名全 AI 玩家并让除主动者外每名玩家持有一张反制牌，用于冻结反制座次顺序。
+
+调用方
+FR-ARCH-1 响应顺序 characterization test。
+
+输入
+无。
+
+输出
+game、source、harvest 卡牌和响应捕获数组。
+
+读取状态
+生产 Game/Player/卡牌配置。
+
+写入状态
+仅写测试 fixture。
+
+调用函数
+makePlayer、makeGame、instance。
+
+边界与不变量
+不注册被动技能；除 source 外每名响应者恰有一张反制，保证确定性。
+*/
+function makeFrArchCounterOrderFixture() {
+  const players = [];
+  for (let index = 0; index < 5; index += 1) {
+    players.push(makePlayer(`fr-counter-p${index}`, index, index === 0 ? "dawn" : "dusk", "ai", index));
+  }
+  const { game } = makeGame(players);
+  const source = players[0];
+  const card = instance("harvest");
+  source.hand.push(card);
+  for (const responder of players.slice(1)) {
+    responder.hand.push({ ...CARD_DEFINITIONS.counter, id: `fr-counter-card-${responder.id}` });
+  }
+  const calls = [];
+  game.aiController.responsePolicy.shouldRespond = (responder, type, context, cards) => {
+    calls.push({
+      responderId: responder.id,
+      type,
+      sourceId: context.source?.id ?? null,
+      rootCardId: context.rootCard?.definitionId ?? null,
+      counterDepth: context.counterDepth ?? null
+    });
+    return type === "counter" && cards.length > 0;
+  };
+  return { game, source, card, calls };
+}
+
+/*
+功能
+运行 FR-ARCH-1 突袭事件顺序 characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture 的 trace。
+
+写入状态
+无生产状态。
+
+调用函数
+makePlayer、makeGame、instance、installFrArchTrace、Game.playCard。
+
+边界与不变量
+trace 序列必须与迁移前逐项一致。
+*/
+async function frArchAssaultEventTrace() {
+  const actor = makePlayer("fr-trace-actor", 0, "dawn", "ai", 0);
+  const target = makePlayer("fr-trace-target", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, target]);
+  const card = instance("assault");
+  actor.hand.push(card);
+  const trace = installFrArchTrace(game);
+  await game.playCard(actor, card, [target]);
+  assert.deepEqual(trace.events, [
+    "beforeCardMove",
+    "afterCardMove",
+    "beforeCardUse",
+    "targetSelected",
+    "beforeCardResolve",
+    "beforeDamage",
+    "afterDamage",
+    "beforeCardMove",
+    "afterCardMove",
+    "cardUsed"
+  ]);
+  assert.deepEqual(trace.logs.map((entry) => entry.kind), ["normal", "damage"]);
+  assert.deepEqual(game.getCardZoneOccurrences(card), ["discard"]);
+  assert.equal(target.hp, target.maxHp - 1);
+}
+
+test("FR-ARCH·事件顺序：突袭真实结算冻结 before/after 与移动事件序列", frArchAssaultEventTrace);
+
+/*
+功能
+运行 FR-ARCH-1 反制链座次 characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture 与响应策略捕获。
+
+写入状态
+无生产状态。
+
+调用函数
+makeFrArchCounterOrderFixture、Game.playCard。
+
+边界与不变量
+根牌每层询问严格按当前响应者下一座位开始，且 counterDepth 逐层加一。
+*/
+async function frArchCounterOrderTrace() {
+  const { game, source, card, calls } = makeFrArchCounterOrderFixture();
+  await game.playCard(source, card, []);
+  assert.deepEqual(calls.map((entry) => entry.responderId), [
+    "fr-counter-p1",
+    "fr-counter-p2",
+    "fr-counter-p3",
+    "fr-counter-p4"
+  ]);
+  assert.deepEqual(calls.map((entry) => entry.counterDepth), [0, 1, 2, 3]);
+  assert.ok(calls.every((entry) => entry.type === "counter"));
+  assert.ok(calls.every((entry) => entry.rootCardId === "harvest"));
+}
+
+test("FR-ARCH·响应顺序：反制链逐层座次与 counterDepth 冻结", frArchCounterOrderTrace);
+
+/*
+功能
+运行 FR-ARCH-1 原子响应支付与 zone 唯一性 characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture 的 trace 与 zone occurrence。
+
+写入状态
+无生产状态。
+
+调用函数
+makePlayer、makeGame、instance、installFrArchTrace、Game.payCardsFromHandAtomically。
+
+边界与不变量
+两张支付牌必须同时离开手牌且各自只出现在弃牌堆。
+*/
+async function frArchAtomicZoneTrace() {
+  const actor = makePlayer("fr-zone-actor", 0, "dawn", "ai", 0);
+  const other = makePlayer("fr-zone-other", 1, "dusk", "ai", 1);
+  const first = instance("block");
+  const second = instance("block");
+  actor.hand.push(first, second);
+  const { game } = makeGame([actor, other]);
+  const trace = installFrArchTrace(game);
+  const beforeVersion = actor.handVersion;
+  const payment = await game.payCardsFromHandAtomically(actor, [first, second], "FR-ARCH 原子支付", {
+    silent: true,
+    expectedCount: 2
+  });
+  assert.equal(payment.status, "used");
+  assert.deepEqual(actor.hand, []);
+  assert.equal(actor.handVersion, beforeVersion + 1);
+  assertCardOnlyIn(game, first, "discard");
+  assertCardOnlyIn(game, second, "discard");
+  assert.deepEqual(trace.events, [
+    "beforeCardMove",
+    "beforeCardMove",
+    "afterCardMove",
+    "afterCardMove"
+  ]);
+}
+
+test("FR-ARCH·zone 不变量：原子支付与实体唯一区域冻结", frArchAtomicZoneTrace);
+
+/*
+功能
+运行 FR-ARCH-1 主动技能 trace characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture 的 UI 记录与角色状态。
+
+写入状态
+无生产状态。
+
+调用函数
+makePlayer、makeGame、Game.useActiveSkill。
+
+边界与不变量
+破军先按固定费用扣能量，再增加本回合突袭上限并进入中央结算展示。
+*/
+async function frArchSkillTrace() {
+  const actor = makePlayer("fr-skill-actor", 0, "dawn", "ai", 0);
+  const other = makePlayer("fr-skill-other", 1, "dusk", "ai", 1);
+  actor.energy = 2;
+  const { game, ui } = makeGame([actor, other]);
+  const trace = installFrArchTrace(game);
+  const used = await game.useActiveSkill(actor, "breakArmy", []);
+  assert.equal(used, true);
+  assert.equal(actor.energy, 0);
+  assert.equal(actor.turnFlags.attackLimit, 2);
+  assert.equal(ui.currentCards.length, 1);
+  assert.match(ui.currentCards[0].cardOrName, /破军/);
+  assert.ok(trace.events.length === 0, "主动技能当前不应经过额外领域事件");
+}
+
+test("FR-ARCH·技能 trace：破军费用、次数上限与中央展示顺序冻结", frArchSkillTrace);
+
+/*
+功能
+运行 FR-ARCH-1 真实权威与 AI Simulation 的确定性差分。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture、SearchState 与 Simulator。
+
+写入状态
+Simulator 只写克隆 SearchState；随后真实 playCard 只写测试 fixture。
+
+调用函数
+makePlayer、makeGame、instance、createInitialSearchState、ActionGenerator.generateFromVisible、Simulator.apply、Game.playCard。
+
+边界与不变量
+同一突袭在真实与模拟目标上均造成 1 点生命伤害，且不触发格挡/雷达。
+*/
+async function frArchRealSimulationDelta() {
+  const actor = makePlayer("fr-delta-actor", 0, "dawn", "ai", 0);
+  const target = makePlayer("fr-delta-target", 1, "dusk", "ai", 1);
+  target.hp = 3;
+  const card = instance("assault");
+  actor.hand.push(card);
+  const { game } = makeGame([actor, target]);
+  const remaining = game.aiController.knowledge.remainingCounts(actor);
+  const visible = createInitialSearchState(actor.id, game.state, remaining);
+  const simulatedAction = game.aiController.actionGenerator.generateFromVisible(visible, actor.id)
+    .find((entry) => entry.card?.definitionId === "assault");
+  assert.ok(simulatedAction);
+  const simulated = new Simulator(visible).apply(visible, simulatedAction, actor.id);
+  const simulatedTarget = simulated.players.find((player) => player.id === target.id);
+  assert.equal(simulatedTarget.hp, 2);
+  await game.playCard(actor, card, [target]);
+  assert.equal(target.hp, simulatedTarget.hp);
+  assert.deepEqual(game.getCardZoneOccurrences(card), ["discard"]);
+}
+
+test("FR-ARCH·真实 vs 模拟：确定性突袭差分冻结", frArchRealSimulationDelta);
+
+/*
+功能
+运行 FR-ARCH-1 隐藏信息与 root action blocker characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture、Visible/SearchState 与生产 ActionGenerator。
+
+写入状态
+无生产状态。
+
+调用函数
+makePlayer、makeGame、instance、createInitialSearchState、getActionCandidates、describeAction。
+
+边界与不变量
+SearchState 不得含敌方未知牌；真实 root action 可以持有 real Player，只有 descriptor 可跨越未来 Worker 边界。
+*/
+function frArchHiddenInformationAndRootAction() {
+  const actor = makePlayer("fr-hidden-actor", 0, "dawn", "ai", 0);
+  const target = makePlayer("fr-hidden-target", 1, "dusk", "ai", 1);
+  const hidden = instance("counter");
+  target.hand.push(hidden);
+  const { game } = makeGame([actor, target]);
+  const assault = instance("assault");
+  actor.hand.push(assault);
+  const visible = createInitialSearchState(
+    actor.id,
+    game.state,
+    game.aiController.knowledge.remainingCounts(actor)
+  );
+  const visibleTarget = visible.players.find((player) => player.id === target.id);
+  assert.equal(visibleTarget.hand, undefined);
+  assert.equal(visibleTarget.handCount, 1);
+  assert.equal(JSON.stringify(visible).includes(hidden.id), false);
+  assert.equal(JSON.stringify(visible).includes(hidden.name), false);
+  const rootAction = game.aiController.getActionCandidates(actor)
+    .find((entry) => entry.card?.definitionId === "assault" && entry.targets?.[0]?.id === target.id);
+  assert.ok(rootAction);
+  assert.equal(rootAction.targets[0], target);
+  assert.ok(target.hand.includes(hidden), "当前 root action 仍持有 real Player target");
+  const descriptor = describeAction(rootAction);
+  const serializedDescriptor = JSON.stringify(descriptor);
+  assert.equal(serializedDescriptor.includes(hidden.id), false);
+  assert.equal(serializedDescriptor.includes(hidden.definitionId), false);
+  assert.equal(serializedDescriptor.includes(hidden.name), false);
+}
+
+test("FR-ARCH·隐藏信息：SearchState 过滤与 root action descriptor blocker", frArchHiddenInformationAndRootAction);
+
+/*
+功能
+运行 FR-ARCH-1 ActionDescriptor 稳定字段 characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产 describeAction。
+
+写入状态
+无。
+
+调用函数
+instance、describeAction。
+
+边界与不变量
+转移选择只保留 source/receiver/zone；目标顺序不得改变。
+*/
+function frArchActionDescriptorContract() {
+  const card = instance("transfer");
+  const target = { id: "fr-descriptor-target" };
+  const action = {
+    type: "card",
+    card,
+    targets: [target],
+    selection: {
+      sourceId: "fr-source",
+      receiverId: "fr-receiver",
+      zone: "hand",
+      score: 7.5
+    }
+  };
+  assert.deepEqual(describeAction(action), {
+    type: "card",
+    cardId: "transfer",
+    cardInstanceId: card.id,
+    targetId: target.id,
+    targetIds: [target.id],
+    selection: {
+      sourceId: "fr-source",
+      receiverId: "fr-receiver",
+      zone: "hand"
+    }
+  });
+}
+
+test("FR-ARCH·ActionDescriptor：cardInstanceId、targetIds 与 transfer selection 冻结", frArchActionDescriptorContract);
+
+/*
+功能
+运行 FR-ARCH-1 当前搜索质量基线 schema 与确定性回归检查。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+tests/fixtures/fr-arch-search-quality-baseline.json 与生产 AIController 搜索链路。
+
+写入状态
+独立 benchmark Game。
+
+调用函数
+readFile、makeBenchmarkGame、makeBenchmarkCard、runBenchmarkAiDecision、describeAction、disposeBenchmarkGame。
+
+边界与不变量
+只重跑小型确定性 COMPLETE fixture C；A/B 作为观测基线保留，不因 wall-clock 波动进入常规断言。
+*/
+async function frArchSearchQualityBaseline() {
+  const baseline = JSON.parse(await readFile(
+    projectFile("tests/fixtures/fr-arch-search-quality-baseline.json"),
+    "utf8"
+  ));
+  assert.equal(baseline.fixtures.length, 3);
+  for (const fixture of baseline.fixtures) {
+    assert.equal(fixture.config.timeBudgetMs, 900);
+    assert.equal(fixture.config.nodeBudget, null);
+    assert.ok(["card", "end"].includes(fixture.result.action.type));
+    assert.equal(fixture.result.stats.timeBudget, 900);
+    assert.equal(fixture.result.stats.budgetType, "time");
+    assert.ok(Array.isArray(fixture.result.stats.bestSequence));
+  }
+  const replay = baseline.fixtures.find((fixture) => fixture.name === "fr-arch-baseline-c");
+  assert.ok(replay);
+  const game = makeBenchmarkGame({
+    players: replay.fixture.players.map((player) => ({
+      id: player.id,
+      team: player.team,
+      general: player.general,
+      hp: player.hp,
+      energy: player.energy,
+      hand: player.hand.map((card) => makeBenchmarkCard(card.definitionId, card.id))
+    })),
+    options: {
+      actorId: replay.fixture.actorId,
+      seed: replay.fixture.seed
+    }
+  });
+  try {
+    game.aiSearchBudgetOverrideMs = replay.config.timeBudgetMs;
+    const decision = await runBenchmarkAiDecision(game, replay.fixture.actorId);
+    const stats = decision.stats;
+    assert.equal(decision.legalActions.length, replay.result.legalActionCount);
+    const expectedAction = {
+      ...replay.result.action,
+      targetId: replay.result.action.targetIds?.[0] ?? null
+    };
+    assert.deepEqual(describeAction(decision.action), expectedAction);
+    assert.equal(stats.expanded, replay.result.stats.expanded);
+    assert.equal(stats.depth, replay.result.stats.depth);
+    assert.equal(stats.stopReason, replay.result.stats.stopReason);
+    assert.equal(stats.simulationCalls, replay.result.stats.simulationCalls);
+    assert.equal(stats.counterfactualCalls, replay.result.stats.counterfactualCalls);
+    assert.equal(stats.stateUtilityCalls, replay.result.stats.stateUtilityCalls);
+    assert.equal(stats.hiddenSamples, replay.result.stats.hiddenSamples);
+    assert.deepEqual(stats.bestSequence, replay.result.stats.bestSequence);
+    assertClose(stats.bestValueScore, replay.result.stats.bestValueScore);
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test("FR-ARCH·搜索质量基线：900ms 固定种子 fixtures schema 与确定性重放", frArchSearchQualityBaseline);
+
+/*
+功能
+运行 FR-ARCH-1 当前 timing 配置冻结检查。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+GAME_CONFIG 与 SearchBudget 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+本测试只冻结数值，不修改任何 production timing。
+*/
+async function frArchCurrentTimingFreeze() {
+  assert.equal(GAME_CONFIG.aiSearchTimeBudgetMs, 900);
+  assert.equal(GAME_CONFIG.aiSearchYieldEvery, 48);
+  assert.equal(GAME_CONFIG.aiSearchDepth, 4);
+  assert.equal(GAME_CONFIG.aiBeamWidth, 10);
+  assert.equal(GAME_CONFIG.aiHiddenStateSamples, 10);
+  assert.equal(GAME_CONFIG.aiInitialThinkMinMs, 3000);
+  assert.equal(GAME_CONFIG.aiInitialThinkMaxMs, 5500);
+  assert.equal(GAME_CONFIG.animationFastMinimumMs, 0);
+  assert.equal(GAME_CONFIG.animationFastScale, 0.08);
+  const budgetSource = await readFile(projectFile("js/ai/search/SearchBudget.js"), "utf8");
+  const timingSource = await readFile(projectFile("js/utils/aiTiming.js"), "utf8");
+  assert.match(budgetSource, /GAME_CONFIG\.aiSearchTimeBudgetMs/);
+  assert.match(timingSource, /aiInitialThinkMinMs/);
+  assert.match(timingSource, /animationFastScale/);
+}
+
+test("FR-ARCH·timing 基线：当前 900ms/48-yield 与展示时序配置冻结", frArchCurrentTimingFreeze);
+
+/*
+功能
+运行 FR-ARCH-1 架构文档与 checker guard 存在性检查。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+docs/architecture/FR_ARCHITECTURE.md 与 tools/check-code-quality.mjs。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+只检查冻结契约关键词，不替代 checker self-test 的执行。
+*/
+async function frArchGovernanceDocumentContract() {
+  const architecture = await readFile(projectFile("docs/architecture/FR_ARCHITECTURE.md"), "utf8");
+  const checker = await readFile(projectFile("tools/check-code-quality.mjs"), "utf8");
+  for (const fragment of [
+    "Soft Thinking Target：500 ms",
+    "Compatibility Hard Ceiling：900 ms",
+    "Hard Search Ceiling：3000 ms",
+    "REAL GAME RNG != AI SEARCH RNG",
+    "sessionId + stateVersion",
+    "TARGET ARCHITECTURE CAN REMAIN FROZEN"
+  ]) assert.ok(architecture.includes(fragment), `architecture authority 缺少：${fragment}`);
+  for (const fragment of [
+    "FUTURE_DOMAIN_PATTERN",
+    "FUTURE_APPLICATION_PATTERN",
+    "DOMAIN_TRANSITIONS_PATTERN",
+    "架构约束：domain 禁止依赖",
+    "架构约束：state/transitions 禁止依赖"
+  ]) assert.match(checker, new RegExp(fragment));
+}
+
+test("FR-ARCH·governance：architecture authority 与 checker guard 已冻结", frArchGovernanceDocumentContract);
+
+
+// ==================== FR-ARCH-2 Definition Authority Tests ====================
+
+/*
+功能
+验证旧 config 公开 API 与 FR-ARCH-2 迁移前 JSON snapshot 完全一致。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+tests/fixtures/fr-arch-definition-public-api.json 与三个 legacy config 模块导出。
+
+写入状态
+无。
+
+调用函数
+readFile、JSON.parse。
+
+边界与不变量
+JSON 深比较包含 key order；任何旧公开 shape/value 变化都会失败。
+*/
+async function frArchLegacyPublicApiSnapshot() {
+  const snapshot = JSON.parse(await readFile(
+    projectFile("tests/fixtures/fr-arch-definition-public-api.json"),
+    "utf8"
+  ));
+  assert.deepEqual({ CARD_DEFINITIONS, CARD_COUNTS, TOTAL_CARD_COUNT }, snapshot.cardConfig);
+  assert.deepEqual({ GENERAL_DEFINITIONS, GENERAL_BY_ID }, snapshot.generalConfig);
+  assert.deepEqual(
+    { GAME_CONFIG, TEAM_CONFIG, PHASE_NAMES },
+    snapshot.gameConfig
+  );
+}
+
+test("FR-ARCH-2·公开 API：legacy config shape 与迁移前 snapshot 一致", frArchLegacyPublicApiSnapshot);
+
+/*
+功能
+验证 card domain definition 是 legacy CARD_DEFINITIONS 的领域字段 authority，旧文件不维护领域 literal。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+CARD_DEFINITIONS、DOMAIN_CARD_DEFINITIONS、cardConfig 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+只验证领域字段集合，不要求 legacy 完整对象与 domain 对象同一引用。
+*/
+async function frArchCardAuthority() {
+  const domainFields = [
+    "definitionId", "name", "category", "targetType", "subtypes", "description",
+    "usageMode", "responseTypes", "counterable", "counterScope", "ignoresDistance",
+    "selectionFlow", "effectRange", "targetZones"
+  ];
+  assert.deepEqual(Object.keys(DOMAIN_CARD_DEFINITIONS), Object.keys(CARD_DEFINITIONS));
+  for (const [definitionId, domainCard] of Object.entries(DOMAIN_CARD_DEFINITIONS)) {
+    assert.equal(Object.hasOwn(domainCard, "count"), false, `${definitionId} 不得独立拥有 count`);
+    const legacyCard = CARD_DEFINITIONS[definitionId];
+    assert.equal(legacyCard.count, RULESET_DEFINITION.deckComposition[definitionId]);
+    for (const field of domainFields) {
+      if (domainCard[field] !== undefined) assert.deepEqual(legacyCard[field], domainCard[field], `${definitionId}.${field}`);
+    }
+  }
+  const source = await readFile(projectFile("js/config/cardConfig.js"), "utf8");
+  assert.doesNotMatch(source, /definitionId:\s*["']/);
+  assert.doesNotMatch(source, /count:\s*\d/);
+  assert.match(source, /CARD_DOMAIN_DEFINITIONS/);
+  assert.match(source, /RULESET_DEFINITION\.deckComposition/);
+}
+
+test("FR-ARCH-2·card authority：domain definitions 唯一拥有规则字段", frArchCardAuthority);
+
+/*
+功能
+验证 character/skill domain definitions 是 legacy GENERAL_DEFINITIONS 的领域字段 authority。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+GENERAL_DEFINITIONS、CHARACTER_DEFINITIONS、ACTIVE/PASSIVE_SKILL_DEFINITIONS、generalConfig 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+AI/UI 字段仍留在 legacy generalConfig；领域字段不得在旧文件以 literal 维护。
+*/
+async function frArchCharacterSkillAuthority() {
+  assert.equal(CHARACTER_DEFINITIONS.length, GENERAL_DEFINITIONS.length);
+  for (let index = 0; index < GENERAL_DEFINITIONS.length; index += 1) {
+    const legacy = GENERAL_DEFINITIONS[index];
+    const character = CHARACTER_DEFINITIONS[index];
+    for (const field of ["id", "name", "loreFaction", "maxHp", "initialEnergy", "passiveSkillIds", "activeSkillIds", "description"]) {
+      assert.deepEqual(legacy[field], character[field], `${character.id}.${field}`);
+    }
+    const active = ACTIVE_SKILL_DEFINITIONS[legacy.activeSkillIds[0]];
+    const passive = PASSIVE_SKILL_DEFINITIONS[legacy.passiveSkillIds[0]];
+    assert.equal(legacy.activeName, active.name);
+    assert.equal(legacy.activeDescription, active.description);
+    assert.equal(legacy.activeCost, active.cost);
+    assert.equal(legacy.activeLimitPerTurn, active.limitPerTurn);
+    assert.equal(legacy.passiveName, passive.name);
+    assert.equal(legacy.passiveDescription, passive.description);
+    assert.equal(legacy.passiveTriggerText, passive.triggerText);
+    assert.equal(legacy.passiveLimitText, passive.limitText);
+  }
+  const source = await readFile(projectFile("js/config/generalConfig.js"), "utf8");
+  assert.doesNotMatch(source, /maxHp:\s*\d/);
+  assert.doesNotMatch(source, /initialEnergy:\s*\d/);
+  assert.doesNotMatch(source, /activeCost:\s*\d/);
+  assert.doesNotMatch(source, /activeLimitPerTurn:\s*\d/);
+}
+
+test("FR-ARCH-2·character/skill authority：旧 generalConfig 不再维护领域 literal", frArchCharacterSkillAuthority);
+
+/*
+功能
+验证 skillRegistry 的 ACTIVE_SKILLS runtime shape 从 SkillDefinitions 投影，不再维护 cost/limit literal。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+ACTIVE_SKILLS、ACTIVE_SKILL_DEFINITIONS、skillRegistry 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+runtime 不引入 description；canUse/execute 仍由 skillRegistry 拥有。
+*/
+async function frArchSkillRuntimeSingleAuthority() {
+  for (const [skillId, runtime] of Object.entries(ACTIVE_SKILLS)) {
+    const definition = ACTIVE_SKILL_DEFINITIONS[skillId];
+    assert.equal(runtime.cost, definition.cost);
+    assert.equal(runtime.limitPerTurn, definition.limitPerTurn);
+    assert.equal(runtime.name, definition.name);
+    assert.equal(runtime.targetType, definition.targetType);
+    assert.equal(runtime.rangeRule, definition.rangeRule);
+    if (definition.range !== undefined) assert.equal(runtime.range, definition.range);
+    assert.equal(Object.hasOwn(runtime, "description"), false);
+    assert.equal(typeof runtime.canUse, "function");
+    assert.equal(typeof runtime.execute, "function");
+  }
+  const source = await readFile(projectFile("js/generals/skillRegistry.js"), "utf8");
+  assert.doesNotMatch(source, /cost:\s*\d/);
+  assert.doesNotMatch(source, /limitPerTurn:\s*\d/);
+  assert.doesNotMatch(source, /targetType:\s*["']/);
+  assert.match(source, /ACTIVE_SKILL_DEFINITIONS/);
+}
+
+test("FR-ARCH-2·skill runtime authority：ACTIVE_SKILLS 只投影 Domain Skill Definition", frArchSkillRuntimeSingleAuthority);
+
+/*
+功能
+验证 RulesetDefinition 是 GAME_CONFIG 领域字段 authority，旧 gameConfig 保留 AI/UI/debug 字段。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+GAME_CONFIG、RULESET_DEFINITION、gameConfig 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+只验证本阶段已迁移的 domain 字段；AI/UI/debug 字段故意留在旧 config。
+*/
+async function frArchRulesetAuthority() {
+  for (const field of [
+    "playerCount", "smallTeamSize", "largeTeamSize", "generalCandidateCount",
+    "allowDuplicateGenerals", "initialHandCount", "defaultDrawCount", "defaultMaxEnergy",
+    "defaultAttackRange", "initialRound", "gamblerDrawChance", "momentumMaxStacks",
+    "killRewardDrawCount", "smallTeamBonuses", "largeTeamRules"
+  ]) assert.deepEqual(GAME_CONFIG[field], RULESET_DEFINITION[field], field);
+  assert.equal(GAME_CONFIG.smallTeamBonuses, RULESET_DEFINITION.smallTeamBonuses);
+  assert.equal(GAME_CONFIG.largeTeamRules, RULESET_DEFINITION.largeTeamRules);
+  assert.equal(GAME_CONFIG.initialRound, RULESET_DEFINITION.initialRound);
+  assert.equal(GAME_CONFIG.deckComposition, undefined, "deckComposition 暂不进入 legacy GAME_CONFIG shape");
+  const source = await readFile(projectFile("js/config/gameConfig.js"), "utf8");
+  assert.doesNotMatch(source, /playerCount:\s*\d/);
+  assert.doesNotMatch(source, /defaultAttackRange:\s*\d/);
+  assert.doesNotMatch(source, /initialRound:\s*\d/);
+  assert.match(source, /RULESET_DEFINITION/);
+  for (const retained of [
+    "aiSearchTimeBudgetMs", "aiSearchYieldEvery", "aiInitialThinkMinMs",
+    "animationFastScale", "debugMode", "forceAiRescueHuman"
+  ]) assert.match(source, new RegExp(retained));
+}
+
+test("FR-ARCH-2·ruleset authority：GAME_CONFIG 领域字段单一来源", frArchRulesetAuthority);
+
+/*
+功能
+验证 responseTimeoutMs 是 Application/Presentation runtime policy，不属于 Domain Ruleset。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+RULESET_DEFINITION、GAME_CONFIG 与 gameConfig 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+legacy GAME_CONFIG 保留唯一 literal authority；Ruleset 不得拥有该字段或第二 literal。
+*/
+async function frArchResponseTimeoutOwnership() {
+  assert.equal(Object.hasOwn(RULESET_DEFINITION, "responseTimeoutMs"), false);
+  assert.equal(GAME_CONFIG.responseTimeoutMs, null);
+  const rulesetSource = await readFile(projectFile("js/domain/definitions/ruleset/RulesetDefinition.js"), "utf8");
+  assert.doesNotMatch(rulesetSource, /responseTimeoutMs/);
+  const legacySource = await readFile(projectFile("js/config/gameConfig.js"), "utf8");
+  assert.match(legacySource, /responseTimeoutMs:\s*null/);
+}
+
+test("FR-ARCH-2.1·responseTimeoutMs ownership：NOT DOMAIN，legacy runtime policy 单一 literal", frArchResponseTimeoutOwnership);
+
+
+/*
+功能
+验证 StatusDefinitions 只包含当前真实存在的静态身份/文案，不发明生命周期字段。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+STATUS_DEFINITIONS 与 status definitions 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+只允许 id/name/description 当前可证明字段；任何 lifecycle/timing 字段出现即失败。
+*/
+async function frArchStatusAuthority() {
+  assert.deepEqual(Object.keys(STATUS_DEFINITIONS), [
+    "exposeWeakness", "allIn", "huntMark", "sealed", "lightning"
+  ]);
+  for (const status of Object.values(STATUS_DEFINITIONS)) {
+    assert.deepEqual(Object.keys(status), ["id", "name", "description"]);
+    assert.equal(status.id.length > 0, true);
+    assert.equal(status.name.length > 0, true);
+    assert.equal(status.description.length > 0, true);
+  }
+  const source = await readFile(projectFile("js/domain/definitions/statuses/StatusDefinitions.js"), "utf8");
+  for (const forbidden of ["lifecycle", "duration", "trigger", "judgment", "damage", "removal", "transfer"]) {
+    assert.equal(source.includes(forbidden), false, `status definition 不得包含 runtime 字段 ${forbidden}`);
+  }
+}
+
+test("FR-ARCH-2·status authority：仅静态身份与文案，无生命周期", frArchStatusAuthority);
+
+/*
+功能
+验证生产代码中所有 domain/definitions import 使用一致 build query，避免 ESM 双模块身份。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js 全部生产 JS 源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+domain definitions 自身无相对 import；所有外部消费必须带当前 build query。
+*/
+async function frArchDefinitionModuleIdentity() {
+  const files = await listJavaScriptFiles(projectFile("js"));
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    for (const match of source.matchAll(/(?:from\s*|import\s*\()\s*["']([^"']*domain\/definitions[^"']*)["']/g)) {
+      const specifier = match[1];
+      assert.match(specifier, /\?build=20260815-shadow-agent-p1-slot$/, `${file} -> ${specifier}`);
+    }
+  }
+}
+
+test("FR-ARCH-2·module identity：domain definitions 消费统一 build query", frArchDefinitionModuleIdentity);
 
 // ==================== Test Runner 最终执行 ====================
 

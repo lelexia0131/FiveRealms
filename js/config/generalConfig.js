@@ -1,83 +1,181 @@
 /**
- * 八名原创角色的规则数据与纯展示肖像路径。portrait 不参与技能、合法性或 AI 判断。
+ * 旧角色配置 façade。纯角色与技能静态定义已分别由
+ * domain/definitions/characters 与 domain/definitions/skills 单一拥有；
+ * 本文件继续保留 AI profile、portrait、展示标签与旧 GENERAL_DEFINITIONS API shape。
  */
+import { CHARACTER_DEFINITIONS } from "../domain/definitions/characters/CharacterDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
+
+/*
+功能
+创建 AI 风格 profile 的冻结对象。
+
+调用方
+generalConfig 模块初始化。
+
+输入
+八个 AI profile 数值。
+
+输出
+冻结的 profile 对象。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+字段顺序与旧 profile 完全一致；不参与任何 Domain 定义。
+*/
 const profile = (aggression, defense, support, healingPriority, cardConservation, energyConservation, responseConservation, riskTolerance) => Object.freeze({
   aggression, defense, support, healingPriority, cardConservation, energyConservation, responseConservation, riskTolerance
 });
 
-export const GENERAL_DEFINITIONS = Object.freeze([
-  Object.freeze({
-    id: "blade-walker", name: "刃行者", glyph: "刃", portrait: "./assets/characters/blade-walker.svg",
-    loreFaction: "流火长路", maxHp: 4, initialEnergy: 0, tags: ["输出", "爆发"], roleTags: ["damage", "attacker"], passiveSkillIds: ["momentum"], activeSkillIds: ["breakArmy"],
-    passiveName: "连势", passiveDescription: "每回合首次使用一种新的卡牌类别时获得1层「连势」，最多2层；下一次「突袭」实际造成伤害时增加等同层数的伤害并消耗，回合结束后清空「连势」。",
-    passiveTriggerText: "使用本回合尚未记录的卡牌类别时", passiveLimitText: "每回合按不同卡牌类别分别触发",
-    activeName: "破军", activeDescription: "消耗2点能量，本回合可额外使用1张「突袭」；每回合最多发动1次。", activeCost: 2, activeLimitPerTurn: 1,
-    description: "沿熔岩古道巡行的迅刃，用变化不定的牌序积蓄致命节奏。",
+const CHARACTER_PRESENTATION = Object.freeze({
+  "blade-walker": Object.freeze({
+    glyph: "刃",
+    portrait: "./assets/characters/blade-walker.svg",
+    tags: ["输出", "爆发"],
+    roleTags: ["damage", "attacker"],
     aiProfile: profile(1.35, .65, .35, .45, .55, .55, .5, 1.05)
   }),
-  Object.freeze({
-    id: "oath-warden", name: "守誓者", glyph: "誓", portrait: "./assets/characters/oath-warden.svg",
-    loreFaction: "曜石城垒", maxHp: 4, initialEnergy: 0, tags: ["防护", "辅助"], roleTags: ["tank", "support"], passiveSkillIds: ["guardianAid"], activeSkillIds: ["barrier"],
-    passiveName: "护援", passiveDescription: "每回合1次，弃置1张手牌令队友即将受到的伤害-1。",
-    passiveTriggerText: "队友即将受到伤害且你可弃置1张手牌时", passiveLimitText: "每回合限触发1次",
-    activeName: "壁垒", activeDescription: "消耗2点能量，使一名己方阵营角色获得1点护盾；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
-    description: "背负古誓的城垒守卫，擅长将危险拦截在盟友身前。",
+  "oath-warden": Object.freeze({
+    glyph: "誓",
+    portrait: "./assets/characters/oath-warden.svg",
+    tags: ["防护", "辅助"],
+    roleTags: ["tank", "support"],
     aiProfile: profile(.6, 1.45, 1.25, .7, .8, .85, .9, .45)
   }),
-  Object.freeze({
-    id: "spirit-medic", name: "灵医", glyph: "灵", portrait: "./assets/characters/spirit-medic.svg",
-    loreFaction: "雾泉庭", maxHp: 4, initialEnergy: 1, tags: ["恢复", "辅助"], roleTags: ["support", "healer"], passiveSkillIds: ["rejuvenation"], activeSkillIds: ["symbiosis"],
-    passiveName: "回春", passiveDescription: "由你使一名己方阵营角色恢复生命时，你摸1张牌；濒死救援也可触发；每回合最多触发2次。",
-    passiveTriggerText: "由你使自己或队友恢复生命时", passiveLimitText: "每回合限触发2次",
-    activeName: "滋荣", activeDescription: "消耗2点能量，使一名己方阵营角色恢复1点生命；每回合最多发动2次", activeCost: 2, activeLimitPerTurn: 2,
-    description: "听见生命回声的游医，以自己的元息换取同伴继续作战。",
+  "spirit-medic": Object.freeze({
+    glyph: "灵",
+    portrait: "./assets/characters/spirit-medic.svg",
+    tags: ["恢复", "辅助"],
+    roleTags: ["support", "healer"],
     aiProfile: profile(.45, .95, 1.45, 1.5, .75, .9, .85, .35)
   }),
-  Object.freeze({
-    id: "shade-agent", name: "影客", glyph: "影", portrait: "./assets/characters/shade-agent.svg",
-    loreFaction: "无灯港", maxHp: 4, initialEnergy: 0, tags: ["控制", "辅助"], roleTags: ["control", "utility"], passiveSkillIds: ["spyGap"], activeSkillIds: ["stealSkill"],
-    passiveName: "窥隙", passiveDescription: "每回合首次对敌人造成实际伤害后，私下查看其至多2张手牌。",
-    passiveTriggerText: "对敌人造成实际伤害后", passiveLimitText: "每回合限触发1次",
-    activeName: "窃取", activeDescription: "消耗2点能量，选择距离2内一名持有手牌或装备的敌人作为目标，将其全部手牌与装备区牌组成统一候选集合，等概率随机获得其中1张并收入手牌；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
-    description: "往返暗潮市集的情报客，相信一张被看见的牌就不再是秘密。",
+  "shade-agent": Object.freeze({
+    glyph: "影",
+    portrait: "./assets/characters/shade-agent.svg",
+    tags: ["控制", "辅助"],
+    roleTags: ["control", "utility"],
     aiProfile: profile(1.05, .75, .4, .4, .9, .65, .85, 1.1)
   }),
-  Object.freeze({
-    id: "ember-magus", name: "炎术师", glyph: "炎", portrait: "./assets/characters/ember-magus.svg",
-    loreFaction: "赤砂穹庐", maxHp: 4, initialEnergy: 1, tags: ["群攻", "爆发"], roleTags: ["damage", "caster"], passiveSkillIds: ["ember"], activeSkillIds: ["burningField"],
-    passiveName: "余烬", passiveDescription: "卡牌每次结算首次对敌人造成实际伤害后，获得1点能量。",
-    passiveTriggerText: "卡牌结算中首次对敌人造成实际伤害后", passiveLimitText: "每次卡牌结算最多触发1次",
-    activeName: "焚场", activeDescription: "消耗3点能量，对所有存活敌人各造成1点可格挡伤害；每回合最多发动2次。", activeCost: 3, activeLimitPerTurn: 2,
-    description: "以赤砂为燃料的术士，能从每一道伤痕里回收燃烧的余烬。",
+  "ember-magus": Object.freeze({
+    glyph: "炎",
+    portrait: "./assets/characters/ember-magus.svg",
+    tags: ["群攻", "爆发"],
+    roleTags: ["damage", "caster"],
     aiProfile: profile(1.45, .45, .25, .3, .45, .55, .45, 1.25)
   }),
-  Object.freeze({
-    id: "trail-hunter", name: "追猎者", glyph: "猎", portrait: "./assets/characters/trail-hunter.svg",
-    loreFaction: "苍苔原", maxHp: 4, initialEnergy: 0, tags: ["突破", "爆发"], roleTags: ["damage", "control"], passiveSkillIds: ["tracking"], activeSkillIds: ["hunt"],
-    passiveName: "追踪", passiveDescription: "每回合以「突袭」指定敌人后可留下「猎印」，限触发2次；同一名敌人每回合最多留下1次「猎印」；「猎印」持续到你自己的下回合结束。",
-    passiveTriggerText: "以「突袭」指定敌人后", passiveLimitText: "每回合限触发2次；同一敌人每回合限1次",
-    activeName: "猎杀", activeDescription: "消耗2点能量，对有你「猎印」的敌人造成2点可格挡伤害并移除「猎印」；无视距离，若格挡成功则摸1张牌；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
-    description: "从不追赶脚步，只追赶选择；一旦落印，猎物便难逃终局。",
+  "trail-hunter": Object.freeze({
+    glyph: "猎",
+    portrait: "./assets/characters/trail-hunter.svg",
+    tags: ["突破", "爆发"],
+    roleTags: ["damage", "control"],
     aiProfile: profile(1.3, .7, .35, .45, .65, .75, .65, .95)
   }),
-  Object.freeze({
-    id: "fate-gambler", name: "赌命者", glyph: "赌", portrait: "./assets/characters/fate-gambler.svg",
-    loreFaction: "镜轮市", maxHp: 4, initialEnergy: 0, tags: ["输出", "爆发"], roleTags: ["damage", "resource"], passiveSkillIds: ["gamble"], activeSkillIds: ["allIn"],
-    passiveName: "冒险", passiveDescription: "每回合首次使用战术牌后，有60%概率摸1张牌。",
-    passiveTriggerText: "使用战术牌后", passiveLimitText: "每回合限触发1次",
-    activeName: "孤注", activeDescription: "消耗全部能量，摸取比实际消耗能量少1张的牌；有25×实际消耗能量%的概率进入不可叠加的「孤注」状态，令下一次「突袭」伤害+1，「突袭」完毕后退出；每回合最多发动1次。", activeCost: 1, activeLimitPerTurn: 1,
-    description: "在镜轮赌局中输掉姓名的旅人，习惯把剩下的一切推向桌面中央。",
+  "fate-gambler": Object.freeze({
+    glyph: "赌",
+    portrait: "./assets/characters/fate-gambler.svg",
+    tags: ["输出", "爆发"],
+    roleTags: ["damage", "resource"],
     aiProfile: profile(1.05, .55, .4, .4, .35, .25, .4, 1.5)
   }),
-  Object.freeze({
-    id: "resonance-tuner", name: "调律师", glyph: "律", portrait: "./assets/characters/resonance-tuner.svg",
-    loreFaction: "鸣风塔", maxHp: 4, initialEnergy: 1, tags: ["过牌", "辅助"], roleTags: ["support", "control"], passiveSkillIds: ["coordination"], activeSkillIds: ["resonance"],
-    passiveName: "协调", passiveDescription: "每回合首次令另一名队友成为卡牌的有效作用目标后，自己摸1张牌。",
-    passiveTriggerText: "令另一名队友成为卡牌的有效作用目标后", passiveLimitText: "每回合限触发1次",
-    activeName: "共鸣", activeDescription: "消耗2点能量，使一名己方阵营角色摸1张牌；每回合最多发动2次。", activeCost: 2, activeLimitPerTurn: 2,
-    description: "借风塔谐振器校准队友的行动，让每一次协作都产生新的回响。",
+  "resonance-tuner": Object.freeze({
+    glyph: "律",
+    portrait: "./assets/characters/resonance-tuner.svg",
+    tags: ["过牌", "辅助"],
+    roleTags: ["support", "control"],
     aiProfile: profile(.6, .8, 1.45, .9, .7, .8, .75, .55)
   })
-]);
+});
+
+/*
+功能
+克隆数组字段，保持 legacy GENERAL_DEFINITIONS 的数组与 Domain authority 相互隔离。
+
+调用方
+legacyCharacter。
+
+输入
+数组或标量字段值。
+
+输出
+数组返回新浅拷贝，其余值原样返回。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只隔离数组可变性，不复制领域或 presentation 对象身份。
+*/
+const projectLegacyArray = (value) => Array.isArray(value) ? [...value] : value;
+
+/*
+功能
+把 Domain Character 与 Domain Skill 定义投影为当前公开 GENERAL_DEFINITIONS 完整对象 shape。
+
+调用方
+generalConfig 模块初始化。
+
+输入
+角色领域定义、主动/被动技能领域定义与角色 presentation metadata。
+
+输出
+冻结的旧版角色对象，字段顺序与迁移前一致。
+
+读取状态
+CHARACTER_DEFINITIONS、ACTIVE_SKILL_DEFINITIONS、PASSIVE_SKILL_DEFINITIONS、CHARACTER_PRESENTATION。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+不维护任何角色或技能领域字段 literal；AI/UI 字段只来自 CHARACTER_PRESENTATION。
+*/
+
+const legacyCharacter = (character) => {
+  const presentation = CHARACTER_PRESENTATION[character.id];
+  const active = ACTIVE_SKILL_DEFINITIONS[character.activeSkillIds[0]];
+  const passive = PASSIVE_SKILL_DEFINITIONS[character.passiveSkillIds[0]];
+  return Object.freeze({
+    id: character.id,
+    name: character.name,
+    glyph: presentation.glyph,
+    portrait: presentation.portrait,
+    loreFaction: character.loreFaction,
+    maxHp: character.maxHp,
+    initialEnergy: character.initialEnergy,
+    tags: projectLegacyArray(presentation.tags),
+    roleTags: projectLegacyArray(presentation.roleTags),
+    passiveSkillIds: projectLegacyArray(character.passiveSkillIds),
+    activeSkillIds: projectLegacyArray(character.activeSkillIds),
+    passiveName: passive.name,
+    passiveDescription: passive.description,
+    passiveTriggerText: passive.triggerText,
+    passiveLimitText: passive.limitText,
+    activeName: active.name,
+    activeDescription: active.description,
+    activeCost: active.cost,
+    activeLimitPerTurn: active.limitPerTurn,
+    description: character.description,
+    aiProfile: presentation.aiProfile
+  });
+};
+
+export const GENERAL_DEFINITIONS = Object.freeze(CHARACTER_DEFINITIONS.map(legacyCharacter));
 
 export const GENERAL_BY_ID = Object.freeze(Object.fromEntries(GENERAL_DEFINITIONS.map((general) => [general.id, general])));

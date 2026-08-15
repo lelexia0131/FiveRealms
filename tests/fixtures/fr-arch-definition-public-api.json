@@ -1,0 +1,1499 @@
+{
+  "contract": "FR-ARCH-2 legacy public API behavior baseline",
+  "cardConfig": {
+    "CARD_DEFINITIONS": {
+      "assault": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "assault",
+        "name": "突袭",
+        "category": "basic",
+        "categoryName": "基础牌",
+        "targetType": "singleEnemyInRange",
+        "subtypes": [
+          "attack",
+          "assault"
+        ],
+        "description": "对攻击距离1内的一名敌人造成1点可格挡伤害。",
+        "count": 40,
+        "aiValue": 4,
+        "art": "./assets/cards/assault.svg",
+        "icon": "./assets/cards/assault.svg",
+        "accent": "#b84a2f",
+        "frameStyle": "strike",
+        "flavorText": "刀光先于战意抵达。"
+      },
+      "recover": {
+        "usageMode": "both",
+        "responseTypes": [
+          "dyingRescue"
+        ],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "recover",
+        "name": "调息",
+        "category": "basic",
+        "categoryName": "基础牌",
+        "targetType": "self",
+        "subtypes": [
+          "heal",
+          "rescue"
+        ],
+        "description": "出牌阶段令自己恢复1点生命；濒死时可使用「调息」救援自己或队友。",
+        "count": 12,
+        "aiValue": 6,
+        "art": "./assets/cards/recover.svg",
+        "icon": "./assets/cards/recover.svg",
+        "accent": "#4f8468",
+        "frameStyle": "vital",
+        "flavorText": "一息尚存，灵脉不绝。"
+      },
+      "block": {
+        "usageMode": "response",
+        "responseTypes": [
+          "block"
+        ],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "block",
+        "name": "格挡",
+        "category": "basic",
+        "categoryName": "基础牌",
+        "targetType": "responseOnly",
+        "subtypes": [
+          "defense",
+          "response"
+        ],
+        "description": "使用要求数量的「格挡」，令该次攻击无效。",
+        "count": 20,
+        "aiValue": 5,
+        "art": "./assets/cards/block.svg",
+        "icon": "./assets/cards/block.svg",
+        "accent": "#54728a",
+        "frameStyle": "guard",
+        "flavorText": "山岳不语，自有回响。"
+      },
+      "charge": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "charge",
+        "name": "聚能",
+        "category": "basic",
+        "categoryName": "基础牌",
+        "targetType": "self",
+        "subtypes": [
+          "energy"
+        ],
+        "description": "获得1点能量。",
+        "count": 10,
+        "aiValue": 5,
+        "art": "./assets/cards/charge.svg",
+        "icon": "./assets/cards/charge.svg",
+        "accent": "#b4872f",
+        "frameStyle": "core",
+        "flavorText": "星火归心，静待雷鸣。"
+      },
+      "shield": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "shield",
+        "name": "护盾",
+        "category": "basic",
+        "categoryName": "基础牌",
+        "targetType": "singleAlly",
+        "subtypes": [
+          "defense",
+          "shield",
+          "support"
+        ],
+        "description": "令自己或一名存活队友获得1点护盾；每点护盾免疫1点伤害。",
+        "count": 10,
+        "aiValue": 7,
+        "art": "./assets/cards/shield.svg",
+        "icon": "./assets/cards/shield.svg",
+        "accent": "#477b91",
+        "frameStyle": "ward",
+        "flavorText": "灵光层叠，终成不破之垒。"
+      },
+      "scout": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "card",
+        "ignoresDistance": true,
+        "selectionFlow": [
+          "target",
+          "hiddenCards:upTo2"
+        ],
+        "definitionId": "scout",
+        "name": "窥探",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "otherWithCards",
+        "subtypes": [
+          "information",
+          "hidden-selection"
+        ],
+        "description": "查看一名其他角色至多2张指定手牌。",
+        "count": 6,
+        "aiValue": 5,
+        "art": "./assets/cards/scout.svg",
+        "icon": "./assets/cards/scout.svg",
+        "accent": "#4b718b",
+        "frameStyle": "oracle",
+        "flavorText": "潮声掩住了情报的脚步。"
+      },
+      "transfer": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [
+          "source",
+          "receiver",
+          "handCard:1"
+        ],
+        "definitionId": "transfer",
+        "name": "转移",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "multiStage",
+        "subtypes": [
+          "control",
+          "hidden-selection"
+        ],
+        "description": "选择距离1内一名拥有手牌的来源和一名不同接收者，将其中1张手牌转移至接收者手牌；不能转移装备区的牌。",
+        "count": 2,
+        "aiValue": 7,
+        "effectRange": 1,
+        "targetZones": [
+          "hand"
+        ],
+        "art": "./assets/cards/transfer.svg",
+        "icon": "./assets/cards/transfer.svg",
+        "accent": "#3f6099",
+        "frameStyle": "current",
+        "flavorText": "物随势转，去处不由旧主。"
+      },
+      "exposeWeakness": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "exposeWeakness",
+        "name": "破势",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "self",
+        "subtypes": [
+          "status",
+          "attack-buff"
+        ],
+        "description": "获得1层「破势」；「破势」可以使「突袭」伤害额外增加相应层数；层数可叠加，打出「突袭」后消耗所有层数。",
+        "count": 6,
+        "aiValue": 6,
+        "art": "./assets/cards/expose-weakness.svg",
+        "icon": "./assets/cards/expose-weakness.svg",
+        "accent": "#8d332f",
+        "frameStyle": "fracture",
+        "flavorText": "先断其势，再断其锋。"
+      },
+      "shockwave": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "target",
+        "ignoresDistance": true,
+        "selectionFlow": [],
+        "definitionId": "shockwave",
+        "name": "震荡",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "allEnemies",
+        "subtypes": [
+          "attack",
+          "assault",
+          "area"
+        ],
+        "description": "对所有敌人进行1次「突袭」；目标使用「反制」时只取消对自己的效果。",
+        "count": 3,
+        "aiValue": 8,
+        "art": "./assets/cards/shockwave.svg",
+        "icon": "./assets/cards/shockwave.svg",
+        "accent": "#c35a35",
+        "frameStyle": "impact",
+        "flavorText": "大地替怒火发声。"
+      },
+      "provoke": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "target",
+        "ignoresDistance": true,
+        "selectionFlow": [],
+        "definitionId": "provoke",
+        "name": "挑衅",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "allEnemies",
+        "subtypes": [
+          "coercion",
+          "damage"
+        ],
+        "description": "每名敌人打出1张「突袭」，否则受到1点伤害。",
+        "count": 3,
+        "aiValue": 8,
+        "art": "./assets/cards/provoke.svg",
+        "icon": "./assets/cards/provoke.svg",
+        "accent": "#a44935",
+        "frameStyle": "impact",
+        "flavorText": "怒意一旦应声，代价便已写下。"
+      },
+      "leverage": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [
+          "firstTarget",
+          "equipment",
+          "secondTarget",
+          "confirm"
+        ],
+        "definitionId": "leverage",
+        "name": "借势",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "multiStage",
+        "subtypes": [
+          "coercion",
+          "assault",
+          "equipment-control"
+        ],
+        "description": "选择一名有装备且攻击范围内存在其他角色的其他角色，再选择其攻击范围内的一名其他角色。前者可对后者使用1张「突袭」；若拒绝，你获得其指定装备。",
+        "count": 3,
+        "aiValue": 7,
+        "art": "./assets/cards/leverage.svg",
+        "icon": "./assets/cards/leverage.svg",
+        "accent": "#9c6537",
+        "frameStyle": "current",
+        "flavorText": "借来的锋芒，也能改写归属。"
+      },
+      "plunder": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [
+          "target",
+          "zoneCard:1"
+        ],
+        "definitionId": "plunder",
+        "name": "掠夺",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "otherWithCardsOrEquipment",
+        "subtypes": [
+          "control",
+          "hidden-selection",
+          "equipment-control"
+        ],
+        "description": "获得距离2内一名其他角色的1张指定手牌或装备牌。",
+        "count": 5,
+        "aiValue": 7,
+        "effectRange": 2,
+        "targetZones": [
+          "hand",
+          "equipment"
+        ],
+        "art": "./assets/cards/plunder.svg",
+        "icon": "./assets/cards/plunder.svg",
+        "accent": "#714985",
+        "frameStyle": "chain",
+        "flavorText": "秘密总有第二位主人。"
+      },
+      "destroy": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "card",
+        "ignoresDistance": true,
+        "selectionFlow": [
+          "target",
+          "zoneCard:1"
+        ],
+        "definitionId": "destroy",
+        "name": "破坏",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "otherWithCardsOrEquipment",
+        "subtypes": [
+          "control",
+          "hidden-selection",
+          "equipment-control"
+        ],
+        "description": "弃置一名其他角色的1张指定手牌或装备牌，并公开其牌名。",
+        "count": 6,
+        "aiValue": 6,
+        "targetZones": [
+          "hand",
+          "equipment"
+        ],
+        "art": "./assets/cards/destroy.svg",
+        "icon": "./assets/cards/destroy.svg",
+        "accent": "#7a3f36",
+        "frameStyle": "fracture",
+        "flavorText": "断裂之声让秘密无处藏身。"
+      },
+      "counter": {
+        "usageMode": "response",
+        "responseTypes": [
+          "counter"
+        ],
+        "counterable": true,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "counter",
+        "name": "反制",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "responseOnly",
+        "subtypes": [
+          "response",
+          "counter"
+        ],
+        "description": "响应一张战术牌并取消其效果；面对群伤牌时只取消对自己的效果。",
+        "count": 7,
+        "aiValue": 8,
+        "art": "./assets/cards/counter.svg",
+        "icon": "./assets/cards/counter.svg",
+        "accent": "#59406e",
+        "frameStyle": "seal",
+        "flavorText": "印成，则万法暂寂。"
+      },
+      "harvest": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "harvest",
+        "name": "丰收",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "none",
+        "subtypes": [
+          "draw"
+        ],
+        "description": "摸2张牌。",
+        "count": 4,
+        "aiValue": 8,
+        "art": "./assets/cards/harvest.svg",
+        "icon": "./assets/cards/harvest.svg",
+        "accent": "#71834b",
+        "frameStyle": "vital",
+        "flavorText": "耐心让每一粒星火结实。"
+      },
+      "duel": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "card",
+        "ignoresDistance": true,
+        "selectionFlow": [],
+        "definitionId": "duel",
+        "name": "决斗",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "singleEnemy",
+        "subtypes": [
+          "duel",
+          "attack-discard"
+        ],
+        "description": "目标先开始，双方轮流打出「突袭」；首先放弃者受到1点伤害。",
+        "count": 3,
+        "aiValue": 6,
+        "art": "./assets/cards/duel.svg",
+        "icon": "./assets/cards/duel.svg",
+        "accent": "#933d31",
+        "frameStyle": "strike",
+        "flavorText": "胜负只隔着下一次出刃。"
+      },
+      "mutualBenefit": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "card",
+        "ignoresDistance": true,
+        "selectionFlow": [
+          "publicPool"
+        ],
+        "definitionId": "mutualBenefit",
+        "name": "互利",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "allLiving",
+        "subtypes": [
+          "public-pool",
+          "draw"
+        ],
+        "description": "以所有存活角色为规则目标；展示等同存活人数的牌，从你开始按座位顺序每人选择1张。",
+        "count": 2,
+        "aiValue": 6,
+        "art": "./assets/cards/mutual-benefit.svg",
+        "icon": "./assets/cards/mutual-benefit.svg",
+        "accent": "#5a8b7f",
+        "frameStyle": "ward",
+        "flavorText": "同桌之上，各取所需。"
+      },
+      "symbiosis": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": true,
+        "counterScope": "card",
+        "ignoresDistance": true,
+        "selectionFlow": [],
+        "definitionId": "symbiosis",
+        "name": "共生",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "allLiving",
+        "subtypes": [
+          "heal",
+          "global"
+        ],
+        "description": "令所有存活角色各恢复1点生命。",
+        "count": 1,
+        "aiValue": 5,
+        "art": "./assets/cards/symbiosis.svg",
+        "icon": "./assets/cards/symbiosis.svg",
+        "accent": "#45856b",
+        "frameStyle": "vital",
+        "flavorText": "万脉同息，枯处亦生。"
+      },
+      "seal": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "seal",
+        "name": "封印",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "singleUnsealedEnemy",
+        "subtypes": [
+          "status",
+          "delay",
+          "control"
+        ],
+        "description": "对一名未处于「封印」状态的敌人使用，使其进入「封印」状态。其下个回合摸牌阶段前判定：为战术牌时「封印」未生效，本回合正常进行；否则「封印」生效，摸牌后跳过出牌阶段。",
+        "count": 3,
+        "aiValue": 7,
+        "art": "./assets/cards/seal.svg",
+        "icon": "./assets/cards/seal.svg",
+        "accent": "#7655a8",
+        "frameStyle": "seal",
+        "flavorText": "印落于身，来日方知枷锁轻重。"
+      },
+      "lightning": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "lightning",
+        "name": "闪电",
+        "category": "tactic",
+        "categoryName": "战术牌",
+        "targetType": "none",
+        "subtypes": [
+          "status",
+          "delay"
+        ],
+        "description": "使用后进入「闪电」状态；下回合摸牌前进行判定。若结果为装备牌，受到3点伤害并移除状态；否则将状态转移给下一名未进入「闪电」状态的角色。",
+        "count": 2,
+        "aiValue": 3,
+        "art": "./assets/cards/lightning.svg",
+        "icon": "./assets/cards/lightning.svg",
+        "accent": "#5b7fd4",
+        "frameStyle": "current",
+        "flavorText": "云隙一瞬，雷霆已有归处。"
+      },
+      "energyDevice": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "energyDevice",
+        "name": "充能桩",
+        "category": "equipment",
+        "categoryName": "装备牌",
+        "targetType": "self",
+        "subtypes": [
+          "equipment",
+          "energy"
+        ],
+        "description": "回合开始获得能量时额外获得1点。",
+        "count": 2,
+        "aiValue": 7,
+        "art": "./assets/cards/energy-device.svg",
+        "icon": "./assets/cards/energy-device.svg",
+        "accent": "#b4872f",
+        "frameStyle": "machine",
+        "flavorText": "微光沿铜轨汇入核心。"
+      },
+      "recycleDevice": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "recycleDevice",
+        "name": "回收站",
+        "category": "equipment",
+        "categoryName": "装备牌",
+        "targetType": "self",
+        "subtypes": [
+          "equipment",
+          "draw"
+        ],
+        "description": "自己回合主动使用战术牌后摸1张，即使该牌被反制；每回合最多触发2次。",
+        "count": 3,
+        "aiValue": 8,
+        "art": "./assets/cards/recycle-device.svg",
+        "icon": "./assets/cards/recycle-device.svg",
+        "accent": "#7d8260",
+        "frameStyle": "machine",
+        "flavorText": "废弃的余响仍可再次运转。"
+      },
+      "defenseDevice": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "defenseDevice",
+        "name": "雷达",
+        "category": "equipment",
+        "categoryName": "装备牌",
+        "targetType": "self",
+        "subtypes": [
+          "equipment",
+          "judgment",
+          "defense"
+        ],
+        "description": "当需要打出「格挡」进行响应时判定：战术牌令此次攻击无效；基础牌进入手牌后继续结算；装备牌进入弃牌堆且此次攻击继续结算。",
+        "count": 2,
+        "aiValue": 9,
+        "art": "./assets/cards/defense-device.svg",
+        "icon": "./assets/cards/defense-device.svg",
+        "accent": "#58788c",
+        "frameStyle": "machine",
+        "flavorText": "齿轮先一步听见危险。"
+      },
+      "battleDevice": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "battleDevice",
+        "name": "军火库",
+        "category": "equipment",
+        "categoryName": "装备牌",
+        "targetType": "self",
+        "subtypes": [
+          "equipment",
+          "attack"
+        ],
+        "description": "你的「突袭」与「震荡」需要目标一次使用2张「格挡」才能防御；数量不足时不会消耗已有「格挡」。",
+        "count": 2,
+        "aiValue": 9,
+        "art": "./assets/cards/battle-device.svg",
+        "icon": "./assets/cards/battle-device.svg",
+        "accent": "#9a6139",
+        "frameStyle": "machine",
+        "flavorText": "双重压力让防线发出哀鸣。"
+      },
+      "telescope": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "telescope",
+        "name": "望远镜",
+        "category": "equipment",
+        "categoryName": "装备牌",
+        "targetType": "self",
+        "subtypes": [
+          "equipment",
+          "distance",
+          "attack"
+        ],
+        "description": "你计算与其他角色的距离时-1。",
+        "count": 3,
+        "aiValue": 8,
+        "art": "./assets/cards/telescope.svg",
+        "icon": "./assets/cards/telescope.svg",
+        "accent": "#497c91",
+        "frameStyle": "machine",
+        "flavorText": "远处的锋芒，也能近在眼前。"
+      },
+      "barrierDevice": {
+        "usageMode": "active",
+        "responseTypes": [],
+        "counterable": false,
+        "counterScope": "card",
+        "ignoresDistance": false,
+        "selectionFlow": [],
+        "definitionId": "barrierDevice",
+        "name": "屏障",
+        "category": "equipment",
+        "categoryName": "装备牌",
+        "targetType": "self",
+        "subtypes": [
+          "equipment",
+          "distance",
+          "defense"
+        ],
+        "description": "其他角色计算与你的距离时+1。",
+        "count": 3,
+        "aiValue": 9,
+        "art": "./assets/cards/barrier-device.svg",
+        "icon": "./assets/cards/barrier-device.svg",
+        "accent": "#6d638f",
+        "frameStyle": "machine",
+        "flavorText": "无形界面，将来敌推远一步。"
+      }
+    },
+    "CARD_COUNTS": {
+      "assault": 40,
+      "recover": 12,
+      "block": 20,
+      "charge": 10,
+      "shield": 10,
+      "scout": 6,
+      "transfer": 2,
+      "exposeWeakness": 6,
+      "shockwave": 3,
+      "provoke": 3,
+      "leverage": 3,
+      "plunder": 5,
+      "destroy": 6,
+      "counter": 7,
+      "harvest": 4,
+      "duel": 3,
+      "mutualBenefit": 2,
+      "symbiosis": 1,
+      "seal": 3,
+      "lightning": 2,
+      "energyDevice": 2,
+      "recycleDevice": 3,
+      "defenseDevice": 2,
+      "battleDevice": 2,
+      "telescope": 3,
+      "barrierDevice": 3
+    },
+    "TOTAL_CARD_COUNT": 163
+  },
+  "generalConfig": {
+    "GENERAL_DEFINITIONS": [
+      {
+        "id": "blade-walker",
+        "name": "刃行者",
+        "glyph": "刃",
+        "portrait": "./assets/characters/blade-walker.svg",
+        "loreFaction": "流火长路",
+        "maxHp": 4,
+        "initialEnergy": 0,
+        "tags": [
+          "输出",
+          "爆发"
+        ],
+        "roleTags": [
+          "damage",
+          "attacker"
+        ],
+        "passiveSkillIds": [
+          "momentum"
+        ],
+        "activeSkillIds": [
+          "breakArmy"
+        ],
+        "passiveName": "连势",
+        "passiveDescription": "每回合首次使用一种新的卡牌类别时获得1层「连势」，最多2层；下一次「突袭」实际造成伤害时增加等同层数的伤害并消耗，回合结束后清空「连势」。",
+        "passiveTriggerText": "使用本回合尚未记录的卡牌类别时",
+        "passiveLimitText": "每回合按不同卡牌类别分别触发",
+        "activeName": "破军",
+        "activeDescription": "消耗2点能量，本回合可额外使用1张「突袭」；每回合最多发动1次。",
+        "activeCost": 2,
+        "activeLimitPerTurn": 1,
+        "description": "沿熔岩古道巡行的迅刃，用变化不定的牌序积蓄致命节奏。",
+        "aiProfile": {
+          "aggression": 1.35,
+          "defense": 0.65,
+          "support": 0.35,
+          "healingPriority": 0.45,
+          "cardConservation": 0.55,
+          "energyConservation": 0.55,
+          "responseConservation": 0.5,
+          "riskTolerance": 1.05
+        }
+      },
+      {
+        "id": "oath-warden",
+        "name": "守誓者",
+        "glyph": "誓",
+        "portrait": "./assets/characters/oath-warden.svg",
+        "loreFaction": "曜石城垒",
+        "maxHp": 4,
+        "initialEnergy": 0,
+        "tags": [
+          "防护",
+          "辅助"
+        ],
+        "roleTags": [
+          "tank",
+          "support"
+        ],
+        "passiveSkillIds": [
+          "guardianAid"
+        ],
+        "activeSkillIds": [
+          "barrier"
+        ],
+        "passiveName": "护援",
+        "passiveDescription": "每回合1次，弃置1张手牌令队友即将受到的伤害-1。",
+        "passiveTriggerText": "队友即将受到伤害且你可弃置1张手牌时",
+        "passiveLimitText": "每回合限触发1次",
+        "activeName": "壁垒",
+        "activeDescription": "消耗2点能量，使一名己方阵营角色获得1点护盾；每回合最多发动2次。",
+        "activeCost": 2,
+        "activeLimitPerTurn": 2,
+        "description": "背负古誓的城垒守卫，擅长将危险拦截在盟友身前。",
+        "aiProfile": {
+          "aggression": 0.6,
+          "defense": 1.45,
+          "support": 1.25,
+          "healingPriority": 0.7,
+          "cardConservation": 0.8,
+          "energyConservation": 0.85,
+          "responseConservation": 0.9,
+          "riskTolerance": 0.45
+        }
+      },
+      {
+        "id": "spirit-medic",
+        "name": "灵医",
+        "glyph": "灵",
+        "portrait": "./assets/characters/spirit-medic.svg",
+        "loreFaction": "雾泉庭",
+        "maxHp": 4,
+        "initialEnergy": 1,
+        "tags": [
+          "恢复",
+          "辅助"
+        ],
+        "roleTags": [
+          "support",
+          "healer"
+        ],
+        "passiveSkillIds": [
+          "rejuvenation"
+        ],
+        "activeSkillIds": [
+          "symbiosis"
+        ],
+        "passiveName": "回春",
+        "passiveDescription": "由你使一名己方阵营角色恢复生命时，你摸1张牌；濒死救援也可触发；每回合最多触发2次。",
+        "passiveTriggerText": "由你使自己或队友恢复生命时",
+        "passiveLimitText": "每回合限触发2次",
+        "activeName": "滋荣",
+        "activeDescription": "消耗2点能量，使一名己方阵营角色恢复1点生命；每回合最多发动2次",
+        "activeCost": 2,
+        "activeLimitPerTurn": 2,
+        "description": "听见生命回声的游医，以自己的元息换取同伴继续作战。",
+        "aiProfile": {
+          "aggression": 0.45,
+          "defense": 0.95,
+          "support": 1.45,
+          "healingPriority": 1.5,
+          "cardConservation": 0.75,
+          "energyConservation": 0.9,
+          "responseConservation": 0.85,
+          "riskTolerance": 0.35
+        }
+      },
+      {
+        "id": "shade-agent",
+        "name": "影客",
+        "glyph": "影",
+        "portrait": "./assets/characters/shade-agent.svg",
+        "loreFaction": "无灯港",
+        "maxHp": 4,
+        "initialEnergy": 0,
+        "tags": [
+          "控制",
+          "辅助"
+        ],
+        "roleTags": [
+          "control",
+          "utility"
+        ],
+        "passiveSkillIds": [
+          "spyGap"
+        ],
+        "activeSkillIds": [
+          "stealSkill"
+        ],
+        "passiveName": "窥隙",
+        "passiveDescription": "每回合首次对敌人造成实际伤害后，私下查看其至多2张手牌。",
+        "passiveTriggerText": "对敌人造成实际伤害后",
+        "passiveLimitText": "每回合限触发1次",
+        "activeName": "窃取",
+        "activeDescription": "消耗2点能量，选择距离2内一名持有手牌或装备的敌人作为目标，将其全部手牌与装备区牌组成统一候选集合，等概率随机获得其中1张并收入手牌；每回合最多发动2次。",
+        "activeCost": 2,
+        "activeLimitPerTurn": 2,
+        "description": "往返暗潮市集的情报客，相信一张被看见的牌就不再是秘密。",
+        "aiProfile": {
+          "aggression": 1.05,
+          "defense": 0.75,
+          "support": 0.4,
+          "healingPriority": 0.4,
+          "cardConservation": 0.9,
+          "energyConservation": 0.65,
+          "responseConservation": 0.85,
+          "riskTolerance": 1.1
+        }
+      },
+      {
+        "id": "ember-magus",
+        "name": "炎术师",
+        "glyph": "炎",
+        "portrait": "./assets/characters/ember-magus.svg",
+        "loreFaction": "赤砂穹庐",
+        "maxHp": 4,
+        "initialEnergy": 1,
+        "tags": [
+          "群攻",
+          "爆发"
+        ],
+        "roleTags": [
+          "damage",
+          "caster"
+        ],
+        "passiveSkillIds": [
+          "ember"
+        ],
+        "activeSkillIds": [
+          "burningField"
+        ],
+        "passiveName": "余烬",
+        "passiveDescription": "卡牌每次结算首次对敌人造成实际伤害后，获得1点能量。",
+        "passiveTriggerText": "卡牌结算中首次对敌人造成实际伤害后",
+        "passiveLimitText": "每次卡牌结算最多触发1次",
+        "activeName": "焚场",
+        "activeDescription": "消耗3点能量，对所有存活敌人各造成1点可格挡伤害；每回合最多发动2次。",
+        "activeCost": 3,
+        "activeLimitPerTurn": 2,
+        "description": "以赤砂为燃料的术士，能从每一道伤痕里回收燃烧的余烬。",
+        "aiProfile": {
+          "aggression": 1.45,
+          "defense": 0.45,
+          "support": 0.25,
+          "healingPriority": 0.3,
+          "cardConservation": 0.45,
+          "energyConservation": 0.55,
+          "responseConservation": 0.45,
+          "riskTolerance": 1.25
+        }
+      },
+      {
+        "id": "trail-hunter",
+        "name": "追猎者",
+        "glyph": "猎",
+        "portrait": "./assets/characters/trail-hunter.svg",
+        "loreFaction": "苍苔原",
+        "maxHp": 4,
+        "initialEnergy": 0,
+        "tags": [
+          "突破",
+          "爆发"
+        ],
+        "roleTags": [
+          "damage",
+          "control"
+        ],
+        "passiveSkillIds": [
+          "tracking"
+        ],
+        "activeSkillIds": [
+          "hunt"
+        ],
+        "passiveName": "追踪",
+        "passiveDescription": "每回合以「突袭」指定敌人后可留下「猎印」，限触发2次；同一名敌人每回合最多留下1次「猎印」；「猎印」持续到你自己的下回合结束。",
+        "passiveTriggerText": "以「突袭」指定敌人后",
+        "passiveLimitText": "每回合限触发2次；同一敌人每回合限1次",
+        "activeName": "猎杀",
+        "activeDescription": "消耗2点能量，对有你「猎印」的敌人造成2点可格挡伤害并移除「猎印」；无视距离，若格挡成功则摸1张牌；每回合最多发动2次。",
+        "activeCost": 2,
+        "activeLimitPerTurn": 2,
+        "description": "从不追赶脚步，只追赶选择；一旦落印，猎物便难逃终局。",
+        "aiProfile": {
+          "aggression": 1.3,
+          "defense": 0.7,
+          "support": 0.35,
+          "healingPriority": 0.45,
+          "cardConservation": 0.65,
+          "energyConservation": 0.75,
+          "responseConservation": 0.65,
+          "riskTolerance": 0.95
+        }
+      },
+      {
+        "id": "fate-gambler",
+        "name": "赌命者",
+        "glyph": "赌",
+        "portrait": "./assets/characters/fate-gambler.svg",
+        "loreFaction": "镜轮市",
+        "maxHp": 4,
+        "initialEnergy": 0,
+        "tags": [
+          "输出",
+          "爆发"
+        ],
+        "roleTags": [
+          "damage",
+          "resource"
+        ],
+        "passiveSkillIds": [
+          "gamble"
+        ],
+        "activeSkillIds": [
+          "allIn"
+        ],
+        "passiveName": "冒险",
+        "passiveDescription": "每回合首次使用战术牌后，有60%概率摸1张牌。",
+        "passiveTriggerText": "使用战术牌后",
+        "passiveLimitText": "每回合限触发1次",
+        "activeName": "孤注",
+        "activeDescription": "消耗全部能量，摸取比实际消耗能量少1张的牌；有25×实际消耗能量%的概率进入不可叠加的「孤注」状态，令下一次「突袭」伤害+1，「突袭」完毕后退出；每回合最多发动1次。",
+        "activeCost": 1,
+        "activeLimitPerTurn": 1,
+        "description": "在镜轮赌局中输掉姓名的旅人，习惯把剩下的一切推向桌面中央。",
+        "aiProfile": {
+          "aggression": 1.05,
+          "defense": 0.55,
+          "support": 0.4,
+          "healingPriority": 0.4,
+          "cardConservation": 0.35,
+          "energyConservation": 0.25,
+          "responseConservation": 0.4,
+          "riskTolerance": 1.5
+        }
+      },
+      {
+        "id": "resonance-tuner",
+        "name": "调律师",
+        "glyph": "律",
+        "portrait": "./assets/characters/resonance-tuner.svg",
+        "loreFaction": "鸣风塔",
+        "maxHp": 4,
+        "initialEnergy": 1,
+        "tags": [
+          "过牌",
+          "辅助"
+        ],
+        "roleTags": [
+          "support",
+          "control"
+        ],
+        "passiveSkillIds": [
+          "coordination"
+        ],
+        "activeSkillIds": [
+          "resonance"
+        ],
+        "passiveName": "协调",
+        "passiveDescription": "每回合首次令另一名队友成为卡牌的有效作用目标后，自己摸1张牌。",
+        "passiveTriggerText": "令另一名队友成为卡牌的有效作用目标后",
+        "passiveLimitText": "每回合限触发1次",
+        "activeName": "共鸣",
+        "activeDescription": "消耗2点能量，使一名己方阵营角色摸1张牌；每回合最多发动2次。",
+        "activeCost": 2,
+        "activeLimitPerTurn": 2,
+        "description": "借风塔谐振器校准队友的行动，让每一次协作都产生新的回响。",
+        "aiProfile": {
+          "aggression": 0.6,
+          "defense": 0.8,
+          "support": 1.45,
+          "healingPriority": 0.9,
+          "cardConservation": 0.7,
+          "energyConservation": 0.8,
+          "responseConservation": 0.75,
+          "riskTolerance": 0.55
+        }
+      }
+    ],
+    "GENERAL_BY_ID": {
+      "blade-walker": {
+        "id": "blade-walker",
+        "name": "刃行者",
+        "glyph": "刃",
+        "portrait": "./assets/characters/blade-walker.svg",
+        "loreFaction": "流火长路",
+        "maxHp": 4,
+        "initialEnergy": 0,
+        "tags": [
+          "输出",
+          "爆发"
+        ],
+        "roleTags": [
+          "damage",
+          "attacker"
+        ],
+        "passiveSkillIds": [
+          "momentum"
+        ],
+        "activeSkillIds": [
+          "breakArmy"
+        ],
+        "passiveName": "连势",
+        "passiveDescription": "每回合首次使用一种新的卡牌类别时获得1层「连势」，最多2层；下一次「突袭」实际造成伤害时增加等同层数的伤害并消耗，回合结束后清空「连势」。",
+        "passiveTriggerText": "使用本回合尚未记录的卡牌类别时",
+        "passiveLimitText": "每回合按不同卡牌类别分别触发",
+        "activeName": "破军",
+        "activeDescription": "消耗2点能量，本回合可额外使用1张「突袭」；每回合最多发动1次。",
+        "activeCost": 2,
+        "activeLimitPerTurn": 1,
+        "description": "沿熔岩古道巡行的迅刃，用变化不定的牌序积蓄致命节奏。",
+        "aiProfile": {
+          "aggression": 1.35,
+          "defense": 0.65,
+          "support": 0.35,
+          "healingPriority": 0.45,
+          "cardConservation": 0.55,
+          "energyConservation": 0.55,
+          "responseConservation": 0.5,
+          "riskTolerance": 1.05
+        }
+      },
+      "oath-warden": {
+        "id": "oath-warden",
+        "name": "守誓者",
+        "glyph": "誓",
+        "portrait": "./assets/characters/oath-warden.svg",
+        "loreFaction": "曜石城垒",
+        "maxHp": 4,
+        "initialEnergy": 0,
+        "tags": [
+          "防护",
+          "辅助"
+        ],
+        "roleTags": [
+          "tank",
+          "support"
+        ],
+        "passiveSkillIds": [
+          "guardianAid"
+        ],
+        "activeSkillIds": [
+          "barrier"
+        ],
+        "passiveName": "护援",
+        "passiveDescription": "每回合1次，弃置1张手牌令队友即将受到的伤害-1。",
+        "passiveTriggerText": "队友即将受到伤害且你可弃置1张手牌时",
+        "passiveLimitText": "每回合限触发1次",
+        "activeName": "壁垒",
+        "activeDescription": "消耗2点能量，使一名己方阵营角色获得1点护盾；每回合最多发动2次。",
+        "activeCost": 2,
+        "activeLimitPerTurn": 2,
+        "description": "背负古誓的城垒守卫，擅长将危险拦截在盟友身前。",
+        "aiProfile": {
+          "aggression": 0.6,
+          "defense": 1.45,
+          "support": 1.25,
+          "healingPriority": 0.7,
+          "cardConservation": 0.8,
+          "energyConservation": 0.85,
+          "responseConservation": 0.9,
+          "riskTolerance": 0.45
+        }
+      },
+      "spirit-medic": {
+        "id": "spirit-medic",
+        "name": "灵医",
+        "glyph": "灵",
+        "portrait": "./assets/characters/spirit-medic.svg",
+        "loreFaction": "雾泉庭",
+        "maxHp": 4,
+        "initialEnergy": 1,
+        "tags": [
+          "恢复",
+          "辅助"
+        ],
+        "roleTags": [
+          "support",
+          "healer"
+        ],
+        "passiveSkillIds": [
+          "rejuvenation"
+        ],
+        "activeSkillIds": [
+          "symbiosis"
+        ],
+        "passiveName": "回春",
+        "passiveDescription": "由你使一名己方阵营角色恢复生命时，你摸1张牌；濒死救援也可触发；每回合最多触发2次。",
+        "passiveTriggerText": "由你使自己或队友恢复生命时",
+        "passiveLimitText": "每回合限触发2次",
+        "activeName": "滋荣",
+        "activeDescription": "消耗2点能量，使一名己方阵营角色恢复1点生命；每回合最多发动2次",
+        "activeCost": 2,
+        "activeLimitPerTurn": 2,
+        "description": "听见生命回声的游医，以自己的元息换取同伴继续作战。",
+        "aiProfile": {
+          "aggression": 0.45,
+          "defense": 0.95,
+          "support": 1.45,
+          "healingPriority": 1.5,
+          "cardConservation": 0.75,
+          "energyConservation": 0.9,
+          "responseConservation": 0.85,
+          "riskTolerance": 0.35
+        }
+      },
+      "shade-agent": {
+        "id": "shade-agent",
+        "name": "影客",
+        "glyph": "影",
+        "portrait": "./assets/characters/shade-agent.svg",
+        "loreFaction": "无灯港",
+        "maxHp": 4,
+        "initialEnergy": 0,
+        "tags": [
+          "控制",
+          "辅助"
+        ],
+        "roleTags": [
+          "control",
+          "utility"
+        ],
+        "passiveSkillIds": [
+          "spyGap"
+        ],
+        "activeSkillIds": [
+          "stealSkill"
+        ],
+        "passiveName": "窥隙",
+        "passiveDescription": "每回合首次对敌人造成实际伤害后，私下查看其至多2张手牌。",
+        "passiveTriggerText": "对敌人造成实际伤害后",
+        "passiveLimitText": "每回合限触发1次",
+        "activeName": "窃取",
+        "activeDescription": "消耗2点能量，选择距离2内一名持有手牌或装备的敌人作为目标，将其全部手牌与装备区牌组成统一候选集合，等概率随机获得其中1张并收入手牌；每回合最多发动2次。",
+        "activeCost": 2,
+        "activeLimitPerTurn": 2,
+        "description": "往返暗潮市集的情报客，相信一张被看见的牌就不再是秘密。",
+        "aiProfile": {
+          "aggression": 1.05,
+          "defense": 0.75,
+          "support": 0.4,
+          "healingPriority": 0.4,
+          "cardConservation": 0.9,
+          "energyConservation": 0.65,
+          "responseConservation": 0.85,
+          "riskTolerance": 1.1
+        }
+      },
+      "ember-magus": {
+        "id": "ember-magus",
+        "name": "炎术师",
+        "glyph": "炎",
+        "portrait": "./assets/characters/ember-magus.svg",
+        "loreFaction": "赤砂穹庐",
+        "maxHp": 4,
+        "initialEnergy": 1,
+        "tags": [
+          "群攻",
+          "爆发"
+        ],
+        "roleTags": [
+          "damage",
+          "caster"
+        ],
+        "passiveSkillIds": [
+          "ember"
+        ],
+        "activeSkillIds": [
+          "burningField"
+        ],
+        "passiveName": "余烬",
+        "passiveDescription": "卡牌每次结算首次对敌人造成实际伤害后，获得1点能量。",
+        "passiveTriggerText": "卡牌结算中首次对敌人造成实际伤害后",
+        "passiveLimitText": "每次卡牌结算最多触发1次",
+        "activeName": "焚场",
+        "activeDescription": "消耗3点能量，对所有存活敌人各造成1点可格挡伤害；每回合最多发动2次。",
+        "activeCost": 3,
+        "activeLimitPerTurn": 2,
+        "description": "以赤砂为燃料的术士，能从每一道伤痕里回收燃烧的余烬。",
+        "aiProfile": {
+          "aggression": 1.45,
+          "defense": 0.45,
+          "support": 0.25,
+          "healingPriority": 0.3,
+          "cardConservation": 0.45,
+          "energyConservation": 0.55,
+          "responseConservation": 0.45,
+          "riskTolerance": 1.25
+        }
+      },
+      "trail-hunter": {
+        "id": "trail-hunter",
+        "name": "追猎者",
+        "glyph": "猎",
+        "portrait": "./assets/characters/trail-hunter.svg",
+        "loreFaction": "苍苔原",
+        "maxHp": 4,
+        "initialEnergy": 0,
+        "tags": [
+          "突破",
+          "爆发"
+        ],
+        "roleTags": [
+          "damage",
+          "control"
+        ],
+        "passiveSkillIds": [
+          "tracking"
+        ],
+        "activeSkillIds": [
+          "hunt"
+        ],
+        "passiveName": "追踪",
+        "passiveDescription": "每回合以「突袭」指定敌人后可留下「猎印」，限触发2次；同一名敌人每回合最多留下1次「猎印」；「猎印」持续到你自己的下回合结束。",
+        "passiveTriggerText": "以「突袭」指定敌人后",
+        "passiveLimitText": "每回合限触发2次；同一敌人每回合限1次",
+        "activeName": "猎杀",
+        "activeDescription": "消耗2点能量，对有你「猎印」的敌人造成2点可格挡伤害并移除「猎印」；无视距离，若格挡成功则摸1张牌；每回合最多发动2次。",
+        "activeCost": 2,
+        "activeLimitPerTurn": 2,
+        "description": "从不追赶脚步，只追赶选择；一旦落印，猎物便难逃终局。",
+        "aiProfile": {
+          "aggression": 1.3,
+          "defense": 0.7,
+          "support": 0.35,
+          "healingPriority": 0.45,
+          "cardConservation": 0.65,
+          "energyConservation": 0.75,
+          "responseConservation": 0.65,
+          "riskTolerance": 0.95
+        }
+      },
+      "fate-gambler": {
+        "id": "fate-gambler",
+        "name": "赌命者",
+        "glyph": "赌",
+        "portrait": "./assets/characters/fate-gambler.svg",
+        "loreFaction": "镜轮市",
+        "maxHp": 4,
+        "initialEnergy": 0,
+        "tags": [
+          "输出",
+          "爆发"
+        ],
+        "roleTags": [
+          "damage",
+          "resource"
+        ],
+        "passiveSkillIds": [
+          "gamble"
+        ],
+        "activeSkillIds": [
+          "allIn"
+        ],
+        "passiveName": "冒险",
+        "passiveDescription": "每回合首次使用战术牌后，有60%概率摸1张牌。",
+        "passiveTriggerText": "使用战术牌后",
+        "passiveLimitText": "每回合限触发1次",
+        "activeName": "孤注",
+        "activeDescription": "消耗全部能量，摸取比实际消耗能量少1张的牌；有25×实际消耗能量%的概率进入不可叠加的「孤注」状态，令下一次「突袭」伤害+1，「突袭」完毕后退出；每回合最多发动1次。",
+        "activeCost": 1,
+        "activeLimitPerTurn": 1,
+        "description": "在镜轮赌局中输掉姓名的旅人，习惯把剩下的一切推向桌面中央。",
+        "aiProfile": {
+          "aggression": 1.05,
+          "defense": 0.55,
+          "support": 0.4,
+          "healingPriority": 0.4,
+          "cardConservation": 0.35,
+          "energyConservation": 0.25,
+          "responseConservation": 0.4,
+          "riskTolerance": 1.5
+        }
+      },
+      "resonance-tuner": {
+        "id": "resonance-tuner",
+        "name": "调律师",
+        "glyph": "律",
+        "portrait": "./assets/characters/resonance-tuner.svg",
+        "loreFaction": "鸣风塔",
+        "maxHp": 4,
+        "initialEnergy": 1,
+        "tags": [
+          "过牌",
+          "辅助"
+        ],
+        "roleTags": [
+          "support",
+          "control"
+        ],
+        "passiveSkillIds": [
+          "coordination"
+        ],
+        "activeSkillIds": [
+          "resonance"
+        ],
+        "passiveName": "协调",
+        "passiveDescription": "每回合首次令另一名队友成为卡牌的有效作用目标后，自己摸1张牌。",
+        "passiveTriggerText": "令另一名队友成为卡牌的有效作用目标后",
+        "passiveLimitText": "每回合限触发1次",
+        "activeName": "共鸣",
+        "activeDescription": "消耗2点能量，使一名己方阵营角色摸1张牌；每回合最多发动2次。",
+        "activeCost": 2,
+        "activeLimitPerTurn": 2,
+        "description": "借风塔谐振器校准队友的行动，让每一次协作都产生新的回响。",
+        "aiProfile": {
+          "aggression": 0.6,
+          "defense": 0.8,
+          "support": 1.45,
+          "healingPriority": 0.9,
+          "cardConservation": 0.7,
+          "energyConservation": 0.8,
+          "responseConservation": 0.75,
+          "riskTolerance": 0.55
+        }
+      }
+    }
+  },
+  "gameConfig": {
+    "GAME_CONFIG": {
+      "playerCount": 5,
+      "smallTeamSize": 2,
+      "largeTeamSize": 3,
+      "generalCandidateCount": 4,
+      "allowDuplicateGenerals": false,
+      "initialHandCount": 4,
+      "defaultDrawCount": 2,
+      "defaultMaxEnergy": 3,
+      "defaultAttackRange": 1,
+      "responseTimeoutMs": null,
+      "forceAiRescueHuman": true,
+      "aiMaxActionsPerTurn": 16,
+      "initialRound": 1,
+      "gamblerDrawChance": 0.6,
+      "momentumMaxStacks": 2,
+      "killRewardDrawCount": 1,
+      "debugMode": false,
+      "smallTeamBonuses": {
+        "initialHandCount": 5,
+        "drawCountPerTurn": 3,
+        "attackLimitPerTurn": 2,
+        "recoverLimitPerTurn": null,
+        "turnEnergyGain": 1,
+        "turnEnergyBonus": 0,
+        "maxEnergy": 4
+      },
+      "largeTeamRules": {
+        "initialHandCount": 4,
+        "drawCountPerTurn": 2,
+        "attackLimitPerTurn": 1,
+        "recoverLimitPerTurn": null,
+        "turnEnergyGain": 1,
+        "turnEnergyBonus": 0,
+        "maxEnergy": 3
+      },
+      "aiInitialThinkMinMs": 3000,
+      "aiInitialThinkMaxMs": 5500,
+      "aiBetweenActionMinMs": 1800,
+      "aiBetweenActionMaxMs": 3500,
+      "aiResponseThinkMinMs": 1800,
+      "aiResponseThinkMaxMs": 3200,
+      "aiDiscardThinkMinMs": 1600,
+      "aiDiscardThinkMaxMs": 2800,
+      "aiEndThinkMinMs": 900,
+      "aiEndThinkMaxMs": 1600,
+      "aiComplexThinkMaxMs": 7000,
+      "animationFastMode": false,
+      "animationFastScale": 0.08,
+      "animationFastMinimumMs": 0,
+      "simulationMode": false,
+      "aiSearchDepth": 4,
+      "aiBeamWidth": 10,
+      "aiHiddenStateSamples": 10,
+      "aiSearchTimeBudgetMs": 900,
+      "aiReplanAfterEveryAction": true,
+      "aiSearchYieldEvery": 48,
+      "aiNearTieRange": 0.35,
+      "enableAiRandomness": true,
+      "aiRandomnessRange": 0.035,
+      "aiDifficultyMultiplier": 1
+    },
+    "TEAM_CONFIG": {
+      "dawn": {
+        "id": "dawn",
+        "name": "晨星阵营",
+        "shortName": "晨星"
+      },
+      "dusk": {
+        "id": "dusk",
+        "name": "暮影阵营",
+        "shortName": "暮影"
+      }
+    },
+    "PHASE_NAMES": {
+      "idle": "等待",
+      "turnStart": "回合开始",
+      "status": "状态处理",
+      "energy": "获得能量",
+      "draw": "摸牌",
+      "play": "出牌",
+      "dying": "濒死救援",
+      "judgment": "判定",
+      "discard": "弃牌",
+      "turnEnd": "回合结束",
+      "gameOver": "对局结束"
+    }
+  }
+}
