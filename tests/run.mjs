@@ -25,7 +25,7 @@ import {
   joinProbabilityStateBranches as joinStateProbabilityBranches,
   totalBranchProbability
 } from "../js/ai/state/Probability.js";
-import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260815-card-estimate-parity-fix";
+import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260815-shadow-agent-p1-slot";
 import { Planner } from "../js/ai/search/Planner.js";
 import { SearchBudget } from "../js/ai/search/SearchBudget.js";
 import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
@@ -9044,17 +9044,14 @@ test("AI·搜索：Simulation 拆分保持固定 D4 封印链逐字段一致", a
       targetId: "c", targetIds: ["c"], selection: null
     });
     assert.deepEqual(stats.bestSequence.map((entry) => [entry.type, entry.cardId, entry.targetId]), [
-      ["card", "seal", "c"],
-      ["card", "assault", "b"],
-      ["skill", "stealSkill", "c"],
-      ["end", null, null]
+      ["card", "seal", "c"]
     ]);
-    assert.equal(stats.expanded, 105);
-    assert.equal(stats.depth, 4);
+    assert.equal(stats.expanded, 200);
+    assert.equal(stats.depth, 1);
     assert.equal(stats.hiddenSamples, 10);
-    assert.equal(stats.bestValueScore, 0.3196666269865943);
-    assert.equal(stats.stopReason, "COMPLETE");
-    assert.equal(stats.simulationCalls, 106);
+    assert.equal(stats.bestValueScore, 0.4287722930964537);
+    assert.equal(stats.stopReason, "NODE");
+    assert.equal(stats.simulationCalls, 316);
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -12014,7 +12011,15 @@ test("AI·突袭：共用突袭模拟覆盖护援弃牌、窥隙信息和余烬�
   simulator.simulateAssault({ players: [spy, spyTarget] }, spy, spyTarget, 1);
   assert.equal(spyTarget.hp, 3);
   assert.equal(spy.spyGapTriggeredProbability, 1);
-  assert.equal(spy.expectedInformationGain, 2);
+  assert.equal(spy.expectedInformationGain, 0);
+  assert.ok(Array.isArray(spyTarget.knownCards), "窥隙应写入可消费的概率已知牌状态");
+  const spyKnownMass = spyTarget.knownCards.reduce((sum, entry) => {
+    const branches = entry.availabilityStateBranches ?? entry.availabilityBranches;
+    return sum + (Array.isArray(branches)
+      ? branches.filter((branch) => branch.available !== false).reduce((total, branch) => total + (Number(branch.probability) || 0), 0)
+      : 1);
+  }, 0);
+  assert.ok(spyKnownMass > 1 && spyKnownMass <= 2);
   const ember = {
     id: "ember",
     generalId: "ember-magus",
@@ -19606,7 +19611,8 @@ test("AI·影客：窥隙在目标濒死获救后仍结算且救援失败不结�
   new Simulator(rescuedState).simulateAssault(rescuedState, spy, rescued, 1);
   assert.equal(rescued.hp, 1);
   assert.equal(spy.spyGapTriggeredProbability, 1);
-  assert.equal(spy.expectedInformationGain, 2);
+  assert.equal(spy.expectedInformationGain, 0);
+  assert.ok(Array.isArray(rescued.knownCards), "获救后窥隙应写入概率已知牌状态");
   const deadSpy = {
     id: "ai-dead-spy",
     generalId: "shade-agent",
@@ -19672,7 +19678,8 @@ test("AI·影客：窥隙与余烬从统一生命伤害入口覆盖非突袭和�
   spyTarget.handCount = 3;
   const duelState = { players: [spy, spyTarget] };
   new Simulator(duelState).applyDuel(duelState, spy, spyTarget, 1);
-  assert.equal(spy.expectedInformationGain, 2);
+  assert.equal(spy.expectedInformationGain, 0);
+  assert.ok(Array.isArray(spyTarget.knownCards), "非突袭伤害触发窥隙同样写入概率已知牌状态");
   const ember = {
     id: "provoke-ember",
     seatIndex: 0,
@@ -19694,6 +19701,185 @@ test("AI·影客：窥隙与余烬从统一生命伤害入口覆盖非突袭和�
       state
     ).apply(state, { type: "card", card: { ...CARD_DEFINITIONS.provoke, id: "ember-provoke" }, targets: enemies }, ember.id);
   assert.equal(next.players[0].energy, 1);
+});
+
+test("AI·影客：模拟窥隙写入概率已知牌且重复触发不增加信息质量", () => {
+  const spy = {
+    id: "ai-spy-repeat",
+    generalId: "shade-agent",
+    battleTeam: "dawn",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    handCount: 0,
+    spyGapTriggeredProbability: 0,
+    expectedInformationGain: 0
+  };
+  const target = {
+    id: "ai-spy-repeat-target",
+    seatIndex: 1,
+    battleTeam: "dusk",
+    alive: true,
+    hp: 3,
+    maxHp: 4,
+    handCount: 2,
+    blockProbability: 0.5,
+    twoBlockProbability: 0,
+    expectedRecoverCount: 0
+  };
+  const knownMass = () => (target.knownCards ?? []).reduce((sum, entry) => {
+    const branches = entry.availabilityStateBranches ?? entry.availabilityBranches;
+    return sum + (Array.isArray(branches)
+      ? branches.filter((branch) => branch.available !== false).reduce((total, branch) => total + (Number(branch.probability) || 0), 0)
+      : 1);
+  }, 0);
+  const state = {
+    remainingCardCounts: { block: 1, charge: 1, assault: 1 },
+    players: [spy, target]
+  };
+  const simulator = new Simulator(state);
+  simulator.simulateSpyGapAfterLifeDamage(state, spy, target, 1);
+  assert.equal(spy.spyGapTriggeredProbability, 1);
+  assert.equal(spy.expectedInformationGain, 0);
+  assert.ok(Array.isArray(target.knownCards) && target.knownCards.length > 0);
+  assert.ok(Math.abs(knownMass() - 2) < 1e-9);
+  const entryCountAfterFirst = target.knownCards.length;
+  const massAfterFirst = knownMass();
+  simulator.simulateSpyGapAfterLifeDamage(state, spy, target, 1);
+  assert.equal(target.knownCards.length, entryCountAfterFirst);
+  assert.ok(Math.abs(knownMass() - massAfterFirst) < 1e-9);
+  assert.equal(spy.expectedInformationGain, 0);
+});
+
+test("AI·影客：真实窥隙记忆改变后续 Planner 突袭目标", async () => {
+  const build = ({ eaHp, knownEa }) => {
+    const shade = makePlayer("info-chain-shade", 0, "dawn", "ai", 3),
+      ea = makePlayer("info-chain-ea", 1, "dusk", "ai", 0),
+      ally = makePlayer("info-chain-ally", 2, "dawn", "ai", 1),
+      eb = makePlayer("info-chain-eb", 3, "dusk", "ai", 4);
+    const { game } = makeGame([shade, ea, ally, eb], { random: () => 0 });
+    const eaCharge = instance("charge", "info-chain-ea-charge"),
+      ebCharge = instance("charge", "info-chain-eb-charge");
+    ea.hand = [eaCharge];
+    eb.hand = [ebCharge];
+    ea.hp = eaHp;
+    eb.hp = 4;
+    shade.hand = [instance("assault", "info-chain-assault")];
+    shade.turnFlags.attackLimit = 2;
+    if (knownEa) shade.aiMemory.knownCardsByPlayer[ea.id] = { [eaCharge.id]: "charge" };
+    shade.aiMemory.knownCardsByPlayer[eb.id] = { [ebCharge.id]: "charge" };
+    game.aiRandomnessRange = 0;
+    game.aiSearchNodeBudgetOverride = 30;
+    return { game, shade, ea };
+  };
+  const before = build({ eaHp: 1, knownEa: false });
+  const beforeAction = await before.game.aiController.selectAction(before.shade, {
+    gameId: before.game.state.gameId
+  });
+  assert.equal(beforeAction.type, "end", "未获得信息时不应冒险攻击未知手牌目标");
+  const after = build({ eaHp: 1, knownEa: true });
+  const afterAction = await after.game.aiController.selectAction(after.shade, {
+    gameId: after.game.state.gameId
+  });
+  assert.equal(afterAction.card?.definitionId, "assault");
+  assert.equal(afterAction.targets?.[0]?.id, after.ea.id);
+  const triggered = build({ eaHp: 2, knownEa: false });
+  registerPassiveSkills(triggered.game);
+  await triggered.game.damage(triggered.shade, triggered.ea, 1, { canBlock: false });
+  assert.equal(triggered.ea.hp, 1);
+  assert.deepEqual(
+    Object.entries(triggered.shade.aiMemory.knownCardsByPlayer[triggered.ea.id] ?? {}),
+    [[triggered.ea.hand[0].id, "charge"]]
+  );
+});
+
+test("AI·影客：Planner 规划震荡触发窥隙后用后续突袭兑现信息", async () => {
+  const shade = makePlayer("spy-chain-shade", 0, "dawn", "ai", 3),
+    ea = makePlayer("spy-chain-ea", 1, "dusk", "ai", 0),
+    ally = makePlayer("spy-chain-ally", 2, "dawn", "ai", 1),
+    eb = makePlayer("spy-chain-eb", 3, "dusk", "ai", 4);
+  const { game } = makeGame([shade, ea, ally, eb], { random: () => 0 });
+  const eaCharge = instance("charge", "spy-chain-ea-charge"),
+    ebCharge = instance("charge", "spy-chain-eb-charge");
+  ea.hand = [eaCharge];
+  eb.hand = [ebCharge];
+  ea.hp = 2;
+  eb.hp = 4;
+  shade.hand = [
+    instance("shockwave", "spy-chain-shockwave"),
+    instance("assault", "spy-chain-assault")
+  ];
+  shade.turnFlags.attackLimit = 2;
+  shade.aiMemory.knownCardsByPlayer[eb.id] = { [ebCharge.id]: "charge" };
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 80;
+  const action = await game.aiController.selectAction(shade, { gameId: game.state.gameId });
+  assert.equal(action.card?.definitionId, "shockwave");
+  const sequence = game.aiController.planner.lastPlannedSequence;
+  assert.deepEqual(
+    sequence.slice(0, 3).map((entry) => [entry.type, entry.cardId, entry.targetId]),
+    [
+      ["card", "shockwave", ea.id],
+      ["card", "assault", ea.id],
+      ["end", null, null]
+    ]
+  );
+});
+
+test("AI·影客：窃取已知突袭后 Planner 规划窃取接突袭", async () => {
+  const shade = makePlayer("steal-chain-shade", 0, "dawn", "ai", 3),
+    enemy = makePlayer("steal-chain-enemy", 1, "dusk", "ai", 0);
+  shade.energy = 2;
+  shade.hand = [];
+  const stolenAssault = instance("assault", "steal-chain-assault");
+  enemy.hand = [stolenAssault];
+  enemy.hp = 1;
+  shade.aiMemory.knownCardsByPlayer[enemy.id] = { [stolenAssault.id]: "assault" };
+  const { game } = makeGame([shade, enemy], { random: () => 0 });
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 50;
+  const action = await game.aiController.selectAction(shade, { gameId: game.state.gameId });
+  assert.equal(action.skill?.id, "stealSkill");
+  assert.equal(action.targets?.[0]?.id, enemy.id);
+  const sequence = game.aiController.planner.lastPlannedSequence;
+  assert.equal(sequence[1]?.type, "card");
+  assert.equal(sequence[1]?.cardId, "assault");
+  assert.equal(sequence[1]?.cardInstanceId, stolenAssault.id);
+  assert.equal(sequence[1]?.targetId, enemy.id);
+  assert.equal(sequence[2]?.type, "end");
+});
+
+test("AI·影客：确定击杀与能量机会成本优先于窃取", async () => {
+  const shade = makePlayer("steal-kill-shade", 0, "dawn", "ai", 3),
+    enemy = makePlayer("steal-kill-enemy", 1, "dusk", "ai", 0);
+  shade.energy = 2;
+  shade.hand = [instance("assault", "steal-kill-assault")];
+  enemy.hand = [];
+  enemy.equipment = instance("energyDevice", "steal-kill-equipment");
+  enemy.hp = 1;
+  const { game } = makeGame([shade, enemy], { random: () => 0 });
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 30;
+  assert.ok(game.aiController.getActionCandidates(shade).some((entry) => entry.skill?.id === "stealSkill"));
+  const action = await game.aiController.selectAction(shade, { gameId: game.state.gameId });
+  assert.equal(action.card?.definitionId, "assault");
+  assert.equal(action.targets?.[0]?.id, enemy.id);
+});
+
+test("AI·影客：窃取低收益目标时允许结束出牌", async () => {
+  const shade = makePlayer("steal-skip-shade", 0, "dawn", "ai", 3),
+    enemy = makePlayer("steal-skip-enemy", 1, "dusk", "ai", 0);
+  shade.energy = 2;
+  shade.hand = [];
+  const lowValue = instance("shield", "steal-skip-shield");
+  enemy.hand = [lowValue];
+  shade.aiMemory.knownCardsByPlayer[enemy.id] = { [lowValue.id]: "shield" };
+  const { game } = makeGame([shade, enemy], { random: () => 0 });
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 30;
+  assert.ok(game.aiController.getActionCandidates(shade).some((entry) => entry.skill?.id === "stealSkill"));
+  const action = await game.aiController.selectAction(shade, { gameId: game.state.gameId });
+  assert.equal(action.type, "end");
 });
 
 // ---- AI 角色行为·炎术师 ----
@@ -26944,6 +27130,222 @@ test("AI·资源身份：整手牌随机移除：当前 AI 完整 hand 路径保
   const byCount = blockDistributionByCount(player.blockCountDistribution);
   assert.ok(Math.abs((byCount[0] ?? 0) - 0.5) < 1e-9);
   assert.ok(Math.abs((byCount[1] ?? 0) - 0.5) < 1e-9);
+});
+
+/*
+功能
+构造一个带 partial-group 物理槽位、可选确定已知牌与匿名质量的玩家 fixture。
+
+调用方
+P1 physical-slot marginalization focused tests。
+
+输入
+分组定义 [definitionId, probability] 列表、额外确定已知牌与匿名数量。
+
+输出
+state/player/Simulator、groupKey、slotKey 与分组条目；分组身份带互斥 slot 条件，
+block/counter 保持独立响应身份，所有分区概率和守恒。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+handCount 等于所有候选物理质量之和；identitySlotStates 是完整概率分区。
+*/
+const makePhysicalSlotFixture = ({
+  grouped = [],
+  extraKnown = [],
+  anonymous = 0,
+  optimized = true
+} = {}) => {
+  const groupKey = "slot";
+  const slotKey = `${groupKey}:available`;
+  const groupedMass = grouped.reduce((sum, [, probability]) => sum + probability, 0);
+  const knownMass = extraKnown.reduce((sum, [, probability]) => sum + probability, 0);
+  const handCount = groupedMass + knownMass + anonymous;
+  const slotState = grouped.map(([definitionId, probability]) => ({
+    probability,
+    conditions:{ [slotKey]:"yes" },
+    slotAvailable:true,
+    definitionId
+  }));
+  if (1 - groupedMass > 1e-12) {
+    slotState.push({
+      probability:1 - groupedMass,
+      conditions:{ [slotKey]:"no" },
+      slotAvailable:false,
+      definitionId:null
+    });
+  }
+  const groupedEntries = grouped.map(([definitionId, probability]) => ({
+    cardId:`slot-${definitionId}`,
+    definitionId,
+    ...(optimized ? { identityGroupKey:groupKey } : {}),
+    availabilityBranches:[{
+      probability,
+      conditions:optimized
+        ? { [slotKey]:"yes", [groupKey]:definitionId }
+        : { [groupKey]:definitionId }
+    }]
+  }));
+  const extraEntries = extraKnown.map(([definitionId, probability]) => ({
+    cardId:`known-${definitionId}`,
+    definitionId,
+    availabilityBranches:probability >= 1 - 1e-12
+      ? [{ probability, conditions:{} }]
+      : [{
+          probability,
+          conditions:definitionId === "block" || definitionId === "counter"
+            ? { [slotKey]:"no" }
+            : {}
+        }]
+  }));
+  const player = {
+    id:"p",
+    seatIndex:0,
+    battleTeam:"dusk",
+    generalId:"oath-warden",
+    alive:true,
+    hp:4,
+    maxHp:4,
+    shield:0,
+    energy:0,
+    maxEnergy:4,
+    attackUsed:0,
+    attackLimit:1,
+    attackRange:1,
+    handCount,
+    knownCards:[...groupedEntries, ...extraEntries],
+    ...(optimized ? { identitySlotStates:{ [groupKey]:slotState } } : {}),
+    equipmentDefinitionId:null,
+    equipmentRetentionProbability:0,
+    statuses:[]
+  };
+  const state = { remainingCardCounts:{ block:10, counter:10, assault:10, charge:10 }, players:[player] };
+  return { simulator:new Simulator(state), state, player, groupKey, slotKey, groupedEntries };
+};
+
+test("AI·资源身份：partial-group physical slot 可用概率为身份边际之和", () => {
+  const { simulator, player, groupedEntries, groupKey } = makePhysicalSlotFixture({
+    grouped:[["assault", .2], ["charge", .3], ["shield", .1]]
+  });
+  const slotBranches = simulator.marginalizeIdentitySlotBranches(groupedEntries, groupKey);
+  const mass = slotBranches.reduce((sum, branch) => sum + branch.probability, 0);
+  assert.ok(Math.abs(mass - .6) < 1e-9);
+  assert.ok(slotBranches.every((branch) => !Object.hasOwn(branch.conditions, groupKey)));
+  const slotState = simulator.identitySlotStateFor(player, groupKey, groupedEntries);
+  assert.ok(Math.abs(slotState.reduce((sum, branch) => sum + branch.probability, 0) - 1) < 1e-9);
+  const availableMass = slotState.filter((branch) => branch.slotAvailable)
+    .reduce((sum, branch) => sum + branch.probability, 0);
+  assert.ok(Math.abs(availableMass - .6) < 1e-9);
+});
+
+test("AI·资源身份：partial-group 随机移除保持每个身份边际概率", () => {
+  const fixture = makePhysicalSlotFixture({
+    grouped:[["assault", .2], ["charge", .8]]
+  });
+  const { simulator, state, player } = fixture;
+  const removed = simulator.removeOneRandomCardFromHand(state, player, .3);
+  assert.ok(Math.abs(removed - .3) < 1e-9);
+  for (const [definitionId, probability] of [["assault", .2], ["charge", .8]]) {
+    const entry = player.knownCards.find((candidate) => candidate.definitionId === definitionId);
+    assert.ok(Math.abs(simulator.cardAvailability(entry) - probability * .7) < 1e-9);
+  }
+  assert.ok(Math.abs(player.handCount - .7) < 1e-9);
+  const slotState = player.identitySlotStates.slot;
+  assert.ok(Math.abs(slotState.reduce((sum, branch) => sum + branch.probability, 0) - 1) < 1e-9);
+});
+
+test("AI·资源身份：partial-group 中 block 移除后响应容量保持", () => {
+  const fixture = makePhysicalSlotFixture({
+    grouped:[["assault", .6], ["block", .4]]
+  });
+  const { simulator, state, player } = fixture;
+  simulator.removeOneRandomCardFromHand(state, player, .3);
+  const blockEntry = player.knownCards.find((entry) => entry.definitionId === "block");
+  const assaultEntry = player.knownCards.find((entry) => entry.definitionId === "assault");
+  assert.ok(Math.abs(simulator.cardAvailability(blockEntry) - .28) < 1e-9);
+  assert.ok(Math.abs(simulator.cardAvailability(assaultEntry) - .42) < 1e-9);
+  assert.ok(Math.abs(player.handCount - .7) < 1e-9);
+  const byCount = blockDistributionByCount(player.blockCountDistribution);
+  assert.ok(Math.abs((byCount[0] ?? 0) - .72) < 1e-9);
+  assert.ok(Math.abs((byCount[1] ?? 0) - .28) < 1e-9);
+  assert.ok(Math.abs(player.blockProbability - .28) < 1e-9);
+});
+
+test("AI·资源身份：partial-group 中 counter 移除后响应容量保持", () => {
+  const fixture = makePhysicalSlotFixture({
+    grouped:[["assault", .6], ["counter", .4]]
+  });
+  const { simulator, state, player } = fixture;
+  simulator.removeOneRandomCardFromHand(state, player, .3);
+  const counterEntry = player.knownCards.find((entry) => entry.definitionId === "counter");
+  const assaultEntry = player.knownCards.find((entry) => entry.definitionId === "assault");
+  assert.ok(Math.abs(simulator.cardAvailability(counterEntry) - .28) < 1e-9);
+  assert.ok(Math.abs(simulator.cardAvailability(assaultEntry) - .42) < 1e-9);
+  assert.ok(Math.abs(player.handCount - .7) < 1e-9);
+  const byCount = counterByCount(player);
+  assert.ok(Math.abs((byCount[0] ?? 0) - .72) < 1e-9);
+  assert.ok(Math.abs((byCount[1] ?? 0) - .28) < 1e-9);
+  assert.ok(Math.abs(player.counterProbability - .28) < 1e-9);
+});
+
+test("AI·资源身份：partial-group 与确定牌、匿名质量混合移除守恒", () => {
+  const fixture = makePhysicalSlotFixture({
+    grouped:[["assault", .2], ["charge", .8]],
+    extraKnown:[["block", 1]],
+    anonymous:1
+  });
+  const { simulator, state, player } = fixture;
+  const handBefore = player.handCount;
+  simulator.removeOneRandomCardFromHand(state, player, 1);
+  const factor = 1 - 1 / handBefore;
+  for (const [definitionId, probability] of [["assault", .2], ["charge", .8]]) {
+    const entry = player.knownCards.find((candidate) => candidate.definitionId === definitionId);
+    assert.ok(Math.abs(simulator.cardAvailability(entry) - probability * factor) < 1e-9);
+  }
+  const blockEntry = player.knownCards.find((entry) => entry.definitionId === "block");
+  assert.ok(Math.abs(simulator.cardAvailability(blockEntry) - factor) < 1e-9);
+  const anonymousMass = player.anonymousCountBranches.reduce(
+    (sum, branch) => sum + branch.probability * branch.anonymousCount,
+    0
+  );
+  assert.ok(Math.abs(anonymousMass - factor) < 1e-9);
+  assert.ok(Math.abs(player.handCount - handBefore + 1) < 1e-9);
+});
+
+test("AI·资源身份：guardianAid 经 partial-group 随机消耗保持确定性语义", () => {
+  const fixture = makePhysicalSlotFixture({
+    grouped:[["assault", .2], ["charge", .8]]
+  });
+  const { simulator, state, player } = fixture;
+  const target = {
+    id:"target",
+    seatIndex:1,
+    battleTeam:"dusk",
+    alive:true,
+    hp:4,
+    maxHp:4,
+    shield:0,
+    handCount:0,
+    blockProbability:0,
+    expectedRecoverCount:0
+  };
+  state.players.push(target);
+  const result = simulator.simulateGuardianAid(state, target, .3, .3);
+  assert.ok(Math.abs(result - 0) < 1e-9);
+  assert.ok(Math.abs(player.handCount - .7) < 1e-9);
+  for (const [definitionId, initial] of [["assault", .2], ["charge", .8]]) {
+    const entry = player.knownCards.find((candidate) => candidate.definitionId === definitionId);
+    assert.ok(Math.abs(simulator.cardAvailability(entry) - initial * .7) < 1e-9);
+  }
+  assert.ok(Math.abs(player.guardianAidUsedProbability - .3) < 1e-9);
 });
 
 test("AI·资源身份：unknown 消费只消耗未知部分且不侵蚀完整确定 counter", () => {

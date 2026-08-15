@@ -29,15 +29,15 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-card-estimate-parity-fix";
-import { cloneSearchState } from "../state/SearchState.js?build=20260815-card-estimate-parity-fix";
+} from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
+import { cloneSearchState } from "../state/SearchState.js?build=20260815-shadow-agent-p1-slot";
 
-import { clampProbability } from "./SimulationSupport.js?build=20260815-card-estimate-parity-fix";
-import { withResponseSimulation } from "./ResponseSimulation.js?build=20260815-card-estimate-parity-fix";
-import { withCombatSimulation } from "./CombatSimulation.js?build=20260815-card-estimate-parity-fix";
-import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260815-card-estimate-parity-fix";
-import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260815-card-estimate-parity-fix";
-import { withStatusSimulation } from "./StatusSimulation.js?build=20260815-card-estimate-parity-fix";
+import { clampProbability } from "./SimulationSupport.js?build=20260815-shadow-agent-p1-slot";
+import { withResponseSimulation } from "./ResponseSimulation.js?build=20260815-shadow-agent-p1-slot";
+import { withCombatSimulation } from "./CombatSimulation.js?build=20260815-shadow-agent-p1-slot";
+import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260815-shadow-agent-p1-slot";
+import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260815-shadow-agent-p1-slot";
+import { withStatusSimulation } from "./StatusSimulation.js?build=20260815-shadow-agent-p1-slot";
 
 class SimulatorCore {
   /*

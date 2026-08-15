@@ -17,16 +17,17 @@ Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
 架构约束
 真实状态/监听顺序以 Game、JudgmentSystem 与 skillRegistry 为权威；不拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-card-estimate-parity-fix";
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-card-estimate-parity-fix";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260815-card-estimate-parity-fix";
-import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260815-card-estimate-parity-fix";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260815-shadow-agent-p1-slot";
+import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260815-shadow-agent-p1-slot";
 import {
   RADAR_BASIC_DEFINITIONS,
   buildRadarJudgmentProbabilities
-} from "../domain/RadarModel.js?build=20260815-card-estimate-parity-fix";
+} from "../domain/RadarModel.js?build=20260815-shadow-agent-p1-slot";
 import {
   PROBABILITY_EPSILON,
+  availableBranchesFromState,
   expectedBranchValue,
   getValueBranches,
   joinProbabilityStateBranches,
@@ -34,8 +35,12 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-card-estimate-parity-fix";
-import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260815-card-estimate-parity-fix";
+} from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
+import {
+  clampProbability,
+  remainingCardDensity,
+  unionProbability
+} from "./SimulationSupport.js?build=20260815-shadow-agent-p1-slot";
 
 /*
 功能
@@ -486,28 +491,152 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
 
   /*
   功能
-  根据双方手牌差与生命伤害概率结算间谍的补牌效果。
+  把窥隙实际看到的未知手牌身份按合法先验写入目标的 knownCards 概率条目。
 
   调用方
-  CombatSimulation.applyDamage：结算生命伤害后的间谍手牌差收益。
+  simulateSpyGapAfterLifeDamage：在窥隙新触发世界中推进私密信息状态。
+
+  输入
+  SearchState、观察者、被观察者、期望揭示数量与触发条件世界。
+
+  输出
+  无返回值；目标的已知牌、剩余牌计数与卡牌摘要已按揭示世界推进。
+
+  读取状态
+  目标 handCount/knownCards、当前 remainingCardCounts 与合法卡牌定义。
+
+  写入状态
+  目标 knownCards 概率身份、remainingCardCounts 和 recover/assault 摘要；不改手牌数量或格挡/反制总量。
+
+  调用函数
+  cardAvailability、gateEventWorlds、nextSimulatedCardId、remainingCardDensity、availableBranchesFromState、syncCardEstimates。
+
+  边界与不变量
+  窥隙只观察已在目标手牌中的槽位，不得改变 handCount 或凭空重抽格挡/反制容量；
+  每张观察身份拥有独立概率世界，重复窥探已确定身份不会产生新的揭示质量。
+  */
+  recordSimulatedSpyGapPeek(state, source, target, revealCount, triggerWorlds) {
+    if (!target?.alive || !Array.isArray(state?.players)) return;
+    target.knownCards ??= [];
+    const triggerProbability = this.eventProbability(triggerWorlds);
+    if (triggerProbability <= PROBABILITY_EPSILON) return;
+    const knownOccupancy = target.knownCards.reduce(
+      (sum, entry) => sum + this.cardAvailability(entry),
+      0
+    );
+    let revealMass = Math.min(
+      Math.max(0, Number(revealCount) || 0),
+      Math.max(0, (Number(target.handCount) || 0) - knownOccupancy)
+    );
+    const maxPositions = Math.ceil(Math.max(0, revealMass));
+    for (let position = 0; position < maxPositions && revealMass > PROBABILITY_EPSILON; position += 1) {
+      const positionProbability = Math.min(1, revealMass);
+      const revealWorlds = this.gateEventWorlds(
+        state,
+        triggerWorlds,
+        positionProbability,
+        `spy-gap-reveal:${source.id}:${target.id}:${position}`
+      );
+      const revealProbability = this.eventProbability(revealWorlds);
+      if (revealProbability <= PROBABILITY_EPSILON) break;
+      // 同一观察槽位的各牌身份必须共享一个条件键，保证候选互斥；
+      // 否则 Probability 会把 26 个身份误当成独立牌反复叉乘。
+      const identityKey = `spy-gap-identity:${source.id}:${target.id}:${position}`;
+      const identityPartition = mergeProbabilityStateBranches(revealWorlds.flatMap((branch) => {
+        if (!branch.occurs) {
+          return [{
+            probability:branch.probability,
+            conditions:{ ...branch.conditions, [identityKey]:"none" },
+            observedDefinitionId:null
+          }];
+        }
+        return Object.keys(CARD_DEFINITIONS).map((definitionId) => ({
+          probability:branch.probability
+            * remainingCardDensity(state?.remainingCardCounts ?? null, definitionId),
+          conditions:{ ...branch.conditions, [identityKey]:definitionId },
+          observedDefinitionId:definitionId
+        }));
+      }).filter((branch) => branch.probability > PROBABILITY_EPSILON));
+      const slotKey = `${identityKey}:slot`;
+      target.identitySlotStates ??= {};
+      target.identitySlotStates[identityKey] = mergeProbabilityStateBranches(
+        identityPartition.map((branch) => {
+          const conditions = { ...branch.conditions, [slotKey]:branch.observedDefinitionId ? "yes" : "no" };
+          delete conditions[identityKey];
+          return {
+            probability:branch.probability,
+            conditions,
+            slotAvailable:branch.observedDefinitionId !== null,
+            definitionId:branch.observedDefinitionId
+          };
+        })
+      );
+      for (const definitionId of Object.keys(CARD_DEFINITIONS)) {
+        const identityWorlds = mergeProbabilityStateBranches(
+          identityPartition
+            .filter((branch) => branch.observedDefinitionId === definitionId)
+            .map((branch) => ({
+              probability:branch.probability,
+              conditions:branch.conditions,
+              occurs:true
+            }))
+        );
+        const identityProbability = this.eventProbability(identityWorlds);
+        if (identityProbability <= PROBABILITY_EPSILON) continue;
+        const slotKey = `${identityKey}:slot`;
+        const entry = {
+          cardId:this.nextSimulatedCardId(state, definitionId),
+          definitionId,
+          availabilityBranches:availableBranchesFromState(
+            projectProbabilityStateBranches(identityWorlds, (branch) => ({
+              available:Boolean(branch.occurs)
+            }))
+          ).map((branch) => ({
+            ...branch,
+            conditions:{
+              ...branch.conditions,
+              [slotKey]:definitionId === "block" || definitionId === "counter" ? "no" : "yes"
+            }
+          }))
+        };
+        entry.identityGroupKey = identityKey;
+        target.knownCards.push(entry);
+        if (state.remainingCardCounts && Number.isFinite(state.remainingCardCounts[definitionId])) {
+          state.remainingCardCounts[definitionId] = Math.max(
+            0,
+            (state.remainingCardCounts[definitionId] ?? 0) - identityProbability
+          );
+        }
+      }
+      revealMass -= positionProbability;
+    }
+    this.syncCardEstimates(target, state?.remainingCardCounts ?? null);
+  }
+
+  /*
+  功能
+  根据生命伤害概率结算影客窥隙：推进一次性额度并把新观察身份写入后续可消费状态。
+
+  调用方
+  CombatSimulation.applyDamage：在生命伤害与濒死结果落地后触发。
 
   输入
   SearchState、伤害来源、受伤目标与生命伤害概率。
 
   输出
-  无返回值；满足手牌差条件的一方可能获得未知牌。
+  无返回值；满足触发条件时推进窥隙额度与目标私密信息。
 
   读取状态
-  双方 generalId、handCount 与生命伤害概率。
+  来源 generalId/既有触发概率、目标阵营/生命/手牌与剩余牌先验。
 
   写入状态
-  受益玩家手牌、remaining counts 与响应摘要。
+  spyGapTriggeredProbability、spyGapTriggered、lastSpyGapTargetId，以及委托记录的目标已知牌与摘要。
 
   调用函数
-  gainUnknownCardsWithCounterState。
+  recordSimulatedSpyGapPeek。
 
   边界与不变量
-  只使用公开手牌数量差，不读取未知牌定义；收益按生命伤害概率权重结算。
+  只有本回合尚未触发的边际生命伤害世界会揭示新牌；空手、队友、已死亡或已触发时不会产生信息价值。
   */
   simulateSpyGapAfterLifeDamage(state, source, target, lifeDamageProbability) {
     const chance = clampProbability(lifeDamageProbability);
@@ -519,8 +648,14 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     const triggerProbability = (1 - oldTriggeredProbability) * chance;
     source.spyGapTriggeredProbability = unionProbability(oldTriggeredProbability, chance);
     source.spyGapTriggered = source.spyGapTriggeredProbability >= 1 - Number.EPSILON;
-    source.expectedInformationGain = (source.expectedInformationGain ?? 0)
-      + Math.min(2, target.handCount) * triggerProbability;
+    if (triggerProbability <= PROBABILITY_EPSILON) return;
+    source.lastSpyGapTargetId = target.id;
+    const triggerWorlds = probabilityEventPartition(
+      this.nextProbabilityEventKey(state, `spy-gap:${source.id}:${target.id}`),
+      triggerProbability,
+      "occurs"
+    );
+    this.recordSimulatedSpyGapPeek(state, source, target, 2, triggerWorlds);
   }
 
   /*

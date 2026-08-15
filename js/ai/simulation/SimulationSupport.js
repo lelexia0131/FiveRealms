@@ -20,7 +20,7 @@ Simulator、ResponseSimulation、CombatSimulation 与效果组件。
 import {
   CARD_DEFINITIONS,
   TOTAL_CARD_COUNT
-} from "../../config/cardConfig.js?build=20260815-card-estimate-parity-fix";
+} from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS)
   .filter((card) => card.category === "basic")

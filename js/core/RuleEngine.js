@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260815-card-estimate-parity-fix";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-card-estimate-parity-fix";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

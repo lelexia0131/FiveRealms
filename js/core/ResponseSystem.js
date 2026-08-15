@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-card-estimate-parity-fix";
-import { createId } from "../utils/helpers.js?build=20260815-card-estimate-parity-fix";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260815-card-estimate-parity-fix";
-import { RuleEngine } from "./RuleEngine.js?build=20260815-card-estimate-parity-fix";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
+import { createId } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260815-shadow-agent-p1-slot";
+import { RuleEngine } from "./RuleEngine.js?build=20260815-shadow-agent-p1-slot";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

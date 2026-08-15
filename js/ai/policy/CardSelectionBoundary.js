@@ -17,12 +17,12 @@ RuleEngine、DistanceSystem 与 policy/CardSelectionPolicy、ResourceSelectionPo
 架构约束
 选择公式只存在于 policy 目录；本文件只负责合法集合、公开上下文与实体 ID 解析。
 */
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-card-estimate-parity-fix";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-card-estimate-parity-fix";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-card-estimate-parity-fix";
-import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260815-card-estimate-parity-fix";
-import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260815-card-estimate-parity-fix";
-import { TransferPolicy } from "./TransferPolicy.js?build=20260815-card-estimate-parity-fix";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
+import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
+import { TransferPolicy } from "./TransferPolicy.js?build=20260815-shadow-agent-p1-slot";
 
 export class CardSelectionBoundary {
   /*

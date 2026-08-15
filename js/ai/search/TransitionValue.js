@@ -20,7 +20,7 @@ Planner 与价值等价测试。
 import {
   STATE_DELTA_SCALE,
   actionEconomicValue
-} from "../value/Economics.js?build=20260815-card-estimate-parity-fix";
+} from "../value/Economics.js?build=20260815-shadow-agent-p1-slot";
 
 export class TransitionValue {
   /*
@@ -168,10 +168,11 @@ export class TransitionValue {
     frontierValue = 0,
     sealTimingPenalty = 0,
     exposeMarginal = 0,
-    assaultStacksCredit = 0
+    assaultStacksCredit = 0,
+    spyGapInformationValue = 0
   }) {
     return baseTransition + frontierValue
       - sealTimingPenalty
-      + (exposeMarginal + assaultStacksCredit) * STATE_DELTA_SCALE;
+      + (exposeMarginal + assaultStacksCredit + spyGapInformationValue) * STATE_DELTA_SCALE;
   }
 }

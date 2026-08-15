@@ -17,34 +17,34 @@ Game、ResponseSystem、PublicCardPool、角色技能与测试。
 架构约束
 子组件不得回指 AIController；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
 */
-import { createInitialSearchState } from "./state/StateContracts.js?build=20260815-card-estimate-parity-fix";
-import { Knowledge } from "./state/Knowledge.js?build=20260815-card-estimate-parity-fix";
-import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260815-card-estimate-parity-fix";
-import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260815-card-estimate-parity-fix";
-import { ActionGenerator } from "./search/ActionGenerator.js?build=20260815-card-estimate-parity-fix";
-import { ValueService } from "./value/ValueService.js?build=20260815-card-estimate-parity-fix";
-import { StateValue } from "./value/StateValue.js?build=20260815-card-estimate-parity-fix";
-import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260815-card-estimate-parity-fix";
-import { Simulator } from "./simulation/Simulator.js?build=20260815-card-estimate-parity-fix";
-import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260815-card-estimate-parity-fix";
-import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260815-card-estimate-parity-fix";
-import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260815-card-estimate-parity-fix";
-import { Planner } from "./search/Planner.js?build=20260815-card-estimate-parity-fix";
-import { SearchBudget } from "./search/SearchBudget.js?build=20260815-card-estimate-parity-fix";
-import { SearchPolicy } from "./search/SearchPolicy.js?build=20260815-card-estimate-parity-fix";
-import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260815-card-estimate-parity-fix";
-import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260815-card-estimate-parity-fix";
-import { FrontierValue } from "./search/FrontierValue.js?build=20260815-card-estimate-parity-fix";
-import { SearchPrior } from "./search/SearchPrior.js?build=20260815-card-estimate-parity-fix";
-import { TransitionValue } from "./search/TransitionValue.js?build=20260815-card-estimate-parity-fix";
-import { Evaluator } from "./value/Evaluator.js?build=20260815-card-estimate-parity-fix";
-import { ValueLedger } from "./value/ValueLedger.js?build=20260815-card-estimate-parity-fix";
-import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260815-card-estimate-parity-fix";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260815-card-estimate-parity-fix";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260815-card-estimate-parity-fix";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260815-card-estimate-parity-fix";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260815-card-estimate-parity-fix";
-import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260815-card-estimate-parity-fix";
+import { createInitialSearchState } from "./state/StateContracts.js?build=20260815-shadow-agent-p1-slot";
+import { Knowledge } from "./state/Knowledge.js?build=20260815-shadow-agent-p1-slot";
+import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260815-shadow-agent-p1-slot";
+import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260815-shadow-agent-p1-slot";
+import { ActionGenerator } from "./search/ActionGenerator.js?build=20260815-shadow-agent-p1-slot";
+import { ValueService } from "./value/ValueService.js?build=20260815-shadow-agent-p1-slot";
+import { StateValue } from "./value/StateValue.js?build=20260815-shadow-agent-p1-slot";
+import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260815-shadow-agent-p1-slot";
+import { Simulator } from "./simulation/Simulator.js?build=20260815-shadow-agent-p1-slot";
+import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260815-shadow-agent-p1-slot";
+import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260815-shadow-agent-p1-slot";
+import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260815-shadow-agent-p1-slot";
+import { Planner } from "./search/Planner.js?build=20260815-shadow-agent-p1-slot";
+import { SearchBudget } from "./search/SearchBudget.js?build=20260815-shadow-agent-p1-slot";
+import { SearchPolicy } from "./search/SearchPolicy.js?build=20260815-shadow-agent-p1-slot";
+import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260815-shadow-agent-p1-slot";
+import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260815-shadow-agent-p1-slot";
+import { FrontierValue } from "./search/FrontierValue.js?build=20260815-shadow-agent-p1-slot";
+import { SearchPrior } from "./search/SearchPrior.js?build=20260815-shadow-agent-p1-slot";
+import { TransitionValue } from "./search/TransitionValue.js?build=20260815-shadow-agent-p1-slot";
+import { Evaluator } from "./value/Evaluator.js?build=20260815-shadow-agent-p1-slot";
+import { ValueLedger } from "./value/ValueLedger.js?build=20260815-shadow-agent-p1-slot";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260815-shadow-agent-p1-slot";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260815-shadow-agent-p1-slot";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260815-shadow-agent-p1-slot";
+import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260815-shadow-agent-p1-slot";
 
 export class AIController {
   /*

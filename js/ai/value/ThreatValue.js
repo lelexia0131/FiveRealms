@@ -17,13 +17,13 @@ DistanceSystem 与 value/Economics 的生命尺度。
 架构约束
 威胁公式只能在本模块出现；基础数值项可被 Evaluator 组合进 State Value，但不得绕过它独立追加到最终 Transition Value。
 */
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-card-estimate-parity-fix";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-card-estimate-parity-fix";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "../state/Probability.js?build=20260815-card-estimate-parity-fix";
-import { HP_VALUE } from "./Economics.js?build=20260815-card-estimate-parity-fix";
+} from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
+import { HP_VALUE } from "./Economics.js?build=20260815-shadow-agent-p1-slot";
 
 export const DANGER_VALUE = 7;
 export const DEATH_VALUE = 28;

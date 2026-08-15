@@ -1,5 +1,5 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-card-estimate-parity-fix";
-import { createId } from "../utils/helpers.js?build=20260815-card-estimate-parity-fix";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
+import { createId } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；

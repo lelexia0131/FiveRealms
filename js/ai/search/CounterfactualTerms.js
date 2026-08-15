@@ -18,6 +18,12 @@ Simulator、State Value、深层动作生成与合法隐藏世界采样。
 baseline（基线世界）与 boosted（只增强被测因素的世界）必须成对；本模块只产生破势数值项、先验和来源记录，不拥有同层时机、最终价值、束裁剪或同分裁决。
 */
 
+import {
+  PROBABILITY_EPSILON,
+  clampProbability,
+  totalBranchProbability
+} from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
+
 export class CounterfactualTerms {
   /*
   功能
@@ -175,6 +181,183 @@ export class CounterfactualTerms {
     return -1.5 * hiddenWorlds.filter(
       (world) => world[targetId]?.includes("block")
     ).length / hiddenWorlds.length;
+  }
+
+  /*
+  功能
+  判断一次模拟 transition 是否新触发了影客窥隙。
+
+  调用方
+  candidateTerms 的信息价值分支。
+
+  输入
+  before/after SearchState 与候选动作。
+
+  输出
+  新触发时返回被观察者 ID，否则返回 null。
+
+  读取状态
+  双方 spyGapTriggeredProbability、generalId 与 lastSpyGapTargetId。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只有本回合尚未触发的边际概率才构成新信息；重复触发返回 null。
+  */
+  newlyTriggeredSpyGapTarget(beforeState, afterState, actorId) {
+    const beforeActor = beforeState?.players?.find((player) => player.id === actorId);
+    const afterActor = afterState?.players?.find((player) => player.id === actorId);
+    if (afterActor?.generalId !== "shade-agent") return null;
+    const beforeProbability = clampProbability(beforeActor?.spyGapTriggeredProbability
+      ?? (beforeActor?.spyGapTriggered ? 1 : 0));
+    const afterProbability = clampProbability(afterActor?.spyGapTriggeredProbability
+      ?? (afterActor?.spyGapTriggered ? 1 : 0));
+    if (afterProbability - beforeProbability <= PROBABILITY_EPSILON) return null;
+    return afterActor.lastSpyGapTargetId ?? null;
+  }
+
+  /*
+  功能
+  为隐藏世界采样构造敌方手牌完全确定的 SearchState 分支。
+
+  调用方
+  evaluateSpyGapInformationValue。
+
+  输入
+  before SearchState、一个隐藏世界、viewer ID 与复用 Simulator。
+
+  输出
+  已重建响应摘要的独立确定世界。
+
+  读取状态
+  before State 的公开字段与隐藏世界定义。
+
+  写入状态
+  只写新克隆；将其他玩家 knownCards/handCount 绑定到采样定义。
+
+  调用函数
+  structuredClone、Simulator.clone。
+
+  边界与不变量
+  不得回读真实未知手牌；viewer 自身手牌保持原状态。
+  */
+  specializeHiddenWorld(beforeState, world, actorId, simulator) {
+    const specialized = structuredClone(beforeState);
+    const remainingCounts = specialized.remainingCardCounts
+      ? { ...specialized.remainingCardCounts }
+      : null;
+    for (const player of specialized.players ?? []) {
+      if (player.id === actorId) continue;
+      const definitions = world?.[player.id] ?? [];
+      const beforePlayer = beforeState.players.find((entry) => entry.id === player.id);
+      const certainKnownCount = (beforePlayer?.knownCards ?? []).filter((entry) => {
+        const branches = entry.availabilityStateBranches ?? entry.availabilityBranches;
+        if (!Array.isArray(branches)) return true;
+        return totalBranchProbability(
+          branches.filter((branch) => branch.available !== false)
+        ) >= 1 - PROBABILITY_EPSILON;
+      }).length;
+      if (remainingCounts) {
+        for (const definitionId of definitions.slice(certainKnownCount)) {
+          if (Number.isFinite(remainingCounts[definitionId])) {
+            remainingCounts[definitionId] = Math.max(0, (remainingCounts[definitionId] ?? 0) - 1);
+          }
+        }
+      }
+      player.knownCards = definitions.map((definitionId, index) => ({
+        cardId:`revealed:${player.id}:${index}`,
+        definitionId,
+        availabilityBranches:[{ probability:1, conditions:{} }]
+      }));
+      player.hand = undefined;
+      player.handCount = definitions.length;
+      delete player.anonymousCountBranches;
+      delete player.blockCountDistribution;
+      delete player.counterCountDistribution;
+      delete player.assaultCountDistribution;
+    }
+    if (remainingCounts) specialized.remainingCardCounts = remainingCounts;
+    return simulator.clone(specialized);
+  }
+
+  /*
+  功能
+  枚举一个状态的后续合法候选并返回其中最高的状态效用。
+
+  调用方
+  evaluateSpyGapInformationValue。
+
+  输入
+  SearchState、viewer ID、复用 Simulator 与可选搜索预算。
+
+  输出
+  最佳后续状态效用；没有候选时返回当前状态效用。
+
+  读取状态
+  generateFromVisible、Simulator.apply 与 evaluator.stateUtility。
+
+  写入状态
+  只写 Simulator 返回的独立后续状态。
+
+  调用函数
+  generateFromVisible、simulator.apply、evaluator.stateUtility。
+
+  边界与不变量
+  每个候选从同一输入状态独立模拟；end 候选保持生成顺序参与同分。
+  */
+  bestFollowUpUtility(state, actorId, simulator, searchBudget = null) {
+    const candidates = this.generateFromVisible(state, actorId);
+    let best = -Infinity;
+    for (const candidate of candidates) {
+      searchBudget?.observeSimulation();
+      const after = simulator.apply(state, candidate, actorId);
+      const utility = this.evaluator.stateUtility(after, actorId);
+      if (utility > best) best = utility;
+    }
+    return Number.isFinite(best) ? best : this.evaluator.stateUtility(state, actorId);
+  }
+
+  /*
+  功能
+  用隐藏世界采样估算窥隙信息的自适应选择价值。
+
+  调用方
+  candidateTerms 的根层信息价值分支。
+
+  输入
+  before/after、viewer ID、复用 Simulator、领域 context 与可选搜索预算。
+
+  输出
+  非负的 raw information option value；无样本或目标缺失时为零。
+
+  读取状态
+  context.hiddenWorlds、afterState 后续候选与 stateUtility。
+
+  写入状态
+  只写 Simulator 返回的独立世界。
+
+  调用函数
+  specializeHiddenWorld、bestFollowUpUtility。
+
+  边界与不变量
+  E[max utility] - max E[utility] 只允许非负；该值描述“知道后可改选”的增量，不是固定窥探奖励。
+  */
+  evaluateSpyGapInformationValue(beforeState, afterState, action, actorId, simulator, context, searchBudget = null) {
+    const targetId = this.newlyTriggeredSpyGapTarget(beforeState, afterState, actorId);
+    if (!targetId || !context?.hiddenWorlds?.length) return 0;
+    const baselineBest = this.bestFollowUpUtility(afterState, actorId, simulator, searchBudget);
+    let informedTotal = 0;
+    for (const world of context.hiddenWorlds) {
+      const specializedBefore = this.specializeHiddenWorld(beforeState, world, actorId, simulator);
+      searchBudget?.observeSimulation();
+      const specializedAfter = simulator.apply(specializedBefore, action, actorId);
+      informedTotal += this.bestFollowUpUtility(specializedAfter, actorId, simulator, searchBudget);
+    }
+    return Math.max(0, informedTotal / context.hiddenWorlds.length - baselineBest);
   }
 
   /*
@@ -352,6 +535,7 @@ export class CounterfactualTerms {
     depth,
     remainingProvenance,
     simulator,
+    context = null,
     searchBudget = null
   }) {
     const exposeMarginal = action.card?.definitionId === "exposeWeakness"
@@ -381,7 +565,23 @@ export class CounterfactualTerms {
           remainingProvenance
         )
       : remainingProvenance;
-    return { exposeMarginal, assaultStacksCredit, nextProvenance };
+    const spyGapInformationValue = depth === 1
+      ? this.evaluateSpyGapInformationValue(
+          beforeState,
+          afterState,
+          action,
+          actorId,
+          simulator,
+          context,
+          searchBudget
+        )
+      : 0;
+    return {
+      exposeMarginal,
+      assaultStacksCredit,
+      spyGapInformationValue,
+      nextProvenance
+    };
   }
 
 }

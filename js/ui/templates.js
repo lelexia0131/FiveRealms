@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260815-card-estimate-parity-fix";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260815-card-estimate-parity-fix";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260815-shadow-agent-p1-slot";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

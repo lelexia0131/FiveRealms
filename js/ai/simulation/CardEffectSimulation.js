@@ -17,15 +17,15 @@ Response/Combat/Status 组件、RuleEngine、正式资源 Policy、CardValue 与
 架构约束
 不生成动作、不搜索、不拥有规则合法性或最终价值公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-card-estimate-parity-fix";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-card-estimate-parity-fix";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-card-estimate-parity-fix";
-import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260815-card-estimate-parity-fix";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260815-card-estimate-parity-fix";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-card-estimate-parity-fix";
-import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260815-card-estimate-parity-fix";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-card-estimate-parity-fix";
-import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260815-card-estimate-parity-fix";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-shadow-agent-p1-slot";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
+import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260815-shadow-agent-p1-slot";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-shadow-agent-p1-slot";
+import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
+import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260815-shadow-agent-p1-slot";
 
 /*
 功能
@@ -1454,7 +1454,18 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       || this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON
     ));
     const changed = retained.length !== player.knownCards.length;
-    if (changed) player.knownCards = retained;
+    if (changed) {
+      player.knownCards = retained;
+      // 身份条目被降级后，既有槽位全状态不再与条目集合等价；
+      // 清除对应 group state，后续随机移除回退逐身份语义，避免使用陈旧世界。
+      if (player.identitySlotStates) {
+        for (const groupKey of Object.keys(player.identitySlotStates)) {
+          if (!retained.some((entry) => entry.identityGroupKey === groupKey)) {
+            delete player.identitySlotStates[groupKey];
+          }
+        }
+      }
+    }
     return changed;
   }
 
@@ -1518,6 +1529,92 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
+  取得一个 partial-group 的完整物理槽位状态，或从条目全状态精确重建。
+
+  调用方
+  removeOneRandomCardFromHand。
+
+  输入
+  玩家、identityGroupKey 与该组成员。
+
+  输出
+  slotAvailable/definitionId 的完整概率分区；无法证明互斥完整时返回 null。
+
+  读取状态
+  player.identitySlotStates 或条目 availabilityStateBranches。
+
+  写入状态
+  无。
+
+  调用函数
+  getAvailabilityStateBranches、mergeProbabilityStateBranches。
+
+  边界与不变量
+  完整分区质量必须约等于一；只对可证明互斥的身份组启用精确边缘化，
+  其他输入回退既有逐身份选择语义。
+  */
+  identitySlotStateFor(player, groupKey, entries) {
+    const stored = player?.identitySlotStates?.[groupKey];
+    if (Array.isArray(stored) && stored.length) return stored;
+    const branches = entries.flatMap((entry) => (
+      getAvailabilityStateBranches(entry).map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        slotAvailable:Boolean(branch.available),
+        definitionId:branch.available ? entry.definitionId : null
+      }))
+    ));
+    const merged = mergeProbabilityStateBranches(branches);
+    const mass = totalBranchProbability(merged);
+    return Math.abs(mass - 1) <= 1e-7 ? merged : null;
+  }
+
+  /*
+  功能
+  把同一物理槽位的互斥身份可用分支边缘化为该槽位的可用概率分区。
+
+  调用方
+  removeOneRandomCardFromHand 的 partial-group 候选构造。
+
+  输入
+  共享 identityGroupKey 的概率身份条目与该内部条件键。
+
+  输出
+  删除内部身份键后按剩余条件合并的槽位可用分支。
+
+  读取状态
+  availabilityStateBranches 或 availabilityBranches。
+
+  写入状态
+  无。
+
+  调用函数
+  mergeProbabilityBranches。
+
+  边界与不变量
+  只边缘化调用方显式声明的槽位内部身份键；其他共享世界条件必须原样保留，
+  因此不会把相关性错误的独立化，也不修改任何身份条目。
+  */
+  marginalizeIdentitySlotBranches(entries, identityKey) {
+    return mergeProbabilityBranches(entries.flatMap((entry) => {
+      const branches = Array.isArray(entry.availabilityStateBranches)
+        ? entry.availabilityStateBranches
+        : entry.availabilityBranches ?? [];
+      return branches
+        .filter((branch) => branch.available !== false)
+        .map((branch) => {
+          const conditions = { ...(branch.conditions ?? {}) };
+          delete conditions[identityKey];
+          return {
+            probability:Math.max(0, Number(branch.probability) || 0),
+            conditions
+          };
+        });
+    }));
+  }
+
+  /*
+  功能
   按当前已知/未知身份概率移除一张随机手牌并返回效果世界。
 
   调用方
@@ -1542,27 +1639,79 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   身份选择分区必须互斥；同一张牌在一个世界最多移除一次，响应容量与手牌身份共享条件。
   */
   removeOneRandomCardFromHand(state, player, spend, options = {}) {
+    const eventMass = Array.isArray(options.eventWorlds) && options.eventWorlds.length
+      ? this.eventProbability(options.eventWorlds)
+      : null;
     const amount = Math.min(
       Math.max(0, Number(spend) || 0),
-      Math.max(0, Number(player.handCount) || 0)
+      Math.max(0, Number(player.handCount) || 0),
+      eventMass == null ? Infinity : eventMass
     );
     if (amount <= PROBABILITY_EPSILON || !player) return 0;
-    const explicitCards = [
-      ...(Array.isArray(player.hand) ? player.hand : []),
-      ...(Array.isArray(player.knownCards) ? player.knownCards : [])
-    ];
+    const explicitCards = options.anonymousOnly
+      ? []
+      : [
+          ...(Array.isArray(player.hand) ? player.hand : []),
+          ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+        ];
     const explicitExpected = explicitCards.reduce(
       (sum, card) => sum + this.cardAvailability(card), 0
     );
     const expectedUnknown = Math.max(0, (Number(player.handCount) || 0) - explicitExpected);
-    const candidates = [
-      ...(Array.isArray(player.hand) ? player.hand
-        .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON)
-        .map((card, index) => ({ key:`hand:${card.id ?? index}`, card, definitionId:card.definitionId })) : []),
-      ...(Array.isArray(player.knownCards) ? player.knownCards
-        .filter((entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON)
-        .map((entry, index) => ({ key:`known:${entry.cardId ?? index}`, card:entry, definitionId:entry.definitionId })) : [])
-    ];
+    let candidates = options.anonymousOnly
+      ? []
+      : [
+          ...(Array.isArray(player.hand) ? player.hand
+            .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON
+              && !card.identityGroupKey)
+            .map((card, index) => ({ key:`hand:${card.id ?? index}`, card, definitionId:card.definitionId })) : []),
+          ...(Array.isArray(player.knownCards) ? player.knownCards
+            .filter((entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON
+              && !entry.identityGroupKey)
+            .map((entry, index) => ({ key:`known:${entry.cardId ?? index}`, card:entry, definitionId:entry.definitionId })) : [])
+        ];
+    // 同一观察/窃取槽位的互斥概率身份共享 identityGroupKey。
+    // 随机移除只把它们当作一个聚合候选，避免二十余个互斥身份反复进入 Probability 叉乘。
+    if (!options.anonymousOnly) {
+      const groupedEntries = new Map();
+      for (const entries of [
+        ...(Array.isArray(player.hand) ? player.hand : []),
+        ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+      ]) {
+        if (!entries.identityGroupKey || this.cardAvailability(entries) <= PROBABILITY_EPSILON) continue;
+        if (!groupedEntries.has(entries.identityGroupKey)) groupedEntries.set(entries.identityGroupKey, []);
+        groupedEntries.get(entries.identityGroupKey).push(entries);
+      }
+      candidates = [
+        ...candidates,
+        ...[...groupedEntries.entries()].map(([groupKey, entries]) => {
+          const slotState = this.identitySlotStateFor(player, groupKey, entries);
+          const candidate = {
+            key:`partial-group:${groupKey}`,
+            card:{
+              id:`partial-group:${groupKey}`,
+              definitionId:null
+            },
+            definitionId:null,
+            aggregateEntries:entries,
+            slotKey:groupKey,
+            slotState
+          };
+          if (slotState) {
+            candidate.card.availabilityStateBranches = projectProbabilityStateBranches(
+              slotState,
+              (branch) => ({ available:Boolean(branch.slotAvailable) })
+            );
+          } else {
+            candidate.card.availabilityBranches = this.marginalizeIdentitySlotBranches(
+              entries,
+              groupKey
+            );
+          }
+          return candidate;
+        })
+      ];
+    }
     if (!candidates.length && expectedUnknown <= PROBABILITY_EPSILON) return 0;
 
     let anonymousState = Array.isArray(player.anonymousCountBranches) && player.anonymousCountBranches.length
@@ -1579,11 +1728,18 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       anonymousState = player.anonymousCountBranches;
     }
 
-    const removalWorlds = probabilityEventPartition(
-      this.nextProbabilityEventKey(state, "random-hand-removal"),
-      Math.min(1, amount),
-      "occurs"
-    );
+    const removalWorlds = Array.isArray(options.eventWorlds) && options.eventWorlds.length
+      ? this.gateEventWorlds(
+          state,
+          options.eventWorlds,
+          eventMass > PROBABILITY_EPSILON ? amount / eventMass : 0,
+          "random-hand-removal"
+        )
+      : probabilityEventPartition(
+          this.nextProbabilityEventKey(state, "random-hand-removal"),
+          Math.min(1, amount),
+          "occurs"
+        );
     const candidatePartitions = candidates.map((candidate, index) => (
       getAvailabilityStateBranches(candidate.card).map((branch) => ({
         probability:branch.probability,
@@ -1638,8 +1794,118 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
 
     const selectionPartition = mergeProbabilityStateBranches(outcomes);
+    // 聚合槽位已在上面按完整 slotState 重建 block/counter 容量；
+    // 响应容量循环只消费真正的独立 block/counter 候选，不再次解释 aggregate 选择。
+    const responseSelectionPartition = mergeProbabilityStateBranches(
+      selectionPartition.map((branch) => {
+        const selectedAggregate = branch.selectedIndex >= 0
+          && Boolean(candidates[branch.selectedIndex]?.aggregateEntries);
+        return {
+          probability:branch.probability,
+          conditions:branch.conditions,
+          selectedIndex:selectedAggregate ? -1 : branch.selectedIndex,
+          anonymousSelected:selectedAggregate ? false : branch.anonymousSelected,
+          anonymousCount:branch.anonymousCount ?? 0
+        };
+      })
+    );
+    if (options.result) {
+      options.result.selectionPartition = selectionPartition;
+      options.result.knownIdentityWorlds = candidates.map((candidate, index) => ({
+        definitionId:candidate.definitionId,
+        cardId:candidate.card?.id ?? candidate.card?.cardId ?? null,
+        worlds:mergeProbabilityStateBranches(
+          selectionPartition
+            .filter((branch) => branch.selectedIndex === index)
+            .map((branch) => ({
+              probability:branch.probability,
+              conditions:branch.conditions,
+              occurs:true
+            }))
+        )
+      }));
+      options.result.anonymousSelectionWorlds = mergeProbabilityStateBranches(
+        selectionPartition
+          .filter((branch) => branch.anonymousSelected)
+          .map((branch) => ({
+            probability:branch.probability,
+            conditions:branch.conditions,
+            occurs:true
+          }))
+      );
+    }
+    let aggregateBlockRemovedWorlds = null;
+    let aggregateCounterRemovedWorlds = null;
+    let handCountAdjusted = false;
+    const hasAggregateCandidate = candidates.some((candidate) => candidate.aggregateEntries);
     for (let index = 0; index < candidates.length; index += 1) {
       const candidate = candidates[index];
+      if (candidate.aggregateEntries) {
+        if (candidate.slotState) {
+          const joinedSlot = joinProbabilityStateBranches(candidate.slotState, selectionPartition);
+          aggregateBlockRemovedWorlds = mergeProbabilityStateBranches(
+            joinedSlot.map((branch) => ({
+              probability:branch.probability,
+              conditions:branch.conditions,
+              occurs:Boolean(
+                branch.slotAvailable
+                && branch.selectedIndex === index
+                && branch.definitionId === "block"
+              )
+            }))
+          );
+          aggregateCounterRemovedWorlds = mergeProbabilityStateBranches(
+            joinedSlot.map((branch) => ({
+              probability:branch.probability,
+              conditions:branch.conditions,
+              occurs:Boolean(
+                branch.slotAvailable
+                && branch.selectedIndex === index
+                && branch.definitionId === "counter"
+              )
+            }))
+          );
+          const updatedSlot = projectProbabilityStateBranches(joinedSlot, (branch) => ({
+            slotAvailable:Boolean(branch.slotAvailable && branch.selectedIndex !== index),
+            definitionId:branch.definitionId
+          }));
+          if (player.identitySlotStates) {
+            player.identitySlotStates[candidate.slotKey] = updatedSlot;
+          }
+          for (const entry of candidate.aggregateEntries) {
+            entry.availabilityStateBranches = projectProbabilityStateBranches(updatedSlot, (branch) => ({
+              available:Boolean(branch.slotAvailable && branch.definitionId === entry.definitionId)
+            }));
+            entry.availabilityBranches = availableBranchesFromState(entry.availabilityStateBranches);
+            if (totalBranchProbability(entry.availabilityBranches) <= PROBABILITY_EPSILON) {
+              if (Array.isArray(player.hand)) player.hand = player.hand.filter((card) => card !== entry);
+              if (Array.isArray(player.knownCards)) {
+                player.knownCards = player.knownCards.filter((known) => known !== entry);
+              }
+            }
+          }
+          continue;
+        }
+        for (const entry of candidate.aggregateEntries) {
+          const entryState = getAvailabilityStateBranches(entry).map((branch) => ({
+            probability:branch.probability,
+            conditions:branch.conditions,
+            available:Boolean(branch.available)
+          }));
+          const joinedEntry = joinProbabilityStateBranches(entryState, selectionPartition);
+          entry.availabilityStateBranches = projectProbabilityStateBranches(joinedEntry, (branch) => ({
+            available:Boolean(branch.available && branch.selectedIndex !== index)
+          }));
+          entry.availabilityBranches = availableBranchesFromState(entry.availabilityStateBranches);
+          if (totalBranchProbability(entry.availabilityBranches) <= PROBABILITY_EPSILON) {
+            if (Array.isArray(player.hand)) player.hand = player.hand.filter((card) => card !== entry);
+            if (Array.isArray(player.knownCards)) {
+              player.knownCards = player.knownCards.filter((known) => known !== entry);
+            }
+          }
+        }
+        continue;
+      }
       const availabilityState = getAvailabilityStateBranches(candidate.card).map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
@@ -1657,106 +1923,171 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       }
     }
 
-    const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
-    const knownState = this.getKnownBlockCountBranches(player);
-    const joinedBlock = joinProbabilityStateBranches(blockState, knownState, selectionPartition);
-    const blockOutcomes = [];
-    for (const branch of joinedBlock) {
-      const totalBlocks = Math.max(0, Math.floor(Number(branch.blockCount) || 0));
-      const knownBlocks = Math.max(0, Math.floor(Number(branch.knownBlockCount) || 0));
-      const selectedIndex = Number.isFinite(Number(branch.selectedIndex)) ? Number(branch.selectedIndex) : -1;
-      if (branch.anonymousSelected) {
-        const anonymousCount = Math.max(0, Number(branch.anonymousCount) || 0);
-        const anonymousBlocks = Math.max(0, Math.min(anonymousCount, totalBlocks - knownBlocks));
-        const removalChance = anonymousCount > PROBABILITY_EPSILON
-          ? Math.min(1, anonymousBlocks / anonymousCount)
-          : 0;
-        blockOutcomes.push({
-          probability:branch.probability * removalChance,
-          conditions:branch.conditions,
-          blockCount:Math.max(0, totalBlocks - 1)
-        });
-        blockOutcomes.push({
-          probability:branch.probability * (1 - removalChance),
-          conditions:branch.conditions,
-          blockCount:totalBlocks
-        });
-      } else if (selectedIndex >= 0 && candidates[selectedIndex]?.definitionId === "block") {
-        blockOutcomes.push({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          blockCount:Math.max(0, totalBlocks - 1)
-        });
-      } else {
-        blockOutcomes.push({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          blockCount:totalBlocks
-        });
-      }
-    }
-    player.blockCountDistribution = mergeProbabilityStateBranches(blockOutcomes);
-    this.syncBlockSummary(player);
-
-    const counterState = this.getCounterCountBranches(player, state?.remainingCardCounts ?? null);
-    const knownCounterState = this.getKnownCounterCountBranches(player);
-    const joinedCounter = joinProbabilityStateBranches(counterState, knownCounterState, selectionPartition);
-    const counterOutcomes = [];
-    for (const branch of joinedCounter) {
-      const totalCounters = Math.max(0, Math.floor(Number(branch.counterCount) || 0));
-      const knownCounters = Math.max(0, Math.floor(Number(branch.knownCounterCount) || 0));
-      const selectedIndex = Number.isFinite(Number(branch.selectedIndex)) ? Number(branch.selectedIndex) : -1;
-      if (branch.anonymousSelected) {
-        const anonymousCount = Math.max(0, Number(branch.anonymousCount) || 0);
-        const anonymousCounters = Math.max(0, Math.min(anonymousCount, totalCounters - knownCounters));
-        const removalChance = anonymousCount > PROBABILITY_EPSILON
-          ? Math.min(1, anonymousCounters / anonymousCount)
-          : 0;
-        counterOutcomes.push({
-          probability:branch.probability * removalChance,
-          conditions:branch.conditions,
-          counterCount:Math.max(0, totalCounters - 1),
-          counterRemoved:true
-        });
-        counterOutcomes.push({
-          probability:branch.probability * (1 - removalChance),
-          conditions:branch.conditions,
-          counterCount:totalCounters,
-          counterRemoved:false
-        });
-      } else if (selectedIndex >= 0 && candidates[selectedIndex]?.definitionId === "counter") {
-        counterOutcomes.push({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          counterCount:Math.max(0, totalCounters - 1),
-          counterRemoved:true
-        });
-      } else {
-        counterOutcomes.push({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          counterCount:totalCounters,
-          counterRemoved:false
-        });
-      }
-    }
-    const counterRemovedPartition = mergeProbabilityStateBranches(
-      counterOutcomes.map((branch) => ({
+    if (hasAggregateCandidate) {
+      // 聚合槽位已在上面按完整 slotState 投影条目；这里推进 handCount 后从最终条目边际
+      // 一次性重建 block/counter 容量，避免 aggregate selection 再次污染响应分布。
+      player.handCount = Math.max(0, (player.handCount ?? 0) - amount);
+      handCountAdjusted = true;
+      player.blockCountDistribution = this.buildInitialBlockCountDistribution(
+        player,
+        state?.remainingCardCounts ?? null
+      ).map((branch) => ({
         probability:branch.probability,
-        conditions:branch.conditions,
-        occurs:Boolean(branch.counterRemoved)
-      }))
-    );
-    if (options.result && counterRemovedPartition.length) {
-      options.result.counterRemovedWorlds.push(counterRemovedPartition);
-    }
-    player.counterCountDistribution = mergeProbabilityStateBranches(
-      counterOutcomes.map(({ probability, conditions, counterCount }) => ({
-        probability, conditions, counterCount
-      }))
-    );
-    this.syncCounterSummary(player);
+        conditions:branch.conditions ?? {},
+        blockCount:branch.blockCount
+      }));
+      this.syncBlockSummary(player);
+      player.counterCountDistribution = this.buildInitialCounterCountDistribution(
+        player,
+        state?.remainingCardCounts ?? null
+      ).map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions ?? {},
+        counterCount:branch.counterCount
+      }));
+      this.syncCounterSummary(player);
+      if (options.result) {
+        const selectedBlockWorlds = mergeProbabilityStateBranches(
+          selectionPartition.map((branch) => ({
+            probability:branch.probability,
+            conditions:branch.conditions,
+            occurs:Boolean(
+              branch.selectedIndex >= 0
+              && candidates[branch.selectedIndex]?.definitionId === "block"
+            )
+          }))
+        );
+        const selectedCounterWorlds = mergeProbabilityStateBranches(
+          selectionPartition.map((branch) => ({
+            probability:branch.probability,
+            conditions:branch.conditions,
+            occurs:Boolean(
+              branch.selectedIndex >= 0
+              && candidates[branch.selectedIndex]?.definitionId === "counter"
+            )
+          }))
+        );
+        options.result.blockRemovedWorlds = aggregateBlockRemovedWorlds
+          ? aggregateBlockRemovedWorlds
+          : selectedBlockWorlds;
+        options.result.counterRemovedWorlds.push(
+          aggregateCounterRemovedWorlds ?? selectedCounterWorlds
+        );
+      }
+    } else {
+      const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
+      const knownState = this.getKnownBlockCountBranches(player);
+      const joinedBlock = joinProbabilityStateBranches(blockState, knownState, selectionPartition);
+      const blockOutcomes = [];
+      for (const branch of joinedBlock) {
+        const totalBlocks = Math.max(0, Math.floor(Number(branch.blockCount) || 0));
+        const knownBlocks = Math.max(0, Math.floor(Number(branch.knownBlockCount) || 0));
+        const selectedIndex = Number.isFinite(Number(branch.selectedIndex)) ? Number(branch.selectedIndex) : -1;
+        if (branch.anonymousSelected) {
+          const anonymousCount = Math.max(0, Number(branch.anonymousCount) || 0);
+          const anonymousBlocks = Math.max(0, Math.min(anonymousCount, totalBlocks - knownBlocks));
+          const removalChance = anonymousCount > PROBABILITY_EPSILON
+            ? Math.min(1, anonymousBlocks / anonymousCount)
+            : 0;
+          blockOutcomes.push({
+            probability:branch.probability * removalChance,
+            conditions:branch.conditions,
+            blockCount:Math.max(0, totalBlocks - 1),
+            blockRemoved:true
+          });
+          blockOutcomes.push({
+            probability:branch.probability * (1 - removalChance),
+            conditions:branch.conditions,
+            blockCount:totalBlocks,
+            blockRemoved:false
+          });
+        } else if (selectedIndex >= 0 && candidates[selectedIndex]?.definitionId === "block") {
+          blockOutcomes.push({
+            probability:branch.probability,
+            conditions:branch.conditions,
+            blockCount:Math.max(0, totalBlocks - 1),
+            blockRemoved:true
+          });
+        } else {
+          blockOutcomes.push({
+            probability:branch.probability,
+            conditions:branch.conditions,
+            blockCount:totalBlocks,
+            blockRemoved:false
+          });
+        }
+      }
+      if (options.result) {
+        options.result.blockRemovedWorlds = mergeProbabilityStateBranches(
+          blockOutcomes.map((branch) => ({
+            probability:branch.probability,
+            conditions:branch.conditions,
+            occurs:Boolean(branch.blockRemoved ?? false)
+          }))
+        );
+      }
+      player.blockCountDistribution = mergeProbabilityStateBranches(blockOutcomes);
+      this.syncBlockSummary(player);
 
+      const counterState = this.getCounterCountBranches(player, state?.remainingCardCounts ?? null);
+      const knownCounterState = this.getKnownCounterCountBranches(player);
+      const joinedCounter = joinProbabilityStateBranches(counterState, knownCounterState, selectionPartition);
+      const counterOutcomes = [];
+      for (const branch of joinedCounter) {
+        const totalCounters = Math.max(0, Math.floor(Number(branch.counterCount) || 0));
+        const knownCounters = Math.max(0, Math.floor(Number(branch.knownCounterCount) || 0));
+        const selectedIndex = Number.isFinite(Number(branch.selectedIndex)) ? Number(branch.selectedIndex) : -1;
+        if (branch.anonymousSelected) {
+          const anonymousCount = Math.max(0, Number(branch.anonymousCount) || 0);
+          const anonymousCounters = Math.max(0, Math.min(anonymousCount, totalCounters - knownCounters));
+          const removalChance = anonymousCount > PROBABILITY_EPSILON
+            ? Math.min(1, anonymousCounters / anonymousCount)
+            : 0;
+          counterOutcomes.push({
+            probability:branch.probability * removalChance,
+            conditions:branch.conditions,
+            counterCount:Math.max(0, totalCounters - 1),
+            counterRemoved:true
+          });
+          counterOutcomes.push({
+            probability:branch.probability * (1 - removalChance),
+            conditions:branch.conditions,
+            counterCount:totalCounters,
+            counterRemoved:false
+          });
+        } else if (selectedIndex >= 0 && candidates[selectedIndex]?.definitionId === "counter") {
+          counterOutcomes.push({
+            probability:branch.probability,
+            conditions:branch.conditions,
+            counterCount:Math.max(0, totalCounters - 1),
+            counterRemoved:true
+          });
+        } else {
+          counterOutcomes.push({
+            probability:branch.probability,
+            conditions:branch.conditions,
+            counterCount:totalCounters,
+            counterRemoved:false
+          });
+        }
+      }
+      const counterRemovedPartition = mergeProbabilityStateBranches(
+        counterOutcomes.map((branch) => ({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          occurs:Boolean(branch.counterRemoved)
+        }))
+      );
+      if (options.result && counterRemovedPartition.length) {
+        options.result.counterRemovedWorlds.push(counterRemovedPartition);
+      }
+      player.counterCountDistribution = mergeProbabilityStateBranches(
+        counterOutcomes.map(({ probability, conditions, counterCount }) => ({
+          probability, conditions, counterCount
+        }))
+      );
+      this.syncCounterSummary(player);
+    }
     const joinedAnonymous = joinProbabilityStateBranches(anonymousPartition, selectionPartition);
     player.anonymousCountBranches = projectProbabilityStateBranches(joinedAnonymous, (branch) => ({
       anonymousCount:Math.max(0, (Number(branch.anonymousCount) || 0) - (branch.anonymousSelected ? 1 : 0))
@@ -1768,7 +2099,9 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     if (Array.isArray(player.knownCards)) {
       player.knownCards = player.knownCards.filter((entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON);
     }
-    player.handCount = Math.max(0, (player.handCount ?? 0) - amount);
+    if (!handCountAdjusted) {
+      player.handCount = Math.max(0, (player.handCount ?? 0) - amount);
+    }
     this.clearCountersWhenHandEmpty(player);
     return amount;
   }
@@ -1813,7 +2146,11 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         if (branch.count > 0) next.push({ count:branch.count - 1, probability:branch.probability * assaultLossChance });
       }
       this.syncAssaultSummary(player, next);
-      this.removeOneRandomCardFromHand(state, player, spend, result ? { result } : {});
+      this.removeOneRandomCardFromHand(state, player, spend, {
+        result,
+        eventWorlds:options.eventWorlds ?? null,
+        anonymousOnly:options.anonymousOnly ?? false
+      });
       remaining -= spend;
       totalSpent += spend;
     }
@@ -2156,28 +2493,297 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
-  镜像窃取技能：移除目标资源并只把所得资源加入施术者手牌。
+  在不重复增加 handCount 的前提下，把窃取所得确定或概率身份写入行动者手牌表示。
 
   调用方
-  SkillEffectSimulation 的窃取技能：按现有随机区域模型搬运目标资源。
+  stealResourceToHand 与匿名窃取身份辅助方法。
 
   输入
-  SearchState、行动者、目标与执行概率。
+  SearchState、行动者、牌身份与获得条件世界。
 
   输出
-  无返回值；目标损失和行动者手牌收益已推进。
+  实际写入身份的概率质量。
 
   读取状态
-  目标 handCount、装备存在概率与随机失牌响应结果。
+  行动者现有 hand 与牌 availability。
 
   写入状态
-  双方 handCount、目标装备与 block/counter 摘要。
+  行动者 hand 中新增或合并牌身份条目；不改 handCount 或响应容量。
 
   调用函数
-  consumeRandomHandCards、addTransferredCounterCapacity、setSimulatedEquipment。
+  projectProbabilityStateBranches、getAvailabilityStateBranches、availableBranchesFromState。
 
   边界与不变量
-  只把实际窃取到反制的世界转移为反制容量；不得根据根先验重新猜测身份。
+  同一实体 ID 只能绑定同一 definitionId；重复获得通过并联合并可用质量，不重复创建条目。
+  */
+  addStolenIdentityToHand(state, actor, cardIdentity, acquisitionWorlds) {
+    if (!actor || !cardIdentity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
+    const acquired = projectProbabilityStateBranches(acquisitionWorlds, (branch) => ({
+      available:Boolean(branch.occurs ?? branch.available)
+    }));
+    const acquisitionProbability = totalBranchProbability(
+      acquired.filter((branch) => branch.available)
+    );
+    if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
+    actor.hand ??= [];
+    const identityId = cardIdentity.id ?? this.nextSimulatedCardId(state, cardIdentity.definitionId);
+    const existing = actor.hand.find((entry) => entry.id === identityId) ?? null;
+    if (existing) {
+      if (existing.definitionId !== cardIdentity.definitionId) {
+        throw new Error(`addStolenIdentityToHand 同 cardId 不同 definitionId：${identityId}`);
+      }
+      const oldState = getAvailabilityStateBranches(existing);
+      const oldProbability = totalBranchProbability(
+        oldState.filter((branch) => branch.available)
+      );
+      const newState = acquired.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        newAvailable:Boolean(branch.available)
+      }));
+      const mergedState = projectProbabilityStateBranches(
+        joinProbabilityStateBranches(oldState, newState),
+        (branch) => ({ available:Boolean(branch.available || branch.newAvailable) })
+      );
+      existing.availabilityStateBranches = mergedState;
+      existing.availabilityBranches = availableBranchesFromState(mergedState);
+      return Math.max(0, totalBranchProbability(
+        mergedState.filter((branch) => branch.available)
+      ) - oldProbability);
+    }
+    actor.hand.push({
+      id:identityId,
+      definitionId:cardIdentity.definitionId,
+      availabilityBranches:availableBranchesFromState(acquired),
+      ...(cardIdentity.identityGroupKey
+        ? { identityGroupKey:cardIdentity.identityGroupKey }
+        : {})
+    });
+    return acquisitionProbability;
+  }
+
+  /*
+  功能
+  把窃取未知手牌路径产生的匿名身份概率化写入行动者手牌，并转移对应响应容量。
+
+  调用方
+  stealResourceToHand 的未知手牌分支。
+
+  输入
+  SearchState、行动者与匿名移除结果（selection/block/counter 身份世界）。
+
+  输出
+  行动者新增的匿名手牌期望质量。
+
+  读取状态
+  剩余牌计数与匿名移除共享条件世界。
+
+  写入状态
+  行动者 hand 身份、handCount、格挡/反制分布和 remainingCardCounts。
+
+  调用函数
+  addStolenIdentityToHand、addKnownBlockToDistribution、addKnownCounterToDistribution、remainingCardDensity、syncCardEstimates。
+
+  边界与不变量
+  身份世界必须复用来源匿名移除的同一条件分区；格挡与反制互斥，其余定义按合法剩余密度补齐。
+  */
+  addAnonymousStolenIdentityToHand(state, actor, result) {
+    const selection = Array.isArray(result?.selectionPartition)
+      ? result.selectionPartition
+      : [];
+    const selectionPartition = selection.map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions,
+      stolen:Boolean(branch.anonymousSelected)
+    }));
+    const stolenMass = totalBranchProbability(
+      selectionPartition.filter((branch) => branch.stolen)
+    );
+    if (stolenMass <= PROBABILITY_EPSILON) return 0;
+    const blockPartition = (result.blockRemovedWorlds ?? []).map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions,
+      blockRemoved:Boolean(branch.occurs)
+    }));
+    const counterPartition = (result.counterRemovedWorlds ?? []).flatMap((partition) => (
+      Array.isArray(partition) ? partition : []
+    )).map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions,
+      counterRemoved:Boolean(branch.occurs)
+    }));
+    const stolenSlotIdentityKey = `steal-unknown-identity:${actor.id}:${this.nextProbabilityEventKey(
+      state,
+      `steal-unknown-slot:${actor.id}`
+    )}`;
+    const stolenSlotKey = `${stolenSlotIdentityKey}:slot`;
+    const otherDefinitions = Object.keys(CARD_DEFINITIONS)
+      .filter((definitionId) => !["block", "counter"].includes(definitionId));
+    const otherDensity = otherDefinitions.reduce((sum, definitionId) => (
+      sum + remainingCardDensity(state?.remainingCardCounts ?? null, definitionId)
+    ), 0);
+    const joined = joinProbabilityStateBranches(
+      selectionPartition,
+      blockPartition,
+      counterPartition
+    );
+    // block/counter 与其余定义合并为同一物理槽位的互斥身份分区；
+    // 随机移除只需该分区边缘化，响应容量则从选中身份世界精确恢复。
+    const identityPartition = mergeProbabilityStateBranches(joined.flatMap((branch) => {
+      if (!branch.stolen) {
+        return [{
+          probability:branch.probability,
+          conditions:branch.conditions,
+          observedDefinitionId:null
+        }];
+      }
+      if (branch.blockRemoved) {
+        return [{
+          probability:branch.probability,
+          conditions:branch.conditions,
+          observedDefinitionId:"block"
+        }];
+      }
+      if (branch.counterRemoved && !branch.blockRemoved) {
+        return [{
+          probability:branch.probability,
+          conditions:branch.conditions,
+          observedDefinitionId:"counter"
+        }];
+      }
+      if (otherDensity <= PROBABILITY_EPSILON) {
+        return [{
+          probability:branch.probability,
+          conditions:branch.conditions,
+          observedDefinitionId:null
+        }];
+      }
+      return otherDefinitions.map((definitionId) => ({
+        probability:branch.probability
+          * remainingCardDensity(state?.remainingCardCounts ?? null, definitionId)
+          / otherDensity,
+        conditions:branch.conditions,
+        observedDefinitionId:definitionId
+      }));
+    }).filter((branch) => branch.probability > PROBABILITY_EPSILON));
+    actor.identitySlotStates ??= {};
+    actor.identitySlotStates[stolenSlotIdentityKey] = mergeProbabilityStateBranches(
+      identityPartition.map((branch) => {
+        const conditions = { ...branch.conditions, [stolenSlotKey]:branch.observedDefinitionId ? "yes" : "no" };
+        return {
+          probability:branch.probability,
+          conditions,
+          slotAvailable:branch.observedDefinitionId !== null,
+          definitionId:branch.observedDefinitionId
+        };
+      })
+    );
+    const blockRemovalPartition = mergeProbabilityStateBranches(
+      identityPartition.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        occurs:branch.observedDefinitionId === "block"
+      }))
+    );
+    const counterRemovalPartition = mergeProbabilityStateBranches(
+      identityPartition.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        occurs:branch.observedDefinitionId === "counter"
+      }))
+    );
+    for (const definitionId of ["block", "counter", ...otherDefinitions]) {
+      const identityWorlds = mergeProbabilityStateBranches(
+        identityPartition
+          .filter((branch) => branch.observedDefinitionId === definitionId)
+          .map((branch) => ({
+            probability:branch.probability,
+            conditions:branch.conditions,
+            occurs:true
+          }))
+      );
+      const identityMass = this.eventProbability(identityWorlds);
+      if (identityMass <= PROBABILITY_EPSILON) continue;
+      this.addStolenIdentityToHand(state, actor, {
+        definitionId,
+        identityGroupKey:stolenSlotIdentityKey
+      }, identityWorlds);
+      if (definitionId === "block") {
+        this.addKnownBlockToDistribution(state, actor, blockRemovalPartition);
+      }
+      if (definitionId === "counter") {
+        this.addKnownCounterToDistribution(state, actor, counterRemovalPartition);
+      }
+      if (state.remainingCardCounts && Number.isFinite(state.remainingCardCounts[definitionId])) {
+        state.remainingCardCounts[definitionId] = Math.max(0,
+          (state.remainingCardCounts[definitionId] ?? 0) - identityMass);
+      }
+    }
+    actor.handCount = (actor.handCount ?? 0) + stolenMass;
+    this.syncCardEstimates(actor, state?.remainingCardCounts ?? null);
+    return stolenMass;
+  }
+
+  /*
+  功能
+  把窃取技能的统一选择分区投影为指定 outcome 的完整条件世界。
+
+  调用方
+  stealResourceToHand。
+
+  输入
+  完整选择分区、目标 outcome 与可选确定牌 ID。
+
+  输出
+  概率质量为一的 occurs 布尔分区。
+
+  读取状态
+  只读选择分区。
+
+  写入状态
+  无。
+
+  调用函数
+  mergeProbabilityStateBranches。
+
+  边界与不变量
+  必须保留未选中世界，否则下游 Probability join 会把不完整分区错误重归一化。
+  */
+  projectStealOutcome(selectionPartition, outcome, cardId = null) {
+    return mergeProbabilityStateBranches(
+      selectionPartition.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        occurs:branch.outcome === outcome
+          && (cardId == null || branch.cardId === cardId)
+      }))
+    );
+  }
+
+  /*
+  功能
+  镜像窃取技能：把目标手牌与装备合并为单一等概率候选，并将所得身份写入施术者手牌。
+
+  调用方
+  SkillEffectSimulation 的窃取技能。
+
+  输入
+  SearchState、行动者、目标与执行概率；兼容旧式 (actor, target) 调用。
+
+  输出
+  无返回值；目标资源损失和行动者手牌收益已按互斥窃取世界推进。
+
+  读取状态
+  目标 handCount/knownCards/装备存在概率、剩余牌密度与随机移除结果。
+
+  写入状态
+  双方 hand/knownCards、handCount、目标装备与 block/counter 摘要。
+
+  调用函数
+  buildSimulatedKnownCards、transferKnownCardIdentity、consumeRandomHandCards、addAnonymousStolenIdentityToHand、addStolenIdentityToHand、setSimulatedEquipment。
+
+  边界与不变量
+  装备、每张确定已知手牌与匿名手牌聚合必须共享同一个互斥选择条件；实际所得身份与来源损失不得由根先验独立重抽。
   */
   stealResourceToHand(state, actor, target, scale = 1) {
     if (!Array.isArray(state?.players)) {
@@ -2187,20 +2793,85 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       state = { players:[actor, target] };
     }
     const chance = clampProbability(scale);
-    const handCount = Math.max(0, target.handCount ?? 0);
+    const handCount = Math.max(0, Number(target.handCount) || 0);
     const existenceProbability = this.getSimulatedEquipmentProbability(target);
     if ((!handCount && !existenceProbability) || chance <= 0) return;
-    const equipmentLossProbability = existenceProbability / (handCount + 1) * chance;
-    const handLoss = handCount > 0 ? (1 - existenceProbability / (handCount + 1)) * chance : 0;
-    const gainProbability = (handCount > 0 ? 1 : existenceProbability) * chance;
-    actor.handCount = (actor.handCount ?? 0) + gainProbability;
-    const result = { counterRemovedWorlds: [] };
-    this.consumeRandomHandCards(state, target, handLoss, { result });
-    // 只有实际窃取到目标手牌且该手牌是反制的世界才转移反制容量；
-    // 复用来源随机失牌已经决定的 counterRemoved 世界，不重新按根先验猜测。
-    for (const partition of result.counterRemovedWorlds) {
-      this.addTransferredCounterCapacity(state, actor, partition);
+    const poolSize = handCount + existenceProbability;
+    const equipmentLossProbability = existenceProbability / poolSize * chance;
+    const { knownCards, unknownCount } = this.buildSimulatedKnownCards(target);
+    const knownLoss = knownCards.length / poolSize * chance;
+    const unknownLoss = Math.max(0, unknownCount) / poolSize * chance;
+    const selectionKey = this.nextProbabilityEventKey(state, `steal-resource:${actor.id}:${target.id}`);
+    const outcomeBranches = [];
+    if (equipmentLossProbability > PROBABILITY_EPSILON && target.equipmentDefinitionId) {
+      outcomeBranches.push({
+        probability:equipmentLossProbability,
+        conditions:{ [selectionKey]:"equipment" },
+        outcome:"equipment"
+      });
     }
-    this.setSimulatedEquipment(target, target.equipmentDefinitionId, existenceProbability - equipmentLossProbability);
+    for (const card of knownCards) {
+      outcomeBranches.push({
+        probability:chance / poolSize,
+        conditions:{ [selectionKey]:`known:${card.cardId}` },
+        outcome:"known",
+        cardId:card.cardId,
+        definitionId:card.definitionId
+      });
+    }
+    if (unknownLoss > PROBABILITY_EPSILON) {
+      outcomeBranches.push({
+        probability:unknownLoss,
+        conditions:{ [selectionKey]:"unknown" },
+        outcome:"unknown"
+      });
+    }
+    outcomeBranches.push({
+      probability:Math.max(0, 1 - chance),
+      conditions:{ [selectionKey]:"none" },
+      outcome:"none"
+    });
+    const selectionPartition = mergeProbabilityStateBranches(outcomeBranches);
+    if (equipmentLossProbability > PROBABILITY_EPSILON && target.equipmentDefinitionId) {
+      const stolenEquipmentDefinitionId = target.equipmentDefinitionId;
+      const equipmentWorlds = this.projectStealOutcome(selectionPartition, "equipment");
+      const equipmentMass = this.eventProbability(equipmentWorlds);
+      if (equipmentMass > PROBABILITY_EPSILON) {
+        this.setSimulatedEquipment(
+          target,
+          stolenEquipmentDefinitionId,
+          existenceProbability - equipmentLossProbability
+        );
+        this.addStolenIdentityToHand(state, actor, {
+          definitionId:stolenEquipmentDefinitionId
+        }, equipmentWorlds);
+        actor.handCount = (actor.handCount ?? 0) + equipmentMass;
+      }
+    }
+    for (const known of knownCards) {
+      const knownWorlds = this.projectStealOutcome(selectionPartition, "known", known.cardId);
+      if (this.eventProbability(knownWorlds) <= PROBABILITY_EPSILON) continue;
+      this.transferKnownCardIdentity(
+        state,
+        target,
+        actor,
+        { cardId:known.cardId, definitionId:known.definitionId },
+        knownWorlds,
+        true,
+        null
+      );
+    }
+    if (unknownLoss > PROBABILITY_EPSILON) {
+      const unknownWorlds = this.projectStealOutcome(selectionPartition, "unknown");
+      const result = { counterRemovedWorlds: [] };
+      this.consumeRandomHandCards(state, target, unknownLoss, {
+        result,
+        eventWorlds:unknownWorlds,
+        anonymousOnly:true
+      });
+      this.addAnonymousStolenIdentityToHand(state, actor, result);
+    }
+    this.syncCardEstimates(target, state?.remainingCardCounts ?? null);
+    this.syncCardEstimates(actor, state?.remainingCardCounts ?? null);
   }
 };

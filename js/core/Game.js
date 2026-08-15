@@ -3,29 +3,29 @@
  * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
  * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260815-card-estimate-parity-fix";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-card-estimate-parity-fix";
-import { createId, clamp } from "../utils/helpers.js?build=20260815-card-estimate-parity-fix";
-import { EventBus } from "./EventBus.js?build=20260815-card-estimate-parity-fix";
-import { Player } from "./Player.js?build=20260815-card-estimate-parity-fix";
-import { Deck } from "./Deck.js?build=20260815-card-estimate-parity-fix";
-import { TeamManager } from "./TeamManager.js?build=20260815-card-estimate-parity-fix";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260815-card-estimate-parity-fix";
-import { RuleEngine } from "./RuleEngine.js?build=20260815-card-estimate-parity-fix";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260815-card-estimate-parity-fix";
-import { GameLogger } from "./GameLogger.js?build=20260815-card-estimate-parity-fix";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260815-card-estimate-parity-fix";
-import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260815-card-estimate-parity-fix";
-import { AIController } from "../ai/AiController.js?build=20260815-card-estimate-parity-fix";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260815-card-estimate-parity-fix";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260815-card-estimate-parity-fix";
-import { Debug } from "../utils/debug.js?build=20260815-card-estimate-parity-fix";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260815-card-estimate-parity-fix";
-import { DyingSystem } from "./DyingSystem.js?build=20260815-card-estimate-parity-fix";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260815-card-estimate-parity-fix";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260815-card-estimate-parity-fix";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260815-card-estimate-parity-fix";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260815-card-estimate-parity-fix";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { createId, clamp } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
+import { EventBus } from "./EventBus.js?build=20260815-shadow-agent-p1-slot";
+import { Player } from "./Player.js?build=20260815-shadow-agent-p1-slot";
+import { Deck } from "./Deck.js?build=20260815-shadow-agent-p1-slot";
+import { TeamManager } from "./TeamManager.js?build=20260815-shadow-agent-p1-slot";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260815-shadow-agent-p1-slot";
+import { RuleEngine } from "./RuleEngine.js?build=20260815-shadow-agent-p1-slot";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260815-shadow-agent-p1-slot";
+import { GameLogger } from "./GameLogger.js?build=20260815-shadow-agent-p1-slot";
+import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260815-shadow-agent-p1-slot";
+import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260815-shadow-agent-p1-slot";
+import { AIController } from "../ai/AiController.js?build=20260815-shadow-agent-p1-slot";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260815-shadow-agent-p1-slot";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260815-shadow-agent-p1-slot";
+import { Debug } from "../utils/debug.js?build=20260815-shadow-agent-p1-slot";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260815-shadow-agent-p1-slot";
+import { DyingSystem } from "./DyingSystem.js?build=20260815-shadow-agent-p1-slot";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260815-shadow-agent-p1-slot";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260815-shadow-agent-p1-slot";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260815-shadow-agent-p1-slot";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260815-shadow-agent-p1-slot";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {

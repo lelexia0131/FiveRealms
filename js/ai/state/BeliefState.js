@@ -17,7 +17,9 @@ AI 状态组合入口、Knowledge、Planner 隐藏世界采样与状态契约测
 架构约束
 不得生成动作、计算价值、写 GameState，概率分布必须归一且不持有输入计数引用。
 */
-import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260815-card-estimate-parity-fix";
+import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { cardAvailability } from "../value/CardValue.js?build=20260815-shadow-agent-p1-slot";
+import { PROBABILITY_EPSILON } from "./Probability.js?build=20260815-shadow-agent-p1-slot";
 
 /*
 功能
@@ -465,10 +467,10 @@ function pickDefinition(remaining, random) {
 Knowledge.sampleHiddenWorlds、Planner。
 
 输入
-观察者、SearchState、非负样本数与随机数函数。
+观察者、SearchState、非负样本数与随机函数。
 
 输出
-样本数组，每个样本按玩家 ID 给出已知牌加采样未知牌定义。
+样本数组，每个样本按玩家 ID 给出确定已知牌加采样未知牌定义。
 
 读取状态
 SearchState 剩余计数、玩家 handCount 与 knownCards。
@@ -477,10 +479,10 @@ SearchState 剩余计数、玩家 handCount 与 knownCards。
 仅写每个样本私有的剩余计数副本。
 
 调用函数
-pickDefinition。
+cardAvailability、pickDefinition。
 
 边界与不变量
-不得回读 Game；已知实体不重复采样，各世界之间计数完全隔离。
+不得回读 Game；部分概率身份按未知质量处理，已知实体不重复采样，各世界计数完全隔离。
 */
 export function sampleHiddenWorlds(viewer, searchState, count, random) {
   const rootCounts = searchState.remainingCardCounts;
@@ -490,7 +492,10 @@ export function sampleHiddenWorlds(viewer, searchState, count, random) {
   return Array.from({ length:count }, () => {
     const remaining = { ...rootCounts };
     return Object.fromEntries(searchState.players.filter((player) => player.id !== viewer.id).map((player) => {
-      const known = new Map((player.knownCards ?? []).map((entry) => [entry.cardId, entry.definitionId]));
+      const certainKnown = (player.knownCards ?? []).filter((entry) => (
+        cardAvailability(entry) >= 1 - PROBABILITY_EPSILON
+      ));
+      const known = new Map(certainKnown.map((entry) => [entry.cardId, entry.definitionId]));
       const unknownCount = Math.max(0, player.handCount - known.size);
       const sampled = [];
       for (let index = 0; index < unknownCount; index += 1) {

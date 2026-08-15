@@ -21,7 +21,7 @@ import {
   PROBABILITY_EPSILON,
   getAvailabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-card-estimate-parity-fix";
+} from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
 
 export class ActionCandidatePolicy {
   /*

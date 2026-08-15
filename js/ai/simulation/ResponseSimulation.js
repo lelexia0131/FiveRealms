@@ -17,10 +17,10 @@ state/Probability、正式 ResponsePolicy、GlobalBenefit assessment 与共享 s
 架构约束
 不得读取 Game/UI/Controller/Planner，不得复制 Policy、Value 或真实规则实现。
 */
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260815-card-estimate-parity-fix";
-import { planningCounterDesire, planningDynamicCounterGain } from "../policy/ResponsePolicy.js?build=20260815-card-estimate-parity-fix";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-card-estimate-parity-fix";
-import { clampProbability, remainingCardDensity, unionProbability } from "./SimulationSupport.js?build=20260815-card-estimate-parity-fix";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260815-shadow-agent-p1-slot";
+import { planningCounterDesire, planningDynamicCounterGain } from "../policy/ResponsePolicy.js?build=20260815-shadow-agent-p1-slot";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
+import { clampProbability, remainingCardDensity, unionProbability } from "./SimulationSupport.js?build=20260815-shadow-agent-p1-slot";
 
 /*
 功能

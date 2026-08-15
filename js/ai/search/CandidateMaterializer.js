@@ -208,6 +208,7 @@ export class CandidateMaterializer {
       depth,
       remainingProvenance,
       simulator,
+      context,
       searchBudget
     });
     const baseTerms = this.transitionValue.evaluateBase({
@@ -252,6 +253,7 @@ export class CandidateMaterializer {
       baseTransition,
       exposeMarginal:terms.exposeMarginal,
       assaultStacksCredit:terms.assaultStacksCredit,
+      spyGapInformationValue:terms.spyGapInformationValue ?? 0,
       remainingProvenance:terms.nextProvenance,
       candidateLedger,
       responseNet,
@@ -297,7 +299,8 @@ export class CandidateMaterializer {
         frontierValue:candidate.frontierValue,
         sealTimingPenalty:candidate.sealTimingPenalty,
         exposeMarginal:candidate.exposeMarginal,
-        assaultStacksCredit:candidate.assaultStacksCredit
+        assaultStacksCredit:candidate.assaultStacksCredit,
+        spyGapInformationValue:candidate.spyGapInformationValue ?? 0
       });
     }
     return summary;

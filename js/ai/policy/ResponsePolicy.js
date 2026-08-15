@@ -17,8 +17,9 @@ value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query�
 架构约束
 不执行规则、不依赖 Planner/Controller/UI，不 import 或构造 具体 Simulator。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-card-estimate-parity-fix";
-import { HP_VALUE } from "../value/Economics.js?build=20260815-card-estimate-parity-fix";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { cardAvailability } from "../value/CardValue.js?build=20260815-shadow-agent-p1-slot";
+import { HP_VALUE } from "../value/Economics.js?build=20260815-shadow-agent-p1-slot";
 
 /*
 功能
@@ -213,7 +214,9 @@ export function planningDynamicCounterGain(
     }
     case "scout": {
       if (!target?.alive) return 0;
-      const knownCount = Array.isArray(target.knownCards) ? target.knownCards.length : 0;
+      const knownCount = Array.isArray(target.knownCards)
+        ? target.knownCards.reduce((sum, entry) => sum + cardAvailability(entry), 0)
+        : 0;
       const unknownCount = Math.max(0, Number(target.handCount) - knownCount);
       const info = Math.min(2, unknownCount) * 0.35;
       return actorEnemy ? info : -info;

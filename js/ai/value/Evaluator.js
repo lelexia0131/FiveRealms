@@ -17,15 +17,15 @@ Economics、CardValue、ThreatValue 以及封印、雷达的现有纯领域函�
 架构约束
 不得导入或构造 Simulator、Planner、Controller；State Value 只读一个状态，闪电等生命周期结果必须由调用层先计算为纯值。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-card-estimate-parity-fix";
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260815-card-estimate-parity-fix";
-import { sealTeamBurden } from "./SealValue.js?build=20260815-card-estimate-parity-fix";
-import { cardAvailability, roleCardDelta } from "./CardValue.js?build=20260815-card-estimate-parity-fix";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260815-shadow-agent-p1-slot";
+import { sealTeamBurden } from "./SealValue.js?build=20260815-shadow-agent-p1-slot";
+import { cardAvailability, roleCardDelta } from "./CardValue.js?build=20260815-shadow-agent-p1-slot";
 import {
   ENERGY_STATE_WEIGHT,
   HP_VALUE,
   energyDeviceFutureUtility
-} from "./Economics.js?build=20260815-card-estimate-parity-fix";
+} from "./Economics.js?build=20260815-shadow-agent-p1-slot";
 import {
   DANGER_VALUE,
   DEATH_VALUE,
@@ -33,7 +33,7 @@ import {
   hp2ThreatRiskValue,
   radarMitigationUtility,
   shieldStateValue
-} from "./ThreatValue.js?build=20260815-card-estimate-parity-fix";
+} from "./ThreatValue.js?build=20260815-shadow-agent-p1-slot";
 
 export class Evaluator {
   /*
