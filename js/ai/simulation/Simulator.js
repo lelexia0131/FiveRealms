@@ -29,15 +29,15 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-threat-exposure-fix-final";
-import { cloneSearchState } from "../state/SearchState.js?build=20260815-threat-exposure-fix-final";
+} from "../state/Probability.js?build=20260815-residual-end-threat-fix";
+import { cloneSearchState } from "../state/SearchState.js?build=20260815-residual-end-threat-fix";
 
-import { clampProbability } from "./SimulationSupport.js?build=20260815-threat-exposure-fix-final";
-import { withResponseSimulation } from "./ResponseSimulation.js?build=20260815-threat-exposure-fix-final";
-import { withCombatSimulation } from "./CombatSimulation.js?build=20260815-threat-exposure-fix-final";
-import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260815-threat-exposure-fix-final";
-import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260815-threat-exposure-fix-final";
-import { withStatusSimulation } from "./StatusSimulation.js?build=20260815-threat-exposure-fix-final";
+import { clampProbability } from "./SimulationSupport.js?build=20260815-residual-end-threat-fix";
+import { withResponseSimulation } from "./ResponseSimulation.js?build=20260815-residual-end-threat-fix";
+import { withCombatSimulation } from "./CombatSimulation.js?build=20260815-residual-end-threat-fix";
+import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260815-residual-end-threat-fix";
+import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260815-residual-end-threat-fix";
+import { withStatusSimulation } from "./StatusSimulation.js?build=20260815-residual-end-threat-fix";
 
 class SimulatorCore {
   /*
@@ -719,39 +719,81 @@ class SimulatorCore {
   独立 SearchState 与行动者。
 
   输出
-  无；行动者手牌按正式保留价值弃置到生命上限，并同步相关概率摘要。
+  无；行动者总手牌数量按生命上限压缩，并同步已知身份、匿名容量与概率摘要。
 
   读取状态
-  行动者手牌、生命与公开装备上下文。
+  行动者 hand/handCount、生命、匿名容量与公开装备上下文。
 
   写入状态
-  手牌 availability、hand/handCount、突袭/格挡/反制/调息摘要。
+  手牌 availability、hand/handCount、匿名容量与突袭/格挡/反制/调息摘要。
 
   调用函数
-  consumeChosenHandCard、buildDiscardKeepValueContext。
+  hasCompleteCertainHand、cardAvailability、consumeUnknownResourceCard、
+  consumeChosenHandCard、syncCardEstimates。
 
   边界与不变量
-  与真实 Game.handleDiscardPhase 的 required=hand.length-hp 及正式弃牌策略保持一致；
-  行动者未存活或手牌不超上限时为空操作，不制造新状态字段。
+  总手牌数以 handCount 为准，不得用 hand.length 掩盖匿名容量；完整确定手牌仍走正式保留价值选择，
+  混合状态先消费匿名容量，再对剩余已知身份做保留价值选择；不虚构 definitionId，
+  行动者未存活或手牌不超上限时为空操作。
   */
   applyMandatoryDiscard(state, actor) {
     if (!actor?.alive) return;
-    const handSize = Array.isArray(actor.hand)
-      ? actor.hand.length
-      : Math.max(0, Number(actor.handCount) || 0);
-    const required = Math.max(0, handSize - Math.max(0, actor.hp));
-    if (required <= 0) return;
+    const rawHandCount = Number(actor.handCount);
+    const handSize = Number.isFinite(rawHandCount)
+      ? Math.max(0, rawHandCount)
+      : (Array.isArray(actor.hand) ? actor.hand.length : 0);
+    const hp = Math.max(0, Number(actor.hp) || 0);
+    let remaining = Math.max(0, handSize - hp);
+    if (remaining <= PROBABILITY_EPSILON) return;
     if (!Array.isArray(actor.hand)) {
       // 无身份信息的摘要状态（测试夹具）无法按保留价值选牌，只投影数量上限。
-      actor.handCount = Math.min(
-        Math.max(0, Number(actor.handCount) || 0),
-        Math.max(0, actor.hp)
-      );
+      actor.handCount = Math.min(handSize, hp);
       return;
     }
-    this.consumeChosenHandCard(state, actor, required, {
-      label:"end-hand-limit-discard"
-    });
+    if (this.hasCompleteCertainHand(actor)) {
+      this.consumeChosenHandCard(state, actor, remaining, {
+        label:"end-hand-limit-discard"
+      });
+      return;
+    }
+    // 混合状态中的匿名容量没有可排序身份，先在匿名聚合内消费；
+    // 余量只落在已知身份上，再复用正式保留价值选择，避免给匿名牌虚构 definitionId。
+    while (remaining > PROBABILITY_EPSILON) {
+      const explicitExpected = [
+        ...(Array.isArray(actor.hand) ? actor.hand : []),
+        ...(Array.isArray(actor.knownCards) ? actor.knownCards : [])
+      ].reduce((sum, card) => sum + this.cardAvailability(card), 0);
+      const anonymousCapacity = Math.max(
+        0,
+        Math.max(0, Number(actor.handCount) || 0) - explicitExpected
+      );
+      if (anonymousCapacity <= PROBABILITY_EPSILON) break;
+      const removed = this.consumeUnknownResourceCard(
+        state,
+        actor,
+        Math.min(1, remaining, anonymousCapacity),
+        anonymousCapacity
+      );
+      if (removed <= PROBABILITY_EPSILON) break;
+      remaining = Math.max(0, Math.max(0, Number(actor.handCount) || 0) - hp);
+    }
+    remaining = Math.max(0, Math.max(0, Number(actor.handCount) || 0) - hp);
+    if (remaining > PROBABILITY_EPSILON) {
+      this.consumeChosenHandCard(state, actor, remaining, {
+        label:"end-hand-limit-discard"
+      });
+    }
+    actor.handCount = Math.min(Math.max(0, Number(actor.handCount) || 0), hp);
+    const explicitAfter = [
+      ...(Array.isArray(actor.hand) ? actor.hand : []),
+      ...(Array.isArray(actor.knownCards) ? actor.knownCards : [])
+    ].reduce((sum, card) => sum + this.cardAvailability(card), 0);
+    actor.anonymousCountBranches = [{
+      probability: 1,
+      conditions: {},
+      anonymousCount: Math.max(0, (Number(actor.handCount) || 0) - explicitAfter)
+    }];
+    this.syncCardEstimates(actor, state?.remainingCardCounts);
   }
 
   /*

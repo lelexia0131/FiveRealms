@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260815-threat-exposure-fix-final";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260815-residual-end-threat-fix";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-residual-end-threat-fix";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

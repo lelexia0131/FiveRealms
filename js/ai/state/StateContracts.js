@@ -17,14 +17,14 @@ AiController、ResponseBoundary、测试与搜索调用方。
 架构约束
 createInitialSearchState 只做 SearchState 正式组合入口，不得另存一份投影或概率逻辑。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
-import { TeamRuleService } from "../../core/TeamRuleService.js?build=20260815-threat-exposure-fix-final";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../../generals/skillRegistry.js?build=20260815-threat-exposure-fix-final";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-threat-exposure-fix-final";
-import { createBeliefState } from "./BeliefState.js?build=20260815-threat-exposure-fix-final";
-import { createKnowledgeState } from "./Knowledge.js?build=20260815-threat-exposure-fix-final";
-import { createSearchState } from "./SearchState.js?build=20260815-threat-exposure-fix-final";
-import { createVisibleState } from "./VisibleState.js?build=20260815-threat-exposure-fix-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-residual-end-threat-fix";
+import { TeamRuleService } from "../../core/TeamRuleService.js?build=20260815-residual-end-threat-fix";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../../generals/skillRegistry.js?build=20260815-residual-end-threat-fix";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-residual-end-threat-fix";
+import { createBeliefState } from "./BeliefState.js?build=20260815-residual-end-threat-fix";
+import { createKnowledgeState } from "./Knowledge.js?build=20260815-residual-end-threat-fix";
+import { createSearchState } from "./SearchState.js?build=20260815-residual-end-threat-fix";
+import { createVisibleState } from "./VisibleState.js?build=20260815-residual-end-threat-fix";
 
 /*
 功能

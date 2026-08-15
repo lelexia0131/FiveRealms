@@ -21,7 +21,7 @@ import {
   PROBABILITY_EPSILON,
   getAvailabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-threat-exposure-fix-final";
+} from "../state/Probability.js?build=20260815-residual-end-threat-fix";
 
 export class ActionCandidatePolicy {
   /*

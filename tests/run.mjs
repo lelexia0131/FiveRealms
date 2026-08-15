@@ -25,7 +25,7 @@ import {
   joinProbabilityStateBranches as joinStateProbabilityBranches,
   totalBranchProbability
 } from "../js/ai/state/Probability.js";
-import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260815-threat-exposure-fix-final";
+import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260815-residual-end-threat-fix";
 import { Planner } from "../js/ai/search/Planner.js";
 import { SearchBudget } from "../js/ai/search/SearchBudget.js";
 import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
@@ -8936,6 +8936,78 @@ test("AI·搜索：Simulation 七类固定场景保持根动作、序列与搜�
   }
 });
 
+test("AI·搜索：壁垒固定场景的 end 由完整账本证明而非概率距离塌缩", async () => {
+  const game = makeBenchmarkGame({
+    players: [
+      { id: "a", team: "dawn", general: "oath-warden", hand: [], hp: 4, energy: 2 },
+      { id: "b", team: "dawn", general: "spirit-medic", hand: [], hp: 1 },
+      {
+        id: "c", team: "dusk", general: "blade-walker",
+        hand: [makeBenchmarkCard("assault", "trace-barrier-end")], hp: 4
+      }
+    ],
+    options: { actorId: "a", seed: 20260814, nodeBudget: 200 }
+  });
+  try {
+    const player = game.state.players.find((entry) => entry.id === "a");
+    const { action, stats } = await runBenchmarkAiDecision(game, "a");
+    assert.deepEqual(describeBenchmarkAction(action), {
+      type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null
+    });
+    assert.equal(stats.bestValueScore, 0);
+    const visible = createInitialSearchState(
+      player.id, game.state, game.aiController.knowledge.remainingCounts(player)
+    ),
+      roots = game.aiController.getActionCandidates(player),
+      barrierAction = roots.find((entry) => (
+        entry.type === "skill" && entry.skill?.id === "barrier" && entry.targets?.[0]?.id === "b"
+      )),
+      endAction = roots.find((entry) => entry.type === "end"),
+      materializer = game.aiController.candidateMaterializer,
+      simulator = new Simulator(visible),
+      context = materializer.createContext(player, visible, roots);
+    assert.ok(barrierAction && endAction);
+    const materialize = (candidateAction) => {
+      const after = simulator.apply(visible, candidateAction, player.id);
+      return materializer.materialize({
+        action: candidateAction,
+        beforeState: visible,
+        afterState: after,
+        player,
+        depth: 1,
+        remainingProvenance: context.rootProvenance,
+        simulator,
+        context,
+        collectDiagnostics: true,
+        searchBudget: null
+      });
+    };
+    const barrierCandidate = materialize(barrierAction),
+      endCandidate = materialize(endAction);
+    materializer.finalizeSiblings([barrierCandidate, endCandidate], 1);
+    // 账本语义：护盾确实给了队友，但 2 点能量先降低自身资源，同时让敌方 c 的
+    // 能量压力项改善；三项合计后 Barrier 净值为负，end 是真实价值结果。
+    assert.ok(barrierCandidate.candidateLedger.projected.ally > 0,
+      "壁垒应给队友带来正护盾价值");
+    assert.ok(barrierCandidate.candidateLedger.projected.self < 0,
+      "壁垒应消耗行动者能量");
+    assert.ok(barrierCandidate.candidateLedger.projected.total < 0,
+      "壁垒总净值应为负");
+    assert.ok(barrierCandidate.transitionValue < endCandidate.transitionValue,
+      "壁垒 transition 应低于 end");
+    // 该场景 c 到 a/b 均为确定性可达，p=1，证明翻转不是概率距离二次折损造成。
+    const enemy = visible.players.find((entry) => entry.id === "c");
+    for (const targetId of ["a", "b"]) {
+      const target = visible.players.find((entry) => entry.id === targetId);
+      const components = game.aiController.evaluator.exposureComponents(visible, target);
+      const enemyComponents = components.perEnemy.find((entry) => entry.enemyId === enemy.id);
+      assert.equal(enemyComponents.rangeProbability, 1);
+    }
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+});
+
 test("AI·搜索：Simulation 拆分保持固定 D4 封印链逐字段一致", async () => {
   const game = makeBenchmarkGame({
     players: [
@@ -9772,6 +9844,131 @@ test("AI·模拟器：end 动作按真实弃牌阶段把手牌压到生命上限
   // 弃掉最后一张突袭后，敌方可见的突袭库存必须同步归零
   assert.equal(actorAfter.expectedAssaultCount, 0);
   assert.equal(actorAfter.assaultResponseProbability, 0);
+});
+
+test("AI·模拟器：end 完整确定手牌按生命上限弃置并同步四类摘要", () => {
+  const actor = makePlayer("end-certain-actor", 0, "dawn", "ai", 1),
+    enemy1 = makePlayer("end-certain-enemy-1", 1, "dusk", "ai", 5),
+    enemy2 = makePlayer("end-certain-enemy-2", 2, "dusk", "ai", 5);
+  actor.hp = 3;
+  actor.hand.push(
+    instance("assault"), instance("scout"), instance("destroy"),
+    instance("block"), instance("counter"), instance("recover")
+  );
+  const { game } = makeGame([actor, enemy1, enemy2]),
+    visible = createInitialSearchState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    ),
+    after = new Simulator(visible).apply(visible, { type: "end" }, actor.id),
+    actorAfter = after.players.find((player) => player.id === actor.id);
+  assert.equal(actorAfter.handCount, 3);
+  // 守誓者保留价值最低的三张是突袭、窥探、破坏；格挡、反制与调息必须保留。
+  assert.deepEqual(
+    actorAfter.hand.map((card) => card.definitionId).sort(),
+    ["block", "counter", "recover"]
+  );
+  assert.equal(actorAfter.expectedAssaultCount, 0);
+  assert.equal(actorAfter.assaultResponseProbability, 0);
+  assert.equal(actorAfter.blockProbability, 1);
+  assert.equal(actorAfter.counterProbability, 1);
+  assert.equal(actorAfter.expectedRecoverCount, 1);
+});
+
+test("AI·模拟器：丰收获得匿名容量后 end 仍按 handCount 压到生命上限", () => {
+  const actor = makePlayer("end-harvest-actor", 0, "dawn", "ai", 0),
+    enemy1 = makePlayer("end-harvest-enemy-1", 1, "dusk", "ai", 5),
+    enemy2 = makePlayer("end-harvest-enemy-2", 2, "dusk", "ai", 5);
+  actor.hp = 3;
+  actor.hand.push(
+    instance("harvest"), instance("assault"), instance("block"), instance("scout")
+  );
+  const { game } = makeGame([actor, enemy1, enemy2]),
+    visible = createInitialSearchState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    ),
+    simulator = new Simulator(visible),
+    harvestAction = game.aiController.actionGenerator.generateFromVisible(
+      visible, actor.id
+    ).find((action) => action.card?.id === actor.hand.find((card) => card.definitionId === "harvest")?.id);
+  assert.ok(harvestAction, "应存在丰收模拟动作");
+  const afterHarvest = simulator.apply(visible, harvestAction, actor.id),
+    actorAfterHarvest = afterHarvest.players.find((player) => player.id === actor.id);
+  assert.equal(actorAfterHarvest.hand.length, 3);
+  assert.equal(actorAfterHarvest.handCount, 5);
+  assert.ok(actorAfterHarvest.handCount > actorAfterHarvest.hand.length,
+    "丰收后的匿名容量必须体现在 handCount 中");
+  assert.equal(Math.max(0, actorAfterHarvest.handCount - actorAfterHarvest.hp), 2,
+    "真实弃牌阶段应弃 2 张");
+  const afterEnd = simulator.apply(afterHarvest, { type: "end" }, actor.id),
+    actorAfterEnd = afterEnd.players.find((player) => player.id === actor.id);
+  assert.equal(afterEnd.playPhaseEnded, true);
+  assert.equal(actorAfterEnd.handCount, 3);
+  assert.ok(actorAfterEnd.handCount <= actorAfterEnd.hp);
+  // 强制弃牌必须真实进入状态价值：行动者 own ledger 的手牌容量损失为 2 × 1.1。
+  const ledger = game.aiController.evaluator.ownerStateLedger(
+    afterHarvest, afterEnd, actor.id
+  ),
+    actorOwner = ledger.owners.find((owner) => owner.playerId === actor.id),
+    projected = game.aiController.evaluator.projectOwnerLedger(ledger, actor.id);
+  assertClose(actorOwner.generic.handCount, -2.2);
+  assert.ok(projected.total < 0, `end 弃牌应降低 viewer 状态价值，实际 ${projected.total}`);
+});
+
+test("AI·模拟器：混合已知身份与匿名容量弃牌不泄露或虚构身份", () => {
+  const actor = makePlayer("end-mixed-actor", 0, "dawn", "ai", 1),
+    enemy1 = makePlayer("end-mixed-enemy-1", 1, "dusk", "ai", 5),
+    enemy2 = makePlayer("end-mixed-enemy-2", 2, "dusk", "ai", 5);
+  actor.hp = 3;
+  actor.hand.push(instance("assault"), instance("block"), instance("counter"), instance("recover"));
+  const { game } = makeGame([actor, enemy1, enemy2]),
+    visible = createInitialSearchState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    ),
+    state = structuredClone(visible),
+    actorState = state.players.find((player) => player.id === actor.id),
+    originalIds = new Set(actorState.hand.map((card) => card.id));
+  actorState.handCount = 6;
+  actorState.anonymousCountBranches = [
+    { probability: 1, conditions: {}, anonymousCount: 2 }
+  ];
+  const simulator = new Simulator(state),
+    after = simulator.apply(state, { type: "end" }, actor.id),
+    actorAfter = after.players.find((player) => player.id === actor.id);
+  assert.equal(actorAfter.handCount, 3);
+  assert.ok(actorAfter.handCount <= actorAfter.hp);
+  assert.ok(actorAfter.hand.every((card) => originalIds.has(card.id)),
+    "不得为匿名容量制造新的手牌实体");
+  assert.ok(actorAfter.hand.every((card) => (
+    ["assault", "block", "counter", "recover"].includes(card.definitionId)
+  )), "不得泄露匿名 definitionId");
+  const explicitExpected = actorAfter.hand.reduce(
+    (sum, card) => sum + simulator.cardAvailability(card), 0
+  ),
+    anonymousExpected = (actorAfter.anonymousCountBranches ?? []).reduce(
+      (sum, branch) => sum + branch.probability * (Number(branch.anonymousCount) || 0), 0
+    );
+  assertClose(actorAfter.handCount, explicitExpected + anonymousExpected, 1e-9);
+  const distributionMass = (branches) => branches.reduce(
+    (sum, branch) => sum + Number(branch.probability) || 0, 0
+  ),
+    distributionCapacity = (branches) => branches.reduce(
+      (sum, branch) => sum + ((Number(branch.count ?? branch.blockCount ?? branch.counterCount) || 0) > 0
+        ? Number(branch.probability) || 0 : 0), 0
+    );
+  for (const [name, branches] of [
+    ["block", actorAfter.blockCountDistribution],
+    ["counter", actorAfter.counterCountDistribution]
+  ]) {
+    assert.ok(Array.isArray(branches) && branches.length > 0);
+    assert.ok(branches.every((branch) => branch.probability >= 0), `${name} 概率不得为负`);
+    assertClose(distributionMass(branches), 1, 1e-9, `${name} 概率质量应守恒`);
+    assert.ok(distributionCapacity(branches) <= actorAfter.handCount + 1e-9,
+      `${name} 容量不得超过手牌数`);
+  }
+  assert.ok(actorAfter.expectedAssaultCount >= 0
+    && actorAfter.expectedAssaultCount <= actorAfter.handCount + 1e-9);
+  assert.ok(actorAfter.expectedRecoverCount >= 0
+    && actorAfter.expectedRecoverCount <= actorAfter.handCount + 1e-9);
 });
 
 // ---- AI 核心状态·核心链路一致性 ----
@@ -33583,6 +33780,73 @@ test("AI·价值归属：多敌人时同一突袭库存分摊而不逐目标重�
   const projected = evaluator.projectOwnerLedger(ledger, "a");
   assertClose(projected.enemy, 0);
   assertClose(projected.total, -0.1);
+});
+
+test("AI·价值归属：概率距离条件世界分摊有限突袭库存且不二次折损", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const attacker = (id, seat, overrides = {}) => ledgerPlayer(
+    id, seat, "dusk", "blade-walker",
+    { expectedAssaultCount: 1, assaultResponseProbability: 1, ...overrides }
+  ),
+    target = (id, seat, overrides = {}) => ledgerPlayer(id, seat, "dawn", "oath-warden", overrides);
+  // B2：一个确定可达目标 + 一个 50% 屏障装置目标；有限突袭总容量仍为 5，
+  // 不能因为新增概率目标把可实现威胁从 5 折损到 4.1667。
+  const b2a = target("b2a", 0),
+    b2c = attacker("b2c", 1),
+    b2b = target("b2b", 2, {
+      equipmentDefinitionId: "barrierDevice",
+      equipmentRetentionProbability: 0.5
+    }),
+    b2State = ledgerState([b2a, b2c, b2b]),
+    b2CompsA = evaluator.exposureComponents(b2State, b2a),
+    b2CompsB = evaluator.exposureComponents(b2State, b2b);
+  assertClose(b2CompsA.currentThreat, 3.75);
+  assertClose(b2CompsB.currentThreat, 1.25);
+  assertClose(b2CompsA.currentThreat + b2CompsB.currentThreat, 5);
+  assert.equal(b2CompsA.futureInventory, 0);
+  assert.equal(b2CompsB.futureInventory, 0);
+  // B3：同一望远镜变量同时影响两个目标。共享条件不能被拆成独立概率：
+  // 望远镜保留时两个目标均分 5，保留失败时全不可达，总期望为 2.5。
+  const filler = (id, seat) => ledgerPlayer(id, seat, "dusk", "blade-walker");
+  const b3a = target("b3a", 0),
+    b3d1 = filler("b3d1", 1),
+    b3c = attacker("b3c", 2, {
+      equipmentDefinitionId: "telescope",
+      equipmentRetentionProbability: 0.5
+    }),
+    b3d2 = filler("b3d2", 3),
+    b3b = target("b3b", 4),
+    b3State = ledgerState([b3a, b3d1, b3c, b3d2, b3b]),
+    b3CompsA = evaluator.exposureComponents(b3State, b3a),
+    b3CompsB = evaluator.exposureComponents(b3State, b3b);
+  assertClose(b3CompsA.currentThreat, 1.25);
+  assertClose(b3CompsB.currentThreat, 1.25);
+  assertClose(b3CompsA.currentThreat + b3CompsB.currentThreat, 2.5);
+  // B4：两个目标各自持有独立屏障装置。目标条件独立时，至少一个可达的世界
+  // 概率为 0.75，总容量期望为 3.75；不得与共享望远镜世界用同一简化。
+  const b4d1 = filler("b4d1", 0),
+    b4a = target("b4a", 1, {
+      equipmentDefinitionId: "barrierDevice",
+      equipmentRetentionProbability: 0.5
+    }),
+    b4c = attacker("b4c", 2),
+    b4b = target("b4b", 3, {
+      equipmentDefinitionId: "barrierDevice",
+      equipmentRetentionProbability: 0.5
+    }),
+    b4d2 = filler("b4d2", 4),
+    b4State = ledgerState([b4d1, b4a, b4c, b4b, b4d2]),
+    b4CompsA = evaluator.exposureComponents(b4State, b4a),
+    b4CompsB = evaluator.exposureComponents(b4State, b4b);
+  assertClose(b4CompsA.currentThreat, 1.875);
+  assertClose(b4CompsB.currentThreat, 1.875);
+  assertClose(b4CompsA.currentThreat + b4CompsB.currentThreat, 3.75);
+  for (const components of [b2CompsA, b2CompsB, b3CompsA, b3CompsB, b4CompsA, b4CompsB]) {
+    assert.ok(Number.isFinite(components.currentThreat) && components.currentThreat >= 0);
+    assert.ok(Number.isFinite(components.futureInventory) && components.futureInventory >= 0);
+    assert.equal(components.futureInventory, 0);
+  }
 });
 
 test("AI·价值归属：静态卡牌分已移出最终真实价值，仅作 beam 排序先验", () => {

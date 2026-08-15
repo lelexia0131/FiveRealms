@@ -17,13 +17,13 @@ DistanceSystem 与 value/Economics 的生命尺度。
 架构约束
 威胁公式只能在本模块出现；基础数值项可被 Evaluator 组合进 State Value，但不得绕过它独立追加到最终 Transition Value。
 */
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-threat-exposure-fix-final";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-residual-end-threat-fix";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-residual-end-threat-fix";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "../state/Probability.js?build=20260815-threat-exposure-fix-final";
-import { HP_VALUE } from "./Economics.js?build=20260815-threat-exposure-fix-final";
+} from "../state/Probability.js?build=20260815-residual-end-threat-fix";
+import { HP_VALUE } from "./Economics.js?build=20260815-residual-end-threat-fix";
 
 export const DANGER_VALUE = 7;
 export const DEATH_VALUE = 28;
@@ -504,6 +504,59 @@ export class ThreatCalculator {
 
 /*
 功能
+在共享距离装备条件世界中，把一名敌人的有限突袭库存按可到达敌对目标均摊，
+并返回指定目标的边际可达概率与库存兑现质量。
+
+调用方
+exposureComponents。
+
+输入
+SearchState、攻击敌人、该敌人全部存活敌对目标与待评估目标下标。
+
+输出
+包含 rangeProbability 与 assaultAllocation 的新对象。
+
+读取状态
+只读存活、队伍、攻击距离与望远镜/屏障装置保留概率。
+
+写入状态
+无。
+
+调用函数
+DistanceSystem.getRangeConditionBranches。
+
+边界与不变量
+全部目标一次枚举共享条件世界；每个世界中一张突袭库存只被可到达目标均分一次，
+全部不可达世界不分配；不得把 marginal 概率当作独立世界再次相乘。
+*/
+function assaultRangeAllocation(state, enemy, targets, targetIndex) {
+  const branches = DistanceSystem.getRangeConditionBranches(
+    { state },
+    targets.map((target) => ({
+      source: enemy,
+      target,
+      range: enemy.attackRange ?? 1
+    })),
+    { includeRequirementMatches: true }
+  );
+  let rangeProbability = 0;
+  let allocation = 0;
+  for (const branch of branches) {
+    const targetReachable = Boolean(branch.requirementMatches?.[targetIndex]);
+    if (targetReachable) rangeProbability += branch.probability;
+    const reachableCount = (branch.requirementMatches ?? []).reduce(
+      (sum, matches) => sum + (matches ? 1 : 0),
+      0
+    );
+    if (targetReachable && reachableCount > 0) {
+      allocation += branch.probability / reachableCount;
+    }
+  }
+  return { rangeProbability, assaultAllocation: allocation };
+}
+
+/*
+功能
 把敌方攻击暴露拆成当前威胁、未来突袭库存与能量压力。
 
 调用方
@@ -522,12 +575,12 @@ Evaluator、FrontierValue 与响应策略。
 无。
 
 调用函数
-DistanceSystem.getRangeLegalityProbability。
+assaultRangeAllocation。
 
 边界与不变量
 三个分量之和恒等于既有 incoming exposure；不得用 raw handCount 推断敌方突袭身份。
-同一张突袭牌不得同时计入当前威胁与未来库存，且同一库存按该敌人可到达的目标分摊，
-避免对每个目标重复计全额而放大真实可实现威胁。
+同一张突袭牌不得同时计入当前威胁与未来库存，且同一库存按联合距离条件世界分摊，
+避免对每个目标重复计全额，也不得对概率距离二次折损。
 */
 export function exposureComponents(state, player) {
   const perEnemy = [];
@@ -536,8 +589,14 @@ export function exposureComponents(state, player) {
   let energyPressure = 0;
   for (const enemy of state.players) {
     if (!enemy?.alive || enemy.battleTeam === player.battleTeam || enemy.id === player.id) continue;
-    const rangeProbability = DistanceSystem.getRangeLegalityProbability(
-      { state }, enemy, player, enemy.attackRange ?? 1
+    const victims = state.players.filter((victim) => (
+      victim?.alive && victim.battleTeam !== enemy.battleTeam && victim.id !== enemy.id
+    ));
+    if (!victims.length) continue;
+    const targetIndex = victims.findIndex((victim) => victim.id === player.id);
+    if (targetIndex < 0) continue;
+    const { rangeProbability, assaultAllocation } = assaultRangeAllocation(
+      state, enemy, victims, targetIndex
     );
     if (rangeProbability <= 0) continue;
     const energy = Math.max(0, Number(enemy.energy ?? 0));
@@ -546,20 +605,10 @@ export function exposureComponents(state, player) {
     // 同一张突袭牌不能同时充当“本次响应”和“下回合库存”：
     // 第一张（response 概率质量）已按当前威胁计满，未来库存只计超出响应保留的期望数量。
     const futureCount = Math.min(3, Math.max(0, expectedAssault - response));
-    // 一个敌人每回合可兑现的攻击次数有限，同一库存不得对每个可到达目标重复计全额；
-    // 按该敌人当前可到达的全部敌对目标分摊突袭暴露，能量压力仍按逐目标口径保留。
-    let reachableTotal = 0;
-    for (const victim of state.players) {
-      if (!victim?.alive || victim.battleTeam === enemy.battleTeam || victim.id === enemy.id) continue;
-      reachableTotal += victim.id === player.id
-        ? rangeProbability
-        : DistanceSystem.getRangeLegalityProbability(
-          { state }, enemy, victim, enemy.attackRange ?? 1
-        );
-    }
-    const share = reachableTotal > 0 ? rangeProbability / reachableTotal : 0;
-    const current = response * HP_VALUE * rangeProbability * share;
-    const future = futureCount * 0.5 * HP_VALUE * rangeProbability * share;
+    // current 与 future 使用同一联合条件世界分摊质量：marginal 概率只决定能量压力，
+    // 不能再次乘入已分摊的有限突袭库存。
+    const current = response * HP_VALUE * assaultAllocation;
+    const future = futureCount * 0.5 * HP_VALUE * assaultAllocation;
     const energyTerm = Math.min(2, energy) * 0.3 * HP_VALUE * rangeProbability;
     currentThreat += current;
     futureInventory += future;

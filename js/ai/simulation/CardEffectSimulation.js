@@ -17,15 +17,15 @@ Response/Combat/Status 组件、RuleEngine、正式资源 Policy、CardValue 与
 架构约束
 不生成动作、不搜索、不拥有规则合法性或最终价值公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-threat-exposure-fix-final";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-threat-exposure-fix-final";
-import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260815-threat-exposure-fix-final";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260815-threat-exposure-fix-final";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-threat-exposure-fix-final";
-import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260815-threat-exposure-fix-final";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-threat-exposure-fix-final";
-import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260815-threat-exposure-fix-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-residual-end-threat-fix";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-residual-end-threat-fix";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-residual-end-threat-fix";
+import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260815-residual-end-threat-fix";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260815-residual-end-threat-fix";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-residual-end-threat-fix";
+import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260815-residual-end-threat-fix";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-residual-end-threat-fix";
+import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260815-residual-end-threat-fix";
 
 /*
 功能

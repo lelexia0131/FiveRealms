@@ -17,7 +17,7 @@ GAME_CONFIG 默认时间配置与注入时钟。
 架构约束
 节点预算只统计已经完成候选物化的 SearchNode；不得把模拟调用折算成节点成本。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-threat-exposure-fix-final";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-residual-end-threat-fix";
 
 // COMPLETE 表示自然完成；TIME/NODE 分别表示时间或完整节点预算耗尽；
 // CANCELLED 表示会话让步检测到取消。停止原因只决定收束方式，不修改候选价值。

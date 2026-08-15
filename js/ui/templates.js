@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260815-threat-exposure-fix-final";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260815-threat-exposure-fix-final";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260815-residual-end-threat-fix";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260815-residual-end-threat-fix";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

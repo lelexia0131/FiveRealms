@@ -43,13 +43,39 @@ export class DistanceSystem {
     return Math.max(1, distance);
   }
 
-  /**
-   * 枚举一组距离要求共享的装备世界。每个分支保存无条件概率质量、规范化条件集，
-   * 以及所有距离/装备要求是否同时成立；同一望远镜变量只枚举一次。
-   */
+  /*
+  功能
+  枚举一组距离要求共享的装备世界。
+
+  调用方
+  getRangeLegalityProbability、ActionGenerator、ThreatValue 与其它距离概率查询。
+
+  输入
+  只读 game 局面、距离要求数组与可选装备/强制存在、逐项匹配选项。
+
+  输出
+  每个分支包含 probability、conditions 与 matches；includeRequirementMatches 为 true 时附逐项 requirementMatches。
+
+  读取状态
+  game.state.players 的存活、座位与装备保留概率。
+
+  写入状态
+  无。
+
+  调用函数
+  getBaseDistance、getEquipmentDefinitionId、getEquipmentEffectProbability、equipmentConditionKey。
+
+  边界与不变量
+  同一望远镜变量只枚举一次；matches 表示全部要求同时成立，逐项成立事实仅在显式请求时返回。
+
+  */
   static getRangeConditionBranches(game, requirements, options = {}) {
     const entries = (Array.isArray(requirements) ? requirements : [requirements]).filter(Boolean);
-    if (!entries.length) return [{ probability:1, conditions:{}, matches:true }];
+    if (!entries.length) {
+    const empty = { probability:1, conditions:{}, matches:true };
+    if (options.includeRequirementMatches === true) empty.requirementMatches = [];
+    return [empty];
+  }
     const variables = new Map();
     const forcedConditions = new Map();
     const addVariable = (player, definitionId, forcedPresent = false) => {
@@ -94,7 +120,7 @@ export class DistanceSystem {
       conditions[this.equipmentConditionKey(player, definitionId)] === "present"
     );
     return branches.map((branch) => {
-      const distancesLegal = entries.every(({ source, target, range }) => {
+      const requirementMatches = entries.map(({ source, target, range }) => {
         const baseDistance = this.getBaseDistance(game, source, target);
         if (!Number.isFinite(baseDistance)) return false;
         if (baseDistance === 0) return true;
@@ -106,11 +132,13 @@ export class DistanceSystem {
       const equipmentLegal = (options.equipmentRequirements ?? []).every(({ player, definitionId, present = true }) => (
         isPresent(branch.conditions, player, definitionId) === present
       ));
-      return {
+      const result = {
         probability:branch.probability,
         conditions:Object.fromEntries(Object.entries(branch.conditions).sort(([left], [right]) => left.localeCompare(right))),
-        matches:distancesLegal && equipmentLegal
+        matches:requirementMatches.every(Boolean) && equipmentLegal
       };
+      if (options.includeRequirementMatches === true) result.requirementMatches = requirementMatches;
+      return result;
     });
   }
 

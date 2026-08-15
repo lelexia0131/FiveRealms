@@ -17,14 +17,14 @@ Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
 架构约束
 真实状态/监听顺序以 Game、JudgmentSystem 与 skillRegistry 为权威；不拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-threat-exposure-fix-final";
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-threat-exposure-fix-final";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260815-threat-exposure-fix-final";
-import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260815-threat-exposure-fix-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-residual-end-threat-fix";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-residual-end-threat-fix";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260815-residual-end-threat-fix";
+import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260815-residual-end-threat-fix";
 import {
   RADAR_BASIC_DEFINITIONS,
   buildRadarJudgmentProbabilities
-} from "../domain/RadarModel.js?build=20260815-threat-exposure-fix-final";
+} from "../domain/RadarModel.js?build=20260815-residual-end-threat-fix";
 import {
   PROBABILITY_EPSILON,
   expectedBranchValue,
@@ -34,8 +34,8 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-threat-exposure-fix-final";
-import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260815-threat-exposure-fix-final";
+} from "../state/Probability.js?build=20260815-residual-end-threat-fix";
+import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260815-residual-end-threat-fix";
 
 /*
 功能

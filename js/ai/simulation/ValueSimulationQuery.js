@@ -17,14 +17,14 @@ Simulator、闪电概率 辅助函数 与纯 value/Evaluator。
 架构约束
 本模块只做有界 simulation query，不搜索、不生成动作，也不拥有最终价值组合公式。
 */
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260815-threat-exposure-fix-final";
-import { Simulator } from "./Simulator.js?build=20260815-threat-exposure-fix-final";
+import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260815-residual-end-threat-fix";
+import { Simulator } from "./Simulator.js?build=20260815-residual-end-threat-fix";
 import {
   buildLightningHitDistribution,
   lightningPresenceProbability
-} from "../domain/LightningModel.js?build=20260815-threat-exposure-fix-final";
-import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./RootResolutionQuery.js?build=20260815-threat-exposure-fix-final";
-import { HP_VALUE } from "../value/Economics.js?build=20260815-threat-exposure-fix-final";
+} from "../domain/LightningModel.js?build=20260815-residual-end-threat-fix";
+import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./RootResolutionQuery.js?build=20260815-residual-end-threat-fix";
+import { HP_VALUE } from "../value/Economics.js?build=20260815-residual-end-threat-fix";
 
 export class ValueSimulationQuery {
   /*
