@@ -17,15 +17,15 @@ Response/Combat/Status 组件、RuleEngine、正式资源 Policy、CardValue 与
 架构约束
 不生成动作、不搜索、不拥有规则合法性或最终价值公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-code-hygiene-final";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260814-ai-code-hygiene-final";
-import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260814-ai-code-hygiene-final";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260814-ai-code-hygiene-final";
-import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
-import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260814-ai-code-hygiene-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-ai-residue-cleanup-final";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-ai-residue-cleanup-final";
+import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260815-ai-residue-cleanup-final";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260815-ai-residue-cleanup-final";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-ai-residue-cleanup-final";
+import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260815-ai-residue-cleanup-final";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
+import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260815-ai-residue-cleanup-final";
 
 /*
 功能
@@ -92,6 +92,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       }
     }
   }
+
   /*
   功能
   计算一件装备相对全局基础值的角色专属差量。
@@ -428,6 +429,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
     return next;
   }
+
   /*
   功能
   在概率世界中写入玩家当前模拟装备，并同步价值、角色差量与保留概率。
@@ -493,6 +495,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     if (!player?.equipmentDefinitionId || (definitionId && player.equipmentDefinitionId !== definitionId)) return 0;
     return Math.max(0, Math.min(1, Number(player.equipmentRetentionProbability ?? 1) || 0));
   }
+
   /*
   功能
   汇总一张抽象牌在其可用性分支中的剩余概率。
@@ -530,6 +533,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return 1;
   }
+
   /*
   功能
   将资源效果的标量概率或既有条件世界规范成同一 occurs 分区。
@@ -560,6 +564,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     const probability = Math.max(0, Math.min(1, Number(resolution) || 0));
     return this.getEventWorlds(state, probability, null, label);
   }
+
   /*
   功能
   生成不会与真实实体牌冲突的单调模拟卡牌 ID。
@@ -589,6 +594,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     state.simulatedCardCounter = Math.max(0, Number(state.simulatedCardCounter) || 0) + 1;
     return `simulated-resource:${state.simulatedCardCounter}:${definitionId}`;
   }
+
   /*
   功能
   按实体 ID 与定义 ID 在合法 knownCards 中定位抽象牌条目。
@@ -620,6 +626,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       entry?.cardId === cardId && entry?.definitionId === definitionId
     )) ?? null;
   }
+
   /*
   功能
   按获得世界把一张已知或模拟身份牌加入玩家自己的搜索手牌。
@@ -668,6 +675,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     this.syncCardEstimates(player, state?.remainingCardCounts);
     return acquisitionProbability;
   }
+
   /*
   功能
   计算玩家手牌数量扣除确定已知身份后的未知聚合容量。
@@ -704,6 +712,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     const { unknownCount } = this.buildSimulatedKnownCards(player);
     return Math.max(0, unknownCount);
   }
+
   /*
   功能
   按来源可见性定位转移使用的真实自有牌或合法已知他人牌。
@@ -736,6 +745,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return this.findKnownCardEntry(source, cardId, definitionId);
   }
+
   /*
   功能
   只向其他玩家的合法 knownCards 表示写入新获得的确定身份。
@@ -822,6 +832,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     this.syncCardEstimates(player, state?.remainingCardCounts);
     return acquisitionProbability;
   }
+
   /*
   功能
   用同一联合条件世界从来源移除并向接收者增加确定牌身份。
@@ -893,6 +904,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return this.addSimulatedKnownCard(state, receiver, identity, acquisitionWorlds);
   }
+
   /*
   功能
   用共享匿名身份条件将一张未知牌容量从来源转给接收者。
@@ -921,6 +933,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   transferUnknownCardIdentity(state, source, receiver, effectWorlds, availableUnknownCount) {
     return this.transferUnknownBlockCapacity(state, source, receiver, effectWorlds, availableUnknownCount);
   }
+
   /*
   功能
   根据确定牌和未知聚合牌建立指定定义的数量概率分布。
@@ -1110,6 +1123,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     player.expectedAssaultCount = expectation(assaultDistribution);
     player.assaultResponseProbability = atLeast(assaultDistribution, 1);
   }
+
   /*
   功能
   将合法已知手牌整理成确定身份与未知聚合数量，处理身份数量失配的保守回退。
@@ -1145,6 +1159,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return { knownCards: certainKnown, unknownCount: Math.max(0, handCount - certainKnownCount) };
   }
+
   /*
   功能
   为破坏或掠夺构造公开资源上下文并委托正式 ResourceSelectionPolicy。
@@ -1194,6 +1209,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     // 仅供模拟器未知消费使用；不修改资源选择模块的公共语义
     return { ...selection, availableUnknownCount: unknownCount };
   }
+
   /*
   功能
   按共享效果世界从自己的模拟手牌消费指定已知牌身份。
@@ -1401,6 +1417,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     this.syncAssaultSummary(player, remaining);
     return expectedSpent;
   }
+
   /*
   功能
   随机失牌后降级部分已知身份，避免已知牌与聚合手牌容量双计。
@@ -1436,6 +1453,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     if (changed) player.knownCards = retained;
     return changed;
   }
+
   /*
   功能
   从未知聚合容量中消费一张资源牌，并同步各类响应数量分布。
@@ -1493,6 +1511,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     this.syncCardEstimates(player, state?.remainingCardCounts);
     return removed;
   }
+
   /*
   功能
   按当前已知/未知身份概率移除一张随机手牌并返回效果世界。
@@ -1796,6 +1815,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return totalSpent;
   }
+
   /*
   功能
   从搜索状态构造与真实弃牌策略一致的距离、装备与资源保留上下文。
@@ -1831,6 +1851,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       equipmentRetentionProbability: player.equipmentRetentionProbability ?? 1
     };
   }
+
   /*
   功能
   判断聚合手牌是否已被完整且确定的合法身份覆盖。
@@ -1866,6 +1887,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       Math.max(0, Number(player.handCount) || 0) - player.hand.length
     ) <= PROBABILITY_EPSILON;
   }
+
   /*
   功能
   按 ResourceSelectionPolicy 的选择从模拟手牌消费确定实体或未知位置。
@@ -2054,6 +2076,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return 0;
   }
+
   /*
   功能
   镜像破坏：按所选区域和身份从目标状态删除一项资源。
@@ -2126,6 +2149,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     }
     return 0;
   }
+
   /*
   功能
   镜像窃取技能：移除目标资源并只把所得资源加入施术者手牌。

@@ -1,11 +1,12 @@
 # FiveRealms AI Engine 2.0
 
-当前状态：AI-ARCH-0 至 AI-ARCH-9 已完成；下一阶段为 AI-ARCH-10 最终清理。
-当前实现起点：`7696f16 ARCH-0.1.2`
-当前浏览器构建标识：`20260814-ai-engine-2-final`
+当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE。
+架构结论：FiveRealms AI Engine 2.0 — MASTER ARCHITECTURE COMPLETE。
+本轮整理基线：`7f73a03 ARCH-9.10`
+当前浏览器构建标识：`20260815-ai-residue-cleanup-final`
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
-审计日期：2026-08-14
-范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；第 2 至 10 节保留最初只读审计及迁移设计作为历史基线，后续完成事实在对应阶段章节持续更新。
+最新校验日期：2026-08-15
+范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；下方 Current Architecture Snapshot 与第 32 节描述当前架构，第 2 至 31 节保留阶段审计、迁移设计和落地证据。
 
 ## 1. 文档职责
 
@@ -14,10 +15,29 @@
 - 当前实现和真实运行依赖；
 - 状态、隐藏信息、规则镜像与价值 owner；
 - 已确认的耦合、重复计分和性能风险；
-- 目标边界与 AI-ARCH-2 至 AI-ARCH-10 的迁移顺序；
+- 当前最终边界，以及 AI-ARCH-2 至 AI-ARCH-10 的历史迁移顺序；
 - 每个阶段的行为冻结、验证和回滚契约。
 
-代码风格与函数头只在 `CODE_STANDARD.md` 定义。本次审计是代码与测试证据，不是对未来实现的推测；目标架构是迁移约束，不表示对应目录或 API 已存在。
+代码风格与函数头只在 `CODE_STANDARD.md` 定义。Current Architecture Snapshot 与第 32 节是当前事实；第 2 至 31 节中的“当前”“目标”“后续”等词只描述对应阶段当时的状态，不覆盖最终架构。
+
+## Current Architecture Snapshot
+
+当前生产 AI 共 50 个 JavaScript 模块，最终责任边界如下：
+
+| 层 | 当前正式 owner |
+|---|---|
+| Composition / Execution | `AiController` 是唯一装配与真实实体重绑入口；它向 Planner 注入窄 capability，不把 Controller 传入子组件。 |
+| State | `VisibleState`、`Knowledge`、`BeliefState`、`StateContracts`、`SearchState`、`Probability` 分别拥有公开投影、合法记忆、未知分布、组合、可克隆搜索世界与概率代数。 |
+| Search | `ActionGenerator` 产生 AI 候选，`SearchBudget` 与 `SearchPolicy` 管搜索边界，`CandidateMaterializer` 组合完整候选，`Planner` 只编排。 |
+| Simulation | `Simulator` 管 clone、共享 runtime 与分派；Response、Combat、Card、Skill、Status 五个组件各自推进对应状态。 |
+| Value | State Value、Transition Value、Search Prior、Policy Value 与 Diagnostic Ledger 分属正式 owner；只有 Transition Value 的最终组合进入候选 final value。 |
+| Policy / Domain | Policy 只做 AI 选择；Domain 只返回概率、ID 与 outcome 事实，不拥有 Game 合法性或 final value。 |
+
+RuleEngine 独占游戏合法性；ActionCandidatePolicy 只决定 AI 是否考虑某个规则合法动作。正式搜索不得读取敌方未知手牌的 `definitionId`，只能消费 Visible / Knowledge / Belief 提供的合法信息或概率分支。旧 compatibility 文件与旧 owner 路径已删除；checker 中保留的旧名称仅是防止回归的正式 guard。
+
+## Historical Baseline and Migration Record
+
+以下第 2 至 31 节按时间保留最初审计、阶段约束、迁移表和验收证据。其阶段性路径、未来时态与 compatibility 描述属于历史记录；最终现状以本页顶部快照和第 32 节为准。
 
 ## 2. 基线与验证边界
 
@@ -586,7 +606,7 @@ Guard 必须从解析到的 import、路径层和明确语法事实得出结论�
 - `state/SearchState.js` 只组合已经过滤的三个契约和显式注入的 DOMAIN/VALUE 结果；`cloneSearchState` 只深克隆 SearchState，不接受或回读 GameState。
 - `state/Probability.js` 拥有领域无关的概率分支代数；`AiProbabilityBranches.js` 仅保留雷达判定领域模型并重导出旧通用 API。
 
-`createAiVisibleState` 的历史命名暂时保留，但它已是 `createAiStateContracts(...).searchState` 的单行 compatibility façade。Planner、ResponsePolicy 与现有测试因此继续消费原扁平字段；后续迁移不得在该旧文件恢复第二套投影或概率实现。
+AI-ARCH-2 当时暂留 `createAiVisibleState` 历史命名，并将其收窄为 `createAiStateContracts(...).searchState` 的单行 compatibility façade。该入口随后已删除；正式 State owner 不再保留第二套投影或概率实现。
 
 ### 未移动职责
 
@@ -623,7 +643,7 @@ Architecture Guard 现已覆盖 `state/**` 的模块头与 UI import 禁令，�
 
 - 生产上游只使用 `getLegalActions`、`selectAction`、`resolvePlannedAction`、`getPlannedSequence`、`chooseDiscards`、`chooseTransferCombination`、`chooseHiddenCards`、`chooseZoneCard`、`choosePublicCard`、`shouldRespond`。
 - Descriptor resolver 保留在 Controller 的真实执行边界：它必须读取“当前合法动作”并按实体 ID、目标顺序和选择字段重绑，不属于纯 Planner。
-- 兼容子组件字段不是新的推荐 API。它们只保证历史测试与诊断工具仍能读取或替换同一组件，计划在 AI-ARCH-10 有调用证据后移除。
+- 兼容子组件字段当时只服务历史测试与诊断工具，并非推荐 API；AI-ARCH-10 已在消费者审计后移除不再需要的入口。
 
 ### 行为冻结证据
 
@@ -656,7 +676,7 @@ Architecture Guard 现已覆盖 `state/**` 的模块头与 UI import 禁令，�
 
 ### 当前回滚与兼容边界
 
-可独立回滚的物理边界是 `state/**`、`AiVisibleState` composition façade、`AiKnowledge` 重导出、通用 Probability 重导出和 Simulator clone 委托。仍需后续移除的债务包括旧 `createAiVisibleState` 命名、Planner 对扁平 SearchState 的直接字段依赖、DOMAIN/VALUE 派生注入以及 Simulator 内部状态初始化兼容函数。
+AI-ARCH-3 当时可独立回滚的物理边界是 `state/**`、`AiVisibleState` composition façade、`AiKnowledge` 重导出、通用 Probability 重导出和 Simulator clone 委托。当时记录的旧命名、扁平状态依赖、派生注入和 Simulator 初始化兼容债务，均已在后续既定阶段关闭。
 
 ## 24. AI-ARCH-4 Value Ownership 落地结果
 
@@ -707,7 +727,7 @@ Architecture Guard 现已覆盖 `state/**` 的模块头与 UI import 禁令，�
 
 Controller 的构造顺序固定为 `Knowledge -> Evaluator -> ValueSimulationQuery -> AiStateValue -> ValueLedger/FrontierValue/SearchPrior/TransitionValue -> AiEvaluator façade -> Policy/Generator -> Planner`。每个正式 owner 只构造一次，再显式注入消费者；搜索节点不构造 owner object。
 
-旧 `AiEconomics.js`、`ThreatCalculator.js`、`roleCardValue.js` 只重导出正式 owner。旧 `AiEvaluator.js` 只动态绑定正式 owner 方法，不持有 Game、不含任何价值公式，也不 import/new Simulator。生产价值调用链已优先改为正式路径；这些旧入口仅为迁移期测试和上游兼容，计划在 AI-ARCH-10 以调用证据删除。
+AI-ARCH-4 当时的 `AiEconomics.js`、`ThreatCalculator.js`、`roleCardValue.js` 只重导出正式 owner，`AiEvaluator.js` 也只动态绑定正式 owner 方法。它们作为迁移期测试与上游兼容入口，最终已在 AI-ARCH-10 通过调用证据删除。
 
 ### Evaluator、TransitionValue 与 Ledger 边界
 
@@ -771,13 +791,13 @@ Expose、assault-stack 与 seal timing 的领域 producer 暂留 Planner/既有 
 
 质量门禁使用去注释后的真实 import/new 语法检查 `value/**`，禁止 UI、Controller、Planner 和 concrete Simulator 依赖或 `new AiSimulator`；注释中的相同文本不会误报。`search/TransitionValue.js` 额外禁止 Game/AIController import 与 `this.game`。Guard self-test 覆盖合法 value、非法 import/new、注释忽略和 TransitionValue 边界。
 
-浏览器模块图从 `20260814-ai-controller-di` 统一更新为 `20260814-ai-value-ownership`。Remaining Debt 明确为：
+浏览器模块图从 `20260814-ai-controller-di` 统一更新为 `20260814-ai-value-ownership`。AI-ARCH-4 当时记录的 Remaining Debt 为：
 
-- `AiEvaluator`、`AiStateValue`、旧 Card/Economics/Threat 路径仍是 compatibility façade，待 AI-ARCH-10 删除。
-- resource/discard/transfer 与 ResponsePolicy 的正式 policy 目录迁移属于 AI-ARCH-5，本阶段只把稳定价值输入指向正式 owner。
-- expose/assault/seal/Lightning/GlobalBenefit 的 domain producer 仍在既有文件或 Planner，属于 AI-ARCH-6；本阶段只迁移 final composition。
-- response counterfactual 仍通过 `AiValueSimulationQuery` 构造 concrete Simulator；正式 ResponseSimulation split 属于 AI-ARCH-7。
-- Planner 仍保留 beam、根/深层候选 materialization、end sibling、临时 domain term producer 和 compatibility delegation；正式 Search Core 清理属于 AI-ARCH-9。
+- `AiEvaluator`、`AiStateValue` 和旧 Card/Economics/Threat compatibility façade 后来在 AI-ARCH-10 删除。
+- resource/discard/transfer 与 ResponsePolicy 的正式 Policy 目录迁移后来在 AI-ARCH-5 完成。
+- expose/assault/seal/Lightning/GlobalBenefit 的 Domain producer 迁移后来在 AI-ARCH-6 完成。
+- response counterfactual 与 ResponseSimulation 的正式拆分后来在 AI-ARCH-7/8 完成。
+- Planner 的 candidate materialization（把动作完整转换成搜索节点）、end sibling 与 Search Core 清理后来在 AI-ARCH-9/10 完成。
 
 AI-ARCH-4 没有修改权重、规则、策略、搜索参数、概率常量或隐藏信息边界，也没有提前进入 AI-ARCH-5。
 
@@ -903,7 +923,7 @@ Architecture Guard 已覆盖 `policy/**` 与 `domain/**`：禁止 UI、Controlle
 
 ARCH-6 完整测试为 `1377/1377`，统一 build 为 `20260814-ai-policy-domain`。没有修改 Value/Transition 数值、搜索参数、规则或平衡；没有创建 Simulation split，也没有清理 Planner core。
 
-Remaining debt：旧 `getLegalActions` 命名仍把 policy candidate set 称作 legal；`sealScoring` 仍承载 value/prior compatibility adapter；GlobalBenefit root flip 仍通过 `AiValueSimulationQuery` 使用完整 Simulator；旧 façade 的最终移除待 AI-ARCH-10。Simulator/Response/Combat 的正式拆分从 AI-ARCH-7 开始，本阶段到此停止。
+AI-ARCH-6 结束时仍记录了 `getLegalActions` 命名、`sealScoring` adapter、GlobalBenefit root flip 查询和旧 façade 等债务；这些项目随后在 AI-ARCH-7 至 AI-ARCH-10 完成。Simulator、Response 与 Combat 的正式拆分也已按该顺序落地。
 
 ## 28. AI-ARCH-7/8 Simulation Responsibility Freeze Table
 
@@ -1193,6 +1213,6 @@ planning benchmark（seed `20260814`、node budget `200`、`planning` category�
 
 同一 planning 场景的结构计数为 constructor `64`、clone `1583`、apply `1583`、expanded `1325`、clones/node `1.1947169811320755`。Response `27686`、Combat `1860`、Skill `2905`、Status `12729`；Card raw `9340`，其中 `64` 是每个 Simulator 一次的 `initializeAssaultSummaries` 状态初始化，按 ARCH-8 可比 component 口径排除后为 `9276`，与冻结值一致。
 
-最终非 Balance 验证：Search `71/71`、Simulation `137/137`、Value/Policy/Domain `227/227`、隐藏信息 `59/59`、全部 AI `816/816`、显式排除 `AI·搜索：平衡模拟` 的普通 unit/integration `1383/1383`。浏览器模块图统一使用 `20260814-ai-engine-2-final`，旧浏览器 build 引用为零。
+AI-ARCH-10 最终非 Balance 验证：Search `71/71`、Simulation `137/137`、Value/Policy/Domain `227/227`、隐藏信息 `59/59`、全部 AI `816/816`、显式排除 `AI·搜索：平衡模拟` 的普通 unit/integration `1383/1383`。其阶段浏览器模块图统一使用 `20260814-ai-engine-2-final`；本轮静态清理后的当前标识记录在页首。
 
 Remaining debt 不包含兼容算法或缺失 owner。尚需人工浏览器 smoke 验证观察战场、动作执行、响应、状态结算与重新开始流程；Git 提交、推送与合并仍由维护者执行。

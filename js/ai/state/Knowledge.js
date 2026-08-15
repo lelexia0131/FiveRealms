@@ -17,12 +17,12 @@ BeliefState 的剩余牌计数、概率与隐藏世界采样纯函数。
 架构约束
 不得拥有概率公式或搜索状态转换；概率查询必须委托给 BeliefState 权威实现。
 */
-import { TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
 import {
   deriveRemainingCardCounts,
   probabilityFromRemainingCounts,
   sampleHiddenWorlds
-} from "./BeliefState.js?build=20260814-ai-code-hygiene-final";
+} from "./BeliefState.js?build=20260815-ai-residue-cleanup-final";
 
 /*
 功能

@@ -17,13 +17,13 @@ DistanceSystem 与 value/Economics 的生命尺度。
 架构约束
 威胁公式只能在本模块出现；基础数值项可被 Evaluator 组合进 State Value，但不得绕过它独立追加到最终 Transition Value。
 */
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260814-ai-code-hygiene-final";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-ai-residue-cleanup-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
-import { HP_VALUE } from "./Economics.js?build=20260814-ai-code-hygiene-final";
+} from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
+import { HP_VALUE } from "./Economics.js?build=20260815-ai-residue-cleanup-final";
 
 export const DANGER_VALUE = 7;
 export const DEATH_VALUE = 28;

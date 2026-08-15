@@ -17,10 +17,10 @@ state/Probability、正式 ResponsePolicy、GlobalBenefit assessment 与共享 s
 架构约束
 不得读取 Game/UI/Controller/Planner，不得复制 Policy、Value 或真实规则实现。
 */
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260814-ai-code-hygiene-final";
-import { planningCounterDesire, planningDynamicCounterGain } from "../policy/ResponsePolicy.js?build=20260814-ai-code-hygiene-final";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
-import { clampProbability, remainingCardDensity, unionProbability } from "./SimulationSupport.js?build=20260814-ai-code-hygiene-final";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260815-ai-residue-cleanup-final";
+import { planningCounterDesire, planningDynamicCounterGain } from "../policy/ResponsePolicy.js?build=20260815-ai-residue-cleanup-final";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
+import { clampProbability, remainingCardDensity, unionProbability } from "./SimulationSupport.js?build=20260815-ai-residue-cleanup-final";
 
 /*
 功能
@@ -81,6 +81,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       this.syncBlockSummary(player);
     }
   }
+
   /*
   功能
   合并已知格挡身份与未知手牌密度，构造玩家初始格挡数量概率分布。
@@ -143,6 +144,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       ? branches.map((branch) => ({ ...branch, probability:branch.probability / total }))
       : [{ probability:1, conditions:{}, blockCount:0 }];
   }
+
   /*
   功能
   规范格挡数量分支，并同步期望数量、可响应概率与已知身份摘要。
@@ -188,6 +190,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     );
     return branches;
   }
+
   /*
   功能
   返回玩家的正式格挡数量分支；缺失时从当前合法信息建立一次。
@@ -223,6 +226,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       blockCount:branch.blockCount
     }));
   }
+
   /*
   功能
   按已知格挡卡身份构造确定的格挡数量分支，不推测未知牌面。
@@ -267,6 +271,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }
     return branches;
   }
+
   /*
   功能
   确保玩家拥有完整格挡容量分布并同步所有派生摘要。
@@ -298,6 +303,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }
     return this.syncBlockSummary(player);
   }
+
   /*
   功能
   为全部玩家建立反制数量与已知反制身份分布，作为锦囊响应消费的唯一初始状态。
@@ -333,6 +339,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       this.syncCounterSummary(player);
     }
   }
+
   /*
   功能
   合并已知反制身份与未知手牌密度，构造玩家初始反制数量概率分布。
@@ -395,6 +402,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       ? branches.map((branch) => ({ ...branch, probability:branch.probability / total }))
       : [{ probability:1, conditions:{}, counterCount:0 }];
   }
+
   /*
   功能
   规范反制数量分支，并同步期望数量、可响应概率与已知身份摘要。
@@ -440,6 +448,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       : counterProbability <= PROBABILITY_EPSILON ? 0 : counterProbability;
     return branches;
   }
+
   /*
   功能
   返回玩家的正式反制数量分支；缺失时从当前合法信息建立一次。
@@ -475,6 +484,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       counterCount:branch.counterCount
     }));
   }
+
   /*
   功能
   按已知反制卡身份构造确定的反制数量分支，不推测未知牌面。
@@ -519,6 +529,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }
     return branches;
   }
+
   /*
   功能
   确保玩家拥有完整反制容量分布并同步所有派生摘要。
@@ -550,6 +561,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }
     return this.syncCounterSummary(player);
   }
+
   /*
   功能
   当手牌确定为空时清零反制身份与容量分支，阻止过期概率继续响应。
@@ -586,6 +598,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }
     this.syncCounterSummary(player);
   }
+
   /*
   功能
   在获得已知反制卡的条件世界中增加反制容量并登记真实卡牌身份。
@@ -624,6 +637,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }));
     this.syncCounterSummary(player);
   }
+
   /*
   功能
   把转移牌携带的反制容量按同一转移世界加入接收者分布。
@@ -653,6 +667,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     if (!player || !Array.isArray(transferWorlds) || !transferWorlds.length) return;
     this.addKnownCounterToDistribution(state, player, transferWorlds);
   }
+
   /*
   功能
   在已知反制卡离手世界中移除其身份并扣减对应反制容量。
@@ -691,6 +706,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }));
     this.syncCounterSummary(player);
   }
+
   /*
   功能
   按未知牌池反制密度把一次未知摸牌卷积进反制数量分布。
@@ -749,6 +765,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     player.counterCountDistribution = mergeProbabilityStateBranches(outcomes);
     this.syncCounterSummary(player);
   }
+
   /*
   功能
   逐张推进未知摸牌、剩余密度和反制容量，使无放回抽取保持一致。
@@ -838,6 +855,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }
     return gained;
   }
+
   /*
   功能
   在获得已知格挡卡的条件世界中增加格挡容量并登记真实卡牌身份。
@@ -876,6 +894,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }));
     this.syncBlockSummary(player);
   }
+
   /*
   功能
   在已知格挡卡离手世界中移除其身份并扣减对应格挡容量。
@@ -914,6 +933,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }));
     this.syncBlockSummary(player);
   }
+
   /*
   功能
   按未知牌池格挡密度把一次未知摸牌卷积进格挡数量分布。
@@ -972,6 +992,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     player.blockCountDistribution = mergeProbabilityStateBranches(outcomes);
     this.syncBlockSummary(player);
   }
+
   /*
   功能
   按条件化失去数量从未知格挡容量中抽样扣减，并保持概率质量守恒。
@@ -1096,6 +1117,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     if (adjustHandCount) player.handCount = Math.max(0, (player.handCount ?? 0) - removed);
     return { removed, identityWorlds };
   }
+
   /*
   功能
   按条件化失去数量从未知反制容量中抽样扣减，并保持概率质量守恒。
@@ -1218,6 +1240,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     if (adjustHandCount) player.handCount = Math.max(0, (player.handCount ?? 0) - removed);
     return { removed, identityWorlds };
   }
+
   /*
   功能
   在同一转移世界中耦合来源格挡容量减少与接收者容量增加。
@@ -1283,6 +1306,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     this.syncCardEstimates(receiver, state?.remainingCardCounts);
     return removed;
   }
+
   /*
   功能
   将实际格挡世界映射到可用已知身份并消费每张卡至多一次。
@@ -1350,6 +1374,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       if (!remainingWorlds.some((branch) => branch.remaining > 0 && branch.probability > PROBABILITY_EPSILON)) break;
     }
   }
+
   /*
   功能
   按守护者意愿、可用格挡与目标伤害世界结算护援及其资源消耗。
@@ -1433,6 +1458,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     if (card.category !== "tactic" || card.counterable === false) return 1;
     return this.evaluateCardScopeCounterResponses(state, actor, card, targets, selection).resolutionChance;
   }
+
   /*
   功能
   按座次评估卡牌级反制链，返回每名响应者的条件消费世界。
@@ -1471,6 +1497,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }
     return { resolutionChance, contenders };
   }
+
   /*
   功能
   依据已评估的卡牌级反制链消费对应玩家的反制容量与身份。
@@ -1511,6 +1538,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       if (notYetCancelled <= PROBABILITY_EPSILON) break;
     }
   }
+
   /*
   功能
   从玩家反制数量分布中扣除给定期望消耗量并同步摘要。
@@ -1650,6 +1678,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   dynamicCounterGain(state, responder, actor, card, targets, selection = null) {
     return planningDynamicCounterGain(state, responder, actor, card, targets, selection);
   }
+
   /*
   功能
   将攻击世界与格挡容量、意愿和身份相交，返回命中与格挡后的互斥世界。
@@ -1779,6 +1808,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }));
     return { outcomeWorlds, blockedProbability, expectedBlockSpend };
   }
+
   /*
   功能
   将目标效果世界与反制容量和意愿相交，消费资源并返回最终生效世界。

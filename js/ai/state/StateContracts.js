@@ -17,14 +17,14 @@ AiController、ResponseBoundary、测试与搜索调用方。
 架构约束
 createInitialSearchState 只做 SearchState 正式组合入口，不得另存一份投影或概率逻辑。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
-import { TeamRuleService } from "../../core/TeamRuleService.js?build=20260814-ai-code-hygiene-final";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../../generals/skillRegistry.js?build=20260814-ai-code-hygiene-final";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260814-ai-code-hygiene-final";
-import { createBeliefState } from "./BeliefState.js?build=20260814-ai-code-hygiene-final";
-import { createKnowledgeState } from "./Knowledge.js?build=20260814-ai-code-hygiene-final";
-import { createSearchState } from "./SearchState.js?build=20260814-ai-code-hygiene-final";
-import { createVisibleState } from "./VisibleState.js?build=20260814-ai-code-hygiene-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
+import { TeamRuleService } from "../../core/TeamRuleService.js?build=20260815-ai-residue-cleanup-final";
+import { ACTIVE_SKILLS, getActiveSkillCost } from "../../generals/skillRegistry.js?build=20260815-ai-residue-cleanup-final";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-ai-residue-cleanup-final";
+import { createBeliefState } from "./BeliefState.js?build=20260815-ai-residue-cleanup-final";
+import { createKnowledgeState } from "./Knowledge.js?build=20260815-ai-residue-cleanup-final";
+import { createSearchState } from "./SearchState.js?build=20260815-ai-residue-cleanup-final";
+import { createVisibleState } from "./VisibleState.js?build=20260815-ai-residue-cleanup-final";
 
 /*
 功能

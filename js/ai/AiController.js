@@ -17,34 +17,34 @@ Game、ResponseSystem、PublicCardPool、角色技能与测试。
 架构约束
 子组件不得回指 AIController；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
 */
-import { createInitialSearchState } from "./state/StateContracts.js?build=20260814-ai-code-hygiene-final";
-import { Knowledge } from "./state/Knowledge.js?build=20260814-ai-code-hygiene-final";
-import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260814-ai-code-hygiene-final";
-import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260814-ai-code-hygiene-final";
-import { ActionGenerator } from "./search/ActionGenerator.js?build=20260814-ai-code-hygiene-final";
-import { ValueService } from "./value/ValueService.js?build=20260814-ai-code-hygiene-final";
-import { StateValue } from "./value/StateValue.js?build=20260814-ai-code-hygiene-final";
-import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260814-ai-code-hygiene-final";
-import { Simulator } from "./simulation/Simulator.js?build=20260814-ai-code-hygiene-final";
-import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260814-ai-code-hygiene-final";
-import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260814-ai-code-hygiene-final";
-import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260814-ai-code-hygiene-final";
-import { Planner } from "./search/Planner.js?build=20260814-ai-code-hygiene-final";
-import { SearchBudget } from "./search/SearchBudget.js?build=20260814-ai-code-hygiene-final";
-import { SearchPolicy } from "./search/SearchPolicy.js?build=20260814-ai-code-hygiene-final";
-import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260814-ai-code-hygiene-final";
-import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260814-ai-code-hygiene-final";
-import { FrontierValue } from "./search/FrontierValue.js?build=20260814-ai-code-hygiene-final";
-import { SearchPrior } from "./search/SearchPrior.js?build=20260814-ai-code-hygiene-final";
-import { TransitionValue } from "./search/TransitionValue.js?build=20260814-ai-code-hygiene-final";
-import { Evaluator } from "./value/Evaluator.js?build=20260814-ai-code-hygiene-final";
-import { ValueLedger } from "./value/ValueLedger.js?build=20260814-ai-code-hygiene-final";
-import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260814-ai-code-hygiene-final";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260814-ai-code-hygiene-final";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260814-ai-code-hygiene-final";
-import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260814-ai-code-hygiene-final";
+import { createInitialSearchState } from "./state/StateContracts.js?build=20260815-ai-residue-cleanup-final";
+import { Knowledge } from "./state/Knowledge.js?build=20260815-ai-residue-cleanup-final";
+import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260815-ai-residue-cleanup-final";
+import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260815-ai-residue-cleanup-final";
+import { ActionGenerator } from "./search/ActionGenerator.js?build=20260815-ai-residue-cleanup-final";
+import { ValueService } from "./value/ValueService.js?build=20260815-ai-residue-cleanup-final";
+import { StateValue } from "./value/StateValue.js?build=20260815-ai-residue-cleanup-final";
+import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260815-ai-residue-cleanup-final";
+import { Simulator } from "./simulation/Simulator.js?build=20260815-ai-residue-cleanup-final";
+import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260815-ai-residue-cleanup-final";
+import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260815-ai-residue-cleanup-final";
+import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260815-ai-residue-cleanup-final";
+import { Planner } from "./search/Planner.js?build=20260815-ai-residue-cleanup-final";
+import { SearchBudget } from "./search/SearchBudget.js?build=20260815-ai-residue-cleanup-final";
+import { SearchPolicy } from "./search/SearchPolicy.js?build=20260815-ai-residue-cleanup-final";
+import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260815-ai-residue-cleanup-final";
+import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260815-ai-residue-cleanup-final";
+import { FrontierValue } from "./search/FrontierValue.js?build=20260815-ai-residue-cleanup-final";
+import { SearchPrior } from "./search/SearchPrior.js?build=20260815-ai-residue-cleanup-final";
+import { TransitionValue } from "./search/TransitionValue.js?build=20260815-ai-residue-cleanup-final";
+import { Evaluator } from "./value/Evaluator.js?build=20260815-ai-residue-cleanup-final";
+import { ValueLedger } from "./value/ValueLedger.js?build=20260815-ai-residue-cleanup-final";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260815-ai-residue-cleanup-final";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260815-ai-residue-cleanup-final";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260815-ai-residue-cleanup-final";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260815-ai-residue-cleanup-final";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260815-ai-residue-cleanup-final";
+import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260815-ai-residue-cleanup-final";
 
 export class AIController {
   /*
@@ -66,8 +66,8 @@ export class AIController {
   写入状态
   仅写控制器组件字段。
 
-调用函数
-Value owners、Knowledge、正式 Policy、执行边界、ActionGenerator 与 Planner 构造函数。
+  调用函数
+  Value owners、Knowledge、正式 Policy、执行边界、ActionGenerator 与 Planner 构造函数。
 
   边界与不变量
   装配无事后补丁；闭包持有具体组件或 Game 能力，不把 Controller 传给任何子组件。
@@ -169,7 +169,7 @@ Value owners、Knowledge、正式 Policy、执行边界、ActionGenerator 与 Pl
 
   /*
   功能
-  通过动作生成器返回当前真实局面的合法 AI 动作。
+  通过动作生成器返回当前真实局面中经规则校验与 AI 候选策略筛选的根动作。
 
   调用方
   Game、selectAction、动作重绑与测试。
@@ -178,7 +178,7 @@ Value owners、Knowledge、正式 Policy、执行边界、ActionGenerator 与 Pl
   当前行动 Player。
 
   输出
-  合法动作数组。
+  供 Planner 搜索的候选动作数组；它是游戏规则合法动作的策略子集。
 
   读取状态
   当前 GameState 与 RuleEngine 权威。
@@ -190,7 +190,7 @@ Value owners、Knowledge、正式 Policy、执行边界、ActionGenerator 与 Pl
   ActionGenerator.generate。
 
   边界与不变量
-  门面不得额外筛选或重排动作。
+  RuleEngine 定义游戏合法性，ActionCandidatePolicy 只决定 AI 是否考虑候选；门面不得额外筛选或重排，也不得把策略拒绝解释为游戏非法。
   */
   getActionCandidates(player) {
     return this.actionGenerator.generate(player);
@@ -207,7 +207,7 @@ Value owners、Knowledge、正式 Policy、执行边界、ActionGenerator 与 Pl
   当前行动 Player 与可选搜索上下文。
 
   输出
-  Planner 选择的合法动作。
+  Planner 从 AI 候选集合中选择的当前可执行动作。
 
   读取状态
   当前 GameState、合法 Knowledge 与搜索配置。

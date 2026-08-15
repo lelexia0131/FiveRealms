@@ -17,15 +17,15 @@ AIController、响应策略与直接价值查询测试。
 架构约束
 本文件不得保留价值公式、导入 Simulator 或成为新的组合根（统一组装依赖的位置）；只允许无损转发。
 */
-import * as CardValue from "./CardValue.js?build=20260814-ai-code-hygiene-final";
-import * as Economics from "./Economics.js?build=20260814-ai-code-hygiene-final";
-import * as ThreatValue from "./ThreatValue.js?build=20260814-ai-code-hygiene-final";
+import * as CardValue from "./CardValue.js?build=20260815-ai-residue-cleanup-final";
+import * as Economics from "./Economics.js?build=20260815-ai-residue-cleanup-final";
+import * as ThreatValue from "./ThreatValue.js?build=20260815-ai-residue-cleanup-final";
 
 export {
   HP_VALUE,
   STATE_DELTA_SCALE
-} from "./Economics.js?build=20260814-ai-code-hygiene-final";
-export { HP_RISK_OPTION_WEIGHT } from "./ThreatValue.js?build=20260814-ai-code-hygiene-final";
+} from "./Economics.js?build=20260815-ai-residue-cleanup-final";
+export { HP_RISK_OPTION_WEIGHT } from "./ThreatValue.js?build=20260815-ai-residue-cleanup-final";
 
 const OWNER_METHODS = Object.freeze([
   ["evaluator", ["playerValueTerms", "ownerStateTerms", "ownerMaterialValue"]],

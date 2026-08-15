@@ -20,15 +20,15 @@ Card/Combat/Response/Status 组件、主动技能配置与 Probability。
 import {
   ACTIVE_SKILLS,
   getActiveSkillCost
-} from "../../generals/skillRegistry.js?build=20260814-ai-code-hygiene-final";
+} from "../../generals/skillRegistry.js?build=20260815-ai-residue-cleanup-final";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
   joinProbabilityStateBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
-import { clampProbability } from "./SimulationSupport.js?build=20260814-ai-code-hygiene-final";
+} from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
+import { clampProbability } from "./SimulationSupport.js?build=20260815-ai-residue-cleanup-final";
 
 /*
 功能

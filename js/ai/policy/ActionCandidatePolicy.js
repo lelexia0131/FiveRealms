@@ -21,7 +21,7 @@ import {
   PROBABILITY_EPSILON,
   getAvailabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
+} from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
 
 export class ActionCandidatePolicy {
   /*

@@ -17,11 +17,11 @@ Simulator、ValueSimulationQuery、Evaluator、ValueLedger 与正式边界。
 架构约束
 本模型不是 Game authority；真实雷达判定与牌移动仍由 JudgmentSystem/Game 负责。不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
+} from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
 
 export const RADAR_BASIC_DEFINITIONS = Object.freeze(["assault", "recover", "block", "charge", "shield"]);
 

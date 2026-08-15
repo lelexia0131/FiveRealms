@@ -1,7 +1,7 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260814-ai-code-hygiene-final";
-import { createId } from "../utils/helpers.js?build=20260814-ai-code-hygiene-final";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260814-ai-code-hygiene-final";
-import { RuleEngine } from "./RuleEngine.js?build=20260814-ai-code-hygiene-final";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-ai-residue-cleanup-final";
+import { createId } from "../utils/helpers.js?build=20260815-ai-residue-cleanup-final";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260815-ai-residue-cleanup-final";
+import { RuleEngine } from "./RuleEngine.js?build=20260815-ai-residue-cleanup-final";
 
 const RESPONSE_DEFINITION = Object.freeze({ block:"block", counter:"counter" });
 

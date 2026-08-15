@@ -17,12 +17,12 @@ RuleEngine、DistanceSystem 与 policy/CardSelectionPolicy、ResourceSelectionPo
 架构约束
 选择公式只存在于 policy 目录；本文件只负责合法集合、公开上下文与实体 ID 解析。
 */
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260814-ai-code-hygiene-final";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-code-hygiene-final";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
-import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
-import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260814-ai-code-hygiene-final";
-import { TransferPolicy } from "./TransferPolicy.js?build=20260814-ai-code-hygiene-final";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-ai-residue-cleanup-final";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-ai-residue-cleanup-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
+import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260815-ai-residue-cleanup-final";
+import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260815-ai-residue-cleanup-final";
+import { TransferPolicy } from "./TransferPolicy.js?build=20260815-ai-residue-cleanup-final";
 
 export class CardSelectionBoundary {
   /*

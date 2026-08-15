@@ -20,12 +20,12 @@ value/CardValue、value/ThreatValue 与 state/Probability。
 import {
   getBaseCardAiValue,
   getRoleCardAiValue
-} from "../value/CardValue.js?build=20260814-ai-code-hygiene-final";
-import { ThreatCalculator } from "../value/ThreatValue.js?build=20260814-ai-code-hygiene-final";
+} from "../value/CardValue.js?build=20260815-ai-residue-cleanup-final";
+import { ThreatCalculator } from "../value/ThreatValue.js?build=20260815-ai-residue-cleanup-final";
 import {
   PROBABILITY_EPSILON,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
+} from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

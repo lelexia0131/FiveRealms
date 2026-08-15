@@ -17,11 +17,11 @@ ResponseSimulation、Radar domain、state/Probability 与共享 simulation runti
 架构约束
 结算顺序以 Game.damage、HpLossSystem 与 DyingSystem 为权威；不得拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-code-hygiene-final";
-import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260814-ai-code-hygiene-final";
-import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
-import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260814-ai-code-hygiene-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-ai-residue-cleanup-final";
+import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260815-ai-residue-cleanup-final";
+import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
+import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260815-ai-residue-cleanup-final";
 
 /*
 功能
@@ -714,6 +714,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   heal(target, amount) {
     if (target.alive && amount > 0) target.hp = Math.min(target.maxHp, target.hp + amount);
   }
+
   /*
   功能
   结算带来源的治疗，同时推进与治疗来源和目标相关的角色被动。

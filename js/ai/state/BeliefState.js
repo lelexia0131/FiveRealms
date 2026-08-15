@@ -17,7 +17,7 @@ AI 状态组合入口、Knowledge、Planner 隐藏世界采样与状态契约测
 架构约束
 不得生成动作、计算价值、写 GameState，概率分布必须归一且不持有输入计数引用。
 */
-import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
 
 /*
 功能

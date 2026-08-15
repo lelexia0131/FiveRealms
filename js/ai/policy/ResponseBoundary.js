@@ -17,20 +17,20 @@ policy/ResponsePolicy、ValueSimulationQuery、状态组合与既有 Domain/Valu
 架构约束
 本文件是唯一响应执行边界；不得保留第二份响应阈值、分数或选择公式。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-code-hygiene-final";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260814-ai-code-hygiene-final";
-import { createInitialSearchState } from "../state/StateContracts.js?build=20260814-ai-code-hygiene-final";
-import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js?build=20260814-ai-code-hygiene-final";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-ai-residue-cleanup-final";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260815-ai-residue-cleanup-final";
+import { createInitialSearchState } from "../state/StateContracts.js?build=20260815-ai-residue-cleanup-final";
+import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js?build=20260815-ai-residue-cleanup-final";
 import {
   hasLightning,
   nextLightningReceiverId
-} from "../domain/LightningModel.js?build=20260814-ai-code-hygiene-final";
+} from "../domain/LightningModel.js?build=20260815-ai-residue-cleanup-final";
 import {
   hasSeal,
   tacticJudgmentProbability
-} from "../domain/SealModel.js?build=20260814-ai-code-hygiene-final";
-import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260814-ai-code-hygiene-final";
-import { ResponsePolicy } from "./ResponsePolicy.js?build=20260814-ai-code-hygiene-final";
+} from "../domain/SealModel.js?build=20260815-ai-residue-cleanup-final";
+import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260815-ai-residue-cleanup-final";
+import { ResponsePolicy } from "./ResponsePolicy.js?build=20260815-ai-residue-cleanup-final";
 
 /*
 功能

@@ -1,5 +1,5 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260814-ai-code-hygiene-final";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260815-ai-residue-cleanup-final";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

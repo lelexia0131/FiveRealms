@@ -17,16 +17,16 @@ RuleEngine、技能注册器、领域概率与策略评分模块。
 架构约束
 不得依赖 AIController；转移资源选择必须由构造时注入的窄能力提供。
 */
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260814-ai-code-hygiene-final";
-import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260814-ai-code-hygiene-final";
-import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260814-ai-code-hygiene-final";
+import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-ai-residue-cleanup-final";
+import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260815-ai-residue-cleanup-final";
+import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260815-ai-residue-cleanup-final";
 import {
   ACTIVE_SKILLS, getActiveSkill, getActiveSkillCost
-} from "../../generals/skillRegistry.js?build=20260814-ai-code-hygiene-final";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260814-ai-code-hygiene-final";
-import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260814-ai-code-hygiene-final";
-import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260814-ai-code-hygiene-final";
+} from "../../generals/skillRegistry.js?build=20260815-ai-residue-cleanup-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
+import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-ai-residue-cleanup-final";
+import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260815-ai-residue-cleanup-final";
+import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260815-ai-residue-cleanup-final";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -38,7 +38,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
+} from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
 
 export class ActionGenerator {
   /*
@@ -128,7 +128,7 @@ export class ActionGenerator {
 
   /*
   功能
-  从当前真实局面生成行动者的合法根动作。
+  从当前真实局面枚举 RuleEngine 允许的动作，再应用 AI 专属候选策略形成 Planner 根候选。
 
   调用方
   AIController.getActionCandidates 与直接动作生成测试。
@@ -137,7 +137,7 @@ export class ActionGenerator {
   当前行动 Player。
 
   输出
-  包含卡牌、技能和结束阶段的候选动作数组。
+  包含卡牌、技能和结束阶段的 Planner 候选数组；它不等同于完整游戏合法动作集。
 
   读取状态
   当前 GameState、RuleEngine 权威、角色技能与转移选择策略。
@@ -149,7 +149,7 @@ export class ActionGenerator {
   RuleEngine 合法性与目标入口、getActiveSkill、getActiveSkillCost、chooseTransferCombination。
 
   边界与不变量
-  保持既有枚举顺序与动作集合；转移只记录选择描述，不移动实体牌。
+  RuleEngine 独占游戏合法性，ActionCandidatePolicy 仅收窄 AI 会考虑的集合；保持既有枚举顺序与候选集合，转移只记录选择描述，不移动实体牌。
   */
   generate(player) {
     const actions = [];

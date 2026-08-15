@@ -17,14 +17,14 @@ Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
 架构约束
 真实状态/监听顺序以 Game、JudgmentSystem 与 skillRegistry 为权威；不拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260814-ai-code-hygiene-final";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260814-ai-code-hygiene-final";
-import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260814-ai-code-hygiene-final";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-ai-residue-cleanup-final";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260815-ai-residue-cleanup-final";
+import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260815-ai-residue-cleanup-final";
 import {
   RADAR_BASIC_DEFINITIONS,
   buildRadarJudgmentProbabilities
-} from "../domain/RadarModel.js?build=20260814-ai-code-hygiene-final";
+} from "../domain/RadarModel.js?build=20260815-ai-residue-cleanup-final";
 import {
   PROBABILITY_EPSILON,
   expectedBranchValue,
@@ -34,8 +34,8 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260814-ai-code-hygiene-final";
-import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260814-ai-code-hygiene-final";
+} from "../state/Probability.js?build=20260815-ai-residue-cleanup-final";
+import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260815-ai-residue-cleanup-final";
 
 /*
 功能
@@ -194,6 +194,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     else if (probability < 1 - PROBABILITY_EPSILON && index >= 0) player.categoriesUsed.splice(index, 1);
     return branches;
   }
+
   /*
   功能
   联合卡牌使用、类别历史与生命伤害世界，结算刀客势能获得或清空。
@@ -360,6 +361,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     }
     return triggerProbability;
   }
+
   /*
   功能
   按追猎命中世界写入来源绑定的猎物标记及其概率分支。
@@ -422,6 +424,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       if (Array.isArray(target.statuses) && !target.statuses.includes("huntMark")) target.statuses.push("huntMark");
     }
   }
+
   /*
   功能
   在生命伤害世界中按真实钩子顺序结算受伤后的角色被动效果。
@@ -480,6 +483,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       }
     }
   }
+
   /*
   功能
   根据双方手牌差与生命伤害概率结算间谍的补牌效果。
@@ -548,6 +552,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     return this.simulateAfterLifeDamage(state, source, target, lifeDamageProbability,
       lifeDamageBranches, { cardDamage:true, emberTriggeredProbabilities:{} });
   }
+
   /*
   功能
   组合防御结果与雷达判定类别，生成互斥且概率守恒的结果分区。
@@ -647,6 +652,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       ? branches.map((branch) => ({ ...branch, probability:branch.probability / branchTotal }))
       : [{ probability:1, conditions:{ [key]:"noRadar" }, radarOutcome:"noRadar", responseAllowed:true, immuneByRadar:false }];
   }
+
   /*
   功能
   结算闪电命中目标的伤害与延迟状态移除，并保持状态分支一致。

@@ -20,7 +20,7 @@ Simulator、ResponseSimulation、CombatSimulation 与效果组件。
 import {
   CARD_DEFINITIONS,
   TOTAL_CARD_COUNT
-} from "../../config/cardConfig.js?build=20260814-ai-code-hygiene-final";
+} from "../../config/cardConfig.js?build=20260815-ai-residue-cleanup-final";
 
 const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS)
   .filter((card) => card.category === "basic")
