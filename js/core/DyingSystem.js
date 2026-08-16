@@ -265,7 +265,7 @@ export class DyingSystem {
   get active() { return this.workflow.active; }
   /*
   功能
-  暴露 Application DyingWorkflow queue。
+  暴露 Application DyingWorkflow 的只读队列快照。
 
   调用方
   legacy observers。
@@ -274,7 +274,7 @@ export class DyingSystem {
   无。
 
   输出
-  queue array。
+  冻结 queue snapshot。
 
   读取状态
   Application workflow。
@@ -283,10 +283,10 @@ export class DyingSystem {
   无。
 
   调用函数
-  无。
+  this.workflow.queueSnapshot。
 
   边界与不变量
-  façade 不缓存第二份 queue。
+  façade 不缓存第二份 queue；不暴露可变 owner queue。
   */
-  get queue() { return this.workflow.queue; }
+  get queueSnapshot() { return this.workflow.queueSnapshot; }
 }

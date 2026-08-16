@@ -21,7 +21,40 @@ import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.
 
 /*
 功能
+决定当前存活阵营的胜者或 null。
+
+调用方
+Application Match victory workflow 与 tests。
+
+输入
+state 投影。
+
+输出
+"dawn"、"dusk" 或 null。
+
+读取状态
+players.alive 与 battleTeam。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只有单一阵营存活才分出胜负；双阵营存活返回 null；不写 phase 或 winnerTeam。
+*/
+export function getWinningTeam(state) {
+  const dawnAlive = state.players.some((player) => player.alive && player.battleTeam === "dawn");
+  const duskAlive = state.players.some((player) => player.alive && player.battleTeam === "dusk");
+  if (dawnAlive && duskAlive) return null;
+  return dawnAlive ? "dawn" : "dusk";
+}
+
+/*
+功能
 返回指定阵营的座位数。
+
 
 调用方
 TeamRuleService、TeamManager 与 tests。

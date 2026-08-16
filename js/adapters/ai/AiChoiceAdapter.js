@@ -48,10 +48,12 @@ export function createAiChoiceAdapter({
   getLegacyContext,
   shouldRespond,
   choosePublicCard,
+  chooseDiscards,
   isSessionValid
 }) {
   if (typeof getLegacyContext !== "function" || typeof shouldRespond !== "function"
-    || typeof choosePublicCard !== "function" || typeof isSessionValid !== "function") {
+    || typeof choosePublicCard !== "function" || typeof chooseDiscards !== "function"
+    || typeof isSessionValid !== "function") {
     throw new TypeError("AiChoiceAdapter 缺少必要 bridge capability");
   }
   return Object.freeze({
@@ -81,6 +83,14 @@ export function createAiChoiceAdapter({
     AI policy/search/planner 不变；不拥有 Application delay 或 presentation state。
     */
     async request(choiceRequest) {
+      if (choiceRequest?.kind === "discard") {
+        const legacy = getLegacyContext(choiceRequest.requestId);
+        if (!legacy?.player || !Number.isFinite(legacy.count)) return createChoiceResult("cancelled");
+        const cards = chooseDiscards(legacy.player, legacy.count);
+        return cards?.length
+          ? createChoiceResult("selected", { selectedIds: cards.slice(0, legacy.count).map((card) => card.id) })
+          : createChoiceResult("declined");
+      }
       if (choiceRequest?.kind === "publicCard") {
         const legacy = getLegacyContext(choiceRequest.requestId);
         if (!legacy?.player || !Array.isArray(legacy.cards)) return createChoiceResult("cancelled");

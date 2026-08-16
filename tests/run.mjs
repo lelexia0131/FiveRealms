@@ -35,7 +35,7 @@ import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/d
 import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome, interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js?build=20260815-shadow-agent-p1-slot";
 import { getCounterResponderOrder, getDyingRescueResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
 import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, isHuntMarkSourceExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
-import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, isSmallTeam } from "../js/domain/rules/team/TeamRules.js?build=20260815-shadow-agent-p1-slot";
+import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, getWinningTeam, isSmallTeam } from "../js/domain/rules/team/TeamRules.js?build=20260815-shadow-agent-p1-slot";
 import { calculateNextActorIndex, createAttackUsage, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
 import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js?build=20260815-shadow-agent-p1-slot";
 import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js?build=20260815-shadow-agent-p1-slot";
@@ -118,6 +118,11 @@ import { createCombatWorkflow } from "../js/application/combat/CombatWorkflow.js
 import { createDyingWorkflow } from "../js/application/combat/DyingWorkflow.js?build=20260815-shadow-agent-p1-slot";
 import { createJudgmentWorkflow } from "../js/application/judgment/JudgmentWorkflow.js?build=20260815-shadow-agent-p1-slot";
 import { createStatusResolutionWorkflow } from "../js/application/judgment/StatusResolutionWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createMatchWorkflow } from "../js/application/match/MatchWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createTurnWorkflow } from "../js/application/turn/TurnWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createActionWorkflow } from "../js/application/action/ActionWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
+import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import {
   ACTIVE_SKILLS, getActiveSkillCost, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
@@ -40577,6 +40582,8 @@ async function frArch6PeerChoiceAdapters() {
   const human = createUiChoiceAdapter({
     requestResponse: async (legacy, label) => { humanCalls.push({ legacy, label }); return { status:"used" }; },
     requestPublicCard: async () => null,
+    requestDiscard: async () => [],
+    requestTarget: async () => null,
     getLegacyContext: () => ({ player:{ id:"p1" }, cards:[] }),
     isSessionValid: () => true
   });
@@ -40589,6 +40596,7 @@ async function frArch6PeerChoiceAdapters() {
     getLegacyContext: () => ({ responder:{ id:"p1", name:"电脑" }, cards:[], context:{}, label:"格挡" }),
     shouldRespond: () => true,
     choosePublicCard: () => null,
+    chooseDiscards: () => [],
     isSessionValid: () => true
   });
   const ai = createAiResponseTimingDecorator(rawAi, {
@@ -41295,6 +41303,13 @@ function frArch8PortsMinimalSurface() {
     hideJudgment: () => presentationCalls.push(["hide-judgment"]),
     showCurrentEffect: (...args) => presentationCalls.push(["effect", ...args]),
     showLightningHit: (...args) => presentationCalls.push(["lightning", ...args]),
+    showCurrentAction: (...args) => presentationCalls.push(["action", ...args]),
+    playActionCue: (...args) => presentationCalls.push(["cue", ...args]),
+    setPrompt: (...args) => presentationCalls.push(["prompt", ...args]),
+    showThinking: (...args) => presentationCalls.push(["thinking", ...args]),
+    clearThinking: () => presentationCalls.push(["clear-thinking"]),
+    isThinkingActive: () => false,
+    showGameOver: (...args) => presentationCalls.push(["game-over", ...args]),
     refresh: () => presentationCalls.push(["refresh"])
   });
   presentation.showDamageFeedback("p1", 1);
@@ -41302,7 +41317,8 @@ function frArch8PortsMinimalSurface() {
   assert.deepEqual(presentationCalls.slice(0, 2), [["damage", "p1", 1], ["refresh"]]);
   assert.throws(() => createPresentationPort({ log() { } }), /showDamageFeedback/);
   const diagnostics = createDiagnosticsPort({
-    recordDamage: () => { }, recordHealing: () => { }, recordHpLoss: () => { }
+    recordDamage: () => { }, recordHealing: () => { }, recordHpLoss: () => { },
+    recordCardPlayed: () => { }, reportWorkflowError: () => { }
   });
   assert.equal(typeof diagnostics.recordDamage, "function");
   assert.throws(() => createDiagnosticsPort({ recordDamage() { } }), /recordHealing/);
@@ -41768,6 +41784,368 @@ function frArch8ApplicationStateProjectionNoVersion() {
 
 test("FR-ARCH-8·application state：currentJudgment/dyingContext projection 不 bump stateVersion", frArch8ApplicationStateProjectionNoVersion);
 
+
+// ==================== FR-ARCH-9 Match/Turn/Action Workflow Tests ====================
+
+/*
+功能
+验证 pre-live match setup 与 live authoritative match 的显式边界。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game/matchWorkflow/stateVersion。
+
+写入状态
+startSelection 与 confirmGeneral setup/live 状态。
+
+调用函数
+game.startSelection、game.confirmGeneral。
+
+边界与不变量
+pre-live roster/maxEnergy/startingPlayerIndex 不 bump stateVersion；live 后拒绝重复 setup commit。
+*/
+async function frArch9MatchSetupBoundary() {
+  const ui = makeUi();
+  const game = new Game(ui, () => 0.25);
+  game.simulationMode = true;
+  game.runGameLoop = async () => { };
+  const versionBeforeRoster = game.state.stateVersion;
+  const candidates = game.startSelection();
+  assert.equal(candidates.length, 4);
+  assert.equal(game.state.players.length, 5);
+  assert.equal(game.state.stateVersion, versionBeforeRoster, "pre-live roster/maxEnergy 不 bump stateVersion");
+  assert.equal(game.matchWorkflow.preLiveSetup.rosterCommitted, true);
+  assert.equal(game.matchWorkflow.preLiveSetup.maxEnergyCommitted, true);
+  assert.equal(game.matchWorkflow.liveAuthoritativeMatch, false);
+  await game.confirmGeneral(candidates[0].id);
+  assert.equal(game.matchWorkflow.liveAuthoritativeMatch, true);
+  assert.equal(game.state.startingPlayerIndex, 1);
+  assert.ok(game.state.stateVersion > versionBeforeRoster, "live setup transitions 后 stateVersion authoritative");
+  assert.throws(() => game.startSelection(), /pre-live setup/);
+}
+
+test("FR-ARCH-9·setup boundary：pre-live one-shot，live 后拒绝重复 setup", frArch9MatchSetupBoundary);
+
+/*
+功能
+验证胜利决定是 Domain Team Rule，Application Match 只提交 workflow。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture。
+
+写入状态
+winner/isGameOver/phase 经 transitions。
+
+调用函数
+getWinningTeam、game.checkVictory。
+
+边界与不变量
+双阵营存活无胜者；单阵营返回该阵营并提交 gameOver phase。
+*/
+async function frArch9MatchVictoryWorkflow() {
+  const dawn = makePlayer("fr9-dawn", 0, "dawn"),
+    dusk = makePlayer("fr9-dusk", 1, "dusk");
+  const { game } = makeGame([dawn, dusk]);
+  assert.equal(getWinningTeam(game.state), null);
+  dusk.alive = false;
+  assert.equal(getWinningTeam(game.state), "dawn");
+  assert.equal(await game.checkVictory(), "dawn");
+  assert.equal(game.state.winnerTeam, "dawn");
+  assert.equal(game.state.isGameOver, true);
+  assert.equal(game.state.phase, "gameOver");
+}
+
+test("FR-ARCH-9·victory workflow：winner formula 在 Domain TeamRules", frArch9MatchVictoryWorkflow);
+
+/*
+功能
+验证 discard ChoicePort request 为 data-only，且 UI/AI adapter 映射保持旧 legacy entity rebind。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake cards/legacy context。
+
+写入状态
+fake calls。
+
+调用函数
+createDiscardChoiceRequest、createUiChoiceAdapter、createAiChoiceAdapter。
+
+边界与不变量
+selectedIds 只含 cardId；human exact count；AI exact count；canDecline false。
+*/
+async function frArch9DiscardChoicePort() {
+  const request = createDiscardChoiceRequest({
+    requestId:"d1", actorId:"p1", gameId:"g1", stateVersion:1,
+    handCardIds:["c1", "c2"], requiredCount:2, label:"弃牌", handLimit:2
+  });
+  assert.equal(request.kind, "discard");
+  assert.equal(request.canDecline, false);
+  assert.deepEqual(request.options.map((option) => option.optionId), ["c1", "c2"]);
+  const human = createUiChoiceAdapter({
+    requestResponse: async () => null,
+    requestPublicCard: async () => null,
+    requestDiscard: async (player, count, prompt) => {
+      assert.equal(count, 2);
+      assert.equal(prompt, "弃牌");
+      return [{ id:"c1" }, { id:"c2" }];
+    },
+    requestTarget: async () => null,
+    getLegacyContext: () => ({ player:{ id:"p1" }, count:2, prompt:"弃牌" }),
+    isSessionValid: () => true
+  });
+  assert.deepEqual(await human.request(request), createChoiceResult("selected", { selectedIds:["c1", "c2"] }));
+  const ai = createAiChoiceAdapter({
+    getLegacyContext: () => ({ player:{ id:"p1" }, count:2 }),
+    shouldRespond: () => false,
+    choosePublicCard: () => null,
+    chooseDiscards: () => [{ id:"c1" }, { id:"c2" }],
+    isSessionValid: () => true
+  });
+  assert.deepEqual(await ai.request(request), createChoiceResult("selected", { selectedIds:["c1", "c2"] }));
+}
+
+test("FR-ARCH-9·discard ChoicePort：data-only 请求，UI/AI adapter 只 rebind", frArch9DiscardChoicePort);
+
+/*
+功能
+验证 target ChoicePort 只接受公开 target facts，human adapter 返回 selected ID 后由 Action 重新绑定。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake targets。
+
+写入状态
+fake calls。
+
+调用函数
+createTargetChoiceRequest、createUiChoiceAdapter。
+
+边界与不变量
+AI Planner 不走该 Choice；request 不含 Player entity。
+*/
+async function frArch9TargetChoicePort() {
+  const request = createTargetChoiceRequest({
+    requestId:"t1", actorId:"human", gameId:"g1", stateVersion:1,
+    targets:[{ id:"e1", name:"敌人", battleTeam:"dusk" }], label:"选择目标", sourcePlayerId:"human", cardId:"a1"
+  });
+  assert.equal(request.kind, "target");
+  assert.equal(request.options[0].optionId, "e1");
+  assert.equal(JSON.stringify(request).includes("hand"), false);
+  const human = createUiChoiceAdapter({
+    requestResponse: async () => null,
+    requestPublicCard: async () => null,
+    requestDiscard: async () => [],
+    requestTarget: async (players, prompt) => { assert.equal(players[0].id, "e1"); assert.equal(prompt, "选择目标"); return players[0]; },
+    getLegacyContext: () => ({ players:[{ id:"e1", name:"敌人" }], prompt:"选择目标", meta:{} }),
+    isSessionValid: () => true
+  });
+  assert.deepEqual(await human.request(request), createChoiceResult("selected", { selectedIds:["e1"] }));
+}
+
+test("FR-ARCH-9·target ChoicePort：公开 target facts，Action 返回后 revalidate", frArch9TargetChoicePort);
+
+/*
+功能
+验证 Application Match/Turn/Action 无 concrete runtime 依赖且 Game 无旧 workflow algorithm 残留。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/application/{match,turn,action} 与 js/core/Game.js 源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+Game 只有 thin forward；旧 match/turn/action algorithm marker 不再出现。
+*/
+async function frArch9ApplicationOwnershipPurity() {
+  const files = [
+    ...(await listJavaScriptFiles(projectFile("js/application/match"))),
+    ...(await listJavaScriptFiles(projectFile("js/application/turn"))),
+    ...(await listJavaScriptFiles(projectFile("js/application/action")))
+  ];
+  assert.ok(files.length >= 3);
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|\/adapters\/|\/ui\/|\/audio\/|\/ai\/|UIManager\.js|AiController\.js|SoundManager\.js|cards\/cardRegistry|generals\/skillRegistry|config\/|utils\/debug)/, file);
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(code, /\.(?:statistics|aiMemory|recentAggressors)\b|\bEventBus\b|\beventBus\b|\bdocument\b|\bwindow\b|\bPlanner\b|\bSearchState\b/, file);
+  }
+  const gameSource = await readFile(projectFile("js/core/Game.js"), "utf8");
+  assert.match(gameSource, /return this\.matchWorkflow\.(?:startSelection|confirmGeneral|checkVictory|dispose)/);
+  assert.match(gameSource, /return this\.turnWorkflow\.(?:runGameLoop|takeTurn|advanceTurn)/);
+  assert.match(gameSource, /return this\.actionWorkflow\.(?:playCard|useActiveSkill)/);
+  assert.doesNotMatch(gameSource, /\bconsecutiveTurnFailures\b/);
+  assert.doesNotMatch(gameSource, /setMatchPhase\(\s*this\.state/);
+  assert.doesNotMatch(gameSource, /const preparedTransfer =/);
+  assert.doesNotMatch(gameSource, /recentAggressors/);
+}
+
+test("FR-ARCH-9·purity：Application Match/Turn/Action 无 concrete runtime，Game 无旧 workflow body", frArch9ApplicationOwnershipPurity);
+
+/*
+功能
+验证 Dying queue mutable exposure 已关闭且只提供冻结快照。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 DyingWorkflow。
+
+写入状态
+无。
+
+调用函数
+Object.isFrozen、Object.hasOwn。
+
+边界与不变量
+façade 不再暴露可变 queue；snapshot 与内部队列解耦。
+*/
+function frArch9DyingQueueSnapshotClosure() {
+  const { game } = makeTeamFixture();
+  assert.equal(Object.hasOwn(game.dyingSystem, "queue"), false);
+  const snapshot = game.dyingSystem.queueSnapshot;
+  assert.ok(Object.isFrozen(snapshot));
+  assert.ok(Array.isArray(snapshot));
+}
+
+test("FR-ARCH-9·dying queue closure：只读 snapshot，不暴露可变 owner queue", frArch9DyingQueueSnapshotClosure);
+
+/*
+功能
+验证 concrete Presentation/Diagnostics/AI observation 实现已移出 Game，Game 只做 composition wiring。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+adapters 与 Game 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+Game 无 showDamageFeedback 实现、无 statistics 写入、无 recentAggressors 写入。
+*/
+async function frArch9ConcreteAdaptersLeftGame() {
+  const gameSource = await readFile(projectFile("js/core/Game.js"), "utf8");
+  assert.doesNotMatch(gameSource, /showDamageFeedback:\s*\(playerId/);
+  assert.doesNotMatch(gameSource, /target\.statistics\.damageTaken\s*\+=/);
+  assert.doesNotMatch(gameSource, /target\.aiMemory\.recentAggressors/);
+  const uiAdapter = await readFile(projectFile("js/adapters/ui/GamePresentationAdapter.js"), "utf8");
+  const diagnosticsAdapter = await readFile(projectFile("js/adapters/diagnostics/PlayerStatisticsDiagnosticsAdapter.js"), "utf8");
+  const aiAdapter = await readFile(projectFile("js/adapters/ai/RecentAggressorsObservationAdapter.js"), "utf8");
+  assert.match(uiAdapter, /createPresentationPort/);
+  assert.match(diagnosticsAdapter, /target\.statistics\.damageTaken/);
+  assert.match(aiAdapter, /recentAggressors/);
+}
+
+test("FR-ARCH-9·concrete adapters：Presentation/Diagnostics/AI observation owner 在 adapters", frArch9ConcreteAdaptersLeftGame);
+
+/*
+功能
+验证 action runtime state 由 Application Action 唯一拥有，Game 仅提供兼容 accessor。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 Game/actionWorkflow 源码。
+
+写入状态
+action state 字段。
+
+调用函数
+readFile。
+
+边界与不变量
+设置 Game.accessor 会写 ActionWorkflow state；resolutionOwners 为同一 Map。
+*/
+async function frArch9ActionRuntimeStateOwnership() {
+  const actor = makePlayer("fr9-action-state", 0, "dawn");
+  const { game } = makeGame([actor]);
+  game.actionLocked = true;
+  assert.equal(game.actionWorkflow.state.actionLocked, true);
+  game.actionLocked = false;
+  game.interactionLocked = true;
+  assert.equal(game.actionWorkflow.state.interactionLocked, true);
+  game.interactionLocked = false;
+  game.pendingHumanPlayEnd = true;
+  assert.equal(game.actionWorkflow.state.pendingHumanPlayEnd, true);
+  game.pendingHumanPlayEnd = false;
+  assert.equal(game.resolutionOwners, game.actionWorkflow.state.resolutionOwners);
+  const source = await readFile(projectFile("js/application/action/ActionWorkflow.js"), "utf8");
+  assert.match(source, /resolutionOwners: new Map\(\)/);
+}
+
+test("FR-ARCH-9·action runtime state：locks/resolution owners 归 Application Action", frArch9ActionRuntimeStateOwnership);
 
 // ==================== Test Runner 最终执行 ====================
 

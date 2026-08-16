@@ -1,0 +1,490 @@
+/*
+模块职责
+唯一拥有 Application Turn Workflow：回合循环、六阶段顺序、失败恢复、轮次推进、AI play-phase orchestration 与弃牌阶段 sequencing；不拥有 card/skill resolver 或 AI search policy。
+
+上游
+core/Game legacy façade 与 Application Match continuation。
+
+下游
+Domain TeamRules/TurnRules/transitions、Application Action/Combat/Response 能力与 Ports/Adapters。
+
+状态边界
+不直接写 Domain fields；phase/round/current/flags 经 transitions；presentation 经 PresentationPort。
+
+信息边界
+不读取 concrete UI/AI/DOM；controllerType 仅用于 human/AI play-phase 参与者策略。
+
+架构约束
+不得依赖 Game、UIManager、AIController、SoundManager、Planner、SearchState 或 concrete adapters。
+*/
+import { getDrawCountFromRules, getTeamRules, getTurnEnergyBreakdownFromRules } from "../../domain/rules/team/TeamRules.js?build=20260815-shadow-agent-p1-slot";
+import {
+  calculateNextActorIndex, createGlobalTurnReactiveState, createRoundUsageState,
+  createTurnUsageState, shouldSkipActionPhase
+} from "../../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
+import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
+import { setCurrentPlayerIndex, setCurrentRound, setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
+
+const REQUIRED_DEPENDENCIES = [
+  "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics", "runTurn",
+  "gainEnergy", "drawCards", "cleanupDefeatedZones", "delay", "getAiDelay",
+  "getTeamRules", "waitForHumanPlayEnd", "runAiPlayPhase", "choiceCoordinator",
+  "choiceContexts", "createId",
+  "getActionCandidates", "selectAction", "resolvePlannedAction", "getPlannedSequence",
+  "playCard", "useActiveSkill", "getAiMaxActions", "getAiReplanAfterEveryAction",
+  "getActionTargetLabel", "getAiBeamWidth", "resetActionLocks", "discardCardFromHand",
+  "cancelPendingInteractions"
+];
+
+/*
+功能
+创建 Application Turn Workflow。
+
+调用方
+core/Game legacy façade composition。
+
+输入
+显式注入的 phase/event/participant/AI-action/presentation collaborators。
+
+输出
+冻结 { runGameLoop, takeTurn, advanceTurn, takeAiPlayPhase, handleDiscardPhase }。
+
+读取状态
+无。
+
+写入状态
+内部无持久状态；Domain 写入经 transitions。
+
+调用函数
+getTeamRules、createTurnUsageState、createGlobalTurnReactiveState、createRoundUsageState、shouldSkipActionPhase、calculateNextActorIndex、setMatchPhase、setCurrentRound、setCurrentPlayerIndex。
+
+边界与不变量
+旧 runGameLoop/takeTurn/advanceTurn 的 session、failure recovery、delay(0) yield 与事件顺序逐点保留。
+*/
+export function createTurnWorkflow(dependencies) {
+  for (const name of REQUIRED_DEPENDENCIES) {
+    if (!dependencies?.[name]) throw new TypeError(`TurnWorkflow 缺少 ${name} collaborator`);
+  }
+  const runtime = dependencies;
+
+  /*
+  功能
+  返回当前行动玩家的 Domain Rule 投影。
+
+  调用方
+  turn phase helpers。
+
+  输入
+  state 与真实 Player。
+
+  输出
+  Rule projection 或 null。
+
+  读取状态
+  state.players。
+
+  写入状态
+  无。
+
+  调用函数
+  createRuleStateView。
+
+  边界与不变量
+  每次调用重新投影，不缓存。
+  */
+  function ruleProjection(state, player) {
+    return createRuleStateView(state).playerById(player.id);
+  }
+
+  /*
+  功能
+  持续运行轮次直到胜负或销毁。
+
+  调用方
+  MatchWorkflow start continuation。
+
+  输入
+  无。
+
+  输出
+  Promise。
+
+  读取状态
+  Game state、当前玩家与 session。
+
+  写入状态
+  轮次/回合经 Domain transitions。
+
+  调用函数
+  takeTurn、advanceTurn、resetRoundFlags、presentation、diagnostics。
+
+  边界与不变量
+  初始 roundStart、consecutiveTurnFailures、failureLimit=3、异常 delay(0) yield 与最后安全收束保持旧语义。
+  */
+  async function runGameLoop() {
+    const state = runtime.getState();
+    const gameId = state.gameId;
+    let consecutiveTurnFailures = 0;
+    const failureLimit = 3;
+    try {
+      runtime.presentation.log(`第${state.currentRound}轮开始。`, "important");
+      for (const player of state.players) resetRoundFlags(state, player, createRoundUsageState());
+      await runtime.emitEvent("roundStart", { type: "roundStart", round: state.currentRound });
+      if (!runtime.isSessionValid(gameId)) return;
+      while (runtime.isSessionValid(gameId) && !state.isGameOver) {
+        const view = createRuleStateView(state);
+        const playerProjection = view.currentActor();
+        const player = playerProjection ? state.players.find((entry) => entry.id === playerProjection.id) : null;
+        if (!player || !state.players.some((entry) => entry.alive)) {
+          runtime.diagnostics.reportWorkflowError("Game", "当前行动角色或存活角色状态无效，安全结束游戏循环");
+          break;
+        }
+        let turnFailed = false;
+        try {
+          if (player.alive) await runtime.runTurn(player, gameId);
+        } catch (error) {
+          turnFailed = true;
+          consecutiveTurnFailures += 1;
+          runtime.diagnostics.reportWorkflowError("Game", `${player.name}的回合执行失败，尝试推进至下一名存活角色`, error);
+          runtime.resetActionLocks();
+          runtime.presentation.clearThinking();
+          runtime.cancelPendingInteractions?.();
+        }
+        if (!runtime.isSessionValid(gameId) || state.isGameOver) break;
+        if (turnFailed) {
+          if (consecutiveTurnFailures >= failureLimit) {
+            runtime.diagnostics.reportWorkflowError("Game", `连续${failureLimit}个回合执行失败，安全结束游戏循环`);
+            break;
+          }
+          if (!(await runtime.delay(0))) break;
+        } else {
+          consecutiveTurnFailures = 0;
+        }
+        await advanceTurn();
+      }
+    } catch (error) {
+      runtime.diagnostics.reportWorkflowError("Game", "游戏循环遇到无法恢复的异常，已安全停止", error);
+      runtime.resetActionLocks();
+      if (state.gameId === gameId && !state.isDisposed) {
+        runtime.presentation.clearThinking();
+        runtime.cancelPendingInteractions?.();
+      }
+    }
+  }
+
+  /*
+  功能
+  执行角色的六阶段完整回合；真人出牌和弃牌阶段经 participant driver 异步等待。
+
+  调用方
+  runGameLoop 与 tests。
+
+  输入
+  行动 Player 与 gameId。
+
+  输出
+  Promise。
+
+  读取状态
+  Game state、Domain Team Rules 与 session。
+
+  写入状态
+  phase 经 MatchStateTransition；资源经注入 gainEnergy/drawCards。
+
+  调用函数
+  setMatchPhase、resetTurnFlags、resetGlobalTurnReactiveFlags、emitEvent、gainEnergy、drawCards、shouldSkipActionPhase、runPlayPhase、handleDiscardPhase。
+
+  边界与不变量
+  六阶段顺序与事件顺序不变；每个 await 后保留 session 检查。
+  */
+  async function takeTurn(player, gameId) {
+    const state = runtime.getState();
+    if (!runtime.isSessionValid(gameId) || !player?.alive || state.isGameOver) return;
+    const projection = ruleProjection(state, player);
+    const viewState = { players: createRuleStateView(state).players() };
+    setMatchPhase(state, "turnStart");
+    resetTurnFlags(state, player, createTurnUsageState(runtime.getTeamRules(player)));
+    for (const entry of state.players) resetGlobalTurnReactiveFlags(state, entry, createGlobalTurnReactiveState());
+    runtime.presentation.log(`${player.name}的回合开始。`, "important");
+    await runtime.emitEvent("turnStart", { type: "turnStart", player });
+    if (!runtime.isSessionValid(gameId) || !player.alive || state.isGameOver) return;
+    runtime.presentation.refresh();
+
+    setMatchPhase(state, "status");
+    const statusEvent = { type: "beforeStatusResolve", player, cancelled: false };
+    await runtime.emitEvent("beforeStatusResolve", statusEvent);
+    if (!runtime.isSessionValid(gameId)) return;
+    await runtime.emitEvent("afterStatusResolve", { ...statusEvent, type: "afterStatusResolve" });
+    if (!runtime.isSessionValid(gameId) || !player.alive || state.isGameOver) return;
+
+    setMatchPhase(state, "energy");
+    const rules = getTeamRules(viewState, projection);
+    const energyParts = getTurnEnergyBreakdownFromRules(rules, player.equipment?.definitionId ?? null);
+    const energyEvent = { type: "beforeTurnEnergyGain", player, ...energyParts, amount: energyParts.baseAmount + energyParts.teamBonus + energyParts.equipmentBonus, cancelled: false, metadata: {} };
+    await runtime.emitEvent("beforeTurnEnergyGain", energyEvent);
+    if (!runtime.isSessionValid(gameId)) return;
+    let energyGained = 0;
+    if (!energyEvent.cancelled) energyGained = await runtime.gainEnergy(player, Math.max(0, energyEvent.amount), { reason: "回合开始" });
+    if (!runtime.isSessionValid(gameId)) return;
+    await runtime.emitEvent("afterTurnEnergyGain", { ...energyEvent, type: "afterTurnEnergyGain", actualAmount: energyGained });
+    if (!runtime.isSessionValid(gameId) || !player.alive || state.isGameOver) return;
+
+    setMatchPhase(state, "draw");
+    const drawCount = getDrawCountFromRules(rules);
+    const drawEvent = { type: "beforeDraw", player, count: drawCount, cancelled: false, metadata: {} };
+    await runtime.emitEvent("beforeDraw", drawEvent);
+    if (!runtime.isSessionValid(gameId)) return;
+    if (!drawEvent.cancelled) await runtime.drawCards(player, Math.max(0, drawEvent.count), "回合摸牌");
+    if (!runtime.isSessionValid(gameId)) return;
+    await runtime.emitEvent("afterDraw", { ...drawEvent, type: "afterDraw" });
+    if (!runtime.isSessionValid(gameId) || !player.alive || state.isGameOver) return;
+
+    if (shouldSkipActionPhase(player.turnFlags)) {
+      runtime.presentation.log(`${player.name}因「封印」生效，跳过出牌阶段并进入弃牌阶段。`, "important");
+    } else {
+      setMatchPhase(state, "play");
+      await runtime.emitEvent("playPhaseStart", { type: "playPhaseStart", player });
+      if (!runtime.isSessionValid(gameId)) return;
+      runtime.presentation.refresh();
+      if (player.controllerType === "human") {
+        runtime.presentation.setPrompt("你的出牌阶段：选择手牌、发动技能，或结束出牌。", "从手牌中选择可用牌");
+        const completed = await runtime.waitForHumanPlayEnd(gameId);
+        if (!completed || !runtime.isSessionValid(gameId)) return;
+      } else {
+        await runtime.runAiPlayPhase(player, gameId);
+      }
+      if (!runtime.isSessionValid(gameId) || state.isGameOver || !player.alive) return;
+      await runtime.emitEvent("playPhaseEnd", { type: "playPhaseEnd", player });
+      if (!runtime.isSessionValid(gameId)) return;
+    }
+
+    setMatchPhase(state, "discard");
+    await handleDiscardPhase(player, gameId);
+    if (!runtime.isSessionValid(gameId) || state.isGameOver) return;
+
+    setMatchPhase(state, "turnEnd");
+    await runtime.emitEvent("turnEnd", { type: "turnEnd", player });
+    if (!runtime.isSessionValid(gameId)) return;
+    runtime.presentation.log(`${player.name}的回合结束。`);
+    runtime.presentation.refresh();
+  }
+
+  /*
+  功能
+  驱动一名 AI 玩家完成当前出牌阶段。
+
+  调用方
+  takeTurn。
+
+  输入
+  当前行动 Player 与所属 gameId。
+
+  输出
+  Promise。
+
+  读取状态
+  Game state、注入 AI action capability、时延配置与会话状态。
+
+  写入状态
+  thinking/prompt 经 PresentationPort；真实卡牌/技能经注入 action collaborators。
+
+  调用函数
+  getActionCandidates、selectAction、resolvePlannedAction、getPlannedSequence、playCard、useActiveSkill。
+
+  边界与不变量
+  计划重用必须重绑当前合法实体；执行失败立即停止；initial/action/end delay 与 searchElapsed 补偿不变。
+  */
+  async function takeAiPlayPhase(player, gameId) {
+    const state = runtime.getState();
+    let queuedPlan = [];
+    try {
+      runtime.presentation.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
+      runtime.presentation.showThinking({ playerId: player.id, message: "正在观察战场与可用资源" });
+      let complexPosition = false;
+      try {
+        complexPosition = runtime.getActionCandidates(player).length > runtime.getAiBeamWidth();
+      } catch (error) {
+        runtime.diagnostics.reportWorkflowError("AI", `${player.name}生成合法动作失败，安全结束出牌阶段`, error);
+        return;
+      }
+      if (!(await runtime.delay(runtime.getAiDelay("initial", { complex: complexPosition })))) return;
+      for (let count = 0; count < runtime.getAiMaxActions(); count += 1) {
+        if (!runtime.isSessionValid(gameId) || state.isGameOver || !player.alive) break;
+        let searchElapsed = 0;
+        let action = null;
+        if (!runtime.getAiReplanAfterEveryAction() && queuedPlan.length) {
+          action = runtime.resolvePlannedAction(player, queuedPlan.shift());
+          if (!action) queuedPlan = [];
+        }
+        if (!action) {
+          const searchStarted = globalThis.performance?.now?.() ?? Date.now();
+          try {
+            action = await runtime.selectAction(player, { gameId });
+          } catch (error) {
+            runtime.diagnostics.reportWorkflowError("AI", `${player.name}规划行动失败，安全结束出牌阶段`, error);
+            action = { type: "end" };
+          }
+          if (!runtime.isSessionValid(gameId)) return;
+          searchElapsed = (globalThis.performance?.now?.() ?? Date.now()) - searchStarted;
+          if (!runtime.getAiReplanAfterEveryAction()) queuedPlan = runtime.getPlannedSequence().slice(1);
+        }
+        if (action.type === "end") {
+          runtime.presentation.setPrompt(`${player.name}准备结束出牌阶段。`);
+          runtime.presentation.showThinking({ playerId: player.id, message: "正在收束回合" });
+          await runtime.delay(Math.max(0, runtime.getAiDelay("end") - searchElapsed));
+          if (!runtime.isSessionValid(gameId)) return;
+          break;
+        }
+        const actionName = action.type === "card" ? `准备使用「${action.card.name}」` : `准备发动「${action.skill.name}」`;
+        const targetLabel = runtime.getActionTargetLabel(player, action.type === "card" ? action.card : action.skill, action.targets, action.selection);
+        const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
+        runtime.presentation.showThinking({ playerId: player.id, message: actionDescription });
+        if (!(await runtime.delay(Math.max(0, runtime.getAiDelay("action") - searchElapsed)))) break;
+        runtime.presentation.clearThinking();
+        let executed = false;
+        try {
+          if (action.type === "card") executed = await runtime.playCard(player, action.card, action.targets, action.selection ?? null);
+          else if (action.type === "skill") executed = await runtime.useActiveSkill(player, action.skill.id, action.targets);
+        } catch (error) {
+          runtime.diagnostics.reportWorkflowError("AI", `${player.name}执行行动失败，安全结束出牌阶段`, error);
+          queuedPlan = [];
+          break;
+        }
+        if (!executed) {
+          queuedPlan = [];
+          break;
+        }
+        if (!runtime.isSessionValid(gameId)) return;
+      }
+      if (runtime.isSessionValid(gameId) && !state.isGameOver) runtime.presentation.setPrompt(`${player.name}结束了出牌阶段。`);
+    } finally {
+      queuedPlan = [];
+      if (state.gameId === gameId && !state.isDisposed) {
+        runtime.resetActionLocks();
+        runtime.presentation.clearThinking();
+        runtime.presentation.refresh();
+      }
+    }
+  }
+
+  /*
+  功能
+  处理手牌上限弃牌；真人选择与 AI 选择由注入 participant collaborator 执行。
+
+  调用方
+  takeTurn。
+
+  输入
+  player 与 gameId。
+
+  输出
+  Promise。
+
+  读取状态
+  player.hand、hp 与 session。
+
+  写入状态
+  手牌经注入 discardCardFromHand 提交。
+
+  调用函数
+  requestDiscard、chooseDiscards、delay、getAiDelay、discardCardFromHand。
+
+  边界与不变量
+  human/AI 分支是 participant mechanism policy；实际 mechanism 在 composition collaborator；不迁移 discard semantic。
+  */
+  async function handleDiscardPhase(player, gameId) {
+    const required = Math.max(0, player.hand.length - Math.max(0, player.hp));
+    if (!required) return;
+    runtime.presentation.log(`${player.name}需要弃置${required}张牌。`);
+    const requestId = runtime.createId("discard-choice");
+    const prompt = `手牌上限为${player.hp}，请选择${required}张弃牌`;
+    const choiceRequest = createDiscardChoiceRequest({
+      requestId,
+      actorId: player.id,
+      gameId: runtime.getState().gameId,
+      stateVersion: runtime.getState().stateVersion,
+      handCardIds: player.hand.map((card) => card.id),
+      requiredCount: required,
+      label: prompt,
+      handLimit: Math.max(0, player.hp)
+    });
+    runtime.choiceContexts.set(requestId, { player, count: required, prompt });
+    let decision;
+    try {
+      if (player.controllerType === "human") {
+        decision = await runtime.choiceCoordinator.request(choiceRequest);
+      } else {
+        runtime.presentation.showThinking({ playerId: player.id, message: `正在斟酌弃置${required}张牌` });
+        if (!(await runtime.delay(runtime.getAiDelay("discard")))) return;
+        decision = await runtime.choiceCoordinator.request(choiceRequest);
+        runtime.presentation.clearThinking();
+      }
+    } finally {
+      runtime.choiceContexts.delete(requestId);
+    }
+    if (!runtime.isSessionValid(gameId)) return;
+    if (decision.status === "cancelled") return;
+    const cards = (decision.selectedIds ?? [])
+      .map((cardId) => player.hand.find((card) => card.id === cardId))
+      .filter(Boolean)
+      .slice(0, required);
+    for (const card of cards) {
+      await runtime.discardCardFromHand(player, card, "弃牌阶段");
+      if (!runtime.isSessionValid(gameId)) return;
+    }
+  }
+
+  /*
+  功能
+  清理阵亡牌区并移动到下一名存活角色，经过首发座位时开始新轮。
+
+  调用方
+  runGameLoop。
+
+  输入
+  无。
+
+  输出
+  Promise。
+
+  读取状态
+  Game state 与玩家存活。
+
+  写入状态
+  currentRound/currentPlayerIndex 经 Domain transitions。
+
+  调用函数
+  cleanupDefeatedZones、calculateNextActorIndex、setCurrentRound、setCurrentPlayerIndex、resetRoundFlags。
+
+  边界与不变量
+  next-seat formula 只由 Domain TurnRules 计算；wrapped 顺序与旧 advanceTurn 一致。
+  */
+  async function advanceTurn() {
+    const state = runtime.getState();
+    const gameId = state.gameId;
+    if (!runtime.isSessionValid(gameId) || state.isGameOver) return;
+    await runtime.cleanupDefeatedZones();
+    if (!runtime.isSessionValid(gameId) || state.isGameOver) return;
+    const nextTurn = calculateNextActorIndex(
+      state.players,
+      state.currentPlayerIndex,
+      state.startingPlayerIndex
+    );
+    const next = nextTurn.nextIndex;
+    const wrapped = nextTurn.wrapped;
+    if (wrapped) {
+      await runtime.emitEvent("roundEnd", { type: "roundEnd", round: state.currentRound });
+      if (!runtime.isSessionValid(gameId)) return;
+      setCurrentRound(state, state.currentRound + 1);
+      for (const player of state.players) resetRoundFlags(state, player, createRoundUsageState());
+      runtime.presentation.log(`第${state.currentRound}轮开始。`, "important");
+      await runtime.emitEvent("roundStart", { type: "roundStart", round: state.currentRound });
+      if (!runtime.isSessionValid(gameId)) return;
+    }
+    setCurrentPlayerIndex(state, next);
+  }
+
+  return Object.freeze({ runGameLoop, takeTurn, advanceTurn, takeAiPlayPhase, handleDiscardPhase });
+}

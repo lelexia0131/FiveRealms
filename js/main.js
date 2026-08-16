@@ -1,6 +1,8 @@
 /**
- * 本文件是页面入口，只负责连接 UIManager 与每局新建的 Game。
- * 它不实现卡牌、AI 或技能规则；重新开始时必须先 dispose 旧局，再创建新 gameId。
+ * 页面入口与当前 minimal composition root：创建 UIManager 并管理每局 Game。
+ * FR-ARCH-9 后 Match/Turn/Action/Combat/Response/Judgment workflow 已在 js/application；
+ * AIController 仍依赖 Game、UIManager.createGameSession 仍需要 Game 实例，因此 concrete adapter
+ * wiring 暂时保留在 Game shell，待 FR-ARCH-12/13 收敛 AI boundary 与 FR-ARCH-15 shell removal。
  */
 import { Game } from "./core/Game.js?build=20260815-shadow-agent-p1-slot";
 import { UIManager } from "./ui/UIManager.js?build=20260815-shadow-agent-p1-slot";

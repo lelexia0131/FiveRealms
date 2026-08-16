@@ -1,7 +1,8 @@
 /**
- * 本文件是对局编排器，连接配置、牌堆、事件、响应、卡牌、技能、AI 和 UI。
- * 它负责所有状态变化的唯一入口与完整回合循环；UI 只能调用公开交互方法，不能直接改生命或手牌。
- * 每次重新开始会创建新 Game，并调用 dispose 清理本实例的监听器、延迟和 Promise。
+ * Game 是 temporary legacy compatibility façade / runtime shell。
+ * Match/Turn/generic Action/Combat/Response/Judgment workflow authority 已迁到 js/application；
+ * 本文件只保留 legacy Card/Skill bridge、EventBus compatibility、AI legacy wiring 与 explicit setup/lifecycle adapters。
+ * FR-ARCH-10/11/12/13/15 前不得重新在本文件增长 workflow algorithm。
  */
 import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
 import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
@@ -26,9 +27,13 @@ import { JudgmentSystem } from "./JudgmentSystem.js?build=20260815-shadow-agent-
 import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260815-shadow-agent-p1-slot";
 import { createGameChoiceBoundary } from "./GameChoiceRouter.js?build=20260815-shadow-agent-p1-slot";
 import { createRandomPort } from "../application/ports/RandomPort.js?build=20260815-shadow-agent-p1-slot";
-import { createPresentationPort } from "../application/ports/PresentationPort.js?build=20260815-shadow-agent-p1-slot";
-import { createDiagnosticsPort } from "../application/ports/DiagnosticsPort.js?build=20260815-shadow-agent-p1-slot";
+import { createGamePresentationAdapter } from "../adapters/ui/GamePresentationAdapter.js?build=20260815-shadow-agent-p1-slot";
+import { createPlayerStatisticsDiagnosticsAdapter } from "../adapters/diagnostics/PlayerStatisticsDiagnosticsAdapter.js?build=20260815-shadow-agent-p1-slot";
+import { createRecentAggressorsObservationAdapter } from "../adapters/ai/RecentAggressorsObservationAdapter.js?build=20260815-shadow-agent-p1-slot";
 import { createCombatWorkflow } from "../application/combat/CombatWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createMatchWorkflow } from "../application/match/MatchWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createTurnWorkflow } from "../application/turn/TurnWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createActionWorkflow } from "../application/action/ActionWorkflow.js?build=20260815-shadow-agent-p1-slot";
 import { PublicCardPool } from "./PublicCardPool.js?build=20260815-shadow-agent-p1-slot";
 import { HpLossSystem } from "./HpLossSystem.js?build=20260815-shadow-agent-p1-slot";
 import { createMatchState } from "../domain/state/model/MatchState.js?build=20260815-shadow-agent-p1-slot";
@@ -36,11 +41,8 @@ import { getCurrentActor, getAllies as getAlliesFromState, getEnemies as getEnem
 import { getCardZoneOccurrences as getCardZoneOccurrencesFromState, isCardCommittedToDiscard as isCardCommittedToDiscardInState, isCardCommittedToEquipment as isCardCommittedToEquipmentInState } from "../domain/state/queries/ZoneQueries.js?build=20260815-shadow-agent-p1-slot";
 import { appendCardToZone, commitEquipmentReplacement, discardEquipment, moveCardBetweenZones, moveCardsAtomically, moveEquipmentToHand, purgeCardToDiscard, removeCardFromZone } from "../domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { changeEnergy } from "../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { setCurrentPlayerIndex, setCurrentRound, setGameOver, setMatchPhase, setPublicCardPool, setWinnerTeam } from "../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { addTrackingTarget, markCategoryUsed, recordActiveSkillUse, resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags, setGuardianAidUsed, setKillRewardGranted, setLastEmberResolutionId, setMomentum, setRecycleDeviceUses, setSpyGapPendingTargetIds, setTrackingTurnNumber } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { calculateNextActorIndex, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, shouldSkipActionPhase } from "../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
-
-import { applyGeneralDefinition, bumpHandVersion, setAlive, setEquipment } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { addTrackingTarget, markCategoryUsed, setGuardianAidUsed, setKillRewardGranted, setLastEmberResolutionId, setMomentum, setRecycleDeviceUses, setSpyGapPendingTargetIds, setTrackingTurnNumber } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -80,154 +82,29 @@ const RESULT_ONLY_CARD_IDS = new Set(["charge", "recover", "shield"]);
 
 /*
 功能
-创建本局 PresentationPort 的 concrete composition adapter。
+为中央结算卡生成纯展示 displayTargets。
 
 调用方
-Game constructor。
+Game composition 的 Application Action collaborator。
 
 输入
-Game composition root。
+game、source、cardOrSkill 与 targets。
 
 输出
-冻结 PresentationPort。
+展示目标数组或 null。
 
 读取状态
-state.players 与 ui 公开展示字段。
+targetType 与存活敌人。
 
 写入状态
-只写既有 UI/presentation 状态，不写 Domain state。
+无。
 
 调用函数
-createPresentationPort、ui.showJudgment、ui.showDying、ui.setCurrentCard、ui.playLightningHit、ui.queueFeedback、ui.render。
+game.getEnemies。
 
 边界与不变量
-Application 传入 data-only DTO；本 adapter 负责把 ID/公开字段映射回 legacy UI 调用，不新增 UI 行为。
+不进入业务 targets、规则判断或 AI。
 */
-function buildGamePresentationPort(game) {
-  return createPresentationPort({
-    log: (message, kind = "normal") => game.log(message, kind),
-    showDamageFeedback: (playerId, amount) => game.ui.queueFeedback?.("damage", playerId, amount),
-    showShieldFeedback: (playerId, amount) => game.ui.queueFeedback?.("shield", playerId, amount),
-    showHealFeedback: (playerId, amount) => game.ui.queueFeedback?.("heal", playerId, amount),
-    showDying: ({ playerId, need, currentHp }) => {
-      const player = game.state.players.find((entry) => entry.id === playerId);
-      if (!player) return;
-      game.ui.showDying?.(player, { targetId: playerId, need, currentHp });
-    },
-    hideDying: () => game.ui.hideDying?.(),
-    showJudgment: ({ playerId, card, delayedStatusContext }) => {
-      const player = game.state.players.find((entry) => entry.id === playerId);
-      if (!player || !card) return;
-      game.ui.showJudgment?.(
-        player,
-        { name: card.name, categoryName: card.categoryName, art: card.art },
-        delayedStatusContext ? { delayedStatusContext } : {}
-      );
-    },
-    hideJudgment: () => game.ui.hideJudgment?.(),
-    showCurrentEffect: ({ statusId, label, holderName }) => {
-      const card = CARD_DEFINITIONS[statusId];
-      if (!card) return;
-      game.ui.setCurrentCard?.(card, label, holderName);
-    },
-    showLightningHit: (playerId) => game.ui.playLightningHit?.(playerId),
-    refresh: () => game.ui.render(game)
-  });
-}
-
-/*
-功能
-创建本局 DiagnosticsPort 的 concrete composition adapter。
-
-调用方
-Game constructor。
-
-输入
-Game composition root。
-
-输出
-冻结 DiagnosticsPort。
-
-读取状态
-state.players 的 identity。
-
-写入状态
-只写 legacy Player.statistics telemetry；不写 Domain fields 或 AI memory。
-
-调用函数
-createDiagnosticsPort。
-
-边界与不变量
-Application 只传入 ID/数值 DTO；本 adapter 保留旧 statistics 更新位置与数值语义。
-*/
-function buildGameDiagnosticsPort(game) {
-  return createDiagnosticsPort({
-    recordDamage: ({ targetId, sourceId, hpDamage }) => {
-      const target = game.state.players.find((entry) => entry.id === targetId);
-      if (target) target.statistics.damageTaken += hpDamage;
-      const source = sourceId ? game.state.players.find((entry) => entry.id === sourceId) : null;
-      if (source) source.statistics.damageDealt += hpDamage;
-    },
-    recordHealing: ({ sourceId, actualAmount }) => {
-      const source = sourceId ? game.state.players.find((entry) => entry.id === sourceId) : null;
-      if (source) source.statistics.healingDone += actualAmount;
-    },
-    recordHpLoss: ({ targetId, amount }) => {
-      const target = game.state.players.find((entry) => entry.id === targetId);
-      if (target) target.statistics.damageTaken += amount;
-    }
-  });
-}
-
-/*
-功能
-创建本局 Application Combat Workflow 的 composition dependencies。
-
-调用方
-Game constructor。
-
-输入
-Game composition root。
-
-输出
-冻结 CombatWorkflow。
-
-读取状态
-Game 状态与 response/judgment/dying 门面。
-
-写入状态
-无；AI memory/statistics 只由窄 observation/diagnostics adapter 写入。
-
-调用函数
-createCombatWorkflow、game.eventBus.emit。
-
-边界与不变量
-judgeDefense/enterDying 使用已注入 workflow 的窄回调；不把 Game 对象传入 Application。
-*/
-function buildGameCombatWorkflow(game) {
-  return createCombatWorkflow({
-    getState: () => game.state,
-    isSessionValid: (gameId) => game.isSessionValid(gameId),
-    askForBlock: (...args) => game.responseSystem.askForBlock(...args),
-    judgeDefense: (...args) => game.judgmentSystem
-      ? game.judgmentSystem.judgeDefense(...args)
-      : Promise.resolve({ handled: false, immune: false }),
-    enterDying: (...args) => game.dyingSystem
-      ? game.dyingSystem.enter(...args)
-      : Promise.resolve(false),
-    emitEvent: (type, payload) => game.eventBus.emit(type, payload),
-    createId,
-    presentation: game.presentationPort,
-    diagnostics: game.diagnosticsPort,
-    observeDamage: (target, source, hpDamage) => {
-      if (source && hpDamage > 0 && source.battleTeam !== target.battleTeam) {
-        target.aiMemory.recentAggressors[source.id] = (target.aiMemory.recentAggressors[source.id] ?? 0) + hpDamage;
-      }
-    }
-  });
-}
-
-/** 纯展示：为中央结算卡生成 displayTargets，不进入业务 targets、规则判断或 AI。 */
 function resolveActionDisplayTargets(game, source, cardOrSkill, targets = []) {
   if (targets.length) return targets;
   if (cardOrSkill?.targetType === "allEnemies") {
@@ -235,6 +112,53 @@ function resolveActionDisplayTargets(game, source, cardOrSkill, targets = []) {
   }
   if (cardOrSkill?.targetType === "none") {
     return [{ id: source.id, name: source.name, isSelf: true }];
+  }
+  return null;
+}
+
+/*
+功能
+按 Card identity 在 legacy runtime 全部规则区域中查找实体。
+
+调用方
+Game composition 的 Presentation adapter。
+
+输入
+cardId。
+
+输出
+Card entity 或 null。
+
+读取状态
+state deck zones、players hand/equipment 与 publicCardPool。
+
+写入状态
+无。
+
+调用函数
+Array.find。
+
+边界与不变量
+保持同一 Card 引用；用于把 Application 的 data-only cardId 映射回 UI 既有实体展示契约。
+*/
+function findCardEntity(game, cardId) {
+  if (!cardId) return null;
+  const zones = [
+    game.state.deck.cards,
+    game.state.deck.discardPile,
+    game.state.deck.resolvingCards,
+    game.state.deck.judgmentZone,
+    game.state.publicCardPool ?? [],
+    game.publicCardPool?.cards
+  ].filter(Boolean);
+  for (const zone of zones) {
+    const found = zone.find((card) => card.id === cardId);
+    if (found) return found;
+  }
+  for (const player of game.state.players) {
+    const fromHand = player.hand.find((card) => card.id === cardId);
+    if (fromHand) return fromHand;
+    if (player.equipment?.id === cardId) return player.equipment;
   }
   return null;
 }
@@ -310,26 +234,208 @@ export class Game {
     this.choiceCoordinator = choiceBoundary.choiceCoordinator;
     this.responseSystem = new ResponseSystem(this, this.choiceCoordinator, this.choiceContexts);
     this.cardSelectionSystem = new CardSelectionSystem(this);
-    this.presentationPort = buildGamePresentationPort(this);
-    this.diagnosticsPort = buildGameDiagnosticsPort(this);
-    this.combatWorkflow = buildGameCombatWorkflow(this);
+    const aiObservation = createRecentAggressorsObservationAdapter();
+    this.presentationPort = createGamePresentationAdapter({
+      log: (message, kind) => this.log(message, kind),
+      getPlayerById: (playerId) => this.state.players.find((player) => player.id === playerId),
+      getCardById: (cardId) => findCardEntity(this, cardId),
+      ui: this.ui,
+      renderTarget: this
+    });
+    this.diagnosticsPort = createPlayerStatisticsDiagnosticsAdapter({
+      getPlayerById: (playerId) => this.state.players.find((player) => player.id === playerId)
+    });
+    this.combatWorkflow = createCombatWorkflow({
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      askForBlock: (...args) => this.responseSystem.askForBlock(...args),
+      judgeDefense: (...args) => this.judgmentSystem
+        ? this.judgmentSystem.judgeDefense(...args)
+        : Promise.resolve({ handled: false, immune: false }),
+      enterDying: (...args) => this.dyingSystem
+        ? this.dyingSystem.enter(...args)
+        : Promise.resolve(false),
+      emitEvent: (type, payload) => this.eventBus.emit(type, payload),
+      createId,
+      presentation: this.presentationPort,
+      diagnostics: this.diagnosticsPort,
+      observeDamage: (...args) => aiObservation.observeDamage(...args)
+    });
     this.judgmentSystem = new JudgmentSystem(this);
     this.dyingSystem = new DyingSystem(this);
     this.hpLossSystem = new HpLossSystem(this);
     this.publicCardPool = new PublicCardPool(this);
-    this.candidates = [];
-    this.actionLocked = false;
-    this.interactionLocked = false;
-    this.pendingHumanPlayEnd = false;
     this.animationFastMode = GAME_CONFIG.animationFastMode;
     this.simulationMode = GAME_CONFIG.simulationMode;
     this.aiReplanAfterEveryAction = GAME_CONFIG.aiReplanAfterEveryAction;
     this.aiRandomnessRange = GAME_CONFIG.aiRandomnessRange;
     this.aiDifficultyMultiplier = GAME_CONFIG.aiDifficultyMultiplier;
-    /** 同一借势 resolutionId 在本局只能进入一次核心结算，防止异步重复提交。 */
+    this.aiMaxActionsPerTurn = GAME_CONFIG.aiMaxActionsPerTurn;
+    /*
+    功能
+    按 playerId 返回 legacy Player 引用。
+
+    调用方
+    本构造函数的 adapter wiring。
+
+    输入
+    playerId。
+
+    输出
+    Player 或 null。
+
+    读取状态
+    state.players。
+
+    写入状态
+    无。
+
+    调用函数
+    Array.find。
+
+    边界与不变量
+    只用于 concrete adapter rebind，不供 Application 使用。
+    */
+    const getPlayerById = (playerId) => this.state.players.find((player) => player.id === playerId);
+    this.actionWorkflow = createActionWorkflow({
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      emitEvent: (type, payload) => this.eventBus.emit(type, payload),
+      presentation: this.presentationPort,
+      diagnostics: this.diagnosticsPort,
+      responseSystem: this.responseSystem,
+      canPlayCard: (source, card) => RuleEngine.canPlayCard(this, source, card),
+      canUseForcedAssault: (source, card, target) => RuleEngine.canUseForcedAssault(this, source, card, target),
+      getCardTargets: (source, card) => RuleEngine.getCardTargets(this, source, card),
+      getAssaultTargetCandidates: (source) => RuleEngine.getAssaultTargetCandidates(this, source),
+      prepareTransferIntent: (...args) => this.prepareTransferIntent(...args),
+      prepareLeverageIntent: (...args) => this.prepareLeverageIntent(...args),
+      preparePrivateCardSelectionIntent: (...args) => this.preparePrivateCardSelectionIntent(...args),
+      resolveCardEffect: (...args) => resolveCardEffect(this, ...args),
+      moveHandToResolving: (...args) => this.moveHandToResolving(...args),
+      finishResolvingToDiscard: (...args) => this.finishResolvingToDiscard(...args),
+      isCardCommittedToDiscard: (card) => this.isCardCommittedToDiscard(card),
+      isCardCommittedToEquipment: (player, card) => this.isCardCommittedToEquipment(player, card),
+      cleanupFailedResolution: (...args) => this.cleanupFailedResolution(...args),
+      clearSelection: (selectionId) => this.cardSelectionSystem.clearSelection(selectionId),
+      getActionTargetLabel: (source, cardOrSkill, targets, selection) => actionTargetLabel(this, source, cardOrSkill, targets, selection),
+      getActionLogMessage: (source, card, targets) => actionLogMessage(source, card, targets),
+      shouldSuppressUseLog: (definitionId) => RESULT_ONLY_CARD_IDS.has(definitionId),
+      getActionDisplayTargets: (source, cardOrSkill, targets) => resolveActionDisplayTargets(this, source, cardOrSkill, targets),
+      skillRuntime: {
+        getActiveSkill: (source) => getActiveSkill(source),
+        getCost: (source, skill) => getActiveSkillCost(this, source, skill),
+        canUse: (source, skill, cost = null) => skill.canUse(this, source, cost ?? getActiveSkillCost(this, source, skill)),
+        execute: (skill, source, targets, context) => skill.execute(this, source, targets, context)
+      },
+      getSkillTargets: (source, skill) => RuleEngine.getSkillTargets(this, source, skill),
+      getHumanPlayer: () => this.state.players[0],
+      choiceCoordinator: this.choiceCoordinator,
+      choiceContexts: this.choiceContexts,
+      requestCardFlow: (...args) => this.ui.requestCardFlow?.(...args),
+      resolveHumanPlayEnd: (gameId) => this.ui.resolveHumanPlayEnd(gameId),
+      createId,
+      setResolutionSerialProjection: (value) => { this.state.resolutionSerial = value; }
+    });
+    Object.defineProperties(this, {
+      actionLocked: {
+        get: () => this.actionWorkflow.state.actionLocked,
+        set: (value) => { this.actionWorkflow.state.actionLocked = Boolean(value); },
+        configurable: false
+      },
+      interactionLocked: {
+        get: () => this.actionWorkflow.state.interactionLocked,
+        set: (value) => { this.actionWorkflow.state.interactionLocked = Boolean(value); },
+        configurable: false
+      },
+      pendingHumanPlayEnd: {
+        get: () => this.actionWorkflow.state.pendingHumanPlayEnd,
+        set: (value) => { this.actionWorkflow.state.pendingHumanPlayEnd = Boolean(value); },
+        configurable: false
+      },
+      resolutionOwners: {
+        get: () => this.actionWorkflow.state.resolutionOwners,
+        configurable: false
+      }
+    });
+    this.turnWorkflow = createTurnWorkflow({
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      emitEvent: (type, payload) => this.eventBus.emit(type, payload),
+      presentation: this.presentationPort,
+      diagnostics: this.diagnosticsPort,
+      runTurn: (...args) => this.takeTurn(...args),
+      gainEnergy: (...args) => this.gainEnergy(...args),
+      drawCards: (...args) => this.drawCards(...args),
+      cleanupDefeatedZones: () => this.cleanupDefeatedZones(),
+      delay: (ms) => this.cleanupManager.delay(ms),
+      getAiDelay: (kind, options) => getAiDelay(this, kind, options),
+      getTeamRules: (player) => this.teamRules.getRules(player),
+      waitForHumanPlayEnd: (gameId) => this.ui.waitForHumanPlayEnd(gameId),
+      runAiPlayPhase: (...args) => this.takeAiPlayPhase(...args),
+      choiceCoordinator: this.choiceCoordinator,
+      choiceContexts: this.choiceContexts,
+      createId,
+      getActionCandidates: (player) => this.aiController.getActionCandidates(player),
+      selectAction: (player, options) => this.aiController.selectAction(player, options),
+      resolvePlannedAction: (player, action) => this.aiController.resolvePlannedAction(player, action),
+      getPlannedSequence: () => this.aiController.getPlannedSequence(),
+      playCard: (...args) => this.actionWorkflow.playCard(...args),
+      useActiveSkill: (...args) => this.actionWorkflow.useActiveSkill(...args),
+      getAiMaxActions: () => this.aiMaxActionsPerTurn,
+      getAiReplanAfterEveryAction: () => this.aiReplanAfterEveryAction,
+      getActionTargetLabel: (source, cardOrSkill, targets, selection) => actionTargetLabel(this, source, cardOrSkill, targets, selection),
+      getAiBeamWidth: () => GAME_CONFIG.aiBeamWidth,
+      resetActionLocks: () => {
+        this.actionWorkflow.state.actionLocked = false;
+        this.actionWorkflow.state.interactionLocked = false;
+      },
+      discardCardFromHand: (...args) => this.discardCardFromHand(...args),
+      cancelPendingInteractions: () => this.ui.cancelPendingInteractions?.()
+    });
+    this.matchWorkflow = createMatchWorkflow({
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      createId,
+      createPlayer: (options) => new Player(options),
+      assignTeams: () => TeamManager.assignTeams(this.random),
+      createCandidates: () => this.generalSelection.createCandidates(),
+      assignAiGenerals: (...args) => this.generalSelection.assignAiGenerals(...args),
+      emitEvent: (type, payload) => this.eventBus.emit(type, payload),
+      log: (message, kind) => this.log(message, kind),
+      getTeamName: (team) => TEAM_CONFIG[team].name,
+      registerGlobalRules: () => this.registerGlobalRules(),
+      registerPassiveSkills: () => registerPassiveSkills(this),
+      buildDeck: () => this.state.deck.build(this.state),
+      syncDeckAliases: () => this.syncDeckAliases(),
+      getTeamRules: (player) => this.teamRules.getRules(player),
+      drawCards: (...args) => this.drawCards(...args),
+      render: () => this.ui.render(this),
+      startTurnLoop: () => { this.loopPromise = this.runGameLoop(); },
+      setRoster: (players) => { this.state.players = players; },
+      setMaxEnergy: (player, value) => { player.maxEnergy = value; },
+      setStartingPlayerIndex: (value) => { this.state.startingPlayerIndex = value; },
+      setSelectedGeneralId: (value) => { this.state.selectedGeneralId = value; },
+      getLegacyGameRef: () => this,
+      responseCleanup: () => this.responseSystem.cleanup(),
+      cancelPendingInteractions: () => this.ui.cancelPendingInteractions?.(),
+      showGameOver: (winnerTeam, humanWon) => this.presentationPort.showGameOver(winnerTeam, humanWon),
+      markDisposed: () => { this.state.isDisposed = true; },
+      resetActionLocks: () => {
+        this.actionWorkflow.state.actionLocked = false;
+        this.actionWorkflow.state.interactionLocked = false;
+        this.actionWorkflow.state.pendingHumanPlayEnd = false;
+      },
+      cleanupManagerCleanup: () => this.cleanupManager.cleanup(),
+      cardSelectionCleanup: () => this.cardSelectionSystem.cleanup(),
+      dyingCleanup: () => this.dyingSystem.cleanup(),
+      publicCardPoolCleanup: () => this.publicCardPool.cleanup(),
+      eventBusClear: () => this.eventBus.clear(),
+      traceError: (channel, message, error) => this.diagnosticsPort.reportWorkflowError(channel, message, error),
+      getRandom: () => this.random()
+    });
+    /** 同一借势 resolutionId 在本局只能进入一次核心结算，防止异步重复提交；card-specific runtime 留 FR-ARCH-10。 */
     this.leverageResolutionIds = new Set();
-    /** 记录结算区实体的唯一所有者，隔离借势外层牌与内嵌突袭牌。 */
-    this.resolutionOwners = new Map();
     this.loopPromise = null;
   }
 
@@ -362,6 +468,35 @@ export class Game {
     return getCurrentActor(this.state);
   }
 
+  /*
+  功能
+  返回 Application MatchWorkflow 当前候选角色数组。
+
+  调用方
+  legacy tests/observers。
+
+  输入
+  无。
+
+  输出
+  候选数组。
+
+  读取状态
+  Application Match state。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只读 projection；不缓存第二份 candidates。
+  */
+  get candidates() {
+    return this.matchWorkflow.candidates;
+  }
+
   /** 切换展示节奏；只影响可清理等待与 CSS 动画，不改变规则或 AI 评分。 */
   setAnimationFastMode(enabled) {
     this.animationFastMode = Boolean(enabled);
@@ -369,89 +504,62 @@ export class Game {
     return this.animationFastMode;
   }
 
-  /**
-   * 生成新阵营与四名候选角色。此时不会发牌或启动回合。
-   * @returns {Array<Object>} 候选角色配置。
-   */
+  /*
+  功能
+  转发 Application MatchWorkflow.startSelection。
+
+  调用方
+  main.js 与测试 fixture。
+
+  输入
+  无。
+
+  输出
+  候选角色数组。
+
+  读取状态
+  无额外状态。
+
+  写入状态
+  无额外写入。
+
+  调用函数
+  this.matchWorkflow.startSelection。
+
+  边界与不变量
+  pre-live setup authority 在 Application Match；Game 不重复组队公式。
+  */
   startSelection() {
-    if (this.state.isDisposed) return [];
-    const teams = TeamManager.assignTeams(this.random);
-    this.state.players = teams.map((battleTeam, seatIndex) => new Player({
-      id: createId("player"), seatIndex, battleTeam, controllerType: seatIndex === 0 ? "human" : "ai"
-    }));
-    for (const player of this.state.players) player.maxEnergy = this.teamRules.getMaxEnergy(player);
-    this.candidates = this.generalSelection.createCandidates();
-    this.eventBus.emit("teamAssigned", { type: "teamAssigned", players: this.state.players });
-    return this.candidates;
+    return this.matchWorkflow.startSelection();
   }
 
   /*
   功能
-  确认真选角色、分配电脑角色、构建牌堆并启动异步回合循环。
+  转发 Application MatchWorkflow.confirmGeneral。
 
   调用方
   main.js。
 
   输入
-  候选角色 ID。
+  candidate generalId。
 
   输出
-  初始化成功返回 true，session 失效返回 false。
+  true/false 或抛错。
 
   读取状态
-  candidates、team rules、牌堆与随机源。
+  无额外状态。
 
   写入状态
-  Player 角色、牌堆、starting/current index 与回合循环。
+  无额外写入。
 
   调用函数
-  applyGeneral、registerGlobalRules、registerPassiveSkills、Deck.build、setCurrentPlayerIndex。
+  this.matchWorkflow.confirmGeneral。
 
   边界与不变量
-  角色选择与发牌顺序不变。
+  角色确认与初始发牌 authority 在 Application Match。
   */
   async confirmGeneral(generalId) {
-    const gameId = this.state.gameId;
-    const selected = this.candidates.find((general) => general.id === generalId);
-    if (!selected || this.state.selectedGeneralId) throw new Error("角色选择无效或已确认");
-    const human = this.state.players[0];
-    applyGeneralDefinition(this.state, human, selected);
-    human.general = selected;
-    this.state.selectedGeneralId = selected.id;
-    const aiPlayers = this.state.players.slice(1);
-    const smallTeamId = ["dawn","dusk"].find((team) => this.teamRules.getTeamSize(team) === GAME_CONFIG.smallTeamSize);
-    const assigned = this.generalSelection.assignAiGenerals(aiPlayers, selected.id, smallTeamId);
-    aiPlayers.forEach((player, index) => {
-      applyGeneralDefinition(this.state, player, assigned[index]);
-      player.general = assigned[index];
-    });
-
-    this.registerGlobalRules();
-    registerPassiveSkills(this);
-    this.state.deck.build(this.state);
-    this.syncDeckAliases();
-    for (const player of this.state.players) {
-      resetTurnFlags(this.state, player, createTurnUsageState(this.teamRules.getRules(player)));
-      resetRoundFlags(this.state, player, createRoundUsageState());
-      await this.drawCards(player, this.teamRules.getInitialHandCount(player), "初始发牌", { silent:true });
-      if (!this.isSessionValid(gameId)) return false;
-    }
-    this.state.startingPlayerIndex = Math.floor(this.random() * this.state.players.length);
-    setCurrentPlayerIndex(this.state, this.state.startingPlayerIndex);
-    await this.eventBus.emit("generalSelected", { type: "generalSelected", player: human, general: selected });
-    if (!this.isSessionValid(gameId)) return false;
-    await this.eventBus.emit("gameStart", { type: "gameStart", game: this });
-    if (!this.isSessionValid(gameId)) return false;
-
-    const dawnCount = TeamManager.teamSize(this.state.players, "dawn");
-    const duskCount = TeamManager.teamSize(this.state.players, "dusk");
-    this.log(`本局晨星阵营有${dawnCount}名角色，暮影阵营有${duskCount}名角色。`, "important");
-    this.log(`你选择了${human.name}，你的阵营是${TEAM_CONFIG[human.battleTeam].name}。`, "important");
-    this.log(`电脑角色为${aiPlayers.map((player) => player.name).join("、")}。`);
-    this.log(`${this.currentPlayer.name}获得首个行动回合。`, "important");
-    this.ui.render(this);
-    this.loopPromise = this.runGameLoop();
-    return true;
+    return this.matchWorkflow.confirmGeneral(generalId);
   }
 
   /*
@@ -509,342 +617,147 @@ export class Game {
 
   /*
   功能
-  持续运行轮次直到胜负或销毁。
+  转发 Application TurnWorkflow.runGameLoop。
 
   调用方
-  confirmGeneral。
+  Application MatchWorkflow start continuation。
 
   输入
   无。
 
   输出
-  无返回值。
+  loop promise。
 
   读取状态
-  Game state 与 EventBus。
+  无额外状态。
 
   写入状态
-  回合/轮次经 Domain transitions。
+  无额外写入。
 
   调用函数
-  takeTurn、advanceTurn、resetRoundFlags。
+  this.turnWorkflow.runGameLoop。
 
   边界与不变量
-  每次 await 后校验 session。
+  turn loop algorithm authority 在 Application Turn。
   */
   async runGameLoop() {
-    const gameId = this.state.gameId;
-    let consecutiveTurnFailures = 0;
-    const failureLimit = 3;
-    try {
-      this.log(`第${this.state.currentRound}轮开始。`, "important");
-      for (const player of this.state.players) resetRoundFlags(this.state, player, createRoundUsageState());
-      await this.eventBus.emit("roundStart", { type: "roundStart", round: this.state.currentRound });
-      if (!this.isSessionValid(gameId)) return;
-      while (this.isSessionValid(gameId) && !this.state.isGameOver) {
-        const player = this.currentPlayer;
-        if (!player || !this.state.players.some((entry) => entry.alive)) {
-          Debug.log("Game", "当前行动角色或存活角色状态无效，安全结束游戏循环");
-          break;
-        }
-        let turnFailed = false;
-        try {
-          if (player.alive) await this.takeTurn(player, gameId);
-        } catch (error) {
-          turnFailed = true;
-          consecutiveTurnFailures += 1;
-          Debug.log("Game", `${player.name}的回合执行失败，尝试推进至下一名存活角色`, error);
-          this.actionLocked = false;
-          this.interactionLocked = false;
-          this.ui.setThinking(false);
-          this.ui.cancelPendingInteractions?.();
-        }
-        if (!this.isSessionValid(gameId) || this.state.isGameOver) break;
-        if (turnFailed) {
-          if (consecutiveTurnFailures >= failureLimit) {
-            Debug.log("Game", `连续${failureLimit}个回合执行失败，安全结束游戏循环`);
-            break;
-          }
-          // 异常后至少让出一次任务，避免损坏状态形成无间隔快速失败循环。
-          if (!(await this.cleanupManager.delay(0))) break;
-        } else {
-          consecutiveTurnFailures = 0;
-        }
-        await this.advanceTurn();
-      }
-    } catch (error) {
-      // 最后一层只负责令 loopPromise 安全收束；单回合异常已在上方尝试继续推进。
-      Debug.log("Game", "游戏循环遇到无法恢复的异常，已安全停止", error);
-      this.actionLocked = false;
-      this.interactionLocked = false;
-      if (this.state.gameId === gameId && !this.state.isDisposed) {
-        this.ui.setThinking(false);
-        this.ui.cancelPendingInteractions?.();
-      }
-    }
+    return this.turnWorkflow.runGameLoop();
   }
 
   /*
   功能
-  执行角色的六阶段完整回合；真人出牌和弃牌阶段会异步等待 UI。
+  转发 Application TurnWorkflow.takeTurn。
 
   调用方
-  runGameLoop。
+  runGameLoop 与 tests。
 
   输入
-  行动 Player 与 gameId。
+  player 与 gameId。
 
   输出
-  无返回值。
+  Promise。
 
   读取状态
-  Game state、EventBus、UI 与 team rules。
+  无额外状态。
 
   写入状态
-  phase 经 MatchStateTransition；资源经 ResourceTransition。
+  无额外写入。
 
   调用函数
-  setMatchPhase、drawCards、gainEnergy、EventBus.emit。
+  this.turnWorkflow.takeTurn。
 
   边界与不变量
-  阶段顺序与事件顺序不变。
+  六阶段 algorithm authority 在 Application Turn。
   */
   async takeTurn(player, gameId) {
-    if (!this.isSessionValid(gameId) || !player?.alive || this.state.isGameOver) return;
-    setMatchPhase(this.state, "turnStart");
-    resetTurnFlags(this.state, player, createTurnUsageState(this.teamRules.getRules(player)));
-    // 每个新全局回合开始：所有角色的 global-turn reactive 额度统一重置，
-    // 必须在 emit("turnStart") 之前完成，避免 turnStart 监听器读取上一回合残留状态。
-    for (const entry of this.state.players) resetGlobalTurnReactiveFlags(this.state, entry, createGlobalTurnReactiveState());
-    this.log(`${player.name}的回合开始。`, "important");
-    await this.eventBus.emit("turnStart", { type: "turnStart", player });
-    if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
-    this.ui.render(this);
-
-    setMatchPhase(this.state, "status");
-    const statusEvent = { type: "beforeStatusResolve", player, cancelled: false };
-    await this.eventBus.emit("beforeStatusResolve", statusEvent);
-    if (!this.isSessionValid(gameId)) return;
-    await this.eventBus.emit("afterStatusResolve", { ...statusEvent, type: "afterStatusResolve" });
-    if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
-
-    setMatchPhase(this.state, "energy");
-    const energyParts = this.teamRules.getTurnEnergyBreakdown(player);
-    const energyEvent = { type:"beforeTurnEnergyGain", player, ...energyParts, amount:energyParts.baseAmount + energyParts.teamBonus + energyParts.equipmentBonus, cancelled:false, metadata:{} };
-    await this.eventBus.emit("beforeTurnEnergyGain", energyEvent);
-    if (!this.isSessionValid(gameId)) return;
-    let energyGained = 0;
-    if (!energyEvent.cancelled) energyGained = await this.gainEnergy(player, Math.max(0, energyEvent.amount), { reason:"回合开始" });
-    if (!this.isSessionValid(gameId)) return;
-    await this.eventBus.emit("afterTurnEnergyGain", { ...energyEvent, type:"afterTurnEnergyGain", actualAmount:energyGained });
-    if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
-
-    setMatchPhase(this.state, "draw");
-    const drawEvent = { type: "beforeDraw", player, count: this.teamRules.getDrawCount(player), cancelled: false, metadata: {} };
-    await this.eventBus.emit("beforeDraw", drawEvent);
-    if (!this.isSessionValid(gameId)) return;
-    if (!drawEvent.cancelled) await this.drawCards(player, Math.max(0, drawEvent.count), "回合摸牌");
-    if (!this.isSessionValid(gameId)) return;
-    await this.eventBus.emit("afterDraw", { ...drawEvent, type: "afterDraw" });
-    if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
-
-    if (shouldSkipActionPhase(player.turnFlags)) {
-      this.log(`${player.name}因「封印」生效，跳过出牌阶段并进入弃牌阶段。`, "important");
-    } else {
-      setMatchPhase(this.state, "play");
-      await this.eventBus.emit("playPhaseStart", { type: "playPhaseStart", player });
-      if (!this.isSessionValid(gameId)) return;
-      this.ui.render(this);
-      if (player.controllerType === "human") {
-        this.ui.setPrompt("你的出牌阶段：选择手牌、发动技能，或结束出牌。", "从手牌中选择可用牌");
-        const completed = await this.ui.waitForHumanPlayEnd(gameId);
-        if (!completed || !this.isSessionValid(gameId)) return;
-      } else {
-        await this.takeAiPlayPhase(player, gameId);
-      }
-      if (!this.isSessionValid(gameId) || this.state.isGameOver || !player.alive) return;
-      await this.eventBus.emit("playPhaseEnd", { type: "playPhaseEnd", player });
-      if (!this.isSessionValid(gameId)) return;
-    }
-
-    setMatchPhase(this.state, "discard");
-    await this.handleDiscardPhase(player, gameId);
-    if (!this.isSessionValid(gameId) || this.state.isGameOver) return;
-
-    setMatchPhase(this.state, "turnEnd");
-    await this.eventBus.emit("turnEnd", { type: "turnEnd", player });
-    if (!this.isSessionValid(gameId)) return;
-    this.log(`${player.name}的回合结束。`);
-    this.ui.render(this);
+    return this.turnWorkflow.takeTurn(player, gameId);
   }
 
   /*
   功能
-  驱动一名 AI 玩家完成当前出牌阶段。
+  转发 Application TurnWorkflow.takeAiPlayPhase。
 
   调用方
-  Game 回合流程。
+  Application TurnWorkflow.takeTurn。
 
   输入
-  当前行动 Player 与所属 gameId。
+  player 与 gameId。
 
   输出
-  异步完成；取消、异常或陈旧动作时安全收束阶段。
+  Promise。
 
   读取状态
-  GameState、AIController 门面、时延配置与会话状态。
+  无额外状态。
 
   写入状态
-  UI 思考状态、真实卡牌/技能结算及可选局部计划队列。
+  无额外写入。
 
   调用函数
-  AIController 合法动作、动作选择、描述重绑和计划序列门面，以及 playCard、useActiveSkill。
+  this.turnWorkflow.takeAiPlayPhase。
 
   边界与不变量
-  搜索失败不得悬空回合；计划重用必须重新绑定当前合法实体，执行失败立即停止重试。
+  AI play-phase orchestration authority 在 Application Turn。
   */
   async takeAiPlayPhase(player, gameId) {
-    let queuedPlan = [];
-    try {
-      this.ui.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
-      this.ui.setThinking(true, player, "正在观察战场与可用资源");
-      let complexPosition = false;
-      try {
-        complexPosition = this.aiController.getActionCandidates(player).length > GAME_CONFIG.aiBeamWidth;
-      } catch (error) {
-        Debug.log("AI", `${player.name}生成合法动作失败，安全结束出牌阶段`, error);
-        return;
-      }
-      if (!(await this.cleanupManager.delay(getAiDelay(this, "initial", { complex:complexPosition })))) return;
-      for (let count = 0; count < GAME_CONFIG.aiMaxActionsPerTurn; count += 1) {
-        if (!this.isSessionValid(gameId) || this.state.isGameOver || !player.alive) break;
-        let searchElapsed = 0;
-        let action = null;
-        if (!this.aiReplanAfterEveryAction && queuedPlan.length) {
-          action = this.aiController.resolvePlannedAction(player, queuedPlan.shift());
-          if (!action) queuedPlan = [];
-        }
-        if (!action) {
-          const searchStarted = globalThis.performance?.now?.() ?? Date.now();
-          try {
-            action = await this.aiController.selectAction(player, { gameId });
-          } catch (error) {
-            // 规划异常不能让回合 Promise 悬空；安全退化为结束出牌。
-            Debug.log("AI", `${player.name}规划行动失败，安全结束出牌阶段`, error);
-            action = { type:"end" };
-          }
-          if (!this.isSessionValid(gameId)) return;
-          searchElapsed = (globalThis.performance?.now?.() ?? Date.now()) - searchStarted;
-          if (!this.aiReplanAfterEveryAction) queuedPlan = this.aiController.getPlannedSequence().slice(1);
-        }
-        if (action.type === "end") {
-          this.ui.setPrompt(`${player.name}准备结束出牌阶段。`);
-          this.ui.setThinking(true, player, "正在收束回合");
-          await this.cleanupManager.delay(Math.max(0, getAiDelay(this, "end") - searchElapsed));
-          if (!this.isSessionValid(gameId)) return;
-          break;
-        }
-        const actionName = action.type === "card" ? `准备使用「${action.card.name}」` : `准备发动「${action.skill.name}」`;
-        const targetLabel = actionTargetLabel(this, player, action.type === "card" ? action.card : action.skill, action.targets, action.selection);
-        const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
-        this.ui.setThinking(true, player, actionDescription);
-        if (!(await this.cleanupManager.delay(Math.max(0, getAiDelay(this, "action") - searchElapsed)))) break;
-        this.ui.setThinking(false);
-        let executed = false;
-        try {
-          if (action.type === "card") executed = await this.playCard(player, action.card, action.targets, action.selection ?? null);
-          else if (action.type === "skill") executed = await this.useActiveSkill(player, action.skill.id, action.targets);
-        } catch (error) {
-          Debug.log("AI", `${player.name}执行行动失败，安全结束出牌阶段`, error);
-          queuedPlan = [];
-          break;
-        }
-        // 陈旧动作或可预期移动失败同样结束本阶段，避免重复尝试同一实体。
-        if (!executed) {
-          queuedPlan = [];
-          break;
-        }
-        if (!this.isSessionValid(gameId)) return;
-      }
-      if (this.isSessionValid(gameId) && !this.state.isGameOver) this.ui.setPrompt(`${player.name}结束了出牌阶段。`);
-    } finally {
-      queuedPlan = [];
-      if (this.state.gameId === gameId && !this.state.isDisposed) {
-        this.actionLocked = false;
-        this.interactionLocked = false;
-        this.ui.setThinking(false);
-        this.ui.render(this);
-      }
-    }
-  }
-
-  /** 处理手牌上限；真人必须选择准确数量，电脑按价值自动弃置。 */
-  async handleDiscardPhase(player, gameId) {
-    const required = Math.max(0, player.hand.length - Math.max(0, player.hp));
-    if (!required) return;
-    this.log(`${player.name}需要弃置${required}张牌。`);
-    let cards = [];
-    if (player.controllerType === "human") cards = await this.ui.requestDiscard(player, required, `手牌上限为${player.hp}，请选择${required}张弃牌`);
-    else {
-      this.ui.setThinking(true, player, `正在斟酌弃置${required}张牌`);
-      if (!(await this.cleanupManager.delay(getAiDelay(this, "discard")))) return;
-      cards = this.aiController.chooseDiscards(player, required);
-      this.ui.setThinking(false);
-    }
-    if (!this.isSessionValid(gameId)) return;
-    for (const card of cards.slice(0, required)) {
-      await this.discardCardFromHand(player, card, "弃牌阶段");
-      if (!this.isSessionValid(gameId)) return;
-    }
+    return this.turnWorkflow.takeAiPlayPhase(player, gameId);
   }
 
   /*
   功能
-  移动到下一名存活角色，并在经过首发座位时开始新轮。
+  转发 Application TurnWorkflow.handleDiscardPhase。
 
   调用方
-  runGameLoop。
+  Application TurnWorkflow.takeTurn。
+
+  输入
+  player 与 gameId。
+
+  输出
+  Promise。
+
+  读取状态
+  无额外状态。
+
+  写入状态
+  无额外写入。
+
+  调用函数
+  this.turnWorkflow.handleDiscardPhase。
+
+  边界与不变量
+  discard sequencing authority 在 Application Turn。
+  */
+  async handleDiscardPhase(player, gameId) {
+    return this.turnWorkflow.handleDiscardPhase(player, gameId);
+  }
+
+  /*
+  功能
+  转发 Application TurnWorkflow.advanceTurn。
+
+  调用方
+  Application TurnWorkflow.runGameLoop。
 
   输入
   无。
 
   输出
-  无返回值。
+  Promise。
 
   读取状态
-  Game state 与玩家存活。
+  无额外状态。
 
   写入状态
-  currentRound/currentPlayerIndex 经 MatchStateTransition。
+  无额外写入。
 
   调用函数
-  setCurrentRound、setCurrentPlayerIndex。
+  this.turnWorkflow.advanceTurn。
 
   边界与不变量
-  轮次推进决定仍在 workflow。
+  轮次推进 formula authority 在 Domain TurnRules。
   */
   async advanceTurn() {
-    const gameId = this.state.gameId;
-    if (!this.isSessionValid(gameId) || this.state.isGameOver) return;
-    await this.cleanupDefeatedZones();
-    if (!this.isSessionValid(gameId) || this.state.isGameOver) return;
-    const nextTurn = calculateNextActorIndex(
-      this.state.players,
-      this.state.currentPlayerIndex,
-      this.state.startingPlayerIndex
-    );
-    const next = nextTurn.nextIndex;
-    const wrapped = nextTurn.wrapped;
-    if (wrapped) {
-      await this.eventBus.emit("roundEnd", { type: "roundEnd", round: this.state.currentRound });
-      if (!this.isSessionValid(gameId)) return;
-      setCurrentRound(this.state, this.state.currentRound + 1);
-      for (const player of this.state.players) resetRoundFlags(this.state, player, createRoundUsageState());
-      this.log(`第${this.state.currentRound}轮开始。`, "important");
-      await this.eventBus.emit("roundStart", { type: "roundStart", round: this.state.currentRound });
-      if (!this.isSessionValid(gameId)) return;
-    }
-    setCurrentPlayerIndex(this.state, next);
+    return this.turnWorkflow.advanceTurn();
   }
 
   /*
@@ -1134,332 +1047,207 @@ export class Game {
     return false;
   }
 
-  /**
-   * 使用一张主动牌。卡牌从手牌先进入结算区，完成或取消后才进入弃牌堆/装备区。
-   * @returns {Promise<boolean>} 是否实际开始结算。
-   */
-  async playCard(source, card, requestedTargets = [], selection = null, options = {}) {
-    const gameId = this.state.gameId;
-    if (!this.isSessionValid(gameId) || this.state.isGameOver) return false;
-    const forcedAssault = options.usageContext === "leverageAssault" && card?.definitionId === "assault";
-    const legality = forcedAssault
-      ? RuleEngine.canUseForcedAssault(this, source, card, requestedTargets[0])
-      : RuleEngine.canPlayCard(this, source, card);
-    // 借势会在自身结算锁内嵌套调用普通突袭；除此之外任何重入仍被统一锁拒绝。
-    if (!legality.ok || (this.actionLocked && !forcedAssault)) return false;
-    let targets = requestedTargets;
-    const legalTargets = forcedAssault
-      ? RuleEngine.getAssaultTargetCandidates(this, source)
-      : RuleEngine.getCardTargets(this, source, card);
-    if (card.targetType === "self") targets = [source];
-    if (card.targetType === "allEnemies") targets = legalTargets;
-    if (card.targetType === "allLiving") targets = legalTargets;
-    if (!["none", "self", "allEnemies", "allLiving", "multiStage"].includes(card.targetType) && (!targets[0] || !legalTargets.includes(targets[0]))) return false;
-    const preparedTransfer = card.definitionId === "transfer"
-      ? await this.prepareTransferIntent(source, card, selection)
-      : null;
-    const preparedLeverage = card.definitionId === "leverage"
-      ? this.prepareLeverageIntent(source, selection)
-      : null;
-    const needsPrivateSelection = ["scout", "plunder", "destroy"].includes(card.definitionId);
-    const preparedPrivateSelection = needsPrivateSelection
-      ? await this.preparePrivateCardSelectionIntent(source, card, targets, selection)
-      : null;
-    if (!this.isSessionValid(gameId)) return false;
-    if (card.definitionId === "transfer" && !preparedTransfer) return false;
-    if (card.definitionId === "leverage" && !preparedLeverage) return false;
-    if (needsPrivateSelection && !preparedPrivateSelection) return false;
-    if (preparedLeverage) targets = [preparedLeverage.firstTarget, preparedLeverage.secondTarget];
+  /*
+  功能
+  转发 Application ActionWorkflow.playCard。
 
-    const previousActionLocked = this.actionLocked;
-    this.actionLocked = true;
-    const resolutionId = `${this.state.gameId}:resolution:${++this.state.resolutionSerial}`;
-    let completed = false;
-    let enteredResolving = false;
-    let destinationCommitted = false;
-    let expectedDestination = card.category === "equipment" ? "equipment" : "discard";
-    let failureReason = null;
-    try {
-      let moved = false;
-      try {
-        moved = await this.moveHandToResolving(source, card, resolutionId);
-      } finally {
-        // afterCardMove 监听器也可能抛错，按实体所有权识别已完成的物理移动。
-        enteredResolving = this.resolutionOwners.get(card) === resolutionId;
-      }
-      if (!moved) return false;
-      if (!this.isSessionValid(gameId)) return false;
-      const targetLabel = preparedTransfer
-        ? `来源 ${preparedTransfer.publicContext.fromName} → 接收 ${preparedTransfer.publicContext.receiverName}`
-        : preparedLeverage
-          ? `${preparedLeverage.firstTarget.name} → ${preparedLeverage.secondTarget.name}`
-        : actionTargetLabel(this, source, card, targets, selection);
-      this.ui.setCurrentCard(card, source.name, targetLabel, resolveActionDisplayTargets(this, source, card, targets));
-      this.ui.playSound?.("playCard");
-      if (preparedTransfer) {
-        const publicContext = preparedTransfer.publicContext;
-        const receiverLabel = publicContext.receiverPlayerId === source.id ? "自己" : publicContext.receiverName;
-        this.log(`${source.name}使用了「${card.name}」，准备将${publicContext.fromName}的${publicContext.safeItemLabel}转移给${receiverLabel}。`);
-      } else if (preparedLeverage) {
-        this.log(`${source.name}对${preparedLeverage.firstTarget.name}使用「借势」，要求其对${preparedLeverage.secondTarget.name}使用「突袭」；若拒绝，${source.name}将获得其「${preparedLeverage.equipmentCard.name}」。`);
-      } else if (card.category !== "equipment" && !RESULT_ONLY_CARD_IDS.has(card.definitionId)) {
-        this.log(actionLogMessage(source, card, targets));
-      }
-      const useEvent = await this.eventBus.emit("beforeCardUse", { type: "beforeCardUse", source, card, targets, cancelled: false, metadata: {}, resolutionId });
-      if (!this.isSessionValid(gameId)) return false;
-      let cancelledBeforeResolve = useEvent.cancelled;
-      if (!cancelledBeforeResolve && targets.length) {
-        const targetEvent = { type: "targetSelected", source, card, targets, cancelled: false, metadata: {}, resolutionId };
-        await this.eventBus.emit("targetSelected", targetEvent);
-        if (!this.isSessionValid(gameId)) return false;
-        targets = targetEvent.targets;
-      }
-      const resolveEvent = { type: "beforeCardResolve", source, card, targets, cancelled: false, metadata: {}, resolutionId };
-      if (!cancelledBeforeResolve) await this.eventBus.emit("beforeCardResolve", resolveEvent);
-      if (!this.isSessionValid(gameId)) return false;
-      targets = resolveEvent.targets;
-      cancelledBeforeResolve ||= resolveEvent.cancelled;
-      // 群伤牌使用逐目标反制，由各目标的效果解析负责；这里不能提前取消整张牌。
-      const counterResult = !cancelledBeforeResolve && card.counterScope !== "target"
-        ? await this.responseSystem.askForCounter(source, card, targets, {
-          publicTransferContext:preparedTransfer?.publicContext ?? null,
-          publicSelectionContext:preparedPrivateSelection?.publicContext ?? null,
-          relatedTargets:preparedTransfer
-            ? [preparedTransfer.privateIntent.from, preparedTransfer.privateIntent.receiver]
-            : targets
-        })
-        : { status:RESPONSE_STATUS.UNAVAILABLE };
-      if (!this.isSessionValid(gameId) || isCancelledResponse(counterResult)) return false;
-      const countered = counterResult?.status === RESPONSE_STATUS.USED;
-      let destination = "discard";
-      let effectResolved = false;
-      let effectEffectiveTargets = null;
-      if (cancelledBeforeResolve) {
-        this.log(`「${card.name}」的效果被取消。`, "important");
-      } else if (!countered) {
-        const effectResult = await resolveCardEffect(this, source, card, targets, {
-          resolutionId, selection,
-          privateTransferIntent:preparedTransfer?.privateIntent ?? null,
-          privateCardSelectionIntent:preparedPrivateSelection?.privateIntent ?? null,
-          privateLeverageIntent:preparedLeverage
-        });
-        if (!this.isSessionValid(gameId)) return false;
-        destination = effectResult.destination;
-        effectResolved = effectResult.resolved ?? true;
-        effectEffectiveTargets = Array.isArray(effectResult.effectiveTargets)
-          ? effectResult.effectiveTargets
-          : null;
-      }
-      expectedDestination = destination;
-      if (destination === "discard") {
-        const discarded = await this.finishResolvingToDiscard(card, resolutionId);
-        destinationCommitted = discarded && this.isCardCommittedToDiscard(card);
-        if (!destinationCommitted) throw new Error("结算牌未能进入弃牌堆");
-      } else if (destination === "equipment") {
-        destinationCommitted = this.isCardCommittedToEquipment(source, card);
-        if (!destinationCommitted) throw new Error("装备牌未能进入装备区");
-      } else {
-        throw new Error("未知的卡牌结算目标区域");
-      }
-      if (!this.isSessionValid(gameId)) return false;
-      const resolved = !countered && !cancelledBeforeResolve && effectResolved;
-      const effectiveTargets = !resolved
-        ? []
-        : effectEffectiveTargets ?? (preparedTransfer
-          ? [preparedTransfer.privateIntent.from, preparedTransfer.privateIntent.receiver]
-          : preparedLeverage
-            ? [preparedLeverage.firstTarget, preparedLeverage.secondTarget]
-            : card.definitionId === "mutualBenefit"
-              ? this.state.players.filter((player) => player.alive)
-              : targets);
-      await this.eventBus.emit("cardUsed", {
-        type:"cardUsed", source, card, targets, effectiveTargets,
-        cancelled:!resolved, resolved, resolutionId
-      });
-      if (!this.isSessionValid(gameId)) return false;
-      source.statistics.cardsPlayed += 1;
-      if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
-      this.ui.render(this);
-      completed = true;
-      return true;
-    } catch (error) {
-      failureReason = error;
-      throw error;
-    } finally {
-      if (enteredResolving) {
-        destinationCommitted = expectedDestination === "discard"
-          ? this.isCardCommittedToDiscard(card)
-          : expectedDestination === "equipment"
-            ? this.isCardCommittedToEquipment(source, card)
-            : false;
-        if (!destinationCommitted && this.resolutionOwners.get(card) === resolutionId) {
-          this.cleanupFailedResolution(card, failureReason, resolutionId);
-        } else if (destinationCommitted && this.resolutionOwners.get(card) === resolutionId) {
-          this.resolutionOwners.delete(card);
-        }
-      }
-      if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
-      this.actionLocked = previousActionLocked;
-      if (!previousActionLocked && source.controllerType !== "human") {
-        this.interactionLocked = false;
-        if (this.ui.thinkingPlayerId != null) this.ui.setThinking(false);
-      }
-      this.flushPendingHumanPlayEnd();
-      if (completed && !previousActionLocked && !this.state.isGameOver && source.alive && source.controllerType === "human"
-        && this.currentPlayer?.id === source.id && this.state.phase === "play") {
-        this.ui.setPrompt("继续出牌，或结束本次出牌阶段。", "选择一张可用手牌");
-      }
-      this.ui.render(this);
-    }
+  调用方
+  Application Turn AI orchestration、human command 与 tests。
+
+  输入
+  source、card、requestedTargets、selection 与 options。
+
+  输出
+  Promise<boolean>。
+
+  读取状态
+  无额外状态。
+
+  写入状态
+  无额外写入。
+
+  调用函数
+  this.actionWorkflow.playCard。
+
+  边界与不变量
+  generic card action pipeline authority 在 Application Action；card-specific prep 仍由本文件 legacy collaborator 提供。
+  */
+  async playCard(source, card, requestedTargets = [], selection = null, options = {}) {
+    return this.actionWorkflow.playCard(source, card, requestedTargets, selection, options);
   }
 
   /*
   功能
-  发动玩家的主动技能并提交次数/费用/目标执行。
+  转发 Application ActionWorkflow.useActiveSkill。
 
   调用方
-  AI play phase 与 human skill handler。
+  Application Turn AI orchestration、human command 与 tests。
 
   输入
   source、skillId 与 targets。
 
   输出
-  是否执行成功。
+  Promise<boolean>。
 
   读取状态
-  Game state 与主动技能定义。
+  无额外状态。
 
   写入状态
-  active skill usage 经 RuleUsageTransition；资源经 ResourceTransition。
+  无额外写入。
 
   调用函数
-  recordActiveSkillUse、getActiveSkillCost。
+  this.actionWorkflow.useActiveSkill。
 
   边界与不变量
-  技能规则由 skill runtime 决定，transition 只提交。
+  generic skill action pipeline authority 在 Application Action；skill-specific rule 仍 legacy。
   */
   async useActiveSkill(source, skillId, targets = []) {
-    const gameId = this.state.gameId;
-    if (!this.isSessionValid(gameId) || this.state.isGameOver) return false;
-    const skill = getActiveSkill(source);
-    if (!skill || skill.id !== skillId || this.actionLocked) return false;
-    const energyCost = getActiveSkillCost(this, source, skill);
-    const legality = skill.canUse(this, source, energyCost);
-    if (!legality.ok) return false;
-    const legalTargets = RuleEngine.getSkillTargets(this, source, skill);
-    if (!["none", "allEnemies"].includes(skill.targetType) && (!targets[0] || !legalTargets.includes(targets[0]))) return false;
-    this.actionLocked = true;
-    recordActiveSkillUse(this.state, source, skill.id);
-    try {
-      const targetLabel = actionTargetLabel(this, source, skill, targets);
-      this.ui.setCurrentCard(skill.name, `${source.name} · 技能`, targetLabel, resolveActionDisplayTargets(this, source, skill, targets));
-      this.ui.playSound?.("skill");
-      await skill.execute(this, source, targets, {
-        resolutionId:createId("skill-resolution"), energyCost
-      });
-      if (!this.isSessionValid(gameId)) return false;
-      this.ui.render(this);
-      return true;
-    } finally {
-      this.actionLocked = false;
-      if (source.controllerType !== "human") {
-        this.interactionLocked = false;
-        if (this.ui.thinkingPlayerId != null) this.ui.setThinking(false);
-      }
-      this.flushPendingHumanPlayEnd();
-      if (!this.state.isGameOver && source.controllerType === "human" && this.state.phase === "play") {
-        this.ui.setPrompt("技能结算完成，继续出牌或结束阶段。", "选择一张可用手牌");
-      }
-      this.ui.render(this);
-    }
+    return this.actionWorkflow.useActiveSkill(source, skillId, targets);
   }
 
-  /** 真人点击手牌的入口；若需要目标则等待统一目标选择。 */
+  /*
+  功能
+  转发 Application ActionWorkflow.handleHumanCard。
+
+  调用方
+  main/UI command boundary。
+
+  输入
+  cardId。
+
+  输出
+  Promise<boolean>。
+
+  读取状态
+  无额外状态。
+
+  写入状态
+  无额外写入。
+
+  调用函数
+  this.actionWorkflow.handleHumanCard。
+
+  边界与不变量
+  human inbound command authority 在 Application Action。
+  */
   async handleHumanCard(cardId) {
-    const gameId = this.state.gameId;
-    if (!this.isSessionValid(gameId)) return false;
-    const human = this.state.players[0];
-    const card = human.hand.find((entry) => entry.id === cardId);
-    if (!card || this.currentPlayer?.id !== human.id || this.state.phase !== "play" || this.actionLocked || this.interactionLocked) return false;
-    const legality = RuleEngine.canPlayCard(this, human, card);
-    if (!legality.ok) { this.ui.setPrompt(legality.reason); return false; }
-    this.interactionLocked = true;
-    this.ui.render(this);
-    try {
-      const legalTargets = RuleEngine.getCardTargets(this, human, card);
-      let targets = [];
-      if (!["none", "self", "allEnemies", "allLiving", "multiStage"].includes(card.targetType)) {
-        const target = await this.ui.requestTarget(legalTargets, `为「${card.name}」选择目标`, { source:human, card });
-        if (!this.isSessionValid(gameId)) return false;
-        if (!target) return false;
-        targets = [target];
-      }
-      let selection = null;
-      if (card.selectionFlow?.length) selection = await this.ui.requestCardFlow?.(this, human, card, targets);
-      if (!this.isSessionValid(gameId)) return false;
-      if (card.selectionFlow?.length && !selection) return false;
-      return await this.playCard(human, card, targets, selection);
-    } finally {
-      this.interactionLocked = false;
-      this.flushPendingHumanPlayEnd();
-      this.ui.render(this);
-    }
+    return this.actionWorkflow.handleHumanCard(cardId);
   }
 
-  /** 真人点击主动技能的入口；统一请求合法目标。 */
+  /*
+  功能
+  转发 Application ActionWorkflow.handleHumanSkill。
+
+  调用方
+  main/UI command boundary。
+
+  输入
+  无。
+
+  输出
+  Promise<boolean>。
+
+  读取状态
+  无额外状态。
+
+  写入状态
+  无额外写入。
+
+  调用函数
+  this.actionWorkflow.handleHumanSkill。
+
+  边界与不变量
+  human inbound command authority 在 Application Action。
+  */
   async handleHumanSkill() {
-    const gameId = this.state.gameId;
-    if (!this.isSessionValid(gameId)) return false;
-    const human = this.state.players[0];
-    const skill = getActiveSkill(human);
-    if (!skill || this.actionLocked || this.interactionLocked || !skill.canUse(this, human).ok) return false;
-    this.interactionLocked = true;
-    this.ui.render(this);
-    try {
-      const legalTargets = RuleEngine.getSkillTargets(this, human, skill);
-      let targets = [];
-      if (!["none", "allEnemies"].includes(skill.targetType)) {
-        const target = await this.ui.requestTarget(legalTargets, `为「${skill.name}」选择目标`);
-        if (!this.isSessionValid(gameId)) return false;
-        if (!target) return false;
-        targets = [target];
-      }
-      return await this.useActiveSkill(human, skill.id, targets);
-    } finally {
-      this.interactionLocked = false;
-      this.flushPendingHumanPlayEnd();
-      this.ui.render(this);
-    }
+    return this.actionWorkflow.handleHumanSkill();
   }
 
-  /** 真人结束出牌阶段；仅在自己的出牌阶段有效。 */
+  /*
+  功能
+  转发 Application ActionWorkflow.requestEndHumanPlay。
+
+  调用方
+  main/UI command boundary。
+
+  输入
+  无。
+
+  输出
+  boolean。
+
+  读取状态
+  无额外状态。
+
+  写入状态
+  无额外写入。
+
+  调用函数
+  this.actionWorkflow.requestEndHumanPlay。
+
+  边界与不变量
+  end-play command authority 在 Application Action。
+  */
   requestEndHumanPlay() {
-    const human = this.state.players[0];
-    if (this.currentPlayer?.id !== human.id || this.state.phase !== "play" || this.actionLocked || this.interactionLocked) return false;
-    this.ui.resolveHumanPlayEnd(this.state.gameId);
-    return true;
+    return this.actionWorkflow.requestEndHumanPlay();
   }
 
-  /** 标记当前真人已阵亡；等正在结算的卡牌/技能及交互完整退出后再释放出牌等待。 */
+  /*
+  功能
+  转发 Application ActionWorkflow.requestHumanPlayEndForDefeat。
+
+  调用方
+  Application DyingWorkflow death commit。
+
+  输入
+  player。
+
+  输出
+  boolean。
+
+  读取状态
+  无额外状态。
+
+  写入状态
+  无额外写入。
+
+  调用函数
+  this.actionWorkflow.requestHumanPlayEndForDefeat。
+
+  边界与不变量
+  human defeat release authority 在 Application Action。
+  */
   requestHumanPlayEndForDefeat(player) {
-    const human = this.state.players[0];
-    if (!player || player.id !== human?.id || player.controllerType !== "human" ||
-      this.currentPlayer?.id !== player.id) return false;
-    this.pendingHumanPlayEnd = true;
-    return this.flushPendingHumanPlayEnd();
+    return this.actionWorkflow.requestHumanPlayEndForDefeat(player);
   }
 
-  /** 只在核心结算锁与 UI 交互锁均释放后结束真人出牌，避免回合循环抢跑。 */
+  /*
+  功能
+  转发 Application ActionWorkflow.flushPendingHumanPlayEnd。
+
+  调用方
+  action finally paths。
+
+  输入
+  无。
+
+  输出
+  boolean。
+
+  读取状态
+  无额外状态。
+
+  写入状态
+  无额外写入。
+
+  调用函数
+  this.actionWorkflow.flushPendingHumanPlayEnd。
+
+  边界与不变量
+  pendingHumanPlayEnd authority 在 Application Action。
+  */
   flushPendingHumanPlayEnd() {
-    if (!this.pendingHumanPlayEnd) return false;
-    if (this.state.isDisposed) {
-      this.pendingHumanPlayEnd = false;
-      return false;
-    }
-    if (this.actionLocked || this.interactionLocked) return false;
-    this.pendingHumanPlayEnd = false;
-    this.ui.resolveHumanPlayEnd(this.state.gameId);
-    return true;
+    return this.actionWorkflow.flushPendingHumanPlayEnd();
   }
 
   /*
@@ -1577,10 +1365,10 @@ export class Game {
 
   /*
   功能
-  判断并提交胜负状态；停止旧交互并展示结果。
+  转发 Application MatchWorkflow.checkVictory。
 
   调用方
-  DyingSystem.kill 与测试。
+  Application Combat death continuation 与 tests。
 
   输入
   无。
@@ -1589,35 +1377,19 @@ export class Game {
   winnerTeam 或 null。
 
   读取状态
-  Game state 玩家存活。
+  无额外状态。
 
   写入状态
-  winnerTeam/isGameOver/phase 经 MatchStateTransition。
+  无额外写入。
 
   调用函数
-  setWinnerTeam、setGameOver、setMatchPhase。
+  this.matchWorkflow.checkVictory。
 
   边界与不变量
-  胜利决定留在 workflow，transition 只提交。
+  胜利决定 formula authority 在 Domain TeamRules。
   */
   async checkVictory() {
-    const gameId = this.state.gameId;
-    if (!this.isSessionValid(gameId) || this.state.isGameOver) return this.state.winnerTeam;
-    const dawnAlive = this.state.players.some((player) => player.alive && player.battleTeam === "dawn");
-    const duskAlive = this.state.players.some((player) => player.alive && player.battleTeam === "dusk");
-    if (dawnAlive && duskAlive) return null;
-    const winnerTeam = dawnAlive ? "dawn" : "dusk";
-    setWinnerTeam(this.state, winnerTeam);
-    setGameOver(this.state, true);
-    setMatchPhase(this.state, "gameOver");
-    this.responseSystem.cleanup();
-    this.ui.cancelPendingInteractions();
-    this.log(`${TEAM_CONFIG[winnerTeam].name}消灭了全部敌人，获得胜利！`, "important");
-    await this.eventBus.emit("gameOver", { type: "gameOver", winnerTeam });
-    if (!this.isSessionValid(gameId)) return null;
-    this.ui.render(this);
-    this.ui.showGameOver(winnerTeam, this.state.players[0].battleTeam === winnerTeam);
-    return winnerTeam;
+    return this.matchWorkflow.checkVictory();
   }
 
   /*
@@ -2520,22 +2292,33 @@ export class Game {
     return !this.state.isDisposed && this.state.gameId === gameId && ownsUi;
   }
 
-  /**
-   * 终止本局并清理延迟、响应、事件与 UI Promise。旧异步逻辑会收到 false/null 后自然退出。
-   */
+  /*
+  功能
+  转发 Application MatchWorkflow.dispose。
+
+  调用方
+  main restart 与 tests。
+
+  输入
+  无。
+
+  输出
+  无。
+
+  读取状态
+  无额外状态。
+
+  写入状态
+  无额外写入。
+
+  调用函数
+  this.matchWorkflow.dispose。
+
+  边界与不变量
+  match lifecycle authority 在 Application Match；EventBus concrete cleanup 仍经 collaborator。
+  */
   dispose() {
-    if (this.state.isDisposed) return;
-    this.state.isDisposed = true;
-    this.interactionLocked = false;
-    this.pendingHumanPlayEnd = false;
-    this.cleanupManager.cleanup();
-    this.responseSystem.cleanup();
-    this.cardSelectionSystem.cleanup();
-    this.dyingSystem.cleanup();
-    this.publicCardPool.cleanup();
-    this.eventBus.clear();
-    this.ui.cancelPendingInteractions();
-    Debug.log("Game", `清理对局 ${this.state.gameId}`);
+    return this.matchWorkflow.dispose();
   }
 }
 

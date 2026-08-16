@@ -456,7 +456,7 @@ export function createDyingWorkflow(dependencies) {
     get active() { return active; },
     /*
     功能
-    返回当前濒死队列引用。
+    返回当前濒死队列的只读冻结快照。
 
     调用方
     legacy observers。
@@ -465,7 +465,7 @@ export function createDyingWorkflow(dependencies) {
     无。
 
     输出
-    队列数组。
+    冻结队列快照数组。
 
     读取状态
     queue。
@@ -474,12 +474,12 @@ export function createDyingWorkflow(dependencies) {
     无。
 
     调用函数
-    无。
+    Array.slice、Object.freeze。
 
     边界与不变量
-    调用方不得绕过 enter/resolve 直接写入队列。
+    不暴露内部可变数组；快照不随后续 enqueue 变化。
     */
-    get queue() { return queue; },
+    get queueSnapshot() { return Object.freeze(queue.slice()); },
     /*
     功能
     返回当前濒死上下文。

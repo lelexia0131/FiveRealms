@@ -57,6 +57,8 @@ export function createGameChoiceBoundary(game, choiceContexts, injectedPort = nu
   const humanPort = createChoicePort(createUiChoiceAdapter({
     requestResponse: (request, label) => game.ui.requestResponse(request, label),
     requestPublicCard: (player, cards) => game.ui.requestPublicCard?.(player, cards),
+    requestDiscard: (player, count, prompt) => game.ui.requestDiscard(player, count, prompt),
+    requestTarget: (players, prompt, meta) => game.ui.requestTarget(players, prompt, meta),
     getLegacyContext: (requestId) => choiceContexts.get(requestId),
     isSessionValid: (gameId) => game.isSessionValid(gameId)
   }));
@@ -64,6 +66,7 @@ export function createGameChoiceBoundary(game, choiceContexts, injectedPort = nu
     getLegacyContext: (requestId) => choiceContexts.get(requestId),
     shouldRespond: (responder, type, context, cards) => game.aiController.shouldRespond(responder, type, context, cards),
     choosePublicCard: (player, cards) => game.aiController.choosePublicCard(player, cards),
+    chooseDiscards: (player, count) => game.aiController.chooseDiscards(player, count),
     isSessionValid: (gameId) => game.isSessionValid(gameId)
   }));
   const aiPort = createChoicePort(createAiResponseTimingDecorator(rawAiPort, {

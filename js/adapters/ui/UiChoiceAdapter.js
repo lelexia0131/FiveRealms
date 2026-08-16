@@ -47,6 +47,8 @@ response 请求字段与旧 UI request 保持逐项映射；publicCard 经 legac
 export function createUiChoiceAdapter({
   requestResponse,
   requestPublicCard,
+  requestDiscard,
+  requestTarget,
   getLegacyContext,
   isSessionValid
 }) {
@@ -55,6 +57,9 @@ export function createUiChoiceAdapter({
   }
   if (typeof requestPublicCard !== "function" || typeof getLegacyContext !== "function") {
     throw new TypeError("UiChoiceAdapter 需要 requestPublicCard 与 getLegacyContext");
+  }
+  if (typeof requestDiscard !== "function" || typeof requestTarget !== "function") {
+    throw new TypeError("UiChoiceAdapter 需要 requestDiscard 与 requestTarget");
   }
   return Object.freeze({
     /*
@@ -90,6 +95,24 @@ export function createUiChoiceAdapter({
         if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
         return card
           ? createChoiceResult("selected", { selectedIds:[card.id] })
+          : createChoiceResult("declined");
+      }
+      if (choiceRequest?.kind === "discard") {
+        const legacy = getLegacyContext(choiceRequest.requestId);
+        if (!legacy?.player || !Number.isFinite(legacy.count)) return createChoiceResult("cancelled");
+        const cards = await requestDiscard(legacy.player, legacy.count, legacy.prompt);
+        if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
+        return cards?.length
+          ? createChoiceResult("selected", { selectedIds: cards.slice(0, legacy.count).map((card) => card.id) })
+          : createChoiceResult("declined");
+      }
+      if (choiceRequest?.kind === "target") {
+        const legacy = getLegacyContext(choiceRequest.requestId);
+        if (!legacy?.players) return createChoiceResult("cancelled");
+        const target = await requestTarget(legacy.players, legacy.prompt, legacy.meta);
+        if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
+        return target
+          ? createChoiceResult("selected", { selectedIds:[target.id] })
           : createChoiceResult("declined");
       }
       if (choiceRequest?.kind !== "response") return createChoiceResult("cancelled", { reason:"unsupported-choice-kind" });

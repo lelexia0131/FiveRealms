@@ -21,7 +21,9 @@ concrete diagnostics adapter（当前由 Game composition 桥接）。
 const REQUIRED_METHODS = [
   "recordDamage",
   "recordHealing",
-  "recordHpLoss"
+  "recordHpLoss",
+  "recordCardPlayed",
+  "reportWorkflowError"
 ];
 
 /*
@@ -47,7 +49,7 @@ Game composition root 与 tests。
 Object.freeze。
 
 边界与不变量
-不暴露整个 Player.statistics；后续 AI 性能诊断另行收敛。
+不暴露整个 Player.statistics；workflow error 只表达稳定 trace semantic。
 */
 export function createDiagnosticsPort(implementation) {
   if (!implementation) throw new TypeError("DiagnosticsPort 需要 implementation");
@@ -59,6 +61,8 @@ export function createDiagnosticsPort(implementation) {
   return Object.freeze({
     recordDamage: implementation.recordDamage,
     recordHealing: implementation.recordHealing,
-    recordHpLoss: implementation.recordHpLoss
+    recordHpLoss: implementation.recordHpLoss,
+    recordCardPlayed: implementation.recordCardPlayed,
+    reportWorkflowError: implementation.reportWorkflowError
   });
 }

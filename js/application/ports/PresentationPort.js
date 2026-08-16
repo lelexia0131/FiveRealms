@@ -29,6 +29,13 @@ const REQUIRED_METHODS = [
   "hideJudgment",
   "showCurrentEffect",
   "showLightningHit",
+  "showCurrentAction",
+  "playActionCue",
+  "setPrompt",
+  "showThinking",
+  "clearThinking",
+  "isThinkingActive",
+  "showGameOver",
   "refresh"
 ];
 
@@ -55,7 +62,7 @@ Game composition root 与 tests。
 Object.freeze。
 
 边界与不变量
-只要求当前 Combat/Dying/Judgment/Status 真实消费的语义 surface；不创建 UIManager 副本。
+只要求当前 Combat/Dying/Judgment/Status 与 FR-ARCH-9 Match/Turn/Action 真实消费的语义 surface；不创建 UIManager 副本。
 */
 export function createPresentationPort(implementation) {
   if (!implementation) throw new TypeError("PresentationPort 需要 implementation");
@@ -75,6 +82,13 @@ export function createPresentationPort(implementation) {
     hideJudgment: implementation.hideJudgment,
     showCurrentEffect: implementation.showCurrentEffect,
     showLightningHit: implementation.showLightningHit,
+    showCurrentAction: implementation.showCurrentAction,
+    playActionCue: implementation.playActionCue,
+    setPrompt: implementation.setPrompt,
+    showThinking: implementation.showThinking,
+    clearThinking: implementation.clearThinking,
+    isThinkingActive: implementation.isThinkingActive,
+    showGameOver: implementation.showGameOver,
     refresh: implementation.refresh
   });
 }

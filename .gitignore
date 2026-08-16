@@ -284,8 +284,9 @@ backups/
 *.heapprofile
 *.heapsnapshot
 
-diagnostics/
+/diagnostics/
 profiling/
+!/js/adapters/diagnostics/
 
 # ------------------------------------------------------------
 
