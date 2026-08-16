@@ -20,13 +20,15 @@ Domain mutation 经 transitions/workflows；trigger runtime state 经 transition
 import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
 import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { addSpyGapPendingTarget, addTrackingTarget, markCategoryUsed, removeSpyGapPendingTarget, setCoordinationTriggered, setGambleTriggered, setGuardianAidUsed, setLastEmberResolutionId, setMomentum, setRejuvenationTriggerCount, setSpyGapTriggered, setTrackingTurnNumber } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { getAllInAssaultBonus, isHuntMarkExpired } from "../../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import { getAllInAssaultBonus } from "../../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
+import { canRevealSpyGap, canTriggerCoordination, canTriggerEmber, canTriggerGamble, canTriggerGuardianAid, canTriggerMomentumCategory, canTriggerRejuvenation, canTriggerSpyGapAfterDamage, canTriggerSpyGapOnRescue, canTriggerTrackingTarget, isHuntMarkExpiredForOwner, shouldAddAllInDamage, shouldAddMomentumDamage, shouldAdvanceTrackingClock, shouldCleanupExpiredHuntMarks, shouldConsumeAllIn, shouldConsumeMomentum, shouldIgnoreEmberDuplicate, shouldQueueSpyGapOnDying, shouldRemoveSpyGapPendingOnDead, shouldResetMomentumAtTurnEnd, shouldResetRejuvenationAtTurnStart } from "../../domain/rules/skill/PassiveSkillRules.js?build=20260815-shadow-agent-p1-slot";
 
 const REQUIRED_DEPENDENCIES = [
-  "onEvent", "getState", "isSessionValid", "log", "random", "responseSystem",
+  "onEvent", "getState", "isSessionValid", "presentation", "random", "responseSystem",
   "discardCardFromHand", "drawCards", "gainEnergy", "preparePrivateHandPeekIntent",
-  "resolvePrivateHandPeekIntent", "rememberPrivateCard", "requestDiscard",
-  "chooseDiscards", "showPrivateReveal", "createId"
+  "resolvePrivateHandPeekIntent", "rememberPrivateCard", "choiceCoordinator",
+  "choiceContexts", "createId"
 ];
 
 /*
@@ -88,18 +90,18 @@ const PASSIVE_SKILLS = {
   */
   momentum(game, owner) {
     runtime.onEvent("cardUsed", `${owner.id}:momentum:category`, (event) => {
-      if (!owner.alive || event.source.id !== owner.id) return;
-      if (!owner.turnFlags.categoriesUsed.has(event.card.category)) {
+      if (!canTriggerMomentumCategory(owner, event)) return;
+      if (canTriggerMomentumCategory(owner, event)) {
         markCategoryUsed(runtime.getState(), owner, event.card.category);
         const previousMomentum = owner.turnFlags.momentum;
         setMomentum(runtime.getState(), owner, Math.min(RULESET_DEFINITION.momentumMaxStacks, previousMomentum + 1));
         if (owner.turnFlags.momentum > previousMomentum) {
-          runtime.log(`${owner.name}触发「连势」，现有${owner.turnFlags.momentum}层「连势」。`);
+          runtime.presentation.log(`${owner.name}触发「连势」，现有${owner.turnFlags.momentum}层「连势」。`);
         }
       }
     });
     runtime.onEvent("beforeDamage", `${owner.id}:momentum:damage`, (event) => {
-      if (!owner.alive || event.source?.id !== owner.id || event.card?.definitionId !== "assault") return;
+      if (!shouldAddMomentumDamage(owner, event)) return;
       const bonus = owner.turnFlags.momentum;
       if (bonus > 0) {
         event.amount += bonus;
@@ -108,11 +110,11 @@ const PASSIVE_SKILLS = {
       }
     });
     runtime.onEvent("afterDamage", `${owner.id}:momentum:consume`, (event) => {
-      if (event.source?.id !== owner.id || event.actualAmount <= 0) return;
-      if (event.metadata.consumeMomentum) {
+      if (!shouldConsumeMomentum(owner, event)) return;
+      if (shouldConsumeMomentum(owner, event)) {
         const consumed = event.metadata.momentumBonus;
         setMomentum(runtime.getState(), owner, 0);
-        runtime.log(`${owner.name}消耗${consumed}层「连势」，本次「突袭」伤害+${consumed}。`, "important");
+        runtime.presentation.log(`${owner.name}消耗${consumed}层「连势」，本次「突袭」伤害+${consumed}。`, "important");
       }
     });
     runtime.onEvent("turnEnd", `${owner.id}:momentum:turnEnd`, () => {
@@ -150,20 +152,37 @@ const PASSIVE_SKILLS = {
   guardianAid(game, owner) {
     runtime.onEvent("beforeDamage", `${owner.id}:guardianAid`, async (event) => {
       const gameId = runtime.getState().gameId;
-      if (!owner.alive || !event.target?.alive || owner.id === event.target.id) return;
-      if (owner.battleTeam !== event.target.battleTeam || owner.turnFlags.guardianAidUsed || !owner.hand.length || event.amount <= 0) return;
+      if (!canTriggerGuardianAid(owner, event)) return;
       const response = await runtime.responseSystem.requestSkillResponse(owner, "guardianAid", "护援", event);
       if (!runtime.isSessionValid(gameId) || response.status !== "used" || !owner.alive || !owner.hand.length) return;
-      let discard = null;
-      if (owner.controllerType === "human") discard = (await runtime.requestDiscard(owner, 1, "护援：选择弃置1张手牌"))[0] ?? null;
-      else discard = runtime.chooseDiscards(owner, 1)[0] ?? null;
+      const discardRequestId = runtime.createId("guardian-aid-discard");
+      const discardRequest = createDiscardChoiceRequest({
+        requestId: discardRequestId,
+        actorId: owner.id,
+        gameId,
+        stateVersion: runtime.getState().stateVersion,
+        handCardIds: owner.hand.map((card) => card.id),
+        requiredCount: 1,
+        label: "护援：选择弃置1张手牌",
+        handLimit: Math.max(0, owner.hp)
+      });
+      runtime.choiceContexts.set(discardRequestId, { player: owner, count: 1, prompt: "护援：选择弃置1张手牌" });
+      let discardDecision;
+      try {
+        discardDecision = await runtime.choiceCoordinator.request(discardRequest);
+      } finally {
+        runtime.choiceContexts.delete(discardRequestId);
+      }
       if (!runtime.isSessionValid(gameId)) return;
+      const discard = (discardDecision.selectedIds ?? [])
+        .map((cardId) => owner.hand.find((card) => card.id === cardId))
+        .find(Boolean) ?? null;
       if (!discard) return;
       const moved = await runtime.discardCardFromHand(owner, discard, "护援", { logReason:"「护援」" });
       if (!runtime.isSessionValid(gameId) || !moved) return;
       setGuardianAidUsed(runtime.getState(), owner, true);
       event.amount = Math.max(0, event.amount - 1);
-      runtime.log(`${owner.name}发动「护援」，令${event.target.name}受到的伤害减少1点。`, "important");
+      runtime.presentation.log(`${owner.name}发动「护援」，令${event.target.name}受到的伤害减少1点。`, "important");
     });
   },
 
@@ -194,16 +213,16 @@ const PASSIVE_SKILLS = {
   */
   rejuvenation(game, owner) {
     runtime.onEvent("turnStart", `${owner.id}:rejuvenation:reset`, () => {
+      if (!shouldResetRejuvenationAtTurnStart()) return;
       setRejuvenationTriggerCount(runtime.getState(), owner, 0);
     });
     runtime.onEvent("afterHeal", `${owner.id}:rejuvenation`, async (event) => {
-      if (!owner.alive || event.source?.id !== owner.id || event.target?.battleTeam !== owner.battleTeam
-        || event.actualAmount <= 0 || (owner.turnFlags.rejuvenationTriggerCount ?? 0) >= 2) return;
+      if (!canTriggerRejuvenation(owner, event)) return;
       setRejuvenationTriggerCount(runtime.getState(), owner, (owner.turnFlags.rejuvenationTriggerCount ?? 0) + 1);
       const gameId = runtime.getState().gameId;
       const drawn = await runtime.drawCards(owner, 1, "回春", { silent:true });
       if (!runtime.isSessionValid(gameId)) return;
-      runtime.log(`${owner.name}触发「回春」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`, "heal");
+      runtime.presentation.log(`${owner.name}触发「回春」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`, "heal");
     });
   },
 
@@ -260,41 +279,38 @@ const PASSIVE_SKILLS = {
     */
     async function revealGap(target) {
       const gameId = runtime.getState().gameId;
-      if (!owner.alive || !target?.alive || target.hp <= 0
-        || target.battleTeam === owner.battleTeam
-        || owner.turnFlags.spyGapTriggered || !target.hand.length) return;
+      if (!canRevealSpyGap(owner, target)) return;
       setSpyGapTriggered(runtime.getState(), owner, true);
       const intent = await runtime.preparePrivateHandPeekIntent(owner, target, 2, `窥隙：选择查看${target.name}至多2张手牌`);
       if (!runtime.isSessionValid(gameId)) return;
       const seen = runtime.resolvePrivateHandPeekIntent(owner, intent);
       if (!seen.length) return;
       for (const card of seen) runtime.rememberPrivateCard(owner, target, card);
-      if (owner.controllerType === "human") await runtime.showPrivateReveal(`窥隙：${target.name}的手牌`, seen);
+      if (owner.controllerType === "human") runtime.presentation.showPrivateReveal({ title: `窥隙：${target.name}的手牌`, cardIds: seen.map((card) => card.id) });
       if (!runtime.isSessionValid(gameId)) return;
-      runtime.log(`${owner.name}触发「窥隙」，查看了${target.name}的${seen.length}张手牌。`);
+      runtime.presentation.log(`${owner.name}触发「窥隙」，查看了${target.name}的${seen.length}张手牌。`);
     }
 
     runtime.onEvent("afterDamage", `${owner.id}:spyGap`, async (event) => {
-      if (!owner.alive || event.source?.id !== owner.id || !event.target?.alive
-        || event.target.battleTeam === owner.battleTeam || event.actualAmount <= 0
-        || owner.turnFlags.spyGapTriggered) return;
+      if (!canTriggerSpyGapAfterDamage(owner, event)) return;
       if (event.target.hp > 0) {
         await revealGap(event.target);
         return;
       }
+      if (!shouldQueueSpyGapOnDying(owner, event)) return;
       if (!owner.turnFlags.spyGapPendingTargetIds) setSpyGapPendingTargetIds(runtime.getState(), owner, new Set());
       addSpyGapPendingTarget(runtime.getState(), owner, event.target.id);
     });
 
     runtime.onEvent("playerRescued", `${owner.id}:spyGap:rescue`, async (event) => {
       const pending = owner.turnFlags.spyGapPendingTargetIds;
-      if (!pending?.has(event.target?.id)) return;
+      if (!canTriggerSpyGapOnRescue(owner, event)) return;
       pending.delete(event.target.id);
       await revealGap(event.target);
     });
 
     runtime.onEvent("playerDead", `${owner.id}:spyGap:dead`, (event) => {
-      if (event.target?.id) removeSpyGapPendingTarget(runtime.getState(), owner, event.target.id);
+      if (shouldRemoveSpyGapPendingOnDead(owner, event)) removeSpyGapPendingTarget(runtime.getState(), owner, event.target.id);
     });
   },
 
@@ -325,8 +341,8 @@ const PASSIVE_SKILLS = {
   */
   ember(game, owner) {
     runtime.onEvent("afterDamage", `${owner.id}:ember`, async (event) => {
-      if (!owner.alive || event.source?.id !== owner.id || event.target.battleTeam === owner.battleTeam || event.actualAmount <= 0 || !event.card) return;
-      if (owner.gameFlags.lastEmberResolutionId === event.resolutionId) return;
+      if (!canTriggerEmber(owner, event)) return;
+      if (shouldIgnoreEmberDuplicate(owner, event)) return;
       setLastEmberResolutionId(runtime.getState(), owner, event.resolutionId);
       await runtime.gainEnergy(owner, 1, { skill: "ember", reason: "余烬" });
     });
@@ -359,23 +375,21 @@ const PASSIVE_SKILLS = {
   */
   tracking(game, owner) {
     runtime.onEvent("turnStart", `${owner.id}:tracking:clock`, (event) => {
-      if (event.player.id === owner.id) setTrackingTurnNumber(runtime.getState(), owner, (owner.gameFlags.trackingTurnNumber ?? 0) + 1);
+      if (shouldAdvanceTrackingClock(owner, event)) setTrackingTurnNumber(runtime.getState(), owner, (owner.gameFlags.trackingTurnNumber ?? 0) + 1);
     });
     runtime.onEvent("targetSelected", `${owner.id}:tracking`, (event) => {
       const target = event.targets[0];
-      if (!owner.alive || event.source.id !== owner.id || event.card?.definitionId !== "assault" || !target
-        || target.battleTeam === owner.battleTeam || owner.turnFlags.trackingTargetIds.size >= 2
-        || owner.turnFlags.trackingTargetIds.has(target.id)) return;
+      if (!canTriggerTrackingTarget(owner, event)) return;
       addTrackingTarget(runtime.getState(), owner, target.id);
       const currentTrackingTurn = owner.gameFlags.trackingTurnNumber ?? 0;
       setStatus(runtime.getState(), target, "huntMark", { sourceId: owner.id, expireAtTurnEnd: currentTrackingTurn + 1 });
-      runtime.log(`${owner.name}触发「追踪」，在${target.name}身上留下了「猎印」。`, "important");
+      runtime.presentation.log(`${owner.name}触发「追踪」，在${target.name}身上留下了「猎印」。`, "important");
     });
     runtime.onEvent("turnEnd", `${owner.id}:tracking:cleanup`, (event) => {
-      if (event.player.id !== owner.id) return;
+      if (!shouldCleanupExpiredHuntMarks(owner, event)) return;
       for (const player of runtime.getState().players) {
         const mark = player.statuses.huntMark;
-        if (mark?.sourceId === owner.id && isHuntMarkExpired(mark, owner.gameFlags.trackingTurnNumber ?? 0)) {
+        if (mark?.sourceId === owner.id && isHuntMarkExpiredForOwner(mark, owner)) {
           removeStatus(runtime.getState(), player, "huntMark");
         }
       }
@@ -409,30 +423,27 @@ const PASSIVE_SKILLS = {
   */
   gamble(game, owner) {
     runtime.onEvent("cardUsed", `${owner.id}:gamble`, async (event) => {
-      if (!owner.alive || event.source.id !== owner.id || event.card.category !== "tactic" || owner.turnFlags.gambleTriggered) return;
+      if (!canTriggerGamble(owner, event)) return;
       setGambleTriggered(runtime.getState(), owner, true);
       if (runtime.random() < RULESET_DEFINITION.gamblerDrawChance) {
         const gameId = runtime.getState().gameId;
         const drawn = await runtime.drawCards(owner, 1, "冒险", { silent:true });
         if (!runtime.isSessionValid(gameId)) return;
-        runtime.log(`${owner.name}触发「冒险」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
-      } else runtime.log(`${owner.name}触发「冒险」，但未获得额外收益。`);
+        runtime.presentation.log(`${owner.name}触发「冒险」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
+      } else runtime.presentation.log(`${owner.name}触发「冒险」，但未获得额外收益。`);
     });
     runtime.onEvent("beforeDamage", `${owner.id}:allIn:damage`, (event) => {
       const allIn = owner.statuses.allIn;
-      if (!owner.alive || event.source?.id !== owner.id || event.card?.definitionId !== "assault" || !allIn) return;
+      if (!shouldAddAllInDamage(owner, event)) return;
       event.amount += getAllInAssaultBonus(allIn);
       event.metadata.consumeAssaultBonus = true;
-      runtime.log(`${owner.name}的「孤注」状态令此次「突袭」伤害+1。`, "important");
+      runtime.presentation.log(`${owner.name}的「孤注」状态令此次「突袭」伤害+1。`, "important");
     });
     runtime.onEvent("afterDamage", `${owner.id}:allIn:consume`, (event) => {
-      if (!owner.statuses.allIn) return;
-      const assaultFinishedWithoutDamage = event.card?.definitionId === "assault"
-        && ["block", "defenseDevice"].includes(event.preventedBy);
-      if (event.source?.id === owner.id
-        && (event.metadata.consumeAssaultBonus || assaultFinishedWithoutDamage)) {
+      if (!shouldConsumeAllIn(owner, event)) return;
+      {
         removeStatus(runtime.getState(), owner, "allIn");
-        runtime.log(`${owner.name}退出「孤注」状态。`);
+        runtime.presentation.log(`${owner.name}退出「孤注」状态。`);
       }
     });
   },
@@ -464,15 +475,12 @@ const PASSIVE_SKILLS = {
   */
   coordination(game, owner) {
     runtime.onEvent("cardUsed", `${owner.id}:coordination`, async (event) => {
-      if (!owner.alive || event.resolved !== true || event.source?.id !== owner.id
-        || owner.turnFlags.coordinationTriggered) return;
-      if (!(event.effectiveTargets ?? []).some((target) => target?.alive && target.id !== owner.id
-        && target.battleTeam === owner.battleTeam)) return;
+      if (!canTriggerCoordination(owner, event)) return;
       setCoordinationTriggered(runtime.getState(), owner, true);
       const gameId = runtime.getState().gameId;
       const drawn = await runtime.drawCards(owner, 1, "协调", { silent:true });
       if (!runtime.isSessionValid(gameId)) return;
-      runtime.log(`${owner.name}触发「协调」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
+      runtime.presentation.log(`${owner.name}触发「协调」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
     });
   }
 };

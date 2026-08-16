@@ -40,6 +40,8 @@ const APPLICATION_MATCH_PATTERN = /^js\/application\/match\//i;
 const APPLICATION_TURN_PATTERN = /^js\/application\/turn\//i;
 const APPLICATION_ACTION_PATTERN = /^js\/application\/action\//i;
 const APPLICATION_TRIGGER_PATTERN = /^js\/application\/trigger\//i;
+const APPLICATION_MESSAGING_PATTERN = /^js\/application\/messaging\//i;
+const DOMAIN_EVENTS_PATTERN = /^js\/domain\/events\//i;
 const LEGACY_WORKFLOW_FACADE_PATTERN = /^js\/core\/(?:DyingSystem|JudgmentSystem|HpLossSystem)\.js$/i;
 const FUTURE_ADAPTERS_PATTERN = /^js\/adapters\//i;
 const DOMAIN_TRANSITIONS_PATTERN = /^js\/domain\/state\/transitions\//i;
@@ -935,6 +937,35 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     pushPatternError(
       maskedSource.match(/\bEventBus\b|\beventBus\b|\bdocument\b|\bwindow\b|\b[Ss]earchState\b|\bVisibleState\b|\bBeliefState\b|\bPlanner\b/),
       `架构约束：application/${layerName} 禁止 Game 回指、EventBus、DOM 与 AI SearchState/Planner`
+    );
+  }
+
+  if (DOMAIN_EVENTS_PATTERN.test(file)) {
+    pushImportError(
+      importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/EventBus|\/application\/|\/adapters\/|\/ai\/|\/ui\/|Game\.js|UIManager\.js)[^"']*(?:\?[^"']*)?["']/i),
+      "架构约束：domain/events 禁止依赖 EventBus/application/adapters/Game"
+    );
+    pushPatternError(
+      maskedSource.match(/\bawait\b|\bemit\b|\bsubscribe\b|\blisteners\b|\bnew Map\b/),
+      "架构约束：domain/events 只允许 frozen data-only fact builder"
+    );
+  }
+
+  if (APPLICATION_MESSAGING_PATTERN.test(file)) {
+    pushImportError(
+      importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/Game|\/ui\/|\/ai\/|UIManager\.js|AIController\.js|SoundManager\.js|utils\/debug)[^"']*(?:\?[^"']*)?["']/i),
+      "架构约束：application/messaging 禁止 Game/UI/AI/Debug 依赖"
+    );
+    pushPatternError(
+      maskedSource.match(/\bstate\.stateVersion\s*(?:\+\+|\+=)|\bbumpStateVersion\s*\(/),
+      "架构约束：application/messaging 禁止 Domain mutation"
+    );
+  }
+
+  if (/^js\/core\/EventBus\.js$/i.test(file)) {
+    pushPatternError(
+      source.match(/listeners\s*=\s*new Map|this\.depth\s*=|maxDepth\s*=|this\.generation\s*=/),
+      "架构约束：core/EventBus 必须是 thin façade，不得重新拥有 listener registry"
     );
   }
 
@@ -2140,7 +2171,7 @@ function identity(value) { return value; }`;
   if (!rootLayoutErrors.some((error) => error.missing.some((item) => item.includes("AI 根目录")))) {
     throw new Error("root layout fixture did not detect non-allowlisted root file");
   }
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/match/turn/action/trigger/slim-game/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/match/turn/action/trigger/messaging/events/slim-game/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
 }
 
 /*

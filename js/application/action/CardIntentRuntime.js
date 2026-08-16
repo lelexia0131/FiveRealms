@@ -18,11 +18,11 @@ private intent 只存在于当前调用栈；公开 context 不含 hidden card e
 不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime 或 concrete adapters。
 */
 const REQUIRED_DEPENDENCIES = [
-  "getState", "isSessionValid", "log", "diagnostics", "responseSystem", "playCard",
+  "getState", "isSessionValid", "presentation", "diagnostics", "responseSystem", "playCard",
   "moveEquipmentToHand", "getTransferSources", "getTransferReceivers", "getCardTargets",
-  "chooseTransferCombination", "chooseHiddenCards", "choosePlayerZoneCard",
-  "getLeverageFirstTargets", "getAssaultTargetCandidates", "requestHiddenCards",
-  "createHiddenSelection", "resolveConfirmedTokens", "clearSelection"
+  "chooseTransferCombination", "chooseHiddenCards", "choosePlayerZoneCard", "choosePrivatePeekCards",
+  "getLeverageFirstTargets", "getAssaultTargetCandidates", "isTransferExecutionAllowed",
+  "requestHiddenCards", "createHiddenSelection", "resolveConfirmedTokens", "clearSelection"
 ];
 
 /*
@@ -99,9 +99,7 @@ export function createCardIntentRuntime(dependencies) {
     const from = state.players.find((player) => player.id === planned?.sourceId && player.alive) ?? null;
     const receiver = state.players.find((player) => player.id === planned?.receiverId && player.alive) ?? null;
     if (!sources.includes(from) || !runtime.getTransferReceivers(source, from, card).includes(receiver)) return null;
-    if (source.controllerType === "ai"
-      && from.battleTeam === source.battleTeam
-      && receiver.battleTeam !== source.battleTeam) return null;
+    if (!runtime.isTransferExecutionAllowed(source, from, receiver)) return null;
 
     const hiddenCard = (await runtime.chooseHiddenCards(
       source, from, 1, "选择要转移的手牌", planned, excludedCardIds, { purpose: "transfer", receiver }
@@ -256,21 +254,10 @@ export function createCardIntentRuntime(dependencies) {
     const gameId = state.gameId;
     const maximum = Math.min(Math.max(0, count), owner?.hand?.length ?? 0);
     if (!runtime.isSessionValid(gameId) || !viewer?.alive || !owner?.alive || !maximum) return null;
-    if (viewer.controllerType !== "human") {
-      const cards = await runtime.chooseHiddenCards(viewer, owner, maximum, "spy-gap", null, null, { purpose: "spy-gap" });
-      return cards.length ? Object.freeze({ owner, zone: "hand", cards: Object.freeze([...cards]), selectionId: null }) : null;
-    }
-    const hidden = runtime.createHiddenSelection(owner);
-    try {
-      const tokens = await runtime.requestHiddenCards(hidden, maximum, reason, { exact: false, viewer, owner });
-      if (!runtime.isSessionValid(gameId) || !viewer.alive || !owner.alive) return null;
-      const cards = runtime.resolveConfirmedTokens(tokens, owner, hidden.selectionId, maximum);
-      return cards.length
-        ? Object.freeze({ owner, zone: "hand", cards: Object.freeze(cards), selectionId: hidden.selectionId })
-        : null;
-    } finally {
-      runtime.clearSelection(hidden.selectionId);
-    }
+    const cards = await runtime.choosePrivatePeekCards(viewer, owner, maximum, reason, { purpose: "spy-gap" });
+    return cards.length
+      ? Object.freeze({ owner, zone: "hand", cards: Object.freeze([...cards]), selectionId: null })
+      : null;
   }
 
   /*
@@ -418,11 +405,11 @@ export function createCardIntentRuntime(dependencies) {
     leverageResolutionIds.add(resolutionId);
 
     if (!playersValid()) {
-      runtime.log(`目标已离场，「${card.name}」结算取消。`, "important");
+      runtime.presentation.log(`目标已离场，「${card.name}」结算取消。`, "important");
       return false;
     }
     if (!equipmentValid()) {
-      runtime.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+      runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
       return false;
     }
 
@@ -433,11 +420,11 @@ export function createCardIntentRuntime(dependencies) {
     if (!runtime.isSessionValid(gameId) || response.status === "cancelled") return false;
 
     if (!playersValid()) {
-      runtime.log(`目标已离场，「${card.name}」结算取消。`, "important");
+      runtime.presentation.log(`目标已离场，「${card.name}」结算取消。`, "important");
       return false;
     }
     if (!equipmentValid()) {
-      runtime.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+      runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
       return false;
     }
 
@@ -456,21 +443,21 @@ export function createCardIntentRuntime(dependencies) {
     }
 
     if (!playersValid()) {
-      runtime.log(`目标已离场，「${card.name}」结算取消。`, "important");
+      runtime.presentation.log(`目标已离场，「${card.name}」结算取消。`, "important");
       return false;
     }
     if (!equipmentValid()) {
-      runtime.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+      runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
       return false;
     }
     const moved = await runtime.moveEquipmentToHand(firstTarget, source, equipmentCard, "借势");
     if (!runtime.isSessionValid(gameId)) return false;
     if (moved) {
-      runtime.log(`${firstTarget.name}拒绝使用「突袭」，${source.name}获得了其「${equipmentCard.name}」。`, "important");
+      runtime.presentation.log(`${firstTarget.name}拒绝使用「突袭」，${source.name}获得了其「${equipmentCard.name}」。`, "important");
       return true;
     }
     if (!equipmentValid()) {
-      runtime.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+      runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
     }
     return false;
   }

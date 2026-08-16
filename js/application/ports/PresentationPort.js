@@ -36,6 +36,9 @@ const REQUIRED_METHODS = [
   "clearThinking",
   "isThinkingActive",
   "showGameOver",
+  "showPrivateReveal",
+  "showDuel",
+  "hideDuel",
   "refresh"
 ];
 
@@ -89,6 +92,9 @@ export function createPresentationPort(implementation) {
     clearThinking: implementation.clearThinking,
     isThinkingActive: implementation.isThinkingActive,
     showGameOver: implementation.showGameOver,
+    showPrivateReveal: implementation.showPrivateReveal,
+    showDuel: implementation.showDuel,
+    hideDuel: implementation.hideDuel,
     refresh: implementation.refresh
   });
 }

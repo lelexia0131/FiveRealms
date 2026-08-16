@@ -36,10 +36,12 @@ import { createActionWorkflow } from "../application/action/ActionWorkflow.js?bu
 import { createCardRuntime } from "../application/action/CardRuntime.js?build=20260815-shadow-agent-p1-slot";
 import { getActionLogMessage as getActionLogMessageFromRuntime, getActionTargetLabel as getActionTargetLabelFromRuntime, shouldSuppressUseLog as shouldSuppressUseLogFromRuntime } from "../application/action/ActionPresentation.js?build=20260815-shadow-agent-p1-slot";
 import { createCardIntentRuntime } from "../application/action/CardIntentRuntime.js?build=20260815-shadow-agent-p1-slot";
+import { isTransferExecutionAllowed } from "../adapters/ai/TransferExecutionPolicyAdapter.js?build=20260815-shadow-agent-p1-slot";
 import { createCardEffectRuntime } from "../application/action/CardEffectRuntime.js?build=20260815-shadow-agent-p1-slot";
 import { createSkillEffectRuntime } from "../application/action/SkillEffectRuntime.js?build=20260815-shadow-agent-p1-slot";
 import { createPassiveSkillTriggerRegistry } from "../application/trigger/PassiveSkillTriggerRegistry.js?build=20260815-shadow-agent-p1-slot";
 import { createRecycleDeviceTrigger } from "../application/trigger/RecycleDeviceTrigger.js?build=20260815-shadow-agent-p1-slot";
+import { createGlobalTriggerRegistry } from "../application/trigger/GlobalTriggerRegistry.js?build=20260815-shadow-agent-p1-slot";
 import { PublicCardPool } from "./PublicCardPool.js?build=20260815-shadow-agent-p1-slot";
 import { HpLossSystem } from "./HpLossSystem.js?build=20260815-shadow-agent-p1-slot";
 import { createMatchState } from "../domain/state/model/MatchState.js?build=20260815-shadow-agent-p1-slot";
@@ -84,6 +86,45 @@ function resolveActionDisplayTargets(game, source, cardOrSkill, targets = []) {
     return [{ id: source.id, name: source.name, isSelf: true }];
   }
   return null;
+}
+
+/*
+功能
+按 participant metadata 选择私密窥牌实体并隐藏 concrete UI/AI branch。
+
+调用方
+Game composition 的 CardIntentRuntime dependency。
+
+输入
+viewer、owner、maximum、reason 与 aiContext。
+
+输出
+有效 Card 数组。
+
+读取状态
+CardSelectionSystem/UI/AIController。
+
+写入状态
+短期 hidden selection session cleanup。
+
+调用函数
+createHiddenSelection、requestHiddenCards、resolveConfirmedTokens、clearSelection、chooseHiddenCards。
+
+边界与不变量
+真人使用 resolveConfirmedTokens 保留旧 handVersion 语义；AI 走 adapter hidden policy。
+*/
+async function choosePrivateHandPeekCards(game, viewer, owner, maximum, reason, aiContext) {
+  if (viewer.controllerType !== "human") {
+    return game.aiController.chooseHiddenCards(viewer, owner, maximum, null, aiContext);
+  }
+  const hidden = game.cardSelectionSystem.createHiddenSelection(owner);
+  try {
+    const tokens = await game.ui.requestHiddenCards?.(hidden, maximum, reason, { exact: false, viewer, owner });
+    if (!game.isSessionValid(game.state.gameId) || !viewer.alive || !owner.alive) return [];
+    return game.cardSelectionSystem.resolveConfirmedTokens(tokens, owner, hidden.selectionId, maximum);
+  } finally {
+    game.cardSelectionSystem.clearSelection(hidden.selectionId);
+  }
 }
 
 /*
@@ -194,7 +235,7 @@ export class Game {
     };
     this.uiManager = ui;
     this.ui = ui.createGameSession?.(this) ?? ui;
-    this.eventBus = new EventBus(() => this.isSessionValid(this.state.gameId));
+    this.eventBus = new EventBus(() => this.isSessionValid(this.state.gameId), (channel, message, data) => Debug.log(channel, message, data));
     this.logger = new GameLogger(this.state, this.ui);
     this.choiceContexts = new Map();
     this.teamRules = new TeamRuleService(this);
@@ -267,18 +308,25 @@ export class Game {
     只用于 concrete adapter rebind，不供 Application 使用。
     */
     const getPlayerById = (playerId) => this.state.players.find((player) => player.id === playerId);
+    this.globalTriggerRegistry = createGlobalTriggerRegistry({
+      onEvent: (eventName, key, handler) => this.eventBus.on(eventName, key, handler),
+      getState: () => this.state,
+      cleanupHuntMarksForSource: (sourceId) => this.dyingSystem.cleanupHuntMarksForSource(sourceId),
+      resolveSeal: (holder, status) => this.judgmentSystem.resolveSeal(holder, status),
+      resolveLightning: (holder, status) => this.judgmentSystem.resolveLightning(holder, status)
+    });
     this.recycleDeviceTrigger = createRecycleDeviceTrigger({
       onEvent: (eventName, key, handler) => this.eventBus.on(eventName, key, handler),
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
-      log: (message, kind) => this.log(message, kind),
+      presentation: this.presentationPort,
       drawCards: (...args) => this.drawCards(...args)
     });
     this.passiveTriggerRegistry = createPassiveSkillTriggerRegistry({
       onEvent: (eventName, key, handler) => this.eventBus.on(eventName, key, handler),
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
-      log: (message, kind) => this.log(message, kind),
+      presentation: this.presentationPort,
       random: () => this.random(),
       responseSystem: this.responseSystem,
       discardCardFromHand: (...args) => this.discardCardFromHand(...args),
@@ -287,15 +335,14 @@ export class Game {
       preparePrivateHandPeekIntent: (...args) => this.cardIntentRuntime.preparePrivateHandPeekIntent(...args),
       resolvePrivateHandPeekIntent: (...args) => this.cardIntentRuntime.resolvePrivateHandPeekIntent(...args),
       rememberPrivateCard: (...args) => this.rememberPrivateCard(...args),
-      requestDiscard: (...args) => this.ui.requestDiscard(...args),
-      chooseDiscards: (...args) => this.aiController.chooseDiscards(...args),
-      showPrivateReveal: (...args) => this.ui.showPrivateReveal?.(...args),
+      choiceCoordinator: this.choiceCoordinator,
+      choiceContexts: this.choiceContexts,
       createId
     });
     this.skillEffectRuntime = createSkillEffectRuntime({
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
-      log: (message, kind) => this.log(message, kind),
+      presentation: this.presentationPort,
       heal: (...args) => this.heal(...args),
       damage: (...args) => this.damage(...args),
       drawCards: (...args) => this.drawCards(...args),
@@ -303,13 +350,12 @@ export class Game {
       moveCardBetweenHands: (...args) => this.moveCardBetweenHands(...args),
       cardLabelForHuman: (...args) => this.cardLabelForHuman(...args),
       getEnemies: (...args) => this.getEnemies(...args),
-      queueFeedback: (...args) => this.ui.queueFeedback?.(...args),
       random: () => this.random()
     });
     this.cardEffectRuntime = createCardEffectRuntime({
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
-      log: (message, kind) => this.log(message, kind),
+      presentation: this.presentationPort,
       damage: (...args) => this.damage(...args),
       heal: (...args) => this.heal(...args),
       gainEnergy: (...args) => this.gainEnergy(...args),
@@ -326,11 +372,6 @@ export class Game {
       responseSystem: this.responseSystem,
       publicCardPool: this.publicCardPool,
       resolveLeverage: (...args) => this.cardIntentRuntime.resolveLeverage(...args),
-      showPrivateReveal: (...args) => this.ui.showPrivateReveal?.(...args),
-      setCurrentCard: (...args) => this.ui.setCurrentCard?.(...args),
-      showDuel: (...args) => this.ui.showDuel?.(...args),
-      hideDuel: (...args) => this.ui.hideDuel?.(...args),
-      queueFeedback: (...args) => this.ui.queueFeedback?.(...args),
       getCardTargets: (source, card) => RuleEngine.getCardTargets(this, source, card),
       getTransferSources: (source, card) => RuleEngine.getTransferSources(this, source, card),
       getTransferReceivers: (source, from, card) => RuleEngine.getTransferReceivers(this, source, from, card),
@@ -341,7 +382,7 @@ export class Game {
     this.cardIntentRuntime = createCardIntentRuntime({
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
-      log: (message, kind) => this.log(message, kind),
+      presentation: this.presentationPort,
       diagnostics: this.diagnosticsPort,
       responseSystem: this.responseSystem,
       playCard: (...args) => this.actionWorkflow.playCard(...args),
@@ -351,9 +392,11 @@ export class Game {
       getCardTargets: (source, card) => RuleEngine.getCardTargets(this, source, card),
       getLeverageFirstTargets: (source) => RuleEngine.getLeverageFirstTargets(this, source),
       getAssaultTargetCandidates: (source) => RuleEngine.getAssaultTargetCandidates(this, source),
+      isTransferExecutionAllowed,
       chooseTransferCombination: (...args) => this.aiController.chooseTransferCombination(...args),
       chooseHiddenCards: (...args) => this.chooseHiddenCards(...args),
       choosePlayerZoneCard: (...args) => this.choosePlayerZoneCard(...args),
+      choosePrivatePeekCards: (...args) => choosePrivateHandPeekCards(this, ...args),
       requestHiddenCards: (...args) => this.ui.requestHiddenCards?.(...args),
       createHiddenSelection: (...args) => this.cardSelectionSystem.createHiddenSelection(...args),
       resolveConfirmedTokens: (...args) => this.cardSelectionSystem.resolveConfirmedTokens(...args),
@@ -479,7 +522,7 @@ export class Game {
       setMaxEnergy: (player, value) => { player.maxEnergy = value; },
       setStartingPlayerIndex: (value) => { this.state.startingPlayerIndex = value; },
       setSelectedGeneralId: (value) => { this.state.selectedGeneralId = value; },
-      getLegacyGameRef: () => this,
+      publishFact: (eventName, fact) => this.eventBus.publishFact(eventName, fact),
       responseCleanup: () => this.responseSystem.cleanup(),
       cancelPendingInteractions: () => this.ui.cancelPendingInteractions?.(),
       showGameOver: (winnerTeam, humanWon) => this.presentationPort.showGameOver(winnerTeam, humanWon),
@@ -650,21 +693,7 @@ export class Game {
   */
   registerGlobalRules() {
     this.recycleDeviceTrigger.register();
-    this.eventBus.on("playerDead", "global:huntMarkSourceCleanup", (event) => {
-      this.dyingSystem.cleanupHuntMarksForSource(event.target.id);
-    });
-    this.eventBus.on("beforeStatusResolve", "global:seal", async (event) => {
-      const holder = event.player;
-      const status = holder?.statuses?.sealed;
-      if (!status || event.cancelled || !holder?.alive || this.state.isGameOver) return;
-      await this.judgmentSystem.resolveSeal(holder, status);
-    });
-    this.eventBus.on("beforeStatusResolve", "global:lightning", async (event) => {
-      const holder = event.player;
-      const status = holder?.statuses?.lightning;
-      if (!status || event.cancelled || !holder?.alive || this.state.isGameOver) return;
-      await this.judgmentSystem.resolveLightning(holder, status);
-    });
+    this.globalTriggerRegistry.register();
   }
 
   /*

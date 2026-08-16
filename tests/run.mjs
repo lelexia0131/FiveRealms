@@ -128,6 +128,9 @@ import { canTriggerRecycleDevice } from "../js/domain/rules/card/RecycleDeviceRu
 import { canUseSkillBase, getSkillTargetIds } from "../js/domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot";
 import { createCardIntentRuntime } from "../js/application/action/CardIntentRuntime.js?build=20260815-shadow-agent-p1-slot";
 import { createRecycleDeviceTrigger } from "../js/application/trigger/RecycleDeviceTrigger.js?build=20260815-shadow-agent-p1-slot";
+import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js?build=20260815-shadow-agent-p1-slot";
+import { createGameOverFact, createGameStartFact } from "../js/domain/events/MatchEvents.js?build=20260815-shadow-agent-p1-slot";
+import { canTriggerMomentumCategory, canTriggerRejuvenation, shouldConsumeMomentum } from "../js/domain/rules/skill/PassiveSkillRules.js?build=20260815-shadow-agent-p1-slot";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import {
   ACTIVE_SKILLS, getActiveSkillCost, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
@@ -41315,6 +41318,9 @@ function frArch8PortsMinimalSurface() {
     clearThinking: () => presentationCalls.push(["clear-thinking"]),
     isThinkingActive: () => false,
     showGameOver: (...args) => presentationCalls.push(["game-over", ...args]),
+    showPrivateReveal: (...args) => presentationCalls.push(["private-reveal", ...args]),
+    showDuel: (...args) => presentationCalls.push(["duel", ...args]),
+    hideDuel: () => presentationCalls.push(["hide-duel"]),
     refresh: () => presentationCalls.push(["refresh"])
   });
   presentation.showDamageFeedback("p1", 1);
@@ -42397,6 +42403,221 @@ async function frArch10PassiveTriggerOwnership() {
 }
 
 test("FR-ARCH-10·passive triggers：Application Trigger 拥有注册，skillRegistry 无 PASSIVE_SKILLS", frArch10PassiveTriggerOwnership);
+
+// ==================== FR-ARCH-11 Messaging / Event Boundary Tests ====================
+
+/*
+功能
+验证 EventDispatcher 完整保留旧 EventBus 语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+dispatcher。
+
+写入状态
+dispatcher registry。
+
+调用函数
+EventDispatcher.on/emit/clear。
+
+边界与不变量
+same-key overwrite、order、shared mutable object、mutation visibility、unsubscribe、generation、clear during dispatch。
+*/
+async function frArch11DispatcherSemantics() {
+  const dispatcher = new EventDispatcher(() => true);
+  const trace = [];
+  dispatcher.on("hook", "b", async (event) => { trace.push(["b-before", event.value]); event.value += 1; });
+  dispatcher.on("hook", "a", async (event) => { trace.push(["a", event.value]); event.value += 1; });
+  const event = { value: 1 };
+  assert.equal(await dispatcher.emit("hook", event), event);
+  assert.deepEqual(trace, [["b-before", 1], ["a", 2]]);
+  assert.equal(event.value, 3, "前一 handler mutation 必须对后一 handler 可见");
+
+  dispatcher.on("hook", "b", async () => { trace.push(["b-replaced"]); });
+  await dispatcher.emit("hook", { value: 0 });
+  assert.deepEqual(trace.slice(2), [["b-replaced"], ["a", 0]]);
+
+  const once = [];
+  const off = dispatcher.on("hook", "once", () => { once.push(1); });
+  off();
+  await dispatcher.emit("hook", { value: 0 });
+  assert.equal(once.length, 0);
+
+  const deep = new EventDispatcher(() => true);
+  for (let index = 0; index < 25; index += 1) deep.on("nested", `k${index}`, () => { });
+  deep.on("nested", "boom", async () => { await deep.emit("nested", {}); });
+  await assert.rejects(deep.emit("nested", {}), /超过安全深度/);
+
+  const clearTrace = [];
+  const clearDispatcher = new EventDispatcher(() => true);
+  clearDispatcher.on("x", "one", async () => { clearTrace.push(1); clearDispatcher.clear(); });
+  clearDispatcher.on("x", "two", async () => { clearTrace.push(2); });
+  await clearDispatcher.emit("x", {});
+  assert.deepEqual(clearTrace, [1], "clear during dispatch 阻止后续 handler");
+}
+
+test("FR-ARCH-11·dispatcher：order/shared mutable/generation/clear/overflow 全语义保留", frArch11DispatcherSemantics);
+
+/*
+功能
+验证 Domain Match facts 是 frozen data-only 且 gameStart 不含 Game。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fact builders。
+
+写入状态
+无。
+
+调用函数
+createGameStartFact、createGameOverFact。
+
+边界与不变量
+JSON 序列化无 Game/Player/function/Map/Set。
+*/
+function frArch11DomainMatchFacts() {
+  const start = createGameStartFact({ gameId:"g1", stateVersion:7, humanPlayerId:"p1", selectedGeneralId:"hero" });
+  assert.ok(Object.isFrozen(start));
+  assert.equal(JSON.stringify(start).includes("function"), false);
+  assert.equal(JSON.stringify(start).includes("Game"), false);
+  const parsed = JSON.parse(JSON.stringify(start));
+  assert.deepEqual(parsed, { type:"gameStart", gameId:"g1", stateVersion:7, humanPlayerId:"p1", selectedGeneralId:"hero" });
+  const over = createGameOverFact({ gameId:"g1", stateVersion:9, winnerTeam:"dawn" });
+  assert.ok(Object.isFrozen(over));
+  assert.equal(over.winnerTeam, "dawn");
+}
+
+test("FR-ARCH-11·domain facts：frozen/data-only，gameStart 无 Game entity", frArch11DomainMatchFacts);
+
+/*
+功能
+验证 MatchWorkflow 不再有 getLegacyGameRef 且 core/EventBus 只是 façade。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+EventBus 无 listener registry implementation。
+*/
+async function frArch11MatchAndEventBusClosure() {
+  const matchSource = await readFile(projectFile("js/application/match/MatchWorkflow.js"), "utf8");
+  assert.doesNotMatch(matchSource, /getLegacyGameRef/);
+  assert.match(matchSource, /publishFact/);
+  assert.doesNotMatch(matchSource, /game:\s*runtime\.getLegacyGameRef/);
+  const eventBusSource = await readFile(projectFile("js/core/EventBus.js"), "utf8");
+  assert.match(eventBusSource, /EventDispatcher/);
+  assert.doesNotMatch(eventBusSource, /listeners\s*=\s*new Map/);
+  assert.doesNotMatch(eventBusSource, /maxDepth/);
+}
+
+test("FR-ARCH-11·closure：MatchWorkflow 无 Game ref，core/EventBus 无第二 registry", frArch11MatchAndEventBusClosure);
+
+/*
+功能
+验证 FR-ARCH-10 carry-ins：AI transfer policy 与 passive predicate 归属。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码与 Domain predicates。
+
+写入状态
+无。
+
+调用函数
+readFile、canTriggerMomentumCategory、canTriggerRejuvenation、shouldConsumeMomentum。
+
+边界与不变量
+Application 无 controllerType AI 转移公式；predicate 由 Domain 拥有。
+*/
+async function frArch11CarryInOwnership() {
+  const cardIntent = await readFile(projectFile("js/application/action/CardIntentRuntime.js"), "utf8");
+  assert.doesNotMatch(cardIntent, /source\.controllerType === "ai"/);
+  assert.match(cardIntent, /isTransferExecutionAllowed/);
+  const trigger = await readFile(projectFile("js/application/trigger/PassiveSkillTriggerRegistry.js"), "utf8");
+  assert.match(trigger, /canTriggerMomentumCategory/);
+  const owner = { id:"a", alive:true, turnFlags:{ categoriesUsed:new Set() } };
+  assert.equal(canTriggerMomentumCategory(owner, { source:{ id:"a" }, card:{ category:"basic" } }), true);
+  assert.equal(shouldConsumeMomentum(owner, { source:{ id:"a" }, actualAmount:1, metadata:{ consumeMomentum:true } }), true);
+}
+
+test("FR-ARCH-11·carry-ins：AI policy/被动 predicates 不留在 Application runtime", frArch11CarryInOwnership);
+
+/*
+功能
+验证 GlobalTriggerRegistry 拥有 huntMark/seal/lightning 注册。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+Game.registerGlobalRules 无业务 on(...)。
+*/
+async function frArch11GlobalTriggerOwnership() {
+  const gameSource = await readFile(projectFile("js/core/Game.js"), "utf8");
+  assert.match(gameSource, /globalTriggerRegistry\.register\(\)/);
+  assert.doesNotMatch(gameSource, /eventBus\.on\("playerDead"/);
+  assert.doesNotMatch(gameSource, /eventBus\.on\("beforeStatusResolve"/);
+  const registry = await readFile(projectFile("js/application/trigger/GlobalTriggerRegistry.js"), "utf8");
+  assert.match(registry, /global:huntMarkSourceCleanup/);
+  assert.match(registry, /global:seal/);
+  assert.match(registry, /global:lightning/);
+}
+
+test("FR-ARCH-11·global triggers：huntMark/seal/lightning registration 归 Application", frArch11GlobalTriggerOwnership);
 
 // ==================== Test Runner 最终执行 ====================
 

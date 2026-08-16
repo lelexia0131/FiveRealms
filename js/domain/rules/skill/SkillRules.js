@@ -101,6 +101,48 @@ export function canUseSkillBase({
 
 /*
 功能
+决定主动技能执行所需的纯数值效果 facts。
+
+调用方
+SkillEffectRuntime 与 tests。
+
+输入
+skill、source 与 options.energyCost。
+
+输出
+冻结 decision。
+
+读取状态
+skill.cost/source.energy。
+
+写入状态
+无。
+
+调用函数
+getSkillCost。
+
+边界与不变量
+Application 只执行 decision，不复制数值。
+*/
+export function decideSkillEffect(skill, source, options = {}) {
+  const energyCost = Math.max(0, Number(options.energyCost ?? getSkillCost(skill, source)));
+  if (skill.id === "breakArmy") return Object.freeze({ energyCost, attackLimitBonus: 1 });
+  if (skill.id === "barrier") return Object.freeze({ energyCost, shieldAmount: 1 });
+  if (skill.id === "symbiosis") return Object.freeze({ energyCost, healAmount: 1 });
+  if (skill.id === "stealSkill") return Object.freeze({ energyCost });
+  if (skill.id === "burningField") return Object.freeze({ energyCost, damageAmount: 1 });
+  if (skill.id === "hunt") return Object.freeze({ energyCost, damageAmount: 2, blockedRewardDraw: 1 });
+  if (skill.id === "allIn") return Object.freeze({
+    energyCost: Math.max(0, Number(source.energy) || 0),
+    drawCount: Math.max(0, (Number(source.energy) || 0) - 1),
+    enterChance: Math.min(1, (Number(source.energy) || 0) * .25)
+  });
+  if (skill.id === "resonance") return Object.freeze({ energyCost, drawCount: 1 });
+  return Object.freeze({ energyCost });
+}
+
+/*
+功能
 决定主动技能合法目标 ID。
 
 调用方

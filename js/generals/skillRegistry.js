@@ -73,7 +73,7 @@ export function getActiveSkillCost(gameOrState, source, skill) {
 }
 
 const baseCanUse = (game, source, skill, minimumEnergy = getActiveSkillCost(game, source, skill)) => {
-  const players = game?.state?.players ?? game?.players ?? source ? [source] : [];
+  const players = game?.state?.players ?? game?.players ?? [source];
   const used = getActiveSkillUseCount(source.turnFlags, skill.id);
   return canUseSkillBase({
     players,

@@ -93,6 +93,16 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
     clearThinking: () => ui.setThinking?.(false),
     isThinkingActive: () => ui.thinkingPlayerId != null,
     showGameOver: (winnerTeam, humanWon) => ui.showGameOver?.(winnerTeam, humanWon),
+    showPrivateReveal: ({ title, cardIds }) => {
+      const cards = (cardIds ?? []).map((cardId) => getCardById(cardId)).filter(Boolean);
+      ui.showPrivateReveal?.(title, cards);
+    },
+    showDuel: ({ playerId, opponentId }) => {
+      const player = getPlayerById(playerId);
+      const opponent = getPlayerById(opponentId);
+      if (player && opponent) ui.showDuel?.(player, opponent);
+    },
+    hideDuel: () => ui.hideDuel?.(),
     refresh: () => ui.render(renderTarget)
   });
 }

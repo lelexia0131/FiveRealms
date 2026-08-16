@@ -20,7 +20,7 @@ usage 经 RuleUsageTransition；不写其它 Domain state。
 import { canTriggerRecycleDevice } from "../../domain/rules/card/RecycleDeviceRules.js?build=20260815-shadow-agent-p1-slot";
 import { setRecycleDeviceUses } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
 
-const REQUIRED_DEPENDENCIES = ["onEvent", "getState", "isSessionValid", "log", "drawCards"];
+const REQUIRED_DEPENDENCIES = ["onEvent", "getState", "isSessionValid", "presentation", "drawCards"];
 
 /*
 功能
@@ -97,7 +97,7 @@ export function createRecycleDeviceTrigger(dependencies) {
       setRecycleDeviceUses(state, owner, facts.useCount + 1);
       const drawn = await runtime.drawCards(owner, 1, "回收站", { silent: true });
       if (!runtime.isSessionValid(gameId)) return;
-      runtime.log(`${owner.name}的「回收站」触发（${owner.turnFlags.recycleDeviceUses}/2），${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
+      runtime.presentation.log(`${owner.name}的「回收站」触发（${owner.turnFlags.recycleDeviceUses}/2），${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
     });
   }
 

@@ -17,17 +17,17 @@ private intent 只存在于当前调用栈；public context 不泄漏 hidden car
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime、RuleEngine 或 concrete adapters。
 */
-import { getExposeWeaknessStacks, isExposeWeaknessConsumable } from "../../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import { isExposeWeaknessConsumable } from "../../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import { getAssaultBaseDamage, getChargeEnergyAmount, getDuelDamage, getHarvestDrawCount, getMutualBenefitRevealCount, getNextExposeWeaknessStacks, getProvokeDamage, getRecoverHealAmount, getShieldAmount, getShockwaveDamage, getSymbiosisHealAmount } from "../../domain/rules/card/CardEffectRules.js?build=20260815-shadow-agent-p1-slot";
 import { changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { incrementAttackUsed, incrementRecoverUsed } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
 
 const REQUIRED_DEPENDENCIES = [
-  "getState", "isSessionValid", "log", "damage", "heal", "gainEnergy", "drawCards",
+  "getState", "isSessionValid", "presentation", "damage", "heal", "gainEnergy", "drawCards",
   "equipCard", "moveCardBetweenHands", "moveEquipmentToHand", "discardEquipment",
   "discardCardFromHand", "rememberPrivateCard", "cardLabelForHuman", "seatOrderFrom",
   "getEnemies", "responseSystem", "publicCardPool", "resolveLeverage",
-  "showPrivateReveal", "setCurrentCard", "showDuel", "hideDuel", "queueFeedback",
   "getCardTargets", "getTransferSources", "getTransferReceivers", "diagnostics",
   "random", "createId"
 ];
@@ -165,12 +165,12 @@ runtime/card/skill facts。
       const state = runtime.getState();
       incrementAttackUsed(state, source);
       runtime.diagnostics.recordAssaultUse({ sourceId: source.id });
-      const stacks = getExposeWeaknessStacks(source.statuses.exposeWeakness);
+      const stacks = getNextExposeWeaknessStacks(source.statuses.exposeWeakness) - 1;
       if (isExposeWeaknessConsumable(source.statuses.exposeWeakness)) {
         removeStatus(state, source, "exposeWeakness");
-        runtime.log(`${source.name}消耗${stacks}层「破势」，本次「突袭」伤害+${stacks}。`, "important");
+        runtime.presentation.log(`${source.name}消耗${stacks}层「破势」，本次「突袭」伤害+${stacks}。`, "important");
       }
-      await runtime.damage(source, targets[0], 1 + stacks, { card, canBlock: true, damageType: "normal", resolutionId: context.resolutionId });
+      await runtime.damage(source, targets[0], getAssaultBaseDamage() + stacks, { card, canBlock: true, damageType: "normal", resolutionId: context.resolutionId });
     },
 
 /*
@@ -201,7 +201,7 @@ runtime/card/skill facts。
     async recover(source, card, _targets, context) {
       const state = runtime.getState();
       incrementRecoverUsed(state, source);
-      await runtime.heal(source, source, 1, {
+      await runtime.heal(source, source, getRecoverHealAmount(), {
         card, resolutionId: context.resolutionId, silentLog: true,
         resultLog: (actualAmount) => `${source.name}使用「${card.name}」，恢复${actualAmount}点生命。`
       });
@@ -232,7 +232,7 @@ runtime/card/skill facts。
 边界与不变量
 不重复 Domain rule 决定。
 */
-    async charge(source, card) { await runtime.gainEnergy(source, 1, { card, reason: "聚能" }); },
+    async charge(source, card) { await runtime.gainEnergy(source, getChargeEnergyAmount(), { card, reason: "聚能" }); },
 
 /*
 功能
@@ -263,10 +263,10 @@ runtime/card/skill facts。
       const state = runtime.getState();
       const target = targets[0];
       if (!target?.alive || target.battleTeam !== source.battleTeam) return { resolved: false };
-      changeShield(state, target, 1);
-      runtime.queueFeedback("shield", target.id, 1);
+      changeShield(state, target, getShieldAmount());
+      runtime.presentation.showShieldFeedback(target.id, 1);
       const targetLabel = target.id === source.id ? "自己" : target.name;
-      runtime.log(`${source.name}使用「${card.name}」，令${targetLabel}获得1点护盾，现有${target.shield}点。`, "heal");
+      runtime.presentation.log(`${source.name}使用「${card.name}」，令${targetLabel}获得1点护盾，现有${target.shield}点。`, "heal");
       return { resolved: true };
     },
 
@@ -301,9 +301,9 @@ runtime/card/skill facts。
       const chosen = intent?.cards.slice(0, 2) ?? [];
       if (!chosen.length) return { resolved: false };
       for (const seen of chosen) runtime.rememberPrivateCard(source, target, seen);
-      if (source.controllerType === "human") await runtime.showPrivateReveal(`${target.name}的手牌情报`, chosen);
+      if (source.controllerType === "human") runtime.presentation.showPrivateReveal({ title: `${target.name}的手牌情报`, cardIds: chosen.map((card) => card.id) });
       if (!runtime.isSessionValid(runtime.getState().gameId)) return { resolved: false };
-      runtime.log(`${source.name}窥探了${target.name}的${chosen.length}张手牌。`);
+      runtime.presentation.log(`${source.name}窥探了${target.name}的${chosen.length}张手牌。`);
       return { resolved: true };
     },
 
@@ -344,7 +344,7 @@ runtime/card/skill facts。
       if (!runtime.isSessionValid(state.gameId)) return { destination: "discard", resolved: false };
       if (transferred) {
         const receiverLabel = intent.receiver.id === source.id ? "自己" : intent.receiver.name;
-        runtime.log(`${source.name}将${intent.from.name}的${runtime.cardLabelForHuman(intent.receiver, intent.card)}转移给了${receiverLabel}。`, "important");
+        runtime.presentation.log(`${source.name}将${intent.from.name}的${runtime.cardLabelForHuman(intent.receiver, intent.card)}转移给了${receiverLabel}。`, "important");
       }
       return { destination: "discard", resolved: Boolean(transferred) };
     },
@@ -376,8 +376,8 @@ runtime/card/skill facts。
 */
     async exposeWeakness(source) {
       const state = runtime.getState();
-      const status = setStatus(state, source, "exposeWeakness", { stacks: (source.statuses.exposeWeakness?.stacks ?? 0) + 1 });
-      runtime.log(`${source.name}获得${status.stacks}层「破势」。`, "important");
+      const status = setStatus(state, source, "exposeWeakness", { stacks: getNextExposeWeaknessStacks(source.statuses.exposeWeakness) });
+      runtime.presentation.log(`${source.name}获得${status.stacks}层「破势」。`, "important");
     },
 
 /*
@@ -420,7 +420,7 @@ runtime/card/skill facts。
         if (!runtime.isSessionValid(gameId) || counteredForTarget.status === "cancelled") return { resolved: false };
         if (counteredForTarget.status === "used") continue;
         effectiveTargets.push(target);
-        await runtime.damage(source, target, 1, { card, canBlock: true, damageType: "area", resolutionId: context.resolutionId });
+        await runtime.damage(source, target, getShockwaveDamage(), { card, canBlock: true, damageType: "area", resolutionId: context.resolutionId });
         if (!runtime.isSessionValid(gameId)) return { resolved: false };
       }
       return { effectiveTargets };
@@ -466,7 +466,7 @@ runtime/card/skill facts。
         const discarded = await runtime.responseSystem.requestAssaultDiscard(target, "响应挑衅并打出突袭", { source, target, card });
         if (!runtime.isSessionValid(gameId) || discarded.status === "cancelled") return { resolved: false };
         effectiveTargets.push(target);
-        if (discarded.status !== "used") await runtime.damage(source, target, 1, {
+        if (discarded.status !== "used") await runtime.damage(source, target, getProvokeDamage(), {
           card, canBlock: false, damageType: "provoke", actionName: "挑衅", resolutionId: context.resolutionId
         });
         if (!runtime.isSessionValid(gameId)) return { resolved: false };
@@ -539,7 +539,7 @@ runtime/card/skill facts。
         ? await runtime.moveEquipmentToHand(target, source, chosen.card, "掠夺")
         : await runtime.moveCardBetweenHands(target, source, chosen.card, "掠夺");
       if (!runtime.isSessionValid(gameId)) return { resolved: false };
-      if (plundered) runtime.log(`${source.name}从${target.name}处掠夺了${runtime.cardLabelForHuman(source, chosen.card)}。`, "important");
+      if (plundered) runtime.presentation.log(`${source.name}从${target.name}处掠夺了${runtime.cardLabelForHuman(source, chosen.card)}。`, "important");
       return { resolved: Boolean(plundered) };
     },
 
@@ -580,8 +580,8 @@ runtime/card/skill facts。
         : await runtime.discardCardFromHand(target, chosen.card, `被${source.name}破坏`, { silent: true });
       if (!runtime.isSessionValid(gameId)) return { resolved: false };
       if (!destroyed) return { resolved: false };
-      runtime.setCurrentCard(chosen.card, `${source.name}破坏的${chosen.zone === "equipment" ? "装备" : "手牌"}`, target.name);
-      runtime.log(`${source.name}破坏了${target.name}的${chosen.zone === "equipment" ? "装备" : "手牌"}「${chosen.card.name}」。`, "important");
+      runtime.presentation.showCurrentAction({ cardId: chosen.card.id, sourceLabel: `${source.name}破坏的${chosen.zone === "equipment" ? "装备" : "手牌"}`, targetLabel: target.name, displayTargets: [] });
+      runtime.presentation.log(`${source.name}破坏了${target.name}的${chosen.zone === "equipment" ? "装备" : "手牌"}「${chosen.card.name}」。`, "important");
       return { resolved: true, effectiveTargets: [target] };
     },
 
@@ -610,7 +610,7 @@ runtime/card/skill facts。
 边界与不变量
 不重复 Domain rule 决定。
 */
-    async harvest(source) { await runtime.drawCards(source, 2, "丰收"); },
+    async harvest(source) { await runtime.drawCards(source, getHarvestDrawCount(), "丰收"); },
 
 /*
 功能
@@ -646,12 +646,12 @@ runtime/card/skill facts。
       duelContext = { sourceId: source.id, targetId: target.id, currentId: target.id };
       while (current.alive && opponent.alive && !state.isGameOver) {
         duelContext.currentId = current.id;
-        runtime.showDuel(current, opponent);
+        runtime.presentation.showDuel({ playerId: current.id, opponentId: opponent.id });
         const assault = await runtime.responseSystem.requestAssaultDiscard(current, "在决斗中打出突袭", { source: opponent, target: current, card });
         if (!runtime.isSessionValid(gameId) || assault.status === "cancelled") return { resolved: false };
         if (assault.status !== "used") {
-          runtime.log(`${current.name}在决斗中败下阵来。`, "important");
-          await runtime.damage(opponent, current, 1, { card, canBlock: false, damageType: "duel", resolutionId: context.resolutionId });
+          runtime.presentation.log(`${current.name}在决斗中败下阵来。`, "important");
+          await runtime.damage(opponent, current, getDuelDamage(), { card, canBlock: false, damageType: "duel", resolutionId: context.resolutionId });
           if (!runtime.isSessionValid(gameId)) return { resolved: false };
           break;
         }
@@ -659,7 +659,7 @@ runtime/card/skill facts。
       }
       if (!runtime.isSessionValid(gameId)) return { resolved: false };
       duelContext = null;
-      runtime.hideDuel();
+      runtime.presentation.hideDuel();
     },
 
 /*
@@ -690,9 +690,9 @@ runtime/card/skill facts。
     async mutualBenefit(source) {
       const state = runtime.getState();
       const gameId = state.gameId;
-      const count = state.players.filter((player) => player.alive).length;
+      const count = getMutualBenefitRevealCount(state.players.filter((player) => player.alive).length);
       runtime.publicCardPool.reveal(count);
-      runtime.log(`${source.name}展示了${state.publicCardPool.length}张互利牌。`, "important");
+      runtime.presentation.log(`${source.name}展示了${state.publicCardPool.length}张互利牌。`, "important");
       const drafted = await runtime.publicCardPool.draft(source);
       return { resolved: Boolean(drafted && runtime.isSessionValid(gameId)) };
     },
@@ -727,7 +727,7 @@ runtime/card/skill facts。
       const gameId = state.gameId;
       const effectiveTargets = [];
       for (const target of runtime.seatOrderFrom(source, true).filter((player) => player.alive)) {
-        const healed = await runtime.heal(source, target, 1, { card });
+        const healed = await runtime.heal(source, target, getSymbiosisHealAmount(), { card });
         if (!runtime.isSessionValid(gameId)) return { resolved: false };
         if (healed > 0) effectiveTargets.push(target);
       }
@@ -763,7 +763,7 @@ runtime/card/skill facts。
       const target = targets[0];
       if (!runtime.getCardTargets(source, card).includes(target)) return { resolved: false };
       setStatus(runtime.getState(), target, "sealed", { cardDefinitionId: card.definitionId, originPlayerId: source.id });
-      runtime.log(`${source.name}使${target.name}进入「封印」状态。`, "important");
+      runtime.presentation.log(`${source.name}使${target.name}进入「封印」状态。`, "important");
     },
 
 /*
@@ -951,7 +951,7 @@ runtime/card/skill facts。
     async lightning(source, card) {
       if (source.statuses.lightning) return;
       setStatus(runtime.getState(), source, "lightning", { cardDefinitionId: card.definitionId, originPlayerId: source.id });
-      runtime.log(`${source.name}获得了「闪电」状态。`, "important");
+      runtime.presentation.log(`${source.name}获得了「闪电」状态。`, "important");
     },
 
 /*

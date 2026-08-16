@@ -21,11 +21,12 @@ import { changeEnergy, changeShield } from "../../domain/state/transitions/Resou
 import { incrementAttackLimit } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { randomChoice } from "../../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
+import { decideSkillEffect } from "../../domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot";
 
 const REQUIRED_DEPENDENCIES = [
-  "getState", "isSessionValid", "log", "heal", "damage", "drawCards",
+  "getState", "isSessionValid", "presentation", "heal", "damage", "drawCards",
   "moveEquipmentToHand", "moveCardBetweenHands", "cardLabelForHuman",
-  "getEnemies", "queueFeedback", "random"
+  "getEnemies", "random"
 ];
 
 /*
@@ -85,11 +86,12 @@ runtime/card/skill facts。
 边界与不变量
 不重复 Domain rule 决定。
 */
-    async breakArmy(source) {
+    async breakArmy(skill, source, _targets, context) {
       const state = runtime.getState();
-      changeEnergy(state, source, -2);
-      incrementAttackLimit(state, source, 1);
-      runtime.log(`${source.name}发动「破军」，本回合可额外使用1张「突袭」。`, "important");
+      const decision = decideSkillEffect(skill, source, context);
+      changeEnergy(state, source, -decision.energyCost);
+      incrementAttackLimit(state, source, decision.attackLimitBonus);
+      runtime.presentation.log(`${source.name}发动「破军」，本回合可额外使用${decision.attackLimitBonus}张「突袭」。`, "important");
     },
 /*
 功能
@@ -116,13 +118,14 @@ runtime/card/skill facts。
 边界与不变量
 不重复 Domain rule 决定。
 */
-    async barrier(source, targets) {
+    async barrier(skill, source, targets, context) {
       const state = runtime.getState();
-      changeEnergy(state, source, -2);
+      const decision = decideSkillEffect(skill, source, context);
+      changeEnergy(state, source, -decision.energyCost);
       const target = targets[0];
-      changeShield(state, target, 1);
-      runtime.queueFeedback("shield", target.id, 1);
-      runtime.log(`${source.name}发动「壁垒」，令${target.name}获得1点护盾。`, "heal");
+      changeShield(state, target, decision.shieldAmount);
+      runtime.presentation.showShieldFeedback(target.id, decision.shieldAmount);
+      runtime.presentation.log(`${source.name}发动「壁垒」，令${target.name}获得${decision.shieldAmount}点护盾。`, "heal");
     },
 /*
 功能
@@ -149,17 +152,18 @@ runtime/card/skill facts。
 边界与不变量
 不重复 Domain rule 决定。
 */
-    async symbiosis(source, targets) {
+    async symbiosis(skill, source, targets, context) {
       const state = runtime.getState();
-      changeEnergy(state, source, -2);
+      const decision = decideSkillEffect(skill, source, context);
+      changeEnergy(state, source, -decision.energyCost);
       const target = targets[0];
-      runtime.log(
+      runtime.presentation.log(
         target.id === source.id
           ? `${source.name}对自己发动「滋荣」。`
           : `${source.name}对${target.name}发动「滋荣」。`,
         "important"
       );
-      await runtime.heal(source, target, 1, { skill: "symbiosis" });
+      await runtime.heal(source, target, decision.healAmount, { skill: "symbiosis" });
     },
 /*
 功能
@@ -186,10 +190,11 @@ runtime/card/skill facts。
 边界与不变量
 不重复 Domain rule 决定。
 */
-    async stealSkill(source, targets) {
+    async stealSkill(skill, source, targets, context) {
       const state = runtime.getState();
       const gameId = state.gameId;
-      changeEnergy(state, source, -2);
+      const decision = decideSkillEffect(skill, source, context);
+      changeEnergy(state, source, -decision.energyCost);
       const target = targets[0];
       const options = [...target.hand.map((card) => ({ card, zone: "hand" })), ...(target.equipment ? [{ card: target.equipment, zone: "equipment" }] : [])];
       const chosen = randomChoice(options, runtime.random);
@@ -198,7 +203,7 @@ runtime/card/skill facts。
         ? await runtime.moveEquipmentToHand(target, source, chosen.card, "窃取")
         : await runtime.moveCardBetweenHands(target, source, chosen.card, "窃取");
       if (!runtime.isSessionValid(gameId)) return;
-      if (stolen) runtime.log(`${source.name}发动「窃取」，从${target.name}处获得${runtime.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
+      if (stolen) runtime.presentation.log(`${source.name}发动「窃取」，从${target.name}处获得${runtime.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
     },
 /*
 功能
@@ -225,15 +230,15 @@ runtime/card/skill facts。
 边界与不变量
 不重复 Domain rule 决定。
 */
-    async burningField(source, _targets, context = {}) {
+    async burningField(skill, source, _targets, context = {}) {
       const state = runtime.getState();
       const gameId = state.gameId;
-      const energyCost = context.energyCost ?? 3;
-      changeEnergy(state, source, -energyCost);
-      runtime.log(`${source.name}发动「焚场」。`, "important");
+      const decision = decideSkillEffect(skill, source, context);
+      changeEnergy(state, source, -decision.energyCost);
+      runtime.presentation.log(`${source.name}发动「焚场」。`, "important");
       for (const target of runtime.getEnemies(source)) {
         if (!runtime.isSessionValid(gameId) || state.isGameOver) break;
-        if (target.alive) await runtime.damage(source, target, 1, {
+        if (target.alive) await runtime.damage(source, target, decision.damageAmount, {
           skill: "burningField", actionName: "焚场", canBlock: true,
           damageType: "skill", resolutionId: context.resolutionId
         });
@@ -264,17 +269,18 @@ runtime/card/skill facts。
 边界与不变量
 不重复 Domain rule 决定。
 */
-    async hunt(source, targets) {
+    async hunt(skill, source, targets, context) {
       const state = runtime.getState();
       const gameId = state.gameId;
+      const decision = decideSkillEffect(skill, source, context);
       const target = targets[0];
-      runtime.log(`${source.name}对${target.name}发动「猎杀」。`, "important");
-      changeEnergy(state, source, -2);
+      runtime.presentation.log(`${source.name}对${target.name}发动「猎杀」。`, "important");
+      changeEnergy(state, source, -decision.energyCost);
       removeStatus(state, target, "huntMark");
-      const context = { skill: "hunt", actionName: "猎杀", canBlock: true, damageType: "skill" };
-      await runtime.damage(source, target, 2, context);
+      const damageContext = { skill: "hunt", actionName: "猎杀", canBlock: true, damageType: "skill" };
+      await runtime.damage(source, target, decision.damageAmount, damageContext);
       if (!runtime.isSessionValid(gameId)) return;
-      if (context.blockedByCard && source.alive) await runtime.drawCards(source, 1, "猎杀被格挡");
+      if (damageContext.blockedByCard && source.alive) await runtime.drawCards(source, decision.blockedRewardDraw, "猎杀被格挡");
     },
 /*
 功能
@@ -301,22 +307,20 @@ runtime/card/skill facts。
 边界与不变量
 不重复 Domain rule 决定。
 */
-    async allIn(source) {
+    async allIn(skill, source, _targets, context) {
       const state = runtime.getState();
       const gameId = state.gameId;
       const hadAllInBefore = Boolean(source.statuses.allIn);
-      const energy = source.energy;
-      const drawCount = Math.max(0, energy - 1);
-      const chance = Math.min(1, energy * .25);
-      changeEnergy(state, source, -energy);
-      const drawn = await runtime.drawCards(source, drawCount, "孤注", { silent: true });
+      const decision = decideSkillEffect(skill, source, context);
+      changeEnergy(state, source, -decision.energyCost);
+      const drawn = await runtime.drawCards(source, decision.drawCount, "孤注", { silent: true });
       if (!runtime.isSessionValid(gameId)) return;
-      const entered = runtime.random() < chance;
+      const entered = runtime.random() < decision.enterChance;
       if (entered) setStatus(state, source, "allIn", { assaultBonus: 1 });
       if (hadAllInBefore) {
-        runtime.log(`${source.name}消耗${energy}点能量发动「孤注」，${drawn ? `摸${drawn}张牌` : "未摸到牌"}，原有「孤注」状态保持不变。`, "important");
+        runtime.presentation.log(`${source.name}消耗${decision.energyCost}点能量发动「孤注」，${drawn ? `摸${drawn}张牌` : "未摸到牌"}，原有「孤注」状态保持不变。`, "important");
       } else {
-        runtime.log(`${source.name}消耗${energy}点能量发动「孤注」，${drawn ? `摸${drawn}张牌` : "未摸到牌"}，${entered ? "并进入" : "但未进入"}「孤注」状态。`, "important");
+        runtime.presentation.log(`${source.name}消耗${decision.energyCost}点能量发动「孤注」，${drawn ? `摸${drawn}张牌` : "未摸到牌"}，${entered ? "并进入" : "但未进入"}「孤注」状态。`, "important");
       }
     },
 /*
@@ -344,12 +348,13 @@ runtime/card/skill facts。
 边界与不变量
 不重复 Domain rule 决定。
 */
-    async resonance(source, targets) {
+    async resonance(skill, source, targets, context) {
       const state = runtime.getState();
       const gameId = state.gameId;
-      changeEnergy(state, source, -2);
-      const drawn = await runtime.drawCards(targets[0], 1, "共鸣", { silent: true });
-      if (runtime.isSessionValid(gameId)) runtime.log(`${source.name}发动「共鸣」，令${targets[0].name}${drawn ? `摸${drawn}张牌` : "未摸到牌"}。`);
+      const decision = decideSkillEffect(skill, source, context);
+      changeEnergy(state, source, -decision.energyCost);
+      const drawn = await runtime.drawCards(targets[0], decision.drawCount, "共鸣", { silent: true });
+      if (runtime.isSessionValid(gameId)) runtime.presentation.log(`${source.name}发动「共鸣」，令${targets[0].name}${drawn ? `摸${drawn}张牌` : "未摸到牌"}。`);
     }
   };
 
@@ -381,7 +386,7 @@ runtime/card/skill facts。
   async function execute(skill, source, targets, context = {}) {
     const resolver = EFFECTS[skill.id];
     if (!resolver) throw new Error(`未注册主动技能效果：${skill.id}`);
-    await resolver(source, targets, context);
+    await resolver(skill, source, targets, context);
   }
 
   return Object.freeze({ execute });

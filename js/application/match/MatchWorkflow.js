@@ -25,13 +25,14 @@ import { createRoundUsageState, createTurnUsageState } from "../../domain/rules/
 import { setCurrentPlayerIndex, setGameOver, setMatchPhase, setWinnerTeam } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { applyGeneralDefinition } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { createGameOverFact, createGameStartFact } from "../../domain/events/MatchEvents.js?build=20260815-shadow-agent-p1-slot";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "createId", "createPlayer", "assignTeams",
   "createCandidates", "assignAiGenerals", "emitEvent", "log", "getTeamName",
   "registerGlobalRules", "registerPassiveSkills", "buildDeck", "syncDeckAliases",
   "getTeamRules", "drawCards", "render", "startTurnLoop", "setRoster", "setMaxEnergy",
-  "setStartingPlayerIndex", "setSelectedGeneralId", "getLegacyGameRef",
+  "setStartingPlayerIndex", "setSelectedGeneralId", "publishFact",
   "responseCleanup", "cancelPendingInteractions", "showGameOver",
   "markDisposed", "resetActionLocks", "cleanupManagerCleanup",
   "cardSelectionCleanup", "dyingCleanup", "publicCardPoolCleanup", "eventBusClear",
@@ -216,7 +217,12 @@ export function createMatchWorkflow(dependencies) {
     liveAuthoritativeMatch = true;
     await runtime.emitEvent("generalSelected", { type: "generalSelected", player: human, general: selected });
     if (!runtime.isSessionValid(gameId)) return false;
-    await runtime.emitEvent("gameStart", { type: "gameStart", game: runtime.getLegacyGameRef() });
+    await runtime.publishFact("gameStart", createGameStartFact({
+      gameId,
+      stateVersion: state.stateVersion,
+      humanPlayerId: human.id,
+      selectedGeneralId: selected.id
+    }));
     if (!runtime.isSessionValid(gameId)) return false;
 
     const dawnCount = getTeamSize({ players: state.players }, "dawn");
@@ -268,7 +274,11 @@ export function createMatchWorkflow(dependencies) {
     runtime.responseCleanup();
     runtime.cancelPendingInteractions();
     runtime.log(`${runtime.getTeamName(winnerTeam)}消灭了全部敌人，获得胜利！`, "important");
-    await runtime.emitEvent("gameOver", { type: "gameOver", winnerTeam });
+    await runtime.publishFact("gameOver", createGameOverFact({
+      gameId,
+      stateVersion: state.stateVersion,
+      winnerTeam
+    }));
     if (!runtime.isSessionValid(gameId)) return null;
     runtime.render();
     runtime.showGameOver(winnerTeam, state.players[0].battleTeam === winnerTeam);
