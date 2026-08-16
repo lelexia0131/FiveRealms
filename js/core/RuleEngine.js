@@ -1,10 +1,67 @@
 import { DistanceSystem } from "./DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
 import { hasStatus as hasStatusFromRule, nextLightningReceiverId } from "../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import { getSkillTargetIds } from "../domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot";
 import { createAttackUsage, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn } from "../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
 import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import {
+  canActuallyUseAssault as decideAssaultLegality, canPlayCard as decideCardLegality,
+  findPlayerFact, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds,
+  getTransferReceiverIds, getTransferSourceIds
+} from "../domain/rules/card/CardRules.js?build=20260815-shadow-agent-p1-slot";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
+  /*
+  功能
+  把真实或 AI filtered players 投影为 Domain Card Rule canonical facts。
+
+  调用方
+  RuleEngine card/skill adapters。
+
+  输入
+  game。
+
+  输出
+  冻结 canonical player facts 数组。
+
+  读取状态
+  game.state.players 或 game.players。
+
+  写入状态
+  无。
+
+  调用函数
+  Object.keys。
+
+  边界与不变量
+  dual-schema statuses 只在本 adapter 归一化。
+  */
+  static getCardRulePlayers(game, { includeHand = true } = {}) {
+    const players = game?.state?.players ?? game?.players ?? [];
+    return players.map((player) => Object.freeze({
+      id: player.id,
+      seatIndex: player.seatIndex,
+      alive: player.alive,
+      battleTeam: player.battleTeam,
+      hp: Number(player.hp) || 0,
+      maxHp: Number(player.maxHp) || 0,
+      shield: Number(player.shield) || 0,
+      energy: Number(player.energy) || 0,
+      maxEnergy: Number(player.maxEnergy) || 0,
+      attackRange: Number(player.attackRange ?? 1) || 1,
+      handCount: includeHand
+        ? (Array.isArray(player.hand) ? player.hand.length : Math.max(0, Number(player.handCount) || 0))
+        : 0,
+      equipmentDefinitionId: player.equipment?.definitionId ?? player.equipmentDefinitionId ?? null,
+      huntMarkSourceId: !Array.isArray(player.statuses) && player.statuses?.huntMark?.sourceId
+        ? player.statuses.huntMark.sourceId
+        : null,
+      statusIds: Object.freeze(Array.isArray(player.statuses)
+        ? player.statuses
+        : Object.keys(player.statuses ?? {}))
+    }));
+  }
+
   static isPlayerInGame(game, player) {
     return Boolean(player?.alive && game?.state?.players?.some((entry) => entry === player && entry.alive));
   }
@@ -81,16 +138,37 @@ export class RuleEngine {
     return players.find((player) => player.id === receiverId) ?? holder;
   }
 
-  /**
-   * 借势第二目标的实时候选：只要求存活、不是第一目标本人，且第一目标到
-   * 第二目标的距离满足第一目标的攻击范围。不得检查阵营、手牌或突袭次数；
-   * 这些条件属于后续响应与结算阶段。
-   */
+  /*
+  功能
+  返回借势第二目标候选。
+
+  调用方
+  RuleEngine card adapter 与 tests。
+
+  输入
+  game 与 source。
+
+  输出
+  Player 数组。
+
+  读取状态
+  alive/attackRange/equipment facts。
+
+  写入状态
+  无。
+
+  调用函数
+  getCardRulePlayers、getAssaultTargetIds。
+
+  边界与不变量
+  不检查阵营、手牌或突袭次数。
+  */
   static getAssaultTargetCandidates(game, source) {
     if (!this.isPlayerInGame(game, source)) return [];
-    return game.state.players.filter((player) => player.alive
-      && player.id !== source.id
-      && DistanceSystem.inAttackRange(game, source, player));
+    const players = this.getCardRulePlayers(game, { includeHand:false });
+    const sourceFact = findPlayerFact(players, source.id);
+    const ids = getAssaultTargetIds(players, sourceFact);
+    return (game.state?.players ?? game.players ?? []).filter((player) => ids.includes(player.id));
   }
 
   /** 普通突袭的实时合法目标列表：兼容旧调用，仍包含距离、阵营、装备、技能和状态规则，不读取手牌或次数。 */
@@ -163,20 +241,24 @@ export class RuleEngine {
   次数额度由 Domain Turn Rule 决定；forced assault 仍放宽出牌阶段并忽略首目标次数。
   */
   static canActuallyUseAssault(game, source, card, target = null, { allowOutOfTurn = false, ignoreAttackLimit = false } = {}) {
-    if (!this.isPlayerInGame(game, source)) return { ok:false, reason:"角色已阵亡或离场" };
-    if (!card || card.definitionId !== "assault" || !source.hand?.includes(card)) return { ok:false, reason:"突袭已不在手中" };
-    if (card.usageMode === "response" || card.targetType === "responseOnly") return { ok:false, reason:"该牌不能主动使用" };
-    if (!allowOutOfTurn && !isActorTurn(game.state.phase, game.currentPlayer?.id, source.id)) {
-      return { ok:false, reason:"现在不是你的出牌阶段" };
-    }
-    if (!ignoreAttackLimit) {
-      const usage = this.getAssaultUsage(source);
-      if (!hasAttackUseRemaining(usage)) return { ok:false, reason:"本回合突袭次数已用尽" };
-    }
-    const candidates = this.getLegalAssaultTargets(game, source);
-    if (target && !candidates.includes(target)) return { ok:false, reason:"目标不再是合法突袭目标" };
-    if (!target && !candidates.length) return { ok:false, reason:"攻击距离内没有敌人" };
-    return { ok:true, reason:"" };
+    const players = this.getCardRulePlayers(game);
+    const sourceFact = findPlayerFact(players, source?.id);
+    const usage = source ? this.getAssaultUsage(source) : { used:0, limit:0 };
+    const decision = decideAssaultLegality({
+      players,
+      sourceId: source?.id,
+      currentPlayerId: game.currentPlayer?.id ?? game.state?.currentPlayerId ?? null,
+      phase: game.state?.phase ?? game.phase ?? "idle",
+      card,
+      inHand: Boolean(source?.hand?.includes(card) || source?.hand?.some?.((entry) => entry?.id === card?.id)),
+      targetId: target?.id ?? null,
+      usage,
+      allowOutOfTurn,
+      ignoreAttackLimit
+    });
+    return decision.ok || target
+      ? decision
+      : { ok: false, reason: decision.reason || "攻击距离内没有敌人" };
   }
 
   /** 借势响应的兼容入口：只放宽不在本人出牌阶段，且忽略第一目标已用突袭次数。 */
@@ -188,12 +270,36 @@ export class RuleEngine {
     return (source?.hand ?? []).filter((card) => this.canUseForcedAssault(game, source, card, target).ok);
   }
 
-  /** 第一目标必须拥有真实装备实例，并且至少存在一个距离合法的借势第二目标。 */
+  /*
+  功能
+  返回借势第一目标候选。
+
+  调用方
+  canPlayCard 与 tests。
+
+  输入
+  game 与 cardUser。
+
+  输出
+  Player 数组。
+
+  读取状态
+  alive/equipment 与第二目标候选。
+
+  写入状态
+  无。
+
+  调用函数
+  getCardRulePlayers、getLeverageFirstTargetIds。
+
+  边界与不变量
+  第一目标必须持有真实装备实例。
+  */
   static getLeverageFirstTargets(game, cardUser) {
-    return game.state.players.filter((player) => player !== cardUser
-      && this.isPlayerInGame(game, player)
-      && Boolean(player.equipment?.id)
-      && this.getAssaultTargetCandidates(game, player).length > 0);
+    const players = this.getCardRulePlayers(game, { includeHand:false });
+    const sourceFact = findPlayerFact(players, cardUser?.id);
+    const ids = getLeverageFirstTargetIds(players, sourceFact);
+    return (game.state?.players ?? game.players ?? []).filter((player) => ids.includes(player.id));
   }
   static transferableHandCount(player, excludedCardIds = null) {
     if (Array.isArray(player?.hand)) return player.hand.filter((held) => !excludedCardIds?.has(held.id)).length;
@@ -211,33 +317,109 @@ export class RuleEngine {
     return DistanceSystem.getRangeLegalityProbability(game, source, target, card.effectRange) > 0;
   }
 
+  /*
+  功能
+  返回可转移来源。
+
+  调用方
+  CardIntentRuntime 与 tests。
+
+  输入
+  game、source、card 与 excludedCardIds。
+
+  输出
+  Player 数组。
+
+  读取状态
+  alive/handCount/range facts。
+
+  写入状态
+  无。
+
+  调用函数
+  getCardRulePlayers、getTransferSourceIds。
+
+  边界与不变量
+  excluded transfer card 不计入来源手牌。
+  */
   static getTransferSources(game, source, card, excludedCardIds = null) {
+    const original = game.state?.players ?? game.players ?? [];
     const exclusions = excludedCardIds ?? (card?.definitionId === "transfer" && card?.id ? new Set([card.id]) : null);
-    return game.state.players.filter((player) => player.alive && this.transferableHandCount(player, exclusions) > 0 && this.isWithinCardEffectRange(game, source, player, card));
+    const players = this.getCardRulePlayers(game).map((fact) => {
+      const player = original.find((entry) => entry.id === fact.id);
+      return Object.freeze({
+        ...fact,
+        handCount: player ? this.transferableHandCount(player, exclusions) : fact.handCount
+      });
+    });
+    const sourceFact = findPlayerFact(players, source?.id);
+    const ids = getTransferSourceIds(players, sourceFact, card, exclusions);
+    return original.filter((player) => ids.includes(player.id));
   }
 
+  /*
+  功能
+  返回转移接收者。
+
+  调用方
+  CardIntentRuntime 与 tests。
+
+  输入
+  game、source、from 与 card。
+
+  输出
+  Player 数组。
+
+  读取状态
+  alive/range facts。
+
+  写入状态
+  无。
+
+  调用函数
+  getCardRulePlayers、getTransferReceiverIds。
+
+  边界与不变量
+  排除 from 自身。
+  */
   static getTransferReceivers(game, source, from, card) {
-    return game.state.players.filter((player) => player.alive && player.id !== from?.id && this.isWithinCardEffectRange(game, source, player, card));
+    const players = this.getCardRulePlayers(game);
+    const sourceFact = findPlayerFact(players, source?.id);
+    const fromFact = findPlayerFact(players, from?.id);
+    const ids = getTransferReceiverIds(players, sourceFact, fromFact, card);
+    return (game.state?.players ?? game.players ?? []).filter((player) => ids.includes(player.id));
   }
 
+  /*
+  功能
+  返回卡牌合法目标。
+
+  调用方
+  card rules consumers。
+
+  输入
+  game、source 与 card。
+
+  输出
+  Player 数组。
+
+  读取状态
+  canonical card rule facts。
+
+  写入状态
+  无。
+
+  调用函数
+  getCardRulePlayers、getCardTargetIds。
+
+  边界与不变量
+  目标 formula 由 Domain CardRules 唯一拥有。
+  */
   static getCardTargets(game, source, card) {
-    const alive = game.state.players.filter((player) => player.alive);
-    const enemies = alive.filter((player) => player.battleTeam !== source.battleTeam);
-    switch (card.targetType) {
-      case "singleEnemyInRange": return enemies.filter((target) => DistanceSystem.inAttackRange(game, source, target, card));
-      case "singleEnemy": return enemies;
-      case "singleUnsealedEnemy": return enemies.filter((target) => !this.hasStatus(target, "sealed"));
-      case "otherWithCards": return alive.filter((player) => player.id !== source.id && player.hand.length > 0);
-      case "otherWithCardsOrEquipment": return alive.filter((player) => player.id !== source.id && this.hasHandOrEquipment(player) && this.isWithinCardEffectRange(game, source, player, card));
-      case "anyWithCards": return alive.filter((player) => player.hand.length > 0);
-      case "singleAlly": return alive.filter((player) => player.battleTeam === source.battleTeam);
-      case "self": return [source];
-      case "allEnemies": return enemies;
-      case "allLiving": return alive;
-      case "multiStage": return alive;
-      case "none": return [];
-      default: return [];
-    }
+    const players = this.getCardRulePlayers(game);
+    const sourceFact = findPlayerFact(players, source?.id);
+    const ids = getCardTargetIds(players, sourceFact, card);
+    return (game.state?.players ?? game.players ?? []).filter((player) => ids.includes(player.id));
   }
 
   /*
@@ -266,34 +448,22 @@ export class RuleEngine {
   调息额度由 Domain Turn Rule 决定；具体卡牌目标规则仍属 cardRegistry/deferred。
   */
   static canPlayCard(game, source, card) {
-    if (!source?.alive) return { ok:false, reason:"角色已阵亡" };
-    if (!isActorTurn(game.state.phase, game.currentPlayer?.id, source.id)) return { ok:false, reason:"现在不是你的出牌阶段" };
-    if (!source.hand.includes(card)) return { ok:false, reason:"这张牌已不在手中" };
-    if (card.usageMode === "response" || card.targetType === "responseOnly") return { ok:false, reason:"这张牌只能在对应响应时机使用" };
-    if (card.definitionId === "assault") {
-      const assaultLegality = this.canActuallyUseAssault(game, source, card);
-      if (!assaultLegality.ok) return assaultLegality;
-    }
-    if (card.definitionId === "recover") {
-      if (source.hp >= source.maxHp) return { ok:false, reason:"生命已满" };
-      if (!hasRecoverUseRemaining(source.turnFlags.recoverUsed, source.turnFlags.recoverLimit)) {
-        return { ok:false, reason:"本回合调息次数已用尽" };
-      }
-    }
-    if (card.definitionId === "charge" && source.energy >= source.maxEnergy) return { ok:false, reason:"能量已经充满" };
-    if (card.definitionId === "lightning" && this.hasStatus(source, "lightning")) return { ok:false, reason:"已处于闪电状态，不能再次使用闪电" };
-    if (card.targetType === "otherWithCards" && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有可选择手牌的其他角色" };
-    if (card.targetType === "otherWithCardsOrEquipment" && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"范围内没有可选择手牌或装备的其他角色" };
-    if (card.targetType === "singleAlly" && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有可选择的存活队友" };
-    if (["singleEnemy","singleEnemyInRange","singleUnsealedEnemy","allEnemies"].includes(card.targetType) && !this.getCardTargets(game, source, card).length) return { ok:false, reason:"没有合法敌方目标" };
-    if (card.definitionId === "transfer") {
-      const sources = this.getTransferSources(game, source, card);
-      if (!sources.some((from) => this.getTransferReceivers(game, source, from, card).length)) return { ok:false, reason:"距离1内没有可转移手牌的来源和接收者" };
-    }
-    if (card.definitionId === "leverage" && !this.getLeverageFirstTargets(game, source).length) {
-      return { ok:false, reason:"没有装备区有真实装备且能够突袭的其他角色" };
-    }
-    return { ok:true, reason:"" };
+    const usage = this.getAssaultUsage(source);
+    const transferSourceIds = card?.definitionId === "transfer"
+      ? this.getTransferSources(game, source, card).map((player) => player.id)
+      : null;
+    return decideCardLegality({
+      players: this.getCardRulePlayers(game),
+      sourceId: source?.id,
+      currentPlayerId: game.currentPlayer?.id ?? game.state?.currentPlayerId ?? null,
+      phase: game.state?.phase ?? game.phase ?? "idle",
+      card,
+      inHand: Boolean(source?.hand?.includes(card) || source?.hand?.some?.((entry) => entry?.id === card?.id)),
+      assaultUsage: usage,
+      recoverUsed: source?.turnFlags?.recoverUsed ?? source?.recoverUsed ?? 0,
+      recoverLimit: source?.turnFlags?.recoverLimit ?? source?.recoverLimit ?? null,
+      transferSourceIds
+    });
   }
 
   static targetLegality(game, source, card, target) {
@@ -310,19 +480,35 @@ export class RuleEngine {
     return { ok:false, reason:"不是合法目标" };
   }
 
+  /*
+  功能
+  返回技能合法目标。
+
+  调用方
+  ActionWorkflow/skillRegistry 与 tests。
+
+  输入
+  game、source 与 skill。
+
+  输出
+  Player 数组。
+
+  读取状态
+  canonical skill rule facts。
+
+  写入状态
+  无。
+
+  调用函数
+  getCardRulePlayers、getSkillTargetIds。
+
+  边界与不变量
+  目标 formula 由 Domain SkillRules 唯一拥有。
+  */
   static getSkillTargets(game, source, skill) {
     if (!skill?.rangeRule) return [];
-    const skillId = skill.id;
-    const alive = game.state.players.filter((player) => player.alive);
-    let candidates = [];
-    if (skillId === "barrier") candidates = alive.filter((player) => player.battleTeam === source.battleTeam);
-    else if (skillId === "resonance") candidates = alive.filter((player) => player.battleTeam === source.battleTeam);
-    else if (skillId === "symbiosis") candidates = alive.filter((player) => player.battleTeam === source.battleTeam && player.hp < player.maxHp);
-    else if (skillId === "stealSkill") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && this.hasHandOrEquipment(player));
-    else if (skillId === "hunt") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && player.statuses.huntMark?.sourceId === source.id);
-    if (skill.rangeRule === "attack") return candidates.filter((target) => DistanceSystem.getRangeLegalityProbability(game, source, target, source.attackRange) > 0);
-    if (skill.rangeRule === "fixed") return candidates.filter((target) => DistanceSystem.getRangeLegalityProbability(game, source, target, skill.range) > 0);
-    if (["unlimited", "ally"].includes(skill.rangeRule)) return candidates;
-    return skill.rangeRule === "self" && candidates.includes(source) ? [source] : [];
+    const players = this.getCardRulePlayers(game);
+    const ids = getSkillTargetIds(players, source?.id, skill);
+    return (game.state?.players ?? game.players ?? []).filter((player) => ids.includes(player.id));
   }
 }

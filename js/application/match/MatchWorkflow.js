@@ -327,7 +327,7 @@ export function createMatchWorkflow(dependencies) {
     无。
 
     输出
-    冻结 setup facts。
+    冻结 setup facts snapshot。
 
     读取状态
     preLiveSetup。
@@ -336,12 +336,12 @@ export function createMatchWorkflow(dependencies) {
     无。
 
     调用函数
-    无。
+    Object.freeze。
 
     边界与不变量
-    只读事实；不暴露 setup writer。
+    只读事实 snapshot；修改返回对象不影响内部 setup 标记。
     */
-    get preLiveSetup() { return preLiveSetup; },
+    get preLiveSetup() { return Object.freeze({ ...preLiveSetup }); },
     /*
     功能
     返回 live authoritative match 是否已开始。
@@ -379,7 +379,7 @@ export function createMatchWorkflow(dependencies) {
     无。
 
     输出
-    候选数组。
+    冻结候选数组 snapshot。
 
     读取状态
     candidates。
@@ -388,12 +388,12 @@ export function createMatchWorkflow(dependencies) {
     无。
 
     调用函数
-    无。
+    Array.slice、Object.freeze。
 
     边界与不变量
-    不缓存第二份候选数据。
+    修改返回数组不影响 confirmGeneral lookup。
     */
-    get candidates() { return candidates; },
+    get candidates() { return Object.freeze(candidates.slice()); },
     startSelection,
     confirmGeneral,
     checkVictory,

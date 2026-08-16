@@ -123,6 +123,11 @@ import { createTurnWorkflow } from "../js/application/turn/TurnWorkflow.js?build
 import { createActionWorkflow } from "../js/application/action/ActionWorkflow.js?build=20260815-shadow-agent-p1-slot";
 import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
 import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
+import { canActuallyUseAssault as canActuallyUseAssaultRule, canPlayCard as canPlayCardRule, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds, getTransferSourceIds } from "../js/domain/rules/card/CardRules.js?build=20260815-shadow-agent-p1-slot";
+import { canTriggerRecycleDevice } from "../js/domain/rules/card/RecycleDeviceRules.js?build=20260815-shadow-agent-p1-slot";
+import { canUseSkillBase, getSkillTargetIds } from "../js/domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot";
+import { createCardIntentRuntime } from "../js/application/action/CardIntentRuntime.js?build=20260815-shadow-agent-p1-slot";
+import { createRecycleDeviceTrigger } from "../js/application/trigger/RecycleDeviceTrigger.js?build=20260815-shadow-agent-p1-slot";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import {
   ACTIVE_SKILLS, getActiveSkillCost, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
@@ -8445,7 +8450,7 @@ test("隐藏信息：牌背多阶段 pending 会锁住手牌、技能和结束�
   const human = makePlayer("h", 0, "dawn", "human"), enemy = makePlayer("e", 1, "dusk");
   const { game }
     = makeGame([human, enemy]);
-  game.interactionLocked = true;
+  game.actionWorkflow.setInteractionLocked(true);
   assert.equal(game.requestEndHumanPlay(), false);
 });
 
@@ -37096,7 +37101,7 @@ test("生命周期：结算异常后 actionLocked、interactionLocked 与 AI thi
     { game, ui }
       = makeGame([source, enemy]);
   source.hand.push(card);
-  game.interactionLocked = true;
+  game.actionWorkflow.setInteractionLocked(true);
   ui.thinkingPlayerId = source.id;
   ui.setThinking(true, source, "测试异常恢复");
   game.eventBus.on("beforeCardUse", "test:throw-for-lock-restore", (event) => {
@@ -41318,7 +41323,7 @@ function frArch8PortsMinimalSurface() {
   assert.throws(() => createPresentationPort({ log() { } }), /showDamageFeedback/);
   const diagnostics = createDiagnosticsPort({
     recordDamage: () => { }, recordHealing: () => { }, recordHpLoss: () => { },
-    recordCardPlayed: () => { }, reportWorkflowError: () => { }
+    recordCardPlayed: () => { }, recordAssaultUse: () => { }, reportWorkflowError: () => { }
   });
   assert.equal(typeof diagnostics.recordDamage, "function");
   assert.throws(() => createDiagnosticsPort({ recordDamage() { } }), /recordHealing/);
@@ -42131,21 +42136,267 @@ readFile。
 async function frArch9ActionRuntimeStateOwnership() {
   const actor = makePlayer("fr9-action-state", 0, "dawn");
   const { game } = makeGame([actor]);
-  game.actionLocked = true;
-  assert.equal(game.actionWorkflow.state.actionLocked, true);
-  game.actionLocked = false;
-  game.interactionLocked = true;
-  assert.equal(game.actionWorkflow.state.interactionLocked, true);
-  game.interactionLocked = false;
-  game.pendingHumanPlayEnd = true;
-  assert.equal(game.actionWorkflow.state.pendingHumanPlayEnd, true);
-  game.pendingHumanPlayEnd = false;
-  assert.equal(game.resolutionOwners, game.actionWorkflow.state.resolutionOwners);
+  game.actionWorkflow.setActionLocked(true);
+  assert.equal(game.actionWorkflow.getActionStateSnapshot().actionLocked, true);
+  game.actionWorkflow.resetLocks();
+  game.actionWorkflow.setInteractionLocked(true);
+  assert.equal(game.actionWorkflow.getActionStateSnapshot().interactionLocked, true);
+  game.actionWorkflow.resetLocks();
+  game.actionWorkflow.setPendingHumanPlayEnd(true);
+  assert.equal(game.actionWorkflow.getActionStateSnapshot().pendingHumanPlayEnd, true);
+  game.actionWorkflow.resetLocks();
+  const snapshot = game.actionWorkflow.getResolutionOwnersSnapshot();
+  snapshot.set({}, "x");
+  assert.equal(game.actionWorkflow.getResolutionOwnerCount(), 0);
   const source = await readFile(projectFile("js/application/action/ActionWorkflow.js"), "utf8");
   assert.match(source, /resolutionOwners: new Map\(\)/);
 }
 
 test("FR-ARCH-9·action runtime state：locks/resolution owners 归 Application Action", frArch9ActionRuntimeStateOwnership);
+
+// ==================== FR-ARCH-10 Card/Skill Domain + Runtime Tests ====================
+
+/*
+功能
+验证 Domain CardRules 纯目标/借势/转移公式。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake canonical facts。
+
+写入状态
+无。
+
+调用函数
+getCardTargetIds、getAssaultTargetIds、getLeverageFirstTargetIds、getTransferSourceIds、canActuallyUseAssaultRule、canPlayCardRule。
+
+边界与不变量
+Domain 不接受 entity；reason 与旧 RuleEngine 一致。
+*/
+function frArch10DomainCardRules() {
+  const players = [
+    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", attackRange:1, handCount:1, equipmentDefinitionId:null, hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] },
+    { id:"b", seatIndex:1, alive:true, battleTeam:"dusk", attackRange:1, handCount:1, equipmentDefinitionId:"defenseDevice", hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] },
+    { id:"c", seatIndex:2, alive:true, battleTeam:"dawn", attackRange:1, handCount:1, equipmentDefinitionId:null, hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] }
+  ];
+  const source = players[0];
+  assert.deepEqual(getCardTargetIds(players, source, { targetType:"singleEnemyInRange", effectRange:null }), ["b"]);
+  assert.deepEqual(getAssaultTargetIds(players, players[1]), ["a", "c"]);
+  assert.deepEqual(getLeverageFirstTargetIds(players, source), ["b"]);
+  assert.deepEqual(getTransferSourceIds(players, source, { effectRange:null, ignoresDistance:true, id:"x" }, new Set(["x"])), ["a", "b", "c"]);
+  assert.equal(canActuallyUseAssaultRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, usage:{ used:0, limit:1 } }).ok, true);
+  assert.equal(canPlayCardRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, assaultUsage:{ used:0, limit:1 } }).ok, true);
+}
+
+test("FR-ARCH-10·domain card rules：target/leverage/transfer/legality 纯公式", frArch10DomainCardRules);
+
+/*
+功能
+验证 Domain SkillRules 的 cost/base legality/target 纯决定。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake canonical facts。
+
+写入状态
+无。
+
+调用函数
+canUseSkillBase、getSkillTargetIds。
+
+边界与不变量
+reason 与旧 skillRegistry 一致。
+*/
+function frArch10DomainSkillRules() {
+  const players = [
+    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", attackRange:1, handCount:0, equipmentDefinitionId:null, hp:4, maxHp:4, energy:2, maxEnergy:3, huntMarkSourceId:null, statusIds:[] },
+    { id:"b", seatIndex:1, alive:true, battleTeam:"dawn", attackRange:1, handCount:0, equipmentDefinitionId:null, hp:2, maxHp:4, energy:0, maxEnergy:3, huntMarkSourceId:null, statusIds:[] }
+  ];
+  assert.deepEqual(getSkillTargetIds(players, "a", { id:"barrier", rangeRule:"ally" }), ["a", "b"]);
+  assert.equal(canUseSkillBase({ players, sourceId:"a", currentPlayerId:"a", phase:"play", skill:{ id:"barrier", cost:2, limitPerTurn:2 }, used:0, limitPerTurn:2, energy:2 }).ok, true);
+  assert.equal(canUseSkillBase({ players, sourceId:"a", currentPlayerId:"a", phase:"play", skill:{ id:"barrier", cost:2, limitPerTurn:2 }, used:0, limitPerTurn:2, energy:1 }).reason, "能量不足");
+}
+
+test("FR-ARCH-10·domain skill rules：cost/base legality/target 纯决定", frArch10DomainSkillRules);
+
+/*
+功能
+验证 recycleDevice Domain predicate 与应用 trigger 已从 Game 迁出。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake predicate 与 Game source。
+
+写入状态
+无。
+
+调用函数
+canTriggerRecycleDevice、readFile。
+
+边界与不变量
+predicate 只读；Game 不再拥有 semantic formula。
+*/
+async function frArch10RecycleDeviceTrigger() {
+  const facts = { ownerAlive:true, currentActorId:"a", ownerId:"a", equipmentDefinitionId:"recycleDevice", cardCategory:"tactic", cardUsageMode:"active", useCount:1 };
+  assert.equal(canTriggerRecycleDevice(facts), true);
+  assert.equal(canTriggerRecycleDevice({ ...facts, useCount:2 }), false);
+  assert.equal(canTriggerRecycleDevice({ ...facts, cardCategory:"basic" }), false);
+  const gameSource = await readFile(projectFile("js/core/Game.js"), "utf8");
+  assert.doesNotMatch(gameSource, /global:recycleDevice[\s\S]*setRecycleDeviceUses/);
+  assert.match(gameSource, /this\.recycleDeviceTrigger\.register\(\)/);
+  const triggerSource = await readFile(projectFile("js/application/trigger/RecycleDeviceTrigger.js"), "utf8");
+  assert.match(triggerSource, /canTriggerRecycleDevice/);
+}
+
+test("FR-ARCH-10·recycleDevice：predicate 在 Domain，trigger 在 Application", frArch10RecycleDeviceTrigger);
+
+/*
+功能
+验证 ActionWorkflow 无 specific card ID branch 且不暴露 mutable runtime。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+ActionWorkflow/Game 源码与 fake Game。
+
+写入状态
+无。
+
+调用函数
+readFile、makeGame。
+
+边界与不变量
+resolutionOwners snapshot 修改不影响 owner。
+*/
+async function frArch10ActionGenericAndEncapsulated() {
+  const source = await readFile(projectFile("js/application/action/ActionWorkflow.js"), "utf8");
+  for (const token of ["transfer", "leverage", "scout", "plunder", "destroy", "mutualBenefit"]) {
+    assert.doesNotMatch(source, new RegExp(`\\\\b${token}\\\\b`), token);
+  }
+  assert.doesNotMatch(source, /state:\s*actionRuntime/);
+  const actor = makePlayer("fr10-action", 0, "dawn");
+  const { game } = makeGame([actor]);
+  const snapshot = game.actionWorkflow.getResolutionOwnersSnapshot();
+  snapshot.set({}, "x");
+  assert.equal(game.actionWorkflow.getResolutionOwnerCount(), 0);
+  assert.equal(game.resolutionOwners.size, 0);
+}
+
+test("FR-ARCH-10·ActionWorkflow：generic + encapsulated，resolutionOwners 无 mutable escape", frArch10ActionGenericAndEncapsulated);
+
+/*
+功能
+验证 cardRegistry/skillRegistry/RuleEngine 旧 owner 不再持有 duplicate rule/runtime authority。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+源码断言低误报。
+*/
+async function frArch10RegistryClosure() {
+  const cardRegistry = await readFile(projectFile("js/cards/cardRegistry.js"), "utf8");
+  assert.doesNotMatch(cardRegistry, /CARD_EFFECTS/);
+  assert.doesNotMatch(cardRegistry, /setStatus\(|changeShield\(|incrementAttackUsed/);
+  assert.match(cardRegistry, /cardEffectRuntime\.resolve/);
+  const skillRegistry = await readFile(projectFile("js/generals/skillRegistry.js"), "utf8");
+  assert.doesNotMatch(skillRegistry, /PASSIVE_SKILLS/);
+  assert.doesNotMatch(skillRegistry, /game\.eventBus\.on/);
+  assert.match(skillRegistry, /skillEffectRuntime\.execute/);
+  const ruleEngine = await readFile(projectFile("js/core/RuleEngine.js"), "utf8");
+  assert.doesNotMatch(ruleEngine, /switch \(card\.targetType\)/);
+  assert.doesNotMatch(ruleEngine, /skillId === "barrier"/);
+  assert.match(ruleEngine, /getCardTargetIds/);
+  assert.match(ruleEngine, /getSkillTargetIds/);
+}
+
+test("FR-ARCH-10·registry closure：cardRegistry/skillRegistry/RuleEngine 只做 façade", frArch10RegistryClosure);
+
+/*
+功能
+验证 passive skill trigger runtime 已迁到 Application Trigger。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码与 Game fixture。
+
+写入状态
+无。
+
+调用函数
+readFile、makeGame、registerPassiveSkills。
+
+边界与不变量
+registration once；skillRegistry 不再拥有 PASSIVE_SKILLS。
+*/
+async function frArch10PassiveTriggerOwnership() {
+  const triggerSource = await readFile(projectFile("js/application/trigger/PassiveSkillTriggerRegistry.js"), "utf8");
+  assert.match(triggerSource, /momentum\(/);
+  assert.match(triggerSource, /coordination\(/);
+  const skillSource = await readFile(projectFile("js/generals/skillRegistry.js"), "utf8");
+  assert.doesNotMatch(skillSource, /PASSIVE_SKILLS/);
+  assert.match(skillSource, /passiveTriggerRegistry\.registerForPlayers/);
+  const owner = makePlayer("fr10-passive", 0, "dawn", "ai", 4);
+  const { game } = makeGame([owner]);
+  registerPassiveSkills(game);
+  assert.ok(game.passiveTriggerRegistry.hasSkill("momentum"));
+}
+
+test("FR-ARCH-10·passive triggers：Application Trigger 拥有注册，skillRegistry 无 PASSIVE_SKILLS", frArch10PassiveTriggerOwnership);
 
 // ==================== Test Runner 最终执行 ====================
 

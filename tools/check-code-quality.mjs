@@ -39,6 +39,7 @@ const APPLICATION_JUDGMENT_PATTERN = /^js\/application\/judgment\//i;
 const APPLICATION_MATCH_PATTERN = /^js\/application\/match\//i;
 const APPLICATION_TURN_PATTERN = /^js\/application\/turn\//i;
 const APPLICATION_ACTION_PATTERN = /^js\/application\/action\//i;
+const APPLICATION_TRIGGER_PATTERN = /^js\/application\/trigger\//i;
 const LEGACY_WORKFLOW_FACADE_PATTERN = /^js\/core\/(?:DyingSystem|JudgmentSystem|HpLossSystem)\.js$/i;
 const FUTURE_ADAPTERS_PATTERN = /^js\/adapters\//i;
 const DOMAIN_TRANSITIONS_PATTERN = /^js\/domain\/state\/transitions\//i;
@@ -915,12 +916,14 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     );
   }
 
-  if (APPLICATION_MATCH_PATTERN.test(file) || APPLICATION_TURN_PATTERN.test(file) || APPLICATION_ACTION_PATTERN.test(file)) {
+  if (APPLICATION_MATCH_PATTERN.test(file) || APPLICATION_TURN_PATTERN.test(file) || APPLICATION_ACTION_PATTERN.test(file) || APPLICATION_TRIGGER_PATTERN.test(file)) {
     const layerName = APPLICATION_MATCH_PATTERN.test(file)
       ? "match"
       : APPLICATION_TURN_PATTERN.test(file)
         ? "turn"
-        : "action";
+        : APPLICATION_ACTION_PATTERN.test(file)
+          ? "action"
+          : "trigger";
     pushImportError(
       importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/|\/adapters\/|\/ui\/|\/audio\/|\/ai\/|UIManager\.js|AiController\.js|AIController\.js|SoundManager\.js|cards\/cardRegistry|generals\/skillRegistry|config\/|utils\/debug)[^"']*(?:\?[^"']*)?["']/i),
       `架构约束：application/${layerName} 禁止 Game/core runtime、concrete UI/AI/Debug、legacy card/skill/config 依赖`
@@ -932,6 +935,17 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     pushPatternError(
       maskedSource.match(/\bEventBus\b|\beventBus\b|\bdocument\b|\bwindow\b|\b[Ss]earchState\b|\bVisibleState\b|\bBeliefState\b|\bPlanner\b/),
       `架构约束：application/${layerName} 禁止 Game 回指、EventBus、DOM 与 AI SearchState/Planner`
+    );
+  }
+
+  if (/^js\/application\/action\/ActionWorkflow\.js$/i.test(file)) {
+    pushPatternError(
+      source.match(/\b(?:transfer|leverage|scout|plunder|destroy|mutualBenefit)\b/),
+      "架构约束：generic ActionWorkflow 禁止 specific card definitionId semantic branch"
+    );
+    pushPatternError(
+      maskedSource.match(/state:\s*actionRuntime|resolutionOwners:\s*actionRuntime\.resolutionOwners/),
+      "架构约束：ActionWorkflow 禁止暴露 mutable internal runtime state"
     );
   }
 
@@ -1892,6 +1906,31 @@ function identity(value) { return value; }`;
   if (!actionRuntimeErrors.some((error) => error.missing.some((item) => item.includes("statistics")))) {
     throw new Error("application/action fixture did not detect direct statistics mutation");
   }
+  const validGenericActionErrors = inspectSource(
+    "js/application/action/ActionWorkflow.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (validGenericActionErrors.length) {
+    throw new Error(`valid generic ActionWorkflow fixture failed: ${JSON.stringify(validGenericActionErrors)}`);
+  }
+  const cardSpecificActionErrors = inspectSource(
+    "js/application/action/ActionWorkflow.js",
+    `${moduleHeader}\n${pass.replace("return value;", "if (card.definitionId === \"transfer\") return value;")}`,
+    null,
+  );
+  if (!cardSpecificActionErrors.some((error) => error.missing.some((item) => item.includes("specific card")))) {
+    throw new Error("generic ActionWorkflow fixture did not detect cardId branch");
+  }
+  const mutableActionErrors = inspectSource(
+    "js/application/action/ActionWorkflow.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return { state: actionRuntime, playCard };")}`,
+    null,
+  );
+  if (!mutableActionErrors.some((error) => error.missing.some((item) => item.includes("mutable internal runtime")))) {
+    throw new Error("ActionWorkflow fixture did not detect mutable runtime exposure");
+  }
+
   const validSlimGameErrors = inspectSource(
     "js/core/Game.js",
     `${moduleHeader}\nexport class Game { runGameLoop() { return this.turnWorkflow.runGameLoop(); } }`,
@@ -2101,7 +2140,7 @@ function identity(value) { return value; }`;
   if (!rootLayoutErrors.some((error) => error.missing.some((item) => item.includes("AI 根目录")))) {
     throw new Error("root layout fixture did not detect non-allowlisted root file");
   }
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/match/turn/action/slim-game/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/match/turn/action/trigger/slim-game/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
 }
 
 /*

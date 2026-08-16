@@ -1,8 +1,8 @@
 /**
  * Game 是 temporary legacy compatibility façade / runtime shell。
- * Match/Turn/generic Action/Combat/Response/Judgment workflow authority 已迁到 js/application；
- * 本文件只保留 legacy Card/Skill bridge、EventBus compatibility、AI legacy wiring 与 explicit setup/lifecycle adapters。
- * FR-ARCH-10/11/12/13/15 前不得重新在本文件增长 workflow algorithm。
+ * Match/Turn/Action/Combat/Response/Judgment 与 Card/Skill rule/runtime authority 已迁到 js/application + js/domain；
+ * 本文件只保留 FR-ARCH-11 EventBus compatibility、FR-ARCH-12/13 AI legacy wiring、
+ * zone movement/query façades 与 FR-ARCH-15 shell cleanup 前必要的 temporary composition。
  */
 import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
 import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
@@ -15,8 +15,7 @@ import { GeneralSelection } from "./GeneralSelection.js?build=20260815-shadow-ag
 import { RuleEngine } from "./RuleEngine.js?build=20260815-shadow-agent-p1-slot";
 import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260815-shadow-agent-p1-slot";
 import { GameLogger } from "./GameLogger.js?build=20260815-shadow-agent-p1-slot";
-import { resolveCardEffect } from "../cards/cardRegistry.js?build=20260815-shadow-agent-p1-slot";
-import { getActiveSkill, getActiveSkillCost, registerPassiveSkills } from "../generals/skillRegistry.js?build=20260815-shadow-agent-p1-slot";
+import { getActiveSkill, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260815-shadow-agent-p1-slot";
 import { AIController } from "../ai/AiController.js?build=20260815-shadow-agent-p1-slot";
 import { CleanupManager } from "../utils/CleanupManager.js?build=20260815-shadow-agent-p1-slot";
 import { getAiDelay } from "../utils/aiTiming.js?build=20260815-shadow-agent-p1-slot";
@@ -34,6 +33,13 @@ import { createCombatWorkflow } from "../application/combat/CombatWorkflow.js?bu
 import { createMatchWorkflow } from "../application/match/MatchWorkflow.js?build=20260815-shadow-agent-p1-slot";
 import { createTurnWorkflow } from "../application/turn/TurnWorkflow.js?build=20260815-shadow-agent-p1-slot";
 import { createActionWorkflow } from "../application/action/ActionWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createCardRuntime } from "../application/action/CardRuntime.js?build=20260815-shadow-agent-p1-slot";
+import { getActionLogMessage as getActionLogMessageFromRuntime, getActionTargetLabel as getActionTargetLabelFromRuntime, shouldSuppressUseLog as shouldSuppressUseLogFromRuntime } from "../application/action/ActionPresentation.js?build=20260815-shadow-agent-p1-slot";
+import { createCardIntentRuntime } from "../application/action/CardIntentRuntime.js?build=20260815-shadow-agent-p1-slot";
+import { createCardEffectRuntime } from "../application/action/CardEffectRuntime.js?build=20260815-shadow-agent-p1-slot";
+import { createSkillEffectRuntime } from "../application/action/SkillEffectRuntime.js?build=20260815-shadow-agent-p1-slot";
+import { createPassiveSkillTriggerRegistry } from "../application/trigger/PassiveSkillTriggerRegistry.js?build=20260815-shadow-agent-p1-slot";
+import { createRecycleDeviceTrigger } from "../application/trigger/RecycleDeviceTrigger.js?build=20260815-shadow-agent-p1-slot";
 import { PublicCardPool } from "./PublicCardPool.js?build=20260815-shadow-agent-p1-slot";
 import { HpLossSystem } from "./HpLossSystem.js?build=20260815-shadow-agent-p1-slot";
 import { createMatchState } from "../domain/state/model/MatchState.js?build=20260815-shadow-agent-p1-slot";
@@ -41,44 +47,8 @@ import { getCurrentActor, getAllies as getAlliesFromState, getEnemies as getEnem
 import { getCardZoneOccurrences as getCardZoneOccurrencesFromState, isCardCommittedToDiscard as isCardCommittedToDiscardInState, isCardCommittedToEquipment as isCardCommittedToEquipmentInState } from "../domain/state/queries/ZoneQueries.js?build=20260815-shadow-agent-p1-slot";
 import { appendCardToZone, commitEquipmentReplacement, discardEquipment, moveCardBetweenZones, moveCardsAtomically, moveEquipmentToHand, purgeCardToDiscard, removeCardFromZone } from "../domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { changeEnergy } from "../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { addTrackingTarget, markCategoryUsed, setGuardianAidUsed, setKillRewardGranted, setLastEmberResolutionId, setMomentum, setRecycleDeviceUses, setSpyGapPendingTargetIds, setTrackingTurnNumber } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { addTrackingTarget, markCategoryUsed, setGuardianAidUsed, setKillRewardGranted, setLastEmberResolutionId, setMomentum, setSpyGapPendingTargetIds, setTrackingTurnNumber } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-
-/** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
-function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
-  const uniqueTargets = [...new Map(
-    targets.filter((target) => target?.id && target?.name).map((target) => [target.id, target])
-  ).values()];
-  if (uniqueTargets.length) {
-    return uniqueTargets
-      .map((target) => target.id === source.id ? `${target.name}（自己）` : target.name)
-      .join("、");
-  }
-  if (cardOrSkill?.definitionId === "transfer" && selection?.sourceId && selection?.receiverId) {
-    const from = game.state.players.find((player) => player.id === selection.sourceId);
-    const receiver = game.state.players.find((player) => player.id === selection.receiverId);
-    if (from && receiver) return `来源 ${from.name} → 接收 ${receiver.name}`;
-  }
-  if (cardOrSkill?.definitionId === "leverage" && selection?.firstTargetId && selection?.secondTargetId) {
-    const first = game.state.players.find((player) => player.id === selection.firstTargetId);
-    const second = game.state.players.find((player) => player.id === selection.secondTargetId);
-    if (first && second) return `${first.name} → ${second.name}`;
-  }
-  return "";
-}
-
-/** 右侧战斗日志使用自然句式；中央结算区仍保留独立的结构化目标标签。 */
-function actionLogMessage(source, card, targets = []) {
-  const singleTarget = !["allEnemies", "allLiving"].includes(card.targetType)
-    && targets.length === 1 && targets[0]?.id !== source.id
-    ? targets[0]
-    : null;
-  return singleTarget
-    ? `${source.name}对${singleTarget.name}使用了「${card.name}」。`
-    : `${source.name}使用了「${card.name}」。`;
-}
-
-const RESULT_ONLY_CARD_IDS = new Set(["charge", "recover", "shield"]);
 
 /*
 功能
@@ -297,6 +267,112 @@ export class Game {
     只用于 concrete adapter rebind，不供 Application 使用。
     */
     const getPlayerById = (playerId) => this.state.players.find((player) => player.id === playerId);
+    this.recycleDeviceTrigger = createRecycleDeviceTrigger({
+      onEvent: (eventName, key, handler) => this.eventBus.on(eventName, key, handler),
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      log: (message, kind) => this.log(message, kind),
+      drawCards: (...args) => this.drawCards(...args)
+    });
+    this.passiveTriggerRegistry = createPassiveSkillTriggerRegistry({
+      onEvent: (eventName, key, handler) => this.eventBus.on(eventName, key, handler),
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      log: (message, kind) => this.log(message, kind),
+      random: () => this.random(),
+      responseSystem: this.responseSystem,
+      discardCardFromHand: (...args) => this.discardCardFromHand(...args),
+      drawCards: (...args) => this.drawCards(...args),
+      gainEnergy: (...args) => this.gainEnergy(...args),
+      preparePrivateHandPeekIntent: (...args) => this.cardIntentRuntime.preparePrivateHandPeekIntent(...args),
+      resolvePrivateHandPeekIntent: (...args) => this.cardIntentRuntime.resolvePrivateHandPeekIntent(...args),
+      rememberPrivateCard: (...args) => this.rememberPrivateCard(...args),
+      requestDiscard: (...args) => this.ui.requestDiscard(...args),
+      chooseDiscards: (...args) => this.aiController.chooseDiscards(...args),
+      showPrivateReveal: (...args) => this.ui.showPrivateReveal?.(...args),
+      createId
+    });
+    this.skillEffectRuntime = createSkillEffectRuntime({
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      log: (message, kind) => this.log(message, kind),
+      heal: (...args) => this.heal(...args),
+      damage: (...args) => this.damage(...args),
+      drawCards: (...args) => this.drawCards(...args),
+      moveEquipmentToHand: (...args) => this.moveEquipmentToHand(...args),
+      moveCardBetweenHands: (...args) => this.moveCardBetweenHands(...args),
+      cardLabelForHuman: (...args) => this.cardLabelForHuman(...args),
+      getEnemies: (...args) => this.getEnemies(...args),
+      queueFeedback: (...args) => this.ui.queueFeedback?.(...args),
+      random: () => this.random()
+    });
+    this.cardEffectRuntime = createCardEffectRuntime({
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      log: (message, kind) => this.log(message, kind),
+      damage: (...args) => this.damage(...args),
+      heal: (...args) => this.heal(...args),
+      gainEnergy: (...args) => this.gainEnergy(...args),
+      drawCards: (...args) => this.drawCards(...args),
+      equipCard: (...args) => this.equipCard(...args),
+      moveCardBetweenHands: (...args) => this.moveCardBetweenHands(...args),
+      moveEquipmentToHand: (...args) => this.moveEquipmentToHand(...args),
+      discardEquipment: (...args) => this.discardEquipment(...args),
+      discardCardFromHand: (...args) => this.discardCardFromHand(...args),
+      rememberPrivateCard: (...args) => this.rememberPrivateCard(...args),
+      cardLabelForHuman: (...args) => this.cardLabelForHuman(...args),
+      seatOrderFrom: (...args) => this.seatOrderFrom(...args),
+      getEnemies: (...args) => this.getEnemies(...args),
+      responseSystem: this.responseSystem,
+      publicCardPool: this.publicCardPool,
+      resolveLeverage: (...args) => this.cardIntentRuntime.resolveLeverage(...args),
+      showPrivateReveal: (...args) => this.ui.showPrivateReveal?.(...args),
+      setCurrentCard: (...args) => this.ui.setCurrentCard?.(...args),
+      showDuel: (...args) => this.ui.showDuel?.(...args),
+      hideDuel: (...args) => this.ui.hideDuel?.(...args),
+      queueFeedback: (...args) => this.ui.queueFeedback?.(...args),
+      getCardTargets: (source, card) => RuleEngine.getCardTargets(this, source, card),
+      getTransferSources: (source, card) => RuleEngine.getTransferSources(this, source, card),
+      getTransferReceivers: (source, from, card) => RuleEngine.getTransferReceivers(this, source, from, card),
+      diagnostics: this.diagnosticsPort,
+      random: () => this.random(),
+      createId
+    });
+    this.cardIntentRuntime = createCardIntentRuntime({
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      log: (message, kind) => this.log(message, kind),
+      diagnostics: this.diagnosticsPort,
+      responseSystem: this.responseSystem,
+      playCard: (...args) => this.actionWorkflow.playCard(...args),
+      moveEquipmentToHand: (...args) => this.moveEquipmentToHand(...args),
+      getTransferSources: (source, card, excludedCardIds) => RuleEngine.getTransferSources(this, source, card, excludedCardIds),
+      getTransferReceivers: (source, from, card) => RuleEngine.getTransferReceivers(this, source, from, card),
+      getCardTargets: (source, card) => RuleEngine.getCardTargets(this, source, card),
+      getLeverageFirstTargets: (source) => RuleEngine.getLeverageFirstTargets(this, source),
+      getAssaultTargetCandidates: (source) => RuleEngine.getAssaultTargetCandidates(this, source),
+      chooseTransferCombination: (...args) => this.aiController.chooseTransferCombination(...args),
+      chooseHiddenCards: (...args) => this.chooseHiddenCards(...args),
+      choosePlayerZoneCard: (...args) => this.choosePlayerZoneCard(...args),
+      requestHiddenCards: (...args) => this.ui.requestHiddenCards?.(...args),
+      createHiddenSelection: (...args) => this.cardSelectionSystem.createHiddenSelection(...args),
+      resolveConfirmedTokens: (...args) => this.cardSelectionSystem.resolveConfirmedTokens(...args),
+      clearSelection: (...args) => this.cardSelectionSystem.clearSelection(...args)
+    });
+    this.cardRuntime = createCardRuntime({
+      getState: () => this.state,
+      canPlayCard: (source, card) => RuleEngine.canPlayCard(this, source, card),
+      canUseForcedAssault: (source, card, target) => RuleEngine.canUseForcedAssault(this, source, card, target),
+      getCardTargets: (source, card) => RuleEngine.getCardTargets(this, source, card),
+      getAssaultTargetCandidates: (source) => RuleEngine.getAssaultTargetCandidates(this, source),
+      prepareTransferIntent: (...args) => this.cardIntentRuntime.prepareTransferIntent(...args),
+      prepareLeverageIntent: (...args) => this.cardIntentRuntime.prepareLeverageIntent(...args),
+      preparePrivateCardSelectionIntent: (...args) => this.cardIntentRuntime.preparePrivateCardSelectionIntent(...args),
+      resolveCardEffect: (...args) => this.cardEffectRuntime.resolve(...args),
+      getActionTargetLabel: (source, cardOrSkill, targets, selection) => getActionTargetLabelFromRuntime(this.state, source, cardOrSkill, targets, selection),
+      getActionLogMessage: (source, card, targets) => getActionLogMessageFromRuntime(source, card, targets),
+      shouldSuppressUseLog: (definitionId) => shouldSuppressUseLogFromRuntime(definitionId)
+    });
     this.actionWorkflow = createActionWorkflow({
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
@@ -304,24 +380,17 @@ export class Game {
       presentation: this.presentationPort,
       diagnostics: this.diagnosticsPort,
       responseSystem: this.responseSystem,
+      cardRuntime: this.cardRuntime,
       canPlayCard: (source, card) => RuleEngine.canPlayCard(this, source, card),
-      canUseForcedAssault: (source, card, target) => RuleEngine.canUseForcedAssault(this, source, card, target),
       getCardTargets: (source, card) => RuleEngine.getCardTargets(this, source, card),
-      getAssaultTargetCandidates: (source) => RuleEngine.getAssaultTargetCandidates(this, source),
-      prepareTransferIntent: (...args) => this.prepareTransferIntent(...args),
-      prepareLeverageIntent: (...args) => this.prepareLeverageIntent(...args),
-      preparePrivateCardSelectionIntent: (...args) => this.preparePrivateCardSelectionIntent(...args),
-      resolveCardEffect: (...args) => resolveCardEffect(this, ...args),
       moveHandToResolving: (...args) => this.moveHandToResolving(...args),
       finishResolvingToDiscard: (...args) => this.finishResolvingToDiscard(...args),
       isCardCommittedToDiscard: (card) => this.isCardCommittedToDiscard(card),
       isCardCommittedToEquipment: (player, card) => this.isCardCommittedToEquipment(player, card),
       cleanupFailedResolution: (...args) => this.cleanupFailedResolution(...args),
       clearSelection: (selectionId) => this.cardSelectionSystem.clearSelection(selectionId),
-      getActionTargetLabel: (source, cardOrSkill, targets, selection) => actionTargetLabel(this, source, cardOrSkill, targets, selection),
-      getActionLogMessage: (source, card, targets) => actionLogMessage(source, card, targets),
-      shouldSuppressUseLog: (definitionId) => RESULT_ONLY_CARD_IDS.has(definitionId),
       getActionDisplayTargets: (source, cardOrSkill, targets) => resolveActionDisplayTargets(this, source, cardOrSkill, targets),
+      getActionTargetLabel: (source, cardOrSkill, targets, selection) => getActionTargetLabelFromRuntime(this.state, source, cardOrSkill, targets, selection),
       skillRuntime: {
         getActiveSkill: (source) => getActiveSkill(source),
         getCost: (source, skill) => getActiveSkillCost(this, source, skill),
@@ -339,22 +408,19 @@ export class Game {
     });
     Object.defineProperties(this, {
       actionLocked: {
-        get: () => this.actionWorkflow.state.actionLocked,
-        set: (value) => { this.actionWorkflow.state.actionLocked = Boolean(value); },
+        get: () => this.actionWorkflow.getActionStateSnapshot().actionLocked,
         configurable: false
       },
       interactionLocked: {
-        get: () => this.actionWorkflow.state.interactionLocked,
-        set: (value) => { this.actionWorkflow.state.interactionLocked = Boolean(value); },
+        get: () => this.actionWorkflow.getActionStateSnapshot().interactionLocked,
         configurable: false
       },
       pendingHumanPlayEnd: {
-        get: () => this.actionWorkflow.state.pendingHumanPlayEnd,
-        set: (value) => { this.actionWorkflow.state.pendingHumanPlayEnd = Boolean(value); },
+        get: () => this.actionWorkflow.getActionStateSnapshot().pendingHumanPlayEnd,
         configurable: false
       },
       resolutionOwners: {
-        get: () => this.actionWorkflow.state.resolutionOwners,
+        get: () => this.actionWorkflow.getResolutionOwnersSnapshot(),
         configurable: false
       }
     });
@@ -384,12 +450,9 @@ export class Game {
       useActiveSkill: (...args) => this.actionWorkflow.useActiveSkill(...args),
       getAiMaxActions: () => this.aiMaxActionsPerTurn,
       getAiReplanAfterEveryAction: () => this.aiReplanAfterEveryAction,
-      getActionTargetLabel: (source, cardOrSkill, targets, selection) => actionTargetLabel(this, source, cardOrSkill, targets, selection),
+      getActionTargetLabel: (source, cardOrSkill, targets, selection) => getActionTargetLabelFromRuntime(this.state, source, cardOrSkill, targets, selection),
       getAiBeamWidth: () => GAME_CONFIG.aiBeamWidth,
-      resetActionLocks: () => {
-        this.actionWorkflow.state.actionLocked = false;
-        this.actionWorkflow.state.interactionLocked = false;
-      },
+      resetActionLocks: () => this.actionWorkflow.resetLocks(),
       discardCardFromHand: (...args) => this.discardCardFromHand(...args),
       cancelPendingInteractions: () => this.ui.cancelPendingInteractions?.()
     });
@@ -405,7 +468,7 @@ export class Game {
       log: (message, kind) => this.log(message, kind),
       getTeamName: (team) => TEAM_CONFIG[team].name,
       registerGlobalRules: () => this.registerGlobalRules(),
-      registerPassiveSkills: () => registerPassiveSkills(this),
+      registerPassiveSkills: () => this.passiveTriggerRegistry.registerForPlayers(this.state.players),
       buildDeck: () => this.state.deck.build(this.state),
       syncDeckAliases: () => this.syncDeckAliases(),
       getTeamRules: (player) => this.teamRules.getRules(player),
@@ -421,11 +484,7 @@ export class Game {
       cancelPendingInteractions: () => this.ui.cancelPendingInteractions?.(),
       showGameOver: (winnerTeam, humanWon) => this.presentationPort.showGameOver(winnerTeam, humanWon),
       markDisposed: () => { this.state.isDisposed = true; },
-      resetActionLocks: () => {
-        this.actionWorkflow.state.actionLocked = false;
-        this.actionWorkflow.state.interactionLocked = false;
-        this.actionWorkflow.state.pendingHumanPlayEnd = false;
-      },
+      resetActionLocks: () => this.actionWorkflow.resetLocks(),
       cleanupManagerCleanup: () => this.cleanupManager.cleanup(),
       cardSelectionCleanup: () => this.cardSelectionSystem.cleanup(),
       dyingCleanup: () => this.dyingSystem.cleanup(),
@@ -434,8 +493,10 @@ export class Game {
       traceError: (channel, message, error) => this.diagnosticsPort.reportWorkflowError(channel, message, error),
       getRandom: () => this.random()
     });
-    /** 同一借势 resolutionId 在本局只能进入一次核心结算，防止异步重复提交；card-specific runtime 留 FR-ARCH-10。 */
-    this.leverageResolutionIds = new Set();
+    Object.defineProperty(this, "leverageResolutionIds", {
+      get: () => this.cardIntentRuntime.getLeverageResolutionIdsSnapshot(),
+      configurable: false
+    });
     this.loopPromise = null;
   }
 
@@ -588,16 +649,7 @@ export class Game {
   规则决定仍留在本方法；Domain transition 只提交写入。
   */
   registerGlobalRules() {
-    this.eventBus.on("cardUsed", "global:recycleDevice", async (event) => {
-      const owner = event.source;
-      const gameId = this.state.gameId;
-      if (!owner.alive || this.currentPlayer?.id !== owner.id || owner.equipment?.definitionId !== "recycleDevice"
-        || event.card.category !== "tactic" || event.card.usageMode !== "active" || (owner.turnFlags.recycleDeviceUses ?? 0) >= 2) return;
-      setRecycleDeviceUses(this.state, owner, (owner.turnFlags.recycleDeviceUses ?? 0) + 1);
-      const drawn = await this.drawCards(owner, 1, "回收站", { silent:true });
-      if (!this.isSessionValid(gameId)) return;
-      this.log(`${owner.name}的「回收站」触发（${owner.turnFlags.recycleDeviceUses}/2），${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
-    });
+    this.recycleDeviceTrigger.register();
     this.eventBus.on("playerDead", "global:huntMarkSourceCleanup", (event) => {
       this.dyingSystem.cleanupHuntMarksForSource(event.target.id);
     });
@@ -762,289 +814,176 @@ export class Game {
 
   /*
   功能
-  在反制窗口前锁定转移来源、接收者和手牌实体，并分离私密与公开上下文。
+  转发 CardIntentRuntime.prepareTransferIntent。
 
   调用方
-  转移卡牌真实结算入口。
+  CardRuntime legacy façade 与 tests。
 
   输入
-  使用者、转移实体牌与可选预先规划选择。
+  source、card 与 selection。
 
   输出
-  冻结的私密意图和公开上下文；无效、取消或状态变化时为 null。
+  frozen intent/publicContext 或 null。
 
   读取状态
-  当前 GameState、RuleEngine 权威、CardSelectionSystem 与 AIController 选择门面。
+  无。
 
   写入状态
-  仅可能清理短期隐藏选择会话。
+  无。
 
   调用函数
-  RuleEngine 转移目标入口、AIController.chooseTransferCombination、chooseHiddenCards。
+  this.cardIntentRuntime.prepareTransferIntent。
 
   边界与不变量
-  AI 计划必须在真实边界复核；未知手牌不进入公开上下文，锁定实体不得按名称替代。
+  card-specific preparation authority 在 Application CardIntentRuntime。
   */
   async prepareTransferIntent(source, card, selection = null) {
-    const gameId = this.state.gameId;
-    if (!this.isSessionValid(gameId)) return null;
-    const excludedCardIds = new Set([card.id]);
-    const sources = RuleEngine.getTransferSources(this, source, card, excludedCardIds)
-      .filter((from) => RuleEngine.getTransferReceivers(this, source, from, card).length);
-    const planned = selection?.sourceId && selection?.receiverId
-      ? selection
-      : this.aiController.chooseTransferCombination(source, card, sources, null, excludedCardIds);
-    if (planned?.zone && planned.zone !== "hand") {
-      if (planned.selectionId) this.cardSelectionSystem.clearSelection(planned.selectionId);
-      return null;
-    }
-    const from = this.state.players.find((player) => player.id === planned?.sourceId && player.alive) ?? null;
-    const receiver = this.state.players.find((player) => player.id === planned?.receiverId && player.alive) ?? null;
-    if (!sources.includes(from) || !RuleEngine.getTransferReceivers(this, source, from, card).includes(receiver)) return null;
-    // AI 禁止主动把己方手牌转移给敌方；真人路径保持公共规则合法。
-    if (source.controllerType === "ai"
-      && from.battleTeam === source.battleTeam
-      && receiver.battleTeam !== source.battleTeam) return null;
-
-    const [hiddenCard] = source.controllerType === "ai"
-      ? this.aiController.chooseHiddenCards(source, from, 1, excludedCardIds, { purpose:"transfer", receiver })
-      : await this.chooseHiddenCards(source, from, 1, "选择要转移的手牌", planned, excludedCardIds);
-    const chosen = hiddenCard ? { card:hiddenCard, zone:"hand" } : null;
-    if (!this.isSessionValid(gameId)) return null;
-    if (!chosen || excludedCardIds.has(chosen.card.id)
-      || !RuleEngine.getTransferSources(this, source, card, excludedCardIds).includes(from)
-      || !RuleEngine.getTransferReceivers(this, source, from, card).includes(receiver)) return null;
-    if (chosen.zone !== "hand" || !from.hand.includes(chosen.card)) return null;
-    const privateIntent = Object.freeze({ from, receiver, card:chosen.card, zone:"hand" });
-    const publicContext = Object.freeze({
-      fromPlayerId:from.id,
-      fromName:from.name,
-      receiverPlayerId:receiver.id,
-      receiverName:receiver.name,
-      zone:"hand",
-      safeItemLabel:"1张牌"
-    });
-    return Object.freeze({ privateIntent, publicContext });
-  }
-
-  /**
-   * 在借势进入结算区前锁定公开选择。装备同时保存唯一 ID 与原实例引用；后续每个
-   * 异步边界仍会重新检查所在区域，绝不会按名称、槽位或索引寻找替代品。
-   */
-  prepareLeverageIntent(source, selection = null) {
-    if (!this.isSessionValid(this.state.gameId) || !source?.alive || !selection) return null;
-    const firstTarget = this.state.players.find((player) => player.id === selection.firstTargetId) ?? null;
-    const secondTarget = this.state.players.find((player) => player.id === selection.secondTargetId) ?? null;
-    if (!RuleEngine.getLeverageFirstTargets(this, source).includes(firstTarget)) return null;
-    if (!RuleEngine.getAssaultTargetCandidates(this, firstTarget).includes(secondTarget)) return null;
-    const equipmentCard = firstTarget.equipment;
-    if (!equipmentCard?.id || equipmentCard.id !== selection.equipmentCardId) return null;
-    return Object.freeze({
-      firstTarget,
-      secondTarget,
-      equipmentCard,
-      equipmentCardId:equipmentCard.id
-    });
-  }
-
-  /**
-   * 在反制窗口打开前消费短期隐藏选择令牌，并把结果固化为仅供最终解析器使用的实体意图。
-   * 公开上下文只保留玩家、区域与数量；实体牌、定义和名称不会进入响应链。
-   */
-  async preparePrivateCardSelectionIntent(source, card, targets, selection = null) {
-    const gameId = this.state.gameId;
-    const target = targets[0] ?? null;
-    if (!this.isSessionValid(gameId) || !target?.alive
-      || !RuleEngine.getCardTargets(this, source, card).includes(target)) return null;
-
-    try {
-      let zone = "hand";
-      let cards = [];
-      if (card.definitionId === "scout") {
-        cards = await this.chooseHiddenCards(
-          source,
-          target,
-          Math.min(2, target.hand.length),
-          "选择至多2张手牌进行窥探",
-          selection,
-          null,
-          { purpose:"scout" }
-        );
-      } else if (["plunder", "destroy"].includes(card.definitionId)) {
-        const chosen = await this.choosePlayerZoneCard(
-          source,
-          target,
-          card.definitionId === "plunder" ? "选择要掠夺的手牌或装备牌" : "选择要破坏的手牌或装备牌",
-          selection,
-          null,
-          { purpose:card.definitionId }
-        );
-        if (chosen) {
-          zone = chosen.zone;
-          cards = [chosen.card];
-        }
-      } else return null;
-
-      if (!this.isSessionValid(gameId) || !cards.length
-        || !RuleEngine.getCardTargets(this, source, card).includes(target)) return null;
-      const uniqueCards = [...new Map(cards.map((entity) => [entity.id, entity])).values()];
-      const privateIntent = Object.freeze({
-        owner:target,
-        zone,
-        cards:Object.freeze(uniqueCards),
-        selectionId:selection?.selectionId ?? null
-      });
-      const publicContext = Object.freeze({
-        ownerPlayerId:target.id,
-        zone,
-        selectedCount:uniqueCards.length
-      });
-      return Object.freeze({ privateIntent, publicContext });
-    } finally {
-      if (selection?.selectionId) this.cardSelectionSystem.clearSelection(selection.selectionId);
-    }
+    return this.cardIntentRuntime.prepareTransferIntent(source, card, selection);
   }
 
   /*
   功能
-  为被动技能准备一次不泄漏牌面的私密窥牌意图。
+  转发 CardIntentRuntime.prepareLeverageIntent。
 
   调用方
-  私密窥牌被动技能流程。
+  CardRuntime legacy façade 与 tests。
 
   输入
-  观察者、手牌持有者、最大数量与真人提示文本。
+  source 与 selection。
 
   输出
-  冻结的实体牌意图；无合法选择或会话失效时为 null。
+  frozen intent 或 null。
 
   读取状态
-  当前 GameState、CardSelectionSystem、UI 与 AIController 隐藏选择门面。
+  无。
 
   写入状态
-  创建并清理真人短期选择令牌。
+  无。
 
   调用函数
-  AIController.chooseHiddenCards、UI.requestHiddenCards、CardSelectionSystem 令牌入口。
+  this.cardIntentRuntime.prepareLeverageIntent。
 
   边界与不变量
-  AI 只按合法记忆或隐藏位置选择；确认后令牌立即清理，实体意图只留在当前调用栈。
+  card-specific preparation authority 在 Application CardIntentRuntime。
+  */
+  prepareLeverageIntent(source, selection = null) {
+    return this.cardIntentRuntime.prepareLeverageIntent(source, selection);
+  }
+
+  /*
+  功能
+  转发 CardIntentRuntime.preparePrivateCardSelectionIntent。
+
+  调用方
+  CardRuntime legacy façade。
+
+  输入
+  source、card、targets 与 selection。
+
+  输出
+  frozen intent/publicContext 或 null。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.cardIntentRuntime.preparePrivateCardSelectionIntent。
+
+  边界与不变量
+  hidden selection authority 保持 FR-ARCH-6 store。
+  */
+  async preparePrivateCardSelectionIntent(source, card, targets, selection = null) {
+    return this.cardIntentRuntime.preparePrivateCardSelectionIntent(source, card, targets, selection);
+  }
+
+  /*
+  功能
+  转发 CardIntentRuntime.preparePrivateHandPeekIntent。
+
+  调用方
+  Application passive trigger。
+
+  输入
+  viewer、owner、count 与 reason。
+
+  输出
+  frozen intent 或 null。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.cardIntentRuntime.preparePrivateHandPeekIntent。
+
+  边界与不变量
+  hidden peek authority 在 Application CardIntentRuntime。
   */
   async preparePrivateHandPeekIntent(viewer, owner, count, reason) {
-    const gameId = this.state.gameId;
-    const maximum = Math.min(Math.max(0, count), owner?.hand?.length ?? 0);
-    if (!this.isSessionValid(gameId) || !viewer?.alive || !owner?.alive || !maximum) return null;
-    if (viewer.controllerType !== "human") {
-      const cards = this.aiController.chooseHiddenCards(viewer, owner, maximum, null, { purpose:"spy-gap" });
-      return cards.length ? Object.freeze({ owner, zone:"hand", cards:Object.freeze([...cards]), selectionId:null }) : null;
-    }
-
-    const hidden = this.cardSelectionSystem.createHiddenSelection(owner);
-    try {
-      const tokens = await this.ui.requestHiddenCards?.(hidden, maximum, reason, {
-        exact:false, viewer, owner
-      });
-      if (!this.isSessionValid(gameId) || !viewer.alive || !owner.alive) return null;
-      const cards = this.cardSelectionSystem.resolveConfirmedTokens(tokens, owner, hidden.selectionId, maximum);
-      return cards.length
-        ? Object.freeze({ owner, zone:"hand", cards:Object.freeze(cards), selectionId:hidden.selectionId })
-        : null;
-    } finally {
-      this.cardSelectionSystem.clearSelection(hidden.selectionId);
-    }
+    return this.cardIntentRuntime.preparePrivateHandPeekIntent(viewer, owner, count, reason);
   }
 
-  /** 结算私密窥牌意图时只保留仍在原角色手牌区的实体。 */
+  /*
+  功能
+  转发 CardIntentRuntime.resolvePrivateHandPeekIntent。
+
+  调用方
+  Application passive trigger。
+
+  输入
+  viewer 与 intent。
+
+  输出
+  有效 cards。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.cardIntentRuntime.resolvePrivateHandPeekIntent。
+
+  边界与不变量
+  不泄漏 hidden entity。
+  */
   resolvePrivateHandPeekIntent(viewer, intent) {
-    if (!this.isSessionValid(this.state.gameId) || !viewer?.alive || !intent?.owner?.alive || intent.zone !== "hand") return [];
-    return intent.cards.filter((card) => intent.owner.hand.includes(card));
+    return this.cardIntentRuntime.resolvePrivateHandPeekIntent(viewer, intent);
   }
 
-  /** 借势目标失效采用统一取消分支；死亡或离场绝不能被当作拒绝并转移装备。 */
-  leveragePlayersRemainValid(source, intent) {
-    const inGame = (player) => Boolean(player?.alive && this.state.players.includes(player));
-    return inGame(source) && inGame(intent?.firstTarget) && inGame(intent?.secondTarget);
-  }
+  /*
+  功能
+  转发 CardIntentRuntime.resolveLeverage。
 
-  /** 只接受发动时记录 ID 所对应的同一装备实例，名称相同也不能替代。 */
-  leverageEquipmentRemainsValid(intent) {
-    return Boolean(intent?.equipmentCard?.id
-      && intent.equipmentCard.id === intent.equipmentCardId
-      && intent.firstTarget?.equipment === intent.equipmentCard);
-  }
+  调用方
+  CardEffectRuntime legacy effect resolver 与 tests。
 
-  /**
-   * 借势的玩家/AI 共用结算。指定装备在响应结束前始终留在装备区，因此普通
-   * RuleEngine 距离计算会继续应用该装备；只有统一拒绝后才调用装备转移入口。
-   */
+  输入
+  source、card、intent 与 resolutionId。
+
+  输出
+  resolved boolean。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.cardIntentRuntime.resolveLeverage。
+
+  边界与不变量
+  leverage resolution authority 在 Application CardIntentRuntime。
+  */
   async resolveLeverage(source, card, intent, resolutionId) {
-    const gameId = this.state.gameId;
-    if (!this.isSessionValid(gameId) || !intent || !resolutionId || this.leverageResolutionIds.has(resolutionId)) return false;
-    this.leverageResolutionIds.add(resolutionId);
-
-    if (!this.leveragePlayersRemainValid(source, intent)) {
-      this.log(`目标已离场，「${card.name}」结算取消。`, "important");
-      return false;
-    }
-    if (!this.leverageEquipmentRemainsValid(intent)) {
-      this.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
-      return false;
-    }
-
-    const { firstTarget, secondTarget, equipmentCard } = intent;
-    // AI 即使没有可用突袭也经过相同思考等待，避免通过响应时长泄露手牌。
-    const response = await this.responseSystem.requestLeverageAssault(firstTarget, secondTarget, {
-      source,
-      card,
-      equipment:equipmentCard
-    });
-    if (!this.isSessionValid(gameId) || isCancelledResponse(response)) return false;
-
-    // 响应等待期间重新读取三名玩家、装备、距离、目标合法性及真实手牌实例。
-    if (!this.leveragePlayersRemainValid(source, intent)) {
-      this.log(`目标已离场，「${card.name}」结算取消。`, "important");
-      return false;
-    }
-    if (!this.leverageEquipmentRemainsValid(intent)) {
-      this.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
-      return false;
-    }
-
-    if (response.status === RESPONSE_STATUS.USED && response.card
-      && RuleEngine.canUseForcedAssault(this, firstTarget, response.card, secondTarget).ok) {
-      let used = false;
-      try {
-        used = await this.playCard(firstTarget, response.card, [secondTarget], null, {
-          usageContext:"leverageAssault",
-          parentResolutionId:resolutionId
-        });
-      } catch (error) {
-        // 内嵌突袭拥有独立 resolution；其失败只结束该响应，外层借势继续按拒绝分支收束。
-        Debug.log("Game", `${firstTarget.name}的借势内嵌突袭结算失败`, error);
-      }
-      if (used) return true;
-      if (!this.isSessionValid(gameId)) return false;
-    }
-
-    // 所有无法使用与主动放弃在公开结果上统一为“拒绝”，且此刻才卸下装备。
-    if (!this.leveragePlayersRemainValid(source, intent)) {
-      this.log(`目标已离场，「${card.name}」结算取消。`, "important");
-      return false;
-    }
-    if (!this.leverageEquipmentRemainsValid(intent)) {
-      this.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
-      return false;
-    }
-    const moved = await this.moveEquipmentToHand(firstTarget, source, equipmentCard, "借势");
-    if (!this.isSessionValid(gameId)) return false;
-    if (moved) {
-      this.log(`${firstTarget.name}拒绝使用「突袭」，${source.name}获得了其「${equipmentCard.name}」。`, "important");
-      return true;
-    }
-    if (!this.leverageEquipmentRemainsValid(intent)) {
-      this.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
-    }
-    return false;
+    return this.cardIntentRuntime.resolveLeverage(source, card, intent, resolutionId);
   }
 
   /*
@@ -1739,7 +1678,7 @@ export class Game {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return false;
     if (player.hand.indexOf(card) < 0) return false;
-    if (resolutionId && this.resolutionOwners.has(card)) return false;
+    if (resolutionId && this.actionWorkflow.getResolutionOwner(card)) return false;
     const move = { type: "beforeCardMove", card, from: "hand", to: "resolving", player, reason: "使用", cancelled: false };
     await this.eventBus.emit("beforeCardMove", move);
     if (!this.isSessionValid(gameId)) return false;
@@ -1749,7 +1688,7 @@ export class Game {
     removeCardFromZone(this.state, player.hand, card);
     bumpHandVersion(this.state, player);
     this.invalidateCardKnowledge(card.id, player.id);
-    if (resolutionId) this.resolutionOwners.set(card, resolutionId);
+    if (resolutionId) this.actionWorkflow.claimResolution(card, resolutionId);
     this.syncDeckAliases();
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });
     return this.isSessionValid(gameId);
@@ -1783,12 +1722,12 @@ export class Game {
   async finishResolvingToDiscard(card, resolutionId = null) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return false;
-    if (resolutionId && this.resolutionOwners.get(card) !== resolutionId) return false;
+    if (resolutionId && !this.actionWorkflow.ownsResolution(card, resolutionId)) return false;
     if (!this.state.deck.resolvingCards.includes(card)) return false;
     const move = { type: "beforeCardMove", card, from: "resolving", to: "discard", reason: "结算完成", cancelled: false };
     await this.eventBus.emit("beforeCardMove", move);
     if (!this.isSessionValid(gameId)) return false;
-    if (move.cancelled || (resolutionId && this.resolutionOwners.get(card) !== resolutionId)) return false;
+    if (move.cancelled || (resolutionId && !this.actionWorkflow.ownsResolution(card, resolutionId))) return false;
     const discarded = this.state.deck.finishResolveToDiscard(this.state, card);
     if (!discarded) return false;
     this.syncDeckAliases();
@@ -1824,7 +1763,32 @@ export class Game {
   async equipCard(player, card, resolutionId = null) {
     const gameId = this.state.gameId;
     if (!this.isSessionValid(gameId)) return false;
-    const ownsResolution = () => !resolutionId || this.resolutionOwners.get(card) === resolutionId;
+    /*
+    功能
+    判断结算牌是否由当前 resolution 拥有。
+
+    调用方
+    equipCard。
+
+    输入
+    无。
+
+    输出
+    布尔值。
+
+    读取状态
+    actionWorkflow resolution owner。
+
+    写入状态
+    无。
+
+    调用函数
+    actionWorkflow.ownsResolution。
+
+    边界与不变量
+    不暴露 mutable Map。
+    */
+    const ownsResolution = () => !resolutionId || this.actionWorkflow.ownsResolution(card, resolutionId);
     const canCommitNew = () => ownsResolution()
       && this.state.deck.resolvingCards.includes(card)
       && !this.state.deck.cards.includes(card)
@@ -1983,7 +1947,7 @@ export class Game {
   不触发事件或日志。
   */
   cleanupFailedResolution(card, reason = null, resolutionId = null) {
-    if (!card || (resolutionId && this.resolutionOwners.get(card) !== resolutionId)) return false;
+    if (!card || (resolutionId && !this.actionWorkflow.ownsResolution(card, resolutionId))) return false;
     if (!resolutionId && !this.state.deck.resolvingCards.includes(card)) return false;
     const affectedHands = this.state.players.filter((player) => player.hand.includes(card));
     const zones = [
@@ -2007,7 +1971,7 @@ export class Game {
       this.state.deck.discardPile
     );
     for (const player of affectedHands) bumpHandVersion(this.state, player);
-    this.resolutionOwners.delete(card);
+    this.actionWorkflow.releaseResolution(card);
     this.syncDeckAliases();
     Debug.log("Game", `已清理失败结算实体 ${card.id ?? "unknown"}`, reason ?? undefined);
     return this.state.deck.discardPile.filter((entry) => entry === card).length === 1

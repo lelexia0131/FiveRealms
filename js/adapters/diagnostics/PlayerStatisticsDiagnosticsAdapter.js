@@ -68,6 +68,10 @@ export function createPlayerStatisticsDiagnosticsAdapter({ getPlayerById }) {
       const source = getPlayerById(sourceId);
       if (source) source.statistics.cardsPlayed += 1;
     },
+    recordAssaultUse: ({ sourceId }) => {
+      const source = getPlayerById(sourceId);
+      if (source) source.statistics.assaultsUsed += 1;
+    },
     reportWorkflowError: (channel, message, error = null) => {
       Debug.log(channel, message, error ?? undefined);
     }

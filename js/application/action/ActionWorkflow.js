@@ -23,13 +23,10 @@ import { recordActiveSkillUse } from "../../domain/state/transitions/RuleUsageTr
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics",
-  "responseSystem", "canPlayCard", "canUseForcedAssault", "getCardTargets",
-  "getAssaultTargetCandidates", "prepareTransferIntent", "prepareLeverageIntent",
-  "preparePrivateCardSelectionIntent", "resolveCardEffect", "moveHandToResolving",
+  "responseSystem", "cardRuntime", "canPlayCard", "getCardTargets", "moveHandToResolving",
   "finishResolvingToDiscard", "isCardCommittedToDiscard", "isCardCommittedToEquipment",
-  "cleanupFailedResolution", "clearSelection", "getActionTargetLabel",
-  "getActionLogMessage", "shouldSuppressUseLog", "getActionDisplayTargets",
-  "skillRuntime", "getSkillTargets", "getHumanPlayer", "choiceCoordinator",
+  "cleanupFailedResolution", "clearSelection", "getActionDisplayTargets",
+  "getActionTargetLabel", "skillRuntime", "getSkillTargets", "getHumanPlayer", "choiceCoordinator",
   "choiceContexts", "requestCardFlow", "resolveHumanPlayEnd", "createId",
   "setResolutionSerialProjection"
 ];
@@ -105,6 +102,333 @@ export function createActionWorkflow(dependencies) {
 
   /*
   功能
+  设置 action lock。
+
+  调用方
+  Game temporary reset collaborator 与 tests。
+
+  输入
+  布尔值。
+
+  输出
+  无。
+
+  读取状态
+  actionRuntime.actionLocked。
+
+  写入状态
+  actionRuntime.actionLocked。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不提供任意字段写入 API。
+  */
+  function setActionLocked(value) {
+    actionRuntime.actionLocked = Boolean(value);
+  }
+
+  /*
+  功能
+  设置 interaction lock。
+
+  调用方
+  Game temporary reset collaborator 与 tests。
+
+  输入
+  布尔值。
+
+  输出
+  无。
+
+  读取状态
+  actionRuntime.interactionLocked。
+
+  写入状态
+  actionRuntime.interactionLocked。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不提供任意字段写入 API。
+  */
+  function setInteractionLocked(value) {
+    actionRuntime.interactionLocked = Boolean(value);
+  }
+
+  /*
+  功能
+  设置 pendingHumanPlayEnd 标记。
+
+  调用方
+  Game temporary reset collaborator 与 tests。
+
+  输入
+  布尔值。
+
+  输出
+  无。
+
+  读取状态
+  actionRuntime.pendingHumanPlayEnd。
+
+  写入状态
+  actionRuntime.pendingHumanPlayEnd。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不提供任意字段写入 API。
+  */
+  function setPendingHumanPlayEnd(value) {
+    actionRuntime.pendingHumanPlayEnd = Boolean(value);
+  }
+
+  /*
+  功能
+  清空全部 action runtime locks。
+
+  调用方
+  Game turn/action reset collaborator。
+
+  输入
+  无。
+
+  输出
+  无。
+
+  读取状态
+  actionRuntime。
+
+  写入状态
+  actionRuntime locks。
+
+  调用函数
+  setActionLocked、setInteractionLocked、setPendingHumanPlayEnd。
+
+  边界与不变量
+  是唯一全量 reset 入口；不触碰 resolution owners。
+  */
+  function resetLocks() {
+    setActionLocked(false);
+    setInteractionLocked(false);
+    setPendingHumanPlayEnd(false);
+  }
+
+  /*
+  功能
+  返回只读 action runtime snapshot。
+
+  调用方
+  Game compatibility accessors 与 tests。
+
+  输入
+  无。
+
+  输出
+  冻结 { actionLocked, interactionLocked, pendingHumanPlayEnd }。
+
+  读取状态
+  actionRuntime。
+
+  写入状态
+  无。
+
+  调用函数
+  Object.freeze。
+
+  边界与不变量
+  不返回 internal mutable object。
+  */
+  function getActionStateSnapshot() {
+    return Object.freeze({
+      actionLocked: actionRuntime.actionLocked,
+      interactionLocked: actionRuntime.interactionLocked,
+      pendingHumanPlayEnd: actionRuntime.pendingHumanPlayEnd
+    });
+  }
+
+  /*
+  功能
+  查询 resolution owner。
+
+  调用方
+  Game zone helpers 与 ActionWorkflow finally。
+
+  输入
+  card 与 resolutionId。
+
+  输出
+  布尔值。
+
+  读取状态
+  actionRuntime.resolutionOwners。
+
+  写入状态
+  无。
+
+  调用函数
+  Map.get。
+
+  边界与不变量
+  只做 identity 查询。
+  */
+  function ownsResolution(card, resolutionId) {
+    return Boolean(resolutionId && actionRuntime.resolutionOwners.get(card) === resolutionId);
+  }
+
+  /*
+  功能
+  记录卡牌实体 resolution owner。
+
+  调用方
+  Game moveHandToResolving。
+
+  输入
+  card 与 resolutionId。
+
+  输出
+  是否 claim 成功。
+
+  读取状态
+  actionRuntime.resolutionOwners。
+
+  写入状态
+  actionRuntime.resolutionOwners。
+
+  调用函数
+  Map.has/Map.set。
+
+  边界与不变量
+  已有 owner 时返回 false，不覆盖。
+  */
+  function claimResolution(card, resolutionId) {
+    if (!card || !resolutionId || actionRuntime.resolutionOwners.has(card)) return false;
+    actionRuntime.resolutionOwners.set(card, resolutionId);
+    return true;
+  }
+
+  /*
+  功能
+  读取卡牌实体 resolution owner ID。
+
+  调用方
+  Game zone helpers 与 ActionWorkflow finally。
+
+  输入
+  card。
+
+  输出
+  resolutionId 或 null。
+
+  读取状态
+  actionRuntime.resolutionOwners。
+
+  写入状态
+  无。
+
+  调用函数
+  Map.get。
+
+  边界与不变量
+  不暴露 Map。
+  */
+  function getResolutionOwner(card) {
+    return actionRuntime.resolutionOwners.get(card) ?? null;
+  }
+
+  /*
+  功能
+  释放卡牌实体 resolution owner。
+
+  调用方
+  ActionWorkflow finally。
+
+  输入
+  card。
+
+  输出
+  是否删除。
+
+  读取状态
+  actionRuntime.resolutionOwners。
+
+  写入状态
+  actionRuntime.resolutionOwners。
+
+  调用函数
+  Map.delete。
+
+  边界与不变量
+  不暴露 Map。
+  */
+  function releaseResolution(card) {
+    return actionRuntime.resolutionOwners.delete(card);
+  }
+
+  /*
+  功能
+  返回 resolution owners 的只读快照 Map。
+
+  调用方
+  Game compatibility accessors 与 legacy test harness。
+
+  输入
+  无。
+
+  输出
+  new Map snapshot。
+
+  读取状态
+  actionRuntime.resolutionOwners。
+
+  写入状态
+  无。
+
+  调用函数
+  Map。
+
+  边界与不变量
+  修改返回 Map 不影响 owner Map。
+  */
+  function getResolutionOwnersSnapshot() {
+    return new Map(actionRuntime.resolutionOwners);
+  }
+
+  /*
+  功能
+  返回 resolution owners 数量。
+
+  调用方
+  legacy tests。
+
+  输入
+  无。
+
+  输出
+  整数。
+
+  读取状态
+  actionRuntime.resolutionOwners.size。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不暴露 Map。
+  */
+  function getResolutionOwnerCount() {
+    return actionRuntime.resolutionOwners.size;
+  }
+
+  /*
+  功能
   执行通用卡牌使用 workflow。
 
   调用方
@@ -132,34 +456,13 @@ export function createActionWorkflow(dependencies) {
     const state = runtime.getState();
     const gameId = state.gameId;
     if (!runtime.isSessionValid(gameId) || state.isGameOver) return false;
-    const forcedAssault = options.usageContext === "leverageAssault" && card?.definitionId === "assault";
-    const legality = forcedAssault
-      ? runtime.canUseForcedAssault(source, card, requestedTargets[0])
-      : runtime.canPlayCard(source, card);
-    if (!legality.ok || (actionRuntime.actionLocked && !forcedAssault)) return false;
-    let targets = requestedTargets;
-    const legalTargets = forcedAssault
-      ? runtime.getAssaultTargetCandidates(source)
-      : runtime.getCardTargets(source, card);
-    if (card.targetType === "self") targets = [source];
-    if (card.targetType === "allEnemies") targets = legalTargets;
-    if (card.targetType === "allLiving") targets = legalTargets;
-    if (!["none", "self", "allEnemies", "allLiving", "multiStage"].includes(card.targetType) && (!targets[0] || !legalTargets.includes(targets[0]))) return false;
-    const preparedTransfer = card.definitionId === "transfer"
-      ? await runtime.prepareTransferIntent(source, card, selection)
-      : null;
-    const preparedLeverage = card.definitionId === "leverage"
-      ? runtime.prepareLeverageIntent(source, selection)
-      : null;
-    const needsPrivateSelection = ["scout", "plunder", "destroy"].includes(card.definitionId);
-    const preparedPrivateSelection = needsPrivateSelection
-      ? await runtime.preparePrivateCardSelectionIntent(source, card, targets, selection)
-      : null;
+    const plan = await runtime.cardRuntime.prepareCardAction(source, card, requestedTargets, selection, options);
     if (!runtime.isSessionValid(gameId)) return false;
-    if (card.definitionId === "transfer" && !preparedTransfer) return false;
-    if (card.definitionId === "leverage" && !preparedLeverage) return false;
-    if (needsPrivateSelection && !preparedPrivateSelection) return false;
-    if (preparedLeverage) targets = [preparedLeverage.firstTarget, preparedLeverage.secondTarget];
+    if (!plan.legality.ok || (actionRuntime.actionLocked && !plan.forcedAssault)) return false;
+    let targets = plan.targets;
+    const preparedTransfer = plan.preparedTransfer;
+    const preparedLeverage = plan.preparedLeverage;
+    const preparedPrivateSelection = plan.preparedPrivateSelection;
 
     const previousActionLocked = actionRuntime.actionLocked;
     actionRuntime.actionLocked = true;
@@ -174,15 +477,11 @@ export function createActionWorkflow(dependencies) {
       try {
         moved = await runtime.moveHandToResolving(source, card, resolutionId);
       } finally {
-        enteredResolving = actionRuntime.resolutionOwners.get(card) === resolutionId;
+        enteredResolving = ownsResolution(card, resolutionId);
       }
       if (!moved) return false;
       if (!runtime.isSessionValid(gameId)) return false;
-      const targetLabel = preparedTransfer
-        ? `来源 ${preparedTransfer.publicContext.fromName} → 接收 ${preparedTransfer.publicContext.receiverName}`
-        : preparedLeverage
-          ? `${preparedLeverage.firstTarget.name} → ${preparedLeverage.secondTarget.name}`
-          : runtime.getActionTargetLabel(source, card, targets, selection);
+      const targetLabel = plan.targetLabel;
       runtime.presentation.showCurrentAction({
         cardId: card.id,
         sourceLabel: source.name,
@@ -190,15 +489,7 @@ export function createActionWorkflow(dependencies) {
         displayTargets: runtime.getActionDisplayTargets(source, card, targets)
       });
       runtime.presentation.playActionCue("card");
-      if (preparedTransfer) {
-        const publicContext = preparedTransfer.publicContext;
-        const receiverLabel = publicContext.receiverPlayerId === source.id ? "自己" : publicContext.receiverName;
-        runtime.presentation.log(`${source.name}使用了「${card.name}」，准备将${publicContext.fromName}的${publicContext.safeItemLabel}转移给${receiverLabel}。`);
-      } else if (preparedLeverage) {
-        runtime.presentation.log(`${source.name}对${preparedLeverage.firstTarget.name}使用「借势」，要求其对${preparedLeverage.secondTarget.name}使用「突袭」；若拒绝，${source.name}将获得其「${preparedLeverage.equipmentCard.name}」。`);
-      } else if (card.category !== "equipment" && !runtime.shouldSuppressUseLog(card.definitionId)) {
-        runtime.presentation.log(runtime.getActionLogMessage(source, card, targets));
-      }
+      if (plan.useLogMessage) runtime.presentation.log(plan.useLogMessage);
       const useEvent = await runtime.emitEvent("beforeCardUse", { type: "beforeCardUse", source, card, targets, cancelled: false, metadata: {}, resolutionId });
       if (!runtime.isSessionValid(gameId)) return false;
       let cancelledBeforeResolve = useEvent.cancelled;
@@ -230,12 +521,7 @@ export function createActionWorkflow(dependencies) {
       if (cancelledBeforeResolve) {
         runtime.presentation.log(`「${card.name}」的效果被取消。`, "important");
       } else if (!countered) {
-        const effectResult = await runtime.resolveCardEffect(source, card, targets, {
-          resolutionId, selection,
-          privateTransferIntent: preparedTransfer?.privateIntent ?? null,
-          privateCardSelectionIntent: preparedPrivateSelection?.privateIntent ?? null,
-          privateLeverageIntent: preparedLeverage
-        });
+        const effectResult = await runtime.cardRuntime.resolveCardAction(source, card, targets, selection, resolutionId, plan);
         if (!runtime.isSessionValid(gameId)) return false;
         destination = effectResult.destination;
         effectResolved = effectResult.resolved ?? true;
@@ -256,15 +542,9 @@ export function createActionWorkflow(dependencies) {
       }
       if (!runtime.isSessionValid(gameId)) return false;
       const resolved = !countered && !cancelledBeforeResolve && effectResolved;
-      const effectiveTargets = !resolved
-        ? []
-        : effectEffectiveTargets ?? (preparedTransfer
-          ? [preparedTransfer.privateIntent.from, preparedTransfer.privateIntent.receiver]
-          : preparedLeverage
-            ? [preparedLeverage.firstTarget, preparedLeverage.secondTarget]
-            : card.definitionId === "mutualBenefit"
-              ? state.players.filter((player) => player.alive)
-              : targets);
+      const effectiveTargets = runtime.cardRuntime.getEffectiveTargets(
+        state, source, card, targets, resolved, { effectiveTargets: effectEffectiveTargets }, plan
+      );
       await runtime.emitEvent("cardUsed", {
         type: "cardUsed", source, card, targets, effectiveTargets,
         cancelled: !resolved, resolved, resolutionId
@@ -285,10 +565,10 @@ export function createActionWorkflow(dependencies) {
           : expectedDestination === "equipment"
             ? runtime.isCardCommittedToEquipment(source, card)
             : false;
-        if (!destinationCommitted && actionRuntime.resolutionOwners.get(card) === resolutionId) {
+        if (!destinationCommitted && ownsResolution(card, resolutionId)) {
           runtime.cleanupFailedResolution(card, failureReason, resolutionId);
-        } else if (destinationCommitted && actionRuntime.resolutionOwners.get(card) === resolutionId) {
-          actionRuntime.resolutionOwners.delete(card);
+        } else if (destinationCommitted && ownsResolution(card, resolutionId)) {
+          releaseResolution(card);
         }
       }
       if (selection?.selectionId) runtime.clearSelection(selection.selectionId);
@@ -634,13 +914,23 @@ export function createActionWorkflow(dependencies) {
   }
 
   return Object.freeze({
-    state: actionRuntime,
     playCard,
     useActiveSkill,
     handleHumanCard,
     handleHumanSkill,
     requestEndHumanPlay,
     requestHumanPlayEndForDefeat,
-    flushPendingHumanPlayEnd
+    flushPendingHumanPlayEnd,
+    setActionLocked,
+    setInteractionLocked,
+    setPendingHumanPlayEnd,
+    resetLocks,
+    getActionStateSnapshot,
+    ownsResolution,
+    claimResolution,
+    getResolutionOwner,
+    releaseResolution,
+    getResolutionOwnersSnapshot,
+    getResolutionOwnerCount
   });
 }

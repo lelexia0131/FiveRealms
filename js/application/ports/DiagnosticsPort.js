@@ -23,6 +23,7 @@ const REQUIRED_METHODS = [
   "recordHealing",
   "recordHpLoss",
   "recordCardPlayed",
+  "recordAssaultUse",
   "reportWorkflowError"
 ];
 
@@ -63,6 +64,7 @@ export function createDiagnosticsPort(implementation) {
     recordHealing: implementation.recordHealing,
     recordHpLoss: implementation.recordHpLoss,
     recordCardPlayed: implementation.recordCardPlayed,
+    recordAssaultUse: implementation.recordAssaultUse,
     reportWorkflowError: implementation.reportWorkflowError
   });
 }

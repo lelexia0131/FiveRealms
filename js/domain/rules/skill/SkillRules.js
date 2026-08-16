@@ -1,0 +1,174 @@
+/*
+模块职责
+唯一拥有主动技能纯合法性：基础使用条件、能量成本决定与目标 ID 决定；不拥有 execute、payment、trigger、response、AI 或 mutation。
+
+上游
+core/RuleEngine 与 generals/skillRegistry legacy façades、tests。
+
+下游
+Domain TurnRules、CardRules 与 distance rules。
+
+状态边界
+只读 canonical facts；不写状态。
+
+信息边界
+不读取 controllerType、aiMemory、UI、AI 或 hidden hand。
+
+架构约束
+不得依赖 Game/RuleEngine/application/adapters/EventBus；不得 await、emit、随机、mutation。
+*/
+import { getDistance } from "../distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
+import { hasActiveSkillUseRemaining } from "../turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
+
+/*
+功能
+决定主动技能纯静态/当前敌人计数成本。
+
+调用方
+skillRegistry adapter 与 tests。
+
+输入
+skill facts 与 source facts。
+
+输出
+非负整数。
+
+读取状态
+skill.cost 与敌人计数。
+
+写入状态
+无。
+
+调用函数
+Array.filter。
+
+边界与不变量
+当前全部主动技能 cost 为 definition.cost；动态 cost 若未来出现由本模块唯一解释。
+*/
+export function getSkillCost(skill, source, players = []) {
+  if (!skill) return 0;
+  return Math.max(0, Number(skill.cost) || 0);
+}
+
+/*
+功能
+决定主动技能基础使用合法性。
+
+调用方
+skillRegistry adapter 与 tests。
+
+输入
+players、sourceId、currentPlayerId、phase、skill facts、usage 与 energy。
+
+输出
+{ ok, reason }。
+
+读取状态
+source alive/energy 与 skill limit。
+
+写入状态
+无。
+
+调用函数
+hasActiveSkillUseRemaining。
+
+边界与不变量
+reason 与旧 skillRegistry 完全一致。
+*/
+export function canUseSkillBase({
+  players,
+  sourceId,
+  currentPlayerId,
+  phase,
+  skill,
+  used = 0,
+  limitPerTurn = 1,
+  energy,
+  minimumEnergy = null
+}) {
+  const source = players.find((player) => player.id === sourceId) ?? null;
+  if (!source?.alive || !(phase === "play" && currentPlayerId === sourceId)) {
+    return { ok: false, reason: "只能在自己的出牌阶段发动" };
+  }
+  if (!hasActiveSkillUseRemaining(used, limitPerTurn)) {
+    return { ok: false, reason: "本回合发动次数已用尽" };
+  }
+  if ((energy ?? source.energy) < (minimumEnergy ?? getSkillCost(skill, source, players))) {
+    return { ok: false, reason: "能量不足" };
+  }
+  return { ok: true, reason: "" };
+}
+
+/*
+功能
+决定主动技能合法目标 ID。
+
+调用方
+RuleEngine adapter 与 tests。
+
+输入
+players、sourceId 与 skill facts。
+
+输出
+目标 ID 数组。
+
+读取状态
+alive/battleTeam/status/hand/equipment/range facts。
+
+写入状态
+无。
+
+调用函数
+getDistance。
+
+边界与不变量
+每个 skill 的目标语义只在本模块维护。
+*/
+export function getSkillTargetIds(players, sourceId, skill) {
+  const source = players.find((player) => player.id === sourceId) ?? null;
+  if (!source?.alive || !skill?.rangeRule) return [];
+  const alive = players.filter((player) => player.alive);
+  let candidates = [];
+  if (skill.id === "barrier") candidates = alive.filter((player) => player.battleTeam === source.battleTeam);
+  else if (skill.id === "resonance") candidates = alive.filter((player) => player.battleTeam === source.battleTeam);
+  else if (skill.id === "symbiosis") candidates = alive.filter((player) => player.battleTeam === source.battleTeam && player.hp < player.maxHp);
+  else if (skill.id === "stealSkill") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && (player.handCount > 0 || player.equipmentDefinitionId));
+  else if (skill.id === "hunt") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && player.huntMarkSourceId === source.id);
+  /*
+  功能
+  判断技能目标是否在 range rule 范围内。
+
+  调用方
+  getSkillTargetIds。
+
+  输入
+  target projection。
+
+  输出
+  布尔值。
+
+  读取状态
+  distance facts。
+
+  写入状态
+  无。
+
+  调用函数
+  getDistance。
+
+  边界与不变量
+  range 使用 skill.range 或 source.attackRange。
+  */
+  const inRange = (target) => {
+    const distance = getDistance(
+      players, source, target,
+      source.equipmentDefinitionId ?? null,
+      target.equipmentDefinitionId ?? null
+    );
+    return Number.isFinite(distance) && distance <= (skill.range ?? source.attackRange ?? 1);
+  };
+  if (skill.rangeRule === "attack") return candidates.filter(inRange).map((player) => player.id);
+  if (skill.rangeRule === "fixed") return candidates.filter(inRange).map((player) => player.id);
+  if (["unlimited", "ally"].includes(skill.rangeRule)) return candidates.map((player) => player.id);
+  return skill.rangeRule === "self" && candidates.some((player) => player.id === source.id) ? [source.id] : [];
+}
