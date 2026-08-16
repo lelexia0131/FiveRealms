@@ -17,12 +17,12 @@ application/choice、application/ports 与 adapters/ui、adapters/ai。
 架构约束
 不接收或回读 Game；所有 concrete capability 由 composition root 显式注入。FR-ARCH-15 删除条件：Game 不再是 composition owner，main.js 接管本文件全部 wiring 时删除。
 */
-import { createChoiceCoordinator } from "../application/choice/ChoiceCoordinator.js?build=20260815-shadow-agent-p1-slot";
-import { createChoicePort, createChoiceResult } from "../application/ports/ChoicePort.js?build=20260815-shadow-agent-p1-slot";
-import { createAiChoiceAdapter } from "../adapters/ai/AiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
-import { createAiResponseTimingDecorator } from "../application/response/AiResponseTimingDecorator.js?build=20260815-shadow-agent-p1-slot";
-import { createUiChoiceAdapter } from "../adapters/ui/UiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260815-shadow-agent-p1-slot";
+import { createChoiceCoordinator } from "../application/choice/ChoiceCoordinator.js?build=20260816-fr-arch-14-runtime-closure";
+import { createChoicePort, createChoiceResult } from "../application/ports/ChoicePort.js?build=20260816-fr-arch-14-runtime-closure";
+import { createAiChoiceAdapter } from "../adapters/ai/AiChoiceAdapter.js?build=20260816-fr-arch-14-runtime-closure";
+import { createAiResponseTimingDecorator } from "../application/response/AiResponseTimingDecorator.js?build=20260816-fr-arch-14-runtime-closure";
+import { createUiChoiceAdapter } from "../adapters/ui/UiChoiceAdapter.js?build=20260816-fr-arch-14-runtime-closure";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

@@ -17,8 +17,8 @@ usage 经 RuleUsageTransition；不写其它 Domain state。
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime 或 concrete adapters。
 */
-import { canTriggerRecycleDevice } from "../../domain/rules/card/RecycleDeviceRules.js?build=20260815-shadow-agent-p1-slot";
-import { setRecycleDeviceUses } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { canTriggerRecycleDevice } from "../../domain/rules/card/RecycleDeviceRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { setRecycleDeviceUses } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
 
 const REQUIRED_DEPENDENCIES = ["onEvent", "getState", "isSessionValid", "presentation", "drawCards"];
 

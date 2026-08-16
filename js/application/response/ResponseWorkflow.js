@@ -21,12 +21,12 @@ import {
   getCounterResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId,
   getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage,
   isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible
-} from "../../domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
-import { createResponseChoiceRequest } from "../choice/ResponseChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
-import { shouldForceAiRescueHuman, shouldForceAiSelfRescue, shouldPreferExplicitSelection, shouldRejectLeverageWithoutCards, shouldShowResponseWindowWithoutCards } from "./ParticipantPolicy.js?build=20260815-shadow-agent-p1-slot";
-import { buildResponsePresentation, publicPlayerContext } from "./ResponsePresentation.js?build=20260815-shadow-agent-p1-slot";
-import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } from "./ResponseResult.js?build=20260815-shadow-agent-p1-slot";
+} from "../../domain/rules/response/ResponseRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-fr-arch-14-runtime-closure";
+import { createResponseChoiceRequest } from "../choice/ResponseChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
+import { shouldForceAiRescueHuman, shouldForceAiSelfRescue, shouldPreferExplicitSelection, shouldRejectLeverageWithoutCards, shouldShowResponseWindowWithoutCards } from "./ParticipantPolicy.js?build=20260816-fr-arch-14-runtime-closure";
+import { buildResponsePresentation, publicPlayerContext } from "./ResponsePresentation.js?build=20260816-fr-arch-14-runtime-closure";
+import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } from "./ResponseResult.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

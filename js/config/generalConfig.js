@@ -3,8 +3,8 @@
  * domain/definitions/characters 与 domain/definitions/skills 单一拥有；
  * 本文件继续保留 AI profile、portrait、展示标签与旧 GENERAL_DEFINITIONS API shape。
  */
-import { CHARACTER_DEFINITIONS } from "../domain/definitions/characters/CharacterDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { CHARACTER_DEFINITIONS } from "../domain/definitions/characters/CharacterDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../domain/definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

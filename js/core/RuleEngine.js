@@ -1,13 +1,13 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
-import { hasStatus as hasStatusFromRule, nextLightningReceiverId } from "../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
-import { getSkillTargetIds } from "../domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot";
-import { createAttackUsage, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn } from "../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260816-fr-arch-14-runtime-closure";
+import { hasStatus as hasStatusFromRule, nextLightningReceiverId } from "../domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getSkillTargetIds } from "../domain/rules/skill/SkillRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { createAttackUsage, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn } from "../domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260816-fr-arch-14-runtime-closure";
 import {
   canActuallyUseAssault as decideAssaultLegality, canPlayCard as decideCardLegality,
   findPlayerFact, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds,
   getTransferReceiverIds, getTransferSourceIds
-} from "../domain/rules/card/CardRules.js?build=20260815-shadow-agent-p1-slot";
+} from "../domain/rules/card/CardRules.js?build=20260816-fr-arch-14-runtime-closure";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {

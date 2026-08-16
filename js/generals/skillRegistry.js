@@ -2,11 +2,11 @@
  * 主动技能 lookup/legacy façade。Domain Skill Rules 拥有 canUse/target/cost；
  * Application SkillEffectRuntime 拥有 execute；Application Trigger 拥有 passive registration。
  */
-import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { removeStatus, setStatus } from "../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260815-shadow-agent-p1-slot";
-import { getActiveSkillUseCount } from "../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
-import { canUseSkillBase, getSkillCost as getDomainSkillCost } from "../domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot";
+import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../domain/definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { removeStatus, setStatus } from "../domain/state/transitions/StatusTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { RuleEngine } from "../core/RuleEngine.js?build=20260816-fr-arch-14-runtime-closure";
+import { getActiveSkillUseCount } from "../domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { canUseSkillBase, getSkillCost as getDomainSkillCost } from "../domain/rules/skill/SkillRules.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

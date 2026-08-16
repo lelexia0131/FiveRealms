@@ -17,15 +17,15 @@ Domain StatusRules、Domain Card/Ruleset Definitions 与 state/Probability。
 架构约束
 确定性状态存在由 Domain StatusRules 解释；本模型只拥有封印概率生命周期。不得包含回合机会价值、封印负担、使用价值或搜索延迟，也不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
-import { hasStatus } from "../../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
-import { projectRulePlayer } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
+import { hasStatus } from "../../domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { projectRulePlayer } from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
 import {
   clampProbability,
   mergeProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
+} from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

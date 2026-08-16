@@ -29,16 +29,16 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
-import { cloneSearchState } from "../state/SearchState.js?build=20260815-shadow-agent-p1-slot";
-import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
+} from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
+import { cloneSearchState } from "../state/SearchState.js?build=20260816-fr-arch-14-runtime-closure";
+import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
 
-import { clampProbability } from "./SimulationSupport.js?build=20260815-shadow-agent-p1-slot";
-import { withResponseSimulation } from "./ResponseSimulation.js?build=20260815-shadow-agent-p1-slot";
-import { withCombatSimulation } from "./CombatSimulation.js?build=20260815-shadow-agent-p1-slot";
-import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260815-shadow-agent-p1-slot";
-import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260815-shadow-agent-p1-slot";
-import { withStatusSimulation } from "./StatusSimulation.js?build=20260815-shadow-agent-p1-slot";
+import { clampProbability } from "./SimulationSupport.js?build=20260816-fr-arch-14-runtime-closure";
+import { withResponseSimulation } from "./ResponseSimulation.js?build=20260816-fr-arch-14-runtime-closure";
+import { withCombatSimulation } from "./CombatSimulation.js?build=20260816-fr-arch-14-runtime-closure";
+import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260816-fr-arch-14-runtime-closure";
+import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260816-fr-arch-14-runtime-closure";
+import { withStatusSimulation } from "./StatusSimulation.js?build=20260816-fr-arch-14-runtime-closure";
 
 class SimulatorCore {
   /*

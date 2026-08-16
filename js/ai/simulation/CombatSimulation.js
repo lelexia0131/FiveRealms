@@ -17,22 +17,22 @@ ResponseSimulation、Radar domain、state/Probability 与共享 simulation runti
 架构约束
 结算顺序以 Game.damage、HpLossSystem 与 DyingSystem 为权威；不得拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
 import {
   calculateHealAmount,
   calculateHpDamage,
   calculateShieldAbsorption,
   isDying,
   isKillRewardEligible
-} from "../../domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
-import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
-import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
-import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
-import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260815-shadow-agent-p1-slot";
-import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
-import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260815-shadow-agent-p1-slot";
+} from "../../domain/rules/combat/CombatRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
+import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260816-fr-arch-14-runtime-closure";
+import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
+import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

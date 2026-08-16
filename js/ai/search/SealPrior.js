@@ -17,11 +17,11 @@ domain/SealModel、value/ThreatValue、Domain DistanceRules 与 AI 卡牌配置�
 架构约束
 返回值只用于 SEARCH_PRIOR；不得进入 State Value、TransitionValue 或 sibling timing。
 */
-import { getAliveRing } from "../../domain/rules/distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
-import { projectRulePlayers } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { hasSeal, sealOutcomeProbabilities } from "../domain/SealModel.js?build=20260815-shadow-agent-p1-slot";
-import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260815-shadow-agent-p1-slot";
+import { getAliveRing } from "../../domain/rules/distance/DistanceRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { projectRulePlayers } from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-fr-arch-14-runtime-closure";
+import { hasSeal, sealOutcomeProbabilities } from "../domain/SealModel.js?build=20260816-fr-arch-14-runtime-closure";
+import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260816-fr-arch-14-runtime-closure";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;

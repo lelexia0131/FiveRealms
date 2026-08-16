@@ -17,7 +17,7 @@ composition root 的 human choice port。
 架构约束
 不得 import UIManager、AIController、SoundManager、Game runtime 或其它 concrete adapter。
 */
-import { createChoiceResult, normalizeChoiceResult } from "../../application/ports/ChoicePort.js?build=20260815-shadow-agent-p1-slot";
+import { createChoiceResult, normalizeChoiceResult } from "../../application/ports/ChoicePort.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

@@ -17,9 +17,9 @@ Domain DistanceRules、TurnRules、StatusRules 与 definitions。
 架构约束
 不得依赖 Game/RuleEngine/application/adapters/EventBus；不得 await、emit、随机、mutation。
 */
-import { getDistance } from "../distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
-import { hasAttackUseRemaining } from "../turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
-import { hasStatus } from "../status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import { getDistance } from "../distance/DistanceRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { hasAttackUseRemaining } from "../turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { hasStatus } from "../status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

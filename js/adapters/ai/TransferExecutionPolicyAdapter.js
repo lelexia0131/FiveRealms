@@ -17,7 +17,7 @@ Application CardIntentRuntime。
 架构约束
 不得依赖 Game、AIController、Planner、Domain transitions 或其它 adapter；不得重新解释 ally/enemy 转移方向。
 */
-import { isTransferDirectionAllowed } from "../../ai/policy/TransferPolicy.js?build=20260815-shadow-agent-p1-slot";
+import { isTransferDirectionAllowed } from "../../ai/policy/TransferPolicy.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

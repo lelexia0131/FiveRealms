@@ -17,7 +17,7 @@ StateView 语义读边界。
 架构约束
 不得依赖 application/adapters/ui/audio/ai/Game runtime；不得实现规则、距离、合法性或 workflow。
 */
-import { createStateView } from "./StateView.js?build=20260815-shadow-agent-p1-slot";
+import { createStateView } from "./StateView.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

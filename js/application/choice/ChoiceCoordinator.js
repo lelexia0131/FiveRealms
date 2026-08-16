@@ -17,7 +17,7 @@ application/ports/ChoicePort。
 架构约束
 不得依赖 concrete UI/AI/Audio/Diagnostics、Game runtime、EventBus 或 adapters。
 */
-import { normalizeChoiceResult } from "../ports/ChoicePort.js?build=20260815-shadow-agent-p1-slot";
+import { normalizeChoiceResult } from "../ports/ChoicePort.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

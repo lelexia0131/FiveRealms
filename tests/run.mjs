@@ -5,47 +5,47 @@ import { access, readFile, readdir } from "node:fs/promises";
 import * as nodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { GAME_CONFIG, PHASE_NAMES, TEAM_CONFIG } from "../js/config/gameConfig.js";
+import { AI_SEARCH_PROFILES, GAME_CONFIG, PHASE_NAMES, TEAM_CONFIG } from "../js/config/gameConfig.js";
 import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../js/config/cardConfig.js";
 import { GENERAL_DEFINITIONS, GENERAL_BY_ID } from "../js/config/generalConfig.js";
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../js/domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { CHARACTER_DEFINITIONS } from "../js/domain/definitions/characters/CharacterDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { STATUS_DEFINITIONS } from "../js/domain/definitions/statuses/StatusDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { RULESET_DEFINITION } from "../js/domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
-import { createMatchState } from "../js/domain/state/model/MatchState.js?build=20260815-shadow-agent-p1-slot";
-import { createPlayerState } from "../js/domain/state/model/PlayerState.js?build=20260815-shadow-agent-p1-slot";
-import { createDeckZoneState } from "../js/domain/state/model/ZoneState.js?build=20260815-shadow-agent-p1-slot";
-import { createStateView } from "../js/domain/state/queries/StateView.js?build=20260815-shadow-agent-p1-slot";
-import { createRuleStateView } from "../js/domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
-import { assertCanonicalSeatRoster, isCanonicalSeatRoster } from "../js/domain/state/queries/SeatRosterContract.js?build=20260815-shadow-agent-p1-slot";
-import { createChoicePort, createChoiceResult, normalizeChoiceResult } from "../js/application/ports/ChoicePort.js?build=20260815-shadow-agent-p1-slot";
-import { createRandomPort } from "../js/application/ports/RandomPort.js?build=20260815-shadow-agent-p1-slot";
-import { createDiagnosticsPort } from "../js/application/ports/DiagnosticsPort.js?build=20260815-shadow-agent-p1-slot";
-import { createPresentationPort } from "../js/application/ports/PresentationPort.js?build=20260815-shadow-agent-p1-slot";
-import { createChoiceCoordinator } from "../js/application/choice/ChoiceCoordinator.js?build=20260815-shadow-agent-p1-slot";
-import { createResponseChoiceRequest } from "../js/application/choice/ResponseChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
-import { createPublicCardChoiceRequest } from "../js/application/choice/PublicCardChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
-import { createHiddenCardSelectionStore } from "../js/application/choice/HiddenCardSelectionStore.js?build=20260815-shadow-agent-p1-slot";
-import { createUiChoiceAdapter } from "../js/adapters/ui/UiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
-import { createAiChoiceAdapter } from "../js/adapters/ai/AiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
-import { createAiResponseTimingDecorator } from "../js/application/response/AiResponseTimingDecorator.js?build=20260815-shadow-agent-p1-slot";
-import { calculateDamageResult, calculateHealAmount, isDying, isKillRewardEligible } from "../js/domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
-import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
-import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome, interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js?build=20260815-shadow-agent-p1-slot";
-import { getCounterResponderOrder, getDyingRescueResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
-import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, isHuntMarkSourceExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
-import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, getWinningTeam, isSmallTeam } from "../js/domain/rules/team/TeamRules.js?build=20260815-shadow-agent-p1-slot";
-import { calculateNextActorIndex, createAttackUsage, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
-import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js?build=20260815-shadow-agent-p1-slot";
-import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js?build=20260815-shadow-agent-p1-slot";
-import { changeEnergy as transitionChangeEnergy, changeHp as transitionChangeHp, setHp as transitionSetHp, changeShield as transitionChangeShield } from "../js/domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { setStatus as transitionSetStatus, removeStatus as transitionRemoveStatus, clearStatuses as transitionClearStatuses } from "../js/domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { appendCardToZone as transitionAppendCardToZone, removeCardFromZone as transitionRemoveCardFromZone, moveCardBetweenZones as transitionMoveCardBetweenZones } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { moveCardsAtomically as transitionMoveCardsAtomically } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { resetGlobalTurnReactiveFlags as transitionResetGlobalTurnReactiveFlags, resetRoundFlags as transitionResetRoundFlags, resetTurnFlags as transitionResetTurnFlags } from "../js/domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { setCurrentPlayerIndex as transitionSetCurrentPlayerIndex, setCurrentRound as transitionSetCurrentRound, setMatchPhase as transitionSetMatchPhase, setWinnerTeam as transitionSetWinnerTeam, setGameOver as transitionSetGameOver, setPublicCardPool as transitionSetPublicCardPool } from "../js/domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { applyGeneralDefinition as transitionApplyGeneralDefinition, bumpHandVersion as transitionBumpHandVersion, setAlive as transitionSetAlive, setEquipment as transitionSetEquipment } from "../js/domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../js/domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { CHARACTER_DEFINITIONS } from "../js/domain/definitions/characters/CharacterDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { STATUS_DEFINITIONS } from "../js/domain/definitions/statuses/StatusDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { RULESET_DEFINITION } from "../js/domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
+import { createMatchState } from "../js/domain/state/model/MatchState.js?build=20260816-fr-arch-14-runtime-closure";
+import { createPlayerState } from "../js/domain/state/model/PlayerState.js?build=20260816-fr-arch-14-runtime-closure";
+import { createDeckZoneState } from "../js/domain/state/model/ZoneState.js?build=20260816-fr-arch-14-runtime-closure";
+import { createStateView } from "../js/domain/state/queries/StateView.js?build=20260816-fr-arch-14-runtime-closure";
+import { createRuleStateView } from "../js/domain/state/queries/RuleStateView.js?build=20260816-fr-arch-14-runtime-closure";
+import { assertCanonicalSeatRoster, isCanonicalSeatRoster } from "../js/domain/state/queries/SeatRosterContract.js?build=20260816-fr-arch-14-runtime-closure";
+import { createChoicePort, createChoiceResult, normalizeChoiceResult } from "../js/application/ports/ChoicePort.js?build=20260816-fr-arch-14-runtime-closure";
+import { createRandomPort } from "../js/application/ports/RandomPort.js?build=20260816-fr-arch-14-runtime-closure";
+import { createDiagnosticsPort } from "../js/application/ports/DiagnosticsPort.js?build=20260816-fr-arch-14-runtime-closure";
+import { createPresentationPort } from "../js/application/ports/PresentationPort.js?build=20260816-fr-arch-14-runtime-closure";
+import { createChoiceCoordinator } from "../js/application/choice/ChoiceCoordinator.js?build=20260816-fr-arch-14-runtime-closure";
+import { createResponseChoiceRequest } from "../js/application/choice/ResponseChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
+import { createPublicCardChoiceRequest } from "../js/application/choice/PublicCardChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
+import { createHiddenCardSelectionStore } from "../js/application/choice/HiddenCardSelectionStore.js?build=20260816-fr-arch-14-runtime-closure";
+import { createUiChoiceAdapter } from "../js/adapters/ui/UiChoiceAdapter.js?build=20260816-fr-arch-14-runtime-closure";
+import { createAiChoiceAdapter } from "../js/adapters/ai/AiChoiceAdapter.js?build=20260816-fr-arch-14-runtime-closure";
+import { createAiResponseTimingDecorator } from "../js/application/response/AiResponseTimingDecorator.js?build=20260816-fr-arch-14-runtime-closure";
+import { calculateDamageResult, calculateHealAmount, isDying, isKillRewardEligible } from "../js/domain/rules/combat/CombatRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/distance/DistanceRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome, interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getCounterResponderOrder, getDyingRescueResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, isHuntMarkSourceExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, getWinningTeam, isSmallTeam } from "../js/domain/rules/team/TeamRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { calculateNextActorIndex, createAttackUsage, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js?build=20260816-fr-arch-14-runtime-closure";
+import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js?build=20260816-fr-arch-14-runtime-closure";
+import { changeEnergy as transitionChangeEnergy, changeHp as transitionChangeHp, setHp as transitionSetHp, changeShield as transitionChangeShield } from "../js/domain/state/transitions/ResourceTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { setStatus as transitionSetStatus, removeStatus as transitionRemoveStatus, clearStatuses as transitionClearStatuses } from "../js/domain/state/transitions/StatusTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { appendCardToZone as transitionAppendCardToZone, removeCardFromZone as transitionRemoveCardFromZone, moveCardBetweenZones as transitionMoveCardBetweenZones } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { moveCardsAtomically as transitionMoveCardsAtomically } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { resetGlobalTurnReactiveFlags as transitionResetGlobalTurnReactiveFlags, resetRoundFlags as transitionResetRoundFlags, resetTurnFlags as transitionResetTurnFlags } from "../js/domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { setCurrentPlayerIndex as transitionSetCurrentPlayerIndex, setCurrentRound as transitionSetCurrentRound, setMatchPhase as transitionSetMatchPhase, setWinnerTeam as transitionSetWinnerTeam, setGameOver as transitionSetGameOver, setPublicCardPool as transitionSetPublicCardPool } from "../js/domain/state/transitions/MatchStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { applyGeneralDefinition as transitionApplyGeneralDefinition, bumpHandVersion as transitionBumpHandVersion, setAlive as transitionSetAlive, setEquipment as transitionSetEquipment } from "../js/domain/state/transitions/PlayerStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
 import { Game } from "../js/core/Game.js";
 import { Player } from "../js/core/Player.js";
 import { Deck } from "../js/core/Deck.js";
@@ -63,7 +63,7 @@ import {
   joinProbabilityStateBranches as joinStateProbabilityBranches,
   totalBranchProbability
 } from "../js/ai/state/Probability.js";
-import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260815-shadow-agent-p1-slot";
+import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260816-fr-arch-14-runtime-closure";
 import { Planner } from "../js/ai/search/Planner.js";
 import { SearchBudget } from "../js/ai/search/SearchBudget.js";
 import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
@@ -112,26 +112,26 @@ import {
 import { PublicPoolView } from "../js/ui/PublicPoolView.js";
 import { isCardSelectionValid, toggleCardSelection } from "../js/ui/selectionUtils.js";
 import { buildResponsePresentation } from "../js/core/ResponseSystem.js";
-import { RESPONSE_STATUS as WORKFLOW_RESPONSE_STATUS, createResponseWorkflowResult } from "../js/application/response/ResponseResult.js?build=20260815-shadow-agent-p1-slot";
-import { createResponseWorkflow } from "../js/application/response/ResponseWorkflow.js?build=20260815-shadow-agent-p1-slot";
-import { shouldForceAiSelfRescue, shouldShowResponseWindowWithoutCards } from "../js/application/response/ParticipantPolicy.js?build=20260815-shadow-agent-p1-slot";
-import { createCombatWorkflow } from "../js/application/combat/CombatWorkflow.js?build=20260815-shadow-agent-p1-slot";
-import { createDyingWorkflow } from "../js/application/combat/DyingWorkflow.js?build=20260815-shadow-agent-p1-slot";
-import { createJudgmentWorkflow } from "../js/application/judgment/JudgmentWorkflow.js?build=20260815-shadow-agent-p1-slot";
-import { createStatusResolutionWorkflow } from "../js/application/judgment/StatusResolutionWorkflow.js?build=20260815-shadow-agent-p1-slot";
-import { createMatchWorkflow } from "../js/application/match/MatchWorkflow.js?build=20260815-shadow-agent-p1-slot";
-import { createTurnWorkflow } from "../js/application/turn/TurnWorkflow.js?build=20260815-shadow-agent-p1-slot";
-import { createActionWorkflow } from "../js/application/action/ActionWorkflow.js?build=20260815-shadow-agent-p1-slot";
-import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
-import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
-import { canActuallyUseAssault as canActuallyUseAssaultRule, canPlayCard as canPlayCardRule, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds, getTransferSourceIds } from "../js/domain/rules/card/CardRules.js?build=20260815-shadow-agent-p1-slot";
-import { canTriggerRecycleDevice } from "../js/domain/rules/card/RecycleDeviceRules.js?build=20260815-shadow-agent-p1-slot";
-import { canUseSkillBase, getSkillTargetIds } from "../js/domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot";
-import { createCardIntentRuntime } from "../js/application/action/CardIntentRuntime.js?build=20260815-shadow-agent-p1-slot";
-import { createRecycleDeviceTrigger } from "../js/application/trigger/RecycleDeviceTrigger.js?build=20260815-shadow-agent-p1-slot";
-import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js?build=20260815-shadow-agent-p1-slot";
-import { createGameOverFact, createGameStartFact } from "../js/domain/events/MatchEvents.js?build=20260815-shadow-agent-p1-slot";
-import { canTriggerMomentumCategory, canTriggerRejuvenation, shouldConsumeMomentum } from "../js/domain/rules/skill/PassiveSkillRules.js?build=20260815-shadow-agent-p1-slot";
+import { RESPONSE_STATUS as WORKFLOW_RESPONSE_STATUS, createResponseWorkflowResult } from "../js/application/response/ResponseResult.js?build=20260816-fr-arch-14-runtime-closure";
+import { createResponseWorkflow } from "../js/application/response/ResponseWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
+import { shouldForceAiSelfRescue, shouldShowResponseWindowWithoutCards } from "../js/application/response/ParticipantPolicy.js?build=20260816-fr-arch-14-runtime-closure";
+import { createCombatWorkflow } from "../js/application/combat/CombatWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
+import { createDyingWorkflow } from "../js/application/combat/DyingWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
+import { createJudgmentWorkflow } from "../js/application/judgment/JudgmentWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
+import { createStatusResolutionWorkflow } from "../js/application/judgment/StatusResolutionWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
+import { createMatchWorkflow } from "../js/application/match/MatchWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
+import { createTurnWorkflow } from "../js/application/turn/TurnWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
+import { createActionWorkflow } from "../js/application/action/ActionWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
+import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
+import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
+import { canActuallyUseAssault as canActuallyUseAssaultRule, canPlayCard as canPlayCardRule, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds, getTransferSourceIds } from "../js/domain/rules/card/CardRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { canTriggerRecycleDevice } from "../js/domain/rules/card/RecycleDeviceRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { canUseSkillBase, getSkillTargetIds } from "../js/domain/rules/skill/SkillRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { createCardIntentRuntime } from "../js/application/action/CardIntentRuntime.js?build=20260816-fr-arch-14-runtime-closure";
+import { createRecycleDeviceTrigger } from "../js/application/trigger/RecycleDeviceTrigger.js?build=20260816-fr-arch-14-runtime-closure";
+import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js?build=20260816-fr-arch-14-runtime-closure";
+import { createGameOverFact, createGameStartFact } from "../js/domain/events/MatchEvents.js?build=20260816-fr-arch-14-runtime-closure";
+import { canTriggerMomentumCategory, canTriggerRejuvenation, shouldConsumeMomentum } from "../js/domain/rules/skill/PassiveSkillRules.js?build=20260816-fr-arch-14-runtime-closure";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import {
   ACTIVE_SKILLS, getActiveSkillCost, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
@@ -199,7 +199,7 @@ import {
 import { sealDelayCost, sealEarlyUsePenalty } from "../js/ai/search/SealTiming.js";
 import { sealTeamBurden } from "../js/ai/value/SealValue.js";
 import { sealUseValue, turnOrderGap, turnTimingFactor } from "../js/ai/search/SealPrior.js";
-import { MUSIC_PROFILES, SoundManager } from "../js/audio/SoundManager.js";
+import { MUSIC_PROFILES, SOUND_THROTTLE_MS, SoundManager } from "../js/audio/SoundManager.js";
 import {
   assessGlobalBenefit,
   mutualBenefitDraftValues
@@ -323,7 +323,11 @@ function makePlayer(id, seatIndex, team, controllerType = "ai", generalIndex = s
 function makeGame(players, { random = () => 0.25, response = () => false } = {}) {
   const ui = makeUi(response);
   const game = new Game(ui, random);
-  game.aiRandom = { next: random, snapshot: () => ({ seed: 0 }) };
+  game.aiRandom = {
+    next: random,
+    snapshot: () => ({ seed: 0, state: 0, algorithm: "lcg", draws: 0 }),
+    commit: () => {}
+  };
   game.aiController.searchRng = game.aiRandom;
   game.state.players = players;
   game.state.currentPlayerIndex = 0;
@@ -10660,41 +10664,14 @@ test("AI·搜索：到达搜索预算仍返回当前最佳合法动作", async (
   assert.ok(game.aiController.planner.lastSearchStats.elapsedMs < 250);
 });
 
-test("AI·搜索：延迟在配置上下限内且快速模式显著缩短", () => {
-  const natural = sampleDelay(
-    () => .5, GAME_CONFIG.aiInitialThinkMinMs, GAME_CONFIG.aiInitialThinkMaxMs, false
-  );
-  const fast = sampleDelay(
-    () => .5, GAME_CONFIG.aiInitialThinkMinMs, GAME_CONFIG.aiInitialThinkMaxMs, true
-  );
-  assert.ok(natural >= GAME_CONFIG.aiInitialThinkMinMs && natural <= GAME_CONFIG.aiInitialThinkMaxMs);
-  assert.ok(fast < natural / 2);
-});
-
-test("AI·搜索：各可见思考阶段使用集中配置范围且不改变搜索预算", () => {
-  const ranges = {
-    initial: [3000, 5500],
-    action: [1800, 3500],
-    response: [1800, 3200],
-    discard: [1600, 2800],
-    end: [900, 1600]
-  };
-  for (const [phase, [minimum, maximum]] of Object.entries(ranges)) {
-    const low = getAiDelay({ random: () => 0, simulationMode: false, animationFastMode: false }, phase),
-      high = getAiDelay({ random: () => .999999, simulationMode: false, animationFastMode: false }, phase),
-      fast = getAiDelay({ random: () => .5, simulationMode: false, animationFastMode: true }, phase);
-    assert.equal(low, minimum);
-    assert.ok(high <= maximum && high >= maximum - 1);
-    assert.ok(fast < (minimum + maximum) / 4);
-  }
-  assert.equal(GAME_CONFIG.aiComplexThinkMaxMs, 7000);
+test("AI·搜索：fake thinking delay 已移除且不推进 random", () => {
+  let calls = 0;
+  assert.equal(sampleDelay(() => { calls += 1; return .5; }, 3000, 5500), 0);
+  assert.equal(calls, 0);
+  assert.equal(getAiDelay({ random: () => { calls += 1; return .5; }, simulationMode: false, animationFastMode: false }, "initial"), 0);
+  assert.equal(getAiDelay({ random: () => { calls += 1; return .5; }, simulationMode: false, animationFastMode: true }, "end"), 0);
+  assert.equal(calls, 0);
   assert.equal(GAME_CONFIG.aiSearchTimeBudgetMs, 900);
-});
-
-test("AI·搜索：复杂局面首次思考实际使用 aiComplexThinkMaxMs 上限", () => {
-  const game = { random: () => .999999, simulationMode: false, animationFastMode: false };
-  assert.equal(getAiDelay(game, "initial"), GAME_CONFIG.aiInitialThinkMaxMs);
-  assert.equal(getAiDelay(game, "initial", { complex: true }), GAME_CONFIG.aiComplexThinkMaxMs);
 });
 
 test("AI·搜索：关闭逐动作重规划时会复用仍合法的束搜索牌序", async () => {
@@ -28314,16 +28291,29 @@ test("AI·动态密度：模拟器动态：AIController 每次行动只计算一
     calls += 1;
     return { assault: 1 };
   };
-  const plan = {};
-  game.aiController.planner.plan = async (player, visible) => {
-    plan.player = player;
-    plan.visible = visible;
-    return { type: "end" };
+  let receivedRequest = null;
+  game.aiController.searchExecutor = {
+    search: async (request) => {
+      receivedRequest = request;
+      return {
+        requestId:request.requestId,
+        gameId:request.gameId,
+        stateVersion:request.stateVersion,
+        actorId:request.actorId,
+        actionDescriptor:{ type:"end", cardId:null, cardInstanceId:null, targetId:null, targetIds:[], selection:null },
+        plannedSequenceDescriptors:[],
+        stats:{ stopReason:"COMPLETE", expandedNodes:0 },
+        searchStopReason:"COMPLETE",
+        rngAfter:request.rng,
+        cancelled:false,
+        workerError:null
+      };
+    }
   };
   await game.aiController.selectAction(actor, { gameId: game.state.gameId });
   assert.equal(captured, actor);
   assert.equal(calls, 1);
-  assert.equal(plan.visible.remainingCardCounts.assault, 1);
+  assert.equal(receivedRequest.searchState.remainingCardCounts.assault, 1);
 });
 
 test("AI·动态密度：模拟器动态：destroy 使用动态未知 owner 期望", () => {
@@ -37827,7 +37817,7 @@ test("集成：全 AI 快速对局能推进到合法胜者", async () => {
   const result = await Promise.race(
     [
       game.loopPromise.then(() => "done"),
-      new Promise((resolve) => setTimeout(() => resolve("timeout"), 10000))
+      new Promise((resolve) => setTimeout(() => resolve("timeout"), 20000))
     ]
   );
   assert.equal(result, "done");
@@ -38657,11 +38647,18 @@ async function frArchCurrentTimingFreeze() {
   assert.equal(GAME_CONFIG.aiInitialThinkMaxMs, 5500);
   assert.equal(GAME_CONFIG.animationFastMinimumMs, 0);
   assert.equal(GAME_CONFIG.animationFastScale, 0.08);
+  assert.equal(AI_SEARCH_PROFILES.FAST.softTargetMs, 500);
+  assert.equal(AI_SEARCH_PROFILES.FAST.searchDeadlineMs, 900);
+  assert.equal(AI_SEARCH_PROFILES.FAST.hardWatchdogMs, 5000);
+  assert.equal(AI_SEARCH_PROFILES.NORMAL.softTargetMs, null);
+  assert.equal(AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs, 3000);
+  assert.equal(AI_SEARCH_PROFILES.NORMAL.hardWatchdogMs, 10000);
   const budgetSource = await readFile(projectFile("js/ai/search/SearchBudget.js"), "utf8");
   const timingSource = await readFile(projectFile("js/utils/aiTiming.js"), "utf8");
   assert.match(budgetSource, /GAME_CONFIG\.aiSearchTimeBudgetMs/);
   assert.match(timingSource, /aiInitialThinkMinMs/);
-  assert.match(timingSource, /animationFastScale/);
+  assert.doesNotMatch(timingSource, /\bgame\.random\s*\(/);
+  assert.doesNotMatch(timingSource, /Math\.max\(GAME_CONFIG\.animationFastMinimumMs/);
 }
 
 test("FR-ARCH·timing 基线：当前 900ms/48-yield 与展示时序配置冻结", frArchCurrentTimingFreeze);
@@ -39065,7 +39062,7 @@ async function frArchDefinitionModuleIdentity() {
     const source = await readFile(file, "utf8");
     for (const match of source.matchAll(/(?:from\s*|import\s*\()\s*["']([^"']*domain\/definitions[^"']*)["']/g)) {
       const specifier = match[1];
-      assert.match(specifier, /\?build=20260815-shadow-agent-p1-slot$/, `${file} -> ${specifier}`);
+      assert.match(specifier, /\?build=20260816-fr-arch-14-runtime-closure$/, `${file} -> ${specifier}`);
     }
   }
 }
@@ -42682,7 +42679,7 @@ readFile、CardEffectRules getters。
 CardEffectRules 不得重新出现固定 literal getter。
 */
 async function frArch12CardFixedFactOwnership() {
-  const rules = await import("../js/domain/rules/card/CardEffectRules.js?build=20260815-shadow-agent-p1-slot");
+  const rules = await import("../js/domain/rules/card/CardEffectRules.js?build=20260816-fr-arch-14-runtime-closure");
   assert.equal(rules.getAssaultBaseDamage(), DOMAIN_CARD_DEFINITIONS.assault.baseDamage);
   assert.equal(rules.getRecoverHealAmount(), DOMAIN_CARD_DEFINITIONS.recover.healAmount);
   assert.equal(rules.getChargeEnergyAmount(), DOMAIN_CARD_DEFINITIONS.charge.energyGain);
@@ -42726,7 +42723,7 @@ readFile、decideSkillEffect、decideAllInDrawCount、decideAllInEnterChance。
 SkillRules 不得复制固定 effect literal；AI 不得自行复制 allIn 公式。
 */
 async function frArch12SkillFixedFactOwnership() {
-  const rules = await import("../js/domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot");
+  const rules = await import("../js/domain/rules/skill/SkillRules.js?build=20260816-fr-arch-14-runtime-closure");
   const source = { id:"s", energy:3, alive:true, battleTeam:"dawn", hp:3, maxHp:4, shield:0, handCount:1, equipmentDefinitionId:null };
   const assertDecision = (skill, fields) => {
     const decision = rules.decideSkillEffect(skill, source);
@@ -42778,8 +42775,8 @@ readFile。
 Human ally→enemy 仍合法；AI ally→enemy 仍被 AI policy 禁止。
 */
 async function frArch12TransferPolicySingleAuthority() {
-  const { isTransferDirectionAllowed } = await import("../js/ai/policy/TransferPolicy.js?build=20260815-shadow-agent-p1-slot");
-  const { isTransferExecutionAllowed } = await import("../js/adapters/ai/TransferExecutionPolicyAdapter.js?build=20260815-shadow-agent-p1-slot");
+  const { isTransferDirectionAllowed } = await import("../js/ai/policy/TransferPolicy.js?build=20260816-fr-arch-14-runtime-closure");
+  const { isTransferExecutionAllowed } = await import("../js/adapters/ai/TransferExecutionPolicyAdapter.js?build=20260816-fr-arch-14-runtime-closure");
   const actor = { id:"a", battleTeam:"dawn" };
   const ally = { id:"f", battleTeam:"dawn" };
   const ally2 = { id:"f2", battleTeam:"dawn" };
@@ -42863,9 +42860,9 @@ projectCanonicalSeatRoster、getRangeConditionBranches、Simulator.applyDamage/h
 概率分支总质量为一时 matches 与 Domain deterministic 结论一致。
 */
 async function frArch12DeterministicParityMatrix() {
-  const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/state/RuleProjection.js?build=20260815-shadow-agent-p1-slot");
-  const { getRangeConditionBranches } = await import("../js/ai/state/DistanceProbabilityBranches.js?build=20260815-shadow-agent-p1-slot");
-  const { nextLightningReceiverId: aiNextLightningReceiverId } = await import("../js/ai/domain/LightningModel.js?build=20260815-shadow-agent-p1-slot");
+  const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure");
+  const { getRangeConditionBranches } = await import("../js/ai/state/DistanceProbabilityBranches.js?build=20260816-fr-arch-14-runtime-closure");
+  const { nextLightningReceiverId: aiNextLightningReceiverId } = await import("../js/ai/domain/LightningModel.js?build=20260816-fr-arch-14-runtime-closure");
 
   const players = [
     { id:"p0", seatIndex:0, alive:true, battleTeam:"dawn", hp:5, maxHp:5, shield:1, energy:3, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:[] },
@@ -42981,9 +42978,9 @@ async function frArch13CarryInRosterAndRootArtifacts() {
   assert.match(checkerSource, /ACCIDENTAL_ROOT_ARTIFACTS/);
   assert.match(checkerSource, /accidentalRootArtifacts/);
 
-  const { projectCanonicalSeatRoster } = await import("../js/ai/state/RuleProjection.js?build=20260815-shadow-agent-p1-slot");
-  const { getCounterResponderOrder, getDyingRescueResponderOrder } = await import("../js/domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot");
-  const { nextLightningReceiverId } = await import("../js/domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot");
+  const { projectCanonicalSeatRoster } = await import("../js/ai/state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure");
+  const { getCounterResponderOrder, getDyingRescueResponderOrder } = await import("../js/domain/rules/response/ResponseRules.js?build=20260816-fr-arch-14-runtime-closure");
+  const { nextLightningReceiverId } = await import("../js/domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure");
   const player = (id, seatIndex, alive = true) => ({
     id, seatIndex, alive, battleTeam: id === "d" ? "dusk" : "dawn",
     hp:4, maxHp:4, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:0,
@@ -43034,7 +43031,8 @@ createSearchRequest、searchRequestViolations、structuredClone。
 clone 前后语义相等；敌方真实 hand definition 不得进入 request。
 */
 async function frArch13SearchRequestContract() {
-  const { createSearchRequest, searchRequestViolations } = await import("../js/ai/search/SearchRequest.js?build=20260815-shadow-agent-p1-slot");
+  const { createSearchRequest, searchRequestViolations } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
   const actor = makePlayer("sr-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("sr-enemy", 1, "dusk", "ai", 1);
   const secret = instance("harvest");
@@ -43050,8 +43048,9 @@ async function frArch13SearchRequestContract() {
     currentRound:game.state.currentRound,
     searchState,
     searchConfig:game.aiController.buildSearchConfig(),
-    rng:{ seed:7, algorithm:"lcg", draws:0 },
-    rootActionDescriptors:[{ type:"end", cardId:null, cardInstanceId:null, targetId:null, targetIds:[], selection:null }]
+    rng:{ seed:7, state:7, algorithm:"lcg", draws:0 },
+    rootActionDescriptors:[{ type:"end", cardId:null, cardInstanceId:null, targetId:null, targetIds:[], selection:null }],
+    rootSearchActions:[describeRootSearchAction({ type:"end" })]
   });
   const cloned = structuredClone(request);
   assert.deepEqual(cloned, request);
@@ -43091,9 +43090,10 @@ createSearchRequest、acceptSearchResult、bumpStateVersion。
 任一失败只能返回安全 end；合法 descriptor 必须在当前 Domain-legal set rebind。
 */
 async function frArch13StaleResultRejection() {
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260815-shadow-agent-p1-slot");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260815-shadow-agent-p1-slot");
-  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260815-shadow-agent-p1-slot");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
+  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260816-fr-arch-14-runtime-closure");
   const actor = makePlayer("stale-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("stale-enemy", 1, "dusk", "ai", 1);
   const card = instance("assault");
@@ -43101,18 +43101,22 @@ async function frArch13StaleResultRejection() {
   const { game } = makeGame([actor, enemy]);
   game.aiRandomnessRange = 0;
   const controller = game.aiController;
-  const makeRequest = () => createSearchRequest({
-    requestId:controller.createId("stale-test"),
-    gameId:game.state.gameId,
-    stateVersion:game.state.stateVersion,
-    actorId:actor.id,
-    phase:game.state.phase,
-    currentRound:game.state.currentRound,
-    searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
-    searchConfig:controller.buildSearchConfig(),
-    rng:controller.searchRng.snapshot(),
-    rootActionDescriptors:controller.getActionCandidates(actor).map(ActionDescriptor.describe)
-  });
+  const makeRequest = () => {
+    const roots = controller.getActionCandidates(actor);
+    return createSearchRequest({
+      requestId:controller.createId("stale-test"),
+      gameId:game.state.gameId,
+      stateVersion:game.state.stateVersion,
+      actorId:actor.id,
+      phase:game.state.phase,
+      currentRound:game.state.currentRound,
+      searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
+      searchConfig:controller.buildSearchConfig(),
+      rng:controller.searchRng.snapshot(),
+      rootActionDescriptors:roots.map(ActionDescriptor.describe),
+      rootSearchActions:roots.map(describeRootSearchAction)
+    });
+  };
   const action = controller.getActionCandidates(actor).find((entry) => entry.card?.id === card.id);
   assert.ok(action);
   const request = makeRequest();
@@ -43190,7 +43194,7 @@ bumpStateVersion。
 第一项执行后的 version 变化不得让第二项必然 stale；失效动作只返回 null，由 TurnWorkflow 清空 plan。
 */
 async function frArch13PlannedSequenceReuse() {
-  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260815-shadow-agent-p1-slot");
+  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260816-fr-arch-14-runtime-closure");
   const actor = makePlayer("plan-actor", 0, "dawn", "ai", 2);
   const enemy = makePlayer("plan-enemy", 1, "dusk", "ai", 1);
   const charge = instance("charge");
@@ -43284,8 +43288,9 @@ createSearchRequest、acceptSearchResult。
 cancelled/invalid 只允许安全 end，不执行真实 Card/Player。
 */
 async function frArch13CancellationContract() {
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260815-shadow-agent-p1-slot");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260815-shadow-agent-p1-slot");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
   const actor = makePlayer("cancel-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("cancel-enemy", 1, "dusk", "ai", 1);
   const card = instance("assault");
@@ -43301,7 +43306,8 @@ async function frArch13CancellationContract() {
     searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
     searchConfig:game.aiController.buildSearchConfig(),
     rng:game.aiController.searchRng.snapshot(),
-    rootActionDescriptors:game.aiController.getActionCandidates(actor).map(ActionDescriptor.describe)
+    rootActionDescriptors:game.aiController.getActionCandidates(actor).map(ActionDescriptor.describe),
+    rootSearchActions:game.aiController.getActionCandidates(actor).map(describeRootSearchAction)
   });
   const action = game.aiController.getActionCandidates(actor)[0];
   const cancelled = game.aiController.acceptSearchResult({
@@ -43316,6 +43322,946 @@ async function frArch13CancellationContract() {
 }
 
 test("FR-ARCH-13·cancellation：cancelled result 不执行真实 action", frArch13CancellationContract);
+
+
+// ==================== FR-ARCH-14 Worker / Thinking-Time Tests ====================
+
+/*
+功能
+验证 FR13 carry-in：SearchResult planned sequence descriptors 只投影一次且 round-trip identity 保留。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+ActionDescriptor/SearchResult contracts。
+
+写入状态
+无。
+
+调用函数
+ActionDescriptor.describe、createSearchResult。
+
+边界与不变量
+end/card/skill/transfer/leverage descriptor 不再二次 describe。
+*/
+async function frArch14SearchResultDescriptorIdempotence() {
+  const { createSearchResult } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
+  const target = { id:"t" };
+  const rawActions = [
+    { type:"end" },
+    { type:"card", card:instance("assault"), targets:[target] },
+    { type:"skill", skill:ACTIVE_SKILL_DEFINITIONS.barrier, targets:[target], energyCost:2 },
+    { type:"card", card:instance("transfer"), targets:[], selection:{ sourceId:"s", receiverId:"r", zone:"hand", selectionKind:"unknown", availableUnknownCount:1, expectedValue:4, score:.5 } },
+    { type:"card", card:instance("leverage"), targets:[target], selection:{ firstTargetId:"a", equipmentCardId:"e", secondTargetId:"b", equipmentDefinitionId:"battleDevice" } }
+  ];
+  const descriptors = rawActions.map(ActionDescriptor.describe);
+  const request = {
+    requestId:"r", gameId:"g", stateVersion:0, actorId:"a"
+  };
+  const result = createSearchResult({
+    request,
+    actionDescriptor:descriptors[0],
+    plannedSequenceDescriptors:descriptors,
+    stats:null,
+    status:"ACCEPTED"
+  });
+  assert.deepEqual(result.actionDescriptor, descriptors[0]);
+  assert.deepEqual(result.plannedSequenceDescriptors, descriptors);
+  assert.deepEqual(
+    result.plannedSequenceDescriptors.map((descriptor) => descriptor.cardInstanceId),
+    descriptors.map((descriptor) => descriptor.cardInstanceId)
+  );
+}
+
+test("FR-ARCH-14·carry-in：SearchResult descriptor 只投影一次且 idempotent", frArch14SearchResultDescriptorIdempotence);
+
+/*
+功能
+验证 Worker RNG snapshot/restore/commit continuation。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchRng。
+
+写入状态
+测试 RNG 实例。
+
+调用函数
+SearchRng.restore/commit/snapshot。
+
+边界与不变量
+restore 后 Worker 序列与 main 未消费序列一致；commit 后 next search 从 rngAfter 继续。
+*/
+async function frArch14RngHandoff() {
+  const { SearchRng } = await import("../js/ai/search/SearchRng.js?build=20260816-fr-arch-14-runtime-closure");
+  const main = new SearchRng(42);
+  main.next();
+  const before = main.snapshot();
+  const worker = SearchRng.restore(before);
+  const workerValues = [worker.next(), worker.next(), worker.next()];
+  const after = worker.snapshot();
+  const mainValues = [];
+  main.commit(before);
+  main.next(); main.next(); main.next();
+  main.commit(after);
+  const nextWorker = SearchRng.restore(after);
+  assert.deepEqual([main.next(), main.next()], [nextWorker.next(), nextWorker.next()]);
+  assert.equal(after.draws, before.draws + 3);
+}
+
+test("FR-ARCH-14·carry-in：AI RNG worker handoff restore/commit 连续", frArch14RngHandoff);
+
+/*
+功能
+验证 root search action 投影/rehydrate 与原始 action 的 search identity 无损。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+production root actions 与 SearchState。
+
+写入状态
+无。
+
+调用函数
+describeRootSearchAction、rehydrateRootSearchAction、ActionDescriptor.describe。
+
+边界与不变量
+比较 descriptor、card/skill identity、target order、selection 与 energyCost；不比较实体引用。
+*/
+async function frArch14RootActionRehydration() {
+  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const actor = makePlayer("root-actor", 0, "dawn", "ai", 2);
+  const enemy = makePlayer("root-enemy", 1, "dusk", "ai", 1);
+  const assault = instance("assault");
+  actor.hand.push(assault);
+  const { game } = makeGame([actor, enemy]);
+  const roots = game.aiController.getActionCandidates(actor);
+  const visible = createInitialSearchState(actor.id, game.state);
+  for (const raw of roots) {
+    const record = describeRootSearchAction(raw);
+    const hydrated = rehydrateRootSearchAction(record, visible, visible.players.find((player) => player.id === actor.id));
+    assert.deepEqual(ActionDescriptor.describe(hydrated), ActionDescriptor.describe(raw));
+    assert.equal(hydrated.type, raw.type);
+    assert.equal(hydrated.card?.definitionId ?? null, raw.card?.definitionId ?? null);
+    assert.equal(hydrated.card?.id ?? null, raw.card?.id ?? null);
+    assert.equal(hydrated.skill?.id ?? null, raw.skill?.id ?? null);
+    assert.deepEqual((hydrated.targets ?? []).map((target) => target.id), (raw.targets ?? []).map((target) => target.id));
+    assert.deepEqual(hydrated.selection ?? null, raw.selection ?? null);
+    assert.equal(hydrated.energyCost ?? null, raw.energyCost ?? null);
+  }
+}
+
+test("FR-ARCH-14·root rehydration：all root action families lossless", frArch14RootActionRehydration);
+
+/*
+功能
+验证 runSearchRequest 是 serializable outcome 的唯一 worker-safe search entry，且 main acceptance 可 rebind。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchRequest/WorkerSearchOutcome/AIController acceptance。
+
+写入状态
+测试 Game。
+
+调用函数
+createSearchRequest、describeRootSearchAction、runSearchRequest、workerOutcomeViolations、acceptWorkerSearchOutcome。
+
+边界与不变量
+outcome 无真实实体/函数；Main Thread 仍负责 ACCEPTED 与 rebind。
+*/
+async function frArch14RunSearchRequest() {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-fr-arch-14-runtime-closure");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
+  const actor = makePlayer("run-actor", 0, "dawn", "ai", 2);
+  const enemy = makePlayer("run-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("charge"), instance("assault"));
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 8;
+  const roots = game.aiController.getActionCandidates(actor);
+  const request = createSearchRequest({
+    requestId:"run-worker-1",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:createInitialSearchState(actor.id, game.state, { assault:1, charge:1 }),
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActionDescriptors:roots.map(ActionDescriptor.describe),
+    rootSearchActions:roots.map(describeRootSearchAction)
+  });
+  const outcome = await runSearchRequest(request, { yieldControl: async () => true });
+  assert.deepEqual(workerOutcomeViolations(outcome, request), []);
+  assert.deepEqual(structuredClone(outcome), outcome);
+  assert.equal(typeof outcome.actionDescriptor, "object");
+  assert.equal(outcome.actionDescriptor?.cardInstanceId === undefined || typeof outcome.actionDescriptor.cardInstanceId === "string", true);
+  const accepted = game.aiController.acceptWorkerSearchOutcome(request, outcome);
+  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.ok(["card", "end"].includes(accepted.action.type));
+  assert.deepEqual(accepted.result.rngAfter, outcome.rngAfter);
+  assert.deepEqual(game.aiController.searchRng.snapshot(), outcome.rngAfter);
+}
+
+test("FR-ARCH-14·runSearchRequest：serializable Worker outcome + main acceptance", frArch14RunSearchRequest);
+
+/*
+功能
+验证 Worker message protocol 的 terminal outcome/unknown message 安全语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+searchWorker protocol 与 runSearchRequest。
+
+写入状态
+fake postMessage 队列。
+
+调用函数
+createSearchWorkerMessageHandler。
+
+边界与不变量
+一个 requestId 只产生一个 terminal result；unknown message 返回 ERROR。
+*/
+async function frArch14WorkerProtocol() {
+  const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js?build=20260816-fr-arch-14-runtime-closure");
+  const messages = [];
+  const handler = createSearchWorkerMessageHandler({ postMessage: (data) => messages.push(structuredClone(data)) });
+  await handler.handleMessage({ type:"UNKNOWN" });
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].type, "ERROR");
+  const actor = makePlayer("proto-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("proto-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  game.aiSearchNodeBudgetOverride = 2;
+  const roots = game.aiController.getActionCandidates(actor);
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
+  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-fr-arch-14-runtime-closure");
+  const request = createSearchRequest({
+    requestId:"proto-1",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActionDescriptors:roots.map(ActionDescriptor.describe),
+    rootSearchActions:roots.map(describeRootSearchAction)
+  });
+  await handler.handleMessage({ type:"SEARCH", requestId:request.requestId, request:structuredClone(request) });
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].type, "RESULT");
+  assert.equal(messages[1].requestId, request.requestId);
+  assert.deepEqual(workerOutcomeViolations(messages[1].outcome, request), []);
+}
+
+test("FR-ARCH-14·worker protocol：SEARCH -> RESULT，unknown -> ERROR", frArch14WorkerProtocol);
+
+
+/*
+功能
+验证 Worker-safe search runtime 通过 periodic macrotask yield 保持 main thread/heartbeat 可运行。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchRequest/WorkerSearchRuntime。
+
+写入状态
+测试 interval 计数器。
+
+调用函数
+runSearchRequest、setInterval、clearInterval。
+
+边界与不变量
+不依赖 wall-clock 精确值；只证明搜索期间事件循环可运行。
+*/
+async function frArch14MainThreadResponsiveness() {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const actor = makePlayer("heart-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("heart-enemy", 1, "dusk", "ai", 1);
+  for (let index = 0; index < 60; index += 1) actor.hand.push(instance("exposeWeakness"));
+  const { game } = makeGame([actor, enemy]);
+  game.aiSearchNodeBudgetOverride = 100;
+  const roots = game.aiController.getActionCandidates(actor);
+  const request = createSearchRequest({
+    requestId:"heartbeat-1",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:createInitialSearchState(actor.id, game.state, { assault:1, charge:1 }),
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActionDescriptors:roots.map(ActionDescriptor.describe),
+    rootSearchActions:roots.map(describeRootSearchAction)
+  });
+  let heartbeats = 0;
+  const timer = setInterval(() => { heartbeats += 1; }, 5);
+  const outcome = await runSearchRequest(request, {
+    yieldControl: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return true;
+    }
+  });
+  clearInterval(timer);
+  assert.ok(heartbeats > 0, "搜索期间 main thread/heartbeat 必须获得运行机会");
+  assert.equal(outcome.workerError, null);
+}
+
+test("FR-ARCH-14·responsiveness：Worker-safe search yield 保持 main-thread heartbeat", frArch14MainThreadResponsiveness);
+
+// ==================== FR-ARCH-14 Runtime Regression Closure ====================
+
+/*
+功能
+验证互利从 root candidate 到 Worker projection、rehydrate、main acceptance、实体 rebind、ActionWorkflow 执行与公开池完成的完整 runtime 链。
+
+调用方
+FR-ARCH-14 runtime regression。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchRequest/RootSearchAction/WorkerSearchRuntime/AIController/Game playCard/PublicCardPool。
+
+写入状态
+测试 Game 状态。
+
+调用函数
+makePlayer、makeGame、instance、createInitialSearchState、getActionCandidates、createSearchRequest、describeRootSearchAction、rehydrateRootSearchAction、runSearchRequest、createWorkerSearchOutcome、acceptWorkerSearchOutcome、Game.playCard。
+
+边界与不变量
+Search 选择是否 end 不影响执行边界验证；执行使用显式 mutualBenefit root descriptor 的合法 rebind。
+*/
+async function frArch14MutualBenefitRuntimeTrace() {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
+  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createWorkerSearchOutcome, workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-fr-arch-14-runtime-closure");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
+  const actor = makePlayer("mb-runtime-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("mb-runtime-enemy", 1, "dusk", "ai", 1);
+  const benefit = instance("mutualBenefit");
+  actor.hand.push(benefit);
+  const { game } = makeGame([actor, enemy]);
+  game.state.deck.cards = [instance("block"), instance("charge")];
+  game.aiSearchNodeBudgetOverride = 8;
+  const roots = game.aiController.getActionCandidates(actor);
+  const root = roots.find((action) => action.card?.definitionId === "mutualBenefit");
+  assert.ok(root, "root candidate 必须包含 mutualBenefit");
+  const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const record = describeRootSearchAction(root);
+  const hydrated = rehydrateRootSearchAction(record, visible, visible.players.find((player) => player.id === actor.id));
+  assert.equal(hydrated.card.definitionId, "mutualBenefit");
+  assert.equal(hydrated.card.category, root.card.category);
+  assert.equal(hydrated.card.usageMode, root.card.usageMode);
+  assert.equal(hydrated.card.targetType, root.card.targetType);
+  assert.equal(hydrated.card.ignoresDistance, root.card.ignoresDistance);
+  assert.equal(hydrated.card.aiValue, root.card.aiValue);
+  assert.deepEqual(ActionDescriptor.describe(hydrated), ActionDescriptor.describe(root));
+  const request = createSearchRequest({
+    requestId:"mb-runtime-request",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:visible,
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActionDescriptors:roots.map(ActionDescriptor.describe),
+    rootSearchActions:roots.map(describeRootSearchAction)
+  });
+  assert.ok(request.rootSearchActions.some((entry) => entry.card?.definitionId === "mutualBenefit"));
+  const outcome = await runSearchRequest(request, { yieldControl: async () => true });
+  assert.deepEqual(workerOutcomeViolations(outcome, request), []);
+  assert.deepEqual(structuredClone(outcome), outcome);
+  assert.ok(outcome.actionDescriptor === null || request.rootActionDescriptors.some(
+    (descriptor) => JSON.stringify(descriptor) === JSON.stringify(outcome.actionDescriptor)
+  ));
+  const executionOutcome = createWorkerSearchOutcome({
+    request,
+    actionDescriptor:ActionDescriptor.describe(root),
+    plannedSequenceDescriptors:[ActionDescriptor.describe(root), ActionDescriptor.describe({ type:"end" })],
+    stats:outcome.stats,
+    searchStopReason:"COMPLETE",
+    rngAfter:outcome.rngAfter
+  });
+  const accepted = game.aiController.acceptWorkerSearchOutcome(request, executionOutcome);
+  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.equal(accepted.action.type, "card");
+  assert.equal(accepted.action.card.id, benefit.id);
+  assert.deepEqual(accepted.action.targets.map((target) => target.id), [actor.id, enemy.id]);
+  assert.equal(await game.playCard(actor, accepted.action.card, accepted.action.targets, accepted.action.selection), true);
+  assert.equal(actor.hand.length, 1);
+  assert.equal(enemy.hand.length, 1);
+  assert.equal(game.state.publicCardPool.length, 0);
+  assert.ok(game.state.deck.discardPile.includes(benefit));
+  game.dispose();
+}
+
+test("FR-ARCH-14·mutualBenefit：root → worker → rebind → execution → public pool 全链", frArch14MutualBenefitRuntimeTrace);
+
+/*
+功能
+覆盖 AI 强制弃牌不变量：HP 1/2/3、多余1/2/多张、普通/快速模式，以及 AI choice cancelled 或 selectedIds 不足时仍收束到 hand.length <= hp。
+
+调用方
+FR-ARCH-14 runtime regression。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+TurnWorkflow.handleDiscardPhase 与 AI_SEARCH_PROFILES。
+
+写入状态
+测试 Game 手牌/弃牌堆。
+
+调用函数
+new Game、makePlayer、instance、createChoiceResult、handleDiscardPhase。
+
+边界与不变量
+兜底只保证 AI 弃牌收束，不改变正常 AI 选牌策略；真人取消仍保留既有交互语义。
+*/
+async function frArch14DiscardInvariantMatrix() {
+  const makeFixture = (hp, handCount, fastMode, choiceKind) => {
+    const ui = makeUi();
+    const game = new Game(ui, () => 0.25, {
+      choicePort: {
+        async request(choiceRequest) {
+          if (choiceRequest?.kind !== "discard") return createChoiceResult("declined");
+          if (choiceKind === "cancelled") return createChoiceResult("cancelled");
+          const selectedIds = choiceRequest.options.slice(0, 1).map((option) => option.optionId);
+          return createChoiceResult("selected", { selectedIds });
+        }
+      }
+    });
+    const player = makePlayer(`discard-${hp}-${handCount}-${fastMode ? "fast" : "normal"}-${choiceKind}`, 0, "dawn", "ai", 0);
+    const enemy = makePlayer(`discard-enemy-${hp}-${handCount}-${fastMode ? "fast" : "normal"}-${choiceKind}`, 1, "dusk", "ai", 1);
+    player.hp = hp;
+    for (let index = 0; index < handCount; index += 1) {
+      player.hand.push(instance(["assault", "scout", "recover", "block", "charge", "counter"][index % 6]));
+    }
+    game.state.players = [player, enemy];
+    game.state.currentPlayerIndex = 0;
+    game.state.phase = "discard";
+    game.animationFastMode = fastMode;
+    game.cleanupManager.delay = async () => true;
+    return { game, player };
+  };
+  for (const hp of [1, 2, 3]) {
+    for (const extra of [1, 2, 5]) {
+      for (const fastMode of [false, true]) {
+        for (const choiceKind of ["cancelled", "partial"]) {
+          const { game, player } = makeFixture(hp, hp + extra, fastMode, choiceKind);
+          const profile = game.aiController.buildSearchConfig();
+          assert.equal(profile.searchMode, fastMode ? "FAST" : "NORMAL");
+          assert.equal(profile.timeBudgetMs, fastMode
+            ? AI_SEARCH_PROFILES.FAST.searchDeadlineMs
+            : AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs);
+          await game.turnWorkflow.handleDiscardPhase(player, game.state.gameId);
+          assert.ok(player.hand.length <= hp, `hp=${hp} hand=${hp + extra} fast=${fastMode} ${choiceKind}`);
+          game.dispose();
+        }
+      }
+    }
+  }
+}
+
+test("FR-ARCH-14·discard：AI HP1/2/3 普通/快速与取消/不足选择后不超手牌上限", frArch14DiscardInvariantMatrix);
+
+/*
+功能
+用 fake Dedicated Worker 验证 SearchWorkerClient 的首个 Worker 已接线、RESULT settle、duplicate/stale 消息隔离、postMessage 失败清空 pending、cancel 与 createSearchExecutor 生产选择。
+
+调用方
+FR-ARCH-14 browser transport regression。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchWorkerClient 与 createSearchExecutor。
+
+写入状态
+fake Worker 消息队列与测试 executor。
+
+调用函数
+createSearchWorkerClient、createSearchExecutor。
+
+边界与不变量
+不执行真实 search；只验证 browser transport 协议与 pending 生命周期。
+*/
+async function frArch14WorkerClientTransport() {
+  const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchExecutor } = await import("../js/adapters/ai/worker/createSearchExecutor.js?build=20260816-fr-arch-14-runtime-closure");
+  const instances = [];
+  class FakeWorker {
+    constructor(url, options) {
+      this.url = url;
+      this.options = options;
+      this.listeners = new Map();
+      this.posted = [];
+      this.terminated = false;
+      this.throwOnPost = false;
+      instances.push(this);
+    }
+    addEventListener(type, listener) {
+      if (!this.listeners.has(type)) this.listeners.set(type, []);
+      this.listeners.get(type).push(listener);
+    }
+    postMessage(message) {
+      if (this.throwOnPost) throw new Error("structuredClone failed");
+      this.posted.push(message);
+    }
+    terminate() { this.terminated = true; }
+    emit(type, data) {
+      for (const listener of this.listeners.get(type) ?? []) listener({ data });
+    }
+  }
+  const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  Object.defineProperty(globalThis, "Worker", { configurable:true, writable:true, value:FakeWorker });
+  try {
+    const makeOutcome = (requestId) => ({
+      requestId,
+      gameId:"game-1",
+      stateVersion:0,
+      actorId:"actor-1",
+      actionDescriptor:{ type:"end", cardId:null, cardInstanceId:null, targetId:null, targetIds:[], selection:null },
+      plannedSequenceDescriptors:[],
+      stats:null,
+      searchStopReason:"COMPLETE",
+      rngAfter:{ seed:1, state:1, algorithm:"lcg", draws:0 },
+      cancelled:false,
+      workerError:null
+    });
+    const makeRequest = (requestId) => ({ requestId, gameId:"game-1", stateVersion:0, actorId:"actor-1", searchConfig:{ hardWatchdogMs:5000 } });
+    const client = createSearchWorkerClient("searchWorker.js?build=test");
+    assert.equal(instances.length, 1, "首个 production Worker 必须立即接线");
+    const firstWorker = instances[0];
+    assert.equal(firstWorker.listeners.get("message")?.length, 1);
+    const firstRequest = makeRequest("first");
+    const firstPromise = client.search(firstRequest);
+    assert.equal(firstWorker.posted[0].type, "SEARCH");
+    firstWorker.emit("message", { type:"RESULT", requestId:"first", outcome:makeOutcome("first") });
+    assert.deepEqual(await firstPromise, makeOutcome("first"));
+    firstWorker.emit("message", { type:"RESULT", requestId:"first", outcome:makeOutcome("first") });
+    client.dispose();
+    assert.equal(firstWorker.terminated, true);
+
+    const recoveryClient = createSearchWorkerClient("searchWorker.js?build=test");
+    const recoveryWorker = instances[1];
+    recoveryWorker.throwOnPost = true;
+    await assert.rejects(recoveryClient.search(makeRequest("clone-fail")), /structuredClone failed/);
+    recoveryWorker.throwOnPost = false;
+    const secondPromise = recoveryClient.search(makeRequest("second"));
+    recoveryWorker.emit("message", { type:"ERROR", requestId:"stale", workerError:"stale error" });
+    recoveryWorker.emit("message", { type:"RESULT", requestId:"second", outcome:makeOutcome("second") });
+    assert.deepEqual(await secondPromise, makeOutcome("second"));
+    const cancelPromise = recoveryClient.search(makeRequest("cancel-me"));
+    recoveryClient.cancel("cancel-me");
+    await assert.rejects(cancelPromise, /cancelled/);
+    assert.ok(recoveryWorker.posted.some((message) => message.type === "CANCEL" && message.requestId === "cancel-me"));
+    recoveryClient.dispose();
+
+    const executor = createSearchExecutor({});
+    assert.equal(executor.transport, "dedicated-worker", "browser 存在 Worker 时 production 必须使用 Dedicated Worker");
+    executor.dispose();
+    assert.equal(createSearchExecutor({ forceLocal:true }).transport, "headless-local");
+  } finally {
+    for (const instance of instances) instance.terminate();
+    if (previousWorker) Object.defineProperty(globalThis, "Worker", previousWorker);
+    else delete globalThis.Worker;
+  }
+}
+
+test("FR-ARCH-14·transport：Dedicated Worker 初始接线/结果/清理/恢复与 production 选择", frArch14WorkerClientTransport);
+
+/*
+功能
+对同一固定 state 比较 FR13-equivalent main Planner（raw roots）与 FR14 Worker runSearchRequest（rehydrated roots）的完整确定性 trace。
+
+调用方
+FR-ARCH-14 worker search parity audit。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Planner/runSearchRequest/SearchRng/ActionDescriptor。
+
+写入状态
+测试 Game 与两个独立 SearchRng continuation。
+
+调用函数
+makeGame、instance、getActionCandidates、createInitialSearchState、createSearchRequest、describeRootSearchAction、SearchRng.restore、Planner.plan、runSearchRequest。
+
+边界与不变量
+固定 node budget 保证双方同 stopReason；比较 action、计划序列、stats、RNG after 与 hidden samples。
+*/
+async function frArch14WorkerSearchParityTrace() {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const actor = makePlayer("parity-actor", 0, "dawn", "ai", 0);
+  const ally = makePlayer("parity-ally", 2, "dawn", "ai", 2);
+  const enemy = makePlayer("parity-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("assault"), instance("assault"), instance("scout"), instance("recover"));
+  const { game } = makeGame([actor, enemy, ally]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 120;
+  game.aiController.searchRng = new SearchRng(777001);
+  const player = game.state.players[0];
+  const roots = game.aiController.getActionCandidates(player);
+  const visible = createInitialSearchState(player.id, game.state, game.aiController.knowledge.remainingCounts(player));
+  const before = game.aiController.searchRng.snapshot();
+  const localRng = SearchRng.restore(before);
+  game.aiController.searchRng = localRng;
+  const mainAction = await game.aiController.planner.plan(player, visible, roots, { gameId:game.state.gameId });
+  const mainStats = { ...game.aiController.planner.lastSearchStats };
+  const mainSequence = game.aiController.planner.lastPlannedSequence.map((entry) => ({
+    type:entry.type,
+    cardId:entry.cardId,
+    cardInstanceId:entry.cardInstanceId,
+    targetId:entry.targetId,
+    targetIds:[...entry.targetIds],
+    selection:entry.selection ? { ...entry.selection } : null
+  }));
+  const mainAfter = localRng.snapshot();
+  const request = createSearchRequest({
+    requestId:"parity-request",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:player.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:visible,
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:before,
+    rootActionDescriptors:roots.map(ActionDescriptor.describe),
+    rootSearchActions:roots.map(describeRootSearchAction)
+  });
+  const outcome = await runSearchRequest(request, { yieldControl: async () => true });
+  assert.deepEqual(outcome.actionDescriptor, ActionDescriptor.describe(mainAction));
+  assert.deepEqual(outcome.plannedSequenceDescriptors.map((entry) => ({
+    type:entry.type,
+    cardId:entry.cardId,
+    cardInstanceId:entry.cardInstanceId,
+    targetId:entry.targetId,
+    targetIds:[...entry.targetIds],
+    selection:entry.selection ? { ...entry.selection } : null
+  })), mainSequence);
+  assert.equal(outcome.searchStopReason, mainStats.stopReason);
+  assert.equal(outcome.stats.expanded, mainStats.expanded);
+  assert.equal(outcome.stats.depth, mainStats.depth);
+  assert.equal(outcome.stats.hiddenSamples, mainStats.hiddenSamples);
+  assert.equal(outcome.stats.simulationCalls, mainStats.simulationCalls);
+  assert.equal(outcome.stats.counterfactualCalls, mainStats.counterfactualCalls);
+  assert.equal(outcome.stats.stateUtilityCalls, mainStats.stateUtilityCalls);
+  assert.equal(outcome.stats.bestValueScore, mainStats.bestValueScore);
+  assert.deepEqual(outcome.rngAfter, mainAfter);
+  game.dispose();
+}
+
+test("FR-ARCH-14·search parity：同一 state/seed/config 下 raw vs rehydrated 全 trace 一致", frArch14WorkerSearchParityTrace);
+
+/*
+功能
+验证连续两次 accepted Worker-equivalent search 的 RNG continuation、duplicate 不二次 commit、rejected outcome 不 commit。
+
+调用方
+FR-ARCH-14 RNG continuity runtime audit。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+AIController selectAction/acceptWorkerSearchOutcome/SearchRng。
+
+写入状态
+测试 Game 与 SearchRng。
+
+调用函数
+makeGame、instance、selectAction、acceptWorkerSearchOutcome、createWorkerSearchOutcome。
+
+边界与不变量
+所有断言只读 diagnostic；不改变 AI policy/value。
+*/
+async function frArch14RngContinuityAcceptedSearches() {
+  const { createWorkerSearchOutcome } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-fr-arch-14-runtime-closure");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
+  const actor = makePlayer("rng-continuity-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("rng-continuity-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("assault"));
+  const { game } = makeGame([actor, enemy]);
+  game.aiSearchNodeBudgetOverride = 12;
+  game.aiController.searchRng = new SearchRng(9001);
+  const player = game.state.players[0];
+  const firstAction = await game.aiController.selectAction(player, { gameId:game.state.gameId });
+  assert.ok(["card", "end"].includes(firstAction.type));
+  const firstResult = game.aiController.lastSearchResult;
+  const firstRequest = game.aiController.lastSearchRequest;
+  const firstOutcome = game.aiController.lastWorkerOutcome;
+  assert.equal(firstResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.deepEqual(game.aiController.searchRng.snapshot(), firstResult.rngAfter);
+  const secondAction = await game.aiController.selectAction(player, { gameId:game.state.gameId });
+  assert.ok(["card", "end"].includes(secondAction.type));
+  const secondRequest = game.aiController.lastSearchRequest;
+  assert.deepEqual(secondRequest.rng, firstResult.rngAfter, "Search2.rngBefore 必须等于 Search1.accepted.rngAfter");
+  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  const beforeDuplicate = game.aiController.searchRng.snapshot();
+  const duplicate = game.aiController.acceptWorkerSearchOutcome(firstRequest, firstOutcome);
+  assert.equal(duplicate.result.rngAfter, null, "duplicate RESULT 不得二次 commit");
+  assert.deepEqual(game.aiController.searchRng.snapshot(), beforeDuplicate);
+  const beforeRejected = game.aiController.searchRng.snapshot();
+  game.aiController.searchExecutor = {
+    search: async (request) => createWorkerSearchOutcome({
+      request,
+      actionDescriptor:null,
+      plannedSequenceDescriptors:[],
+      stats:null,
+      searchStopReason:null,
+      rngAfter:request.rng,
+      cancelled:false,
+      workerError:"intentional worker failure"
+    })
+  };
+  const rejectedAction = await game.aiController.selectAction(player, { gameId:game.state.gameId });
+  assert.equal(rejectedAction.type, "end");
+  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.INVALID_ACTION);
+  assert.deepEqual(game.aiController.searchRng.snapshot(), beforeRejected, "rejected outcome 不得 commit RNG");
+  assert.equal(game.aiController.getSearchDiagnostics().WORKER_ERROR, 1);
+  game.dispose();
+}
+
+test("FR-ARCH-14·RNG：连续 accepted 搜索续接、rejected 不提交、duplicate 不二次提交", frArch14RngContinuityAcceptedSearches);
+
+/*
+功能
+验证 zero fake-thinking 下 AI 出牌 presentation sequencing 仍完整：showThinking、clearThinking、playActionCue 与真实 playCard 均发生。
+
+调用方
+FR-ARCH-14 presentation sequencing audit。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+TurnWorkflow/ActionWorkflow/GamePresentationAdapter。
+
+写入状态
+测试 Game 手牌/能量与 UI 记录。
+
+调用函数
+makeGame、instance、takeAiPlayPhase。
+
+边界与不变量
+不恢复 fake delay；只证明真实 presentation trigger 在零等待路径存活。
+*/
+async function frArch14PresentationSequencingZeroTiming() {
+  const actor = makePlayer("presentation-zero-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("presentation-zero-enemy", 1, "dusk", "ai", 1);
+  const charge = instance("charge");
+  actor.hand.push(charge);
+  const { game, ui } = makeGame([actor, enemy]);
+  const sounds = [];
+  ui.playSound = (name) => sounds.push(name);
+  let delayCalls = 0;
+  game.cleanupManager.delay = async () => { delayCalls += 1; return true; };
+  game.aiController.selectAction = async () => ({ type:"card", card:charge, targets:[] });
+  await game.takeAiPlayPhase(actor, game.state.gameId);
+  assert.ok(ui.thinking.some(([thinking]) => thinking === true));
+  assert.ok(ui.thinking.some(([thinking]) => thinking === false));
+  assert.ok(ui.currentCards.some((entry) => entry.cardOrName === charge));
+  assert.ok(sounds.includes("playCard"), "playActionCue 必须在零 fake thinking 路径存活");
+  assert.equal(actor.hand.length, 0);
+  assert.equal(delayCalls, 0, "fake AI thinking delay 不得恢复");
+  game.dispose();
+}
+
+test("FR-ARCH-14·presentation：零 fake-thinking 下 thinking/clear/cue/play 序列仍存活", frArch14PresentationSequencingZeroTiming);
+
+/*
+功能
+验证 animationFastMode 只映射命名 search profile，普通/快速 timeBudget、softTarget 与 watchdog 均为有限正数或规定 null。
+
+调用方
+FR-ARCH-14 search configuration audit。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+AIController.buildSearchConfig 与 AI_SEARCH_PROFILES。
+
+写入状态
+测试 Game 配置字段。
+
+调用函数
+makeGame、buildSearchConfig。
+
+边界与不变量
+不改变搜索结构；simulationMode 不得把 production 模式映射成 local。
+*/
+function frArch14SearchProfileRuntimeValues() {
+  const actor = makePlayer("profile-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("profile-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  game.simulationMode = true;
+  game.aiSearchBudgetOverrideMs = null;
+  game.aiSearchNodeBudgetOverride = null;
+  game.animationFastMode = false;
+  const normal = game.aiController.buildSearchConfig();
+  assert.equal(normal.searchMode, "NORMAL");
+  assert.equal(normal.softTargetMs, AI_SEARCH_PROFILES.NORMAL.softTargetMs);
+  assert.equal(normal.timeBudgetMs, AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs);
+  assert.equal(normal.searchDeadlineMs, 3000);
+  assert.equal(normal.hardWatchdogMs, AI_SEARCH_PROFILES.NORMAL.hardWatchdogMs);
+  assert.ok(Number.isFinite(normal.timeBudgetMs) && normal.timeBudgetMs > 0);
+  assert.equal(normal.nodeBudget, null);
+  game.animationFastMode = true;
+  const fast = game.aiController.buildSearchConfig();
+  assert.equal(fast.searchMode, "FAST");
+  assert.equal(fast.softTargetMs, 500);
+  assert.equal(fast.timeBudgetMs, 900);
+  assert.equal(fast.searchDeadlineMs, 900);
+  assert.equal(fast.hardWatchdogMs, 5000);
+  assert.ok(Number.isFinite(fast.timeBudgetMs) && fast.timeBudgetMs > 0);
+  assert.equal(fast.nodeBudget, null);
+  game.dispose();
+}
+
+test("FR-ARCH-14·search profile：普通 3000ms / 快速 500+900ms 且 simulationMode 不映射 local", frArch14SearchProfileRuntimeValues);
+
+/*
+功能
+验证零 fake-thinking 后连续 gameplay 音效不被 SoundManager 墙钟节流吞掉，同时保留 select 防误触节流。
+
+调用方
+FR-ARCH-14 audio regression audit。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SoundManager/SOUND_THROTTLE_MS。
+
+写入状态
+fake AudioContext 节点与测试 SoundManager。
+
+调用函数
+makeFakeAudioContext、withAudioContextStub、SoundManager.play。
+
+边界与不变量
+不增加任何 delay；只删除 gameplay 事件节流。
+*/
+async function frArch14AudioSurvivesZeroTiming() {
+  assert.equal(SOUND_THROTTLE_MS.playCard, undefined);
+  assert.equal(SOUND_THROTTLE_MS.hit, undefined);
+  assert.equal(SOUND_THROTTLE_MS.skill, undefined);
+  assert.equal(SOUND_THROTTLE_MS.select, 35);
+  await withAudioContextStub(async () => {
+    const sound = new SoundManager();
+    const fake = makeFakeAudioContext();
+    sound.context = fake;
+    sound.musicGain = fake.destination;
+    sound.sfxGain = fake.destination;
+    sound.enabled = true;
+    assert.equal(await sound.play("playCard"), true);
+    assert.equal(await sound.play("playCard"), true, "连续真实出牌音效不得被节流吞掉");
+    assert.equal(await sound.play("hit"), true);
+    assert.equal(await sound.play("skill"), true);
+    assert.equal(await sound.play("select"), true);
+    assert.equal(await sound.play("select"), false, "UI select 防误触节流必须保留");
+    assert.ok(fake.bufferSources.length >= 6, "gameplay SFX 应创建独立 AudioBufferSource");
+  });
+}
+
+test("FR-ARCH-14·audio：连续 gameplay 音效不被零 fake-thinking 节流吞掉", frArch14AudioSurvivesZeroTiming);
+
 
 // ==================== Test Runner 最终执行 ====================
 

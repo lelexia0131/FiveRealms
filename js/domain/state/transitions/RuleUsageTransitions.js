@@ -17,7 +17,7 @@ Game、Player、cardRegistry、skillRegistry、DyingSystem 的 legacy commit fa�
 架构约束
 不得依赖 Game/EventBus/UI/AI/application/adapters；不得包含 cardId/skillId/statusId 规则分支。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260815-shadow-agent-p1-slot";
+import { bumpStateVersion } from "./StateVersion.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

@@ -17,21 +17,21 @@ CardValue、ThreatValue、现有领域纯函数与闪电模拟查询。
 架构约束
 本模块所有返回值只用于剪枝和排序；不得进入最终价值，TransitionValue 也不得调用或累计这些值。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260815-shadow-agent-p1-slot";
-import { sealUseValue } from "./SealPrior.js?build=20260815-shadow-agent-p1-slot";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-fr-arch-14-runtime-closure";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260816-fr-arch-14-runtime-closure";
+import { sealUseValue } from "./SealPrior.js?build=20260816-fr-arch-14-runtime-closure";
 import {
   getBaseCardAiValue,
   getEquipmentKeepValueDeduction,
   getRoleCardAiValue,
   roleCardDelta
-} from "../value/CardValue.js?build=20260815-shadow-agent-p1-slot";
+} from "../value/CardValue.js?build=20260816-fr-arch-14-runtime-closure";
 import {
   SKILL_THRESHOLD_OPTION_VALUE,
   STATE_DELTA_SCALE
-} from "../value/Economics.js?build=20260815-shadow-agent-p1-slot";
-import { ThreatCalculator } from "../value/ThreatValue.js?build=20260815-shadow-agent-p1-slot";
+} from "../value/Economics.js?build=20260816-fr-arch-14-runtime-closure";
+import { ThreatCalculator } from "../value/ThreatValue.js?build=20260816-fr-arch-14-runtime-closure";
 
 export const BURNING_FIELD_SEARCH_PRIOR = 8;
 

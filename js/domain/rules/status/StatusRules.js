@@ -17,8 +17,8 @@ STATUS_DEFINITIONS。
 架构约束
 不得依赖 application/adapters/AI/UI/Game runtime；不得随机、await、emit。
 */
-import { STATUS_DEFINITIONS } from "../../definitions/statuses/StatusDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260815-shadow-agent-p1-slot";
+import { STATUS_DEFINITIONS } from "../../definitions/statuses/StatusDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

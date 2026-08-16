@@ -17,17 +17,17 @@ active queue 与 dyingContext 是 Application workflow state；Domain commit 只
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime 或 concrete adapters。
 */
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
-import { isDying, isKillRewardEligible } from "../../domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
-import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
-import { isHuntMarkSourceExpired } from "../../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
-import { setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { setAlive } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { setHp } from "../../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { setKillRewardGranted, setMomentum, setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { clearStatuses, removeStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { discardEquipment } from "../../domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
+import { isDying, isKillRewardEligible } from "../../domain/rules/combat/CombatRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { isHuntMarkSourceExpired } from "../../domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-fr-arch-14-runtime-closure";
+import { setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { setAlive } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { setHp } from "../../domain/state/transitions/ResourceTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { setKillRewardGranted, setMomentum, setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { clearStatuses, removeStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { discardEquipment } from "../../domain/state/transitions/ZoneTransitions.js?build=20260816-fr-arch-14-runtime-closure";
 
 const REQUIRED_DEPENDENCIES = [
   "getState",

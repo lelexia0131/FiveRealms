@@ -17,9 +17,9 @@ js/domain/rules 与 js/domain/definitions 目录。
 架构约束
 禁止在这里计算合法性、目标公式、距离公式或技能语义；Domain Rule 函数是唯一公式 owner。
 */
-import { CHARACTER_BY_ID } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { assertCanonicalSeatRoster } from "../../domain/state/queries/SeatRosterContract.js?build=20260815-shadow-agent-p1-slot";
-import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
+import { CHARACTER_BY_ID } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { assertCanonicalSeatRoster } from "../../domain/state/queries/SeatRosterContract.js?build=20260816-fr-arch-14-runtime-closure";
+import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

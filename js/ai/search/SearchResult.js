@@ -17,8 +17,6 @@ AIController acceptance boundary、TurnWorkflow 只经门面消费 action。
 架构约束
 不得 import Game/Application/Domain transitions；不得返回函数或 mutable candidate。
 */
-import { describeAction } from "./ActionDescriptor.js?build=20260815-shadow-agent-p1-slot";
-
 export const SEARCH_RESULT_STATUS = Object.freeze({
   ACCEPTED:"ACCEPTED",
   STALE_VERSION:"STALE_VERSION",
@@ -37,10 +35,10 @@ export const SEARCH_RESULT_STATUS = Object.freeze({
 AIController.acceptSearchResult 与 SearchResult 契约测试。
 
 输入
-request、raw action、计划序列、stats 与 acceptance 状态。
+request、actionDescriptor、plannedSequenceDescriptors、stats、acceptance 状态与 rngAfter。
 
 输出
-冻结 data-only SearchResult。
+冻结 data-only SearchResult；descriptor 不再二次投影。
 
 读取状态
 只读输入 action。
@@ -49,18 +47,19 @@ request、raw action、计划序列、stats 与 acceptance 状态。
 无。
 
 调用函数
-describeAction、Object.freeze。
+Object.freeze。
 
 边界与不变量
-不保存 raw action、Player、Card 或 SearchState；plannedSequence 全部经 ActionDescriptor。
+不保存 raw action、Player、Card 或 SearchState；plannedSequenceDescriptors 必须已是 ActionDescriptor。
 */
 export function createSearchResult({
   request,
-  action = null,
-  plannedSequence = [],
+  actionDescriptor = null,
+  plannedSequenceDescriptors = [],
   stats = null,
   status,
-  rejectionReason = null
+  rejectionReason = null,
+  rngAfter = null
 }) {
   return Object.freeze({
     requestId:request.requestId,
@@ -69,9 +68,12 @@ export function createSearchResult({
     actorId:request.actorId,
     status,
     rejectionReason,
-    actionDescriptor:action ? Object.freeze(describeAction(action)) : null,
-    plannedSequenceDescriptors:Object.freeze((plannedSequence ?? []).map(describeAction)),
-    stats:stats ? Object.freeze({ ...stats }) : null
+    actionDescriptor:actionDescriptor ? Object.freeze({ ...actionDescriptor }) : null,
+    plannedSequenceDescriptors:Object.freeze((plannedSequenceDescriptors ?? []).map(
+      (descriptor) => Object.freeze({ ...descriptor })
+    )),
+    stats:stats ? Object.freeze({ ...stats }) : null,
+    rngAfter:rngAfter ? Object.freeze({ ...rngAfter }) : null
   });
 }
 

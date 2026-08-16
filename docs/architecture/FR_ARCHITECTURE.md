@@ -1,11 +1,11 @@
 # FiveRealms Repository Architecture Authority
 
-状态：FR-ARCH-4 CLOSED / PASS — stateVersion AUTHORITATIVE；FR-ARCH-5 PASS；FR-ARCH-6 PASS；FR-ARCH-7 PASS；FR-ARCH-8 PASS；FR-ARCH-9 PASS；FR-ARCH-10 PASS；FR-ARCH-11 PASS — MESSAGING / EVENT BOUNDARY；FR-ARCH-12 PASS — AI ↔ DOMAIN RULE CONVERGENCE；FR-ARCH-13 PASS — AI MAIN-THREAD BOUNDARY HARDENING
+状态：FR-ARCH-4 CLOSED / PASS — stateVersion AUTHORITATIVE；FR-ARCH-5 PASS；FR-ARCH-6 PASS；FR-ARCH-7 PASS；FR-ARCH-8 PASS；FR-ARCH-9 PASS；FR-ARCH-10 PASS；FR-ARCH-11 PASS — MESSAGING / EVENT BOUNDARY；FR-ARCH-12 PASS — AI ↔ DOMAIN RULE CONVERGENCE；FR-ARCH-13 PASS — AI MAIN-THREAD BOUNDARY HARDENING；FR-ARCH-14 BLOCKED — BROWSER RUNTIME REGRESSIONS（代码修复已就位，待真实浏览器验收）
 适用范围：FiveRealms 仓库级架构；`AI_ENGINE.md` 继续作为 AI Engine 2.0 的实施与历史权威，本文件不复制其内部所有权表。
 事实源关系：本文件是 repository-wide target architecture 的唯一规范入口；若与 `CODE_STANDARD.md` 冲突，以本文件解释 ownership，以 `CODE_STANDARD.md` 解释注释格式。
 
 冻结裁决：TARGET ARCHITECTURE CAN REMAIN FROZEN。
-实施进度：FR-ARCH-0 DONE；FR-ARCH-1 DONE；FR-ARCH-2/2.1 DONE；FR-ARCH-3 DONE；FR-ARCH-4A DONE；FR-ARCH-4 CLOSED / PASS，stateVersion ACTIVATED — AUTHORITATIVE；FR-ARCH-5 DONE；FR-ARCH-6 DONE；FR-ARCH-7 PASS；FR-ARCH-8 PASS；FR-ARCH-9 PASS；FR-ARCH-10 PASS；FR-ARCH-11 PASS；FR-ARCH-12 PASS；FR-ARCH-13 PASS；FR-ARCH-14 NOT STARTED。
+实施进度：FR-ARCH-0 DONE；FR-ARCH-1 DONE；FR-ARCH-2/2.1 DONE；FR-ARCH-3 DONE；FR-ARCH-4A DONE；FR-ARCH-4 CLOSED / PASS，stateVersion ACTIVATED — AUTHORITATIVE；FR-ARCH-5 DONE；FR-ARCH-6 DONE；FR-ARCH-7 PASS；FR-ARCH-8 PASS；FR-ARCH-9 PASS；FR-ARCH-10 PASS；FR-ARCH-11 PASS；FR-ARCH-12 PASS；FR-ARCH-13 PASS；FR-ARCH-14 BLOCKED — 浏览器 runtime 回归已关闭代码路径，正式 PASS 仍以第 15 节真实浏览器验收为准；FR-ARCH-15 NOT STARTED。
 
 ## 1. Target Physical Architecture
 
@@ -23,7 +23,8 @@
 - FR-ARCH-10：`domain/rules/card` 拥有主动卡牌/目标/转移/借势/回收站 pure rules；`domain/rules/skill` 拥有技能成本/基础合法性与目标 pure rules；`application/action` 拥有 CardRuntime/CardEffectRuntime/CardIntentRuntime/SkillEffectRuntime；`application/trigger` 拥有被动技能 trigger registry 与 recycleDevice trigger；`cardRegistry`/`skillRegistry`/`RuleEngine` 只做 legacy façade；ActionWorkflow 无 specific card ID branch 且不暴露 mutable runtime。
 - FR-ARCH-11：`application/messaging/EventDispatcher` 唯一拥有 listener registry/sequential await/generation/clear 与 mutable Hook propagation；`domain/events/MatchEvents` 拥有 immutable data-only gameStart/gameOver facts；`core/EventBus.js` 仅 thin re-export；`gameStart` 不再携带 Game；`Game.registerGlobalRules` 的 huntMark/seal/lightning 注册已迁 `application/trigger/GlobalTriggerRegistry`；玩家日志仍由 Presentation 拥有，不属于 Domain Event。
 - FR-ARCH-12：AI deterministic rule semantics 与 `domain/rules/**` 对齐；`js/ai/state/RuleProjection.js` 只做 SearchState→Domain canonical shape adaptation；`DistanceProbabilityBranches.js` 只拥有装备存在概率分区，确定性距离公式仍由 `DistanceRules` 解释；root/deep `ActionGenerator` 共同消费 Domain Card/Skill/Status Rules；`js/ai/search|simulation|domain` production imports 对 `core/RuleEngine` 与 `core/DistanceSystem` 为零；卡牌/技能固定效果数值归 Definitions；`TransferPolicy.isTransferDirectionAllowed` 是 AI 转移方向唯一公式；AI simulation 保留概率/Belief/反事实模型，不调用 Application workflow 或 Domain Transitions 修改 SearchState。
-- FR-ARCH-13：`AIController`/`Knowledge`/`ActionGenerator`/`CardSelectionBoundary`/`ResponseBoundary` 不再保存 raw Game；`SearchRequest`/`SearchResult` 建立 data-only structured-clone-safe boundary；`SearchRng` 隔离 AI Search RNG 与真实 Game RNG；main-thread acceptance 执行 session/gameId/stateVersion/actor/phase/descriptor-rebind/Domain-legality 验证；queued plan 继续 current-state rebind；`GameChoiceRouter` 收窄为显式注入 composition bridge；Worker/`postMessage` 未创建。
+- FR-ARCH-13：`AIController`/`Knowledge`/`ActionGenerator`/`CardSelectionBoundary`/`ResponseBoundary` 不再保存 raw Game；`SearchRequest`/`SearchResult` 建立 data-only structured-clone-safe boundary；`SearchRng` 隔离 AI Search RNG 与真实 Game RNG；main-thread acceptance 执行 session/gameId/stateVersion/actor/phase/descriptor-rebind/Domain-legality 验证；queued plan 继续 current-state rebind；`GameChoiceRouter` 收窄为显式注入 composition bridge。
+- FR-ARCH-14：`js/adapters/ai/worker/` 建立 Dedicated Browser Worker entry/client 与共享 `runSearchRequest`；`SearchRequest.rootSearchActions` 允许 Worker 从 SearchState 无损恢复 root actions；`WorkerSearchOutcome` 返回 descriptor-only outcome 与 `rngAfter`；Fast 500ms soft/900ms deadline，Normal 3000ms deadline；fake AI thinking waits 与 `searchElapsed` compensation 移除；AI timing 不消费 Real Game RNG；Main Thread 保持 session/stateVersion/actor/phase/rebind/Domain-legality authority。
 
 ```text
 js/

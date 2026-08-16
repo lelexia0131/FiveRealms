@@ -23,13 +23,13 @@
 
 ## Current Architecture Snapshot
 
-当前生产 AI 共 55 个 JavaScript 模块，最终责任边界如下：
+当前生产 AI 共 57 个 JavaScript 模块，最终责任边界如下：
 
 | 层 | 当前正式 owner |
 |---|---|
-| Composition / Execution | `AiController` 是 main-thread AI 组合根；只保存显式 state/session/rule capability/search RNG/lifecycle/rebind 依赖，不保存 Game；它向 Planner 注入窄 capability。 |
+| Composition / Execution | `AiController` 是 main-thread AI 组合根；只保存显式 state/session/rule capability/search RNG/search executor/lifecycle/rebind 依赖，不保存 Game；生产 Planner execution 由 injected search executor 承担。 |
 | State | `VisibleState`、`Knowledge`、`BeliefState`、`StateContracts`、`SearchState`、`Probability` 分别拥有公开投影、合法记忆、未知分布、组合、可克隆搜索世界与概率代数；`RuleProjection` 与 `DistanceProbabilityBranches` 是 AI→Domain 的 canonical projection 与距离概率分区。 |
-| Search | `ActionGenerator` 根/深层分开消费 root context/SearchState，产生 AI 候选；`SearchRequest`/`SearchResult` 是 data-only boundary contract；`SearchRng` 是 AI search RNG；`SearchBudget`/`SearchPolicy` 管搜索边界；`CandidateMaterializer` 组合候选；`Planner` 只编排。 |
+| Search | `ActionGenerator` 根/深层分开消费 root context/SearchState；`SearchRequest`/`RootSearchAction`/`SearchResult`/`WorkerSearchOutcome` 是 data-only boundary contracts；`SearchRng` 是 AI search RNG；`SearchBudget`/`SearchPolicy` 管搜索边界；`CandidateMaterializer` 组合候选；`Planner` 只编排。 |
 | Simulation | `Simulator` 管 clone、共享 runtime 与分派；Response、Combat、Card、Skill、Status 五个组件各自推进对应状态。 |
 | Value | State Value、Transition Value、Search Prior、Policy Value 与 Diagnostic Ledger 分属正式 owner；只有 Transition Value 的最终组合进入候选 final value。 |
 | Policy / Domain | Policy 只做 AI 过滤、选择与 valuation；`js/ai/domain/**` 是 AI probabilistic/search model，不拥有 Repository Domain 规则。 |
@@ -53,6 +53,19 @@ FR-ARCH-13 current facts：
 - `SearchRng` 是 AI Search/Decision 专用 LCG；real Game RNG 不被纯 AI search 推进，固定 AI seed 可复现；
 - `GameChoiceRouter` 已收窄为显式注入的 composition bridge；FR-ARCH-15 删除条件：Game 不再是 composition owner 且 main.js 接管全部 wiring；
 - Worker、`postMessage`、SearchRequest 之外的 worker protocol 均未创建。
+
+FR-ARCH-14 current facts：
+- `js/adapters/ai/worker/` 拥有 Dedicated Worker entry、Worker client、headless local transport 与 `WorkerSearchRuntime`/`SearchEngineFactory` 唯一 search execution composition；
+- 生产 `AIController.selectAction` 不直接调用 `planner.plan`；SearchRequest → search executor → WorkerSearchOutcome → main-thread acceptance → current entity rebind → Domain legality；
+- `SearchRequest.rootSearchActions` 是 Worker 专用 root action 投影，`RootSearchAction.rehydrate` 从 SearchState/Definitions 恢复 search action；执行期 `ActionDescriptor` 保持窄 rebind 职责；
+- `SearchRng.snapshot` 携带 seed/state/draws；Worker outcome 返回 `rngAfter`；main thread exactly-once commit，新 session 不继承旧 RNG；
+- Fast profile `softTarget=500ms / deadline=900ms / watchdog=5000ms`；Normal profile `deadline=3000ms / watchdog=10000ms`；node-budget override 仍优先；
+- fake AI thinking wait 与 `searchElapsed` compensation 已停用；`utils/aiTiming` 不再调用任何 RNG；
+- production browser path 使用 `new Worker(url, { type:"module" })`；Node/headless 只使用同一 `runSearchRequest` 的 explicit local transport；
+- browser Worker client 初始实例与 watchdog 重建实例共用同一 wiring；postMessage/messageerror 失败会清空 pending 并重建，不在下一次合法搜索上产生 false in-flight；
+- AI 弃牌阶段有 runtime invariant guard：即使 ChoicePort 异常 cancelled/declined/selectedIds 不足，AI 回合结束仍收束到 `hand.length <= hp`；
+- zero fake-thinking 下 gameplay SFX 不再受 `SoundManager` 墙钟节流，仅 UI `select` 保留防误触节流；
+- FR-ARCH-14 正式状态为 BLOCKED，代码与 CLI/browser-equivalent 回归已关闭，最终 PASS 等待真实浏览器验收。
 
 ## Historical Baseline and Migration Record
 

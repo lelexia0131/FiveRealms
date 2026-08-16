@@ -17,15 +17,15 @@ pre-live setup 字段经显式 one-shot collaborator 写入；live Domain 字段
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime、Planner 或 concrete adapters。
 */
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
 import {
   getInitialHandCount, getMaxEnergy, getTeamSize, getWinningTeam
-} from "../../domain/rules/team/TeamRules.js?build=20260815-shadow-agent-p1-slot";
-import { createRoundUsageState, createTurnUsageState } from "../../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
-import { setCurrentPlayerIndex, setGameOver, setMatchPhase, setWinnerTeam } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { applyGeneralDefinition } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { createGameOverFact, createGameStartFact } from "../../domain/events/MatchEvents.js?build=20260815-shadow-agent-p1-slot";
+} from "../../domain/rules/team/TeamRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { createRoundUsageState, createTurnUsageState } from "../../domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { setCurrentPlayerIndex, setGameOver, setMatchPhase, setWinnerTeam } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { applyGeneralDefinition } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { createGameOverFact, createGameStartFact } from "../../domain/events/MatchEvents.js?build=20260816-fr-arch-14-runtime-closure";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "createId", "createPlayer", "assignTeams",

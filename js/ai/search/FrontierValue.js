@@ -17,12 +17,12 @@ ThreatValue、CardValue 与 Economics。
 架构约束
 持有的调息/回收选项只能在前沿或终止节点一次进入最终价值，不能按搜索深度逐层累计。
 */
-import { cardAvailability } from "../value/CardValue.js?build=20260815-shadow-agent-p1-slot";
+import { cardAvailability } from "../value/CardValue.js?build=20260816-fr-arch-14-runtime-closure";
 import {
   HP_VALUE,
   STATE_DELTA_SCALE
-} from "../value/Economics.js?build=20260815-shadow-agent-p1-slot";
-import { exposureComponents } from "../value/ThreatValue.js?build=20260815-shadow-agent-p1-slot";
+} from "../value/Economics.js?build=20260816-fr-arch-14-runtime-closure";
+import { exposureComponents } from "../value/ThreatValue.js?build=20260816-fr-arch-14-runtime-closure";
 
 export class FrontierValue {
   /*

@@ -2,8 +2,8 @@
  * 旧卡牌配置 façade。纯领域卡牌定义已由 domain/definitions/cards/CardDefinitions.js 单一拥有；
  * 本文件只负责把领域定义与 AI/UI presentation metadata 组合成当前公开 CARD_DEFINITIONS shape。
  */
-import { CARD_DEFINITIONS as CARD_DOMAIN_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { RULESET_DEFINITION } from "../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS as CARD_DOMAIN_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { RULESET_DEFINITION } from "../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
 
 const CARD_PRESENTATION = Object.freeze({
   assault: Object.freeze({

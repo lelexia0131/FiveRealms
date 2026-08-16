@@ -17,7 +17,7 @@ adapters/ai/AiChoiceAdapter 的纯决策结果。
 架构约束
 不得依赖 concrete UI/AI、Game runtime、DOM 或 EventBus。
 */
-import { createChoiceResult } from "../ports/ChoicePort.js?build=20260815-shadow-agent-p1-slot";
+import { createChoiceResult } from "../ports/ChoicePort.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

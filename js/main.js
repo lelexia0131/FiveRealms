@@ -4,9 +4,9 @@
  * AIController 仍依赖 Game、UIManager.createGameSession 仍需要 Game 实例，因此 concrete adapter
  * wiring 暂时保留在 Game shell，待 FR-ARCH-12/13 收敛 AI boundary 与 FR-ARCH-15 shell removal。
  */
-import { Game } from "./core/Game.js?build=20260815-shadow-agent-p1-slot";
-import { UIManager } from "./ui/UIManager.js?build=20260815-shadow-agent-p1-slot";
-import { Debug } from "./utils/debug.js?build=20260815-shadow-agent-p1-slot";
+import { Game } from "./core/Game.js?build=20260816-fr-arch-14-runtime-closure";
+import { UIManager } from "./ui/UIManager.js?build=20260816-fr-arch-14-runtime-closure";
+import { Debug } from "./utils/debug.js?build=20260816-fr-arch-14-runtime-closure";
 
 const ui = new UIManager();
 let game = null;

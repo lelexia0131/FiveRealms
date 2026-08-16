@@ -3,13 +3,13 @@
  * 所有 response workflow authority 已迁至 js/application/response/ResponseWorkflow.js；
  * 本文件只做 Game collaborator 适配与方法转发。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
-import { createId } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260815-shadow-agent-p1-slot";
-import { RuleEngine } from "./RuleEngine.js?build=20260815-shadow-agent-p1-slot";
-import { createResponseWorkflow } from "../application/response/ResponseWorkflow.js?build=20260815-shadow-agent-p1-slot";
-import { buildResponsePresentation } from "../application/response/ResponsePresentation.js?build=20260815-shadow-agent-p1-slot";
-import { RESPONSE_STATUS, isCancelledResponse } from "../application/response/ResponseResult.js?build=20260815-shadow-agent-p1-slot";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260816-fr-arch-14-runtime-closure";
+import { createId } from "../utils/helpers.js?build=20260816-fr-arch-14-runtime-closure";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260816-fr-arch-14-runtime-closure";
+import { RuleEngine } from "./RuleEngine.js?build=20260816-fr-arch-14-runtime-closure";
+import { createResponseWorkflow } from "../application/response/ResponseWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
+import { buildResponsePresentation } from "../application/response/ResponsePresentation.js?build=20260816-fr-arch-14-runtime-closure";
+import { RESPONSE_STATUS, isCancelledResponse } from "../application/response/ResponseResult.js?build=20260816-fr-arch-14-runtime-closure";
 
 export { buildResponsePresentation, RESPONSE_STATUS, isCancelledResponse };
 

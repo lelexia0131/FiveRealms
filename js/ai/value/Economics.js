@@ -18,7 +18,7 @@ Evaluator、TransitionValue、SearchPrior、Simulator 与响应策略。
 不得收纳搜索先验或领域魔法数字；已进入 after-state 的价值不得再次成为 economic term。
 */
 
-import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
+import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
 
 export const STATE_DELTA_SCALE = 0.08;
 export const HP_VALUE = 5;

@@ -17,16 +17,16 @@ Domain CardRules、AI RuleProjection/DistanceProbabilityBranches 与 policy/Card
 架构约束
 选择公式只存在于 policy 目录；本文件只负责合法集合、公开上下文与实体 ID 解析。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
 import {
   findPlayerFact,
   getTransferReceiverIds
-} from "../../domain/rules/card/CardRules.js?build=20260815-shadow-agent-p1-slot";
-import { projectTransferRulePlayers } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
-import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260815-shadow-agent-p1-slot";
-import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
-import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
-import { TransferPolicy } from "./TransferPolicy.js?build=20260815-shadow-agent-p1-slot";
+} from "../../domain/rules/card/CardRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { projectTransferRulePlayers } from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
+import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260816-fr-arch-14-runtime-closure";
+import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260816-fr-arch-14-runtime-closure";
+import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260816-fr-arch-14-runtime-closure";
+import { TransferPolicy } from "./TransferPolicy.js?build=20260816-fr-arch-14-runtime-closure";
 
 export class CardSelectionBoundary {
   /*

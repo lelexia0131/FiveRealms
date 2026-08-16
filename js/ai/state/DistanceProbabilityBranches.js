@@ -17,8 +17,8 @@ Domain DistanceRules、RuleProjection。
 架构约束
 不得把本模块当成规则 authority；不得复制基础距离、望远镜或屏障公式。
 */
-import { getDistance } from "../../domain/rules/distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
-import { projectRulePlayers } from "./RuleProjection.js?build=20260815-shadow-agent-p1-slot";
+import { getDistance } from "../../domain/rules/distance/DistanceRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { projectRulePlayers } from "./RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

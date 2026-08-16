@@ -17,9 +17,9 @@ domain/SealModel 与 value/ThreatValue。
 架构约束
 只拥有 STATE_VALUE 投影；不拥有封印概率、搜索先验或 sibling timing。
 */
-import { sealOutcomeProbabilities } from "../domain/SealModel.js?build=20260815-shadow-agent-p1-slot";
-import { PROBABILITY_EPSILON } from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
-import { turnOpportunityValue } from "./ThreatValue.js?build=20260815-shadow-agent-p1-slot";
+import { sealOutcomeProbabilities } from "../domain/SealModel.js?build=20260816-fr-arch-14-runtime-closure";
+import { PROBABILITY_EPSILON } from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
+import { turnOpportunityValue } from "./ThreatValue.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

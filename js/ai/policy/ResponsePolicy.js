@@ -17,9 +17,9 @@ value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query�
 架构约束
 不执行规则、不依赖 Planner/Controller/UI，不 import 或构造 具体 Simulator。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { cardAvailability } from "../value/CardValue.js?build=20260815-shadow-agent-p1-slot";
-import { HP_VALUE } from "../value/Economics.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-fr-arch-14-runtime-closure";
+import { cardAvailability } from "../value/CardValue.js?build=20260816-fr-arch-14-runtime-closure";
+import { HP_VALUE } from "../value/Economics.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

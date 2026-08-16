@@ -3,13 +3,17 @@
  * AudioContext 只会在用户首次交互后创建，以符合浏览器的自动播放策略。
  */
 
-import { Debug } from "../utils/debug.js?build=20260815-shadow-agent-p1-slot";
+import { Debug } from "../utils/debug.js?build=20260816-fr-arch-14-runtime-closure";
 
 const STORAGE_KEY = "five-realms-audio-enabled";
 const MUSIC_VOLUME_KEY = "five-realms-music-volume";
 const DEFAULT_MUSIC_VOLUME = 0.75;
+
+// 零 fake-thinking 后连续真实游戏事件会在同一帧内到达；gameplay 音效不得按墙钟
+// 节流吞掉，只保留 UI 连点 select 的防误触节流。
+export const SOUND_THROTTLE_MS = Object.freeze({ select:35 });
 /** 真实雷击采样（用户选定素材），URL 带当前统一 build 防止浏览器缓存旧声音。 */
-const LIGHTNING_SOURCE = "../../assets/audio/lightning.wav?build=20260815-shadow-agent-p1-slot";
+const LIGHTNING_SOURCE = "../../assets/audio/lightning.wav?build=20260816-fr-arch-14-runtime-closure";
 
 // 0–75% 保持原来的线性手感，最后四分之一提供额外余量，让需要更响 BGM 的玩家可以继续推高。
 const musicGainForVolume = (volume) => {
@@ -254,11 +258,36 @@ export class SoundManager {
     }
   }
 
+  /*
+  功能
+  播放一个命名 SFX；lightning 走采样路径，UI select 保留短节流，其余 gameplay 音效不被节流吞掉。
+
+  调用方
+  UIManager 与 gameplay feedback adapters。
+
+  输入
+  name 与可选 force 选项。
+
+  输出
+  是否实际触发声音节点；未启用、解锁失败或未知名称返回 false。
+
+  读取状态
+  enabled、context、lastPlayedAt 与 SOUND_THROTTLE_MS。
+
+  写入状态
+  lastPlayedAt 与 Web Audio 节点。
+
+  调用函数
+  unlock、playLightningSample 与 sound_* 方法。
+
+  边界与不变量
+  force 只绕过 enabled 与节流；不会绕过 AudioContext 解锁。
+  */
   async play(name, options = {}) {
     if (!this.enabled && !options.force) return false;
     if (!await this.unlock()) return false;
     if (name === "lightning") return this.playLightningSample();
-    const throttle = { select:35, draw:75, playCard:55, hit:45, discard:65 }[name] ?? 0;
+    const throttle = SOUND_THROTTLE_MS[name] ?? 0;
     const nowMs = globalThis.performance?.now?.() ?? Date.now();
     if (!options.force && nowMs - (this.lastPlayedAt.get(name) ?? -Infinity) < throttle) return false;
     this.lastPlayedAt.set(name, nowMs);

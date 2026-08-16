@@ -141,6 +141,71 @@ export class SearchRng {
   不返回函数或可变 state；draws 是创建请求时的诊断事实。
   */
   snapshot() {
-    return { seed:this.seed, algorithm:"lcg", draws:this.draws };
+    return { seed:this.seed, state:this.state, algorithm:"lcg", draws:this.draws };
+  }
+
+  /*
+  功能
+  从 snapshot 创建恢复同一 continuation 的 SearchRng。
+
+  调用方
+  Worker search runtime 与 RNG handoff 测试。
+
+  输入
+  snapshot（seed/state/draws/algorithm）。
+
+  输出
+  与 snapshot 后续序列一致的 SearchRng。
+
+  读取状态
+  无。
+
+  写入状态
+  新实例 state 与 draws。
+
+  调用函数
+  Number。
+
+  边界与不变量
+  常数时间恢复；不创建全局 RNG 或读取旧 session。
+  */
+  static restore(snapshot) {
+    if (!snapshot || snapshot.algorithm !== "lcg") throw new TypeError("SearchRng snapshot 只接受 lcg continuation");
+    const rng = new SearchRng(snapshot.seed);
+    rng.state = (Number(snapshot.state) || 0) >>> 0;
+    rng.draws = Math.max(0, Number(snapshot.draws) || 0);
+    return rng;
+  }
+
+  /*
+  功能
+  提交一次 Worker search 产生的 rngAfter continuation。
+
+  调用方
+  main-thread AIController RNG commit boundary。
+
+  输入
+  snapshot。
+
+  输出
+  无。
+
+  读取状态
+  无。
+
+  写入状态
+  本实例 state 与 draws。
+
+  调用函数
+  Number。
+
+  边界与不变量
+  只允许 caller 显式 exactly-once commit；本方法不判断 request 重复。
+  */
+  commit(snapshot) {
+    if (!snapshot || snapshot.algorithm !== "lcg") throw new TypeError("SearchRng commit 只接受 lcg continuation");
+    this.seed = (Number(snapshot.seed) || 0) >>> 0;
+    this.state = (Number(snapshot.state) || 0) >>> 0;
+    this.draws = Math.max(0, Number(snapshot.draws) || 0);
   }
 }

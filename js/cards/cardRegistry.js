@@ -3,7 +3,7 @@
  * Rule authority 已迁至 js/domain/rules/card；effect sequencing 已迁至 js/application/action/CardEffectRuntime。
  * 本文件只提供 lookup 与 Game façade 转发。
  */
-import { CARD_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

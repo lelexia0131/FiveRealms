@@ -3,8 +3,8 @@
  * 防御判定、延迟状态判定、seal/lightning resolution 的 authority 已迁至
  * js/application/judgment/；本文件只做 Game collaborator 适配与方法转发。
  */
-import { createJudgmentWorkflow } from "../application/judgment/JudgmentWorkflow.js?build=20260815-shadow-agent-p1-slot";
-import { createStatusResolutionWorkflow } from "../application/judgment/StatusResolutionWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createJudgmentWorkflow } from "../application/judgment/JudgmentWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
+import { createStatusResolutionWorkflow } from "../application/judgment/StatusResolutionWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

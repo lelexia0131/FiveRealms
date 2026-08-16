@@ -3,12 +3,12 @@
  * Player 只保存数据并提供安全的资源变更，不决定目标合法性、伤害响应或胜负。
  * 每局都会重新创建 Player，因此无需跨局保留实例。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
-import { createPlayerState } from "../domain/state/model/PlayerState.js?build=20260815-shadow-agent-p1-slot";
-import { applyGeneralDefinition, bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { changeEnergy } from "../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState } from "../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260816-fr-arch-14-runtime-closure";
+import { createPlayerState } from "../domain/state/model/PlayerState.js?build=20260816-fr-arch-14-runtime-closure";
+import { applyGeneralDefinition, bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { changeEnergy } from "../domain/state/transitions/ResourceTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState } from "../domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
 
 export class Player {
   /*

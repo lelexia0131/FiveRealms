@@ -18,8 +18,8 @@ Domain StatusRules 与 CardDefinitions。
 不得依赖 Game/application/adapters/EventBus；不得 await、emit、随机、mutation；不得复制 CardDefinitions 固定 literal。
 */
 
-import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { getExposeWeaknessStacks } from "../status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { getExposeWeaknessStacks } from "../status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

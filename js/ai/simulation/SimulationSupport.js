@@ -17,8 +17,8 @@ Domain Card/Ruleset Definitions。
 架构约束
 不得包含规则执行、策略、价值或组件调度。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
 
 const DECK_COMPOSITION = RULESET_DEFINITION.deckComposition;
 const TOTAL_CARD_COUNT = Object.values(DECK_COMPOSITION)

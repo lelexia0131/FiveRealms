@@ -2,7 +2,7 @@
  * 旧混合配置 façade。领域规则值已由 domain/definitions/ruleset/RulesetDefinition.js 单一拥有；
  * 本文件继续保留 AI 搜索、展示节奏、调试与产品行为参数，直到后续阶段迁移。
  */
-import { RULESET_DEFINITION } from "../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
+import { RULESET_DEFINITION } from "../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
 
 export const GAME_CONFIG = Object.freeze({
   playerCount: RULESET_DEFINITION.playerCount,
@@ -84,6 +84,23 @@ export const GAME_CONFIG = Object.freeze({
   aiRandomnessRange: 0.035,
   // AI 难度总倍率接口；当前 1 为标准，调整前需配合评估权重验证。
   aiDifficultyMultiplier: 1
+});
+
+/*
+功能
+提供 FR-ARCH-14 的 named AI search profiles；搜索 deadline 与 watchdog 是 AI runtime/product policy，不属于 Domain Ruleset。
+*/
+export const AI_SEARCH_PROFILES = Object.freeze({
+  FAST: Object.freeze({
+    softTargetMs: 500,
+    searchDeadlineMs: 900,
+    hardWatchdogMs: 5000
+  }),
+  NORMAL: Object.freeze({
+    softTargetMs: null,
+    searchDeadlineMs: 3000,
+    hardWatchdogMs: 10000
+  })
 });
 
 export const TEAM_CONFIG = Object.freeze({

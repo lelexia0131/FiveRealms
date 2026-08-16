@@ -58,6 +58,7 @@ const AI_LEGACY_RULE_GUARD_PATTERN = /^(?:js\/ai\/(?:search|simulation|domain)\/
 const CARD_EFFECT_RULES_FILE = "js/domain/rules/card/CardEffectRules.js";
 const SKILL_RULES_FILE = "js/domain/rules/skill/SkillRules.js";
 const TRANSFER_EXECUTION_ADAPTER_FILE = "js/adapters/ai/TransferExecutionPolicyAdapter.js";
+const WORKER_PATTERN = /^js\/adapters\/ai\/worker\//i;
 const CARD_EFFECT_SIMULATION_FILE = "js/ai/simulation/CardEffectSimulation.js";
 const COMBAT_SIMULATION_FILE = "js/ai/simulation/CombatSimulation.js";
 const SKILL_EFFECT_SIMULATION_FILE = "js/ai/simulation/SkillEffectSimulation.js";
@@ -1251,6 +1252,29 @@ function inspectSource(file, source, changed) {
         functionName: "<architecture>",
         line: source.slice(0, legacyRuleImport.index).split(/\r?\n/).length,
         missing: ["架构约束：AI search/simulation/domain 禁止依赖 legacy RuleEngine/DistanceSystem authority"]
+      });
+    }
+  }
+
+  if (WORKER_PATTERN.test(file)) {
+    const forbiddenWorkerImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/Game\.js|\/application\/|\/ui\/|\/audio\/|domain\/state\/transitions\/)[^"']*(?:\?[^"']*)?["']/i,
+    );
+    if (forbiddenWorkerImport) {
+      errors.push({
+        file,
+        functionName: "<module>",
+        line: source.slice(0, forbiddenWorkerImport.index).split(/\r?\n/).length,
+        missing: ["架构约束：Worker 禁止 import core/Game、Application、UI/Audio 或 Domain transitions"]
+      });
+    }
+    const workerRandom = maskNonCode(source).match(/\bMath\.random\s*\(/);
+    if (workerRandom) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, workerRandom.index).split(/\r?\n/).length,
+        missing: ["架构约束：Worker search 禁止 Math.random"]
       });
     }
   }
@@ -2588,7 +2612,32 @@ function identity(value) { return value; }`;
     throw new Error("GameChoiceRouter guard did not reject aiController lookup");
   }
 
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/match/turn/action/trigger/messaging/events/slim-game/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, legacy RuleEngine/DistanceSystem guard, static Definition/Rule fact guards, TransferExecutionPolicyAdapter guard, simulation mirror guards, accidental root artifact guard, AI raw-Game/Application/Transition/Worker guards, GameChoiceRouter service-locator guard, compatibility removal, and root layout\n");
+  const goodWorkerBoundary = inspectSource(
+    "js/adapters/ai/worker/GoodWorker.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (goodWorkerBoundary.some((error) => error.missing.some((item) => item.includes("Worker 禁止")))) {
+    throw new Error("Worker guard incorrectly rejected canonical worker fixture");
+  }
+  const badWorkerImport = inspectSource(
+    "js/adapters/ai/worker/BadWorkerImport.js",
+    `${moduleHeader}\nimport { Game } from "../../../core/Game.js";\n${pass}`,
+    null,
+  );
+  if (!badWorkerImport.some((error) => error.missing.some((item) => item.includes("Worker 禁止")))) {
+    throw new Error("Worker guard did not reject core/Game import");
+  }
+  const badWorkerRandom = inspectSource(
+    "js/adapters/ai/worker/BadWorkerRandom.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return Math.random();")}`,
+    null,
+  );
+  if (!badWorkerRandom.some((error) => error.missing.some((item) => item.includes("Math.random")))) {
+    throw new Error("Worker guard did not reject Math.random");
+  }
+
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/match/turn/action/trigger/messaging/events/slim-game/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, legacy RuleEngine/DistanceSystem guard, static Definition/Rule fact guards, TransferExecutionPolicyAdapter guard, simulation mirror guards, accidental root artifact guard, AI raw-Game/Application/Transition/Worker guards, GameChoiceRouter service-locator guard, Dedicated Worker boundary/random guards, compatibility removal, and root layout\n");
 }
 
 /*

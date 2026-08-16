@@ -84,7 +84,8 @@ export function createSearchRequest({
   searchState,
   searchConfig,
   rng,
-  rootActionDescriptors
+  rootActionDescriptors,
+  rootSearchActions
 }) {
   if (typeof requestId !== "string" || !requestId) throw new TypeError("SearchRequest 需要 requestId");
   if (typeof gameId !== "string" || !gameId) throw new TypeError("SearchRequest 需要 gameId");
@@ -92,10 +93,12 @@ export function createSearchRequest({
   if (typeof actorId !== "string" || !actorId) throw new TypeError("SearchRequest 需要 actorId");
   if (!searchState || typeof searchState !== "object") throw new TypeError("SearchRequest 需要 searchState");
   if (!searchConfig || typeof searchConfig !== "object") throw new TypeError("SearchRequest 需要 searchConfig");
-  if (!rng || typeof rng !== "object" || typeof rng.seed !== "number") {
-    throw new TypeError("SearchRequest 需要 rng seed 事实");
+  if (!rng || typeof rng !== "object" || typeof rng.seed !== "number"
+    || typeof rng.state !== "number" || rng.algorithm !== "lcg") {
+    throw new TypeError("SearchRequest 需要 lcg rng continuation（seed/state/draws）");
   }
   if (!Array.isArray(rootActionDescriptors)) throw new TypeError("SearchRequest 需要 rootActionDescriptors");
+  if (!Array.isArray(rootSearchActions)) throw new TypeError("SearchRequest 需要 rootSearchActions");
   return Object.freeze({
     requestId,
     gameId,
@@ -106,7 +109,8 @@ export function createSearchRequest({
     searchState:freezeValue(searchState),
     searchConfig:freezeValue(searchConfig),
     rng:freezeValue(rng),
-    rootActionDescriptors:Object.freeze(rootActionDescriptors.map(freezeValue))
+    rootActionDescriptors:Object.freeze(rootActionDescriptors.map(freezeValue)),
+    rootSearchActions:Object.freeze(rootSearchActions.map(freezeValue))
   });
 }
 

@@ -17,37 +17,39 @@ Game、ResponseSystem、PublicCardPool、角色技能与测试。
 架构约束
 子组件不得回指 AIController；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
 */
-import { createInitialSearchState } from "./state/StateContracts.js?build=20260815-shadow-agent-p1-slot";
-import { Knowledge } from "./state/Knowledge.js?build=20260815-shadow-agent-p1-slot";
-import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260815-shadow-agent-p1-slot";
-import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260815-shadow-agent-p1-slot";
-import { ActionGenerator } from "./search/ActionGenerator.js?build=20260815-shadow-agent-p1-slot";
-import { ValueService } from "./value/ValueService.js?build=20260815-shadow-agent-p1-slot";
-import { StateValue } from "./value/StateValue.js?build=20260815-shadow-agent-p1-slot";
-import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260815-shadow-agent-p1-slot";
-import { Simulator } from "./simulation/Simulator.js?build=20260815-shadow-agent-p1-slot";
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
-import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260815-shadow-agent-p1-slot";
-import { createSearchRequest } from "./search/SearchRequest.js?build=20260815-shadow-agent-p1-slot";
-import { createSearchResult, SEARCH_RESULT_STATUS } from "./search/SearchResult.js?build=20260815-shadow-agent-p1-slot";
-import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260815-shadow-agent-p1-slot";
-import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260815-shadow-agent-p1-slot";
-import { Planner } from "./search/Planner.js?build=20260815-shadow-agent-p1-slot";
-import { SearchBudget } from "./search/SearchBudget.js?build=20260815-shadow-agent-p1-slot";
-import { SearchPolicy } from "./search/SearchPolicy.js?build=20260815-shadow-agent-p1-slot";
-import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260815-shadow-agent-p1-slot";
-import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260815-shadow-agent-p1-slot";
-import { FrontierValue } from "./search/FrontierValue.js?build=20260815-shadow-agent-p1-slot";
-import { SearchPrior } from "./search/SearchPrior.js?build=20260815-shadow-agent-p1-slot";
-import { TransitionValue } from "./search/TransitionValue.js?build=20260815-shadow-agent-p1-slot";
-import { Evaluator } from "./value/Evaluator.js?build=20260815-shadow-agent-p1-slot";
-import { ValueLedger } from "./value/ValueLedger.js?build=20260815-shadow-agent-p1-slot";
-import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260815-shadow-agent-p1-slot";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260815-shadow-agent-p1-slot";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260815-shadow-agent-p1-slot";
-import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260815-shadow-agent-p1-slot";
+import { createInitialSearchState } from "./state/StateContracts.js?build=20260816-fr-arch-14-runtime-closure";
+import { Knowledge } from "./state/Knowledge.js?build=20260816-fr-arch-14-runtime-closure";
+import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260816-fr-arch-14-runtime-closure";
+import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260816-fr-arch-14-runtime-closure";
+import { ActionGenerator } from "./search/ActionGenerator.js?build=20260816-fr-arch-14-runtime-closure";
+import { ValueService } from "./value/ValueService.js?build=20260816-fr-arch-14-runtime-closure";
+import { StateValue } from "./value/StateValue.js?build=20260816-fr-arch-14-runtime-closure";
+import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260816-fr-arch-14-runtime-closure";
+import { Simulator } from "./simulation/Simulator.js?build=20260816-fr-arch-14-runtime-closure";
+import { AI_SEARCH_PROFILES, GAME_CONFIG } from "../config/gameConfig.js?build=20260816-fr-arch-14-runtime-closure";
+import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260816-fr-arch-14-runtime-closure";
+import { createSearchRequest } from "./search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure";
+import { describeRootSearchAction } from "./search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure";
+import { createSearchResult, SEARCH_RESULT_STATUS } from "./search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure";
+import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js?build=20260816-fr-arch-14-runtime-closure";
+import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260816-fr-arch-14-runtime-closure";
+import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260816-fr-arch-14-runtime-closure";
+import { Planner } from "./search/Planner.js?build=20260816-fr-arch-14-runtime-closure";
+import { SearchBudget } from "./search/SearchBudget.js?build=20260816-fr-arch-14-runtime-closure";
+import { SearchPolicy } from "./search/SearchPolicy.js?build=20260816-fr-arch-14-runtime-closure";
+import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260816-fr-arch-14-runtime-closure";
+import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260816-fr-arch-14-runtime-closure";
+import { FrontierValue } from "./search/FrontierValue.js?build=20260816-fr-arch-14-runtime-closure";
+import { SearchPrior } from "./search/SearchPrior.js?build=20260816-fr-arch-14-runtime-closure";
+import { TransitionValue } from "./search/TransitionValue.js?build=20260816-fr-arch-14-runtime-closure";
+import { Evaluator } from "./value/Evaluator.js?build=20260816-fr-arch-14-runtime-closure";
+import { ValueLedger } from "./value/ValueLedger.js?build=20260816-fr-arch-14-runtime-closure";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260816-fr-arch-14-runtime-closure";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260816-fr-arch-14-runtime-closure";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260816-fr-arch-14-runtime-closure";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260816-fr-arch-14-runtime-closure";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260816-fr-arch-14-runtime-closure";
+import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260816-fr-arch-14-runtime-closure";
 
 export class AIController {
   /*
@@ -80,14 +82,18 @@ export class AIController {
       "getState", "isSessionValid", "getMaxEnergy", "getTurnEnergyBreakdown",
       "getDifficultyMultiplier", "getRandomnessRange", "getSearchTimeBudget",
       "getSearchNodeBudget", "getEnemies", "getDyingRescueOrder", "isSmallTeam",
-      "getForceAiRescueHuman", "yieldControl", "createId"
+      "getForceAiRescueHuman", "yieldControl", "createId", "getSearchMode"
     ];
     for (const name of required) {
       if (typeof dependencies[name] !== "function") throw new TypeError(`AIController 缺少依赖：${name}`);
     }
     if (!dependencies.searchRng || typeof dependencies.searchRng.next !== "function"
-      || typeof dependencies.searchRng.snapshot !== "function") {
+      || typeof dependencies.searchRng.snapshot !== "function"
+      || typeof dependencies.searchRng.commit !== "function") {
       throw new TypeError("AIController 缺少依赖：searchRng");
+    }
+    if (!dependencies.searchExecutor || typeof dependencies.searchExecutor.search !== "function") {
+      throw new TypeError("AIController 缺少依赖：searchExecutor.search");
     }
     this.getState = dependencies.getState;
     this.isSessionValid = dependencies.isSessionValid;
@@ -101,11 +107,25 @@ export class AIController {
     this.getDyingRescueOrder = dependencies.getDyingRescueOrder;
     this.isSmallTeam = dependencies.isSmallTeam;
     this.getForceAiRescueHuman = dependencies.getForceAiRescueHuman;
+    this.getSearchMode = dependencies.getSearchMode;
     this.yieldControl = dependencies.yieldControl;
     this.createId = dependencies.createId;
     this.searchRng = dependencies.searchRng;
+    this.searchExecutor = dependencies.searchExecutor;
     this.lastSearchRequest = null;
     this.lastSearchResult = null;
+    this.lastWorkerOutcome = null;
+    this.acceptedPlannedSequence = [];
+    this.planSource = "planner";
+    this.committedRngRequestIds = new Set();
+    this.searchDiagnostics = {
+      SEARCH:0,
+      RESULT:0,
+      CANCEL:0,
+      WATCHDOG:0,
+      STALE:0,
+      WORKER_ERROR:0
+    };
 
     this.knowledge = new Knowledge({
       getState: () => this.getState(),
@@ -310,12 +330,25 @@ export class AIController {
   */
   buildSearchConfig() {
     const base = this.searchPolicy.snapshot();
+    const mode = this.getSearchMode();
+    const profile = AI_SEARCH_PROFILES[mode] ?? AI_SEARCH_PROFILES.NORMAL;
     const timeBudget = this.getSearchTimeBudget();
     const nodeBudget = this.getSearchNodeBudget();
+    const numericTime = Number(timeBudget);
+    const numericNodes = Number(nodeBudget);
     return Object.freeze({
       ...base,
-      timeBudgetMs:Number.isFinite(Number(timeBudget)) ? Math.max(0, Number(timeBudget)) : base.timeBudgetMs,
-      nodeBudget:Number.isFinite(Number(nodeBudget)) ? Math.max(0, Number(nodeBudget)) : null,
+      searchMode:mode,
+      softTargetMs:profile.softTargetMs,
+      searchDeadlineMs:profile.searchDeadlineMs,
+      hardWatchdogMs:profile.hardWatchdogMs,
+      timeBudgetMs:timeBudget === null || timeBudget === undefined || !Number.isFinite(numericTime)
+        ? profile.searchDeadlineMs
+        : Math.max(0, numericTime),
+      nodeBudget:nodeBudget === null || nodeBudget === undefined
+        || !Number.isFinite(numericNodes) || numericNodes < 1
+        ? null
+        : Math.max(0, numericNodes),
       randomnessRange:Number.isFinite(Number(this.getRandomnessRange()))
         ? Number(this.getRandomnessRange())
         : base.randomnessRange,
@@ -429,10 +462,11 @@ export class AIController {
     const player = this.getState().players.find((entry) => entry.id === request.actorId) ?? null;
     const validation = this.validateRequestAcceptance(player, request);
     if (validation.status) {
+      if (validation.status === SEARCH_RESULT_STATUS.STALE_VERSION) this.searchDiagnostics.STALE += 1;
       const result = createSearchResult({
         request,
-        action:null,
-        plannedSequence:[],
+        actionDescriptor:null,
+        plannedSequenceDescriptors:[],
         stats,
         status:validation.status,
         rejectionReason:validation.reason
@@ -443,8 +477,8 @@ export class AIController {
     if (stats?.stopReason === "CANCELLED") {
       const result = createSearchResult({
         request,
-        action:null,
-        plannedSequence:[],
+        actionDescriptor:null,
+        plannedSequenceDescriptors:[],
         stats,
         status:SEARCH_RESULT_STATUS.CANCELLED,
         rejectionReason:"cancelled"
@@ -456,8 +490,8 @@ export class AIController {
     if (!descriptor || !this.isDescriptorInRootSet(descriptor, request.rootActionDescriptors)) {
       const result = createSearchResult({
         request,
-        action:null,
-        plannedSequence:[],
+        actionDescriptor:null,
+        plannedSequenceDescriptors:[],
         stats,
         status:SEARCH_RESULT_STATUS.INVALID_ACTION,
         rejectionReason:"descriptor not in request root set"
@@ -469,8 +503,8 @@ export class AIController {
     if (!rebound) {
       const result = createSearchResult({
         request,
-        action:null,
-        plannedSequence:[],
+        actionDescriptor:null,
+        plannedSequenceDescriptors:[],
         stats,
         status:SEARCH_RESULT_STATUS.INVALID_ACTION,
         rejectionReason:"action cannot rebind to current Domain-legal set"
@@ -480,8 +514,8 @@ export class AIController {
     }
     const result = createSearchResult({
       request,
-      action:rebound,
-      plannedSequence,
+      actionDescriptor:descriptor,
+      plannedSequenceDescriptors:plannedSequence,
       stats,
       status:SEARCH_RESULT_STATUS.ACCEPTED
     });
@@ -514,6 +548,194 @@ export class AIController {
   边界与不变量
   stateVersion 只用于本次异步结果 acceptance；queued plan reuse 继续由 resolvePlannedAction current-state rebind。
   */
+  /*
+  功能
+  提交 Worker outcome 返回的 RNG continuation。
+
+  调用方
+  acceptWorkerSearchOutcome。
+
+  输入
+  request 与 outcome。
+
+  输出
+  已提交返回 true；重复提交返回 false。
+
+  读取状态
+  committedRngRequestIds 与 session。
+
+  写入状态
+  searchRng state/draws 与 committedRngRequestIds。
+
+  调用函数
+  isSessionValid、SearchRng.commit。
+
+  边界与不变量
+  同一 requestId 只 commit 一次；invalid session 不 commit，新 Game 不继承旧 session RNG。
+  */
+  commitWorkerRng(request, outcome) {
+    if (!outcome?.rngAfter || this.committedRngRequestIds.has(request.requestId)) return false;
+    if (!this.isSessionValid(outcome.gameId)) return false;
+    this.searchRng.commit(outcome.rngAfter);
+    this.committedRngRequestIds.add(request.requestId);
+    return true;
+  }
+
+  /*
+  功能
+  接受 WorkerSearchOutcome 并产生 main-thread authoritative SearchResult。
+
+  调用方
+  selectAction 与 worker result tests。
+
+  输入
+  request 与 WorkerSearchOutcome。
+
+  输出
+  { action, result }；Worker error/cancelled/非法 outcome 只返回安全 end。
+
+  读取状态
+  current GameState、session、request、outcome 与 Domain candidate set。
+
+  写入状态
+  searchRng continuation、lastWorkerOutcome、lastSearchResult、acceptedPlannedSequence。
+
+  调用函数
+  workerOutcomeViolations、commitWorkerRng、validateRequestAcceptance、isDescriptorInRootSet、resolvePlannedAction、createSearchResult。
+
+  边界与不变量
+  Worker 不宣布 ACCEPTED；Main Thread 验证全部身份/version/actor/phase/rebind/legality；descriptor 不二次投影。
+  */
+  acceptWorkerSearchOutcome(request, outcome) {
+    this.lastWorkerOutcome = outcome;
+    this.planSource = "worker";
+    // Main planner 在 Worker 生产路径只作诊断兼容；同步 outcome 数据保持既有测试/诊断读口。
+    if (outcome?.stats) this.planner.lastSearchStats = { ...outcome.stats };
+    if (Array.isArray(outcome?.plannedSequenceDescriptors)) {
+      this.planner.lastPlannedSequence = [...outcome.plannedSequenceDescriptors];
+    }
+    const malformed = workerOutcomeViolations(outcome, request);
+    if (malformed.length || outcome.workerError) {
+      this.searchDiagnostics.WORKER_ERROR += 1;
+      if (String(outcome.workerError ?? "").includes("watchdog")) this.searchDiagnostics.WATCHDOG += 1;
+      const result = createSearchResult({
+        request,
+        actionDescriptor:null,
+        plannedSequenceDescriptors:[],
+        stats:outcome?.stats ?? null,
+        status:SEARCH_RESULT_STATUS.INVALID_ACTION,
+        rejectionReason:outcome?.workerError ?? malformed.join(", "),
+        rngAfter:null
+      });
+      this.lastSearchResult = result;
+      this.acceptedPlannedSequence = [];
+      return { action:{ type:"end" }, result };
+    }
+    if (outcome.cancelled || outcome.searchStopReason === "CANCELLED") {
+      this.searchDiagnostics.CANCEL += 1;
+      const result = createSearchResult({
+        request,
+        actionDescriptor:null,
+        plannedSequenceDescriptors:[],
+        stats:outcome.stats,
+        status:SEARCH_RESULT_STATUS.CANCELLED,
+        rejectionReason:"cancelled",
+        rngAfter:null
+      });
+      this.lastSearchResult = result;
+      this.acceptedPlannedSequence = [];
+      return { action:{ type:"end" }, result };
+    }
+
+    const player = this.getState().players.find((entry) => entry.id === request.actorId) ?? null;
+    const validation = this.validateRequestAcceptance(player, request);
+    if (validation.status) {
+      const result = createSearchResult({
+        request,
+        actionDescriptor:null,
+        plannedSequenceDescriptors:[],
+        stats:outcome.stats,
+        status:validation.status,
+        rejectionReason:validation.reason,
+        rngAfter:null
+      });
+      this.lastSearchResult = result;
+      this.acceptedPlannedSequence = [];
+      return { action:{ type:"end" }, result };
+    }
+
+    const descriptor = outcome.actionDescriptor;
+    if (!descriptor || !this.isDescriptorInRootSet(descriptor, request.rootActionDescriptors)) {
+      const result = createSearchResult({
+        request,
+        actionDescriptor:null,
+        plannedSequenceDescriptors:[],
+        stats:outcome.stats,
+        status:SEARCH_RESULT_STATUS.INVALID_ACTION,
+        rejectionReason:"descriptor not in request root set",
+        rngAfter:null
+      });
+      this.lastSearchResult = result;
+      this.acceptedPlannedSequence = [];
+      return { action:{ type:"end" }, result };
+    }
+
+    const rebound = this.resolvePlannedAction(player, descriptor);
+    if (!rebound) {
+      const result = createSearchResult({
+        request,
+        actionDescriptor:null,
+        plannedSequenceDescriptors:[],
+        stats:outcome.stats,
+        status:SEARCH_RESULT_STATUS.INVALID_ACTION,
+        rejectionReason:"action cannot rebind to current Domain-legal set",
+        rngAfter:null
+      });
+      this.lastSearchResult = result;
+      this.acceptedPlannedSequence = [];
+      return { action:{ type:"end" }, result };
+    }
+
+    const rngCommitted = this.commitWorkerRng(request, outcome);
+    const result = createSearchResult({
+      request,
+      actionDescriptor:descriptor,
+      plannedSequenceDescriptors:outcome.plannedSequenceDescriptors,
+      stats:outcome.stats,
+      status:SEARCH_RESULT_STATUS.ACCEPTED,
+      rngAfter:rngCommitted ? outcome.rngAfter : null
+    });
+    this.lastSearchResult = result;
+    this.acceptedPlannedSequence = [...(outcome.plannedSequenceDescriptors ?? [])];
+    this.searchDiagnostics.RESULT += 1;
+    return { action:rebound, result };
+  }
+
+  /*
+  功能
+  构造 SearchRequest、通过 injected search executor 执行 Worker-safe search，并把 outcome 交给 main-thread acceptance。
+
+  调用方
+  TurnWorkflow 与测试。
+
+  输入
+  player 与可选 options/signal。
+
+  输出
+  当前可执行 action；executor error/stale/cancel 安全返回 end。
+
+  读取状态
+  current GameState、Knowledge、SearchPolicy、searchRng。
+
+  写入状态
+  lastSearchRequest、worker/acceptance diagnostics、RNG continuation 与 accepted plan。
+
+  调用函数
+  createInitialSearchState、getActionCandidates、createSearchRequest、searchExecutor.search、acceptWorkerSearchOutcome。
+
+  边界与不变量
+  生产 Planner execution 由 executor 负责；Main Thread 只 rebind 与 Domain-legal validation。
+  */
   async selectAction(player, options = {}) {
     const state = this.getState();
     if (!this.isSessionValid(options.gameId ?? state.gameId)) return { type:"end" };
@@ -530,16 +752,57 @@ export class AIController {
       searchState:visible,
       searchConfig:this.buildSearchConfig(),
       rng:this.searchRng.snapshot(),
-      rootActionDescriptors:rootActions.map(ActionDescriptor.describe)
+      rootActionDescriptors:rootActions.map(ActionDescriptor.describe),
+      rootSearchActions:rootActions.map(describeRootSearchAction)
     });
     this.lastSearchRequest = request;
-    const action = await this.planner.plan(player, visible, rootActions, options);
-    return this.acceptSearchResult({
-      request,
-      action,
-      plannedSequence:this.planner.lastPlannedSequence,
-      stats:this.planner.lastSearchStats
-    }).action;
+    this.searchDiagnostics.SEARCH += 1;
+    let outcome;
+    try {
+      outcome = await this.searchExecutor.search(request, options);
+    } catch (error) {
+      this.searchDiagnostics.WORKER_ERROR += 1;
+      if (String(error?.message ?? error).includes("watchdog")) this.searchDiagnostics.WATCHDOG += 1;
+      outcome = createWorkerSearchOutcome({
+        request,
+        actionDescriptor:null,
+        plannedSequenceDescriptors:[],
+        stats:null,
+        searchStopReason:null,
+        rngAfter:this.searchRng.snapshot(),
+        cancelled:false,
+        workerError:error instanceof Error ? error.message : String(error)
+      });
+    }
+    return this.acceptWorkerSearchOutcome(request, outcome).action;
+  }
+  /*
+  功能
+  返回搜索运行时诊断计数器的隔离副本。
+
+  调用方
+  runtime diagnostics、测试与 browser console audit。
+
+  输入
+  无。
+
+  输出
+  SEARCH/RESULT/CANCEL/WATCHDOG/STALE/WORKER_ERROR 计数副本。
+
+  读取状态
+  searchDiagnostics。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  仅 diagnostics；不得被任何策略、候选排序或 RNG commit 读取。
+  */
+  getSearchDiagnostics() {
+    return { ...this.searchDiagnostics };
   }
 
   /*
@@ -616,6 +879,7 @@ export class AIController {
   调用方不得通过返回数组修改 Planner 内部序列。
   */
   getPlannedSequence() {
+    if (this.planSource === "worker") return [...this.acceptedPlannedSequence];
     return [...this.planner.lastPlannedSequence];
   }
 

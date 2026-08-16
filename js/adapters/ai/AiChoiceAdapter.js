@@ -17,7 +17,7 @@ composition boundary 的 AI ChoicePort wiring。
 架构约束
 不得 import AIController、UIManager、SoundManager、Game runtime 或其它 concrete adapter。
 */
-import { createChoiceResult } from "../../application/ports/ChoicePort.js?build=20260815-shadow-agent-p1-slot";
+import { createChoiceResult } from "../../application/ports/ChoicePort.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

@@ -17,9 +17,9 @@ Domain TurnRules、CardRules、distance rules 与 SkillDefinitions。
 架构约束
 不得依赖 Game/RuleEngine/application/adapters/EventBus；不得 await、emit、随机、mutation；不得复制 SkillDefinitions 固定 literal。
 */
-import { ACTIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { getDistance } from "../distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
-import { hasActiveSkillUseRemaining } from "../turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { getDistance } from "../distance/DistanceRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { hasActiveSkillUseRemaining } from "../turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
 
 /*
 功能

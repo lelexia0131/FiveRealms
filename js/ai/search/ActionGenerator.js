@@ -25,27 +25,27 @@ import {
   getLeverageFirstTargetIds,
   getTransferReceiverIds,
   getTransferSourceIds
-} from "../../domain/rules/card/CardRules.js?build=20260815-shadow-agent-p1-slot";
-import { hasStatus } from "../../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+} from "../../domain/rules/card/CardRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { hasStatus } from "../../domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
 import {
   canUseSkillBase,
   getSkillCost,
   getSkillTargetIds
-} from "../../domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot";
-import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260815-shadow-agent-p1-slot";
-import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260815-shadow-agent-p1-slot";
+} from "../../domain/rules/skill/SkillRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260816-fr-arch-14-runtime-closure";
+import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260816-fr-arch-14-runtime-closure";
 import {
   projectAttackUsage,
   projectRulePlayer,
   projectRulePlayers,
   projectTransferRulePlayers
-} from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
-import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260815-shadow-agent-p1-slot";
-import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260815-shadow-agent-p1-slot";
-import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260815-shadow-agent-p1-slot";
+} from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
+import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260816-fr-arch-14-runtime-closure";
+import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260816-fr-arch-14-runtime-closure";
+import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260816-fr-arch-14-runtime-closure";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -57,7 +57,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
+} from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
 
 export class ActionGenerator {
   /*
@@ -86,16 +86,20 @@ export class ActionGenerator {
   只保存具体能力，不接收或查找 AIController。
   */
   constructor({
-    getRootContext,
-    chooseTransferCombination,
+    getRootContext = null,
+    chooseTransferCombination = null,
     transferPolicy,
     actionCandidatePolicy
   } = {}) {
-    if (typeof getRootContext !== "function") {
-      throw new TypeError("ActionGenerator 缺少依赖：getRootContext");
-    }
-    if (typeof chooseTransferCombination !== "function") {
-      throw new TypeError("ActionGenerator 缺少依赖：chooseTransferCombination");
+    if (getRootContext === null && chooseTransferCombination === null) {
+      // Worker-safe deep-only construction；root generate() 会在调用时 fail fast。
+    } else {
+      if (typeof getRootContext !== "function") {
+        throw new TypeError("ActionGenerator 缺少依赖：getRootContext");
+      }
+      if (typeof chooseTransferCombination !== "function") {
+        throw new TypeError("ActionGenerator 缺少依赖：chooseTransferCombination");
+      }
     }
     const resolvedTransferPolicy = transferPolicy ?? new TransferPolicy();
     const resolvedActionCandidatePolicy = actionCandidatePolicy ?? new ActionCandidatePolicy();
@@ -506,6 +510,9 @@ export class ActionGenerator {
   Domain CardRules/SkillRules 独占确定性合法性，ActionCandidatePolicy 仅收窄 AI 会考虑的集合；保持既有枚举顺序与候选集合，转移只记录选择描述，不移动实体牌。
   */
   generate(player, rootContext = null) {
+    if (typeof this.getRootContext !== "function") {
+      throw new Error("Worker deep-only ActionGenerator 不提供 root generate");
+    }
     const context = rootContext ?? this.getRootContext();
     const players = context.state.players;
     const actions = [];
