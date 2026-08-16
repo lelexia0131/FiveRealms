@@ -18,7 +18,7 @@ js/domain/rules 与 js/domain/definitions 目录。
 禁止在这里计算合法性、目标公式、距离公式或技能语义；Domain Rule 函数是唯一公式 owner。
 */
 import { CHARACTER_BY_ID } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260815-shadow-agent-p1-slot";
-import { isCanonicalSeatRoster } from "../../domain/state/queries/SeatRosterContract.js?build=20260815-shadow-agent-p1-slot";
+import { assertCanonicalSeatRoster } from "../../domain/state/queries/SeatRosterContract.js?build=20260815-shadow-agent-p1-slot";
 import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
 
 /*
@@ -75,7 +75,7 @@ player.hand 或 player.handCount。
 无。
 
 边界与不变量
-与 legacy RuleEngine.transferableHandCount 语义一致；有实体 hand 时按 ID 计数，否则用标量 handCount。
+与既有 legacy transferableHandCount 语义一致；有实体 hand 时按 ID 计数，否则用标量 handCount。
 */
 function getProjectedHandCount(player, excludedCardIds = null) {
   if (Array.isArray(player?.hand)) {
@@ -200,7 +200,7 @@ StatusRules.nextLightningReceiverId、ResponseRules seat-order 入口与 AI doma
 玩家数组。
 
 输出
-按 seatIndex 升序的冻结 Domain Rule fact 数组。
+按输入顺序保留真实 seatIndex 的冻结 Domain Rule fact 数组。
 
 读取状态
 players 座位与公开事实。
@@ -209,18 +209,15 @@ players 座位与公开事实。
 无。
 
 调用函数
-projectRulePlayers、isCanonicalSeatRoster。
+projectRulePlayer、assertCanonicalSeatRoster。
 
 边界与不变量
-按调用方数组物理顺序归一化 seatIndex 为 0..n-1；Domain 只解释该 canonical roster，不排序或猜测原始座位。
+只做 shape adaptation；不重编号、不排序、不过滤 dead player；非 canonical roster 由 Domain contract fail fast。
 */
 export function projectCanonicalSeatRoster(players) {
-  const projected = (players ?? []).map((player, index) => {
-    const fact = projectRulePlayer(player);
-    return Object.freeze({ ...fact, seatIndex:index });
-  });
-  isCanonicalSeatRoster(projected);
-  return Object.freeze(projected);
+  const projected = Object.freeze((players ?? []).map((player) => projectRulePlayer(player)));
+  assertCanonicalSeatRoster(projected);
+  return projected;
 }
 
 /*

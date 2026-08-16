@@ -99,31 +99,34 @@ export function createKnowledgeState(viewer, visibleState) {
 export class Knowledge {
   /*
   功能
-  创建绑定当前 Game 生命周期的 Knowledge 服务。
+  创建只依赖显式 state snapshot provider 与 AI search RNG 的 Knowledge 服务。
 
   调用方
   AiController 构造流程、Knowledge 单元测试。
 
   输入
-  当前 Game 服务对象。
+  { getState, random } 窄能力对象。
 
   输出
-  绑定观察者记忆的 Knowledge 实例。
+  绑定显式能力的 Knowledge 实例。
 
   读取状态
   无。
 
   写入状态
-  实例 game 引用。
+  保存能力引用。
 
   调用函数
   无。
 
   边界与不变量
-  game 只供合法公开区域计数、随机源和记忆失效使用。
+  不保存 Game；getState 只用于合法公开区域计数；random 只用于 hidden-world sampling。
   */
-  constructor(game) {
-    this.game = game;
+  constructor({ getState, random } = {}) {
+    if (typeof getState !== "function") throw new TypeError("Knowledge 缺少依赖：getState");
+    if (typeof random !== "function") throw new TypeError("Knowledge 缺少依赖：random");
+    this.getState = getState;
+    this.random = random;
   }
 
   /*
@@ -181,7 +184,7 @@ export class Knowledge {
   不得读取敌方真实手牌或未来牌堆顺序。
   */
   remainingCounts(viewer) {
-    return deriveRemainingCardCounts(viewer, this.game?.state);
+    return deriveRemainingCardCounts(viewer, this.getState());
   }
 
   /*
@@ -285,7 +288,7 @@ export class Knowledge {
   彼此独立的隐藏牌定义世界数组。
 
   读取状态
-  SearchState 剩余计数与玩家知识字段、Game 随机源。
+  SearchState 剩余计数与玩家知识字段、注入 AI search RNG。
 
   写入状态
   无。
@@ -297,6 +300,6 @@ export class Knowledge {
   采样函数不得回读 GameState，缺少合法剩余计数时抛错。
   */
   sampleHiddenWorlds(viewer, searchState, count) {
-    return sampleHiddenWorlds(viewer, searchState, count, this.game.random);
+    return sampleHiddenWorlds(viewer, searchState, count, this.random);
   }
 }

@@ -64,6 +64,7 @@ const SKILL_EFFECT_SIMULATION_FILE = "js/ai/simulation/SkillEffectSimulation.js"
 const STATUS_SIMULATION_FILE = "js/ai/simulation/StatusSimulation.js";
 const AI_ROOT_PATTERN = /^js\/ai\/[^/]+\.js$/i;
 const AI_ROOT_ALLOWLIST = new Set(["js/ai/AiController.js"]);
+const ACCIDENTAL_ROOT_ARTIFACTS = Object.freeze(new Set(["AI", "application", "transitions"]));
 const REMOVED_COMPATIBILITY_NAMES = Object.freeze([
   "AiSimulator",
   "AiEvaluator",
@@ -147,6 +148,35 @@ String.replaceAll。
 */
 function normalizePath(value) {
   return String(value).replaceAll("\\", "/");
+}
+
+/*
+功能
+判断仓库根目录是否重新出现已知 accidental root artifact 文件。
+
+调用方
+main 与 runSelfTest。
+
+输入
+待检查的根目录相对文件路径列表。
+
+输出
+返回命中的路径数组。
+
+读取状态
+无；不访问文件系统。
+
+写入状态
+无。
+
+调用函数
+Set.has。
+
+边界与不变量
+只精确匹配已知三个残片名称，不建立宽泛 root allowlist。
+*/
+function accidentalRootArtifacts(files) {
+  return files.filter((file) => ACCIDENTAL_ROOT_ARTIFACTS.has(file));
 }
 
 /*
@@ -1143,6 +1173,48 @@ function inspectSource(file, source, changed) {
   if (AI_PATTERN.test(file)) {
     const uiImport = importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:\/ui\/|\/ui\.|\.\.\/ui\/)/i);
     if (uiImport) errors.push({ file, functionName: "<module>", line: source.slice(0, uiImport.index).split(/\r?\n/).length, missing: ["架构约束：AI 分层目录禁止 UI import"] });
+    const gameImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*\/core\/Game\.js(?:\?[^"']*)?["']/i,
+    );
+    if (gameImport) {
+      errors.push({
+        file,
+        functionName: "<module>",
+        line: source.slice(0, gameImport.index).split(/\r?\n/).length,
+        missing: ["架构约束：js/ai 禁止 raw Game ownership/import"]
+      });
+    }
+    const applicationImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*\/application\/(?:action|combat|response|judgment|turn|match|choice|trigger|messaging)\//i,
+    );
+    if (applicationImport) {
+      errors.push({
+        file,
+        functionName: "<module>",
+        line: source.slice(0, applicationImport.index).split(/\r?\n/).length,
+        missing: ["架构约束：js/ai 禁止 import Application workflow"]
+      });
+    }
+    const transitionImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*\/domain\/state\/transitions\//i,
+    );
+    if (transitionImport) {
+      errors.push({
+        file,
+        functionName: "<module>",
+        line: source.slice(0, transitionImport.index).split(/\r?\n/).length,
+        missing: ["架构约束：js/ai 禁止 Domain Transition 修改 SearchState"]
+      });
+    }
+    const workerUsage = maskNonCode(source).match(/\bnew\s+Worker\s*\(|\bpostMessage\s*\(/);
+    if (workerUsage) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, workerUsage.index).split(/\r?\n/).length,
+        missing: ["架构约束：FR-ARCH-13 不创建 Worker/postMessage"]
+      });
+    }
     const missing = missingModuleFields(source);
     if (missing.length) errors.push({ file, functionName: "<module>", line: 1, missing });
     if (changed === null) {
@@ -1477,7 +1549,22 @@ function inspectSource(file, source, changed) {
     if (/\b(?:this\.)?game\.aiController\b/.test(line)) {
       errors.push({ file, functionName: "<architecture>", line: index + 1, missing: ["架构约束：AI 内部禁止 game.aiController 回指"] });
     }
+    if (/\bthis\.game\b/.test(line)) {
+      errors.push({ file, functionName: "<architecture>", line: index + 1, missing: ["架构约束：js/ai 禁止 raw Game ownership（this.game）"] });
+    }
   });
+
+  if (/^js\/core\/GameChoiceRouter\.js$/i.test(file)) {
+    const serviceLocator = maskNonCode(source).match(/\bgame\.aiController\b|\bgame\.ui\b|\bgame\.cleanupManager\b/);
+    if (serviceLocator) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, serviceLocator.index).split(/\r?\n/).length,
+        missing: ["架构约束：GameChoiceRouter 不得 service-locate Game 子组件"]
+      });
+    }
+  }
   return errors;
 }
 
@@ -2427,7 +2514,81 @@ function identity(value) { return value; }`;
     throw new Error("StatusSimulation mirror guard did not reject lightning damage literal");
   }
 
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/match/turn/action/trigger/messaging/events/slim-game/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, legacy RuleEngine/DistanceSystem guard, static Definition/Rule fact guards, TransferExecutionPolicyAdapter guard, simulation mirror guards, compatibility removal, and root layout\n");
+  const rootArtifactPositive = accidentalRootArtifacts(["AI", "js/core/Game.js"]);
+  if (rootArtifactPositive.length !== 1 || rootArtifactPositive[0] !== "AI") {
+    throw new Error("root artifact guard did not detect accidental AI file");
+  }
+  const rootArtifactNegative = accidentalRootArtifacts(["js/ai/AiController.js", "js/core/Game.js"]);
+  if (rootArtifactNegative.length !== 0) {
+    throw new Error("root artifact guard incorrectly rejected valid root files");
+  }
+
+  const goodAiGameBoundary = inspectSource(
+    "js/ai/search/GoodBoundary.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (goodAiGameBoundary.some((error) => error.missing.some((item) => item.includes("raw Game")))) {
+    throw new Error("AI Game-boundary guard incorrectly rejected canonical fixture");
+  }
+  const badAiGameImport = inspectSource(
+    "js/ai/search/BadGameBoundary.js",
+    `${moduleHeader}\nimport { Game } from "../../core/Game.js";\n${pass}`,
+    null,
+  );
+  if (!badAiGameImport.some((error) => error.missing.some((item) => item.includes("raw Game")))) {
+    throw new Error("AI Game-boundary guard did not reject core/Game import");
+  }
+  const badAiThisGame = inspectSource(
+    "js/ai/search/BadThisGame.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return this.game;")}`,
+    null,
+  );
+  if (!badAiThisGame.some((error) => error.missing.some((item) => item.includes("this.game")))) {
+    throw new Error("AI Game-boundary guard did not reject this.game");
+  }
+  const badAiApplication = inspectSource(
+    "js/ai/search/BadApplicationBoundary.js",
+    `${moduleHeader}\nimport { createTurnWorkflow } from "../../application/turn/TurnWorkflow.js";\n${pass}`,
+    null,
+  );
+  if (!badAiApplication.some((error) => error.missing.some((item) => item.includes("Application workflow")))) {
+    throw new Error("AI Application guard did not reject workflow import");
+  }
+  const badAiTransition = inspectSource(
+    "js/ai/search/BadTransitionBoundary.js",
+    `${moduleHeader}\nimport { bumpStateVersion } from "../../domain/state/transitions/StateVersion.js";\n${pass}`,
+    null,
+  );
+  if (!badAiTransition.some((error) => error.missing.some((item) => item.includes("Domain Transition")))) {
+    throw new Error("AI Transition guard did not reject Domain transitions import");
+  }
+  const badWorker = inspectSource(
+    "js/ai/search/BadWorkerBoundary.js",
+    `${moduleHeader}\n${pass.replace("return value;", "postMessage(value); return value;")}`,
+    null,
+  );
+  if (!badWorker.some((error) => error.missing.some((item) => item.includes("Worker/postMessage")))) {
+    throw new Error("Worker guard did not reject postMessage");
+  }
+  const goodChoiceRouter = inspectSource(
+    "js/core/GameChoiceRouter.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (goodChoiceRouter.some((error) => error.missing.some((item) => item.includes("service-locate")))) {
+    throw new Error("GameChoiceRouter guard incorrectly rejected canonical fixture");
+  }
+  const badChoiceRouter = inspectSource(
+    "js/core/GameChoiceRouter.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return game.aiController;")}`,
+    null,
+  );
+  if (!badChoiceRouter.some((error) => error.missing.some((item) => item.includes("service-locate")))) {
+    throw new Error("GameChoiceRouter guard did not reject aiController lookup");
+  }
+
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/match/turn/action/trigger/messaging/events/slim-game/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, legacy RuleEngine/DistanceSystem guard, static Definition/Rule fact guards, TransferExecutionPolicyAdapter guard, simulation mirror guards, accidental root artifact guard, AI raw-Game/Application/Transition/Worker guards, GameChoiceRouter service-locator guard, compatibility removal, and root layout\n");
 }
 
 /*
@@ -2469,6 +2630,18 @@ function main() {
     runSelfTest();
     return;
   }
+  const rootArtifacts = accidentalRootArtifacts(
+    ["AI", "application", "transitions"].filter((name) => fs.existsSync(path.join(ROOT, name)))
+  );
+  if (rootArtifacts.length) {
+    for (const artifact of rootArtifacts) {
+      process.stderr.write(`${artifact}:1 <architecture> missing: 架构约束：根目录 accidental artifact ${artifact} 不得重新出现\n`);
+    }
+    process.stderr.write(`code-quality failed: ${rootArtifacts.length} accidental root artifact(s)\n`);
+    process.exitCode = 1;
+    return;
+  }
+
   const mode = args.includes("--all") ? "all"
     : args.includes("--ai-all") ? "ai-all"
       : "changed";

@@ -15,7 +15,7 @@ value/CardValue、value/ThreatValue 与 state/Probability。
 其他玩家未知手牌只作为聚合未知候选；只有自己手牌、过滤 knownCards 或合法 aiMemory 可提供定义。
 
 架构约束
-不调用 RuleEngine 生成合法集合，不依赖 Planner/Controller/UI，也不执行规则或构造 Simulator。
+不调用 Domain CardRules 生成合法集合，不依赖 Planner/Controller/UI，也不执行规则或构造 Simulator。
 */
 import {
   getBaseCardAiValue,
@@ -731,7 +731,7 @@ evaluateTransferCombination 所需上下文。
 evaluateTransferCombination。
 
 边界与不变量
-不生成 RuleEngine 合法候选。
+不生成 Domain CardRules 合法候选。
 */
 export function scoreTransferCombination(options) {
   return evaluateTransferCombination(options).score;
@@ -760,7 +760,7 @@ CardSelectionBoundary、ActionGenerator 与直接测试。
 evaluateTransferCombination、handCount、getReceivers。
 
 边界与不变量
-getReceivers 必须由 RuleEngine/Generator 边界提供；本函数不把策略拒绝变成规则非法。
+getReceivers 必须由 Domain CardRules/Generator 边界提供；本函数不把策略拒绝变成规则非法。
 */
 export function buildTransferCandidates({
   actor,
@@ -870,7 +870,7 @@ export class TransferPolicy {
   buildTransferCandidates、chooseBestPositiveTransfer。
 
   边界与不变量
-  不调用 RuleEngine、不解析或移动真实实体，每个组合只评分一次。
+  不调用 Domain CardRules、不解析或移动真实实体，每个组合只评分一次。
   */
   choose(context) {
     return chooseBestPositiveTransfer(buildTransferCandidates(context));

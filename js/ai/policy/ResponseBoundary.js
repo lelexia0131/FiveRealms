@@ -99,7 +99,7 @@ export class ResponseBoundary {
   AIController 组合根（统一组装依赖的位置） 与直接测试。
 
   输入
-  Game、Evaluator、Knowledge 及可选正式依赖。
+  runtime capabilities、Evaluator、Knowledge 及可选正式依赖。
 
   输出
   建立稳定的 shouldRespond 执行边界。
@@ -116,8 +116,16 @@ export class ResponseBoundary {
   边界与不变量
   生产装配由 Controller 注入正式实例；未注入时构造同一依赖，保证边界可独立测试。
   */
-  constructor(game, evaluator, knowledge, dependencies = {}) {
-    this.game = game;
+  constructor(runtime, evaluator, knowledge, dependencies = {}) {
+    for (const name of ["getState", "getDyingRescueOrder", "isSmallTeam"]) {
+      if (typeof runtime?.[name] !== "function") {
+        throw new TypeError(`ResponseBoundary 缺少依赖：${name}`);
+      }
+    }
+    this.getState = runtime.getState;
+    this.getDyingRescueOrder = runtime.getDyingRescueOrder;
+    this.isSmallTeam = runtime.isSmallTeam;
+    this.forceAiRescueHuman = runtime.forceAiRescueHuman;
     this.evaluator = evaluator;
     this.knowledge = knowledge;
     this.responsePolicy = dependencies.responsePolicy ?? new ResponsePolicy({
@@ -154,7 +162,7 @@ export class ResponseBoundary {
   所有昂贵查询惰性执行且每个响应分支至多一次，避免无条件 State 投影或重复计算。
   */
   buildDecisionContext(responder, type, rawContext, cards = []) {
-    const rawPlayers = this.game.state.players;
+    const rawPlayers = this.getState().players;
     const players = rawPlayers.map(responsePlayerView);
     const byId = new Map(players.map((player) => [player.id, player]));
     const responderView = byId.get(responder.id);
@@ -202,7 +210,7 @@ export class ResponseBoundary {
     const needsRemainingCounts = type === "counter" || type === "skill";
     if (needsRemainingCounts) getRemainingCardCounts();
     const rescueOrder = type === "dyingRescue"
-      ? this.game.dyingSystem.rescueOrder(rawContext.target ?? responder)
+      ? this.getDyingRescueOrder(rawContext.target ?? responder)
           .map((player) => byId.get(player.id))
           .filter(Boolean)
       : [];
@@ -220,12 +228,12 @@ export class ResponseBoundary {
         ? this.knowledge.probability(responder, "recover")
         : 0,
       remainingCardCounts: needsRemainingCounts ? remainingCardCounts : null,
-      isSmallTeam: this.game.teamRules.isSmallTeam(responder),
-      forceAiRescueHuman: this.game.forceAiRescueHuman ?? GAME_CONFIG.forceAiRescueHuman,
+      isSmallTeam: this.isSmallTeam(responder),
+      forceAiRescueHuman: this.forceAiRescueHuman ?? GAME_CONFIG.forceAiRescueHuman,
       leverageMetrics: () => {
         const target = rawContext.target ?? responder;
         const enemyTarget = target.battleTeam !== responder.battleTeam;
-        const visible = createInitialSearchState(responder.id, this.game.state);
+        const visible = createInitialSearchState(responder.id, this.getState());
         const visibleResponder = visible.players.find((player) => player.id === responder.id);
         const visibleTarget = visible.players.find((player) => player.id === target.id);
         const threat = enemyTarget && visibleResponder && visibleTarget
@@ -246,7 +254,7 @@ export class ResponseBoundary {
         const target = rawContext.target;
         const visible = createInitialSearchState(
           responder.id,
-          this.game.state,
+          this.getState(),
           getRemainingCardCounts()
         );
         return this.simulationQuery.guardianAidValues(
@@ -267,7 +275,7 @@ export class ResponseBoundary {
         }
         const state = createInitialSearchState(
           responder.id,
-          this.game.state,
+          this.getState(),
           getRemainingCardCounts()
         );
         const visibleHolder = state.players.find((player) => player.id === holder.id);
@@ -312,7 +320,7 @@ export class ResponseBoundary {
           ?? null;
         const visible = createInitialSearchState(
           responder.id,
-          this.game.state,
+          this.getState(),
           getRemainingCardCounts()
         );
         return this.simulationQuery.dynamicRootFlipGain(

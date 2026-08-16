@@ -67,7 +67,8 @@ import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260815-shado
 import { Planner } from "../js/ai/search/Planner.js";
 import { SearchBudget } from "../js/ai/search/SearchBudget.js";
 import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
-import { describeAction } from "../js/ai/search/ActionDescriptor.js";
+import { SearchRng } from "../js/ai/search/SearchRng.js";
+import { ActionDescriptor, describeAction } from "../js/ai/search/ActionDescriptor.js";
 import { ThreatCalculator } from "../js/ai/value/ThreatValue.js";
 import { STATE_DELTA_SCALE } from "../js/ai/value/Economics.js";
 import { HP_RISK_OPTION_WEIGHT } from "../js/ai/value/ThreatValue.js";
@@ -322,6 +323,8 @@ function makePlayer(id, seatIndex, team, controllerType = "ai", generalIndex = s
 function makeGame(players, { random = () => 0.25, response = () => false } = {}) {
   const ui = makeUi(response);
   const game = new Game(ui, random);
+  game.aiRandom = { next: random, snapshot: () => ({ seed: 0 }) };
+  game.aiController.searchRng = game.aiRandom;
   game.state.players = players;
   game.state.currentPlayerIndex = 0;
   game.state.startingPlayerIndex = 0;
@@ -8797,7 +8800,10 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
     yieldControl: async () => true
   });
   try {
-    game.random = makeBenchmarkRandom(seed);
+    game.aiRandom = new SearchRng(seed);
+    const traceRng = new SearchRng(seed);
+    knowledge.random = () => traceRng.next();
+    game.aiController.searchPolicy.random = () => traceRng.next();
     const productionAction = await productionPlanner.plan(
       actor, visible, roots, { gameId: game.state.gameId }
     );
@@ -8807,7 +8813,10 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
     );
 
     mode = "direct";
-    game.random = makeBenchmarkRandom(seed);
+    game.aiRandom = new SearchRng(seed);
+    const directTraceRng = new SearchRng(seed);
+    knowledge.random = () => directTraceRng.next();
+    game.aiController.searchPolicy.random = () => directTraceRng.next();
     const directAction = await directPlanner.plan(actor, visible, roots, { gameId: game.state.gameId });
     assert.equal("game" in directPlanner, false);
     assert.equal("aiController" in directPlanner, false);
@@ -9389,7 +9398,12 @@ function testActionGeneratorUsesInjectedTransferSelection() {
   const { game } = makeGame([actor, ally, enemy]);
   const selection = { sourceId: ally.id, receiverId: actor.id, zone: "hand" };
   let calls = 0;
-  const generator = new ActionGenerator(game, {
+  const generator = new ActionGenerator({
+    getRootContext: () => ({
+      state: game.state,
+      currentPlayer: game.state.players[game.state.currentPlayerIndex] ?? null,
+      phase: game.state.phase
+    }),
     chooseTransferCombination: () => {
       calls += 1;
       return selection;
@@ -9445,7 +9459,8 @@ function testMissingAiDependenciesFailAtConstruction() {
     searchBudgetFactory: () => ({}),
     yieldControl: async () => true
   }), /generateFromVisible/);
-  assert.throws(() => new ActionGenerator(game), /chooseTransferCombination/);
+  assert.throws(() => new ActionGenerator({ chooseTransferCombination: () => null }), /getRootContext/);
+  assert.throws(() => new ActionGenerator({ getRootContext: () => ({ state:{ players:[] } }) }), /chooseTransferCombination/);
 }
 
 test("AI·依赖注入：缺少必要能力时构造立即给出依赖名", testMissingAiDependenciesFailAtConstruction);
@@ -10712,7 +10727,7 @@ test("AI·搜索：aiRandomnessRange 控制近似同分动作的评分扰动", (
   game.aiRandomnessRange = 0;
   assert.equal(game.aiController.searchPolicy.chooseCandidate(beam).id, "first");
   const rolls = [0, 1];
-  game.random = () => rolls.shift();
+  game.aiController.searchPolicy.random = () => rolls.shift();
   game.aiRandomnessRange = .1;
   assert.equal(game.aiController.searchPolicy.chooseCandidate(beam).id, "second");
 });
@@ -11869,7 +11884,7 @@ test("AI·搜索：濒死救援存在与否使攻击候选价值反映生存后�
   attacker.hand.push(assault);
   rescuer.hand.push(recover);
   rescuer.expectedRecoverCount = 1;
-  const { game } = makeGame([attacker, target, rescuer]);
+  const { game } = makeGame([target, rescuer, attacker]);
   game.aiSearchNodeBudgetOverride = 1;
   game.aiRandomnessRange = 0;
   game.aiController.knowledge.sampleHiddenWorlds = () => [];
@@ -12110,6 +12125,7 @@ test("AI·突袭：共用突袭模拟消费破势与孤注并保留濒死救援�
   const simulator = new Simulator({ players: [] }),
     source = {
       id: "source",
+      seatIndex: 0,
       battleTeam: "dawn",
       alive: true,
       hp: 4,
@@ -12121,6 +12137,7 @@ test("AI·突袭：共用突袭模拟消费破势与孤注并保留濒死救援�
     },
     target = {
       id: "target",
+      seatIndex: 1,
       battleTeam: "dusk",
       alive: true,
       hp: 5,
@@ -12135,10 +12152,11 @@ test("AI·突袭：共用突袭模拟消费破势与孤注并保留濒死救援�
   assert.equal(source.exposeWeaknessStacks, 0);
   assert.equal(source.assaultBonus, 0);
   const killer = {
-    id: "killer", battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, handCount: 0, attackUsed: 0
+    id: "killer", seatIndex: 0, battleTeam: "dawn", alive: true, hp: 4, maxHp: 4, handCount: 0, attackUsed: 0
   },
     victim = {
       id: "victim",
+      seatIndex: 1,
       battleTeam: "dusk",
       alive: true,
       hp: 1,
@@ -12154,6 +12172,7 @@ test("AI·突袭：共用突袭模拟消费破势与孤注并保留濒死救援�
   assert.equal(killer.handCount, GAME_CONFIG.killRewardDrawCount);
   const rescuedAttacker = {
     id: "rescued-attacker",
+    seatIndex: 0,
     battleTeam: "dawn",
     alive: true,
     hp: 4,
@@ -12163,6 +12182,7 @@ test("AI·突袭：共用突袭模拟消费破势与孤注并保留濒死救援�
   },
     rescued = {
       id: "rescued",
+      seatIndex: 1,
       battleTeam: "dusk",
       alive: true,
       hp: 1,
@@ -12174,6 +12194,7 @@ test("AI·突袭：共用突袭模拟消费破势与孤注并保留濒死救援�
     },
     rescuer = {
       id: "rescuer",
+      seatIndex: 2,
       generalId: "spirit-medic",
       battleTeam: "dusk",
       alive: true,
@@ -14841,6 +14862,7 @@ test("AI·装备：雷达与回收站效果按装备存在概率加权", () => {
       players: [
         {
           id: "a",
+          seatIndex: 0,
           battleTeam: "dawn",
           alive: true,
           hp: 4,
@@ -14852,6 +14874,7 @@ test("AI·装备：雷达与回收站效果按装备存在概率加权", () => {
         },
         {
           id: "b",
+          seatIndex: 1,
           battleTeam: "dusk",
           alive: true,
           hp: 4,
@@ -14880,6 +14903,7 @@ test("AI·装备：雷达与回收站效果按装备存在概率加权", () => {
     players: [
       {
         id: "r",
+        seatIndex: 0,
         battleTeam: "dawn",
         alive: true,
         hp: 4,
@@ -14915,6 +14939,7 @@ test("AI·装备：掠夺破坏窃取与主动装备均通过统一装备状态�
     },
     target = {
       id: "target",
+      seatIndex: 1,
       battleTeam: "dusk",
       generalId: "oath-warden",
       handCount: 0,
@@ -15081,6 +15106,7 @@ test("AI·回收站：触发期望严格封顶2次", () => {
     players: [
       {
         id: "r",
+        seatIndex: 0,
         battleTeam: "dawn",
         alive: true,
         hp: 4,
@@ -15215,6 +15241,7 @@ test("AI·雷达：按判定牌类型计算格挡消耗并保持手牌非负", (
       players: [
         {
           id: "a",
+          seatIndex: 0,
           battleTeam: "dawn",
           alive: true,
           hp: 4,
@@ -15226,6 +15253,7 @@ test("AI·雷达：按判定牌类型计算格挡消耗并保持手牌非负", (
         },
         {
           id: "b",
+          seatIndex: 1,
           battleTeam: "dusk",
           alive: true,
           hp: 4,
@@ -16037,6 +16065,7 @@ test("AI·雷达：默认概率：动态类别密度且耗尽类别为零", () =
       players: [
         {
           id: "a",
+          seatIndex: 0,
           battleTeam: "dawn",
           alive: true,
           hp: 4,
@@ -19638,6 +19667,7 @@ test("AI·影客：模拟窃取装备时只增加手牌且保持影客当前装�
 test("AI·影客：窥隙在目标濒死获救后仍结算且救援失败不结算", () => {
   const spy = {
     id: "ai-rescue-spy",
+    seatIndex: 0,
     generalId: "shade-agent",
     battleTeam: "dawn",
     alive: true,
@@ -19668,6 +19698,7 @@ test("AI·影客：窥隙在目标濒死获救后仍结算且救援失败不结�
   assert.ok(Array.isArray(rescued.knownCards), "获救后窥隙应写入概率已知牌状态");
   const deadSpy = {
     id: "ai-dead-spy",
+    seatIndex: 0,
     generalId: "shade-agent",
     battleTeam: "dawn",
     alive: true,
@@ -23168,7 +23199,7 @@ test("AI·反制先验：丰收摸两张并叠加两次新牌反制先验", () =
     }
   );
   const state = {
-    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", {})]
+    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", { seatIndex: 1 })]
   };
   const next = new Simulator(
     state
@@ -23187,7 +23218,7 @@ test("AI·反制先验：旧反制消费后再丰收只产生新牌先验", () =
   const actor = counterDrawActor(
     { handCount: 2, hand: [{ id: "c", definitionId: "counter" }, { id: "h", definitionId: "harvest" }] }
   );
-  const state = { players: [actor, counterPlayer("e", "dusk", {})] };
+  const state = { players: [actor, counterPlayer("e", "dusk", { seatIndex: 1 })] };
   const simulator = new Simulator(state);
   simulator.consumeTargetCounterResponseWorlds(
     state, actor, [{ probability: 1, conditions: {}, occurs: true }], 1
@@ -23217,7 +23248,7 @@ test("AI·反制先验：40%概率丰收两张共享同一效果世界", () => {
     }
   );
   const state = {
-    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", {})]
+    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", { seatIndex: 1 })]
   };
   const next = new Simulator(
     state
@@ -23248,7 +23279,7 @@ test("AI·反制先验：回收站前两次战术各摸一张第三次不触发"
     }
   );
   const state = {
-    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", {})]
+    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", { seatIndex: 1 })]
   };
   const simulator = new Simulator(state);
   let next = simulator.apply(
@@ -23287,7 +23318,7 @@ test("AI·反制先验：击杀奖励为新牌叠加反制先验", () => {
   const enemy = counterPlayer(
     "e",
     "dusk",
-    { handCount: 0, hp: 1, blockProbability: 0, expectedRecoverCount: 0, assaultResponseProbability: 0 }
+    { seatIndex: 1, handCount: 0, hp: 1, blockProbability: 0, expectedRecoverCount: 0, assaultResponseProbability: 0 }
   );
   const state = { remainingCardCounts: { counter: 1, charge: 1 }, players: [attacker, enemy] };
   const next = new Simulator(
@@ -23311,7 +23342,7 @@ test("AI·反制先验：赌命被动摸牌增加反制先验", () => {
     }
   );
   const state = {
-    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", {})]
+    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", { seatIndex: 1 })]
   };
   const next = new Simulator(
     state
@@ -23332,7 +23363,7 @@ test("AI·反制先验：主动技能孤注摸牌增加反制先验", () => {
     }
   );
   const state = {
-    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", {})]
+    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", { seatIndex: 1 })]
   };
   const simulator = new Simulator(state);
   simulator.applySkill(
@@ -23363,7 +23394,7 @@ test("AI·反制先验：40%概率主动孤注只在发动世界增加反制", (
     }
   );
   const state = {
-    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", {})]
+    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", { seatIndex: 1 })]
   };
   const simulator = new Simulator(state);
   simulator.applySkill(
@@ -23403,7 +23434,7 @@ test("AI·反制先验：旧反制消费后主动孤注只产生新牌先验", (
       maxEnergy: 4
     }
   );
-  const state = { players: [actor, counterPlayer("e", "dusk", {})] };
+  const state = { players: [actor, counterPlayer("e", "dusk", { seatIndex: 1 })] };
   const simulator = new Simulator(state);
   simulator.consumeTargetCounterResponseWorlds(
     state, actor, [{ probability: 1, conditions: {}, occurs: true }], 1
@@ -23443,7 +23474,7 @@ test("AI·反制先验：主动孤注摸牌数跟随能量条件世界", () => {
     { probability: .5, conditions: { energyWorld: "three" }, amount: 3 }
   ];
   const state = {
-    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", {})]
+    remainingCardCounts: { counter: 1, charge: 1 }, players: [actor, counterPlayer("e", "dusk", { seatIndex: 1 })]
   };
   const simulator = new Simulator(state);
   simulator.applySkill(
@@ -23614,10 +23645,12 @@ test("AI·反制先验：已知牌移动不按匿名根先验重复增加反制"
 test("AI·反制容量：card-scope 取消概率与容量消费复用同一组响应评估", () => {
   const actor = counterPlayer("reuse-a", "dawn", { handCount: 1 });
   const first = counterPlayer("reuse-b", "dusk", {
+    seatIndex: 1,
     handCount: 1,
     counterCountDistribution: [{ probability: 1, conditions: {}, counterCount: 1 }]
   });
   const second = counterPlayer("reuse-c", "dusk", {
+    seatIndex: 2,
     handCount: 1,
     counterCountDistribution: [{ probability: 1, conditions: {}, counterCount: 1 }]
   });
@@ -26525,9 +26558,10 @@ test("AI·资源身份：Planner 描述不保存转移候选身份", () => {
 
 test("AI·资源身份：确定性破坏已知 counter 移除身份并重算反制概率", () => {
   const simulator = new Simulator({ players: [] });
-  const actor = { id: "a", battleTeam: "dawn", generalId: "blade-walker" };
+  const actor = { id: "a", seatIndex: 0, battleTeam: "dawn", generalId: "blade-walker" };
   const target = {
     id: "t",
+    seatIndex: 1,
     battleTeam: "dusk",
     generalId: "oath-warden",
     handCount: 1,
@@ -26578,9 +26612,10 @@ test("AI·资源身份：确定性掠夺已知 assault 后可在下一层生成�
 
 test("AI·资源身份：部分概率破坏保留已知牌剩余可用概率且不确定化", () => {
   const simulator = new Simulator({ players: [] });
-  const actor = { id: "a", battleTeam: "dawn", generalId: "blade-walker" };
+  const actor = { id: "a", seatIndex: 0, battleTeam: "dawn", generalId: "blade-walker" };
   const target = {
     id: "t",
+    seatIndex: 1,
     battleTeam: "dusk",
     generalId: "oath-warden",
     handCount: 1,
@@ -27558,13 +27593,13 @@ test("AI·资源身份：纯 unknown 破坏/掠夺按剩余未知数量同步摘
 // ---- AI 剩余牌池 ----
 
 const makeRemainingKnowledge = (viewer, state = null) => {
-  const game = {
-    state: state ?? {
-      deck: { discardPile: [], resolvingCards: [], judgmentZone: [] }, players: [], publicCardPool: []
-    },
-    random: () => 0
+  const resolvedState = state ?? {
+    deck: { discardPile: [], resolvingCards: [], judgmentZone: [] }, players: [], publicCardPool: []
   };
-  return new Knowledge(game);
+  return new Knowledge({
+    getState: () => resolvedState,
+    random: () => 0
+  });
 };
 
 test("AI·剩余牌池：空公开状态返回完整计数", () => {
@@ -27891,7 +27926,7 @@ test("AI·剩余牌池：隐藏世界抽样 sampleHiddenWorlds：计数归零后
   const viewer = { id: "v", hand: [], aiMemory: { knownCardsByPlayer: {} } };
   const counts = { assault: 1, counter: 1, block: 5 };
   const knowledge = makeRemainingKnowledge(viewer);
-  knowledge.game.random = () => 0.15;
+  knowledge.random = () => 0.15;
   const worlds = knowledge.sampleHiddenWorlds(
     viewer,
     { remainingCardCounts: counts, players: [viewer, { id: "e1", handCount: 2, knownCards: [] }] },
@@ -31285,6 +31320,7 @@ test("AI·资源选择：破坏模拟区域选择随目标角色变化", () => {
       players: [
         {
           id: "a",
+          seatIndex: 0,
           battleTeam: "dawn",
           generalId: "blade-walker",
           alive: true,
@@ -31486,6 +31522,7 @@ test("AI·资源选择：破坏模拟不读取目标隐藏 hand 实体定义", (
       players: [
         {
           id: "a",
+          seatIndex: 0,
           battleTeam: "dawn",
           generalId: "blade-walker",
           alive: true,
@@ -31597,6 +31634,7 @@ test("AI·资源选择：破坏模拟 scale 三档：手牌与装备", () => {
       players: [
         {
           id: "a",
+          seatIndex: 0,
           battleTeam: "dawn",
           generalId: "blade-walker",
           alive: true,
@@ -31637,6 +31675,7 @@ test("AI·资源选择：破坏模拟 scale 三档：手牌与装备", () => {
       players: [
         {
           id: "a",
+          seatIndex: 0,
           battleTeam: "dawn",
           generalId: "blade-walker",
           alive: true,
@@ -42905,6 +42944,378 @@ async function frArch12AiDomainModelOwnership() {
 }
 
 test("FR-ARCH-12·AI domain models：AI MODEL NOT DOMAIN RULE AUTHORITY", frArch12AiDomainModelOwnership);
+
+
+// ==================== FR-ARCH-13 Main-Thread Boundary Tests ====================
+
+/*
+功能
+验证 FR12 carry-ins：根目录残片已删除且 guard 存在，canonical roster 不再被 AI projection 静默重编号。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+文件系统与 checker/production source。
+
+写入状态
+无。
+
+调用函数
+access、readFile、projectCanonicalSeatRoster、Domain seat-order rules。
+
+边界与不变量
+非 canonical roster 必须 fail fast；full roster 含 dead player 仍合法。
+*/
+async function frArch13CarryInRosterAndRootArtifacts() {
+  for (const file of ["AI", "application", "transitions"]) {
+    await assert.rejects(access(projectFile(file)), /ENOENT/);
+  }
+  const checkerSource = await readFile(projectFile("tools/check-code-quality.mjs"), "utf8");
+  assert.match(checkerSource, /ACCIDENTAL_ROOT_ARTIFACTS/);
+  assert.match(checkerSource, /accidentalRootArtifacts/);
+
+  const { projectCanonicalSeatRoster } = await import("../js/ai/state/RuleProjection.js?build=20260815-shadow-agent-p1-slot");
+  const { getCounterResponderOrder, getDyingRescueResponderOrder } = await import("../js/domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot");
+  const { nextLightningReceiverId } = await import("../js/domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot");
+  const player = (id, seatIndex, alive = true) => ({
+    id, seatIndex, alive, battleTeam: id === "d" ? "dusk" : "dawn",
+    hp:4, maxHp:4, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:0,
+    equipmentDefinitionId:null, statuses:[]
+  });
+  const canonical = projectCanonicalSeatRoster([player("a", 0), player("b", 1), player("c", 2)]);
+  assert.deepEqual(canonical.map((entry) => entry.seatIndex), [0, 1, 2]);
+  projectCanonicalSeatRoster([player("dead", 0, false), player("b", 1)]);
+  assert.throws(() => projectCanonicalSeatRoster([player("b", 1), player("a", 0), player("c", 2)]), /canonical roster/);
+  assert.throws(() => projectCanonicalSeatRoster([player("a", 0), player("b", 0)]), /canonical roster/);
+  assert.throws(() => projectCanonicalSeatRoster([player("a", 0), player("c", 2)]), /canonical roster/);
+  assert.throws(
+    () => projectCanonicalSeatRoster(
+      [player("dead", 0, false), player("b", 1), player("c", 2)].filter((entry) => entry.alive)
+    ),
+    /canonical roster/
+  );
+  assert.equal(nextLightningReceiverId(canonical, "a"), "b");
+  assert.deepEqual(getCounterResponderOrder(canonical, "a"), ["b", "c"]);
+  assert.deepEqual(getDyingRescueResponderOrder(canonical, "b"), ["b", "c", "a"]);
+}
+
+test("FR-ARCH-13·carry-in：root artifacts 删除，canonical seat roster authoritative/fail-fast", frArch13CarryInRosterAndRootArtifacts);
+
+/*
+功能
+验证 SearchRequest 是 structured-clone-safe、data-only 且不含隐藏实体或 runtime capability。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchRequest contract 与生产 Visible/Search 投影。
+
+写入状态
+测试 Game。
+
+调用函数
+createSearchRequest、searchRequestViolations、structuredClone。
+
+边界与不变量
+clone 前后语义相等；敌方真实 hand definition 不得进入 request。
+*/
+async function frArch13SearchRequestContract() {
+  const { createSearchRequest, searchRequestViolations } = await import("../js/ai/search/SearchRequest.js?build=20260815-shadow-agent-p1-slot");
+  const actor = makePlayer("sr-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("sr-enemy", 1, "dusk", "ai", 1);
+  const secret = instance("harvest");
+  enemy.hand.push(secret);
+  const { game } = makeGame([actor, enemy]);
+  const searchState = createInitialSearchState(actor.id, game.state, { assault: 1 });
+  const request = createSearchRequest({
+    requestId:"sr-1",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState,
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:{ seed:7, algorithm:"lcg", draws:0 },
+    rootActionDescriptors:[{ type:"end", cardId:null, cardInstanceId:null, targetId:null, targetIds:[], selection:null }]
+  });
+  const cloned = structuredClone(request);
+  assert.deepEqual(cloned, request);
+  assert.deepEqual(searchRequestViolations(cloned), []);
+  const text = JSON.stringify(cloned);
+  assert.equal(text.includes(secret.id), false);
+  assert.equal(text.includes(secret.definitionId), false);
+  assert.equal(typeof cloned.random, "undefined");
+  assert.equal(cloned.searchState.players.find((player) => player.id === enemy.id)?.hand, undefined);
+}
+
+test("FR-ARCH-13·SearchRequest：structured clone / data-only / no hidden leak", frArch13SearchRequestContract);
+
+/*
+功能
+验证 AIController result acceptance 的 session/stateVersion/actor/phase/rebind 拒绝语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产 AIController boundary 与当前 Game state。
+
+写入状态
+测试 Game stateVersion/phase/hand。
+
+调用函数
+createSearchRequest、acceptSearchResult、bumpStateVersion。
+
+边界与不变量
+任一失败只能返回安全 end；合法 descriptor 必须在当前 Domain-legal set rebind。
+*/
+async function frArch13StaleResultRejection() {
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260815-shadow-agent-p1-slot");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260815-shadow-agent-p1-slot");
+  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260815-shadow-agent-p1-slot");
+  const actor = makePlayer("stale-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("stale-enemy", 1, "dusk", "ai", 1);
+  const card = instance("assault");
+  actor.hand.push(card);
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  const controller = game.aiController;
+  const makeRequest = () => createSearchRequest({
+    requestId:controller.createId("stale-test"),
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
+    searchConfig:controller.buildSearchConfig(),
+    rng:controller.searchRng.snapshot(),
+    rootActionDescriptors:controller.getActionCandidates(actor).map(ActionDescriptor.describe)
+  });
+  const action = controller.getActionCandidates(actor).find((entry) => entry.card?.id === card.id);
+  assert.ok(action);
+  const request = makeRequest();
+  const accepted = controller.acceptSearchResult({
+    request,
+    action,
+    plannedSequence:[action],
+    stats:{ stopReason:"COMPLETE" }
+  });
+  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.equal(accepted.action.card.id, card.id);
+
+  bumpStateVersion(game.state);
+  const stale = controller.acceptSearchResult({ request, action, plannedSequence:[], stats:null });
+  assert.equal(stale.result.status, SEARCH_RESULT_STATUS.STALE_VERSION);
+  assert.equal(stale.action.type, "end");
+  bumpStateVersion(game.state);
+  const freshRequest = makeRequest();
+  game.state.isDisposed = true;
+  const invalidSession = controller.acceptSearchResult({
+    request:freshRequest, action, plannedSequence:[], stats:null
+  });
+  assert.equal(invalidSession.result.status, SEARCH_RESULT_STATUS.INVALID_SESSION);
+  assert.equal(invalidSession.action.type, "end");
+  game.state.isDisposed = false;
+
+  const versionNow = game.state.stateVersion;
+  const validAgain = makeRequest();
+  assert.equal(validAgain.stateVersion, versionNow);
+  actor.alive = false;
+  const deadActor = controller.acceptSearchResult({ request:validAgain, action, plannedSequence:[], stats:null });
+  assert.equal(deadActor.result.status, SEARCH_RESULT_STATUS.INVALID_ACTOR);
+  assert.equal(deadActor.action.type, "end");
+  actor.alive = true;
+
+  const phaseNowRequest = makeRequest();
+  game.state.phase = "discard";
+  const wrongPhase = controller.acceptSearchResult({ request:phaseNowRequest, action, plannedSequence:[], stats:null });
+  assert.equal(wrongPhase.result.status, SEARCH_RESULT_STATUS.INVALID_PHASE);
+  assert.equal(wrongPhase.action.type, "end");
+  game.state.phase = "play";
+
+  const movedRequest = makeRequest();
+  actor.hand = [];
+  const moved = controller.acceptSearchResult({ request:movedRequest, action, plannedSequence:[], stats:null });
+  assert.equal(moved.result.status, SEARCH_RESULT_STATUS.INVALID_ACTION);
+  assert.equal(moved.action.type, "end");
+}
+
+test("FR-ARCH-13·stale validation：session/stateVersion/actor/phase/rebind 全拒绝", frArch13StaleResultRejection);
+
+/*
+功能
+验证 queued planned sequence 在自身 action commit bump stateVersion 后仍按 current-state rebind，非法项返回 null。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+AIController resolvePlannedAction 与 Domain candidate set。
+
+写入状态
+测试 Game stateVersion 与手牌。
+
+调用函数
+bumpStateVersion。
+
+边界与不变量
+第一项执行后的 version 变化不得让第二项必然 stale；失效动作只返回 null，由 TurnWorkflow 清空 plan。
+*/
+async function frArch13PlannedSequenceReuse() {
+  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260815-shadow-agent-p1-slot");
+  const actor = makePlayer("plan-actor", 0, "dawn", "ai", 2);
+  const enemy = makePlayer("plan-enemy", 1, "dusk", "ai", 1);
+  const charge = instance("charge");
+  actor.hand.push(charge);
+  const { game } = makeGame([actor, enemy]);
+  const descriptor = ActionDescriptor.describe({ type:"card", card:charge, targets:[] });
+  const first = game.aiController.resolvePlannedAction(actor, descriptor);
+  assert.equal(first?.card?.id, charge.id);
+  bumpStateVersion(game.state);
+  const second = game.aiController.resolvePlannedAction(actor, descriptor);
+  assert.equal(second?.card?.id, charge.id, "queued plan 第二项不得因 stateVersion 变化而必然 stale");
+  actor.hand = [];
+  assert.equal(game.aiController.resolvePlannedAction(actor, descriptor), null);
+}
+
+test("FR-ARCH-13·planned sequence：current-state rebind 与 version 变化共存", frArch13PlannedSequenceReuse);
+
+/*
+功能
+验证 AI Search RNG 与真实 Game RNG 隔离且固定 seed 可复现。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game random、AIController selectAction 与 Planner stats。
+
+写入状态
+测试 Game 与 SearchRng。
+
+调用函数
+SearchRng、selectAction。
+
+边界与不变量
+纯 AI search 不推进 real random；相同 AI seed 产生相同 descriptor。
+*/
+async function frArch13RngIsolation() {
+  const actor = makePlayer("rng-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("rng-enemy", 1, "dusk", "ai", 1);
+  let realCalls = 0;
+  const realRandom = () => { realCalls += 1; return .5; };
+  const { game } = makeGame([actor, enemy], { random: realRandom });
+  game.aiController.searchRng = new SearchRng(7);
+  game.aiRandomnessRange = 0;
+  const before = realCalls;
+  await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+  assert.equal(realCalls, before, "AI search 不得推进真实 Game RNG");
+
+  const firstGame = makeGame([actor, enemy]).game;
+  const secondGame = makeGame([actor, enemy]).game;
+  firstGame.aiController.searchRng = new SearchRng(11);
+  secondGame.aiController.searchRng = new SearchRng(11);
+  firstGame.aiRandomnessRange = 0;
+  secondGame.aiRandomnessRange = 0;
+  const firstAction = await firstGame.aiController.selectAction(firstGame.state.players[0], { gameId: firstGame.state.gameId });
+  const secondAction = await secondGame.aiController.selectAction(secondGame.state.players[0], { gameId: secondGame.state.gameId });
+  assert.deepEqual(ActionDescriptor.describe(firstAction), ActionDescriptor.describe(secondAction));
+}
+
+test("FR-ARCH-13·RNG isolation：AI search RNG 与 real RNG 分离且 fixed-seed 可复现", frArch13RngIsolation);
+
+/*
+功能
+验证 cancelled / session-invalid search result 永远不返回真实执行 action。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+AIController acceptSearchResult 与 SearchResult contract。
+
+写入状态
+测试 request/result。
+
+调用函数
+createSearchRequest、acceptSearchResult。
+
+边界与不变量
+cancelled/invalid 只允许安全 end，不执行真实 Card/Player。
+*/
+async function frArch13CancellationContract() {
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260815-shadow-agent-p1-slot");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260815-shadow-agent-p1-slot");
+  const actor = makePlayer("cancel-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("cancel-enemy", 1, "dusk", "ai", 1);
+  const card = instance("assault");
+  actor.hand.push(card);
+  const { game } = makeGame([actor, enemy]);
+  const request = createSearchRequest({
+    requestId:game.aiController.createId("cancel"),
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActionDescriptors:game.aiController.getActionCandidates(actor).map(ActionDescriptor.describe)
+  });
+  const action = game.aiController.getActionCandidates(actor)[0];
+  const cancelled = game.aiController.acceptSearchResult({
+    request,
+    action,
+    plannedSequence:[],
+    stats:{ stopReason:"CANCELLED" }
+  });
+  assert.equal(cancelled.result.status, SEARCH_RESULT_STATUS.CANCELLED);
+  assert.equal(cancelled.action.type, "end");
+  assert.equal(cancelled.action.card, undefined);
+}
+
+test("FR-ARCH-13·cancellation：cancelled result 不执行真实 action", frArch13CancellationContract);
 
 // ==================== Test Runner 最终执行 ====================
 

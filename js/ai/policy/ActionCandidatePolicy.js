@@ -15,7 +15,7 @@ state/Probability。
 只使用公开状态、观察者自身手牌与 SearchState availability，不读取敌方未知牌面。
 
 架构约束
-不调用 RuleEngine 定义合法性，不依赖 Planner/Controller/UI，也不构造 Simulator。
+不调用 Domain CardRules 定义合法性，不依赖 Planner/Controller/UI，也不构造 Simulator。
 */
 import {
   PROBABILITY_EPSILON,
@@ -191,7 +191,7 @@ export class ActionCandidatePolicy {
 
   /*
   功能
-  从 RuleEngine 已确认合法的卡牌目标中应用既有敌我候选偏好。
+  从 Domain CardRules 已确认合法的卡牌目标中应用既有敌我候选偏好。
 
   调用方
   ActionGenerator 根/深层卡牌枚举。

@@ -171,7 +171,8 @@ async function runOneGame(Game, index, config) {
 
   try {
     const random = makeRandom(config.seedBase ^ (index * GOLDEN_RATIO_32));
-    game = new Game(createHeadlessUi(), random);
+    const aiSearchSeed = (config.seedBase ^ (index * 0x9e3779b9)) >>> 0;
+    game = new Game(createHeadlessUi(), random, { aiSearchSeed });
     game.simulationMode = true;
     game.animationFastMode = true;
     game.aiSearchNodeBudgetOverride = config.searchNodeBudget;

@@ -1,6 +1,6 @@
 /*
 模块职责
-为单局 Game 组合 human/AI peer Choice adapters，并按 participant metadata 路由到对应 port；这是 composition-owned router，不是 service locator。
+为单局 Game 组合 human/AI peer Choice adapters，并按 participant metadata 路由到对应 port；这是窄 composition bridge，不是 service locator。
 
 上游
 Game 构造函数。
@@ -9,13 +9,13 @@ Game 构造函数。
 application/choice、application/ports 与 adapters/ui、adapters/ai。
 
 状态边界
-只读 game.state.players 的 controllerType/identity；不写状态。
+只读显式注入的 state players；不写状态。
 
 信息边界
 不在 ChoiceRequest 中放入实体；adapter 内部 legacy rebind 由本模块提供窄闭包。
 
 架构约束
-最终 owner 是 composition wiring；当前 Game 仍是单局 composition root，所以物理上暂留此 bridge。main.js 成为唯一 composition root 时删除本文件。允许导入 concrete adapters；application/choice 仍禁止 concrete adapter import。
+不接收或回读 Game；所有 concrete capability 由 composition root 显式注入。FR-ARCH-15 删除条件：Game 不再是 composition owner，main.js 接管本文件全部 wiring 时删除。
 */
 import { createChoiceCoordinator } from "../application/choice/ChoiceCoordinator.js?build=20260815-shadow-agent-p1-slot";
 import { createChoicePort, createChoiceResult } from "../application/ports/ChoicePort.js?build=20260815-shadow-agent-p1-slot";
@@ -32,13 +32,13 @@ import { getAiDelay } from "../utils/aiTiming.js?build=20260815-shadow-agent-p1-
 Game 构造函数。
 
 输入
-game、choiceContexts registry 与可选外部注入 choicePort。
+dependencies（state/ui/choiceContexts/AI capability/lifecycle）与可选外部注入 choicePort。
 
 输出
 { choicePort, choiceCoordinator }。
 
 读取状态
-game.state.players 与 game.ui/aiController 门面。
+显式注入 state players 与 ui/AI capability。
 
 写入状态
 无。
@@ -49,32 +49,43 @@ createUiChoiceAdapter、createAiChoiceAdapter、createChoicePort、createChoiceC
 边界与不变量
 外部注入 port 优先；否则按 controllerType 路由；未知 actor 返回 cancelled。
 */
-export function createGameChoiceBoundary(game, choiceContexts, injectedPort = null) {
+export function createGameChoiceBoundary(dependencies, injectedPort = null) {
+  const {
+    state,
+    ui,
+    choiceContexts,
+    isSessionValid,
+    shouldRespond,
+    choosePublicCard,
+    chooseDiscards,
+    cleanupDelay,
+    getAiResponseDelay
+  } = dependencies;
   if (injectedPort) {
     const choicePort = createChoicePort(injectedPort);
     return { choicePort, choiceCoordinator: createChoiceCoordinator(choicePort) };
   }
   const humanPort = createChoicePort(createUiChoiceAdapter({
-    requestResponse: (request, label) => game.ui.requestResponse(request, label),
-    requestPublicCard: (player, cards) => game.ui.requestPublicCard?.(player, cards),
-    requestDiscard: (player, count, prompt) => game.ui.requestDiscard(player, count, prompt),
-    requestTarget: (players, prompt, meta) => game.ui.requestTarget(players, prompt, meta),
+    requestResponse: (request, label) => ui.requestResponse(request, label),
+    requestPublicCard: (player, cards) => ui.requestPublicCard?.(player, cards),
+    requestDiscard: (player, count, prompt) => ui.requestDiscard(player, count, prompt),
+    requestTarget: (players, prompt, meta) => ui.requestTarget(players, prompt, meta),
     getLegacyContext: (requestId) => choiceContexts.get(requestId),
-    isSessionValid: (gameId) => game.isSessionValid(gameId)
+    isSessionValid
   }));
   const rawAiPort = createChoicePort(createAiChoiceAdapter({
     getLegacyContext: (requestId) => choiceContexts.get(requestId),
-    shouldRespond: (responder, type, context, cards) => game.aiController.shouldRespond(responder, type, context, cards),
-    choosePublicCard: (player, cards) => game.aiController.choosePublicCard(player, cards),
-    chooseDiscards: (player, count) => game.aiController.chooseDiscards(player, count),
-    isSessionValid: (gameId) => game.isSessionValid(gameId)
+    shouldRespond,
+    choosePublicCard,
+    chooseDiscards,
+    isSessionValid
   }));
   const aiPort = createChoicePort(createAiResponseTimingDecorator(rawAiPort, {
-    getPlayer: (actorId) => game.state.players.find((player) => player.id === actorId),
-    setThinking: (isThinking, player, message) => game.ui.setThinking(isThinking, player, message),
-    delay: async () => game.cleanupManager.delay(getAiDelay(game, "response")),
-    setPrompt: (message) => game.ui.setPrompt(message),
-    isSessionValid: (gameId) => game.isSessionValid(gameId)
+    getPlayer: (actorId) => state.players.find((player) => player.id === actorId),
+    setThinking: (isThinking, player, message) => ui.setThinking(isThinking, player, message),
+    delay: async () => cleanupDelay(getAiResponseDelay()),
+    setPrompt: (message) => ui.setPrompt(message),
+    isSessionValid
   }));
   const choicePort = createChoicePort({
     /*
@@ -91,7 +102,7 @@ export function createGameChoiceBoundary(game, choiceContexts, injectedPort = nu
     Promise<canonical ChoiceResult>。
 
     读取状态
-    game.state.players 的 id/controllerType。
+    state.players 的 id/controllerType。
 
     写入状态
     无。
@@ -103,7 +114,7 @@ export function createGameChoiceBoundary(game, choiceContexts, injectedPort = nu
     不是 service locator；未知 actor 返回 cancelled。
     */
     async request(choiceRequest) {
-      const actor = game.state.players.find((player) => player.id === choiceRequest?.actorId);
+      const actor = state.players.find((player) => player.id === choiceRequest?.actorId);
       if (!actor) return createChoiceResult("cancelled", { reason:"unknown-actor" });
       const port = actor.controllerType === "human" ? humanPort : aiPort;
       return port.request(choiceRequest);

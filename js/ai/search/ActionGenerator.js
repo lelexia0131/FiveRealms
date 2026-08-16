@@ -68,7 +68,7 @@ export class ActionGenerator {
   AIController 组合根与直接独立性测试。
 
   输入
-  Game 规则上下文，以及包含 chooseTransferCombination 的依赖对象。
+  getRootContext 窄能力与包含 chooseTransferCombination 的依赖对象。
 
   输出
   可生成根与深层动作的 ActionGenerator；缺少依赖时立即抛错。
@@ -77,7 +77,7 @@ export class ActionGenerator {
   无。
 
   写入状态
-  实例 game 与转移选择能力。
+  实例 getRootContext 与转移选择能力。
 
   调用函数
   无。
@@ -85,12 +85,15 @@ export class ActionGenerator {
   边界与不变量
   只保存具体能力，不接收或查找 AIController。
   */
-  constructor(game, {
+  constructor({
+    getRootContext,
     chooseTransferCombination,
     transferPolicy,
     actionCandidatePolicy
   } = {}) {
-    if (!game) throw new TypeError("ActionGenerator 缺少依赖：game");
+    if (typeof getRootContext !== "function") {
+      throw new TypeError("ActionGenerator 缺少依赖：getRootContext");
+    }
     if (typeof chooseTransferCombination !== "function") {
       throw new TypeError("ActionGenerator 缺少依赖：chooseTransferCombination");
     }
@@ -102,7 +105,7 @@ export class ActionGenerator {
     if (typeof resolvedActionCandidatePolicy.isLightningStrategicallyForbidden !== "function") {
       throw new TypeError("ActionGenerator 缺少依赖：actionCandidatePolicy");
     }
-    this.game = game;
+    this.getRootContext = getRootContext;
     this.chooseTransferCombination = chooseTransferCombination;
     this.transferPolicy = resolvedTransferPolicy;
     this.actionCandidatePolicy = resolvedActionCandidatePolicy;
@@ -392,13 +395,13 @@ export class ActionGenerator {
   generate 根枚举。
 
   输入
-  Game、source 与 Domain skill definition。
+  root context、source 与 Domain skill definition。
 
   输出
   { ok, reason }。
 
   读取状态
-  Game 阶段、当前行动者与 source usage/energy。
+  root context 的 phase/currentPlayer 与 source usage/energy。
 
   写入状态
   无。
@@ -409,15 +412,15 @@ export class ActionGenerator {
   边界与不变量
   基础费用与次数公式只由 Domain SkillRules 解释；额外目标非空检查保留 legacy registry 行为。
   */
-  canUseSkillFromRule(game, source, skill) {
+  canUseSkillFromRule(rootContext, source, skill) {
     if (!skill?.id) return { ok:false, reason:"" };
-    const players = game?.state?.players ?? game?.players ?? [];
+    const players = rootContext?.state?.players ?? [];
     const used = getActiveSkillUseCount(source.turnFlags, skill.id);
     const decision = canUseSkillBase({
       players,
       sourceId: source.id,
-      currentPlayerId: game.currentPlayer?.id ?? game.state?.currentPlayerId ?? null,
-      phase: game.state?.phase ?? game.phase ?? "idle",
+      currentPlayerId: rootContext?.currentPlayer?.id ?? rootContext?.state?.currentPlayerId ?? null,
+      phase: rootContext?.state?.phase ?? rootContext?.phase ?? "idle",
       skill,
       used,
       limitPerTurn: skill.limitPerTurn ?? 1,
@@ -447,7 +450,7 @@ export class ActionGenerator {
   generateFromVisible。
 
   输入
-  过滤 simulation game、行动者、转移牌与 Belief remaining counts。
+  过滤 SearchState、行动者、转移牌与 Belief remaining counts。
 
   输出
   TransferPolicy 选择描述或 null。
@@ -464,8 +467,8 @@ export class ActionGenerator {
   边界与不变量
   Generator 只提供合法集合；正收益过滤和 tie-break 属正式 Policy，真实实体移动不在此发生。
   */
-  chooseVisibleTransferPlan(game, actor, card, remainingCardCounts = null) {
-    const players = game?.state?.players ?? game?.players ?? [];
+  chooseVisibleTransferPlan(state, actor, card, remainingCardCounts = null) {
+    const players = state?.players ?? [];
     const excludedCardIds = card.id ? new Set([card.id]) : null;
     const sources = this.getTransferSourcesFromRule(players, actor, card, excludedCardIds);
     return this.transferPolicy.choose({
@@ -502,8 +505,9 @@ export class ActionGenerator {
   边界与不变量
   Domain CardRules/SkillRules 独占确定性合法性，ActionCandidatePolicy 仅收窄 AI 会考虑的集合；保持既有枚举顺序与候选集合，转移只记录选择描述，不移动实体牌。
   */
-  generate(player) {
-    const players = this.game.state.players;
+  generate(player, rootContext = null) {
+    const context = rootContext ?? this.getRootContext();
+    const players = context.state.players;
     const actions = [];
     for (const card of player.hand) {
       const transferSourceIds = card.definitionId === "transfer"
@@ -513,8 +517,8 @@ export class ActionGenerator {
       const cardLegality = canPlayCard({
         players: this.projectPlayers(players),
         sourceId: player.id,
-        currentPlayerId: this.game.currentPlayer?.id ?? this.game.state?.currentPlayerId ?? null,
-        phase: this.game.state?.phase ?? this.game.phase ?? "idle",
+        currentPlayerId: context.currentPlayer?.id ?? context.state?.currentPlayerId ?? null,
+        phase: context.state?.phase ?? context.phase ?? "idle",
         card,
         inHand: Boolean(player.hand.includes(card) || player.hand.some((entry) => entry?.id === card?.id)),
         assaultUsage: projectAttackUsage(player),
@@ -561,7 +565,7 @@ export class ActionGenerator {
     }
     const skill = ACTIVE_SKILL_DEFINITIONS[player.general?.activeSkillIds?.[0] ?? ""] ?? null;
     if (skill
-      && this.canUseSkillFromRule(this.game, player, skill).ok
+      && this.canUseSkillFromRule(context, player, skill).ok
       && (skill.id !== "breakArmy"
         || this.actionCandidatePolicy.canBenefitFromBreakArmy(player))
       && !(skill.id === "allIn" && this.actionCandidatePolicy.isZeroBenefitAllIn(player))) {
@@ -600,7 +604,7 @@ export class ActionGenerator {
   Domain Card/Skill Rules、ActionCandidatePolicy、TransferPolicy、attachProbabilityBranches。
 
   边界与不变量
-  动态距离只使用实时 alive ring；Policy 过滤不改变 Game authority 的合法性定义。
+  动态距离只使用实时 alive ring；Policy 过滤不改变 Domain authority 的合法性定义。
   */
   generateFromVisible(state, playerId) {
     if (state.playPhaseEnded) return [];
@@ -608,7 +612,6 @@ export class ActionGenerator {
     if (!actor) return [{ type:"end" }];
     const alive = state.players.filter((player) => player.alive).sort((a,b) => a.seatIndex - b.seatIndex);
     // 深层规则输入是 SearchState canonical projection，Domain Rules 只接收 data-only facts。
-    const simulationGame = { state:{ players:state.players } };
     const enemies = alive.filter((player) => player.battleTeam !== actor.battleTeam);
     const actions = [];
     for (const held of actor.hand ?? []) {
@@ -630,7 +633,7 @@ export class ActionGenerator {
       if (card.definitionId === "recover" && (actor.hp >= actor.maxHp || (actor.recoverLimit !== null && actor.recoverUsed >= actor.recoverLimit))) continue;
       if (card.definitionId === "charge" && actor.energy >= actor.maxEnergy) continue;
       if (card.definitionId === "transfer") {
-        const selection = this.chooseVisibleTransferPlan(simulationGame, actor, card, state.remainingCardCounts ?? null);
+        const selection = this.chooseVisibleTransferPlan(state, actor, card, state.remainingCardCounts ?? null);
         if (selection) actions.push({ type:"card", card, targets:[], selection });
         continue;
       }
@@ -700,7 +703,7 @@ export class ActionGenerator {
       else for (const target of targets) actions.push({ type:"skill", skill, targets:[target] });
     }
     actions.push({ type:"end" });
-    return actions.map((action) => this.attachProbabilityBranches(simulationGame, actor, action))
+    return actions.map((action) => this.attachProbabilityBranches(state, actor, action))
       .filter(Boolean);
   }
 
@@ -712,7 +715,7 @@ export class ActionGenerator {
   attachProbabilityBranches。
 
   输入
-  过滤 simulation game、行动者与候选动作。
+  过滤 SearchState、行动者与候选动作。
 
   输出
   带 probability、conditions 与 matches 的条件分支。
@@ -729,7 +732,7 @@ export class ActionGenerator {
   边界与不变量
   这里只投影既有条件世界，不重新判断 Policy 价值或执行真实规则。
   */
-  getActionConditionPartition(game, actor, action) {
+  getActionConditionPartition(state, actor, action) {
     if (action.type === "skill") {
       if (action.skill.id === "hunt") {
         const target = action.targets?.[0];
@@ -748,7 +751,7 @@ export class ActionGenerator {
       }
       if (action.skill.rangeRule === "attack" || action.skill.rangeRule === "fixed") {
         const target = action.targets?.[0];
-        return getRangeConditionBranches(game, {
+        return getRangeConditionBranches({ state }, {
           source:actor,
           target,
           range:action.skill.rangeRule === "attack" ? actor.attackRange : action.skill.range
@@ -766,7 +769,7 @@ export class ActionGenerator {
       }));
     }
     if (card.definitionId === "seal") {
-      const target = game.state.players.find((player) => player.id === action.targets?.[0]?.id);
+      const target = state.players.find((player) => player.id === action.targets?.[0]?.id);
       return getSealStatusStateBranches(target).map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
@@ -774,17 +777,17 @@ export class ActionGenerator {
       }));
     }
     if (card.definitionId === "transfer") {
-      const source = game.state.players.find((player) => player.id === action.selection?.sourceId);
-      const receiver = game.state.players.find((player) => player.id === action.selection?.receiverId);
-      return getRangeConditionBranches(game, [
+      const source = state.players.find((player) => player.id === action.selection?.sourceId);
+      const receiver = state.players.find((player) => player.id === action.selection?.receiverId);
+      return getRangeConditionBranches({ state }, [
         { source:actor, target:source, range:card.effectRange },
         { source:actor, target:receiver, range:card.effectRange }
       ]);
     }
     if (card.definitionId === "leverage") {
-      const first = game.state.players.find((player) => player.id === action.selection?.firstTargetId);
-      const second = game.state.players.find((player) => player.id === action.selection?.secondTargetId);
-      return getRangeConditionBranches(game, {
+      const first = state.players.find((player) => player.id === action.selection?.firstTargetId);
+      const second = state.players.find((player) => player.id === action.selection?.secondTargetId);
+      return getRangeConditionBranches({ state }, {
         source:first,
         target:second,
         range:first?.attackRange ?? 1
@@ -798,14 +801,14 @@ export class ActionGenerator {
     }
     const target = action.targets?.[0];
     if (card.definitionId === "assault" && target) {
-      return getRangeConditionBranches(game, {
+      return getRangeConditionBranches({ state }, {
         source:actor,
         target,
         range:actor.attackRange ?? 1
       });
     }
     if (!card.ignoresDistance && card.effectRange != null && target) {
-      return getRangeConditionBranches(game, {
+      return getRangeConditionBranches({ state }, {
         source:actor,
         target,
         range:card.effectRange
@@ -984,9 +987,9 @@ export class ActionGenerator {
   边界与不变量
   所有约束必须在同一条件世界联合，不能把相关概率当作独立标量相乘。
   */
-  attachProbabilityBranches(game, actor, action) {
+  attachProbabilityBranches(state, actor, action) {
     if (action.type === "end") return action;
-    const conditionBranches = this.getActionConditionPartition(game, actor, action);
+    const conditionBranches = this.getActionConditionPartition(state, actor, action);
     if (action.type === "card") {
       const cardState = getAvailabilityStateBranches(action.card).map((branch) => ({
         probability:branch.probability,

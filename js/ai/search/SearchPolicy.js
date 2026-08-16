@@ -29,13 +29,13 @@ export class SearchPolicy {
   AIController 组合根与 Planner 正式边界。
 
   输入
-  随机与随机幅度查询能力。
+  随机、随机幅度查询能力与可选显式 search configuration。
 
   输出
   可供 Planner 使用的搜索策略实例。
 
   读取状态
-  保存显式能力引用。
+  保存显式能力与配置引用。
 
   写入状态
   写入实例依赖字段。
@@ -44,11 +44,12 @@ export class SearchPolicy {
   无。
 
   边界与不变量
-  不接收 Game、Controller 或任何领域归属模块。
+  不接收 Game、Controller 或任何领域归属模块；config 缺省时保持 GAME_CONFIG 兼容默认。
   */
   constructor({
     random,
-    getRandomnessRange
+    getRandomnessRange,
+    config = null
   } = {}) {
     const capabilities = {
       random,
@@ -60,6 +61,7 @@ export class SearchPolicy {
       }
     }
     Object.assign(this, capabilities);
+    this.config = config;
   }
 
   /*
@@ -89,11 +91,48 @@ export class SearchPolicy {
   */
   structure() {
     return {
-      depth:GAME_CONFIG.aiSearchDepth,
-      beamWidth:GAME_CONFIG.aiBeamWidth,
-      hiddenSamples:GAME_CONFIG.aiHiddenStateSamples,
-      yieldEvery:GAME_CONFIG.aiSearchYieldEvery
+      depth:this.config?.depth ?? GAME_CONFIG.aiSearchDepth,
+      beamWidth:this.config?.beamWidth ?? GAME_CONFIG.aiBeamWidth,
+      hiddenSamples:this.config?.hiddenSamples ?? GAME_CONFIG.aiHiddenStateSamples,
+      yieldEvery:this.config?.yieldEvery ?? GAME_CONFIG.aiSearchYieldEvery
     };
+  }
+
+  /*
+  功能
+  返回本次搜索 policy 的完整 data-only configuration snapshot。
+
+  调用方
+  AIController 构造 SearchRequest 与 boundary 测试。
+
+  输入
+  无。
+
+  输出
+  包含搜索结构、预算、近似平局与随机幅度的冻结普通对象。
+
+  读取状态
+  this.config 与 GAME_CONFIG 默认。
+
+  写入状态
+  无。
+
+  调用函数
+  Object.freeze。
+
+  边界与不变量
+  只读诊断契约；不能通过返回对象修改搜索行为。
+  */
+  snapshot() {
+    return Object.freeze({
+      ...this.structure(),
+      timeBudgetMs:this.config?.timeBudgetMs ?? GAME_CONFIG.aiSearchTimeBudgetMs,
+      nodeBudget:this.config?.nodeBudget ?? null,
+      nearTieRange:this.config?.nearTieRange ?? GAME_CONFIG.aiNearTieRange,
+      enableRandomness:this.config?.enableRandomness ?? GAME_CONFIG.enableAiRandomness,
+      randomnessRange:this.config?.randomnessRange ?? GAME_CONFIG.aiRandomnessRange,
+      difficultyMultiplier:this.config?.difficultyMultiplier ?? GAME_CONFIG.aiDifficultyMultiplier
+    });
   }
 
   /*
@@ -243,11 +282,12 @@ export class SearchPolicy {
   */
   chooseCandidate(beam) {
     const bestScore = beam[0]?.valueScore ?? -Infinity;
-    const near = beam.filter((node) => bestScore - node.valueScore <= GAME_CONFIG.aiNearTieRange);
-    if (near.length <= 1 || !GAME_CONFIG.enableAiRandomness) return near[0] ?? beam[0];
+    const config = this.snapshot();
+    const near = beam.filter((node) => bestScore - node.valueScore <= config.nearTieRange);
+    if (near.length <= 1 || !config.enableRandomness) return near[0] ?? beam[0];
     const randomness = Math.max(
       0,
-      Number(this.getRandomnessRange() ?? GAME_CONFIG.aiRandomnessRange) || 0
+      Number(this.getRandomnessRange() ?? config.randomnessRange) || 0
     );
     if (!randomness) return near[0];
     const scale = Math.max(1, Math.abs(bestScore));

@@ -98,7 +98,7 @@ export function createHeadlessUi() {
  */
 export function makeGame({ players, options = {} }, runtimeOptions = {}) {
   const seed = runtimeOptions.seed ?? options.seed ?? 0x5eed;
-  const game = new Game(createHeadlessUi(), makeRandom(seed));
+  const game = new Game(createHeadlessUi(), makeRandom(seed), { aiSearchSeed: seed });
   game.simulationMode = true;
   game.animationFastMode = true;
   game.aiRandomnessRange = 0;

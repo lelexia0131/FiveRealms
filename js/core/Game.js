@@ -17,6 +17,7 @@ import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./Response
 import { GameLogger } from "./GameLogger.js?build=20260815-shadow-agent-p1-slot";
 import { getActiveSkill, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260815-shadow-agent-p1-slot";
 import { AIController } from "../ai/AiController.js?build=20260815-shadow-agent-p1-slot";
+import { hashSearchSeed, SearchRng } from "../ai/search/SearchRng.js?build=20260815-shadow-agent-p1-slot";
 import { CleanupManager } from "../utils/CleanupManager.js?build=20260815-shadow-agent-p1-slot";
 import { getAiDelay } from "../utils/aiTiming.js?build=20260815-shadow-agent-p1-slot";
 import { Debug } from "../utils/debug.js?build=20260815-shadow-agent-p1-slot";
@@ -239,8 +240,39 @@ export class Game {
     this.logger = new GameLogger(this.state, this.ui);
     this.choiceContexts = new Map();
     this.teamRules = new TeamRuleService(this);
-    this.aiController = new AIController(this);
-    const choiceBoundary = createGameChoiceBoundary(this, this.choiceContexts, options.choicePort ?? null);
+    this.aiRandom = new SearchRng(options.aiSearchSeed ?? hashSearchSeed(this.state.gameId));
+    this.aiController = new AIController({
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      getMaxEnergy: (player) => this.teamRules.getMaxEnergy(player),
+      getTurnEnergyBreakdown: (player) => this.teamRules.getTurnEnergyBreakdown(player),
+      getDifficultyMultiplier: () => this.aiDifficultyMultiplier,
+      getRandomnessRange: () => this.aiRandomnessRange,
+      getSearchTimeBudget: () => this.aiSearchBudgetOverrideMs,
+      getSearchNodeBudget: () => this.aiSearchNodeBudgetOverride,
+      getEnemies: (player) => this.getEnemies(player),
+      getDyingRescueOrder: (target) => this.dyingSystem
+        ? this.dyingSystem.rescueOrder(target)
+        : [],
+      isSmallTeam: (player) => this.teamRules.isSmallTeam(player),
+      getForceAiRescueHuman: () => this.forceAiRescueHuman ?? GAME_CONFIG.forceAiRescueHuman,
+      yieldControl: async (gameId) => (
+        await this.cleanupManager.delay(0)
+      ) && this.isSessionValid(gameId ?? this.state.gameId),
+      createId,
+      searchRng: this.aiRandom
+    });
+    const choiceBoundary = createGameChoiceBoundary({
+      state: this.state,
+      ui: this.ui,
+      choiceContexts: this.choiceContexts,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      shouldRespond: (responder, type, context, cards) => this.aiController.shouldRespond(responder, type, context, cards),
+      choosePublicCard: (player, cards) => this.aiController.choosePublicCard(player, cards),
+      chooseDiscards: (player, count) => this.aiController.chooseDiscards(player, count),
+      cleanupDelay: (ms) => this.cleanupManager.delay(ms),
+      getAiResponseDelay: () => getAiDelay(this, "response")
+    }, options.choicePort ?? null);
     this.choicePort = choiceBoundary.choicePort;
     this.choiceCoordinator = choiceBoundary.choiceCoordinator;
     this.responseSystem = new ResponseSystem(this, this.choiceCoordinator, this.choiceContexts);

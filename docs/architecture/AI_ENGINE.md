@@ -23,13 +23,13 @@
 
 ## Current Architecture Snapshot
 
-当前生产 AI 共 52 个 JavaScript 模块，最终责任边界如下：
+当前生产 AI 共 55 个 JavaScript 模块，最终责任边界如下：
 
 | 层 | 当前正式 owner |
 |---|---|
-| Composition / Execution | `AiController` 是唯一装配与真实实体重绑入口；它向 Planner 注入窄 capability，不把 Controller 传入子组件。 |
+| Composition / Execution | `AiController` 是 main-thread AI 组合根；只保存显式 state/session/rule capability/search RNG/lifecycle/rebind 依赖，不保存 Game；它向 Planner 注入窄 capability。 |
 | State | `VisibleState`、`Knowledge`、`BeliefState`、`StateContracts`、`SearchState`、`Probability` 分别拥有公开投影、合法记忆、未知分布、组合、可克隆搜索世界与概率代数；`RuleProjection` 与 `DistanceProbabilityBranches` 是 AI→Domain 的 canonical projection 与距离概率分区。 |
-| Search | `ActionGenerator` 产生 AI 候选，`SearchBudget` 与 `SearchPolicy` 管搜索边界，`CandidateMaterializer` 组合完整候选，`Planner` 只编排。 |
+| Search | `ActionGenerator` 根/深层分开消费 root context/SearchState，产生 AI 候选；`SearchRequest`/`SearchResult` 是 data-only boundary contract；`SearchRng` 是 AI search RNG；`SearchBudget`/`SearchPolicy` 管搜索边界；`CandidateMaterializer` 组合候选；`Planner` 只编排。 |
 | Simulation | `Simulator` 管 clone、共享 runtime 与分派；Response、Combat、Card、Skill、Status 五个组件各自推进对应状态。 |
 | Value | State Value、Transition Value、Search Prior、Policy Value 与 Diagnostic Ledger 分属正式 owner；只有 Transition Value 的最终组合进入候选 final value。 |
 | Policy / Domain | Policy 只做 AI 过滤、选择与 valuation；`js/ai/domain/**` 是 AI probabilistic/search model，不拥有 Repository Domain 规则。 |
@@ -44,6 +44,15 @@ FR-ARCH-12 current facts：
 - `TransferPolicy.isTransferDirectionAllowed` 是 ally→enemy AI strategic prohibition 的唯一公式，`TransferExecutionPolicyAdapter` 只做 Human/AI bridge；
 - `js/ai/domain/**` 四个模块是 AI probabilistic/search model，不是 Repository Domain Rule authority；
 - AI simulation 保留所有概率、Belief、反事实 SearchState 模型，不调用 Application workflow 或 Domain Transitions 修改 SearchState。
+
+FR-ARCH-13 current facts：
+- `AIController`、`Knowledge`、`ActionGenerator`、`CardSelectionBoundary`、`ResponseBoundary` 均不保存 raw Game；`js/ai/**` 的 `this.game` 与 `core/Game` import 为零；
+- `AIController.selectAction` 构造 `SearchRequest`（requestId/gameId/stateVersion/actor/phase/round/SearchState/config/rng seed/rootActionDescriptors），并在返回前执行 session、game identity、stateVersion、actor、phase、descriptor rebind 与 Domain legality acceptance；
+- queued planned sequence 的第二项不继承首项 requestVersion；`resolvePlannedAction` 继续 current-state rebind + Domain candidate revalidation；
+- `SearchResult` 只保存 `ActionDescriptor`、计划描述与 stats；搜索边界不返回 real Card/Player/SearchState/Simulator；
+- `SearchRng` 是 AI Search/Decision 专用 LCG；real Game RNG 不被纯 AI search 推进，固定 AI seed 可复现；
+- `GameChoiceRouter` 已收窄为显式注入的 composition bridge；FR-ARCH-15 删除条件：Game 不再是 composition owner 且 main.js 接管全部 wiring；
+- Worker、`postMessage`、SearchRequest 之外的 worker protocol 均未创建。
 
 ## Historical Baseline and Migration Record
 

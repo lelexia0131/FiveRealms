@@ -9,7 +9,7 @@ AIController、Game、PublicCardPool、角色技能与直接测试。
 Domain CardRules、AI RuleProjection/DistanceProbabilityBranches 与 policy/CardSelectionPolicy、ResourceSelectionPolicy、TransferPolicy。
 
 状态边界
-只读当前 Game/Player 实体；不移动卡牌，实体移动仍由真实规则调用方执行。
+只读 runtime 提供的当前 state/Player 实体；不移动卡牌，实体移动仍由真实规则调用方执行。
 
 信息边界
 边界只把自己手牌、合法 aiMemory、公开装备和 Belief 交给 Policy，未知牌只能按位置解析。
@@ -37,10 +37,10 @@ export class CardSelectionBoundary {
   AIController 组合根（统一组装依赖的位置） 与边界专项测试。
 
   输入
-  Game、Knowledge 及可选正式 Policy 实例。
+  显式 runtime 能力、Knowledge 及可选正式 Policy 实例。
 
   输出
-  可解析真实实体的 正式边界。
+  可解析真实实体的正式边界。
 
   读取状态
   保存显式依赖。
@@ -52,15 +52,26 @@ export class CardSelectionBoundary {
   ResourceSelectionPolicy、TransferPolicy、CardSelectionPolicy 构造函数。
 
   边界与不变量
-  生产装配由 Controller 注入正式 Policy；未注入时构造同一 Policy，保证边界可独立测试。
+  不保存 Game；runtime 只提供 random/getState/getEnemies 三个 narrow capability。
   */
-  constructor(game, knowledge, policies = {}) {
-    this.game = game;
+  constructor(runtime, knowledge, policies = {}) {
+    if (!runtime || typeof runtime.random !== "function") {
+      throw new TypeError("CardSelectionBoundary 缺少 runtime 能力：random");
+    }
+    this.getState = typeof runtime.getState === "function"
+      ? runtime.getState
+      : () => runtime.state ?? { players:[] };
+    this.getEnemies = typeof runtime.getEnemies === "function"
+      ? runtime.getEnemies
+      : (player) => (this.getState().players ?? []).filter((entry) => (
+        entry.alive && entry.battleTeam !== player.battleTeam
+      ));
+    this.random = runtime.random;
     this.knowledge = knowledge;
     this.resourcePolicy = policies.resourcePolicy ?? new ResourceSelectionPolicy();
     this.transferPolicy = policies.transferPolicy ?? new TransferPolicy();
     this.cardSelectionPolicy = policies.cardSelectionPolicy ?? new CardSelectionPolicy({
-      random: () => this.game.random(),
+      random: () => this.random(),
       remainingCounts: (actor) => this.knowledge?.remainingCounts?.(actor) ?? null,
       resourcePolicy: this.resourcePolicy,
       transferPolicy: this.transferPolicy
@@ -324,7 +335,7 @@ export class CardSelectionBoundary {
 
   /*
   功能
-  从 RuleEngine 给出的合法 source/receiver 集合选择最佳转移描述。
+  从 Domain CardRules 给出的合法 source/receiver 集合选择最佳转移描述。
 
   调用方
   AIController、ActionGenerator 与分阶段选择入口。
@@ -336,7 +347,7 @@ export class CardSelectionBoundary {
   冻结 transfer selection 或 null。
 
   读取状态
-  RuleEngine 合法集合、Knowledge remaining counts 与 TransferPolicy。
+  Domain CardRules 合法集合、Knowledge remaining counts 与 TransferPolicy。
 
   写入状态
   无。
@@ -355,7 +366,7 @@ export class CardSelectionBoundary {
     excludedCardIds = null
   ) {
     const remainingCardCounts = this.knowledge?.remainingCounts?.(actor) ?? null;
-    const players = this.game.state.players ?? this.game.players ?? [];
+    const players = this.getState()?.players ?? [];
     return this.transferPolicy.choose({
       actor,
       sources,
@@ -429,9 +440,10 @@ export class CardSelectionBoundary {
   距离事实由真实规则边界提供；评分只存在于正式 ResourceSelectionPolicy。
   */
   chooseDiscards(player, count) {
-    const enemies = this.game.getEnemies(player);
+    const enemies = this.getEnemies(player);
+    const state = this.getState();
     const stranded = enemies.length > 0 && !enemies.some(
-      (enemy) => inAttackRange(this.game, player, enemy)
+      (enemy) => inAttackRange({ state }, player, enemy)
     );
     const equippedDefinitionId = player.equipment?.definitionId
       ?? player.equipmentDefinitionId

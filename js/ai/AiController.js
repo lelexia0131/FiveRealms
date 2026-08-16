@@ -26,7 +26,10 @@ import { ValueService } from "./value/ValueService.js?build=20260815-shadow-agen
 import { StateValue } from "./value/StateValue.js?build=20260815-shadow-agent-p1-slot";
 import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260815-shadow-agent-p1-slot";
 import { Simulator } from "./simulation/Simulator.js?build=20260815-shadow-agent-p1-slot";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
 import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260815-shadow-agent-p1-slot";
+import { createSearchRequest } from "./search/SearchRequest.js?build=20260815-shadow-agent-p1-slot";
+import { createSearchResult, SEARCH_RESULT_STATUS } from "./search/SearchResult.js?build=20260815-shadow-agent-p1-slot";
 import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260815-shadow-agent-p1-slot";
 import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260815-shadow-agent-p1-slot";
 import { Planner } from "./search/Planner.js?build=20260815-shadow-agent-p1-slot";
@@ -55,13 +58,13 @@ export class AIController {
   Game 构造函数与直接构造测试。
 
   输入
-  当前 Game 实例。
+  显式 narrow dependencies（state/session/rule capability/search RNG/lifecycle/rebind）。
 
   输出
   完成装配的 AIController；缺少必要运行能力时由子组件构造立即失败。
 
   读取状态
-  Game 的随机源、搜索覆盖配置、CleanupManager 与会话状态。
+  无；依赖均为显式能力引用。
 
   写入状态
   仅写控制器组件字段。
@@ -70,14 +73,47 @@ export class AIController {
   Value owners、Knowledge、正式 Policy、执行边界、ActionGenerator 与 Planner 构造函数。
 
   边界与不变量
-  装配无事后补丁；闭包持有具体组件或 Game 能力，不把 Controller 传给任何子组件。
+  装配无事后补丁；闭包只持有窄能力，不保存 Game，也不把 Controller 传给任何子组件。
   */
-  constructor(game) {
-    this.game = game;
-    this.knowledge = new Knowledge(game);
+  constructor(dependencies = {}) {
+    const required = [
+      "getState", "isSessionValid", "getMaxEnergy", "getTurnEnergyBreakdown",
+      "getDifficultyMultiplier", "getRandomnessRange", "getSearchTimeBudget",
+      "getSearchNodeBudget", "getEnemies", "getDyingRescueOrder", "isSmallTeam",
+      "getForceAiRescueHuman", "yieldControl", "createId"
+    ];
+    for (const name of required) {
+      if (typeof dependencies[name] !== "function") throw new TypeError(`AIController 缺少依赖：${name}`);
+    }
+    if (!dependencies.searchRng || typeof dependencies.searchRng.next !== "function"
+      || typeof dependencies.searchRng.snapshot !== "function") {
+      throw new TypeError("AIController 缺少依赖：searchRng");
+    }
+    this.getState = dependencies.getState;
+    this.isSessionValid = dependencies.isSessionValid;
+    this.getMaxEnergy = dependencies.getMaxEnergy;
+    this.getTurnEnergyBreakdown = dependencies.getTurnEnergyBreakdown;
+    this.getDifficultyMultiplier = dependencies.getDifficultyMultiplier;
+    this.getRandomnessRange = dependencies.getRandomnessRange;
+    this.getSearchTimeBudget = dependencies.getSearchTimeBudget;
+    this.getSearchNodeBudget = dependencies.getSearchNodeBudget;
+    this.getEnemies = dependencies.getEnemies;
+    this.getDyingRescueOrder = dependencies.getDyingRescueOrder;
+    this.isSmallTeam = dependencies.isSmallTeam;
+    this.getForceAiRescueHuman = dependencies.getForceAiRescueHuman;
+    this.yieldControl = dependencies.yieldControl;
+    this.createId = dependencies.createId;
+    this.searchRng = dependencies.searchRng;
+    this.lastSearchRequest = null;
+    this.lastSearchResult = null;
+
+    this.knowledge = new Knowledge({
+      getState: () => this.getState(),
+      random: () => this.searchRng.next()
+    });
     this.stateEvaluator = new Evaluator({
-      getMaxEnergy: (player) => game.teamRules.getMaxEnergy(player),
-      getTurnEnergyBreakdown: (player) => game.teamRules.getTurnEnergyBreakdown(player)
+      getMaxEnergy: (player) => this.getMaxEnergy(player),
+      getTurnEnergyBreakdown: (player) => this.getTurnEnergyBreakdown(player)
     });
     this.valueSimulationQuery = new ValueSimulationQuery(this.stateEvaluator);
     this.stateValue = new StateValue(this.stateEvaluator, this.valueSimulationQuery);
@@ -88,7 +124,7 @@ export class AIController {
     });
     this.frontierValue = new FrontierValue();
     this.searchPrior = new SearchPrior({
-      getDifficultyMultiplier: () => game.aiDifficultyMultiplier,
+      getDifficultyMultiplier: () => this.getDifficultyMultiplier(),
       simulationQuery: this.valueSimulationQuery
     });
     this.transitionValue = new TransitionValue(this.stateValue);
@@ -104,26 +140,43 @@ export class AIController {
     this.resourceSelectionPolicy = new ResourceSelectionPolicy();
     this.transferPolicy = new TransferPolicy();
     this.cardSelectionPolicy = new CardSelectionPolicy({
-      random: () => game.random(),
+      random: () => this.searchRng.next(),
       remainingCounts: (actor) => this.knowledge.remainingCounts(actor),
       resourcePolicy: this.resourceSelectionPolicy,
       transferPolicy: this.transferPolicy
     });
     this.actionCandidatePolicy = new ActionCandidatePolicy();
     this.responseDecisionPolicy = new ResponsePolicy({ assessGlobalBenefit });
-    this.cardSelector = new CardSelectionBoundary(game, this.knowledge, {
+    this.cardSelector = new CardSelectionBoundary({
+      random: () => this.searchRng.next(),
+      getState: () => this.getState(),
+      getEnemies: (player) => this.getEnemies(player)
+    }, this.knowledge, {
       cardSelectionPolicy: this.cardSelectionPolicy,
       resourcePolicy: this.resourceSelectionPolicy,
       transferPolicy: this.transferPolicy
     });
-    this.responsePolicy = new ResponseBoundary(game, this.evaluator, this.knowledge, {
+    this.responsePolicy = new ResponseBoundary({
+      getState: () => this.getState(),
+      getDyingRescueOrder: (target) => this.getDyingRescueOrder(target),
+      isSmallTeam: (player) => this.isSmallTeam(player),
+      forceAiRescueHuman: this.getForceAiRescueHuman()
+    }, this.evaluator, this.knowledge, {
       responsePolicy: this.responseDecisionPolicy,
       simulationQuery: this.valueSimulationQuery,
       stateValue: this.stateValue
     });
 
     const cardSelector = this.cardSelector;
-    this.actionGenerator = new ActionGenerator(game, {
+    this.actionGenerator = new ActionGenerator({
+      getRootContext: () => {
+        const state = this.getState();
+        return {
+          state,
+          currentPlayer: state.players[state.currentPlayerIndex] ?? null,
+          phase: state.phase
+        };
+      },
       chooseTransferCombination: (...args) => cardSelector.chooseTransferCombination(...args),
       transferPolicy: this.transferPolicy,
       actionCandidatePolicy: this.actionCandidatePolicy
@@ -132,8 +185,19 @@ export class AIController {
     const actionGenerator = this.actionGenerator;
     const knowledge = this.knowledge;
     this.searchPolicy = new SearchPolicy({
-      random: () => game.random(),
-      getRandomnessRange: () => game.aiRandomnessRange
+      random: () => this.searchRng.next(),
+      getRandomnessRange: () => this.getRandomnessRange(),
+      config: {
+        depth: GAME_CONFIG.aiSearchDepth,
+        beamWidth: GAME_CONFIG.aiBeamWidth,
+        hiddenSamples: GAME_CONFIG.aiHiddenStateSamples,
+        yieldEvery: GAME_CONFIG.aiSearchYieldEvery,
+        timeBudgetMs: GAME_CONFIG.aiSearchTimeBudgetMs,
+        nearTieRange: GAME_CONFIG.aiNearTieRange,
+        enableRandomness: GAME_CONFIG.enableAiRandomness,
+        randomnessRange: GAME_CONFIG.aiRandomnessRange,
+        difficultyMultiplier: GAME_CONFIG.aiDifficultyMultiplier
+      }
     });
     this.counterfactualTerms = new CounterfactualTerms({
       evaluator: this.evaluator,
@@ -157,13 +221,11 @@ export class AIController {
       searchPolicy: this.searchPolicy,
       simulatorFactory: (state) => new Simulator(state),
       searchBudgetFactory: () => new SearchBudget({
-        timeBudget: game.aiSearchBudgetOverrideMs,
-        nodeBudget: game.aiSearchNodeBudgetOverride
+        timeBudget: this.getSearchTimeBudget(),
+        nodeBudget: this.getSearchNodeBudget()
       }),
       generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
-      yieldControl: async (gameId) => (
-        await game.cleanupManager.delay(0)
-      ) && game.isSessionValid(gameId ?? game.state.gameId),
+      yieldControl: (gameId) => this.yieldControl(gameId)
     });
   }
 
@@ -181,7 +243,7 @@ export class AIController {
   供 Planner 搜索的候选动作数组；它是游戏规则合法动作的策略子集。
 
   读取状态
-  当前 GameState 与 RuleEngine 权威。
+  当前 GameState 与 Domain Rules 权威。
 
   写入状态
   无。
@@ -190,7 +252,7 @@ export class AIController {
   ActionGenerator.generate。
 
   边界与不变量
-  RuleEngine 定义游戏合法性，ActionCandidatePolicy 只决定 AI 是否考虑候选；门面不得额外筛选或重排，也不得把策略拒绝解释为游戏非法。
+  Domain Rules 定义确定性游戏合法性，ActionCandidatePolicy 只决定 AI 是否考虑候选；门面不得额外筛选或重排，也不得把策略拒绝解释为游戏非法。
   */
   getActionCandidates(player) {
     return this.actionGenerator.generate(player);
@@ -221,10 +283,263 @@ export class AIController {
   边界与不变量
   剩余牌计数每次真实决策只计算一次，Planner 不获得 Game 或 Controller。
   */
+  /*
+  功能
+  组装本次搜索的 data-only configuration snapshot。
+
+  调用方
+  selectAction。
+
+  输入
+  无。
+
+  输出
+  冻结 search config 普通对象。
+
+  读取状态
+  SearchPolicy 默认与 main-thread runtime override getters。
+
+  写入状态
+  无。
+
+  调用函数
+  SearchPolicy.snapshot。
+
+  边界与不变量
+  runtime override 只覆盖已有字段，不新增搜索参数。
+  */
+  buildSearchConfig() {
+    const base = this.searchPolicy.snapshot();
+    const timeBudget = this.getSearchTimeBudget();
+    const nodeBudget = this.getSearchNodeBudget();
+    return Object.freeze({
+      ...base,
+      timeBudgetMs:Number.isFinite(Number(timeBudget)) ? Math.max(0, Number(timeBudget)) : base.timeBudgetMs,
+      nodeBudget:Number.isFinite(Number(nodeBudget)) ? Math.max(0, Number(nodeBudget)) : null,
+      randomnessRange:Number.isFinite(Number(this.getRandomnessRange()))
+        ? Number(this.getRandomnessRange())
+        : base.randomnessRange,
+      difficultyMultiplier:Number.isFinite(Number(this.getDifficultyMultiplier()))
+        ? Number(this.getDifficultyMultiplier())
+        : base.difficultyMultiplier
+    });
+  }
+
+  /*
+  功能
+  验证当前 main-thread state 是否仍接受一次 SearchRequest 的结果。
+
+  调用方
+  acceptSearchResult。
+
+  输入
+  player 与 SearchRequest。
+
+  输出
+  { status, reason }；identity/stateVersion/actor/phase 不匹配时拒绝。
+
+  读取状态
+  当前 GameState 与 session。
+
+  写入状态
+  无。
+
+  调用函数
+  isSessionValid。
+
+  边界与不变量
+  stateVersion 只保护一次异步 search result；queued planned sequence 走 resolvePlannedAction 的 current-state rebind。
+  */
+  validateRequestAcceptance(player, request) {
+    if (!this.isSessionValid(request.gameId)) {
+      return { status:SEARCH_RESULT_STATUS.INVALID_SESSION, reason:"session invalid" };
+    }
+    const state = this.getState();
+    if (state.gameId !== request.gameId) {
+      return { status:SEARCH_RESULT_STATUS.INVALID_SESSION, reason:"game identity changed" };
+    }
+    if (state.stateVersion !== request.stateVersion) {
+      return { status:SEARCH_RESULT_STATUS.STALE_VERSION, reason:`stateVersion ${state.stateVersion} != ${request.stateVersion}` };
+    }
+    const currentPlayer = state.players[state.currentPlayerIndex] ?? null;
+    if (!player || !currentPlayer || player.id !== currentPlayer.id || currentPlayer.id !== request.actorId) {
+      return { status:SEARCH_RESULT_STATUS.INVALID_ACTOR, reason:"actor changed" };
+    }
+    if (!player.alive) return { status:SEARCH_RESULT_STATUS.INVALID_ACTOR, reason:"actor dead" };
+    if (state.phase !== "play") return { status:SEARCH_RESULT_STATUS.INVALID_PHASE, reason:`phase ${state.phase}` };
+    return { status:null, reason:"" };
+  }
+
+  /*
+  功能
+  判断 Planner 返回 action 的 descriptor 是否属于本次 SearchRequest 的 root descriptor set。
+
+  调用方
+  acceptSearchResult。
+
+  输入
+  descriptor 与 request.rootActionDescriptors。
+
+  输出
+  布尔值。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  JSON.stringify。
+
+  边界与不变量
+  只用稳定普通字段比较；不会把策略收窄后的 root set 当成完整游戏合法集。
+  */
+  isDescriptorInRootSet(descriptor, rootActionDescriptors) {
+    const text = JSON.stringify(descriptor);
+    return rootActionDescriptors.some((entry) => JSON.stringify(entry) === text);
+  }
+
+  /*
+  功能
+  接受并验证一次异步 AI search 结果，只返回已 rebind 的当前 Domain-legal action。
+
+  调用方
+  selectAction。
+
+  输入
+  SearchRequest、Planner raw action、计划序列与 stats。
+
+  输出
+  { action, result }；非法结果返回安全 end，绝不返回旧实体动作。
+
+  读取状态
+  SearchRequest、当前 GameState、Domain legality 经 getActionCandidates。
+
+  写入状态
+  lastSearchResult。
+
+  调用函数
+  validateRequestAcceptance、isDescriptorInRootSet、ActionDescriptor.describe、resolvePlannedAction、createSearchResult。
+
+  边界与不变量
+  result descriptor 必须先属于 request root set，再在当前 root candidate 集合 rebind；cancelled 只允许返回 end。
+  */
+  acceptSearchResult({ request, action = null, plannedSequence = [], stats = null }) {
+    const player = this.getState().players.find((entry) => entry.id === request.actorId) ?? null;
+    const validation = this.validateRequestAcceptance(player, request);
+    if (validation.status) {
+      const result = createSearchResult({
+        request,
+        action:null,
+        plannedSequence:[],
+        stats,
+        status:validation.status,
+        rejectionReason:validation.reason
+      });
+      this.lastSearchResult = result;
+      return { action:{ type:"end" }, result };
+    }
+    if (stats?.stopReason === "CANCELLED") {
+      const result = createSearchResult({
+        request,
+        action:null,
+        plannedSequence:[],
+        stats,
+        status:SEARCH_RESULT_STATUS.CANCELLED,
+        rejectionReason:"cancelled"
+      });
+      this.lastSearchResult = result;
+      return { action:{ type:"end" }, result };
+    }
+    const descriptor = action ? ActionDescriptor.describe(action) : null;
+    if (!descriptor || !this.isDescriptorInRootSet(descriptor, request.rootActionDescriptors)) {
+      const result = createSearchResult({
+        request,
+        action:null,
+        plannedSequence:[],
+        stats,
+        status:SEARCH_RESULT_STATUS.INVALID_ACTION,
+        rejectionReason:"descriptor not in request root set"
+      });
+      this.lastSearchResult = result;
+      return { action:{ type:"end" }, result };
+    }
+    const rebound = this.resolvePlannedAction(player, descriptor);
+    if (!rebound) {
+      const result = createSearchResult({
+        request,
+        action:null,
+        plannedSequence:[],
+        stats,
+        status:SEARCH_RESULT_STATUS.INVALID_ACTION,
+        rejectionReason:"action cannot rebind to current Domain-legal set"
+      });
+      this.lastSearchResult = result;
+      return { action:{ type:"end" }, result };
+    }
+    const result = createSearchResult({
+      request,
+      action:rebound,
+      plannedSequence,
+      stats,
+      status:SEARCH_RESULT_STATUS.ACCEPTED
+    });
+    this.lastSearchResult = result;
+    return { action:rebound, result };
+  }
+
+  /*
+  功能
+  从当前权威 state 构造 SearchRequest、执行 Planner，并只返回通过 stale/rebind/Domain-legality 验证的 action。
+
+  调用方
+  Game/TurnWorkflow 与测试。
+
+  输入
+  当前行动 Player 与可选上下文。
+
+  输出
+  当前可执行的 Planner 动作；非法结果安全返回 end。
+
+  读取状态
+  当前 GameState、Knowledge、SearchPolicy 与 Planner。
+
+  写入状态
+  lastSearchRequest/lastSearchResult 与 Planner 诊断。
+
+  调用函数
+  Knowledge.remainingCounts、createInitialSearchState、getActionCandidates、createSearchRequest、Planner.plan、acceptSearchResult。
+
+  边界与不变量
+  stateVersion 只用于本次异步结果 acceptance；queued plan reuse 继续由 resolvePlannedAction current-state rebind。
+  */
   async selectAction(player, options = {}) {
+    const state = this.getState();
+    if (!this.isSessionValid(options.gameId ?? state.gameId)) return { type:"end" };
     const remainingCardCounts = this.knowledge.remainingCounts(player);
-    const visible = createInitialSearchState(player.id, this.game.state, remainingCardCounts);
-    return this.planner.plan(player, visible, this.getActionCandidates(player), options);
+    const visible = createInitialSearchState(player.id, state, remainingCardCounts);
+    const rootActions = this.getActionCandidates(player);
+    const request = createSearchRequest({
+      requestId:this.createId("search-request"),
+      gameId:state.gameId,
+      stateVersion:state.stateVersion,
+      actorId:player.id,
+      phase:state.phase,
+      currentRound:state.currentRound,
+      searchState:visible,
+      searchConfig:this.buildSearchConfig(),
+      rng:this.searchRng.snapshot(),
+      rootActionDescriptors:rootActions.map(ActionDescriptor.describe)
+    });
+    this.lastSearchRequest = request;
+    const action = await this.planner.plan(player, visible, rootActions, options);
+    return this.acceptSearchResult({
+      request,
+      action,
+      plannedSequence:this.planner.lastPlannedSequence,
+      stats:this.planner.lastSearchStats
+    }).action;
   }
 
   /*
@@ -254,6 +569,11 @@ export class AIController {
   */
   resolvePlannedAction(player, descriptor) {
     if (!descriptor) return null;
+    const state = this.getState();
+    if (!this.isSessionValid(state.gameId)) return null;
+    const currentPlayer = state.players[state.currentPlayerIndex] ?? null;
+    if (!player?.alive || currentPlayer?.id !== player.id || state.phase !== "play") return null;
+    if (descriptor.type === "end") return { type:"end" };
     return this.getActionCandidates(player).find((action) => {
       if (action.type !== descriptor.type) return false;
       if (action.type === "end") return true;
