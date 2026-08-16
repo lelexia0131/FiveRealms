@@ -12,7 +12,7 @@ Player constructor 的 legacy composition 与未来 domain/rules consumer。
 工厂只创建初始 shape，不读取或写入任何既有 Player 实例。
 
 信息边界
-不含 controllerType、aiMemory、statistics 或 AI/UI 信息。
+不含 controllerType、aiMemory、statistics、legacy general 对象或 AI/UI 信息。
 
 架构约束
 不得依赖 application/adapters/ui/audio/ai/Game runtime；turnFlags/roundFlags/gameFlags 的规则归属延后处理，不在此声明。
@@ -52,7 +52,6 @@ export function createPlayerState({ id, seatIndex, battleTeam }) {
     generalId: null,
     name: "待选择",
     loreFaction: "未知",
-    general: null,
     hp: 0,
     maxHp: 0,
     shield: 0,

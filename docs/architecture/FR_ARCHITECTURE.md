@@ -1,11 +1,11 @@
 # FiveRealms Repository Architecture Authority
 
-状态：FR-ARCH-3 State Foundation Baseline v1
+状态：FR-ARCH-4B Mutation Closure Complete — stateVersion AUTHORITATIVE
 适用范围：FiveRealms 仓库级架构；`AI_ENGINE.md` 继续作为 AI Engine 2.0 的实施与历史权威，本文件不复制其内部所有权表。
 事实源关系：本文件是 repository-wide target architecture 的唯一规范入口；若与 `CODE_STANDARD.md` 冲突，以本文件解释 ownership，以 `CODE_STANDARD.md` 解释注释格式。
 
 冻结裁决：TARGET ARCHITECTURE CAN REMAIN FROZEN。
-实施进度：FR-ARCH-0 DONE；FR-ARCH-1 DONE；FR-ARCH-2/2.1 DONE；FR-ARCH-3 CURRENT。
+实施进度：FR-ARCH-0 DONE；FR-ARCH-1 DONE；FR-ARCH-2/2.1 DONE；FR-ARCH-3 DONE；FR-ARCH-4A DONE；FR-ARCH-4B mutation closure DONE，stateVersion ACTIVATED — AUTHORITATIVE；FR-ARCH-5 READY。
 
 ## 1. Target Physical Architecture
 
@@ -14,6 +14,7 @@
 当前已落地：
 - FR-ARCH-2/2.1：`js/domain/definitions/{cards,characters,skills,statuses,ruleset}` 已创建为纯静态定义 authority；旧 `js/config/**` 仅作 legacy façade/projection。Card `count` 由 `RulesetDefinition.deckComposition` 唯一拥有；`initialRound` 属 Ruleset；`responseTimeoutMs` 是 Application/Presentation runtime policy，不属于 Domain。
 - FR-ARCH-3：`js/domain/state/{model,queries}` 已建立 state foundation；Game/Player/Deck 保持 legacy composite runtime identity。
+- FR-ARCH-4A：`js/domain/state/transitions` 已建立 generic atomic mutation foundation；resource/status/match/player primitive 与部分 Deck zone commit 已接 transition；stateVersion 保持 dormant。FR-ARCH-4B 必须关闭剩余 zone/flags direct writes 后才允许激活 version。
 
 ```text
 js/
@@ -324,8 +325,8 @@ Game RNG 由 authoritative Main Thread Game Runtime 持有；AI Search RNG 由 S
 | FR-ARCH-0 | Architecture Audit（DONE） |
 | FR-ARCH-1 | Governance + Characterization Freeze（DONE） |
 | FR-ARCH-2 | Domain Definitions（DONE，含 2.1 ownership closure） |
-| FR-ARCH-3 | Domain State Model + StateView + Queries；定义 stateVersion contract，不完全激活 increment（CURRENT） |
-| FR-ARCH-4 | Atomic State Transitions；建立 authoritative mutation boundary；激活 stateVersion semantics |
+| FR-ARCH-3 | Domain State Model + StateView + Queries；定义 stateVersion contract，不完全激活 increment（DONE） |
+| FR-ARCH-4 | Atomic State Transitions；CLOSED / PASS；stateVersion authoritative（DONE） |
 | FR-ARCH-5 | Foundational Domain Rules：Team/Distance/Turn/Judgment/Combat/Status/Response；主要提纯 Rules，不过早迁全部 Runtime Workflow |
 | FR-ARCH-6 | Choice + Ports Boundary：ChoicePort/PresentationPort/AudioPort 及代码证明需要的最小 Port |
 | FR-ARCH-7 | Response Workflow（Combat/Dying 依赖 Response/Rescue） |

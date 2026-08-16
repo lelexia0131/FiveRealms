@@ -1,6 +1,6 @@
 /*
 模块职责
-唯一拥有 Deck 中已证明属于 Domain 的牌区数组与重洗计数初始化 shape。
+唯一拥有 Deck 中已证明属于 Domain 的牌区数组初始化 shape；重洗计数属于 diagnostics/test observability，不在此维护。
 
 上游
 Deck constructor 的 legacy composition 与未来 domain/state/transitions consumer。
@@ -20,7 +20,7 @@ Deck constructor 的 legacy composition 与未来 domain/state/transitions consu
 
 /*
 功能
-创建 Domain 牌区状态的初始空数组与重洗计数。
+创建 Domain 牌区状态的初始空数组。
 
 调用方
 Deck constructor 按旧 key order 逐字段赋值。
@@ -41,14 +41,13 @@ Deck constructor 按旧 key order 逐字段赋值。
 无。
 
 边界与不变量
-四个牌区数组保持可变，调用方必须继续使用同一数组身份；本工厂不共享跨 Deck 状态。
+四个牌区数组保持可变，调用方必须继续使用同一数组身份；本工厂不共享跨 Deck 状态，也不拥有诊断计数。
 */
 export function createDeckZoneState() {
   return Object.freeze({
     cards: [],
     discardPile: [],
     resolvingCards: [],
-    judgmentZone: [],
-    reshuffleCount: 0
+    judgmentZone: []
   });
 }

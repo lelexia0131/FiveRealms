@@ -17,8 +17,15 @@ import { createMatchState } from "../js/domain/state/model/MatchState.js?build=2
 import { createPlayerState } from "../js/domain/state/model/PlayerState.js?build=20260815-shadow-agent-p1-slot";
 import { createDeckZoneState } from "../js/domain/state/model/ZoneState.js?build=20260815-shadow-agent-p1-slot";
 import { createStateView } from "../js/domain/state/queries/StateView.js?build=20260815-shadow-agent-p1-slot";
+import { createRuleStateView } from "../js/domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
 import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js?build=20260815-shadow-agent-p1-slot";
 import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js?build=20260815-shadow-agent-p1-slot";
+import { changeEnergy as transitionChangeEnergy, changeHp as transitionChangeHp, setHp as transitionSetHp, changeShield as transitionChangeShield } from "../js/domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { setStatus as transitionSetStatus, removeStatus as transitionRemoveStatus, clearStatuses as transitionClearStatuses } from "../js/domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { appendCardToZone as transitionAppendCardToZone, removeCardFromZone as transitionRemoveCardFromZone, moveCardBetweenZones as transitionMoveCardBetweenZones } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { moveCardsAtomically as transitionMoveCardsAtomically } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { setCurrentPlayerIndex as transitionSetCurrentPlayerIndex, setCurrentRound as transitionSetCurrentRound, setMatchPhase as transitionSetMatchPhase, setWinnerTeam as transitionSetWinnerTeam, setGameOver as transitionSetGameOver, setPublicCardPool as transitionSetPublicCardPool } from "../js/domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { applyGeneralDefinition as transitionApplyGeneralDefinition, bumpHandVersion as transitionBumpHandVersion, setAlive as transitionSetAlive, setEquipment as transitionSetEquipment } from "../js/domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { Game } from "../js/core/Game.js";
 import { Player } from "../js/core/Player.js";
 import { Deck } from "../js/core/Deck.js";
@@ -39034,6 +39041,8 @@ function frArchStateModelFactories() {
   assert.equal(Object.hasOwn(playerState, "controllerType"), false);
   assert.equal(Object.hasOwn(playerState, "aiMemory"), false);
   assert.equal(Object.hasOwn(playerState, "statistics"), false);
+  assert.equal(Object.hasOwn(playerState, "general"), false);
+  assert.equal(Object.hasOwn(matchState, "selectedGeneralId"), false);
   assert.equal(playerState.maxEnergy, RULESET_DEFINITION.defaultMaxEnergy);
   assert.equal(playerState.attackRange, RULESET_DEFINITION.defaultAttackRange);
 
@@ -39041,7 +39050,8 @@ function frArchStateModelFactories() {
   const secondZone = createDeckZoneState();
   assert.notEqual(firstZone.cards, secondZone.cards);
   assert.notEqual(firstZone.discardPile, secondZone.discardPile);
-  assert.equal(firstZone.reshuffleCount, 0);
+  assert.equal(Object.hasOwn(firstZone, "reshuffleCount"), false);
+  assert.equal(new Deck().reshuffleCount, 0);
 }
 
 test("FR-ARCH-3·state model：Domain factories 初始 shape 与 dormant stateVersion", frArchStateModelFactories);
@@ -39253,7 +39263,7 @@ test("FR-ARCH-3·domain purity：State Model/View/Queries 不识别 AI、UI 或 
 
 /*
 功能
-验证 stateVersion 只作为 dormant contract 存在，当前无 increment 或 stale-result 消费。
+验证 stateVersion 只由 Domain transition authority 修改，成功 mutation +1，no-op 不增加。
 
 调用方
 当前测试。
@@ -39274,21 +39284,455 @@ test("FR-ARCH-3·domain purity：State Model/View/Queries 不识别 AI、UI 或 
 listJavaScriptFiles、readFile、makeGame、makePlayer。
 
 边界与不变量
-本阶段任何 stateVersion++/+=/incrementStateVersion 或 stale rejection 实现都视为失败。
+任何 Domain transition 外的 stateVersion 写或 stale-result/Worker 消费仍视为失败。
 */
 async function frArchStateVersionDormant() {
   const actor = makePlayer("fr3-version-actor", 0, "dawn");
   const { game } = makeGame([actor]);
   assert.equal(game.state.stateVersion, 0);
+  transitionChangeEnergy(game.state, actor, 1);
+  assert.equal(game.state.stateVersion, 1);
+  transitionChangeEnergy(game.state, actor, 0);
+  assert.equal(game.state.stateVersion, 1);
   const files = await listJavaScriptFiles(projectFile("js"));
   for (const file of files) {
     const source = await readFile(file, "utf8");
+    if (file.endsWith("StateVersion.js")) {
+      assert.match(source, /state\.stateVersion \+= 1/);
+      continue;
+    }
     assert.doesNotMatch(source, /stateVersion\s*\+\+|stateVersion\s*\+=\s*1/, file);
     assert.doesNotMatch(source, /incrementStateVersion/, file);
   }
 }
 
-test("FR-ARCH-3·stateVersion：CONTRACT DEFINED / INCREMENT NOT ACTIVE", frArchStateVersionDormant);
+test("FR-ARCH-3·stateVersion：authority 唯一，成功 +1，no-op +0", frArchStateVersionDormant);
+
+
+// ==================== FR-ARCH-4 Atomic Transition Foundation Tests ====================
+
+/*
+功能
+验证 ResourceTransitions 的 energy/hp/shield 行为、clamp 与 no-op。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Player fixture。
+
+写入状态
+Player primitive resource 字段。
+
+调用函数
+transitionChangeEnergy、transitionChangeHp、transitionSetHp、transitionChangeShield。
+
+边界与不变量
+失败/no-op 返回 0 且不修改其它字段。
+*/
+function frArchResourceTransitions() {
+  const player = makePlayer("fr4-resource", 0, "dawn", "ai", 0);
+  const state = { stateVersion: 0 };
+  player.maxEnergy = 3;
+  player.energy = 2;
+  assert.equal(transitionChangeEnergy(state, player, 5), 1);
+  assert.equal(player.energy, 3);
+  assert.equal(transitionChangeEnergy(state, player, 0), 0);
+  assert.equal(transitionChangeEnergy(state, player, -10), -3);
+  assert.equal(player.energy, 0);
+
+  player.hp = 2;
+  assert.equal(transitionChangeHp(state, player, 1), 3);
+  assert.equal(transitionChangeHp(state, player, 0), 3);
+  assert.equal(transitionSetHp(state, player, 0), 0);
+
+  player.shield = 1;
+  assert.equal(transitionChangeShield(state, player, 2), 3);
+  assert.equal(transitionChangeShield(state, player, 0), 3);
+  assert.equal(transitionChangeShield(state, player, -3), 0);
+  assert.equal(state.stateVersion, 6);
+}
+
+test("FR-ARCH-4·resource transitions：energy clamp、hp/shield 与 no-op", frArchResourceTransitions);
+
+/*
+功能
+验证 StatusTransitions 的 generic set/remove/clear。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Player statuses。
+
+写入状态
+Player.statuses。
+
+调用函数
+transitionSetStatus、transitionRemoveStatus、transitionClearStatuses。
+
+边界与不变量
+transition 不理解具体状态语义。
+*/
+function frArchStatusTransitions() {
+  const player = makePlayer("fr4-status", 0, "dawn");
+  const state = { stateVersion: 0 };
+  const first = { stacks: 1 };
+  const second = { sourceId: "p1" };
+  assert.equal(transitionSetStatus(state, player, "exposeWeakness", first), first);
+  assert.equal(player.statuses.exposeWeakness, first);
+  assert.equal(transitionRemoveStatus(state, player, "exposeWeakness"), first);
+  assert.equal(player.statuses.exposeWeakness, undefined);
+  transitionSetStatus(state, player, "huntMark", second);
+  const previous = transitionClearStatuses(state, player);
+  assert.equal(previous.huntMark, second);
+  assert.deepEqual(player.statuses, {});
+}
+
+test("FR-ARCH-4·status transitions：generic set/remove/clear，不解释状态语义", frArchStatusTransitions);
+
+/*
+功能
+验证 ZoneTransitions 的 append/remove/move 与 Card identity。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立牌区数组。
+
+写入状态
+牌区数组。
+
+调用函数
+transitionAppendCardToZone、transitionRemoveCardFromZone、transitionMoveCardBetweenZones。
+
+边界与不变量
+move 不复制 Card；来源不存在返回 false 且目标不变。
+*/
+function frArchZoneTransitions() {
+  const card = instance("charge");
+  const source = [];
+  const target = [];
+  const state = { stateVersion: 0 };
+  transitionAppendCardToZone(state, source, card);
+  assert.equal(source[0], card);
+  assert.equal(transitionRemoveCardFromZone(state, source, card), true);
+  assert.equal(transitionRemoveCardFromZone(state, source, card), false);
+  transitionAppendCardToZone(state, source, card);
+  assert.equal(transitionMoveCardBetweenZones(state, source, target, card), true);
+  assert.deepEqual(source, []);
+  assert.equal(target[0], card);
+  assert.equal(transitionMoveCardBetweenZones(state, source, target, card), false);
+}
+
+test("FR-ARCH-4·zone transitions：通用数组移动与实体身份", frArchZoneTransitions);
+
+/*
+功能
+验证 MatchState/PlayerState primitive transitions 只提交已决定的值。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 state 与 Player fixture。
+
+写入状态
+Match/Player primitive 字段。
+
+调用函数
+Match/Player transition functions。
+
+边界与不变量
+transition 不计算下一玩家、胜负或角色选择。
+*/
+function frArchPrimitiveStateTransitions() {
+  const state = { players: [], currentPlayerIndex: -1, currentRound: 1, phase: "idle", winnerTeam: null, isGameOver: false, publicCardPool: [] };
+  transitionSetCurrentPlayerIndex(state, 2);
+  assert.equal(state.currentPlayerIndex, 2);
+  transitionSetCurrentRound(state, 4);
+  assert.equal(state.currentRound, 4);
+  transitionSetMatchPhase(state, "play");
+  assert.equal(state.phase, "play");
+  transitionSetWinnerTeam(state, "dawn");
+  transitionSetGameOver(state, true);
+  assert.equal(state.winnerTeam, "dawn");
+  assert.equal(state.isGameOver, true);
+  const pool = [];
+  assert.equal(transitionSetPublicCardPool(state, pool), pool);
+
+  const player = makePlayer("fr4-primitive", 0, "dusk");
+  const general = GENERAL_DEFINITIONS[0];
+  transitionApplyGeneralDefinition(state, player, general);
+  assert.equal(player.generalId, general.id);
+  assert.equal(player.hp, general.maxHp);
+  assert.equal(player.energy, general.initialEnergy);
+  const version = player.handVersion;
+  assert.equal(transitionBumpHandVersion(state, player), version + 1);
+  transitionSetAlive(state, player, false);
+  assert.equal(player.alive, false);
+  const equipment = instance("telescope");
+  assert.equal(transitionSetEquipment(state, player, equipment), equipment);
+  assert.equal(player.equipment, equipment);
+}
+
+test("FR-ARCH-4·match/player transitions：只提交已决定 primitive 写入", frArchPrimitiveStateTransitions);
+
+/*
+功能
+验证 transitions 目录 purity：无 Game/EventBus/UI/AI import，无 cardId/skillId 规则分支。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/domain/state/transitions 源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+注释中允许解释禁止项；代码本体不得出现禁止依赖。
+*/
+async function frArchTransitionPurity() {
+  const files = await listJavaScriptFiles(projectFile("js/domain/state/transitions"));
+  assert.ok(files.length >= 5);
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:\/ai\/|\/ui\/|\/audio\/|core\/Game\.js|core\/RuleEngine\.js|cards\/cardRegistry|generals\/skillRegistry|ResponseSystem|DyingSystem|JudgmentSystem)/, file);
+    assert.doesNotMatch(code, /definitionId\s*===|skillId\s*===|cardId\s*===/, file);
+    assert.doesNotMatch(code, /statusId\s*===/, file);
+  }
+}
+
+test("FR-ARCH-4·transition purity：无 runtime/rule import 与 cardId/skillId 分支", frArchTransitionPurity);
+
+/*
+功能
+验证已迁移的 legacy commit 不再直接写 resource/status/phase，且 stateVersion 随成功 commit 增长。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game.js/cardRegistry.js/skillRegistry.js/Player.js 源码与独立 fixture。
+
+写入状态
+无。
+
+调用函数
+readFile、makeGame、makePlayer。
+
+边界与不变量
+flags/counters 与大量 zone 写入仍为已知 4B blocker；本测试只证明 foundation 未伪激活 version。
+*/
+async function frArchLegacyCommitFaçade() {
+  const actor = makePlayer("fr4-commit", 0, "dawn");
+  const { game } = makeGame([actor]);
+  assert.equal(game.state.stateVersion, 0);
+  transitionChangeEnergy(game.state, actor, 1);
+  transitionSetStatus(game.state, actor, "huntMark", { sourceId: "x" });
+  transitionSetMatchPhase(game.state, "status");
+  assert.equal(game.state.stateVersion, 3);
+
+  const gameSource = await readFile(projectFile("js/core/Game.js"), "utf8");
+  const cardSource = await readFile(projectFile("js/cards/cardRegistry.js"), "utf8");
+  const skillSource = await readFile(projectFile("js/generals/skillRegistry.js"), "utf8");
+  assert.doesNotMatch(gameSource, /target\.hp\s*-=|\btarget\.shield\s*-=/);
+  assert.doesNotMatch(gameSource, /state\.phase\s*=\s*["']/);
+  assert.doesNotMatch(cardSource, /target\.shield\s*\+=/);
+  assert.doesNotMatch(skillSource, /target\.shield\s*=\s*\(/);
+}
+
+test("FR-ARCH-4·legacy commit façade：migrated writes 经 transition；stateVersion 随 commit 增长", frArchLegacyCommitFaçade);
+
+
+// ==================== FR-ARCH-4B Phase A Carry-in Tests ====================
+
+/*
+功能
+验证 FR-ARCH-3 carry-in closures：selectedGeneralId 和 legacy general 不再属于 Domain model，RuleStateView 不泄漏 AI/UI。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Domain factories、Player/Game legacy runtime 与 RuleStateView。
+
+写入状态
+无。
+
+调用函数
+createMatchState、createPlayerState、makeGame、makePlayer、createRuleStateView。
+
+边界与不变量
+legacy runtime shape 保持不变，只是 ownership 声明被修正。
+*/
+function frArchPhaseACarryInClosure() {
+  const deck = new Deck();
+  const matchState = createMatchState({ deck });
+  assert.equal(Object.hasOwn(matchState, "selectedGeneralId"), false);
+
+  const playerState = createPlayerState({ id: "p", seatIndex: 0, battleTeam: "dawn" });
+  assert.equal(Object.hasOwn(playerState, "general"), false);
+
+  const player = makePlayer("p", 0, "dawn", "human", 0);
+  assert.equal(player.general, GENERAL_DEFINITIONS[0]);
+  const legacyGeneral = player.general;
+  const { game } = makeGame([player]);
+  assert.equal(game.state.selectedGeneralId, null);
+
+  const ruleView = createRuleStateView(game.state);
+  const projected = ruleView.players()[0];
+  assert.equal(projected.id, player.id);
+  assert.equal(projected.generalId, player.generalId);
+  assert.equal(Object.hasOwn(projected, "controllerType"), false);
+  assert.equal(Object.hasOwn(projected, "aiMemory"), false);
+  assert.equal(Object.hasOwn(projected, "general"), false);
+  assert.equal(Object.hasOwn(projected, "portrait"), false);
+  assert.equal(Object.hasOwn(projected, "aiProfile"), false);
+  assert.equal(player.general, legacyGeneral);
+}
+
+test("FR-ARCH-4B·carry-in：selectedGeneralId/legacy general/RuleStateView boundary 已关闭", frArchPhaseACarryInClosure);
+
+/*
+功能
+记录 PHASE A mutation gate 已满足：无 version-relevant direct writes，stateVersion authoritative。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game.js、skillRegistry.js、Player.js 源码与独立 Game。
+
+写入状态
+无。
+
+调用函数
+readFile、makeGame、makePlayer。
+
+边界与不变量
+该测试验证 blocker 已关闭且只有 transition authority 写 stateVersion。
+*/
+async function frArchPhaseAMutationGateStillBlocked() {
+  const actor = makePlayer("fr4b-gate", 0, "dawn");
+  const { game } = makeGame([actor]);
+  assert.equal(game.state.stateVersion, 0);
+
+  const gameSource = await readFile(projectFile("js/core/Game.js"), "utf8");
+  const skillSource = await readFile(projectFile("js/generals/skillRegistry.js"), "utf8");
+  assert.doesNotMatch(gameSource, /turnFlags\.recycleDeviceUses\s*=/);
+  assert.doesNotMatch(gameSource, /player\.hand\.push/);
+  assert.doesNotMatch(skillSource, /owner\.turnFlags\.momentum\s*=/);
+}
+
+test("FR-ARCH-4B·gate：direct writes 已关闭，stateVersion authoritative", frArchPhaseAMutationGateStillBlocked);
+
+
+// ==================== FR-ARCH-4B stateVersion Contract Tests ====================
+
+/*
+功能
+验证 authoritative stateVersion 的 success/no-op/fail/non-domain/atomic-group 语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 state/player/zones 与 legacy log。
+
+写入状态
+Domain transitions 与 legacy presentation。
+
+调用函数
+transitionChangeHp、transitionSetStatus、transitionRemoveStatus、transitionMoveCardBetweenZones、transitionMoveCardsAtomically。
+
+边界与不变量
+所有版本变化仅由 transition authority 产生。
+*/
+function frArchStateVersionContract() {
+  const state = { stateVersion: 0, phase: "idle", currentPlayerIndex: 0 };
+  const player = makePlayer("fr4b-version", 0, "dawn");
+  transitionChangeHp(state, player, 1);
+  assert.equal(state.stateVersion, 1);
+  transitionChangeHp(state, player, 0);
+  assert.equal(state.stateVersion, 1);
+  transitionSetStatus(state, player, "huntMark", { sourceId: "x" });
+  assert.equal(state.stateVersion, 2);
+  transitionRemoveStatus(state, player, "missing");
+  assert.equal(state.stateVersion, 2);
+  const source = []; const target = [];
+  transitionMoveCardBetweenZones(state, source, target, { id: "x" });
+  assert.equal(state.stateVersion, 2);
+  const cards = [instance("block"), instance("block")];
+  const hand = [...cards];
+  const discard = [];
+  transitionMoveCardsAtomically(state, hand, discard, cards);
+  assert.equal(state.stateVersion, 3);
+  assert.deepEqual(discard, cards);
+}
+
+test("FR-ARCH-4B·stateVersion：success +1、no-op/fail +0、atomic group +1", frArchStateVersionContract);
 
 // ==================== Test Runner 最终执行 ====================
 

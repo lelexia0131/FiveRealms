@@ -2,19 +2,48 @@
  * 互利的公开牌池。依赖 Deck、AI 选牌器和 UI；展示中的实体独立于抽牌、弃牌
  * 与判定区。这里负责公开选取和合法记忆，不处理其他隐藏手牌选择。
  */
+import { setPublicCardPool } from "../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { appendCardToZone, moveCardBetweenZones, moveCardsAtomically } from "../domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
+
 export class PublicCardPool {
   constructor(game) { this.game = game; this.cards = []; }
 
+  /*
+  功能
+  揭示指定数量的公开牌池卡并提交 publicCardPool 引用。
+
+  调用方
+  cardRegistry.mutualBenefit。
+
+  输入
+  count。
+
+  输出
+  本次公开的 Card 数组。
+
+  读取状态
+  Deck 牌堆。
+
+  写入状态
+  publicCardPool 经 MatchStateTransition。
+
+  调用函数
+  setPublicCardPool、Deck.drawOne。
+
+  边界与不变量
+  不执行轮选。
+  */
   reveal(count) {
     if (!this.game.isSessionValid(this.game.state.gameId) || this.game.state.isGameOver) return [];
     this.cards = [];
     for (let index = 0; index < count; index += 1) {
-      const card = this.game.state.deck.drawOne();
+      const card = this.game.state.deck.drawOne(this.game.state);
       if (!card) break;
-      this.cards.push(card);
+      appendCardToZone(this.game.state, this.cards, card);
     }
     this.game.syncDeckAliases();
-    this.game.state.publicCardPool = this.cards;
+    setPublicCardPool(this.game.state, this.cards);
     this.game.ui.showPublicPool?.(this.cards);
     return this.cards;
   }
@@ -69,22 +98,50 @@ export class PublicCardPool {
         card = this.cards[0];
       }
       if (!card) continue;
-      const cardIndex = this.cards.indexOf(card);
-      if (cardIndex < 0) continue;
-      this.cards.splice(cardIndex, 1);
-      player.hand.push(card);
-      player.bumpHandVersion();
+      if (!this.cards.includes(card)) continue;
+      moveCardBetweenZones(this.game.state, this.cards, player.hand, card);
+      bumpHandVersion(this.game.state, player);
       for (const viewer of this.game.state.players) if (viewer.id !== player.id) this.game.rememberPrivateCard(viewer, player, card);
       this.game.log(`${player.name}从互利牌池选择了「${card.name}」。`);
       this.game.ui.render(this.game);
       this.game.ui.showPublicPool?.(this.cards);
     }
     if (!this.game.isSessionValid(gameId)) return false;
-    for (const card of this.cards.splice(0)) this.game.state.deck.discard(card);
-    this.game.state.publicCardPool = [];
+    if (this.cards.length) moveCardsAtomically(
+      this.game.state,
+      this.cards,
+      this.game.state.deck.discardPile,
+      [...this.cards]
+    );
+    setPublicCardPool(this.game.state, []);
     this.game.ui.hidePublicPool?.();
     return true;
   }
 
-  cleanup() { this.cards = []; this.game.state.publicCardPool = []; }
+  /*
+  功能
+  清空公开牌池本地数组并提交空 publicCardPool。
+
+  调用方
+  Game.dispose 与重新征召。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  this.cards 与 game.state。
+
+  写入状态
+  publicCardPool 经 MatchStateTransition。
+
+  调用函数
+  setPublicCardPool。
+
+  边界与不变量
+  不移动实体牌到弃牌堆。
+  */
+  cleanup() { this.cards = []; setPublicCardPool(this.game.state, []); }
 }

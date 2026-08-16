@@ -5,7 +5,9 @@
  */
 import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
 import { createPlayerState } from "../domain/state/model/PlayerState.js?build=20260815-shadow-agent-p1-slot";
-import { clamp } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
+import { applyGeneralDefinition, bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { changeEnergy } from "../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
 
 export class Player {
   /*
@@ -46,7 +48,7 @@ export class Player {
     this.generalId = playerState.generalId;
     this.name = playerState.name;
     this.loreFaction = playerState.loreFaction;
-    this.general = playerState.general;
+    this.general = null;
     this.hp = playerState.hp;
     this.maxHp = playerState.maxHp;
     this.shield = playerState.shield;
@@ -65,78 +67,179 @@ export class Player {
     this.aiMemory = { revealedCardsByPlayer: {}, knownCardsByPlayer: {}, recentAggressors: {} };
   }
 
-  /**
-   * 将角色配置应用到座位并恢复至满生命、初始能量。只在角色分配阶段调用，会修改玩家状态。
-   * @param {Object} general 角色配置。
-   * @returns {void}
-   */
-  applyGeneral(general) {
+  /*
+  功能
+  将已决定的角色定义应用到 PlayerState。
+
+  调用方
+  Game.confirmGeneral 与测试 fixture。
+
+  输入
+  general definition。
+
+  输出
+  无返回值。
+
+  读取状态
+  general definition。
+
+  写入状态
+  Player 角色身份与初始资源字段。
+
+  调用函数
+  applyGeneralDefinition。
+
+  边界与不变量
+  只转发 Domain transition；不决定角色选择。
+  */
+  applyGeneral(general, state = null) {
+    applyGeneralDefinition(state ?? { stateVersion: 0 }, this, general);
     this.general = general;
-    this.generalId = general.id;
-    this.name = general.name;
-    this.loreFaction = general.loreFaction;
-    this.maxHp = general.maxHp;
-    this.hp = general.maxHp;
-    this.energy = general.initialEnergy ?? 0;
   }
 
-  /** 重置每回合次数与技能标记；TurnManager 在回合开始调用。 */
-  resetTurnFlags(teamRules = null) {
-    this.turnFlags = {
-      attackUsed: 0,
-      attackLimit: teamRules?.attackLimitPerTurn ?? GAME_CONFIG.largeTeamRules.attackLimitPerTurn,
-      recoverUsed: 0,
-      recoverLimit: teamRules ? teamRules.recoverLimitPerTurn : GAME_CONFIG.largeTeamRules.recoverLimitPerTurn,
-      categoriesUsed: new Set(),
-      momentum: 0,
-      activeSkillsUsed: new Set(),
-      activeSkillUseCounts: {},
-      recycleDeviceUses: 0,
-      guardianAidUsed: false,
-      coordinationTriggered: false,
-      gambleTriggered: false,
-      rejuvenationTriggerCount: 0,
-      spyGapTriggered: false,
-      spyGapPendingTargetIds: new Set(),
-      trackingTargetIds: new Set(),
-      skipActionPhase: false
-    };
+  /*
+  功能
+  重置每回合次数与技能标记；生产调用必须提供 authoritative state。
+
+  调用方
+  Game.takeTurn 与测试 fixture。
+
+  输入
+  teamRules 与可选 state。
+
+  输出
+  无返回值。
+
+  读取状态
+  Player turnFlags。
+
+  写入状态
+  turnFlags 经 RuleUsageTransitions。
+
+  调用函数
+  resetTurnFlags。
+
+  边界与不变量
+  无 state 的调用只用于测试/旧 fixture，不更新真实 stateVersion。
+  */
+  resetTurnFlags(teamRules = null, state = null) {
+    resetTurnFlags(state ?? { stateVersion: 0 }, this, teamRules);
   }
 
-  /**
-   * 重置所有角色都可能在任意玩家回合触发的“每回合”被动额度；
-   * Game 在每个新全局回合开始时对全部玩家调用一次，必须在 turnStart 监听器执行前完成。
-   * 不触碰 actor-turn state（攻击次数、主动技能次数、调息次数、skipActionPhase 等）。
-   */
-  resetGlobalTurnReactiveFlags() {
-    this.turnFlags.categoriesUsed = new Set();
-    this.turnFlags.momentum = 0;
-    this.turnFlags.guardianAidUsed = false;
-    this.turnFlags.coordinationTriggered = false;
-    this.turnFlags.gambleTriggered = false;
-    this.turnFlags.rejuvenationTriggerCount = 0;
-    this.turnFlags.spyGapTriggered = false;
-    this.turnFlags.spyGapPendingTargetIds = new Set();
-    this.turnFlags.trackingTargetIds = new Set();
+  /*
+  功能
+  重置所有玩家共用的 global-turn reactive 额度。
+
+  调用方
+  Game.takeTurn 与测试 fixture。
+
+  输入
+  可选 authoritative state。
+
+  输出
+  无返回值。
+
+  读取状态
+  Player turnFlags。
+
+  写入状态
+  reactive flags 经 RuleUsageTransition。
+
+  调用函数
+  resetGlobalTurnReactiveFlags。
+
+  边界与不变量
+  不触碰 actor-turn state。
+  */
+  resetGlobalTurnReactiveFlags(state = null) {
+    resetGlobalTurnReactiveFlags(state ?? { stateVersion: 0 }, this);
   }
 
-  bumpHandVersion() { this.handVersion += 1; return this.handVersion; }
+  /*
+  功能
+  递增手牌版本并返回新版本。
 
-  /** 重置每轮技能标记；新轮开始时调用。 */
-  resetRoundFlags() {
-    // Guardian aid is per-global-turn and lives in turnFlags (resetGlobalTurnReactiveFlags).
-    this.roundFlags = {};
+  调用方
+  Game 卡牌移动与 CardSelectionSystem。
+
+  输入
+  无。
+
+  输出
+  新 handVersion。
+
+  读取状态
+  this.handVersion。
+
+  写入状态
+  this.handVersion。
+
+  调用函数
+  bumpHandVersion。
+
+  边界与不变量
+  handVersion 只服务隐藏选择 token 失效，不参与 stateVersion。
+  */
+  bumpHandVersion(state = null) {
+    return bumpHandVersion(state ?? { stateVersion: 0 }, this);
   }
 
-  /**
-   * 安全增加能量并限制在上限内。
-   * @param {number} amount 增量，可为负数。
-   * @returns {number} 实际变化量。
-   */
-  changeEnergy(amount) {
-    const previous = this.energy;
-    this.energy = clamp(this.energy + amount, 0, this.maxEnergy);
-    return this.energy - previous;
+  /*
+  功能
+  重置每轮技能标记；生产调用必须提供 authoritative state。
+
+  调用方
+  Game.runGameLoop 与测试 fixture。
+
+  输入
+  可选 state。
+
+  输出
+  无返回值。
+
+  读取状态
+  Player roundFlags。
+
+  写入状态
+  roundFlags 经 RuleUsageTransitions。
+
+  调用函数
+  resetRoundFlags。
+
+  边界与不变量
+  Guardian aid 按当前规则位于 turnFlags。
+  */
+  resetRoundFlags(state = null) {
+    resetRoundFlags(state ?? { stateVersion: 0 }, this);
+  }
+
+  /*
+  功能
+  安全增加能量并限制在上限内。
+
+  调用方
+  Game 与技能 execute。
+
+  输入
+  能量增量。
+
+  输出
+  实际变化量。
+
+  读取状态
+  this.energy、this.maxEnergy。
+
+  写入状态
+  this.energy。
+
+  调用函数
+  changeEnergy。
+
+  边界与不变量
+  只转发 Domain ResourceTransition，不触发事件。
+  */
+  changeEnergy(amount, state = null) {
+    return changeEnergy(state ?? { stateVersion: 0 }, this, amount);
   }
 
   /** 返回角色是否具有给定技能 ID；不修改状态。 */

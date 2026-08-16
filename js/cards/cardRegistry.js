@@ -1,5 +1,8 @@
 /** 二十六种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
 import { RuleEngine } from "../core/RuleEngine.js?build=20260815-shadow-agent-p1-slot";
+import { changeShield } from "../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { incrementAttackUsed, incrementRecoverUsed } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { removeStatus, setStatus } from "../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
 
 /** 只在最终效果解析时读取私密意图，并按原角色、原区域复验实体牌。 */
 function resolvePrivateSelectionIntent(game, source, card, target, context, expectedZone = null) {
@@ -24,19 +27,69 @@ async function resolveEquipment(game, source, card, context) {
 }
 
 const CARD_EFFECTS = {
+  /*
+  功能
+  提交一次已决定的突袭效果：递增攻击次数、消耗破势并调用统一伤害 workflow。
+
+  调用方
+  resolveCardEffect。
+
+  输入
+  Game、source、assault card、目标数组与 resolution context。
+
+  输出
+  无显式返回值。
+
+  读取状态
+  source.turnFlags/statuses/statistics。
+
+  写入状态
+  经 transition 写 turnFlags/statuses 并触发 damage。
+
+  调用函数
+  removeStatus、game.damage。
+
+  边界与不变量
+  不重新计算合法性；伤害目标由 workflow 决定。
+  */
   async assault(game, source, card, targets, context) {
-    source.turnFlags.attackUsed += 1;
+    incrementAttackUsed(game.state, source);
     source.statistics.assaultsUsed += 1;
     const stacks = source.statuses.exposeWeakness?.stacks ?? 0;
     if (stacks) {
-      delete source.statuses.exposeWeakness;
+      removeStatus(game.state, source, "exposeWeakness");
       game.log(`${source.name}消耗${stacks}层「破势」，本次「突袭」伤害+${stacks}。`, "important");
     }
     await game.damage(source, targets[0], 1 + stacks, { card, canBlock:true, damageType:"normal", resolutionId:context.resolutionId });
   },
 
+  /*
+  功能
+  提交调息卡已决定的次数与治疗 workflow。
+
+  调用方
+  resolveCardEffect。
+
+  输入
+  Game、source、recover card、targets 与 context。
+
+  输出
+  无显式返回值。
+
+  读取状态
+  source.turnFlags。
+
+  写入状态
+  recoverUsed 经 RuleUsageTransition；治疗经 Game.heal。
+
+  调用函数
+  incrementRecoverUsed、game.heal。
+
+  边界与不变量
+  不重新判断合法性。
+  */
   async recover(game, source, card, targets, context) {
-    source.turnFlags.recoverUsed += 1;
+    incrementRecoverUsed(game.state, source);
     await game.heal(source, source, 1, {
       card, resolutionId:context.resolutionId, silentLog:true,
       resultLog:(actualAmount) => `${source.name}使用「${card.name}」，恢复${actualAmount}点生命。`
@@ -45,10 +98,35 @@ const CARD_EFFECTS = {
 
   async charge(game, source, card) { await game.gainEnergy(source, 1, { card, reason:"聚能" }); },
 
+  /*
+  功能
+  提交已决定的护盾牌效果，给合法目标增加 1 点护盾。
+
+  调用方
+  resolveCardEffect。
+
+  输入
+  Game、source、shield card 与目标数组。
+
+  输出
+  resolved 布尔值。
+
+  读取状态
+  target 存活与阵营。
+
+  写入状态
+  target.shield 经 ResourceTransition。
+
+  调用函数
+  changeShield。
+
+  边界与不变量
+  不做合法性判断；UI 反馈与日志由调用方上下文继续。
+  */
   async shield(game, source, card, targets) {
     const target = targets[0];
     if (!target?.alive || target.battleTeam !== source.battleTeam) return { resolved:false };
-    target.shield += 1;
+    changeShield(game.state, target, 1);
     game.ui.queueFeedback?.("shield", target.id, 1);
     const targetLabel = target.id === source.id ? "自己" : target.name;
     game.log(`${source.name}使用「${card.name}」，令${targetLabel}获得1点护盾，现有${target.shield}点。`, "heal");
@@ -84,9 +162,33 @@ const CARD_EFFECTS = {
     return { destination:"discard", resolved:Boolean(transferred) };
   },
 
+  /*
+  功能
+  提交已决定的破势效果，增加一层破势状态。
+
+  调用方
+  resolveCardEffect。
+
+  输入
+  Game 与 source。
+
+  输出
+  无显式返回值。
+
+  读取状态
+  source.statuses.exposeWeakness。
+
+  写入状态
+  source.statuses.exposeWeakness 经 StatusTransition。
+
+  调用函数
+  setStatus。
+
+  边界与不变量
+  不拥有破势具体消耗规则；只提交层数变化。
+  */
   async exposeWeakness(game, source) {
-    const status = source.statuses.exposeWeakness ??= { stacks:0 };
-    status.stacks += 1;
+    const status = setStatus(game.state, source, "exposeWeakness", { stacks:(source.statuses.exposeWeakness?.stacks ?? 0) + 1 });
     game.log(`${source.name}获得${status.stacks}层「破势」。`, "important");
   },
 
@@ -217,10 +319,35 @@ const CARD_EFFECTS = {
     return { resolved:effectiveTargets.length > 0, effectiveTargets };
   },
 
+  /*
+  功能
+  提交已决定的封印状态写入。
+
+  调用方
+  resolveCardEffect。
+
+  输入
+  Game、source、seal card 与目标数组。
+
+  输出
+  无显式返回值。
+
+  读取状态
+  target 状态。
+
+  写入状态
+  target.statuses.sealed 经 StatusTransition。
+
+  调用函数
+  setStatus。
+
+  边界与不变量
+  不决定判定时机或转移规则。
+  */
   async seal(game, source, card, targets) {
     const target = targets[0];
     if (!RuleEngine.getCardTargets(game, source, card).includes(target)) return { resolved:false };
-    target.statuses.sealed = { cardDefinitionId:card.definitionId, originPlayerId:source.id };
+    setStatus(game.state, target, "sealed", { cardDefinitionId:card.definitionId, originPlayerId:source.id });
     game.log(`${source.name}使${target.name}进入「封印」状态。`, "important");
   },
 
@@ -231,9 +358,34 @@ const CARD_EFFECTS = {
   async telescope(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },
   async barrierDevice(game, source, card, targets, context) { return resolveEquipment(game, source, card, context); },
 
+  /*
+  功能
+  提交已决定的闪电状态写入。
+
+  调用方
+  resolveCardEffect。
+
+  输入
+  Game、source 与 lightning card。
+
+  输出
+  无显式返回值。
+
+  读取状态
+  source.statuses.lightning。
+
+  写入状态
+  source.statuses.lightning 经 StatusTransition。
+
+  调用函数
+  setStatus。
+
+  边界与不变量
+  不决定判定、伤害或转移规则。
+  */
   async lightning(game, source, card) {
     if (source.statuses.lightning) return;
-    source.statuses.lightning = { cardDefinitionId: card.definitionId, originPlayerId: source.id };
+    setStatus(game.state, source, "lightning", { cardDefinitionId: card.definitionId, originPlayerId: source.id });
     game.log(`${source.name}获得了「闪电」状态。`, "important");
   },
 

@@ -9,7 +9,7 @@ Game constructor 的 legacy composition 与未来 application/match consumer。
 无。
 
 状态边界
-工厂只创建初始 shape，不读取或写入任何既有 GameState。
+工厂只创建初始 shape，不读取或写入任何既有 GameState；application match setup 字段不在此维护。
 
 信息边界
 纯公开领域状态 shape，无 AI 记忆或隐藏信息策略。
@@ -52,7 +52,6 @@ export function createMatchState({ deck }) {
     startingPlayerIndex: -1,
     currentRound: RULESET_DEFINITION.initialRound,
     phase: "idle",
-    selectedGeneralId: null,
     winnerTeam: null,
     publicCardPool: [],
     isGameOver: false,

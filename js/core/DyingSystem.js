@@ -1,5 +1,11 @@
 import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
 import { createId } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
+import { setHp } from "../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { clearStatuses } from "../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { setAlive, setEquipment } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { discardEquipment } from "../domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { setKillRewardGranted, setMomentum, setSkipActionPhase } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { setMatchPhase } from "../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；
@@ -9,6 +15,31 @@ import { createId } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slo
 export class DyingSystem {
   constructor(game) { this.game = game; this.active = false; this.queue = []; }
 
+  /*
+  功能
+  将一名生命不大于 0 的角色送入既有濒死队列与救援 workflow。
+
+  调用方
+  Game.damage、HpLossSystem 与 killPlayer。
+
+  输入
+  target、可选 source 与 context。
+
+  输出
+  是否最终脱离濒死。
+
+  读取状态
+  Game session、target 存活与生命。
+
+  写入状态
+  phase 经 MatchStateTransition；生命经 ResourceTransition。
+
+  调用函数
+  resolve、setMatchPhase、setHp。
+
+  边界与不变量
+  不决定伤害规则；事件与响应顺序保持原样。
+  */
   async enter(target, source = null, context = {}) {
     const gameId = this.game.state.gameId;
     if (!this.game.isSessionValid(gameId) || !target?.alive || target.hp > 0 || this.game.state.isGameOver) return target?.hp > 0;
@@ -29,7 +60,7 @@ export class DyingSystem {
       return rescued;
     } finally {
       this.active = false;
-      if (this.game.isSessionValid(gameId) && !this.game.state.isGameOver && this.game.state.phase === "dying") this.game.state.phase = entryPhase;
+      if (this.game.isSessionValid(gameId) && !this.game.state.isGameOver && this.game.state.phase === "dying") setMatchPhase(this.game.state, entryPhase);
     }
   }
 
@@ -43,6 +74,31 @@ export class DyingSystem {
     return [target, ...allies];
   }
 
+  /*
+  功能
+  执行单个濒死目标的完整救援响应链并提交救援/死亡 commit。
+
+  调用方
+  enter。
+
+  输入
+  target、source 与 context。
+
+  输出
+  是否成功脱离濒死。
+
+  读取状态
+  Game session、玩家手牌、阵营与响应系统。
+
+  写入状态
+  phase/HP/alive/statuses 经 Domain transitions。
+
+  调用函数
+  setHp、setAlive、clearStatuses、setMatchPhase、responseSystem 与 heal。
+
+  边界与不变量
+  救援顺序、事件与日志顺序保持不变。
+  */
   async resolve(target, source, context) {
     const gameId = this.game.state.gameId;
     const previousPhase = this.game.state.phase;
@@ -51,7 +107,7 @@ export class DyingSystem {
     if (!this.game.isSessionValid(gameId)) return false;
     if (before.cancelled) {
       if (target.alive && target.hp <= 0) {
-        target.hp = 1;
+        setHp(this.game.state, target, 1);
         this.game.log(`${target.name}的濒死被取消，生命恢复到1点以保持存活状态。`, "heal");
         this.game.ui.queueFeedback?.("heal", target.id, 1);
         this.game.ui.render(this.game);
@@ -59,7 +115,7 @@ export class DyingSystem {
       return target.hp > 0;
     }
     if (target.hp > 0 || !target.alive) return target.hp > 0;
-    this.game.state.phase = "dying";
+    setMatchPhase(this.game.state, "dying");
     this.game.state.dyingContext = { targetId:target.id, need:1 - target.hp, currentHp:target.hp };
     this.game.log(`${target.name}进入濒死，还需恢复${1 - target.hp}点生命才能脱离濒死。`, "important");
     await this.game.eventBus.emit("playerDying", { type:"playerDying", target, source, need:1 - target.hp, context });
@@ -113,24 +169,49 @@ export class DyingSystem {
       this.game.log(`${target.name}脱离濒死。`, "heal");
       await this.game.eventBus.emit("playerRescued", { type:"playerRescued", target, source });
       if (!this.game.isSessionValid(gameId)) return false;
-      if (!this.game.state.isGameOver) this.game.state.phase = previousPhase;
+      if (!this.game.state.isGameOver) setMatchPhase(this.game.state, previousPhase);
       return true;
     }
     await this.kill(target, source);
     if (!this.game.isSessionValid(gameId)) return false;
-    if (!this.game.state.isGameOver) this.game.state.phase = previousPhase;
+    if (!this.game.state.isGameOver) setMatchPhase(this.game.state, previousPhase);
     return false;
   }
 
+  /*
+  功能
+  提交已决定的阵亡状态、清理手牌/装备并触发死亡事件与奖励 workflow。
+
+  调用方
+  resolve。
+
+  输入
+  target 与可选击杀者。
+
+  输出
+  session 是否仍有效。
+
+  读取状态
+  Game session、牌堆、装备与玩家。
+
+  写入状态
+  HP/alive/statuses/equipment 经 Domain transitions。
+
+  调用函数
+  setHp、setAlive、clearStatuses、setEquipment。
+
+  边界与不变量
+  不决定何时死亡；奖励/胜利 workflow 留在原层。
+  */
   async kill(target, source) {
     const gameId = this.game.state.gameId;
     if (!this.game.isSessionValid(gameId) || !target.alive) return false;
-    target.hp = 0;
-    target.alive = false;
-    target.statuses = {};
+    setHp(this.game.state, target, 0);
+    setAlive(this.game.state, target, false);
+    clearStatuses(this.game.state, target);
     if (target.turnFlags) {
-      target.turnFlags.momentum = 0;
-      target.turnFlags.skipActionPhase = false;
+      setMomentum(this.game.state, target, 0);
+      setSkipActionPhase(this.game.state, target, false);
     }
     this.game.requestHumanPlayEndForDefeat?.(target);
     this.game.ui.render(this.game);
@@ -141,15 +222,14 @@ export class DyingSystem {
     }
     if (target.equipment) {
       const equipment = target.equipment;
-      target.equipment = null;
-      this.game.state.deck.discard(equipment);
+      discardEquipment(this.game.state, target, equipment, this.game.state.deck.discardPile);
       this.game.log(`${target.name}的装备「${equipment.name}」随阵亡进入弃牌堆。`);
     }
     this.game.syncDeckAliases();
     await this.game.eventBus.emit("playerDead", { type:"playerDead", target, source });
     if (!this.game.isSessionValid(gameId)) return false;
     if (!target.gameFlags.killRewardGranted && source?.alive && source.battleTeam !== target.battleTeam) {
-      target.gameFlags.killRewardGranted = true;
+      setKillRewardGranted(this.game.state, target, true);
       const drawn = await this.game.drawCards(source, GAME_CONFIG.killRewardDrawCount, "击杀奖励", { silent:true });
       if (!this.game.isSessionValid(gameId)) return false;
       this.game.log(`${source.name}击杀了${target.name}，额外摸了${drawn}张牌。`, "important");

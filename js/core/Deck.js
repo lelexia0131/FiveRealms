@@ -5,6 +5,7 @@
  */
 import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
 import { createDeckZoneState } from "../domain/state/model/ZoneState.js?build=20260815-shadow-agent-p1-slot";
+import { appendCardToZone, commitDeckBuild, commitReshuffle, moveCardBetweenZones, removeCardFromZone, takeTopCard } from "../domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { createId, shuffled } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
 import { Debug } from "../utils/debug.js?build=20260815-shadow-agent-p1-slot";
 
@@ -32,7 +33,7 @@ export class Deck {
   createDeckZoneState。
 
   边界与不变量
-  四个牌区数组保持 Domain factory 提供的同一身份；随机源不属于 Domain state。
+  四个牌区数组保持 Domain factory 提供的同一身份；reshuffleCount 是 diagnostics/test observability legacy extension；随机源不属于 Domain state。
   */
   constructor(random = Math.random) {
     this.random = random;
@@ -41,100 +42,331 @@ export class Deck {
     this.discardPile = zoneState.discardPile;
     this.resolvingCards = zoneState.resolvingCards;
     this.judgmentZone = zoneState.judgmentZone;
-    this.reshuffleCount = zoneState.reshuffleCount;
+    this.reshuffleCount = 0;
   }
 
-  /**
-   * 根据集中配置创建唯一实例并执行 Fisher-Yates 洗牌；新对局只调用一次。
-   * @returns {number} 创建的卡牌总数。
-   */
-  build() {
-    this.cards = [];
-    this.discardPile = [];
-    this.resolvingCards = [];
-    this.judgmentZone = [];
+  /*
+  功能
+  根据集中配置创建实体牌并执行 Fisher-Yates 洗牌。
+
+  调用方
+  Game.confirmGeneral 与测试。
+
+  输入
+  可选 authoritative state。
+
+  输出
+  创建的卡牌总数。
+
+  读取状态
+  CARD_DEFINITIONS 与随机源。
+
+  写入状态
+  Deck 四区经 atomic ZoneTransition。
+
+  调用函数
+  shuffled、commitDeckBuild。
+
+  边界与不变量
+  createId 与 random 调用顺序不变。
+  */
+  build(state = null) {
     this.reshuffleCount = 0;
+    const builtCards = [];
     for (const definition of Object.values(CARD_DEFINITIONS)) {
       for (let count = 0; count < definition.count; count += 1) {
-        this.cards.push({ ...definition, id: createId("card") });
+        builtCards.push({ ...definition, id: createId("card") });
       }
     }
-    this.cards = shuffled(this.cards, this.random);
+    const shuffledCards = shuffled(builtCards, this.random);
+    commitDeckBuild(state ?? { stateVersion: 0 }, this, shuffledCards, [], [], []);
     Debug.log("Deck", `创建并洗牌 ${this.cards.length} 张`);
     return this.cards.length;
   }
 
-  /**
-   * 抽取一张牌。牌堆为空时仅重洗弃牌堆；若两者都空则安全返回 null。
-   * @returns {Object|null} 抽到的实体牌。
-   */
-  drawOne() {
-    if (!this.cards.length) this.reshuffle();
-    return this.cards.pop() ?? null;
+  /*
+  功能
+  抽取一张牌；空牌堆时先重洗弃牌堆。
+
+  调用方
+  Game/PublicCardPool/Judgment workflow。
+
+  输入
+  可选 authoritative state。
+
+  输出
+  抽到的 Card entity 或 null。
+
+  读取状态
+  cards/discardPile 与随机源。
+
+  写入状态
+  cards 经 ZoneTransition；reshuffle 经 atomic commit。
+
+  调用函数
+  reshuffle、takeTopCard。
+
+  边界与不变量
+  RNG 调用顺序不变。
+  */
+  drawOne(state = null) {
+    if (!this.cards.length) this.reshuffle(state);
+    return takeTopCard(state ?? { stateVersion: 0 }, this.cards);
   }
 
-  /** 将弃牌堆洗回抽牌堆，结算区不会参与；返回是否实际重洗。 */
-  reshuffle() {
+  /*
+  功能
+  将弃牌堆洗回抽牌堆。
+
+  调用方
+  drawOne 与测试。
+
+  输入
+  可选 authoritative state。
+
+  输出
+  是否实际重洗。
+
+  读取状态
+  discardPile 与随机源。
+
+  写入状态
+  cards/discardPile 经 atomic ZoneTransition；reshuffleCount 只作 diagnostics。
+
+  调用函数
+  shuffled、commitReshuffle。
+
+  边界与不变量
+  结算区不参与；RNG 调用顺序不变。
+  */
+  reshuffle(state = null) {
     if (!this.discardPile.length) return false;
-    this.cards = shuffled(this.discardPile, this.random);
-    this.discardPile = [];
+    const shuffledCards = shuffled(this.discardPile, this.random);
+    commitReshuffle(state ?? { stateVersion: 0 }, this, shuffledCards);
     this.reshuffleCount += 1;
     Debug.log("Deck", `重洗后牌堆 ${this.cards.length} 张`);
     return true;
   }
 
-  /** 将一张已离开手牌的卡放入结算区；同一实例不会重复加入。 */
-  beginResolve(card) {
+  /*
+  功能
+  将一张已离开手牌的卡放入结算区。
+
+  调用方
+  Game.moveHandToResolving 与 draw workflow。
+
+  输入
+  Card entity。
+
+  输出
+  追加成功返回 true。
+
+  读取状态
+  当前牌区数组。
+
+  写入状态
+  resolvingCards 经 ZoneTransition。
+
+  调用函数
+  appendCardToZone。
+
+  边界与不变量
+  同一实例不会重复加入；调用方保留校验。
+  */
+  beginResolve(card, state = null) {
     if (!card || this.cards.includes(card) || this.discardPile.includes(card)
       || this.resolvingCards.includes(card) || this.judgmentZone.includes(card)) return false;
-    this.resolvingCards.push(card);
+    appendCardToZone(state ?? { stateVersion: 0 }, this.resolvingCards, card);
     return true;
   }
 
-  /** 从结算区移除卡并放入弃牌堆；装备牌应改由 equip 完成而不调用此方法。 */
-  finishResolveToDiscard(card) {
+  /*
+  功能
+  将结算区卡提交到弃牌堆。
+
+  调用方
+  Game.finishResolvingToDiscard。
+
+  输入
+  Card entity。
+
+  输出
+  提交成功返回 true。
+
+  读取状态
+  resolvingCards 与 discardPile。
+
+  写入状态
+  两牌区经 ZoneTransition。
+
+  调用函数
+  moveCardBetweenZones。
+
+  边界与不变量
+  装备牌仍由 equip 路径处理。
+  */
+  finishResolveToDiscard(card, state = null) {
     const index = this.resolvingCards.indexOf(card);
     if (index < 0 || this.discardPile.includes(card)) return false;
-    this.resolvingCards.splice(index, 1);
-    this.discardPile.push(card);
+    moveCardBetweenZones(state ?? { stateVersion: 0 }, this.resolvingCards, this.discardPile, card);
     return true;
   }
 
-  /** 从结算区移除将要进入装备区的牌，不加入弃牌堆。 */
-  finishResolveToEquipment(card) {
-    const index = this.resolvingCards.indexOf(card);
-    if (index < 0) return false;
-    this.resolvingCards.splice(index, 1);
+  /*
+  功能
+  从结算区移除将要进入装备区的牌。
+
+  调用方
+  Game.equipCard。
+
+  输入
+  Card entity。
+
+  输出
+  移除成功返回 true。
+
+  读取状态
+  resolvingCards。
+
+  写入状态
+  resolvingCards 经 ZoneTransition。
+
+  调用函数
+  removeCardFromZone。
+
+  边界与不变量
+  不处理装备槽写入。
+  */
+  finishResolveToEquipment(card, state = null) {
+    if (this.resolvingCards.indexOf(card) < 0) return false;
+    removeCardFromZone(state ?? { stateVersion: 0 }, this.resolvingCards, card);
     return true;
   }
 
-  /** 将公开弃置或被替换的牌加入弃牌堆；重复实例会被拒绝。 */
-  discard(card) {
+  /*
+  功能
+  将公开弃置或被替换的牌加入弃牌堆。
+
+  调用方
+  Game 与 PublicCardPool。
+
+  输入
+  Card entity。
+
+  输出
+  追加成功返回 true。
+
+  读取状态
+  discardPile/resolvingCards/judgmentZone。
+
+  写入状态
+  discardPile 经 ZoneTransition。
+
+  调用函数
+  appendCardToZone。
+
+  边界与不变量
+  重复实例校验保持不变。
+  */
+  discard(card, state = null) {
     if (!card || this.discardPile.includes(card) || this.resolvingCards.includes(card) || this.judgmentZone.includes(card)) return false;
-    this.discardPile.push(card);
+    appendCardToZone(state ?? { stateVersion: 0 }, this.discardPile, card);
     return true;
   }
 
-  drawToJudgment() {
-    const card = this.drawOne();
+  /*
+  功能
+  从牌堆抽取一张牌并放入独立判定区。
+
+  调用方
+  JudgmentSystem。
+
+  输入
+  无。
+
+  输出
+  判定 Card entity 或 null。
+
+  读取状态
+  牌堆与判定区。
+
+  写入状态
+  judgmentZone 经 ZoneTransition。
+
+  调用函数
+  drawOne、appendCardToZone。
+
+  边界与不变量
+  不处理判定结果。
+  */
+  drawToJudgment(state = null) {
+    const card = this.drawOne(state);
     if (!card) return null;
-    this.judgmentZone.push(card);
+    appendCardToZone(state ?? { stateVersion: 0 }, this.judgmentZone, card);
     return card;
   }
 
-  finishJudgmentToDiscard(card) {
+  /*
+  功能
+  将判定区卡提交到弃牌堆。
+
+  调用方
+  JudgmentSystem。
+
+  输入
+  Card entity。
+
+  输出
+  提交成功返回 true。
+
+  读取状态
+  judgmentZone 与 discardPile。
+
+  写入状态
+  两牌区经 ZoneTransition。
+
+  调用函数
+  moveCardBetweenZones。
+
+  边界与不变量
+  不解释判定结果。
+  */
+  finishJudgmentToDiscard(card, state = null) {
     const index = this.judgmentZone.indexOf(card);
     if (index < 0) return false;
-    this.judgmentZone.splice(index, 1);
-    this.discardPile.push(card);
+    moveCardBetweenZones(state ?? { stateVersion: 0 }, this.judgmentZone, this.discardPile, card);
     return true;
   }
 
-  finishJudgmentToHand(card, player) {
+  /*
+  功能
+  将判定区卡提交到指定玩家手牌。
+
+  调用方
+  JudgmentSystem。
+
+  输入
+  Card entity 与 Player。
+
+  输出
+  提交成功返回 true。
+
+  读取状态
+  judgmentZone 与 player.hand。
+
+  写入状态
+  两牌区经 ZoneTransition。
+
+  调用函数
+  moveCardBetweenZones。
+
+  边界与不变量
+  不负责 handVersion 或知识失效。
+  */
+  finishJudgmentToHand(card, player, state = null) {
     const index = this.judgmentZone.indexOf(card);
     if (index < 0) return false;
-    this.judgmentZone.splice(index, 1);
-    player.hand.push(card);
+    moveCardBetweenZones(state ?? { stateVersion: 0 }, this.judgmentZone, player.hand, card);
     return true;
   }
 }

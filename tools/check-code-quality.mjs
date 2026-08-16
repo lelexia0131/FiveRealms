@@ -883,6 +883,14 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     );
   }
 
+  const isTransitionImplementation = /^js\/domain\/state\/transitions\//i.test(file);
+  if (!isTransitionImplementation) {
+    pushPatternError(
+      maskedSource.match(/\bstate\.stateVersion\s*\+\+|\bstate\.stateVersion\s*\+=/),
+      "架构约束：只有 Domain transition implementation 可以直接写 state.stateVersion"
+    );
+  }
+
   if (
     (!LEGACY_UTILS_PATTERN.test(file) && FORBIDDEN_ROOT_BUCKET_PATTERN.test(file))
     || FUTURE_LAYER_BUCKET_PATTERN.test(file)
@@ -1636,6 +1644,23 @@ function identity(value) { return value; }`;
     throw new Error("garbage-bucket fixture did not detect future layer bucket directory");
   }
 
+  const validStateVersionTransitionErrors = inspectSource(
+    "js/domain/state/transitions/GoodVersionTransition.js",
+    `${moduleHeader}\n${pass.replace("return value;", "state.stateVersion += 1; return value;")}`,
+    null,
+  );
+  if (validStateVersionTransitionErrors.length) {
+    throw new Error(`valid stateVersion transition fixture failed: ${JSON.stringify(validStateVersionTransitionErrors)}`);
+  }
+  const stateVersionWriteGuardErrors = inspectSource(
+    "js/core/BadVersionWrite.js",
+    `${moduleHeader}\n${pass.replace("return value;", "state.stateVersion += 1; return value;")}`,
+    null,
+  );
+  if (!stateVersionWriteGuardErrors.some((error) => error.missing.some((item) => item.includes("state.stateVersion")))) {
+    throw new Error("stateVersion write guard did not reject non-transition write");
+  }
+
   const compatibilityErrors = inspectSource(
     "js/ai/search/BadCompatibility.js",
     `${moduleHeader}\nimport { AiSimulator } from "../AiSimulator.js";\n${pass}`,
@@ -1652,7 +1677,7 @@ function identity(value) { return value; }`;
   if (!rootLayoutErrors.some((error) => error.missing.some((item) => item.includes("AI 根目录")))) {
     throw new Error("root layout fixture did not detect non-allowlisted root file");
   }
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/adapter/transition/garbage/dual-schema guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/adapter/transition/garbage/dual-schema/stateVersion-write guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
 }
 
 /*

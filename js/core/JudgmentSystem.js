@@ -1,4 +1,6 @@
 import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { setMatchPhase } from "../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 
 /**
  * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；
@@ -7,15 +9,40 @@ import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-
 export class JudgmentSystem {
   constructor(game) { this.game = game; }
 
+  /*
+  功能
+  执行雷达防御判定 workflow 并提交判定区移动与 phase 写入。
+
+  调用方
+  Game.damage。
+
+  输入
+  attacker、defender 与 attackContext。
+
+  输出
+  handled/immune/category 结果。
+
+  读取状态
+  defender 装备、Deck 判定区与 EventBus。
+
+  写入状态
+  phase 经 MatchStateTransition；牌区经 ZoneTransition。
+
+  调用函数
+  setMatchPhase、Deck judgment moves。
+
+  边界与不变量
+  判定结果规则不变。
+  */
   async judgeDefense(attacker, defender, attackContext) {
     const gameId = this.game.state.gameId;
     if (!this.game.isSessionValid(gameId)) return { handled:false, immune:false, cancelled:true };
     if (defender.equipment?.definitionId !== "defenseDevice") return { handled:false, immune:false };
-    const card = this.game.state.deck.drawToJudgment();
+    const card = this.game.state.deck.drawToJudgment(this.game.state);
     this.game.syncDeckAliases();
     if (!card) return { handled:false, immune:false };
     const previousPhase = this.game.state.phase;
-    this.game.state.phase = "judgment";
+    setMatchPhase(this.game.state, "judgment");
     this.game.state.currentJudgment = { card, defenderId:defender.id, attackerId:attacker?.id ?? null };
     this.game.ui.showJudgment?.(defender, card);
     this.game.log(`${defender.name}的「雷达」判定为「${card.name}」（${card.categoryName}）。`, "important");
@@ -23,29 +50,53 @@ export class JudgmentSystem {
     if (!this.game.isSessionValid(gameId)) return { handled:false, immune:false, cancelled:true };
     let result;
     if (card.category === "tactic") {
-      this.game.state.deck.finishJudgmentToDiscard(card);
+      this.game.state.deck.finishJudgmentToDiscard(card, this.game.state);
       this.game.log(`${defender.name}的「雷达」生效，此次攻击无效。`, "important");
       result = { handled:true, immune:true, category:"tactic" };
     } else if (card.category === "basic") {
-      this.game.state.deck.finishJudgmentToHand(card, defender);
-      defender.bumpHandVersion();
+      this.game.state.deck.finishJudgmentToHand(card, defender, this.game.state);
+      bumpHandVersion(this.game.state, defender);
       for (const viewer of this.game.state.players) if (viewer.id !== defender.id) this.game.rememberPrivateCard(viewer, defender, card);
       this.game.log(`${defender.name}获得判定牌，此次攻击继续结算。`);
       result = { handled:true, immune:false, category:"basic" };
     } else {
-      this.game.state.deck.finishJudgmentToDiscard(card);
+      this.game.state.deck.finishJudgmentToDiscard(card, this.game.state);
       this.game.log(`${defender.name}的「雷达」未生效，判定牌进入弃牌堆，此次攻击继续结算。`, "important");
       result = { handled:true, immune:false, category:"equipment" };
     }
     this.game.state.currentJudgment = null;
     this.game.ui.hideJudgment?.();
-    if (!this.game.state.isGameOver) this.game.state.phase = previousPhase;
+    if (!this.game.state.isGameOver) setMatchPhase(this.game.state, previousPhase);
     this.game.syncDeckAliases();
     this.game.ui.render(this.game);
     return result;
   }
 
-  /** 延迟战术状态的公共判定：按权威 category 比较，判定牌最终一律进入弃牌堆。 */
+  /*
+  功能
+  执行延迟状态的公共判定 workflow。
+
+  调用方
+  Game.registerGlobalRules 的 seal/lightning 规则。
+
+  输入
+  holder 与 options。
+
+  输出
+  handled/triggered/category 结果。
+
+  读取状态
+  holder 状态、Deck 判定区与 EventBus。
+
+  写入状态
+  phase 经 MatchStateTransition；判定区经 ZoneTransition。
+
+  调用函数
+  setMatchPhase、Deck judgment moves。
+
+  边界与不变量
+  判定牌最终弃置的既有规则不变。
+  */
   async judgeDelayedStatus(holder, options = {}) {
     const {
       statusId,
@@ -59,7 +110,7 @@ export class JudgmentSystem {
     const gameId = this.game.state.gameId;
     if (!this.game.isSessionValid(gameId)) return { handled:false, triggered:false, cancelled:true };
     if (!holder?.alive || !this.game.state.players.some((entry) => entry === holder && entry.alive)) return { handled:false, triggered:false };
-    const card = this.game.state.deck.drawToJudgment();
+    const card = this.game.state.deck.drawToJudgment(this.game.state);
     this.game.syncDeckAliases();
     if (!card) {
       this.game.log(`没有可翻开的判定牌，「${statusName}」结算顺延。`);
@@ -69,7 +120,7 @@ export class JudgmentSystem {
       : card.category === "tactic" ? "战术牌"
         : card.category === "equipment" ? "装备牌" : card.categoryName;
     const previousPhase = this.game.state.phase;
-    this.game.state.phase = "judgment";
+    setMatchPhase(this.game.state, "judgment");
     this.game.state.currentJudgment = { card, defenderId:holder.id, attackerId:null, statusId };
     if (statusCard) this.game.ui.setCurrentCard?.(
       statusCard, "判定中", holder.name
@@ -93,11 +144,11 @@ export class JudgmentSystem {
     await this.game.eventBus.emit("judgmentRevealed", revealEvent);
     if (!this.game.isSessionValid(gameId)) return { handled:false, triggered:false, cancelled:true };
     const triggered = card.category === triggerCategory;
-    this.game.state.deck.finishJudgmentToDiscard(card);
+    this.game.state.deck.finishJudgmentToDiscard(card, this.game.state);
     if (triggered && triggerMessage) this.game.log(triggerMessage(holder, card), "important");
     this.game.state.currentJudgment = null;
     this.game.ui.hideJudgment?.();
-    if (!this.game.state.isGameOver) this.game.state.phase = previousPhase;
+    if (!this.game.state.isGameOver) setMatchPhase(this.game.state, previousPhase);
     this.game.syncDeckAliases();
     this.game.ui.render(this.game);
     return { handled:true, triggered, category:card.category, card };
