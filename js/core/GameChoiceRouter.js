@@ -20,7 +20,7 @@ application/choice、application/ports 与 adapters/ui、adapters/ai。
 import { createChoiceCoordinator } from "../application/choice/ChoiceCoordinator.js?build=20260815-shadow-agent-p1-slot";
 import { createChoicePort, createChoiceResult } from "../application/ports/ChoicePort.js?build=20260815-shadow-agent-p1-slot";
 import { createAiChoiceAdapter } from "../adapters/ai/AiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
-import { createAiResponseTimingPort } from "../application/response/AiResponseTimingPort.js?build=20260815-shadow-agent-p1-slot";
+import { createAiResponseTimingDecorator } from "../application/response/AiResponseTimingDecorator.js?build=20260815-shadow-agent-p1-slot";
 import { createUiChoiceAdapter } from "../adapters/ui/UiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
 import { getAiDelay } from "../utils/aiTiming.js?build=20260815-shadow-agent-p1-slot";
 
@@ -66,7 +66,7 @@ export function createGameChoiceBoundary(game, choiceContexts, injectedPort = nu
     choosePublicCard: (player, cards) => game.aiController.choosePublicCard(player, cards),
     isSessionValid: (gameId) => game.isSessionValid(gameId)
   }));
-  const aiPort = createChoicePort(createAiResponseTimingPort(rawAiPort, {
+  const aiPort = createChoicePort(createAiResponseTimingDecorator(rawAiPort, {
     getPlayer: (actorId) => game.state.players.find((player) => player.id === actorId),
     setThinking: (isThinking, player, message) => game.ui.setThinking(isThinking, player, message),
     delay: async () => game.cleanupManager.delay(getAiDelay(game, "response")),

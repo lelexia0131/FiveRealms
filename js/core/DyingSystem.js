@@ -1,245 +1,292 @@
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
-import { createId } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
-import { setHp } from "../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { clearStatuses } from "../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { setAlive, setEquipment } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { discardEquipment } from "../domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { setKillRewardGranted, setMomentum, setSkipActionPhase } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { setMatchPhase } from "../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { isDying } from "../domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
-
 /**
- * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；
- * 救援顺序为本人，然后从本人下一座位起的存活队友。实例随 Game 创建，并在
- * dispose 时清空队列；它不负责普通伤害、护盾或调息的主动使用。
+ * Application Dying Workflow 的 legacy compatibility façade。
+ * queue/active/dyingContext 的真实 owner 已迁至 js/application/combat/DyingWorkflow.js；
+ * 本文件只做 Game collaborator 适配与方法转发。
  */
-export class DyingSystem {
-  constructor(game) { this.game = game; this.active = false; this.queue = []; }
+import { createId } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
+import { createDyingWorkflow } from "../application/combat/DyingWorkflow.js?build=20260815-shadow-agent-p1-slot";
 
+/*
+功能
+为本局 DyingWorkflow 构造显式 Game collaborator 依赖。
+
+调用方
+DyingSystem constructor。
+
+输入
+Game composition root。
+
+输出
+dependencies object。
+
+读取状态
+无。
+
+写入状态
+game.state.dyingContext 的 legacy projection setter。
+
+调用函数
+无。
+
+边界与不变量
+不构造第二份 workflow；Application 不持有 Game。
+*/
+function buildGameDyingWorkflowDependencies(game) {
+  return {
+    getState: () => game.state,
+    isSessionValid: (gameId) => game.isSessionValid(gameId),
+    emitEvent: (type, payload) => game.eventBus.emit(type, payload),
+    requestDyingRescue: (...args) => game.responseSystem.requestDyingRescue(...args),
+    heal: (...args) => game.heal(...args),
+    discardCardFromHand: (...args) => game.discardCardFromHand(...args),
+    drawCards: (...args) => game.drawCards(...args),
+    syncDeckAliases: () => game.syncDeckAliases(),
+    requestHumanPlayEndForDefeat: (target) => game.requestHumanPlayEndForDefeat(target),
+    checkVictory: () => game.checkVictory(),
+    createId,
+    presentation: game.presentationPort,
+    setDyingContextProjection: (value) => { game.state.dyingContext = value; }
+  };
+}
+
+export class DyingSystem {
   /*
   功能
-  将一名生命不大于 0 的角色送入既有濒死队列与救援 workflow。
+  创建 legacy DyingSystem façade 并组合 Application DyingWorkflow。
 
   调用方
-  Game.damage、HpLossSystem 与 killPlayer。
+  Game constructor。
 
   输入
-  target、可选 source 与 context。
+  game。
 
   输出
-  是否最终脱离濒死。
+  DyingSystem façade。
 
   读取状态
-  Game session、target 存活与生命。
+  无。
 
   写入状态
-  phase 经 MatchStateTransition；生命经 ResourceTransition。
+  无；运行时经 Application workflow。
 
   调用函数
-  resolve、setMatchPhase、setHp。
+  buildGameDyingWorkflowDependencies、createDyingWorkflow。
 
   边界与不变量
-  不决定伤害规则；事件与响应顺序保持原样。
+  不含第二份 dying workflow；所有方法只转发。
   */
-  async enter(target, source = null, context = {}) {
-    const gameId = this.game.state.gameId;
-    if (!this.game.isSessionValid(gameId) || !isDying(target?.hp, target?.alive) || this.game.state.isGameOver) return target?.hp > 0;
-    if (this.active) {
-      if (!this.queue.some((entry) => entry.target.id === target.id)) this.queue.push({ target, source, context });
-      return false;
-    }
-    const entryPhase = this.game.state.phase;
-    this.active = true;
-    this.queue.push({ target, source, context });
-    let rescued = false;
-    try {
-      while (this.queue.length && !this.game.state.isGameOver && this.game.isSessionValid(gameId)) {
-        const entry = this.queue.shift();
-        if (isDying(entry.target.hp, entry.target.alive)) rescued = await this.resolve(entry.target, entry.source, entry.context);
-        if (!this.game.isSessionValid(gameId)) return false;
-      }
-      return rescued;
-    } finally {
-      this.active = false;
-      if (this.game.isSessionValid(gameId) && !this.game.state.isGameOver && this.game.state.phase === "dying") setMatchPhase(this.game.state, entryPhase);
-    }
-  }
-
-  rescueOrder(target) {
-    const players = this.game.state.players;
-    const allies = [];
-    for (let offset = 1; offset < players.length; offset += 1) {
-      const candidate = players[(target.seatIndex + offset) % players.length];
-      if (candidate.alive && candidate.battleTeam === target.battleTeam) allies.push(candidate);
-    }
-    return [target, ...allies];
+  constructor(game) {
+    this.game = game;
+    this.workflow = createDyingWorkflow(buildGameDyingWorkflowDependencies(game));
   }
 
   /*
   功能
-  执行单个濒死目标的完整救援响应链并提交救援/死亡 commit。
+  转发 Application DyingWorkflow.enter。
 
   调用方
-  enter。
+  CombatWorkflow 与 legacy callers。
 
   输入
   target、source 与 context。
 
   输出
-  是否成功脱离濒死。
+  enter 结果。
 
   读取状态
-  Game session、玩家手牌、阵营与响应系统。
+  无。
 
   写入状态
-  phase/HP/alive/statuses 经 Domain transitions。
+  无。
 
   调用函数
-  setHp、setAlive、clearStatuses、setMatchPhase、responseSystem 与 heal。
+  this.workflow.enter。
 
   边界与不变量
-  救援顺序、事件与日志顺序保持不变。
+  无第二份 workflow。
   */
-  async resolve(target, source, context) {
-    const gameId = this.game.state.gameId;
-    const previousPhase = this.game.state.phase;
-    const before = { type:"beforePlayerDying", target, source, context, cancelled:false };
-    await this.game.eventBus.emit("beforePlayerDying", before);
-    if (!this.game.isSessionValid(gameId)) return false;
-    if (before.cancelled) {
-      if (isDying(target.hp, target.alive)) {
-        setHp(this.game.state, target, 1);
-        this.game.log(`${target.name}的濒死被取消，生命恢复到1点以保持存活状态。`, "heal");
-        this.game.ui.queueFeedback?.("heal", target.id, 1);
-        this.game.ui.render(this.game);
-      }
-      return target.hp > 0;
-    }
-    if (!isDying(target.hp, target.alive)) return target.hp > 0;
-    setMatchPhase(this.game.state, "dying");
-    this.game.state.dyingContext = { targetId:target.id, need:1 - target.hp, currentHp:target.hp };
-    this.game.log(`${target.name}进入濒死，还需恢复${1 - target.hp}点生命才能脱离濒死。`, "important");
-    await this.game.eventBus.emit("playerDying", { type:"playerDying", target, source, need:1 - target.hp, context });
-    if (!this.game.isSessionValid(gameId)) return false;
-    this.game.ui.showDying?.(target, this.game.state.dyingContext);
+  enter(...args) { return this.workflow.enter(...args); }
+  /*
+  功能
+  转发 Application DyingWorkflow.resolve。
 
-    while (isDying(target.hp, target.alive) && this.game.isSessionValid(gameId)) {
-      let usedThisRound = false;
-      const order = this.rescueOrder(target);
-      for (const rescuer of order) {
-        if (target.hp >= 1 || !target.alive || this.game.state.isGameOver) break;
-        const cards = rescuer.hand.filter((card) => card.definitionId === "recover");
-        // 合法真人即使没有调息也应看到本次救援响应；AI 无牌会在响应系统立即跳过。
-        const response = await this.game.responseSystem.requestDyingRescue(rescuer, target, cards[0] ?? null);
-        if (!this.game.isSessionValid(gameId)) return false;
-        if (response.status === "cancelled") return false;
-        if (response.status !== "used" || !response.card) continue;
-        usedThisRound = true;
-        const healed = await this.game.heal(rescuer, target, 1, {
-          card:response.card, reason:"dyingRescue", isDyingRescue:true, silentLog:true,
-          resultLog:() => `${rescuer.name}使用「调息」救援${target.name}，使其恢复至${target.hp}点生命。`
-        });
-        if (!this.game.isSessionValid(gameId)) return false;
-        this.game.state.dyingContext = { targetId:target.id, need:Math.max(0, 1 - target.hp), currentHp:target.hp };
-        if (target.hp <= 0) this.game.log(`${target.name}仍处于濒死，还需恢复${1 - target.hp}点生命。`, "important");
-        await this.game.eventBus.emit("dyingRescueUsed", { type:"dyingRescueUsed", target, rescuer, card:response.card, currentHp:target.hp });
-        if (!this.game.isSessionValid(gameId)) return false;
-        if (healed > 0) {
-          await this.game.eventBus.emit("cardUsed", {
-            type:"cardUsed",
-            source:rescuer,
-            card:response.card,
-            targets:[target],
-            effectiveTargets:[target],
-            cancelled:false,
-            resolved:true,
-            resolutionId:createId("rescue-resolution"),
-            usageContext:"dyingRescue"
-          });
-          if (!this.game.isSessionValid(gameId)) return false;
-        }
-        this.game.ui.showDying?.(target, this.game.state.dyingContext);
-        this.game.ui.render(this.game);
-      }
-      if (!usedThisRound) break;
-    }
+  调用方
+  legacy callers。
 
-    this.game.state.dyingContext = null;
-    this.game.ui.hideDying?.();
-    if (target.hp >= 1) {
-      this.game.log(`${target.name}脱离濒死。`, "heal");
-      await this.game.eventBus.emit("playerRescued", { type:"playerRescued", target, source });
-      if (!this.game.isSessionValid(gameId)) return false;
-      if (!this.game.state.isGameOver) setMatchPhase(this.game.state, previousPhase);
-      return true;
-    }
-    await this.kill(target, source);
-    if (!this.game.isSessionValid(gameId)) return false;
-    if (!this.game.state.isGameOver) setMatchPhase(this.game.state, previousPhase);
-    return false;
-  }
+  输入
+  target、source 与 context。
+
+  输出
+  resolve 结果。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.workflow.resolve。
+
+  边界与不变量
+  无第二份 workflow。
+  */
+  resolve(...args) { return this.workflow.resolve(...args); }
+  /*
+  功能
+  转发 Application DyingWorkflow.rescueOrder。
+
+  调用方
+  ResponseBoundary 与 legacy callers。
+
+  输入
+  target。
+
+  输出
+  ordered players。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.workflow.rescueOrder。
+
+  边界与不变量
+  座位公式由 Domain Response Rule 唯一拥有。
+  */
+  rescueOrder(...args) { return this.workflow.rescueOrder(...args); }
+  /*
+  功能
+  转发 Application DyingWorkflow.kill。
+
+  调用方
+  legacy tests。
+
+  输入
+  target 与 source。
+
+  输出
+  session validity。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.workflow.kill。
+
+  边界与不变量
+  无第二份 workflow。
+  */
+  kill(...args) { return this.workflow.kill(...args); }
+  /*
+  功能
+  转发 Application DyingWorkflow death-coupled huntMark cleanup。
+
+  调用方
+  Game playerDead trigger bridge。
+
+  输入
+  dead source id。
+
+  输出
+  无。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.workflow.cleanupHuntMarksForSource。
+
+  边界与不变量
+  具体状态语义由 Domain Status Rule 唯一拥有。
+  */
+  cleanupHuntMarksForSource(...args) { return this.workflow.cleanupHuntMarksForSource(...args); }
+  /*
+  功能
+  转发 Application DyingWorkflow.cleanup。
+
+  调用方
+  Game.dispose。
+
+  输入
+  无。
+
+  输出
+  无。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.workflow.cleanup。
+
+  边界与不变量
+  无第二份 lifecycle。
+  */
+  cleanup() { return this.workflow.cleanup(); }
 
   /*
   功能
-  提交已决定的阵亡状态、清理手牌/装备并触发死亡事件与奖励 workflow。
+  暴露 Application DyingWorkflow active 标志。
 
   调用方
-  resolve。
+  legacy observers。
 
   输入
-  target 与可选击杀者。
+  无。
 
   输出
-  session 是否仍有效。
+  active boolean。
 
   读取状态
-  Game session、牌堆、装备与玩家。
+  Application workflow。
 
   写入状态
-  HP/alive/statuses/equipment 经 Domain transitions。
+  无。
 
   调用函数
-  setHp、setAlive、clearStatuses、setEquipment。
+  无。
 
   边界与不变量
-  不决定何时死亡；奖励/胜利 workflow 留在原层。
+  façade 不缓存第二份 active。
   */
-  async kill(target, source) {
-    const gameId = this.game.state.gameId;
-    if (!this.game.isSessionValid(gameId) || !target.alive) return false;
-    setHp(this.game.state, target, 0);
-    setAlive(this.game.state, target, false);
-    clearStatuses(this.game.state, target);
-    if (target.turnFlags) {
-      setMomentum(this.game.state, target, 0);
-      setSkipActionPhase(this.game.state, target, false);
-    }
-    this.game.requestHumanPlayEndForDefeat?.(target);
-    this.game.ui.render(this.game);
-    this.game.log(`${target.name}救援失败，阵亡。`, "important");
-    for (const card of [...target.hand]) {
-      await this.game.discardCardFromHand(target, card, "阵亡清理", { silent:true });
-      if (!this.game.isSessionValid(gameId)) return false;
-    }
-    if (target.equipment) {
-      const equipment = target.equipment;
-      discardEquipment(this.game.state, target, equipment, this.game.state.deck.discardPile);
-      this.game.log(`${target.name}的装备「${equipment.name}」随阵亡进入弃牌堆。`);
-    }
-    this.game.syncDeckAliases();
-    await this.game.eventBus.emit("playerDead", { type:"playerDead", target, source });
-    if (!this.game.isSessionValid(gameId)) return false;
-    if (!target.gameFlags.killRewardGranted && source?.alive && source.battleTeam !== target.battleTeam) {
-      setKillRewardGranted(this.game.state, target, true);
-      const drawn = await this.game.drawCards(source, GAME_CONFIG.killRewardDrawCount, "击杀奖励", { silent:true });
-      if (!this.game.isSessionValid(gameId)) return false;
-      this.game.log(`${source.name}击杀了${target.name}，额外摸了${drawn}张牌。`, "important");
-      await this.game.eventBus.emit("enemyKilled", { type:"enemyKilled", source, target, drawn });
-      if (!this.game.isSessionValid(gameId)) return false;
-    }
-    await this.game.checkVictory();
-    return this.game.isSessionValid(gameId);
-  }
+  get active() { return this.workflow.active; }
+  /*
+  功能
+  暴露 Application DyingWorkflow queue。
 
-  cleanup() { this.queue = []; this.active = false; }
+  调用方
+  legacy observers。
+
+  输入
+  无。
+
+  输出
+  queue array。
+
+  读取状态
+  Application workflow。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  façade 不缓存第二份 queue。
+  */
+  get queue() { return this.workflow.queue; }
 }

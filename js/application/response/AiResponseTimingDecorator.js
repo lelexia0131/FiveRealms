@@ -1,6 +1,6 @@
 /*
 模块职责
-拥有 AI response Choice 的 Application timing/presentation decoration：thinking on -> delay -> inner AI decision -> thinking off -> decline prompt；不拥有 AI policy。
+拥有 AI response Choice 的 Application timing/presentation decorator：thinking on -> delay -> inner AI decision -> thinking off -> decline prompt；不拥有 AI policy。
 
 上游
 composition boundary 的 AI ChoicePort wiring。
@@ -44,7 +44,7 @@ createChoiceResult。
 边界与不变量
 只有 kind=response 装饰 timing；publicCard 直通；delay 顺序与旧 ResponseSystem 完全一致。
 */
-export function createAiResponseTimingPort(innerPort, {
+export function createAiResponseTimingDecorator(innerPort, {
   getPlayer,
   setThinking,
   delay,
@@ -54,7 +54,7 @@ export function createAiResponseTimingPort(innerPort, {
   if (typeof innerPort?.request !== "function" || typeof getPlayer !== "function"
     || typeof setThinking !== "function" || typeof delay !== "function"
     || typeof setPrompt !== "function" || typeof isSessionValid !== "function") {
-    throw new TypeError("AiResponseTimingPort 缺少必要 capability");
+    throw new TypeError("AiResponseTimingDecorator 缺少必要 capability");
   }
   return Object.freeze({
     /*

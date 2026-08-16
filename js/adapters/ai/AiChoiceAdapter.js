@@ -60,7 +60,7 @@ export function createAiChoiceAdapter({
     调用既有 AI decision API 并返回 canonical ChoiceResult。
 
     调用方
-    ChoicePort router 或 AiResponseTimingPort。
+    ChoicePort router 或 AiResponseTimingDecorator。
 
     输入
     data-only ChoiceRequest。

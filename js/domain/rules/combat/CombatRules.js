@@ -139,6 +139,39 @@ export function calculateDamageResult(amount, shield, hp) {
 
 /*
 功能
+判断一次真实死亡是否满足击杀奖励资格。
+
+调用方
+Application DyingWorkflow 与 tests。
+
+输入
+target facts 与 source facts。
+
+输出
+布尔值。
+
+读取状态
+rewardGranted、alive 与 battleTeam facts。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+奖励只能授予一次；来源必须存活且敌对；击杀者可为空。
+*/
+export function isKillRewardEligible(targetFacts, sourceFacts) {
+  return Boolean(
+    !targetFacts?.rewardGranted
+    && sourceFacts?.alive
+    && sourceFacts.battleTeam !== targetFacts?.battleTeam
+  );
+}
+
+/*
+功能
 计算治疗实际量。
 
 调用方

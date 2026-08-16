@@ -24,6 +24,7 @@ import {
 } from "../../domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
 import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
 import { createResponseChoiceRequest } from "../choice/ResponseChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
+import { shouldForceAiRescueHuman, shouldForceAiSelfRescue, shouldPreferExplicitSelection, shouldRejectLeverageWithoutCards, shouldShowResponseWindowWithoutCards } from "./ParticipantPolicy.js?build=20260815-shadow-agent-p1-slot";
 import { buildResponsePresentation, publicPlayerContext } from "./ResponsePresentation.js?build=20260815-shadow-agent-p1-slot";
 import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } from "./ResponseResult.js?build=20260815-shadow-agent-p1-slot";
 
@@ -170,7 +171,7 @@ export function createResponseWorkflow(dependencies) {
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
     if (!isResponderEligible(responder) || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
     // 规则轮到真人响应时始终显示窗口；AI 没牌仍立即跳过。
-    if (availableCards.length < requiredCount && responder.controllerType !== "human") return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
+    if (availableCards.length < requiredCount && !shouldShowResponseWindowWithoutCards(responder)) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
     const fallbackLabel = type === "block" ? (requiredCount === 2 ? "使用2张「格挡」" : "格挡") : "反制";
     const request = { id:runtime.createId("response"), type, sourcePlayerId:context.source?.id ?? null, targetPlayerId:responder.id,
       cardId:context.card?.id ?? null, legalCardIds:availableCards.map((card) => card.id), requiredCount,
@@ -501,7 +502,7 @@ export function createResponseWorkflow(dependencies) {
     }
     const availableCards = rescuer.hand.filter((entry) => entry.definitionId === "recover");
     const legalCard = card?.definitionId === "recover" && rescuer.hand.includes(card) ? card : (availableCards[0] ?? null);
-    if (!availableCards.length && rescuer.controllerType !== "human") return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    if (!availableCards.length && !shouldShowResponseWindowWithoutCards(rescuer)) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     const request = { id:runtime.createId("dying-response"), type:"dyingRescue", sourcePlayerId:rescuer.id, targetPlayerId:target.id,
       cardId:null, legalCardIds:availableCards.map((entry) => entry.id), requiredCount:1, legalSkillIds:[], timeoutMs:runtime.getResponseTimeoutMs(), allowDecline:true,
       need:1 - target.hp, currentHp:target.hp,
@@ -509,13 +510,8 @@ export function createResponseWorkflow(dependencies) {
     activeRequestIds.add(request.id);
     runtime.pushPendingResponse(request);
     let decision;
-    const aiSelfRescue = rescuer.controllerType === "ai" && rescuer.id === target.id;
-    const forcedHumanRescue =
-      (runtime.getForceAiRescueHuman()) &&
-      rescuer.controllerType === "ai" &&
-      target.controllerType === "human" &&
-      rescuer.id !== target.id &&
-      rescuer.battleTeam === target.battleTeam;
+    const aiSelfRescue = shouldForceAiSelfRescue(rescuer, target);
+    const forcedHumanRescue = shouldForceAiRescueHuman(rescuer, target, runtime.getForceAiRescueHuman());
 
     if (aiSelfRescue) {
       decision = responseResult(RESPONSE_STATUS.USED);
@@ -579,7 +575,7 @@ export function createResponseWorkflow(dependencies) {
     const availableCards = responder.hand.filter((entry) => entry.definitionId === "assault");
     const cardToUse = availableCards[0] ?? null;
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    if (!isResponderEligible(responder) || runtime.getState().isGameOver || (!availableCards.length && responder.controllerType !== "human")) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    if (!isResponderEligible(responder) || runtime.getState().isGameOver || (!availableCards.length && !shouldShowResponseWindowWithoutCards(responder))) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     const presentation = buildResponsePresentation(responder, "assaultDiscard", context, 1, availableCards.length, reason);
     const request = { id:runtime.createId("assault-discard"), type:"assaultDiscard", sourcePlayerId:context.source?.id ?? null,
       targetPlayerId:responder.id, cardId:context.card?.id ?? null, legalCardIds:availableCards.map((entry) => entry.id), requiredCount:1,
@@ -640,7 +636,7 @@ export function createResponseWorkflow(dependencies) {
     if (!responder?.alive || !target?.alive || runtime.getState().isGameOver) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
-    if (!availableCards.length && responder.controllerType === "human") {
+    if (!availableCards.length && shouldRejectLeverageWithoutCards(responder)) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
     const presentation = {
@@ -664,7 +660,7 @@ export function createResponseWorkflow(dependencies) {
     activeRequestIds.add(request.id);
     runtime.pushPendingResponse(request);
     const decision = await waitForDecision(responder, request, presentation.buttonLabel, { ...context, target }, availableCards);
-    const selectedId = responder.controllerType === "human"
+    const selectedId = shouldPreferExplicitSelection(responder)
       ? (decision.cardId ?? availableCards[0]?.id)
       : availableCards[0]?.id;
     const selectedCard = availableCards.find((entry) => entry.id === selectedId) ?? null;

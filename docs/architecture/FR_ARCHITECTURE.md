@@ -1,11 +1,11 @@
 # FiveRealms Repository Architecture Authority
 
-状态：FR-ARCH-4 CLOSED / PASS — stateVersion AUTHORITATIVE；FR-ARCH-5 PASS；FR-ARCH-6 PASS；FR-ARCH-7 DONE — RESPONSE APPLICATION WORKFLOW；FR-ARCH-8 NOT STARTED
+状态：FR-ARCH-4 CLOSED / PASS — stateVersion AUTHORITATIVE；FR-ARCH-5 PASS；FR-ARCH-6 PASS；FR-ARCH-7 PASS；FR-ARCH-8 PASS — COMBAT/DYING/JUDGMENT/STATUS APPLICATION WORKFLOW
 适用范围：FiveRealms 仓库级架构；`AI_ENGINE.md` 继续作为 AI Engine 2.0 的实施与历史权威，本文件不复制其内部所有权表。
 事实源关系：本文件是 repository-wide target architecture 的唯一规范入口；若与 `CODE_STANDARD.md` 冲突，以本文件解释 ownership，以 `CODE_STANDARD.md` 解释注释格式。
 
 冻结裁决：TARGET ARCHITECTURE CAN REMAIN FROZEN。
-实施进度：FR-ARCH-0 DONE；FR-ARCH-1 DONE；FR-ARCH-2/2.1 DONE；FR-ARCH-3 DONE；FR-ARCH-4A DONE；FR-ARCH-4 CLOSED / PASS，stateVersion ACTIVATED — AUTHORITATIVE；FR-ARCH-5 DONE；FR-ARCH-6 DONE；FR-ARCH-7 DONE；FR-ARCH-8 NOT STARTED。
+实施进度：FR-ARCH-0 DONE；FR-ARCH-1 DONE；FR-ARCH-2/2.1 DONE；FR-ARCH-3 DONE；FR-ARCH-4A DONE；FR-ARCH-4 CLOSED / PASS，stateVersion ACTIVATED — AUTHORITATIVE；FR-ARCH-5 DONE；FR-ARCH-6 DONE；FR-ARCH-7 PASS；FR-ARCH-8 PASS；FR-ARCH-9 NOT STARTED。
 
 ## 1. Target Physical Architecture
 
@@ -17,7 +17,8 @@
 - FR-ARCH-4A/4B：`js/domain/state/transitions` 已建立 generic atomic mutation foundation 并关闭 zone/deck/flags/counters direct writes；stateVersion 已由唯一 Domain authority 激活。
 - FR-ARCH-5：`js/domain/rules/{team,distance,turn,judgment,combat,status,response}` 已建立 foundational pure rule layer；TeamRuleService/DistanceSystem/RuleEngine/ResponseSystem/JudgmentSystem/Game 只保留 legacy façade 或 workflow。Turn reset semantics 由 `TurnRules` 唯一拥有，`RuleUsageTransitions` 只 commit。cardRegistry/skillRegistry 完整迁移仍留在 FR-ARCH-10；DyingSystem/JudgmentSystem runtime workflow 仍留后续阶段。
 - FR-ARCH-6：`js/application/{choice,ports/{ChoicePort,RandomPort}}` 已建立 evidence-based Choice/Random boundary；`ResponseSystem.waitForDecision` 与 `PublicCardPool.draft` 是真实 ChoicePort consumers；`adapters/{ui/UiChoiceAdapter,ai/AiChoiceAdapter}` 是 peer human/AI bridges。hidden token/session authority 已迁到 `application/choice/HiddenCardSelectionStore`，`core/CardSelectionSystem` 只做实体 façade。Presentation/Audio/Diagnostics ports evidence 不足，暂不创建空 port。
-- FR-ARCH-7：`js/application/response/{ResponseWorkflow,ResponsePresentation,ResponseResult,AiResponseTimingPort}` 拥有 response window、block/counter/nested-chain/status-counter、dying-rescue window、forced assault window、request lifecycle、cancellation、payment orchestration 与 result normalization；`core/ResponseSystem.js` 仅 thin compatibility façade。`domain/rules/response` 保持 pure rule。AI timing 由 Application timing port 拥有，AI adapter 只做决策 bridge。GameChoiceRouter 仍作为 Game 组合根 wiring bridge。
+- FR-ARCH-7：`js/application/response/{ResponseWorkflow,ResponsePresentation,ResponseResult,AiResponseTimingDecorator,ParticipantPolicy}` 拥有 response window、block/counter/nested-chain/status-counter、dying-rescue window、forced assault window、request lifecycle、cancellation、payment orchestration 与 result normalization；`core/ResponseSystem.js` 仅 thin compatibility façade。`domain/rules/response` 保持 pure rule。AI timing 由 Application timing decorator 拥有，AI adapter 只做决策 bridge。GameChoiceRouter 仍作为 Game 组合根 wiring bridge。
+- FR-ARCH-8：`js/application/combat/{CombatWorkflow,DyingWorkflow}` 拥有 damage/heal/HP-loss 与 dying queue/rescue/death commit/cleanup sequencing；`js/application/judgment/{JudgmentWorkflow,StatusResolutionWorkflow}` 拥有防御判定、延迟状态判定与 seal/lightning resolution。`core/{DyingSystem,HpLossSystem,JudgmentSystem}` 与 `Game.damage/Game.heal` 仅 thin façade；`presentationPort`/`diagnosticsPort` 已按真实消费面创建。rescue-order、kill-reward eligibility、judgment destination 与 huntMark source-death predicate 已收敛到 Domain Rules；`recycleDevice` 与 trigger engine 未迁移。
 
 ```text
 js/

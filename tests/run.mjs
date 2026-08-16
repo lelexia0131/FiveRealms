@@ -21,18 +21,20 @@ import { createRuleStateView } from "../js/domain/state/queries/RuleStateView.js
 import { assertCanonicalSeatRoster, isCanonicalSeatRoster } from "../js/domain/state/queries/SeatRosterContract.js?build=20260815-shadow-agent-p1-slot";
 import { createChoicePort, createChoiceResult, normalizeChoiceResult } from "../js/application/ports/ChoicePort.js?build=20260815-shadow-agent-p1-slot";
 import { createRandomPort } from "../js/application/ports/RandomPort.js?build=20260815-shadow-agent-p1-slot";
+import { createDiagnosticsPort } from "../js/application/ports/DiagnosticsPort.js?build=20260815-shadow-agent-p1-slot";
+import { createPresentationPort } from "../js/application/ports/PresentationPort.js?build=20260815-shadow-agent-p1-slot";
 import { createChoiceCoordinator } from "../js/application/choice/ChoiceCoordinator.js?build=20260815-shadow-agent-p1-slot";
 import { createResponseChoiceRequest } from "../js/application/choice/ResponseChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
 import { createPublicCardChoiceRequest } from "../js/application/choice/PublicCardChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
 import { createHiddenCardSelectionStore } from "../js/application/choice/HiddenCardSelectionStore.js?build=20260815-shadow-agent-p1-slot";
 import { createUiChoiceAdapter } from "../js/adapters/ui/UiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
 import { createAiChoiceAdapter } from "../js/adapters/ai/AiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
-import { createAiResponseTimingPort } from "../js/application/response/AiResponseTimingPort.js?build=20260815-shadow-agent-p1-slot";
-import { calculateDamageResult, calculateHealAmount, isDying } from "../js/domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
+import { createAiResponseTimingDecorator } from "../js/application/response/AiResponseTimingDecorator.js?build=20260815-shadow-agent-p1-slot";
+import { calculateDamageResult, calculateHealAmount, isDying, isKillRewardEligible } from "../js/domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
 import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
-import { interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js?build=20260815-shadow-agent-p1-slot";
-import { getCounterResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
-import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome, interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js?build=20260815-shadow-agent-p1-slot";
+import { getCounterResponderOrder, getDyingRescueResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
+import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, isHuntMarkSourceExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
 import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, isSmallTeam } from "../js/domain/rules/team/TeamRules.js?build=20260815-shadow-agent-p1-slot";
 import { calculateNextActorIndex, createAttackUsage, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
 import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js?build=20260815-shadow-agent-p1-slot";
@@ -111,6 +113,11 @@ import { isCardSelectionValid, toggleCardSelection } from "../js/ui/selectionUti
 import { buildResponsePresentation } from "../js/core/ResponseSystem.js";
 import { RESPONSE_STATUS as WORKFLOW_RESPONSE_STATUS, createResponseWorkflowResult } from "../js/application/response/ResponseResult.js?build=20260815-shadow-agent-p1-slot";
 import { createResponseWorkflow } from "../js/application/response/ResponseWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { shouldForceAiSelfRescue, shouldShowResponseWindowWithoutCards } from "../js/application/response/ParticipantPolicy.js?build=20260815-shadow-agent-p1-slot";
+import { createCombatWorkflow } from "../js/application/combat/CombatWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createDyingWorkflow } from "../js/application/combat/DyingWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createJudgmentWorkflow } from "../js/application/judgment/JudgmentWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createStatusResolutionWorkflow } from "../js/application/judgment/StatusResolutionWorkflow.js?build=20260815-shadow-agent-p1-slot";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import {
   ACTIVE_SKILLS, getActiveSkillCost, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
@@ -40584,7 +40591,7 @@ async function frArch6PeerChoiceAdapters() {
     choosePublicCard: () => null,
     isSessionValid: () => true
   });
-  const ai = createAiResponseTimingPort(rawAi, {
+  const ai = createAiResponseTimingDecorator(rawAi, {
     getPlayer: () => ({ id:"p1", name:"电脑" }),
     setThinking: (...args) => thinking.push(args),
     delay: async () => true,
@@ -41000,6 +41007,767 @@ function frArch7ResponsePresentationDto() {
 }
 
 test("FR-ARCH-7·presentation DTO：data-only 且 observable 等价", frArch7ResponsePresentationDto);
+
+// ==================== FR-ARCH-8 Combat/Dying/Judgment/Status Workflow Tests ====================
+
+/*
+功能
+验证 Domain Response Rule 唯一拥有濒死救援座次公式。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture 与 createRuleStateView。
+
+写入状态
+测试玩家 alive 字段。
+
+调用函数
+createRuleStateView、getDyingRescueResponderOrder。
+
+边界与不变量
+self first、顺时针存活队友、死亡与敌方跳过；非 canonical roster 必须拒绝。
+*/
+function frArch8RescueOrderDomainRule() {
+  const { game, small, large } = makeTeamFixture();
+  const smallAlly = game.state.players.find((player) => player.id === "small-ally");
+  const view = createRuleStateView(game.state);
+  assert.deepEqual(getDyingRescueResponderOrder(view.players(), small.id), [small.id, smallAlly.id]);
+  assert.deepEqual(getDyingRescueResponderOrder(view.players(), smallAlly.id), [smallAlly.id, small.id]);
+  smallAlly.alive = false;
+  assert.deepEqual(getDyingRescueResponderOrder(view.players(), small.id), [small.id]);
+  assert.equal(getDyingRescueResponderOrder(view.players(), large.id).includes(small.id), false);
+  assert.throws(() => getDyingRescueResponderOrder([view.players()[1], view.players()[2]], small.id), /canonical roster/);
+}
+
+test("FR-ARCH-8·rescue order rule：Domain 唯一拥有 self→顺时针存活队友公式", frArch8RescueOrderDomainRule);
+
+/*
+功能
+验证 Domain Judgment Rule 输出结构化 destination，Application 不再解释牌区公式。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+decideDefenseJudgmentOutcome、decideDelayedStatusJudgmentOutcome。
+
+边界与不变量
+basic 进手牌；tactic/equipment 与延迟判定进弃牌堆。
+*/
+function frArch8JudgmentOutcomeRules() {
+  assert.deepEqual(decideDefenseJudgmentOutcome("basic"), { handled:true, immune:false, category:"basic", destination:"hand" });
+  assert.deepEqual(decideDefenseJudgmentOutcome("tactic"), { handled:true, immune:true, category:"tactic", destination:"discard" });
+  assert.deepEqual(decideDefenseJudgmentOutcome("equipment"), { handled:true, immune:false, category:"equipment", destination:"discard" });
+  assert.deepEqual(decideDelayedStatusJudgmentOutcome("equipment", "equipment"), { triggered:true, category:"equipment", destination:"discard" });
+  assert.deepEqual(decideDelayedStatusJudgmentOutcome("basic", "equipment"), { triggered:false, category:"basic", destination:"discard" });
+}
+
+test("FR-ARCH-8·judgment outcome rule：destination 由 Domain 决定，Application 只执行", frArch8JudgmentOutcomeRules);
+
+/*
+功能
+验证 Application participant policy 显式拥有无牌窗口与 AI 救援兼容策略。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+controllerType/id/battleTeam metadata。
+
+写入状态
+无。
+
+调用函数
+shouldShowResponseWindowWithoutCards、shouldForceAiSelfRescue。
+
+边界与不变量
+真人无牌展示；AI 无牌跳过；AI 自救固定使用调息。
+*/
+function frArch8ParticipantPolicyExplicit() {
+  assert.equal(shouldShowResponseWindowWithoutCards({ controllerType:"human" }), true);
+  assert.equal(shouldShowResponseWindowWithoutCards({ controllerType:"ai" }), false);
+  assert.equal(shouldForceAiSelfRescue({ controllerType:"ai", id:"p1" }, { id:"p1" }), true);
+  assert.equal(shouldForceAiSelfRescue({ controllerType:"ai", id:"p1" }, { id:"p2" }), false);
+}
+
+test("FR-ARCH-8·participant policy：窗口与 AI 救援兼容策略显式归 Application", frArch8ParticipantPolicyExplicit);
+
+/*
+功能
+验证 Application CombatWorkflow damage 在 fake collaborators 下保持 judgment/block/before/commit/after/dying 顺序。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/presentation/diagnostics/observation records。
+
+写入状态
+fake target 经 Domain ResourceTransitions。
+
+调用函数
+createCombatWorkflow。
+
+边界与不变量
+defense 非免疫时 block 早于 beforeDamage；commit 后 telemetry；afterDamage 在 dying 前。
+*/
+async function frArch8CombatWorkflowDamageTrace() {
+  const state = { gameId:"g8", isGameOver:false, stateVersion:0, players:[] };
+  const source = { id:"s", name:"来源", alive:true, battleTeam:"dusk" };
+  const target = { id:"t", name:"目标", alive:true, battleTeam:"dawn", hp:3, maxHp:4, shield:2, statuses:{}, hand:[] };
+  const events = [];
+  const logs = [];
+  const feedback = [];
+  const telemetry = [];
+  const aiObservation = [];
+  const workflow = createCombatWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    judgeDefense: async () => ({ handled:false, immune:false }),
+    askForBlock: async () => ({ status:"declined", cards:[] }),
+    enterDying: async (...args) => { events.push({ type:"dying-entry", args }); return false; },
+    emitEvent: async (type, payload) => { events.push({ type, payload }); },
+    createId: (prefix) => `${prefix}-${events.length}`,
+    presentation: {
+      log: (message, kind) => logs.push([kind ?? "normal", message]),
+      showDamageFeedback: (...args) => feedback.push(["damage", ...args]),
+      showShieldFeedback: (...args) => feedback.push(["shield", ...args]),
+      showHealFeedback: () => { },
+      showDying: () => { },
+      hideDying: () => { },
+      showJudgment: () => { },
+      hideJudgment: () => { },
+      showCurrentEffect: () => { },
+      showLightningHit: () => { },
+      refresh: () => { }
+    },
+    diagnostics: {
+      recordDamage: (dto) => telemetry.push(dto),
+      recordHealing: () => { },
+      recordHpLoss: () => { }
+    },
+    observeDamage: (...args) => aiObservation.push(args)
+  });
+  assert.equal(await workflow.damage(source, target, 3, { card:{ name:"突袭", subtypes:["assault"] }, canBlock:true, damageType:"normal" }), 1);
+  assert.equal(target.hp, 2);
+  assert.equal(target.shield, 0);
+  assert.deepEqual(events.map((entry) => entry.type), ["beforeDamage", "afterDamage"]);
+  assert.deepEqual(telemetry, [{ targetId:"t", sourceId:"s", hpDamage:1 }]);
+  assert.equal(aiObservation.length, 1);
+  assert.deepEqual(feedback.slice(0, 2), [["shield", "t", 2], ["damage", "t", 1]]);
+}
+
+test("FR-ARCH-8·damage trace：judgment→block→before→commit→after 顺序冻结", frArch8CombatWorkflowDamageTrace);
+
+/*
+功能
+验证 Application CombatWorkflow heal 与 loseHp 保持独立事件顺序与旧返回契约。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/event/telemetry records。
+
+写入状态
+fake player 经 ResourceTransitions。
+
+调用函数
+createCombatWorkflow、calculateHealAmount。
+
+边界与不变量
+loseHp 不调用 judgeDefense/askForBlock；heal 上限仍由 Domain Rule 计算。
+*/
+async function frArch8CombatWorkflowHealAndHpLossTrace() {
+  const state = { gameId:"g8h", isGameOver:false, stateVersion:0, players:[] };
+  const source = { id:"s", name:"来源", alive:true, battleTeam:"dusk" };
+  const target = { id:"t", name:"目标", alive:true, battleTeam:"dawn", hp:1, maxHp:4, shield:5, statuses:{}, hand:[] };
+  const events = [];
+  const telemetry = [];
+  let judgeCalls = 0;
+  let blockCalls = 0;
+  const workflow = createCombatWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    judgeDefense: async () => { judgeCalls += 1; return { handled:false, immune:false }; },
+    askForBlock: async () => { blockCalls += 1; return { status:"declined", cards:[] }; },
+    enterDying: async () => false,
+    emitEvent: async (type) => { events.push(type); },
+    createId: (prefix) => `${prefix}-heal`,
+    presentation: {
+      log: () => { }, showDamageFeedback: () => { }, showShieldFeedback: () => { }, showHealFeedback: () => { },
+      showDying: () => { }, hideDying: () => { }, showJudgment: () => { }, hideJudgment: () => { },
+      showCurrentEffect: () => { }, showLightningHit: () => { }, refresh: () => { }
+    },
+    diagnostics: {
+      recordDamage: () => { }, recordHealing: (dto) => telemetry.push(["heal", dto]), recordHpLoss: (dto) => telemetry.push(["loss", dto])
+    },
+    observeDamage: () => { }
+  });
+  assert.equal(await workflow.heal(source, target, 2, { reason:"治疗" }), 2);
+  assert.equal(target.hp, 3);
+  assert.deepEqual(events.splice(0), ["beforeHeal", "afterHeal"]);
+  target.hp = 1;
+  assert.equal(await workflow.loseHp(target, 2, { source, reason:"失去生命" }), 2);
+  assert.equal(target.hp, -1);
+  assert.equal(target.shield, 5, "HP loss 继续绕过护盾");
+  assert.equal(judgeCalls, 0);
+  assert.equal(blockCalls, 0);
+  assert.deepEqual(events.splice(0), ["beforeHpLoss", "afterHpLoss"]);
+  assert.deepEqual(telemetry, [["heal", { sourceId:"s", actualAmount:2 }], ["loss", { targetId:"t", amount:2 }]]);
+}
+
+test("FR-ARCH-8·heal/hp-loss trace：独立 workflow、绕过盾/格挡/雷达", frArch8CombatWorkflowHealAndHpLossTrace);
+
+/*
+功能
+验证 PresentationPort 与 DiagnosticsPort 只暴露 FR-ARCH-8 真实 evidence surface。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+fake records。
+
+调用函数
+createPresentationPort、createDiagnosticsPort。
+
+边界与不变量
+缺任一真实消费方法必须拒绝；不暴露 Player.statistics 整体。
+*/
+function frArch8PortsMinimalSurface() {
+  const presentationCalls = [];
+  const presentation = createPresentationPort({
+    log: (...args) => presentationCalls.push(["log", ...args]),
+    showDamageFeedback: (...args) => presentationCalls.push(["damage", ...args]),
+    showShieldFeedback: (...args) => presentationCalls.push(["shield", ...args]),
+    showHealFeedback: (...args) => presentationCalls.push(["heal", ...args]),
+    showDying: (...args) => presentationCalls.push(["dying", ...args]),
+    hideDying: () => presentationCalls.push(["hide-dying"]),
+    showJudgment: (...args) => presentationCalls.push(["judgment", ...args]),
+    hideJudgment: () => presentationCalls.push(["hide-judgment"]),
+    showCurrentEffect: (...args) => presentationCalls.push(["effect", ...args]),
+    showLightningHit: (...args) => presentationCalls.push(["lightning", ...args]),
+    refresh: () => presentationCalls.push(["refresh"])
+  });
+  presentation.showDamageFeedback("p1", 1);
+  presentation.refresh();
+  assert.deepEqual(presentationCalls.slice(0, 2), [["damage", "p1", 1], ["refresh"]]);
+  assert.throws(() => createPresentationPort({ log() { } }), /showDamageFeedback/);
+  const diagnostics = createDiagnosticsPort({
+    recordDamage: () => { }, recordHealing: () => { }, recordHpLoss: () => { }
+  });
+  assert.equal(typeof diagnostics.recordDamage, "function");
+  assert.throws(() => createDiagnosticsPort({ recordDamage() { } }), /recordHealing/);
+}
+
+test("FR-ARCH-8·ports：Presentation CREATE，Diagnostics CREATE，surface 最小", frArch8PortsMinimalSurface);
+
+/*
+功能
+验证 DyingWorkflow 的 cancel 分支只经 Application authority 写 projection 与 Domain transition。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 event listener。
+
+写入状态
+target.hp 经 DyingWorkflow。
+
+调用函数
+game.eventBus.on、game.dyingSystem.enter。
+
+边界与不变量
+beforePlayerDying cancel 后 hp=1、phase 不变、dyingContext 不残留。
+*/
+async function frArch8DyingCancelProjectionAuthority() {
+  const target = makePlayer("fr8-dying", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("fr8-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([target, enemy]);
+  target.hp = 0;
+  game.eventBus.on("beforePlayerDying", "fr8-cancel", (event) => { event.cancelled = true; });
+  assert.equal(await game.dyingSystem.enter(target, enemy), true);
+  assert.equal(target.hp, 1);
+  assert.equal(game.state.phase, "play");
+  assert.equal(game.state.dyingContext, null);
+  assert.equal(game.dyingSystem.workflow.currentDyingContext, null);
+}
+
+test("FR-ARCH-8·dying cancel：hp=1 且 currentDyingContext 仅 Application projection", frArch8DyingCancelProjectionAuthority);
+
+/*
+功能
+验证 DyingWorkflow 继续通过 FR-ARCH-7 Response boundary 并保持成功救援事件顺序。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 event trace。
+
+写入状态
+target.hp 经 transitions；response payment 经 Game 移动。
+
+调用函数
+game.eventBus.on、game.dyingSystem.enter。
+
+边界与不变量
+AI self rescue 固定使用调息；事件顺序为 beforePlayerDying→playerDying→beforeHeal→afterHeal→dyingRescueUsed→cardUsed→playerRescued。
+*/
+async function frArch8DyingRescueUsesResponseWorkflow() {
+  const target = makePlayer("fr8-rescue-target", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("fr8-rescue-enemy", 1, "dusk", "ai", 1);
+  target.hp = 0;
+  const recover = instance("recover");
+  target.hand.push(recover);
+  const { game } = makeGame([target, enemy]);
+  const trace = [];
+  for (const eventName of ["beforePlayerDying", "playerDying", "beforeHeal", "afterHeal", "dyingRescueUsed", "cardUsed", "playerRescued"]) {
+    game.eventBus.on(eventName, `fr8-trace-${eventName}`, () => { trace.push(eventName); });
+  }
+  assert.equal(await game.dyingSystem.enter(target, enemy), true);
+  assert.equal(target.hp, 1);
+  assert.deepEqual(trace, ["beforePlayerDying", "playerDying", "beforeHeal", "afterHeal", "dyingRescueUsed", "cardUsed", "playerRescued"]);
+}
+
+test("FR-ARCH-8·dying rescue trace：Response authority preserved，事件顺序等价", frArch8DyingRescueUsesResponseWorkflow);
+
+/*
+功能
+验证击杀奖励资格是 Domain Combat Rule，数量仍由 RulesetDefinition authority 提供。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+RULESET_DEFINITION 与 GAME_CONFIG。
+
+写入状态
+无。
+
+调用函数
+isKillRewardEligible。
+
+边界与不变量
+未奖励、来源存活且敌对才成立；同阵营或死来源不成立；数量不复制进 Application。
+*/
+function frArch8KillRewardRuleAuthority() {
+  assert.equal(isKillRewardEligible({ rewardGranted:false, battleTeam:"dawn" }, { alive:true, battleTeam:"dusk" }), true);
+  assert.equal(isKillRewardEligible({ rewardGranted:true, battleTeam:"dawn" }, { alive:true, battleTeam:"dusk" }), false);
+  assert.equal(isKillRewardEligible({ rewardGranted:false, battleTeam:"dawn" }, { alive:false, battleTeam:"dusk" }), false);
+  assert.equal(isKillRewardEligible({ rewardGranted:false, battleTeam:"dawn" }, { alive:true, battleTeam:"dawn" }), false);
+  assert.equal(GAME_CONFIG.killRewardDrawCount, RULESET_DEFINITION.killRewardDrawCount);
+}
+
+test("FR-ARCH-8·kill reward：资格归 Combat Rule，数量归 RulesetDefinition", frArch8KillRewardRuleAuthority);
+
+/*
+功能
+验证 Application JudgmentWorkflow 在 fake collaborators 下执行 draw→show/log→reveal→destination→handVersion→clear/hide/restore 顺序。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/zone/observer records。
+
+写入状态
+fake hand/handVersion 经 PlayerStateTransition。
+
+调用函数
+createJudgmentWorkflow、decideDefenseJudgmentOutcome。
+
+边界与不变量
+basic 判定牌进入守方手牌；非守方 viewer 均触发 AI knowledge collaborator；phase 恢复。
+*/
+async function frArch8JudgmentWorkflowDefenseTrace() {
+  const defender = { id:"d", name:"守方", alive:true, equipment:{ definitionId:"defenseDevice" }, hand:[], handVersion:0, battleTeam:"dawn" };
+  const attacker = { id:"a", name:"攻方", alive:true };
+  const viewer = { id:"v", name:"观众", alive:true };
+  const state = { gameId:"g8j", isGameOver:false, phase:"play", stateVersion:0, players:[defender, attacker, viewer] };
+  const card = { id:"j-card", name:"判定牌", category:"basic", categoryName:"基础牌", art:"art" };
+  const trace = [];
+  const observations = [];
+  const projections = [];
+  const workflow = createJudgmentWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    emitEvent: async (type) => { trace.push(type); },
+    drawJudgmentCard: () => { trace.push("draw"); return card; },
+    syncDeckAliases: () => { trace.push("sync"); },
+    moveJudgmentToDiscard: () => { trace.push("to-discard"); },
+    moveJudgmentToHand: (moved) => { trace.push(["to-hand", moved.id]); defender.hand.push(moved); },
+    observeJudgmentCard: (...args) => observations.push(args),
+    presentation: {
+      log: (message) => trace.push(["log", message]),
+      showJudgment: () => trace.push("show-judgment"),
+      hideJudgment: () => trace.push("hide-judgment"),
+      showCurrentEffect: () => { }, showLightningHit: () => { }, showDamageFeedback: () => { },
+      showShieldFeedback: () => { }, showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => trace.push("refresh")
+    },
+    setCurrentJudgmentProjection: (value) => projections.push(value)
+  });
+  const result = await workflow.judgeDefense(attacker, defender, {});
+  assert.deepEqual(result, { handled:true, immune:false, category:"basic" });
+  assert.equal(defender.hand[0], card);
+  assert.equal(defender.handVersion, 1);
+  assert.equal(observations.length, 2);
+  assert.equal(observations.every(([observer]) => observer.id !== defender.id), true);
+  assert.equal(state.phase, "play");
+  assert.equal(projections[0].card, card);
+  assert.equal(projections[projections.length - 1], null);
+  assert.equal(workflow.currentJudgment, null);
+  const toHandIndex = trace.findIndex((entry) => Array.isArray(entry) && entry[0] === "to-hand");
+  assert.ok(trace.indexOf("draw") < trace.indexOf("show-judgment"));
+  assert.ok(trace.indexOf("judgmentRevealed") < toHandIndex);
+  assert.ok(trace.indexOf("hide-judgment") < trace.indexOf("refresh"));
+}
+
+test("FR-ARCH-8·judgment trace：draw→show/log→reveal→destination→handVersion→restore", frArch8JudgmentWorkflowDefenseTrace);
+
+/*
+功能
+验证 delayed-status judgment workflow 的 destination 永远执行 Domain 决定的 discard。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/trace。
+
+写入状态
+无。
+
+调用函数
+createJudgmentWorkflow、decideDelayedStatusJudgmentOutcome。
+
+边界与不变量
+equipment 判定触发；tactic/basic 不触发；所有延迟判定牌进弃牌堆。
+*/
+async function frArch8DelayedStatusJudgmentDestination() {
+  const holder = { id:"h", name:"持有者", alive:true, battleTeam:"dawn" };
+  const state = { gameId:"g8d", isGameOver:false, phase:"status", stateVersion:0, players:[holder] };
+  const card = { id:"j2", name:"装备判定", category:"equipment", categoryName:"装备牌", art:"art" };
+  const moved = [];
+  const workflow = createJudgmentWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    emitEvent: async () => { },
+    drawJudgmentCard: () => card,
+    syncDeckAliases: () => { },
+    moveJudgmentToDiscard: (entry) => moved.push(entry),
+    moveJudgmentToHand: () => { },
+    observeJudgmentCard: () => { },
+    presentation: {
+      log: () => { }, showJudgment: () => { }, hideJudgment: () => { }, showCurrentEffect: () => { },
+      showLightningHit: () => { }, showDamageFeedback: () => { }, showShieldFeedback: () => { },
+      showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => { }
+    },
+    setCurrentJudgmentProjection: () => { }
+  });
+  const result = await workflow.judgeDelayedStatus(holder, {
+    statusId:"lightning", statusName:"闪电", triggerCategory:"equipment",
+    triggerMessage: (target) => `${target.name}命中`
+  });
+  assert.equal(result.triggered, true);
+  assert.equal(moved[0], card);
+  assert.equal(state.phase, "status");
+}
+
+test("FR-ARCH-8·delayed judgment destination：公开后一律执行 Domain 决定的 discard", frArch8DelayedStatusJudgmentDestination);
+
+/*
+功能
+验证 seal/lightning status-resolution workflow 是 Application authority 且只调用 Response/Judgment/Combat。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/status/response/judgment/damage records。
+
+写入状态
+fake holder statuses/flags 经 Domain transitions。
+
+调用函数
+createStatusResolutionWorkflow。
+
+边界与不变量
+seal 非战术提交 skipActionPhase；lightning 命中调用 combat damage 3/canBlock false 且 presentation hit 只一次。
+*/
+async function frArch8StatusResolutionWorkflowTrace() {
+  const sealStatus = { cardDefinitionId:"seal", originPlayerId:"s" };
+  const sealHolder = { id:"h", name:"封印者", alive:true, battleTeam:"dawn", statuses:{ sealed:sealStatus }, turnFlags:{ skipActionPhase:false } };
+  const sealState = { gameId:"g8seal", isGameOver:false, stateVersion:0, players:[sealHolder] };
+  const sealEffects = [];
+  const sealWorkflow = createStatusResolutionWorkflow({
+    getState: () => sealState,
+    isSessionValid: () => true,
+    askForStatusCounter: async () => { sealEffects.push("counter"); return { status:"declined", cards:[] }; },
+    judgeSeal: async () => { sealEffects.push("judge"); return { handled:true, triggered:false, category:"basic", card:{ name:"基础牌" } }; },
+    judgeLightning: async () => ({ handled:false, triggered:false }),
+    damage: async () => 0,
+    presentation: {
+      log: () => { }, showCurrentEffect: (...args) => sealEffects.push(["effect", ...args]),
+      showJudgment: () => { }, hideJudgment: () => { }, showLightningHit: () => { }, showDamageFeedback: () => { },
+      showShieldFeedback: () => { }, showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => sealEffects.push("refresh")
+    }
+  });
+  await sealWorkflow.resolveSeal(sealHolder, sealStatus);
+  assert.equal(sealHolder.statuses.sealed, undefined);
+  assert.equal(sealHolder.turnFlags.skipActionPhase, true);
+  assert.deepEqual(sealEffects.slice(0, 3), [["effect", { statusId:"seal", label:"即将判定", holderName:"封印者"}], "counter", "judge"]);
+
+  const lightningStatus = { cardDefinitionId:"lightning", originPlayerId:"s" };
+  const holder = { id:"l", name:"闪电者", alive:true, battleTeam:"dawn", statuses:{ lightning:lightningStatus }, turnFlags:{} };
+  const state = { gameId:"g8light", isGameOver:false, stateVersion:0, players:[holder] };
+  const hits = [];
+  const damages = [];
+  const lightningWorkflow = createStatusResolutionWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    askForStatusCounter: async () => ({ status:"declined", cards:[] }),
+    judgeSeal: async () => ({ handled:false, triggered:false }),
+    judgeLightning: async () => ({ handled:true, triggered:true, category:"equipment", card:{ name:"装备牌" } }),
+    damage: async (...args) => { damages.push(args); return 3; },
+    presentation: {
+      log: () => { }, showCurrentEffect: () => { }, showJudgment: () => { }, hideJudgment: () => { },
+      showLightningHit: (id) => hits.push(id), showDamageFeedback: () => { }, showShieldFeedback: () => { },
+      showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => { }
+    }
+  });
+  await lightningWorkflow.resolveLightning(holder, lightningStatus);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.deepEqual(hits, [holder.id]);
+  assert.equal(damages.length, 1);
+  assert.deepEqual(damages[0][1], holder);
+  assert.equal(damages[0][2], 3);
+  assert.equal(damages[0][3].canBlock, false);
+}
+
+test("FR-ARCH-8·status resolution trace：seal commit 与 lightning hit 只经 Application workflow", frArch8StatusResolutionWorkflowTrace);
+
+/*
+功能
+验证猎印死亡清理的纯规则与 Application workflow ownership。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 Domain StatusTransitions。
+
+写入状态
+player.statuses 经 transition 与 cleanup workflow。
+
+调用函数
+isHuntMarkSourceExpired、transitionSetStatus、game.dyingSystem.cleanupHuntMarksForSource。
+
+边界与不变量
+只删 sourceId 匹配的猎印；不匹配保留；transition 成功时 stateVersion 递增。
+*/
+function frArch8HuntMarkDeathCleanupOwnership() {
+  assert.equal(isHuntMarkSourceExpired({ sourceId:"dead" }, "dead"), true);
+  assert.equal(isHuntMarkSourceExpired({ sourceId:"other" }, "dead"), false);
+  const hunter = makePlayer("fr8-hunter", 0, "dawn", "ai", 0);
+  const marked = makePlayer("fr8-marked", 1, "dusk", "ai", 1);
+  const unrelated = makePlayer("fr8-unrelated", 2, "dusk", "ai", 2);
+  const { game } = makeGame([hunter, marked, unrelated]);
+  transitionSetStatus(game.state, marked, "huntMark", { sourceId:hunter.id });
+  transitionSetStatus(game.state, unrelated, "huntMark", { sourceId:"someone-else" });
+  const version = game.state.stateVersion;
+  game.dyingSystem.cleanupHuntMarksForSource(hunter.id);
+  assert.equal(marked.statuses.huntMark, undefined);
+  assert.equal(unrelated.statuses.huntMark.sourceId, "someone-else");
+  assert.equal(game.state.stateVersion, version + 1);
+}
+
+test("FR-ARCH-8·huntMark cleanup：Domain predicate 唯一，Application 只执行 remove/render", frArch8HuntMarkDeathCleanupOwnership);
+
+/*
+功能
+验证 Application Combat/Judgment 无 concrete UI/AI、无 aiMemory/statistics 直接写，legacy facades 无第二份 workflow body。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/application/{combat,judgment} 与 js/core legacy facade 源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+Domain 规则仍无 application/EventBus；Game.damage/heal 只转发。
+*/
+async function frArch8OwnershipAndDependencyPurity() {
+  const appFiles = [
+    ...(await listJavaScriptFiles(projectFile("js/application/combat"))),
+    ...(await listJavaScriptFiles(projectFile("js/application/judgment")))
+  ];
+  assert.ok(appFiles.length >= 4);
+  for (const file of appFiles) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|\/adapters\/|\/ui\/|\/audio\/|\/ai\/|UIManager\.js|AiController\.js|SoundManager\.js|cards\/cardRegistry|generals\/skillRegistry|config\/)/, file);
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(code, /\.(?:statistics|aiMemory|recentAggressors)\b|\bEventBus\b|\beventBus\b|\bdocument\b|\bwindow\b/, file);
+  }
+  const gameSource = await readFile(projectFile("js/core/Game.js"), "utf8");
+  assert.doesNotMatch(gameSource, /event\.amount > 0 && event\.canBlock/);
+  assert.match(gameSource, /return this\.combatWorkflow\.damage/);
+  assert.match(gameSource, /return this\.combatWorkflow\.heal/);
+  const dyingSource = await readFile(projectFile("js/core/DyingSystem.js"), "utf8");
+  assert.doesNotMatch(dyingSource, /async\s+resolve\(target/);
+  assert.match(dyingSource, /createDyingWorkflow/);
+  const judgmentSource = await readFile(projectFile("js/core/JudgmentSystem.js"), "utf8");
+  assert.doesNotMatch(judgmentSource, /async\s+judgeDefense\(/);
+  assert.match(judgmentSource, /createJudgmentWorkflow/);
+  const hpLossSource = await readFile(projectFile("js/core/HpLossSystem.js"), "utf8");
+  assert.doesNotMatch(hpLossSource, /beforeHpLoss/);
+  assert.match(hpLossSource, /workflow\.loseHp/);
+}
+
+test("FR-ARCH-8·purity：Application 无 concrete runtime，legacy façade 无第二份 workflow", frArch8OwnershipAndDependencyPurity);
+
+/*
+功能
+验证 currentJudgment/dyingContext 的 legacy projection 不 bump stateVersion。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture。
+
+写入状态
+fake projection setter。
+
+调用函数
+game.judgmentSystem.workflow、game.dyingSystem.workflow。
+
+边界与不变量
+两个字段是 Application state；setter 只写 legacy game.state 字段。
+*/
+function frArch8ApplicationStateProjectionNoVersion() {
+  const { game } = makeTeamFixture();
+  const version = game.state.stateVersion;
+  game.judgmentSystem.workflow.setCurrentJudgmentProjection({ card:{ id:"x" }, defenderId:"small" });
+  game.dyingSystem.workflow.setDyingContextProjection({ targetId:"small", need:1, currentHp:0 });
+  assert.equal(game.state.stateVersion, version);
+  assert.equal(game.state.currentJudgment.card.id, "x");
+  assert.equal(game.state.dyingContext.targetId, "small");
+  game.judgmentSystem.workflow.setCurrentJudgmentProjection(null);
+  game.dyingSystem.workflow.setDyingContextProjection(null);
+}
+
+test("FR-ARCH-8·application state：currentJudgment/dyingContext projection 不 bump stateVersion", frArch8ApplicationStateProjectionNoVersion);
+
 
 // ==================== Test Runner 最终执行 ====================
 

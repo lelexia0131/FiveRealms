@@ -34,6 +34,9 @@ const FUTURE_APPLICATION_PATTERN = /^js\/application\//i;
 const APPLICATION_PORTS_PATTERN = /^js\/application\/ports\//i;
 const APPLICATION_CHOICE_PATTERN = /^js\/application\/choice\//i;
 const APPLICATION_RESPONSE_PATTERN = /^js\/application\/response\//i;
+const APPLICATION_COMBAT_PATTERN = /^js\/application\/combat\//i;
+const APPLICATION_JUDGMENT_PATTERN = /^js\/application\/judgment\//i;
+const LEGACY_WORKFLOW_FACADE_PATTERN = /^js\/core\/(?:DyingSystem|JudgmentSystem|HpLossSystem)\.js$/i;
 const FUTURE_ADAPTERS_PATTERN = /^js\/adapters\//i;
 const DOMAIN_TRANSITIONS_PATTERN = /^js\/domain\/state\/transitions\//i;
 const DOMAIN_RULES_PATTERN = /^js\/domain\/rules\//i;
@@ -882,6 +885,30 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     pushPatternError(
       maskedSource.match(/\bthis\.game\b|\bEventBus\b|\beventBus\b|\bdocument\b|\bwindow\b|\b[Ss]earchState\b|\bVisibleState\b|\bBeliefState\b/),
       "架构约束：application/response 禁止 Game 回指、EventBus、DOM 与 AI SearchState"
+    );
+  }
+
+  if (APPLICATION_COMBAT_PATTERN.test(file) || APPLICATION_JUDGMENT_PATTERN.test(file)) {
+    const layerName = APPLICATION_COMBAT_PATTERN.test(file) ? "combat" : "judgment";
+    pushImportError(
+      importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/|\/adapters\/|\/ui\/|\/audio\/|\/ai\/|UIManager\.js|AiController\.js|AIController\.js|SoundManager\.js|cards\/cardRegistry|generals\/skillRegistry|config\/)[^"']*(?:\?[^"']*)?["']/i),
+      `架构约束：application/${layerName} 禁止 Game/core runtime、concrete UI/Audio/AI adapter 与 legacy card/skill/config 依赖`
+    );
+    pushPatternError(
+      maskedSource.match(/\b(?:player|target|source|holder|responder|defender|rescuer)\.(?:statistics|aiMemory|recentAggressors)\b|\b(?:target|player|source|holder)\.(?:hp|shield|alive|statuses|phase)\s*(?:\+\+|--|\+=|-=|=)/),
+      `架构约束：application/${layerName} 禁止直接写 statistics/aiMemory 或 Domain primitive 字段，全部经 Port/Transition`
+    );
+    pushPatternError(
+      maskedSource.match(/\bEventBus\b|\beventBus\b|\bdocument\b|\bwindow\b|\b[Ss]earchState\b|\bVisibleState\b|\bBeliefState\b/),
+      `架构约束：application/${layerName} 禁止 Game 回指、EventBus、DOM 与 AI SearchState`
+    );
+  }
+
+  if (LEGACY_WORKFLOW_FACADE_PATTERN.test(file)) {
+    const facadeName = file.split("/").pop().replace(/\.js$/i, "");
+    pushPatternError(
+      maskedSource.match(/\b(?:queue\.push\(\s*\{\s*target|setHp\(|setAlive\(|clearStatuses\(|changeHp\(|isDying\()|\basync\s+(?:enter|resolve|kill|lose|judgeDefense|judgeDelayedStatus|resolveSeal|resolveLightning)\s*\(/),
+      `架构约束：${facadeName} legacy façade 不得继续包含 workflow body；请转发 Application workflow`
     );
   }
 
@@ -1763,6 +1790,72 @@ function identity(value) { return value; }`;
     throw new Error("application/response fixture did not detect SearchState dependency");
   }
 
+  const validCombatTargetErrors = inspectSource(
+    "js/application/combat/GoodCombat.js",
+    `${moduleHeader}\nimport { calculateDamageResult } from "../../domain/rules/combat/CombatRules.js";\n${pass}`,
+    null,
+  );
+  if (validCombatTargetErrors.length) {
+    throw new Error(`valid application/combat fixture failed: ${JSON.stringify(validCombatTargetErrors)}`);
+  }
+  const combatRuntimeErrors = inspectSource(
+    "js/application/combat/BadRuntimeCombat.js",
+    `${moduleHeader}\nimport { Game } from "../../core/Game.js";\n${pass}`,
+    null,
+  );
+  if (!combatRuntimeErrors.some((error) => error.missing.some((item) => item.includes("application/combat 禁止")))) {
+    throw new Error("application/combat fixture did not detect Game runtime import");
+  }
+  const combatStateErrors = inspectSource(
+    "js/application/combat/BadStateCombat.js",
+    `${moduleHeader}\n${pass.replace("return value;", "target.statistics.damageTaken += value; return value;")}`,
+    null,
+  );
+  if (!combatStateErrors.some((error) => error.missing.some((item) => item.includes("statistics/aiMemory")))) {
+    throw new Error("application/combat fixture did not detect direct statistics mutation");
+  }
+  const validJudgmentTargetErrors = inspectSource(
+    "js/application/judgment/GoodJudgment.js",
+    `${moduleHeader}\nimport { decideDefenseJudgmentOutcome } from "../../domain/rules/judgment/JudgmentRules.js";\n${pass}`,
+    null,
+  );
+  if (validJudgmentTargetErrors.length) {
+    throw new Error(`valid application/judgment fixture failed: ${JSON.stringify(validJudgmentTargetErrors)}`);
+  }
+  const judgmentRuntimeErrors = inspectSource(
+    "js/application/judgment/BadRuntimeJudgment.js",
+    `${moduleHeader}\nimport { UIManager } from "../../ui/UIManager.js";\n${pass}`,
+    null,
+  );
+  if (!judgmentRuntimeErrors.some((error) => error.missing.some((item) => item.includes("application/judgment 禁止")))) {
+    throw new Error("application/judgment fixture did not detect concrete UI import");
+  }
+  const judgmentAiMemoryErrors = inspectSource(
+    "js/application/judgment/BadAiMemoryJudgment.js",
+    `${moduleHeader}\n${pass.replace("return value;", "holder.aiMemory.recentAggressors.x = value; return value;")}`,
+    null,
+  );
+  if (!judgmentAiMemoryErrors.some((error) => error.missing.some((item) => item.includes("statistics/aiMemory")))) {
+    throw new Error("application/judgment fixture did not detect direct aiMemory write");
+  }
+  const validDyingFacadeErrors = inspectSource(
+    "js/core/DyingSystem.js",
+    `${moduleHeader}\nexport class DyingSystem { constructor(game) { this.game = game; this.workflow = game.combatWorkflow; } enter(...args) { return this.workflow.enter(...args); } }`,
+    null,
+  );
+  if (validDyingFacadeErrors.length) {
+    throw new Error(`valid dying facade fixture failed: ${JSON.stringify(validDyingFacadeErrors)}`);
+  }
+  const badDyingFacadeErrors = inspectSource(
+    "js/core/DyingSystem.js",
+    `${moduleHeader}\nexport class DyingSystem { async resolve(target) { setHp(null, target, 0); } }`,
+    null,
+  );
+  if (!badDyingFacadeErrors.some((error) => error.missing.some((item) => item.includes("legacy façade")))) {
+    throw new Error("dying facade fixture did not detect workflow body growth");
+  }
+
+
   const validPortsTargetErrors = inspectSource(
     "js/application/ports/GoodPort.js",
     `${moduleHeader}\nimport { createChoiceResult } from "./ChoicePort.js";\n${pass}`,
@@ -1913,7 +2006,7 @@ function identity(value) { return value; }`;
   if (!rootLayoutErrors.some((error) => error.missing.some((item) => item.includes("AI 根目录")))) {
     throw new Error("root layout fixture did not detect non-allowlisted root file");
   }
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
 }
 
 /*

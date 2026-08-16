@@ -26,18 +26,20 @@ import { JudgmentSystem } from "./JudgmentSystem.js?build=20260815-shadow-agent-
 import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260815-shadow-agent-p1-slot";
 import { createGameChoiceBoundary } from "./GameChoiceRouter.js?build=20260815-shadow-agent-p1-slot";
 import { createRandomPort } from "../application/ports/RandomPort.js?build=20260815-shadow-agent-p1-slot";
+import { createPresentationPort } from "../application/ports/PresentationPort.js?build=20260815-shadow-agent-p1-slot";
+import { createDiagnosticsPort } from "../application/ports/DiagnosticsPort.js?build=20260815-shadow-agent-p1-slot";
+import { createCombatWorkflow } from "../application/combat/CombatWorkflow.js?build=20260815-shadow-agent-p1-slot";
 import { PublicCardPool } from "./PublicCardPool.js?build=20260815-shadow-agent-p1-slot";
 import { HpLossSystem } from "./HpLossSystem.js?build=20260815-shadow-agent-p1-slot";
 import { createMatchState } from "../domain/state/model/MatchState.js?build=20260815-shadow-agent-p1-slot";
 import { getCurrentActor, getAllies as getAlliesFromState, getEnemies as getEnemiesFromState, getSeatOrderFrom } from "../domain/state/queries/MatchQueries.js?build=20260815-shadow-agent-p1-slot";
 import { getCardZoneOccurrences as getCardZoneOccurrencesFromState, isCardCommittedToDiscard as isCardCommittedToDiscardInState, isCardCommittedToEquipment as isCardCommittedToEquipmentInState } from "../domain/state/queries/ZoneQueries.js?build=20260815-shadow-agent-p1-slot";
 import { appendCardToZone, commitEquipmentReplacement, discardEquipment, moveCardBetweenZones, moveCardsAtomically, moveEquipmentToHand, purgeCardToDiscard, removeCardFromZone } from "../domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { changeEnergy, changeHp, changeShield } from "../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { removeStatus, setStatus } from "../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { changeEnergy } from "../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { setCurrentPlayerIndex, setCurrentRound, setGameOver, setMatchPhase, setPublicCardPool, setWinnerTeam } from "../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { addTrackingTarget, markCategoryUsed, recordActiveSkillUse, resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags, setGuardianAidUsed, setKillRewardGranted, setLastEmberResolutionId, setMomentum, setRecycleDeviceUses, setSkipActionPhase, setSpyGapPendingTargetIds, setTrackingTurnNumber } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { addTrackingTarget, markCategoryUsed, recordActiveSkillUse, resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags, setGuardianAidUsed, setKillRewardGranted, setLastEmberResolutionId, setMomentum, setRecycleDeviceUses, setSpyGapPendingTargetIds, setTrackingTurnNumber } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { calculateNextActorIndex, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, shouldSkipActionPhase } from "../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
-import { calculateDamageResult, calculateHealAmount, isDying } from "../domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
+
 import { applyGeneralDefinition, bumpHandVersion, setAlive, setEquipment } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
@@ -76,11 +78,153 @@ function actionLogMessage(source, card, targets = []) {
 
 const RESULT_ONLY_CARD_IDS = new Set(["charge", "recover", "shield"]);
 
-/** 中央结算区用状态持有者 + 延迟状态事件展示，不伪造普通出牌者。 */
-function showDelayedStatusCard(game, holder, definitionId, eventLabel) {
-  const card = CARD_DEFINITIONS[definitionId];
-  if (!holder || !card) return;
-  game.ui.setCurrentCard?.(card, eventLabel, holder.name);
+/*
+功能
+创建本局 PresentationPort 的 concrete composition adapter。
+
+调用方
+Game constructor。
+
+输入
+Game composition root。
+
+输出
+冻结 PresentationPort。
+
+读取状态
+state.players 与 ui 公开展示字段。
+
+写入状态
+只写既有 UI/presentation 状态，不写 Domain state。
+
+调用函数
+createPresentationPort、ui.showJudgment、ui.showDying、ui.setCurrentCard、ui.playLightningHit、ui.queueFeedback、ui.render。
+
+边界与不变量
+Application 传入 data-only DTO；本 adapter 负责把 ID/公开字段映射回 legacy UI 调用，不新增 UI 行为。
+*/
+function buildGamePresentationPort(game) {
+  return createPresentationPort({
+    log: (message, kind = "normal") => game.log(message, kind),
+    showDamageFeedback: (playerId, amount) => game.ui.queueFeedback?.("damage", playerId, amount),
+    showShieldFeedback: (playerId, amount) => game.ui.queueFeedback?.("shield", playerId, amount),
+    showHealFeedback: (playerId, amount) => game.ui.queueFeedback?.("heal", playerId, amount),
+    showDying: ({ playerId, need, currentHp }) => {
+      const player = game.state.players.find((entry) => entry.id === playerId);
+      if (!player) return;
+      game.ui.showDying?.(player, { targetId: playerId, need, currentHp });
+    },
+    hideDying: () => game.ui.hideDying?.(),
+    showJudgment: ({ playerId, card, delayedStatusContext }) => {
+      const player = game.state.players.find((entry) => entry.id === playerId);
+      if (!player || !card) return;
+      game.ui.showJudgment?.(
+        player,
+        { name: card.name, categoryName: card.categoryName, art: card.art },
+        delayedStatusContext ? { delayedStatusContext } : {}
+      );
+    },
+    hideJudgment: () => game.ui.hideJudgment?.(),
+    showCurrentEffect: ({ statusId, label, holderName }) => {
+      const card = CARD_DEFINITIONS[statusId];
+      if (!card) return;
+      game.ui.setCurrentCard?.(card, label, holderName);
+    },
+    showLightningHit: (playerId) => game.ui.playLightningHit?.(playerId),
+    refresh: () => game.ui.render(game)
+  });
+}
+
+/*
+功能
+创建本局 DiagnosticsPort 的 concrete composition adapter。
+
+调用方
+Game constructor。
+
+输入
+Game composition root。
+
+输出
+冻结 DiagnosticsPort。
+
+读取状态
+state.players 的 identity。
+
+写入状态
+只写 legacy Player.statistics telemetry；不写 Domain fields 或 AI memory。
+
+调用函数
+createDiagnosticsPort。
+
+边界与不变量
+Application 只传入 ID/数值 DTO；本 adapter 保留旧 statistics 更新位置与数值语义。
+*/
+function buildGameDiagnosticsPort(game) {
+  return createDiagnosticsPort({
+    recordDamage: ({ targetId, sourceId, hpDamage }) => {
+      const target = game.state.players.find((entry) => entry.id === targetId);
+      if (target) target.statistics.damageTaken += hpDamage;
+      const source = sourceId ? game.state.players.find((entry) => entry.id === sourceId) : null;
+      if (source) source.statistics.damageDealt += hpDamage;
+    },
+    recordHealing: ({ sourceId, actualAmount }) => {
+      const source = sourceId ? game.state.players.find((entry) => entry.id === sourceId) : null;
+      if (source) source.statistics.healingDone += actualAmount;
+    },
+    recordHpLoss: ({ targetId, amount }) => {
+      const target = game.state.players.find((entry) => entry.id === targetId);
+      if (target) target.statistics.damageTaken += amount;
+    }
+  });
+}
+
+/*
+功能
+创建本局 Application Combat Workflow 的 composition dependencies。
+
+调用方
+Game constructor。
+
+输入
+Game composition root。
+
+输出
+冻结 CombatWorkflow。
+
+读取状态
+Game 状态与 response/judgment/dying 门面。
+
+写入状态
+无；AI memory/statistics 只由窄 observation/diagnostics adapter 写入。
+
+调用函数
+createCombatWorkflow、game.eventBus.emit。
+
+边界与不变量
+judgeDefense/enterDying 使用已注入 workflow 的窄回调；不把 Game 对象传入 Application。
+*/
+function buildGameCombatWorkflow(game) {
+  return createCombatWorkflow({
+    getState: () => game.state,
+    isSessionValid: (gameId) => game.isSessionValid(gameId),
+    askForBlock: (...args) => game.responseSystem.askForBlock(...args),
+    judgeDefense: (...args) => game.judgmentSystem
+      ? game.judgmentSystem.judgeDefense(...args)
+      : Promise.resolve({ handled: false, immune: false }),
+    enterDying: (...args) => game.dyingSystem
+      ? game.dyingSystem.enter(...args)
+      : Promise.resolve(false),
+    emitEvent: (type, payload) => game.eventBus.emit(type, payload),
+    createId,
+    presentation: game.presentationPort,
+    diagnostics: game.diagnosticsPort,
+    observeDamage: (target, source, hpDamage) => {
+      if (source && hpDamage > 0 && source.battleTeam !== target.battleTeam) {
+        target.aiMemory.recentAggressors[source.id] = (target.aiMemory.recentAggressors[source.id] ?? 0) + hpDamage;
+      }
+    }
+  });
 }
 
 /** 纯展示：为中央结算卡生成 displayTargets，不进入业务 targets、规则判断或 AI。 */
@@ -166,8 +310,11 @@ export class Game {
     this.choiceCoordinator = choiceBoundary.choiceCoordinator;
     this.responseSystem = new ResponseSystem(this, this.choiceCoordinator, this.choiceContexts);
     this.cardSelectionSystem = new CardSelectionSystem(this);
-    this.dyingSystem = new DyingSystem(this);
+    this.presentationPort = buildGamePresentationPort(this);
+    this.diagnosticsPort = buildGameDiagnosticsPort(this);
+    this.combatWorkflow = buildGameCombatWorkflow(this);
     this.judgmentSystem = new JudgmentSystem(this);
+    this.dyingSystem = new DyingSystem(this);
     this.hpLossSystem = new HpLossSystem(this);
     this.publicCardPool = new PublicCardPool(this);
     this.candidates = [];
@@ -344,113 +491,19 @@ export class Game {
       this.log(`${owner.name}的「回收站」触发（${owner.turnFlags.recycleDeviceUses}/2），${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
     });
     this.eventBus.on("playerDead", "global:huntMarkSourceCleanup", (event) => {
-      for (const player of this.state.players) {
-        if (player.statuses.huntMark?.sourceId === event.target.id) removeStatus(this.state, player, "huntMark");
-      }
-      this.ui.render(this);
+      this.dyingSystem.cleanupHuntMarksForSource(event.target.id);
     });
     this.eventBus.on("beforeStatusResolve", "global:seal", async (event) => {
       const holder = event.player;
       const status = holder?.statuses?.sealed;
       if (!status || event.cancelled || !holder?.alive || this.state.isGameOver) return;
-      const gameId = this.state.gameId;
-      showDelayedStatusCard(this, holder, "seal", "即将判定");
-      this.log(`${holder.name}的「封印」即将判定，进入反制窗口。`, "important");
-      const counterResult = await this.responseSystem.askForStatusCounter(holder, {
-        statusId:"sealed",
-        statusName:"封印",
-        counterOutcome:"cancel",
-        originPlayerId:status.originPlayerId ?? null
-      });
-      if (!this.isSessionValid(gameId) || this.state.isGameOver || !holder.alive) return;
-      if (isCancelledResponse(counterResult)) return;
-      if (counterResult.status === RESPONSE_STATUS.USED) {
-        removeStatus(this.state, holder, "sealed");
-        showDelayedStatusCard(this, holder, "seal", "被反制");
-        this.log(`${holder.name}的「封印」被反制，本次封印解除。`, "important");
-        this.ui.render(this);
-        return;
-      }
-      const judgment = await this.judgmentSystem.judgeSeal(holder, { status });
-      if (!this.isSessionValid(gameId) || this.state.isGameOver || !holder.alive || !judgment.handled) return;
-      removeStatus(this.state, holder, "sealed");
-      if (judgment.triggered) {
-        showDelayedStatusCard(this, holder, "seal", "未生效");
-        this.log(`${holder.name}的「封印」判定牌为「${judgment.card.name}」（战术牌），「封印」未生效，本回合正常进行。`, "important");
-      } else {
-        setSkipActionPhase(this.state, holder, true);
-        showDelayedStatusCard(this, holder, "seal", "生效");
-        const categoryLabel = judgment.category === "basic" ? "基础牌" : "装备牌";
-        this.log(`${holder.name}的「封印」判定牌为「${judgment.card.name}」（${categoryLabel}），「封印」生效。`, "important");
-      }
-      this.ui.render(this);
+      await this.judgmentSystem.resolveSeal(holder, status);
     });
     this.eventBus.on("beforeStatusResolve", "global:lightning", async (event) => {
       const holder = event.player;
       const status = holder?.statuses?.lightning;
       if (!status || event.cancelled || !holder?.alive || this.state.isGameOver) return;
-      const gameId = this.state.gameId;
-      showDelayedStatusCard(this, holder, "lightning", "即将判定");
-      this.log(`${holder.name}的「闪电」即将判定，进入反制窗口。`, "important");
-      const counterResult = await this.responseSystem.askForStatusCounter(holder, {
-        statusId:"lightning",
-        statusName:"闪电",
-        counterOutcome:"transfer",
-        originPlayerId:status.originPlayerId ?? null
-      });
-      if (!this.isSessionValid(gameId) || this.state.isGameOver || !holder.alive) return;
-      if (isCancelledResponse(counterResult)) return;
-      if (counterResult.status === RESPONSE_STATUS.USED) {
-        removeStatus(this.state, holder, "lightning");
-        const receiver = RuleEngine.nextLightningReceiver(this.state.players, holder);
-        if (receiver) {
-          setStatus(this.state, receiver, "lightning", { ...status, cardDefinitionId:"lightning", originPlayerId:status.originPlayerId ?? holder.id });
-          showDelayedStatusCard(this, holder, "lightning", "被反制");
-          this.log(`${holder.name}的「闪电」被反制，转移给${receiver.name}。`, "important");
-        }
-        this.ui.render(this);
-        return;
-      }
-      const judgment = await this.judgmentSystem.judgeLightning(holder, { status });
-      if (!this.isSessionValid(gameId) || this.state.isGameOver || !holder.alive || !judgment.handled) return;
-      if (judgment.triggered) {
-        removeStatus(this.state, holder, "lightning");
-        showDelayedStatusCard(this, holder, "lightning", "判定成功");
-        // 判定已确认命中：音效与人物框电弧共享同一语义入口，失败、转移和反制路径
-        // 均不会触发；后续即使护援或其他减伤把生命伤害降到 0，仍属于真实雷击命中。
-        this.ui.playLightningHit?.(holder.id);
-        await this.damage(null, holder, 3, {
-          damageType:"lightning",
-          reason:"lightning",
-          canBlock:false,
-          actionName:"闪电",
-          delayedStatusContext:{
-            ownerId:holder.id,
-            ownerName:holder.name,
-            ownerBattleTeam:holder.battleTeam,
-            statusId:"lightning",
-            statusName:"闪电",
-            event:"judgmentSuccess"
-          },
-          metadata:{
-            statusId:"lightning",
-            cardDefinitionId:"lightning",
-            originPlayerId:status.originPlayerId ?? null,
-            currentHolderId:holder.id,
-            baseDamage:3,
-            judgmentCategory:"equipment"
-          }
-        });
-        return;
-      }
-      removeStatus(this.state, holder, "lightning");
-      const receiver = RuleEngine.nextLightningReceiver(this.state.players, holder);
-      if (receiver) {
-        setStatus(this.state, receiver, "lightning", { ...status, cardDefinitionId:"lightning", originPlayerId:status.originPlayerId ?? holder.id });
-        showDelayedStatusCard(this, holder, "lightning", "判定未生效");
-        this.log(`${holder.name}的「闪电」判定未生效，转移给${receiver.name}。`, "important");
-      }
-      this.ui.render(this);
+      await this.judgmentSystem.resolveLightning(holder, status);
     });
   }
 
@@ -1411,7 +1464,7 @@ export class Game {
 
   /*
   功能
-  执行伤害 workflow；防御/格挡/事件修正后提交护盾与生命写入。
+  转发 Application Combat Workflow.damage。
 
   调用方
   Card/Skill resolvers 与闪电规则。
@@ -1423,86 +1476,27 @@ export class Game {
   实际扣除的生命值。
 
   读取状态
-  Game state、response/judgment/dying systems。
+  无额外状态。
 
   写入状态
-  shield/hp 经 ResourceTransition；phase 经 MatchStateTransition。
+  无额外写入。
 
   调用函数
-  changeShield、changeHp、setMatchPhase、EventBus.emit。
+  this.combatWorkflow.damage。
 
   边界与不变量
-  规则与事件顺序不变；Transition 不 emit。
+  本 façade 不含第二份伤害 workflow；Application Combat 是唯一 authority。
   */
   async damage(source, target, amount, context = {}) {
-    const gameId = this.state.gameId;
-    if (!this.isSessionValid(gameId) || !target?.alive || this.state.isGameOver) return 0;
-    const metadata = {};
-    if (context.metadata && typeof context.metadata === "object") Object.assign(metadata, context.metadata);
-    const event = {
-      type: "beforeDamage", source, target, amount: Math.max(0, amount), card: context.card ?? null,
-      skill: context.skill ?? null, damageType: context.damageType ?? "normal", canBlock: context.canBlock ?? false,
-      actionName: context.card?.name ?? context.actionName ?? context.reason ?? "伤害",
-      delayedStatusContext:context.delayedStatusContext ?? null,
-      cancelled: false, metadata, resolutionId: context.resolutionId ?? createId("skill-resolution")
-    };
-    // 雷达跟随统一“需要打出格挡”规则：只要本次结算要求目标以「格挡」响应（event.canBlock），
-    // 就进行雷达判定，不依赖具体卡牌名（突袭、震荡、焚场、猎杀等可格挡效果均适用）。
-    if (event.amount > 0 && event.canBlock) {
-      const judgment = await this.judgmentSystem.judgeDefense(source, target, event);
-      if (!this.isSessionValid(gameId) || judgment.cancelled) return 0;
-      if (judgment.immune || !target.alive || this.state.isGameOver) {
-        await this.eventBus.emit("afterDamage", { ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"defenseDevice" });
-        return 0;
-      }
-    }
-    const blockResult = await this.responseSystem.askForBlock(source, target, event);
-    if (!this.isSessionValid(gameId) || isCancelledResponse(blockResult)) return 0;
-    if (blockResult.status === RESPONSE_STATUS.USED) {
-      context.blockedByCard = true;
-      await this.eventBus.emit("afterDamage", { ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"block" });
-      if (!this.isSessionValid(gameId)) return 0;
-      this.ui.render(this);
-      return 0;
-    }
-    await this.eventBus.emit("beforeDamage", event);
-    if (!this.isSessionValid(gameId)) return 0;
-    if (event.cancelled || !target.alive) return 0;
-    if (event.amount <= 0) {
-      this.log(`${target.name}没有受到生命伤害。`);
-      await this.eventBus.emit("afterDamage", {
-        ...event, type:"afterDamage", actualAmount:0, shieldAbsorbed:0, preventedBy:"damageReduction"
-      });
-      if (!this.isSessionValid(gameId)) return 0;
-      this.ui.render(this);
-      return 0;
-    }
-    const damageResult = calculateDamageResult(event.amount, target.shield, target.hp);
-    changeShield(this.state, target, -damageResult.shieldAbsorbed);
-    const hpDamage = damageResult.hpDamage;
-    changeHp(this.state, target, -hpDamage);
-    target.statistics.damageTaken += hpDamage;
-    if (source) {
-      source.statistics.damageDealt += hpDamage;
-      if (hpDamage > 0 && source.battleTeam !== target.battleTeam) target.aiMemory.recentAggressors[source.id] = (target.aiMemory.recentAggressors[source.id] ?? 0) + hpDamage;
-    }
-    if (damageResult.shieldAbsorbed) { this.log(`${target.name}的护盾吸收了${damageResult.shieldAbsorbed}点伤害。`); this.ui.queueFeedback?.("shield", target.id, damageResult.shieldAbsorbed); }
-    if (hpDamage) { this.log(`${target.name}受到${hpDamage}点伤害，剩余${target.hp}点生命。`, "damage"); this.ui.queueFeedback?.("damage", target.id, hpDamage); }
-    else this.log(`${target.name}没有受到生命伤害。`);
-    await this.eventBus.emit("afterDamage", { ...event, type: "afterDamage", actualAmount: hpDamage, shieldAbsorbed:damageResult.shieldAbsorbed });
-    if (!this.isSessionValid(gameId)) return hpDamage;
-    if (isDying(target.hp, target.alive)) await this.dyingSystem.enter(target, source, context);
-    if (!this.isSessionValid(gameId)) return hpDamage;
-    this.ui.render(this);
-    return hpDamage;
+    return this.combatWorkflow.damage(source, target, amount, context);
   }
 
   /*
   功能
-  执行治疗 workflow；事件修正后提交生命写入。
+  转发 Application Combat Workflow.heal。
 
   调用方
-  Card/Skill resolvers 与 DyingSystem。
+  Card/Skill resolvers 与 DyingWorkflow。
 
   输入
   source、target、amount 与 context。
@@ -1511,38 +1505,19 @@ export class Game {
   实际治疗量。
 
   读取状态
-  Game state 与 EventBus。
+  无额外状态。
 
   写入状态
-  target.hp 经 ResourceTransition。
+  无额外写入。
 
   调用函数
-  changeHp、EventBus.emit。
+  this.combatWorkflow.heal。
 
   边界与不变量
-  治疗上限与事件顺序不变。
+  本 façade 不含第二份治疗 workflow；Application Combat 是唯一 authority。
   */
   async heal(source, target, amount, context = {}) {
-    const gameId = this.state.gameId;
-    if (!this.isSessionValid(gameId) || !target?.alive || target.hp >= target.maxHp || this.state.isGameOver) return 0;
-    const event = { type: "beforeHeal", source, target, amount: Math.max(0, amount), card: context.card ?? null, skill: context.skill ?? null,
-      reason:context.reason ?? "治疗", isDyingRescue:Boolean(context.isDyingRescue), cancelled: false, metadata: {} };
-    await this.eventBus.emit("beforeHeal", event);
-    if (!this.isSessionValid(gameId)) return 0;
-    if (event.cancelled) return 0;
-    const actualAmount = calculateHealAmount(event.amount, target.maxHp, target.hp);
-    changeHp(this.state, target, actualAmount);
-    if (source) source.statistics.healingDone += actualAmount;
-    if (actualAmount) {
-      if (!context.silentLog) this.log(`${target.name}恢复${actualAmount}点生命。`, "heal");
-      if (typeof context.resultLog === "function") this.log(context.resultLog(actualAmount), "heal");
-      else if (context.resultLog) this.log(String(context.resultLog), "heal");
-      this.ui.queueFeedback?.("heal", target.id, actualAmount);
-    }
-    await this.eventBus.emit("afterHeal", { ...event, type: "afterHeal", actualAmount });
-    if (!this.isSessionValid(gameId)) return actualAmount;
-    this.ui.render(this);
-    return actualAmount;
+    return this.combatWorkflow.heal(source, target, amount, context);
   }
 
   /*

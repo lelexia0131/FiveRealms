@@ -260,6 +260,45 @@ export function isCounterEligible(category, counterable) {
 
 /*
 功能
+决定濒死救援响应顺序：目标自己优先，然后从目标下一座位顺时针取存活同阵营角色。
+
+调用方
+Application DyingWorkflow 与 tests。
+
+输入
+canonical roster 投影与 target id。
+
+输出
+有序 responder IDs。
+
+读取状态
+seatIndex/alive/battleTeam/id。
+
+写入状态
+无。
+
+调用函数
+assertCanonicalSeatRoster。
+
+边界与不变量
+死亡与敌方跳过；self 即使生命不大于 0 仍优先；座次 formula 只在这里维护。
+*/
+export function getDyingRescueResponderOrder(players, targetId) {
+  assertCanonicalSeatRoster(players);
+  const target = players.find((player) => player.id === targetId);
+  if (!target) return [];
+  const ordered = [targetId];
+  for (let offset = 1; offset < players.length; offset += 1) {
+    const candidate = players[(target.seatIndex + offset) % players.length];
+    if (candidate.alive && candidate.battleTeam === target.battleTeam && candidate.id !== targetId) {
+      ordered.push(candidate.id);
+    }
+  }
+  return ordered;
+}
+
+/*
+功能
 判断濒死救援者资格。
 
 调用方

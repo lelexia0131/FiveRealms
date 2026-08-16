@@ -206,6 +206,35 @@ export function nextLightningReceiverId(players, holderId) {
 
 /*
 功能
+判断猎印是否因留下者死亡而到期。
+
+调用方
+Application DyingWorkflow death cleanup 与 tests。
+
+输入
+huntMark 状态详情与死亡来源 ID。
+
+输出
+布尔值。
+
+读取状态
+状态详情 sourceId。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只比较 sourceId；其它状态不受影响。
+*/
+export function isHuntMarkSourceExpired(statusDetail, deadSourceId) {
+  return Boolean(deadSourceId && statusDetail?.sourceId === deadSourceId);
+}
+
+/*
+功能
 返回 StatusDefinitions 中已存在的状态 ID。
 
 调用方

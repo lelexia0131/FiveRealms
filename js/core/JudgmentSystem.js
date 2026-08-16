@@ -1,179 +1,278 @@
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../domain/rules/judgment/JudgmentRules.js?build=20260815-shadow-agent-p1-slot";
-import { setMatchPhase } from "../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
-
 /**
- * 雷达的公开判定流程。依赖 Deck、EventBus 与 UI 展示；
- * 判定牌先进入独立判定区再去手牌或弃牌堆，绝不能在处理中参与重洗。
+ * Application Judgment Workflow 的 legacy compatibility façade。
+ * 防御判定、延迟状态判定、seal/lightning resolution 的 authority 已迁至
+ * js/application/judgment/；本文件只做 Game collaborator 适配与方法转发。
  */
+import { createJudgmentWorkflow } from "../application/judgment/JudgmentWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { createStatusResolutionWorkflow } from "../application/judgment/StatusResolutionWorkflow.js?build=20260815-shadow-agent-p1-slot";
+
+/*
+功能
+为本局 JudgmentWorkflow 构造显式 Game collaborator 依赖。
+
+调用方
+JudgmentSystem constructor。
+
+输入
+Game composition root。
+
+输出
+dependencies object。
+
+读取状态
+无。
+
+写入状态
+game.state.currentJudgment 的 legacy projection setter。
+
+调用函数
+无。
+
+边界与不变量
+Application 不持有 Game；currentJudgment 为单向 projection。
+*/
+function buildGameJudgmentWorkflowDependencies(game) {
+  return {
+    getState: () => game.state,
+    isSessionValid: (gameId) => game.isSessionValid(gameId),
+    emitEvent: (type, payload) => game.eventBus.emit(type, payload),
+    drawJudgmentCard: () => {
+      const card = game.state.deck.drawToJudgment(game.state);
+      game.syncDeckAliases();
+      return card;
+    },
+    syncDeckAliases: () => game.syncDeckAliases(),
+    moveJudgmentToDiscard: (card) => game.state.deck.finishJudgmentToDiscard(game.state, card),
+    moveJudgmentToHand: (card, player) => game.state.deck.finishJudgmentToHand(game.state, card, player),
+    observeJudgmentCard: (viewer, owner, card) => game.rememberPrivateCard(viewer, owner, card),
+    presentation: game.presentationPort,
+    setCurrentJudgmentProjection: (value) => { game.state.currentJudgment = value; }
+  };
+}
+
+/*
+功能
+为本局 StatusResolutionWorkflow 构造显式 Game collaborator 依赖。
+
+调用方
+JudgmentSystem constructor。
+
+输入
+Game composition root 与已组合 JudgmentWorkflow。
+
+输出
+dependencies object。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+seal/lightning 不重新实现 counter/judgment/damage；只调用既有 Application workflow。
+*/
+function buildGameStatusResolutionDependencies(game, workflow) {
+  return {
+    getState: () => game.state,
+    isSessionValid: (gameId) => game.isSessionValid(gameId),
+    askForStatusCounter: (...args) => game.responseSystem.askForStatusCounter(...args),
+    judgeSeal: (...args) => workflow.judgeSeal(...args),
+    judgeLightning: (...args) => workflow.judgeLightning(...args),
+    damage: (...args) => game.combatWorkflow.damage(...args),
+    presentation: game.presentationPort
+  };
+}
+
 export class JudgmentSystem {
-  constructor(game) { this.game = game; }
+  /*
+  功能
+  创建 legacy JudgmentSystem façade 并组合 Application Judgment/Status workflows。
+
+  调用方
+  Game constructor。
+
+  输入
+  game。
+
+  输出
+  JudgmentSystem façade。
+
+  读取状态
+  无。
+
+  写入状态
+  无；运行时经 Application workflows。
+
+  调用函数
+  buildGameJudgmentWorkflowDependencies、createJudgmentWorkflow、buildGameStatusResolutionDependencies、createStatusResolutionWorkflow。
+
+  边界与不变量
+  不含第二份 judgment/status workflow；所有方法只转发。
+  */
+  constructor(game) {
+    this.game = game;
+    this.workflow = createJudgmentWorkflow(buildGameJudgmentWorkflowDependencies(game));
+    this.statusWorkflow = createStatusResolutionWorkflow(buildGameStatusResolutionDependencies(game, this.workflow));
+  }
 
   /*
   功能
-  执行雷达防御判定 workflow 并提交判定区移动与 phase 写入。
+  转发 Application JudgmentWorkflow.judgeDefense。
 
   调用方
-  Game.damage。
+  Application CombatWorkflow。
 
   输入
   attacker、defender 与 attackContext。
 
   输出
-  handled/immune/category 结果。
+  judgment result。
 
   读取状态
-  defender 装备、Deck 判定区与 EventBus。
+  无。
 
   写入状态
-  phase 经 MatchStateTransition；牌区经 ZoneTransition。
+  无。
 
   调用函数
-  setMatchPhase、Deck judgment moves。
+  this.workflow.judgeDefense。
 
   边界与不变量
-  判定结果规则不变。
+  无第二份 workflow。
   */
-  async judgeDefense(attacker, defender, attackContext) {
-    const gameId = this.game.state.gameId;
-    if (!this.game.isSessionValid(gameId)) return { handled:false, immune:false, cancelled:true };
-    if (defender.equipment?.definitionId !== "defenseDevice") return { handled:false, immune:false };
-    const card = this.game.state.deck.drawToJudgment(this.game.state);
-    this.game.syncDeckAliases();
-    if (!card) return { handled:false, immune:false };
-    const previousPhase = this.game.state.phase;
-    setMatchPhase(this.game.state, "judgment");
-    this.game.state.currentJudgment = { card, defenderId:defender.id, attackerId:attacker?.id ?? null };
-    this.game.ui.showJudgment?.(defender, card);
-    this.game.log(`${defender.name}的「雷达」判定为「${card.name}」（${card.categoryName}）。`, "important");
-    await this.game.eventBus.emit("judgmentRevealed", { type:"judgmentRevealed", attacker, defender, card, attackContext });
-    if (!this.game.isSessionValid(gameId)) return { handled:false, immune:false, cancelled:true };
-    let result;
-    if (card.category === "tactic") {
-      this.game.state.deck.finishJudgmentToDiscard(this.game.state, card);
-      this.game.log(`${defender.name}的「雷达」生效，此次攻击无效。`, "important");
-      result = interpretDefenseJudgment(card.category);
-    } else if (card.category === "basic") {
-      this.game.state.deck.finishJudgmentToHand(this.game.state, card, defender);
-      bumpHandVersion(this.game.state, defender);
-      for (const viewer of this.game.state.players) if (viewer.id !== defender.id) this.game.rememberPrivateCard(viewer, defender, card);
-      this.game.log(`${defender.name}获得判定牌，此次攻击继续结算。`);
-      result = interpretDefenseJudgment(card.category);
-    } else {
-      this.game.state.deck.finishJudgmentToDiscard(this.game.state, card);
-      this.game.log(`${defender.name}的「雷达」未生效，判定牌进入弃牌堆，此次攻击继续结算。`, "important");
-      result = interpretDefenseJudgment(card.category);
-    }
-    this.game.state.currentJudgment = null;
-    this.game.ui.hideJudgment?.();
-    if (!this.game.state.isGameOver) setMatchPhase(this.game.state, previousPhase);
-    this.game.syncDeckAliases();
-    this.game.ui.render(this.game);
-    return result;
-  }
-
+  judgeDefense(...args) { return this.workflow.judgeDefense(...args); }
   /*
   功能
-  执行延迟状态的公共判定 workflow。
+  转发 Application JudgmentWorkflow.judgeDelayedStatus。
 
   调用方
-  Game.registerGlobalRules 的 seal/lightning 规则。
+  status workflow 与 legacy callers。
 
   输入
   holder 与 options。
 
   输出
-  handled/triggered/category 结果。
+  judgment result。
 
   读取状态
-  holder 状态、Deck 判定区与 EventBus。
+  无。
 
   写入状态
-  phase 经 MatchStateTransition；判定区经 ZoneTransition。
+  无。
 
   调用函数
-  setMatchPhase、Deck judgment moves。
+  this.workflow.judgeDelayedStatus。
 
   边界与不变量
-  判定牌最终弃置的既有规则不变。
+  无第二份 workflow。
   */
-  async judgeDelayedStatus(holder, options = {}) {
-    const {
-      statusId,
-      statusName,
-      triggerCategory,
-      context = {},
-      logReveal = true,
-      triggerMessage = null,
-      statusCard = null
-    } = options;
-    const gameId = this.game.state.gameId;
-    if (!this.game.isSessionValid(gameId)) return { handled:false, triggered:false, cancelled:true };
-    if (!holder?.alive || !this.game.state.players.some((entry) => entry === holder && entry.alive)) return { handled:false, triggered:false };
-    const card = this.game.state.deck.drawToJudgment(this.game.state);
-    this.game.syncDeckAliases();
-    if (!card) {
-      this.game.log(`没有可翻开的判定牌，「${statusName}」结算顺延。`);
-      return { handled:false, triggered:false };
-    }
-    const categoryLabel = card.category === "basic" ? "基础牌"
-      : card.category === "tactic" ? "战术牌"
-        : card.category === "equipment" ? "装备牌" : card.categoryName;
-    const previousPhase = this.game.state.phase;
-    setMatchPhase(this.game.state, "judgment");
-    this.game.state.currentJudgment = { card, defenderId:holder.id, attackerId:null, statusId };
-    if (statusCard) this.game.ui.setCurrentCard?.(
-      statusCard, "判定中", holder.name
-    );
-    this.game.ui.showJudgment?.(holder, card, {
-      delayedStatusContext:{
-        ownerId:holder.id,
-        ownerName:holder.name,
-        ownerBattleTeam:holder.battleTeam,
-        statusId,
-        statusName,
-        event:"judging"
-      }
-    });
-    if (logReveal) this.game.log(`${holder.name}的「${statusName}」判定为「${card.name}」，为${categoryLabel}。`, "important");
-    const revealEvent = {
-      type:"judgmentRevealed", attacker:null, defender:holder, card, statusId, statusContext:context
-    };
-    if (statusId === "lightning") revealEvent.lightningContext = context;
-    if (statusId === "sealed") revealEvent.sealContext = context;
-    await this.game.eventBus.emit("judgmentRevealed", revealEvent);
-    if (!this.game.isSessionValid(gameId)) return { handled:false, triggered:false, cancelled:true };
-    const triggered = interpretDelayedStatusJudgment(card.category, triggerCategory);
-    this.game.state.deck.finishJudgmentToDiscard(this.game.state, card);
-    if (triggered && triggerMessage) this.game.log(triggerMessage(holder, card), "important");
-    this.game.state.currentJudgment = null;
-    this.game.ui.hideJudgment?.();
-    if (!this.game.state.isGameOver) setMatchPhase(this.game.state, previousPhase);
-    this.game.syncDeckAliases();
-    this.game.ui.render(this.game);
-    return { handled:true, triggered, category:card.category, card };
-  }
+  judgeDelayedStatus(...args) { return this.workflow.judgeDelayedStatus(...args); }
+  /*
+  功能
+  转发 Application JudgmentWorkflow.judgeLightning。
 
-  async judgeLightning(holder, context = {}) {
-    return this.judgeDelayedStatus(holder, {
-      statusId:"lightning",
-      statusName:"闪电",
-      triggerCategory:"equipment",
-      context,
-      triggerMessage:(target) => `${target.name}的「闪电」判定成功，被「闪电」击中。`,
-      statusCard:CARD_DEFINITIONS.lightning
-    });
-  }
+  调用方
+  status workflow 与 legacy callers。
 
-  async judgeSeal(holder, context = {}) {
-    return this.judgeDelayedStatus(holder, {
-      statusId:"sealed",
-      statusName:"封印",
-      triggerCategory:"tactic",
-      context,
-      logReveal:false,
-      statusCard:CARD_DEFINITIONS.seal
-    });
-  }
+  输入
+  holder 与 context。
+
+  输出
+  judgment result。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.workflow.judgeLightning。
+
+  边界与不变量
+  无第二份 workflow。
+  */
+  judgeLightning(...args) { return this.workflow.judgeLightning(...args); }
+  /*
+  功能
+  转发 Application JudgmentWorkflow.judgeSeal。
+
+  调用方
+  status workflow 与 legacy callers。
+
+  输入
+  holder 与 context。
+
+  输出
+  judgment result。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.workflow.judgeSeal。
+
+  边界与不变量
+  无第二份 workflow。
+  */
+  judgeSeal(...args) { return this.workflow.judgeSeal(...args); }
+  /*
+  功能
+  转发 Application StatusResolutionWorkflow.resolveSeal。
+
+  调用方
+  Game beforeStatusResolve trigger bridge。
+
+  输入
+  holder 与 status。
+
+  输出
+  Promise。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.statusWorkflow.resolveSeal。
+
+  边界与不变量
+  seal workflow authority 单一。
+  */
+  resolveSeal(...args) { return this.statusWorkflow.resolveSeal(...args); }
+  /*
+  功能
+  转发 Application StatusResolutionWorkflow.resolveLightning。
+
+  调用方
+  Game beforeStatusResolve trigger bridge。
+
+  输入
+  holder 与 status。
+
+  输出
+  Promise。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  this.statusWorkflow.resolveLightning。
+
+  边界与不变量
+  lightning workflow authority 单一。
+  */
+  resolveLightning(...args) { return this.statusWorkflow.resolveLightning(...args); }
 }
