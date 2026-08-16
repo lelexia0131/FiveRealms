@@ -18,6 +18,7 @@ STATUS_DEFINITIONS。
 不得依赖 application/adapters/AI/UI/Game runtime；不得随机、await、emit。
 */
 import { STATUS_DEFINITIONS } from "../../definitions/statuses/StatusDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260815-shadow-agent-p1-slot";
 
 /*
 功能
@@ -191,6 +192,7 @@ hasStatus。
 跳过死亡与已闪电者；未找到时回绕 holder。
 */
 export function nextLightningReceiverId(players, holderId) {
+  assertCanonicalSeatRoster(players);
   const holder = players.find((player) => player.id === holderId);
   if (!holder?.alive) return holderId;
   for (let offset = 1; offset < players.length; offset += 1) {

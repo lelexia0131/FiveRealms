@@ -135,13 +135,45 @@ export function createRoundUsageState() {
 
 /*
 功能
-从 canonical usage facts 读取突袭使用量与上限。
+创建 Domain Turn Rule 唯一的 canonical attack usage 事实。
 
 调用方
 RuleEngine facade 与 tests。
 
 输入
-含 attackUsed/attackLimit 的 usage 对象。
+已决定 used 与 limit。
+
+输出
+冻结的 { used, limit }。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+Object.freeze。
+
+边界与不变量
+canonical shape 只有 used/limit；legacy attackUsed/attackLimit 必须在 RuleEngine facade 归一化。
+*/
+export function createAttackUsage(used, limit) {
+  return Object.freeze({
+    used: Math.max(0, Number(used) || 0),
+    limit: Math.max(0, Number(limit) || 0)
+  });
+}
+
+/*
+功能
+校验并读取 canonical attack usage facts。
+
+调用方
+RuleEngine facade、hasAttackUseRemaining 与 tests。
+
+输入
+canonical { used, limit } 对象。
 
 输出
 { used, limit } 整数。
@@ -156,12 +188,15 @@ usage 对象。
 无。
 
 边界与不变量
-缺失值按 0 处理；额外攻击次数已体现在 attackLimit。
+只接受 used/limit 单一 Domain-facing shape；legacy attackUsed/attackLimit 直接传入会抛 TypeError。
 */
 export function getAttackUsage(usage) {
+  if (!usage || !Number.isFinite(Number(usage.used)) || !Number.isFinite(Number(usage.limit))) {
+    throw new TypeError("TurnRules attack usage 只接受 canonical { used, limit }");
+  }
   return {
-    used: Math.max(0, Number(usage?.used) || 0),
-    limit: Math.max(0, Number(usage?.limit) || 0)
+    used: Math.max(0, Number(usage.used) || 0),
+    limit: Math.max(0, Number(usage.limit) || 0)
   };
 }
 

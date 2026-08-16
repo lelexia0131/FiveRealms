@@ -17,6 +17,7 @@ ResponseSystem 与 tests。
 架构约束
 不得依赖 application/adapters/AI/UI/Game runtime；不得 await、emit、随机。
 */
+import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260815-shadow-agent-p1-slot";
 
 /*
 功能
@@ -220,6 +221,7 @@ getCounterResponderOrder。
 只包含存活玩家；holder 不在 players 时返回空。
 */
 export function getStatusCounterResponderOrder(players, holderId) {
+  assertCanonicalSeatRoster(players);
   const holder = players.find((player) => player.id === holderId);
   if (!holder?.alive) return [];
   const following = getCounterResponderOrder(players, holderId)
@@ -311,6 +313,7 @@ seatIndex。
 不含 source。
 */
 export function getCounterResponderOrder(players, sourceId) {
+  assertCanonicalSeatRoster(players);
   const source = players.find((player) => player.id === sourceId);
   if (!source) return [];
   const ordered = [];

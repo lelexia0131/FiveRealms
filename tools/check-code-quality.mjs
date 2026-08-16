@@ -31,6 +31,8 @@ const POLICY_AI_PATTERN = /^js\/ai\/policy\//i;
 const DOMAIN_AI_PATTERN = /^js\/ai\/domain\//i;
 const FUTURE_DOMAIN_PATTERN = /^js\/domain\//i;
 const FUTURE_APPLICATION_PATTERN = /^js\/application\//i;
+const APPLICATION_PORTS_PATTERN = /^js\/application\/ports\//i;
+const APPLICATION_CHOICE_PATTERN = /^js\/application\/choice\//i;
 const FUTURE_ADAPTERS_PATTERN = /^js\/adapters\//i;
 const DOMAIN_TRANSITIONS_PATTERN = /^js\/domain\/state\/transitions\//i;
 const DOMAIN_RULES_PATTERN = /^js\/domain\/rules\//i;
@@ -860,6 +862,36 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     );
   }
 
+  if (APPLICATION_PORTS_PATTERN.test(file)) {
+    pushImportError(
+      importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/Game\.js|core\/ResponseSystem\.js|state\/transitions\/|\/ui\/|\/ai\/|UIManager\.js|AiController\.js)[^"']*(?:\?[^"']*)?["']/i),
+      "架构约束：application/ports 禁止 Game runtime、UI/AI implementation 与 Domain transition import"
+    );
+    pushPatternError(
+      maskedSource.match(/\bstate\.stateVersion\s*(?:\+\+|\+=|=)|\bbumpStateVersion\s*\(/),
+      "架构约束：application/ports 禁止 Domain mutation"
+    );
+  }
+
+  if (APPLICATION_CHOICE_PATTERN.test(file)) {
+    pushImportError(
+      importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/|\/ui\/|\/ai\/|UIManager\.js|AiController\.js|SoundManager\.js|state\/transitions\/)[^"']*(?:\?[^"']*)?["']/i),
+      "架构约束：application/choice 禁止 Game/UI/AI/Audio runtime 与 Domain transition import"
+    );
+    pushPatternError(
+      maskedSource.match(/\bthis\.game\b|\bEventBus\b|\beventBus\b/),
+      "架构约束：application/choice 禁止 Game 回指与 EventBus runtime"
+    );
+    pushPatternError(
+      maskedSource.match(/\bdocument\b|\bwindow\b/),
+      "架构约束：application/choice 禁止 DOM 依赖"
+    );
+    pushPatternError(
+      maskedSource.match(/\b(?:player|card)\.[A-Za-z_$][A-Za-z0-9_$]*/),
+      "架构约束：application/choice 禁止直接读取 Player/Card entity 字段"
+    );
+  }
+
   if (FUTURE_ADAPTERS_PATTERN.test(file)) {
     const currentAdapter = file.split("/")[2] ?? null;
     const importPattern = /(?:from\s*|import\s*\()\s*["']([^"']+)["']/gi;
@@ -870,6 +902,12 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
         pushImportError(match, "架构约束：adapters 禁止跨 concrete adapter 直接耦合");
         break;
       }
+    }
+    if (/^js\/adapters\/(?:ui|ai)\//i.test(file)) {
+      pushImportError(
+        importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/Game\.js|core\/ResponseSystem\.js|UiChoiceAdapter\.js|AiChoiceAdapter\.js|UIManager\.js|AiController\.js)[^"']*(?:\?[^"']*)?["']/i),
+        "架构约束：choice adapter 禁止 concrete Game/ResponseSystem/peer adapter 依赖"
+      );
     }
   }
 
@@ -1664,6 +1702,63 @@ function identity(value) { return value; }`;
     throw new Error("future application fixture did not detect concrete AI import");
   }
 
+  const validChoiceTargetErrors = inspectSource(
+    "js/application/choice/GoodChoice.js",
+    `${moduleHeader}\nimport { createChoiceResult } from "../ports/ChoicePort.js";\n${pass}`,
+    null,
+  );
+  if (validChoiceTargetErrors.length) {
+    throw new Error(`valid application/choice fixture failed: ${JSON.stringify(validChoiceTargetErrors)}`);
+  }
+  const choiceGameImportErrors = inspectSource(
+    "js/application/choice/BadGameChoice.js",
+    `${moduleHeader}\nimport { Game } from "../../core/Game.js";\n${pass}`,
+    null,
+  );
+  if (!choiceGameImportErrors.some((error) => error.missing.some((item) => item.includes("application/choice 禁止")))) {
+    throw new Error("application/choice fixture did not detect Game runtime import");
+  }
+  const choiceEntityErrors = inspectSource(
+    "js/application/choice/BadEntityChoice.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return player.hand;")}`,
+    null,
+  );
+  if (!choiceEntityErrors.some((error) => error.missing.some((item) => item.includes("entity 字段")))) {
+    throw new Error("application/choice fixture did not detect Player entity field access");
+  }
+  const validPortsTargetErrors = inspectSource(
+    "js/application/ports/GoodPort.js",
+    `${moduleHeader}\nimport { createChoiceResult } from "./ChoicePort.js";\n${pass}`,
+    null,
+  );
+  if (validPortsTargetErrors.length) {
+    throw new Error(`valid application/ports fixture failed: ${JSON.stringify(validPortsTargetErrors)}`);
+  }
+  const portsTransitionErrors = inspectSource(
+    "js/application/ports/BadTransitionPort.js",
+    `${moduleHeader}\nimport { bumpStateVersion } from "../../domain/state/transitions/StateVersion.js";\n${pass}`,
+    null,
+  );
+  if (!portsTransitionErrors.some((error) => error.missing.some((item) => item.includes("application/ports 禁止")))) {
+    throw new Error("application/ports fixture did not detect Domain transition import");
+  }
+  const validUiAdapterErrors = inspectSource(
+    "js/adapters/ui/GoodUiAdapter.js",
+    `${moduleHeader}\nimport { createChoiceResult } from "../../application/ports/ChoicePort.js";\n${pass}`,
+    null,
+  );
+  if (validUiAdapterErrors.length) {
+    throw new Error(`valid ui adapter fixture failed: ${JSON.stringify(validUiAdapterErrors)}`);
+  }
+  const uiAiPeerErrors = inspectSource(
+    "js/adapters/ui/BadUiAiPeer.js",
+    `${moduleHeader}\nimport { AIController } from "../../ai/AiController.js";\n${pass}`,
+    null,
+  );
+  if (!uiAiPeerErrors.some((error) => error.missing.some((item) => item.includes("跨 concrete adapter")))) {
+    throw new Error("ui adapter fixture did not detect ai peer import");
+  }
+
   const validAdapterTargetErrors = inspectSource(
     "js/adapters/ui/GoodUiAdapter.js",
     `${moduleHeader}\nimport { PlayCard } from "../../application/action/PlayCard.js";\nimport { CardState } from "../../domain/state/model/CardState.js";\n${pass}`,
@@ -1781,7 +1876,7 @@ function identity(value) { return value; }`;
   if (!rootLayoutErrors.some((error) => error.missing.some((item) => item.includes("AI 根目录")))) {
     throw new Error("root layout fixture did not detect non-allowlisted root file");
   }
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
 }
 
 /*

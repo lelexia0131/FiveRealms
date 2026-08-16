@@ -8,6 +8,7 @@ import {
   isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible
 } from "../domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
 import { createRuleStateView } from "../domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
+import { createResponseChoiceRequest } from "../application/choice/ResponseChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
 
 export const RESPONSE_STATUS = Object.freeze({
   USED:"used",
@@ -19,13 +20,6 @@ export const RESPONSE_STATUS = Object.freeze({
 
 const responseResult = (status, payload = {}) => Object.freeze({ status, ...payload });
 export const isCancelledResponse = (result) => result?.status === RESPONSE_STATUS.CANCELLED;
-
-function normalizeDecision(decision) {
-  if (decision?.status === RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.USED, { cardId:decision.cardId ?? null });
-  if (decision?.status === RESPONSE_STATUS.CANCELLED) return responseResult(RESPONSE_STATUS.CANCELLED);
-  if (decision?.status === RESPONSE_STATUS.DECLINED) return responseResult(RESPONSE_STATUS.DECLINED);
-  return responseResult(decision ? RESPONSE_STATUS.USED : RESPONSE_STATUS.DECLINED);
-}
 
 const responsePlayerName = (responder, player) => player?.id === responder?.id ? "你" : (player?.name ?? "未知角色");
 const publicPlayerName = (responder, playerId, playerName) => playerId === responder?.id ? "你" : (playerName ?? "未知角色");
@@ -238,7 +232,37 @@ export function buildResponsePresentation(responder, type, context = {}, require
 
 /** 卡牌响应、强制弃置和濒死救援的可清理异步入口。 */
 export class ResponseSystem {
-  constructor(game) { this.game = game; this.activeRequestIds = new Set(); }
+  /*
+  功能
+  创建 legacy ResponseSystem 并注入 Application Choice boundary。
+
+  调用方
+  Game 构造函数。
+
+  输入
+  game、choiceCoordinator 与 choiceContexts。
+
+  输出
+  ResponseSystem 实例。
+
+  读取状态
+  无。
+
+  写入状态
+  activeRequestIds。
+
+  调用函数
+  无。
+
+  边界与不变量
+  workflow 仍属 legacy；choice 决定经注入 port，不直接分支 UI/AI。
+  */
+  constructor(game, choiceCoordinator = null, choiceContexts = null) {
+    this.game = game;
+    this.choiceCoordinator = choiceCoordinator;
+    this.choiceContexts = choiceContexts;
+    this.activeRequestIds = new Set();
+  }
 
   /*
   功能
@@ -266,19 +290,34 @@ export class ResponseSystem {
   会话失效必须返回取消；AI 放弃借势时不得用中间提示泄漏手牌。
   */
   async waitForDecision(responder, request, label, context, cards) {
-    const gameId = this.game.state.gameId;
-    if (responder.controllerType === "human") {
-      const decision = normalizeDecision(await this.game.ui.requestResponse(request, label));
-      return this.game.isSessionValid(gameId) ? decision : responseResult(RESPONSE_STATUS.CANCELLED);
+    const choiceRequest = createResponseChoiceRequest({
+      requestId: request.id,
+      actorId: responder.id,
+      gameId: this.game.state.gameId,
+      stateVersion: this.game.state.stateVersion,
+      responseType: request.type,
+      requiredCount: request.requiredCount,
+      legalCardIds: request.legalCardIds,
+      label,
+      context: {
+        sourcePlayerId: request.sourcePlayerId,
+        targetPlayerId: request.targetPlayerId,
+        cardId: request.cardId,
+        timeoutMs: request.timeoutMs,
+        presentation: request.presentation
+      }
+    });
+    this.choiceContexts?.set(request.id, { responder, cards, context, label });
+    try {
+      const choice = await this.choiceCoordinator.request(choiceRequest);
+      if (choice.status === "selected") {
+        return responseResult(RESPONSE_STATUS.USED, { cardId:choice.selectedIds[0] ?? null });
+      }
+      if (choice.status === "declined") return responseResult(RESPONSE_STATUS.DECLINED);
+      return responseResult(RESPONSE_STATUS.CANCELLED);
+    } finally {
+      this.choiceContexts?.delete(request.id);
     }
-    this.game.ui.setThinking(true, responder, `正在考虑是否${label}`);
-    const waited = await this.game.cleanupManager.delay(getAiDelay(this.game, "response"));
-    if (!waited || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-    const use = this.game.aiController.shouldRespond(responder, request.type, context, cards);
-    this.game.ui.setThinking(false);
-    // 借势的所有拒绝原因只在最终结算处统一公开，不能用中间提示暴露 AI 手牌。
-    if (!use && request.type !== "leverageAssault") this.game.ui.setPrompt(`${responder.name}放弃${label}。`);
-    return responseResult(use ? RESPONSE_STATUS.USED : RESPONSE_STATUS.DECLINED);
   }
 
   /*

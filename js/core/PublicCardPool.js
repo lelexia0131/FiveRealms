@@ -2,6 +2,8 @@
  * 互利的公开牌池。依赖 Deck、AI 选牌器和 UI；展示中的实体独立于抽牌、弃牌
  * 与判定区。这里负责公开选取和合法记忆，不处理其他隐藏手牌选择。
  */
+import { createId } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
+import { createPublicCardChoiceRequest } from "../application/choice/PublicCardChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
 import { setPublicCardPool } from "../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { appendCardToZone, moveCardBetweenZones, moveCardsAtomically } from "../domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
@@ -84,12 +86,12 @@ export class PublicCardPool {
       if (player.controllerType === "human") {
         while (!card && this.cards.length && player.alive) {
           const offeredCards = [...this.cards];
-          card = await this.game.ui.requestPublicCard?.(player, offeredCards);
+          card = await this.#requestPublicCardChoice(player, offeredCards);
           if (!this.game.isSessionValid(gameId) || this.game.state.isGameOver) return false;
           // 有效对局中的意外 null 或过期选择不能中止整张互利，重新请求当前角色选择。
           if (!card || !this.cards.includes(card)) card = null;
         }
-      } else card = this.game.aiController.choosePublicCard(player, this.cards);
+      } else card = await this.#requestPublicCardChoice(player, this.cards);
       if (!this.game.isSessionValid(gameId) || this.game.state.isGameOver) return false;
       if (!player.alive) continue;
       if (!this.cards.length) break;
@@ -116,6 +118,49 @@ export class PublicCardPool {
     setPublicCardPool(this.game.state, []);
     this.game.ui.hidePublicPool?.();
     return true;
+  }
+
+  /*
+  功能
+  通过注入 Choice boundary 请求一次公开牌池选择，并保留实体重验证。
+
+  调用方
+  draft。
+
+  输入
+  player 与 offeredCards。
+
+  输出
+  选中的 Card entity 或 null。
+
+  读取状态
+  Game stateVersion 与公开牌池实体。
+
+  写入状态
+  choiceContexts registry 仅在本方法调用期间保存 legacy bridge context。
+
+  调用函数
+  createPublicCardChoiceRequest、game.choiceCoordinator.request。
+
+  边界与不变量
+  ChoiceRequest 只含公开 card id/definition；返回后仍由 draft 复核实体仍在 this.cards。
+  */
+  async #requestPublicCardChoice(player, offeredCards) {
+    const requestId = createId("public-card-choice");
+    this.game.choiceContexts?.set(requestId, { player, cards: offeredCards });
+    try {
+      const result = await this.game.choiceCoordinator.request(createPublicCardChoiceRequest({
+        requestId,
+        actorId: player.id,
+        gameId: this.game.state.gameId,
+        stateVersion: this.game.state.stateVersion,
+        offeredCards
+      }));
+      if (result.status !== "selected") return null;
+      return offeredCards.find((card) => card.id === result.selectedIds[0]) ?? null;
+    } finally {
+      this.game.choiceContexts?.delete(requestId);
+    }
   }
 
   /*

@@ -18,7 +18,7 @@ domain/rules/** 与 tests。
 不得依赖 application/adapters/ui/audio/ai/Game runtime；不得复制整个 Player 或 Card entity。
 
 投影契约
-players()/currentActor()/playerById() 返回 Rule Player projection；alliesOf/enemiesOf/seatOrderFrom 的 player/source 参数只接受本模块生成的 Rule Player projection，不接受真实 Player 或 SearchState。playerById 是唯一的 ID 查询入口。
+players() 永远返回完整 canonical seat roster（含阵亡座位）；currentActor()/playerById() 返回 Rule Player projection；alliesOf/enemiesOf/seatOrderFrom 的 player/source 参数只接受本模块生成的 Rule Player projection，不接受真实 Player 或 SearchState。playerById 是唯一的 ID 查询入口。seat-order Domain Rule 只接受 players() 这类 full roster，不得传入 filtered candidates。
 */
 const RULE_PLAYER_PROJECTION = Symbol("rulePlayerProjection");
 

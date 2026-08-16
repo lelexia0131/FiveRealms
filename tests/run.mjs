@@ -18,13 +18,22 @@ import { createPlayerState } from "../js/domain/state/model/PlayerState.js?build
 import { createDeckZoneState } from "../js/domain/state/model/ZoneState.js?build=20260815-shadow-agent-p1-slot";
 import { createStateView } from "../js/domain/state/queries/StateView.js?build=20260815-shadow-agent-p1-slot";
 import { createRuleStateView } from "../js/domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
+import { assertCanonicalSeatRoster, isCanonicalSeatRoster } from "../js/domain/state/queries/SeatRosterContract.js?build=20260815-shadow-agent-p1-slot";
+import { createChoicePort, createChoiceResult, normalizeChoiceResult } from "../js/application/ports/ChoicePort.js?build=20260815-shadow-agent-p1-slot";
+import { createRandomPort } from "../js/application/ports/RandomPort.js?build=20260815-shadow-agent-p1-slot";
+import { createChoiceCoordinator } from "../js/application/choice/ChoiceCoordinator.js?build=20260815-shadow-agent-p1-slot";
+import { createResponseChoiceRequest } from "../js/application/choice/ResponseChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
+import { createPublicCardChoiceRequest } from "../js/application/choice/PublicCardChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
+import { createHiddenCardSelectionStore } from "../js/application/choice/HiddenCardSelectionStore.js?build=20260815-shadow-agent-p1-slot";
+import { createUiChoiceAdapter } from "../js/adapters/ui/UiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
+import { createAiChoiceAdapter } from "../js/adapters/ai/AiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
 import { calculateDamageResult, calculateHealAmount, isDying } from "../js/domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
 import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
 import { interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js?build=20260815-shadow-agent-p1-slot";
 import { getCounterResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
 import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
 import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, isSmallTeam } from "../js/domain/rules/team/TeamRules.js?build=20260815-shadow-agent-p1-slot";
-import { calculateNextActorIndex, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
+import { calculateNextActorIndex, createAttackUsage, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
 import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js?build=20260815-shadow-agent-p1-slot";
 import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js?build=20260815-shadow-agent-p1-slot";
 import { changeEnergy as transitionChangeEnergy, changeHp as transitionChangeHp, setHp as transitionSetHp, changeShield as transitionChangeShield } from "../js/domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
@@ -40368,6 +40377,385 @@ async function frArch5DomainRulePurity() {
 }
 
 test("FR-ARCH-5·purity：domain/rules 无 runtime/AI/UI/EventBus/await/random/dual-schema/God Object", frArch5DomainRulePurity);
+
+
+// ==================== FR-ARCH-6 Choice + Ports Boundary Tests ====================
+
+/*
+功能
+验证 FR-ARCH-5 carry-in：Turn usage 只有 used/limit 单一 canonical Domain shape。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+createAttackUsage、getAttackUsage。
+
+边界与不变量
+legacy attackUsed/attackLimit 必须由 RuleEngine facade 适配。
+*/
+function frArch6TurnUsageCanonical() {
+  assert.deepEqual(createAttackUsage(1, 2), { used:1, limit:2 });
+  assert.deepEqual(getAttackUsage({ used:1, limit:2 }), { used:1, limit:2 });
+  assert.throws(() => getAttackUsage({ attackUsed:1, attackLimit:2 }), /canonical \{ used, limit \}/);
+  assert.throws(() => getAttackUsage(null), /canonical \{ used, limit \}/);
+}
+
+test("FR-ARCH-6·carry-in：Turn usage canonical shape 单一", frArch6TurnUsageCanonical);
+
+/*
+功能
+验证 FR-ARCH-5 carry-in：seat-order rule 只接受完整 canonical roster，filtered candidates 被拒绝且原顺序不变。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+isCanonicalSeatRoster、assertCanonicalSeatRoster、nextDomainLightningReceiverId、getCounterResponderOrder、getStatusCounterResponderOrder。
+
+边界与不变量
+dead player 保留 roster；不改变 seat semantics。
+*/
+function frArch6SeatRosterContract() {
+  const roster = [
+    { id:"h", seatIndex:0, alive:true, statusIds:["lightning"] },
+    { id:"dead", seatIndex:1, alive:false, statusIds:[] },
+    { id:"a", seatIndex:2, alive:1, statusIds:[] },
+    { id:"b", seatIndex:3, alive:true, statusIds:[] }
+  ];
+  assert.equal(isCanonicalSeatRoster(roster), true);
+  assert.equal(assertCanonicalSeatRoster(roster), roster);
+  assert.equal(isCanonicalSeatRoster([roster[0], roster[2]]), false, "filtered candidates 不得伪装 roster");
+  assert.equal(isCanonicalSeatRoster([{ id:"x", seatIndex:0 }, { id:"y", seatIndex:2 }]), false);
+  assert.throws(() => nextDomainLightningReceiverId([roster[0], roster[2]], "h"), /完整 canonical seat roster/);
+  assert.throws(() => getCounterResponderOrder([roster[0], roster[2]], "h"), /完整 canonical seat roster/);
+  assert.deepEqual(getCounterResponderOrder(roster, "h"), ["dead", "a", "b"], "counter order unchanged");
+  assert.equal(nextDomainLightningReceiverId(roster, "h"), "a", "lightning skips dead/already and order unchanged");
+  assert.deepEqual(getStatusCounterResponderOrder(roster, "h"), ["h", "a", "b"], "status counter order unchanged");
+}
+
+test("FR-ARCH-6·carry-in：seat-order 只接受 full canonical roster", frArch6SeatRosterContract);
+
+/*
+功能
+验证 ChoiceRequest/ChoiceResult contract data-only、canonical 与 legacy normalization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+createResponseChoiceRequest、createPublicCardChoiceRequest、createChoiceResult、normalizeChoiceResult、createChoicePort、createChoiceCoordinator。
+
+边界与不变量
+request/result 可 JSON 序列化，不含 entity/function。
+*/
+async function frArch6ChoiceContract() {
+  const request = createResponseChoiceRequest({
+    requestId:"r1", actorId:"p1", gameId:"g1", stateVersion:7,
+    responseType:"block", requiredCount:2,
+    legalCardIds:["c1", "c2"], label:"格挡",
+    context:{ sourcePlayerId:"p2", targetPlayerId:"p1", cardId:"a1", timeoutMs:null, presentation:Object.freeze({ eventText:"test", fragments:[] }) }
+  });
+  assert.equal(request.kind, "response");
+  assert.equal(request.options[0].optionId, "c1");
+  assert.equal(JSON.parse(JSON.stringify(request)).requestId, "r1");
+
+  const publicRequest = createPublicCardChoiceRequest({
+    requestId:"r2", actorId:"p1", gameId:"g1", stateVersion:7,
+    offeredCards:[{ id:"pub1", definitionId:"charge", name:"聚能", category:"basic" }]
+  });
+  assert.equal(publicRequest.kind, "publicCard");
+  assert.equal(publicRequest.options[0].definitionId, "charge");
+
+  assert.deepEqual(createChoiceResult("selected", { selectedIds:["c1"] }), { status:"selected", selectedIds:["c1"], reason:null });
+  assert.deepEqual(createChoiceResult("declined"), { status:"declined", selectedIds:[], reason:null });
+  assert.deepEqual(createChoiceResult("cancelled"), { status:"cancelled", selectedIds:[], reason:null });
+  assert.deepEqual(normalizeChoiceResult({ status:"used", cardId:"c1" }), createChoiceResult("selected", { selectedIds:["c1"] }));
+  assert.deepEqual(normalizeChoiceResult({ status:"declined" }), createChoiceResult("declined"));
+  assert.deepEqual(normalizeChoiceResult({ status:"cancelled" }), createChoiceResult("cancelled"));
+  assert.throws(() => createChoicePort({}), /request/);
+  assert.throws(() => createChoiceResult("invalid"), /未知 ChoiceResult status/);
+
+  const coordinator = createChoiceCoordinator(createChoicePort({
+    async request() { return { status:"used", cardId:"c1" }; }
+  }));
+  assert.deepEqual(await coordinator.request(request), createChoiceResult("selected", { selectedIds:["c1"] }));
+}
+
+test("FR-ARCH-6·choice contract：data-only request/result 与 canonical normalization", async () => frArch6ChoiceContract());
+
+/*
+功能
+验证 Human/AI peer adapters 对同一 response ChoiceRequest 返回同一 canonical result shape，并保持旧 timing/thinking 顺序。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+mock legacy capabilities。
+
+写入状态
+mock thinking/prompt/delay 记录。
+
+调用函数
+createUiChoiceAdapter、createAiChoiceAdapter、createResponseChoiceRequest。
+
+边界与不变量
+AI policy 不变；human legacy request 字段逐项映射。
+*/
+async function frArch6PeerChoiceAdapters() {
+  const request = createResponseChoiceRequest({
+    requestId:"r1", actorId:"p1", gameId:"g1", stateVersion:1,
+    responseType:"block", requiredCount:1, legalCardIds:["c1"], label:"格挡",
+    context:{ sourcePlayerId:"p2", targetPlayerId:"p1", cardId:"a1", timeoutMs:null, presentation:{ eventText:"x" } }
+  });
+  const humanCalls = [];
+  const human = createUiChoiceAdapter({
+    requestResponse: async (legacy, label) => { humanCalls.push({ legacy, label }); return { status:"used" }; },
+    requestPublicCard: async () => null,
+    getLegacyContext: () => ({ player:{ id:"p1" }, cards:[] }),
+    isSessionValid: () => true
+  });
+  assert.deepEqual(await human.request(request), createChoiceResult("selected"));
+  assert.equal(humanCalls[0].legacy.legalCardIds[0], "c1");
+  assert.equal(humanCalls[0].legacy.type, "block");
+
+  const thinking = [];
+  const ai = createAiChoiceAdapter({
+    getLegacyContext: () => ({ responder:{ id:"p1", name:"电脑" }, cards:[], context:{}, label:"格挡" }),
+    shouldRespond: () => true,
+    choosePublicCard: () => null,
+    isSessionValid: () => true,
+    setThinking: (...args) => thinking.push(args),
+    delay: async () => true,
+    setPrompt: () => { }
+  });
+  assert.deepEqual(await ai.request(request), createChoiceResult("selected"));
+  assert.equal(thinking[0][0], true);
+  assert.equal(thinking[1][0], false);
+}
+
+test("FR-ARCH-6·peer adapters：human/AI 同一 request 返回同一 result shape", frArch6PeerChoiceAdapters);
+
+/*
+功能
+验证 Application HiddenCardSelectionStore 的 opaque token、session、确认与清理语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+store 内部 maps。
+
+写入状态
+store 内部 maps。
+
+调用函数
+createHiddenCardSelectionStore。
+
+边界与不变量
+store 不保存 Card/Player 实体；handVersion 变化失效。
+*/
+function frArch6HiddenSelectionStore() {
+  let serial = 0;
+  const ids = [];
+  const store = createHiddenCardSelectionStore({ createId: (prefix) => { const id = `${prefix}-${serial++}`; ids.push(id); return id; } });
+  const selection = store.createSelection({
+    ownerId:"owner", handVersion:3,
+    cardRecords:[{ cardId:"card-a", position:1 }, { cardId:"card-b", position:2 }]
+  });
+  assert.equal(selection.tokens.length, 2);
+  assert.deepEqual(store.resolveConfirmedCardIds(selection.tokens.map((entry) => entry.token), selection.selectionId, "owner", 2), ["card-a", "card-b"]);
+  assert.equal(store.isSessionActive(selection.selectionId, "owner", 3), true);
+  assert.equal(store.isSessionActive(selection.selectionId, "owner", 4), false);
+  const record = store.getTokenRecord(selection.tokens[0].token);
+  assert.equal(record.cardId, "card-a");
+  assert.equal(typeof record.cardId, "string");
+  store.clearSelection(selection.selectionId);
+  assert.equal(store.tokenRecords.size, 0);
+  assert.equal(store.sessions.size, 0);
+}
+
+test("FR-ARCH-6·hidden information：application store 只保存 opaque token 与版本事实", frArch6HiddenSelectionStore);
+
+/*
+功能
+验证 composition router 按 participant metadata 路由 Human/AI peer，且真实 Game 默认注入 Choice boundary。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 mock AI shouldRespond。
+
+写入状态
+mock thinking 记录。
+
+调用函数
+createResponseChoiceRequest、game.choicePort.request。
+
+边界与不变量
+未知 actor 返回 cancelled；无 service locator。
+*/
+async function frArch6ChoiceRouting() {
+  const human = makePlayer("fr6-human", 0, "dawn", "human");
+  const ai = makePlayer("fr6-ai", 1, "dusk", "ai");
+  const { game, ui } = makeGame([human, ai], { response: () => ({ status:"used" }) });
+  assert.ok(game.choicePort);
+  assert.ok(game.choiceCoordinator);
+  game.aiController.shouldRespond = () => true;
+  const responseRequest = (actorId) => createResponseChoiceRequest({
+    requestId:`route-${actorId}`, actorId, gameId:game.state.gameId, stateVersion:game.state.stateVersion,
+    responseType:"block", requiredCount:1, legalCardIds:[], label:"格挡",
+    context:{ sourcePlayerId:null, targetPlayerId:actorId, cardId:null, timeoutMs:null, presentation:null }
+  });
+  assert.deepEqual(await game.choicePort.request(responseRequest(human.id)), createChoiceResult("selected"));
+  game.choiceContexts.set("route-fr6-ai", { responder:ai, cards:[], context:{}, label:"格挡" });
+  assert.deepEqual(await game.choicePort.request(responseRequest(ai.id)), createChoiceResult("selected"));
+  assert.equal(ui.responseRequests.length, 1, "human path 走 UI");
+  assert.ok(ui.thinking.length >= 2, "AI path 走 thinking bridge");
+  assert.deepEqual(await game.choicePort.request(responseRequest("missing")), createChoiceResult("cancelled", { reason:"unknown-actor" }));
+}
+
+test("FR-ARCH-6·choice routing：participant metadata 路由 Human/AI peer", frArch6ChoiceRouting);
+
+/*
+功能
+验证 RandomPort 只包装 next() 且固定 seed 调用顺序不变。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+createRandomPort。
+
+边界与不变量
+每次 port.next 对应一次旧 random()。
+*/
+function frArch6RandomPort() {
+  const values = [0.1, 0.2, 0.3];
+  let index = 0;
+  const port = createRandomPort({ next: () => values[index++] });
+  assert.deepEqual([port.next(), port.next(), port.next()], values);
+  assert.throws(() => createRandomPort({}), /next/);
+}
+
+test("FR-ARCH-6·random port：minimal next() boundary", frArch6RandomPort);
+
+/*
+功能
+验证 application/choice 与 application/ports 源码不依赖 concrete runtime/DOM/Game/transition，且 adapters peer 不互相 import。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/application 与 js/adapters/{ui,ai} 源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+允许 application/choice 依赖 application/ports 与 Domain data。
+*/
+async function frArch6ApplicationPurity() {
+  const choiceFiles = await listJavaScriptFiles(projectFile("js/application/choice"));
+  const portFiles = await listJavaScriptFiles(projectFile("js/application/ports"));
+  const adapterFiles = [
+    ...(await listJavaScriptFiles(projectFile("js/adapters/ui"))),
+    ...(await listJavaScriptFiles(projectFile("js/adapters/ai")))
+  ];
+  assert.ok(choiceFiles.length >= 4);
+  assert.ok(portFiles.length >= 2);
+  for (const file of [...choiceFiles, ...portFiles]) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|UIManager|AiController|SoundManager|state\/transitions\/)/, file);
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(code, /\bthis\.game\b|\bEventBus\b|\beventBus\b|\bdocument\b|\bwindow\b/, file);
+  }
+  for (const file of adapterFiles) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/Game|core\/ResponseSystem|UIManager|AiController)/, file);
+  }
+  assert.equal(adapterFiles.every((file) => !file.includes("UiChoiceAdapter") || !file.includes("AiChoiceAdapter")), true);
+}
+
+test("FR-ARCH-6·purity：application choice/ports 无 concrete runtime 依赖", frArch6ApplicationPurity);
 
 // ==================== Test Runner 最终执行 ====================
 

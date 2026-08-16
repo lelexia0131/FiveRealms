@@ -1,6 +1,6 @@
 import { DistanceSystem } from "./DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
 import { hasStatus as hasStatusFromRule, nextLightningReceiverId } from "../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
-import { getAttackUsage, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn } from "../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
+import { createAttackUsage, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn } from "../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
 import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
@@ -134,7 +134,7 @@ export class RuleEngine {
     const raw = turnFlags?.attackUsed !== undefined || turnFlags?.attackLimit !== undefined
       ? turnFlags
       : source;
-    return Object.freeze(getAttackUsage({ used:raw?.attackUsed, limit:raw?.attackLimit }));
+    return createAttackUsage(raw?.attackUsed, raw?.attackLimit);
   }
 
   /*

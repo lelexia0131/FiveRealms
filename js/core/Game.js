@@ -24,6 +24,8 @@ import { TeamRuleService } from "./TeamRuleService.js?build=20260815-shadow-agen
 import { DyingSystem } from "./DyingSystem.js?build=20260815-shadow-agent-p1-slot";
 import { JudgmentSystem } from "./JudgmentSystem.js?build=20260815-shadow-agent-p1-slot";
 import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260815-shadow-agent-p1-slot";
+import { createGameChoiceBoundary } from "./GameChoiceRouter.js?build=20260815-shadow-agent-p1-slot";
+import { createRandomPort } from "../application/ports/RandomPort.js?build=20260815-shadow-agent-p1-slot";
 import { PublicCardPool } from "./PublicCardPool.js?build=20260815-shadow-agent-p1-slot";
 import { HpLossSystem } from "./HpLossSystem.js?build=20260815-shadow-agent-p1-slot";
 import { createMatchState } from "../domain/state/model/MatchState.js?build=20260815-shadow-agent-p1-slot";
@@ -102,7 +104,7 @@ export class Game {
   main.js 与测试 fixture。
 
   输入
-  UI 实例与可替换随机源。
+  UI 实例、可替换随机源与可选 { choicePort } 注入项。
 
   输出
   已完成 service 组合但尚未发牌/启动的 Game 实例。
@@ -117,13 +119,14 @@ export class Game {
   createMatchState、CleanupManager、GeneralSelection、Deck、各 core service 与 AIController 构造。
 
   边界与不变量
-  领域字段值只来自 createMatchState；gameId/isDisposed/logs/pendingResponses 等保持 legacy 扩展；stateVersion 仅作 dormant contract。
+  领域字段值只来自 createMatchState；gameId/isDisposed/logs/pendingResponses 等保持 legacy 扩展；stateVersion 保持 authoritative。
   */
-  constructor(ui, random = Math.random) {
-    this.random = random;
+  constructor(ui, random = Math.random, options = {}) {
+    this.randomPort = createRandomPort({ next: () => random() });
+    this.random = () => this.randomPort.next();
     this.cleanupManager = new CleanupManager();
-    this.generalSelection = new GeneralSelection(random);
-    const deck = new Deck(random);
+    this.generalSelection = new GeneralSelection(this.random);
+    const deck = new Deck(this.random);
     const matchState = createMatchState({ deck });
     this.state = {
       gameId: createId("game"),
@@ -155,14 +158,18 @@ export class Game {
     this.ui = ui.createGameSession?.(this) ?? ui;
     this.eventBus = new EventBus(() => this.isSessionValid(this.state.gameId));
     this.logger = new GameLogger(this.state, this.ui);
-    this.responseSystem = new ResponseSystem(this);
+    this.choiceContexts = new Map();
     this.teamRules = new TeamRuleService(this);
+    this.aiController = new AIController(this);
+    const choiceBoundary = createGameChoiceBoundary(this, this.choiceContexts, options.choicePort ?? null);
+    this.choicePort = choiceBoundary.choicePort;
+    this.choiceCoordinator = choiceBoundary.choiceCoordinator;
+    this.responseSystem = new ResponseSystem(this, this.choiceCoordinator, this.choiceContexts);
     this.cardSelectionSystem = new CardSelectionSystem(this);
     this.dyingSystem = new DyingSystem(this);
     this.judgmentSystem = new JudgmentSystem(this);
     this.hpLossSystem = new HpLossSystem(this);
     this.publicCardPool = new PublicCardPool(this);
-    this.aiController = new AIController(this);
     this.candidates = [];
     this.actionLocked = false;
     this.interactionLocked = false;
