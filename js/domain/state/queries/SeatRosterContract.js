@@ -41,18 +41,15 @@ players 数组。
 Number.isInteger。
 
 边界与不变量
-要求 seatIndex 为 0..length-1 且唯一；允许 dead player 保留在 roster。
+要求 players[i].seatIndex === i；这同时保证 0..length-1 连续、唯一且物理 seat-order；允许 dead player 保留在 roster。
 */
 export function isCanonicalSeatRoster(players) {
   if (!Array.isArray(players) || players.length === 0) return false;
-  const seats = new Set();
-  for (const player of players) {
-    if (!player || player.id === undefined || !Number.isInteger(player.seatIndex)) return false;
-    if (player.seatIndex < 0 || player.seatIndex >= players.length) return false;
-    if (seats.has(player.seatIndex)) return false;
-    seats.add(player.seatIndex);
+  for (let index = 0; index < players.length; index += 1) {
+    const player = players[index];
+    if (!player || player.id === undefined || player.seatIndex !== index) return false;
   }
-  return seats.size === players.length;
+  return true;
 }
 
 /*
@@ -82,7 +79,7 @@ isCanonicalSeatRoster。
 */
 export function assertCanonicalSeatRoster(players) {
   if (!isCanonicalSeatRoster(players)) {
-    throw new TypeError("seat-order rule 只接受完整 canonical seat roster；不得传入 filtered candidates");
+    throw new TypeError("seat-order rule 只接受完整且物理 seat-ordered canonical roster；players[i].seatIndex 必须等于 i");
   }
   return players;
 }

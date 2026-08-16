@@ -27,6 +27,7 @@ import { createPublicCardChoiceRequest } from "../js/application/choice/PublicCa
 import { createHiddenCardSelectionStore } from "../js/application/choice/HiddenCardSelectionStore.js?build=20260815-shadow-agent-p1-slot";
 import { createUiChoiceAdapter } from "../js/adapters/ui/UiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
 import { createAiChoiceAdapter } from "../js/adapters/ai/AiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
+import { createAiResponseTimingPort } from "../js/application/response/AiResponseTimingPort.js?build=20260815-shadow-agent-p1-slot";
 import { calculateDamageResult, calculateHealAmount, isDying } from "../js/domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
 import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
 import { interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js?build=20260815-shadow-agent-p1-slot";
@@ -108,6 +109,8 @@ import {
 import { PublicPoolView } from "../js/ui/PublicPoolView.js";
 import { isCardSelectionValid, toggleCardSelection } from "../js/ui/selectionUtils.js";
 import { buildResponsePresentation } from "../js/core/ResponseSystem.js";
+import { RESPONSE_STATUS as WORKFLOW_RESPONSE_STATUS, createResponseWorkflowResult } from "../js/application/response/ResponseResult.js?build=20260815-shadow-agent-p1-slot";
+import { createResponseWorkflow } from "../js/application/response/ResponseWorkflow.js?build=20260815-shadow-agent-p1-slot";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import {
   ACTIVE_SKILLS, getActiveSkillCost, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
@@ -40451,8 +40454,20 @@ function frArch6SeatRosterContract() {
   assert.equal(assertCanonicalSeatRoster(roster), roster);
   assert.equal(isCanonicalSeatRoster([roster[0], roster[2]]), false, "filtered candidates 不得伪装 roster");
   assert.equal(isCanonicalSeatRoster([{ id:"x", seatIndex:0 }, { id:"y", seatIndex:2 }]), false);
-  assert.throws(() => nextDomainLightningReceiverId([roster[0], roster[2]], "h"), /完整 canonical seat roster/);
-  assert.throws(() => getCounterResponderOrder([roster[0], roster[2]], "h"), /完整 canonical seat roster/);
+  const shuffledFull = [
+    { id:"x", seatIndex:2, alive:true, statusIds:[] },
+    { id:"y", seatIndex:0, alive:true, statusIds:[] },
+    { id:"z", seatIndex:1, alive:true, statusIds:[] }
+  ];
+  assert.equal(isCanonicalSeatRoster(shuffledFull), false, "full set 但物理乱序仍拒绝");
+  assert.equal(isCanonicalSeatRoster([
+    { id:"x", seatIndex:0, alive:true, statusIds:[] },
+    { id:"y", seatIndex:0, alive:true, statusIds:[] }
+  ]), false, "duplicate seatIndex 拒绝");
+  assert.throws(() => nextDomainLightningReceiverId([roster[0], roster[2]], "h"), /canonical roster/);
+  assert.throws(() => getCounterResponderOrder([roster[0], roster[2]], "h"), /canonical roster/);
+  assert.throws(() => getCounterResponderOrder(shuffledFull, "x"), /players\[i\]\.seatIndex 必须等于 i/);
+  assert.throws(() => assertCanonicalSeatRoster(shuffledFull), /players\[i\]\.seatIndex 必须等于 i/);
   assert.deepEqual(getCounterResponderOrder(roster, "h"), ["dead", "a", "b"], "counter order unchanged");
   assert.equal(nextDomainLightningReceiverId(roster, "h"), "a", "lightning skips dead/already and order unchanged");
   assert.deepEqual(getStatusCounterResponderOrder(roster, "h"), ["h", "a", "b"], "status counter order unchanged");
@@ -40563,14 +40578,18 @@ async function frArch6PeerChoiceAdapters() {
   assert.equal(humanCalls[0].legacy.type, "block");
 
   const thinking = [];
-  const ai = createAiChoiceAdapter({
+  const rawAi = createAiChoiceAdapter({
     getLegacyContext: () => ({ responder:{ id:"p1", name:"电脑" }, cards:[], context:{}, label:"格挡" }),
     shouldRespond: () => true,
     choosePublicCard: () => null,
-    isSessionValid: () => true,
+    isSessionValid: () => true
+  });
+  const ai = createAiResponseTimingPort(rawAi, {
+    getPlayer: () => ({ id:"p1", name:"电脑" }),
     setThinking: (...args) => thinking.push(args),
     delay: async () => true,
-    setPrompt: () => { }
+    setPrompt: () => { },
+    isSessionValid: () => true
   });
   assert.deepEqual(await ai.request(request), createChoiceResult("selected"));
   assert.equal(thinking[0][0], true);
@@ -40756,6 +40775,231 @@ async function frArch6ApplicationPurity() {
 }
 
 test("FR-ARCH-6·purity：application choice/ports 无 concrete runtime 依赖", frArch6ApplicationPurity);
+
+
+// ==================== FR-ARCH-7 Response Workflow Tests ====================
+
+/*
+功能
+验证 ResponseWorkflowResult 与 ChoiceResult 语义分离且 status authority 单一。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+createChoiceResult、createResponseWorkflowResult。
+
+边界与不变量
+choice selected 不等于 response USED；unavailable/invalid 只属 workflow。
+*/
+function frArch7ResponseResultContract() {
+  const choice = createChoiceResult("selected", { selectedIds:["c1"] });
+  const response = createResponseWorkflowResult(WORKFLOW_RESPONSE_STATUS.USED, { cards:["c1"] });
+  assert.equal(choice.status, "selected");
+  assert.equal(response.status, "used");
+  assert.notDeepEqual(choice, response);
+  assert.deepEqual(createResponseWorkflowResult(WORKFLOW_RESPONSE_STATUS.INVALID), { status:"invalid" });
+}
+
+test("FR-ARCH-7·result contract：ChoiceResult 与 ResponseWorkflowResult 分离", frArch7ResponseResultContract);
+
+/*
+功能
+验证 Application ResponseWorkflow 在 fake collaborators 下拥有 request lifecycle、choice normalization、revalidation 与 payment orchestration。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/payment/pending records。
+
+写入状态
+fake records。
+
+调用函数
+createResponseWorkflow、createChoicePort、createChoiceCoordinator、createChoiceResult。
+
+边界与不变量
+不写真实 Domain state；adapter selected 不代表必然 USED。
+*/
+async function frArch7ApplicationWorkflow() {
+  const card = { id:"block-1", definitionId:"block" };
+  const makeDeps = (choiceResult) => {
+    const state = { gameId:"g1", isGameOver:false, isDisposed:false, stateVersion:4, players:[] };
+    const pending = [];
+    const payments = [];
+    const workflow = createResponseWorkflow({
+      choiceCoordinator: createChoiceCoordinator(createChoicePort({ request: async () => choiceResult })),
+      choiceContexts: new Map(),
+      getState: () => state,
+      isSessionValid: (gameId) => gameId === "g1" && !state.isDisposed,
+      pushPendingResponse: (request) => pending.push(request),
+      removePendingResponse: (id) => { state.isDisposed || pending.splice(pending.findIndex((entry) => entry.id === id), 1); },
+      clearPendingResponses: () => { pending.length = 0; },
+      payCardsFromHandAtomically: async (responder, cards, reason) => { payments.push({ responder, cards, reason }); return { status:"used", cards }; },
+      setCurrentCard: () => { },
+      log: () => { },
+      emitCardUsed: async () => { },
+      getForceAiRescueHuman: () => false,
+      setThinking: () => { },
+      delayResponse: async () => true,
+      getUsableAssaultCards: () => [],
+      canUseForcedAssault: () => ({ ok:false }),
+      getResponseTimeoutMs: () => null,
+      createId: (prefix) => `${prefix}-1`
+    });
+    return { workflow, state, pending, payments };
+  };
+  const selected = await makeDeps(createChoiceResult("selected"));
+  const responder = { id:"p1", name:"测试", alive:true, controllerType:"ai", hand:[card] };
+  assert.deepEqual(
+    await selected.workflow.requestCardResponse(responder, "block", { source:{ id:"p2", name:"来源" }, card }, 1),
+    { status:"used", cards:[card] }
+  );
+  assert.equal(selected.payments.length, 1);
+  assert.equal(selected.pending.length, 0);
+
+  const declined = await makeDeps(createChoiceResult("declined"));
+  assert.equal((await declined.workflow.requestCardResponse(responder, "block", {}, 1)).status, "declined");
+  assert.equal(declined.payments.length, 0);
+
+  const invalidated = makeDeps(createChoiceResult("selected"));
+  invalidated.workflow = invalidated.workflow;
+  const invalidResponder = { id:"p1", name:"测试", alive:true, controllerType:"ai", hand:[{ ...card }] };
+  const oldRequest = invalidated.workflow.requestCardResponse;
+  invalidated.workflow = createResponseWorkflow({
+    choiceCoordinator: createChoiceCoordinator(createChoicePort({
+      async request() { invalidResponder.hand.length = 0; return createChoiceResult("selected"); }
+    })),
+    choiceContexts: new Map(),
+    getState: () => invalidated.state,
+    isSessionValid: () => true,
+    pushPendingResponse: (request) => invalidated.pending.push(request),
+    removePendingResponse: (id) => { invalidated.pending.splice(invalidated.pending.findIndex((entry) => entry.id === id), 1); },
+    clearPendingResponses: () => { invalidated.pending.length = 0; },
+    payCardsFromHandAtomically: async () => ({ status:"used", cards:[] }),
+    setCurrentCard: () => { },
+    log: () => { },
+    emitCardUsed: async () => { },
+    getForceAiRescueHuman: () => false,
+    setThinking: () => { },
+    delayResponse: async () => true,
+    getUsableAssaultCards: () => [],
+    canUseForcedAssault: () => ({ ok:false }),
+    getResponseTimeoutMs: () => null,
+    createId: (prefix) => `${prefix}-invalid`
+  });
+  const invalidResult = await invalidated.workflow.requestCardResponse(invalidResponder, "block", {}, 1);
+  assert.equal(invalidResult.status, "invalid");
+  assert.equal(invalidResult.cards.length, 0);
+}
+
+test("FR-ARCH-7·application workflow：choice/payment/revalidation 由 Application 拥有", frArch7ApplicationWorkflow);
+
+/*
+功能
+验证 application/response 源码不依赖 concrete UI/AI/Game/DOM/SearchState，legacy ResponseSystem 只做 façade。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/application/response 与 js/core/ResponseSystem 源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+Domain ResponseRules 仍 pure；core ResponseSystem 无第二份 workflow。
+*/
+async function frArch7ResponseOwnershipPurity() {
+  const files = await listJavaScriptFiles(projectFile("js/application/response"));
+  assert.ok(files.length >= 4);
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|UIManager|AiController|SoundManager|state\/transitions\/)/, file);
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(code, /\bthis\.game\b|\bEventBus\b|\beventBus\b|\bdocument\b|\bwindow\b|[Ss]earchState\b|\bVisibleState\b|\bBeliefState\b/, file);
+  }
+  const facade = await readFile(projectFile("js/core/ResponseSystem.js"), "utf8");
+  assert.match(facade, /createResponseWorkflow/);
+  assert.match(facade, /this\.workflow\.askForCounter/);
+  assert.doesNotMatch(facade, /function askForCounter|const responderIds/);
+  assert.doesNotMatch(facade, /shouldRespond\(responder/);
+}
+
+test("FR-ARCH-7·ownership purity：Application workflow 唯一，legacy façade 无第二份", frArch7ResponseOwnershipPurity);
+
+/*
+功能
+验证 response presentation DTO 保持 data-only 且旧 observable 字段完整。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+buildResponsePresentation。
+
+边界与不变量
+不包含 DOM/function/entity。
+*/
+function frArch7ResponsePresentationDto() {
+  const presentation = buildResponsePresentation(
+    { id:"p1", name:"测试", controllerType:"human", battleTeam:"dawn", hp:2, maxHp:4, shield:0, energy:1, alive:true },
+    "block",
+    { source:{ id:"p2", name:"敌方" }, target:{ id:"p1", name:"测试" }, card:{ id:"a1", name:"突袭", targetType:"singleEnemy" } },
+    2, 1, "格挡"
+  );
+  assert.equal(presentation.responseCardName, "格挡");
+  assert.equal(presentation.requiredCount, 2);
+  assert.equal(presentation.availableCount, 1);
+  assert.equal(typeof presentation.eventText, "string");
+  assert.ok(Array.isArray(presentation.eventFragments));
+  assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(presentation))).sort(), [
+    "availabilityText","buttonLabel","eventFragments","eventText","requiredCount","responseCardName","responseText","availableCount"
+  ].sort());
+}
+
+test("FR-ARCH-7·presentation DTO：data-only 且 observable 等价", frArch7ResponsePresentationDto);
 
 // ==================== Test Runner 最终执行 ====================
 

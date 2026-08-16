@@ -1,240 +1,22 @@
+/**
+ * Application Response Workflow 的 legacy compatibility façade。
+ * 所有 response workflow authority 已迁至 js/application/response/ResponseWorkflow.js；
+ * 本文件只做 Game collaborator 适配与方法转发。
+ */
 import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
 import { createId } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
 import { getAiDelay } from "../utils/aiTiming.js?build=20260815-shadow-agent-p1-slot";
 import { RuleEngine } from "./RuleEngine.js?build=20260815-shadow-agent-p1-slot";
-import {
-  getCounterResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId,
-  getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage,
-  isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible
-} from "../domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
-import { createRuleStateView } from "../domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
-import { createResponseChoiceRequest } from "../application/choice/ResponseChoiceRequest.js?build=20260815-shadow-agent-p1-slot";
+import { createResponseWorkflow } from "../application/response/ResponseWorkflow.js?build=20260815-shadow-agent-p1-slot";
+import { buildResponsePresentation } from "../application/response/ResponsePresentation.js?build=20260815-shadow-agent-p1-slot";
+import { RESPONSE_STATUS, isCancelledResponse } from "../application/response/ResponseResult.js?build=20260815-shadow-agent-p1-slot";
 
-export const RESPONSE_STATUS = Object.freeze({
-  USED:"used",
-  DECLINED:"declined",
-  CANCELLED:"cancelled",
-  UNAVAILABLE:"unavailable",
-  INVALID:"invalid"
-});
+export { buildResponsePresentation, RESPONSE_STATUS, isCancelledResponse };
 
-const responseResult = (status, payload = {}) => Object.freeze({ status, ...payload });
-export const isCancelledResponse = (result) => result?.status === RESPONSE_STATUS.CANCELLED;
-
-const responsePlayerName = (responder, player) => player?.id === responder?.id ? "你" : (player?.name ?? "未知角色");
-const publicPlayerName = (responder, playerId, playerName) => playerId === responder?.id ? "你" : (playerName ?? "未知角色");
-const publicPlayerContext = (player) => player ? Object.freeze({
-  id:player.id,
-  name:player.name,
-  controllerType:player.controllerType,
-  battleTeam:player.battleTeam,
-  hp:player.hp,
-  maxHp:player.maxHp,
-  shield:player.shield,
-  energy:player.energy,
-  alive:player.alive
-}) : null;
-
-function responseTargetName(responder, context = {}) {
-  if (context.targetLabel) return context.targetLabel;
-  const targets = (context.targets ?? []).filter(Boolean);
-  if (targets.length) return targets.map((target) => responsePlayerName(responder, target)).join("、");
-  return context.target ? responsePlayerName(responder, context.target) : "";
-}
-
-const textFragment = (text) => Object.freeze({ type:"text", text:String(text) });
-
-const playerFragment = (player, text, battleTeam) => {
-  if (!player?.id) return textFragment(text ?? "未知角色");
-  return Object.freeze({
-    type:"player",
-    text:String(text ?? player.name ?? "未知角色"),
-    playerId:player.id,
-    battleTeam:battleTeam ?? player.battleTeam
-  });
-};
-
-/** 返回目标角色的展示片段；与 responseTargetName 使用同一数据源，不解析 eventText。 */
-function responseTargetFragments(responder, context = {}) {
-  if (context.targetLabel) return [textFragment(context.targetLabel)];
-  const targets = (context.targets ?? []).filter(Boolean);
-  const list = targets.length ? targets : (context.target ? [context.target] : []);
-  const fragments = [];
-  list.forEach((target, index) => {
-    if (index > 0) fragments.push(textFragment("、"));
-    const display = responsePlayerName(responder, target);
-    fragments.push(display === "你" ? textFragment("你") : playerFragment(target, display));
-  });
-  return fragments;
-}
-
-/** 延迟状态事件只以当前状态持有者和状态本身为主体，不借用普通出牌 source。 */
-function delayedStatusEventFragments(responder, context = {}) {
-  const delayedStatus = context.delayedStatusContext ?? (context.statusCounterContext
-    ? {
-        ownerId:context.statusCounterContext.holderId,
-        ownerName:context.statusCounterContext.holderName,
-        ownerBattleTeam:context.statusCounterContext.holderBattleTeam,
-        statusId:context.statusCounterContext.statusId,
-        statusName:context.statusCounterContext.statusName,
-        event:"beforeJudgment"
-      }
-    : null);
-  if (!delayedStatus) return null;
-  const ownerDisplay = publicPlayerName(
-    responder, delayedStatus.ownerId, delayedStatus.ownerName
-  );
-  const ownerFragment = ownerDisplay === "你"
-    ? textFragment("你的")
-    : playerFragment(
-        { id:delayedStatus.ownerId, name:delayedStatus.ownerName },
-        `${delayedStatus.ownerName}的`,
-        delayedStatus.ownerBattleTeam
-      );
-  const eventSuffix = delayedStatus.event === "judgmentSuccess"
-    ? delayedStatus.statusId === "lightning"
-      ? "判定成功，被「闪电」击中。"
-      : "判定成功。"
-    : delayedStatus.event === "judgmentFailure"
-      ? "判定未生效。"
-      : "即将判定。";
-  return [ownerFragment, textFragment(`「${delayedStatus.statusName}」${eventSuffix}`)];
-}
-
-/** 只包含公开名称与数量的响应展示数据；UI 不接收任何隐藏牌内容。 */
-export function buildResponsePresentation(responder, type, context = {}, requiredCount = 1, availableCount = 0, fallbackLabel = "响应") {
-  const actionName = context.card?.name ?? context.actionName ?? "伤害";
-  let eventFragments = delayedStatusEventFragments(responder, context);
-  let sourceFragment = null;
-  if (!eventFragments) {
-    const sourceName = responsePlayerName(responder, context.source);
-    sourceFragment = sourceName === "你"
-      ? textFragment("你")
-      : playerFragment(context.source, sourceName);
-    eventFragments = [sourceFragment];
-    if (context.card?.targetType !== "self") {
-      const targetFragments = responseTargetFragments(responder, context);
-      if (targetFragments.length) {
-        eventFragments.push(textFragment("对"));
-        eventFragments.push(...targetFragments);
-      }
-    }
-    eventFragments.push(textFragment(`使用了「${actionName}」。`));
-  }
-  let responseText = `你可以进行${fallbackLabel}。`;
-  let responseCardName = fallbackLabel;
-  let buttonLabel = fallbackLabel;
-
-  if (type === "block") {
-    responseCardName = "格挡";
-    buttonLabel = requiredCount > 1 ? `使用${requiredCount}张「格挡」` : "格挡";
-    responseText = `你需要打出${requiredCount}张「格挡」。`;
-  } else if (type === "counter") {
-    responseCardName = "反制";
-    buttonLabel = "反制";
-    if (context.statusCounterContext) {
-      const statusCounter = context.statusCounterContext;
-      const statusName = statusCounter.statusName;
-      if (statusCounter.counterOutcome === "cancel") {
-        responseText = `是否使用「反制」，取消本次判定并解除「${statusName}」？`;
-      } else {
-        responseText = `是否使用「反制」，取消本次判定并转移「${statusName}」？`;
-      }
-    } else if (context.card?.definitionId === "transfer" && context.publicTransferContext) {
-      const transfer = context.publicTransferContext;
-      const fromDisplay = publicPlayerName(responder, transfer.fromPlayerId, transfer.fromName);
-      const receiverDisplay = publicPlayerName(responder, transfer.receiverPlayerId, transfer.receiverName);
-      eventFragments = [
-        sourceFragment,
-        textFragment("准备将"),
-        fromDisplay === "你"
-          ? textFragment("你")
-          : playerFragment({ id:transfer.fromPlayerId, name:transfer.fromName }, transfer.fromName, transfer.fromBattleTeam),
-        textFragment(`的${transfer.safeItemLabel}转移给`),
-        receiverDisplay === "你"
-          ? textFragment("你")
-          : playerFragment({ id:transfer.receiverPlayerId, name:transfer.receiverName }, transfer.receiverName, transfer.receiverBattleTeam),
-        textFragment("。")
-      ];
-      responseText = "你可以使用「反制」取消这次转移。";
-    } else if (context.card?.definitionId === "counter" && context.counteredCardName) {
-      eventFragments = [
-        sourceFragment,
-        textFragment("对"),
-        ...responseTargetFragments(responder, context),
-        textFragment(`打出的「${context.counteredCardName}」使用了「反制」。`)
-      ];
-      responseText = "你可以继续使用「反制」。";
-    } else {
-      responseText = context.targetScoped
-        ? `你可以使用「反制」，仅取消「${actionName}」对你的效果；其他目标仍会继续结算。`
-        : "你可以使用「反制」。";
-    }
-  } else if (type === "assaultDiscard") {
-    responseCardName = "突袭";
-    buttonLabel = "打出突袭";
-    if (context.card?.definitionId === "duel") {
-      eventFragments = [
-        sourceFragment,
-        textFragment("向"),
-        ...responseTargetFragments(responder, context),
-        textFragment("发起了「决斗」。")
-      ];
-      responseText = "现在轮到你打出1张「突袭」。";
-    } else {
-      responseText = "你需要打出1张「突袭」。";
-    }
-  } else if (type === "leverageAssault") {
-    responseCardName = "突袭";
-    buttonLabel = "使用「突袭」";
-    eventFragments = [
-      sourceFragment,
-      textFragment("对你使用了「借势」，要求你对"),
-      ...responseTargetFragments(responder, context),
-      textFragment("使用「突袭」。")
-    ];
-    responseText = `你可以使用1张「突袭」；若拒绝，对方将获得你的「${context.equipment?.name ?? "指定装备"}」。`;
-  } else if (type === "dyingRescue") {
-    responseCardName = "调息";
-    buttonLabel = "使用「调息」";
-    eventFragments = [
-      ...responseTargetFragments(responder, context),
-      textFragment("已进入濒死状态。")
-    ];
-    responseText = "现在轮到你使用「调息」进行救援。";
-  } else if (type === "skill") {
-    responseCardName = context.responseName ?? fallbackLabel;
-    buttonLabel = context.buttonLabel ?? fallbackLabel;
-    responseText = `你可以发动「${responseCardName}」。`;
-  }
-
-  let availabilityText = "";
-  if (requiredCount > 0) {
-    if (responseCardName === "反制" && availableCount === 0) {
-      availabilityText = "你没有可用的「反制」，只能放弃响应。";
-    } else if (availableCount < requiredCount) {
-      const heldText = availableCount > 0 ? `只有${availableCount}张` : "没有";
-      const unavailableAction = type === "block" ? "格挡"
-        : type === "dyingRescue" ? "救援"
-          : type === "assaultDiscard" || type === "leverageAssault" ? "使用「突袭」" : "完成响应";
-      availabilityText = `需要${requiredCount}张「${responseCardName}」，你当前${heldText}，无法${unavailableAction}。`;
-    } else {
-      availabilityText = `需要${requiredCount}张「${responseCardName}」，当前有${availableCount}张。`;
-    }
-  }
-  const eventText = eventFragments.map((fragment) => fragment.text).join("");
-  return Object.freeze({
-    eventText,
-    eventFragments:Object.freeze(eventFragments.map((fragment) => Object.freeze(fragment))),
-    responseText, availabilityText, responseCardName, buttonLabel, requiredCount, availableCount
-  });
-}
-
-/** 卡牌响应、强制弃置和濒死救援的可清理异步入口。 */
 export class ResponseSystem {
   /*
   功能
-  创建 legacy ResponseSystem 并注入 Application Choice boundary。
+  创建 legacy ResponseSystem façade 并组合 Application Response Workflow。
 
   调用方
   Game 构造函数。
@@ -243,602 +25,358 @@ export class ResponseSystem {
   game、choiceCoordinator 与 choiceContexts。
 
   输出
-  ResponseSystem 实例。
+  ResponseSystem façade。
 
   读取状态
   无。
 
   写入状态
-  activeRequestIds。
+  无；运行时经 Application workflow。
 
   调用函数
-  无。
+  createResponseWorkflow。
 
   边界与不变量
-  workflow 仍属 legacy；choice 决定经注入 port，不直接分支 UI/AI。
+  不包含第二份 response workflow；所有方法只转发。
   */
   constructor(game, choiceCoordinator = null, choiceContexts = null) {
     this.game = game;
-    this.choiceCoordinator = choiceCoordinator;
-    this.choiceContexts = choiceContexts;
-    this.activeRequestIds = new Set();
-  }
-
-  /*
-  功能
-  等待真人响应或通过 AI 门面取得响应决策。
-
-  调用方
-  各类卡牌、弃置、技能与濒死响应入口。
-
-  输入
-  响应者、请求、显示标签、公开上下文与合法候选牌。
-
-  输出
-  规范化的 USED、DECLINED 或 CANCELLED 结果。
-
-  读取状态
-  当前会话、UI、CleanupManager 与 AIController 响应门面。
-
-  写入状态
-  UI 思考与提示状态。
-
-  调用函数
-  UI.requestResponse、AIController.shouldRespond、responseResult。
-
-  边界与不变量
-  会话失效必须返回取消；AI 放弃借势时不得用中间提示泄漏手牌。
-  */
-  async waitForDecision(responder, request, label, context, cards) {
-    const choiceRequest = createResponseChoiceRequest({
-      requestId: request.id,
-      actorId: responder.id,
-      gameId: this.game.state.gameId,
-      stateVersion: this.game.state.stateVersion,
-      responseType: request.type,
-      requiredCount: request.requiredCount,
-      legalCardIds: request.legalCardIds,
-      label,
-      context: {
-        sourcePlayerId: request.sourcePlayerId,
-        targetPlayerId: request.targetPlayerId,
-        cardId: request.cardId,
-        timeoutMs: request.timeoutMs,
-        presentation: request.presentation
-      }
-    });
-    this.choiceContexts?.set(request.id, { responder, cards, context, label });
-    try {
-      const choice = await this.choiceCoordinator.request(choiceRequest);
-      if (choice.status === "selected") {
-        return responseResult(RESPONSE_STATUS.USED, { cardId:choice.selectedIds[0] ?? null });
-      }
-      if (choice.status === "declined") return responseResult(RESPONSE_STATUS.DECLINED);
-      return responseResult(RESPONSE_STATUS.CANCELLED);
-    } finally {
-      this.choiceContexts?.delete(request.id);
-    }
-  }
-
-  /*
-  功能
-  请求指定响应类型、校验响应者与手牌实体并执行原子支付。
-
-  调用方
-  askForBlock、askForCounter、askForStatusCounter 与 requestDyingRescue。
-
-  输入
-  responder、type、context 与 requiredCount。
-
-  输出
-  规范化 USED/DECLINED/CANCELLED/INVALID 结果。
-
-  读取状态
-  responder 存活、手牌实体、Game 会话与响应请求注册表。
-
-  写入状态
-  pendingResponses、UI thinking/prompt 与经支付 transition 的手牌。
-
-  调用函数
-  getResponseCardDefinitionId、isResponderEligible、hasSufficientResponseCards、waitForDecision、finishRequest、payCardsFromHandAtomically。
-
-  边界与不变量
-  responseTimeoutMs 仍属 legacy runtime policy；响应类型映射与资格由 Domain Rule 决定。
-  */
-  async requestCardResponse(responder, type, context, requiredCount = 1) {
-    const gameId = this.game.state.gameId;
-    const definitionId = getResponseCardDefinitionId(type);
-    const availableCards = responder.hand.filter((card) => card.definitionId === definitionId);
-    const cardsToUse = availableCards.slice(0, requiredCount);
-    if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
-    if (!isResponderEligible(responder) || this.game.state.isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
-    // 规则轮到真人响应时始终显示窗口；AI 没牌仍立即跳过。
-    if (availableCards.length < requiredCount && responder.controllerType !== "human") return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
-    const fallbackLabel = type === "block" ? (requiredCount === 2 ? "使用2张「格挡」" : "格挡") : "反制";
-    const request = { id:createId("response"), type, sourcePlayerId:context.source?.id ?? null, targetPlayerId:responder.id,
-      cardId:context.card?.id ?? null, legalCardIds:availableCards.map((card) => card.id), requiredCount,
-      legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true,
-      presentation:buildResponsePresentation(responder, type, context, requiredCount, availableCards.length, fallbackLabel) };
-    this.activeRequestIds.add(request.id);
-    this.game.state.pendingResponses.push(request);
-    const label = request.presentation.buttonLabel;
-    const decision = await this.waitForDecision(responder, request, label, context, availableCards);
-    const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) && isResponderEligible(responder) &&
-      hasSufficientResponseCards(cardsToUse.length, requiredCount) && cardsToUse.every((card) => responder.hand.includes(card));
-    this.finishRequest(request.id);
-    if (isCancelledResponse(decision) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
-    if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { cards:[] });
-    if (!valid) return responseResult(RESPONSE_STATUS.INVALID, { cards:[] });
-    const payment = await this.game.payCardsFromHandAtomically(
-      responder,
-      cardsToUse,
-      `响应·${type === "block" ? "格挡" : "反制"}`,
-      { silent:true, expectedCount:requiredCount }
-    );
-    if (payment.status === RESPONSE_STATUS.CANCELLED || !this.game.isSessionValid(gameId)) {
-      return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
-    }
-    if (payment.status !== RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.INVALID, { cards:[] });
-    if (type === "counter") {
-      const targetSuffix = context.targetScoped ? `（仅取消对${responder.name}的效果）` : "";
-      const delayedStatus = context.delayedStatusContext;
-      const counterTarget = delayedStatus
-        ? `${delayedStatus.ownerName}的「${delayedStatus.statusName}」判定`
-        : `「${context.card?.name ?? "战术牌"}」${targetSuffix}`;
-      this.game.ui.setCurrentCard?.(cardsToUse[0], responder.name, `反制${counterTarget}`);
-    } else {
-      this.game.log(cardsToUse.length === 1
-        ? `${responder.name}使用了「格挡」。`
-        : `${responder.name}同时使用了${cardsToUse.length}张「格挡」。`, "important");
-    }
-    return responseResult(RESPONSE_STATUS.USED, { cards:cardsToUse });
-  }
-
-  /*
-  功能
-  请求格挡响应。
-
-  调用方
-  Game.damage。
-
-  输入
-  source、target 与 context。
-
-  输出
-  规范化响应结果。
-
-  读取状态
-  Game state、响应策略与 UI/AI boundary。
-
-  写入状态
-  经支付 transition。
-
-  调用函数
-  getRequiredBlockCount、requestCardResponse。
-
-  边界与不变量
-  格挡需求由 Domain Rule 决定。
-  */
-  async askForBlock(source, target, context) {
-    if (!isBlockResponseAvailable(context.canBlock, context.amount)) {
-      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
-    }
-    const required = getRequiredBlockCount(
-      source?.equipment?.definitionId ?? null,
-      isAssaultDamage(context.card, context.damageType)
-    );
-    return this.requestCardResponse(target, "block", { source, target, ...context }, required);
-  }
-
-  /** 响应牌只在整条反制链确认其最终生效后，才公开本次真实关联的存活角色。 */
-  async emitResolvedCounterUse(responder, counterCard, relatedPlayers = []) {
-    const seen = new Set();
-    const effectiveTargets = [];
-    for (const related of relatedPlayers) {
-      const player = this.game.state.players.find((candidate) => candidate.id === related?.id);
-      if (!player?.alive || seen.has(player.id)) continue;
-      seen.add(player.id);
-      effectiveTargets.push(player);
-    }
-    await this.game.eventBus.emit("cardUsed", {
-      type:"cardUsed",
-      source:responder,
-      card:counterCard,
-      targets:effectiveTargets,
-      effectiveTargets,
-      cancelled:false,
-      resolved:true,
-      resolutionId:createId("counter-resolution"),
-      usageContext:"response"
-    });
-  }
-
-  /*
-  功能
-  执行反制链响应编排。
-
-  调用方
-  Game.playCard 与状态反制 workflow。
-
-  输入
-  source、card、targets 与 chainContext。
-
-  输出
-  USED/DECLINED/CANCELLED。
-
-  读取状态
-  Game state、响应策略与 UI/AI boundary。
-
-  写入状态
-  经支付 transition。
-
-  调用函数
-  isCounterEligible、seatOrderFrom、requestCardResponse。
-
-  边界与不变量
-  反制资格由 Domain Rule 决定；嵌套链 workflow 保留。
-  */
-  async askForCounter(source, card, targets, chainContext = {}) {
-    const gameId = this.game.state.gameId;
-    if (!isCounterEligible(card.category, card.counterable)) return responseResult(RESPONSE_STATUS.UNAVAILABLE);
-    const responderIds = chainContext.responders
-      ? chainContext.responders.map((responder) => responder.id)
-      : (() => {
-          const view = createRuleStateView(this.game.state);
-          return getCounterResponderOrder(view.players(), source.id);
-        })();
-    const responders = responderIds
-      .map((id) => this.game.state.players.find((player) => player.id === id))
-      .filter(Boolean);
-    // 反制链上下文：把 root card、root source 与当前深度透传给每一层的 AI 决策。
-    // root=0 表示当前被反制的是 root 本身；每追加一层反制深度 +1。AI 按 depth 奇偶
-    // 判断最终 root 生效/取消，再决定是否追加反制；这里只透传，不改变响应顺序、
-    // 合法性或人类响应窗口。
-    const rootCard = chainContext.rootCard ?? card;
-    const rootSourceId = chainContext.rootSourceId ?? source.id;
-    const counterDepth = chainContext.counterDepth ?? 0;
-    // 首层 root 目标 = 根牌原始目标的 id 列表；嵌套层继续保留透传。rootTargetIds 描述
-    // root 的目标（估值时从当前状态重新解析，可能已死亡/清空资源），与"当前被反制对象"
-    // 是两个概念，不得混淆。
-    const rootTargetIds = chainContext.rootTargetIds !== undefined
-      ? chainContext.rootTargetIds
-      : targets.map((target) => target?.id).filter(Boolean);
-    for (const responder of responders) {
-      if (!responder.alive || responder.id === source.id) continue;
-      const publicSource = publicPlayerContext(source);
-      const publicTargets = targets.map(publicPlayerContext).filter(Boolean);
-      const publicTransferContext = chainContext.publicTransferContext ?? null;
-      const enrichedTransferContext = publicTransferContext
-        ? Object.freeze({
-            ...publicTransferContext,
-            fromBattleTeam:this.game.state.players.find((player) => player.id === publicTransferContext.fromPlayerId)?.battleTeam,
-            receiverBattleTeam:this.game.state.players.find((player) => player.id === publicTransferContext.receiverPlayerId)?.battleTeam
-          })
-        : null;
-      const response = await this.requestCardResponse(responder, "counter", {
-        source:publicSource, target:publicTargets[0] ?? null, targets:publicTargets, card,
-        counteredCardName:chainContext.targetCard?.name ?? null,
-        targetScoped:Boolean(chainContext.targetScoped),
-        publicTransferContext:enrichedTransferContext,
-        publicSelectionContext:chainContext.publicSelectionContext ?? null,
-        // root outcome 决策上下文：只读，供 AI 评价最终 root 结局，不影响展示与合法性。
-        rootCard,
-        rootSourceId,
-        counterDepth,
-        rootTargetIds
-      }, 1);
-      if (isCancelledResponse(response) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-      const [counterCard] = response.cards ?? [];
-      if (response.status !== RESPONSE_STATUS.USED || !counterCard) continue;
-      const cancelledTarget = chainContext.targetScoped
-        ? `对${targets[0]?.name ?? responder.name}的效果`
-        : "的效果";
-      this.game.log(`${responder.name}对${source.name}的「${card.name}」使用了「反制」，取消了「${card.name}」${cancelledTarget}。`, "important");
-      // 反制牌已经从手牌移入弃牌堆，因此递归链必然受实体牌数量限制，不会无限循环。
-      // 嵌套层只透传 root outcome 链上下文（root card、root source、深度、root 目标）；
-      // targetScoped、responders 等针对"当前被反制牌"的字段在本层即消费完毕，不向下一层泄漏。
-      const counterWasCountered = await this.askForCounter(responder, counterCard, [source], {
-        targetCard:card, rootCard, rootSourceId, counterDepth:counterDepth + 1, rootTargetIds
-      });
-      if (isCancelledResponse(counterWasCountered) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-      if (counterWasCountered.status === RESPONSE_STATUS.USED) {
-        return responseResult(RESPONSE_STATUS.DECLINED);
-      }
-      await this.emitResolvedCounterUse(
-        responder, counterCard, [source, ...(chainContext.relatedTargets ?? targets)]
-      );
-      if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-      return responseResult(RESPONSE_STATUS.USED, { card:counterCard });
-    }
-    return responseResult(RESPONSE_STATUS.DECLINED);
-  }
-
-  /*
-  功能
-  编排延迟战术状态判定前的独立反制窗口。
-
-  调用方
-  Game 延迟状态判定 workflow。
-
-  输入
-  holder 与 context。
-
-  输出
-  USED/DECLINED/CANCELLED。
-
-  读取状态
-  Game 会话、RuleStateView 座次与响应策略。
-
-  写入状态
-  经 requestCardResponse/payCardsFromHandAtomically 支付反制牌。
-
-  调用函数
-  createRuleStateView、getStatusCounterResponderOrder、requestCardResponse、askForCounter、emitResolvedCounterUse。
-
-  边界与不变量
-  响应者顺序由 Domain Rule 决定；状态持有者最先，其余存活玩家顺时针。
-  */
-  async askForStatusCounter(holder, context = {}) {
-    const gameId = this.game.state.gameId;
-    if (!this.game.isSessionValid(gameId) || !isResponderEligible(holder) || this.game.state.isGameOver) return responseResult(RESPONSE_STATUS.DECLINED);
-    const statusName = context.statusName;
-    const view = createRuleStateView(this.game.state);
-    const responderIds = getStatusCounterResponderOrder(view.players(), holder.id);
-    const responders = responderIds
-      .map((id) => this.game.state.players.find((player) => player.id === id))
-      .filter(Boolean);
-    for (const responder of responders) {
-      if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-      const delayedStatusContext = Object.freeze({
-        ownerId:holder.id,
-        ownerName:holder.name,
-        ownerBattleTeam:holder.battleTeam,
-        statusId:context.statusId,
-        statusName,
-        event:"beforeJudgment"
-      });
-      const response = await this.requestCardResponse(responder, "counter", {
-        source:null,
-        target:null,
-        targets:[],
-        card:null,
-        delayedStatusContext,
-        statusCounterContext:{
-          holderId:holder.id,
-          holderName:holder.name,
-          holderBattleTeam:holder.battleTeam,
-          statusId:context.statusId,
-          statusName,
-          counterOutcome:context.counterOutcome,
-          originPlayerId:context.originPlayerId ?? null
+    this.workflow = createResponseWorkflow({
+      choiceCoordinator,
+      choiceContexts,
+      getState: () => game.state,
+      isSessionValid: (gameId) => game.isSessionValid(gameId),
+      pushPendingResponse: (request) => game.state.pendingResponses.push(request),
+      removePendingResponse: (id) => {
+        if (!game.state.isDisposed) {
+          game.state.pendingResponses = game.state.pendingResponses.filter((request) => request.id !== id);
         }
-      }, 1);
-      if (isCancelledResponse(response) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-      const [counterCard] = response.cards ?? [];
-      if (response.status !== RESPONSE_STATUS.USED || !counterCard) continue;
-      this.game.log(`${responder.name}对${holder.name}的「${statusName}」使用了「反制」。`, "important");
-      const counterWasCountered = await this.askForCounter(responder, counterCard, [holder], { targetCard:null, statusCounterChain:true });
-      if (isCancelledResponse(counterWasCountered) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-      if (counterWasCountered.status === RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.DECLINED);
-      await this.emitResolvedCounterUse(responder, counterCard, [holder]);
-      if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-      return responseResult(RESPONSE_STATUS.USED, { card:counterCard });
-    }
-    return responseResult(RESPONSE_STATUS.DECLINED);
+      },
+      clearPendingResponses: () => { game.state.pendingResponses = []; },
+      payCardsFromHandAtomically: (...args) => game.payCardsFromHandAtomically(...args),
+      setCurrentCard: (...args) => game.ui.setCurrentCard?.(...args),
+      log: (message, kind = "normal") => game.log(message, kind),
+      emitCardUsed: (payload) => game.eventBus.emit("cardUsed", payload),
+      getForceAiRescueHuman: () => game.forceAiRescueHuman ?? GAME_CONFIG.forceAiRescueHuman,
+      setThinking: (isThinking, player, message) => game.ui.setThinking(isThinking, player, message),
+      delayResponse: async () => game.cleanupManager.delay(getAiDelay(game, "response")),
+      getUsableAssaultCards: (responder, target) => RuleEngine.getUsableAssaultCards(game, responder, target),
+      canUseForcedAssault: (responder, card, target) => RuleEngine.canUseForcedAssault(game, responder, card, target),
+      getResponseTimeoutMs: () => GAME_CONFIG.responseTimeoutMs,
+      createId
+    });
   }
 
-  /*
-  功能
-  请求濒死救援响应。
+/*
+功能
+转发 Application ResponseWorkflow.waitForDecision。
 
-  调用方
-  DyingSystem。
+调用方
+response workflow methods。
 
-  输入
-  rescuer、target 与可选 recover card。
+输入
+原 ResponseSystem 参数。
 
-  输出
-  USED/DECLINED/CANCELLED。
+输出
+ResponseWorkflowResult。
 
-  读取状态
-  Game state、响应策略与 UI/AI boundary。
+读取状态
+无。
 
-  写入状态
-  经支付 transition。
+写入状态
+无。
 
-  调用函数
-  isDyingRescueEligible、waitForDecision、payCardsFromHandAtomically。
+调用函数
+this.workflow.waitForDecision。
 
-  边界与不变量
-  救援资格由 Domain Rule 决定。
-  */
-  async requestDyingRescue(rescuer, target, card) {
-    const gameId = this.game.state.gameId;
-    if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    if (!isDyingRescueEligible(rescuer, target) || this.game.state.isGameOver) {
-      return responseResult(this.game.state.isDisposed ? RESPONSE_STATUS.CANCELLED : RESPONSE_STATUS.UNAVAILABLE, { card:null });
-    }
-    const availableCards = rescuer.hand.filter((entry) => entry.definitionId === "recover");
-    const legalCard = card?.definitionId === "recover" && rescuer.hand.includes(card) ? card : (availableCards[0] ?? null);
-    if (!availableCards.length && rescuer.controllerType !== "human") return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
-    const request = { id:createId("dying-response"), type:"dyingRescue", sourcePlayerId:rescuer.id, targetPlayerId:target.id,
-      cardId:null, legalCardIds:availableCards.map((entry) => entry.id), requiredCount:1, legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true,
-      need:1 - target.hp, currentHp:target.hp,
-      presentation:buildResponsePresentation(rescuer, "dyingRescue", { target }, 1, availableCards.length, "使用「调息」") };
-    this.activeRequestIds.add(request.id);
-    this.game.state.pendingResponses.push(request);
-    let decision;
-    const aiSelfRescue = rescuer.controllerType === "ai" && rescuer.id === target.id;
-    const forcedHumanRescue =
-      (this.game.forceAiRescueHuman ?? GAME_CONFIG.forceAiRescueHuman) &&
-      rescuer.controllerType === "ai" &&
-      target.controllerType === "human" &&
-      rescuer.id !== target.id &&
-      rescuer.battleTeam === target.battleTeam;
+边界与不变量
+本文件无第二份 workflow。
+*/
+  waitForDecision(...args) { return this.workflow.waitForDecision(...args); }
+/*
+功能
+转发 Application ResponseWorkflow.requestCardResponse。
 
-    if (aiSelfRescue) {
-      decision = responseResult(RESPONSE_STATUS.USED);
-    } else if (forcedHumanRescue) {
-      this.game.ui.setThinking(true, rescuer, `正在准备救援${target.name}`);
-      const waited = await this.game.cleanupManager.delay(getAiDelay(this.game, "response"));
-      this.game.ui.setThinking(false);
-      if (!waited) {
-        this.finishRequest(request.id);
-        return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-      }
-      // 强制队友规则在等待结束后固定使用调息，不进入 AI 效用评分。
-      decision = responseResult(RESPONSE_STATUS.USED);
-    } else {
-      decision = await this.waitForDecision(rescuer, request, request.presentation.buttonLabel, { target, source:rescuer, card:legalCard }, availableCards);
-    }
-    const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) &&
-      isDyingRescueEligible(rescuer, target) && legalCard && rescuer.hand.includes(legalCard);
-    this.finishRequest(request.id);
-    if (isCancelledResponse(decision) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { card:null });
-    if (!valid) return responseResult(RESPONSE_STATUS.INVALID, { card:null });
-    const payment = await this.game.payCardsFromHandAtomically(
-      rescuer, [legalCard], `救援${target.name}`, { silent:true, expectedCount:1 }
-    );
-    if (payment.status === RESPONSE_STATUS.CANCELLED || !this.game.isSessionValid(gameId)) {
-      return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    }
-    return payment.status === RESPONSE_STATUS.USED
-      ? responseResult(RESPONSE_STATUS.USED, { card:legalCard })
-      : responseResult(RESPONSE_STATUS.INVALID, { card:null });
-  }
+调用方
+response workflow methods。
 
-  /*
-  功能
-  请求强制打出一张突袭作为响应。
+输入
+原 ResponseSystem 参数。
 
-  调用方
-  Game 决斗/借势 response workflow。
+输出
+ResponseWorkflowResult。
 
-  输入
-  responder、reason 与 context。
+读取状态
+无。
 
-  输出
-  USED/DECLINED/CANCELLED/INVALID。
+写入状态
+无。
 
-  读取状态
-  responder 存活、手牌实体、Game 会话与响应策略。
+调用函数
+this.workflow.requestCardResponse。
 
-  写入状态
-  pendingResponses、UI 思考与经支付 transition 的手牌。
+边界与不变量
+本文件无第二份 workflow。
+*/
+  requestCardResponse(...args) { return this.workflow.requestCardResponse(...args); }
+/*
+功能
+转发 Application ResponseWorkflow.askForBlock。
 
-  调用函数
-  isResponderEligible、waitForDecision、finishRequest、payCardsFromHandAtomically。
+调用方
+Game.damage。
 
-  边界与不变量
-  响应类型与资格由 Domain Rule 决定；human/AI 选择仍属 workflow。
-  */
-  async requestAssaultDiscard(responder, reason, context = {}) {
-    const gameId = this.game.state.gameId;
-    const availableCards = responder.hand.filter((entry) => entry.definitionId === "assault");
-    const cardToUse = availableCards[0] ?? null;
-    if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    if (!isResponderEligible(responder) || this.game.state.isGameOver || (!availableCards.length && responder.controllerType !== "human")) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
-    const presentation = buildResponsePresentation(responder, "assaultDiscard", context, 1, availableCards.length, reason);
-    const request = { id:createId("assault-discard"), type:"assaultDiscard", sourcePlayerId:context.source?.id ?? null,
-      targetPlayerId:responder.id, cardId:context.card?.id ?? null, legalCardIds:availableCards.map((entry) => entry.id), requiredCount:1,
-      legalSkillIds:[], timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true, presentation };
-    this.activeRequestIds.add(request.id); this.game.state.pendingResponses.push(request);
-    const decision = await this.waitForDecision(responder, request, presentation.buttonLabel, context, availableCards);
-    const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) && isResponderEligible(responder) && cardToUse && responder.hand.includes(cardToUse);
-    this.finishRequest(request.id);
-    if (isCancelledResponse(decision) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { card:null });
-    if (!valid) return responseResult(RESPONSE_STATUS.INVALID, { card:null });
-    const payment = await this.game.payCardsFromHandAtomically(
-      responder, [cardToUse], reason, { silent:true, expectedCount:1 }
-    );
-    if (payment.status === RESPONSE_STATUS.CANCELLED || !this.game.isSessionValid(gameId)) {
-      return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    }
-    if (payment.status !== RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.INVALID, { card:null });
-    if (context.card?.definitionId === "duel") {
-      this.game.log(`${responder.name}在决斗中打出了「突袭」。`, "important");
-    } else if (context.card?.definitionId === "provoke") {
-      this.game.log(`${responder.name}打出了「突袭」回应挑衅。`, "important");
-    } else {
-      this.game.log(`${responder.name}打出了「突袭」。`, "important");
-    }
-    return responseResult(RESPONSE_STATUS.USED, { card:cardToUse });
-  }
+输入
+原 ResponseSystem 参数。
 
-  /**
-   * 借势响应不在这里消费牌：确认后返回同一实体，由 Game.playCard 进入普通突袭
-   * 完整流程。真人没有合法突袭时不创建窗口；AI 仍经过相同思考等待，避免手牌侧信道。
-   */
-  async requestLeverageAssault(responder, target, context = {}) {
-    const gameId = this.game.state.gameId;
-    const availableCards = RuleEngine.getUsableAssaultCards(this.game, responder, target);
-    if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    if (!responder?.alive || !target?.alive || this.game.state.isGameOver) {
-      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
-    }
-    if (!availableCards.length && responder.controllerType === "human") {
-      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
-    }
-    const presentation = {
-      ...buildResponsePresentation(responder, "leverageAssault", { ...context, target }, 1, availableCards.length, "使用「突袭」"),
-      declineLabel:"拒绝"
-    };
-    const request = {
-      id:createId("leverage-assault"),
-      type:"leverageAssault",
-      sourcePlayerId:context.source?.id ?? null,
-      targetPlayerId:responder.id,
-      forcedTargetPlayerId:target.id,
-      cardId:context.card?.id ?? null,
-      legalCardIds:availableCards.map((entry) => entry.id),
-      requiredCount:1,
-      legalSkillIds:[],
-      timeoutMs:GAME_CONFIG.responseTimeoutMs,
-      allowDecline:true,
-      presentation
-    };
-    this.activeRequestIds.add(request.id);
-    this.game.state.pendingResponses.push(request);
-    const decision = await this.waitForDecision(responder, request, presentation.buttonLabel, { ...context, target }, availableCards);
-    const selectedId = responder.controllerType === "human"
-      ? (decision.cardId ?? availableCards[0]?.id)
-      : availableCards[0]?.id;
-    const selectedCard = availableCards.find((entry) => entry.id === selectedId) ?? null;
-    const valid = this.activeRequestIds.has(request.id)
-      && this.game.isSessionValid(gameId)
-      && selectedCard
-      && RuleEngine.canUseForcedAssault(this.game, responder, selectedCard, target).ok;
-    this.finishRequest(request.id);
-    if (isCancelledResponse(decision) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { card:null });
-    return valid
-      ? responseResult(RESPONSE_STATUS.USED, { card:selectedCard })
-      : responseResult(RESPONSE_STATUS.INVALID, { card:null });
-  }
+输出
+ResponseWorkflowResult。
 
-  async requestSkillResponse(responder, skillId, responseName, context) {
-    const gameId = this.game.state.gameId;
-    if (!this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-    if (!responder.alive || this.game.state.isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE);
-    const buttonLabel = `发动「${responseName}」`;
-    const request = { id:createId("skill-response"), type:"skill", sourcePlayerId:context.source?.id ?? null,
-      targetPlayerId:responder.id, cardId:context.card?.id ?? null, legalCardIds:[], legalSkillIds:[skillId],
-      requiredCount:0, timeoutMs:GAME_CONFIG.responseTimeoutMs, allowDecline:true,
-      presentation:buildResponsePresentation(responder, "skill", { ...context, responseName, buttonLabel }, 0, 0, buttonLabel) };
-    this.activeRequestIds.add(request.id); this.game.state.pendingResponses.push(request);
-    const decision = await this.waitForDecision(responder, request, buttonLabel, context, []);
-    const valid = this.activeRequestIds.has(request.id) && this.game.isSessionValid(gameId) && responder.alive;
-    this.finishRequest(request.id);
-    if (isCancelledResponse(decision) || !this.game.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-    if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status);
-    return responseResult(valid ? RESPONSE_STATUS.USED : RESPONSE_STATUS.INVALID);
-  }
+读取状态
+无。
 
-  finishRequest(id) {
-    this.activeRequestIds.delete(id);
-    if (!this.game.state.isDisposed) this.game.state.pendingResponses = this.game.state.pendingResponses.filter((request) => request.id !== id);
-  }
-  cleanup() { this.activeRequestIds.clear(); this.game.state.pendingResponses = []; }
+写入状态
+无。
+
+调用函数
+this.workflow.askForBlock。
+
+边界与不变量
+本文件无第二份 workflow。
+*/
+  askForBlock(...args) { return this.workflow.askForBlock(...args); }
+/*
+功能
+转发 Application ResponseWorkflow.emitResolvedCounterUse。
+
+调用方
+Application workflow。
+
+输入
+原 ResponseSystem 参数。
+
+输出
+event emission。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+this.workflow.emitResolvedCounterUse。
+
+边界与不变量
+本文件无第二份 workflow。
+*/
+  emitResolvedCounterUse(...args) { return this.workflow.emitResolvedCounterUse(...args); }
+/*
+功能
+转发 Application ResponseWorkflow.askForCounter。
+
+调用方
+Game.playCard 与 cardRegistry。
+
+输入
+原 ResponseSystem 参数。
+
+输出
+ResponseWorkflowResult。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+this.workflow.askForCounter。
+
+边界与不变量
+本文件无第二份 workflow。
+*/
+  askForCounter(...args) { return this.workflow.askForCounter(...args); }
+/*
+功能
+转发 Application ResponseWorkflow.askForStatusCounter。
+
+调用方
+Game 延迟状态 workflow。
+
+输入
+原 ResponseSystem 参数。
+
+输出
+ResponseWorkflowResult。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+this.workflow.askForStatusCounter。
+
+边界与不变量
+本文件无第二份 workflow。
+*/
+  askForStatusCounter(...args) { return this.workflow.askForStatusCounter(...args); }
+/*
+功能
+转发 Application ResponseWorkflow.requestDyingRescue。
+
+调用方
+DyingSystem。
+
+输入
+原 ResponseSystem 参数。
+
+输出
+ResponseWorkflowResult。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+this.workflow.requestDyingRescue。
+
+边界与不变量
+Dying workflow 本体仍 deferred。
+*/
+  requestDyingRescue(...args) { return this.workflow.requestDyingRescue(...args); }
+/*
+功能
+转发 Application ResponseWorkflow.requestAssaultDiscard。
+
+调用方
+cardRegistry 决斗/挑衅 workflow。
+
+输入
+原 ResponseSystem 参数。
+
+输出
+ResponseWorkflowResult。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+this.workflow.requestAssaultDiscard。
+
+边界与不变量
+本文件无第二份 workflow。
+*/
+  requestAssaultDiscard(...args) { return this.workflow.requestAssaultDiscard(...args); }
+/*
+功能
+转发 Application ResponseWorkflow.requestLeverageAssault。
+
+调用方
+Game leverage workflow。
+
+输入
+原 ResponseSystem 参数。
+
+输出
+ResponseWorkflowResult。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+this.workflow.requestLeverageAssault。
+
+边界与不变量
+本文件无第二份 workflow。
+*/
+  requestLeverageAssault(...args) { return this.workflow.requestLeverageAssault(...args); }
+/*
+功能
+转发 Application ResponseWorkflow.requestSkillResponse。
+
+调用方
+skillRegistry。
+
+输入
+原 ResponseSystem 参数。
+
+输出
+ResponseWorkflowResult。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+this.workflow.requestSkillResponse。
+
+边界与不变量
+本文件无第二份 workflow。
+*/
+  requestSkillResponse(...args) { return this.workflow.requestSkillResponse(...args); }
+/*
+功能
+转发 Application ResponseWorkflow.finishRequest。
+
+调用方
+response workflow methods。
+
+输入
+request id。
+
+输出
+无。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+this.workflow.finishRequest。
+
+边界与不变量
+本文件无第二份 lifecycle。
+*/
+  finishRequest(...args) { return this.workflow.finishRequest(...args); }
+/*
+功能
+转发 Application ResponseWorkflow.cleanup。
+
+调用方
+Game dispose/restart。
+
+输入
+无。
+
+输出
+无。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+this.workflow.cleanup。
+
+边界与不变量
+本文件无第二份 lifecycle。
+*/
+  cleanup() { return this.workflow.cleanup(); }
 }

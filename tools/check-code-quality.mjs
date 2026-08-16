@@ -33,6 +33,7 @@ const FUTURE_DOMAIN_PATTERN = /^js\/domain\//i;
 const FUTURE_APPLICATION_PATTERN = /^js\/application\//i;
 const APPLICATION_PORTS_PATTERN = /^js\/application\/ports\//i;
 const APPLICATION_CHOICE_PATTERN = /^js\/application\/choice\//i;
+const APPLICATION_RESPONSE_PATTERN = /^js\/application\/response\//i;
 const FUTURE_ADAPTERS_PATTERN = /^js\/adapters\//i;
 const DOMAIN_TRANSITIONS_PATTERN = /^js\/domain\/state\/transitions\//i;
 const DOMAIN_RULES_PATTERN = /^js\/domain\/rules\//i;
@@ -870,6 +871,17 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     pushPatternError(
       maskedSource.match(/\bstate\.stateVersion\s*(?:\+\+|\+=|=)|\bbumpStateVersion\s*\(/),
       "架构约束：application/ports 禁止 Domain mutation"
+    );
+  }
+
+  if (APPLICATION_RESPONSE_PATTERN.test(file)) {
+    pushImportError(
+      importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/|\/ui\/|\/ai\/|UIManager\.js|AiController\.js|SoundManager\.js|state\/transitions\/)[^"']*(?:\?[^"']*)?["']/i),
+      "架构约束：application/response 禁止 Game/UI/AI/Audio runtime 与 Domain transition import"
+    );
+    pushPatternError(
+      maskedSource.match(/\bthis\.game\b|\bEventBus\b|\beventBus\b|\bdocument\b|\bwindow\b|\b[Ss]earchState\b|\bVisibleState\b|\bBeliefState\b/),
+      "架构约束：application/response 禁止 Game 回指、EventBus、DOM 与 AI SearchState"
     );
   }
 
@@ -1726,6 +1738,31 @@ function identity(value) { return value; }`;
   if (!choiceEntityErrors.some((error) => error.missing.some((item) => item.includes("entity 字段")))) {
     throw new Error("application/choice fixture did not detect Player entity field access");
   }
+  const validResponseTargetErrors = inspectSource(
+    "js/application/response/GoodResponse.js",
+    `${moduleHeader}\nimport { isBlockResponseAvailable } from "../../domain/rules/response/ResponseRules.js";\n${pass}`,
+    null,
+  );
+  if (validResponseTargetErrors.length) {
+    throw new Error(`valid application/response fixture failed: ${JSON.stringify(validResponseTargetErrors)}`);
+  }
+  const responseGameImportErrors = inspectSource(
+    "js/application/response/BadGameResponse.js",
+    `${moduleHeader}\nimport { Game } from "../../core/Game.js";\n${pass}`,
+    null,
+  );
+  if (!responseGameImportErrors.some((error) => error.missing.some((item) => item.includes("application/response 禁止")))) {
+    throw new Error("application/response fixture did not detect Game runtime import");
+  }
+  const responseSearchStateErrors = inspectSource(
+    "js/application/response/BadSearchResponse.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return state.searchState;")}`,
+    null,
+  );
+  if (!responseSearchStateErrors.some((error) => error.missing.some((item) => item.includes("SearchState")))) {
+    throw new Error("application/response fixture did not detect SearchState dependency");
+  }
+
   const validPortsTargetErrors = inspectSource(
     "js/application/ports/GoodPort.js",
     `${moduleHeader}\nimport { createChoiceResult } from "./ChoicePort.js";\n${pass}`,
@@ -1876,7 +1913,7 @@ function identity(value) { return value; }`;
   if (!rootLayoutErrors.some((error) => error.missing.some((item) => item.includes("AI 根目录")))) {
     throw new Error("root layout fixture did not detect non-allowlisted root file");
   }
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
 }
 
 /*

@@ -15,11 +15,12 @@ application/choice、application/ports 与 adapters/ui、adapters/ai。
 不在 ChoiceRequest 中放入实体；adapter 内部 legacy rebind 由本模块提供窄闭包。
 
 架构约束
-本文件是 legacy composition boundary，允许导入 concrete adapters；application/choice 仍禁止 concrete adapter import。
+最终 owner 是 composition wiring；当前 Game 仍是单局 composition root，所以物理上暂留此 bridge。main.js 成为唯一 composition root 时删除本文件。允许导入 concrete adapters；application/choice 仍禁止 concrete adapter import。
 */
 import { createChoiceCoordinator } from "../application/choice/ChoiceCoordinator.js?build=20260815-shadow-agent-p1-slot";
 import { createChoicePort, createChoiceResult } from "../application/ports/ChoicePort.js?build=20260815-shadow-agent-p1-slot";
 import { createAiChoiceAdapter } from "../adapters/ai/AiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
+import { createAiResponseTimingPort } from "../application/response/AiResponseTimingPort.js?build=20260815-shadow-agent-p1-slot";
 import { createUiChoiceAdapter } from "../adapters/ui/UiChoiceAdapter.js?build=20260815-shadow-agent-p1-slot";
 import { getAiDelay } from "../utils/aiTiming.js?build=20260815-shadow-agent-p1-slot";
 
@@ -59,14 +60,18 @@ export function createGameChoiceBoundary(game, choiceContexts, injectedPort = nu
     getLegacyContext: (requestId) => choiceContexts.get(requestId),
     isSessionValid: (gameId) => game.isSessionValid(gameId)
   }));
-  const aiPort = createChoicePort(createAiChoiceAdapter({
+  const rawAiPort = createChoicePort(createAiChoiceAdapter({
     getLegacyContext: (requestId) => choiceContexts.get(requestId),
     shouldRespond: (responder, type, context, cards) => game.aiController.shouldRespond(responder, type, context, cards),
     choosePublicCard: (player, cards) => game.aiController.choosePublicCard(player, cards),
-    isSessionValid: (gameId) => game.isSessionValid(gameId),
+    isSessionValid: (gameId) => game.isSessionValid(gameId)
+  }));
+  const aiPort = createChoicePort(createAiResponseTimingPort(rawAiPort, {
+    getPlayer: (actorId) => game.state.players.find((player) => player.id === actorId),
     setThinking: (isThinking, player, message) => game.ui.setThinking(isThinking, player, message),
     delay: async () => game.cleanupManager.delay(getAiDelay(game, "response")),
-    setPrompt: (message) => game.ui.setPrompt(message)
+    setPrompt: (message) => game.ui.setPrompt(message),
+    isSessionValid: (gameId) => game.isSessionValid(gameId)
   }));
   const choicePort = createChoicePort({
     /*
