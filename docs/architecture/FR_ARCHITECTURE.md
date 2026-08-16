@@ -1,16 +1,19 @@
 # FiveRealms Repository Architecture Authority
 
-状态：FR-ARCH-1 Frozen Governance Baseline v1
+状态：FR-ARCH-3 State Foundation Baseline v1
 适用范围：FiveRealms 仓库级架构；`AI_ENGINE.md` 继续作为 AI Engine 2.0 的实施与历史权威，本文件不复制其内部所有权表。
 事实源关系：本文件是 repository-wide target architecture 的唯一规范入口；若与 `CODE_STANDARD.md` 冲突，以本文件解释 ownership，以 `CODE_STANDARD.md` 解释注释格式。
 
-冻结裁决：TARGET ARCHITECTURE CAN REMAIN FROZEN。当前未创建任何 production 目标目录，只冻结治理规则。
+冻结裁决：TARGET ARCHITECTURE CAN REMAIN FROZEN。
+实施进度：FR-ARCH-0 DONE；FR-ARCH-1 DONE；FR-ARCH-2/2.1 DONE；FR-ARCH-3 CURRENT。
 
 ## 1. Target Physical Architecture
 
-FR-ARCH-1 只冻结以下目标。当前生产目录尚未创建，任何阶段不得为了“目录整齐”提前搬代码。
+目标目录继续冻结；只允许按 dependency-aware 阶段逐步创建真实需要的目录，禁止为了“目录整齐”提前搬代码。
 
-当前已落地（FR-ARCH-2 / 2.1）：`js/domain/definitions/{cards,characters,skills,statuses,ruleset}` 已创建为纯静态定义 authority；旧 `js/config/**` 仅作 legacy façade/projection。Card `count` 由 `RulesetDefinition.deckComposition` 唯一拥有；`initialRound` 属 Ruleset；`responseTimeoutMs` 是 Application/Presentation runtime policy，不属于 Domain。
+当前已落地：
+- FR-ARCH-2/2.1：`js/domain/definitions/{cards,characters,skills,statuses,ruleset}` 已创建为纯静态定义 authority；旧 `js/config/**` 仅作 legacy façade/projection。Card `count` 由 `RulesetDefinition.deckComposition` 唯一拥有；`initialRound` 属 Ruleset；`responseTimeoutMs` 是 Application/Presentation runtime policy，不属于 Domain。
+- FR-ARCH-3：`js/domain/state/{model,queries}` 已建立 state foundation；Game/Player/Deck 保持 legacy composite runtime identity。
 
 ```text
 js/
@@ -319,9 +322,9 @@ Game RNG 由 authoritative Main Thread Game Runtime 持有；AI Search RNG 由 S
 | Phase | 内容 |
 |---|---|
 | FR-ARCH-0 | Architecture Audit（DONE） |
-| FR-ARCH-1 | Governance + Characterization Freeze（CURRENT） |
-| FR-ARCH-2 | Domain Definitions |
-| FR-ARCH-3 | Domain State Model + StateView + Queries；定义 stateVersion contract，不完全激活 increment |
+| FR-ARCH-1 | Governance + Characterization Freeze（DONE） |
+| FR-ARCH-2 | Domain Definitions（DONE，含 2.1 ownership closure） |
+| FR-ARCH-3 | Domain State Model + StateView + Queries；定义 stateVersion contract，不完全激活 increment（CURRENT） |
 | FR-ARCH-4 | Atomic State Transitions；建立 authoritative mutation boundary；激活 stateVersion semantics |
 | FR-ARCH-5 | Foundational Domain Rules：Team/Distance/Turn/Judgment/Combat/Status/Response；主要提纯 Rules，不过早迁全部 Runtime Workflow |
 | FR-ARCH-6 | Choice + Ports Boundary：ChoicePort/PresentationPort/AudioPort 及代码证明需要的最小 Port |

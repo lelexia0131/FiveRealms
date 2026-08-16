@@ -4,17 +4,44 @@
  * 所有在手牌、装备区或 resolvingCards 中的卡都不会进入重洗来源。
  */
 import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { createDeckZoneState } from "../domain/state/model/ZoneState.js?build=20260815-shadow-agent-p1-slot";
 import { createId, shuffled } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
 import { Debug } from "../utils/debug.js?build=20260815-shadow-agent-p1-slot";
 
 export class Deck {
+  /*
+  功能
+  创建 Deck runtime 并组合 Domain zone state 初始数组。
+
+  调用方
+  Game constructor 与测试 fixture。
+
+  输入
+  可替换随机源。
+
+  输出
+  初始化完成的 Deck 实例。
+
+  读取状态
+  Domain ZoneState 初始 shape。
+
+  写入状态
+  Deck 字段。
+
+  调用函数
+  createDeckZoneState。
+
+  边界与不变量
+  四个牌区数组保持 Domain factory 提供的同一身份；随机源不属于 Domain state。
+  */
   constructor(random = Math.random) {
     this.random = random;
-    /** @type {Array<Object>} */ this.cards = [];
-    /** @type {Array<Object>} */ this.discardPile = [];
-    /** @type {Array<Object>} */ this.resolvingCards = [];
-    /** @type {Array<Object>} */ this.judgmentZone = [];
-    this.reshuffleCount = 0;
+    const zoneState = createDeckZoneState();
+    this.cards = zoneState.cards;
+    this.discardPile = zoneState.discardPile;
+    this.resolvingCards = zoneState.resolvingCards;
+    this.judgmentZone = zoneState.judgmentZone;
+    this.reshuffleCount = zoneState.reshuffleCount;
   }
 
   /**

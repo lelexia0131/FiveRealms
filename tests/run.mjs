@@ -13,6 +13,12 @@ import { CHARACTER_DEFINITIONS } from "../js/domain/definitions/characters/Chara
 import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
 import { STATUS_DEFINITIONS } from "../js/domain/definitions/statuses/StatusDefinitions.js?build=20260815-shadow-agent-p1-slot";
 import { RULESET_DEFINITION } from "../js/domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
+import { createMatchState } from "../js/domain/state/model/MatchState.js?build=20260815-shadow-agent-p1-slot";
+import { createPlayerState } from "../js/domain/state/model/PlayerState.js?build=20260815-shadow-agent-p1-slot";
+import { createDeckZoneState } from "../js/domain/state/model/ZoneState.js?build=20260815-shadow-agent-p1-slot";
+import { createStateView } from "../js/domain/state/queries/StateView.js?build=20260815-shadow-agent-p1-slot";
+import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js?build=20260815-shadow-agent-p1-slot";
+import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js?build=20260815-shadow-agent-p1-slot";
 import { Game } from "../js/core/Game.js";
 import { Player } from "../js/core/Player.js";
 import { Deck } from "../js/core/Deck.js";
@@ -38983,6 +38989,306 @@ async function frArchDefinitionModuleIdentity() {
 }
 
 test("FR-ARCH-2·module identity：domain definitions 消费统一 build query", frArchDefinitionModuleIdentity);
+
+
+// ==================== FR-ARCH-3 Domain State Foundation Tests ====================
+
+/*
+功能
+验证 Domain State factories 的初始 shape 与 stateVersion dormant contract。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+createMatchState/createPlayerState/createDeckZoneState 返回值。
+
+写入状态
+无。
+
+调用函数
+createMatchState、createPlayerState、createDeckZoneState、Deck。
+
+边界与不变量
+stateVersion 只存在且为 0；PlayerState 不得包含 controllerType/aiMemory。
+*/
+function frArchStateModelFactories() {
+  const deck = new Deck();
+  const matchState = createMatchState({ deck });
+  assert.deepEqual(matchState.players, []);
+  assert.equal(matchState.deck, deck);
+  assert.equal(matchState.currentPlayerIndex, -1);
+  assert.equal(matchState.startingPlayerIndex, -1);
+  assert.equal(matchState.currentRound, RULESET_DEFINITION.initialRound);
+  assert.equal(matchState.phase, "idle");
+  assert.equal(matchState.isGameOver, false);
+  assert.equal(matchState.stateVersion, 0);
+
+  const playerState = createPlayerState({ id: "fr3-p", seatIndex: 2, battleTeam: "dusk" });
+  assert.equal(Object.hasOwn(playerState, "controllerType"), false);
+  assert.equal(Object.hasOwn(playerState, "aiMemory"), false);
+  assert.equal(Object.hasOwn(playerState, "statistics"), false);
+  assert.equal(playerState.maxEnergy, RULESET_DEFINITION.defaultMaxEnergy);
+  assert.equal(playerState.attackRange, RULESET_DEFINITION.defaultAttackRange);
+
+  const firstZone = createDeckZoneState();
+  const secondZone = createDeckZoneState();
+  assert.notEqual(firstZone.cards, secondZone.cards);
+  assert.notEqual(firstZone.discardPile, secondZone.discardPile);
+  assert.equal(firstZone.reshuffleCount, 0);
+}
+
+test("FR-ARCH-3·state model：Domain factories 初始 shape 与 dormant stateVersion", frArchStateModelFactories);
+
+/*
+功能
+验证 Game.state/Player/Deck 的 legacy 组合没有改变对象 key order 或 Domain field authority。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game、Player、Deck 实例与 Game.js/Player.js/Deck.js 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+现有字段顺序保持；新 stateVersion 追加在 Game.state 末尾；旧 constructor 不再维护 Domain literal。
+*/
+async function frArchLegacyStateComposition() {
+  const ui = makeUi();
+  const game = new Game(ui, () => 0.25);
+  assert.equal(game.state.stateVersion, 0);
+  assert.deepEqual(Object.keys(game.state), [
+    "gameId", "players", "deck", "discardPile", "resolvingCards", "judgmentZone",
+    "currentPlayerIndex", "startingPlayerIndex", "currentRound", "phase",
+    "pendingAction", "pendingResponses", "activeEffects", "selectedGeneralId",
+    "winnerTeam", "publicCardPool", "currentJudgment", "dyingContext",
+    "isGameOver", "isDisposed", "logs", "debugHistory", "resolutionSerial", "stateVersion"
+  ]);
+  const player = new Player({ id: "fr3-key", seatIndex: 0, controllerType: "human", battleTeam: "dawn" });
+  assert.equal(player.controllerType, "human");
+  assert.deepEqual(Object.hasOwn(player, "aiMemory"), true);
+  game.dispose();
+
+  const gameSource = await readFile(projectFile("js/core/Game.js"), "utf8");
+  const playerSource = await readFile(projectFile("js/core/Player.js"), "utf8");
+  const deckSource = await readFile(projectFile("js/core/Deck.js"), "utf8");
+  assert.doesNotMatch(gameSource, /players:\s*\[\]/);
+  assert.doesNotMatch(gameSource, /currentRound:\s*GAME_CONFIG\.initialRound/);
+  assert.doesNotMatch(gameSource, /phase:\s*"idle"/);
+  assert.doesNotMatch(playerSource, /this\.hp\s*=\s*0/);
+  assert.doesNotMatch(playerSource, /this\.maxEnergy\s*=\s*GAME_CONFIG/);
+  assert.match(deckSource, /const zoneState = createDeckZoneState/);
+  assert.match(deckSource, /this\.cards = zoneState\.cards/);
+}
+
+test("FR-ARCH-3·legacy composition：Game/Player/Deck 只组合 Domain state，不复制 literal", frArchLegacyStateComposition);
+
+/*
+功能
+验证 StateView/MatchQueries 与旧 Game query 的返回身份与顺序完全一致。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture 与 Domain queries。
+
+写入状态
+无。
+
+调用函数
+makeTeamFixture、createStateView、queryCurrentActor、queryAllies、queryEnemies、queryLivingPlayers、querySeatOrderFrom。
+
+边界与不变量
+返回同一 Player 引用；allies 含自己；seat order 两种 includeSource 均一致。
+*/
+function frArchStateQueryEquivalence() {
+  const { game, small, large } = makeTeamFixture();
+  const players = game.state.players;
+  const source = players[0];
+  const view = createStateView(game.state);
+  assert.equal(view.players(), game.state.players);
+  assert.equal(view.currentActor(), game.currentPlayer);
+  assert.deepEqual(view.livingPlayers(), getLivingPlayers(game.state));
+  assert.deepEqual(queryCurrentActor(game.state), game.currentPlayer);
+  const allies = queryAllies(game.state, source);
+  const enemies = queryEnemies(game.state, source);
+  assert.deepEqual(allies, game.getAllies(source));
+  assert.deepEqual(enemies, game.getEnemies(source));
+  assert.ok(allies.includes(source));
+  for (let index = 0; index < allies.length; index += 1) {
+    assert.equal(allies[index], game.getAllies(source)[index]);
+  }
+  for (let index = 0; index < enemies.length; index += 1) {
+    assert.equal(enemies[index], game.getEnemies(source)[index]);
+  }
+  for (const includeSource of [false, true]) {
+    const ordered = querySeatOrderFrom(game.state, source, includeSource);
+    assert.deepEqual(ordered, game.seatOrderFrom(source, includeSource));
+    for (let index = 0; index < ordered.length; index += 1) {
+      assert.equal(ordered[index], game.seatOrderFrom(source, includeSource)[index]);
+    }
+  }
+  assert.equal(small.battleTeam, "dawn");
+  assert.equal(large.battleTeam, "dusk");
+}
+
+test("FR-ARCH-3·query equivalence：current/allies/enemies/seat order 与旧 Game 完全一致", frArchStateQueryEquivalence);
+
+/*
+功能
+验证 ZoneQueries 与旧 Game zone query 的 zone 枚举、重复计数与提交判定一致。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture 与 Domain ZoneQueries。
+
+写入状态
+无。
+
+调用函数
+makePlayer、makeGame、instance、queryCardZoneOccurrences、queryCommittedToDiscard、queryCommittedToEquipment。
+
+边界与不变量
+Card entity 使用同一引用；zone label 顺序与旧实现一致。
+*/
+function frArchZoneQueryEquivalence() {
+  const owner = makePlayer("fr3-zone-owner", 0, "dawn", "ai", 0);
+  const other = makePlayer("fr3-zone-other", 1, "dusk", "ai", 1);
+  const { game } = makeGame([owner, other]);
+  const card = instance("charge");
+  owner.hand.push(card);
+  assert.deepEqual(queryCardZoneOccurrences(game.state, card), game.getCardZoneOccurrences(card));
+  assert.deepEqual(queryCardZoneOccurrences(game.state, card), [`hand:${owner.id}`]);
+
+  game.state.deck.discardPile.push(card);
+  assert.deepEqual(queryCardZoneOccurrences(game.state, card), ["discard", `hand:${owner.id}`]);
+  assert.deepEqual(queryCardZoneOccurrences(game.state, card), game.getCardZoneOccurrences(card));
+  owner.hand.splice(owner.hand.indexOf(card), 1);
+  assert.equal(queryCommittedToDiscard(game.state, card), true);
+  assert.equal(queryCommittedToDiscard(game.state, card), game.isCardCommittedToDiscard(card));
+
+  const equipment = instance("telescope");
+  owner.equipment = equipment;
+  assert.equal(queryCommittedToEquipment(game.state, owner, equipment), true);
+  assert.equal(queryCommittedToEquipment(game.state, owner, equipment), game.isCardCommittedToEquipment(owner, equipment));
+  assert.equal(queryCommittedToEquipment(game.state, other, equipment), false);
+}
+
+test("FR-ARCH-3·zone query equivalence：出现位置、重复计数与提交判定", frArchZoneQueryEquivalence);
+
+/*
+功能
+验证 Domain State 模块不 import AI/UI/runtime，也不声明 controllerType/aiMemory/SearchState。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/domain/state 全部源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+允许引用 state 字段，但禁止 dual-schema 或 AI 信息 token。
+*/
+async function frArchDomainStatePurity() {
+  const files = await listJavaScriptFiles(projectFile("js/domain/state"));
+  assert.ok(files.length >= 6);
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:\/ai\/|\/ui\/|\/audio\/|core\/Game\.js|core\/Player\.js|core\/Deck\.js)/, file);
+    assert.doesNotMatch(code, /controllerType/, file);
+    assert.doesNotMatch(code, /aiMemory/, file);
+    assert.doesNotMatch(code, /SearchState|VisibleState|BeliefState|Knowledge/, file);
+    assert.doesNotMatch(code, /Array\.isArray\(player\.statuses\)/, file);
+    assert.doesNotMatch(code, /equipmentRetentionProbability/, file);
+  }
+}
+
+test("FR-ARCH-3·domain purity：State Model/View/Queries 不识别 AI、UI 或 runtime", frArchDomainStatePurity);
+
+/*
+功能
+验证 stateVersion 只作为 dormant contract 存在，当前无 increment 或 stale-result 消费。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+全部生产 js 源码与独立 Game fixture。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile、makeGame、makePlayer。
+
+边界与不变量
+本阶段任何 stateVersion++/+=/incrementStateVersion 或 stale rejection 实现都视为失败。
+*/
+async function frArchStateVersionDormant() {
+  const actor = makePlayer("fr3-version-actor", 0, "dawn");
+  const { game } = makeGame([actor]);
+  assert.equal(game.state.stateVersion, 0);
+  const files = await listJavaScriptFiles(projectFile("js"));
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /stateVersion\s*\+\+|stateVersion\s*\+=\s*1/, file);
+    assert.doesNotMatch(source, /incrementStateVersion/, file);
+  }
+}
+
+test("FR-ARCH-3·stateVersion：CONTRACT DEFINED / INCREMENT NOT ACTIVE", frArchStateVersionDormant);
 
 // ==================== Test Runner 最终执行 ====================
 

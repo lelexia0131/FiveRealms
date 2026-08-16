@@ -4,32 +4,60 @@
  * 每局都会重新创建 Player，因此无需跨局保留实例。
  */
 import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
+import { createPlayerState } from "../domain/state/model/PlayerState.js?build=20260815-shadow-agent-p1-slot";
 import { clamp } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
 
 export class Player {
-  /**
-   * @param {{id:string,seatIndex:number,controllerType:"human"|"ai",battleTeam:string}} options 座位与阵营信息。
-   */
+  /*
+  功能
+  创建一个 legacy composite Player runtime，其领域字段由 Domain PlayerState factory 提供。
+
+  调用方
+  Game.startSelection 与测试 fixture。
+
+  输入
+  id、seatIndex、controllerType 与 battleTeam。
+
+  输出
+  初始化完成的 Player 实例。
+
+  读取状态
+  Domain PlayerState 初始 shape。
+
+  写入状态
+  Player 领域字段与 legacy extension 字段。
+
+  调用函数
+  createPlayerState。
+
+  边界与不变量
+  controllerType 属于 Application participant metadata；aiMemory 属于 AI adapter state；两者均作为 legacy extension 保留，不进入 Domain PlayerState。
+  */
   constructor(options) {
-    this.id = options.id;
-    this.seatIndex = options.seatIndex;
+    const playerState = createPlayerState({
+      id: options.id,
+      seatIndex: options.seatIndex,
+      battleTeam: options.battleTeam
+    });
+    this.id = playerState.id;
+    this.seatIndex = playerState.seatIndex;
     this.controllerType = options.controllerType;
-    this.battleTeam = options.battleTeam;
-    this.generalId = null;
-    this.name = "待选择";
-    this.loreFaction = "未知";
-    this.general = null;
-    this.hp = 0;
-    this.maxHp = 0;
-    this.shield = 0;
-    this.energy = 0;
-    this.maxEnergy = GAME_CONFIG.defaultMaxEnergy;
-    this.attackRange = GAME_CONFIG.defaultAttackRange;
-    /** @type {Array<Object>} */ this.hand = [];
-    this.handVersion = 0;
-    /** @type {Object|null} */ this.equipment = null;
-    /** @type {Record<string, Object>} */ this.statuses = {};
-    this.alive = true;
+    this.battleTeam = playerState.battleTeam;
+    this.generalId = playerState.generalId;
+    this.name = playerState.name;
+    this.loreFaction = playerState.loreFaction;
+    this.general = playerState.general;
+    this.hp = playerState.hp;
+    this.maxHp = playerState.maxHp;
+    this.shield = playerState.shield;
+    this.energy = playerState.energy;
+    this.maxEnergy = playerState.maxEnergy;
+    this.attackRange = playerState.attackRange;
+    this.hand = playerState.hand;
+    this.handVersion = playerState.handVersion;
+    this.equipment = playerState.equipment;
+    this.statuses = playerState.statuses;
+    this.alive = playerState.alive;
     this.turnFlags = {};
     this.roundFlags = {};
     this.gameFlags = {};

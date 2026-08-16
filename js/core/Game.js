@@ -26,6 +26,9 @@ import { JudgmentSystem } from "./JudgmentSystem.js?build=20260815-shadow-agent-
 import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260815-shadow-agent-p1-slot";
 import { PublicCardPool } from "./PublicCardPool.js?build=20260815-shadow-agent-p1-slot";
 import { HpLossSystem } from "./HpLossSystem.js?build=20260815-shadow-agent-p1-slot";
+import { createMatchState } from "../domain/state/model/MatchState.js?build=20260815-shadow-agent-p1-slot";
+import { getCurrentActor, getAllies as getAlliesFromState, getEnemies as getEnemiesFromState, getSeatOrderFrom } from "../domain/state/queries/MatchQueries.js?build=20260815-shadow-agent-p1-slot";
+import { getCardZoneOccurrences as getCardZoneOccurrencesFromState, isCardCommittedToDiscard as isCardCommittedToDiscardInState, isCardCommittedToEquipment as isCardCommittedToEquipmentInState } from "../domain/state/queries/ZoneQueries.js?build=20260815-shadow-agent-p1-slot";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
 function actionTargetLabel(game, source, cardOrSkill, targets = [], selection = null) {
@@ -83,22 +86,62 @@ function resolveActionDisplayTargets(game, source, cardOrSkill, targets = []) {
 }
 
 export class Game {
-  /**
-   * @param {Object} ui UIManager 实例。
-   * @param {()=>number} random 可替换随机源，自动测试可传入确定序列。
-   */
+  /*
+  功能
+  创建一局 Game 并组合 Domain MatchState 与 legacy application/session 扩展状态。
+
+  调用方
+  main.js 与测试 fixture。
+
+  输入
+  UI 实例与可替换随机源。
+
+  输出
+  已完成 service 组合但尚未发牌/启动的 Game 实例。
+
+  读取状态
+  无既有状态。
+
+  写入状态
+  写入 Game services、Domain MatchState 组合与 legacy 扩展字段。
+
+  调用函数
+  createMatchState、CleanupManager、GeneralSelection、Deck、各 core service 与 AIController 构造。
+
+  边界与不变量
+  领域字段值只来自 createMatchState；gameId/isDisposed/logs/pendingResponses 等保持 legacy 扩展；stateVersion 仅作 dormant contract。
+  */
   constructor(ui, random = Math.random) {
     this.random = random;
     this.cleanupManager = new CleanupManager();
     this.generalSelection = new GeneralSelection(random);
     const deck = new Deck(random);
+    const matchState = createMatchState({ deck });
     this.state = {
-      gameId: createId("game"), players: [], deck, discardPile: deck.discardPile,
-      resolvingCards: deck.resolvingCards, currentPlayerIndex: -1, startingPlayerIndex: -1,
-      currentRound: GAME_CONFIG.initialRound, phase: "idle", pendingAction: null,
-      pendingResponses: [], activeEffects: [], selectedGeneralId: null, winnerTeam: null,
-      publicCardPool: [], currentJudgment: null, dyingContext: null,
-      isGameOver: false, isDisposed: false, logs: [], debugHistory: [], resolutionSerial: 0
+      gameId: createId("game"),
+      players: matchState.players,
+      deck: matchState.deck,
+      discardPile: deck.discardPile,
+      resolvingCards: deck.resolvingCards,
+      judgmentZone: deck.judgmentZone,
+      currentPlayerIndex: matchState.currentPlayerIndex,
+      startingPlayerIndex: matchState.startingPlayerIndex,
+      currentRound: matchState.currentRound,
+      phase: matchState.phase,
+      pendingAction: null,
+      pendingResponses: [],
+      activeEffects: [],
+      selectedGeneralId: matchState.selectedGeneralId,
+      winnerTeam: matchState.winnerTeam,
+      publicCardPool: matchState.publicCardPool,
+      currentJudgment: null,
+      dyingContext: null,
+      isGameOver: matchState.isGameOver,
+      isDisposed: false,
+      logs: [],
+      debugHistory: [],
+      resolutionSerial: 0,
+      stateVersion: matchState.stateVersion
     };
     this.uiManager = ui;
     this.ui = ui.createGameSession?.(this) ?? ui;
@@ -128,9 +171,33 @@ export class Game {
     this.loopPromise = null;
   }
 
-  /** 当前行动角色；索引尚未设置时返回 null。 */
+  /*
+  功能
+  返回当前行动角色。
+
+  调用方
+  Game workflow 与 UI。
+
+  输入
+  无。
+
+  输出
+  当前 Player 或 null。
+
+  读取状态
+  this.state。
+
+  写入状态
+  无。
+
+  调用函数
+  getCurrentActor。
+
+  边界与不变量
+  只转发 Domain query，不改变索引语义。
+  */
   get currentPlayer() {
-    return this.state.players[this.state.currentPlayerIndex] ?? null;
+    return getCurrentActor(this.state);
   }
 
   /** 切换展示节奏；只影响可清理等待与 CSS 动画，不改变规则或 AI 评分。 */
@@ -1611,32 +1678,91 @@ export class Game {
     return player.equipment === card && !this.state.deck.resolvingCards.includes(card);
   }
 
-  /** 返回实体牌在所有规则区域中的实际出现位置；重复引用也会被逐一计数。 */
+  /*
+  功能
+  返回实体牌在所有规则区域中的实际出现位置。
+
+  调用方
+  playCard 提交校验、cleanup 与 tests。
+
+  输入
+  Card entity。
+
+  输出
+  zone label 数组；重复引用逐次计数。
+
+  读取状态
+  this.state 的 deck 区域、publicCardPool 与 Player hand/equipment。
+
+  写入状态
+  无。
+
+  调用函数
+  getCardZoneOccurrencesFromState。
+
+  边界与不变量
+  只转发 Domain query，zone 枚举顺序与 label 格式不变。
+  */
   getCardZoneOccurrences(card) {
-    const occurrences = [];
-    const collect = (cards, zone) => cards.forEach((entry) => { if (entry === card) occurrences.push(zone); });
-    collect(this.state.deck.cards, "deck");
-    collect(this.state.deck.discardPile, "discard");
-    collect(this.state.deck.resolvingCards, "resolving");
-    collect(this.state.deck.judgmentZone, "judgment");
-    collect(this.state.publicCardPool ?? [], "publicPool");
-    for (const player of this.state.players) {
-      collect(player.hand, `hand:${player.id}`);
-      if (player.equipment === card) occurrences.push(`equipment:${player.id}`);
-    }
-    return occurrences;
+    return getCardZoneOccurrencesFromState(this.state, card);
   }
 
-  /** 只有弃牌堆是实体牌的唯一实际区域时，弃牌提交才算成功。 */
+  /*
+  功能
+  判断实体牌是否唯一处于弃牌堆。
+
+  调用方
+  playCard 提交校验与 tests。
+
+  输入
+  Card entity。
+
+  输出
+  布尔值。
+
+  读取状态
+  Domain zone query。
+
+  写入状态
+  无。
+
+  调用函数
+  isCardCommittedToDiscardInState。
+
+  边界与不变量
+  与迁移前判定完全一致。
+  */
   isCardCommittedToDiscard(card) {
-    const occurrences = this.getCardZoneOccurrences(card);
-    return occurrences.length === 1 && occurrences[0] === "discard";
+    return isCardCommittedToDiscardInState(this.state, card);
   }
 
-  /** 只有指定玩家装备槽是实体牌的唯一实际区域时，装备提交才算成功。 */
+  /*
+  功能
+  判断实体牌是否唯一处于指定玩家装备槽。
+
+  调用方
+  equipCard 提交校验与 tests。
+
+  输入
+  Player 与 Card entity。
+
+  输出
+  布尔值。
+
+  读取状态
+  Domain zone query。
+
+  写入状态
+  无。
+
+  调用函数
+  isCardCommittedToEquipmentInState。
+
+  边界与不变量
+  与迁移前判定完全一致。
+  */
   isCardCommittedToEquipment(player, card) {
-    const occurrences = this.getCardZoneOccurrences(card);
-    return occurrences.length === 1 && occurrences[0] === `equipment:${player?.id}`;
+    return isCardCommittedToEquipmentInState(this.state, player, card);
   }
 
   /**
@@ -1673,10 +1799,63 @@ export class Game {
       && !this.state.deck.resolvingCards.includes(card);
   }
 
-  /** 返回某角色的存活敌人。 */
-  getEnemies(player) { return this.state.players.filter((other) => other.alive && other.battleTeam !== player.battleTeam); }
-  /** 返回某角色含自身在内的存活同阵营角色。 */
-  getAllies(player) { return this.state.players.filter((other) => other.alive && other.battleTeam === player.battleTeam); }
+  /*
+  功能
+  返回某角色的存活敌人。
+
+  调用方
+  Card/Skill runtime、AI 与 UI。
+
+  输入
+  当前 Player。
+
+  输出
+  真实 Player 引用数组，保持 state.players 顺序。
+
+  读取状态
+  this.state。
+
+  写入状态
+  无。
+
+  调用函数
+  getEnemiesFromState。
+
+  边界与不变量
+  只转发 Domain query；不复制或排序 Player。
+  */
+  getEnemies(player) {
+    return getEnemiesFromState(this.state, player);
+  }
+
+  /*
+  功能
+  返回某角色含自身在内的存活同阵营角色。
+
+  调用方
+  Card/Skill runtime、AI 与 UI。
+
+  输入
+  当前 Player。
+
+  输出
+  真实 Player 引用数组，保持 state.players 顺序。
+
+  读取状态
+  this.state。
+
+  写入状态
+  无。
+
+  调用函数
+  getAlliesFromState。
+
+  边界与不变量
+  保留当前“allies 含 source 自身”语义。
+  */
+  getAllies(player) {
+    return getAlliesFromState(this.state, player);
+  }
 
   /** 守住区域不变量：阵亡角色不能继续占有会阻塞重洗的手牌或装备。 */
   async cleanupDefeatedZones() {
@@ -1696,12 +1875,33 @@ export class Game {
     this.syncDeckAliases();
   }
 
-  /** 从指定角色下一座位开始，按环形座位顺序返回角色；includeSource 为 true 时源角色排在首位。 */
+  /*
+  功能
+  从指定角色下一座位开始，按环形座位顺序返回角色。
+
+  调用方
+  Card/Skill/Response workflow 与测试。
+
+  输入
+  source Player 与 includeSource。
+
+  输出
+  真实 Player 引用数组。
+
+  读取状态
+  this.state。
+
+  写入状态
+  无。
+
+  调用函数
+  getSeatOrderFrom。
+
+  边界与不变量
+  includeSource=true 时 source 排首位；环形语义与迁移前一致。
+  */
   seatOrderFrom(source, includeSource = false) {
-    const players = this.state.players;
-    const ordered = includeSource ? [source] : [];
-    for (let offset = 1; offset < players.length; offset += 1) ordered.push(players[(source.seatIndex + offset) % players.length]);
-    return ordered;
+    return getSeatOrderFrom(this.state, source, includeSource);
   }
 
   /** 令所有观察者关于已离开原手牌的实体牌记忆立即失效。 */
