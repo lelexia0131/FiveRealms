@@ -29,16 +29,16 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
-import { cloneSearchState } from "../state/SearchState.js?build=20260816-fr-arch-14-runtime-closure";
-import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../state/Probability.js?build=20260816-legacy-recovery";
+import { cloneSearchState } from "../state/SearchState.js?build=20260816-legacy-recovery";
+import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260816-legacy-recovery";
 
-import { clampProbability } from "./SimulationSupport.js?build=20260816-fr-arch-14-runtime-closure";
-import { withResponseSimulation } from "./ResponseSimulation.js?build=20260816-fr-arch-14-runtime-closure";
-import { withCombatSimulation } from "./CombatSimulation.js?build=20260816-fr-arch-14-runtime-closure";
-import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260816-fr-arch-14-runtime-closure";
-import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260816-fr-arch-14-runtime-closure";
-import { withStatusSimulation } from "./StatusSimulation.js?build=20260816-fr-arch-14-runtime-closure";
+import { clampProbability } from "./SimulationSupport.js?build=20260816-legacy-recovery";
+import { withResponseSimulation } from "./ResponseSimulation.js?build=20260816-legacy-recovery";
+import { withCombatSimulation } from "./CombatSimulation.js?build=20260816-legacy-recovery";
+import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260816-legacy-recovery";
+import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260816-legacy-recovery";
+import { withStatusSimulation } from "./StatusSimulation.js?build=20260816-legacy-recovery";
 
 class SimulatorCore {
   /*

@@ -17,8 +17,8 @@ Domain StatusRules/TurnRules。
 架构约束
 不得依赖 Game/application/adapters/EventBus；不得 await、emit、随机、mutation。
 */
-import { PASSIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { isHuntMarkExpired } from "../status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260816-legacy-recovery";
+import { isHuntMarkExpired } from "../status/StatusRules.js?build=20260816-legacy-recovery";
 
 /*
 功能

@@ -8,44 +8,44 @@ import { promisify } from "node:util";
 import { AI_SEARCH_PROFILES, GAME_CONFIG, PHASE_NAMES, TEAM_CONFIG } from "../js/config/gameConfig.js";
 import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../js/config/cardConfig.js";
 import { GENERAL_DEFINITIONS, GENERAL_BY_ID } from "../js/config/generalConfig.js";
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../js/domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { CHARACTER_DEFINITIONS } from "../js/domain/definitions/characters/CharacterDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { STATUS_DEFINITIONS } from "../js/domain/definitions/statuses/StatusDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { RULESET_DEFINITION } from "../js/domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
-import { createMatchState } from "../js/domain/state/model/MatchState.js?build=20260816-fr-arch-14-runtime-closure";
-import { createPlayerState } from "../js/domain/state/model/PlayerState.js?build=20260816-fr-arch-14-runtime-closure";
-import { createDeckZoneState } from "../js/domain/state/model/ZoneState.js?build=20260816-fr-arch-14-runtime-closure";
-import { createStateView } from "../js/domain/state/queries/StateView.js?build=20260816-fr-arch-14-runtime-closure";
-import { createRuleStateView } from "../js/domain/state/queries/RuleStateView.js?build=20260816-fr-arch-14-runtime-closure";
-import { assertCanonicalSeatRoster, isCanonicalSeatRoster } from "../js/domain/state/queries/SeatRosterContract.js?build=20260816-fr-arch-14-runtime-closure";
-import { createChoicePort, createChoiceResult, normalizeChoiceResult } from "../js/application/ports/ChoicePort.js?build=20260816-fr-arch-14-runtime-closure";
-import { createRandomPort } from "../js/application/ports/RandomPort.js?build=20260816-fr-arch-14-runtime-closure";
-import { createDiagnosticsPort } from "../js/application/ports/DiagnosticsPort.js?build=20260816-fr-arch-14-runtime-closure";
-import { createPresentationPort } from "../js/application/ports/PresentationPort.js?build=20260816-fr-arch-14-runtime-closure";
-import { createChoiceCoordinator } from "../js/application/choice/ChoiceCoordinator.js?build=20260816-fr-arch-14-runtime-closure";
-import { createResponseChoiceRequest } from "../js/application/choice/ResponseChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
-import { createPublicCardChoiceRequest } from "../js/application/choice/PublicCardChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
-import { createHiddenCardSelectionStore } from "../js/application/choice/HiddenCardSelectionStore.js?build=20260816-fr-arch-14-runtime-closure";
-import { createUiChoiceAdapter } from "../js/adapters/ui/UiChoiceAdapter.js?build=20260816-fr-arch-14-runtime-closure";
-import { createAiChoiceAdapter } from "../js/adapters/ai/AiChoiceAdapter.js?build=20260816-fr-arch-14-runtime-closure";
-import { createAiResponseTimingDecorator } from "../js/application/response/AiResponseTimingDecorator.js?build=20260816-fr-arch-14-runtime-closure";
-import { calculateDamageResult, calculateHealAmount, isDying, isKillRewardEligible } from "../js/domain/rules/combat/CombatRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/distance/DistanceRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome, interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { getCounterResponderOrder, getDyingRescueResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, isHuntMarkSourceExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, getWinningTeam, isSmallTeam } from "../js/domain/rules/team/TeamRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { calculateNextActorIndex, createAttackUsage, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js?build=20260816-fr-arch-14-runtime-closure";
-import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js?build=20260816-fr-arch-14-runtime-closure";
-import { changeEnergy as transitionChangeEnergy, changeHp as transitionChangeHp, setHp as transitionSetHp, changeShield as transitionChangeShield } from "../js/domain/state/transitions/ResourceTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { setStatus as transitionSetStatus, removeStatus as transitionRemoveStatus, clearStatuses as transitionClearStatuses } from "../js/domain/state/transitions/StatusTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { appendCardToZone as transitionAppendCardToZone, removeCardFromZone as transitionRemoveCardFromZone, moveCardBetweenZones as transitionMoveCardBetweenZones } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { moveCardsAtomically as transitionMoveCardsAtomically } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { resetGlobalTurnReactiveFlags as transitionResetGlobalTurnReactiveFlags, resetRoundFlags as transitionResetRoundFlags, resetTurnFlags as transitionResetTurnFlags } from "../js/domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { setCurrentPlayerIndex as transitionSetCurrentPlayerIndex, setCurrentRound as transitionSetCurrentRound, setMatchPhase as transitionSetMatchPhase, setWinnerTeam as transitionSetWinnerTeam, setGameOver as transitionSetGameOver, setPublicCardPool as transitionSetPublicCardPool } from "../js/domain/state/transitions/MatchStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { applyGeneralDefinition as transitionApplyGeneralDefinition, bumpHandVersion as transitionBumpHandVersion, setAlive as transitionSetAlive, setEquipment as transitionSetEquipment } from "../js/domain/state/transitions/PlayerStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../js/domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
+import { CHARACTER_DEFINITIONS } from "../js/domain/definitions/characters/CharacterDefinitions.js?build=20260816-legacy-recovery";
+import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js?build=20260816-legacy-recovery";
+import { STATUS_DEFINITIONS } from "../js/domain/definitions/statuses/StatusDefinitions.js?build=20260816-legacy-recovery";
+import { RULESET_DEFINITION } from "../js/domain/definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
+import { createMatchState } from "../js/domain/state/model/MatchState.js?build=20260816-legacy-recovery";
+import { createPlayerState } from "../js/domain/state/model/PlayerState.js?build=20260816-legacy-recovery";
+import { createDeckZoneState } from "../js/domain/state/model/ZoneState.js?build=20260816-legacy-recovery";
+import { createStateView } from "../js/domain/state/queries/StateView.js?build=20260816-legacy-recovery";
+import { createRuleStateView } from "../js/domain/state/queries/RuleStateView.js?build=20260816-legacy-recovery";
+import { assertCanonicalSeatRoster, isCanonicalSeatRoster } from "../js/domain/state/queries/SeatRosterContract.js?build=20260816-legacy-recovery";
+import { createChoicePort, createChoiceResult, normalizeChoiceResult } from "../js/application/ports/ChoicePort.js?build=20260816-legacy-recovery";
+import { createRandomPort } from "../js/application/ports/RandomPort.js?build=20260816-legacy-recovery";
+import { createDiagnosticsPort } from "../js/application/ports/DiagnosticsPort.js?build=20260816-legacy-recovery";
+import { createPresentationPort } from "../js/application/ports/PresentationPort.js?build=20260816-legacy-recovery";
+import { createChoiceCoordinator } from "../js/application/choice/ChoiceCoordinator.js?build=20260816-legacy-recovery";
+import { createResponseChoiceRequest } from "../js/application/choice/ResponseChoiceRequest.js?build=20260816-legacy-recovery";
+import { createPublicCardChoiceRequest } from "../js/application/choice/PublicCardChoiceRequest.js?build=20260816-legacy-recovery";
+import { createHiddenCardSelectionStore } from "../js/application/choice/HiddenCardSelectionStore.js?build=20260816-legacy-recovery";
+import { createUiChoiceAdapter } from "../js/adapters/ui/UiChoiceAdapter.js?build=20260816-legacy-recovery";
+import { createAiChoiceAdapter } from "../js/adapters/ai/AiChoiceAdapter.js?build=20260816-legacy-recovery";
+import { createAiResponseTimingDecorator } from "../js/application/response/AiResponseTimingDecorator.js?build=20260816-legacy-recovery";
+import { calculateDamageResult, calculateHealAmount, isDying, isKillRewardEligible } from "../js/domain/rules/combat/CombatRules.js?build=20260816-legacy-recovery";
+import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/distance/DistanceRules.js?build=20260816-legacy-recovery";
+import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome, interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js?build=20260816-legacy-recovery";
+import { getCounterResponderOrder, getDyingRescueResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js?build=20260816-legacy-recovery";
+import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, isHuntMarkSourceExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
+import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, getWinningTeam, isSmallTeam } from "../js/domain/rules/team/TeamRules.js?build=20260816-legacy-recovery";
+import { calculateNextActorIndex, createAttackUsage, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js?build=20260816-legacy-recovery";
+import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js?build=20260816-legacy-recovery";
+import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js?build=20260816-legacy-recovery";
+import { changeEnergy as transitionChangeEnergy, changeHp as transitionChangeHp, setHp as transitionSetHp, changeShield as transitionChangeShield } from "../js/domain/state/transitions/ResourceTransitions.js?build=20260816-legacy-recovery";
+import { setStatus as transitionSetStatus, removeStatus as transitionRemoveStatus, clearStatuses as transitionClearStatuses } from "../js/domain/state/transitions/StatusTransitions.js?build=20260816-legacy-recovery";
+import { appendCardToZone as transitionAppendCardToZone, removeCardFromZone as transitionRemoveCardFromZone, moveCardBetweenZones as transitionMoveCardBetweenZones } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260816-legacy-recovery";
+import { moveCardsAtomically as transitionMoveCardsAtomically } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260816-legacy-recovery";
+import { resetGlobalTurnReactiveFlags as transitionResetGlobalTurnReactiveFlags, resetRoundFlags as transitionResetRoundFlags, resetTurnFlags as transitionResetTurnFlags } from "../js/domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
+import { setCurrentPlayerIndex as transitionSetCurrentPlayerIndex, setCurrentRound as transitionSetCurrentRound, setMatchPhase as transitionSetMatchPhase, setWinnerTeam as transitionSetWinnerTeam, setGameOver as transitionSetGameOver, setPublicCardPool as transitionSetPublicCardPool } from "../js/domain/state/transitions/MatchStateTransitions.js?build=20260816-legacy-recovery";
+import { applyGeneralDefinition as transitionApplyGeneralDefinition, bumpHandVersion as transitionBumpHandVersion, setAlive as transitionSetAlive, setEquipment as transitionSetEquipment } from "../js/domain/state/transitions/PlayerStateTransitions.js?build=20260816-legacy-recovery";
 import { Game } from "../js/core/Game.js";
 import { Player } from "../js/core/Player.js";
 import { Deck } from "../js/core/Deck.js";
@@ -63,7 +63,7 @@ import {
   joinProbabilityStateBranches as joinStateProbabilityBranches,
   totalBranchProbability
 } from "../js/ai/state/Probability.js";
-import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260816-fr-arch-14-runtime-closure";
+import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260816-legacy-recovery";
 import { Planner } from "../js/ai/search/Planner.js";
 import { SearchBudget } from "../js/ai/search/SearchBudget.js";
 import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
@@ -112,26 +112,26 @@ import {
 import { PublicPoolView } from "../js/ui/PublicPoolView.js";
 import { isCardSelectionValid, toggleCardSelection } from "../js/ui/selectionUtils.js";
 import { buildResponsePresentation } from "../js/core/ResponseSystem.js";
-import { RESPONSE_STATUS as WORKFLOW_RESPONSE_STATUS, createResponseWorkflowResult } from "../js/application/response/ResponseResult.js?build=20260816-fr-arch-14-runtime-closure";
-import { createResponseWorkflow } from "../js/application/response/ResponseWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { shouldForceAiSelfRescue, shouldShowResponseWindowWithoutCards } from "../js/application/response/ParticipantPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { createCombatWorkflow } from "../js/application/combat/CombatWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { createDyingWorkflow } from "../js/application/combat/DyingWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { createJudgmentWorkflow } from "../js/application/judgment/JudgmentWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { createStatusResolutionWorkflow } from "../js/application/judgment/StatusResolutionWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { createMatchWorkflow } from "../js/application/match/MatchWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { createTurnWorkflow } from "../js/application/turn/TurnWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { createActionWorkflow } from "../js/application/action/ActionWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
-import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
-import { canActuallyUseAssault as canActuallyUseAssaultRule, canPlayCard as canPlayCardRule, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds, getTransferSourceIds } from "../js/domain/rules/card/CardRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { canTriggerRecycleDevice } from "../js/domain/rules/card/RecycleDeviceRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { canUseSkillBase, getSkillTargetIds } from "../js/domain/rules/skill/SkillRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { createCardIntentRuntime } from "../js/application/action/CardIntentRuntime.js?build=20260816-fr-arch-14-runtime-closure";
-import { createRecycleDeviceTrigger } from "../js/application/trigger/RecycleDeviceTrigger.js?build=20260816-fr-arch-14-runtime-closure";
-import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js?build=20260816-fr-arch-14-runtime-closure";
-import { createGameOverFact, createGameStartFact } from "../js/domain/events/MatchEvents.js?build=20260816-fr-arch-14-runtime-closure";
-import { canTriggerMomentumCategory, canTriggerRejuvenation, shouldConsumeMomentum } from "../js/domain/rules/skill/PassiveSkillRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { RESPONSE_STATUS as WORKFLOW_RESPONSE_STATUS, createResponseWorkflowResult } from "../js/application/response/ResponseResult.js?build=20260816-legacy-recovery";
+import { createResponseWorkflow } from "../js/application/response/ResponseWorkflow.js?build=20260816-legacy-recovery";
+import { shouldForceAiSelfRescue, shouldShowResponseWindowWithoutCards } from "../js/application/response/ParticipantPolicy.js?build=20260816-legacy-recovery";
+import { createCombatWorkflow } from "../js/application/combat/CombatWorkflow.js?build=20260816-legacy-recovery";
+import { createDyingWorkflow } from "../js/application/combat/DyingWorkflow.js?build=20260816-legacy-recovery";
+import { createJudgmentWorkflow } from "../js/application/judgment/JudgmentWorkflow.js?build=20260816-legacy-recovery";
+import { createStatusResolutionWorkflow } from "../js/application/judgment/StatusResolutionWorkflow.js?build=20260816-legacy-recovery";
+import { createMatchWorkflow } from "../js/application/match/MatchWorkflow.js?build=20260816-legacy-recovery";
+import { createTurnWorkflow } from "../js/application/turn/TurnWorkflow.js?build=20260816-legacy-recovery";
+import { createActionWorkflow } from "../js/application/action/ActionWorkflow.js?build=20260816-legacy-recovery";
+import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoiceRequest.js?build=20260816-legacy-recovery";
+import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js?build=20260816-legacy-recovery";
+import { canActuallyUseAssault as canActuallyUseAssaultRule, canPlayCard as canPlayCardRule, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds, getTransferableHandCount, getTransferSourceIds, hasHandOrEquipmentFacts } from "../js/domain/rules/card/CardRules.js?build=20260816-legacy-recovery";
+import { canTriggerRecycleDevice } from "../js/domain/rules/card/RecycleDeviceRules.js?build=20260816-legacy-recovery";
+import { canUseSkillBase, getSkillTargetIds } from "../js/domain/rules/skill/SkillRules.js?build=20260816-legacy-recovery";
+import { createCardIntentRuntime } from "../js/application/action/CardIntentRuntime.js?build=20260816-legacy-recovery";
+import { createRecycleDeviceTrigger } from "../js/application/trigger/RecycleDeviceTrigger.js?build=20260816-legacy-recovery";
+import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js?build=20260816-legacy-recovery";
+import { createGameOverFact, createGameStartFact } from "../js/domain/events/MatchEvents.js?build=20260816-legacy-recovery";
+import { canTriggerMomentumCategory, canTriggerRejuvenation, shouldConsumeMomentum } from "../js/domain/rules/skill/PassiveSkillRules.js?build=20260816-legacy-recovery";
 import { hasCardResolver } from "../js/cards/cardRegistry.js";
 import {
   ACTIVE_SKILLS, getActiveSkillCost, hasActiveSkill, hasPassiveSkill, registerPassiveSkills
@@ -2953,6 +2953,48 @@ test("借势：响应窗口不再渲染卡牌列表且使用按钮无需选牌�
 });
 
 // ---- 掠夺 ----
+
+/*
+功能
+从真实 Game.handleHumanCard 入口冻结多阶段卡牌 UI bridge 的四参数签名。
+
+调用方
+UI/Application boundary regression。
+
+输入
+真人掠夺牌与一个合法目标。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+ActionWorkflow、ChoiceCoordinator 与 Game composition bridge。
+
+写入状态
+仅记录 requestCardFlow 参数；返回 null 取消后不结算卡牌。
+
+调用函数
+makeGame、handleHumanCard。
+
+边界与不变量
+requestCardFlow 必须收到 game、actor、card、initialTargets，参数不得因 Application 窄接口而左移。
+*/
+async function humanCardFlowBridgeSignature() {
+  const actor = makePlayer("flow-human", 0, "dawn", "human");
+  const target = makePlayer("flow-target", 1, "dusk");
+  const use = instance("plunder");
+  actor.hand.push(use);
+  target.hand.push(instance("block"));
+  const { game } = makeGame([actor, target]);
+  let captured = null;
+  game.ui.requestCardFlow = async (...args) => { captured = args; return null; };
+  assert.equal(await game.handleHumanCard(use.id), false);
+  assert.deepEqual(captured, [game, actor, use, [target]]);
+  assert.ok(actor.hand.includes(use));
+  game.dispose();
+}
+
+test("UI·多阶段卡牌：handleHumanCard 保持 game/actor/card/targets bridge 签名", humanCardFlowBridgeSignature);
 
 test("掠夺：真人掠夺指定隐藏牌后按已知公开牌名记录", async () => {
   const a = makePlayer("a", 0, "dawn", "human"), b = makePlayer("b", 1, "dusk");
@@ -10664,13 +10706,24 @@ test("AI·搜索：到达搜索预算仍返回当前最佳合法动作", async (
   assert.ok(game.aiController.planner.lastSearchStats.elapsedMs < 250);
 });
 
-test("AI·搜索：fake thinking delay 已移除且不推进 random", () => {
-  let calls = 0;
-  assert.equal(sampleDelay(() => { calls += 1; return .5; }, 3000, 5500), 0);
-  assert.equal(calls, 0);
-  assert.equal(getAiDelay({ random: () => { calls += 1; return .5; }, simulationMode: false, animationFastMode: false }, "initial"), 0);
-  assert.equal(getAiDelay({ random: () => { calls += 1; return .5; }, simulationMode: false, animationFastMode: true }, "end"), 0);
-  assert.equal(calls, 0);
+test("AI·展示节奏：独立 presentation random 采样且不推进 Game/search RNG", () => {
+  let presentationCalls = 0, gameCalls = 0;
+  const presentationRandom = () => { presentationCalls += 1; return .5; };
+  assert.equal(sampleDelay(presentationRandom, 3000, 5500), 4250);
+  const runtime = {
+    random: () => { gameCalls += 1; return .5; },
+    presentationRandom,
+    simulationMode: false,
+    animationFastMode: false
+  };
+  assert.equal(getAiDelay(runtime, "initial"), 4250);
+  assert.equal(getAiDelay(runtime, "initial", { complex:true }), 5000);
+  runtime.animationFastMode = true;
+  assert.equal(getAiDelay(runtime, "end"), 100);
+  runtime.simulationMode = true;
+  assert.equal(getAiDelay(runtime, "response"), 0);
+  assert.equal(presentationCalls, 4);
+  assert.equal(gameCalls, 0);
   assert.equal(GAME_CONFIG.aiSearchTimeBudgetMs, 900);
 });
 
@@ -17147,6 +17200,135 @@ test("AI·望远镜与屏障：概率距离合法性枚举离散装备分支且�
   target.equipmentDefinitionId = null;
   assert.equal(DistanceSystem.getRangeLegalityProbability(game, source, target, 1), 1);
 });
+
+/*
+功能
+验证概率装备世界不会在 Domain 目标语义执行前压塌深层候选。
+
+调用方
+AI ActionGenerator probability-candidate regression。
+
+输入
+屏障以 0.5 概率保留的突袭、掠夺/窃取、转移与借势 SearchState。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Domain Card/Skill target rules 与 DistanceProbabilityBranches。
+
+写入状态
+无。
+
+调用函数
+generateFromVisible。
+
+边界与不变量
+只要任一概率世界合法就必须保留候选；executionProbability 仍由同一条件分区精确给出。
+*/
+function probabilisticRangeCandidateCompleteness() {
+  const { game } = makeGame([
+    makePlayer("candidate-real-a", 0, "dawn"),
+    makePlayer("candidate-real-b", 1, "dusk")
+  ]);
+  const generator = game.aiController.actionGenerator;
+
+  const assaultState = {
+    playPhaseEnded:false,
+    players:[
+      {
+        id:"assault-actor", seatIndex:0, battleTeam:"dawn", alive:true,
+        hp:4, maxHp:4, shield:0, energy:0, handCount:1,
+        hand:[{ id:"prob-assault", definitionId:"assault" }],
+        attackUsed:0, attackLimit:1, attackRange:1
+      },
+      {
+        id:"assault-target", seatIndex:1, battleTeam:"dusk", alive:true,
+        hp:4, maxHp:4, shield:0, handCount:0,
+        equipmentDefinitionId:"barrierDevice", equipmentRetentionProbability:.5,
+        blockProbability:0
+      }
+    ]
+  };
+  const assault = generator.generateFromVisible(assaultState, "assault-actor")
+    .find((action) => action.card?.id === "prob-assault");
+  assert.equal(assault.targets[0].id, "assault-target");
+  assertClose(assault.executionProbability, .5);
+
+  const rangedState = {
+    playPhaseEnded:false,
+    players:[
+      {
+        id:"ranged-actor", seatIndex:0, battleTeam:"dawn", alive:true,
+        hp:4, maxHp:4, shield:0, energy:2, handCount:1,
+        hand:[{ id:"prob-plunder", definitionId:"plunder" }],
+        activeSkillId:"stealSkill", activeSkillUses:0, activeSkillLimit:2
+      },
+      { id:"range-middle", seatIndex:1, battleTeam:"dawn", alive:true, hp:4, maxHp:4, handCount:0 },
+      {
+        id:"ranged-target", seatIndex:2, battleTeam:"dusk", alive:true,
+        hp:4, maxHp:4, handCount:1,
+        equipmentDefinitionId:"barrierDevice", equipmentRetentionProbability:.5,
+        counterProbability:0
+      },
+      { id:"range-tail", seatIndex:3, battleTeam:"dusk", alive:true, hp:4, maxHp:4, handCount:0 }
+    ]
+  };
+  const rangedActions = generator.generateFromVisible(rangedState, "ranged-actor");
+  const plunder = rangedActions.find((action) => action.card?.id === "prob-plunder");
+  const steal = rangedActions.find((action) => action.type === "skill" && action.skill.id === "stealSkill");
+  assert.equal(plunder.targets[0].id, "ranged-target");
+  assertClose(plunder.executionProbability, .5);
+  assert.equal(steal.targets[0].id, "ranged-target");
+  assertClose(steal.executionProbability, .5);
+
+  const transferState = {
+    playPhaseEnded:false,
+    players:[
+      {
+        id:"transfer-actor", seatIndex:0, battleTeam:"dawn", alive:true,
+        hp:4, maxHp:4, handCount:1,
+        hand:[{ id:"prob-transfer", definitionId:"transfer" }]
+      },
+      {
+        id:"transfer-source", seatIndex:1, battleTeam:"dusk", alive:true,
+        hp:4, maxHp:4, handCount:1,
+        equipmentDefinitionId:"barrierDevice", equipmentRetentionProbability:.5
+      }
+    ]
+  };
+  const transfer = generator.generateFromVisible(transferState, "transfer-actor")
+    .find((action) => action.card?.id === "prob-transfer");
+  assert.equal(transfer.selection.sourceId, "transfer-source");
+  assert.equal(transfer.selection.receiverId, "transfer-actor");
+  assertClose(transfer.executionProbability, .5);
+
+  const leverageState = {
+    playPhaseEnded:false,
+    players:[
+      {
+        id:"leverage-actor", seatIndex:0, battleTeam:"dawn", alive:true,
+        hp:4, maxHp:4, handCount:1,
+        hand:[{ id:"prob-leverage", definitionId:"leverage" }],
+        equipmentDefinitionId:"barrierDevice", equipmentRetentionProbability:.5
+      },
+      {
+        id:"leverage-first", seatIndex:1, battleTeam:"dusk", alive:true,
+        hp:4, maxHp:4, handCount:1, attackRange:1,
+        equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1,
+        assaultResponseProbability:1, expectedAssaultCount:1
+      }
+    ]
+  };
+  const leverage = generator.generateFromVisible(leverageState, "leverage-actor")
+    .find((action) => action.card?.id === "prob-leverage");
+  assert.equal(leverage.selection.firstTargetId, "leverage-first");
+  assert.equal(leverage.selection.secondTargetId, "leverage-actor");
+  assertClose(leverage.executionProbability, .5);
+  game.dispose();
+}
+
+test("AI·概率距离：任一合法装备世界保留 card/skill/transfer/leverage 候选", probabilisticRangeCandidateCompleteness);
 
 test("AI·望远镜与屏障：概率距离动作按同一概率扣牌结算且未执行分支不能重复攻击同一目标", () => {
   const state = {
@@ -38658,7 +38840,8 @@ async function frArchCurrentTimingFreeze() {
   assert.match(budgetSource, /GAME_CONFIG\.aiSearchTimeBudgetMs/);
   assert.match(timingSource, /aiInitialThinkMinMs/);
   assert.doesNotMatch(timingSource, /\bgame\.random\s*\(/);
-  assert.doesNotMatch(timingSource, /Math\.max\(GAME_CONFIG\.animationFastMinimumMs/);
+  assert.match(timingSource, /game\?\.presentationRandom/);
+  assert.match(timingSource, /Math\.max\(GAME_CONFIG\.animationFastMinimumMs/);
 }
 
 test("FR-ARCH·timing 基线：当前 900ms/48-yield 与展示时序配置冻结", frArchCurrentTimingFreeze);
@@ -39062,7 +39245,7 @@ async function frArchDefinitionModuleIdentity() {
     const source = await readFile(file, "utf8");
     for (const match of source.matchAll(/(?:from\s*|import\s*\()\s*["']([^"']*domain\/definitions[^"']*)["']/g)) {
       const specifier = match[1];
-      assert.match(specifier, /\?build=20260816-fr-arch-14-runtime-closure$/, `${file} -> ${specifier}`);
+      assert.match(specifier, /\?build=20260816-legacy-recovery$/, `${file} -> ${specifier}`);
     }
   }
 }
@@ -40648,6 +40831,17 @@ async function frArch6PeerChoiceAdapters() {
   assert.deepEqual(await ai.request(request), createChoiceResult("selected"));
   assert.equal(thinking[0][0], true);
   assert.equal(thinking[1][0], false);
+
+  const cancelledThinking = [];
+  const cancelled = createAiResponseTimingDecorator(rawAi, {
+    getPlayer: () => ({ id:"p1", name:"电脑" }),
+    setThinking: (...args) => cancelledThinking.push(args),
+    delay: async () => false,
+    setPrompt: () => { },
+    isSessionValid: () => true
+  });
+  assert.deepEqual(await cancelled.request(request), createChoiceResult("cancelled"));
+  assert.deepEqual(cancelledThinking.map(([value]) => value), [true, false]);
 }
 
 test("FR-ARCH-6·peer adapters：human/AI 同一 request 返回同一 result shape", frArch6PeerChoiceAdapters);
@@ -42229,6 +42423,17 @@ function frArch10DomainCardRules() {
   assert.deepEqual(getAssaultTargetIds(players, players[1]), ["a", "c"]);
   assert.deepEqual(getLeverageFirstTargetIds(players, source), ["b"]);
   assert.deepEqual(getTransferSourceIds(players, source, { effectRange:null, ignoresDistance:true, id:"x" }, new Set(["x"])), ["a", "b", "c"]);
+  const transferOnly = { ...players[0], handCount:1, handCardIds:["transfer-card"] };
+  assert.equal(getTransferableHandCount(transferOnly, new Set(["transfer-card"])), 0);
+  assert.equal(hasHandOrEquipmentFacts(transferOnly, new Set(["transfer-card"])), false);
+  assert.deepEqual(
+    getTransferSourceIds(
+      [transferOnly, players[1], players[2]], transferOnly,
+      { effectRange:null, ignoresDistance:true, id:"transfer-card" },
+      new Set(["transfer-card"])
+    ),
+    ["b", "c"]
+  );
   assert.equal(canActuallyUseAssaultRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, usage:{ used:0, limit:1 } }).ok, true);
   assert.equal(canPlayCardRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, assaultUsage:{ used:0, limit:1 } }).ok, true);
 }
@@ -42679,7 +42884,7 @@ readFile、CardEffectRules getters。
 CardEffectRules 不得重新出现固定 literal getter。
 */
 async function frArch12CardFixedFactOwnership() {
-  const rules = await import("../js/domain/rules/card/CardEffectRules.js?build=20260816-fr-arch-14-runtime-closure");
+  const rules = await import("../js/domain/rules/card/CardEffectRules.js?build=20260816-legacy-recovery");
   assert.equal(rules.getAssaultBaseDamage(), DOMAIN_CARD_DEFINITIONS.assault.baseDamage);
   assert.equal(rules.getRecoverHealAmount(), DOMAIN_CARD_DEFINITIONS.recover.healAmount);
   assert.equal(rules.getChargeEnergyAmount(), DOMAIN_CARD_DEFINITIONS.charge.energyGain);
@@ -42723,7 +42928,7 @@ readFile、decideSkillEffect、decideAllInDrawCount、decideAllInEnterChance。
 SkillRules 不得复制固定 effect literal；AI 不得自行复制 allIn 公式。
 */
 async function frArch12SkillFixedFactOwnership() {
-  const rules = await import("../js/domain/rules/skill/SkillRules.js?build=20260816-fr-arch-14-runtime-closure");
+  const rules = await import("../js/domain/rules/skill/SkillRules.js?build=20260816-legacy-recovery");
   const source = { id:"s", energy:3, alive:true, battleTeam:"dawn", hp:3, maxHp:4, shield:0, handCount:1, equipmentDefinitionId:null };
   const assertDecision = (skill, fields) => {
     const decision = rules.decideSkillEffect(skill, source);
@@ -42775,8 +42980,8 @@ readFile。
 Human ally→enemy 仍合法；AI ally→enemy 仍被 AI policy 禁止。
 */
 async function frArch12TransferPolicySingleAuthority() {
-  const { isTransferDirectionAllowed } = await import("../js/ai/policy/TransferPolicy.js?build=20260816-fr-arch-14-runtime-closure");
-  const { isTransferExecutionAllowed } = await import("../js/adapters/ai/TransferExecutionPolicyAdapter.js?build=20260816-fr-arch-14-runtime-closure");
+  const { isTransferDirectionAllowed } = await import("../js/ai/policy/TransferPolicy.js?build=20260816-legacy-recovery");
+  const { isTransferExecutionAllowed } = await import("../js/adapters/ai/TransferExecutionPolicyAdapter.js?build=20260816-legacy-recovery");
   const actor = { id:"a", battleTeam:"dawn" };
   const ally = { id:"f", battleTeam:"dawn" };
   const ally2 = { id:"f2", battleTeam:"dawn" };
@@ -42860,9 +43065,9 @@ projectCanonicalSeatRoster、getRangeConditionBranches、Simulator.applyDamage/h
 概率分支总质量为一时 matches 与 Domain deterministic 结论一致。
 */
 async function frArch12DeterministicParityMatrix() {
-  const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure");
-  const { getRangeConditionBranches } = await import("../js/ai/state/DistanceProbabilityBranches.js?build=20260816-fr-arch-14-runtime-closure");
-  const { nextLightningReceiverId: aiNextLightningReceiverId } = await import("../js/ai/domain/LightningModel.js?build=20260816-fr-arch-14-runtime-closure");
+  const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/state/RuleProjection.js?build=20260816-legacy-recovery");
+  const { getRangeConditionBranches } = await import("../js/ai/state/DistanceProbabilityBranches.js?build=20260816-legacy-recovery");
+  const { nextLightningReceiverId: aiNextLightningReceiverId } = await import("../js/ai/domain/LightningModel.js?build=20260816-legacy-recovery");
 
   const players = [
     { id:"p0", seatIndex:0, alive:true, battleTeam:"dawn", hp:5, maxHp:5, shield:1, energy:3, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:[] },
@@ -42978,9 +43183,9 @@ async function frArch13CarryInRosterAndRootArtifacts() {
   assert.match(checkerSource, /ACCIDENTAL_ROOT_ARTIFACTS/);
   assert.match(checkerSource, /accidentalRootArtifacts/);
 
-  const { projectCanonicalSeatRoster } = await import("../js/ai/state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure");
-  const { getCounterResponderOrder, getDyingRescueResponderOrder } = await import("../js/domain/rules/response/ResponseRules.js?build=20260816-fr-arch-14-runtime-closure");
-  const { nextLightningReceiverId } = await import("../js/domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure");
+  const { projectCanonicalSeatRoster } = await import("../js/ai/state/RuleProjection.js?build=20260816-legacy-recovery");
+  const { getCounterResponderOrder, getDyingRescueResponderOrder } = await import("../js/domain/rules/response/ResponseRules.js?build=20260816-legacy-recovery");
+  const { nextLightningReceiverId } = await import("../js/domain/rules/status/StatusRules.js?build=20260816-legacy-recovery");
   const player = (id, seatIndex, alive = true) => ({
     id, seatIndex, alive, battleTeam: id === "d" ? "dusk" : "dawn",
     hp:4, maxHp:4, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:0,
@@ -43031,8 +43236,8 @@ createSearchRequest、searchRequestViolations、structuredClone。
 clone 前后语义相等；敌方真实 hand definition 不得进入 request。
 */
 async function frArch13SearchRequestContract() {
-  const { createSearchRequest, searchRequestViolations } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchRequest, searchRequestViolations } = await import("../js/ai/search/SearchRequest.js?build=20260816-legacy-recovery");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-legacy-recovery");
   const actor = makePlayer("sr-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("sr-enemy", 1, "dusk", "ai", 1);
   const secret = instance("harvest");
@@ -43090,10 +43295,10 @@ createSearchRequest、acceptSearchResult、bumpStateVersion。
 任一失败只能返回安全 end；合法 descriptor 必须在当前 Domain-legal set rebind。
 */
 async function frArch13StaleResultRejection() {
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
-  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-legacy-recovery");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-legacy-recovery");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-legacy-recovery");
+  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260816-legacy-recovery");
   const actor = makePlayer("stale-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("stale-enemy", 1, "dusk", "ai", 1);
   const card = instance("assault");
@@ -43194,7 +43399,7 @@ bumpStateVersion。
 第一项执行后的 version 变化不得让第二项必然 stale；失效动作只返回 null，由 TurnWorkflow 清空 plan。
 */
 async function frArch13PlannedSequenceReuse() {
-  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260816-fr-arch-14-runtime-closure");
+  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260816-legacy-recovery");
   const actor = makePlayer("plan-actor", 0, "dawn", "ai", 2);
   const enemy = makePlayer("plan-enemy", 1, "dusk", "ai", 1);
   const charge = instance("charge");
@@ -43288,9 +43493,9 @@ createSearchRequest、acceptSearchResult。
 cancelled/invalid 只允许安全 end，不执行真实 Card/Player。
 */
 async function frArch13CancellationContract() {
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-legacy-recovery");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-legacy-recovery");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-legacy-recovery");
   const actor = makePlayer("cancel-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("cancel-enemy", 1, "dusk", "ai", 1);
   const card = instance("assault");
@@ -43352,7 +43557,7 @@ ActionDescriptor.describe、createSearchResult。
 end/card/skill/transfer/leverage descriptor 不再二次 describe。
 */
 async function frArch14SearchResultDescriptorIdempotence() {
-  const { createSearchResult } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchResult } = await import("../js/ai/search/SearchResult.js?build=20260816-legacy-recovery");
   const target = { id:"t" };
   const rawActions = [
     { type:"end" },
@@ -43408,7 +43613,7 @@ SearchRng.restore/commit/snapshot。
 restore 后 Worker 序列与 main 未消费序列一致；commit 后 next search 从 rngAfter 继续。
 */
 async function frArch14RngHandoff() {
-  const { SearchRng } = await import("../js/ai/search/SearchRng.js?build=20260816-fr-arch-14-runtime-closure");
+  const { SearchRng } = await import("../js/ai/search/SearchRng.js?build=20260816-legacy-recovery");
   const main = new SearchRng(42);
   main.next();
   const before = main.snapshot();
@@ -43452,7 +43657,7 @@ describeRootSearchAction、rehydrateRootSearchAction、ActionDescriptor.describe
 比较 descriptor、card/skill identity、target order、selection 与 energyCost；不比较实体引用。
 */
 async function frArch14RootActionRehydration() {
-  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-legacy-recovery");
   const actor = makePlayer("root-actor", 0, "dawn", "ai", 2);
   const enemy = makePlayer("root-enemy", 1, "dusk", "ai", 1);
   const assault = instance("assault");
@@ -43502,11 +43707,11 @@ createSearchRequest、describeRootSearchAction、runSearchRequest、workerOutcom
 outcome 无真实实体/函数；Main Thread 仍负责 ACCEPTED 与 rebind。
 */
 async function frArch14RunSearchRequest() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-fr-arch-14-runtime-closure");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
-  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-fr-arch-14-runtime-closure");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-legacy-recovery");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-legacy-recovery");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-legacy-recovery");
+  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-legacy-recovery");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-legacy-recovery");
   const actor = makePlayer("run-actor", 0, "dawn", "ai", 2);
   const enemy = makePlayer("run-enemy", 1, "dusk", "ai", 1);
   actor.hand.push(instance("charge"), instance("assault"));
@@ -43567,7 +43772,7 @@ createSearchWorkerMessageHandler。
 一个 requestId 只产生一个 terminal result；unknown message 返回 ERROR。
 */
 async function frArch14WorkerProtocol() {
-  const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js?build=20260816-legacy-recovery");
   const messages = [];
   const handler = createSearchWorkerMessageHandler({ postMessage: (data) => messages.push(structuredClone(data)) });
   await handler.handleMessage({ type:"UNKNOWN" });
@@ -43578,9 +43783,9 @@ async function frArch14WorkerProtocol() {
   const { game } = makeGame([actor, enemy]);
   game.aiSearchNodeBudgetOverride = 2;
   const roots = game.aiController.getActionCandidates(actor);
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
-  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-fr-arch-14-runtime-closure");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-legacy-recovery");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-legacy-recovery");
+  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-legacy-recovery");
   const request = createSearchRequest({
     requestId:"proto-1",
     gameId:game.state.gameId,
@@ -43630,9 +43835,9 @@ runSearchRequest、setInterval、clearInterval。
 不依赖 wall-clock 精确值；只证明搜索期间事件循环可运行。
 */
 async function frArch14MainThreadResponsiveness() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-fr-arch-14-runtime-closure");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-legacy-recovery");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-legacy-recovery");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-legacy-recovery");
   const actor = makePlayer("heart-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("heart-enemy", 1, "dusk", "ai", 1);
   for (let index = 0; index < 60; index += 1) actor.hand.push(instance("exposeWeakness"));
@@ -43695,11 +43900,11 @@ makePlayer、makeGame、instance、createInitialSearchState、getActionCandidate
 Search 选择是否 end 不影响执行边界验证；执行使用显式 mutualBenefit root descriptor 的合法 rebind。
 */
 async function frArch14MutualBenefitRuntimeTrace() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-fr-arch-14-runtime-closure");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
-  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
-  const { createWorkerSearchOutcome, workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-fr-arch-14-runtime-closure");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-legacy-recovery");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-legacy-recovery");
+  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-legacy-recovery");
+  const { createWorkerSearchOutcome, workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-legacy-recovery");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-legacy-recovery");
   const actor = makePlayer("mb-runtime-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("mb-runtime-enemy", 1, "dusk", "ai", 1);
   const benefit = instance("mutualBenefit");
@@ -43837,6 +44042,55 @@ test("FR-ARCH-14·discard：AI HP1/2/3 普通/快速与取消/不足选择后不
 
 /*
 功能
+冻结 AI 弃牌阶段 Normal/Fast 的 thinking 与 presentation delay 顺序。
+
+调用方
+TurnWorkflow pacing regression。
+
+输入
+同一名超手牌上限 AI，分别使用 Normal 与 Fast 展示模式。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+GAME_CONFIG discard range、TurnWorkflow 与 ChoiceCoordinator。
+
+写入状态
+测试手牌弃置与 trace。
+
+调用函数
+makeGame、handleDiscardPhase。
+
+边界与不变量
+Normal 使用可读最小值，Fast 只缩放展示时间；两者都必须 thinking on→delay→thinking off。
+*/
+async function discardPresentationPacingModes() {
+  for (const [fastMode, expectedDelay] of [[false, 1600], [true, 128]]) {
+    const actor = makePlayer(`discard-pacing-${fastMode}`, 0, "dawn", "ai", 0);
+    actor.hp = 1;
+    actor.hand.push(instance("charge"), instance("shield"));
+    const { game, ui } = makeGame([actor]);
+    game.simulationMode = false;
+    game.animationFastMode = fastMode;
+    game.presentationRandom = () => 0;
+    const trace = [];
+    const originalThinking = ui.setThinking.bind(ui);
+    ui.setThinking = (...args) => { trace.push(["thinking", args[0]]); originalThinking(...args); };
+    game.cleanupManager.delay = async (ms) => { trace.push(["delay", ms]); return true; };
+    await game.handleDiscardPhase(actor, game.state.gameId);
+    assert.deepEqual(trace.slice(0, 3), [
+      ["thinking", true], ["delay", expectedDelay], ["thinking", false]
+    ]);
+    assert.equal(actor.hand.length, 1);
+    game.dispose();
+  }
+}
+
+test("展示节奏·AI 弃牌：Normal 可读且 Fast 缩放并保持 thinking 生命周期", discardPresentationPacingModes);
+
+/*
+功能
 用 fake Dedicated Worker 验证 SearchWorkerClient 的首个 Worker 已接线、RESULT settle、duplicate/stale 消息隔离、postMessage 失败清空 pending、cancel 与 createSearchExecutor 生产选择。
 
 调用方
@@ -43861,8 +44115,8 @@ createSearchWorkerClient、createSearchExecutor。
 不执行真实 search；只验证 browser transport 协议与 pending 生命周期。
 */
 async function frArch14WorkerClientTransport() {
-  const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js?build=20260816-fr-arch-14-runtime-closure");
-  const { createSearchExecutor } = await import("../js/adapters/ai/worker/createSearchExecutor.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js?build=20260816-legacy-recovery");
+  const { createSearchExecutor } = await import("../js/adapters/ai/worker/createSearchExecutor.js?build=20260816-legacy-recovery");
   const instances = [];
   class FakeWorker {
     constructor(url, options) {
@@ -43888,6 +44142,14 @@ async function frArch14WorkerClientTransport() {
     }
   }
   const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  delete globalThis.Worker;
+  delete globalThis.window;
+  delete globalThis.document;
+  const headlessExecutor = createSearchExecutor({});
+  assert.equal(headlessExecutor.transport, "headless-local", "Node/headless 无 Worker 时必须保留本地 transport");
+  headlessExecutor.dispose();
   Object.defineProperty(globalThis, "Worker", { configurable:true, writable:true, value:FakeWorker });
   try {
     const makeOutcome = (requestId) => ({
@@ -43936,10 +44198,22 @@ async function frArch14WorkerClientTransport() {
     assert.equal(executor.transport, "dedicated-worker", "browser 存在 Worker 时 production 必须使用 Dedicated Worker");
     executor.dispose();
     assert.equal(createSearchExecutor({ forceLocal:true }).transport, "headless-local");
+
+    delete globalThis.Worker;
+    Object.defineProperty(globalThis, "window", { configurable:true, value:{} });
+    Object.defineProperty(globalThis, "document", { configurable:true, value:{} });
+    assert.throws(
+      () => createSearchExecutor({}),
+      /不支持 Dedicated Worker.*不能回退到主线程/
+    );
   } finally {
     for (const instance of instances) instance.terminate();
     if (previousWorker) Object.defineProperty(globalThis, "Worker", previousWorker);
     else delete globalThis.Worker;
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else delete globalThis.window;
+    if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+    else delete globalThis.document;
   }
 }
 
@@ -43971,9 +44245,9 @@ makeGame、instance、getActionCandidates、createInitialSearchState、createSea
 固定 node budget 保证双方同 stopReason；比较 action、计划序列、stats、RNG after 与 hidden samples。
 */
 async function frArch14WorkerSearchParityTrace() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-fr-arch-14-runtime-closure");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260816-legacy-recovery");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260816-legacy-recovery");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260816-legacy-recovery");
   const actor = makePlayer("parity-actor", 0, "dawn", "ai", 0);
   const ally = makePlayer("parity-ally", 2, "dawn", "ai", 2);
   const enemy = makePlayer("parity-enemy", 1, "dusk", "ai", 1);
@@ -44062,8 +44336,8 @@ makeGame、instance、selectAction、acceptWorkerSearchOutcome、createWorkerSea
 所有断言只读 diagnostic；不改变 AI policy/value。
 */
 async function frArch14RngContinuityAcceptedSearches() {
-  const { createWorkerSearchOutcome } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-fr-arch-14-runtime-closure");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure");
+  const { createWorkerSearchOutcome } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260816-legacy-recovery");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260816-legacy-recovery");
   const actor = makePlayer("rng-continuity-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("rng-continuity-enemy", 1, "dusk", "ai", 1);
   actor.hand.push(instance("assault"));
@@ -44112,7 +44386,7 @@ test("FR-ARCH-14·RNG：连续 accepted 搜索续接、rejected 不提交、dupl
 
 /*
 功能
-验证 zero fake-thinking 下 AI 出牌 presentation sequencing 仍完整：showThinking、clearThinking、playActionCue 与真实 playCard 均发生。
+验证 AI 出牌 presentation pacing 完整：showThinking、await delay、clearThinking、playActionCue 与真实 playCard 顺序稳定。
 
 调用方
 FR-ARCH-14 presentation sequencing audit。
@@ -44133,30 +44407,42 @@ TurnWorkflow/ActionWorkflow/GamePresentationAdapter。
 makeGame、instance、takeAiPlayPhase。
 
 边界与不变量
-不恢复 fake delay；只证明真实 presentation trigger 在零等待路径存活。
+simulation 路径延迟值为零但仍经过可取消 await；真实展示路径由 timing 单测冻结范围。
 */
-async function frArch14PresentationSequencingZeroTiming() {
+async function frArch14PresentationPacingSequence() {
   const actor = makePlayer("presentation-zero-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("presentation-zero-enemy", 1, "dusk", "ai", 1);
   const charge = instance("charge");
   actor.hand.push(charge);
   const { game, ui } = makeGame([actor, enemy]);
   const sounds = [];
+  const trace = [];
+  const originalThinking = ui.setThinking.bind(ui);
+  const originalCurrentCard = ui.setCurrentCard.bind(ui);
+  ui.setThinking = (...args) => { trace.push(["thinking", args[0], args[2] ?? ""]); originalThinking(...args); };
+  ui.setCurrentCard = (...args) => { trace.push(["current-card", args[0]?.id ?? args[0]]); originalCurrentCard(...args); };
   ui.playSound = (name) => sounds.push(name);
-  let delayCalls = 0;
-  game.cleanupManager.delay = async () => { delayCalls += 1; return true; };
-  game.aiController.selectAction = async () => ({ type:"card", card:charge, targets:[] });
+  game.cleanupManager.delay = async (ms) => { trace.push(["delay", ms]); return true; };
+  let actionCount = 0;
+  game.aiController.selectAction = async () => (
+    actionCount++ === 0 ? { type:"card", card:charge, targets:[] } : { type:"end" }
+  );
   await game.takeAiPlayPhase(actor, game.state.gameId);
   assert.ok(ui.thinking.some(([thinking]) => thinking === true));
   assert.ok(ui.thinking.some(([thinking]) => thinking === false));
   assert.ok(ui.currentCards.some((entry) => entry.cardOrName === charge));
   assert.ok(sounds.includes("playCard"), "playActionCue 必须在零 fake thinking 路径存活");
   assert.equal(actor.hand.length, 0);
-  assert.equal(delayCalls, 0, "fake AI thinking delay 不得恢复");
+  assert.deepEqual(trace.filter(([kind]) => kind === "delay").map(([, ms]) => ms), [0, 0, 0]);
+  const preparedIndex = trace.findIndex(([kind, value, message]) => kind === "thinking" && value === true && message.includes("准备使用"));
+  const actionDelayIndex = trace.findIndex((entry, index) => index > preparedIndex && entry[0] === "delay");
+  const clearIndex = trace.findIndex((entry, index) => index > actionDelayIndex && entry[0] === "thinking" && entry[1] === false);
+  const cardIndex = trace.findIndex((entry, index) => index > clearIndex && entry[0] === "current-card");
+  assert.ok(preparedIndex >= 0 && preparedIndex < actionDelayIndex && actionDelayIndex < clearIndex && clearIndex < cardIndex);
   game.dispose();
 }
 
-test("FR-ARCH-14·presentation：零 fake-thinking 下 thinking/clear/cue/play 序列仍存活", frArch14PresentationSequencingZeroTiming);
+test("展示节奏·AI 行动：thinking→await pacing→clear→play 且 simulation 延迟为零", frArch14PresentationPacingSequence);
 
 /*
 功能

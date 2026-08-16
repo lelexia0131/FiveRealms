@@ -24,7 +24,7 @@
 - FR-ARCH-11：`application/messaging/EventDispatcher` 唯一拥有 listener registry/sequential await/generation/clear 与 mutable Hook propagation；`domain/events/MatchEvents` 拥有 immutable data-only gameStart/gameOver facts；`core/EventBus.js` 仅 thin re-export；`gameStart` 不再携带 Game；`Game.registerGlobalRules` 的 huntMark/seal/lightning 注册已迁 `application/trigger/GlobalTriggerRegistry`；玩家日志仍由 Presentation 拥有，不属于 Domain Event。
 - FR-ARCH-12：AI deterministic rule semantics 与 `domain/rules/**` 对齐；`js/ai/state/RuleProjection.js` 只做 SearchState→Domain canonical shape adaptation；`DistanceProbabilityBranches.js` 只拥有装备存在概率分区，确定性距离公式仍由 `DistanceRules` 解释；root/deep `ActionGenerator` 共同消费 Domain Card/Skill/Status Rules；`js/ai/search|simulation|domain` production imports 对 `core/RuleEngine` 与 `core/DistanceSystem` 为零；卡牌/技能固定效果数值归 Definitions；`TransferPolicy.isTransferDirectionAllowed` 是 AI 转移方向唯一公式；AI simulation 保留概率/Belief/反事实模型，不调用 Application workflow 或 Domain Transitions 修改 SearchState。
 - FR-ARCH-13：`AIController`/`Knowledge`/`ActionGenerator`/`CardSelectionBoundary`/`ResponseBoundary` 不再保存 raw Game；`SearchRequest`/`SearchResult` 建立 data-only structured-clone-safe boundary；`SearchRng` 隔离 AI Search RNG 与真实 Game RNG；main-thread acceptance 执行 session/gameId/stateVersion/actor/phase/descriptor-rebind/Domain-legality 验证；queued plan 继续 current-state rebind；`GameChoiceRouter` 收窄为显式注入 composition bridge。
-- FR-ARCH-14：`js/adapters/ai/worker/` 建立 Dedicated Browser Worker entry/client 与共享 `runSearchRequest`；`SearchRequest.rootSearchActions` 允许 Worker 从 SearchState 无损恢复 root actions；`WorkerSearchOutcome` 返回 descriptor-only outcome 与 `rngAfter`；Fast 500ms soft/900ms deadline，Normal 3000ms deadline；fake AI thinking waits 与 `searchElapsed` compensation 移除；AI timing 不消费 Real Game RNG；Main Thread 保持 session/stateVersion/actor/phase/rebind/Domain-legality authority。
+- FR-ARCH-14：`js/adapters/ai/worker/` 建立 Dedicated Browser Worker entry/client 与共享 `runSearchRequest`；`SearchRequest.rootSearchActions` 允许 Worker 从 SearchState 无损恢复 root actions；`WorkerSearchOutcome` 返回 descriptor-only outcome 与 `rngAfter`；Fast 500ms soft/900ms deadline，Normal 3000ms deadline；`searchElapsed` compensation 与伪装成搜索计算的 minimum wait 移除；产品可见 presentation pacing 使用独立 RNG/预算且不消费 Real Game/Search RNG；Main Thread 保持 session/stateVersion/actor/phase/rebind/Domain-legality authority。
 
 ```text
 js/
@@ -241,7 +241,7 @@ Main Thread 永远 authoritative。
 
 ### 11.3 Normal Mode
 - Hard Search Ceiling：3000 ms。
-- Normal 没有 minimum fake wait。
+- Normal Search Compute 没有 minimum fake wait；Normal UI 仍可有独立、可取消的 presentation pacing，不计入搜索预算也不改变搜索结果。
 - 100ms 已明确完成、700ms 已收敛：立即行动。
 - 复杂局面仍有高 VOI：允许继续。
 - 最迟 3000ms 返回 best-so-far valid candidate。
@@ -298,7 +298,7 @@ Fast 900ms / Normal 3000ms 是正常 Search Deadline；Hard Watchdog 独立存�
 Worker 返回 ActionDescriptor；Main Thread 执行 session/stateVersion/actor/phase validation、rebind、Domain legality validation 后才真实执行。
 
 ### 11.10 No Fake Random Thinking Delay
-Worker 正式落地后逐步淘汰随机“AI 思考展示延迟”。
+Worker 正式落地后淘汰把等待伪装成 Search Compute 的补偿；面向玩家的 AI 行动、响应、弃牌与结束展示节奏保留为独立 Presentation policy，并使用独立 RNG。
 AI Search Compute != Presentation Pacing。动画/反馈/牌移动/响应 UI transition 仍可有真实 Presentation 时间，但不得伪装成 AI Thinking Time。
 
 ### 11.11 Fast Animation Relationship

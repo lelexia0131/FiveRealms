@@ -17,12 +17,12 @@ Domain mutation 经 transitions/workflows；trigger runtime state 经 transition
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、concrete adapters 或 config runtime。
 */
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
-import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { addSpyGapPendingTarget, addTrackingTarget, markCategoryUsed, removeSpyGapPendingTarget, setCoordinationTriggered, setGambleTriggered, setGuardianAidUsed, setLastEmberResolutionId, setMomentum, setRejuvenationTriggerCount, setSpyGapTriggered, setTrackingTurnNumber } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { getAllInAssaultBonus } from "../../domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
-import { canRevealSpyGap, canTriggerCoordination, canTriggerEmber, canTriggerGamble, canTriggerGuardianAid, canTriggerMomentumCategory, canTriggerRejuvenation, canTriggerSpyGapAfterDamage, canTriggerSpyGapOnRescue, canTriggerTrackingTarget, isHuntMarkExpiredForOwner, shouldAddAllInDamage, shouldAddMomentumDamage, shouldAdvanceTrackingClock, shouldCleanupExpiredHuntMarks, shouldConsumeAllIn, shouldConsumeMomentum, shouldIgnoreEmberDuplicate, shouldQueueSpyGapOnDying, shouldRemoveSpyGapPendingOnDead, shouldResetMomentumAtTurnEnd, shouldResetRejuvenationAtTurnStart } from "../../domain/rules/skill/PassiveSkillRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
+import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-legacy-recovery";
+import { addSpyGapPendingTarget, addTrackingTarget, markCategoryUsed, removeSpyGapPendingTarget, setCoordinationTriggered, setGambleTriggered, setGuardianAidUsed, setLastEmberResolutionId, setMomentum, setRejuvenationTriggerCount, setSpyGapTriggered, setTrackingTurnNumber } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
+import { getAllInAssaultBonus } from "../../domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
+import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260816-legacy-recovery";
+import { canRevealSpyGap, canTriggerCoordination, canTriggerEmber, canTriggerGamble, canTriggerGuardianAid, canTriggerMomentumCategory, canTriggerRejuvenation, canTriggerSpyGapAfterDamage, canTriggerSpyGapOnRescue, canTriggerTrackingTarget, isHuntMarkExpiredForOwner, shouldAddAllInDamage, shouldAddMomentumDamage, shouldAdvanceTrackingClock, shouldCleanupExpiredHuntMarks, shouldConsumeAllIn, shouldConsumeMomentum, shouldIgnoreEmberDuplicate, shouldQueueSpyGapOnDying, shouldRemoveSpyGapPendingOnDead, shouldResetMomentumAtTurnEnd, shouldResetRejuvenationAtTurnStart } from "../../domain/rules/skill/PassiveSkillRules.js?build=20260816-legacy-recovery";
 
 const REQUIRED_DEPENDENCIES = [
   "onEvent", "getState", "isSessionValid", "presentation", "random", "responseSystem",

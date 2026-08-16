@@ -17,9 +17,9 @@ js/domain/rules 与 js/domain/definitions 目录。
 架构约束
 禁止在这里计算合法性、目标公式、距离公式或技能语义；Domain Rule 函数是唯一公式 owner。
 */
-import { CHARACTER_BY_ID } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { assertCanonicalSeatRoster } from "../../domain/state/queries/SeatRosterContract.js?build=20260816-fr-arch-14-runtime-closure";
-import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { CHARACTER_BY_ID } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260816-legacy-recovery";
+import { assertCanonicalSeatRoster } from "../../domain/state/queries/SeatRosterContract.js?build=20260816-legacy-recovery";
+import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js?build=20260816-legacy-recovery";
 
 /*
 功能
@@ -54,13 +54,13 @@ function getStatusIds(player) {
 
 /*
 功能
-计算排除指定实体后的可转移手牌数量。
+读取公开手牌数量。
 
 调用方
 projectRulePlayer 与 transfer projection。
 
 输入
-玩家摘要与排除 ID 集合。
+玩家摘要。
 
 输出
 非负手牌数量。
@@ -75,11 +75,11 @@ player.hand 或 player.handCount。
 无。
 
 边界与不变量
-与既有 legacy transferableHandCount 语义一致；有实体 hand 时按 ID 计数，否则用标量 handCount。
+有实体 hand 时按长度计数，否则用标量 handCount；排除语义由 Domain CardRules 解释。
 */
-function getProjectedHandCount(player, excludedCardIds = null) {
+function getProjectedHandCount(player) {
   if (Array.isArray(player?.hand)) {
-    return player.hand.filter((held) => !excludedCardIds?.has(held.id)).length;
+    return player.hand.length;
   }
   return Math.max(0, Number(player?.handCount ?? 0) || 0);
 }
@@ -109,8 +109,7 @@ getStatusIds。
 边界与不变量
 不返回实体引用；不读取 controllerType/aiMemory/AI 概率或隐藏手牌。
 */
-export function projectRulePlayer(player, options = {}) {
-  const excludedCardIds = options.excludedCardIds ?? null;
+export function projectRulePlayer(player, _options = {}) {
   return Object.freeze({
     id: player?.id,
     seatIndex: player?.seatIndex,
@@ -122,7 +121,10 @@ export function projectRulePlayer(player, options = {}) {
     energy: Number(player?.energy) || 0,
     maxEnergy: Number(player?.maxEnergy) || 0,
     attackRange: Number(player?.attackRange ?? 1) || 1,
-    handCount: getProjectedHandCount(player, excludedCardIds),
+    handCount: getProjectedHandCount(player),
+    handCardIds: Array.isArray(player?.hand)
+      ? Object.freeze(player.hand.map((card) => card?.id).filter(Boolean))
+      : null,
     equipmentDefinitionId: player?.equipment?.definitionId ?? player?.equipmentDefinitionId ?? null,
     huntMarkSourceId: player?.statuses?.huntMark?.sourceId
       ?? player?.huntMarkSourceId
@@ -133,13 +135,13 @@ export function projectRulePlayer(player, options = {}) {
 
 /*
 功能
-把玩家数组投影为扣除指定实体后的转移手牌 Domain Rule fact 数组。
+把玩家数组投影为携带 opaque 手牌 ID 的转移 Domain Rule fact 数组。
 
 调用方
 ActionGenerator transfer legality 与执行边界。
 
 输入
-玩家数组与排除 ID 集合。
+玩家数组与兼容保留的排除 ID 参数。
 
 输出
 冻结的 Domain Rule player fact 数组。
@@ -154,10 +156,10 @@ players 顺序与可转移手牌身份。
 projectRulePlayer。
 
 边界与不变量
-排除规则与 legacy transferableHandCount 一致；只改变 handCount，不改变其它事实。
+不解释排除规则；Domain CardRules 根据 handCardIds 与排除集合计算。
 */
-export function projectTransferRulePlayers(players, excludedCardIds = null) {
-  return Object.freeze((players ?? []).map((player) => projectRulePlayer(player, { excludedCardIds })));
+export function projectTransferRulePlayers(players, _excludedCardIds = null) {
+  return Object.freeze((players ?? []).map((player) => projectRulePlayer(player)));
 }
 
 /*

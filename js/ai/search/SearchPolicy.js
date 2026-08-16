@@ -17,8 +17,8 @@ Planner 与搜索策略测试。
 架构约束
 不得产生动作先验、领域转移项或最终价值；预算中断不能从 partial frontier（尚未完整物化的搜索前沿）重新选择。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260816-fr-arch-14-runtime-closure";
-import { SEARCH_STOP_REASON } from "./SearchBudget.js?build=20260816-fr-arch-14-runtime-closure";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260816-legacy-recovery";
+import { SEARCH_STOP_REASON } from "./SearchBudget.js?build=20260816-legacy-recovery";
 
 export class SearchPolicy {
   /*

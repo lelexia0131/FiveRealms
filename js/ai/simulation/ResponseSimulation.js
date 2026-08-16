@@ -17,13 +17,13 @@ state/Probability、正式 ResponsePolicy、GlobalBenefit assessment 与共享 s
 架构约束
 不得读取 Game/UI/Controller/Planner，不得复制 Policy、Value 或真实规则实现。
 */
-import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/response/ResponseRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { planningCounterDesire, planningDynamicCounterGain } from "../policy/ResponsePolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
-import { clampProbability, remainingCardDensity, unionProbability } from "./SimulationSupport.js?build=20260816-fr-arch-14-runtime-closure";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260816-legacy-recovery";
+import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/response/ResponseRules.js?build=20260816-legacy-recovery";
+import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js?build=20260816-legacy-recovery";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260816-legacy-recovery";
+import { planningCounterDesire, planningDynamicCounterGain } from "../policy/ResponsePolicy.js?build=20260816-legacy-recovery";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260816-legacy-recovery";
+import { clampProbability, remainingCardDensity, unionProbability } from "./SimulationSupport.js?build=20260816-legacy-recovery";
 
 /*
 功能

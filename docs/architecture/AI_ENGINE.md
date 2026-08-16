@@ -60,11 +60,11 @@ FR-ARCH-14 current facts：
 - `SearchRequest.rootSearchActions` 是 Worker 专用 root action 投影，`RootSearchAction.rehydrate` 从 SearchState/Definitions 恢复 search action；执行期 `ActionDescriptor` 保持窄 rebind 职责；
 - `SearchRng.snapshot` 携带 seed/state/draws；Worker outcome 返回 `rngAfter`；main thread exactly-once commit，新 session 不继承旧 RNG；
 - Fast profile `softTarget=500ms / deadline=900ms / watchdog=5000ms`；Normal profile `deadline=3000ms / watchdog=10000ms`；node-budget override 仍优先；
-- fake AI thinking wait 与 `searchElapsed` compensation 已停用；`utils/aiTiming` 不再调用任何 RNG；
-- production browser path 使用 `new Worker(url, { type:"module" })`；Node/headless 只使用同一 `runSearchRequest` 的 explicit local transport；
+- `searchElapsed` compensation 与 Search Compute minimum wait 已停用；`utils/aiTiming` 只采样独立 presentation RNG，Normal/Fast 可见节奏不会推进 Real Game RNG 或 Search RNG，simulation/headless 为零；
+- production browser path 使用 `new Worker(url, { type:"module" })`；浏览器缺少 Worker 时 fail fast，不允许静默回退主线程；Node/headless 使用同一 `runSearchRequest` 的 local transport；
 - browser Worker client 初始实例与 watchdog 重建实例共用同一 wiring；postMessage/messageerror 失败会清空 pending 并重建，不在下一次合法搜索上产生 false in-flight；
 - AI 弃牌阶段有 runtime invariant guard：即使 ChoicePort 异常 cancelled/declined/selectedIds 不足，AI 回合结束仍收束到 `hand.length <= hp`；
-- zero fake-thinking 下 gameplay SFX 不再受 `SoundManager` 墙钟节流，仅 UI `select` 保留防误触节流；
+- presentation pacing 与 gameplay SFX 解耦；连续 gameplay SFX 不受 `SoundManager` 墙钟节流，仅 UI `select` 保留防误触节流；
 - FR-ARCH-14 正式状态为 BLOCKED，代码与 CLI/browser-equivalent 回归已关闭，最终 PASS 等待真实浏览器验收。
 
 ## Historical Baseline and Migration Record

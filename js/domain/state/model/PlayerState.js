@@ -17,7 +17,7 @@ Player constructor 的 legacy composition 与未来 domain/rules consumer。
 架构约束
 不得依赖 application/adapters/ui/audio/ai/Game runtime；turnFlags/roundFlags/gameFlags 的规则归属延后处理，不在此声明。
 */
-import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
+import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
 
 /*
 功能

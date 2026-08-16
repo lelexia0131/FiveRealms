@@ -2,7 +2,7 @@
  * 旧混合配置 façade。领域规则值已由 domain/definitions/ruleset/RulesetDefinition.js 单一拥有；
  * 本文件继续保留 AI 搜索、展示节奏、调试与产品行为参数，直到后续阶段迁移。
  */
-import { RULESET_DEFINITION } from "../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
+import { RULESET_DEFINITION } from "../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
 
 export const GAME_CONFIG = Object.freeze({
   playerCount: RULESET_DEFINITION.playerCount,

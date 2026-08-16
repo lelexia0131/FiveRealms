@@ -17,7 +17,7 @@ cardRegistry、skillRegistry、Game 状态 workflow 与直接测试。
 架构约束
 不得依赖 Game/EventBus/UI/AI/application/adapters；禁止 statusId 具体规则分支。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260816-fr-arch-14-runtime-closure";
+import { bumpStateVersion } from "./StateVersion.js?build=20260816-legacy-recovery";
 
 /*
 功能

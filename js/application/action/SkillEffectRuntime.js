@@ -17,11 +17,11 @@ Domain mutation 经 transitions；随机与移动经注入 collaborator。
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime、RuleEngine 或 concrete adapters。
 */
-import { changeEnergy, changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { incrementAttackLimit } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { randomChoice } from "../../utils/helpers.js?build=20260816-fr-arch-14-runtime-closure";
-import { decideSkillEffect } from "../../domain/rules/skill/SkillRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { changeEnergy, changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260816-legacy-recovery";
+import { incrementAttackLimit } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
+import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-legacy-recovery";
+import { randomChoice } from "../../utils/helpers.js?build=20260816-legacy-recovery";
+import { decideSkillEffect } from "../../domain/rules/skill/SkillRules.js?build=20260816-legacy-recovery";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "heal", "damage", "drawCards",

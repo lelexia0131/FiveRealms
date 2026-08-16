@@ -17,7 +17,7 @@ adapters/ai/AiChoiceAdapter 的纯决策结果。
 架构约束
 不得依赖 concrete UI/AI、Game runtime、DOM 或 EventBus。
 */
-import { createChoiceResult } from "../ports/ChoicePort.js?build=20260816-fr-arch-14-runtime-closure";
+import { createChoiceResult } from "../ports/ChoicePort.js?build=20260816-legacy-recovery";
 
 /*
 功能
@@ -80,7 +80,7 @@ export function createAiResponseTimingDecorator(innerPort, {
     innerPort.request、createChoiceResult。
 
     边界与不变量
-    thinking on 必须早于 delay；cancelled 时不再询问 AI。
+    thinking on 必须早于 delay；cancelled/异常/失效时也必须在 finally 清除 thinking。
     */
     async request(choiceRequest) {
       if (choiceRequest?.kind !== "response") return innerPort.request(choiceRequest);
@@ -88,14 +88,17 @@ export function createAiResponseTimingDecorator(innerPort, {
       if (!actor) return createChoiceResult("cancelled", { reason:"unknown-actor" });
       const label = choiceRequest.context?.label ?? "";
       setThinking(true, actor, `正在考虑是否${label}`);
-      const waited = await delay();
-      if (!waited || !isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
-      const result = await innerPort.request(choiceRequest);
-      setThinking(false);
-      if (result.status === "declined" && choiceRequest.constraints.responseType !== "leverageAssault") {
-        setPrompt(`${actor.name}放弃${label}。`);
+      try {
+        const waited = await delay();
+        if (!waited || !isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
+        const result = await innerPort.request(choiceRequest);
+        if (result.status === "declined" && choiceRequest.constraints.responseType !== "leverageAssault") {
+          setPrompt(`${actor.name}放弃${label}。`);
+        }
+        return result;
+      } finally {
+        setThinking(false);
       }
-      return result;
     }
   });
 }

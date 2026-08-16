@@ -17,12 +17,12 @@ Domain Card/Ruleset Definitions、Domain JudgmentRules 与 state/Probability。
 架构约束
 雷达 category 解释来自 Domain Card Definitions；本模型只拥有未知判定牌概率分区。不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../state/Probability.js?build=20260816-legacy-recovery";
 
 export const RADAR_BASIC_DEFINITIONS = Object.freeze(
   Object.entries(CARD_DEFINITIONS)

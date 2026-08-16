@@ -17,39 +17,39 @@ Game、ResponseSystem、PublicCardPool、角色技能与测试。
 架构约束
 子组件不得回指 AIController；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
 */
-import { createInitialSearchState } from "./state/StateContracts.js?build=20260816-fr-arch-14-runtime-closure";
-import { Knowledge } from "./state/Knowledge.js?build=20260816-fr-arch-14-runtime-closure";
-import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260816-fr-arch-14-runtime-closure";
-import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260816-fr-arch-14-runtime-closure";
-import { ActionGenerator } from "./search/ActionGenerator.js?build=20260816-fr-arch-14-runtime-closure";
-import { ValueService } from "./value/ValueService.js?build=20260816-fr-arch-14-runtime-closure";
-import { StateValue } from "./value/StateValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260816-fr-arch-14-runtime-closure";
-import { Simulator } from "./simulation/Simulator.js?build=20260816-fr-arch-14-runtime-closure";
-import { AI_SEARCH_PROFILES, GAME_CONFIG } from "../config/gameConfig.js?build=20260816-fr-arch-14-runtime-closure";
-import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260816-fr-arch-14-runtime-closure";
-import { createSearchRequest } from "./search/SearchRequest.js?build=20260816-fr-arch-14-runtime-closure";
-import { describeRootSearchAction } from "./search/RootSearchAction.js?build=20260816-fr-arch-14-runtime-closure";
-import { createSearchResult, SEARCH_RESULT_STATUS } from "./search/SearchResult.js?build=20260816-fr-arch-14-runtime-closure";
-import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js?build=20260816-fr-arch-14-runtime-closure";
-import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260816-fr-arch-14-runtime-closure";
-import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260816-fr-arch-14-runtime-closure";
-import { Planner } from "./search/Planner.js?build=20260816-fr-arch-14-runtime-closure";
-import { SearchBudget } from "./search/SearchBudget.js?build=20260816-fr-arch-14-runtime-closure";
-import { SearchPolicy } from "./search/SearchPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260816-fr-arch-14-runtime-closure";
-import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260816-fr-arch-14-runtime-closure";
-import { FrontierValue } from "./search/FrontierValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { SearchPrior } from "./search/SearchPrior.js?build=20260816-fr-arch-14-runtime-closure";
-import { TransitionValue } from "./search/TransitionValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { Evaluator } from "./value/Evaluator.js?build=20260816-fr-arch-14-runtime-closure";
-import { ValueLedger } from "./value/ValueLedger.js?build=20260816-fr-arch-14-runtime-closure";
-import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260816-fr-arch-14-runtime-closure";
+import { createInitialSearchState } from "./state/StateContracts.js?build=20260816-legacy-recovery";
+import { Knowledge } from "./state/Knowledge.js?build=20260816-legacy-recovery";
+import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260816-legacy-recovery";
+import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260816-legacy-recovery";
+import { ActionGenerator } from "./search/ActionGenerator.js?build=20260816-legacy-recovery";
+import { ValueService } from "./value/ValueService.js?build=20260816-legacy-recovery";
+import { StateValue } from "./value/StateValue.js?build=20260816-legacy-recovery";
+import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260816-legacy-recovery";
+import { Simulator } from "./simulation/Simulator.js?build=20260816-legacy-recovery";
+import { AI_SEARCH_PROFILES, GAME_CONFIG } from "../config/gameConfig.js?build=20260816-legacy-recovery";
+import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260816-legacy-recovery";
+import { createSearchRequest } from "./search/SearchRequest.js?build=20260816-legacy-recovery";
+import { describeRootSearchAction } from "./search/RootSearchAction.js?build=20260816-legacy-recovery";
+import { createSearchResult, SEARCH_RESULT_STATUS } from "./search/SearchResult.js?build=20260816-legacy-recovery";
+import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js?build=20260816-legacy-recovery";
+import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260816-legacy-recovery";
+import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260816-legacy-recovery";
+import { Planner } from "./search/Planner.js?build=20260816-legacy-recovery";
+import { SearchBudget } from "./search/SearchBudget.js?build=20260816-legacy-recovery";
+import { SearchPolicy } from "./search/SearchPolicy.js?build=20260816-legacy-recovery";
+import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260816-legacy-recovery";
+import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260816-legacy-recovery";
+import { FrontierValue } from "./search/FrontierValue.js?build=20260816-legacy-recovery";
+import { SearchPrior } from "./search/SearchPrior.js?build=20260816-legacy-recovery";
+import { TransitionValue } from "./search/TransitionValue.js?build=20260816-legacy-recovery";
+import { Evaluator } from "./value/Evaluator.js?build=20260816-legacy-recovery";
+import { ValueLedger } from "./value/ValueLedger.js?build=20260816-legacy-recovery";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260816-legacy-recovery";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260816-legacy-recovery";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260816-legacy-recovery";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260816-legacy-recovery";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260816-legacy-recovery";
+import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260816-legacy-recovery";
 
 export class AIController {
   /*

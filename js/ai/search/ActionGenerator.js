@@ -25,27 +25,27 @@ import {
   getLeverageFirstTargetIds,
   getTransferReceiverIds,
   getTransferSourceIds
-} from "../../domain/rules/card/CardRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { hasStatus } from "../../domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../../domain/rules/card/CardRules.js?build=20260816-legacy-recovery";
+import { hasStatus } from "../../domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
 import {
   canUseSkillBase,
   getSkillCost,
   getSkillTargetIds
-} from "../../domain/rules/skill/SkillRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260816-fr-arch-14-runtime-closure";
-import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../../domain/rules/skill/SkillRules.js?build=20260816-legacy-recovery";
+import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260816-legacy-recovery";
+import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260816-legacy-recovery";
+import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260816-legacy-recovery";
 import {
   projectAttackUsage,
   projectRulePlayer,
   projectRulePlayers,
   projectTransferRulePlayers
-} from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
-import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260816-fr-arch-14-runtime-closure";
-import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../state/RuleProjection.js?build=20260816-legacy-recovery";
+import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260816-legacy-recovery";
+import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260816-legacy-recovery";
+import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260816-legacy-recovery";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -57,7 +57,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../state/Probability.js?build=20260816-legacy-recovery";
 
 export class ActionGenerator {
   /*
@@ -227,10 +227,10 @@ export class ActionGenerator {
   边界与不变量
   目标公式只由 Domain CardRules 解释；不在此过滤 AI policy。
   */
-  getCardTargetsFromRule(players, source, card) {
+  getCardTargetsFromRule(players, source, card, isRangeLegal = null) {
     const rulePlayers = this.projectPlayers(players);
     const sourceFact = findPlayerFact(rulePlayers, source.id);
-    return this.resolveRuleTargets(players, getCardTargetIds(rulePlayers, sourceFact, card));
+    return this.resolveRuleTargets(players, getCardTargetIds(rulePlayers, sourceFact, card, isRangeLegal));
   }
 
   /*
@@ -258,10 +258,10 @@ export class ActionGenerator {
   边界与不变量
   第二目标只受 Domain 距离规则约束，不检查次数或手牌。
   */
-  getAssaultTargetsFromRule(players, source) {
+  getAssaultTargetsFromRule(players, source, isRangeLegal = null) {
     const rulePlayers = this.projectPlayers(players);
     const sourceFact = findPlayerFact(rulePlayers, source.id);
-    return this.resolveRuleTargets(players, getAssaultTargetIds(rulePlayers, sourceFact));
+    return this.resolveRuleTargets(players, getAssaultTargetIds(rulePlayers, sourceFact, isRangeLegal));
   }
 
   /*
@@ -289,10 +289,10 @@ export class ActionGenerator {
   边界与不变量
   第一目标装备与第二目标距离公式只由 Domain 解释。
   */
-  getLeverageFirstTargetsFromRule(players, source) {
+  getLeverageFirstTargetsFromRule(players, source, isRangeLegal = null) {
     const rulePlayers = this.projectPlayers(players);
     const sourceFact = findPlayerFact(rulePlayers, source.id);
-    return this.resolveRuleTargets(players, getLeverageFirstTargetIds(rulePlayers, sourceFact));
+    return this.resolveRuleTargets(players, getLeverageFirstTargetIds(rulePlayers, sourceFact, isRangeLegal));
   }
 
   /*
@@ -320,11 +320,11 @@ export class ActionGenerator {
   边界与不变量
   排除规则与 legacy transferableHandCount 一致。
   */
-  getTransferSourcesFromRule(players, source, card, excludedCardIds = null) {
+  getTransferSourcesFromRule(players, source, card, excludedCardIds = null, isRangeLegal = null) {
     const exclusions = excludedCardIds ?? (card?.id ? new Set([card.id]) : null);
     const rulePlayers = this.projectTransferPlayers(players, exclusions);
     const sourceFact = findPlayerFact(rulePlayers, source.id);
-    return this.resolveRuleTargets(players, getTransferSourceIds(rulePlayers, sourceFact, card, exclusions));
+    return this.resolveRuleTargets(players, getTransferSourceIds(rulePlayers, sourceFact, card, exclusions, isRangeLegal));
   }
 
   /*
@@ -352,12 +352,12 @@ export class ActionGenerator {
   边界与不变量
   接收者排除来源自身；公式只由 Domain CardRules 解释。
   */
-  getTransferReceiversFromRule(players, source, from, card) {
+  getTransferReceiversFromRule(players, source, from, card, isRangeLegal = null) {
     const exclusions = card?.id ? new Set([card.id]) : null;
     const rulePlayers = this.projectTransferPlayers(players, exclusions);
     const sourceFact = findPlayerFact(rulePlayers, source.id);
     const fromFact = findPlayerFact(rulePlayers, from.id);
-    return this.resolveRuleTargets(players, getTransferReceiverIds(rulePlayers, sourceFact, fromFact, card));
+    return this.resolveRuleTargets(players, getTransferReceiverIds(rulePlayers, sourceFact, fromFact, card, isRangeLegal));
   }
 
   /*
@@ -385,10 +385,42 @@ export class ActionGenerator {
   边界与不变量
   技能目标公式只由 Domain SkillRules 解释。
   */
-  getSkillTargetsFromRule(players, source, skill) {
+  getSkillTargetsFromRule(players, source, skill, isRangeLegal = null) {
     if (!skill?.rangeRule) return [];
     const rulePlayers = this.projectPlayers(players);
-    return this.resolveRuleTargets(players, getSkillTargetIds(rulePlayers, source.id, skill));
+    return this.resolveRuleTargets(players, getSkillTargetIds(rulePlayers, source.id, skill, isRangeLegal));
+  }
+
+  /*
+  功能
+  判断 SearchState 的任一概率装备世界是否满足 Domain 请求的距离约束。
+
+  调用方
+  generateFromVisible 的 Domain target rule 注入边界。
+
+  输入
+  SearchState、source、target 与 Domain 提供的 range。
+
+  输出
+  布尔值。
+
+  读取状态
+  公开座位、存活装备定义与 equipmentRetentionProbability。
+
+  写入状态
+  无。
+
+  调用函数
+  getRangeConditionBranches。
+
+  边界与不变量
+  Domain 仍拥有目标类型语义；这里只回答是否存在概率大于 epsilon 的合法距离世界。
+  */
+  hasPossibleRangeWorld(state, source, target, range) {
+    const sourceState = state?.players?.find((player) => player.id === source?.id) ?? source;
+    const targetState = state?.players?.find((player) => player.id === target?.id) ?? target;
+    return getRangeConditionBranches({ state }, { source:sourceState, target:targetState, range })
+      .some((branch) => branch.matches && branch.probability > PROBABILITY_EPSILON);
   }
 
   /*
@@ -471,16 +503,16 @@ export class ActionGenerator {
   边界与不变量
   Generator 只提供合法集合；正收益过滤和 tie-break 属正式 Policy，真实实体移动不在此发生。
   */
-  chooseVisibleTransferPlan(state, actor, card, remainingCardCounts = null) {
+  chooseVisibleTransferPlan(state, actor, card, remainingCardCounts = null, isRangeLegal = null) {
     const players = state?.players ?? [];
     const excludedCardIds = card.id ? new Set([card.id]) : null;
-    const sources = this.getTransferSourcesFromRule(players, actor, card, excludedCardIds);
+    const sources = this.getTransferSourcesFromRule(players, actor, card, excludedCardIds, isRangeLegal);
     return this.transferPolicy.choose({
       actor,
       sources,
       excludedCardIds,
       remainingCardCounts,
-      getReceivers:(from) => this.getTransferReceiversFromRule(players, actor, from, card)
+      getReceivers:(from) => this.getTransferReceiversFromRule(players, actor, from, card, isRangeLegal)
     });
   }
 
@@ -620,6 +652,34 @@ export class ActionGenerator {
     const alive = state.players.filter((player) => player.alive).sort((a,b) => a.seatIndex - b.seatIndex);
     // 深层规则输入是 SearchState canonical projection，Domain Rules 只接收 data-only facts。
     const enemies = alive.filter((player) => player.battleTeam !== actor.battleTeam);
+    /*
+    功能
+    把当前 SearchState 绑定成 Domain target rules 所需的概率距离 predicate。
+
+    调用方
+    generateFromVisible 内的 card/skill/transfer/leverage target enumeration。
+
+    输入
+    Domain 投影的 source、target 与 range。
+
+    输出
+    布尔值。
+
+    读取状态
+    当前 generateFromVisible 的 state。
+
+    写入状态
+    无。
+
+    调用函数
+    hasPossibleRangeWorld。
+
+    边界与不变量
+    只回答候选存在性；精确 execution probability 仍由 attachProbabilityBranches 计算。
+    */
+    const isRangeLegal = (source, target, range) => this.hasPossibleRangeWorld(
+      state, source, target, range
+    );
     const actions = [];
     for (const held of actor.hand ?? []) {
       const definition = CARD_DEFINITIONS[held.definitionId];
@@ -632,7 +692,7 @@ export class ActionGenerator {
         )) continue;
       if (card.definitionId === "lightning" && hasStatus(projectRulePlayer(actor), "lightning")) continue;
       if (card.definitionId === "assault") {
-        for (const target of this.getCardTargetsFromRule(state.players, actor, card)) {
+        for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) {
           actions.push({ type:"card", card, targets:[target] });
         }
         continue;
@@ -640,17 +700,18 @@ export class ActionGenerator {
       if (card.definitionId === "recover" && (actor.hp >= actor.maxHp || (actor.recoverLimit !== null && actor.recoverUsed >= actor.recoverLimit))) continue;
       if (card.definitionId === "charge" && actor.energy >= actor.maxEnergy) continue;
       if (card.definitionId === "transfer") {
-        const selection = this.chooseVisibleTransferPlan(state, actor, card, state.remainingCardCounts ?? null);
+        const selection = this.chooseVisibleTransferPlan(
+          state, actor, card, state.remainingCardCounts ?? null, isRangeLegal
+        );
         if (selection) actions.push({ type:"card", card, targets:[], selection });
         continue;
       }
       if (card.definitionId === "leverage") {
-        const firstTargets = alive.filter((firstTarget) => firstTarget.id !== actor.id
-          && firstTarget.equipmentDefinitionId
-          && (firstTarget.equipmentRetentionProbability ?? 1) > 0
-          && this.getAssaultTargetsFromRule(state.players, firstTarget).length > 0);
+        const firstTargets = this.getLeverageFirstTargetsFromRule(
+          state.players, actor, isRangeLegal
+        ).filter((firstTarget) => (firstTarget.equipmentRetentionProbability ?? 1) > PROBABILITY_EPSILON);
         for (const firstTarget of firstTargets) {
-          for (const secondTarget of this.getAssaultTargetsFromRule(state.players, firstTarget)) {
+          for (const secondTarget of this.getAssaultTargetsFromRule(state.players, firstTarget, isRangeLegal)) {
             actions.push({
               type:"card",
               card,
@@ -667,13 +728,13 @@ export class ActionGenerator {
         continue;
       }
       if (["singleEnemy","singleUnsealedEnemy"].includes(card.targetType)) {
-        for (const target of this.getCardTargetsFromRule(state.players, actor, card)) {
+        for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) {
           actions.push({ type:"card", card, targets:[target] });
         }
-      } else if (card.targetType === "singleAlly") for (const target of this.getCardTargetsFromRule(state.players, actor, card)) actions.push({ type:"card", card, targets:[target] });
-      else if (card.targetType === "otherWithCards") for (const target of this.getCardTargetsFromRule(state.players, actor, card)) actions.push({ type:"card", card, targets:[target] });
+      } else if (card.targetType === "singleAlly") for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) actions.push({ type:"card", card, targets:[target] });
+      else if (card.targetType === "otherWithCards") for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) actions.push({ type:"card", card, targets:[target] });
       else if (card.targetType === "otherWithCardsOrEquipment") {
-        const targets = this.getCardTargetsFromRule(state.players, actor, card);
+        const targets = this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal);
         for (const target of this.actionCandidatePolicy.filterCardTargets(
           card,
           actor,
@@ -688,12 +749,12 @@ export class ActionGenerator {
         || this.actionCandidatePolicy.canBenefitFromBreakArmy(actor))
       && !(skill.id === "allIn" && this.actionCandidatePolicy.isZeroBenefitAllIn(actor))) {
             let targets = [];
-      if (skill.id === "barrier") targets = this.getSkillTargetsFromRule(state.players, actor, skill);
-      else if (skill.id === "resonance") targets = this.getSkillTargetsFromRule(state.players, actor, skill);
-      else if (skill.id === "symbiosis") targets = this.getSkillTargetsFromRule(state.players, actor, skill);
-      else if (skill.id === "stealSkill") targets = this.getSkillTargetsFromRule(state.players, actor, skill);
+      if (skill.id === "barrier") targets = this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal);
+      else if (skill.id === "resonance") targets = this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal);
+      else if (skill.id === "symbiosis") targets = this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal);
+      else if (skill.id === "stealSkill") targets = this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal);
       else if (skill.id === "hunt") {
-        const ruleTargets = new Set(this.getSkillTargetsFromRule(state.players, actor, skill)
+        const ruleTargets = new Set(this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal)
           .map((target) => target.id));
         targets = enemies.filter((player) => {
           if (ruleTargets.has(player.id)) return true;

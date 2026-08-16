@@ -17,19 +17,19 @@ Domain TeamRules/TurnRules/transitions、Application Action/Combat/Response 能�
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、Planner、SearchState 或 concrete adapters。
 */
-import { getDrawCountFromRules, getTeamRules, getTurnEnergyBreakdownFromRules } from "../../domain/rules/team/TeamRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getDrawCountFromRules, getTeamRules, getTurnEnergyBreakdownFromRules } from "../../domain/rules/team/TeamRules.js?build=20260816-legacy-recovery";
 import {
   calculateNextActorIndex, createGlobalTurnReactiveState, createRoundUsageState,
   createTurnUsageState, shouldSkipActionPhase
-} from "../../domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-fr-arch-14-runtime-closure";
-import { setCurrentPlayerIndex, setCurrentRound, setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../../domain/rules/turn/TurnRules.js?build=20260816-legacy-recovery";
+import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260816-legacy-recovery";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-legacy-recovery";
+import { setCurrentPlayerIndex, setCurrentRound, setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260816-legacy-recovery";
+import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics", "runTurn",
-  "gainEnergy", "drawCards", "cleanupDefeatedZones", "delay",
+  "gainEnergy", "drawCards", "cleanupDefeatedZones", "delay", "getAiDelay",
   "getTeamRules", "waitForHumanPlayEnd", "runAiPlayPhase", "choiceCoordinator",
   "choiceContexts", "createId",
   "getActionCandidates", "selectAction", "resolvePlannedAction", "getPlannedSequence",
@@ -294,7 +294,7 @@ export function createTurnWorkflow(dependencies) {
   getActionCandidates、selectAction、resolvePlannedAction、getPlannedSequence、playCard、useActiveSkill。
 
   边界与不变量
-  计划重用必须重绑当前合法实体；执行失败立即停止；AI thinking 只反映实际 search compute。
+  计划重用必须重绑当前合法实体；执行失败立即停止；search compute 与可见 presentation pacing 使用独立预算。
   */
   async function takeAiPlayPhase(player, gameId) {
     const state = runtime.getState();
@@ -302,12 +302,15 @@ export function createTurnWorkflow(dependencies) {
     try {
       runtime.presentation.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
       runtime.presentation.showThinking({ playerId: player.id, message: "正在观察战场与可用资源" });
+      let complexPosition = false;
       try {
-        runtime.getActionCandidates(player);
+        complexPosition = runtime.getActionCandidates(player).length > runtime.getAiBeamWidth();
       } catch (error) {
         runtime.diagnostics.reportWorkflowError("AI", `${player.name}生成合法动作失败，安全结束出牌阶段`, error);
         return;
       }
+      if (!(await runtime.delay(runtime.getAiDelay("initial", { complex:complexPosition })))) return;
+      if (!runtime.isSessionValid(gameId)) return;
       for (let count = 0; count < runtime.getAiMaxActions(); count += 1) {
         if (!runtime.isSessionValid(gameId) || state.isGameOver || !player.alive) break;
         let action = null;
@@ -328,6 +331,7 @@ export function createTurnWorkflow(dependencies) {
         if (action.type === "end") {
           runtime.presentation.setPrompt(`${player.name}准备结束出牌阶段。`);
           runtime.presentation.showThinking({ playerId: player.id, message: "正在收束回合" });
+          if (!(await runtime.delay(runtime.getAiDelay("end")))) return;
           if (!runtime.isSessionValid(gameId)) return;
           break;
         }
@@ -335,6 +339,8 @@ export function createTurnWorkflow(dependencies) {
         const targetLabel = runtime.getActionTargetLabel(player, action.type === "card" ? action.card : action.skill, action.targets, action.selection);
         const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
         runtime.presentation.showThinking({ playerId: player.id, message: actionDescription });
+        if (!(await runtime.delay(runtime.getAiDelay("action")))) return;
+        if (!runtime.isSessionValid(gameId)) return;
         runtime.presentation.clearThinking();
         let executed = false;
         try {
@@ -382,7 +388,7 @@ export function createTurnWorkflow(dependencies) {
   手牌经注入 discardCardFromHand 提交。
 
   调用函数
-  requestDiscard、chooseDiscards、delay、discardCardFromHand。
+  requestDiscard、chooseDiscards、getAiDelay、delay、discardCardFromHand。
 
   边界与不变量
   human/AI 分支是 participant mechanism policy；实际 mechanism 在 composition collaborator；不迁移 discard semantic。
@@ -410,8 +416,13 @@ export function createTurnWorkflow(dependencies) {
         decision = await runtime.choiceCoordinator.request(choiceRequest);
       } else {
         runtime.presentation.showThinking({ playerId: player.id, message: `正在斟酌弃置${required}张牌` });
-        decision = await runtime.choiceCoordinator.request(choiceRequest);
-        runtime.presentation.clearThinking();
+        try {
+          if (!(await runtime.delay(runtime.getAiDelay("discard")))) return;
+          if (!runtime.isSessionValid(gameId)) return;
+          decision = await runtime.choiceCoordinator.request(choiceRequest);
+        } finally {
+          runtime.presentation.clearThinking();
+        }
       }
     } finally {
       runtime.choiceContexts.delete(requestId);

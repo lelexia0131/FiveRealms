@@ -1,5 +1,5 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260816-fr-arch-14-runtime-closure";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260816-fr-arch-14-runtime-closure";
+import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260816-legacy-recovery";
+import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260816-legacy-recovery";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

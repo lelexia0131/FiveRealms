@@ -17,29 +17,29 @@ AI value/policy/simulation/search modules 与 Domain Definitions/Rules。
 架构约束
 不得 import core/Game、application、UI/Audio/DOM 或 Domain transitions；不得使用 Math.random。
 */
-import { getMaxEnergy, getTurnEnergyBreakdown } from "../../../domain/rules/team/TeamRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { sampleHiddenWorlds } from "../../../ai/state/BeliefState.js?build=20260816-fr-arch-14-runtime-closure";
-import { Evaluator } from "../../../ai/value/Evaluator.js?build=20260816-fr-arch-14-runtime-closure";
-import { StateValue } from "../../../ai/value/StateValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { ValueLedger } from "../../../ai/value/ValueLedger.js?build=20260816-fr-arch-14-runtime-closure";
-import { ValueService } from "../../../ai/value/ValueService.js?build=20260816-fr-arch-14-runtime-closure";
-import { ValueSimulationQuery } from "../../../ai/simulation/ValueSimulationQuery.js?build=20260816-fr-arch-14-runtime-closure";
-import { Simulator } from "../../../ai/simulation/Simulator.js?build=20260816-fr-arch-14-runtime-closure";
-import { ActionCandidatePolicy } from "../../../ai/policy/ActionCandidatePolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { TransferPolicy } from "../../../ai/policy/TransferPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { ActionGenerator } from "../../../ai/search/ActionGenerator.js?build=20260816-fr-arch-14-runtime-closure";
-import { CandidateMaterializer } from "../../../ai/search/CandidateMaterializer.js?build=20260816-fr-arch-14-runtime-closure";
-import { CounterfactualTerms } from "../../../ai/search/CounterfactualTerms.js?build=20260816-fr-arch-14-runtime-closure";
-import { FrontierValue } from "../../../ai/search/FrontierValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { Planner } from "../../../ai/search/Planner.js?build=20260816-fr-arch-14-runtime-closure";
-import { SearchBudget } from "../../../ai/search/SearchBudget.js?build=20260816-fr-arch-14-runtime-closure";
-import { SearchPolicy } from "../../../ai/search/SearchPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { SearchPrior } from "../../../ai/search/SearchPrior.js?build=20260816-fr-arch-14-runtime-closure";
-import { SiblingTransitionTerms } from "../../../ai/search/SiblingTransitionTerms.js?build=20260816-fr-arch-14-runtime-closure";
-import { tacticResolutionScale } from "../../../ai/search/TacticResolutionQuery.js?build=20260816-fr-arch-14-runtime-closure";
-import { TransitionValue } from "../../../ai/search/TransitionValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { ActionDescriptor } from "../../../ai/search/ActionDescriptor.js?build=20260816-fr-arch-14-runtime-closure";
-import { SearchRng } from "../../../ai/search/SearchRng.js?build=20260816-fr-arch-14-runtime-closure";
+import { getMaxEnergy, getTurnEnergyBreakdown } from "../../../domain/rules/team/TeamRules.js?build=20260816-legacy-recovery";
+import { sampleHiddenWorlds } from "../../../ai/state/BeliefState.js?build=20260816-legacy-recovery";
+import { Evaluator } from "../../../ai/value/Evaluator.js?build=20260816-legacy-recovery";
+import { StateValue } from "../../../ai/value/StateValue.js?build=20260816-legacy-recovery";
+import { ValueLedger } from "../../../ai/value/ValueLedger.js?build=20260816-legacy-recovery";
+import { ValueService } from "../../../ai/value/ValueService.js?build=20260816-legacy-recovery";
+import { ValueSimulationQuery } from "../../../ai/simulation/ValueSimulationQuery.js?build=20260816-legacy-recovery";
+import { Simulator } from "../../../ai/simulation/Simulator.js?build=20260816-legacy-recovery";
+import { ActionCandidatePolicy } from "../../../ai/policy/ActionCandidatePolicy.js?build=20260816-legacy-recovery";
+import { TransferPolicy } from "../../../ai/policy/TransferPolicy.js?build=20260816-legacy-recovery";
+import { ActionGenerator } from "../../../ai/search/ActionGenerator.js?build=20260816-legacy-recovery";
+import { CandidateMaterializer } from "../../../ai/search/CandidateMaterializer.js?build=20260816-legacy-recovery";
+import { CounterfactualTerms } from "../../../ai/search/CounterfactualTerms.js?build=20260816-legacy-recovery";
+import { FrontierValue } from "../../../ai/search/FrontierValue.js?build=20260816-legacy-recovery";
+import { Planner } from "../../../ai/search/Planner.js?build=20260816-legacy-recovery";
+import { SearchBudget } from "../../../ai/search/SearchBudget.js?build=20260816-legacy-recovery";
+import { SearchPolicy } from "../../../ai/search/SearchPolicy.js?build=20260816-legacy-recovery";
+import { SearchPrior } from "../../../ai/search/SearchPrior.js?build=20260816-legacy-recovery";
+import { SiblingTransitionTerms } from "../../../ai/search/SiblingTransitionTerms.js?build=20260816-legacy-recovery";
+import { tacticResolutionScale } from "../../../ai/search/TacticResolutionQuery.js?build=20260816-legacy-recovery";
+import { TransitionValue } from "../../../ai/search/TransitionValue.js?build=20260816-legacy-recovery";
+import { ActionDescriptor } from "../../../ai/search/ActionDescriptor.js?build=20260816-legacy-recovery";
+import { SearchRng } from "../../../ai/search/SearchRng.js?build=20260816-legacy-recovery";
 
 /*
 功能

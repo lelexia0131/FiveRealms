@@ -3,8 +3,8 @@
  * queue/active/dyingContext 的真实 owner 已迁至 js/application/combat/DyingWorkflow.js；
  * 本文件只做 Game collaborator 适配与方法转发。
  */
-import { createId } from "../utils/helpers.js?build=20260816-fr-arch-14-runtime-closure";
-import { createDyingWorkflow } from "../application/combat/DyingWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
+import { createId } from "../utils/helpers.js?build=20260816-legacy-recovery";
+import { createDyingWorkflow } from "../application/combat/DyingWorkflow.js?build=20260816-legacy-recovery";
 
 /*
 功能

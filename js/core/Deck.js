@@ -3,11 +3,11 @@
  * 它依赖卡牌配置和随机工具，不负责合法性、日志或卡牌效果。
  * 所有在手牌、装备区或 resolvingCards 中的卡都不会进入重洗来源。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260816-fr-arch-14-runtime-closure";
-import { createDeckZoneState } from "../domain/state/model/ZoneState.js?build=20260816-fr-arch-14-runtime-closure";
-import { appendCardToZone, commitDeckBuild, commitReshuffle, moveCardBetweenZones, removeCardFromZone, takeTopCard } from "../domain/state/transitions/ZoneTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { createId, shuffled } from "../utils/helpers.js?build=20260816-fr-arch-14-runtime-closure";
-import { Debug } from "../utils/debug.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260816-legacy-recovery";
+import { createDeckZoneState } from "../domain/state/model/ZoneState.js?build=20260816-legacy-recovery";
+import { appendCardToZone, commitDeckBuild, commitReshuffle, moveCardBetweenZones, removeCardFromZone, takeTopCard } from "../domain/state/transitions/ZoneTransitions.js?build=20260816-legacy-recovery";
+import { createId, shuffled } from "../utils/helpers.js?build=20260816-legacy-recovery";
+import { Debug } from "../utils/debug.js?build=20260816-legacy-recovery";
 
 export class Deck {
   /*

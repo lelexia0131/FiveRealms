@@ -2,8 +2,8 @@
  * 隐藏实体牌令牌 legacy façade。Application 已拥有 token/session authority；
  * 本文件只把真实 Player/Card entity 适配为 application/choice data-only store。
  */
-import { createId } from "../utils/helpers.js?build=20260816-fr-arch-14-runtime-closure";
-import { createHiddenCardSelectionStore } from "../application/choice/HiddenCardSelectionStore.js?build=20260816-fr-arch-14-runtime-closure";
+import { createId } from "../utils/helpers.js?build=20260816-legacy-recovery";
+import { createHiddenCardSelectionStore } from "../application/choice/HiddenCardSelectionStore.js?build=20260816-legacy-recovery";
 
 export class CardSelectionSystem {
   /*

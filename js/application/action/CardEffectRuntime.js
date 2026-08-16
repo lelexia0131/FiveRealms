@@ -17,11 +17,11 @@ private intent 只存在于当前调用栈；public context 不泄漏 hidden car
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime、RuleEngine 或 concrete adapters。
 */
-import { isExposeWeaknessConsumable } from "../../domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { getAssaultBaseDamage, getChargeEnergyAmount, getDuelDamage, getHarvestDrawCount, getMutualBenefitRevealCount, getNextExposeWeaknessStacks, getProvokeDamage, getRecoverHealAmount, getShieldAmount, getShockwaveDamage, getSymbiosisHealAmount } from "../../domain/rules/card/CardEffectRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { incrementAttackUsed, incrementRecoverUsed } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { isExposeWeaknessConsumable } from "../../domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
+import { getAssaultBaseDamage, getChargeEnergyAmount, getDuelDamage, getHarvestDrawCount, getMutualBenefitRevealCount, getNextExposeWeaknessStacks, getProvokeDamage, getRecoverHealAmount, getShieldAmount, getShockwaveDamage, getSymbiosisHealAmount } from "../../domain/rules/card/CardEffectRules.js?build=20260816-legacy-recovery";
+import { changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260816-legacy-recovery";
+import { incrementAttackUsed, incrementRecoverUsed } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
+import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-legacy-recovery";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "damage", "heal", "gainEnergy", "drawCards",

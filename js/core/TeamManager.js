@@ -2,9 +2,9 @@
  * 本文件负责 2V3 阵营生成与阵营查询，依赖游戏配置和洗牌工具。
  * 它不根据角色、名字或座位推断阵营；battleTeam 是唯一判断来源。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260816-fr-arch-14-runtime-closure";
-import { getTeamSize } from "../domain/rules/team/TeamRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { createRuleStateView } from "../domain/state/queries/RuleStateView.js?build=20260816-fr-arch-14-runtime-closure";
+import { GAME_CONFIG } from "../config/gameConfig.js?build=20260816-legacy-recovery";
+import { getTeamSize } from "../domain/rules/team/TeamRules.js?build=20260816-legacy-recovery";
+import { createRuleStateView } from "../domain/state/queries/RuleStateView.js?build=20260816-legacy-recovery";
 
 export class TeamManager {
   /**

@@ -17,17 +17,17 @@ Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
 架构约束
 真实状态/监听顺序以 Game、JudgmentSystem 与 skillRegistry 为权威；不拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
-import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { interpretDefenseJudgment } from "../../domain/rules/judgment/JudgmentRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260816-fr-arch-14-runtime-closure";
-import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260816-legacy-recovery";
+import { interpretDefenseJudgment } from "../../domain/rules/judgment/JudgmentRules.js?build=20260816-legacy-recovery";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260816-legacy-recovery";
+import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260816-legacy-recovery";
 import {
   RADAR_BASIC_DEFINITIONS,
   buildRadarJudgmentProbabilities
-} from "../domain/RadarModel.js?build=20260816-fr-arch-14-runtime-closure";
-import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../domain/RadarModel.js?build=20260816-legacy-recovery";
+import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260816-legacy-recovery";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -38,12 +38,12 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../state/Probability.js?build=20260816-legacy-recovery";
 import {
   clampProbability,
   remainingCardDensity,
   unionProbability
-} from "./SimulationSupport.js?build=20260816-fr-arch-14-runtime-closure";
+} from "./SimulationSupport.js?build=20260816-legacy-recovery";
 
 /*
 功能

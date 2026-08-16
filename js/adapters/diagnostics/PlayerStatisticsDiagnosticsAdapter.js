@@ -17,8 +17,8 @@ application/ports/DiagnosticsPort。
 架构约束
 不得依赖 Game class、AI、UI、Domain transitions 或其它 adapter。
 */
-import { createDiagnosticsPort } from "../../application/ports/DiagnosticsPort.js?build=20260816-fr-arch-14-runtime-closure";
-import { Debug } from "../../utils/debug.js?build=20260816-fr-arch-14-runtime-closure";
+import { createDiagnosticsPort } from "../../application/ports/DiagnosticsPort.js?build=20260816-legacy-recovery";
+import { Debug } from "../../utils/debug.js?build=20260816-legacy-recovery";
 
 /*
 功能

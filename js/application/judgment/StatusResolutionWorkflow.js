@@ -17,11 +17,11 @@ Domain StatusRules、Domain transitions、Application Response status-counter、
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime、config/cardConfig 或 concrete adapters。
 */
-import { nextLightningReceiverId } from "../../domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-fr-arch-14-runtime-closure";
-import { setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { RESPONSE_STATUS, isCancelledResponse } from "../response/ResponseResult.js?build=20260816-fr-arch-14-runtime-closure";
+import { nextLightningReceiverId } from "../../domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-legacy-recovery";
+import { setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
+import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-legacy-recovery";
+import { RESPONSE_STATUS, isCancelledResponse } from "../response/ResponseResult.js?build=20260816-legacy-recovery";
 
 const REQUIRED_DEPENDENCIES = [
   "getState",

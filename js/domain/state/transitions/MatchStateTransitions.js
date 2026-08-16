@@ -17,7 +17,7 @@ Game、DyingSystem、JudgmentSystem、PublicCardPool 的 legacy commit façade�
 架构约束
 不得依赖 Game/EventBus/UI/AI/application/adapters；不得计算下一玩家、轮次或胜利者。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260816-fr-arch-14-runtime-closure";
+import { bumpStateVersion } from "./StateVersion.js?build=20260816-legacy-recovery";
 
 /*
 功能

@@ -20,12 +20,12 @@ value/CardValue、value/ThreatValue 与 state/Probability。
 import {
   getBaseCardAiValue,
   getRoleCardAiValue
-} from "../value/CardValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { ThreatCalculator } from "../value/ThreatValue.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../value/CardValue.js?build=20260816-legacy-recovery";
+import { ThreatCalculator } from "../value/ThreatValue.js?build=20260816-legacy-recovery";
 import {
   PROBABILITY_EPSILON,
   totalBranchProbability
-} from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../state/Probability.js?build=20260816-legacy-recovery";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

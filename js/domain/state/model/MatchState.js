@@ -17,7 +17,7 @@ Game constructor 的 legacy composition 与未来 application/match consumer。
 架构约束
 不得依赖 application/adapters/ui/audio/ai/Game runtime；不得维护 Game.state 的 application-only 字段。
 */
-import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
+import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
 
 /*
 功能

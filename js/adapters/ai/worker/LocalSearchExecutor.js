@@ -17,7 +17,7 @@ runSearchRequest。
 架构约束
 不得 import core/Game/application/UI/Audio；browser production 不得自动静默使用本 executor。
 */
-import { runSearchRequest } from "./WorkerSearchRuntime.js?build=20260816-fr-arch-14-runtime-closure";
+import { runSearchRequest } from "./WorkerSearchRuntime.js?build=20260816-legacy-recovery";
 
 /*
 功能

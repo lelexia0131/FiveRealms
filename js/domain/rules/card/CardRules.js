@@ -17,9 +17,9 @@ Domain DistanceRules、TurnRules、StatusRules 与 definitions。
 架构约束
 不得依赖 Game/RuleEngine/application/adapters/EventBus；不得 await、emit、随机、mutation。
 */
-import { getDistance } from "../distance/DistanceRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { hasAttackUseRemaining } from "../turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { hasStatus } from "../status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getDistance } from "../distance/DistanceRules.js?build=20260816-legacy-recovery";
+import { hasAttackUseRemaining } from "../turn/TurnRules.js?build=20260816-legacy-recovery";
+import { hasStatus } from "../status/StatusRules.js?build=20260816-legacy-recovery";
 
 /*
 功能
@@ -75,10 +75,13 @@ getDistance。
 边界与不变量
 自身恒 true；ignoresDistance 或未声明 effectRange 恒 true。
 */
-export function isWithinEffectRange(players, source, target, card) {
+export function isWithinEffectRange(players, source, target, card, isRangeLegal = null) {
   if (!source || !target || !target.alive) return false;
   if (source.id === target.id) return true;
   if (card?.ignoresDistance || card?.effectRange == null) return true;
+  if (typeof isRangeLegal === "function") {
+    return Boolean(isRangeLegal(source, target, card.effectRange));
+  }
   const distance = getDistance(
     players,
     source,
@@ -114,12 +117,15 @@ getDistance、hasStatus。
 边界与不变量
 只包含存活敌人且在攻击范围内；不读取手牌或次数。
 */
-export function getCardTargetIds(players, source, card) {
+export function getCardTargetIds(players, source, card, isRangeLegal = null) {
   const alive = players.filter((player) => player.alive);
   const enemies = alive.filter((player) => player.battleTeam !== source.battleTeam);
   switch (card.targetType) {
     case "singleEnemyInRange":
       return enemies.filter((target) => {
+        if (typeof isRangeLegal === "function") {
+          return Boolean(isRangeLegal(source, target, source.attackRange ?? 0));
+        }
         const distance = getDistance(
           players, source, target,
           source.equipmentDefinitionId ?? null,
@@ -133,7 +139,7 @@ export function getCardTargetIds(players, source, card) {
     case "otherWithCardsOrEquipment":
       return alive.filter((player) => player.id !== source.id
         && (player.handCount > 0 || player.equipmentDefinitionId)
-        && isWithinEffectRange(players, source, player, card)).map((player) => player.id);
+        && isWithinEffectRange(players, source, player, card, isRangeLegal)).map((player) => player.id);
     case "anyWithCards": return alive.filter((player) => player.handCount > 0).map((player) => player.id);
     case "singleAlly": return alive.filter((player) => player.battleTeam === source.battleTeam).map((player) => player.id);
     case "self": return [source.id];
@@ -170,10 +176,13 @@ getDistance。
 边界与不变量
 只要求存活、非 source 且首目标攻击范围内；不检查阵营/手牌/突袭次数。
 */
-export function getAssaultTargetIds(players, source) {
+export function getAssaultTargetIds(players, source, isRangeLegal = null) {
   return players.filter((target) => target.alive
     && target.id !== source.id
     && (() => {
+      if (typeof isRangeLegal === "function") {
+        return Boolean(isRangeLegal(source, target, source.attackRange ?? 0));
+      }
       const distance = getDistance(
         players, source, target,
         source.equipmentDefinitionId ?? null,
@@ -208,11 +217,43 @@ getAssaultTargetIds。
 边界与不变量
 第一目标必须持有装备且至少有一个距离合法第二目标。
 */
-export function getLeverageFirstTargetIds(players, source) {
+export function getLeverageFirstTargetIds(players, source, isRangeLegal = null) {
   return players.filter((player) => player.id !== source.id
     && player.alive
     && Boolean(player.equipmentDefinitionId)
-    && getAssaultTargetIds(players, player).length > 0).map((player) => player.id);
+    && getAssaultTargetIds(players, player, isRangeLegal).length > 0).map((player) => player.id);
+}
+
+/*
+功能
+计算排除显式卡牌实体后的可转移手牌数量。
+
+调用方
+hasHandOrEquipmentFacts、getTransferSourceIds 与 adapters/tests。
+
+输入
+canonical player fact 与 excludedCardIds。
+
+输出
+非负整数。
+
+读取状态
+handCount/handCardIds。
+
+写入状态
+无。
+
+调用函数
+Array.filter。
+
+边界与不变量
+只按 card id 排除；缺少 handCardIds 时保守使用公开 handCount，不把 player id 当 card id。
+*/
+export function getTransferableHandCount(player, excludedCardIds = null) {
+  if (Array.isArray(player?.handCardIds)) {
+    return player.handCardIds.filter((cardId) => !excludedCardIds?.has(cardId)).length;
+  }
+  return Math.max(0, Number(player?.handCount ?? 0) || 0);
 }
 
 /*
@@ -242,7 +283,7 @@ excludedCardIds 只扣除显式 card id。
 */
 export function hasHandOrEquipmentFacts(player, excludedCardIds = null) {
   return Boolean(
-    (excludedCardIds ? Math.max(0, (player.handCount ?? 0) - (excludedCardIds.has(player.id) ? 1 : 0)) : (player.handCount ?? 0)) > 0
+    getTransferableHandCount(player, excludedCardIds) > 0
     || player.equipmentDefinitionId
   );
 }
@@ -272,11 +313,11 @@ hasHandOrEquipmentFacts、isWithinEffectRange。
 边界与不变量
 excluded card 不参与 handCount。
 */
-export function getTransferSourceIds(players, source, card, excludedCardIds = null) {
+export function getTransferSourceIds(players, source, card, excludedCardIds = null, isRangeLegal = null) {
   const excluded = excludedCardIds ?? new Set([card?.id].filter(Boolean));
   return players.filter((player) => player.alive
-    && player.handCount > 0
-    && isWithinEffectRange(players, source, player, card)).map((player) => player.id);
+    && getTransferableHandCount(player, excluded) > 0
+    && isWithinEffectRange(players, source, player, card, isRangeLegal)).map((player) => player.id);
 }
 
 /*
@@ -304,10 +345,10 @@ isWithinEffectRange。
 边界与不变量
 排除 from 自身。
 */
-export function getTransferReceiverIds(players, source, from, card) {
+export function getTransferReceiverIds(players, source, from, card, isRangeLegal = null) {
   return players.filter((player) => player.alive
     && player.id !== from.id
-    && isWithinEffectRange(players, source, player, card)).map((player) => player.id);
+    && isWithinEffectRange(players, source, player, card, isRangeLegal)).map((player) => player.id);
 }
 
 /*

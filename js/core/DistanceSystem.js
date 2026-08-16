@@ -3,7 +3,7 @@
  * 不修改状态、不缓存距离矩阵。视觉 seatIndex 只保存原始顺时针次序，阵亡后
  * 必须重新构造 aliveRing，所有卡牌和 AI 模拟都经 RuleEngine 调用本系统。
  */
-import { getAliveRing as getAliveRingFromRule, getBaseDistance as getBaseDistanceFromRule, getDistance as getDistanceFromRule } from "../domain/rules/distance/DistanceRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { getAliveRing as getAliveRingFromRule, getBaseDistance as getBaseDistanceFromRule, getDistance as getDistanceFromRule } from "../domain/rules/distance/DistanceRules.js?build=20260816-legacy-recovery";
 
 export class DistanceSystem {
   static getEquipmentDefinitionId(player) {

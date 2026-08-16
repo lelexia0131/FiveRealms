@@ -21,12 +21,12 @@ import {
   getCounterResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId,
   getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage,
   isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible
-} from "../../domain/rules/response/ResponseRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-fr-arch-14-runtime-closure";
-import { createResponseChoiceRequest } from "../choice/ResponseChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
-import { shouldForceAiRescueHuman, shouldForceAiSelfRescue, shouldPreferExplicitSelection, shouldRejectLeverageWithoutCards, shouldShowResponseWindowWithoutCards } from "./ParticipantPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { buildResponsePresentation, publicPlayerContext } from "./ResponsePresentation.js?build=20260816-fr-arch-14-runtime-closure";
-import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } from "./ResponseResult.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../../domain/rules/response/ResponseRules.js?build=20260816-legacy-recovery";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-legacy-recovery";
+import { createResponseChoiceRequest } from "../choice/ResponseChoiceRequest.js?build=20260816-legacy-recovery";
+import { shouldForceAiRescueHuman, shouldForceAiSelfRescue, shouldPreferExplicitSelection, shouldRejectLeverageWithoutCards, shouldShowResponseWindowWithoutCards } from "./ParticipantPolicy.js?build=20260816-legacy-recovery";
+import { buildResponsePresentation, publicPlayerContext } from "./ResponsePresentation.js?build=20260816-legacy-recovery";
+import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } from "./ResponseResult.js?build=20260816-legacy-recovery";
 
 /*
 功能
@@ -517,8 +517,12 @@ export function createResponseWorkflow(dependencies) {
       decision = responseResult(RESPONSE_STATUS.USED);
     } else if (forcedHumanRescue) {
       runtime.setThinking(true, rescuer, `正在准备救援${target.name}`);
-      const waited = await runtime.delayResponse();
-      runtime.setThinking(false);
+      let waited = false;
+      try {
+        waited = await runtime.delayResponse();
+      } finally {
+        runtime.setThinking(false);
+      }
       if (!waited) {
         finishRequest(request.id);
         return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });

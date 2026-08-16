@@ -22,7 +22,7 @@ import {
   PROBABILITY_EPSILON,
   clampProbability,
   totalBranchProbability
-} from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../state/Probability.js?build=20260816-legacy-recovery";
 
 export class CounterfactualTerms {
   /*

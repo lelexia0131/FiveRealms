@@ -1,13 +1,13 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260816-fr-arch-14-runtime-closure";
-import { hasStatus as hasStatusFromRule, nextLightningReceiverId } from "../domain/rules/status/StatusRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { getSkillTargetIds } from "../domain/rules/skill/SkillRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { createAttackUsage, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn } from "../domain/rules/turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260816-fr-arch-14-runtime-closure";
+import { DistanceSystem } from "./DistanceSystem.js?build=20260816-legacy-recovery";
+import { hasStatus as hasStatusFromRule, nextLightningReceiverId } from "../domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
+import { getSkillTargetIds } from "../domain/rules/skill/SkillRules.js?build=20260816-legacy-recovery";
+import { createAttackUsage, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn } from "../domain/rules/turn/TurnRules.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260816-legacy-recovery";
 import {
   canActuallyUseAssault as decideAssaultLegality, canPlayCard as decideCardLegality,
   findPlayerFact, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds,
   getTransferReceiverIds, getTransferSourceIds
-} from "../domain/rules/card/CardRules.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../domain/rules/card/CardRules.js?build=20260816-legacy-recovery";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class RuleEngine {
@@ -52,6 +52,9 @@ export class RuleEngine {
       handCount: includeHand
         ? (Array.isArray(player.hand) ? player.hand.length : Math.max(0, Number(player.handCount) || 0))
         : 0,
+      handCardIds: includeHand && Array.isArray(player.hand)
+        ? Object.freeze(player.hand.map((card) => card?.id).filter(Boolean))
+        : null,
       equipmentDefinitionId: player.equipment?.definitionId ?? player.equipmentDefinitionId ?? null,
       huntMarkSourceId: !Array.isArray(player.statuses) && player.statuses?.huntMark?.sourceId
         ? player.statuses.huntMark.sourceId
@@ -345,13 +348,7 @@ export class RuleEngine {
   static getTransferSources(game, source, card, excludedCardIds = null) {
     const original = game.state?.players ?? game.players ?? [];
     const exclusions = excludedCardIds ?? (card?.definitionId === "transfer" && card?.id ? new Set([card.id]) : null);
-    const players = this.getCardRulePlayers(game).map((fact) => {
-      const player = original.find((entry) => entry.id === fact.id);
-      return Object.freeze({
-        ...fact,
-        handCount: player ? this.transferableHandCount(player, exclusions) : fact.handCount
-      });
-    });
+    const players = this.getCardRulePlayers(game);
     const sourceFact = findPlayerFact(players, source?.id);
     const ids = getTransferSourceIds(players, sourceFact, card, exclusions);
     return original.filter((player) => ids.includes(player.id));

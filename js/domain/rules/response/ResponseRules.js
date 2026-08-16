@@ -17,7 +17,7 @@ ResponseSystem 与 tests。
 架构约束
 不得依赖 application/adapters/AI/UI/Game runtime；不得 await、emit、随机。
 */
-import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260816-fr-arch-14-runtime-closure";
+import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260816-legacy-recovery";
 
 /*
 功能

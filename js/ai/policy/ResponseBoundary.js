@@ -17,20 +17,20 @@ policy/ResponsePolicy、ValueSimulationQuery、状态组合与既有 Domain/Valu
 架构约束
 本文件是唯一响应执行边界；不得保留第二份响应阈值、分数或选择公式。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260816-fr-arch-14-runtime-closure";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { createInitialSearchState } from "../state/StateContracts.js?build=20260816-fr-arch-14-runtime-closure";
-import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js?build=20260816-fr-arch-14-runtime-closure";
+import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260816-legacy-recovery";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260816-legacy-recovery";
+import { createInitialSearchState } from "../state/StateContracts.js?build=20260816-legacy-recovery";
+import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js?build=20260816-legacy-recovery";
 import {
   hasLightning,
   nextLightningReceiverId
-} from "../domain/LightningModel.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../domain/LightningModel.js?build=20260816-legacy-recovery";
 import {
   hasSeal,
   tacticJudgmentProbability
-} from "../domain/SealModel.js?build=20260816-fr-arch-14-runtime-closure";
-import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { ResponsePolicy } from "./ResponsePolicy.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../domain/SealModel.js?build=20260816-legacy-recovery";
+import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260816-legacy-recovery";
+import { ResponsePolicy } from "./ResponsePolicy.js?build=20260816-legacy-recovery";
 
 /*
 功能

@@ -17,20 +17,20 @@ Response/Combat/Status 组件、Domain CardRules、正式资源 Policy、CardVal
 架构约束
 不生成动作、不搜索、不拥有规则合法性或最终价值公式。
 */
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
 import {
   findPlayerFact,
   getCardTargetIds
-} from "../../domain/rules/card/CardRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { hasPassiveSkill, projectRulePlayers } from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
-import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260816-fr-arch-14-runtime-closure";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-fr-arch-14-runtime-closure";
-import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260816-fr-arch-14-runtime-closure";
-import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
-import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../../domain/rules/card/CardRules.js?build=20260816-legacy-recovery";
+import { hasPassiveSkill, projectRulePlayers } from "../state/RuleProjection.js?build=20260816-legacy-recovery";
+import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-legacy-recovery";
+import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260816-legacy-recovery";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260816-legacy-recovery";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260816-legacy-recovery";
+import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260816-legacy-recovery";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260816-legacy-recovery";
+import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260816-legacy-recovery";
 
 /*
 功能

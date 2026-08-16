@@ -4,55 +4,55 @@
  * 本文件只保留 FR-ARCH-11 EventBus compatibility、FR-ARCH-12/13 AI legacy wiring、
  * zone movement/query façades 与 FR-ARCH-15 shell cleanup 前必要的 temporary composition。
  */
-import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260816-fr-arch-14-runtime-closure";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260816-fr-arch-14-runtime-closure";
-import { createId, clamp } from "../utils/helpers.js?build=20260816-fr-arch-14-runtime-closure";
-import { EventBus } from "./EventBus.js?build=20260816-fr-arch-14-runtime-closure";
-import { Player } from "./Player.js?build=20260816-fr-arch-14-runtime-closure";
-import { Deck } from "./Deck.js?build=20260816-fr-arch-14-runtime-closure";
-import { TeamManager } from "./TeamManager.js?build=20260816-fr-arch-14-runtime-closure";
-import { GeneralSelection } from "./GeneralSelection.js?build=20260816-fr-arch-14-runtime-closure";
-import { RuleEngine } from "./RuleEngine.js?build=20260816-fr-arch-14-runtime-closure";
-import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260816-fr-arch-14-runtime-closure";
-import { GameLogger } from "./GameLogger.js?build=20260816-fr-arch-14-runtime-closure";
-import { getActiveSkill, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260816-fr-arch-14-runtime-closure";
-import { AIController } from "../ai/AiController.js?build=20260816-fr-arch-14-runtime-closure";
-import { hashSearchSeed, SearchRng } from "../ai/search/SearchRng.js?build=20260816-fr-arch-14-runtime-closure";
-import { createSearchExecutor } from "../adapters/ai/worker/createSearchExecutor.js?build=20260816-fr-arch-14-runtime-closure";
-import { CleanupManager } from "../utils/CleanupManager.js?build=20260816-fr-arch-14-runtime-closure";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260816-fr-arch-14-runtime-closure";
-import { Debug } from "../utils/debug.js?build=20260816-fr-arch-14-runtime-closure";
-import { TeamRuleService } from "./TeamRuleService.js?build=20260816-fr-arch-14-runtime-closure";
-import { DyingSystem } from "./DyingSystem.js?build=20260816-fr-arch-14-runtime-closure";
-import { JudgmentSystem } from "./JudgmentSystem.js?build=20260816-fr-arch-14-runtime-closure";
-import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260816-fr-arch-14-runtime-closure";
-import { createGameChoiceBoundary } from "./GameChoiceRouter.js?build=20260816-fr-arch-14-runtime-closure";
-import { createRandomPort } from "../application/ports/RandomPort.js?build=20260816-fr-arch-14-runtime-closure";
-import { createGamePresentationAdapter } from "../adapters/ui/GamePresentationAdapter.js?build=20260816-fr-arch-14-runtime-closure";
-import { createPlayerStatisticsDiagnosticsAdapter } from "../adapters/diagnostics/PlayerStatisticsDiagnosticsAdapter.js?build=20260816-fr-arch-14-runtime-closure";
-import { createRecentAggressorsObservationAdapter } from "../adapters/ai/RecentAggressorsObservationAdapter.js?build=20260816-fr-arch-14-runtime-closure";
-import { createCombatWorkflow } from "../application/combat/CombatWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { createMatchWorkflow } from "../application/match/MatchWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { createTurnWorkflow } from "../application/turn/TurnWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { createActionWorkflow } from "../application/action/ActionWorkflow.js?build=20260816-fr-arch-14-runtime-closure";
-import { createCardRuntime } from "../application/action/CardRuntime.js?build=20260816-fr-arch-14-runtime-closure";
-import { getActionLogMessage as getActionLogMessageFromRuntime, getActionTargetLabel as getActionTargetLabelFromRuntime, shouldSuppressUseLog as shouldSuppressUseLogFromRuntime } from "../application/action/ActionPresentation.js?build=20260816-fr-arch-14-runtime-closure";
-import { createCardIntentRuntime } from "../application/action/CardIntentRuntime.js?build=20260816-fr-arch-14-runtime-closure";
-import { isTransferExecutionAllowed } from "../adapters/ai/TransferExecutionPolicyAdapter.js?build=20260816-fr-arch-14-runtime-closure";
-import { createCardEffectRuntime } from "../application/action/CardEffectRuntime.js?build=20260816-fr-arch-14-runtime-closure";
-import { createSkillEffectRuntime } from "../application/action/SkillEffectRuntime.js?build=20260816-fr-arch-14-runtime-closure";
-import { createPassiveSkillTriggerRegistry } from "../application/trigger/PassiveSkillTriggerRegistry.js?build=20260816-fr-arch-14-runtime-closure";
-import { createRecycleDeviceTrigger } from "../application/trigger/RecycleDeviceTrigger.js?build=20260816-fr-arch-14-runtime-closure";
-import { createGlobalTriggerRegistry } from "../application/trigger/GlobalTriggerRegistry.js?build=20260816-fr-arch-14-runtime-closure";
-import { PublicCardPool } from "./PublicCardPool.js?build=20260816-fr-arch-14-runtime-closure";
-import { HpLossSystem } from "./HpLossSystem.js?build=20260816-fr-arch-14-runtime-closure";
-import { createMatchState } from "../domain/state/model/MatchState.js?build=20260816-fr-arch-14-runtime-closure";
-import { getCurrentActor, getAllies as getAlliesFromState, getEnemies as getEnemiesFromState, getSeatOrderFrom } from "../domain/state/queries/MatchQueries.js?build=20260816-fr-arch-14-runtime-closure";
-import { getCardZoneOccurrences as getCardZoneOccurrencesFromState, isCardCommittedToDiscard as isCardCommittedToDiscardInState, isCardCommittedToEquipment as isCardCommittedToEquipmentInState } from "../domain/state/queries/ZoneQueries.js?build=20260816-fr-arch-14-runtime-closure";
-import { appendCardToZone, commitEquipmentReplacement, discardEquipment, moveCardBetweenZones, moveCardsAtomically, moveEquipmentToHand, purgeCardToDiscard, removeCardFromZone } from "../domain/state/transitions/ZoneTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { changeEnergy } from "../domain/state/transitions/ResourceTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { addTrackingTarget, markCategoryUsed, setGuardianAidUsed, setKillRewardGranted, setLastEmberResolutionId, setMomentum, setSpyGapPendingTargetIds, setTrackingTurnNumber } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { GAME_CONFIG, TEAM_CONFIG } from "../config/gameConfig.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260816-legacy-recovery";
+import { createId, clamp } from "../utils/helpers.js?build=20260816-legacy-recovery";
+import { EventBus } from "./EventBus.js?build=20260816-legacy-recovery";
+import { Player } from "./Player.js?build=20260816-legacy-recovery";
+import { Deck } from "./Deck.js?build=20260816-legacy-recovery";
+import { TeamManager } from "./TeamManager.js?build=20260816-legacy-recovery";
+import { GeneralSelection } from "./GeneralSelection.js?build=20260816-legacy-recovery";
+import { RuleEngine } from "./RuleEngine.js?build=20260816-legacy-recovery";
+import { ResponseSystem, RESPONSE_STATUS, isCancelledResponse } from "./ResponseSystem.js?build=20260816-legacy-recovery";
+import { GameLogger } from "./GameLogger.js?build=20260816-legacy-recovery";
+import { getActiveSkill, getActiveSkillCost } from "../generals/skillRegistry.js?build=20260816-legacy-recovery";
+import { AIController } from "../ai/AiController.js?build=20260816-legacy-recovery";
+import { hashSearchSeed, SearchRng } from "../ai/search/SearchRng.js?build=20260816-legacy-recovery";
+import { createSearchExecutor } from "../adapters/ai/worker/createSearchExecutor.js?build=20260816-legacy-recovery";
+import { CleanupManager } from "../utils/CleanupManager.js?build=20260816-legacy-recovery";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260816-legacy-recovery";
+import { Debug } from "../utils/debug.js?build=20260816-legacy-recovery";
+import { TeamRuleService } from "./TeamRuleService.js?build=20260816-legacy-recovery";
+import { DyingSystem } from "./DyingSystem.js?build=20260816-legacy-recovery";
+import { JudgmentSystem } from "./JudgmentSystem.js?build=20260816-legacy-recovery";
+import { CardSelectionSystem } from "./CardSelectionSystem.js?build=20260816-legacy-recovery";
+import { createGameChoiceBoundary } from "./GameChoiceRouter.js?build=20260816-legacy-recovery";
+import { createRandomPort } from "../application/ports/RandomPort.js?build=20260816-legacy-recovery";
+import { createGamePresentationAdapter } from "../adapters/ui/GamePresentationAdapter.js?build=20260816-legacy-recovery";
+import { createPlayerStatisticsDiagnosticsAdapter } from "../adapters/diagnostics/PlayerStatisticsDiagnosticsAdapter.js?build=20260816-legacy-recovery";
+import { createRecentAggressorsObservationAdapter } from "../adapters/ai/RecentAggressorsObservationAdapter.js?build=20260816-legacy-recovery";
+import { createCombatWorkflow } from "../application/combat/CombatWorkflow.js?build=20260816-legacy-recovery";
+import { createMatchWorkflow } from "../application/match/MatchWorkflow.js?build=20260816-legacy-recovery";
+import { createTurnWorkflow } from "../application/turn/TurnWorkflow.js?build=20260816-legacy-recovery";
+import { createActionWorkflow } from "../application/action/ActionWorkflow.js?build=20260816-legacy-recovery";
+import { createCardRuntime } from "../application/action/CardRuntime.js?build=20260816-legacy-recovery";
+import { getActionLogMessage as getActionLogMessageFromRuntime, getActionTargetLabel as getActionTargetLabelFromRuntime, shouldSuppressUseLog as shouldSuppressUseLogFromRuntime } from "../application/action/ActionPresentation.js?build=20260816-legacy-recovery";
+import { createCardIntentRuntime } from "../application/action/CardIntentRuntime.js?build=20260816-legacy-recovery";
+import { isTransferExecutionAllowed } from "../adapters/ai/TransferExecutionPolicyAdapter.js?build=20260816-legacy-recovery";
+import { createCardEffectRuntime } from "../application/action/CardEffectRuntime.js?build=20260816-legacy-recovery";
+import { createSkillEffectRuntime } from "../application/action/SkillEffectRuntime.js?build=20260816-legacy-recovery";
+import { createPassiveSkillTriggerRegistry } from "../application/trigger/PassiveSkillTriggerRegistry.js?build=20260816-legacy-recovery";
+import { createRecycleDeviceTrigger } from "../application/trigger/RecycleDeviceTrigger.js?build=20260816-legacy-recovery";
+import { createGlobalTriggerRegistry } from "../application/trigger/GlobalTriggerRegistry.js?build=20260816-legacy-recovery";
+import { PublicCardPool } from "./PublicCardPool.js?build=20260816-legacy-recovery";
+import { HpLossSystem } from "./HpLossSystem.js?build=20260816-legacy-recovery";
+import { createMatchState } from "../domain/state/model/MatchState.js?build=20260816-legacy-recovery";
+import { getCurrentActor, getAllies as getAlliesFromState, getEnemies as getEnemiesFromState, getSeatOrderFrom } from "../domain/state/queries/MatchQueries.js?build=20260816-legacy-recovery";
+import { getCardZoneOccurrences as getCardZoneOccurrencesFromState, isCardCommittedToDiscard as isCardCommittedToDiscardInState, isCardCommittedToEquipment as isCardCommittedToEquipmentInState } from "../domain/state/queries/ZoneQueries.js?build=20260816-legacy-recovery";
+import { appendCardToZone, commitEquipmentReplacement, discardEquipment, moveCardBetweenZones, moveCardsAtomically, moveEquipmentToHand, purgeCardToDiscard, removeCardFromZone } from "../domain/state/transitions/ZoneTransitions.js?build=20260816-legacy-recovery";
+import { changeEnergy } from "../domain/state/transitions/ResourceTransitions.js?build=20260816-legacy-recovery";
+import { addTrackingTarget, markCategoryUsed, setGuardianAidUsed, setKillRewardGranted, setLastEmberResolutionId, setMomentum, setSpyGapPendingTargetIds, setTrackingTurnNumber } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
+import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260816-legacy-recovery";
 
 /*
 功能
@@ -185,7 +185,7 @@ export class Game {
   main.js 与测试 fixture。
 
   输入
-  UI 实例、可替换随机源与可选 { choicePort } 注入项。
+  UI 实例、可替换真实游戏随机源与可选 choice/search/presentationRandom 注入项。
 
   输出
   已完成 service 组合但尚未发牌/启动的 Game 实例。
@@ -200,11 +200,14 @@ export class Game {
   createMatchState、CleanupManager、GeneralSelection、Deck、各 core service 与 AIController 构造。
 
   边界与不变量
-  领域字段值只来自 createMatchState；gameId/isDisposed/logs/pendingResponses 等保持 legacy 扩展；stateVersion 保持 authoritative。
+  领域字段值只来自 createMatchState；presentationRandom 不复用真实游戏或 AI search RNG；gameId/isDisposed/logs/pendingResponses 等保持 legacy 扩展；stateVersion 保持 authoritative。
   */
   constructor(ui, random = Math.random, options = {}) {
     this.randomPort = createRandomPort({ next: () => random() });
     this.random = () => this.randomPort.next();
+    this.presentationRandom = typeof options.presentationRandom === "function"
+      ? options.presentationRandom
+      : Math.random;
     this.cleanupManager = new CleanupManager();
     this.generalSelection = new GeneralSelection(this.random);
     const deck = new Deck(this.random);
@@ -483,7 +486,7 @@ export class Game {
       getHumanPlayer: () => this.state.players[0],
       choiceCoordinator: this.choiceCoordinator,
       choiceContexts: this.choiceContexts,
-      requestCardFlow: (...args) => this.ui.requestCardFlow?.(...args),
+      requestCardFlow: (actor, card, targets) => this.ui.requestCardFlow?.(this, actor, card, targets),
       resolveHumanPlayEnd: (gameId) => this.ui.resolveHumanPlayEnd(gameId),
       createId,
       setResolutionSerialProjection: (value) => { this.state.resolutionSerial = value; }

@@ -17,8 +17,8 @@ Domain CardDefinitions、Domain CombatRules。
 架构约束
 真实 card semantic（哪些牌是全体受益、共生治疗量）来自 Domain Definitions/Rules；本模型只拥有 AI 顺序优势与价值结构。不得导入 value、Controller、Planner、Simulator、Evaluator 或 UI；反制意愿与 root flip 不属于本模型。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { calculateHealAmount } from "../../domain/rules/combat/CombatRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
+import { calculateHealAmount } from "../../domain/rules/combat/CombatRules.js?build=20260816-legacy-recovery";
 
 const GLOBAL_BENEFIT_CARDS = new Set(
   Object.entries(CARD_DEFINITIONS)

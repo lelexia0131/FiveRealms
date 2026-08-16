@@ -17,7 +17,7 @@ WorkerSearchRuntime。
 架构约束
 不得 import core/Game、application、UI/Audio 或 Domain transitions；不得使用 Math.random。
 */
-import { runSearchRequest } from "./WorkerSearchRuntime.js?build=20260816-fr-arch-14-runtime-closure";
+import { runSearchRequest } from "./WorkerSearchRuntime.js?build=20260816-legacy-recovery";
 
 /*
 功能

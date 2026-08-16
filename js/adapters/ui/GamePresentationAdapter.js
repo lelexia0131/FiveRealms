@@ -17,8 +17,8 @@ application/ports/PresentationPort 与 UIManager。
 架构约束
 不得依赖 Game class、AIController、SoundManager 或其它 adapter 实现；不 import Application workflow。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-fr-arch-14-runtime-closure";
-import { createPresentationPort } from "../../application/ports/PresentationPort.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-legacy-recovery";
+import { createPresentationPort } from "../../application/ports/PresentationPort.js?build=20260816-legacy-recovery";
 
 /*
 功能

@@ -17,16 +17,16 @@ Domain CardRules、AI RuleProjection/DistanceProbabilityBranches 与 policy/Card
 架构约束
 选择公式只存在于 policy 目录；本文件只负责合法集合、公开上下文与实体 ID 解析。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
 import {
   findPlayerFact,
   getTransferReceiverIds
-} from "../../domain/rules/card/CardRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { projectTransferRulePlayers } from "../state/RuleProjection.js?build=20260816-fr-arch-14-runtime-closure";
-import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260816-fr-arch-14-runtime-closure";
-import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260816-fr-arch-14-runtime-closure";
-import { TransferPolicy } from "./TransferPolicy.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../../domain/rules/card/CardRules.js?build=20260816-legacy-recovery";
+import { projectTransferRulePlayers } from "../state/RuleProjection.js?build=20260816-legacy-recovery";
+import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260816-legacy-recovery";
+import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260816-legacy-recovery";
+import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260816-legacy-recovery";
+import { TransferPolicy } from "./TransferPolicy.js?build=20260816-legacy-recovery";
 
 export class CardSelectionBoundary {
   /*

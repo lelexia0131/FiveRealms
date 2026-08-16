@@ -17,9 +17,9 @@ Domain TurnRules、CardRules、distance rules 与 SkillDefinitions。
 架构约束
 不得依赖 Game/RuleEngine/application/adapters/EventBus；不得 await、emit、随机、mutation；不得复制 SkillDefinitions 固定 literal。
 */
-import { ACTIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { getDistance } from "../distance/DistanceRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { hasActiveSkillUseRemaining } from "../turn/TurnRules.js?build=20260816-fr-arch-14-runtime-closure";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260816-legacy-recovery";
+import { getDistance } from "../distance/DistanceRules.js?build=20260816-legacy-recovery";
+import { hasActiveSkillUseRemaining } from "../turn/TurnRules.js?build=20260816-legacy-recovery";
 
 /*
 功能
@@ -236,7 +236,7 @@ getDistance。
 边界与不变量
 每个 skill 的目标语义只在本模块维护。
 */
-export function getSkillTargetIds(players, sourceId, skill) {
+export function getSkillTargetIds(players, sourceId, skill, isRangeLegal = null) {
   const source = players.find((player) => player.id === sourceId) ?? null;
   if (!source?.alive || !skill?.rangeRule) return [];
   const alive = players.filter((player) => player.alive);
@@ -272,12 +272,16 @@ export function getSkillTargetIds(players, sourceId, skill) {
   range 使用 skill.range 或 source.attackRange。
   */
   const inRange = (target) => {
+    const range = skill.range ?? source.attackRange ?? 1;
+    if (typeof isRangeLegal === "function") {
+      return Boolean(isRangeLegal(source, target, range));
+    }
     const distance = getDistance(
       players, source, target,
       source.equipmentDefinitionId ?? null,
       target.equipmentDefinitionId ?? null
     );
-    return Number.isFinite(distance) && distance <= (skill.range ?? source.attackRange ?? 1);
+    return Number.isFinite(distance) && distance <= range;
   };
   if (skill.rangeRule === "attack") return candidates.filter(inRange).map((player) => player.id);
   if (skill.rangeRule === "fixed") return candidates.filter(inRange).map((player) => player.id);

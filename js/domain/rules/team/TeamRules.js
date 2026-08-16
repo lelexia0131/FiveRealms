@@ -17,7 +17,7 @@ RULESET_DEFINITION。
 架构约束
 不得依赖 application/adapters/Game runtime；不得随机；不得迁移 match setup。
 */
-import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260816-fr-arch-14-runtime-closure";
+import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
 
 /*
 功能

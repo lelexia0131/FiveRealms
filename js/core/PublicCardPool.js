@@ -2,11 +2,11 @@
  * 互利的公开牌池。依赖 Deck、AI 选牌器和 UI；展示中的实体独立于抽牌、弃牌
  * 与判定区。这里负责公开选取和合法记忆，不处理其他隐藏手牌选择。
  */
-import { createId } from "../utils/helpers.js?build=20260816-fr-arch-14-runtime-closure";
-import { createPublicCardChoiceRequest } from "../application/choice/PublicCardChoiceRequest.js?build=20260816-fr-arch-14-runtime-closure";
-import { setPublicCardPool } from "../domain/state/transitions/MatchStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { appendCardToZone, moveCardBetweenZones, moveCardsAtomically } from "../domain/state/transitions/ZoneTransitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260816-fr-arch-14-runtime-closure";
+import { createId } from "../utils/helpers.js?build=20260816-legacy-recovery";
+import { createPublicCardChoiceRequest } from "../application/choice/PublicCardChoiceRequest.js?build=20260816-legacy-recovery";
+import { setPublicCardPool } from "../domain/state/transitions/MatchStateTransitions.js?build=20260816-legacy-recovery";
+import { appendCardToZone, moveCardBetweenZones, moveCardsAtomically } from "../domain/state/transitions/ZoneTransitions.js?build=20260816-legacy-recovery";
+import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260816-legacy-recovery";
 
 export class PublicCardPool {
   constructor(game) { this.game = game; this.cards = []; }

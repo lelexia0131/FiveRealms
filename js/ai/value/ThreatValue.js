@@ -17,13 +17,13 @@ Domain Card Definitions、AI DistanceProbabilityBranches 与 value/Economics 的
 架构约束
 威胁公式只能在本模块出现；基础数值项可被 Evaluator 组合进 State Value，但不得绕过它独立追加到最终 Transition Value。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-fr-arch-14-runtime-closure";
-import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260816-fr-arch-14-runtime-closure";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
+import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260816-legacy-recovery";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "../state/Probability.js?build=20260816-fr-arch-14-runtime-closure";
-import { HP_VALUE } from "./Economics.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../state/Probability.js?build=20260816-legacy-recovery";
+import { HP_VALUE } from "./Economics.js?build=20260816-legacy-recovery";
 
 export const DANGER_VALUE = 7;
 export const DEATH_VALUE = 28;

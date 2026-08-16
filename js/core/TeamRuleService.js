@@ -5,8 +5,8 @@ import {
   getAttackLimitFromRules, getDrawCountFromRules, getInitialHandCountFromRules,
   getMaxEnergyFromRules, getRecoverLimitFromRules, getTeamRules, getTeamSize,
   getTurnEnergyBreakdownFromRules, getTurnEnergyGainFromRules, isSmallTeam
-} from "../domain/rules/team/TeamRules.js?build=20260816-fr-arch-14-runtime-closure";
-import { createRuleStateView } from "../domain/state/queries/RuleStateView.js?build=20260816-fr-arch-14-runtime-closure";
+} from "../domain/rules/team/TeamRules.js?build=20260816-legacy-recovery";
+import { createRuleStateView } from "../domain/state/queries/RuleStateView.js?build=20260816-legacy-recovery";
 
 export class TeamRuleService {
   constructor(game) { this.game = game; }
