@@ -95,7 +95,7 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
     showGameOver: (winnerTeam, humanWon) => ui.showGameOver?.(winnerTeam, humanWon),
     showPrivateReveal: ({ title, cardIds }) => {
       const cards = (cardIds ?? []).map((cardId) => getCardById(cardId)).filter(Boolean);
-      ui.showPrivateReveal?.(title, cards);
+      return ui.showPrivateReveal?.(title, cards);
     },
     showDuel: ({ playerId, opponentId }) => {
       const player = getPlayerById(playerId);

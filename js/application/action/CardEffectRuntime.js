@@ -296,13 +296,14 @@ runtime/card/skill facts。
 不重复 Domain rule 决定。
 */
     async scout(source, card, targets, context) {
+      const gameId = runtime.getState().gameId;
       const target = targets[0];
       const intent = resolvePrivateSelectionIntent(source, card, target, context, "hand");
       const chosen = intent?.cards.slice(0, 2) ?? [];
       if (!chosen.length) return { resolved: false };
       for (const seen of chosen) runtime.rememberPrivateCard(source, target, seen);
-      if (source.controllerType === "human") runtime.presentation.showPrivateReveal({ title: `${target.name}的手牌情报`, cardIds: chosen.map((card) => card.id) });
-      if (!runtime.isSessionValid(runtime.getState().gameId)) return { resolved: false };
+      if (source.controllerType === "human") await runtime.presentation.showPrivateReveal({ title: `${target.name}的手牌情报`, cardIds: chosen.map((card) => card.id) });
+      if (!runtime.isSessionValid(gameId)) return { resolved: false };
       runtime.presentation.log(`${source.name}窥探了${target.name}的${chosen.length}张手牌。`);
       return { resolved: true };
     },

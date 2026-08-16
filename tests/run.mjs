@@ -101,6 +101,7 @@ import {
 } from "../js/ui/templates.js";
 import { InteractionController, hiddenSelectionMarkup } from "../js/ui/InteractionController.js";
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
+import { PrivateRevealView } from "../js/ui/PrivateRevealView.js?build=20260816-legacy-recovery";
 import { AnimationController, LIGHTNING_HIT_DURATION_MS } from "../js/ui/animationController.js";
 import { JudgmentView } from "../js/ui/JudgmentView.js";
 import {
@@ -44547,6 +44548,312 @@ async function frArch14AudioSurvivesZeroTiming() {
 }
 
 test("FR-ARCH-14·audio：连续 gameplay 音效不被零 fake-thinking 节流吞掉", frArch14AudioSurvivesZeroTiming);
+
+
+// ---- 私人情报异步边界回归 ----
+
+/*
+功能
+等待一个异步边界条件成立，避免依赖不确定数量的微任务 flush。
+
+调用方
+私人情报异步边界回归测试。
+
+输入
+condition 与失败提示。
+
+输出
+无返回值，超时抛错。
+
+读取状态
+condition 闭包。
+
+写入状态
+无。
+
+调用函数
+setTimeout。
+
+边界与不变量
+只用于测试 polling，不进入生产语义。
+*/
+async function waitForPrivateRevealBoundaryCondition(condition, label) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(`等待异步边界条件超时：${label}`);
+}
+
+/*
+功能
+证明真人窥探的 private reveal 是真实异步 gameplay boundary：
+showPrivateReveal 返回的 Promise 未 resolve 前，scout resolver、后续日志、cardUsed 与 playCard 均不得越过。
+
+调用方
+FR-ARCH-15 前置回归。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game/ActionWorkflow/CardEffectRuntime/GamePresentationAdapter 路径与 UI 记录。
+
+写入状态
+测试 Game 手牌/记忆/日志与 UI 记录。
+
+调用函数
+makePlayer、makeGame、choosePrivateCardThroughInteraction、waitForPrivateRevealBoundaryCondition。
+
+边界与不变量
+只验证既有 human 窥探路径，不修改规则或 AI scout 路径。
+*/
+async function privateRevealScoutBlocksUntilClosed() {
+  const source = makePlayer("private-reveal-scout-source", 0, "dawn", "human"),
+    target = makePlayer("private-reveal-scout-target", 1, "dusk");
+  const scout = instance("scout"),
+    first = instance("charge"),
+    second = instance("harvest");
+  source.hand.push(scout);
+  target.hand.push(first, second);
+  const { game, ui } = makeGame([source, target]);
+  const selection = await choosePrivateCardThroughInteraction(
+    game, source, scout, target, { handIndexes: [0, 1] }
+  );
+  const order = [];
+  let revealCalls = 0;
+  let settleReveal = null;
+  ui.showPrivateReveal = (title, cards) => {
+    revealCalls += 1;
+    order.push("reveal");
+    ui.reveals.push({ title, cards: [...cards] });
+    return new Promise((resolve) => { settleReveal = resolve; });
+  };
+  const originalLog = game.log.bind(game);
+  game.log = (message, kind) => {
+    if (message.includes("窥探了")) order.push("scout-log");
+    return originalLog(message, kind);
+  };
+  let cardUsed = false;
+  game.eventBus.on("cardUsed", "test:private-reveal-scout-boundary", (event) => {
+    if (event.card === scout) cardUsed = true;
+  });
+  let playSettled = false;
+  const playPromise = game.playCard(source, scout, [target], selection).then((result) => {
+    playSettled = true;
+    return result;
+  });
+  await waitForPrivateRevealBoundaryCondition(() => revealCalls === 1, "scout 应已进入 showPrivateReveal");
+  assert.equal(order.includes("reveal"), true);
+  assert.equal(order.includes("scout-log"), false);
+  assert.equal(cardUsed, false);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(playSettled, false, "收起情报前 scout 结算不得完成");
+  assert.equal(order.includes("scout-log"), false);
+  assert.equal(cardUsed, false);
+  settleReveal();
+  assert.equal(await playPromise, true);
+  assert.deepEqual(order, ["reveal", "scout-log"]);
+  assert.equal(cardUsed, true);
+  assert.deepEqual(ui.reveals.at(-1)?.cards, [first, second]);
+  assert.ok(game.state.logs.some((entry) => entry.message.includes("窥探了")));
+  game.dispose();
+}
+
+/*
+功能
+证明真人窥隙的 private reveal 会阻塞 EventDispatcher：
+spyGap listener 未完成前 dispatcher 不得执行 sentinel listener，也不得 resolve dispatcher Promise。
+
+调用方
+FR-ARCH-15 前置回归。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+EventDispatcher/PassiveSkillTriggerRegistry/GamePresentationAdapter 路径与 UI 记录。
+
+写入状态
+测试 Game 状态与 UI 记录。
+
+调用函数
+makePlayer、makeGame、registerPassiveSkills、waitForPrivateRevealBoundaryCondition。
+
+边界与不变量
+直接触发真实 afterDamage event 与 spyGap 监听器；不新增规则条件。
+*/
+async function privateRevealSpyGapBlocksDispatcher() {
+  const shade = makePlayer("private-reveal-spygap-shade", 0, "dawn", "human", 3),
+    target = makePlayer("private-reveal-spygap-target", 1, "dusk");
+  target.hand.push(instance("charge"), instance("harvest"));
+  const { game, ui } = makeGame([shade, target]);
+  registerPassiveSkills(game);
+  const order = [];
+  let revealCalls = 0;
+  let settleReveal = null;
+  ui.showPrivateReveal = (title, cards) => {
+    revealCalls += 1;
+    order.push("reveal");
+    ui.reveals.push({ title, cards: [...cards] });
+    return new Promise((resolve) => { settleReveal = resolve; });
+  };
+  const originalLog = game.log.bind(game);
+  game.log = (message, kind) => {
+    if (message.includes("触发「窥隙」")) order.push("spygap-log");
+    return originalLog(message, kind);
+  };
+  let sentinelRuns = 0;
+  game.eventBus.on("afterDamage", "test:private-reveal-spygap-sentinel", () => {
+    sentinelRuns += 1;
+    order.push("sentinel");
+  });
+  const event = {
+    type: "afterDamage", source: shade, target, actualAmount: 1,
+    card: instance("assault"), resolutionId: "private-reveal-spygap-resolution"
+  };
+  let dispatcherSettled = false;
+  const dispatcherPromise = game.eventBus.emit("afterDamage", event).then((payload) => {
+    dispatcherSettled = true;
+    return payload;
+  });
+  await waitForPrivateRevealBoundaryCondition(() => revealCalls === 1, "窥隙应已进入 showPrivateReveal");
+  assert.equal(shade.turnFlags.spyGapTriggered, true);
+  assert.equal(sentinelRuns, 0);
+  assert.equal(order.includes("spygap-log"), false);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(dispatcherSettled, false, "收起情报前 dispatcher 不得越过窥隙 listener");
+  assert.equal(sentinelRuns, 0);
+  settleReveal();
+  assert.equal(await dispatcherPromise, event);
+  assert.equal(sentinelRuns, 1);
+  assert.deepEqual(order, ["reveal", "spygap-log", "sentinel"]);
+  assert.ok(game.state.logs.some((entry) => entry.message.includes("触发「窥隙」")));
+  game.dispose();
+}
+
+/*
+功能
+证明 private reveal pending 时 dispose/cleanup 会 settle reveal Promise，
+随后恢复的旧 resolver 会因 session invalid 直接结束，不写 stale log、不发 cardUsed。
+
+调用方
+FR-ARCH-15 前置回归。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game/ActionWorkflow/CardEffectRuntime 路径与 dispose lifecycle。
+
+写入状态
+测试 Game 状态与 UI 记录。
+
+调用函数
+makePlayer、makeGame、choosePrivateCardThroughInteraction、waitForPrivateRevealBoundaryCondition。
+
+边界与不变量
+模拟当前真实 UI cleanup settle pending reveal；不重复实现 cleanup。
+*/
+async function privateRevealDisposeInvalidatesPendingScout() {
+  const source = makePlayer("private-reveal-dispose-source", 0, "dawn", "human"),
+    target = makePlayer("private-reveal-dispose-target", 1, "dusk");
+  const scout = instance("scout"),
+    first = instance("charge"),
+    second = instance("harvest");
+  source.hand.push(scout);
+  target.hand.push(first, second);
+  const { game, ui } = makeGame([source, target]);
+  const selection = await choosePrivateCardThroughInteraction(
+    game, source, scout, target, { handIndexes: [0, 1] }
+  );
+  let settleReveal = null;
+  ui.showPrivateReveal = () => new Promise((resolve) => { settleReveal = resolve; });
+  const baseCancelPendingInteractions = ui.cancelPendingInteractions.bind(ui);
+  ui.cancelPendingInteractions = () => {
+    baseCancelPendingInteractions();
+    if (settleReveal) {
+      const resolve = settleReveal;
+      settleReveal = null;
+      resolve();
+    }
+  };
+  let cardUsed = false;
+  game.eventBus.on("cardUsed", "test:private-reveal-dispose-boundary", (event) => {
+    if (event.card === scout) cardUsed = true;
+  });
+  let playSettled = false;
+  const playPromise = game.playCard(source, scout, [target], selection).then((result) => {
+    playSettled = true;
+    return result;
+  });
+  await waitForPrivateRevealBoundaryCondition(() => settleReveal !== null, "scout 应已进入 pending reveal");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(playSettled, false, "pending reveal 未清理前 scout 结算不得提前完成");
+  game.dispose();
+  assert.equal(settleReveal, null);
+  assert.equal(await playPromise, false);
+  assert.equal(cardUsed, false);
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("窥探了")));
+}
+
+/*
+功能
+验证 PrivateRevealView 现有 cleanup contract：hide() 会 settle 未关闭的 show() Promise 并清空 overlay。
+
+调用方
+私人情报异步边界回归。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+PrivateRevealView 实例。
+
+写入状态
+fake DOM element 状态。
+
+调用函数
+makeInteractiveElement、PrivateRevealView。
+
+边界与不变量
+只验证既有 UI cleanup，不创建第二份 lifecycle。
+*/
+async function privateRevealViewHideSettlesPendingShow() {
+  const closeButton = makeInteractiveElement();
+  const element = {
+    ...makeInteractiveElement(),
+    querySelector: (selector) => selector === "[data-close-private]" ? closeButton : null
+  };
+  const view = new PrivateRevealView(element);
+  let settled = false;
+  const pending = view.show("测试情报", [instance("charge")]).then(() => { settled = true; });
+  assert.equal(settled, false);
+  assert.equal(element.classList.contains("is-hidden"), false);
+  assert.match(element.innerHTML, /收起情报/);
+  view.hide();
+  await pending;
+  assert.equal(settled, true);
+  assert.equal(element.innerHTML, "");
+  assert.equal(element.classList.contains("is-hidden"), true);
+}
+
+test("私人情报异步边界：真人窥探在收起情报前阻塞 resolver 日志与 cardUsed", privateRevealScoutBlocksUntilClosed);
+test("私人情报异步边界：真人窥隙在收起情报前阻塞 EventDispatcher 后续 listener", privateRevealSpyGapBlocksDispatcher);
+test("私人情报异步边界：pending reveal 时 dispose 清理后旧 scout 不写 stale log/mutation", privateRevealDisposeInvalidatesPendingScout);
+test("私人情报异步边界：PrivateRevealView.hide settle pending show Promise 并清空 overlay", privateRevealViewHideSettlesPendingShow);
 
 
 // ==================== Test Runner 最终执行 ====================
