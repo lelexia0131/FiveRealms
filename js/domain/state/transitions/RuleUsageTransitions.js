@@ -44,39 +44,20 @@ bumpStateVersion。
 边界与不变量
 具体规则字段由调用方规则决定；transition 不解释字段。
 */
-export function resetTurnFlags(state, player, teamRules = null) {
-  const previous = player.turnFlags;
-  player.turnFlags = {
-    attackUsed: 0,
-    attackLimit: teamRules?.attackLimitPerTurn ?? 1,
-    recoverUsed: 0,
-    recoverLimit: teamRules ? teamRules.recoverLimitPerTurn : null,
-    categoriesUsed: new Set(),
-    momentum: 0,
-    activeSkillsUsed: new Set(),
-    activeSkillUseCounts: {},
-    recycleDeviceUses: 0,
-    guardianAidUsed: false,
-    coordinationTriggered: false,
-    gambleTriggered: false,
-    rejuvenationTriggerCount: 0,
-    spyGapTriggered: false,
-    spyGapPendingTargetIds: new Set(),
-    trackingTargetIds: new Set(),
-    skipActionPhase: false
-  };
-  if (previous !== player.turnFlags) bumpStateVersion(state);
+export function resetTurnFlags(state, player, decidedTurnFlags) {
+  player.turnFlags = decidedTurnFlags;
+  bumpStateVersion(state);
 }
 
 /*
 功能
-重置所有玩家共用的 global-turn reactive 额度。
+提交已决定的 global-turn reactive 字段集合。
 
 调用方
-Game.takeTurn 与测试 fixture。
+Game.takeTurn 与 Player legacy façade。
 
 输入
-state 与 Player。
+state、Player 与已决定 reactive 对象。
 
 输出
 无返回值。
@@ -85,59 +66,28 @@ state 与 Player。
 state.stateVersion 与 player.turnFlags。
 
 写入状态
-player.turnFlags 的 reactive 字段；变化时 bump 一次。
+player.turnFlags 的 reactive 字段；bump 一次。
 
 调用函数
 bumpStateVersion。
 
 边界与不变量
-不触碰 actor-turn state。
+规则字段由 TurnRule 决定；transition 只提交。
 */
-export function resetGlobalTurnReactiveFlags(state, player) {
-  const flags = player.turnFlags;
-  const before = [
-    flags.categoriesUsed,
-    flags.momentum,
-    flags.guardianAidUsed,
-    flags.coordinationTriggered,
-    flags.gambleTriggered,
-    flags.rejuvenationTriggerCount,
-    flags.spyGapTriggered,
-    flags.spyGapPendingTargetIds,
-    flags.trackingTargetIds
-  ];
-  flags.categoriesUsed = new Set();
-  flags.momentum = 0;
-  flags.guardianAidUsed = false;
-  flags.coordinationTriggered = false;
-  flags.gambleTriggered = false;
-  flags.rejuvenationTriggerCount = 0;
-  flags.spyGapTriggered = false;
-  flags.spyGapPendingTargetIds = new Set();
-  flags.trackingTargetIds = new Set();
-  const after = [
-    flags.categoriesUsed,
-    flags.momentum,
-    flags.guardianAidUsed,
-    flags.coordinationTriggered,
-    flags.gambleTriggered,
-    flags.rejuvenationTriggerCount,
-    flags.spyGapTriggered,
-    flags.spyGapPendingTargetIds,
-    flags.trackingTargetIds
-  ];
-  if (before.some((value, index) => value !== after[index])) bumpStateVersion(state);
+export function resetGlobalTurnReactiveFlags(state, player, decidedReactiveState) {
+  Object.assign(player.turnFlags, decidedReactiveState);
+  bumpStateVersion(state);
 }
 
 /*
 功能
-重置玩家轮级标记。
+提交已决定的轮级标记对象。
 
 调用方
 Game.runGameLoop/advanceTurn 与测试 fixture。
 
 输入
-state 与 Player。
+state、Player 与已决定 roundFlags。
 
 输出
 无返回值。
@@ -146,17 +96,17 @@ state 与 Player。
 state.stateVersion 与 player.roundFlags。
 
 写入状态
-player.roundFlags；原对象有键时 bump。
+player.roundFlags；原对象有键时 bump 一次。
 
 调用函数
 bumpStateVersion。
 
 边界与不变量
-Guardian aid 按当前规则位于 turnFlags。
+规则字段由 TurnRule 决定；transition 只提交。
 */
-export function resetRoundFlags(state, player) {
+export function resetRoundFlags(state, player, decidedRoundFlags) {
   const previous = player.roundFlags;
-  player.roundFlags = {};
+  player.roundFlags = decidedRoundFlags;
   if (Object.keys(previous).length > 0) bumpStateVersion(state);
 }
 

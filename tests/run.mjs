@@ -18,12 +18,20 @@ import { createPlayerState } from "../js/domain/state/model/PlayerState.js?build
 import { createDeckZoneState } from "../js/domain/state/model/ZoneState.js?build=20260815-shadow-agent-p1-slot";
 import { createStateView } from "../js/domain/state/queries/StateView.js?build=20260815-shadow-agent-p1-slot";
 import { createRuleStateView } from "../js/domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
+import { calculateDamageResult, calculateHealAmount, isDying } from "../js/domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
+import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
+import { interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js?build=20260815-shadow-agent-p1-slot";
+import { getCounterResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
+import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, isSmallTeam } from "../js/domain/rules/team/TeamRules.js?build=20260815-shadow-agent-p1-slot";
+import { calculateNextActorIndex, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
 import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js?build=20260815-shadow-agent-p1-slot";
 import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js?build=20260815-shadow-agent-p1-slot";
 import { changeEnergy as transitionChangeEnergy, changeHp as transitionChangeHp, setHp as transitionSetHp, changeShield as transitionChangeShield } from "../js/domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { setStatus as transitionSetStatus, removeStatus as transitionRemoveStatus, clearStatuses as transitionClearStatuses } from "../js/domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { appendCardToZone as transitionAppendCardToZone, removeCardFromZone as transitionRemoveCardFromZone, moveCardBetweenZones as transitionMoveCardBetweenZones } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { moveCardsAtomically as transitionMoveCardsAtomically } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { resetGlobalTurnReactiveFlags as transitionResetGlobalTurnReactiveFlags, resetRoundFlags as transitionResetRoundFlags, resetTurnFlags as transitionResetTurnFlags } from "../js/domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { setCurrentPlayerIndex as transitionSetCurrentPlayerIndex, setCurrentRound as transitionSetCurrentRound, setMatchPhase as transitionSetMatchPhase, setWinnerTeam as transitionSetWinnerTeam, setGameOver as transitionSetGameOver, setPublicCardPool as transitionSetPublicCardPool } from "../js/domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { applyGeneralDefinition as transitionApplyGeneralDefinition, bumpHandVersion as transitionBumpHandVersion, setAlive as transitionSetAlive, setEquipment as transitionSetEquipment } from "../js/domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { Game } from "../js/core/Game.js";
@@ -189,6 +197,7 @@ import {
 
 // Test Runner 与通用 Helpers
 const tests = [];
+const TEST_VERSION_STATE = { stateVersion: 0 };
 
 const test = (name, fn) => tests.push({ name, fn });
 
@@ -273,8 +282,8 @@ function makeUi(response = () => false) {
 
 function makePlayer(id, seatIndex, team, controllerType = "ai", generalIndex = seatIndex % 8) {
   const player = new Player({ id, seatIndex, battleTeam: team, controllerType });
-  player.applyGeneral(GENERAL_DEFINITIONS[generalIndex]);
-  player.resetRoundFlags();
+  player.applyGeneral(TEST_VERSION_STATE, GENERAL_DEFINITIONS[generalIndex]);
+  player.resetRoundFlags(TEST_VERSION_STATE);
   return player;
 }
 
@@ -290,7 +299,7 @@ function makeGame(players, { random = () => 0.25, response = () => false } = {})
   for (const player of players) {
     player.maxEnergy = game.teamRules.getMaxEnergy(player);
     player.energy = Math.min(player.energy, player.maxEnergy);
-    player.resetTurnFlags(game.teamRules.getRules(player));
+    player.resetTurnFlags(TEST_VERSION_STATE, game.teamRules.getRules(player));
   }
   game.registerGlobalRules();
   return { game, ui };
@@ -364,7 +373,7 @@ function configureOwnedGame(game, players) {
   game.cleanupManager.delay = async () => !game.state.isDisposed;
   for (const player of players) {
     player.maxEnergy = game.teamRules.getMaxEnergy(player);
-    player.resetTurnFlags(game.teamRules.getRules(player));
+    player.resetTurnFlags(TEST_VERSION_STATE, game.teamRules.getRules(player));
   }
   return game;
 }
@@ -537,13 +546,13 @@ test("卡牌定义：护盾全局基础 aiValue 为 7 且不低于调息", () =>
 
 test("卡牌定义：借势在集中牌堆中固定3张且均为不同真实实例", () => {
   const deck = new Deck(() => 0);
-  deck.build();
+  deck.build(TEST_VERSION_STATE);
   const cards = deck.cards.filter((card) => card.definitionId === "leverage");
   assert.equal(CARD_DEFINITIONS.leverage.count, 3);
   assert.equal(cards.length, 3);
   assert.equal(new Set(cards.map((card) => card.id)).size, 3);
   assert.equal(new Set(cards).size, 3);
-  deck.build();
+  deck.build(TEST_VERSION_STATE);
   assert.equal(deck.cards.filter((card) => card.definitionId === "leverage").length, 3);
 });
 
@@ -628,7 +637,7 @@ test("角色规则：八名角色规则配置与README角色介绍一致", async
     assert.deepEqual([general.maxHp, general.activeCost, general.activeLimitPerTurn], values, id);
     assert.deepEqual([skill.cost, skill.limitPerTurn], values.slice(1), `${id}实际技能`);
     const player = new Player({ id: `initial-${id}`, seatIndex: 0, battleTeam: "dawn", controllerType: "ai" });
-    player.applyGeneral(general);
+    player.applyGeneral(TEST_VERSION_STATE, general);
     assert.deepEqual([player.hp, player.maxHp], [4, 4], `${id}初始生命`);
   }
 });
@@ -656,7 +665,7 @@ test("角色规则：applyGeneral 按配置初始化灵医、炎术师、调律�
     const general = GENERAL_DEFINITIONS.find((entry) => entry.id === id),
       player = new Player({ id: `init-${id}`, seatIndex: 0, battleTeam: "dawn", controllerType: "ai" });
     assert.equal(player.energy, 0, `${id} 构造后能量为0`);
-    player.applyGeneral(general);
+    player.applyGeneral(TEST_VERSION_STATE, general);
     assert.equal(player.energy, expectedEnergy, `${id} applyGeneral 后初始能量`);
     assert.equal(player.maxHp, general.maxHp);
     assert.equal(player.hp, general.maxHp);
@@ -1211,31 +1220,31 @@ test("构建一致性：浏览器模块图全部资源使用统一构建版本",
 
 test("牌堆：Deck 创建163个唯一实体 card.id", () => {
   const deck = new Deck(() => .4);
-  assert.equal(deck.build(), 163);
+  assert.equal(deck.build(TEST_VERSION_STATE), 163);
   assert.equal(new Set(deck.cards.map((card) => card.id)).size, 163);
 });
 
 test("牌堆：结算区不会进入重洗", () => {
   const deck = new Deck(() => .4);
-  deck.build();
-  const resolving = deck.drawOne();
-  const discard = deck.drawOne();
-  deck.beginResolve(resolving);
-  deck.discard(discard);
+  deck.build(TEST_VERSION_STATE);
+  const resolving = deck.drawOne(TEST_VERSION_STATE);
+  const discard = deck.drawOne(TEST_VERSION_STATE);
+  deck.beginResolve(TEST_VERSION_STATE, resolving);
+  deck.discard(TEST_VERSION_STATE, discard);
   deck.cards = [];
-  deck.reshuffle();
+  deck.reshuffle(TEST_VERSION_STATE);
   assert.equal(deck.cards.length, 1);
   assert.equal(deck.resolvingCards[0], resolving);
 });
 
 test("牌堆：判定区不会进入重洗", () => {
   const deck = new Deck(() => .4);
-  deck.build();
-  const judgment = deck.drawToJudgment();
-  const discard = deck.drawOne();
-  deck.discard(discard);
+  deck.build(TEST_VERSION_STATE);
+  const judgment = deck.drawToJudgment(TEST_VERSION_STATE);
+  const discard = deck.drawOne(TEST_VERSION_STATE);
+  deck.discard(TEST_VERSION_STATE, discard);
   deck.cards = [];
-  deck.reshuffle();
+  deck.reshuffle(TEST_VERSION_STATE);
   assert.equal(deck.cards.length, 1);
   assert.equal(deck.judgmentZone[0], judgment);
 });
@@ -1243,7 +1252,7 @@ test("牌堆：判定区不会进入重洗", () => {
 test("牌堆：重洗计数会准确累加", () => {
   const deck = new Deck();
   deck.discardPile.push(instance("charge"));
-  deck.reshuffle();
+  deck.reshuffle(TEST_VERSION_STATE);
   assert.equal(deck.reshuffleCount, 1);
 });
 
@@ -1800,7 +1809,7 @@ test("窥探：只向真人私密层展示并把该实体牌标记为已知", as
   const scout = instance("scout"), secret = instance("counter");
   a.hand.push(scout);
   b.hand.push(secret);
-  b.bumpHandVersion();
+  b.bumpHandVersion(TEST_VERSION_STATE);
   const hidden = game.cardSelectionSystem.createHiddenSelection(b);
   await game.playCard(
     a, scout, [b], { tokens: [hidden.tokens[0].token], selectionId: hidden.selectionId }
@@ -1821,7 +1830,7 @@ test("转移：支持来源、接收者与指定牌三阶段", async () => {
   const transfer = instance("transfer"), moved = instance("block");
   a.hand.push(transfer);
   b.hand.push(moved);
-  b.bumpHandVersion();
+  b.bumpHandVersion(TEST_VERSION_STATE);
   const hidden = game.cardSelectionSystem.createHiddenSelection(b);
   await game.playCard(
     a,
@@ -1846,7 +1855,7 @@ test("转移：接收者为使用者时声明与结果都显示自己", async ()
     use = instance("transfer"), moved = instance("recover");
   actor.hand.push(use);
   from.hand.push(moved);
-  from.bumpHandVersion();
+  from.bumpHandVersion(TEST_VERSION_STATE);
   const { game } = makeGame([actor, from, other]), selection = game.cardSelectionSystem.createHiddenSelection(from);
   assert.equal(await game.playCard(actor, use, [], {
     sourceId: from.id,
@@ -1982,8 +1991,8 @@ test("转移：锁定牌在结算前离开来源时转移失败且没有有效�
     if (index >= 0) {
       from.hand.splice(index, 1);
       escaped.hand.push(locked);
-      from.bumpHandVersion();
-      escaped.bumpHandVersion();
+      from.bumpHandVersion(TEST_VERSION_STATE);
+      escaped.bumpHandVersion(TEST_VERSION_STATE);
     }
   });
   game.eventBus.on("cardUsed", "test:failed-transfer", (event) => {
@@ -2020,7 +2029,7 @@ test("转移：在反制前的日志和响应上下文包含来源与接收者�
   const use = instance("transfer"), secret = instance("block");
   actor.hand.push(use);
   from.hand.push(secret);
-  from.bumpHandVersion();
+  from.bumpHandVersion(TEST_VERSION_STATE);
   const { game, ui }
     = makeGame([actor, from, responder, receiver], { response: () => false });
   const hidden = game.cardSelectionSystem.createHiddenSelection(from);
@@ -2913,7 +2922,7 @@ test("掠夺：真人掠夺指定隐藏牌后按已知公开牌名记录", async
   const use = instance("plunder"), secret = instance("block");
   a.hand.push(use);
   b.hand.push(secret);
-  b.bumpHandVersion();
+  b.bumpHandVersion(TEST_VERSION_STATE);
   const h = game.cardSelectionSystem.createHiddenSelection(b);
   await game.playCard(a, use, [b], { tokens: [h.tokens[0].token], selectionId: h.selectionId });
   assert.ok(a.hand.includes(secret));
@@ -2984,7 +2993,7 @@ test("破坏：公开牌名并把牌移入弃牌堆", async () => {
   const use = instance("destroy"), secret = instance("block");
   a.hand.push(use);
   b.hand.push(secret);
-  b.bumpHandVersion();
+  b.bumpHandVersion(TEST_VERSION_STATE);
   const moved = [];
   game.eventBus.on("afterCardMove", "test:destroy-keeps-standard-move", (event) => {
     if (event.card === secret) moved.push([event.from, event.to, event.reason]);
@@ -3302,7 +3311,7 @@ test("互利：触发重洗后弃牌堆别名保持同步", async () => {
   const { game }
     = makeGame([a, b, c]);
   const discards = [instance("block"), instance("charge"), instance("recover")];
-  for (const card of discards) game.state.deck.discard(card);
+  for (const card of discards) game.state.deck.discard(game.state, card);
   let aliasDuringReveal = true;
   const originalShow = game.ui.showPublicPool;
   game.ui.showPublicPool = (cards) => {
@@ -3354,14 +3363,14 @@ test("互利：公共牌揭示触发重洗后两个弃牌堆入口读取同一�
   const { game }
     = makeGame([a, b, c]);
   const discards = [instance("block"), instance("charge"), instance("recover")];
-  for (const card of discards) game.state.deck.discard(card);
+  for (const card of discards) game.state.deck.discard(game.state, card);
   const pool = game.publicCardPool.reveal(3);
   assert.equal(pool.length, 3);
   assert.equal(game.state.deck.reshuffleCount, 1);
   assert.equal(game.state.discardPile, game.state.deck.discardPile);
   assert.equal(game.state.discardPile.length, 0);
   const extra = instance("shield");
-  assert.equal(game.state.deck.discard(extra), true);
+  assert.equal(game.state.deck.discard(game.state, extra), true);
   assert.ok(game.state.discardPile.includes(extra));
   assert.equal(game.state.discardPile.includes(extra), game.state.deck.discardPile.includes(extra));
 });
@@ -3395,7 +3404,7 @@ test("封印：定义、数量、牌堆与原有牌数量正确", () => {
   assert.equal(TOTAL_CARD_COUNT, 163);
   assert.equal(TOTAL_CARD_COUNT - CARD_COUNTS.seal, 160);
   const deck = new Deck(() => 0);
-  assert.equal(deck.build(), 163);
+  assert.equal(deck.build(TEST_VERSION_STATE), 163);
   const cards = deck.cards.filter((card) => card.definitionId === "seal");
   assert.equal(cards.length, 3);
   assert.equal(new Set(cards.map((card) => card.id)).size, 3);
@@ -3642,7 +3651,7 @@ test("封印：判定生效后仍处理闪电、摸牌、跳过出牌并正常�
   assert.ok(game.state.logs.some(
     (entry) => entry.message === `${holder.name}因「封印」生效，跳过出牌阶段并进入弃牌阶段。`
   ));
-  holder.resetTurnFlags(game.teamRules.getRules(holder));
+  holder.resetTurnFlags(TEST_VERSION_STATE, game.teamRules.getRules(holder));
   assert.equal(holder.turnFlags.skipActionPhase, false);
 });
 
@@ -3722,7 +3731,7 @@ test("闪电：定义、数量与牌堆总数正确", () => {
 
 test("闪电：Deck.build 生成正好两张不同实体 ID", () => {
   const deck = new Deck(() => 0);
-  assert.equal(deck.build(), 163);
+  assert.equal(deck.build(TEST_VERSION_STATE), 163);
   const cards = deck.cards.filter((card) => card.definitionId === "lightning");
   assert.equal(cards.length, 2);
   assert.equal(new Set(cards.map((card) => card.id)).size, 2);
@@ -4421,7 +4430,7 @@ test("回收站：次数只在装备区显示并随真实回合状态重置", ()
     const status = panel.match(/<span class="panel-status"[\s\S]*?<\/span>/)?.[0] ?? "";
     assert.doesNotMatch(status, /回收站|回收|\d\/2/);
   }
-  player.resetTurnFlags({ attackLimitPerTurn: 2, recoverLimitPerTurn: null });
+  player.resetTurnFlags(TEST_VERSION_STATE, { attackLimitPerTurn: 2, recoverLimitPerTurn: null });
   assert.match(equipmentSlotTemplate(player, true), />0\/2</);
   player.equipment = null;
   assert.doesNotMatch(equipmentSlotTemplate(player, true), />\d\/2</);
@@ -5353,7 +5362,7 @@ test("灵医：滋荣1能量非法、前两次各耗2能量且仅治疗所选受
   assert.equal(await game.useActiveSkill(medic, "symbiosis", [ally]), false);
   assert.equal(medic.energy, 0);
   assert.equal(medic.turnFlags.activeSkillUseCounts.symbiosis, 2);
-  medic.resetTurnFlags(game.teamRules.getRules(medic));
+  medic.resetTurnFlags(TEST_VERSION_STATE, game.teamRules.getRules(medic));
   medic.energy = 2;
   assert.equal(await game.useActiveSkill(medic, "symbiosis", [ally]), true);
   assert.equal(ally.hp, 3);
@@ -5879,8 +5888,8 @@ test("影客：窥隙等待期间已选牌离手时只展示仍在原手牌的�
   registerPassiveSkills(game);
   ui.requestHiddenCards = async (selection) => {
     target.hand.splice(target.hand.indexOf(first), 1);
-    target.bumpHandVersion();
-    game.state.deck.discard(first);
+    target.bumpHandVersion(TEST_VERSION_STATE);
+    game.state.deck.discard(game.state, first);
     return selection.tokens.slice(0, 2).map((entry) => entry.token);
   };
   await game.damage(shade, target, 1, { canBlock: false });
@@ -6583,7 +6592,7 @@ test("赌命者：孤注状态不可叠加、跨回合保留，并在下一次�
   game.state.deck.cards.push(instance("charge"), instance("shield"), instance("block"));
   gambler.energy = 3;
   await game.useActiveSkill(gambler, "allIn", []);
-  gambler.resetTurnFlags(game.teamRules.getRules(gambler));
+  gambler.resetTurnFlags(TEST_VERSION_STATE, game.teamRules.getRules(gambler));
   assert.deepEqual(gambler.statuses.allIn, { assaultBonus: 1 });
   gambler.energy = 1;
   assert.deepEqual(
@@ -7091,7 +7100,7 @@ test("调律师：共鸣1能量非法、前两次各耗2能量并各摸1张", as
   assert.equal(await game.useActiveSkill(tuner, "resonance", [ally]), false);
   assert.equal(tuner.energy, 0);
   assert.equal(ally.hand.length, 1);
-  tuner.resetTurnFlags(game.teamRules.getRules(tuner));
+  tuner.resetTurnFlags(TEST_VERSION_STATE, game.teamRules.getRules(tuner));
   tuner.energy = 2;
   assert.equal(await game.useActiveSkill(tuner, "resonance", [tuner]), true);
   assert.equal(tuner.energy, 0);
@@ -7236,7 +7245,7 @@ test("调律师：掠夺实际作用于队友时触发协调", async () => {
     { game } = makeGame([tuner, ally, enemy]);
   tuner.hand.push(use);
   ally.hand.push(moved);
-  ally.bumpHandVersion();
+  ally.bumpHandVersion(TEST_VERSION_STATE);
   game.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(game);
   const hidden = game.cardSelectionSystem.createHiddenSelection(ally);
@@ -7256,7 +7265,7 @@ test("调律师：掠夺实际作用于敌人时不触发协调", async () => {
     { game } = makeGame([tuner, ally, enemy]);
   tuner.hand.push(use);
   enemy.hand.push(moved);
-  enemy.bumpHandVersion();
+  enemy.bumpHandVersion(TEST_VERSION_STATE);
   game.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(game);
   const hidden = game.cardSelectionSystem.createHiddenSelection(enemy);
@@ -7276,7 +7285,7 @@ test("调律师：窥探实际作用于队友时触发协调", async () => {
     { game } = makeGame([tuner, ally, enemy]);
   tuner.hand.push(use);
   ally.hand.push(secret);
-  ally.bumpHandVersion();
+  ally.bumpHandVersion(TEST_VERSION_STATE);
   game.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(game);
   const hidden = game.cardSelectionSystem.createHiddenSelection(ally);
@@ -7296,7 +7305,7 @@ test("调律师：窥探实际作用于敌人时不触发协调", async () => {
     { game } = makeGame([tuner, ally, enemy]);
   tuner.hand.push(use);
   enemy.hand.push(secret);
-  enemy.bumpHandVersion();
+  enemy.bumpHandVersion(TEST_VERSION_STATE);
   game.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(game);
   const hidden = game.cardSelectionSystem.createHiddenSelection(enemy);
@@ -7384,7 +7393,7 @@ test("调律师：最终生效的反制把原施牌者与原目标纳入有效�
   enemy.hand.push(use);
   tuner.hand.push(tunerCounter);
   ally.hand.push(secret);
-  ally.bumpHandVersion();
+  ally.bumpHandVersion(TEST_VERSION_STATE);
   game.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(game);
   let counterEvent = null;
@@ -7421,7 +7430,7 @@ test("调律师：被下一层反制取消的反制不产生有效结算且不�
   tuner.hand.push(tunerCounter);
   counterer.hand.push(nextCounter);
   ally.hand.push(secret);
-  ally.bumpHandVersion();
+  ally.bumpHandVersion(TEST_VERSION_STATE);
   game.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(game);
   const resolvedCounterIds = [];
@@ -8193,7 +8202,7 @@ test("隐藏信息：装备区选择令牌绑定本次会话、所有者和手�
   const { game }
     = makeGame([actor, owner]);
   const selection = game.cardSelectionSystem.createHiddenSelection(owner);
-  owner.bumpHandVersion();
+  owner.bumpHandVersion(TEST_VERSION_STATE);
   assert.equal(
     await game.choosePlayerZoneCard(
       actor,
@@ -8344,7 +8353,7 @@ test("隐藏信息：过期手牌版本令不透明令牌失效", () => {
     = makeGame([a, b]);
   b.hand.push(instance("block"));
   const selection = game.cardSelectionSystem.createHiddenSelection(b);
-  b.bumpHandVersion();
+  b.bumpHandVersion(TEST_VERSION_STATE);
   assert.equal(game.cardSelectionSystem.resolveToken(selection.tokens[0].token, b), null);
 });
 
@@ -32227,7 +32236,7 @@ test("AI·转移评分：真人仍可把己方手牌转移给敌方", async () =
     held = instance("block");
   actor.hand.push(use);
   from.hand.push(held);
-  from.bumpHandVersion();
+  from.bumpHandVersion(TEST_VERSION_STATE);
   const { game }
     = makeGame([actor, from, receiver]);
   const prepared = await game.prepareTransferIntent(
@@ -35791,7 +35800,7 @@ test("UI·响应窗口：转移响应片段包含来源与接收者的队伍", a
   const use = instance("transfer"), secret = instance("block");
   actor.hand.push(use);
   from.hand.push(secret);
-  from.bumpHandVersion();
+  from.bumpHandVersion(TEST_VERSION_STATE);
   const { game, ui }
     = makeGame([actor, from, responder, receiver], { response: () => false });
   const hidden = game.cardSelectionSystem.createHiddenSelection(from);
@@ -37838,7 +37847,7 @@ test("集成：调律师转移把来源与接收者都作为有效目标并只�
   const use = instance("transfer"), moved = instance("block");
   tuner.hand.push(use);
   enemy.hand.push(moved);
-  enemy.bumpHandVersion();
+  enemy.bumpHandVersion(TEST_VERSION_STATE);
   const hidden = game.cardSelectionSystem.createHiddenSelection(enemy);
   await game.playCard(
     tuner,
@@ -39638,10 +39647,116 @@ function frArchPhaseACarryInClosure() {
   assert.equal(Object.hasOwn(projected, "general"), false);
   assert.equal(Object.hasOwn(projected, "portrait"), false);
   assert.equal(Object.hasOwn(projected, "aiProfile"), false);
+  const actor = ruleView.currentActor();
+  assert.equal(actor.id, player.id);
+  assert.ok(ruleView.alliesOf(actor).some((entry) => entry.id === player.id));
+  assert.equal(ruleView.enemiesOf(actor).some((entry) => entry.id === player.id), false);
+  assert.deepEqual(ruleView.seatOrderFrom(actor, false).map((entry) => entry.id), game.seatOrderFrom(player, false).map((entry) => entry.id));
+  assert.deepEqual(ruleView.seatOrderFrom(actor, true).map((entry) => entry.id), game.seatOrderFrom(player, true).map((entry) => entry.id));
   assert.equal(player.general, legacyGeneral);
 }
 
 test("FR-ARCH-4B·carry-in：selectedGeneralId/legacy general/RuleStateView boundary 已关闭", frArchPhaseACarryInClosure);
+
+/*
+功能
+验证 RuleStateView 的公开 source/player 参数只接受 Rule Player projection，且 currentActor/players 结果可自然组合传给 allies/enemies/seatOrder。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture 与 createRuleStateView。
+
+写入状态
+无。
+
+调用函数
+makeTeamFixture、createRuleStateView、view.players/currentActor/alliesOf/enemiesOf/seatOrderFrom/playerById。
+
+边界与不变量
+Rule projection 不包含 controllerType/aiMemory/general/aiProfile/portrait 与 SearchState 字段；真实 Player 不得作为 source/player 参数。
+*/
+function frArchPhaseARuleStateViewContract() {
+  const { game, small, large } = makeTeamFixture();
+  const view = createRuleStateView(game.state);
+  const forbidden = [
+    "controllerType",
+    "aiMemory",
+    "general",
+    "aiProfile",
+    "portrait",
+    "roleTags",
+    "equipmentRetentionProbability",
+    "visibleHand",
+    "knowledge",
+    "beliefState",
+    "searchState"
+  ];
+  const assertProjection = (projection) => {
+    assert.ok(Object.isFrozen(projection));
+    assert.ok(Object.isFrozen(projection.statusIds));
+    for (const field of forbidden) {
+      assert.equal(Object.hasOwn(projection, field), false, `Rule projection 不得包含 ${field}`);
+    }
+  };
+  const projections = view.players();
+  projections.forEach(assertProjection);
+  assert.equal(view.currentActor().id, game.currentPlayer.id);
+
+  const actor = view.currentActor();
+  assertProjection(actor);
+  assert.deepEqual(
+    view.alliesOf(actor).map((entry) => entry.id),
+    game.getAllies(small).map((entry) => entry.id)
+  );
+  assert.deepEqual(
+    view.enemiesOf(actor).map((entry) => entry.id),
+    game.getEnemies(small).map((entry) => entry.id)
+  );
+  for (const includeSource of [false, true]) {
+    assert.deepEqual(
+      view.seatOrderFrom(actor, includeSource).map((entry) => entry.id),
+      game.seatOrderFrom(small, includeSource).map((entry) => entry.id)
+    );
+  }
+
+  for (let index = 0; index < projections.length; index += 1) {
+    const projection = projections[index];
+    const real = game.state.players[index];
+    assert.equal(projection.id, real.id);
+    assertProjection(projection);
+    assert.deepEqual(
+      view.alliesOf(projection).map((entry) => entry.id),
+      game.getAllies(real).map((entry) => entry.id)
+    );
+    assert.deepEqual(
+      view.enemiesOf(projection).map((entry) => entry.id),
+      game.getEnemies(real).map((entry) => entry.id)
+    );
+    for (const includeSource of [false, true]) {
+      assert.deepEqual(
+        view.seatOrderFrom(projection, includeSource).map((entry) => entry.id),
+        game.seatOrderFrom(real, includeSource).map((entry) => entry.id)
+      );
+    }
+  }
+
+  const byId = view.playerById(large.id);
+  assertProjection(byId);
+  assert.equal(byId.id, large.id);
+  assert.throws(() => view.alliesOf(game.state.players[0]), /Rule Player projection/);
+  assert.throws(() => view.enemiesOf(game.state.players[0]), /Rule Player projection/);
+  assert.throws(() => view.seatOrderFrom(game.state.players[0]), /Rule Player projection/);
+}
+
+test("FR-ARCH-4B·micro-closure：RuleStateView projection 可组合且拒绝 Real Player 双 schema", frArchPhaseARuleStateViewContract);
 
 /*
 功能
@@ -39733,6 +39848,526 @@ function frArchStateVersionContract() {
 }
 
 test("FR-ARCH-4B·stateVersion：success +1、no-op/fail +0、atomic group +1", frArchStateVersionContract);
+
+
+// ==================== FR-ARCH-5 Foundational Domain Rule Tests ====================
+
+/*
+功能
+验证 Team Rules 已拥有规模、额度与能量公式，且 legacy TeamRuleService/TeamManager 只转发。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture、createRuleStateView 与 Domain TeamRules。
+
+写入状态
+无。
+
+调用函数
+getTeamSize、isSmallTeam、getTeamRules、getInitialHandCount、getDrawCount、getAttackLimit、getRecoverLimit、getMaxEnergy、getTurnEnergyBreakdown。
+
+边界与不变量
+小队/大队全部 legacy==Domain；AI 反事实装备投影仍由 facade 适配。
+*/
+function frArch5TeamRules() {
+  const { game, small, large } = makeTeamFixture();
+  const view = createRuleStateView(game.state);
+  const rulePlayers = view.players();
+  const ruleState = { players: rulePlayers };
+  const smallRule = rulePlayers.find((player) => player.id === small.id);
+  const largeRule = rulePlayers.find((player) => player.id === large.id);
+  assert.equal(getTeamSize(ruleState, smallRule), 2);
+  assert.equal(getTeamSize(ruleState, largeRule), 3);
+  assert.equal(getTeamSize(ruleState, "dawn"), game.teamRules.getTeamSize("dawn"));
+  assert.equal(isSmallTeam(ruleState, smallRule), true);
+  assert.equal(isSmallTeam(ruleState, largeRule), false);
+  assert.equal(getTeamRules(ruleState, smallRule), RULESET_DEFINITION.smallTeamBonuses);
+  assert.equal(getTeamRules(ruleState, largeRule), RULESET_DEFINITION.largeTeamRules);
+  assert.equal(getInitialHandCount(ruleState, smallRule), game.teamRules.getInitialHandCount(small));
+  assert.equal(getInitialHandCount(ruleState, largeRule), game.teamRules.getInitialHandCount(large));
+  assert.equal(getDrawCount(ruleState, smallRule), game.teamRules.getDrawCount(small));
+  assert.equal(getAttackLimit(ruleState, smallRule), game.teamRules.getAttackLimit(small));
+  assert.equal(getAttackLimit(ruleState, largeRule), game.teamRules.getAttackLimit(large));
+  assert.equal(getRecoverLimit(ruleState, smallRule), null);
+  assert.equal(getMaxEnergy(ruleState, smallRule), game.teamRules.getMaxEnergy(small));
+  assert.equal(getMaxEnergy(ruleState, largeRule), game.teamRules.getMaxEnergy(large));
+  assert.deepEqual(getTurnEnergyBreakdown(ruleState, smallRule), { baseAmount:1, teamBonus:0, equipmentBonus:0 });
+  assert.deepEqual(
+    getTurnEnergyBreakdown(ruleState, { ...smallRule, equipmentDefinitionId:"energyDevice" }),
+    { baseAmount:1, teamBonus:0, equipmentBonus:1 }
+  );
+  assert.deepEqual(
+    game.teamRules.getTurnEnergyBreakdown({ battleTeam:small.battleTeam, equipment:{ definitionId:"energyDevice" } }),
+    { baseAmount:1, teamBonus:0, equipmentBonus:1 }
+  );
+  assert.deepEqual(view.alliesOf(smallRule).map((entry) => entry.id), game.getAllies(small).map((entry) => entry.id));
+  assert.deepEqual(view.enemiesOf(smallRule).map((entry) => entry.id), game.getEnemies(small).map((entry) => entry.id));
+}
+
+test("FR-ARCH-5·team rules：规模/手牌/摸牌/能量/攻击/调息与 ally-enemy 语义", frArch5TeamRules);
+
+/*
+功能
+验证确定性 Distance Rules 的存活环、基础距离、装备修正、最小距离与借势距离，且 AI 概率仍在 Domain 外。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+distanceFixture、instance 与 Domain DistanceRules/DistanceSystem。
+
+写入状态
+临时修改测试 Player 的存活与装备字段。
+
+调用函数
+getAliveRing、getBaseDistance、getDistance、DistanceSystem.getRangeLegalityProbability、getAssaultTargetCandidates。
+
+边界与不变量
+deterministic core 不读取 equipmentRetentionProbability。
+*/
+function frArch5DistanceRules() {
+  const { players, game } = distanceFixture();
+  const [a, b, c, d] = players;
+  assert.deepEqual(getAliveRing(players).map((player) => player.id), ["A","B","C","D","E"]);
+  assert.equal(getBaseDistance(players, a, a), 0);
+  assert.equal(getBaseDistance(players, a, b), 1);
+  assert.equal(getDistance(players, a, a), 0);
+  assert.equal(getDistance(players, a, b), 1);
+  assert.equal(getDistance(players, a, c, "telescope", null), 1);
+  assert.equal(getDistance(players, a, b, null, "barrierDevice"), 2);
+  assert.equal(getDistance(players, a, b, "telescope", "barrierDevice"), 1);
+  assert.equal(getDistance(players, a, b, "telescope", null), 1, "minimum distance floor");
+  assert.equal(getDistance(players, a, b, "telescope", "barrierDevice") <= a.attackRange, true, "range boundary");
+
+  const livingBefore = players.map((player) => player.alive);
+  players[1].alive = false;
+  assert.equal(getBaseDistance(players, a, c), 1, "dead-player ring compression");
+  assert.equal(getBaseDistance(players, b, c), Infinity);
+  players[1].alive = livingBefore[1];
+
+  b.equipment = instance("telescope");
+  assert.equal(getDistance(players, b, d, "telescope", null), 1, "borrowed assault distance from first target");
+  b.equipment = null;
+
+  for (const player of players) player.alive = false;
+  players[0].alive = true;
+  players[1].alive = true;
+  assert.equal(getBaseDistance(players, a, b), 1, "two-living ring");
+  for (let index = 0; index < players.length; index += 1) players[index].alive = livingBefore[index];
+  assert.equal(DistanceSystem.getRangeLegalityProbability(game, a, c, 2), 1);
+  const domainSource = String(getDistance);
+  assert.equal(domainSource.includes("equipmentRetentionProbability"), false);
+}
+
+test("FR-ARCH-5·distance rules：确定性核心完整，AI probability 不进入 Domain", frArch5DistanceRules);
+
+/*
+功能
+验证 Turn Rules 唯一拥有 reset semantics 与纯回合推进，RuleUsageTransitions 只提交已决定对象。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture、makePlayer、Domain TurnRules、RuleUsageTransitions 与源码。
+
+写入状态
+测试 Player turnFlags/roundFlags 与独立 stateVersion。
+
+调用函数
+createTurnUsageState、createGlobalTurnReactiveState、createRoundUsageState、reset transitions、getAttackUsage、hasAttackUseRemaining、hasRecoverUseRemaining、getActiveSkillUseCount、hasActiveSkillUseRemaining、isActorTurn、shouldSkipActionPhase、calculateNextActorIndex。
+
+边界与不变量
+Transition 不再维护 reset 字段清单。
+*/
+async function frArch5TurnRules() {
+  const { game, small, large } = makeTeamFixture();
+  const smallRules = game.teamRules.getRules(small);
+  const largeRules = game.teamRules.getRules(large);
+  const smallTurn = createTurnUsageState(smallRules);
+  const largeTurn = createTurnUsageState(largeRules);
+  assert.equal(smallTurn.attackLimit, 2);
+  assert.equal(largeTurn.attackLimit, 1);
+  assert.equal(smallTurn.recoverLimit, null);
+  assert.equal(largeTurn.recoverLimit, null);
+  assert.ok(smallTurn.categoriesUsed instanceof Set);
+  assert.ok(smallTurn.activeSkillsUsed instanceof Set);
+  assert.equal(smallTurn.guardianAidUsed, false);
+
+  const player = makePlayer("fr5-turn", 0, "dawn");
+  const state = { stateVersion: 0 };
+  const decided = createTurnUsageState(smallRules);
+  transitionResetTurnFlags(state, player, decided);
+  assert.equal(player.turnFlags, decided);
+  assert.equal(state.stateVersion, 1);
+  const reactive = createGlobalTurnReactiveState();
+  transitionResetGlobalTurnReactiveFlags(state, player, reactive);
+  assert.equal(player.turnFlags.categoriesUsed, reactive.categoriesUsed);
+  assert.equal(player.turnFlags.momentum, reactive.momentum);
+  assert.equal(state.stateVersion, 2);
+  player.roundFlags = { legacyMarker:true };
+  transitionResetRoundFlags(state, player, createRoundUsageState());
+  assert.deepEqual(player.roundFlags, {});
+  assert.equal(state.stateVersion, 3);
+  assert.deepEqual(createRoundUsageState(), {});
+
+  assert.deepEqual(getAttackUsage({ used:1, limit:2 }), { used:1, limit:2 });
+  assert.equal(hasAttackUseRemaining({ used:1, limit:2 }), true);
+  assert.equal(hasAttackUseRemaining({ used:2, limit:2 }), false);
+  assert.equal(hasAttackUseRemaining({ used:0, limit:0 }), false);
+  assert.equal(hasRecoverUseRemaining(3, null), true);
+  assert.equal(hasRecoverUseRemaining(1, 1), false);
+  const usage = createTurnUsageState(smallRules);
+  assert.equal(getActiveSkillUseCount(usage, "breakArmy"), 0);
+  usage.activeSkillUseCounts.breakArmy = 2;
+  assert.equal(getActiveSkillUseCount(usage, "breakArmy"), 2);
+  assert.equal(hasActiveSkillUseRemaining(2, 2), false);
+  assert.equal(hasActiveSkillUseRemaining(1, 2), true);
+  assert.equal(isActorTurn("play", "p1", "p1"), true);
+  assert.equal(isActorTurn("judgment", "p1", "p1"), false);
+  assert.equal(isActorTurn("play", "p1", "p2"), false);
+  assert.equal(shouldSkipActionPhase({ skipActionPhase:true }), true);
+
+  const ring = [
+    { id:"r0", seatIndex:0, alive:true },
+    { id:"r1", seatIndex:1, alive:false },
+    { id:"r2", seatIndex:2, alive:true }
+  ];
+  assert.deepEqual(calculateNextActorIndex(ring, 0, 0), { nextIndex:2, wrapped:false });
+  const wrapRing = [
+    { id:"r0", seatIndex:0, alive:true },
+    { id:"r1", seatIndex:1, alive:true },
+    { id:"r2", seatIndex:2, alive:false }
+  ];
+  assert.deepEqual(calculateNextActorIndex(wrapRing, 1, 2), { nextIndex:0, wrapped:true });
+
+  const transitionSource = await readFile(projectFile("js/domain/state/transitions/RuleUsageTransitions.js"), "utf8");
+  assert.doesNotMatch(transitionSource, /attackUsed:\s*0/);
+  assert.doesNotMatch(transitionSource, /guardianAidUsed:\s*false/);
+  assert.doesNotMatch(transitionSource, /momentum:\s*0/);
+  assert.match(transitionSource, /decidedTurnFlags|decidedRoundFlags|decidedReactiveState/);
+}
+
+test("FR-ARCH-5·turn rules：reset semantics 由 Domain Turn Rule 拥有，Transition 只 commit", frArch5TurnRules);
+
+/*
+功能
+验证 Judgment Rules 覆盖雷达防御与延迟状态判定的当前成功/失败分类。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+interpretDefenseJudgment、interpretDelayedStatusJudgment。
+
+边界与不变量
+与 JudgmentSystem 当前分类保持一致。
+*/
+function frArch5JudgmentRules() {
+  assert.deepEqual(interpretDefenseJudgment("tactic"), { handled:true, immune:true, category:"tactic" });
+  assert.deepEqual(interpretDefenseJudgment("basic"), { handled:true, immune:false, category:"basic" });
+  assert.deepEqual(interpretDefenseJudgment("equipment"), { handled:true, immune:false, category:"equipment" });
+  assert.equal(interpretDelayedStatusJudgment("equipment", "equipment"), true);
+  assert.equal(interpretDelayedStatusJudgment("tactic", "equipment"), false);
+  assert.equal(interpretDelayedStatusJudgment("tactic", "tactic"), true);
+  assert.equal(interpretDelayedStatusJudgment("basic", "tactic"), false);
+}
+
+test("FR-ARCH-5·judgment rules：雷达/封印/闪电判定分类", frArch5JudgmentRules);
+
+/*
+功能
+验证 Combat Rules 的护盾吸收、生命伤害、负 HP/overkill、濒死与治疗 clamp。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+calculateDamageResult、calculateHealAmount、isDying。
+
+边界与不变量
+不改变 DyingSystem workflow。
+*/
+function frArch5CombatRules() {
+  assert.deepEqual(calculateDamageResult(3, 0, 4), { shieldAbsorbed:0, hpDamage:3, remainingHp:1, dying:false });
+  assert.deepEqual(calculateDamageResult(3, 5, 4), { shieldAbsorbed:3, hpDamage:0, remainingHp:4, dying:false });
+  assert.deepEqual(calculateDamageResult(3, 2, 4), { shieldAbsorbed:2, hpDamage:1, remainingHp:3, dying:false });
+  assert.deepEqual(calculateDamageResult(0, 2, 4), { shieldAbsorbed:0, hpDamage:0, remainingHp:4, dying:false });
+  assert.deepEqual(calculateDamageResult(4, 0, 4), { shieldAbsorbed:0, hpDamage:4, remainingHp:0, dying:true });
+  assert.deepEqual(calculateDamageResult(8, 0, 4), { shieldAbsorbed:0, hpDamage:8, remainingHp:-4, dying:true });
+  assert.equal(isDying(-1, true), true);
+  assert.equal(isDying(0, false), false);
+  assert.equal(calculateHealAmount(5, 4, 1), 3);
+  assert.equal(calculateHealAmount(5, 4, 4), 0);
+  assert.equal(calculateHealAmount(0, 4, 2), 0);
+}
+
+test("FR-ARCH-5·combat rules：damage/shield/lethal/overkill/negative HP/heal clamp", frArch5CombatRules);
+
+/*
+功能
+验证 Status Rules 的破势/孤注/猎印/封印/闪电语义，以及闪电下一持有者座次规则。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+STATUS_DEFINITIONS 与 makeTeamFixture。
+
+写入状态
+无。
+
+调用函数
+getExposeWeaknessStacks、isExposeWeaknessConsumable、getAllInAssaultBonus、isHuntMarkExpired、getStatusDefinition、hasStatus、nextDomainLightningReceiverId、interpretDelayedStatusJudgment。
+
+边界与不变量
+identity 只来自 STATUS_DEFINITIONS；不创建第二份 catalog。
+*/
+function frArch5StatusRules() {
+  assert.equal(getExposeWeaknessStacks({ stacks:3 }), 3);
+  assert.equal(getExposeWeaknessStacks(null), 0);
+  assert.equal(isExposeWeaknessConsumable({ stacks:3 }), true);
+  assert.equal(isExposeWeaknessConsumable({ stacks:0 }), false);
+  assert.equal(getAllInAssaultBonus({ assaultBonus:1 }), 1);
+  assert.equal(getAllInAssaultBonus(null), 0);
+  assert.equal(isHuntMarkExpired({ expireAtTurnEnd:2 }, 2), true);
+  assert.equal(isHuntMarkExpired({ expireAtTurnEnd:3 }, 2), false);
+  assert.equal(getStatusDefinition("sealed"), STATUS_DEFINITIONS.sealed);
+  assert.equal(getStatusDefinition("missing"), null);
+  assert.equal(hasStatus({ statusIds:["sealed"] }, "sealed"), true);
+  assert.equal(hasStatus({ statusIds:[] }, "sealed"), false);
+  assert.equal(interpretDelayedStatusJudgment("tactic", "tactic"), true);
+  assert.equal(interpretDelayedStatusJudgment("equipment", "equipment"), true);
+
+  const canonical = (id, seatIndex, alive, statusIds = []) => ({ id, seatIndex, alive, statusIds });
+  const players = [
+    canonical("h", 0, true, ["lightning"]),
+    canonical("a", 1, true, []),
+    canonical("d", 2, false, []),
+    canonical("b", 3, true, ["lightning"]),
+    canonical("c", 4, true, [])
+  ];
+  assert.equal(nextDomainLightningReceiverId(players, "h"), "a", "skip dead and already-lightning");
+  assert.equal(nextDomainLightningReceiverId(players, "c"), "a", "wrap to earlier ally");
+  const allInvalid = [
+    canonical("h", 0, true, ["lightning"]),
+    canonical("a", 1, true, ["lightning"]),
+    canonical("b", 2, true, ["lightning"])
+  ];
+  assert.equal(nextDomainLightningReceiverId(allInvalid, "h"), "h", "fallback to holder");
+  const { game } = makeTeamFixture();
+  const view = createRuleStateView(game.state);
+  const holder = view.playerById("small");
+  game.state.players.find((player) => player.id === "small").statuses.lightning = { cardDefinitionId:"lightning" };
+  assert.equal(nextDomainLightningReceiverId(view.players(), holder.id), "large");
+}
+
+test("FR-ARCH-5·status rules：破势/孤注/猎印/封印/闪电与 identity authority", frArch5StatusRules);
+
+/*
+功能
+验证 Response Rules 的格挡需求、反制资格、响应顺序、状态反制顺序与救援/响应者资格。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+getRequiredBlockCount、isAssaultDamage、isBlockResponseAvailable、getResponseCardDefinitionId、hasSufficientResponseCards、isResponderEligible、isCounterEligible、isDyingRescueEligible、getCounterResponderOrder、getStatusCounterResponderOrder。
+
+边界与不变量
+async workflow/human-AI choice 不进入 Domain。
+*/
+function frArch5ResponseRules() {
+  assert.equal(getRequiredBlockCount(null, false), 1, "normal block");
+  assert.equal(getRequiredBlockCount("battleDevice", true), 2, "battleDevice double-block");
+  assert.equal(getRequiredBlockCount("battleDevice", false), 1);
+  assert.equal(isAssaultDamage({ subtypes:["assault"] }, "normal"), true);
+  assert.equal(isAssaultDamage({ subtypes:["assault"] }, "area"), true);
+  assert.equal(isAssaultDamage({ subtypes:[] }, "normal"), false);
+  assert.equal(isBlockResponseAvailable(true, 1), true);
+  assert.equal(isBlockResponseAvailable(false, 1), false);
+  assert.equal(isBlockResponseAvailable(true, 0), false);
+  assert.equal(getResponseCardDefinitionId("block"), "block");
+  assert.equal(getResponseCardDefinitionId("counter"), "counter");
+  assert.equal(hasSufficientResponseCards(2, 2), true);
+  assert.equal(hasSufficientResponseCards(1, 2), false);
+  assert.equal(isResponderEligible({ alive:true }), true);
+  assert.equal(isResponderEligible({ alive:false }), false);
+  assert.equal(isCounterEligible("tactic", true), true);
+  assert.equal(isCounterEligible("tactic", false), false);
+  assert.equal(isCounterEligible("basic", true), false);
+  assert.equal(isDyingRescueEligible({ alive:true, battleTeam:"dawn" }, { alive:true, hp:0, battleTeam:"dawn" }), true);
+  assert.equal(isDyingRescueEligible({ alive:true, battleTeam:"dawn" }, { alive:true, hp:0, battleTeam:"dusk" }), false);
+  assert.equal(isDyingRescueEligible({ alive:true, battleTeam:"dawn" }, { alive:true, hp:1, battleTeam:"dawn" }), false);
+  const players = [
+    { id:"p0", seatIndex:0, alive:true },
+    { id:"p1", seatIndex:1, alive:true },
+    { id:"p2", seatIndex:2, alive:false },
+    { id:"p3", seatIndex:3, alive:true },
+    { id:"p4", seatIndex:4, alive:true }
+  ];
+  assert.deepEqual(getCounterResponderOrder(players, "p0"), ["p1","p2","p3","p4"]);
+  assert.deepEqual(getStatusCounterResponderOrder(players, "p0"), ["p0","p1","p3","p4"]);
+  assert.deepEqual(getStatusCounterResponderOrder(players, "p2"), []);
+}
+
+test("FR-ARCH-5·response rules：block/counter/order/eligibility 纯规则", frArch5ResponseRules);
+
+/*
+功能
+验证 RuleStateView 新增的 status/usage/momentum 明确 accessor 足够供 Status/Combat/Turn Rules 使用且不泄漏 metadata。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture 与 createRuleStateView。
+
+写入状态
+测试 Player 的 statuses/turnFlags 字段。
+
+调用函数
+view.status/usage/momentum。
+
+边界与不变量
+不暴露整个 statuses 或 turnFlags。
+*/
+function frArch5RuleStateViewAccessors() {
+  const { game, small } = makeTeamFixture();
+  small.statuses.exposeWeakness = { stacks:3 };
+  small.turnFlags.attackUsed = 1;
+  small.turnFlags.attackLimit = 2;
+  small.turnFlags.momentum = 2;
+  const view = createRuleStateView(game.state);
+  const projected = view.playerById(small.id);
+  assert.deepEqual(view.status(projected, "exposeWeakness"), { stacks:3 });
+  assert.equal(view.status(projected, "missing"), null);
+  assert.deepEqual(view.usage(projected), { attackUsed:1, attackLimit:2, recoverUsed:0, recoverLimit:null });
+  assert.equal(view.momentum(projected), 2);
+  const clone = view.status(projected, "exposeWeakness");
+  assert.equal(Object.isFrozen(clone), true, "status accessor 返回冻结副本");
+  assert.equal(view.status(projected, "exposeWeakness").stacks, 3);
+  for (const field of ["controllerType","aiMemory","general","aiProfile","portrait"]) {
+    assert.equal(Object.hasOwn(projected, field), false);
+  }
+}
+
+test("FR-ARCH-5·RuleStateView：status/usage/momentum 受控 accessor", frArch5RuleStateViewAccessors);
+
+/*
+功能
+验证 domain/rules 目录纯度：七 family 已建立、无运行时/AI/UI/config/transition import、无 await/EventBus/random/双 schema/metadata，且无 DomainRuleEngine God Object。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/domain/rules 全部源码与目录清单。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+注释允许解释禁止项；代码本体不得出现禁止依赖。
+*/
+async function frArch5DomainRulePurity() {
+  const files = await listJavaScriptFiles(projectFile("js/domain/rules"));
+  assert.equal(files.length >= 7, true);
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:\/application\/|\/adapters\/|\/ai\/|\/ui\/|\/audio\/|core\/(?:Game|RuleEngine|ResponseSystem|DyingSystem|JudgmentSystem)\.js|cards\/cardRegistry\.js|generals\/skillRegistry\.js|state\/transitions\/|config\/)/, file);
+    assert.doesNotMatch(code, /\bawait\b/, file);
+    assert.doesNotMatch(code, /\bEventBus\b|\beventBus\b/, file);
+    assert.doesNotMatch(code, /\bMath\.random\s*\(|\.random\s*\(/, file);
+    assert.doesNotMatch(code, /Array\.isArray\([^)]*statuses\)|hand\s*\?\?\s*handCount|equipment\s*\?\?\s*equipmentDefinitionId/, file);
+    assert.doesNotMatch(code, /\b(?:controllerType|aiMemory|aiProfile|portrait|roleTags|equipmentRetentionProbability|SearchState|VisibleState|BeliefState)\b/, file);
+    assert.doesNotMatch(code, /\bthis\.game\b/, file);
+  }
+  assert.equal(files.some((file) => file.endsWith("DomainRuleEngine.js")), false);
+  const statusSource = await readFile(projectFile("js/domain/rules/status/StatusRules.js"), "utf8");
+  assert.doesNotMatch(statusSource, /STATUS_IDS/);
+  assert.equal(hasStatus({ statusIds:["sealed"] }, "sealed"), true);
+}
+
+test("FR-ARCH-5·purity：domain/rules 无 runtime/AI/UI/EventBus/await/random/dual-schema/God Object", frArch5DomainRulePurity);
 
 // ==================== Test Runner 最终执行 ====================
 

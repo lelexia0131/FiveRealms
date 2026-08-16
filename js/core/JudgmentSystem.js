@@ -1,4 +1,5 @@
 import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../domain/rules/judgment/JudgmentRules.js?build=20260815-shadow-agent-p1-slot";
 import { setMatchPhase } from "../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 
@@ -50,19 +51,19 @@ export class JudgmentSystem {
     if (!this.game.isSessionValid(gameId)) return { handled:false, immune:false, cancelled:true };
     let result;
     if (card.category === "tactic") {
-      this.game.state.deck.finishJudgmentToDiscard(card, this.game.state);
+      this.game.state.deck.finishJudgmentToDiscard(this.game.state, card);
       this.game.log(`${defender.name}的「雷达」生效，此次攻击无效。`, "important");
-      result = { handled:true, immune:true, category:"tactic" };
+      result = interpretDefenseJudgment(card.category);
     } else if (card.category === "basic") {
-      this.game.state.deck.finishJudgmentToHand(card, defender, this.game.state);
+      this.game.state.deck.finishJudgmentToHand(this.game.state, card, defender);
       bumpHandVersion(this.game.state, defender);
       for (const viewer of this.game.state.players) if (viewer.id !== defender.id) this.game.rememberPrivateCard(viewer, defender, card);
       this.game.log(`${defender.name}获得判定牌，此次攻击继续结算。`);
-      result = { handled:true, immune:false, category:"basic" };
+      result = interpretDefenseJudgment(card.category);
     } else {
-      this.game.state.deck.finishJudgmentToDiscard(card, this.game.state);
+      this.game.state.deck.finishJudgmentToDiscard(this.game.state, card);
       this.game.log(`${defender.name}的「雷达」未生效，判定牌进入弃牌堆，此次攻击继续结算。`, "important");
-      result = { handled:true, immune:false, category:"equipment" };
+      result = interpretDefenseJudgment(card.category);
     }
     this.game.state.currentJudgment = null;
     this.game.ui.hideJudgment?.();
@@ -143,8 +144,8 @@ export class JudgmentSystem {
     if (statusId === "sealed") revealEvent.sealContext = context;
     await this.game.eventBus.emit("judgmentRevealed", revealEvent);
     if (!this.game.isSessionValid(gameId)) return { handled:false, triggered:false, cancelled:true };
-    const triggered = card.category === triggerCategory;
-    this.game.state.deck.finishJudgmentToDiscard(card, this.game.state);
+    const triggered = interpretDelayedStatusJudgment(card.category, triggerCategory);
+    this.game.state.deck.finishJudgmentToDiscard(this.game.state, card);
     if (triggered && triggerMessage) this.game.log(triggerMessage(holder, card), "important");
     this.game.state.currentJudgment = null;
     this.game.ui.hideJudgment?.();

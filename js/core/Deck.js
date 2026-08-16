@@ -53,7 +53,7 @@ export class Deck {
   Game.confirmGeneral 与测试。
 
   输入
-  可选 authoritative state。
+  authoritative state。
 
   输出
   创建的卡牌总数。
@@ -70,7 +70,7 @@ export class Deck {
   边界与不变量
   createId 与 random 调用顺序不变。
   */
-  build(state = null) {
+  build(state) {
     this.reshuffleCount = 0;
     const builtCards = [];
     for (const definition of Object.values(CARD_DEFINITIONS)) {
@@ -79,7 +79,7 @@ export class Deck {
       }
     }
     const shuffledCards = shuffled(builtCards, this.random);
-    commitDeckBuild(state ?? { stateVersion: 0 }, this, shuffledCards, [], [], []);
+    commitDeckBuild(state, this, shuffledCards, [], [], []);
     Debug.log("Deck", `创建并洗牌 ${this.cards.length} 张`);
     return this.cards.length;
   }
@@ -92,7 +92,7 @@ export class Deck {
   Game/PublicCardPool/Judgment workflow。
 
   输入
-  可选 authoritative state。
+  authoritative state。
 
   输出
   抽到的 Card entity 或 null。
@@ -109,9 +109,9 @@ export class Deck {
   边界与不变量
   RNG 调用顺序不变。
   */
-  drawOne(state = null) {
+  drawOne(state) {
     if (!this.cards.length) this.reshuffle(state);
-    return takeTopCard(state ?? { stateVersion: 0 }, this.cards);
+    return takeTopCard(state, this.cards);
   }
 
   /*
@@ -122,7 +122,7 @@ export class Deck {
   drawOne 与测试。
 
   输入
-  可选 authoritative state。
+  authoritative state。
 
   输出
   是否实际重洗。
@@ -139,10 +139,10 @@ export class Deck {
   边界与不变量
   结算区不参与；RNG 调用顺序不变。
   */
-  reshuffle(state = null) {
+  reshuffle(state) {
     if (!this.discardPile.length) return false;
     const shuffledCards = shuffled(this.discardPile, this.random);
-    commitReshuffle(state ?? { stateVersion: 0 }, this, shuffledCards);
+    commitReshuffle(state, this, shuffledCards);
     this.reshuffleCount += 1;
     Debug.log("Deck", `重洗后牌堆 ${this.cards.length} 张`);
     return true;
@@ -156,7 +156,7 @@ export class Deck {
   Game.moveHandToResolving 与 draw workflow。
 
   输入
-  Card entity。
+  authoritative state 与 Card entity。
 
   输出
   追加成功返回 true。
@@ -173,10 +173,10 @@ export class Deck {
   边界与不变量
   同一实例不会重复加入；调用方保留校验。
   */
-  beginResolve(card, state = null) {
+  beginResolve(state, card) {
     if (!card || this.cards.includes(card) || this.discardPile.includes(card)
       || this.resolvingCards.includes(card) || this.judgmentZone.includes(card)) return false;
-    appendCardToZone(state ?? { stateVersion: 0 }, this.resolvingCards, card);
+    appendCardToZone(state, this.resolvingCards, card);
     return true;
   }
 
@@ -188,7 +188,7 @@ export class Deck {
   Game.finishResolvingToDiscard。
 
   输入
-  Card entity。
+  authoritative state 与 Card entity。
 
   输出
   提交成功返回 true。
@@ -205,10 +205,10 @@ export class Deck {
   边界与不变量
   装备牌仍由 equip 路径处理。
   */
-  finishResolveToDiscard(card, state = null) {
+  finishResolveToDiscard(state, card) {
     const index = this.resolvingCards.indexOf(card);
     if (index < 0 || this.discardPile.includes(card)) return false;
-    moveCardBetweenZones(state ?? { stateVersion: 0 }, this.resolvingCards, this.discardPile, card);
+    moveCardBetweenZones(state, this.resolvingCards, this.discardPile, card);
     return true;
   }
 
@@ -220,7 +220,7 @@ export class Deck {
   Game.equipCard。
 
   输入
-  Card entity。
+  authoritative state 与 Card entity。
 
   输出
   移除成功返回 true。
@@ -237,9 +237,9 @@ export class Deck {
   边界与不变量
   不处理装备槽写入。
   */
-  finishResolveToEquipment(card, state = null) {
+  finishResolveToEquipment(state, card) {
     if (this.resolvingCards.indexOf(card) < 0) return false;
-    removeCardFromZone(state ?? { stateVersion: 0 }, this.resolvingCards, card);
+    removeCardFromZone(state, this.resolvingCards, card);
     return true;
   }
 
@@ -251,7 +251,7 @@ export class Deck {
   Game 与 PublicCardPool。
 
   输入
-  Card entity。
+  authoritative state 与 Card entity。
 
   输出
   追加成功返回 true。
@@ -268,9 +268,9 @@ export class Deck {
   边界与不变量
   重复实例校验保持不变。
   */
-  discard(card, state = null) {
+  discard(state, card) {
     if (!card || this.discardPile.includes(card) || this.resolvingCards.includes(card) || this.judgmentZone.includes(card)) return false;
-    appendCardToZone(state ?? { stateVersion: 0 }, this.discardPile, card);
+    appendCardToZone(state, this.discardPile, card);
     return true;
   }
 
@@ -282,7 +282,7 @@ export class Deck {
   JudgmentSystem。
 
   输入
-  无。
+  authoritative state。
 
   输出
   判定 Card entity 或 null。
@@ -299,10 +299,10 @@ export class Deck {
   边界与不变量
   不处理判定结果。
   */
-  drawToJudgment(state = null) {
+  drawToJudgment(state) {
     const card = this.drawOne(state);
     if (!card) return null;
-    appendCardToZone(state ?? { stateVersion: 0 }, this.judgmentZone, card);
+    appendCardToZone(state, this.judgmentZone, card);
     return card;
   }
 
@@ -314,7 +314,7 @@ export class Deck {
   JudgmentSystem。
 
   输入
-  Card entity。
+  authoritative state 与 Card entity。
 
   输出
   提交成功返回 true。
@@ -331,10 +331,10 @@ export class Deck {
   边界与不变量
   不解释判定结果。
   */
-  finishJudgmentToDiscard(card, state = null) {
+  finishJudgmentToDiscard(state, card) {
     const index = this.judgmentZone.indexOf(card);
     if (index < 0) return false;
-    moveCardBetweenZones(state ?? { stateVersion: 0 }, this.judgmentZone, this.discardPile, card);
+    moveCardBetweenZones(state, this.judgmentZone, this.discardPile, card);
     return true;
   }
 
@@ -346,7 +346,7 @@ export class Deck {
   JudgmentSystem。
 
   输入
-  Card entity 与 Player。
+  authoritative state、Card entity 与 Player。
 
   输出
   提交成功返回 true。
@@ -363,10 +363,10 @@ export class Deck {
   边界与不变量
   不负责 handVersion 或知识失效。
   */
-  finishJudgmentToHand(card, player, state = null) {
+  finishJudgmentToHand(state, card, player) {
     const index = this.judgmentZone.indexOf(card);
     if (index < 0) return false;
-    moveCardBetweenZones(state ?? { stateVersion: 0 }, this.judgmentZone, player.hand, card);
+    moveCardBetweenZones(state, this.judgmentZone, player.hand, card);
     return true;
   }
 }

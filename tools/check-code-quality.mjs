@@ -33,6 +33,7 @@ const FUTURE_DOMAIN_PATTERN = /^js\/domain\//i;
 const FUTURE_APPLICATION_PATTERN = /^js\/application\//i;
 const FUTURE_ADAPTERS_PATTERN = /^js\/adapters\//i;
 const DOMAIN_TRANSITIONS_PATTERN = /^js\/domain\/state\/transitions\//i;
+const DOMAIN_RULES_PATTERN = /^js\/domain\/rules\//i;
 const LEGACY_UTILS_PATTERN = /^js\/utils(?:\/|$)/i;
 const FORBIDDEN_ROOT_BUCKET_PATTERN = /^js\/(?:common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
 const FUTURE_LAYER_BUCKET_PATTERN = /^js\/(?:domain|application|adapters)\/(?:.*\/)?(?:utils|common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
@@ -883,11 +884,49 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     );
   }
 
+  if (DOMAIN_RULES_PATTERN.test(file)) {
+    pushImportError(
+      importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:cards\/cardRegistry\.js|generals\/skillRegistry\.js|core\/(?:Game|RuleEngine|ResponseSystem|DyingSystem|JudgmentSystem)\.js|state\/transitions\/[^"']*|config\/[^"']*)(?:\?[^"']*)?["']/i),
+      "架构约束：domain/rules 禁止依赖 Game/RuleEngine/ResponseSystem/DyingSystem/JudgmentSystem/cardRegistry/skillRegistry/state transitions/config runtime"
+    );
+    pushPatternError(
+      maskedSource.match(/\bawait\b/),
+      "架构约束：domain/rules 必须是纯规则，禁止 await"
+    );
+    pushPatternError(
+      maskedSource.match(/\bEventBus\b|\beventBus\b/),
+      "架构约束：domain/rules 禁止 EventBus"
+    );
+    pushPatternError(
+      maskedSource.match(/\bMath\.random\s*\(|\.random\s*\(/),
+      "架构约束：domain/rules 禁止随机采样"
+    );
+    pushPatternError(
+      maskedSource.match(/\bhand\s*\?\?\s*handCount|\bequipment\s*\?\?\s*equipmentDefinitionId|\bArray\.isArray\([^)]*statuses\)/),
+      "架构约束：domain/rules 禁止 Real Player/SearchState 双 schema 兼容分支"
+    );
+    pushPatternError(
+      maskedSource.match(/\b(?:controllerType|aiMemory|aiProfile|portrait|roleTags|equipmentRetentionProbability|SearchState|VisibleState|BeliefState)\b/),
+      "架构约束：domain/rules 禁止 AI/UI/legacy metadata 泄漏"
+    );
+  }
+
   const isTransitionImplementation = /^js\/domain\/state\/transitions\//i.test(file);
   if (!isTransitionImplementation) {
     pushPatternError(
       maskedSource.match(/\bstate\.stateVersion\s*\+\+|\bstate\.stateVersion\s*\+=/),
       "架构约束：只有 Domain transition implementation 可以直接写 state.stateVersion"
+    );
+  }
+
+  pushPatternError(
+    maskedSource.match(/\bstate\s*\?\?\s*\(?\{\s*stateVersion\s*:/),
+    "架构约束：production mutation façade 不得用 fake root state 旁路 authoritative stateVersion"
+  );
+  if (/^js\/core\/(?:Player|Deck)\.js$/i.test(file)) {
+    pushPatternError(
+      maskedSource.match(/\bstate\s*=\s*null/),
+      "架构约束：Player/Deck production mutation façade 的 state 参数必须为必填 authoritative root"
     );
   }
 
@@ -1559,6 +1598,46 @@ function identity(value) { return value; }`;
   if (!domainDualSchemaErrors.some((error) => error.missing.some((item) => item.includes("statuses 双 schema")))) {
     throw new Error("future domain fixture did not detect dual-schema statuses branch");
   }
+  const domainRuntimeImportErrors = inspectSource(
+    "js/domain/rules/BadRuntimeDomain.js",
+    `${moduleHeader}\nimport { Game } from "../../core/Game.js";\n${pass}`,
+    null,
+  );
+  if (!domainRuntimeImportErrors.some((error) => error.missing.some((item) => item.includes("domain/rules 禁止依赖")))) {
+    throw new Error("future domain/rules fixture did not detect core runtime import");
+  }
+  const domainTransitionsImportErrors = inspectSource(
+    "js/domain/rules/BadTransitionDomain.js",
+    `${moduleHeader}\nimport { bumpStateVersion } from "../../state/transitions/StateVersion.js";\n${pass}`,
+    null,
+  );
+  if (!domainTransitionsImportErrors.some((error) => error.missing.some((item) => item.includes("domain/rules 禁止依赖")))) {
+    throw new Error("future domain/rules fixture did not detect transition import");
+  }
+  const domainAwaitErrors = inspectSource(
+    "js/domain/rules/BadAwaitDomain.js",
+    `${moduleHeader}\n${pass.replace("return value;", "await value; return value;")}`,
+    null,
+  );
+  if (!domainAwaitErrors.some((error) => error.missing.some((item) => item.includes("禁止 await")))) {
+    throw new Error("future domain/rules fixture did not detect await");
+  }
+  const domainRandomErrors = inspectSource(
+    "js/domain/rules/BadRandomDomain.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return Math.random();")}`,
+    null,
+  );
+  if (!domainRandomErrors.some((error) => error.missing.some((item) => item.includes("禁止随机采样")))) {
+    throw new Error("future domain/rules fixture did not detect random sampling");
+  }
+  const domainMetadataErrors = inspectSource(
+    "js/domain/rules/BadMetadataDomain.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return player.aiMemory;")}`,
+    null,
+  );
+  if (!domainMetadataErrors.some((error) => error.missing.some((item) => item.includes("metadata 泄漏")))) {
+    throw new Error("future domain/rules fixture did not detect AI metadata leakage");
+  }
 
   const validApplicationTargetErrors = inspectSource(
     "js/application/action/GoodAction.js",
@@ -1661,6 +1740,31 @@ function identity(value) { return value; }`;
     throw new Error("stateVersion write guard did not reject non-transition write");
   }
 
+  const validCoreMutationErrors = inspectSource(
+    "js/core/Player.js",
+    pass.replace("function identity(value)", "function mutate(state)").replace("return value;", "return state;"),
+    null,
+  );
+  if (validCoreMutationErrors.length) {
+    throw new Error(`valid core mutation fixture failed: ${JSON.stringify(validCoreMutationErrors)}`);
+  }
+  const optionalStateMutationErrors = inspectSource(
+    "js/core/Player.js",
+    pass.replace("function identity(value)", "function mutate(state = null)").replace("return value;", "return state;"),
+    null,
+  );
+  if (!optionalStateMutationErrors.some((error) => error.missing.some((item) => item.includes("state 参数必须为必填")))) {
+    throw new Error("core mutation guard did not reject optional state parameter");
+  }
+  const fakeRootStateErrors = inspectSource(
+    "js/core/Player.js",
+    pass.replace("function identity(value)", "function mutate(state)").replace("return value;", "return state ?? { stateVersion: 0 };"),
+    null,
+  );
+  if (!fakeRootStateErrors.some((error) => error.missing.some((item) => item.includes("fake root state")))) {
+    throw new Error("core mutation guard did not reject fake root state fallback");
+  }
+
   const compatibilityErrors = inspectSource(
     "js/ai/search/BadCompatibility.js",
     `${moduleHeader}\nimport { AiSimulator } from "../AiSimulator.js";\n${pass}`,
@@ -1677,7 +1781,7 @@ function identity(value) { return value; }`;
   if (!rootLayoutErrors.some((error) => error.missing.some((item) => item.includes("AI 根目录")))) {
     throw new Error("root layout fixture did not detect non-allowlisted root file");
   }
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/adapter/transition/garbage/dual-schema/stateVersion-write guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
 }
 
 /*

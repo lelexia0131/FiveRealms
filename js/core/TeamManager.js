@@ -3,6 +3,8 @@
  * 它不根据角色、名字或座位推断阵营；battleTeam 是唯一判断来源。
  */
 import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
+import { getTeamSize } from "../domain/rules/team/TeamRules.js?build=20260815-shadow-agent-p1-slot";
+import { createRuleStateView } from "../domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
 
 export class TeamManager {
   /**
@@ -23,8 +25,32 @@ export class TeamManager {
     return seats.map((_, index) => seats[(index + rotation) % seats.length]);
   }
 
-  /** 返回某阵营的总座位数，用于判断小队的开局手牌、摸牌与行动补偿。 */
+  /*
+  功能
+  返回某阵营的总座位数。
+
+  调用方
+  Game 初始化日志与 legacy consumers。
+
+  输入
+  players 数组与 teamId。
+
+  输出
+  阵营人数。
+
+  读取状态
+  players.battleTeam。
+
+  写入状态
+  无。
+
+  调用函数
+  getTeamSize。
+
+  边界与不变量
+  只转发 Domain Team Rule。
+  */
   static teamSize(players, teamId) {
-    return players.filter((player) => player.battleTeam === teamId).length;
+    return getTeamSize({ players:createRuleStateView({ players }).players() }, teamId);
   }
 }

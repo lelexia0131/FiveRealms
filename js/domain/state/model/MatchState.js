@@ -42,7 +42,7 @@ RULESET_DEFINITION.initialRound。
 无。
 
 边界与不变量
-stateVersion 初始为 0 且本阶段只作为 dormant data contract；gameId/isDisposed/logs/pendingResponses 等非 Domain 字段不得进入本工厂。
+stateVersion 初始为 0，authoritative Domain mutation 经 StateVersion authority 单调递增；gameId/isDisposed/logs/pendingResponses 等非 Domain 字段不得进入本工厂。
 */
 export function createMatchState({ deck }) {
   return Object.freeze({

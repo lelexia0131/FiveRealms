@@ -1,11 +1,11 @@
 # FiveRealms Repository Architecture Authority
 
-状态：FR-ARCH-4B Mutation Closure Complete — stateVersion AUTHORITATIVE
+状态：FR-ARCH-4 CLOSED / PASS — stateVersion AUTHORITATIVE；FR-ARCH-5 DONE — FOUNDATIONAL DOMAIN RULES；FR-ARCH-6 NOT STARTED
 适用范围：FiveRealms 仓库级架构；`AI_ENGINE.md` 继续作为 AI Engine 2.0 的实施与历史权威，本文件不复制其内部所有权表。
 事实源关系：本文件是 repository-wide target architecture 的唯一规范入口；若与 `CODE_STANDARD.md` 冲突，以本文件解释 ownership，以 `CODE_STANDARD.md` 解释注释格式。
 
 冻结裁决：TARGET ARCHITECTURE CAN REMAIN FROZEN。
-实施进度：FR-ARCH-0 DONE；FR-ARCH-1 DONE；FR-ARCH-2/2.1 DONE；FR-ARCH-3 DONE；FR-ARCH-4A DONE；FR-ARCH-4B mutation closure DONE，stateVersion ACTIVATED — AUTHORITATIVE；FR-ARCH-5 READY。
+实施进度：FR-ARCH-0 DONE；FR-ARCH-1 DONE；FR-ARCH-2/2.1 DONE；FR-ARCH-3 DONE；FR-ARCH-4A DONE；FR-ARCH-4 CLOSED / PASS，stateVersion ACTIVATED — AUTHORITATIVE；FR-ARCH-5 DONE；FR-ARCH-6 NOT STARTED。
 
 ## 1. Target Physical Architecture
 
@@ -14,7 +14,8 @@
 当前已落地：
 - FR-ARCH-2/2.1：`js/domain/definitions/{cards,characters,skills,statuses,ruleset}` 已创建为纯静态定义 authority；旧 `js/config/**` 仅作 legacy façade/projection。Card `count` 由 `RulesetDefinition.deckComposition` 唯一拥有；`initialRound` 属 Ruleset；`responseTimeoutMs` 是 Application/Presentation runtime policy，不属于 Domain。
 - FR-ARCH-3：`js/domain/state/{model,queries}` 已建立 state foundation；Game/Player/Deck 保持 legacy composite runtime identity。
-- FR-ARCH-4A：`js/domain/state/transitions` 已建立 generic atomic mutation foundation；resource/status/match/player primitive 与部分 Deck zone commit 已接 transition；stateVersion 保持 dormant。FR-ARCH-4B 必须关闭剩余 zone/flags direct writes 后才允许激活 version。
+- FR-ARCH-4A/4B：`js/domain/state/transitions` 已建立 generic atomic mutation foundation 并关闭 zone/deck/flags/counters direct writes；stateVersion 已由唯一 Domain authority 激活。
+- FR-ARCH-5：`js/domain/rules/{team,distance,turn,judgment,combat,status,response}` 已建立 foundational pure rule layer；TeamRuleService/DistanceSystem/RuleEngine/ResponseSystem/JudgmentSystem/Game 只保留 legacy façade 或 workflow。Turn reset semantics 由 `TurnRules` 唯一拥有，`RuleUsageTransitions` 只 commit。cardRegistry/skillRegistry 完整迁移仍留在 FR-ARCH-10；DyingSystem/JudgmentSystem/ResponseSystem runtime workflow 不迁。
 
 ```text
 js/

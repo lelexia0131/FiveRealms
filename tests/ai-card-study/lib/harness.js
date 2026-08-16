@@ -10,6 +10,8 @@ import { createInitialSearchState } from "../../../js/ai/state/StateContracts.js
 import { TrackedRng } from "./rng.js";
 import { createHeadlessUi } from "./ui.js";
 
+const TEST_VERSION_STATE = { stateVersion: 0 };
+
 export const DEFAULT_SEED_BASE = 0x9e3779b9;
 export const GOLDEN_RATIO_32 = 2654435761;
 export const DEFAULT_NODE_BUDGET = 1000;
@@ -365,7 +367,7 @@ export function classifyState(game, player) {
 export function addExtraCardToHand(game, player, definitionId) {
   const card = makeExtraCard(definitionId, game.state.gameId);
   player.hand.push(card);
-  player.bumpHandVersion();
+  player.bumpHandVersion(TEST_VERSION_STATE);
   return card;
 }
 
@@ -377,7 +379,7 @@ export function takeCardFromDeckToHand(game, player, definitionId) {
   const realIndex = deck.cards.length - 1 - index;
   const [card] = deck.cards.splice(realIndex, 1);
   player.hand.push(card);
-  player.bumpHandVersion();
+  player.bumpHandVersion(TEST_VERSION_STATE);
   game.syncDeckAliases();
   return card;
 }
@@ -399,7 +401,7 @@ export function removeCardFromHandSilently(game, player, definitionId) {
   const index = player.hand.findIndex((card) => card.definitionId === definitionId);
   if (index < 0) return null;
   const [card] = player.hand.splice(index, 1);
-  player.bumpHandVersion();
+  player.bumpHandVersion(TEST_VERSION_STATE);
   game.invalidateCardKnowledge(card.id, player.id);
   return card;
 }
@@ -506,7 +508,7 @@ export function installBestOtherFirstAction(game, definitionId) {
       const cardIndex = player.hand.findIndex((card) => card.definitionId === definitionId);
       if (cardIndex >= 0) {
         const [held] = player.hand.splice(cardIndex, 1);
-        player.bumpHandVersion();
+        player.bumpHandVersion(TEST_VERSION_STATE);
         try {
           const remainingCardCounts = controller.knowledge.remainingCounts(player);
           const visible = createInitialSearchState(player.id, controller.game.state, remainingCardCounts);
@@ -514,7 +516,7 @@ export function installBestOtherFirstAction(game, definitionId) {
           return controller.planner.plan(player, visible, rootActions, options);
         } finally {
           player.hand.splice(Math.min(cardIndex, player.hand.length), 0, held);
-          player.bumpHandVersion();
+          player.bumpHandVersion(TEST_VERSION_STATE);
         }
       }
     }

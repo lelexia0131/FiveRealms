@@ -3,6 +3,7 @@
  * 但故意绕过护盾、格挡和雷达。普通伤害必须继续使用 Game.damage()。
  */
 import { changeHp } from "../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { isDying } from "../domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
 
 export class HpLossSystem {
   constructor(game) { this.game = game; }
@@ -45,7 +46,7 @@ export class HpLossSystem {
     this.game.ui.queueFeedback?.("damage", player.id, event.amount);
     await this.game.eventBus.emit("afterHpLoss", { ...event, type:"afterHpLoss", actualAmount:event.amount });
     if (!this.game.isSessionValid(gameId)) return event.amount;
-    if (player.hp <= 0 && player.alive) await this.game.dyingSystem.enter(player, event.source, context);
+    if (isDying(player.hp, player.alive)) await this.game.dyingSystem.enter(player, event.source, context);
     if (!this.game.isSessionValid(gameId)) return event.amount;
     this.game.ui.render(this.game);
     return event.amount;

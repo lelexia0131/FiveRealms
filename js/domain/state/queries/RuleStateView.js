@@ -1,6 +1,6 @@
 /*
 模块职责
-为未来 Domain Rules 提供不含 controllerType/aiMemory/legacy general/AI probability 的最小只读玩家投影。
+为 Domain Rules 提供不含 controllerType/aiMemory/legacy general/AI probability 的最小只读玩家投影。
 
 上游
 domain/rules/** 与 tests。
@@ -16,7 +16,12 @@ domain/rules/** 与 tests。
 
 架构约束
 不得依赖 application/adapters/ui/audio/ai/Game runtime；不得复制整个 Player 或 Card entity。
+
+投影契约
+players()/currentActor()/playerById() 返回 Rule Player projection；alliesOf/enemiesOf/seatOrderFrom 的 player/source 参数只接受本模块生成的 Rule Player projection，不接受真实 Player 或 SearchState。playerById 是唯一的 ID 查询入口。
 */
+const RULE_PLAYER_PROJECTION = Symbol("rulePlayerProjection");
+
 
 /*
 功能
@@ -44,7 +49,7 @@ Object.keys。
 不返回真实 Player 引用；不读取 legacy general 对象或 aiMemory。
 */
 function projectRulePlayer(player) {
-  return Object.freeze({
+  const projection = {
     id: player.id,
     seatIndex: player.seatIndex,
     battleTeam: player.battleTeam,
@@ -59,7 +64,41 @@ function projectRulePlayer(player) {
     handCount: player.hand.length,
     equipmentDefinitionId: player.equipment?.definitionId ?? null,
     statusIds: Object.freeze(Object.keys(player.statuses))
-  });
+  };
+  Object.defineProperty(projection, RULE_PLAYER_PROJECTION, { value: true });
+  return Object.freeze(projection);
+}
+
+/*
+功能
+校验输入必须是本模块生成的 Rule Player projection。
+
+调用方
+createRuleStateView 的 alliesOf/enemiesOf/seatOrderFrom。
+
+输入
+player 或 source。
+
+输出
+校验失败时抛出 TypeError，否则返回原投影。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+不读取 player.hand/statuses 等真实 Player 字段，不做 dual-schema 兼容。
+*/
+function requireRulePlayerProjection(player) {
+  if (!player || player[RULE_PLAYER_PROJECTION] !== true) {
+    throw new TypeError("RuleStateView source 必须是本模块返回的 Rule Player projection");
+  }
+  return player;
 }
 
 /*
@@ -122,7 +161,7 @@ export function createRuleStateView(state) {
   createRuleStateView 内部能力。
 
   输入
-  Rule Player 投影。
+  Rule Player projection。
 
   输出
   冻结投影数组。
@@ -139,7 +178,10 @@ export function createRuleStateView(state) {
   边界与不变量
   语义与 legacy StateView alliesOf 一致。
   */
-  const alliesOf = (player) => players().filter((other) => other.alive && other.battleTeam === player.battleTeam);
+  const alliesOf = (player) => {
+    requireRulePlayerProjection(player);
+    return players().filter((other) => other.alive && other.battleTeam === player.battleTeam);
+  };
   /*
   功能
   返回指定玩家的存活敌对阵营投影。
@@ -148,7 +190,7 @@ export function createRuleStateView(state) {
   createRuleStateView 内部能力。
 
   输入
-  Rule Player 投影。
+  Rule Player projection。
 
   输出
   冻结投影数组。
@@ -165,18 +207,153 @@ export function createRuleStateView(state) {
   边界与不变量
   语义与 legacy StateView enemiesOf 一致。
   */
-  const enemiesOf = (player) => players().filter((other) => other.alive && other.battleTeam !== player.battleTeam);
+  const enemiesOf = (player) => {
+    requireRulePlayerProjection(player);
+    return players().filter((other) => other.alive && other.battleTeam !== player.battleTeam);
+  };
+  /*
+  功能
+  按玩家 ID 返回 Rule Player 投影。
+
+  调用方
+  TeamRuleService 与 Domain Rules。
+
+  输入
+  player id。
+
+  输出
+  冻结投影或 null。
+
+  读取状态
+  state.players。
+
+  写入状态
+  无。
+
+  调用函数
+  projectRulePlayer。
+
+  边界与不变量
+  不返回真实 Player。
+  */
+  const playerById = (id) => {
+    const current = state.players.find((player) => player.id === id);
+    return current ? projectRulePlayer(current) : null;
+  };
+  /*
+  功能
+  按状态 ID 返回指定投影的状态详情副本或 null。
+
+  调用方
+  Status Rules 与 tests。
+
+  输入
+  Rule Player projection 与 statusId。
+
+  输出
+  冻结状态详情副本、原始 primitive 或 null。
+
+  读取状态
+  state.players 的指定 statuses 条目。
+
+  写入状态
+  无。
+
+  调用函数
+  requireRulePlayerProjection。
+
+  边界与不变量
+  不返回整个 statuses 对象；不暴露真实 Player。
+  */
+  const status = (player, statusId) => {
+    requireRulePlayerProjection(player);
+    const current = state.players.find((entry) => entry.id === player.id);
+    const value = current?.statuses?.[statusId];
+    if (value === undefined) return null;
+    if (value === null || typeof value !== "object") return value;
+    return Object.freeze({ ...value });
+  };
+  /*
+  功能
+  返回指定投影的本回合使用计数事实。
+
+  调用方
+  Turn Rules 与 tests。
+
+  输入
+  Rule Player projection。
+
+  输出
+  冻结 usage 事实。
+
+  读取状态
+  state.players 的 turnFlags 使用字段。
+
+  写入状态
+  无。
+
+  调用函数
+  requireRulePlayerProjection。
+
+  边界与不变量
+  只暴露四个明确计数，不暴露整个 turnFlags。
+  */
+  const usage = (player) => {
+    requireRulePlayerProjection(player);
+    const current = state.players.find((entry) => entry.id === player.id);
+    return Object.freeze({
+      attackUsed: Number(current?.turnFlags?.attackUsed ?? 0),
+      attackLimit: Number(current?.turnFlags?.attackLimit ?? 0),
+      recoverUsed: Number(current?.turnFlags?.recoverUsed ?? 0),
+      recoverLimit: current?.turnFlags?.recoverLimit ?? null
+    });
+  };
+  /*
+  功能
+  返回指定投影的连势值。
+
+  调用方
+  Turn Rules 与 tests。
+
+  输入
+  Rule Player projection。
+
+  输出
+  非负整数。
+
+  读取状态
+  state.players 的 turnFlags.momentum。
+
+  写入状态
+  无。
+
+  调用函数
+  requireRulePlayerProjection。
+
+  边界与不变量
+  只暴露单一明确字段。
+  */
+  const momentum = (player) => {
+    requireRulePlayerProjection(player);
+    const current = state.players.find((entry) => entry.id === player.id);
+    return Math.max(0, Number(current?.turnFlags?.momentum ?? 0) || 0);
+  };
   return Object.freeze({
     players,
+    playerById,
     currentActor: () => {
       const current = state.players[state.currentPlayerIndex];
       return current ? projectRulePlayer(current) : null;
     },
     livingPlayers: () => players().filter((player) => player.alive),
+    status,
+    usage,
+    momentum,
     alliesOf,
     enemiesOf,
     seatOrderFrom: (source, includeSource = false) => {
-      const ordered = includeSource ? [projectRulePlayer(source)] : [];
+      requireRulePlayerProjection(source);
+      const ordered = includeSource ? [source] : [];
       for (let offset = 1; offset < state.players.length; offset += 1) {
         ordered.push(projectRulePlayer(state.players[(source.seatIndex + offset) % state.players.length]));
       }

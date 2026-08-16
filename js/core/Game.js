@@ -34,6 +34,8 @@ import { changeEnergy, changeHp, changeShield } from "../domain/state/transition
 import { removeStatus, setStatus } from "../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { setCurrentPlayerIndex, setCurrentRound, setGameOver, setMatchPhase, setPublicCardPool, setWinnerTeam } from "../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { addTrackingTarget, markCategoryUsed, recordActiveSkillUse, resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags, setGuardianAidUsed, setKillRewardGranted, setLastEmberResolutionId, setMomentum, setRecycleDeviceUses, setSkipActionPhase, setSpyGapPendingTargetIds, setTrackingTurnNumber } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { calculateNextActorIndex, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, shouldSkipActionPhase } from "../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
+import { calculateDamageResult, calculateHealAmount, isDying } from "../domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
 import { applyGeneralDefinition, bumpHandVersion, setAlive, setEquipment } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260815-shadow-agent-p1-slot";
 
 /** 生成纯展示用的公开目标文案，不参与卡牌合法性或结算。 */
@@ -275,8 +277,8 @@ export class Game {
     this.state.deck.build(this.state);
     this.syncDeckAliases();
     for (const player of this.state.players) {
-      resetTurnFlags(this.state, player, this.teamRules.getRules(player));
-      resetRoundFlags(this.state, player);
+      resetTurnFlags(this.state, player, createTurnUsageState(this.teamRules.getRules(player)));
+      resetRoundFlags(this.state, player, createRoundUsageState());
       await this.drawCards(player, this.teamRules.getInitialHandCount(player), "初始发牌", { silent:true });
       if (!this.isSessionValid(gameId)) return false;
     }
@@ -476,7 +478,7 @@ export class Game {
     const failureLimit = 3;
     try {
       this.log(`第${this.state.currentRound}轮开始。`, "important");
-      for (const player of this.state.players) resetRoundFlags(this.state, player);
+      for (const player of this.state.players) resetRoundFlags(this.state, player, createRoundUsageState());
       await this.eventBus.emit("roundStart", { type: "roundStart", round: this.state.currentRound });
       if (!this.isSessionValid(gameId)) return;
       while (this.isSessionValid(gameId) && !this.state.isGameOver) {
@@ -550,10 +552,10 @@ export class Game {
   async takeTurn(player, gameId) {
     if (!this.isSessionValid(gameId) || !player?.alive || this.state.isGameOver) return;
     setMatchPhase(this.state, "turnStart");
-    resetTurnFlags(this.state, player, this.teamRules.getRules(player));
+    resetTurnFlags(this.state, player, createTurnUsageState(this.teamRules.getRules(player)));
     // 每个新全局回合开始：所有角色的 global-turn reactive 额度统一重置，
     // 必须在 emit("turnStart") 之前完成，避免 turnStart 监听器读取上一回合残留状态。
-    for (const entry of this.state.players) resetGlobalTurnReactiveFlags(this.state, entry);
+    for (const entry of this.state.players) resetGlobalTurnReactiveFlags(this.state, entry, createGlobalTurnReactiveState());
     this.log(`${player.name}的回合开始。`, "important");
     await this.eventBus.emit("turnStart", { type: "turnStart", player });
     if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
@@ -586,7 +588,7 @@ export class Game {
     await this.eventBus.emit("afterDraw", { ...drawEvent, type: "afterDraw" });
     if (!this.isSessionValid(gameId) || !player.alive || this.state.isGameOver) return;
 
-    if (player.turnFlags.skipActionPhase) {
+    if (shouldSkipActionPhase(player.turnFlags)) {
       this.log(`${player.name}因「封印」生效，跳过出牌阶段并进入弃牌阶段。`, "important");
     } else {
       setMatchPhase(this.state, "play");
@@ -766,18 +768,18 @@ export class Game {
     if (!this.isSessionValid(gameId) || this.state.isGameOver) return;
     await this.cleanupDefeatedZones();
     if (!this.isSessionValid(gameId) || this.state.isGameOver) return;
-    let wrapped = false;
-    let next = this.state.currentPlayerIndex;
-    for (let step = 0; step < this.state.players.length; step += 1) {
-      next = (next + 1) % this.state.players.length;
-      if (next === this.state.startingPlayerIndex) wrapped = true;
-      if (this.state.players[next].alive) break;
-    }
+    const nextTurn = calculateNextActorIndex(
+      this.state.players,
+      this.state.currentPlayerIndex,
+      this.state.startingPlayerIndex
+    );
+    const next = nextTurn.nextIndex;
+    const wrapped = nextTurn.wrapped;
     if (wrapped) {
       await this.eventBus.emit("roundEnd", { type: "roundEnd", round: this.state.currentRound });
       if (!this.isSessionValid(gameId)) return;
       setCurrentRound(this.state, this.state.currentRound + 1);
-      for (const player of this.state.players) resetRoundFlags(this.state, player);
+      for (const player of this.state.players) resetRoundFlags(this.state, player, createRoundUsageState());
       this.log(`第${this.state.currentRound}轮开始。`, "important");
       await this.eventBus.emit("roundStart", { type: "roundStart", round: this.state.currentRound });
       if (!this.isSessionValid(gameId)) return;
@@ -1468,21 +1470,21 @@ export class Game {
       this.ui.render(this);
       return 0;
     }
-    const shieldAbsorbed = Math.min(target.shield, event.amount);
-    changeShield(this.state, target, -shieldAbsorbed);
-    const hpDamage = Math.max(0, event.amount - shieldAbsorbed);
+    const damageResult = calculateDamageResult(event.amount, target.shield, target.hp);
+    changeShield(this.state, target, -damageResult.shieldAbsorbed);
+    const hpDamage = damageResult.hpDamage;
     changeHp(this.state, target, -hpDamage);
     target.statistics.damageTaken += hpDamage;
     if (source) {
       source.statistics.damageDealt += hpDamage;
       if (hpDamage > 0 && source.battleTeam !== target.battleTeam) target.aiMemory.recentAggressors[source.id] = (target.aiMemory.recentAggressors[source.id] ?? 0) + hpDamage;
     }
-    if (shieldAbsorbed) { this.log(`${target.name}的护盾吸收了${shieldAbsorbed}点伤害。`); this.ui.queueFeedback?.("shield", target.id, shieldAbsorbed); }
+    if (damageResult.shieldAbsorbed) { this.log(`${target.name}的护盾吸收了${damageResult.shieldAbsorbed}点伤害。`); this.ui.queueFeedback?.("shield", target.id, damageResult.shieldAbsorbed); }
     if (hpDamage) { this.log(`${target.name}受到${hpDamage}点伤害，剩余${target.hp}点生命。`, "damage"); this.ui.queueFeedback?.("damage", target.id, hpDamage); }
     else this.log(`${target.name}没有受到生命伤害。`);
-    await this.eventBus.emit("afterDamage", { ...event, type: "afterDamage", actualAmount: hpDamage, shieldAbsorbed });
+    await this.eventBus.emit("afterDamage", { ...event, type: "afterDamage", actualAmount: hpDamage, shieldAbsorbed:damageResult.shieldAbsorbed });
     if (!this.isSessionValid(gameId)) return hpDamage;
-    if (target.hp <= 0 && target.alive) await this.dyingSystem.enter(target, source, context);
+    if (isDying(target.hp, target.alive)) await this.dyingSystem.enter(target, source, context);
     if (!this.isSessionValid(gameId)) return hpDamage;
     this.ui.render(this);
     return hpDamage;
@@ -1521,7 +1523,7 @@ export class Game {
     await this.eventBus.emit("beforeHeal", event);
     if (!this.isSessionValid(gameId)) return 0;
     if (event.cancelled) return 0;
-    const actualAmount = Math.min(event.amount, target.maxHp - target.hp);
+    const actualAmount = calculateHealAmount(event.amount, target.maxHp, target.hp);
     changeHp(this.state, target, actualAmount);
     if (source) source.statistics.healingDone += actualAmount;
     if (actualAmount) {
@@ -1670,18 +1672,18 @@ export class Game {
       this.syncDeckAliases();
       if (!card) break;
       // 跨 beforeCardMove 等待期间先放入受管结算区，避免 dispose 时实体牌悬空。
-      if (!this.state.deck.beginResolve(card, this.state)) break;
+      if (!this.state.deck.beginResolve(this.state, card)) break;
       this.syncDeckAliases();
       const move = { type: "beforeCardMove", card, from: "deck", to: "hand", player, reason, cancelled: false };
       await this.eventBus.emit("beforeCardMove", move);
       if (!this.isSessionValid(gameId)) return drawn;
       if (move.cancelled) {
-        this.state.deck.finishResolveToEquipment(card, this.state);
+        this.state.deck.finishResolveToEquipment(this.state, card);
         appendCardToZone(this.state, this.state.deck.cards, card);
         this.syncDeckAliases();
         continue;
       }
-      if (!this.state.deck.finishResolveToEquipment(card, this.state)) return drawn;
+      if (!this.state.deck.finishResolveToEquipment(this.state, card)) return drawn;
       appendCardToZone(this.state, player.hand, card);
       bumpHandVersion(this.state, player);
       this.invalidateCardKnowledge(card.id, player.id);
@@ -1989,7 +1991,7 @@ export class Game {
     if (!this.isSessionValid(gameId)) return false;
     if (move.cancelled) return false;
     // 移动事件可能改变手牌，提交前重新按实体引用确认；beginResolve 失败时手牌必须保持原状。
-    if (player.hand.indexOf(card) < 0 || !this.state.deck.beginResolve(card, this.state)) return false;
+    if (player.hand.indexOf(card) < 0 || !this.state.deck.beginResolve(this.state, card)) return false;
     removeCardFromZone(this.state, player.hand, card);
     bumpHandVersion(this.state, player);
     this.invalidateCardKnowledge(card.id, player.id);
@@ -2033,7 +2035,7 @@ export class Game {
     await this.eventBus.emit("beforeCardMove", move);
     if (!this.isSessionValid(gameId)) return false;
     if (move.cancelled || (resolutionId && this.resolutionOwners.get(card) !== resolutionId)) return false;
-    const discarded = this.state.deck.finishResolveToDiscard(card, this.state);
+    const discarded = this.state.deck.finishResolveToDiscard(this.state, card);
     if (!discarded) return false;
     this.syncDeckAliases();
     await this.eventBus.emit("afterCardMove", { ...move, type: "afterCardMove" });

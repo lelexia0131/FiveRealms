@@ -19,6 +19,8 @@ import { Simulator } from "../../js/ai/simulation/Simulator.js";
 let cardSerial = 0;
 
 /** 可复现随机源（LCG），与 balance.mjs 同型。 */
+const TEST_VERSION_STATE = { stateVersion: 0 };
+
 export function makeRandom(seedValue) {
   let seed = (Number(seedValue) || 0) >>> 0;
   return () => {
@@ -112,7 +114,7 @@ export function makeGame({ players, options = {} }, runtimeOptions = {}) {
     });
     const general = GENERAL_BY_ID[config.general];
     if (!general) throw new Error(`未知角色：${config.general}`);
-    player.applyGeneral(general);
+    player.applyGeneral(TEST_VERSION_STATE, general);
     player.hp = config.hp ?? general.maxHp;
     player.shield = config.shield ?? 0;
     player.energy = config.energy ?? general.initialEnergy;
@@ -120,8 +122,8 @@ export function makeGame({ players, options = {} }, runtimeOptions = {}) {
     player.hand = config.hand ? [...config.hand] : [];
     player.equipment = config.equipment ?? null;
     player.alive = config.alive ?? true;
-    player.resetTurnFlags(game.teamRules.getRules(player));
-    player.resetRoundFlags();
+    player.resetTurnFlags(TEST_VERSION_STATE, game.teamRules.getRules(player));
+    player.resetRoundFlags(TEST_VERSION_STATE);
     if (config.turnFlags) Object.assign(player.turnFlags, config.turnFlags);
     if (config.roundFlags) Object.assign(player.roundFlags, config.roundFlags);
     if (config.statuses) {

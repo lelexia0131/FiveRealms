@@ -6,6 +6,7 @@ import { setAlive, setEquipment } from "../domain/state/transitions/PlayerStateT
 import { discardEquipment } from "../domain/state/transitions/ZoneTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { setKillRewardGranted, setMomentum, setSkipActionPhase } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { setMatchPhase } from "../domain/state/transitions/MatchStateTransitions.js?build=20260815-shadow-agent-p1-slot";
+import { isDying } from "../domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
 
 /**
  * 负生命值濒死与循环救援。依赖 ResponseSystem、EventBus 和 Game 的移动/胜负入口；
@@ -42,7 +43,7 @@ export class DyingSystem {
   */
   async enter(target, source = null, context = {}) {
     const gameId = this.game.state.gameId;
-    if (!this.game.isSessionValid(gameId) || !target?.alive || target.hp > 0 || this.game.state.isGameOver) return target?.hp > 0;
+    if (!this.game.isSessionValid(gameId) || !isDying(target?.hp, target?.alive) || this.game.state.isGameOver) return target?.hp > 0;
     if (this.active) {
       if (!this.queue.some((entry) => entry.target.id === target.id)) this.queue.push({ target, source, context });
       return false;
@@ -54,7 +55,7 @@ export class DyingSystem {
     try {
       while (this.queue.length && !this.game.state.isGameOver && this.game.isSessionValid(gameId)) {
         const entry = this.queue.shift();
-        if (entry.target.alive && entry.target.hp <= 0) rescued = await this.resolve(entry.target, entry.source, entry.context);
+        if (isDying(entry.target.hp, entry.target.alive)) rescued = await this.resolve(entry.target, entry.source, entry.context);
         if (!this.game.isSessionValid(gameId)) return false;
       }
       return rescued;
@@ -106,7 +107,7 @@ export class DyingSystem {
     await this.game.eventBus.emit("beforePlayerDying", before);
     if (!this.game.isSessionValid(gameId)) return false;
     if (before.cancelled) {
-      if (target.alive && target.hp <= 0) {
+      if (isDying(target.hp, target.alive)) {
         setHp(this.game.state, target, 1);
         this.game.log(`${target.name}的濒死被取消，生命恢复到1点以保持存活状态。`, "heal");
         this.game.ui.queueFeedback?.("heal", target.id, 1);
@@ -114,7 +115,7 @@ export class DyingSystem {
       }
       return target.hp > 0;
     }
-    if (target.hp > 0 || !target.alive) return target.hp > 0;
+    if (!isDying(target.hp, target.alive)) return target.hp > 0;
     setMatchPhase(this.game.state, "dying");
     this.game.state.dyingContext = { targetId:target.id, need:1 - target.hp, currentHp:target.hp };
     this.game.log(`${target.name}进入濒死，还需恢复${1 - target.hp}点生命才能脱离濒死。`, "important");
@@ -122,7 +123,7 @@ export class DyingSystem {
     if (!this.game.isSessionValid(gameId)) return false;
     this.game.ui.showDying?.(target, this.game.state.dyingContext);
 
-    while (target.alive && target.hp <= 0 && this.game.isSessionValid(gameId)) {
+    while (isDying(target.hp, target.alive) && this.game.isSessionValid(gameId)) {
       let usedThisRound = false;
       const order = this.rescueOrder(target);
       for (const rescuer of order) {

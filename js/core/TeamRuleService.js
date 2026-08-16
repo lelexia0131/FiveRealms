@@ -1,35 +1,311 @@
 /**
- * 阵营补偿的唯一查询服务。依赖 Game 状态与 gameConfig，不修改玩家状态；
- * 初始牌、回合额度和能量阶段都应调用这里，避免散落 teamSize === 2 判断。
+ * 阵营补偿查询 legacy façade；公式 authority 已迁至 domain/rules/team/TeamRules.js。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
+import {
+  getAttackLimitFromRules, getDrawCountFromRules, getInitialHandCountFromRules,
+  getMaxEnergyFromRules, getRecoverLimitFromRules, getTeamRules, getTeamSize,
+  getTurnEnergyBreakdownFromRules, getTurnEnergyGainFromRules, isSmallTeam
+} from "../domain/rules/team/TeamRules.js?build=20260815-shadow-agent-p1-slot";
+import { createRuleStateView } from "../domain/state/queries/RuleStateView.js?build=20260815-shadow-agent-p1-slot";
 
-/** 阵营人数补偿的唯一规则入口。 */
 export class TeamRuleService {
   constructor(game) { this.game = game; }
 
+  /*
+  功能
+  返回阵营人数。
+
+  调用方
+  Game 与 legacy consumers。
+
+  输入
+  player 或 team id。
+
+  输出
+  人数。
+
+  读取状态
+  state.players。
+
+  写入状态
+  无。
+
+  调用函数
+  getTeamSize。
+
+  边界与不变量
+  只转发 Domain Rule。
+  */
   getTeamSize(playerOrTeam) {
-    const team = typeof playerOrTeam === "string" ? playerOrTeam : playerOrTeam?.battleTeam;
-    return this.game.state.players.filter((player) => player.battleTeam === team).length;
+    return getTeamSize(this.#ruleState(), playerOrTeam);
   }
 
-  isSmallTeam(playerOrTeam) { return this.getTeamSize(playerOrTeam) === GAME_CONFIG.smallTeamSize; }
-  getRules(player) { return this.isSmallTeam(player) ? GAME_CONFIG.smallTeamBonuses : GAME_CONFIG.largeTeamRules; }
-  getInitialHandCount(player) { return this.getRules(player).initialHandCount ?? GAME_CONFIG.initialHandCount; }
-  getDrawCount(player) { return this.getRules(player).drawCountPerTurn ?? GAME_CONFIG.defaultDrawCount; }
-  getAttackLimit(player) { return this.getRules(player).attackLimitPerTurn; }
-  getRecoverLimit(player) { return this.getRules(player).recoverLimitPerTurn; }
-  getMaxEnergy(player) { return this.getRules(player).maxEnergy ?? GAME_CONFIG.defaultMaxEnergy; }
-  getTurnEnergyGain(player) {
-    const breakdown = this.getTurnEnergyBreakdown(player);
-    return breakdown.baseAmount + breakdown.teamBonus + breakdown.equipmentBonus;
+  /*
+  功能
+  判断是否二人小队。
+
+  调用方
+  legacy consumers。
+
+  输入
+  player 或 team。
+
+  输出
+  布尔值。
+
+  读取状态
+  state。
+
+  写入状态
+  无。
+
+  调用函数
+  isSmallTeam。
+
+  边界与不变量
+  只转发 Domain Rule。
+  */
+  isSmallTeam(playerOrTeam) {
+    return isSmallTeam(this.#ruleState(), playerOrTeam);
   }
+
+  /*
+  功能
+  返回阵营补偿规则对象。
+
+  调用方
+  Game 与 AI projection。
+
+  输入
+  player。
+
+  输出
+  冻结规则对象。
+
+  读取状态
+  state。
+
+  写入状态
+  无。
+
+  调用函数
+  getTeamRules。
+
+  边界与不变量
+  只转发 Domain Rule。
+  */
+  getRules(player) {
+    return getTeamRules(this.#ruleState(), this.#playerFact(player));
+  }
+
+  /*
+  功能
+  返回开局手牌数。
+
+  调用方
+  Game setup。
+
+  输入
+  player。
+
+  输出
+  整数。
+
+  读取状态
+  state。
+
+  写入状态
+  无。
+
+  调用函数
+  getInitialHandCount。
+
+  边界与不变量
+  只转发 Domain Rule。
+  */
+  getInitialHandCount(player) {
+    return getInitialHandCountFromRules(this.getRules(player));
+  }
+  /*
+  功能
+  返回每回合摸牌数。
+
+  调用方
+  Game.takeTurn。
+
+  输入
+  player。
+
+  输出
+  整数。
+
+  读取状态
+  state。
+
+  写入状态
+  无。
+
+  调用函数
+  getDrawCount。
+
+  边界与不变量
+  只转发 Domain Rule。
+  */
+  getDrawCount(player) {
+    return getDrawCountFromRules(this.getRules(player));
+  }
+  /*
+  功能
+  返回突袭上限。
+
+  调用方
+  Player reset 与 legality。
+
+  输入
+  player。
+
+  输出
+  整数。
+
+  读取状态
+  state。
+
+  写入状态
+  无。
+
+  调用函数
+  getAttackLimit。
+
+  边界与不变量
+  只转发 Domain Rule。
+  */
+  getAttackLimit(player) { return getAttackLimitFromRules(this.getRules(player)); }
+  /*
+  功能
+  返回调息上限。
+
+  调用方
+  reset 与 legality。
+
+  输入
+  player。
+
+  输出
+  整数或 null。
+
+  读取状态
+  state。
+
+  写入状态
+  无。
+
+  调用函数
+  getRecoverLimit。
+
+  边界与不变量
+  只转发 Domain Rule。
+  */
+  getRecoverLimit(player) { return getRecoverLimitFromRules(this.getRules(player)); }
+  /*
+  功能
+  返回能量上限。
+
+  调用方
+  setup/reset 与 AI。
+
+  输入
+  player。
+
+  输出
+  整数。
+
+  读取状态
+  state。
+
+  写入状态
+  无。
+
+  调用函数
+  getMaxEnergy。
+
+  边界与不变量
+  只转发 Domain Rule。
+  */
+  getMaxEnergy(player) {
+    return getMaxEnergyFromRules(this.getRules(player));
+  }
+  /*
+  功能
+  返回玩家回合总能量获取。
+
+  调用方
+  Game.takeTurn 与 legacy consumers。
+
+  输入
+  player。
+
+  输出
+  整数。
+
+  读取状态
+  state 与已决定 team rules。
+
+  写入状态
+  无。
+
+  调用函数
+  getRules、getTurnEnergyGainFromRules、#playerFact。
+
+  边界与不变量
+  公式由 Domain Team Rule 唯一拥有。
+  */
+  getTurnEnergyGain(player) {
+    return getTurnEnergyGainFromRules(
+      this.getRules(player),
+      this.#playerFact(player)?.equipmentDefinitionId ?? null
+    );
+  }
+  /*
+  功能
+  返回回合能量分项。
+
+  调用方
+  Game.takeTurn 与 AI projection。
+
+  输入
+  player。
+
+  输出
+  breakdown。
+
+  读取状态
+  state。
+
+  写入状态
+  无。
+
+  调用函数
+  getTurnEnergyBreakdown。
+
+  边界与不变量
+  只转发 Domain Rule。
+  */
   getTurnEnergyBreakdown(player) {
-    const rules = this.getRules(player);
+    return getTurnEnergyBreakdownFromRules(
+      this.getRules(player),
+      this.#playerFact(player)?.equipmentDefinitionId ?? null
+    );
+  }
+
+  #ruleState() {
+    return { players: createRuleStateView(this.game.state).players() };
+  }
+
+  #playerFact(player) {
+    if (!player || typeof player === "string") return player;
     return {
-      baseAmount: rules.turnEnergyGain,
-      teamBonus: rules.turnEnergyBonus ?? 0,
-      equipmentBonus: player.equipment?.definitionId === "energyDevice" ? 1 : 0
+      battleTeam: player.battleTeam,
+      equipmentDefinitionId: player.equipmentDefinitionId ?? player.equipment?.definitionId ?? null
     };
   }
 }

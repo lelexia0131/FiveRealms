@@ -9,6 +9,8 @@ import { changeEnergy, changeShield } from "../domain/state/transitions/Resource
 import { removeStatus, setStatus } from "../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { addSpyGapPendingTarget, addTrackingTarget, incrementAttackLimit, markCategoryUsed, removeSpyGapPendingTarget, setCoordinationTriggered, setGambleTriggered, setGuardianAidUsed, setLastEmberResolutionId, setMomentum, setRejuvenationTriggerCount, setSpyGapTriggered, setTrackingTurnNumber } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { RuleEngine } from "../core/RuleEngine.js?build=20260815-shadow-agent-p1-slot";
+import { getActiveSkillUseCount, hasActiveSkillUseRemaining, isActorTurn } from "../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
+import { getAllInAssaultBonus, isHuntMarkExpired } from "../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
 import { randomChoice } from "../utils/helpers.js?build=20260815-shadow-agent-p1-slot";
 import { Debug } from "../utils/debug.js?build=20260815-shadow-agent-p1-slot";
 
@@ -343,7 +345,9 @@ const PASSIVE_SKILLS = {
       if (event.player.id !== owner.id) return;
       for (const player of game.state.players) {
         const mark = player.statuses.huntMark;
-        if (mark?.sourceId === owner.id && mark.expireAtTurnEnd <= (owner.gameFlags.trackingTurnNumber ?? 0)) removeStatus(game.state, player, "huntMark");
+        if (mark?.sourceId === owner.id && isHuntMarkExpired(mark, owner.gameFlags.trackingTurnNumber ?? 0)) {
+          removeStatus(game.state, player, "huntMark");
+        }
       }
     });
   },
@@ -387,7 +391,7 @@ const PASSIVE_SKILLS = {
     game.eventBus.on("beforeDamage", `${owner.id}:allIn:damage`, (event) => {
       const allIn = owner.statuses.allIn;
       if (!owner.alive || event.source?.id !== owner.id || event.card?.definitionId !== "assault" || !allIn) return;
-      event.amount += allIn.assaultBonus;
+      event.amount += getAllInAssaultBonus(allIn);
       event.metadata.consumeAssaultBonus = true;
       game.log(`${owner.name}的「孤注」状态令此次「突袭」伤害+1。`, "important");
     });
@@ -453,9 +457,13 @@ export function getActiveSkillCost(gameOrState, source, skill) {
 }
 
 const baseCanUse = (game, source, skill, minimumEnergy = getActiveSkillCost(game, source, skill)) => {
-  if (!source.alive || game.state.phase !== "play" || game.currentPlayer?.id !== source.id) return { ok: false, reason: "只能在自己的出牌阶段发动" };
-  const used = source.turnFlags.activeSkillUseCounts?.[skill.id] ?? (source.turnFlags.activeSkillsUsed.has(skill.id) ? 1 : 0);
-  if (used >= (skill.limitPerTurn ?? 1)) return { ok: false, reason: "本回合发动次数已用尽" };
+  if (!source.alive || !isActorTurn(game.state.phase, game.currentPlayer?.id, source.id)) {
+    return { ok: false, reason: "只能在自己的出牌阶段发动" };
+  }
+  const used = getActiveSkillUseCount(source.turnFlags, skill.id);
+  if (!hasActiveSkillUseRemaining(used, skill.limitPerTurn ?? 1)) {
+    return { ok: false, reason: "本回合发动次数已用尽" };
+  }
   if (source.energy < minimumEnergy) return { ok: false, reason: "能量不足" };
   return { ok: true, reason: "" };
 };

@@ -1,5 +1,6 @@
 /** 二十六种卡牌的结算器；所有持久状态变化都回到 Game 服务。 */
 import { RuleEngine } from "../core/RuleEngine.js?build=20260815-shadow-agent-p1-slot";
+import { getExposeWeaknessStacks, isExposeWeaknessConsumable } from "../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
 import { changeShield } from "../domain/state/transitions/ResourceTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { incrementAttackUsed, incrementRecoverUsed } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260815-shadow-agent-p1-slot";
 import { removeStatus, setStatus } from "../domain/state/transitions/StatusTransitions.js?build=20260815-shadow-agent-p1-slot";
@@ -55,8 +56,8 @@ const CARD_EFFECTS = {
   async assault(game, source, card, targets, context) {
     incrementAttackUsed(game.state, source);
     source.statistics.assaultsUsed += 1;
-    const stacks = source.statuses.exposeWeakness?.stacks ?? 0;
-    if (stacks) {
+    const stacks = getExposeWeaknessStacks(source.statuses.exposeWeakness);
+    if (isExposeWeaknessConsumable(source.statuses.exposeWeakness)) {
       removeStatus(game.state, source, "exposeWeakness");
       game.log(`${source.name}消耗${stacks}层「破势」，本次「突袭」伤害+${stacks}。`, "important");
     }

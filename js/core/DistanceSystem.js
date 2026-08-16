@@ -3,6 +3,8 @@
  * 不修改状态、不缓存距离矩阵。视觉 seatIndex 只保存原始顺时针次序，阵亡后
  * 必须重新构造 aliveRing，所有卡牌和 AI 模拟都经 RuleEngine 调用本系统。
  */
+import { getAliveRing as getAliveRingFromRule, getBaseDistance as getBaseDistanceFromRule, getDistance as getDistanceFromRule } from "../domain/rules/distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
+
 export class DistanceSystem {
   static getEquipmentDefinitionId(player) {
     return player?.equipment?.definitionId ?? player?.equipmentDefinitionId ?? null;
@@ -19,28 +21,140 @@ export class DistanceSystem {
     return `equipment:${player.id}:${definitionId}`;
   }
 
+  /*
+  功能
+  把真实或 AI 过滤玩家统一投影为 Deterministic Distance Rule 需要的 canonical 事实。
+
+  调用方
+  getAliveRing/getBaseDistance/getDistance/getRangeConditionBranches。
+
+  输入
+  game。
+
+  输出
+  冻结的 { id, seatIndex, alive } 数组。
+
+  读取状态
+  game.state.players 或 game.players。
+
+  写入状态
+  无。
+
+  调用函数
+  Object.freeze。
+
+  边界与不变量
+  legacy dual-schema 只归一化到本 facade；Domain Distance Rule 不接触 Real Player/SearchState。
+  */
+  static getDistancePlayerFacts(game) {
+    const players = game?.state?.players ?? game?.players ?? [];
+    return players.map((player) => Object.freeze({
+      id:player.id,
+      seatIndex:player.seatIndex,
+      alive:player.alive
+    }));
+  }
+
+  /*
+  功能
+  返回按 seatIndex 升序的存活玩家。
+
+  调用方
+  Distance deterministic 与 probability branches。
+
+  输入
+  game。
+
+  输出
+  存活玩家数组。
+
+  读取状态
+  game.state.players。
+
+  写入状态
+  无。
+
+  调用函数
+  getAliveRingFromRule。
+
+  边界与不变量
+  不修改输入。
+  */
   static getAliveRing(game) {
-    return game.state.players.filter((player) => player.alive).sort((a,b) => a.seatIndex - b.seatIndex);
+    const rulePlayers = this.getDistancePlayerFacts(game);
+    return getAliveRingFromRule(rulePlayers)
+      .map((player) => (game.state?.players ?? game.players ?? []).find((entry) => entry.id === player.id))
+      .filter(Boolean);
   }
 
+  /*
+  功能
+  返回存活环基础距离。
+
+  调用方
+  deterministic 与 AI probability。
+
+  输入
+  game、source、target。
+
+  输出
+  非负整数或 Infinity。
+
+  读取状态
+  game.state.players。
+
+  写入状态
+  无。
+
+  调用函数
+  getBaseDistanceFromRule。
+
+  边界与不变量
+  只转发 Domain Rule。
+  */
   static getBaseDistance(game, source, target) {
-    if (!source || !target || !source.alive || !target.alive) return Infinity;
-    if (source.id === target.id) return 0;
-    const ring = this.getAliveRing(game);
-    const sourceIndex = ring.findIndex((player) => player.id === source.id);
-    const targetIndex = ring.findIndex((player) => player.id === target.id);
-    if (sourceIndex < 0 || targetIndex < 0) return Infinity;
-    const clockwise = Math.abs(sourceIndex - targetIndex);
-    return Math.min(clockwise, ring.length - clockwise);
+    const rulePlayers = this.getDistancePlayerFacts(game);
+    return getBaseDistanceFromRule(
+      rulePlayers,
+      rulePlayers.find((player) => player.id === source?.id) ?? null,
+      rulePlayers.find((player) => player.id === target?.id) ?? null
+    );
   }
 
+  /*
+  功能
+  返回 deterministic 方向性距离。
+
+  调用方
+  RuleEngine 与 legacy consumers。
+
+  输入
+  game、source、target。
+
+  输出
+  非负整数或 Infinity。
+
+  读取状态
+  game.state.players 与装备定义。
+
+  写入状态
+  无。
+
+  调用函数
+  getDistanceFromRule。
+
+  边界与不变量
+  AI 概率分支仍留在本 facade。
+  */
   static getDistance(game, source, target) {
-    let distance = this.getBaseDistance(game, source, target);
-    if (!Number.isFinite(distance) || distance === 0) return distance;
-    // 真实距离保持整数规则；概率装备只能通过 getRangeLegalityProbability 参与 AI 推演。
-    if (this.getEquipmentDefinitionId(source) === "telescope") distance -= 1;
-    if (this.getEquipmentDefinitionId(target) === "barrierDevice") distance += 1;
-    return Math.max(1, distance);
+    const rulePlayers = this.getDistancePlayerFacts(game);
+    return getDistanceFromRule(
+      rulePlayers,
+      rulePlayers.find((player) => player.id === source?.id) ?? null,
+      rulePlayers.find((player) => player.id === target?.id) ?? null,
+      this.getEquipmentDefinitionId(source),
+      this.getEquipmentDefinitionId(target)
+    );
   }
 
   /*
@@ -119,14 +233,16 @@ export class DistanceSystem {
     const isPresent = (conditions, player, definitionId) => (
       conditions[this.equipmentConditionKey(player, definitionId)] === "present"
     );
+    const rulePlayers = this.getDistancePlayerFacts(game);
     return branches.map((branch) => {
       const requirementMatches = entries.map(({ source, target, range }) => {
-        const baseDistance = this.getBaseDistance(game, source, target);
-        if (!Number.isFinite(baseDistance)) return false;
-        if (baseDistance === 0) return true;
-        const distance = Math.max(1, baseDistance
-          - (isPresent(branch.conditions, source, "telescope") ? 1 : 0)
-          + (isPresent(branch.conditions, target, "barrierDevice") ? 1 : 0));
+        const distance = getDistanceFromRule(
+          rulePlayers,
+          rulePlayers.find((player) => player.id === source?.id) ?? null,
+          rulePlayers.find((player) => player.id === target?.id) ?? null,
+          isPresent(branch.conditions, source, "telescope") ? "telescope" : null,
+          isPresent(branch.conditions, target, "barrierDevice") ? "barrierDevice" : null
+        );
         return distance <= range;
       });
       const equipmentLegal = (options.equipmentRequirements ?? []).every(({ player, definitionId, present = true }) => (

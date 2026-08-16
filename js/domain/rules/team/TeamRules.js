@@ -1,0 +1,527 @@
+/*
+模块职责
+唯一拥有 FiveRealms 阵营规模补偿与资源额度的纯规则计算；不拥有组队 RNG、UI 标签或 workflow。
+
+上游
+TeamRuleService、TeamManager 的 legacy façade 与未来 application/match consumer。
+
+下游
+RULESET_DEFINITION。
+
+状态边界
+只读 state.players 与玩家 Domain 投影；不写状态。
+
+信息边界
+不读取 controllerType、aiMemory、AI、UI 或隐藏信息。
+
+架构约束
+不得依赖 application/adapters/Game runtime；不得随机；不得迁移 match setup。
+*/
+import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
+
+/*
+功能
+返回指定阵营的座位数。
+
+调用方
+TeamRuleService、TeamManager 与 tests。
+
+输入
+state 与 player 或 team id。
+
+输出
+阵营人数。
+
+读取状态
+state.players.battleTeam。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+battleTeam 是唯一阵营事实源。
+*/
+export function getTeamSize(state, playerOrTeam) {
+  const team = typeof playerOrTeam === "string" ? playerOrTeam : playerOrTeam?.battleTeam;
+  return state.players.filter((player) => player.battleTeam === team).length;
+}
+
+/*
+功能
+判断玩家是否属于二人小队。
+
+调用方
+TeamRuleService 与 tests。
+
+输入
+state 与 player 投影。
+
+输出
+布尔值。
+
+读取状态
+getTeamSize。
+
+写入状态
+无。
+
+调用函数
+getTeamSize。
+
+边界与不变量
+小队规模来自 RulesetDefinition。
+*/
+export function isSmallTeam(state, player) {
+  return getTeamSize(state, player) === RULESET_DEFINITION.smallTeamSize;
+}
+
+/*
+功能
+返回玩家阵营适用的补偿规则对象。
+
+调用方
+TeamRuleService 与 tests。
+
+输入
+state 与 player 投影。
+
+输出
+smallTeamBonuses 或 largeTeamRules。
+
+读取状态
+isSmallTeam、RULESET_DEFINITION。
+
+写入状态
+无。
+
+调用函数
+isSmallTeam。
+
+边界与不变量
+返回冻结配置引用。
+*/
+export function getTeamRules(state, player) {
+  return isSmallTeam(state, player)
+    ? RULESET_DEFINITION.smallTeamBonuses
+    : RULESET_DEFINITION.largeTeamRules;
+}
+
+/*
+功能
+从已决定 team rules 返回开局手牌数。
+
+调用方
+TeamRuleService facade 与 getInitialHandCount。
+
+输入
+teamRules。
+
+输出
+整数。
+
+读取状态
+RULESET_DEFINITION.initialHandCount。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+teamRules 未显式覆盖时使用 Ruleset 默认。
+*/
+export function getInitialHandCountFromRules(teamRules) {
+  return teamRules.initialHandCount ?? RULESET_DEFINITION.initialHandCount;
+}
+
+/*
+功能
+从已决定 team rules 返回每回合摸牌数。
+
+调用方
+TeamRuleService facade 与 getDrawCount。
+
+输入
+teamRules。
+
+输出
+整数。
+
+读取状态
+RULESET_DEFINITION.defaultDrawCount。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+teamRules 未显式覆盖时使用 Ruleset 默认。
+*/
+export function getDrawCountFromRules(teamRules) {
+  return teamRules.drawCountPerTurn ?? RULESET_DEFINITION.defaultDrawCount;
+}
+
+/*
+功能
+从已决定 team rules 返回突袭上限。
+
+调用方
+TeamRuleService facade 与 getAttackLimit。
+
+输入
+teamRules。
+
+输出
+整数。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只读取已决定规则。
+*/
+export function getAttackLimitFromRules(teamRules) {
+  return teamRules.attackLimitPerTurn;
+}
+
+/*
+功能
+从已决定 team rules 返回调息上限。
+
+调用方
+TeamRuleService facade 与 getRecoverLimit。
+
+输入
+teamRules。
+
+输出
+整数或 null。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+null 表示无限。
+*/
+export function getRecoverLimitFromRules(teamRules) {
+  return teamRules.recoverLimitPerTurn;
+}
+
+/*
+功能
+从已决定 team rules 返回能量上限。
+
+调用方
+TeamRuleService facade 与 getMaxEnergy。
+
+输入
+teamRules。
+
+输出
+整数。
+
+读取状态
+RULESET_DEFINITION.defaultMaxEnergy。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+teamRules 未显式覆盖时使用 Ruleset 默认。
+*/
+export function getMaxEnergyFromRules(teamRules) {
+  return teamRules.maxEnergy ?? RULESET_DEFINITION.defaultMaxEnergy;
+}
+
+/*
+功能
+从已决定 team rules 与装备定义返回回合能量分项。
+
+调用方
+TeamRuleService facade 与 getTurnEnergyBreakdown。
+
+输入
+teamRules 与 equipmentDefinitionId。
+
+输出
+{ baseAmount, teamBonus, equipmentBonus }。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+充能桩 +1 是当前规则语义。
+*/
+export function getTurnEnergyBreakdownFromRules(teamRules, equipmentDefinitionId) {
+  return {
+    baseAmount: teamRules.turnEnergyGain,
+    teamBonus: teamRules.turnEnergyBonus ?? 0,
+    equipmentBonus: equipmentDefinitionId === "energyDevice" ? 1 : 0
+  };
+}
+
+/*
+功能
+从已决定 team rules 与装备定义返回回合总能量获取。
+
+调用方
+TeamRuleService facade 与 getTurnEnergyGain。
+
+输入
+teamRules 与 equipmentDefinitionId。
+
+输出
+整数。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+getTurnEnergyBreakdownFromRules。
+
+边界与不变量
+总能量 = 基础 + 阵营 + 装备。
+*/
+export function getTurnEnergyGainFromRules(teamRules, equipmentDefinitionId) {
+  const breakdown = getTurnEnergyBreakdownFromRules(teamRules, equipmentDefinitionId);
+  return breakdown.baseAmount + breakdown.teamBonus + breakdown.equipmentBonus;
+}
+
+/*
+功能
+返回玩家开局手牌数。
+
+调用方
+TeamRuleService。
+
+输入
+state 与 player 投影。
+
+输出
+整数。
+
+读取状态
+getTeamRules、RULESET_DEFINITION。
+
+写入状态
+无。
+
+调用函数
+getTeamRules。
+
+边界与不变量
+不读取手牌运行时。
+*/
+export function getInitialHandCount(state, player) {
+  return getInitialHandCountFromRules(getTeamRules(state, player));
+}
+
+/*
+功能
+返回玩家每回合摸牌数。
+
+调用方
+TeamRuleService。
+
+输入
+state 与 player 投影。
+
+输出
+整数。
+
+读取状态
+getTeamRules、RULESET_DEFINITION。
+
+写入状态
+无。
+
+调用函数
+getTeamRules。
+
+边界与不变量
+不读取牌堆。
+*/
+export function getDrawCount(state, player) {
+  return getDrawCountFromRules(getTeamRules(state, player));
+}
+
+/*
+功能
+返回玩家每回合突袭上限。
+
+调用方
+TeamRuleService。
+
+输入
+state 与 player 投影。
+
+输出
+整数。
+
+读取状态
+getTeamRules。
+
+写入状态
+无。
+
+调用函数
+getTeamRules。
+
+边界与不变量
+不读取当前使用次数。
+*/
+export function getAttackLimit(state, player) {
+  return getAttackLimitFromRules(getTeamRules(state, player));
+}
+
+/*
+功能
+返回玩家每回合调息上限。
+
+调用方
+TeamRuleService。
+
+输入
+state 与 player 投影。
+
+输出
+整数或 null。
+
+读取状态
+getTeamRules。
+
+写入状态
+无。
+
+调用函数
+getTeamRules。
+
+边界与不变量
+null 表示无限。
+*/
+export function getRecoverLimit(state, player) {
+  return getRecoverLimitFromRules(getTeamRules(state, player));
+}
+
+/*
+功能
+返回玩家能量上限。
+
+调用方
+TeamRuleService。
+
+输入
+state 与 player 投影。
+
+输出
+整数。
+
+读取状态
+getTeamRules、RULESET_DEFINITION。
+
+写入状态
+无。
+
+调用函数
+getTeamRules。
+
+边界与不变量
+不读取当前能量。
+*/
+export function getMaxEnergy(state, player) {
+  return getMaxEnergyFromRules(getTeamRules(state, player));
+}
+
+/*
+功能
+返回玩家回合能量获取分项。
+
+调用方
+TeamRuleService。
+
+输入
+state 与 player 投影。
+
+输出
+baseAmount/teamBonus/equipmentBonus。
+
+读取状态
+getTeamRules 与 player.equipmentDefinitionId。
+
+写入状态
+无。
+
+调用函数
+getTeamRules。
+
+边界与不变量
+充能桩 +1 是当前规则语义。
+*/
+export function getTurnEnergyBreakdown(state, player) {
+  return getTurnEnergyBreakdownFromRules(
+    getTeamRules(state, player),
+    player.equipmentDefinitionId
+  );
+}
+
+/*
+功能
+返回玩家回合总能量获取。
+
+调用方
+TeamRuleService facade 与 tests。
+
+输入
+state 与 player 投影。
+
+输出
+整数。
+
+读取状态
+getTurnEnergyGainFromRules。
+
+写入状态
+无。
+
+调用函数
+getTeamRules、getTurnEnergyGainFromRules。
+
+边界与不变量
+总能量 = 基础 + 阵营 + 装备。
+*/
+export function getTurnEnergyGain(state, player) {
+  return getTurnEnergyGainFromRules(
+    getTeamRules(state, player),
+    player.equipmentDefinitionId
+  );
+}
