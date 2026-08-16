@@ -17,8 +17,19 @@ ResponseSimulation、Radar domain、state/Probability 与共享 simulation runti
 架构约束
 结算顺序以 Game.damage、HpLossSystem 与 DyingSystem 为权威；不得拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
+import {
+  calculateHealAmount,
+  calculateHpDamage,
+  calculateShieldAbsorption,
+  isDying,
+  isKillRewardEligible
+} from "../../domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
+import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
+import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
+import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
 import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260815-shadow-agent-p1-slot";
 import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
 import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260815-shadow-agent-p1-slot";
@@ -88,11 +99,13 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       source.attackUsed = (source.attackUsed ?? 0) + chance;
     }
     this.simulateTracking(state, source, target, assaultWorlds);
-    const momentumBranches = source.generalId === "blade-walker"
+    const momentumBranches = hasPassiveSkill(source, "momentum")
       ? this.syncMomentumSummary(source)
       : [{ probability:1, conditions:{}, amount:0 }];
     const damageOutcome = {};
-    const baseDamage = 1 + (source.exposeWeaknessStacks ?? 0) + (source.assaultBonus ?? 0);
+    const baseDamage = DOMAIN_CARD_DEFINITIONS.assault.baseDamage
+      + (source.exposeWeaknessStacks ?? 0)
+      + (source.assaultBonus ?? 0);
     const damageBranches = momentumBranches.map((branch) => ({
       probability:branch.probability,
       conditions:branch.conditions,
@@ -238,12 +251,12 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     target.handCount = Math.max(0, target.handCount - expectedTargetSpent);
     this.consumeKnownCardsFromHand(state, actor, "assault", expectedActorSpent);
     this.consumeKnownCardsFromHand(state, target, "assault", expectedTargetSpent);
-    this.applyDamage(state, target, actor, 1, {
+    this.applyDamage(state, target, actor, DOMAIN_CARD_DEFINITIONS.duel.failDamage, {
       canBlock:false,
       eventProbability:actorLoseProbability,
       damageContext
     });
-    this.applyDamage(state, actor, target, 1, {
+    this.applyDamage(state, actor, target, DOMAIN_CARD_DEFINITIONS.duel.failDamage, {
       canBlock:false,
       eventProbability:targetLoseProbability,
       damageContext
@@ -327,12 +340,20 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
         `battle-required:${attacker?.id ?? "unknown"}:${target.id}`
       );
       const requiredPartition = battleProbability >= 1 - PROBABILITY_EPSILON
-        ? [{ probability:1, conditions:{}, requiredCount:2 }]
+        ? [{ probability:1, conditions:{}, requiredCount:getRequiredBlockCount("battleDevice", true) }]
         : battleProbability <= PROBABILITY_EPSILON
-          ? [{ probability:1, conditions:{}, requiredCount:1 }]
+          ? [{ probability:1, conditions:{}, requiredCount:getRequiredBlockCount(null, true) }]
           : [
-              { probability:battleProbability, conditions:{ [battleKey]:"yes" }, requiredCount:2 },
-              { probability:1 - battleProbability, conditions:{ [battleKey]:"no" }, requiredCount:1 }
+              {
+                probability:battleProbability,
+                conditions:{ [battleKey]:"yes" },
+                requiredCount:getRequiredBlockCount("battleDevice", true)
+              },
+              {
+                probability:1 - battleProbability,
+                conditions:{ [battleKey]:"no" },
+                requiredCount:getRequiredBlockCount(null, true)
+              }
             ];
       const baseWorlds = joinProbabilityStateBranches(
         eventWorlds, radarOutcomePartition, requiredPartition
@@ -390,12 +411,20 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
         `battle-required:${attacker?.id ?? "unknown"}:${target.id}`
       );
       const requiredPartition = battleProbability >= 1 - PROBABILITY_EPSILON
-        ? [{ probability:1, conditions:{}, requiredCount:2 }]
+        ? [{ probability:1, conditions:{}, requiredCount:getRequiredBlockCount("battleDevice", true) }]
         : battleProbability <= PROBABILITY_EPSILON
-          ? [{ probability:1, conditions:{}, requiredCount:1 }]
+          ? [{ probability:1, conditions:{}, requiredCount:getRequiredBlockCount(null, true) }]
           : [
-              { probability:battleProbability, conditions:{ [battleKey]:"yes" }, requiredCount:2 },
-              { probability:1 - battleProbability, conditions:{ [battleKey]:"no" }, requiredCount:1 }
+              {
+                probability:battleProbability,
+                conditions:{ [battleKey]:"yes" },
+                requiredCount:getRequiredBlockCount("battleDevice", true)
+              },
+              {
+                probability:1 - battleProbability,
+                conditions:{ [battleKey]:"no" },
+                requiredCount:getRequiredBlockCount(null, true)
+              }
             ];
       const blockState = this.getBlockCountBranches(target, state?.remainingCardCounts ?? null);
       const blockWorlds = joinProbabilityStateBranches(eventWorlds, requiredPartition, blockState);
@@ -510,12 +539,21 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     边界与不变量
     未发生或未穿过响应的世界必须返回零；护盾只在这里扣一次。
     */
-    const hpDamageFor = (branch) => branch.occurs && branch.passes
-      ? Math.max(0, effectiveDamageFor(branch) - branch.shieldAmount)
-      : 0;
+    const hpDamageFor = (branch) => {
+      if (!branch.occurs || !branch.passes) return 0;
+      const effectiveAmount = effectiveDamageFor(branch);
+      const absorbed = calculateShieldAbsorption(branch.shieldAmount, effectiveAmount);
+      return calculateHpDamage(effectiveAmount, absorbed);
+    };
     target.shieldBranches = projectProbabilityStateBranches(damageWorlds, (branch) => ({
       amount:branch.occurs && branch.passes
-        ? Math.max(0, branch.shieldAmount - effectiveDamageFor(branch))
+        ? Math.max(
+            0,
+            branch.shieldAmount - calculateShieldAbsorption(
+              branch.shieldAmount,
+              effectiveDamageFor(branch)
+            )
+          )
         : branch.shieldAmount
     }));
     target.shield = expectedBranchValue(target.shieldBranches);
@@ -596,18 +634,13 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   救援按目标优先再顺时针盟友顺序；死亡清理和击杀奖励最多执行一次，不产生半存活状态。
   */
   resolveFatal(state, target, attacker = null) {
-    if (target.hp > 0 || !target.alive) return;
-    const need = 1 - target.hp;
-    const seatCount = Math.max(1, state.players.length);
-    const targetSeat = Number(target.seatIndex) || 0;
-    const allies = state.players.filter((player) => player.alive && player.battleTeam === target.battleTeam)
-      .sort((a,b) => {
-        if (a.id === target.id) return -1;
-        if (b.id === target.id) return 1;
-        const aDistance = ((Number(a.seatIndex) || 0) - targetSeat + seatCount) % seatCount;
-        const bDistance = ((Number(b.seatIndex) || 0) - targetSeat + seatCount) % seatCount;
-        return aDistance - bDistance;
-      });
+    if (!isDying(target.hp, target.alive)) return;
+    const need = Math.max(0, 1 - target.hp);
+    const roster = projectCanonicalSeatRoster(state.players);
+    const rescueOrder = getDyingRescueResponderOrder(roster, target.id);
+    const allies = rescueOrder
+      .map((id) => state.players.find((player) => player.id === id))
+      .filter(Boolean);
     const capacity = allies.reduce((sum, player) => sum + (player.expectedRecoverCount ?? 0), 0);
     target.survivalChance = Math.min(1, capacity / need);
     if (capacity < need) {
@@ -636,9 +669,14 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       }
       this.setSimulatedEquipment(target, null, 0);
       this.clearHuntMarksBySource(state, target.id);
-      if (attacker?.alive && attacker.battleTeam !== target.battleTeam) {
+      const targetFact = roster.find((player) => player.id === target.id) ?? null;
+      const attackerFact = attacker ? roster.find((player) => player.id === attacker.id) ?? null : null;
+      if (isKillRewardEligible(
+        { rewardGranted:false, alive:targetFact?.alive, battleTeam:targetFact?.battleTeam },
+        attackerFact
+      )) {
         this.gainUnknownCardsWithCounterState(
-          state, attacker, GAME_CONFIG.killRewardDrawCount, null, "kill-reward-draw"
+          state, attacker, RULESET_DEFINITION.killRewardDrawCount, null, "kill-reward-draw"
         );
       }
       return;
@@ -654,9 +692,10 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
         if (remaining <= PROBABILITY_EPSILON) break;
         const available = Math.max(0, rescuer.expectedRecoverCount ?? 0);
         if (available <= PROBABILITY_EPSILON) continue;
-        const canRejuvenate = rescuer.generalId === "spirit-medic"
-          && (rescuer.rejuvenationTriggerCount ?? 0) < 2;
-        const healingPerCard = 1;
+        const canRejuvenate = hasPassiveSkill(rescuer, "rejuvenation")
+          && (rescuer.rejuvenationTriggerCount ?? 0)
+            < PASSIVE_SKILL_DEFINITIONS.rejuvenation.maxTriggersPerTurn;
+        const healingPerCard = DOMAIN_CARD_DEFINITIONS.recover.healAmount;
         const spent = Math.min(1, available);
         if (spent <= PROBABILITY_EPSILON) continue;
         const healing = spent * healingPerCard;
@@ -668,7 +707,11 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
         if (canRejuvenate) {
           // 概率救援按实际消耗的期望调息推进回春：摸牌与次数消耗必须共享同一概率权重，
           // 并以每回合 2 次为上限，避免“摸牌按分数计、次数却完整消耗”的条件世界失配。
-          const remainingSlots = Math.max(0, 2 - (rescuer.rejuvenationTriggerCount ?? 0));
+          const remainingSlots = Math.max(
+            0,
+            PASSIVE_SKILL_DEFINITIONS.rejuvenation.maxTriggersPerTurn
+              - (rescuer.rejuvenationTriggerCount ?? 0)
+          );
           const consume = Math.min(spent, remainingSlots);
           if (consume > PROBABILITY_EPSILON) {
             this.gainUnknownCardsWithCounterState(state, rescuer, consume, null, "rejuvenation-rescue-draw");
@@ -681,7 +724,8 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       rounds += 1;
       if (!usedThisRound) break;
     }
-    target.hp = Math.min(target.maxHp, target.hp + healingApplied);
+    const appliedHealing = calculateHealAmount(healingApplied, target.maxHp, target.hp);
+    target.hp += appliedHealing;
     target.survivalChance = 1;
     target.alive = true;
   }
@@ -712,7 +756,9 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   死亡或已满生命目标不变化；生命不得超过 maxHp。
   */
   heal(target, amount) {
-    if (target.alive && amount > 0) target.hp = Math.min(target.maxHp, target.hp + amount);
+    if (!target.alive || amount <= 0) return;
+    const applied = calculateHealAmount(amount, target.maxHp, target.hp);
+    if (applied > 0) target.hp += applied;
   }
 
   /*
@@ -745,13 +791,18 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     const beforeHp = target.hp;
     this.heal(target, amount);
     const actualAmount = Math.max(0, target.hp - beforeHp);
-    if (source?.generalId === "spirit-medic" && source.battleTeam === target.battleTeam
-      && (source.rejuvenationTriggerCount ?? 0) < 2) {
+    if (hasPassiveSkill(source, "rejuvenation") && source.battleTeam === target.battleTeam
+      && (source.rejuvenationTriggerCount ?? 0)
+        < PASSIVE_SKILL_DEFINITIONS.rejuvenation.maxTriggersPerTurn) {
       const triggerWeight = Math.min(1, actualAmount);
       if (triggerWeight <= PROBABILITY_EPSILON) return;
       // 概率执行的治疗只按触发权重推进回春次数，与摸牌共享同一概率权重；
       // 剩余额度按 2 - 期望次数截断，保证期望次数不越过每回合 2 次上限。
-      const remainingSlots = Math.max(0, 2 - (source.rejuvenationTriggerCount ?? 0));
+      const remainingSlots = Math.max(
+        0,
+        PASSIVE_SKILL_DEFINITIONS.rejuvenation.maxTriggersPerTurn
+          - (source.rejuvenationTriggerCount ?? 0)
+      );
       const consume = Math.min(triggerWeight, remainingSlots);
       if (consume <= PROBABILITY_EPSILON) return;
       source.rejuvenationTriggerCount = (source.rejuvenationTriggerCount ?? 0) + consume;

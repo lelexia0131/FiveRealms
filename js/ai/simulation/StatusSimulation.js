@@ -17,14 +17,17 @@ Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
 架构约束
 真实状态/监听顺序以 Game、JudgmentSystem 与 skillRegistry 为权威；不拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { interpretDefenseJudgment } from "../../domain/rules/judgment/JudgmentRules.js?build=20260815-shadow-agent-p1-slot";
 import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260815-shadow-agent-p1-slot";
 import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260815-shadow-agent-p1-slot";
 import {
   RADAR_BASIC_DEFINITIONS,
   buildRadarJudgmentProbabilities
 } from "../domain/RadarModel.js?build=20260815-shadow-agent-p1-slot";
+import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -95,12 +98,12 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   */
   initializeMomentumBranches(state) {
     for (const player of state?.players ?? []) {
-      if (player.generalId !== "blade-walker") continue;
+      if (!hasPassiveSkill(player, "momentum")) continue;
       if (!Array.isArray(player.momentumBranches) || !player.momentumBranches.length) {
         player.momentumBranches = [{
           probability:1,
           conditions:{},
-          amount:Math.max(0, Math.min(GAME_CONFIG.momentumMaxStacks, Number(player.momentum) || 0))
+          amount:Math.max(0, Math.min(RULESET_DEFINITION.momentumMaxStacks, Number(player.momentum) || 0))
         }];
       }
       this.syncMomentumSummary(player);
@@ -155,7 +158,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     player.momentumBranches = projectProbabilityStateBranches(
       getValueBranches(player, "momentum", player.momentum),
       (branch) => ({
-        amount:Math.max(0, Math.min(GAME_CONFIG.momentumMaxStacks, Number(branch.amount) || 0))
+        amount:Math.max(0, Math.min(RULESET_DEFINITION.momentumMaxStacks, Number(branch.amount) || 0))
       })
     );
     player.momentum = expectedBranchValue(player.momentumBranches);
@@ -226,7 +229,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   同类首次且造成生命伤害才增加势能，重复类别在相交世界清空；条件质量必须守恒。
   */
   simulateCategoryUse(state, player, category, useResolution = 1, lifeDamageResolution = null) {
-    if (!category || player?.generalId !== "blade-walker") return 0;
+    if (!category || !hasPassiveSkill(player, "momentum")) return 0;
     this.initializeMomentumBranches({ players:[player] });
     const useWorlds = Array.isArray(useResolution)
       ? this.getEventWorlds(state, 1, useResolution, `momentum-use:${player.id}:${category}`)
@@ -268,7 +271,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       if (!branch.cardUsed) return { amount:branch.momentumAmount };
       const retained = branch.lifeDamage ? 0 : branch.momentumAmount;
       return {
-        amount:Math.min(GAME_CONFIG.momentumMaxStacks,
+        amount:Math.min(RULESET_DEFINITION.momentumMaxStacks,
           retained + (!branch.categoryUsed ? 1 : 0))
       };
     });
@@ -307,7 +310,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   颜色分支与卡牌生效世界共享条件；一次行动的奖励和惩罚不能同时重复结算。
   */
   simulateGamble(state, actor, card, useProbability) {
-    if (actor?.generalId !== "fate-gambler" || card?.category !== "tactic") return 0;
+    if (!hasPassiveSkill(actor, "gamble") || card?.category !== "tactic") return 0;
     const oldProbability = clampProbability(actor.gambleTriggeredProbability
       ?? (actor.gambleTriggered ? 1 : 0));
     const newProbability = unionProbability(oldProbability, useProbability);
@@ -317,7 +320,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     if (triggerProbability > PROBABILITY_EPSILON) {
       const gambleWorlds = this.getEventWorlds(state, triggerProbability, null, "gamble-draw");
       this.gainUnknownCardsWithCounterState(
-        state, actor, triggerProbability * GAME_CONFIG.gamblerDrawChance, gambleWorlds, "gamble-draw"
+        state, actor, triggerProbability * RULESET_DEFINITION.gamblerDrawChance, gambleWorlds, "gamble-draw"
       );
     }
     return triggerProbability;
@@ -349,7 +352,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   只作用于调用方确认的有效目标；同一触发质量不得对同一目标重复发放。
   */
   simulateCoordination(state, actor, effectiveTargets, resolutionProbability) {
-    if (actor?.generalId !== "resonance-tuner") return 0;
+    if (!hasPassiveSkill(actor, "coordination")) return 0;
     if (!(effectiveTargets ?? []).some((target) => target?.alive && target.id !== actor.id
       && target.battleTeam === actor.battleTeam)) return 0;
     const oldProbability = clampProbability(actor.coordinationTriggeredProbability
@@ -393,7 +396,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   不同来源的标记分别记账；确定摘要只能来自概率一世界，未命中世界保持原标记。
   */
   simulateTracking(state, source, target, eventWorlds) {
-    if (source.generalId !== "trail-hunter" || target.battleTeam === source.battleTeam) return;
+    if (!hasPassiveSkill(source, "tracking") || target.battleTeam === source.battleTeam) return;
     source.trackingTargetIds ??= [];
     // 同一敌人本回合只能触发一次；猎杀移除标记也不会返还该次追踪额度。
     if (source.trackingTargetIds.includes(target.id)) return;
@@ -401,7 +404,10 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     target.huntMarkProbabilities ??= {};
     const oldProbability = clampProbability(target.huntMarkProbabilities[source.id]
       ?? (target.huntMarkSourceId === source.id ? 1 : 0));
-    const remainingUses = Math.max(0, 2 - source.trackingUses);
+    const remainingUses = Math.max(
+      0,
+      PASSIVE_SKILL_DEFINITIONS.tracking.maxTargetsPerTurn - source.trackingUses
+    );
     const limitedEventWorlds = this.eventProbability(eventWorlds) <= remainingUses + PROBABILITY_EPSILON
       ? eventWorlds
       : this.gateEventWorlds(state, eventWorlds,
@@ -458,7 +464,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   simulateAfterLifeDamage(state, source, target, lifeDamageProbability, lifeDamageBranches = null, damageContext = {}) {
     const chance = clampProbability(lifeDamageProbability);
     if (!chance || !source?.alive || !target) return;
-    if (damageContext.cardDamage && source.generalId === "ember-magus"
+    if (damageContext.cardDamage && hasPassiveSkill(source, "ember")
       && target.battleTeam !== source.battleTeam) {
       damageContext.emberTriggeredProbabilities ??= {};
       const oldProbability = clampProbability(damageContext.emberTriggeredProbabilities[source.id]);
@@ -482,7 +488,9 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
         const joined = joinProbabilityStateBranches(baseEnergy, triggerWorlds);
         source.energyBranches = projectProbabilityStateBranches(joined, (branch) => ({
           amount:Math.max(0, Math.min(source.maxEnergy ?? Infinity,
-            branch.baseEnergyAmount + (branch.occurs ? 1 : 0)))
+            branch.baseEnergyAmount + (branch.occurs
+              ? PASSIVE_SKILL_DEFINITIONS.ember.energyGain
+              : 0)))
         }));
         source.energy = expectedBranchValue(source.energyBranches);
       }
@@ -550,7 +558,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
             observedDefinitionId:null
           }];
         }
-        return Object.keys(CARD_DEFINITIONS).map((definitionId) => ({
+        return Object.keys(DOMAIN_CARD_DEFINITIONS).map((definitionId) => ({
           probability:branch.probability
             * remainingCardDensity(state?.remainingCardCounts ?? null, definitionId),
           conditions:{ ...branch.conditions, [identityKey]:definitionId },
@@ -571,7 +579,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
           };
         })
       );
-      for (const definitionId of Object.keys(CARD_DEFINITIONS)) {
+      for (const definitionId of Object.keys(DOMAIN_CARD_DEFINITIONS)) {
         const identityWorlds = mergeProbabilityStateBranches(
           identityPartition
             .filter((branch) => branch.observedDefinitionId === definitionId)
@@ -642,7 +650,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     const chance = clampProbability(lifeDamageProbability);
     if (!chance || !source?.alive || !target?.alive || target.hp <= 0
       || target.battleTeam === source.battleTeam || (target.handCount ?? 0) <= 0
-      || source.generalId !== "shade-agent") return;
+      || !hasPassiveSkill(source, "spyGap")) return;
     const oldTriggeredProbability = clampProbability(source.spyGapTriggeredProbability
       ?? (source.spyGapTriggered ? 1 : 0));
     const triggerProbability = (1 - oldTriggeredProbability) * chance;
@@ -655,7 +663,9 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       triggerProbability,
       "occurs"
     );
-    this.recordSimulatedSpyGapPeek(state, source, target, 2, triggerWorlds);
+    this.recordSimulatedSpyGapPeek(
+      state, source, target, PASSIVE_SKILL_DEFINITIONS.spyGap.maxRevealCount, triggerWorlds
+    );
   }
 
   /*
@@ -775,10 +785,27 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       if (!hasJudgmentPool) {
         pushOutcome("noJudgment", 1, true, false);
       } else {
-        pushOutcome("tactic", tacticProbability, false, true);
-        pushOutcome("equipment", equipmentProbability, true, false);
+        const tacticOutcome = interpretDefenseJudgment("tactic");
+        const nonTacticOutcome = interpretDefenseJudgment("basic");
+        pushOutcome(
+          "tactic",
+          tacticProbability,
+          !tacticOutcome.immune,
+          tacticOutcome.immune
+        );
+        pushOutcome(
+          "equipment",
+          equipmentProbability,
+          !nonTacticOutcome.immune,
+          nonTacticOutcome.immune
+        );
         for (const definitionId of RADAR_BASIC_DEFINITIONS) {
-          pushOutcome(`basic:${definitionId}`, basicProbabilities[definitionId], true, false);
+          pushOutcome(
+            `basic:${definitionId}`,
+            basicProbabilities[definitionId],
+            !nonTacticOutcome.immune,
+            nonTacticOutcome.immune
+          );
         }
       }
     }
@@ -826,7 +853,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     }
     target.lightningStatusStateBranches = [{ probability:1, conditions:{}, present:false }];
     target.lightningStatusProbability = 0;
-    this.applyDamage(next, null, target, 3, { canBlock:false });
+    this.applyDamage(next, null, target, DOMAIN_CARD_DEFINITIONS.lightning.hitDamage, { canBlock:false });
     return next;
   }
 

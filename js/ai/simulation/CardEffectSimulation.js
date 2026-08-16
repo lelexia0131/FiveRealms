@@ -6,7 +6,7 @@
 Simulator 正式模拟门面、CombatSimulation 与 SkillEffectSimulation。
 
 下游
-Response/Combat/Status 组件、RuleEngine、正式资源 Policy、CardValue 与 Probability。
+Response/Combat/Status 组件、Domain CardRules、正式资源 Policy、CardValue 与 Probability。
 
 状态边界
 只修改 Simulator 门面提供的独立 SearchState 副本。
@@ -17,9 +17,14 @@ Response/Combat/Status 组件、RuleEngine、正式资源 Policy、CardValue 与
 架构约束
 不生成动作、不搜索、不拥有规则合法性或最终价值公式。
 */
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import {
+  findPlayerFact,
+  getCardTargetIds
+} from "../../domain/rules/card/CardRules.js?build=20260815-shadow-agent-p1-slot";
+import { hasPassiveSkill, projectRulePlayers } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
+import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260815-shadow-agent-p1-slot";
 import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-shadow-agent-p1-slot";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
 import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260815-shadow-agent-p1-slot";
 import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
 import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-shadow-agent-p1-slot";
@@ -192,22 +197,25 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
     switch (card.definitionId) {
       case "recover":
-        this.healFrom(next, actor, actor, 1 * scale);
+        this.healFrom(next, actor, actor, DOMAIN_CARD_DEFINITIONS.recover.healAmount * scale);
         actor.recoverUsed = (actor.recoverUsed ?? 0) + executionProbability;
         actor.expectedRecoverCount = Math.max(0, (actor.expectedRecoverCount ?? 0) - executionProbability);
         break;
-      case "charge": this.changeEnergy(next, actor, 1, effectEventWorlds); break;
+      case "charge": this.changeEnergy(next, actor, DOMAIN_CARD_DEFINITIONS.charge.energyGain, effectEventWorlds); break;
       case "shield":
         if (target?.alive && target.battleTeam === actor.battleTeam) {
-          this.changeShield(next, target, 1, effectEventWorlds);
+          this.changeShield(next, target, DOMAIN_CARD_DEFINITIONS.shield.shieldAmount, effectEventWorlds);
           coordinationProbability = scale;
           coordinationTargets = [target];
         }
         break;
       case "harvest":
-        this.gainUnknownCardsWithCounterState(next, actor, 2, effectEventWorlds, "harvest-draw");
+        this.gainUnknownCardsWithCounterState(
+          next, actor, DOMAIN_CARD_DEFINITIONS.harvest.drawCount, effectEventWorlds, "harvest-draw"
+        );
         break;
-      case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0) + scale; break;
+      case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0)
+        + DOMAIN_CARD_DEFINITIONS.exposeWeakness.stacksGain * scale; break;
       case "lightning":
         this.applyDelayedStatusCard(next, actor, null, "lightning", effectEventWorlds);
         break;
@@ -219,7 +227,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         const knownExpectedCount = (target.knownCards ?? [])
           .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
         const unknownCount = Math.max(0, (Number(target.handCount) || 0) - knownExpectedCount);
-        const informationGain = Math.min(2, unknownCount);
+        const informationGain = Math.min(DOMAIN_CARD_DEFINITIONS.scout.maxRevealCount, unknownCount);
         actor.expectedInformationGain = (actor.expectedInformationGain ?? 0) + informationGain * scale;
         coordinationProbability = scale;
         coordinationTargets = [target];
@@ -239,7 +247,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
             effectEventWorlds,
             this.counterDesire(next, player, actor, card, [player])
           );
-          this.applyDamage(next, actor, player, 1, {
+          this.applyDamage(next, actor, player, DOMAIN_CARD_DEFINITIONS.shockwave.perTargetDamage, {
             canBlock:true,
             deviceAttack:true,
             eventBranches:counterResponse.effectPassWorlds,
@@ -261,7 +269,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
           const spent = this.consumeAssaultForOpportunity(player, eventProbability);
           player.handCount = Math.max(0, player.handCount - spent);
           this.consumeKnownCardsFromHand(next, player, "assault", spent);
-          this.applyDamage(next, actor, player, 1, {
+          this.applyDamage(next, actor, player, DOMAIN_CARD_DEFINITIONS.provoke.failDamage, {
             canBlock:false,
             deviceAttack:false,
             eventBranches:this.gateEventWorlds(next, targetWorlds,
@@ -277,9 +285,13 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
           ?? next.players.find((player) => player.id === abstractAction.targets?.[1]?.id);
         if (!first?.alive || !second?.alive || !first.equipmentDefinitionId) break;
         // 借势第二目标选择只按距离，但实际打出突袭必须满足普通突袭完整目标合法性。
-        const simulationGame = { state:{ players:next.players } };
-        const canActuallyTargetWithAssault = RuleEngine.getLegalAssaultTargets(simulationGame, first)
-          .some((candidate) => candidate.id === second.id);
+        const rulePlayers = projectRulePlayers(next.players);
+        const firstRuleFact = findPlayerFact(rulePlayers, first.id);
+        const canActuallyTargetWithAssault = getCardTargetIds(
+          rulePlayers,
+          firstRuleFact,
+          DOMAIN_CARD_DEFINITIONS.assault
+        ).includes(second.id);
         // 候选组合从不因手牌估计或次数删除；实际使用必须消费第一目标自己的次数槽。
         const assaultAvailable = canActuallyTargetWithAssault
           ? Math.max(0, Math.min(1, first.assaultResponseProbability ?? 0))
@@ -387,8 +399,11 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         // 缩小。规划阶段牌未翻开，禁止读取真实未来牌堆或 RNG，只能用公共剩余牌计数做
         // 确定性期望。
         const draftValues = mutualBenefitDraftValues(next.players, actor, next?.remainingCardCounts ?? null);
+        const perRecipientDrawCount = DOMAIN_CARD_DEFINITIONS.mutualBenefit.perRecipientDrawCount;
         for (const player of coordinationTargets) {
-          this.gainUnknownCardsWithCounterState(next, player, 1, effectEventWorlds, "mutual-benefit-draw");
+          this.gainUnknownCardsWithCounterState(
+            next, player, perRecipientDrawCount, effectEventWorlds, "mutual-benefit-draw"
+          );
           // 把本次选牌期望价值记入角色状态：owner ledger 据此区分"己方先选/敌方先选"
           // 两种座位排列，后手因可选集合缩小而自然更低，不引入座位奖励常数。
           player.mutualBenefitDraftValue = (player.mutualBenefitDraftValue ?? 0)
@@ -400,7 +415,9 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         const targets = this.seatOrderFrom(next, actor, true);
         coordinationTargets = targets.filter((player) => player.hp < player.maxHp);
         coordinationProbability = scale;
-        for (const player of targets) this.healFrom(next, actor, player, scale);
+        for (const player of targets) {
+          this.healFrom(next, actor, player, DOMAIN_CARD_DEFINITIONS.symbiosis.healAmount * scale);
+        }
         break;
       }
       default:
@@ -411,18 +428,27 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     this.simulateCoordination(next, actor, coordinationTargets, coordinationProbability);
     const recycleProbability = executionProbability * this.getSimulatedEquipmentProbability(actor, "recycleDevice");
     if (card.category === "tactic" && recycleProbability > 0) {
-      const remainingUses = Math.max(0, 2 - (actor.recycleDeviceUses ?? 0));
+      const remainingUses = Math.max(
+        0,
+        DOMAIN_CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - (actor.recycleDeviceUses ?? 0)
+      );
       const triggerProbability = Math.min(recycleProbability, remainingUses);
       actor.recycleDeviceUses = (actor.recycleDeviceUses ?? 0) + triggerProbability;
       if (triggerProbability > PROBABILITY_EPSILON) {
         const recycleWorlds = this.getEventWorlds(
           next, triggerProbability, null, `recycle-draw:${card.id ?? card.definitionId}`
         );
-        this.gainUnknownCardsWithCounterState(next, actor, triggerProbability, recycleWorlds, "recycle-draw");
+        this.gainUnknownCardsWithCounterState(
+          next,
+          actor,
+          triggerProbability * DOMAIN_CARD_DEFINITIONS.recycleDevice.triggerDrawCount,
+          recycleWorlds,
+          "recycle-draw"
+        );
       }
     }
-    if (actor.generalId === "blade-walker" && actor.alive && card.definitionId !== "assault") {
-      const category = card.category ?? CARD_DEFINITIONS[card.definitionId]?.category;
+    if (hasPassiveSkill(actor, "momentum") && actor.alive && card.definitionId !== "assault") {
+      const category = card.category ?? DOMAIN_CARD_DEFINITIONS[card.definitionId]?.category;
       this.simulateCategoryUse(next, actor, category, cardEventWorlds);
     }
     this.syncActiveSkillCosts(next);
@@ -2177,7 +2203,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   无。
 
   调用函数
-  DistanceSystem.inAttackRange。
+  inAttackRange。
 
   边界与不变量
   只提供公开距离/装备事实，不在 Simulation 中复制弃牌评分。
@@ -2185,7 +2211,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   buildDiscardKeepValueContext(state, player) {
     const enemies = state.players.filter((entry) => entry.alive && entry.battleTeam !== player.battleTeam);
     const stranded = enemies.length > 0
-      && !enemies.some((enemy) => DistanceSystem.inAttackRange({ state }, player, enemy));
+      && !enemies.some((enemy) => inAttackRange({ state }, player, enemy));
     return {
       stranded,
       equippedDefinitionId: player.equipmentDefinitionId ?? null,
@@ -2617,7 +2643,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       `steal-unknown-slot:${actor.id}`
     )}`;
     const stolenSlotKey = `${stolenSlotIdentityKey}:slot`;
-    const otherDefinitions = Object.keys(CARD_DEFINITIONS)
+    const otherDefinitions = Object.keys(DOMAIN_CARD_DEFINITIONS)
       .filter((definitionId) => !["block", "counter"].includes(definitionId));
     const otherDensity = otherDefinitions.reduce((sum, definitionId) => (
       sum + remainingCardDensity(state?.remainingCardCounts ?? null, definitionId)

@@ -17,6 +17,9 @@ state/Probability、正式 ResponsePolicy、GlobalBenefit assessment 与共享 s
 架构约束
 不得读取 Game/UI/Controller/Planner，不得复制 Policy、Value 或真实规则实现。
 */
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/response/ResponseRules.js?build=20260815-shadow-agent-p1-slot";
+import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
 import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260815-shadow-agent-p1-slot";
 import { planningCounterDesire, planningDynamicCounterGain } from "../policy/ResponsePolicy.js?build=20260815-shadow-agent-p1-slot";
 import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
@@ -1403,13 +1406,16 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   simulateGuardianAid(state, target, incomingDamage, eventProbability, excludedGuardianIds = null, options = {}) {
     const probability = clampProbability(eventProbability);
     if (incomingDamage <= PROBABILITY_EPSILON || probability <= PROBABILITY_EPSILON) return Math.max(0, incomingDamage);
-    const conditionalReduction = Math.min(1, incomingDamage / probability);
+    const conditionalReduction = Math.min(
+      PASSIVE_SKILL_DEFINITIONS.guardianAid.damageReduction,
+      incomingDamage / probability
+    );
     let remainingTriggerProbability = probability;
     let expectedReduction = 0;
     for (const guardian of state.players) {
       if (remainingTriggerProbability <= PROBABILITY_EPSILON) break;
       if (excludedGuardianIds?.has(guardian.id)) continue;
-      if (!guardian.alive || guardian.generalId !== "oath-warden" || guardian.id === target.id
+      if (!guardian.alive || !hasPassiveSkill(guardian, "guardianAid") || guardian.id === target.id
         || guardian.battleTeam !== target.battleTeam) continue;
       const oldUsedProbability = clampProbability(guardian.guardianAidUsedProbability
         ?? (guardian.guardianAidUsed ? 1 : 0));
@@ -1455,7 +1461,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   本函数只查询，不消费反制；实际消费必须使用同一次 responseEvaluation。
   */
   tacticResolutionChance(state, actor, card, targets = [], selection = null) {
-    if (card.category !== "tactic" || card.counterable === false) return 1;
+    if (!isCounterEligible(card.category, card.counterable)) return 1;
     return this.evaluateCardScopeCounterResponses(state, actor, card, targets, selection).resolutionChance;
   }
 
@@ -1487,8 +1493,11 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   evaluateCardScopeCounterResponses(state, actor, card, targets = [], selection = null) {
     const contenders = [];
     let resolutionChance = 1;
-    for (const player of state.players) {
-      if (!player.alive || player.id === actor.id) continue;
+    const roster = projectCanonicalSeatRoster(state.players);
+    const responderOrder = getCounterResponderOrder(roster, actor.id);
+    for (const responderId of responderOrder) {
+      const player = state.players.find((entry) => entry.id === responderId);
+      if (!player?.alive || player.id === actor.id) continue;
       const counterProbability = clampProbability(player.counterProbability ?? 0);
       const desire = this.counterDesire(state, player, actor, card, targets, selection);
       const effectiveProbability = clampProbability(counterProbability * desire);
@@ -1613,7 +1622,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   只做概率查询，不消费反制；实际目标响应由 consumeTargetCounterResponseWorlds 结算。
   */
   targetResolutionChance(state, actor, card, target) {
-    if (card.category !== "tactic" || card.counterable === false || card.counterScope !== "target") return 1;
+    if (!isCounterEligible(card.category, card.counterable) || card.counterScope !== "target") return 1;
     return 1 - (target.counterProbability ?? 0) * this.counterDesire(state, target, actor, card, [target]);
   }
 

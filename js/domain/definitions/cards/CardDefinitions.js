@@ -32,6 +32,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "singleEnemyInRange",
     subtypes: Object.freeze(["attack","assault"]),
     description: "对攻击距离1内的一名敌人造成1点可格挡伤害。",
+    baseDamage: 1,
   }),
 
   recover: Object.freeze({
@@ -47,6 +48,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "self",
     subtypes: Object.freeze(["heal","rescue"]),
     description: "出牌阶段令自己恢复1点生命；濒死时可使用「调息」救援自己或队友。",
+    healAmount: 1,
   }),
 
   block: Object.freeze({
@@ -77,6 +79,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "self",
     subtypes: Object.freeze(["energy"]),
     description: "获得1点能量。",
+    energyGain: 1,
   }),
 
   shield: Object.freeze({
@@ -92,6 +95,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "singleAlly",
     subtypes: Object.freeze(["defense","shield","support"]),
     description: "令自己或一名存活队友获得1点护盾；每点护盾免疫1点伤害。",
+    shieldAmount: 1,
   }),
 
   scout: Object.freeze({
@@ -107,6 +111,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "otherWithCards",
     subtypes: Object.freeze(["information","hidden-selection"]),
     description: "查看一名其他角色至多2张指定手牌。",
+    maxRevealCount: 2,
   }),
 
   transfer: Object.freeze({
@@ -139,6 +144,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "self",
     subtypes: Object.freeze(["status","attack-buff"]),
     description: "获得1层「破势」；「破势」可以使「突袭」伤害额外增加相应层数；层数可叠加，打出「突袭」后消耗所有层数。",
+    stacksGain: 1,
   }),
 
   shockwave: Object.freeze({
@@ -154,6 +160,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "allEnemies",
     subtypes: Object.freeze(["attack","assault","area"]),
     description: "对所有敌人进行1次「突袭」；目标使用「反制」时只取消对自己的效果。",
+    perTargetDamage: 1,
   }),
 
   provoke: Object.freeze({
@@ -169,6 +176,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "allEnemies",
     subtypes: Object.freeze(["coercion","damage"]),
     description: "每名敌人打出1张「突袭」，否则受到1点伤害。",
+    failDamage: 1,
   }),
 
   leverage: Object.freeze({
@@ -247,6 +255,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "none",
     subtypes: Object.freeze(["draw"]),
     description: "摸2张牌。",
+    drawCount: 2,
   }),
 
   duel: Object.freeze({
@@ -262,6 +271,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "singleEnemy",
     subtypes: Object.freeze(["duel","attack-discard"]),
     description: "目标先开始，双方轮流打出「突袭」；首先放弃者受到1点伤害。",
+    failDamage: 1,
   }),
 
   mutualBenefit: Object.freeze({
@@ -277,6 +287,8 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "allLiving",
     subtypes: Object.freeze(["public-pool","draw"]),
     description: "以所有存活角色为规则目标；展示等同存活人数的牌，从你开始按座位顺序每人选择1张。",
+    perRecipientDrawCount: 1,
+    globalBenefit: true,
   }),
 
   symbiosis: Object.freeze({
@@ -292,6 +304,8 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "allLiving",
     subtypes: Object.freeze(["heal","global"]),
     description: "令所有存活角色各恢复1点生命。",
+    globalBenefit: true,
+    healAmount: 1,
   }),
 
   seal: Object.freeze({
@@ -307,6 +321,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "singleUnsealedEnemy",
     subtypes: Object.freeze(["status","delay","control"]),
     description: "对一名未处于「封印」状态的敌人使用，使其进入「封印」状态。其下个回合摸牌阶段前判定：为战术牌时「封印」未生效，本回合正常进行；否则「封印」生效，摸牌后跳过出牌阶段。",
+    judgmentTriggerCategory: "tactic",
   }),
 
   lightning: Object.freeze({
@@ -322,6 +337,8 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "none",
     subtypes: Object.freeze(["status","delay"]),
     description: "使用后进入「闪电」状态；下回合摸牌前进行判定。若结果为装备牌，受到3点伤害并移除状态；否则将状态转移给下一名未进入「闪电」状态的角色。",
+    judgmentTriggerCategory: "equipment",
+    hitDamage: 3,
   }),
 
   energyDevice: Object.freeze({
@@ -352,6 +369,8 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "self",
     subtypes: Object.freeze(["equipment","draw"]),
     description: "自己回合主动使用战术牌后摸1张，即使该牌被反制；每回合最多触发2次。",
+    triggerDrawCount: 1,
+    maxUsesPerTurn: 2,
   }),
 
   defenseDevice: Object.freeze({

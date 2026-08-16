@@ -6,7 +6,7 @@
 Simulator、ResponseSimulation、CombatSimulation 与效果组件。
 
 下游
-卡牌配置。
+Domain Card/Ruleset Definitions。
 
 状态边界
 全部函数纯计算，不持有或修改 SearchState。
@@ -17,18 +17,19 @@ Simulator、ResponseSimulation、CombatSimulation 与效果组件。
 架构约束
 不得包含规则执行、策略、价值或组件调度。
 */
-import {
-  CARD_DEFINITIONS,
-  TOTAL_CARD_COUNT
-} from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
 
-const BASIC_CARD_COUNT = Object.values(CARD_DEFINITIONS)
-  .filter((card) => card.category === "basic")
-  .reduce((sum, card) => sum + card.count, 0);
-const EQUIPMENT_CARD_COUNT = Object.values(CARD_DEFINITIONS)
-  .filter((card) => card.category === "equipment")
-  .reduce((sum, card) => sum + card.count, 0);
-const BLOCK_CARD_COUNT = CARD_DEFINITIONS.block.count;
+const DECK_COMPOSITION = RULESET_DEFINITION.deckComposition;
+const TOTAL_CARD_COUNT = Object.values(DECK_COMPOSITION)
+  .reduce((sum, count) => sum + count, 0);
+const BASIC_CARD_COUNT = Object.entries(DECK_COMPOSITION)
+  .filter(([definitionId]) => CARD_DEFINITIONS[definitionId]?.category === "basic")
+  .reduce((sum, [, count]) => sum + count, 0);
+const EQUIPMENT_CARD_COUNT = Object.entries(DECK_COMPOSITION)
+  .filter(([definitionId]) => CARD_DEFINITIONS[definitionId]?.category === "equipment")
+  .reduce((sum, [, count]) => sum + count, 0);
+const BLOCK_CARD_COUNT = DECK_COMPOSITION.block ?? 0;
 const OTHER_BASIC_CARD_COUNT = BASIC_CARD_COUNT - BLOCK_CARD_COUNT;
 
 /*
@@ -57,7 +58,7 @@ BeliefState 与响应/卡牌模拟：在没有剩余牌快照时取得指定牌�
 这是配置先验，不是对真实牌堆的观察；不得读取牌堆实体或随机顺序。
 */
 export const fixedCardDensity = (definitionId) => (
-  (CARD_DEFINITIONS[definitionId]?.count ?? 0) / TOTAL_CARD_COUNT
+  (DECK_COMPOSITION[definitionId] ?? 0) / TOTAL_CARD_COUNT
 );
 
 /*

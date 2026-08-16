@@ -54,6 +54,14 @@ const SEARCH_PLANNER_PATTERN = /^js\/ai\/search\/Planner\.js$/i;
 const SEARCH_PRIOR_PATTERN = /^js\/ai\/search\/SearchPrior\.js$/i;
 const SEARCH_AI_PATTERN = /^js\/ai\/search\//i;
 const SIMULATION_AI_PATTERN = /^js\/ai\/simulation\//i;
+const AI_LEGACY_RULE_GUARD_PATTERN = /^(?:js\/ai\/(?:search|simulation|domain)\/)/i;
+const CARD_EFFECT_RULES_FILE = "js/domain/rules/card/CardEffectRules.js";
+const SKILL_RULES_FILE = "js/domain/rules/skill/SkillRules.js";
+const TRANSFER_EXECUTION_ADAPTER_FILE = "js/adapters/ai/TransferExecutionPolicyAdapter.js";
+const CARD_EFFECT_SIMULATION_FILE = "js/ai/simulation/CardEffectSimulation.js";
+const COMBAT_SIMULATION_FILE = "js/ai/simulation/CombatSimulation.js";
+const SKILL_EFFECT_SIMULATION_FILE = "js/ai/simulation/SkillEffectSimulation.js";
+const STATUS_SIMULATION_FILE = "js/ai/simulation/StatusSimulation.js";
 const AI_ROOT_PATTERN = /^js\/ai\/[^/]+\.js$/i;
 const AI_ROOT_ALLOWLIST = new Set(["js/ai/AiController.js"]);
 const REMOVED_COMPATIBILITY_NAMES = Object.freeze([
@@ -1161,6 +1169,118 @@ function inspectSource(file, source, changed) {
 
   errors.push(...targetArchitectureErrors(file, importSource, maskedSource, source));
 
+  if (AI_LEGACY_RULE_GUARD_PATTERN.test(file)) {
+    const legacyRuleImport = importSource.match(
+      /(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/(?:RuleEngine|DistanceSystem)\.js)(?:\?[^"']*)?["']/i,
+    );
+    if (legacyRuleImport) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, legacyRuleImport.index).split(/\r?\n/).length,
+        missing: ["架构约束：AI search/simulation/domain 禁止依赖 legacy RuleEngine/DistanceSystem authority"]
+      });
+    }
+  }
+
+  if (file === CARD_EFFECT_RULES_FILE) {
+    const staticCardFactLiteral = maskedSource.match(
+      /\bexport\s+function\s+get(?:AssaultBaseDamage|RecoverHealAmount|ChargeEnergyAmount|ShieldAmount|ShockwaveDamage|ProvokeDamage|HarvestDrawCount|DuelDamage|SymbiosisHealAmount)\s*\([^)]*\)\s*\{\s*return\s+\d+/,
+    );
+    if (staticCardFactLiteral) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, staticCardFactLiteral.index).split(/\r?\n/).length,
+        missing: ["架构约束：CardEffectRules 固定效果数值必须消费 CardDefinitions"]
+      });
+    }
+  }
+
+  if (file === SKILL_RULES_FILE) {
+    const staticSkillFactLiteral = importSource.match(
+      /\bif\s*\(\s*skill\.id\s*===\s*"(?:breakArmy|barrier|symbiosis|burningField|hunt|resonance)"[\s\S]{0,140}?\b(?:attackLimitBonus|shieldAmount|healAmount|damageAmount|blockedRewardDraw|drawCount)\s*:\s*\d+/,
+    );
+    if (staticSkillFactLiteral) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, staticSkillFactLiteral.index).split(/\r?\n/).length,
+        missing: ["架构约束：SkillRules 固定技能效果数值必须消费 SkillDefinitions"]
+      });
+    }
+  }
+
+  if (file === TRANSFER_EXECUTION_ADAPTER_FILE) {
+    const duplicatedTransferFormula = maskedSource.match(
+      /\b(?:from|receiver)\.battleTeam\s*(?:===|!==)\s*(?:source\.battleTeam|from\.battleTeam)/,
+    );
+    if (duplicatedTransferFormula) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, duplicatedTransferFormula.index).split(/\r?\n/).length,
+        missing: ["架构约束：TransferExecutionPolicyAdapter 只 delegate TransferPolicy，不得重新解释 ally/enemy 方向"]
+      });
+    }
+  }
+
+  if (file === CARD_EFFECT_SIMULATION_FILE) {
+    const migratedCardFactMirror = maskedSource.match(
+      /\b(?:healFrom\(next,\s*actor,\s*actor,\s*1\b|changeEnergy\(next,\s*actor,\s*1\b|changeShield\(next,\s*target,\s*1\b|gainUnknownCardsWithCounterState\(next,\s*actor,\s*2\b|Math\.min\(\s*2\s*,|applyDamage\(next,\s*actor,\s*player,\s*1\b)/,
+    );
+    if (migratedCardFactMirror) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, migratedCardFactMirror.index).split(/\r?\n/).length,
+        missing: ["架构约束：CardEffectSimulation 已迁移固定卡牌效果不得重新硬编码 1/2 literal"]
+      });
+    }
+  }
+
+  if (file === COMBAT_SIMULATION_FILE) {
+    const combatRuleMirror = maskedSource.match(
+      /\b(?:baseDamage\s*=\s*1\s*\+|applyDamage\(state,\s*target,\s*actor,\s*1\b|applyDamage\(state,\s*actor,\s*target,\s*1\b|Math\.min\(target\.maxHp,\s*target\.hp\s*\+\s*amount\))/,
+    );
+    if (combatRuleMirror) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, combatRuleMirror.index).split(/\r?\n/).length,
+        missing: ["架构约束：CombatSimulation 确定性伤害/治疗 arithmetic 必须消费 Domain CombatRules"]
+      });
+    }
+  }
+
+  if (file === SKILL_EFFECT_SIMULATION_FILE) {
+    const skillEffectMirror = maskedSource.match(
+      /\b(?:branch\.energyAmount\s*-\s*1\b|branch\.energyAmount\s*\*\s*\.25\b|changeShield\(state,\s*target,\s*1\b|healFrom\(state,\s*actor,\s*target,\s*chance\)|applyDamage\(state,\s*actor,\s*target,\s*2\b)/,
+    );
+    if (skillEffectMirror) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, skillEffectMirror.index).split(/\r?\n/).length,
+        missing: ["架构约束：SkillEffectSimulation 固定技能效果/孤注公式必须消费 Domain Skill Definitions/Rules"]
+      });
+    }
+  }
+
+  if (file === STATUS_SIMULATION_FILE) {
+    const lightningDamageMirror = maskedSource.match(
+      /\bapplyDamage\(next,\s*null,\s*target,\s*3\s*,/,
+    );
+    if (lightningDamageMirror) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: source.slice(0, lightningDamageMirror.index).split(/\r?\n/).length,
+        missing: ["架构约束：StatusSimulation 闪电命中伤害必须消费 Domain CardDefinitions"]
+      });
+    }
+  }
+
   const removedCompatibilityPattern = new RegExp(
     `(?:from\\s*|import\\s*\\()\\s*["'][^"']*(?:${REMOVED_COMPATIBILITY_NAMES.join("|")})\\.js(?:\\?[^"']*)?["']`,
     "i",
@@ -2171,7 +2291,143 @@ function identity(value) { return value; }`;
   if (!rootLayoutErrors.some((error) => error.missing.some((item) => item.includes("AI 根目录")))) {
     throw new Error("root layout fixture did not detect non-allowlisted root file");
   }
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/match/turn/action/trigger/messaging/events/slim-game/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, compatibility removal, and root layout\n");
+  const goodLegacyRuleGuard = inspectSource(
+    "js/ai/search/GoodLegacyRule.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (goodLegacyRuleGuard.some((error) => error.missing.some((item) => item.includes("legacy RuleEngine/DistanceSystem")))) {
+    throw new Error("legacy rule guard incorrectly rejected canonical search fixture");
+  }
+  const badLegacyRuleGuard = inspectSource(
+    "js/ai/search/BadLegacyRule.js",
+    `${moduleHeader}\nimport { RuleEngine } from "../../core/RuleEngine.js";\n${pass}`,
+    null,
+  );
+  if (!badLegacyRuleGuard.some((error) => error.missing.some((item) => item.includes("legacy RuleEngine/DistanceSystem")))) {
+    throw new Error("legacy rule guard did not reject core/RuleEngine import");
+  }
+
+  const goodCardFactGuard = inspectSource(
+    "js/domain/rules/card/CardEffectRules.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (goodCardFactGuard.some((error) => error.missing.some((item) => item.includes("CardEffectRules")))) {
+    throw new Error(`valid CardEffectRules fixture failed: ${JSON.stringify(goodCardFactGuard)}`);
+  }
+  const badCardFactGuard = inspectSource(
+    "js/domain/rules/card/CardEffectRules.js",
+    `${moduleHeader}\n${pass.replace("function identity(value)", "export function getAssaultBaseDamage()").replace("return value;", "return 1;")}`,
+    null,
+  );
+  if (!badCardFactGuard.some((error) => error.missing.some((item) => item.includes("CardEffectRules")))) {
+    throw new Error("CardEffectRules guard did not reject fixed literal getter");
+  }
+
+  const goodSkillFactGuard = inspectSource(
+    "js/domain/rules/skill/SkillRules.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (goodSkillFactGuard.some((error) => error.missing.some((item) => item.includes("SkillRules")))) {
+    throw new Error(`valid SkillRules fixture failed: ${JSON.stringify(goodSkillFactGuard)}`);
+  }
+  const badSkillFactGuard = inspectSource(
+    "js/domain/rules/skill/SkillRules.js",
+    `${moduleHeader}\n${pass.replace("return value;", "if (skill.id === \"barrier\") return { shieldAmount: 1 }; return value;")}`,
+    null,
+  );
+  if (!badSkillFactGuard.some((error) => error.missing.some((item) => item.includes("SkillRules")))) {
+    throw new Error("SkillRules guard did not reject hardcoded fixed effect fact");
+  }
+
+  const goodTransferAdapterGuard = inspectSource(
+    "js/adapters/ai/TransferExecutionPolicyAdapter.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (goodTransferAdapterGuard.some((error) => error.missing.some((item) => item.includes("TransferExecutionPolicyAdapter")))) {
+    throw new Error(`valid TransferExecutionPolicyAdapter fixture failed: ${JSON.stringify(goodTransferAdapterGuard)}`);
+  }
+  const badTransferAdapterGuard = inspectSource(
+    "js/adapters/ai/TransferExecutionPolicyAdapter.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return !(source.controllerType === \"ai\" && from.battleTeam === source.battleTeam && receiver.battleTeam !== source.battleTeam);")}`,
+    null,
+  );
+  if (!badTransferAdapterGuard.some((error) => error.missing.some((item) => item.includes("TransferExecutionPolicyAdapter")))) {
+    throw new Error("TransferExecutionPolicyAdapter guard did not reject duplicated direction formula");
+  }
+
+  const goodCardSimulationMirror = inspectSource(
+    "js/ai/simulation/CardEffectSimulation.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (goodCardSimulationMirror.some((error) => error.missing.some((item) => item.includes("CardEffectSimulation")))) {
+    throw new Error(`valid CardEffectSimulation fixture failed: ${JSON.stringify(goodCardSimulationMirror)}`);
+  }
+  const badCardSimulationMirror = inspectSource(
+    "js/ai/simulation/CardEffectSimulation.js",
+    `${moduleHeader}\n${pass.replace("return value;", "this.healFrom(next, actor, actor, 1); return value;")}`,
+    null,
+  );
+  if (!badCardSimulationMirror.some((error) => error.missing.some((item) => item.includes("CardEffectSimulation")))) {
+    throw new Error("CardEffectSimulation mirror guard did not reject recover literal");
+  }
+
+  const goodCombatSimulationMirror = inspectSource(
+    "js/ai/simulation/CombatSimulation.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (goodCombatSimulationMirror.some((error) => error.missing.some((item) => item.includes("CombatSimulation")))) {
+    throw new Error(`valid CombatSimulation fixture failed: ${JSON.stringify(goodCombatSimulationMirror)}`);
+  }
+  const badCombatSimulationMirror = inspectSource(
+    "js/ai/simulation/CombatSimulation.js",
+    `${moduleHeader}\n${pass.replace("return value;", "const baseDamage = 1 + source.exposeWeaknessStacks; return value;")}`,
+    null,
+  );
+  if (!badCombatSimulationMirror.some((error) => error.missing.some((item) => item.includes("CombatSimulation")))) {
+    throw new Error("CombatSimulation mirror guard did not reject assault base literal");
+  }
+
+  const goodSkillSimulationMirror = inspectSource(
+    "js/ai/simulation/SkillEffectSimulation.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (goodSkillSimulationMirror.some((error) => error.missing.some((item) => item.includes("SkillEffectSimulation")))) {
+    throw new Error(`valid SkillEffectSimulation fixture failed: ${JSON.stringify(goodSkillSimulationMirror)}`);
+  }
+  const badSkillSimulationMirror = inspectSource(
+    "js/ai/simulation/SkillEffectSimulation.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return branch.energyAmount - 1;")}`,
+    null,
+  );
+  if (!badSkillSimulationMirror.some((error) => error.missing.some((item) => item.includes("SkillEffectSimulation")))) {
+    throw new Error("SkillEffectSimulation mirror guard did not reject allIn draw formula");
+  }
+
+  const goodStatusSimulationMirror = inspectSource(
+    "js/ai/simulation/StatusSimulation.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (goodStatusSimulationMirror.some((error) => error.missing.some((item) => item.includes("StatusSimulation")))) {
+    throw new Error(`valid StatusSimulation fixture failed: ${JSON.stringify(goodStatusSimulationMirror)}`);
+  }
+  const badStatusSimulationMirror = inspectSource(
+    "js/ai/simulation/StatusSimulation.js",
+    `${moduleHeader}\n${pass.replace("return value;", "this.applyDamage(next, null, target, 3, { canBlock:false }); return value;")}`,
+    null,
+  );
+  if (!badStatusSimulationMirror.some((error) => error.missing.some((item) => item.includes("StatusSimulation")))) {
+    throw new Error("StatusSimulation mirror guard did not reject lightning damage literal");
+  }
+
+  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/match/turn/action/trigger/messaging/events/slim-game/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, legacy RuleEngine/DistanceSystem guard, static Definition/Rule fact guards, TransferExecutionPolicyAdapter guard, simulation mirror guards, compatibility removal, and root layout\n");
 }
 
 /*

@@ -6,7 +6,7 @@
 AIController 与 Planner 注入能力。
 
 下游
-RuleEngine、技能注册器、领域概率与策略评分模块。
+Domain Card/Skill/Status Rules、Domain Definitions、AI RuleProjection、领域概率与策略评分模块。
 
 状态边界
 根生成只读 GameState，深层生成只读 SearchState，不执行或结算动作。
@@ -17,14 +17,33 @@ RuleEngine、技能注册器、领域概率与策略评分模块。
 架构约束
 不得依赖 AIController；转移资源选择必须由构造时注入的窄能力提供。
 */
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-shadow-agent-p1-slot";
+import {
+  canPlayCard,
+  findPlayerFact,
+  getAssaultTargetIds,
+  getCardTargetIds,
+  getLeverageFirstTargetIds,
+  getTransferReceiverIds,
+  getTransferSourceIds
+} from "../../domain/rules/card/CardRules.js?build=20260815-shadow-agent-p1-slot";
+import { hasStatus } from "../../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import {
+  canUseSkillBase,
+  getSkillCost,
+  getSkillTargetIds
+} from "../../domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot";
+import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
 import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260815-shadow-agent-p1-slot";
 import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260815-shadow-agent-p1-slot";
 import {
-  ACTIVE_SKILLS, getActiveSkill, getActiveSkillCost
-} from "../../generals/skillRegistry.js?build=20260815-shadow-agent-p1-slot";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
+  projectAttackUsage,
+  projectRulePlayer,
+  projectRulePlayers,
+  projectTransferRulePlayers
+} from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
+import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260815-shadow-agent-p1-slot";
 import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260815-shadow-agent-p1-slot";
 import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260815-shadow-agent-p1-slot";
 import {
@@ -91,7 +110,338 @@ export class ActionGenerator {
 
   /*
   功能
-  从 RuleEngine 提供的深层合法 source/receiver 集合选择转移计划。
+  把玩家实体解析为 Domain CardRules 目标 ID 对应的原玩家对象。
+
+  调用方
+  generate 与 generateFromVisible 的根/深层动作枚举。
+
+  输入
+  原玩家数组、规则目标 ID 数组。
+
+  输出
+  原玩家对象数组。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  Array.find。
+
+  边界与不变量
+  保持 ID 数组顺序；找不到的 ID 不产生伪实体。
+  */
+  resolveRuleTargets(players, ids) {
+    return ids.map((id) => players.find((player) => player.id === id)).filter(Boolean);
+  }
+
+  /*
+  功能
+  把玩家数组投影为 Domain Card/Skill Rule canonical facts。
+
+  调用方
+  generate 与 generateFromVisible。
+
+  输入
+  原玩家数组。
+
+  输出
+  冻结的 canonical player facts。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  projectRulePlayers。
+
+  边界与不变量
+  保持调用方顺序，保证候选 target order 不变。
+  */
+  projectPlayers(players) {
+    return projectRulePlayers(players);
+  }
+
+  /*
+  功能
+  计算排除当前转移牌后的 Domain transfer source facts。
+
+  调用方
+  generate 与 generateFromVisible 的 transfer legality。
+
+  输入
+  原玩家数组与要排除的卡牌 ID 集合。
+
+  输出
+  冻结的 canonical player facts，handCount 已扣除排除实体。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  projectTransferRulePlayers。
+
+  边界与不变量
+  只投影可转移手牌数量；Domain Rule 负责来源与接收者公式。
+  */
+  projectTransferPlayers(players, excludedCardIds) {
+    return projectTransferRulePlayers(players, excludedCardIds);
+  }
+
+  /*
+  功能
+  从 Domain CardRules 取得卡牌合法目标实体。
+
+  调用方
+  generate 与 generateFromVisible。
+
+  输入
+  原玩家数组、source 与 card。
+
+  输出
+  原玩家对象数组。
+
+  读取状态
+  canonical players facts。
+
+  写入状态
+  无。
+
+  调用函数
+  projectPlayers、findPlayerFact、getCardTargetIds、resolveRuleTargets。
+
+  边界与不变量
+  目标公式只由 Domain CardRules 解释；不在此过滤 AI policy。
+  */
+  getCardTargetsFromRule(players, source, card) {
+    const rulePlayers = this.projectPlayers(players);
+    const sourceFact = findPlayerFact(rulePlayers, source.id);
+    return this.resolveRuleTargets(players, getCardTargetIds(rulePlayers, sourceFact, card));
+  }
+
+  /*
+  功能
+  从 Domain CardRules 取得借势第二目标实体。
+
+  调用方
+  generate 与 generateFromVisible。
+
+  输入
+  原玩家数组与 source。
+
+  输出
+  原玩家对象数组。
+
+  读取状态
+  canonical players facts。
+
+  写入状态
+  无。
+
+  调用函数
+  projectPlayers、findPlayerFact、getAssaultTargetIds、resolveRuleTargets。
+
+  边界与不变量
+  第二目标只受 Domain 距离规则约束，不检查次数或手牌。
+  */
+  getAssaultTargetsFromRule(players, source) {
+    const rulePlayers = this.projectPlayers(players);
+    const sourceFact = findPlayerFact(rulePlayers, source.id);
+    return this.resolveRuleTargets(players, getAssaultTargetIds(rulePlayers, sourceFact));
+  }
+
+  /*
+  功能
+  从 Domain CardRules 取得借势第一目标实体。
+
+  调用方
+  generate 与 generateFromVisible。
+
+  输入
+  原玩家数组与 source。
+
+  输出
+  原玩家对象数组。
+
+  读取状态
+  canonical players facts。
+
+  写入状态
+  无。
+
+  调用函数
+  projectPlayers、findPlayerFact、getLeverageFirstTargetIds、resolveRuleTargets。
+
+  边界与不变量
+  第一目标装备与第二目标距离公式只由 Domain 解释。
+  */
+  getLeverageFirstTargetsFromRule(players, source) {
+    const rulePlayers = this.projectPlayers(players);
+    const sourceFact = findPlayerFact(rulePlayers, source.id);
+    return this.resolveRuleTargets(players, getLeverageFirstTargetIds(rulePlayers, sourceFact));
+  }
+
+  /*
+  功能
+  从 Domain CardRules 取得可转移来源实体。
+
+  调用方
+  generate 与 generateFromVisible 的转移枚举。
+
+  输入
+  原玩家数组、source、card 与排除 ID。
+
+  输出
+  原玩家对象数组。
+
+  读取状态
+  canonical transfer facts。
+
+  写入状态
+  无。
+
+  调用函数
+  projectTransferPlayers、findPlayerFact、getTransferSourceIds、resolveRuleTargets。
+
+  边界与不变量
+  排除规则与 legacy transferableHandCount 一致。
+  */
+  getTransferSourcesFromRule(players, source, card, excludedCardIds = null) {
+    const exclusions = excludedCardIds ?? (card?.id ? new Set([card.id]) : null);
+    const rulePlayers = this.projectTransferPlayers(players, exclusions);
+    const sourceFact = findPlayerFact(rulePlayers, source.id);
+    return this.resolveRuleTargets(players, getTransferSourceIds(rulePlayers, sourceFact, card, exclusions));
+  }
+
+  /*
+  功能
+  从 Domain CardRules 取得转移接收者实体。
+
+  调用方
+  generate 与 generateFromVisible 的转移枚举。
+
+  输入
+  原玩家数组、source、from 与 card。
+
+  输出
+  原玩家对象数组。
+
+  读取状态
+  canonical transfer facts。
+
+  写入状态
+  无。
+
+  调用函数
+  projectTransferPlayers、findPlayerFact、getTransferReceiverIds、resolveRuleTargets。
+
+  边界与不变量
+  接收者排除来源自身；公式只由 Domain CardRules 解释。
+  */
+  getTransferReceiversFromRule(players, source, from, card) {
+    const exclusions = card?.id ? new Set([card.id]) : null;
+    const rulePlayers = this.projectTransferPlayers(players, exclusions);
+    const sourceFact = findPlayerFact(rulePlayers, source.id);
+    const fromFact = findPlayerFact(rulePlayers, from.id);
+    return this.resolveRuleTargets(players, getTransferReceiverIds(rulePlayers, sourceFact, fromFact, card));
+  }
+
+  /*
+  功能
+  从 Domain SkillRules 取得技能目标实体。
+
+  调用方
+  generate 与 generateFromVisible。
+
+  输入
+  原玩家数组、source 与 skill。
+
+  输出
+  原玩家对象数组。
+
+  读取状态
+  canonical players facts。
+
+  写入状态
+  无。
+
+  调用函数
+  projectPlayers、getSkillTargetIds、resolveRuleTargets。
+
+  边界与不变量
+  技能目标公式只由 Domain SkillRules 解释。
+  */
+  getSkillTargetsFromRule(players, source, skill) {
+    if (!skill?.rangeRule) return [];
+    const rulePlayers = this.projectPlayers(players);
+    return this.resolveRuleTargets(players, getSkillTargetIds(rulePlayers, source.id, skill));
+  }
+
+  /*
+  功能
+  按 Domain SkillRules 判断当前真实技能是否可发动。
+
+  调用方
+  generate 根枚举。
+
+  输入
+  Game、source 与 Domain skill definition。
+
+  输出
+  { ok, reason }。
+
+  读取状态
+  Game 阶段、当前行动者与 source usage/energy。
+
+  写入状态
+  无。
+
+  调用函数
+  canUseSkillBase、getSkillCost、getActiveSkillUseCount。
+
+  边界与不变量
+  基础费用与次数公式只由 Domain SkillRules 解释；额外目标非空检查保留 legacy registry 行为。
+  */
+  canUseSkillFromRule(game, source, skill) {
+    if (!skill?.id) return { ok:false, reason:"" };
+    const players = game?.state?.players ?? game?.players ?? [];
+    const used = getActiveSkillUseCount(source.turnFlags, skill.id);
+    const decision = canUseSkillBase({
+      players,
+      sourceId: source.id,
+      currentPlayerId: game.currentPlayer?.id ?? game.state?.currentPlayerId ?? null,
+      phase: game.state?.phase ?? game.phase ?? "idle",
+      skill,
+      used,
+      limitPerTurn: skill.limitPerTurn ?? 1,
+      energy: source.energy,
+      minimumEnergy: getSkillCost(skill, source, players)
+    });
+    if (!decision.ok) return decision;
+    if (["barrier", "resonance", "symbiosis", "stealSkill", "hunt"].includes(skill.id)
+      && !this.getSkillTargetsFromRule(players, source, skill).length) {
+      const reasons = {
+        barrier:"没有存活队友",
+        resonance:"没有存活队友",
+        symbiosis:"自己和队友都未受伤",
+        stealSkill:"距离2内没有持有手牌或装备的敌人",
+        hunt:"没有猎印目标"
+      };
+      return { ok:false, reason:reasons[skill.id] };
+    }
+    return decision;
+  }
+
+  /*
+  功能
+  从 Domain CardRules 提供的深层合法 source/receiver 集合选择转移计划。
 
   调用方
   generateFromVisible。
@@ -103,32 +453,33 @@ export class ActionGenerator {
   TransferPolicy 选择描述或 null。
 
   读取状态
-  RuleEngine 合法集合、SearchState 公开/合法信息与 Belief。
+  Domain CardRules 合法集合、SearchState 公开/合法信息与 Belief。
 
   写入状态
   无。
 
   调用函数
-  RuleEngine.getTransferSources/getTransferReceivers、TransferPolicy.choose。
+  Domain CardRules.getTransferSourceIds/getTransferReceiverIds、TransferPolicy.choose。
 
   边界与不变量
   Generator 只提供合法集合；正收益过滤和 tie-break 属正式 Policy，真实实体移动不在此发生。
   */
   chooseVisibleTransferPlan(game, actor, card, remainingCardCounts = null) {
-    const sources = RuleEngine.getTransferSources(game, actor, card);
+    const players = game?.state?.players ?? game?.players ?? [];
     const excludedCardIds = card.id ? new Set([card.id]) : null;
+    const sources = this.getTransferSourcesFromRule(players, actor, card, excludedCardIds);
     return this.transferPolicy.choose({
       actor,
       sources,
       excludedCardIds,
       remainingCardCounts,
-      getReceivers:(from) => RuleEngine.getTransferReceivers(game, actor, from, card)
+      getReceivers:(from) => this.getTransferReceiversFromRule(players, actor, from, card)
     });
   }
 
   /*
   功能
-  从当前真实局面枚举 RuleEngine 允许的动作，再应用 AI 专属候选策略形成 Planner 根候选。
+  从当前真实局面枚举 Domain Rules 允许的动作，再应用 AI 专属候选策略形成 Planner 根候选。
 
   调用方
   AIController.getActionCandidates 与直接动作生成测试。
@@ -140,31 +491,48 @@ export class ActionGenerator {
   包含卡牌、技能和结束阶段的 Planner 候选数组；它不等同于完整游戏合法动作集。
 
   读取状态
-  当前 GameState、RuleEngine 权威、角色技能与转移选择策略。
+  当前 GameState、Domain Rules 权威、角色技能与转移选择策略。
 
   写入状态
   无。
 
   调用函数
-  RuleEngine 合法性与目标入口、getActiveSkill、getActiveSkillCost、chooseTransferCombination。
+  Domain CardRules/SkillRules 合法性与目标入口、chooseTransferCombination。
 
   边界与不变量
-  RuleEngine 独占游戏合法性，ActionCandidatePolicy 仅收窄 AI 会考虑的集合；保持既有枚举顺序与候选集合，转移只记录选择描述，不移动实体牌。
+  Domain CardRules/SkillRules 独占确定性合法性，ActionCandidatePolicy 仅收窄 AI 会考虑的集合；保持既有枚举顺序与候选集合，转移只记录选择描述，不移动实体牌。
   */
   generate(player) {
+    const players = this.game.state.players;
     const actions = [];
     for (const card of player.hand) {
-      if (!RuleEngine.canPlayCard(this.game, player, card).ok) continue;
+      const transferSourceIds = card.definitionId === "transfer"
+        ? this.getTransferSourcesFromRule(players, player, card, new Set([card.id]))
+          .map((from) => from.id)
+        : null;
+      const cardLegality = canPlayCard({
+        players: this.projectPlayers(players),
+        sourceId: player.id,
+        currentPlayerId: this.game.currentPlayer?.id ?? this.game.state?.currentPlayerId ?? null,
+        phase: this.game.state?.phase ?? this.game.phase ?? "idle",
+        card,
+        inHand: Boolean(player.hand.includes(card) || player.hand.some((entry) => entry?.id === card?.id)),
+        assaultUsage: projectAttackUsage(player),
+        recoverUsed: player.turnFlags?.recoverUsed ?? player.recoverUsed ?? 0,
+        recoverLimit: player.turnFlags?.recoverLimit ?? player.recoverLimit ?? null,
+        transferSourceIds
+      });
+      if (!cardLegality.ok) continue;
       if (card.definitionId === "lightning"
         && this.actionCandidatePolicy.isLightningStrategicallyForbidden(
-          this.game.state.players,
+          players,
           player
         )) continue;
-      if (card.definitionId === "lightning" && RuleEngine.hasStatus(player, "lightning")) continue;
-      const targets = RuleEngine.getCardTargets(this.game, player, card);
+      if (card.definitionId === "lightning" && hasStatus(projectRulePlayer(player), "lightning")) continue;
+      const targets = this.getCardTargetsFromRule(players, player, card);
       if (card.definitionId === "leverage") {
-        for (const firstTarget of RuleEngine.getLeverageFirstTargets(this.game, player)) {
-          for (const secondTarget of RuleEngine.getAssaultTargetCandidates(this.game, firstTarget)) {
+        for (const firstTarget of this.getLeverageFirstTargetsFromRule(players, player)) {
+          for (const secondTarget of this.getAssaultTargetsFromRule(players, firstTarget)) {
             actions.push({
               type:"card",
               card,
@@ -180,8 +548,8 @@ export class ActionGenerator {
         continue;
       }
       if (card.definitionId === "transfer") {
-        const sources = RuleEngine.getTransferSources(this.game, player, card)
-          .filter((from) => RuleEngine.getTransferReceivers(this.game, player, from, card).length);
+        const sources = this.getTransferSourcesFromRule(players, player, card, new Set([card.id]))
+          .filter((from) => this.getTransferReceiversFromRule(players, player, from, card).length);
         const selection = this.chooseTransferCombination(player, card, sources, null, new Set([card.id]));
         if (selection) actions.push({ type:"card", card, targets:[], selection });
         continue;
@@ -191,13 +559,14 @@ export class ActionGenerator {
         for (const target of aiTargets) actions.push({ type:"card", card, targets:[target] });
       } else actions.push({ type:"card", card, targets:card.targetType === "allEnemies" || card.targetType === "allLiving" ? targets : [] });
     }
-    const skill = getActiveSkill(player);
-    if (skill?.canUse(this.game, player).ok
+    const skill = ACTIVE_SKILL_DEFINITIONS[player.general?.activeSkillIds?.[0] ?? ""] ?? null;
+    if (skill
+      && this.canUseSkillFromRule(this.game, player, skill).ok
       && (skill.id !== "breakArmy"
         || this.actionCandidatePolicy.canBenefitFromBreakArmy(player))
       && !(skill.id === "allIn" && this.actionCandidatePolicy.isZeroBenefitAllIn(player))) {
-      const targets = RuleEngine.getSkillTargets(this.game, player, skill);
-      const energyCost = getActiveSkillCost(this.game, player, skill);
+      const targets = this.getSkillTargetsFromRule(players, player, skill);
+      const energyCost = getSkillCost(skill, player, players);
       if (skill.targetType === "none" || skill.targetType === "allEnemies") {
         actions.push({ type:"skill", skill, targets, energyCost });
       } else {
@@ -222,13 +591,13 @@ export class ActionGenerator {
   带执行概率分支的 AI policy candidate action 数组。
 
   读取状态
-  过滤玩家、Belief、RuleEngine 共享纯规则、正式 Policy 与概率代数。
+  过滤玩家、Belief、Domain Rules 共享纯规则、正式 Policy 与概率代数。
 
   写入状态
   无。
 
   调用函数
-  RuleEngine、ActionCandidatePolicy、TransferPolicy、attachProbabilityBranches。
+  Domain Card/Skill Rules、ActionCandidatePolicy、TransferPolicy、attachProbabilityBranches。
 
   边界与不变量
   动态距离只使用实时 alive ring；Policy 过滤不改变 Game authority 的合法性定义。
@@ -238,7 +607,7 @@ export class ActionGenerator {
     const actor = state.players.find((player) => player.id === playerId && player.alive);
     if (!actor) return [{ type:"end" }];
     const alive = state.players.filter((player) => player.alive).sort((a,b) => a.seatIndex - b.seatIndex);
-    // 深层模拟仍走 RuleEngine → DistanceSystem；传入的是过滤快照，不是完整 GameState。
+    // 深层规则输入是 SearchState canonical projection，Domain Rules 只接收 data-only facts。
     const simulationGame = { state:{ players:state.players } };
     const enemies = alive.filter((player) => player.battleTeam !== actor.battleTeam);
     const actions = [];
@@ -251,9 +620,9 @@ export class ActionGenerator {
           state.players,
           actor
         )) continue;
-      if (card.definitionId === "lightning" && RuleEngine.hasStatus(actor, "lightning")) continue;
+      if (card.definitionId === "lightning" && hasStatus(projectRulePlayer(actor), "lightning")) continue;
       if (card.definitionId === "assault") {
-        for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) {
+        for (const target of this.getCardTargetsFromRule(state.players, actor, card)) {
           actions.push({ type:"card", card, targets:[target] });
         }
         continue;
@@ -269,9 +638,9 @@ export class ActionGenerator {
         const firstTargets = alive.filter((firstTarget) => firstTarget.id !== actor.id
           && firstTarget.equipmentDefinitionId
           && (firstTarget.equipmentRetentionProbability ?? 1) > 0
-          && RuleEngine.getAssaultTargetCandidates(simulationGame, firstTarget).length > 0);
+          && this.getAssaultTargetsFromRule(state.players, firstTarget).length > 0);
         for (const firstTarget of firstTargets) {
-          for (const secondTarget of RuleEngine.getAssaultTargetCandidates(simulationGame, firstTarget)) {
+          for (const secondTarget of this.getAssaultTargetsFromRule(state.players, firstTarget)) {
             actions.push({
               type:"card",
               card,
@@ -288,13 +657,13 @@ export class ActionGenerator {
         continue;
       }
       if (["singleEnemy","singleUnsealedEnemy"].includes(card.targetType)) {
-        for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) {
+        for (const target of this.getCardTargetsFromRule(state.players, actor, card)) {
           actions.push({ type:"card", card, targets:[target] });
         }
-      } else if (card.targetType === "singleAlly") for (const target of RuleEngine.getCardTargets(simulationGame, actor, card)) actions.push({ type:"card", card, targets:[target] });
-      else if (card.targetType === "otherWithCards") for (const target of alive.filter((entry) => entry.id !== actor.id && entry.handCount > 0)) actions.push({ type:"card", card, targets:[target] });
+      } else if (card.targetType === "singleAlly") for (const target of this.getCardTargetsFromRule(state.players, actor, card)) actions.push({ type:"card", card, targets:[target] });
+      else if (card.targetType === "otherWithCards") for (const target of this.getCardTargetsFromRule(state.players, actor, card)) actions.push({ type:"card", card, targets:[target] });
       else if (card.targetType === "otherWithCardsOrEquipment") {
-        const targets = RuleEngine.getCardTargets(simulationGame, actor, card);
+        const targets = this.getCardTargetsFromRule(state.players, actor, card);
         for (const target of this.actionCandidatePolicy.filterCardTargets(
           card,
           actor,
@@ -303,26 +672,30 @@ export class ActionGenerator {
       }
       else actions.push({ type:"card", card, targets:["allEnemies","allLiving"].includes(card.targetType) ? (card.targetType === "allEnemies" ? enemies : alive) : [] });
     }
-    const skill = ACTIVE_SKILLS[actor.activeSkillId];
+    const skill = ACTIVE_SKILL_DEFINITIONS[actor.activeSkillId] ?? null;
     if (skill
       && (skill.id !== "breakArmy"
         || this.actionCandidatePolicy.canBenefitFromBreakArmy(actor))
       && !(skill.id === "allIn" && this.actionCandidatePolicy.isZeroBenefitAllIn(actor))) {
-      const friendlies = alive.filter((player) => player.battleTeam === actor.battleTeam);
-      let targets = [];
-      if (skill.id === "barrier") targets = friendlies;
-      else if (skill.id === "resonance") targets = friendlies;
-      else if (skill.id === "symbiosis") targets = friendlies.filter((player) => player.hp < player.maxHp);
-      else if (skill.id === "stealSkill") targets = RuleEngine.getSkillTargets(simulationGame, actor, skill);
-      else if (skill.id === "hunt") targets = enemies.filter((player) => {
-        const markBranches = player.huntMarkStateBranchesBySource?.[actor.id];
-        if (Array.isArray(markBranches)) {
-          return totalBranchProbability(markBranches.filter((branch) => branch.marked)) > PROBABILITY_EPSILON;
-        }
-        return Math.max(0, Math.min(1, Number(
-          player.huntMarkProbabilities?.[actor.id] ?? (player.huntMarkSourceId === actor.id ? 1 : 0)
-        ) || 0)) > 0;
-      });
+            let targets = [];
+      if (skill.id === "barrier") targets = this.getSkillTargetsFromRule(state.players, actor, skill);
+      else if (skill.id === "resonance") targets = this.getSkillTargetsFromRule(state.players, actor, skill);
+      else if (skill.id === "symbiosis") targets = this.getSkillTargetsFromRule(state.players, actor, skill);
+      else if (skill.id === "stealSkill") targets = this.getSkillTargetsFromRule(state.players, actor, skill);
+      else if (skill.id === "hunt") {
+        const ruleTargets = new Set(this.getSkillTargetsFromRule(state.players, actor, skill)
+          .map((target) => target.id));
+        targets = enemies.filter((player) => {
+          if (ruleTargets.has(player.id)) return true;
+          const markBranches = player.huntMarkStateBranchesBySource?.[actor.id];
+          if (Array.isArray(markBranches)) {
+            return totalBranchProbability(markBranches.filter((branch) => branch.marked)) > PROBABILITY_EPSILON;
+          }
+          return Math.max(0, Math.min(1, Number(
+            player.huntMarkProbabilities?.[actor.id] ?? (player.huntMarkSourceId === actor.id ? 1 : 0)
+          ) || 0)) > 0;
+        });
+      }
       if (["none","allEnemies"].includes(skill.targetType)) actions.push({ type:"skill", skill, targets:skill.targetType === "allEnemies" ? enemies : [] });
       else for (const target of targets) actions.push({ type:"skill", skill, targets:[target] });
     }
@@ -351,7 +724,7 @@ export class ActionGenerator {
   无。
 
   调用函数
-  DistanceSystem、LightningModel、SealModel、binaryConditionPartition。
+  DistanceProbabilityBranches、LightningModel、SealModel、binaryConditionPartition。
 
   边界与不变量
   这里只投影既有条件世界，不重新判断 Policy 价值或执行真实规则。
@@ -375,7 +748,7 @@ export class ActionGenerator {
       }
       if (action.skill.rangeRule === "attack" || action.skill.rangeRule === "fixed") {
         const target = action.targets?.[0];
-        return DistanceSystem.getRangeConditionBranches(game, {
+        return getRangeConditionBranches(game, {
           source:actor,
           target,
           range:action.skill.rangeRule === "attack" ? actor.attackRange : action.skill.range
@@ -403,7 +776,7 @@ export class ActionGenerator {
     if (card.definitionId === "transfer") {
       const source = game.state.players.find((player) => player.id === action.selection?.sourceId);
       const receiver = game.state.players.find((player) => player.id === action.selection?.receiverId);
-      return DistanceSystem.getRangeConditionBranches(game, [
+      return getRangeConditionBranches(game, [
         { source:actor, target:source, range:card.effectRange },
         { source:actor, target:receiver, range:card.effectRange }
       ]);
@@ -411,7 +784,7 @@ export class ActionGenerator {
     if (card.definitionId === "leverage") {
       const first = game.state.players.find((player) => player.id === action.selection?.firstTargetId);
       const second = game.state.players.find((player) => player.id === action.selection?.secondTargetId);
-      return DistanceSystem.getRangeConditionBranches(game, {
+      return getRangeConditionBranches(game, {
         source:first,
         target:second,
         range:first?.attackRange ?? 1
@@ -425,14 +798,14 @@ export class ActionGenerator {
     }
     const target = action.targets?.[0];
     if (card.definitionId === "assault" && target) {
-      return DistanceSystem.getRangeConditionBranches(game, {
+      return getRangeConditionBranches(game, {
         source:actor,
         target,
         range:actor.attackRange ?? 1
       });
     }
     if (!card.ignoresDistance && card.effectRange != null && target) {
-      return DistanceSystem.getRangeConditionBranches(game, {
+      return getRangeConditionBranches(game, {
         source:actor,
         target,
         range:card.effectRange
@@ -662,7 +1035,7 @@ export class ActionGenerator {
     }));
     const minimumEnergy = action.skill.id === "allIn"
       ? 1
-      : getActiveSkillCost(game, actor, action.skill);
+      : getSkillCost(action.skill, actor);
     let bestResult = null;
     for (let skillUseSlot = 0; skillUseSlot < slots.length; skillUseSlot += 1) {
       const slotState = slots[skillUseSlot].map((branch) => ({

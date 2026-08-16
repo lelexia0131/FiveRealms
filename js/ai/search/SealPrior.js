@@ -6,7 +6,7 @@
 SearchPrior 与直接搜索先验测试。
 
 下游
-domain/SealModel、value/ThreatValue、DistanceSystem 与卡牌配置。
+domain/SealModel、value/ThreatValue、Domain DistanceRules 与 AI 卡牌配置。
 
 状态边界
 只读过滤后的 SearchState 与候选目标，不写状态。
@@ -17,8 +17,9 @@ domain/SealModel、value/ThreatValue、DistanceSystem 与卡牌配置。
 架构约束
 返回值只用于 SEARCH_PRIOR；不得进入 State Value、TransitionValue 或 sibling timing。
 */
+import { getAliveRing } from "../../domain/rules/distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
+import { projectRulePlayers } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
 import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
 import { hasSeal, sealOutcomeProbabilities } from "../domain/SealModel.js?build=20260815-shadow-agent-p1-slot";
 import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260815-shadow-agent-p1-slot";
 
@@ -46,14 +47,14 @@ turnTimingFactor 与直接先验测试。
 无。
 
 调用函数
-DistanceSystem.getAliveRing。
+Domain getAliveRing。
 
 边界与不变量
 只描述座次时机，不判断封印合法性或修改真实回合顺序。
 */
 export function turnOrderGap(state, actor, target) {
   if (!actor?.alive || !target?.alive || actor.id === target.id) return Infinity;
-  const ring = DistanceSystem.getAliveRing({ state:{ players:state?.players ?? [] } });
+  const ring = getAliveRing(projectRulePlayers(state?.players ?? []));
   const actorIndex = ring.findIndex((player) => player.id === actor.id);
   const targetIndex = ring.findIndex((player) => player.id === target.id);
   if (actorIndex < 0 || targetIndex < 0 || ring.length < 2) return Infinity;

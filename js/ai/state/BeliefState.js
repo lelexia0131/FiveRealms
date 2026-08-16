@@ -17,9 +17,13 @@ AI 状态组合入口、Knowledge、Planner 隐藏世界采样与状态契约测
 架构约束
 不得生成动作、计算价值、写 GameState，概率分布必须归一且不持有输入计数引用。
 */
-import { CARD_COUNTS, CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
 import { cardAvailability } from "../value/CardValue.js?build=20260815-shadow-agent-p1-slot";
 import { PROBABILITY_EPSILON } from "./Probability.js?build=20260815-shadow-agent-p1-slot";
+
+const CARD_COUNTS = RULESET_DEFINITION.deckComposition;
+const TOTAL_CARD_COUNT = Object.values(CARD_COUNTS).reduce((sum, count) => sum + count, 0);
 
 /*
 功能
@@ -79,7 +83,7 @@ CARD_DEFINITIONS、TOTAL_CARD_COUNT。
 未知定义按零张处理。
 */
 function fixedCardDensity(definitionId) {
-  return (CARD_DEFINITIONS[definitionId]?.count ?? 0) / TOTAL_CARD_COUNT;
+  return (CARD_COUNTS[definitionId] ?? 0) / TOTAL_CARD_COUNT;
 }
 
 /*

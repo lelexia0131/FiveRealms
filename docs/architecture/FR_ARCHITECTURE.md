@@ -1,11 +1,11 @@
 # FiveRealms Repository Architecture Authority
 
-状态：FR-ARCH-4 CLOSED / PASS — stateVersion AUTHORITATIVE；FR-ARCH-5 PASS；FR-ARCH-6 PASS；FR-ARCH-7 PASS；FR-ARCH-8 PASS；FR-ARCH-9 PASS；FR-ARCH-10 PASS；FR-ARCH-11 PASS — MESSAGING / EVENT BOUNDARY
+状态：FR-ARCH-4 CLOSED / PASS — stateVersion AUTHORITATIVE；FR-ARCH-5 PASS；FR-ARCH-6 PASS；FR-ARCH-7 PASS；FR-ARCH-8 PASS；FR-ARCH-9 PASS；FR-ARCH-10 PASS；FR-ARCH-11 PASS — MESSAGING / EVENT BOUNDARY；FR-ARCH-12 PASS — AI ↔ DOMAIN RULE CONVERGENCE
 适用范围：FiveRealms 仓库级架构；`AI_ENGINE.md` 继续作为 AI Engine 2.0 的实施与历史权威，本文件不复制其内部所有权表。
 事实源关系：本文件是 repository-wide target architecture 的唯一规范入口；若与 `CODE_STANDARD.md` 冲突，以本文件解释 ownership，以 `CODE_STANDARD.md` 解释注释格式。
 
 冻结裁决：TARGET ARCHITECTURE CAN REMAIN FROZEN。
-实施进度：FR-ARCH-0 DONE；FR-ARCH-1 DONE；FR-ARCH-2/2.1 DONE；FR-ARCH-3 DONE；FR-ARCH-4A DONE；FR-ARCH-4 CLOSED / PASS，stateVersion ACTIVATED — AUTHORITATIVE；FR-ARCH-5 DONE；FR-ARCH-6 DONE；FR-ARCH-7 PASS；FR-ARCH-8 PASS；FR-ARCH-9 PASS；FR-ARCH-10 PASS；FR-ARCH-11 PASS；FR-ARCH-12 NOT STARTED。
+实施进度：FR-ARCH-0 DONE；FR-ARCH-1 DONE；FR-ARCH-2/2.1 DONE；FR-ARCH-3 DONE；FR-ARCH-4A DONE；FR-ARCH-4 CLOSED / PASS，stateVersion ACTIVATED — AUTHORITATIVE；FR-ARCH-5 DONE；FR-ARCH-6 DONE；FR-ARCH-7 PASS；FR-ARCH-8 PASS；FR-ARCH-9 PASS；FR-ARCH-10 PASS；FR-ARCH-11 PASS；FR-ARCH-12 PASS；FR-ARCH-13 NOT STARTED。
 
 ## 1. Target Physical Architecture
 
@@ -22,6 +22,7 @@
 - FR-ARCH-9：`js/application/match/MatchWorkflow` 拥有 setup/victory/dispose sequencing；`js/application/turn/TurnWorkflow` 拥有六阶段回合、AI play-phase orchestration、弃牌与轮转；`js/application/action/ActionWorkflow` 拥有 generic card/skill action、human inbound command、locks/resolution state。`Game` 降为 legacy façade/deferred runtime shell；concrete Presentation/Diagnostics/AI observation adapters 已迁至 `adapters/{ui,diagnostics,ai}`；discard 与有限 target 选择经 ChoicePort；`GameChoiceRouter` 因 AIController 依赖 Game 暂留至 FR-ARCH-12/13。
 - FR-ARCH-10：`domain/rules/card` 拥有主动卡牌/目标/转移/借势/回收站 pure rules；`domain/rules/skill` 拥有技能成本/基础合法性与目标 pure rules；`application/action` 拥有 CardRuntime/CardEffectRuntime/CardIntentRuntime/SkillEffectRuntime；`application/trigger` 拥有被动技能 trigger registry 与 recycleDevice trigger；`cardRegistry`/`skillRegistry`/`RuleEngine` 只做 legacy façade；ActionWorkflow 无 specific card ID branch 且不暴露 mutable runtime。
 - FR-ARCH-11：`application/messaging/EventDispatcher` 唯一拥有 listener registry/sequential await/generation/clear 与 mutable Hook propagation；`domain/events/MatchEvents` 拥有 immutable data-only gameStart/gameOver facts；`core/EventBus.js` 仅 thin re-export；`gameStart` 不再携带 Game；`Game.registerGlobalRules` 的 huntMark/seal/lightning 注册已迁 `application/trigger/GlobalTriggerRegistry`；玩家日志仍由 Presentation 拥有，不属于 Domain Event。
+- FR-ARCH-12：AI deterministic rule semantics 与 `domain/rules/**` 对齐；`js/ai/state/RuleProjection.js` 只做 SearchState→Domain canonical shape adaptation；`DistanceProbabilityBranches.js` 只拥有装备存在概率分区，确定性距离公式仍由 `DistanceRules` 解释；root/deep `ActionGenerator` 共同消费 Domain Card/Skill/Status Rules；`js/ai/search|simulation|domain` production imports 对 `core/RuleEngine` 与 `core/DistanceSystem` 为零；卡牌/技能固定效果数值归 Definitions；`TransferPolicy.isTransferDirectionAllowed` 是 AI 转移方向唯一公式；AI simulation 保留概率/Belief/反事实模型，不调用 Application workflow 或 Domain Transitions 修改 SearchState。
 
 ```text
 js/

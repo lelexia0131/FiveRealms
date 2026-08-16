@@ -1,12 +1,12 @@
 /*
 模块职责
-唯一拥有卡牌效果的纯 deterministic effect facts：静态数值与依赖状态的简单数值决定；不拥有 async sequencing、movement、response、choice、presentation 或 mutation。
+唯一拥有卡牌效果的动态规则解释；固定数值事实由 CardDefinitions 唯一拥有，本模块只转发或按运行状态组合。
 
 上游
-CardEffectRuntime 与 tests。
+CardEffectRuntime、AI deterministic simulation 与 tests。
 
 下游
-Domain StatusRules。
+Domain StatusRules 与 CardDefinitions。
 
 状态边界
 只读传入 facts；不写状态。
@@ -15,9 +15,10 @@ Domain StatusRules。
 不读取 hidden card 内容、AI、UI。
 
 架构约束
-不得依赖 Game/application/adapters/EventBus；不得 await、emit、随机、mutation。
+不得依赖 Game/application/adapters/EventBus；不得 await、emit、随机、mutation；不得复制 CardDefinitions 固定 literal。
 */
 
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
 import { getExposeWeaknessStacks } from "../status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
 
 /*
@@ -45,7 +46,7 @@ CardEffectRuntime.assault。
 边界与不变量
 破势额外伤害由 getAssaultDamageBonus 决定。
 */
-export function getAssaultBaseDamage() { return 1; }
+export function getAssaultBaseDamage() { return CARD_DEFINITIONS.assault.baseDamage; }
 
 /*
 功能
@@ -72,7 +73,7 @@ CardEffectRuntime.recover。
 边界与不变量
 固定事实。
 */
-export function getRecoverHealAmount() { return 1; }
+export function getRecoverHealAmount() { return CARD_DEFINITIONS.recover.healAmount; }
 
 /*
 功能
@@ -99,7 +100,7 @@ CardEffectRuntime.charge。
 边界与不变量
 固定事实。
 */
-export function getChargeEnergyAmount() { return 1; }
+export function getChargeEnergyAmount() { return CARD_DEFINITIONS.charge.energyGain; }
 
 /*
 功能
@@ -126,7 +127,7 @@ CardEffectRuntime.shield。
 边界与不变量
 固定事实。
 */
-export function getShieldAmount() { return 1; }
+export function getShieldAmount() { return CARD_DEFINITIONS.shield.shieldAmount; }
 
 /*
 功能
@@ -154,7 +155,7 @@ getExposeWeaknessStacks。
 层数叠加。
 */
 export function getNextExposeWeaknessStacks(statusDetail) {
-  return getExposeWeaknessStacks(statusDetail) + 1;
+  return getExposeWeaknessStacks(statusDetail) + CARD_DEFINITIONS.exposeWeakness.stacksGain;
 }
 
 /*
@@ -182,7 +183,7 @@ CardEffectRuntime.shockwave。
 边界与不变量
 固定事实。
 */
-export function getShockwaveDamage() { return 1; }
+export function getShockwaveDamage() { return CARD_DEFINITIONS.shockwave.perTargetDamage; }
 
 /*
 功能
@@ -209,7 +210,7 @@ CardEffectRuntime.provoke。
 边界与不变量
 固定事实。
 */
-export function getProvokeDamage() { return 1; }
+export function getProvokeDamage() { return CARD_DEFINITIONS.provoke.failDamage; }
 
 /*
 功能
@@ -236,7 +237,7 @@ CardEffectRuntime.harvest。
 边界与不变量
 固定事实。
 */
-export function getHarvestDrawCount() { return 2; }
+export function getHarvestDrawCount() { return CARD_DEFINITIONS.harvest.drawCount; }
 
 /*
 功能
@@ -263,7 +264,7 @@ CardEffectRuntime.duel。
 边界与不变量
 固定事实。
 */
-export function getDuelDamage() { return 1; }
+export function getDuelDamage() { return CARD_DEFINITIONS.duel.failDamage; }
 
 /*
 功能
@@ -319,4 +320,4 @@ CardEffectRuntime.symbiosis。
 边界与不变量
 固定事实。
 */
-export function getSymbiosisHealAmount() { return 1; }
+export function getSymbiosisHealAmount() { return CARD_DEFINITIONS.symbiosis.healAmount; }

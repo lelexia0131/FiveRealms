@@ -31,6 +31,7 @@ import {
   totalBranchProbability
 } from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
 import { cloneSearchState } from "../state/SearchState.js?build=20260815-shadow-agent-p1-slot";
+import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
 
 import { clampProbability } from "./SimulationSupport.js?build=20260815-shadow-agent-p1-slot";
 import { withResponseSimulation } from "./ResponseSimulation.js?build=20260815-shadow-agent-p1-slot";
@@ -596,7 +597,7 @@ class SimulatorCore {
     if (next.playPhaseEnded) return next;
     const actor = next.players.find((player) => player.id === viewerId);
     if (abstractAction.type === "end") {
-      if (actor?.generalId === "blade-walker") {
+      if (hasPassiveSkill(actor, "momentum")) {
         actor.momentumBranches = [{ probability:1, conditions:{}, amount:0 }];
         actor.momentum = 0;
       }

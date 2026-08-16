@@ -6,7 +6,7 @@
 Evaluator、SearchPrior、响应策略与转移策略。
 
 下游
-DistanceSystem 与 value/Economics 的生命尺度。
+Domain Card Definitions、AI DistanceProbabilityBranches 与 value/Economics 的生命尺度。
 
 状态边界
 只读传入的 VisibleState/SearchState；不写状态，不启动模拟。
@@ -17,8 +17,8 @@ DistanceSystem 与 value/Economics 的生命尺度。
 架构约束
 威胁公式只能在本模块出现；基础数值项可被 Evaluator 组合进 State Value，但不得绕过它独立追加到最终 Transition Value。
 */
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260815-shadow-agent-p1-slot";
 import {
   PROBABILITY_EPSILON,
   clampProbability
@@ -523,14 +523,14 @@ SearchState、攻击敌人、该敌人全部存活敌对目标与待评估目标
 无。
 
 调用函数
-DistanceSystem.getRangeConditionBranches。
+getRangeConditionBranches。
 
 边界与不变量
 全部目标一次枚举共享条件世界；每个世界中一张突袭库存只被可到达目标均分一次，
 全部不可达世界不分配；不得把 marginal 概率当作独立世界再次相乘。
 */
 function assaultRangeAllocation(state, enemy, targets, targetIndex) {
-  const branches = DistanceSystem.getRangeConditionBranches(
+  const branches = getRangeConditionBranches(
     { state },
     targets.map((target) => ({
       source: enemy,

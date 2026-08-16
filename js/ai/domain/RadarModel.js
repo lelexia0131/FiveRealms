@@ -1,29 +1,37 @@
 /*
 模块职责
-根据公开剩余牌计数派生雷达判定的类别与基础牌定义概率。
+根据公开剩余牌计数派生雷达判定的未知判定牌概率分区；本模块是 AI probabilistic/search model，不是 Repository Domain Rule authority。
 
 上游
 Simulator、ValueSimulationQuery、Evaluator、ValueLedger 与正式边界。
 
 下游
-卡牌定义配置与 state/Probability。
+Domain Card/Ruleset Definitions、Domain JudgmentRules 与 state/Probability。
 
 状态边界
 只读剩余牌计数并返回独立概率对象，不读写 GameState 或 SearchState。
 
 信息边界
-只使用调用方提供的公开剩余牌计数；缺失时使用正式初始牌堆构成。
+只使用调用方提供的公开剩余牌计数；缺失时使用 RulesetDefinition 正式初始牌堆构成。
 
 架构约束
-本模型不是 Game authority；真实雷达判定与牌移动仍由 JudgmentSystem/Game 负责。不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
+雷达 category 解释来自 Domain Card Definitions；本模型只拥有未知判定牌概率分区。不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
 import {
   PROBABILITY_EPSILON,
   clampProbability
 } from "../state/Probability.js?build=20260815-shadow-agent-p1-slot";
 
-export const RADAR_BASIC_DEFINITIONS = Object.freeze(["assault", "recover", "block", "charge", "shield"]);
+export const RADAR_BASIC_DEFINITIONS = Object.freeze(
+  Object.entries(CARD_DEFINITIONS)
+    .filter(([, definition]) => definition.category === "basic")
+    .map(([definitionId]) => definitionId)
+);
+const RADAR_OTHER_BASIC_DEFINITIONS = Object.freeze(
+  RADAR_BASIC_DEFINITIONS.filter((definitionId) => definitionId !== "block")
+);
 
 /*
 功能
@@ -62,9 +70,10 @@ export function buildRadarJudgmentProbabilities(remainingCardCounts = null, over
       totalWeight += value;
     }
   } else {
-    for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
-      weights[definitionId] = definition.count;
-      totalWeight += definition.count;
+    for (const [definitionId, count] of Object.entries(RULESET_DEFINITION.deckComposition)) {
+      if (!CARD_DEFINITIONS[definitionId]) continue;
+      weights[definitionId] = count;
+      totalWeight += count;
     }
   }
 
@@ -87,7 +96,7 @@ export function buildRadarJudgmentProbabilities(remainingCardCounts = null, over
     ? overrideProbabilities
     : null;
   if (override) {
-    const otherBasicDefinitions = ["assault", "recover", "charge", "shield"];
+    const otherBasicDefinitions = RADAR_OTHER_BASIC_DEFINITIONS;
     const overrideBlock = clampProbability(override.block ?? basicProbabilities.block);
     const overrideEquipment = clampProbability(override.equipment ?? equipmentProbability);
     const overrideOtherBasic = clampProbability(override.otherBasic ?? otherBasicDefinitions
@@ -102,10 +111,10 @@ export function buildRadarJudgmentProbabilities(remainingCardCounts = null, over
       ]));
     } else {
       const fixedTotal = otherBasicDefinitions
-        .reduce((sum, definitionId) => sum + CARD_DEFINITIONS[definitionId].count, 0);
+        .reduce((sum, definitionId) => sum + (RULESET_DEFINITION.deckComposition[definitionId] ?? 0), 0);
       otherBasicRatios = Object.fromEntries(otherBasicDefinitions.map((definitionId) => [
         definitionId,
-        fixedTotal > 0 ? CARD_DEFINITIONS[definitionId].count / fixedTotal : 0.25
+        fixedTotal > 0 ? (RULESET_DEFINITION.deckComposition[definitionId] ?? 0) / fixedTotal : 0.25
       ]));
     }
     basicProbabilities.block = overrideBlock;

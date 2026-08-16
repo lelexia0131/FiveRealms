@@ -1,12 +1,12 @@
 /*
 模块职责
-唯一拥有主动技能纯合法性：基础使用条件、能量成本决定与目标 ID 决定；不拥有 execute、payment、trigger、response、AI 或 mutation。
+唯一拥有主动技能动态成本、合法性与目标决定；固定技能效果数值由 SkillDefinitions 唯一拥有，本模块只转发或按运行状态组合。
 
 上游
 core/RuleEngine 与 generals/skillRegistry legacy façades、tests。
 
 下游
-Domain TurnRules、CardRules 与 distance rules。
+Domain TurnRules、CardRules、distance rules 与 SkillDefinitions。
 
 状态边界
 只读 canonical facts；不写状态。
@@ -15,8 +15,9 @@ Domain TurnRules、CardRules 与 distance rules。
 不读取 controllerType、aiMemory、UI、AI 或 hidden hand。
 
 架构约束
-不得依赖 Game/RuleEngine/application/adapters/EventBus；不得 await、emit、随机、mutation。
+不得依赖 Game/RuleEngine/application/adapters/EventBus；不得 await、emit、随机、mutation；不得复制 SkillDefinitions 固定 literal。
 */
+import { ACTIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
 import { getDistance } from "../distance/DistanceRules.js?build=20260815-shadow-agent-p1-slot";
 import { hasActiveSkillUseRemaining } from "../turn/TurnRules.js?build=20260815-shadow-agent-p1-slot";
 
@@ -101,6 +102,71 @@ export function canUseSkillBase({
 
 /*
 功能
+返回孤注技能从指定能量计算出的摸牌数量。
+
+调用方
+decideSkillEffect 与 AI SkillEffectSimulation。
+
+输入
+当前能量值。
+
+输出
+非负整数。
+
+读取状态
+ACTIVE_SKILL_DEFINITIONS.allIn。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+AI 概率世界逐 branch 调用本函数，不自行复制 energy - offset 公式。
+*/
+export function decideAllInDrawCount(energy) {
+  const definition = ACTIVE_SKILL_DEFINITIONS.allIn;
+  const drawOffset = Math.max(0, Number(definition.drawOffset) || 0);
+  return Math.max(0, Math.floor((Number(energy) || 0) - drawOffset));
+}
+
+/*
+功能
+返回孤注技能从指定能量计算出的进入概率。
+
+调用方
+decideSkillEffect 与 AI SkillEffectSimulation。
+
+输入
+当前能量值。
+
+输出
+零到上限之间的概率。
+
+读取状态
+ACTIVE_SKILL_DEFINITIONS.allIn。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+AI 概率世界逐 branch 调用本函数，不自行复制 energy × rate 公式。
+*/
+export function decideAllInEnterChance(energy) {
+  const definition = ACTIVE_SKILL_DEFINITIONS.allIn;
+  const rate = Number(definition.enterChancePerEnergy) || 0;
+  const cap = definition.enterChanceCap === undefined
+    ? 1
+    : Math.max(0, Number(definition.enterChanceCap) || 0);
+  return Math.min(cap, Math.max(0, Number(energy) || 0) * rate);
+}
+
+/*
+功能
 决定主动技能执行所需的纯数值效果 facts。
 
 调用方
@@ -126,18 +192,22 @@ Application 只执行 decision，不复制数值。
 */
 export function decideSkillEffect(skill, source, options = {}) {
   const energyCost = Math.max(0, Number(options.energyCost ?? getSkillCost(skill, source)));
-  if (skill.id === "breakArmy") return Object.freeze({ energyCost, attackLimitBonus: 1 });
-  if (skill.id === "barrier") return Object.freeze({ energyCost, shieldAmount: 1 });
-  if (skill.id === "symbiosis") return Object.freeze({ energyCost, healAmount: 1 });
+  const definition = ACTIVE_SKILL_DEFINITIONS[skill.id] ?? {};
+  if (skill.id === "breakArmy") return Object.freeze({ energyCost, attackLimitBonus: definition.attackLimitBonus });
+  if (skill.id === "barrier") return Object.freeze({ energyCost, shieldAmount: definition.shieldAmount });
+  if (skill.id === "symbiosis") return Object.freeze({ energyCost, healAmount: definition.healAmount });
   if (skill.id === "stealSkill") return Object.freeze({ energyCost });
-  if (skill.id === "burningField") return Object.freeze({ energyCost, damageAmount: 1 });
-  if (skill.id === "hunt") return Object.freeze({ energyCost, damageAmount: 2, blockedRewardDraw: 1 });
-  if (skill.id === "allIn") return Object.freeze({
-    energyCost: Math.max(0, Number(source.energy) || 0),
-    drawCount: Math.max(0, (Number(source.energy) || 0) - 1),
-    enterChance: Math.min(1, (Number(source.energy) || 0) * .25)
-  });
-  if (skill.id === "resonance") return Object.freeze({ energyCost, drawCount: 1 });
+  if (skill.id === "burningField") return Object.freeze({ energyCost, damageAmount: definition.damageAmount });
+  if (skill.id === "hunt") return Object.freeze({ energyCost, damageAmount: definition.damageAmount, blockedRewardDraw: definition.blockedRewardDraw });
+  if (skill.id === "allIn") {
+    const currentEnergy = Math.max(0, Number(source.energy) || 0);
+    return Object.freeze({
+      energyCost: currentEnergy,
+      drawCount: decideAllInDrawCount(currentEnergy),
+      enterChance: decideAllInEnterChance(currentEnergy)
+    });
+  }
+  if (skill.id === "resonance") return Object.freeze({ energyCost, drawCount: definition.drawCount });
   return Object.freeze({ energyCost });
 }
 

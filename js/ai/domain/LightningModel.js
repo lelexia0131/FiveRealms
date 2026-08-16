@@ -1,24 +1,29 @@
 /*
 模块职责
-派生闪电状态、装备判定概率、存活座位传播环与最终命中分布。
+派生闪电状态、装备判定概率、存活座位传播环与最终命中分布；本模块是 AI probabilistic/search model，不是 Repository Domain Rule authority。
 
 上游
 ActionGenerator、Simulator、ResponseBoundary 与 ValueSimulationQuery。
 
 下游
-RuleEngine、卡牌定义配置与 state/Probability。
+Domain StatusRules、Domain Card/Ruleset Definitions 与 state/Probability。
 
 状态边界
 只读过滤玩家和剩余牌计数，返回仅含普通值与玩家 ID 的独立结果。
 
 信息边界
-不实例化判定牌、不读取敌方隐藏牌面；缺失计数时使用正式初始牌堆构成。
+不实例化判定牌、不读取敌方隐藏牌面；缺失计数时使用 RulesetDefinition 正式初始牌堆构成。
 
 架构约束
-本模型不是 Game authority；RuleEngine 是真实状态与接收者规则权威，真实状态移动/伤害仍由 Game 卡牌生命周期负责。不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
+确定性状态存在与下一接收者公式只调用 Domain StatusRules；本模型只拥有概率传播与命中分布。不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
+import {
+  hasStatus,
+  nextLightningReceiverId as nextDomainLightningReceiverId
+} from "../../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import { projectCanonicalSeatRoster, projectRulePlayer } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
@@ -46,13 +51,13 @@ import {
 无。
 
 调用函数
-RuleEngine.hasStatus。
+Domain StatusRules.hasStatus。
 
 边界与不变量
-状态含义以 RuleEngine 为权威，本函数不复制写入规则。
+状态含义以 Domain StatusRules 为权威，本函数不复制写入规则。
 */
 export function hasLightning(player) {
-  return RuleEngine.hasStatus(player, "lightning");
+  return hasStatus(projectRulePlayer(player), "lightning");
 }
 
 /*
@@ -75,7 +80,7 @@ lightningStatusStateBranches 或确定性 statuses。
 无。
 
 调用函数
-mergeProbabilityStateBranches、RuleEngine.hasStatus。
+mergeProbabilityStateBranches、Domain StatusRules.hasStatus。
 
 边界与不变量
 缺少概率分支时退化为概率一的确定状态；输出不复用输入分支对象。
@@ -150,6 +155,7 @@ CARD_DEFINITIONS 与剩余牌计数。
 忽略非法定义与非正计数，不修改输入；缺失计数时使用正式初始牌堆。
 */
 function judgmentCategoryCounts(remainingCardCounts = null) {
+  const triggerCategory = CARD_DEFINITIONS.lightning.judgmentTriggerCategory;
   if (remainingCardCounts && typeof remainingCardCounts === "object" && !Array.isArray(remainingCardCounts)) {
     let equipment = 0;
     let total = 0;
@@ -159,14 +165,16 @@ function judgmentCategoryCounts(remainingCardCounts = null) {
       const definition = CARD_DEFINITIONS[definitionId];
       if (!definition) continue;
       total += value;
-      if (definition.category === "equipment") equipment += value;
+      if (definition.category === triggerCategory) equipment += value;
     }
     return { equipment, total };
   }
-  const equipmentTotal = Object.values(CARD_DEFINITIONS)
-    .filter((definition) => definition.category === "equipment")
-    .reduce((sum, definition) => sum + definition.count, 0);
-  return { equipment:equipmentTotal, total:TOTAL_CARD_COUNT };
+  const deckComposition = RULESET_DEFINITION.deckComposition;
+  const equipmentTotal = Object.entries(deckComposition)
+    .filter(([definitionId]) => CARD_DEFINITIONS[definitionId]?.category === triggerCategory)
+    .reduce((sum, [, count]) => sum + count, 0);
+  const total = Object.values(deckComposition).reduce((sum, count) => sum + count, 0);
+  return { equipment:equipmentTotal, total };
 }
 
 /*
@@ -219,13 +227,15 @@ alive、seatIndex、id 与 lightning status。
 无。
 
 调用函数
-RuleEngine.nextLightningReceiver。
+Domain StatusRules.nextLightningReceiverId。
 
 边界与不变量
-接收者规则以 RuleEngine 为权威；输出不得持有 Player 引用。
+接收者规则以 Domain StatusRules 为权威；输出不得持有 Player 引用。
 */
 export function nextLightningReceiverId(players, holder) {
-  return RuleEngine.nextLightningReceiver(players, holder)?.id ?? null;
+  if (!holder?.alive || !Array.isArray(players) || !players.length) return null;
+  const roster = projectCanonicalSeatRoster(players);
+  return nextDomainLightningReceiverId(roster, holder.id) ?? null;
 }
 
 /*
@@ -255,13 +265,14 @@ hasLightning。
 */
 export function buildLightningPropagationChainIds(players, initialHolder) {
   if (!initialHolder?.alive || !Array.isArray(players) || !players.length) return [];
+  const roster = projectCanonicalSeatRoster(players);
   const chainIds = [initialHolder.id];
-  const count = players.length;
-  for (let offset = 1; offset < count; offset += 1) {
-    const candidate = players[(initialHolder.seatIndex + offset) % count];
-    if (!candidate?.alive || candidate.id === initialHolder.id) continue;
-    if (hasLightning(candidate)) continue;
-    chainIds.push(candidate.id);
+  let currentId = initialHolder.id;
+  while (chainIds.length < roster.length) {
+    const nextId = nextDomainLightningReceiverId(roster, currentId);
+    if (!nextId || nextId === currentId || nextId === initialHolder.id) break;
+    chainIds.push(nextId);
+    currentId = nextId;
   }
   return chainIds;
 }

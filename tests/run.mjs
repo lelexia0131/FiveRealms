@@ -14183,23 +14183,16 @@ test("AI·封印：判定概率随 remainingCardCounts 类别组成动态变化�
 });
 
 test("AI·封印：fallback 从权威牌堆组成动态推导且无固定概率字面量", async () => {
-  const definitions = Object.values(CARD_DEFINITIONS),
-    tacticTotal = definitions.filter(
-      (definition) => definition.category === "tactic"
-    ).reduce((sum, definition) => sum + definition.count, 0),
-    total = definitions.reduce((sum, definition) => sum + definition.count, 0),
-    authoritativeCounts = Object.fromEntries(
-      definitions.map((definition) => [definition.definitionId, definition.count])
-    ),
-    adjustedDefinitions = definitions.map(
-      (definition) => definition.definitionId === "seal"
-        ? { ...definition, count: definition.count + 4 }
-        : definition
-    ),
-    adjustedTacticTotal = adjustedDefinitions.filter(
-      (definition) => definition.category === "tactic"
-    ).reduce((sum, definition) => sum + definition.count, 0),
-    adjustedTotal = adjustedDefinitions.reduce((sum, definition) => sum + definition.count, 0);
+  const authoritativeCounts = RULESET_DEFINITION.deckComposition;
+  const tacticTotal = Object.entries(authoritativeCounts)
+    .filter(([definitionId]) => DOMAIN_CARD_DEFINITIONS[definitionId]?.category === "tactic")
+    .reduce((sum, [, count]) => sum + count, 0);
+  const total = Object.values(authoritativeCounts).reduce((sum, count) => sum + count, 0);
+  const adjustedCounts = { ...authoritativeCounts, seal: authoritativeCounts.seal + 4 };
+  const adjustedTacticTotal = Object.entries(adjustedCounts)
+    .filter(([definitionId]) => DOMAIN_CARD_DEFINITIONS[definitionId]?.category === "tactic")
+    .reduce((sum, [, count]) => sum + count, 0);
+  const adjustedTotal = Object.values(adjustedCounts).reduce((sum, count) => sum + count, 0);
   assertClose(tacticJudgmentProbability(null), tacticTotal / total);
   assertClose(tacticJudgmentProbability(undefined), tacticTotal / total);
   assertClose(tacticJudgmentProbability(authoritativeCounts), tacticTotal / total);
@@ -14209,9 +14202,11 @@ test("AI·封印：fallback 从权威牌堆组成动态推导且无固定概率�
   const source = await readFile(projectFile("js/ai/domain/SealModel.js"), "utf8"),
     configSource = await readFile(projectFile("js/config/cardConfig.js"), "utf8");
   assert.doesNotMatch(source, /\b(?:56|163)\b/);
+  assert.match(source, /RULESET_DEFINITION\.deckComposition/);
+  assert.match(source, /CARD_DEFINITIONS\.seal\.judgmentTriggerCategory/);
   assert.match(
     source,
-    /Object\.values\(CARD_DEFINITIONS\)[\s\S]*definition\.category === "tactic"[\s\S]*definition\.count[\s\S]*tacticTotal \/ TOTAL_CARD_COUNT/
+    /definition\.category === triggerCategory[\s\S]*tacticTotal \/ total/
   );
   assert.match(configSource, /RULESET_DEFINITION\.deckComposition/);
   assert.match(configSource, /TOTAL_CARD_COUNT = Object\.values\(CARD_COUNTS\)\.reduce/);
@@ -42618,6 +42613,298 @@ async function frArch11GlobalTriggerOwnership() {
 }
 
 test("FR-ARCH-11·global triggers：huntMark/seal/lightning registration 归 Application", frArch11GlobalTriggerOwnership);
+
+
+// ==================== FR-ARCH-12 AI ↔ Domain Convergence Tests ====================
+
+/*
+功能
+验证 FR-ARCH-11 carry-in：卡牌固定效果数值只由 CardDefinitions 拥有。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+CardDefinitions 与 CardEffectRules 源码/导出。
+
+写入状态
+无。
+
+调用函数
+readFile、CardEffectRules getters。
+
+边界与不变量
+CardEffectRules 不得重新出现固定 literal getter。
+*/
+async function frArch12CardFixedFactOwnership() {
+  const rules = await import("../js/domain/rules/card/CardEffectRules.js?build=20260815-shadow-agent-p1-slot");
+  assert.equal(rules.getAssaultBaseDamage(), DOMAIN_CARD_DEFINITIONS.assault.baseDamage);
+  assert.equal(rules.getRecoverHealAmount(), DOMAIN_CARD_DEFINITIONS.recover.healAmount);
+  assert.equal(rules.getChargeEnergyAmount(), DOMAIN_CARD_DEFINITIONS.charge.energyGain);
+  assert.equal(rules.getShieldAmount(), DOMAIN_CARD_DEFINITIONS.shield.shieldAmount);
+  assert.equal(rules.getShockwaveDamage(), DOMAIN_CARD_DEFINITIONS.shockwave.perTargetDamage);
+  assert.equal(rules.getProvokeDamage(), DOMAIN_CARD_DEFINITIONS.provoke.failDamage);
+  assert.equal(rules.getHarvestDrawCount(), DOMAIN_CARD_DEFINITIONS.harvest.drawCount);
+  assert.equal(rules.getDuelDamage(), DOMAIN_CARD_DEFINITIONS.duel.failDamage);
+  assert.equal(rules.getSymbiosisHealAmount(), DOMAIN_CARD_DEFINITIONS.symbiosis.healAmount);
+  assert.equal(rules.getNextExposeWeaknessStacks({ stacks: 2 }), 3);
+  assert.equal(rules.getMutualBenefitRevealCount(5), 5);
+  const source = await readFile(projectFile("js/domain/rules/card/CardEffectRules.js"), "utf8");
+  assert.doesNotMatch(source, /export function get(?:AssaultBaseDamage|RecoverHealAmount|ChargeEnergyAmount|ShieldAmount|ShockwaveDamage|ProvokeDamage|HarvestDrawCount|DuelDamage|SymbiosisHealAmount)[\s\S]*?return\s+[12];/);
+}
+
+test("FR-ARCH-12·card fixed facts：Definition-owned 且 Rule 不复制 literal", frArch12CardFixedFactOwnership);
+
+/*
+功能
+验证 FR-ARCH-11 carry-in：技能固定效果数值只由 SkillDefinitions 拥有，allIn 动态公式仍由 SkillRules 解释。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SkillDefinitions 与 SkillRules 导出/源码。
+
+写入状态
+无。
+
+调用函数
+readFile、decideSkillEffect、decideAllInDrawCount、decideAllInEnterChance。
+
+边界与不变量
+SkillRules 不得复制固定 effect literal；AI 不得自行复制 allIn 公式。
+*/
+async function frArch12SkillFixedFactOwnership() {
+  const rules = await import("../js/domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot");
+  const source = { id:"s", energy:3, alive:true, battleTeam:"dawn", hp:3, maxHp:4, shield:0, handCount:1, equipmentDefinitionId:null };
+  const assertDecision = (skill, fields) => {
+    const decision = rules.decideSkillEffect(skill, source);
+    for (const [field, value] of Object.entries(fields)) assert.equal(decision[field], value, `${skill.id}.${field}`);
+  };
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.breakArmy, { energyCost:2, attackLimitBonus:1 });
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.barrier, { energyCost:2, shieldAmount:1 });
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.symbiosis, { energyCost:2, healAmount:1 });
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.burningField, { energyCost:3, damageAmount:1 });
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.hunt, { energyCost:2, damageAmount:2, blockedRewardDraw:1 });
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.resonance, { energyCost:2, drawCount:1 });
+  const allIn = rules.decideSkillEffect(ACTIVE_SKILL_DEFINITIONS.allIn, { ...source, energy:3 });
+  assert.equal(allIn.energyCost, 3);
+  assert.equal(allIn.drawCount, 2);
+  assertClose(allIn.enterChance, .75);
+  assert.equal(rules.decideAllInDrawCount(2), 1);
+  assertClose(rules.decideAllInEnterChance(4), 1);
+  const skillSource = await readFile(projectFile("js/domain/rules/skill/SkillRules.js"), "utf8");
+  assert.doesNotMatch(skillSource, /if \(skill\.id === "(?:breakArmy|barrier|symbiosis|burningField|hunt|resonance)"\) return Object\.freeze\(\{ energyCost, (?:attackLimitBonus|shieldAmount|healAmount|damageAmount|drawCount): [12]/);
+  const simSource = await readFile(projectFile("js/ai/simulation/SkillEffectSimulation.js"), "utf8");
+  assert.doesNotMatch(simSource, /energyAmount\s*-\s*1|energyAmount\s*\*\s*\.25/);
+}
+
+test("FR-ARCH-12·skill fixed facts：Definition-owned 且 allIn 公式 Rule-owned", frArch12SkillFixedFactOwnership);
+
+/*
+功能
+验证转移方向策略只有 TransferPolicy 一个公式，执行 adapter 只桥接 Human/AI 条件。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+TransferPolicy、TransferExecutionPolicyAdapter 导出与源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+Human ally→enemy 仍合法；AI ally→enemy 仍被 AI policy 禁止。
+*/
+async function frArch12TransferPolicySingleAuthority() {
+  const { isTransferDirectionAllowed } = await import("../js/ai/policy/TransferPolicy.js?build=20260815-shadow-agent-p1-slot");
+  const { isTransferExecutionAllowed } = await import("../js/adapters/ai/TransferExecutionPolicyAdapter.js?build=20260815-shadow-agent-p1-slot");
+  const actor = { id:"a", battleTeam:"dawn" };
+  const ally = { id:"f", battleTeam:"dawn" };
+  const ally2 = { id:"f2", battleTeam:"dawn" };
+  const enemy = { id:"r", battleTeam:"dusk" };
+  const enemy2 = { id:"r2", battleTeam:"dusk" };
+  assert.equal(isTransferDirectionAllowed(actor, ally, enemy), false);
+  assert.equal(isTransferDirectionAllowed(actor, ally, ally2), true);
+  assert.equal(isTransferDirectionAllowed(actor, enemy, ally), true);
+  assert.equal(isTransferDirectionAllowed(actor, enemy, enemy2), true);
+  assert.equal(isTransferExecutionAllowed({ controllerType:"ai", battleTeam:"dawn" }, ally, enemy), false);
+  assert.equal(isTransferExecutionAllowed({ controllerType:"human", battleTeam:"dawn" }, ally, enemy), true);
+  const adapterSource = await readFile(projectFile("js/adapters/ai/TransferExecutionPolicyAdapter.js"), "utf8");
+  assert.match(adapterSource, /isTransferDirectionAllowed\(source, from, receiver\)/);
+  assert.doesNotMatch(adapterSource, /receiver\?\.battleTeam\s*!==\s*source\.battleTeam/);
+}
+
+test("FR-ARCH-12·transfer policy：ONE AI POLICY AUTHORITY 且 adapter 只 delegate", frArch12TransferPolicySingleAuthority);
+
+/*
+功能
+验证 AI search/simulation/domain production 已零依赖 legacy RuleEngine/DistanceSystem authority。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/ai/search、js/ai/simulation、js/ai/domain 源码。
+
+写入状态
+无。
+
+调用函数
+readdir、readFile。
+
+边界与不变量
+允许 policy/value 保留 AI 配置；本 guard 只检查确定性规则层。
+*/
+async function frArch12AiLegacyRuleImports() {
+  const roots = ["js/ai/search", "js/ai/simulation", "js/ai/domain"];
+  for (const root of roots) {
+    const entries = await readdir(projectFile(root), { withFileTypes:true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".js")) continue;
+      const source = await readFile(projectFile(`${root}/${entry.name}`), "utf8");
+      assert.doesNotMatch(source, /core\/RuleEngine\.js|core\/DistanceSystem\.js/, `${root}/${entry.name}`);
+    }
+  }
+}
+
+test("FR-ARCH-12·legacy imports：AI search/simulation/domain → RuleEngine/DistanceSystem ZERO", frArch12AiLegacyRuleImports);
+
+/*
+功能
+验证 Distance、Turn、Card、Skill、Combat、Response、Status 的 Domain 决定与 AI projection/确定性分支一致。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Domain rules、AI projection/distance branches、LightningModel 与 Simulator。
+
+写入状态
+测试局部 SearchState 副本。
+
+调用函数
+projectCanonicalSeatRoster、getRangeConditionBranches、Simulator.applyDamage/heal、LightningModel.nextLightningReceiverId。
+
+边界与不变量
+概率分支总质量为一时 matches 与 Domain deterministic 结论一致。
+*/
+async function frArch12DeterministicParityMatrix() {
+  const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/state/RuleProjection.js?build=20260815-shadow-agent-p1-slot");
+  const { getRangeConditionBranches } = await import("../js/ai/state/DistanceProbabilityBranches.js?build=20260815-shadow-agent-p1-slot");
+  const { nextLightningReceiverId: aiNextLightningReceiverId } = await import("../js/ai/domain/LightningModel.js?build=20260815-shadow-agent-p1-slot");
+
+  const players = [
+    { id:"p0", seatIndex:0, alive:true, battleTeam:"dawn", hp:5, maxHp:5, shield:1, energy:3, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:[] },
+    { id:"p1", seatIndex:1, alive:true, battleTeam:"dusk", hp:5, maxHp:5, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:["lightning"] },
+    { id:"p2", seatIndex:2, alive:true, battleTeam:"dusk", hp:5, maxHp:5, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:[] }
+  ];
+  const roster = projectCanonicalSeatRoster(players);
+  assert.equal(getDistance(roster, roster[0], roster[1]), 1);
+  const distanceBranches = getRangeConditionBranches(
+    { state:{ players } },
+    [{ source:players[0], target:players[1], range:1 }]
+  );
+  assertClose(totalBranchProbability(distanceBranches.filter((branch) => branch.matches)), 1);
+
+  const usage = projectAttackUsage({ turnFlags:{ attackUsed:1, attackLimit:2 } });
+  assert.equal(hasAttackUseRemaining(usage), true);
+  assert.equal(hasAttackUseRemaining({ used:1, limit:1 }), false);
+
+  assert.deepEqual(getCardTargetIds(roster, roster[0], DOMAIN_CARD_DEFINITIONS.assault), ["p1", "p2"]);
+  assert.deepEqual(getSkillTargetIds(roster, "p0", ACTIVE_SKILL_DEFINITIONS.barrier), ["p0"]);
+
+  assert.equal(nextDomainLightningReceiverId(roster, "p1"), "p2");
+  assert.equal(aiNextLightningReceiverId(players, players[1]), "p2");
+
+  const simulator = new Simulator({ players:[] });
+  const combatState = {
+    players: [
+      { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", generalId:"none", hp:4, maxHp:4, shield:0, energy:0, handCount:0, statuses:[] },
+      { id:"b", seatIndex:1, alive:true, battleTeam:"dusk", generalId:"none", hp:5, maxHp:5, shield:1, energy:0, handCount:0, blockProbability:0, expectedRecoverCount:0, statuses:[] }
+    ]
+  };
+  simulator.applyDamage(combatState, combatState.players[0], combatState.players[1], 3, { canBlock:false });
+  const damageResult = calculateDamageResult(3, 1, 5);
+  assert.equal(combatState.players[1].hp, damageResult.remainingHp);
+  assert.equal(combatState.players[1].shield, 0);
+  simulator.healFrom(combatState, combatState.players[0], combatState.players[1], 5);
+  assert.equal(combatState.players[1].hp, 5);
+}
+
+test("FR-ARCH-12·parity：Distance/Turn/Card/Skill/Combat/Status 确定性世界与 Domain 一致", frArch12DeterministicParityMatrix);
+
+/*
+功能
+验证 AI 概率模型模块已声明为 AI MODEL，不是 Repository Domain Rule authority。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/ai/domain 模块源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+确定性 receiver/status 公式不在 AI domain models 中重写。
+*/
+async function frArch12AiDomainModelOwnership() {
+  for (const file of ["LightningModel.js", "SealModel.js", "RadarModel.js", "GlobalBenefitModel.js"]) {
+    const source = await readFile(projectFile(`js/ai/domain/${file}`), "utf8");
+    assert.match(source, /AI probabilistic\/search model|AI model|不是 Repository Domain Rule authority/);
+    assert.doesNotMatch(source, /core\/RuleEngine\.js|core\/DistanceSystem\.js/);
+  }
+  const lightning = await readFile(projectFile("js/ai/domain/LightningModel.js"), "utf8");
+  assert.match(lightning, /nextDomainLightningReceiverId/);
+  assert.doesNotMatch(lightning, /players\[\(initialHolder\.seatIndex \+ offset\) % count\]/);
+}
+
+test("FR-ARCH-12·AI domain models：AI MODEL NOT DOMAIN RULE AUTHORITY", frArch12AiDomainModelOwnership);
 
 // ==================== Test Runner 最终执行 ====================
 

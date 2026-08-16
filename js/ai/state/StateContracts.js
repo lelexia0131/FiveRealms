@@ -6,7 +6,7 @@
 AiController、ResponseBoundary、测试与搜索调用方。
 
 下游
-四类 state 工厂、TeamRuleService、技能成本和卡牌价值权威。
+四类 state 工厂、Domain Team/Skill Rules 与卡牌 AI 价值配置。
 
 状态边界
 只读当前 GameState，输出互不持有 Game 引用的不可变根快照。
@@ -18,8 +18,13 @@ AiController、ResponseBoundary、测试与搜索调用方。
 createInitialSearchState 只做 SearchState 正式组合入口，不得另存一份投影或概率逻辑。
 */
 import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { TeamRuleService } from "../../core/TeamRuleService.js?build=20260815-shadow-agent-p1-slot";
-import { ACTIVE_SKILLS, getActiveSkillCost } from "../../generals/skillRegistry.js?build=20260815-shadow-agent-p1-slot";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { getSkillCost } from "../../domain/rules/skill/SkillRules.js?build=20260815-shadow-agent-p1-slot";
+import {
+  getAttackLimitFromRules,
+  getTeamRules,
+  getTurnEnergyBreakdownFromRules
+} from "../../domain/rules/team/TeamRules.js?build=20260815-shadow-agent-p1-slot";
 import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260815-shadow-agent-p1-slot";
 import { createBeliefState } from "./BeliefState.js?build=20260815-shadow-agent-p1-slot";
 import { createKnowledgeState } from "./Knowledge.js?build=20260815-shadow-agent-p1-slot";
@@ -64,40 +69,41 @@ function equipmentRoleDelta(player, definitionId) {
 createStateContracts。
 
 输入
-当前 GameState 与已绑定该状态的 TeamRuleService。
+当前 GameState。
 
 输出
 按玩家 ID 索引的领域、规则和初始价值派生值表。
 
 读取状态
-Player 回合标记、装备、角色技能与 TeamRuleService 规则。
+Player 回合标记、装备、角色技能与 Domain Team/Skill Rules。
 
 写入状态
 无。
 
 调用函数
-TeamRuleService 能量与攻击规则、getActiveSkillCost、equipmentRoleDelta。
+Domain TeamRules、Domain SkillRules.getSkillCost、equipmentRoleDelta。
 
 边界与不变量
 只转换字段承载位置，不重写领域规则；SearchState 仅接收结果而不自行计算。
 */
-function createDerivedPlayersById(state, teamRules) {
+function createDerivedPlayersById(state) {
   return Object.fromEntries(state.players.map((player) => {
     const activeSkillId = player.general.activeSkillIds[0] ?? null;
-    const activeSkill = ACTIVE_SKILLS[activeSkillId] ?? null;
-    const energyBreakdown = teamRules.getTurnEnergyBreakdown(player);
-    const energyDeviceBreakdown = teamRules.getTurnEnergyBreakdown({
-      ...player,
-      equipment:{ definitionId:"energyDevice" }
-    });
+    const activeSkill = ACTIVE_SKILL_DEFINITIONS[activeSkillId] ?? null;
+    const teamRules = getTeamRules({ players:state.players }, player);
+    const energyBreakdown = getTurnEnergyBreakdownFromRules(
+      teamRules,
+      player.equipment?.definitionId ?? null
+    );
+    const energyDeviceBreakdown = getTurnEnergyBreakdownFromRules(teamRules, "energyDevice");
     const equipmentDefinitionId = player.equipment?.definitionId ?? null;
     return [player.id, Object.freeze({
       turnEnergyGainWithoutEquipment:energyBreakdown.baseAmount + energyBreakdown.teamBonus,
       energyDeviceTurnEnergyGain:energyDeviceBreakdown.equipmentBonus,
-      nextTurnBaseAttackLimit:teamRules.getAttackLimit(player),
+      nextTurnBaseAttackLimit:getAttackLimitFromRules(teamRules),
       guardianAidUsed:Boolean(player.turnFlags.guardianAidUsed),
       spyGapTriggered:Boolean(player.turnFlags.spyGapTriggered),
-      activeSkillCost:getActiveSkillCost(state, player, activeSkill),
+      activeSkillCost:getSkillCost(activeSkill, player, state.players),
       initialEquipmentValue:equipmentDefinitionId
         ? (CARD_DEFINITIONS[equipmentDefinitionId]?.aiValue ?? 7)
         : 0,
@@ -139,8 +145,7 @@ export function createStateContracts(viewerId, state, remainingCardCounts = null
   const visibleState = createVisibleState(viewerId, state);
   const knowledgeState = createKnowledgeState(viewer, visibleState);
   const beliefState = createBeliefState(viewerId, visibleState, knowledgeState, remainingCardCounts);
-  const teamRules = new TeamRuleService({ state });
-  const derivedPlayersById = createDerivedPlayersById(state, teamRules);
+  const derivedPlayersById = createDerivedPlayersById(state);
   const searchState = createSearchState(
     visibleState,
     knowledgeState,

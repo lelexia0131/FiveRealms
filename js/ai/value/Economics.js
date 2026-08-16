@@ -18,6 +18,8 @@ Evaluator、TransitionValue、SearchPrior、Simulator 与响应策略。
 不得收纳搜索先验或领域魔法数字；已进入 after-state 的价值不得再次成为 economic term。
 */
 
+import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
+
 export const STATE_DELTA_SCALE = 0.08;
 export const HP_VALUE = 5;
 export const ENERGY_STATE_WEIGHT = 1.2;
@@ -53,7 +55,7 @@ export function actionEconomicValue(action, player, visible) {
   const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
   if (action.type === "end") {
     const remainingCards = actor.handCount ?? actor.hand?.length ?? player.hand.length;
-    if (actor.generalId === "blade-walker" && (actor.momentum ?? 0) > 0) return 0;
+    if (hasPassiveSkill(actor, "momentum") && (actor.momentum ?? 0) > 0) return 0;
     return remainingCards > 0 ? -END_OPPORTUNITY_CAP : 0;
   }
   if (action.type === "skill") return 0;

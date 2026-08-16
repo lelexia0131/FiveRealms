@@ -6,7 +6,7 @@
 AIController、Game、PublicCardPool、角色技能与直接测试。
 
 下游
-RuleEngine、DistanceSystem 与 policy/CardSelectionPolicy、ResourceSelectionPolicy、TransferPolicy。
+Domain CardRules、AI RuleProjection/DistanceProbabilityBranches 与 policy/CardSelectionPolicy、ResourceSelectionPolicy、TransferPolicy。
 
 状态边界
 只读当前 Game/Player 实体；不移动卡牌，实体移动仍由真实规则调用方执行。
@@ -17,9 +17,13 @@ RuleEngine、DistanceSystem 与 policy/CardSelectionPolicy、ResourceSelectionPo
 架构约束
 选择公式只存在于 policy 目录；本文件只负责合法集合、公开上下文与实体 ID 解析。
 */
-import { DistanceSystem } from "../../core/DistanceSystem.js?build=20260815-shadow-agent-p1-slot";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-shadow-agent-p1-slot";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import {
+  findPlayerFact,
+  getTransferReceiverIds
+} from "../../domain/rules/card/CardRules.js?build=20260815-shadow-agent-p1-slot";
+import { projectTransferRulePlayers } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
+import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260815-shadow-agent-p1-slot";
 import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
 import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260815-shadow-agent-p1-slot";
 import { TransferPolicy } from "./TransferPolicy.js?build=20260815-shadow-agent-p1-slot";
@@ -267,7 +271,7 @@ export class CardSelectionBoundary {
   当前来源实体或 null。
 
   读取状态
-  RuleEngine 合法接收者与 TransferPolicy。
+  Domain CardRules 合法接收者与 TransferPolicy。
 
   写入状态
   无。
@@ -297,7 +301,7 @@ export class CardSelectionBoundary {
   当前接收者实体或 null。
 
   读取状态
-  RuleEngine 合法集合与 TransferPolicy。
+  Domain CardRules 合法集合与 TransferPolicy。
 
   写入状态
   无。
@@ -338,10 +342,10 @@ export class CardSelectionBoundary {
   无。
 
   调用函数
-  RuleEngine.getTransferReceivers、TransferPolicy.choose。
+  Domain CardRules.getTransferReceiverIds、TransferPolicy.choose。
 
   边界与不变量
-  合法性由 RuleEngine 提供，Policy 只评分；正在使用的转移实体通过排除集合保持不可选。
+  合法性由 Domain CardRules 提供，Policy 只评分；正在使用的转移实体通过排除集合保持不可选。
   */
   chooseTransferCombination(
     actor,
@@ -351,18 +355,21 @@ export class CardSelectionBoundary {
     excludedCardIds = null
   ) {
     const remainingCardCounts = this.knowledge?.remainingCounts?.(actor) ?? null;
+    const players = this.game.state.players ?? this.game.players ?? [];
     return this.transferPolicy.choose({
       actor,
       sources,
       allowedReceiverIds,
       excludedCardIds,
       remainingCardCounts,
-      getReceivers: (from) => RuleEngine.getTransferReceivers(
-        this.game,
-        actor,
-        from,
-        card
-      )
+      getReceivers: (from) => {
+        const exclusions = excludedCardIds ?? (card?.id ? new Set([card.id]) : null);
+        const facts = projectTransferRulePlayers(players, exclusions);
+        const actorFact = findPlayerFact(facts, actor.id);
+        const fromFact = findPlayerFact(facts, from.id);
+        const receiverIds = getTransferReceiverIds(facts, actorFact, fromFact, card);
+        return players.filter((player) => receiverIds.includes(player.id));
+      }
     });
   }
 
@@ -416,7 +423,7 @@ export class CardSelectionBoundary {
   无。
 
   调用函数
-  DistanceSystem.inAttackRange、CardSelectionPolicy.chooseDiscardIds。
+  inAttackRange、CardSelectionPolicy.chooseDiscardIds。
 
   边界与不变量
   距离事实由真实规则边界提供；评分只存在于正式 ResourceSelectionPolicy。
@@ -424,7 +431,7 @@ export class CardSelectionBoundary {
   chooseDiscards(player, count) {
     const enemies = this.game.getEnemies(player);
     const stranded = enemies.length > 0 && !enemies.some(
-      (enemy) => DistanceSystem.inAttackRange(this.game, player, enemy)
+      (enemy) => inAttackRange(this.game, player, enemy)
     );
     const equippedDefinitionId = player.equipment?.definitionId
       ?? player.equipmentDefinitionId

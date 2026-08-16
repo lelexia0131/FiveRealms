@@ -1,12 +1,12 @@
 /*
 模块职责
-描述全体受益牌、互利公开池选择顺序与每名存活角色的实际受益结构。
+描述全体受益牌的 AI 选择顺序、期望选择与受益估值；本模型是 AI probabilistic/search model，不是 Repository Domain Rule authority。
 
 上游
 GlobalBenefitValue 价值适配器、ResponsePolicy 适配器与直接领域测试。
 
 下游
-无。
+Domain CardDefinitions、Domain CombatRules。
 
 状态边界
 只读过滤玩家、公开池计数与调用方提供的定义价值查询，返回独立普通对象。
@@ -15,10 +15,16 @@ GlobalBenefitValue 价值适配器、ResponsePolicy 适配器与直接领域测�
 互利只使用公开剩余牌构成，不读取未来牌堆顺序、随机数或隐藏手牌。
 
 架构约束
-本模型不是 Game authority；真实公共池创建、选择与结算仍由 Game/card resolver 负责。不得导入 value、Controller、Planner、Simulator、Evaluator 或 UI；反制意愿与 root flip 不属于本模型。
+真实 card semantic（哪些牌是全体受益、共生治疗量）来自 Domain Definitions/Rules；本模型只拥有 AI 顺序优势与价值结构。不得导入 value、Controller、Planner、Simulator、Evaluator 或 UI；反制意愿与 root flip 不属于本模型。
 */
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { calculateHealAmount } from "../../domain/rules/combat/CombatRules.js?build=20260815-shadow-agent-p1-slot";
 
-const GLOBAL_BENEFIT_CARDS = new Set(["mutualBenefit", "symbiosis"]);
+const GLOBAL_BENEFIT_CARDS = new Set(
+  Object.entries(CARD_DEFINITIONS)
+    .filter(([, definition]) => definition.globalBenefit === true)
+    .map(([definitionId]) => definitionId)
+);
 
 /*
 功能
@@ -177,7 +183,11 @@ player.hp 与 maxHp。
 */
 export function directBenefitForPlayer(player, definitionId) {
   if (definitionId === "symbiosis") {
-    return Math.min(1, Math.max(0, (player.maxHp ?? 0) - (player.hp ?? 0)));
+    return calculateHealAmount(
+      CARD_DEFINITIONS.symbiosis.healAmount,
+      player.maxHp ?? 0,
+      player.hp ?? 0
+    );
   }
   return 0;
 }

@@ -17,6 +17,7 @@ Domain StatusRules/TurnRules。
 架构约束
 不得依赖 Game/application/adapters/EventBus；不得 await、emit、随机、mutation。
 */
+import { PASSIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260815-shadow-agent-p1-slot";
 import { isHuntMarkExpired } from "../status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
 
 /*
@@ -222,7 +223,8 @@ canTriggerRejuvenation consumers。
 export function canTriggerRejuvenation(owner, event) {
   return Boolean(owner?.alive && event?.source?.id === owner.id
     && event.target?.battleTeam === owner.battleTeam && event.actualAmount > 0
-    && (owner.turnFlags.rejuvenationTriggerCount ?? 0) < 2);
+    && (owner.turnFlags.rejuvenationTriggerCount ?? 0)
+      < PASSIVE_SKILL_DEFINITIONS.rejuvenation.maxTriggersPerTurn);
 }
 
 /*
@@ -494,7 +496,8 @@ export function canTriggerTrackingTarget(owner, event) {
   return Boolean(owner?.alive && event?.source?.id === owner.id
     && event.card?.definitionId === "assault" && target
     && target.battleTeam !== owner.battleTeam
-    && owner.turnFlags.trackingTargetIds.size < 2
+    && owner.turnFlags.trackingTargetIds.size
+      < PASSIVE_SKILL_DEFINITIONS.tracking.maxTargetsPerTurn
     && !owner.turnFlags.trackingTargetIds.has(target.id));
 }
 

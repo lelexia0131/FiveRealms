@@ -35,6 +35,36 @@ const MIN_ENEMY_REDISTRIBUTION_UTILITY = 5;
 
 /*
 功能
+判断一次转移方向是否被 AI 转移策略允许。
+
+调用方
+TransferPolicy.choose 家族与 TransferExecutionPolicyAdapter。
+
+输入
+行动者、来源与接收者投影。
+
+输出
+己方来源到敌方接收者返回 false，其余方向返回 true。
+
+读取状态
+battleTeam 与 id。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+这是 AI strategic prohibition 的唯一公式；Domain 仍允许该方向，Human 不受本函数约束。
+*/
+export function isTransferDirectionAllowed(actor, from, receiver) {
+  if (!actor || !from || !receiver || from.id === receiver.id) return false;
+  return !(from.battleTeam === actor.battleTeam && receiver.battleTeam !== actor.battleTeam);
+}
+
+/*
+功能
 读取一张过滤卡牌实体仍可用的概率质量。
 
 调用方
@@ -442,11 +472,13 @@ chooseTransferHandCandidate。
 边界与不变量
 禁止从己方送给敌方；其余三类组合公式保持冻结。
 */
-function transferCardUtility(sourceIsAlly, receiverIsAlly, sourceValue, receiverValue) {
+function transferCardUtility(actor, from, receiver, sourceValue, receiverValue) {
+  const sourceIsAlly = from.battleTeam === actor.battleTeam;
+  const receiverIsAlly = receiver.battleTeam === actor.battleTeam;
+  if (!isTransferDirectionAllowed(actor, from, receiver)) return Number.NEGATIVE_INFINITY;
   if (sourceIsAlly && receiverIsAlly) return receiverValue - sourceValue;
   if (!sourceIsAlly && receiverIsAlly) return sourceValue + receiverValue;
-  if (!sourceIsAlly && !receiverIsAlly) return sourceValue - receiverValue;
-  return Number.NEGATIVE_INFINITY;
+  return sourceValue - receiverValue;
 }
 
 /*
@@ -482,9 +514,7 @@ export function chooseTransferHandCandidate(
   remainingCardCounts = null
 ) {
   if (!actor || !from || !receiver) return null;
-  const sourceIsAlly = from.battleTeam === actor.battleTeam;
-  const receiverIsAlly = receiver.battleTeam === actor.battleTeam;
-  if (sourceIsAlly && !receiverIsAlly) return null;
+  if (!isTransferDirectionAllowed(actor, from, receiver)) return null;
   const knownEntries = knownHandCandidateEntries(actor, from, excludedCardIds);
   const unknownCount = Math.max(0, handCount(from, excludedCardIds) - knownEntries.length);
   const scored = knownEntries.map((entry) => {
@@ -496,8 +526,9 @@ export function chooseTransferHandCandidate(
       definitionId: entry.definitionId,
       expectedValue: receiverValue,
       utility: transferCardUtility(
-        sourceIsAlly,
-        receiverIsAlly,
+        actor,
+        from,
+        receiver,
         sourceValue,
         receiverValue
       ),
@@ -513,8 +544,9 @@ export function chooseTransferHandCandidate(
       definitionId: null,
       expectedValue: receiverUnknownValue,
       utility: transferCardUtility(
-        sourceIsAlly,
-        receiverIsAlly,
+        actor,
+        from,
+        receiver,
         sourceUnknownValue,
         receiverUnknownValue
       ),
@@ -641,7 +673,7 @@ function evaluateTransferCombination({
   }
   const sourceIsAlly = from.battleTeam === actor.battleTeam;
   const receiverIsAlly = receiver.battleTeam === actor.battleTeam;
-  if (sourceIsAlly && !receiverIsAlly) {
+  if (!isTransferDirectionAllowed(actor, from, receiver)) {
     return { candidate: null, score: Number.NEGATIVE_INFINITY };
   }
   if (zone !== "hand" || handCount(from, excludedCardIds) <= 0) {

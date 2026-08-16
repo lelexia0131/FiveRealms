@@ -23,18 +23,27 @@
 
 ## Current Architecture Snapshot
 
-当前生产 AI 共 50 个 JavaScript 模块，最终责任边界如下：
+当前生产 AI 共 52 个 JavaScript 模块，最终责任边界如下：
 
 | 层 | 当前正式 owner |
 |---|---|
 | Composition / Execution | `AiController` 是唯一装配与真实实体重绑入口；它向 Planner 注入窄 capability，不把 Controller 传入子组件。 |
-| State | `VisibleState`、`Knowledge`、`BeliefState`、`StateContracts`、`SearchState`、`Probability` 分别拥有公开投影、合法记忆、未知分布、组合、可克隆搜索世界与概率代数。 |
+| State | `VisibleState`、`Knowledge`、`BeliefState`、`StateContracts`、`SearchState`、`Probability` 分别拥有公开投影、合法记忆、未知分布、组合、可克隆搜索世界与概率代数；`RuleProjection` 与 `DistanceProbabilityBranches` 是 AI→Domain 的 canonical projection 与距离概率分区。 |
 | Search | `ActionGenerator` 产生 AI 候选，`SearchBudget` 与 `SearchPolicy` 管搜索边界，`CandidateMaterializer` 组合完整候选，`Planner` 只编排。 |
 | Simulation | `Simulator` 管 clone、共享 runtime 与分派；Response、Combat、Card、Skill、Status 五个组件各自推进对应状态。 |
 | Value | State Value、Transition Value、Search Prior、Policy Value 与 Diagnostic Ledger 分属正式 owner；只有 Transition Value 的最终组合进入候选 final value。 |
-| Policy / Domain | Policy 只做 AI 选择；Domain 只返回概率、ID 与 outcome 事实，不拥有 Game 合法性或 final value。 |
+| Policy / Domain | Policy 只做 AI 过滤、选择与 valuation；`js/ai/domain/**` 是 AI probabilistic/search model，不拥有 Repository Domain 规则。 |
+| Repository Domain Rules | `js/domain/rules/**` 是 Game Rule Authority；`js/domain/definitions/**` 是固定事实 Authority；`RuleEngine` 与 `DistanceSystem` 仅 legacy façade。 |
 
-RuleEngine 独占游戏合法性；ActionCandidatePolicy 只决定 AI 是否考虑某个规则合法动作。正式搜索不得读取敌方未知手牌的 `definitionId`，只能消费 Visible / Knowledge / Belief 提供的合法信息或概率分支。旧 compatibility 文件与旧 owner 路径已删除；checker 中保留的旧名称仅是防止回归的正式 guard。
+AI deterministic legality、目标、距离、伤害、响应与状态判定的 rule source 来自 `js/domain/rules/**`；AI 只通过窄投影把 SearchState/Visible facts 适配为 canonical rule facts。`ActionCandidatePolicy` 只决定 AI 是否考虑某个规则合法动作，`TransferPolicy` 唯一拥有 AI 转移方向策略。正式搜索不得读取敌方未知手牌的 `definitionId`，只能消费 Visible / Knowledge / Belief 提供的合法信息或概率分支。旧 compatibility 文件与旧 owner 路径已删除；checker 中保留的旧名称仅是防止回归的正式 guard。
+
+FR-ARCH-12 current facts：
+- `js/ai/search/**`、`js/ai/simulation/**`、`js/ai/domain/**` 的 production imports 对 `core/RuleEngine` 与 `core/DistanceSystem` 均为零；
+- root/deep `ActionGenerator` 通过 `js/ai/state/RuleProjection.js` 共同消费 `domain/rules/card`、`domain/rules/skill`、`domain/rules/status` 与 Domain Definitions；
+- 固定卡牌/技能效果数值 owner 为 `CardDefinitions` / `SkillDefinitions`；`CardEffectRules` 与 `SkillRules` 只保留动态决定；
+- `TransferPolicy.isTransferDirectionAllowed` 是 ally→enemy AI strategic prohibition 的唯一公式，`TransferExecutionPolicyAdapter` 只做 Human/AI bridge；
+- `js/ai/domain/**` 四个模块是 AI probabilistic/search model，不是 Repository Domain Rule authority；
+- AI simulation 保留所有概率、Belief、反事实 SearchState 模型，不调用 Application workflow 或 Domain Transitions 修改 SearchState。
 
 ## Historical Baseline and Migration Record
 
@@ -1193,16 +1202,16 @@ js/ai/
 | Simulation | `Simulator` 管 clone、共享概率 runtime 与 action dispatch；Response、Combat、Card、Skill、Status 五个组件各自拥有状态变换；`ValueSimulationQuery`、`RootResolutionQuery` 只做窄反事实查询。 |
 | Value | `Evaluator` 拥有纯状态公式；`StateValue` 提供显式状态查询；`ValueLedger` 管 owner ledger；`Economics`、`CardValue`、`ThreatValue`、`SealValue`、`GlobalBenefitValue` 各拥有对应价值 primitive；`ValueService` 只聚合查询。 |
 | Policy | `ActionCandidatePolicy` 管 AI 专属候选约束；`CardSelectionPolicy`、`ResourceSelectionPolicy`、`ResponsePolicy`、`TransferPolicy` 各拥有唯一选择公式；两个 Boundary 只解析真实实体与执行上下文。 |
-| Domain | `RadarModel`、`LightningModel`、`SealModel`、`GlobalBenefitModel` 只返回只读概率、ID 与 outcome 事实。 |
+| AI Models | `RadarModel`、`LightningModel`、`SealModel`、`GlobalBenefitModel` 只返回只读概率、ID 与 outcome 事实；它们不是 Repository Domain Rule authority。 |
 | Execution | `AiController` 读取当前 GameState、组合全部 owner、向 Planner 注入窄 capability，并把 descriptor 重新绑定到当前合法实体。 |
 
-`getLegalActions` 已改为 `getActionCandidates`：该集合包含 RuleEngine 合法动作和 AI Policy 过滤后的候选，不再误称为完整游戏合法集。
+`getLegalActions` 已改为 `getActionCandidates`：该集合以 `js/domain/rules/**` 决定确定性合法动作，再由 AI Policy 收窄为候选，不再误称为完整游戏合法集。
 
 ### 最终依赖图与门禁
 
 生产静态 import 图已执行 DFS 审计，无循环依赖。Search 不 import concrete Simulation；Planner 没有任何 import，并只消费 `simulatorFactory`、`searchBudgetFactory` 与显式 capability。Simulation component 只在 `simulation/` 内被 import，禁止 Game、Controller、Planner、SearchPolicy 与 final value composition。AI 内部禁止 `game.aiController` 回指；SearchPrior 不保存 GameState callback。
 
-`tools/check-code-quality.mjs` 的 `--ai-all` 会扫描全部 AI 生产文件，而非只看 changed lines。门禁覆盖六段式 Module Header、八段式 Function Header、JSDoc 拒绝、注释/字符串遮蔽、Simulation/Search/State/Value/Policy/Domain 分层、旧兼容路径和根目录布局；self-test 同时包含正负夹具。
+`tools/check-code-quality.mjs` 的 `--ai-all` 会扫描全部 AI 生产文件，而非只看 changed lines。门禁覆盖六段式 Module Header、八段式 Function Header、JSDoc 拒绝、注释/字符串遮蔽、Simulation/Search/State/Value/Policy/Domain 分层、旧兼容路径、根目录布局、AI search/simulation/domain legacy RuleEngine/DistanceSystem import guard、Card/Skill 静态事实 guard、Transfer adapter delegate guard 与已迁移 simulation mirror guard；self-test 同时包含正负夹具。
 
 全部 AI 模块已统一为正式注释格式。复杂 Search/Simulation 说明明确记录 counterfactual、best-seen、pruning、概率分区、资源身份、伤害/救援顺序和状态生命周期；生产 AI 中不存在 `/**`、`@param`、`@returns` 或开发阶段型注释，旧 owner 名称扫描为零。
 

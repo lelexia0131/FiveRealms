@@ -1,24 +1,26 @@
 /*
 模块职责
-派生封印状态、判定类别、团队反制输入与先反制后判定的生命周期概率。
+派生封印状态、判定类别、团队反制输入与先反制后判定的生命周期概率；本模块是 AI probabilistic/search model，不是 Repository Domain Rule authority。
 
 上游
 ActionGenerator、Simulator、ResponseBoundary 与 Seal value 查询。
 
 下游
-RuleEngine、卡牌定义配置与 state/Probability。
+Domain StatusRules、Domain Card/Ruleset Definitions 与 state/Probability。
 
 状态边界
 只读过滤玩家、反制概率和剩余牌计数，返回独立普通值。
 
 信息边界
-不实例化判定牌、不读取隐藏牌面；缺失计数时使用正式初始牌堆构成。
+不实例化判定牌、不读取隐藏牌面；缺失计数时使用 RulesetDefinition 正式初始牌堆构成。
 
 架构约束
-本模型不是 Game authority；RuleEngine 与真实判定/状态生命周期仍是规则权威。不得包含回合机会价值、封印负担、使用价值或搜索延迟，也不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
+确定性状态存在由 Domain StatusRules 解释；本模型只拥有封印概率生命周期。不得包含回合机会价值、封印负担、使用价值或搜索延迟，也不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS, TOTAL_CARD_COUNT } from "../../config/cardConfig.js?build=20260815-shadow-agent-p1-slot";
-import { RuleEngine } from "../../core/RuleEngine.js?build=20260815-shadow-agent-p1-slot";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260815-shadow-agent-p1-slot";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260815-shadow-agent-p1-slot";
+import { hasStatus } from "../../domain/rules/status/StatusRules.js?build=20260815-shadow-agent-p1-slot";
+import { projectRulePlayer } from "../state/RuleProjection.js?build=20260815-shadow-agent-p1-slot";
 import {
   clampProbability,
   mergeProbabilityStateBranches,
@@ -45,13 +47,13 @@ import {
 无。
 
 调用函数
-RuleEngine.hasStatus。
+Domain StatusRules.hasStatus。
 
 边界与不变量
-状态含义以 RuleEngine 为权威，本函数不复制写入规则。
+状态含义以 Domain StatusRules 为权威，本函数不复制写入规则。
 */
 export function hasSeal(player) {
-  return RuleEngine.hasStatus(player, "sealed");
+  return hasStatus(projectRulePlayer(player), "sealed");
 }
 
 /*
@@ -149,6 +151,7 @@ clampProbability。
 忽略非法定义与非正计数，不修改输入；缺失计数时回退正式初始牌堆。
 */
 export function tacticJudgmentProbability(remainingCardCounts = null) {
+  const triggerCategory = CARD_DEFINITIONS.seal.judgmentTriggerCategory;
   if (remainingCardCounts && typeof remainingCardCounts === "object" && !Array.isArray(remainingCardCounts)) {
     let tactic = 0;
     let total = 0;
@@ -158,14 +161,16 @@ export function tacticJudgmentProbability(remainingCardCounts = null) {
       const definition = CARD_DEFINITIONS[definitionId];
       if (!definition) continue;
       total += value;
-      if (definition.category === "tactic") tactic += value;
+      if (definition.category === triggerCategory) tactic += value;
     }
     return total > 0 ? clampProbability(tactic / total) : 0;
   }
-  const tacticTotal = Object.values(CARD_DEFINITIONS)
-    .filter((definition) => definition.category === "tactic")
-    .reduce((sum, definition) => sum + definition.count, 0);
-  return TOTAL_CARD_COUNT > 0 ? tacticTotal / TOTAL_CARD_COUNT : 0;
+  const deckComposition = RULESET_DEFINITION.deckComposition;
+  const tacticTotal = Object.entries(deckComposition)
+    .filter(([definitionId]) => CARD_DEFINITIONS[definitionId]?.category === triggerCategory)
+    .reduce((sum, [, count]) => sum + count, 0);
+  const total = Object.values(deckComposition).reduce((sum, count) => sum + count, 0);
+  return total > 0 ? tacticTotal / total : 0;
 }
 
 /*

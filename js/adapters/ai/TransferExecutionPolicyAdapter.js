@@ -1,6 +1,6 @@
 /*
 模块职责
-拥有 AI 转移执行策略的 narrow adapter authority：禁止 AI 主动把己方手牌转移给敌方；不拥有 Application preparation、Domain legality 或 planner 策略。
+把 AI 转移方向 strategic prohibition 从正式 TransferPolicy 桥接给 Application 执行边界；不拥有转移策略公式。
 
 上游
 Game temporary composition root。
@@ -15,8 +15,9 @@ Application CardIntentRuntime。
 不读取 AI memory、Planner、SearchState 或 hidden card。
 
 架构约束
-不得依赖 Game、AIController、Planner、Domain transitions 或其它 adapter。
+不得依赖 Game、AIController、Planner、Domain transitions 或其它 adapter；不得重新解释 ally/enemy 转移方向。
 */
+import { isTransferDirectionAllowed } from "../../ai/policy/TransferPolicy.js?build=20260815-shadow-agent-p1-slot";
 
 /*
 功能
@@ -38,13 +39,12 @@ controllerType 与 battleTeam。
 无。
 
 调用函数
-无。
+isTransferDirectionAllowed。
 
 边界与不变量
-真人路径恒允许；AI 己方→敌方恒拒绝；该公式不再复制进 Application 或 Domain。
+真人路径恒允许；AI 己方→敌方由 TransferPolicy 公式拒绝；Adapter 不重新解释方向。
 */
 export function isTransferExecutionAllowed(source, from, receiver) {
-  return !(source?.controllerType === "ai"
-    && from?.battleTeam === source.battleTeam
-    && receiver?.battleTeam !== source.battleTeam);
+  if (source?.controllerType !== "ai") return true;
+  return isTransferDirectionAllowed(source, from, receiver);
 }
