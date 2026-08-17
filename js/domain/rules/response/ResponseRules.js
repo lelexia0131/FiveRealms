@@ -3,7 +3,7 @@
 唯一拥有响应资格、格挡需求、反制资格与响应座次顺序的纯规则语义；不拥有 async window、UI、payment 或 nested chain workflow。
 
 上游
-ResponseWorkflow 与 tests。
+Application ResponseWorkflow、DyingWorkflow 与 tests。
 
 下游
 无。

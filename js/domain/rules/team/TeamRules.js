@@ -310,13 +310,13 @@ teamRules 与 equipmentDefinitionId。
 无。
 
 边界与不变量
-充能桩 +1 是当前规则语义。
+装备回合能量加成只读取 CardDefinitions.turnEnergyBonus；未定义时为 0。
 */
 export function getTurnEnergyBreakdownFromRules(teamRules, equipmentDefinitionId) {
   return {
     baseAmount: teamRules.turnEnergyGain,
     teamBonus: teamRules.turnEnergyBonus ?? 0,
-    equipmentBonus: equipmentDefinitionId === "energyDevice" ? 1 : 0
+    equipmentBonus: CARD_DEFINITIONS[equipmentDefinitionId]?.turnEnergyBonus ?? 0
   };
 }
 

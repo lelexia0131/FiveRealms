@@ -9,10 +9,10 @@ application/trigger PassiveSkillTriggerRegistry 与 tests。
 Domain StatusRules/TurnRules。
 
 状态边界
-只读传入 primitive/公开 facts；不写状态。
+只读传入的 Domain Player/Event facts；不写状态。
 
 信息边界
-不读取 hidden card、controllerType、AI/UI。
+可读取 hand.length 作为公开事实；不得读取、遍历或检查隐藏手牌的 definition、category、identity 等内容；不读取 controllerType、AI/UI。
 
 架构约束
 不得依赖 Game/application/adapters/EventDispatcher；不得 await、emit、随机、mutation。
@@ -224,7 +224,7 @@ export function canTriggerRejuvenation(owner, event) {
   return Boolean(owner?.alive && event?.source?.id === owner.id
     && event.target?.battleTeam === owner.battleTeam && event.actualAmount > 0
     && (owner.turnFlags.rejuvenationTriggerCount ?? 0)
-      < PASSIVE_SKILL_DEFINITIONS.rejuvenation.maxTriggersPerTurn);
+    < PASSIVE_SKILL_DEFINITIONS.rejuvenation.maxTriggersPerTurn);
 }
 
 /*
@@ -497,7 +497,7 @@ export function canTriggerTrackingTarget(owner, event) {
     && event.card?.definitionId === "assault" && target
     && target.battleTeam !== owner.battleTeam
     && owner.turnFlags.trackingTargetIds.size
-      < PASSIVE_SKILL_DEFINITIONS.tracking.maxTargetsPerTurn
+    < PASSIVE_SKILL_DEFINITIONS.tracking.maxTargetsPerTurn
     && !owner.turnFlags.trackingTargetIds.has(target.id));
 }
 
