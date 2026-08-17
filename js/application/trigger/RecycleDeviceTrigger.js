@@ -6,7 +6,7 @@
 composition root。
 
 下游
-Domain RecycleDeviceRules、RuleUsageTransitions、 narrow draw/log collaborators Domain SeatRosterContract 与 CardDefinitions。
+Domain RecycleDeviceRules、CardDefinitions、RuleUsageTransitions 与 narrow draw/log collaborators。
 
 状态边界
 usage 经 RuleUsageTransition；不写其它 Domain state。
