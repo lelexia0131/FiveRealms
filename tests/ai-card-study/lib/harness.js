@@ -1,11 +1,10 @@
-import { Game } from "../../../js/core/Game.js";
-import { Player } from "../../../js/core/Player.js";
-import { Deck } from "../../../js/core/Deck.js";
-import { CARD_DEFINITIONS } from "../../../js/config/cardConfig.js";
-import { GENERAL_DEFINITIONS } from "../../../js/config/generalConfig.js";
-import { RuleEngine } from "../../../js/core/RuleEngine.js";
-import { DistanceSystem } from "../../../js/core/DistanceSystem.js";
-import { registerPassiveSkills } from "../../../js/generals/skillRegistry.js";
+import { createGameApplication } from "../../../js/composition/createGameApplication.js";
+import { Player } from "../../../js/application/match/Player.js";
+import { Deck } from "../../../js/application/match/Deck.js";
+import { CARD_DEFINITIONS } from "../../../js/domain/definitions/cards/CardDefinitions.js";
+import { CHARACTER_DEFINITIONS } from "../../../js/domain/definitions/characters/CharacterDefinitions.js";
+import { ActionLegality } from "../../../js/application/action/ActionLegality.js";
+import { inAttackRange } from "../../../js/ai/state/DistanceProbabilityBranches.js";
 import { createInitialSearchState } from "../../../js/ai/state/StateContracts.js";
 import { TrackedRng } from "./rng.js";
 import { createHeadlessUi } from "./ui.js";
@@ -47,7 +46,7 @@ export function createGame({
   const gameSeed = (Number(seed) >>> 0);
   const rng = new TrackedRng(gameSeed);
   const ui = createHeadlessUi();
-  const game = new Game(ui, () => rng.next());
+  const game = createGameApplication(ui, () => rng.next());
   game.simulationMode = true;
   game.animationFastMode = true;
   game.cleanupManager.delay = async () => !game.state.isDisposed;
@@ -56,9 +55,9 @@ export function createGame({
 
   const candidates = game.startSelection();
   if (roleOverride) {
-    const forced = GENERAL_DEFINITIONS.find((general) => general.id === roleOverride);
+    const forced = CHARACTER_DEFINITIONS.find((character) => character.id === roleOverride);
     if (!forced) throw new Error(`未知角色：${roleOverride}`);
-    if (!candidates.some((general) => general.id === roleOverride)) {
+    if (!candidates.some((character) => character.id === roleOverride)) {
       candidates[0] = forced;
     }
   }
@@ -67,10 +66,10 @@ export function createGame({
   return { game, rng, selectedId, ui, seed: gameSeed, startIndex };
 }
 
-/** 调用 confirmGeneral（不启动自动循环），返回已初始化的对局。 */
+/** 调用 confirmCharacter（不启动自动循环），返回已初始化的对局。 */
 export async function initGame({ seed = 1, roleOverride = null, nodeBudget = DEFAULT_NODE_BUDGET } = {}) {
   const handle = createGame({ seed, roleOverride, nodeBudget });
-  await handle.game.confirmGeneral(handle.selectedId);
+  await handle.game.confirmCharacter(handle.selectedId);
   return handle;
 }
 
@@ -91,7 +90,7 @@ function clonePlain(source) {
 function clonePlayer(player, cardMap) {
   const cloned = Object.assign(Object.create(Player.prototype), {
     ...player,
-    general: player.general,
+    character: player.character,
     hand: player.hand.map((card) => cardMap.get(card) ?? { ...card }),
     equipment: player.equipment ? (cardMap.get(player.equipment) ?? { ...player.equipment }) : null,
     turnFlags: {
@@ -118,7 +117,7 @@ function clonePlayer(player, cardMap) {
 export function cloneGame(game, rngState) {
   const branchRng = TrackedRng.from(rngState);
   const ui = createHeadlessUi();
-  const clone = new Game(ui, () => branchRng.next());
+  const clone = createGameApplication(ui, () => branchRng.next());
   clone.simulationMode = true;
   clone.animationFastMode = true;
   clone.cleanupManager.delay = async () => !clone.state.isDisposed;
@@ -176,7 +175,7 @@ export function cloneGame(game, rngState) {
   clone.state.resolutionSerial = old.resolutionSerial ?? 0;
   clone.syncDeckAliases();
   clone.registerGlobalRules();
-  registerPassiveSkills(clone);
+  clone.passiveTriggerRegistry.registerForPlayers(clone.state.players);
   return clone;
 }
 
@@ -197,7 +196,7 @@ export function stateFingerprint(game) {
     players: state.players.map((player) => ({
       id: player.id,
       seat: player.seatIndex,
-      generalId: player.generalId,
+      characterId: player.characterId,
       team: player.battleTeam,
       hp: player.hp,
       maxHp: player.maxHp,
@@ -266,7 +265,7 @@ export function structuralFingerprint(game) {
     publicPool: (state.publicCardPool ?? []).map((card) => card.definitionId),
     players: state.players.map((player) => ({
       seat: player.seatIndex,
-      generalId: player.generalId,
+      characterId: player.characterId,
       team: player.battleTeam,
       hp: player.hp,
       maxHp: player.maxHp,
@@ -337,9 +336,9 @@ export function classifyState(game, player) {
   const ownTotal = allies.reduce((sum, entry) => sum + entry.hp + entry.shield, 0);
   const enemyTotal = enemies.reduce((sum, entry) => sum + entry.hp + entry.shield, 0);
   const teamGap = ownTotal - enemyTotal;
-  const activeSkill = player.general?.activeSkillIds?.[0] ?? null;
-  const activeCost = player.general?.activeCost ?? 0;
-  const canReachEnemy = enemies.some((enemy) => enemy.alive && DistanceSystem.inAttackRange(game, player, enemy));
+  const activeSkill = player.character?.activeSkillIds?.[0] ?? null;
+  const activeCost = player.character?.activeCost ?? 0;
+  const canReachEnemy = enemies.some((enemy) => enemy.alive && inAttackRange(game, player, enemy));
   return {
     round: state.currentRound,
     hp: player.hp,
@@ -359,7 +358,7 @@ export function classifyState(game, player) {
     leadClass: teamGap >= 2 ? "lead" : teamGap <= -2 ? "lag" : "close",
     teamSize: allies.length,
     enemyCount: enemies.length,
-    generalId: player.generalId
+    characterId: player.characterId
   };
 }
 
@@ -467,7 +466,7 @@ export async function continueTurnFromAction(game, spec) {
   await game.handleDiscardPhase(source, gameId);
   if (!game.isSessionValid(gameId) || game.state.isGameOver) return executed;
   game.state.phase = "turnEnd";
-  await game.eventBus.emit("turnEnd", { type: "turnEnd", player: source });
+  await game.eventDispatcher.emit("turnEnd", { type: "turnEnd", player: source });
   if (!game.isSessionValid(gameId) || game.state.isGameOver) return executed;
   await game.advanceTurn();
   return executed;
@@ -524,4 +523,4 @@ export function installBestOtherFirstAction(game, definitionId) {
   };
 }
 
-export { RuleEngine };
+export { ActionLegality };

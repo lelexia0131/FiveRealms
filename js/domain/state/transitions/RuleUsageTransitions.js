@@ -3,7 +3,7 @@
 拥有玩家回合/技能/被动触发/追踪/游戏标记的 root-aware 原子写操作；不拥有任何具体规则语义。
 
 上游
-Game、Player、cardRegistry、skillRegistry、DyingSystem 的 legacy commit façade。
+match application、Player、application card runtime、application skill runtime、DyingWorkflow 的 commit boundary。
 
 下游
 无。
@@ -15,9 +15,9 @@ Game、Player、cardRegistry、skillRegistry、DyingSystem 的 legacy commit fa�
 不读取 AI、UI、事件或隐藏信息。
 
 架构约束
-不得依赖 Game/EventBus/UI/AI/application/adapters；不得包含 cardId/skillId/statusId 规则分支。
+不得依赖 Game/EventDispatcher/UI/AI/application/adapters；不得包含 cardId/skillId/statusId 规则分支。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260816-legacy-recovery";
+import { bumpStateVersion } from "./StateVersion.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -54,7 +54,7 @@ export function resetTurnFlags(state, player, decidedTurnFlags) {
 提交已决定的 global-turn reactive 字段集合。
 
 调用方
-Game.takeTurn 与 Player legacy façade。
+match application.takeTurn 与 Player boundary。
 
 输入
 state、Player 与已决定 reactive 对象。
@@ -115,7 +115,7 @@ export function resetRoundFlags(state, player, decidedRoundFlags) {
 递增本回合突袭使用次数。
 
 调用方
-cardRegistry assault resolver。
+CardRuntime assault resolver。
 
 输入
 state、Player 与增量。
@@ -177,7 +177,7 @@ export function incrementAttackLimit(state, player, delta) {
 递增本回合调息使用次数。
 
 调用方
-cardRegistry recover resolver。
+CardRuntime recover resolver。
 
 输入
 state、Player 与增量。
@@ -208,7 +208,7 @@ export function incrementRecoverUsed(state, player, delta = 1) {
 写入 momentum 当前值。
 
 调用方
-momentum passive 与 DyingSystem cleanup。
+momentum passive 与 DyingWorkflow cleanup。
 
 输入
 state、Player 与新值。
@@ -661,7 +661,7 @@ export function addTrackingTarget(state, player, targetId) {
 写入 skipActionPhase 标记。
 
 调用方
-seal rule 与 DyingSystem cleanup。
+seal rule 与 DyingWorkflow cleanup。
 
 输入
 state、Player 与布尔值。
@@ -757,7 +757,7 @@ export function setTrackingTurnNumber(state, player, value) {
 写入 killRewardGranted 标记。
 
 调用方
-DyingSystem kill reward workflow。
+DyingWorkflow kill reward workflow。
 
 输入
 state、Player 与布尔值。

@@ -3,7 +3,7 @@
 拥有状态对象的 root-aware 通用 set/remove/clear 原子写操作；不拥有任何具体状态生命周期或规则。
 
 上游
-cardRegistry、skillRegistry、Game 状态 workflow 与直接测试。
+CardRuntime、SkillRuntime、Game 状态 workflow 与直接测试。
 
 下游
 无。
@@ -15,9 +15,9 @@ cardRegistry、skillRegistry、Game 状态 workflow 与直接测试。
 不读取具体状态语义、AI 或隐藏信息。
 
 架构约束
-不得依赖 Game/EventBus/UI/AI/application/adapters；禁止 statusId 具体规则分支。
+不得依赖 Game/EventDispatcher/UI/AI/application/adapters；禁止 statusId 具体规则分支。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260816-legacy-recovery";
+import { bumpStateVersion } from "./StateVersion.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -89,7 +89,7 @@ export function removeStatus(state, player, statusId) {
 清空玩家全部状态对象。
 
 调用方
-DyingSystem kill cleanup 与直接测试。
+DyingWorkflow kill cleanup 与直接测试。
 
 输入
 state 与 Player。

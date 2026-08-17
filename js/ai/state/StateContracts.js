@@ -17,19 +17,18 @@ AiController、ResponseBoundary、测试与搜索调用方。
 架构约束
 createInitialSearchState 只做 SearchState 正式组合入口，不得另存一份投影或概率逻辑。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-legacy-recovery";
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260816-legacy-recovery";
-import { getSkillCost } from "../../domain/rules/skill/SkillRules.js?build=20260816-legacy-recovery";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
+import { getSkillCost } from "../../domain/rules/skill/SkillRules.js?build=20260817-architecture-closure-final";
 import {
   getAttackLimitFromRules,
   getTeamRules,
   getTurnEnergyBreakdownFromRules
-} from "../../domain/rules/team/TeamRules.js?build=20260816-legacy-recovery";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260816-legacy-recovery";
-import { createBeliefState } from "./BeliefState.js?build=20260816-legacy-recovery";
-import { createKnowledgeState } from "./Knowledge.js?build=20260816-legacy-recovery";
-import { createSearchState } from "./SearchState.js?build=20260816-legacy-recovery";
-import { createVisibleState } from "./VisibleState.js?build=20260816-legacy-recovery";
+} from "../../domain/rules/team/TeamRules.js?build=20260817-architecture-closure-final";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260817-architecture-closure-final";
+import { createBeliefState } from "./BeliefState.js?build=20260817-architecture-closure-final";
+import { createKnowledgeState } from "./Knowledge.js?build=20260817-architecture-closure-final";
+import { createSearchState } from "./SearchState.js?build=20260817-architecture-closure-final";
+import { createVisibleState } from "./VisibleState.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -57,8 +56,8 @@ getRoleCardAiValue、getBaseCardAiValue。
 这里只注入既有 Value 结果，不改变价值规则或重复记账。
 */
 function equipmentRoleDelta(player, definitionId) {
-  if (!player?.generalId || !definitionId) return 0;
-  return getRoleCardAiValue(player.generalId, definitionId) - getBaseCardAiValue(definitionId);
+  if (!player?.characterId || !definitionId) return 0;
+  return getRoleCardAiValue(player.characterId, definitionId) - getBaseCardAiValue(definitionId);
 }
 
 /*
@@ -88,7 +87,7 @@ Domain TeamRules、Domain SkillRules.getSkillCost、equipmentRoleDelta。
 */
 function createDerivedPlayersById(state) {
   return Object.fromEntries(state.players.map((player) => {
-    const activeSkillId = player.general.activeSkillIds[0] ?? null;
+    const activeSkillId = player.character.activeSkillIds[0] ?? null;
     const activeSkill = ACTIVE_SKILL_DEFINITIONS[activeSkillId] ?? null;
     const teamRules = getTeamRules({ players:state.players }, player);
     const energyBreakdown = getTurnEnergyBreakdownFromRules(
@@ -105,7 +104,7 @@ function createDerivedPlayersById(state) {
       spyGapTriggered:Boolean(player.turnFlags.spyGapTriggered),
       activeSkillCost:getSkillCost(activeSkill, player, state.players),
       initialEquipmentValue:equipmentDefinitionId
-        ? (CARD_DEFINITIONS[equipmentDefinitionId]?.aiValue ?? 7)
+        ? getBaseCardAiValue(equipmentDefinitionId)
         : 0,
       initialEquipmentRoleDelta:equipmentDefinitionId
         ? equipmentRoleDelta(player, equipmentDefinitionId)

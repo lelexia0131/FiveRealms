@@ -15,7 +15,7 @@ application/trigger RecycleDeviceTrigger 与 tests。
 不读取 AI/UI/hidden hand。
 
 架构约束
-不得依赖 Game/application/adapters/EventBus；不得 await、emit、随机。
+不得依赖 Game/application/adapters/EventDispatcher；不得 await、emit、随机。
 */
 
 /*

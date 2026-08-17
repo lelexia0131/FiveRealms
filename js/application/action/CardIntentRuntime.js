@@ -3,7 +3,7 @@
 唯一拥有 card-specific preparation/revalidation/nested-assault runtime：transfer/leverage/private-selection/peek intent 与 leverage decline fallback；不拥有 generic Action lifecycle、Domain target rule 或 AI policy。
 
 上游
-CardRuntime 与 legacy Game façades。
+CardRuntime 与 ActionWorkflow。
 
 下游
 Application Response/Action、Domain rules 与 narrow hidden-selection/choice collaborators。
@@ -15,10 +15,10 @@ leverageResolutionIds 是本 runtime 的 card-specific application state；Domai
 private intent 只存在于当前调用栈；公开 context 不含 hidden card entity。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime 或 concrete adapters。
 */
 const REQUIRED_DEPENDENCIES = [
-  "getState", "isSessionValid", "presentation", "diagnostics", "responseSystem", "playCard",
+  "getState", "isSessionValid", "presentation", "diagnostics", "responseWorkflow", "playCard",
   "moveEquipmentToHand", "getTransferSources", "getTransferReceivers", "getCardTargets",
   "chooseTransferCombination", "chooseHiddenCards", "choosePlayerZoneCard", "choosePrivatePeekCards",
   "getLeverageFirstTargets", "getAssaultTargetCandidates", "isTransferExecutionAllowed",
@@ -71,7 +71,7 @@ export function createCardIntentRuntime(dependencies) {
   frozen intent/publicContext 或 null。
 
   读取状态
-  state、legacy transfer legality/hidden selection。
+  state、transfer legality/hidden selection。
 
   写入状态
   仅可能清理短期 hidden selection session。
@@ -311,7 +311,7 @@ export function createCardIntentRuntime(dependencies) {
   nested action 与 equipment movement 经 collaborators。
 
   调用函数
-  responseSystem、playCard、moveEquipmentToHand。
+  responseWorkflow、playCard、moveEquipmentToHand。
 
   边界与不变量
   resolutionId 重复只允许一次；死亡/装备离场统一取消。
@@ -414,7 +414,7 @@ export function createCardIntentRuntime(dependencies) {
     }
 
     const { firstTarget, secondTarget, equipmentCard } = intent;
-    const response = await runtime.responseSystem.requestLeverageAssault(firstTarget, secondTarget, {
+    const response = await runtime.responseWorkflow.requestLeverageAssault(firstTarget, secondTarget, {
       source, card, equipment: equipmentCard
     });
     if (!runtime.isSessionValid(gameId) || response.status === "cancelled") return false;
@@ -467,7 +467,7 @@ export function createCardIntentRuntime(dependencies) {
   返回 leverage resolution IDs 的只读快照。
 
   调用方
-  Game compatibility accessor 与 legacy harness。
+  match application adapter accessor 与 harness。
 
   输入
   无。

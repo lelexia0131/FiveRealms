@@ -15,7 +15,7 @@ concrete UI/presentation adapter（当前由 Game composition 桥接）。
 不得要求 Card/Player 实体；只允许公开字段与 ID。
 
 架构约束
-不得依赖 UIManager、DOM、Game runtime、Domain transitions、EventBus 或 concrete adapters。
+不得依赖 UIManager、DOM、Game runtime、Domain transitions、EventDispatcher 或 concrete adapters。
 */
 
 const REQUIRED_METHODS = [

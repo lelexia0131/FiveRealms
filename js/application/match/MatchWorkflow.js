@@ -1,12 +1,12 @@
 /*
 模块职责
-唯一拥有 Application Match setup/victory/lifecycle sequencing：selection setup、general confirmation、initial state preparation、initial dealing、starting actor、match-start continuation 与 victory commit。
+唯一拥有 Application Match setup/victory/lifecycle sequencing：selection setup、character confirmation、initial state preparation、initial dealing、starting actor、match-start continuation 与 victory commit。
 
 上游
-core/Game legacy façade 与 main composition root。
+composition boundary 与 main composition root。
 
 下游
-Domain TeamRules/TurnRules/transitions、Application Turn loop capability、Application Combat/Dying/Judgment façades 与 Ports/Adapters。
+Domain TeamRules/TurnRules/transitions、Application Turn/Combat/Dying/Judgment capabilities 与 Ports/Adapters。
 
 状态边界
 pre-live setup 字段经显式 one-shot collaborator 写入；live Domain 字段只经 transitions；stateVersion 保持 authoritative。
@@ -15,27 +15,27 @@ pre-live setup 字段经显式 one-shot collaborator 写入；live Domain 字段
 不读取 concrete UI/AI/DOM；controllerType 仅作为 participant metadata 用于 Player 构造。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime、Planner 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、Planner 或 concrete adapters。
 */
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
 import {
   getInitialHandCount, getMaxEnergy, getTeamSize, getWinningTeam
-} from "../../domain/rules/team/TeamRules.js?build=20260816-legacy-recovery";
-import { createRoundUsageState, createTurnUsageState } from "../../domain/rules/turn/TurnRules.js?build=20260816-legacy-recovery";
-import { setCurrentPlayerIndex, setGameOver, setMatchPhase, setWinnerTeam } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260816-legacy-recovery";
-import { applyGeneralDefinition } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260816-legacy-recovery";
-import { resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
-import { createGameOverFact, createGameStartFact } from "../../domain/events/MatchEvents.js?build=20260816-legacy-recovery";
+} from "../../domain/rules/team/TeamRules.js?build=20260817-architecture-closure-final";
+import { createRoundUsageState, createTurnUsageState } from "../../domain/rules/turn/TurnRules.js?build=20260817-architecture-closure-final";
+import { setCurrentPlayerIndex, setGameOver, setMatchPhase, setWinnerTeam } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260817-architecture-closure-final";
+import { applyCharacterDefinition } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260817-architecture-closure-final";
+import { resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
+import { createGameOverFact, createGameStartFact } from "../../domain/events/MatchEvents.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "createId", "createPlayer", "assignTeams",
-  "createCandidates", "assignAiGenerals", "emitEvent", "log", "getTeamName",
+  "createCandidates", "assignAiCharacters", "emitEvent", "log", "getTeamName",
   "registerGlobalRules", "registerPassiveSkills", "buildDeck", "syncDeckAliases",
   "getTeamRules", "drawCards", "render", "startTurnLoop", "setRoster", "setMaxEnergy",
-  "setStartingPlayerIndex", "setSelectedGeneralId", "publishFact",
+  "setStartingPlayerIndex", "setSelectedCharacterId", "publishFact",
   "responseCleanup", "cancelPendingInteractions", "showGameOver",
   "markDisposed", "resetActionLocks", "cleanupManagerCleanup",
-  "cardSelectionCleanup", "dyingCleanup", "publicCardPoolCleanup", "eventBusClear",
+  "hiddenCardSelectionCleanup", "dyingCleanup", "publicCardPoolCleanup", "eventDispatcherClear",
   "traceError", "getRandom"
 ];
 
@@ -44,13 +44,13 @@ const REQUIRED_DEPENDENCIES = [
 创建 Application Match Workflow。
 
 调用方
-core/Game legacy façade composition。
+composition root。
 
 输入
 显式注入的 setup/transition/card-zone/match-start/lifecycle collaborators。
 
 输出
-冻结 { startSelection, confirmGeneral, checkVictory, dispose }。
+冻结 { startSelection, confirmCharacter, checkVictory, dispose }。
 
 读取状态
 无。
@@ -59,7 +59,7 @@ core/Game legacy façade composition。
 内部 preLiveSetup 状态；经注入 setup commits 与 Domain transitions。
 
 调用函数
-getTeamSize、getInitialHandCount、getMaxEnergy、getWinningTeam、applyGeneralDefinition、resetTurnFlags、resetRoundFlags、setCurrentPlayerIndex、setWinnerTeam、setGameOver、setMatchPhase。
+getTeamSize、getInitialHandCount、getMaxEnergy、getWinningTeam、applyCharacterDefinition、resetTurnFlags、resetRoundFlags、setCurrentPlayerIndex、setWinnerTeam、setGameOver、setMatchPhase。
 
 边界与不变量
 pre-live roster/maxEnergy/startingPlayerIndex 写入不 bump stateVersion；live 开始后拒绝再次 setup commit。
@@ -82,7 +82,7 @@ export function createMatchWorkflow(dependencies) {
   校验并执行一个 pre-live setup 写入。
 
   调用方
-  startSelection 与 confirmGeneral。
+  startSelection 与 confirmCharacter。
 
   输入
   写入阶段 key 与 write 函数。
@@ -116,7 +116,7 @@ export function createMatchWorkflow(dependencies) {
   生成阵营、玩家花名册与四名候选角色。
 
   调用方
-  Game.startSelection legacy façade。
+  match application.startSelection boundary。
 
   输入
   无。
@@ -162,10 +162,10 @@ export function createMatchWorkflow(dependencies) {
   确认真选角色、分配电脑角色、准备牌堆与初始手牌、选择首发并启动回合循环。
 
   调用方
-  Game.confirmGeneral legacy façade。
+  match application.confirmCharacter boundary。
 
   输入
-  candidate generalId。
+  candidate characterId。
 
   输出
   true；session 失效返回 false；无效选择抛错。
@@ -177,26 +177,26 @@ export function createMatchWorkflow(dependencies) {
   pre-live startingPlayerIndex 经 one-shot commit；其余 Domain 写入经 transitions。
 
   调用函数
-  applyGeneralDefinition、registerGlobalRules、registerPassiveSkills、buildDeck、resetTurnFlags、resetRoundFlags、drawCards、setCurrentPlayerIndex、emitEvent、startTurnLoop。
+  applyCharacterDefinition、registerGlobalRules、registerPassiveSkills、buildDeck、resetTurnFlags、resetRoundFlags、drawCards、setCurrentPlayerIndex、emitEvent、startTurnLoop。
 
   边界与不变量
-  初始事件/抽牌顺序与旧 confirmGeneral 完全一致；每个 await 保留 session 检查。
+  初始事件/抽牌顺序与旧 confirmCharacter 完全一致；每个 await 保留 session 检查。
   */
-  async function confirmGeneral(generalId) {
+  async function confirmCharacter(characterId) {
     const state = runtime.getState();
     const gameId = state.gameId;
-    const selected = candidates.find((general) => general.id === generalId);
-    if (!selected || state.selectedGeneralId) throw new Error("角色选择无效或已确认");
+    const selected = candidates.find((character) => character.id === characterId);
+    if (!selected || state.selectedCharacterId) throw new Error("角色选择无效或已确认");
     const human = state.players[0];
-    applyGeneralDefinition(state, human, selected);
-    human.general = selected;
-    runtime.setSelectedGeneralId(selected.id);
+    applyCharacterDefinition(state, human, selected);
+    human.character = selected;
+    runtime.setSelectedCharacterId(selected.id);
     const aiPlayers = state.players.slice(1);
     const smallTeamId = ["dawn", "dusk"].find((team) => getTeamSize({ players: state.players }, team) === RULESET_DEFINITION.smallTeamSize);
-    const assigned = runtime.assignAiGenerals(aiPlayers, selected.id, smallTeamId);
+    const assigned = runtime.assignAiCharacters(aiPlayers, selected.id, smallTeamId);
     aiPlayers.forEach((player, index) => {
-      applyGeneralDefinition(state, player, assigned[index]);
-      player.general = assigned[index];
+      applyCharacterDefinition(state, player, assigned[index]);
+      player.character = assigned[index];
     });
 
     runtime.registerGlobalRules();
@@ -215,13 +215,13 @@ export function createMatchWorkflow(dependencies) {
     });
     setCurrentPlayerIndex(state, state.startingPlayerIndex);
     liveAuthoritativeMatch = true;
-    await runtime.emitEvent("generalSelected", { type: "generalSelected", player: human, general: selected });
+    await runtime.emitEvent("characterSelected", { type: "characterSelected", player: human, character: selected });
     if (!runtime.isSessionValid(gameId)) return false;
     await runtime.publishFact("gameStart", createGameStartFact({
       gameId,
       stateVersion: state.stateVersion,
       humanPlayerId: human.id,
-      selectedGeneralId: selected.id
+      selectedCharacterId: selected.id
     }));
     if (!runtime.isSessionValid(gameId)) return false;
 
@@ -242,7 +242,7 @@ export function createMatchWorkflow(dependencies) {
   查询 Domain winner rule 并提交胜利 workflow。
 
   调用方
-  Game.checkVictory legacy façade 与 Application Combat death continuation。
+  match application.checkVictory boundary 与 Application Combat death continuation。
 
   输入
   无。
@@ -290,7 +290,7 @@ export function createMatchWorkflow(dependencies) {
   终止本局并清理延迟、响应、事件、UI Promise 与 workflow owner 队列。
 
   调用方
-  Game.dispose legacy façade。
+  match application.dispose boundary。
 
   输入
   无。
@@ -302,13 +302,13 @@ export function createMatchWorkflow(dependencies) {
   state.isDisposed。
 
   写入状态
-  legacy isDisposed/action lock projections 与各 service cleanup。
+  isDisposed/action lock projections 与各 service cleanup。
 
   调用函数
   markDisposed、resetActionLocks、cleanupManagerCleanup、responseCleanup、cardSelectionCleanup、dyingCleanup、publicCardPoolCleanup、eventBusClear、cancelPendingInteractions、traceError。
 
   边界与不变量
-  重复 dispose 直接返回；EventBus concrete cleanup 仍属 FR-ARCH-11，这里只经 collaborator。
+  重复 dispose 直接返回；EventDispatcher concrete cleanup 仍属 FR-ARCH-11，这里只经 collaborator。
   */
   function dispose() {
     const state = runtime.getState();
@@ -317,10 +317,10 @@ export function createMatchWorkflow(dependencies) {
     runtime.resetActionLocks();
     runtime.cleanupManagerCleanup();
     runtime.responseCleanup();
-    runtime.cardSelectionCleanup();
+    runtime.hiddenCardSelectionCleanup();
     runtime.dyingCleanup();
     runtime.publicCardPoolCleanup();
-    runtime.eventBusClear();
+    runtime.eventDispatcherClear();
     runtime.cancelPendingInteractions();
     runtime.traceError("Game", `清理对局 ${state.gameId}`);
   }
@@ -383,7 +383,7 @@ export function createMatchWorkflow(dependencies) {
     返回当前候选角色数组。
 
     调用方
-    legacy observers。
+    observers。
 
     输入
     无。
@@ -401,11 +401,11 @@ export function createMatchWorkflow(dependencies) {
     Array.slice、Object.freeze。
 
     边界与不变量
-    修改返回数组不影响 confirmGeneral lookup。
+    修改返回数组不影响 confirmCharacter lookup。
     */
     get candidates() { return Object.freeze(candidates.slice()); },
     startSelection,
-    confirmGeneral,
+    confirmCharacter,
     checkVictory,
     dispose
   });

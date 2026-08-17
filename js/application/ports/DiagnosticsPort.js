@@ -15,7 +15,7 @@ concrete diagnostics adapter（当前由 Game composition 桥接）。
 只允许 ID、数值与 semantic type；不暴露 Player.statistics 对象或 AI memory。
 
 架构约束
-不得依赖 concrete Diagnostics adapter、Game runtime、Domain transitions、EventBus、UI 或 AI。
+不得依赖 concrete Diagnostics adapter、Game runtime、Domain transitions、EventDispatcher、UI 或 AI。
 */
 
 const REQUIRED_METHODS = [

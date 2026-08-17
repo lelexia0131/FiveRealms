@@ -1,6 +1,6 @@
 /*
 模块职责
-为单局 Game 组合 human/AI peer Choice adapters，并按 participant metadata 路由到对应 port；这是窄 composition bridge，不是 service locator。
+为单局应用组合 human/AI peer Choice adapters，并按 participant metadata 路由到对应 port；这是窄 composition bridge，不是 service locator。
 
 上游
 Game 构造函数。
@@ -12,17 +12,17 @@ application/choice、application/ports 与 adapters/ui、adapters/ai。
 只读显式注入的 state players；不写状态。
 
 信息边界
-不在 ChoiceRequest 中放入实体；adapter 内部 legacy rebind 由本模块提供窄闭包。
+不在 ChoiceRequest 中放入实体；adapter 的实体重绑由本模块提供窄闭包。
 
 架构约束
-不接收或回读 Game；所有 concrete capability 由 composition root 显式注入。FR-ARCH-15 删除条件：Game 不再是 composition owner，main.js 接管本文件全部 wiring 时删除。
+不接收或回读应用对象；所有 concrete capability 由 composition root 显式注入。
 */
-import { createChoiceCoordinator } from "../application/choice/ChoiceCoordinator.js?build=20260816-legacy-recovery";
-import { createChoicePort, createChoiceResult } from "../application/ports/ChoicePort.js?build=20260816-legacy-recovery";
-import { createAiChoiceAdapter } from "../adapters/ai/AiChoiceAdapter.js?build=20260816-legacy-recovery";
-import { createAiResponseTimingDecorator } from "../application/response/AiResponseTimingDecorator.js?build=20260816-legacy-recovery";
-import { createUiChoiceAdapter } from "../adapters/ui/UiChoiceAdapter.js?build=20260816-legacy-recovery";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260816-legacy-recovery";
+import { createChoiceCoordinator } from "../application/choice/ChoiceCoordinator.js?build=20260817-architecture-closure-final";
+import { createChoicePort, createChoiceResult } from "../application/ports/ChoicePort.js?build=20260817-architecture-closure-final";
+import { createAiChoiceAdapter } from "../adapters/ai/AiChoiceAdapter.js?build=20260817-architecture-closure-final";
+import { createAiResponseTimingDecorator } from "../application/response/AiResponseTimingDecorator.js?build=20260817-architecture-closure-final";
+import { createUiChoiceAdapter } from "../adapters/ui/UiChoiceAdapter.js?build=20260817-architecture-closure-final";
+import { getAiDelay } from "../utils/aiTiming.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -49,7 +49,7 @@ createUiChoiceAdapter、createAiChoiceAdapter、createChoicePort、createChoiceC
 边界与不变量
 外部注入 port 优先；否则按 controllerType 路由；未知 actor 返回 cancelled。
 */
-export function createGameChoiceBoundary(dependencies, injectedPort = null) {
+export function createChoiceBoundary(dependencies, injectedPort = null) {
   const {
     state,
     ui,
@@ -70,11 +70,11 @@ export function createGameChoiceBoundary(dependencies, injectedPort = null) {
     requestPublicCard: (player, cards) => ui.requestPublicCard?.(player, cards),
     requestDiscard: (player, count, prompt) => ui.requestDiscard(player, count, prompt),
     requestTarget: (players, prompt, meta) => ui.requestTarget(players, prompt, meta),
-    getLegacyContext: (requestId) => choiceContexts.get(requestId),
+    getChoiceContext: (requestId) => choiceContexts.get(requestId),
     isSessionValid
   }));
   const rawAiPort = createChoicePort(createAiChoiceAdapter({
-    getLegacyContext: (requestId) => choiceContexts.get(requestId),
+    getChoiceContext: (requestId) => choiceContexts.get(requestId),
     shouldRespond,
     choosePublicCard,
     chooseDiscards,

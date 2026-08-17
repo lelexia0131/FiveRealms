@@ -3,7 +3,7 @@
 定义 Application 的 minimal Random boundary：只暴露 next()；Domain 不得依赖本 port。
 
 上游
-Game composition root 与 legacy random consumers。
+match application composition root 与 random consumers。
 
 下游
 concrete random source（当前为 Game constructor 注入的函数）。

@@ -17,8 +17,8 @@ Economics 的既有 END cap 与 SealTiming。
 架构约束
 不得执行模拟、组合最终价值、决定 beam 或拥有 Seal 领域概率模型。
 */
-import { END_OPPORTUNITY_CAP } from "../value/Economics.js?build=20260816-legacy-recovery";
-import { sealDelayCost, sealEarlyUsePenalty } from "./SealTiming.js?build=20260816-legacy-recovery";
+import { END_OPPORTUNITY_CAP } from "../value/Economics.js?build=20260817-architecture-closure-final";
+import { sealDelayCost, sealEarlyUsePenalty } from "./SealTiming.js?build=20260817-architecture-closure-final";
 
 export class SiblingTransitionTerms {
   /*

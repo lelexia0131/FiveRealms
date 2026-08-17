@@ -3,10 +3,10 @@
 唯一拥有 generic Application Action orchestration：卡牌使用 pipeline、主动技能使用 pipeline、human inbound commands、action locks、resolution identity 与 failure cleanup；不拥有 cardId-specific/skillId-specific rule semantics。
 
 上游
-core/Game legacy façade、Application Turn AI orchestration 与 main/UI command boundary。
+composition boundary、Application Turn AI orchestration 与 main/UI command boundary。
 
 下游
-Domain transitions、Application Response/Combat、legacy legality/card-skill collaborators 与 Ports/Adapters。
+Domain transitions、Application Response/Combat、legality/card-skill collaborators 与 Ports/Adapters。
 
 状态边界
 actionLocked/interactionLocked/pendingHumanPlayEnd/resolutionOwners/resolutionSerial 由本 workflow 唯一拥有；game.state.resolutionSerial 仅单向 projection。
@@ -15,15 +15,15 @@ actionLocked/interactionLocked/pendingHumanPlayEnd/resolutionOwners/resolutionSe
 不读取 concrete UI/AI/DOM；不直接写 statistics/aiMemory。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、Planner、SearchState、cardRegistry/skillRegistry 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、Planner、SearchState、CardRuntime/SkillRuntime 或 concrete adapters。
 */
-import { createTargetChoiceRequest } from "../choice/TargetChoiceRequest.js?build=20260816-legacy-recovery";
-import { getCurrentActor } from "../../domain/state/queries/MatchQueries.js?build=20260816-legacy-recovery";
-import { recordActiveSkillUse } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
+import { createTargetChoiceRequest } from "../choice/TargetChoiceRequest.js?build=20260817-architecture-closure-final";
+import { getCurrentActor } from "../../domain/state/queries/MatchQueries.js?build=20260817-architecture-closure-final";
+import { recordActiveSkillUse } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics",
-  "responseSystem", "cardRuntime", "canPlayCard", "getCardTargets", "moveHandToResolving",
+  "responseWorkflow", "cardRuntime", "canPlayCard", "getCardTargets", "moveHandToResolving",
   "finishResolvingToDiscard", "isCardCommittedToDiscard", "isCardCommittedToEquipment",
   "cleanupFailedResolution", "clearSelection", "getActionDisplayTargets",
   "getActionTargetLabel", "skillRuntime", "getSkillTargets", "getHumanPlayer", "choiceCoordinator",
@@ -36,7 +36,7 @@ const REQUIRED_DEPENDENCIES = [
 创建 Application Action Workflow。
 
 调用方
-core/Game legacy façade composition。
+composition root。
 
 输入
 显式注入的 legality/preparation/zone/response/skill/presentation/participant collaborators。
@@ -71,7 +71,7 @@ export function createActionWorkflow(dependencies) {
 
   /*
   功能
-  生成递增的 resolutionId 并同步 legacy game.state.resolutionSerial projection。
+  生成递增的 resolutionId 并同步 game.state.resolutionSerial projection。
 
   调用方
   playCard。
@@ -86,7 +86,7 @@ export function createActionWorkflow(dependencies) {
   actionRuntime.resolutionSerial。
 
   写入状态
-  actionRuntime.resolutionSerial 与 legacy projection。
+  actionRuntime.resolutionSerial 与 projection。
 
   调用函数
   setResolutionSerialProjection。
@@ -105,7 +105,7 @@ export function createActionWorkflow(dependencies) {
   设置 action lock。
 
   调用方
-  Game temporary reset collaborator 与 tests。
+  composition lifecycle reset 与 tests。
 
   输入
   布尔值。
@@ -134,7 +134,7 @@ export function createActionWorkflow(dependencies) {
   设置 interaction lock。
 
   调用方
-  Game temporary reset collaborator 与 tests。
+  composition lifecycle reset 与 tests。
 
   输入
   布尔值。
@@ -163,7 +163,7 @@ export function createActionWorkflow(dependencies) {
   设置 pendingHumanPlayEnd 标记。
 
   调用方
-  Game temporary reset collaborator 与 tests。
+  composition lifecycle reset 与 tests。
 
   输入
   布尔值。
@@ -223,7 +223,7 @@ export function createActionWorkflow(dependencies) {
   返回只读 action runtime snapshot。
 
   调用方
-  Game compatibility accessors 与 tests。
+  match application adapter accessors 与 tests。
 
   输入
   无。
@@ -374,7 +374,7 @@ export function createActionWorkflow(dependencies) {
   返回 resolution owners 的只读快照 Map。
 
   调用方
-  Game compatibility accessors 与 legacy test harness。
+  match application adapter accessors 与 test harness。
 
   输入
   无。
@@ -403,7 +403,7 @@ export function createActionWorkflow(dependencies) {
   返回 resolution owners 数量。
 
   调用方
-  legacy tests。
+  tests。
 
   输入
   无。
@@ -432,7 +432,7 @@ export function createActionWorkflow(dependencies) {
   执行通用卡牌使用 workflow。
 
   调用方
-  AI play phase、human command 与 legacy tests。
+  AI play phase、human command 与 tests。
 
   输入
   source、card、requestedTargets、selection 与 options。
@@ -441,13 +441,13 @@ export function createActionWorkflow(dependencies) {
   Promise<是否实际开始结算>。
 
   读取状态
-  Game state、legacy legality/preparation/card-zone collaborators 与 session。
+  match application state、legality/preparation/card-zone collaborators 与 session。
 
   写入状态
-  卡牌经 zone collaborators；card-specific resolution 经 legacy resolver；generic locks/owners 经 actionRuntime。
+  卡牌经 zone collaborators；card-specific resolution 经 resolver；generic locks/owners 经 actionRuntime。
 
   调用函数
-  canPlayCard、canUseForcedAssault、getCardTargets、prepareTransferIntent、prepareLeverageIntent、preparePrivateCardSelectionIntent、moveHandToResolving、emitEvent、responseSystem、resolveCardEffect、finishResolvingToDiscard、isCardCommittedToDiscard、isCardCommittedToEquipment、cleanupFailedResolution、diagnostics.recordCardPlayed。
+  canPlayCard、canUseForcedAssault、getCardTargets、prepareTransferIntent、prepareLeverageIntent、preparePrivateCardSelectionIntent、moveHandToResolving、emitEvent、responseWorkflow、resolveCardEffect、finishResolvingToDiscard、isCardCommittedToDiscard、isCardCommittedToEquipment、cleanupFailedResolution、diagnostics.recordCardPlayed。
 
   边界与不变量
   借势嵌套锁豁免、counter/cancel/destination/failure cleanup 与旧 playCard 完全一致。
@@ -505,7 +505,7 @@ export function createActionWorkflow(dependencies) {
       targets = resolveEvent.targets;
       cancelledBeforeResolve ||= resolveEvent.cancelled;
       const counterResult = !cancelledBeforeResolve && card.counterScope !== "target"
-        ? await runtime.responseSystem.askForCounter(source, card, targets, {
+        ? await runtime.responseWorkflow.askForCounter(source, card, targets, {
           publicTransferContext: preparedTransfer?.publicContext ?? null,
           publicSelectionContext: preparedPrivateSelection?.publicContext ?? null,
           relatedTargets: preparedTransfer
@@ -591,7 +591,7 @@ export function createActionWorkflow(dependencies) {
   执行通用主动技能使用 workflow。
 
   调用方
-  AI play phase、human command 与 legacy tests。
+  AI play phase、human command 与 tests。
 
   输入
   source、skillId 与 targets。
@@ -600,16 +600,16 @@ export function createActionWorkflow(dependencies) {
   Promise<boolean>。
 
   读取状态
-  Game state、legacy skill runtime 与 session。
+  match application state、skill runtime 与 session。
 
   写入状态
-  active skill usage 经 RuleUsageTransition；资源经 legacy skill execute。
+  active skill usage 经 RuleUsageTransition；资源经 skill execute。
 
   调用函数
   recordActiveSkillUse、skillRuntime、getSkillTargets。
 
   边界与不变量
-  技能规则由 legacy skill runtime 决定，transition 只提交；finally 顺序与旧 useActiveSkill 一致。
+  技能规则由 skill runtime 决定，transition 只提交；finally 顺序与旧 useActiveSkill 一致。
   */
   async function useActiveSkill(source, skillId, targets = []) {
     const state = runtime.getState();
@@ -667,7 +667,7 @@ export function createActionWorkflow(dependencies) {
   Promise<boolean>。
 
   读取状态
-  human hand、current actor、phase、locks 与 legacy legality。
+  human hand、current actor、phase、locks 与 legality。
 
   写入状态
   interactionLocked；真实执行经 playCard。
@@ -748,7 +748,7 @@ export function createActionWorkflow(dependencies) {
   Promise<boolean>。
 
   读取状态
-  human active skill、current actor、phase、locks 与 legacy skill runtime。
+  human active skill、current actor、phase、locks 与 skill runtime。
 
   写入状态
   interactionLocked；真实执行经 useActiveSkill。

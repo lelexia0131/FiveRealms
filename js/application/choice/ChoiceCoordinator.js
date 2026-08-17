@@ -3,7 +3,7 @@
 最小 Choice 协调器：把已构造的 ChoiceRequest 交给注入的 ChoicePort，并归一化结果；不拥有游戏规则、routing 或 workflow。
 
 上游
-ResponseSystem 与 future application workflow。
+Application response 与 action workflows。
 
 下游
 application/ports/ChoicePort。
@@ -15,16 +15,16 @@ application/ports/ChoicePort。
 只处理 data-only request/result。
 
 架构约束
-不得依赖 concrete UI/AI/Audio/Diagnostics、Game runtime、EventBus 或 adapters。
+不得依赖 concrete UI/AI/Audio/Diagnostics、Game runtime、EventDispatcher 或 adapters。
 */
-import { normalizeChoiceResult } from "../ports/ChoicePort.js?build=20260816-legacy-recovery";
+import { normalizeChoiceResult } from "../ports/ChoicePort.js?build=20260817-architecture-closure-final";
 
 /*
 功能
 创建最小 ChoiceCoordinator。
 
 调用方
-composition root 与 legacy ResponseSystem。
+composition root 与 ResponseWorkflow。
 
 输入
 已注入的 ChoicePort。
@@ -42,7 +42,7 @@ composition root 与 legacy ResponseSystem。
 normalizeChoiceResult。
 
 边界与不变量
-不决定 legality；不修改 rule；adapter 返回 legacy shape 时只做 canonical mapping。
+不决定 legality；不修改 rule；adapter 返回 shape 时只做 canonical mapping。
 */
 export function createChoiceCoordinator(choicePort) {
   if (!choicePort || typeof choicePort.request !== "function") {
@@ -54,7 +54,7 @@ export function createChoiceCoordinator(choicePort) {
     请求已注入 ChoicePort 并返回 canonical ChoiceResult。
 
     调用方
-    ResponseSystem 与 future application workflow。
+    Application response 与 action workflows。
 
     输入
     data-only ChoiceRequest。

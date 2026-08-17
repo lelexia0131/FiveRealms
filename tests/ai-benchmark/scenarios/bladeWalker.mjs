@@ -10,11 +10,11 @@ import {
 } from "../evaluators/scenarioDsl.mjs";
 
 const BASE = [
-  { id:"a", team:"dawn", general:"blade-walker" },
-  { id:"b", team:"dusk", general:"oath-warden" },
-  { id:"c", team:"dusk", general:"fate-gambler" },
-  { id:"d", team:"dawn", general:"spirit-medic" },
-  { id:"e", team:"dusk", general:"ember-magus" }
+  { id:"a", team:"dawn", character:"blade-walker" },
+  { id:"b", team:"dusk", character:"oath-warden" },
+  { id:"c", team:"dusk", character:"fate-gambler" },
+  { id:"d", team:"dawn", character:"spirit-medic" },
+  { id:"e", team:"dusk", character:"ember-magus" }
 ];
 
 function board(actorOverrides = {}, others = {}, seed = 81000) {
@@ -331,7 +331,7 @@ registerScenario({
       turnFlags:{ momentum:1, categoriesUsed:new Set(["basic"]), attackUsed:1, attackLimit:2 }
     }, {
       b:{ hp:2 },
-      c:{ general:"oath-warden", hp:2, hand:[guardianCard] },
+      c:{ character:"oath-warden", hp:2, hand:[guardianCard] },
       e:{ hp:4 }
     });
   },

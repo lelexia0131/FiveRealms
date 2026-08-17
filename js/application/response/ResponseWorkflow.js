@@ -3,10 +3,10 @@
 拥有 Application Response Workflow：response window、responder iteration、block/counter/nested-chain/status-counter、dying-rescue response window、forced assault window、request lifecycle、cancellation、timeout 输入、payment orchestration 与 result normalization。
 
 上游
-core/ResponseSystem legacy façade 与 Game/cardRegistry/skillRegistry/DyingSystem response workflow consumers。
+Application action、combat、dying 与 composition command consumers。
 
 下游
-Domain ResponseRules、Choice application modules、ResponsePresentation 与注入的 legacy compatibility collaborators。
+Domain ResponseRules、Choice application modules、ResponsePresentation 与注入的 adapter collaborators。
 
 状态边界
 不直接写 Domain state；真实 commit 只经注入 payment callback（最终 ZoneTransitions）。
@@ -21,22 +21,22 @@ import {
   getCounterResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId,
   getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage,
   isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible
-} from "../../domain/rules/response/ResponseRules.js?build=20260816-legacy-recovery";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-legacy-recovery";
-import { createResponseChoiceRequest } from "../choice/ResponseChoiceRequest.js?build=20260816-legacy-recovery";
-import { shouldForceAiRescueHuman, shouldForceAiSelfRescue, shouldPreferExplicitSelection, shouldRejectLeverageWithoutCards, shouldShowResponseWindowWithoutCards } from "./ParticipantPolicy.js?build=20260816-legacy-recovery";
-import { buildResponsePresentation, publicPlayerContext } from "./ResponsePresentation.js?build=20260816-legacy-recovery";
-import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } from "./ResponseResult.js?build=20260816-legacy-recovery";
+} from "../../domain/rules/response/ResponseRules.js?build=20260817-architecture-closure-final";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260817-architecture-closure-final";
+import { createResponseChoiceRequest } from "../choice/ResponseChoiceRequest.js?build=20260817-architecture-closure-final";
+import { shouldForceAiRescueHuman, shouldForceAiSelfRescue, shouldPreferExplicitSelection, shouldRejectLeverageWithoutCards, shouldShowResponseWindowWithoutCards } from "./ParticipantPolicy.js?build=20260817-architecture-closure-final";
+import { buildResponsePresentation, publicPlayerContext } from "./ResponsePresentation.js?build=20260817-architecture-closure-final";
+import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } from "./ResponseResult.js?build=20260817-architecture-closure-final";
 
 /*
 功能
 创建 Application Response Workflow。
 
 调用方
-core/ResponseSystem legacy façade。
+composition root。
 
 输入
-显式注入的 choice、presentation、session、payment 与 legacy rule facade collaborators。
+显式注入的 choice、presentation、session、payment 与 rule boundary collaborators。
 
 输出
 冻结 response workflow API。
@@ -161,7 +161,7 @@ export function createResponseWorkflow(dependencies) {
   getResponseCardDefinitionId、isResponderEligible、hasSufficientResponseCards、waitForDecision、finishRequest、payCardsFromHandAtomically。
 
   边界与不变量
-  responseTimeoutMs 仍属 legacy runtime policy；响应类型映射与资格由 Domain Rule 决定。
+  responseTimeoutMs 仍属 runtime policy；响应类型映射与资格由 Domain Rule 决定。
   */
   async function requestCardResponse(responder, type, context, requiredCount = 1) {
     const gameId = runtime.getState().gameId;
@@ -474,7 +474,7 @@ export function createResponseWorkflow(dependencies) {
   请求濒死救援响应。
 
   调用方
-  DyingSystem。
+  DyingWorkflow。
 
   输入
   rescuer、target 与可选 recover card。
@@ -685,7 +685,7 @@ export function createResponseWorkflow(dependencies) {
   执行技能响应窗口并返回 workflow result。
 
   调用方
-  skillRegistry 护援入口。
+  SkillRuntime 护援入口。
 
   输入
   responder、skillId、responseName 与 context。
@@ -703,7 +703,7 @@ export function createResponseWorkflow(dependencies) {
   buildResponsePresentation、waitForDecision、finishRequest。
 
   边界与不变量
-  skill 效果仍由 skillRegistry 执行。
+  skill 效果仍由 SkillRuntime 执行。
   */
   async function requestSkillResponse(responder, skillId, responseName, context) {
     const gameId = runtime.getState().gameId;

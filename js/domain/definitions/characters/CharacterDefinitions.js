@@ -3,7 +3,7 @@
 唯一拥有 FiveRealms 八名角色的纯静态领域定义；不含 portrait、AI profile、展示标签或运行时 Player 状态。
 
 上游
-generalConfig legacy façade 与未来 domain/rules、application/match 消费者。
+Domain character/skill rules、Application match、AI 与 presentation consumers。
 
 下游
 无。

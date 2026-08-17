@@ -3,10 +3,10 @@
 唯一拥有主动技能 effect execution sequencing：cost commit、card/status/resource movement orchestration 与 skill presentation；不拥有 canUse/target/cost pure rule 或 generic Action lifecycle。
 
 上游
-generals/skillRegistry legacy façade 与 Application ActionWorkflow。
+application skill runtime boundary 与 Application ActionWorkflow。
 
 下游
-Application Combat/Turn workflows、Domain transitions 与 narrow legacy collaborators。
+Application Combat/Turn workflows、Domain transitions 与 narrow collaborators。
 
 状态边界
 Domain mutation 经 transitions；随机与移动经注入 collaborator。
@@ -15,13 +15,13 @@ Domain mutation 经 transitions；随机与移动经注入 collaborator。
 不读取 UI/AI/Planner 或 hidden hand；只使用 target entity 执行。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime、RuleEngine 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、ActionLegality 或 concrete adapters。
 */
-import { changeEnergy, changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260816-legacy-recovery";
-import { incrementAttackLimit } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
-import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-legacy-recovery";
-import { randomChoice } from "../../utils/helpers.js?build=20260816-legacy-recovery";
-import { decideSkillEffect } from "../../domain/rules/skill/SkillRules.js?build=20260816-legacy-recovery";
+import { changeEnergy, changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260817-architecture-closure-final";
+import { incrementAttackLimit } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
+import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260817-architecture-closure-final";
+import { randomChoice } from "../../utils/helpers.js?build=20260817-architecture-closure-final";
+import { decideSkillEffect } from "../../domain/rules/skill/SkillRules.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "heal", "damage", "drawCards",
@@ -34,7 +34,7 @@ const REQUIRED_DEPENDENCIES = [
 创建主动技能 effect runtime。
 
 调用方
-Game temporary composition root。
+composition root。
 
 输入
 显式注入的 combat/zone/presentation/random collaborators。
@@ -363,7 +363,7 @@ runtime/card/skill facts。
   执行指定主动技能效果。
 
   调用方
-  skillRegistry legacy façade。
+  application skill runtime boundary。
 
   输入
   skill、source、targets 与 context。

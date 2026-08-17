@@ -1,22 +1,41 @@
-import { DistanceSystem } from "./DistanceSystem.js?build=20260816-legacy-recovery";
-import { hasStatus as hasStatusFromRule, nextLightningReceiverId } from "../domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
-import { getSkillTargetIds } from "../domain/rules/skill/SkillRules.js?build=20260816-legacy-recovery";
-import { createAttackUsage, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn } from "../domain/rules/turn/TurnRules.js?build=20260816-legacy-recovery";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260816-legacy-recovery";
+/*
+模块职责
+把真实运行时实体投影为 Domain 规则事实，并提供动作合法性与确定性距离的 Application 查询入口。
+
+上游
+动作工作流、UI intent adapter 与真实执行边界。
+
+下游
+Domain Card/Skill/Status/Turn/Distance rules 与 definitions。
+
+状态边界
+只读真实 match state；不写玩家、牌区、回合或效果状态。
+
+信息边界
+只在真实执行边界读取实体手牌；AI 概率世界由 ai/state 单独拥有。
+
+架构约束
+不得复制领域规则、实现效果结算或枚举 AI 概率分支。
+*/
+import { getBaseDistance as getBaseDistanceFromRule, getDistance as getDistanceFromRule } from "../../domain/rules/distance/DistanceRules.js?build=20260817-architecture-closure-final";
+import { hasStatus as hasStatusFromRule, nextLightningReceiverId } from "../../domain/rules/status/StatusRules.js?build=20260817-architecture-closure-final";
+import { getSkillTargetIds } from "../../domain/rules/skill/SkillRules.js?build=20260817-architecture-closure-final";
+import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
 import {
   canActuallyUseAssault as decideAssaultLegality, canPlayCard as decideCardLegality,
   findPlayerFact, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds,
   getTransferReceiverIds, getTransferSourceIds
-} from "../domain/rules/card/CardRules.js?build=20260816-legacy-recovery";
+} from "../../domain/rules/card/CardRules.js?build=20260817-architecture-closure-final";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
-export class RuleEngine {
+export class ActionLegality {
   /*
   功能
   把真实或 AI filtered players 投影为 Domain Card Rule canonical facts。
 
   调用方
-  RuleEngine card/skill adapters。
+  ActionLegality card/skill adapters。
 
   输入
   game。
@@ -65,7 +84,32 @@ export class RuleEngine {
     }));
   }
 
-  static isPlayerInGame(game, player) {
+  /*
+  功能
+  判断 isPlayerInMatch 对应的 ActionLegality 条件。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
+  static isPlayerInMatch(game, player) {
     return Boolean(player?.alive && game?.state?.players?.some((entry) => entry === player && entry.alive));
   }
 
@@ -93,7 +137,7 @@ export class RuleEngine {
   hasStatusFromRule。
 
   边界与不变量
-  legacy dual-schema 仅作 adapter。
+  dual-schema 仅作 adapter。
   */
   static hasStatus(player, statusId) {
     if (!player || !statusId) return false;
@@ -125,7 +169,7 @@ export class RuleEngine {
   nextLightningReceiverId。
 
   边界与不变量
-  legacy 投影只在本 facade。
+  投影只在本 boundary。
   */
   static nextLightningReceiver(players, holder) {
     if (!holder?.alive || !Array.isArray(players) || !players.length) return null;
@@ -146,7 +190,7 @@ export class RuleEngine {
   返回借势第二目标候选。
 
   调用方
-  RuleEngine card adapter 与 tests。
+  ActionLegality card adapter 与 tests。
 
   输入
   game 与 source。
@@ -167,7 +211,7 @@ export class RuleEngine {
   不检查阵营、手牌或突袭次数。
   */
   static getAssaultTargetCandidates(game, source) {
-    if (!this.isPlayerInGame(game, source)) return [];
+    if (!this.isPlayerInMatch(game, source)) return [];
     const players = this.getCardRulePlayers(game, { includeHand:false });
     const sourceFact = findPlayerFact(players, source.id);
     const ids = getAssaultTargetIds(players, sourceFact);
@@ -175,12 +219,62 @@ export class RuleEngine {
   }
 
   /** 普通突袭的实时合法目标列表：兼容旧调用，仍包含距离、阵营、装备、技能和状态规则，不读取手牌或次数。 */
+  /*
+  功能
+  查询并返回 getLegalAssaultTargets 对应的 ActionLegality 结果。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   static getLegalAssaultTargets(game, source) {
-    if (!this.isPlayerInGame(game, source)) return [];
+    if (!this.isPlayerInMatch(game, source)) return [];
     return this.getCardTargets(game, source, CARD_DEFINITIONS.assault);
   }
 
   /** 借势选择阶段的兼容别名：第二目标只受距离限制。 */
+  /*
+  功能
+  查询并返回 getLeverageAssaultTargets 对应的 ActionLegality 结果。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   static getLeverageAssaultTargets(game, source) {
     return this.getAssaultTargetCandidates(game, source);
   }
@@ -199,7 +293,7 @@ export class RuleEngine {
   冻结的 { used, limit } 整数。
 
   读取状态
-  source.turnFlags 或 legacy flat usage facts。
+  source.turnFlags 或 flat usage facts。
 
   写入状态
   无。
@@ -208,7 +302,7 @@ export class RuleEngine {
   getAttackUsage。
 
   边界与不变量
-  额外次数统一体现在 limit；legacy dual-schema 归一化只发生在本 facade。
+  额外次数统一体现在 limit；dual-schema 归一化只发生在本 boundary。
   */
   static getAssaultUsage(source) {
     const turnFlags = source?.turnFlags;
@@ -265,10 +359,60 @@ export class RuleEngine {
   }
 
   /** 借势响应的兼容入口：只放宽不在本人出牌阶段，且忽略第一目标已用突袭次数。 */
+  /*
+  功能
+  判断 canUseForcedAssault 对应的 ActionLegality 条件。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   static canUseForcedAssault(game, source, card, target) {
     return this.canActuallyUseAssault(game, source, card, target, { allowOutOfTurn:true, ignoreAttackLimit:true });
   }
 
+  /*
+  功能
+  查询并返回 getUsableAssaultCards 对应的 ActionLegality 结果。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   static getUsableAssaultCards(game, source, target) {
     return (source?.hand ?? []).filter((card) => this.canUseForcedAssault(game, source, card, target).ok);
   }
@@ -304,20 +448,95 @@ export class RuleEngine {
     const ids = getLeverageFirstTargetIds(players, sourceFact);
     return (game.state?.players ?? game.players ?? []).filter((player) => ids.includes(player.id));
   }
+  /*
+  功能
+  执行 transferableHandCount 对应的 ActionLegality 职责。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   static transferableHandCount(player, excludedCardIds = null) {
     if (Array.isArray(player?.hand)) return player.hand.filter((held) => !excludedCardIds?.has(held.id)).length;
     return Math.max(0, Number(player?.handCount ?? 0));
   }
 
+  /*
+  功能
+  判断 hasHandOrEquipment 对应的 ActionLegality 条件。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   static hasHandOrEquipment(player, excludedCardIds = null) {
     return Boolean(this.transferableHandCount(player, excludedCardIds) > 0 || player?.equipment || player?.equipmentDefinitionId);
   }
 
+  /*
+  功能
+  判断 isWithinCardEffectRange 对应的 ActionLegality 条件。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   static isWithinCardEffectRange(game, source, target, card) {
     if (!source || !target || !target.alive) return false;
     if (source.id === target.id) return true;
     if (card?.ignoresDistance || card?.effectRange == null) return true;
-    return DistanceSystem.getRangeLegalityProbability(game, source, target, card.effectRange) > 0;
+    return this.getDistance(game, source, target) <= card.effectRange;
   }
 
   /*
@@ -442,7 +661,7 @@ export class RuleEngine {
   canActuallyUseAssault、hasRecoverUseRemaining、hasStatus、getCardTargets 等。
 
   边界与不变量
-  调息额度由 Domain Turn Rule 决定；具体卡牌目标规则仍属 cardRegistry/deferred。
+  调息额度由 Domain Turn Rule 决定；具体卡牌目标规则由 Domain CardRules 决定。
   */
   static canPlayCard(game, source, card) {
     const usage = this.getAssaultUsage(source);
@@ -463,15 +682,40 @@ export class RuleEngine {
     });
   }
 
+  /*
+  功能
+  执行 targetLegality 对应的 ActionLegality 职责。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   static targetLegality(game, source, card, target) {
     const legal = this.getCardTargets(game, source, card).includes(target);
-    if (legal) return { ok:true, reason:"", ...DistanceSystem.describe(game, source, target) };
+    if (legal) return { ok:true, reason:"", ...this.describeDistance(game, source, target) };
     if (card.targetType === "singleEnemyInRange" && target.battleTeam !== source.battleTeam) {
-      const distance = DistanceSystem.getDistance(game, source, target);
+      const distance = this.getDistance(game, source, target);
       return { ok:false, reason:`距离${distance}，超过攻击范围${source.attackRange}`, distance, range:source.attackRange };
     }
     if (card.targetType === "otherWithCardsOrEquipment" && target?.alive && target.id !== source.id) {
-      const distance = DistanceSystem.getDistance(game, source, target);
+      const distance = this.getDistance(game, source, target);
       if (!card.ignoresDistance && card.effectRange != null && distance > card.effectRange) return { ok:false, reason:`距离${distance}，超过效果范围${card.effectRange}`, distance, range:card.effectRange };
     }
     return { ok:false, reason:"不是合法目标" };
@@ -482,7 +726,7 @@ export class RuleEngine {
   返回技能合法目标。
 
   调用方
-  ActionWorkflow/skillRegistry 与 tests。
+  ActionWorkflow/SkillRuntime 与 tests。
 
   输入
   game、source 与 skill。
@@ -507,5 +751,137 @@ export class RuleEngine {
     const players = this.getCardRulePlayers(game);
     const ids = getSkillTargetIds(players, source?.id, skill);
     return (game.state?.players ?? game.players ?? []).filter((player) => ids.includes(player.id));
+  }
+
+  /*
+  功能
+  查询并返回 getBaseDistance 对应的 ActionLegality 结果。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
+  static getBaseDistance(game, source, target) {
+    const players = this.getCardRulePlayers(game, { includeHand:false });
+    return getBaseDistanceFromRule(
+      players,
+      findPlayerFact(players, source?.id),
+      findPlayerFact(players, target?.id)
+    );
+  }
+
+  /*
+  功能
+  查询并返回 getDistance 对应的 ActionLegality 结果。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
+  static getDistance(game, source, target) {
+    const players = this.getCardRulePlayers(game, { includeHand:false });
+    return getDistanceFromRule(
+      players,
+      findPlayerFact(players, source?.id),
+      findPlayerFact(players, target?.id),
+      source?.equipment?.definitionId ?? source?.equipmentDefinitionId ?? null,
+      target?.equipment?.definitionId ?? target?.equipmentDefinitionId ?? null
+    );
+  }
+
+  /*
+  功能
+  执行 inAttackRange 对应的 ActionLegality 职责。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
+  static inAttackRange(game, source, target, card = null) {
+    return Boolean(card?.ignoresDistance || this.getDistance(game, source, target) <= (source?.attackRange ?? 1));
+  }
+
+  /*
+  功能
+  查询并返回 describeDistance 对应的 ActionLegality 结果。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
+  static describeDistance(game, source, target) {
+    return {
+      seat:target.seatIndex + 1,
+      distance:this.getDistance(game, source, target),
+      range:source.attackRange ?? 1
+    };
   }
 }

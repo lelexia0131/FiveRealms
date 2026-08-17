@@ -1,6 +1,6 @@
 /*
 模块职责
-为 Domain Rules 提供不含 controllerType/aiMemory/legacy general/AI probability 的最小只读玩家投影。
+为 Domain Rules 提供不含 controllerType/aiMemory/character/AI probability 的最小只读玩家投影。
 
 上游
 domain/rules/** 与 tests。
@@ -37,7 +37,7 @@ createRuleStateView。
 冻结的 Domain 玩家事实。
 
 读取状态
-Player 的 id/seat/battleTeam/generalId/resources/alive/handCount/equipment/status keys。
+Player 的 id/seat/battleTeam/characterId/resources/alive/handCount/equipment/status keys。
 
 写入状态
 无。
@@ -46,14 +46,14 @@ Player 的 id/seat/battleTeam/generalId/resources/alive/handCount/equipment/stat
 Object.keys。
 
 边界与不变量
-不返回真实 Player 引用；不读取 legacy general 对象或 aiMemory。
+不返回真实 Player 引用；不读取 character 对象或 aiMemory。
 */
 function projectRulePlayer(player) {
   const projection = {
     id: player.id,
     seatIndex: player.seatIndex,
     battleTeam: player.battleTeam,
-    generalId: player.generalId,
+    characterId: player.characterId,
     hp: player.hp,
     maxHp: player.maxHp,
     shield: player.shield,
@@ -124,7 +124,7 @@ state.players 与 currentPlayerIndex。
 projectRulePlayer。
 
 边界与不变量
-每次 players() 都重新投影；allies/enemies 语义与 legacy StateView 相同但只返回投影。
+每次 players() 都重新投影；allies/enemies 语义与 StateView 相同但只返回投影。
 */
 export function createRuleStateView(state) {
   /*
@@ -178,7 +178,7 @@ export function createRuleStateView(state) {
   Array.filter。
 
   边界与不变量
-  语义与 legacy StateView alliesOf 一致。
+  语义与 StateView alliesOf 一致。
   */
   const alliesOf = (player) => {
     requireRulePlayerProjection(player);
@@ -207,7 +207,7 @@ export function createRuleStateView(state) {
   Array.filter。
 
   边界与不变量
-  语义与 legacy StateView enemiesOf 一致。
+  语义与 StateView enemiesOf 一致。
   */
   const enemiesOf = (player) => {
     requireRulePlayerProjection(player);
@@ -218,7 +218,7 @@ export function createRuleStateView(state) {
   按玩家 ID 返回 Rule Player 投影。
 
   调用方
-  TeamRuleService 与 Domain Rules。
+  TeamRules 与 Domain Rules。
 
   输入
   player id。

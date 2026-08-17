@@ -295,19 +295,19 @@ AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/�
 
 借势搜索枚举“第一目标、公开装备实体、第二目标”的合法组合；第二目标与真人选择器一致，只按第一目标的攻击距离枚举其他角色，随后综合实际「突袭」概率、双方关系、装备价值和防御风险评分。
 
-自然节奏由“实际规划耗时 + 最低可读展示时间”组成：首次分析通常为 3000～5500ms，复杂局面可延长到 7000ms；动作间 1800～3500ms，响应 1800～3200ms，弃牌 1600～2800ms，结束前 900～1600ms。若搜索已消耗部分时间，只等待差额；界面先显示角色肖像和分阶段思考提示，再公开准备执行的行动。快速模式按比例缩短等待，但仍执行同一规划和规则。
+AI 搜索计算与玩家可见展示节奏彼此独立。浏览器生产路径在 Dedicated Worker 中搜索：快速模式使用 500ms soft target、900ms deadline，普通模式使用 3000ms deadline；主线程只接受通过 session、stateVersion、actor、phase、实体重绑和当前合法性校验的结果。动作间、响应、弃牌和结束提示由独立 presentation pacing 控制，不推进真实游戏 RNG 或搜索 RNG。
 
 修改 AI：
 
-- 速度：调整 `gameConfig.js` 中各 `ai*ThinkMinMs/MaxMs` 与快速模式倍率；复杂局面的首次展示上限使用 `aiComplexThinkMaxMs`。
-- 搜索强度：调整 `aiSearchDepth`、`aiBeamWidth`、`aiHiddenStateSamples` 和 `aiSearchTimeBudgetMs`。提高会增加 CPU 占用。
+- 展示速度：调整 `js/application/policy/RuntimePolicy.js` 中各 `ai*ThinkMinMs/MaxMs` 与快速模式倍率；复杂局面的展示上限使用 `aiComplexThinkMaxMs`。
+- 搜索强度：调整 `js/ai/policy/AiRuntimePolicy.js` 中的 `searchDepth`、`beamWidth`、`hiddenStateSamples`、`searchTimeBudgetMs` 和 `AI_SEARCH_PROFILES`。提高会增加 CPU 占用。
 - 行为倾向：优先修改 `AiEvaluator` 与 `AiResponsePolicy`，不要让 AI 访问完整隐藏手牌。
-- 随机性：`aiRandomnessRange` 控制近似同分候选的评分扰动范围，设为 `0` 时稳定选择最高分。
-- 难度：`aiDifficultyMultiplier` 缩放公开威胁优先级；`ThreatCalculator` 的稳定 `roleTags`、斩杀线、公开资源、状态和近期攻击者会直接影响攻击/控制目标。改变评分后应重新运行 200 局模拟。
+- 随机性：`randomnessRange` 控制近似同分候选的评分扰动范围，设为 `0` 时稳定选择最高分。
+- 难度：`difficultyMultiplier` 缩放公开威胁优先级；`ThreatCalculator` 的稳定 `roleTags`、斩杀线、公开资源、状态和近期攻击者会直接影响攻击/控制目标。改变评分后应按 `test.md` 运行当前 Balance 入口。
 
 ## 角色、卡牌和 UI 资源
 
-八名角色配置位于 `js/config/generalConfig.js`，肖像位于 `assets/characters/`；二十六种卡牌的展示与规则元数据位于 `js/config/cardConfig.js`，插画位于 `assets/cards/`。`art`、`icon`、`accent`、`frameStyle` 和 `flavorText` 只用于展示，不参与规则或 AI 合法性。
+八名角色的领域定义位于 `js/domain/definitions/characters/CharacterDefinitions.js`，肖像位于 `assets/characters/`；二十六种卡牌的领域定义位于 `js/domain/definitions/cards/CardDefinitions.js`，牌组数量位于 `RulesetDefinition.js`，插画位于 `assets/cards/`。`art`、`icon`、`accent`、`frameStyle` 和 `flavorText` 由 `js/adapters/ui/*PresentationDefinitions.js` 拥有，只用于展示，不参与规则或 AI 合法性。
 
 所有卡牌 SVG 必须使用统一的 `width="480"`、`height="280"` 和 `viewBox="0 0 480 280"`。新增资源应在该画布内等比缩放并居中构图，禁止依靠非等比拉伸适配。
 
@@ -329,27 +329,28 @@ FiveRealms/
 │   ├── characters.css            # 征召与人物席位
 │   └── animations.css            # 轻量反馈与减弱动态
 ├── js/
-│   ├── config/                   # 游戏、牌和角色配置
-│   ├── core/                     # Game 与独立规则系统
-│   ├── cards/cardRegistry.js     # 26 种牌的结算器
-│   ├── generals/skillRegistry.js # 8 名角色的被动/主动技能
-│   ├── ai/                       # 可见状态、生成、评估、规划、知识与响应
+│   ├── domain/                   # 定义、状态、纯规则、原子 transition 与领域事实
+│   ├── application/              # Match/Turn/Action/Combat/Response/Judgment workflows 与 ports
+│   ├── adapters/                 # UI、AI Worker transport 与 diagnostics adapters
+│   ├── ai/                       # 可见状态、概率、模拟、策略、搜索与价值
+│   ├── composition/              # 单局依赖装配与公开应用 boundary
 │   ├── ui/                       # 模板、交互、牌池、判定、私密层和动画
-│   └── utils/                    # 可取消延迟、随机、ID 与调试
+│   ├── audio/                    # 浏览器音频实现
+│   └── utils/                    # 可取消延迟、ID 与调试
 └── tests/
     ├── run.mjs                   # 快速回归测试
-    └── balance-simulation.mjs    # 200 局固定种子平衡模拟
+    └── balance.mjs               # 平衡模拟入口；参数以 test.md 为准
 ```
 
 ## 常用配置修改
 
-- 牌组数量：修改 `cardConfig.js` 对应定义的 `count`，保持非负整数，并更新预期总数测试。
+- 牌组数量：修改 `js/domain/definitions/ruleset/RulesetDefinition.js` 的 `deckComposition`，保持非负整数，并更新预期总数测试。
 - 初始牌：分别修改 `smallTeamBonuses.initialHandCount` 与 `largeTeamRules.initialHandCount`；当前分别为 5 和 4。
 - 摸牌：分别修改 `smallTeamBonuses.drawCountPerTurn` 与 `largeTeamRules.drawCountPerTurn`；当前分别为 3 和 2，`defaultDrawCount` 仅作回退值。
-- 阵营补偿：只修改 `smallTeamBonuses` 与 `largeTeamRules`，所有消费者通过 `TeamRuleService` 读取。
+- 阵营补偿：只修改 `RulesetDefinition` 的 `smallTeamBonuses` 与 `largeTeamRules`，Application 通过 `TeamRuleQueries` 读取。
 - 攻击范围：修改 `defaultAttackRange` 或单个玩家公开字段；不能改回固定座位公式。
-- 响应时限：修改 `responseTimeoutMs`。
-- 调试：设置 `debugMode: true`，统一 `Debug` 会输出阶段、事件、牌移动、响应和清理信息。
+- 响应时限：修改 `js/application/policy/RuntimePolicy.js` 的 `responseTimeoutMs`。
+- 调试：修改同一文件的 `debugMode`；统一 `Debug` 会输出阶段、事件、牌移动、响应和清理信息。
 
 配置项旁有中文注释，说明增减影响、推荐范围和可能的平衡/性能风险。规则数字不得复制到 UI 或 AI 模块。
 
@@ -357,30 +358,30 @@ FiveRealms/
 
 示例“蓄势”：使用后获得 1 能量，并增加下一张战术牌效果。
 
-1. 在 `cardConfig.js` 增加唯一 `definitionId: "prepare"`、三大类别之一、数量、使用/目标/响应字段和纯展示字段。
+1. 在 `CardDefinitions.js` 增加唯一 `definitionId: "prepare"` 与领域固定事实，并在 `RulesetDefinition.deckComposition` 增加数量。
 2. 在 `assets/cards/prepare.svg` 添加原创离线插画。
-3. 在 `cardRegistry.js` 注册 `prepare(game, source, card, targets, context)`，通过 `game.gainEnergy()` 与状态/事件接口修改规则，不能由 UI 改状态。
-4. 在 `RuleEngine` 仅加入必要的显式合法性，不按中文名判断。
-5. 在 `AiSimulator` 模拟状态变化，在 `AiEvaluator` 增加组合收益；未知牌推断会自动读取新牌数量。
+3. 在 `domain/rules/card` 定义合法性/结果，在 `application/action` 接入真实 effect workflow；状态提交必须经过 Domain transition，不能由 UI 改状态。
+4. 在 `CardPresentationDefinitions.js` 增加展示字段；规则不得按中文名判断。
+5. 在 `js/ai` 的生成、模拟和价值 owner 中补齐 SearchState 行为；未知牌推断只读取定义数量与合法观察。
 6. 增加牌数、结算、反制、AI 牌序、DOM 展示和本地资源测试，再运行两套测试。
 
 ## 添加新角色和技能
 
 示例“铸甲师”：4 生命；首次装备后得 1 护盾；主动花 2 能量把装备交给队友并使其得 1 护盾。
 
-1. 在 `generalConfig.js` 增加稳定角色 ID、生命、背景、标签、肖像路径和技能 ID。
-2. 在 `assets/characters/` 添加原创肖像；配置 `portrait`，`glyph` 仅作备用图章。
-3. 被动技能在 `skillRegistry.js` 注册具唯一监听键的事件处理器，用 `turnFlags`、`roundFlags` 或 `gameFlags` 表达正确生命周期。
-4. 主动技能配置 `id/name/cost/targetType/rangeRule/canUse/execute`；合法目标由 `RuleEngine.getSkillTargets()` 返回。
-5. 响应型技能通过 `ResponseSystem.requestSkillResponse()`，不得另建不可清理的 Promise 或 `setTimeout`。
+1. 在 `CharacterDefinitions.js` 增加稳定角色 ID 与领域事实，在 `SkillDefinitions.js` 增加技能固定事实。
+2. 在 `assets/characters/` 添加原创肖像，并在 `CharacterPresentationDefinitions.js` 配置展示数据。
+3. 被动技能在 `application/trigger/PassiveSkillTriggerRegistry.js` 注册具唯一监听键的触发器，用 Application flags 表达正确生命周期。
+4. 主动技能的合法性由 `domain/rules/skill` 决定，真实执行由 `application/action/SkillEffectRuntime.js` 编排。
+5. 响应型技能接入 `ResponseWorkflow` 和 `ChoicePort`，不得另建不可清理的 Promise 或裸 `setTimeout`。
 6. 在 AI 生成、模拟和评估中增加公开状态效果；不得读取敌方真实手牌。
 7. 为配置、能量、目标、事件只触发一次、阵亡失效、重开清理和 UI 增加测试。
 
 ## 添加状态、响应与胜负条件
 
 - 新状态应保存结构化对象而非中文字符串；明确在回合、轮次或整局何时清除，并通过事件处理伤害/治疗修正。
-- 新响应先定义合法时机和原子消费数量，再接入 `ResponseSystem`；任何异步结果提交前检查 `gameId`、角色存活和请求有效性。
-- 胜负条件只修改 `Game.checkVictory()` 及对应测试。不要在 UI、卡牌模板或 AI 中复制胜负判断。
+- 新响应先在 Domain ResponseRules 定义合法时机和原子消费数量，再接入 `ResponseWorkflow`；任何异步结果提交前检查 `gameId`、角色存活和请求有效性。
+- 胜负条件由 Domain TeamRules 决定并由 `MatchWorkflow` 执行。不要在 UI、卡牌模板或 AI 中复制胜负判断。
 
 ## 排查回合卡住、重复结算和信息泄露
 

@@ -3,7 +3,7 @@
 唯一拥有真实对局中已证明属于 Domain 的 MatchState 初始化 shape；application/session/presentation 扩展字段不在此维护。
 
 上游
-Game constructor 的 legacy composition 与未来 application/match consumer。
+match application constructor 的 composition 与当前 application/match consumer。
 
 下游
 无。
@@ -17,14 +17,14 @@ Game constructor 的 legacy composition 与未来 application/match consumer。
 架构约束
 不得依赖 application/adapters/ui/audio/ai/Game runtime；不得维护 Game.state 的 application-only 字段。
 */
-import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
+import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
 
 /*
 功能
 创建 Domain MatchState 的初始字段集合。
 
 调用方
-Game constructor 通过 spread 组合 legacy state。
+match application constructor 通过 spread 组合 state。
 
 输入
 新对局的 Deck 实例。

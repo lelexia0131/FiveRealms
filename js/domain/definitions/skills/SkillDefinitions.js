@@ -1,9 +1,9 @@
 /*
 模块职责
-唯一拥有 FiveRealms 主动与被动技能的纯静态定义；不含 canUse、execute、passive handler、EventBus 注册或 AI/UI 选择逻辑。
+唯一拥有 FiveRealms 主动与被动技能的纯静态定义；不含 canUse、execute、passive handler、EventDispatcher 注册或 AI/UI 选择逻辑。
 
 上游
-generalConfig legacy façade、skillRegistry runtime projection 与未来 domain/rules 消费者。
+Domain skill rules、Application skill runtime、AI 与 presentation consumers。
 
 下游
 无。
@@ -15,7 +15,7 @@ generalConfig legacy façade、skillRegistry runtime projection 与未来 domain
 全部字段均为公开技能规则事实，无隐藏信息。
 
 架构约束
-不得依赖 application/adapters/ui/audio/ai/Game/skillRegistry 或任何 runtime 模块。
+不得依赖 application/adapters/ui/audio/ai/Game/SkillRuntime 或任何 runtime 模块。
 */
 
 export const ACTIVE_SKILL_DEFINITIONS = Object.freeze({

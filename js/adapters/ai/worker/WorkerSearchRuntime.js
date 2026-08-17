@@ -15,13 +15,13 @@ SearchEngineFactory、RootSearchAction、Planner、ActionDescriptor 与 WorkerSe
 只消费 SearchRequest；不读取 Game/Application/UI/DOM/真实 hidden entities。
 
 架构约束
-不得 import core/Game、application、UI/Audio/DOM 或 Domain transitions；不得使用 Math.random。
+不得 import composition、application、UI/Audio/DOM 或 Domain transitions；不得使用 Math.random。
 */
-import { describeAction } from "../../../ai/search/ActionDescriptor.js?build=20260816-legacy-recovery";
-import { rehydrateRootSearchAction } from "../../../ai/search/RootSearchAction.js?build=20260816-legacy-recovery";
-import { SearchRng } from "../../../ai/search/SearchRng.js?build=20260816-legacy-recovery";
-import { createSearchEngine } from "./SearchEngineFactory.js?build=20260816-legacy-recovery";
-import { createWorkerSearchOutcome } from "../../../ai/search/WorkerSearchOutcome.js?build=20260816-legacy-recovery";
+import { describeAction } from "../../../ai/search/ActionDescriptor.js?build=20260817-architecture-closure-final";
+import { rehydrateRootSearchAction } from "../../../ai/search/RootSearchAction.js?build=20260817-architecture-closure-final";
+import { SearchRng } from "../../../ai/search/SearchRng.js?build=20260817-architecture-closure-final";
+import { createSearchEngine } from "./SearchEngineFactory.js?build=20260817-architecture-closure-final";
+import { createWorkerSearchOutcome } from "../../../ai/search/WorkerSearchOutcome.js?build=20260817-architecture-closure-final";
 
 /*
 功能

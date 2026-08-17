@@ -15,19 +15,19 @@ Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
 只消费过滤状态和显式概率分支，不读取未来判定实体牌。
 
 架构约束
-真实状态/监听顺序以 Game、JudgmentSystem 与 skillRegistry 为权威；不拥有 Policy 或 Value 公式。
+真实状态与监听顺序以 StatusResolutionWorkflow、JudgmentWorkflow 和 Application triggers 为权威；不拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
-import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260816-legacy-recovery";
-import { interpretDefenseJudgment } from "../../domain/rules/judgment/JudgmentRules.js?build=20260816-legacy-recovery";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260816-legacy-recovery";
-import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
+import { interpretDefenseJudgment } from "../../domain/rules/judgment/JudgmentRules.js?build=20260817-architecture-closure-final";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260817-architecture-closure-final";
+import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260817-architecture-closure-final";
 import {
   RADAR_BASIC_DEFINITIONS,
   buildRadarJudgmentProbabilities
-} from "../domain/RadarModel.js?build=20260816-legacy-recovery";
-import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260816-legacy-recovery";
+} from "../domain/RadarModel.js?build=20260817-architecture-closure-final";
+import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260817-architecture-closure-final";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -38,12 +38,12 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260816-legacy-recovery";
+} from "../state/Probability.js?build=20260817-architecture-closure-final";
 import {
   clampProbability,
   remainingCardDensity,
   unionProbability
-} from "./SimulationSupport.js?build=20260816-legacy-recovery";
+} from "./SimulationSupport.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -85,7 +85,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   无返回值；刀客的势能和类别使用分支已存在并同步。
 
   读取状态
-  玩家 generalId、momentum、categoriesUsed 及已有概率分支。
+  玩家 characterId、momentum、categoriesUsed 及已有概率分支。
 
   写入状态
   momentumBranches、categoryUsedStateBranchesByCategory 及摘要字段。
@@ -635,7 +635,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   无返回值；满足触发条件时推进窥隙额度与目标私密信息。
 
   读取状态
-  来源 generalId/既有触发概率、目标阵营/生命/手牌与剩余牌先验。
+  来源 characterId/既有触发概率、目标阵营/生命/手牌与剩余牌先验。
 
   写入状态
   spyGapTriggeredProbability、spyGapTriggered、lastSpyGapTargetId，以及委托记录的目标已知牌与摘要。

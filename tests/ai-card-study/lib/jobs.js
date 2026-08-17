@@ -14,8 +14,8 @@ import {
   continueTurnFromAction,
   ForkSignal
 } from "./harness.js";
-import { RuleEngine } from "../../../js/core/RuleEngine.js";
-import { CARD_DEFINITIONS } from "../../../js/config/cardConfig.js";
+import { ActionLegality } from "../../../js/application/action/ActionLegality.js";
+import { CARD_DEFINITIONS } from "../../../js/domain/definitions/cards/CardDefinitions.js";
 import { getStudyRandom } from "./studyRandom.js";
 import { performance } from "node:perf_hooks";
 
@@ -52,7 +52,7 @@ export async function runCorpusJob(job) {
         round: g.state.currentRound,
         playerId: player.id,
         seat: player.seatIndex,
-        generalId: player.generalId,
+        characterId: player.characterId,
         battleTeam: player.battleTeam,
         classification,
         fingerprint: structuralFingerprint(g),
@@ -111,7 +111,7 @@ export async function runStateJob(job) {
     stateId,
     seed,
     sampleType: job.sampleType ?? "composite",
-    role: subject.generalId,
+    role: subject.characterId,
     battleTeam: subject.battleTeam,
     round: game.state.currentRound,
     seat: subject.seatIndex,
@@ -454,7 +454,7 @@ export async function runWindowJob(job) {
     seed,
     windowType,
     card: forkSpec.addDefinition,
-    subjectRole: subjectA.generalId,
+    subjectRole: subjectA.characterId,
     battleTeam: subjectA.battleTeam,
     classification
   };
@@ -483,7 +483,7 @@ export async function runStatusCounterJob(job) {
   await runGame(game, {
     maxRounds,
     onTurnStart: async (g, player, turn) => {
-      if (!RuleEngine.hasStatus(player, "lightning")) return null;
+      if (!ActionLegality.hasStatus(player, "lightning")) return null;
       const chain = [player, ...g.seatOrderFrom(player, false)].filter((entry) => entry.alive);
       const subject = chain.find((entry) => !entry.hand.some((card) => card.definitionId === "counter"));
       if (!subject) return null;
@@ -516,7 +516,7 @@ export async function runStatusCounterJob(job) {
     seed,
     windowType: "statusCounter",
     card: "counter",
-    subjectRole: subjectA.generalId,
+    subjectRole: subjectA.characterId,
     battleTeam: subjectA.battleTeam,
     classification,
     aWin: resultA.winnerTeam === subjectA.battleTeam ? 1 : 0,
@@ -540,8 +540,8 @@ export async function runWindowJobDispatch(job) {
 
 function installWindowCounters(game, spec) {
   const counters = { windowOpened: 0 };
-  const originalRequest = game.responseSystem.requestCardResponse.bind(game.responseSystem);
-  game.responseSystem.requestCardResponse = async (responder, type, context, requiredCount = 1) => {
+  const originalRequest = game.responseWorkflow.requestCardResponse.bind(game.responseWorkflow);
+  game.responseWorkflow.requestCardResponse = async (responder, type, context, requiredCount = 1) => {
     const wanted = spec.windowType === "block" ? "block"
       : spec.windowType === "counter" || spec.windowType === "statusCounter" ? "counter"
         : null;
@@ -549,8 +549,8 @@ function installWindowCounters(game, spec) {
     return originalRequest(responder, type, context, requiredCount);
   };
   if (spec.windowType === "dying") {
-    const originalDyingRescue = game.responseSystem.requestDyingRescue.bind(game.responseSystem);
-    game.responseSystem.requestDyingRescue = async (rescuer, target, card) => {
+    const originalDyingRescue = game.responseWorkflow.requestDyingRescue.bind(game.responseWorkflow);
+    game.responseWorkflow.requestDyingRescue = async (rescuer, target, card) => {
       if (rescuer?.id === spec.subjectId) counters.windowOpened += 1;
       return originalDyingRescue(rescuer, target, card);
     };

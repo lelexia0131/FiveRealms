@@ -1,12 +1,12 @@
 /*
 模块职责
-唯一拥有角色被动技能 trigger registration：WHEN/IF 事件接收、rule predicate query、effect workflow invocation 与 once-per-turn/round commit；不拥有 Domain Skill Rule、active skill execute 或完整 EventBus/Messaging。
+唯一拥有角色被动技能 trigger registration：WHEN/IF 事件接收、rule predicate query、effect workflow invocation 与 once-per-turn/round commit；不拥有 Domain Skill Rule、active skill execute 或完整 EventDispatcher/Messaging。
 
 上游
-skillRegistry legacy façade 与 Game temporary composition root。
+composition root。
 
 下游
-Domain rules、Application workflows 与 narrow legacy collaborators。
+Domain rules、Application workflows 与 narrow collaborators。
 
 状态边界
 Domain mutation 经 transitions/workflows；trigger runtime state 经 transitions。
@@ -17,15 +17,15 @@ Domain mutation 经 transitions/workflows；trigger runtime state 经 transition
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、concrete adapters 或 config runtime。
 */
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
-import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-legacy-recovery";
-import { addSpyGapPendingTarget, addTrackingTarget, markCategoryUsed, removeSpyGapPendingTarget, setCoordinationTriggered, setGambleTriggered, setGuardianAidUsed, setLastEmberResolutionId, setMomentum, setRejuvenationTriggerCount, setSpyGapTriggered, setTrackingTurnNumber } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
-import { getAllInAssaultBonus } from "../../domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
-import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260816-legacy-recovery";
-import { canRevealSpyGap, canTriggerCoordination, canTriggerEmber, canTriggerGamble, canTriggerGuardianAid, canTriggerMomentumCategory, canTriggerRejuvenation, canTriggerSpyGapAfterDamage, canTriggerSpyGapOnRescue, canTriggerTrackingTarget, isHuntMarkExpiredForOwner, shouldAddAllInDamage, shouldAddMomentumDamage, shouldAdvanceTrackingClock, shouldCleanupExpiredHuntMarks, shouldConsumeAllIn, shouldConsumeMomentum, shouldIgnoreEmberDuplicate, shouldQueueSpyGapOnDying, shouldRemoveSpyGapPendingOnDead, shouldResetMomentumAtTurnEnd, shouldResetRejuvenationAtTurnStart } from "../../domain/rules/skill/PassiveSkillRules.js?build=20260816-legacy-recovery";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
+import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260817-architecture-closure-final";
+import { addSpyGapPendingTarget, addTrackingTarget, markCategoryUsed, removeSpyGapPendingTarget, setCoordinationTriggered, setGambleTriggered, setGuardianAidUsed, setLastEmberResolutionId, setMomentum, setRejuvenationTriggerCount, setSpyGapTriggered, setTrackingTurnNumber } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
+import { getAllInAssaultBonus } from "../../domain/rules/status/StatusRules.js?build=20260817-architecture-closure-final";
+import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260817-architecture-closure-final";
+import { canRevealSpyGap, canTriggerCoordination, canTriggerEmber, canTriggerGamble, canTriggerGuardianAid, canTriggerMomentumCategory, canTriggerRejuvenation, canTriggerSpyGapAfterDamage, canTriggerSpyGapOnRescue, canTriggerTrackingTarget, isHuntMarkExpiredForOwner, shouldAddAllInDamage, shouldAddMomentumDamage, shouldAdvanceTrackingClock, shouldCleanupExpiredHuntMarks, shouldConsumeAllIn, shouldConsumeMomentum, shouldIgnoreEmberDuplicate, shouldQueueSpyGapOnDying, shouldRemoveSpyGapPendingOnDead, shouldResetMomentumAtTurnEnd, shouldResetRejuvenationAtTurnStart } from "../../domain/rules/skill/PassiveSkillRules.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = [
-  "onEvent", "getState", "isSessionValid", "presentation", "random", "responseSystem",
+  "onEvent", "getState", "isSessionValid", "presentation", "random", "responseWorkflow",
   "discardCardFromHand", "drawCards", "gainEnergy", "preparePrivateHandPeekIntent",
   "resolvePrivateHandPeekIntent", "rememberPrivateCard", "choiceCoordinator",
   "choiceContexts", "createId"
@@ -36,10 +36,10 @@ const REQUIRED_DEPENDENCIES = [
 创建被动技能 trigger registry。
 
 调用方
-Game temporary composition root。
+composition root。
 
 输入
-显式注入的 legacy event/session/choice/presentation collaborators。
+显式注入的 event/session/choice/presentation collaborators。
 
 输出
 冻结 { registerForPlayers, hasSkill }。
@@ -77,7 +77,7 @@ const PASSIVE_SKILLS = {
   无返回值。
 
   读取状态
-  EventBus、玩家类别与 momentum。
+  EventDispatcher、玩家类别与 momentum。
 
   写入状态
   categoriesUsed/momentum 经 RuleUsageTransition。
@@ -138,7 +138,7 @@ const PASSIVE_SKILLS = {
   无返回值。
 
   读取状态
-  EventBus、响应系统与手牌。
+  EventDispatcher、响应系统与手牌。
 
   写入状态
   guardianAidUsed 经 RuleUsageTransition。
@@ -153,7 +153,7 @@ const PASSIVE_SKILLS = {
     runtime.onEvent("beforeDamage", `${owner.id}:guardianAid`, async (event) => {
       const gameId = runtime.getState().gameId;
       if (!canTriggerGuardianAid(owner, event)) return;
-      const response = await runtime.responseSystem.requestSkillResponse(owner, "guardianAid", "护援", event);
+      const response = await runtime.responseWorkflow.requestSkillResponse(owner, "guardianAid", "护援", event);
       if (!runtime.isSessionValid(gameId) || response.status !== "used" || !owner.alive || !owner.hand.length) return;
       const discardRequestId = runtime.createId("guardian-aid-discard");
       const discardRequest = createDiscardChoiceRequest({
@@ -200,7 +200,7 @@ const PASSIVE_SKILLS = {
   无返回值。
 
   读取状态
-  EventBus、治疗事件与触发计数。
+  EventDispatcher、治疗事件与触发计数。
 
   写入状态
   rejuvenationTriggerCount 经 RuleUsageTransition。
@@ -240,7 +240,7 @@ const PASSIVE_SKILLS = {
   无返回值。
 
   读取状态
-  EventBus、伤害/救援事件与手牌。
+  EventDispatcher、伤害/救援事件与手牌。
 
   写入状态
   spyGap flags 经 RuleUsageTransition。
@@ -328,7 +328,7 @@ const PASSIVE_SKILLS = {
   无返回值。
 
   读取状态
-  EventBus、伤害事件与 gameFlags。
+  EventDispatcher、伤害事件与 gameFlags。
 
   写入状态
   lastEmberResolutionId 经 RuleUsageTransition。
@@ -362,10 +362,10 @@ const PASSIVE_SKILLS = {
   无返回值。
 
   读取状态
-  Game EventBus 与玩家 flags/statuses。
+  Game EventDispatcher 与玩家 flags/statuses。
 
   写入状态
-  turnFlags/gameFlags 仍为 deferred；status 经 StatusTransition。
+  turnFlags/gameFlags 由 Application trigger runtime 拥有；status 经 StatusTransition。
 
   调用函数
   setStatus、removeStatus。
@@ -410,10 +410,10 @@ const PASSIVE_SKILLS = {
   无返回值。
 
   读取状态
-  Game EventBus、玩家 flags 与状态。
+  Game EventDispatcher、玩家 flags 与状态。
 
   写入状态
-  flags 仍 deferred；status 经 StatusTransition。
+  flags 由 Application trigger runtime 拥有；status 经 StatusTransition。
 
   调用函数
   setStatus、removeStatus、runtime.drawCards。
@@ -462,7 +462,7 @@ const PASSIVE_SKILLS = {
   无返回值。
 
   读取状态
-  EventBus、卡牌有效目标与额度。
+  EventDispatcher、卡牌有效目标与额度。
 
   写入状态
   coordinationTriggered 经 RuleUsageTransition。
@@ -489,7 +489,7 @@ const PASSIVE_SKILLS = {
   为 players 上每个 passiveSkillId 注册 trigger。
 
   调用方
-  skillRegistry legacy façade。
+  application skill runtime boundary。
 
   输入
   players 数组。
@@ -498,7 +498,7 @@ const PASSIVE_SKILLS = {
   无。
 
   读取状态
-  owner.general.passiveSkillIds。
+  owner.character.passiveSkillIds。
 
   写入状态
   listener registrations。
@@ -511,7 +511,7 @@ const PASSIVE_SKILLS = {
   */
   function registerForPlayers(players) {
     for (const owner of players) {
-      for (const skillId of owner.general.passiveSkillIds) {
+      for (const skillId of owner.character.passiveSkillIds) {
         const register = PASSIVE_SKILLS[skillId];
         if (!register) throw new Error(`未注册被动技能：${skillId}`);
         register(runtime, owner);
@@ -524,7 +524,7 @@ const PASSIVE_SKILLS = {
   查询被动 trigger 是否存在。
 
   调用方
-  skillRegistry legacy façade。
+  application skill runtime boundary。
 
   输入
   skillId。

@@ -17,13 +17,13 @@ ResourceSelectionPolicy、TransferPolicy 与 value/CardValue。
 架构约束
 不执行规则、不投影 State、不依赖 Planner/Controller/UI，也不构造 Simulator。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-legacy-recovery";
-import { getRoleCardAiValue } from "../value/CardValue.js?build=20260816-legacy-recovery";
-import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260816-legacy-recovery";
+import { getBaseCardAiValue } from "../value/CardValue.js?build=20260817-architecture-closure-final";
+import { getRoleCardAiValue } from "../value/CardValue.js?build=20260817-architecture-closure-final";
+import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260817-architecture-closure-final";
 import {
   getResourceDefinitionUtility,
   getResourceUnknownUtility
-} from "./ResourceSelectionPolicy.js?build=20260816-legacy-recovery";
+} from "./ResourceSelectionPolicy.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -51,7 +51,11 @@ CARD_DEFINITIONS。
 只对调用方已经合法揭示的定义调用。
 */
 function globalKnownValue(definitionId) {
-  return CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE;
+  try {
+    return getBaseCardAiValue(definitionId);
+  } catch {
+    return UNKNOWN_HAND_EXPECTED_VALUE;
+  }
 }
 
 /*
@@ -181,8 +185,8 @@ export class CardSelectionPolicy {
       .map((card, current) => ({ card, current, definitionId: known[card.id] }))
       .filter((entry) => entry.definitionId)
       .sort((left, right) => (
-        (CARD_DEFINITIONS[left.definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE)
-        - (CARD_DEFINITIONS[right.definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE)
+        globalKnownValue(left.definitionId)
+        - globalKnownValue(right.definitionId)
       ));
     return knownCards[0]?.current ?? 0;
   }
@@ -313,8 +317,8 @@ export class CardSelectionPolicy {
         if (index < 0) return selected;
       } else if (actor.id === owner.id) {
         index = candidates.reduce((best, card, current) => (
-          getRoleCardAiValue(actor.generalId, card.definitionId)
-            < getRoleCardAiValue(actor.generalId, candidates[best].definitionId)
+          getRoleCardAiValue(actor.characterId, card.definitionId)
+            < getRoleCardAiValue(actor.characterId, candidates[best].definitionId)
             ? current
             : best
         ), 0);
@@ -352,8 +356,8 @@ export class CardSelectionPolicy {
           .map((card, current) => ({ card, current, definitionId: known[card.id] }))
           .filter((entry) => entry.definitionId)
           .sort((left, right) => (
-            (CARD_DEFINITIONS[left.definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE)
-            - (CARD_DEFINITIONS[right.definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE)
+            globalKnownValue(left.definitionId)
+            - globalKnownValue(right.definitionId)
           ));
         index = knownCards[0]?.current ?? Math.floor(this.random() * candidates.length);
       }
@@ -420,7 +424,7 @@ export class CardSelectionPolicy {
       }
       return null;
     }
-    if (equipment && (!owner.hand.length || (actor.id !== owner.id && equipment.aiValue >= 7))) {
+    if (equipment && (!owner.hand.length || (actor.id !== owner.id && globalKnownValue(equipment.definitionId) >= 7))) {
       return { zone: "equipment", cardId: equipment.id ?? null };
     }
     if (handCard) return { zone: "hand", cardId: handCard.id };
@@ -454,11 +458,11 @@ export class CardSelectionPolicy {
   */
   expectedCardValue(actor, owner, card) {
     if (actor.id === owner.id) {
-      return getRoleCardAiValue(actor.generalId, card.definitionId);
+      return getRoleCardAiValue(actor.characterId, card.definitionId);
     }
     const definitionId = actor.aiMemory.knownCardsByPlayer[owner.id]?.[card.id] ?? null;
     return definitionId
-      ? (CARD_DEFINITIONS[definitionId]?.aiValue ?? UNKNOWN_HAND_EXPECTED_VALUE)
+      ? globalKnownValue(definitionId)
       : UNKNOWN_HAND_EXPECTED_VALUE;
   }
 
@@ -489,8 +493,8 @@ export class CardSelectionPolicy {
   */
   choosePublicCardId(player, cards) {
     return [...cards].sort((left, right) => (
-      getRoleCardAiValue(player.generalId, right.definitionId)
-      - getRoleCardAiValue(player.generalId, left.definitionId)
+      getRoleCardAiValue(player.characterId, right.definitionId)
+      - getRoleCardAiValue(player.characterId, left.definitionId)
     ))[0]?.id ?? null;
   }
 

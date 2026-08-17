@@ -3,7 +3,7 @@
 唯一拥有与 Combat/Judgment 耦合的 delayed-status resolution workflow：sealed 与 lightning 的反制窗口、判定、移除/转移、skip 提交、伤害编排与语义 presentation。
 
 上游
-core/Game legacy trigger bridge 与 tests。
+composition trigger bridge 与 tests。
 
 下游
 Domain StatusRules、Domain transitions、Application Response status-counter、Application Judgment 与 Application Combat damage。
@@ -15,13 +15,13 @@ Domain StatusRules、Domain transitions、Application Response status-counter、
 不读取 concrete UI/AI/DOM；下一闪电接收者由 Domain Status Rule 决定。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime、config/cardConfig 或 concrete adapters。
+不得依赖 MatchApplication、UIManager、AiController、SoundManager、EventDispatcher runtime、混合配置模块或 concrete adapters。
 */
-import { nextLightningReceiverId } from "../../domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-legacy-recovery";
-import { setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
-import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-legacy-recovery";
-import { RESPONSE_STATUS, isCancelledResponse } from "../response/ResponseResult.js?build=20260816-legacy-recovery";
+import { nextLightningReceiverId } from "../../domain/rules/status/StatusRules.js?build=20260817-architecture-closure-final";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260817-architecture-closure-final";
+import { setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
+import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260817-architecture-closure-final";
+import { RESPONSE_STATUS, isCancelledResponse } from "../response/ResponseResult.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = [
   "getState",
@@ -38,7 +38,7 @@ const REQUIRED_DEPENDENCIES = [
 创建 delayed-status Application Workflow。
 
 调用方
-core/JudgmentSystem legacy façade composition。
+composition root。
 
 输入
 显式注入的 state/session/response/judgment/damage/presentation collaborators。
@@ -100,7 +100,7 @@ export function createStatusResolutionWorkflow(dependencies) {
   执行封印延迟状态结算。
 
   调用方
-  legacy beforeStatusResolve trigger bridge。
+  beforeStatusResolve trigger bridge。
 
   输入
   holder 与 sealed status。
@@ -161,7 +161,7 @@ export function createStatusResolutionWorkflow(dependencies) {
   执行闪电延迟状态结算。
 
   调用方
-  legacy beforeStatusResolve trigger bridge。
+  beforeStatusResolve trigger bridge。
 
   输入
   holder 与 lightning status。

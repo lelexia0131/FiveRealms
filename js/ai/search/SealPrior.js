@@ -17,11 +17,11 @@ domain/SealModel、value/ThreatValue、Domain DistanceRules 与 AI 卡牌配置�
 架构约束
 返回值只用于 SEARCH_PRIOR；不得进入 State Value、TransitionValue 或 sibling timing。
 */
-import { getAliveRing } from "../../domain/rules/distance/DistanceRules.js?build=20260816-legacy-recovery";
-import { projectRulePlayers } from "../state/RuleProjection.js?build=20260816-legacy-recovery";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-legacy-recovery";
-import { hasSeal, sealOutcomeProbabilities } from "../domain/SealModel.js?build=20260816-legacy-recovery";
-import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260816-legacy-recovery";
+import { getAliveRing } from "../../domain/rules/distance/DistanceRules.js?build=20260817-architecture-closure-final";
+import { projectRulePlayers } from "../state/RuleProjection.js?build=20260817-architecture-closure-final";
+import { getBaseCardAiValue } from "../value/CardValue.js?build=20260817-architecture-closure-final";
+import { hasSeal, sealOutcomeProbabilities } from "../domain/SealModel.js?build=20260817-architecture-closure-final";
+import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260817-architecture-closure-final";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;
@@ -130,7 +130,7 @@ export function sealUseValue(actor, target, state) {
     sealedStatusStateBranches:[{ probability:1, conditions:{}, present:true }]
   };
   const skipAction = sealOutcomeProbabilities(state, futureTarget).skipAction;
-  return (CARD_DEFINITIONS.seal?.aiValue ?? 7)
+  return getBaseCardAiValue("seal")
     + skipAction * turnOpportunityValue(target) * FUTURE_DISCOUNT
       * turnTimingFactor(state, actor, target);
 }

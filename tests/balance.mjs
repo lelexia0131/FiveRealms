@@ -127,7 +127,7 @@ function createLocalResult(index) {
       resolvedByDefinition: {},
       cancelledByDefinition: {},
       byCategory: {},
-      byGeneral: {},
+      byCharacter: {},
       byDefinitionAndAliveStructure: {}
     },
     cardMoves: {
@@ -156,7 +156,7 @@ function createLocalResult(index) {
     skillUses: {
       total: 0,
       bySkill: {},
-      byGeneral: {}
+      byCharacter: {}
     },
     players: [],
     stallSnapshot: null,
@@ -164,7 +164,7 @@ function createLocalResult(index) {
   };
 }
 
-async function runOneGame(Game, index, config) {
+async function runOneGame(createApplication, index, config) {
   const startedAt = performance.now();
   const local = createLocalResult(index);
   let game = null;
@@ -172,7 +172,7 @@ async function runOneGame(Game, index, config) {
   try {
     const random = makeRandom(config.seedBase ^ (index * GOLDEN_RATIO_32));
     const aiSearchSeed = (config.seedBase ^ (index * 0x9e3779b9)) >>> 0;
-    game = new Game(createHeadlessUi(), random, { aiSearchSeed });
+    game = createApplication(createHeadlessUi(), random, { aiSearchSeed });
     game.simulationMode = true;
     game.animationFastMode = true;
     game.aiSearchNodeBudgetOverride = config.searchNodeBudget;
@@ -182,7 +182,7 @@ async function runOneGame(Game, index, config) {
     if (!candidates.length) throw new Error(`第 ${index} 局没有可选角色`);
     game.state.players[0].controllerType = "ai";
 
-    game.eventBus.on("afterCardMove", `balance:move:${index}`, (event) => {
+    game.eventDispatcher.on("afterCardMove", `balance:move:${index}`, (event) => {
       if (config.detailed) {
         local.cardMoves.total += 1;
         increment(local.cardMoves.byTransition, `${event.from ?? "unknown"}->${event.to ?? "unknown"}`);
@@ -194,14 +194,14 @@ async function runOneGame(Game, index, config) {
       }
     });
 
-    if (config.detailed) game.eventBus.on("cardUsed", `balance:card-used:${index}`, (event) => {
+    if (config.detailed) game.eventDispatcher.on("cardUsed", `balance:card-used:${index}`, (event) => {
       const definitionId = event.card?.definitionId ?? "unknown";
       const category = event.card?.category ?? "unknown";
-      const generalId = event.source?.generalId ?? "unknown";
+      const characterId = event.source?.characterId ?? "unknown";
       local.cardUses.total += 1;
       increment(local.cardUses.byDefinition, definitionId);
       increment(local.cardUses.byCategory, category);
-      incrementNested(local.cardUses.byGeneral, generalId, definitionId);
+      incrementNested(local.cardUses.byCharacter, characterId, definitionId);
       const alive = game.state.players.filter((player) => player.alive);
       const allies = alive.filter((player) => player.battleTeam === event.source?.battleTeam).length;
       incrementNested(
@@ -218,7 +218,7 @@ async function runOneGame(Game, index, config) {
       }
     });
 
-    if (config.detailed) game.eventBus.on("afterDamage", `balance:damage:${index}`, (event) => {
+    if (config.detailed) game.eventDispatcher.on("afterDamage", `balance:damage:${index}`, (event) => {
       local.damageEvents.events += 1;
       local.damageEvents.hpDamage += Number(event.actualAmount) || 0;
       local.damageEvents.shieldAbsorbed += Number(event.shieldAbsorbed) || 0;
@@ -226,7 +226,7 @@ async function runOneGame(Game, index, config) {
       if (event.preventedBy) increment(local.damageEvents.preventedBy, event.preventedBy);
     });
 
-    if (config.detailed) game.eventBus.on("afterHeal", `balance:heal:${index}`, (event) => {
+    if (config.detailed) game.eventDispatcher.on("afterHeal", `balance:heal:${index}`, (event) => {
       const amount = Number(event.actualAmount) || 0;
       local.healEvents.events += 1;
       local.healEvents.amount += amount;
@@ -234,33 +234,33 @@ async function runOneGame(Game, index, config) {
       increment(local.healEvents.byReason, event.reason ?? "unknown", amount);
     });
 
-    if (config.detailed) game.eventBus.on("afterGainEnergy", `balance:energy:${index}`, (event) => {
+    if (config.detailed) game.eventDispatcher.on("afterGainEnergy", `balance:energy:${index}`, (event) => {
       const amount = Number(event.actualAmount) || 0;
       local.energyEvents.events += 1;
       local.energyEvents.amount += amount;
       increment(local.energyEvents.byReason, event.reason ?? "unknown", amount);
     });
 
-    game.eventBus.on("turnEnd", `balance:turn:${index}`, () => {
+    game.eventDispatcher.on("turnEnd", `balance:turn:${index}`, () => {
       local.turns += 1;
     });
 
-    game.eventBus.on("playerDying", `balance:dying:${index}`, () => {
+    game.eventDispatcher.on("playerDying", `balance:dying:${index}`, () => {
       local.dyingEntries += 1;
     });
 
-    game.eventBus.on("playerRescued", `balance:rescue:${index}`, () => {
+    game.eventDispatcher.on("playerRescued", `balance:rescue:${index}`, () => {
       local.rescues += 1;
     });
 
-    game.eventBus.on("playerDead", `balance:dead:${index}`, (event) => {
+    game.eventDispatcher.on("playerDead", `balance:dead:${index}`, (event) => {
       local.deaths += 1;
       if (event.target.hand.length || event.target.equipment) {
         local.deathCleanupViolations += 1;
       }
     });
 
-    game.eventBus.on("roundStart", `balance:round-cap:${index}`, (event) => {
+    game.eventDispatcher.on("roundStart", `balance:round-cap:${index}`, (event) => {
       if (event.round > config.maxRounds) {
         game.state.isGameOver = true;
         game.state.phase = "gameOver";
@@ -272,16 +272,16 @@ async function runOneGame(Game, index, config) {
       game.useActiveSkill = async (source, skillId, targets = []) => {
         const used = await originalUseActiveSkill(source, skillId, targets);
         if (used) {
-          const generalId = source?.generalId ?? "unknown";
+          const characterId = source?.characterId ?? "unknown";
           local.skillUses.total += 1;
           increment(local.skillUses.bySkill, skillId ?? "unknown");
-          incrementNested(local.skillUses.byGeneral, generalId, skillId ?? "unknown");
+          incrementNested(local.skillUses.byCharacter, characterId, skillId ?? "unknown");
         }
         return used;
       };
     }
 
-    await game.confirmGeneral(candidates[index % candidates.length].id);
+    await game.confirmCharacter(candidates[index % candidates.length].id);
     await game.loopPromise;
 
     const smallTeam = ["dawn", "dusk"].find((team) => (
@@ -315,7 +315,7 @@ async function runOneGame(Game, index, config) {
           team: player.battleTeam,
           side: player.battleTeam === smallTeam ? "small" : "large",
           seat: player.seatIndex,
-          generalId: player.generalId,
+          characterId: player.characterId,
           alive: player.alive,
           hp: player.hp,
           hand: player.hand.map((card) => card.definitionId),
@@ -339,8 +339,8 @@ async function runOneGame(Game, index, config) {
         seat: player.seatIndex,
         team: player.battleTeam,
         side,
-        generalId: player.generalId,
-        generalName: player.name,
+        characterId: player.characterId,
+        characterName: player.name,
         won: Boolean(winnerTeam && player.battleTeam === winnerTeam),
         started: player.id === startingPlayer?.id,
         alive: player.alive,
@@ -379,7 +379,7 @@ async function runOneGame(Game, index, config) {
 }
 
 async function startWorker() {
-  const { Game } = await import("../js/core/Game.js");
+  const { createGameApplication } = await import("../js/composition/createGameApplication.js");
   const config = workerData.config;
 
   parentPort.on("message", async (message) => {
@@ -387,7 +387,7 @@ async function startWorker() {
     const { index, taskId } = message;
     parentPort.postMessage({ type: "started", index, taskId });
     try {
-      const result = await runOneGame(Game, index, config);
+      const result = await runOneGame(createGameApplication, index, config);
       parentPort.postMessage({ type: "result", index, taskId, result });
     } catch (error) {
       parentPort.postMessage({
@@ -559,13 +559,13 @@ function createTotals() {
     smallTeamIdentity: { dawn: 0, dusk: 0 },
     startingSide: { small: { games: 0, wins: 0 }, large: { games: 0, wins: 0 } },
     startingSeat: {},
-    cardUses: { total: 0, resolved: 0, cancelled: 0, byDefinition: {}, resolvedByDefinition: {}, cancelledByDefinition: {}, byCategory: {}, byGeneral: {}, byDefinitionAndAliveStructure: {} },
+    cardUses: { total: 0, resolved: 0, cancelled: 0, byDefinition: {}, resolvedByDefinition: {}, cancelledByDefinition: {}, byCategory: {}, byCharacter: {}, byDefinitionAndAliveStructure: {} },
     cardMoves: { total: 0, byTransition: {}, byReason: {} },
     damageEvents: { events: 0, hpDamage: 0, shieldAbsorbed: 0, byType: {}, preventedBy: {} },
     healEvents: { events: 0, amount: 0, dyingRescueAmount: 0, byReason: {} },
     energyEvents: { events: 0, amount: 0, byReason: {} },
-    skillUses: { total: 0, bySkill: {}, byGeneral: {} },
-    generalStats: {}, seatStats: {},
+    skillUses: { total: 0, bySkill: {}, byCharacter: {} },
+    characterStats: {}, seatStats: {},
     stallSnapshots: [], errorSamples: [],
     durationsMs: [], roundValues: [], reshuffleValues: [], turnValues: [],
     gameRecords: [],
@@ -657,7 +657,7 @@ function mergeResult(totals, result, config) {
   mergeNumericMap(totals.cardUses.resolvedByDefinition, result.cardUses?.resolvedByDefinition);
   mergeNumericMap(totals.cardUses.cancelledByDefinition, result.cardUses?.cancelledByDefinition);
   mergeNumericMap(totals.cardUses.byCategory, result.cardUses?.byCategory);
-  mergeNestedNumericMap(totals.cardUses.byGeneral, result.cardUses?.byGeneral);
+  mergeNestedNumericMap(totals.cardUses.byCharacter, result.cardUses?.byCharacter);
   mergeNestedNumericMap(
     totals.cardUses.byDefinitionAndAliveStructure,
     result.cardUses?.byDefinitionAndAliveStructure
@@ -675,19 +675,19 @@ function mergeResult(totals, result, config) {
   }
   totals.skillUses.total += result.skillUses?.total ?? 0;
   mergeNumericMap(totals.skillUses.bySkill, result.skillUses?.bySkill);
-  mergeNestedNumericMap(totals.skillUses.byGeneral, result.skillUses?.byGeneral);
+  mergeNestedNumericMap(totals.skillUses.byCharacter, result.skillUses?.byCharacter);
 
   for (const player of result.players ?? []) {
-    const general = ensurePlayerAggregate(totals.generalStats, player.generalId);
-    mergePlayerAggregate(general, player);
+    const character = ensurePlayerAggregate(totals.characterStats, player.characterId);
+    mergePlayerAggregate(character, player);
     const seat = ensurePlayerAggregate(totals.seatStats, player.seat);
     mergePlayerAggregate(seat, player);
   }
-  for (const [generalId, cards] of Object.entries(result.cardUses?.byGeneral ?? {})) {
-    mergeNumericMap(ensurePlayerAggregate(totals.generalStats, generalId).cardsByDefinition, cards);
+  for (const [characterId, cards] of Object.entries(result.cardUses?.byCharacter ?? {})) {
+    mergeNumericMap(ensurePlayerAggregate(totals.characterStats, characterId).cardsByDefinition, cards);
   }
-  for (const [generalId, skills] of Object.entries(result.skillUses?.byGeneral ?? {})) {
-    mergeNumericMap(ensurePlayerAggregate(totals.generalStats, generalId).skillsById, skills);
+  for (const [characterId, skills] of Object.entries(result.skillUses?.byCharacter ?? {})) {
+    mergeNumericMap(ensurePlayerAggregate(totals.characterStats, characterId).skillsById, skills);
   }
 
   if (result.stallSnapshot && totals.stallSnapshots.length < config.stallSamplesLimit) {
@@ -938,7 +938,7 @@ function buildReport(config, totals, elapsedMs) {
       equipmentUsesByType: totals.equipmentByType
     },
     skills: totals.skillUses,
-    generals: finalizePlayerAggregates(totals.generalStats),
+    characters: finalizePlayerAggregates(totals.characterStats),
     seats: finalizePlayerAggregates(totals.seatStats),
     diagnostics: {
       stalledGames: totals.stalled,

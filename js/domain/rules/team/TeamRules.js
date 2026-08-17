@@ -3,7 +3,7 @@
 唯一拥有 FiveRealms 阵营规模补偿与资源额度的纯规则计算；不拥有组队 RNG、UI 标签或 workflow。
 
 上游
-TeamRuleService、TeamManager 的 legacy façade 与未来 application/match consumer。
+TeamRuleQueries、TeamAssignment 的 boundary 与当前 application/match consumer。
 
 下游
 RULESET_DEFINITION。
@@ -17,7 +17,7 @@ RULESET_DEFINITION。
 架构约束
 不得依赖 application/adapters/Game runtime；不得随机；不得迁移 match setup。
 */
-import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
+import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -57,7 +57,7 @@ export function getWinningTeam(state) {
 
 
 调用方
-TeamRuleService、TeamManager 与 tests。
+TeamRules、TeamAssignment 与 tests。
 
 输入
 state 与 player 或 team id。
@@ -87,7 +87,7 @@ export function getTeamSize(state, playerOrTeam) {
 判断玩家是否属于二人小队。
 
 调用方
-TeamRuleService 与 tests。
+TeamRules 与 tests。
 
 输入
 state 与 player 投影。
@@ -116,7 +116,7 @@ export function isSmallTeam(state, player) {
 返回玩家阵营适用的补偿规则对象。
 
 调用方
-TeamRuleService 与 tests。
+TeamRules 与 tests。
 
 输入
 state 与 player 投影。
@@ -147,7 +147,7 @@ export function getTeamRules(state, player) {
 从已决定 team rules 返回开局手牌数。
 
 调用方
-TeamRuleService facade 与 getInitialHandCount。
+TeamRuleQueries boundary 与 getInitialHandCount。
 
 输入
 teamRules。
@@ -176,7 +176,7 @@ export function getInitialHandCountFromRules(teamRules) {
 从已决定 team rules 返回每回合摸牌数。
 
 调用方
-TeamRuleService facade 与 getDrawCount。
+TeamRuleQueries boundary 与 getDrawCount。
 
 输入
 teamRules。
@@ -205,7 +205,7 @@ export function getDrawCountFromRules(teamRules) {
 从已决定 team rules 返回突袭上限。
 
 调用方
-TeamRuleService facade 与 getAttackLimit。
+TeamRuleQueries boundary 与 getAttackLimit。
 
 输入
 teamRules。
@@ -234,7 +234,7 @@ export function getAttackLimitFromRules(teamRules) {
 从已决定 team rules 返回调息上限。
 
 调用方
-TeamRuleService facade 与 getRecoverLimit。
+TeamRuleQueries boundary 与 getRecoverLimit。
 
 输入
 teamRules。
@@ -263,7 +263,7 @@ export function getRecoverLimitFromRules(teamRules) {
 从已决定 team rules 返回能量上限。
 
 调用方
-TeamRuleService facade 与 getMaxEnergy。
+TeamRuleQueries boundary 与 getMaxEnergy。
 
 输入
 teamRules。
@@ -292,7 +292,7 @@ export function getMaxEnergyFromRules(teamRules) {
 从已决定 team rules 与装备定义返回回合能量分项。
 
 调用方
-TeamRuleService facade 与 getTurnEnergyBreakdown。
+TeamRuleQueries boundary 与 getTurnEnergyBreakdown。
 
 输入
 teamRules 与 equipmentDefinitionId。
@@ -325,7 +325,7 @@ export function getTurnEnergyBreakdownFromRules(teamRules, equipmentDefinitionId
 从已决定 team rules 与装备定义返回回合总能量获取。
 
 调用方
-TeamRuleService facade 与 getTurnEnergyGain。
+TeamRuleQueries boundary 与 getTurnEnergyGain。
 
 输入
 teamRules 与 equipmentDefinitionId。
@@ -355,7 +355,7 @@ export function getTurnEnergyGainFromRules(teamRules, equipmentDefinitionId) {
 返回玩家开局手牌数。
 
 调用方
-TeamRuleService。
+TeamRules。
 
 输入
 state 与 player 投影。
@@ -384,7 +384,7 @@ export function getInitialHandCount(state, player) {
 返回玩家每回合摸牌数。
 
 调用方
-TeamRuleService。
+TeamRules。
 
 输入
 state 与 player 投影。
@@ -413,7 +413,7 @@ export function getDrawCount(state, player) {
 返回玩家每回合突袭上限。
 
 调用方
-TeamRuleService。
+TeamRules。
 
 输入
 state 与 player 投影。
@@ -442,7 +442,7 @@ export function getAttackLimit(state, player) {
 返回玩家每回合调息上限。
 
 调用方
-TeamRuleService。
+TeamRules。
 
 输入
 state 与 player 投影。
@@ -471,7 +471,7 @@ export function getRecoverLimit(state, player) {
 返回玩家能量上限。
 
 调用方
-TeamRuleService。
+TeamRules。
 
 输入
 state 与 player 投影。
@@ -500,7 +500,7 @@ export function getMaxEnergy(state, player) {
 返回玩家回合能量获取分项。
 
 调用方
-TeamRuleService。
+TeamRules。
 
 输入
 state 与 player 投影。
@@ -532,7 +532,7 @@ export function getTurnEnergyBreakdown(state, player) {
 返回玩家回合总能量获取。
 
 调用方
-TeamRuleService facade 与 tests。
+TeamRuleQueries boundary 与 tests。
 
 输入
 state 与 player 投影。

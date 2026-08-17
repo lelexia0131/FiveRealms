@@ -15,7 +15,7 @@ Domain transition implementations only。
 不读取规则、AI 或隐藏信息。
 
 架构约束
-禁止被 Game/cardRegistry/skillRegistry/AI/UI 直接 import；禁止暴露任意字段修改能力。
+禁止被 Game/CardRuntime/SkillRuntime/AI/UI 直接 import；禁止暴露任意字段修改能力。
 */
 
 /*

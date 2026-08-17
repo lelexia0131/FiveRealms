@@ -3,7 +3,7 @@
 唯一拥有 Application Combat 的 damage、heal 与 HP-loss sequencing：防御判定、格挡响应、事件修正、Domain 计算、Transition commit、telemetry、presentation、dying 入口。
 
 上游
-core/Game legacy façade 与 future card/skill application consumers。
+Application card/skill workflows 与 composition command boundary。
 
 下游
 Domain CombatRules、Domain ResourceTransitions、Application Response、Application Dying、PresentationPort 与 DiagnosticsPort。
@@ -15,10 +15,10 @@ Domain CombatRules、Domain ResourceTransitions、Application Response、Applica
 不读取 concrete UI/AI/DOM；只读取 workflow 需要的公开角色事实。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus、SearchState、Planner 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher、SearchState、Planner 或 concrete adapters。
 */
-import { calculateDamageResult, calculateHealAmount, isDying } from "../../domain/rules/combat/CombatRules.js?build=20260816-legacy-recovery";
-import { changeHp, changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260816-legacy-recovery";
+import { calculateDamageResult, calculateHealAmount, isDying } from "../../domain/rules/combat/CombatRules.js?build=20260817-architecture-closure-final";
+import { changeHp, changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = [
   "getState",
@@ -38,7 +38,7 @@ const REQUIRED_DEPENDENCIES = [
 创建 Application Combat Workflow。
 
 调用方
-core/Game composition root。
+composition root。
 
 输入
 显式注入的 state/session/response/judgment/dying/event/presentation/diagnostics/AI-observation collaborators。
@@ -75,7 +75,7 @@ export function createCombatWorkflow(dependencies) {
   执行伤害 workflow：雷达判定、格挡、beforeDamage、护盾/生命 commit、telemetry、afterDamage 与濒死入口。
 
   调用方
-  Game.damage legacy façade。
+  composition damage command。
 
   输入
   source、target、amount 与 context。
@@ -166,7 +166,7 @@ export function createCombatWorkflow(dependencies) {
   执行治疗 workflow：beforeHeal 事件修正、Domain 上限计算、生命 commit、telemetry、日志、afterHeal 与 render。
 
   调用方
-  Game.heal legacy façade 与 DyingWorkflow。
+  composition heal command 与 DyingWorkflow。
 
   输入
   source、target、amount 与 context。
@@ -215,7 +215,7 @@ export function createCombatWorkflow(dependencies) {
   执行 HP-loss workflow：beforeHpLoss 事件修正、绕过护盾/格挡/雷达的生命 commit、telemetry、afterHpLoss 与濒死入口。
 
   调用方
-  HpLossSystem legacy façade。
+  composition hp-loss command。
 
   输入
   player、amount 与 context。

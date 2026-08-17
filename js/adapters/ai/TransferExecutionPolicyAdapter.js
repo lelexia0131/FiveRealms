@@ -3,7 +3,7 @@
 把 AI 转移方向 strategic prohibition 从正式 TransferPolicy 桥接给 Application 执行边界；不拥有转移策略公式。
 
 上游
-Game temporary composition root。
+composition root。
 
 下游
 Application CardIntentRuntime。
@@ -17,7 +17,7 @@ Application CardIntentRuntime。
 架构约束
 不得依赖 Game、AIController、Planner、Domain transitions 或其它 adapter；不得重新解释 ally/enemy 转移方向。
 */
-import { isTransferDirectionAllowed } from "../../ai/policy/TransferPolicy.js?build=20260816-legacy-recovery";
+import { isTransferDirectionAllowed } from "../../ai/policy/TransferPolicy.js?build=20260817-architecture-closure-final";
 
 /*
 功能

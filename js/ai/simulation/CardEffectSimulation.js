@@ -17,20 +17,19 @@ Response/Combat/Status 组件、Domain CardRules、正式资源 Policy、CardVal
 架构约束
 不生成动作、不搜索、不拥有规则合法性或最终价值公式。
 */
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
 import {
   findPlayerFact,
   getCardTargetIds
-} from "../../domain/rules/card/CardRules.js?build=20260816-legacy-recovery";
-import { hasPassiveSkill, projectRulePlayers } from "../state/RuleProjection.js?build=20260816-legacy-recovery";
-import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260816-legacy-recovery";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-legacy-recovery";
-import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260816-legacy-recovery";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260816-legacy-recovery";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260816-legacy-recovery";
-import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260816-legacy-recovery";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260816-legacy-recovery";
-import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260816-legacy-recovery";
+} from "../../domain/rules/card/CardRules.js?build=20260817-architecture-closure-final";
+import { hasPassiveSkill, projectRulePlayers } from "../state/RuleProjection.js?build=20260817-architecture-closure-final";
+import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260817-architecture-closure-final";
+import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260817-architecture-closure-final";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260817-architecture-closure-final";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260817-architecture-closure-final";
+import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260817-architecture-closure-final";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260817-architecture-closure-final";
+import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -87,7 +86,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     for (const player of state?.players ?? []) {
       if (!Object.hasOwn(player, "initialEquipmentValue")) {
         player.initialEquipmentValue = player.equipmentDefinitionId
-          ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7)
+          ? getBaseCardAiValue(player.equipmentDefinitionId)
           : 0;
       }
       if (!Object.hasOwn(player, "initialEquipmentRoleDelta")) {
@@ -112,7 +111,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   角色静态装备价值减去全局基础值的数值；缺少身份时为零。
 
   读取状态
-  player.generalId 与 CardValue 正式公式。
+  player.characterId 与 CardValue 正式公式。
 
   写入状态
   无。
@@ -124,8 +123,8 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   只返回静态差量，不把它直接加入最终行动价值。
   */
   equipmentRoleDelta(player, definitionId) {
-    if (!player?.generalId || !definitionId) return 0;
-    return getRoleCardAiValue(player.generalId, definitionId) - getBaseCardAiValue(definitionId);
+    if (!player?.characterId || !definitionId) return 0;
+    return getRoleCardAiValue(player.characterId, definitionId) - getBaseCardAiValue(definitionId);
   }
 
   /*
@@ -296,7 +295,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         const assaultAvailable = canActuallyTargetWithAssault
           ? Math.max(0, Math.min(1, first.assaultResponseProbability ?? 0))
           : 0;
-        const equipmentValue = CARD_DEFINITIONS[first.equipmentDefinitionId]?.aiValue ?? 7;
+        const equipmentValue = getBaseCardAiValue(first.equipmentDefinitionId);
         const friendlyFirePenalty = second.battleTeam === first.battleTeam ? .55 : 0;
         const defenseRisk = Math.min(.9, second.equipmentDefinitionId === "defenseDevice"
           ? (second.blockProbability ?? remainingCardDensity(next.remainingCardCounts, "block"))

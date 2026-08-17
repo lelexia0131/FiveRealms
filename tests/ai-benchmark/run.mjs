@@ -79,10 +79,10 @@ function normalizeSeed(seed) {
 }
 
 async function runFullGameDiagnostics({ seed, nodeBudget, gameCount = 3 }) {
-  const { Game } = await import("../../js/core/Game.js");
+  const { createGameApplication } = await import("../../js/composition/createGameApplication.js");
   const diagnostics = [];
   for (let index = 0; index < gameCount; index += 1) {
-    const game = new Game(createHeadlessUi(), makeRandom((seed ^ 0x9e3779b9) + index * 2654435761 >>> 0));
+    const game = createGameApplication(createHeadlessUi(), makeRandom((seed ^ 0x9e3779b9) + index * 2654435761 >>> 0));
     game.simulationMode = true;
     game.animationFastMode = true;
     game.aiSearchNodeBudgetOverride = Math.max(200, Math.floor(nodeBudget / 2));
@@ -102,7 +102,7 @@ async function runFullGameDiagnostics({ seed, nodeBudget, gameCount = 3 }) {
       };
       const candidates = game.startSelection();
       if (!candidates.length) throw new Error("无可用角色");
-      await game.confirmGeneral(candidates[index % candidates.length].id);
+      await game.confirmCharacter(candidates[index % candidates.length].id);
       await game.loopPromise;
       diagnostics.push({
         game: index + 1,

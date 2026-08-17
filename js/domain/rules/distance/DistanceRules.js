@@ -3,7 +3,7 @@
 唯一拥有 FiveRealms 确定性距离语义：存活环、基础距离、装备方向修正与最小距离。
 
 上游
-DistanceSystem 的 deterministic façade、RuleEngine 与 tests。
+DistanceRules 的 deterministic boundary、ActionLegality 与 tests。
 
 下游
 无。
@@ -23,7 +23,7 @@ DistanceSystem 的 deterministic façade、RuleEngine 与 tests。
 返回按 seatIndex 升序的存活玩家。
 
 调用方
-DistanceSystem 与 tests。
+DistanceRules 与 tests。
 
 输入
 players 数组。
@@ -52,7 +52,7 @@ export function getAliveRing(players) {
 计算两名存活玩家在压缩存活环上的基础距离。
 
 调用方
-DistanceSystem 与 tests。
+DistanceRules 与 tests。
 
 输入
 players、source 与 target。
@@ -88,7 +88,7 @@ export function getBaseDistance(players, source, target) {
 计算 deterministic 方向性距离：望远镜 -1，屏障 +1，下限 1。
 
 调用方
-DistanceSystem 与 tests。
+DistanceRules 与 tests。
 
 输入
 players、source、target 与显式装备定义 ID。

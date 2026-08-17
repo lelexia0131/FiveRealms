@@ -1,9 +1,9 @@
 /*
 模块职责
-把 Application Combat 的 damage observation 结果写入 legacy target.aiMemory.recentAggressors；只拥有 narrow AI memory adapter，不拥有 AI policy/search/planner。
+把 Application Combat 的 damage observation 结果写入 target.aiMemory.recentAggressors；只拥有 narrow AI memory adapter，不拥有 AI policy/search/planner。
 
 上游
-Game temporary composition root。
+composition root。
 
 下游
 无。
@@ -23,7 +23,7 @@ Game temporary composition root。
 创建 narrow damage AI observation adapter。
 
 调用方
-Game temporary composition root。
+composition root。
 
 输入
 无。
@@ -35,7 +35,7 @@ Game temporary composition root。
 无。
 
 写入状态
-经 observeDamage 写 legacy recentAggressors。
+经 observeDamage 写 recentAggressors。
 
 调用函数
 无。
@@ -47,7 +47,7 @@ export function createRecentAggressorsObservationAdapter() {
   return Object.freeze({
     /*
     功能
-    记录一次对目标的敌对生命伤害至 legacy recentAggressors。
+    记录一次对目标的敌对生命伤害至 recentAggressors。
 
     调用方
     Application CombatWorkflow。

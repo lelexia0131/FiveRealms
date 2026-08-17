@@ -3,7 +3,7 @@
 唯一拥有卡牌主动使用、目标、转移、借势与范围适用性的纯规则决定；不拥有 async runtime、card movement、choice、response、AI policy 或 mutation。
 
 上游
-core/RuleEngine legacy façade 与 tests。
+Application ActionLegality 与 tests。
 
 下游
 Domain DistanceRules、TurnRules、StatusRules 与 definitions。
@@ -15,18 +15,18 @@ Domain DistanceRules、TurnRules、StatusRules 与 definitions。
 不读取 controllerType、aiMemory、UI、AI 或 hidden hand 内容。
 
 架构约束
-不得依赖 Game/RuleEngine/application/adapters/EventBus；不得 await、emit、随机、mutation。
+不得依赖 Game/ActionLegality/application/adapters/EventDispatcher；不得 await、emit、随机、mutation。
 */
-import { getDistance } from "../distance/DistanceRules.js?build=20260816-legacy-recovery";
-import { hasAttackUseRemaining } from "../turn/TurnRules.js?build=20260816-legacy-recovery";
-import { hasStatus } from "../status/StatusRules.js?build=20260816-legacy-recovery";
+import { getDistance } from "../distance/DistanceRules.js?build=20260817-architecture-closure-final";
+import { hasAttackUseRemaining } from "../turn/TurnRules.js?build=20260817-architecture-closure-final";
+import { hasStatus } from "../status/StatusRules.js?build=20260817-architecture-closure-final";
 
 /*
 功能
 查找 canonical player fact。
 
 调用方
-CardRules 内部与 RuleEngine adapter。
+CardRules 内部与 ActionLegality adapter。
 
 输入
 players 与 id。
@@ -97,7 +97,7 @@ export function isWithinEffectRange(players, source, target, card, isRangeLegal 
 返回突袭可作用目标 ID（不含 attack usage 校验）。
 
 调用方
-CardRules 与 RuleEngine adapter。
+CardRules 与 ActionLegality adapter。
 
 输入
 players、source 与 card facts。
@@ -156,7 +156,7 @@ export function getCardTargetIds(players, source, card, isRangeLegal = null) {
 返回借势第二目标候选 ID。
 
 调用方
-CardRules 与 RuleEngine adapter。
+CardRules 与 ActionLegality adapter。
 
 输入
 players、source 与 source facts。
@@ -197,7 +197,7 @@ export function getAssaultTargetIds(players, source, isRangeLegal = null) {
 返回借势第一目标候选 ID。
 
 调用方
-CardRules 与 RuleEngine adapter。
+CardRules 与 ActionLegality adapter。
 
 输入
 players、source 与 card facts。
@@ -261,7 +261,7 @@ export function getTransferableHandCount(player, excludedCardIds = null) {
 判断 canonical facts 是否仍有可转移手牌或装备。
 
 调用方
-CardRules 与 RuleEngine adapter。
+CardRules 与 ActionLegality adapter。
 
 输入
 player fact 与 excludedCardIds。
@@ -293,7 +293,7 @@ export function hasHandOrEquipmentFacts(player, excludedCardIds = null) {
 返回可转移来源 ID。
 
 调用方
-CardRules 与 RuleEngine adapter。
+CardRules 与 ActionLegality adapter。
 
 输入
 players、source、card facts 与 excludedCardIds。
@@ -325,7 +325,7 @@ export function getTransferSourceIds(players, source, card, excludedCardIds = nu
 返回转移接收者 ID。
 
 调用方
-CardRules 与 RuleEngine adapter。
+CardRules 与 ActionLegality adapter。
 
 输入
 players、source、from 与 card facts。
@@ -356,7 +356,7 @@ export function getTransferReceiverIds(players, source, from, card, isRangeLegal
 判断突袭是否可实际使用。
 
 调用方
-RuleEngine adapter 与 tests。
+ActionLegality adapter 与 tests。
 
 输入
 players、sourceId、card facts、targetId、usage facts 与放宽选项。
@@ -407,7 +407,7 @@ export function canActuallyUseAssault({
 判断主动卡牌是否合法可出。
 
 调用方
-RuleEngine adapter 与 tests。
+ActionLegality adapter 与 tests。
 
 输入
 players、sourceId、currentPlayerId、phase、card facts、inHand、assault usage 与 recover usage。
@@ -425,7 +425,7 @@ source facts、statuses、turn usage 与 target facts。
 canActuallyUseAssault、hasAttackUseRemaining、hasStatus、getCardTargetIds、getTransferSourceIds、getTransferReceiverIds、getLeverageFirstTargetIds。
 
 边界与不变量
-reason 文案与旧 RuleEngine 完全一致。
+reason 文案与旧 ActionLegality 完全一致。
 */
 export function canPlayCard({
   players,

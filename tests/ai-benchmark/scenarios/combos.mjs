@@ -11,11 +11,11 @@ import {
 } from "../evaluators/scenarioDsl.mjs";
 
 const BASE = [
-  { id: "a", team: "dawn", general: "blade-walker" },
-  { id: "b", team: "dusk", general: "oath-warden" },
-  { id: "c", team: "dusk", general: "fate-gambler" },
-  { id: "d", team: "dawn", general: "spirit-medic" },
-  { id: "e", team: "dusk", general: "ember-magus" }
+  { id: "a", team: "dawn", character: "blade-walker" },
+  { id: "b", team: "dusk", character: "oath-warden" },
+  { id: "c", team: "dusk", character: "fate-gambler" },
+  { id: "d", team: "dawn", character: "spirit-medic" },
+  { id: "e", team: "dusk", character: "ember-magus" }
 ];
 
 function board(actorOverrides = {}, others = {}) {
@@ -23,7 +23,7 @@ function board(actorOverrides = {}, others = {}) {
   for (const player of players) {
     if (player.id === "a") continue;
     const override = others[player.id] ?? {};
-    if (override.general) player.general = override.general;
+    if (override.character) player.character = override.character;
     player.hp = override.hp ?? 4;
     player.energy = override.energy ?? 1;
     player.hand = override.hand ?? makeCards(["assault"]);
@@ -158,7 +158,7 @@ registerScenario({
   difficulty: "advanced",
   discrimination: "planning",
   setup: () => board({
-    general: "trail-hunter",
+    character: "trail-hunter",
     energy: 3,
     hand: [makeCard("assault")]
   }, { b: { hp: 1, statuses: { huntMark: { sourceId: "a" } } } }),
@@ -177,7 +177,7 @@ registerScenario({
   difficulty: "advanced",
   discrimination: "tactical",
   setup: () => board({
-    general: "ember-magus",
+    character: "ember-magus",
     energy: 3,
     hand: [makeCard("assault"), makeCard("charge")]
   }, { b: { hp: 2 }, c: { hp: 2 }, e: { hp: 2 } }),
@@ -197,7 +197,7 @@ registerScenario({
   difficulty: "advanced",
   discrimination: "planning",
   setup: () => board({
-    general: "fate-gambler",
+    character: "fate-gambler",
     energy: 2,
     hand: [makeCard("exposeWeakness"), makeCard("assault"), makeCard("assault")]
   }),
@@ -219,7 +219,7 @@ registerScenario({
   }, {
     // c 是守誓者，与 b 同阵营，可弃牌护援 b（护援对同阵营有效）
     b: { hp: 2, hand: makeCards(["assault"]) },
-    c: { general: "oath-warden", hp: 4, hand: makeCards(["assault", "assault", "assault"]) }
+    c: { character: "oath-warden", hp: 4, hand: makeCards(["assault", "assault", "assault"]) }
   }),
   grade: ({ action }) => {
     if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "目标可能被护援减伤，先破势保证击杀");
@@ -234,7 +234,7 @@ registerScenario({
   category: "combos",
   depth: 3,
   setup: () => board({
-    general: "spirit-medic",
+    character: "spirit-medic",
     energy: 3,
     hand: [makeCard("recover")]
   }, { d: { hp: 2 } }),
@@ -251,7 +251,7 @@ registerScenario({
   category: "combos",
   depth: 3,
   setup: () => board({
-    general: "resonance-tuner",
+    character: "resonance-tuner",
     energy: 3,
     hand: [makeCard("shield"), makeCard("assault")]
   }, { d: { hp: 2, hand: makeCards(["assault"]) } }),

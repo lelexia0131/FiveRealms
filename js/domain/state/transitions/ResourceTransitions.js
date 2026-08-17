@@ -3,7 +3,7 @@
 拥有能量、生命与护盾的 root-aware 通用原子写操作；不拥有任何卡牌/技能/伤害规则语义。
 
 上游
-Game、HpLossSystem、DyingSystem、cardRegistry、skillRegistry 的 legacy commit façade。
+match application、CombatWorkflow、DyingWorkflow、application card runtime、application skill runtime 的 commit boundary。
 
 下游
 无。
@@ -15,10 +15,10 @@ Game、HpLossSystem、DyingSystem、cardRegistry、skillRegistry 的 legacy comm
 不读取卡牌、技能、AI 或隐藏信息。
 
 架构约束
-不得依赖 Game/EventBus/UI/AI/application/adapters；不得出现 cardId/skillId/statusId 规则分支。
+不得依赖 Game/EventDispatcher/UI/AI/application/adapters；不得出现 cardId/skillId/statusId 规则分支。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260816-legacy-recovery";
-import { clamp } from "../../../utils/helpers.js?build=20260816-legacy-recovery";
+import { bumpStateVersion } from "./StateVersion.js?build=20260817-architecture-closure-final";
+import { clamp } from "../../../utils/helpers.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -58,7 +58,7 @@ export function changeEnergy(state, player, amount) {
 对玩家生命执行已决定的整数增量。
 
 调用方
-Game.damage、Game.heal、HpLossSystem、DyingSystem 与直接测试。
+Game.damage、Game.heal、CombatWorkflow、DyingWorkflow 与直接测试。
 
 输入
 state、Player 与生命增量。
@@ -89,7 +89,7 @@ export function changeHp(state, player, delta) {
 将玩家生命设置为已决定的精确值。
 
 调用方
-DyingSystem cancel/kill 与直接测试。
+DyingWorkflow cancel/kill 与直接测试。
 
 输入
 state、Player 与目标生命值。
@@ -121,7 +121,7 @@ export function setHp(state, player, value) {
 对玩家护盾执行已决定的整数增量。
 
 调用方
-Game.damage、cardRegistry、skillRegistry 与直接测试。
+Game.damage、CardRuntime、SkillRuntime 与直接测试。
 
 输入
 state、Player 与护盾增量。

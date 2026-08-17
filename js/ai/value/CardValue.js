@@ -17,9 +17,38 @@
 架构约束
 静态卡片值不得直接成为最终 Transition Value；状态存量只可经 State Value 的前后差进入最终价值，所有调用路径必须复用本模块的唯一公式。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-legacy-recovery";
-import { GENERAL_BY_ID, GENERAL_DEFINITIONS } from "../../config/generalConfig.js?build=20260816-legacy-recovery";
-import { HP_VALUE } from "./Economics.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { CHARACTER_BY_ID, CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260817-architecture-closure-final";
+import { HP_VALUE } from "./Economics.js?build=20260817-architecture-closure-final";
+
+export const CARD_AI_VALUES = Object.freeze({
+  assault: 4,
+  recover: 6,
+  block: 5,
+  charge: 5,
+  shield: 7,
+  scout: 5,
+  transfer: 7,
+  exposeWeakness: 6,
+  shockwave: 8,
+  provoke: 8,
+  leverage: 7,
+  plunder: 7,
+  destroy: 6,
+  counter: 8,
+  harvest: 8,
+  duel: 6,
+  mutualBenefit: 6,
+  symbiosis: 5,
+  seal: 7,
+  lightning: 3,
+  energyDevice: 7,
+  recycleDevice: 8,
+  defenseDevice: 9,
+  battleDevice: 9,
+  telescope: 8,
+  barrierDevice: 9
+});
 
 /*
 角色 × 卡牌差值只记录非零项，未配置组合自动回退零；新角色和新卡牌不需要补完整矩阵。
@@ -213,10 +242,13 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
 */
 export function getBaseCardAiValue(definitionId, cardDefinitions = CARD_DEFINITIONS) {
   const definition = cardDefinitions[definitionId];
-  if (!definition || !Number.isFinite(definition.aiValue)) {
+  const value = definition?.aiValue ?? (cardDefinitions === CARD_DEFINITIONS
+    ? CARD_AI_VALUES[definitionId]
+    : undefined);
+  if (!definition || !Number.isFinite(value)) {
     throw new Error(`getBaseCardAiValue 未知卡牌 ID：${definitionId}`);
   }
-  return definition.aiValue;
+  return value;
 }
 
 /*
@@ -244,27 +276,27 @@ getBaseCardAiValue。
 边界与不变量
 未配置组合回退零差量；差量必须为 -2..2 的整数，且结果不直接进入最终 transition value。
 */
-export function getRoleCardAiValue(generalId, definitionId, options = {}) {
+export function getRoleCardAiValue(characterId, definitionId, options = {}) {
   const {
     cardDefinitions = CARD_DEFINITIONS,
-    generalDefinitions,
+    characterDefinitions,
     deltas = ROLE_CARD_VALUE_DELTAS
   } = options ?? {};
-  const knownGeneral = generalDefinitions === undefined
-    ? Object.hasOwn(GENERAL_BY_ID, generalId)
-    : Array.isArray(generalDefinitions) && generalDefinitions.some((general) => general?.id === generalId);
-  if (!knownGeneral) {
-    throw new Error(`getRoleCardAiValue 未知角色 ID：${generalId}`);
+  const knownCharacter = characterDefinitions === undefined
+    ? Object.hasOwn(CHARACTER_BY_ID, characterId)
+    : Array.isArray(characterDefinitions) && characterDefinitions.some((character) => character?.id === characterId);
+  if (!knownCharacter) {
+    throw new Error(`getRoleCardAiValue 未知角色 ID：${characterId}`);
   }
   const base = getBaseCardAiValue(definitionId, cardDefinitions);
-  const roleDeltas = deltas?.[generalId];
+  const roleDeltas = deltas?.[characterId];
   const hasExplicitDelta = roleDeltas !== null && typeof roleDeltas === "object"
     && Object.hasOwn(roleDeltas, definitionId);
   if (!hasExplicitDelta) return base;
   const delta = roleDeltas[definitionId];
   if (!Number.isInteger(delta) || delta < -2 || delta > 2) {
     throw new Error(
-      `getRoleCardAiValue 非法差值：角色 ${generalId}，卡牌 ${definitionId}，差值 ${String(delta)}`
+      `getRoleCardAiValue 非法差值：角色 ${characterId}，卡牌 ${definitionId}，差值 ${String(delta)}`
     );
   }
   return base + delta;
@@ -296,7 +328,7 @@ getRoleCardAiValue。
 只表达 replacement/redundancy 边际，不重复授予完整装备价值。
 */
 export function getEquipmentKeepValueDeduction(
-  generalId,
+  characterId,
   newDefinitionId,
   equippedDefinitionId,
   retention = 1,
@@ -304,9 +336,9 @@ export function getEquipmentKeepValueDeduction(
 ) {
   if (!equippedDefinitionId) return 0;
   const cardDefinitions = options.cardDefinitions ?? CARD_DEFINITIONS;
-  const oldValue = generalId
-    ? getRoleCardAiValue(generalId, equippedDefinitionId, options)
-    : (cardDefinitions[equippedDefinitionId]?.aiValue ?? 0);
+  const oldValue = characterId
+    ? getRoleCardAiValue(characterId, equippedDefinitionId, options)
+    : getBaseCardAiValue(equippedDefinitionId, cardDefinitions);
   const deduction = oldValue * Math.max(0, Number(retention) || 0);
   return equippedDefinitionId === newDefinitionId ? deduction + 4 : deduction;
 }
@@ -339,35 +371,35 @@ export function getEquipmentKeepValueDeduction(
 export function validateRoleCardValueDeltas(deltas = ROLE_CARD_VALUE_DELTAS, options = {}) {
   const {
     cardDefinitions = CARD_DEFINITIONS,
-    generalDefinitions = GENERAL_DEFINITIONS
+    characterDefinitions = CHARACTER_DEFINITIONS
   } = options ?? {};
   if (deltas === null || typeof deltas !== "object" || Array.isArray(deltas)) {
     return ["角色差值表必须是对象"];
   }
-  const generalIds = new Set(
-    Array.isArray(generalDefinitions) ? generalDefinitions.map((general) => general?.id) : []
+  const characterIds = new Set(
+    Array.isArray(characterDefinitions) ? characterDefinitions.map((character) => character?.id) : []
   );
   const errors = [];
-  for (const [generalId, roleDeltas] of Object.entries(deltas)) {
-    if (!generalIds.has(generalId)) {
-      errors.push(`未知角色 ID：${generalId}`);
+  for (const [characterId, roleDeltas] of Object.entries(deltas)) {
+    if (!characterIds.has(characterId)) {
+      errors.push(`未知角色 ID：${characterId}`);
       continue;
     }
     if (roleDeltas === null || typeof roleDeltas !== "object" || Array.isArray(roleDeltas)) {
-      errors.push(`角色 ${generalId} 的差值必须是对象`);
+      errors.push(`角色 ${characterId} 的差值必须是对象`);
       continue;
     }
     for (const [definitionId, delta] of Object.entries(roleDeltas)) {
       if (!Object.hasOwn(cardDefinitions, definitionId)) {
-        errors.push(`未知卡牌 ID：${definitionId}（角色 ${generalId}）`);
+        errors.push(`未知卡牌 ID：${definitionId}（角色 ${characterId}）`);
         continue;
       }
       if (!Number.isInteger(delta)) {
-        errors.push(`卡牌 ${definitionId}（角色 ${generalId}）的差值必须是有限整数，实际：${String(delta)}`);
+        errors.push(`卡牌 ${definitionId}（角色 ${characterId}）的差值必须是有限整数，实际：${String(delta)}`);
         continue;
       }
       if (delta < -2 || delta > 2) {
-        errors.push(`卡牌 ${definitionId}（角色 ${generalId}）的差值超出 -2..+2：${delta}`);
+        errors.push(`卡牌 ${definitionId}（角色 ${characterId}）的差值超出 -2..+2：${delta}`);
       }
     }
   }
@@ -399,9 +431,9 @@ getRoleCardAiValue、getBaseCardAiValue。
 边界与不变量
 只返回相对差量，不能被当作完整静态价值再次计分。
 */
-export function roleCardDelta(generalId, definitionId) {
-  if (!generalId || !definitionId) return 0;
-  return getRoleCardAiValue(generalId, definitionId) - getBaseCardAiValue(definitionId);
+export function roleCardDelta(characterId, definitionId) {
+  if (!characterId || !definitionId) return 0;
+  return getRoleCardAiValue(characterId, definitionId) - getBaseCardAiValue(definitionId);
 }
 
 /*
@@ -474,7 +506,7 @@ roleCardDelta。
 export function cardOpportunityCost(card, player) {
   const definitionId = card?.definitionId ?? null;
   const generic = 1.1;
-  const specific = definitionId ? roleCardDelta(player?.generalId, definitionId) : 0;
+  const specific = definitionId ? roleCardDelta(player?.characterId, definitionId) : 0;
   const recoverOption = definitionId === "recover"
     ? Math.max(0, Math.min(1, Math.max(0, (player?.maxHp ?? 0) - (player?.hp ?? 0)))) * HP_VALUE
     : 0;

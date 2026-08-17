@@ -29,7 +29,7 @@ import {
 } from "./lib/harness.js";
 import { TrackedRng } from "./lib/rng.js";
 import { runDirUrl } from "./lib/runPaths.js";
-import { GENERAL_DEFINITIONS } from "../../js/config/generalConfig.js";
+import { CHARACTER_DEFINITIONS } from "../../js/domain/definitions/characters/CharacterDefinitions.js";
 
 let DATA_DIR = new URL("./data/", import.meta.url);
 const WORKERS_DEFAULT = 24;
@@ -256,14 +256,14 @@ async function phaseCorpus(config, progress) {
 
   const roleJobs = [];
   let roleIndex = 0;
-  for (const general of GENERAL_DEFINITIONS) {
+  for (const character of CHARACTER_DEFINITIONS) {
     for (let i = 0; i < config.roleGamesPerRole; i += 1) {
       roleJobs.push({
-        jobId: `role:${general.id}:${i}`,
+        jobId: `role:${character.id}:${i}`,
         kind: "corpus",
         index: roleIndex,
         seed: seedFor("role", roleIndex),
-        roleOverride: general.id,
+        roleOverride: character.id,
         nodeBudget: config.nodeBudget,
         maxRounds: config.maxRounds
       });
@@ -517,9 +517,9 @@ async function phaseExperiment(config, progress) {
     (record) => `${record.seed}:${record.turn}`
   );
   const roleTargets = {};
-  for (const general of GENERAL_DEFINITIONS) {
-    roleTargets[general.id] = sampleUniform(
-      roleStates.filter((record) => record.roleOverride === general.id && record.generalId === general.id),
+  for (const character of CHARACTER_DEFINITIONS) {
+    roleTargets[character.id] = sampleUniform(
+      roleStates.filter((record) => record.roleOverride === character.id && record.characterId === character.id),
       config.roleStateTargetPerRole,
       (record) => `${record.seed}:${record.turn}`
     );
@@ -570,16 +570,16 @@ async function phaseExperiment(config, progress) {
       expectedFingerprint: record.fingerprint
     });
   }
-  for (const general of GENERAL_DEFINITIONS) {
-    for (const record of roleTargets[general.id]) {
+  for (const character of CHARACTER_DEFINITIONS) {
+    for (const record of roleTargets[character.id]) {
       jobs.push({
-        jobId: stateIdFor(record, `hold:${general.id}`),
+        jobId: stateIdFor(record, `hold:${character.id}`),
         kind: "state",
         metric: "hold",
-        stateId: stateIdFor(record, `hold:${general.id}`),
-        sampleType: `role:${general.id}`,
+        stateId: stateIdFor(record, `hold:${character.id}`),
+        sampleType: `role:${character.id}`,
         seed: record.seed,
-        roleOverride: general.id,
+        roleOverride: character.id,
         targetTurn: record.turn,
         nodeBudget: config.nodeBudget,
         maxRounds: config.maxRounds,

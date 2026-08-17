@@ -3,7 +3,7 @@
 作为 AI 组合根一次性构造组件、注入窄能力，并向真实执行边界提供稳定门面。
 
 上游
-Game、ResponseSystem、PublicCardPool、角色技能与测试。
+MatchApplication、ResponseWorkflow、PublicCardPoolWorkflow、角色技能与测试。
 
 下游
 状态组合、Knowledge、选择、响应、动作生成、评估与 Planner。
@@ -17,39 +17,39 @@ Game、ResponseSystem、PublicCardPool、角色技能与测试。
 架构约束
 子组件不得回指 AIController；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
 */
-import { createInitialSearchState } from "./state/StateContracts.js?build=20260816-legacy-recovery";
-import { Knowledge } from "./state/Knowledge.js?build=20260816-legacy-recovery";
-import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260816-legacy-recovery";
-import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260816-legacy-recovery";
-import { ActionGenerator } from "./search/ActionGenerator.js?build=20260816-legacy-recovery";
-import { ValueService } from "./value/ValueService.js?build=20260816-legacy-recovery";
-import { StateValue } from "./value/StateValue.js?build=20260816-legacy-recovery";
-import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260816-legacy-recovery";
-import { Simulator } from "./simulation/Simulator.js?build=20260816-legacy-recovery";
-import { AI_SEARCH_PROFILES, GAME_CONFIG } from "../config/gameConfig.js?build=20260816-legacy-recovery";
-import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260816-legacy-recovery";
-import { createSearchRequest } from "./search/SearchRequest.js?build=20260816-legacy-recovery";
-import { describeRootSearchAction } from "./search/RootSearchAction.js?build=20260816-legacy-recovery";
-import { createSearchResult, SEARCH_RESULT_STATUS } from "./search/SearchResult.js?build=20260816-legacy-recovery";
-import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js?build=20260816-legacy-recovery";
-import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260816-legacy-recovery";
-import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260816-legacy-recovery";
-import { Planner } from "./search/Planner.js?build=20260816-legacy-recovery";
-import { SearchBudget } from "./search/SearchBudget.js?build=20260816-legacy-recovery";
-import { SearchPolicy } from "./search/SearchPolicy.js?build=20260816-legacy-recovery";
-import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260816-legacy-recovery";
-import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260816-legacy-recovery";
-import { FrontierValue } from "./search/FrontierValue.js?build=20260816-legacy-recovery";
-import { SearchPrior } from "./search/SearchPrior.js?build=20260816-legacy-recovery";
-import { TransitionValue } from "./search/TransitionValue.js?build=20260816-legacy-recovery";
-import { Evaluator } from "./value/Evaluator.js?build=20260816-legacy-recovery";
-import { ValueLedger } from "./value/ValueLedger.js?build=20260816-legacy-recovery";
-import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260816-legacy-recovery";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260816-legacy-recovery";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260816-legacy-recovery";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260816-legacy-recovery";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260816-legacy-recovery";
-import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260816-legacy-recovery";
+import { createInitialSearchState } from "./state/StateContracts.js?build=20260817-architecture-closure-final";
+import { Knowledge } from "./state/Knowledge.js?build=20260817-architecture-closure-final";
+import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260817-architecture-closure-final";
+import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260817-architecture-closure-final";
+import { ActionGenerator } from "./search/ActionGenerator.js?build=20260817-architecture-closure-final";
+import { ValueService } from "./value/ValueService.js?build=20260817-architecture-closure-final";
+import { StateValue } from "./value/StateValue.js?build=20260817-architecture-closure-final";
+import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260817-architecture-closure-final";
+import { Simulator } from "./simulation/Simulator.js?build=20260817-architecture-closure-final";
+import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILES } from "./policy/AiRuntimePolicy.js?build=20260817-architecture-closure-final";
+import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260817-architecture-closure-final";
+import { createSearchRequest } from "./search/SearchRequest.js?build=20260817-architecture-closure-final";
+import { describeRootSearchAction } from "./search/RootSearchAction.js?build=20260817-architecture-closure-final";
+import { createSearchResult, SEARCH_RESULT_STATUS } from "./search/SearchResult.js?build=20260817-architecture-closure-final";
+import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js?build=20260817-architecture-closure-final";
+import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260817-architecture-closure-final";
+import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260817-architecture-closure-final";
+import { Planner } from "./search/Planner.js?build=20260817-architecture-closure-final";
+import { SearchBudget } from "./search/SearchBudget.js?build=20260817-architecture-closure-final";
+import { SearchPolicy } from "./search/SearchPolicy.js?build=20260817-architecture-closure-final";
+import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260817-architecture-closure-final";
+import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260817-architecture-closure-final";
+import { FrontierValue } from "./search/FrontierValue.js?build=20260817-architecture-closure-final";
+import { SearchPrior } from "./search/SearchPrior.js?build=20260817-architecture-closure-final";
+import { TransitionValue } from "./search/TransitionValue.js?build=20260817-architecture-closure-final";
+import { Evaluator } from "./value/Evaluator.js?build=20260817-architecture-closure-final";
+import { ValueLedger } from "./value/ValueLedger.js?build=20260817-architecture-closure-final";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260817-architecture-closure-final";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260817-architecture-closure-final";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260817-architecture-closure-final";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260817-architecture-closure-final";
+import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260817-architecture-closure-final";
+import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260817-architecture-closure-final";
 
 export class AIController {
   /*
@@ -208,15 +208,15 @@ export class AIController {
       random: () => this.searchRng.next(),
       getRandomnessRange: () => this.getRandomnessRange(),
       config: {
-        depth: GAME_CONFIG.aiSearchDepth,
-        beamWidth: GAME_CONFIG.aiBeamWidth,
-        hiddenSamples: GAME_CONFIG.aiHiddenStateSamples,
-        yieldEvery: GAME_CONFIG.aiSearchYieldEvery,
-        timeBudgetMs: GAME_CONFIG.aiSearchTimeBudgetMs,
-        nearTieRange: GAME_CONFIG.aiNearTieRange,
-        enableRandomness: GAME_CONFIG.enableAiRandomness,
-        randomnessRange: GAME_CONFIG.aiRandomnessRange,
-        difficultyMultiplier: GAME_CONFIG.aiDifficultyMultiplier
+        depth: AI_RUNTIME_POLICY.searchDepth,
+        beamWidth: AI_RUNTIME_POLICY.beamWidth,
+        hiddenSamples: AI_RUNTIME_POLICY.hiddenStateSamples,
+        yieldEvery: AI_RUNTIME_POLICY.searchYieldEvery,
+        timeBudgetMs: AI_RUNTIME_POLICY.searchTimeBudgetMs,
+        nearTieRange: AI_RUNTIME_POLICY.nearTieRange,
+        enableRandomness: AI_RUNTIME_POLICY.enableRandomness,
+        randomnessRange: AI_RUNTIME_POLICY.randomnessRange,
+        difficultyMultiplier: AI_RUNTIME_POLICY.difficultyMultiplier
       }
     });
     this.counterfactualTerms = new CounterfactualTerms({
@@ -1004,7 +1004,7 @@ export class AIController {
   从公开牌池选择最适合当前角色的牌。
 
   调用方
-  PublicCardPool。
+  PublicCardPoolWorkflow。
 
   输入
   当前 Player 与公开实体牌数组。
@@ -1033,7 +1033,7 @@ export class AIController {
   判断 AI 是否在当前响应窗口使用候选响应。
 
   调用方
-  ResponseSystem 与直接测试。
+  ResponseWorkflow 与直接测试。
 
   输入
   响应者、响应类型、公开上下文与合法候选牌。

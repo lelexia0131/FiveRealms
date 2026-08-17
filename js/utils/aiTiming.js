@@ -1,5 +1,5 @@
 /** AI 展示节奏；与 search compute、真实游戏 RNG、AI search RNG 完全分离。 */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260816-legacy-recovery";
+import { RUNTIME_POLICY } from "../application/policy/RuntimePolicy.js?build=20260817-architecture-closure-final";
 
 const RANGES = Object.freeze({
   initial: ["aiInitialThinkMinMs", "aiInitialThinkMaxMs"],
@@ -14,7 +14,7 @@ const RANGES = Object.freeze({
 按独立展示随机源采样可见 AI 节奏延迟。
 
 调用方
-legacy timing callers 与 timing regression。
+timing callers 与 timing regression。
 
 输入
 presentation random、最小/最大毫秒与 fastMode。
@@ -23,7 +23,7 @@ presentation random、最小/最大毫秒与 fastMode。
 非负整数毫秒。
 
 读取状态
-GAME_CONFIG 的快速展示倍率与最短延迟。
+RUNTIME_POLICY 的快速展示倍率与最短延迟。
 
 写入状态
 random。
@@ -41,7 +41,7 @@ export function sampleDelay(random, minimum, maximum, fastMode = false) {
   const roll = Math.min(0.999999, Math.max(0, Number(random()) || 0));
   const natural = Math.round(minimum + ((maximum - minimum) * roll));
   return fastMode
-    ? Math.max(GAME_CONFIG.animationFastMinimumMs, Math.round(natural * GAME_CONFIG.animationFastScale))
+    ? Math.max(RUNTIME_POLICY.animationFastMinimumMs, Math.round(natural * RUNTIME_POLICY.animationFastScale))
     : natural;
 }
 
@@ -50,7 +50,7 @@ export function sampleDelay(random, minimum, maximum, fastMode = false) {
 返回按阶段采样的 AI 展示节奏延迟。
 
 调用方
-legacy timing callers。
+timing callers。
 
 输入
 game-like presentation runtime、phase 与 complex 选项。
@@ -59,7 +59,7 @@ game-like presentation runtime、phase 与 complex 选项。
 非负整数毫秒；simulation/headless 为零。
 
 读取状态
-GAME_CONFIG 展示范围与 game 的展示模式。
+RUNTIME_POLICY 展示范围与 game 的展示模式。
 
 写入状态
 sampleDelay。
@@ -74,12 +74,12 @@ export function getAiDelay(game, phase, options = {}) {
   const keys = RANGES[phase] ? [...RANGES[phase]] : null;
   if (!keys) throw new RangeError(`未知 AI 延迟阶段：${phase}`);
   if (phase === "initial" && options.complex) keys[1] = "aiComplexThinkMaxMs";
-  if (GAME_CONFIG.simulationMode || game?.simulationMode) return 0;
+  if (RUNTIME_POLICY.simulationMode || game?.simulationMode) return 0;
   const presentationRandom = options.random ?? game?.presentationRandom ?? Math.random;
   return sampleDelay(
     presentationRandom,
-    GAME_CONFIG[keys[0]],
-    GAME_CONFIG[keys[1]],
+    RUNTIME_POLICY[keys[0]],
+    RUNTIME_POLICY[keys[1]],
     Boolean(game?.animationFastMode)
   );
 }

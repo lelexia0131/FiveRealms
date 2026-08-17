@@ -15,10 +15,10 @@ SearchWorkerClient、LocalSearchExecutor。
 不读取 search payload。
 
 架构约束
-不得 import core/Game/application/UI/Audio；browser production 不提供同线程 search fallback。
+不得 import composition/application/UI/Audio；browser production 不提供同线程 search fallback。
 */
-import { createLocalSearchExecutor } from "./LocalSearchExecutor.js?build=20260816-legacy-recovery";
-import { createSearchWorkerClient } from "./SearchWorkerClient.js?build=20260816-legacy-recovery";
+import { createLocalSearchExecutor } from "./LocalSearchExecutor.js?build=20260817-architecture-closure-final";
+import { createSearchWorkerClient } from "./SearchWorkerClient.js?build=20260817-architecture-closure-final";
 
 /*
 功能

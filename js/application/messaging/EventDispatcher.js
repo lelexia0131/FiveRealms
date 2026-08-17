@@ -3,7 +3,7 @@
 唯一拥有 Application Messaging propagation：keyed listener registry、sequential await dispatch、mutable Hook propagation、immutable Fact propagation、generation/clear/session guard。不解释事件业务含义，不拥有 trigger rule 或 presentation。
 
 上游
-core/EventBus legacy façade 与 Game temporary composition root。
+Application workflows、trigger registries 与 composition root。
 
 下游
 Application workflows/triggers。
@@ -23,7 +23,7 @@ Application workflows/triggers。
 创建并返回 EventDispatcher 实例。
 
 调用方
-Game temporary composition root。
+composition root。
 
 输入
 isActive session guard 与可选 trace collaborator。
@@ -41,7 +41,7 @@ listener registry/depth/generation。
 无。
 
 边界与不变量
-完全保留旧 EventBus 的 same-key overwrite、registration order、shared mutable object、sequential await、maxDepth=24、generation clear 语义。
+完全保留旧 EventDispatcher 的 same-key overwrite、registration order、shared mutable object、sequential await、maxDepth=24、generation clear 语义。
 */
 export class EventDispatcher {
   /*
@@ -49,7 +49,7 @@ export class EventDispatcher {
   创建 dispatcher 并初始化 listener registry/session guard。
 
   调用方
-  Game temporary composition。
+  composition root。
 
   输入
   isActive 与 trace。
@@ -83,7 +83,7 @@ export class EventDispatcher {
   注册 keyed listener。
 
   调用方
-  Application Trigger/legacy Game。
+  Application Trigger/match application。
 
   输入
   eventName、key 与 handler。
@@ -106,7 +106,7 @@ export class EventDispatcher {
   on(eventName, key, handler) {
     if (!this.listeners.has(eventName)) this.listeners.set(eventName, new Map());
     this.listeners.get(eventName).set(key, handler);
-    this.trace("EventBus", `注册 ${eventName}:${key}`);
+    this.trace("EventDispatcher", `注册 ${eventName}:${key}`);
     return () => this.listeners.get(eventName)?.delete(key);
   }
 
@@ -140,7 +140,7 @@ export class EventDispatcher {
     if (this.depth >= this.maxDepth) throw new Error(`事件递归超过安全深度：${eventName}`);
     const handlers = [...(this.listeners.get(eventName)?.values() ?? [])];
     const generation = this.generation;
-    this.trace("EventBus", `触发 ${eventName}`, event);
+    this.trace("EventDispatcher", `触发 ${eventName}`, event);
     this.depth += 1;
     try {
       for (const handler of handlers) {
@@ -187,10 +187,10 @@ export class EventDispatcher {
 
   /*
   功能
-  兼容旧 EventBus.emit 入口，语义等于 dispatchHook。
+  兼容旧 EventDispatcher.emit 入口，语义等于 dispatchHook。
 
   调用方
-  legacy Game/Response/Dying/Judgment façades。
+  Application response、combat、dying 与 judgment workflows。
 
   输入
   eventName 与 payload。

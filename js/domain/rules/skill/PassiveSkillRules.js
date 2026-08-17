@@ -1,6 +1,6 @@
 /*
 模块职责
-唯一拥有被动技能 WHEN/IF 的纯 predicate facts；不拥有 EventBus、listener、effect workflow、response、choice、mutation 或 presentation。
+唯一拥有被动技能 WHEN/IF 的纯 predicate facts；不拥有 EventDispatcher、listener、effect workflow、response、choice、mutation 或 presentation。
 
 上游
 application/trigger PassiveSkillTriggerRegistry 与 tests。
@@ -15,10 +15,10 @@ Domain StatusRules/TurnRules。
 不读取 hidden card、controllerType、AI/UI。
 
 架构约束
-不得依赖 Game/application/adapters/EventBus；不得 await、emit、随机、mutation。
+不得依赖 Game/application/adapters/EventDispatcher；不得 await、emit、随机、mutation。
 */
-import { PASSIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260816-legacy-recovery";
-import { isHuntMarkExpired } from "../status/StatusRules.js?build=20260816-legacy-recovery";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
+import { isHuntMarkExpired } from "../status/StatusRules.js?build=20260817-architecture-closure-final";
 
 /*
 功能

@@ -20,12 +20,14 @@ value/CardValue、value/ThreatValue 与 state/Probability。
 import {
   getBaseCardAiValue,
   getRoleCardAiValue
-} from "../value/CardValue.js?build=20260816-legacy-recovery";
-import { ThreatCalculator } from "../value/ThreatValue.js?build=20260816-legacy-recovery";
+} from "../value/CardValue.js?build=20260817-architecture-closure-final";
+import { ThreatCalculator } from "../value/ThreatValue.js?build=20260817-architecture-closure-final";
+import { getCharacterRoleTags } from "./CharacterRoleMetadata.js?build=20260817-architecture-closure-final";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
 import {
   PROBABILITY_EPSILON,
   totalBranchProbability
-} from "../state/Probability.js?build=20260816-legacy-recovery";
+} from "../state/Probability.js?build=20260817-architecture-closure-final";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
@@ -279,11 +281,11 @@ cardSituationValue。
 getRoleCardAiValue、getBaseCardAiValue。
 
 边界与不变量
-非空非法 generalId 保持抛错，不静默吞掉配置错误。
+非空非法 characterId 保持抛错，不静默吞掉配置错误。
 */
 function roleOrBaseCardAiValue(player, definitionId) {
-  return player?.generalId
-    ? getRoleCardAiValue(player.generalId, definitionId)
+  return player?.characterId
+    ? getRoleCardAiValue(player.characterId, definitionId)
     : getBaseCardAiValue(definitionId);
 }
 
@@ -331,15 +333,16 @@ export function cardSituationValue(definitionId, player) {
       Number(player?.maxEnergy ?? player?.energy ?? 0) - Number(player?.energy ?? 0)
     );
     value += Math.min(2, missingEnergy);
-    const activeSkillId = player?.activeSkillId ?? player?.general?.activeSkillIds?.[0] ?? null;
-    const activeSkillCost = Number(player?.activeSkillCost ?? player?.general?.activeCost ?? 0);
+    const activeSkillId = player?.activeSkillId ?? player?.character?.activeSkillIds?.[0] ?? null;
+    const activeSkill = ACTIVE_SKILL_DEFINITIONS[activeSkillId] ?? null;
+    const activeSkillCost = Number(player?.activeSkillCost ?? activeSkill?.cost ?? 0);
     const activeSkillUses = Number(
       player?.activeSkillUses
       ?? player?.turnFlags?.activeSkillUseCounts?.[activeSkillId]
       ?? 0
     );
     const activeSkillLimit = Number(
-      player?.activeSkillLimit ?? player?.general?.activeLimitPerTurn ?? 0
+      player?.activeSkillLimit ?? activeSkill?.limitPerTurn ?? 0
     );
     if (
       activeSkillId
@@ -599,8 +602,8 @@ export function threatView(player) {
     statuses: Array.isArray(player?.statuses)
       ? player.statuses
       : Object.keys(player?.statuses ?? {}),
-    roleTags: player?.roleTags ?? player?.general?.roleTags ?? [],
-    tags: player?.tags ?? player?.general?.tags ?? []
+    roleTags: player?.roleTags ?? getCharacterRoleTags(player?.characterId ?? player?.character?.id),
+    tags: player?.tags ?? []
   };
 }
 

@@ -1,13 +1,13 @@
 /**
- * 本文件根据 cardConfig 创建实体牌堆，并管理抽牌、弃牌、结算区与重洗。
+ * 本文件根据领域定义与规则集创建实体牌堆，并管理抽牌、弃牌、结算区与重洗。
  * 它依赖卡牌配置和随机工具，不负责合法性、日志或卡牌效果。
  * 所有在手牌、装备区或 resolvingCards 中的卡都不会进入重洗来源。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260816-legacy-recovery";
-import { createDeckZoneState } from "../domain/state/model/ZoneState.js?build=20260816-legacy-recovery";
-import { appendCardToZone, commitDeckBuild, commitReshuffle, moveCardBetweenZones, removeCardFromZone, takeTopCard } from "../domain/state/transitions/ZoneTransitions.js?build=20260816-legacy-recovery";
-import { createId, shuffled } from "../utils/helpers.js?build=20260816-legacy-recovery";
-import { Debug } from "../utils/debug.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
+import { createDeckZoneState } from "../../domain/state/model/ZoneState.js?build=20260817-architecture-closure-final";
+import { appendCardToZone, commitDeckBuild, commitReshuffle, moveCardBetweenZones, removeCardFromZone, takeTopCard } from "../../domain/state/transitions/ZoneTransitions.js?build=20260817-architecture-closure-final";
+import { createId, shuffled } from "../../utils/helpers.js?build=20260817-architecture-closure-final";
 
 export class Deck {
   /*
@@ -33,10 +33,11 @@ export class Deck {
   createDeckZoneState。
 
   边界与不变量
-  四个牌区数组保持 Domain factory 提供的同一身份；reshuffleCount 是 diagnostics/test observability legacy extension；随机源不属于 Domain state。
+  四个牌区数组保持 Domain factory 提供的同一身份；reshuffleCount 是 diagnostics/test observability extension；随机源不属于 Domain state。
   */
-  constructor(random = Math.random) {
+  constructor(random = Math.random, trace = () => {}) {
     this.random = random;
+    this.trace = trace;
     const zoneState = createDeckZoneState();
     this.cards = zoneState.cards;
     this.discardPile = zoneState.discardPile;
@@ -50,7 +51,7 @@ export class Deck {
   根据集中配置创建实体牌并执行 Fisher-Yates 洗牌。
 
   调用方
-  Game.confirmGeneral 与测试。
+  Game.confirmCharacter 与测试。
 
   输入
   authoritative state。
@@ -74,13 +75,14 @@ export class Deck {
     this.reshuffleCount = 0;
     const builtCards = [];
     for (const definition of Object.values(CARD_DEFINITIONS)) {
-      for (let count = 0; count < definition.count; count += 1) {
+      const cardCount = RULESET_DEFINITION.deckComposition[definition.definitionId];
+      for (let count = 0; count < cardCount; count += 1) {
         builtCards.push({ ...definition, id: createId("card") });
       }
     }
     const shuffledCards = shuffled(builtCards, this.random);
     commitDeckBuild(state, this, shuffledCards, [], [], []);
-    Debug.log("Deck", `创建并洗牌 ${this.cards.length} 张`);
+    this.trace("Deck", `创建并洗牌 ${this.cards.length} 张`);
     return this.cards.length;
   }
 
@@ -89,7 +91,7 @@ export class Deck {
   抽取一张牌；空牌堆时先重洗弃牌堆。
 
   调用方
-  Game/PublicCardPool/Judgment workflow。
+  MatchApplication、PublicCardPoolWorkflow 与 JudgmentWorkflow。
 
   输入
   authoritative state。
@@ -144,7 +146,7 @@ export class Deck {
     const shuffledCards = shuffled(this.discardPile, this.random);
     commitReshuffle(state, this, shuffledCards);
     this.reshuffleCount += 1;
-    Debug.log("Deck", `重洗后牌堆 ${this.cards.length} 张`);
+    this.trace("Deck", `重洗后牌堆 ${this.cards.length} 张`);
     return true;
   }
 
@@ -248,7 +250,7 @@ export class Deck {
   将公开弃置或被替换的牌加入弃牌堆。
 
   调用方
-  Game 与 PublicCardPool。
+  MatchApplication 与 PublicCardPoolWorkflow。
 
   输入
   authoritative state 与 Card entity。
@@ -279,7 +281,7 @@ export class Deck {
   从牌堆抽取一张牌并放入独立判定区。
 
   调用方
-  JudgmentSystem。
+  JudgmentWorkflow。
 
   输入
   authoritative state。
@@ -311,7 +313,7 @@ export class Deck {
   将判定区卡提交到弃牌堆。
 
   调用方
-  JudgmentSystem。
+  JudgmentWorkflow。
 
   输入
   authoritative state 与 Card entity。
@@ -343,7 +345,7 @@ export class Deck {
   将判定区卡提交到指定玩家手牌。
 
   调用方
-  JudgmentSystem。
+  JudgmentWorkflow。
 
   输入
   authoritative state、Card entity 与 Player。

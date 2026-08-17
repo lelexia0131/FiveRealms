@@ -3,7 +3,7 @@
 当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE。
 架构结论：FiveRealms AI Engine 2.0 — MASTER ARCHITECTURE COMPLETE。
 本轮整理基线：`7f73a03 ARCH-9.10`
-当前浏览器构建标识：`20260815-card-estimate-parity-fix`
+当前浏览器构建标识：`20260817-architecture-closure-final`
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
 最新校验日期：2026-08-15
 范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；下方 Current Architecture Snapshot 与第 32 节描述当前架构，第 2 至 31 节保留阶段审计、迁移设计和落地证据。
@@ -23,7 +23,7 @@
 
 ## Current Architecture Snapshot
 
-当前生产 AI 共 57 个 JavaScript 模块，最终责任边界如下：
+当前生产 AI 共 59 个 JavaScript 模块，最终责任边界如下：
 
 | 层 | 当前正式 owner |
 |---|---|
@@ -33,7 +33,7 @@
 | Simulation | `Simulator` 管 clone、共享 runtime 与分派；Response、Combat、Card、Skill、Status 五个组件各自推进对应状态。 |
 | Value | State Value、Transition Value、Search Prior、Policy Value 与 Diagnostic Ledger 分属正式 owner；只有 Transition Value 的最终组合进入候选 final value。 |
 | Policy / Domain | Policy 只做 AI 过滤、选择与 valuation；`js/ai/domain/**` 是 AI probabilistic/search model，不拥有 Repository Domain 规则。 |
-| Repository Domain Rules | `js/domain/rules/**` 是 Game Rule Authority；`js/domain/definitions/**` 是固定事实 Authority；`RuleEngine` 与 `DistanceSystem` 仅 legacy façade。 |
+| Repository Domain Rules | `js/domain/rules/**` 是 Game Rule Authority；`js/domain/definitions/**` 是固定事实 Authority；AI 通过 canonical projection 直接消费这些 final owners。 |
 
 AI deterministic legality、目标、距离、伤害、响应与状态判定的 rule source 来自 `js/domain/rules/**`；AI 只通过窄投影把 SearchState/Visible facts 适配为 canonical rule facts。`ActionCandidatePolicy` 只决定 AI 是否考虑某个规则合法动作，`TransferPolicy` 唯一拥有 AI 转移方向策略。正式搜索不得读取敌方未知手牌的 `definitionId`，只能消费 Visible / Knowledge / Belief 提供的合法信息或概率分支。旧 compatibility 文件与旧 owner 路径已删除；checker 中保留的旧名称仅是防止回归的正式 guard。
 
@@ -51,8 +51,8 @@ FR-ARCH-13 current facts：
 - queued planned sequence 的第二项不继承首项 requestVersion；`resolvePlannedAction` 继续 current-state rebind + Domain candidate revalidation；
 - `SearchResult` 只保存 `ActionDescriptor`、计划描述与 stats；搜索边界不返回 real Card/Player/SearchState/Simulator；
 - `SearchRng` 是 AI Search/Decision 专用 LCG；real Game RNG 不被纯 AI search 推进，固定 AI seed 可复现；
-- `GameChoiceRouter` 已收窄为显式注入的 composition bridge；FR-ARCH-15 删除条件：Game 不再是 composition owner 且 main.js 接管全部 wiring；
-- Worker、`postMessage`、SearchRequest 之外的 worker protocol 均未创建。
+- `createChoiceBoundary` 显式组合 Human/AI peer adapters、ChoicePort 与 coordinator；AI 不回读应用对象；
+- Main Thread 与 Dedicated Worker 只交换 data-only `SearchRequest` / `WorkerSearchOutcome`。
 
 FR-ARCH-14 current facts：
 - `js/adapters/ai/worker/` 拥有 Dedicated Worker entry、Worker client、headless local transport 与 `WorkerSearchRuntime`/`SearchEngineFactory` 唯一 search execution composition；
@@ -65,7 +65,7 @@ FR-ARCH-14 current facts：
 - browser Worker client 初始实例与 watchdog 重建实例共用同一 wiring；postMessage/messageerror 失败会清空 pending 并重建，不在下一次合法搜索上产生 false in-flight；
 - AI 弃牌阶段有 runtime invariant guard：即使 ChoicePort 异常 cancelled/declined/selectedIds 不足，AI 回合结束仍收束到 `hand.length <= hp`；
 - presentation pacing 与 gameplay SFX 解耦；连续 gameplay SFX 不受 `SoundManager` 墙钟节流，仅 UI `select` 保留防误触节流；
-- FR-ARCH-14 正式状态为 BLOCKED，代码与 CLI/browser-equivalent 回归已关闭，最终 PASS 等待真实浏览器验收。
+- FR-ARCH-14 与 repository FR-ARCH-15 均已 CLOSED / PASS；Dedicated Worker 是当前浏览器生产路径。
 
 ## Historical Baseline and Migration Record
 
@@ -1196,7 +1196,7 @@ js/ai/
 └─ domain/      # Radar / Lightning / Seal / GlobalBenefit 纯领域事实
 ```
 
-正式生产文件共 `50` 个。根目录 allowlist 为且仅为 `AiController.js`；任何新增根级 AI JavaScript 文件都会被 Architecture Guard 拒绝。
+正式生产文件共 `59` 个。根目录 allowlist 为且仅为 `AiController.js`；任何新增根级 AI JavaScript 文件都会被 Architecture Guard 拒绝。
 
 ### 物理移动与兼容路径删除
 
@@ -1225,7 +1225,7 @@ js/ai/
 | Value | `Evaluator` 拥有纯状态公式；`StateValue` 提供显式状态查询；`ValueLedger` 管 owner ledger；`Economics`、`CardValue`、`ThreatValue`、`SealValue`、`GlobalBenefitValue` 各拥有对应价值 primitive；`ValueService` 只聚合查询。 |
 | Policy | `ActionCandidatePolicy` 管 AI 专属候选约束；`CardSelectionPolicy`、`ResourceSelectionPolicy`、`ResponsePolicy`、`TransferPolicy` 各拥有唯一选择公式；两个 Boundary 只解析真实实体与执行上下文。 |
 | AI Models | `RadarModel`、`LightningModel`、`SealModel`、`GlobalBenefitModel` 只返回只读概率、ID 与 outcome 事实；它们不是 Repository Domain Rule authority。 |
-| Execution | `AiController` 读取当前 GameState、组合全部 owner、向 Planner 注入窄 capability，并把 descriptor 重新绑定到当前合法实体。 |
+| Execution | `AiController` 读取显式注入的状态/会话 capability，组合全部 owner，经 search executor 调用 Worker，并把 descriptor 重新绑定到当前合法实体。 |
 
 `getLegalActions` 已改为 `getActionCandidates`：该集合以 `js/domain/rules/**` 决定确定性合法动作，再由 AI Policy 收窄为候选，不再误称为完整游戏合法集。
 
@@ -1245,6 +1245,6 @@ planning benchmark（seed `20260814`、node budget `200`、`planning` category�
 
 同一 planning 场景的结构计数为 constructor `64`、clone `1583`、apply `1583`、expanded `1325`、clones/node `1.1947169811320755`。Response `27686`、Combat `1860`、Skill `2905`、Status `12729`；Card raw `9340`，其中 `64` 是每个 Simulator 一次的 `initializeAssaultSummaries` 状态初始化，按 ARCH-8 可比 component 口径排除后为 `9276`，与冻结值一致。
 
-AI-ARCH-10 最终非 Balance 验证：Search `71/71`、Simulation `137/137`、Value/Policy/Domain `227/227`、隐藏信息 `59/59`、全部 AI `816/816`、显式排除 `AI·搜索：平衡模拟` 的普通 unit/integration `1383/1383`。其阶段浏览器模块图统一使用 `20260814-ai-engine-2-final`；本轮静态清理后的当前标识记录在页首。
+AI-ARCH-10 的阶段验证记录保留在 Git 历史与测试输出；当前验收以 `tests/run.mjs` 的 `AI 系统`、FR-ARCH、完整非 Balance suite、architecture checker 和真实浏览器 smoke 为准。浏览器模块图统一使用页首构建标识。
 
-Remaining debt 不包含兼容算法或缺失 owner。尚需人工浏览器 smoke 验证观察战场、动作执行、响应、状态结算与重新开始流程；Git 提交、推送与合并仍由维护者执行。
+AI 架构不存在兼容算法或缺失 owner。后续功能必须在上述 final owner 内演进；Git 提交、推送与合并仍由维护者执行。

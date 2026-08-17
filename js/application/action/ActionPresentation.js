@@ -3,7 +3,7 @@
 拥有 card/skill action 的展示文案与显示目标决策：目标标签、自然战斗日志与 result-only 卡牌使用日志抑制；不拥有 legality、effect 或 generic Action lifecycle。
 
 上游
-Game temporary composition root 与 Application Action/Turn。
+composition root 与 Application Action/Turn。
 
 下游
 无。
@@ -15,9 +15,47 @@ Game temporary composition root 与 Application Action/Turn。
 不读取 hidden hand 或 AI memory。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher 或 concrete adapters。
 */
+import { getEnemies } from "../../domain/state/queries/MatchQueries.js?build=20260817-architecture-closure-final";
+
 const RESULT_ONLY_CARD_IDS = new Set(["charge", "recover", "shield"]);
+
+/*
+功能
+为中央结算卡生成纯展示 displayTargets。
+
+调用方
+composition root 的 ActionWorkflow wiring。
+
+输入
+MatchState、source、cardOrSkill 与已决定 targets。
+
+输出
+展示目标数组或 null。
+
+读取状态
+targetType 与存活敌人。
+
+写入状态
+无。
+
+调用函数
+getEnemies。
+
+边界与不变量
+只决定展示投影，不改变业务 targets、合法性或 AI 决策。
+*/
+export function resolveActionDisplayTargets(state, source, cardOrSkill, targets = []) {
+  if (targets.length) return targets;
+  if (cardOrSkill?.targetType === "allEnemies") {
+    return getEnemies(state, source).map((target) => ({ id:target.id, name:target.name }));
+  }
+  if (cardOrSkill?.targetType === "none") {
+    return [{ id:source.id, name:source.name, isSelf:true }];
+  }
+  return null;
+}
 
 /*
 功能

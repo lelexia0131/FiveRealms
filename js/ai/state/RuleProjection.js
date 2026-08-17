@@ -17,9 +17,9 @@ js/domain/rules 与 js/domain/definitions 目录。
 架构约束
 禁止在这里计算合法性、目标公式、距离公式或技能语义；Domain Rule 函数是唯一公式 owner。
 */
-import { CHARACTER_BY_ID } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260816-legacy-recovery";
-import { assertCanonicalSeatRoster } from "../../domain/state/queries/SeatRosterContract.js?build=20260816-legacy-recovery";
-import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js?build=20260816-legacy-recovery";
+import { CHARACTER_BY_ID } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260817-architecture-closure-final";
+import { assertCanonicalSeatRoster } from "../../domain/state/queries/SeatRosterContract.js?build=20260817-architecture-closure-final";
+import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -236,7 +236,7 @@ AI simulation 与 policy 的 passive trigger 分支。
 布尔值。
 
 读取状态
-Domain CharacterDefinitions 与玩家 generalId。
+Domain CharacterDefinitions 与玩家 characterId。
 
 写入状态
 无。
@@ -245,12 +245,12 @@ Domain CharacterDefinitions 与玩家 generalId。
 无。
 
 边界与不变量
-角色→被动技能映射是 Domain static fact；AI 不得按 generalId 字面量重写该映射。
+角色→被动技能映射是 Domain static fact；AI 不得按 characterId 字面量重写该映射。
 */
 export function hasPassiveSkill(player, skillId) {
   return Boolean(
-    player?.generalId
-    && CHARACTER_BY_ID[player.generalId]?.passiveSkillIds?.includes(skillId)
+    player?.characterId
+    && CHARACTER_BY_ID[player.characterId]?.passiveSkillIds?.includes(skillId)
   );
 }
 

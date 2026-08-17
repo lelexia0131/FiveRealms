@@ -3,7 +3,7 @@
 唯一拥有 Application Turn Workflow：回合循环、六阶段顺序、失败恢复、轮次推进、AI play-phase orchestration 与弃牌阶段 sequencing；不拥有 card/skill resolver 或 AI search policy。
 
 上游
-core/Game legacy façade 与 Application Match continuation。
+composition boundary 与 Application Match continuation。
 
 下游
 Domain TeamRules/TurnRules/transitions、Application Action/Combat/Response 能力与 Ports/Adapters。
@@ -17,15 +17,15 @@ Domain TeamRules/TurnRules/transitions、Application Action/Combat/Response 能�
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、Planner、SearchState 或 concrete adapters。
 */
-import { getDrawCountFromRules, getTeamRules, getTurnEnergyBreakdownFromRules } from "../../domain/rules/team/TeamRules.js?build=20260816-legacy-recovery";
+import { getDrawCountFromRules, getTeamRules, getTurnEnergyBreakdownFromRules } from "../../domain/rules/team/TeamRules.js?build=20260817-architecture-closure-final";
 import {
   calculateNextActorIndex, createGlobalTurnReactiveState, createRoundUsageState,
   createTurnUsageState, shouldSkipActionPhase
-} from "../../domain/rules/turn/TurnRules.js?build=20260816-legacy-recovery";
-import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260816-legacy-recovery";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-legacy-recovery";
-import { setCurrentPlayerIndex, setCurrentRound, setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260816-legacy-recovery";
-import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
+} from "../../domain/rules/turn/TurnRules.js?build=20260817-architecture-closure-final";
+import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260817-architecture-closure-final";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260817-architecture-closure-final";
+import { setCurrentPlayerIndex, setCurrentRound, setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260817-architecture-closure-final";
+import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics", "runTurn",
@@ -43,7 +43,7 @@ const REQUIRED_DEPENDENCIES = [
 创建 Application Turn Workflow。
 
 调用方
-core/Game legacy façade composition。
+composition root。
 
 输入
 显式注入的 phase/event/participant/AI-action/presentation collaborators。

@@ -3,7 +3,7 @@
 拥有隐藏手牌选择的短期 opaque-token/session 数据契约；不保存 Card/Player 实体，只保存 ID 与版本事实。
 
 上游
-core/CardSelectionSystem legacy façade。
+Application hidden-card workflow 与 UI adapter。
 
 下游
 无。
@@ -15,7 +15,7 @@ core/CardSelectionSystem legacy façade。
 不读取 controllerType/aiMemory/AI/UI 或真实手牌内容。
 
 架构约束
-不得依赖 Game runtime、Player/Card entity、DOM、EventBus 或 concrete adapters。
+不得依赖 Game runtime、Player/Card entity、DOM、EventDispatcher 或 concrete adapters。
 */
 
 /*
@@ -23,7 +23,7 @@ core/CardSelectionSystem legacy façade。
 创建 application-owned hidden selection store。
 
 调用方
-core/CardSelectionSystem。
+HiddenCardSelectionAdapter。
 
 输入
 注入的 createId 能力。
@@ -56,7 +56,7 @@ export function createHiddenCardSelectionStore({ createId }) {
     创建隐藏选择会话与 opaque token records。
 
     调用方
-    core/CardSelectionSystem.createHiddenSelection。
+    HiddenCardSelectionAdapter.createHiddenSelection。
 
     输入
     ownerId、handVersion 与 cardRecords。
@@ -102,7 +102,7 @@ export function createHiddenCardSelectionStore({ createId }) {
     返回 token 记录或 null。
 
     调用方
-    core/CardSelectionSystem.resolveToken。
+    HiddenCardSelectionAdapter.resolveToken。
 
     输入
     token。
@@ -132,7 +132,7 @@ export function createHiddenCardSelectionStore({ createId }) {
     解析已确认 token 列表为去重 cardId。
 
     调用方
-    core/CardSelectionSystem.resolveConfirmedTokens。
+    HiddenCardSelectionAdapter.resolveConfirmedTokens。
 
     输入
     tokens、selectionId、ownerId 与 maximum。
@@ -150,7 +150,7 @@ export function createHiddenCardSelectionStore({ createId }) {
     无。
 
     边界与不变量
-    不检查 handVersion；实体复核由 core facade 保留。
+    不检查 handVersion；实体复核由 Application hidden-card workflow 执行。
     */
     resolveConfirmedCardIds(tokens, selectionId, ownerId, maximum) {
       const session = sessions.get(selectionId);
@@ -167,7 +167,7 @@ export function createHiddenCardSelectionStore({ createId }) {
     判断 selection session 是否仍 active。
 
     调用方
-    core/CardSelectionSystem.isSelectionActive。
+    HiddenCardSelectionAdapter.isSelectionActive。
 
     输入
     selectionId、ownerId 与 handVersion。
@@ -197,7 +197,7 @@ export function createHiddenCardSelectionStore({ createId }) {
     判断 selection session 是否仍 active。
 
     调用方
-    core/CardSelectionSystem.isSelectionActive。
+    HiddenCardSelectionAdapter.isSelectionActive。
 
     输入
     selectionId、可选 ownerId 与 handVersion。
@@ -228,7 +228,7 @@ export function createHiddenCardSelectionStore({ createId }) {
     清理一个 selection session 及其全部 token。
 
     调用方
-    core/CardSelectionSystem.clearSelection。
+    HiddenCardSelectionAdapter.clearSelection。
 
     输入
     selectionId。
@@ -260,7 +260,7 @@ export function createHiddenCardSelectionStore({ createId }) {
     清理全部 sessions 与 token records。
 
     调用方
-    core/CardSelectionSystem.cleanup。
+    HiddenCardSelectionAdapter.cleanup。
 
     输入
     无。

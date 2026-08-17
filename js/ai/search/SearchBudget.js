@@ -6,7 +6,7 @@
 Planner 与搜索预算回归测试。
 
 下游
-GAME_CONFIG 默认时间配置与注入时钟。
+RUNTIME_POLICY 默认时间配置与注入时钟。
 
 状态边界
 只修改当前 SearchBudget 实例的计数和停止原因，不读取 SearchState。
@@ -17,7 +17,7 @@ GAME_CONFIG 默认时间配置与注入时钟。
 架构约束
 节点预算只统计已经完成候选物化的 SearchNode；不得把模拟调用折算成节点成本。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260816-legacy-recovery";
+import { AI_RUNTIME_POLICY } from "../policy/AiRuntimePolicy.js?build=20260817-architecture-closure-final";
 
 // COMPLETE 表示自然完成；TIME/NODE 分别表示时间或完整节点预算耗尽；
 // CANCELLED 表示会话让步检测到取消。停止原因只决定收束方式，不修改候选价值。
@@ -43,7 +43,7 @@ export class SearchBudget {
   尚未停止的 SearchBudget 实例。
 
   读取状态
-  GAME_CONFIG 默认时间预算和注入时钟。
+  RUNTIME_POLICY 默认时间预算和注入时钟。
 
   写入状态
   初始化开始时间、预算、计数与空 stopReason。
@@ -61,7 +61,7 @@ export class SearchBudget {
     const configuredTime = timeBudget == null ? Number.NaN : Number(timeBudget);
     this.timeBudget = Number.isFinite(configuredTime)
       ? Math.max(0, configuredTime)
-      : GAME_CONFIG.aiSearchTimeBudgetMs;
+      : AI_RUNTIME_POLICY.searchTimeBudgetMs;
     const configuredNodes = Number(nodeBudget);
     this.nodeBudget = Number.isFinite(configuredNodes) && configuredNodes >= 1
       ? Math.floor(configuredNodes)

@@ -17,15 +17,14 @@ Economics、CardValue、ThreatValue 以及封印、雷达的现有纯领域函�
 架构约束
 不得导入或构造 Simulator、Planner、Controller；State Value 只读一个状态，闪电等生命周期结果必须由调用层先计算为纯值。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-legacy-recovery";
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260816-legacy-recovery";
-import { sealTeamBurden } from "./SealValue.js?build=20260816-legacy-recovery";
-import { cardAvailability, roleCardDelta } from "./CardValue.js?build=20260816-legacy-recovery";
+import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260817-architecture-closure-final";
+import { sealTeamBurden } from "./SealValue.js?build=20260817-architecture-closure-final";
+import { cardAvailability, getBaseCardAiValue, roleCardDelta } from "./CardValue.js?build=20260817-architecture-closure-final";
 import {
   ENERGY_STATE_WEIGHT,
   HP_VALUE,
   energyDeviceFutureUtility
-} from "./Economics.js?build=20260816-legacy-recovery";
+} from "./Economics.js?build=20260817-architecture-closure-final";
 import {
   DANGER_VALUE,
   DEATH_VALUE,
@@ -33,7 +32,7 @@ import {
   hp2ThreatRiskValue,
   radarMitigationUtility,
   shieldStateValue
-} from "./ThreatValue.js?build=20260816-legacy-recovery";
+} from "./ThreatValue.js?build=20260817-architecture-closure-final";
 
 export class Evaluator {
   /*
@@ -126,14 +125,14 @@ export class Evaluator {
       ? 0
       : (player.survivalChance - 0.5) * 8;
     const equipmentValue = player.equipmentDefinitionId
-      ? (CARD_DEFINITIONS[player.equipmentDefinitionId]?.aiValue ?? 7)
+      ? getBaseCardAiValue(player.equipmentDefinitionId)
       : 0;
     const initialEquipmentValue = player.initialEquipmentValue ?? equipmentValue;
     const equipmentDelta = (equipmentValue
       * (player.equipmentRetentionProbability ?? (equipmentValue ? 1 : 0))
       - initialEquipmentValue + (player.expectedEquipmentGain ?? 0)) * 0.25;
     const currentEquipmentRoleDelta = player.equipmentDefinitionId
-      ? roleCardDelta(player.generalId, player.equipmentDefinitionId)
+      ? roleCardDelta(player.characterId, player.equipmentDefinitionId)
       : 0;
     const initialEquipmentRoleDelta = Number.isFinite(player.initialEquipmentRoleDelta)
       ? player.initialEquipmentRoleDelta
@@ -143,7 +142,7 @@ export class Evaluator {
       - initialEquipmentRoleDelta + (player.expectedEquipmentRoleDelta ?? 0)) * 0.25;
     const handRoleDelta = player.id === viewerId
       ? (player.hand ?? []).reduce((sum, card) => (
-          sum + roleCardDelta(player.generalId, card?.definitionId) * cardAvailability(card)
+          sum + roleCardDelta(player.characterId, card?.definitionId) * cardAvailability(card)
         ), 0)
       : 0;
     const markThreat = Object.entries(player.huntMarkProbabilities ?? {}).reduce(

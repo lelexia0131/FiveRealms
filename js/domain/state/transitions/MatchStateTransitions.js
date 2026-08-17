@@ -3,7 +3,7 @@
 拥有 MatchState primitive 字段的 root-aware 通用原子写操作；不决定回合推进、阶段顺序、胜负或 workflow。
 
 上游
-Game、DyingSystem、JudgmentSystem、PublicCardPool 的 legacy commit façade。
+match application、DyingWorkflow、JudgmentWorkflow、PublicCardPoolWorkflow 的 commit boundary。
 
 下游
 无。
@@ -15,9 +15,9 @@ Game、DyingSystem、JudgmentSystem、PublicCardPool 的 legacy commit façade�
 不读取 AI、UI、事件或隐藏信息。
 
 架构约束
-不得依赖 Game/EventBus/UI/AI/application/adapters；不得计算下一玩家、轮次或胜利者。
+不得依赖 Game/EventDispatcher/UI/AI/application/adapters；不得计算下一玩家、轮次或胜利者。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260816-legacy-recovery";
+import { bumpStateVersion } from "./StateVersion.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -88,7 +88,7 @@ export function setCurrentRound(state, round) {
 写入当前 match phase。
 
 调用方
-Game turn flow、DyingSystem、JudgmentSystem 与直接测试。
+Game turn flow、DyingWorkflow、JudgmentWorkflow 与直接测试。
 
 输入
 state 与 phase。
@@ -184,7 +184,7 @@ export function setGameOver(state, isGameOver) {
 写入公开牌池数组引用。
 
 调用方
-PublicCardPool 与直接测试。
+PublicCardPoolWorkflow 与直接测试。
 
 输入
 state 与数组。

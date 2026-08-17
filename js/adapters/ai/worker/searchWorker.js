@@ -15,9 +15,9 @@ WorkerSearchRuntime。
 不读取 DOM/Game/真实 entities；所有 payload 必须 structured-clone-safe。
 
 架构约束
-不得 import core/Game、application、UI/Audio 或 Domain transitions；不得使用 Math.random。
+不得 import composition、application、UI/Audio 或 Domain transitions；不得使用 Math.random。
 */
-import { runSearchRequest } from "./WorkerSearchRuntime.js?build=20260816-legacy-recovery";
+import { runSearchRequest } from "./WorkerSearchRuntime.js?build=20260817-architecture-closure-final";
 
 /*
 功能

@@ -17,21 +17,20 @@ CardValue、ThreatValue、现有领域纯函数与闪电模拟查询。
 架构约束
 本模块所有返回值只用于剪枝和排序；不得进入最终价值，TransitionValue 也不得调用或累计这些值。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260816-legacy-recovery";
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-legacy-recovery";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260816-legacy-recovery";
-import { sealUseValue } from "./SealPrior.js?build=20260816-legacy-recovery";
+import { AI_RUNTIME_POLICY } from "../policy/AiRuntimePolicy.js?build=20260817-architecture-closure-final";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260817-architecture-closure-final";
+import { sealUseValue } from "./SealPrior.js?build=20260817-architecture-closure-final";
 import {
   getBaseCardAiValue,
   getEquipmentKeepValueDeduction,
   getRoleCardAiValue,
   roleCardDelta
-} from "../value/CardValue.js?build=20260816-legacy-recovery";
+} from "../value/CardValue.js?build=20260817-architecture-closure-final";
 import {
   SKILL_THRESHOLD_OPTION_VALUE,
   STATE_DELTA_SCALE
-} from "../value/Economics.js?build=20260816-legacy-recovery";
-import { ThreatCalculator } from "../value/ThreatValue.js?build=20260816-legacy-recovery";
+} from "../value/Economics.js?build=20260817-architecture-closure-final";
+import { ThreatCalculator } from "../value/ThreatValue.js?build=20260817-architecture-closure-final";
 
 export const BURNING_FIELD_SEARCH_PRIOR = 8;
 
@@ -62,7 +61,7 @@ export class SearchPrior {
   不持有 Game、Planner、Controller 或隐式 GameState callback。
   */
   constructor({
-    getDifficultyMultiplier = () => GAME_CONFIG.aiDifficultyMultiplier,
+    getDifficultyMultiplier = () => AI_RUNTIME_POLICY.difficultyMultiplier,
     simulationQuery
   } = {}) {
     this.getDifficultyMultiplier = getDifficultyMultiplier;
@@ -117,8 +116,8 @@ export class SearchPrior {
       1,
       Math.max(0, assaultCount - availableAttackUses)
     );
-    const assaultSearchValue = actor.generalId
-      ? getRoleCardAiValue(actor.generalId, "assault")
+    const assaultSearchValue = actor.characterId
+      ? getRoleCardAiValue(actor.characterId, "assault")
       : getBaseCardAiValue("assault");
     return redeemableExtraCapacity * assaultSearchValue;
   }
@@ -151,7 +150,7 @@ export class SearchPrior {
   threatPriority(viewer, target, memory, expectedDamage = 1) {
     const multiplier = Math.max(
       0,
-      Number(this.getDifficultyMultiplier?.() ?? GAME_CONFIG.aiDifficultyMultiplier) || 0
+      Number(this.getDifficultyMultiplier?.() ?? AI_RUNTIME_POLICY.difficultyMultiplier) || 0
     );
     if (!multiplier || !target || target.battleTeam === viewer.battleTeam) return 0;
     return ThreatCalculator.calculate(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
@@ -214,12 +213,14 @@ export class SearchPrior {
       return value;
     }
     const card = action.card;
-    const identityDelta = roleCardDelta(actor?.generalId, card?.definitionId);
-    let value = actor?.generalId && card?.definitionId
-      ? getRoleCardAiValue(actor.generalId, card.definitionId)
-      : (card.aiValue ?? 0);
+    const identityDelta = roleCardDelta(actor?.characterId, card?.definitionId);
+    let value = actor?.characterId && card?.definitionId
+      ? getRoleCardAiValue(actor.characterId, card.definitionId)
+      : (Number.isFinite(card?.aiValue)
+        ? card.aiValue
+        : (card?.definitionId ? getBaseCardAiValue(card.definitionId) : 0));
     if (card.definitionId === "lightning") {
-      value = (card.aiValue ?? 0)
+      value = getBaseCardAiValue(card.definitionId)
         + this.simulationQuery.lightningLifecycleValue(
           visible,
           actor,
@@ -300,11 +301,10 @@ export class SearchPrior {
       ?? null;
     if (card.category === "equipment" && equippedDefinitionId) {
       value -= getEquipmentKeepValueDeduction(
-        actor?.generalId ?? null,
+        actor?.characterId ?? null,
         card.definitionId,
         equippedDefinitionId,
-        actor.equipmentRetentionProbability ?? 1,
-        { cardDefinitions: CARD_DEFINITIONS }
+        actor.equipmentRetentionProbability ?? 1
       );
     }
     return value;

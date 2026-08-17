@@ -12,12 +12,12 @@ composition root 的 human choice port。
 不读写真 GameState；不接触 Card/Player 实体。
 
 信息边界
-只把 data-only ChoiceRequest 映射回 legacy UI request。
+只把 data-only ChoiceRequest 映射为 UI session request。
 
 架构约束
 不得 import UIManager、AIController、SoundManager、Game runtime 或其它 concrete adapter。
 */
-import { createChoiceResult, normalizeChoiceResult } from "../../application/ports/ChoicePort.js?build=20260816-legacy-recovery";
+import { createChoiceResult, normalizeChoiceResult } from "../../application/ports/ChoicePort.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -27,7 +27,7 @@ import { createChoiceResult, normalizeChoiceResult } from "../../application/por
 composition root。
 
 输入
-注入的 requestResponse、requestPublicCard、getLegacyContext 与 isSessionValid 能力。
+注入的 requestResponse、requestPublicCard、getChoiceContext 与 isSessionValid 能力。
 
 输出
 冻结的 { request } adapter。
@@ -42,21 +42,21 @@ composition root。
 normalizeChoiceResult、createChoiceResult。
 
 边界与不变量
-response 请求字段与旧 UI request 保持逐项映射；publicCard 经 legacy context 解析实体；session 失效必须返回 cancelled。
+response 请求字段与 UI session request 保持逐项映射；publicCard 经私有 choice context 解析实体；session 失效必须返回 cancelled。
 */
 export function createUiChoiceAdapter({
   requestResponse,
   requestPublicCard,
   requestDiscard,
   requestTarget,
-  getLegacyContext,
+  getChoiceContext,
   isSessionValid
 }) {
   if (typeof requestResponse !== "function" || typeof isSessionValid !== "function") {
     throw new TypeError("UiChoiceAdapter 需要 requestResponse 与 isSessionValid");
   }
-  if (typeof requestPublicCard !== "function" || typeof getLegacyContext !== "function") {
-    throw new TypeError("UiChoiceAdapter 需要 requestPublicCard 与 getLegacyContext");
+  if (typeof requestPublicCard !== "function" || typeof getChoiceContext !== "function") {
+    throw new TypeError("UiChoiceAdapter 需要 requestPublicCard 与 getChoiceContext");
   }
   if (typeof requestDiscard !== "function" || typeof requestTarget !== "function") {
     throw new TypeError("UiChoiceAdapter 需要 requestDiscard 与 requestTarget");
@@ -76,7 +76,7 @@ export function createUiChoiceAdapter({
     Promise<canonical ChoiceResult>。
 
     读取状态
-    注入的 legacy context。
+    注入的私有 choice context。
 
     写入状态
     无。
@@ -89,27 +89,27 @@ export function createUiChoiceAdapter({
     */
     async request(choiceRequest) {
       if (choiceRequest?.kind === "publicCard") {
-        const legacy = getLegacyContext(choiceRequest.requestId);
-        if (!legacy?.player || !Array.isArray(legacy.cards)) return createChoiceResult("cancelled");
-        const card = await requestPublicCard(legacy.player, legacy.cards);
+        const choiceContext = getChoiceContext(choiceRequest.requestId);
+        if (!choiceContext?.player || !Array.isArray(choiceContext.cards)) return createChoiceResult("cancelled");
+        const card = await requestPublicCard(choiceContext.player, choiceContext.cards);
         if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
         return card
           ? createChoiceResult("selected", { selectedIds:[card.id] })
           : createChoiceResult("declined");
       }
       if (choiceRequest?.kind === "discard") {
-        const legacy = getLegacyContext(choiceRequest.requestId);
-        if (!legacy?.player || !Number.isFinite(legacy.count)) return createChoiceResult("cancelled");
-        const cards = await requestDiscard(legacy.player, legacy.count, legacy.prompt);
+        const choiceContext = getChoiceContext(choiceRequest.requestId);
+        if (!choiceContext?.player || !Number.isFinite(choiceContext.count)) return createChoiceResult("cancelled");
+        const cards = await requestDiscard(choiceContext.player, choiceContext.count, choiceContext.prompt);
         if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
         return cards?.length
-          ? createChoiceResult("selected", { selectedIds: cards.slice(0, legacy.count).map((card) => card.id) })
+          ? createChoiceResult("selected", { selectedIds: cards.slice(0, choiceContext.count).map((card) => card.id) })
           : createChoiceResult("declined");
       }
       if (choiceRequest?.kind === "target") {
-        const legacy = getLegacyContext(choiceRequest.requestId);
-        if (!legacy?.players) return createChoiceResult("cancelled");
-        const target = await requestTarget(legacy.players, legacy.prompt, legacy.meta);
+        const choiceContext = getChoiceContext(choiceRequest.requestId);
+        if (!choiceContext?.players) return createChoiceResult("cancelled");
+        const target = await requestTarget(choiceContext.players, choiceContext.prompt, choiceContext.meta);
         if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
         return target
           ? createChoiceResult("selected", { selectedIds:[target.id] })
@@ -117,7 +117,7 @@ export function createUiChoiceAdapter({
       }
       if (choiceRequest?.kind !== "response") return createChoiceResult("cancelled", { reason:"unsupported-choice-kind" });
       const { constraints, context } = choiceRequest;
-      const legacyRequest = {
+      const responseRequest = {
         id: choiceRequest.requestId,
         type: constraints.responseType,
         sourcePlayerId: context.sourcePlayerId,
@@ -130,7 +130,7 @@ export function createUiChoiceAdapter({
         allowDecline: choiceRequest.canDecline,
         presentation: context.presentation
       };
-      const decision = await requestResponse(legacyRequest, context.label);
+      const decision = await requestResponse(responseRequest, context.label);
       return isSessionValid(choiceRequest.gameId)
         ? normalizeChoiceResult(decision)
         : createChoiceResult("cancelled");

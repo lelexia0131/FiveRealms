@@ -3,7 +3,7 @@
 唯一拥有 Player runtime 中已证明属于 Domain 的核心玩家状态初始化 shape。
 
 上游
-Player constructor 的 legacy composition 与未来 domain/rules consumer。
+Player constructor 的 composition 与当前 domain/rules consumer。
 
 下游
 无。
@@ -12,12 +12,12 @@ Player constructor 的 legacy composition 与未来 domain/rules consumer。
 工厂只创建初始 shape，不读取或写入任何既有 Player 实例。
 
 信息边界
-不含 controllerType、aiMemory、statistics、legacy general 对象或 AI/UI 信息。
+不含 controllerType、aiMemory、statistics、character 对象或 AI/UI 信息。
 
 架构约束
 不得依赖 application/adapters/ui/audio/ai/Game runtime；turnFlags/roundFlags/gameFlags 的规则归属延后处理，不在此声明。
 */
-import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
+import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -49,7 +49,7 @@ export function createPlayerState({ id, seatIndex, battleTeam }) {
     id,
     seatIndex,
     battleTeam,
-    generalId: null,
+    characterId: null,
     name: "待选择",
     loreFaction: "未知",
     hp: 0,

@@ -15,7 +15,7 @@ adapters/ui 与 adapters/ai 的 peer choice adapter。
 不得包含 Game/Player/Card/DOM/AI search node；只允许可序列化 IDs、tokens、primitive metadata。
 
 架构约束
-不得依赖 UI/AI/Audio/Diagnostics 实现、Game runtime、Domain transitions 或 EventBus runtime。
+不得依赖 UI/AI/Audio/Diagnostics 实现、Game runtime、Domain transitions 或 EventDispatcher runtime。
 */
 
 export const CHOICE_STATUS = Object.freeze({
@@ -67,13 +67,13 @@ export function createChoiceResult(status, payload = {}) {
 
 /*
 功能
-把 legacy decision shape 或 canonical result 归一化为 ChoiceResult。
+把 decision shape 或 canonical result 归一化为 ChoiceResult。
 
 调用方
 ChoiceCoordinator 与 adapters。
 
 输入
-legacy/canonical result。
+/canonical result。
 
 输出
 冻结 canonical ChoiceResult。
@@ -88,7 +88,7 @@ legacy/canonical result。
 createChoiceResult。
 
 边界与不变量
-used -> selected；declined/cancelled 直通；boolean true/false 兼容 legacy。
+used -> selected；declined/cancelled 直通；boolean true/false 兼容。
 */
 export function normalizeChoiceResult(result) {
   if (result?.status === CHOICE_STATUS.SELECTED || result?.status === CHOICE_STATUS.DECLINED || result?.status === CHOICE_STATUS.CANCELLED) {

@@ -12,21 +12,21 @@ import {
 } from "../evaluators/scenarioDsl.mjs";
 
 const BASE = [
-  { id: "a", team: "dawn", general: "blade-walker" },
-  { id: "b", team: "dusk", general: "oath-warden" },
-  { id: "c", team: "dusk", general: "fate-gambler" },
-  { id: "d", team: "dawn", general: "spirit-medic" },
-  { id: "e", team: "dusk", general: "ember-magus" }
+  { id: "a", team: "dawn", character: "blade-walker" },
+  { id: "b", team: "dusk", character: "oath-warden" },
+  { id: "c", team: "dusk", character: "fate-gambler" },
+  { id: "d", team: "dawn", character: "spirit-medic" },
+  { id: "e", team: "dusk", character: "ember-magus" }
 ];
 
-function board(general = "blade-walker", actorOverrides = {}, others = {}, viewerMemory = null, seed = 20000) {
+function board(character = "blade-walker", actorOverrides = {}, others = {}, viewerMemory = null, seed = 20000) {
   others = others ?? {};
   const players = BASE.map((config) => ({ ...config }));
-  players[0].general = general;
+  players[0].character = character;
   for (const player of players) {
     if (player.id === "a") continue;
     const override = others[player.id] ?? {};
-    if (override.general) player.general = override.general;
+    if (override.character) player.character = override.character;
     player.hp = override.hp ?? 4;
     player.energy = override.energy ?? 1;
     player.hand = override.hand ?? makeCards(["assault"]);
@@ -294,7 +294,7 @@ registerScenario({
     hand: [makeCard("assault"), makeCard("exposeWeakness")]
   }, {
     b: { hp: 2 },
-    c: { general: "oath-warden", hp: 4, hand: makeCards(["assault", "assault"]) }
+    c: { character: "oath-warden", hp: 4, hand: makeCards(["assault", "assault"]) }
   }, null, 20030),
   grade: ({ action }) => {
     if (isCard(action, "exposeWeakness")) return quality(QUALITY.OPTIMAL, "护援可减伤，破势保证 2 伤击杀");

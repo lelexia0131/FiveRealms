@@ -3,7 +3,7 @@
 唯一拥有回合使用状态、global-turn reactive 状态与纯回合推进的规则决定；不执行 workflow 或 mutation。
 
 上游
-Game、Player 测试 façade、RuleUsageTransitions 调用方与 tests。
+match application、Player 测试 boundary、RuleUsageTransitions 调用方与 tests。
 
 下游
 无。
@@ -138,7 +138,7 @@ export function createRoundUsageState() {
 创建 Domain Turn Rule 唯一的 canonical attack usage 事实。
 
 调用方
-RuleEngine facade 与 tests。
+ActionLegality boundary 与 tests。
 
 输入
 已决定 used 与 limit。
@@ -156,7 +156,7 @@ RuleEngine facade 与 tests。
 Object.freeze。
 
 边界与不变量
-canonical shape 只有 used/limit；legacy attackUsed/attackLimit 必须在 RuleEngine facade 归一化。
+canonical shape 只有 used/limit；attackUsed/attackLimit 必须在 ActionLegality boundary 归一化。
 */
 export function createAttackUsage(used, limit) {
   return Object.freeze({
@@ -170,7 +170,7 @@ export function createAttackUsage(used, limit) {
 校验并读取 canonical attack usage facts。
 
 调用方
-RuleEngine facade、hasAttackUseRemaining 与 tests。
+ActionLegality boundary、hasAttackUseRemaining 与 tests。
 
 输入
 canonical { used, limit } 对象。
@@ -188,7 +188,7 @@ usage 对象。
 无。
 
 边界与不变量
-只接受 used/limit 单一 Domain-facing shape；legacy attackUsed/attackLimit 直接传入会抛 TypeError。
+只接受 used/limit 单一 Domain-facing shape；attackUsed/attackLimit 直接传入会抛 TypeError。
 */
 export function getAttackUsage(usage) {
   if (!usage || !Number.isFinite(Number(usage.used)) || !Number.isFinite(Number(usage.limit))) {
@@ -205,7 +205,7 @@ export function getAttackUsage(usage) {
 决定突袭次数是否仍有可用额度。
 
 调用方
-RuleEngine facade 与 tests。
+ActionLegality boundary 与 tests。
 
 输入
 canonical usage facts 或已读取的 used/limit。
@@ -235,7 +235,7 @@ export function hasAttackUseRemaining(usage) {
 决定调息次数是否仍有可用额度。
 
 调用方
-RuleEngine facade 与 tests。
+ActionLegality boundary 与 tests。
 
 输入
 recoverUsed 与 recoverLimit。
@@ -265,7 +265,7 @@ export function hasRecoverUseRemaining(recoverUsed, recoverLimit) {
 读取主动技能在本回合已使用次数。
 
 调用方
-skillRegistry facade 与 tests。
+application skill runtime boundary 与 tests。
 
 输入
 canonical turn usage 与 skillId。
@@ -296,7 +296,7 @@ export function getActiveSkillUseCount(usage, skillId) {
 决定主动技能是否仍有本回合使用额度。
 
 调用方
-skillRegistry facade 与 tests。
+application skill runtime boundary 与 tests。
 
 输入
 已使用次数与每回合上限。
@@ -325,7 +325,7 @@ export function hasActiveSkillUseRemaining(used, limitPerTurn) {
 决定指定角色是否处于自己的出牌阶段。
 
 调用方
-RuleEngine/skillRegistry facade 与 tests。
+ActionLegality/application skill runtime boundary 与 tests。
 
 输入
 phase、currentPlayerId 与 sourceId。
@@ -354,7 +354,7 @@ export function isActorTurn(phase, currentPlayerId, sourceId) {
 决定角色是否应跳过出牌阶段。
 
 调用方
-Game.takeTurn facade 与 tests。
+match application.takeTurn boundary 与 tests。
 
 输入
 canonical turn usage。

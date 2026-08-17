@@ -22,7 +22,7 @@ import {
   PROBABILITY_EPSILON,
   clampProbability,
   totalBranchProbability
-} from "../state/Probability.js?build=20260816-legacy-recovery";
+} from "../state/Probability.js?build=20260817-architecture-closure-final";
 
 export class CounterfactualTerms {
   /*
@@ -197,7 +197,7 @@ export class CounterfactualTerms {
   新触发时返回被观察者 ID，否则返回 null。
 
   读取状态
-  双方 spyGapTriggeredProbability、generalId 与 lastSpyGapTargetId。
+  双方 spyGapTriggeredProbability、characterId 与 lastSpyGapTargetId。
 
   写入状态
   无。
@@ -211,7 +211,7 @@ export class CounterfactualTerms {
   newlyTriggeredSpyGapTarget(beforeState, afterState, actorId) {
     const beforeActor = beforeState?.players?.find((player) => player.id === actorId);
     const afterActor = afterState?.players?.find((player) => player.id === actorId);
-    if (afterActor?.generalId !== "shade-agent") return null;
+    if (afterActor?.characterId !== "shade-agent") return null;
     const beforeProbability = clampProbability(beforeActor?.spyGapTriggeredProbability
       ?? (beforeActor?.spyGapTriggered ? 1 : 0));
     const afterProbability = clampProbability(afterActor?.spyGapTriggeredProbability

@@ -3,10 +3,10 @@
 拥有 Response Workflow 的 canonical result status；与 ChoiceResult 语义分离。
 
 上游
-application/response ResponseWorkflow 与 legacy ResponseSystem façade。
+Application ResponseWorkflow 与 tests。
 
 下游
-Game/cardRegistry/skillRegistry/DyingSystem 等 response workflow consumers。
+ActionWorkflow、CombatWorkflow、DyingWorkflow 与状态结算 workflow 等 consumers。
 
 状态边界
 不读写真状态。
@@ -15,7 +15,7 @@ Game/cardRegistry/skillRegistry/DyingSystem 等 response workflow consumers。
 无隐藏信息。
 
 架构约束
-不得依赖 concrete UI/AI/Audio/Diagnostics、Game runtime、EventBus 或 Domain mutation。
+不得依赖 concrete UI/AI/Audio/Diagnostics、Game runtime、EventDispatcher 或 Domain mutation。
 */
 
 export const RESPONSE_STATUS = Object.freeze({
@@ -60,7 +60,7 @@ export function createResponseWorkflowResult(status, payload = {}) {
 判断 ResponseWorkflowResult 是否 cancelled。
 
 调用方
-Game 与 tests。
+Application workflows 与 tests。
 
 输入
 result。
@@ -78,7 +78,7 @@ result。
 无。
 
 边界与不变量
-保持 legacy isCancelledResponse 语义。
+保持 isCancelledResponse 语义。
 */
 export function isCancelledResponse(result) {
   return result?.status === RESPONSE_STATUS.CANCELLED;

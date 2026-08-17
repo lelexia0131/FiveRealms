@@ -1,9 +1,9 @@
 /*
 模块职责
-唯一拥有全局状态 trigger registration：huntMark source-death cleanup、sealed 与 lightning beforeStatusResolve bridges。不拥有 status/judgment workflow 或 EventBus dispatcher implementation。
+唯一拥有全局状态 trigger registration：huntMark source-death cleanup、sealed 与 lightning beforeStatusResolve bridges。不拥有 status/judgment workflow 或 EventDispatcher dispatcher implementation。
 
 上游
-Game temporary composition root。
+composition root。
 
 下游
 Application Dying/Judgment workflows 与 messaging subscription capability。
@@ -15,7 +15,7 @@ Application Dying/Judgment workflows 与 messaging subscription capability。
 不读取 hidden info；listener 只读取 event 公开持有者/状态。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime 或 concrete adapters。
 */
 const REQUIRED_DEPENDENCIES = ["onEvent", "getState", "cleanupHuntMarksForSource", "resolveSeal", "resolveLightning"];
 
@@ -24,7 +24,7 @@ const REQUIRED_DEPENDENCIES = ["onEvent", "getState", "cleanupHuntMarksForSource
 创建全局状态 trigger registry。
 
 调用方
-Game.registerGlobalRules legacy bridge。
+match application.registerGlobalRules bridge。
 
 输入
 注入的 subscription 与 workflow capabilities。
@@ -55,7 +55,7 @@ export function createGlobalTriggerRegistry(dependencies) {
   注册 playerDead 与 beforeStatusResolve bridges。
 
   调用方
-  Game legacy façade。
+  match application boundary。
 
   输入
   无。

@@ -13,7 +13,7 @@
           {
             "id": "fr-a-actor",
             "team": "dawn",
-            "general": "blade-walker",
+            "character": "blade-walker",
             "hp": 4,
             "energy": 0,
             "hand": [
@@ -34,7 +34,7 @@
           {
             "id": "fr-a-target",
             "team": "dusk",
-            "general": "oath-warden",
+            "character": "oath-warden",
             "hp": 2,
             "energy": 0,
             "hand": []
@@ -42,7 +42,7 @@
           {
             "id": "fr-a-ally",
             "team": "dusk",
-            "general": "spirit-medic",
+            "character": "spirit-medic",
             "hp": 4,
             "energy": 0,
             "hand": []
@@ -133,7 +133,7 @@
           {
             "id": "fr-b-actor",
             "team": "dawn",
-            "general": "shade-agent",
+            "character": "shade-agent",
             "hp": 4,
             "energy": 2,
             "hand": [
@@ -154,7 +154,7 @@
           {
             "id": "fr-b-target",
             "team": "dusk",
-            "general": "blade-walker",
+            "character": "blade-walker",
             "hp": 3,
             "energy": 0,
             "hand": [
@@ -167,7 +167,7 @@
           {
             "id": "fr-b-other",
             "team": "dusk",
-            "general": "resonance-tuner",
+            "character": "resonance-tuner",
             "hp": 4,
             "energy": 0,
             "hand": []
@@ -227,7 +227,7 @@
           {
             "id": "fr-c-actor",
             "team": "dawn",
-            "general": "blade-walker",
+            "character": "blade-walker",
             "hp": 4,
             "energy": 0,
             "hand": [
@@ -244,7 +244,7 @@
           {
             "id": "fr-c-target",
             "team": "dusk",
-            "general": "oath-warden",
+            "character": "oath-warden",
             "hp": 1,
             "energy": 0,
             "hand": []

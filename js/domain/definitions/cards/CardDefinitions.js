@@ -3,7 +3,7 @@
 唯一拥有 FiveRealms 二十六种卡牌的纯静态领域定义；不含 AI 价值、UI 素材、展示样式或运行时 resolver。
 
 上游
-cardConfig legacy façade 与未来 domain/rules、application/action 消费者。
+Domain card rules、Application action、AI 与 presentation consumers。
 
 下游
 无。

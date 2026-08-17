@@ -9,15 +9,15 @@ composition boundary 的 AI ChoicePort wiring。
 既有 AI shouldRespond/choosePublicCard 门面。
 
 状态边界
-不写 GameState；只读 legacy snapshot registry。
+不写 GameState；只读 composition 提供的私有 choice context。
 
 信息边界
-不把实体引用放进 ChoiceRequest；adapter 内部仅为 bridge 使用 legacy 实体。
+不把实体引用放进 ChoiceRequest；adapter 仅在私有边界内重绑实体。
 
 架构约束
 不得 import AIController、UIManager、SoundManager、Game runtime 或其它 concrete adapter。
 */
-import { createChoiceResult } from "../../application/ports/ChoicePort.js?build=20260816-legacy-recovery";
+import { createChoiceResult } from "../../application/ports/ChoicePort.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -27,7 +27,7 @@ import { createChoiceResult } from "../../application/ports/ChoicePort.js?build=
 composition boundary。
 
 输入
-注入的 legacy context resolver、shouldRespond、choosePublicCard 与 isSessionValid。
+注入的 choice context resolver、shouldRespond、choosePublicCard 与 isSessionValid。
 
 输出
 冻结 { request } adapter。
@@ -45,13 +45,13 @@ createChoiceResult。
 不执行 delay/thinking/prompt；publicCard 只 bridge choosePublicCard。
 */
 export function createAiChoiceAdapter({
-  getLegacyContext,
+  getChoiceContext,
   shouldRespond,
   choosePublicCard,
   chooseDiscards,
   isSessionValid
 }) {
-  if (typeof getLegacyContext !== "function" || typeof shouldRespond !== "function"
+  if (typeof getChoiceContext !== "function" || typeof shouldRespond !== "function"
     || typeof choosePublicCard !== "function" || typeof chooseDiscards !== "function"
     || typeof isSessionValid !== "function") {
     throw new TypeError("AiChoiceAdapter 缺少必要 bridge capability");
@@ -71,43 +71,43 @@ export function createAiChoiceAdapter({
     Promise<canonical ChoiceResult>。
 
     读取状态
-    legacy snapshot 与 AI decision boundary。
+    私有 choice context 与 AI decision boundary。
 
     写入状态
     无。
 
     调用函数
-    getLegacyContext、shouldRespond、choosePublicCard、createChoiceResult。
+    getChoiceContext、shouldRespond、choosePublicCard、createChoiceResult。
 
     边界与不变量
     AI policy/search/planner 不变；不拥有 Application delay 或 presentation state。
     */
     async request(choiceRequest) {
       if (choiceRequest?.kind === "discard") {
-        const legacy = getLegacyContext(choiceRequest.requestId);
-        if (!legacy?.player || !Number.isFinite(legacy.count)) return createChoiceResult("cancelled");
-        const cards = chooseDiscards(legacy.player, legacy.count);
+        const choiceContext = getChoiceContext(choiceRequest.requestId);
+        if (!choiceContext?.player || !Number.isFinite(choiceContext.count)) return createChoiceResult("cancelled");
+        const cards = chooseDiscards(choiceContext.player, choiceContext.count);
         return cards?.length
-          ? createChoiceResult("selected", { selectedIds: cards.slice(0, legacy.count).map((card) => card.id) })
+          ? createChoiceResult("selected", { selectedIds: cards.slice(0, choiceContext.count).map((card) => card.id) })
           : createChoiceResult("declined");
       }
       if (choiceRequest?.kind === "publicCard") {
-        const legacy = getLegacyContext(choiceRequest.requestId);
-        if (!legacy?.player || !Array.isArray(legacy.cards)) return createChoiceResult("cancelled");
-        const card = choosePublicCard(legacy.player, legacy.cards);
+        const choiceContext = getChoiceContext(choiceRequest.requestId);
+        if (!choiceContext?.player || !Array.isArray(choiceContext.cards)) return createChoiceResult("cancelled");
+        const card = choosePublicCard(choiceContext.player, choiceContext.cards);
         return card
           ? createChoiceResult("selected", { selectedIds:[card.id] })
           : createChoiceResult("declined");
       }
       if (choiceRequest?.kind !== "response") return createChoiceResult("cancelled", { reason:"unsupported-choice-kind" });
-      const legacy = getLegacyContext(choiceRequest.requestId);
-      if (!legacy?.responder) return createChoiceResult("cancelled");
+      const choiceContext = getChoiceContext(choiceRequest.requestId);
+      if (!choiceContext?.responder) return createChoiceResult("cancelled");
       if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
       const use = shouldRespond(
-        legacy.responder,
+        choiceContext.responder,
         choiceRequest.constraints.responseType,
-        legacy.context,
-        legacy.cards
+        choiceContext.context,
+        choiceContext.cards
       );
       return createChoiceResult(use ? "selected" : "declined");
     }

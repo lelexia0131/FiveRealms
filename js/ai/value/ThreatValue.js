@@ -17,13 +17,13 @@ Domain Card Definitions、AI DistanceProbabilityBranches 与 value/Economics 的
 架构约束
 威胁公式只能在本模块出现；基础数值项可被 Evaluator 组合进 State Value，但不得绕过它独立追加到最终 Transition Value。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
-import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260817-architecture-closure-final";
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "../state/Probability.js?build=20260816-legacy-recovery";
-import { HP_VALUE } from "./Economics.js?build=20260816-legacy-recovery";
+} from "../state/Probability.js?build=20260817-architecture-closure-final";
+import { HP_VALUE } from "./Economics.js?build=20260817-architecture-closure-final";
 
 export const DANGER_VALUE = 7;
 export const DEATH_VALUE = 28;
@@ -452,8 +452,8 @@ skillReadinessThreat、assaultThreat、roleThreatSynergy、equipmentThreatSynerg
 export function turnOpportunityValue(player) {
   const hand = Math.max(0, Number(player?.handCount ?? player?.hand?.length ?? 0) || 0);
   const energy = Math.max(0, Number(player?.energy ?? 0) || 0);
-  const generalResources = Math.min(2.5, hand * 0.25 + energy * 0.35);
-  return 6 + generalResources + skillReadinessThreat(player) + assaultThreat(player)
+  const characterResources = Math.min(2.5, hand * 0.25 + energy * 0.35);
+  return 6 + characterResources + skillReadinessThreat(player) + assaultThreat(player)
     + roleThreatSynergy(player) + equipmentThreatSynergy(player);
 }
 

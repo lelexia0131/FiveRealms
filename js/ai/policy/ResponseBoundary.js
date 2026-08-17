@@ -3,7 +3,7 @@
 把真实响应窗口投影为不含 Game 引用的 DecisionContext，并委托正式 ResponsePolicy。
 
 上游
-AIController、ResponseSystem 与边界专项测试。
+AIController、ResponseWorkflow 与边界专项测试。
 
 下游
 policy/ResponsePolicy、ValueSimulationQuery、状态组合与既有 Domain/Value 查询。
@@ -17,20 +17,21 @@ policy/ResponsePolicy、ValueSimulationQuery、状态组合与既有 Domain/Valu
 架构约束
 本文件是唯一响应执行边界；不得保留第二份响应阈值、分数或选择公式。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260816-legacy-recovery";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260816-legacy-recovery";
-import { createInitialSearchState } from "../state/StateContracts.js?build=20260816-legacy-recovery";
-import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js?build=20260816-legacy-recovery";
+import { AI_RUNTIME_POLICY } from "./AiRuntimePolicy.js?build=20260817-architecture-closure-final";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260817-architecture-closure-final";
+import { createInitialSearchState } from "../state/StateContracts.js?build=20260817-architecture-closure-final";
+import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js?build=20260817-architecture-closure-final";
 import {
   hasLightning,
   nextLightningReceiverId
-} from "../domain/LightningModel.js?build=20260816-legacy-recovery";
+} from "../domain/LightningModel.js?build=20260817-architecture-closure-final";
 import {
   hasSeal,
   tacticJudgmentProbability
-} from "../domain/SealModel.js?build=20260816-legacy-recovery";
-import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260816-legacy-recovery";
-import { ResponsePolicy } from "./ResponsePolicy.js?build=20260816-legacy-recovery";
+} from "../domain/SealModel.js?build=20260817-architecture-closure-final";
+import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260817-architecture-closure-final";
+import { ResponsePolicy } from "./ResponsePolicy.js?build=20260817-architecture-closure-final";
+import { getCharacterRoleTags } from "./CharacterRoleMetadata.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -65,9 +66,9 @@ function responsePlayerView(player) {
     alive: Boolean(player.alive),
     battleTeam: player.battleTeam,
     controllerType: player.controllerType,
-    generalId: player.generalId ?? player.general?.id ?? null,
-    roleTags: [...(player.roleTags ?? player.general?.roleTags ?? [])],
-    tags: [...(player.tags ?? player.general?.tags ?? [])],
+    characterId: player.characterId ?? player.character?.id ?? null,
+    roleTags: [...(player.roleTags ?? getCharacterRoleTags(player.characterId ?? player.character?.id))],
+    tags: [...(player.tags ?? [])],
     hp: Number(player.hp ?? 0),
     maxHp: Number(player.maxHp ?? player.hp ?? 0),
     shield: Number(player.shield ?? 0),
@@ -80,7 +81,7 @@ function responsePlayerView(player) {
     statuses: Array.isArray(player.statuses)
       ? [...player.statuses]
       : { ...(player.statuses ?? {}) },
-    passiveSkillIds: [...(player.general?.passiveSkillIds ?? [])],
+    passiveSkillIds: [...(player.character?.passiveSkillIds ?? [])],
     momentum: Number(player.turnFlags?.momentum ?? player.momentum ?? 0),
     assaultBonus: Number(player.statuses?.allIn?.assaultBonus ?? player.assaultBonus ?? 0),
     guardianAidUsed: Boolean(
@@ -150,7 +151,7 @@ export class ResponseBoundary {
   不含 Game/Simulator 引用且只暴露合法信息的 DecisionContext。
 
   读取状态
-  当前 GameState、Knowledge、TeamRules、DyingSystem 与显式 Value/Domain query。
+  当前 GameState、Knowledge、TeamRules、DyingWorkflow 与显式 Value/Domain query。
 
   写入状态
   只有被调用的未知位置/状态查询可能写 query 私有缓存；真实状态不变。
@@ -229,7 +230,7 @@ export class ResponseBoundary {
         : 0,
       remainingCardCounts: needsRemainingCounts ? remainingCardCounts : null,
       isSmallTeam: this.isSmallTeam(responder),
-      forceAiRescueHuman: this.forceAiRescueHuman ?? GAME_CONFIG.forceAiRescueHuman,
+      forceAiRescueHuman: this.forceAiRescueHuman ?? AI_RUNTIME_POLICY.forceAiRescueHuman,
       leverageMetrics: () => {
         const target = rawContext.target ?? responder;
         const enemyTarget = target.battleTeam !== responder.battleTeam;
@@ -416,7 +417,7 @@ export class ResponseBoundary {
   将真实响应窗口委托给正式 ResponsePolicy。
 
   调用方
-  AIController 与 ResponseSystem。
+  AIController 与 ResponseWorkflow。
 
   输入
   响应者、响应类型、公开上下文和合法 Cards。
@@ -465,7 +466,7 @@ export class ResponseBoundary {
   shouldRespond。
 
   边界与不变量
-  与 ResponseSystem 的 skill 分支完全共用一份策略。
+  与 ResponseWorkflow 的 skill 分支完全共用一份策略。
   */
   shouldUseGuardianAid(responder, context) {
     return this.shouldRespond(responder, "skill", context, []);

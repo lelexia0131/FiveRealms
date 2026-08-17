@@ -21,7 +21,7 @@ import {
   PROBABILITY_EPSILON,
   getAvailabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260816-legacy-recovery";
+} from "../state/Probability.js?build=20260817-architecture-closure-final";
 
 export class ActionCandidatePolicy {
   /*

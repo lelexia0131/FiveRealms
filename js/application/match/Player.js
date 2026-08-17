@@ -1,19 +1,18 @@
 /**
- * 本文件定义单个座位的运行时玩家状态，依赖 gameConfig.js 与角色配置数据。
+ * 本文件定义单个座位的运行时玩家状态，依赖 Domain state 与 transitions。
  * Player 只保存数据并提供安全的资源变更，不决定目标合法性、伤害响应或胜负。
  * 每局都会重新创建 Player，因此无需跨局保留实例。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260816-legacy-recovery";
-import { createPlayerState } from "../domain/state/model/PlayerState.js?build=20260816-legacy-recovery";
-import { applyGeneralDefinition, bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260816-legacy-recovery";
-import { changeEnergy } from "../domain/state/transitions/ResourceTransitions.js?build=20260816-legacy-recovery";
-import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
-import { createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState } from "../domain/rules/turn/TurnRules.js?build=20260816-legacy-recovery";
+import { createPlayerState } from "../../domain/state/model/PlayerState.js?build=20260817-architecture-closure-final";
+import { applyCharacterDefinition, bumpHandVersion } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260817-architecture-closure-final";
+import { changeEnergy } from "../../domain/state/transitions/ResourceTransitions.js?build=20260817-architecture-closure-final";
+import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
+import { createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState } from "../../domain/rules/turn/TurnRules.js?build=20260817-architecture-closure-final";
 
 export class Player {
   /*
   功能
-  创建一个 legacy composite Player runtime，其领域字段由 Domain PlayerState factory 提供。
+  创建一个 composite Player runtime，其领域字段由 Domain PlayerState factory 提供。
 
   调用方
   Game.startSelection 与测试 fixture。
@@ -28,13 +27,13 @@ export class Player {
   Domain PlayerState 初始 shape。
 
   写入状态
-  Player 领域字段与 legacy extension 字段。
+  Player 领域字段与 extension 字段。
 
   调用函数
   createPlayerState。
 
   边界与不变量
-  controllerType 属于 Application participant metadata；aiMemory 属于 AI adapter state；两者均作为 legacy extension 保留，不进入 Domain PlayerState。
+  controllerType 属于 Application participant metadata；aiMemory 属于 AI adapter state；两者均作为 extension 保留，不进入 Domain PlayerState。
   */
   constructor(options) {
     const playerState = createPlayerState({
@@ -46,10 +45,10 @@ export class Player {
     this.seatIndex = playerState.seatIndex;
     this.controllerType = options.controllerType;
     this.battleTeam = playerState.battleTeam;
-    this.generalId = playerState.generalId;
+    this.characterId = playerState.characterId;
     this.name = playerState.name;
     this.loreFaction = playerState.loreFaction;
-    this.general = null;
+    this.character = null;
     this.hp = playerState.hp;
     this.maxHp = playerState.maxHp;
     this.shield = playerState.shield;
@@ -73,29 +72,29 @@ export class Player {
   将已决定的角色定义应用到 PlayerState。
 
   调用方
-  Game.confirmGeneral 与测试 fixture。
+  Game.confirmCharacter 与测试 fixture。
 
   输入
-  authoritative state 与 general definition。
+  authoritative state 与 character definition。
 
   输出
   无返回值。
 
   读取状态
-  general definition。
+  character definition。
 
   写入状态
   Player 角色身份与初始资源字段。
 
   调用函数
-  applyGeneralDefinition。
+  applyCharacterDefinition。
 
   边界与不变量
   只转发 Domain transition；不决定角色选择。
   */
-  applyGeneral(state, general) {
-    applyGeneralDefinition(state, this, general);
-    this.general = general;
+  applyCharacter(state, character) {
+    applyCharacterDefinition(state, this, character);
+    this.character = character;
   }
 
   /*
@@ -161,7 +160,7 @@ export class Player {
   递增手牌版本并返回新版本。
 
   调用方
-  Game 卡牌移动与 CardSelectionSystem。
+  Game 卡牌移动与 HiddenCardChoiceWorkflow。
 
   输入
   authoritative state。
@@ -244,11 +243,61 @@ export class Player {
   }
 
   /** 返回角色是否具有给定技能 ID；不修改状态。 */
+  /*
+  功能
+  判断 hasSkill 对应的 Player 条件。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   hasSkill(skillId) {
-    return Boolean(this.general?.passiveSkillIds.includes(skillId) || this.general?.activeSkillIds.includes(skillId));
+    return Boolean(this.character?.passiveSkillIds.includes(skillId) || this.character?.activeSkillIds.includes(skillId));
   }
 
   /** 返回手中第一个指定定义的卡牌实例；不向 UI 暴露电脑牌。 */
+  /*
+  功能
+  查询并返回 findCard 对应的 Player 结果。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   findCard(definitionId) {
     return this.hand.find((card) => card.definitionId === definitionId) ?? null;
   }

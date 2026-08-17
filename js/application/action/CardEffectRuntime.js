@@ -3,10 +3,10 @@
 唯一拥有 card-specific effect execution sequencing：效果提交、response integration、card movement orchestration 与 card-specific presentation；不拥有 Domain legality/target formula 或 generic Action lifecycle。
 
 上游
-cardRegistry legacy façade 与 Application CardRuntime/ActionWorkflow。
+application card runtime boundary 与 Application CardRuntime/ActionWorkflow。
 
 下游
-Application Combat/Response/Judgment/Turn workflows、Domain transitions 与 narrow legacy collaborators。
+Application Combat/Response/Judgment/Turn workflows、Domain transitions 与 narrow collaborators。
 
 状态边界
 内部 duelContext 是 card-specific runtime state；Domain mutation 经 transitions 或 application workflows。
@@ -15,19 +15,19 @@ Application Combat/Response/Judgment/Turn workflows、Domain transitions 与 nar
 private intent 只存在于当前调用栈；public context 不泄漏 hidden card。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime、RuleEngine 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、ActionLegality 或 concrete adapters。
 */
-import { isExposeWeaknessConsumable } from "../../domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
-import { getAssaultBaseDamage, getChargeEnergyAmount, getDuelDamage, getHarvestDrawCount, getMutualBenefitRevealCount, getNextExposeWeaknessStacks, getProvokeDamage, getRecoverHealAmount, getShieldAmount, getShockwaveDamage, getSymbiosisHealAmount } from "../../domain/rules/card/CardEffectRules.js?build=20260816-legacy-recovery";
-import { changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260816-legacy-recovery";
-import { incrementAttackUsed, incrementRecoverUsed } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
-import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-legacy-recovery";
+import { isExposeWeaknessConsumable } from "../../domain/rules/status/StatusRules.js?build=20260817-architecture-closure-final";
+import { getAssaultBaseDamage, getChargeEnergyAmount, getDuelDamage, getHarvestDrawCount, getMutualBenefitRevealCount, getNextExposeWeaknessStacks, getProvokeDamage, getRecoverHealAmount, getShieldAmount, getShockwaveDamage, getSymbiosisHealAmount } from "../../domain/rules/card/CardEffectRules.js?build=20260817-architecture-closure-final";
+import { changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260817-architecture-closure-final";
+import { incrementAttackUsed, incrementRecoverUsed } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
+import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "damage", "heal", "gainEnergy", "drawCards",
   "equipCard", "moveCardBetweenHands", "moveEquipmentToHand", "discardEquipment",
   "discardCardFromHand", "rememberPrivateCard", "cardLabelForHuman", "seatOrderFrom",
-  "getEnemies", "responseSystem", "publicCardPool", "resolveLeverage",
+  "getEnemies", "responseWorkflow", "publicCardPool", "resolveLeverage",
   "getCardTargets", "getTransferSources", "getTransferReceivers", "diagnostics",
   "random", "createId"
 ];
@@ -37,7 +37,7 @@ const REQUIRED_DEPENDENCIES = [
 创建 card-specific effect runtime。
 
 调用方
-Game temporary composition root。
+composition root。
 
 输入
 显式注入的 combat/response/zone/presentation/choice collaborators。
@@ -55,7 +55,7 @@ Game temporary composition root。
 无。
 
 边界与不变量
-不执行 generic Action pipeline；不复制 RuleEngine 合法性。
+不执行 generic Action pipeline；不复制 ActionLegality 合法性。
 */
 export function createCardEffectRuntime(dependencies) {
   for (const name of REQUIRED_DEPENDENCIES) {
@@ -415,7 +415,7 @@ runtime/card/skill facts。
       for (const target of enemies) {
         if (state.isGameOver) break;
         if (!target.alive) continue;
-        const counteredForTarget = await runtime.responseSystem.askForCounter(source, card, [target], {
+        const counteredForTarget = await runtime.responseWorkflow.askForCounter(source, card, [target], {
           responders: [target], targetScoped: true
         });
         if (!runtime.isSessionValid(gameId) || counteredForTarget.status === "cancelled") return { resolved: false };
@@ -459,12 +459,12 @@ runtime/card/skill facts。
       for (const target of runtime.seatOrderFrom(source, false).filter((player) => player.alive && player.battleTeam !== source.battleTeam)) {
         if (state.isGameOver) break;
         if (!target.alive) continue;
-        const counteredForTarget = await runtime.responseSystem.askForCounter(source, card, [target], {
+        const counteredForTarget = await runtime.responseWorkflow.askForCounter(source, card, [target], {
           responders: [target], targetScoped: true
         });
         if (!runtime.isSessionValid(gameId) || counteredForTarget.status === "cancelled") return { resolved: false };
         if (counteredForTarget.status === "used") continue;
-        const discarded = await runtime.responseSystem.requestAssaultDiscard(target, "响应挑衅并打出突袭", { source, target, card });
+        const discarded = await runtime.responseWorkflow.requestAssaultDiscard(target, "响应挑衅并打出突袭", { source, target, card });
         if (!runtime.isSessionValid(gameId) || discarded.status === "cancelled") return { resolved: false };
         effectiveTargets.push(target);
         if (discarded.status !== "used") await runtime.damage(source, target, getProvokeDamage(), {
@@ -648,7 +648,7 @@ runtime/card/skill facts。
       while (current.alive && opponent.alive && !state.isGameOver) {
         duelContext.currentId = current.id;
         runtime.presentation.showDuel({ playerId: current.id, opponentId: opponent.id });
-        const assault = await runtime.responseSystem.requestAssaultDiscard(current, "在决斗中打出突袭", { source: opponent, target: current, card });
+        const assault = await runtime.responseWorkflow.requestAssaultDiscard(current, "在决斗中打出突袭", { source: opponent, target: current, card });
         if (!runtime.isSessionValid(gameId) || assault.status === "cancelled") return { resolved: false };
         if (assault.status !== "used") {
           runtime.presentation.log(`${current.name}在决斗中败下阵来。`, "important");
@@ -1045,7 +1045,7 @@ runtime/card/skill facts。
   查询指定卡牌是否有 effect resolver。
 
   调用方
-  cardRegistry legacy façade。
+  application card runtime boundary。
 
   输入
   definitionId。

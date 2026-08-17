@@ -2,18 +2,43 @@
  * 本文件负责 2V3 阵营生成与阵营查询，依赖游戏配置和洗牌工具。
  * 它不根据角色、名字或座位推断阵营；battleTeam 是唯一判断来源。
  */
-import { GAME_CONFIG } from "../config/gameConfig.js?build=20260816-legacy-recovery";
-import { getTeamSize } from "../domain/rules/team/TeamRules.js?build=20260816-legacy-recovery";
-import { createRuleStateView } from "../domain/state/queries/RuleStateView.js?build=20260816-legacy-recovery";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
+import { getTeamSize } from "../../domain/rules/team/TeamRules.js?build=20260817-architecture-closure-final";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260817-architecture-closure-final";
 
-export class TeamManager {
+export class TeamAssignment {
   /**
    * 随机返回每个座位的阵营 ID，严格保证 2V3。
    * @param {()=>number} random 随机源。
    * @returns {Array<"dawn"|"dusk">} 与座位索引一一对应的阵营。
    */
+  /*
+  功能
+  执行 assignTeams 对应的 TeamAssignment 职责。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   static assignTeams(random = Math.random) {
-    if (GAME_CONFIG.smallTeamSize + GAME_CONFIG.largeTeamSize !== GAME_CONFIG.playerCount) {
+    if (RULESET_DEFINITION.smallTeamSize + RULESET_DEFINITION.largeTeamSize !== RULESET_DEFINITION.playerCount) {
       throw new Error("阵营人数配置之和必须等于玩家总数");
     }
     const smallTeam = random() < 0.5 ? "dawn" : "dusk";
@@ -30,7 +55,7 @@ export class TeamManager {
   返回某阵营的总座位数。
 
   调用方
-  Game 初始化日志与 legacy consumers。
+  match application 初始化日志与 consumers。
 
   输入
   players 数组与 teamId。

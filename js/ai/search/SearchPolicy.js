@@ -17,8 +17,8 @@ Planner 与搜索策略测试。
 架构约束
 不得产生动作先验、领域转移项或最终价值；预算中断不能从 partial frontier（尚未完整物化的搜索前沿）重新选择。
 */
-import { GAME_CONFIG } from "../../config/gameConfig.js?build=20260816-legacy-recovery";
-import { SEARCH_STOP_REASON } from "./SearchBudget.js?build=20260816-legacy-recovery";
+import { AI_RUNTIME_POLICY } from "../policy/AiRuntimePolicy.js?build=20260817-architecture-closure-final";
+import { SEARCH_STOP_REASON } from "./SearchBudget.js?build=20260817-architecture-closure-final";
 
 export class SearchPolicy {
   /*
@@ -44,7 +44,7 @@ export class SearchPolicy {
   无。
 
   边界与不变量
-  不接收 Game、Controller 或任何领域归属模块；config 缺省时保持 GAME_CONFIG 兼容默认。
+  不接收 Game、Controller 或任何领域归属模块；config 缺省时保持 RUNTIME_POLICY 兼容默认。
   */
   constructor({
     random,
@@ -78,7 +78,7 @@ export class SearchPolicy {
   depth、beamWidth、hiddenSamples 与 yieldEvery。
 
   读取状态
-  GAME_CONFIG。
+  RUNTIME_POLICY。
 
   写入状态
   无。
@@ -91,10 +91,10 @@ export class SearchPolicy {
   */
   structure() {
     return {
-      depth:this.config?.depth ?? GAME_CONFIG.aiSearchDepth,
-      beamWidth:this.config?.beamWidth ?? GAME_CONFIG.aiBeamWidth,
-      hiddenSamples:this.config?.hiddenSamples ?? GAME_CONFIG.aiHiddenStateSamples,
-      yieldEvery:this.config?.yieldEvery ?? GAME_CONFIG.aiSearchYieldEvery
+      depth:this.config?.depth ?? AI_RUNTIME_POLICY.searchDepth,
+      beamWidth:this.config?.beamWidth ?? AI_RUNTIME_POLICY.beamWidth,
+      hiddenSamples:this.config?.hiddenSamples ?? AI_RUNTIME_POLICY.hiddenStateSamples,
+      yieldEvery:this.config?.yieldEvery ?? AI_RUNTIME_POLICY.searchYieldEvery
     };
   }
 
@@ -112,7 +112,7 @@ export class SearchPolicy {
   包含搜索结构、预算、近似平局与随机幅度的冻结普通对象。
 
   读取状态
-  this.config 与 GAME_CONFIG 默认。
+  this.config 与 RUNTIME_POLICY 默认。
 
   写入状态
   无。
@@ -126,12 +126,12 @@ export class SearchPolicy {
   snapshot() {
     return Object.freeze({
       ...this.structure(),
-      timeBudgetMs:this.config?.timeBudgetMs ?? GAME_CONFIG.aiSearchTimeBudgetMs,
+      timeBudgetMs:this.config?.timeBudgetMs ?? AI_RUNTIME_POLICY.searchTimeBudgetMs,
       nodeBudget:this.config?.nodeBudget ?? null,
-      nearTieRange:this.config?.nearTieRange ?? GAME_CONFIG.aiNearTieRange,
-      enableRandomness:this.config?.enableRandomness ?? GAME_CONFIG.enableAiRandomness,
-      randomnessRange:this.config?.randomnessRange ?? GAME_CONFIG.aiRandomnessRange,
-      difficultyMultiplier:this.config?.difficultyMultiplier ?? GAME_CONFIG.aiDifficultyMultiplier
+      nearTieRange:this.config?.nearTieRange ?? AI_RUNTIME_POLICY.nearTieRange,
+      enableRandomness:this.config?.enableRandomness ?? AI_RUNTIME_POLICY.enableRandomness,
+      randomnessRange:this.config?.randomnessRange ?? AI_RUNTIME_POLICY.randomnessRange,
+      difficultyMultiplier:this.config?.difficultyMultiplier ?? AI_RUNTIME_POLICY.difficultyMultiplier
     });
   }
 
@@ -269,7 +269,7 @@ export class SearchPolicy {
   被选节点；空束时为 undefined。
 
   读取状态
-  GAME_CONFIG 与注入的随机能力。
+  RUNTIME_POLICY 与注入的随机能力。
 
   写入状态
   随机源序列。

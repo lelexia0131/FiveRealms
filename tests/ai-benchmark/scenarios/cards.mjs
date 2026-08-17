@@ -12,11 +12,11 @@ import {
 
 function basePlayers() {
   return [
-    { id: "a", team: "dawn", general: "blade-walker" },
-    { id: "b", team: "dusk", general: "oath-warden" },
-    { id: "c", team: "dusk", general: "fate-gambler" },
-    { id: "d", team: "dawn", general: "spirit-medic" },
-    { id: "e", team: "dusk", general: "ember-magus" }
+    { id: "a", team: "dawn", character: "blade-walker" },
+    { id: "b", team: "dusk", character: "oath-warden" },
+    { id: "c", team: "dusk", character: "fate-gambler" },
+    { id: "d", team: "dawn", character: "spirit-medic" },
+    { id: "e", team: "dusk", character: "ember-magus" }
   ];
 }
 
@@ -157,7 +157,7 @@ registerScenario({
   setup: () => {
     const players = fillOthers(basePlayers(), 1);
     const actor = players[0];
-    actor.general = "spirit-medic";
+    actor.character = "spirit-medic";
     actor.hp = 2;
     actor.energy = 1;
     actor.hand = [makeCard("recover")];

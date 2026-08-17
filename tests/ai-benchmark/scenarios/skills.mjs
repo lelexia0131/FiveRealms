@@ -11,16 +11,16 @@ import {
 } from "../evaluators/scenarioDsl.mjs";
 
 const BASE = [
-  { id: "a", team: "dawn", general: "blade-walker" },
-  { id: "b", team: "dusk", general: "oath-warden" },
-  { id: "c", team: "dusk", general: "fate-gambler" },
-  { id: "d", team: "dawn", general: "spirit-medic" },
-  { id: "e", team: "dusk", general: "ember-magus" }
+  { id: "a", team: "dawn", character: "blade-walker" },
+  { id: "b", team: "dusk", character: "oath-warden" },
+  { id: "c", team: "dusk", character: "fate-gambler" },
+  { id: "d", team: "dawn", character: "spirit-medic" },
+  { id: "e", team: "dusk", character: "ember-magus" }
 ];
 
-function board(general, overrides = {}, others = {}) {
+function board(character, overrides = {}, others = {}) {
   const players = BASE.map((config) => ({ ...config }));
-  players[0].general = general;
+  players[0].character = character;
   const fill = (player) => {
     player.hp = others[player.id]?.hp ?? 4;
     player.energy = others[player.id]?.energy ?? 1;
@@ -255,4 +255,4 @@ id: "skills.medic-rejuvenation-trigger",
   }
 });
 
-export const scenarioModule = { id: "skills", label: "General Skills" };
+export const scenarioModule = { id: "skills", label: "Character Skills" };

@@ -17,12 +17,12 @@ value/CardValue 与 TransferPolicy 的共享未知牌期望常量。
 架构约束
 不执行规则、不生成合法集合、不依赖 Planner/Controller/UI，也不构造 Simulator。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
 import {
   getEquipmentKeepValueDeduction,
   getRoleCardAiValue
-} from "../value/CardValue.js?build=20260816-legacy-recovery";
-import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260816-legacy-recovery";
+} from "../value/CardValue.js?build=20260817-architecture-closure-final";
+import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260817-architecture-closure-final";
 
 export const RESPONSE_SURVIVAL_BONUS_DANGER = 1;
 export const RESPONSE_SURVIVAL_BONUS_LETHAL = 2;
@@ -56,10 +56,10 @@ export function getDiscardKeepValue(player, card, context = {}) {
   const definition = CARD_DEFINITIONS[card?.definitionId] ?? {};
   const category = card?.category ?? definition.category;
   const usageMode = card?.usageMode ?? definition.usageMode;
-  let score = getRoleCardAiValue(player?.generalId, card.definitionId);
+  let score = getRoleCardAiValue(player?.characterId, card.definitionId);
   if (category === "equipment") {
     score -= getEquipmentKeepValueDeduction(
-      player?.generalId,
+      player?.characterId,
       card.definitionId,
       context.equippedDefinitionId ?? null,
       context.equipmentRetentionProbability ?? 1
@@ -166,11 +166,11 @@ getRoleCardAiValue。
 */
 export function getResourceDefinitionUtility(purpose, actor, owner, definitionId) {
   if (purpose === "destroy") {
-    return getRoleCardAiValue(owner.generalId, definitionId);
+    return getRoleCardAiValue(owner.characterId, definitionId);
   }
   if (purpose === "plunder") {
-    const actorValue = getRoleCardAiValue(actor.generalId, definitionId);
-    const ownerValue = getRoleCardAiValue(owner.generalId, definitionId);
+    const actorValue = getRoleCardAiValue(actor.characterId, definitionId);
+    const ownerValue = getRoleCardAiValue(owner.characterId, definitionId);
     return owner.battleTeam === actor.battleTeam
       ? actorValue - ownerValue
       : actorValue + ownerValue;

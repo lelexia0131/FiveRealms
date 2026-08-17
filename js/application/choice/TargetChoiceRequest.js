@@ -15,7 +15,7 @@ application/ports/ChoicePort 与 peer adapters。
 只包含 targetId/name/battleTeam 等公开事实；不携带 Player entity 或 hidden hand。
 
 架构约束
-不得依赖 Game runtime、UI/AI、EventBus、Domain transitions 或 concrete adapters。
+不得依赖 Game runtime、UI/AI、EventDispatcher、Domain transitions 或 concrete adapters。
 */
 
 /*

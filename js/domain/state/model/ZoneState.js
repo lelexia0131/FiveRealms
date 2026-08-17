@@ -3,7 +3,7 @@
 唯一拥有 Deck 中已证明属于 Domain 的牌区数组初始化 shape；重洗计数属于 diagnostics/test observability，不在此维护。
 
 上游
-Deck constructor 的 legacy composition 与未来 domain/state/transitions consumer。
+Deck constructor 的 composition 与当前 domain/state/transitions consumer。
 
 下游
 无。

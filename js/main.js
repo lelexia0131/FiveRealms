@@ -1,19 +1,41 @@
 /**
- * 页面入口与当前 minimal composition root：创建 UIManager 并管理每局 Game。
- * FR-ARCH-9 后 Match/Turn/Action/Combat/Response/Judgment workflow 已在 js/application；
- * AIController 仍依赖 Game、UIManager.createGameSession 仍需要 Game 实例，因此 concrete adapter
- * wiring 暂时保留在 Game shell，待 FR-ARCH-12/13 收敛 AI boundary 与 FR-ARCH-15 shell removal。
+ * 页面入口：创建 UIManager，并通过最终 composition root 创建/替换单局应用。
  */
-import { Game } from "./core/Game.js?build=20260816-legacy-recovery";
-import { UIManager } from "./ui/UIManager.js?build=20260816-legacy-recovery";
-import { Debug } from "./utils/debug.js?build=20260816-legacy-recovery";
+import { createGameApplication } from "./composition/createGameApplication.js?build=20260817-architecture-closure-final";
+import { UIManager } from "./ui/UIManager.js?build=20260817-architecture-closure-final";
+import { Debug } from "./utils/debug.js?build=20260817-architecture-closure-final";
 
 const ui = new UIManager();
 let game = null;
 
+/*
+功能
+执行 startSelection 对应的 main 职责。
+
+调用方
+本模块内部流程及显式公开边界。
+
+输入
+函数签名声明的参数。
+
+输出
+函数实现声明的返回值。
+
+读取状态
+仅函数体显式读取的参数、模块或实例状态。
+
+写入状态
+仅执行函数体显式声明的写入；查询路径不写状态。
+
+调用函数
+仅调用函数体中显式列出的依赖。
+
+边界与不变量
+遵守模块头定义的 ownership、状态与信息边界。
+*/
 function startSelection() {
   game?.dispose();
-  game = new Game(ui);
+  game = createGameApplication(ui);
   ui.attachGame(game);
   game.setAnimationFastMode(ui.fastMode);
   const candidates = game.startSelection();
@@ -23,12 +45,37 @@ function startSelection() {
 ui.setCallbacks({
   onStart: startSelection,
   onRestart: startSelection,
-  async onSelectGeneral(generalId) {
-    if (!game || game.state.selectedGeneralId) return;
+  /*
+  功能
+  执行 onSelectCharacter 对应的 main 职责。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
+  async onSelectCharacter(characterId) {
+    if (!game || game.state.selectedCharacterId) return;
     const selectedGame = game;
     ui.showGame(selectedGame);
     try {
-      await selectedGame.confirmGeneral(generalId);
+      await selectedGame.confirmCharacter(characterId);
     } catch (error) {
       Debug.log("Main", "对局初始化失败", error);
       if (game === selectedGame && ui.isGameAttached(selectedGame)) {

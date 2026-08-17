@@ -172,7 +172,7 @@ npm run check:code-quality -- --changed
 
 检查器只使用 Node.js 标准库。`--changed` 聚焦相对 Git 基线发生实质变更的生产 JavaScript 函数；`--all` 用于盘点历史欠债，不是当前阶段的零告警承诺；`--self-test` 验证合法无星号格式以及缺字段、旧星号格式、JSDoc、同一行标题、模块头和架构边界失败夹具。错误必须包含文件、函数、位置和具体格式问题。
 
-Architecture Guard 当前实施能够低误报判断的边界：AI 分层目录禁止 UI import；`js/ai/**` 禁止 `game.aiController`/`this.game.aiController` 服务定位器回指；未来 `js/domain/**` 禁止 application/adapters/ui/audio/ai/Game 依赖与 statuses dual-schema 分支；未来 `js/application/**` 禁止 concrete UI/Audio/AI adapter import；未来 `js/adapters/**` 禁止跨 concrete adapter 耦合；未来 `domain/state/transitions/**` 禁止 cardRegistry/skillRegistry/Response/Dying/Judgment 依赖与 cardId/skillId 分支；同时禁止新增 utils/common/helpers/misc/shared/legacy/compat 兜底目录。Controller 之外的 core 上游允许通过稳定门面调用 `game.aiController`，但不得直接取其子组件。后续迁移阶段再基于稳定目录和依赖契约扩展；禁止用模块名黑名单假装完成架构检查。
+Architecture Guard 当前实施能够低误报判断的边界：AI 分层目录禁止 UI import；`js/ai/**` 禁止 `game.aiController`/`this.game.aiController` 服务定位器回指；`js/domain/**` 禁止 application/adapters/ui/audio/ai/Game 依赖与 statuses dual-schema 分支；`js/application/**` 禁止 concrete UI/Audio/AI adapter import；`js/adapters/**` 禁止跨 concrete adapter 耦合；`domain/state/transitions/**` 禁止业务 workflow 依赖与 cardId/skillId 分支；同时禁止已删除路径、Game shell、内部 general schema、composition business branch、同线程 Worker production fallback 以及 utils/common/helpers/misc/shared/legacy/compat 兜底目录回流。禁止用模块名黑名单或复制实现假装完成架构检查。
 
 ## 7. 评审清单
 

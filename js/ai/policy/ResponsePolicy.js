@@ -17,9 +17,9 @@ value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query�
 架构约束
 不执行规则、不依赖 Planner/Controller/UI，不 import 或构造 具体 Simulator。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-legacy-recovery";
-import { cardAvailability } from "../value/CardValue.js?build=20260816-legacy-recovery";
-import { HP_VALUE } from "../value/Economics.js?build=20260816-legacy-recovery";
+import { getBaseCardAiValue } from "../value/CardValue.js?build=20260817-architecture-closure-final";
+import { cardAvailability } from "../value/CardValue.js?build=20260817-architecture-closure-final";
+import { HP_VALUE } from "../value/Economics.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -47,7 +47,7 @@ CARD_DEFINITIONS.counter。
 这是既定的局部策略近似，只用于响应选择，不进入最终 Transition Value；STAY/FLIP 配对世界不得重复扣除。
 */
 export function counterOpportunityCost() {
-  return (CARD_DEFINITIONS.counter.aiValue ?? 8) * 0.35;
+  return getBaseCardAiValue("counter") * 0.35;
 }
 
 /*
@@ -557,7 +557,9 @@ export class ResponsePolicy {
       if (globalDesire !== null) return globalDesire > 0;
       if (rootId === "counter") {
         const sourceEnemy = context.source?.battleTeam !== responder.battleTeam;
-        return sourceEnemy ? (context.card?.aiValue ?? 0) >= 7 : false;
+        return sourceEnemy && context.card?.definitionId
+          ? getBaseCardAiValue(context.card.definitionId) >= 7
+          : false;
       }
       const gain = dynamicRootFlipGain();
       return gain !== null && gain > counterOpportunityCost();
@@ -581,7 +583,9 @@ export class ResponsePolicy {
           + Math.max(0, target.maxHp - target.hp) * 1.5
           + (target.hp <= 1 ? 5 : 0)
         : -10;
-      const equipmentValue = Number(context.equipment?.aiValue ?? 5);
+      const equipmentValue = context.equipment?.definitionId
+        ? getBaseCardAiValue(context.equipment.definitionId)
+        : 5;
       const assaultCost = cards.length <= 1 ? 4.5 : 2.5;
       const score = attackBenefit
         + equipmentValue * 1.05

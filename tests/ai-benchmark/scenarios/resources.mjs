@@ -11,11 +11,11 @@ import {
 } from "../evaluators/scenarioDsl.mjs";
 
 const BASE = [
-  { id: "a", team: "dawn", general: "blade-walker" },
-  { id: "b", team: "dusk", general: "oath-warden" },
-  { id: "c", team: "dusk", general: "fate-gambler" },
-  { id: "d", team: "dawn", general: "spirit-medic" },
-  { id: "e", team: "dusk", general: "ember-magus" }
+  { id: "a", team: "dawn", character: "blade-walker" },
+  { id: "b", team: "dusk", character: "oath-warden" },
+  { id: "c", team: "dusk", character: "fate-gambler" },
+  { id: "d", team: "dawn", character: "spirit-medic" },
+  { id: "e", team: "dusk", character: "ember-magus" }
 ];
 
 function board(actorOverrides = {}, others = {}) {
@@ -30,7 +30,7 @@ function board(actorOverrides = {}, others = {}) {
     player.statuses = override.statuses ?? {};
   }
   const actor = players[0];
-  if (actorOverrides.general) actor.general = actorOverrides.general;
+  if (actorOverrides.character) actor.character = actorOverrides.character;
   actor.hp = actorOverrides.hp ?? 4;
   actor.energy = actorOverrides.energy ?? 3;
   // maxEnergy 由 makeGame 按生产 TeamRuleService 计算。
@@ -167,7 +167,7 @@ registerScenario({
   category: "resources",
   depth: 2,
   setup: () => board({
-    general: "ember-magus",
+    character: "ember-magus",
     energy: 2,
     hand: [makeCard("charge"), makeCard("assault")]
   }),

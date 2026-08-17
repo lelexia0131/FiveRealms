@@ -9,8 +9,8 @@
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { CARD_DEFINITIONS } from "../../../js/config/cardConfig.js";
-import { GENERAL_DEFINITIONS, GENERAL_BY_ID } from "../../../js/config/generalConfig.js";
+import { CARD_DEFINITIONS } from "../../../js/domain/definitions/cards/CardDefinitions.js";
+import { CHARACTER_DEFINITIONS, CHARACTER_BY_ID } from "../../../js/domain/definitions/characters/CharacterDefinitions.js";
 import { ROLE_CARD_VALUE_DELTAS } from "../../../js/ai/value/CardValue.js";
 import { runDirUrl } from "./runPaths.js";
 
@@ -18,7 +18,7 @@ let DATA_DIR = new URL("../data/", import.meta.url);
 let OUT_DIR = new URL("../", import.meta.url);
 
 const CARD_IDS = Object.keys(CARD_DEFINITIONS);
-const ROLES = GENERAL_DEFINITIONS.map((general) => general.id);
+const ROLES = CHARACTER_DEFINITIONS.map((character) => character.id);
 
 async function readLines(relativePath) {
   try {
@@ -470,7 +470,7 @@ function responsePrimary(results, cardId) {
 }
 
 async function writeRoleCsv(results) {
-  const roleNames = ROLES.map((role) => GENERAL_BY_ID[role].name);
+  const roleNames = ROLES.map((role) => CHARACTER_BY_ID[role].name);
   const header = ["卡牌", ...roleNames, "全局"];
   const lines = [header.join(",")];
   for (const cardId of Object.keys(results.cards)) {
@@ -526,7 +526,7 @@ async function writeReport(results, holdByCardStratum) {
   lines.push("## 3. 状态采样方法");
   lines.push("");
   lines.push(`- 自然语料：${results.corpus.games} 局全 AI self-play，记录每回合开始状态，共 ${results.corpus.naturalStates} 个；综合值按这些状态均匀抽样（等价于按自然状态出现频率加权）。`);
-  const roleStateSummary = ROLES.map((role) => `${GENERAL_BY_ID[role].name}=${results.corpus.roleStatesByRole?.[role] ?? 0}`).join("、");
+  const roleStateSummary = ROLES.map((role) => `${CHARACTER_BY_ID[role].name}=${results.corpus.roleStatesByRole?.[role] ?? 0}`).join("、");
   lines.push(`- 角色矩阵：每个角色额外强制为 1 号位采样回合开始状态（角色语料状态数：${roleStateSummary}）。`);
   lines.push(`- 对局长度分布：平均 ${results.corpus.rounds?.average} 轮，中位 ${results.corpus.rounds?.median}，P90 ${results.corpus.rounds?.p90}，最大 ${results.corpus.rounds?.max}。`);
   lines.push(`- 阶段分层：前期 ≤ 第 ${results.corpus.rounds?.terciles?.p33} 轮，中期 ≤ 第 ${results.corpus.rounds?.terciles?.p67} 轮，后期 > 第 ${results.corpus.rounds?.terciles?.p67} 轮。`);
@@ -647,7 +647,7 @@ function masterTable(results) {
 }
 
 function roleTable(results) {
-  const roleNames = ROLES.map((role) => GENERAL_BY_ID[role].name);
+  const roleNames = ROLES.map((role) => CHARACTER_BY_ID[role].name);
   const header = ["卡牌", ...roleNames, "全局"];
   const rows = [header.join("|"), header.map(() => "---").join("|")];
   for (const cardId of CARD_IDS) {

@@ -3,7 +3,7 @@
 作为真实选牌执行边界，把合法实体候选转换为正式 Policy 输入，再把选择 ID 解析回当前实体。
 
 上游
-AIController、Game、PublicCardPool、角色技能与直接测试。
+AiController、MatchApplication、PublicCardPoolWorkflow、角色技能与直接测试。
 
 下游
 Domain CardRules、AI RuleProjection/DistanceProbabilityBranches 与 policy/CardSelectionPolicy、ResourceSelectionPolicy、TransferPolicy。
@@ -17,16 +17,16 @@ Domain CardRules、AI RuleProjection/DistanceProbabilityBranches 与 policy/Card
 架构约束
 选择公式只存在于 policy 目录；本文件只负责合法集合、公开上下文与实体 ID 解析。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
 import {
   findPlayerFact,
   getTransferReceiverIds
-} from "../../domain/rules/card/CardRules.js?build=20260816-legacy-recovery";
-import { projectTransferRulePlayers } from "../state/RuleProjection.js?build=20260816-legacy-recovery";
-import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260816-legacy-recovery";
-import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260816-legacy-recovery";
-import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260816-legacy-recovery";
-import { TransferPolicy } from "./TransferPolicy.js?build=20260816-legacy-recovery";
+} from "../../domain/rules/card/CardRules.js?build=20260817-architecture-closure-final";
+import { projectTransferRulePlayers } from "../state/RuleProjection.js?build=20260817-architecture-closure-final";
+import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260817-architecture-closure-final";
+import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260817-architecture-closure-final";
+import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260817-architecture-closure-final";
+import { TransferPolicy } from "./TransferPolicy.js?build=20260817-architecture-closure-final";
 
 export class CardSelectionBoundary {
   /*
@@ -389,7 +389,7 @@ export class CardSelectionBoundary {
   从公开合法牌池解析 CardSelectionPolicy 选择的实体。
 
   调用方
-  AIController 与 PublicCardPool。
+  AiController 与 PublicCardPoolWorkflow。
 
   输入
   当前玩家与公开卡牌数组。

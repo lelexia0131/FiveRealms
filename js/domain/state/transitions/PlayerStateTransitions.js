@@ -1,9 +1,9 @@
 /*
 模块职责
-拥有 PlayerState primitive 字段的 root-aware 通用原子写操作；不拥有角色选择、legacy general 兼容引用、规则或 workflow 决定。
+拥有 PlayerState primitive 字段的 root-aware 通用原子写操作；不拥有角色选择、character 兼容引用、规则或 workflow 决定。
 
 上游
-Player 的 legacy method façade 与直接测试。
+Player 的 method boundary 与直接测试。
 
 下游
 无。
@@ -15,25 +15,25 @@ Player 的 legacy method façade 与直接测试。
 不读取 controllerType、aiMemory、AI 或隐藏信息。
 
 架构约束
-不得依赖 Game/EventBus/UI/AI/application/adapters；不得实现技能/回合规则。
+不得依赖 Game/EventDispatcher/UI/AI/application/adapters；不得实现技能/回合规则。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260816-legacy-recovery";
+import { bumpStateVersion } from "./StateVersion.js?build=20260817-architecture-closure-final";
 
 /*
 功能
 将已决定的角色定义应用到 PlayerState。
 
 调用方
-Game.confirmGeneral 与直接测试。
+Game.confirmCharacter 与直接测试。
 
 输入
-state、Player 与 general definition。
+state、Player 与 character definition。
 
 输出
 实际变化字段数量。
 
 读取状态
-state.stateVersion、Player Domain 字段与 general 定义。
+state.stateVersion、Player Domain 字段与 character 定义。
 
 写入状态
 Player 的角色身份与资源初始字段；实际变化时只 bump 一次。
@@ -42,25 +42,25 @@ Player 的角色身份与资源初始字段；实际变化时只 bump 一次。
 bumpStateVersion。
 
 边界与不变量
-不写 legacy general 引用，不决定选择哪名角色。
+不写 character 引用，不决定选择哪名角色。
 */
-export function applyGeneralDefinition(state, player, general) {
+export function applyCharacterDefinition(state, player, character) {
   const before = [
-    player.generalId,
+    player.characterId,
     player.name,
     player.loreFaction,
     player.maxHp,
     player.hp,
     player.energy
   ];
-  player.generalId = general.id;
-  player.name = general.name;
-  player.loreFaction = general.loreFaction;
-  player.maxHp = general.maxHp;
-  player.hp = general.maxHp;
-  player.energy = general.initialEnergy ?? 0;
+  player.characterId = character.id;
+  player.name = character.name;
+  player.loreFaction = character.loreFaction;
+  player.maxHp = character.maxHp;
+  player.hp = character.maxHp;
+  player.energy = character.initialEnergy ?? 0;
   const after = [
-    player.generalId,
+    player.characterId,
     player.name,
     player.loreFaction,
     player.maxHp,
@@ -76,7 +76,7 @@ export function applyGeneralDefinition(state, player, general) {
 递增手牌版本并返回新版本。
 
 调用方
-Game 卡牌移动与 CardSelectionSystem。
+Game 卡牌移动与 HiddenCardChoiceWorkflow。
 
 输入
 state 与 Player。
@@ -107,7 +107,7 @@ export function bumpHandVersion(state, player) {
 写入存活标记。
 
 调用方
-DyingSystem 与直接测试。
+DyingWorkflow 与直接测试。
 
 输入
 state、Player 与布尔值。

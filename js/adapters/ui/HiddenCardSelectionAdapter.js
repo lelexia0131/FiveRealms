@@ -1,14 +1,14 @@
 /**
- * 隐藏实体牌令牌 legacy façade。Application 已拥有 token/session authority；
+ * 隐藏实体牌令牌 adapter。Application 拥有 token/session authority；
  * 本文件只把真实 Player/Card entity 适配为 application/choice data-only store。
  */
-import { createId } from "../utils/helpers.js?build=20260816-legacy-recovery";
-import { createHiddenCardSelectionStore } from "../application/choice/HiddenCardSelectionStore.js?build=20260816-legacy-recovery";
+import { createId } from "../../utils/helpers.js?build=20260817-architecture-closure-final";
+import { createHiddenCardSelectionStore } from "../../application/choice/HiddenCardSelectionStore.js?build=20260817-architecture-closure-final";
 
-export class CardSelectionSystem {
+export class HiddenCardSelectionAdapter {
   /*
   功能
-  创建 legacy façade 并注入 application-owned hidden selection store。
+  创建 boundary 并注入 application-owned hidden selection store。
 
   调用方
   Game 构造函数。
@@ -17,7 +17,7 @@ export class CardSelectionSystem {
   game。
 
   输出
-  初始化完成的 CardSelectionSystem。
+  初始化完成的 HiddenCardChoiceWorkflow。
 
   读取状态
   无。
@@ -31,8 +31,9 @@ export class CardSelectionSystem {
   边界与不变量
   不复制 Application token 规则；只负责实体适配。
   */
-  constructor(game) {
-    this.game = game;
+  constructor(getPlayers) {
+    if (typeof getPlayers !== "function") throw new TypeError("HiddenCardSelectionAdapter 缺少 getPlayers capability");
+    this.getPlayers = getPlayers;
     this.store = createHiddenCardSelectionStore({ createId });
     this.sessions = this.store.sessions;
     this.selections = this.store.tokenRecords;
@@ -109,7 +110,7 @@ export class CardSelectionSystem {
   resolveToken(token, expectedOwner = null, expectedSelectionId = null) {
     const record = this.store.getTokenRecord(token);
     if (!record) return null;
-    const owner = this.game.state.players.find((player) => player.id === record.ownerId);
+    const owner = this.getPlayers().find((player) => player.id === record.ownerId);
     if (!owner || (expectedOwner && owner.id !== expectedOwner.id)
       || (expectedSelectionId && record.selectionId !== expectedSelectionId)
       || owner.handVersion !== record.version) return null;
@@ -182,7 +183,7 @@ export class CardSelectionSystem {
     }
     const session = this.store.getSession(selectionId);
     if (!session) return false;
-    const owner = this.game.state.players.find((player) => player.id === session.ownerId);
+    const owner = this.getPlayers().find((player) => player.id === session.ownerId);
     return Boolean(owner && owner.handVersion === session.version);
   }
 

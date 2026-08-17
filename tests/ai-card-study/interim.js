@@ -7,16 +7,16 @@
  */
 import { readFile, writeFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { CARD_DEFINITIONS } from "../../js/config/cardConfig.js";
-import { GENERAL_DEFINITIONS, GENERAL_BY_ID } from "../../js/config/generalConfig.js";
+import { CARD_DEFINITIONS } from "../../js/domain/definitions/cards/CardDefinitions.js";
+import { CHARACTER_DEFINITIONS, CHARACTER_BY_ID } from "../../js/domain/definitions/characters/CharacterDefinitions.js";
 import { round, fmt, stats, pairStats } from "./lib/aggregate.js";
 import { runDirFromEnv, runDirUrl } from "./lib/runPaths.js";
 
 let DATA_DIR = new URL("./data/", import.meta.url);
 let OUT_DIR = new URL("./", import.meta.url);
 const CARD_IDS = Object.keys(CARD_DEFINITIONS);
-const ROLES = GENERAL_DEFINITIONS.map((general) => general.id);
-const ROLE_NAMES = ROLES.map((role) => GENERAL_BY_ID[role].name);
+const ROLES = CHARACTER_DEFINITIONS.map((character) => character.id);
+const ROLE_NAMES = ROLES.map((role) => CHARACTER_BY_ID[role].name);
 
 async function readLines(relativePath) {
   try {
@@ -449,11 +449,11 @@ async function writeReport(data) {
   const roleSampleRows = [roleHeader.join("|"), roleHeader.map(() => "---").join("|")];
   for (const role of ROLES) {
     const counts = CARD_IDS.map((cardId) => roleMatrix[cardId][role]?.n ?? 0);
-    roleSampleRows.push([GENERAL_BY_ID[role].name, ...counts].join("|"));
+    roleSampleRows.push([CHARACTER_BY_ID[role].name, ...counts].join("|"));
   }
   lines.push(roleSampleRows.join("\n"));
   lines.push("");
-  lines.push(`每角色作为当前玩家的自然状态数：${ROLES.map((role) => `${GENERAL_BY_ID[role].name}=${new Set((roleHoldRows[role] ?? []).map((row) => row.stateId)).size}`).join("、")}。`);
+  lines.push(`每角色作为当前玩家的自然状态数：${ROLES.map((role) => `${CHARACTER_BY_ID[role].name}=${new Set((roleHoldRows[role] ?? []).map((row) => row.stateId)).size}`).join("、")}。`);
   lines.push("");
   lines.push("## 4. 样本明显不足清单（阶段性）");
   lines.push("");
@@ -596,7 +596,7 @@ function printConsoleSummary(data) {
   lines.push("每角色有效样本（Hold）：");
   for (const role of ROLES) {
     const states = new Set((data.roleHoldRows[role] ?? []).map((row) => row.stateId)).size;
-    lines.push(`  ${GENERAL_BY_ID[role].name}：${states} 个状态（${data.roleHoldRows[role]?.length ?? 0} 行）`);
+    lines.push(`  ${CHARACTER_BY_ID[role].name}：${states} 个状态（${data.roleHoldRows[role]?.length ?? 0} 行）`);
   }
   lines.push("");
   lines.push("样本明显不足的牌：");

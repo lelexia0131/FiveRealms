@@ -17,11 +17,11 @@ domain/GlobalBenefitModel 与 value/CardValue。
 架构约束
 只负责 Value 投影；不决定响应、不执行模拟、不持有 Game 或 Controller。
 */
-import { getBaseCardAiValue, getRoleCardAiValue } from "./CardValue.js?build=20260816-legacy-recovery";
+import { getBaseCardAiValue, getRoleCardAiValue } from "./CardValue.js?build=20260817-architecture-closure-final";
 import {
   assessGlobalBenefitOutcome,
   buildMutualBenefitDraftOutcome
-} from "../domain/GlobalBenefitModel.js?build=20260816-legacy-recovery";
+} from "../domain/GlobalBenefitModel.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -48,10 +48,10 @@ getBaseCardAiValue、getRoleCardAiValue。
 边界与不变量
 回退只处理缺失角色身份或未知角色，不改变已定义的角色差量。
 */
-function cardValueFor(generalId, definitionId) {
-  if (!generalId) return getBaseCardAiValue(definitionId);
+function cardValueFor(characterId, definitionId) {
+  if (!characterId) return getBaseCardAiValue(definitionId);
   try {
-    return getRoleCardAiValue(generalId, definitionId);
+    return getRoleCardAiValue(characterId, definitionId);
   } catch {
     return getBaseCardAiValue(definitionId);
   }
@@ -89,7 +89,7 @@ export function mutualBenefitDraftValues(players, source, remainingCounts) {
     source,
     remainingCounts,
     (playerId, definitionId) => cardValueFor(
-      playersById.get(playerId)?.generalId,
+      playersById.get(playerId)?.characterId,
       definitionId
     )
   );
@@ -135,7 +135,7 @@ export function assessGlobalBenefit(
     sourceId,
     remainingCounts,
     definitionValue:(playerId, candidateDefinitionId) => cardValueFor(
-      playersById.get(playerId)?.generalId,
+      playersById.get(playerId)?.characterId,
       candidateDefinitionId
     )
   });

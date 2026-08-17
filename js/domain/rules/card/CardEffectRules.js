@@ -15,11 +15,11 @@ Domain StatusRules 与 CardDefinitions。
 不读取 hidden card 内容、AI、UI。
 
 架构约束
-不得依赖 Game/application/adapters/EventBus；不得 await、emit、随机、mutation；不得复制 CardDefinitions 固定 literal。
+不得依赖 Game/application/adapters/EventDispatcher；不得 await、emit、随机、mutation；不得复制 CardDefinitions 固定 literal。
 */
 
-import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
-import { getExposeWeaknessStacks } from "../status/StatusRules.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { getExposeWeaknessStacks } from "../status/StatusRules.js?build=20260817-architecture-closure-final";
 
 /*
 功能

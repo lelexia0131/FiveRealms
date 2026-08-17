@@ -3,7 +3,7 @@
 拥有「回收站」card trigger registration：cardUsed 事件接收、Domain predicate query、usage commit、draw orchestration 与 presentation；不拥有完整 Trigger engine。
 
 上游
-Game temporary composition root。
+composition root。
 
 下游
 Domain RecycleDeviceRules、RuleUsageTransitions 与 narrow draw/log collaborators。
@@ -15,10 +15,10 @@ usage 经 RuleUsageTransition；不写其它 Domain state。
 不读取 UI/AI/DOM 或 hidden hand。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime 或 concrete adapters。
 */
-import { canTriggerRecycleDevice } from "../../domain/rules/card/RecycleDeviceRules.js?build=20260816-legacy-recovery";
-import { setRecycleDeviceUses } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
+import { canTriggerRecycleDevice } from "../../domain/rules/card/RecycleDeviceRules.js?build=20260817-architecture-closure-final";
+import { setRecycleDeviceUses } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = ["onEvent", "getState", "isSessionValid", "presentation", "drawCards"];
 
@@ -27,7 +27,7 @@ const REQUIRED_DEPENDENCIES = ["onEvent", "getState", "isSessionValid", "present
 创建回收站 trigger registry。
 
 调用方
-Game temporary composition root。
+composition root。
 
 输入
 显式注入的 event/session/draw/log collaborators。
@@ -45,7 +45,7 @@ Game temporary composition root。
 canTriggerRecycleDevice、setRecycleDeviceUses。
 
 边界与不变量
-不迁移 EventBus；每次事件先 query pure predicate。
+不迁移 EventDispatcher；每次事件先 query pure predicate。
 */
 export function createRecycleDeviceTrigger(dependencies) {
   for (const name of REQUIRED_DEPENDENCIES) {
@@ -58,7 +58,7 @@ export function createRecycleDeviceTrigger(dependencies) {
   注册 cardUsed 回收站监听器。
 
   调用方
-  Game.registerGlobalRules legacy bridge。
+  match application.registerGlobalRules bridge。
 
   输入
   无。

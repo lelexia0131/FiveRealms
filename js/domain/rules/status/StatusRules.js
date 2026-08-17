@@ -3,7 +3,7 @@
 唯一拥有状态存在性与闪电下一持有者的纯规则语义；不拥有生命周期 workflow、伤害、判定或响应。
 
 上游
-RuleEngine、Game status workflow 与 tests。
+ActionLegality、Game status workflow 与 tests。
 
 下游
 STATUS_DEFINITIONS。
@@ -17,15 +17,15 @@ STATUS_DEFINITIONS。
 架构约束
 不得依赖 application/adapters/AI/UI/Game runtime；不得随机、await、emit。
 */
-import { STATUS_DEFINITIONS } from "../../definitions/statuses/StatusDefinitions.js?build=20260816-legacy-recovery";
-import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260816-legacy-recovery";
+import { STATUS_DEFINITIONS } from "../../definitions/statuses/StatusDefinitions.js?build=20260817-architecture-closure-final";
+import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260817-architecture-closure-final";
 
 /*
 功能
 判断玩家投影是否拥有指定状态。
 
 调用方
-RuleEngine 与 tests。
+ActionLegality 与 tests。
 
 输入
 Rule Player 投影与 statusId。
@@ -54,7 +54,7 @@ export function hasStatus(player, statusId) {
 读取「破势」状态详情中的层数。
 
 调用方
-cardRegistry assault resolver 与 tests。
+CardRuntime assault resolver 与 tests。
 
 输入
 exposeWeakness 状态详情或 null。
@@ -83,7 +83,7 @@ export function getExposeWeaknessStacks(statusDetail) {
 判断「破势」是否可被一次突袭消耗。
 
 调用方
-cardRegistry assault resolver 与 tests。
+CardRuntime assault resolver 与 tests。
 
 输入
 exposeWeakness 状态详情或 null。
@@ -112,7 +112,7 @@ export function isExposeWeaknessConsumable(statusDetail) {
 读取「孤注」状态提供的突袭伤害加成。
 
 调用方
-skillRegistry gamble passive 与 tests。
+SkillRuntime gamble passive 与 tests。
 
 输入
 allIn 状态详情或 null。
@@ -141,7 +141,7 @@ export function getAllInAssaultBonus(statusDetail) {
 判断「猎印」是否在指定追踪回合已经到期。
 
 调用方
-skillRegistry tracking cleanup 与 tests。
+SkillRuntime tracking cleanup 与 tests。
 
 输入
 huntMark 状态详情与当前追踪回合。
@@ -171,7 +171,7 @@ export function isHuntMarkExpired(statusDetail, currentTrackingTurn) {
 决定闪电状态的下一名合法持有者 ID。
 
 调用方
-Game status workflow 与 RuleEngine。
+Game status workflow 与 ActionLegality。
 
 输入
 Rule Player 投影数组与当前 holder id。

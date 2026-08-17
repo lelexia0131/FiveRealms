@@ -49,7 +49,7 @@ async function main() {
     actor: record.playerId,
     playerId: record.playerId,
     seat: record.seat,
-    generalId: record.generalId,
+    characterId: record.characterId,
     battleTeam: record.battleTeam,
     roleOverride: record.roleOverride ?? null,
     fingerprint: record.fingerprint

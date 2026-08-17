@@ -1,6 +1,6 @@
 /*
 模块职责
-唯一拥有 Match lifecycle 的 immutable data-only Domain fact contracts：gameStart 与 gameOver。不拥有 publisher/subscriber/dispatcher/EventBus。
+唯一拥有 Match lifecycle 的 immutable data-only Domain fact contracts：gameStart 与 gameOver。不拥有 publisher/subscriber/dispatcher/EventDispatcher。
 
 上游
 application/match MatchWorkflow。
@@ -15,7 +15,7 @@ application/match MatchWorkflow。
 只含 gameId/stateVersion/IDs/public primitive；不含 Game/Player/Card/AI/function。
 
 架构约束
-不得依赖 Game/application/adapters/EventBus；不得 await、emit、mutation。
+不得依赖 Game/application/adapters/EventDispatcher；不得 await、emit、mutation。
 */
 
 /*
@@ -23,13 +23,13 @@ application/match MatchWorkflow。
 构建 gameStart Domain fact。
 
 调用方
-MatchWorkflow.confirmGeneral。
+MatchWorkflow.confirmCharacter。
 
 输入
 gameId、stateVersion 与 human/selected facts。
 
 输出
-冻结 { type, gameId, stateVersion, humanPlayerId, selectedGeneralId }。
+冻结 { type, gameId, stateVersion, humanPlayerId, selectedCharacterId }。
 
 读取状态
 无。
@@ -43,13 +43,13 @@ Object.freeze。
 边界与不变量
 不含 Game entity；可 JSON 序列化。
 */
-export function createGameStartFact({ gameId, stateVersion, humanPlayerId, selectedGeneralId }) {
+export function createGameStartFact({ gameId, stateVersion, humanPlayerId, selectedCharacterId }) {
   return Object.freeze({
     type: "gameStart",
     gameId,
     stateVersion,
     humanPlayerId,
-    selectedGeneralId
+    selectedCharacterId
   });
 }
 

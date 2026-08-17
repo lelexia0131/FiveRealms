@@ -23,7 +23,7 @@ import { readFile, writeFile, appendFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
-import { CARD_DEFINITIONS } from "../../../js/config/cardConfig.js";
+import { CARD_DEFINITIONS } from "../../../js/domain/definitions/cards/CardDefinitions.js";
 import {
   initGame,
   cloneGame,
@@ -354,7 +354,7 @@ async function runArm(job) {
     stateId: job.metricId,
     seed: job.seed,
     sampleType: "composite",
-    role: subject.generalId,
+    role: subject.characterId,
     battleTeam: subject.battleTeam,
     round: game.state.currentRound,
     seat: subject.seatIndex,

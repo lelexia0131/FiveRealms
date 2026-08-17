@@ -2,7 +2,8 @@
  * 将非本地玩家手牌转换为脱敏展示模型。未知槽位不携带实体 ID、定义、名称、
  * 类别、描述或图片；已知信息只读取本地真人自己的实体牌记忆。
  */
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260816-legacy-recovery";
+import { CARD_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js?build=20260817-architecture-closure-final";
 
 // 与 README 卡牌表保持一致的纯展示顺序；任何排序都只作用于 ViewModel。
 export const CARD_CATEGORY_DISPLAY_ORDER = Object.freeze({ basic:0, tactic:1, equipment:2, unknown:3 });
@@ -13,19 +14,45 @@ export const CARD_DEFINITION_DISPLAY_ORDER = Object.freeze([
 ]);
 const definitionOrder = new Map(CARD_DEFINITION_DISPLAY_ORDER.map((definitionId, index) => [definitionId, index]));
 
+/*
+功能
+查询并返回 knownCardView 对应的 handVisibility 结果。
+
+调用方
+本模块内部流程及显式公开边界。
+
+输入
+函数签名声明的参数。
+
+输出
+函数实现声明的返回值。
+
+读取状态
+仅函数体显式读取的参数、模块或实例状态。
+
+写入状态
+仅执行函数体显式声明的写入；查询路径不写状态。
+
+调用函数
+仅调用函数体中显式列出的依赖。
+
+边界与不变量
+遵守模块头定义的 ownership、状态与信息边界。
+*/
 function knownCardView(definition) {
+  const card = presentCard(definition);
   return Object.freeze({
     known:true,
-    name:definition.name,
-    category:definition.category,
-    categoryName:definition.categoryName,
-    description:definition.description,
-    art:definition.art,
-    icon:definition.icon,
-    accent:definition.accent,
-    frameStyle:definition.frameStyle,
-    flavorText:definition.flavorText,
-    subtypes:[...definition.subtypes]
+    name:card.name,
+    category:card.category,
+    categoryName:card.categoryName,
+    description:card.description,
+    art:card.art,
+    icon:card.icon,
+    accent:card.accent,
+    frameStyle:card.frameStyle,
+    flavorText:card.flavorText,
+    subtypes:[...card.subtypes]
   });
 }
 

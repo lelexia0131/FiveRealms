@@ -17,6 +17,8 @@ AI 状态组合入口、状态契约测试。
 架构约束
 不得计算概率、价值、搜索分支，也不得保留 Game 或 Player 引用。
 */
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
+import { getCharacterRoleTags } from "../policy/CharacterRoleMetadata.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -102,18 +104,18 @@ projectVisibleCard、freezeList。
 非观察者只暴露 handCount，绝不访问其手牌定义进行投影。
 */
 function projectVisiblePlayer(viewerId, player) {
-  const activeSkillId = player.general.activeSkillIds[0] ?? null;
+  const activeSkillId = player.character.activeSkillIds[0] ?? null;
   const activeSkillUses = player.turnFlags.activeSkillUseCounts?.[activeSkillId] ?? 0;
-  const activeSkillLimit = player.general.activeLimitPerTurn ?? 1;
+  const activeSkillLimit = ACTIVE_SKILL_DEFINITIONS[activeSkillId]?.limitPerTurn ?? 1;
   return Object.freeze({
     id:player.id,
     seatIndex:player.seatIndex,
     name:player.name,
     controllerType:player.controllerType,
     battleTeam:player.battleTeam,
-    generalId:player.generalId,
-    tags:freezeList(player.general.tags),
-    roleTags:freezeList(player.general.roleTags ?? []),
+    characterId:player.characterId,
+    tags:freezeList([]),
+    roleTags:freezeList(getCharacterRoleTags(player.characterId)),
     hp:player.hp,
     maxHp:player.maxHp,
     shield:player.shield,

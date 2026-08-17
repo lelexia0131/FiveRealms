@@ -15,7 +15,7 @@ application/ports/ChoicePort 与 peer adapters。
 不包含 Card/Player 实体；option 只使用 cardId。
 
 架构约束
-不得依赖 Game runtime、UI/AI、EventBus、Domain transitions 或 concrete adapters。
+不得依赖 Game runtime、UI/AI、EventDispatcher、Domain transitions 或 concrete adapters。
 */
 
 /*

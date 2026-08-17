@@ -15,9 +15,9 @@ Deck 的物理移动路径与直接测试。
 不读取卡牌规则字段或 AI 信息。
 
 架构约束
-不得依赖 Game/EventBus/UI/AI/application/adapters；禁止具体卡牌效果分支。
+不得依赖 Game/EventDispatcher/UI/AI/application/adapters；禁止具体卡牌效果分支。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260816-legacy-recovery";
+import { bumpStateVersion } from "./StateVersion.js?build=20260817-architecture-closure-final";
 
 /*
 功能

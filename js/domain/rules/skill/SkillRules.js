@@ -3,7 +3,7 @@
 唯一拥有主动技能动态成本、合法性与目标决定；固定技能效果数值由 SkillDefinitions 唯一拥有，本模块只转发或按运行状态组合。
 
 上游
-core/RuleEngine 与 generals/skillRegistry legacy façades、tests。
+Application ActionLegality、skill runtime 与 tests。
 
 下游
 Domain TurnRules、CardRules、distance rules 与 SkillDefinitions。
@@ -15,18 +15,18 @@ Domain TurnRules、CardRules、distance rules 与 SkillDefinitions。
 不读取 controllerType、aiMemory、UI、AI 或 hidden hand。
 
 架构约束
-不得依赖 Game/RuleEngine/application/adapters/EventBus；不得 await、emit、随机、mutation；不得复制 SkillDefinitions 固定 literal。
+不得依赖 Game/ActionLegality/application/adapters/EventDispatcher；不得 await、emit、随机、mutation；不得复制 SkillDefinitions 固定 literal。
 */
-import { ACTIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260816-legacy-recovery";
-import { getDistance } from "../distance/DistanceRules.js?build=20260816-legacy-recovery";
-import { hasActiveSkillUseRemaining } from "../turn/TurnRules.js?build=20260816-legacy-recovery";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
+import { getDistance } from "../distance/DistanceRules.js?build=20260817-architecture-closure-final";
+import { hasActiveSkillUseRemaining } from "../turn/TurnRules.js?build=20260817-architecture-closure-final";
 
 /*
 功能
 决定主动技能纯静态/当前敌人计数成本。
 
 调用方
-skillRegistry adapter 与 tests。
+Application SkillRuntime 与 tests。
 
 输入
 skill facts 与 source facts。
@@ -56,7 +56,7 @@ export function getSkillCost(skill, source, players = []) {
 决定主动技能基础使用合法性。
 
 调用方
-skillRegistry adapter 与 tests。
+Application SkillRuntime 与 tests。
 
 输入
 players、sourceId、currentPlayerId、phase、skill facts、usage 与 energy。
@@ -74,7 +74,7 @@ source alive/energy 与 skill limit。
 hasActiveSkillUseRemaining。
 
 边界与不变量
-reason 与旧 skillRegistry 完全一致。
+reason 保持既定公开拒绝文案。
 */
 export function canUseSkillBase({
   players,
@@ -216,7 +216,7 @@ export function decideSkillEffect(skill, source, options = {}) {
 决定主动技能合法目标 ID。
 
 调用方
-RuleEngine adapter 与 tests。
+ActionLegality adapter 与 tests。
 
 输入
 players、sourceId 与 skill facts。
@@ -246,6 +246,7 @@ export function getSkillTargetIds(players, sourceId, skill, isRangeLegal = null)
   else if (skill.id === "symbiosis") candidates = alive.filter((player) => player.battleTeam === source.battleTeam && player.hp < player.maxHp);
   else if (skill.id === "stealSkill") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && (player.handCount > 0 || player.equipmentDefinitionId));
   else if (skill.id === "hunt") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam && player.huntMarkSourceId === source.id);
+  else if (skill.id === "burningField") candidates = alive.filter((player) => player.battleTeam !== source.battleTeam);
   /*
   功能
   判断技能目标是否在 range rule 范围内。

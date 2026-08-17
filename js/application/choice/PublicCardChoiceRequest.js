@@ -3,7 +3,7 @@
 构建公开牌池轮选 family 的 data-only ChoiceRequest；公开牌内容可进入 request，但绝不携带 Card 实体。
 
 上游
-PublicCardPool legacy workflow。
+PublicCardPoolWorkflow。
 
 下游
 application/ports/ChoicePort 与 peer adapters。
@@ -15,7 +15,7 @@ application/ports/ChoicePort 与 peer adapters。
 只包含公开的 cardId/definitionId/name/category 与 primitive constraints。
 
 架构约束
-不得依赖 UI/AI/Audio/Diagnostics、Game runtime、EventBus 或 Domain mutation。
+不得依赖 UI/AI/Audio/Diagnostics、Game runtime、EventDispatcher 或 Domain mutation。
 */
 
 /*
@@ -23,7 +23,7 @@ application/ports/ChoicePort 与 peer adapters。
 创建 publicCard ChoiceRequest。
 
 调用方
-PublicCardPool.draft。
+PublicCardPoolWorkflow.draft。
 
 输入
 requestId、actorId、gameId、stateVersion 与 offeredCards facts。

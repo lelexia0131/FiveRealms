@@ -11,11 +11,11 @@ import {
 } from "../evaluators/scenarioDsl.mjs";
 
 const BASE = [
-  { id:"a", team:"dawn", general:"oath-warden" },
-  { id:"b", team:"dawn", general:"spirit-medic" },
-  { id:"c", team:"dusk", general:"trail-hunter" },
-  { id:"d", team:"dawn", general:"fate-gambler" },
-  { id:"e", team:"dusk", general:"ember-magus" }
+  { id:"a", team:"dawn", character:"oath-warden" },
+  { id:"b", team:"dawn", character:"spirit-medic" },
+  { id:"c", team:"dusk", character:"trail-hunter" },
+  { id:"d", team:"dawn", character:"fate-gambler" },
+  { id:"e", team:"dusk", character:"ember-magus" }
 ];
 
 function board(actorOverrides = {}, others = {}, seed = 82000) {

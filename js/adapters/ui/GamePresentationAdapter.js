@@ -3,13 +3,13 @@
 把 Application PresentationPort 的 data-only semantic DTO bridge 到本局 UIManager session；只拥有 FR-ARCH-8 已证明的 concrete UI mapping，不拥有 application presentation policy。
 
 上游
-Game temporary composition root。
+composition root。
 
 下游
 application/ports/PresentationPort 与 UIManager。
 
 状态边界
-只写 legacy UI/presentation state；不写 Domain state。
+只写 UI/presentation state；不写 Domain state。
 
 信息边界
 通过 playerId/card DTO 读取公开展示字段；不构造 Application workflow。
@@ -17,15 +17,15 @@ application/ports/PresentationPort 与 UIManager。
 架构约束
 不得依赖 Game class、AIController、SoundManager 或其它 adapter 实现；不 import Application workflow。
 */
-import { CARD_DEFINITIONS } from "../../config/cardConfig.js?build=20260816-legacy-recovery";
-import { createPresentationPort } from "../../application/ports/PresentationPort.js?build=20260816-legacy-recovery";
+import { presentCard } from "./CardPresentationDefinitions.js?build=20260817-architecture-closure-final";
+import { createPresentationPort } from "../../application/ports/PresentationPort.js?build=20260817-architecture-closure-final";
 
 /*
 功能
 创建单局 concrete PresentationPort UI adapter。
 
 调用方
-Game temporary composition root。
+composition root。
 
 输入
 log、getPlayerById、ui 与 renderTarget 能力。
@@ -43,7 +43,7 @@ getPlayerById 与静态卡牌展示定义。
 createPresentationPort、ui.showJudgment、ui.showDying、ui.setCurrentCard、ui.playLightningHit、ui.queueFeedback、ui.render。
 
 边界与不变量
-Application 传入 data-only DTO；本 adapter 负责映射回 legacy UI 调用，不新增 UI 行为。
+Application 传入 data-only DTO；本 adapter 负责映射回 UI 调用，不新增 UI 行为。
 */
 export function createGamePresentationAdapter({ log, getPlayerById, getCardById, ui, renderTarget }) {
   if (typeof log !== "function" || typeof getPlayerById !== "function"
@@ -66,13 +66,13 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
       if (!player || !card) return;
       ui.showJudgment?.(
         player,
-        { name: card.name, categoryName: card.categoryName, art: card.art },
+        card,
         delayedStatusContext ? { delayedStatusContext } : {}
       );
     },
     hideJudgment: () => ui.hideJudgment?.(),
     showCurrentEffect: ({ statusId, label, holderName }) => {
-      const card = CARD_DEFINITIONS[statusId];
+      const card = presentCard(statusId);
       if (!card) return;
       ui.setCurrentCard?.(card, label, holderName);
     },

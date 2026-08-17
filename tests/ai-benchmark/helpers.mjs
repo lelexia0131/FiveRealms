@@ -2,16 +2,15 @@
  * AI Benchmark 公共辅助：构造合法测试局面并驱动生产 AI。
  *
  * 原则：
- * - 局面构造只使用生产 Player / generalConfig / cardConfig / Game 权威定义；
+ * - 局面构造只使用生产 Player / characterConfig / cardConfig / Game 权威定义；
  * - 不重新实现任何规则；
  * - 其他玩家的手牌仅作为"计数"参与 AI 决策，AI 可见信息由 AiVisibleState /
  *   Knowledge 过滤，本文件不写入任何作弊信息。
  */
-import { Game } from "../../js/core/Game.js";
-import { Player } from "../../js/core/Player.js";
-import { GENERAL_BY_ID } from "../../js/config/generalConfig.js";
-import { CARD_DEFINITIONS } from "../../js/config/cardConfig.js";
-import { registerPassiveSkills } from "../../js/generals/skillRegistry.js";
+import { createGameApplication } from "../../js/composition/createGameApplication.js";
+import { Player } from "../../js/application/match/Player.js";
+import { CHARACTER_BY_ID } from "../../js/domain/definitions/characters/CharacterDefinitions.js";
+import { CARD_DEFINITIONS } from "../../js/domain/definitions/cards/CardDefinitions.js";
 import { createId } from "../../js/utils/helpers.js";
 import { createInitialSearchState } from "../../js/ai/state/StateContracts.js";
 import { Simulator } from "../../js/ai/simulation/Simulator.js";
@@ -83,11 +82,11 @@ export function createHeadlessUi() {
 }
 
 /**
- * 构造一个可被生产 RuleEngine / AI 直接查询的 Game 局面。
+ * 构造一个可被生产 ActionLegality / AI 直接查询的 Game 局面。
  *
  * @param {Object} options
  * @param {Array<Object>} options.players 玩家配置：
- *   { id, team, general, hp?, energy?, shield?, maxEnergy?,
+ *   { id, team, character, hp?, energy?, shield?, maxEnergy?,
  *     hand?, equipment?, statuses?, turnFlags?, roundFlags?,
  *     aiMemory? }  aiMemory: { knownCardsByPlayer: { [ownerId]: [{ id, definitionId }] } }
  * @param {Object} options.options
@@ -98,7 +97,7 @@ export function createHeadlessUi() {
  */
 export function makeGame({ players, options = {} }, runtimeOptions = {}) {
   const seed = runtimeOptions.seed ?? options.seed ?? 0x5eed;
-  const game = new Game(createHeadlessUi(), makeRandom(seed), { aiSearchSeed: seed });
+  const game = createGameApplication(createHeadlessUi(), makeRandom(seed), { aiSearchSeed: seed });
   game.simulationMode = true;
   game.animationFastMode = true;
   game.aiRandomnessRange = 0;
@@ -112,12 +111,12 @@ export function makeGame({ players, options = {} }, runtimeOptions = {}) {
       battleTeam: config.team,
       controllerType: "ai"
     });
-    const general = GENERAL_BY_ID[config.general];
-    if (!general) throw new Error(`未知角色：${config.general}`);
-    player.applyGeneral(TEST_VERSION_STATE, general);
-    player.hp = config.hp ?? general.maxHp;
+    const character = CHARACTER_BY_ID[config.character];
+    if (!character) throw new Error(`未知角色：${config.character}`);
+    player.applyCharacter(TEST_VERSION_STATE, character);
+    player.hp = config.hp ?? character.maxHp;
     player.shield = config.shield ?? 0;
-    player.energy = config.energy ?? general.initialEnergy;
+    player.energy = config.energy ?? character.initialEnergy;
     player.attackRange = config.attackRange ?? 1;
     player.hand = config.hand ? [...config.hand] : [];
     player.equipment = config.equipment ?? null;
@@ -162,7 +161,7 @@ export function makeGame({ players, options = {} }, runtimeOptions = {}) {
   game.state.deck.resolvingCards = [];
   game.state.deck.judgmentZone = [];
 
-  registerPassiveSkills(game);
+  game.passiveTriggerRegistry.registerForPlayers(game.state.players);
   return game;
 }
 

@@ -25,27 +25,27 @@ import {
   getLeverageFirstTargetIds,
   getTransferReceiverIds,
   getTransferSourceIds
-} from "../../domain/rules/card/CardRules.js?build=20260816-legacy-recovery";
-import { hasStatus } from "../../domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
+} from "../../domain/rules/card/CardRules.js?build=20260817-architecture-closure-final";
+import { hasStatus } from "../../domain/rules/status/StatusRules.js?build=20260817-architecture-closure-final";
 import {
   canUseSkillBase,
   getSkillCost,
   getSkillTargetIds
-} from "../../domain/rules/skill/SkillRules.js?build=20260816-legacy-recovery";
-import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js?build=20260816-legacy-recovery";
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260816-legacy-recovery";
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260816-legacy-recovery";
-import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260816-legacy-recovery";
-import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260816-legacy-recovery";
+} from "../../domain/rules/skill/SkillRules.js?build=20260817-architecture-closure-final";
+import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
+import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260817-architecture-closure-final";
+import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260817-architecture-closure-final";
 import {
   projectAttackUsage,
   projectRulePlayer,
   projectRulePlayers,
   projectTransferRulePlayers
-} from "../state/RuleProjection.js?build=20260816-legacy-recovery";
-import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260816-legacy-recovery";
-import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260816-legacy-recovery";
-import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260816-legacy-recovery";
+} from "../state/RuleProjection.js?build=20260817-architecture-closure-final";
+import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260817-architecture-closure-final";
+import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260817-architecture-closure-final";
+import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260817-architecture-closure-final";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -57,7 +57,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260816-legacy-recovery";
+} from "../state/Probability.js?build=20260817-architecture-closure-final";
 
 export class ActionGenerator {
   /*
@@ -318,7 +318,7 @@ export class ActionGenerator {
   projectTransferPlayers、findPlayerFact、getTransferSourceIds、resolveRuleTargets。
 
   边界与不变量
-  排除规则与 legacy transferableHandCount 一致。
+  排除规则与 transferableHandCount 一致。
   */
   getTransferSourcesFromRule(players, source, card, excludedCardIds = null, isRangeLegal = null) {
     const exclusions = excludedCardIds ?? (card?.id ? new Set([card.id]) : null);
@@ -446,7 +446,7 @@ export class ActionGenerator {
   canUseSkillBase、getSkillCost、getActiveSkillUseCount。
 
   边界与不变量
-  基础费用与次数公式只由 Domain SkillRules 解释；额外目标非空检查保留 legacy registry 行为。
+  基础费用与次数公式只由 Domain SkillRules 解释；额外目标非空检查保留 registry 行为。
   */
   canUseSkillFromRule(rootContext, source, skill) {
     if (!skill?.id) return { ok:false, reason:"" };
@@ -602,7 +602,7 @@ export class ActionGenerator {
         for (const target of aiTargets) actions.push({ type:"card", card, targets:[target] });
       } else actions.push({ type:"card", card, targets:card.targetType === "allEnemies" || card.targetType === "allLiving" ? targets : [] });
     }
-    const skill = ACTIVE_SKILL_DEFINITIONS[player.general?.activeSkillIds?.[0] ?? ""] ?? null;
+    const skill = ACTIVE_SKILL_DEFINITIONS[player.character?.activeSkillIds?.[0] ?? ""] ?? null;
     if (skill
       && this.canUseSkillFromRule(context, player, skill).ok
       && (skill.id !== "breakArmy"
@@ -922,7 +922,7 @@ export class ActionGenerator {
       const unavailable = used - Math.floor(used);
       return [
         { probability:1 - unavailable, conditions:{}, available:true },
-        { probability:unavailable, conditions:{ [`legacyAttackUse:${actor.id}:${index}`]:"used" }, available:false }
+        { probability:unavailable, conditions:{ [`attackUse:${actor.id}:${index}`]:"used" }, available:false }
       ];
     });
   }

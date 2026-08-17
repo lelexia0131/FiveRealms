@@ -3,7 +3,7 @@
 提供真实 Domain MatchState 的纯只读玩家/座次查询入口，并作为当前 Game query 的 forwarding target。
 
 上游
-Game 的 legacy query façade 与未来 domain/rules 消费者。
+match application 的 query boundary 与当前 domain/rules 消费者。
 
 下游
 StateView 语义读边界。
@@ -17,7 +17,7 @@ StateView 语义读边界。
 架构约束
 不得依赖 application/adapters/ui/audio/ai/Game runtime；不得实现规则、距离、合法性或 workflow。
 */
-import { createStateView } from "./StateView.js?build=20260816-legacy-recovery";
+import { createStateView } from "./StateView.js?build=20260817-architecture-closure-final";
 
 /*
 功能

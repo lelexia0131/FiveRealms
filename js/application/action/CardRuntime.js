@@ -3,10 +3,10 @@
 拥有 card-specific Application action planning 与 effective-target 决策；把 generic ActionWorkflow 与 transfer/leverage/private-selection 等具体卡牌语义隔离。不拥有 Domain Card Rule 或通用 action lifecycle。
 
 上游
-core/Game legacy façade 与 application/action ActionWorkflow。
+composition boundary 与 application/action ActionWorkflow。
 
 下游
-legacy RuleEngine/card preparation collaborators、application/action/effect collaborator 与 Domain rules。
+ActionLegality/card preparation collaborators、application/action/effect collaborator 与 Domain rules。
 
 状态边界
 不写 Domain state；仅组合调用栈中的 action plan facts。
@@ -15,7 +15,7 @@ legacy RuleEngine/card preparation collaborators、application/action/effect col
 private intent 只存在于当前调用栈；公开 context 不含 hidden Card entity。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime 或 concrete adapters。
 */
 const REQUIRED_DEPENDENCIES = [
   "getState", "canPlayCard", "canUseForcedAssault", "getCardTargets",
@@ -29,10 +29,10 @@ const REQUIRED_DEPENDENCIES = [
 创建 card-specific Application runtime capability。
 
 调用方
-Game temporary composition root。
+composition root。
 
 输入
-显式注入的 legacy legality/preparation/effect/presentation collaborators。
+显式注入的 legality/preparation/effect/presentation collaborators。
 
 输出
 冻结 { prepareCardAction, resolveCardAction, getEffectiveTargets }。
@@ -69,7 +69,7 @@ export function createCardRuntime(dependencies) {
   { legality, forcedAssault, legalTargets, targets, preparedTransfer, preparedLeverage, preparedPrivateSelection, targetLabel, useLogMessage }。
 
   读取状态
-  legacy legality/preparation collaborators 与 card facts。
+  legality/preparation collaborators 与 card facts。
 
   写入状态
   无。
@@ -142,7 +142,7 @@ export function createCardRuntime(dependencies) {
 
   /*
   功能
-  调用 legacy card effect resolver。
+  调用 card effect resolver。
 
   调用方
   ActionWorkflow.playCard。
@@ -151,7 +151,7 @@ export function createCardRuntime(dependencies) {
   source、card、targets、selection、resolutionId 与 action plan。
 
   输出
-  legacy effect result。
+  effect result。
 
   读取状态
   无。

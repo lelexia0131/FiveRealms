@@ -1,15 +1,15 @@
 /*
 模块职责
-把 Application DiagnosticsPort 的 runtime telemetry DTO bridge 到 legacy Player.statistics 字段；只拥有 concrete statistics adapter，不拥有 telemetry semantics。
+把 Application DiagnosticsPort 的 runtime telemetry DTO bridge 到 Player.statistics 字段；只拥有 concrete statistics adapter，不拥有 telemetry semantics。
 
 上游
-Game temporary composition root。
+composition root。
 
 下游
 application/ports/DiagnosticsPort。
 
 状态边界
-只写 legacy Player.statistics；不写 Domain fields、aiMemory 或 UI。
+只写 Player.statistics；不写 Domain fields、aiMemory 或 UI。
 
 信息边界
 只接收 playerId/amount DTO。
@@ -17,15 +17,15 @@ application/ports/DiagnosticsPort。
 架构约束
 不得依赖 Game class、AI、UI、Domain transitions 或其它 adapter。
 */
-import { createDiagnosticsPort } from "../../application/ports/DiagnosticsPort.js?build=20260816-legacy-recovery";
-import { Debug } from "../../utils/debug.js?build=20260816-legacy-recovery";
+import { createDiagnosticsPort } from "../../application/ports/DiagnosticsPort.js?build=20260817-architecture-closure-final";
+import { Debug } from "../../utils/debug.js?build=20260817-architecture-closure-final";
 
 /*
 功能
 创建单局 concrete DiagnosticsPort adapter。
 
 调用方
-Game temporary composition root。
+composition root。
 
 输入
 getPlayerById 能力。
@@ -37,7 +37,7 @@ getPlayerById 能力。
 getPlayerById。
 
 写入状态
-legacy Player.statistics。
+Player.statistics。
 
 调用函数
 createDiagnosticsPort。

@@ -3,7 +3,7 @@
 唯一拥有雷达防御与延迟状态判定的纯结果解释；不执行抽牌、UI、事件或移动。
 
 上游
-JudgmentSystem 与 tests。
+JudgmentWorkflow 与 tests。
 
 下游
 无。
@@ -56,7 +56,7 @@ export function decideDefenseJudgmentOutcome(category) {
 解释雷达防御判定的 category 结果。
 
 调用方
-JudgmentSystem.judgeDefense。
+JudgmentWorkflow.judgeDefense。
 
 输入
 判定卡 category。
@@ -119,7 +119,7 @@ export function decideDelayedStatusJudgmentOutcome(category, triggerCategory) {
 解释延迟状态判定的触发结果。
 
 调用方
-JudgmentSystem.judgeDelayedStatus。
+JudgmentWorkflow.judgeDelayedStatus。
 
 输入
 判定卡 category 与触发 category。

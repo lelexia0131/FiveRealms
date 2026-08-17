@@ -1,5 +1,7 @@
-import { TEAM_CONFIG } from "../config/gameConfig.js?build=20260816-legacy-recovery";
-import { GENERAL_DEFINITIONS } from "../config/generalConfig.js?build=20260816-legacy-recovery";
+import { TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js?build=20260817-architecture-closure-final";
+import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js?build=20260817-architecture-closure-final";
+import { presentCharacter } from "../adapters/ui/CharacterPresentationDefinitions.js?build=20260817-architecture-closure-final";
+import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
@@ -17,9 +19,10 @@ export function hiddenCardBackTemplate(options = {}) {
 const image = (src, alt, className) => `<img class="${className}" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" draggable="false">`;
 
 const LONG_DESCRIPTION_THRESHOLD = 38;
-const SKILL_NAMES = new Set(GENERAL_DEFINITIONS.flatMap(
-  (general) => [general.activeName, general.passiveName].filter(Boolean)
-));
+const SKILL_NAMES = new Set([
+  ...Object.values(ACTIVE_SKILL_DEFINITIONS),
+  ...Object.values(PASSIVE_SKILL_DEFINITIONS)
+].map((skill) => skill.name));
 const VERY_LONG_DESCRIPTION_THRESHOLD = 48;
 
 /** 真人手牌与已知对手牌共用的确定性规则文字长度分类。 */
@@ -30,21 +33,22 @@ export function cardDescriptionClass(description) {
   return "";
 }
 
-export function candidateCardTemplate(general, index) {
-  const activeCostLabel = general.activeSkillIds?.[0] === "allIn"
+export function candidateCardTemplate(character, index) {
+  character = presentCharacter(character);
+  const activeCostLabel = character.activeSkillIds?.[0] === "allIn"
     ? "X 能量"
-    : general.activeCostText ?? `${general.activeCost ?? 0} 能量`;
+    : character.activeCostText ?? `${character.activeCost ?? 0} 能量`;
   return `<article class="candidate-card" style="--candidate-order:${index}">
-    <div class="candidate-art">${image(general.portrait, `${general.name}半身像`, "candidate-portrait")}<span class="candidate-index">候选 0${index + 1}</span></div>
+    <div class="candidate-art">${image(character.portrait, `${character.name}半身像`, "candidate-portrait")}<span class="candidate-index">候选 0${index + 1}</span></div>
     <div class="candidate-body">
-      <div class="candidate-name-row"><div><small>${escapeHtml(general.loreFaction)}</small><h3>${escapeHtml(general.name)}</h3></div><div class="candidate-badges"><span class="candidate-stat-badge energy-chip" aria-label="能量 ${general.initialEnergy}">能量 ${general.initialEnergy}</span><span class="candidate-stat-badge hp-chip" aria-label="${general.maxHp}点生命">生命 ${general.maxHp}</span></div></div>
-      <div class="tag-row">${general.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>
-      <p class="character-description">${escapeHtml(general.description)}</p>
+      <div class="candidate-name-row"><div><small>${escapeHtml(character.loreFaction)}</small><h3>${escapeHtml(character.name)}</h3></div><div class="candidate-badges"><span class="candidate-stat-badge energy-chip" aria-label="能量 ${character.initialEnergy}">能量 ${character.initialEnergy}</span><span class="candidate-stat-badge hp-chip" aria-label="${character.maxHp}点生命">生命 ${character.maxHp}</span></div></div>
+      <div class="tag-row">${character.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>
+      <p class="character-description">${escapeHtml(character.description)}</p>
       <div class="candidate-skills">
-        <div class="skill-copy"><h4><span>主动 · ${escapeHtml(general.activeName)}</span><small>${escapeHtml(activeCostLabel)}</small></h4><p>${escapeHtml(general.activeDescription)}</p></div>
-        <div class="skill-copy"><h4><span>被动 · ${escapeHtml(general.passiveName)}</span><small>持续</small></h4><p>${escapeHtml(general.passiveDescription)}</p></div>
+        <div class="skill-copy"><h4><span>主动 · ${escapeHtml(character.activeName)}</span><small>${escapeHtml(activeCostLabel)}</small></h4><p>${escapeHtml(character.activeDescription)}</p></div>
+        <div class="skill-copy"><h4><span>被动 · ${escapeHtml(character.passiveName)}</span><small>持续</small></h4><p>${escapeHtml(character.passiveDescription)}</p></div>
       </div>
-      <button class="primary-button candidate-select" type="button" data-general-id="${escapeHtml(general.id)}">选择 ${escapeHtml(general.name)}</button>
+      <button class="primary-button candidate-select" type="button" data-character-id="${escapeHtml(character.id)}">选择 ${escapeHtml(character.name)}</button>
     </div>
   </article>`;
 }
@@ -56,7 +60,7 @@ export function equipmentSlotTemplate(player, isHuman = false) {
       <span class="equipment-tooltip" role="tooltip">打出装备牌后会放入这里，并持续提供公开效果。</span>
     </div>`;
   }
-  const equipment = player.equipment;
+  const equipment = presentCard(player.equipment);
   const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"战术后摸1张·每回合2次", defenseDevice:"需要格挡时公开判定", battleDevice:"突袭需2张格挡", telescope:"对外距离-1", barrierDevice:"他人对你距离+1" };
   const stateLabels = { energyDevice:"持续供能", recycleDevice:"待回收", defenseDevice:"待判定", battleDevice:"强化中", telescope:"观测中", barrierDevice:"屏障展开" };
   const recycleUses = player.turnFlags?.recycleDeviceUses ?? 0;
@@ -84,18 +88,19 @@ export function opponentHandStripTemplate(slots = []) {
 }
 
 export function skillDetailsTemplate(player) {
-  const general = player?.general ?? {};
-  const activeId = general.activeSkillIds?.[0] ?? null;
+  const character = presentCharacter(player?.character) ?? {};
+  const activeId = character.activeSkillIds?.[0] ?? null;
   const activeCost = activeId === "allIn"
     ? "至少1点；发动时消耗全部能量"
-    : general.activeCostText ?? `${general.activeCost ?? 0}点能量`;
-  const activeLimit = `每回合限发动${general.activeLimitPerTurn ?? 1}次`;
-  const active = general.activeName ? `<section class="skill-detail-section is-active"><div class="skill-detail-heading"><span>主动技能</span><strong>${escapeHtml(general.activeName)}</strong></div><p>${escapeHtml(general.activeDescription)}</p><dl><div><dt>能量消耗</dt><dd>${escapeHtml(activeCost)}</dd></div><div><dt>次数限制</dt><dd>${escapeHtml(activeLimit)}</dd></div></dl></section>` : '<section class="skill-detail-empty">无主动技能</section>';
-  const passive = general.passiveName ? `<section class="skill-detail-section is-passive"><div class="skill-detail-heading"><span>被动技能</span><strong>${escapeHtml(general.passiveName)}</strong></div><p>${escapeHtml(general.passiveDescription)}</p><dl><div><dt>发动条件</dt><dd>${escapeHtml(general.passiveTriggerText ?? "满足技能公开条件")}</dd></div><div><dt>触发限制</dt><dd>${escapeHtml(general.passiveLimitText ?? "依技能配置触发")}</dd></div></dl></section>` : '<section class="skill-detail-empty">无被动技能</section>';
-  return `<div class="skill-dialog-card" role="document"><button type="button" class="skill-dialog-close" data-skill-dialog-close aria-label="关闭技能详情">×</button><header><img src="${escapeHtml(general.portrait)}" alt="${escapeHtml(player.name)}肖像"><div><small>${escapeHtml(player.loreFaction)}</small><h2 id="skill-details-title">${escapeHtml(player.name)} · 技能详情</h2><span>${escapeHtml(TEAM_CONFIG[player.battleTeam]?.name ?? "")}</span></div></header><div class="skill-dialog-scroll">${active}${passive}</div></div>`;
+    : character.activeCostText ?? `${character.activeCost ?? 0}点能量`;
+  const activeLimit = `每回合限发动${character.activeLimitPerTurn ?? 1}次`;
+  const active = character.activeName ? `<section class="skill-detail-section is-active"><div class="skill-detail-heading"><span>主动技能</span><strong>${escapeHtml(character.activeName)}</strong></div><p>${escapeHtml(character.activeDescription)}</p><dl><div><dt>能量消耗</dt><dd>${escapeHtml(activeCost)}</dd></div><div><dt>次数限制</dt><dd>${escapeHtml(activeLimit)}</dd></div></dl></section>` : '<section class="skill-detail-empty">无主动技能</section>';
+  const passive = character.passiveName ? `<section class="skill-detail-section is-passive"><div class="skill-detail-heading"><span>被动技能</span><strong>${escapeHtml(character.passiveName)}</strong></div><p>${escapeHtml(character.passiveDescription)}</p><dl><div><dt>发动条件</dt><dd>${escapeHtml(character.passiveTriggerText ?? "满足技能公开条件")}</dd></div><div><dt>触发限制</dt><dd>${escapeHtml(character.passiveLimitText ?? "依技能配置触发")}</dd></div></dl></section>` : '<section class="skill-detail-empty">无被动技能</section>';
+  return `<div class="skill-dialog-card" role="document"><button type="button" class="skill-dialog-close" data-skill-dialog-close aria-label="关闭技能详情">×</button><header><img src="${escapeHtml(character.portrait)}" alt="${escapeHtml(player.name)}肖像"><div><small>${escapeHtml(player.loreFaction)}</small><h2 id="skill-details-title">${escapeHtml(player.name)} · 技能详情</h2><span>${escapeHtml(TEAM_PRESENTATION[player.battleTeam]?.name ?? "")}</span></div></header><div class="skill-dialog-scroll">${active}${passive}</div></div>`;
 }
 
 export function playerPanelTemplate(player, options = {}) {
+  const character = presentCharacter(player.character) ?? {};
   const { humanTeam = player.battleTeam, isHuman = false, isCurrent = false, isLegalTarget = false, isSelectedTarget = false, isTargeting = false, isThinking = false, distanceInfo = null, distanceState = null, opponentHandSlots = null } = options;
   const relationship = isHuman ? "is-self" : player.battleTeam === humanTeam ? "is-ally" : "is-enemy";
   const statuses = player.alive ? [
@@ -110,11 +115,11 @@ export function playerPanelTemplate(player, options = {}) {
   const statusSummary = statuses.length ? statuses.map(([label]) => label).join(" · ") : "—";
   const statusText = isThinking ? "正在思考" : isCurrent ? "正在行动" : player.alive ? "等待行动" : "已阵亡";
   const showDistance = Boolean(player.alive && distanceInfo);
-  return `<article class="player-seat ${isHuman ? "human-seat" : "cpu-seat"} team-${escapeHtml(player.battleTeam)} ${relationship} ${isCurrent ? "is-active" : ""} ${isLegalTarget ? "target-legal" : ""} ${isSelectedTarget ? "target-selected" : ""} ${isTargeting && !isLegalTarget ? "target-illegal" : ""} ${isThinking ? "is-thinking" : ""} ${player.alive ? "" : "is-dead"}" data-player-id="${escapeHtml(player.id)}" tabindex="${isLegalTarget ? "0" : "-1"}" aria-label="${escapeHtml(player.name)}，${TEAM_CONFIG[player.battleTeam].name}，生命${player.hp}点，能量${player.energy}点，手牌${player.hand.length}张，状态${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}${showDistance ? `，距离${distanceInfo.distance}` : ""}">
+  return `<article class="player-seat ${isHuman ? "human-seat" : "cpu-seat"} team-${escapeHtml(player.battleTeam)} ${relationship} ${isCurrent ? "is-active" : ""} ${isLegalTarget ? "target-legal" : ""} ${isSelectedTarget ? "target-selected" : ""} ${isTargeting && !isLegalTarget ? "target-illegal" : ""} ${isThinking ? "is-thinking" : ""} ${player.alive ? "" : "is-dead"}" data-player-id="${escapeHtml(player.id)}" tabindex="${isLegalTarget ? "0" : "-1"}" aria-label="${escapeHtml(player.name)}，${TEAM_PRESENTATION[player.battleTeam].name}，生命${player.hp}点，能量${player.energy}点，手牌${player.hand.length}张，状态${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}${showDistance ? `，距离${distanceInfo.distance}` : ""}">
     <button type="button" class="seat-portrait-wrap" data-skill-player-id="${escapeHtml(player.id)}" aria-label="查看${escapeHtml(player.name)}的技能">
-      ${image(player.general.portrait, `${player.name}肖像`, "seat-portrait")}
-      <span class="team-emblem" aria-label="${TEAM_CONFIG[player.battleTeam].name}">${player.battleTeam === "dawn" ? "晨" : "暮"}</span>
-      ${!player.alive ? `<span class="death-stamp"><b>${escapeHtml(player.general.glyph)}</b> 阵亡</span>` : ""}
+      ${image(character.portrait, `${player.name}肖像`, "seat-portrait")}
+      <span class="team-emblem" aria-label="${TEAM_PRESENTATION[player.battleTeam].name}">${player.battleTeam === "dawn" ? "晨" : "暮"}</span>
+      ${!player.alive ? `<span class="death-stamp"><b>${escapeHtml(character.glyph)}</b> 阵亡</span>` : ""}
     </button>
     <div class="seat-main">
       <div class="seat-heading"><button type="button" class="seat-name-button" data-skill-player-id="${escapeHtml(player.id)}"><strong>${escapeHtml(player.name)}${isHuman ? " · 你" : ""}</strong><small>${escapeHtml(player.loreFaction)}</small></button><span class="turn-state"><i aria-hidden="true"></i>${statusText}</span></div>
@@ -130,6 +135,7 @@ export function playerPanelTemplate(player, options = {}) {
 }
 
 function cardFaceTemplate(card) {
+  card = presentCard(card);
   const descriptionClass = cardDescriptionClass(card.description);
   return `<span class="card-topline"><span class="card-name">${escapeHtml(card.name)}</span><span class="card-category">${escapeHtml(card.categoryName)}</span></span>
     <span class="card-art"><img src="${escapeHtml(card.art)}" alt="" aria-hidden="true" draggable="false"><span class="card-crest"><img src="${escapeHtml(card.icon)}" alt="" aria-hidden="true"></span></span>
@@ -137,6 +143,7 @@ function cardFaceTemplate(card) {
 }
 
 export function handCardTemplate(card, options = {}) {
+  card = presentCard(card);
   const selected = Boolean(options.selected);
   const disabled = Boolean(options.disabled);
   const cardIdAttribute = options.response ? "data-response-card-id" : "data-card-id";
@@ -147,6 +154,7 @@ export function handCardTemplate(card, options = {}) {
 
 /** 私密展示复用真人手牌的完整牌面，但不暴露可用于交互的实体 card.id。 */
 export function privateCardTemplate(card) {
+  card = presentCard(card);
   return `<article class="hand-card private-card frame-${escapeHtml(card.frameStyle)}" style="--card-accent:${escapeHtml(card.accent)}" aria-label="${escapeHtml(`${card.name}，${card.categoryName}，${card.description}`)}">
     ${cardFaceTemplate(card)}
   </article>`;
@@ -154,6 +162,7 @@ export function privateCardTemplate(card) {
 
 /** 隐藏选择中的已知牌使用标准牌面，只向 DOM 写入不透明选择 token。 */
 export function hiddenKnownCardTemplate(card, token, options = {}) {
+  card = presentCard(card);
   const zoneLabel = options.zone === "equipment" ? "装备" : "已知手牌";
   const zoneClass = options.zone === "equipment" ? " is-equipment-option" : "";
   return `<button type="button" class="hand-card hidden-known-card frame-${escapeHtml(card.frameStyle)}${zoneClass}" style="--card-accent:${escapeHtml(card.accent)}" data-hidden-token="${escapeHtml(token)}" aria-label="选择${zoneLabel}${escapeHtml(card.name)}" aria-pressed="false">
@@ -163,6 +172,7 @@ export function hiddenKnownCardTemplate(card, token, options = {}) {
 
 /** 公开牌池复用标准牌面；公开实体 ID 仅用于本池的选择确认。 */
 export function publicPoolCardTemplate(card, options = {}) {
+  card = presentCard(card);
   const selected = Boolean(options.selected);
   return `<button type="button" class="hand-card tableau-card frame-${escapeHtml(card.frameStyle)} ${selected ? "is-selected" : ""}" style="--card-accent:${escapeHtml(card.accent)}" data-public-card-id="${escapeHtml(card.id)}" aria-label="选择${escapeHtml(card.name)}" aria-pressed="${selected}">
     ${cardFaceTemplate(card)}
@@ -183,6 +193,7 @@ export function resolvingCardTemplate(cardOrName, source = "结算区", targetLa
       ? `<span class="resolving-target"><b>作用对象</b>${displayTargetMarkup}</span>`
       : "";
   if (typeof cardOrName === "object" && cardOrName) {
+    cardOrName = presentCard(cardOrName);
     return `<div class="resolving-card frame-${escapeHtml(cardOrName.frameStyle)}" style="--card-accent:${escapeHtml(cardOrName.accent)}">
       <img src="${escapeHtml(cardOrName.art)}" alt="" aria-hidden="true"><div><small>${escapeHtml(source)}</small><strong>${escapeHtml(cardOrName.name)}</strong><span class="resolving-kind">${escapeHtml(cardOrName.categoryName)}</span>${targetMarkup}</div>
     </div>`;
@@ -195,7 +206,8 @@ export function emptyResolvingCardTemplate() {
 }
 
 export function thinkingTemplate(player, message) {
-  return `<img src="${escapeHtml(player?.general?.portrait || "")}" alt="" aria-hidden="true"><div><strong>${escapeHtml(player?.name || "电脑角色")}</strong><span>${escapeHtml(message || "正在思考")}</span></div><i class="thinking-dots" aria-label="思考中"><b></b><b></b><b></b></i>`;
+  const character = presentCharacter(player?.character);
+  return `<img src="${escapeHtml(character?.portrait || "")}" alt="" aria-hidden="true"><div><strong>${escapeHtml(player?.name || "电脑角色")}</strong><span>${escapeHtml(message || "正在思考")}</span></div><i class="thinking-dots" aria-label="思考中"><b></b><b></b><b></b></i>`;
 }
 
 export function formatLogMessage(message) {

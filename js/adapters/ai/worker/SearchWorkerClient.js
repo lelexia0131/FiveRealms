@@ -15,7 +15,7 @@ searchWorker.js。
 只 transport data-only SearchRequest/WorkerSearchOutcome。
 
 架构约束
-不得 import core/Game、application、UI/Audio；不提供同线程 search fallback。
+不得 import composition、application、UI/Audio；不提供同线程 search fallback。
 */
 
 /*

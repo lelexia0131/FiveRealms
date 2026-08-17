@@ -3,7 +3,7 @@
 构建 response family 的 data-only ChoiceRequest；不拥有响应规则、支付或 workflow。
 
 上游
-ResponseSystem legacy workflow。
+ResponseWorkflow workflow。
 
 下游
 application/ports/ChoicePort 与 peer adapters。
@@ -15,7 +15,7 @@ application/ports/ChoicePort 与 peer adapters。
 不含 Game/Player/Card 实体引用；presentation 仅允许结构化公开数据。
 
 架构约束
-不得依赖 UI/AI/Audio/Diagnostics、Game runtime、EventBus 或 Domain mutation。
+不得依赖 UI/AI/Audio/Diagnostics、Game runtime、EventDispatcher 或 Domain mutation。
 */
 
 /*
@@ -23,7 +23,7 @@ application/ports/ChoicePort 与 peer adapters。
 创建 response ChoiceRequest。
 
 调用方
-ResponseSystem.waitForDecision。
+ResponseWorkflow.waitForDecision。
 
 输入
 responseId、responderId、gameId、stateVersion、responseType、requiredCount、legalCardIds、label 与公开 context。

@@ -2,21 +2,46 @@
  * 互利的公开牌池。依赖 Deck、AI 选牌器和 UI；展示中的实体独立于抽牌、弃牌
  * 与判定区。这里负责公开选取和合法记忆，不处理其他隐藏手牌选择。
  */
-import { createId } from "../utils/helpers.js?build=20260816-legacy-recovery";
-import { createPublicCardChoiceRequest } from "../application/choice/PublicCardChoiceRequest.js?build=20260816-legacy-recovery";
-import { setPublicCardPool } from "../domain/state/transitions/MatchStateTransitions.js?build=20260816-legacy-recovery";
-import { appendCardToZone, moveCardBetweenZones, moveCardsAtomically } from "../domain/state/transitions/ZoneTransitions.js?build=20260816-legacy-recovery";
-import { bumpHandVersion } from "../domain/state/transitions/PlayerStateTransitions.js?build=20260816-legacy-recovery";
+import { createId } from "../../utils/helpers.js?build=20260817-architecture-closure-final";
+import { createPublicCardChoiceRequest } from "../choice/PublicCardChoiceRequest.js?build=20260817-architecture-closure-final";
+import { setPublicCardPool } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260817-architecture-closure-final";
+import { appendCardToZone, moveCardBetweenZones, moveCardsAtomically } from "../../domain/state/transitions/ZoneTransitions.js?build=20260817-architecture-closure-final";
+import { bumpHandVersion } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260817-architecture-closure-final";
 
-export class PublicCardPool {
-  constructor(game) { this.game = game; this.cards = []; }
+export class PublicCardPoolWorkflow {
+  /*
+  功能
+  创建并初始化 PublicCardPoolWorkflow 实例。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
+  constructor(runtime) { this.runtime = runtime; this.cards = []; }
 
   /*
   功能
   揭示指定数量的公开牌池卡并提交 publicCardPool 引用。
 
   调用方
-  cardRegistry.mutualBenefit。
+  CardEffectRuntime 的互利结算入口。
 
   输入
   count。
@@ -37,16 +62,16 @@ export class PublicCardPool {
   不执行轮选。
   */
   reveal(count) {
-    if (!this.game.isSessionValid(this.game.state.gameId) || this.game.state.isGameOver) return [];
+    if (!this.runtime.isSessionValid(this.runtime.getState().gameId) || this.runtime.getState().isGameOver) return [];
     this.cards = [];
     for (let index = 0; index < count; index += 1) {
-      const card = this.game.state.deck.drawOne(this.game.state);
+      const card = this.runtime.getState().deck.drawOne(this.runtime.getState());
       if (!card) break;
-      appendCardToZone(this.game.state, this.cards, card);
+      appendCardToZone(this.runtime.getState(), this.cards, card);
     }
-    this.game.syncDeckAliases();
-    setPublicCardPool(this.game.state, this.cards);
-    this.game.ui.showPublicPool?.(this.cards);
+    this.runtime.syncDeckAliases();
+    setPublicCardPool(this.runtime.getState(), this.cards);
+    this.runtime.ui.showPublicPool?.(this.cards);
     return this.cards;
   }
 
@@ -76,10 +101,10 @@ export class PublicCardPool {
   真人的无效选择会在有效会话内重开；AI 无效返回安全退化为当前首牌。
   */
   async draft(source) {
-    const gameId = this.game.state.gameId;
-    const living = this.game.seatOrderFrom(source, true).filter((player) => player.alive);
+    const gameId = this.runtime.getState().gameId;
+    const living = this.runtime.seatOrderFrom(source, true).filter((player) => player.alive);
     for (const player of living) {
-      if (!this.game.isSessionValid(gameId) || this.game.state.isGameOver) return false;
+      if (!this.runtime.isSessionValid(gameId) || this.runtime.getState().isGameOver) return false;
       if (!this.cards.length) break;
       if (!player.alive) continue;
       let card = null;
@@ -87,12 +112,12 @@ export class PublicCardPool {
         while (!card && this.cards.length && player.alive) {
           const offeredCards = [...this.cards];
           card = await this.#requestPublicCardChoice(player, offeredCards);
-          if (!this.game.isSessionValid(gameId) || this.game.state.isGameOver) return false;
+          if (!this.runtime.isSessionValid(gameId) || this.runtime.getState().isGameOver) return false;
           // 有效对局中的意外 null 或过期选择不能中止整张互利，重新请求当前角色选择。
           if (!card || !this.cards.includes(card)) card = null;
         }
       } else card = await this.#requestPublicCardChoice(player, this.cards);
-      if (!this.game.isSessionValid(gameId) || this.game.state.isGameOver) return false;
+      if (!this.runtime.isSessionValid(gameId) || this.runtime.getState().isGameOver) return false;
       if (!player.alive) continue;
       if (!this.cards.length) break;
       if (!this.cards.includes(card)) {
@@ -101,22 +126,22 @@ export class PublicCardPool {
       }
       if (!card) continue;
       if (!this.cards.includes(card)) continue;
-      moveCardBetweenZones(this.game.state, this.cards, player.hand, card);
-      bumpHandVersion(this.game.state, player);
-      for (const viewer of this.game.state.players) if (viewer.id !== player.id) this.game.rememberPrivateCard(viewer, player, card);
-      this.game.log(`${player.name}从互利牌池选择了「${card.name}」。`);
-      this.game.ui.render(this.game);
-      this.game.ui.showPublicPool?.(this.cards);
+      moveCardBetweenZones(this.runtime.getState(), this.cards, player.hand, card);
+      bumpHandVersion(this.runtime.getState(), player);
+      for (const viewer of this.runtime.getState().players) if (viewer.id !== player.id) this.runtime.rememberPrivateCard(viewer, player, card);
+      this.runtime.log(`${player.name}从互利牌池选择了「${card.name}」。`);
+      this.runtime.ui.render(this.runtime.renderTarget());
+      this.runtime.ui.showPublicPool?.(this.cards);
     }
-    if (!this.game.isSessionValid(gameId)) return false;
+    if (!this.runtime.isSessionValid(gameId)) return false;
     if (this.cards.length) moveCardsAtomically(
-      this.game.state,
+      this.runtime.getState(),
       this.cards,
-      this.game.state.deck.discardPile,
+      this.runtime.getState().deck.discardPile,
       [...this.cards]
     );
-    setPublicCardPool(this.game.state, []);
-    this.game.ui.hidePublicPool?.();
+    setPublicCardPool(this.runtime.getState(), []);
+    this.runtime.ui.hidePublicPool?.();
     return true;
   }
 
@@ -137,7 +162,7 @@ export class PublicCardPool {
   Game stateVersion 与公开牌池实体。
 
   写入状态
-  choiceContexts registry 仅在本方法调用期间保存 legacy bridge context。
+  choiceContexts registry 仅在本方法调用期间保存 bridge context。
 
   调用函数
   createPublicCardChoiceRequest、game.choiceCoordinator.request。
@@ -147,19 +172,19 @@ export class PublicCardPool {
   */
   async #requestPublicCardChoice(player, offeredCards) {
     const requestId = createId("public-card-choice");
-    this.game.choiceContexts?.set(requestId, { player, cards: offeredCards });
+    this.runtime.choiceContexts?.set(requestId, { player, cards: offeredCards });
     try {
-      const result = await this.game.choiceCoordinator.request(createPublicCardChoiceRequest({
+      const result = await this.runtime.choiceCoordinator.request(createPublicCardChoiceRequest({
         requestId,
         actorId: player.id,
-        gameId: this.game.state.gameId,
-        stateVersion: this.game.state.stateVersion,
+        gameId: this.runtime.getState().gameId,
+        stateVersion: this.runtime.getState().stateVersion,
         offeredCards
       }));
       if (result.status !== "selected") return null;
       return offeredCards.find((card) => card.id === result.selectedIds[0]) ?? null;
     } finally {
-      this.game.choiceContexts?.delete(requestId);
+      this.runtime.choiceContexts?.delete(requestId);
     }
   }
 
@@ -188,5 +213,5 @@ export class PublicCardPool {
   边界与不变量
   不移动实体牌到弃牌堆。
   */
-  cleanup() { this.cards = []; setPublicCardPool(this.game.state, []); }
+  cleanup() { this.cards = []; setPublicCardPool(this.runtime.getState(), []); }
 }

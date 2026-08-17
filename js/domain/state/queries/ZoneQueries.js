@@ -3,7 +3,7 @@
 提供真实牌区实体出现位置的纯只读查询，并作为 Game zone query 的 forwarding target。
 
 上游
-Game 的 legacy zone query façade 与未来 transitions 前置校验。
+match application 的 zone query boundary 与当前 transitions 前置校验。
 
 下游
 无。

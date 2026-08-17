@@ -3,7 +3,7 @@
 唯一拥有 FiveRealms 全局静态领域规则参数（含 deckComposition 与 initialRound）；不含 AI 搜索、UI 时序、调试或运行时行为。
 
 上游
-gameConfig legacy façade 与未来 domain/rules 消费者。
+Domain rules 与 Application match consumers。
 
 下游
 无。
@@ -26,9 +26,9 @@ export const RULESET_DEFINITION = Object.freeze({
   // 多人数阵营规模；与 playerCount-smallTeamSize 一致，当前只能为 3。
   largeTeamSize: 3,
   // 真人可选角色数；1～8 可运行，越大选择更充分但征召页更拥挤。
-  generalCandidateCount: 4,
+  characterCandidateCount: 4,
   // 是否允许同局重复角色；开启会削弱角色辨识度并让技能叠加更难平衡。
-  allowDuplicateGenerals: false,
+  allowDuplicateCharacters: false,
   // 三人阵营默认初始牌；二人阵营由 smallTeamBonuses.initialHandCount 覆盖。
   initialHandCount: 4,
   // 三人阵营默认每回合摸牌数；二人阵营由 smallTeamBonuses.drawCountPerTurn 覆盖。

@@ -15,7 +15,7 @@ UI adapter。
 只输出公开 ID/name/battleTeam/text/fragment；不输出隐藏牌定义或 Card entity。
 
 架构约束
-不得依赖 concrete UI/AI/Audio/Diagnostics、Game runtime、EventBus 或 Domain mutation。
+不得依赖 concrete UI/AI/Audio/Diagnostics、Game runtime、EventDispatcher 或 Domain mutation。
 */
 
 /*

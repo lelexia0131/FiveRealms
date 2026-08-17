@@ -1,22 +1,21 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { TEAM_CONFIG, PHASE_NAMES } from "../config/gameConfig.js?build=20260816-legacy-recovery";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260816-legacy-recovery";
-import { getActiveSkill } from "../generals/skillRegistry.js?build=20260816-legacy-recovery";
+import { PHASE_PRESENTATION, TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js?build=20260817-architecture-closure-final";
+import { ActionLegality } from "../application/action/ActionLegality.js?build=20260817-architecture-closure-final";
+import { canUseActiveSkill, getActiveSkill } from "../application/action/SkillRuntime.js?build=20260817-architecture-closure-final";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260816-legacy-recovery";
-import { AnimationController } from "./animationController.js?build=20260816-legacy-recovery";
-import { InteractionController } from "./InteractionController.js?build=20260816-legacy-recovery";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260816-legacy-recovery";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260816-legacy-recovery";
-import { JudgmentView } from "./JudgmentView.js?build=20260816-legacy-recovery";
-import { DistanceSystem } from "../core/DistanceSystem.js?build=20260816-legacy-recovery";
-import { createOpponentHandView } from "./handVisibility.js?build=20260816-legacy-recovery";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260816-legacy-recovery";
-import { SoundManager } from "../audio/SoundManager.js?build=20260816-legacy-recovery";
+} from "./templates.js?build=20260817-architecture-closure-final";
+import { AnimationController } from "./animationController.js?build=20260817-architecture-closure-final";
+import { InteractionController } from "./InteractionController.js?build=20260817-architecture-closure-final";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260817-architecture-closure-final";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260817-architecture-closure-final";
+import { JudgmentView } from "./JudgmentView.js?build=20260817-architecture-closure-final";
+import { createOpponentHandView } from "./handVisibility.js?build=20260817-architecture-closure-final";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260817-architecture-closure-final";
+import { SoundManager } from "../audio/SoundManager.js?build=20260817-architecture-closure-final";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
@@ -135,6 +134,31 @@ export class UIManager {
     });
   }
 
+  /*
+  功能
+  执行 bindEvents 对应的 UIManager 职责。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   bindEvents() {
     this.updateAudioButtons();
     for (const button of this.audioButtons) button.addEventListener("click", () => this.toggleAudio());
@@ -143,8 +167,8 @@ export class UIManager {
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.candidate_grid.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-general-id]");
-      if (button) { this.playSound("select"); this.callbacks.onSelectGeneral?.(button.dataset.generalId); }
+      const button = event.target.closest("[data-character-id]");
+      if (button) { this.playSound("select"); this.callbacks.onSelectCharacter?.(button.dataset.characterId); }
     });
     this.elements.human_hand.addEventListener("click", (event) => this.handleHandClick(event));
     this.elements.cpu_grid.addEventListener("wheel", (event) => {
@@ -194,6 +218,31 @@ export class UIManager {
     this.elements.game_screen.classList.add("is-hidden");
   }
 
+  /*
+  功能
+  生成或展示 showSelection 对应的 UIManager 视图。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   showSelection(candidates, battleTeam) {
     this.sound.setMusicTeam(battleTeam);
     this.cancelPendingInteractions();
@@ -203,10 +252,35 @@ export class UIManager {
     this.elements.game_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.remove("is-hidden");
     this.elements.game_over_overlay.classList.add("is-hidden");
-    this.elements.team_preview.innerHTML = `<span>你的本局阵营</span><strong class="team-${battleTeam}">${TEAM_CONFIG[battleTeam].name}</strong>`;
+    this.elements.team_preview.innerHTML = `<span>你的本局阵营</span><strong class="team-${battleTeam}">${TEAM_PRESENTATION[battleTeam].name}</strong>`;
     this.elements.candidate_grid.innerHTML = candidates.map(candidateCardTemplate).join("");
   }
 
+  /*
+  功能
+  生成或展示 showGame 对应的 UIManager 视图。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   showGame(game) {
     this.attachGame(game);
     this.resetCurrentCard();
@@ -216,7 +290,7 @@ export class UIManager {
     this.elements.game_screen.classList.remove("is-hidden");
     this.setLogCollapsed(window.innerWidth < 1280);
     this.viewportWasNarrow = window.innerWidth < 1280;
-    if (game.state.players.every((player) => player.general)) this.render(game);
+    if (game.state.players.every((player) => player.character)) this.render(game);
   }
 
   handleViewportResize() {
@@ -227,17 +301,67 @@ export class UIManager {
     this.viewportWasNarrow = isNarrow;
   }
 
-  candidateTemplate(general, index) { return candidateCardTemplate(general, index); }
+  /*
+  功能
+  判断 candidateTemplate 对应的 UIManager 条件。
 
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
+  candidateTemplate(character, index) { return candidateCardTemplate(character, index); }
+
+  /*
+  功能
+  生成或展示 render 对应的 UIManager 视图。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   render(game = this.game) {
-    if (!this.isGameAttached(game) || !game.state.players.length || !game.state.players[0].general) return false;
+    if (!this.isGameAttached(game) || !game.state.players.length || !game.state.players[0].character) return false;
     const state = game.state;
     const human = state.players[0];
     const dawnAlive = state.players.filter((player) => player.alive && player.battleTeam === "dawn").length;
     const duskAlive = state.players.filter((player) => player.alive && player.battleTeam === "dusk").length;
     const metrics = [
       ["轮次", `第 ${state.currentRound} 轮`, "round"], ["当前角色", game.currentPlayer?.name ?? "—", "active"],
-      ["阶段", PHASE_NAMES[state.phase] ?? state.phase, "phase"], ["阵营", `晨 ${dawnAlive} · 暮 ${duskAlive}`, "teams"],
+      ["阶段", PHASE_PRESENTATION[state.phase] ?? state.phase, "phase"], ["阵营", `晨 ${dawnAlive} · 暮 ${duskAlive}`, "teams"],
       ["牌堆", state.deck.cards.length, "deck"], ["弃牌", state.deck.discardPile.length, "discard"]
     ];
     this.elements.status_metrics.innerHTML = metrics.map(([label, value, key]) => `<span class="metric metric-${key}" data-pile="${key}"><small>${label}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
@@ -248,7 +372,7 @@ export class UIManager {
       isLegalTarget: Boolean(this.targetState?.legalIds.has(player.id)),
       isSelectedTarget: this.targetState?.selected?.id === player.id,
       isThinking: this.thinkingPlayerId === player.id,
-      distanceInfo: DistanceSystem.describe(game, targetSource, player),
+      distanceInfo: ActionLegality.describeDistance(game, targetSource, player),
       distanceState: this.getDistanceState(targetSource, player),
       opponentHandSlots: createOpponentHandView(human, player)
     })).join("");
@@ -257,7 +381,7 @@ export class UIManager {
       isLegalTarget: Boolean(this.targetState?.legalIds.has(human.id)),
       isSelectedTarget: this.targetState?.selected?.id === human.id,
       isThinking: this.thinkingPlayerId === human.id,
-      distanceInfo:this.targetState && targetSource.id !== human.id ? DistanceSystem.describe(game, targetSource, human) : null,
+      distanceInfo:this.targetState && targetSource.id !== human.id ? ActionLegality.describeDistance(game, targetSource, human) : null,
       distanceState:this.targetState && targetSource.id !== human.id ? this.getDistanceState(targetSource, human) : null
     });
     this.renderHand(game, human);
@@ -280,20 +404,70 @@ export class UIManager {
     return Boolean(this.targetState || this.discardState || this.responseState || this.interactionController?.pending || this.game?.interactionLocked);
   }
 
+  /*
+  功能
+  查询并返回 getDistanceState 对应的 UIManager 结果。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   getDistanceState(source, target) {
     if (!target.alive) return "已阵亡";
-    const distance = DistanceSystem.getDistance(this.game, source, target);
+    const distance = ActionLegality.getDistance(this.game, source, target);
     if (target.battleTeam === source.battleTeam) return `距离 ${distance} · 同阵营`;
     const card = this.targetState?.meta?.card;
     if (card?.definitionId === "assault") return distance <= source.attackRange ? `距离 ${distance} · 可突袭` : `距离 ${distance} · 超出攻击范围`;
     return `距离 ${distance}`;
   }
 
+  /*
+  功能
+  生成或展示 renderHand 对应的 UIManager 视图。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   renderHand(game, human) {
     const inDiscard = Boolean(this.discardState);
     const blockedByInteraction = this.isInteractionActive();
     this.elements.human_hand.innerHTML = human.hand.map((card) => {
-      const playable = RuleEngine.canPlayCard(game, human, card).ok;
+      const playable = ActionLegality.canPlayCard(game, human, card).ok;
       const selected = this.discardState?.selectedIds.has(card.id);
       const disabled = !inDiscard && (!playable || blockedByInteraction || game.actionLocked);
       return handCardTemplate(card, { selected, disabled });
@@ -302,11 +476,36 @@ export class UIManager {
     else if (!this.targetState) this.elements.hand_hint.textContent = `${human.hand.length}张 · 不可用的牌仍可聚焦查看`;
   }
 
+  /*
+  功能
+  按当前回合、交互锁和主动技能合法性刷新真人操作按钮。
+
+  调用方
+  render 在每次界面刷新时调用。
+
+  输入
+  game 为当前 MatchApplication；human 为真人 Player。
+
+  输出
+  无返回值。
+
+  读取状态
+  读取对局阶段、当前角色、结束状态、动作锁、真人存活状态与 UI 交互状态。
+
+  写入状态
+  只更新控制按钮的文字、禁用状态和显隐 class，不写游戏状态。
+
+  调用函数
+  isInteractionActive、getActiveSkill、canUseActiveSkill、skillButtonLabel、classList.toggle。
+
+  边界与不变量
+  Skill 定义保持纯数据；按钮合法性必须经 SkillRuntime 判断，不能调用定义对象上的运行时方法。
+  */
   renderControls(game, human) {
     const humanPlay = game.currentPlayer?.id === human.id && game.state.phase === "play" && human.alive && !game.state.isGameOver;
     const interaction = this.isInteractionActive();
     const skill = getActiveSkill(human);
-    const skillLegal = skill?.canUse(game, human).ok ?? false;
+    const skillLegal = skill ? canUseActiveSkill(game, human, skill).ok : false;
     this.elements.skill_button.textContent = skillButtonLabel(skill);
     this.elements.skill_button.disabled = !humanPlay || !skillLegal || interaction || game.actionLocked;
     this.elements.end_play_button.disabled = !humanPlay || interaction || game.actionLocked;
@@ -359,8 +558,33 @@ export class UIManager {
     }
   }
 
+  /*
+  功能
+  生成或展示 showSkillDetails 对应的 UIManager 视图。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   showSkillDetails(player, trigger = null) {
-    if (!player?.general) return false;
+    if (!player?.character) return false;
     this.skillDetailsTrigger = trigger;
     this.elements.skill_details_overlay.innerHTML = skillDetailsTemplate(player);
     this.elements.skill_details_overlay.classList.remove("is-hidden");
@@ -509,6 +733,31 @@ export class UIManager {
     if (handHint) this.elements.hand_hint.textContent = handHint;
   }
 
+  /*
+  功能
+  更新或清理 setThinking 对应的 UIManager 状态。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   setThinking(isThinking, playerOrName = "电脑角色", message = "正在思考") {
     const player = typeof playerOrName === "object" ? playerOrName : this.game?.state.players.find((entry) => entry.name === playerOrName);
     this.thinkingPlayerId = isThinking ? player?.id ?? null : null;
@@ -517,7 +766,7 @@ export class UIManager {
     // 思考指示已经包含完整行动和目标，避免下方 action-prompt 重复显示同一信息。
     this.elements.action_prompt.classList.toggle("is-hidden", isThinking);
     if (isThinking) this.elements.thinking_indicator.innerHTML = thinkingTemplate(player, message);
-    if (this.game?.state.players[0]?.general) this.render(this.game);
+    if (this.game?.state.players[0]?.character) this.render(this.game);
   }
 
   setCurrentCard(cardOrName, source, targetLabel = "", displayTargets = null) {
@@ -632,9 +881,34 @@ export class UIManager {
     this.elements.log_toggle_button.setAttribute("aria-label", this.logCollapsed ? "展开对局记录" : "折叠对局记录");
   }
 
+  /*
+  功能
+  生成或展示 showGameOver 对应的 UIManager 视图。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   showGameOver(winnerTeam, humanWon) {
     this.elements.game_over_title.textContent = humanWon ? "你的阵营获胜" : "你的阵营落败";
-    this.elements.game_over_copy.textContent = `${TEAM_CONFIG[winnerTeam].name}存活到了最后。${humanWon ? "这场联结与应变赢得了终局。" : "重新征召旅者，下一局仍会有全新的阵营与牌序。"}`;
+    this.elements.game_over_copy.textContent = `${TEAM_PRESENTATION[winnerTeam].name}存活到了最后。${humanWon ? "这场联结与应变赢得了终局。" : "重新征召旅者，下一局仍会有全新的阵营与牌序。"}`;
     this.elements.game_over_overlay.classList.remove("is-hidden");
   }
 

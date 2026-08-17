@@ -15,16 +15,16 @@ adapters/ai/AiChoiceAdapter 的纯决策结果。
 不新增 response context；label/actor 只用于既有提示。
 
 架构约束
-不得依赖 concrete UI/AI、Game runtime、DOM 或 EventBus。
+不得依赖 concrete UI/AI、Game runtime、DOM 或 EventDispatcher。
 */
-import { createChoiceResult } from "../ports/ChoicePort.js?build=20260816-legacy-recovery";
+import { createChoiceResult } from "../ports/ChoicePort.js?build=20260817-architecture-closure-final";
 
 /*
 功能
 创建带 Application Response timing 的 AI ChoicePort decorator。
 
 调用方
-core/GameChoiceRouter composition boundary。
+composition choice boundary。
 
 输入
 inner AI decision port 与 presentation/delay/session 能力。
@@ -42,7 +42,7 @@ inner AI decision port 与 presentation/delay/session 能力。
 createChoiceResult。
 
 边界与不变量
-只有 kind=response 装饰 timing；publicCard 直通；delay 顺序与旧 ResponseSystem 完全一致。
+只有 kind=response 装饰 timing；publicCard 直通；delay 顺序保持既定响应展示语义。
 */
 export function createAiResponseTimingDecorator(innerPort, {
   getPlayer,

@@ -29,8 +29,8 @@ const STATE_AI_PATTERN = /^js\/ai\/state\//i;
 const VALUE_AI_PATTERN = /^js\/ai\/value\//i;
 const POLICY_AI_PATTERN = /^js\/ai\/policy\//i;
 const DOMAIN_AI_PATTERN = /^js\/ai\/domain\//i;
-const FUTURE_DOMAIN_PATTERN = /^js\/domain\//i;
-const FUTURE_APPLICATION_PATTERN = /^js\/application\//i;
+const DOMAIN_LAYER_PATTERN = /^js\/domain\//i;
+const APPLICATION_LAYER_PATTERN = /^js\/application\//i;
 const APPLICATION_PORTS_PATTERN = /^js\/application\/ports\//i;
 const APPLICATION_CHOICE_PATTERN = /^js\/application\/choice\//i;
 const APPLICATION_RESPONSE_PATTERN = /^js\/application\/response\//i;
@@ -42,13 +42,12 @@ const APPLICATION_ACTION_PATTERN = /^js\/application\/action\//i;
 const APPLICATION_TRIGGER_PATTERN = /^js\/application\/trigger\//i;
 const APPLICATION_MESSAGING_PATTERN = /^js\/application\/messaging\//i;
 const DOMAIN_EVENTS_PATTERN = /^js\/domain\/events\//i;
-const LEGACY_WORKFLOW_FACADE_PATTERN = /^js\/core\/(?:DyingSystem|JudgmentSystem|HpLossSystem)\.js$/i;
 const FUTURE_ADAPTERS_PATTERN = /^js\/adapters\//i;
 const DOMAIN_TRANSITIONS_PATTERN = /^js\/domain\/state\/transitions\//i;
 const DOMAIN_RULES_PATTERN = /^js\/domain\/rules\//i;
 const LEGACY_UTILS_PATTERN = /^js\/utils(?:\/|$)/i;
 const FORBIDDEN_ROOT_BUCKET_PATTERN = /^js\/(?:common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
-const FUTURE_LAYER_BUCKET_PATTERN = /^js\/(?:domain|application|adapters)\/(?:.*\/)?(?:utils|common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
+const LAYER_BUCKET_PATTERN = /^js\/(?:domain|application|adapters)\/(?:.*\/)?(?:utils|common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
 const TRANSITION_VALUE_PATTERN = /^js\/ai\/search\/TransitionValue\.js$/i;
 const SEARCH_PLANNER_PATTERN = /^js\/ai\/search\/Planner\.js$/i;
 const SEARCH_PRIOR_PATTERN = /^js\/ai\/search\/SearchPrior\.js$/i;
@@ -88,6 +87,31 @@ const REMOVED_COMPATIBILITY_NAMES = Object.freeze([
   "AiResponsePolicy",
   "AiValueSimulationQuery",
 ]);
+const REMOVED_LEGACY_FILES = Object.freeze([
+  "js/core/Game.js",
+  "js/core/RuleEngine.js",
+  "js/core/ResponseSystem.js",
+  "js/core/DyingSystem.js",
+  "js/core/HpLossSystem.js",
+  "js/core/JudgmentSystem.js",
+  "js/core/TeamRuleService.js",
+  "js/core/DistanceSystem.js",
+  "js/core/EventBus.js",
+  "js/core/CardSelectionSystem.js",
+  "js/core/GameChoiceRouter.js",
+  "js/core/GameLogger.js",
+  "js/core/GeneralSelection.js",
+  "js/core/TeamManager.js",
+  "js/core/Player.js",
+  "js/core/Deck.js",
+  "js/core/PublicCardPool.js",
+  "js/cards/cardRegistry.js",
+  "js/generals/skillRegistry.js",
+  "js/config/gameConfig.js",
+  "js/config/cardConfig.js",
+  "js/config/generalConfig.js"
+]);
+const REMOVED_LEGACY_SYMBOL_PATTERN = /\b(?:RuleEngine|ResponseSystem|DyingSystem|HpLossSystem|JudgmentSystem|TeamRuleService|DistanceSystem|EventBus|CardSelectionSystem|GameChoiceRouter|GameLogger|GeneralSelection|TeamManager|cardRegistry|skillRegistry|gameConfig|cardConfig|generalConfig)\b/i;
 
 /*
 功能
@@ -178,6 +202,35 @@ Set.has。
 */
 function accidentalRootArtifacts(files) {
   return files.filter((file) => ACCIDENTAL_ROOT_ARTIFACTS.has(file));
+}
+
+/*
+功能
+返回被最终架构明确删除但重新出现在磁盘上的生产路径。
+
+调用方
+main。
+
+输入
+无。
+
+输出
+仓库相对路径数组。
+
+读取状态
+REMOVED_LEGACY_FILES 与工作区文件树。
+
+写入状态
+无。
+
+调用函数
+fs.existsSync。
+
+边界与不变量
+只检查明确删除清单，不推断未知文件是否为遗留组件。
+*/
+function removedLegacyArtifacts() {
+  return REMOVED_LEGACY_FILES.filter((file) => fs.existsSync(path.join(ROOT, file)));
 }
 
 /*
@@ -879,6 +932,7 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
       missing: [message]
     });
   };
+
   const pushPatternError = (match, message) => {
     if (!match) return;
     errors.push({
@@ -889,7 +943,30 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     });
   };
 
-  if (FUTURE_DOMAIN_PATTERN.test(file)) {
+  pushImportError(
+    importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/(?:Game|RuleEngine|ResponseSystem|DyingSystem|HpLossSystem|JudgmentSystem|TeamRuleService|DistanceSystem|EventBus|CardSelectionSystem|GameChoiceRouter|GameLogger|GeneralSelection|TeamManager|Player|Deck|PublicCardPool)\.js|cards\/cardRegistry\.js|generals\/skillRegistry\.js|config\/(?:gameConfig|cardConfig|generalConfig)\.js)[^"']*(?:\?[^"']*)?["']/i),
+    "架构约束：生产代码禁止 import 已删除的 façade、shell 或混合 config 路径"
+  );
+  pushPatternError(
+    source.match(REMOVED_LEGACY_SYMBOL_PATTERN),
+    "架构约束：生产源码与维护注释禁止把已删除 legacy symbol 写成当前架构事实"
+  );
+  pushPatternError(
+    maskedSource.match(/\bgeneral(?:Id|Selected|Selection|Config)?\b/i),
+    "架构约束：内部领域术语统一为 character，禁止 general/character 双 schema"
+  );
+  pushPatternError(
+    maskedSource.match(/\bclass\s+Game\b|\bexport\s*\{[^}]*\bGame\b[^}]*\}/),
+    "架构约束：禁止重新引入 Game class 或 Game shell export"
+  );
+  if (/^js\/composition\//i.test(file)) {
+    pushPatternError(
+      maskedSource.match(/\b(?:definitionId|skillId)\s*===|switch\s*\(\s*(?:card|skill)(?:\.|\))/),
+      "架构约束：composition 只负责实例化、wiring、lifecycle 与 public boundary assembly，不得拥有业务分支"
+    );
+  }
+
+  if (DOMAIN_LAYER_PATTERN.test(file)) {
     pushImportError(
       importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:\/application\/|\/adapters\/|\/ui\/|\/audio\/|\/ai\/|\/core\/Game\.js|UIManager\.js|SoundManager\.js)[^"']*(?:\?[^"']*)?["']/i),
       "架构约束：domain 禁止依赖 application/adapters/ui/audio/ai/Game/UIManager/SoundManager"
@@ -904,7 +981,7 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     );
   }
 
-  if (FUTURE_APPLICATION_PATTERN.test(file)) {
+  if (APPLICATION_LAYER_PATTERN.test(file)) {
     pushImportError(
       importSource.match(/(?:from\s*|import\s*\()\s*["'][^"']*(?:\/adapters\/|\/ui\/|\/audio\/|\/ai\/|UIManager\.js|SoundManager\.js|AiController\.js|AIController\.js)[^"']*(?:\?[^"']*)?["']/i),
       "架构约束：application 禁止 concrete UI/Audio/AI adapter import，外部能力必须走 Port"
@@ -946,14 +1023,6 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     pushPatternError(
       maskedSource.match(/\bEventBus\b|\beventBus\b|\bdocument\b|\bwindow\b|\b[Ss]earchState\b|\bVisibleState\b|\bBeliefState\b/),
       `架构约束：application/${layerName} 禁止 Game 回指、EventBus、DOM 与 AI SearchState`
-    );
-  }
-
-  if (LEGACY_WORKFLOW_FACADE_PATTERN.test(file)) {
-    const facadeName = file.split("/").pop().replace(/\.js$/i, "");
-    pushPatternError(
-      maskedSource.match(/\b(?:queue\.push\(\s*\{\s*target|setHp\(|setAlive\(|clearStatuses\(|changeHp\(|isDying\()|\basync\s+(?:enter|resolve|kill|lose|judgeDefense|judgeDelayedStatus|resolveSeal|resolveLightning)\s*\(/),
-      `架构约束：${facadeName} legacy façade 不得继续包含 workflow body；请转发 Application workflow`
     );
   }
 
@@ -1001,13 +1070,6 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     );
   }
 
-  if (/^js\/core\/EventBus\.js$/i.test(file)) {
-    pushPatternError(
-      source.match(/listeners\s*=\s*new Map|this\.depth\s*=|maxDepth\s*=|this\.generation\s*=/),
-      "架构约束：core/EventBus 必须是 thin façade，不得重新拥有 listener registry"
-    );
-  }
-
   if (/^js\/application\/action\/ActionWorkflow\.js$/i.test(file)) {
     pushPatternError(
       source.match(/\b(?:transfer|leverage|scout|plunder|destroy|mutualBenefit)\b/),
@@ -1016,13 +1078,6 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
     pushPatternError(
       maskedSource.match(/state:\s*actionRuntime|resolutionOwners:\s*actionRuntime\.resolutionOwners/),
       "架构约束：ActionWorkflow 禁止暴露 mutable internal runtime state"
-    );
-  }
-
-  if (/^js\/core\/Game\.js$/i.test(file)) {
-    pushPatternError(
-      maskedSource.match(/\bconsecutiveTurnFailures\b|setMatchPhase\(\s*this\.state|const\s+preparedTransfer\s*=|const\s+energyCost\s*=\s*getActiveSkillCost|const\s+dawnAlive\s*=|this\.state\.players\s*=\s*teams\.map/),
-      "架构约束：Game workflow regression guard — Match/Turn/Action/Combat implementation 不得重新长回 core/Game.js"
     );
   }
 
@@ -1123,7 +1178,7 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
 
   if (
     (!LEGACY_UTILS_PATTERN.test(file) && FORBIDDEN_ROOT_BUCKET_PATTERN.test(file))
-    || FUTURE_LAYER_BUCKET_PATTERN.test(file)
+    || LAYER_BUCKET_PATTERN.test(file)
   ) {
     pushPatternError(
       maskedSource.match(/./s),
@@ -1947,7 +2002,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (validDomainTargetErrors.length) {
-    throw new Error(`valid future domain fixture failed: ${JSON.stringify(validDomainTargetErrors)}`);
+    throw new Error(`valid final domain fixture failed: ${JSON.stringify(validDomainTargetErrors)}`);
   }
   const domainApplicationImportErrors = inspectSource(
     "js/domain/rules/BadApplicationDomain.js",
@@ -1955,7 +2010,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!domainApplicationImportErrors.some((error) => error.missing.some((item) => item.includes("domain 禁止依赖")))) {
-    throw new Error("future domain fixture did not detect application import");
+    throw new Error("final domain fixture did not detect application import");
   }
   const domainUiImportErrors = inspectSource(
     "js/domain/rules/BadUiDomain.js",
@@ -1963,7 +2018,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!domainUiImportErrors.some((error) => error.missing.some((item) => item.includes("domain 禁止依赖")))) {
-    throw new Error("future domain fixture did not detect legacy UI import");
+    throw new Error("final domain fixture did not detect removed UI import");
   }
   const domainGameBackreferenceErrors = inspectSource(
     "js/domain/rules/BadGameDomain.js",
@@ -1971,7 +2026,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!domainGameBackreferenceErrors.some((error) => error.missing.some((item) => item.includes("Game 实例回指")))) {
-    throw new Error("future domain fixture did not detect Game instance backreference");
+    throw new Error("final domain fixture did not detect Game instance backreference");
   }
   const domainDualSchemaErrors = inspectSource(
     "js/domain/rules/BadDualSchemaDomain.js",
@@ -1979,7 +2034,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!domainDualSchemaErrors.some((error) => error.missing.some((item) => item.includes("statuses 双 schema")))) {
-    throw new Error("future domain fixture did not detect dual-schema statuses branch");
+    throw new Error("final domain fixture did not detect dual-schema statuses branch");
   }
   const domainRuntimeImportErrors = inspectSource(
     "js/domain/rules/BadRuntimeDomain.js",
@@ -1987,7 +2042,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!domainRuntimeImportErrors.some((error) => error.missing.some((item) => item.includes("domain/rules 禁止依赖")))) {
-    throw new Error("future domain/rules fixture did not detect core runtime import");
+    throw new Error("final domain/rules fixture did not detect core runtime import");
   }
   const domainTransitionsImportErrors = inspectSource(
     "js/domain/rules/BadTransitionDomain.js",
@@ -1995,7 +2050,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!domainTransitionsImportErrors.some((error) => error.missing.some((item) => item.includes("domain/rules 禁止依赖")))) {
-    throw new Error("future domain/rules fixture did not detect transition import");
+    throw new Error("final domain/rules fixture did not detect transition import");
   }
   const domainAwaitErrors = inspectSource(
     "js/domain/rules/BadAwaitDomain.js",
@@ -2003,7 +2058,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!domainAwaitErrors.some((error) => error.missing.some((item) => item.includes("禁止 await")))) {
-    throw new Error("future domain/rules fixture did not detect await");
+    throw new Error("final domain/rules fixture did not detect await");
   }
   const domainRandomErrors = inspectSource(
     "js/domain/rules/BadRandomDomain.js",
@@ -2011,7 +2066,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!domainRandomErrors.some((error) => error.missing.some((item) => item.includes("禁止随机采样")))) {
-    throw new Error("future domain/rules fixture did not detect random sampling");
+    throw new Error("final domain/rules fixture did not detect random sampling");
   }
   const domainMetadataErrors = inspectSource(
     "js/domain/rules/BadMetadataDomain.js",
@@ -2019,7 +2074,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!domainMetadataErrors.some((error) => error.missing.some((item) => item.includes("metadata 泄漏")))) {
-    throw new Error("future domain/rules fixture did not detect AI metadata leakage");
+    throw new Error("final domain/rules fixture did not detect AI metadata leakage");
   }
 
   const validApplicationTargetErrors = inspectSource(
@@ -2028,7 +2083,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (validApplicationTargetErrors.length) {
-    throw new Error(`valid future application fixture failed: ${JSON.stringify(validApplicationTargetErrors)}`);
+    throw new Error(`valid final application fixture failed: ${JSON.stringify(validApplicationTargetErrors)}`);
   }
   const applicationConcreteUiErrors = inspectSource(
     "js/application/action/BadUiApplication.js",
@@ -2036,7 +2091,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!applicationConcreteUiErrors.some((error) => error.missing.some((item) => item.includes("concrete UI/Audio/AI")))) {
-    throw new Error("future application fixture did not detect concrete UI import");
+    throw new Error("final application fixture did not detect concrete UI import");
   }
   const applicationConcreteAiErrors = inspectSource(
     "js/application/action/BadAiApplication.js",
@@ -2044,7 +2099,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!applicationConcreteAiErrors.some((error) => error.missing.some((item) => item.includes("concrete UI/Audio/AI")))) {
-    throw new Error("future application fixture did not detect concrete AI import");
+    throw new Error("final application fixture did not detect concrete AI import");
   }
 
   const validChoiceTargetErrors = inspectSource(
@@ -2193,21 +2248,45 @@ function identity(value) { return value; }`;
     throw new Error("ActionWorkflow fixture did not detect mutable runtime exposure");
   }
 
-  const validSlimGameErrors = inspectSource(
-    "js/core/Game.js",
-    `${moduleHeader}\nexport class Game { runGameLoop() { return this.turnWorkflow.runGameLoop(); } }`,
+  const removedPathImportErrors = inspectSource(
+    "js/ui/BadRemovedImport.js",
+    `${moduleHeader}\nimport { Game } from "../core/Game.js";\n${pass}`,
     null,
   );
-  if (validSlimGameErrors.length) {
-    throw new Error(`valid slim Game fixture failed: ${JSON.stringify(validSlimGameErrors)}`);
+  if (!removedPathImportErrors.some((error) => error.missing.some((item) => item.includes("已删除")))) {
+    throw new Error("final architecture guard did not reject removed path import");
   }
-  const badSlimGameErrors = inspectSource(
-    "js/core/Game.js",
-    `${moduleHeader}\nexport class Game { async runGameLoop() { let consecutiveTurnFailures = 0; } }`,
+  const removedSymbolCommentErrors = inspectSource(
+    "js/application/action/BadRemovedSymbolComment.js",
+    `${moduleHeader}\n/* 调用方：cardRegistry。 */\n${pass}`,
     null,
   );
-  if (!badSlimGameErrors.some((error) => error.missing.some((item) => item.includes("Game workflow regression guard")))) {
-    throw new Error("Game regression fixture did not detect workflow body growth");
+  if (!removedSymbolCommentErrors.some((error) => error.missing.some((item) => item.includes("legacy symbol")))) {
+    throw new Error("final architecture guard did not reject removed symbol in source comments");
+  }
+  const gameShellErrors = inspectSource(
+    "js/composition/BadGameShell.js",
+    `${moduleHeader}\nexport class Game { }\n${pass}`,
+    null,
+  );
+  if (!gameShellErrors.some((error) => error.missing.some((item) => item.includes("Game shell")))) {
+    throw new Error("final architecture guard did not reject Game class");
+  }
+  const generalSchemaErrors = inspectSource(
+    "js/domain/state/model/BadCharacterState.js",
+    `${moduleHeader}\n${pass.replace("return value;", "const generalId = value; return generalId;")}`,
+    null,
+  );
+  if (!generalSchemaErrors.some((error) => error.missing.some((item) => item.includes("双 schema")))) {
+    throw new Error("final architecture guard did not reject general schema");
+  }
+  const compositionBusinessErrors = inspectSource(
+    "js/composition/BadComposition.js",
+    `${moduleHeader}\n${pass.replace("return value;", "if (card.definitionId === \"assault\") return value;")}`,
+    null,
+  );
+  if (!compositionBusinessErrors.some((error) => error.missing.some((item) => item.includes("composition 只负责")))) {
+    throw new Error("final architecture guard did not reject composition business branch");
   }
 
   const validJudgmentTargetErrors = inspectSource(
@@ -2234,24 +2313,6 @@ function identity(value) { return value; }`;
   if (!judgmentAiMemoryErrors.some((error) => error.missing.some((item) => item.includes("statistics/aiMemory")))) {
     throw new Error("application/judgment fixture did not detect direct aiMemory write");
   }
-  const validDyingFacadeErrors = inspectSource(
-    "js/core/DyingSystem.js",
-    `${moduleHeader}\nexport class DyingSystem { constructor(game) { this.game = game; this.workflow = game.combatWorkflow; } enter(...args) { return this.workflow.enter(...args); } }`,
-    null,
-  );
-  if (validDyingFacadeErrors.length) {
-    throw new Error(`valid dying facade fixture failed: ${JSON.stringify(validDyingFacadeErrors)}`);
-  }
-  const badDyingFacadeErrors = inspectSource(
-    "js/core/DyingSystem.js",
-    `${moduleHeader}\nexport class DyingSystem { async resolve(target) { setHp(null, target, 0); } }`,
-    null,
-  );
-  if (!badDyingFacadeErrors.some((error) => error.missing.some((item) => item.includes("legacy façade")))) {
-    throw new Error("dying facade fixture did not detect workflow body growth");
-  }
-
-
   const validPortsTargetErrors = inspectSource(
     "js/application/ports/GoodPort.js",
     `${moduleHeader}\nimport { createChoiceResult } from "./ChoicePort.js";\n${pass}`,
@@ -2291,7 +2352,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (validAdapterTargetErrors.length) {
-    throw new Error(`valid future adapter fixture failed: ${JSON.stringify(validAdapterTargetErrors)}`);
+    throw new Error(`valid final adapter fixture failed: ${JSON.stringify(validAdapterTargetErrors)}`);
   }
   const adapterCrossCouplingErrors = inspectSource(
     "js/adapters/ui/BadCrossAdapter.js",
@@ -2299,7 +2360,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!adapterCrossCouplingErrors.some((error) => error.missing.some((item) => item.includes("跨 concrete adapter")))) {
-    throw new Error("future adapter fixture did not detect cross-adapter concrete coupling");
+    throw new Error("final adapter fixture did not detect cross-adapter concrete coupling");
   }
 
   const validTransitionTargetErrors = inspectSource(
@@ -2308,7 +2369,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (validTransitionTargetErrors.length) {
-    throw new Error(`valid future transition fixture failed: ${JSON.stringify(validTransitionTargetErrors)}`);
+    throw new Error(`valid final transition fixture failed: ${JSON.stringify(validTransitionTargetErrors)}`);
   }
   const transitionRegistryImportErrors = inspectSource(
     "js/domain/state/transitions/BadTransition.js",
@@ -2316,7 +2377,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!transitionRegistryImportErrors.some((error) => error.missing.some((item) => item.includes("transitions 禁止依赖")))) {
-    throw new Error("future transition fixture did not detect cardRegistry import");
+    throw new Error("final transition fixture did not detect removed cardRegistry import");
   }
   const transitionSpecificRuleErrors = inspectSource(
     "js/domain/state/transitions/BadSpecificTransition.js",
@@ -2324,7 +2385,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!transitionSpecificRuleErrors.some((error) => error.missing.some((item) => item.includes("cardId/skillId-specific")))) {
-    throw new Error("future transition fixture did not detect cardId-specific rule branch");
+    throw new Error("final transition fixture did not detect cardId-specific rule branch");
   }
 
   const garbageRootErrors = inspectSource(
@@ -2333,7 +2394,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!garbageRootErrors.some((error) => error.missing.some((item) => item.includes("兜底目录")))) {
-    throw new Error("garbage-bucket fixture did not detect future root bucket directory");
+    throw new Error("garbage-bucket fixture did not detect forbidden root bucket directory");
   }
   const garbageLayerErrors = inspectSource(
     "js/domain/shared/GodBucket.js",
@@ -2341,7 +2402,7 @@ function identity(value) { return value; }`;
     null,
   );
   if (!garbageLayerErrors.some((error) => error.missing.some((item) => item.includes("兜底目录")))) {
-    throw new Error("garbage-bucket fixture did not detect future layer bucket directory");
+    throw new Error("garbage-bucket fixture did not detect forbidden layer bucket directory");
   }
 
   const validStateVersionTransitionErrors = inspectSource(
@@ -2637,7 +2698,7 @@ function identity(value) { return value; }`;
     throw new Error("Worker guard did not reject Math.random");
   }
 
-  process.stdout.write("code-quality self-test passed: headers, modules, JSDoc rejection, comment masking, layered purity, future domain/application/choice/ports/response/combat/judgment/match/turn/action/trigger/messaging/events/slim-game/facade/adapter/transition/rules-purity/garbage/dual-schema/stateVersion-write/fake-root-state/core-mutation-state guards, Simulation/Search boundaries, legacy RuleEngine/DistanceSystem guard, static Definition/Rule fact guards, TransferExecutionPolicyAdapter guard, simulation mirror guards, accidental root artifact guard, AI raw-Game/Application/Transition/Worker guards, GameChoiceRouter service-locator guard, Dedicated Worker boundary/random guards, compatibility removal, and root layout\n");
+  process.stdout.write("code-quality self-test passed: headers/modules, final layer direction, removed-path imports, Game-shell removal, character schema, composition purity, transitions/rules ownership, AI boundaries, Worker safety, duplicate-authority guards, compatibility removal, and root layout\n");
 }
 
 /*
@@ -2677,6 +2738,15 @@ function main() {
   }
   if (args.includes("--self-test")) {
     runSelfTest();
+    return;
+  }
+  const removedArtifacts = removedLegacyArtifacts();
+  if (removedArtifacts.length) {
+    for (const artifact of removedArtifacts) {
+      process.stderr.write(`${artifact}:1 <architecture> missing: 架构约束：最终架构已删除路径不得重新出现\n`);
+    }
+    process.stderr.write(`code-quality failed: ${removedArtifacts.length} removed architecture artifact(s) returned\n`);
+    process.exitCode = 1;
     return;
   }
   const rootArtifacts = accidentalRootArtifacts(

@@ -13,12 +13,12 @@ import {
 } from "../evaluators/scenarioDsl.mjs";
 
 const BASE = [
-  { id: "a", team: "dawn", general: "spirit-medic" },
-  { id: "b", team: "dusk", general: "blade-walker" },
-  { id: "c", team: "dusk", general: "fate-gambler" },
-  { id: "d", team: "dawn", general: "fate-gambler" },
-  { id: "e", team: "dusk", general: "ember-magus" },
-  { id: "f", team: "dawn", general: "resonance-tuner" }
+  { id: "a", team: "dawn", character: "spirit-medic" },
+  { id: "b", team: "dusk", character: "blade-walker" },
+  { id: "c", team: "dusk", character: "fate-gambler" },
+  { id: "d", team: "dawn", character: "fate-gambler" },
+  { id: "e", team: "dusk", character: "ember-magus" },
+  { id: "f", team: "dawn", character: "resonance-tuner" }
 ];
 
 /** 6 人局：a(0) b(1) c(2) d(3) e(4) f(5)，邻座即攻击范围 1 的合法目标。 */
@@ -395,14 +395,14 @@ registerScenario({
   setup: () => {
     const players = [
       {
-        id: "a", team: "dawn", general: "spirit-medic", hp: 4, energy: 2, hand: [],
+        id: "a", team: "dawn", character: "spirit-medic", hp: 4, energy: 2, hand: [],
         turnFlags: { rejuvenationTriggerCount: 2 }, aiMemory: { knownCardsByPlayer: {} }, seatIndex: 0
       },
-      { id: "x", team: "dawn", general: "fate-gambler", hp: 2, energy: 1, hand: [], seatIndex: 1 },
-      { id: "p", team: "dusk", general: "blade-walker", hp: 4, energy: 2, hand: [makeCard("assault")], seatIndex: 2 },
-      { id: "m", team: "dawn", general: "oath-warden", hp: 4, energy: 1, hand: [], seatIndex: 3 },
-      { id: "q", team: "dusk", general: "ember-magus", hp: 4, energy: 0, hand: [], seatIndex: 4 },
-      { id: "y", team: "dawn", general: "resonance-tuner", hp: 2, energy: 1, hand: [], seatIndex: 5 }
+      { id: "x", team: "dawn", character: "fate-gambler", hp: 2, energy: 1, hand: [], seatIndex: 1 },
+      { id: "p", team: "dusk", character: "blade-walker", hp: 4, energy: 2, hand: [makeCard("assault")], seatIndex: 2 },
+      { id: "m", team: "dawn", character: "oath-warden", hp: 4, energy: 1, hand: [], seatIndex: 3 },
+      { id: "q", team: "dusk", character: "ember-magus", hp: 4, energy: 0, hand: [], seatIndex: 4 },
+      { id: "y", team: "dawn", character: "resonance-tuner", hp: 2, energy: 1, hand: [], seatIndex: 5 }
     ];
     players[0].aiMemory.knownCardsByPlayer.p = [{ id: "known-p-assault", definitionId: "assault" }];
     return { players, options: { actorId: "a", seed: 62010 } };
@@ -429,14 +429,14 @@ registerScenario({
   setup: () => ({
     players: [
       {
-        id: "a", team: "dawn", general: "spirit-medic", hp: 2, energy: 2, hand: [],
+        id: "a", team: "dawn", character: "spirit-medic", hp: 2, energy: 2, hand: [],
         turnFlags: { rejuvenationTriggerCount: 0 }, aiMemory: { knownCardsByPlayer: {} }, seatIndex: 0
       },
-      { id: "b", team: "dawn", general: "oath-warden", hp: 4, energy: 1, hand: [], seatIndex: 1 },
-      { id: "c", team: "dusk", general: "blade-walker", hp: 4, energy: 1, hand: [], seatIndex: 2 },
-      { id: "d", team: "dawn", general: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 3 },
-      { id: "e", team: "dusk", general: "ember-magus", hp: 4, energy: 1, hand: [], seatIndex: 4 },
-      { id: "f", team: "dawn", general: "resonance-tuner", hp: 4, energy: 1, hand: [], seatIndex: 5 }
+      { id: "b", team: "dawn", character: "oath-warden", hp: 4, energy: 1, hand: [], seatIndex: 1 },
+      { id: "c", team: "dusk", character: "blade-walker", hp: 4, energy: 1, hand: [], seatIndex: 2 },
+      { id: "d", team: "dawn", character: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 3 },
+      { id: "e", team: "dusk", character: "ember-magus", hp: 4, energy: 1, hand: [], seatIndex: 4 },
+      { id: "f", team: "dawn", character: "resonance-tuner", hp: 4, energy: 1, hand: [], seatIndex: 5 }
     ],
     options: { actorId: "a", seed: 62011 }
   }),
@@ -459,15 +459,15 @@ registerScenario({
   setup: () => ({
     players: [
       {
-        id: "a", team: "dawn", general: "spirit-medic", hp: 4, energy: 2,
+        id: "a", team: "dawn", character: "spirit-medic", hp: 4, energy: 2,
         hand: [makeCard("assault")], turnFlags: { rejuvenationTriggerCount: 0 },
         aiMemory: { knownCardsByPlayer: {} }, seatIndex: 0
       },
-      { id: "b", team: "dusk", general: "oath-warden", hp: 1, energy: 1, hand: [], seatIndex: 1 },
-      { id: "c", team: "dusk", general: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 2 },
-      { id: "d", team: "dawn", general: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 3 },
-      { id: "e", team: "dusk", general: "ember-magus", hp: 4, energy: 1, hand: [], seatIndex: 4 },
-      { id: "f", team: "dawn", general: "resonance-tuner", hp: 4, energy: 1, hand: [], seatIndex: 5 }
+      { id: "b", team: "dusk", character: "oath-warden", hp: 1, energy: 1, hand: [], seatIndex: 1 },
+      { id: "c", team: "dusk", character: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 2 },
+      { id: "d", team: "dawn", character: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 3 },
+      { id: "e", team: "dusk", character: "ember-magus", hp: 4, energy: 1, hand: [], seatIndex: 4 },
+      { id: "f", team: "dawn", character: "resonance-tuner", hp: 4, energy: 1, hand: [], seatIndex: 5 }
     ],
     options: { actorId: "a", seed: 62012 }
   }),
@@ -490,15 +490,15 @@ registerScenario({
   setup: () => ({
     players: [
       {
-        id: "a", team: "dawn", general: "spirit-medic", hp: 4, energy: 2,
+        id: "a", team: "dawn", character: "spirit-medic", hp: 4, energy: 2,
         hand: [makeCard("block")], turnFlags: { rejuvenationTriggerCount: 0 },
         aiMemory: { knownCardsByPlayer: {} }, seatIndex: 0
       },
-      { id: "b", team: "dawn", general: "oath-warden", hp: 4, energy: 1, hand: [], seatIndex: 1 },
-      { id: "c", team: "dusk", general: "blade-walker", hp: 4, energy: 1, hand: [], seatIndex: 2 },
-      { id: "d", team: "dawn", general: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 3 },
-      { id: "e", team: "dusk", general: "ember-magus", hp: 4, energy: 1, hand: [], seatIndex: 4 },
-      { id: "f", team: "dawn", general: "resonance-tuner", hp: 4, energy: 1, hand: [], seatIndex: 5 }
+      { id: "b", team: "dawn", character: "oath-warden", hp: 4, energy: 1, hand: [], seatIndex: 1 },
+      { id: "c", team: "dusk", character: "blade-walker", hp: 4, energy: 1, hand: [], seatIndex: 2 },
+      { id: "d", team: "dawn", character: "fate-gambler", hp: 4, energy: 1, hand: [], seatIndex: 3 },
+      { id: "e", team: "dusk", character: "ember-magus", hp: 4, energy: 1, hand: [], seatIndex: 4 },
+      { id: "f", team: "dawn", character: "resonance-tuner", hp: 4, energy: 1, hand: [], seatIndex: 5 }
     ],
     options: { actorId: "a", seed: 62013 }
   }),

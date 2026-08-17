@@ -3,7 +3,7 @@
 唯一拥有响应资格、格挡需求、反制资格与响应座次顺序的纯规则语义；不拥有 async window、UI、payment 或 nested chain workflow。
 
 上游
-ResponseSystem 与 tests。
+ResponseWorkflow 与 tests。
 
 下游
 无。
@@ -17,14 +17,14 @@ ResponseSystem 与 tests。
 架构约束
 不得依赖 application/adapters/AI/UI/Game runtime；不得 await、emit、随机。
 */
-import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260816-legacy-recovery";
+import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260817-architecture-closure-final";
 
 /*
 功能
 决定一次可格挡攻击需要几张格挡。
 
 调用方
-ResponseSystem.askForBlock。
+ResponseWorkflow.askForBlock。
 
 输入
 source equipmentDefinitionId 与 damage facts。
@@ -53,7 +53,7 @@ export function getRequiredBlockCount(sourceEquipmentDefinitionId, isAssaultDama
 决定一次伤害是否属于突袭/震荡格挡加重语义。
 
 调用方
-ResponseSystem.askForBlock 与 tests。
+ResponseWorkflow.askForBlock 与 tests。
 
 输入
 card 与 damageType。
@@ -82,7 +82,7 @@ export function isAssaultDamage(card, damageType) {
 决定是否进入格挡请求窗口。
 
 调用方
-ResponseSystem.askForBlock 与 tests。
+ResponseWorkflow.askForBlock 与 tests。
 
 输入
 canBlock 与 amount。
@@ -111,7 +111,7 @@ export function isBlockResponseAvailable(canBlock, amount) {
 返回响应类型对应的卡牌定义 ID。
 
 调用方
-ResponseSystem.requestCardResponse 与 tests。
+ResponseWorkflow.requestCardResponse 与 tests。
 
 输入
 响应类型。
@@ -142,7 +142,7 @@ export function getResponseCardDefinitionId(type) {
 决定已选择响应牌数量是否满足要求。
 
 调用方
-ResponseSystem.requestCardResponse 与 tests。
+ResponseWorkflow.requestCardResponse 与 tests。
 
 输入
 availableCount 与 requiredCount。
@@ -171,7 +171,7 @@ export function hasSufficientResponseCards(availableCount, requiredCount) {
 决定响应者是否具备基本响应资格。
 
 调用方
-ResponseSystem.requestCardResponse 与 tests。
+ResponseWorkflow.requestCardResponse 与 tests。
 
 输入
 responder。
@@ -200,7 +200,7 @@ export function isResponderEligible(responder) {
 决定延迟状态反制的响应顺序：状态持有者最先，其余按座次顺时针。
 
 调用方
-ResponseSystem.askForStatusCounter 与 tests。
+ResponseWorkflow.askForStatusCounter 与 tests。
 
 输入
 players 投影与 holder id。
@@ -234,7 +234,7 @@ export function getStatusCounterResponderOrder(players, holderId) {
 判断战术牌是否可被反制。
 
 调用方
-ResponseSystem.askForCounter。
+ResponseWorkflow.askForCounter。
 
 输入
 card category 与 counterable。
@@ -302,7 +302,7 @@ export function getDyingRescueResponderOrder(players, targetId) {
 判断濒死救援者资格。
 
 调用方
-ResponseSystem.requestDyingRescue。
+ResponseWorkflow.requestDyingRescue。
 
 输入
 rescuer/target alive、hp 与阵营。
@@ -331,7 +331,7 @@ export function isDyingRescueEligible(rescuer, target) {
 决定普通反制响应者顺序。
 
 调用方
-ResponseSystem 与 tests。
+ResponseWorkflow 与 tests。
 
 输入
 players 投影与 sourceId。

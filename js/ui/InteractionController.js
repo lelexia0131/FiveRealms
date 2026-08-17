@@ -2,11 +2,12 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260816-legacy-recovery";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260816-legacy-recovery";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260816-legacy-recovery";
-import { RuleEngine } from "../core/RuleEngine.js?build=20260816-legacy-recovery";
-import { CARD_DEFINITIONS } from "../config/cardConfig.js?build=20260816-legacy-recovery";
+import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260817-architecture-closure-final";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260817-architecture-closure-final";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260817-architecture-closure-final";
+import { ActionLegality } from "../application/action/ActionLegality.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js?build=20260817-architecture-closure-final";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 
@@ -33,26 +34,51 @@ export class InteractionController {
     });
   }
 
+  /*
+  功能
+  完成 requestCardFlow 对应的 InteractionController 交互选择。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   async requestCardFlow(game, actor, card, initialTargets) {
     const gameId = game.state.gameId;
     if (!game.isSessionValid(gameId)) return null;
     if (card.definitionId === "leverage") {
       // 项目当前每人只有一个公开装备槽，故装备阶段可按规则自动选中唯一真实实例。
-      const firstTargets = RuleEngine.getLeverageFirstTargets(game, actor);
+      const firstTargets = ActionLegality.getLeverageFirstTargets(game, actor);
       const firstTarget = await this.ui.requestTarget(firstTargets, "选择一名有装备且有可选第二目标的其他角色", {
         source:actor, card, confirmSelection:true, stepTitle:"借势 · 第一目标"
       });
       if (!game.isSessionValid(gameId) || !firstTarget) return null;
       const equipment = firstTarget.equipment;
-      if (!equipment?.id || !RuleEngine.getLeverageFirstTargets(game, actor).includes(firstTarget)) return null;
+      if (!equipment?.id || !ActionLegality.getLeverageFirstTargets(game, actor).includes(firstTarget)) return null;
 
-      const secondTargets = RuleEngine.getAssaultTargetCandidates(game, firstTarget);
+      const secondTargets = ActionLegality.getAssaultTargetCandidates(game, firstTarget);
       const secondTarget = await this.ui.requestTarget(secondTargets, "选择其攻击范围内的一名其他角色", {
         source:firstTarget, card:CARD_DEFINITIONS.assault, confirmSelection:true, stepTitle:"借势 · 第二目标"
       });
       if (!game.isSessionValid(gameId) || !secondTarget) return null;
       if (firstTarget.equipment !== equipment || equipment.id == null
-        || !RuleEngine.getAssaultTargetCandidates(game, firstTarget).includes(secondTarget)) return null;
+        || !ActionLegality.getAssaultTargetCandidates(game, firstTarget).includes(secondTarget)) return null;
 
       const confirmed = await this.requestConfirmation(
         "借势 · 确认",
@@ -66,11 +92,11 @@ export class InteractionController {
       };
     }
     if (card.definitionId === "transfer") {
-      const sources = RuleEngine.getTransferSources(game, actor, card).filter((from) => RuleEngine.getTransferReceivers(game, actor, from, card).length);
+      const sources = ActionLegality.getTransferSources(game, actor, card).filter((from) => ActionLegality.getTransferReceivers(game, actor, from, card).length);
       const source = await this.ui.requestTarget(sources, "转移：选择距离1内的牌来源", { source:actor, card });
       if (!game.isSessionValid(gameId)) return null;
       if (!source) return null;
-      const receivers = RuleEngine.getTransferReceivers(game, actor, source, card);
+      const receivers = ActionLegality.getTransferReceivers(game, actor, source, card);
       const receiver = await this.ui.requestTarget(receivers, "转移：选择距离1内的接收者", { source:actor, card });
       if (!game.isSessionValid(gameId)) return null;
       if (!receiver) return null;
@@ -86,7 +112,7 @@ export class InteractionController {
     if (card.definitionId === "scout") {
       const target = initialTargets[0];
       if (!target) return null;
-      const hidden = game.cardSelectionSystem.createHiddenSelection(target);
+      const hidden = game.hiddenCardSelection.createHiddenSelection(target);
       const count = Math.min(2, target.hand.length);
       const slots = createHiddenSelectionView(actor, target, hidden);
       const tokens = await this.requestHiddenCards(hidden, count, `${card.name}：选择至多2张隐藏手牌`, { exact:false, slots });
@@ -96,15 +122,40 @@ export class InteractionController {
     return {};
   }
 
+  /*
+  功能
+  完成 requestZoneCard 对应的 InteractionController 交互选择。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   async requestZoneCard(game, actor, owner, prompt, excludedCardIds = null) {
     const gameId = game.state.gameId;
     if (!game.isSessionValid(gameId)) return null;
     const eligibleHand = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)) ?? [];
     if (!eligibleHand.length && !owner?.equipment) return null;
-    const hidden = game.cardSelectionSystem.createHiddenSelection(owner, eligibleHand);
+    const hidden = game.hiddenCardSelection.createHiddenSelection(owner, eligibleHand);
     const slots = createHiddenSelectionView(actor, owner, hidden);
     if (owner.equipment) {
-      const { name, categoryName, description, art, icon, accent, frameStyle, flavorText } = owner.equipment;
+      const { name, categoryName, description, art, icon, accent, frameStyle, flavorText } = presentCard(owner.equipment);
       slots.push({ token:EQUIPMENT_OPTION_TOKEN, known:true, zone:"equipment", name, categoryName, description, art, icon, accent, frameStyle, flavorText });
     }
     const selected = await this.requestHiddenCards(hidden, 1, prompt, { exact:true, slots, totalCount:slots.length });
@@ -115,12 +166,37 @@ export class InteractionController {
   }
 
   /** 转移专用：只呈现隐藏手牌槽位，不把公开装备加入候选。 */
+  /*
+  功能
+  完成 requestHandCard 对应的 InteractionController 交互选择。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   async requestHandCard(game, actor, owner, prompt, excludedCardIds = null) {
     const gameId = game.state.gameId;
     if (!game.isSessionValid(gameId)) return null;
     const eligibleHand = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)) ?? [];
     if (!eligibleHand.length) return null;
-    const hidden = game.cardSelectionSystem.createHiddenSelection(owner, eligibleHand);
+    const hidden = game.hiddenCardSelection.createHiddenSelection(owner, eligibleHand);
     const slots = createHiddenSelectionView(actor, owner, hidden);
     const selected = await this.requestHiddenCards(hidden, 1, prompt, { exact:true, slots, totalCount:slots.length });
     if (!game.isSessionValid(gameId)) return null;
@@ -169,13 +245,38 @@ export class InteractionController {
     this.settle(this.pending.type === "confirm" ? true : [...this.pending.selected]);
   }
   cancel() { if (this.pending) this.settle(null); }
+  /*
+  功能
+  更新或清理 settle 对应的 InteractionController 状态。
+
+  调用方
+  本模块内部流程及显式公开边界。
+
+  输入
+  函数签名声明的参数。
+
+  输出
+  函数实现声明的返回值。
+
+  读取状态
+  仅函数体显式读取的参数、模块或实例状态。
+
+  写入状态
+  仅执行函数体显式声明的写入；查询路径不写状态。
+
+  调用函数
+  仅调用函数体中显式列出的依赖。
+
+  边界与不变量
+  遵守模块头定义的 ownership、状态与信息边界。
+  */
   settle(value) {
     const current = this.pending;
     if (!current) return;
     this.pending = null;
     this.ui.elements.response_panel.classList.add("is-hidden");
     this.ui.elements.response_panel.innerHTML = "";
-    if (value === null && current.selection?.selectionId) this.ui.game?.cardSelectionSystem.clearSelection(current.selection.selectionId);
+    if (value === null && current.selection?.selectionId) this.ui.game?.hiddenCardSelection.clearSelection(current.selection.selectionId);
     current.resolve(value);
     if (this.ui.game) this.ui.render(this.ui.game);
   }

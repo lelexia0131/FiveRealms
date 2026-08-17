@@ -3,31 +3,31 @@
 唯一拥有 Application Dying Workflow：reentrant queue、entry phase restoration、救援轮转、rescue response boundary、死亡 commit/cleanup、击杀奖励与死亡耦合状态清理。
 
 上游
-core/DyingSystem legacy façade 与 Game.damage/HpLossSystem。
+Application CombatWorkflow 与 composition damage command。
 
 下游
 Domain CombatRules/ResponseRules/StatusRules/transitions、Application Response rescue window、Application Combat heal、PresentationPort 与注入的 card-zone/match continuation collaborators。
 
 状态边界
-active queue 与 dyingContext 是 Application workflow state；Domain commit 只经 transitions；game.state.dyingContext 仅单向 legacy projection。
+active queue 与 dyingContext 是 Application workflow state；Domain commit 只经 transitions；game.state.dyingContext 仅单向 projection。
 
 信息边界
 不读取 concrete UI/AI/DOM；rescue order 从 Domain 规则取得。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime 或 concrete adapters。
 */
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260816-legacy-recovery";
-import { isDying, isKillRewardEligible } from "../../domain/rules/combat/CombatRules.js?build=20260816-legacy-recovery";
-import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260816-legacy-recovery";
-import { isHuntMarkSourceExpired } from "../../domain/rules/status/StatusRules.js?build=20260816-legacy-recovery";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260816-legacy-recovery";
-import { setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260816-legacy-recovery";
-import { setAlive } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260816-legacy-recovery";
-import { setHp } from "../../domain/state/transitions/ResourceTransitions.js?build=20260816-legacy-recovery";
-import { setKillRewardGranted, setMomentum, setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260816-legacy-recovery";
-import { clearStatuses, removeStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260816-legacy-recovery";
-import { discardEquipment } from "../../domain/state/transitions/ZoneTransitions.js?build=20260816-legacy-recovery";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
+import { isDying, isKillRewardEligible } from "../../domain/rules/combat/CombatRules.js?build=20260817-architecture-closure-final";
+import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260817-architecture-closure-final";
+import { isHuntMarkSourceExpired } from "../../domain/rules/status/StatusRules.js?build=20260817-architecture-closure-final";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260817-architecture-closure-final";
+import { setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260817-architecture-closure-final";
+import { setAlive } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260817-architecture-closure-final";
+import { setHp } from "../../domain/state/transitions/ResourceTransitions.js?build=20260817-architecture-closure-final";
+import { setKillRewardGranted, setMomentum, setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
+import { clearStatuses, removeStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260817-architecture-closure-final";
+import { discardEquipment } from "../../domain/state/transitions/ZoneTransitions.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = [
   "getState",
@@ -50,7 +50,7 @@ const REQUIRED_DEPENDENCIES = [
 创建 Application Dying Workflow。
 
 调用方
-core/DyingSystem legacy façade composition。
+composition root。
 
 输入
 显式注入的 state/session/event/response/heal/card-movement/match-continuation/presentation/projection collaborators。
@@ -62,7 +62,7 @@ core/DyingSystem legacy façade composition。
 无。
 
 写入状态
-内部 active/queue/currentDyingContext；Domain 写入经 transitions；legacy projection 经注入 setter。
+内部 active/queue/currentDyingContext；Domain 写入经 transitions；projection 经注入 setter。
 
 调用函数
 createRuleStateView、getDyingRescueResponderOrder、setMatchPhase、setHp、setAlive、clearStatuses、discardEquipment、setKillRewardGranted、setMomentum、setSkipActionPhase、removeStatus。
@@ -81,10 +81,10 @@ export function createDyingWorkflow(dependencies) {
 
   /*
   功能
-  提交当前濒死上下文并同步 legacy game.state.dyingContext projection。
+  提交当前濒死上下文并同步 game.state.dyingContext projection。
 
   调用方
-  resolve 与 legacy observers。
+  resolve 与 observers。
 
   输入
   dying context 或 null。
@@ -96,7 +96,7 @@ export function createDyingWorkflow(dependencies) {
   无。
 
   写入状态
-  currentDyingContext 与 legacy projection。
+  currentDyingContext 与 projection。
 
   调用函数
   runtime.setDyingContextProjection。
@@ -114,7 +114,7 @@ export function createDyingWorkflow(dependencies) {
   计算濒死救援响应者顺序。
 
   调用方
-  resolve 与 legacy façade。
+  resolve 与 boundary。
 
   输入
   target。
@@ -146,7 +146,7 @@ export function createDyingWorkflow(dependencies) {
   将一名生命不大于 0 的角色送入既有濒死队列并进入救援 workflow。
 
   调用方
-  Application Combat damage/loseHp 与 legacy killPlayer。
+  Application Combat damage/loseHp 与 killPlayer。
 
   输入
   target、可选 source 与 context。
@@ -367,7 +367,7 @@ export function createDyingWorkflow(dependencies) {
   清理死亡来源留下的全部猎印状态。
 
   调用方
-  legacy playerDead trigger bridge 与 tests。
+  playerDead trigger bridge 与 tests。
 
   输入
   dead source id。
@@ -433,7 +433,7 @@ export function createDyingWorkflow(dependencies) {
     返回当前濒死 workflow 是否正在排空队列。
 
     调用方
-    legacy observers。
+    observers。
 
     输入
     无。
@@ -459,7 +459,7 @@ export function createDyingWorkflow(dependencies) {
     返回当前濒死队列的只读冻结快照。
 
     调用方
-    legacy observers。
+    observers。
 
     输入
     无。
@@ -485,7 +485,7 @@ export function createDyingWorkflow(dependencies) {
     返回当前濒死上下文。
 
     调用方
-    legacy observers。
+    observers。
 
     输入
     无。
@@ -512,6 +512,5 @@ export function createDyingWorkflow(dependencies) {
     kill,
     cleanup,
     cleanupHuntMarksForSource,
-    setDyingContextProjection
   });
 }

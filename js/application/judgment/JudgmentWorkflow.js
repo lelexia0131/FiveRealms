@@ -1,9 +1,9 @@
 /*
 模块职责
-唯一拥有 Application Judgment Workflow：防御判定与延迟状态判定的 draw/show/reveal/destination/phase-restore sequencing；currentJudgment 是 Application state 的单向 legacy projection。
+唯一拥有 Application Judgment Workflow：防御判定与延迟状态判定的 draw/show/reveal/destination/phase-restore sequencing；currentJudgment 是 Application state 的单向 projection。
 
 上游
-core/JudgmentSystem legacy façade 与 application/judgment status-resolution workflow。
+Application status-resolution workflow 与 composition judgment command。
 
 下游
 Domain JudgmentRules、Domain transitions、PresentationPort 与注入的 AI knowledge collaborator。
@@ -15,11 +15,11 @@ Domain JudgmentRules、Domain transitions、PresentationPort 与注入的 AI kno
 不读取 concrete UI/AI/DOM；AI knowledge 更新只经窄 collaborator。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventBus runtime、config/cardConfig 或 concrete adapters。
+不得依赖 MatchApplication、UIManager、AiController、SoundManager、EventDispatcher runtime、混合配置模块或 concrete adapters。
 */
-import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome } from "../../domain/rules/judgment/JudgmentRules.js?build=20260816-legacy-recovery";
-import { setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260816-legacy-recovery";
-import { bumpHandVersion } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260816-legacy-recovery";
+import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome } from "../../domain/rules/judgment/JudgmentRules.js?build=20260817-architecture-closure-final";
+import { setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260817-architecture-closure-final";
+import { bumpHandVersion } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = [
   "getState",
@@ -39,7 +39,7 @@ const REQUIRED_DEPENDENCIES = [
 创建 Application Judgment Workflow。
 
 调用方
-core/JudgmentSystem legacy façade composition。
+composition root。
 
 输入
 显式注入的 state/session/event/deck-movement/AI-knowledge/presentation/projection collaborators。
@@ -68,7 +68,7 @@ export function createJudgmentWorkflow(dependencies) {
 
   /*
   功能
-  设置当前判定 projection 并同步 legacy game.state.currentJudgment。
+  设置当前判定 projection 并同步 game.state.currentJudgment。
 
   调用方
   judgeDefense 与 judgeDelayedStatus。
@@ -83,7 +83,7 @@ export function createJudgmentWorkflow(dependencies) {
   无。
 
   写入状态
-  currentJudgment 与 legacy projection。
+  currentJudgment 与 projection。
 
   调用函数
   runtime.setCurrentJudgmentProjection。
@@ -256,7 +256,7 @@ export function createJudgmentWorkflow(dependencies) {
   执行闪电延迟判定。
 
   调用方
-  status-resolution workflow 与 legacy façade。
+  status-resolution workflow 与 boundary。
 
   输入
   holder 与 context。
@@ -292,7 +292,7 @@ export function createJudgmentWorkflow(dependencies) {
   执行封印延迟判定。
 
   调用方
-  status-resolution workflow 与 legacy façade。
+  status-resolution workflow 与 boundary。
 
   输入
   holder 与 context。
@@ -329,7 +329,7 @@ export function createJudgmentWorkflow(dependencies) {
     返回当前判定上下文。
 
     调用方
-    legacy observers。
+    observers。
 
     输入
     无。
