@@ -71,9 +71,6 @@ export class ActionLegality {
       handCount: includeHand
         ? (Array.isArray(player.hand) ? player.hand.length : Math.max(0, Number(player.handCount) || 0))
         : 0,
-      handCardIds: includeHand && Array.isArray(player.hand)
-        ? Object.freeze(player.hand.map((card) => card?.id).filter(Boolean))
-        : null,
       equipmentDefinitionId: player.equipment?.definitionId ?? player.equipmentDefinitionId ?? null,
       huntMarkSourceId: !Array.isArray(player.statuses) && player.statuses?.huntMark?.sourceId
         ? player.statuses.huntMark.sourceId
@@ -562,14 +559,21 @@ export class ActionLegality {
   getCardRulePlayers、getTransferSourceIds。
 
   边界与不变量
-  excluded transfer card 不计入来源手牌。
+  当前转移牌在真实执行边界排除后，只把可转移手牌数量（transferableHandCount）派生给 Domain CardRules。
   */
   static getTransferSources(game, source, card, excludedCardIds = null) {
     const original = game.state?.players ?? game.players ?? [];
     const exclusions = excludedCardIds ?? (card?.definitionId === "transfer" && card?.id ? new Set([card.id]) : null);
     const players = this.getCardRulePlayers(game);
-    const sourceFact = findPlayerFact(players, source?.id);
-    const ids = getTransferSourceIds(players, sourceFact, card, exclusions);
+    const transferPlayers = players.map((fact) => {
+      const real = original.find((entry) => entry.id === fact.id);
+      const transferable = Array.isArray(real?.hand)
+        ? real.hand.filter((held) => !exclusions?.has(held.id)).length
+        : fact.handCount;
+      return Object.freeze({ ...fact, transferableHandCount: transferable });
+    });
+    const sourceFact = findPlayerFact(transferPlayers, source?.id);
+    const ids = getTransferSourceIds(transferPlayers, sourceFact, card);
     return original.filter((player) => ids.includes(player.id));
   }
 

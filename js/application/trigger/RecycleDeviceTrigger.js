@@ -18,6 +18,7 @@ usage 经 RuleUsageTransition；不写其它 Domain state。
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime 或 concrete adapters。
 */
 import { canTriggerRecycleDevice } from "../../domain/rules/card/RecycleDeviceRules.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
 import { setRecycleDeviceUses } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
 
 const REQUIRED_DEPENDENCIES = ["onEvent", "getState", "isSessionValid", "presentation", "drawCards"];
@@ -95,9 +96,9 @@ export function createRecycleDeviceTrigger(dependencies) {
       };
       if (!canTriggerRecycleDevice(facts)) return;
       setRecycleDeviceUses(state, owner, facts.useCount + 1);
-      const drawn = await runtime.drawCards(owner, 1, "回收站", { silent: true });
+      const drawn = await runtime.drawCards(owner, CARD_DEFINITIONS.recycleDevice.triggerDrawCount, "回收站", { silent: true });
       if (!runtime.isSessionValid(gameId)) return;
-      runtime.presentation.log(`${owner.name}的「回收站」触发（${owner.turnFlags.recycleDeviceUses}/2），${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
+      runtime.presentation.log(`${owner.name}的「回收站」触发（${owner.turnFlags.recycleDeviceUses}/${CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn}），${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
     });
   }
 

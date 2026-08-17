@@ -110,6 +110,8 @@ export const PASSIVE_SKILL_DEFINITIONS = Object.freeze({
     id: "momentum",
     name: "连势",
     description: "每回合首次使用一种新的卡牌类别时获得1层「连势」，最多2层；下一次「突袭」实际造成伤害时增加等同层数的伤害并消耗，回合结束后清空「连势」。",
+    stacksGain: 1,
+    maxStacks: 2,
     triggerText: "使用本回合尚未记录的卡牌类别时",
     limitText: "每回合按不同卡牌类别分别触发"
   }),
@@ -160,6 +162,8 @@ export const PASSIVE_SKILL_DEFINITIONS = Object.freeze({
     id: "gamble",
     name: "冒险",
     description: "每回合首次使用战术牌后，有60%概率摸1张牌。",
+    drawChance: 0.6,
+    drawCount: 1,
     triggerText: "使用战术牌后",
     limitText: "每回合限触发1次"
   }),

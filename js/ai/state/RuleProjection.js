@@ -122,9 +122,6 @@ export function projectRulePlayer(player, _options = {}) {
     maxEnergy: Number(player?.maxEnergy) || 0,
     attackRange: Number(player?.attackRange ?? 1) || 1,
     handCount: getProjectedHandCount(player),
-    handCardIds: Array.isArray(player?.hand)
-      ? Object.freeze(player.hand.map((card) => card?.id).filter(Boolean))
-      : null,
     equipmentDefinitionId: player?.equipment?.definitionId ?? player?.equipmentDefinitionId ?? null,
     huntMarkSourceId: player?.statuses?.huntMark?.sourceId
       ?? player?.huntMarkSourceId
@@ -135,16 +132,16 @@ export function projectRulePlayer(player, _options = {}) {
 
 /*
 功能
-把玩家数组投影为携带 opaque 手牌 ID 的转移 Domain Rule fact 数组。
+把玩家数组投影为携带可转移手牌数量 primitive 的转移 Domain Rule fact 数组。
 
 调用方
 ActionGenerator transfer legality 与执行边界。
 
 输入
-玩家数组与兼容保留的排除 ID 参数。
+玩家数组与要排除的卡牌 ID 集合。
 
 输出
-冻结的 Domain Rule player fact 数组。
+冻结的 Domain Rule player fact 数组，已有实体手牌的玩家带 transferableHandCount。
 
 读取状态
 players 顺序与可转移手牌身份。
@@ -156,10 +153,18 @@ players 顺序与可转移手牌身份。
 projectRulePlayer。
 
 边界与不变量
-不解释排除规则；Domain CardRules 根据 handCardIds 与排除集合计算。
+不解释排除规则；排除集合只在边界派生 transferableHandCount，Domain CardRules 只消费数量 primitive。
 */
-export function projectTransferRulePlayers(players, _excludedCardIds = null) {
-  return Object.freeze((players ?? []).map((player) => projectRulePlayer(player)));
+export function projectTransferRulePlayers(players, excludedCardIds = null) {
+  const excluded = excludedCardIds ?? new Set();
+  return Object.freeze((players ?? []).map((player) => {
+    const fact = projectRulePlayer(player);
+    if (!Array.isArray(player?.hand)) return fact;
+    return Object.freeze({
+      ...fact,
+      transferableHandCount: player.hand.filter((card) => Boolean(card?.id) && !excluded.has(card.id)).length
+    });
+  }));
 }
 
 /*

@@ -16,8 +16,10 @@ Application ResponseWorkflow、DyingWorkflow 与 tests。
 
 架构约束
 不得依赖 application/adapters/AI/UI/Game runtime；不得 await、emit、随机。
+军火库的 assaultRequiredBlockCount 固定值由 CardDefinitions 唯一拥有。
 */
 import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -30,10 +32,10 @@ ResponseWorkflow.askForBlock。
 source equipmentDefinitionId 与 damage facts。
 
 输出
-1 或 2。
+格挡数量（默认 1）。
 
 读取状态
-无。
+CARD_DEFINITIONS[sourceEquipmentDefinitionId].assaultRequiredBlockCount。
 
 写入状态
 无。
@@ -42,10 +44,11 @@ source equipmentDefinitionId 与 damage facts。
 无。
 
 边界与不变量
-军火库对突袭/震荡为 2。
+battleDevice 的 assaultRequiredBlockCount 固定值由 CardDefinitions 唯一拥有；非 assault 伤害恒为 1。
 */
 export function getRequiredBlockCount(sourceEquipmentDefinitionId, isAssaultDamage = false) {
-  return isAssaultDamage && sourceEquipmentDefinitionId === "battleDevice" ? 2 : 1;
+  if (!isAssaultDamage) return 1;
+  return CARD_DEFINITIONS[sourceEquipmentDefinitionId]?.assaultRequiredBlockCount ?? 1;
 }
 
 /*

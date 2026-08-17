@@ -402,6 +402,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "self",
     subtypes: Object.freeze(["equipment", "attack"]),
     description: "你的「突袭」与「震荡」需要目标一次使用2张「格挡」才能防御；数量不足时不会消耗已有「格挡」。",
+    assaultRequiredBlockCount: 2,
   }),
 
   telescope: Object.freeze({
@@ -417,6 +418,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "self",
     subtypes: Object.freeze(["equipment", "distance", "attack"]),
     description: "你计算与其他角色的距离时-1。",
+    outgoingDistanceModifier: -1,
   }),
 
   barrierDevice: Object.freeze({
@@ -432,6 +434,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     targetType: "self",
     subtypes: Object.freeze(["equipment", "distance", "defense"]),
     description: "其他角色计算与你的距离时+1。",
+    incomingDistanceModifier: 1,
   }),
 
 });

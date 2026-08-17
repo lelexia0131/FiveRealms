@@ -39,10 +39,6 @@ export const RULESET_DEFINITION = Object.freeze({
   defaultAttackRange: 1,
   // 一局游戏进入 Match State 时的初始轮数；会进入 roundStart/roundEnd 与回合推进。
   initialRound: 1,
-  // 赌命者被动成功率；0～1，增大会直接增强该角色并影响阵营胜率。
-  gamblerDrawChance: 0.6,
-  // 刃行者连势上限；推荐 1～3，增大会显著提高连续出牌爆发。
-  momentumMaxStacks: 2,
   // 合法击杀敌方角色后的额外摸牌数；真实死亡结算与 AI 模拟统一读取。
   killRewardDrawCount: 1,
 

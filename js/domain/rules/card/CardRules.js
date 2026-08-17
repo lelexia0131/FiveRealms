@@ -12,7 +12,7 @@ Domain DistanceRules、TurnRules、StatusRules 与 definitions。
 只读 canonical player/card facts；不写状态。
 
 信息边界
-不读取 controllerType、aiMemory、UI、AI 或 hidden hand 内容。
+不读取 controllerType、aiMemory、UI、AI 或 hidden hand 内容；不接收手牌实体身份，只接收可转移手牌数量等 primitive facts。
 
 架构约束
 不得依赖 Game/ActionLegality/application/adapters/EventDispatcher；不得 await、emit、随机、mutation。
@@ -226,34 +226,38 @@ export function getLeverageFirstTargetIds(players, source, isRangeLegal = null) 
 
 /*
 功能
-计算排除显式卡牌实体后的可转移手牌数量。
+计算可转移手牌数量。
 
 调用方
 hasHandOrEquipmentFacts、getTransferSourceIds 与 adapters/tests。
 
 输入
-canonical player fact 与 excludedCardIds。
+canonical player fact。
 
 输出
 非负整数。
 
 读取状态
-handCount/handCardIds。
+transferableHandCount/handCount。
 
 写入状态
 无。
 
 调用函数
-Array.filter。
+无。
 
 边界与不变量
-只按 card id 排除；缺少 handCardIds 时保守使用公开 handCount，不把 player id 当 card id。
+优先使用 Application/AI 派生并排除当前转移牌后的 transferableHandCount；缺失时保守回退公开 handCount。
 */
-export function getTransferableHandCount(player, excludedCardIds = null) {
-  if (Array.isArray(player?.handCardIds)) {
-    return player.handCardIds.filter((cardId) => !excludedCardIds?.has(cardId)).length;
-  }
-  return Math.max(0, Number(player?.handCount ?? 0) || 0);
+export function getTransferableHandCount(player) {
+  return Math.max(
+    0,
+    Number(
+      player?.transferableHandCount
+      ?? player?.handCount
+      ?? 0
+    ) || 0
+  );
 }
 
 /*
@@ -264,28 +268,25 @@ export function getTransferableHandCount(player, excludedCardIds = null) {
 CardRules 与 ActionLegality adapter。
 
 输入
-player fact 与 excludedCardIds。
+player fact。
 
 输出
 布尔值。
 
 读取状态
-handCount/equipmentDefinitionId。
+transferableHandCount/handCount/equipmentDefinitionId。
 
 写入状态
 无。
 
 调用函数
-无。
+getTransferableHandCount。
 
 边界与不变量
-excludedCardIds 只扣除显式 card id。
+可转移数量经 boundary 派生；装备存在即满足。
 */
-export function hasHandOrEquipmentFacts(player, excludedCardIds = null) {
-  return Boolean(
-    getTransferableHandCount(player, excludedCardIds) > 0
-    || player.equipmentDefinitionId
-  );
+export function hasHandOrEquipmentFacts(player) {
+  return Boolean(getTransferableHandCount(player) > 0 || player.equipmentDefinitionId);
 }
 
 /*
@@ -296,27 +297,26 @@ export function hasHandOrEquipmentFacts(player, excludedCardIds = null) {
 CardRules 与 ActionLegality adapter。
 
 输入
-players、source、card facts 与 excludedCardIds。
+players、source 与 card facts。
 
 输出
 来源 ID 数组。
 
 读取状态
-alive/handCount/equipment/range facts。
+alive/transferableHandCount/handCount/equipment/range facts。
 
 写入状态
 无。
 
 调用函数
-hasHandOrEquipmentFacts、isWithinEffectRange。
+getTransferableHandCount、isWithinEffectRange。
 
 边界与不变量
-excluded card 不参与 handCount。
+当前转移牌排除由 Application/AI boundary 预先派生为 transferableHandCount，Domain 不再接收卡牌身份。
 */
-export function getTransferSourceIds(players, source, card, excludedCardIds = null, isRangeLegal = null) {
-  const excluded = excludedCardIds ?? new Set([card?.id].filter(Boolean));
+export function getTransferSourceIds(players, source, card, isRangeLegal = null) {
   return players.filter((player) => player.alive
-    && getTransferableHandCount(player, excluded) > 0
+    && getTransferableHandCount(player) > 0
     && isWithinEffectRange(players, source, player, card, isRangeLegal)).map((player) => player.id);
 }
 

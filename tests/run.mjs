@@ -17938,7 +17938,7 @@ test("AI·刃行者：模拟按不同类别积累连势且命中的突袭消耗�
   assert.deepEqual(charged.players[0].categoriesUsed, ["basic"]);
   assert.equal(charged.players[0].momentum, 1);
   assert.deepEqual(harvested.players[0].categoriesUsed, ["basic", "tactic"]);
-  assert.equal(harvested.players[0].momentum, RULESET_DEFINITION.momentumMaxStacks);
+  assert.equal(harvested.players[0].momentum, PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks);
   assert.equal(attacked.players[1].hp, enemy.maxHp - 3);
   assert.equal(attacked.players[0].momentum, 0);
 });
@@ -39141,7 +39141,7 @@ async function frArchRulesetAuthority() {
   for (const field of [
     "playerCount", "smallTeamSize", "largeTeamSize", "characterCandidateCount",
     "allowDuplicateCharacters", "initialHandCount", "defaultDrawCount", "defaultMaxEnergy",
-    "defaultAttackRange", "initialRound", "gamblerDrawChance", "momentumMaxStacks",
+    "defaultAttackRange", "initialRound",
     "killRewardDrawCount", "smallTeamBonuses", "largeTeamRules"
   ]) {
     assert.equal(Object.hasOwn(RULESET_DEFINITION, field), true, field);
@@ -42441,15 +42441,14 @@ function frArch10DomainCardRules() {
   assert.deepEqual(getCardTargetIds(players, source, { targetType:"singleEnemyInRange", effectRange:null }), ["b"]);
   assert.deepEqual(getAssaultTargetIds(players, players[1]), ["a", "c"]);
   assert.deepEqual(getLeverageFirstTargetIds(players, source), ["b"]);
-  assert.deepEqual(getTransferSourceIds(players, source, { effectRange:null, ignoresDistance:true, id:"x" }, new Set(["x"])), ["a", "b", "c"]);
-  const transferOnly = { ...players[0], handCount:1, handCardIds:["transfer-card"] };
-  assert.equal(getTransferableHandCount(transferOnly, new Set(["transfer-card"])), 0);
-  assert.equal(hasHandOrEquipmentFacts(transferOnly, new Set(["transfer-card"])), false);
+  assert.deepEqual(getTransferSourceIds(players, source, { effectRange:null, ignoresDistance:true, id:"x" }), ["a", "b", "c"]);
+  const transferOnly = { ...players[0], handCount:1, transferableHandCount:0 };
+  assert.equal(getTransferableHandCount(transferOnly), 0);
+  assert.equal(hasHandOrEquipmentFacts(transferOnly), false);
   assert.deepEqual(
     getTransferSourceIds(
       [transferOnly, players[1], players[2]], transferOnly,
-      { effectRange:null, ignoresDistance:true, id:"transfer-card" },
-      new Set(["transfer-card"])
+      { effectRange:null, ignoresDistance:true, id:"transfer-card" }
     ),
     ["b", "c"]
   );
@@ -42918,6 +42917,82 @@ async function frArch12CardFixedFactOwnership() {
 }
 
 test("FR-ARCH-12·card fixed facts：Definition-owned 且 Rule 不复制 literal", frArch12CardFixedFactOwnership);
+
+/*
+功能
+验证本阶段 Domain closure：装备/技能固定事实单一 Definition authority，Rules 层不再复制 literal，transfer 隐藏手牌边界只消费 primitive。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Domain definitions/rules 源码与导出、RULESET_DEFINITION。
+
+写入状态
+无。
+
+调用函数
+getRequiredBlockCount、canTriggerRecycleDevice、getTransferableHandCount、getTransferSourceIds、hasHandOrEquipmentFacts、readFile。
+
+边界与不变量
+只验证 ownership 与信息边界，不改变规则行为。
+*/
+async function frArch15DomainClosureFinal() {
+  assert.equal(CARD_DEFINITIONS.telescope.outgoingDistanceModifier, -1);
+  assert.equal(CARD_DEFINITIONS.barrierDevice.incomingDistanceModifier, 1);
+  assert.equal(CARD_DEFINITIONS.battleDevice.assaultRequiredBlockCount, 2);
+  assert.equal(CARD_DEFINITIONS.recycleDevice.triggerDrawCount, 1);
+  assert.equal(CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn, 2);
+
+  const distanceSource = await readFile(projectFile("js/domain/rules/distance/DistanceRules.js"), "utf8");
+  assert.doesNotMatch(distanceSource, /sourceEquipmentDefinitionId === "telescope"/);
+  assert.doesNotMatch(distanceSource, /targetEquipmentDefinitionId === "barrierDevice"/);
+  assert.match(distanceSource, /outgoingDistanceModifier|incomingDistanceModifier/);
+
+  const responseSource = await readFile(projectFile("js/domain/rules/response/ResponseRules.js"), "utf8");
+  assert.doesNotMatch(responseSource, /sourceEquipmentDefinitionId === "battleDevice" \? 2 : 1/);
+  assert.equal(
+    getRequiredBlockCount("battleDevice", true),
+    CARD_DEFINITIONS.battleDevice.assaultRequiredBlockCount
+  );
+
+  const recycleSource = await readFile(projectFile("js/domain/rules/card/RecycleDeviceRules.js"), "utf8");
+  assert.doesNotMatch(recycleSource, /Number\(useCount\) < 2/);
+  const recycleBase = { ownerAlive:true, currentActorId:"a", ownerId:"a", equipmentDefinitionId:"recycleDevice", cardCategory:"tactic", cardUsageMode:"active" };
+  assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount:0 }), true);
+  assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - 1 }), true);
+  assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn }), false);
+
+  assert.equal(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, 2);
+  assert.equal(PASSIVE_SKILL_DEFINITIONS.momentum.stacksGain, 1);
+  assert.equal(PASSIVE_SKILL_DEFINITIONS.gamble.drawChance, 0.6);
+  assert.equal(PASSIVE_SKILL_DEFINITIONS.gamble.drawCount, 1);
+  assert.equal(Object.hasOwn(RULESET_DEFINITION, "gamblerDrawChance"), false);
+  assert.equal(Object.hasOwn(RULESET_DEFINITION, "momentumMaxStacks"), false);
+
+  const cardRulesSource = await readFile(projectFile("js/domain/rules/card/CardRules.js"), "utf8");
+  assert.doesNotMatch(cardRulesSource, /handCardIds/);
+  const transferOnly = { id:"t", seatIndex:0, alive:true, handCount:1, transferableHandCount:0, equipmentDefinitionId:null };
+  assert.equal(getTransferableHandCount(transferOnly), 0);
+  assert.equal(hasHandOrEquipmentFacts(transferOnly), false);
+  assert.deepEqual(
+    getTransferSourceIds(
+      [transferOnly, { id:"u", seatIndex:1, alive:true, handCount:1, equipmentDefinitionId:null }],
+      transferOnly,
+      { effectRange:null, ignoresDistance:true, id:"t" }
+    ),
+    ["u"]
+  );
+}
+
+test("FR-ARCH-15·domain closure：装备/技能 Definition-owned，transfer 边界 primitive-only", frArch15DomainClosureFinal);
+
 
 /*
 功能

@@ -17,7 +17,7 @@ Domain mutation 经 transitions/workflows；trigger runtime state 经 transition
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、concrete adapters 或 config runtime。
 */
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
 import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260817-architecture-closure-final";
 import { addSpyGapPendingTarget, addTrackingTarget, markCategoryUsed, removeSpyGapPendingTarget, setCoordinationTriggered, setGambleTriggered, setGuardianAidUsed, setLastEmberResolutionId, setMomentum, setRejuvenationTriggerCount, setSpyGapTriggered, setTrackingTurnNumber } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
 import { getAllInAssaultBonus } from "../../domain/rules/status/StatusRules.js?build=20260817-architecture-closure-final";
@@ -94,7 +94,7 @@ const PASSIVE_SKILLS = {
       if (canTriggerMomentumCategory(owner, event)) {
         markCategoryUsed(runtime.getState(), owner, event.card.category);
         const previousMomentum = owner.turnFlags.momentum;
-        setMomentum(runtime.getState(), owner, Math.min(RULESET_DEFINITION.momentumMaxStacks, previousMomentum + 1));
+        setMomentum(runtime.getState(), owner, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, previousMomentum + PASSIVE_SKILL_DEFINITIONS.momentum.stacksGain));
         if (owner.turnFlags.momentum > previousMomentum) {
           runtime.presentation.log(`${owner.name}触发「连势」，现有${owner.turnFlags.momentum}层「连势」。`);
         }
@@ -425,9 +425,9 @@ const PASSIVE_SKILLS = {
     runtime.onEvent("cardUsed", `${owner.id}:gamble`, async (event) => {
       if (!canTriggerGamble(owner, event)) return;
       setGambleTriggered(runtime.getState(), owner, true);
-      if (runtime.random() < RULESET_DEFINITION.gamblerDrawChance) {
+      if (runtime.random() < PASSIVE_SKILL_DEFINITIONS.gamble.drawChance) {
         const gameId = runtime.getState().gameId;
-        const drawn = await runtime.drawCards(owner, 1, "冒险", { silent:true });
+        const drawn = await runtime.drawCards(owner, PASSIVE_SKILL_DEFINITIONS.gamble.drawCount, "冒险", { silent:true });
         if (!runtime.isSessionValid(gameId)) return;
         runtime.presentation.log(`${owner.name}触发「冒险」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
       } else runtime.presentation.log(`${owner.name}触发「冒险」，但未获得额外收益。`);

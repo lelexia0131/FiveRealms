@@ -324,7 +324,7 @@ export class ActionGenerator {
     const exclusions = excludedCardIds ?? (card?.id ? new Set([card.id]) : null);
     const rulePlayers = this.projectTransferPlayers(players, exclusions);
     const sourceFact = findPlayerFact(rulePlayers, source.id);
-    return this.resolveRuleTargets(players, getTransferSourceIds(rulePlayers, sourceFact, card, exclusions, isRangeLegal));
+    return this.resolveRuleTargets(players, getTransferSourceIds(rulePlayers, sourceFact, card, isRangeLegal));
   }
 
   /*

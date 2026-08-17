@@ -18,7 +18,6 @@ Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
 真实状态与监听顺序以 StatusResolutionWorkflow、JudgmentWorkflow 和 Application triggers 为权威；不拥有 Policy 或 Value 公式。
 */
 import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
 import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
 import { interpretDefenseJudgment } from "../../domain/rules/judgment/JudgmentRules.js?build=20260817-architecture-closure-final";
 import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260817-architecture-closure-final";
@@ -103,7 +102,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
         player.momentumBranches = [{
           probability:1,
           conditions:{},
-          amount:Math.max(0, Math.min(RULESET_DEFINITION.momentumMaxStacks, Number(player.momentum) || 0))
+          amount:Math.max(0, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, Number(player.momentum) || 0))
         }];
       }
       this.syncMomentumSummary(player);
@@ -158,7 +157,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     player.momentumBranches = projectProbabilityStateBranches(
       getValueBranches(player, "momentum", player.momentum),
       (branch) => ({
-        amount:Math.max(0, Math.min(RULESET_DEFINITION.momentumMaxStacks, Number(branch.amount) || 0))
+        amount:Math.max(0, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, Number(branch.amount) || 0))
       })
     );
     player.momentum = expectedBranchValue(player.momentumBranches);
@@ -271,7 +270,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       if (!branch.cardUsed) return { amount:branch.momentumAmount };
       const retained = branch.lifeDamage ? 0 : branch.momentumAmount;
       return {
-        amount:Math.min(RULESET_DEFINITION.momentumMaxStacks,
+        amount:Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks,
           retained + (!branch.categoryUsed ? 1 : 0))
       };
     });
@@ -320,7 +319,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     if (triggerProbability > PROBABILITY_EPSILON) {
       const gambleWorlds = this.getEventWorlds(state, triggerProbability, null, "gamble-draw");
       this.gainUnknownCardsWithCounterState(
-        state, actor, triggerProbability * RULESET_DEFINITION.gamblerDrawChance, gambleWorlds, "gamble-draw"
+        state, actor, triggerProbability * PASSIVE_SKILL_DEFINITIONS.gamble.drawChance, gambleWorlds, "gamble-draw"
       );
     }
     return triggerProbability;

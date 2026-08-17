@@ -16,7 +16,9 @@ application/trigger RecycleDeviceTrigger 与 tests。
 
 架构约束
 不得依赖 Game/application/adapters/EventDispatcher；不得 await、emit、随机。
+「回收站」固定数值（triggerDrawCount / maxUsesPerTurn）由 CardDefinitions 唯一拥有。
 */
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -41,7 +43,7 @@ owner facts、current actor id、card category/usageMode 与 usage count。
 无。
 
 边界与不变量
-旧触发条件逐项保留：owner 存活且当前行动者、装备为 recycleDevice、战术牌主动使用、次数小于 2。
+旧触发条件逐项保留：owner 存活且当前行动者、装备为 recycleDevice、战术牌主动使用、次数未达到 CardDefinitions.recycleDevice.maxUsesPerTurn。
 */
 export function canTriggerRecycleDevice({
   ownerAlive,
@@ -58,6 +60,6 @@ export function canTriggerRecycleDevice({
     && equipmentDefinitionId === "recycleDevice"
     && cardCategory === "tactic"
     && cardUsageMode === "active"
-    && Number(useCount) < 2
+    && Number(useCount) < CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn
   );
 }

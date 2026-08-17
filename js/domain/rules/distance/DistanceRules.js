@@ -16,7 +16,9 @@ DistanceRules 的 deterministic boundary、ActionLegality 与 tests。
 
 架构约束
 不得依赖 application/adapters/AI/UI/Game runtime；不得采样随机。
+固定装备距离修正数值（望远镜 -1 / 屏障 +1）由 CardDefinitions 唯一拥有。
 */
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -85,7 +87,7 @@ export function getBaseDistance(players, source, target) {
 
 /*
 功能
-计算 deterministic 方向性距离：望远镜 -1，屏障 +1，下限 1。
+计算 deterministic 方向性距离：来源装备 outgoing 修正、目标装备 incoming 修正，下限 1。
 
 调用方
 DistanceRules 与 tests。
@@ -97,7 +99,7 @@ players、source、target 与显式装备定义 ID。
 非负整数或 Infinity。
 
 读取状态
-getBaseDistance 与 equipmentDefinitionId。
+getBaseDistance、CARD_DEFINITIONS 与 equipmentDefinitionId。
 
 写入状态
 无。
@@ -106,12 +108,14 @@ getBaseDistance 与 equipmentDefinitionId。
 getBaseDistance。
 
 边界与不变量
-只接受已投影的确定性装备事实。
+只接受已投影的确定性装备事实；装备固定修正数值从 CardDefinitions 读取。
 */
 export function getDistance(players, source, target, sourceEquipmentDefinitionId = null, targetEquipmentDefinitionId = null) {
   let distance = getBaseDistance(players, source, target);
   if (!Number.isFinite(distance) || distance === 0) return distance;
-  if (sourceEquipmentDefinitionId === "telescope") distance -= 1;
-  if (targetEquipmentDefinitionId === "barrierDevice") distance += 1;
+  const sourceModifier = CARD_DEFINITIONS[sourceEquipmentDefinitionId]?.outgoingDistanceModifier ?? 0;
+  const targetModifier = CARD_DEFINITIONS[targetEquipmentDefinitionId]?.incomingDistanceModifier ?? 0;
+  distance += sourceModifier;
+  distance += targetModifier;
   return Math.max(1, distance);
 }
