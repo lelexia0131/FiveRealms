@@ -6,7 +6,7 @@
 Application ResponseWorkflow、DyingWorkflow 与 tests。
 
 下游
-无。
+Domain SeatRosterContract 与 CardDefinitions。
 
 状态边界
 只读传入 facts；不写状态。

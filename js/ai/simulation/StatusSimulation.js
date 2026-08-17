@@ -100,9 +100,9 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       if (!hasPassiveSkill(player, "momentum")) continue;
       if (!Array.isArray(player.momentumBranches) || !player.momentumBranches.length) {
         player.momentumBranches = [{
-          probability:1,
-          conditions:{},
-          amount:Math.max(0, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, Number(player.momentum) || 0))
+          probability: 1,
+          conditions: {},
+          amount: Math.max(0, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, Number(player.momentum) || 0))
         }];
       }
       this.syncMomentumSummary(player);
@@ -115,13 +115,13 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
           const usedProbability = clampProbability(player.categoryUsedProbabilities[category]
             ?? (player.categoriesUsed.includes(category) ? 1 : 0));
           player.categoryUsedStateBranchesByCategory[category] = usedProbability <= PROBABILITY_EPSILON
-            ? [{ probability:1, conditions:{}, used:false }]
+            ? [{ probability: 1, conditions: {}, used: false }]
             : usedProbability >= 1 - PROBABILITY_EPSILON
-              ? [{ probability:1, conditions:{}, used:true }]
+              ? [{ probability: 1, conditions: {}, used: true }]
               : [
-                  { probability:usedProbability, conditions:{}, used:true },
-                  { probability:1 - usedProbability, conditions:{}, used:false }
-                ];
+                { probability: usedProbability, conditions: {}, used: true },
+                { probability: 1 - usedProbability, conditions: {}, used: false }
+              ];
         }
         this.syncCategoryUsedSummary(player, category);
       }
@@ -157,7 +157,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     player.momentumBranches = projectProbabilityStateBranches(
       getValueBranches(player, "momentum", player.momentum),
       (branch) => ({
-        amount:Math.max(0, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, Number(branch.amount) || 0))
+        amount: Math.max(0, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, Number(branch.amount) || 0))
       })
     );
     player.momentum = expectedBranchValue(player.momentumBranches);
@@ -229,7 +229,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   */
   simulateCategoryUse(state, player, category, useResolution = 1, lifeDamageResolution = null) {
     if (!category || !hasPassiveSkill(player, "momentum")) return 0;
-    this.initializeMomentumBranches({ players:[player] });
+    this.initializeMomentumBranches({ players: [player] });
     const useWorlds = Array.isArray(useResolution)
       ? this.getEventWorlds(state, 1, useResolution, `momentum-use:${player.id}:${category}`)
       : this.getEventWorlds(state, clampProbability(useResolution), null,
@@ -240,43 +240,43 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       : this.getEventWorlds(state, clampProbability(lifeDamageResolution), null,
         `momentum-life-damage:${player.id}:${category}`);
     const momentumState = this.syncMomentumSummary(player).map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      momentumAmount:branch.amount
+      probability: branch.probability,
+      conditions: branch.conditions,
+      momentumAmount: branch.amount
     }));
     const categoryState = this.syncCategoryUsedSummary(player, category).map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      categoryUsed:Boolean(branch.used)
+      probability: branch.probability,
+      conditions: branch.conditions,
+      categoryUsed: Boolean(branch.used)
     }));
     const joined = joinProbabilityStateBranches(
       momentumState,
       categoryState,
       useWorlds.map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        cardUsed:Boolean(branch.occurs)
+        probability: branch.probability,
+        conditions: branch.conditions,
+        cardUsed: Boolean(branch.occurs)
       })),
       lifeDamageWorlds.map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        lifeDamage:Boolean(branch.occurs)
+        probability: branch.probability,
+        conditions: branch.conditions,
+        lifeDamage: Boolean(branch.occurs)
       }))
     );
     const firstUseProbability = totalBranchProbability(
       joined.filter((branch) => branch.cardUsed && !branch.categoryUsed)
     );
     player.momentumBranches = projectProbabilityStateBranches(joined, (branch) => {
-      if (!branch.cardUsed) return { amount:branch.momentumAmount };
+      if (!branch.cardUsed) return { amount: branch.momentumAmount };
       const retained = branch.lifeDamage ? 0 : branch.momentumAmount;
       return {
-        amount:Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks,
-          retained + (!branch.categoryUsed ? 1 : 0))
+        amount: Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks,
+          retained + (!branch.categoryUsed ? PASSIVE_SKILL_DEFINITIONS.momentum.stacksGain : 0))
       };
     });
     player.categoryUsedStateBranchesByCategory[category] = projectProbabilityStateBranches(
       joined,
-      (branch) => ({ used:Boolean(branch.categoryUsed || branch.cardUsed) })
+      (branch) => ({ used: Boolean(branch.categoryUsed || branch.cardUsed) })
     );
     this.syncMomentumSummary(player);
     this.syncCategoryUsedSummary(player, category);
@@ -285,41 +285,58 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
 
   /*
   功能
-  按赌徒判定颜色世界结算弃牌收益、能量变化与后续状态。
-
+  模拟「冒险」被动：首次战术牌触发后按定义概率决定是否获得摸牌收益。
+  
   调用方
-  CardEffectSimulation.applyCardEffect：结算赌徒卡牌在生效世界中的判定收益。
-
+  CardEffectSimulation.applyCardEffect。
+  
   输入
   SearchState、行动者、已使用卡牌与生效概率。
-
+  
   输出
-  无返回值；弃牌、摸牌、能量和触发概率已推进。
-
+  返回本次新增触发概率；成功世界中的摸牌状态已推进。
+  
   读取状态
-  卡牌颜色、gambleTriggeredProbability 与行动者资源。
-
+  gambleTriggeredProbability、gambleTriggered 与 SkillDefinitions 的 drawChance/drawCount。
+  
   写入状态
-  手牌/响应摘要、能量、gambleTriggeredProbability 和触发标记。
-
+  手牌/响应摘要、gambleTriggeredProbability 与 gambleTriggered。
+  
   调用函数
-  getEventWorlds、gainUnknownCardsWithCounterState、changeEnergy。
-
+  getEventWorlds、gateEventWorlds、gainUnknownCardsWithCounterState。
+  
   边界与不变量
-  颜色分支与卡牌生效世界共享条件；一次行动的奖励和惩罚不能同时重复结算。
+  每回合首次战术牌才产生新增触发质量；drawChance 决定成功世界，drawCount 决定成功世界中的摸牌数量，两项固定事实均由 SkillDefinitions 拥有。
   */
   simulateGamble(state, actor, card, useProbability) {
     if (!hasPassiveSkill(actor, "gamble") || card?.category !== "tactic") return 0;
-    const oldProbability = clampProbability(actor.gambleTriggeredProbability
-      ?? (actor.gambleTriggered ? 1 : 0));
+    const oldProbability = clampProbability(
+      actor.gambleTriggeredProbability
+      ?? (actor.gambleTriggered ? 1 : 0)
+    );
     const newProbability = unionProbability(oldProbability, useProbability);
     const triggerProbability = Math.max(0, newProbability - oldProbability);
     actor.gambleTriggeredProbability = newProbability;
     actor.gambleTriggered = newProbability >= 1 - PROBABILITY_EPSILON;
     if (triggerProbability > PROBABILITY_EPSILON) {
-      const gambleWorlds = this.getEventWorlds(state, triggerProbability, null, "gamble-draw");
+      const gambleWorlds = this.getEventWorlds(
+        state,
+        triggerProbability,
+        null,
+        "gamble-trigger"
+      );
+      const gambleSuccessWorlds = this.gateEventWorlds(
+        state,
+        gambleWorlds,
+        PASSIVE_SKILL_DEFINITIONS.gamble.drawChance,
+        "gamble-success"
+      );
       this.gainUnknownCardsWithCounterState(
-        state, actor, triggerProbability * PASSIVE_SKILL_DEFINITIONS.gamble.drawChance, gambleWorlds, "gamble-draw"
+        state,
+        actor,
+        PASSIVE_SKILL_DEFINITIONS.gamble.drawCount,
+        gambleSuccessWorlds,
+        "gamble-draw"
       );
     }
     return triggerProbability;
@@ -419,7 +436,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       );
     const joined = joinProbabilityStateBranches(existingBranches, limitedEventWorlds);
     const markState = projectProbabilityStateBranches(joined, (branch) => ({
-      marked:Boolean(branch.marked || branch.occurs)
+      marked: Boolean(branch.marked || branch.occurs)
     }));
     const markProbability = totalBranchProbability(markState.filter((branch) => branch.marked));
     const gainedProbability = Math.max(0, markProbability - oldProbability);
@@ -480,13 +497,13 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
             "occurs"
           );
         const baseEnergy = damageContext.emberBaseEnergyBranches[source.id].map((branch) => ({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          baseEnergyAmount:branch.amount
+          probability: branch.probability,
+          conditions: branch.conditions,
+          baseEnergyAmount: branch.amount
         }));
         const joined = joinProbabilityStateBranches(baseEnergy, triggerWorlds);
         source.energyBranches = projectProbabilityStateBranches(joined, (branch) => ({
-          amount:Math.max(0, Math.min(source.maxEnergy ?? Infinity,
+          amount: Math.max(0, Math.min(source.maxEnergy ?? Infinity,
             branch.baseEnergyAmount + (branch.occurs
               ? PASSIVE_SKILL_DEFINITIONS.ember.energyGain
               : 0)))
@@ -552,29 +569,29 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       const identityPartition = mergeProbabilityStateBranches(revealWorlds.flatMap((branch) => {
         if (!branch.occurs) {
           return [{
-            probability:branch.probability,
-            conditions:{ ...branch.conditions, [identityKey]:"none" },
-            observedDefinitionId:null
+            probability: branch.probability,
+            conditions: { ...branch.conditions, [identityKey]: "none" },
+            observedDefinitionId: null
           }];
         }
         return Object.keys(DOMAIN_CARD_DEFINITIONS).map((definitionId) => ({
-          probability:branch.probability
+          probability: branch.probability
             * remainingCardDensity(state?.remainingCardCounts ?? null, definitionId),
-          conditions:{ ...branch.conditions, [identityKey]:definitionId },
-          observedDefinitionId:definitionId
+          conditions: { ...branch.conditions, [identityKey]: definitionId },
+          observedDefinitionId: definitionId
         }));
       }).filter((branch) => branch.probability > PROBABILITY_EPSILON));
       const slotKey = `${identityKey}:slot`;
       target.identitySlotStates ??= {};
       target.identitySlotStates[identityKey] = mergeProbabilityStateBranches(
         identityPartition.map((branch) => {
-          const conditions = { ...branch.conditions, [slotKey]:branch.observedDefinitionId ? "yes" : "no" };
+          const conditions = { ...branch.conditions, [slotKey]: branch.observedDefinitionId ? "yes" : "no" };
           delete conditions[identityKey];
           return {
-            probability:branch.probability,
+            probability: branch.probability,
             conditions,
-            slotAvailable:branch.observedDefinitionId !== null,
-            definitionId:branch.observedDefinitionId
+            slotAvailable: branch.observedDefinitionId !== null,
+            definitionId: branch.observedDefinitionId
           };
         })
       );
@@ -583,26 +600,26 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
           identityPartition
             .filter((branch) => branch.observedDefinitionId === definitionId)
             .map((branch) => ({
-              probability:branch.probability,
-              conditions:branch.conditions,
-              occurs:true
+              probability: branch.probability,
+              conditions: branch.conditions,
+              occurs: true
             }))
         );
         const identityProbability = this.eventProbability(identityWorlds);
         if (identityProbability <= PROBABILITY_EPSILON) continue;
         const slotKey = `${identityKey}:slot`;
         const entry = {
-          cardId:this.nextSimulatedCardId(state, definitionId),
+          cardId: this.nextSimulatedCardId(state, definitionId),
           definitionId,
-          availabilityBranches:availableBranchesFromState(
+          availabilityBranches: availableBranchesFromState(
             projectProbabilityStateBranches(identityWorlds, (branch) => ({
-              available:Boolean(branch.occurs)
+              available: Boolean(branch.occurs)
             }))
           ).map((branch) => ({
             ...branch,
-            conditions:{
+            conditions: {
               ...branch.conditions,
-              [slotKey]:definitionId === "block" || definitionId === "counter" ? "no" : "yes"
+              [slotKey]: definitionId === "block" || definitionId === "counter" ? "no" : "yes"
             }
           }))
         };
@@ -694,7 +711,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   */
   simulateAssaultAfterDamage(state, source, target, lifeDamageProbability, lifeDamageBranches = null) {
     return this.simulateAfterLifeDamage(state, source, target, lifeDamageProbability,
-      lifeDamageBranches, { cardDamage:true, emberTriggeredProbabilities:{} });
+      lifeDamageBranches, { cardDamage: true, emberTriggeredProbabilities: {} });
   }
 
   /*
@@ -736,11 +753,11 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     const noRadarProbability = 1 - defense;
     if (noRadarProbability > PROBABILITY_EPSILON) {
       branches.push({
-        probability:noRadarProbability,
-        conditions:{ [key]:"noRadar" },
-        radarOutcome:"noRadar",
-        responseAllowed:true,
-        immuneByRadar:false
+        probability: noRadarProbability,
+        conditions: { [key]: "noRadar" },
+        radarOutcome: "noRadar",
+        responseAllowed: true,
+        immuneByRadar: false
       });
     }
     if (defense > PROBABILITY_EPSILON) {
@@ -773,9 +790,9 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
         const chance = probability * defense;
         if (chance > PROBABILITY_EPSILON) {
           branches.push({
-            probability:chance,
-            conditions:{ [key]:outcome },
-            radarOutcome:outcome,
+            probability: chance,
+            conditions: { [key]: outcome },
+            radarOutcome: outcome,
             responseAllowed,
             immuneByRadar
           });
@@ -810,8 +827,8 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     }
     const branchTotal = branches.reduce((sum, branch) => sum + branch.probability, 0);
     return branchTotal > 0
-      ? branches.map((branch) => ({ ...branch, probability:branch.probability / branchTotal }))
-      : [{ probability:1, conditions:{ [key]:"noRadar" }, radarOutcome:"noRadar", responseAllowed:true, immuneByRadar:false }];
+      ? branches.map((branch) => ({ ...branch, probability: branch.probability / branchTotal }))
+      : [{ probability: 1, conditions: { [key]: "noRadar" }, radarOutcome: "noRadar", responseAllowed: true, immuneByRadar: false }];
   }
 
   /*
@@ -850,9 +867,9 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     } else if (target.statuses) {
       delete target.statuses.lightning;
     }
-    target.lightningStatusStateBranches = [{ probability:1, conditions:{}, present:false }];
+    target.lightningStatusStateBranches = [{ probability: 1, conditions: {}, present: false }];
     target.lightningStatusProbability = 0;
-    this.applyDamage(next, null, target, DOMAIN_CARD_DEFINITIONS.lightning.hitDamage, { canBlock:false });
+    this.applyDamage(next, null, target, DOMAIN_CARD_DEFINITIONS.lightning.hitDamage, { canBlock: false });
     return next;
   }
 
@@ -927,7 +944,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       : getSealStatusStateBranches(holder);
     const joined = joinProbabilityStateBranches(oldBranches, effectEventWorlds);
     const projected = projectProbabilityStateBranches(joined, (branch) => ({
-      present:Boolean(branch.present || branch.occurs)
+      present: Boolean(branch.present || branch.occurs)
     }));
     const probability = totalBranchProbability(projected.filter((branch) => branch.present));
     if (statusId === "lightning") {

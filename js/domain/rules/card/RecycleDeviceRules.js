@@ -6,7 +6,7 @@
 application/trigger RecycleDeviceTrigger 与 tests。
 
 下游
-无。
+CardDefinitions。
 
 状态边界
 只读 primitive facts；不写状态。

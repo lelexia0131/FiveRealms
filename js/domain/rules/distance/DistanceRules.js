@@ -6,7 +6,7 @@
 DistanceRules 的 deterministic boundary、ActionLegality 与 tests。
 
 下游
-无。
+CardDefinitions。
 
 状态边界
 只读玩家公开座位/存活/装备定义 ID；不写状态。
