@@ -6,7 +6,7 @@
 TeamRuleQueries、TeamAssignment 的 boundary 与当前 application/match consumer。
 
 下游
-RULESET_DEFINITION。
+RULESET_DEFINITION 与 CARD_DEFINITIONS 。
 
 状态边界
 只读 state.players 与玩家 Domain 投影；不写状态。
@@ -18,6 +18,7 @@ RULESET_DEFINITION。
 不得依赖 application/adapters/Game runtime；不得随机；不得迁移 match setup。
 */
 import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
 
 /*
 功能
@@ -518,7 +519,7 @@ getTeamRules 与 player.equipmentDefinitionId。
 getTeamRules。
 
 边界与不变量
-充能桩 +1 是当前规则语义。
+装备回合能量固定加成由 CardDefinitions 拥有，本函数只委托规则组合。
 */
 export function getTurnEnergyBreakdown(state, player) {
   return getTurnEnergyBreakdownFromRules(
