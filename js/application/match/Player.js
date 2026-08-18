@@ -3,11 +3,11 @@
  * Player 只保存数据并提供安全的资源变更，不决定目标合法性、伤害响应或胜负。
  * 每局都会重新创建 Player，因此无需跨局保留实例。
  */
-import { createPlayerState } from "../../domain/state/model/PlayerState.js?build=20260817-architecture-closure-final";
-import { applyCharacterDefinition, bumpHandVersion } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260817-architecture-closure-final";
-import { changeEnergy } from "../../domain/state/transitions/ResourceTransitions.js?build=20260817-architecture-closure-final";
-import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
-import { createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState } from "../../domain/rules/turn/TurnRules.js?build=20260817-architecture-closure-final";
+import { createPlayerState } from "../../domain/state/model/PlayerState.js?build=20260818-skill-rules-locality-refactor";
+import { applyCharacterDefinition, bumpHandVersion } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { changeEnergy } from "../../domain/state/transitions/ResourceTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState } from "../../domain/rules/turn/TurnRules.js?build=20260818-skill-rules-locality-refactor";
 
 export class Player {
   /*

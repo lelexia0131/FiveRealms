@@ -17,16 +17,16 @@ Domain Card/Skill/Status/Turn/Distance rules 与 definitions。
 架构约束
 不得复制领域规则、实现效果结算或枚举 AI 概率分支。
 */
-import { getBaseDistance as getBaseDistanceFromRule, getDistance as getDistanceFromRule } from "../../domain/rules/distance/DistanceRules.js?build=20260817-architecture-closure-final";
-import { hasStatus as hasStatusFromRule, nextLightningReceiverId } from "../../domain/rules/status/StatusRules.js?build=20260817-architecture-closure-final";
-import { getSkillTargetIds } from "../../domain/rules/skill/SkillRules.js?build=20260817-architecture-closure-final";
-import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js?build=20260817-architecture-closure-final";
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { getBaseDistance as getBaseDistanceFromRule, getDistance as getDistanceFromRule } from "../../domain/rules/distance/DistanceRules.js?build=20260818-skill-rules-locality-refactor";
+import { hasStatus as hasStatusFromRule, nextLightningReceiverId } from "../../domain/rules/status/StatusRules.js?build=20260818-skill-rules-locality-refactor";
+import { getSkillTargetIds } from "../../domain/rules/skill/SkillRules.js?build=20260818-skill-rules-locality-refactor";
+import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js?build=20260818-skill-rules-locality-refactor";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
 import {
   canActuallyUseAssault as decideAssaultLegality, canPlayCard as decideCardLegality,
   findPlayerFact, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds,
   getTransferReceiverIds, getTransferSourceIds
-} from "../../domain/rules/card/CardRules.js?build=20260817-architecture-closure-final";
+} from "../../domain/rules/card/CardRules.js?build=20260818-skill-rules-locality-refactor";
 
 /** UI、AI 与核心共享的唯一主动合法性入口。 */
 export class ActionLegality {

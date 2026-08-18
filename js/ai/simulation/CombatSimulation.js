@@ -17,22 +17,22 @@ ResponseSimulation、Radar domain、state/Probability 与共享 simulation runti
 架构约束
 结算顺序以 Domain CombatRules、CombatWorkflow 与 DyingWorkflow 为权威；不得拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
-import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260818-skill-rules-locality-refactor";
 import {
   calculateHealAmount,
   calculateHpDamage,
   calculateShieldAbsorption,
   isDying,
   isKillRewardEligible
-} from "../../domain/rules/combat/CombatRules.js?build=20260817-architecture-closure-final";
-import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules.js?build=20260817-architecture-closure-final";
-import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260817-architecture-closure-final";
-import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js?build=20260817-architecture-closure-final";
-import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260817-architecture-closure-final";
-import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260817-architecture-closure-final";
-import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260817-architecture-closure-final";
+} from "../../domain/rules/combat/CombatRules.js?build=20260818-skill-rules-locality-refactor";
+import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules.js?build=20260818-skill-rules-locality-refactor";
+import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260818-skill-rules-locality-refactor";
+import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js?build=20260818-skill-rules-locality-refactor";
+import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260818-skill-rules-locality-refactor";
+import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
+import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

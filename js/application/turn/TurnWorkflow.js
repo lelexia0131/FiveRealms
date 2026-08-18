@@ -17,15 +17,15 @@ Domain TeamRules/TurnRules/transitions、Application Action/Combat/Response 能�
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、Planner、SearchState 或 concrete adapters。
 */
-import { getDrawCountFromRules, getTeamRules, getTurnEnergyBreakdownFromRules } from "../../domain/rules/team/TeamRules.js?build=20260817-architecture-closure-final";
+import { getDrawCountFromRules, getTeamRules, getTurnEnergyBreakdownFromRules } from "../../domain/rules/team/TeamRules.js?build=20260818-skill-rules-locality-refactor";
 import {
   calculateNextActorIndex, createGlobalTurnReactiveState, createRoundUsageState,
   createTurnUsageState, shouldSkipActionPhase
-} from "../../domain/rules/turn/TurnRules.js?build=20260817-architecture-closure-final";
-import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260817-architecture-closure-final";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260817-architecture-closure-final";
-import { setCurrentPlayerIndex, setCurrentRound, setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260817-architecture-closure-final";
-import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
+} from "../../domain/rules/turn/TurnRules.js?build=20260818-skill-rules-locality-refactor";
+import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260818-skill-rules-locality-refactor";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260818-skill-rules-locality-refactor";
+import { setCurrentPlayerIndex, setCurrentRound, setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260818-skill-rules-locality-refactor";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics", "runTurn",

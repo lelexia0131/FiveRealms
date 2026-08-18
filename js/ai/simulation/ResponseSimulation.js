@@ -17,13 +17,13 @@ state/Probability、正式 ResponsePolicy、GlobalBenefit assessment 与共享 s
 架构约束
 不得读取 Game/UI/Controller/Planner，不得复制 Policy、Value 或真实规则实现。
 */
-import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
-import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/response/ResponseRules.js?build=20260817-architecture-closure-final";
-import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js?build=20260817-architecture-closure-final";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260817-architecture-closure-final";
-import { planningCounterDesire, planningDynamicCounterGain } from "../policy/ResponsePolicy.js?build=20260817-architecture-closure-final";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260817-architecture-closure-final";
-import { clampProbability, remainingCardDensity, unionProbability } from "./SimulationSupport.js?build=20260817-architecture-closure-final";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/response/ResponseRules.js?build=20260818-skill-rules-locality-refactor";
+import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js?build=20260818-skill-rules-locality-refactor";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260818-skill-rules-locality-refactor";
+import { planningCounterDesire, planningDynamicCounterGain } from "../policy/ResponsePolicy.js?build=20260818-skill-rules-locality-refactor";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
+import { clampProbability, remainingCardDensity, unionProbability } from "./SimulationSupport.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

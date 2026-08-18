@@ -17,8 +17,8 @@ match application、CombatWorkflow、DyingWorkflow、application card runtime、
 架构约束
 不得依赖 Game/EventDispatcher/UI/AI/application/adapters；不得出现 cardId/skillId/statusId 规则分支。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260817-architecture-closure-final";
-import { clamp } from "../../../utils/helpers.js?build=20260817-architecture-closure-final";
+import { bumpStateVersion } from "./StateVersion.js?build=20260818-skill-rules-locality-refactor";
+import { clamp } from "../../../utils/helpers.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

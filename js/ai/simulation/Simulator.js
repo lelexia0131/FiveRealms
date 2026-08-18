@@ -29,16 +29,16 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260817-architecture-closure-final";
-import { cloneSearchState } from "../state/SearchState.js?build=20260817-architecture-closure-final";
-import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260817-architecture-closure-final";
+} from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
+import { cloneSearchState } from "../state/SearchState.js?build=20260818-skill-rules-locality-refactor";
+import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260818-skill-rules-locality-refactor";
 
-import { clampProbability } from "./SimulationSupport.js?build=20260817-architecture-closure-final";
-import { withResponseSimulation } from "./ResponseSimulation.js?build=20260817-architecture-closure-final";
-import { withCombatSimulation } from "./CombatSimulation.js?build=20260817-architecture-closure-final";
-import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260817-architecture-closure-final";
-import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260817-architecture-closure-final";
-import { withStatusSimulation } from "./StatusSimulation.js?build=20260817-architecture-closure-final";
+import { clampProbability } from "./SimulationSupport.js?build=20260818-skill-rules-locality-refactor";
+import { withResponseSimulation } from "./ResponseSimulation.js?build=20260818-skill-rules-locality-refactor";
+import { withCombatSimulation } from "./CombatSimulation.js?build=20260818-skill-rules-locality-refactor";
+import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260818-skill-rules-locality-refactor";
+import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260818-skill-rules-locality-refactor";
+import { withStatusSimulation } from "./StatusSimulation.js?build=20260818-skill-rules-locality-refactor";
 
 class SimulatorCore {
   /*

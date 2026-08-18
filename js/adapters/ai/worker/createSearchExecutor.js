@@ -17,8 +17,8 @@ SearchWorkerClient、LocalSearchExecutor。
 架构约束
 不得 import composition/application/UI/Audio；browser production 不提供同线程 search fallback。
 */
-import { createLocalSearchExecutor } from "./LocalSearchExecutor.js?build=20260817-architecture-closure-final";
-import { createSearchWorkerClient } from "./SearchWorkerClient.js?build=20260817-architecture-closure-final";
+import { createLocalSearchExecutor } from "./LocalSearchExecutor.js?build=20260818-skill-rules-locality-refactor";
+import { createSearchWorkerClient } from "./SearchWorkerClient.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

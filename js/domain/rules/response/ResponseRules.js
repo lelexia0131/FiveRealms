@@ -18,8 +18,8 @@ Domain SeatRosterContract 与 CardDefinitions。
 不得依赖 application/adapters/AI/UI/Game runtime；不得 await、emit、随机。
 军火库的 assaultRequiredBlockCount 固定值由 CardDefinitions 唯一拥有。
 */
-import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260817-architecture-closure-final";
-import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260818-skill-rules-locality-refactor";
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

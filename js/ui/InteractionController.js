@@ -2,12 +2,12 @@
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
  * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
  */
-import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260817-architecture-closure-final";
-import { createHiddenSelectionView } from "./handVisibility.js?build=20260817-architecture-closure-final";
-import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260817-architecture-closure-final";
-import { ActionLegality } from "../application/action/ActionLegality.js?build=20260817-architecture-closure-final";
-import { CARD_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
-import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js?build=20260817-architecture-closure-final";
+import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js?build=20260818-skill-rules-locality-refactor";
+import { createHiddenSelectionView } from "./handVisibility.js?build=20260818-skill-rules-locality-refactor";
+import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js?build=20260818-skill-rules-locality-refactor";
+import { ActionLegality } from "../application/action/ActionLegality.js?build=20260818-skill-rules-locality-refactor";
+import { CARD_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js?build=20260818-skill-rules-locality-refactor";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 

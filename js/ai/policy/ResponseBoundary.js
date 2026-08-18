@@ -17,21 +17,21 @@ policy/ResponsePolicy、ValueSimulationQuery、状态组合与既有 Domain/Valu
 架构约束
 本文件是唯一响应执行边界；不得保留第二份响应阈值、分数或选择公式。
 */
-import { AI_RUNTIME_POLICY } from "./AiRuntimePolicy.js?build=20260817-architecture-closure-final";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260817-architecture-closure-final";
-import { createInitialSearchState } from "../state/StateContracts.js?build=20260817-architecture-closure-final";
-import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js?build=20260817-architecture-closure-final";
+import { AI_RUNTIME_POLICY } from "./AiRuntimePolicy.js?build=20260818-skill-rules-locality-refactor";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260818-skill-rules-locality-refactor";
+import { createInitialSearchState } from "../state/StateContracts.js?build=20260818-skill-rules-locality-refactor";
+import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js?build=20260818-skill-rules-locality-refactor";
 import {
   hasLightning,
   nextLightningReceiverId
-} from "../domain/LightningModel.js?build=20260817-architecture-closure-final";
+} from "../domain/LightningModel.js?build=20260818-skill-rules-locality-refactor";
 import {
   hasSeal,
   tacticJudgmentProbability
-} from "../domain/SealModel.js?build=20260817-architecture-closure-final";
-import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260817-architecture-closure-final";
-import { ResponsePolicy } from "./ResponsePolicy.js?build=20260817-architecture-closure-final";
-import { getCharacterRoleTags } from "./CharacterRoleMetadata.js?build=20260817-architecture-closure-final";
+} from "../domain/SealModel.js?build=20260818-skill-rules-locality-refactor";
+import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260818-skill-rules-locality-refactor";
+import { ResponsePolicy } from "./ResponsePolicy.js?build=20260818-skill-rules-locality-refactor";
+import { getCharacterRoleTags } from "./CharacterRoleMetadata.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

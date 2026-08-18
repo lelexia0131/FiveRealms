@@ -17,7 +17,7 @@ Domain CardDefinitions。
 架构约束
 不得拥有领域规则、牌堆数量、AI 价值或结算行为。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
 
 export const CARD_PRESENTATION = Object.freeze({
   assault: Object.freeze({

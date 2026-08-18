@@ -17,16 +17,16 @@ Domain CardRules、AI RuleProjection/DistanceProbabilityBranches 与 policy/Card
 架构约束
 选择公式只存在于 policy 目录；本文件只负责合法集合、公开上下文与实体 ID 解析。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
 import {
   findPlayerFact,
   getTransferReceiverIds
-} from "../../domain/rules/card/CardRules.js?build=20260817-architecture-closure-final";
-import { projectTransferRulePlayers } from "../state/RuleProjection.js?build=20260817-architecture-closure-final";
-import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260817-architecture-closure-final";
-import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260817-architecture-closure-final";
-import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260817-architecture-closure-final";
-import { TransferPolicy } from "./TransferPolicy.js?build=20260817-architecture-closure-final";
+} from "../../domain/rules/card/CardRules.js?build=20260818-skill-rules-locality-refactor";
+import { projectTransferRulePlayers } from "../state/RuleProjection.js?build=20260818-skill-rules-locality-refactor";
+import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260818-skill-rules-locality-refactor";
+import { CardSelectionPolicy } from "./CardSelectionPolicy.js?build=20260818-skill-rules-locality-refactor";
+import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js?build=20260818-skill-rules-locality-refactor";
+import { TransferPolicy } from "./TransferPolicy.js?build=20260818-skill-rules-locality-refactor";
 
 export class CardSelectionBoundary {
   /*

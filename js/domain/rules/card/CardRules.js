@@ -17,9 +17,9 @@ Domain DistanceRules、TurnRules、StatusRules 与 definitions。
 架构约束
 不得依赖 Game/ActionLegality/application/adapters/EventDispatcher；不得 await、emit、随机、mutation。
 */
-import { getDistance } from "../distance/DistanceRules.js?build=20260817-architecture-closure-final";
-import { hasAttackUseRemaining } from "../turn/TurnRules.js?build=20260817-architecture-closure-final";
-import { hasStatus } from "../status/StatusRules.js?build=20260817-architecture-closure-final";
+import { getDistance } from "../distance/DistanceRules.js?build=20260818-skill-rules-locality-refactor";
+import { hasAttackUseRemaining } from "../turn/TurnRules.js?build=20260818-skill-rules-locality-refactor";
+import { hasStatus } from "../status/StatusRules.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

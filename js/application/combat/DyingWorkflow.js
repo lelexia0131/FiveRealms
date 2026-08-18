@@ -17,17 +17,17 @@ active queue 与 dyingContext 是 Application workflow state；Domain commit 只
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime 或 concrete adapters。
 */
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
-import { isDying, isKillRewardEligible } from "../../domain/rules/combat/CombatRules.js?build=20260817-architecture-closure-final";
-import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260817-architecture-closure-final";
-import { isHuntMarkSourceExpired } from "../../domain/rules/status/StatusRules.js?build=20260817-architecture-closure-final";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260817-architecture-closure-final";
-import { setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260817-architecture-closure-final";
-import { setAlive } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260817-architecture-closure-final";
-import { setHp } from "../../domain/state/transitions/ResourceTransitions.js?build=20260817-architecture-closure-final";
-import { setKillRewardGranted, setMomentum, setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
-import { clearStatuses, removeStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260817-architecture-closure-final";
-import { discardEquipment } from "../../domain/state/transitions/ZoneTransitions.js?build=20260817-architecture-closure-final";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260818-skill-rules-locality-refactor";
+import { isDying, isKillRewardEligible } from "../../domain/rules/combat/CombatRules.js?build=20260818-skill-rules-locality-refactor";
+import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260818-skill-rules-locality-refactor";
+import { isHuntMarkSourceExpired } from "../../domain/rules/status/StatusRules.js?build=20260818-skill-rules-locality-refactor";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260818-skill-rules-locality-refactor";
+import { setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { setAlive } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { setHp } from "../../domain/state/transitions/ResourceTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { setKillRewardGranted, setMomentum, setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { clearStatuses, removeStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { discardEquipment } from "../../domain/state/transitions/ZoneTransitions.js?build=20260818-skill-rules-locality-refactor";
 
 const REQUIRED_DEPENDENCIES = [
   "getState",

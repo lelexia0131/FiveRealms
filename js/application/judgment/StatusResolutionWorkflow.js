@@ -17,11 +17,11 @@ Domain StatusRules、Domain transitions、Application Response status-counter、
 架构约束
 不得依赖 MatchApplication、UIManager、AiController、SoundManager、EventDispatcher runtime、混合配置模块或 concrete adapters。
 */
-import { nextLightningReceiverId } from "../../domain/rules/status/StatusRules.js?build=20260817-architecture-closure-final";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260817-architecture-closure-final";
-import { setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260817-architecture-closure-final";
-import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260817-architecture-closure-final";
-import { RESPONSE_STATUS, isCancelledResponse } from "../response/ResponseResult.js?build=20260817-architecture-closure-final";
+import { nextLightningReceiverId } from "../../domain/rules/status/StatusRules.js?build=20260818-skill-rules-locality-refactor";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260818-skill-rules-locality-refactor";
+import { setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { RESPONSE_STATUS, isCancelledResponse } from "../response/ResponseResult.js?build=20260818-skill-rules-locality-refactor";
 
 const REQUIRED_DEPENDENCIES = [
   "getState",

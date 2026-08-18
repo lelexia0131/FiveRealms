@@ -17,8 +17,8 @@ Domain CombatRules、Domain ResourceTransitions、Application Response、Applica
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher、SearchState、Planner 或 concrete adapters。
 */
-import { calculateDamageResult, calculateHealAmount, isDying } from "../../domain/rules/combat/CombatRules.js?build=20260817-architecture-closure-final";
-import { changeHp, changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260817-architecture-closure-final";
+import { calculateDamageResult, calculateHealAmount, isDying } from "../../domain/rules/combat/CombatRules.js?build=20260818-skill-rules-locality-refactor";
+import { changeHp, changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260818-skill-rules-locality-refactor";
 
 const REQUIRED_DEPENDENCIES = [
   "getState",

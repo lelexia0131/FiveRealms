@@ -1,21 +1,21 @@
 /**
  * DOM 渲染与真人意图入口。这里只提交卡牌 ID、目标和按钮意图，不修改生命、能量、手牌或胜负。
  */
-import { PHASE_PRESENTATION, TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js?build=20260817-architecture-closure-final";
-import { ActionLegality } from "../application/action/ActionLegality.js?build=20260817-architecture-closure-final";
-import { canUseActiveSkill, getActiveSkill } from "../application/action/SkillRuntime.js?build=20260817-architecture-closure-final";
+import { PHASE_PRESENTATION, TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js?build=20260818-skill-rules-locality-refactor";
+import { ActionLegality } from "../application/action/ActionLegality.js?build=20260818-skill-rules-locality-refactor";
+import { canUseActiveSkill, getActiveSkill } from "../application/action/SkillRuntime.js?build=20260818-skill-rules-locality-refactor";
 import {
   candidateCardTemplate, emptyResolvingCardTemplate, escapeHtml, formatLogEntry, handCardTemplate,
   playerPanelTemplate, resolvingCardTemplate, skillDetailsTemplate, thinkingTemplate
-} from "./templates.js?build=20260817-architecture-closure-final";
-import { AnimationController } from "./animationController.js?build=20260817-architecture-closure-final";
-import { InteractionController } from "./InteractionController.js?build=20260817-architecture-closure-final";
-import { PublicPoolView } from "./PublicPoolView.js?build=20260817-architecture-closure-final";
-import { PrivateRevealView } from "./PrivateRevealView.js?build=20260817-architecture-closure-final";
-import { JudgmentView } from "./JudgmentView.js?build=20260817-architecture-closure-final";
-import { createOpponentHandView } from "./handVisibility.js?build=20260817-architecture-closure-final";
-import { toggleCardSelection } from "./selectionUtils.js?build=20260817-architecture-closure-final";
-import { SoundManager } from "../audio/SoundManager.js?build=20260817-architecture-closure-final";
+} from "./templates.js?build=20260818-skill-rules-locality-refactor";
+import { AnimationController } from "./animationController.js?build=20260818-skill-rules-locality-refactor";
+import { InteractionController } from "./InteractionController.js?build=20260818-skill-rules-locality-refactor";
+import { PublicPoolView } from "./PublicPoolView.js?build=20260818-skill-rules-locality-refactor";
+import { PrivateRevealView } from "./PrivateRevealView.js?build=20260818-skill-rules-locality-refactor";
+import { JudgmentView } from "./JudgmentView.js?build=20260818-skill-rules-locality-refactor";
+import { createOpponentHandView } from "./handVisibility.js?build=20260818-skill-rules-locality-refactor";
+import { toggleCardSelection } from "./selectionUtils.js?build=20260818-skill-rules-locality-refactor";
+import { SoundManager } from "../audio/SoundManager.js?build=20260818-skill-rules-locality-refactor";
 
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);

@@ -17,8 +17,8 @@ Planner 诊断、正式边界 与价值归属测试。
 架构约束
 账本解释已有价值，不是第二个 Evaluator；所有响应/候选字段仅供诊断，开关不得改变最终价值或选择。
 */
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260817-architecture-closure-final";
-import { sealTeamBurden } from "./SealValue.js?build=20260817-architecture-closure-final";
+import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260818-skill-rules-locality-refactor";
+import { sealTeamBurden } from "./SealValue.js?build=20260818-skill-rules-locality-refactor";
 
 export class ValueLedger {
   /*

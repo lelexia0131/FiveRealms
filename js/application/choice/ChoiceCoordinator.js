@@ -17,7 +17,7 @@ application/ports/ChoicePort。
 架构约束
 不得依赖 concrete UI/AI/Audio/Diagnostics、Game runtime、EventDispatcher 或 adapters。
 */
-import { normalizeChoiceResult } from "../ports/ChoicePort.js?build=20260817-architecture-closure-final";
+import { normalizeChoiceResult } from "../ports/ChoicePort.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

@@ -17,20 +17,20 @@ Card/Combat/Response/Status 组件、Domain Skill Definitions/Rules 与 Probabil
 架构约束
 不生成技能动作、不决定是否使用技能、不复制技能价值或规则合法性。
 */
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
 import {
   decideAllInDrawCount,
   decideAllInEnterChance,
   getSkillCost
-} from "../../domain/rules/skill/SkillRules.js?build=20260817-architecture-closure-final";
+} from "../../domain/rules/skill/SkillRules.js?build=20260818-skill-rules-locality-refactor";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
   joinProbabilityStateBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260817-architecture-closure-final";
-import { clampProbability } from "./SimulationSupport.js?build=20260817-architecture-closure-final";
+} from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
+import { clampProbability } from "./SimulationSupport.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

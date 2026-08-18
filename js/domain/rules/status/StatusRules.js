@@ -17,8 +17,8 @@ STATUS_DEFINITIONS。
 架构约束
 不得依赖 application/adapters/AI/UI/Game runtime；不得随机、await、emit。
 */
-import { STATUS_DEFINITIONS } from "../../definitions/statuses/StatusDefinitions.js?build=20260817-architecture-closure-final";
-import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260817-architecture-closure-final";
+import { STATUS_DEFINITIONS } from "../../definitions/statuses/StatusDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { assertCanonicalSeatRoster } from "../../state/queries/SeatRosterContract.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

@@ -17,15 +17,15 @@ AIController、响应策略与直接价值查询测试。
 架构约束
 本文件不得保留价值公式、导入 Simulator 或成为新的组合根（统一组装依赖的位置）；只允许无损转发。
 */
-import * as CardValue from "./CardValue.js?build=20260817-architecture-closure-final";
-import * as Economics from "./Economics.js?build=20260817-architecture-closure-final";
-import * as ThreatValue from "./ThreatValue.js?build=20260817-architecture-closure-final";
+import * as CardValue from "./CardValue.js?build=20260818-skill-rules-locality-refactor";
+import * as Economics from "./Economics.js?build=20260818-skill-rules-locality-refactor";
+import * as ThreatValue from "./ThreatValue.js?build=20260818-skill-rules-locality-refactor";
 
 export {
   HP_VALUE,
   STATE_DELTA_SCALE
-} from "./Economics.js?build=20260817-architecture-closure-final";
-export { HP_RISK_OPTION_WEIGHT } from "./ThreatValue.js?build=20260817-architecture-closure-final";
+} from "./Economics.js?build=20260818-skill-rules-locality-refactor";
+export { HP_RISK_OPTION_WEIGHT } from "./ThreatValue.js?build=20260818-skill-rules-locality-refactor";
 
 const OWNER_METHODS = Object.freeze([
   ["evaluator", ["playerValueTerms", "ownerStateTerms", "ownerMaterialValue"]],

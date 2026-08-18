@@ -2,8 +2,8 @@
  * 公共判定展示。只渲染核心已公开的判定牌；牌区移动和判定结果由
  * JudgmentWorkflow 负责，重开时 UIManager 会清空本视图。
  */
-import { escapeHtml } from "./templates.js?build=20260817-architecture-closure-final";
-import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js?build=20260817-architecture-closure-final";
+import { escapeHtml } from "./templates.js?build=20260818-skill-rules-locality-refactor";
+import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js?build=20260818-skill-rules-locality-refactor";
 export class JudgmentView {
   constructor(element) { this.element = element; }
   /*

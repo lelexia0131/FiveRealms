@@ -17,7 +17,7 @@ match application、Player、application card runtime、application skill runtim
 架构约束
 不得依赖 Game/EventDispatcher/UI/AI/application/adapters；不得包含 cardId/skillId/statusId 规则分支。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260817-architecture-closure-final";
+import { bumpStateVersion } from "./StateVersion.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

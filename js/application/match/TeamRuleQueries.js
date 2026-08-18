@@ -21,8 +21,8 @@ import {
   getAttackLimitFromRules, getDrawCountFromRules, getInitialHandCountFromRules,
   getMaxEnergyFromRules, getRecoverLimitFromRules, getTeamRules, getTeamSize,
   getTurnEnergyBreakdownFromRules, getTurnEnergyGainFromRules, isSmallTeam
-} from "../../domain/rules/team/TeamRules.js?build=20260817-architecture-closure-final";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260817-architecture-closure-final";
+} from "../../domain/rules/team/TeamRules.js?build=20260818-skill-rules-locality-refactor";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

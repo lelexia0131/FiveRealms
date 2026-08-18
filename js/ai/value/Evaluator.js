@@ -17,14 +17,14 @@ Economics、CardValue、ThreatValue 以及封印、雷达的现有纯领域函�
 架构约束
 不得导入或构造 Simulator、Planner、Controller；State Value 只读一个状态，闪电等生命周期结果必须由调用层先计算为纯值。
 */
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260817-architecture-closure-final";
-import { sealTeamBurden } from "./SealValue.js?build=20260817-architecture-closure-final";
-import { cardAvailability, getBaseCardAiValue, roleCardDelta } from "./CardValue.js?build=20260817-architecture-closure-final";
+import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260818-skill-rules-locality-refactor";
+import { sealTeamBurden } from "./SealValue.js?build=20260818-skill-rules-locality-refactor";
+import { cardAvailability, getBaseCardAiValue, roleCardDelta } from "./CardValue.js?build=20260818-skill-rules-locality-refactor";
 import {
   ENERGY_STATE_WEIGHT,
   HP_VALUE,
   energyDeviceFutureUtility
-} from "./Economics.js?build=20260817-architecture-closure-final";
+} from "./Economics.js?build=20260818-skill-rules-locality-refactor";
 import {
   DANGER_VALUE,
   DEATH_VALUE,
@@ -32,7 +32,7 @@ import {
   hp2ThreatRiskValue,
   radarMitigationUtility,
   shieldStateValue
-} from "./ThreatValue.js?build=20260817-architecture-closure-final";
+} from "./ThreatValue.js?build=20260818-skill-rules-locality-refactor";
 
 export class Evaluator {
   /*

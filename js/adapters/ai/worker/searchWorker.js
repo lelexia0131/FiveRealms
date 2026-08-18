@@ -17,7 +17,7 @@ WorkerSearchRuntime。
 架构约束
 不得 import composition、application、UI/Audio 或 Domain transitions；不得使用 Math.random。
 */
-import { runSearchRequest } from "./WorkerSearchRuntime.js?build=20260817-architecture-closure-final";
+import { runSearchRequest } from "./WorkerSearchRuntime.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

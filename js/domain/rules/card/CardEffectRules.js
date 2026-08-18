@@ -18,8 +18,8 @@ Domain StatusRules 与 CardDefinitions。
 不得依赖 Game/application/adapters/EventDispatcher；不得 await、emit、随机、mutation；不得复制 CardDefinitions 固定 literal。
 */
 
-import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
-import { getExposeWeaknessStacks } from "../status/StatusRules.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { getExposeWeaknessStacks } from "../status/StatusRules.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

@@ -17,7 +17,7 @@ composition root 与 Application Action/Turn。
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher 或 concrete adapters。
 */
-import { getEnemies } from "../../domain/state/queries/MatchQueries.js?build=20260817-architecture-closure-final";
+import { getEnemies } from "../../domain/state/queries/MatchQueries.js?build=20260818-skill-rules-locality-refactor";
 
 const RESULT_ONLY_CARD_IDS = new Set(["charge", "recover", "shield"]);
 

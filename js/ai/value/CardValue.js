@@ -17,9 +17,9 @@
 架构约束
 静态卡片值不得直接成为最终 Transition Value；状态存量只可经 State Value 的前后差进入最终价值，所有调用路径必须复用本模块的唯一公式。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
-import { CHARACTER_BY_ID, CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260817-architecture-closure-final";
-import { HP_VALUE } from "./Economics.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { CHARACTER_BY_ID, CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { HP_VALUE } from "./Economics.js?build=20260818-skill-rules-locality-refactor";
 
 export const CARD_AI_VALUES = Object.freeze({
   assault: 4,

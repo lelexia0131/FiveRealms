@@ -1,9 +1,9 @@
 /**
  * 页面入口：创建 UIManager，并通过最终 composition root 创建/替换单局应用。
  */
-import { createGameApplication } from "./composition/createGameApplication.js?build=20260817-architecture-closure-final";
-import { UIManager } from "./ui/UIManager.js?build=20260817-architecture-closure-final";
-import { Debug } from "./utils/debug.js?build=20260817-architecture-closure-final";
+import { createGameApplication } from "./composition/createGameApplication.js?build=20260818-skill-rules-locality-refactor";
+import { UIManager } from "./ui/UIManager.js?build=20260818-skill-rules-locality-refactor";
+import { Debug } from "./utils/debug.js?build=20260818-skill-rules-locality-refactor";
 
 const ui = new UIManager();
 let game = null;

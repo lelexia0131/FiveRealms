@@ -17,12 +17,12 @@ value/CardValue 与 TransferPolicy 的共享未知牌期望常量。
 架构约束
 不执行规则、不生成合法集合、不依赖 Planner/Controller/UI，也不构造 Simulator。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
 import {
   getEquipmentKeepValueDeduction,
   getRoleCardAiValue
-} from "../value/CardValue.js?build=20260817-architecture-closure-final";
-import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260817-architecture-closure-final";
+} from "../value/CardValue.js?build=20260818-skill-rules-locality-refactor";
+import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js?build=20260818-skill-rules-locality-refactor";
 
 export const RESPONSE_SURVIVAL_BONUS_DANGER = 1;
 export const RESPONSE_SURVIVAL_BONUS_LETHAL = 2;

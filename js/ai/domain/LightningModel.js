@@ -17,19 +17,19 @@ Domain StatusRules、Domain Card/Ruleset Definitions 与 state/Probability。
 架构约束
 确定性状态存在与下一接收者公式只调用 Domain StatusRules；本模型只拥有概率传播与命中分布。不得依赖 Controller、Planner、Simulator、Evaluator、UI 或 value 层。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260818-skill-rules-locality-refactor";
 import {
   hasStatus,
   nextLightningReceiverId as nextDomainLightningReceiverId
-} from "../../domain/rules/status/StatusRules.js?build=20260817-architecture-closure-final";
-import { projectCanonicalSeatRoster, projectRulePlayer } from "../state/RuleProjection.js?build=20260817-architecture-closure-final";
+} from "../../domain/rules/status/StatusRules.js?build=20260818-skill-rules-locality-refactor";
+import { projectCanonicalSeatRoster, projectRulePlayer } from "../state/RuleProjection.js?build=20260818-skill-rules-locality-refactor";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
   mergeProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260817-architecture-closure-final";
+} from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

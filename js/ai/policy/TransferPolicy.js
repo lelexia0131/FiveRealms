@@ -20,14 +20,14 @@ value/CardValue、value/ThreatValue 与 state/Probability。
 import {
   getBaseCardAiValue,
   getRoleCardAiValue
-} from "../value/CardValue.js?build=20260817-architecture-closure-final";
-import { ThreatCalculator } from "../value/ThreatValue.js?build=20260817-architecture-closure-final";
-import { getCharacterRoleTags } from "./CharacterRoleMetadata.js?build=20260817-architecture-closure-final";
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
+} from "../value/CardValue.js?build=20260818-skill-rules-locality-refactor";
+import { ThreatCalculator } from "../value/ThreatValue.js?build=20260818-skill-rules-locality-refactor";
+import { getCharacterRoleTags } from "./CharacterRoleMetadata.js?build=20260818-skill-rules-locality-refactor";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
 import {
   PROBABILITY_EPSILON,
   totalBranchProbability
-} from "../state/Probability.js?build=20260817-architecture-closure-final";
+} from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

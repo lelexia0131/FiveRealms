@@ -17,7 +17,7 @@ ValueSimulationQuery 与固定响应回归测试。
 架构约束
 这是有界 Simulation query；不构造 Simulator、不决定响应策略、不拥有最终价值公式。
 */
-import { isGlobalBenefitCard } from "../domain/GlobalBenefitModel.js?build=20260817-architecture-closure-final";
+import { isGlobalBenefitCard } from "../domain/GlobalBenefitModel.js?build=20260818-skill-rules-locality-refactor";
 
 export const TARGET_SCOPE_CARDS = new Set(["shockwave", "provoke"]);
 

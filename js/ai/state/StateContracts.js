@@ -17,18 +17,18 @@ AiController、ResponseBoundary、测试与搜索调用方。
 架构约束
 createInitialSearchState 只做 SearchState 正式组合入口，不得另存一份投影或概率逻辑。
 */
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
-import { getSkillCost } from "../../domain/rules/skill/SkillRules.js?build=20260817-architecture-closure-final";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { getSkillCost } from "../../domain/rules/skill/SkillRules.js?build=20260818-skill-rules-locality-refactor";
 import {
   getAttackLimitFromRules,
   getTeamRules,
   getTurnEnergyBreakdownFromRules
-} from "../../domain/rules/team/TeamRules.js?build=20260817-architecture-closure-final";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260817-architecture-closure-final";
-import { createBeliefState } from "./BeliefState.js?build=20260817-architecture-closure-final";
-import { createKnowledgeState } from "./Knowledge.js?build=20260817-architecture-closure-final";
-import { createSearchState } from "./SearchState.js?build=20260817-architecture-closure-final";
-import { createVisibleState } from "./VisibleState.js?build=20260817-architecture-closure-final";
+} from "../../domain/rules/team/TeamRules.js?build=20260818-skill-rules-locality-refactor";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260818-skill-rules-locality-refactor";
+import { createBeliefState } from "./BeliefState.js?build=20260818-skill-rules-locality-refactor";
+import { createKnowledgeState } from "./Knowledge.js?build=20260818-skill-rules-locality-refactor";
+import { createSearchState } from "./SearchState.js?build=20260818-skill-rules-locality-refactor";
+import { createVisibleState } from "./VisibleState.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

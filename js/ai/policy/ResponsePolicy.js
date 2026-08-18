@@ -17,9 +17,9 @@ value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query�
 架构约束
 不执行规则、不依赖 Planner/Controller/UI，不 import 或构造 具体 Simulator。
 */
-import { getBaseCardAiValue } from "../value/CardValue.js?build=20260817-architecture-closure-final";
-import { cardAvailability } from "../value/CardValue.js?build=20260817-architecture-closure-final";
-import { HP_VALUE } from "../value/Economics.js?build=20260817-architecture-closure-final";
+import { getBaseCardAiValue } from "../value/CardValue.js?build=20260818-skill-rules-locality-refactor";
+import { cardAvailability } from "../value/CardValue.js?build=20260818-skill-rules-locality-refactor";
+import { HP_VALUE } from "../value/Economics.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

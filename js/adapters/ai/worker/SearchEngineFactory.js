@@ -17,29 +17,29 @@ AI value/policy/simulation/search modules 与 Domain Definitions/Rules。
 架构约束
 不得 import composition、application、UI/Audio/DOM 或 Domain transitions；不得使用 Math.random。
 */
-import { getMaxEnergy, getTurnEnergyBreakdown } from "../../../domain/rules/team/TeamRules.js?build=20260817-architecture-closure-final";
-import { sampleHiddenWorlds } from "../../../ai/state/BeliefState.js?build=20260817-architecture-closure-final";
-import { Evaluator } from "../../../ai/value/Evaluator.js?build=20260817-architecture-closure-final";
-import { StateValue } from "../../../ai/value/StateValue.js?build=20260817-architecture-closure-final";
-import { ValueLedger } from "../../../ai/value/ValueLedger.js?build=20260817-architecture-closure-final";
-import { ValueService } from "../../../ai/value/ValueService.js?build=20260817-architecture-closure-final";
-import { ValueSimulationQuery } from "../../../ai/simulation/ValueSimulationQuery.js?build=20260817-architecture-closure-final";
-import { Simulator } from "../../../ai/simulation/Simulator.js?build=20260817-architecture-closure-final";
-import { ActionCandidatePolicy } from "../../../ai/policy/ActionCandidatePolicy.js?build=20260817-architecture-closure-final";
-import { TransferPolicy } from "../../../ai/policy/TransferPolicy.js?build=20260817-architecture-closure-final";
-import { ActionGenerator } from "../../../ai/search/ActionGenerator.js?build=20260817-architecture-closure-final";
-import { CandidateMaterializer } from "../../../ai/search/CandidateMaterializer.js?build=20260817-architecture-closure-final";
-import { CounterfactualTerms } from "../../../ai/search/CounterfactualTerms.js?build=20260817-architecture-closure-final";
-import { FrontierValue } from "../../../ai/search/FrontierValue.js?build=20260817-architecture-closure-final";
-import { Planner } from "../../../ai/search/Planner.js?build=20260817-architecture-closure-final";
-import { SearchBudget } from "../../../ai/search/SearchBudget.js?build=20260817-architecture-closure-final";
-import { SearchPolicy } from "../../../ai/search/SearchPolicy.js?build=20260817-architecture-closure-final";
-import { SearchPrior } from "../../../ai/search/SearchPrior.js?build=20260817-architecture-closure-final";
-import { SiblingTransitionTerms } from "../../../ai/search/SiblingTransitionTerms.js?build=20260817-architecture-closure-final";
-import { tacticResolutionScale } from "../../../ai/search/TacticResolutionQuery.js?build=20260817-architecture-closure-final";
-import { TransitionValue } from "../../../ai/search/TransitionValue.js?build=20260817-architecture-closure-final";
-import { ActionDescriptor } from "../../../ai/search/ActionDescriptor.js?build=20260817-architecture-closure-final";
-import { SearchRng } from "../../../ai/search/SearchRng.js?build=20260817-architecture-closure-final";
+import { getMaxEnergy, getTurnEnergyBreakdown } from "../../../domain/rules/team/TeamRules.js?build=20260818-skill-rules-locality-refactor";
+import { sampleHiddenWorlds } from "../../../ai/state/BeliefState.js?build=20260818-skill-rules-locality-refactor";
+import { Evaluator } from "../../../ai/value/Evaluator.js?build=20260818-skill-rules-locality-refactor";
+import { StateValue } from "../../../ai/value/StateValue.js?build=20260818-skill-rules-locality-refactor";
+import { ValueLedger } from "../../../ai/value/ValueLedger.js?build=20260818-skill-rules-locality-refactor";
+import { ValueService } from "../../../ai/value/ValueService.js?build=20260818-skill-rules-locality-refactor";
+import { ValueSimulationQuery } from "../../../ai/simulation/ValueSimulationQuery.js?build=20260818-skill-rules-locality-refactor";
+import { Simulator } from "../../../ai/simulation/Simulator.js?build=20260818-skill-rules-locality-refactor";
+import { ActionCandidatePolicy } from "../../../ai/policy/ActionCandidatePolicy.js?build=20260818-skill-rules-locality-refactor";
+import { TransferPolicy } from "../../../ai/policy/TransferPolicy.js?build=20260818-skill-rules-locality-refactor";
+import { ActionGenerator } from "../../../ai/search/ActionGenerator.js?build=20260818-skill-rules-locality-refactor";
+import { CandidateMaterializer } from "../../../ai/search/CandidateMaterializer.js?build=20260818-skill-rules-locality-refactor";
+import { CounterfactualTerms } from "../../../ai/search/CounterfactualTerms.js?build=20260818-skill-rules-locality-refactor";
+import { FrontierValue } from "../../../ai/search/FrontierValue.js?build=20260818-skill-rules-locality-refactor";
+import { Planner } from "../../../ai/search/Planner.js?build=20260818-skill-rules-locality-refactor";
+import { SearchBudget } from "../../../ai/search/SearchBudget.js?build=20260818-skill-rules-locality-refactor";
+import { SearchPolicy } from "../../../ai/search/SearchPolicy.js?build=20260818-skill-rules-locality-refactor";
+import { SearchPrior } from "../../../ai/search/SearchPrior.js?build=20260818-skill-rules-locality-refactor";
+import { SiblingTransitionTerms } from "../../../ai/search/SiblingTransitionTerms.js?build=20260818-skill-rules-locality-refactor";
+import { tacticResolutionScale } from "../../../ai/search/TacticResolutionQuery.js?build=20260818-skill-rules-locality-refactor";
+import { TransitionValue } from "../../../ai/search/TransitionValue.js?build=20260818-skill-rules-locality-refactor";
+import { ActionDescriptor } from "../../../ai/search/ActionDescriptor.js?build=20260818-skill-rules-locality-refactor";
+import { SearchRng } from "../../../ai/search/SearchRng.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

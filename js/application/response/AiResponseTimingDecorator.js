@@ -17,7 +17,7 @@ adapters/ai/AiChoiceAdapter 的纯决策结果。
 架构约束
 不得依赖 concrete UI/AI、Game runtime、DOM 或 EventDispatcher。
 */
-import { createChoiceResult } from "../ports/ChoicePort.js?build=20260817-architecture-closure-final";
+import { createChoiceResult } from "../ports/ChoicePort.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

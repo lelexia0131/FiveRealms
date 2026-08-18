@@ -17,16 +17,16 @@ Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
 架构约束
 真实状态与监听顺序以 StatusResolutionWorkflow、JudgmentWorkflow 和 Application triggers 为权威；不拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260817-architecture-closure-final";
-import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260817-architecture-closure-final";
-import { interpretDefenseJudgment } from "../../domain/rules/judgment/JudgmentRules.js?build=20260817-architecture-closure-final";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260817-architecture-closure-final";
-import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260817-architecture-closure-final";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { interpretDefenseJudgment } from "../../domain/rules/judgment/JudgmentRules.js?build=20260818-skill-rules-locality-refactor";
+import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js?build=20260818-skill-rules-locality-refactor";
+import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js?build=20260818-skill-rules-locality-refactor";
 import {
   RADAR_BASIC_DEFINITIONS,
   buildRadarJudgmentProbabilities
-} from "../domain/RadarModel.js?build=20260817-architecture-closure-final";
-import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260817-architecture-closure-final";
+} from "../domain/RadarModel.js?build=20260818-skill-rules-locality-refactor";
+import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260818-skill-rules-locality-refactor";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -37,12 +37,12 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260817-architecture-closure-final";
+} from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
 import {
   clampProbability,
   remainingCardDensity,
   unionProbability
-} from "./SimulationSupport.js?build=20260817-architecture-closure-final";
+} from "./SimulationSupport.js?build=20260818-skill-rules-locality-refactor";
 
 /*
 功能

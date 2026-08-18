@@ -1,5 +1,5 @@
 /** AI 展示节奏；与 search compute、真实游戏 RNG、AI search RNG 完全分离。 */
-import { RUNTIME_POLICY } from "../application/policy/RuntimePolicy.js?build=20260817-architecture-closure-final";
+import { RUNTIME_POLICY } from "../application/policy/RuntimePolicy.js?build=20260818-skill-rules-locality-refactor";
 
 const RANGES = Object.freeze({
   initial: ["aiInitialThinkMinMs", "aiInitialThinkMaxMs"],
