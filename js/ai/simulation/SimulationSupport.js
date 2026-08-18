@@ -17,8 +17,8 @@ Domain Card/Ruleset Definitions。
 架构约束
 不得包含规则执行、策略、价值或组件调度。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260818-skill-rules-locality-refactor";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 
 const DECK_COMPOSITION = RULESET_DEFINITION.deckComposition;
 const TOTAL_CARD_COUNT = Object.values(DECK_COMPOSITION)

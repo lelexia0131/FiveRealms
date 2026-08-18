@@ -21,7 +21,7 @@ import {
   PROBABILITY_EPSILON,
   getAvailabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
+} from "../state/Probability.js";
 
 export class ActionCandidatePolicy {
   /*

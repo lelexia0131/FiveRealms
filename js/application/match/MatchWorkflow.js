@@ -17,15 +17,15 @@ pre-live setup 字段经显式 one-shot collaborator 写入；live Domain 字段
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、Planner 或 concrete adapters。
 */
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260818-skill-rules-locality-refactor";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 import {
   getInitialHandCount, getMaxEnergy, getTeamSize, getWinningTeam
-} from "../../domain/rules/team/TeamRules.js?build=20260818-skill-rules-locality-refactor";
-import { createRoundUsageState, createTurnUsageState } from "../../domain/rules/turn/TurnRules.js?build=20260818-skill-rules-locality-refactor";
-import { setCurrentPlayerIndex, setGameOver, setMatchPhase, setWinnerTeam } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { applyCharacterDefinition } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { createGameOverFact, createGameStartFact } from "../../domain/events/MatchEvents.js?build=20260818-skill-rules-locality-refactor";
+} from "../../domain/rules/team/TeamRules.js";
+import { createRoundUsageState, createTurnUsageState } from "../../domain/rules/turn/TurnRules.js";
+import { setCurrentPlayerIndex, setGameOver, setMatchPhase, setWinnerTeam } from "../../domain/state/transitions/MatchStateTransitions.js";
+import { applyCharacterDefinition } from "../../domain/state/transitions/PlayerStateTransitions.js";
+import { resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js";
+import { createGameOverFact, createGameStartFact } from "../../domain/events/MatchEvents.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "createId", "createPlayer", "assignTeams",

@@ -17,15 +17,15 @@ Domain TeamRules/TurnRules/transitions、Application Action/Combat/Response 能�
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、Planner、SearchState 或 concrete adapters。
 */
-import { getDrawCountFromRules, getTeamRules, getTurnEnergyBreakdownFromRules } from "../../domain/rules/team/TeamRules.js?build=20260818-skill-rules-locality-refactor";
+import { getDrawCountFromRules, getTeamRules, getTurnEnergyBreakdownFromRules } from "../../domain/rules/team/TeamRules.js";
 import {
   calculateNextActorIndex, createGlobalTurnReactiveState, createRoundUsageState,
   createTurnUsageState, shouldSkipActionPhase
-} from "../../domain/rules/turn/TurnRules.js?build=20260818-skill-rules-locality-refactor";
-import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js?build=20260818-skill-rules-locality-refactor";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260818-skill-rules-locality-refactor";
-import { setCurrentPlayerIndex, setCurrentRound, setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260818-skill-rules-locality-refactor";
+} from "../../domain/rules/turn/TurnRules.js";
+import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js";
+import { setCurrentPlayerIndex, setCurrentRound, setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js";
+import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics", "runTurn",

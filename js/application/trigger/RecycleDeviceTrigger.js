@@ -17,9 +17,9 @@ usage 经 RuleUsageTransition；不写其它 Domain state。
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime 或 concrete adapters。
 */
-import { canTriggerRecycleDevice } from "../../domain/rules/card/RecycleDeviceRules.js?build=20260818-skill-rules-locality-refactor";
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { setRecycleDeviceUses } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { canTriggerRecycleDevice } from "../../domain/rules/card/RecycleDeviceRules.js";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { setRecycleDeviceUses } from "../../domain/state/transitions/RuleUsageTransitions.js";
 
 const REQUIRED_DEPENDENCIES = ["onEvent", "getState", "isSessionValid", "presentation", "drawCards"];
 

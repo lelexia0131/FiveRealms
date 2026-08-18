@@ -17,8 +17,8 @@ RULESET_DEFINITION 与 CARD_DEFINITIONS 。
 架构约束
 不得依赖 application/adapters/Game runtime；不得随机；不得迁移 match setup。
 */
-import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260818-skill-rules-locality-refactor";
-import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js";
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js";
 
 /*
 功能

@@ -58,7 +58,7 @@ npm test
 - 卡牌及技能结算；
 - AI 合法性、评分和模拟；
 - 阵亡、濒死、救援与清理；
-- 浏览器模块统一 `?build=` 标识；
+- 浏览器本地资源 URL 稳定且由 no-cache 开发服务器提供；
 - 其他已有回归测试。
 
 修改业务代码后，应先运行与改动直接相关的定点测试，再运行完整测试。
@@ -460,7 +460,7 @@ git diff --check
 
 如果修改可能影响 Balance：按现有 Balance 章节运行对应测试。
 
-如果修改浏览器资源：执行统一 build 测试。
+如果修改浏览器资源：执行 canonical no-cache server smoke test 和资源 guard。
 
 纯测试结构整理，至少：
 
@@ -476,7 +476,7 @@ git status --short
 
 确认最终修改文件符合白名单。
 
-### 3.13 build 规则
+### 3.13 浏览器资源缓存规则
 
 仅修改：
 
@@ -486,7 +486,7 @@ AGENTS.md
 test.md
 ```
 
-等浏览器不会加载的文件：不需要更新 `?build=`。
+等浏览器不会加载的文件：不需要运行浏览器资源 smoke test。
 
 如果同时修改浏览器实际加载的：
 
@@ -495,7 +495,7 @@ test.md
 - JS
 - ES Module
 
-则必须更新统一 build。
+则必须确认本地资源 URL 不带 `?build=`，并运行 `py tests/dev_server_test.py` 验证 `tools/dev-server.py` 返回 `Cache-Control: no-store`。
 
 ### 3.14 临时脚本规则
 
@@ -970,7 +970,7 @@ Balance 报告提供的是统计证据，不等于直接证明某个规则或 AI
 7. 进行浏览器人工验证；
 8. 用户确认后手动提交 Git。
 
-自动测试通过不能代替浏览器人工验证。特别是 HTML、CSS、JS 或 ES Module 修改后，还必须确认浏览器实际加载了统一的新 `?build=` 资源图。
+自动测试通过不能代替浏览器人工验证。特别是 HTML、CSS、JS 或 ES Module 修改后，还必须确认浏览器通过 no-cache 开发服务器重新请求稳定 URL 的资源。
 
 ---
 

@@ -2,8 +2,8 @@
  * 隐藏实体牌令牌 adapter。Application 拥有 token/session authority；
  * 本文件只把真实 Player/Card entity 适配为 application/choice data-only store。
  */
-import { createId } from "../../utils/helpers.js?build=20260818-skill-rules-locality-refactor";
-import { createHiddenCardSelectionStore } from "../../application/choice/HiddenCardSelectionStore.js?build=20260818-skill-rules-locality-refactor";
+import { createId } from "../../utils/helpers.js";
+import { createHiddenCardSelectionStore } from "../../application/choice/HiddenCardSelectionStore.js";
 
 export class HiddenCardSelectionAdapter {
   /*

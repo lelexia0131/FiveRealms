@@ -11,44 +11,44 @@ import { PHASE_PRESENTATION as PHASE_NAMES, TEAM_PRESENTATION as TEAM_CONFIG } f
 import { CARD_PRESENTATION, presentCard } from "../js/adapters/ui/CardPresentationDefinitions.js";
 import { CHARACTER_PRESENTATION, presentCharacter } from "../js/adapters/ui/CharacterPresentationDefinitions.js";
 import { getCharacterRoleTags } from "../js/ai/policy/CharacterRoleMetadata.js";
-import { CARD_DEFINITIONS } from "../js/domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { CHARACTER_BY_ID, CHARACTER_DEFINITIONS } from "../js/domain/definitions/characters/CharacterDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { STATUS_DEFINITIONS } from "../js/domain/definitions/statuses/StatusDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { RULESET_DEFINITION } from "../js/domain/definitions/ruleset/RulesetDefinition.js?build=20260818-skill-rules-locality-refactor";
-import { createMatchState } from "../js/domain/state/model/MatchState.js?build=20260818-skill-rules-locality-refactor";
-import { createPlayerState } from "../js/domain/state/model/PlayerState.js?build=20260818-skill-rules-locality-refactor";
-import { createDeckZoneState } from "../js/domain/state/model/ZoneState.js?build=20260818-skill-rules-locality-refactor";
-import { createStateView } from "../js/domain/state/queries/StateView.js?build=20260818-skill-rules-locality-refactor";
-import { createRuleStateView } from "../js/domain/state/queries/RuleStateView.js?build=20260818-skill-rules-locality-refactor";
-import { assertCanonicalSeatRoster, isCanonicalSeatRoster } from "../js/domain/state/queries/SeatRosterContract.js?build=20260818-skill-rules-locality-refactor";
-import { createChoicePort, createChoiceResult, normalizeChoiceResult } from "../js/application/ports/ChoicePort.js?build=20260818-skill-rules-locality-refactor";
-import { createRandomPort } from "../js/application/ports/RandomPort.js?build=20260818-skill-rules-locality-refactor";
-import { createDiagnosticsPort } from "../js/application/ports/DiagnosticsPort.js?build=20260818-skill-rules-locality-refactor";
-import { createPresentationPort } from "../js/application/ports/PresentationPort.js?build=20260818-skill-rules-locality-refactor";
-import { createChoiceCoordinator } from "../js/application/choice/ChoiceCoordinator.js?build=20260818-skill-rules-locality-refactor";
-import { createResponseChoiceRequest } from "../js/application/choice/ResponseChoiceRequest.js?build=20260818-skill-rules-locality-refactor";
-import { createPublicCardChoiceRequest } from "../js/application/choice/PublicCardChoiceRequest.js?build=20260818-skill-rules-locality-refactor";
-import { createHiddenCardSelectionStore } from "../js/application/choice/HiddenCardSelectionStore.js?build=20260818-skill-rules-locality-refactor";
-import { createUiChoiceAdapter } from "../js/adapters/ui/UiChoiceAdapter.js?build=20260818-skill-rules-locality-refactor";
-import { createAiChoiceAdapter } from "../js/adapters/ai/AiChoiceAdapter.js?build=20260818-skill-rules-locality-refactor";
-import { createAiResponseTimingDecorator } from "../js/application/response/AiResponseTimingDecorator.js?build=20260818-skill-rules-locality-refactor";
-import { calculateDamageResult, calculateHealAmount, isDying, isKillRewardEligible } from "../js/domain/rules/combat/CombatRules.js?build=20260818-skill-rules-locality-refactor";
-import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/distance/DistanceRules.js?build=20260818-skill-rules-locality-refactor";
-import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome, interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js?build=20260818-skill-rules-locality-refactor";
-import { getCounterResponderOrder, getDyingRescueResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js?build=20260818-skill-rules-locality-refactor";
-import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, isHuntMarkSourceExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js?build=20260818-skill-rules-locality-refactor";
-import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, getTurnEnergyBreakdownFromRules, getTurnEnergyGainFromRules, getWinningTeam, isSmallTeam } from "../js/domain/rules/team/TeamRules.js?build=20260818-skill-rules-locality-refactor";
-import { calculateNextActorIndex, createAttackUsage, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js?build=20260818-skill-rules-locality-refactor";
-import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js?build=20260818-skill-rules-locality-refactor";
-import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js?build=20260818-skill-rules-locality-refactor";
-import { changeEnergy as transitionChangeEnergy, changeHp as transitionChangeHp, setHp as transitionSetHp, changeShield as transitionChangeShield } from "../js/domain/state/transitions/ResourceTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { setStatus as transitionSetStatus, removeStatus as transitionRemoveStatus, clearStatuses as transitionClearStatuses } from "../js/domain/state/transitions/StatusTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { appendCardToZone as transitionAppendCardToZone, removeCardFromZone as transitionRemoveCardFromZone, moveCardBetweenZones as transitionMoveCardBetweenZones } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { moveCardsAtomically as transitionMoveCardsAtomically } from "../js/domain/state/transitions/ZoneTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { resetGlobalTurnReactiveFlags as transitionResetGlobalTurnReactiveFlags, resetRoundFlags as transitionResetRoundFlags, resetTurnFlags as transitionResetTurnFlags } from "../js/domain/state/transitions/RuleUsageTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { setCurrentPlayerIndex as transitionSetCurrentPlayerIndex, setCurrentRound as transitionSetCurrentRound, setMatchPhase as transitionSetMatchPhase, setWinnerTeam as transitionSetWinnerTeam, setGameOver as transitionSetGameOver, setPublicCardPool as transitionSetPublicCardPool } from "../js/domain/state/transitions/MatchStateTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { applyCharacterDefinition as transitionApplyCharacterDefinition, bumpHandVersion as transitionBumpHandVersion, setAlive as transitionSetAlive, setEquipment as transitionSetEquipment } from "../js/domain/state/transitions/PlayerStateTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { CARD_DEFINITIONS } from "../js/domain/definitions/cards/CardDefinitions.js";
+import { CHARACTER_BY_ID, CHARACTER_DEFINITIONS } from "../js/domain/definitions/characters/CharacterDefinitions.js";
+import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js";
+import { STATUS_DEFINITIONS } from "../js/domain/definitions/statuses/StatusDefinitions.js";
+import { RULESET_DEFINITION } from "../js/domain/definitions/ruleset/RulesetDefinition.js";
+import { createMatchState } from "../js/domain/state/model/MatchState.js";
+import { createPlayerState } from "../js/domain/state/model/PlayerState.js";
+import { createDeckZoneState } from "../js/domain/state/model/ZoneState.js";
+import { createStateView } from "../js/domain/state/queries/StateView.js";
+import { createRuleStateView } from "../js/domain/state/queries/RuleStateView.js";
+import { assertCanonicalSeatRoster, isCanonicalSeatRoster } from "../js/domain/state/queries/SeatRosterContract.js";
+import { createChoicePort, createChoiceResult, normalizeChoiceResult } from "../js/application/ports/ChoicePort.js";
+import { createRandomPort } from "../js/application/ports/RandomPort.js";
+import { createDiagnosticsPort } from "../js/application/ports/DiagnosticsPort.js";
+import { createPresentationPort } from "../js/application/ports/PresentationPort.js";
+import { createChoiceCoordinator } from "../js/application/choice/ChoiceCoordinator.js";
+import { createResponseChoiceRequest } from "../js/application/choice/ResponseChoiceRequest.js";
+import { createPublicCardChoiceRequest } from "../js/application/choice/PublicCardChoiceRequest.js";
+import { createHiddenCardSelectionStore } from "../js/application/choice/HiddenCardSelectionStore.js";
+import { createUiChoiceAdapter } from "../js/adapters/ui/UiChoiceAdapter.js";
+import { createAiChoiceAdapter } from "../js/adapters/ai/AiChoiceAdapter.js";
+import { createAiResponseTimingDecorator } from "../js/application/response/AiResponseTimingDecorator.js";
+import { calculateDamageResult, calculateHealAmount, isDying, isKillRewardEligible } from "../js/domain/rules/combat/CombatRules.js";
+import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/distance/DistanceRules.js";
+import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome, interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js";
+import { getCounterResponderOrder, getDyingRescueResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js";
+import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, isHuntMarkSourceExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js";
+import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, getTurnEnergyBreakdownFromRules, getTurnEnergyGainFromRules, getWinningTeam, isSmallTeam } from "../js/domain/rules/team/TeamRules.js";
+import { calculateNextActorIndex, createAttackUsage, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js";
+import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js";
+import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js";
+import { changeEnergy as transitionChangeEnergy, changeHp as transitionChangeHp, setHp as transitionSetHp, changeShield as transitionChangeShield } from "../js/domain/state/transitions/ResourceTransitions.js";
+import { setStatus as transitionSetStatus, removeStatus as transitionRemoveStatus, clearStatuses as transitionClearStatuses } from "../js/domain/state/transitions/StatusTransitions.js";
+import { appendCardToZone as transitionAppendCardToZone, removeCardFromZone as transitionRemoveCardFromZone, moveCardBetweenZones as transitionMoveCardBetweenZones } from "../js/domain/state/transitions/ZoneTransitions.js";
+import { moveCardsAtomically as transitionMoveCardsAtomically } from "../js/domain/state/transitions/ZoneTransitions.js";
+import { resetGlobalTurnReactiveFlags as transitionResetGlobalTurnReactiveFlags, resetRoundFlags as transitionResetRoundFlags, resetTurnFlags as transitionResetTurnFlags } from "../js/domain/state/transitions/RuleUsageTransitions.js";
+import { setCurrentPlayerIndex as transitionSetCurrentPlayerIndex, setCurrentRound as transitionSetCurrentRound, setMatchPhase as transitionSetMatchPhase, setWinnerTeam as transitionSetWinnerTeam, setGameOver as transitionSetGameOver, setPublicCardPool as transitionSetPublicCardPool } from "../js/domain/state/transitions/MatchStateTransitions.js";
+import { applyCharacterDefinition as transitionApplyCharacterDefinition, bumpHandVersion as transitionBumpHandVersion, setAlive as transitionSetAlive, setEquipment as transitionSetEquipment } from "../js/domain/state/transitions/PlayerStateTransitions.js";
 import { createGameApplication } from "../js/composition/createGameApplication.js";
 import { Player } from "../js/application/match/Player.js";
 import { Deck } from "../js/application/match/Deck.js";
@@ -64,7 +64,7 @@ import {
   joinProbabilityStateBranches as joinStateProbabilityBranches,
   totalBranchProbability
 } from "../js/ai/state/Probability.js";
-import { Simulator } from "../js/ai/simulation/Simulator.js?build=20260818-skill-rules-locality-refactor";
+import { Simulator } from "../js/ai/simulation/Simulator.js";
 import { Planner } from "../js/ai/search/Planner.js";
 import { SearchBudget } from "../js/ai/search/SearchBudget.js";
 import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
@@ -102,7 +102,7 @@ import {
 } from "../js/ui/templates.js";
 import { InteractionController, hiddenSelectionMarkup } from "../js/ui/InteractionController.js";
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
-import { PrivateRevealView } from "../js/ui/PrivateRevealView.js?build=20260818-skill-rules-locality-refactor";
+import { PrivateRevealView } from "../js/ui/PrivateRevealView.js";
 import { AnimationController, LIGHTNING_HIT_DURATION_MS } from "../js/ui/animationController.js";
 import { JudgmentView } from "../js/ui/JudgmentView.js";
 import {
@@ -114,26 +114,26 @@ import {
 import { PublicPoolView } from "../js/ui/PublicPoolView.js";
 import { isCardSelectionValid, toggleCardSelection } from "../js/ui/selectionUtils.js";
 import { buildResponsePresentation } from "../js/application/response/ResponsePresentation.js";
-import { RESPONSE_STATUS as WORKFLOW_RESPONSE_STATUS, createResponseWorkflowResult } from "../js/application/response/ResponseResult.js?build=20260818-skill-rules-locality-refactor";
-import { createResponseWorkflow } from "../js/application/response/ResponseWorkflow.js?build=20260818-skill-rules-locality-refactor";
-import { shouldForceAiSelfRescue, shouldShowResponseWindowWithoutCards } from "../js/application/response/ParticipantPolicy.js?build=20260818-skill-rules-locality-refactor";
-import { createCombatWorkflow } from "../js/application/combat/CombatWorkflow.js?build=20260818-skill-rules-locality-refactor";
-import { createDyingWorkflow } from "../js/application/combat/DyingWorkflow.js?build=20260818-skill-rules-locality-refactor";
-import { createJudgmentWorkflow } from "../js/application/judgment/JudgmentWorkflow.js?build=20260818-skill-rules-locality-refactor";
-import { createStatusResolutionWorkflow } from "../js/application/judgment/StatusResolutionWorkflow.js?build=20260818-skill-rules-locality-refactor";
-import { createMatchWorkflow } from "../js/application/match/MatchWorkflow.js?build=20260818-skill-rules-locality-refactor";
-import { createTurnWorkflow } from "../js/application/turn/TurnWorkflow.js?build=20260818-skill-rules-locality-refactor";
-import { createActionWorkflow } from "../js/application/action/ActionWorkflow.js?build=20260818-skill-rules-locality-refactor";
-import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoiceRequest.js?build=20260818-skill-rules-locality-refactor";
-import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js?build=20260818-skill-rules-locality-refactor";
-import { canActuallyUseAssault as canActuallyUseAssaultRule, canPlayCard as canPlayCardRule, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds, getTransferableHandCount, getTransferSourceIds, hasHandOrEquipmentFacts } from "../js/domain/rules/card/CardRules.js?build=20260818-skill-rules-locality-refactor";
-import { canTriggerRecycleDevice } from "../js/domain/rules/card/RecycleDeviceRules.js?build=20260818-skill-rules-locality-refactor";
-import { canUseSkillBase, getSkillTargetIds } from "../js/domain/rules/skill/SkillRules.js?build=20260818-skill-rules-locality-refactor";
-import { createCardIntentRuntime } from "../js/application/action/CardIntentRuntime.js?build=20260818-skill-rules-locality-refactor";
-import { createRecycleDeviceTrigger } from "../js/application/trigger/RecycleDeviceTrigger.js?build=20260818-skill-rules-locality-refactor";
-import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js?build=20260818-skill-rules-locality-refactor";
-import { createGameOverFact, createGameStartFact } from "../js/domain/events/MatchEvents.js?build=20260818-skill-rules-locality-refactor";
-import { canTriggerMomentumCategory, canTriggerRejuvenation, shouldConsumeMomentum } from "../js/domain/rules/skill/PassiveSkillRules.js?build=20260818-skill-rules-locality-refactor";
+import { RESPONSE_STATUS as WORKFLOW_RESPONSE_STATUS, createResponseWorkflowResult } from "../js/application/response/ResponseResult.js";
+import { createResponseWorkflow } from "../js/application/response/ResponseWorkflow.js";
+import { shouldForceAiSelfRescue, shouldShowResponseWindowWithoutCards } from "../js/application/response/ParticipantPolicy.js";
+import { createCombatWorkflow } from "../js/application/combat/CombatWorkflow.js";
+import { createDyingWorkflow } from "../js/application/combat/DyingWorkflow.js";
+import { createJudgmentWorkflow } from "../js/application/judgment/JudgmentWorkflow.js";
+import { createStatusResolutionWorkflow } from "../js/application/judgment/StatusResolutionWorkflow.js";
+import { createMatchWorkflow } from "../js/application/match/MatchWorkflow.js";
+import { createTurnWorkflow } from "../js/application/turn/TurnWorkflow.js";
+import { createActionWorkflow } from "../js/application/action/ActionWorkflow.js";
+import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoiceRequest.js";
+import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js";
+import { canActuallyUseAssault as canActuallyUseAssaultRule, canPlayCard as canPlayCardRule, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds, getTransferableHandCount, getTransferSourceIds, hasHandOrEquipmentFacts } from "../js/domain/rules/card/CardRules.js";
+import { canTriggerRecycleDevice } from "../js/domain/rules/card/RecycleDeviceRules.js";
+import { canUseSkillBase, getSkillTargetIds } from "../js/domain/rules/skill/SkillRules.js";
+import { createCardIntentRuntime } from "../js/application/action/CardIntentRuntime.js";
+import { createRecycleDeviceTrigger } from "../js/application/trigger/RecycleDeviceTrigger.js";
+import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js";
+import { createGameOverFact, createGameStartFact } from "../js/domain/events/MatchEvents.js";
+import { canTriggerMomentumCategory, canTriggerRejuvenation, shouldConsumeMomentum } from "../js/domain/rules/skill/PassiveSkillRules.js";
 import { canUseActiveSkill, getActiveSkill, getActiveSkillCost } from "../js/application/action/SkillRuntime.js";
 import {
   describeAction as describeBenchmarkAction,
@@ -1146,15 +1146,14 @@ test("音频：unlock 后台预加载 lightning 且不阻塞其它声音", async
   });
 });
 
-test("音频：lightning 资源 URL 带统一 build 且文件存在", async () => {
+test("音频：lightning 资源使用稳定本地 URL 且文件存在", async () => {
   const [soundSource, index] = await Promise.all([
     readFile(projectFile("js/audio/SoundManager.js"), "utf8"),
     readFile(projectFile("index.html"), "utf8")
   ]);
-  const build = index.match(/src="\.\/js\/main\.js\?build=([^"]+)"/)?.[1];
-  assert.ok(build, "index.html 应声明统一 build");
-  assert.ok(soundSource.includes(`lightning.wav?build=${build}`), "音频 URL 应带当前 build");
-  assert.ok(soundSource.includes(`../utils/debug.js?build=${build}`), "新 import 应带当前 build");
+  assert.match(index, /src="\.\/js\/main\.js"/);
+  assert.match(soundSource, /lightning\.wav/);
+  assert.doesNotMatch(soundSource, /\?build=/);
   await access(projectFile("assets/audio/lightning.wav"));
 });
 
@@ -1253,24 +1252,21 @@ test("BGM：重新征召时按新局真人阵营切换主题", () => {
   assert.deepEqual(themes, ["dawn", "dusk"]);
 });
 
-// ---- 浏览器构建一致性 ----
+// ---- 浏览器资源 URL ----
 
-test("构建一致性：浏览器模块图全部资源使用统一构建版本", async () => {
+test("浏览器资源：本地模块与样式 URL 不使用 cache-busting query", async () => {
   const index = await readFile(projectFile("index.html"), "utf8");
-  const entry = index.match(/src="\.\/js\/main\.js\?build=([^"]+)"/);
-  assert.ok(entry, "入口模块缺少 build 查询参数");
-  const expectedBuild = entry[1];
-  const stylesheetBuilds = [
-    ...index.matchAll(/href="\.\/css\/[^"]+\.css\?build=([^"]+)"/g)
-  ].map((match) => match[1]);
-  assert.equal(stylesheetBuilds.length, 7, "所有样式表都必须带构建版本");
-  stylesheetBuilds.forEach((build) => assert.equal(build, expectedBuild));
+  assert.doesNotMatch(index, /(?:src|href)="\.\/(?:js|css)\/[^"']*\?build=/);
   for (const file of await listJavaScriptFiles()) {
     const source = await readFile(file, "utf8");
-    for (const match of source.matchAll(/(?:from\s+|import\s+)["'][^"']+\.js(?:\?build=([^"']+))?["']/g)) {
-      assert.equal(match[1], expectedBuild, `${file} 存在未版本化或版本不一致的模块依赖：${match[0]}`);
-    }
+    assert.doesNotMatch(source, /(?:from\s+|import\s*\()["'][^"']*\?build=/, `${file} 存在 cache-busting 模块依赖`);
   }
+});
+
+test("浏览器资源：一键启动器只复用 canonical no-store server", async () => {
+  const launcher = await readFile(projectFile("tools/launcher/start-fr.ps1"), "utf8");
+  assert.match(launcher, /tools\/dev-server\.py --host 127\.0\.0\.1 --port 8000/);
+  assert.match(launcher, /Headers\['Cache-Control'\][\s\S]*Contains\('no-store'\)/);
 });
 
 // ==================== 核心状态与基础规则 ====================
@@ -9341,7 +9337,7 @@ test("AI·架构：Simulation facade 与五个效果组件保持单向依赖和�
     );
   }
   assert.doesNotMatch(source.planner, /^import\s/m);
-  assert.match(source.valueQuery, /from "\.\/Simulator\.js\?build=/);
+  assert.match(source.valueQuery, /from "\.\/Simulator\.js/);
   assert.match(source.response, /consumeBlockResponseWorlds[\s\S]*consumeTargetCounterResponseWorlds/);
   assert.match(source.combat, /applyDamage[\s\S]*resolveFatal[\s\S]*healFrom/);
   assert.match(source.card, /applyCardEffect[\s\S]*takeResourceToHand[\s\S]*destroyResource/);
@@ -38298,7 +38294,7 @@ test("集成：控制器文件名：新模块可导入且仍导出 AIController"
 
 test("集成：控制器文件名：composition root 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  assert.match(source, /\.\.\/ai\/AiController\.js\?build=[^"']+/);
+  assert.match(source, /\.\.\/ai\/AiController\.js/);
   assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
 });
 
@@ -39244,7 +39240,7 @@ test("FR-ARCH-2·status authority：仅静态身份与文案，无生命周期",
 
 /*
 功能
-验证生产代码中所有 domain/definitions import 使用一致 build query，避免 ESM 双模块身份。
+验证生产代码中所有 domain/definitions import 使用稳定本地 URL，避免重新引入 cache-busting query。
 
 调用方
 当前测试。
@@ -39265,7 +39261,7 @@ js 全部生产 JS 源码。
 listJavaScriptFiles、readFile。
 
 边界与不变量
-domain definitions 自身无相对 import；所有外部消费必须带当前 build query。
+domain definitions 自身无相对 import；所有外部消费不得带 build query。
 */
 async function frArchDefinitionModuleIdentity() {
   const files = await listJavaScriptFiles(projectFile("js"));
@@ -39273,12 +39269,12 @@ async function frArchDefinitionModuleIdentity() {
     const source = await readFile(file, "utf8");
     for (const match of source.matchAll(/(?:from\s*|import\s*\()\s*["']([^"']*domain\/definitions[^"']*)["']/g)) {
       const specifier = match[1];
-      assert.match(specifier, /\?build=20260818-skill-rules-locality-refactor$/, `${file} -> ${specifier}`);
+      assert.doesNotMatch(specifier, /\?build=/, `${file} -> ${specifier}`);
     }
   }
 }
 
-test("FR-ARCH-2·module identity：domain definitions 消费统一 build query", frArchDefinitionModuleIdentity);
+test("FR-ARCH-2·module identity：domain definitions 消费稳定本地 URL", frArchDefinitionModuleIdentity);
 
 
 // ==================== FR-ARCH-3 Domain State Foundation Tests ====================
@@ -42900,7 +42896,7 @@ readFile、CardEffectRules getters。
 CardEffectRules 不得重新出现固定 literal getter。
 */
 async function frArch12CardFixedFactOwnership() {
-  const rules = await import("../js/domain/rules/card/CardEffectRules.js?build=20260818-skill-rules-locality-refactor");
+  const rules = await import("../js/domain/rules/card/CardEffectRules.js");
   assert.equal(rules.getAssaultBaseDamage(), DOMAIN_CARD_DEFINITIONS.assault.baseDamage);
   assert.equal(rules.getRecoverHealAmount(), DOMAIN_CARD_DEFINITIONS.recover.healAmount);
   assert.equal(rules.getChargeEnergyAmount(), DOMAIN_CARD_DEFINITIONS.charge.energyGain);
@@ -43020,7 +43016,7 @@ readFile、decideSkillEffect、decideAllInDrawCount、decideAllInEnterChance。
 SkillRules 不得复制固定 effect literal；AI 不得自行复制 allIn 公式。
 */
 async function frArch12SkillFixedFactOwnership() {
-  const rules = await import("../js/domain/rules/skill/SkillRules.js?build=20260818-skill-rules-locality-refactor");
+  const rules = await import("../js/domain/rules/skill/SkillRules.js");
   const source = { id:"s", energy:3, alive:true, battleTeam:"dawn", hp:3, maxHp:4, shield:0, handCount:1, equipmentDefinitionId:null };
   const assertDecision = (skill, fields) => {
     const decision = rules.decideSkillEffect(skill, source);
@@ -43072,8 +43068,8 @@ readFile。
 Human ally→enemy 仍合法；AI ally→enemy 仍被 AI policy 禁止。
 */
 async function frArch12TransferPolicySingleAuthority() {
-  const { isTransferDirectionAllowed } = await import("../js/ai/policy/TransferPolicy.js?build=20260818-skill-rules-locality-refactor");
-  const { isTransferExecutionAllowed } = await import("../js/adapters/ai/TransferExecutionPolicyAdapter.js?build=20260818-skill-rules-locality-refactor");
+  const { isTransferDirectionAllowed } = await import("../js/ai/policy/TransferPolicy.js");
+  const { isTransferExecutionAllowed } = await import("../js/adapters/ai/TransferExecutionPolicyAdapter.js");
   const actor = { id:"a", battleTeam:"dawn" };
   const ally = { id:"f", battleTeam:"dawn" };
   const ally2 = { id:"f2", battleTeam:"dawn" };
@@ -43157,9 +43153,9 @@ projectCanonicalSeatRoster、getRangeConditionBranches、Simulator.applyDamage/h
 概率分支总质量为一时 matches 与 Domain deterministic 结论一致。
 */
 async function frArch12DeterministicParityMatrix() {
-  const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/state/RuleProjection.js?build=20260818-skill-rules-locality-refactor");
-  const { getRangeConditionBranches } = await import("../js/ai/state/DistanceProbabilityBranches.js?build=20260818-skill-rules-locality-refactor");
-  const { nextLightningReceiverId: aiNextLightningReceiverId } = await import("../js/ai/domain/LightningModel.js?build=20260818-skill-rules-locality-refactor");
+  const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/state/RuleProjection.js");
+  const { getRangeConditionBranches } = await import("../js/ai/state/DistanceProbabilityBranches.js");
+  const { nextLightningReceiverId: aiNextLightningReceiverId } = await import("../js/ai/domain/LightningModel.js");
 
   const players = [
     { id:"p0", seatIndex:0, alive:true, battleTeam:"dawn", hp:5, maxHp:5, shield:1, energy:3, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:[] },
@@ -43275,9 +43271,9 @@ async function frArch13CarryInRosterAndRootArtifacts() {
   assert.match(checkerSource, /ACCIDENTAL_ROOT_ARTIFACTS/);
   assert.match(checkerSource, /accidentalRootArtifacts/);
 
-  const { projectCanonicalSeatRoster } = await import("../js/ai/state/RuleProjection.js?build=20260818-skill-rules-locality-refactor");
-  const { getCounterResponderOrder, getDyingRescueResponderOrder } = await import("../js/domain/rules/response/ResponseRules.js?build=20260818-skill-rules-locality-refactor");
-  const { nextLightningReceiverId } = await import("../js/domain/rules/status/StatusRules.js?build=20260818-skill-rules-locality-refactor");
+  const { projectCanonicalSeatRoster } = await import("../js/ai/state/RuleProjection.js");
+  const { getCounterResponderOrder, getDyingRescueResponderOrder } = await import("../js/domain/rules/response/ResponseRules.js");
+  const { nextLightningReceiverId } = await import("../js/domain/rules/status/StatusRules.js");
   const player = (id, seatIndex, alive = true) => ({
     id, seatIndex, alive, battleTeam: id === "d" ? "dusk" : "dawn",
     hp:4, maxHp:4, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:0,
@@ -43328,8 +43324,8 @@ createSearchRequest、searchRequestViolations、structuredClone。
 clone 前后语义相等；敌方真实 hand definition 不得进入 request。
 */
 async function frArch13SearchRequestContract() {
-  const { createSearchRequest, searchRequestViolations } = await import("../js/ai/search/SearchRequest.js?build=20260818-skill-rules-locality-refactor");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260818-skill-rules-locality-refactor");
+  const { createSearchRequest, searchRequestViolations } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const actor = makePlayer("sr-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("sr-enemy", 1, "dusk", "ai", 1);
   const secret = instance("harvest");
@@ -43387,10 +43383,10 @@ createSearchRequest、acceptSearchResult、bumpStateVersion。
 任一失败只能返回安全 end；合法 descriptor 必须在当前 Domain-legal set rebind。
 */
 async function frArch13StaleResultRejection() {
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260818-skill-rules-locality-refactor");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260818-skill-rules-locality-refactor");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260818-skill-rules-locality-refactor");
-  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260818-skill-rules-locality-refactor");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
+  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js");
   const actor = makePlayer("stale-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("stale-enemy", 1, "dusk", "ai", 1);
   const card = instance("assault");
@@ -43491,7 +43487,7 @@ bumpStateVersion。
 第一项执行后的 version 变化不得让第二项必然 stale；失效动作只返回 null，由 TurnWorkflow 清空 plan。
 */
 async function frArch13PlannedSequenceReuse() {
-  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js?build=20260818-skill-rules-locality-refactor");
+  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js");
   const actor = makePlayer("plan-actor", 0, "dawn", "ai", 2);
   const enemy = makePlayer("plan-enemy", 1, "dusk", "ai", 1);
   const charge = instance("charge");
@@ -43585,9 +43581,9 @@ createSearchRequest、acceptSearchResult。
 cancelled/invalid 只允许安全 end，不执行真实 Card/Player。
 */
 async function frArch13CancellationContract() {
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260818-skill-rules-locality-refactor");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260818-skill-rules-locality-refactor");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260818-skill-rules-locality-refactor");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
   const actor = makePlayer("cancel-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("cancel-enemy", 1, "dusk", "ai", 1);
   const card = instance("assault");
@@ -43649,7 +43645,7 @@ ActionDescriptor.describe、createSearchResult。
 end/card/skill/transfer/leverage descriptor 不再二次 describe。
 */
 async function frArch14SearchResultDescriptorIdempotence() {
-  const { createSearchResult } = await import("../js/ai/search/SearchResult.js?build=20260818-skill-rules-locality-refactor");
+  const { createSearchResult } = await import("../js/ai/search/SearchResult.js");
   const target = { id:"t" };
   const rawActions = [
     { type:"end" },
@@ -43705,7 +43701,7 @@ SearchRng.restore/commit/snapshot。
 restore 后 Worker 序列与 main 未消费序列一致；commit 后 next search 从 rngAfter 继续。
 */
 async function frArch14RngHandoff() {
-  const { SearchRng } = await import("../js/ai/search/SearchRng.js?build=20260818-skill-rules-locality-refactor");
+  const { SearchRng } = await import("../js/ai/search/SearchRng.js");
   const main = new SearchRng(42);
   main.next();
   const before = main.snapshot();
@@ -43749,7 +43745,7 @@ describeRootSearchAction、rehydrateRootSearchAction、ActionDescriptor.describe
 比较 descriptor、card/skill identity、target order、selection 与 energyCost；不比较实体引用。
 */
 async function frArch14RootActionRehydration() {
-  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260818-skill-rules-locality-refactor");
+  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const actor = makePlayer("root-actor", 0, "dawn", "ai", 2);
   const enemy = makePlayer("root-enemy", 1, "dusk", "ai", 1);
   const assault = instance("assault");
@@ -43799,11 +43795,11 @@ createSearchRequest、describeRootSearchAction、runSearchRequest、workerOutcom
 outcome 无真实实体/函数；Main Thread 仍负责 ACCEPTED 与 rebind。
 */
 async function frArch14RunSearchRequest() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260818-skill-rules-locality-refactor");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260818-skill-rules-locality-refactor");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260818-skill-rules-locality-refactor");
-  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260818-skill-rules-locality-refactor");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260818-skill-rules-locality-refactor");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
   const actor = makePlayer("run-actor", 0, "dawn", "ai", 2);
   const enemy = makePlayer("run-enemy", 1, "dusk", "ai", 1);
   actor.hand.push(instance("charge"), instance("assault"));
@@ -43864,7 +43860,7 @@ createSearchWorkerMessageHandler。
 一个 requestId 只产生一个 terminal result；unknown message 返回 ERROR。
 */
 async function frArch14WorkerProtocol() {
-  const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js?build=20260818-skill-rules-locality-refactor");
+  const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js");
   const messages = [];
   const handler = createSearchWorkerMessageHandler({ postMessage: (data) => messages.push(structuredClone(data)) });
   await handler.handleMessage({ type:"UNKNOWN" });
@@ -43875,9 +43871,9 @@ async function frArch14WorkerProtocol() {
   const { game } = makeGame([actor, enemy]);
   game.aiSearchNodeBudgetOverride = 2;
   const roots = game.aiController.getActionCandidates(actor);
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260818-skill-rules-locality-refactor");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260818-skill-rules-locality-refactor");
-  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260818-skill-rules-locality-refactor");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
   const request = createSearchRequest({
     requestId:"proto-1",
     gameId:game.state.gameId,
@@ -43927,9 +43923,9 @@ runSearchRequest、setInterval、clearInterval。
 不依赖 wall-clock 精确值；只证明搜索期间事件循环可运行。
 */
 async function frArch14MainThreadResponsiveness() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260818-skill-rules-locality-refactor");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260818-skill-rules-locality-refactor");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260818-skill-rules-locality-refactor");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const actor = makePlayer("heart-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("heart-enemy", 1, "dusk", "ai", 1);
   for (let index = 0; index < 60; index += 1) actor.hand.push(instance("exposeWeakness"));
@@ -43992,11 +43988,11 @@ makePlayer、makeGame、instance、createInitialSearchState、getActionCandidate
 Search 选择是否 end 不影响执行边界验证；执行使用显式 mutualBenefit root descriptor 的合法 rebind。
 */
 async function frArch14MutualBenefitRuntimeTrace() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260818-skill-rules-locality-refactor");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260818-skill-rules-locality-refactor");
-  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260818-skill-rules-locality-refactor");
-  const { createWorkerSearchOutcome, workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260818-skill-rules-locality-refactor");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260818-skill-rules-locality-refactor");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const { createWorkerSearchOutcome, workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
   const actor = makePlayer("mb-runtime-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("mb-runtime-enemy", 1, "dusk", "ai", 1);
   const benefit = instance("mutualBenefit");
@@ -44207,8 +44203,8 @@ createSearchWorkerClient、createSearchExecutor。
 不执行真实 search；只验证 browser transport 协议与 pending 生命周期。
 */
 async function frArch14WorkerClientTransport() {
-  const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js?build=20260818-skill-rules-locality-refactor");
-  const { createSearchExecutor } = await import("../js/adapters/ai/worker/createSearchExecutor.js?build=20260818-skill-rules-locality-refactor");
+  const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js");
+  const { createSearchExecutor } = await import("../js/adapters/ai/worker/createSearchExecutor.js");
   const instances = [];
   class FakeWorker {
     constructor(url, options) {
@@ -44258,7 +44254,7 @@ async function frArch14WorkerClientTransport() {
       workerError:null
     });
     const makeRequest = (requestId) => ({ requestId, gameId:"game-1", stateVersion:0, actorId:"actor-1", searchConfig:{ hardWatchdogMs:5000 } });
-    const client = createSearchWorkerClient("searchWorker.js?build=test");
+    const client = createSearchWorkerClient("searchWorker.js");
     assert.equal(instances.length, 1, "首个 production Worker 必须立即接线");
     const firstWorker = instances[0];
     assert.equal(firstWorker.listeners.get("message")?.length, 1);
@@ -44271,7 +44267,7 @@ async function frArch14WorkerClientTransport() {
     client.dispose();
     assert.equal(firstWorker.terminated, true);
 
-    const recoveryClient = createSearchWorkerClient("searchWorker.js?build=test");
+    const recoveryClient = createSearchWorkerClient("searchWorker.js");
     const recoveryWorker = instances[1];
     recoveryWorker.throwOnPost = true;
     await assert.rejects(recoveryClient.search(makeRequest("clone-fail")), /structuredClone failed/);
@@ -44337,9 +44333,9 @@ makeGame、instance、getActionCandidates、createInitialSearchState、createSea
 固定 node budget 保证双方同 stopReason；比较 action、计划序列、stats、RNG after 与 hidden samples。
 */
 async function frArch14WorkerSearchParityTrace() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js?build=20260818-skill-rules-locality-refactor");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js?build=20260818-skill-rules-locality-refactor");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js?build=20260818-skill-rules-locality-refactor");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const actor = makePlayer("parity-actor", 0, "dawn", "ai", 0);
   const ally = makePlayer("parity-ally", 2, "dawn", "ai", 2);
   const enemy = makePlayer("parity-enemy", 1, "dusk", "ai", 1);
@@ -44428,8 +44424,8 @@ makeGame、instance、selectAction、acceptWorkerSearchOutcome、createWorkerSea
 所有断言只读 diagnostic；不改变 AI policy/value。
 */
 async function frArch14RngContinuityAcceptedSearches() {
-  const { createWorkerSearchOutcome } = await import("../js/ai/search/WorkerSearchOutcome.js?build=20260818-skill-rules-locality-refactor");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js?build=20260818-skill-rules-locality-refactor");
+  const { createWorkerSearchOutcome } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
   const actor = makePlayer("rng-continuity-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("rng-continuity-enemy", 1, "dusk", "ai", 1);
   actor.hand.push(instance("assault"));

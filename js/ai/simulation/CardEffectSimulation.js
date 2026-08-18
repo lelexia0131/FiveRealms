@@ -17,19 +17,19 @@ Response/Combat/Status 组件、Domain CardRules、正式资源 Policy、CardVal
 架构约束
 不生成动作、不搜索、不拥有规则合法性或最终价值公式。
 */
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import {
   findPlayerFact,
   getCardTargetIds
-} from "../../domain/rules/card/CardRules.js?build=20260818-skill-rules-locality-refactor";
-import { hasPassiveSkill, projectRulePlayers } from "../state/RuleProjection.js?build=20260818-skill-rules-locality-refactor";
-import { inAttackRange } from "../state/DistanceProbabilityBranches.js?build=20260818-skill-rules-locality-refactor";
-import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js?build=20260818-skill-rules-locality-refactor";
-import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js?build=20260818-skill-rules-locality-refactor";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260818-skill-rules-locality-refactor";
-import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js?build=20260818-skill-rules-locality-refactor";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
-import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js?build=20260818-skill-rules-locality-refactor";
+} from "../../domain/rules/card/CardRules.js";
+import { hasPassiveSkill, projectRulePlayers } from "../state/RuleProjection.js";
+import { inAttackRange } from "../state/DistanceProbabilityBranches.js";
+import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js";
+import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js";
+import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js";
+import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js";
 
 /*
 功能

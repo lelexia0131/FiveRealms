@@ -17,14 +17,14 @@ Simulator、闪电概率 辅助函数 与纯 value/Evaluator。
 架构约束
 本模块只做有界 simulation query，不搜索、不生成动作，也不拥有最终价值组合公式。
 */
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js?build=20260818-skill-rules-locality-refactor";
-import { Simulator } from "./Simulator.js?build=20260818-skill-rules-locality-refactor";
+import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js";
+import { Simulator } from "./Simulator.js";
 import {
   buildLightningHitDistribution,
   lightningPresenceProbability
-} from "../domain/LightningModel.js?build=20260818-skill-rules-locality-refactor";
-import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./RootResolutionQuery.js?build=20260818-skill-rules-locality-refactor";
-import { HP_VALUE } from "../value/Economics.js?build=20260818-skill-rules-locality-refactor";
+} from "../domain/LightningModel.js";
+import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./RootResolutionQuery.js";
+import { HP_VALUE } from "../value/Economics.js";
 
 export class ValueSimulationQuery {
   /*

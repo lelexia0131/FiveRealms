@@ -17,7 +17,7 @@ runSearchRequest。
 架构约束
 不得 import composition/application/UI/Audio；browser production 不得自动静默使用本 executor。
 */
-import { runSearchRequest } from "./WorkerSearchRuntime.js?build=20260818-skill-rules-locality-refactor";
+import { runSearchRequest } from "./WorkerSearchRuntime.js";
 
 /*
 功能

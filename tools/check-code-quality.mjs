@@ -1191,6 +1191,106 @@ function targetArchitectureErrors(file, importSource, maskedSource, source) {
 
 /*
 功能
+从指定位置越过 JavaScript 空白和注释，返回下一个语法字符位置。
+
+调用方
+cacheBustImportErrors。
+
+输入
+完整源码和零基起始偏移。
+
+输出
+下一个非空白、非注释字符的零基偏移。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+String.indexOf、String.startsWith。
+
+边界与不变量
+只处理 import token 与 specifier 之间允许出现的空白、行注释和块注释；未闭合注释返回源码末尾。
+*/
+function skipWhitespaceAndComments(source, start) {
+  let cursor = start;
+  while (cursor < source.length) {
+    if (/\s/.test(source[cursor])) {
+      cursor += 1;
+      continue;
+    }
+    if (source.startsWith("/*", cursor)) {
+      const end = source.indexOf("*/", cursor + 2);
+      cursor = end < 0 ? source.length : end + 2;
+      continue;
+    }
+    if (source.startsWith("//", cursor)) {
+      const end = source.indexOf("\n", cursor + 2);
+      cursor = end < 0 ? source.length : end + 1;
+      continue;
+    }
+    break;
+  }
+  return cursor;
+}
+
+/*
+功能
+拒绝生产 JavaScript 本地模块 specifier 中重新出现的 cache-busting build query。
+
+调用方
+inspectSource。
+
+输入
+仓库相对路径和完整源码。
+
+输出
+命中的结构化错误数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+maskNonCode、skipWhitespaceAndComments、String.matchAll。
+
+边界与不变量
+只检查真实 import/export-from/dynamic import 语法中的相对或根本地 specifier；外部 URL、注释和普通字符串不触发。
+*/
+function cacheBustImportErrors(file, source) {
+  const errors = [];
+  const maskedSource = maskNonCode(source);
+  for (const match of maskedSource.matchAll(/\b(?:from|import)\b/g)) {
+    let cursor = skipWhitespaceAndComments(source, match.index + match[0].length);
+    if (match[0] === "import" && source[cursor] === "(") {
+      cursor = skipWhitespaceAndComments(source, cursor + 1);
+    }
+    const quote = source[cursor];
+    if (quote !== '"' && quote !== "'" && quote !== "`") continue;
+    let end = cursor + 1;
+    while (end < source.length && source[end] !== quote) {
+      if (source[end] === "\\") end += 1;
+      end += 1;
+    }
+    const specifier = source.slice(cursor + 1, end);
+    if (!specifier.startsWith(".") && !specifier.startsWith("/")) continue;
+    if (!specifier.includes("?build=")) continue;
+    errors.push({
+      file,
+      functionName: "<module>",
+      line: source.slice(0, cursor).split(/\r?\n/).length,
+      missing: ["生产源码禁止使用 ?build= cache-busting；开发缓存由本地 server Cache-Control 负责"]
+    });
+  }
+  return errors;
+}
+
+/*
+功能
 对单份源码执行 Function Header 与 FR-ARCH 分层 Architecture Guard。
 
 调用方
@@ -1220,6 +1320,7 @@ function inspectSource(file, source, changed) {
   const maskedSource = maskNonCode(source);
   const maskedLines = maskedSource.split(/\r?\n/);
   const errors = [];
+  errors.push(...cacheBustImportErrors(file, source));
   for (const fn of findFunctions(source)) {
     if (!functionWasChanged(fn, changed, lines)) continue;
     const missing = missingHeaderFields(lines, fn.startLine);
@@ -1681,6 +1782,46 @@ function inspectFile(file, mode) {
 
 /*
 功能
+拒绝 index.html 本地 JavaScript/CSS 资源引用中的 cache-busting build query。
+
+调用方
+main、runSelfTest。
+
+输入
+HTML 源码与报告路径。
+
+输出
+命中的结构化错误数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+String.matchAll。
+
+边界与不变量
+只检查 ./js/ 与 ./css/ 本地资源属性；外部资源和普通 HTML 文本不触发。
+*/
+function inspectIndexHtml(source, file = "index.html") {
+  const errors = [];
+  const searchableSource = source.replace(/<!--[\s\S]*?-->/g, (comment) => comment.replace(/[^\r\n]/g, " "));
+  const pattern = /<(?:script|link)\b[^>]*\b(?:src|href)\s*=\s*["'](\.\/(?:js|css)\/[^"']*\?build=[^"']*)["'][^>]*>/gi;
+  for (const match of searchableSource.matchAll(pattern)) {
+    errors.push({
+      file,
+      functionName: "<resource>",
+      line: source.slice(0, match.index).split(/\r?\n/).length,
+      missing: ["index.html 本地资源禁止使用 ?build= cache-busting；开发缓存由本地 server Cache-Control 负责"]
+    });
+  }
+  return errors;
+}
+
+/*
+功能
 运行内置通过/失败夹具，防止检查器静默失效。
 
 调用方
@@ -1752,6 +1893,48 @@ function identity(value) { return value; }`;
 */`;
   const passErrors = inspectSource("js/fixture-pass.js", pass, null);
   if (passErrors.length) throw new Error(`valid no-star fixture failed: ${JSON.stringify(passErrors)}`);
+
+  const validCacheBustSource = inspectSource(
+    "js/fixture-stable-import.js",
+    `${pass}\nimport "./module.js";`,
+    null,
+  );
+  if (validCacheBustSource.length) {
+    throw new Error(`stable import fixture failed: ${JSON.stringify(validCacheBustSource)}`);
+  }
+  const invalidCacheBustSource = inspectSource(
+    "js/fixture-build-import.js",
+    `${pass}\nimport "./module.js?build=fixture";`,
+    null,
+  );
+  if (!invalidCacheBustSource.some((error) => error.missing.some((item) => item.includes("cache-busting")))) {
+    throw new Error("cache-busting import fixture was not rejected");
+  }
+  const ignoredCacheBustText = inspectSource(
+    "js/fixture-build-text.js",
+    `${pass}\nconst fixture = 'import("./module.js?build=fixture")';\n/* import "./comment.js?build=fixture"; */\nimport "https://example.test/module.js?build=external";`,
+    null,
+  );
+  if (ignoredCacheBustText.some((error) => error.missing.some((item) => item.includes("cache-busting")))) {
+    throw new Error("cache-busting guard scanned ordinary strings, comments, or external URLs");
+  }
+  const invalidCacheBustVariants = inspectSource(
+    "js/fixture-build-variants.js",
+    `${pass}\nexport { fixture } from "./export.js?build=fixture";\nimport("./dynamic.js?build=fixture");`,
+    null,
+  );
+  if (invalidCacheBustVariants.filter((error) => error.missing.some((item) => item.includes("cache-busting"))).length !== 2) {
+    throw new Error("cache-busting guard did not reject export-from and dynamic import variants");
+  }
+  if (inspectIndexHtml('<script type="module" src="./js/main.js"></script>\n<link rel="stylesheet" href="./css/theme.css">').length) {
+    throw new Error("stable HTML resource fixture failed");
+  }
+  if (!inspectIndexHtml('<script type="module" src="./js/main.js?build=fixture"></script>').length) {
+    throw new Error("cache-busting HTML fixture was not rejected");
+  }
+  if (inspectIndexHtml('<!-- <script type="module" src="./js/main.js?build=fixture"></script> -->').length) {
+    throw new Error("cache-busting HTML guard scanned comments");
+  }
 
   const missing = pass.replace("\n输入\n数值。\n", "\n");
   const missingErrors = inspectSource("js/fixture-missing.js", missing, null);
@@ -2767,11 +2950,15 @@ function main() {
   const files = mode === "all" ? allProductionFiles()
     : mode === "ai-all" ? allProductionFiles().filter((file) => AI_PATTERN.test(file))
       : changedProductionFiles();
-  if (!files.length) {
+  const browserErrors = inspectIndexHtml(fs.readFileSync(path.join(ROOT, "index.html"), "utf8"));
+  if (!files.length && !browserErrors.length) {
     process.stdout.write(`code-quality passed (--${mode}): no production JavaScript files to inspect\n`);
     return;
   }
-  const errors = files.flatMap((file) => inspectFile(file, mode === "changed" ? mode : "all"));
+  const errors = [
+    ...files.flatMap((file) => inspectFile(file, mode === "changed" ? mode : "all")),
+    ...browserErrors,
+  ];
   if (errors.length) {
     for (const error of errors) {
       process.stderr.write(`${error.file}:${error.line} ${error.functionName} missing: ${error.missing.join(", ")}\n`);

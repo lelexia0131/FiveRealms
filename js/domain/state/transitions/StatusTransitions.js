@@ -17,7 +17,7 @@ CardRuntime、SkillRuntime、Game 状态 workflow 与直接测试。
 架构约束
 不得依赖 Game/EventDispatcher/UI/AI/application/adapters；禁止 statusId 具体规则分支。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260818-skill-rules-locality-refactor";
+import { bumpStateVersion } from "./StateVersion.js";
 
 /*
 功能

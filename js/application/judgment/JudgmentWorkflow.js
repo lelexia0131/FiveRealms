@@ -17,9 +17,9 @@ Domain JudgmentRules、Domain transitions、PresentationPort 与注入的 AI kno
 架构约束
 不得依赖 MatchApplication、UIManager、AiController、SoundManager、EventDispatcher runtime、混合配置模块或 concrete adapters。
 */
-import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome } from "../../domain/rules/judgment/JudgmentRules.js?build=20260818-skill-rules-locality-refactor";
-import { setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { bumpHandVersion } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome } from "../../domain/rules/judgment/JudgmentRules.js";
+import { setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js";
+import { bumpHandVersion } from "../../domain/state/transitions/PlayerStateTransitions.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState",

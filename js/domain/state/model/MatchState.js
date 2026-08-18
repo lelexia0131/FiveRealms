@@ -17,7 +17,7 @@ match application constructor 的 composition 与当前 application/match consum
 架构约束
 不得依赖 application/adapters/ui/audio/ai/Game runtime；不得维护 Game.state 的 application-only 字段。
 */
-import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js?build=20260818-skill-rules-locality-refactor";
+import { RULESET_DEFINITION } from "../../definitions/ruleset/RulesetDefinition.js";
 
 /*
 功能

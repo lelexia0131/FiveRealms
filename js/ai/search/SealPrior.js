@@ -17,11 +17,11 @@ domain/SealModel、value/ThreatValue、Domain DistanceRules 与 AI 卡牌配置�
 架构约束
 返回值只用于 SEARCH_PRIOR；不得进入 State Value、TransitionValue 或 sibling timing。
 */
-import { getAliveRing } from "../../domain/rules/distance/DistanceRules.js?build=20260818-skill-rules-locality-refactor";
-import { projectRulePlayers } from "../state/RuleProjection.js?build=20260818-skill-rules-locality-refactor";
-import { getBaseCardAiValue } from "../value/CardValue.js?build=20260818-skill-rules-locality-refactor";
-import { hasSeal, sealOutcomeProbabilities } from "../domain/SealModel.js?build=20260818-skill-rules-locality-refactor";
-import { turnOpportunityValue } from "../value/ThreatValue.js?build=20260818-skill-rules-locality-refactor";
+import { getAliveRing } from "../../domain/rules/distance/DistanceRules.js";
+import { projectRulePlayers } from "../state/RuleProjection.js";
+import { getBaseCardAiValue } from "../value/CardValue.js";
+import { hasSeal, sealOutcomeProbabilities } from "../domain/SealModel.js";
+import { turnOpportunityValue } from "../value/ThreatValue.js";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;

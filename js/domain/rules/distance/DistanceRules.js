@@ -18,7 +18,7 @@ CardDefinitions。
 不得依赖 application/adapters/AI/UI/Game runtime；不得采样随机。
 固定装备距离修正数值（望远镜 -1 / 屏障 +1）由 CardDefinitions 唯一拥有。
 */
-import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js";
 
 /*
 功能

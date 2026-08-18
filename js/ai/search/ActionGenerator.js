@@ -25,27 +25,27 @@ import {
   getLeverageFirstTargetIds,
   getTransferReceiverIds,
   getTransferSourceIds
-} from "../../domain/rules/card/CardRules.js?build=20260818-skill-rules-locality-refactor";
-import { hasStatus } from "../../domain/rules/status/StatusRules.js?build=20260818-skill-rules-locality-refactor";
+} from "../../domain/rules/card/CardRules.js";
+import { hasStatus } from "../../domain/rules/status/StatusRules.js";
 import {
   canUseSkillBase,
   getSkillCost,
   getSkillTargetIds
-} from "../../domain/rules/skill/SkillRules.js?build=20260818-skill-rules-locality-refactor";
-import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js?build=20260818-skill-rules-locality-refactor";
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { getLightningStatusStateBranches } from "../domain/LightningModel.js?build=20260818-skill-rules-locality-refactor";
-import { getSealStatusStateBranches } from "../domain/SealModel.js?build=20260818-skill-rules-locality-refactor";
+} from "../../domain/rules/skill/SkillRules.js";
+import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
+import { getLightningStatusStateBranches } from "../domain/LightningModel.js";
+import { getSealStatusStateBranches } from "../domain/SealModel.js";
 import {
   projectAttackUsage,
   projectRulePlayer,
   projectRulePlayers,
   projectTransferRulePlayers
-} from "../state/RuleProjection.js?build=20260818-skill-rules-locality-refactor";
-import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js?build=20260818-skill-rules-locality-refactor";
-import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js?build=20260818-skill-rules-locality-refactor";
-import { TransferPolicy } from "../policy/TransferPolicy.js?build=20260818-skill-rules-locality-refactor";
+} from "../state/RuleProjection.js";
+import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js";
+import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js";
+import { TransferPolicy } from "../policy/TransferPolicy.js";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -57,7 +57,7 @@ import {
   mergeProbabilityBranches,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
+} from "../state/Probability.js";
 
 export class ActionGenerator {
   /*

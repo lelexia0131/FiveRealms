@@ -17,18 +17,18 @@ AiController、ResponseBoundary、测试与搜索调用方。
 架构约束
 createInitialSearchState 只做 SearchState 正式组合入口，不得另存一份投影或概率逻辑。
 */
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { getSkillCost } from "../../domain/rules/skill/SkillRules.js?build=20260818-skill-rules-locality-refactor";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
+import { getSkillCost } from "../../domain/rules/skill/SkillRules.js";
 import {
   getAttackLimitFromRules,
   getTeamRules,
   getTurnEnergyBreakdownFromRules
-} from "../../domain/rules/team/TeamRules.js?build=20260818-skill-rules-locality-refactor";
-import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js?build=20260818-skill-rules-locality-refactor";
-import { createBeliefState } from "./BeliefState.js?build=20260818-skill-rules-locality-refactor";
-import { createKnowledgeState } from "./Knowledge.js?build=20260818-skill-rules-locality-refactor";
-import { createSearchState } from "./SearchState.js?build=20260818-skill-rules-locality-refactor";
-import { createVisibleState } from "./VisibleState.js?build=20260818-skill-rules-locality-refactor";
+} from "../../domain/rules/team/TeamRules.js";
+import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js";
+import { createBeliefState } from "./BeliefState.js";
+import { createKnowledgeState } from "./Knowledge.js";
+import { createSearchState } from "./SearchState.js";
+import { createVisibleState } from "./VisibleState.js";
 
 /*
 功能

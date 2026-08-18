@@ -21,10 +21,12 @@ function Show-ErrorMessage([string] $message) {
 function Test-FiveRealmsPage {
     try {
         $response = Invoke-WebRequest -Uri $gameUrl -UseBasicParsing -TimeoutSec 1
+        $cacheControl = [string] ($response.Headers['Cache-Control'] -join ',')
         return $response.StatusCode -ge 200 -and
             $response.StatusCode -lt 400 -and
             $response.Content.Contains('<section id="game-screen"') -and
-            $response.Content.Contains('<small>FIVE REALMS</small>')
+            $response.Content.Contains('<small>FIVE REALMS</small>') -and
+            $cacheControl.Contains('no-store')
     }
     catch {
         return $false
@@ -80,7 +82,7 @@ try {
             }
         }
         if (-not $ready) {
-            throw "Port 8000 is already in use, but $gameUrl is not the FiveRealms entry page. Stop the other program or free port 8000, then try again."
+            throw "Port 8000 is already in use, but $gameUrl is not the canonical no-cache FiveRealms entry page. Stop the other program or free port 8000, then try again."
         }
     }
 
@@ -92,7 +94,7 @@ try {
 
         $startInfo = New-Object Diagnostics.ProcessStartInfo
         $startInfo.FileName = $python.Source
-        $startInfo.Arguments = '-m http.server 8000 --bind 127.0.0.1'
+        $startInfo.Arguments = 'tools/dev-server.py --host 127.0.0.1 --port 8000'
         $startInfo.WorkingDirectory = $repoRoot
         $startInfo.UseShellExecute = $false
         $startInfo.CreateNoWindow = $true

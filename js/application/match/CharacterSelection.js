@@ -2,10 +2,10 @@
  * 本文件封装真人候选与电脑角色分配，依赖角色配置和随机工具。
  * 它不进入对局循环，也不改变阵营；角色与 battleTeam 始终保持独立。
  */
-import { CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260818-skill-rules-locality-refactor";
-import { shuffled } from "../../utils/helpers.js?build=20260818-skill-rules-locality-refactor";
-import { CHARACTER_SELECTION_TAGS, SMALL_TEAM_CHARACTER_PRIORITY } from "./CharacterSelectionMetadata.js?build=20260818-skill-rules-locality-refactor";
+import { CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/CharacterDefinitions.js";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
+import { shuffled } from "../../utils/helpers.js";
+import { CHARACTER_SELECTION_TAGS, SMALL_TEAM_CHARACTER_PRIORITY } from "./CharacterSelectionMetadata.js";
 
 export class CharacterSelection {
   /*

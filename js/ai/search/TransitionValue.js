@@ -20,7 +20,7 @@ Planner 与价值等价测试。
 import {
   STATE_DELTA_SCALE,
   actionEconomicValue
-} from "../value/Economics.js?build=20260818-skill-rules-locality-refactor";
+} from "../value/Economics.js";
 
 export class TransitionValue {
   /*

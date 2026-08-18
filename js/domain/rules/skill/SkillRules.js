@@ -17,9 +17,9 @@ Domain TurnRules、CardRules、distance rules 与 SkillDefinitions。
 架构约束
 不得依赖 Game/ActionLegality/application/adapters/EventDispatcher；不得 await、emit、随机、mutation；不得复制 SkillDefinitions 固定 literal。
 */
-import { ACTIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { getDistance } from "../distance/DistanceRules.js?build=20260818-skill-rules-locality-refactor";
-import { hasActiveSkillUseRemaining } from "../turn/TurnRules.js?build=20260818-skill-rules-locality-refactor";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../definitions/skills/SkillDefinitions.js";
+import { getDistance } from "../distance/DistanceRules.js";
+import { hasActiveSkillUseRemaining } from "../turn/TurnRules.js";
 
 /*
 功能

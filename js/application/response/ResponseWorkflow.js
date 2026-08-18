@@ -21,12 +21,12 @@ import {
   getCounterResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId,
   getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage,
   isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible
-} from "../../domain/rules/response/ResponseRules.js?build=20260818-skill-rules-locality-refactor";
-import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js?build=20260818-skill-rules-locality-refactor";
-import { createResponseChoiceRequest } from "../choice/ResponseChoiceRequest.js?build=20260818-skill-rules-locality-refactor";
-import { shouldForceAiRescueHuman, shouldForceAiSelfRescue, shouldPreferExplicitSelection, shouldRejectLeverageWithoutCards, shouldShowResponseWindowWithoutCards } from "./ParticipantPolicy.js?build=20260818-skill-rules-locality-refactor";
-import { buildResponsePresentation, publicPlayerContext } from "./ResponsePresentation.js?build=20260818-skill-rules-locality-refactor";
-import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } from "./ResponseResult.js?build=20260818-skill-rules-locality-refactor";
+} from "../../domain/rules/response/ResponseRules.js";
+import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js";
+import { createResponseChoiceRequest } from "../choice/ResponseChoiceRequest.js";
+import { shouldForceAiRescueHuman, shouldForceAiSelfRescue, shouldPreferExplicitSelection, shouldRejectLeverageWithoutCards, shouldShowResponseWindowWithoutCards } from "./ParticipantPolicy.js";
+import { buildResponsePresentation, publicPlayerContext } from "./ResponsePresentation.js";
+import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } from "./ResponseResult.js";
 
 /*
 功能

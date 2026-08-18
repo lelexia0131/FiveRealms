@@ -17,8 +17,8 @@ Domain Definitions、AI 配置与 Simulator/Value/SearchPrior。
 架构约束
 不得 import Game/Application/Domain transitions；不得直接 structuredClone 真实实体图。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 
 /*
 功能

@@ -18,7 +18,7 @@ CardDefinitions。
 不得依赖 Game/application/adapters/EventDispatcher；不得 await、emit、随机。
 「回收站」固定数值（triggerDrawCount / maxUsesPerTurn）由 CardDefinitions 唯一拥有。
 */
-import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js";
 
 /*
 功能

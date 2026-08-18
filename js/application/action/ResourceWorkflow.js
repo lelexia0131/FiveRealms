@@ -17,11 +17,11 @@ Domain resource/zone transitions、zone queries 与显式 presentation/knowledge
 架构约束
 不得持有 composition root、UIManager、AIController 或规则 literal；跨 await 后必须复核 session 与实体位置。
 */
-import { appendCardToZone, commitEquipmentReplacement, discardEquipment as commitDiscardEquipment, moveCardBetweenZones, moveCardsAtomically, moveEquipmentToHand as commitMoveEquipmentToHand, purgeCardToDiscard, removeCardFromZone } from "../../domain/state/transitions/ZoneTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { changeEnergy } from "../../domain/state/transitions/ResourceTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { bumpHandVersion } from "../../domain/state/transitions/PlayerStateTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { getCardZoneOccurrences, isCardCommittedToDiscard, isCardCommittedToEquipment } from "../../domain/state/queries/ZoneQueries.js?build=20260818-skill-rules-locality-refactor";
-import { RESPONSE_STATUS } from "../response/ResponseResult.js?build=20260818-skill-rules-locality-refactor";
+import { appendCardToZone, commitEquipmentReplacement, discardEquipment as commitDiscardEquipment, moveCardBetweenZones, moveCardsAtomically, moveEquipmentToHand as commitMoveEquipmentToHand, purgeCardToDiscard, removeCardFromZone } from "../../domain/state/transitions/ZoneTransitions.js";
+import { changeEnergy } from "../../domain/state/transitions/ResourceTransitions.js";
+import { bumpHandVersion } from "../../domain/state/transitions/PlayerStateTransitions.js";
+import { getCardZoneOccurrences, isCardCommittedToDiscard, isCardCommittedToEquipment } from "../../domain/state/queries/ZoneQueries.js";
+import { RESPONSE_STATUS } from "../response/ResponseResult.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "log", "queueFeedback", "render",

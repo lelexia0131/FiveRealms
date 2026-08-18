@@ -194,7 +194,7 @@ Fast profile 为 500ms soft target、900ms search deadline；Normal profile 为 
 
 ## 12. Test Architecture
 
-`tests/run.mjs` 按 `test.md` 的稳定分类和命名规则组织。架构测试验证 final owner、依赖方向、公开 contract、行为 characterization、Worker transport、stale-result rejection、RNG isolation 和 browser module build 一致性。
+`tests/run.mjs` 按 `test.md` 的稳定分类和命名规则组织。架构测试验证 final owner、依赖方向、公开 contract、行为 characterization、Worker transport、stale-result rejection、RNG isolation 和 browser stable URL/no-cache server 契约。
 
 Facade-only loader tests 与已删除模块 fixture 不再存在。测试从 final owner 导入；不存在用于维持旧路径的 test-only shim。
 

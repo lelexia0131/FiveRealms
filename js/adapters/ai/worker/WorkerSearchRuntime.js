@@ -17,11 +17,11 @@ SearchEngineFactory、RootSearchAction、Planner、ActionDescriptor 与 WorkerSe
 架构约束
 不得 import composition、application、UI/Audio/DOM 或 Domain transitions；不得使用 Math.random。
 */
-import { describeAction } from "../../../ai/search/ActionDescriptor.js?build=20260818-skill-rules-locality-refactor";
-import { rehydrateRootSearchAction } from "../../../ai/search/RootSearchAction.js?build=20260818-skill-rules-locality-refactor";
-import { SearchRng } from "../../../ai/search/SearchRng.js?build=20260818-skill-rules-locality-refactor";
-import { createSearchEngine } from "./SearchEngineFactory.js?build=20260818-skill-rules-locality-refactor";
-import { createWorkerSearchOutcome } from "../../../ai/search/WorkerSearchOutcome.js?build=20260818-skill-rules-locality-refactor";
+import { describeAction } from "../../../ai/search/ActionDescriptor.js";
+import { rehydrateRootSearchAction } from "../../../ai/search/RootSearchAction.js";
+import { SearchRng } from "../../../ai/search/SearchRng.js";
+import { createSearchEngine } from "./SearchEngineFactory.js";
+import { createWorkerSearchOutcome } from "../../../ai/search/WorkerSearchOutcome.js";
 
 /*
 功能

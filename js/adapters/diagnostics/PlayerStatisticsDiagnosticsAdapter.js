@@ -17,8 +17,8 @@ application/ports/DiagnosticsPort。
 架构约束
 不得依赖 Game class、AI、UI、Domain transitions 或其它 adapter。
 */
-import { createDiagnosticsPort } from "../../application/ports/DiagnosticsPort.js?build=20260818-skill-rules-locality-refactor";
-import { Debug } from "../../utils/debug.js?build=20260818-skill-rules-locality-refactor";
+import { createDiagnosticsPort } from "../../application/ports/DiagnosticsPort.js";
+import { Debug } from "../../utils/debug.js";
 
 /*
 功能

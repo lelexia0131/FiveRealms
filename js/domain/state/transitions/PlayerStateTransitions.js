@@ -17,7 +17,7 @@ Player 的 method boundary 与直接测试。
 架构约束
 不得依赖 Game/EventDispatcher/UI/AI/application/adapters；不得实现技能/回合规则。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260818-skill-rules-locality-refactor";
+import { bumpStateVersion } from "./StateVersion.js";
 
 /*
 功能

@@ -1,7 +1,7 @@
-import { TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js?build=20260818-skill-rules-locality-refactor";
-import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { presentCharacter } from "../adapters/ui/CharacterPresentationDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
+import { TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js";
+import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js";
+import { presentCharacter } from "../adapters/ui/CharacterPresentationDefinitions.js";
+import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../domain/definitions/skills/SkillDefinitions.js";
 
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"

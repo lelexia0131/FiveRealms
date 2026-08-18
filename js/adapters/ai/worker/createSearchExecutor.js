@@ -17,8 +17,8 @@ SearchWorkerClient、LocalSearchExecutor。
 架构约束
 不得 import composition/application/UI/Audio；browser production 不提供同线程 search fallback。
 */
-import { createLocalSearchExecutor } from "./LocalSearchExecutor.js?build=20260818-skill-rules-locality-refactor";
-import { createSearchWorkerClient } from "./SearchWorkerClient.js?build=20260818-skill-rules-locality-refactor";
+import { createLocalSearchExecutor } from "./LocalSearchExecutor.js";
+import { createSearchWorkerClient } from "./SearchWorkerClient.js";
 
 /*
 功能
@@ -48,10 +48,7 @@ createSearchWorkerClient、createLocalSearchExecutor。
 export function createSearchExecutor({ explicitExecutor = null, forceLocal = false } = {}) {
   if (explicitExecutor) return explicitExecutor;
   if (!forceLocal && typeof globalThis.Worker === "function") {
-    // 从当前模块的 ?build= 查询继承同一构建标识，避免 production Worker 文件
-    // 被浏览器缓存成旧版本；浏览器无 Worker 时仍只允许 explicit local transport。
-    const build = new URL(import.meta.url).searchParams.get("build");
-    const workerUrl = new URL(`./searchWorker.js${build ? `?build=${build}` : ""}`, import.meta.url);
+    const workerUrl = new URL("./searchWorker.js", import.meta.url);
     return createSearchWorkerClient(workerUrl);
   }
   const isBrowserRuntime = typeof globalThis.window === "object"

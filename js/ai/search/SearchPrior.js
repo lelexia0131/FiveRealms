@@ -17,20 +17,20 @@ CardValue、ThreatValue、现有领域纯函数与闪电模拟查询。
 架构约束
 本模块所有返回值只用于剪枝和排序；不得进入最终价值，TransitionValue 也不得调用或累计这些值。
 */
-import { AI_RUNTIME_POLICY } from "../policy/AiRuntimePolicy.js?build=20260818-skill-rules-locality-refactor";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js?build=20260818-skill-rules-locality-refactor";
-import { sealUseValue } from "./SealPrior.js?build=20260818-skill-rules-locality-refactor";
+import { AI_RUNTIME_POLICY } from "../policy/AiRuntimePolicy.js";
+import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js";
+import { sealUseValue } from "./SealPrior.js";
 import {
   getBaseCardAiValue,
   getEquipmentKeepValueDeduction,
   getRoleCardAiValue,
   roleCardDelta
-} from "../value/CardValue.js?build=20260818-skill-rules-locality-refactor";
+} from "../value/CardValue.js";
 import {
   SKILL_THRESHOLD_OPTION_VALUE,
   STATE_DELTA_SCALE
-} from "../value/Economics.js?build=20260818-skill-rules-locality-refactor";
-import { ThreatCalculator } from "../value/ThreatValue.js?build=20260818-skill-rules-locality-refactor";
+} from "../value/Economics.js";
+import { ThreatCalculator } from "../value/ThreatValue.js";
 
 export const BURNING_FIELD_SEARCH_PRIOR = 8;
 

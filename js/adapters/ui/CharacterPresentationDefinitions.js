@@ -17,9 +17,9 @@ UI templates 与 presentation asset tests。
 架构约束
 不得包含 AI profile/roleTags、技能 cost/limit 或角色规则副本。
 */
-import { CHARACTER_BY_ID } from "../../domain/definitions/characters/CharacterDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { CHARACTER_SELECTION_TAGS } from "../../application/match/CharacterSelectionMetadata.js?build=20260818-skill-rules-locality-refactor";
+import { CHARACTER_BY_ID } from "../../domain/definitions/characters/CharacterDefinitions.js";
+import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
+import { CHARACTER_SELECTION_TAGS } from "../../application/match/CharacterSelectionMetadata.js";
 
 export const CHARACTER_PRESENTATION = Object.freeze({
   "blade-walker": Object.freeze({ glyph: "刃", portrait: "./assets/characters/blade-walker.svg" }),

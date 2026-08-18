@@ -17,39 +17,39 @@ MatchApplication、ResponseWorkflow、PublicCardPoolWorkflow、角色技能与�
 架构约束
 子组件不得回指 AIController；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
 */
-import { createInitialSearchState } from "./state/StateContracts.js?build=20260818-skill-rules-locality-refactor";
-import { Knowledge } from "./state/Knowledge.js?build=20260818-skill-rules-locality-refactor";
-import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js?build=20260818-skill-rules-locality-refactor";
-import { ResponseBoundary } from "./policy/ResponseBoundary.js?build=20260818-skill-rules-locality-refactor";
-import { ActionGenerator } from "./search/ActionGenerator.js?build=20260818-skill-rules-locality-refactor";
-import { ValueService } from "./value/ValueService.js?build=20260818-skill-rules-locality-refactor";
-import { StateValue } from "./value/StateValue.js?build=20260818-skill-rules-locality-refactor";
-import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js?build=20260818-skill-rules-locality-refactor";
-import { Simulator } from "./simulation/Simulator.js?build=20260818-skill-rules-locality-refactor";
-import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILES } from "./policy/AiRuntimePolicy.js?build=20260818-skill-rules-locality-refactor";
-import { ActionDescriptor } from "./search/ActionDescriptor.js?build=20260818-skill-rules-locality-refactor";
-import { createSearchRequest } from "./search/SearchRequest.js?build=20260818-skill-rules-locality-refactor";
-import { describeRootSearchAction } from "./search/RootSearchAction.js?build=20260818-skill-rules-locality-refactor";
-import { createSearchResult, SEARCH_RESULT_STATUS } from "./search/SearchResult.js?build=20260818-skill-rules-locality-refactor";
-import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js?build=20260818-skill-rules-locality-refactor";
-import { CandidateMaterializer } from "./search/CandidateMaterializer.js?build=20260818-skill-rules-locality-refactor";
-import { CounterfactualTerms } from "./search/CounterfactualTerms.js?build=20260818-skill-rules-locality-refactor";
-import { Planner } from "./search/Planner.js?build=20260818-skill-rules-locality-refactor";
-import { SearchBudget } from "./search/SearchBudget.js?build=20260818-skill-rules-locality-refactor";
-import { SearchPolicy } from "./search/SearchPolicy.js?build=20260818-skill-rules-locality-refactor";
-import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js?build=20260818-skill-rules-locality-refactor";
-import { tacticResolutionScale } from "./search/TacticResolutionQuery.js?build=20260818-skill-rules-locality-refactor";
-import { FrontierValue } from "./search/FrontierValue.js?build=20260818-skill-rules-locality-refactor";
-import { SearchPrior } from "./search/SearchPrior.js?build=20260818-skill-rules-locality-refactor";
-import { TransitionValue } from "./search/TransitionValue.js?build=20260818-skill-rules-locality-refactor";
-import { Evaluator } from "./value/Evaluator.js?build=20260818-skill-rules-locality-refactor";
-import { ValueLedger } from "./value/ValueLedger.js?build=20260818-skill-rules-locality-refactor";
-import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js?build=20260818-skill-rules-locality-refactor";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js?build=20260818-skill-rules-locality-refactor";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js?build=20260818-skill-rules-locality-refactor";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js?build=20260818-skill-rules-locality-refactor";
-import { TransferPolicy } from "./policy/TransferPolicy.js?build=20260818-skill-rules-locality-refactor";
-import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js?build=20260818-skill-rules-locality-refactor";
+import { createInitialSearchState } from "./state/StateContracts.js";
+import { Knowledge } from "./state/Knowledge.js";
+import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js";
+import { ResponseBoundary } from "./policy/ResponseBoundary.js";
+import { ActionGenerator } from "./search/ActionGenerator.js";
+import { ValueService } from "./value/ValueService.js";
+import { StateValue } from "./value/StateValue.js";
+import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js";
+import { Simulator } from "./simulation/Simulator.js";
+import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILES } from "./policy/AiRuntimePolicy.js";
+import { ActionDescriptor } from "./search/ActionDescriptor.js";
+import { createSearchRequest } from "./search/SearchRequest.js";
+import { describeRootSearchAction } from "./search/RootSearchAction.js";
+import { createSearchResult, SEARCH_RESULT_STATUS } from "./search/SearchResult.js";
+import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js";
+import { CandidateMaterializer } from "./search/CandidateMaterializer.js";
+import { CounterfactualTerms } from "./search/CounterfactualTerms.js";
+import { Planner } from "./search/Planner.js";
+import { SearchBudget } from "./search/SearchBudget.js";
+import { SearchPolicy } from "./search/SearchPolicy.js";
+import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js";
+import { tacticResolutionScale } from "./search/TacticResolutionQuery.js";
+import { FrontierValue } from "./search/FrontierValue.js";
+import { SearchPrior } from "./search/SearchPrior.js";
+import { TransitionValue } from "./search/TransitionValue.js";
+import { Evaluator } from "./value/Evaluator.js";
+import { ValueLedger } from "./value/ValueLedger.js";
+import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js";
+import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js";
+import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js";
+import { ResponsePolicy } from "./policy/ResponsePolicy.js";
+import { TransferPolicy } from "./policy/TransferPolicy.js";
+import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js";
 
 export class AIController {
   /*

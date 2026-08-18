@@ -17,11 +17,11 @@ Domain mutation 经 transitions；随机与移动经注入 collaborator。
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、ActionLegality 或 concrete adapters。
 */
-import { changeEnergy, changeShield } from "../../domain/state/transitions/ResourceTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { incrementAttackLimit } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js?build=20260818-skill-rules-locality-refactor";
-import { randomChoice } from "../../utils/helpers.js?build=20260818-skill-rules-locality-refactor";
-import { decideSkillEffect } from "../../domain/rules/skill/SkillRules.js?build=20260818-skill-rules-locality-refactor";
+import { changeEnergy, changeShield } from "../../domain/state/transitions/ResourceTransitions.js";
+import { incrementAttackLimit } from "../../domain/state/transitions/RuleUsageTransitions.js";
+import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js";
+import { randomChoice } from "../../utils/helpers.js";
+import { decideSkillEffect } from "../../domain/rules/skill/SkillRules.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "heal", "damage", "drawCards",

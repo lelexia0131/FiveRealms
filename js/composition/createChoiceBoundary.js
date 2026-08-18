@@ -17,12 +17,12 @@ application/choice、application/ports 与 adapters/ui、adapters/ai。
 架构约束
 不接收或回读应用对象；所有 concrete capability 由 composition root 显式注入。
 */
-import { createChoiceCoordinator } from "../application/choice/ChoiceCoordinator.js?build=20260818-skill-rules-locality-refactor";
-import { createChoicePort, createChoiceResult } from "../application/ports/ChoicePort.js?build=20260818-skill-rules-locality-refactor";
-import { createAiChoiceAdapter } from "../adapters/ai/AiChoiceAdapter.js?build=20260818-skill-rules-locality-refactor";
-import { createAiResponseTimingDecorator } from "../application/response/AiResponseTimingDecorator.js?build=20260818-skill-rules-locality-refactor";
-import { createUiChoiceAdapter } from "../adapters/ui/UiChoiceAdapter.js?build=20260818-skill-rules-locality-refactor";
-import { getAiDelay } from "../utils/aiTiming.js?build=20260818-skill-rules-locality-refactor";
+import { createChoiceCoordinator } from "../application/choice/ChoiceCoordinator.js";
+import { createChoicePort, createChoiceResult } from "../application/ports/ChoicePort.js";
+import { createAiChoiceAdapter } from "../adapters/ai/AiChoiceAdapter.js";
+import { createAiResponseTimingDecorator } from "../application/response/AiResponseTimingDecorator.js";
+import { createUiChoiceAdapter } from "../adapters/ui/UiChoiceAdapter.js";
+import { getAiDelay } from "../utils/aiTiming.js";
 
 /*
 功能

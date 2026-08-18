@@ -17,7 +17,7 @@ Deck 的物理移动路径与直接测试。
 架构约束
 不得依赖 Game/EventDispatcher/UI/AI/application/adapters；禁止具体卡牌效果分支。
 */
-import { bumpStateVersion } from "./StateVersion.js?build=20260818-skill-rules-locality-refactor";
+import { bumpStateVersion } from "./StateVersion.js";
 
 /*
 功能

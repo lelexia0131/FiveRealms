@@ -22,8 +22,8 @@ Use this Skill for repository work in `D:/FiveRealms`. The project documents rem
 - In ARCHITECTURE/QUALITY mode, preserve behavior, document source/target ownership, and stop at the authorized migration stage.
 - Use Function Header v1 and module headers exactly as defined in `CODE_STANDARD.md` for touched production code.
 - Never install dependencies, access unrelated external data, change system/tool configuration, or perform Git writes.
-- Update the shared `?build=` identifier only when browser-loaded HTML/CSS/JavaScript/ES Modules change.
+- Keep browser-loaded HTML/CSS/JavaScript/ES Module URLs stable; use `tools/dev-server.py` no-cache headers for local development.
 
 ## Verify and report
 
-Run directly relevant tests, the available full suite when required, build consistency for browser resource changes, `npm run check:code-quality -- --changed` for production JavaScript changes, final diff inspection, and `git diff --check`. Report only actual results, unverified items, scope, dependency/install status, and Git-write status. Leave commit, push, and merge to the user.
+Run directly relevant tests, the available full suite when required, the no-cache server smoke test for browser resource changes, `npm run check:code-quality -- --changed` for production JavaScript changes, final diff inspection, and `git diff --check`. Report only actual results, unverified items, scope, dependency/install status, and Git-write status. Leave commit, push, and merge to the user.

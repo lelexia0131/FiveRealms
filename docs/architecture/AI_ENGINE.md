@@ -475,7 +475,7 @@ Guard 必须从解析到的 import、路径层和明确语法事实得出结论�
 
 ## 18. 分阶段迁移计划
 
-所有阶段共用冻结条件：保持 AI 决策行为，除阶段明确批准的 bug 外不改规则/平衡；浏览器 JS 变更统一 build；直接测试后跑完整入口、质量门禁、build 一致性和 diff 检查；每阶段可独立回滚。
+所有阶段共用冻结条件：保持 AI 决策行为，除阶段明确批准的 bug 外不改规则/平衡；浏览器 JS 使用稳定 URL 并由 no-cache 开发服务器刷新；直接测试后跑完整入口、质量门禁、浏览器资源 guard 和 diff 检查；每阶段可独立回滚。
 
 ### AI-ARCH-2：State Contract
 
@@ -558,7 +558,7 @@ Guard 必须从解析到的 import、路径层和明确语法事实得出结论�
 
 - source/target owner 表与未移动职责；
 - current/target import diff 和新 API；
-- 相关测试、完整测试、质量门禁、build 版本测试（浏览器资源变更时）；
+- 相关测试、完整测试、质量门禁、no-cache server smoke test（浏览器资源变更时）；
 - hidden-info fixture 与性能观测影响；
 - `git diff --stat`、`git diff --check`、无关改动确认；
 - 回滚点和仍存在的兼容层。
@@ -817,9 +817,9 @@ Expose、assault-stack 与 seal timing 的领域 producer 暂留 Planner/既有 
 
 固定 benchmark `seed=20260814`、`node-budget=200`、`category=planning` 在改造前后均为 raw `126/1000`、corrected `106/1000`，32 次决策平均扩展 `41.4` 节点、平均深度 `2.8`；报告决策耗时由约 `0.9s` 观测为约 `0.8s`，总耗时均约 `1.0s`。没有引入缓存或主动性能优化。
 
-最终验证为 Value/依赖/搜索专项 `142/142`、炎术师与反制补充专项 `46/46`、完整功能入口 `1367/1367`、浏览器 build 一致性 `1/1`；10 个新增核心模块通过 `node --check`，quality self-test 与 `--changed`（57 个生产文件）通过，`git diff --check` 通过。
+最终验证为 Value/依赖/搜索专项 `142/142`、炎术师与反制补充专项 `46/46`、完整功能入口 `1367/1367`；10 个新增核心模块通过 `node --check`，quality self-test 与 `--changed`（57 个生产文件）通过，`git diff --check` 通过。
 
-### Architecture Guard、构建与 Remaining Debt
+### Architecture Guard 与 Remaining Debt
 
 质量门禁使用去注释后的真实 import/new 语法检查 `value/**`，禁止 UI、Controller、Planner 和 concrete Simulator 依赖或 `new AiSimulator`；注释中的相同文本不会误报。`search/TransitionValue.js` 额外禁止 Game/AIController import 与 `this.game`。Guard self-test 覆盖合法 value、非法 import/new、注释忽略和 TransitionValue 边界。
 
@@ -953,7 +953,7 @@ Architecture Guard 已覆盖 `policy/**` 与 `domain/**`：禁止 UI、Controlle
 
 ### 最终验证与 Remaining Debt
 
-ARCH-6 完整测试为 `1377/1377`，统一 build 为 `20260814-ai-policy-domain`。没有修改 Value/Transition 数值、搜索参数、规则或平衡；没有创建 Simulation split，也没有清理 Planner core。
+ARCH-6 完整测试为 `1377/1377`。没有修改 Value/Transition 数值、搜索参数、规则或平衡；没有创建 Simulation split，也没有清理 Planner core。
 
 AI-ARCH-6 结束时仍记录了 `getLegalActions` 命名、`sealScoring` adapter、GlobalBenefit root flip 查询和旧 façade 等债务；这些项目随后在 AI-ARCH-7 至 AI-ARCH-10 完成。Simulator、Response 与 Combat 的正式拆分也已按该顺序落地。
 

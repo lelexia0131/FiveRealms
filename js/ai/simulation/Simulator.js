@@ -29,16 +29,16 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches,
   totalBranchProbability
-} from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
-import { cloneSearchState } from "../state/SearchState.js?build=20260818-skill-rules-locality-refactor";
-import { hasPassiveSkill } from "../state/RuleProjection.js?build=20260818-skill-rules-locality-refactor";
+} from "../state/Probability.js";
+import { cloneSearchState } from "../state/SearchState.js";
+import { hasPassiveSkill } from "../state/RuleProjection.js";
 
-import { clampProbability } from "./SimulationSupport.js?build=20260818-skill-rules-locality-refactor";
-import { withResponseSimulation } from "./ResponseSimulation.js?build=20260818-skill-rules-locality-refactor";
-import { withCombatSimulation } from "./CombatSimulation.js?build=20260818-skill-rules-locality-refactor";
-import { withCardEffectSimulation } from "./CardEffectSimulation.js?build=20260818-skill-rules-locality-refactor";
-import { withSkillEffectSimulation } from "./SkillEffectSimulation.js?build=20260818-skill-rules-locality-refactor";
-import { withStatusSimulation } from "./StatusSimulation.js?build=20260818-skill-rules-locality-refactor";
+import { clampProbability } from "./SimulationSupport.js";
+import { withResponseSimulation } from "./ResponseSimulation.js";
+import { withCombatSimulation } from "./CombatSimulation.js";
+import { withCardEffectSimulation } from "./CardEffectSimulation.js";
+import { withSkillEffectSimulation } from "./SkillEffectSimulation.js";
+import { withStatusSimulation } from "./StatusSimulation.js";
 
 class SimulatorCore {
   /*

@@ -17,8 +17,8 @@ AI 状态组合入口、状态契约测试。
 架构约束
 不得计算概率、价值、搜索分支，也不得保留 Game 或 Player 引用。
 */
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { getCharacterRoleTags } from "../policy/CharacterRoleMetadata.js?build=20260818-skill-rules-locality-refactor";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
+import { getCharacterRoleTags } from "../policy/CharacterRoleMetadata.js";
 
 /*
 功能

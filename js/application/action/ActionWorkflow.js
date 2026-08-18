@@ -17,9 +17,9 @@ actionLocked/interactionLocked/pendingHumanPlayEnd/resolutionOwners/resolutionSe
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、Planner、SearchState、CardRuntime/SkillRuntime 或 concrete adapters。
 */
-import { createTargetChoiceRequest } from "../choice/TargetChoiceRequest.js?build=20260818-skill-rules-locality-refactor";
-import { getCurrentActor } from "../../domain/state/queries/MatchQueries.js?build=20260818-skill-rules-locality-refactor";
-import { recordActiveSkillUse } from "../../domain/state/transitions/RuleUsageTransitions.js?build=20260818-skill-rules-locality-refactor";
+import { createTargetChoiceRequest } from "../choice/TargetChoiceRequest.js";
+import { getCurrentActor } from "../../domain/state/queries/MatchQueries.js";
+import { recordActiveSkillUse } from "../../domain/state/transitions/RuleUsageTransitions.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics",

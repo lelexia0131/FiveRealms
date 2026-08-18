@@ -17,7 +17,7 @@ Application CardIntentRuntime。
 架构约束
 不得依赖 Game、AIController、Planner、Domain transitions 或其它 adapter；不得重新解释 ally/enemy 转移方向。
 */
-import { isTransferDirectionAllowed } from "../../ai/policy/TransferPolicy.js?build=20260818-skill-rules-locality-refactor";
+import { isTransferDirectionAllowed } from "../../ai/policy/TransferPolicy.js";
 
 /*
 功能

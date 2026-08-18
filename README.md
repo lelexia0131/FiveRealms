@@ -6,13 +6,15 @@
 
 ## 启动与测试
 
-不要直接双击 `index.html`，因为浏览器通常会阻止 `file://` 页面加载 ES Module。在项目根目录启动任意静态服务器：
+不要直接双击 `index.html`，因为浏览器通常会阻止 `file://` 页面加载 ES Module。在项目根目录启动仓库内的标准开发服务器：
 
 ```bash
-python -m http.server 8000
+py tools/dev-server.py
 ```
 
-然后访问 `http://localhost:8000`。
+然后访问 `http://127.0.0.1:8000/`。
+
+本地开发服务器为 HTML、CSS、JavaScript 和 ES Module 返回 `Cache-Control: no-store`，因此刷新页面即可读取最新源码，不需要修改资源 URL。
 
 开发测试：
 

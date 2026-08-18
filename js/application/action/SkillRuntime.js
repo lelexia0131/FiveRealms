@@ -17,10 +17,10 @@ Domain Skill/Turn rules、SkillDefinitions 与 ActionLegality。
 架构约束
 不得复制技能定义、实现技能效果、注册被动触发或提供兼容 runtime shape。
 */
-import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js?build=20260818-skill-rules-locality-refactor";
-import { canUseSkillBase, getSkillCost as getDomainSkillCost } from "../../domain/rules/skill/SkillRules.js?build=20260818-skill-rules-locality-refactor";
-import { ActionLegality } from "./ActionLegality.js?build=20260818-skill-rules-locality-refactor";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
+import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js";
+import { canUseSkillBase, getSkillCost as getDomainSkillCost } from "../../domain/rules/skill/SkillRules.js";
+import { ActionLegality } from "./ActionLegality.js";
 
 /*
 功能

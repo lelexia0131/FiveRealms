@@ -17,22 +17,22 @@ ResponseSimulation、Radar domain、state/Probability 与共享 simulation runti
 架构约束
 结算顺序以 Domain CombatRules、CombatWorkflow 与 DyingWorkflow 为权威；不得拥有 Policy 或 Value 公式。
 */
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js?build=20260818-skill-rules-locality-refactor";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js?build=20260818-skill-rules-locality-refactor";
+import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 import {
   calculateHealAmount,
   calculateHpDamage,
   calculateShieldAbsorption,
   isDying,
   isKillRewardEligible
-} from "../../domain/rules/combat/CombatRules.js?build=20260818-skill-rules-locality-refactor";
-import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules.js?build=20260818-skill-rules-locality-refactor";
-import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js?build=20260818-skill-rules-locality-refactor";
-import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js?build=20260818-skill-rules-locality-refactor";
-import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js?build=20260818-skill-rules-locality-refactor";
-import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js?build=20260818-skill-rules-locality-refactor";
-import { clampProbability, unionProbability } from "./SimulationSupport.js?build=20260818-skill-rules-locality-refactor";
+} from "../../domain/rules/combat/CombatRules.js";
+import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules.js";
+import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js";
+import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js";
+import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js";
+import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js";
+import { clampProbability, unionProbability } from "./SimulationSupport.js";
 
 /*
 功能
