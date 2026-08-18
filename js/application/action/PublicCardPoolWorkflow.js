@@ -59,7 +59,7 @@ export class PublicCardPoolWorkflow {
   setPublicCardPool、Deck.drawOne。
 
   边界与不变量
-  不执行轮选。
+  不执行轮选；PresentationPort 只接收公开 card ID，不接收 Card entity。
   */
   reveal(count) {
     if (!this.runtime.isSessionValid(this.runtime.getState().gameId) || this.runtime.getState().isGameOver) return [];
@@ -71,7 +71,7 @@ export class PublicCardPoolWorkflow {
     }
     this.runtime.syncDeckAliases();
     setPublicCardPool(this.runtime.getState(), this.cards);
-    this.runtime.presentation.showPublicCardPool(this.cards);
+    this.runtime.presentation.showPublicCardPool({ cardIds:this.cards.map((card) => card.id) });
     return this.cards;
   }
 
@@ -98,7 +98,7 @@ export class PublicCardPoolWorkflow {
   seatOrderFrom、ChoiceCoordinator、PresentationPort 与 ZoneTransitions。
 
   边界与不变量
-  真人的无效选择会在有效会话内重开；AI 无效返回安全退化为当前首牌。
+  真人的无效选择会在有效会话内重开；AI 无效返回安全退化为当前首牌；牌池展示只跨边界传 ID。
   */
   async draft(source) {
     const gameId = this.runtime.getState().gameId;
@@ -131,7 +131,7 @@ export class PublicCardPoolWorkflow {
       for (const viewer of this.runtime.getState().players) if (viewer.id !== player.id) this.runtime.rememberPrivateCard(viewer, player, card);
       this.runtime.log(`${player.name}从互利牌池选择了「${card.name}」。`);
       this.runtime.presentation.refresh();
-      this.runtime.presentation.showPublicCardPool(this.cards);
+      this.runtime.presentation.showPublicCardPool({ cardIds:this.cards.map((entry) => entry.id) });
     }
     if (!this.runtime.isSessionValid(gameId)) return false;
     if (this.cards.length) moveCardsAtomically(

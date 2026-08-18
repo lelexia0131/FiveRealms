@@ -28,13 +28,13 @@ import { createPresentationPort } from "../../application/ports/PresentationPort
 composition root。
 
 输入
-log、getPlayerById、ui 与 renderTarget 能力。
+log、getPlayerById、getCardById、ui 与 renderTarget 能力。
 
 输出
 冻结 PresentationPort。
 
 读取状态
-getPlayerById 与静态卡牌展示定义。
+getPlayerById、getCardById 与静态卡牌展示定义。
 
 写入状态
 只写 UIManager 展示状态。
@@ -103,7 +103,10 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
       if (player && opponent) ui.showDuel?.(player, opponent);
     },
     hideDuel: () => ui.hideDuel?.(),
-    showPublicCardPool: (cards) => ui.showPublicPool?.(cards),
+    showPublicCardPool: ({ cardIds }) => {
+      const cards = (cardIds ?? []).map((cardId) => getCardById(cardId)).filter(Boolean);
+      ui.showPublicPool?.(cards);
+    },
     hidePublicCardPool: () => ui.hidePublicPool?.(),
     refresh: () => ui.render(renderTarget)
   });

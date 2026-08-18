@@ -31,6 +31,7 @@ import { createResponseChoiceRequest } from "../js/application/choice/ResponseCh
 import { createPublicCardChoiceRequest } from "../js/application/choice/PublicCardChoiceRequest.js";
 import { createHiddenCardSelectionStore } from "../js/application/choice/HiddenCardSelectionStore.js";
 import { createUiChoiceAdapter } from "../js/adapters/ui/UiChoiceAdapter.js";
+import { createGamePresentationAdapter } from "../js/adapters/ui/GamePresentationAdapter.js";
 import { createAiChoiceAdapter } from "../js/adapters/ai/AiChoiceAdapter.js";
 import { createAiResponseTimingDecorator } from "../js/application/response/AiResponseTimingDecorator.js";
 import { calculateDamageResult, calculateHealAmount, isDying, isKillRewardEligible } from "../js/domain/rules/combat/CombatRules.js";
@@ -41707,6 +41708,38 @@ function frArch8PortsMinimalSurface() {
 }
 
 test("FR-ARCH-8·ports：Presentation CREATE，Diagnostics CREATE，surface 最小", frArch8PortsMinimalSurface);
+
+test("FR-ARCH-8·ports：公开牌池只跨边界传 ID 并由 adapter 重绑实体", () => {
+  const player = makePlayer("public-pool-port-player", 0, "dawn", "human"),
+    cardA = instance("block"),
+    cardB = instance("charge");
+  const { game } = makeGame([player]);
+  game.state.deck.cards.push(cardA, cardB);
+  let payload = null;
+  game.publicCardPoolWorkflow.runtime.presentation = {
+    ...game.presentationPort,
+    showPublicCardPool: (value) => { payload = value; }
+  };
+
+  const revealed = game.publicCardPoolWorkflow.reveal(2);
+
+  assert.deepEqual(payload, { cardIds:revealed.map((card) => card.id) });
+  assert.equal(payload.cardIds.some((cardId) => typeof cardId !== "string"), false);
+  let displayedCards = null;
+  const cardsById = new Map(revealed.map((card) => [card.id, card]));
+  const presentation = createGamePresentationAdapter({
+    log: () => { },
+    getPlayerById: () => null,
+    getCardById: (cardId) => cardsById.get(cardId) ?? null,
+    ui: {
+      showPublicPool: (cards) => { displayedCards = cards; },
+      render: () => { }
+    },
+    renderTarget: {}
+  });
+  presentation.showPublicCardPool(payload);
+  assert.deepEqual(displayedCards, revealed);
+});
 
 /*
 功能
