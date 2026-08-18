@@ -96,7 +96,9 @@ export function normalizeChoiceResult(result) {
   }
   if (result?.status === "used") {
     return createChoiceResult(CHOICE_STATUS.SELECTED, {
-      selectedIds: result.cardId ? [result.cardId] : []
+      selectedIds: Array.isArray(result.selectedIds)
+        ? result.selectedIds
+        : result.cardId ? [result.cardId] : []
     });
   }
   if (result?.status === "declined" || result === false) return createChoiceResult(CHOICE_STATUS.DECLINED);

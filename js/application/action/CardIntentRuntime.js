@@ -17,6 +17,8 @@ private intent 只存在于当前调用栈；公开 context 不含 hidden card e
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime 或 concrete adapters。
 */
+import { getScoutMaxRevealCount } from "../../domain/rules/card/CardEffectRules.js";
+
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "diagnostics", "responseWorkflow", "playCard",
   "moveEquipmentToHand", "getTransferSources", "getTransferReceivers", "getCardTargets",
@@ -196,9 +198,10 @@ export function createCardIntentRuntime(dependencies) {
       let zone = "hand";
       let cards = [];
       if (card.definitionId === "scout") {
+        const maxRevealCount = getScoutMaxRevealCount();
         cards = await runtime.chooseHiddenCards(
-          source, target, Math.min(2, target.hand.length),
-          "选择至多2张手牌进行窥探", selection, null, { purpose: "scout" }
+          source, target, Math.min(maxRevealCount, target.hand.length),
+          `选择至多${maxRevealCount}张手牌进行窥探`, selection, null, { purpose: "scout" }
         );
       } else if (["plunder", "destroy"].includes(card.definitionId)) {
         const chosen = await runtime.choosePlayerZoneCard(

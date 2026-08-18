@@ -710,9 +710,39 @@ export class UIManager {
     UIManager.prototype.renderResponseRequest.call(this);
   }
 
+  /*
+  功能
+  结束当前响应窗口并把实体选择 ID 交还 Choice adapter。
+
+  调用方
+  响应窗口使用/放弃按钮与 cancelPendingInteractions。
+
+  输入
+  布尔使用决定，或 cancelled 等既有响应结果对象。
+
+  输出
+  无返回值。
+
+  读取状态
+  this.responseState 中的 request、selectedCardIds 与 resolve callback。
+
+  写入状态
+  通过 responseState.resolve 结束当前 UI 响应 Promise。
+
+  调用函数
+  responseState.resolve。
+
+  边界与不变量
+  借势返回显式勾选 ID；普通响应按当前请求顺序返回 requiredCount 个合法 ID，不接触 Card entity。
+  */
   resolveResponse(choice) {
-    const selectedCardId = this.responseState?.selectedCardIds?.values().next().value ?? null;
-    const result = typeof choice === "object" ? choice : { status:choice ? "used" : "declined", cardId:choice ? selectedCardId : null };
+    const responseState = this.responseState;
+    const selectedIds = responseState?.request.type === "leverageAssault"
+      ? [...responseState.selectedCardIds]
+      : (responseState?.request.legalCardIds ?? []).slice(0, responseState?.request.requiredCount ?? 0);
+    const result = typeof choice === "object"
+      ? choice
+      : { status:choice ? "used" : "declined", selectedIds:choice ? selectedIds : [] };
     this.responseState?.resolve(result);
   }
   requestCardFlow(...args) { return this.interactionController.requestCardFlow(...args); }

@@ -109,7 +109,13 @@ export function createAiChoiceAdapter({
         choiceContext.context,
         choiceContext.cards
       );
-      return createChoiceResult(use ? "selected" : "declined");
+      return use
+        ? createChoiceResult("selected", {
+            selectedIds: choiceRequest.options
+              .slice(0, choiceRequest.constraints.requiredCount)
+              .map((option) => option.optionId)
+          })
+        : createChoiceResult("declined");
     }
   });
 }

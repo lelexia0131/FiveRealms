@@ -39,6 +39,8 @@ const REQUIRED_METHODS = [
   "showPrivateReveal",
   "showDuel",
   "hideDuel",
+  "showPublicCardPool",
+  "hidePublicCardPool",
   "refresh"
 ];
 
@@ -95,6 +97,8 @@ export function createPresentationPort(implementation) {
     showPrivateReveal: implementation.showPrivateReveal,
     showDuel: implementation.showDuel,
     hideDuel: implementation.hideDuel,
+    showPublicCardPool: implementation.showPublicCardPool,
+    hidePublicCardPool: implementation.hidePublicCardPool,
     refresh: implementation.refresh
   });
 }

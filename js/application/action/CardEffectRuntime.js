@@ -18,7 +18,7 @@ private intent 只存在于当前调用栈；public context 不泄漏 hidden car
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、ActionLegality 或 concrete adapters。
 */
 import { isExposeWeaknessConsumable } from "../../domain/rules/status/StatusRules.js";
-import { getAssaultBaseDamage, getChargeEnergyAmount, getDuelDamage, getHarvestDrawCount, getMutualBenefitRevealCount, getNextExposeWeaknessStacks, getProvokeDamage, getRecoverHealAmount, getShieldAmount, getShockwaveDamage, getSymbiosisHealAmount } from "../../domain/rules/card/CardEffectRules.js";
+import { getAssaultBaseDamage, getChargeEnergyAmount, getDuelDamage, getHarvestDrawCount, getMutualBenefitRevealCount, getNextExposeWeaknessStacks, getProvokeDamage, getRecoverHealAmount, getScoutMaxRevealCount, getShieldAmount, getShockwaveDamage, getSymbiosisHealAmount } from "../../domain/rules/card/CardEffectRules.js";
 import { changeShield } from "../../domain/state/transitions/ResourceTransitions.js";
 import { incrementAttackUsed, incrementRecoverUsed } from "../../domain/state/transitions/RuleUsageTransitions.js";
 import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js";
@@ -263,10 +263,11 @@ runtime/card/skill facts。
       const state = runtime.getState();
       const target = targets[0];
       if (!target?.alive || target.battleTeam !== source.battleTeam) return { resolved: false };
-      changeShield(state, target, getShieldAmount());
-      runtime.presentation.showShieldFeedback(target.id, 1);
+      const shieldAmount = getShieldAmount();
+      changeShield(state, target, shieldAmount);
+      runtime.presentation.showShieldFeedback(target.id, shieldAmount);
       const targetLabel = target.id === source.id ? "自己" : target.name;
-      runtime.presentation.log(`${source.name}使用「${card.name}」，令${targetLabel}获得1点护盾，现有${target.shield}点。`, "heal");
+      runtime.presentation.log(`${source.name}使用「${card.name}」，令${targetLabel}获得${shieldAmount}点护盾，现有${target.shield}点。`, "heal");
       return { resolved: true };
     },
 
@@ -299,7 +300,7 @@ runtime/card/skill facts。
       const gameId = runtime.getState().gameId;
       const target = targets[0];
       const intent = resolvePrivateSelectionIntent(source, card, target, context, "hand");
-      const chosen = intent?.cards.slice(0, 2) ?? [];
+      const chosen = intent?.cards.slice(0, getScoutMaxRevealCount()) ?? [];
       if (!chosen.length) return { resolved: false };
       for (const seen of chosen) runtime.rememberPrivateCard(source, target, seen);
       if (source.controllerType === "human") await runtime.presentation.showPrivateReveal({ title: `${target.name}的手牌情报`, cardIds: chosen.map((card) => card.id) });

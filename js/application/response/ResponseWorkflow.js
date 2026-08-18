@@ -19,7 +19,7 @@ Domain ResponseRules、Choice application modules、ResponsePresentation 与注�
 */
 import {
   getCounterResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId,
-  getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage,
+  getStatusCounterResponderOrder, isAssaultDamage,
   isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible
 } from "../../domain/rules/response/ResponseRules.js";
 import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js";
@@ -93,7 +93,7 @@ export function createResponseWorkflow(dependencies) {
   响应者、请求、显示标签、公开上下文与合法候选牌。
 
   输出
-  规范化的 USED、DECLINED 或 CANCELLED 结果。
+  规范化的 USED、DECLINED 或 CANCELLED 结果；USED 保留完整 selectedIds。
 
   读取状态
   当前会话、UI、CleanupManager 与 AIController 响应门面。
@@ -105,7 +105,7 @@ export function createResponseWorkflow(dependencies) {
   UI.requestResponse、AIController.shouldRespond、responseResult。
 
   边界与不变量
-  会话失效必须返回取消；AI 放弃借势时不得用中间提示泄漏手牌。
+  会话失效必须返回取消；选择实体 ID 不得在此截断或替换。
   */
   async function waitForDecision(responder, request, label, context, cards) {
     const choiceRequest = createResponseChoiceRequest({
@@ -129,7 +129,7 @@ export function createResponseWorkflow(dependencies) {
     try {
       const choice = await choiceCoordinator.request(choiceRequest);
       if (choice.status === "selected") {
-        return responseResult(RESPONSE_STATUS.USED, { cardId:choice.selectedIds[0] ?? null });
+        return responseResult(RESPONSE_STATUS.USED, { selectedIds:choice.selectedIds });
       }
       if (choice.status === "declined") return responseResult(RESPONSE_STATUS.DECLINED);
       return responseResult(RESPONSE_STATUS.CANCELLED);
@@ -152,22 +152,21 @@ export function createResponseWorkflow(dependencies) {
   规范化 USED/DECLINED/CANCELLED/INVALID 结果。
 
   读取状态
-  responder 存活、手牌实体、Game 会话与响应请求注册表。
+  responder 当前手牌实体、Game 会话与响应请求注册表。
 
   写入状态
   pendingResponses、UI thinking/prompt 与经支付 transition 的手牌。
 
   调用函数
-  getResponseCardDefinitionId、isResponderEligible、hasSufficientResponseCards、waitForDecision、finishRequest、payCardsFromHandAtomically。
+  getResponseCardDefinitionId、isResponderEligible、waitForDecision、finishRequest、payCardsFromHandAtomically。
 
   边界与不变量
-  responseTimeoutMs 仍属 runtime policy；响应类型映射与资格由 Domain Rule 决定。
+  只按返回的唯一 selectedIds 从当前手牌重绑实体；数量、合法集合、会话或实体位置任一失效都不得支付。
   */
   async function requestCardResponse(responder, type, context, requiredCount = 1) {
     const gameId = runtime.getState().gameId;
     const definitionId = getResponseCardDefinitionId(type);
     const availableCards = responder.hand.filter((card) => card.definitionId === definitionId);
-    const cardsToUse = availableCards.slice(0, requiredCount);
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
     if (!isResponderEligible(responder) || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
     // 规则轮到真人响应时始终显示窗口；AI 没牌仍立即跳过。
@@ -181,8 +180,14 @@ export function createResponseWorkflow(dependencies) {
     runtime.pushPendingResponse(request);
     const label = request.presentation.buttonLabel;
     const decision = await waitForDecision(responder, request, label, context, availableCards);
+    const selectedIds = decision.selectedIds ?? [];
+    const uniqueSelectedIds = new Set(selectedIds);
+    const cardsToUse = selectedIds.map((selectedId) => (
+      responder.hand.find((card) => card.id === selectedId) ?? null
+    ));
     const valid = activeRequestIds.has(request.id) && runtime.isSessionValid(gameId) && isResponderEligible(responder) &&
-      hasSufficientResponseCards(cardsToUse.length, requiredCount) && cardsToUse.every((card) => responder.hand.includes(card));
+      selectedIds.length === requiredCount && uniqueSelectedIds.size === selectedIds.length &&
+      selectedIds.every((selectedId) => request.legalCardIds.includes(selectedId)) && cardsToUse.every(Boolean);
     finishRequest(request.id);
     if (isCancelledResponse(decision) || !runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
     if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { cards:[] });
@@ -665,7 +670,7 @@ export function createResponseWorkflow(dependencies) {
     runtime.pushPendingResponse(request);
     const decision = await waitForDecision(responder, request, presentation.buttonLabel, { ...context, target }, availableCards);
     const selectedId = shouldPreferExplicitSelection(responder)
-      ? (decision.cardId ?? availableCards[0]?.id)
+      ? (decision.selectedIds?.[0] ?? availableCards[0]?.id)
       : availableCards[0]?.id;
     const selectedCard = availableCards.find((entry) => entry.id === selectedId) ?? null;
     const valid = activeRequestIds.has(request.id)

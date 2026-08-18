@@ -10,28 +10,28 @@ import { CHARACTER_SELECTION_TAGS, SMALL_TEAM_CHARACTER_PRIORITY } from "./Chara
 export class CharacterSelection {
   /*
   功能
-  创建并初始化 CharacterSelection 实例。
+  创建使用指定随机源的角色选择器。
 
   调用方
-  本模块内部流程及显式公开边界。
+  composition root 与测试。
 
   输入
-  函数签名声明的参数。
+  random，返回 [0, 1) 数值的随机函数。
 
   输出
-  函数实现声明的返回值。
+  初始化完成的 CharacterSelection 实例。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  无。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  this.random。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  无。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  不自行消费随机数；缺省随机源保持 Math.random。
   */
   constructor(random = Math.random) {
     this.random = random;
@@ -40,28 +40,28 @@ export class CharacterSelection {
   /** 随机生成不重复候选；若允许重复仍优先展示不同角色。 */
   /*
   功能
-  执行 createCandidates 对应的 CharacterSelection 职责。
+  随机生成真人可选的角色候选。
 
   调用方
-  本模块内部流程及显式公开边界。
+  MatchWorkflow 角色选择阶段与测试。
 
   输入
-  函数签名声明的参数。
+  无。
 
   输出
-  函数实现声明的返回值。
+  不超过规则候选数的角色定义数组。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  CHARACTER_DEFINITIONS、RULESET_DEFINITION.characterCandidateCount 与 this.random。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  shuffled。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  只返回打乱后的前 N 个定义，不修改定义集合。
   */
   createCandidates() {
     return shuffled(CHARACTER_DEFINITIONS, this.random).slice(0, RULESET_DEFINITION.characterCandidateCount);
@@ -75,28 +75,28 @@ export class CharacterSelection {
    */
   /*
   功能
-  执行 assignAiCharacters 对应的 CharacterSelection 职责。
+  按队伍标签多样性为 AI 座位分配角色。
 
   调用方
-  本模块内部流程及显式公开边界。
+  MatchWorkflow 确认真人角色后的 AI 分配阶段与测试。
 
   输入
-  函数签名声明的参数。
+  AI Player entity 数组、真人角色 ID 与可选小队 ID。
 
   输出
-  函数实现声明的返回值。
+  与 aiPlayers 顺序一致的角色定义数组。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  角色定义、选择标签、规则重复开关、玩家 battleTeam 与 this.random。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无；仅修改本方法局部候选池与分配记录。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  shuffled、Array filter/map/sort/splice。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  不修改 Player entity；禁止重复角色时每次选择后从局部池移除同一定义。
   */
   assignAiCharacters(aiPlayers, selectedCharacterId, smallTeamId = null) {
     const pool = shuffled(CHARACTER_DEFINITIONS.filter((character) => RULESET_DEFINITION.allowDuplicateCharacters || character.id !== selectedCharacterId), this.random);

@@ -87,6 +87,14 @@ const REMOVED_COMPATIBILITY_NAMES = Object.freeze([
   "AiResponsePolicy",
   "AiValueSimulationQuery",
 ]);
+const SEMANTIC_EMPTY_HEADER_BODIES = Object.freeze([
+  "函数签名声明的参数。",
+  "函数实现声明的返回值。",
+  "仅函数体显式读取的参数、模块或实例状态。",
+  "仅执行函数体显式声明的写入；查询路径不写状态。",
+  "仅调用函数体中显式列出的依赖。",
+  "遵守模块头定义的 ownership、状态与信息边界。",
+]);
 const REMOVED_LEGACY_FILES = Object.freeze([
   "js/core/Game.js",
   "js/core/RuleEngine.js",
@@ -773,7 +781,7 @@ function headerFormatIssues(block, fields) {
 inspectSource。
 
 输入
-源码行与函数起始行。
+源码行、函数起始行与是否拒绝已确认 Application 模板正文。
 
 输出
 缺失字段和严格格式问题数组。
@@ -788,10 +796,18 @@ inspectSource。
 adjacentHeaderBlock、headerFormatIssues。
 
 边界与不变量
-允许函数头与签名之间有空行，不越过其他代码寻找注释。
+允许函数头与签名之间有空行，不越过其他代码寻找注释；semantic guard 只匹配固定占位句式。
 */
-function missingHeaderFields(lines, startLine) {
-  return headerFormatIssues(adjacentHeaderBlock(lines, startLine - 1), HEADER_FIELDS);
+function missingHeaderFields(lines, startLine, rejectSemanticTemplates = false) {
+  const block = adjacentHeaderBlock(lines, startLine - 1);
+  const issues = headerFormatIssues(block, HEADER_FIELDS);
+  if (!rejectSemanticTemplates || !block) return issues;
+  for (const placeholder of SEMANTIC_EMPTY_HEADER_BODIES) {
+    if (block.some((line) => line.trim() === placeholder)) {
+      issues.push(`模板化空正文：${placeholder}`);
+    }
+  }
+  return [...new Set(issues)];
 }
 
 /*
@@ -1323,7 +1339,7 @@ function inspectSource(file, source, changed) {
   errors.push(...cacheBustImportErrors(file, source));
   for (const fn of findFunctions(source)) {
     if (!functionWasChanged(fn, changed, lines)) continue;
-    const missing = missingHeaderFields(lines, fn.startLine);
+    const missing = missingHeaderFields(lines, fn.startLine, APPLICATION_LAYER_PATTERN.test(file));
     if (missing.length) errors.push({ file, functionName: fn.name, line: fn.startLine, missing });
   }
 
@@ -1893,6 +1909,20 @@ function identity(value) { return value; }`;
 */`;
   const passErrors = inspectSource("js/fixture-pass.js", pass, null);
   if (passErrors.length) throw new Error(`valid no-star fixture failed: ${JSON.stringify(passErrors)}`);
+
+  const shortLegalHeader = pass
+    .replace("输入\n数值。", "输入\nPlayer entity。")
+    .replace("输出\n原数值。", "输出\nPromise。")
+    .replace("读取状态\n无。", "读取状态\n无");
+  const shortLegalErrors = inspectSource("js/application/fixture-short-header.js", shortLegalHeader, null);
+  if (shortLegalErrors.length) {
+    throw new Error(`short but meaningful header fixture failed: ${JSON.stringify(shortLegalErrors)}`);
+  }
+  const semanticEmpty = pass.replace("输入\n数值。", "输入\n函数签名声明的参数。");
+  const semanticEmptyErrors = inspectSource("js/application/fixture-semantic-empty.js", semanticEmpty, null);
+  if (!semanticEmptyErrors.some((error) => error.missing.some((item) => item.includes("模板化空正文")))) {
+    throw new Error("semantic-empty Application header fixture was not rejected");
+  }
 
   const validCacheBustSource = inspectSource(
     "js/fixture-stable-import.js",

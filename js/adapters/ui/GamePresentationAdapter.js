@@ -40,7 +40,7 @@ getPlayerById 与静态卡牌展示定义。
 只写 UIManager 展示状态。
 
 调用函数
-createPresentationPort、ui.showJudgment、ui.showDying、ui.setCurrentCard、ui.playLightningHit、ui.queueFeedback、ui.render。
+createPresentationPort、UIManager 的语义展示方法与 render。
 
 边界与不变量
 Application 传入 data-only DTO；本 adapter 负责映射回 UI 调用，不新增 UI 行为。
@@ -103,6 +103,8 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
       if (player && opponent) ui.showDuel?.(player, opponent);
     },
     hideDuel: () => ui.hideDuel?.(),
+    showPublicCardPool: (cards) => ui.showPublicPool?.(cards),
+    hidePublicCardPool: () => ui.hidePublicPool?.(),
     refresh: () => ui.render(renderTarget)
   });
 }

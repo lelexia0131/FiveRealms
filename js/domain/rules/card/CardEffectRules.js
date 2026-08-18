@@ -131,6 +131,60 @@ export function getShieldAmount() { return CARD_DEFINITIONS.shield.shieldAmount;
 
 /*
 功能
+返回窥探牌可查看的最大手牌数。
+
+调用方
+CardIntentRuntime 与 CardEffectRuntime。
+
+输入
+无。
+
+输出
+非负整数。
+
+读取状态
+CARD_DEFINITIONS.scout.maxRevealCount。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+选择阶段和结算阶段必须消费同一权威上限。
+*/
+export function getScoutMaxRevealCount() { return CARD_DEFINITIONS.scout.maxRevealCount; }
+
+/*
+功能
+返回闪电判定命中时的伤害值。
+
+调用方
+StatusResolutionWorkflow.resolveLightning。
+
+输入
+无。
+
+输出
+非负数值。
+
+读取状态
+CARD_DEFINITIONS.lightning.hitDamage。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只返回固定事实，不解释判定或伤害顺序。
+*/
+export function getLightningHitDamage() { return CARD_DEFINITIONS.lightning.hitDamage; }
+
+/*
+功能
 决定破势新增层数。
 
 调用方

@@ -46,7 +46,7 @@ import { changeEnergy as transitionChangeEnergy, changeHp as transitionChangeHp,
 import { setStatus as transitionSetStatus, removeStatus as transitionRemoveStatus, clearStatuses as transitionClearStatuses } from "../js/domain/state/transitions/StatusTransitions.js";
 import { appendCardToZone as transitionAppendCardToZone, removeCardFromZone as transitionRemoveCardFromZone, moveCardBetweenZones as transitionMoveCardBetweenZones } from "../js/domain/state/transitions/ZoneTransitions.js";
 import { moveCardsAtomically as transitionMoveCardsAtomically } from "../js/domain/state/transitions/ZoneTransitions.js";
-import { resetGlobalTurnReactiveFlags as transitionResetGlobalTurnReactiveFlags, resetRoundFlags as transitionResetRoundFlags, resetTurnFlags as transitionResetTurnFlags } from "../js/domain/state/transitions/RuleUsageTransitions.js";
+import { removeSpyGapPendingTarget as transitionRemoveSpyGapPendingTarget, resetGlobalTurnReactiveFlags as transitionResetGlobalTurnReactiveFlags, resetRoundFlags as transitionResetRoundFlags, resetTurnFlags as transitionResetTurnFlags } from "../js/domain/state/transitions/RuleUsageTransitions.js";
 import { setCurrentPlayerIndex as transitionSetCurrentPlayerIndex, setCurrentRound as transitionSetCurrentRound, setMatchPhase as transitionSetMatchPhase, setWinnerTeam as transitionSetWinnerTeam, setGameOver as transitionSetGameOver, setPublicCardPool as transitionSetPublicCardPool } from "../js/domain/state/transitions/MatchStateTransitions.js";
 import { applyCharacterDefinition as transitionApplyCharacterDefinition, bumpHandVersion as transitionBumpHandVersion, setAlive as transitionSetAlive, setEquipment as transitionSetEquipment } from "../js/domain/state/transitions/PlayerStateTransitions.js";
 import { createGameApplication } from "../js/composition/createGameApplication.js";
@@ -301,7 +301,17 @@ function makeUi(response = () => false) {
         this.playEndState
       ) { const resolve = this.playEndState.resolve; this.playEndState = null; resolve(false); }
     },
-    async requestResponse(request) { this.responseRequests.push(request); return response(request); },
+    async requestResponse(request) {
+      this.responseRequests.push(request);
+      const decision = await response(request);
+      if (decision === true) {
+        return {
+          status:"used",
+          selectedIds:request.legalCardIds.slice(0, request.requiredCount)
+        };
+      }
+      return decision === false ? { status:"declined" } : decision;
+    },
     async requestDiscard(player, count) { return player.hand.slice(0, count); },
     async requestTarget(players) { return players[0] ?? null; },
     async requestPublicCard(
@@ -6060,6 +6070,24 @@ test("影客：窥隙在致命伤害获救后触发且不会在救援前提前�
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length, 2);
 });
 
+test("影客：窥隙救援清理待处理目标并按 transition 语义推进状态版本", async () => {
+  const shade = makePlayer("peek-version-shade", 0, "dawn", "human", 3),
+    target = makePlayer("peek-version-target", 1, "dusk");
+  target.hand.push(instance("charge"));
+  const { game } = makeGame([shade, target]);
+  registerPassiveSkills(game);
+  shade.turnFlags.spyGapPendingTargetIds.add(target.id);
+  const versionBeforeRescue = game.state.stateVersion;
+
+  await game.eventDispatcher.emit("playerRescued", { target });
+
+  assert.equal(shade.turnFlags.spyGapPendingTargetIds.has(target.id), false);
+  assert.equal(game.state.stateVersion, versionBeforeRescue + 2, "删除 pending 与提交触发额度各推进一次版本");
+  const versionAfterRescue = game.state.stateVersion;
+  assert.equal(transitionRemoveSpyGapPendingTarget(game.state, shade, target.id), false);
+  assert.equal(game.state.stateVersion, versionAfterRescue, "no-op 删除不得推进状态版本");
+});
+
 test("影客：窥隙在致命伤害由队友救援成功后触发", async () => {
   const shade = makePlayer("peek-ally-rescue-shade", 0, "dawn", "human", 3),
     enemy = makePlayer("peek-ally-rescue-enemy", 1, "dusk"),
@@ -7717,6 +7745,97 @@ test("响应窗口：显示真实持有数量但只消耗所需格挡", async ()
   assert.equal(request.legalCardIds.length, 3);
   assert.match(request.presentation.availabilityText, /需要1张「格挡」，当前有3张/);
   assert.equal(target.hand.filter((card) => card.definitionId === "block").length, 2);
+});
+
+test("响应窗口：按 selectedIds 消费用户选择的第二张同定义实体", async () => {
+  const source = makePlayer("selected-second-source", 0, "dusk"),
+    target = makePlayer("selected-second-target", 1, "dawn", "human"),
+    blockA = instance("block"),
+    blockB = instance("block");
+  target.hand.push(blockA, blockB);
+  const { game } = makeGame([source, target], {
+    response: () => ({ status:"used", selectedIds:[blockB.id] })
+  });
+
+  const result = await game.responseWorkflow.requestCardResponse(
+    target, "block", { source, target, card:instance("assault") }, 1
+  );
+
+  assert.equal(result.status, "used");
+  assert.deepEqual(result.cards, [blockB]);
+  assert.ok(target.hand.includes(blockA));
+  assert.ok(!target.hand.includes(blockB));
+  assert.ok(game.state.deck.discardPile.includes(blockB));
+});
+
+test("响应窗口：requiredCount 为二时原子消费 selectedIds 指定的两张实体", async () => {
+  const source = makePlayer("selected-pair-source", 0, "dusk"),
+    target = makePlayer("selected-pair-target", 1, "dawn", "human"),
+    blockA = instance("block"),
+    blockB = instance("block"),
+    blockC = instance("block");
+  target.hand.push(blockA, blockB, blockC);
+  const { game } = makeGame([source, target], {
+    response: () => ({ status:"used", selectedIds:[blockB.id, blockC.id] })
+  });
+
+  const result = await game.responseWorkflow.requestCardResponse(
+    target, "block", { source, target, card:instance("assault") }, 2
+  );
+
+  assert.equal(result.status, "used");
+  assert.deepEqual(result.cards, [blockB, blockC]);
+  assert.deepEqual(target.hand, [blockA]);
+  assert.ok(game.state.deck.discardPile.includes(blockB));
+  assert.ok(game.state.deck.discardPile.includes(blockC));
+});
+
+test("响应窗口：选择实体在 await 后离开手牌时不得替换为同定义实体", async () => {
+  const source = makePlayer("stale-selection-source", 0, "dusk"),
+    target = makePlayer("stale-selection-target", 1, "dawn", "human"),
+    blockA = instance("block"),
+    blockB = instance("block");
+  target.hand.push(blockA, blockB);
+  const { game, ui } = makeGame([source, target]);
+  ui.requestResponse = async () => {
+    assert.equal(await game.resourceWorkflow.discardCardFromHand(target, blockB, "测试过期选择", { silent:true }), true);
+    return { status:"used", selectedIds:[blockB.id] };
+  };
+
+  const result = await game.responseWorkflow.requestCardResponse(
+    target, "block", { source, target, card:instance("assault") }, 1
+  );
+
+  assert.equal(result.status, "invalid");
+  assert.deepEqual(result.cards, []);
+  assert.ok(target.hand.includes(blockA));
+  assert.ok(!game.state.deck.discardPile.includes(blockA));
+  assert.equal(game.state.deck.discardPile.filter((card) => card === blockB).length, 1);
+});
+
+test("响应窗口：非法或重复 selectedIds 不得产生部分支付", async () => {
+  for (const selectedIds of [["not-legal"], null]) {
+    const source = makePlayer(`invalid-selection-source-${serial}`, 0, "dusk"),
+      target = makePlayer(`invalid-selection-target-${serial}`, 1, "dawn", "human"),
+      blockA = instance("block"),
+      blockB = instance("block");
+    target.hand.push(blockA, blockB);
+    const ids = selectedIds ?? [blockB.id, blockB.id];
+    const requiredCount = selectedIds ? 1 : 2;
+    const { game } = makeGame([source, target], {
+      response: () => ({ status:"used", selectedIds:ids })
+    });
+
+    const result = await game.responseWorkflow.requestCardResponse(
+      target, "block", { source, target, card:instance("assault") }, requiredCount
+    );
+
+    assert.equal(result.status, "invalid");
+    assert.deepEqual(result.cards, []);
+    assert.deepEqual(target.hand, [blockA, blockB]);
+    assert.equal(game.state.deck.discardPile.includes(blockA), false);
+    assert.equal(game.state.deck.discardPile.includes(blockB), false);
+  }
 });
 
 test("响应窗口：反制、强制突袭与濒死调息显示完整持有数量", async () => {
@@ -40826,14 +40945,17 @@ async function frArch6PeerChoiceAdapters() {
   });
   const humanCalls = [];
   const human = createUiChoiceAdapter({
-    requestResponse: async (legacy, label) => { humanCalls.push({ legacy, label }); return { status:"used" }; },
+    requestResponse: async (legacy, label) => {
+      humanCalls.push({ legacy, label });
+      return { status:"used", selectedIds:["c1"] };
+    },
     requestPublicCard: async () => null,
     requestDiscard: async () => [],
     requestTarget: async () => null,
     getChoiceContext: () => ({ player:{ id:"p1" }, cards:[] }),
     isSessionValid: () => true
   });
-  assert.deepEqual(await human.request(request), createChoiceResult("selected"));
+  assert.deepEqual(await human.request(request), createChoiceResult("selected", { selectedIds:["c1"] }));
   assert.equal(humanCalls[0].legacy.legalCardIds[0], "c1");
   assert.equal(humanCalls[0].legacy.type, "block");
 
@@ -40852,7 +40974,7 @@ async function frArch6PeerChoiceAdapters() {
     setPrompt: () => { },
     isSessionValid: () => true
   });
-  assert.deepEqual(await ai.request(request), createChoiceResult("selected"));
+  assert.deepEqual(await ai.request(request), createChoiceResult("selected", { selectedIds:["c1"] }));
   assert.equal(thinking[0][0], true);
   assert.equal(thinking[1][0], false);
 
@@ -41140,7 +41262,7 @@ async function frArch7ApplicationWorkflow() {
     });
     return { workflow, state, pending, payments };
   };
-  const selected = await makeDeps(createChoiceResult("selected"));
+  const selected = await makeDeps(createChoiceResult("selected", { selectedIds:[card.id] }));
   const responder = { id:"p1", name:"测试", alive:true, controllerType:"ai", hand:[card] };
   assert.deepEqual(
     await selected.workflow.requestCardResponse(responder, "block", { source:{ id:"p2", name:"来源" }, card }, 1),
@@ -41153,13 +41275,13 @@ async function frArch7ApplicationWorkflow() {
   assert.equal((await declined.workflow.requestCardResponse(responder, "block", {}, 1)).status, "declined");
   assert.equal(declined.payments.length, 0);
 
-  const invalidated = makeDeps(createChoiceResult("selected"));
+  const invalidated = makeDeps(createChoiceResult("selected", { selectedIds:[card.id] }));
   invalidated.workflow = invalidated.workflow;
   const invalidResponder = { id:"p1", name:"测试", alive:true, controllerType:"ai", hand:[{ ...card }] };
   const oldRequest = invalidated.workflow.requestCardResponse;
   invalidated.workflow = createResponseWorkflow({
     choiceCoordinator: createChoiceCoordinator(createChoicePort({
-      async request() { invalidResponder.hand.length = 0; return createChoiceResult("selected"); }
+      async request() { invalidResponder.hand.length = 0; return createChoiceResult("selected", { selectedIds:[card.id] }); }
     })),
     choiceContexts: new Map(),
     getState: () => invalidated.state,
@@ -41568,6 +41690,8 @@ function frArch8PortsMinimalSurface() {
     showPrivateReveal: (...args) => presentationCalls.push(["private-reveal", ...args]),
     showDuel: (...args) => presentationCalls.push(["duel", ...args]),
     hideDuel: () => presentationCalls.push(["hide-duel"]),
+    showPublicCardPool: (...args) => presentationCalls.push(["public-pool", ...args]),
+    hidePublicCardPool: () => presentationCalls.push(["hide-public-pool"]),
     refresh: () => presentationCalls.push(["refresh"])
   });
   presentation.showDamageFeedback("p1", 1);

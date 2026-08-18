@@ -14,28 +14,28 @@ export class TeamAssignment {
    */
   /*
   功能
-  执行 assignTeams 对应的 TeamAssignment 职责。
+  随机生成满足 2V3 规则的逐座位阵营数组。
 
   调用方
-  本模块内部流程及显式公开边界。
+  MatchWorkflow 初始化与测试。
 
   输入
-  函数签名声明的参数。
+  random，返回 [0, 1) 数值的随机函数。
 
   输出
-  函数实现声明的返回值。
+  与座位索引一一对应的 dawn/dusk 数组。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  RULESET_DEFINITION 的玩家数与两队人数。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  random、Array.reverse、Array.map。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  人数配置必须闭合；两名小队成员始终隔座，随机调用顺序保持阵营、翻转、旋转三步。
   */
   static assignTeams(random = Math.random) {
     if (RULESET_DEFINITION.smallTeamSize + RULESET_DEFINITION.largeTeamSize !== RULESET_DEFINITION.playerCount) {

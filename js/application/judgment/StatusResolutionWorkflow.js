@@ -18,6 +18,7 @@ Domain StatusRules、Domain transitions、Application Response status-counter、
 不得依赖 MatchApplication、UIManager、AiController、SoundManager、EventDispatcher runtime、混合配置模块或 concrete adapters。
 */
 import { nextLightningReceiverId } from "../../domain/rules/status/StatusRules.js";
+import { getLightningHitDamage } from "../../domain/rules/card/CardEffectRules.js";
 import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js";
 import { setSkipActionPhase } from "../../domain/state/transitions/RuleUsageTransitions.js";
 import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js";
@@ -209,10 +210,11 @@ export function createStatusResolutionWorkflow(dependencies) {
     const judgment = await runtime.judgeLightning(holder, { status });
     if (!runtime.isSessionValid(gameId) || state.isGameOver || !holder.alive || !judgment.handled) return;
     if (judgment.triggered) {
+      const hitDamage = getLightningHitDamage();
       removeStatus(state, holder, "lightning");
       runtime.presentation.showCurrentEffect({ statusId: "lightning", label: "判定成功", holderName: holder.name });
       runtime.presentation.showLightningHit(holder.id);
-      await runtime.damage(null, holder, 3, {
+      await runtime.damage(null, holder, hitDamage, {
         damageType: "lightning",
         reason: "lightning",
         canBlock: false,
@@ -230,7 +232,7 @@ export function createStatusResolutionWorkflow(dependencies) {
           cardDefinitionId: "lightning",
           originPlayerId: status.originPlayerId ?? null,
           currentHolderId: holder.id,
-          baseDamage: 3,
+          baseDamage: hitDamage,
           judgmentCategory: "equipment"
         }
       });

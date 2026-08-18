@@ -316,7 +316,7 @@ runtime/card/skill facts。
       const drawn = await runtime.drawCards(source, decision.drawCount, "孤注", { silent: true });
       if (!runtime.isSessionValid(gameId)) return;
       const entered = runtime.random() < decision.enterChance;
-      if (entered) setStatus(state, source, "allIn", { assaultBonus: 1 });
+      if (entered) setStatus(state, source, "allIn", { assaultBonus: decision.assaultDamageBonus });
       if (hadAllInBefore) {
         runtime.presentation.log(`${source.name}消耗${decision.energyCost}点能量发动「孤注」，${drawn ? `摸${drawn}张牌` : "未摸到牌"}，原有「孤注」状态保持不变。`, "important");
       } else {

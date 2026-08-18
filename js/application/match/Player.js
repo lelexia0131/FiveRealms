@@ -245,28 +245,28 @@ export class Player {
   /** 返回角色是否具有给定技能 ID；不修改状态。 */
   /*
   功能
-  判断 hasSkill 对应的 Player 条件。
+  判断当前角色定义是否声明指定主动或被动技能。
 
   调用方
-  本模块内部流程及显式公开边界。
+  Action/trigger 合法性入口与测试。
 
   输入
-  函数签名声明的参数。
+  skillId，技能定义 ID。
 
   输出
-  函数实现声明的返回值。
+  具有该技能时返回 true。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  this.character 的 activeSkillIds 与 passiveSkillIds。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  Array.includes。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  未选择角色时返回 false，不推断或修改技能状态。
   */
   hasSkill(skillId) {
     return Boolean(this.character?.passiveSkillIds.includes(skillId) || this.character?.activeSkillIds.includes(skillId));
@@ -275,28 +275,28 @@ export class Player {
   /** 返回手中第一个指定定义的卡牌实例；不向 UI 暴露电脑牌。 */
   /*
   功能
-  查询并返回 findCard 对应的 Player 结果。
+  返回手牌中第一张指定定义的实体牌。
 
   调用方
-  本模块内部流程及显式公开边界。
+  response/action 执行边界与测试。
 
   输入
-  函数签名声明的参数。
+  definitionId，卡牌定义 ID。
 
   输出
-  函数实现声明的返回值。
+  匹配的 Card entity；不存在时返回 null。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  this.hand。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  Array.find。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  返回当前手牌中的原实体引用，不按名称匹配或复制。
   */
   findCard(definitionId) {
     return this.hand.find((card) => card.definitionId === definitionId) ?? null;

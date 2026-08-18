@@ -53,54 +53,54 @@ export function createTeamRuleQueries(getState) {
   if (typeof getState !== "function") throw new TypeError("TeamRuleQueries 缺少 getState capability");
   /*
   功能
-  执行 ruleState 对应的 TeamRuleQueries 职责。
+  取得当前 MatchState 的 canonical team-rule player facts。
 
   调用方
-  本模块内部流程及显式公开边界。
+  本函数返回的所有阵营规则查询。
 
   输入
-  函数签名声明的参数。
+  无。
 
   输出
-  函数实现声明的返回值。
+  仅含 players 投影的 rule state。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  getState 返回的当前 MatchState。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  getState、createRuleStateView。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  每次查询重新投影，不缓存过期玩家状态。
   */
   const ruleState = () => ({ players:createRuleStateView(getState()).players() });
   /*
   功能
-  执行 playerFact 对应的 TeamRuleQueries 职责。
+  把 Player entity 归一化为 TeamRules 所需公开事实。
 
   调用方
-  本模块内部流程及显式公开边界。
+  rulesFor、回合能量查询。
 
   输入
-  函数签名声明的参数。
+  Player entity、teamId 字符串或空值。
 
   输出
-  函数实现声明的返回值。
+  原字符串/空值，或 battleTeam 与 equipmentDefinitionId 投影。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  player.battleTeam 与当前装备定义 ID。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  无。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  不暴露手牌或 mutable equipment entity。
   */
   const playerFact = (player) => !player || typeof player === "string" ? player : ({
     battleTeam:player.battleTeam,
@@ -108,28 +108,28 @@ export function createTeamRuleQueries(getState) {
   });
   /*
   功能
-  执行 rulesFor 对应的 TeamRuleQueries 职责。
+  返回指定玩家或阵营当前适用的 Domain team rules。
 
   调用方
-  本模块内部流程及显式公开边界。
+  getRules 及所有数值查询包装。
 
   输入
-  函数签名声明的参数。
+  Player entity、teamId 字符串或空值。
 
   输出
-  函数实现声明的返回值。
+  Domain getTeamRules 返回的规则对象。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  当前 ruleState 与 playerFact。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  getTeamRules、ruleState、playerFact。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  Application 不解释或缓存 Domain 返回的固定规则数值。
   */
   const rulesFor = (player) => getTeamRules(ruleState(), playerFact(player));
   return Object.freeze({

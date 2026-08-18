@@ -181,8 +181,9 @@ const PASSIVE_SKILLS = {
       const moved = await runtime.discardCardFromHand(owner, discard, "护援", { logReason:"「护援」" });
       if (!runtime.isSessionValid(gameId) || !moved) return;
       setGuardianAidUsed(runtime.getState(), owner, true);
-      event.amount = Math.max(0, event.amount - 1);
-      runtime.presentation.log(`${owner.name}发动「护援」，令${event.target.name}受到的伤害减少1点。`, "important");
+      const reduction = PASSIVE_SKILL_DEFINITIONS.guardianAid.damageReduction;
+      event.amount = Math.max(0, event.amount - reduction);
+      runtime.presentation.log(`${owner.name}发动「护援」，令${event.target.name}受到的伤害减少${reduction}点。`, "important");
     });
   },
 
@@ -220,7 +221,7 @@ const PASSIVE_SKILLS = {
       if (!canTriggerRejuvenation(owner, event)) return;
       setRejuvenationTriggerCount(runtime.getState(), owner, (owner.turnFlags.rejuvenationTriggerCount ?? 0) + 1);
       const gameId = runtime.getState().gameId;
-      const drawn = await runtime.drawCards(owner, 1, "回春", { silent:true });
+      const drawn = await runtime.drawCards(owner, PASSIVE_SKILL_DEFINITIONS.rejuvenation.drawCount, "回春", { silent:true });
       if (!runtime.isSessionValid(gameId)) return;
       runtime.presentation.log(`${owner.name}触发「回春」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`, "heal");
     });
@@ -281,7 +282,8 @@ const PASSIVE_SKILLS = {
       const gameId = runtime.getState().gameId;
       if (!canRevealSpyGap(owner, target)) return;
       setSpyGapTriggered(runtime.getState(), owner, true);
-      const intent = await runtime.preparePrivateHandPeekIntent(owner, target, 2, `窥隙：选择查看${target.name}至多2张手牌`);
+      const maxRevealCount = PASSIVE_SKILL_DEFINITIONS.spyGap.maxRevealCount;
+      const intent = await runtime.preparePrivateHandPeekIntent(owner, target, maxRevealCount, `窥隙：选择查看${target.name}至多${maxRevealCount}张手牌`);
       if (!runtime.isSessionValid(gameId)) return;
       const seen = runtime.resolvePrivateHandPeekIntent(owner, intent);
       if (!seen.length) return;
@@ -303,9 +305,8 @@ const PASSIVE_SKILLS = {
     });
 
     runtime.onEvent("playerRescued", `${owner.id}:spyGap:rescue`, async (event) => {
-      const pending = owner.turnFlags.spyGapPendingTargetIds;
       if (!canTriggerSpyGapOnRescue(owner, event)) return;
-      pending.delete(event.target.id);
+      removeSpyGapPendingTarget(runtime.getState(), owner, event.target.id);
       await revealGap(event.target);
     });
 
@@ -344,7 +345,7 @@ const PASSIVE_SKILLS = {
       if (!canTriggerEmber(owner, event)) return;
       if (shouldIgnoreEmberDuplicate(owner, event)) return;
       setLastEmberResolutionId(runtime.getState(), owner, event.resolutionId);
-      await runtime.gainEnergy(owner, 1, { skill: "ember", reason: "余烬" });
+      await runtime.gainEnergy(owner, PASSIVE_SKILL_DEFINITIONS.ember.energyGain, { skill: "ember", reason: "余烬" });
     });
   },
 
@@ -435,9 +436,10 @@ const PASSIVE_SKILLS = {
     runtime.onEvent("beforeDamage", `${owner.id}:allIn:damage`, (event) => {
       const allIn = owner.statuses.allIn;
       if (!shouldAddAllInDamage(owner, event)) return;
-      event.amount += getAllInAssaultBonus(allIn);
+      const bonus = getAllInAssaultBonus(allIn);
+      event.amount += bonus;
       event.metadata.consumeAssaultBonus = true;
-      runtime.presentation.log(`${owner.name}的「孤注」状态令此次「突袭」伤害+1。`, "important");
+      runtime.presentation.log(`${owner.name}的「孤注」状态令此次「突袭」伤害+${bonus}。`, "important");
     });
     runtime.onEvent("afterDamage", `${owner.id}:allIn:consume`, (event) => {
       if (!shouldConsumeAllIn(owner, event)) return;
@@ -478,7 +480,7 @@ const PASSIVE_SKILLS = {
       if (!canTriggerCoordination(owner, event)) return;
       setCoordinationTriggered(runtime.getState(), owner, true);
       const gameId = runtime.getState().gameId;
-      const drawn = await runtime.drawCards(owner, 1, "协调", { silent:true });
+      const drawn = await runtime.drawCards(owner, PASSIVE_SKILL_DEFINITIONS.coordination.drawCount, "协调", { silent:true });
       if (!runtime.isSessionValid(gameId)) return;
       runtime.presentation.log(`${owner.name}触发「协调」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
     });

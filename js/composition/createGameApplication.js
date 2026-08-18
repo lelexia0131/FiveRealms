@@ -647,11 +647,10 @@ class MatchApplication {
       getState:() => this.state,
       isSessionValid:(gameId) => this.isSessionValid(gameId),
       syncDeckAliases:() => this.syncDeckAliases(),
-      ui:this.ui,
+      presentation:this.presentationPort,
       seatOrderFrom:(...args) => getSeatOrderFrom(this.state, ...args),
       rememberPrivateCard:(...args) => this.cardKnowledge.remember(...args),
       log:(...args) => this.log(...args),
-      renderTarget:() => this,
       choiceContexts:this.choiceContexts,
       choiceCoordinator:this.choiceCoordinator
     });

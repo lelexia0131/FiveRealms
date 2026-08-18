@@ -1,6 +1,6 @@
 /**
- * 互利的公开牌池。依赖 Deck、AI 选牌器和 UI；展示中的实体独立于抽牌、弃牌
- * 与判定区。这里负责公开选取和合法记忆，不处理其他隐藏手牌选择。
+ * 互利的公开牌池。依赖 Deck、ChoiceCoordinator 和 PresentationPort；展示中的实体
+ * 独立于抽牌、弃牌与判定区。这里负责公开选取和合法记忆，不处理其他隐藏手牌选择。
  */
 import { createId } from "../../utils/helpers.js";
 import { createPublicCardChoiceRequest } from "../choice/PublicCardChoiceRequest.js";
@@ -14,25 +14,25 @@ export class PublicCardPoolWorkflow {
   创建并初始化 PublicCardPoolWorkflow 实例。
 
   调用方
-  本模块内部流程及显式公开边界。
+  createGameApplication composition root。
 
   输入
-  函数签名声明的参数。
+  仅含 state、session、choice、knowledge、seat order 与 PresentationPort 的 runtime capabilities。
 
   输出
-  函数实现声明的返回值。
+  初始化完成的 PublicCardPoolWorkflow 实例。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  注入的 runtime capabilities。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  初始化本地公开牌池数组。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  无。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  不持有 concrete UI 或整局 Application 对象；展示只能经过 PresentationPort。
   */
   constructor(runtime) { this.runtime = runtime; this.cards = []; }
 
@@ -71,7 +71,7 @@ export class PublicCardPoolWorkflow {
     }
     this.runtime.syncDeckAliases();
     setPublicCardPool(this.runtime.getState(), this.cards);
-    this.runtime.ui.showPublicPool?.(this.cards);
+    this.runtime.presentation.showPublicCardPool(this.cards);
     return this.cards;
   }
 
@@ -89,13 +89,13 @@ export class PublicCardPoolWorkflow {
   完成返回 true；会话失效或游戏结束返回 false。
 
   读取状态
-  当前 GameState、公开牌池、UI 与 AIController 公开选牌门面。
+  当前 GameState、公开牌池与 Choice/Presentation ports。
 
   写入状态
-  玩家手牌、合法记忆、公开牌池、弃牌堆与 UI。
+  玩家手牌、合法记忆、公开牌池、弃牌堆与 presentation state。
 
   调用函数
-  Game.seatOrderFrom、UI.requestPublicCard、AIController.choosePublicCard、Deck.discard。
+  seatOrderFrom、ChoiceCoordinator、PresentationPort 与 ZoneTransitions。
 
   边界与不变量
   真人的无效选择会在有效会话内重开；AI 无效返回安全退化为当前首牌。
@@ -130,8 +130,8 @@ export class PublicCardPoolWorkflow {
       bumpHandVersion(this.runtime.getState(), player);
       for (const viewer of this.runtime.getState().players) if (viewer.id !== player.id) this.runtime.rememberPrivateCard(viewer, player, card);
       this.runtime.log(`${player.name}从互利牌池选择了「${card.name}」。`);
-      this.runtime.ui.render(this.runtime.renderTarget());
-      this.runtime.ui.showPublicPool?.(this.cards);
+      this.runtime.presentation.refresh();
+      this.runtime.presentation.showPublicCardPool(this.cards);
     }
     if (!this.runtime.isSessionValid(gameId)) return false;
     if (this.cards.length) moveCardsAtomically(
@@ -141,7 +141,7 @@ export class PublicCardPoolWorkflow {
       [...this.cards]
     );
     setPublicCardPool(this.runtime.getState(), []);
-    this.runtime.ui.hidePublicPool?.();
+    this.runtime.presentation.hidePublicCardPool();
     return true;
   }
 

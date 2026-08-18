@@ -241,7 +241,8 @@ const SKILL_RULES = Object.freeze({
       return Object.freeze({
         energyCost: currentEnergy,
         drawCount: this.getDrawCount(currentEnergy),
-        enterChance: this.getEnterChance(currentEnergy)
+        enterChance: this.getEnterChance(currentEnergy),
+        assaultDamageBonus: ACTIVE_SKILL_DEFINITIONS.allIn.assaultDamageBonus
       });
     }
   },
