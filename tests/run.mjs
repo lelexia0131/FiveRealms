@@ -4289,7 +4289,7 @@ fake target 经 Domain ResourceTransitions。
 createCombatWorkflow。
 
 边界与不变量
-defense 非免疫时 block 早于 beforeDamage；commit 后 telemetry；afterDamage 在 dying 前。
+defense 非免疫时 block 早于 beforeDamage；commit 后 telemetry；护盾 presentation 使用真实负 delta；afterDamage 在 dying 前。
 */
 async function frArch8CombatWorkflowDamageTrace() {
   const state = { gameId: "g8", isGameOver: false, stateVersion: 0, players: [] };
@@ -4328,13 +4328,20 @@ async function frArch8CombatWorkflowDamageTrace() {
     },
     observeDamage: (...args) => aiObservation.push(args)
   });
-  assert.equal(await workflow.damage(source, target, 3, { card: { name: "突袭", subtypes: ["assault"] }, canBlock: true, damageType: "normal" }), 1);
+  assert.equal(await workflow.damage(source, target, 3, {
+    card: { definitionId: "assault", name: "突袭", subtypes: ["assault"] },
+    canBlock: true,
+    damageType: "normal"
+  }), 1);
   assert.equal(target.hp, 2);
   assert.equal(target.shield, 0);
   assert.deepEqual(events.map((entry) => entry.type), ["beforeDamage", "afterDamage"]);
   assert.deepEqual(telemetry, [{ targetId: "t", sourceId: "s", hpDamage: 1 }]);
   assert.equal(aiObservation.length, 1);
-  assert.deepEqual(feedback.slice(0, 2), [["shield", "t", 2], ["damage", "t", 1]]);
+  assert.deepEqual(feedback.slice(0, 2), [
+    ["shield", "t", -2, "absorb"],
+    ["damage", "t", 1, "assault", "normal"]
+  ]);
 }
 
 test("战斗结算轨迹：judgment→block→before→commit→after 顺序冻结", frArch8CombatWorkflowDamageTrace);
@@ -4457,9 +4464,12 @@ function frArch8PortsMinimalSurface() {
     hidePublicCardPool: () => presentationCalls.push(["hide-public-pool"]),
     refresh: () => presentationCalls.push(["refresh"])
   });
-  presentation.showDamageFeedback("p1", 1);
+  presentation.showDamageFeedback("p1", 1, "assault", "normal");
   presentation.refresh();
-  assert.deepEqual(presentationCalls.slice(0, 2), [["damage", "p1", 1], ["refresh"]]);
+  assert.deepEqual(presentationCalls.slice(0, 2), [
+    ["damage", "p1", 1, "assault", "normal"],
+    ["refresh"]
+  ]);
   assert.throws(() => createPresentationPort({ log() { } }), /showDamageFeedback/);
   const diagnostics = createDiagnosticsPort({
     recordDamage: () => { }, recordHealing: () => { }, recordHpLoss: () => { },
@@ -43311,6 +43321,193 @@ test("UI·日志：同句连势技能名为蓝色而累计状态名保持卡牌�
   assert.equal((rendered.match(/log-card-name/g) ?? []).length, 1);
 });
 
+/*
+功能
+验证 UI adapter 将公开结算来源映射为正确 VFX 变体。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+本地 queued 记录。
+
+调用函数
+createGamePresentationAdapter、PresentationPort feedback 方法。
+
+边界与不变量
+护盾获得与伤害吸收必须保持不同展示语义。
+*/
+function frVfxAdapterMapping() {
+  const queued = [];
+  const presentation = createGamePresentationAdapter({
+    log: () => { },
+    getPlayerById: () => null,
+    getCardById: () => null,
+    ui: {
+      queueFeedback: (...args) => queued.push(args),
+      render: () => { }
+    },
+    renderTarget: {}
+  });
+  for (const [cardDefinitionId, variant] of [
+    ["assault", "slash"],
+    ["shockwave", "explosion"],
+    ["provoke", "red-impact"],
+    ["duel", "cross-slash"]
+  ]) {
+    presentation.showDamageFeedback("target", 1, cardDefinitionId, "normal");
+    assert.deepEqual(queued.at(-1), ["damage", "target", 1, variant]);
+  }
+  presentation.showShieldFeedback("target", 2, "gain");
+  presentation.showShieldFeedback("target", -1, "absorb");
+  presentation.showHealFeedback("target", 1);
+  assert.deepEqual(queued.slice(-3), [
+    ["shield", "target", 2, "gain"],
+    ["shield", "target", -1, "absorb"],
+    ["heal", "target", 1]
+  ]);
+}
+
+test("UI·结算特效：adapter 映射四类伤害并区分护盾获得与吸收", frVfxAdapterMapping);
+
+/*
+功能
+验证真实卡牌与 CombatWorkflow 只为实际生效目标提交对应结算反馈。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+Promise<void>，断言失败时拒绝。
+
+读取状态
+独立 makeGame fixtures 的生命、手牌与 presentation 队列。
+
+写入状态
+各 fixture 按正式卡牌 workflow 完成结算。
+
+调用函数
+Game.playCard、Game.heal、makeGame。
+
+边界与不变量
+反制目标、0 治疗和决斗胜者不得收到成功受击/治疗反馈。
+*/
+async function frVfxRealResolutionFeedback() {
+  {
+    const source = makePlayer("vfx-assault-source", 0, "dawn"),
+      target = makePlayer("vfx-assault-target", 1, "dusk"),
+      { game, ui } = makeGame([source, target]),
+      feedback = [];
+    ui.queueFeedback = (...args) => feedback.push(args);
+    const card = instance("assault");
+    source.hand.push(card);
+    await game.playCard(source, card, [target]);
+    assert.ok(feedback.some((entry) => entry[0] === "damage" && entry[1] === target.id && entry[3] === "slash"));
+  }
+  {
+    const source = makePlayer("vfx-shockwave-source", 0, "dawn"),
+      countered = makePlayer("vfx-shockwave-countered", 1, "dusk", "human"),
+      damaged = makePlayer("vfx-shockwave-damaged", 2, "dusk"),
+      { game, ui } = makeGame([source, countered, damaged], {
+        response: (request) => request.type === "counter" && request.targetPlayerId === countered.id
+      }),
+      feedback = [];
+    ui.queueFeedback = (...args) => feedback.push(args);
+    const card = instance("shockwave");
+    source.hand.push(card);
+    countered.hand.push(instance("counter"));
+    await game.playCard(source, card, [countered, damaged]);
+    const explosions = feedback.filter((entry) => entry[0] === "damage" && entry[3] === "explosion");
+    assert.deepEqual(explosions.map((entry) => entry[1]), [damaged.id]);
+  }
+  {
+    const source = makePlayer("vfx-provoke-source", 0, "dawn"),
+      target = makePlayer("vfx-provoke-target", 1, "dusk"),
+      { game, ui } = makeGame([source, target]),
+      feedback = [];
+    ui.queueFeedback = (...args) => feedback.push(args);
+    const card = instance("provoke");
+    source.hand.push(card);
+    await game.playCard(source, card, [target]);
+    assert.ok(feedback.some((entry) => entry[0] === "damage" && entry[1] === target.id && entry[3] === "red-impact"));
+  }
+  {
+    const source = makePlayer("vfx-duel-source", 0, "dawn"),
+      target = makePlayer("vfx-duel-target", 1, "dusk"),
+      { game, ui } = makeGame([source, target]),
+      feedback = [];
+    ui.queueFeedback = (...args) => feedback.push(args);
+    const card = instance("duel");
+    source.hand.push(card);
+    await game.playCard(source, card, [target]);
+    assert.ok(feedback.some((entry) => entry[0] === "damage" && entry[1] === target.id && entry[3] === "cross-slash"));
+    assert.equal(feedback.some((entry) => entry[0] === "damage" && entry[1] === source.id), false);
+  }
+  {
+    const healer = makePlayer("vfx-healer", 0, "dawn"),
+      target = makePlayer("vfx-heal-target", 1, "dawn"),
+      enemy = makePlayer("vfx-heal-enemy", 2, "dusk"),
+      { game, ui } = makeGame([healer, target, enemy]),
+      feedback = [];
+    ui.queueFeedback = (...args) => feedback.push(args);
+    assert.equal(await game.heal(healer, target, 1), 0);
+    assert.equal(feedback.some((entry) => entry[0] === "heal"), false);
+    target.hp -= 1;
+    assert.equal(await game.heal(healer, target, 1), 1);
+    assert.ok(feedback.some((entry) => entry[0] === "heal" && entry[1] === target.id));
+  }
+  {
+    const source = makePlayer("vfx-shield-source", 0, "dawn"),
+      enemy = makePlayer("vfx-shield-enemy", 1, "dusk"),
+      { game, ui } = makeGame([source, enemy]),
+      feedback = [];
+    ui.queueFeedback = (...args) => feedback.push(args);
+    const card = instance("shield");
+    source.hand.push(card);
+    await game.playCard(source, card, [source]);
+    assert.ok(feedback.some((entry) => entry[0] === "shield" && entry[1] === source.id && entry[3] === "gain"));
+    await game.damage(enemy, source, 1, { canBlock: false });
+    assert.ok(feedback.some((entry) => entry[0] === "shield"
+      && entry[1] === source.id && entry[2] === -1 && entry[3] === "absorb"));
+  }
+  {
+    const player = makePlayer("vfx-energy-target", 0, "dawn"),
+      enemy = makePlayer("vfx-energy-enemy", 1, "dusk"),
+      { game, ui } = makeGame([player, enemy]),
+      feedback = [];
+    ui.queueFeedback = (...args) => feedback.push(args);
+    player.energy = 0;
+    player.maxEnergy = 4;
+    assert.equal(await game.gainEnergy(player, 2, { reason: "回合开始" }), 2);
+    assert.ok(feedback.some((entry) => entry[0] === "energy"
+      && entry[1] === player.id && entry[2] === 2));
+    player.energy = player.maxEnergy;
+    const feedbackCount = feedback.length;
+    assert.equal(await game.gainEnergy(player, 2, { reason: "测试" }), 0);
+    assert.equal(feedback.length, feedbackCount, "能量到达上限后不得提交 +0 或成功 VFX");
+    player.energy = 0;
+    const charge = instance("charge");
+    player.hand.push(charge);
+    await game.playCard(player, charge, []);
+    assert.ok(feedback.slice(feedbackCount).some((entry) => entry[0] === "energy"
+      && entry[1] === player.id && entry[2] === 1));
+  }
+}
+
+test("UI·结算特效：真实卡牌结算只向实际目标提交对应反馈", frVfxRealResolutionFeedback);
+
 // ---- 布局与样式 ----
 
 test("UI·闪电反馈：电弧 overlay 跟随人物框、可重复触发并完整清理", () => {
@@ -43401,6 +43598,151 @@ test("UI·闪电反馈：电弧 overlay 跟随人物框、可重复触发并完�
   assert.equal(controller.activeLightning.size, 0);
 });
 
+/*
+功能
+验证多人结算 overlay、render 后伤害震动续接与统一清理。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake DOM 与 AnimationController 展示状态。
+
+写入状态
+fake DOM overlay、class 与控制器短生命周期记录。
+
+调用函数
+AnimationController.queue、flush、clear。
+
+边界与不变量
+多个目标可并存；治疗、护盾和能量不得创建 activeDamageFeedback；零变化不得创建 overlay。
+*/
+function frVfxOverlayLifecycle() {
+  const panels = new Map();
+  const doc = {
+    ownerDocument: null,
+    body: null,
+    createElement(tagName = "span") {
+      const classValues = new Set();
+      const styleValues = new Map();
+      const listeners = new Map();
+      const children = [];
+      return {
+        tagName: tagName.toUpperCase(),
+        className: "",
+        classList: {
+          add: (...names) => names.forEach((name) => classValues.add(name)),
+          remove: (...names) => names.forEach((name) => classValues.delete(name)),
+          contains: (name) => classValues.has(name)
+        },
+        style: {
+          setProperty: (name, value) => styleValues.set(name, value),
+          getPropertyValue: (name) => styleValues.get(name),
+          removeProperty: (name) => styleValues.delete(name)
+        },
+        children,
+        isConnected: true,
+        owner: null,
+        setAttribute(name, value) { this[name] = value; },
+        addEventListener(type, handler) { listeners.set(type, handler); },
+        append(child) { child.owner = this; children.push(child); },
+        remove() {
+          this.isConnected = false;
+          if (this.owner) this.owner.children.splice(this.owner.children.indexOf(this), 1);
+        },
+        listeners
+      };
+    },
+    querySelector(selector) {
+      for (const [playerId, panel] of panels) {
+        if (selector.includes(playerId)) return panel;
+      }
+      return null;
+    }
+  };
+  doc.body = doc.createElement();
+  for (const [playerId, left] of [["target-a", 40], ["target-b", 380]]) {
+    const panel = doc.createElement();
+    panel.getBoundingClientRect = () => ({ left, top: 120, width: 280, height: 170 });
+    panels.set(playerId, panel);
+  }
+
+  const controller = new AnimationController();
+  controller.queue("damage", "target-a", 2, "slash");
+  controller.queue("damage", "target-b", 1, "explosion");
+  controller.flush(doc);
+  assert.equal(doc.body.children.length, 2);
+  const slashOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-slash"));
+  const explosionOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-explosion"));
+  assert.equal(slashOverlay.children[0].className, "floating-feedback is-damage");
+  assert.equal(slashOverlay.children[0].textContent, "−2");
+  assert.equal(explosionOverlay.children[0].textContent, "−1");
+  assert.equal(slashOverlay.style.getPropertyValue("--resolution-vfx-duration"), "800ms");
+  assert.equal(controller.activeDamageFeedback.size, 2);
+  assert.ok(panels.get("target-a").classList.contains("feedback-damage"));
+  assert.ok(panels.get("target-b").classList.contains("feedback-damage"));
+
+  const oldPanel = panels.get("target-a");
+  const replacement = doc.createElement();
+  replacement.getBoundingClientRect = oldPanel.getBoundingClientRect;
+  oldPanel.isConnected = false;
+  panels.set("target-a", replacement);
+  controller.flush(doc);
+  assert.ok(replacement.classList.contains("feedback-damage"), "render 后按剩余时长续接受击震动");
+
+  controller.queue("heal", "target-a", 1);
+  controller.queue("shield", "target-b", 2, "gain");
+  controller.queue("energy", "target-a", 2);
+  controller.queue("shield", "target-b", -3, "absorb");
+  controller.flush(doc);
+  const healOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-heal"));
+  const shieldOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-shield"));
+  const energyOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-energy"));
+  const shieldLossOverlay = doc.body.children.find((overlay) => overlay.className === "resolution-vfx-overlay"
+    && overlay.children[0]?.className === "floating-feedback is-shield");
+  const healIcon = healOverlay.children.find((child) => child.className === "positive-vfx-icon");
+  const shieldIcon = shieldOverlay.children.find((child) => child.className === "positive-vfx-icon");
+  const energyIcon = energyOverlay.children.find((child) => child.className === "positive-vfx-icon");
+  assert.equal(healOverlay.children.find((child) => child.className === "floating-feedback is-heal").textContent, "+1");
+  assert.equal(shieldOverlay.children.find((child) => child.className === "floating-feedback is-shield").textContent, "+2");
+  assert.equal(energyOverlay.children.find((child) => child.className === "floating-feedback is-energy").textContent, "+2");
+  assert.equal(shieldLossOverlay.children[0].textContent, "−3");
+  assert.equal(healOverlay.style.getPropertyValue("--resolution-vfx-duration"), "1000ms");
+  assert.equal(shieldOverlay.style.getPropertyValue("--resolution-vfx-duration"), "1000ms");
+  assert.equal(energyOverlay.style.getPropertyValue("--resolution-vfx-duration"), "1000ms");
+  assert.deepEqual([healIcon.tagName, healIcon.src], ["IMG", CARD_PRESENTATION.recover.icon]);
+  assert.deepEqual([shieldIcon.tagName, shieldIcon.src], ["IMG", CARD_PRESENTATION.shield.icon]);
+  assert.deepEqual([energyIcon.tagName, energyIcon.src], ["IMG", CARD_PRESENTATION.charge.icon]);
+  for (const icon of [healIcon, shieldIcon, energyIcon]) {
+    assert.equal(icon["aria-hidden"], "true");
+    assert.equal(icon.draggable, "false");
+  }
+  assert.equal(controller.activeDamageFeedback.size, 2, "治疗、护盾和能量不得创建伤害震动");
+  assert.equal(controller.activeResolutionEffects.size, 6);
+
+  controller.queue("heal", "target-a", 0);
+  controller.queue("energy", "target-a", 0);
+  controller.flush(doc);
+  assert.equal(doc.body.children.length, 6, "零治疗和零能量不得创建成功 overlay");
+  energyOverlay.listeners.get("animationend")({ target: energyOverlay, animationName: "resolutionVfxLifetime" });
+  assert.equal(energyOverlay.isConnected, false);
+  assert.equal(controller.activeResolutionEffects.size, 5, "生命周期动画结束后必须清理对应 overlay");
+
+  controller.clear();
+  assert.equal(doc.body.children.length, 0);
+  assert.equal(controller.activeDamageFeedback.size, 0);
+  assert.equal(controller.activeResolutionEffects.size, 0);
+  assert.equal(replacement.classList.contains("feedback-damage"), false);
+}
+
+test("UI·结算特效：signed 数值、多目标正向 overlay 与生命周期保持独立", frVfxOverlayLifecycle);
+
 test("UI·闪电反馈：样式包含外扩锯齿主弧、分叉、火花且不参与布局或指针事件", async () => {
   const source = await readFile(projectFile("css/animations.css"), "utf8");
   assert.match(source, /\.lightning-hit-overlay\s*\{[^}]*position:\s*fixed/);
@@ -43414,6 +43756,62 @@ test("UI·闪电反馈：样式包含外扩锯齿主弧、分叉、火花且不�
   assert.match(source, /@keyframes lightningImpactFlash/);
   assert.match(source, /@keyframes lightningPanelShock/);
 });
+
+/*
+功能
+验证结算 VFX 样式包含全部授权效果且 overlay 不拦截操作。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+Promise<void>，断言失败时拒绝。
+
+读取状态
+css/animations.css。
+
+写入状态
+无。
+
+调用函数
+readFile、正则断言。
+
+边界与不变量
+单斩与双斩选择器必须不同；正向效果形状和数值 feedback 分离；所有效果共用 pointer-events:none overlay。
+*/
+async function frVfxCssContract() {
+  const source = await readFile(projectFile("css/animations.css"), "utf8");
+  const positiveKeyframes = source.slice(
+    source.indexOf("@keyframes positiveVfxExpand"),
+    source.indexOf("@keyframes lightningHitLifetime")
+  );
+  assert.match(source, /\.resolution-vfx-overlay\s*\{[^}]*position:\s*fixed/);
+  assert.match(source, /\.resolution-vfx-overlay\s*\{[^}]*pointer-events:\s*none/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-slash::before/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-cross-slash::after/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-explosion::before/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-red-impact::before/);
+  assert.match(positiveKeyframes, /32%\s*\{\s*opacity:\s*\.88;[^}]*scale\(1\)/);
+  assert.match(positiveKeyframes, /68%\s*\{\s*opacity:\s*\.5;[^}]*scale\(1\.36\)/);
+  assert.doesNotMatch(positiveKeyframes, /rotate|spin/);
+  assert.match(source, /\.positive-vfx-icon\s*\{[^}]*z-index:\s*2;[^}]*object-fit:\s*cover;[^}]*animation:\s*positiveVfxExpand \.92s/s);
+  assert.match(source, /\.resolution-vfx-overlay\.is-(?:heal|shield|energy)::after\s*\{[^}]*z-index:\s*1;/s);
+  assert.doesNotMatch(source, /--positive-vfx-art|\.resolution-vfx-overlay\.is-(?:heal|shield|energy)::before/);
+  assert.doesNotMatch(source, /@keyframes (?:healMote|energyStarExpand|energyAuraExpand)/);
+  assert.doesNotMatch(source, /\.resolution-vfx-overlay\.is-heal::after\s*\{[^}]*(?:--mote-x|width:\s*10px)/s);
+  assert.doesNotMatch(source, /\.resolution-vfx-overlay\.is-(?:energy|shield)::before\s*\{[^}]*clip-path:/s);
+  assert.doesNotMatch(source, /\.resolution-vfx-overlay\.is-shield(?::before|::after)?[^{]*\{[^}]*content:\s*["']\+\d+["']/s);
+  assert.match(source, /\.floating-feedback\.is-damage\s*\{[^}]*color:\s*var\(--danger\)/);
+  assert.match(source, /\.floating-feedback\.is-heal\s*\{[^}]*color:\s*var\(--success\)/);
+  assert.match(source, /\.floating-feedback\.is-energy\s*\{[^}]*color:\s*var\(--energy\)/);
+  assert.match(source, /\.floating-feedback\.is-shield\s*\{[^}]*color:\s*var\(--shield\)/);
+  assert.match(source, /\.feedback-damage\s*\{[^}]*--damage-feedback-duration/);
+}
+
+test("UI·结算特效：CSS 提供伤害、治疗、护盾与能量效果且数字颜色语义独立", frVfxCssContract);
 
 test("UI·布局样式：日志技能蓝色不扩散到其他技能界面", async () => {
   const [theme, components, characters, cards] = await Promise.all([

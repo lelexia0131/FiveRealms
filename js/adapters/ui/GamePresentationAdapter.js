@@ -20,6 +20,13 @@ application/ports/PresentationPort 与 UIManager。
 import { presentCard } from "./CardPresentationDefinitions.js";
 import { createPresentationPort } from "../../application/ports/PresentationPort.js";
 
+const DAMAGE_VFX_BY_CARD_ID = Object.freeze({
+  assault: "slash",
+  shockwave: "explosion",
+  provoke: "red-impact",
+  duel: "cross-slash"
+});
+
 /*
 功能
 创建单局 concrete PresentationPort UI adapter。
@@ -43,7 +50,7 @@ getPlayerById、getCardById 与静态卡牌展示定义。
 createPresentationPort、UIManager 的语义展示方法与 render。
 
 边界与不变量
-Application 传入 data-only DTO；本 adapter 负责映射回 UI 调用，不新增 UI 行为。
+Application 传入 data-only DTO；本 adapter 只映射 UI 调用与视觉变体，不决定结算是否生效。
 */
 export function createGamePresentationAdapter({ log, getPlayerById, getCardById, ui, renderTarget }) {
   if (typeof log !== "function" || typeof getPlayerById !== "function"
@@ -52,8 +59,13 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
   }
   return createPresentationPort({
     log: (message, kind = "normal") => log(message, kind),
-    showDamageFeedback: (playerId, amount) => ui.queueFeedback?.("damage", playerId, amount),
-    showShieldFeedback: (playerId, amount) => ui.queueFeedback?.("shield", playerId, amount),
+    showDamageFeedback: (playerId, amount, cardDefinitionId) => ui.queueFeedback?.(
+      "damage",
+      playerId,
+      amount,
+      DAMAGE_VFX_BY_CARD_ID[cardDefinitionId] ?? null
+    ),
+    showShieldFeedback: (playerId, amount, mode) => ui.queueFeedback?.("shield", playerId, amount, mode),
     showHealFeedback: (playerId, amount) => ui.queueFeedback?.("heal", playerId, amount),
     showDying: ({ playerId, need, currentHp }) => {
       const player = getPlayerById(playerId);

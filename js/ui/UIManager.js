@@ -2241,7 +2241,7 @@ export class UIManager {
   GamePresentationAdapter.queueFeedback。
 
   输入
-  反馈类型、可选玩家 ID 与数值。
+  反馈类型、可选玩家 ID、数值与 presentation 视觉变体。
 
   输出
   无返回值。
@@ -2258,8 +2258,8 @@ export class UIManager {
   边界与不变量
   只消费公开 primitive；反馈与声音不能改变真实结算顺序。
   */
-  queueFeedback(type, playerId = null, amount = null) {
-    this.animationController.queue(type, playerId, amount);
+  queueFeedback(type, playerId = null, amount = null, variant = null) {
+    this.animationController.queue(type, playerId, amount, variant);
     const soundByFeedback = { draw:"draw", damage:"hit", heal:"heal", shield:"shield", discard:"discard" };
     if (soundByFeedback[type]) this.playSound(soundByFeedback[type]);
   }

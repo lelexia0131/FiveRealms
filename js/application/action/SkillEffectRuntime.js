@@ -124,7 +124,7 @@ runtime/card/skill facts。
       changeEnergy(state, source, -decision.energyCost);
       const target = targets[0];
       changeShield(state, target, decision.shieldAmount);
-      runtime.presentation.showShieldFeedback(target.id, decision.shieldAmount);
+      runtime.presentation.showShieldFeedback(target.id, decision.shieldAmount, "gain");
       runtime.presentation.log(`${source.name}发动「壁垒」，令${target.name}获得${decision.shieldAmount}点护盾。`, "heal");
     },
 /*

@@ -1,5 +1,18 @@
+import { CARD_PRESENTATION } from "../adapters/ui/CardPresentationDefinitions.js";
+
 /** 闪电采样约 3.2 秒；视觉在 3 秒自然收束，避免声音尾部结束后仍残留强光。 */
 export const LIGHTNING_HIT_DURATION_MS = 3000;
+
+const DAMAGE_FEEDBACK_DURATION_MS = 360;
+const RESOLUTION_VFX_DURATION_MS = 800;
+const POSITIVE_RESOLUTION_VFX_DURATION_MS = 1000;
+const RESOLUTION_VFX_CLEANUP_BUFFER_MS = 60;
+const NUMERIC_FEEDBACK_TYPES = new Set(["damage", "heal", "energy", "shield"]);
+const POSITIVE_VFX_ART_BY_EFFECT = Object.freeze({
+  heal: CARD_PRESENTATION.recover.icon,
+  energy: CARD_PRESENTATION.charge.icon,
+  shield: CARD_PRESENTATION.shield.icon
+});
 
 /** 将 Presentation adapter 提交的公开事件映射为短暂 CSS 反馈；本类从不修改任何游戏状态。 */
 export class AnimationController {
@@ -20,7 +33,7 @@ export class AnimationController {
   无。
 
   写入状态
-  初始化 pending、activeLightning 与序号。
+  初始化 pending、闪电/伤害生命周期与结算 overlay 集合。
 
   调用函数
   Map 构造器。
@@ -32,6 +45,9 @@ export class AnimationController {
     this.pending = [];
     this.activeLightning = new Map();
     this.lightningSerial = 0;
+    this.activeDamageFeedback = new Map();
+    this.damageFeedbackSerial = 0;
+    this.activeResolutionEffects = new Set();
   }
 
   /*
@@ -42,7 +58,7 @@ export class AnimationController {
   UIManager.queueFeedback。
 
   输入
-  反馈类型、可选玩家 ID 与可选数值。
+  反馈类型、可选玩家 ID、可选数值与 presentation 视觉变体。
 
   输出
   无返回值。
@@ -59,7 +75,9 @@ export class AnimationController {
   边界与不变量
   只保存公开 primitive，不保留玩家实体。
   */
-  queue(type, playerId = null, amount = null) { this.pending.push({ type, playerId, amount }); }
+  queue(type, playerId = null, amount = null, variant = null) {
+    this.pending.push({ type, playerId, amount, variant });
+  }
 
   /*
   功能
@@ -305,7 +323,237 @@ export class AnimationController {
 
   /*
   功能
-  在一次 UI render 后提交普通反馈并续接活跃闪电动画。
+  启动或重启指定人物框的统一生命伤害震动。
+
+  调用方
+  flush 消费 damage feedback 时。
+
+  输入
+  公开玩家 ID 与当前文档根节点。
+
+  输出
+  无返回值。
+
+  读取状态
+  activeDamageFeedback 与 damageFeedbackSerial。
+
+  写入状态
+  替换该玩家的震动生命周期并登记清理 timer。
+
+  调用函数
+  removeDamageFeedback、attachDamageFeedback、setTimeout。
+
+  边界与不变量
+  只有真实生命伤害反馈进入本入口；重复伤害重启动画且不改变布局。
+  */
+  startDamageFeedback(playerId, root = globalThis.document) {
+    if (!playerId || !root) return;
+    this.removeDamageFeedback(playerId);
+    const token = ++this.damageFeedbackSerial;
+    const entry = {
+      token,
+      expiresAt:Date.now() + DAMAGE_FEEDBACK_DURATION_MS,
+      panel:null,
+      timer:setTimeout(
+        () => this.removeDamageFeedback(playerId, token),
+        DAMAGE_FEEDBACK_DURATION_MS
+      )
+    };
+    entry.timer?.unref?.();
+    this.activeDamageFeedback.set(playerId, entry);
+    this.attachDamageFeedback(playerId, entry, root);
+  }
+
+  /*
+  功能
+  把仍有效的统一伤害震动挂到当前 render 后的人物框。
+
+  调用方
+  startDamageFeedback 与 flush 的重挂载路径。
+
+  输入
+  玩家 ID、震动生命周期条目与文档根节点。
+
+  输出
+  无返回值。
+
+  读取状态
+  条目到期时间与当前人物框 DOM。
+
+  写入状态
+  人物框 feedback-damage class、持续时间变量与 entry.panel。
+
+  调用函数
+  playerPanel、classList 与 style API。
+
+  边界与不变量
+  render 替换人物框时只续接剩余时长，不延长真实反馈生命周期。
+  */
+  attachDamageFeedback(playerId, entry, root) {
+    const panel = this.playerPanel(root, playerId);
+    if (!panel) return;
+    const remaining = Math.max(1, entry.expiresAt - Date.now());
+    entry.panel?.classList?.remove("feedback-damage");
+    entry.panel?.style?.removeProperty?.("--damage-feedback-duration");
+    panel.classList.remove("feedback-damage");
+    panel.style?.setProperty?.("--damage-feedback-duration", `${remaining}ms`);
+    void panel.offsetWidth;
+    panel.classList.add("feedback-damage");
+    entry.panel = panel;
+  }
+
+  /*
+  功能
+  清除指定玩家当前或指定 token 的统一伤害震动。
+
+  调用方
+  startDamageFeedback、到期 timer 与 clear。
+
+  输入
+  玩家 ID 与可选生命周期 token。
+
+  输出
+  无返回值。
+
+  读取状态
+  activeDamageFeedback 中对应条目。
+
+  写入状态
+  清除 timer、人物框 class/变量与 Map 条目。
+
+  调用函数
+  clearTimeout、classList 与 style API。
+
+  边界与不变量
+  token 不匹配时不得清除更新后的连续受击动画。
+  */
+  removeDamageFeedback(playerId, token = null) {
+    const entry = this.activeDamageFeedback.get(playerId);
+    if (!entry || (token !== null && entry.token !== token)) return;
+    clearTimeout(entry.timer);
+    entry.panel?.classList?.remove("feedback-damage");
+    entry.panel?.style?.removeProperty?.("--damage-feedback-duration");
+    this.activeDamageFeedback.delete(playerId);
+  }
+
+  /*
+  功能
+  在人物框坐标上创建不受后续 render 替换影响的短生命周期结算特效。
+
+  调用方
+  flush 消费 damage/heal/energy/shield feedback 时。
+
+  输入
+  data-only feedback 与当前文档根节点。
+
+  输出
+  已创建 overlay 时返回 true，否则返回 false。
+
+  读取状态
+  当前人物框矩形与正向效果的 presentation asset 映射。
+
+  写入状态
+  body overlay、fallback timer 与 activeResolutionEffects。
+
+  调用函数
+  playerPanel、DOM 创建/定位/事件 API、setTimeout。
+
+  边界与不变量
+  overlay 不参与布局且不接收指针；零变化不创建成功效果；多个目标和连续触发各自独立清理。
+  */
+  startResolutionEffect(feedback, root = globalThis.document) {
+    const amount = Number(feedback?.amount);
+    if (!feedback?.playerId || !NUMERIC_FEEDBACK_TYPES.has(feedback.type)
+      || !Number.isFinite(amount) || amount === 0) return false;
+    const panel = this.playerPanel(root, feedback.playerId);
+    if (!panel) return false;
+    let effectName = null;
+    if (feedback.type === "damage") effectName = feedback.variant;
+    else if (feedback.type === "heal" || feedback.type === "energy") effectName = feedback.type;
+    else if (feedback.variant === "gain") effectName = "shield";
+    const duration = ["heal", "shield", "energy"].includes(effectName)
+      ? POSITIVE_RESOLUTION_VFX_DURATION_MS
+      : RESOLUTION_VFX_DURATION_MS;
+
+    const doc = root.ownerDocument ?? root;
+    const overlay = doc.createElement("span");
+    overlay.className = `resolution-vfx-overlay${effectName ? ` is-${effectName}` : ""}`;
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.style.setProperty("--resolution-vfx-duration", `${duration}ms`);
+    const effectArt = POSITIVE_VFX_ART_BY_EFFECT[effectName];
+    if (effectArt) {
+      const icon = doc.createElement("img");
+      icon.className = "positive-vfx-icon";
+      icon.setAttribute("src", effectArt);
+      icon.setAttribute("alt", "");
+      icon.setAttribute("aria-hidden", "true");
+      icon.setAttribute("draggable", "false");
+      overlay.append(icon);
+    }
+
+    const signedAmount = feedback.type === "damage" ? -Math.abs(amount) : amount;
+    const floating = doc.createElement("span");
+    floating.className = `floating-feedback is-${feedback.type}`;
+    floating.textContent = `${signedAmount < 0 ? "−" : "+"}${Math.abs(signedAmount)}`;
+    overlay.append(floating);
+
+    const entry = { overlay, timer:null, cleanup:null };
+    const rect = panel.getBoundingClientRect?.();
+    if (rect && doc.body) {
+      const overflow = 10;
+      overlay.style.setProperty("--resolution-vfx-left", `${rect.left - overflow}px`);
+      overlay.style.setProperty("--resolution-vfx-top", `${rect.top - overflow}px`);
+      overlay.style.setProperty("--resolution-vfx-width", `${rect.width + overflow * 2}px`);
+      overlay.style.setProperty("--resolution-vfx-height", `${rect.height + overflow * 2}px`);
+      doc.body.append(overlay);
+    } else {
+      overlay.classList.add("is-panel-local");
+      panel.append(overlay);
+    }
+
+    /*
+    功能
+    清理单个结算 overlay 的 timer、DOM 与控制器记录。
+
+    调用方
+    overlay 生命周期 animationend、fallback timer 与 clear。
+
+    输入
+    无；闭包捕获当前 entry 与 overlay。
+
+    输出
+    无返回值。
+
+    读取状态
+    entry.timer 与 activeResolutionEffects。
+
+    写入状态
+    移除 overlay 和 activeResolutionEffects 条目。
+
+    调用函数
+    clearTimeout、Element.remove、Set.delete。
+
+    边界与不变量
+    重复调用保持幂等，不影响其他目标或连续触发的 overlay。
+    */
+    const cleanup = () => {
+      clearTimeout(entry.timer);
+      overlay.remove();
+      this.activeResolutionEffects.delete(entry);
+    };
+    entry.cleanup = cleanup;
+    overlay.addEventListener("animationend", (event) => {
+      if (event.target === overlay && event.animationName === "resolutionVfxLifetime") cleanup();
+    });
+    entry.timer = setTimeout(cleanup, duration + RESOLUTION_VFX_CLEANUP_BUFFER_MS);
+    entry.timer?.unref?.();
+    this.activeResolutionEffects.add(entry);
+    return true;
+  }
+
+  /*
+  功能
+  在一次 UI render 后提交普通反馈并续接活跃伤害/闪电动画。
 
   调用方
   UIManager.render。
@@ -317,13 +565,13 @@ export class AnimationController {
   无返回值。
 
   读取状态
-  pending 队列、activeLightning 与当前 DOM。
+  pending、activeDamageFeedback、activeLightning 与当前 DOM。
 
   写入状态
-  消费 pending，创建短暂反馈 DOM，并更新过期/断连的闪电条目。
+  消费 pending，创建短暂结算 DOM，并更新过期或断连的伤害/闪电条目。
 
   调用函数
-  startLightning、attachLightning、removeLightning 与 DOM animation API。
+  startDamageFeedback、startResolutionEffect、startLightning 与 DOM animation API。
 
   边界与不变量
   pending 每项只消费一次；DOM 重绘不得延长闪电原到期时间。
@@ -334,18 +582,32 @@ export class AnimationController {
         this.startLightning(feedback.playerId, root);
         continue;
       }
-      const panel = feedback.playerId ? root.querySelector(`[data-player-id="${CSS.escape(feedback.playerId)}"]`) : null;
+      const numericAmount = Number(feedback.amount);
+      if (NUMERIC_FEEDBACK_TYPES.has(feedback.type)
+        && (!Number.isFinite(numericAmount) || numericAmount === 0)) continue;
+      const panel = feedback.playerId ? this.playerPanel(root, feedback.playerId) : null;
       const target = panel || root.querySelector(".command-deck");
       if (!target) continue;
-      target.classList.add(`feedback-${feedback.type}`);
-      target.addEventListener("animationend", () => target.classList.remove(`feedback-${feedback.type}`), { once: true });
-      if (feedback.amount && ["damage", "heal", "energy", "shield"].includes(feedback.type)) {
-        const floating = document.createElement("span");
+      if (feedback.type === "damage") {
+        this.startDamageFeedback(feedback.playerId, root);
+      } else {
+        target.classList.add(`feedback-${feedback.type}`);
+        target.addEventListener("animationend", () => target.classList.remove(`feedback-${feedback.type}`), { once: true });
+      }
+      const hasResolutionOverlay = this.startResolutionEffect(feedback, root);
+      if (!hasResolutionOverlay && numericAmount && NUMERIC_FEEDBACK_TYPES.has(feedback.type)) {
+        const doc = root.ownerDocument ?? root;
+        const floating = doc.createElement("span");
         floating.className = `floating-feedback is-${feedback.type}`;
-        floating.textContent = `${feedback.type === "damage" ? "−" : "+"}${feedback.amount}`;
+        const signedAmount = feedback.type === "damage" ? -Math.abs(numericAmount) : numericAmount;
+        floating.textContent = `${signedAmount < 0 ? "−" : "+"}${Math.abs(signedAmount)}`;
         floating.addEventListener("animationend", () => floating.remove(), { once: true });
         target.append(floating);
       }
+    }
+    for (const [playerId, entry] of this.activeDamageFeedback) {
+      if (entry.expiresAt <= Date.now()) this.removeDamageFeedback(playerId, entry.token);
+      else if (!entry.panel?.isConnected) this.attachDamageFeedback(playerId, entry, root);
     }
     for (const [playerId, entry] of this.activeLightning) {
       if (entry.expiresAt <= Date.now()) this.removeLightning(playerId, entry.token);
@@ -357,7 +619,7 @@ export class AnimationController {
 
   /*
   功能
-  清空全部待提交反馈和活跃闪电生命周期。
+  清空全部待提交反馈、伤害震动、结算 overlay 和闪电生命周期。
 
   调用方
   UIManager.cancelPendingInteractions。
@@ -369,19 +631,21 @@ export class AnimationController {
   无返回值。
 
   读取状态
-  pending 与 activeLightning。
+  pending、activeDamageFeedback、activeResolutionEffects 与 activeLightning。
 
   写入状态
-  清空 pending 并移除所有闪电条目和 DOM。
+  清空 pending 并移除所有活跃反馈条目、timer 和 DOM。
 
   调用函数
-  removeLightning。
+  removeDamageFeedback、结算 overlay cleanup、removeLightning。
 
   边界与不变量
   重开或销毁后不得遗留 timer、listener 或 overlay。
   */
   clear() {
     this.pending.length = 0;
+    for (const playerId of [...this.activeDamageFeedback.keys()]) this.removeDamageFeedback(playerId);
+    for (const entry of [...this.activeResolutionEffects]) entry.cleanup?.();
     for (const playerId of [...this.activeLightning.keys()]) this.removeLightning(playerId);
   }
 }

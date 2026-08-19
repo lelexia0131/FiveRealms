@@ -145,11 +145,16 @@ export function createCombatWorkflow(dependencies) {
     runtime.observeDamage(target, source, hpDamage);
     if (damageResult.shieldAbsorbed) {
       runtime.presentation.log(`${target.name}的护盾吸收了${damageResult.shieldAbsorbed}点伤害。`);
-      runtime.presentation.showShieldFeedback(target.id, damageResult.shieldAbsorbed);
+      runtime.presentation.showShieldFeedback(target.id, -damageResult.shieldAbsorbed, "absorb");
     }
     if (hpDamage) {
       runtime.presentation.log(`${target.name}受到${hpDamage}点伤害，剩余${target.hp}点生命。`, "damage");
-      runtime.presentation.showDamageFeedback(target.id, hpDamage);
+      runtime.presentation.showDamageFeedback(
+        target.id,
+        hpDamage,
+        event.card?.definitionId ?? null,
+        event.damageType
+      );
     } else {
       runtime.presentation.log(`${target.name}没有受到生命伤害。`);
     }
@@ -246,7 +251,12 @@ export function createCombatWorkflow(dependencies) {
     changeHp(state, player, -event.amount);
     runtime.diagnostics.recordHpLoss({ targetId: player.id, amount: event.amount });
     runtime.presentation.log(`${player.name}因${event.reason}失去${event.amount}点生命，当前生命${player.hp}。`, "damage");
-    runtime.presentation.showDamageFeedback(player.id, event.amount);
+    runtime.presentation.showDamageFeedback(
+      player.id,
+      event.amount,
+      event.card?.definitionId ?? null,
+      "hpLoss"
+    );
     await runtime.emitEvent("afterHpLoss", { ...event, type: "afterHpLoss", actualAmount: event.amount });
     if (!runtime.isSessionValid(gameId)) return event.amount;
     if (isDying(player.hp, player.alive)) await runtime.enterDying(player, event.source, context);

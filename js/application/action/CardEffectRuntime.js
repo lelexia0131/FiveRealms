@@ -265,7 +265,7 @@ runtime/card/skill facts。
       if (!target?.alive || target.battleTeam !== source.battleTeam) return { resolved: false };
       const shieldAmount = getShieldAmount();
       changeShield(state, target, shieldAmount);
-      runtime.presentation.showShieldFeedback(target.id, shieldAmount);
+      runtime.presentation.showShieldFeedback(target.id, shieldAmount, "gain");
       const targetLabel = target.id === source.id ? "自己" : target.name;
       runtime.presentation.log(`${source.name}使用「${card.name}」，令${targetLabel}获得${shieldAmount}点护盾，现有${target.shield}点。`, "heal");
       return { resolved: true };
