@@ -578,7 +578,7 @@ export class AnimationController {
   startDamageFeedback、startResolutionEffect、startLightning 与 DOM animation API。
 
   边界与不变量
-  pending 每项只消费一次；DOM 重绘不得延长闪电原到期时间。
+  pending 每项只消费一次；新结算 overlay 与负护盾数字不得叠加旧人物框动画；DOM 重绘不得延长闪电原到期时间。
   */
   flush(root = document) {
     for (const feedback of this.pending.splice(0)) {
@@ -592,13 +592,15 @@ export class AnimationController {
       const panel = feedback.playerId ? this.playerPanel(root, feedback.playerId) : null;
       const target = panel || root.querySelector(".command-deck");
       if (!target) continue;
+      const hasResolutionOverlay = this.startResolutionEffect(feedback, root);
+      // 护盾减少在 overlay 无法定位时仍是数字反馈，不能回退为获得护盾的 outline。
+      const isShieldLoss = feedback.type === "shield" && numericAmount < 0;
       if (feedback.type === "damage") {
         this.startDamageFeedback(feedback.playerId, root);
-      } else {
+      } else if (!hasResolutionOverlay && !isShieldLoss) {
         target.classList.add(`feedback-${feedback.type}`);
         target.addEventListener("animationend", () => target.classList.remove(`feedback-${feedback.type}`), { once: true });
       }
-      const hasResolutionOverlay = this.startResolutionEffect(feedback, root);
       if (!hasResolutionOverlay && numericAmount && NUMERIC_FEEDBACK_TYPES.has(feedback.type)) {
         const doc = root.ownerDocument ?? root;
         const floating = doc.createElement("span");

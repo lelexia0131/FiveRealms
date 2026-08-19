@@ -43621,7 +43621,7 @@ fake DOM overlay、class 与控制器短生命周期记录。
 AnimationController.queue、flush、clear。
 
 边界与不变量
-多个目标可并存；治疗、护盾和能量不得创建 activeDamageFeedback；零变化不得创建 overlay。
+多个目标可并存；新正向 overlay 与 shield loss 不得叠加旧人物框动画；damage 与 draw 保持原反馈语义。
 */
 function frVfxOverlayLifecycle() {
   const panels = new Map();
@@ -43663,10 +43663,11 @@ function frVfxOverlayLifecycle() {
       for (const [playerId, panel] of panels) {
         if (selector.includes(playerId)) return panel;
       }
-      return null;
+      return selector === ".command-deck" ? this.commandDeck : null;
     }
   };
   doc.body = doc.createElement();
+  doc.commandDeck = doc.createElement();
   for (const [playerId, left] of [["target-a", 40], ["target-b", 380]]) {
     const panel = doc.createElement();
     panel.getBoundingClientRect = () => ({ left, top: 120, width: 280, height: 170 });
@@ -43697,9 +43698,9 @@ function frVfxOverlayLifecycle() {
   assert.ok(replacement.classList.contains("feedback-damage"), "render 后按剩余时长续接受击震动");
 
   controller.queue("heal", "target-a", 1);
-  controller.queue("shield", "target-b", 2, "gain");
-  controller.queue("energy", "target-a", 2);
-  controller.queue("shield", "target-b", -3, "absorb");
+  controller.queue("shield", "target-b", 1, "gain");
+  controller.queue("energy", "target-a", 1);
+  controller.queue("shield", "target-b", -1, "absorb");
   controller.flush(doc);
   const healOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-heal"));
   const shieldOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-shield"));
@@ -43713,9 +43714,10 @@ function frVfxOverlayLifecycle() {
   const shieldIcon = shieldVisual.children[0];
   const energyIcon = energyVisual.children[0];
   assert.equal(healOverlay.children.find((child) => child.className === "floating-feedback is-heal").textContent, "+1");
-  assert.equal(shieldOverlay.children.find((child) => child.className === "floating-feedback is-shield").textContent, "+2");
-  assert.equal(energyOverlay.children.find((child) => child.className === "floating-feedback is-energy").textContent, "+2");
-  assert.equal(shieldLossOverlay.children[0].textContent, "−3");
+  assert.equal(shieldOverlay.children.find((child) => child.className === "floating-feedback is-shield").textContent, "+1");
+  assert.equal(energyOverlay.children.find((child) => child.className === "floating-feedback is-energy").textContent, "+1");
+  assert.equal(shieldLossOverlay.children[0].textContent, "−1");
+  assert.equal(shieldLossOverlay.children.some((child) => child.className === "positive-vfx-visual"), false);
   assert.equal(healOverlay.style.getPropertyValue("--resolution-vfx-duration"), "1000ms");
   assert.equal(shieldOverlay.style.getPropertyValue("--resolution-vfx-duration"), "1000ms");
   assert.equal(energyOverlay.style.getPropertyValue("--resolution-vfx-duration"), "1000ms");
@@ -43728,11 +43730,26 @@ function frVfxOverlayLifecycle() {
   }
   assert.equal(controller.activeDamageFeedback.size, 2, "治疗、护盾和能量不得创建伤害震动");
   assert.equal(controller.activeResolutionEffects.size, 6);
+  assert.equal(panels.get("target-a").classList.contains("feedback-heal"), false);
+  assert.equal(panels.get("target-a").classList.contains("feedback-energy"), false);
+  assert.equal(panels.get("target-b").classList.contains("feedback-shield"), false);
 
   controller.queue("heal", "target-a", 0);
   controller.queue("energy", "target-a", 0);
   controller.flush(doc);
   assert.equal(doc.body.children.length, 6, "零治疗和零能量不得创建成功 overlay");
+  controller.queue("draw", "target-a");
+  controller.flush(doc);
+  const drawPanel = panels.get("target-a");
+  assert.equal(drawPanel.classList.contains("feedback-draw"), true);
+  drawPanel.listeners.get("animationend")();
+  assert.equal(drawPanel.classList.contains("feedback-draw"), false);
+  controller.queue("shield", "missing-target", -1, "absorb");
+  controller.flush(doc);
+  const shieldLossFallback = doc.commandDeck.children[0];
+  assert.equal(shieldLossFallback.className, "floating-feedback is-shield");
+  assert.equal(shieldLossFallback.textContent, "−1");
+  assert.equal(doc.commandDeck.classList.contains("feedback-shield"), false);
   energyOverlay.listeners.get("animationend")({ target: energyOverlay, animationName: "positiveVfxLifetime" });
   assert.equal(energyOverlay.isConnected, false);
   assert.equal(controller.activeResolutionEffects.size, 5, "生命周期动画结束后必须清理对应 overlay");
