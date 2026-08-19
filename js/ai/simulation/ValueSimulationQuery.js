@@ -35,13 +35,13 @@ export class ValueSimulationQuery {
   AIController 组合根（统一组装依赖的位置）。
 
   输入
-  不含 Simulator 的 value/Evaluator。
+  不含 Simulator 的 value/Evaluator，以及可选 Simulator factory。
 
   输出
   可复用的有界模拟查询实例。
 
   读取状态
-  保存纯 evaluator 引用。
+  保存纯 evaluator 与 Simulator factory 引用。
 
   写入状态
   初始化实例级 WeakMap 缓存。
@@ -50,10 +50,11 @@ export class ValueSimulationQuery {
   WeakMap。
 
   边界与不变量
-  缓存仅以 SearchState 对象生命周期为界，不跨状态对象复用结果。
+  缓存仅以 SearchState 对象生命周期为界，不跨状态对象复用结果；组合根 factory 保证嵌套资源效果使用正式 query 语义。
   */
-  constructor(evaluator) {
+  constructor(evaluator, simulatorFactory = (state) => new Simulator(state)) {
     this.evaluator = evaluator;
+    this.simulatorFactory = simulatorFactory;
     this.lightningLifecycleCache = new WeakMap();
   }
 
@@ -107,7 +108,7 @@ export class ValueSimulationQuery {
       player.id,
       this.evaluator.ownerMaterialValue(state, player, viewerId, beforeRadar)
     ]));
-    const simulator = new Simulator(state);
+    const simulator = this.simulatorFactory(state);
     for (const outcome of distribution) {
       const after = simulator.applyLightningHit(state, outcome.holderId);
       const afterRadar = buildRadarJudgmentProbabilities(
@@ -342,7 +343,7 @@ export class ValueSimulationQuery {
     amount,
     stateValue
   ) {
-    const simulator = new Simulator(state);
+    const simulator = this.simulatorFactory(state);
     const stayState = simulator.clone();
     const aidState = simulator.clone();
     const stayTarget = stayState.players.find((player) => player.id === targetId);
@@ -402,7 +403,7 @@ export class ValueSimulationQuery {
     options,
     stateValue
   ) {
-    const simulator = new Simulator(state);
+    const simulator = this.simulatorFactory(state);
     return evaluateDynamicRootFlipGain(
       stateValue,
       simulator,
@@ -452,7 +453,7 @@ export class ValueSimulationQuery {
     stateValue
   ) {
     if (!action) return { grossAvoided: 0, ownerValue: 0, projected: 0 };
-    const simulator = new Simulator(before);
+    const simulator = this.simulatorFactory(before);
     const actualAfter = after ?? simulator.apply(before, action, actorId);
     const counterfactualPlayers = before.players.map((player) => {
       if (player.id !== defenderId) return player;
@@ -475,7 +476,7 @@ export class ValueSimulationQuery {
       return next;
     });
     const counterfactualBefore = { ...before, players: counterfactualPlayers };
-    const counterfactualAfter = new Simulator(counterfactualBefore).apply(
+    const counterfactualAfter = this.simulatorFactory(counterfactualBefore).apply(
       counterfactualBefore,
       action,
       actorId

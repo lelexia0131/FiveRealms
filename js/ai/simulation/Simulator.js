@@ -15,7 +15,7 @@ Response、Combat、CardEffect、SkillEffect 与 Status 模拟组件。
 只消费过滤后的可见状态、合法记忆与 Belief 概率，不读取隐藏实体牌或未来牌堆。
 
 架构约束
-不得拥有 Policy、Value 或 Domain 公式；所有模拟算法只存在于本目录组件。
+不得拥有 Policy、Value 或 Domain 公式；只保存组合根注入的资源 Policy/query 引用，所有模拟算法只存在于本目录组件。
 */
 import {
   PROBABILITY_EPSILON,
@@ -49,7 +49,7 @@ class SimulatorCore {
   Planner 与有界 Value/Root simulation query：为一次搜索或配对查询创建模拟生命周期。
 
   输入
-  已经过滤且不含 Game 引用的 SearchState 根快照。
+  已经过滤且不含 Game 引用的 SearchState 根快照，以及可选的资源 Policy/query 依赖。
 
   输出
   持有独立 initial 世界的 Simulator 实例。
@@ -58,15 +58,17 @@ class SimulatorCore {
   只读输入 SearchState。
 
   写入状态
-  实例 initial、概率摘要初始化结果与 root 递归守卫。
+  实例 initial、注入依赖、概率摘要初始化结果与 root 递归守卫。
 
   调用函数
   cloneSearchState、各 Simulation 组件初始化器。
 
   边界与不变量
-  构造不得回读 GameState；initial 与输入及其他模拟器实例不共享可变对象。
+  构造不得回读 GameState；initial 与输入及其他模拟器实例不共享可变对象；缺少资源 query 时仅保留直接测试的旧静态回退。
   */
-  constructor(visibleState) {
+  constructor(visibleState, options = {}) {
+    this.resourceSelectionPolicy = options.resourceSelectionPolicy ?? null;
+    this.resourceValueQuery = options.resourceValueQuery ?? null;
     this.initial = cloneSearchState(visibleState);
     this.initializeEquipmentBaselines(this.initial);
     this.initializeAssaultSummaries(this.initial);

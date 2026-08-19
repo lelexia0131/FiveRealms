@@ -231,6 +231,48 @@ export class Evaluator {
 
   /*
   功能
+  投影一次状态变化中静态装备资产与角色装备差量的团队价值贡献。
+
+  调用方
+  ResourceValueQuery：把长期资产先验与当前已兑现装备效果分离。
+
+  输入
+  before/after SearchState 与 viewer ID。
+
+  输出
+  已按 self/ally/enemy 符号投影的 equipmentDelta+equipmentRoleDelta 变化。
+
+  读取状态
+  只读双方玩家公开装备字段与 StateValue 装备基线字段。
+
+  写入状态
+  无。
+
+  调用函数
+  ownerStateTerms。
+
+  边界与不变量
+  只剥离两个静态装备材料项；距离、雷达、能量与其它上下文效果仍保留在完整 StateValue delta 中。
+  */
+  equipmentMaterialDelta(before, after, viewerId) {
+    const viewer = after.players.find((player) => player.id === viewerId)
+      ?? before.players.find((player) => player.id === viewerId);
+    if (!viewer) return 0;
+    const beforePlayers = new Map(before.players.map((player) => [player.id, player]));
+    return after.players.reduce((sum, afterPlayer) => {
+      const beforePlayer = beforePlayers.get(afterPlayer.id);
+      if (!beforePlayer) return sum;
+      const beforeTerms = this.ownerStateTerms(before, beforePlayer, viewerId, 0).terms;
+      const afterTerms = this.ownerStateTerms(after, afterPlayer, viewerId, 0).terms;
+      const localDelta = (afterTerms.equipmentDelta ?? 0) - (beforeTerms.equipmentDelta ?? 0)
+        + (afterTerms.equipmentRoleDelta ?? 0) - (beforeTerms.equipmentRoleDelta ?? 0);
+      const sign = afterPlayer.battleTeam === viewer.battleTeam ? 1 : -1;
+      return sum + sign * localDelta;
+    }, 0);
+  }
+
+  /*
+  功能
   汇总单个 owner 在不含延迟状态负担时的经济总值。
 
   调用方

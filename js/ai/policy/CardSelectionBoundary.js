@@ -52,7 +52,7 @@ export class CardSelectionBoundary {
   ResourceSelectionPolicy、TransferPolicy、CardSelectionPolicy 构造函数。
 
   边界与不变量
-  不保存 Game；runtime 只提供 random/getState/getEnemies 三个 narrow capability。
+  不保存 Game；runtime 只提供 random/getState/getEnemies/createSearchState 窄能力，query 缺失时保留直接测试的旧静态回退。
   */
   constructor(runtime, knowledge, policies = {}) {
     if (!runtime || typeof runtime.random !== "function") {
@@ -67,8 +67,12 @@ export class CardSelectionBoundary {
         entry.alive && entry.battleTeam !== player.battleTeam
       ));
     this.random = runtime.random;
+    this.createSearchState = typeof runtime.createSearchState === "function"
+      ? runtime.createSearchState
+      : null;
     this.knowledge = knowledge;
     this.resourcePolicy = policies.resourcePolicy ?? new ResourceSelectionPolicy();
+    this.resourceValueQuery = policies.resourceValueQuery ?? null;
     this.transferPolicy = policies.transferPolicy ?? new TransferPolicy();
     this.cardSelectionPolicy = policies.cardSelectionPolicy ?? new CardSelectionPolicy({
       random: () => this.random(),
@@ -76,6 +80,84 @@ export class CardSelectionBoundary {
       resourcePolicy: this.resourcePolicy,
       transferPolicy: this.transferPolicy
     });
+  }
+
+  /*
+  功能
+  在真实执行边界用与深层模拟相同的 SearchState 反事实语义选择资源并解析当前实体。
+
+  调用方
+  chooseZoneCard 的 destroy/plunder 分支。
+
+  输入
+  行动者、资源拥有者、purpose、排除 ID 与一次冻结的 remaining counts。
+
+  输出
+  `{card, zone}` 或 null。
+
+  读取状态
+  当前合法实体 ID、createSearchState 输出、公开装备、合法 known identities 与匿名容量。
+
+  写入状态
+  仅在匿名候选胜出时推进随机源。
+
+  调用函数
+  ResourceSelectionPolicy.buildCandidates/chooseContextual、ResourceValueQuery.evaluate。
+
+  边界与不变量
+  known 必须按 exact cardId 解析；unknown 只在胜出后从匿名位置随机解析且不读取 definitionId。
+  */
+  chooseContextualZoneCard(
+    actor,
+    owner,
+    purpose,
+    excludedCardIds,
+    remainingCardCounts
+  ) {
+    const searchState = this.createSearchState(actor.id, remainingCardCounts);
+    const searchActor = searchState.players.find((player) => player.id === actor.id);
+    const searchOwner = searchState.players.find((player) => player.id === owner.id);
+    if (!searchActor || !searchOwner) return null;
+    const eligibleCards = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
+    const eligibleIds = new Set(eligibleCards.map((card) => card.id));
+    const knownCards = (searchOwner.knownCards ?? []).filter(
+      (entry) => eligibleIds.has(entry.cardId)
+    );
+    const knownIds = new Set(knownCards.map((entry) => entry.cardId));
+    const unknownCards = eligibleCards.filter((card) => !knownIds.has(card.id));
+    const equipmentDefinitionId = owner.equipment?.definitionId ?? null;
+    const candidates = this.resourcePolicy.buildCandidates({
+      purpose,
+      actor: searchActor,
+      owner: searchOwner,
+      knownCards,
+      unknownCount: unknownCards.length,
+      equipmentDefinitionId,
+      remainingCardCounts
+    }).map((candidate) => ({
+      ...candidate,
+      availableUnknownCount: unknownCards.length
+    }));
+    const evaluated = this.resourceValueQuery.evaluate({
+      state: searchState,
+      actorId: searchActor.id,
+      targetId: searchOwner.id,
+      purpose,
+      candidates
+    });
+    const selection = this.resourcePolicy.chooseContextual(evaluated);
+    if (selection?.zone === "equipment" && owner.equipment) {
+      return { card: owner.equipment, zone: "equipment" };
+    }
+    if (selection?.selectionKind === "known") {
+      const card = eligibleCards.find((entry) => entry.id === selection.cardId) ?? null;
+      return card ? { card, zone: "hand" } : null;
+    }
+    if (selection?.selectionKind === "unknown" && unknownCards.length) {
+      const index = Math.floor(this.random() * unknownCards.length);
+      return { card: unknownCards[index] ?? unknownCards[0], zone: "hand" };
+    }
+    return null;
   }
 
   /*
@@ -214,6 +296,12 @@ export class CardSelectionBoundary {
     const remainingCardCounts = purpose === "plunder" || purpose === "destroy"
       ? (this.knowledge?.remainingCounts?.(actor) ?? null)
       : null;
+    if ((purpose === "plunder" || purpose === "destroy")
+      && this.createSearchState && this.resourceValueQuery) {
+      return this.chooseContextualZoneCard(
+        actor, owner, purpose, excludedCardIds, remainingCardCounts
+      );
+    }
     const [handCard] = this.chooseHiddenCards(
       actor,
       owner,

@@ -25,6 +25,7 @@ import { ActionGenerator } from "./search/ActionGenerator.js";
 import { ValueService } from "./value/ValueService.js";
 import { StateValue } from "./value/StateValue.js";
 import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js";
+import { ResourceValueQuery } from "./simulation/ResourceValueQuery.js";
 import { Simulator } from "./simulation/Simulator.js";
 import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILES } from "./policy/AiRuntimePolicy.js";
 import { ActionDescriptor } from "./search/ActionDescriptor.js";
@@ -135,8 +136,46 @@ export class AIController {
       getMaxEnergy: (player) => this.getMaxEnergy(player),
       getTurnEnergyBreakdown: (player) => this.getTurnEnergyBreakdown(player)
     });
-    this.valueSimulationQuery = new ValueSimulationQuery(this.stateEvaluator);
+    this.resourceSelectionPolicy = new ResourceSelectionPolicy();
+    /*
+    功能
+    为 main-thread 组合根创建共享资源决策语义的独立 Simulator。
+
+    调用方
+    ValueSimulationQuery、ResourceValueQuery 与 Planner。
+
+    输入
+    当前查询或搜索节点的 SearchState。
+
+    输出
+    注入正式资源 Policy/query 的 Simulator。
+
+    读取状态
+    当前 AIController 的 resourceSelectionPolicy 与已完成初始化的 resourceValueQuery。
+
+    写入状态
+    无。
+
+    调用函数
+    Simulator 构造函数。
+
+    边界与不变量
+    闭包允许在 ResourceValueQuery 初始化完成前声明，但只在组合完成后调用；不得回读 Game。
+    */
+    const simulatorFactory = (state) => new Simulator(state, {
+      resourceSelectionPolicy: this.resourceSelectionPolicy,
+      resourceValueQuery: this.resourceValueQuery ?? null
+    });
+    this.valueSimulationQuery = new ValueSimulationQuery(
+      this.stateEvaluator,
+      simulatorFactory
+    );
     this.stateValue = new StateValue(this.stateEvaluator, this.valueSimulationQuery);
+    this.resourceValueQuery = new ResourceValueQuery({
+      stateValue: this.stateValue,
+      evaluator: this.stateEvaluator,
+      simulatorFactory
+    });
     this.valueLedger = new ValueLedger({
       evaluator: this.stateEvaluator,
       stateValue: this.stateValue,
@@ -157,7 +196,6 @@ export class AIController {
       searchPrior: this.searchPrior,
       transitionValue: this.transitionValue
     });
-    this.resourceSelectionPolicy = new ResourceSelectionPolicy();
     this.transferPolicy = new TransferPolicy();
     this.cardSelectionPolicy = new CardSelectionPolicy({
       random: () => this.searchRng.next(),
@@ -170,10 +208,14 @@ export class AIController {
     this.cardSelector = new CardSelectionBoundary({
       random: () => this.searchRng.next(),
       getState: () => this.getState(),
-      getEnemies: (player) => this.getEnemies(player)
+      getEnemies: (player) => this.getEnemies(player),
+      createSearchState: (viewerId, remainingCardCounts) => createInitialSearchState(
+        viewerId, this.getState(), remainingCardCounts
+      )
     }, this.knowledge, {
       cardSelectionPolicy: this.cardSelectionPolicy,
       resourcePolicy: this.resourceSelectionPolicy,
+      resourceValueQuery: this.resourceValueQuery,
       transferPolicy: this.transferPolicy
     });
     this.responsePolicy = new ResponseBoundary({
@@ -239,7 +281,7 @@ export class AIController {
     this.planner = new Planner({
       candidateMaterializer: this.candidateMaterializer,
       searchPolicy: this.searchPolicy,
-      simulatorFactory: (state) => new Simulator(state),
+      simulatorFactory,
       searchBudgetFactory: () => new SearchBudget({
         timeBudget: this.getSearchTimeBudget(),
         nodeBudget: this.getSearchNodeBudget()

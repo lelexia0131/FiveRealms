@@ -19,6 +19,7 @@ value/CardValue 与 TransferPolicy 的共享未知牌期望常量。
 */
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import {
+  getBaseCardAiValue,
   getEquipmentKeepValueDeduction,
   getRoleCardAiValue
 } from "../value/CardValue.js";
@@ -356,6 +357,162 @@ export function chooseResourceZone({
   return equipmentChoice;
 }
 
+/*
+功能
+计算掠夺后接收方获得一张匿名牌的基础资产期望。
+
+调用方
+buildResourceCandidates。
+
+输入
+Belief remaining counts；允许为 null。
+
+输出
+基础 CardValue 的加权期望；无有效计数时返回既有未知期望。
+
+读取状态
+只读 remaining counts 与 CardValue。
+
+写入状态
+无。
+
+调用函数
+getBaseCardAiValue。
+
+边界与不变量
+只计算匿名资源期望，不读取实体牌或角色私有身份。
+*/
+export function getUnknownAcquisitionUtility(remainingCardCounts = null) {
+  if (remainingCardCounts !== null && typeof remainingCardCounts === "object") {
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (const [definitionId, count] of Object.entries(remainingCardCounts)) {
+      if (!Number.isFinite(count) || count <= 0) continue;
+      weightedSum += count * getBaseCardAiValue(definitionId);
+      totalWeight += count;
+    }
+    if (totalWeight > 0) return weightedSum / totalWeight;
+  }
+  return UNKNOWN_HAND_EXPECTED_VALUE;
+}
+
+/*
+功能
+把装备、合法确定手牌与一个匿名手牌槽整理为资源反事实候选。
+
+调用方
+ResourceSelectionPolicy.buildCandidates、CardSelectionBoundary 与 CardEffectSimulation。
+
+输入
+用途、双方公开字段、确定 known cards、匿名数量、装备定义与 Belief counts。
+
+输出
+按 known、unknown、equipment 稳定顺序排列的候选数组。
+
+读取状态
+只读显式身份、匿名容量、CardValue 与 remaining counts。
+
+写入状态
+无。
+
+调用函数
+getResourceDefinitionUtility、getResourceUnknownUtility、getUnknownAcquisitionUtility。
+
+边界与不变量
+known 保留 cardId+definitionId；unknown 不携带二者且最多一个；公开装备最多一个。
+*/
+export function buildResourceCandidates({
+  purpose,
+  actor,
+  owner,
+  knownCards,
+  unknownCount,
+  equipmentDefinitionId,
+  remainingCardCounts
+}) {
+  const candidates = [];
+  for (const entry of Array.isArray(knownCards) ? knownCards : []) {
+    candidates.push({
+      zone: "hand",
+      selectionKind: "known",
+      cardId: entry.cardId,
+      definitionId: entry.definitionId,
+      staticUtility: getResourceDefinitionUtility(purpose, actor, owner, entry.definitionId),
+      acquisitionUtility: purpose === "plunder"
+        ? getBaseCardAiValue(entry.definitionId)
+        : 0
+    });
+  }
+  if (Number(unknownCount) > 0) {
+    candidates.push({
+      zone: "hand",
+      selectionKind: "unknown",
+      cardId: null,
+      definitionId: null,
+      staticUtility: getResourceUnknownUtility(
+        purpose, actor, owner, remainingCardCounts
+      ),
+      acquisitionUtility: purpose === "plunder"
+        ? getUnknownAcquisitionUtility(remainingCardCounts)
+        : 0
+    });
+  }
+  if (equipmentDefinitionId) {
+    candidates.push({
+      zone: "equipment",
+      selectionKind: "equipment",
+      cardId: null,
+      definitionId: equipmentDefinitionId,
+      staticUtility: getResourceDefinitionUtility(
+        purpose, actor, owner, equipmentDefinitionId
+      ),
+      acquisitionUtility: purpose === "plunder"
+        ? getBaseCardAiValue(equipmentDefinitionId)
+        : 0
+    });
+  }
+  return candidates;
+}
+
+/*
+功能
+从已经完成 after-state 估值的资源候选中选择最高上下文收益项。
+
+调用方
+ResourceSelectionPolicy.chooseContextual、CardSelectionBoundary 与 CardEffectSimulation。
+
+输入
+ResourceValueQuery 返回的候选数组。
+
+输出
+最佳候选描述或 null。
+
+读取状态
+只读 contextualUtility 与 staticUtility。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+上下文收益是第一权威；仅在数值同分时使用静态值，最终仍保持 known、unknown、equipment 输入顺序。
+*/
+export function chooseContextualResourceCandidate(candidates) {
+  let best = null;
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    if (!Number.isFinite(candidate?.contextualUtility)) continue;
+    if (!best
+      || candidate.contextualUtility > best.contextualUtility + 1e-9
+      || (Math.abs(candidate.contextualUtility - best.contextualUtility) <= 1e-9
+        && candidate.staticUtility > best.staticUtility)) {
+      best = candidate;
+    }
+  }
+  return best ? { ...best, utility: best.contextualUtility } : null;
+}
+
 export class ResourceSelectionPolicy {
   /*
   功能
@@ -442,5 +599,63 @@ export class ResourceSelectionPolicy {
   */
   chooseZone(context) {
     return chooseResourceZone(context);
+  }
+
+  /*
+  功能
+  通过正式 Policy 实例构造资源反事实候选。
+
+  调用方
+  CardSelectionBoundary 与 CardEffectSimulation。
+
+  输入
+  已合法过滤且不含隐藏定义的资源上下文。
+
+  输出
+  known/unknown/equipment 候选数组。
+
+  读取状态
+  只读输入。
+
+  写入状态
+  无。
+
+  调用函数
+  buildResourceCandidates。
+
+  边界与不变量
+  不读取 Game，不执行 mutation，也不启动反事实模拟。
+  */
+  buildCandidates(context) {
+    return buildResourceCandidates(context);
+  }
+
+  /*
+  功能
+  通过正式 Policy 实例比较已完成上下文估值的资源候选。
+
+  调用方
+  CardSelectionBoundary 与 CardEffectSimulation。
+
+  输入
+  ResourceValueQuery 结果数组。
+
+  输出
+  最佳候选描述或 null。
+
+  读取状态
+  只读输入。
+
+  写入状态
+  无。
+
+  调用函数
+  chooseContextualResourceCandidate。
+
+  边界与不变量
+  Policy 不构造 Simulator；静态 CardValue 只处理上下文同分。
+  */
+  chooseContextual(candidates) {
+    return chooseContextualResourceCandidate(candidates);
   }
 }

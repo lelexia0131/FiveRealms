@@ -24,8 +24,10 @@ import { StateValue } from "../../../ai/value/StateValue.js";
 import { ValueLedger } from "../../../ai/value/ValueLedger.js";
 import { ValueService } from "../../../ai/value/ValueService.js";
 import { ValueSimulationQuery } from "../../../ai/simulation/ValueSimulationQuery.js";
+import { ResourceValueQuery } from "../../../ai/simulation/ResourceValueQuery.js";
 import { Simulator } from "../../../ai/simulation/Simulator.js";
 import { ActionCandidatePolicy } from "../../../ai/policy/ActionCandidatePolicy.js";
+import { ResourceSelectionPolicy } from "../../../ai/policy/ResourceSelectionPolicy.js";
 import { TransferPolicy } from "../../../ai/policy/TransferPolicy.js";
 import { ActionGenerator } from "../../../ai/search/ActionGenerator.js";
 import { CandidateMaterializer } from "../../../ai/search/CandidateMaterializer.js";
@@ -163,8 +165,47 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     getMaxEnergy:getMaxEnergyForPlayer,
     getTurnEnergyBreakdown:getTurnEnergyBreakdownForPlayer
   });
-  const valueSimulationQuery = new ValueSimulationQuery(stateEvaluator);
+  const resourceSelectionPolicy = new ResourceSelectionPolicy();
+  let resourceValueQuery = null;
+  /*
+  功能
+  为 Worker search runtime 创建共享资源决策语义的独立 Simulator。
+
+  调用方
+  ValueSimulationQuery、ResourceValueQuery 与 Planner。
+
+  输入
+  当前查询或搜索节点的 SearchState。
+
+  输出
+  注入正式资源 Policy/query 的 Simulator。
+
+  读取状态
+  当前 search engine 的 resourceSelectionPolicy 与已完成初始化的 resourceValueQuery。
+
+  写入状态
+  无。
+
+  调用函数
+  Simulator 构造函数。
+
+  边界与不变量
+  闭包允许在 ResourceValueQuery 初始化完成前声明，但只在组合完成后调用；不得依赖 main-thread 对象。
+  */
+  const simulatorFactory = (state) => new Simulator(state, {
+    resourceSelectionPolicy,
+    resourceValueQuery
+  });
+  const valueSimulationQuery = new ValueSimulationQuery(
+    stateEvaluator,
+    simulatorFactory
+  );
   const stateValue = new StateValue(stateEvaluator, valueSimulationQuery);
+  resourceValueQuery = new ResourceValueQuery({
+    stateValue,
+    evaluator: stateEvaluator,
+    simulatorFactory
+  });
   const valueLedger = new ValueLedger({
     evaluator:stateEvaluator,
     stateValue,
@@ -215,7 +256,7 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
   const planner = new Planner({
     candidateMaterializer,
     searchPolicy,
-    simulatorFactory: (state) => new Simulator(state),
+    simulatorFactory,
     searchBudgetFactory: () => new SearchBudget({
       timeBudget:config.timeBudgetMs,
       nodeBudget:config.nodeBudget,

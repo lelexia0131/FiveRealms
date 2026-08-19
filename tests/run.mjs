@@ -32138,7 +32138,7 @@ test("AI·资源身份：部分概率高价值牌不再按完整确定身份评�
   assert.ok(partialScore < fullScore);
 });
 
-test("AI·资源身份：防御性旧动作对部分可用 known 身份按未知聚合处理", () => {
+test("AI·资源身份：部分可用 known 身份按同一条件世界精确转移", () => {
   const state = {
     playPhaseEnded: false,
     remainingCardCounts: { assault: 10 },
@@ -32215,7 +32215,9 @@ test("AI·资源身份：防御性旧动作对部分可用 known 身份按未知
   const next = new Simulator(state).apply(state, action, "a");
   const nextSource = next.players[1], nextReceiver = next.players[2];
   assert.equal(nextSource.knownCards.some((entry) => entry.cardId === "partial-k"), false);
-  assert.equal((nextReceiver.knownCards ?? []).some((entry) => entry.cardId === "partial-k"), false);
+  assert.equal((nextReceiver.knownCards ?? []).some(
+    (entry) => entry.cardId === "partial-k" && entry.definitionId === "assault"
+  ), true);
   assert.equal(nextReceiver.hand, undefined);
   assertClose(nextSource.handCount, 0);
   assertClose(nextReceiver.handCount, .4);
@@ -32725,7 +32727,7 @@ test("AI·资源身份：部分概率掠夺双方共享条件分支且所有权�
   assertClose(actorOwned + targetOwned, 1);
 });
 
-test("AI·资源身份：部分概率已知牌保守并入未知聚合而不作为确定 known", () => {
+test("AI·资源身份：部分概率已知牌保持 exact candidate 且不进入未知聚合", () => {
   const simulator = new Simulator({ players: [] });
   const actor = { id: "a", battleTeam: "dawn", characterId: "blade-walker" };
   const target = {
@@ -32749,14 +32751,15 @@ test("AI·资源身份：部分概率已知牌保守并入未知聚合而不作�
   };
   const { knownCards, unknownCount }
     = simulator.buildSimulatedKnownCards(target);
-  assert.deepEqual(knownCards, []);
-  assert.ok(Math.abs(unknownCount - 0.4) < 1e-9);
+  assert.equal(knownCards.length, 1);
+  assert.equal(knownCards[0].cardId, "c");
+  assert.equal(unknownCount, 0);
   const selection = simulator.chooseSimulatedResourceSelection(
     { players: [actor, target] }, actor, target, "destroy"
   );
   assert.equal(selection.zone, "hand");
-  assert.equal(selection.selectionKind, "unknown");
-  assert.equal(selection.cardId, null);
+  assert.equal(selection.selectionKind, "known");
+  assert.equal(selection.cardId, "c");
 });
 
 test("AI·资源身份：已知 block/counter/recover/assault 移除后摘要按分布精确重算", () => {
@@ -34662,7 +34665,7 @@ test("AI·动态密度：模拟器动态：手牌与装备同分仍选手牌", (
   assert.equal(selection.zone, "hand");
 });
 
-test("AI·动态密度：模拟器动态：陈旧 knownCards 回退继续生效", () => {
+test("AI·动态密度：模拟器动态：陈旧与部分 knownCards 不降级为未知", () => {
   const state = { remainingCardCounts: { counter: 7, defenseDevice: 1 }, players: [] };
   const simulator = new Simulator(state);
   const actor = { id: "a", battleTeam: "dawn", characterId: "blade-walker", alive: true };
@@ -34678,11 +34681,23 @@ test("AI·动态密度：模拟器动态：陈旧 knownCards 回退继续生效"
   };
   const built = simulator.buildSimulatedKnownCards(target);
   assert.deepEqual(built.knownCards, []);
-  assert.equal(built.unknownCount, 0.5);
+  assert.equal(built.unknownCount, 0);
+  const partial = simulator.buildSimulatedKnownCards({
+    handCount: 1,
+    knownCards: [{
+      cardId: "partial",
+      definitionId: "counter",
+      availabilityStateBranches: [
+        { probability: 0.5, conditions: {}, available: true },
+        { probability: 0.5, conditions: {}, available: false }
+      ]
+    }]
+  });
+  assert.equal(partial.knownCards.length, 1);
+  assert.equal(partial.unknownCount, 0.5);
   const before = JSON.stringify(target.knownCards);
   const selection = simulator.chooseSimulatedResourceSelection(state, actor, target, "destroy");
   assert.equal(selection.zone, "equipment");
-  // 动态 7.125 < 军火库 10
   assert.equal(JSON.stringify(target.knownCards), before);
 });
 
@@ -36979,7 +36994,7 @@ test("AI·资源选择：破坏不因未知实体真实牌面改变选择位置"
   assert.equal(lowChosen, low.target.hand[1]);
 });
 
-test("AI·资源选择：破坏手牌与装备比较使用目标角色价值", () => {
+test("AI·资源选择：破坏手牌与装备比较使用上下文状态收益", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const medic = makePlayer("medic", 1, "dusk", "ai", 2);
   // spirit-medic：recover 8、energyDevice 8
@@ -36990,8 +37005,8 @@ test("AI·资源选择：破坏手牌与装备比较使用目标角色价值", (
   medic.equipment = instance("energyDevice");
   game.rememberPrivateCard(actor, medic, recover);
   const chosen = game.aiController.cardSelector.chooseZoneCard(actor, medic, { purpose: "destroy" });
-  assert.equal(chosen.zone, "hand");
-  assert.equal(chosen.card, recover);
+  assert.equal(chosen.zone, "equipment");
+  assert.equal(chosen.card, medic.equipment);
 });
 
 test("AI·资源选择：掠夺使用双角色效用而非破坏的单角色损失", () => {
@@ -37015,7 +37030,7 @@ test("AI·资源选择：掠夺使用双角色效用而非破坏的单角色损�
   // 掠夺：recover 6+8=14 < battleDevice 11+8=19
 });
 
-test("AI·资源选择：破坏同分时优先手牌且已知手牌同分保持较早位置", () => {
+test("AI·资源选择：破坏已知同分保持较早位置且区域使用上下文收益", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const warden = makePlayer("warden", 1, "dusk", "ai", 1);
   // oath-warden：recover 7、leverage 7
@@ -37030,12 +37045,12 @@ test("AI·资源选择：破坏同分时优先手牌且已知手牌同分保持�
   )[0];
   assert.equal(chosen, recover);
   warden.equipment = instance("energyDevice");
-  // oath-warden：energyDevice 7，与 recover 同分
+  // 静态值同为 7，但充能桩的真实能量上下文收益高于只减少一张手牌。
   const zoneChosen = game.aiController.cardSelector.chooseZoneCard(
     actor, warden, { purpose: "destroy" }
   );
-  assert.equal(zoneChosen.zone, "hand");
-  assert.equal(zoneChosen.card, recover);
+  assert.equal(zoneChosen.zone, "equipment");
+  assert.equal(zoneChosen.card, warden.equipment);
 });
 
 test("AI·资源选择：非破坏非掠夺的装备阈值分支保持不变", () => {
@@ -37149,7 +37164,7 @@ test("AI·资源选择：掠夺不因未知实体真实牌面改变选择位置"
   assert.equal(lowChosen, low.warden.hand[1]);
 });
 
-test("AI·资源选择：掠夺手牌与装备比较使用双角色效用", () => {
+test("AI·资源选择：掠夺手牌与装备比较使用转移后的上下文收益", () => {
   const medic = makePlayer("medic", 0, "dawn", "ai", 2);
   const blade = makePlayer("blade", 1, "dusk", "ai", 0);
   const { game }
@@ -37159,12 +37174,11 @@ test("AI·资源选择：掠夺手牌与装备比较使用双角色效用", () =
   blade.equipment = instance("energyDevice");
   game.rememberPrivateCard(medic, blade, recover);
   const chosen = game.aiController.cardSelector.chooseZoneCard(medic, blade, { purpose: "plunder" });
-  assert.equal(chosen.zone, "hand");
-  assert.equal(chosen.card, recover);
-  // recover 14 > energyDevice 13
+  assert.equal(chosen.zone, "equipment");
+  assert.equal(chosen.card, blade.equipment);
 });
 
-test("AI·资源选择：掠夺同分时优先手牌", () => {
+test("AI·资源选择：掠夺静态近似不覆盖装备的上下文收益", () => {
   const medic = makePlayer("medic", 0, "dawn", "ai", 2);
   const blade = makePlayer("blade", 1, "dusk", "ai", 0);
   const { game }
@@ -37174,9 +37188,8 @@ test("AI·资源选择：掠夺同分时优先手牌", () => {
   blade.equipment = instance("energyDevice");
   game.rememberPrivateCard(medic, blade, shield);
   const chosen = game.aiController.cardSelector.chooseZoneCard(medic, blade, { purpose: "plunder" });
-  assert.equal(chosen.zone, "hand");
-  assert.equal(chosen.card, shield);
-  // 均为 13，同分优先手牌
+  assert.equal(chosen.zone, "equipment");
+  assert.equal(chosen.card, blade.equipment);
 });
 
 test("AI·资源选择：同阵营掠夺辅助语义使用差值而非相加", () => {
@@ -37400,7 +37413,7 @@ test("AI·资源选择：随机调用：未知手牌胜出调用一次随机数"
   assert.equal(randomCalls, 1);
 });
 
-test("AI·资源选择：随机调用：未知候选存在但装备胜出仍调用一次随机数", () => {
+test("AI·资源选择：随机调用：未知候选落败时不解析实体也不调用随机数", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const owner = makePlayer("owner", 1, "dusk", "ai", 1);
   // oath-warden
@@ -37413,7 +37426,7 @@ test("AI·资源选择：随机调用：未知候选存在但装备胜出仍调�
   // oath-warden 值 7 > 4
   const chosen = game.aiController.cardSelector.chooseZoneCard(actor, owner, { purpose: "destroy" });
   assert.equal(chosen.zone, "equipment");
-  assert.equal(randomCalls, 1);
+  assert.equal(randomCalls, 0);
 });
 
 test("AI·资源选择：随机调用：只有装备且没有手牌不调用随机数", () => {
@@ -37441,6 +37454,286 @@ test("AI·资源选择：随机调用：多选两张未知牌各调用一次随�
   );
   assert.equal(chosen.length, 2);
   assert.equal(randomCalls, 2);
+});
+
+test("AI·资源选择：无效望远镜不压过未知手牌且真实与深层选择一致", () => {
+  const actor = makePlayer("context-root", 0, "dawn", "ai", 3),
+    target = makePlayer("context-owner", 1, "dusk", "ai", 0),
+    ally = makePlayer("context-ally", 2, "dawn", "ai", 1),
+    unknown = instance("charge");
+  target.equipment = instance("telescope");
+  target.hand = [unknown];
+  const { game }
+    = makeGame([actor, target, ally], { random: () => 0 });
+  for (const enemy of [actor, ally]) {
+    assert.equal(
+      getDistance(game.state.players, target, enemy, "telescope", enemy.equipment?.definitionId ?? null),
+      getDistance(game.state.players, target, enemy, null, enemy.equipment?.definitionId ?? null)
+    );
+  }
+  const rootChoice = game.aiController.cardSelector.chooseZoneCard(
+    actor, target, { purpose: "destroy" }
+  );
+  assert.equal(rootChoice.zone, "hand");
+  assert.equal(rootChoice.card, unknown);
+
+  const remaining = game.aiController.knowledge.remainingCounts(actor);
+  const state = createInitialSearchState(actor.id, game.state, remaining);
+  const simulator = new Simulator(state, {
+    resourceSelectionPolicy: game.aiController.resourceSelectionPolicy,
+    resourceValueQuery: game.aiController.resourceValueQuery
+  });
+  const deepChoice = simulator.chooseSimulatedResourceSelection(
+    state, state.players[0], state.players[1], "destroy"
+  );
+  assert.equal(deepChoice.zone, "hand");
+  assert.equal(deepChoice.selectionKind, "unknown");
+});
+
+test("AI·资源选择：望远镜真实改变屏障距离时上下文收益可胜出", () => {
+  const actor = makePlayer("range-actor", 0, "dawn", "ai", 0),
+    target = makePlayer("range-owner", 1, "dusk", "ai", 1),
+    ally = makePlayer("range-ally", 2, "dawn", "ai", 2);
+  actor.equipment = instance("barrierDevice");
+  ally.equipment = instance("barrierDevice");
+  target.equipment = instance("telescope");
+  target.hand = Array.from({ length: 4 }, () => instance("charge"));
+  const { game }
+    = makeGame([actor, target, ally]);
+  assert.equal(getDistance(game.state.players, target, actor, "telescope", "barrierDevice"), 1);
+  assert.equal(getDistance(game.state.players, target, actor, null, "barrierDevice"), 2);
+
+  const remaining = { assault: 4 };
+  const state = createInitialSearchState(actor.id, game.state, remaining);
+  const searchActor = state.players[0], searchTarget = state.players[1];
+  const unknownCount = searchTarget.handCount - (searchTarget.knownCards?.length ?? 0);
+  const candidates = game.aiController.resourceSelectionPolicy.buildCandidates({
+    purpose: "destroy",
+    actor: searchActor,
+    owner: searchTarget,
+    knownCards: searchTarget.knownCards,
+    unknownCount,
+    equipmentDefinitionId: searchTarget.equipmentDefinitionId,
+    remainingCardCounts: remaining
+  }).map((candidate) => ({ ...candidate, availableUnknownCount: unknownCount }));
+  const evaluated = game.aiController.resourceValueQuery.evaluate({
+    state,
+    actorId: searchActor.id,
+    targetId: searchTarget.id,
+    purpose: "destroy",
+    candidates
+  });
+  const equipment = evaluated.find((candidate) => candidate.zone === "equipment");
+  const unknown = evaluated.find((candidate) => candidate.selectionKind === "unknown");
+  assert.ok(equipment.contextualStateDelta > 0);
+  assert.ok(equipment.contextualUtility > unknown.contextualUtility);
+  assert.equal(
+    game.aiController.resourceSelectionPolicy.chooseContextual(evaluated).zone,
+    "equipment"
+  );
+});
+
+test("AI·资源选择：掠夺无效望远镜仍计入接收方获得价值", () => {
+  const actor = makePlayer("gain-actor", 0, "dawn", "ai", 3),
+    target = makePlayer("gain-owner", 1, "dusk", "ai", 0),
+    ally = makePlayer("gain-ally", 2, "dawn", "ai", 1);
+  target.equipment = instance("telescope");
+  target.hand = [instance("charge")];
+  const { game }
+    = makeGame([actor, target, ally]);
+  const remaining = { charge: 4 };
+  const state = createInitialSearchState(actor.id, game.state, remaining);
+  const searchActor = state.players[0], searchTarget = state.players[1];
+  const unknownCount = 1;
+  const destroyCandidates = game.aiController.resourceSelectionPolicy.buildCandidates({
+    purpose: "destroy",
+    actor: searchActor,
+    owner: searchTarget,
+    knownCards: [],
+    unknownCount,
+    equipmentDefinitionId: "telescope",
+    remainingCardCounts: remaining
+  }).map((candidate) => ({ ...candidate, availableUnknownCount: unknownCount }));
+  const plunderCandidates = game.aiController.resourceSelectionPolicy.buildCandidates({
+    purpose: "plunder",
+    actor: searchActor,
+    owner: searchTarget,
+    knownCards: [],
+    unknownCount,
+    equipmentDefinitionId: "telescope",
+    remainingCardCounts: remaining
+  }).map((candidate) => ({ ...candidate, availableUnknownCount: unknownCount }));
+  const destroy = game.aiController.resourceValueQuery.evaluate({
+    state,
+    actorId: searchActor.id,
+    targetId: searchTarget.id,
+    purpose: "destroy",
+    candidates: destroyCandidates
+  });
+  const plunder = game.aiController.resourceValueQuery.evaluate({
+    state,
+    actorId: searchActor.id,
+    targetId: searchTarget.id,
+    purpose: "plunder",
+    candidates: plunderCandidates
+  });
+  const destroyedEquipment = destroy.find((candidate) => candidate.zone === "equipment");
+  const plunderedEquipment = plunder.find((candidate) => candidate.zone === "equipment");
+  assert.ok(Math.abs(destroyedEquipment.contextualStateDelta) < 1e-9);
+  assert.ok(plunderedEquipment.acquisitionMaterial > 0);
+  assert.ok(plunderedEquipment.contextualUtility > destroyedEquipment.contextualUtility);
+  assert.equal(game.aiController.resourceSelectionPolicy.chooseContextual(destroy).selectionKind, "unknown");
+  assert.equal(game.aiController.resourceSelectionPolicy.chooseContextual(plunder).zone, "equipment");
+
+  const after = structuredClone(state);
+  const simulator = new Simulator(after);
+  simulator.applyForcedResourceSelection(
+    after,
+    after.players[0],
+    after.players[1],
+    "plunder",
+    { ...plunderedEquipment, availableUnknownCount: unknownCount }
+  );
+  assert.equal(after.players[1].equipmentRetentionProbability, 0);
+  assert.ok(after.players[0].hand.some((card) => card.definitionId === "telescope"));
+});
+
+test("AI·资源选择：已知牌不进入未知池且强制破坏精确身份不递归", () => {
+  const actor = makePlayer("known-actor", 0, "dawn", "ai", 0),
+    target = makePlayer("known-owner", 1, "dusk", "ai", 1),
+    counter = instance("counter"), charge = instance("charge");
+  target.hand = [counter, charge];
+  const { game }
+    = makeGame([actor, target]);
+  game.rememberPrivateCard(actor, target, counter);
+  game.rememberPrivateCard(actor, target, charge);
+  const rootChoice = game.aiController.cardSelector.chooseZoneCard(
+    actor, target, { purpose: "destroy" }
+  );
+  assert.equal(rootChoice.card, counter);
+
+  const state = createInitialSearchState(actor.id, game.state, { assault: 4 });
+  const simulator = new Simulator(state);
+  const searchTarget = state.players[1];
+  const resourceShape = simulator.buildSimulatedKnownCards(searchTarget);
+  assert.equal(resourceShape.knownCards.length, 2);
+  assert.equal(resourceShape.unknownCount, 0);
+  const candidates = game.aiController.resourceSelectionPolicy.buildCandidates({
+    purpose: "destroy",
+    actor: state.players[0],
+    owner: searchTarget,
+    knownCards: resourceShape.knownCards,
+    unknownCount: resourceShape.unknownCount,
+    equipmentDefinitionId: null,
+    remainingCardCounts: state.remainingCardCounts
+  });
+  assert.equal(candidates.filter((candidate) => candidate.selectionKind === "known").length, 2);
+  assert.equal(candidates.some((candidate) => candidate.selectionKind === "unknown"), false);
+
+  const after = simulator.clone(state);
+  const forcedSimulator = new Simulator(after);
+  forcedSimulator.chooseSimulatedResourceSelection = () => {
+    throw new Error("forced mutation 不得重新选择资源");
+  };
+  const applied = forcedSimulator.applyForcedResourceSelection(
+    after,
+    after.players[0],
+    after.players[1],
+    "destroy",
+    {
+      zone: "hand",
+      selectionKind: "known",
+      cardId: counter.id,
+      definitionId: "counter"
+    }
+  );
+  assert.equal(applied, 1);
+  assert.equal(after.players[1].handCount, 1);
+  assert.deepEqual(
+    after.players[1].knownCards.map((card) => [card.cardId, card.definitionId]),
+    [[charge.id, "charge"]]
+  );
+  assert.equal(after.players[1].counterProbability, 0);
+
+  const stale = simulator.clone(state);
+  const staleApplied = new Simulator(stale).applyForcedResourceSelection(
+    stale,
+    stale.players[0],
+    stale.players[1],
+    "destroy",
+    {
+      zone: "hand",
+      selectionKind: "known",
+      cardId: "missing-card",
+      definitionId: "counter"
+    }
+  );
+  assert.equal(staleApplied, 0);
+  assert.equal(stale.players[1].handCount, 2);
+  assert.equal(stale.players[1].knownCards.length, 2);
+});
+
+test("AI·资源选择：掠夺精确转移已知反制并同步双方容量", () => {
+  const actor = makePlayer("known-gain-actor", 0, "dawn", "ai", 0),
+    target = makePlayer("known-gain-owner", 1, "dusk", "ai", 1),
+    counter = instance("counter"), unknown = instance("charge");
+  target.hand = [counter, unknown];
+  const { game }
+    = makeGame([actor, target]);
+  game.rememberPrivateCard(actor, target, counter);
+  const state = createInitialSearchState(actor.id, game.state, { charge: 4 });
+  const contextualSimulator = new Simulator(state, {
+    resourceSelectionPolicy: game.aiController.resourceSelectionPolicy,
+    resourceValueQuery: game.aiController.resourceValueQuery
+  });
+  const selection = contextualSimulator.chooseSimulatedResourceSelection(
+    state, state.players[0], state.players[1], "plunder"
+  );
+  assert.equal(selection.selectionKind, "known");
+  assert.equal(selection.cardId, counter.id);
+
+  const after = contextualSimulator.clone(state);
+  const applied = new Simulator(after).applyForcedResourceSelection(
+    after, after.players[0], after.players[1], "plunder", selection
+  );
+  assert.equal(applied, 1);
+  assert.equal(after.players[1].knownCards.some((card) => card.cardId === counter.id), false);
+  assert.equal(after.players[1].handCount, 1);
+  assert.equal(after.players[1].counterProbability, 0);
+  assert.ok(after.players[0].hand.some(
+    (card) => card.id === counter.id && card.definitionId === "counter"
+  ));
+  assert.equal(after.players[0].counterProbability, 1);
+});
+
+test("AI·资源选择：掠夺未知槽只转移匿名容量不暴露身份", () => {
+  const actor = makePlayer("unknown-gain-actor", 0, "dawn", "ai", 0),
+    target = makePlayer("unknown-gain-owner", 1, "dusk", "ai", 1),
+    hidden = { id: "hidden-slot" };
+  Object.defineProperty(hidden, "definitionId", {
+    enumerable: true,
+    get() { throw new Error("读取未知 definitionId"); }
+  });
+  target.hand = [hidden];
+  const { game }
+    = makeGame([actor, target]);
+  const state = createInitialSearchState(actor.id, game.state, { block: 1, counter: 1 });
+  const selection = {
+    zone: "hand",
+    selectionKind: "unknown",
+    cardId: null,
+    definitionId: null,
+    availableUnknownCount: 1
+  };
+  const after = structuredClone(state);
+  const applied = new Simulator(after).applyForcedResourceSelection(
+    after, after.players[0], after.players[1], "plunder", selection
+  );
+  assert.equal(applied, 1);
+  assert.equal(after.players[1].handCount, 0);
+  assert.equal(after.players[0].handCount, 1);
+  assert.deepEqual(after.players[0].hand, []);
+  assert.equal(after.players[0].identitySlotStates, undefined);
 });
 
 test("AI·资源选择：破坏模拟使用共享区域选择：灵医已知调息优先于充能桩", () => {
@@ -37720,7 +38013,7 @@ test("AI·资源选择：破坏模拟不读取目标隐藏 hand 实体定义", (
   assert.deepEqual(nextHigh.players[1].knownCards, nextLow.players[1].knownCards);
 });
 
-test("AI·资源选择：破坏模拟陈旧 knownCards 保守回退为未知聚合", () => {
+test("AI·资源选择：破坏模拟陈旧 knownCards 不降级为未知聚合", () => {
   const state = {
     players: [
       {
@@ -37750,7 +38043,7 @@ test("AI·资源选择：破坏模拟陈旧 knownCards 保守回退为未知聚�
   const next = new Simulator(
     state
   ).apply(state, { type: "card", card: { id: "use", definitionId: "destroy" }, targets: [{ id: "t" }] }, "a");
-  assert.ok(Math.abs(next.players[1].handCount - 0) < 1e-9);
+  assert.ok(Math.abs(next.players[1].handCount - 0.5) < 1e-9);
   assert.equal(JSON.stringify(next.players[1].knownCards), before);
 });
 
@@ -38155,7 +38448,7 @@ test("AI·资源选择：掠夺模拟不读取目标隐藏 hand 实体定义", (
   assert.equal(high.act.handCount, low.act.handCount);
 });
 
-test("AI·资源选择：掠夺模拟陈旧 knownCards 保守回退为未知聚合", () => {
+test("AI·资源选择：掠夺模拟陈旧 knownCards 不降级且仍可选公开装备", () => {
   const simulator = new Simulator({ players: [] });
   const actor = {
     id: "actor",
@@ -38176,7 +38469,6 @@ test("AI·资源选择：掠夺模拟陈旧 knownCards 保守回退为未知聚�
   };
   const before = JSON.stringify(target.knownCards);
   simulator.takeResourceToHand({ players: [actor, target] }, actor, target, 1);
-  // 陈旧回退 → 未知 8 < 装备 13 → 装备；若误用已知 recover（14）会选手牌
   assert.ok(Math.abs(target.equipmentRetentionProbability - 0) < 1e-9);
   assert.equal(actor.handCount, 1);
   assert.equal(JSON.stringify(target.knownCards), before);
@@ -38346,7 +38638,7 @@ test("AI·转移评分：TransferPolicy 实例与纯查询使用同一选择 own
   assert.deepEqual(policy.choose(context), chooseBestPositiveTransfer(candidates));
 });
 
-test("AI·转移评分：掠夺选择已知高价值手牌而非较低价值装备", () => {
+test("AI·转移评分：掠夺最终选择由上下文收益覆盖静态牌值排序", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
     = makeGame([a, b], { random: () => 0 });
@@ -38355,8 +38647,8 @@ test("AI·转移评分：掠夺选择已知高价值手牌而非较低价值装�
   b.equipment = instance("energyDevice");
   game.rememberPrivateCard(a, b, high);
   const chosen = game.aiController.cardSelector.chooseZoneCard(a, b, { purpose: "plunder" });
-  assert.equal(chosen.zone, "hand");
-  assert.equal(chosen.card, high);
+  assert.equal(chosen.zone, "equipment");
+  assert.equal(chosen.card, b.equipment);
 });
 
 test("AI·转移评分：掠夺装备价值高于手牌与未知期望值时选择装备", () => {
@@ -38370,7 +38662,7 @@ test("AI·转移评分：掠夺装备价值高于手牌与未知期望值时选�
   assert.equal(chosen.card, b.equipment);
 });
 
-test("AI·转移评分：破坏把未知位置按期望值4比较且不读取真实牌面", () => {
+test("AI·转移评分：破坏按匿名响应期望选择且不读取真实牌面", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
     = makeGame([a, b], { random: () => 0 });
@@ -38388,7 +38680,7 @@ test("AI·转移评分：破坏把未知位置按期望值4比较且不读取真
   const chosen = game.aiController.cardSelector.chooseZoneCard(a, b, { purpose: "destroy" });
   assert.equal(reads, 0);
   assert.equal(chosen.zone, "hand");
-  assert.equal(chosen.card, known);
+  assert.equal(chosen.card, unknown);
 });
 
 test("AI·转移评分：choosePlayerZoneCard 向手牌选择传递 excludedCardIds", async () => {

@@ -761,12 +761,14 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   findKnownCardEntry。
 
   边界与不变量
-  只访问来源允许的表示；未知他人手牌不得按真实实体重绑。
+  只访问来源允许的表示；若测试或迁移态同时含 hand/knownCards，先按 cardId 检查 hand，
+  未命中时只回退合法 knownCards，且不得读取无关隐藏实体定义。
   */
   findTransferCardEntry(source, cardId, definitionId) {
     if (!cardId || !definitionId) return null;
     if (Array.isArray(source?.hand)) {
-      return source.hand.find((card) => card?.id === cardId && card?.definitionId === definitionId) ?? null;
+      const sameId = source.hand.find((card) => card?.id === cardId) ?? null;
+      if (sameId) return sameId.definitionId === definitionId ? sameId : null;
     }
     return this.findKnownCardEntry(source, cardId, definitionId);
   }
@@ -881,16 +883,14 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   findTransferCardEntry、addSimulatedCardToHand/addSimulatedKnownCard、响应容量移除 辅助函数。
 
   边界与不变量
-  来源移除和接收者增加必须共享同一条件世界；实体 ID 在任一世界只能归一个持有者。
+  来源移除和接收者增加必须共享同一条件世界；实体 ID 在任一世界只能归一个持有者；
+  exact identity 缺失或不可用时不得降级为匿名转移。
   */
   transferKnownCardIdentity(state, source, receiver, identity, effectWorlds, receiverIsActor, excludedCardIds = null) {
     const entry = (!excludedCardIds?.has(identity.cardId))
       ? this.findTransferCardEntry(source, identity.cardId, identity.definitionId)
       : null;
-    if (!entry || this.cardAvailability(entry) < 1 - PROBABILITY_EPSILON) {
-      return this.transferUnknownCardIdentity(state, source, receiver,
-        effectWorlds, this.availableUnknownCountFor(source, excludedCardIds));
-    }
+    if (!entry || this.cardAvailability(entry) <= PROBABILITY_EPSILON) return 0;
     const availabilityState = getAvailabilityStateBranches(entry);
     const joined = joinProbabilityStateBranches(effectWorlds, availabilityState);
     const remainingState = projectProbabilityStateBranches(joined, (branch) => ({
@@ -1176,22 +1176,27 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   cardAvailability。
 
   边界与不变量
-  knownCards 只能来自自己 hand 或合法记忆；身份总量超过 handCount 时按手牌容量保守截断。
+  knownCards 只能来自自己 hand 或合法记忆；全部 known availability 必须先占用手牌容量，
+  不一致状态 fail closed，部分已知身份保留 exact candidate 且不得重新进入 unknown pool。
   */
   buildSimulatedKnownCards(target) {
     const knownCards = Array.isArray(target.knownCards) ? target.knownCards : [];
     const handCount = Math.max(0, Number(target.handCount) || 0);
-    const certainKnown = knownCards.filter((entry) => this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON);
-    const certainKnownCount = certainKnown.length;
-    if (certainKnownCount > handCount + PROBABILITY_EPSILON) {
-      return { knownCards: [], unknownCount: handCount };
+    const availableKnown = knownCards.filter(
+      (entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON
+    );
+    const knownOccupancy = knownCards.reduce(
+      (sum, entry) => sum + this.cardAvailability(entry), 0
+    );
+    if (knownOccupancy > handCount + PROBABILITY_EPSILON) {
+      return { knownCards: [], unknownCount: 0 };
     }
-    return { knownCards: certainKnown, unknownCount: Math.max(0, handCount - certainKnownCount) };
+    return { knownCards: availableKnown, unknownCount: Math.max(0, handCount - knownOccupancy) };
   }
 
   /*
   功能
-  为破坏或掠夺构造公开资源上下文并委托正式 ResourceSelectionPolicy。
+  为破坏或掠夺构造公开资源候选，并在生产注入存在时执行有限上下文反事实查询。
 
   调用方
   takeResourceToHand 与 destroyResource：在公开资源上下文中请求正式资源策略。
@@ -1200,7 +1205,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   SearchState、行动者、目标与 purpose（plunder 或 destroy）。
 
   输出
-  选中区域/身份描述；无正收益候选时为 null。
+  选中区域/身份描述；无候选时为 null。
 
   读取状态
   公开装备、合法已知手牌、匿名容量、距离与 remaining counts。
@@ -1209,13 +1214,35 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   无。
 
   调用函数
-  chooseBestResourceHandCandidate、chooseResourceZone、buildSimulatedKnownCards。
+  ResourceSelectionPolicy.buildCandidates/chooseContextual、ResourceValueQuery.evaluate；旧直接测试回退使用静态选择函数。
 
   边界与不变量
-  本函数只选择，不移动资源；未知候选不携带真实 definitionId。
+  本函数只选择，不移动资源；未知候选不携带真实 definitionId；生产深层模拟必须使用注入的同一 query 语义。
   */
   chooseSimulatedResourceSelection(state, actor, target, purpose) {
     const { knownCards, unknownCount } = this.buildSimulatedKnownCards(target);
+    const equipmentDefinitionId = this.getSimulatedEquipmentProbability(target) > PROBABILITY_EPSILON
+      ? (target.equipmentDefinitionId ?? null)
+      : null;
+    if (this.resourceSelectionPolicy && this.resourceValueQuery) {
+      const candidates = this.resourceSelectionPolicy.buildCandidates({
+        purpose,
+        actor,
+        owner: target,
+        knownCards,
+        unknownCount,
+        equipmentDefinitionId,
+        remainingCardCounts: state?.remainingCardCounts ?? null
+      }).map((candidate) => ({ ...candidate, availableUnknownCount: unknownCount }));
+      const evaluated = this.resourceValueQuery.evaluate({
+        state,
+        actorId: actor.id,
+        targetId: target.id,
+        purpose,
+        candidates
+      });
+      return this.resourceSelectionPolicy.chooseContextual(evaluated);
+    }
     const handCandidate = chooseBestResourceHandCandidate({
       purpose,
       actor,
@@ -1224,9 +1251,6 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       unknownCount,
       remainingCardCounts: state?.remainingCardCounts ?? null
     });
-    const equipmentDefinitionId = this.getSimulatedEquipmentProbability(target) > PROBABILITY_EPSILON
-      ? (target.equipmentDefinitionId ?? null)
-      : null;
     const selection = chooseResourceZone({
       purpose,
       actor,
@@ -1237,6 +1261,46 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     if (!selection) return null;
     // 仅供模拟器未知消费使用；不修改资源选择模块的公共语义
     return { ...selection, availableUnknownCount: unknownCount };
+  }
+
+  /*
+  功能
+  对一个已明确指定的资源候选执行 Destroy removal 或 Plunder ownership transfer。
+
+  调用方
+  ResourceValueQuery：为每个候选生成不会递归选择的 after-state。
+
+  输入
+  独立 SearchState、其中的 actor/target、purpose 与确定候选描述。
+
+  输出
+  实际移除或转移的概率质量。
+
+  读取状态
+  候选公开/known/anonymous 身份与目标当前资源状态。
+
+  写入状态
+  只写传入的独立 SearchState。
+
+  调用函数
+  takeResourceToHand、destroyResource 的 forcedSelection 入口。
+
+  边界与不变量
+  必须提供候选；本入口绝不调用 chooseSimulatedResourceSelection，known 缺失时不得退化为匿名随机消费。
+  */
+  applyForcedResourceSelection(state, actor, target, purpose, selection) {
+    if (!selection || !actor || !target) return 0;
+    if (purpose === "plunder") {
+      return this.takeResourceToHand(
+        state, actor, target, 1, "resource-counterfactual-plunder", selection
+      );
+    }
+    if (purpose === "destroy") {
+      return this.destroyResource(
+        state, actor, target, 1, "resource-counterfactual-destroy", selection
+      );
+    }
+    throw new Error(`applyForcedResourceSelection 非法 purpose：${String(purpose)}`);
   }
 
   /*
@@ -2361,7 +2425,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   applyCardEffect 的掠夺分支：把策略选中的目标资源转入行动者手牌。
 
   输入
-  SearchState、行动者、目标、效果概率/分支与标签。
+  SearchState、行动者、目标、效果概率/分支、标签与可选强制候选。
 
   输出
   实际转移的期望质量。
@@ -2373,12 +2437,19 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   双方装备、hand/knownCards、handCount 与响应/卡牌摘要。
 
   调用函数
-  normalizeResourceEffectWorlds、chooseSimulatedResourceSelection、身份/匿名转移 辅助函数。
+  normalizeResourceEffectWorlds、可选 chooseSimulatedResourceSelection、transferKnownCardIdentity 与匿名转移 辅助函数。
 
   边界与不变量
-  来源减少与行动者获得必须共享同一世界；未知手牌只能作为匿名容量转移。
+  来源减少与行动者获得必须共享同一世界；未知手牌只能作为匿名容量转移；强制 known 缺失时不得随机替换。
   */
-  takeResourceToHand(state, actor, target, resolution = 1, label = "plunder-resource") {
+  takeResourceToHand(
+    state,
+    actor,
+    target,
+    resolution = 1,
+    label = "plunder-resource",
+    forcedSelection = null
+  ) {
     if (!Array.isArray(state?.players)) {
       resolution = target ?? 1;
       target = actor;
@@ -2386,7 +2457,8 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       state = { players:[actor, target] };
     }
     const effectWorlds = this.normalizeResourceEffectWorlds(state, resolution, label);
-    const selection = this.chooseSimulatedResourceSelection(state, actor, target, "plunder");
+    const selection = forcedSelection
+      ?? this.chooseSimulatedResourceSelection(state, actor, target, "plunder");
     if (!selection) return 0;
     if (selection.zone === "equipment") {
       const existenceProbability = this.getSimulatedEquipmentProbability(target);
@@ -2403,34 +2475,15 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       }
       return transferProbability;
     } else if (selection.zone === "hand" && selection.selectionKind === "known") {
-      const entry = this.findKnownCardEntry(target, selection.cardId, selection.definitionId);
-      if (entry && this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON) {
-        const acquisitionProbability = this.eventProbability(effectWorlds);
-        if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
-        if (selection.definitionId === "block") {
-          this.removeKnownBlockFromDistribution(state, target, effectWorlds);
-        }
-        if (selection.definitionId === "counter") {
-          this.removeKnownCounterFromDistribution(state, target, effectWorlds);
-        }
-        entry.availabilityStateBranches = projectProbabilityStateBranches(effectWorlds, (branch) => ({
-          available:Boolean(!branch.occurs)
-        }));
-        entry.availabilityBranches = availableBranchesFromState(entry.availabilityStateBranches);
-        if (totalBranchProbability(entry.availabilityBranches) <= PROBABILITY_EPSILON) {
-          target.knownCards = target.knownCards.filter((item) => item !== entry);
-        }
-        target.handCount = Math.max(0, (target.handCount ?? 0) - acquisitionProbability);
-        this.syncCardEstimates(target, state?.remainingCardCounts);
-        this.addSimulatedCardToHand(state, actor, {
-          id: selection.cardId,
-          definitionId: selection.definitionId
-        }, effectWorlds);
-        return acquisitionProbability;
-      }
-      const transferred = this.consumeRandomHandCards(state, target, this.eventProbability(effectWorlds));
-      actor.handCount = (actor.handCount ?? 0) + transferred;
-      return transferred;
+      return this.transferKnownCardIdentity(
+        state,
+        target,
+        actor,
+        { cardId:selection.cardId, definitionId:selection.definitionId },
+        effectWorlds,
+        true,
+        null
+      );
     } else if (selection.zone === "hand") {
       return this.transferUnknownBlockCapacity(
         state,
@@ -2451,7 +2504,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   applyCardEffect 的破坏分支：删除策略选中的目标资源。
 
   输入
-  完整 SearchState、行动者、目标、效果概率/分支与标签。
+  完整 SearchState、行动者、目标、效果概率/分支、标签与可选强制候选。
 
   输出
   实际移除的期望质量。
@@ -2463,17 +2516,25 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   目标装备、hand/knownCards、handCount 与响应/卡牌摘要。
 
   调用函数
-  normalizeResourceEffectWorlds、chooseSimulatedResourceSelection、确定/匿名消费 辅助函数。
+  normalizeResourceEffectWorlds、可选 chooseSimulatedResourceSelection、确定/匿名消费 辅助函数。
 
   边界与不变量
-  要求完整 state/actor/target 签名；只删除目标资源，不向行动者创建牌身份。
+  要求完整 state/actor/target 签名；只删除目标资源，不向行动者创建牌身份；强制 known 缺失时不得随机替换。
   */
-  destroyResource(state, actor, target, resolution = 1, label = "destroy-resource") {
+  destroyResource(
+    state,
+    actor,
+    target,
+    resolution = 1,
+    label = "destroy-resource",
+    forcedSelection = null
+  ) {
     if (!Array.isArray(state?.players)) {
       throw new Error("destroyResource 需要 state、actor、target、scale 完整签名");
     }
     const effectWorlds = this.normalizeResourceEffectWorlds(state, resolution, label);
-    const selection = this.chooseSimulatedResourceSelection(state, actor, target, "destroy");
+    const selection = forcedSelection
+      ?? this.chooseSimulatedResourceSelection(state, actor, target, "destroy");
     if (!selection) return 0;
     if (selection.zone === "equipment") {
       const existenceProbability = this.getSimulatedEquipmentProbability(target);
@@ -2483,17 +2544,22 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       return removalProbability;
     } else if (selection.zone === "hand" && selection.selectionKind === "known") {
       const entry = this.findKnownCardEntry(target, selection.cardId, selection.definitionId);
-      if (entry && this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON) {
-        const removalProbability = this.eventProbability(effectWorlds);
+      if (entry && this.cardAvailability(entry) > PROBABILITY_EPSILON) {
+        const availabilityState = getAvailabilityStateBranches(entry);
+        const joined = joinProbabilityStateBranches(effectWorlds, availabilityState);
+        const removalWorlds = projectProbabilityStateBranches(joined, (branch) => ({
+          occurs:Boolean(branch.available && branch.occurs)
+        }));
+        const removalProbability = this.eventProbability(removalWorlds);
         if (removalProbability <= PROBABILITY_EPSILON) return 0;
         if (selection.definitionId === "block") {
-          this.removeKnownBlockFromDistribution(state, target, effectWorlds);
+          this.removeKnownBlockFromDistribution(state, target, removalWorlds);
         }
         if (selection.definitionId === "counter") {
-          this.removeKnownCounterFromDistribution(state, target, effectWorlds);
+          this.removeKnownCounterFromDistribution(state, target, removalWorlds);
         }
-        entry.availabilityStateBranches = projectProbabilityStateBranches(effectWorlds, (branch) => ({
-          available:Boolean(!branch.occurs)
+        entry.availabilityStateBranches = projectProbabilityStateBranches(joined, (branch) => ({
+          available:Boolean(branch.available && !branch.occurs)
         }));
         entry.availabilityBranches = availableBranchesFromState(entry.availabilityStateBranches);
         if (totalBranchProbability(entry.availabilityBranches) <= PROBABILITY_EPSILON) {
@@ -2503,7 +2569,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         this.syncCardEstimates(target, state?.remainingCardCounts);
         return removalProbability;
       }
-      return this.consumeRandomHandCards(state, target, this.eventProbability(effectWorlds));
+      return 0;
     } else if (selection.zone === "hand") {
       return this.consumeUnknownResourceCard(
         state,
