@@ -67,7 +67,8 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     isHiddenSelectionActive,
     clearHiddenSelection,
     cleanupDelay,
-    getAiResponseDelay
+    getAiResponseDelay,
+    now
   } = dependencies;
   if (injectedPort) {
     const choicePort = createChoicePort(injectedPort);
@@ -99,9 +100,10 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
   const aiPort = createChoicePort(createAiResponseTimingDecorator(rawAiPort, {
     getPlayer: (actorId) => state.players.find((player) => player.id === actorId),
     setThinking: (isThinking, player, message) => ui.setThinking(isThinking, player, message),
-    delay: async () => cleanupDelay(getAiResponseDelay()),
+    delay: async (options) => cleanupDelay(getAiResponseDelay(options)),
     setPrompt: (message) => ui.setPrompt(message),
-    isSessionValid
+    isSessionValid,
+    now
   }));
   const choicePort = createChoicePort({
     /*

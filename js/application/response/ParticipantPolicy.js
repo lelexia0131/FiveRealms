@@ -99,7 +99,7 @@ controllerType。
 isHumanParticipant。
 
 边界与不变量
-只有真人无牌仍展示窗口；AI 无牌立即 unavailable。
+只有真人无牌仍展示交互窗口；AI 无牌由 workflow 在完成统一 presentation pacing 后返回 unavailable。
 */
 export function shouldShowResponseWindowWithoutCards(responder) {
   return isHumanParticipant(responder);

@@ -29,7 +29,7 @@ import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from ".
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics", "runTurn",
-  "gainEnergy", "drawCards", "cleanupDefeatedZones", "delay", "getAiDelay",
+  "gainEnergy", "drawCards", "cleanupDefeatedZones", "delay", "getAiDelay", "now",
   "getTeamRules", "waitForHumanPlayEnd", "runAiPlayPhase", "choiceCoordinator",
   "choiceContexts", "createId",
   "getActionCandidates", "selectAction", "resolvePlannedAction", "getPlannedSequence",
@@ -302,6 +302,7 @@ export function createTurnWorkflow(dependencies) {
     try {
       runtime.presentation.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
       runtime.presentation.showThinking({ playerId: player.id, message: "正在观察战场与可用资源" });
+      const initialStartedAt = runtime.now();
       let complexPosition = false;
       try {
         complexPosition = runtime.getActionCandidates(player).length > runtime.getAiBeamWidth();
@@ -309,10 +310,14 @@ export function createTurnWorkflow(dependencies) {
         runtime.diagnostics.reportWorkflowError("AI", `${player.name}生成合法动作失败，安全结束出牌阶段`, error);
         return;
       }
-      if (!(await runtime.delay(runtime.getAiDelay("initial", { complex:complexPosition })))) return;
+      if (!(await runtime.delay(runtime.getAiDelay("initial", {
+        complex:complexPosition,
+        elapsedMs:Math.max(0, runtime.now() - initialStartedAt)
+      })))) return;
       if (!runtime.isSessionValid(gameId)) return;
       for (let count = 0; count < runtime.getAiMaxActions(); count += 1) {
         if (!runtime.isSessionValid(gameId) || state.isGameOver || !player.alive) break;
+        const decisionStartedAt = runtime.now();
         let action = null;
         if (!runtime.getAiReplanAfterEveryAction() && queuedPlan.length) {
           action = runtime.resolvePlannedAction(player, queuedPlan.shift());
@@ -328,10 +333,11 @@ export function createTurnWorkflow(dependencies) {
           if (!runtime.isSessionValid(gameId)) return;
           if (!runtime.getAiReplanAfterEveryAction()) queuedPlan = runtime.getPlannedSequence().slice(1);
         }
+        const decisionElapsedMs = Math.max(0, runtime.now() - decisionStartedAt);
         if (action.type === "end") {
           runtime.presentation.setPrompt(`${player.name}准备结束出牌阶段。`);
           runtime.presentation.showThinking({ playerId: player.id, message: "正在收束回合" });
-          if (!(await runtime.delay(runtime.getAiDelay("end")))) return;
+          if (!(await runtime.delay(runtime.getAiDelay("end", { elapsedMs:decisionElapsedMs })))) return;
           if (!runtime.isSessionValid(gameId)) return;
           break;
         }
@@ -339,7 +345,7 @@ export function createTurnWorkflow(dependencies) {
         const targetLabel = runtime.getActionTargetLabel(player, action.type === "card" ? action.card : action.skill, action.targets, action.selection);
         const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
         runtime.presentation.showThinking({ playerId: player.id, message: actionDescription });
-        if (!(await runtime.delay(runtime.getAiDelay("action")))) return;
+        if (!(await runtime.delay(runtime.getAiDelay("action", { elapsedMs:decisionElapsedMs })))) return;
         if (!runtime.isSessionValid(gameId)) return;
         runtime.presentation.clearThinking();
         let executed = false;
@@ -416,10 +422,13 @@ export function createTurnWorkflow(dependencies) {
         decision = await runtime.choiceCoordinator.request(choiceRequest);
       } else {
         runtime.presentation.showThinking({ playerId: player.id, message: `正在斟酌弃置${required}张牌` });
+        const decisionStartedAt = runtime.now();
         try {
-          if (!(await runtime.delay(runtime.getAiDelay("discard")))) return;
-          if (!runtime.isSessionValid(gameId)) return;
           decision = await runtime.choiceCoordinator.request(choiceRequest);
+          if (!runtime.isSessionValid(gameId)) return;
+          if (!(await runtime.delay(runtime.getAiDelay("discard", {
+            elapsedMs:Math.max(0, runtime.now() - decisionStartedAt)
+          })))) return;
         } finally {
           runtime.presentation.clearThinking();
         }

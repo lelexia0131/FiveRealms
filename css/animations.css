@@ -86,9 +86,6 @@
 .spark-8 { top: 49%; left: -7px; --spark-x: -13px; --spark-y: -2px; rotate: 255deg; animation-delay: -.22s; }
 .spark-9 { top: 4%; left: 28%; --spark-x: -2px; --spark-y: -10px; rotate: 17deg; animation-delay: -1.55s; }
 .spark-10 { right: 18%; bottom: -5px; --spark-x: 4px; --spark-y: 11px; rotate: 152deg; animation-delay: -1.61s; }
-.fast-mode .thinking-dots b, .fast-mode .current-card.is-entering .resolving-card, .fast-mode [class*="feedback-"] { animation-duration: .12s; }
-.fast-mode .resolution-vfx-overlay, .fast-mode .resolution-vfx-overlay * { animation-duration: .12s !important; }
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
   .hand-card:hover, .hand-card:focus-visible, .hand-card.is-selected { transform: none; }

@@ -27,7 +27,7 @@ import { StateValue } from "./value/StateValue.js";
 import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js";
 import { ResourceValueQuery } from "./simulation/ResourceValueQuery.js";
 import { Simulator } from "./simulation/Simulator.js";
-import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILES } from "./policy/AiRuntimePolicy.js";
+import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILE } from "./policy/AiRuntimePolicy.js";
 import { ActionDescriptor } from "./search/ActionDescriptor.js";
 import { createSearchRequest } from "./search/SearchRequest.js";
 import { describeRootSearchAction } from "./search/RootSearchAction.js";
@@ -83,7 +83,7 @@ export class AIController {
       "getState", "isSessionValid", "getMaxEnergy", "getTurnEnergyBreakdown",
       "getDifficultyMultiplier", "getRandomnessRange", "getSearchTimeBudget",
       "getSearchNodeBudget", "getEnemies", "getDyingRescueOrder", "isSmallTeam",
-      "getForceAiRescueHuman", "yieldControl", "createId", "getSearchMode"
+      "getForceAiRescueHuman", "yieldControl", "createId"
     ];
     for (const name of required) {
       if (typeof dependencies[name] !== "function") throw new TypeError(`AIController 缺少依赖：${name}`);
@@ -108,7 +108,6 @@ export class AIController {
     this.getDyingRescueOrder = dependencies.getDyingRescueOrder;
     this.isSmallTeam = dependencies.isSmallTeam;
     this.getForceAiRescueHuman = dependencies.getForceAiRescueHuman;
-    this.getSearchMode = dependencies.getSearchMode;
     this.yieldControl = dependencies.yieldControl;
     this.createId = dependencies.createId;
     this.searchRng = dependencies.searchRng;
@@ -347,7 +346,7 @@ export class AIController {
   */
   /*
   功能
-  组装本次搜索的 data-only configuration snapshot。
+  组装不受展示速度影响的 data-only search configuration snapshot。
 
   调用方
   selectAction。
@@ -359,7 +358,7 @@ export class AIController {
   冻结 search config 普通对象。
 
   读取状态
-  SearchPolicy 默认与 main-thread runtime override getters。
+  SearchPolicy 默认、单一 AI_SEARCH_PROFILE 与 main-thread runtime override getters。
 
   写入状态
   无。
@@ -368,24 +367,22 @@ export class AIController {
   SearchPolicy.snapshot。
 
   边界与不变量
-  runtime override 只覆盖已有字段，不新增搜索参数。
+  runtime override 只覆盖已有字段；1×/2×/3× 只属于 presentation pacing，不得改变搜索预算。
   */
   buildSearchConfig() {
     const base = this.searchPolicy.snapshot();
-    const mode = this.getSearchMode();
-    const profile = AI_SEARCH_PROFILES[mode] ?? AI_SEARCH_PROFILES.NORMAL;
     const timeBudget = this.getSearchTimeBudget();
     const nodeBudget = this.getSearchNodeBudget();
     const numericTime = Number(timeBudget);
     const numericNodes = Number(nodeBudget);
     return Object.freeze({
       ...base,
-      searchMode:mode,
-      softTargetMs:profile.softTargetMs,
-      searchDeadlineMs:profile.searchDeadlineMs,
-      hardWatchdogMs:profile.hardWatchdogMs,
+      searchMode:AI_SEARCH_PROFILE.mode,
+      softTargetMs:AI_SEARCH_PROFILE.softTargetMs,
+      searchDeadlineMs:AI_SEARCH_PROFILE.searchDeadlineMs,
+      hardWatchdogMs:AI_SEARCH_PROFILE.hardWatchdogMs,
       timeBudgetMs:timeBudget === null || timeBudget === undefined || !Number.isFinite(numericTime)
-        ? profile.searchDeadlineMs
+        ? AI_SEARCH_PROFILE.searchDeadlineMs
         : Math.max(0, numericTime),
       nodeBudget:nodeBudget === null || nodeBudget === undefined
         || !Number.isFinite(numericNodes) || numericNodes < 1

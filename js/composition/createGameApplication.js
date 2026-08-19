@@ -36,7 +36,7 @@ import { AIController } from "../ai/AiController.js";
 import { hashSearchSeed, SearchRng } from "../ai/search/SearchRng.js";
 import { createSearchExecutor } from "../adapters/ai/worker/createSearchExecutor.js";
 import { CleanupManager } from "../utils/CleanupManager.js";
-import { getAiDelay } from "../utils/aiTiming.js";
+import { getAiDelay, normalizeAiSpeed } from "../utils/aiTiming.js";
 import { Debug } from "../utils/debug.js";
 import { createDyingWorkflow } from "../application/combat/DyingWorkflow.js";
 import { createJudgmentWorkflow } from "../application/judgment/JudgmentWorkflow.js";
@@ -160,27 +160,27 @@ function assembleApplicationBoundary(application) {
     main bootstrap 初始设置与 UI 快速动画 callback。
 
     输入
-    是否启用快速动画。
+    AI 速度档位（1、2、3）。
 
     输出
-    归一化后的 animationFastMode 布尔值。
+    归一化后的 aiSpeed 档位。
 
     读取状态
     application.ui。
 
     写入状态
-    application.animationFastMode 与 UI CSS 展示状态。
+    application.aiSpeed 与 UI 速度状态。
 
     调用函数
-    ui.setFastMode。
+    ui.setAiSpeed。
 
     边界与不变量
-    只改变展示动画速度，不改变 Application/AI delay、搜索预算或游戏时序。
+    只改变 presentation pacing，不改变搜索预算、AI 决策或游戏时序。
     */
-    setAnimationFastMode(enabled) {
-      application.animationFastMode = Boolean(enabled);
-      application.ui.setFastMode?.(application.animationFastMode);
-      return application.animationFastMode;
+    setAiSpeed(speed) {
+      const normalized = normalizeAiSpeed(speed);
+      application.aiSpeed = application.ui.setAiSpeed?.(normalized) ?? normalized;
+      return application.aiSpeed;
     },
     startSelection:application.matchWorkflow.startSelection,
     confirmCharacter:application.matchWorkflow.confirmCharacter,
@@ -390,7 +390,7 @@ class MatchApplication {
   main.js 与测试 fixture。
 
   输入
-  UI 实例、可替换真实游戏随机源与可选 choice/search/presentationRandom 注入项。
+  UI 实例、可替换真实游戏随机源与可选 choice/search/presentationRandom/clock 注入项。
 
   输出
   已完成 service 组合但尚未发牌/启动的 MatchApplication 实例。
@@ -413,6 +413,9 @@ class MatchApplication {
     this.presentationRandom = typeof options.presentationRandom === "function"
       ? options.presentationRandom
       : Math.random;
+    this.now = typeof options.now === "function"
+      ? options.now
+      : () => globalThis.performance?.now?.() ?? Date.now();
     this.cleanupManager = new CleanupManager();
     this.characterSelection = new CharacterSelection(this.random);
     const deck = new Deck(this.random, (channel, message, data) => Debug.log(channel, message, data));
@@ -470,7 +473,6 @@ class MatchApplication {
         : [],
       isSmallTeam: (player) => this.teamRules.isSmallTeam(player),
       getForceAiRescueHuman: () => this.forceAiRescueHuman ?? AI_RUNTIME_POLICY.forceAiRescueHuman,
-      getSearchMode: () => this.animationFastMode ? "FAST" : "NORMAL",
       yieldControl: async (gameId) => (
         await this.cleanupManager.delay(0)
       ) && this.isSessionValid(gameId ?? this.state.gameId),
@@ -496,7 +498,8 @@ class MatchApplication {
       isHiddenSelectionActive: (...args) => this.hiddenCardSelection.isSelectionActive(...args),
       clearHiddenSelection: (...args) => this.hiddenCardSelection.clearSelection(...args),
       cleanupDelay: (ms) => this.cleanupManager.delay(ms),
-      getAiResponseDelay: () => getAiDelay(this, "response")
+      getAiResponseDelay: (options) => getAiDelay(this, "response", options),
+      now: () => this.now()
     }, options.choicePort ?? null);
     this.choicePort = choiceBoundary.choicePort;
     this.choiceCoordinator = choiceBoundary.choiceCoordinator;
@@ -516,11 +519,12 @@ class MatchApplication {
       emitCardUsed:(payload) => this.eventDispatcher.emit("cardUsed", payload),
       getForceAiRescueHuman:() => this.forceAiRescueHuman ?? AI_RUNTIME_POLICY.forceAiRescueHuman,
       setThinking:(isThinking, player, message) => this.ui.setThinking(isThinking, player, message),
-      delayResponse:async () => this.cleanupManager.delay(getAiDelay(this, "response")),
+      delayResponse:async (options) => this.cleanupManager.delay(getAiDelay(this, "response", options)),
       getUsableAssaultCards:(responder, target) => ActionLegality.getUsableAssaultCards(this, responder, target),
       canUseForcedAssault:(responder, card, target) => ActionLegality.canUseForcedAssault(this, responder, card, target),
       getResponseTimeoutMs:() => RUNTIME_POLICY.responseTimeoutMs,
-      createId
+      createId,
+      now:() => this.now()
     });
     this.hiddenCardChoiceWorkflow = createHiddenCardChoiceWorkflow({
       getState: () => this.state,
@@ -630,7 +634,7 @@ class MatchApplication {
       presentation:this.presentationPort,
       setDyingContextProjection:(value) => { this.state.dyingContext = value; }
     });
-    this.animationFastMode = RUNTIME_POLICY.animationFastMode;
+    this.aiSpeed = RUNTIME_POLICY.defaultAiSpeed;
     this.simulationMode = RUNTIME_POLICY.simulationMode;
     this.aiReplanAfterEveryAction = AI_RUNTIME_POLICY.replanAfterEveryAction;
     this.aiRandomnessRange = AI_RUNTIME_POLICY.randomnessRange;
@@ -857,6 +861,7 @@ class MatchApplication {
       cleanupDefeatedZones: () => this.cleanupDefeatedZones(),
       delay: (ms) => this.cleanupManager.delay(ms),
       getAiDelay: (kind, options) => getAiDelay(this, kind, options),
+      now: () => this.now(),
       getTeamRules: (player) => this.teamRules.getRules(player),
       waitForHumanPlayEnd: (gameId) => this.ui.waitForHumanPlayEnd(gameId),
       runAiPlayPhase: (...args) => this.takeAiPlayPhase(...args),

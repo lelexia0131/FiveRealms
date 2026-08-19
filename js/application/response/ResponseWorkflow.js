@@ -72,10 +72,11 @@ export function createResponseWorkflow(dependencies) {
     getUsableAssaultCards,
     canUseForcedAssault,
     getResponseTimeoutMs,
-    createId
+    createId,
+    now
   } = dependencies;
   if (!choiceCoordinator || !getState || !isSessionValid || !payCardsFromHandAtomically
-    || !getResponseTimeoutMs || !createId) {
+    || !getResponseTimeoutMs || !createId || !now) {
     throw new TypeError("ResponseWorkflow 缺少必要 collaborator");
   }
   const runtime = dependencies;
@@ -140,6 +141,48 @@ export function createResponseWorkflow(dependencies) {
 
   /*
   功能
+  为不经过 AI policy 的固定响应结果补齐与普通 AI 响应相同的 elapsed-aware presentation pacing。
+
+  调用方
+  requestDyingRescue 的 AI 自救与强制救援分支。
+
+  输入
+  响应者、gameId、thinking 文案与同步 decision factory。
+
+  输出
+  factory 生成的 ResponseWorkflowResult；等待取消或会话失效时返回 CANCELLED。
+
+  读取状态
+  Application session 与注入 clock。
+
+  写入状态
+  thinking presentation state。
+
+  调用函数
+  decisionFactory、runtime.delayResponse、responseResult。
+
+  边界与不变量
+  固定策略只绕过效用评分，不得绕过可观察思考下限；真实 elapsed 必须从剩余等待中扣除。
+  */
+  async function waitForFixedAiDecision(responder, gameId, message, decisionFactory) {
+    runtime.setThinking(true, responder, message);
+    const startedAt = runtime.now();
+    try {
+      const decision = decisionFactory();
+      if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
+      const waited = await runtime.delayResponse({
+        elapsedMs:Math.max(0, runtime.now() - startedAt)
+      });
+      return waited && runtime.isSessionValid(gameId)
+        ? decision
+        : responseResult(RESPONSE_STATUS.CANCELLED);
+    } finally {
+      runtime.setThinking(false);
+    }
+  }
+
+  /*
+  功能
   请求指定响应类型、校验响应者与手牌实体并执行原子支付。
 
   调用方
@@ -167,10 +210,12 @@ export function createResponseWorkflow(dependencies) {
     const gameId = runtime.getState().gameId;
     const definitionId = getResponseCardDefinitionId(type);
     const availableCards = responder.hand.filter((card) => card.definitionId === definitionId);
+    const unavailableAfterTiming = availableCards.length < requiredCount
+      && !shouldShowResponseWindowWithoutCards(responder);
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
     if (!isResponderEligible(responder) || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
-    // 规则轮到真人响应时始终显示窗口；AI 没牌仍立即跳过。
-    if (availableCards.length < requiredCount && !shouldShowResponseWindowWithoutCards(responder)) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
+    // 真人继续显示完整窗口；AI 即使没有足够牌也必须经过同一 decision/timing boundary，
+    // 最后再恢复 unavailable 结果，避免手牌数量通过响应耗时泄露。
     const fallbackLabel = type === "block" ? (requiredCount === 2 ? "使用2张「格挡」" : "格挡") : "反制";
     const request = { id:runtime.createId("response"), type, sourcePlayerId:context.source?.id ?? null, targetPlayerId:responder.id,
       cardId:context.card?.id ?? null, legalCardIds:availableCards.map((card) => card.id), requiredCount,
@@ -190,6 +235,7 @@ export function createResponseWorkflow(dependencies) {
       selectedIds.every((selectedId) => request.legalCardIds.includes(selectedId)) && cardsToUse.every(Boolean);
     finishRequest(request.id);
     if (isCancelledResponse(decision) || !runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
+    if (unavailableAfterTiming) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
     if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { cards:[] });
     if (!valid) return responseResult(RESPONSE_STATUS.INVALID, { cards:[] });
     const payment = await runtime.payCardsFromHandAtomically(
@@ -507,7 +553,7 @@ export function createResponseWorkflow(dependencies) {
     }
     const availableCards = rescuer.hand.filter((entry) => entry.definitionId === "recover");
     const legalCard = card?.definitionId === "recover" && rescuer.hand.includes(card) ? card : (availableCards[0] ?? null);
-    if (!availableCards.length && !shouldShowResponseWindowWithoutCards(rescuer)) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    const unavailableAfterTiming = !availableCards.length && !shouldShowResponseWindowWithoutCards(rescuer);
     const request = { id:runtime.createId("dying-response"), type:"dyingRescue", sourcePlayerId:rescuer.id, targetPlayerId:target.id,
       cardId:null, legalCardIds:availableCards.map((entry) => entry.id), requiredCount:1, legalSkillIds:[], timeoutMs:runtime.getResponseTimeoutMs(), allowDecline:true,
       need:1 - target.hp, currentHp:target.hp,
@@ -518,22 +564,13 @@ export function createResponseWorkflow(dependencies) {
     const aiSelfRescue = shouldForceAiSelfRescue(rescuer, target);
     const forcedHumanRescue = shouldForceAiRescueHuman(rescuer, target, runtime.getForceAiRescueHuman());
 
-    if (aiSelfRescue) {
-      decision = responseResult(RESPONSE_STATUS.USED);
-    } else if (forcedHumanRescue) {
-      runtime.setThinking(true, rescuer, `正在准备救援${target.name}`);
-      let waited = false;
-      try {
-        waited = await runtime.delayResponse();
-      } finally {
-        runtime.setThinking(false);
-      }
-      if (!waited) {
-        finishRequest(request.id);
-        return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-      }
-      // 强制队友规则在等待结束后固定使用调息，不进入 AI 效用评分。
-      decision = responseResult(RESPONSE_STATUS.USED);
+    if (aiSelfRescue || forcedHumanRescue) {
+      decision = await waitForFixedAiDecision(
+        rescuer,
+        gameId,
+        `正在准备救援${target.name}`,
+        () => responseResult(unavailableAfterTiming ? RESPONSE_STATUS.UNAVAILABLE : RESPONSE_STATUS.USED)
+      );
     } else {
       decision = await waitForDecision(rescuer, request, request.presentation.buttonLabel, { target, source:rescuer, card:legalCard }, availableCards);
     }
@@ -541,6 +578,7 @@ export function createResponseWorkflow(dependencies) {
       isDyingRescueEligible(rescuer, target) && legalCard && rescuer.hand.includes(legalCard);
     finishRequest(request.id);
     if (isCancelledResponse(decision) || !runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
+    if (unavailableAfterTiming) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { card:null });
     if (!valid) return responseResult(RESPONSE_STATUS.INVALID, { card:null });
     const payment = await runtime.payCardsFromHandAtomically(
@@ -583,8 +621,9 @@ export function createResponseWorkflow(dependencies) {
     const gameId = runtime.getState().gameId;
     const availableCards = responder.hand.filter((entry) => entry.definitionId === "assault");
     const cardToUse = availableCards[0] ?? null;
+    const unavailableAfterTiming = !availableCards.length && !shouldShowResponseWindowWithoutCards(responder);
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    if (!isResponderEligible(responder) || runtime.getState().isGameOver || (!availableCards.length && !shouldShowResponseWindowWithoutCards(responder))) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    if (!isResponderEligible(responder) || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     const presentation = buildResponsePresentation(responder, "assaultDiscard", context, 1, availableCards.length, reason);
     const request = { id:runtime.createId("assault-discard"), type:"assaultDiscard", sourcePlayerId:context.source?.id ?? null,
       targetPlayerId:responder.id, cardId:context.card?.id ?? null, legalCardIds:availableCards.map((entry) => entry.id), requiredCount:1,
@@ -594,6 +633,7 @@ export function createResponseWorkflow(dependencies) {
     const valid = activeRequestIds.has(request.id) && runtime.isSessionValid(gameId) && isResponderEligible(responder) && cardToUse && responder.hand.includes(cardToUse);
     finishRequest(request.id);
     if (isCancelledResponse(decision) || !runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
+    if (unavailableAfterTiming) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status, { card:null });
     if (!valid) return responseResult(RESPONSE_STATUS.INVALID, { card:null });
     const payment = await runtime.payCardsFromHandAtomically(

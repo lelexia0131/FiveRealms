@@ -139,6 +139,11 @@ export function createAiChoiceAdapter({
       const choiceContext = getChoiceContext(choiceRequest.requestId);
       if (!choiceContext?.responder) return createChoiceResult("cancelled");
       if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
+      // 候选不足时不进入 response policy，保留原有“不可用”策略语义；外层 timing decorator
+      // 仍会在返回 declined 后补齐可观察等待，因此不会泄露这次没有对应手牌。
+      if (choiceRequest.options.length < choiceRequest.constraints.requiredCount) {
+        return createChoiceResult("declined");
+      }
       const use = shouldRespond(
         choiceContext.responder,
         choiceRequest.constraints.responseType,

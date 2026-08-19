@@ -33,15 +33,9 @@ export const AI_RUNTIME_POLICY = Object.freeze({
   difficultyMultiplier:1
 });
 
-export const AI_SEARCH_PROFILES = Object.freeze({
-  FAST:Object.freeze({
-    softTargetMs:500,
-    searchDeadlineMs:900,
-    hardWatchdogMs:5000
-  }),
-  NORMAL:Object.freeze({
-    softTargetMs:null,
-    searchDeadlineMs:3000,
-    hardWatchdogMs:10000
-  })
+export const AI_SEARCH_PROFILE = Object.freeze({
+  mode:"NORMAL",
+  softTargetMs:null,
+  searchDeadlineMs:3000,
+  hardWatchdogMs:10000
 });

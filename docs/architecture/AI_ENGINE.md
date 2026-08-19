@@ -59,8 +59,8 @@ FR-ARCH-14 current facts：
 - 生产 `AIController.selectAction` 不直接调用 `planner.plan`；SearchRequest → search executor → WorkerSearchOutcome → main-thread acceptance → current entity rebind → Domain legality；
 - `SearchRequest.rootSearchActions` 是 Worker 专用 root action 投影，`RootSearchAction.rehydrate` 从 SearchState/Definitions 恢复 search action；执行期 `ActionDescriptor` 保持窄 rebind 职责；
 - `SearchRng.snapshot` 携带 seed/state/draws；Worker outcome 返回 `rngAfter`；main thread exactly-once commit，新 session 不继承旧 RNG；
-- Fast profile `softTarget=500ms / deadline=900ms / watchdog=5000ms`；Normal profile `deadline=3000ms / watchdog=10000ms`；node-budget override 仍优先；
-- `searchElapsed` compensation 与 Search Compute minimum wait 已停用；`utils/aiTiming` 只采样独立 presentation RNG，Normal/Fast 可见节奏不会推进 Real Game RNG 或 Search RNG，simulation/headless 为零；
+- 搜索固定使用 `NORMAL` profile（`deadline=3000ms / watchdog=10000ms`）；node-budget override 仍优先。1×、2×、3× AI 速度只属于 presentation pacing，不得改变搜索预算、搜索质量、决策逻辑或难度；
+- `searchElapsed` compensation 与 Search Compute minimum wait 已停用；`utils/aiTiming` 只采样独立 presentation RNG，以 1×、2×、3× 的可见节奏等待，不推进 Real Game RNG 或 Search RNG，simulation/headless 为零；
 - production browser path 使用 `new Worker(url, { type:"module" })`；浏览器缺少 Worker 时 fail fast，不允许静默回退主线程；Node/headless 使用同一 `runSearchRequest` 的 local transport；
 - browser Worker client 初始实例与 watchdog 重建实例共用同一 wiring；postMessage/messageerror 失败会清空 pending 并重建，不在下一次合法搜索上产生 false in-flight；
 - AI 弃牌阶段有 runtime invariant guard：即使 ChoicePort 异常 cancelled/declined/selectedIds 不足，AI 回合结束仍收束到 `hand.length <= hp`；

@@ -22,20 +22,19 @@ export const RUNTIME_POLICY = Object.freeze({
   // null 表示真人响应窗口无限等待；正有限毫秒只改变等待/fallback，不改变响应合法性。
   responseTimeoutMs: null,
   debugMode: false,
-
-  aiInitialThinkMinMs: 3000,
-  aiInitialThinkMaxMs: 5500,
-  aiBetweenActionMinMs: 1800,
-  aiBetweenActionMaxMs: 3500,
-  aiResponseThinkMinMs: 1800,
-  aiResponseThinkMaxMs: 3200,
-  aiDiscardThinkMinMs: 1600,
-  aiDiscardThinkMaxMs: 2800,
-  aiEndThinkMinMs: 900,
-  aiEndThinkMaxMs: 1600,
-  aiComplexThinkMaxMs: 7000,
-  animationFastMode: false,
-  animationFastScale: 0.08,
-  animationFastMinimumMs: 0,
+  defaultAiSpeed: 1,
+  aiRawThinkingRanges: Object.freeze({
+    initial: Object.freeze({ minimumMs:3000, maximumMs:5500, complexMaximumMs:7000 }),
+    action: Object.freeze({ minimumMs:1800, maximumMs:3500 }),
+    response: Object.freeze({ minimumMs:1800, maximumMs:3200 }),
+    discard: Object.freeze({ minimumMs:1600, maximumMs:2800 }),
+    end: Object.freeze({ minimumMs:900, maximumMs:1600 })
+  }),
   simulationMode: false
+});
+
+export const AI_PACING = Object.freeze({
+  1: Object.freeze({ baseMinMs:1800, baseMaxMs:3000, minJitter:0.25, maxJitter:0.20 }),
+  2: Object.freeze({ baseMinMs:900, baseMaxMs:1500, minJitter:0.20, maxJitter:0.20 }),
+  3: Object.freeze({ baseMinMs:600, baseMaxMs:1000, minJitter:0.15, maxJitter:0.15 })
 });

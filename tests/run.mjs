@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { access, readFile, readdir } from "node:fs/promises";
 import * as nodePath from "node:path";
 import { fileURLToPath } from "node:url";
-import { RUNTIME_POLICY } from "../js/application/policy/RuntimePolicy.js";
-import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILES } from "../js/ai/policy/AiRuntimePolicy.js";
+import { AI_PACING, RUNTIME_POLICY } from "../js/application/policy/RuntimePolicy.js";
+import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILE } from "../js/ai/policy/AiRuntimePolicy.js";
 import { PHASE_PRESENTATION as PHASE_NAMES, TEAM_PRESENTATION as TEAM_CONFIG } from "../js/adapters/ui/PresentationMetadata.js";
 import { CARD_PRESENTATION, presentCard } from "../js/adapters/ui/CardPresentationDefinitions.js";
 import { CHARACTER_PRESENTATION, presentCharacter } from "../js/adapters/ui/CharacterPresentationDefinitions.js";
@@ -85,7 +85,16 @@ import {
   exposureComponents as ownedExposureComponents
 } from "../js/ai/value/ThreatValue.js";
 import { CleanupManager } from "../js/utils/CleanupManager.js";
-import { getAiDelay, sampleDelay } from "../js/utils/aiTiming.js";
+import {
+  clampAiThinkingTime,
+  getAiDelay,
+  getAiPacingBounds,
+  getRemainingAiThinkingDelay,
+  normalizeAiSpeed,
+  readAiSpeedPreference,
+  sampleDelay,
+  writeAiSpeedPreference
+} from "../js/utils/aiTiming.js";
 import {
   candidateCardTemplate,
   cardDescriptionClass,
@@ -1018,7 +1027,7 @@ async function frArchRulesetAuthority() {
   const aiSource = await readFile(projectFile("js/ai/policy/AiRuntimePolicy.js"), "utf8");
   assert.doesNotMatch(source, /playerCount|defaultAttackRange|initialRound|deckComposition/);
   assert.doesNotMatch(source, /aiSearchTimeBudgetMs|aiSearchYieldEvery|forceAiRescueHuman/);
-  for (const retained of ["aiInitialThinkMinMs", "animationFastScale", "debugMode"]) {
+  for (const retained of ["defaultAiSpeed", "aiRawThinkingRanges", "debugMode"]) {
     assert.match(source, new RegExp(retained));
   }
   for (const retained of ["searchTimeBudgetMs", "searchYieldEvery", "forceAiRescueHuman"]) {
@@ -4021,7 +4030,8 @@ async function frArch7ApplicationWorkflow() {
       getUsableAssaultCards: () => [],
       canUseForcedAssault: () => ({ ok: false }),
       getResponseTimeoutMs: () => null,
-      createId: (prefix) => `${prefix}-1`
+      createId: (prefix) => `${prefix}-1`,
+      now: () => 0
     });
     return { workflow, state, pending, payments };
   };
@@ -4062,7 +4072,8 @@ async function frArch7ApplicationWorkflow() {
     getUsableAssaultCards: () => [],
     canUseForcedAssault: () => ({ ok: false }),
     getResponseTimeoutMs: () => null,
-    createId: (prefix) => `${prefix}-invalid`
+    createId: (prefix) => `${prefix}-invalid`,
+    now: () => 0
   });
   const invalidResult = await invalidated.workflow.requestCardResponse(invalidResponder, "block", {}, 1);
   assert.equal(invalidResult.status, "invalid");
@@ -5234,9 +5245,10 @@ async function frArch6PeerChoiceAdapters() {
   const ai = createAiResponseTimingDecorator(rawAi, {
     getPlayer: () => ({ id: "p1", name: "电脑" }),
     setThinking: (...args) => thinking.push(args),
-    delay: async () => true,
+    delay: async (options) => { assert.equal(options.elapsedMs, 0); return true; },
     setPrompt: () => { },
-    isSessionValid: () => true
+    isSessionValid: () => true,
+    now: () => 0
   });
   assert.deepEqual(await ai.request(request), createChoiceResult("selected", { selectedIds: ["c1"] }));
   assert.equal(thinking[0][0], true);
@@ -5248,7 +5260,8 @@ async function frArch6PeerChoiceAdapters() {
     setThinking: (...args) => cancelledThinking.push(args),
     delay: async () => false,
     setPrompt: () => { },
-    isSessionValid: () => true
+    isSessionValid: () => true,
+    now: () => 0
   });
   assert.deepEqual(await cancelled.request(request), createChoiceResult("cancelled"));
   assert.deepEqual(cancelledThinking.map(([value]) => value), [true, false]);
@@ -5335,14 +5348,15 @@ async function frArch6ChoiceRouting() {
   assert.ok(game.choicePort);
   assert.ok(game.choiceCoordinator);
   game.aiController.shouldRespond = () => true;
+  const block = { id: "route-block" };
   const responseRequest = (actorId) => createResponseChoiceRequest({
     requestId: `route-${actorId}`, actorId, gameId: game.state.gameId, stateVersion: game.state.stateVersion,
-    responseType: "block", requiredCount: 1, legalCardIds: [], label: "格挡",
+    responseType: "block", requiredCount: 1, legalCardIds: [block.id], label: "格挡",
     context: { sourcePlayerId: null, targetPlayerId: actorId, cardId: null, timeoutMs: null, presentation: null }
   });
   assert.deepEqual(await game.choicePort.request(responseRequest(human.id)), createChoiceResult("selected"));
-  game.choiceContexts.set("route-fr6-ai", { responder: ai, cards: [], context: {}, label: "格挡" });
-  assert.deepEqual(await game.choicePort.request(responseRequest(ai.id)), createChoiceResult("selected"));
+  game.choiceContexts.set("route-fr6-ai", { responder: ai, cards: [block], context: {}, label: "格挡" });
+  assert.deepEqual(await game.choicePort.request(responseRequest(ai.id)), createChoiceResult("selected", { selectedIds: [block.id] }));
   assert.equal(ui.responseRequests.length, 1, "human path 走 UI");
   assert.ok(ui.thinking.length >= 2, "AI path 走 thinking bridge");
   assert.deepEqual(await game.choicePort.request(responseRequest("missing")), createChoiceResult("cancelled", { reason: "unknown-actor" }));
@@ -11782,14 +11796,14 @@ test("响应窗口：真人没有格挡时仍出现完整响应窗口，但不�
   assert.equal(b.hp, hp - 1);
 });
 
-test("响应窗口：AI 没有合法响应牌时立即跳过且不创建真人响应请求", async () => {
+test("AI·响应窗口：没有合法格挡时仍经过思考节奏且不创建真人响应请求", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "ai");
   const { game, ui }
     = makeGame([a, b]);
   const hp = b.hp;
   await game.damage(a, b, 1, { card: instance("assault"), canBlock: true, damageType: "normal" });
   assert.equal(ui.responseRequests.length, 0);
-  assert.equal(ui.thinking.length, 0);
+  assert.deepEqual(ui.thinking.map(([thinking]) => thinking), [true, false]);
   assert.equal(b.hp, hp - 1);
 });
 
@@ -14781,23 +14795,19 @@ async function frArchCurrentTimingFreeze() {
   assert.equal(AI_RUNTIME_POLICY.searchDepth, 4);
   assert.equal(AI_RUNTIME_POLICY.beamWidth, 10);
   assert.equal(AI_RUNTIME_POLICY.hiddenStateSamples, 10);
-  assert.equal(RUNTIME_POLICY.aiInitialThinkMinMs, 3000);
-  assert.equal(RUNTIME_POLICY.aiInitialThinkMaxMs, 5500);
-  assert.equal(RUNTIME_POLICY.animationFastMinimumMs, 0);
-  assert.equal(RUNTIME_POLICY.animationFastScale, 0.08);
-  assert.equal(AI_SEARCH_PROFILES.FAST.softTargetMs, 500);
-  assert.equal(AI_SEARCH_PROFILES.FAST.searchDeadlineMs, 900);
-  assert.equal(AI_SEARCH_PROFILES.FAST.hardWatchdogMs, 5000);
-  assert.equal(AI_SEARCH_PROFILES.NORMAL.softTargetMs, null);
-  assert.equal(AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs, 3000);
-  assert.equal(AI_SEARCH_PROFILES.NORMAL.hardWatchdogMs, 10000);
+  assert.equal(RUNTIME_POLICY.defaultAiSpeed, 1);
+  assert.deepEqual(RUNTIME_POLICY.aiRawThinkingRanges.initial, { minimumMs: 3000, maximumMs: 5500, complexMaximumMs: 7000 });
+  assert.equal(AI_SEARCH_PROFILE.mode, "NORMAL");
+  assert.equal(AI_SEARCH_PROFILE.softTargetMs, null);
+  assert.equal(AI_SEARCH_PROFILE.searchDeadlineMs, 3000);
+  assert.equal(AI_SEARCH_PROFILE.hardWatchdogMs, 10000);
   const budgetSource = await readFile(projectFile("js/ai/search/SearchBudget.js"), "utf8");
   const timingSource = await readFile(projectFile("js/utils/aiTiming.js"), "utf8");
   assert.match(budgetSource, /AI_RUNTIME_POLICY\.searchTimeBudgetMs/);
-  assert.match(timingSource, /aiInitialThinkMinMs/);
+  assert.match(timingSource, /aiRawThinkingRanges/);
   assert.doesNotMatch(timingSource, /\bgame\.random\s*\(/);
   assert.match(timingSource, /game\?\.presentationRandom/);
-  assert.match(timingSource, /Math\.max\(RUNTIME_POLICY\.animationFastMinimumMs/);
+  assert.match(timingSource, /getRemainingAiThinkingDelay/);
 }
 
 
@@ -17469,7 +17479,7 @@ test("AI·Worker 互利链路：root → worker → rebind → execution → pub
 
 /*
 功能
-覆盖 AI 强制弃牌不变量：HP 1/2/3、多余1/2/多张、普通/快速模式，以及 AI choice cancelled 或 selectedIds 不足时仍收束到 hand.length <= hp。
+覆盖 AI 强制弃牌不变量：HP 1/2/3、多余1/2/多张、三档展示速度，以及 AI choice cancelled 或 selectedIds 不足时仍收束到 hand.length <= hp。
 
 调用方
 FR-ARCH-14 runtime regression。
@@ -17481,7 +17491,7 @@ FR-ARCH-14 runtime regression。
 无返回值，断言失败时抛错。
 
 读取状态
-TurnWorkflow.handleDiscardPhase 与 AI_SEARCH_PROFILES。
+TurnWorkflow.handleDiscardPhase 与 AI_SEARCH_PROFILE。
 
 写入状态
 测试 Game 手牌/弃牌堆。
@@ -17493,7 +17503,7 @@ new Game、makePlayer、instance、createChoiceResult、handleDiscardPhase。
 兜底只保证 AI 弃牌收束，不改变正常 AI 选牌策略；真人取消仍保留既有交互语义。
 */
 async function frArch14DiscardInvariantMatrix() {
-  const makeFixture = (hp, handCount, fastMode, choiceKind) => {
+  const makeFixture = (hp, handCount, speed, choiceKind) => {
     const ui = makeUi();
     const game = createGameApplication(ui, () => 0.25, {
       choicePort: {
@@ -17505,8 +17515,8 @@ async function frArch14DiscardInvariantMatrix() {
         }
       }
     });
-    const player = makePlayer(`discard-${hp}-${handCount}-${fastMode ? "fast" : "normal"}-${choiceKind}`, 0, "dawn", "ai", 0);
-    const enemy = makePlayer(`discard-enemy-${hp}-${handCount}-${fastMode ? "fast" : "normal"}-${choiceKind}`, 1, "dusk", "ai", 1);
+    const player = makePlayer(`discard-${hp}-${handCount}-${speed}-${choiceKind}`, 0, "dawn", "ai", 0);
+    const enemy = makePlayer(`discard-enemy-${hp}-${handCount}-${speed}-${choiceKind}`, 1, "dusk", "ai", 1);
     player.hp = hp;
     for (let index = 0; index < handCount; index += 1) {
       player.hand.push(instance(["assault", "scout", "recover", "block", "charge", "counter"][index % 6]));
@@ -17514,22 +17524,20 @@ async function frArch14DiscardInvariantMatrix() {
     game.state.players = [player, enemy];
     game.state.currentPlayerIndex = 0;
     game.state.phase = "discard";
-    game.animationFastMode = fastMode;
+    game.aiSpeed = speed;
     game.cleanupManager.delay = async () => true;
     return { game, player };
   };
   for (const hp of [1, 2, 3]) {
     for (const extra of [1, 2, 5]) {
-      for (const fastMode of [false, true]) {
+      for (const speed of [1, 2, 3]) {
         for (const choiceKind of ["cancelled", "partial"]) {
-          const { game, player } = makeFixture(hp, hp + extra, fastMode, choiceKind);
+          const { game, player } = makeFixture(hp, hp + extra, speed, choiceKind);
           const profile = game.aiController.buildSearchConfig();
-          assert.equal(profile.searchMode, fastMode ? "FAST" : "NORMAL");
-          assert.equal(profile.timeBudgetMs, fastMode
-            ? AI_SEARCH_PROFILES.FAST.searchDeadlineMs
-            : AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs);
+          assert.equal(profile.searchMode, AI_SEARCH_PROFILE.mode);
+          assert.equal(profile.timeBudgetMs, AI_SEARCH_PROFILE.searchDeadlineMs);
           await game.turnWorkflow.handleDiscardPhase(player, game.state.gameId);
-          assert.ok(player.hand.length <= hp, `hp=${hp} hand=${hp + extra} fast=${fastMode} ${choiceKind}`);
+          assert.ok(player.hand.length <= hp, `hp=${hp} hand=${hp + extra} speed=${speed} ${choiceKind}`);
           game.dispose();
         }
       }
@@ -17537,9 +17545,7 @@ async function frArch14DiscardInvariantMatrix() {
   }
 }
 
-test("AI·Worker 弃牌：AI HP1/2/3 普通/快速与取消/不足选择后不超手牌上限", frArch14DiscardInvariantMatrix);
-
-
+test("AI·Worker 弃牌：AI HP1/2/3 三档速度与取消/不足选择后不超手牌上限", frArch14DiscardInvariantMatrix);
 
 /*
 功能
@@ -17840,7 +17846,7 @@ test("AI·Worker RNG：连续 accepted 搜索续接、rejected 不提交、dupli
 
 /*
 功能
-验证 animationFastMode 只映射命名 search profile，普通/快速 timeBudget、softTarget 与 watchdog 均为有限正数或规定 null。
+验证三档 AI presentation speed 都使用同一命名 search profile，速度不会改变搜索预算。
 
 调用方
 FR-ARCH-14 search configuration audit。
@@ -17852,7 +17858,7 @@ FR-ARCH-14 search configuration audit。
 无返回值，断言失败时抛错。
 
 读取状态
-AIController.buildSearchConfig 与 AI_SEARCH_PROFILES。
+AIController.buildSearchConfig 与 AI_SEARCH_PROFILE。
 
 写入状态
 测试 Game 配置字段。
@@ -17870,28 +17876,40 @@ function frArch14SearchProfileRuntimeValues() {
   game.simulationMode = true;
   game.aiSearchBudgetOverrideMs = null;
   game.aiSearchNodeBudgetOverride = null;
-  game.animationFastMode = false;
+  game.aiSpeed = 1;
   const normal = game.aiController.buildSearchConfig();
   assert.equal(normal.searchMode, "NORMAL");
-  assert.equal(normal.softTargetMs, AI_SEARCH_PROFILES.NORMAL.softTargetMs);
-  assert.equal(normal.timeBudgetMs, AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs);
+  assert.equal(normal.softTargetMs, AI_SEARCH_PROFILE.softTargetMs);
+  assert.equal(normal.timeBudgetMs, AI_SEARCH_PROFILE.searchDeadlineMs);
   assert.equal(normal.searchDeadlineMs, 3000);
-  assert.equal(normal.hardWatchdogMs, AI_SEARCH_PROFILES.NORMAL.hardWatchdogMs);
+  assert.equal(normal.hardWatchdogMs, AI_SEARCH_PROFILE.hardWatchdogMs);
   assert.ok(Number.isFinite(normal.timeBudgetMs) && normal.timeBudgetMs > 0);
   assert.equal(normal.nodeBudget, null);
-  game.animationFastMode = true;
-  const fast = game.aiController.buildSearchConfig();
-  assert.equal(fast.searchMode, "FAST");
-  assert.equal(fast.softTargetMs, 500);
-  assert.equal(fast.timeBudgetMs, 900);
-  assert.equal(fast.searchDeadlineMs, 900);
-  assert.equal(fast.hardWatchdogMs, 5000);
-  assert.ok(Number.isFinite(fast.timeBudgetMs) && fast.timeBudgetMs > 0);
-  assert.equal(fast.nodeBudget, null);
+  for (const speed of [2, 3]) {
+    game.aiSpeed = speed;
+    assert.deepEqual(game.aiController.buildSearchConfig(), normal);
+  }
   game.dispose();
 }
 
-test("AI·搜索配置：普通 3000ms / 快速 500+900ms 且 simulationMode 不映射 local", frArch14SearchProfileRuntimeValues);
+test("AI·搜索配置：三档展示速度共用 Normal 搜索预算且 simulationMode 不映射 local", frArch14SearchProfileRuntimeValues);
+
+test("AI·搜索配置：同一状态在 1×/2×/3× 下返回相同动作", async () => {
+  const actor = makePlayer("speed-invariant-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("speed-invariant-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("charge"), instance("assault"));
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 20;
+  const actions = [];
+  for (const speed of [1, 2, 3]) {
+    game.aiSpeed = speed;
+    actions.push(describeAction(await game.aiController.selectAction(actor, { gameId: game.state.gameId })));
+  }
+  assert.deepEqual(actions[1], actions[0]);
+  assert.deepEqual(actions[2], actions[0]);
+  game.dispose();
+});
 
 
 
@@ -18809,10 +18827,10 @@ test("AI·借势：有牌拒绝与无牌拒绝经过相同思考提示且日志�
     };
   };
   const without = await run(false), withCard = await run(true);
-  assert.deepEqual(without.thinking, [true, false]);
-  assert.deepEqual(withCard.thinking, [true, false]);
-  assert.deepEqual(without.prompts, []);
-  assert.deepEqual(withCard.prompts, []);
+  assert.deepEqual(without.thinking, withCard.thinking);
+  assert.deepEqual(without.thinking, [true, false, true, false]);
+  assert.deepEqual(without.prompts, withCard.prompts);
+  assert.ok(without.prompts.every((message) => !/没有|次数|无法|距离/.test(message)));
   assert.equal(without.logs.length, 1);
   assert.equal(withCard.logs.length, 1);
   assert.ok(without.logs.every((message) => !/没有|次数|无法|距离/.test(message)));
@@ -41176,29 +41194,101 @@ test("AI·展示节奏：独立 presentation random 采样且不推进 Game/sear
   const runtime = {
     random: () => { gameCalls += 1; return .5; },
     presentationRandom,
-    simulationMode: false,
-    animationFastMode: false
+    aiSpeed: 1,
+    simulationMode: false
   };
-  assert.equal(getAiDelay(runtime, "initial"), 4250);
-  assert.equal(getAiDelay(runtime, "initial", { complex: true }), 5000);
-  runtime.animationFastMode = true;
-  assert.equal(getAiDelay(runtime, "end"), 100);
+  assert.equal(getAiDelay(runtime, "initial"), 3000);
+  assert.equal(getAiDelay(runtime, "initial", { complex: true }), 3000);
+  assert.equal(getAiDelay(runtime, "end"), 1800);
   runtime.simulationMode = true;
   assert.equal(getAiDelay(runtime, "response"), 0);
-  assert.equal(presentationCalls, 4);
+  assert.equal(presentationCalls, 10);
   assert.equal(gameCalls, 0);
   assert.equal(AI_RUNTIME_POLICY.searchTimeBudgetMs, 900);
 });
 
+test("AI·展示节奏：三档配置分别 jitter MIN/MAX，clamp 保留区间内 raw 并扣除 elapsed", () => {
+  assert.equal(RUNTIME_POLICY.defaultAiSpeed, 1);
+  assert.deepEqual(AI_PACING, {
+    1: { baseMinMs: 1800, baseMaxMs: 3000, minJitter: 0.25, maxJitter: 0.20 },
+    2: { baseMinMs: 900, baseMaxMs: 1500, minJitter: 0.20, maxJitter: 0.20 },
+    3: { baseMinMs: 600, baseMaxMs: 1000, minJitter: 0.15, maxJitter: 0.15 }
+  });
+  assert.equal(normalizeAiSpeed(1.5), 1);
+  assert.equal(normalizeAiSpeed(2), 2);
+  assert.deepEqual(getAiPacingBounds(1, () => 0), { minimumMs: 1350, maximumMs: 2400 });
+  assert.deepEqual(getAiPacingBounds(2, () => 0.5), { minimumMs: 900, maximumMs: 1500 });
+  assert.deepEqual(getAiPacingBounds(3, () => 1), { minimumMs: 690, maximumMs: 1150 });
+  const rolls = [0, 1];
+  assert.deepEqual(getAiPacingBounds(1, () => rolls.shift()), { minimumMs: 1350, maximumMs: 3600 });
+  const bounds = { minimumMs: 1200, maximumMs: 1800 };
+  assert.equal(clampAiThinkingTime(500, bounds), 1200);
+  assert.equal(clampAiThinkingTime(1333, bounds), 1333);
+  assert.equal(clampAiThinkingTime(4000, bounds), 1800);
+  assert.equal(getRemainingAiThinkingDelay(1800, 400), 1400);
+  assert.equal(getRemainingAiThinkingDelay(1800, 1333), 467);
+  assert.equal(getRemainingAiThinkingDelay(1800, 4000), 0);
+});
+
+test("AI·展示节奏：旧 fastMode 偏好单向迁移到三档速度", () => {
+  const values = new Map([["fastMode", "false"]]);
+  const storage = {
+    getItem: (key) => values.has(key) ? values.get(key) : null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key)
+  };
+  assert.equal(readAiSpeedPreference(storage), 1);
+  assert.equal(values.get("five-realms-ai-speed"), "1");
+  values.set("fastMode", "true");
+  values.delete("five-realms-ai-speed");
+  assert.equal(readAiSpeedPreference(storage), 3);
+  assert.equal(writeAiSpeedPreference(2.4, storage), 1);
+  assert.equal(values.get("five-realms-ai-speed"), "1");
+});
+
+test("AI·展示节奏：响应先决策再按 elapsed 等待，no-card 与有牌拒绝共用 timing boundary", async () => {
+  const request = createResponseChoiceRequest({
+    requestId: "timing-response",
+    actorId: "timing-ai",
+    gameId: "timing-game",
+    stateVersion: 1,
+    responseType: "counter",
+    requiredCount: 1,
+    legalCardIds: [],
+    label: "反制",
+    context: { sourcePlayerId: null, targetPlayerId: "timing-ai", cardId: null, timeoutMs: null, presentation: null }
+  });
+  const run = async (decision) => {
+    const trace = [];
+    const clock = [100, 500];
+    const port = createAiResponseTimingDecorator({
+      async request() { trace.push("decision"); return decision; }
+    }, {
+      getPlayer: () => ({ id: "timing-ai", name: "电脑" }),
+      setThinking: (value) => trace.push(value ? "thinking-on" : "thinking-off"),
+      delay: async ({ elapsedMs }) => { trace.push(["delay", elapsedMs]); return true; },
+      setPrompt: () => { },
+      isSessionValid: () => true,
+      now: () => clock.shift()
+    });
+    return { result: await port.request(request), trace };
+  };
+  const noCard = await run(createChoiceResult("declined"));
+  const haveCardDecline = await run(createChoiceResult("declined"));
+  assert.deepEqual(noCard.result, createChoiceResult("declined"));
+  assert.deepEqual(noCard.trace, ["thinking-on", "decision", ["delay", 400], "thinking-off"]);
+  assert.deepEqual(haveCardDecline.trace, noCard.trace);
+});
+
 /*
 功能
-冻结 AI 弃牌阶段 Normal/Fast 的 thinking 与 presentation delay 顺序。
+冻结 AI 弃牌阶段三档速度的 decision、thinking 与 presentation delay 顺序。
 
 调用方
 TurnWorkflow pacing regression。
 
 输入
-同一名超手牌上限 AI，分别使用 Normal 与 Fast 展示模式。
+同一名超手牌上限 AI，分别使用 1× 与 3× 展示模式。
 
 输出
 无返回值，断言失败时抛错。
@@ -41213,16 +41303,16 @@ RUNTIME_POLICY discard range、TurnWorkflow 与 ChoiceCoordinator。
 makeGame、handleDiscardPhase。
 
 边界与不变量
-Normal 使用可读最小值，Fast 只缩放展示时间；两者都必须 thinking on→delay→thinking off。
+不同档位只改变 presentation pacing；都必须 thinking on→decision→delay→thinking off。
 */
 async function discardPresentationPacingModes() {
-  for (const [fastMode, expectedDelay] of [[false, 1600], [true, 128]]) {
-    const actor = makePlayer(`discard-pacing-${fastMode}`, 0, "dawn", "ai", 0);
+  for (const [speed, expectedDelay] of [[1, 1600], [3, 850]]) {
+    const actor = makePlayer(`discard-pacing-${speed}`, 0, "dawn", "ai", 0);
     actor.hp = 1;
     actor.hand.push(instance("charge"), instance("shield"));
     const { game, ui } = makeGame([actor]);
     game.simulationMode = false;
-    game.animationFastMode = fastMode;
+    game.aiSpeed = speed;
     game.presentationRandom = () => 0;
     const trace = [];
     const originalThinking = ui.setThinking.bind(ui);
@@ -41237,7 +41327,7 @@ async function discardPresentationPacingModes() {
   }
 }
 
-test("展示节奏·AI 弃牌：Normal 可读且 Fast 缩放并保持 thinking 生命周期", discardPresentationPacingModes);
+test("展示节奏·AI 弃牌：三档速度保持 decision→delay→thinking 生命周期", discardPresentationPacingModes);
 
 /*
 功能

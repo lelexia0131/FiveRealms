@@ -22,13 +22,13 @@ let game = null;
 无返回值。
 
 读取状态
-当前 game、UI fastMode 与新局首位玩家阵营。
+当前 game、UI aiSpeed 与新局首位玩家阵营。
 
 写入状态
 销毁旧 game、替换模块级 game 并切换 UI owner/选将屏幕。
 
 调用函数
-MatchApplication.dispose/startSelection/setAnimationFastMode、createGameApplication、UIManager.attachGame/showSelection。
+MatchApplication.dispose/startSelection/setAiSpeed、createGameApplication、UIManager.attachGame/showSelection。
 
 边界与不变量
 必须先 dispose 旧局；新局 UI owner 在任何异步流程启动前完成绑定。
@@ -37,7 +37,7 @@ function startSelection() {
   game?.dispose();
   game = createGameApplication(ui);
   ui.attachGame(game);
-  game.setAnimationFastMode(ui.fastMode);
+  game.setAiSpeed(ui.aiSpeed);
   const candidates = game.startSelection();
   ui.showSelection(candidates, game.state.players[0].battleTeam);
 }
@@ -86,7 +86,7 @@ ui.setCallbacks({
   onCard: (cardId) => game?.handleHumanCard(cardId),
   onSkill: () => game?.handleHumanSkill(),
   onEndPlay: () => game?.requestEndHumanPlay(),
-  onToggleFastMode: (enabled) => game?.setAnimationFastMode(enabled)
+  onChangeAiSpeed: (speed) => game?.setAiSpeed(speed)
 });
 
 ui.showStart();

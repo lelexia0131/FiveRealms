@@ -1,6 +1,6 @@
 /*
 模块职责
-拥有 AI response Choice 的 Application timing/presentation decorator：thinking on -> delay -> inner AI decision -> thinking off -> decline prompt；不拥有 AI policy。
+拥有 AI response Choice 的 Application timing/presentation decorator：thinking on -> inner AI decision -> elapsed-aware delay -> thinking off -> result presentation；不拥有 AI policy。
 
 上游
 composition boundary 的 AI ChoicePort wiring。
@@ -42,18 +42,20 @@ inner AI decision port 与 presentation/delay/session 能力。
 createChoiceResult。
 
 边界与不变量
-只有 kind=response 装饰 timing；publicCard 直通；delay 顺序保持既定响应展示语义。
+只有 kind=response 装饰 timing；publicCard 直通；真实决策耗时必须从 planned presentation pacing 中扣除。
 */
 export function createAiResponseTimingDecorator(innerPort, {
   getPlayer,
   setThinking,
   delay,
   setPrompt,
-  isSessionValid
+  isSessionValid,
+  now
 }) {
   if (typeof innerPort?.request !== "function" || typeof getPlayer !== "function"
     || typeof setThinking !== "function" || typeof delay !== "function"
-    || typeof setPrompt !== "function" || typeof isSessionValid !== "function") {
+    || typeof setPrompt !== "function" || typeof isSessionValid !== "function"
+    || typeof now !== "function") {
     throw new TypeError("AiResponseTimingDecorator 缺少必要 capability");
   }
   return Object.freeze({
@@ -80,7 +82,7 @@ export function createAiResponseTimingDecorator(innerPort, {
     innerPort.request、createChoiceResult。
 
     边界与不变量
-    thinking on 必须早于 delay；cancelled/异常/失效时也必须在 finally 清除 thinking。
+    thinking on 必须早于 AI decision；decision 完成后才按真实 elapsed 补足 delay；cancelled/异常/失效时也必须在 finally 清除 thinking。
     */
     async request(choiceRequest) {
       if (choiceRequest?.kind !== "response") return innerPort.request(choiceRequest);
@@ -88,10 +90,13 @@ export function createAiResponseTimingDecorator(innerPort, {
       if (!actor) return createChoiceResult("cancelled", { reason:"unknown-actor" });
       const label = choiceRequest.context?.label ?? "";
       setThinking(true, actor, `正在考虑是否${label}`);
+      const startedAt = now();
       try {
-        const waited = await delay();
-        if (!waited || !isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
         const result = await innerPort.request(choiceRequest);
+        if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
+        const elapsedMs = Math.max(0, now() - startedAt);
+        const waited = await delay({ elapsedMs });
+        if (!waited || !isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
         if (result.status === "declined" && choiceRequest.constraints.responseType !== "leverageAssault") {
           setPrompt(`${actor.name}放弃${label}。`);
         }

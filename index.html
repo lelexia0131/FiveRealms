@@ -93,8 +93,15 @@
             <label class="music-volume-control"><span>BGM</span><input type="range" min="0" max="100" value="75"
                 data-music-volume aria-label="背景音乐音量" /></label>
           </div>
-          <button id="fast-mode-button" class="toggle-button" type="button" aria-pressed="false"><i
-              aria-hidden="true"></i><span>快速动画：关</span></button>
+          <div id="ai-speed-control" class="ai-speed-control" role="group" aria-label="AI速度">
+            <span>速度</span>
+            <button type="button" data-ai-speed="1" aria-label="AI速度：标准"
+              aria-pressed="false"><strong>1×</strong><small>标准</small></button>
+            <button type="button" data-ai-speed="2" aria-label="AI速度：较快"
+              aria-pressed="false"><strong>2×</strong><small>较快</small></button>
+            <button type="button" data-ai-speed="3" aria-label="AI速度：快速"
+              aria-pressed="false"><strong>3×</strong><small>快速</small></button>
+          </div>
           <button id="restart-button" class="ghost-button" type="button">重新征召</button>
         </div>
       </header>

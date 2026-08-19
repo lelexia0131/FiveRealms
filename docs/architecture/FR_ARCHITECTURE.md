@@ -184,7 +184,7 @@ Main Thread 永远负责：
 - accepted RNG state commit；
 - real action、trigger、presentation 与 audio continuation。
 
-Fast profile 为 500ms soft target、900ms search deadline；Normal profile 为 3000ms search deadline。Hard watchdog 独立于 search deadline。搜索计算 RNG、真实游戏 RNG 与 presentation pacing RNG 相互隔离。
+浏览器生产搜索固定使用 `NORMAL` AI search profile，Hard watchdog 独立于 search deadline。1×、2×、3× AI 速度只控制 presentation pacing，不改变搜索预算、搜索质量、决策逻辑或难度。搜索计算 RNG、真实游戏 RNG 与 presentation pacing RNG 相互隔离。
 
 ## 11. Behavior Preservation
 

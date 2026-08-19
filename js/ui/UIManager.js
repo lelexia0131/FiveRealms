@@ -16,6 +16,7 @@ import { JudgmentView } from "./JudgmentView.js";
 import { createOpponentHandView } from "./handVisibility.js";
 import { toggleCardSelection } from "./selectionUtils.js";
 import { SoundManager } from "../audio/SoundManager.js";
+import { normalizeAiSpeed, readAiSpeedPreference, writeAiSpeedPreference } from "../utils/aiTiming.js";
 
 /*
 功能
@@ -153,7 +154,7 @@ export class UIManager {
   初始化元素引用、交互状态、声音、动画和各 View，并绑定事件。
 
   调用函数
-  SoundManager、AnimationController、InteractionController、各 View 构造器、bindEvents。
+  SoundManager、AnimationController、InteractionController、各 View 构造器、bindEvents、setAiSpeed。
 
   边界与不变量
   UI 只提交 ID/token/intent，不直接修改权威游戏状态。
@@ -165,7 +166,7 @@ export class UIManager {
       "thinking-indicator", "current-card", "action-prompt", "private-reveal", "response-panel",
       "public-pool-view", "judgment-view", "dying-view", "duel-view",
       "skill-button", "end-play-button", "discard-confirm-button", "cancel-interaction-button",
-      "log-panel", "battle-layout", "log-toggle-button", "fast-mode-button",
+      "log-panel", "battle-layout", "log-toggle-button", "ai-speed-control",
       "log-list", "log-count", "skill-details-overlay", "game-over-overlay", "game-over-title", "game-over-copy", "play-again-button"
     ].map((id) => [id.replaceAll("-", "_"), document.getElementById(id)]));
     this.callbacks = {};
@@ -181,7 +182,7 @@ export class UIManager {
     this.thinkingPlayerId = null;
     this.thinkingMessage = "正在思考";
     this.skillDetailsTrigger = null;
-    this.fastMode = false;
+    this.aiSpeed = readAiSpeedPreference();
     this.logCollapsed = false;
     this.animationController = new AnimationController();
     this.interactionController = new InteractionController(this);
@@ -190,6 +191,7 @@ export class UIManager {
     this.judgmentView = new JudgmentView(this.elements.judgment_view);
     this.viewportWasNarrow = window.innerWidth < 1280;
     this.bindEvents();
+    this.setAiSpeed(this.aiSpeed);
   }
 
   /*
@@ -422,7 +424,12 @@ export class UIManager {
     this.interactionController.bind(this.elements.response_panel);
     this.elements.log_toggle_button.addEventListener("click", () => this.setLogCollapsed(!this.logCollapsed));
     window.addEventListener("resize", () => this.handleViewportResize());
-    this.elements.fast_mode_button.addEventListener("click", () => this.callbacks.onToggleFastMode?.(!this.fastMode));
+    this.elements.ai_speed_control?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-ai-speed]");
+      if (!button) return;
+      this.playSound("select");
+      this.callbacks.onChangeAiSpeed?.(Number(button.dataset.aiSpeed));
+    });
     this.elements.skill_details_overlay.addEventListener("click", (event) => {
       if (event.target === this.elements.skill_details_overlay || event.target.closest("[data-skill-dialog-close]")) this.hideSkillDetails();
     });
@@ -2266,13 +2273,13 @@ export class UIManager {
 
   /*
   功能
-  切换页面快速动画展示模式。
+  更新 AI 可观察思考速度档位。
 
   调用方
-  main onToggleFastMode callback。
+  main onChangeAiSpeed callback。
 
   输入
-  是否启用快速动画。
+  速度值；只允许 1、2、3。
 
   输出
   无返回值。
@@ -2281,19 +2288,20 @@ export class UIManager {
   无。
 
   写入状态
-  fastMode、body class 与按钮属性/标签。
+  aiSpeed、速度按钮的 aria-pressed 状态与持久化偏好。
 
   调用函数
-  DOM classList/attribute API。
+  normalizeAiSpeed、writeAiSpeedPreference 与 DOM attribute API。
 
   边界与不变量
-  只改变 CSS 动画速度，不改变 Application/AI 延迟或游戏时序。
+  只改变 AI presentation pacing，不改变 AI 决策或搜索质量。
   */
-  setFastMode(enabled) {
-    this.fastMode = Boolean(enabled);
-    document.body.classList.toggle("fast-mode", this.fastMode);
-    this.elements.fast_mode_button.setAttribute("aria-pressed", String(this.fastMode));
-    this.elements.fast_mode_button.querySelector("span").textContent = this.fastMode ? "快速动画：开" : "快速动画：关";
+  setAiSpeed(speed) {
+    this.aiSpeed = writeAiSpeedPreference(normalizeAiSpeed(speed));
+    for (const button of this.elements.ai_speed_control?.querySelectorAll("[data-ai-speed]") ?? []) {
+      button.setAttribute("aria-pressed", String(Number(button.dataset.aiSpeed) === this.aiSpeed));
+    }
+    return this.aiSpeed;
   }
 
   /*
