@@ -44612,6 +44612,84 @@ test("UI·布局样式：闪电：响应卡片信息框与其他战术牌共用�
   assert.match(imgRule, /height:\s*74px/);
 });
 
+/*
+功能
+验证音频设置页同时渲染 BGM 与音效音量滑条，并且 UIManager 初始化/调整会同步当前音量值。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+index.html、UIManager 原型与伪造的 sound/ui 控件状态。
+
+写入状态
+伪造控件的 value、aria 属性与调用记录。
+
+调用函数
+UIManager.prototype.updateAudioButtons、UIManager.prototype.setSfxVolume。
+
+边界与不变量
+页面必须保留四处音频控件实例；SFX 输入变更只写入音效总音量，不回写 BGM。
+*/
+async function uiAudioVolumeControlsSync() {
+  const index = await readFile(projectFile("index.html"), "utf8");
+  assert.equal((index.match(/data-music-volume/g) ?? []).length, 4);
+  assert.equal((index.match(/data-sfx-volume/g) ?? []).length, 4);
+  assert.equal((index.match(/<span>BGM<\/span>/g) ?? []).length, 4);
+  assert.equal((index.match(/<span>音效<\/span>/g) ?? []).length, 4);
+  assert.doesNotMatch(index, /<span>音效音量<\/span>/);
+  const components = await readFile(projectFile("css/components.css"), "utf8");
+  assert.match(components, /\.audio-volume-stack\s*\{[^}]*grid-template-columns:\s*max-content 92px/);
+  assert.match(components, /\.music-volume-control\s*\{\s*display:\s*contents/);
+  const button = {
+    attributes: new Map(),
+    label: { textContent: "" },
+    setAttribute(name, value) { this.attributes.set(name, value); },
+    querySelector(selector) { return selector === "span" ? this.label : null; }
+  };
+  const musicInput = {
+    attributes: new Map(),
+    value: "",
+    setAttribute(name, value) { this.attributes.set(name, value); }
+  };
+  const sfxInput = {
+    attributes: new Map(),
+    value: "",
+    setAttribute(name, value) { this.attributes.set(name, value); }
+  };
+  const controls = {
+    sound: { enabled: true, musicVolume: 0.75, sfxVolume: 1 },
+    audioButtons: [button],
+    musicVolumeInputs: [musicInput],
+    sfxVolumeInputs: [sfxInput]
+  };
+  UIManager.prototype.updateAudioButtons.call(controls);
+  assert.equal(button.attributes.get("aria-pressed"), "true");
+  assert.equal(button.attributes.get("aria-label"), "关闭声音");
+  assert.equal(button.label.textContent, "声音：开");
+  assert.equal(musicInput.value, "75");
+  assert.equal(musicInput.attributes.get("aria-valuetext"), "75%");
+  assert.equal(sfxInput.value, "100");
+  assert.equal(sfxInput.attributes.get("aria-valuetext"), "100%");
+  const updates = [];
+  UIManager.prototype.setSfxVolume.call(
+    {
+      sound: { setSfxVolume: (value) => updates.push(value) },
+      updateAudioButtons: () => updates.push("refresh")
+    },
+    "37"
+  );
+  assert.deepEqual(updates, [0.37, "refresh"]);
+}
+
+test("UI·音频控制：初始化与调整同步 BGM 和音效音量", uiAudioVolumeControlsSync);
+
 // ---------- 音频与 BGM ----------
 
 test("音频：合成声音覆盖八类反馈且 lightning 改为采样播放", async () => {
@@ -44659,6 +44737,60 @@ test("音频：BGM 无保存音量时使用默认值且明确保存零时保持�
   }
 });
 
+/*
+功能
+验证音乐与音效音量偏好分别以独立键持久化，并能兼容旧保存值与默认值。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+localStorage stub、SoundManager 构造函数。
+
+写入状态
+临时 localStorage 存储内容。
+
+调用函数
+SoundManager 构造函数、setSfxVolume。
+
+边界与不变量
+旧配置缺少音效键时必须回退到默认值；保存零值不能被误判为空。
+*/
+function audioVolumePersistenceCompatibility() {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const store = new Map();
+  try {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: {
+        getItem(key) { return store.has(key) ? store.get(key) : null; },
+        setItem(key, value) { store.set(key, String(value)); }
+      }
+    });
+    assert.equal(new SoundManager().musicVolume, 0.75);
+    assert.equal(new SoundManager().sfxVolume, 1);
+    store.set("five-realms-music-volume", "0");
+    store.set("five-realms-sfx-volume", "0");
+    const sound = new SoundManager();
+    assert.equal(sound.musicVolume, 0);
+    assert.equal(sound.sfxVolume, 0);
+    sound.setSfxVolume(0.31);
+    assert.equal(store.get("five-realms-sfx-volume"), "0.31");
+  } finally {
+    if (
+      previous
+    ) Object.defineProperty(globalThis, "localStorage", previous); else delete globalThis.localStorage;
+  }
+}
+
+test("音频：BGM 与 SFX 分别读取默认值并兼容旧保存值", audioVolumePersistenceCompatibility);
+
 test("音频：晨昏主题切换后分别续播而不是反复从开头播放", () => {
   const sound = new SoundManager();
   sound.musicTeam = "dawn";
@@ -44670,6 +44802,51 @@ test("音频：晨昏主题切换后分别续播而不是反复从开头播放",
   assert.equal(sound.musicStepsByTeam.dusk, 17);
   assert.equal(sound.musicStep, 42);
 });
+
+/*
+功能
+验证 SFX 总音量通过统一增益缩放，同时不会改动 BGM 通道。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SoundManager、fake AudioContext 与增益节点。
+
+写入状态
+fake gain 的 setTargetAtTime 调用记录与音量字段。
+
+调用函数
+SoundManager.setSfxVolume、SoundManager.setMusicVolume。
+
+边界与不变量
+SFX clamp 只能作用于统一总增益；BGM gain 调整不得写入 SFX 节点。
+*/
+function audioSfxGainIndependence() {
+  const sound = new SoundManager();
+  const fake = makeFakeAudioContext();
+  sound.context = fake;
+  sound.musicGain = fake.createGain();
+  sound.sfxGain = fake.createGain();
+  assert.equal(sound.setSfxVolume(0.5), 0.5);
+  assert.equal(sound.sfxVolume, 0.5);
+  assert.deepEqual(sound.sfxGain.gain.calls.at(-1), ["target", 0.45, 0, 0.025]);
+  assert.equal(sound.musicGain.gain.calls.length, 0);
+  assert.equal(sound.setSfxVolume(2), 1);
+  assert.deepEqual(sound.sfxGain.gain.calls.at(-1), ["target", 0.9, 0, 0.025]);
+  assert.equal(sound.setMusicVolume(0.4), 0.4);
+  assert.equal(sound.musicVolume, 0.4);
+  assert.equal(sound.sfxGain.gain.calls.length, 2);
+  assert.equal(sound.musicGain.gain.calls.at(-1)[0], "target");
+}
+
+test("音频：SFX 音量按总增益缩放且不影响 BGM", audioSfxGainIndependence);
 
 /** 构造最小 Web Audio 假实现，用于验证 BGM 排程连续性、索引回绕与旧节点停止。 */
 function makeFakeAudioContext() {

@@ -7,7 +7,11 @@ import { Debug } from "../utils/debug.js";
 
 const STORAGE_KEY = "five-realms-audio-enabled";
 const MUSIC_VOLUME_KEY = "five-realms-music-volume";
+const SFX_VOLUME_KEY = "five-realms-sfx-volume";
 const DEFAULT_MUSIC_VOLUME = 0.75;
+const DEFAULT_SFX_VOLUME = 1;
+// 保留旧版音效的整体响度基线；SFX 滑条只在这个基线上做线性缩放。
+const SFX_GAIN_BASE = 0.9;
 
 // 零 fake-thinking 后连续真实游戏事件会在同一帧内到达；gameplay 音效不得按墙钟
 // 节流吞掉，只保留 UI 连点 select 的防误触节流。
@@ -251,6 +255,40 @@ function safelyReadMusicVolume() {
 
 /*
 功能
+读取并校验持久化的音效音量。
+
+调用方
+SoundManager 构造函数。
+
+输入
+无。
+
+输出
+[0, 1] 内音量；缺失、非法或读取失败时返回默认值。
+
+读取状态
+localStorage 的音效音量键。
+
+写入状态
+无。
+
+调用函数
+localStorage.getItem、Number。
+
+边界与不变量
+空字符串和非有限值不得被解释为有效的零音量。
+*/
+function safelyReadSfxVolume() {
+  try {
+    const stored = globalThis.localStorage?.getItem(SFX_VOLUME_KEY);
+    if (typeof stored !== "string" || stored.trim() === "") return DEFAULT_SFX_VOLUME;
+    const volume = Number(stored);
+    return Number.isFinite(volume) && volume >= 0 && volume <= 1 ? volume : DEFAULT_SFX_VOLUME;
+  } catch { return DEFAULT_SFX_VOLUME; }
+}
+
+/*
+功能
 持久化归一化音乐音量。
 
 调用方
@@ -279,6 +317,36 @@ function safelyStoreMusicVolume(volume) {
   catch { /* 存储不可用时只保留本次会话设置。 */ }
 }
 
+/*
+功能
+持久化归一化音效音量。
+
+调用方
+SoundManager.setSfxVolume。
+
+输入
+已归一化的音量数值。
+
+输出
+无返回值。
+
+读取状态
+无。
+
+写入状态
+localStorage 的音效音量键。
+
+调用函数
+localStorage.setItem。
+
+边界与不变量
+存储异常静默忽略，当前 AudioContext 设置仍然生效。
+*/
+function safelyStoreSfxVolume(volume) {
+  try { globalThis.localStorage?.setItem(SFX_VOLUME_KEY, String(volume)); }
+  catch { /* 存储不可用时只保留本次会话设置。 */ }
+}
+
 export class SoundManager {
   /*
   功能
@@ -294,13 +362,13 @@ export class SoundManager {
   SoundManager 实例。
 
   读取状态
-  已持久化的声音开关和音乐音量。
+  已持久化的声音开关、音乐音量和音效音量。
 
   写入状态
   初始化 AudioContext、调度器、缓存和节流生命周期字段。
 
   调用函数
-  safelyReadPreference、safelyReadMusicVolume。
+  safelyReadPreference、safelyReadMusicVolume、safelyReadSfxVolume。
 
   边界与不变量
   构造时不得创建 AudioContext，必须等待用户交互解锁。
@@ -308,6 +376,7 @@ export class SoundManager {
   constructor() {
     this.enabled = safelyReadPreference();
     this.musicVolume = safelyReadMusicVolume();
+    this.sfxVolume = safelyReadSfxVolume();
     this.context = null;
     this.masterGain = null;
     this.sfxGain = null;
@@ -403,7 +472,7 @@ export class SoundManager {
   无返回值。
 
   读取状态
-  enabled 与 musicVolume。
+  enabled、musicVolume 与 sfxVolume。
 
   写入状态
   context、masterGain、sfxGain、musicGain 及节点连接。
@@ -421,7 +490,7 @@ export class SoundManager {
     this.sfxGain = this.context.createGain();
     this.musicGain = this.context.createGain();
     this.masterGain.gain.value = this.enabled ? 0.82 : 0;
-    this.sfxGain.gain.value = 0.9;
+    this.sfxGain.gain.value = SFX_GAIN_BASE * this.sfxVolume;
     this.musicGain.gain.value = musicGainForVolume(this.musicVolume);
     this.sfxGain.connect(this.masterGain);
     this.musicGain.connect(this.masterGain);
@@ -498,6 +567,41 @@ export class SoundManager {
     safelyStoreMusicVolume(normalized);
     if (this.musicGain && this.context) {
       this.musicGain.gain.setTargetAtTime(musicGainForVolume(normalized), this.context.currentTime, 0.025);
+    }
+    return normalized;
+  }
+
+  /*
+  功能
+  设置并持久化非 BGM 音效总音量。
+
+  调用方
+  UIManager.setSfxVolume。
+
+  输入
+  可转换为数值的音量。
+
+  输出
+  限制在 [0, 1] 的音量。
+
+  读取状态
+  context 与 sfxGain。
+
+  写入状态
+  sfxVolume、持久化值与当前音效总增益。
+
+  调用函数
+  safelyStoreSfxVolume。
+
+  边界与不变量
+  非数值按零处理；已有节点使用短时间平滑过渡。
+  */
+  setSfxVolume(volume) {
+    const normalized = Math.min(1, Math.max(0, Number(volume) || 0));
+    this.sfxVolume = normalized;
+    safelyStoreSfxVolume(normalized);
+    if (this.sfxGain && this.context) {
+      this.sfxGain.gain.setTargetAtTime(SFX_GAIN_BASE * normalized, this.context.currentTime, 0.025);
     }
     return normalized;
   }

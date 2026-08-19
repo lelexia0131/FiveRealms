@@ -199,6 +199,7 @@ export class UIManager {
     this.sound = new SoundManager();
     this.audioButtons = [...document.querySelectorAll("[data-audio-toggle]")];
     this.musicVolumeInputs = [...document.querySelectorAll("[data-music-volume]")];
+    this.sfxVolumeInputs = [...document.querySelectorAll("[data-sfx-volume]")];
     this.game = null;
     this.targetState = null;
     this.discardState = null;
@@ -395,7 +396,7 @@ export class UIManager {
   无返回值。
 
   读取状态
-  elements、audioButtons、musicVolumeInputs 与当前交互状态。
+  elements、audioButtons、musicVolumeInputs、sfxVolumeInputs 与当前交互状态。
 
   写入状态
   注册 DOM/window/document listeners。
@@ -410,6 +411,7 @@ export class UIManager {
     this.updateAudioButtons();
     for (const button of this.audioButtons) button.addEventListener("click", () => this.toggleAudio());
     for (const input of this.musicVolumeInputs) input.addEventListener("input", () => this.setMusicVolume(input.value));
+    for (const input of this.sfxVolumeInputs) input.addEventListener("input", () => this.setSfxVolume(input.value));
     this.elements.start_button.addEventListener("click", () => { void this.sound.unlock(); this.playSound("select"); this.callbacks.onStart?.(); });
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
@@ -2263,7 +2265,7 @@ export class UIManager {
   无返回值。
 
   读取状态
-  sound.enabled、sound.musicVolume 与控件集合。
+  sound.enabled、sound.musicVolume、sound.sfxVolume 与控件集合。
 
   写入状态
   音频按钮属性/标签及音量输入值。
@@ -2281,10 +2283,15 @@ export class UIManager {
       const label = button.querySelector("span");
       if (label) label.textContent = this.sound.enabled ? "声音：开" : "声音：关";
     }
-    const percentage = String(Math.round(this.sound.musicVolume * 100));
+    const musicPercentage = String(Math.round(this.sound.musicVolume * 100));
     for (const input of this.musicVolumeInputs) {
-      input.value = percentage;
-      input.setAttribute("aria-valuetext", `${percentage}%`);
+      input.value = musicPercentage;
+      input.setAttribute("aria-valuetext", `${musicPercentage}%`);
+    }
+    const sfxPercentage = String(Math.round(this.sound.sfxVolume * 100));
+    for (const input of this.sfxVolumeInputs) {
+      input.value = sfxPercentage;
+      input.setAttribute("aria-valuetext", `${sfxPercentage}%`);
     }
   }
 
@@ -2315,6 +2322,36 @@ export class UIManager {
   */
   setMusicVolume(value) {
     this.sound.setMusicVolume(Number(value) / 100);
+    this.updateAudioButtons();
+  }
+
+  /*
+  功能
+  将百分比输入转换为 SoundManager 音效总音量并刷新控件。
+
+  调用方
+  bindEvents 的音效音量 input listener。
+
+  输入
+  0 至 100 的控件值。
+
+  输出
+  无返回值。
+
+  读取状态
+  sound。
+
+  写入状态
+  SoundManager.sfxVolume 与控件 DOM。
+
+  调用函数
+  SoundManager.setSfxVolume、updateAudioButtons。
+
+  边界与不变量
+  UI 百分比必须除以 100 后交给归一化音量边界。
+  */
+  setSfxVolume(value) {
+    this.sound.setSfxVolume(Number(value) / 100);
     this.updateAudioButtons();
   }
 
