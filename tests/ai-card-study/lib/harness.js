@@ -53,7 +53,7 @@ export function createGame({
   game.aiSearchNodeBudgetOverride = nodeBudget;
   game.runGameLoop = async () => {};
 
-  const candidates = game.startSelection();
+  const candidates = game.startSelection("random");
   if (roleOverride) {
     const forced = CHARACTER_DEFINITIONS.find((character) => character.id === roleOverride);
     if (!forced) throw new Error(`未知角色：${roleOverride}`);

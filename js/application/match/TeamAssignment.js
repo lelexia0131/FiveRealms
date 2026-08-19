@@ -1,26 +1,18 @@
-/**
- * 本文件负责 2V3 阵营生成与阵营查询，依赖游戏配置和洗牌工具。
- * 它不根据角色、名字或座位推断阵营；battleTeam 是唯一判断来源。
- */
 import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 import { getTeamSize } from "../../domain/rules/team/TeamRules.js";
 import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js";
+import { TEAM_ASSIGNMENT_MODE, TEAM_ASSIGNMENT_MODES } from "./TeamAssignmentMode.js";
 
 export class TeamAssignment {
-  /**
-   * 随机返回每个座位的阵营 ID，严格保证 2V3。
-   * @param {()=>number} random 随机源。
-   * @returns {Array<"dawn"|"dusk">} 与座位索引一一对应的阵营。
-   */
   /*
   功能
-  随机生成满足 2V3 规则的逐座位阵营数组。
+  按编队方式生成满足 2V3 规则的逐座位阵营数组。
 
   调用方
   MatchWorkflow 初始化与测试。
 
   输入
-  random，返回 [0, 1) 数值的随机函数。
+  random，返回 [0, 1) 数值的随机函数；mode 为 two、three 或 random。
 
   输出
   与座位索引一一对应的 dawn/dusk 数组。
@@ -35,12 +27,33 @@ export class TeamAssignment {
   random、Array.reverse、Array.map。
 
   边界与不变量
-  人数配置必须闭合；两名小队成员始终隔座，随机调用顺序保持阵营、翻转、旋转三步。
+  人数配置必须闭合且两名小队成员始终隔座；random 保持旧阵营、翻转、旋转三次调用，固定模式不执行规模抽签。
   */
-  static assignTeams(random = Math.random) {
+  static assignTeams(random = Math.random, mode) {
     if (RULESET_DEFINITION.smallTeamSize + RULESET_DEFINITION.largeTeamSize !== RULESET_DEFINITION.playerCount) {
       throw new Error("阵营人数配置之和必须等于玩家总数");
     }
+    if (!TEAM_ASSIGNMENT_MODES.includes(mode)) throw new TypeError(`未知编队方式：${mode}`);
+
+    if (mode !== TEAM_ASSIGNMENT_MODE.RANDOM) {
+      const humanTeam = random() < 0.5 ? "dawn" : "dusk";
+      const opposingTeam = humanTeam === "dawn" ? "dusk" : "dawn";
+      if (mode === TEAM_ASSIGNMENT_MODE.TWO) {
+        const teammateSeats = [2, 3];
+        const teammateSeat = teammateSeats[Math.floor(random() * teammateSeats.length)];
+        return Array.from(
+          { length: RULESET_DEFINITION.playerCount },
+          (_, seatIndex) => seatIndex === 0 || seatIndex === teammateSeat ? humanTeam : opposingTeam
+        );
+      }
+      const opposingSeatPairs = [[1, 3], [1, 4], [2, 4]];
+      const opposingSeats = opposingSeatPairs[Math.floor(random() * opposingSeatPairs.length)];
+      return Array.from(
+        { length: RULESET_DEFINITION.playerCount },
+        (_, seatIndex) => opposingSeats.includes(seatIndex) ? opposingTeam : humanTeam
+      );
+    }
+
     const smallTeam = random() < 0.5 ? "dawn" : "dusk";
     const largeTeam = smallTeam === "dawn" ? "dusk" : "dawn";
     // 两名小队成员固定隔座，再随机旋转与翻转；因此永不相邻且真人仍可能进入任一队。

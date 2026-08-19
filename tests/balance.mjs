@@ -178,7 +178,7 @@ async function runOneGame(createApplication, index, config) {
     game.aiSearchNodeBudgetOverride = config.searchNodeBudget;
     game.cleanupManager.delay = async () => !game.state.isDisposed;
 
-    const candidates = game.startSelection();
+    const candidates = game.startSelection("random");
     if (!candidates.length) throw new Error(`第 ${index} 局没有可选角色`);
     game.state.players[0].controllerType = "ai";
 

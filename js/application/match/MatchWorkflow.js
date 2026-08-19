@@ -26,6 +26,7 @@ import { setCurrentPlayerIndex, setGameOver, setMatchPhase, setWinnerTeam } from
 import { applyCharacterDefinition } from "../../domain/state/transitions/PlayerStateTransitions.js";
 import { resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js";
 import { createGameOverFact, createGameStartFact } from "../../domain/events/MatchEvents.js";
+import { TEAM_ASSIGNMENT_MODES } from "./TeamAssignmentMode.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "createId", "createPlayer", "assignTeams",
@@ -50,7 +51,7 @@ composition root。
 显式注入的 setup/transition/card-zone/match-start/lifecycle collaborators。
 
 输出
-冻结 { startSelection, confirmCharacter, checkVictory, dispose }。
+  冻结 { startSelection, confirmCharacter, checkVictory, dispose } 与只读征召状态。
 
 读取状态
 无。
@@ -76,6 +77,7 @@ export function createMatchWorkflow(dependencies) {
   };
   let liveAuthoritativeMatch = false;
   let candidates = [];
+  let teamAssignmentMode = null;
 
   /*
   功能
@@ -113,47 +115,36 @@ export function createMatchWorkflow(dependencies) {
 
   /*
   功能
-  生成阵营、玩家花名册与四名候选角色。
+  锁定本次编队方式并生成四名候选角色。
 
   调用方
   match application.startSelection boundary。
 
   输入
-  无。
+  teamAssignmentMode，two、three 或 random。
 
   输出
   候选角色数组。
 
   读取状态
-  MatchState 与 random capability。
+  MatchState 与合法编队方式集合。
 
   写入状态
-  pre-live roster/maxEnergy/candidates。
+  workflow 的 teamAssignmentMode 与 candidates。
 
   调用函数
-  assignTeams、createPlayer、getMaxEnergy、createCandidates、emitEvent。
+  createCandidates。
 
   边界与不变量
-  controllerType 是 Application participant metadata；真人固定 seat 0；RNG call order 不变。
+  每局只能选择一次模式；角色确认前不解析队伍规模或创建玩家花名册。
   */
-  function startSelection() {
+  function startSelection(selectedMode) {
     const state = runtime.getState();
     if (state.isDisposed) return [];
-    const teams = runtime.assignTeams();
-    const roster = teams.map((battleTeam, seatIndex) => runtime.createPlayer({
-      id: runtime.createId("player"),
-      seatIndex,
-      battleTeam,
-      controllerType: seatIndex === 0 ? "human" : "ai"
-    }));
-    commitPreLiveSetup("rosterCommitted", () => runtime.setRoster(roster));
-    for (const player of state.players) {
-      commitPreLiveSetup("maxEnergyCommitted", () => {
-        runtime.setMaxEnergy(player, getMaxEnergy({ players: state.players }, player));
-      });
-    }
+    if (teamAssignmentMode) throw new Error("编队方式已确认，不能重复开始征召");
+    if (!TEAM_ASSIGNMENT_MODES.includes(selectedMode)) throw new TypeError(`未知编队方式：${selectedMode}`);
+    teamAssignmentMode = selectedMode;
     candidates = runtime.createCandidates();
-    runtime.emitEvent("teamAssigned", { type: "teamAssigned", players: state.players });
     return candidates;
   }
 
@@ -171,22 +162,37 @@ export function createMatchWorkflow(dependencies) {
   true；session 失效返回 false；无效选择抛错。
 
   读取状态
-  candidates、players、random、team rules 与 deck。
+  teamAssignmentMode、candidates、random、team rules 与 deck。
 
   写入状态
   pre-live startingPlayerIndex 经 one-shot commit；其余 Domain 写入经 transitions。
 
   调用函数
-  applyCharacterDefinition、registerGlobalRules、registerPassiveSkills、buildDeck、resetTurnFlags、resetRoundFlags、drawCards、setCurrentPlayerIndex、emitEvent、startTurnLoop。
+  assignTeams、createPlayer、getMaxEnergy、applyCharacterDefinition、registerGlobalRules、registerPassiveSkills、buildDeck、resetTurnFlags、resetRoundFlags、drawCards、setCurrentPlayerIndex、emitEvent、startTurnLoop。
 
   边界与不变量
-  初始事件/抽牌顺序与旧 confirmCharacter 完全一致；每个 await 保留 session 检查。
+  只在角色确认后解析编队方式；random 复用 TeamAssignment 旧随机语义，固定模式不执行规模抽签；每个 await 保留 session 检查。
   */
   async function confirmCharacter(characterId) {
     const state = runtime.getState();
     const gameId = state.gameId;
+    if (!teamAssignmentMode) throw new Error("尚未选择编队方式");
     const selected = candidates.find((character) => character.id === characterId);
     if (!selected || state.selectedCharacterId) throw new Error("角色选择无效或已确认");
+    const teams = runtime.assignTeams(teamAssignmentMode);
+    const roster = teams.map((battleTeam, seatIndex) => runtime.createPlayer({
+      id: runtime.createId("player"),
+      seatIndex,
+      battleTeam,
+      controllerType: seatIndex === 0 ? "human" : "ai"
+    }));
+    commitPreLiveSetup("rosterCommitted", () => runtime.setRoster(roster));
+    for (const player of state.players) {
+      commitPreLiveSetup("maxEnergyCommitted", () => {
+        runtime.setMaxEnergy(player, getMaxEnergy({ players: state.players }, player));
+      });
+    }
+    runtime.emitEvent("teamAssigned", { type: "teamAssigned", players: state.players });
     const human = state.players[0];
     applyCharacterDefinition(state, human, selected);
     human.character = selected;
@@ -313,6 +319,8 @@ export function createMatchWorkflow(dependencies) {
   function dispose() {
     const state = runtime.getState();
     if (state.isDisposed) return;
+    teamAssignmentMode = null;
+    candidates = [];
     runtime.markDisposed();
     runtime.resetActionLocks();
     runtime.cleanupManagerCleanup();
@@ -326,6 +334,32 @@ export function createMatchWorkflow(dependencies) {
   }
 
   return Object.freeze({
+    /*
+    功能
+    返回当前征召已选择的编队方式。
+
+    调用方
+    main workflow、tests 与 lifecycle diagnostics。
+
+    输入
+    无。
+
+    输出
+    two、three、random 或尚未选择时的 null。
+
+    读取状态
+    teamAssignmentMode。
+
+    写入状态
+    无。
+
+    调用函数
+    无。
+
+    边界与不变量
+    仅 startSelection 可设置，dispose 必须重置为 null。
+    */
+    get teamAssignmentMode() { return teamAssignmentMode; },
     /*
     功能
     返回当前 pre-live setup 标记。

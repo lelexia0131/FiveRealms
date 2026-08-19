@@ -887,7 +887,7 @@ class MatchApplication {
       isSessionValid: (gameId) => this.isSessionValid(gameId),
       createId,
       createPlayer: (options) => new Player(options),
-      assignTeams: () => TeamAssignment.assignTeams(this.random),
+      assignTeams: (mode) => TeamAssignment.assignTeams(this.random, mode),
       createCandidates: () => this.characterSelection.createCandidates(),
       assignAiCharacters: (...args) => this.characterSelection.assignAiCharacters(...args),
       emitEvent: (type, payload) => this.eventDispatcher.emit(type, payload),

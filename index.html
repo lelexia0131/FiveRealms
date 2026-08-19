@@ -52,7 +52,7 @@
           </div>
         </div>
         <ol>
-          <li><strong>随机结盟</strong><span>五名角色公开分为2人与3人阵营。</span></li>
+          <li><strong>选择编队</strong><span>决定加入2人小队、3人大队或交给命运。</span></li>
           <li><strong>轮流行动</strong><span>摸牌、出牌、弃牌，阵亡角色会被跳过。</span></li>
           <li><strong>即时响应</strong><span>用格挡、反制与濒死调息改变结算。</span></li>
           <li><strong>全灭即胜</strong><span>让敌方全部阵亡，你的阵营便会获胜。</span></li>
@@ -61,11 +61,90 @@
       </div>
     </section>
 
+    <section id="squad-selection-screen" class="screen squad-selection-screen is-hidden"
+      aria-labelledby="squad-selection-title">
+      <header class="squad-selection-header">
+        <div>
+          <p class="eyebrow">本局征召</p>
+          <h2 id="squad-selection-title">选择编队方式</h2>
+          <p>决定本局你所在阵营的规模</p>
+        </div>
+        <div class="audio-controls">
+          <button class="toggle-button audio-toggle-button" type="button" data-audio-toggle aria-pressed="true"><i
+              aria-hidden="true"></i><span>声音：开</span></button>
+          <label class="music-volume-control"><span>BGM</span><input type="range" min="0" max="100" value="75"
+              data-music-volume aria-label="背景音乐音量" /></label>
+        </div>
+      </header>
+
+      <div id="squad-mode-grid" class="squad-mode-grid">
+        <button class="squad-mode-card mode-two" type="button" data-team-assignment-mode="two">
+          <span class="squad-mode-kicker">双锋</span>
+          <span class="squad-mode-visual" aria-hidden="true">
+            <svg viewBox="0 0 180 120" focusable="false">
+              <path class="mode-trace" d="M27 95L73 31M107 31l46 64" />
+              <path class="mode-blade" d="M55 96L84 39l-5-16-12 11-25 55zM125 96L96 39l5-16 12 11 25 55z" />
+              <circle cx="62" cy="35" r="13" />
+              <circle cx="118" cy="35" r="13" />
+              <path d="M43 78c4-20 12-29 19-29s15 9 19 29M99 78c4-20 12-29 19-29s15 9 19 29" />
+            </svg>
+            <strong>2</strong>
+          </span>
+          <span class="squad-mode-copy">
+            <strong>二人小队</strong>
+            <span>1 名队友</span>
+            <small>对抗 3 名敌人</small>
+          </span>
+        </button>
+
+        <button class="squad-mode-card mode-three" type="button" data-team-assignment-mode="three">
+          <span class="squad-mode-kicker">协阵</span>
+          <span class="squad-mode-visual" aria-hidden="true">
+            <svg viewBox="0 0 180 120" focusable="false">
+              <path class="mode-trace" d="M90 22L42 91h96zM90 22v69M42 91l48-31 48 31" />
+              <circle cx="90" cy="27" r="13" />
+              <circle cx="48" cy="86" r="13" />
+              <circle cx="132" cy="86" r="13" />
+              <path d="M72 64c4-18 11-25 18-25s14 7 18 25M30 112c4-18 11-25 18-25s14 7 18 25M114 112c4-18 11-25 18-25s14 7 18 25" />
+            </svg>
+            <strong>3</strong>
+          </span>
+          <span class="squad-mode-copy">
+            <strong>三人大队</strong>
+            <span>2 名队友</span>
+            <small>对抗 2 名敌人</small>
+          </span>
+        </button>
+
+        <button class="squad-mode-card mode-random" type="button" data-team-assignment-mode="random">
+          <span class="squad-mode-kicker">命运</span>
+          <span class="squad-mode-visual" aria-hidden="true">
+            <svg viewBox="0 0 180 120" focusable="false">
+              <path class="mode-trace" d="M25 60h35c21 0 24-31 48-31h36M25 60h35c21 0 24 31 48 31h36" />
+              <path class="mode-arrow" d="M133 17l13 12-13 12M133 79l13 12-13 12" />
+              <circle cx="25" cy="60" r="8" />
+              <circle cx="91" cy="60" r="11" />
+              <path d="M84 60h14M91 53v14" />
+              <circle cx="111" cy="29" r="5" />
+              <circle cx="111" cy="91" r="5" />
+            </svg>
+            <strong>?</strong>
+          </span>
+          <span class="squad-mode-copy">
+            <strong>随机分配</strong>
+            <span>由命运决定</span>
+            <small>随机加入二人或三人阵营</small>
+          </span>
+        </button>
+      </div>
+    </section>
+
     <section id="selection-screen" class="screen selection-screen is-hidden" aria-labelledby="selection-title">
       <header class="selection-header">
         <div>
-          <p class="eyebrow">角色征召</p>
-          <h2 id="selection-title">从四名旅者中选择你的化身</h2>
+          <p id="selection-eyebrow" class="eyebrow">角色征召</p>
+          <h2 id="selection-title">选择你的角色</h2>
+          <p id="selection-copy" class="selection-copy"></p>
         </div>
         <div class="selection-status">
           <div id="team-preview" class="team-preview" aria-live="polite"></div>
@@ -149,7 +228,7 @@
             <p class="eyebrow">对局终幕</p>
             <h2 id="game-over-title">胜负已定</h2>
             <p id="game-over-copy"></p>
-            <button id="play-again-button" class="primary-button" type="button">再开一局</button>
+            <button id="play-again-button" class="primary-button" type="button">下一局</button>
           </div>
         </section>
 

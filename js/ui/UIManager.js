@@ -17,6 +17,31 @@ import { createOpponentHandView } from "./handVisibility.js";
 import { toggleCardSelection } from "./selectionUtils.js";
 import { SoundManager } from "../audio/SoundManager.js";
 import { normalizeAiSpeed, readAiSpeedPreference, writeAiSpeedPreference } from "../utils/aiTiming.js";
+import { TEAM_ASSIGNMENT_MODE } from "../application/match/TeamAssignmentMode.js";
+
+const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
+  [TEAM_ASSIGNMENT_MODE.TWO]: Object.freeze({
+    eyebrow: "双锋 · 角色征召",
+    title: "二人小队征召",
+    copy: "选择你的角色 · 你将拥有 1 名队友",
+    preview: "二人小队",
+    detail: "1 名队友 · 对抗 3 名敌人"
+  }),
+  [TEAM_ASSIGNMENT_MODE.THREE]: Object.freeze({
+    eyebrow: "协阵 · 角色征召",
+    title: "三人大队征召",
+    copy: "选择你的角色 · 你将拥有 2 名队友",
+    preview: "三人大队",
+    detail: "2 名队友 · 对抗 2 名敌人"
+  }),
+  [TEAM_ASSIGNMENT_MODE.RANDOM]: Object.freeze({
+    eyebrow: "命运 · 角色征召",
+    title: "随机征召",
+    copy: "选择你的角色 · 阵营规模将在本局随机决定",
+    preview: "随机分配",
+    detail: "随机加入二人或三人阵营"
+  })
+});
 
 /*
 功能
@@ -161,7 +186,8 @@ export class UIManager {
   */
   constructor() {
     this.elements = Object.fromEntries([
-      "start-screen", "selection-screen", "game-screen", "start-button", "candidate-grid", "team-preview",
+      "start-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button",
+      "squad-mode-grid", "candidate-grid", "selection-eyebrow", "selection-title", "selection-copy", "team-preview",
       "status-metrics", "restart-button", "cpu-grid", "human-panel", "human-hand", "hand-hint",
       "thinking-indicator", "current-card", "action-prompt", "private-reveal", "response-panel",
       "public-pool-view", "judgment-view", "dying-view", "duel-view",
@@ -387,6 +413,13 @@ export class UIManager {
     this.elements.start_button.addEventListener("click", () => { void this.sound.unlock(); this.playSound("select"); this.callbacks.onStart?.(); });
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
+    this.elements.squad_mode_grid.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-team-assignment-mode]");
+      if (button) {
+        this.playSound("select");
+        this.callbacks.onSelectTeamAssignmentMode?.(button.dataset.teamAssignmentMode);
+      }
+    });
     this.elements.candidate_grid.addEventListener("click", (event) => {
       const button = event.target.closest("[data-character-id]");
       if (button) { this.playSound("select"); this.callbacks.onSelectCharacter?.(button.dataset.characterId); }
@@ -465,19 +498,57 @@ export class UIManager {
     this.sound.stopMusic();
     this.clearLog();
     this.elements.start_screen.classList.remove("is-hidden");
+    this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
   }
 
   /*
   功能
-  展示当前阵营的角色候选选择屏幕。
+  展示独立的编队方式选择界面。
+
+  调用方
+  main 的首次开始、重新征召与下一局 workflow。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  页面屏幕元素与 SoundManager。
+
+  写入状态
+  停止旧阵营音乐、清理旧交互/日志并仅显示编队方式屏幕。
+
+  调用函数
+  SoundManager.stopMusic、cancelPendingInteractions、resetCurrentCard、clearLog。
+
+  边界与不变量
+  只展示选择入口，不保存模式或解析阵营规模。
+  */
+  showSquadSelection() {
+    this.sound.stopMusic();
+    this.cancelPendingInteractions();
+    this.resetCurrentCard();
+    this.clearLog();
+    this.elements.start_screen.classList.add("is-hidden");
+    this.elements.selection_screen.classList.add("is-hidden");
+    this.elements.game_screen.classList.add("is-hidden");
+    this.elements.squad_selection_screen.classList.remove("is-hidden");
+    this.elements.game_over_overlay.classList.add("is-hidden");
+  }
+
+  /*
+  功能
+  展示当前编队方式的角色候选选择屏幕。
 
   调用方
   MatchWorkflow.startSelection 经 session UI。
 
   输入
-  公开角色候选数组与真人阵营 ID。
+  公开角色候选数组与 teamAssignmentMode。
 
   输出
   无返回值。
@@ -486,24 +557,30 @@ export class UIManager {
   候选 presentation 与页面屏幕元素。
 
   写入状态
-  清理旧交互/日志/结算牌，切换 BGM 与候选 DOM。
+  清理旧交互/日志/结算牌，写入模式上下文与候选 DOM。
 
   调用函数
-  SoundManager.setMusicTeam、cancelPendingInteractions、candidateCardTemplate。
+  SoundManager.stopMusic、cancelPendingInteractions、candidateCardTemplate。
 
   边界与不变量
-  只展示公开候选；切换屏幕前必须收束上一会话交互。
+  只展示公开候选和已确认 mode；真人阵营尚未解析，不得提前启动阵营 BGM。
   */
-  showSelection(candidates, battleTeam) {
-    this.sound.setMusicTeam(battleTeam);
+  showSelection(candidates, teamAssignmentMode) {
+    const presentation = TEAM_ASSIGNMENT_PRESENTATION[teamAssignmentMode];
+    if (!presentation) throw new TypeError(`未知编队方式：${teamAssignmentMode}`);
+    this.sound.stopMusic();
     this.cancelPendingInteractions();
     this.resetCurrentCard();
     this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
+    this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.remove("is-hidden");
     this.elements.game_over_overlay.classList.add("is-hidden");
-    this.elements.team_preview.innerHTML = `<span>你的本局阵营</span><strong class="team-${battleTeam}">${TEAM_PRESENTATION[battleTeam].name}</strong>`;
+    this.elements.selection_eyebrow.textContent = presentation.eyebrow;
+    this.elements.selection_title.textContent = presentation.title;
+    this.elements.selection_copy.textContent = presentation.copy;
+    this.elements.team_preview.innerHTML = `<span>当前编队</span><strong>${presentation.preview}</strong><small>${presentation.detail}</small>`;
     this.elements.candidate_grid.innerHTML = candidates.map(candidateCardTemplate).join("");
   }
 
@@ -537,11 +614,12 @@ export class UIManager {
     this.resetCurrentCard();
     this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
+    this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.remove("is-hidden");
     this.setLogCollapsed(window.innerWidth < 1280);
     this.viewportWasNarrow = window.innerWidth < 1280;
-    if (game.state.players.every((player) => player.character)) this.render(game);
+    if (game.state.players.length && game.state.players.every((player) => player.character)) this.render(game);
   }
 
   /*

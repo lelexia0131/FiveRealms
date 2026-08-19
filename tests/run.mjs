@@ -1422,7 +1422,7 @@ test("牌堆：重洗计数会准确累加", () => {
 
 test("阵营：始终严格2V3", () => {
   for (let i = 0; i < 50; i += 1) {
-    const teams = TeamManager.assignTeams(() => (i % 17) / 17);
+    const teams = TeamManager.assignTeams(() => (i % 17) / 17, "random");
     const dawn = teams.filter((t) => t === "dawn").length;
     const dusk = teams.filter((t) => t === "dusk").length;
     assert.deepEqual([dawn, dusk].sort(), [2, 3]);
@@ -1431,7 +1431,7 @@ test("阵营：始终严格2V3", () => {
 
 test("阵营：小队两名成员在环形座位上不相邻", () => {
   for (let i = 0; i < 40; i += 1) {
-    const teams = TeamManager.assignTeams(() => (i % 19) / 19);
+    const teams = TeamManager.assignTeams(() => (i % 19) / 19, "random");
     const small = ["dawn", "dusk"].find((team) => teams.filter((entry) => entry === team).length === 2);
     const seats = teams.map((team, index) => team === small ? index : -1).filter((index) => index >= 0);
     const raw = Math.abs(seats[0] - seats[1]);
@@ -1439,13 +1439,33 @@ test("阵营：小队两名成员在环形座位上不相邻", () => {
   }
 });
 
-test("阵营：真人座位可以随机进入小队或大队", () => {
-  const sizes = new Set();
-  for (let i = 0; i < 60; i += 1) {
-    const teams = TeamManager.assignTeams(() => ((i * 7) % 61) / 61);
-    sizes.add(teams.filter((team) => team === teams[0]).length);
+test("阵营：随机编队保持旧三次 RNG 与真人 2/5 进入二人阵营的语义", () => {
+  const sizes = [], callCounts = [];
+  for (let rotation = 0; rotation < 5; rotation += 1) {
+    const rolls = [0.25, 0.75, (rotation + 0.1) / 5];
+    let calls = 0;
+    const teams = TeamManager.assignTeams(() => rolls[calls++], "random");
+    sizes.push(teams.filter((team) => team === teams[0]).length);
+    callCounts.push(calls);
   }
-  assert.deepEqual([...sizes].sort(), [2, 3]);
+  assert.deepEqual(sizes.filter((size) => size === 2).length, 2);
+  assert.deepEqual(sizes.filter((size) => size === 3).length, 3);
+  assert.deepEqual(callCounts, [3, 3, 3, 3, 3]);
+});
+
+test("阵营：固定二人或三人模式不执行随机规模决策", () => {
+  for (const [mode, expectedHumanSize] of [["two", 2], ["three", 3]]) {
+    for (const formationRoll of [0.05, 0.45, 0.95]) {
+      const rolls = [0.25, formationRoll];
+      let calls = 0;
+      const teams = TeamManager.assignTeams(() => rolls[calls++], mode);
+      const humanSize = teams.filter((team) => team === teams[0]).length;
+      const enemySize = teams.length - humanSize;
+      assert.equal(humanSize, expectedHumanSize, mode);
+      assert.equal(enemySize, 5 - expectedHumanSize, mode);
+      assert.equal(calls, 2, `${mode} 只能随机阵营名与合法阵型`);
+    }
+  }
 });
 
 // ---- 回合 ----
@@ -1483,7 +1503,7 @@ test("回合：初始发牌静默但仍走标准移动事件且正式摸牌继�
   game.eventDispatcher.on("afterCardMove", "test:initial-deal-standard-moves", (event) => {
     if (event.from === "deck" && event.to === "hand") moveReasons.push(event.reason);
   });
-  const candidates = game.startSelection();
+  const candidates = game.startSelection("random");
   await game.confirmCharacter(candidates[0].id);
   const initialHandCount = game.state.players.reduce((sum, player) => sum + player.hand.length, 0);
   assert.equal(
@@ -3485,21 +3505,68 @@ async function frArch9MatchSetupBoundary() {
   game.simulationMode = true;
   game.runGameLoop = async () => { };
   const versionBeforeRoster = game.state.stateVersion;
-  const candidates = game.startSelection();
+  const candidates = game.startSelection("random");
   assert.equal(candidates.length, 4);
-  assert.equal(game.state.players.length, 5);
-  assert.equal(game.state.stateVersion, versionBeforeRoster, "pre-live roster/maxEnergy 不 bump stateVersion");
-  assert.equal(game.matchWorkflow.preLiveSetup.rosterCommitted, true);
-  assert.equal(game.matchWorkflow.preLiveSetup.maxEnergyCommitted, true);
+  assert.equal(game.state.players.length, 0, "角色确认前不得提前生成阵营");
+  assert.equal(game.matchWorkflow.teamAssignmentMode, "random");
+  assert.equal(game.state.stateVersion, versionBeforeRoster, "候选角色与模式选择不 bump stateVersion");
+  assert.equal(game.matchWorkflow.preLiveSetup.rosterCommitted, false);
+  assert.equal(game.matchWorkflow.preLiveSetup.maxEnergyCommitted, false);
   assert.equal(game.matchWorkflow.liveAuthoritativeMatch, false);
   await game.confirmCharacter(candidates[0].id);
+  assert.equal(game.state.players.length, 5);
+  assert.equal(game.matchWorkflow.preLiveSetup.rosterCommitted, true);
+  assert.equal(game.matchWorkflow.preLiveSetup.maxEnergyCommitted, true);
   assert.equal(game.matchWorkflow.liveAuthoritativeMatch, true);
   assert.equal(game.state.startingPlayerIndex, 1);
   assert.ok(game.state.stateVersion > versionBeforeRoster, "live setup transitions 后 stateVersion authoritative");
-  assert.throws(() => game.startSelection(), /pre-live setup/);
+  assert.throws(() => game.startSelection("random"), /编队方式已确认/);
 }
 
 test("Match setup：pre-live one-shot，live 后拒绝重复 setup", frArch9MatchSetupBoundary);
+
+test("Match setup：二人小队在角色确认后生成真人 2 人阵营", async () => {
+  const game = createGameApplication(makeUi(), () => 0.25);
+  game.simulationMode = true;
+  game.runGameLoop = async () => { };
+  const candidates = game.startSelection("two");
+  assert.equal(game.state.players.length, 0);
+  await game.confirmCharacter(candidates[0].id);
+  const human = game.state.players[0];
+  assert.equal(game.state.players.filter((player) => player.battleTeam === human.battleTeam).length, 2);
+  assert.equal(game.state.players.filter((player) => player.battleTeam !== human.battleTeam).length, 3);
+  game.dispose();
+  await game.loopPromise;
+});
+
+test("Match setup：三人大队在角色确认后生成真人 3 人阵营", async () => {
+  const game = createGameApplication(makeUi(), () => 0.25);
+  game.simulationMode = true;
+  game.runGameLoop = async () => { };
+  const candidates = game.startSelection("three");
+  assert.equal(game.state.players.length, 0);
+  await game.confirmCharacter(candidates[0].id);
+  const human = game.state.players[0];
+  assert.equal(game.state.players.filter((player) => player.battleTeam === human.battleTeam).length, 3);
+  assert.equal(game.state.players.filter((player) => player.battleTeam !== human.battleTeam).length, 2);
+  game.dispose();
+  await game.loopPromise;
+});
+
+test("Match setup：随机编队只在角色确认后解析为 2 人或 3 人阵营", async () => {
+  const game = createGameApplication(makeUi(), () => 0.25);
+  game.simulationMode = true;
+  game.runGameLoop = async () => { };
+  const candidates = game.startSelection("random");
+  assert.equal(game.state.players.length, 0);
+  await game.confirmCharacter(candidates[0].id);
+  const human = game.state.players[0];
+  assert.ok([2, 3].includes(
+    game.state.players.filter((player) => player.battleTeam === human.battleTeam).length
+  ));
+  game.dispose();
+  await game.loopPromise;
+});
 
 /*
 功能
@@ -41789,6 +41856,82 @@ test("私人情报异步边界：真人窥隙在收起情报前阻塞 EventDispa
 test("私人情报异步边界：pending reveal 时 dispose 清理后旧 scout 不写 stale log/mutation", privateRevealDisposeInvalidatesPendingScout);
 test("私人情报异步边界：PrivateRevealView.hide settle pending show Promise 并清空 overlay", privateRevealViewHideSettlesPendingShow);
 
+// ---- 编队与征召 ----
+
+test("UI·编队方式：独立界面提供三张原生按钮卡与专属 SVG", async () => {
+  const [index, charactersCss, layoutCss] = await Promise.all([
+    readFile(projectFile("index.html"), "utf8"),
+    readFile(projectFile("css/characters.css"), "utf8"),
+    readFile(projectFile("css/layout.css"), "utf8")
+  ]);
+  const screen = index.match(/<section id="squad-selection-screen"[\s\S]*?<\/section>/)?.[0] ?? "";
+  const cards = [...screen.matchAll(
+    /<button[^>]*data-team-assignment-mode="([^"]+)"[\s\S]*?<\/button>/g
+  )];
+  assert.ok(index.indexOf('id="squad-selection-screen"') < index.indexOf('id="selection-screen"'));
+  assert.deepEqual(cards.map((match) => match[1]), ["two", "three", "random"]);
+  assert.deepEqual(cards.map((match) => /<svg\b/.test(match[0])), [true, true, true]);
+  assert.match(charactersCss, /\.squad-mode-card:hover/);
+  assert.match(charactersCss, /\.squad-mode-card:focus-visible/);
+  assert.match(charactersCss, /\.squad-mode-card:active/);
+  assert.match(layoutCss, /\.squad-mode-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,/s);
+  assert.match(layoutCss, /@media\s*\(max-width:\s*760px\)[\s\S]*?\.squad-mode-grid\s*\{[^}]*grid-template-columns:\s*1fr/s);
+});
+
+test("UI·编队方式：开始、重新征召与下一局统一回到模式选择", async () => {
+  const [main, index] = await Promise.all([
+    readFile(projectFile("js/main.js"), "utf8"),
+    readFile(projectFile("index.html"), "utf8")
+  ]);
+  assert.match(main, /onStart:\s*startRecruitment/);
+  assert.match(main, /onRestart:\s*startRecruitment/);
+  assert.match(main, /onSelectTeamAssignmentMode\(teamAssignmentMode\)/);
+  assert.match(main, /function startRecruitment\(\)[\s\S]*?ui\.showSquadSelection\(\)/);
+  assert.match(index, /id="restart-button"[\s\S]*id="play-again-button"/);
+});
+
+test("UI·编队方式：角色选择页显示 two、three 与 random 的征召上下文", () => {
+  const classes = () => {
+    const values = new Set(["is-hidden"]);
+    return {
+      add: (name) => values.add(name),
+      remove: (name) => values.delete(name),
+      contains: (name) => values.has(name)
+    };
+  };
+  const elements = {
+    start_screen: { classList: classes() },
+    squad_selection_screen: { classList: classes() },
+    selection_screen: { classList: classes() },
+    game_screen: { classList: classes() },
+    game_over_overlay: { classList: classes() },
+    selection_eyebrow: { textContent: "" },
+    selection_title: { textContent: "" },
+    selection_copy: { textContent: "" },
+    team_preview: { innerHTML: "" },
+    candidate_grid: { innerHTML: "" }
+  };
+  const context = {
+    sound: { stopMusic() { } },
+    cancelPendingInteractions() { },
+    resetCurrentCard() { },
+    clearLog() { },
+    elements
+  };
+  UIManager.prototype.showSquadSelection.call(context);
+  assert.equal(elements.squad_selection_screen.classList.contains("is-hidden"), false);
+  for (const [mode, title, copy] of [
+    ["two", "二人小队征召", "你将拥有 1 名队友"],
+    ["three", "三人大队征召", "你将拥有 2 名队友"],
+    ["random", "随机征召", "阵营规模将在本局随机决定"]
+  ]) {
+    UIManager.prototype.showSelection.call(context, [], mode);
+    assert.equal(elements.selection_title.textContent, title);
+    assert.match(elements.selection_copy.textContent, new RegExp(copy));
+    assert.match(elements.team_preview.innerHTML, new RegExp(title.replace("征召", "")));
+  }
+});
+
 // ---- 玩家面板与技能详情 ----
 
 test("UI·玩家文案：阶段、队友与关键卡牌描述采用统一玩家术语", () => {
@@ -43411,7 +43554,7 @@ test("UI·日志：同句连势技能名为蓝色而累计状态名保持卡牌�
   assert.equal((rendered.match(/log-card-name/g) ?? []).length, 1);
 });
 
-test("UI·结束页面：结果层只覆盖战场且与可滚动日志和再开一局按钮共存", async () => {
+test("UI·结束页面：结果层只覆盖战场且与可滚动日志和下一局按钮共存", async () => {
   const [index, layout, components] = await Promise.all([
     readFile(projectFile("index.html"), "utf8"),
     readFile(projectFile("css/layout.css"), "utf8"),
@@ -43461,7 +43604,7 @@ test("UI·结束页面：结束时保留现有日志且进入下一局选择时�
   let visibleLogCount = 2;
   const classList = { add() { }, remove() { } };
   UIManager.prototype.showSelection.call({
-    sound: { setMusicTeam() { } },
+    sound: { stopMusic() { } },
     cancelPendingInteractions() { },
     resetCurrentCard() { },
     clearLog() {
@@ -43470,10 +43613,13 @@ test("UI·结束页面：结束时保留现有日志且进入下一局选择时�
       visibleLogCount = 0;
     },
     elements: {
-      start_screen: { classList }, game_screen: { classList }, selection_screen: { classList },
-      game_over_overlay: overlay, team_preview: { innerHTML: "" }, candidate_grid: { innerHTML: "" }
+      start_screen: { classList }, squad_selection_screen: { classList }, game_screen: { classList },
+      selection_screen: { classList }, game_over_overlay: overlay,
+      selection_eyebrow: { textContent: "" }, selection_title: { textContent: "" },
+      selection_copy: { textContent: "" }, team_preview: { innerHTML: "" },
+      candidate_grid: { innerHTML: "" }
     }
-  }, [], "dawn");
+  }, [], "random");
   assert.equal(logList.innerHTML, "");
   assert.equal(logList.scrollTop, 0);
   assert.equal(visibleLogCount, 0);
@@ -44893,26 +45039,35 @@ test("BGM：多阵营角色轮流行动全程保持真人主题", async () => {
   fixture.game.dispose();
 });
 
-test("BGM：重新征召时按新局真人阵营切换主题", () => {
-  const themes = [];
+test("BGM：编队与选角阶段停止旧主题且阵营确认后启动真人主题", () => {
+  const themes = [], stops = [];
   const classList = { add() { }, remove() { } };
   const context = {
-    sound: { setMusicTeam: (team) => themes.push(team) },
+    sound: {
+      stopMusic: () => stops.push("stop"),
+      setMusicTeam: (team) => themes.push(team)
+    },
     cancelPendingInteractions() { },
     resetCurrentCard() { },
     clearLog() { },
     elements: {
       start_screen: { classList },
+      squad_selection_screen: { classList },
       game_screen: { classList },
       selection_screen: { classList },
       game_over_overlay: { classList },
+      selection_eyebrow: { textContent: "" },
+      selection_title: { textContent: "" },
+      selection_copy: { textContent: "" },
       team_preview: { innerHTML: "" },
       candidate_grid: { innerHTML: "" }
     }
   };
-  UIManager.prototype.showSelection.call(context, [], "dawn");
-  UIManager.prototype.showSelection.call(context, [], "dusk");
-  assert.deepEqual(themes, ["dawn", "dusk"]);
+  UIManager.prototype.showSquadSelection.call(context);
+  UIManager.prototype.showSelection.call(context, [], "two");
+  UIManager.prototype.setMusicTeam.call(context, "dawn");
+  assert.deepEqual(stops, ["stop", "stop"]);
+  assert.deepEqual(themes, ["dawn"]);
 });
 
 // ==================== 生命周期、异常与 Cleanup ====================
@@ -45805,6 +45960,18 @@ test("生命周期：重新征召 cleanup 会清空隐藏令牌、公共池和�
   assert.equal(game.state.publicCardPool.length, 0);
 });
 
+test("生命周期：新一局不会继承上一局的编队方式", () => {
+  const oldGame = createGameApplication(makeUi(), () => 0.25);
+  assert.equal(oldGame.matchWorkflow.teamAssignmentMode, null);
+  oldGame.startSelection("three");
+  assert.equal(oldGame.matchWorkflow.teamAssignmentMode, "three");
+  oldGame.dispose();
+  assert.equal(oldGame.matchWorkflow.teamAssignmentMode, null);
+  const nextGame = createGameApplication(makeUi(), () => 0.25);
+  assert.equal(nextGame.matchWorkflow.teamAssignmentMode, null);
+  nextGame.dispose();
+});
+
 test("生命周期：重新征召后按新阵营重新设置能量上限和无限调息", async () => {
   const verify = async (seed) => {
     let value = seed;
@@ -45813,7 +45980,7 @@ test("生命周期：重新征召后按新阵营重新设置能量上限和无�
       game = createGameApplication(ui, random);
     game.simulationMode = true;
     game.cleanupManager.delay = async () => !game.state.isDisposed;
-    const candidates = game.startSelection();
+    const candidates = game.startSelection("random");
     for (
       const player of game.state.players
     ) assert.equal(player.maxEnergy, game.teamRules.getTeamSize(player) === 2 ? 4 : 3);

@@ -100,7 +100,7 @@ async function runFullGameDiagnostics({ seed, nodeBudget, gameCount = 3 }) {
         if (!ok) failedPlays += 1;
         return ok;
       };
-      const candidates = game.startSelection();
+      const candidates = game.startSelection("random");
       if (!candidates.length) throw new Error("无可用角色");
       await game.confirmCharacter(candidates[index % candidates.length].id);
       await game.loopPromise;
