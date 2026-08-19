@@ -14,10 +14,10 @@ export class HiddenCardSelectionAdapter {
   MatchApplication composition root。
 
   输入
-  game。
+  getPlayers capability。
 
   输出
-  初始化完成的 HiddenCardChoiceWorkflow。
+  初始化完成的 HiddenCardSelectionAdapter 实例。
 
   读取状态
   无。

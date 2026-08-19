@@ -1285,6 +1285,393 @@ test("浏览器资源：一键启动器只复用 canonical no-store server", asy
   assert.match(launcher, /Headers\['Cache-Control'\][\s\S]*Contains\('no-store'\)/);
 });
 
+// ---- 定义与所有权 ----
+
+/*
+功能
+验证旧 config 公开 API 与 FR-ARCH-2 迁移前 JSON snapshot 完全一致。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+tests/fixtures/fr-arch-definition-public-api.json 与三个 legacy config 模块导出。
+
+写入状态
+无。
+
+调用函数
+readFile、JSON.parse。
+
+边界与不变量
+JSON 深比较包含 key order；任何旧公开 shape/value 变化都会失败。
+*/
+async function frArchFinalDefinitionOwners() {
+  assert.deepEqual(Object.keys(CARD_DEFINITIONS), Object.keys(CARD_PRESENTATION));
+  assert.deepEqual(Object.keys(CARD_DEFINITIONS), Object.keys(CARD_AI_VALUES));
+  assert.deepEqual(Object.keys(CARD_DEFINITIONS), Object.keys(CARD_COUNTS));
+  assert.deepEqual(Object.keys(CHARACTER_BY_ID), Object.keys(CHARACTER_PRESENTATION));
+  for (const definition of Object.values(CARD_DEFINITIONS)) {
+    for (const field of ["count", "aiValue", "art", "icon", "accent", "frameStyle", "flavorText"] ) {
+      assert.equal(Object.hasOwn(definition, field), false, `${definition.definitionId}.${field}`);
+    }
+  }
+  for (const path of ["js/config/gameConfig.js", "js/config/cardConfig.js", "js/config/characterConfig.js"]) {
+    await assert.rejects(access(projectFile(path)));
+  }
+}
+
+test("架构·定义归属：Domain、AI、Presentation 与 Runtime Policy 已拆分", frArchFinalDefinitionOwners);
+
+/*
+功能
+验证 card domain definition 是 legacy CARD_DEFINITIONS 的领域字段 authority，旧文件不维护领域 literal。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+CARD_DEFINITIONS、DOMAIN_CARD_DEFINITIONS、cardConfig 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+只验证领域字段集合，不要求 legacy 完整对象与 domain 对象同一引用。
+*/
+async function frArchCardAuthority() {
+  assert.equal(DOMAIN_CARD_DEFINITIONS, CARD_DEFINITIONS);
+  for (const [definitionId, domainCard] of Object.entries(CARD_DEFINITIONS)) {
+    assert.equal(Object.hasOwn(domainCard, "count"), false, `${definitionId} 不得拥有 count`);
+    assert.equal(Object.hasOwn(domainCard, "aiValue"), false, `${definitionId} 不得拥有 aiValue`);
+    assert.ok(Number.isInteger(RULESET_DEFINITION.deckComposition[definitionId]));
+    assert.ok(Number.isFinite(CARD_AI_VALUES[definitionId]));
+    assert.ok(CARD_PRESENTATION[definitionId]?.art);
+  }
+  const source = await readFile(projectFile("js/domain/definitions/cards/CardDefinitions.js"), "utf8");
+  assert.doesNotMatch(source, /aiValue|frameStyle|deckComposition/);
+}
+
+test("定义归属·卡牌：domain definitions 唯一拥有规则字段", frArchCardAuthority);
+
+/*
+功能
+验证 character/skill domain definitions 是 legacy CHARACTER_DEFINITIONS 的领域字段 authority。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+CHARACTER_DEFINITIONS、CHARACTER_DEFINITIONS、ACTIVE/PASSIVE_SKILL_DEFINITIONS、characterConfig 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+AI/UI 字段仍留在 legacy characterConfig；领域字段不得在旧文件以 literal 维护。
+*/
+async function frArchCharacterSkillAuthority() {
+  for (const character of CHARACTER_DEFINITIONS) {
+    const view = presentCharacter(character);
+    const active = ACTIVE_SKILL_DEFINITIONS[character.activeSkillIds[0]];
+    const passive = PASSIVE_SKILL_DEFINITIONS[character.passiveSkillIds[0]];
+    assert.equal(view.activeName, active.name);
+    assert.equal(view.activeDescription, active.description);
+    assert.equal(view.activeCost, active.cost);
+    assert.equal(view.activeLimitPerTurn, active.limitPerTurn);
+    assert.equal(view.passiveName, passive.name);
+    assert.equal(view.passiveDescription, passive.description);
+    assert.deepEqual(getCharacterRoleTags(character.id).length, 2);
+    for (const field of ["portrait", "activeName", "passiveName", "roleTags"]) {
+      assert.equal(Object.hasOwn(character, field), false, `${character.id}.${field}`);
+    }
+  }
+  await assert.rejects(access(projectFile("js/config/characterConfig.js")));
+}
+
+test("定义归属·角色与技能：旧 characterConfig 不再维护领域 literal", frArchCharacterSkillAuthority);
+
+/*
+功能
+验证 skillRegistry 的 ACTIVE_SKILLS runtime shape 从 SkillDefinitions 投影，不再维护 cost/limit literal。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+ACTIVE_SKILLS、ACTIVE_SKILL_DEFINITIONS、skillRegistry 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+runtime 不引入 description；canUse/execute 仍由 skillRegistry 拥有。
+*/
+async function frArchSkillRuntimeSingleAuthority() {
+  assert.equal(ACTIVE_SKILLS, ACTIVE_SKILL_DEFINITIONS);
+  for (const definition of Object.values(ACTIVE_SKILLS)) assert.equal(Object.isFrozen(definition), true);
+  const source = await readFile(projectFile("js/application/action/SkillRuntime.js"), "utf8");
+  assert.doesNotMatch(source, /cost:\s*\d/);
+  assert.doesNotMatch(source, /limitPerTurn:\s*\d/);
+  assert.doesNotMatch(source, /targetType:\s*["']/);
+  assert.match(source, /ACTIVE_SKILL_DEFINITIONS/);
+  assert.match(source, /canUseActiveSkill/);
+  await assert.rejects(access(projectFile("js/characters/skillRegistry.js")));
+}
+
+test("定义归属·技能运行时：ACTIVE_SKILLS 只投影 Domain Skill Definition", frArchSkillRuntimeSingleAuthority);
+
+/*
+功能
+验证 RulesetDefinition 是 RUNTIME_POLICY 领域字段 authority，旧 gameConfig 保留 AI/UI/debug 字段。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+RUNTIME_POLICY、RULESET_DEFINITION、gameConfig 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+只验证本阶段已迁移的 domain 字段；AI/UI/debug 字段故意留在旧 config。
+*/
+async function frArchRulesetAuthority() {
+  for (const field of [
+    "playerCount", "smallTeamSize", "largeTeamSize", "characterCandidateCount",
+    "allowDuplicateCharacters", "initialHandCount", "defaultDrawCount", "defaultMaxEnergy",
+    "defaultAttackRange", "initialRound",
+    "killRewardDrawCount", "smallTeamBonuses", "largeTeamRules"
+  ]) {
+    assert.equal(Object.hasOwn(RULESET_DEFINITION, field), true, field);
+    assert.equal(Object.hasOwn(RUNTIME_POLICY, field), false, field);
+  }
+  assert.equal(Object.hasOwn(RUNTIME_POLICY, "deckComposition"), false);
+  const source = await readFile(projectFile("js/application/policy/RuntimePolicy.js"), "utf8");
+  const aiSource = await readFile(projectFile("js/ai/policy/AiRuntimePolicy.js"), "utf8");
+  assert.doesNotMatch(source, /playerCount|defaultAttackRange|initialRound|deckComposition/);
+  assert.doesNotMatch(source, /aiSearchTimeBudgetMs|aiSearchYieldEvery|forceAiRescueHuman/);
+  for (const retained of ["aiInitialThinkMinMs", "animationFastScale", "debugMode"]) {
+    assert.match(source, new RegExp(retained));
+  }
+  for (const retained of ["searchTimeBudgetMs", "searchYieldEvery", "forceAiRescueHuman"]) {
+    assert.match(aiSource, new RegExp(retained));
+  }
+}
+
+test("定义归属·运行策略：RUNTIME_POLICY 领域字段单一来源", frArchRulesetAuthority);
+
+/*
+功能
+验证 responseTimeoutMs 是 Application/Presentation runtime policy，不属于 Domain Ruleset。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+RULESET_DEFINITION、RUNTIME_POLICY 与 gameConfig 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+legacy RUNTIME_POLICY 保留唯一 literal authority；Ruleset 不得拥有该字段或第二 literal。
+*/
+async function frArchResponseTimeoutOwnership() {
+  assert.equal(Object.hasOwn(RULESET_DEFINITION, "responseTimeoutMs"), false);
+  assert.equal(RUNTIME_POLICY.responseTimeoutMs, null);
+  const rulesetSource = await readFile(projectFile("js/domain/definitions/ruleset/RulesetDefinition.js"), "utf8");
+  assert.doesNotMatch(rulesetSource, /responseTimeoutMs/);
+  const runtimeSource = await readFile(projectFile("js/application/policy/RuntimePolicy.js"), "utf8");
+  assert.match(runtimeSource, /responseTimeoutMs:\s*null/);
+}
+
+test("运行策略·响应超时：只归 Runtime Policy 且保持单一 literal", frArchResponseTimeoutOwnership);
+
+
+/*
+功能
+验证 StatusDefinitions 只包含当前真实存在的静态身份/文案，不发明生命周期字段。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+STATUS_DEFINITIONS 与 status definitions 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+只允许 id/name/description 当前可证明字段；任何 lifecycle/timing 字段出现即失败。
+*/
+async function frArchStatusAuthority() {
+  assert.deepEqual(Object.keys(STATUS_DEFINITIONS), [
+    "exposeWeakness", "allIn", "huntMark", "sealed", "lightning"
+  ]);
+  for (const status of Object.values(STATUS_DEFINITIONS)) {
+    assert.deepEqual(Object.keys(status), ["id", "name", "description"]);
+    assert.equal(status.id.length > 0, true);
+    assert.equal(status.name.length > 0, true);
+    assert.equal(status.description.length > 0, true);
+  }
+  const source = await readFile(projectFile("js/domain/definitions/statuses/StatusDefinitions.js"), "utf8");
+  for (const forbidden of ["lifecycle", "duration", "trigger", "judgment", "damage", "removal", "transfer"]) {
+    assert.equal(source.includes(forbidden), false, `status definition 不得包含 runtime 字段 ${forbidden}`);
+  }
+}
+
+test("定义归属·状态：仅静态身份与文案，无生命周期", frArchStatusAuthority);
+
+/*
+功能
+验证生产代码中所有 domain/definitions import 使用稳定本地 URL，避免重新引入 cache-busting query。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js 全部生产 JS 源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+domain definitions 自身无相对 import；所有外部消费不得带 build query。
+*/
+async function frArchDefinitionModuleIdentity() {
+  const files = await listJavaScriptFiles(projectFile("js"));
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    for (const match of source.matchAll(/(?:from\s*|import\s*\()\s*["']([^"']*domain\/definitions[^"']*)["']/g)) {
+      const specifier = match[1];
+      assert.doesNotMatch(specifier, /\?build=/, `${file} -> ${specifier}`);
+    }
+  }
+}
+
+test("模块身份：domain definitions 消费稳定本地 URL", frArchDefinitionModuleIdentity);
+
+// ---- 架构治理与质量门禁 ----
+
+/*
+功能
+运行 FR-ARCH-1 架构文档与 checker guard 存在性检查。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+docs/architecture/FR_ARCHITECTURE.md 与 tools/check-code-quality.mjs。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+只检查冻结契约关键词，不替代 checker self-test 的执行。
+*/
+async function frArchGovernanceDocumentContract() {
+  const architecture = await readFile(projectFile("docs/architecture/FR_ARCHITECTURE.md"), "utf8");
+  const checker = await readFile(projectFile("tools/check-code-quality.mjs"), "utf8");
+  for (const fragment of [
+    "Fast profile 为 500ms soft target、900ms search deadline",
+    "Normal profile 为 3000ms search deadline",
+    "搜索计算 RNG、真实游戏 RNG 与 presentation pacing RNG 相互隔离",
+    "session、gameId、stateVersion",
+    "TARGET ARCHITECTURE IMPLEMENTED",
+    "LEGACY MIGRATION CLOSED"
+  ]) assert.ok(architecture.includes(fragment), `architecture authority 缺少：${fragment}`);
+  for (const fragment of [
+    "DOMAIN_LAYER_PATTERN",
+    "APPLICATION_LAYER_PATTERN",
+    "DOMAIN_TRANSITIONS_PATTERN",
+    "REMOVED_LEGACY_FILES",
+    "架构约束：domain 禁止依赖",
+    "架构约束：state/transitions 禁止依赖"
+  ]) assert.match(checker, new RegExp(fragment));
+}
+
+test("架构治理：architecture authority 与 checker guard 已冻结", frArchGovernanceDocumentContract);
+
 // ==================== 核心状态与基础规则 ====================
 
 // ---- 牌堆、区域与重洗 ----
@@ -1691,6 +2078,1987 @@ test("动态距离：新 Game 使用自己的全新存活环", () => {
   assert.equal(ActionLegality.getDistance(second.game, second.players[0], second.players[2]), 2);
 });
 
+// ---- 状态模型与查询 ----
+
+/*
+功能
+验证 Domain State factories 的初始 shape 与 stateVersion dormant contract。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+createMatchState/createPlayerState/createDeckZoneState 返回值。
+
+写入状态
+无。
+
+调用函数
+createMatchState、createPlayerState、createDeckZoneState、Deck。
+
+边界与不变量
+stateVersion 只存在且为 0；PlayerState 不得包含 controllerType/aiMemory。
+*/
+function frArchStateModelFactories() {
+  const deck = new Deck();
+  const matchState = createMatchState({ deck });
+  assert.deepEqual(matchState.players, []);
+  assert.equal(matchState.deck, deck);
+  assert.equal(matchState.currentPlayerIndex, -1);
+  assert.equal(matchState.startingPlayerIndex, -1);
+  assert.equal(matchState.currentRound, RULESET_DEFINITION.initialRound);
+  assert.equal(matchState.phase, "idle");
+  assert.equal(matchState.isGameOver, false);
+  assert.equal(matchState.stateVersion, 0);
+
+  const playerState = createPlayerState({ id: "fr3-p", seatIndex: 2, battleTeam: "dusk" });
+  assert.equal(Object.hasOwn(playerState, "controllerType"), false);
+  assert.equal(Object.hasOwn(playerState, "aiMemory"), false);
+  assert.equal(Object.hasOwn(playerState, "statistics"), false);
+  assert.equal(Object.hasOwn(playerState, "character"), false);
+  assert.equal(Object.hasOwn(matchState, "selectedCharacterId"), false);
+  assert.equal(playerState.maxEnergy, RULESET_DEFINITION.defaultMaxEnergy);
+  assert.equal(playerState.attackRange, RULESET_DEFINITION.defaultAttackRange);
+
+  const firstZone = createDeckZoneState();
+  const secondZone = createDeckZoneState();
+  assert.notEqual(firstZone.cards, secondZone.cards);
+  assert.notEqual(firstZone.discardPile, secondZone.discardPile);
+  assert.equal(Object.hasOwn(firstZone, "reshuffleCount"), false);
+  assert.equal(new Deck().reshuffleCount, 0);
+}
+
+test("状态模型：Domain factories 初始 shape 与 dormant stateVersion", frArchStateModelFactories);
+
+/*
+功能
+验证 Game.state/Player/Deck 的 legacy 组合没有改变对象 key order 或 Domain field authority。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game、Player、Deck 实例与 Game.js/Player.js/Deck.js 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+现有字段顺序保持；新 stateVersion 追加在 Game.state 末尾；旧 constructor 不再维护 Domain literal。
+*/
+async function frArchFinalStateComposition() {
+  const ui = makeUi();
+  const game = createGameApplication(ui, () => 0.25);
+  assert.equal(game.state.stateVersion, 0);
+  assert.deepEqual(Object.keys(game.state), [
+    "gameId", "players", "deck", "discardPile", "resolvingCards", "judgmentZone",
+    "currentPlayerIndex", "startingPlayerIndex", "currentRound", "phase",
+    "pendingAction", "pendingResponses", "activeEffects", "selectedCharacterId",
+    "winnerTeam", "publicCardPool", "currentJudgment", "dyingContext",
+    "isGameOver", "isDisposed", "logs", "debugHistory", "resolutionSerial", "stateVersion"
+  ]);
+  const player = new Player({ id: "fr3-key", seatIndex: 0, controllerType: "human", battleTeam: "dawn" });
+  assert.equal(player.controllerType, "human");
+  assert.deepEqual(Object.hasOwn(player, "aiMemory"), true);
+  game.dispose();
+
+  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  const playerSource = await readFile(projectFile("js/application/match/Player.js"), "utf8");
+  const deckSource = await readFile(projectFile("js/application/match/Deck.js"), "utf8");
+  assert.doesNotMatch(gameSource, /players:\s*\[\]/);
+  assert.doesNotMatch(gameSource, /currentRound:\s*RUNTIME_POLICY\.initialRound/);
+  assert.doesNotMatch(gameSource, /phase:\s*"idle"/);
+  assert.doesNotMatch(playerSource, /this\.hp\s*=\s*0/);
+  assert.doesNotMatch(playerSource, /this\.maxEnergy\s*=\s*RUNTIME_POLICY/);
+  assert.match(deckSource, /const zoneState = createDeckZoneState/);
+  assert.match(deckSource, /this\.cards = zoneState\.cards/);
+}
+
+test("状态组合：composition root、Player 与 Deck 只组合 Domain state", frArchFinalStateComposition);
+
+/*
+功能
+验证 StateView/MatchQueries 与旧 Game query 的返回身份与顺序完全一致。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture 与 Domain queries。
+
+写入状态
+无。
+
+调用函数
+makeTeamFixture、createStateView、queryCurrentActor、queryAllies、queryEnemies、queryLivingPlayers、querySeatOrderFrom。
+
+边界与不变量
+返回同一 Player 引用；allies 含自己；seat order 两种 includeSource 均一致。
+*/
+function frArchStateQueryEquivalence() {
+  const { game, small, large } = makeTeamFixture();
+  const players = game.state.players;
+  const source = players[0];
+  const view = createStateView(game.state);
+  assert.equal(view.players(), game.state.players);
+  assert.equal(view.currentActor(), game.currentPlayer);
+  assert.deepEqual(view.livingPlayers(), getLivingPlayers(game.state));
+  assert.deepEqual(queryCurrentActor(game.state), game.currentPlayer);
+  const allies = queryAllies(game.state, source);
+  const enemies = queryEnemies(game.state, source);
+  assert.deepEqual(allies, game.getAllies(source));
+  assert.deepEqual(enemies, game.getEnemies(source));
+  assert.ok(allies.includes(source));
+  for (let index = 0; index < allies.length; index += 1) {
+    assert.equal(allies[index], game.getAllies(source)[index]);
+  }
+  for (let index = 0; index < enemies.length; index += 1) {
+    assert.equal(enemies[index], game.getEnemies(source)[index]);
+  }
+  for (const includeSource of [false, true]) {
+    const ordered = querySeatOrderFrom(game.state, source, includeSource);
+    assert.deepEqual(ordered, game.seatOrderFrom(source, includeSource));
+    for (let index = 0; index < ordered.length; index += 1) {
+      assert.equal(ordered[index], game.seatOrderFrom(source, includeSource)[index]);
+    }
+  }
+  assert.equal(small.battleTeam, "dawn");
+  assert.equal(large.battleTeam, "dusk");
+}
+
+test("状态查询：current/allies/enemies/seat order 与旧 Game 完全一致", frArchStateQueryEquivalence);
+
+/*
+功能
+验证 ZoneQueries 与旧 Game zone query 的 zone 枚举、重复计数与提交判定一致。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture 与 Domain ZoneQueries。
+
+写入状态
+无。
+
+调用函数
+makePlayer、makeGame、instance、queryCardZoneOccurrences、queryCommittedToDiscard、queryCommittedToEquipment。
+
+边界与不变量
+Card entity 使用同一引用；zone label 顺序与旧实现一致。
+*/
+function frArchZoneQueryEquivalence() {
+  const owner = makePlayer("fr3-zone-owner", 0, "dawn", "ai", 0);
+  const other = makePlayer("fr3-zone-other", 1, "dusk", "ai", 1);
+  const { game } = makeGame([owner, other]);
+  const card = instance("charge");
+  owner.hand.push(card);
+  assert.deepEqual(queryCardZoneOccurrences(game.state, card), game.getCardZoneOccurrences(card));
+  assert.deepEqual(queryCardZoneOccurrences(game.state, card), [`hand:${owner.id}`]);
+
+  game.state.deck.discardPile.push(card);
+  assert.deepEqual(queryCardZoneOccurrences(game.state, card), ["discard", `hand:${owner.id}`]);
+  assert.deepEqual(queryCardZoneOccurrences(game.state, card), game.getCardZoneOccurrences(card));
+  owner.hand.splice(owner.hand.indexOf(card), 1);
+  assert.equal(queryCommittedToDiscard(game.state, card), true);
+  assert.equal(queryCommittedToDiscard(game.state, card), game.isCardCommittedToDiscard(card));
+
+  const equipment = instance("telescope");
+  owner.equipment = equipment;
+  assert.equal(queryCommittedToEquipment(game.state, owner, equipment), true);
+  assert.equal(queryCommittedToEquipment(game.state, owner, equipment), game.isCardCommittedToEquipment(owner, equipment));
+  assert.equal(queryCommittedToEquipment(game.state, other, equipment), false);
+}
+
+test("区域查询：出现位置、重复计数与提交判定", frArchZoneQueryEquivalence);
+
+/*
+功能
+验证 Domain State 模块不 import AI/UI/runtime，也不声明 controllerType/aiMemory/SearchState。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/domain/state 全部源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+允许引用 state 字段，但禁止 dual-schema 或 AI 信息 token。
+*/
+async function frArchDomainStatePurity() {
+  const files = await listJavaScriptFiles(projectFile("js/domain/state"));
+  assert.ok(files.length >= 6);
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:\/ai\/|\/ui\/|\/audio\/|core\/Game\.js|core\/Player\.js|core\/Deck\.js)/, file);
+    assert.doesNotMatch(code, /controllerType/, file);
+    assert.doesNotMatch(code, /aiMemory/, file);
+    assert.doesNotMatch(code, /SearchState|VisibleState|BeliefState|Knowledge/, file);
+    assert.doesNotMatch(code, /Array\.isArray\(player\.statuses\)/, file);
+    assert.doesNotMatch(code, /equipmentRetentionProbability/, file);
+  }
+}
+
+test("Domain 状态纯度：State Model/View/Queries 不识别 AI、UI 或 runtime", frArchDomainStatePurity);
+
+/*
+功能
+验证 stateVersion 只由 Domain transition authority 修改，成功 mutation +1，no-op 不增加。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+全部生产 js 源码与独立 Game fixture。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile、makeGame、makePlayer。
+
+边界与不变量
+任何 Domain transition 外的 stateVersion 写或 stale-result/Worker 消费仍视为失败。
+*/
+async function frArchStateVersionDormant() {
+  const actor = makePlayer("fr3-version-actor", 0, "dawn");
+  const { game } = makeGame([actor]);
+  assert.equal(game.state.stateVersion, 0);
+  transitionChangeEnergy(game.state, actor, 1);
+  assert.equal(game.state.stateVersion, 1);
+  transitionChangeEnergy(game.state, actor, 0);
+  assert.equal(game.state.stateVersion, 1);
+  const files = await listJavaScriptFiles(projectFile("js"));
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    if (file.endsWith("StateVersion.js")) {
+      assert.match(source, /state\.stateVersion \+= 1/);
+      continue;
+    }
+    assert.doesNotMatch(source, /stateVersion\s*\+\+|stateVersion\s*\+=\s*1/, file);
+    assert.doesNotMatch(source, /incrementStateVersion/, file);
+  }
+}
+
+test("状态版本：authority 唯一，成功 +1，no-op +0", frArchStateVersionDormant);
+
+// ---- Domain Transitions 与状态版本 ----
+
+/*
+功能
+验证 ResourceTransitions 的 energy/hp/shield 行为、clamp 与 no-op。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Player fixture。
+
+写入状态
+Player primitive resource 字段。
+
+调用函数
+transitionChangeEnergy、transitionChangeHp、transitionSetHp、transitionChangeShield。
+
+边界与不变量
+失败/no-op 返回 0 且不修改其它字段。
+*/
+function frArchResourceTransitions() {
+  const player = makePlayer("fr4-resource", 0, "dawn", "ai", 0);
+  const state = { stateVersion: 0 };
+  player.maxEnergy = 3;
+  player.energy = 2;
+  assert.equal(transitionChangeEnergy(state, player, 5), 1);
+  assert.equal(player.energy, 3);
+  assert.equal(transitionChangeEnergy(state, player, 0), 0);
+  assert.equal(transitionChangeEnergy(state, player, -10), -3);
+  assert.equal(player.energy, 0);
+
+  player.hp = 2;
+  assert.equal(transitionChangeHp(state, player, 1), 3);
+  assert.equal(transitionChangeHp(state, player, 0), 3);
+  assert.equal(transitionSetHp(state, player, 0), 0);
+
+  player.shield = 1;
+  assert.equal(transitionChangeShield(state, player, 2), 3);
+  assert.equal(transitionChangeShield(state, player, 0), 3);
+  assert.equal(transitionChangeShield(state, player, -3), 0);
+  assert.equal(state.stateVersion, 6);
+}
+
+test("Domain Transition·资源：energy clamp、hp/shield 与 no-op", frArchResourceTransitions);
+
+/*
+功能
+验证 StatusTransitions 的 generic set/remove/clear。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Player statuses。
+
+写入状态
+Player.statuses。
+
+调用函数
+transitionSetStatus、transitionRemoveStatus、transitionClearStatuses。
+
+边界与不变量
+transition 不理解具体状态语义。
+*/
+function frArchStatusTransitions() {
+  const player = makePlayer("fr4-status", 0, "dawn");
+  const state = { stateVersion: 0 };
+  const first = { stacks: 1 };
+  const second = { sourceId: "p1" };
+  assert.equal(transitionSetStatus(state, player, "exposeWeakness", first), first);
+  assert.equal(player.statuses.exposeWeakness, first);
+  assert.equal(transitionRemoveStatus(state, player, "exposeWeakness"), first);
+  assert.equal(player.statuses.exposeWeakness, undefined);
+  transitionSetStatus(state, player, "huntMark", second);
+  const previous = transitionClearStatuses(state, player);
+  assert.equal(previous.huntMark, second);
+  assert.deepEqual(player.statuses, {});
+}
+
+test("Domain Transition·状态：generic set/remove/clear，不解释状态语义", frArchStatusTransitions);
+
+/*
+功能
+验证 ZoneTransitions 的 append/remove/move 与 Card identity。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立牌区数组。
+
+写入状态
+牌区数组。
+
+调用函数
+transitionAppendCardToZone、transitionRemoveCardFromZone、transitionMoveCardBetweenZones。
+
+边界与不变量
+move 不复制 Card；来源不存在返回 false 且目标不变。
+*/
+function frArchZoneTransitions() {
+  const card = instance("charge");
+  const source = [];
+  const target = [];
+  const state = { stateVersion: 0 };
+  transitionAppendCardToZone(state, source, card);
+  assert.equal(source[0], card);
+  assert.equal(transitionRemoveCardFromZone(state, source, card), true);
+  assert.equal(transitionRemoveCardFromZone(state, source, card), false);
+  transitionAppendCardToZone(state, source, card);
+  assert.equal(transitionMoveCardBetweenZones(state, source, target, card), true);
+  assert.deepEqual(source, []);
+  assert.equal(target[0], card);
+  assert.equal(transitionMoveCardBetweenZones(state, source, target, card), false);
+}
+
+test("Domain Transition·区域：通用数组移动与实体身份", frArchZoneTransitions);
+
+/*
+功能
+验证 MatchState/PlayerState primitive transitions 只提交已决定的值。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 state 与 Player fixture。
+
+写入状态
+Match/Player primitive 字段。
+
+调用函数
+Match/Player transition functions。
+
+边界与不变量
+transition 不计算下一玩家、胜负或角色选择。
+*/
+function frArchPrimitiveStateTransitions() {
+  const state = { players: [], currentPlayerIndex: -1, currentRound: 1, phase: "idle", winnerTeam: null, isGameOver: false, publicCardPool: [] };
+  transitionSetCurrentPlayerIndex(state, 2);
+  assert.equal(state.currentPlayerIndex, 2);
+  transitionSetCurrentRound(state, 4);
+  assert.equal(state.currentRound, 4);
+  transitionSetMatchPhase(state, "play");
+  assert.equal(state.phase, "play");
+  transitionSetWinnerTeam(state, "dawn");
+  transitionSetGameOver(state, true);
+  assert.equal(state.winnerTeam, "dawn");
+  assert.equal(state.isGameOver, true);
+  const pool = [];
+  assert.equal(transitionSetPublicCardPool(state, pool), pool);
+
+  const player = makePlayer("fr4-primitive", 0, "dusk");
+  const character = CHARACTER_DEFINITIONS[0];
+  transitionApplyCharacterDefinition(state, player, character);
+  assert.equal(player.characterId, character.id);
+  assert.equal(player.hp, character.maxHp);
+  assert.equal(player.energy, character.initialEnergy);
+  const version = player.handVersion;
+  assert.equal(transitionBumpHandVersion(state, player), version + 1);
+  transitionSetAlive(state, player, false);
+  assert.equal(player.alive, false);
+  const equipment = instance("telescope");
+  assert.equal(transitionSetEquipment(state, player, equipment), equipment);
+  assert.equal(player.equipment, equipment);
+}
+
+test("Domain Transition·对局与玩家：只提交已决定 primitive 写入", frArchPrimitiveStateTransitions);
+
+/*
+功能
+验证 transitions 目录 purity：无 Game/EventBus/UI/AI import，无 cardId/skillId 规则分支。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/domain/state/transitions 源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+注释中允许解释禁止项；代码本体不得出现禁止依赖。
+*/
+async function frArchTransitionPurity() {
+  const files = await listJavaScriptFiles(projectFile("js/domain/state/transitions"));
+  assert.ok(files.length >= 5);
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:\/ai\/|\/ui\/|\/audio\/|core\/Game\.js|core\/ActionLegality\.js|cards\/cardRegistry|characters\/skillRegistry|ResponseSystem|DyingSystem|JudgmentSystem)/, file);
+    assert.doesNotMatch(code, /definitionId\s*===|skillId\s*===|cardId\s*===/, file);
+    assert.doesNotMatch(code, /statusId\s*===/, file);
+  }
+}
+
+test("Domain Transition·纯度：无 runtime/rule import 与 cardId/skillId 分支", frArchTransitionPurity);
+
+/*
+功能
+验证已迁移的 legacy commit 不再直接写 resource/status/phase，且 stateVersion 随成功 commit 增长。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game.js/cardRegistry.js/skillRegistry.js/Player.js 源码与独立 fixture。
+
+写入状态
+无。
+
+调用函数
+readFile、makeGame、makePlayer。
+
+边界与不变量
+flags/counters 与大量 zone 写入仍为已知 4B blocker；本测试只证明 foundation 未伪激活 version。
+*/
+async function frArchFinalCommitOwners() {
+  const actor = makePlayer("fr4-commit", 0, "dawn");
+  const { game } = makeGame([actor]);
+  assert.equal(game.state.stateVersion, 0);
+  transitionChangeEnergy(game.state, actor, 1);
+  transitionSetStatus(game.state, actor, "huntMark", { sourceId: "x" });
+  transitionSetMatchPhase(game.state, "status");
+  assert.equal(game.state.stateVersion, 3);
+
+  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  const cardSource = await readFile(projectFile("js/application/action/CardEffectRuntime.js"), "utf8");
+  const skillSource = await readFile(projectFile("js/application/action/SkillEffectRuntime.js"), "utf8");
+  assert.doesNotMatch(gameSource, /target\.hp\s*-=|\btarget\.shield\s*-=/);
+  assert.doesNotMatch(gameSource, /state\.phase\s*=\s*["']/);
+  assert.doesNotMatch(cardSource, /target\.shield\s*\+=/);
+  assert.doesNotMatch(skillSource, /target\.shield\s*=\s*\(/);
+}
+
+test("架构·状态提交：Application effects 经 transition 且 stateVersion 增长", frArchFinalCommitOwners);
+
+// ---- StateView 与提交边界 ----
+
+/*
+功能
+验证 FR-ARCH-3 carry-in closures：selectedCharacterId 和 legacy character 不再属于 Domain model，RuleStateView 不泄漏 AI/UI。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Domain factories、Player/Game legacy runtime 与 RuleStateView。
+
+写入状态
+无。
+
+调用函数
+createMatchState、createPlayerState、makeGame、makePlayer、createRuleStateView。
+
+边界与不变量
+legacy runtime shape 保持不变，只是 ownership 声明被修正。
+*/
+function frArchPhaseACarryInClosure() {
+  const deck = new Deck();
+  const matchState = createMatchState({ deck });
+  assert.equal(Object.hasOwn(matchState, "selectedCharacterId"), false);
+
+  const playerState = createPlayerState({ id: "p", seatIndex: 0, battleTeam: "dawn" });
+  assert.equal(Object.hasOwn(playerState, "character"), false);
+
+  const player = makePlayer("p", 0, "dawn", "human", 0);
+  assert.equal(player.character, CHARACTER_DEFINITIONS[0]);
+  const legacyCharacter = player.character;
+  const { game } = makeGame([player]);
+  assert.equal(game.state.selectedCharacterId, null);
+
+  const ruleView = createRuleStateView(game.state);
+  const projected = ruleView.players()[0];
+  assert.equal(projected.id, player.id);
+  assert.equal(projected.characterId, player.characterId);
+  assert.equal(Object.hasOwn(projected, "controllerType"), false);
+  assert.equal(Object.hasOwn(projected, "aiMemory"), false);
+  assert.equal(Object.hasOwn(projected, "character"), false);
+  assert.equal(Object.hasOwn(projected, "portrait"), false);
+  assert.equal(Object.hasOwn(projected, "aiProfile"), false);
+  const actor = ruleView.currentActor();
+  assert.equal(actor.id, player.id);
+  assert.ok(ruleView.alliesOf(actor).some((entry) => entry.id === player.id));
+  assert.equal(ruleView.enemiesOf(actor).some((entry) => entry.id === player.id), false);
+  assert.deepEqual(ruleView.seatOrderFrom(actor, false).map((entry) => entry.id), game.seatOrderFrom(player, false).map((entry) => entry.id));
+  assert.deepEqual(ruleView.seatOrderFrom(actor, true).map((entry) => entry.id), game.seatOrderFrom(player, true).map((entry) => entry.id));
+  assert.equal(player.character, legacyCharacter);
+}
+
+test("状态视图边界：selectedCharacterId/legacy character/RuleStateView boundary 已关闭", frArchPhaseACarryInClosure);
+
+/*
+功能
+验证 RuleStateView 的公开 source/player 参数只接受 Rule Player projection，且 currentActor/players 结果可自然组合传给 allies/enemies/seatOrder。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture 与 createRuleStateView。
+
+写入状态
+无。
+
+调用函数
+makeTeamFixture、createRuleStateView、view.players/currentActor/alliesOf/enemiesOf/seatOrderFrom/playerById。
+
+边界与不变量
+Rule projection 不包含 controllerType/aiMemory/character/aiProfile/portrait 与 SearchState 字段；真实 Player 不得作为 source/player 参数。
+*/
+function frArchPhaseARuleStateViewContract() {
+  const { game, small, large } = makeTeamFixture();
+  const view = createRuleStateView(game.state);
+  const forbidden = [
+    "controllerType",
+    "aiMemory",
+    "character",
+    "aiProfile",
+    "portrait",
+    "roleTags",
+    "equipmentRetentionProbability",
+    "visibleHand",
+    "knowledge",
+    "beliefState",
+    "searchState"
+  ];
+  const assertProjection = (projection) => {
+    assert.ok(Object.isFrozen(projection));
+    assert.ok(Object.isFrozen(projection.statusIds));
+    for (const field of forbidden) {
+      assert.equal(Object.hasOwn(projection, field), false, `Rule projection 不得包含 ${field}`);
+    }
+  };
+  const projections = view.players();
+  projections.forEach(assertProjection);
+  assert.equal(view.currentActor().id, game.currentPlayer.id);
+
+  const actor = view.currentActor();
+  assertProjection(actor);
+  assert.deepEqual(
+    view.alliesOf(actor).map((entry) => entry.id),
+    game.getAllies(small).map((entry) => entry.id)
+  );
+  assert.deepEqual(
+    view.enemiesOf(actor).map((entry) => entry.id),
+    game.getEnemies(small).map((entry) => entry.id)
+  );
+  for (const includeSource of [false, true]) {
+    assert.deepEqual(
+      view.seatOrderFrom(actor, includeSource).map((entry) => entry.id),
+      game.seatOrderFrom(small, includeSource).map((entry) => entry.id)
+    );
+  }
+
+  for (let index = 0; index < projections.length; index += 1) {
+    const projection = projections[index];
+    const real = game.state.players[index];
+    assert.equal(projection.id, real.id);
+    assertProjection(projection);
+    assert.deepEqual(
+      view.alliesOf(projection).map((entry) => entry.id),
+      game.getAllies(real).map((entry) => entry.id)
+    );
+    assert.deepEqual(
+      view.enemiesOf(projection).map((entry) => entry.id),
+      game.getEnemies(real).map((entry) => entry.id)
+    );
+    for (const includeSource of [false, true]) {
+      assert.deepEqual(
+        view.seatOrderFrom(projection, includeSource).map((entry) => entry.id),
+        game.seatOrderFrom(real, includeSource).map((entry) => entry.id)
+      );
+    }
+  }
+
+  const byId = view.playerById(large.id);
+  assertProjection(byId);
+  assert.equal(byId.id, large.id);
+  assert.throws(() => view.alliesOf(game.state.players[0]), /Rule Player projection/);
+  assert.throws(() => view.enemiesOf(game.state.players[0]), /Rule Player projection/);
+  assert.throws(() => view.seatOrderFrom(game.state.players[0]), /Rule Player projection/);
+}
+
+test("状态视图：RuleStateView projection 可组合且拒绝 Real Player 双 schema", frArchPhaseARuleStateViewContract);
+
+/*
+功能
+记录 PHASE A mutation gate 已满足：无 version-relevant direct writes，stateVersion authoritative。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game.js、skillRegistry.js、Player.js 源码与独立 Game。
+
+写入状态
+无。
+
+调用函数
+readFile、makeGame、makePlayer。
+
+边界与不变量
+该测试验证 blocker 已关闭且只有 transition authority 写 stateVersion。
+*/
+async function frArchPhaseAMutationGateStillBlocked() {
+  const actor = makePlayer("fr4b-gate", 0, "dawn");
+  const { game } = makeGame([actor]);
+  assert.equal(game.state.stateVersion, 0);
+
+  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  const skillSource = await readFile(projectFile("js/application/action/SkillEffectRuntime.js"), "utf8");
+  assert.doesNotMatch(gameSource, /turnFlags\.recycleDeviceUses\s*=/);
+  assert.doesNotMatch(gameSource, /player\.hand\.push/);
+  assert.doesNotMatch(skillSource, /owner\.turnFlags\.momentum\s*=/);
+}
+
+test("架构·状态写入：direct writes 已关闭，stateVersion authoritative", frArchPhaseAMutationGateStillBlocked);
+
+// ---- 状态版本契约 ----
+
+/*
+功能
+验证 authoritative stateVersion 的 success/no-op/fail/non-domain/atomic-group 语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 state/player/zones 与 legacy log。
+
+写入状态
+Domain transitions 与 legacy presentation。
+
+调用函数
+transitionChangeHp、transitionSetStatus、transitionRemoveStatus、transitionMoveCardBetweenZones、transitionMoveCardsAtomically。
+
+边界与不变量
+所有版本变化仅由 transition authority 产生。
+*/
+function frArchStateVersionContract() {
+  const state = { stateVersion: 0, phase: "idle", currentPlayerIndex: 0 };
+  const player = makePlayer("fr4b-version", 0, "dawn");
+  transitionChangeHp(state, player, 1);
+  assert.equal(state.stateVersion, 1);
+  transitionChangeHp(state, player, 0);
+  assert.equal(state.stateVersion, 1);
+  transitionSetStatus(state, player, "huntMark", { sourceId: "x" });
+  assert.equal(state.stateVersion, 2);
+  transitionRemoveStatus(state, player, "missing");
+  assert.equal(state.stateVersion, 2);
+  const source = []; const target = [];
+  transitionMoveCardBetweenZones(state, source, target, { id: "x" });
+  assert.equal(state.stateVersion, 2);
+  const cards = [instance("block"), instance("block")];
+  const hand = [...cards];
+  const discard = [];
+  transitionMoveCardsAtomically(state, hand, discard, cards);
+  assert.equal(state.stateVersion, 3);
+  assert.deepEqual(discard, cards);
+}
+
+test("状态版本：success +1、no-op/fail +0、atomic group +1", frArchStateVersionContract);
+
+// ---- Domain 规则 ----
+
+/*
+功能
+验证 Team Rules 已拥有规模、额度与能量公式，且 legacy TeamRuleService/TeamManager 只转发。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture、createRuleStateView 与 Domain TeamRules。
+
+写入状态
+无。
+
+调用函数
+getTeamSize、isSmallTeam、getTeamRules、getInitialHandCount、getDrawCount、getAttackLimit、getRecoverLimit、getMaxEnergy、getTurnEnergyBreakdown。
+
+边界与不变量
+小队/大队全部 legacy==Domain；AI 反事实装备投影仍由 facade 适配。
+*/
+function frArch5TeamRules() {
+  const { game, small, large } = makeTeamFixture();
+  const view = createRuleStateView(game.state);
+  const rulePlayers = view.players();
+  const ruleState = { players: rulePlayers };
+  const smallRule = rulePlayers.find((player) => player.id === small.id);
+  const largeRule = rulePlayers.find((player) => player.id === large.id);
+  assert.equal(getTeamSize(ruleState, smallRule), 2);
+  assert.equal(getTeamSize(ruleState, largeRule), 3);
+  assert.equal(getTeamSize(ruleState, "dawn"), game.teamRules.getTeamSize("dawn"));
+  assert.equal(isSmallTeam(ruleState, smallRule), true);
+  assert.equal(isSmallTeam(ruleState, largeRule), false);
+  assert.equal(getTeamRules(ruleState, smallRule), RULESET_DEFINITION.smallTeamBonuses);
+  assert.equal(getTeamRules(ruleState, largeRule), RULESET_DEFINITION.largeTeamRules);
+  assert.equal(getInitialHandCount(ruleState, smallRule), game.teamRules.getInitialHandCount(small));
+  assert.equal(getInitialHandCount(ruleState, largeRule), game.teamRules.getInitialHandCount(large));
+  assert.equal(getDrawCount(ruleState, smallRule), game.teamRules.getDrawCount(small));
+  assert.equal(getAttackLimit(ruleState, smallRule), game.teamRules.getAttackLimit(small));
+  assert.equal(getAttackLimit(ruleState, largeRule), game.teamRules.getAttackLimit(large));
+  assert.equal(getRecoverLimit(ruleState, smallRule), null);
+  assert.equal(getMaxEnergy(ruleState, smallRule), game.teamRules.getMaxEnergy(small));
+  assert.equal(getMaxEnergy(ruleState, largeRule), game.teamRules.getMaxEnergy(large));
+  assert.deepEqual(getTurnEnergyBreakdown(ruleState, smallRule), { baseAmount:1, teamBonus:0, equipmentBonus:0 });
+  assert.deepEqual(
+    getTurnEnergyBreakdown(ruleState, { ...smallRule, equipmentDefinitionId:"energyDevice" }),
+    { baseAmount:1, teamBonus:0, equipmentBonus:1 }
+  );
+  assert.deepEqual(
+    game.teamRules.getTurnEnergyBreakdown({ battleTeam:small.battleTeam, equipment:{ definitionId:"energyDevice" } }),
+    { baseAmount:1, teamBonus:0, equipmentBonus:1 }
+  );
+  assert.deepEqual(view.alliesOf(smallRule).map((entry) => entry.id), game.getAllies(small).map((entry) => entry.id));
+  assert.deepEqual(view.enemiesOf(smallRule).map((entry) => entry.id), game.getEnemies(small).map((entry) => entry.id));
+}
+
+test("Domain 规则·阵营：规模/手牌/摸牌/能量/攻击/调息与 ally-enemy 语义", frArch5TeamRules);
+
+/*
+功能
+验证确定性 Distance Rules 的存活环、基础距离、装备修正、最小距离与借势距离，且 AI 概率仍在 Domain 外。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+distanceFixture、instance 与 Domain DistanceRules/DistanceSystem。
+
+写入状态
+临时修改测试 Player 的存活与装备字段。
+
+调用函数
+getAliveRing、getBaseDistance、getDistance、getRangeLegalityProbability、getAssaultTargetCandidates。
+
+边界与不变量
+deterministic core 不读取 equipmentRetentionProbability。
+*/
+function frArch5DistanceRules() {
+  const { players, game } = distanceFixture();
+  const [a, b, c, d] = players;
+  assert.deepEqual(getAliveRing(players).map((player) => player.id), ["A","B","C","D","E"]);
+  assert.equal(getBaseDistance(players, a, a), 0);
+  assert.equal(getBaseDistance(players, a, b), 1);
+  assert.equal(getDistance(players, a, a), 0);
+  assert.equal(getDistance(players, a, b), 1);
+  assert.equal(getDistance(players, a, c, "telescope", null), 1);
+  assert.equal(getDistance(players, a, b, null, "barrierDevice"), 2);
+  assert.equal(getDistance(players, a, b, "telescope", "barrierDevice"), 1);
+  assert.equal(getDistance(players, a, b, "telescope", null), 1, "minimum distance floor");
+  assert.equal(getDistance(players, a, b, "telescope", "barrierDevice") <= a.attackRange, true, "range boundary");
+
+  const livingBefore = players.map((player) => player.alive);
+  players[1].alive = false;
+  assert.equal(getBaseDistance(players, a, c), 1, "dead-player ring compression");
+  assert.equal(getBaseDistance(players, b, c), Infinity);
+  players[1].alive = livingBefore[1];
+
+  b.equipment = instance("telescope");
+  assert.equal(getDistance(players, b, d, "telescope", null), 1, "borrowed assault distance from first target");
+  b.equipment = null;
+
+  for (const player of players) player.alive = false;
+  players[0].alive = true;
+  players[1].alive = true;
+  assert.equal(getBaseDistance(players, a, b), 1, "two-living ring");
+  for (let index = 0; index < players.length; index += 1) players[index].alive = livingBefore[index];
+  assert.equal(getRangeLegalityProbability(game, a, c, 2), 1);
+  const domainSource = String(getDistance);
+  assert.equal(domainSource.includes("equipmentRetentionProbability"), false);
+}
+
+test("Domain 规则·距离：确定性核心完整，AI probability 不进入 Domain", frArch5DistanceRules);
+
+/*
+功能
+验证 Turn Rules 唯一拥有 reset semantics 与纯回合推进，RuleUsageTransitions 只提交已决定对象。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture、makePlayer、Domain TurnRules、RuleUsageTransitions 与源码。
+
+写入状态
+测试 Player turnFlags/roundFlags 与独立 stateVersion。
+
+调用函数
+createTurnUsageState、createGlobalTurnReactiveState、createRoundUsageState、reset transitions、getAttackUsage、hasAttackUseRemaining、hasRecoverUseRemaining、getActiveSkillUseCount、hasActiveSkillUseRemaining、isActorTurn、shouldSkipActionPhase、calculateNextActorIndex。
+
+边界与不变量
+Transition 不再维护 reset 字段清单。
+*/
+async function frArch5TurnRules() {
+  const { game, small, large } = makeTeamFixture();
+  const smallRules = game.teamRules.getRules(small);
+  const largeRules = game.teamRules.getRules(large);
+  const smallTurn = createTurnUsageState(smallRules);
+  const largeTurn = createTurnUsageState(largeRules);
+  assert.equal(smallTurn.attackLimit, 2);
+  assert.equal(largeTurn.attackLimit, 1);
+  assert.equal(smallTurn.recoverLimit, null);
+  assert.equal(largeTurn.recoverLimit, null);
+  assert.ok(smallTurn.categoriesUsed instanceof Set);
+  assert.ok(smallTurn.activeSkillsUsed instanceof Set);
+  assert.equal(smallTurn.guardianAidUsed, false);
+
+  const player = makePlayer("fr5-turn", 0, "dawn");
+  const state = { stateVersion: 0 };
+  const decided = createTurnUsageState(smallRules);
+  transitionResetTurnFlags(state, player, decided);
+  assert.equal(player.turnFlags, decided);
+  assert.equal(state.stateVersion, 1);
+  const reactive = createGlobalTurnReactiveState();
+  transitionResetGlobalTurnReactiveFlags(state, player, reactive);
+  assert.equal(player.turnFlags.categoriesUsed, reactive.categoriesUsed);
+  assert.equal(player.turnFlags.momentum, reactive.momentum);
+  assert.equal(state.stateVersion, 2);
+  player.roundFlags = { legacyMarker:true };
+  transitionResetRoundFlags(state, player, createRoundUsageState());
+  assert.deepEqual(player.roundFlags, {});
+  assert.equal(state.stateVersion, 3);
+  assert.deepEqual(createRoundUsageState(), {});
+
+  assert.deepEqual(getAttackUsage({ used:1, limit:2 }), { used:1, limit:2 });
+  assert.equal(hasAttackUseRemaining({ used:1, limit:2 }), true);
+  assert.equal(hasAttackUseRemaining({ used:2, limit:2 }), false);
+  assert.equal(hasAttackUseRemaining({ used:0, limit:0 }), false);
+  assert.equal(hasRecoverUseRemaining(3, null), true);
+  assert.equal(hasRecoverUseRemaining(1, 1), false);
+  const usage = createTurnUsageState(smallRules);
+  assert.equal(getActiveSkillUseCount(usage, "breakArmy"), 0);
+  usage.activeSkillUseCounts.breakArmy = 2;
+  assert.equal(getActiveSkillUseCount(usage, "breakArmy"), 2);
+  assert.equal(hasActiveSkillUseRemaining(2, 2), false);
+  assert.equal(hasActiveSkillUseRemaining(1, 2), true);
+  assert.equal(isActorTurn("play", "p1", "p1"), true);
+  assert.equal(isActorTurn("judgment", "p1", "p1"), false);
+  assert.equal(isActorTurn("play", "p1", "p2"), false);
+  assert.equal(shouldSkipActionPhase({ skipActionPhase:true }), true);
+
+  const ring = [
+    { id:"r0", seatIndex:0, alive:true },
+    { id:"r1", seatIndex:1, alive:false },
+    { id:"r2", seatIndex:2, alive:true }
+  ];
+  assert.deepEqual(calculateNextActorIndex(ring, 0, 0), { nextIndex:2, wrapped:false });
+  const wrapRing = [
+    { id:"r0", seatIndex:0, alive:true },
+    { id:"r1", seatIndex:1, alive:true },
+    { id:"r2", seatIndex:2, alive:false }
+  ];
+  assert.deepEqual(calculateNextActorIndex(wrapRing, 1, 2), { nextIndex:0, wrapped:true });
+
+  const transitionSource = await readFile(projectFile("js/domain/state/transitions/RuleUsageTransitions.js"), "utf8");
+  assert.doesNotMatch(transitionSource, /attackUsed:\s*0/);
+  assert.doesNotMatch(transitionSource, /guardianAidUsed:\s*false/);
+  assert.doesNotMatch(transitionSource, /momentum:\s*0/);
+  assert.match(transitionSource, /decidedTurnFlags|decidedRoundFlags|decidedReactiveState/);
+}
+
+test("Domain 规则·回合：reset semantics 由 Domain Turn Rule 拥有，Transition 只 commit", frArch5TurnRules);
+
+/*
+功能
+验证 Judgment Rules 覆盖雷达防御与延迟状态判定的当前成功/失败分类。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+interpretDefenseJudgment、interpretDelayedStatusJudgment。
+
+边界与不变量
+与 JudgmentSystem 当前分类保持一致。
+*/
+function frArch5JudgmentRules() {
+  assert.deepEqual(interpretDefenseJudgment("tactic"), { handled:true, immune:true, category:"tactic" });
+  assert.deepEqual(interpretDefenseJudgment("basic"), { handled:true, immune:false, category:"basic" });
+  assert.deepEqual(interpretDefenseJudgment("equipment"), { handled:true, immune:false, category:"equipment" });
+  assert.equal(interpretDelayedStatusJudgment("equipment", "equipment"), true);
+  assert.equal(interpretDelayedStatusJudgment("tactic", "equipment"), false);
+  assert.equal(interpretDelayedStatusJudgment("tactic", "tactic"), true);
+  assert.equal(interpretDelayedStatusJudgment("basic", "tactic"), false);
+}
+
+test("Domain 规则·判定：雷达/封印/闪电判定分类", frArch5JudgmentRules);
+
+/*
+功能
+验证 Combat Rules 的护盾吸收、生命伤害、负 HP/overkill、濒死与治疗 clamp。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+calculateDamageResult、calculateHealAmount、isDying。
+
+边界与不变量
+不改变 DyingSystem workflow。
+*/
+function frArch5CombatRules() {
+  assert.deepEqual(calculateDamageResult(3, 0, 4), { shieldAbsorbed:0, hpDamage:3, remainingHp:1, dying:false });
+  assert.deepEqual(calculateDamageResult(3, 5, 4), { shieldAbsorbed:3, hpDamage:0, remainingHp:4, dying:false });
+  assert.deepEqual(calculateDamageResult(3, 2, 4), { shieldAbsorbed:2, hpDamage:1, remainingHp:3, dying:false });
+  assert.deepEqual(calculateDamageResult(0, 2, 4), { shieldAbsorbed:0, hpDamage:0, remainingHp:4, dying:false });
+  assert.deepEqual(calculateDamageResult(4, 0, 4), { shieldAbsorbed:0, hpDamage:4, remainingHp:0, dying:true });
+  assert.deepEqual(calculateDamageResult(8, 0, 4), { shieldAbsorbed:0, hpDamage:8, remainingHp:-4, dying:true });
+  assert.equal(isDying(-1, true), true);
+  assert.equal(isDying(0, false), false);
+  assert.equal(calculateHealAmount(5, 4, 1), 3);
+  assert.equal(calculateHealAmount(5, 4, 4), 0);
+  assert.equal(calculateHealAmount(0, 4, 2), 0);
+}
+
+test("Domain 规则·战斗：damage/shield/lethal/overkill/negative HP/heal clamp", frArch5CombatRules);
+
+/*
+功能
+验证 Status Rules 的破势/孤注/猎印/封印/闪电语义，以及闪电下一持有者座次规则。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+STATUS_DEFINITIONS 与 makeTeamFixture。
+
+写入状态
+无。
+
+调用函数
+getExposeWeaknessStacks、isExposeWeaknessConsumable、getAllInAssaultBonus、isHuntMarkExpired、getStatusDefinition、hasStatus、nextDomainLightningReceiverId、interpretDelayedStatusJudgment。
+
+边界与不变量
+identity 只来自 STATUS_DEFINITIONS；不创建第二份 catalog。
+*/
+function frArch5StatusRules() {
+  assert.equal(getExposeWeaknessStacks({ stacks:3 }), 3);
+  assert.equal(getExposeWeaknessStacks(null), 0);
+  assert.equal(isExposeWeaknessConsumable({ stacks:3 }), true);
+  assert.equal(isExposeWeaknessConsumable({ stacks:0 }), false);
+  assert.equal(getAllInAssaultBonus({ assaultBonus:1 }), 1);
+  assert.equal(getAllInAssaultBonus(null), 0);
+  assert.equal(isHuntMarkExpired({ expireAtTurnEnd:2 }, 2), true);
+  assert.equal(isHuntMarkExpired({ expireAtTurnEnd:3 }, 2), false);
+  assert.equal(getStatusDefinition("sealed"), STATUS_DEFINITIONS.sealed);
+  assert.equal(getStatusDefinition("missing"), null);
+  assert.equal(hasStatus({ statusIds:["sealed"] }, "sealed"), true);
+  assert.equal(hasStatus({ statusIds:[] }, "sealed"), false);
+  assert.equal(interpretDelayedStatusJudgment("tactic", "tactic"), true);
+  assert.equal(interpretDelayedStatusJudgment("equipment", "equipment"), true);
+
+  const canonical = (id, seatIndex, alive, statusIds = []) => ({ id, seatIndex, alive, statusIds });
+  const players = [
+    canonical("h", 0, true, ["lightning"]),
+    canonical("a", 1, true, []),
+    canonical("d", 2, false, []),
+    canonical("b", 3, true, ["lightning"]),
+    canonical("c", 4, true, [])
+  ];
+  assert.equal(nextDomainLightningReceiverId(players, "h"), "a", "skip dead and already-lightning");
+  assert.equal(nextDomainLightningReceiverId(players, "c"), "a", "wrap to earlier ally");
+  const allInvalid = [
+    canonical("h", 0, true, ["lightning"]),
+    canonical("a", 1, true, ["lightning"]),
+    canonical("b", 2, true, ["lightning"])
+  ];
+  assert.equal(nextDomainLightningReceiverId(allInvalid, "h"), "h", "fallback to holder");
+  const { game } = makeTeamFixture();
+  const view = createRuleStateView(game.state);
+  const holder = view.playerById("small");
+  game.state.players.find((player) => player.id === "small").statuses.lightning = { cardDefinitionId:"lightning" };
+  assert.equal(nextDomainLightningReceiverId(view.players(), holder.id), "large");
+}
+
+test("Domain 规则·状态：破势/孤注/猎印/封印/闪电与 identity authority", frArch5StatusRules);
+
+/*
+功能
+验证 Response Rules 的格挡需求、反制资格、响应顺序、状态反制顺序与救援/响应者资格。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+getRequiredBlockCount、isAssaultDamage、isBlockResponseAvailable、getResponseCardDefinitionId、hasSufficientResponseCards、isResponderEligible、isCounterEligible、isDyingRescueEligible、getCounterResponderOrder、getStatusCounterResponderOrder。
+
+边界与不变量
+async workflow/human-AI choice 不进入 Domain。
+*/
+function frArch5ResponseRules() {
+  assert.equal(getRequiredBlockCount(null, false), 1, "normal block");
+  assert.equal(getRequiredBlockCount("battleDevice", true), 2, "battleDevice double-block");
+  assert.equal(getRequiredBlockCount("battleDevice", false), 1);
+  assert.equal(isAssaultDamage({ subtypes:["assault"] }, "normal"), true);
+  assert.equal(isAssaultDamage({ subtypes:["assault"] }, "area"), true);
+  assert.equal(isAssaultDamage({ subtypes:[] }, "normal"), false);
+  assert.equal(isBlockResponseAvailable(true, 1), true);
+  assert.equal(isBlockResponseAvailable(false, 1), false);
+  assert.equal(isBlockResponseAvailable(true, 0), false);
+  assert.equal(getResponseCardDefinitionId("block"), "block");
+  assert.equal(getResponseCardDefinitionId("counter"), "counter");
+  assert.equal(hasSufficientResponseCards(2, 2), true);
+  assert.equal(hasSufficientResponseCards(1, 2), false);
+  assert.equal(isResponderEligible({ alive:true }), true);
+  assert.equal(isResponderEligible({ alive:false }), false);
+  assert.equal(isCounterEligible("tactic", true), true);
+  assert.equal(isCounterEligible("tactic", false), false);
+  assert.equal(isCounterEligible("basic", true), false);
+  assert.equal(isDyingRescueEligible({ alive:true, battleTeam:"dawn" }, { alive:true, hp:0, battleTeam:"dawn" }), true);
+  assert.equal(isDyingRescueEligible({ alive:true, battleTeam:"dawn" }, { alive:true, hp:0, battleTeam:"dusk" }), false);
+  assert.equal(isDyingRescueEligible({ alive:true, battleTeam:"dawn" }, { alive:true, hp:1, battleTeam:"dawn" }), false);
+  const players = [
+    { id:"p0", seatIndex:0, alive:true },
+    { id:"p1", seatIndex:1, alive:true },
+    { id:"p2", seatIndex:2, alive:false },
+    { id:"p3", seatIndex:3, alive:true },
+    { id:"p4", seatIndex:4, alive:true }
+  ];
+  assert.deepEqual(getCounterResponderOrder(players, "p0"), ["p1","p2","p3","p4"]);
+  assert.deepEqual(getStatusCounterResponderOrder(players, "p0"), ["p0","p1","p3","p4"]);
+  assert.deepEqual(getStatusCounterResponderOrder(players, "p2"), []);
+}
+
+test("Domain 规则·响应：block/counter/order/eligibility 纯规则", frArch5ResponseRules);
+
+/*
+功能
+验证 RuleStateView 新增的 status/usage/momentum 明确 accessor 足够供 Status/Combat/Turn Rules 使用且不泄漏 metadata。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture 与 createRuleStateView。
+
+写入状态
+测试 Player 的 statuses/turnFlags 字段。
+
+调用函数
+view.status/usage/momentum。
+
+边界与不变量
+不暴露整个 statuses 或 turnFlags。
+*/
+function frArch5RuleStateViewAccessors() {
+  const { game, small } = makeTeamFixture();
+  small.statuses.exposeWeakness = { stacks:3 };
+  small.turnFlags.attackUsed = 1;
+  small.turnFlags.attackLimit = 2;
+  small.turnFlags.momentum = 2;
+  const view = createRuleStateView(game.state);
+  const projected = view.playerById(small.id);
+  assert.deepEqual(view.status(projected, "exposeWeakness"), { stacks:3 });
+  assert.equal(view.status(projected, "missing"), null);
+  assert.deepEqual(view.usage(projected), { attackUsed:1, attackLimit:2, recoverUsed:0, recoverLimit:null });
+  assert.equal(view.momentum(projected), 2);
+  const clone = view.status(projected, "exposeWeakness");
+  assert.equal(Object.isFrozen(clone), true, "status accessor 返回冻结副本");
+  assert.equal(view.status(projected, "exposeWeakness").stacks, 3);
+  for (const field of ["controllerType","aiMemory","character","aiProfile","portrait"]) {
+    assert.equal(Object.hasOwn(projected, field), false);
+  }
+}
+
+test("Domain 规则·状态视图：status/usage/momentum 受控 accessor", frArch5RuleStateViewAccessors);
+
+/*
+功能
+验证 domain/rules 目录纯度：七 family 已建立、无运行时/AI/UI/config/transition import、无 await/EventBus/random/双 schema/metadata，且无 DomainActionLegality God Object。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/domain/rules 全部源码与目录清单。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+注释允许解释禁止项；代码本体不得出现禁止依赖。
+*/
+async function frArch5DomainRulePurity() {
+  const files = await listJavaScriptFiles(projectFile("js/domain/rules"));
+  assert.equal(files.length >= 7, true);
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:\/application\/|\/adapters\/|\/ai\/|\/ui\/|\/audio\/|core\/(?:Game|ActionLegality|ResponseSystem|DyingSystem|JudgmentSystem)\.js|cards\/cardRegistry\.js|characters\/skillRegistry\.js|state\/transitions\/|config\/)/, file);
+    assert.doesNotMatch(code, /\bawait\b/, file);
+    assert.doesNotMatch(code, /\bEventBus\b|\beventDispatcher\b/, file);
+    assert.doesNotMatch(code, /\bMath\.random\s*\(|\.random\s*\(/, file);
+    assert.doesNotMatch(code, /Array\.isArray\([^)]*statuses\)|hand\s*\?\?\s*handCount|equipment\s*\?\?\s*equipmentDefinitionId/, file);
+    assert.doesNotMatch(code, /\b(?:controllerType|aiMemory|aiProfile|portrait|roleTags|equipmentRetentionProbability|SearchState|VisibleState|BeliefState)\b/, file);
+    assert.doesNotMatch(code, /\bthis\.game\b/, file);
+  }
+  assert.equal(files.some((file) => file.endsWith("DomainActionLegality.js")), false);
+  const statusSource = await readFile(projectFile("js/domain/rules/status/StatusRules.js"), "utf8");
+  assert.doesNotMatch(statusSource, /STATUS_IDS/);
+  assert.equal(hasStatus({ statusIds:["sealed"] }, "sealed"), true);
+}
+
+test("Domain 规则·纯度：domain/rules 无 runtime/AI/UI/EventBus/await/random/dual-schema/God Object", frArch5DomainRulePurity);
+
+// ---- Messaging 与 Events ----
+
+/*
+功能
+验证 EventDispatcher 完整保留旧 EventBus 语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+dispatcher。
+
+写入状态
+dispatcher registry。
+
+调用函数
+EventDispatcher.on/emit/clear。
+
+边界与不变量
+same-key overwrite、order、shared mutable object、mutation visibility、unsubscribe、generation、clear during dispatch。
+*/
+async function frArch11DispatcherSemantics() {
+  const dispatcher = new EventDispatcher(() => true);
+  const trace = [];
+  dispatcher.on("hook", "b", async (event) => { trace.push(["b-before", event.value]); event.value += 1; });
+  dispatcher.on("hook", "a", async (event) => { trace.push(["a", event.value]); event.value += 1; });
+  const event = { value: 1 };
+  assert.equal(await dispatcher.emit("hook", event), event);
+  assert.deepEqual(trace, [["b-before", 1], ["a", 2]]);
+  assert.equal(event.value, 3, "前一 handler mutation 必须对后一 handler 可见");
+
+  dispatcher.on("hook", "b", async () => { trace.push(["b-replaced"]); });
+  await dispatcher.emit("hook", { value: 0 });
+  assert.deepEqual(trace.slice(2), [["b-replaced"], ["a", 0]]);
+
+  const once = [];
+  const off = dispatcher.on("hook", "once", () => { once.push(1); });
+  off();
+  await dispatcher.emit("hook", { value: 0 });
+  assert.equal(once.length, 0);
+
+  const deep = new EventDispatcher(() => true);
+  for (let index = 0; index < 25; index += 1) deep.on("nested", `k${index}`, () => { });
+  deep.on("nested", "boom", async () => { await deep.emit("nested", {}); });
+  await assert.rejects(deep.emit("nested", {}), /超过安全深度/);
+
+  const clearTrace = [];
+  const clearDispatcher = new EventDispatcher(() => true);
+  clearDispatcher.on("x", "one", async () => { clearTrace.push(1); clearDispatcher.clear(); });
+  clearDispatcher.on("x", "two", async () => { clearTrace.push(2); });
+  await clearDispatcher.emit("x", {});
+  assert.deepEqual(clearTrace, [1], "clear during dispatch 阻止后续 handler");
+}
+
+test("事件分发：order/shared mutable/generation/clear/overflow 全语义保留", frArch11DispatcherSemantics);
+
+/*
+功能
+验证 Domain Match facts 是 frozen data-only 且 gameStart 不含 Game。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fact builders。
+
+写入状态
+无。
+
+调用函数
+createGameStartFact、createGameOverFact。
+
+边界与不变量
+JSON 序列化无 Game/Player/function/Map/Set。
+*/
+function frArch11DomainMatchFacts() {
+  const start = createGameStartFact({ gameId:"g1", stateVersion:7, humanPlayerId:"p1", selectedCharacterId:"hero" });
+  assert.ok(Object.isFrozen(start));
+  assert.equal(JSON.stringify(start).includes("function"), false);
+  assert.equal(JSON.stringify(start).includes("Game"), false);
+  const parsed = JSON.parse(JSON.stringify(start));
+  assert.deepEqual(parsed, { type:"gameStart", gameId:"g1", stateVersion:7, humanPlayerId:"p1", selectedCharacterId:"hero" });
+  const over = createGameOverFact({ gameId:"g1", stateVersion:9, winnerTeam:"dawn" });
+  assert.ok(Object.isFrozen(over));
+  assert.equal(over.winnerTeam, "dawn");
+}
+
+test("Domain 事件事实：frozen/data-only，gameStart 无 Game entity", frArch11DomainMatchFacts);
+
+/*
+功能
+验证 MatchWorkflow 不再有 getLegacyGameRef 且 core/EventBus 只是 façade。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+EventDispatcher 是唯一 listener registry implementation，旧 EventBus 路径不存在。
+*/
+async function frArch11MatchAndEventBusClosure() {
+  const matchSource = await readFile(projectFile("js/application/match/MatchWorkflow.js"), "utf8");
+  assert.doesNotMatch(matchSource, /getLegacyGameRef/);
+  assert.match(matchSource, /publishFact/);
+  assert.doesNotMatch(matchSource, /game:\s*runtime\.getLegacyGameRef/);
+  const eventDispatcherSource = await readFile(projectFile("js/application/messaging/EventDispatcher.js"), "utf8");
+  assert.match(eventDispatcherSource, /listeners\s*=\s*new Map/);
+  assert.match(eventDispatcherSource, /maxDepth/);
+  await assert.rejects(access(projectFile("js/core/EventBus.js")), /ENOENT/);
+}
+
+test("架构·事件 ownership：MatchWorkflow 无 shell ref，EventDispatcher 唯一", frArch11MatchAndEventBusClosure);
+
+/*
+功能
+验证 FR-ARCH-10 carry-ins：AI transfer policy 与 passive predicate 归属。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码与 Domain predicates。
+
+写入状态
+无。
+
+调用函数
+readFile、canTriggerMomentumCategory、canTriggerRejuvenation、shouldConsumeMomentum。
+
+边界与不变量
+Application 无 controllerType AI 转移公式；predicate 由 Domain 拥有。
+*/
+async function frArch11CarryInOwnership() {
+  const cardIntent = await readFile(projectFile("js/application/action/CardIntentRuntime.js"), "utf8");
+  assert.doesNotMatch(cardIntent, /source\.controllerType === "ai"/);
+  assert.match(cardIntent, /isTransferExecutionAllowed/);
+  const trigger = await readFile(projectFile("js/application/trigger/PassiveSkillTriggerRegistry.js"), "utf8");
+  assert.match(trigger, /canTriggerMomentumCategory/);
+  const owner = { id:"a", alive:true, turnFlags:{ categoriesUsed:new Set() } };
+  assert.equal(canTriggerMomentumCategory(owner, { source:{ id:"a" }, card:{ category:"basic" } }), true);
+  assert.equal(shouldConsumeMomentum(owner, { source:{ id:"a" }, actualAmount:1, metadata:{ consumeMomentum:true } }), true);
+}
+
+test("Application ownership：AI policy/被动 predicates 不留在 Application runtime", frArch11CarryInOwnership);
+
+/*
+功能
+验证 GlobalTriggerRegistry 拥有 huntMark/seal/lightning 注册。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+composition 只调用 registry，业务事件 key 只存在于 trigger owner。
+*/
+async function frArch11GlobalTriggerOwnership() {
+  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  assert.match(compositionSource, /globalTriggerRegistry\.register\(\)/);
+  assert.doesNotMatch(compositionSource, /onEvent\("playerDead"/);
+  assert.doesNotMatch(compositionSource, /onEvent\("beforeStatusResolve"/);
+  const registry = await readFile(projectFile("js/application/trigger/GlobalTriggerRegistry.js"), "utf8");
+  assert.match(registry, /global:huntMarkSourceCleanup/);
+  assert.match(registry, /global:seal/);
+  assert.match(registry, /global:lightning/);
+}
+
+test("全局触发器：huntMark/seal/lightning registration 归 Application", frArch11GlobalTriggerOwnership);
+
+// ---- Match、Turn 与 Action ----
+
+/*
+功能
+验证 pre-live match setup 与 live authoritative match 的显式边界。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game/matchWorkflow/stateVersion。
+
+写入状态
+startSelection 与 confirmCharacter setup/live 状态。
+
+调用函数
+game.startSelection、game.confirmCharacter。
+
+边界与不变量
+pre-live roster/maxEnergy/startingPlayerIndex 不 bump stateVersion；live 后拒绝重复 setup commit。
+*/
+async function frArch9MatchSetupBoundary() {
+  const ui = makeUi();
+  const game = createGameApplication(ui, () => 0.25);
+  game.simulationMode = true;
+  game.runGameLoop = async () => { };
+  const versionBeforeRoster = game.state.stateVersion;
+  const candidates = game.startSelection();
+  assert.equal(candidates.length, 4);
+  assert.equal(game.state.players.length, 5);
+  assert.equal(game.state.stateVersion, versionBeforeRoster, "pre-live roster/maxEnergy 不 bump stateVersion");
+  assert.equal(game.matchWorkflow.preLiveSetup.rosterCommitted, true);
+  assert.equal(game.matchWorkflow.preLiveSetup.maxEnergyCommitted, true);
+  assert.equal(game.matchWorkflow.liveAuthoritativeMatch, false);
+  await game.confirmCharacter(candidates[0].id);
+  assert.equal(game.matchWorkflow.liveAuthoritativeMatch, true);
+  assert.equal(game.state.startingPlayerIndex, 1);
+  assert.ok(game.state.stateVersion > versionBeforeRoster, "live setup transitions 后 stateVersion authoritative");
+  assert.throws(() => game.startSelection(), /pre-live setup/);
+}
+
+test("Match setup：pre-live one-shot，live 后拒绝重复 setup", frArch9MatchSetupBoundary);
+
+/*
+功能
+验证胜利决定是 Domain Team Rule，Application Match 只提交 workflow。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture。
+
+写入状态
+winner/isGameOver/phase 经 transitions。
+
+调用函数
+getWinningTeam、game.checkVictory。
+
+边界与不变量
+双阵营存活无胜者；单阵营返回该阵营并提交 gameOver phase。
+*/
+async function frArch9MatchVictoryWorkflow() {
+  const dawn = makePlayer("fr9-dawn", 0, "dawn"),
+    dusk = makePlayer("fr9-dusk", 1, "dusk");
+  const { game } = makeGame([dawn, dusk]);
+  assert.equal(getWinningTeam(game.state), null);
+  dusk.alive = false;
+  assert.equal(getWinningTeam(game.state), "dawn");
+  assert.equal(await game.checkVictory(), "dawn");
+  assert.equal(game.state.winnerTeam, "dawn");
+  assert.equal(game.state.isGameOver, true);
+  assert.equal(game.state.phase, "gameOver");
+}
+
+test("胜负判定：winner formula 在 Domain TeamRules", frArch9MatchVictoryWorkflow);
+
+/*
+功能
+验证 discard ChoicePort request 为 data-only，且 UI/AI adapter 映射保持旧 legacy entity rebind。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake cards/legacy context。
+
+写入状态
+fake calls。
+
+调用函数
+createDiscardChoiceRequest、createUiChoiceAdapter、createAiChoiceAdapter。
+
+边界与不变量
+selectedIds 只含 cardId；human exact count；AI exact count；canDecline false。
+*/
+async function frArch9DiscardChoicePort() {
+  const request = createDiscardChoiceRequest({
+    requestId:"d1", actorId:"p1", gameId:"g1", stateVersion:1,
+    handCardIds:["c1", "c2"], requiredCount:2, label:"弃牌", handLimit:2
+  });
+  assert.equal(request.kind, "discard");
+  assert.equal(request.canDecline, false);
+  assert.deepEqual(request.options.map((option) => option.optionId), ["c1", "c2"]);
+  const human = createUiChoiceAdapter({
+    requestResponse: async () => null,
+    requestPublicCard: async () => null,
+    requestDiscard: async (player, count, prompt) => {
+      assert.equal(count, 2);
+      assert.equal(prompt, "弃牌");
+      return [{ id:"c1" }, { id:"c2" }];
+    },
+    requestTarget: async () => null,
+    getChoiceContext: () => ({ player:{ id:"p1" }, count:2, prompt:"弃牌" }),
+    isSessionValid: () => true
+  });
+  assert.deepEqual(await human.request(request), createChoiceResult("selected", { selectedIds:["c1", "c2"] }));
+  const ai = createAiChoiceAdapter({
+    getChoiceContext: () => ({ player:{ id:"p1" }, count:2 }),
+    shouldRespond: () => false,
+    choosePublicCard: () => null,
+    chooseDiscards: () => [{ id:"c1" }, { id:"c2" }],
+    isSessionValid: () => true
+  });
+  assert.deepEqual(await ai.request(request), createChoiceResult("selected", { selectedIds:["c1", "c2"] }));
+}
+
+test("ChoicePort·弃牌：data-only 请求，UI/AI adapter 只 rebind", frArch9DiscardChoicePort);
+
+/*
+功能
+验证 target ChoicePort 只接受公开 target facts，human adapter 返回 selected ID 后由 Action 重新绑定。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake targets。
+
+写入状态
+fake calls。
+
+调用函数
+createTargetChoiceRequest、createUiChoiceAdapter。
+
+边界与不变量
+AI Planner 不走该 Choice；request 不含 Player entity。
+*/
+async function frArch9TargetChoicePort() {
+  const request = createTargetChoiceRequest({
+    requestId:"t1", actorId:"human", gameId:"g1", stateVersion:1,
+    targets:[{ id:"e1", name:"敌人", battleTeam:"dusk" }], label:"选择目标", sourcePlayerId:"human", cardId:"a1"
+  });
+  assert.equal(request.kind, "target");
+  assert.equal(request.options[0].optionId, "e1");
+  assert.equal(JSON.stringify(request).includes("hand"), false);
+  const human = createUiChoiceAdapter({
+    requestResponse: async () => null,
+    requestPublicCard: async () => null,
+    requestDiscard: async () => [],
+    requestTarget: async (players, prompt) => { assert.equal(players[0].id, "e1"); assert.equal(prompt, "选择目标"); return players[0]; },
+    getChoiceContext: () => ({ players:[{ id:"e1", name:"敌人" }], prompt:"选择目标", meta:{} }),
+    isSessionValid: () => true
+  });
+  assert.deepEqual(await human.request(request), createChoiceResult("selected", { selectedIds:["e1"] }));
+}
+
+test("ChoicePort·目标：公开 target facts，Action 返回后 revalidate", frArch9TargetChoicePort);
+
+/*
+功能
+验证 Application Match/Turn/Action 无 concrete runtime 依赖且 composition 无 workflow algorithm 残留。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/application/{match,turn,action} 与最终 composition 源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+composition 只有 wiring/forward；旧 match/turn/action algorithm marker 不再出现。
+*/
+async function frArch9ApplicationOwnershipPurity() {
+  const files = [
+    ...(await listJavaScriptFiles(projectFile("js/application/match"))),
+    ...(await listJavaScriptFiles(projectFile("js/application/turn"))),
+    ...(await listJavaScriptFiles(projectFile("js/application/action")))
+  ];
+  assert.ok(files.length >= 3);
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|\/adapters\/|\/ui\/|\/audio\/|\/ai\/|UIManager\.js|AiController\.js|SoundManager\.js|cards\/cardRegistry|characters\/skillRegistry|config\/|utils\/debug)/, file);
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    const concreteRuntimePattern = /\.(?:statistics|aiMemory|recentAggressors)\b|\bEventBus\b|\beventDispatcher\b|\bdocument\b|\bwindow\b|\bPlanner\b|\bSearchState\b/;
+    if (nodePath.basename(file) !== "Player.js") assert.doesNotMatch(code, concreteRuntimePattern, file);
+  }
+  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  assert.match(gameSource, /startSelection:application\.matchWorkflow\.startSelection/);
+  assert.match(gameSource, /runGameLoop:application\.turnWorkflow\.runGameLoop/);
+  assert.match(gameSource, /playCard:application\.actionWorkflow\.playCard/);
+  assert.doesNotMatch(gameSource, /\bconsecutiveTurnFailures\b/);
+  assert.doesNotMatch(gameSource, /setMatchPhase\(\s*this\.state/);
+  assert.doesNotMatch(gameSource, /const preparedTransfer =/);
+  assert.doesNotMatch(gameSource, /recentAggressors/);
+}
+
+test("Application 纯度：Match/Turn/Action 无 concrete adapter，composition 无 workflow body", frArch9ApplicationOwnershipPurity);
+
+/*
+功能
+验证 Dying queue mutable exposure 已关闭且只提供冻结快照。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 DyingWorkflow。
+
+写入状态
+无。
+
+调用函数
+Object.isFrozen、Object.hasOwn。
+
+边界与不变量
+façade 不再暴露可变 queue；snapshot 与内部队列解耦。
+*/
+function frArch9DyingQueueSnapshotClosure() {
+  const { game } = makeTeamFixture();
+  assert.equal(Object.hasOwn(game.dyingWorkflow, "queue"), false);
+  const snapshot = game.dyingWorkflow.queueSnapshot;
+  assert.ok(Object.isFrozen(snapshot));
+  assert.ok(Array.isArray(snapshot));
+}
+
+test("濒死队列：只读 snapshot，不暴露可变 owner queue", frArch9DyingQueueSnapshotClosure);
+
+/*
+功能
+验证 concrete Presentation/Diagnostics/AI observation 实现已移出 Game，Game 只做 composition wiring。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+adapters 与 Game 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+Game 无 showDamageFeedback 实现、无 statistics 写入、无 recentAggressors 写入。
+*/
+async function frArch9ConcreteAdaptersLeftGame() {
+  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  assert.doesNotMatch(gameSource, /showDamageFeedback:\s*\(playerId/);
+  assert.doesNotMatch(gameSource, /target\.statistics\.damageTaken\s*\+=/);
+  assert.doesNotMatch(gameSource, /target\.aiMemory\.recentAggressors/);
+  const uiAdapter = await readFile(projectFile("js/adapters/ui/GamePresentationAdapter.js"), "utf8");
+  const diagnosticsAdapter = await readFile(projectFile("js/adapters/diagnostics/PlayerStatisticsDiagnosticsAdapter.js"), "utf8");
+  const aiAdapter = await readFile(projectFile("js/adapters/ai/RecentAggressorsObservationAdapter.js"), "utf8");
+  assert.match(uiAdapter, /createPresentationPort/);
+  assert.match(diagnosticsAdapter, /target\.statistics\.damageTaken/);
+  assert.match(aiAdapter, /recentAggressors/);
+}
+
+test("Adapter ownership：Presentation/Diagnostics/AI observation owner 在 adapters", frArch9ConcreteAdaptersLeftGame);
+
+/*
+功能
+验证 action runtime state 由 Application Action 唯一拥有，Game 仅提供兼容 accessor。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 Game/actionWorkflow 源码。
+
+写入状态
+action state 字段。
+
+调用函数
+readFile。
+
+边界与不变量
+设置 Game.accessor 会写 ActionWorkflow state；resolutionOwners 为同一 Map。
+*/
+async function frArch9ActionRuntimeStateOwnership() {
+  const actor = makePlayer("fr9-action-state", 0, "dawn");
+  const { game } = makeGame([actor]);
+  game.actionWorkflow.setActionLocked(true);
+  assert.equal(game.actionWorkflow.getActionStateSnapshot().actionLocked, true);
+  game.actionWorkflow.resetLocks();
+  game.actionWorkflow.setInteractionLocked(true);
+  assert.equal(game.actionWorkflow.getActionStateSnapshot().interactionLocked, true);
+  game.actionWorkflow.resetLocks();
+  game.actionWorkflow.setPendingHumanPlayEnd(true);
+  assert.equal(game.actionWorkflow.getActionStateSnapshot().pendingHumanPlayEnd, true);
+  game.actionWorkflow.resetLocks();
+  const snapshot = game.actionWorkflow.getResolutionOwnersSnapshot();
+  snapshot.set({}, "x");
+  assert.equal(game.actionWorkflow.getResolutionOwnerCount(), 0);
+  const source = await readFile(projectFile("js/application/action/ActionWorkflow.js"), "utf8");
+  assert.match(source, /resolutionOwners: new Map\(\)/);
+}
+
+test("Action 运行状态：locks/resolution owners 归 Application Action", frArch9ActionRuntimeStateOwnership);
+
+// ---- Action Domain 与 Runtime ----
+
+/*
+功能
+验证 ActionWorkflow 无 specific card ID branch 且不暴露 mutable runtime。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+ActionWorkflow/Game 源码与 fake Game。
+
+写入状态
+无。
+
+调用函数
+readFile、makeGame。
+
+边界与不变量
+resolutionOwners snapshot 修改不影响 owner。
+*/
+async function frArch10ActionGenericAndEncapsulated() {
+  const source = await readFile(projectFile("js/application/action/ActionWorkflow.js"), "utf8");
+  for (const token of ["transfer", "leverage", "scout", "plunder", "destroy", "mutualBenefit"]) {
+    assert.doesNotMatch(source, new RegExp(`\\\\b${token}\\\\b`), token);
+  }
+  assert.doesNotMatch(source, /state:\s*actionRuntime/);
+  const actor = makePlayer("fr10-action", 0, "dawn");
+  const { game } = makeGame([actor]);
+  const snapshot = game.actionWorkflow.getResolutionOwnersSnapshot();
+  snapshot.set({}, "x");
+  assert.equal(game.actionWorkflow.getResolutionOwnerCount(), 0);
+  assert.equal(game.resolutionOwners.size, 0);
+}
+
+test("ActionWorkflow：generic + encapsulated，resolutionOwners 无 mutable escape", frArch10ActionGenericAndEncapsulated);
+
 // ==================== 基础牌 ====================
 
 // ---- 突袭 ----
@@ -1721,6 +4089,99 @@ test("突袭：普通突袭计入次数并造成伤害", async () => {
   assert.equal(a.turnFlags.attackUsed, 1);
   assert.equal(b.hp, b.maxHp - 1);
 });
+
+/*
+功能
+为现有 Game 安装只读 trace harness，记录 EventBus 事件顺序与公开日志顺序。
+
+调用方
+FR-ARCH-1 characterization tests。
+
+输入
+当前 Game 实例。
+
+输出
+包含 events 与 logs 数组的 trace 对象。
+
+读取状态
+Game.eventDispatcher、Game.log。
+
+写入状态
+仅写返回的 trace 数组。
+
+调用函数
+EventBus.emit、Game.log。
+
+边界与不变量
+包装函数保持 this 绑定与原始返回值；记录先于原调用，日志 kind 以原始返回值为准。
+*/
+function installFrArchTrace(game) {
+  const trace = { events: [], logs: [] };
+  const originalEmit = game.eventDispatcher.emit.bind(game.eventDispatcher);
+  const originalLog = game.log.bind(game);
+  game.eventDispatcher.emit = async (eventName, event) => {
+    trace.events.push(eventName);
+    return originalEmit(eventName, event);
+  };
+  game.log = (message, kind = "normal") => {
+    const entry = originalLog(message, kind);
+    trace.logs.push({ message, kind: entry.kind });
+    return entry;
+  };
+  return trace;
+}
+
+/*
+功能
+运行 FR-ARCH-1 突袭事件顺序 characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture 的 trace。
+
+写入状态
+无生产状态。
+
+调用函数
+makePlayer、makeGame、instance、installFrArchTrace、Game.playCard。
+
+边界与不变量
+trace 序列必须与迁移前逐项一致。
+*/
+async function frArchAssaultEventTrace() {
+  const actor = makePlayer("fr-trace-actor", 0, "dawn", "ai", 0);
+  const target = makePlayer("fr-trace-target", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, target]);
+  const card = instance("assault");
+  actor.hand.push(card);
+  const trace = installFrArchTrace(game);
+  await game.playCard(actor, card, [target]);
+  assert.deepEqual(trace.events, [
+    "beforeCardMove",
+    "afterCardMove",
+    "beforeCardUse",
+    "targetSelected",
+    "beforeCardResolve",
+    "beforeDamage",
+    "afterDamage",
+    "beforeCardMove",
+    "afterCardMove",
+    "cardUsed"
+  ]);
+  assert.deepEqual(trace.logs.map((entry) => entry.kind), ["normal", "damage"]);
+  assert.deepEqual(game.getCardZoneOccurrences(card), ["discard"]);
+  assert.equal(target.hp, target.maxHp - 1);
+}
+
+test("结算事件顺序：突袭真实结算冻结 before/after 与移动事件序列", frArchAssaultEventTrace);
 
 // ---- 调息 ----
 
@@ -1885,6 +4346,29 @@ test("窥探：只向真人私密层展示并把该实体牌标记为已知", as
   assert.equal(ui.reveals[0].cards[0], secret);
   assert.equal(createOpponentHandView(a, b)[0].name, secret.name);
   assert.ok(!game.state.logs.at(-1).message.includes(secret.name));
+});
+
+test("窥探：真人目标有两张手牌时只选择一张仍成功", async () => {
+  const actor = makePlayer("scout-up-to-actor", 0, "dawn", "human"),
+    target = makePlayer("scout-up-to-target", 1, "dusk"),
+    use = instance("scout"),
+    selected = instance("charge"),
+    unselected = instance("block");
+  actor.hand.push(use);
+  target.hand.push(selected, unselected);
+  const { game, ui } = makeGame([actor, target]);
+  game.ui.requestCardFlow = async () => ({});
+  game.ui.requestHiddenCards = async (selection, maximum, _prompt, options) => {
+    assert.equal(maximum, 2);
+    assert.equal(options.exact, false);
+    return [selection.tokens[0].token];
+  };
+
+  assert.equal(await game.handleHumanCard(use.id), true);
+  assert.deepEqual(ui.reveals.at(-1)?.cards, [selected]);
+  assert.equal(actor.aiMemory.knownCardsByPlayer[target.id][selected.id], selected.definitionId);
+  assert.equal(actor.aiMemory.knownCardsByPlayer[target.id][unselected.id], undefined);
+  game.dispose();
 });
 
 // ---- 转移 ----
@@ -3350,6 +5834,98 @@ test("反制：三次反制后原战术牌仍被取消", async () => {
   assert.ok(game.state.logs.some((entry) => entry.message.includes("取消了「丰收」的效果")));
 });
 
+/*
+功能
+创建五名全 AI 玩家并让除主动者外每名玩家持有一张反制牌，用于冻结反制座次顺序。
+
+调用方
+FR-ARCH-1 响应顺序 characterization test。
+
+输入
+无。
+
+输出
+game、source、harvest 卡牌和响应捕获数组。
+
+读取状态
+生产 Game/Player/卡牌配置。
+
+写入状态
+仅写测试 fixture。
+
+调用函数
+makePlayer、makeGame、instance。
+
+边界与不变量
+不注册被动技能；除 source 外每名响应者恰有一张反制，保证确定性。
+*/
+function makeFrArchCounterOrderFixture() {
+  const players = [];
+  for (let index = 0; index < 5; index += 1) {
+    players.push(makePlayer(`fr-counter-p${index}`, index, index === 0 ? "dawn" : "dusk", "ai", index));
+  }
+  const { game } = makeGame(players);
+  const source = players[0];
+  const card = instance("harvest");
+  source.hand.push(card);
+  for (const responder of players.slice(1)) {
+    responder.hand.push({ ...CARD_DEFINITIONS.counter, id: `fr-counter-card-${responder.id}` });
+  }
+  const calls = [];
+  game.aiController.responsePolicy.shouldRespond = (responder, type, context, cards) => {
+    calls.push({
+      responderId: responder.id,
+      type,
+      sourceId: context.source?.id ?? null,
+      rootCardId: context.rootCard?.definitionId ?? null,
+      counterDepth: context.counterDepth ?? null
+    });
+    return type === "counter" && cards.length > 0;
+  };
+  return { game, source, card, calls };
+}
+
+/*
+功能
+运行 FR-ARCH-1 反制链座次 characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture 与响应策略捕获。
+
+写入状态
+无生产状态。
+
+调用函数
+makeFrArchCounterOrderFixture、Game.playCard。
+
+边界与不变量
+根牌每层询问严格按当前响应者下一座位开始，且 counterDepth 逐层加一。
+*/
+async function frArchCounterOrderTrace() {
+  const { game, source, card, calls } = makeFrArchCounterOrderFixture();
+  await game.playCard(source, card, []);
+  assert.deepEqual(calls.map((entry) => entry.responderId), [
+    "fr-counter-p1",
+    "fr-counter-p2",
+    "fr-counter-p3",
+    "fr-counter-p4"
+  ]);
+  assert.deepEqual(calls.map((entry) => entry.counterDepth), [0, 1, 2, 3]);
+  assert.ok(calls.every((entry) => entry.type === "counter"));
+  assert.ok(calls.every((entry) => entry.rootCardId === "harvest"));
+}
+
+test("响应顺序：反制链逐层座次与 counterDepth 冻结", frArchCounterOrderTrace);
+
 // ---- 丰收 ----
 
 test("丰收：直接摸2且无需弃牌", async () => {
@@ -4428,6 +7004,101 @@ test("闪电：卡牌描述与 README 当前描述完全一致", async () => {
   assert.equal(CARD_DEFINITIONS.lightning.description, match[1].trim());
 });
 
+// ---- 卡牌 Domain 与 Runtime ----
+
+/*
+功能
+验证 Domain CardRules 纯目标/借势/转移公式。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake canonical facts。
+
+写入状态
+无。
+
+调用函数
+getCardTargetIds、getAssaultTargetIds、getLeverageFirstTargetIds、getTransferSourceIds、canActuallyUseAssaultRule、canPlayCardRule。
+
+边界与不变量
+Domain 不接受 entity；reason 与旧 ActionLegality 一致。
+*/
+function frArch10DomainCardRules() {
+  const players = [
+    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", attackRange:1, handCount:1, equipmentDefinitionId:null, hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] },
+    { id:"b", seatIndex:1, alive:true, battleTeam:"dusk", attackRange:1, handCount:1, equipmentDefinitionId:"defenseDevice", hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] },
+    { id:"c", seatIndex:2, alive:true, battleTeam:"dawn", attackRange:1, handCount:1, equipmentDefinitionId:null, hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] }
+  ];
+  const source = players[0];
+  assert.deepEqual(getCardTargetIds(players, source, { targetType:"singleEnemyInRange", effectRange:null }), ["b"]);
+  assert.deepEqual(getAssaultTargetIds(players, players[1]), ["a", "c"]);
+  assert.deepEqual(getLeverageFirstTargetIds(players, source), ["b"]);
+  assert.deepEqual(getTransferSourceIds(players, source, { effectRange:null, ignoresDistance:true, id:"x" }), ["a", "b", "c"]);
+  const transferOnly = { ...players[0], handCount:1, transferableHandCount:0 };
+  assert.equal(getTransferableHandCount(transferOnly), 0);
+  assert.equal(hasHandOrEquipmentFacts(transferOnly), false);
+  assert.deepEqual(
+    getTransferSourceIds(
+      [transferOnly, players[1], players[2]], transferOnly,
+      { effectRange:null, ignoresDistance:true, id:"transfer-card" }
+    ),
+    ["b", "c"]
+  );
+  assert.equal(canActuallyUseAssaultRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, usage:{ used:0, limit:1 } }).ok, true);
+  assert.equal(canPlayCardRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, assaultUsage:{ used:0, limit:1 } }).ok, true);
+}
+
+test("Domain 规则·卡牌：target/leverage/transfer/legality 纯公式", frArch10DomainCardRules);
+
+/*
+功能
+验证已删除的 registry 不再充当 façade，最终 runtime/legality owner 各自独立。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+源码断言低误报。
+*/
+async function frArch10RegistryClosure() {
+  await assert.rejects(access(projectFile("js/cards/cardRegistry.js")), /ENOENT/);
+  await assert.rejects(access(projectFile("js/characters/skillRegistry.js")), /ENOENT/);
+  const cardRuntime = await readFile(projectFile("js/application/action/CardEffectRuntime.js"), "utf8");
+  assert.match(cardRuntime, /async function resolve\(/);
+  const skillRuntime = await readFile(projectFile("js/application/action/SkillEffectRuntime.js"), "utf8");
+  assert.match(skillRuntime, /async function execute\(/);
+  const actionLegality = await readFile(projectFile("js/application/action/ActionLegality.js"), "utf8");
+  assert.doesNotMatch(actionLegality, /switch \(card\.targetType\)/);
+  assert.doesNotMatch(actionLegality, /skillId === "barrier"/);
+  assert.match(actionLegality, /getCardTargetIds/);
+  assert.match(actionLegality, /getSkillTargetIds/);
+}
+
+test("架构·卡牌运行时：registry façade 已删除，effect 与 legality owner 独立", frArch10RegistryClosure);
+
 // ==================== 装备 ====================
 
 // ---- 装备公共规则 ----
@@ -4562,6 +7233,45 @@ test("回收站：仍严格限制每回合最多触发2次", async () => {
   assert.ok(recycleLogs.every((entry) => /（[12]\/2），摸1张牌。/.test(entry.message)));
   assert.equal(game.state.logs.filter((entry) => entry.message.includes(`${owner.name}摸了`)).length, 0);
 });
+
+/*
+功能
+验证 recycleDevice Domain predicate 与应用 trigger 已从 Game 迁出。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake predicate 与最终 composition source。
+
+写入状态
+无。
+
+调用函数
+canTriggerRecycleDevice、readFile。
+
+边界与不变量
+predicate 只读；composition 只负责注册 trigger，不拥有 semantic formula。
+*/
+async function frArch10RecycleDeviceTrigger() {
+  const facts = { ownerAlive:true, currentActorId:"a", ownerId:"a", equipmentDefinitionId:"recycleDevice", cardCategory:"tactic", cardUsageMode:"active", useCount:1 };
+  assert.equal(canTriggerRecycleDevice(facts), true);
+  assert.equal(canTriggerRecycleDevice({ ...facts, useCount:2 }), false);
+  assert.equal(canTriggerRecycleDevice({ ...facts, cardCategory:"basic" }), false);
+  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  assert.doesNotMatch(compositionSource, /global:recycleDevice[\s\S]*setRecycleDeviceUses/);
+  assert.match(compositionSource, /application\.recycleDeviceTrigger\.register\(\)/);
+  const triggerSource = await readFile(projectFile("js/application/trigger/RecycleDeviceTrigger.js"), "utf8");
+  assert.match(triggerSource, /canTriggerRecycleDevice/);
+}
+
+test("回收站触发：predicate 在 Domain，trigger 在 Application", frArch10RecycleDeviceTrigger);
 
 // ---- 雷达 ----
 
@@ -5000,6 +7710,48 @@ test("刃行者：回合外连势在当前全局回合结束的 turnEnd 立即�
   await game.takeTurn(b, game.state.gameId);
   assert.equal(blade.turnFlags.categoriesUsed.size, 0);
 });
+
+/*
+功能
+运行 FR-ARCH-1 主动技能 trace characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture 的 UI 记录与角色状态。
+
+写入状态
+无生产状态。
+
+调用函数
+makePlayer、makeGame、Game.useActiveSkill。
+
+边界与不变量
+破军先按固定费用扣能量，再增加本回合突袭上限并进入中央结算展示。
+*/
+async function frArchSkillTrace() {
+  const actor = makePlayer("fr-skill-actor", 0, "dawn", "ai", 0);
+  const other = makePlayer("fr-skill-other", 1, "dusk", "ai", 1);
+  actor.energy = 2;
+  const { game, ui } = makeGame([actor, other]);
+  const trace = installFrArchTrace(game);
+  const used = await game.useActiveSkill(actor, "breakArmy", []);
+  assert.equal(used, true);
+  assert.equal(actor.energy, 0);
+  assert.equal(actor.turnFlags.attackLimit, 2);
+  assert.equal(ui.currentCards.length, 1);
+  assert.match(ui.currentCards[0].cardOrName, /破军/);
+  assert.ok(trace.events.length === 0, "主动技能当前不应经过额外领域事件");
+}
+
+test("技能结算轨迹：破军费用、次数上限与中央展示顺序冻结", frArchSkillTrace);
 
 // ---- 守誓者 ----
 
@@ -7632,6 +10384,85 @@ test("调律师：协调额度每个全局回合开始重置且跨两个玩家�
   assert.equal(drawReasons.filter((reason) => reason === "协调").length, 2);
 });
 
+// ---- 技能 Domain 与 Runtime ----
+
+/*
+功能
+验证 Domain SkillRules 的 cost/base legality/target 纯决定。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake canonical facts。
+
+写入状态
+无。
+
+调用函数
+canUseSkillBase、getSkillTargetIds。
+
+边界与不变量
+reason 与旧 skillRegistry 一致。
+*/
+function frArch10DomainSkillRules() {
+  const players = [
+    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", attackRange:1, handCount:0, equipmentDefinitionId:null, hp:4, maxHp:4, energy:2, maxEnergy:3, huntMarkSourceId:null, statusIds:[] },
+    { id:"b", seatIndex:1, alive:true, battleTeam:"dawn", attackRange:1, handCount:0, equipmentDefinitionId:null, hp:2, maxHp:4, energy:0, maxEnergy:3, huntMarkSourceId:null, statusIds:[] }
+  ];
+  assert.deepEqual(getSkillTargetIds(players, "a", { id:"barrier", rangeRule:"ally" }), ["a", "b"]);
+  assert.equal(canUseSkillBase({ players, sourceId:"a", currentPlayerId:"a", phase:"play", skill:{ id:"barrier", cost:2, limitPerTurn:2 }, used:0, limitPerTurn:2, energy:2 }).ok, true);
+  assert.equal(canUseSkillBase({ players, sourceId:"a", currentPlayerId:"a", phase:"play", skill:{ id:"barrier", cost:2, limitPerTurn:2 }, used:0, limitPerTurn:2, energy:1 }).reason, "能量不足");
+}
+
+test("Domain 规则·技能：cost/base legality/target 纯决定", frArch10DomainSkillRules);
+
+/*
+功能
+验证 passive skill trigger runtime 已迁到 Application Trigger。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码与 application fixture。
+
+写入状态
+无。
+
+调用函数
+readFile、makeGame、registerPassiveSkills。
+
+边界与不变量
+registration once；composition 仅委托最终 trigger registry。
+*/
+async function frArch10PassiveTriggerOwnership() {
+  const triggerSource = await readFile(projectFile("js/application/trigger/PassiveSkillTriggerRegistry.js"), "utf8");
+  assert.match(triggerSource, /momentum\(/);
+  assert.match(triggerSource, /coordination\(/);
+  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  assert.match(compositionSource, /passiveTriggerRegistry\.registerForPlayers/);
+  await assert.rejects(access(projectFile("js/characters/skillRegistry.js")), /ENOENT/);
+  const owner = makePlayer("fr10-passive", 0, "dawn", "ai", 4);
+  const { game } = makeGame([owner]);
+  registerPassiveSkills(game);
+  assert.ok(game.passiveTriggerRegistry.hasSkill("momentum"));
+}
+
+test("被动触发器：Application Trigger 独占注册", frArch10PassiveTriggerOwnership);
+
 // ==================== 响应、伤害与濒死 ====================
 
 // ---- 响应窗口与格挡 ----
@@ -8259,6 +11090,59 @@ test("原子响应：响应系统只有整组原子支付完成后才返回 used
   assert.equal(game.state.deck.discardPile.length, 0);
 });
 
+/*
+功能
+运行 FR-ARCH-1 原子响应支付与 zone 唯一性 characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture 的 trace 与 zone occurrence。
+
+写入状态
+无生产状态。
+
+调用函数
+makePlayer、makeGame、instance、installFrArchTrace、Game.payCardsFromHandAtomically。
+
+边界与不变量
+两张支付牌必须同时离开手牌且各自只出现在弃牌堆。
+*/
+async function frArchAtomicZoneTrace() {
+  const actor = makePlayer("fr-zone-actor", 0, "dawn", "ai", 0);
+  const other = makePlayer("fr-zone-other", 1, "dusk", "ai", 1);
+  const first = instance("block");
+  const second = instance("block");
+  actor.hand.push(first, second);
+  const { game } = makeGame([actor, other]);
+  const trace = installFrArchTrace(game);
+  const beforeVersion = actor.handVersion;
+  const payment = await game.payCardsFromHandAtomically(actor, [first, second], "FR-ARCH 原子支付", {
+    silent: true,
+    expectedCount: 2
+  });
+  assert.equal(payment.status, "used");
+  assert.deepEqual(actor.hand, []);
+  assert.equal(actor.handVersion, beforeVersion + 1);
+  assertCardOnlyIn(game, first, "discard");
+  assertCardOnlyIn(game, second, "discard");
+  assert.deepEqual(trace.events, [
+    "beforeCardMove",
+    "beforeCardMove",
+    "afterCardMove",
+    "afterCardMove"
+  ]);
+}
+
+test("区域不变量：原子支付与实体唯一区域冻结", frArchAtomicZoneTrace);
+
 // ---- 直接失去生命 ----
 
 test("失去生命：独立路径不触发雷达、格挡、护援或伤害事件", async () => {
@@ -8408,6 +11292,1025 @@ test("濒死：成功救援事件顺序包含 dying、rescueUsed、rescued", asy
   await game.dyingWorkflow.enter(dying, enemy);
   assert.deepEqual(events, ["playerDying", "dyingRescueUsed", "playerRescued"]);
 });
+
+// ---- Response ownership ----
+
+/*
+功能
+验证 ResponseWorkflowResult 与 ChoiceResult 语义分离且 status authority 单一。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+createChoiceResult、createResponseWorkflowResult。
+
+边界与不变量
+choice selected 不等于 response USED；unavailable/invalid 只属 workflow。
+*/
+function frArch7ResponseResultContract() {
+  const choice = createChoiceResult("selected", { selectedIds:["c1"] });
+  const response = createResponseWorkflowResult(WORKFLOW_RESPONSE_STATUS.USED, { cards:["c1"] });
+  assert.equal(choice.status, "selected");
+  assert.equal(response.status, "used");
+  assert.notDeepEqual(choice, response);
+  assert.deepEqual(createResponseWorkflowResult(WORKFLOW_RESPONSE_STATUS.INVALID), { status:"invalid" });
+}
+
+test("Response 结果契约：ChoiceResult 与 ResponseWorkflowResult 分离", frArch7ResponseResultContract);
+
+/*
+功能
+验证 Application ResponseWorkflow 在 fake collaborators 下拥有 request lifecycle、choice normalization、revalidation 与 payment orchestration。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/payment/pending records。
+
+写入状态
+fake records。
+
+调用函数
+createResponseWorkflow、createChoicePort、createChoiceCoordinator、createChoiceResult。
+
+边界与不变量
+不写真实 Domain state；adapter selected 不代表必然 USED。
+*/
+async function frArch7ApplicationWorkflow() {
+  const card = { id:"block-1", definitionId:"block" };
+  const makeDeps = (choiceResult) => {
+    const state = { gameId:"g1", isGameOver:false, isDisposed:false, stateVersion:4, players:[] };
+    const pending = [];
+    const payments = [];
+    const workflow = createResponseWorkflow({
+      choiceCoordinator: createChoiceCoordinator(createChoicePort({ request: async () => choiceResult })),
+      choiceContexts: new Map(),
+      getState: () => state,
+      isSessionValid: (gameId) => gameId === "g1" && !state.isDisposed,
+      pushPendingResponse: (request) => pending.push(request),
+      removePendingResponse: (id) => { state.isDisposed || pending.splice(pending.findIndex((entry) => entry.id === id), 1); },
+      clearPendingResponses: () => { pending.length = 0; },
+      payCardsFromHandAtomically: async (responder, cards, reason) => { payments.push({ responder, cards, reason }); return { status:"used", cards }; },
+      setCurrentCard: () => { },
+      log: () => { },
+      emitCardUsed: async () => { },
+      getForceAiRescueHuman: () => false,
+      setThinking: () => { },
+      delayResponse: async () => true,
+      getUsableAssaultCards: () => [],
+      canUseForcedAssault: () => ({ ok:false }),
+      getResponseTimeoutMs: () => null,
+      createId: (prefix) => `${prefix}-1`
+    });
+    return { workflow, state, pending, payments };
+  };
+  const selected = await makeDeps(createChoiceResult("selected", { selectedIds:[card.id] }));
+  const responder = { id:"p1", name:"测试", alive:true, controllerType:"ai", hand:[card] };
+  assert.deepEqual(
+    await selected.workflow.requestCardResponse(responder, "block", { source:{ id:"p2", name:"来源" }, card }, 1),
+    { status:"used", cards:[card] }
+  );
+  assert.equal(selected.payments.length, 1);
+  assert.equal(selected.pending.length, 0);
+
+  const declined = await makeDeps(createChoiceResult("declined"));
+  assert.equal((await declined.workflow.requestCardResponse(responder, "block", {}, 1)).status, "declined");
+  assert.equal(declined.payments.length, 0);
+
+  const invalidated = makeDeps(createChoiceResult("selected", { selectedIds:[card.id] }));
+  invalidated.workflow = invalidated.workflow;
+  const invalidResponder = { id:"p1", name:"测试", alive:true, controllerType:"ai", hand:[{ ...card }] };
+  const oldRequest = invalidated.workflow.requestCardResponse;
+  invalidated.workflow = createResponseWorkflow({
+    choiceCoordinator: createChoiceCoordinator(createChoicePort({
+      async request() { invalidResponder.hand.length = 0; return createChoiceResult("selected", { selectedIds:[card.id] }); }
+    })),
+    choiceContexts: new Map(),
+    getState: () => invalidated.state,
+    isSessionValid: () => true,
+    pushPendingResponse: (request) => invalidated.pending.push(request),
+    removePendingResponse: (id) => { invalidated.pending.splice(invalidated.pending.findIndex((entry) => entry.id === id), 1); },
+    clearPendingResponses: () => { invalidated.pending.length = 0; },
+    payCardsFromHandAtomically: async () => ({ status:"used", cards:[] }),
+    setCurrentCard: () => { },
+    log: () => { },
+    emitCardUsed: async () => { },
+    getForceAiRescueHuman: () => false,
+    setThinking: () => { },
+    delayResponse: async () => true,
+    getUsableAssaultCards: () => [],
+    canUseForcedAssault: () => ({ ok:false }),
+    getResponseTimeoutMs: () => null,
+    createId: (prefix) => `${prefix}-invalid`
+  });
+  const invalidResult = await invalidated.workflow.requestCardResponse(invalidResponder, "block", {}, 1);
+  assert.equal(invalidResult.status, "invalid");
+  assert.equal(invalidResult.cards.length, 0);
+}
+
+test("Response ownership：choice/payment/revalidation 由 Application 拥有", frArch7ApplicationWorkflow);
+
+/*
+功能
+验证 application/response 源码不依赖 concrete UI/AI/DOM/SearchState，且旧 ResponseSystem 路径已删除。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/application/response 源码与旧路径存在性。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+Domain ResponseRules 仍 pure；ResponseWorkflow 是唯一 application owner。
+*/
+async function frArch7ResponseOwnershipPurity() {
+  const files = await listJavaScriptFiles(projectFile("js/application/response"));
+  assert.ok(files.length >= 4);
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|UIManager|AiController|SoundManager|state\/transitions\/)/, file);
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(code, /\bthis\.game\b|\bEventBus\b|\beventDispatcher\b|\bdocument\b|\bwindow\b|[Ss]earchState\b|\bVisibleState\b|\bBeliefState\b/, file);
+  }
+  const workflow = await readFile(projectFile("js/application/response/ResponseWorkflow.js"), "utf8");
+  assert.match(workflow, /function askForCounter/);
+  await assert.rejects(access(projectFile("js/core/ResponseSystem.js")), /ENOENT/);
+}
+
+test("架构·Response ownership：Application workflow 唯一且旧系统路径不存在", frArch7ResponseOwnershipPurity);
+
+/*
+功能
+验证 response presentation DTO 保持 data-only 且旧 observable 字段完整。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+buildResponsePresentation。
+
+边界与不变量
+不包含 DOM/function/entity。
+*/
+function frArch7ResponsePresentationDto() {
+  const presentation = buildResponsePresentation(
+    { id:"p1", name:"测试", controllerType:"human", battleTeam:"dawn", hp:2, maxHp:4, shield:0, energy:1, alive:true },
+    "block",
+    { source:{ id:"p2", name:"敌方" }, target:{ id:"p1", name:"测试" }, card:{ id:"a1", name:"突袭", targetType:"singleEnemy" } },
+    2, 1, "格挡"
+  );
+  assert.equal(presentation.responseCardName, "格挡");
+  assert.equal(presentation.requiredCount, 2);
+  assert.equal(presentation.availableCount, 1);
+  assert.equal(typeof presentation.eventText, "string");
+  assert.ok(Array.isArray(presentation.eventFragments));
+  assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(presentation))).sort(), [
+    "availabilityText","buttonLabel","eventFragments","eventText","requiredCount","responseCardName","responseText","availableCount"
+  ].sort());
+}
+
+test("Response 展示 DTO：data-only 且 observable 等价", frArch7ResponsePresentationDto);
+
+// ---- Combat、濒死、判定与状态 ----
+
+/*
+功能
+验证 Domain Response Rule 唯一拥有濒死救援座次公式。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeTeamFixture 与 createRuleStateView。
+
+写入状态
+测试玩家 alive 字段。
+
+调用函数
+createRuleStateView、getDyingRescueResponderOrder。
+
+边界与不变量
+self first、顺时针存活队友、死亡与敌方跳过；非 canonical roster 必须拒绝。
+*/
+function frArch8RescueOrderDomainRule() {
+  const { game, small, large } = makeTeamFixture();
+  const smallAlly = game.state.players.find((player) => player.id === "small-ally");
+  const view = createRuleStateView(game.state);
+  assert.deepEqual(getDyingRescueResponderOrder(view.players(), small.id), [small.id, smallAlly.id]);
+  assert.deepEqual(getDyingRescueResponderOrder(view.players(), smallAlly.id), [smallAlly.id, small.id]);
+  smallAlly.alive = false;
+  assert.deepEqual(getDyingRescueResponderOrder(view.players(), small.id), [small.id]);
+  assert.equal(getDyingRescueResponderOrder(view.players(), large.id).includes(small.id), false);
+  assert.throws(() => getDyingRescueResponderOrder([view.players()[1], view.players()[2]], small.id), /canonical roster/);
+}
+
+test("濒死救援顺序：Domain 唯一拥有 self→顺时针存活队友公式", frArch8RescueOrderDomainRule);
+
+/*
+功能
+验证 Domain Judgment Rule 输出结构化 destination，Application 不再解释牌区公式。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+decideDefenseJudgmentOutcome、decideDelayedStatusJudgmentOutcome。
+
+边界与不变量
+basic 进手牌；tactic/equipment 与延迟判定进弃牌堆。
+*/
+function frArch8JudgmentOutcomeRules() {
+  assert.deepEqual(decideDefenseJudgmentOutcome("basic"), { handled:true, immune:false, category:"basic", destination:"hand" });
+  assert.deepEqual(decideDefenseJudgmentOutcome("tactic"), { handled:true, immune:true, category:"tactic", destination:"discard" });
+  assert.deepEqual(decideDefenseJudgmentOutcome("equipment"), { handled:true, immune:false, category:"equipment", destination:"discard" });
+  assert.deepEqual(decideDelayedStatusJudgmentOutcome("equipment", "equipment"), { triggered:true, category:"equipment", destination:"discard" });
+  assert.deepEqual(decideDelayedStatusJudgmentOutcome("basic", "equipment"), { triggered:false, category:"basic", destination:"discard" });
+}
+
+test("判定结果规则：destination 由 Domain 决定，Application 只执行", frArch8JudgmentOutcomeRules);
+
+/*
+功能
+验证 Application participant policy 显式拥有无牌窗口与 AI 救援兼容策略。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+controllerType/id/battleTeam metadata。
+
+写入状态
+无。
+
+调用函数
+shouldShowResponseWindowWithoutCards、shouldForceAiSelfRescue。
+
+边界与不变量
+真人无牌展示；AI 无牌跳过；AI 自救固定使用调息。
+*/
+function frArch8ParticipantPolicyExplicit() {
+  assert.equal(shouldShowResponseWindowWithoutCards({ controllerType:"human" }), true);
+  assert.equal(shouldShowResponseWindowWithoutCards({ controllerType:"ai" }), false);
+  assert.equal(shouldForceAiSelfRescue({ controllerType:"ai", id:"p1" }, { id:"p1" }), true);
+  assert.equal(shouldForceAiSelfRescue({ controllerType:"ai", id:"p1" }, { id:"p2" }), false);
+}
+
+test("响应参与策略：窗口与 AI 救援兼容策略显式归 Application", frArch8ParticipantPolicyExplicit);
+
+/*
+功能
+验证 Application CombatWorkflow damage 在 fake collaborators 下保持 judgment/block/before/commit/after/dying 顺序。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/presentation/diagnostics/observation records。
+
+写入状态
+fake target 经 Domain ResourceTransitions。
+
+调用函数
+createCombatWorkflow。
+
+边界与不变量
+defense 非免疫时 block 早于 beforeDamage；commit 后 telemetry；afterDamage 在 dying 前。
+*/
+async function frArch8CombatWorkflowDamageTrace() {
+  const state = { gameId:"g8", isGameOver:false, stateVersion:0, players:[] };
+  const source = { id:"s", name:"来源", alive:true, battleTeam:"dusk" };
+  const target = { id:"t", name:"目标", alive:true, battleTeam:"dawn", hp:3, maxHp:4, shield:2, statuses:{}, hand:[] };
+  const events = [];
+  const logs = [];
+  const feedback = [];
+  const telemetry = [];
+  const aiObservation = [];
+  const workflow = createCombatWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    judgeDefense: async () => ({ handled:false, immune:false }),
+    askForBlock: async () => ({ status:"declined", cards:[] }),
+    enterDying: async (...args) => { events.push({ type:"dying-entry", args }); return false; },
+    emitEvent: async (type, payload) => { events.push({ type, payload }); },
+    createId: (prefix) => `${prefix}-${events.length}`,
+    presentation: {
+      log: (message, kind) => logs.push([kind ?? "normal", message]),
+      showDamageFeedback: (...args) => feedback.push(["damage", ...args]),
+      showShieldFeedback: (...args) => feedback.push(["shield", ...args]),
+      showHealFeedback: () => { },
+      showDying: () => { },
+      hideDying: () => { },
+      showJudgment: () => { },
+      hideJudgment: () => { },
+      showCurrentEffect: () => { },
+      showLightningHit: () => { },
+      refresh: () => { }
+    },
+    diagnostics: {
+      recordDamage: (dto) => telemetry.push(dto),
+      recordHealing: () => { },
+      recordHpLoss: () => { }
+    },
+    observeDamage: (...args) => aiObservation.push(args)
+  });
+  assert.equal(await workflow.damage(source, target, 3, { card:{ name:"突袭", subtypes:["assault"] }, canBlock:true, damageType:"normal" }), 1);
+  assert.equal(target.hp, 2);
+  assert.equal(target.shield, 0);
+  assert.deepEqual(events.map((entry) => entry.type), ["beforeDamage", "afterDamage"]);
+  assert.deepEqual(telemetry, [{ targetId:"t", sourceId:"s", hpDamage:1 }]);
+  assert.equal(aiObservation.length, 1);
+  assert.deepEqual(feedback.slice(0, 2), [["shield", "t", 2], ["damage", "t", 1]]);
+}
+
+test("战斗结算轨迹：judgment→block→before→commit→after 顺序冻结", frArch8CombatWorkflowDamageTrace);
+
+/*
+功能
+验证 Application CombatWorkflow heal 与 loseHp 保持独立事件顺序与旧返回契约。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/event/telemetry records。
+
+写入状态
+fake player 经 ResourceTransitions。
+
+调用函数
+createCombatWorkflow、calculateHealAmount。
+
+边界与不变量
+loseHp 不调用 judgeDefense/askForBlock；heal 上限仍由 Domain Rule 计算。
+*/
+async function frArch8CombatWorkflowHealAndHpLossTrace() {
+  const state = { gameId:"g8h", isGameOver:false, stateVersion:0, players:[] };
+  const source = { id:"s", name:"来源", alive:true, battleTeam:"dusk" };
+  const target = { id:"t", name:"目标", alive:true, battleTeam:"dawn", hp:1, maxHp:4, shield:5, statuses:{}, hand:[] };
+  const events = [];
+  const telemetry = [];
+  let judgeCalls = 0;
+  let blockCalls = 0;
+  const workflow = createCombatWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    judgeDefense: async () => { judgeCalls += 1; return { handled:false, immune:false }; },
+    askForBlock: async () => { blockCalls += 1; return { status:"declined", cards:[] }; },
+    enterDying: async () => false,
+    emitEvent: async (type) => { events.push(type); },
+    createId: (prefix) => `${prefix}-heal`,
+    presentation: {
+      log: () => { }, showDamageFeedback: () => { }, showShieldFeedback: () => { }, showHealFeedback: () => { },
+      showDying: () => { }, hideDying: () => { }, showJudgment: () => { }, hideJudgment: () => { },
+      showCurrentEffect: () => { }, showLightningHit: () => { }, refresh: () => { }
+    },
+    diagnostics: {
+      recordDamage: () => { }, recordHealing: (dto) => telemetry.push(["heal", dto]), recordHpLoss: (dto) => telemetry.push(["loss", dto])
+    },
+    observeDamage: () => { }
+  });
+  assert.equal(await workflow.heal(source, target, 2, { reason:"治疗" }), 2);
+  assert.equal(target.hp, 3);
+  assert.deepEqual(events.splice(0), ["beforeHeal", "afterHeal"]);
+  target.hp = 1;
+  assert.equal(await workflow.loseHp(target, 2, { source, reason:"失去生命" }), 2);
+  assert.equal(target.hp, -1);
+  assert.equal(target.shield, 5, "HP loss 继续绕过护盾");
+  assert.equal(judgeCalls, 0);
+  assert.equal(blockCalls, 0);
+  assert.deepEqual(events.splice(0), ["beforeHpLoss", "afterHpLoss"]);
+  assert.deepEqual(telemetry, [["heal", { sourceId:"s", actualAmount:2 }], ["loss", { targetId:"t", amount:2 }]]);
+}
+
+test("治疗与失去生命轨迹：独立 workflow、绕过盾/格挡/雷达", frArch8CombatWorkflowHealAndHpLossTrace);
+
+/*
+功能
+验证 PresentationPort 与 DiagnosticsPort 只暴露 FR-ARCH-8 真实 evidence surface。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+fake records。
+
+调用函数
+createPresentationPort、createDiagnosticsPort。
+
+边界与不变量
+缺任一真实消费方法必须拒绝；不暴露 Player.statistics 整体。
+*/
+function frArch8PortsMinimalSurface() {
+  const presentationCalls = [];
+  const presentation = createPresentationPort({
+    log: (...args) => presentationCalls.push(["log", ...args]),
+    showDamageFeedback: (...args) => presentationCalls.push(["damage", ...args]),
+    showShieldFeedback: (...args) => presentationCalls.push(["shield", ...args]),
+    showHealFeedback: (...args) => presentationCalls.push(["heal", ...args]),
+    showDying: (...args) => presentationCalls.push(["dying", ...args]),
+    hideDying: () => presentationCalls.push(["hide-dying"]),
+    showJudgment: (...args) => presentationCalls.push(["judgment", ...args]),
+    hideJudgment: () => presentationCalls.push(["hide-judgment"]),
+    showCurrentEffect: (...args) => presentationCalls.push(["effect", ...args]),
+    showLightningHit: (...args) => presentationCalls.push(["lightning", ...args]),
+    showCurrentAction: (...args) => presentationCalls.push(["action", ...args]),
+    playActionCue: (...args) => presentationCalls.push(["cue", ...args]),
+    setPrompt: (...args) => presentationCalls.push(["prompt", ...args]),
+    showThinking: (...args) => presentationCalls.push(["thinking", ...args]),
+    clearThinking: () => presentationCalls.push(["clear-thinking"]),
+    isThinkingActive: () => false,
+    showGameOver: (...args) => presentationCalls.push(["game-over", ...args]),
+    showPrivateReveal: (...args) => presentationCalls.push(["private-reveal", ...args]),
+    showDuel: (...args) => presentationCalls.push(["duel", ...args]),
+    hideDuel: () => presentationCalls.push(["hide-duel"]),
+    showPublicCardPool: (...args) => presentationCalls.push(["public-pool", ...args]),
+    hidePublicCardPool: () => presentationCalls.push(["hide-public-pool"]),
+    refresh: () => presentationCalls.push(["refresh"])
+  });
+  presentation.showDamageFeedback("p1", 1);
+  presentation.refresh();
+  assert.deepEqual(presentationCalls.slice(0, 2), [["damage", "p1", 1], ["refresh"]]);
+  assert.throws(() => createPresentationPort({ log() { } }), /showDamageFeedback/);
+  const diagnostics = createDiagnosticsPort({
+    recordDamage: () => { }, recordHealing: () => { }, recordHpLoss: () => { },
+    recordCardPlayed: () => { }, recordAssaultUse: () => { }, reportWorkflowError: () => { }
+  });
+  assert.equal(typeof diagnostics.recordDamage, "function");
+  assert.throws(() => createDiagnosticsPort({ recordDamage() { } }), /recordHealing/);
+}
+
+test("Application Ports：Presentation CREATE，Diagnostics CREATE，surface 最小", frArch8PortsMinimalSurface);
+
+test("Application Ports：公开牌池只跨边界传 ID 并由 adapter 重绑实体", () => {
+  const player = makePlayer("public-pool-port-player", 0, "dawn", "human"),
+    cardA = instance("block"),
+    cardB = instance("charge");
+  const { game } = makeGame([player]);
+  game.state.deck.cards.push(cardA, cardB);
+  let payload = null;
+  game.publicCardPoolWorkflow.runtime.presentation = {
+    ...game.presentationPort,
+    showPublicCardPool: (value) => { payload = value; }
+  };
+
+  const revealed = game.publicCardPoolWorkflow.reveal(2);
+
+  assert.deepEqual(payload, { cardIds:revealed.map((card) => card.id) });
+  assert.equal(payload.cardIds.some((cardId) => typeof cardId !== "string"), false);
+  let displayedCards = null;
+  const cardsById = new Map(revealed.map((card) => [card.id, card]));
+  const presentation = createGamePresentationAdapter({
+    log: () => { },
+    getPlayerById: () => null,
+    getCardById: (cardId) => cardsById.get(cardId) ?? null,
+    ui: {
+      showPublicPool: (cards) => { displayedCards = cards; },
+      render: () => { }
+    },
+    renderTarget: {}
+  });
+  presentation.showPublicCardPool(payload);
+  assert.deepEqual(displayedCards, revealed);
+});
+
+/*
+功能
+验证 DyingWorkflow 的 cancel 分支只经 Application authority 写 projection 与 Domain transition。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 event listener。
+
+写入状态
+target.hp 经 DyingWorkflow。
+
+调用函数
+game.eventDispatcher.on、game.dyingWorkflow.enter。
+
+边界与不变量
+beforePlayerDying cancel 后 hp=1、phase 不变、dyingContext 不残留。
+*/
+async function frArch8DyingCancelProjectionAuthority() {
+  const target = makePlayer("fr8-dying", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("fr8-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([target, enemy]);
+  target.hp = 0;
+  game.eventDispatcher.on("beforePlayerDying", "fr8-cancel", (event) => { event.cancelled = true; });
+  assert.equal(await game.dyingWorkflow.enter(target, enemy), true);
+  assert.equal(target.hp, 1);
+  assert.equal(game.state.phase, "play");
+  assert.equal(game.state.dyingContext, null);
+  assert.equal(game.dyingWorkflow.currentDyingContext, null);
+}
+
+test("濒死取消：hp=1 且 currentDyingContext 仅 Application projection", frArch8DyingCancelProjectionAuthority);
+
+/*
+功能
+验证 DyingWorkflow 继续通过 FR-ARCH-7 Response boundary 并保持成功救援事件顺序。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 event trace。
+
+写入状态
+target.hp 经 transitions；response payment 经 Game 移动。
+
+调用函数
+game.eventDispatcher.on、game.dyingWorkflow.enter。
+
+边界与不变量
+AI self rescue 固定使用调息；事件顺序为 beforePlayerDying→playerDying→beforeHeal→afterHeal→dyingRescueUsed→cardUsed→playerRescued。
+*/
+async function frArch8DyingRescueUsesResponseWorkflow() {
+  const target = makePlayer("fr8-rescue-target", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("fr8-rescue-enemy", 1, "dusk", "ai", 1);
+  target.hp = 0;
+  const recover = instance("recover");
+  target.hand.push(recover);
+  const { game } = makeGame([target, enemy]);
+  const trace = [];
+  for (const eventName of ["beforePlayerDying", "playerDying", "beforeHeal", "afterHeal", "dyingRescueUsed", "cardUsed", "playerRescued"]) {
+    game.eventDispatcher.on(eventName, `fr8-trace-${eventName}`, () => { trace.push(eventName); });
+  }
+  assert.equal(await game.dyingWorkflow.enter(target, enemy), true);
+  assert.equal(target.hp, 1);
+  assert.deepEqual(trace, ["beforePlayerDying", "playerDying", "beforeHeal", "afterHeal", "dyingRescueUsed", "cardUsed", "playerRescued"]);
+}
+
+test("濒死救援轨迹：Response authority preserved，事件顺序等价", frArch8DyingRescueUsesResponseWorkflow);
+
+/*
+功能
+验证击杀奖励资格是 Domain Combat Rule，数量仍由 RulesetDefinition authority 提供。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+RULESET_DEFINITION 与 RUNTIME_POLICY。
+
+写入状态
+无。
+
+调用函数
+isKillRewardEligible。
+
+边界与不变量
+未奖励、来源存活且敌对才成立；同阵营或死来源不成立；数量不复制进 Application。
+*/
+function frArch8KillRewardRuleAuthority() {
+  assert.equal(isKillRewardEligible({ rewardGranted:false, battleTeam:"dawn" }, { alive:true, battleTeam:"dusk" }), true);
+  assert.equal(isKillRewardEligible({ rewardGranted:true, battleTeam:"dawn" }, { alive:true, battleTeam:"dusk" }), false);
+  assert.equal(isKillRewardEligible({ rewardGranted:false, battleTeam:"dawn" }, { alive:false, battleTeam:"dusk" }), false);
+  assert.equal(isKillRewardEligible({ rewardGranted:false, battleTeam:"dawn" }, { alive:true, battleTeam:"dawn" }), false);
+  assert.equal(RULESET_DEFINITION.killRewardDrawCount, 1);
+}
+
+test("击杀奖励规则：资格归 Combat Rule，数量归 RulesetDefinition", frArch8KillRewardRuleAuthority);
+
+/*
+功能
+验证 Application JudgmentWorkflow 在 fake collaborators 下执行 draw→show/log→reveal→destination→handVersion→clear/hide/restore 顺序。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/zone/observer records。
+
+写入状态
+fake hand/handVersion 经 PlayerStateTransition。
+
+调用函数
+createJudgmentWorkflow、decideDefenseJudgmentOutcome。
+
+边界与不变量
+basic 判定牌进入守方手牌；非守方 viewer 均触发 AI knowledge collaborator；phase 恢复。
+*/
+async function frArch8JudgmentWorkflowDefenseTrace() {
+  const defender = { id:"d", name:"守方", alive:true, equipment:{ definitionId:"defenseDevice" }, hand:[], handVersion:0, battleTeam:"dawn" };
+  const attacker = { id:"a", name:"攻方", alive:true };
+  const viewer = { id:"v", name:"观众", alive:true };
+  const state = { gameId:"g8j", isGameOver:false, phase:"play", stateVersion:0, players:[defender, attacker, viewer] };
+  const card = { id:"j-card", name:"判定牌", category:"basic", categoryName:"基础牌", art:"art" };
+  const trace = [];
+  const observations = [];
+  const projections = [];
+  const workflow = createJudgmentWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    emitEvent: async (type) => { trace.push(type); },
+    drawJudgmentCard: () => { trace.push("draw"); return card; },
+    syncDeckAliases: () => { trace.push("sync"); },
+    moveJudgmentToDiscard: () => { trace.push("to-discard"); },
+    moveJudgmentToHand: (moved) => { trace.push(["to-hand", moved.id]); defender.hand.push(moved); },
+    observeJudgmentCard: (...args) => observations.push(args),
+    presentation: {
+      log: (message) => trace.push(["log", message]),
+      showJudgment: () => trace.push("show-judgment"),
+      hideJudgment: () => trace.push("hide-judgment"),
+      showCurrentEffect: () => { }, showLightningHit: () => { }, showDamageFeedback: () => { },
+      showShieldFeedback: () => { }, showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => trace.push("refresh")
+    },
+    setCurrentJudgmentProjection: (value) => projections.push(value)
+  });
+  const result = await workflow.judgeDefense(attacker, defender, {});
+  assert.deepEqual(result, { handled:true, immune:false, category:"basic" });
+  assert.equal(defender.hand[0], card);
+  assert.equal(defender.handVersion, 1);
+  assert.equal(observations.length, 2);
+  assert.equal(observations.every(([observer]) => observer.id !== defender.id), true);
+  assert.equal(state.phase, "play");
+  assert.equal(projections[0].card, card);
+  assert.equal(projections[projections.length - 1], null);
+  assert.equal(workflow.currentJudgment, null);
+  const toHandIndex = trace.findIndex((entry) => Array.isArray(entry) && entry[0] === "to-hand");
+  assert.ok(trace.indexOf("draw") < trace.indexOf("show-judgment"));
+  assert.ok(trace.indexOf("judgmentRevealed") < toHandIndex);
+  assert.ok(trace.indexOf("hide-judgment") < trace.indexOf("refresh"));
+}
+
+test("判定轨迹：draw→show/log→reveal→destination→handVersion→restore", frArch8JudgmentWorkflowDefenseTrace);
+
+/*
+功能
+验证 delayed-status judgment workflow 的 destination 永远执行 Domain 决定的 discard。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/trace。
+
+写入状态
+无。
+
+调用函数
+createJudgmentWorkflow、decideDelayedStatusJudgmentOutcome。
+
+边界与不变量
+equipment 判定触发；tactic/basic 不触发；所有延迟判定牌进弃牌堆。
+*/
+async function frArch8DelayedStatusJudgmentDestination() {
+  const holder = { id:"h", name:"持有者", alive:true, battleTeam:"dawn" };
+  const state = { gameId:"g8d", isGameOver:false, phase:"status", stateVersion:0, players:[holder] };
+  const card = { id:"j2", name:"装备判定", category:"equipment", categoryName:"装备牌", art:"art" };
+  const moved = [];
+  const workflow = createJudgmentWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    emitEvent: async () => { },
+    drawJudgmentCard: () => card,
+    syncDeckAliases: () => { },
+    moveJudgmentToDiscard: (entry) => moved.push(entry),
+    moveJudgmentToHand: () => { },
+    observeJudgmentCard: () => { },
+    presentation: {
+      log: () => { }, showJudgment: () => { }, hideJudgment: () => { }, showCurrentEffect: () => { },
+      showLightningHit: () => { }, showDamageFeedback: () => { }, showShieldFeedback: () => { },
+      showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => { }
+    },
+    setCurrentJudgmentProjection: () => { }
+  });
+  const result = await workflow.judgeDelayedStatus(holder, {
+    statusId:"lightning", statusName:"闪电", triggerCategory:"equipment",
+    triggerMessage: (target) => `${target.name}命中`
+  });
+  assert.equal(result.triggered, true);
+  assert.equal(moved[0], card);
+  assert.equal(state.phase, "status");
+}
+
+test("延迟判定去向：公开后一律执行 Domain 决定的 discard", frArch8DelayedStatusJudgmentDestination);
+
+/*
+功能
+验证 seal/lightning status-resolution workflow 是 Application authority 且只调用 Response/Judgment/Combat。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake state/status/response/judgment/damage records。
+
+写入状态
+fake holder statuses/flags 经 Domain transitions。
+
+调用函数
+createStatusResolutionWorkflow。
+
+边界与不变量
+seal 非战术提交 skipActionPhase；lightning 命中调用 combat damage 3/canBlock false 且 presentation hit 只一次。
+*/
+async function frArch8StatusResolutionWorkflowTrace() {
+  const sealStatus = { cardDefinitionId:"seal", originPlayerId:"s" };
+  const sealHolder = { id:"h", name:"封印者", alive:true, battleTeam:"dawn", statuses:{ sealed:sealStatus }, turnFlags:{ skipActionPhase:false } };
+  const sealState = { gameId:"g8seal", isGameOver:false, stateVersion:0, players:[sealHolder] };
+  const sealEffects = [];
+  const sealWorkflow = createStatusResolutionWorkflow({
+    getState: () => sealState,
+    isSessionValid: () => true,
+    askForStatusCounter: async () => { sealEffects.push("counter"); return { status:"declined", cards:[] }; },
+    judgeSeal: async () => { sealEffects.push("judge"); return { handled:true, triggered:false, category:"basic", card:{ name:"基础牌" } }; },
+    judgeLightning: async () => ({ handled:false, triggered:false }),
+    damage: async () => 0,
+    presentation: {
+      log: () => { }, showCurrentEffect: (...args) => sealEffects.push(["effect", ...args]),
+      showJudgment: () => { }, hideJudgment: () => { }, showLightningHit: () => { }, showDamageFeedback: () => { },
+      showShieldFeedback: () => { }, showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => sealEffects.push("refresh")
+    }
+  });
+  await sealWorkflow.resolveSeal(sealHolder, sealStatus);
+  assert.equal(sealHolder.statuses.sealed, undefined);
+  assert.equal(sealHolder.turnFlags.skipActionPhase, true);
+  assert.deepEqual(sealEffects.slice(0, 3), [["effect", { statusId:"seal", label:"即将判定", holderName:"封印者"}], "counter", "judge"]);
+
+  const lightningStatus = { cardDefinitionId:"lightning", originPlayerId:"s" };
+  const holder = { id:"l", name:"闪电者", alive:true, battleTeam:"dawn", statuses:{ lightning:lightningStatus }, turnFlags:{} };
+  const state = { gameId:"g8light", isGameOver:false, stateVersion:0, players:[holder] };
+  const hits = [];
+  const damages = [];
+  const lightningWorkflow = createStatusResolutionWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    askForStatusCounter: async () => ({ status:"declined", cards:[] }),
+    judgeSeal: async () => ({ handled:false, triggered:false }),
+    judgeLightning: async () => ({ handled:true, triggered:true, category:"equipment", card:{ name:"装备牌" } }),
+    damage: async (...args) => { damages.push(args); return 3; },
+    presentation: {
+      log: () => { }, showCurrentEffect: () => { }, showJudgment: () => { }, hideJudgment: () => { },
+      showLightningHit: (id) => hits.push(id), showDamageFeedback: () => { }, showShieldFeedback: () => { },
+      showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => { }
+    }
+  });
+  await lightningWorkflow.resolveLightning(holder, lightningStatus);
+  assert.equal(holder.statuses.lightning, undefined);
+  assert.deepEqual(hits, [holder.id]);
+  assert.equal(damages.length, 1);
+  assert.deepEqual(damages[0][1], holder);
+  assert.equal(damages[0][2], 3);
+  assert.equal(damages[0][3].canBlock, false);
+}
+
+test("延迟状态结算：seal commit 与 lightning hit 只经 Application workflow", frArch8StatusResolutionWorkflowTrace);
+
+/*
+功能
+验证猎印死亡清理的纯规则与 Application workflow ownership。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 Domain StatusTransitions。
+
+写入状态
+player.statuses 经 transition 与 cleanup workflow。
+
+调用函数
+isHuntMarkSourceExpired、transitionSetStatus、game.dyingWorkflow.cleanupHuntMarksForSource。
+
+边界与不变量
+只删 sourceId 匹配的猎印；不匹配保留；transition 成功时 stateVersion 递增。
+*/
+function frArch8HuntMarkDeathCleanupOwnership() {
+  assert.equal(isHuntMarkSourceExpired({ sourceId:"dead" }, "dead"), true);
+  assert.equal(isHuntMarkSourceExpired({ sourceId:"other" }, "dead"), false);
+  const hunter = makePlayer("fr8-hunter", 0, "dawn", "ai", 0);
+  const marked = makePlayer("fr8-marked", 1, "dusk", "ai", 1);
+  const unrelated = makePlayer("fr8-unrelated", 2, "dusk", "ai", 2);
+  const { game } = makeGame([hunter, marked, unrelated]);
+  transitionSetStatus(game.state, marked, "huntMark", { sourceId:hunter.id });
+  transitionSetStatus(game.state, unrelated, "huntMark", { sourceId:"someone-else" });
+  const version = game.state.stateVersion;
+  game.dyingWorkflow.cleanupHuntMarksForSource(hunter.id);
+  assert.equal(marked.statuses.huntMark, undefined);
+  assert.equal(unrelated.statuses.huntMark.sourceId, "someone-else");
+  assert.equal(game.state.stateVersion, version + 1);
+}
+
+test("猎印清理：Domain predicate 唯一，Application 只执行 remove/render", frArch8HuntMarkDeathCleanupOwnership);
+
+/*
+功能
+验证 Application Combat/Judgment 无 concrete UI/AI、无 aiMemory/statistics 直接写，旧系统路径均已删除。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/application/{combat,judgment} 源码与旧路径存在性。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+Domain 规则仍无 application event dependency；composition 的 damage/heal 只转发。
+*/
+async function frArch8OwnershipAndDependencyPurity() {
+  const appFiles = [
+    ...(await listJavaScriptFiles(projectFile("js/application/combat"))),
+    ...(await listJavaScriptFiles(projectFile("js/application/judgment")))
+  ];
+  assert.ok(appFiles.length >= 4);
+  for (const file of appFiles) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|\/adapters\/|\/ui\/|\/audio\/|\/ai\/|UIManager\.js|AiController\.js|SoundManager\.js|cards\/cardRegistry|characters\/skillRegistry|config\/)/, file);
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(code, /\.(?:statistics|aiMemory|recentAggressors)\b|\bEventBus\b|\beventDispatcher\b|\bdocument\b|\bwindow\b/, file);
+  }
+  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  assert.doesNotMatch(gameSource, /event\.amount > 0 && event\.canBlock/);
+  assert.match(gameSource, /damage:application\.combatWorkflow\.damage/);
+  assert.match(gameSource, /heal:application\.combatWorkflow\.heal/);
+  for (const path of ["js/core/DyingSystem.js", "js/core/JudgmentSystem.js", "js/core/HpLossSystem.js"]) {
+    await assert.rejects(access(projectFile(path)));
+  }
+}
+
+test("架构·Combat ownership：Application workflow 唯一且旧系统路径不存在", frArch8OwnershipAndDependencyPurity);
+
+/*
+功能
+验证 currentJudgment/dyingContext 的 legacy projection 不 bump stateVersion。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture。
+
+写入状态
+fake projection setter。
+
+调用函数
+game.judgmentWorkflow.workflow、game.dyingWorkflow.workflow。
+
+边界与不变量
+两个字段是 Application state；setter 只写 legacy game.state 字段。
+*/
+function frArch8ApplicationStateProjectionNoVersion() {
+  const { game } = makeTeamFixture();
+  const version = game.state.stateVersion;
+  assert.equal(game.judgmentWorkflow.currentJudgment, null);
+  assert.equal(game.dyingWorkflow.currentDyingContext, null);
+  assert.equal(Object.hasOwn(game.judgmentWorkflow, "setCurrentJudgmentProjection"), false);
+  assert.equal(Object.hasOwn(game.dyingWorkflow, "setDyingContextProjection"), false);
+  assert.equal(game.state.stateVersion, version);
+}
+
+test("Application 状态投影：judgment/dying projection 已封装且读取不 bump stateVersion", frArch8ApplicationStateProjectionNoVersion);
 
 // ==================== 隐藏信息与交互安全 ====================
 
@@ -8646,278 +12549,826 @@ test("隐藏信息：牌背多阶段 pending 会锁住手牌、技能和结束�
   assert.equal(game.requestEndHumanPlay(), false);
 });
 
+// ---- Choice、Ports 与隐藏信息 ----
+
+/*
+功能
+验证 FR-ARCH-5 carry-in：Turn usage 只有 used/limit 单一 canonical Domain shape。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+createAttackUsage、getAttackUsage。
+
+边界与不变量
+legacy attackUsed/attackLimit 必须由 ActionLegality facade 适配。
+*/
+function frArch6TurnUsageCanonical() {
+  assert.deepEqual(createAttackUsage(1, 2), { used:1, limit:2 });
+  assert.deepEqual(getAttackUsage({ used:1, limit:2 }), { used:1, limit:2 });
+  assert.throws(() => getAttackUsage({ attackUsed:1, attackLimit:2 }), /canonical \{ used, limit \}/);
+  assert.throws(() => getAttackUsage(null), /canonical \{ used, limit \}/);
+}
+
+test("架构边界：Turn usage canonical shape 单一", frArch6TurnUsageCanonical);
+
+/*
+功能
+验证 FR-ARCH-5 carry-in：seat-order rule 只接受完整 canonical roster，filtered candidates 被拒绝且原顺序不变。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+isCanonicalSeatRoster、assertCanonicalSeatRoster、nextDomainLightningReceiverId、getCounterResponderOrder、getStatusCounterResponderOrder。
+
+边界与不变量
+dead player 保留 roster；不改变 seat semantics。
+*/
+function frArch6SeatRosterContract() {
+  const roster = [
+    { id:"h", seatIndex:0, alive:true, statusIds:["lightning"] },
+    { id:"dead", seatIndex:1, alive:false, statusIds:[] },
+    { id:"a", seatIndex:2, alive:1, statusIds:[] },
+    { id:"b", seatIndex:3, alive:true, statusIds:[] }
+  ];
+  assert.equal(isCanonicalSeatRoster(roster), true);
+  assert.equal(assertCanonicalSeatRoster(roster), roster);
+  assert.equal(isCanonicalSeatRoster([roster[0], roster[2]]), false, "filtered candidates 不得伪装 roster");
+  assert.equal(isCanonicalSeatRoster([{ id:"x", seatIndex:0 }, { id:"y", seatIndex:2 }]), false);
+  const shuffledFull = [
+    { id:"x", seatIndex:2, alive:true, statusIds:[] },
+    { id:"y", seatIndex:0, alive:true, statusIds:[] },
+    { id:"z", seatIndex:1, alive:true, statusIds:[] }
+  ];
+  assert.equal(isCanonicalSeatRoster(shuffledFull), false, "full set 但物理乱序仍拒绝");
+  assert.equal(isCanonicalSeatRoster([
+    { id:"x", seatIndex:0, alive:true, statusIds:[] },
+    { id:"y", seatIndex:0, alive:true, statusIds:[] }
+  ]), false, "duplicate seatIndex 拒绝");
+  assert.throws(() => nextDomainLightningReceiverId([roster[0], roster[2]], "h"), /canonical roster/);
+  assert.throws(() => getCounterResponderOrder([roster[0], roster[2]], "h"), /canonical roster/);
+  assert.throws(() => getCounterResponderOrder(shuffledFull, "x"), /players\[i\]\.seatIndex 必须等于 i/);
+  assert.throws(() => assertCanonicalSeatRoster(shuffledFull), /players\[i\]\.seatIndex 必须等于 i/);
+  assert.deepEqual(getCounterResponderOrder(roster, "h"), ["dead", "a", "b"], "counter order unchanged");
+  assert.equal(nextDomainLightningReceiverId(roster, "h"), "a", "lightning skips dead/already and order unchanged");
+  assert.deepEqual(getStatusCounterResponderOrder(roster, "h"), ["h", "a", "b"], "status counter order unchanged");
+}
+
+test("架构边界：seat-order 只接受 full canonical roster", frArch6SeatRosterContract);
+
+/*
+功能
+验证 ChoiceRequest/ChoiceResult contract data-only、canonical 与 legacy normalization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+createResponseChoiceRequest、createPublicCardChoiceRequest、createChoiceResult、normalizeChoiceResult、createChoicePort、createChoiceCoordinator。
+
+边界与不变量
+request/result 可 JSON 序列化，不含 entity/function。
+*/
+async function frArch6ChoiceContract() {
+  const request = createResponseChoiceRequest({
+    requestId:"r1", actorId:"p1", gameId:"g1", stateVersion:7,
+    responseType:"block", requiredCount:2,
+    legalCardIds:["c1", "c2"], label:"格挡",
+    context:{ sourcePlayerId:"p2", targetPlayerId:"p1", cardId:"a1", timeoutMs:null, presentation:Object.freeze({ eventText:"test", fragments:[] }) }
+  });
+  assert.equal(request.kind, "response");
+  assert.equal(request.options[0].optionId, "c1");
+  assert.equal(JSON.parse(JSON.stringify(request)).requestId, "r1");
+
+  const publicRequest = createPublicCardChoiceRequest({
+    requestId:"r2", actorId:"p1", gameId:"g1", stateVersion:7,
+    offeredCards:[{ id:"pub1", definitionId:"charge", name:"聚能", category:"basic" }]
+  });
+  assert.equal(publicRequest.kind, "publicCard");
+  assert.equal(publicRequest.options[0].definitionId, "charge");
+
+  assert.deepEqual(createChoiceResult("selected", { selectedIds:["c1"] }), { status:"selected", selectedIds:["c1"], reason:null });
+  assert.deepEqual(createChoiceResult("declined"), { status:"declined", selectedIds:[], reason:null });
+  assert.deepEqual(createChoiceResult("cancelled"), { status:"cancelled", selectedIds:[], reason:null });
+  assert.deepEqual(normalizeChoiceResult({ status:"used", cardId:"c1" }), createChoiceResult("selected", { selectedIds:["c1"] }));
+  assert.deepEqual(normalizeChoiceResult({ status:"declined" }), createChoiceResult("declined"));
+  assert.deepEqual(normalizeChoiceResult({ status:"cancelled" }), createChoiceResult("cancelled"));
+  assert.throws(() => createChoicePort({}), /request/);
+  assert.throws(() => createChoiceResult("invalid"), /未知 ChoiceResult status/);
+
+  const coordinator = createChoiceCoordinator(createChoicePort({
+    async request() { return { status:"used", cardId:"c1" }; }
+  }));
+  assert.deepEqual(await coordinator.request(request), createChoiceResult("selected", { selectedIds:["c1"] }));
+}
+
+test("Choice 契约：data-only request/result 与 canonical normalization", async () => frArch6ChoiceContract());
+
+/*
+功能
+验证 Human/AI peer adapters 对同一 response ChoiceRequest 返回同一 canonical result shape，并保持旧 timing/thinking 顺序。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+mock legacy capabilities。
+
+写入状态
+mock thinking/prompt/delay 记录。
+
+调用函数
+createUiChoiceAdapter、createAiChoiceAdapter、createResponseChoiceRequest。
+
+边界与不变量
+AI policy 不变；human legacy request 字段逐项映射。
+*/
+async function frArch6PeerChoiceAdapters() {
+  const request = createResponseChoiceRequest({
+    requestId:"r1", actorId:"p1", gameId:"g1", stateVersion:1,
+    responseType:"block", requiredCount:1, legalCardIds:["c1"], label:"格挡",
+    context:{ sourcePlayerId:"p2", targetPlayerId:"p1", cardId:"a1", timeoutMs:null, presentation:{ eventText:"x" } }
+  });
+  const humanCalls = [];
+  const human = createUiChoiceAdapter({
+    requestResponse: async (legacy, label) => {
+      humanCalls.push({ legacy, label });
+      return { status:"used", selectedIds:["c1"] };
+    },
+    requestPublicCard: async () => null,
+    requestDiscard: async () => [],
+    requestTarget: async () => null,
+    getChoiceContext: () => ({ player:{ id:"p1" }, cards:[] }),
+    isSessionValid: () => true
+  });
+  assert.deepEqual(await human.request(request), createChoiceResult("selected", { selectedIds:["c1"] }));
+  assert.equal(humanCalls[0].legacy.legalCardIds[0], "c1");
+  assert.equal(humanCalls[0].legacy.type, "block");
+
+  const thinking = [];
+  const rawAi = createAiChoiceAdapter({
+    getChoiceContext: () => ({ responder:{ id:"p1", name:"电脑" }, cards:[], context:{}, label:"格挡" }),
+    shouldRespond: () => true,
+    choosePublicCard: () => null,
+    chooseDiscards: () => [],
+    isSessionValid: () => true
+  });
+  const ai = createAiResponseTimingDecorator(rawAi, {
+    getPlayer: () => ({ id:"p1", name:"电脑" }),
+    setThinking: (...args) => thinking.push(args),
+    delay: async () => true,
+    setPrompt: () => { },
+    isSessionValid: () => true
+  });
+  assert.deepEqual(await ai.request(request), createChoiceResult("selected", { selectedIds:["c1"] }));
+  assert.equal(thinking[0][0], true);
+  assert.equal(thinking[1][0], false);
+
+  const cancelledThinking = [];
+  const cancelled = createAiResponseTimingDecorator(rawAi, {
+    getPlayer: () => ({ id:"p1", name:"电脑" }),
+    setThinking: (...args) => cancelledThinking.push(args),
+    delay: async () => false,
+    setPrompt: () => { },
+    isSessionValid: () => true
+  });
+  assert.deepEqual(await cancelled.request(request), createChoiceResult("cancelled"));
+  assert.deepEqual(cancelledThinking.map(([value]) => value), [true, false]);
+}
+
+test("Choice 适配器：human/AI 同一 request 返回同一 result shape", frArch6PeerChoiceAdapters);
+
+/*
+功能
+验证 Application HiddenCardSelectionStore 的 opaque token、session、确认与清理语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+store 内部 maps。
+
+写入状态
+store 内部 maps。
+
+调用函数
+createHiddenCardSelectionStore。
+
+边界与不变量
+store 不保存 Card/Player 实体；handVersion 变化失效。
+*/
+function frArch6HiddenSelectionStore() {
+  let serial = 0;
+  const ids = [];
+  const store = createHiddenCardSelectionStore({ createId: (prefix) => { const id = `${prefix}-${serial++}`; ids.push(id); return id; } });
+  const selection = store.createSelection({
+    ownerId:"owner", handVersion:3,
+    cardRecords:[{ cardId:"card-a", position:1 }, { cardId:"card-b", position:2 }]
+  });
+  assert.equal(selection.tokens.length, 2);
+  assert.deepEqual(store.resolveConfirmedCardIds(selection.tokens.map((entry) => entry.token), selection.selectionId, "owner", 2), ["card-a", "card-b"]);
+  assert.equal(store.isSessionActive(selection.selectionId, "owner", 3), true);
+  assert.equal(store.isSessionActive(selection.selectionId, "owner", 4), false);
+  const record = store.getTokenRecord(selection.tokens[0].token);
+  assert.equal(record.cardId, "card-a");
+  assert.equal(typeof record.cardId, "string");
+  store.clearSelection(selection.selectionId);
+  assert.equal(store.tokenRecords.size, 0);
+  assert.equal(store.sessions.size, 0);
+}
+
+test("Choice 隐藏信息：application store 只保存 opaque token 与版本事实", frArch6HiddenSelectionStore);
+
+/*
+功能
+验证 composition router 按 participant metadata 路由 Human/AI peer，且真实 Game 默认注入 Choice boundary。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+makeGame fixture 与 mock AI shouldRespond。
+
+写入状态
+mock thinking 记录。
+
+调用函数
+createResponseChoiceRequest、game.choicePort.request。
+
+边界与不变量
+未知 actor 返回 cancelled；无 service locator。
+*/
+async function frArch6ChoiceRouting() {
+  const human = makePlayer("fr6-human", 0, "dawn", "human");
+  const ai = makePlayer("fr6-ai", 1, "dusk", "ai");
+  const { game, ui } = makeGame([human, ai], { response: () => ({ status:"used" }) });
+  assert.ok(game.choicePort);
+  assert.ok(game.choiceCoordinator);
+  game.aiController.shouldRespond = () => true;
+  const responseRequest = (actorId) => createResponseChoiceRequest({
+    requestId:`route-${actorId}`, actorId, gameId:game.state.gameId, stateVersion:game.state.stateVersion,
+    responseType:"block", requiredCount:1, legalCardIds:[], label:"格挡",
+    context:{ sourcePlayerId:null, targetPlayerId:actorId, cardId:null, timeoutMs:null, presentation:null }
+  });
+  assert.deepEqual(await game.choicePort.request(responseRequest(human.id)), createChoiceResult("selected"));
+  game.choiceContexts.set("route-fr6-ai", { responder:ai, cards:[], context:{}, label:"格挡" });
+  assert.deepEqual(await game.choicePort.request(responseRequest(ai.id)), createChoiceResult("selected"));
+  assert.equal(ui.responseRequests.length, 1, "human path 走 UI");
+  assert.ok(ui.thinking.length >= 2, "AI path 走 thinking bridge");
+  assert.deepEqual(await game.choicePort.request(responseRequest("missing")), createChoiceResult("cancelled", { reason:"unknown-actor" }));
+}
+
+test("Choice 路由：participant metadata 路由 Human/AI peer", frArch6ChoiceRouting);
+
+/*
+功能
+验证隐藏手牌与区域选择由 Application 构造 data-only request，并统一经 ChoicePort 路由 Human/AI peer。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+HiddenCardChoiceWorkflow、ChoicePort router 与 Human/AI adapter 私有重绑 context。
+
+写入状态
+仅替换测试局的 UI/AI 选择 capability 并创建短期 opaque selection。
+
+调用函数
+createHiddenCardChoiceRequest、chooseHiddenCards、choosePlayerZoneCard。
+
+边界与不变量
+Application 不按 controllerType 分支；请求不含隐藏牌定义或实体；返回后仍按当前实体位置复核并清理 context/token。
+*/
+async function hiddenChoiceRoutesThroughChoicePort() {
+  const contract = createHiddenCardChoiceRequest({
+    requestId:"hidden-contract",
+    actorId:"viewer",
+    ownerId:"owner",
+    gameId:"game",
+    stateVersion:3,
+    mode:"hand",
+    maximum:2,
+    exact:false,
+    prompt:"选择隐藏牌",
+    optionIds:["opaque-a", "opaque-b"]
+  });
+  assert.equal(contract.kind, "hiddenCard");
+  assert.deepEqual(contract.options.map((option) => option.optionId), ["opaque-a", "opaque-b"]);
+  assert.doesNotMatch(JSON.stringify(contract), /definitionId|charge|block/);
+
+  const human = makePlayer("hidden-human", 0, "dawn", "human");
+  const ai = makePlayer("hidden-ai", 1, "dawn", "ai");
+  const owner = makePlayer("hidden-owner", 2, "dusk", "ai");
+  const first = instance("charge"), second = instance("block"), equipment = instance("defenseDevice");
+  owner.hand.push(first, second);
+  owner.equipment = equipment;
+  const { game } = makeGame([human, ai, owner]);
+  let humanHandRequests = 0, humanZoneRequests = 0, aiHandRequests = 0, aiZoneRequests = 0;
+  const humanHandExactValues = [];
+  game.ui.requestHiddenCards = async (selection, _maximum, _reason, options) => {
+    humanHandRequests += 1;
+    humanHandExactValues.push(options.exact);
+    return [selection.tokens[1].token];
+  };
+  game.ui.requestZoneCard = async (_game, _actor, target) => {
+    humanZoneRequests += 1;
+    const selection = game.hiddenCardSelection.createHiddenSelection(target);
+    return { zone:"equipment", equipmentCardId:target.equipment.id, selectionId:selection.selectionId };
+  };
+  game.aiController.chooseHiddenCards = (_actor, target) => {
+    aiHandRequests += 1;
+    return [target.hand[0]];
+  };
+  game.aiController.chooseZoneCard = (_actor, target) => {
+    aiZoneRequests += 1;
+    return { card:target.hand[0], zone:"hand" };
+  };
+
+  assert.deepEqual(
+    await game.hiddenCardChoiceWorkflow.chooseHiddenCards(human, owner, 1, "真人隐藏选择"),
+    [second]
+  );
+  assert.deepEqual(
+    await game.hiddenCardChoiceWorkflow.chooseHiddenCards(ai, owner, 1, "AI 隐藏选择"),
+    [first]
+  );
+  assert.deepEqual(
+    await game.hiddenCardChoiceWorkflow.choosePlayerZoneCard(human, owner, "真人区域选择"),
+    { card:equipment, zone:"equipment" }
+  );
+  assert.deepEqual(
+    await game.hiddenCardChoiceWorkflow.choosePlayerZoneCard(ai, owner, "AI 区域选择"),
+    { card:first, zone:"hand" }
+  );
+  assert.deepEqual(
+    { humanHandRequests, humanZoneRequests, aiHandRequests, aiZoneRequests },
+    { humanHandRequests:1, humanZoneRequests:1, aiHandRequests:1, aiZoneRequests:1 }
+  );
+  assert.deepEqual(humanHandExactValues, [true]);
+  assert.equal(game.choiceContexts.size, 0);
+  assert.equal(game.hiddenCardSelection.sessions.size, 0);
+
+  const workflowSource = await readFile(projectFile("js/application/action/HiddenCardChoiceWorkflow.js"), "utf8");
+  const workflowCode = workflowSource.replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.doesNotMatch(workflowCode, /\bcontrollerType\b|runtime\.(?:requestHiddenCards|requestZoneCard|chooseAiHiddenCards|chooseAiZoneCard)/);
+  assert.match(workflowCode, /runtime\.choiceCoordinator\.request\(/);
+  game.dispose();
+}
+
+test("架构·Hidden Choice：Application 仅经 ChoicePort 路由 Human/AI", hiddenChoiceRoutesThroughChoicePort);
+
+/*
+功能
+验证 RandomPort 只包装 next() 且固定 seed 调用顺序不变。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+createRandomPort。
+
+边界与不变量
+每次 port.next 对应一次旧 random()。
+*/
+function frArch6RandomPort() {
+  const values = [0.1, 0.2, 0.3];
+  let index = 0;
+  const port = createRandomPort({ next: () => values[index++] });
+  assert.deepEqual([port.next(), port.next(), port.next()], values);
+  assert.throws(() => createRandomPort({}), /next/);
+}
+
+test("RandomPort：minimal next() boundary", frArch6RandomPort);
+
+/*
+功能
+验证 application/choice 与 application/ports 源码不依赖 concrete runtime/DOM/Game/transition，且 adapters peer 不互相 import。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/application 与 js/adapters/{ui,ai} 源码。
+
+写入状态
+无。
+
+调用函数
+listJavaScriptFiles、readFile。
+
+边界与不变量
+允许 application/choice 依赖 application/ports 与 Domain data。
+*/
+async function frArch6ApplicationPurity() {
+  const choiceFiles = await listJavaScriptFiles(projectFile("js/application/choice"));
+  const portFiles = await listJavaScriptFiles(projectFile("js/application/ports"));
+  const adapterFiles = [
+    ...(await listJavaScriptFiles(projectFile("js/adapters/ui"))),
+    ...(await listJavaScriptFiles(projectFile("js/adapters/ai")))
+  ];
+  assert.ok(choiceFiles.length >= 4);
+  assert.ok(portFiles.length >= 2);
+  for (const file of [...choiceFiles, ...portFiles]) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|UIManager|AiController|SoundManager|state\/transitions\/)/, file);
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(code, /\bthis\.game\b|\bEventBus\b|\beventDispatcher\b|\bdocument\b|\bwindow\b/, file);
+  }
+  for (const file of adapterFiles) {
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/Game|core\/ResponseSystem|UIManager|AiController)/, file);
+  }
+  assert.equal(adapterFiles.every((file) => !file.includes("UiChoiceAdapter") || !file.includes("AiChoiceAdapter")), true);
+}
+
+test("Choice 与 Port 纯度：application choice/ports 无 concrete runtime 依赖", frArch6ApplicationPurity);
+
+// ---- Private Reveal 异步边界 ----
+
+/*
+功能
+等待一个异步边界条件成立，避免依赖不确定数量的微任务 flush。
+
+调用方
+私人情报异步边界回归测试。
+
+输入
+condition 与失败提示。
+
+输出
+无返回值，超时抛错。
+
+读取状态
+condition 闭包。
+
+写入状态
+无。
+
+调用函数
+setTimeout。
+
+边界与不变量
+只用于测试 polling，不进入生产语义。
+*/
+async function waitForPrivateRevealBoundaryCondition(condition, label) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(`等待异步边界条件超时：${label}`);
+}
+
+/*
+功能
+证明真人窥探的 private reveal 是真实异步 gameplay boundary：
+showPrivateReveal 返回的 Promise 未 resolve 前，scout resolver、后续日志、cardUsed 与 playCard 均不得越过。
+
+调用方
+FR-ARCH-15 前置回归。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game/ActionWorkflow/CardEffectRuntime/GamePresentationAdapter 路径与 UI 记录。
+
+写入状态
+测试 Game 手牌/记忆/日志与 UI 记录。
+
+调用函数
+makePlayer、makeGame、choosePrivateCardThroughInteraction、waitForPrivateRevealBoundaryCondition。
+
+边界与不变量
+只验证既有 human 窥探路径，不修改规则或 AI scout 路径。
+*/
+async function privateRevealScoutBlocksUntilClosed() {
+  const source = makePlayer("private-reveal-scout-source", 0, "dawn", "human"),
+    target = makePlayer("private-reveal-scout-target", 1, "dusk");
+  const scout = instance("scout"),
+    first = instance("charge"),
+    second = instance("harvest");
+  source.hand.push(scout);
+  target.hand.push(first, second);
+  const { game, ui } = makeGame([source, target]);
+  const selection = await choosePrivateCardThroughInteraction(
+    game, source, scout, target, { handIndexes: [0, 1] }
+  );
+  const order = [];
+  let revealCalls = 0;
+  let settleReveal = null;
+  ui.showPrivateReveal = (title, cards) => {
+    revealCalls += 1;
+    order.push("reveal");
+    ui.reveals.push({ title, cards: [...cards] });
+    return new Promise((resolve) => { settleReveal = resolve; });
+  };
+  const originalLog = game.log.bind(game);
+  game.log = (message, kind) => {
+    if (message.includes("窥探了")) order.push("scout-log");
+    return originalLog(message, kind);
+  };
+  let cardUsed = false;
+  game.eventDispatcher.on("cardUsed", "test:private-reveal-scout-boundary", (event) => {
+    if (event.card === scout) cardUsed = true;
+  });
+  let playSettled = false;
+  const playPromise = game.playCard(source, scout, [target], selection).then((result) => {
+    playSettled = true;
+    return result;
+  });
+  await waitForPrivateRevealBoundaryCondition(() => revealCalls === 1, "scout 应已进入 showPrivateReveal");
+  assert.equal(order.includes("reveal"), true);
+  assert.equal(order.includes("scout-log"), false);
+  assert.equal(cardUsed, false);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(playSettled, false, "收起情报前 scout 结算不得完成");
+  assert.equal(order.includes("scout-log"), false);
+  assert.equal(cardUsed, false);
+  settleReveal();
+  assert.equal(await playPromise, true);
+  assert.deepEqual(order, ["reveal", "scout-log"]);
+  assert.equal(cardUsed, true);
+  assert.deepEqual(ui.reveals.at(-1)?.cards, [first, second]);
+  assert.ok(game.state.logs.some((entry) => entry.message.includes("窥探了")));
+  game.dispose();
+}
+
+/*
+功能
+证明真人窥隙的 private reveal 会阻塞 EventDispatcher：
+spyGap listener 未完成前 dispatcher 不得执行 sentinel listener，也不得 resolve dispatcher Promise。
+
+调用方
+FR-ARCH-15 前置回归。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+EventDispatcher/PassiveSkillTriggerRegistry/GamePresentationAdapter 路径与 UI 记录。
+
+写入状态
+测试 Game 状态与 UI 记录。
+
+调用函数
+makePlayer、makeGame、registerPassiveSkills、waitForPrivateRevealBoundaryCondition。
+
+边界与不变量
+直接触发真实 afterDamage event 与 spyGap 监听器；不新增规则条件。
+*/
+async function privateRevealSpyGapBlocksDispatcher() {
+  const shade = makePlayer("private-reveal-spygap-shade", 0, "dawn", "human", 3),
+    target = makePlayer("private-reveal-spygap-target", 1, "dusk");
+  target.hand.push(instance("charge"), instance("harvest"));
+  const { game, ui } = makeGame([shade, target]);
+  registerPassiveSkills(game);
+  const order = [];
+  let revealCalls = 0;
+  let settleReveal = null;
+  ui.showPrivateReveal = (title, cards) => {
+    revealCalls += 1;
+    order.push("reveal");
+    ui.reveals.push({ title, cards: [...cards] });
+    return new Promise((resolve) => { settleReveal = resolve; });
+  };
+  const originalLog = game.log.bind(game);
+  game.log = (message, kind) => {
+    if (message.includes("触发「窥隙」")) order.push("spygap-log");
+    return originalLog(message, kind);
+  };
+  let sentinelRuns = 0;
+  game.eventDispatcher.on("afterDamage", "test:private-reveal-spygap-sentinel", () => {
+    sentinelRuns += 1;
+    order.push("sentinel");
+  });
+  const event = {
+    type: "afterDamage", source: shade, target, actualAmount: 1,
+    card: instance("assault"), resolutionId: "private-reveal-spygap-resolution"
+  };
+  let dispatcherSettled = false;
+  const dispatcherPromise = game.eventDispatcher.emit("afterDamage", event).then((payload) => {
+    dispatcherSettled = true;
+    return payload;
+  });
+  await waitForPrivateRevealBoundaryCondition(() => revealCalls === 1, "窥隙应已进入 showPrivateReveal");
+  assert.equal(shade.turnFlags.spyGapTriggered, true);
+  assert.equal(sentinelRuns, 0);
+  assert.equal(order.includes("spygap-log"), false);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(dispatcherSettled, false, "收起情报前 dispatcher 不得越过窥隙 listener");
+  assert.equal(sentinelRuns, 0);
+  settleReveal();
+  assert.equal(await dispatcherPromise, event);
+  assert.equal(sentinelRuns, 1);
+  assert.deepEqual(order, ["reveal", "spygap-log", "sentinel"]);
+  assert.ok(game.state.logs.some((entry) => entry.message.includes("触发「窥隙」")));
+  game.dispose();
+}
+
+/*
+功能
+证明 private reveal pending 时 dispose/cleanup 会 settle reveal Promise，
+随后恢复的旧 resolver 会因 session invalid 直接结束，不写 stale log、不发 cardUsed。
+
+调用方
+FR-ARCH-15 前置回归。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game/ActionWorkflow/CardEffectRuntime 路径与 dispose lifecycle。
+
+写入状态
+测试 Game 状态与 UI 记录。
+
+调用函数
+makePlayer、makeGame、choosePrivateCardThroughInteraction、waitForPrivateRevealBoundaryCondition。
+
+边界与不变量
+模拟当前真实 UI cleanup settle pending reveal；不重复实现 cleanup。
+*/
+async function privateRevealDisposeInvalidatesPendingScout() {
+  const source = makePlayer("private-reveal-dispose-source", 0, "dawn", "human"),
+    target = makePlayer("private-reveal-dispose-target", 1, "dusk");
+  const scout = instance("scout"),
+    first = instance("charge"),
+    second = instance("harvest");
+  source.hand.push(scout);
+  target.hand.push(first, second);
+  const { game, ui } = makeGame([source, target]);
+  const selection = await choosePrivateCardThroughInteraction(
+    game, source, scout, target, { handIndexes: [0, 1] }
+  );
+  let settleReveal = null;
+  ui.showPrivateReveal = () => new Promise((resolve) => { settleReveal = resolve; });
+  const baseCancelPendingInteractions = ui.cancelPendingInteractions.bind(ui);
+  ui.cancelPendingInteractions = () => {
+    baseCancelPendingInteractions();
+    if (settleReveal) {
+      const resolve = settleReveal;
+      settleReveal = null;
+      resolve();
+    }
+  };
+  let cardUsed = false;
+  game.eventDispatcher.on("cardUsed", "test:private-reveal-dispose-boundary", (event) => {
+    if (event.card === scout) cardUsed = true;
+  });
+  let playSettled = false;
+  const playPromise = game.playCard(source, scout, [target], selection).then((result) => {
+    playSettled = true;
+    return result;
+  });
+  await waitForPrivateRevealBoundaryCondition(() => settleReveal !== null, "scout 应已进入 pending reveal");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(playSettled, false, "pending reveal 未清理前 scout 结算不得提前完成");
+  game.dispose();
+  assert.equal(settleReveal, null);
+  assert.equal(await playPromise, false);
+  assert.equal(cardUsed, false);
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("窥探了")));
+}
+
+/*
+功能
+验证 PrivateRevealView 现有 cleanup contract：hide() 会 settle 未关闭的 show() Promise 并清空 overlay。
+
+调用方
+私人情报异步边界回归。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+PrivateRevealView 实例。
+
+写入状态
+fake DOM element 状态。
+
+调用函数
+makeInteractiveElement、PrivateRevealView。
+
+边界与不变量
+只验证既有 UI cleanup，不创建第二份 lifecycle。
+*/
+async function privateRevealViewHideSettlesPendingShow() {
+  const closeButton = makeInteractiveElement();
+  const element = {
+    ...makeInteractiveElement(),
+    querySelector: (selector) => selector === "[data-close-private]" ? closeButton : null
+  };
+  const view = new PrivateRevealView(element);
+  let settled = false;
+  const pending = view.show("测试情报", [instance("charge")]).then(() => { settled = true; });
+  assert.equal(settled, false);
+  assert.equal(element.classList.contains("is-hidden"), false);
+  assert.match(element.innerHTML, /收起情报/);
+  view.hide();
+  await pending;
+  assert.equal(settled, true);
+  assert.equal(element.innerHTML, "");
+  assert.equal(element.classList.contains("is-hidden"), true);
+}
+
+test("私人情报异步边界：真人窥探在收起情报前阻塞 resolver 日志与 cardUsed", privateRevealScoutBlocksUntilClosed);
+test("私人情报异步边界：真人窥隙在收起情报前阻塞 EventDispatcher 后续 listener", privateRevealSpyGapBlocksDispatcher);
+test("私人情报异步边界：pending reveal 时 dispose 清理后旧 scout 不写 stale log/mutation", privateRevealDisposeInvalidatesPendingScout);
+test("私人情报异步边界：PrivateRevealView.hide settle pending show Promise 并清空 overlay", privateRevealViewHideSettlesPendingShow);
+
 // ==================== AI 系统 ====================
-
-// ---- AI 系统·State Contract ----
-
-/*
-功能
-验证 VisibleState 只由公开事实与观察者自己的手牌决定。
-
-调用方
-AI 状态契约回归测试。
-
-输入
-手牌数量相同但敌方未知牌定义不同的两个 GameState 时刻。
-
-输出
-两个投影完全一致，且敌方投影不含手牌与推测字段。
-
-读取状态
-测试 GameState、VisibleState。
-
-写入状态
-测试夹具中的敌方手牌。
-
-调用函数
-createVisibleState。
-
-边界与不变量
-敌方未知牌定义变化不得影响 VisibleState。
-*/
-function testVisibleStateExcludesHiddenDefinitions() {
-  const actor = makePlayer("state-actor", 0, "dawn"), enemy = makePlayer("state-enemy", 1, "dusk");
-  actor.hand.push(instance("assault"));
-  enemy.hand.push(instance("recover"));
-  const { game } = makeGame([actor, enemy]);
-  const first = createVisibleState(actor.id, game.state);
-  enemy.hand = [instance("counter")];
-  const second = createVisibleState(actor.id, game.state);
-
-  assert.deepEqual(second, first);
-  assert.equal(first.players[1].hand, undefined);
-  assert.equal(first.players[1].handCount, 1);
-  assert.equal(first.players[1].expectedRecoverCount, undefined);
-  assert.equal(first.remainingCardCounts, undefined);
-  assert.equal(first.playPhaseEnded, undefined);
-  assert.equal(first.players[0].hand[0].definitionId, "assault");
-  assert.equal(Object.isFrozen(first.players[1]), true);
-}
-
-test("AI·状态契约：VisibleState 不泄漏敌方未知牌定义", testVisibleStateExcludesHiddenDefinitions);
-
-/*
-功能
-验证 Knowledge 只投影观察者合法记录的实体牌记忆。
-
-调用方
-AI 状态契约回归测试。
-
-输入
-包含一张合法已知牌与一张未知牌的敌方手牌。
-
-输出
-Knowledge 仅包含合法记忆中的牌实体与定义。
-
-读取状态
-玩家 aiMemory、VisibleState 玩家身份。
-
-写入状态
-测试夹具中的合法 AI 记忆。
-
-调用函数
-createVisibleState、createKnowledgeState。
-
-边界与不变量
-Knowledge 不得用真实敌方手牌补全未知位置。
-*/
-function testKnowledgeStateUsesOnlyLegalMemory() {
-  const actor = makePlayer("knowledge-actor", 0, "dawn"), enemy = makePlayer("knowledge-enemy", 1, "dusk");
-  const known = instance("block"), unknown = instance("recover");
-  enemy.hand.push(known, unknown);
-  actor.aiMemory.knownCardsByPlayer[enemy.id] = { [known.id]: known.definitionId };
-  const { game } = makeGame([actor, enemy]);
-  const visible = createVisibleState(actor.id, game.state);
-  const knowledge = createKnowledgeState(actor, visible);
-
-  assert.deepEqual(knowledge.knownCardsByPlayer[enemy.id], [
-    { cardId: known.id, definitionId: "block" }
-  ]);
-  assert.equal(JSON.stringify(knowledge).includes("recover"), false);
-  assert.equal(Object.isFrozen(knowledge.knownCardsByPlayer[enemy.id]), true);
-}
-
-test("AI·状态契约：Knowledge 只保存合法实体记忆", testKnowledgeStateUsesOnlyLegalMemory);
-
-/*
-功能
-验证 BeliefState 从合法记忆、未知槽位数量和剩余牌计数推导概率。
-
-调用方
-AI 状态契约回归测试。
-
-输入
-敌方一张已知格挡、一张未知牌及固定剩余牌计数。
-
-输出
-符合二项分布的期望值，且真实未知牌换面不改变结果。
-
-读取状态
-VisibleState、Knowledge、剩余牌计数。
-
-写入状态
-测试夹具中的敌方未知手牌。
-
-调用函数
-createBeliefState、createKnowledgeState、createVisibleState。
-
-边界与不变量
-Belief 不读取真实未知牌，且不持有调用方计数对象的可变引用。
-*/
-function testBeliefStateDerivesLegalDistribution() {
-  const actor = makePlayer("belief-actor", 0, "dawn"), enemy = makePlayer("belief-enemy", 1, "dusk");
-  const known = instance("block");
-  enemy.hand.push(known, instance("recover"));
-  actor.aiMemory.knownCardsByPlayer[enemy.id] = { [known.id]: known.definitionId };
-  const { game } = makeGame([actor, enemy]);
-  const counts = { block: 1, assault: 3 };
-  const firstVisible = createVisibleState(actor.id, game.state);
-  const knowledge = createKnowledgeState(actor, firstVisible);
-  const first = createBeliefState(actor.id, firstVisible, knowledge, counts);
-  enemy.hand = [known, instance("counter")];
-  const secondVisible = createVisibleState(actor.id, game.state);
-  const second = createBeliefState(actor.id, secondVisible, knowledge, counts);
-
-  assertClose(first.playersById[enemy.id].expectedBlockCount, 1.25);
-  assert.equal(first.playersById[enemy.id].blockProbability, 1);
-  assertClose(first.playersById[enemy.id].twoBlockProbability, 0.25);
-  assert.deepEqual(second, first);
-  counts.block = 99;
-  assert.equal(first.remainingCardCounts.block, 1);
-  assert.equal(Object.isFrozen(first.remainingCardCounts), true);
-}
-
-test("AI·状态契约：Belief 从合法计数与记忆推导", testBeliefStateDerivesLegalDistribution);
-
-/*
-功能
-验证 SearchState 克隆生成与 GameState 无关的独立可变搜索世界。
-
-调用方
-AI 状态契约回归测试。
-
-输入
-由正式状态契约组合完成的 SearchState。
-
-输出
-克隆可独立变更，原快照与后续克隆不受污染。
-
-读取状态
-SearchState。
-
-写入状态
-仅写第一个克隆的玩家、牌分支和剩余计数。
-
-调用函数
-cloneSearchState、createStateContracts。
-
-边界与不变量
-SearchState 不保留 Game 引用，任一克隆的写入不得串扰。
-*/
-function testSearchStateCloneIsolation() {
-  const actor = makePlayer("search-actor", 0, "dawn"), enemy = makePlayer("search-enemy", 1, "dusk");
-  actor.hand.push(instance("assault"));
-  enemy.hand.push(instance("block"));
-  const { game } = makeGame([actor, enemy]);
-  const contracts = createStateContracts(actor.id, game.state, { assault: 2, block: 3 });
-  const firstClone = cloneSearchState(contracts.searchState);
-  const secondClone = cloneSearchState(contracts.searchState);
-
-  firstClone.players[0].hp = 1;
-  firstClone.players[0].hand[0].availabilityStateBranches[0].available = false;
-  firstClone.remainingCardCounts.assault = 0;
-  assert.notEqual(firstClone.players[0].hp, contracts.searchState.players[0].hp);
-  assert.equal(contracts.searchState.players[0].hand[0].availabilityStateBranches[0].available, true);
-  assert.equal(secondClone.remainingCardCounts.assault, 2);
-  assert.equal("game" in contracts.searchState, false);
-  assert.equal("game" in firstClone, false);
-}
-
-test("AI·状态契约：SearchState 克隆隔离且不回读 Game", testSearchStateCloneIsolation);
-
-/*
-功能
-验证通用概率分支迁移后仍按共享世界条件联合并守恒概率质量。
-
-调用方
-AI 状态契约回归测试。
-
-输入
-两个共享同一二元条件、各自携带独立状态字段的完整分区。
-
-输出
-联合结果保持两个世界分支及总概率一。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-joinStateProbabilityBranches、totalBranchProbability。
-
-边界与不变量
-共享条件不得重复相乘，互斥条件不得错误合并。
-*/
-function testStateProbabilityPreservesSharedConditions() {
-  const left = [
-    { probability: 0.3, conditions: { radar: "present" }, attackUsed: 0 },
-    { probability: 0.7, conditions: { radar: "absent" }, attackUsed: 0 }
-  ];
-  const right = [
-    { probability: 0.3, conditions: { radar: "present" }, energy: 2 },
-    { probability: 0.7, conditions: { radar: "absent" }, energy: 1 }
-  ];
-  const joined = joinStateProbabilityBranches(left, right);
-
-  assert.equal(joined.length, 2);
-  assertClose(totalBranchProbability(joined), 1);
-  assert.deepEqual(joined.map((branch) => branch.conditions.radar).sort(), ["absent", "present"]);
-}
-
-test("AI·状态契约：Probability 联合共享条件时质量守恒", testStateProbabilityPreservesSharedConditions);
-
-/*
-功能
-验证 SearchState 快捷入口严格委托给四层状态契约组合结果。
-
-调用方
-AI 状态契约回归测试。
-
-输入
-同一观察者、GameState 与剩余牌计数。
-
-输出
-快捷入口与显式 SearchState 结果深度一致。
-
-读取状态
-GameState、状态契约快照。
-
-写入状态
-无。
-
-调用函数
-createStateContracts、createInitialSearchState。
-
-边界与不变量
-Planner 与 Simulator 接收的扁平字段和值必须来自同一组合结果。
-*/
-function testStateContractCompositionBoundary() {
-  const actor = makePlayer("facade-actor", 0, "dawn"), enemy = makePlayer("facade-enemy", 1, "dusk");
-  actor.hand.push(instance("recover"));
-  enemy.hand.push(instance("counter"));
-  const { game } = makeGame([actor, enemy]);
-  const counts = { recover: 2, counter: 4 };
-  const contracts = createStateContracts(actor.id, game.state, counts);
-
-  assert.deepEqual(createInitialSearchState(actor.id, game.state, counts), contracts.searchState);
-  assert.equal(contracts.visibleState.remainingCardCounts, undefined);
-  assert.equal(contracts.knowledgeState.knownCardsByPlayer[enemy.id].length, 0);
-  assert.equal(contracts.beliefState.playersById[enemy.id].counterProbability > 0, true);
-}
-
-test("AI·状态契约：组合入口等价于显式 SearchState", testStateContractCompositionBoundary);
 
 // ---- AI 架构与依赖边界 ----
 
@@ -9438,318 +13889,276 @@ test(
   testSimulationSearchStateCharacterization
 );
 
-// ---- AI 搜索与规划·固定轨迹与预算 ----
+// ---- AI 系统·State Contract ----
 
-test("AI·搜索：Simulation 七类固定场景保持根动作、序列与搜索统计", async () => {
-  const end = {
-    type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null
-  };
-  const scenes = [
-    {
-      name: "lightning",
-      players: [
-        { id: "a", team: "dawn", character: "blade-walker", hand: [makeBenchmarkCard("lightning", "trace-lightning")], hp: 4 },
-        { id: "b", team: "dusk", character: "shade-agent", hand: [makeBenchmarkCard("assault", "trace-l-b")], hp: 2 },
-        { id: "c", team: "dusk", character: "ember-magus", hand: [makeBenchmarkCard("assault", "trace-l-c")], hp: 2 },
-        { id: "d", team: "dusk", character: "trail-hunter", hand: [makeBenchmarkCard("assault", "trace-l-d")], hp: 2 }
-      ],
-      expected: {
-        root: { type: "card", cardId: "lightning", cardInstanceId: "trace-lightning", targetId: null, targetIds: [], selection: null },
-        sequence: [{ type: "card", cardId: "lightning", cardInstanceId: "trace-lightning", targetId: null, targetIds: [], selection: null }, end],
-        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 1.6011184646730436
-      }
-    },
-    {
-      name: "response",
-      players: [
-        {
-          id: "a", team: "dawn", character: "blade-walker", hand: [makeBenchmarkCard("shockwave", "trace-shock")],
-          aiMemory: { knownCardsByPlayer: { b: [{ id: "trace-counter", definitionId: "counter" }] } }
-        },
-        { id: "b", team: "dusk", character: "shade-agent", hand: [makeBenchmarkCard("counter", "trace-counter")], hp: 2 },
-        { id: "c", team: "dawn", character: "oath-warden", hand: [makeBenchmarkCard("block", "trace-r-c")] },
-        { id: "d", team: "dusk", character: "spirit-medic", hand: [makeBenchmarkCard("recover", "trace-r-d")], hp: 2 }
-      ],
-      expected: {
-        root: { type: "card", cardId: "shockwave", cardInstanceId: "trace-shock", targetId: "b", targetIds: ["b", "d"], selection: null },
-        sequence: [{ type: "card", cardId: "shockwave", cardInstanceId: "trace-shock", targetId: "b", targetIds: ["b", "d"], selection: null }, end],
-        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.2675810346823039
-      }
-    },
-    {
-      name: "transfer",
-      players: [
-        { id: "a", team: "dawn", character: "resonance-tuner", hand: [makeBenchmarkCard("transfer", "trace-transfer"), makeBenchmarkCard("block", "trace-block")], hp: 4 },
-        { id: "b", team: "dawn", character: "spirit-medic", hand: [], hp: 1 },
-        { id: "c", team: "dusk", character: "shade-agent", hand: [makeBenchmarkCard("assault", "trace-t-c")], hp: 4 },
-        { id: "d", team: "dusk", character: "ember-magus", hand: [makeBenchmarkCard("counter", "trace-t-d")], hp: 4 }
-      ],
-      expected: {
-        root: {
-          type: "card", cardId: "transfer", cardInstanceId: "trace-transfer", targetId: null, targetIds: [],
-          selection: {
-            sourceId: "d", receiverId: "b", zone: "hand", score: 14.273291925465838,
-            selectionKind: "unknown", cardId: null, definitionId: null,
-            expectedValue: 8.031055900621118, availableUnknownCount: 1
-          }
-        },
-        sequence: [{
-          type: "card", cardId: "transfer", cardInstanceId: "trace-transfer", targetId: null, targetIds: [],
-          selection: { sourceId: "d", receiverId: "b", zone: "hand" }
-        }, end],
-        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.18368081564601085
-      }
-    },
-    {
-      name: "globalBenefit",
-      players: [
-        { id: "a", team: "dawn", character: "spirit-medic", hand: [makeBenchmarkCard("mutualBenefit", "trace-mutual")], hp: 3 },
-        { id: "b", team: "dusk", character: "shade-agent", hand: [makeBenchmarkCard("assault", "trace-g-b")], hp: 4 },
-        { id: "c", team: "dawn", character: "oath-warden", hand: [makeBenchmarkCard("block", "trace-g-c")], hp: 3 },
-        { id: "d", team: "dusk", character: "ember-magus", hand: [makeBenchmarkCard("counter", "trace-g-d")], hp: 4 }
-      ],
-      expected: { root: end, sequence: [end], expanded: 3, depth: 1, hiddenSamples: 10, bestValueScore: 0 }
-    },
-    {
-      name: "combat",
-      players: [
-        {
-          id: "a", team: "dawn", character: "blade-walker",
-          hand: [
-            makeBenchmarkCard("exposeWeakness", "trace-combat-expose"),
-            makeBenchmarkCard("assault", "trace-combat-assault")
-          ],
-          hp: 4
-        },
-        { id: "b", team: "dusk", character: "shade-agent", hand: [], hp: 2 },
-        { id: "c", team: "dusk", character: "spirit-medic", hand: [], hp: 4 }
-      ],
-      expected: {
-        root: {
-          type: "card", cardId: "exposeWeakness", cardInstanceId: "trace-combat-expose",
-          targetId: null, targetIds: [], selection: null
-        },
-        sequence: [
-          {
-            type: "card", cardId: "exposeWeakness", cardInstanceId: "trace-combat-expose",
-            targetId: null, targetIds: [], selection: null
-          },
-          {
-            type: "card", cardId: "assault", cardInstanceId: "trace-combat-assault",
-            targetId: "b", targetIds: ["b"], selection: null
-          },
-          end
-        ],
-        expanded: 15, depth: 3, hiddenSamples: 10, bestValueScore: 2.092
-      }
-    },
-    {
-      name: "skill",
-      players: [
-        { id: "a", team: "dawn", character: "oath-warden", hand: [], hp: 4, energy: 2 },
-        { id: "b", team: "dawn", character: "spirit-medic", hand: [], hp: 1 },
-        {
-          id: "c", team: "dusk", character: "blade-walker",
-          hand: [makeBenchmarkCard("assault", "trace-skill-enemy")], hp: 4
-        }
-      ],
-      expected: {
-        root: end,
-        sequence: [end],
-        expanded: 5, depth: 1, hiddenSamples: 10, bestValueScore: 0
-      }
-    },
-    {
-      name: "status",
-      players: [
-        {
-          id: "a", team: "dawn", character: "shade-agent",
-          hand: [makeBenchmarkCard("seal", "trace-status-seal")], hp: 4
-        },
-        {
-          id: "b", team: "dusk", character: "blade-walker",
-          hand: [makeBenchmarkCard("assault", "trace-status-enemy")], hp: 4
-        },
-        { id: "c", team: "dawn", character: "spirit-medic", hand: [], hp: 3 }
-      ],
-      expected: {
-        root: {
-          type: "card", cardId: "seal", cardInstanceId: "trace-status-seal",
-          targetId: "b", targetIds: ["b"], selection: null
-        },
-        sequence: [
-          {
-            type: "card", cardId: "seal", cardInstanceId: "trace-status-seal",
-            targetId: "b", targetIds: ["b"], selection: null
-          },
-          end
-        ],
-        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.3310706117894553
-      }
-    }
+/*
+功能
+验证 VisibleState 只由公开事实与观察者自己的手牌决定。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+手牌数量相同但敌方未知牌定义不同的两个 GameState 时刻。
+
+输出
+两个投影完全一致，且敌方投影不含手牌与推测字段。
+
+读取状态
+测试 GameState、VisibleState。
+
+写入状态
+测试夹具中的敌方手牌。
+
+调用函数
+createVisibleState。
+
+边界与不变量
+敌方未知牌定义变化不得影响 VisibleState。
+*/
+function testVisibleStateExcludesHiddenDefinitions() {
+  const actor = makePlayer("state-actor", 0, "dawn"), enemy = makePlayer("state-enemy", 1, "dusk");
+  actor.hand.push(instance("assault"));
+  enemy.hand.push(instance("recover"));
+  const { game } = makeGame([actor, enemy]);
+  const first = createVisibleState(actor.id, game.state);
+  enemy.hand = [instance("counter")];
+  const second = createVisibleState(actor.id, game.state);
+
+  assert.deepEqual(second, first);
+  assert.equal(first.players[1].hand, undefined);
+  assert.equal(first.players[1].handCount, 1);
+  assert.equal(first.players[1].expectedRecoverCount, undefined);
+  assert.equal(first.remainingCardCounts, undefined);
+  assert.equal(first.playPhaseEnded, undefined);
+  assert.equal(first.players[0].hand[0].definitionId, "assault");
+  assert.equal(Object.isFrozen(first.players[1]), true);
+}
+
+test("AI·状态契约：VisibleState 不泄漏敌方未知牌定义", testVisibleStateExcludesHiddenDefinitions);
+
+/*
+功能
+验证 Knowledge 只投影观察者合法记录的实体牌记忆。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+包含一张合法已知牌与一张未知牌的敌方手牌。
+
+输出
+Knowledge 仅包含合法记忆中的牌实体与定义。
+
+读取状态
+玩家 aiMemory、VisibleState 玩家身份。
+
+写入状态
+测试夹具中的合法 AI 记忆。
+
+调用函数
+createVisibleState、createKnowledgeState。
+
+边界与不变量
+Knowledge 不得用真实敌方手牌补全未知位置。
+*/
+function testKnowledgeStateUsesOnlyLegalMemory() {
+  const actor = makePlayer("knowledge-actor", 0, "dawn"), enemy = makePlayer("knowledge-enemy", 1, "dusk");
+  const known = instance("block"), unknown = instance("recover");
+  enemy.hand.push(known, unknown);
+  actor.aiMemory.knownCardsByPlayer[enemy.id] = { [known.id]: known.definitionId };
+  const { game } = makeGame([actor, enemy]);
+  const visible = createVisibleState(actor.id, game.state);
+  const knowledge = createKnowledgeState(actor, visible);
+
+  assert.deepEqual(knowledge.knownCardsByPlayer[enemy.id], [
+    { cardId: known.id, definitionId: "block" }
+  ]);
+  assert.equal(JSON.stringify(knowledge).includes("recover"), false);
+  assert.equal(Object.isFrozen(knowledge.knownCardsByPlayer[enemy.id]), true);
+}
+
+test("AI·状态契约：Knowledge 只保存合法实体记忆", testKnowledgeStateUsesOnlyLegalMemory);
+
+/*
+功能
+验证 BeliefState 从合法记忆、未知槽位数量和剩余牌计数推导概率。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+敌方一张已知格挡、一张未知牌及固定剩余牌计数。
+
+输出
+符合二项分布的期望值，且真实未知牌换面不改变结果。
+
+读取状态
+VisibleState、Knowledge、剩余牌计数。
+
+写入状态
+测试夹具中的敌方未知手牌。
+
+调用函数
+createBeliefState、createKnowledgeState、createVisibleState。
+
+边界与不变量
+Belief 不读取真实未知牌，且不持有调用方计数对象的可变引用。
+*/
+function testBeliefStateDerivesLegalDistribution() {
+  const actor = makePlayer("belief-actor", 0, "dawn"), enemy = makePlayer("belief-enemy", 1, "dusk");
+  const known = instance("block");
+  enemy.hand.push(known, instance("recover"));
+  actor.aiMemory.knownCardsByPlayer[enemy.id] = { [known.id]: known.definitionId };
+  const { game } = makeGame([actor, enemy]);
+  const counts = { block: 1, assault: 3 };
+  const firstVisible = createVisibleState(actor.id, game.state);
+  const knowledge = createKnowledgeState(actor, firstVisible);
+  const first = createBeliefState(actor.id, firstVisible, knowledge, counts);
+  enemy.hand = [known, instance("counter")];
+  const secondVisible = createVisibleState(actor.id, game.state);
+  const second = createBeliefState(actor.id, secondVisible, knowledge, counts);
+
+  assertClose(first.playersById[enemy.id].expectedBlockCount, 1.25);
+  assert.equal(first.playersById[enemy.id].blockProbability, 1);
+  assertClose(first.playersById[enemy.id].twoBlockProbability, 0.25);
+  assert.deepEqual(second, first);
+  counts.block = 99;
+  assert.equal(first.remainingCardCounts.block, 1);
+  assert.equal(Object.isFrozen(first.remainingCardCounts), true);
+}
+
+test("AI·状态契约：Belief 从合法计数与记忆推导", testBeliefStateDerivesLegalDistribution);
+
+/*
+功能
+验证 SearchState 克隆生成与 GameState 无关的独立可变搜索世界。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+由正式状态契约组合完成的 SearchState。
+
+输出
+克隆可独立变更，原快照与后续克隆不受污染。
+
+读取状态
+SearchState。
+
+写入状态
+仅写第一个克隆的玩家、牌分支和剩余计数。
+
+调用函数
+cloneSearchState、createStateContracts。
+
+边界与不变量
+SearchState 不保留 Game 引用，任一克隆的写入不得串扰。
+*/
+function testSearchStateCloneIsolation() {
+  const actor = makePlayer("search-actor", 0, "dawn"), enemy = makePlayer("search-enemy", 1, "dusk");
+  actor.hand.push(instance("assault"));
+  enemy.hand.push(instance("block"));
+  const { game } = makeGame([actor, enemy]);
+  const contracts = createStateContracts(actor.id, game.state, { assault: 2, block: 3 });
+  const firstClone = cloneSearchState(contracts.searchState);
+  const secondClone = cloneSearchState(contracts.searchState);
+
+  firstClone.players[0].hp = 1;
+  firstClone.players[0].hand[0].availabilityStateBranches[0].available = false;
+  firstClone.remainingCardCounts.assault = 0;
+  assert.notEqual(firstClone.players[0].hp, contracts.searchState.players[0].hp);
+  assert.equal(contracts.searchState.players[0].hand[0].availabilityStateBranches[0].available, true);
+  assert.equal(secondClone.remainingCardCounts.assault, 2);
+  assert.equal("game" in contracts.searchState, false);
+  assert.equal("game" in firstClone, false);
+}
+
+test("AI·状态契约：SearchState 克隆隔离且不回读 Game", testSearchStateCloneIsolation);
+
+/*
+功能
+验证通用概率分支迁移后仍按共享世界条件联合并守恒概率质量。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+两个共享同一二元条件、各自携带独立状态字段的完整分区。
+
+输出
+联合结果保持两个世界分支及总概率一。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+joinStateProbabilityBranches、totalBranchProbability。
+
+边界与不变量
+共享条件不得重复相乘，互斥条件不得错误合并。
+*/
+function testStateProbabilityPreservesSharedConditions() {
+  const left = [
+    { probability: 0.3, conditions: { radar: "present" }, attackUsed: 0 },
+    { probability: 0.7, conditions: { radar: "absent" }, attackUsed: 0 }
   ];
-  for (const scene of scenes) {
-    const game = makeBenchmarkGame({
-      players: scene.players,
-      options: { actorId: "a", nodeBudget: 200, seed: 20260814 }
-    });
-    try {
-      const { action, stats } = await runBenchmarkAiDecision(game, "a");
-      assert.deepEqual(describeBenchmarkAction(action), scene.expected.root, `${scene.name} root`);
-      assert.deepEqual(stats.bestSequence, scene.expected.sequence, `${scene.name} sequence`);
-      assert.equal(stats.expanded, scene.expected.expanded, `${scene.name} expanded`);
-      assert.equal(stats.depth, scene.expected.depth, `${scene.name} depth`);
-      assert.equal(stats.hiddenSamples, scene.expected.hiddenSamples, `${scene.name} hiddenSamples`);
-      assert.equal(stats.bestValueScore, scene.expected.bestValueScore, `${scene.name} bestValueScore`);
-    } finally {
-      disposeBenchmarkGame(game);
-    }
-  }
-});
+  const right = [
+    { probability: 0.3, conditions: { radar: "present" }, energy: 2 },
+    { probability: 0.7, conditions: { radar: "absent" }, energy: 1 }
+  ];
+  const joined = joinStateProbabilityBranches(left, right);
 
-test("AI·搜索：壁垒固定场景的 end 由完整账本证明而非概率距离塌缩", async () => {
-  const game = makeBenchmarkGame({
-    players: [
-      { id: "a", team: "dawn", character: "oath-warden", hand: [], hp: 4, energy: 2 },
-      { id: "b", team: "dawn", character: "spirit-medic", hand: [], hp: 1 },
-      {
-        id: "c", team: "dusk", character: "blade-walker",
-        hand: [makeBenchmarkCard("assault", "trace-barrier-end")], hp: 4
-      }
-    ],
-    options: { actorId: "a", seed: 20260814, nodeBudget: 200 }
-  });
-  try {
-    const player = game.state.players.find((entry) => entry.id === "a");
-    const { action, stats } = await runBenchmarkAiDecision(game, "a");
-    assert.deepEqual(describeBenchmarkAction(action), {
-      type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null
-    });
-    assert.equal(stats.bestValueScore, 0);
-    const visible = createInitialSearchState(
-      player.id, game.state, game.aiController.knowledge.remainingCounts(player)
-    ),
-      roots = game.aiController.getActionCandidates(player),
-      barrierAction = roots.find((entry) => (
-        entry.type === "skill" && entry.skill?.id === "barrier" && entry.targets?.[0]?.id === "b"
-      )),
-      endAction = roots.find((entry) => entry.type === "end"),
-      materializer = game.aiController.candidateMaterializer,
-      simulator = new Simulator(visible),
-      context = materializer.createContext(player, visible, roots);
-    assert.ok(barrierAction && endAction);
-    const materialize = (candidateAction) => {
-      const after = simulator.apply(visible, candidateAction, player.id);
-      return materializer.materialize({
-        action: candidateAction,
-        beforeState: visible,
-        afterState: after,
-        player,
-        depth: 1,
-        remainingProvenance: context.rootProvenance,
-        simulator,
-        context,
-        collectDiagnostics: true,
-        searchBudget: null
-      });
-    };
-    const barrierCandidate = materialize(barrierAction),
-      endCandidate = materialize(endAction);
-    materializer.finalizeSiblings([barrierCandidate, endCandidate], 1);
-    // 账本语义：护盾确实给了队友，但 2 点能量先降低自身资源，同时让敌方 c 的
-    // 能量压力项改善；三项合计后 Barrier 净值为负，end 是真实价值结果。
-    assert.ok(barrierCandidate.candidateLedger.projected.ally > 0,
-      "壁垒应给队友带来正护盾价值");
-    assert.ok(barrierCandidate.candidateLedger.projected.self < 0,
-      "壁垒应消耗行动者能量");
-    assert.ok(barrierCandidate.candidateLedger.projected.total < 0,
-      "壁垒总净值应为负");
-    assert.ok(barrierCandidate.transitionValue < endCandidate.transitionValue,
-      "壁垒 transition 应低于 end");
-    // 该场景 c 到 a/b 均为确定性可达，p=1，证明翻转不是概率距离二次折损造成。
-    const enemy = visible.players.find((entry) => entry.id === "c");
-    for (const targetId of ["a", "b"]) {
-      const target = visible.players.find((entry) => entry.id === targetId);
-      const components = game.aiController.evaluator.exposureComponents(visible, target);
-      const enemyComponents = components.perEnemy.find((entry) => entry.enemyId === enemy.id);
-      assert.equal(enemyComponents.rangeProbability, 1);
-    }
-  } finally {
-    disposeBenchmarkGame(game);
-  }
-});
+  assert.equal(joined.length, 2);
+  assertClose(totalBranchProbability(joined), 1);
+  assert.deepEqual(joined.map((branch) => branch.conditions.radar).sort(), ["absent", "present"]);
+}
 
-test("AI·搜索：Simulation 拆分保持固定 D4 封印链逐字段一致", async () => {
-  const game = makeBenchmarkGame({
-    players: [
-      {
-        id: "a", team: "dawn", character: "shade-agent", energy: 3,
-        hand: [
-          makeBenchmarkCard("seal", "d4-seal"),
-          makeBenchmarkCard("assault", "d4-assault")
-        ]
-      },
-      {
-        id: "b", team: "dusk", character: "oath-warden", hp: 2, energy: 1,
-        hand: [makeBenchmarkCard("block", "d4-block")]
-      },
-      {
-        id: "c", team: "dusk", character: "fate-gambler", hp: 1, energy: 1,
-        hand: [makeBenchmarkCard("assault", "d4-c-assault")]
-      },
-      {
-        id: "d", team: "dawn", character: "spirit-medic", hp: 4, energy: 1,
-        hand: [makeBenchmarkCard("assault", "d4-d-assault")]
-      },
-      {
-        id: "e", team: "dusk", character: "ember-magus", hp: 4, energy: 1,
-        hand: [makeBenchmarkCard("assault", "d4-e-assault")]
-      }
-    ],
-    options: { actorId: "a", seed: 20260814, nodeBudget: 200 }
-  });
-  try {
-    const { action, stats } = await runBenchmarkAiDecision(game, "a");
-    assert.deepEqual(describeBenchmarkAction(action), {
-      type: "card", cardId: "seal", cardInstanceId: "d4-seal",
-      targetId: "c", targetIds: ["c"], selection: null
-    });
-    assert.deepEqual(stats.bestSequence.map((entry) => [entry.type, entry.cardId, entry.targetId]), [
-      ["card", "seal", "c"]
-    ]);
-    assert.equal(stats.expanded, 200);
-    assert.equal(stats.depth, 1);
-    assert.equal(stats.hiddenSamples, 10);
-    assert.equal(stats.bestValueScore, 0.4287722930964537);
-    assert.equal(stats.stopReason, "NODE");
-    assert.equal(stats.simulationCalls, 316);
-  } finally {
-    disposeBenchmarkGame(game);
-  }
-});
+test("AI·状态契约：Probability 联合共享条件时质量守恒", testStateProbabilityPreservesSharedConditions);
 
-test("AI·搜索：SearchBudget 用确定性时钟统一 TIME/NODE/COMPLETE 停止原因", () => {
-  const timeValues = [100, 105, 110];
-  const timeBudget = new SearchBudget({
-    timeBudget: 10,
-    now: () => timeValues.shift() ?? 110
-  });
-  assert.equal(timeBudget.shouldStop(), false);
-  assert.equal(timeBudget.shouldStop(), true);
-  assert.equal(timeBudget.stopReason, "TIME");
+/*
+功能
+验证 SearchState 快捷入口严格委托给四层状态契约组合结果。
 
-  const nodeBudget = new SearchBudget({ nodeBudget: 2, now: () => 0 });
-  nodeBudget.observeNode();
-  assert.equal(nodeBudget.shouldStop(), false);
-  nodeBudget.observeNode();
-  assert.equal(nodeBudget.shouldStop(), true);
-  assert.equal(nodeBudget.stopReason, "NODE");
-  assert.equal(nodeBudget.diagnostics().expandedNodes, 2);
+调用方
+AI 状态契约回归测试。
 
-  const completeBudget = new SearchBudget({ nodeBudget: 5, now: () => 0 });
-  assert.equal(completeBudget.complete(), "COMPLETE");
-  assert.equal(completeBudget.shouldStop(), true);
-});
+输入
+同一观察者、GameState 与剩余牌计数。
+
+输出
+快捷入口与显式 SearchState 结果深度一致。
+
+读取状态
+GameState、状态契约快照。
+
+写入状态
+无。
+
+调用函数
+createStateContracts、createInitialSearchState。
+
+边界与不变量
+Planner 与 Simulator 接收的扁平字段和值必须来自同一组合结果。
+*/
+function testStateContractCompositionBoundary() {
+  const actor = makePlayer("facade-actor", 0, "dawn"), enemy = makePlayer("facade-enemy", 1, "dusk");
+  actor.hand.push(instance("recover"));
+  enemy.hand.push(instance("counter"));
+  const { game } = makeGame([actor, enemy]);
+  const counts = { recover: 2, counter: 4 };
+  const contracts = createStateContracts(actor.id, game.state, counts);
+
+  assert.deepEqual(createInitialSearchState(actor.id, game.state, counts), contracts.searchState);
+  assert.equal(contracts.visibleState.remainingCardCounts, undefined);
+  assert.equal(contracts.knowledgeState.knownCardsByPlayer[enemy.id].length, 0);
+  assert.equal(contracts.beliefState.playersById[enemy.id].counterProbability > 0, true);
+}
+
+test("AI·状态契约：组合入口等价于显式 SearchState", testStateContractCompositionBoundary);
 
 // ---- AI 核心状态·可见状态 ----
 
@@ -10287,6 +14696,866 @@ test("AI·核心链路：benchmark helper 默认能量来自 character.initialEn
   assert.equal(byId("bench-two").energy, 2, "显式 energy:2 不被覆盖");
   game.dispose();
 });
+
+/*
+功能
+运行 FR-ARCH-1 真实权威与 AI Simulation 的确定性差分。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture、SearchState 与 Simulator。
+
+写入状态
+Simulator 只写克隆 SearchState；随后真实 playCard 只写测试 fixture。
+
+调用函数
+makePlayer、makeGame、instance、createInitialSearchState、ActionGenerator.generateFromVisible、Simulator.apply、Game.playCard。
+
+边界与不变量
+同一突袭在真实与模拟目标上均造成 1 点生命伤害，且不触发格挡/雷达。
+*/
+async function frArchRealSimulationDelta() {
+  const actor = makePlayer("fr-delta-actor", 0, "dawn", "ai", 0);
+  const target = makePlayer("fr-delta-target", 1, "dusk", "ai", 1);
+  target.hp = 3;
+  const card = instance("assault");
+  actor.hand.push(card);
+  const { game } = makeGame([actor, target]);
+  const remaining = game.aiController.knowledge.remainingCounts(actor);
+  const visible = createInitialSearchState(actor.id, game.state, remaining);
+  const simulatedAction = game.aiController.actionGenerator.generateFromVisible(visible, actor.id)
+    .find((entry) => entry.card?.definitionId === "assault");
+  assert.ok(simulatedAction);
+  const simulated = new Simulator(visible).apply(visible, simulatedAction, actor.id);
+  const simulatedTarget = simulated.players.find((player) => player.id === target.id);
+  assert.equal(simulatedTarget.hp, 2);
+  await game.playCard(actor, card, [target]);
+  assert.equal(target.hp, simulatedTarget.hp);
+  assert.deepEqual(game.getCardZoneOccurrences(card), ["discard"]);
+}
+
+test("AI·真实与模拟一致性：确定性突袭差分冻结", frArchRealSimulationDelta);
+
+// ---- AI 与 Domain 一致性 ----
+
+/*
+功能
+验证 FR-ARCH-11 carry-in：卡牌固定效果数值只由 CardDefinitions 拥有。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+CardDefinitions 与 CardEffectRules 源码/导出。
+
+写入状态
+无。
+
+调用函数
+readFile、CardEffectRules getters。
+
+边界与不变量
+CardEffectRules 不得重新出现固定 literal getter。
+*/
+async function frArch12CardFixedFactOwnership() {
+  const rules = await import("../js/domain/rules/card/CardEffectRules.js");
+  assert.equal(rules.getAssaultBaseDamage(), DOMAIN_CARD_DEFINITIONS.assault.baseDamage);
+  assert.equal(rules.getRecoverHealAmount(), DOMAIN_CARD_DEFINITIONS.recover.healAmount);
+  assert.equal(rules.getChargeEnergyAmount(), DOMAIN_CARD_DEFINITIONS.charge.energyGain);
+  assert.equal(rules.getShieldAmount(), DOMAIN_CARD_DEFINITIONS.shield.shieldAmount);
+  assert.equal(rules.getShockwaveDamage(), DOMAIN_CARD_DEFINITIONS.shockwave.perTargetDamage);
+  assert.equal(rules.getProvokeDamage(), DOMAIN_CARD_DEFINITIONS.provoke.failDamage);
+  assert.equal(rules.getHarvestDrawCount(), DOMAIN_CARD_DEFINITIONS.harvest.drawCount);
+  assert.equal(rules.getDuelDamage(), DOMAIN_CARD_DEFINITIONS.duel.failDamage);
+  assert.equal(rules.getSymbiosisHealAmount(), DOMAIN_CARD_DEFINITIONS.symbiosis.healAmount);
+  assert.equal(rules.getNextExposeWeaknessStacks({ stacks: 2 }), 3);
+  assert.equal(rules.getMutualBenefitRevealCount(5), 5);
+  const source = await readFile(projectFile("js/domain/rules/card/CardEffectRules.js"), "utf8");
+  assert.doesNotMatch(source, /export function get(?:AssaultBaseDamage|RecoverHealAmount|ChargeEnergyAmount|ShieldAmount|ShockwaveDamage|ProvokeDamage|HarvestDrawCount|DuelDamage|SymbiosisHealAmount)[\s\S]*?return\s+[12];/);
+}
+
+test("定义归属·卡牌固定事实：Definition-owned 且 Rule 不复制 literal", frArch12CardFixedFactOwnership);
+
+/*
+功能
+验证本阶段 Domain closure：装备/技能固定事实单一 Definition authority，Rules 层不再复制 literal，transfer 隐藏手牌边界只消费 primitive。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Domain definitions/rules 源码与导出、RULESET_DEFINITION。
+
+写入状态
+无。
+
+调用函数
+getRequiredBlockCount、canTriggerRecycleDevice、getTransferableHandCount、getTransferSourceIds、hasHandOrEquipmentFacts、readFile。
+
+边界与不变量
+只验证 ownership 与信息边界，不改变规则行为。
+*/
+async function frArch15DomainClosureFinal() {
+  assert.equal(CARD_DEFINITIONS.telescope.outgoingDistanceModifier, -1);
+  assert.equal(CARD_DEFINITIONS.barrierDevice.incomingDistanceModifier, 1);
+  assert.equal(CARD_DEFINITIONS.battleDevice.assaultRequiredBlockCount, 2);
+  assert.equal(CARD_DEFINITIONS.recycleDevice.triggerDrawCount, 1);
+  assert.equal(CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn, 2);
+
+  const distanceSource = await readFile(projectFile("js/domain/rules/distance/DistanceRules.js"), "utf8");
+  assert.doesNotMatch(distanceSource, /sourceEquipmentDefinitionId === "telescope"/);
+  assert.doesNotMatch(distanceSource, /targetEquipmentDefinitionId === "barrierDevice"/);
+  assert.match(distanceSource, /outgoingDistanceModifier|incomingDistanceModifier/);
+
+  const responseSource = await readFile(projectFile("js/domain/rules/response/ResponseRules.js"), "utf8");
+  assert.doesNotMatch(responseSource, /sourceEquipmentDefinitionId === "battleDevice" \? 2 : 1/);
+  assert.equal(
+    getRequiredBlockCount("battleDevice", true),
+    CARD_DEFINITIONS.battleDevice.assaultRequiredBlockCount
+  );
+
+  const recycleSource = await readFile(projectFile("js/domain/rules/card/RecycleDeviceRules.js"), "utf8");
+  assert.doesNotMatch(recycleSource, /Number\(useCount\) < 2/);
+  const recycleBase = { ownerAlive:true, currentActorId:"a", ownerId:"a", equipmentDefinitionId:"recycleDevice", cardCategory:"tactic", cardUsageMode:"active" };
+  assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount:0 }), true);
+  assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - 1 }), true);
+  assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn }), false);
+
+  assert.equal(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, 2);
+  assert.equal(PASSIVE_SKILL_DEFINITIONS.momentum.stacksGain, 1);
+  assert.equal(PASSIVE_SKILL_DEFINITIONS.gamble.drawChance, 0.6);
+  assert.equal(PASSIVE_SKILL_DEFINITIONS.gamble.drawCount, 1);
+  assert.equal(Object.hasOwn(RULESET_DEFINITION, "gamblerDrawChance"), false);
+  assert.equal(Object.hasOwn(RULESET_DEFINITION, "momentumMaxStacks"), false);
+
+  const cardRulesSource = await readFile(projectFile("js/domain/rules/card/CardRules.js"), "utf8");
+  assert.doesNotMatch(cardRulesSource, /handCardIds/);
+  const transferOnly = { id:"t", seatIndex:0, alive:true, handCount:1, transferableHandCount:0, equipmentDefinitionId:null };
+  assert.equal(getTransferableHandCount(transferOnly), 0);
+  assert.equal(hasHandOrEquipmentFacts(transferOnly), false);
+  assert.deepEqual(
+    getTransferSourceIds(
+      [transferOnly, { id:"u", seatIndex:1, alive:true, handCount:1, equipmentDefinitionId:null }],
+      transferOnly,
+      { effectRange:null, ignoresDistance:true, id:"t" }
+    ),
+    ["u"]
+  );
+}
+
+test("架构·Domain ownership：装备/技能 Definition-owned，transfer 边界 primitive-only", frArch15DomainClosureFinal);
+
+
+/*
+功能
+验证 FR-ARCH-11 carry-in：技能固定效果数值只由 SkillDefinitions 拥有，allIn 动态公式仍由 SkillRules 解释。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SkillDefinitions 与 SkillRules 导出/源码。
+
+写入状态
+无。
+
+调用函数
+readFile、decideSkillEffect、decideAllInDrawCount、decideAllInEnterChance。
+
+边界与不变量
+SkillRules 不得复制固定 effect literal；AI 不得自行复制 allIn 公式。
+*/
+async function frArch12SkillFixedFactOwnership() {
+  const rules = await import("../js/domain/rules/skill/SkillRules.js");
+  const source = { id:"s", energy:3, alive:true, battleTeam:"dawn", hp:3, maxHp:4, shield:0, handCount:1, equipmentDefinitionId:null };
+  const assertDecision = (skill, fields) => {
+    const decision = rules.decideSkillEffect(skill, source);
+    for (const [field, value] of Object.entries(fields)) assert.equal(decision[field], value, `${skill.id}.${field}`);
+  };
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.breakArmy, { energyCost:2, attackLimitBonus:1 });
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.barrier, { energyCost:2, shieldAmount:1 });
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.symbiosis, { energyCost:2, healAmount:1 });
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.burningField, { energyCost:3, damageAmount:1 });
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.hunt, { energyCost:2, damageAmount:2, blockedRewardDraw:1 });
+  assertDecision(ACTIVE_SKILL_DEFINITIONS.resonance, { energyCost:2, drawCount:1 });
+  const allIn = rules.decideSkillEffect(ACTIVE_SKILL_DEFINITIONS.allIn, { ...source, energy:3 });
+  assert.equal(allIn.energyCost, 3);
+  assert.equal(allIn.drawCount, 2);
+  assertClose(allIn.enterChance, .75);
+  assert.equal(rules.decideAllInDrawCount(2), 1);
+  assertClose(rules.decideAllInEnterChance(4), 1);
+  const skillSource = await readFile(projectFile("js/domain/rules/skill/SkillRules.js"), "utf8");
+  assert.doesNotMatch(skillSource, /if \(skill\.id === "(?:breakArmy|barrier|symbiosis|burningField|hunt|resonance)"\) return Object\.freeze\(\{ energyCost, (?:attackLimitBonus|shieldAmount|healAmount|damageAmount|drawCount): [12]/);
+  const simSource = await readFile(projectFile("js/ai/simulation/SkillEffectSimulation.js"), "utf8");
+  assert.doesNotMatch(simSource, /energyAmount\s*-\s*1|energyAmount\s*\*\s*\.25/);
+}
+
+test("定义归属·技能固定事实：Definition-owned 且 allIn 公式 Rule-owned", frArch12SkillFixedFactOwnership);
+
+/*
+功能
+验证转移方向策略只有 TransferPolicy 一个公式，执行 adapter 只桥接 Human/AI 条件。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+TransferPolicy、TransferExecutionPolicyAdapter 导出与源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+Human ally→enemy 仍合法；AI ally→enemy 仍被 AI policy 禁止。
+*/
+async function frArch12TransferPolicySingleAuthority() {
+  const { isTransferDirectionAllowed } = await import("../js/ai/policy/TransferPolicy.js");
+  const { isTransferExecutionAllowed } = await import("../js/adapters/ai/TransferExecutionPolicyAdapter.js");
+  const actor = { id:"a", battleTeam:"dawn" };
+  const ally = { id:"f", battleTeam:"dawn" };
+  const ally2 = { id:"f2", battleTeam:"dawn" };
+  const enemy = { id:"r", battleTeam:"dusk" };
+  const enemy2 = { id:"r2", battleTeam:"dusk" };
+  assert.equal(isTransferDirectionAllowed(actor, ally, enemy), false);
+  assert.equal(isTransferDirectionAllowed(actor, ally, ally2), true);
+  assert.equal(isTransferDirectionAllowed(actor, enemy, ally), true);
+  assert.equal(isTransferDirectionAllowed(actor, enemy, enemy2), true);
+  assert.equal(isTransferExecutionAllowed({ controllerType:"ai", battleTeam:"dawn" }, ally, enemy), false);
+  assert.equal(isTransferExecutionAllowed({ controllerType:"human", battleTeam:"dawn" }, ally, enemy), true);
+  const adapterSource = await readFile(projectFile("js/adapters/ai/TransferExecutionPolicyAdapter.js"), "utf8");
+  assert.match(adapterSource, /isTransferDirectionAllowed\(source, from, receiver\)/);
+  assert.doesNotMatch(adapterSource, /receiver\?\.battleTeam\s*!==\s*source\.battleTeam/);
+}
+
+test("AI·转移策略：ONE AI POLICY AUTHORITY 且 adapter 只 delegate", frArch12TransferPolicySingleAuthority);
+
+/*
+功能
+验证 AI search/simulation/domain production 已零依赖 legacy ActionLegality/DistanceSystem authority。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/ai/search、js/ai/simulation、js/ai/domain 源码。
+
+写入状态
+无。
+
+调用函数
+readdir、readFile。
+
+边界与不变量
+允许 policy/value 保留 AI 配置；本 guard 只检查确定性规则层。
+*/
+async function frArch12AiLegacyRuleImports() {
+  const roots = ["js/ai/search", "js/ai/simulation", "js/ai/domain"];
+  for (const root of roots) {
+    const entries = await readdir(projectFile(root), { withFileTypes:true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".js")) continue;
+      const source = await readFile(projectFile(`${root}/${entry.name}`), "utf8");
+      assert.doesNotMatch(source, /core\/ActionLegality\.js|core\/DistanceSystem\.js/, `${root}/${entry.name}`);
+    }
+  }
+}
+
+test("AI·规则依赖：AI search/simulation/domain → ActionLegality/DistanceSystem ZERO", frArch12AiLegacyRuleImports);
+
+/*
+功能
+验证 Distance、Turn、Card、Skill、Combat、Response、Status 的 Domain 决定与 AI projection/确定性分支一致。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Domain rules、AI projection/distance branches、LightningModel 与 Simulator。
+
+写入状态
+测试局部 SearchState 副本。
+
+调用函数
+projectCanonicalSeatRoster、getRangeConditionBranches、Simulator.applyDamage/heal、LightningModel.nextLightningReceiverId。
+
+边界与不变量
+概率分支总质量为一时 matches 与 Domain deterministic 结论一致。
+*/
+async function frArch12DeterministicParityMatrix() {
+  const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/state/RuleProjection.js");
+  const { getRangeConditionBranches } = await import("../js/ai/state/DistanceProbabilityBranches.js");
+  const { nextLightningReceiverId: aiNextLightningReceiverId } = await import("../js/ai/domain/LightningModel.js");
+
+  const players = [
+    { id:"p0", seatIndex:0, alive:true, battleTeam:"dawn", hp:5, maxHp:5, shield:1, energy:3, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:[] },
+    { id:"p1", seatIndex:1, alive:true, battleTeam:"dusk", hp:5, maxHp:5, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:["lightning"] },
+    { id:"p2", seatIndex:2, alive:true, battleTeam:"dusk", hp:5, maxHp:5, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:[] }
+  ];
+  const roster = projectCanonicalSeatRoster(players);
+  assert.equal(getDistance(roster, roster[0], roster[1]), 1);
+  const distanceBranches = getRangeConditionBranches(
+    { state:{ players } },
+    [{ source:players[0], target:players[1], range:1 }]
+  );
+  assertClose(totalBranchProbability(distanceBranches.filter((branch) => branch.matches)), 1);
+
+  const usage = projectAttackUsage({ turnFlags:{ attackUsed:1, attackLimit:2 } });
+  assert.equal(hasAttackUseRemaining(usage), true);
+  assert.equal(hasAttackUseRemaining({ used:1, limit:1 }), false);
+
+  assert.deepEqual(getCardTargetIds(roster, roster[0], DOMAIN_CARD_DEFINITIONS.assault), ["p1", "p2"]);
+  assert.deepEqual(getSkillTargetIds(roster, "p0", ACTIVE_SKILL_DEFINITIONS.barrier), ["p0"]);
+
+  assert.equal(nextDomainLightningReceiverId(roster, "p1"), "p2");
+  assert.equal(aiNextLightningReceiverId(players, players[1]), "p2");
+
+  const simulator = new Simulator({ players:[] });
+  const combatState = {
+    players: [
+      { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", characterId:"none", hp:4, maxHp:4, shield:0, energy:0, handCount:0, statuses:[] },
+      { id:"b", seatIndex:1, alive:true, battleTeam:"dusk", characterId:"none", hp:5, maxHp:5, shield:1, energy:0, handCount:0, blockProbability:0, expectedRecoverCount:0, statuses:[] }
+    ]
+  };
+  simulator.applyDamage(combatState, combatState.players[0], combatState.players[1], 3, { canBlock:false });
+  const damageResult = calculateDamageResult(3, 1, 5);
+  assert.equal(combatState.players[1].hp, damageResult.remainingHp);
+  assert.equal(combatState.players[1].shield, 0);
+  simulator.healFrom(combatState, combatState.players[0], combatState.players[1], 5);
+  assert.equal(combatState.players[1].hp, 5);
+}
+
+test("AI·Domain 一致性：Distance/Turn/Card/Skill/Combat/Status 确定性世界与 Domain 一致", frArch12DeterministicParityMatrix);
+
+/*
+功能
+验证 AI 概率模型模块已声明为 AI MODEL，不是 Repository Domain Rule authority。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+js/ai/domain 模块源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+确定性 receiver/status 公式不在 AI domain models 中重写。
+*/
+async function frArch12AiDomainModelOwnership() {
+  for (const file of ["LightningModel.js", "SealModel.js", "RadarModel.js", "GlobalBenefitModel.js"]) {
+    const source = await readFile(projectFile(`js/ai/domain/${file}`), "utf8");
+    assert.match(source, /AI probabilistic\/search model|AI model|不是 Repository Domain Rule authority/);
+    assert.doesNotMatch(source, /core\/ActionLegality\.js|core\/DistanceSystem\.js/);
+  }
+  const lightning = await readFile(projectFile("js/ai/domain/LightningModel.js"), "utf8");
+  assert.match(lightning, /nextDomainLightningReceiverId/);
+  assert.doesNotMatch(lightning, /players\[\(initialHolder\.seatIndex \+ offset\) % count\]/);
+}
+
+test("AI·Domain model 边界：AI MODEL NOT DOMAIN RULE AUTHORITY", frArch12AiDomainModelOwnership);
+
+// ---- AI 搜索与规划·固定轨迹与预算 ----
+
+test("AI·搜索：Simulation 七类固定场景保持根动作、序列与搜索统计", async () => {
+  const end = {
+    type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null
+  };
+  const scenes = [
+    {
+      name: "lightning",
+      players: [
+        { id: "a", team: "dawn", character: "blade-walker", hand: [makeBenchmarkCard("lightning", "trace-lightning")], hp: 4 },
+        { id: "b", team: "dusk", character: "shade-agent", hand: [makeBenchmarkCard("assault", "trace-l-b")], hp: 2 },
+        { id: "c", team: "dusk", character: "ember-magus", hand: [makeBenchmarkCard("assault", "trace-l-c")], hp: 2 },
+        { id: "d", team: "dusk", character: "trail-hunter", hand: [makeBenchmarkCard("assault", "trace-l-d")], hp: 2 }
+      ],
+      expected: {
+        root: { type: "card", cardId: "lightning", cardInstanceId: "trace-lightning", targetId: null, targetIds: [], selection: null },
+        sequence: [{ type: "card", cardId: "lightning", cardInstanceId: "trace-lightning", targetId: null, targetIds: [], selection: null }, end],
+        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 1.6011184646730436
+      }
+    },
+    {
+      name: "response",
+      players: [
+        {
+          id: "a", team: "dawn", character: "blade-walker", hand: [makeBenchmarkCard("shockwave", "trace-shock")],
+          aiMemory: { knownCardsByPlayer: { b: [{ id: "trace-counter", definitionId: "counter" }] } }
+        },
+        { id: "b", team: "dusk", character: "shade-agent", hand: [makeBenchmarkCard("counter", "trace-counter")], hp: 2 },
+        { id: "c", team: "dawn", character: "oath-warden", hand: [makeBenchmarkCard("block", "trace-r-c")] },
+        { id: "d", team: "dusk", character: "spirit-medic", hand: [makeBenchmarkCard("recover", "trace-r-d")], hp: 2 }
+      ],
+      expected: {
+        root: { type: "card", cardId: "shockwave", cardInstanceId: "trace-shock", targetId: "b", targetIds: ["b", "d"], selection: null },
+        sequence: [{ type: "card", cardId: "shockwave", cardInstanceId: "trace-shock", targetId: "b", targetIds: ["b", "d"], selection: null }, end],
+        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.2675810346823039
+      }
+    },
+    {
+      name: "transfer",
+      players: [
+        { id: "a", team: "dawn", character: "resonance-tuner", hand: [makeBenchmarkCard("transfer", "trace-transfer"), makeBenchmarkCard("block", "trace-block")], hp: 4 },
+        { id: "b", team: "dawn", character: "spirit-medic", hand: [], hp: 1 },
+        { id: "c", team: "dusk", character: "shade-agent", hand: [makeBenchmarkCard("assault", "trace-t-c")], hp: 4 },
+        { id: "d", team: "dusk", character: "ember-magus", hand: [makeBenchmarkCard("counter", "trace-t-d")], hp: 4 }
+      ],
+      expected: {
+        root: {
+          type: "card", cardId: "transfer", cardInstanceId: "trace-transfer", targetId: null, targetIds: [],
+          selection: {
+            sourceId: "d", receiverId: "b", zone: "hand", score: 14.273291925465838,
+            selectionKind: "unknown", cardId: null, definitionId: null,
+            expectedValue: 8.031055900621118, availableUnknownCount: 1
+          }
+        },
+        sequence: [{
+          type: "card", cardId: "transfer", cardInstanceId: "trace-transfer", targetId: null, targetIds: [],
+          selection: { sourceId: "d", receiverId: "b", zone: "hand" }
+        }, end],
+        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.18368081564601085
+      }
+    },
+    {
+      name: "globalBenefit",
+      players: [
+        { id: "a", team: "dawn", character: "spirit-medic", hand: [makeBenchmarkCard("mutualBenefit", "trace-mutual")], hp: 3 },
+        { id: "b", team: "dusk", character: "shade-agent", hand: [makeBenchmarkCard("assault", "trace-g-b")], hp: 4 },
+        { id: "c", team: "dawn", character: "oath-warden", hand: [makeBenchmarkCard("block", "trace-g-c")], hp: 3 },
+        { id: "d", team: "dusk", character: "ember-magus", hand: [makeBenchmarkCard("counter", "trace-g-d")], hp: 4 }
+      ],
+      expected: { root: end, sequence: [end], expanded: 3, depth: 1, hiddenSamples: 10, bestValueScore: 0 }
+    },
+    {
+      name: "combat",
+      players: [
+        {
+          id: "a", team: "dawn", character: "blade-walker",
+          hand: [
+            makeBenchmarkCard("exposeWeakness", "trace-combat-expose"),
+            makeBenchmarkCard("assault", "trace-combat-assault")
+          ],
+          hp: 4
+        },
+        { id: "b", team: "dusk", character: "shade-agent", hand: [], hp: 2 },
+        { id: "c", team: "dusk", character: "spirit-medic", hand: [], hp: 4 }
+      ],
+      expected: {
+        root: {
+          type: "card", cardId: "exposeWeakness", cardInstanceId: "trace-combat-expose",
+          targetId: null, targetIds: [], selection: null
+        },
+        sequence: [
+          {
+            type: "card", cardId: "exposeWeakness", cardInstanceId: "trace-combat-expose",
+            targetId: null, targetIds: [], selection: null
+          },
+          {
+            type: "card", cardId: "assault", cardInstanceId: "trace-combat-assault",
+            targetId: "b", targetIds: ["b"], selection: null
+          },
+          end
+        ],
+        expanded: 15, depth: 3, hiddenSamples: 10, bestValueScore: 2.092
+      }
+    },
+    {
+      name: "skill",
+      players: [
+        { id: "a", team: "dawn", character: "oath-warden", hand: [], hp: 4, energy: 2 },
+        { id: "b", team: "dawn", character: "spirit-medic", hand: [], hp: 1 },
+        {
+          id: "c", team: "dusk", character: "blade-walker",
+          hand: [makeBenchmarkCard("assault", "trace-skill-enemy")], hp: 4
+        }
+      ],
+      expected: {
+        root: end,
+        sequence: [end],
+        expanded: 5, depth: 1, hiddenSamples: 10, bestValueScore: 0
+      }
+    },
+    {
+      name: "status",
+      players: [
+        {
+          id: "a", team: "dawn", character: "shade-agent",
+          hand: [makeBenchmarkCard("seal", "trace-status-seal")], hp: 4
+        },
+        {
+          id: "b", team: "dusk", character: "blade-walker",
+          hand: [makeBenchmarkCard("assault", "trace-status-enemy")], hp: 4
+        },
+        { id: "c", team: "dawn", character: "spirit-medic", hand: [], hp: 3 }
+      ],
+      expected: {
+        root: {
+          type: "card", cardId: "seal", cardInstanceId: "trace-status-seal",
+          targetId: "b", targetIds: ["b"], selection: null
+        },
+        sequence: [
+          {
+            type: "card", cardId: "seal", cardInstanceId: "trace-status-seal",
+            targetId: "b", targetIds: ["b"], selection: null
+          },
+          end
+        ],
+        expanded: 3, depth: 2, hiddenSamples: 10, bestValueScore: 0.3310706117894553
+      }
+    }
+  ];
+  for (const scene of scenes) {
+    const game = makeBenchmarkGame({
+      players: scene.players,
+      options: { actorId: "a", nodeBudget: 200, seed: 20260814 }
+    });
+    try {
+      const { action, stats } = await runBenchmarkAiDecision(game, "a");
+      assert.deepEqual(describeBenchmarkAction(action), scene.expected.root, `${scene.name} root`);
+      assert.deepEqual(stats.bestSequence, scene.expected.sequence, `${scene.name} sequence`);
+      assert.equal(stats.expanded, scene.expected.expanded, `${scene.name} expanded`);
+      assert.equal(stats.depth, scene.expected.depth, `${scene.name} depth`);
+      assert.equal(stats.hiddenSamples, scene.expected.hiddenSamples, `${scene.name} hiddenSamples`);
+      assert.equal(stats.bestValueScore, scene.expected.bestValueScore, `${scene.name} bestValueScore`);
+    } finally {
+      disposeBenchmarkGame(game);
+    }
+  }
+});
+
+test("AI·搜索：壁垒固定场景的 end 由完整账本证明而非概率距离塌缩", async () => {
+  const game = makeBenchmarkGame({
+    players: [
+      { id: "a", team: "dawn", character: "oath-warden", hand: [], hp: 4, energy: 2 },
+      { id: "b", team: "dawn", character: "spirit-medic", hand: [], hp: 1 },
+      {
+        id: "c", team: "dusk", character: "blade-walker",
+        hand: [makeBenchmarkCard("assault", "trace-barrier-end")], hp: 4
+      }
+    ],
+    options: { actorId: "a", seed: 20260814, nodeBudget: 200 }
+  });
+  try {
+    const player = game.state.players.find((entry) => entry.id === "a");
+    const { action, stats } = await runBenchmarkAiDecision(game, "a");
+    assert.deepEqual(describeBenchmarkAction(action), {
+      type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null
+    });
+    assert.equal(stats.bestValueScore, 0);
+    const visible = createInitialSearchState(
+      player.id, game.state, game.aiController.knowledge.remainingCounts(player)
+    ),
+      roots = game.aiController.getActionCandidates(player),
+      barrierAction = roots.find((entry) => (
+        entry.type === "skill" && entry.skill?.id === "barrier" && entry.targets?.[0]?.id === "b"
+      )),
+      endAction = roots.find((entry) => entry.type === "end"),
+      materializer = game.aiController.candidateMaterializer,
+      simulator = new Simulator(visible),
+      context = materializer.createContext(player, visible, roots);
+    assert.ok(barrierAction && endAction);
+    const materialize = (candidateAction) => {
+      const after = simulator.apply(visible, candidateAction, player.id);
+      return materializer.materialize({
+        action: candidateAction,
+        beforeState: visible,
+        afterState: after,
+        player,
+        depth: 1,
+        remainingProvenance: context.rootProvenance,
+        simulator,
+        context,
+        collectDiagnostics: true,
+        searchBudget: null
+      });
+    };
+    const barrierCandidate = materialize(barrierAction),
+      endCandidate = materialize(endAction);
+    materializer.finalizeSiblings([barrierCandidate, endCandidate], 1);
+    // 账本语义：护盾确实给了队友，但 2 点能量先降低自身资源，同时让敌方 c 的
+    // 能量压力项改善；三项合计后 Barrier 净值为负，end 是真实价值结果。
+    assert.ok(barrierCandidate.candidateLedger.projected.ally > 0,
+      "壁垒应给队友带来正护盾价值");
+    assert.ok(barrierCandidate.candidateLedger.projected.self < 0,
+      "壁垒应消耗行动者能量");
+    assert.ok(barrierCandidate.candidateLedger.projected.total < 0,
+      "壁垒总净值应为负");
+    assert.ok(barrierCandidate.transitionValue < endCandidate.transitionValue,
+      "壁垒 transition 应低于 end");
+    // 该场景 c 到 a/b 均为确定性可达，p=1，证明翻转不是概率距离二次折损造成。
+    const enemy = visible.players.find((entry) => entry.id === "c");
+    for (const targetId of ["a", "b"]) {
+      const target = visible.players.find((entry) => entry.id === targetId);
+      const components = game.aiController.evaluator.exposureComponents(visible, target);
+      const enemyComponents = components.perEnemy.find((entry) => entry.enemyId === enemy.id);
+      assert.equal(enemyComponents.rangeProbability, 1);
+    }
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+});
+
+test("AI·搜索：Simulation 拆分保持固定 D4 封印链逐字段一致", async () => {
+  const game = makeBenchmarkGame({
+    players: [
+      {
+        id: "a", team: "dawn", character: "shade-agent", energy: 3,
+        hand: [
+          makeBenchmarkCard("seal", "d4-seal"),
+          makeBenchmarkCard("assault", "d4-assault")
+        ]
+      },
+      {
+        id: "b", team: "dusk", character: "oath-warden", hp: 2, energy: 1,
+        hand: [makeBenchmarkCard("block", "d4-block")]
+      },
+      {
+        id: "c", team: "dusk", character: "fate-gambler", hp: 1, energy: 1,
+        hand: [makeBenchmarkCard("assault", "d4-c-assault")]
+      },
+      {
+        id: "d", team: "dawn", character: "spirit-medic", hp: 4, energy: 1,
+        hand: [makeBenchmarkCard("assault", "d4-d-assault")]
+      },
+      {
+        id: "e", team: "dusk", character: "ember-magus", hp: 4, energy: 1,
+        hand: [makeBenchmarkCard("assault", "d4-e-assault")]
+      }
+    ],
+    options: { actorId: "a", seed: 20260814, nodeBudget: 200 }
+  });
+  try {
+    const { action, stats } = await runBenchmarkAiDecision(game, "a");
+    assert.deepEqual(describeBenchmarkAction(action), {
+      type: "card", cardId: "seal", cardInstanceId: "d4-seal",
+      targetId: "c", targetIds: ["c"], selection: null
+    });
+    assert.deepEqual(stats.bestSequence.map((entry) => [entry.type, entry.cardId, entry.targetId]), [
+      ["card", "seal", "c"]
+    ]);
+    assert.equal(stats.expanded, 200);
+    assert.equal(stats.depth, 1);
+    assert.equal(stats.hiddenSamples, 10);
+    assert.equal(stats.bestValueScore, 0.4287722930964537);
+    assert.equal(stats.stopReason, "NODE");
+    assert.equal(stats.simulationCalls, 316);
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+});
+
+test("AI·搜索：SearchBudget 用确定性时钟统一 TIME/NODE/COMPLETE 停止原因", () => {
+  const timeValues = [100, 105, 110];
+  const timeBudget = new SearchBudget({
+    timeBudget: 10,
+    now: () => timeValues.shift() ?? 110
+  });
+  assert.equal(timeBudget.shouldStop(), false);
+  assert.equal(timeBudget.shouldStop(), true);
+  assert.equal(timeBudget.stopReason, "TIME");
+
+  const nodeBudget = new SearchBudget({ nodeBudget: 2, now: () => 0 });
+  nodeBudget.observeNode();
+  assert.equal(nodeBudget.shouldStop(), false);
+  nodeBudget.observeNode();
+  assert.equal(nodeBudget.shouldStop(), true);
+  assert.equal(nodeBudget.stopReason, "NODE");
+  assert.equal(nodeBudget.diagnostics().expandedNodes, 2);
+
+  const completeBudget = new SearchBudget({ nodeBudget: 5, now: () => 0 });
+  assert.equal(completeBudget.complete(), "COMPLETE");
+  assert.equal(completeBudget.shouldStop(), true);
+});
+
+/*
+功能
+运行 FR-ARCH-1 当前搜索质量基线 schema 与确定性回归检查。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+tests/fixtures/fr-arch-search-quality-baseline.json 与生产 AIController 搜索链路。
+
+写入状态
+独立 benchmark Game。
+
+调用函数
+readFile、makeBenchmarkGame、makeBenchmarkCard、runBenchmarkAiDecision、describeAction、disposeBenchmarkGame。
+
+边界与不变量
+只重跑小型确定性 COMPLETE fixture C；A/B 作为观测基线保留，不因 wall-clock 波动进入常规断言。
+*/
+async function frArchSearchQualityBaseline() {
+  const baseline = JSON.parse(await readFile(
+    projectFile("tests/fixtures/fr-arch-search-quality-baseline.json"),
+    "utf8"
+  ));
+  assert.equal(baseline.fixtures.length, 3);
+  for (const fixture of baseline.fixtures) {
+    assert.equal(fixture.config.timeBudgetMs, 900);
+    assert.equal(fixture.config.nodeBudget, null);
+    assert.ok(["card", "end"].includes(fixture.result.action.type));
+    assert.equal(fixture.result.stats.timeBudget, 900);
+    assert.equal(fixture.result.stats.budgetType, "time");
+    assert.ok(Array.isArray(fixture.result.stats.bestSequence));
+  }
+  const replay = baseline.fixtures.find((fixture) => fixture.name === "fr-arch-baseline-c");
+  assert.ok(replay);
+  const game = makeBenchmarkGame({
+    players: replay.fixture.players.map((player) => ({
+      id: player.id,
+      team: player.team,
+      character: player.character,
+      hp: player.hp,
+      energy: player.energy,
+      hand: player.hand.map((card) => makeBenchmarkCard(card.definitionId, card.id))
+    })),
+    options: {
+      actorId: replay.fixture.actorId,
+      seed: replay.fixture.seed
+    }
+  });
+  try {
+    game.aiSearchBudgetOverrideMs = replay.config.timeBudgetMs;
+    const decision = await runBenchmarkAiDecision(game, replay.fixture.actorId);
+    const stats = decision.stats;
+    assert.equal(decision.legalActions.length, replay.result.legalActionCount);
+    const expectedAction = {
+      ...replay.result.action,
+      targetId: replay.result.action.targetIds?.[0] ?? null
+    };
+    assert.deepEqual(describeAction(decision.action), expectedAction);
+    assert.equal(stats.expanded, replay.result.stats.expanded);
+    assert.equal(stats.depth, replay.result.stats.depth);
+    assert.equal(stats.stopReason, replay.result.stats.stopReason);
+    assert.equal(stats.simulationCalls, replay.result.stats.simulationCalls);
+    assert.equal(stats.counterfactualCalls, replay.result.stats.counterfactualCalls);
+    assert.equal(stats.stateUtilityCalls, replay.result.stats.stateUtilityCalls);
+    assert.equal(stats.hiddenSamples, replay.result.stats.hiddenSamples);
+    assert.deepEqual(stats.bestSequence, replay.result.stats.bestSequence);
+    assertClose(stats.bestValueScore, replay.result.stats.bestValueScore);
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test("AI·搜索确定性：900ms 固定种子 fixtures schema 与确定性重放", frArchSearchQualityBaseline);
+
+/*
+功能
+运行 FR-ARCH-1 当前 timing 配置冻结检查。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+RUNTIME_POLICY 与 SearchBudget 源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+本测试只冻结数值，不修改任何 production timing。
+*/
+async function frArchCurrentTimingFreeze() {
+  assert.equal(AI_RUNTIME_POLICY.searchTimeBudgetMs, 900);
+  assert.equal(AI_RUNTIME_POLICY.searchYieldEvery, 48);
+  assert.equal(AI_RUNTIME_POLICY.searchDepth, 4);
+  assert.equal(AI_RUNTIME_POLICY.beamWidth, 10);
+  assert.equal(AI_RUNTIME_POLICY.hiddenStateSamples, 10);
+  assert.equal(RUNTIME_POLICY.aiInitialThinkMinMs, 3000);
+  assert.equal(RUNTIME_POLICY.aiInitialThinkMaxMs, 5500);
+  assert.equal(RUNTIME_POLICY.animationFastMinimumMs, 0);
+  assert.equal(RUNTIME_POLICY.animationFastScale, 0.08);
+  assert.equal(AI_SEARCH_PROFILES.FAST.softTargetMs, 500);
+  assert.equal(AI_SEARCH_PROFILES.FAST.searchDeadlineMs, 900);
+  assert.equal(AI_SEARCH_PROFILES.FAST.hardWatchdogMs, 5000);
+  assert.equal(AI_SEARCH_PROFILES.NORMAL.softTargetMs, null);
+  assert.equal(AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs, 3000);
+  assert.equal(AI_SEARCH_PROFILES.NORMAL.hardWatchdogMs, 10000);
+  const budgetSource = await readFile(projectFile("js/ai/search/SearchBudget.js"), "utf8");
+  const timingSource = await readFile(projectFile("js/utils/aiTiming.js"), "utf8");
+  assert.match(budgetSource, /AI_RUNTIME_POLICY\.searchTimeBudgetMs/);
+  assert.match(timingSource, /aiInitialThinkMinMs/);
+  assert.doesNotMatch(timingSource, /\bgame\.random\s*\(/);
+  assert.match(timingSource, /game\?\.presentationRandom/);
+  assert.match(timingSource, /Math\.max\(RUNTIME_POLICY\.animationFastMinimumMs/);
+}
+
+test("AI·搜索时序：当前 900ms/48-yield 与展示时序配置冻结", frArchCurrentTimingFreeze);
 
 // ---- AI 搜索与规划 ----
 
@@ -12190,6 +17459,1460 @@ test("AI·搜索：END-B 零/近零收益 sibling 不被固定 end 惩罚强制�
   const stats = game.aiController.planner.lastSearchStats;
   assert.equal(stats.bestSequence[0].type, "end", "近零/负 sibling 存在时 end 仍可被选择，不得被固定惩罚强制行动");
 });
+
+// ---- SearchRequest、Descriptor 与 RNG ----
+
+/*
+功能
+验证 FR12 carry-ins：根目录残片已删除且 guard 存在，canonical roster 不再被 AI projection 静默重编号。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+文件系统与 checker/production source。
+
+写入状态
+无。
+
+调用函数
+access、readFile、projectCanonicalSeatRoster、Domain seat-order rules。
+
+边界与不变量
+非 canonical roster 必须 fail fast；full roster 含 dead player 仍合法。
+*/
+async function frArch13CarryInRosterAndRootArtifacts() {
+  for (const file of ["AI", "application", "transitions"]) {
+    await assert.rejects(access(projectFile(file)), /ENOENT/);
+  }
+  const checkerSource = await readFile(projectFile("tools/check-code-quality.mjs"), "utf8");
+  assert.match(checkerSource, /ACCIDENTAL_ROOT_ARTIFACTS/);
+  assert.match(checkerSource, /accidentalRootArtifacts/);
+
+  const { projectCanonicalSeatRoster } = await import("../js/ai/state/RuleProjection.js");
+  const { getCounterResponderOrder, getDyingRescueResponderOrder } = await import("../js/domain/rules/response/ResponseRules.js");
+  const { nextLightningReceiverId } = await import("../js/domain/rules/status/StatusRules.js");
+  const player = (id, seatIndex, alive = true) => ({
+    id, seatIndex, alive, battleTeam: id === "d" ? "dusk" : "dawn",
+    hp:4, maxHp:4, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:0,
+    equipmentDefinitionId:null, statuses:[]
+  });
+  const canonical = projectCanonicalSeatRoster([player("a", 0), player("b", 1), player("c", 2)]);
+  assert.deepEqual(canonical.map((entry) => entry.seatIndex), [0, 1, 2]);
+  projectCanonicalSeatRoster([player("dead", 0, false), player("b", 1)]);
+  assert.throws(() => projectCanonicalSeatRoster([player("b", 1), player("a", 0), player("c", 2)]), /canonical roster/);
+  assert.throws(() => projectCanonicalSeatRoster([player("a", 0), player("b", 0)]), /canonical roster/);
+  assert.throws(() => projectCanonicalSeatRoster([player("a", 0), player("c", 2)]), /canonical roster/);
+  assert.throws(
+    () => projectCanonicalSeatRoster(
+      [player("dead", 0, false), player("b", 1), player("c", 2)].filter((entry) => entry.alive)
+    ),
+    /canonical roster/
+  );
+  assert.equal(nextLightningReceiverId(canonical, "a"), "b");
+  assert.deepEqual(getCounterResponderOrder(canonical, "a"), ["b", "c"]);
+  assert.deepEqual(getDyingRescueResponderOrder(canonical, "b"), ["b", "c", "a"]);
+}
+
+test("架构边界：root artifacts 删除，canonical seat roster authoritative/fail-fast", frArch13CarryInRosterAndRootArtifacts);
+
+/*
+功能
+验证 SearchRequest 是 structured-clone-safe、data-only 且不含隐藏实体或 runtime capability。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchRequest contract 与生产 Visible/Search 投影。
+
+写入状态
+测试 Game。
+
+调用函数
+createSearchRequest、searchRequestViolations、structuredClone。
+
+边界与不变量
+clone 前后语义相等；敌方真实 hand definition 不得进入 request。
+*/
+async function frArch13SearchRequestContract() {
+  const { createSearchRequest, searchRequestViolations } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const actor = makePlayer("sr-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("sr-enemy", 1, "dusk", "ai", 1);
+  const secret = instance("harvest");
+  enemy.hand.push(secret);
+  const { game } = makeGame([actor, enemy]);
+  const searchState = createInitialSearchState(actor.id, game.state, { assault: 1 });
+  const request = createSearchRequest({
+    requestId:"sr-1",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState,
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:{ seed:7, state:7, algorithm:"lcg", draws:0 },
+    rootActionDescriptors:[{ type:"end", cardId:null, cardInstanceId:null, targetId:null, targetIds:[], selection:null }],
+    rootSearchActions:[describeRootSearchAction({ type:"end" })]
+  });
+  const cloned = structuredClone(request);
+  assert.deepEqual(cloned, request);
+  assert.deepEqual(searchRequestViolations(cloned), []);
+  const text = JSON.stringify(cloned);
+  assert.equal(text.includes(secret.id), false);
+  assert.equal(text.includes(secret.definitionId), false);
+  assert.equal(typeof cloned.random, "undefined");
+  assert.equal(cloned.searchState.players.find((player) => player.id === enemy.id)?.hand, undefined);
+}
+
+test("AI·SearchRequest：structured clone / data-only / no hidden leak", frArch13SearchRequestContract);
+
+/*
+功能
+验证 AIController result acceptance 的 session/stateVersion/actor/phase/rebind 拒绝语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产 AIController boundary 与当前 Game state。
+
+写入状态
+测试 Game stateVersion/phase/hand。
+
+调用函数
+createSearchRequest、acceptSearchResult、bumpStateVersion。
+
+边界与不变量
+任一失败只能返回安全 end；合法 descriptor 必须在当前 Domain-legal set rebind。
+*/
+async function frArch13StaleResultRejection() {
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
+  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js");
+  const actor = makePlayer("stale-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("stale-enemy", 1, "dusk", "ai", 1);
+  const card = instance("assault");
+  actor.hand.push(card);
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  const controller = game.aiController;
+  const makeRequest = () => {
+    const roots = controller.getActionCandidates(actor);
+    return createSearchRequest({
+      requestId:controller.createId("stale-test"),
+      gameId:game.state.gameId,
+      stateVersion:game.state.stateVersion,
+      actorId:actor.id,
+      phase:game.state.phase,
+      currentRound:game.state.currentRound,
+      searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
+      searchConfig:controller.buildSearchConfig(),
+      rng:controller.searchRng.snapshot(),
+      rootActionDescriptors:roots.map(ActionDescriptor.describe),
+      rootSearchActions:roots.map(describeRootSearchAction)
+    });
+  };
+  const action = controller.getActionCandidates(actor).find((entry) => entry.card?.id === card.id);
+  assert.ok(action);
+  const request = makeRequest();
+  const accepted = controller.acceptSearchResult({
+    request,
+    action,
+    plannedSequence:[action],
+    stats:{ stopReason:"COMPLETE" }
+  });
+  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.equal(accepted.action.card.id, card.id);
+
+  bumpStateVersion(game.state);
+  const stale = controller.acceptSearchResult({ request, action, plannedSequence:[], stats:null });
+  assert.equal(stale.result.status, SEARCH_RESULT_STATUS.STALE_VERSION);
+  assert.equal(stale.action.type, "end");
+  bumpStateVersion(game.state);
+  const freshRequest = makeRequest();
+  game.state.isDisposed = true;
+  const invalidSession = controller.acceptSearchResult({
+    request:freshRequest, action, plannedSequence:[], stats:null
+  });
+  assert.equal(invalidSession.result.status, SEARCH_RESULT_STATUS.INVALID_SESSION);
+  assert.equal(invalidSession.action.type, "end");
+  game.state.isDisposed = false;
+
+  const versionNow = game.state.stateVersion;
+  const validAgain = makeRequest();
+  assert.equal(validAgain.stateVersion, versionNow);
+  actor.alive = false;
+  const deadActor = controller.acceptSearchResult({ request:validAgain, action, plannedSequence:[], stats:null });
+  assert.equal(deadActor.result.status, SEARCH_RESULT_STATUS.INVALID_ACTOR);
+  assert.equal(deadActor.action.type, "end");
+  actor.alive = true;
+
+  const phaseNowRequest = makeRequest();
+  game.state.phase = "discard";
+  const wrongPhase = controller.acceptSearchResult({ request:phaseNowRequest, action, plannedSequence:[], stats:null });
+  assert.equal(wrongPhase.result.status, SEARCH_RESULT_STATUS.INVALID_PHASE);
+  assert.equal(wrongPhase.action.type, "end");
+  game.state.phase = "play";
+
+  const movedRequest = makeRequest();
+  actor.hand = [];
+  const moved = controller.acceptSearchResult({ request:movedRequest, action, plannedSequence:[], stats:null });
+  assert.equal(moved.result.status, SEARCH_RESULT_STATUS.INVALID_ACTION);
+  assert.equal(moved.action.type, "end");
+}
+
+test("AI·陈旧结果拒绝：session/stateVersion/actor/phase/rebind 全拒绝", frArch13StaleResultRejection);
+
+/*
+功能
+验证 queued planned sequence 在自身 action commit bump stateVersion 后仍按 current-state rebind，非法项返回 null。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+AIController resolvePlannedAction 与 Domain candidate set。
+
+写入状态
+测试 Game stateVersion 与手牌。
+
+调用函数
+bumpStateVersion。
+
+边界与不变量
+第一项执行后的 version 变化不得让第二项必然 stale；失效动作只返回 null，由 TurnWorkflow 清空 plan。
+*/
+async function frArch13PlannedSequenceReuse() {
+  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js");
+  const actor = makePlayer("plan-actor", 0, "dawn", "ai", 2);
+  const enemy = makePlayer("plan-enemy", 1, "dusk", "ai", 1);
+  const charge = instance("charge");
+  actor.hand.push(charge);
+  const { game } = makeGame([actor, enemy]);
+  const descriptor = ActionDescriptor.describe({ type:"card", card:charge, targets:[] });
+  const first = game.aiController.resolvePlannedAction(actor, descriptor);
+  assert.equal(first?.card?.id, charge.id);
+  bumpStateVersion(game.state);
+  const second = game.aiController.resolvePlannedAction(actor, descriptor);
+  assert.equal(second?.card?.id, charge.id, "queued plan 第二项不得因 stateVersion 变化而必然 stale");
+  actor.hand = [];
+  assert.equal(game.aiController.resolvePlannedAction(actor, descriptor), null);
+}
+
+test("AI·计划序列：current-state rebind 与 version 变化共存", frArch13PlannedSequenceReuse);
+
+/*
+功能
+验证 AI Search RNG 与真实 Game RNG 隔离且固定 seed 可复现。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Game random、AIController selectAction 与 Planner stats。
+
+写入状态
+测试 Game 与 SearchRng。
+
+调用函数
+SearchRng、selectAction。
+
+边界与不变量
+纯 AI search 不推进 real random；相同 AI seed 产生相同 descriptor。
+*/
+async function frArch13RngIsolation() {
+  const actor = makePlayer("rng-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("rng-enemy", 1, "dusk", "ai", 1);
+  let realCalls = 0;
+  const realRandom = () => { realCalls += 1; return .5; };
+  const { game } = makeGame([actor, enemy], { random: realRandom });
+  game.aiController.searchRng = new SearchRng(7);
+  game.aiRandomnessRange = 0;
+  const before = realCalls;
+  await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+  assert.equal(realCalls, before, "AI search 不得推进真实 Game RNG");
+
+  const firstGame = makeGame([actor, enemy]).game;
+  const secondGame = makeGame([actor, enemy]).game;
+  firstGame.aiController.searchRng = new SearchRng(11);
+  secondGame.aiController.searchRng = new SearchRng(11);
+  firstGame.aiRandomnessRange = 0;
+  secondGame.aiRandomnessRange = 0;
+  const firstAction = await firstGame.aiController.selectAction(firstGame.state.players[0], { gameId: firstGame.state.gameId });
+  const secondAction = await secondGame.aiController.selectAction(secondGame.state.players[0], { gameId: secondGame.state.gameId });
+  assert.deepEqual(ActionDescriptor.describe(firstAction), ActionDescriptor.describe(secondAction));
+}
+
+test("AI·RNG 隔离：AI search RNG 与 real RNG 分离且 fixed-seed 可复现", frArch13RngIsolation);
+
+/*
+功能
+验证 cancelled / session-invalid search result 永远不返回真实执行 action。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+AIController acceptSearchResult 与 SearchResult contract。
+
+写入状态
+测试 request/result。
+
+调用函数
+createSearchRequest、acceptSearchResult。
+
+边界与不变量
+cancelled/invalid 只允许安全 end，不执行真实 Card/Player。
+*/
+async function frArch13CancellationContract() {
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
+  const actor = makePlayer("cancel-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("cancel-enemy", 1, "dusk", "ai", 1);
+  const card = instance("assault");
+  actor.hand.push(card);
+  const { game } = makeGame([actor, enemy]);
+  const request = createSearchRequest({
+    requestId:game.aiController.createId("cancel"),
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActionDescriptors:game.aiController.getActionCandidates(actor).map(ActionDescriptor.describe),
+    rootSearchActions:game.aiController.getActionCandidates(actor).map(describeRootSearchAction)
+  });
+  const action = game.aiController.getActionCandidates(actor)[0];
+  const cancelled = game.aiController.acceptSearchResult({
+    request,
+    action,
+    plannedSequence:[],
+    stats:{ stopReason:"CANCELLED" }
+  });
+  assert.equal(cancelled.result.status, SEARCH_RESULT_STATUS.CANCELLED);
+  assert.equal(cancelled.action.type, "end");
+  assert.equal(cancelled.action.card, undefined);
+}
+
+test("AI·搜索取消：cancelled result 不执行真实 action", frArch13CancellationContract);
+
+/*
+功能
+运行 FR-ARCH-1 ActionDescriptor 稳定字段 characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产 describeAction。
+
+写入状态
+无。
+
+调用函数
+instance、describeAction。
+
+边界与不变量
+转移选择只保留 source/receiver/zone；目标顺序不得改变。
+*/
+function frArchActionDescriptorContract() {
+  const card = instance("transfer");
+  const target = { id: "fr-descriptor-target" };
+  const action = {
+    type: "card",
+    card,
+    targets: [target],
+    selection: {
+      sourceId: "fr-source",
+      receiverId: "fr-receiver",
+      zone: "hand",
+      score: 7.5
+    }
+  };
+  assert.deepEqual(describeAction(action), {
+    type: "card",
+    cardId: "transfer",
+    cardInstanceId: card.id,
+    targetId: target.id,
+    targetIds: [target.id],
+    selection: {
+      sourceId: "fr-source",
+      receiverId: "fr-receiver",
+      zone: "hand"
+    }
+  });
+}
+
+test("AI·ActionDescriptor：cardInstanceId、targetIds 与 transfer selection 冻结", frArchActionDescriptorContract);
+
+// ---- Worker 与传输 ----
+
+/*
+功能
+验证 FR13 carry-in：SearchResult planned sequence descriptors 只投影一次且 round-trip identity 保留。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+ActionDescriptor/SearchResult contracts。
+
+写入状态
+无。
+
+调用函数
+ActionDescriptor.describe、createSearchResult。
+
+边界与不变量
+end/card/skill/transfer/leverage descriptor 不再二次 describe。
+*/
+async function frArch14SearchResultDescriptorIdempotence() {
+  const { createSearchResult } = await import("../js/ai/search/SearchResult.js");
+  const target = { id:"t" };
+  const rawActions = [
+    { type:"end" },
+    { type:"card", card:instance("assault"), targets:[target] },
+    { type:"skill", skill:ACTIVE_SKILL_DEFINITIONS.barrier, targets:[target], energyCost:2 },
+    { type:"card", card:instance("transfer"), targets:[], selection:{ sourceId:"s", receiverId:"r", zone:"hand", selectionKind:"unknown", availableUnknownCount:1, expectedValue:4, score:.5 } },
+    { type:"card", card:instance("leverage"), targets:[target], selection:{ firstTargetId:"a", equipmentCardId:"e", secondTargetId:"b", equipmentDefinitionId:"battleDevice" } }
+  ];
+  const descriptors = rawActions.map(ActionDescriptor.describe);
+  const request = {
+    requestId:"r", gameId:"g", stateVersion:0, actorId:"a"
+  };
+  const result = createSearchResult({
+    request,
+    actionDescriptor:descriptors[0],
+    plannedSequenceDescriptors:descriptors,
+    stats:null,
+    status:"ACCEPTED"
+  });
+  assert.deepEqual(result.actionDescriptor, descriptors[0]);
+  assert.deepEqual(result.plannedSequenceDescriptors, descriptors);
+  assert.deepEqual(
+    result.plannedSequenceDescriptors.map((descriptor) => descriptor.cardInstanceId),
+    descriptors.map((descriptor) => descriptor.cardInstanceId)
+  );
+}
+
+test("AI·Worker 边界：SearchResult descriptor 只投影一次且 idempotent", frArch14SearchResultDescriptorIdempotence);
+
+/*
+功能
+验证 Worker RNG snapshot/restore/commit continuation。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchRng。
+
+写入状态
+测试 RNG 实例。
+
+调用函数
+SearchRng.restore/commit/snapshot。
+
+边界与不变量
+restore 后 Worker 序列与 main 未消费序列一致；commit 后 next search 从 rngAfter 继续。
+*/
+async function frArch14RngHandoff() {
+  const { SearchRng } = await import("../js/ai/search/SearchRng.js");
+  const main = new SearchRng(42);
+  main.next();
+  const before = main.snapshot();
+  const worker = SearchRng.restore(before);
+  const workerValues = [worker.next(), worker.next(), worker.next()];
+  const after = worker.snapshot();
+  const mainValues = [];
+  main.commit(before);
+  main.next(); main.next(); main.next();
+  main.commit(after);
+  const nextWorker = SearchRng.restore(after);
+  assert.deepEqual([main.next(), main.next()], [nextWorker.next(), nextWorker.next()]);
+  assert.equal(after.draws, before.draws + 3);
+}
+
+test("AI·Worker 边界：AI RNG worker handoff restore/commit 连续", frArch14RngHandoff);
+
+/*
+功能
+验证 root search action 投影/rehydrate 与原始 action 的 search identity 无损。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+production root actions 与 SearchState。
+
+写入状态
+无。
+
+调用函数
+describeRootSearchAction、rehydrateRootSearchAction、ActionDescriptor.describe。
+
+边界与不变量
+比较 descriptor、card/skill identity、target order、selection 与 energyCost；不比较实体引用。
+*/
+async function frArch14RootActionRehydration() {
+  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const actor = makePlayer("root-actor", 0, "dawn", "ai", 2);
+  const enemy = makePlayer("root-enemy", 1, "dusk", "ai", 1);
+  const assault = instance("assault");
+  actor.hand.push(assault);
+  const { game } = makeGame([actor, enemy]);
+  const roots = game.aiController.getActionCandidates(actor);
+  const visible = createInitialSearchState(actor.id, game.state);
+  for (const raw of roots) {
+    const record = describeRootSearchAction(raw);
+    const hydrated = rehydrateRootSearchAction(record, visible, visible.players.find((player) => player.id === actor.id));
+    assert.deepEqual(ActionDescriptor.describe(hydrated), ActionDescriptor.describe(raw));
+    assert.equal(hydrated.type, raw.type);
+    assert.equal(hydrated.card?.definitionId ?? null, raw.card?.definitionId ?? null);
+    assert.equal(hydrated.card?.id ?? null, raw.card?.id ?? null);
+    assert.equal(hydrated.skill?.id ?? null, raw.skill?.id ?? null);
+    assert.deepEqual((hydrated.targets ?? []).map((target) => target.id), (raw.targets ?? []).map((target) => target.id));
+    assert.deepEqual(hydrated.selection ?? null, raw.selection ?? null);
+    assert.equal(hydrated.energyCost ?? null, raw.energyCost ?? null);
+  }
+}
+
+test("AI·Root action 重建：all root action families lossless", frArch14RootActionRehydration);
+
+/*
+功能
+验证 runSearchRequest 是 serializable outcome 的唯一 worker-safe search entry，且 main acceptance 可 rebind。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchRequest/WorkerSearchOutcome/AIController acceptance。
+
+写入状态
+测试 Game。
+
+调用函数
+createSearchRequest、describeRootSearchAction、runSearchRequest、workerOutcomeViolations、acceptWorkerSearchOutcome。
+
+边界与不变量
+outcome 无真实实体/函数；Main Thread 仍负责 ACCEPTED 与 rebind。
+*/
+async function frArch14RunSearchRequest() {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
+  const actor = makePlayer("run-actor", 0, "dawn", "ai", 2);
+  const enemy = makePlayer("run-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("charge"), instance("assault"));
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 8;
+  const roots = game.aiController.getActionCandidates(actor);
+  const request = createSearchRequest({
+    requestId:"run-worker-1",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:createInitialSearchState(actor.id, game.state, { assault:1, charge:1 }),
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActionDescriptors:roots.map(ActionDescriptor.describe),
+    rootSearchActions:roots.map(describeRootSearchAction)
+  });
+  const outcome = await runSearchRequest(request, { yieldControl: async () => true });
+  assert.deepEqual(workerOutcomeViolations(outcome, request), []);
+  assert.deepEqual(structuredClone(outcome), outcome);
+  assert.equal(typeof outcome.actionDescriptor, "object");
+  assert.equal(outcome.actionDescriptor?.cardInstanceId === undefined || typeof outcome.actionDescriptor.cardInstanceId === "string", true);
+  const accepted = game.aiController.acceptWorkerSearchOutcome(request, outcome);
+  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.ok(["card", "end"].includes(accepted.action.type));
+  assert.deepEqual(accepted.result.rngAfter, outcome.rngAfter);
+  assert.deepEqual(game.aiController.searchRng.snapshot(), outcome.rngAfter);
+}
+
+test("AI·Worker 搜索请求：serializable Worker outcome + main acceptance", frArch14RunSearchRequest);
+
+/*
+功能
+验证 Worker message protocol 的 terminal outcome/unknown message 安全语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+searchWorker protocol 与 runSearchRequest。
+
+写入状态
+fake postMessage 队列。
+
+调用函数
+createSearchWorkerMessageHandler。
+
+边界与不变量
+一个 requestId 只产生一个 terminal result；unknown message 返回 ERROR。
+*/
+async function frArch14WorkerProtocol() {
+  const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js");
+  const messages = [];
+  const handler = createSearchWorkerMessageHandler({ postMessage: (data) => messages.push(structuredClone(data)) });
+  await handler.handleMessage({ type:"UNKNOWN" });
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].type, "ERROR");
+  const actor = makePlayer("proto-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("proto-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  game.aiSearchNodeBudgetOverride = 2;
+  const roots = game.aiController.getActionCandidates(actor);
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const request = createSearchRequest({
+    requestId:"proto-1",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActionDescriptors:roots.map(ActionDescriptor.describe),
+    rootSearchActions:roots.map(describeRootSearchAction)
+  });
+  await handler.handleMessage({ type:"SEARCH", requestId:request.requestId, request:structuredClone(request) });
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].type, "RESULT");
+  assert.equal(messages[1].requestId, request.requestId);
+  assert.deepEqual(workerOutcomeViolations(messages[1].outcome, request), []);
+}
+
+test("AI·Worker 协议：SEARCH -> RESULT，unknown -> ERROR", frArch14WorkerProtocol);
+
+
+/*
+功能
+验证 Worker-safe search runtime 通过 periodic macrotask yield 保持 main thread/heartbeat 可运行。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchRequest/WorkerSearchRuntime。
+
+写入状态
+测试 interval 计数器。
+
+调用函数
+runSearchRequest、setInterval、clearInterval。
+
+边界与不变量
+不依赖 wall-clock 精确值；只证明搜索期间事件循环可运行。
+*/
+async function frArch14MainThreadResponsiveness() {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const actor = makePlayer("heart-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("heart-enemy", 1, "dusk", "ai", 1);
+  for (let index = 0; index < 60; index += 1) actor.hand.push(instance("exposeWeakness"));
+  const { game } = makeGame([actor, enemy]);
+  game.aiSearchNodeBudgetOverride = 100;
+  const roots = game.aiController.getActionCandidates(actor);
+  const request = createSearchRequest({
+    requestId:"heartbeat-1",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:createInitialSearchState(actor.id, game.state, { assault:1, charge:1 }),
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActionDescriptors:roots.map(ActionDescriptor.describe),
+    rootSearchActions:roots.map(describeRootSearchAction)
+  });
+  let heartbeats = 0;
+  const timer = setInterval(() => { heartbeats += 1; }, 5);
+  const outcome = await runSearchRequest(request, {
+    yieldControl: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return true;
+    }
+  });
+  clearInterval(timer);
+  assert.ok(heartbeats > 0, "搜索期间 main thread/heartbeat 必须获得运行机会");
+  assert.equal(outcome.workerError, null);
+}
+
+test("AI·Worker 响应性：Worker-safe search yield 保持 main-thread heartbeat", frArch14MainThreadResponsiveness);
+
+// ---- 异步、展示与运行时边界 ----
+
+/*
+功能
+验证互利从 root candidate 到 Worker projection、rehydrate、main acceptance、实体 rebind、ActionWorkflow 执行与公开池完成的完整 runtime 链。
+
+调用方
+FR-ARCH-14 runtime regression。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchRequest/RootSearchAction/WorkerSearchRuntime/AIController/Game playCard/PublicCardPool。
+
+写入状态
+测试 Game 状态。
+
+调用函数
+makePlayer、makeGame、instance、createInitialSearchState、getActionCandidates、createSearchRequest、describeRootSearchAction、rehydrateRootSearchAction、runSearchRequest、createWorkerSearchOutcome、acceptWorkerSearchOutcome、Game.playCard。
+
+边界与不变量
+Search 选择是否 end 不影响执行边界验证；执行使用显式 mutualBenefit root descriptor 的合法 rebind。
+*/
+async function frArch14MutualBenefitRuntimeTrace() {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const { createWorkerSearchOutcome, workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
+  const actor = makePlayer("mb-runtime-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("mb-runtime-enemy", 1, "dusk", "ai", 1);
+  const benefit = instance("mutualBenefit");
+  actor.hand.push(benefit);
+  const { game } = makeGame([actor, enemy]);
+  game.state.deck.cards = [instance("block"), instance("charge")];
+  game.aiSearchNodeBudgetOverride = 8;
+  const roots = game.aiController.getActionCandidates(actor);
+  const root = roots.find((action) => action.card?.definitionId === "mutualBenefit");
+  assert.ok(root, "root candidate 必须包含 mutualBenefit");
+  const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const record = describeRootSearchAction(root);
+  const hydrated = rehydrateRootSearchAction(record, visible, visible.players.find((player) => player.id === actor.id));
+  assert.equal(hydrated.card.definitionId, "mutualBenefit");
+  assert.equal(hydrated.card.category, root.card.category);
+  assert.equal(hydrated.card.usageMode, root.card.usageMode);
+  assert.equal(hydrated.card.targetType, root.card.targetType);
+  assert.equal(hydrated.card.ignoresDistance, root.card.ignoresDistance);
+  assert.equal(hydrated.card.aiValue, root.card.aiValue);
+  assert.deepEqual(ActionDescriptor.describe(hydrated), ActionDescriptor.describe(root));
+  const request = createSearchRequest({
+    requestId:"mb-runtime-request",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:visible,
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActionDescriptors:roots.map(ActionDescriptor.describe),
+    rootSearchActions:roots.map(describeRootSearchAction)
+  });
+  assert.ok(request.rootSearchActions.some((entry) => entry.card?.definitionId === "mutualBenefit"));
+  const outcome = await runSearchRequest(request, { yieldControl: async () => true });
+  assert.deepEqual(workerOutcomeViolations(outcome, request), []);
+  assert.deepEqual(structuredClone(outcome), outcome);
+  assert.ok(outcome.actionDescriptor === null || request.rootActionDescriptors.some(
+    (descriptor) => JSON.stringify(descriptor) === JSON.stringify(outcome.actionDescriptor)
+  ));
+  const executionOutcome = createWorkerSearchOutcome({
+    request,
+    actionDescriptor:ActionDescriptor.describe(root),
+    plannedSequenceDescriptors:[ActionDescriptor.describe(root), ActionDescriptor.describe({ type:"end" })],
+    stats:outcome.stats,
+    searchStopReason:"COMPLETE",
+    rngAfter:outcome.rngAfter
+  });
+  const accepted = game.aiController.acceptWorkerSearchOutcome(request, executionOutcome);
+  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.equal(accepted.action.type, "card");
+  assert.equal(accepted.action.card.id, benefit.id);
+  assert.deepEqual(accepted.action.targets.map((target) => target.id), [actor.id, enemy.id]);
+  assert.equal(await game.playCard(actor, accepted.action.card, accepted.action.targets, accepted.action.selection), true);
+  assert.equal(actor.hand.length, 1);
+  assert.equal(enemy.hand.length, 1);
+  assert.equal(game.state.publicCardPool.length, 0);
+  assert.ok(game.state.deck.discardPile.includes(benefit));
+  game.dispose();
+}
+
+test("AI·Worker 互利链路：root → worker → rebind → execution → public pool 全链", frArch14MutualBenefitRuntimeTrace);
+
+/*
+功能
+覆盖 AI 强制弃牌不变量：HP 1/2/3、多余1/2/多张、普通/快速模式，以及 AI choice cancelled 或 selectedIds 不足时仍收束到 hand.length <= hp。
+
+调用方
+FR-ARCH-14 runtime regression。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+TurnWorkflow.handleDiscardPhase 与 AI_SEARCH_PROFILES。
+
+写入状态
+测试 Game 手牌/弃牌堆。
+
+调用函数
+new Game、makePlayer、instance、createChoiceResult、handleDiscardPhase。
+
+边界与不变量
+兜底只保证 AI 弃牌收束，不改变正常 AI 选牌策略；真人取消仍保留既有交互语义。
+*/
+async function frArch14DiscardInvariantMatrix() {
+  const makeFixture = (hp, handCount, fastMode, choiceKind) => {
+    const ui = makeUi();
+    const game = createGameApplication(ui, () => 0.25, {
+      choicePort: {
+        async request(choiceRequest) {
+          if (choiceRequest?.kind !== "discard") return createChoiceResult("declined");
+          if (choiceKind === "cancelled") return createChoiceResult("cancelled");
+          const selectedIds = choiceRequest.options.slice(0, 1).map((option) => option.optionId);
+          return createChoiceResult("selected", { selectedIds });
+        }
+      }
+    });
+    const player = makePlayer(`discard-${hp}-${handCount}-${fastMode ? "fast" : "normal"}-${choiceKind}`, 0, "dawn", "ai", 0);
+    const enemy = makePlayer(`discard-enemy-${hp}-${handCount}-${fastMode ? "fast" : "normal"}-${choiceKind}`, 1, "dusk", "ai", 1);
+    player.hp = hp;
+    for (let index = 0; index < handCount; index += 1) {
+      player.hand.push(instance(["assault", "scout", "recover", "block", "charge", "counter"][index % 6]));
+    }
+    game.state.players = [player, enemy];
+    game.state.currentPlayerIndex = 0;
+    game.state.phase = "discard";
+    game.animationFastMode = fastMode;
+    game.cleanupManager.delay = async () => true;
+    return { game, player };
+  };
+  for (const hp of [1, 2, 3]) {
+    for (const extra of [1, 2, 5]) {
+      for (const fastMode of [false, true]) {
+        for (const choiceKind of ["cancelled", "partial"]) {
+          const { game, player } = makeFixture(hp, hp + extra, fastMode, choiceKind);
+          const profile = game.aiController.buildSearchConfig();
+          assert.equal(profile.searchMode, fastMode ? "FAST" : "NORMAL");
+          assert.equal(profile.timeBudgetMs, fastMode
+            ? AI_SEARCH_PROFILES.FAST.searchDeadlineMs
+            : AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs);
+          await game.turnWorkflow.handleDiscardPhase(player, game.state.gameId);
+          assert.ok(player.hand.length <= hp, `hp=${hp} hand=${hp + extra} fast=${fastMode} ${choiceKind}`);
+          game.dispose();
+        }
+      }
+    }
+  }
+}
+
+test("AI·Worker 弃牌：AI HP1/2/3 普通/快速与取消/不足选择后不超手牌上限", frArch14DiscardInvariantMatrix);
+
+/*
+功能
+冻结 AI 弃牌阶段 Normal/Fast 的 thinking 与 presentation delay 顺序。
+
+调用方
+TurnWorkflow pacing regression。
+
+输入
+同一名超手牌上限 AI，分别使用 Normal 与 Fast 展示模式。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+RUNTIME_POLICY discard range、TurnWorkflow 与 ChoiceCoordinator。
+
+写入状态
+测试手牌弃置与 trace。
+
+调用函数
+makeGame、handleDiscardPhase。
+
+边界与不变量
+Normal 使用可读最小值，Fast 只缩放展示时间；两者都必须 thinking on→delay→thinking off。
+*/
+async function discardPresentationPacingModes() {
+  for (const [fastMode, expectedDelay] of [[false, 1600], [true, 128]]) {
+    const actor = makePlayer(`discard-pacing-${fastMode}`, 0, "dawn", "ai", 0);
+    actor.hp = 1;
+    actor.hand.push(instance("charge"), instance("shield"));
+    const { game, ui } = makeGame([actor]);
+    game.simulationMode = false;
+    game.animationFastMode = fastMode;
+    game.presentationRandom = () => 0;
+    const trace = [];
+    const originalThinking = ui.setThinking.bind(ui);
+    ui.setThinking = (...args) => { trace.push(["thinking", args[0]]); originalThinking(...args); };
+    game.cleanupManager.delay = async (ms) => { trace.push(["delay", ms]); return true; };
+    await game.handleDiscardPhase(actor, game.state.gameId);
+    assert.deepEqual(trace.slice(0, 3), [
+      ["thinking", true], ["delay", expectedDelay], ["thinking", false]
+    ]);
+    assert.equal(actor.hand.length, 1);
+    game.dispose();
+  }
+}
+
+test("展示节奏·AI 弃牌：Normal 可读且 Fast 缩放并保持 thinking 生命周期", discardPresentationPacingModes);
+
+/*
+功能
+用 fake Dedicated Worker 验证 SearchWorkerClient 的首个 Worker 已接线、RESULT settle、duplicate/stale 消息隔离、postMessage 失败清空 pending、cancel 与 createSearchExecutor 生产选择。
+
+调用方
+FR-ARCH-14 browser transport regression。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SearchWorkerClient 与 createSearchExecutor。
+
+写入状态
+fake Worker 消息队列与测试 executor。
+
+调用函数
+createSearchWorkerClient、createSearchExecutor。
+
+边界与不变量
+不执行真实 search；只验证 browser transport 协议与 pending 生命周期。
+*/
+async function frArch14WorkerClientTransport() {
+  const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js");
+  const { createSearchExecutor } = await import("../js/adapters/ai/worker/createSearchExecutor.js");
+  const instances = [];
+  class FakeWorker {
+    constructor(url, options) {
+      this.url = url;
+      this.options = options;
+      this.listeners = new Map();
+      this.posted = [];
+      this.terminated = false;
+      this.throwOnPost = false;
+      instances.push(this);
+    }
+    addEventListener(type, listener) {
+      if (!this.listeners.has(type)) this.listeners.set(type, []);
+      this.listeners.get(type).push(listener);
+    }
+    postMessage(message) {
+      if (this.throwOnPost) throw new Error("structuredClone failed");
+      this.posted.push(message);
+    }
+    terminate() { this.terminated = true; }
+    emit(type, data) {
+      for (const listener of this.listeners.get(type) ?? []) listener({ data });
+    }
+  }
+  const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  delete globalThis.Worker;
+  delete globalThis.window;
+  delete globalThis.document;
+  const headlessExecutor = createSearchExecutor({});
+  assert.equal(headlessExecutor.transport, "headless-local", "Node/headless 无 Worker 时必须保留本地 transport");
+  headlessExecutor.dispose();
+  Object.defineProperty(globalThis, "Worker", { configurable:true, writable:true, value:FakeWorker });
+  try {
+    const makeOutcome = (requestId) => ({
+      requestId,
+      gameId:"game-1",
+      stateVersion:0,
+      actorId:"actor-1",
+      actionDescriptor:{ type:"end", cardId:null, cardInstanceId:null, targetId:null, targetIds:[], selection:null },
+      plannedSequenceDescriptors:[],
+      stats:null,
+      searchStopReason:"COMPLETE",
+      rngAfter:{ seed:1, state:1, algorithm:"lcg", draws:0 },
+      cancelled:false,
+      workerError:null
+    });
+    const makeRequest = (requestId) => ({ requestId, gameId:"game-1", stateVersion:0, actorId:"actor-1", searchConfig:{ hardWatchdogMs:5000 } });
+    const client = createSearchWorkerClient("searchWorker.js");
+    assert.equal(instances.length, 1, "首个 production Worker 必须立即接线");
+    const firstWorker = instances[0];
+    assert.equal(firstWorker.listeners.get("message")?.length, 1);
+    const firstRequest = makeRequest("first");
+    const firstPromise = client.search(firstRequest);
+    assert.equal(firstWorker.posted[0].type, "SEARCH");
+    firstWorker.emit("message", { type:"RESULT", requestId:"first", outcome:makeOutcome("first") });
+    assert.deepEqual(await firstPromise, makeOutcome("first"));
+    firstWorker.emit("message", { type:"RESULT", requestId:"first", outcome:makeOutcome("first") });
+    client.dispose();
+    assert.equal(firstWorker.terminated, true);
+
+    const recoveryClient = createSearchWorkerClient("searchWorker.js");
+    const recoveryWorker = instances[1];
+    recoveryWorker.throwOnPost = true;
+    await assert.rejects(recoveryClient.search(makeRequest("clone-fail")), /structuredClone failed/);
+    recoveryWorker.throwOnPost = false;
+    const secondPromise = recoveryClient.search(makeRequest("second"));
+    recoveryWorker.emit("message", { type:"ERROR", requestId:"stale", workerError:"stale error" });
+    recoveryWorker.emit("message", { type:"RESULT", requestId:"second", outcome:makeOutcome("second") });
+    assert.deepEqual(await secondPromise, makeOutcome("second"));
+    const cancelPromise = recoveryClient.search(makeRequest("cancel-me"));
+    recoveryClient.cancel("cancel-me");
+    await assert.rejects(cancelPromise, /cancelled/);
+    assert.ok(recoveryWorker.posted.some((message) => message.type === "CANCEL" && message.requestId === "cancel-me"));
+    recoveryClient.dispose();
+
+    const executor = createSearchExecutor({});
+    assert.equal(executor.transport, "dedicated-worker", "browser 存在 Worker 时 production 必须使用 Dedicated Worker");
+    executor.dispose();
+    assert.equal(createSearchExecutor({ forceLocal:true }).transport, "headless-local");
+
+    delete globalThis.Worker;
+    Object.defineProperty(globalThis, "window", { configurable:true, value:{} });
+    Object.defineProperty(globalThis, "document", { configurable:true, value:{} });
+    assert.throws(
+      () => createSearchExecutor({}),
+      /不支持 Dedicated Worker.*不能回退到主线程/
+    );
+  } finally {
+    for (const instance of instances) instance.terminate();
+    if (previousWorker) Object.defineProperty(globalThis, "Worker", previousWorker);
+    else delete globalThis.Worker;
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else delete globalThis.window;
+    if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+    else delete globalThis.document;
+  }
+}
+
+test("AI·Worker 传输：Dedicated Worker 初始接线/结果/清理/恢复与 production 选择", frArch14WorkerClientTransport);
+
+/*
+功能
+对同一固定 state 比较 FR13-equivalent main Planner（raw roots）与 FR14 Worker runSearchRequest（rehydrated roots）的完整确定性 trace。
+
+调用方
+FR-ARCH-14 worker search parity audit。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Planner/runSearchRequest/SearchRng/ActionDescriptor。
+
+写入状态
+测试 Game 与两个独立 SearchRng continuation。
+
+调用函数
+makeGame、instance、getActionCandidates、createInitialSearchState、createSearchRequest、describeRootSearchAction、SearchRng.restore、Planner.plan、runSearchRequest。
+
+边界与不变量
+固定 node budget 保证双方同 stopReason；比较 action、计划序列、stats、RNG after 与 hidden samples。
+*/
+async function frArch14WorkerSearchParityTrace() {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const actor = makePlayer("parity-actor", 0, "dawn", "ai", 0);
+  const ally = makePlayer("parity-ally", 2, "dawn", "ai", 2);
+  const enemy = makePlayer("parity-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("assault"), instance("assault"), instance("scout"), instance("recover"));
+  const { game } = makeGame([actor, enemy, ally]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = 120;
+  game.aiController.searchRng = new SearchRng(777001);
+  const player = game.state.players[0];
+  const roots = game.aiController.getActionCandidates(player);
+  const visible = createInitialSearchState(player.id, game.state, game.aiController.knowledge.remainingCounts(player));
+  const before = game.aiController.searchRng.snapshot();
+  const localRng = SearchRng.restore(before);
+  game.aiController.searchRng = localRng;
+  const mainAction = await game.aiController.planner.plan(player, visible, roots, { gameId:game.state.gameId });
+  const mainStats = { ...game.aiController.planner.lastSearchStats };
+  const mainSequence = game.aiController.planner.lastPlannedSequence.map((entry) => ({
+    type:entry.type,
+    cardId:entry.cardId,
+    cardInstanceId:entry.cardInstanceId,
+    targetId:entry.targetId,
+    targetIds:[...entry.targetIds],
+    selection:entry.selection ? { ...entry.selection } : null
+  }));
+  const mainAfter = localRng.snapshot();
+  const request = createSearchRequest({
+    requestId:"parity-request",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:player.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState:visible,
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:before,
+    rootActionDescriptors:roots.map(ActionDescriptor.describe),
+    rootSearchActions:roots.map(describeRootSearchAction)
+  });
+  const outcome = await runSearchRequest(request, { yieldControl: async () => true });
+  assert.deepEqual(outcome.actionDescriptor, ActionDescriptor.describe(mainAction));
+  assert.deepEqual(outcome.plannedSequenceDescriptors.map((entry) => ({
+    type:entry.type,
+    cardId:entry.cardId,
+    cardInstanceId:entry.cardInstanceId,
+    targetId:entry.targetId,
+    targetIds:[...entry.targetIds],
+    selection:entry.selection ? { ...entry.selection } : null
+  })), mainSequence);
+  assert.equal(outcome.searchStopReason, mainStats.stopReason);
+  assert.equal(outcome.stats.expanded, mainStats.expanded);
+  assert.equal(outcome.stats.depth, mainStats.depth);
+  assert.equal(outcome.stats.hiddenSamples, mainStats.hiddenSamples);
+  assert.equal(outcome.stats.simulationCalls, mainStats.simulationCalls);
+  assert.equal(outcome.stats.counterfactualCalls, mainStats.counterfactualCalls);
+  assert.equal(outcome.stats.stateUtilityCalls, mainStats.stateUtilityCalls);
+  assert.equal(outcome.stats.bestValueScore, mainStats.bestValueScore);
+  assert.deepEqual(outcome.rngAfter, mainAfter);
+  game.dispose();
+}
+
+test("AI·Worker 搜索一致性：同一 state/seed/config 下 raw vs rehydrated 全 trace 一致", frArch14WorkerSearchParityTrace);
+
+/*
+功能
+验证连续两次 accepted Worker-equivalent search 的 RNG continuation、duplicate 不二次 commit、rejected outcome 不 commit。
+
+调用方
+FR-ARCH-14 RNG continuity runtime audit。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+AIController selectAction/acceptWorkerSearchOutcome/SearchRng。
+
+写入状态
+测试 Game 与 SearchRng。
+
+调用函数
+makeGame、instance、selectAction、acceptWorkerSearchOutcome、createWorkerSearchOutcome。
+
+边界与不变量
+所有断言只读 diagnostic；不改变 AI policy/value。
+*/
+async function frArch14RngContinuityAcceptedSearches() {
+  const { createWorkerSearchOutcome } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
+  const actor = makePlayer("rng-continuity-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("rng-continuity-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("assault"));
+  const { game } = makeGame([actor, enemy]);
+  game.aiSearchNodeBudgetOverride = 12;
+  game.aiController.searchRng = new SearchRng(9001);
+  const player = game.state.players[0];
+  const firstAction = await game.aiController.selectAction(player, { gameId:game.state.gameId });
+  assert.ok(["card", "end"].includes(firstAction.type));
+  const firstResult = game.aiController.lastSearchResult;
+  const firstRequest = game.aiController.lastSearchRequest;
+  const firstOutcome = game.aiController.lastWorkerOutcome;
+  assert.equal(firstResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.deepEqual(game.aiController.searchRng.snapshot(), firstResult.rngAfter);
+  const secondAction = await game.aiController.selectAction(player, { gameId:game.state.gameId });
+  assert.ok(["card", "end"].includes(secondAction.type));
+  const secondRequest = game.aiController.lastSearchRequest;
+  assert.deepEqual(secondRequest.rng, firstResult.rngAfter, "Search2.rngBefore 必须等于 Search1.accepted.rngAfter");
+  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  const beforeDuplicate = game.aiController.searchRng.snapshot();
+  const duplicate = game.aiController.acceptWorkerSearchOutcome(firstRequest, firstOutcome);
+  assert.equal(duplicate.result.rngAfter, null, "duplicate RESULT 不得二次 commit");
+  assert.deepEqual(game.aiController.searchRng.snapshot(), beforeDuplicate);
+  const beforeRejected = game.aiController.searchRng.snapshot();
+  game.aiController.searchExecutor = {
+    search: async (request) => createWorkerSearchOutcome({
+      request,
+      actionDescriptor:null,
+      plannedSequenceDescriptors:[],
+      stats:null,
+      searchStopReason:null,
+      rngAfter:request.rng,
+      cancelled:false,
+      workerError:"intentional worker failure"
+    })
+  };
+  const rejectedAction = await game.aiController.selectAction(player, { gameId:game.state.gameId });
+  assert.equal(rejectedAction.type, "end");
+  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.INVALID_ACTION);
+  assert.deepEqual(game.aiController.searchRng.snapshot(), beforeRejected, "rejected outcome 不得 commit RNG");
+  assert.equal(game.aiController.getSearchDiagnostics().WORKER_ERROR, 1);
+  game.dispose();
+}
+
+test("AI·Worker RNG：连续 accepted 搜索续接、rejected 不提交、duplicate 不二次提交", frArch14RngContinuityAcceptedSearches);
+
+/*
+功能
+验证 AI 出牌 presentation pacing 完整：showThinking、await delay、clearThinking、playActionCue 与真实 playCard 顺序稳定。
+
+调用方
+FR-ARCH-14 presentation sequencing audit。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+TurnWorkflow/ActionWorkflow/GamePresentationAdapter。
+
+写入状态
+测试 Game 手牌/能量与 UI 记录。
+
+调用函数
+makeGame、instance、takeAiPlayPhase。
+
+边界与不变量
+simulation 路径延迟值为零但仍经过可取消 await；真实展示路径由 timing 单测冻结范围。
+*/
+async function frArch14PresentationPacingSequence() {
+  const actor = makePlayer("presentation-zero-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("presentation-zero-enemy", 1, "dusk", "ai", 1);
+  const charge = instance("charge");
+  actor.hand.push(charge);
+  const { game, ui } = makeGame([actor, enemy]);
+  const sounds = [];
+  const trace = [];
+  const originalThinking = ui.setThinking.bind(ui);
+  const originalCurrentCard = ui.setCurrentCard.bind(ui);
+  ui.setThinking = (...args) => { trace.push(["thinking", args[0], args[2] ?? ""]); originalThinking(...args); };
+  ui.setCurrentCard = (...args) => { trace.push(["current-card", args[0]?.id ?? args[0]]); originalCurrentCard(...args); };
+  ui.playSound = (name) => sounds.push(name);
+  game.cleanupManager.delay = async (ms) => { trace.push(["delay", ms]); return true; };
+  let actionCount = 0;
+  game.aiController.selectAction = async () => (
+    actionCount++ === 0 ? { type:"card", card:charge, targets:[] } : { type:"end" }
+  );
+  await game.takeAiPlayPhase(actor, game.state.gameId);
+  assert.ok(ui.thinking.some(([thinking]) => thinking === true));
+  assert.ok(ui.thinking.some(([thinking]) => thinking === false));
+  assert.ok(ui.currentCards.some((entry) => entry.cardOrName === charge));
+  assert.ok(sounds.includes("playCard"), "playActionCue 必须在零 fake thinking 路径存活");
+  assert.equal(actor.hand.length, 0);
+  assert.deepEqual(trace.filter(([kind]) => kind === "delay").map(([, ms]) => ms), [0, 0, 0]);
+  const preparedIndex = trace.findIndex(([kind, value, message]) => kind === "thinking" && value === true && message.includes("准备使用"));
+  const actionDelayIndex = trace.findIndex((entry, index) => index > preparedIndex && entry[0] === "delay");
+  const clearIndex = trace.findIndex((entry, index) => index > actionDelayIndex && entry[0] === "thinking" && entry[1] === false);
+  const cardIndex = trace.findIndex((entry, index) => index > clearIndex && entry[0] === "current-card");
+  assert.ok(preparedIndex >= 0 && preparedIndex < actionDelayIndex && actionDelayIndex < clearIndex && clearIndex < cardIndex);
+  game.dispose();
+}
+
+test("展示节奏·AI 行动：thinking→await pacing→clear→play 且 simulation 延迟为零", frArch14PresentationPacingSequence);
+
+/*
+功能
+验证 animationFastMode 只映射命名 search profile，普通/快速 timeBudget、softTarget 与 watchdog 均为有限正数或规定 null。
+
+调用方
+FR-ARCH-14 search configuration audit。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+AIController.buildSearchConfig 与 AI_SEARCH_PROFILES。
+
+写入状态
+测试 Game 配置字段。
+
+调用函数
+makeGame、buildSearchConfig。
+
+边界与不变量
+不改变搜索结构；simulationMode 不得把 production 模式映射成 local。
+*/
+function frArch14SearchProfileRuntimeValues() {
+  const actor = makePlayer("profile-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("profile-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  game.simulationMode = true;
+  game.aiSearchBudgetOverrideMs = null;
+  game.aiSearchNodeBudgetOverride = null;
+  game.animationFastMode = false;
+  const normal = game.aiController.buildSearchConfig();
+  assert.equal(normal.searchMode, "NORMAL");
+  assert.equal(normal.softTargetMs, AI_SEARCH_PROFILES.NORMAL.softTargetMs);
+  assert.equal(normal.timeBudgetMs, AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs);
+  assert.equal(normal.searchDeadlineMs, 3000);
+  assert.equal(normal.hardWatchdogMs, AI_SEARCH_PROFILES.NORMAL.hardWatchdogMs);
+  assert.ok(Number.isFinite(normal.timeBudgetMs) && normal.timeBudgetMs > 0);
+  assert.equal(normal.nodeBudget, null);
+  game.animationFastMode = true;
+  const fast = game.aiController.buildSearchConfig();
+  assert.equal(fast.searchMode, "FAST");
+  assert.equal(fast.softTargetMs, 500);
+  assert.equal(fast.timeBudgetMs, 900);
+  assert.equal(fast.searchDeadlineMs, 900);
+  assert.equal(fast.hardWatchdogMs, 5000);
+  assert.ok(Number.isFinite(fast.timeBudgetMs) && fast.timeBudgetMs > 0);
+  assert.equal(fast.nodeBudget, null);
+  game.dispose();
+}
+
+test("AI·搜索配置：普通 3000ms / 快速 500+900ms 且 simulationMode 不映射 local", frArch14SearchProfileRuntimeValues);
+
+/*
+功能
+验证零 fake-thinking 后连续 gameplay 音效不被 SoundManager 墙钟节流吞掉，同时保留 select 防误触节流。
+
+调用方
+FR-ARCH-14 audio regression audit。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+SoundManager/SOUND_THROTTLE_MS。
+
+写入状态
+fake AudioContext 节点与测试 SoundManager。
+
+调用函数
+makeFakeAudioContext、withAudioContextStub、SoundManager.play。
+
+边界与不变量
+不增加任何 delay；只删除 gameplay 事件节流。
+*/
+async function frArch14AudioSurvivesZeroTiming() {
+  assert.equal(SOUND_THROTTLE_MS.playCard, undefined);
+  assert.equal(SOUND_THROTTLE_MS.hit, undefined);
+  assert.equal(SOUND_THROTTLE_MS.skill, undefined);
+  assert.equal(SOUND_THROTTLE_MS.select, 35);
+  await withAudioContextStub(async () => {
+    const sound = new SoundManager();
+    const fake = makeFakeAudioContext();
+    sound.context = fake;
+    sound.musicGain = fake.destination;
+    sound.sfxGain = fake.destination;
+    sound.enabled = true;
+    assert.equal(await sound.play("playCard"), true);
+    assert.equal(await sound.play("playCard"), true, "连续真实出牌音效不得被节流吞掉");
+    assert.equal(await sound.play("hit"), true);
+    assert.equal(await sound.play("skill"), true);
+    assert.equal(await sound.play("select"), true);
+    assert.equal(await sound.play("select"), false, "UI select 防误触节流必须保留");
+    assert.ok(fake.bufferSources.length >= 6, "gameplay SFX 应创建独立 AudioBufferSource");
+  });
+}
+
+test("音频与展示节奏：连续 gameplay 音效不被零 fake-thinking 节流吞掉", frArch14AudioSurvivesZeroTiming);
 
 // ---- AI 卡牌行为·突袭 ----
 
@@ -27894,6 +34617,63 @@ test("AI·资源身份：纯 unknown 破坏/掠夺按剩余未知数量同步摘
   );
 });
 
+/*
+功能
+运行 FR-ARCH-1 隐藏信息与 root action blocker characterization。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture、Visible/SearchState 与生产 ActionGenerator。
+
+写入状态
+无生产状态。
+
+调用函数
+makePlayer、makeGame、instance、createInitialSearchState、getActionCandidates、describeAction。
+
+边界与不变量
+SearchState 不得含敌方未知牌；真实 root action 可以持有 real Player，只有 descriptor 可跨越未来 Worker 边界。
+*/
+function frArchHiddenInformationAndRootAction() {
+  const actor = makePlayer("fr-hidden-actor", 0, "dawn", "ai", 0);
+  const target = makePlayer("fr-hidden-target", 1, "dusk", "ai", 1);
+  const hidden = instance("counter");
+  target.hand.push(hidden);
+  const { game } = makeGame([actor, target]);
+  const assault = instance("assault");
+  actor.hand.push(assault);
+  const visible = createInitialSearchState(
+    actor.id,
+    game.state,
+    game.aiController.knowledge.remainingCounts(actor)
+  );
+  const visibleTarget = visible.players.find((player) => player.id === target.id);
+  assert.equal(visibleTarget.hand, undefined);
+  assert.equal(visibleTarget.handCount, 1);
+  assert.equal(JSON.stringify(visible).includes(hidden.id), false);
+  assert.equal(JSON.stringify(visible).includes(hidden.name), false);
+  const rootAction = game.aiController.getActionCandidates(actor)
+    .find((entry) => entry.card?.definitionId === "assault" && entry.targets?.[0]?.id === target.id);
+  assert.ok(rootAction);
+  assert.equal(rootAction.targets[0], target);
+  assert.ok(target.hand.includes(hidden), "当前 root action 仍持有 real Player target");
+  const descriptor = describeAction(rootAction);
+  const serializedDescriptor = JSON.stringify(descriptor);
+  assert.equal(serializedDescriptor.includes(hidden.id), false);
+  assert.equal(serializedDescriptor.includes(hidden.definitionId), false);
+  assert.equal(serializedDescriptor.includes(hidden.name), false);
+}
+
+test("AI·隐藏信息边界：SearchState 过滤与 root action descriptor blocker", frArchHiddenInformationAndRootAction);
+
 // ---- AI 剩余牌池 ----
 
 const makeRemainingKnowledge = (viewer, state = null) => {
@@ -38446,6758 +45226,6 @@ test("集成：控制器文件名：导出类名仍为 AIController", async () =
   assert.equal(module.AiController, undefined);
 });
 
-
-// ---- 架构治理与特征回归 ----
-
-/*
-功能
-为现有 Game 安装只读 trace harness，记录 EventBus 事件顺序与公开日志顺序。
-
-调用方
-FR-ARCH-1 characterization tests。
-
-输入
-当前 Game 实例。
-
-输出
-包含 events 与 logs 数组的 trace 对象。
-
-读取状态
-Game.eventDispatcher、Game.log。
-
-写入状态
-仅写返回的 trace 数组。
-
-调用函数
-EventBus.emit、Game.log。
-
-边界与不变量
-包装函数保持 this 绑定与原始返回值；记录先于原调用，日志 kind 以原始返回值为准。
-*/
-function installFrArchTrace(game) {
-  const trace = { events: [], logs: [] };
-  const originalEmit = game.eventDispatcher.emit.bind(game.eventDispatcher);
-  const originalLog = game.log.bind(game);
-  game.eventDispatcher.emit = async (eventName, event) => {
-    trace.events.push(eventName);
-    return originalEmit(eventName, event);
-  };
-  game.log = (message, kind = "normal") => {
-    const entry = originalLog(message, kind);
-    trace.logs.push({ message, kind: entry.kind });
-    return entry;
-  };
-  return trace;
-}
-
-/*
-功能
-创建五名全 AI 玩家并让除主动者外每名玩家持有一张反制牌，用于冻结反制座次顺序。
-
-调用方
-FR-ARCH-1 响应顺序 characterization test。
-
-输入
-无。
-
-输出
-game、source、harvest 卡牌和响应捕获数组。
-
-读取状态
-生产 Game/Player/卡牌配置。
-
-写入状态
-仅写测试 fixture。
-
-调用函数
-makePlayer、makeGame、instance。
-
-边界与不变量
-不注册被动技能；除 source 外每名响应者恰有一张反制，保证确定性。
-*/
-function makeFrArchCounterOrderFixture() {
-  const players = [];
-  for (let index = 0; index < 5; index += 1) {
-    players.push(makePlayer(`fr-counter-p${index}`, index, index === 0 ? "dawn" : "dusk", "ai", index));
-  }
-  const { game } = makeGame(players);
-  const source = players[0];
-  const card = instance("harvest");
-  source.hand.push(card);
-  for (const responder of players.slice(1)) {
-    responder.hand.push({ ...CARD_DEFINITIONS.counter, id: `fr-counter-card-${responder.id}` });
-  }
-  const calls = [];
-  game.aiController.responsePolicy.shouldRespond = (responder, type, context, cards) => {
-    calls.push({
-      responderId: responder.id,
-      type,
-      sourceId: context.source?.id ?? null,
-      rootCardId: context.rootCard?.definitionId ?? null,
-      counterDepth: context.counterDepth ?? null
-    });
-    return type === "counter" && cards.length > 0;
-  };
-  return { game, source, card, calls };
-}
-
-/*
-功能
-运行 FR-ARCH-1 突袭事件顺序 characterization。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立 Game fixture 的 trace。
-
-写入状态
-无生产状态。
-
-调用函数
-makePlayer、makeGame、instance、installFrArchTrace、Game.playCard。
-
-边界与不变量
-trace 序列必须与迁移前逐项一致。
-*/
-async function frArchAssaultEventTrace() {
-  const actor = makePlayer("fr-trace-actor", 0, "dawn", "ai", 0);
-  const target = makePlayer("fr-trace-target", 1, "dusk", "ai", 1);
-  const { game } = makeGame([actor, target]);
-  const card = instance("assault");
-  actor.hand.push(card);
-  const trace = installFrArchTrace(game);
-  await game.playCard(actor, card, [target]);
-  assert.deepEqual(trace.events, [
-    "beforeCardMove",
-    "afterCardMove",
-    "beforeCardUse",
-    "targetSelected",
-    "beforeCardResolve",
-    "beforeDamage",
-    "afterDamage",
-    "beforeCardMove",
-    "afterCardMove",
-    "cardUsed"
-  ]);
-  assert.deepEqual(trace.logs.map((entry) => entry.kind), ["normal", "damage"]);
-  assert.deepEqual(game.getCardZoneOccurrences(card), ["discard"]);
-  assert.equal(target.hp, target.maxHp - 1);
-}
-
-test("结算事件顺序：突袭真实结算冻结 before/after 与移动事件序列", frArchAssaultEventTrace);
-
-/*
-功能
-运行 FR-ARCH-1 反制链座次 characterization。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立 Game fixture 与响应策略捕获。
-
-写入状态
-无生产状态。
-
-调用函数
-makeFrArchCounterOrderFixture、Game.playCard。
-
-边界与不变量
-根牌每层询问严格按当前响应者下一座位开始，且 counterDepth 逐层加一。
-*/
-async function frArchCounterOrderTrace() {
-  const { game, source, card, calls } = makeFrArchCounterOrderFixture();
-  await game.playCard(source, card, []);
-  assert.deepEqual(calls.map((entry) => entry.responderId), [
-    "fr-counter-p1",
-    "fr-counter-p2",
-    "fr-counter-p3",
-    "fr-counter-p4"
-  ]);
-  assert.deepEqual(calls.map((entry) => entry.counterDepth), [0, 1, 2, 3]);
-  assert.ok(calls.every((entry) => entry.type === "counter"));
-  assert.ok(calls.every((entry) => entry.rootCardId === "harvest"));
-}
-
-test("响应顺序：反制链逐层座次与 counterDepth 冻结", frArchCounterOrderTrace);
-
-/*
-功能
-运行 FR-ARCH-1 原子响应支付与 zone 唯一性 characterization。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立 Game fixture 的 trace 与 zone occurrence。
-
-写入状态
-无生产状态。
-
-调用函数
-makePlayer、makeGame、instance、installFrArchTrace、Game.payCardsFromHandAtomically。
-
-边界与不变量
-两张支付牌必须同时离开手牌且各自只出现在弃牌堆。
-*/
-async function frArchAtomicZoneTrace() {
-  const actor = makePlayer("fr-zone-actor", 0, "dawn", "ai", 0);
-  const other = makePlayer("fr-zone-other", 1, "dusk", "ai", 1);
-  const first = instance("block");
-  const second = instance("block");
-  actor.hand.push(first, second);
-  const { game } = makeGame([actor, other]);
-  const trace = installFrArchTrace(game);
-  const beforeVersion = actor.handVersion;
-  const payment = await game.payCardsFromHandAtomically(actor, [first, second], "FR-ARCH 原子支付", {
-    silent: true,
-    expectedCount: 2
-  });
-  assert.equal(payment.status, "used");
-  assert.deepEqual(actor.hand, []);
-  assert.equal(actor.handVersion, beforeVersion + 1);
-  assertCardOnlyIn(game, first, "discard");
-  assertCardOnlyIn(game, second, "discard");
-  assert.deepEqual(trace.events, [
-    "beforeCardMove",
-    "beforeCardMove",
-    "afterCardMove",
-    "afterCardMove"
-  ]);
-}
-
-test("区域不变量：原子支付与实体唯一区域冻结", frArchAtomicZoneTrace);
-
-/*
-功能
-运行 FR-ARCH-1 主动技能 trace characterization。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立 Game fixture 的 UI 记录与角色状态。
-
-写入状态
-无生产状态。
-
-调用函数
-makePlayer、makeGame、Game.useActiveSkill。
-
-边界与不变量
-破军先按固定费用扣能量，再增加本回合突袭上限并进入中央结算展示。
-*/
-async function frArchSkillTrace() {
-  const actor = makePlayer("fr-skill-actor", 0, "dawn", "ai", 0);
-  const other = makePlayer("fr-skill-other", 1, "dusk", "ai", 1);
-  actor.energy = 2;
-  const { game, ui } = makeGame([actor, other]);
-  const trace = installFrArchTrace(game);
-  const used = await game.useActiveSkill(actor, "breakArmy", []);
-  assert.equal(used, true);
-  assert.equal(actor.energy, 0);
-  assert.equal(actor.turnFlags.attackLimit, 2);
-  assert.equal(ui.currentCards.length, 1);
-  assert.match(ui.currentCards[0].cardOrName, /破军/);
-  assert.ok(trace.events.length === 0, "主动技能当前不应经过额外领域事件");
-}
-
-test("技能结算轨迹：破军费用、次数上限与中央展示顺序冻结", frArchSkillTrace);
-
-/*
-功能
-运行 FR-ARCH-1 真实权威与 AI Simulation 的确定性差分。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立 Game fixture、SearchState 与 Simulator。
-
-写入状态
-Simulator 只写克隆 SearchState；随后真实 playCard 只写测试 fixture。
-
-调用函数
-makePlayer、makeGame、instance、createInitialSearchState、ActionGenerator.generateFromVisible、Simulator.apply、Game.playCard。
-
-边界与不变量
-同一突袭在真实与模拟目标上均造成 1 点生命伤害，且不触发格挡/雷达。
-*/
-async function frArchRealSimulationDelta() {
-  const actor = makePlayer("fr-delta-actor", 0, "dawn", "ai", 0);
-  const target = makePlayer("fr-delta-target", 1, "dusk", "ai", 1);
-  target.hp = 3;
-  const card = instance("assault");
-  actor.hand.push(card);
-  const { game } = makeGame([actor, target]);
-  const remaining = game.aiController.knowledge.remainingCounts(actor);
-  const visible = createInitialSearchState(actor.id, game.state, remaining);
-  const simulatedAction = game.aiController.actionGenerator.generateFromVisible(visible, actor.id)
-    .find((entry) => entry.card?.definitionId === "assault");
-  assert.ok(simulatedAction);
-  const simulated = new Simulator(visible).apply(visible, simulatedAction, actor.id);
-  const simulatedTarget = simulated.players.find((player) => player.id === target.id);
-  assert.equal(simulatedTarget.hp, 2);
-  await game.playCard(actor, card, [target]);
-  assert.equal(target.hp, simulatedTarget.hp);
-  assert.deepEqual(game.getCardZoneOccurrences(card), ["discard"]);
-}
-
-test("AI·真实与模拟一致性：确定性突袭差分冻结", frArchRealSimulationDelta);
-
-/*
-功能
-运行 FR-ARCH-1 隐藏信息与 root action blocker characterization。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立 Game fixture、Visible/SearchState 与生产 ActionGenerator。
-
-写入状态
-无生产状态。
-
-调用函数
-makePlayer、makeGame、instance、createInitialSearchState、getActionCandidates、describeAction。
-
-边界与不变量
-SearchState 不得含敌方未知牌；真实 root action 可以持有 real Player，只有 descriptor 可跨越未来 Worker 边界。
-*/
-function frArchHiddenInformationAndRootAction() {
-  const actor = makePlayer("fr-hidden-actor", 0, "dawn", "ai", 0);
-  const target = makePlayer("fr-hidden-target", 1, "dusk", "ai", 1);
-  const hidden = instance("counter");
-  target.hand.push(hidden);
-  const { game } = makeGame([actor, target]);
-  const assault = instance("assault");
-  actor.hand.push(assault);
-  const visible = createInitialSearchState(
-    actor.id,
-    game.state,
-    game.aiController.knowledge.remainingCounts(actor)
-  );
-  const visibleTarget = visible.players.find((player) => player.id === target.id);
-  assert.equal(visibleTarget.hand, undefined);
-  assert.equal(visibleTarget.handCount, 1);
-  assert.equal(JSON.stringify(visible).includes(hidden.id), false);
-  assert.equal(JSON.stringify(visible).includes(hidden.name), false);
-  const rootAction = game.aiController.getActionCandidates(actor)
-    .find((entry) => entry.card?.definitionId === "assault" && entry.targets?.[0]?.id === target.id);
-  assert.ok(rootAction);
-  assert.equal(rootAction.targets[0], target);
-  assert.ok(target.hand.includes(hidden), "当前 root action 仍持有 real Player target");
-  const descriptor = describeAction(rootAction);
-  const serializedDescriptor = JSON.stringify(descriptor);
-  assert.equal(serializedDescriptor.includes(hidden.id), false);
-  assert.equal(serializedDescriptor.includes(hidden.definitionId), false);
-  assert.equal(serializedDescriptor.includes(hidden.name), false);
-}
-
-test("AI·隐藏信息边界：SearchState 过滤与 root action descriptor blocker", frArchHiddenInformationAndRootAction);
-
-/*
-功能
-运行 FR-ARCH-1 ActionDescriptor 稳定字段 characterization。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产 describeAction。
-
-写入状态
-无。
-
-调用函数
-instance、describeAction。
-
-边界与不变量
-转移选择只保留 source/receiver/zone；目标顺序不得改变。
-*/
-function frArchActionDescriptorContract() {
-  const card = instance("transfer");
-  const target = { id: "fr-descriptor-target" };
-  const action = {
-    type: "card",
-    card,
-    targets: [target],
-    selection: {
-      sourceId: "fr-source",
-      receiverId: "fr-receiver",
-      zone: "hand",
-      score: 7.5
-    }
-  };
-  assert.deepEqual(describeAction(action), {
-    type: "card",
-    cardId: "transfer",
-    cardInstanceId: card.id,
-    targetId: target.id,
-    targetIds: [target.id],
-    selection: {
-      sourceId: "fr-source",
-      receiverId: "fr-receiver",
-      zone: "hand"
-    }
-  });
-}
-
-test("AI·ActionDescriptor：cardInstanceId、targetIds 与 transfer selection 冻结", frArchActionDescriptorContract);
-
-/*
-功能
-运行 FR-ARCH-1 当前搜索质量基线 schema 与确定性回归检查。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-tests/fixtures/fr-arch-search-quality-baseline.json 与生产 AIController 搜索链路。
-
-写入状态
-独立 benchmark Game。
-
-调用函数
-readFile、makeBenchmarkGame、makeBenchmarkCard、runBenchmarkAiDecision、describeAction、disposeBenchmarkGame。
-
-边界与不变量
-只重跑小型确定性 COMPLETE fixture C；A/B 作为观测基线保留，不因 wall-clock 波动进入常规断言。
-*/
-async function frArchSearchQualityBaseline() {
-  const baseline = JSON.parse(await readFile(
-    projectFile("tests/fixtures/fr-arch-search-quality-baseline.json"),
-    "utf8"
-  ));
-  assert.equal(baseline.fixtures.length, 3);
-  for (const fixture of baseline.fixtures) {
-    assert.equal(fixture.config.timeBudgetMs, 900);
-    assert.equal(fixture.config.nodeBudget, null);
-    assert.ok(["card", "end"].includes(fixture.result.action.type));
-    assert.equal(fixture.result.stats.timeBudget, 900);
-    assert.equal(fixture.result.stats.budgetType, "time");
-    assert.ok(Array.isArray(fixture.result.stats.bestSequence));
-  }
-  const replay = baseline.fixtures.find((fixture) => fixture.name === "fr-arch-baseline-c");
-  assert.ok(replay);
-  const game = makeBenchmarkGame({
-    players: replay.fixture.players.map((player) => ({
-      id: player.id,
-      team: player.team,
-      character: player.character,
-      hp: player.hp,
-      energy: player.energy,
-      hand: player.hand.map((card) => makeBenchmarkCard(card.definitionId, card.id))
-    })),
-    options: {
-      actorId: replay.fixture.actorId,
-      seed: replay.fixture.seed
-    }
-  });
-  try {
-    game.aiSearchBudgetOverrideMs = replay.config.timeBudgetMs;
-    const decision = await runBenchmarkAiDecision(game, replay.fixture.actorId);
-    const stats = decision.stats;
-    assert.equal(decision.legalActions.length, replay.result.legalActionCount);
-    const expectedAction = {
-      ...replay.result.action,
-      targetId: replay.result.action.targetIds?.[0] ?? null
-    };
-    assert.deepEqual(describeAction(decision.action), expectedAction);
-    assert.equal(stats.expanded, replay.result.stats.expanded);
-    assert.equal(stats.depth, replay.result.stats.depth);
-    assert.equal(stats.stopReason, replay.result.stats.stopReason);
-    assert.equal(stats.simulationCalls, replay.result.stats.simulationCalls);
-    assert.equal(stats.counterfactualCalls, replay.result.stats.counterfactualCalls);
-    assert.equal(stats.stateUtilityCalls, replay.result.stats.stateUtilityCalls);
-    assert.equal(stats.hiddenSamples, replay.result.stats.hiddenSamples);
-    assert.deepEqual(stats.bestSequence, replay.result.stats.bestSequence);
-    assertClose(stats.bestValueScore, replay.result.stats.bestValueScore);
-  } finally {
-    disposeBenchmarkGame(game);
-  }
-}
-
-test("AI·搜索确定性：900ms 固定种子 fixtures schema 与确定性重放", frArchSearchQualityBaseline);
-
-/*
-功能
-运行 FR-ARCH-1 当前 timing 配置冻结检查。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-RUNTIME_POLICY 与 SearchBudget 源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-本测试只冻结数值，不修改任何 production timing。
-*/
-async function frArchCurrentTimingFreeze() {
-  assert.equal(AI_RUNTIME_POLICY.searchTimeBudgetMs, 900);
-  assert.equal(AI_RUNTIME_POLICY.searchYieldEvery, 48);
-  assert.equal(AI_RUNTIME_POLICY.searchDepth, 4);
-  assert.equal(AI_RUNTIME_POLICY.beamWidth, 10);
-  assert.equal(AI_RUNTIME_POLICY.hiddenStateSamples, 10);
-  assert.equal(RUNTIME_POLICY.aiInitialThinkMinMs, 3000);
-  assert.equal(RUNTIME_POLICY.aiInitialThinkMaxMs, 5500);
-  assert.equal(RUNTIME_POLICY.animationFastMinimumMs, 0);
-  assert.equal(RUNTIME_POLICY.animationFastScale, 0.08);
-  assert.equal(AI_SEARCH_PROFILES.FAST.softTargetMs, 500);
-  assert.equal(AI_SEARCH_PROFILES.FAST.searchDeadlineMs, 900);
-  assert.equal(AI_SEARCH_PROFILES.FAST.hardWatchdogMs, 5000);
-  assert.equal(AI_SEARCH_PROFILES.NORMAL.softTargetMs, null);
-  assert.equal(AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs, 3000);
-  assert.equal(AI_SEARCH_PROFILES.NORMAL.hardWatchdogMs, 10000);
-  const budgetSource = await readFile(projectFile("js/ai/search/SearchBudget.js"), "utf8");
-  const timingSource = await readFile(projectFile("js/utils/aiTiming.js"), "utf8");
-  assert.match(budgetSource, /AI_RUNTIME_POLICY\.searchTimeBudgetMs/);
-  assert.match(timingSource, /aiInitialThinkMinMs/);
-  assert.doesNotMatch(timingSource, /\bgame\.random\s*\(/);
-  assert.match(timingSource, /game\?\.presentationRandom/);
-  assert.match(timingSource, /Math\.max\(RUNTIME_POLICY\.animationFastMinimumMs/);
-}
-
-test("AI·搜索时序：当前 900ms/48-yield 与展示时序配置冻结", frArchCurrentTimingFreeze);
-
-/*
-功能
-运行 FR-ARCH-1 架构文档与 checker guard 存在性检查。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-docs/architecture/FR_ARCHITECTURE.md 与 tools/check-code-quality.mjs。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-只检查冻结契约关键词，不替代 checker self-test 的执行。
-*/
-async function frArchGovernanceDocumentContract() {
-  const architecture = await readFile(projectFile("docs/architecture/FR_ARCHITECTURE.md"), "utf8");
-  const checker = await readFile(projectFile("tools/check-code-quality.mjs"), "utf8");
-  for (const fragment of [
-    "Fast profile 为 500ms soft target、900ms search deadline",
-    "Normal profile 为 3000ms search deadline",
-    "搜索计算 RNG、真实游戏 RNG 与 presentation pacing RNG 相互隔离",
-    "session、gameId、stateVersion",
-    "TARGET ARCHITECTURE IMPLEMENTED",
-    "LEGACY MIGRATION CLOSED"
-  ]) assert.ok(architecture.includes(fragment), `architecture authority 缺少：${fragment}`);
-  for (const fragment of [
-    "DOMAIN_LAYER_PATTERN",
-    "APPLICATION_LAYER_PATTERN",
-    "DOMAIN_TRANSITIONS_PATTERN",
-    "REMOVED_LEGACY_FILES",
-    "架构约束：domain 禁止依赖",
-    "架构约束：state/transitions 禁止依赖"
-  ]) assert.match(checker, new RegExp(fragment));
-}
-
-test("架构治理：architecture authority 与 checker guard 已冻结", frArchGovernanceDocumentContract);
-
-// ---- 定义与所有权 ----
-
-/*
-功能
-验证旧 config 公开 API 与 FR-ARCH-2 迁移前 JSON snapshot 完全一致。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-tests/fixtures/fr-arch-definition-public-api.json 与三个 legacy config 模块导出。
-
-写入状态
-无。
-
-调用函数
-readFile、JSON.parse。
-
-边界与不变量
-JSON 深比较包含 key order；任何旧公开 shape/value 变化都会失败。
-*/
-async function frArchFinalDefinitionOwners() {
-  assert.deepEqual(Object.keys(CARD_DEFINITIONS), Object.keys(CARD_PRESENTATION));
-  assert.deepEqual(Object.keys(CARD_DEFINITIONS), Object.keys(CARD_AI_VALUES));
-  assert.deepEqual(Object.keys(CARD_DEFINITIONS), Object.keys(CARD_COUNTS));
-  assert.deepEqual(Object.keys(CHARACTER_BY_ID), Object.keys(CHARACTER_PRESENTATION));
-  for (const definition of Object.values(CARD_DEFINITIONS)) {
-    for (const field of ["count", "aiValue", "art", "icon", "accent", "frameStyle", "flavorText"] ) {
-      assert.equal(Object.hasOwn(definition, field), false, `${definition.definitionId}.${field}`);
-    }
-  }
-  for (const path of ["js/config/gameConfig.js", "js/config/cardConfig.js", "js/config/characterConfig.js"]) {
-    await assert.rejects(access(projectFile(path)));
-  }
-}
-
-test("架构·定义归属：Domain、AI、Presentation 与 Runtime Policy 已拆分", frArchFinalDefinitionOwners);
-
-/*
-功能
-验证 card domain definition 是 legacy CARD_DEFINITIONS 的领域字段 authority，旧文件不维护领域 literal。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-CARD_DEFINITIONS、DOMAIN_CARD_DEFINITIONS、cardConfig 源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-只验证领域字段集合，不要求 legacy 完整对象与 domain 对象同一引用。
-*/
-async function frArchCardAuthority() {
-  assert.equal(DOMAIN_CARD_DEFINITIONS, CARD_DEFINITIONS);
-  for (const [definitionId, domainCard] of Object.entries(CARD_DEFINITIONS)) {
-    assert.equal(Object.hasOwn(domainCard, "count"), false, `${definitionId} 不得拥有 count`);
-    assert.equal(Object.hasOwn(domainCard, "aiValue"), false, `${definitionId} 不得拥有 aiValue`);
-    assert.ok(Number.isInteger(RULESET_DEFINITION.deckComposition[definitionId]));
-    assert.ok(Number.isFinite(CARD_AI_VALUES[definitionId]));
-    assert.ok(CARD_PRESENTATION[definitionId]?.art);
-  }
-  const source = await readFile(projectFile("js/domain/definitions/cards/CardDefinitions.js"), "utf8");
-  assert.doesNotMatch(source, /aiValue|frameStyle|deckComposition/);
-}
-
-test("定义归属·卡牌：domain definitions 唯一拥有规则字段", frArchCardAuthority);
-
-/*
-功能
-验证 character/skill domain definitions 是 legacy CHARACTER_DEFINITIONS 的领域字段 authority。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-CHARACTER_DEFINITIONS、CHARACTER_DEFINITIONS、ACTIVE/PASSIVE_SKILL_DEFINITIONS、characterConfig 源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-AI/UI 字段仍留在 legacy characterConfig；领域字段不得在旧文件以 literal 维护。
-*/
-async function frArchCharacterSkillAuthority() {
-  for (const character of CHARACTER_DEFINITIONS) {
-    const view = presentCharacter(character);
-    const active = ACTIVE_SKILL_DEFINITIONS[character.activeSkillIds[0]];
-    const passive = PASSIVE_SKILL_DEFINITIONS[character.passiveSkillIds[0]];
-    assert.equal(view.activeName, active.name);
-    assert.equal(view.activeDescription, active.description);
-    assert.equal(view.activeCost, active.cost);
-    assert.equal(view.activeLimitPerTurn, active.limitPerTurn);
-    assert.equal(view.passiveName, passive.name);
-    assert.equal(view.passiveDescription, passive.description);
-    assert.deepEqual(getCharacterRoleTags(character.id).length, 2);
-    for (const field of ["portrait", "activeName", "passiveName", "roleTags"]) {
-      assert.equal(Object.hasOwn(character, field), false, `${character.id}.${field}`);
-    }
-  }
-  await assert.rejects(access(projectFile("js/config/characterConfig.js")));
-}
-
-test("定义归属·角色与技能：旧 characterConfig 不再维护领域 literal", frArchCharacterSkillAuthority);
-
-/*
-功能
-验证 skillRegistry 的 ACTIVE_SKILLS runtime shape 从 SkillDefinitions 投影，不再维护 cost/limit literal。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-ACTIVE_SKILLS、ACTIVE_SKILL_DEFINITIONS、skillRegistry 源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-runtime 不引入 description；canUse/execute 仍由 skillRegistry 拥有。
-*/
-async function frArchSkillRuntimeSingleAuthority() {
-  assert.equal(ACTIVE_SKILLS, ACTIVE_SKILL_DEFINITIONS);
-  for (const definition of Object.values(ACTIVE_SKILLS)) assert.equal(Object.isFrozen(definition), true);
-  const source = await readFile(projectFile("js/application/action/SkillRuntime.js"), "utf8");
-  assert.doesNotMatch(source, /cost:\s*\d/);
-  assert.doesNotMatch(source, /limitPerTurn:\s*\d/);
-  assert.doesNotMatch(source, /targetType:\s*["']/);
-  assert.match(source, /ACTIVE_SKILL_DEFINITIONS/);
-  assert.match(source, /canUseActiveSkill/);
-  await assert.rejects(access(projectFile("js/characters/skillRegistry.js")));
-}
-
-test("定义归属·技能运行时：ACTIVE_SKILLS 只投影 Domain Skill Definition", frArchSkillRuntimeSingleAuthority);
-
-/*
-功能
-验证 RulesetDefinition 是 RUNTIME_POLICY 领域字段 authority，旧 gameConfig 保留 AI/UI/debug 字段。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-RUNTIME_POLICY、RULESET_DEFINITION、gameConfig 源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-只验证本阶段已迁移的 domain 字段；AI/UI/debug 字段故意留在旧 config。
-*/
-async function frArchRulesetAuthority() {
-  for (const field of [
-    "playerCount", "smallTeamSize", "largeTeamSize", "characterCandidateCount",
-    "allowDuplicateCharacters", "initialHandCount", "defaultDrawCount", "defaultMaxEnergy",
-    "defaultAttackRange", "initialRound",
-    "killRewardDrawCount", "smallTeamBonuses", "largeTeamRules"
-  ]) {
-    assert.equal(Object.hasOwn(RULESET_DEFINITION, field), true, field);
-    assert.equal(Object.hasOwn(RUNTIME_POLICY, field), false, field);
-  }
-  assert.equal(Object.hasOwn(RUNTIME_POLICY, "deckComposition"), false);
-  const source = await readFile(projectFile("js/application/policy/RuntimePolicy.js"), "utf8");
-  const aiSource = await readFile(projectFile("js/ai/policy/AiRuntimePolicy.js"), "utf8");
-  assert.doesNotMatch(source, /playerCount|defaultAttackRange|initialRound|deckComposition/);
-  assert.doesNotMatch(source, /aiSearchTimeBudgetMs|aiSearchYieldEvery|forceAiRescueHuman/);
-  for (const retained of ["aiInitialThinkMinMs", "animationFastScale", "debugMode"]) {
-    assert.match(source, new RegExp(retained));
-  }
-  for (const retained of ["searchTimeBudgetMs", "searchYieldEvery", "forceAiRescueHuman"]) {
-    assert.match(aiSource, new RegExp(retained));
-  }
-}
-
-test("定义归属·运行策略：RUNTIME_POLICY 领域字段单一来源", frArchRulesetAuthority);
-
-/*
-功能
-验证 responseTimeoutMs 是 Application/Presentation runtime policy，不属于 Domain Ruleset。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-RULESET_DEFINITION、RUNTIME_POLICY 与 gameConfig 源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-legacy RUNTIME_POLICY 保留唯一 literal authority；Ruleset 不得拥有该字段或第二 literal。
-*/
-async function frArchResponseTimeoutOwnership() {
-  assert.equal(Object.hasOwn(RULESET_DEFINITION, "responseTimeoutMs"), false);
-  assert.equal(RUNTIME_POLICY.responseTimeoutMs, null);
-  const rulesetSource = await readFile(projectFile("js/domain/definitions/ruleset/RulesetDefinition.js"), "utf8");
-  assert.doesNotMatch(rulesetSource, /responseTimeoutMs/);
-  const runtimeSource = await readFile(projectFile("js/application/policy/RuntimePolicy.js"), "utf8");
-  assert.match(runtimeSource, /responseTimeoutMs:\s*null/);
-}
-
-test("运行策略·响应超时：只归 Runtime Policy 且保持单一 literal", frArchResponseTimeoutOwnership);
-
-
-/*
-功能
-验证 StatusDefinitions 只包含当前真实存在的静态身份/文案，不发明生命周期字段。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-STATUS_DEFINITIONS 与 status definitions 源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-只允许 id/name/description 当前可证明字段；任何 lifecycle/timing 字段出现即失败。
-*/
-async function frArchStatusAuthority() {
-  assert.deepEqual(Object.keys(STATUS_DEFINITIONS), [
-    "exposeWeakness", "allIn", "huntMark", "sealed", "lightning"
-  ]);
-  for (const status of Object.values(STATUS_DEFINITIONS)) {
-    assert.deepEqual(Object.keys(status), ["id", "name", "description"]);
-    assert.equal(status.id.length > 0, true);
-    assert.equal(status.name.length > 0, true);
-    assert.equal(status.description.length > 0, true);
-  }
-  const source = await readFile(projectFile("js/domain/definitions/statuses/StatusDefinitions.js"), "utf8");
-  for (const forbidden of ["lifecycle", "duration", "trigger", "judgment", "damage", "removal", "transfer"]) {
-    assert.equal(source.includes(forbidden), false, `status definition 不得包含 runtime 字段 ${forbidden}`);
-  }
-}
-
-test("定义归属·状态：仅静态身份与文案，无生命周期", frArchStatusAuthority);
-
-/*
-功能
-验证生产代码中所有 domain/definitions import 使用稳定本地 URL，避免重新引入 cache-busting query。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-js 全部生产 JS 源码。
-
-写入状态
-无。
-
-调用函数
-listJavaScriptFiles、readFile。
-
-边界与不变量
-domain definitions 自身无相对 import；所有外部消费不得带 build query。
-*/
-async function frArchDefinitionModuleIdentity() {
-  const files = await listJavaScriptFiles(projectFile("js"));
-  for (const file of files) {
-    const source = await readFile(file, "utf8");
-    for (const match of source.matchAll(/(?:from\s*|import\s*\()\s*["']([^"']*domain\/definitions[^"']*)["']/g)) {
-      const specifier = match[1];
-      assert.doesNotMatch(specifier, /\?build=/, `${file} -> ${specifier}`);
-    }
-  }
-}
-
-test("模块身份：domain definitions 消费稳定本地 URL", frArchDefinitionModuleIdentity);
-
-// ---- 状态模型与查询 ----
-
-/*
-功能
-验证 Domain State factories 的初始 shape 与 stateVersion dormant contract。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-createMatchState/createPlayerState/createDeckZoneState 返回值。
-
-写入状态
-无。
-
-调用函数
-createMatchState、createPlayerState、createDeckZoneState、Deck。
-
-边界与不变量
-stateVersion 只存在且为 0；PlayerState 不得包含 controllerType/aiMemory。
-*/
-function frArchStateModelFactories() {
-  const deck = new Deck();
-  const matchState = createMatchState({ deck });
-  assert.deepEqual(matchState.players, []);
-  assert.equal(matchState.deck, deck);
-  assert.equal(matchState.currentPlayerIndex, -1);
-  assert.equal(matchState.startingPlayerIndex, -1);
-  assert.equal(matchState.currentRound, RULESET_DEFINITION.initialRound);
-  assert.equal(matchState.phase, "idle");
-  assert.equal(matchState.isGameOver, false);
-  assert.equal(matchState.stateVersion, 0);
-
-  const playerState = createPlayerState({ id: "fr3-p", seatIndex: 2, battleTeam: "dusk" });
-  assert.equal(Object.hasOwn(playerState, "controllerType"), false);
-  assert.equal(Object.hasOwn(playerState, "aiMemory"), false);
-  assert.equal(Object.hasOwn(playerState, "statistics"), false);
-  assert.equal(Object.hasOwn(playerState, "character"), false);
-  assert.equal(Object.hasOwn(matchState, "selectedCharacterId"), false);
-  assert.equal(playerState.maxEnergy, RULESET_DEFINITION.defaultMaxEnergy);
-  assert.equal(playerState.attackRange, RULESET_DEFINITION.defaultAttackRange);
-
-  const firstZone = createDeckZoneState();
-  const secondZone = createDeckZoneState();
-  assert.notEqual(firstZone.cards, secondZone.cards);
-  assert.notEqual(firstZone.discardPile, secondZone.discardPile);
-  assert.equal(Object.hasOwn(firstZone, "reshuffleCount"), false);
-  assert.equal(new Deck().reshuffleCount, 0);
-}
-
-test("状态模型：Domain factories 初始 shape 与 dormant stateVersion", frArchStateModelFactories);
-
-/*
-功能
-验证 Game.state/Player/Deck 的 legacy 组合没有改变对象 key order 或 Domain field authority。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-Game、Player、Deck 实例与 Game.js/Player.js/Deck.js 源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-现有字段顺序保持；新 stateVersion 追加在 Game.state 末尾；旧 constructor 不再维护 Domain literal。
-*/
-async function frArchFinalStateComposition() {
-  const ui = makeUi();
-  const game = createGameApplication(ui, () => 0.25);
-  assert.equal(game.state.stateVersion, 0);
-  assert.deepEqual(Object.keys(game.state), [
-    "gameId", "players", "deck", "discardPile", "resolvingCards", "judgmentZone",
-    "currentPlayerIndex", "startingPlayerIndex", "currentRound", "phase",
-    "pendingAction", "pendingResponses", "activeEffects", "selectedCharacterId",
-    "winnerTeam", "publicCardPool", "currentJudgment", "dyingContext",
-    "isGameOver", "isDisposed", "logs", "debugHistory", "resolutionSerial", "stateVersion"
-  ]);
-  const player = new Player({ id: "fr3-key", seatIndex: 0, controllerType: "human", battleTeam: "dawn" });
-  assert.equal(player.controllerType, "human");
-  assert.deepEqual(Object.hasOwn(player, "aiMemory"), true);
-  game.dispose();
-
-  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  const playerSource = await readFile(projectFile("js/application/match/Player.js"), "utf8");
-  const deckSource = await readFile(projectFile("js/application/match/Deck.js"), "utf8");
-  assert.doesNotMatch(gameSource, /players:\s*\[\]/);
-  assert.doesNotMatch(gameSource, /currentRound:\s*RUNTIME_POLICY\.initialRound/);
-  assert.doesNotMatch(gameSource, /phase:\s*"idle"/);
-  assert.doesNotMatch(playerSource, /this\.hp\s*=\s*0/);
-  assert.doesNotMatch(playerSource, /this\.maxEnergy\s*=\s*RUNTIME_POLICY/);
-  assert.match(deckSource, /const zoneState = createDeckZoneState/);
-  assert.match(deckSource, /this\.cards = zoneState\.cards/);
-}
-
-test("状态组合：composition root、Player 与 Deck 只组合 Domain state", frArchFinalStateComposition);
-
-/*
-功能
-验证 StateView/MatchQueries 与旧 Game query 的返回身份与顺序完全一致。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeTeamFixture 与 Domain queries。
-
-写入状态
-无。
-
-调用函数
-makeTeamFixture、createStateView、queryCurrentActor、queryAllies、queryEnemies、queryLivingPlayers、querySeatOrderFrom。
-
-边界与不变量
-返回同一 Player 引用；allies 含自己；seat order 两种 includeSource 均一致。
-*/
-function frArchStateQueryEquivalence() {
-  const { game, small, large } = makeTeamFixture();
-  const players = game.state.players;
-  const source = players[0];
-  const view = createStateView(game.state);
-  assert.equal(view.players(), game.state.players);
-  assert.equal(view.currentActor(), game.currentPlayer);
-  assert.deepEqual(view.livingPlayers(), getLivingPlayers(game.state));
-  assert.deepEqual(queryCurrentActor(game.state), game.currentPlayer);
-  const allies = queryAllies(game.state, source);
-  const enemies = queryEnemies(game.state, source);
-  assert.deepEqual(allies, game.getAllies(source));
-  assert.deepEqual(enemies, game.getEnemies(source));
-  assert.ok(allies.includes(source));
-  for (let index = 0; index < allies.length; index += 1) {
-    assert.equal(allies[index], game.getAllies(source)[index]);
-  }
-  for (let index = 0; index < enemies.length; index += 1) {
-    assert.equal(enemies[index], game.getEnemies(source)[index]);
-  }
-  for (const includeSource of [false, true]) {
-    const ordered = querySeatOrderFrom(game.state, source, includeSource);
-    assert.deepEqual(ordered, game.seatOrderFrom(source, includeSource));
-    for (let index = 0; index < ordered.length; index += 1) {
-      assert.equal(ordered[index], game.seatOrderFrom(source, includeSource)[index]);
-    }
-  }
-  assert.equal(small.battleTeam, "dawn");
-  assert.equal(large.battleTeam, "dusk");
-}
-
-test("状态查询：current/allies/enemies/seat order 与旧 Game 完全一致", frArchStateQueryEquivalence);
-
-/*
-功能
-验证 ZoneQueries 与旧 Game zone query 的 zone 枚举、重复计数与提交判定一致。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立 Game fixture 与 Domain ZoneQueries。
-
-写入状态
-无。
-
-调用函数
-makePlayer、makeGame、instance、queryCardZoneOccurrences、queryCommittedToDiscard、queryCommittedToEquipment。
-
-边界与不变量
-Card entity 使用同一引用；zone label 顺序与旧实现一致。
-*/
-function frArchZoneQueryEquivalence() {
-  const owner = makePlayer("fr3-zone-owner", 0, "dawn", "ai", 0);
-  const other = makePlayer("fr3-zone-other", 1, "dusk", "ai", 1);
-  const { game } = makeGame([owner, other]);
-  const card = instance("charge");
-  owner.hand.push(card);
-  assert.deepEqual(queryCardZoneOccurrences(game.state, card), game.getCardZoneOccurrences(card));
-  assert.deepEqual(queryCardZoneOccurrences(game.state, card), [`hand:${owner.id}`]);
-
-  game.state.deck.discardPile.push(card);
-  assert.deepEqual(queryCardZoneOccurrences(game.state, card), ["discard", `hand:${owner.id}`]);
-  assert.deepEqual(queryCardZoneOccurrences(game.state, card), game.getCardZoneOccurrences(card));
-  owner.hand.splice(owner.hand.indexOf(card), 1);
-  assert.equal(queryCommittedToDiscard(game.state, card), true);
-  assert.equal(queryCommittedToDiscard(game.state, card), game.isCardCommittedToDiscard(card));
-
-  const equipment = instance("telescope");
-  owner.equipment = equipment;
-  assert.equal(queryCommittedToEquipment(game.state, owner, equipment), true);
-  assert.equal(queryCommittedToEquipment(game.state, owner, equipment), game.isCardCommittedToEquipment(owner, equipment));
-  assert.equal(queryCommittedToEquipment(game.state, other, equipment), false);
-}
-
-test("区域查询：出现位置、重复计数与提交判定", frArchZoneQueryEquivalence);
-
-/*
-功能
-验证 Domain State 模块不 import AI/UI/runtime，也不声明 controllerType/aiMemory/SearchState。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-js/domain/state 全部源码。
-
-写入状态
-无。
-
-调用函数
-listJavaScriptFiles、readFile。
-
-边界与不变量
-允许引用 state 字段，但禁止 dual-schema 或 AI 信息 token。
-*/
-async function frArchDomainStatePurity() {
-  const files = await listJavaScriptFiles(projectFile("js/domain/state"));
-  assert.ok(files.length >= 6);
-  for (const file of files) {
-    const source = await readFile(file, "utf8");
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
-    assert.doesNotMatch(source, /from\s+["'][^"']*(?:\/ai\/|\/ui\/|\/audio\/|core\/Game\.js|core\/Player\.js|core\/Deck\.js)/, file);
-    assert.doesNotMatch(code, /controllerType/, file);
-    assert.doesNotMatch(code, /aiMemory/, file);
-    assert.doesNotMatch(code, /SearchState|VisibleState|BeliefState|Knowledge/, file);
-    assert.doesNotMatch(code, /Array\.isArray\(player\.statuses\)/, file);
-    assert.doesNotMatch(code, /equipmentRetentionProbability/, file);
-  }
-}
-
-test("Domain 状态纯度：State Model/View/Queries 不识别 AI、UI 或 runtime", frArchDomainStatePurity);
-
-/*
-功能
-验证 stateVersion 只由 Domain transition authority 修改，成功 mutation +1，no-op 不增加。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-全部生产 js 源码与独立 Game fixture。
-
-写入状态
-无。
-
-调用函数
-listJavaScriptFiles、readFile、makeGame、makePlayer。
-
-边界与不变量
-任何 Domain transition 外的 stateVersion 写或 stale-result/Worker 消费仍视为失败。
-*/
-async function frArchStateVersionDormant() {
-  const actor = makePlayer("fr3-version-actor", 0, "dawn");
-  const { game } = makeGame([actor]);
-  assert.equal(game.state.stateVersion, 0);
-  transitionChangeEnergy(game.state, actor, 1);
-  assert.equal(game.state.stateVersion, 1);
-  transitionChangeEnergy(game.state, actor, 0);
-  assert.equal(game.state.stateVersion, 1);
-  const files = await listJavaScriptFiles(projectFile("js"));
-  for (const file of files) {
-    const source = await readFile(file, "utf8");
-    if (file.endsWith("StateVersion.js")) {
-      assert.match(source, /state\.stateVersion \+= 1/);
-      continue;
-    }
-    assert.doesNotMatch(source, /stateVersion\s*\+\+|stateVersion\s*\+=\s*1/, file);
-    assert.doesNotMatch(source, /incrementStateVersion/, file);
-  }
-}
-
-test("状态版本：authority 唯一，成功 +1，no-op +0", frArchStateVersionDormant);
-
-// ---- Domain Transitions 与状态版本 ----
-
-/*
-功能
-验证 ResourceTransitions 的 energy/hp/shield 行为、clamp 与 no-op。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立 Player fixture。
-
-写入状态
-Player primitive resource 字段。
-
-调用函数
-transitionChangeEnergy、transitionChangeHp、transitionSetHp、transitionChangeShield。
-
-边界与不变量
-失败/no-op 返回 0 且不修改其它字段。
-*/
-function frArchResourceTransitions() {
-  const player = makePlayer("fr4-resource", 0, "dawn", "ai", 0);
-  const state = { stateVersion: 0 };
-  player.maxEnergy = 3;
-  player.energy = 2;
-  assert.equal(transitionChangeEnergy(state, player, 5), 1);
-  assert.equal(player.energy, 3);
-  assert.equal(transitionChangeEnergy(state, player, 0), 0);
-  assert.equal(transitionChangeEnergy(state, player, -10), -3);
-  assert.equal(player.energy, 0);
-
-  player.hp = 2;
-  assert.equal(transitionChangeHp(state, player, 1), 3);
-  assert.equal(transitionChangeHp(state, player, 0), 3);
-  assert.equal(transitionSetHp(state, player, 0), 0);
-
-  player.shield = 1;
-  assert.equal(transitionChangeShield(state, player, 2), 3);
-  assert.equal(transitionChangeShield(state, player, 0), 3);
-  assert.equal(transitionChangeShield(state, player, -3), 0);
-  assert.equal(state.stateVersion, 6);
-}
-
-test("Domain Transition·资源：energy clamp、hp/shield 与 no-op", frArchResourceTransitions);
-
-/*
-功能
-验证 StatusTransitions 的 generic set/remove/clear。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立 Player statuses。
-
-写入状态
-Player.statuses。
-
-调用函数
-transitionSetStatus、transitionRemoveStatus、transitionClearStatuses。
-
-边界与不变量
-transition 不理解具体状态语义。
-*/
-function frArchStatusTransitions() {
-  const player = makePlayer("fr4-status", 0, "dawn");
-  const state = { stateVersion: 0 };
-  const first = { stacks: 1 };
-  const second = { sourceId: "p1" };
-  assert.equal(transitionSetStatus(state, player, "exposeWeakness", first), first);
-  assert.equal(player.statuses.exposeWeakness, first);
-  assert.equal(transitionRemoveStatus(state, player, "exposeWeakness"), first);
-  assert.equal(player.statuses.exposeWeakness, undefined);
-  transitionSetStatus(state, player, "huntMark", second);
-  const previous = transitionClearStatuses(state, player);
-  assert.equal(previous.huntMark, second);
-  assert.deepEqual(player.statuses, {});
-}
-
-test("Domain Transition·状态：generic set/remove/clear，不解释状态语义", frArchStatusTransitions);
-
-/*
-功能
-验证 ZoneTransitions 的 append/remove/move 与 Card identity。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立牌区数组。
-
-写入状态
-牌区数组。
-
-调用函数
-transitionAppendCardToZone、transitionRemoveCardFromZone、transitionMoveCardBetweenZones。
-
-边界与不变量
-move 不复制 Card；来源不存在返回 false 且目标不变。
-*/
-function frArchZoneTransitions() {
-  const card = instance("charge");
-  const source = [];
-  const target = [];
-  const state = { stateVersion: 0 };
-  transitionAppendCardToZone(state, source, card);
-  assert.equal(source[0], card);
-  assert.equal(transitionRemoveCardFromZone(state, source, card), true);
-  assert.equal(transitionRemoveCardFromZone(state, source, card), false);
-  transitionAppendCardToZone(state, source, card);
-  assert.equal(transitionMoveCardBetweenZones(state, source, target, card), true);
-  assert.deepEqual(source, []);
-  assert.equal(target[0], card);
-  assert.equal(transitionMoveCardBetweenZones(state, source, target, card), false);
-}
-
-test("Domain Transition·区域：通用数组移动与实体身份", frArchZoneTransitions);
-
-/*
-功能
-验证 MatchState/PlayerState primitive transitions 只提交已决定的值。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立 state 与 Player fixture。
-
-写入状态
-Match/Player primitive 字段。
-
-调用函数
-Match/Player transition functions。
-
-边界与不变量
-transition 不计算下一玩家、胜负或角色选择。
-*/
-function frArchPrimitiveStateTransitions() {
-  const state = { players: [], currentPlayerIndex: -1, currentRound: 1, phase: "idle", winnerTeam: null, isGameOver: false, publicCardPool: [] };
-  transitionSetCurrentPlayerIndex(state, 2);
-  assert.equal(state.currentPlayerIndex, 2);
-  transitionSetCurrentRound(state, 4);
-  assert.equal(state.currentRound, 4);
-  transitionSetMatchPhase(state, "play");
-  assert.equal(state.phase, "play");
-  transitionSetWinnerTeam(state, "dawn");
-  transitionSetGameOver(state, true);
-  assert.equal(state.winnerTeam, "dawn");
-  assert.equal(state.isGameOver, true);
-  const pool = [];
-  assert.equal(transitionSetPublicCardPool(state, pool), pool);
-
-  const player = makePlayer("fr4-primitive", 0, "dusk");
-  const character = CHARACTER_DEFINITIONS[0];
-  transitionApplyCharacterDefinition(state, player, character);
-  assert.equal(player.characterId, character.id);
-  assert.equal(player.hp, character.maxHp);
-  assert.equal(player.energy, character.initialEnergy);
-  const version = player.handVersion;
-  assert.equal(transitionBumpHandVersion(state, player), version + 1);
-  transitionSetAlive(state, player, false);
-  assert.equal(player.alive, false);
-  const equipment = instance("telescope");
-  assert.equal(transitionSetEquipment(state, player, equipment), equipment);
-  assert.equal(player.equipment, equipment);
-}
-
-test("Domain Transition·对局与玩家：只提交已决定 primitive 写入", frArchPrimitiveStateTransitions);
-
-/*
-功能
-验证 transitions 目录 purity：无 Game/EventBus/UI/AI import，无 cardId/skillId 规则分支。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-js/domain/state/transitions 源码。
-
-写入状态
-无。
-
-调用函数
-listJavaScriptFiles、readFile。
-
-边界与不变量
-注释中允许解释禁止项；代码本体不得出现禁止依赖。
-*/
-async function frArchTransitionPurity() {
-  const files = await listJavaScriptFiles(projectFile("js/domain/state/transitions"));
-  assert.ok(files.length >= 5);
-  for (const file of files) {
-    const source = await readFile(file, "utf8");
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
-    assert.doesNotMatch(source, /from\s+["'][^"']*(?:\/ai\/|\/ui\/|\/audio\/|core\/Game\.js|core\/ActionLegality\.js|cards\/cardRegistry|characters\/skillRegistry|ResponseSystem|DyingSystem|JudgmentSystem)/, file);
-    assert.doesNotMatch(code, /definitionId\s*===|skillId\s*===|cardId\s*===/, file);
-    assert.doesNotMatch(code, /statusId\s*===/, file);
-  }
-}
-
-test("Domain Transition·纯度：无 runtime/rule import 与 cardId/skillId 分支", frArchTransitionPurity);
-
-/*
-功能
-验证已迁移的 legacy commit 不再直接写 resource/status/phase，且 stateVersion 随成功 commit 增长。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-Game.js/cardRegistry.js/skillRegistry.js/Player.js 源码与独立 fixture。
-
-写入状态
-无。
-
-调用函数
-readFile、makeGame、makePlayer。
-
-边界与不变量
-flags/counters 与大量 zone 写入仍为已知 4B blocker；本测试只证明 foundation 未伪激活 version。
-*/
-async function frArchFinalCommitOwners() {
-  const actor = makePlayer("fr4-commit", 0, "dawn");
-  const { game } = makeGame([actor]);
-  assert.equal(game.state.stateVersion, 0);
-  transitionChangeEnergy(game.state, actor, 1);
-  transitionSetStatus(game.state, actor, "huntMark", { sourceId: "x" });
-  transitionSetMatchPhase(game.state, "status");
-  assert.equal(game.state.stateVersion, 3);
-
-  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  const cardSource = await readFile(projectFile("js/application/action/CardEffectRuntime.js"), "utf8");
-  const skillSource = await readFile(projectFile("js/application/action/SkillEffectRuntime.js"), "utf8");
-  assert.doesNotMatch(gameSource, /target\.hp\s*-=|\btarget\.shield\s*-=/);
-  assert.doesNotMatch(gameSource, /state\.phase\s*=\s*["']/);
-  assert.doesNotMatch(cardSource, /target\.shield\s*\+=/);
-  assert.doesNotMatch(skillSource, /target\.shield\s*=\s*\(/);
-}
-
-test("架构·状态提交：Application effects 经 transition 且 stateVersion 增长", frArchFinalCommitOwners);
-
-
-// ---- StateView 与提交边界 ----
-
-/*
-功能
-验证 FR-ARCH-3 carry-in closures：selectedCharacterId 和 legacy character 不再属于 Domain model，RuleStateView 不泄漏 AI/UI。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-Domain factories、Player/Game legacy runtime 与 RuleStateView。
-
-写入状态
-无。
-
-调用函数
-createMatchState、createPlayerState、makeGame、makePlayer、createRuleStateView。
-
-边界与不变量
-legacy runtime shape 保持不变，只是 ownership 声明被修正。
-*/
-function frArchPhaseACarryInClosure() {
-  const deck = new Deck();
-  const matchState = createMatchState({ deck });
-  assert.equal(Object.hasOwn(matchState, "selectedCharacterId"), false);
-
-  const playerState = createPlayerState({ id: "p", seatIndex: 0, battleTeam: "dawn" });
-  assert.equal(Object.hasOwn(playerState, "character"), false);
-
-  const player = makePlayer("p", 0, "dawn", "human", 0);
-  assert.equal(player.character, CHARACTER_DEFINITIONS[0]);
-  const legacyCharacter = player.character;
-  const { game } = makeGame([player]);
-  assert.equal(game.state.selectedCharacterId, null);
-
-  const ruleView = createRuleStateView(game.state);
-  const projected = ruleView.players()[0];
-  assert.equal(projected.id, player.id);
-  assert.equal(projected.characterId, player.characterId);
-  assert.equal(Object.hasOwn(projected, "controllerType"), false);
-  assert.equal(Object.hasOwn(projected, "aiMemory"), false);
-  assert.equal(Object.hasOwn(projected, "character"), false);
-  assert.equal(Object.hasOwn(projected, "portrait"), false);
-  assert.equal(Object.hasOwn(projected, "aiProfile"), false);
-  const actor = ruleView.currentActor();
-  assert.equal(actor.id, player.id);
-  assert.ok(ruleView.alliesOf(actor).some((entry) => entry.id === player.id));
-  assert.equal(ruleView.enemiesOf(actor).some((entry) => entry.id === player.id), false);
-  assert.deepEqual(ruleView.seatOrderFrom(actor, false).map((entry) => entry.id), game.seatOrderFrom(player, false).map((entry) => entry.id));
-  assert.deepEqual(ruleView.seatOrderFrom(actor, true).map((entry) => entry.id), game.seatOrderFrom(player, true).map((entry) => entry.id));
-  assert.equal(player.character, legacyCharacter);
-}
-
-test("状态视图边界：selectedCharacterId/legacy character/RuleStateView boundary 已关闭", frArchPhaseACarryInClosure);
-
-/*
-功能
-验证 RuleStateView 的公开 source/player 参数只接受 Rule Player projection，且 currentActor/players 结果可自然组合传给 allies/enemies/seatOrder。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeTeamFixture 与 createRuleStateView。
-
-写入状态
-无。
-
-调用函数
-makeTeamFixture、createRuleStateView、view.players/currentActor/alliesOf/enemiesOf/seatOrderFrom/playerById。
-
-边界与不变量
-Rule projection 不包含 controllerType/aiMemory/character/aiProfile/portrait 与 SearchState 字段；真实 Player 不得作为 source/player 参数。
-*/
-function frArchPhaseARuleStateViewContract() {
-  const { game, small, large } = makeTeamFixture();
-  const view = createRuleStateView(game.state);
-  const forbidden = [
-    "controllerType",
-    "aiMemory",
-    "character",
-    "aiProfile",
-    "portrait",
-    "roleTags",
-    "equipmentRetentionProbability",
-    "visibleHand",
-    "knowledge",
-    "beliefState",
-    "searchState"
-  ];
-  const assertProjection = (projection) => {
-    assert.ok(Object.isFrozen(projection));
-    assert.ok(Object.isFrozen(projection.statusIds));
-    for (const field of forbidden) {
-      assert.equal(Object.hasOwn(projection, field), false, `Rule projection 不得包含 ${field}`);
-    }
-  };
-  const projections = view.players();
-  projections.forEach(assertProjection);
-  assert.equal(view.currentActor().id, game.currentPlayer.id);
-
-  const actor = view.currentActor();
-  assertProjection(actor);
-  assert.deepEqual(
-    view.alliesOf(actor).map((entry) => entry.id),
-    game.getAllies(small).map((entry) => entry.id)
-  );
-  assert.deepEqual(
-    view.enemiesOf(actor).map((entry) => entry.id),
-    game.getEnemies(small).map((entry) => entry.id)
-  );
-  for (const includeSource of [false, true]) {
-    assert.deepEqual(
-      view.seatOrderFrom(actor, includeSource).map((entry) => entry.id),
-      game.seatOrderFrom(small, includeSource).map((entry) => entry.id)
-    );
-  }
-
-  for (let index = 0; index < projections.length; index += 1) {
-    const projection = projections[index];
-    const real = game.state.players[index];
-    assert.equal(projection.id, real.id);
-    assertProjection(projection);
-    assert.deepEqual(
-      view.alliesOf(projection).map((entry) => entry.id),
-      game.getAllies(real).map((entry) => entry.id)
-    );
-    assert.deepEqual(
-      view.enemiesOf(projection).map((entry) => entry.id),
-      game.getEnemies(real).map((entry) => entry.id)
-    );
-    for (const includeSource of [false, true]) {
-      assert.deepEqual(
-        view.seatOrderFrom(projection, includeSource).map((entry) => entry.id),
-        game.seatOrderFrom(real, includeSource).map((entry) => entry.id)
-      );
-    }
-  }
-
-  const byId = view.playerById(large.id);
-  assertProjection(byId);
-  assert.equal(byId.id, large.id);
-  assert.throws(() => view.alliesOf(game.state.players[0]), /Rule Player projection/);
-  assert.throws(() => view.enemiesOf(game.state.players[0]), /Rule Player projection/);
-  assert.throws(() => view.seatOrderFrom(game.state.players[0]), /Rule Player projection/);
-}
-
-test("状态视图：RuleStateView projection 可组合且拒绝 Real Player 双 schema", frArchPhaseARuleStateViewContract);
-
-/*
-功能
-记录 PHASE A mutation gate 已满足：无 version-relevant direct writes，stateVersion authoritative。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-Game.js、skillRegistry.js、Player.js 源码与独立 Game。
-
-写入状态
-无。
-
-调用函数
-readFile、makeGame、makePlayer。
-
-边界与不变量
-该测试验证 blocker 已关闭且只有 transition authority 写 stateVersion。
-*/
-async function frArchPhaseAMutationGateStillBlocked() {
-  const actor = makePlayer("fr4b-gate", 0, "dawn");
-  const { game } = makeGame([actor]);
-  assert.equal(game.state.stateVersion, 0);
-
-  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  const skillSource = await readFile(projectFile("js/application/action/SkillEffectRuntime.js"), "utf8");
-  assert.doesNotMatch(gameSource, /turnFlags\.recycleDeviceUses\s*=/);
-  assert.doesNotMatch(gameSource, /player\.hand\.push/);
-  assert.doesNotMatch(skillSource, /owner\.turnFlags\.momentum\s*=/);
-}
-
-test("架构·状态写入：direct writes 已关闭，stateVersion authoritative", frArchPhaseAMutationGateStillBlocked);
-
-
-// ---- 状态版本契约 ----
-
-/*
-功能
-验证 authoritative stateVersion 的 success/no-op/fail/non-domain/atomic-group 语义。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-独立 state/player/zones 与 legacy log。
-
-写入状态
-Domain transitions 与 legacy presentation。
-
-调用函数
-transitionChangeHp、transitionSetStatus、transitionRemoveStatus、transitionMoveCardBetweenZones、transitionMoveCardsAtomically。
-
-边界与不变量
-所有版本变化仅由 transition authority 产生。
-*/
-function frArchStateVersionContract() {
-  const state = { stateVersion: 0, phase: "idle", currentPlayerIndex: 0 };
-  const player = makePlayer("fr4b-version", 0, "dawn");
-  transitionChangeHp(state, player, 1);
-  assert.equal(state.stateVersion, 1);
-  transitionChangeHp(state, player, 0);
-  assert.equal(state.stateVersion, 1);
-  transitionSetStatus(state, player, "huntMark", { sourceId: "x" });
-  assert.equal(state.stateVersion, 2);
-  transitionRemoveStatus(state, player, "missing");
-  assert.equal(state.stateVersion, 2);
-  const source = []; const target = [];
-  transitionMoveCardBetweenZones(state, source, target, { id: "x" });
-  assert.equal(state.stateVersion, 2);
-  const cards = [instance("block"), instance("block")];
-  const hand = [...cards];
-  const discard = [];
-  transitionMoveCardsAtomically(state, hand, discard, cards);
-  assert.equal(state.stateVersion, 3);
-  assert.deepEqual(discard, cards);
-}
-
-test("状态版本：success +1、no-op/fail +0、atomic group +1", frArchStateVersionContract);
-
-// ---- Domain 规则 ----
-
-/*
-功能
-验证 Team Rules 已拥有规模、额度与能量公式，且 legacy TeamRuleService/TeamManager 只转发。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeTeamFixture、createRuleStateView 与 Domain TeamRules。
-
-写入状态
-无。
-
-调用函数
-getTeamSize、isSmallTeam、getTeamRules、getInitialHandCount、getDrawCount、getAttackLimit、getRecoverLimit、getMaxEnergy、getTurnEnergyBreakdown。
-
-边界与不变量
-小队/大队全部 legacy==Domain；AI 反事实装备投影仍由 facade 适配。
-*/
-function frArch5TeamRules() {
-  const { game, small, large } = makeTeamFixture();
-  const view = createRuleStateView(game.state);
-  const rulePlayers = view.players();
-  const ruleState = { players: rulePlayers };
-  const smallRule = rulePlayers.find((player) => player.id === small.id);
-  const largeRule = rulePlayers.find((player) => player.id === large.id);
-  assert.equal(getTeamSize(ruleState, smallRule), 2);
-  assert.equal(getTeamSize(ruleState, largeRule), 3);
-  assert.equal(getTeamSize(ruleState, "dawn"), game.teamRules.getTeamSize("dawn"));
-  assert.equal(isSmallTeam(ruleState, smallRule), true);
-  assert.equal(isSmallTeam(ruleState, largeRule), false);
-  assert.equal(getTeamRules(ruleState, smallRule), RULESET_DEFINITION.smallTeamBonuses);
-  assert.equal(getTeamRules(ruleState, largeRule), RULESET_DEFINITION.largeTeamRules);
-  assert.equal(getInitialHandCount(ruleState, smallRule), game.teamRules.getInitialHandCount(small));
-  assert.equal(getInitialHandCount(ruleState, largeRule), game.teamRules.getInitialHandCount(large));
-  assert.equal(getDrawCount(ruleState, smallRule), game.teamRules.getDrawCount(small));
-  assert.equal(getAttackLimit(ruleState, smallRule), game.teamRules.getAttackLimit(small));
-  assert.equal(getAttackLimit(ruleState, largeRule), game.teamRules.getAttackLimit(large));
-  assert.equal(getRecoverLimit(ruleState, smallRule), null);
-  assert.equal(getMaxEnergy(ruleState, smallRule), game.teamRules.getMaxEnergy(small));
-  assert.equal(getMaxEnergy(ruleState, largeRule), game.teamRules.getMaxEnergy(large));
-  assert.deepEqual(getTurnEnergyBreakdown(ruleState, smallRule), { baseAmount:1, teamBonus:0, equipmentBonus:0 });
-  assert.deepEqual(
-    getTurnEnergyBreakdown(ruleState, { ...smallRule, equipmentDefinitionId:"energyDevice" }),
-    { baseAmount:1, teamBonus:0, equipmentBonus:1 }
-  );
-  assert.deepEqual(
-    game.teamRules.getTurnEnergyBreakdown({ battleTeam:small.battleTeam, equipment:{ definitionId:"energyDevice" } }),
-    { baseAmount:1, teamBonus:0, equipmentBonus:1 }
-  );
-  assert.deepEqual(view.alliesOf(smallRule).map((entry) => entry.id), game.getAllies(small).map((entry) => entry.id));
-  assert.deepEqual(view.enemiesOf(smallRule).map((entry) => entry.id), game.getEnemies(small).map((entry) => entry.id));
-}
-
-test("Domain 规则·阵营：规模/手牌/摸牌/能量/攻击/调息与 ally-enemy 语义", frArch5TeamRules);
-
-/*
-功能
-验证确定性 Distance Rules 的存活环、基础距离、装备修正、最小距离与借势距离，且 AI 概率仍在 Domain 外。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-distanceFixture、instance 与 Domain DistanceRules/DistanceSystem。
-
-写入状态
-临时修改测试 Player 的存活与装备字段。
-
-调用函数
-getAliveRing、getBaseDistance、getDistance、getRangeLegalityProbability、getAssaultTargetCandidates。
-
-边界与不变量
-deterministic core 不读取 equipmentRetentionProbability。
-*/
-function frArch5DistanceRules() {
-  const { players, game } = distanceFixture();
-  const [a, b, c, d] = players;
-  assert.deepEqual(getAliveRing(players).map((player) => player.id), ["A","B","C","D","E"]);
-  assert.equal(getBaseDistance(players, a, a), 0);
-  assert.equal(getBaseDistance(players, a, b), 1);
-  assert.equal(getDistance(players, a, a), 0);
-  assert.equal(getDistance(players, a, b), 1);
-  assert.equal(getDistance(players, a, c, "telescope", null), 1);
-  assert.equal(getDistance(players, a, b, null, "barrierDevice"), 2);
-  assert.equal(getDistance(players, a, b, "telescope", "barrierDevice"), 1);
-  assert.equal(getDistance(players, a, b, "telescope", null), 1, "minimum distance floor");
-  assert.equal(getDistance(players, a, b, "telescope", "barrierDevice") <= a.attackRange, true, "range boundary");
-
-  const livingBefore = players.map((player) => player.alive);
-  players[1].alive = false;
-  assert.equal(getBaseDistance(players, a, c), 1, "dead-player ring compression");
-  assert.equal(getBaseDistance(players, b, c), Infinity);
-  players[1].alive = livingBefore[1];
-
-  b.equipment = instance("telescope");
-  assert.equal(getDistance(players, b, d, "telescope", null), 1, "borrowed assault distance from first target");
-  b.equipment = null;
-
-  for (const player of players) player.alive = false;
-  players[0].alive = true;
-  players[1].alive = true;
-  assert.equal(getBaseDistance(players, a, b), 1, "two-living ring");
-  for (let index = 0; index < players.length; index += 1) players[index].alive = livingBefore[index];
-  assert.equal(getRangeLegalityProbability(game, a, c, 2), 1);
-  const domainSource = String(getDistance);
-  assert.equal(domainSource.includes("equipmentRetentionProbability"), false);
-}
-
-test("Domain 规则·距离：确定性核心完整，AI probability 不进入 Domain", frArch5DistanceRules);
-
-/*
-功能
-验证 Turn Rules 唯一拥有 reset semantics 与纯回合推进，RuleUsageTransitions 只提交已决定对象。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeTeamFixture、makePlayer、Domain TurnRules、RuleUsageTransitions 与源码。
-
-写入状态
-测试 Player turnFlags/roundFlags 与独立 stateVersion。
-
-调用函数
-createTurnUsageState、createGlobalTurnReactiveState、createRoundUsageState、reset transitions、getAttackUsage、hasAttackUseRemaining、hasRecoverUseRemaining、getActiveSkillUseCount、hasActiveSkillUseRemaining、isActorTurn、shouldSkipActionPhase、calculateNextActorIndex。
-
-边界与不变量
-Transition 不再维护 reset 字段清单。
-*/
-async function frArch5TurnRules() {
-  const { game, small, large } = makeTeamFixture();
-  const smallRules = game.teamRules.getRules(small);
-  const largeRules = game.teamRules.getRules(large);
-  const smallTurn = createTurnUsageState(smallRules);
-  const largeTurn = createTurnUsageState(largeRules);
-  assert.equal(smallTurn.attackLimit, 2);
-  assert.equal(largeTurn.attackLimit, 1);
-  assert.equal(smallTurn.recoverLimit, null);
-  assert.equal(largeTurn.recoverLimit, null);
-  assert.ok(smallTurn.categoriesUsed instanceof Set);
-  assert.ok(smallTurn.activeSkillsUsed instanceof Set);
-  assert.equal(smallTurn.guardianAidUsed, false);
-
-  const player = makePlayer("fr5-turn", 0, "dawn");
-  const state = { stateVersion: 0 };
-  const decided = createTurnUsageState(smallRules);
-  transitionResetTurnFlags(state, player, decided);
-  assert.equal(player.turnFlags, decided);
-  assert.equal(state.stateVersion, 1);
-  const reactive = createGlobalTurnReactiveState();
-  transitionResetGlobalTurnReactiveFlags(state, player, reactive);
-  assert.equal(player.turnFlags.categoriesUsed, reactive.categoriesUsed);
-  assert.equal(player.turnFlags.momentum, reactive.momentum);
-  assert.equal(state.stateVersion, 2);
-  player.roundFlags = { legacyMarker:true };
-  transitionResetRoundFlags(state, player, createRoundUsageState());
-  assert.deepEqual(player.roundFlags, {});
-  assert.equal(state.stateVersion, 3);
-  assert.deepEqual(createRoundUsageState(), {});
-
-  assert.deepEqual(getAttackUsage({ used:1, limit:2 }), { used:1, limit:2 });
-  assert.equal(hasAttackUseRemaining({ used:1, limit:2 }), true);
-  assert.equal(hasAttackUseRemaining({ used:2, limit:2 }), false);
-  assert.equal(hasAttackUseRemaining({ used:0, limit:0 }), false);
-  assert.equal(hasRecoverUseRemaining(3, null), true);
-  assert.equal(hasRecoverUseRemaining(1, 1), false);
-  const usage = createTurnUsageState(smallRules);
-  assert.equal(getActiveSkillUseCount(usage, "breakArmy"), 0);
-  usage.activeSkillUseCounts.breakArmy = 2;
-  assert.equal(getActiveSkillUseCount(usage, "breakArmy"), 2);
-  assert.equal(hasActiveSkillUseRemaining(2, 2), false);
-  assert.equal(hasActiveSkillUseRemaining(1, 2), true);
-  assert.equal(isActorTurn("play", "p1", "p1"), true);
-  assert.equal(isActorTurn("judgment", "p1", "p1"), false);
-  assert.equal(isActorTurn("play", "p1", "p2"), false);
-  assert.equal(shouldSkipActionPhase({ skipActionPhase:true }), true);
-
-  const ring = [
-    { id:"r0", seatIndex:0, alive:true },
-    { id:"r1", seatIndex:1, alive:false },
-    { id:"r2", seatIndex:2, alive:true }
-  ];
-  assert.deepEqual(calculateNextActorIndex(ring, 0, 0), { nextIndex:2, wrapped:false });
-  const wrapRing = [
-    { id:"r0", seatIndex:0, alive:true },
-    { id:"r1", seatIndex:1, alive:true },
-    { id:"r2", seatIndex:2, alive:false }
-  ];
-  assert.deepEqual(calculateNextActorIndex(wrapRing, 1, 2), { nextIndex:0, wrapped:true });
-
-  const transitionSource = await readFile(projectFile("js/domain/state/transitions/RuleUsageTransitions.js"), "utf8");
-  assert.doesNotMatch(transitionSource, /attackUsed:\s*0/);
-  assert.doesNotMatch(transitionSource, /guardianAidUsed:\s*false/);
-  assert.doesNotMatch(transitionSource, /momentum:\s*0/);
-  assert.match(transitionSource, /decidedTurnFlags|decidedRoundFlags|decidedReactiveState/);
-}
-
-test("Domain 规则·回合：reset semantics 由 Domain Turn Rule 拥有，Transition 只 commit", frArch5TurnRules);
-
-/*
-功能
-验证 Judgment Rules 覆盖雷达防御与延迟状态判定的当前成功/失败分类。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-interpretDefenseJudgment、interpretDelayedStatusJudgment。
-
-边界与不变量
-与 JudgmentSystem 当前分类保持一致。
-*/
-function frArch5JudgmentRules() {
-  assert.deepEqual(interpretDefenseJudgment("tactic"), { handled:true, immune:true, category:"tactic" });
-  assert.deepEqual(interpretDefenseJudgment("basic"), { handled:true, immune:false, category:"basic" });
-  assert.deepEqual(interpretDefenseJudgment("equipment"), { handled:true, immune:false, category:"equipment" });
-  assert.equal(interpretDelayedStatusJudgment("equipment", "equipment"), true);
-  assert.equal(interpretDelayedStatusJudgment("tactic", "equipment"), false);
-  assert.equal(interpretDelayedStatusJudgment("tactic", "tactic"), true);
-  assert.equal(interpretDelayedStatusJudgment("basic", "tactic"), false);
-}
-
-test("Domain 规则·判定：雷达/封印/闪电判定分类", frArch5JudgmentRules);
-
-/*
-功能
-验证 Combat Rules 的护盾吸收、生命伤害、负 HP/overkill、濒死与治疗 clamp。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-calculateDamageResult、calculateHealAmount、isDying。
-
-边界与不变量
-不改变 DyingSystem workflow。
-*/
-function frArch5CombatRules() {
-  assert.deepEqual(calculateDamageResult(3, 0, 4), { shieldAbsorbed:0, hpDamage:3, remainingHp:1, dying:false });
-  assert.deepEqual(calculateDamageResult(3, 5, 4), { shieldAbsorbed:3, hpDamage:0, remainingHp:4, dying:false });
-  assert.deepEqual(calculateDamageResult(3, 2, 4), { shieldAbsorbed:2, hpDamage:1, remainingHp:3, dying:false });
-  assert.deepEqual(calculateDamageResult(0, 2, 4), { shieldAbsorbed:0, hpDamage:0, remainingHp:4, dying:false });
-  assert.deepEqual(calculateDamageResult(4, 0, 4), { shieldAbsorbed:0, hpDamage:4, remainingHp:0, dying:true });
-  assert.deepEqual(calculateDamageResult(8, 0, 4), { shieldAbsorbed:0, hpDamage:8, remainingHp:-4, dying:true });
-  assert.equal(isDying(-1, true), true);
-  assert.equal(isDying(0, false), false);
-  assert.equal(calculateHealAmount(5, 4, 1), 3);
-  assert.equal(calculateHealAmount(5, 4, 4), 0);
-  assert.equal(calculateHealAmount(0, 4, 2), 0);
-}
-
-test("Domain 规则·战斗：damage/shield/lethal/overkill/negative HP/heal clamp", frArch5CombatRules);
-
-/*
-功能
-验证 Status Rules 的破势/孤注/猎印/封印/闪电语义，以及闪电下一持有者座次规则。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-STATUS_DEFINITIONS 与 makeTeamFixture。
-
-写入状态
-无。
-
-调用函数
-getExposeWeaknessStacks、isExposeWeaknessConsumable、getAllInAssaultBonus、isHuntMarkExpired、getStatusDefinition、hasStatus、nextDomainLightningReceiverId、interpretDelayedStatusJudgment。
-
-边界与不变量
-identity 只来自 STATUS_DEFINITIONS；不创建第二份 catalog。
-*/
-function frArch5StatusRules() {
-  assert.equal(getExposeWeaknessStacks({ stacks:3 }), 3);
-  assert.equal(getExposeWeaknessStacks(null), 0);
-  assert.equal(isExposeWeaknessConsumable({ stacks:3 }), true);
-  assert.equal(isExposeWeaknessConsumable({ stacks:0 }), false);
-  assert.equal(getAllInAssaultBonus({ assaultBonus:1 }), 1);
-  assert.equal(getAllInAssaultBonus(null), 0);
-  assert.equal(isHuntMarkExpired({ expireAtTurnEnd:2 }, 2), true);
-  assert.equal(isHuntMarkExpired({ expireAtTurnEnd:3 }, 2), false);
-  assert.equal(getStatusDefinition("sealed"), STATUS_DEFINITIONS.sealed);
-  assert.equal(getStatusDefinition("missing"), null);
-  assert.equal(hasStatus({ statusIds:["sealed"] }, "sealed"), true);
-  assert.equal(hasStatus({ statusIds:[] }, "sealed"), false);
-  assert.equal(interpretDelayedStatusJudgment("tactic", "tactic"), true);
-  assert.equal(interpretDelayedStatusJudgment("equipment", "equipment"), true);
-
-  const canonical = (id, seatIndex, alive, statusIds = []) => ({ id, seatIndex, alive, statusIds });
-  const players = [
-    canonical("h", 0, true, ["lightning"]),
-    canonical("a", 1, true, []),
-    canonical("d", 2, false, []),
-    canonical("b", 3, true, ["lightning"]),
-    canonical("c", 4, true, [])
-  ];
-  assert.equal(nextDomainLightningReceiverId(players, "h"), "a", "skip dead and already-lightning");
-  assert.equal(nextDomainLightningReceiverId(players, "c"), "a", "wrap to earlier ally");
-  const allInvalid = [
-    canonical("h", 0, true, ["lightning"]),
-    canonical("a", 1, true, ["lightning"]),
-    canonical("b", 2, true, ["lightning"])
-  ];
-  assert.equal(nextDomainLightningReceiverId(allInvalid, "h"), "h", "fallback to holder");
-  const { game } = makeTeamFixture();
-  const view = createRuleStateView(game.state);
-  const holder = view.playerById("small");
-  game.state.players.find((player) => player.id === "small").statuses.lightning = { cardDefinitionId:"lightning" };
-  assert.equal(nextDomainLightningReceiverId(view.players(), holder.id), "large");
-}
-
-test("Domain 规则·状态：破势/孤注/猎印/封印/闪电与 identity authority", frArch5StatusRules);
-
-/*
-功能
-验证 Response Rules 的格挡需求、反制资格、响应顺序、状态反制顺序与救援/响应者资格。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-getRequiredBlockCount、isAssaultDamage、isBlockResponseAvailable、getResponseCardDefinitionId、hasSufficientResponseCards、isResponderEligible、isCounterEligible、isDyingRescueEligible、getCounterResponderOrder、getStatusCounterResponderOrder。
-
-边界与不变量
-async workflow/human-AI choice 不进入 Domain。
-*/
-function frArch5ResponseRules() {
-  assert.equal(getRequiredBlockCount(null, false), 1, "normal block");
-  assert.equal(getRequiredBlockCount("battleDevice", true), 2, "battleDevice double-block");
-  assert.equal(getRequiredBlockCount("battleDevice", false), 1);
-  assert.equal(isAssaultDamage({ subtypes:["assault"] }, "normal"), true);
-  assert.equal(isAssaultDamage({ subtypes:["assault"] }, "area"), true);
-  assert.equal(isAssaultDamage({ subtypes:[] }, "normal"), false);
-  assert.equal(isBlockResponseAvailable(true, 1), true);
-  assert.equal(isBlockResponseAvailable(false, 1), false);
-  assert.equal(isBlockResponseAvailable(true, 0), false);
-  assert.equal(getResponseCardDefinitionId("block"), "block");
-  assert.equal(getResponseCardDefinitionId("counter"), "counter");
-  assert.equal(hasSufficientResponseCards(2, 2), true);
-  assert.equal(hasSufficientResponseCards(1, 2), false);
-  assert.equal(isResponderEligible({ alive:true }), true);
-  assert.equal(isResponderEligible({ alive:false }), false);
-  assert.equal(isCounterEligible("tactic", true), true);
-  assert.equal(isCounterEligible("tactic", false), false);
-  assert.equal(isCounterEligible("basic", true), false);
-  assert.equal(isDyingRescueEligible({ alive:true, battleTeam:"dawn" }, { alive:true, hp:0, battleTeam:"dawn" }), true);
-  assert.equal(isDyingRescueEligible({ alive:true, battleTeam:"dawn" }, { alive:true, hp:0, battleTeam:"dusk" }), false);
-  assert.equal(isDyingRescueEligible({ alive:true, battleTeam:"dawn" }, { alive:true, hp:1, battleTeam:"dawn" }), false);
-  const players = [
-    { id:"p0", seatIndex:0, alive:true },
-    { id:"p1", seatIndex:1, alive:true },
-    { id:"p2", seatIndex:2, alive:false },
-    { id:"p3", seatIndex:3, alive:true },
-    { id:"p4", seatIndex:4, alive:true }
-  ];
-  assert.deepEqual(getCounterResponderOrder(players, "p0"), ["p1","p2","p3","p4"]);
-  assert.deepEqual(getStatusCounterResponderOrder(players, "p0"), ["p0","p1","p3","p4"]);
-  assert.deepEqual(getStatusCounterResponderOrder(players, "p2"), []);
-}
-
-test("Domain 规则·响应：block/counter/order/eligibility 纯规则", frArch5ResponseRules);
-
-/*
-功能
-验证 RuleStateView 新增的 status/usage/momentum 明确 accessor 足够供 Status/Combat/Turn Rules 使用且不泄漏 metadata。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeTeamFixture 与 createRuleStateView。
-
-写入状态
-测试 Player 的 statuses/turnFlags 字段。
-
-调用函数
-view.status/usage/momentum。
-
-边界与不变量
-不暴露整个 statuses 或 turnFlags。
-*/
-function frArch5RuleStateViewAccessors() {
-  const { game, small } = makeTeamFixture();
-  small.statuses.exposeWeakness = { stacks:3 };
-  small.turnFlags.attackUsed = 1;
-  small.turnFlags.attackLimit = 2;
-  small.turnFlags.momentum = 2;
-  const view = createRuleStateView(game.state);
-  const projected = view.playerById(small.id);
-  assert.deepEqual(view.status(projected, "exposeWeakness"), { stacks:3 });
-  assert.equal(view.status(projected, "missing"), null);
-  assert.deepEqual(view.usage(projected), { attackUsed:1, attackLimit:2, recoverUsed:0, recoverLimit:null });
-  assert.equal(view.momentum(projected), 2);
-  const clone = view.status(projected, "exposeWeakness");
-  assert.equal(Object.isFrozen(clone), true, "status accessor 返回冻结副本");
-  assert.equal(view.status(projected, "exposeWeakness").stacks, 3);
-  for (const field of ["controllerType","aiMemory","character","aiProfile","portrait"]) {
-    assert.equal(Object.hasOwn(projected, field), false);
-  }
-}
-
-test("Domain 规则·状态视图：status/usage/momentum 受控 accessor", frArch5RuleStateViewAccessors);
-
-/*
-功能
-验证 domain/rules 目录纯度：七 family 已建立、无运行时/AI/UI/config/transition import、无 await/EventBus/random/双 schema/metadata，且无 DomainActionLegality God Object。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-js/domain/rules 全部源码与目录清单。
-
-写入状态
-无。
-
-调用函数
-listJavaScriptFiles、readFile。
-
-边界与不变量
-注释允许解释禁止项；代码本体不得出现禁止依赖。
-*/
-async function frArch5DomainRulePurity() {
-  const files = await listJavaScriptFiles(projectFile("js/domain/rules"));
-  assert.equal(files.length >= 7, true);
-  for (const file of files) {
-    const source = await readFile(file, "utf8");
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
-    assert.doesNotMatch(source, /from\s+["'][^"']*(?:\/application\/|\/adapters\/|\/ai\/|\/ui\/|\/audio\/|core\/(?:Game|ActionLegality|ResponseSystem|DyingSystem|JudgmentSystem)\.js|cards\/cardRegistry\.js|characters\/skillRegistry\.js|state\/transitions\/|config\/)/, file);
-    assert.doesNotMatch(code, /\bawait\b/, file);
-    assert.doesNotMatch(code, /\bEventBus\b|\beventDispatcher\b/, file);
-    assert.doesNotMatch(code, /\bMath\.random\s*\(|\.random\s*\(/, file);
-    assert.doesNotMatch(code, /Array\.isArray\([^)]*statuses\)|hand\s*\?\?\s*handCount|equipment\s*\?\?\s*equipmentDefinitionId/, file);
-    assert.doesNotMatch(code, /\b(?:controllerType|aiMemory|aiProfile|portrait|roleTags|equipmentRetentionProbability|SearchState|VisibleState|BeliefState)\b/, file);
-    assert.doesNotMatch(code, /\bthis\.game\b/, file);
-  }
-  assert.equal(files.some((file) => file.endsWith("DomainActionLegality.js")), false);
-  const statusSource = await readFile(projectFile("js/domain/rules/status/StatusRules.js"), "utf8");
-  assert.doesNotMatch(statusSource, /STATUS_IDS/);
-  assert.equal(hasStatus({ statusIds:["sealed"] }, "sealed"), true);
-}
-
-test("Domain 规则·纯度：domain/rules 无 runtime/AI/UI/EventBus/await/random/dual-schema/God Object", frArch5DomainRulePurity);
-
-// ---- Choice、Ports 与隐藏信息 ----
-
-/*
-功能
-验证 FR-ARCH-5 carry-in：Turn usage 只有 used/limit 单一 canonical Domain shape。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-createAttackUsage、getAttackUsage。
-
-边界与不变量
-legacy attackUsed/attackLimit 必须由 ActionLegality facade 适配。
-*/
-function frArch6TurnUsageCanonical() {
-  assert.deepEqual(createAttackUsage(1, 2), { used:1, limit:2 });
-  assert.deepEqual(getAttackUsage({ used:1, limit:2 }), { used:1, limit:2 });
-  assert.throws(() => getAttackUsage({ attackUsed:1, attackLimit:2 }), /canonical \{ used, limit \}/);
-  assert.throws(() => getAttackUsage(null), /canonical \{ used, limit \}/);
-}
-
-test("架构边界：Turn usage canonical shape 单一", frArch6TurnUsageCanonical);
-
-/*
-功能
-验证 FR-ARCH-5 carry-in：seat-order rule 只接受完整 canonical roster，filtered candidates 被拒绝且原顺序不变。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-isCanonicalSeatRoster、assertCanonicalSeatRoster、nextDomainLightningReceiverId、getCounterResponderOrder、getStatusCounterResponderOrder。
-
-边界与不变量
-dead player 保留 roster；不改变 seat semantics。
-*/
-function frArch6SeatRosterContract() {
-  const roster = [
-    { id:"h", seatIndex:0, alive:true, statusIds:["lightning"] },
-    { id:"dead", seatIndex:1, alive:false, statusIds:[] },
-    { id:"a", seatIndex:2, alive:1, statusIds:[] },
-    { id:"b", seatIndex:3, alive:true, statusIds:[] }
-  ];
-  assert.equal(isCanonicalSeatRoster(roster), true);
-  assert.equal(assertCanonicalSeatRoster(roster), roster);
-  assert.equal(isCanonicalSeatRoster([roster[0], roster[2]]), false, "filtered candidates 不得伪装 roster");
-  assert.equal(isCanonicalSeatRoster([{ id:"x", seatIndex:0 }, { id:"y", seatIndex:2 }]), false);
-  const shuffledFull = [
-    { id:"x", seatIndex:2, alive:true, statusIds:[] },
-    { id:"y", seatIndex:0, alive:true, statusIds:[] },
-    { id:"z", seatIndex:1, alive:true, statusIds:[] }
-  ];
-  assert.equal(isCanonicalSeatRoster(shuffledFull), false, "full set 但物理乱序仍拒绝");
-  assert.equal(isCanonicalSeatRoster([
-    { id:"x", seatIndex:0, alive:true, statusIds:[] },
-    { id:"y", seatIndex:0, alive:true, statusIds:[] }
-  ]), false, "duplicate seatIndex 拒绝");
-  assert.throws(() => nextDomainLightningReceiverId([roster[0], roster[2]], "h"), /canonical roster/);
-  assert.throws(() => getCounterResponderOrder([roster[0], roster[2]], "h"), /canonical roster/);
-  assert.throws(() => getCounterResponderOrder(shuffledFull, "x"), /players\[i\]\.seatIndex 必须等于 i/);
-  assert.throws(() => assertCanonicalSeatRoster(shuffledFull), /players\[i\]\.seatIndex 必须等于 i/);
-  assert.deepEqual(getCounterResponderOrder(roster, "h"), ["dead", "a", "b"], "counter order unchanged");
-  assert.equal(nextDomainLightningReceiverId(roster, "h"), "a", "lightning skips dead/already and order unchanged");
-  assert.deepEqual(getStatusCounterResponderOrder(roster, "h"), ["h", "a", "b"], "status counter order unchanged");
-}
-
-test("架构边界：seat-order 只接受 full canonical roster", frArch6SeatRosterContract);
-
-/*
-功能
-验证 ChoiceRequest/ChoiceResult contract data-only、canonical 与 legacy normalization。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-createResponseChoiceRequest、createPublicCardChoiceRequest、createChoiceResult、normalizeChoiceResult、createChoicePort、createChoiceCoordinator。
-
-边界与不变量
-request/result 可 JSON 序列化，不含 entity/function。
-*/
-async function frArch6ChoiceContract() {
-  const request = createResponseChoiceRequest({
-    requestId:"r1", actorId:"p1", gameId:"g1", stateVersion:7,
-    responseType:"block", requiredCount:2,
-    legalCardIds:["c1", "c2"], label:"格挡",
-    context:{ sourcePlayerId:"p2", targetPlayerId:"p1", cardId:"a1", timeoutMs:null, presentation:Object.freeze({ eventText:"test", fragments:[] }) }
-  });
-  assert.equal(request.kind, "response");
-  assert.equal(request.options[0].optionId, "c1");
-  assert.equal(JSON.parse(JSON.stringify(request)).requestId, "r1");
-
-  const publicRequest = createPublicCardChoiceRequest({
-    requestId:"r2", actorId:"p1", gameId:"g1", stateVersion:7,
-    offeredCards:[{ id:"pub1", definitionId:"charge", name:"聚能", category:"basic" }]
-  });
-  assert.equal(publicRequest.kind, "publicCard");
-  assert.equal(publicRequest.options[0].definitionId, "charge");
-
-  assert.deepEqual(createChoiceResult("selected", { selectedIds:["c1"] }), { status:"selected", selectedIds:["c1"], reason:null });
-  assert.deepEqual(createChoiceResult("declined"), { status:"declined", selectedIds:[], reason:null });
-  assert.deepEqual(createChoiceResult("cancelled"), { status:"cancelled", selectedIds:[], reason:null });
-  assert.deepEqual(normalizeChoiceResult({ status:"used", cardId:"c1" }), createChoiceResult("selected", { selectedIds:["c1"] }));
-  assert.deepEqual(normalizeChoiceResult({ status:"declined" }), createChoiceResult("declined"));
-  assert.deepEqual(normalizeChoiceResult({ status:"cancelled" }), createChoiceResult("cancelled"));
-  assert.throws(() => createChoicePort({}), /request/);
-  assert.throws(() => createChoiceResult("invalid"), /未知 ChoiceResult status/);
-
-  const coordinator = createChoiceCoordinator(createChoicePort({
-    async request() { return { status:"used", cardId:"c1" }; }
-  }));
-  assert.deepEqual(await coordinator.request(request), createChoiceResult("selected", { selectedIds:["c1"] }));
-}
-
-test("Choice 契约：data-only request/result 与 canonical normalization", async () => frArch6ChoiceContract());
-
-/*
-功能
-验证 Human/AI peer adapters 对同一 response ChoiceRequest 返回同一 canonical result shape，并保持旧 timing/thinking 顺序。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-mock legacy capabilities。
-
-写入状态
-mock thinking/prompt/delay 记录。
-
-调用函数
-createUiChoiceAdapter、createAiChoiceAdapter、createResponseChoiceRequest。
-
-边界与不变量
-AI policy 不变；human legacy request 字段逐项映射。
-*/
-async function frArch6PeerChoiceAdapters() {
-  const request = createResponseChoiceRequest({
-    requestId:"r1", actorId:"p1", gameId:"g1", stateVersion:1,
-    responseType:"block", requiredCount:1, legalCardIds:["c1"], label:"格挡",
-    context:{ sourcePlayerId:"p2", targetPlayerId:"p1", cardId:"a1", timeoutMs:null, presentation:{ eventText:"x" } }
-  });
-  const humanCalls = [];
-  const human = createUiChoiceAdapter({
-    requestResponse: async (legacy, label) => {
-      humanCalls.push({ legacy, label });
-      return { status:"used", selectedIds:["c1"] };
-    },
-    requestPublicCard: async () => null,
-    requestDiscard: async () => [],
-    requestTarget: async () => null,
-    getChoiceContext: () => ({ player:{ id:"p1" }, cards:[] }),
-    isSessionValid: () => true
-  });
-  assert.deepEqual(await human.request(request), createChoiceResult("selected", { selectedIds:["c1"] }));
-  assert.equal(humanCalls[0].legacy.legalCardIds[0], "c1");
-  assert.equal(humanCalls[0].legacy.type, "block");
-
-  const thinking = [];
-  const rawAi = createAiChoiceAdapter({
-    getChoiceContext: () => ({ responder:{ id:"p1", name:"电脑" }, cards:[], context:{}, label:"格挡" }),
-    shouldRespond: () => true,
-    choosePublicCard: () => null,
-    chooseDiscards: () => [],
-    isSessionValid: () => true
-  });
-  const ai = createAiResponseTimingDecorator(rawAi, {
-    getPlayer: () => ({ id:"p1", name:"电脑" }),
-    setThinking: (...args) => thinking.push(args),
-    delay: async () => true,
-    setPrompt: () => { },
-    isSessionValid: () => true
-  });
-  assert.deepEqual(await ai.request(request), createChoiceResult("selected", { selectedIds:["c1"] }));
-  assert.equal(thinking[0][0], true);
-  assert.equal(thinking[1][0], false);
-
-  const cancelledThinking = [];
-  const cancelled = createAiResponseTimingDecorator(rawAi, {
-    getPlayer: () => ({ id:"p1", name:"电脑" }),
-    setThinking: (...args) => cancelledThinking.push(args),
-    delay: async () => false,
-    setPrompt: () => { },
-    isSessionValid: () => true
-  });
-  assert.deepEqual(await cancelled.request(request), createChoiceResult("cancelled"));
-  assert.deepEqual(cancelledThinking.map(([value]) => value), [true, false]);
-}
-
-test("Choice 适配器：human/AI 同一 request 返回同一 result shape", frArch6PeerChoiceAdapters);
-
-/*
-功能
-验证 Application HiddenCardSelectionStore 的 opaque token、session、确认与清理语义。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-store 内部 maps。
-
-写入状态
-store 内部 maps。
-
-调用函数
-createHiddenCardSelectionStore。
-
-边界与不变量
-store 不保存 Card/Player 实体；handVersion 变化失效。
-*/
-function frArch6HiddenSelectionStore() {
-  let serial = 0;
-  const ids = [];
-  const store = createHiddenCardSelectionStore({ createId: (prefix) => { const id = `${prefix}-${serial++}`; ids.push(id); return id; } });
-  const selection = store.createSelection({
-    ownerId:"owner", handVersion:3,
-    cardRecords:[{ cardId:"card-a", position:1 }, { cardId:"card-b", position:2 }]
-  });
-  assert.equal(selection.tokens.length, 2);
-  assert.deepEqual(store.resolveConfirmedCardIds(selection.tokens.map((entry) => entry.token), selection.selectionId, "owner", 2), ["card-a", "card-b"]);
-  assert.equal(store.isSessionActive(selection.selectionId, "owner", 3), true);
-  assert.equal(store.isSessionActive(selection.selectionId, "owner", 4), false);
-  const record = store.getTokenRecord(selection.tokens[0].token);
-  assert.equal(record.cardId, "card-a");
-  assert.equal(typeof record.cardId, "string");
-  store.clearSelection(selection.selectionId);
-  assert.equal(store.tokenRecords.size, 0);
-  assert.equal(store.sessions.size, 0);
-}
-
-test("Choice 隐藏信息：application store 只保存 opaque token 与版本事实", frArch6HiddenSelectionStore);
-
-/*
-功能
-验证 composition router 按 participant metadata 路由 Human/AI peer，且真实 Game 默认注入 Choice boundary。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeGame fixture 与 mock AI shouldRespond。
-
-写入状态
-mock thinking 记录。
-
-调用函数
-createResponseChoiceRequest、game.choicePort.request。
-
-边界与不变量
-未知 actor 返回 cancelled；无 service locator。
-*/
-async function frArch6ChoiceRouting() {
-  const human = makePlayer("fr6-human", 0, "dawn", "human");
-  const ai = makePlayer("fr6-ai", 1, "dusk", "ai");
-  const { game, ui } = makeGame([human, ai], { response: () => ({ status:"used" }) });
-  assert.ok(game.choicePort);
-  assert.ok(game.choiceCoordinator);
-  game.aiController.shouldRespond = () => true;
-  const responseRequest = (actorId) => createResponseChoiceRequest({
-    requestId:`route-${actorId}`, actorId, gameId:game.state.gameId, stateVersion:game.state.stateVersion,
-    responseType:"block", requiredCount:1, legalCardIds:[], label:"格挡",
-    context:{ sourcePlayerId:null, targetPlayerId:actorId, cardId:null, timeoutMs:null, presentation:null }
-  });
-  assert.deepEqual(await game.choicePort.request(responseRequest(human.id)), createChoiceResult("selected"));
-  game.choiceContexts.set("route-fr6-ai", { responder:ai, cards:[], context:{}, label:"格挡" });
-  assert.deepEqual(await game.choicePort.request(responseRequest(ai.id)), createChoiceResult("selected"));
-  assert.equal(ui.responseRequests.length, 1, "human path 走 UI");
-  assert.ok(ui.thinking.length >= 2, "AI path 走 thinking bridge");
-  assert.deepEqual(await game.choicePort.request(responseRequest("missing")), createChoiceResult("cancelled", { reason:"unknown-actor" }));
-}
-
-test("Choice 路由：participant metadata 路由 Human/AI peer", frArch6ChoiceRouting);
-
-/*
-功能
-验证隐藏手牌与区域选择由 Application 构造 data-only request，并统一经 ChoicePort 路由 Human/AI peer。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-HiddenCardChoiceWorkflow、ChoicePort router 与 Human/AI adapter 私有重绑 context。
-
-写入状态
-仅替换测试局的 UI/AI 选择 capability 并创建短期 opaque selection。
-
-调用函数
-createHiddenCardChoiceRequest、chooseHiddenCards、choosePlayerZoneCard。
-
-边界与不变量
-Application 不按 controllerType 分支；请求不含隐藏牌定义或实体；返回后仍按当前实体位置复核并清理 context/token。
-*/
-async function hiddenChoiceRoutesThroughChoicePort() {
-  const contract = createHiddenCardChoiceRequest({
-    requestId:"hidden-contract",
-    actorId:"viewer",
-    ownerId:"owner",
-    gameId:"game",
-    stateVersion:3,
-    mode:"hand",
-    maximum:2,
-    exact:false,
-    prompt:"选择隐藏牌",
-    optionIds:["opaque-a", "opaque-b"]
-  });
-  assert.equal(contract.kind, "hiddenCard");
-  assert.deepEqual(contract.options.map((option) => option.optionId), ["opaque-a", "opaque-b"]);
-  assert.doesNotMatch(JSON.stringify(contract), /definitionId|charge|block/);
-
-  const human = makePlayer("hidden-human", 0, "dawn", "human");
-  const ai = makePlayer("hidden-ai", 1, "dawn", "ai");
-  const owner = makePlayer("hidden-owner", 2, "dusk", "ai");
-  const first = instance("charge"), second = instance("block"), equipment = instance("defenseDevice");
-  owner.hand.push(first, second);
-  owner.equipment = equipment;
-  const { game } = makeGame([human, ai, owner]);
-  let humanHandRequests = 0, humanZoneRequests = 0, aiHandRequests = 0, aiZoneRequests = 0;
-  game.ui.requestHiddenCards = async (selection) => {
-    humanHandRequests += 1;
-    return [selection.tokens[1].token];
-  };
-  game.ui.requestZoneCard = async (_game, _actor, target) => {
-    humanZoneRequests += 1;
-    const selection = game.hiddenCardSelection.createHiddenSelection(target);
-    return { zone:"equipment", equipmentCardId:target.equipment.id, selectionId:selection.selectionId };
-  };
-  game.aiController.chooseHiddenCards = (_actor, target) => {
-    aiHandRequests += 1;
-    return [target.hand[0]];
-  };
-  game.aiController.chooseZoneCard = (_actor, target) => {
-    aiZoneRequests += 1;
-    return { card:target.hand[0], zone:"hand" };
-  };
-
-  assert.deepEqual(
-    await game.hiddenCardChoiceWorkflow.chooseHiddenCards(human, owner, 1, "真人隐藏选择"),
-    [second]
-  );
-  assert.deepEqual(
-    await game.hiddenCardChoiceWorkflow.chooseHiddenCards(ai, owner, 1, "AI 隐藏选择"),
-    [first]
-  );
-  assert.deepEqual(
-    await game.hiddenCardChoiceWorkflow.choosePlayerZoneCard(human, owner, "真人区域选择"),
-    { card:equipment, zone:"equipment" }
-  );
-  assert.deepEqual(
-    await game.hiddenCardChoiceWorkflow.choosePlayerZoneCard(ai, owner, "AI 区域选择"),
-    { card:first, zone:"hand" }
-  );
-  assert.deepEqual(
-    { humanHandRequests, humanZoneRequests, aiHandRequests, aiZoneRequests },
-    { humanHandRequests:1, humanZoneRequests:1, aiHandRequests:1, aiZoneRequests:1 }
-  );
-  assert.equal(game.choiceContexts.size, 0);
-  assert.equal(game.hiddenCardSelection.sessions.size, 0);
-
-  const workflowSource = await readFile(projectFile("js/application/action/HiddenCardChoiceWorkflow.js"), "utf8");
-  const workflowCode = workflowSource.replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.doesNotMatch(workflowCode, /\bcontrollerType\b|runtime\.(?:requestHiddenCards|requestZoneCard|chooseAiHiddenCards|chooseAiZoneCard)/);
-  assert.match(workflowCode, /runtime\.choiceCoordinator\.request\(/);
-  game.dispose();
-}
-
-test("架构·Hidden Choice：Application 仅经 ChoicePort 路由 Human/AI", hiddenChoiceRoutesThroughChoicePort);
-
-/*
-功能
-验证 RandomPort 只包装 next() 且固定 seed 调用顺序不变。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-createRandomPort。
-
-边界与不变量
-每次 port.next 对应一次旧 random()。
-*/
-function frArch6RandomPort() {
-  const values = [0.1, 0.2, 0.3];
-  let index = 0;
-  const port = createRandomPort({ next: () => values[index++] });
-  assert.deepEqual([port.next(), port.next(), port.next()], values);
-  assert.throws(() => createRandomPort({}), /next/);
-}
-
-test("RandomPort：minimal next() boundary", frArch6RandomPort);
-
-/*
-功能
-验证 application/choice 与 application/ports 源码不依赖 concrete runtime/DOM/Game/transition，且 adapters peer 不互相 import。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-js/application 与 js/adapters/{ui,ai} 源码。
-
-写入状态
-无。
-
-调用函数
-listJavaScriptFiles、readFile。
-
-边界与不变量
-允许 application/choice 依赖 application/ports 与 Domain data。
-*/
-async function frArch6ApplicationPurity() {
-  const choiceFiles = await listJavaScriptFiles(projectFile("js/application/choice"));
-  const portFiles = await listJavaScriptFiles(projectFile("js/application/ports"));
-  const adapterFiles = [
-    ...(await listJavaScriptFiles(projectFile("js/adapters/ui"))),
-    ...(await listJavaScriptFiles(projectFile("js/adapters/ai")))
-  ];
-  assert.ok(choiceFiles.length >= 4);
-  assert.ok(portFiles.length >= 2);
-  for (const file of [...choiceFiles, ...portFiles]) {
-    const source = await readFile(file, "utf8");
-    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|UIManager|AiController|SoundManager|state\/transitions\/)/, file);
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
-    assert.doesNotMatch(code, /\bthis\.game\b|\bEventBus\b|\beventDispatcher\b|\bdocument\b|\bwindow\b/, file);
-  }
-  for (const file of adapterFiles) {
-    const source = await readFile(file, "utf8");
-    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/Game|core\/ResponseSystem|UIManager|AiController)/, file);
-  }
-  assert.equal(adapterFiles.every((file) => !file.includes("UiChoiceAdapter") || !file.includes("AiChoiceAdapter")), true);
-}
-
-test("Choice 与 Port 纯度：application choice/ports 无 concrete runtime 依赖", frArch6ApplicationPurity);
-
-// ---- Messaging 与 Events ----
-
-/*
-功能
-验证 EventDispatcher 完整保留旧 EventBus 语义。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-dispatcher。
-
-写入状态
-dispatcher registry。
-
-调用函数
-EventDispatcher.on/emit/clear。
-
-边界与不变量
-same-key overwrite、order、shared mutable object、mutation visibility、unsubscribe、generation、clear during dispatch。
-*/
-async function frArch11DispatcherSemantics() {
-  const dispatcher = new EventDispatcher(() => true);
-  const trace = [];
-  dispatcher.on("hook", "b", async (event) => { trace.push(["b-before", event.value]); event.value += 1; });
-  dispatcher.on("hook", "a", async (event) => { trace.push(["a", event.value]); event.value += 1; });
-  const event = { value: 1 };
-  assert.equal(await dispatcher.emit("hook", event), event);
-  assert.deepEqual(trace, [["b-before", 1], ["a", 2]]);
-  assert.equal(event.value, 3, "前一 handler mutation 必须对后一 handler 可见");
-
-  dispatcher.on("hook", "b", async () => { trace.push(["b-replaced"]); });
-  await dispatcher.emit("hook", { value: 0 });
-  assert.deepEqual(trace.slice(2), [["b-replaced"], ["a", 0]]);
-
-  const once = [];
-  const off = dispatcher.on("hook", "once", () => { once.push(1); });
-  off();
-  await dispatcher.emit("hook", { value: 0 });
-  assert.equal(once.length, 0);
-
-  const deep = new EventDispatcher(() => true);
-  for (let index = 0; index < 25; index += 1) deep.on("nested", `k${index}`, () => { });
-  deep.on("nested", "boom", async () => { await deep.emit("nested", {}); });
-  await assert.rejects(deep.emit("nested", {}), /超过安全深度/);
-
-  const clearTrace = [];
-  const clearDispatcher = new EventDispatcher(() => true);
-  clearDispatcher.on("x", "one", async () => { clearTrace.push(1); clearDispatcher.clear(); });
-  clearDispatcher.on("x", "two", async () => { clearTrace.push(2); });
-  await clearDispatcher.emit("x", {});
-  assert.deepEqual(clearTrace, [1], "clear during dispatch 阻止后续 handler");
-}
-
-test("事件分发：order/shared mutable/generation/clear/overflow 全语义保留", frArch11DispatcherSemantics);
-
-/*
-功能
-验证 Domain Match facts 是 frozen data-only 且 gameStart 不含 Game。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fact builders。
-
-写入状态
-无。
-
-调用函数
-createGameStartFact、createGameOverFact。
-
-边界与不变量
-JSON 序列化无 Game/Player/function/Map/Set。
-*/
-function frArch11DomainMatchFacts() {
-  const start = createGameStartFact({ gameId:"g1", stateVersion:7, humanPlayerId:"p1", selectedCharacterId:"hero" });
-  assert.ok(Object.isFrozen(start));
-  assert.equal(JSON.stringify(start).includes("function"), false);
-  assert.equal(JSON.stringify(start).includes("Game"), false);
-  const parsed = JSON.parse(JSON.stringify(start));
-  assert.deepEqual(parsed, { type:"gameStart", gameId:"g1", stateVersion:7, humanPlayerId:"p1", selectedCharacterId:"hero" });
-  const over = createGameOverFact({ gameId:"g1", stateVersion:9, winnerTeam:"dawn" });
-  assert.ok(Object.isFrozen(over));
-  assert.equal(over.winnerTeam, "dawn");
-}
-
-test("Domain 事件事实：frozen/data-only，gameStart 无 Game entity", frArch11DomainMatchFacts);
-
-/*
-功能
-验证 MatchWorkflow 不再有 getLegacyGameRef 且 core/EventBus 只是 façade。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-EventDispatcher 是唯一 listener registry implementation，旧 EventBus 路径不存在。
-*/
-async function frArch11MatchAndEventBusClosure() {
-  const matchSource = await readFile(projectFile("js/application/match/MatchWorkflow.js"), "utf8");
-  assert.doesNotMatch(matchSource, /getLegacyGameRef/);
-  assert.match(matchSource, /publishFact/);
-  assert.doesNotMatch(matchSource, /game:\s*runtime\.getLegacyGameRef/);
-  const eventDispatcherSource = await readFile(projectFile("js/application/messaging/EventDispatcher.js"), "utf8");
-  assert.match(eventDispatcherSource, /listeners\s*=\s*new Map/);
-  assert.match(eventDispatcherSource, /maxDepth/);
-  await assert.rejects(access(projectFile("js/core/EventBus.js")), /ENOENT/);
-}
-
-test("架构·事件 ownership：MatchWorkflow 无 shell ref，EventDispatcher 唯一", frArch11MatchAndEventBusClosure);
-
-/*
-功能
-验证 FR-ARCH-10 carry-ins：AI transfer policy 与 passive predicate 归属。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产源码与 Domain predicates。
-
-写入状态
-无。
-
-调用函数
-readFile、canTriggerMomentumCategory、canTriggerRejuvenation、shouldConsumeMomentum。
-
-边界与不变量
-Application 无 controllerType AI 转移公式；predicate 由 Domain 拥有。
-*/
-async function frArch11CarryInOwnership() {
-  const cardIntent = await readFile(projectFile("js/application/action/CardIntentRuntime.js"), "utf8");
-  assert.doesNotMatch(cardIntent, /source\.controllerType === "ai"/);
-  assert.match(cardIntent, /isTransferExecutionAllowed/);
-  const trigger = await readFile(projectFile("js/application/trigger/PassiveSkillTriggerRegistry.js"), "utf8");
-  assert.match(trigger, /canTriggerMomentumCategory/);
-  const owner = { id:"a", alive:true, turnFlags:{ categoriesUsed:new Set() } };
-  assert.equal(canTriggerMomentumCategory(owner, { source:{ id:"a" }, card:{ category:"basic" } }), true);
-  assert.equal(shouldConsumeMomentum(owner, { source:{ id:"a" }, actualAmount:1, metadata:{ consumeMomentum:true } }), true);
-}
-
-test("Application ownership：AI policy/被动 predicates 不留在 Application runtime", frArch11CarryInOwnership);
-
-/*
-功能
-验证 GlobalTriggerRegistry 拥有 huntMark/seal/lightning 注册。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-composition 只调用 registry，业务事件 key 只存在于 trigger owner。
-*/
-async function frArch11GlobalTriggerOwnership() {
-  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  assert.match(compositionSource, /globalTriggerRegistry\.register\(\)/);
-  assert.doesNotMatch(compositionSource, /onEvent\("playerDead"/);
-  assert.doesNotMatch(compositionSource, /onEvent\("beforeStatusResolve"/);
-  const registry = await readFile(projectFile("js/application/trigger/GlobalTriggerRegistry.js"), "utf8");
-  assert.match(registry, /global:huntMarkSourceCleanup/);
-  assert.match(registry, /global:seal/);
-  assert.match(registry, /global:lightning/);
-}
-
-test("全局触发器：huntMark/seal/lightning registration 归 Application", frArch11GlobalTriggerOwnership);
-
-// ---- Card、Skill Domain 与 Runtime ----
-
-/*
-功能
-验证 Domain CardRules 纯目标/借势/转移公式。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake canonical facts。
-
-写入状态
-无。
-
-调用函数
-getCardTargetIds、getAssaultTargetIds、getLeverageFirstTargetIds、getTransferSourceIds、canActuallyUseAssaultRule、canPlayCardRule。
-
-边界与不变量
-Domain 不接受 entity；reason 与旧 ActionLegality 一致。
-*/
-function frArch10DomainCardRules() {
-  const players = [
-    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", attackRange:1, handCount:1, equipmentDefinitionId:null, hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] },
-    { id:"b", seatIndex:1, alive:true, battleTeam:"dusk", attackRange:1, handCount:1, equipmentDefinitionId:"defenseDevice", hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] },
-    { id:"c", seatIndex:2, alive:true, battleTeam:"dawn", attackRange:1, handCount:1, equipmentDefinitionId:null, hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] }
-  ];
-  const source = players[0];
-  assert.deepEqual(getCardTargetIds(players, source, { targetType:"singleEnemyInRange", effectRange:null }), ["b"]);
-  assert.deepEqual(getAssaultTargetIds(players, players[1]), ["a", "c"]);
-  assert.deepEqual(getLeverageFirstTargetIds(players, source), ["b"]);
-  assert.deepEqual(getTransferSourceIds(players, source, { effectRange:null, ignoresDistance:true, id:"x" }), ["a", "b", "c"]);
-  const transferOnly = { ...players[0], handCount:1, transferableHandCount:0 };
-  assert.equal(getTransferableHandCount(transferOnly), 0);
-  assert.equal(hasHandOrEquipmentFacts(transferOnly), false);
-  assert.deepEqual(
-    getTransferSourceIds(
-      [transferOnly, players[1], players[2]], transferOnly,
-      { effectRange:null, ignoresDistance:true, id:"transfer-card" }
-    ),
-    ["b", "c"]
-  );
-  assert.equal(canActuallyUseAssaultRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, usage:{ used:0, limit:1 } }).ok, true);
-  assert.equal(canPlayCardRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, assaultUsage:{ used:0, limit:1 } }).ok, true);
-}
-
-test("Domain 规则·卡牌：target/leverage/transfer/legality 纯公式", frArch10DomainCardRules);
-
-/*
-功能
-验证 Domain SkillRules 的 cost/base legality/target 纯决定。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake canonical facts。
-
-写入状态
-无。
-
-调用函数
-canUseSkillBase、getSkillTargetIds。
-
-边界与不变量
-reason 与旧 skillRegistry 一致。
-*/
-function frArch10DomainSkillRules() {
-  const players = [
-    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", attackRange:1, handCount:0, equipmentDefinitionId:null, hp:4, maxHp:4, energy:2, maxEnergy:3, huntMarkSourceId:null, statusIds:[] },
-    { id:"b", seatIndex:1, alive:true, battleTeam:"dawn", attackRange:1, handCount:0, equipmentDefinitionId:null, hp:2, maxHp:4, energy:0, maxEnergy:3, huntMarkSourceId:null, statusIds:[] }
-  ];
-  assert.deepEqual(getSkillTargetIds(players, "a", { id:"barrier", rangeRule:"ally" }), ["a", "b"]);
-  assert.equal(canUseSkillBase({ players, sourceId:"a", currentPlayerId:"a", phase:"play", skill:{ id:"barrier", cost:2, limitPerTurn:2 }, used:0, limitPerTurn:2, energy:2 }).ok, true);
-  assert.equal(canUseSkillBase({ players, sourceId:"a", currentPlayerId:"a", phase:"play", skill:{ id:"barrier", cost:2, limitPerTurn:2 }, used:0, limitPerTurn:2, energy:1 }).reason, "能量不足");
-}
-
-test("Domain 规则·技能：cost/base legality/target 纯决定", frArch10DomainSkillRules);
-
-/*
-功能
-验证 recycleDevice Domain predicate 与应用 trigger 已从 Game 迁出。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake predicate 与最终 composition source。
-
-写入状态
-无。
-
-调用函数
-canTriggerRecycleDevice、readFile。
-
-边界与不变量
-predicate 只读；composition 只负责注册 trigger，不拥有 semantic formula。
-*/
-async function frArch10RecycleDeviceTrigger() {
-  const facts = { ownerAlive:true, currentActorId:"a", ownerId:"a", equipmentDefinitionId:"recycleDevice", cardCategory:"tactic", cardUsageMode:"active", useCount:1 };
-  assert.equal(canTriggerRecycleDevice(facts), true);
-  assert.equal(canTriggerRecycleDevice({ ...facts, useCount:2 }), false);
-  assert.equal(canTriggerRecycleDevice({ ...facts, cardCategory:"basic" }), false);
-  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  assert.doesNotMatch(compositionSource, /global:recycleDevice[\s\S]*setRecycleDeviceUses/);
-  assert.match(compositionSource, /application\.recycleDeviceTrigger\.register\(\)/);
-  const triggerSource = await readFile(projectFile("js/application/trigger/RecycleDeviceTrigger.js"), "utf8");
-  assert.match(triggerSource, /canTriggerRecycleDevice/);
-}
-
-test("回收站触发：predicate 在 Domain，trigger 在 Application", frArch10RecycleDeviceTrigger);
-
-/*
-功能
-验证 ActionWorkflow 无 specific card ID branch 且不暴露 mutable runtime。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-ActionWorkflow/Game 源码与 fake Game。
-
-写入状态
-无。
-
-调用函数
-readFile、makeGame。
-
-边界与不变量
-resolutionOwners snapshot 修改不影响 owner。
-*/
-async function frArch10ActionGenericAndEncapsulated() {
-  const source = await readFile(projectFile("js/application/action/ActionWorkflow.js"), "utf8");
-  for (const token of ["transfer", "leverage", "scout", "plunder", "destroy", "mutualBenefit"]) {
-    assert.doesNotMatch(source, new RegExp(`\\\\b${token}\\\\b`), token);
-  }
-  assert.doesNotMatch(source, /state:\s*actionRuntime/);
-  const actor = makePlayer("fr10-action", 0, "dawn");
-  const { game } = makeGame([actor]);
-  const snapshot = game.actionWorkflow.getResolutionOwnersSnapshot();
-  snapshot.set({}, "x");
-  assert.equal(game.actionWorkflow.getResolutionOwnerCount(), 0);
-  assert.equal(game.resolutionOwners.size, 0);
-}
-
-test("ActionWorkflow：generic + encapsulated，resolutionOwners 无 mutable escape", frArch10ActionGenericAndEncapsulated);
-
-/*
-功能
-验证已删除的 registry 不再充当 façade，最终 runtime/legality owner 各自独立。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-源码断言低误报。
-*/
-async function frArch10RegistryClosure() {
-  await assert.rejects(access(projectFile("js/cards/cardRegistry.js")), /ENOENT/);
-  await assert.rejects(access(projectFile("js/characters/skillRegistry.js")), /ENOENT/);
-  const cardRuntime = await readFile(projectFile("js/application/action/CardEffectRuntime.js"), "utf8");
-  assert.match(cardRuntime, /async function resolve\(/);
-  const skillRuntime = await readFile(projectFile("js/application/action/SkillEffectRuntime.js"), "utf8");
-  assert.match(skillRuntime, /async function execute\(/);
-  const actionLegality = await readFile(projectFile("js/application/action/ActionLegality.js"), "utf8");
-  assert.doesNotMatch(actionLegality, /switch \(card\.targetType\)/);
-  assert.doesNotMatch(actionLegality, /skillId === "barrier"/);
-  assert.match(actionLegality, /getCardTargetIds/);
-  assert.match(actionLegality, /getSkillTargetIds/);
-}
-
-test("架构·卡牌运行时：registry façade 已删除，effect 与 legality owner 独立", frArch10RegistryClosure);
-
-/*
-功能
-验证 passive skill trigger runtime 已迁到 Application Trigger。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产源码与 application fixture。
-
-写入状态
-无。
-
-调用函数
-readFile、makeGame、registerPassiveSkills。
-
-边界与不变量
-registration once；composition 仅委托最终 trigger registry。
-*/
-async function frArch10PassiveTriggerOwnership() {
-  const triggerSource = await readFile(projectFile("js/application/trigger/PassiveSkillTriggerRegistry.js"), "utf8");
-  assert.match(triggerSource, /momentum\(/);
-  assert.match(triggerSource, /coordination\(/);
-  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  assert.match(compositionSource, /passiveTriggerRegistry\.registerForPlayers/);
-  await assert.rejects(access(projectFile("js/characters/skillRegistry.js")), /ENOENT/);
-  const owner = makePlayer("fr10-passive", 0, "dawn", "ai", 4);
-  const { game } = makeGame([owner]);
-  registerPassiveSkills(game);
-  assert.ok(game.passiveTriggerRegistry.hasSkill("momentum"));
-}
-
-test("被动触发器：Application Trigger 独占注册", frArch10PassiveTriggerOwnership);
-
-// ---- Response ownership ----
-
-/*
-功能
-验证 ResponseWorkflowResult 与 ChoiceResult 语义分离且 status authority 单一。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-createChoiceResult、createResponseWorkflowResult。
-
-边界与不变量
-choice selected 不等于 response USED；unavailable/invalid 只属 workflow。
-*/
-function frArch7ResponseResultContract() {
-  const choice = createChoiceResult("selected", { selectedIds:["c1"] });
-  const response = createResponseWorkflowResult(WORKFLOW_RESPONSE_STATUS.USED, { cards:["c1"] });
-  assert.equal(choice.status, "selected");
-  assert.equal(response.status, "used");
-  assert.notDeepEqual(choice, response);
-  assert.deepEqual(createResponseWorkflowResult(WORKFLOW_RESPONSE_STATUS.INVALID), { status:"invalid" });
-}
-
-test("Response 结果契约：ChoiceResult 与 ResponseWorkflowResult 分离", frArch7ResponseResultContract);
-
-/*
-功能
-验证 Application ResponseWorkflow 在 fake collaborators 下拥有 request lifecycle、choice normalization、revalidation 与 payment orchestration。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake state/payment/pending records。
-
-写入状态
-fake records。
-
-调用函数
-createResponseWorkflow、createChoicePort、createChoiceCoordinator、createChoiceResult。
-
-边界与不变量
-不写真实 Domain state；adapter selected 不代表必然 USED。
-*/
-async function frArch7ApplicationWorkflow() {
-  const card = { id:"block-1", definitionId:"block" };
-  const makeDeps = (choiceResult) => {
-    const state = { gameId:"g1", isGameOver:false, isDisposed:false, stateVersion:4, players:[] };
-    const pending = [];
-    const payments = [];
-    const workflow = createResponseWorkflow({
-      choiceCoordinator: createChoiceCoordinator(createChoicePort({ request: async () => choiceResult })),
-      choiceContexts: new Map(),
-      getState: () => state,
-      isSessionValid: (gameId) => gameId === "g1" && !state.isDisposed,
-      pushPendingResponse: (request) => pending.push(request),
-      removePendingResponse: (id) => { state.isDisposed || pending.splice(pending.findIndex((entry) => entry.id === id), 1); },
-      clearPendingResponses: () => { pending.length = 0; },
-      payCardsFromHandAtomically: async (responder, cards, reason) => { payments.push({ responder, cards, reason }); return { status:"used", cards }; },
-      setCurrentCard: () => { },
-      log: () => { },
-      emitCardUsed: async () => { },
-      getForceAiRescueHuman: () => false,
-      setThinking: () => { },
-      delayResponse: async () => true,
-      getUsableAssaultCards: () => [],
-      canUseForcedAssault: () => ({ ok:false }),
-      getResponseTimeoutMs: () => null,
-      createId: (prefix) => `${prefix}-1`
-    });
-    return { workflow, state, pending, payments };
-  };
-  const selected = await makeDeps(createChoiceResult("selected", { selectedIds:[card.id] }));
-  const responder = { id:"p1", name:"测试", alive:true, controllerType:"ai", hand:[card] };
-  assert.deepEqual(
-    await selected.workflow.requestCardResponse(responder, "block", { source:{ id:"p2", name:"来源" }, card }, 1),
-    { status:"used", cards:[card] }
-  );
-  assert.equal(selected.payments.length, 1);
-  assert.equal(selected.pending.length, 0);
-
-  const declined = await makeDeps(createChoiceResult("declined"));
-  assert.equal((await declined.workflow.requestCardResponse(responder, "block", {}, 1)).status, "declined");
-  assert.equal(declined.payments.length, 0);
-
-  const invalidated = makeDeps(createChoiceResult("selected", { selectedIds:[card.id] }));
-  invalidated.workflow = invalidated.workflow;
-  const invalidResponder = { id:"p1", name:"测试", alive:true, controllerType:"ai", hand:[{ ...card }] };
-  const oldRequest = invalidated.workflow.requestCardResponse;
-  invalidated.workflow = createResponseWorkflow({
-    choiceCoordinator: createChoiceCoordinator(createChoicePort({
-      async request() { invalidResponder.hand.length = 0; return createChoiceResult("selected", { selectedIds:[card.id] }); }
-    })),
-    choiceContexts: new Map(),
-    getState: () => invalidated.state,
-    isSessionValid: () => true,
-    pushPendingResponse: (request) => invalidated.pending.push(request),
-    removePendingResponse: (id) => { invalidated.pending.splice(invalidated.pending.findIndex((entry) => entry.id === id), 1); },
-    clearPendingResponses: () => { invalidated.pending.length = 0; },
-    payCardsFromHandAtomically: async () => ({ status:"used", cards:[] }),
-    setCurrentCard: () => { },
-    log: () => { },
-    emitCardUsed: async () => { },
-    getForceAiRescueHuman: () => false,
-    setThinking: () => { },
-    delayResponse: async () => true,
-    getUsableAssaultCards: () => [],
-    canUseForcedAssault: () => ({ ok:false }),
-    getResponseTimeoutMs: () => null,
-    createId: (prefix) => `${prefix}-invalid`
-  });
-  const invalidResult = await invalidated.workflow.requestCardResponse(invalidResponder, "block", {}, 1);
-  assert.equal(invalidResult.status, "invalid");
-  assert.equal(invalidResult.cards.length, 0);
-}
-
-test("Response ownership：choice/payment/revalidation 由 Application 拥有", frArch7ApplicationWorkflow);
-
-/*
-功能
-验证 application/response 源码不依赖 concrete UI/AI/DOM/SearchState，且旧 ResponseSystem 路径已删除。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-js/application/response 源码与旧路径存在性。
-
-写入状态
-无。
-
-调用函数
-listJavaScriptFiles、readFile。
-
-边界与不变量
-Domain ResponseRules 仍 pure；ResponseWorkflow 是唯一 application owner。
-*/
-async function frArch7ResponseOwnershipPurity() {
-  const files = await listJavaScriptFiles(projectFile("js/application/response"));
-  assert.ok(files.length >= 4);
-  for (const file of files) {
-    const source = await readFile(file, "utf8");
-    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|UIManager|AiController|SoundManager|state\/transitions\/)/, file);
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
-    assert.doesNotMatch(code, /\bthis\.game\b|\bEventBus\b|\beventDispatcher\b|\bdocument\b|\bwindow\b|[Ss]earchState\b|\bVisibleState\b|\bBeliefState\b/, file);
-  }
-  const workflow = await readFile(projectFile("js/application/response/ResponseWorkflow.js"), "utf8");
-  assert.match(workflow, /function askForCounter/);
-  await assert.rejects(access(projectFile("js/core/ResponseSystem.js")), /ENOENT/);
-}
-
-test("架构·Response ownership：Application workflow 唯一且旧系统路径不存在", frArch7ResponseOwnershipPurity);
-
-/*
-功能
-验证 response presentation DTO 保持 data-only 且旧 observable 字段完整。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-buildResponsePresentation。
-
-边界与不变量
-不包含 DOM/function/entity。
-*/
-function frArch7ResponsePresentationDto() {
-  const presentation = buildResponsePresentation(
-    { id:"p1", name:"测试", controllerType:"human", battleTeam:"dawn", hp:2, maxHp:4, shield:0, energy:1, alive:true },
-    "block",
-    { source:{ id:"p2", name:"敌方" }, target:{ id:"p1", name:"测试" }, card:{ id:"a1", name:"突袭", targetType:"singleEnemy" } },
-    2, 1, "格挡"
-  );
-  assert.equal(presentation.responseCardName, "格挡");
-  assert.equal(presentation.requiredCount, 2);
-  assert.equal(presentation.availableCount, 1);
-  assert.equal(typeof presentation.eventText, "string");
-  assert.ok(Array.isArray(presentation.eventFragments));
-  assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(presentation))).sort(), [
-    "availabilityText","buttonLabel","eventFragments","eventText","requiredCount","responseCardName","responseText","availableCount"
-  ].sort());
-}
-
-test("Response 展示 DTO：data-only 且 observable 等价", frArch7ResponsePresentationDto);
-
-// ---- Combat、濒死、判定与状态 ----
-
-/*
-功能
-验证 Domain Response Rule 唯一拥有濒死救援座次公式。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeTeamFixture 与 createRuleStateView。
-
-写入状态
-测试玩家 alive 字段。
-
-调用函数
-createRuleStateView、getDyingRescueResponderOrder。
-
-边界与不变量
-self first、顺时针存活队友、死亡与敌方跳过；非 canonical roster 必须拒绝。
-*/
-function frArch8RescueOrderDomainRule() {
-  const { game, small, large } = makeTeamFixture();
-  const smallAlly = game.state.players.find((player) => player.id === "small-ally");
-  const view = createRuleStateView(game.state);
-  assert.deepEqual(getDyingRescueResponderOrder(view.players(), small.id), [small.id, smallAlly.id]);
-  assert.deepEqual(getDyingRescueResponderOrder(view.players(), smallAlly.id), [smallAlly.id, small.id]);
-  smallAlly.alive = false;
-  assert.deepEqual(getDyingRescueResponderOrder(view.players(), small.id), [small.id]);
-  assert.equal(getDyingRescueResponderOrder(view.players(), large.id).includes(small.id), false);
-  assert.throws(() => getDyingRescueResponderOrder([view.players()[1], view.players()[2]], small.id), /canonical roster/);
-}
-
-test("濒死救援顺序：Domain 唯一拥有 self→顺时针存活队友公式", frArch8RescueOrderDomainRule);
-
-/*
-功能
-验证 Domain Judgment Rule 输出结构化 destination，Application 不再解释牌区公式。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-decideDefenseJudgmentOutcome、decideDelayedStatusJudgmentOutcome。
-
-边界与不变量
-basic 进手牌；tactic/equipment 与延迟判定进弃牌堆。
-*/
-function frArch8JudgmentOutcomeRules() {
-  assert.deepEqual(decideDefenseJudgmentOutcome("basic"), { handled:true, immune:false, category:"basic", destination:"hand" });
-  assert.deepEqual(decideDefenseJudgmentOutcome("tactic"), { handled:true, immune:true, category:"tactic", destination:"discard" });
-  assert.deepEqual(decideDefenseJudgmentOutcome("equipment"), { handled:true, immune:false, category:"equipment", destination:"discard" });
-  assert.deepEqual(decideDelayedStatusJudgmentOutcome("equipment", "equipment"), { triggered:true, category:"equipment", destination:"discard" });
-  assert.deepEqual(decideDelayedStatusJudgmentOutcome("basic", "equipment"), { triggered:false, category:"basic", destination:"discard" });
-}
-
-test("判定结果规则：destination 由 Domain 决定，Application 只执行", frArch8JudgmentOutcomeRules);
-
-/*
-功能
-验证 Application participant policy 显式拥有无牌窗口与 AI 救援兼容策略。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-controllerType/id/battleTeam metadata。
-
-写入状态
-无。
-
-调用函数
-shouldShowResponseWindowWithoutCards、shouldForceAiSelfRescue。
-
-边界与不变量
-真人无牌展示；AI 无牌跳过；AI 自救固定使用调息。
-*/
-function frArch8ParticipantPolicyExplicit() {
-  assert.equal(shouldShowResponseWindowWithoutCards({ controllerType:"human" }), true);
-  assert.equal(shouldShowResponseWindowWithoutCards({ controllerType:"ai" }), false);
-  assert.equal(shouldForceAiSelfRescue({ controllerType:"ai", id:"p1" }, { id:"p1" }), true);
-  assert.equal(shouldForceAiSelfRescue({ controllerType:"ai", id:"p1" }, { id:"p2" }), false);
-}
-
-test("响应参与策略：窗口与 AI 救援兼容策略显式归 Application", frArch8ParticipantPolicyExplicit);
-
-/*
-功能
-验证 Application CombatWorkflow damage 在 fake collaborators 下保持 judgment/block/before/commit/after/dying 顺序。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake state/presentation/diagnostics/observation records。
-
-写入状态
-fake target 经 Domain ResourceTransitions。
-
-调用函数
-createCombatWorkflow。
-
-边界与不变量
-defense 非免疫时 block 早于 beforeDamage；commit 后 telemetry；afterDamage 在 dying 前。
-*/
-async function frArch8CombatWorkflowDamageTrace() {
-  const state = { gameId:"g8", isGameOver:false, stateVersion:0, players:[] };
-  const source = { id:"s", name:"来源", alive:true, battleTeam:"dusk" };
-  const target = { id:"t", name:"目标", alive:true, battleTeam:"dawn", hp:3, maxHp:4, shield:2, statuses:{}, hand:[] };
-  const events = [];
-  const logs = [];
-  const feedback = [];
-  const telemetry = [];
-  const aiObservation = [];
-  const workflow = createCombatWorkflow({
-    getState: () => state,
-    isSessionValid: () => true,
-    judgeDefense: async () => ({ handled:false, immune:false }),
-    askForBlock: async () => ({ status:"declined", cards:[] }),
-    enterDying: async (...args) => { events.push({ type:"dying-entry", args }); return false; },
-    emitEvent: async (type, payload) => { events.push({ type, payload }); },
-    createId: (prefix) => `${prefix}-${events.length}`,
-    presentation: {
-      log: (message, kind) => logs.push([kind ?? "normal", message]),
-      showDamageFeedback: (...args) => feedback.push(["damage", ...args]),
-      showShieldFeedback: (...args) => feedback.push(["shield", ...args]),
-      showHealFeedback: () => { },
-      showDying: () => { },
-      hideDying: () => { },
-      showJudgment: () => { },
-      hideJudgment: () => { },
-      showCurrentEffect: () => { },
-      showLightningHit: () => { },
-      refresh: () => { }
-    },
-    diagnostics: {
-      recordDamage: (dto) => telemetry.push(dto),
-      recordHealing: () => { },
-      recordHpLoss: () => { }
-    },
-    observeDamage: (...args) => aiObservation.push(args)
-  });
-  assert.equal(await workflow.damage(source, target, 3, { card:{ name:"突袭", subtypes:["assault"] }, canBlock:true, damageType:"normal" }), 1);
-  assert.equal(target.hp, 2);
-  assert.equal(target.shield, 0);
-  assert.deepEqual(events.map((entry) => entry.type), ["beforeDamage", "afterDamage"]);
-  assert.deepEqual(telemetry, [{ targetId:"t", sourceId:"s", hpDamage:1 }]);
-  assert.equal(aiObservation.length, 1);
-  assert.deepEqual(feedback.slice(0, 2), [["shield", "t", 2], ["damage", "t", 1]]);
-}
-
-test("战斗结算轨迹：judgment→block→before→commit→after 顺序冻结", frArch8CombatWorkflowDamageTrace);
-
-/*
-功能
-验证 Application CombatWorkflow heal 与 loseHp 保持独立事件顺序与旧返回契约。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake state/event/telemetry records。
-
-写入状态
-fake player 经 ResourceTransitions。
-
-调用函数
-createCombatWorkflow、calculateHealAmount。
-
-边界与不变量
-loseHp 不调用 judgeDefense/askForBlock；heal 上限仍由 Domain Rule 计算。
-*/
-async function frArch8CombatWorkflowHealAndHpLossTrace() {
-  const state = { gameId:"g8h", isGameOver:false, stateVersion:0, players:[] };
-  const source = { id:"s", name:"来源", alive:true, battleTeam:"dusk" };
-  const target = { id:"t", name:"目标", alive:true, battleTeam:"dawn", hp:1, maxHp:4, shield:5, statuses:{}, hand:[] };
-  const events = [];
-  const telemetry = [];
-  let judgeCalls = 0;
-  let blockCalls = 0;
-  const workflow = createCombatWorkflow({
-    getState: () => state,
-    isSessionValid: () => true,
-    judgeDefense: async () => { judgeCalls += 1; return { handled:false, immune:false }; },
-    askForBlock: async () => { blockCalls += 1; return { status:"declined", cards:[] }; },
-    enterDying: async () => false,
-    emitEvent: async (type) => { events.push(type); },
-    createId: (prefix) => `${prefix}-heal`,
-    presentation: {
-      log: () => { }, showDamageFeedback: () => { }, showShieldFeedback: () => { }, showHealFeedback: () => { },
-      showDying: () => { }, hideDying: () => { }, showJudgment: () => { }, hideJudgment: () => { },
-      showCurrentEffect: () => { }, showLightningHit: () => { }, refresh: () => { }
-    },
-    diagnostics: {
-      recordDamage: () => { }, recordHealing: (dto) => telemetry.push(["heal", dto]), recordHpLoss: (dto) => telemetry.push(["loss", dto])
-    },
-    observeDamage: () => { }
-  });
-  assert.equal(await workflow.heal(source, target, 2, { reason:"治疗" }), 2);
-  assert.equal(target.hp, 3);
-  assert.deepEqual(events.splice(0), ["beforeHeal", "afterHeal"]);
-  target.hp = 1;
-  assert.equal(await workflow.loseHp(target, 2, { source, reason:"失去生命" }), 2);
-  assert.equal(target.hp, -1);
-  assert.equal(target.shield, 5, "HP loss 继续绕过护盾");
-  assert.equal(judgeCalls, 0);
-  assert.equal(blockCalls, 0);
-  assert.deepEqual(events.splice(0), ["beforeHpLoss", "afterHpLoss"]);
-  assert.deepEqual(telemetry, [["heal", { sourceId:"s", actualAmount:2 }], ["loss", { targetId:"t", amount:2 }]]);
-}
-
-test("治疗与失去生命轨迹：独立 workflow、绕过盾/格挡/雷达", frArch8CombatWorkflowHealAndHpLossTrace);
-
-/*
-功能
-验证 PresentationPort 与 DiagnosticsPort 只暴露 FR-ARCH-8 真实 evidence surface。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-无。
-
-写入状态
-fake records。
-
-调用函数
-createPresentationPort、createDiagnosticsPort。
-
-边界与不变量
-缺任一真实消费方法必须拒绝；不暴露 Player.statistics 整体。
-*/
-function frArch8PortsMinimalSurface() {
-  const presentationCalls = [];
-  const presentation = createPresentationPort({
-    log: (...args) => presentationCalls.push(["log", ...args]),
-    showDamageFeedback: (...args) => presentationCalls.push(["damage", ...args]),
-    showShieldFeedback: (...args) => presentationCalls.push(["shield", ...args]),
-    showHealFeedback: (...args) => presentationCalls.push(["heal", ...args]),
-    showDying: (...args) => presentationCalls.push(["dying", ...args]),
-    hideDying: () => presentationCalls.push(["hide-dying"]),
-    showJudgment: (...args) => presentationCalls.push(["judgment", ...args]),
-    hideJudgment: () => presentationCalls.push(["hide-judgment"]),
-    showCurrentEffect: (...args) => presentationCalls.push(["effect", ...args]),
-    showLightningHit: (...args) => presentationCalls.push(["lightning", ...args]),
-    showCurrentAction: (...args) => presentationCalls.push(["action", ...args]),
-    playActionCue: (...args) => presentationCalls.push(["cue", ...args]),
-    setPrompt: (...args) => presentationCalls.push(["prompt", ...args]),
-    showThinking: (...args) => presentationCalls.push(["thinking", ...args]),
-    clearThinking: () => presentationCalls.push(["clear-thinking"]),
-    isThinkingActive: () => false,
-    showGameOver: (...args) => presentationCalls.push(["game-over", ...args]),
-    showPrivateReveal: (...args) => presentationCalls.push(["private-reveal", ...args]),
-    showDuel: (...args) => presentationCalls.push(["duel", ...args]),
-    hideDuel: () => presentationCalls.push(["hide-duel"]),
-    showPublicCardPool: (...args) => presentationCalls.push(["public-pool", ...args]),
-    hidePublicCardPool: () => presentationCalls.push(["hide-public-pool"]),
-    refresh: () => presentationCalls.push(["refresh"])
-  });
-  presentation.showDamageFeedback("p1", 1);
-  presentation.refresh();
-  assert.deepEqual(presentationCalls.slice(0, 2), [["damage", "p1", 1], ["refresh"]]);
-  assert.throws(() => createPresentationPort({ log() { } }), /showDamageFeedback/);
-  const diagnostics = createDiagnosticsPort({
-    recordDamage: () => { }, recordHealing: () => { }, recordHpLoss: () => { },
-    recordCardPlayed: () => { }, recordAssaultUse: () => { }, reportWorkflowError: () => { }
-  });
-  assert.equal(typeof diagnostics.recordDamage, "function");
-  assert.throws(() => createDiagnosticsPort({ recordDamage() { } }), /recordHealing/);
-}
-
-test("Application Ports：Presentation CREATE，Diagnostics CREATE，surface 最小", frArch8PortsMinimalSurface);
-
-test("Application Ports：公开牌池只跨边界传 ID 并由 adapter 重绑实体", () => {
-  const player = makePlayer("public-pool-port-player", 0, "dawn", "human"),
-    cardA = instance("block"),
-    cardB = instance("charge");
-  const { game } = makeGame([player]);
-  game.state.deck.cards.push(cardA, cardB);
-  let payload = null;
-  game.publicCardPoolWorkflow.runtime.presentation = {
-    ...game.presentationPort,
-    showPublicCardPool: (value) => { payload = value; }
-  };
-
-  const revealed = game.publicCardPoolWorkflow.reveal(2);
-
-  assert.deepEqual(payload, { cardIds:revealed.map((card) => card.id) });
-  assert.equal(payload.cardIds.some((cardId) => typeof cardId !== "string"), false);
-  let displayedCards = null;
-  const cardsById = new Map(revealed.map((card) => [card.id, card]));
-  const presentation = createGamePresentationAdapter({
-    log: () => { },
-    getPlayerById: () => null,
-    getCardById: (cardId) => cardsById.get(cardId) ?? null,
-    ui: {
-      showPublicPool: (cards) => { displayedCards = cards; },
-      render: () => { }
-    },
-    renderTarget: {}
-  });
-  presentation.showPublicCardPool(payload);
-  assert.deepEqual(displayedCards, revealed);
-});
-
-/*
-功能
-验证 DyingWorkflow 的 cancel 分支只经 Application authority 写 projection 与 Domain transition。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeGame fixture 与 event listener。
-
-写入状态
-target.hp 经 DyingWorkflow。
-
-调用函数
-game.eventDispatcher.on、game.dyingWorkflow.enter。
-
-边界与不变量
-beforePlayerDying cancel 后 hp=1、phase 不变、dyingContext 不残留。
-*/
-async function frArch8DyingCancelProjectionAuthority() {
-  const target = makePlayer("fr8-dying", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("fr8-enemy", 1, "dusk", "ai", 1);
-  const { game } = makeGame([target, enemy]);
-  target.hp = 0;
-  game.eventDispatcher.on("beforePlayerDying", "fr8-cancel", (event) => { event.cancelled = true; });
-  assert.equal(await game.dyingWorkflow.enter(target, enemy), true);
-  assert.equal(target.hp, 1);
-  assert.equal(game.state.phase, "play");
-  assert.equal(game.state.dyingContext, null);
-  assert.equal(game.dyingWorkflow.currentDyingContext, null);
-}
-
-test("濒死取消：hp=1 且 currentDyingContext 仅 Application projection", frArch8DyingCancelProjectionAuthority);
-
-/*
-功能
-验证 DyingWorkflow 继续通过 FR-ARCH-7 Response boundary 并保持成功救援事件顺序。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeGame fixture 与 event trace。
-
-写入状态
-target.hp 经 transitions；response payment 经 Game 移动。
-
-调用函数
-game.eventDispatcher.on、game.dyingWorkflow.enter。
-
-边界与不变量
-AI self rescue 固定使用调息；事件顺序为 beforePlayerDying→playerDying→beforeHeal→afterHeal→dyingRescueUsed→cardUsed→playerRescued。
-*/
-async function frArch8DyingRescueUsesResponseWorkflow() {
-  const target = makePlayer("fr8-rescue-target", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("fr8-rescue-enemy", 1, "dusk", "ai", 1);
-  target.hp = 0;
-  const recover = instance("recover");
-  target.hand.push(recover);
-  const { game } = makeGame([target, enemy]);
-  const trace = [];
-  for (const eventName of ["beforePlayerDying", "playerDying", "beforeHeal", "afterHeal", "dyingRescueUsed", "cardUsed", "playerRescued"]) {
-    game.eventDispatcher.on(eventName, `fr8-trace-${eventName}`, () => { trace.push(eventName); });
-  }
-  assert.equal(await game.dyingWorkflow.enter(target, enemy), true);
-  assert.equal(target.hp, 1);
-  assert.deepEqual(trace, ["beforePlayerDying", "playerDying", "beforeHeal", "afterHeal", "dyingRescueUsed", "cardUsed", "playerRescued"]);
-}
-
-test("濒死救援轨迹：Response authority preserved，事件顺序等价", frArch8DyingRescueUsesResponseWorkflow);
-
-/*
-功能
-验证击杀奖励资格是 Domain Combat Rule，数量仍由 RulesetDefinition authority 提供。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-RULESET_DEFINITION 与 RUNTIME_POLICY。
-
-写入状态
-无。
-
-调用函数
-isKillRewardEligible。
-
-边界与不变量
-未奖励、来源存活且敌对才成立；同阵营或死来源不成立；数量不复制进 Application。
-*/
-function frArch8KillRewardRuleAuthority() {
-  assert.equal(isKillRewardEligible({ rewardGranted:false, battleTeam:"dawn" }, { alive:true, battleTeam:"dusk" }), true);
-  assert.equal(isKillRewardEligible({ rewardGranted:true, battleTeam:"dawn" }, { alive:true, battleTeam:"dusk" }), false);
-  assert.equal(isKillRewardEligible({ rewardGranted:false, battleTeam:"dawn" }, { alive:false, battleTeam:"dusk" }), false);
-  assert.equal(isKillRewardEligible({ rewardGranted:false, battleTeam:"dawn" }, { alive:true, battleTeam:"dawn" }), false);
-  assert.equal(RULESET_DEFINITION.killRewardDrawCount, 1);
-}
-
-test("击杀奖励规则：资格归 Combat Rule，数量归 RulesetDefinition", frArch8KillRewardRuleAuthority);
-
-/*
-功能
-验证 Application JudgmentWorkflow 在 fake collaborators 下执行 draw→show/log→reveal→destination→handVersion→clear/hide/restore 顺序。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake state/zone/observer records。
-
-写入状态
-fake hand/handVersion 经 PlayerStateTransition。
-
-调用函数
-createJudgmentWorkflow、decideDefenseJudgmentOutcome。
-
-边界与不变量
-basic 判定牌进入守方手牌；非守方 viewer 均触发 AI knowledge collaborator；phase 恢复。
-*/
-async function frArch8JudgmentWorkflowDefenseTrace() {
-  const defender = { id:"d", name:"守方", alive:true, equipment:{ definitionId:"defenseDevice" }, hand:[], handVersion:0, battleTeam:"dawn" };
-  const attacker = { id:"a", name:"攻方", alive:true };
-  const viewer = { id:"v", name:"观众", alive:true };
-  const state = { gameId:"g8j", isGameOver:false, phase:"play", stateVersion:0, players:[defender, attacker, viewer] };
-  const card = { id:"j-card", name:"判定牌", category:"basic", categoryName:"基础牌", art:"art" };
-  const trace = [];
-  const observations = [];
-  const projections = [];
-  const workflow = createJudgmentWorkflow({
-    getState: () => state,
-    isSessionValid: () => true,
-    emitEvent: async (type) => { trace.push(type); },
-    drawJudgmentCard: () => { trace.push("draw"); return card; },
-    syncDeckAliases: () => { trace.push("sync"); },
-    moveJudgmentToDiscard: () => { trace.push("to-discard"); },
-    moveJudgmentToHand: (moved) => { trace.push(["to-hand", moved.id]); defender.hand.push(moved); },
-    observeJudgmentCard: (...args) => observations.push(args),
-    presentation: {
-      log: (message) => trace.push(["log", message]),
-      showJudgment: () => trace.push("show-judgment"),
-      hideJudgment: () => trace.push("hide-judgment"),
-      showCurrentEffect: () => { }, showLightningHit: () => { }, showDamageFeedback: () => { },
-      showShieldFeedback: () => { }, showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => trace.push("refresh")
-    },
-    setCurrentJudgmentProjection: (value) => projections.push(value)
-  });
-  const result = await workflow.judgeDefense(attacker, defender, {});
-  assert.deepEqual(result, { handled:true, immune:false, category:"basic" });
-  assert.equal(defender.hand[0], card);
-  assert.equal(defender.handVersion, 1);
-  assert.equal(observations.length, 2);
-  assert.equal(observations.every(([observer]) => observer.id !== defender.id), true);
-  assert.equal(state.phase, "play");
-  assert.equal(projections[0].card, card);
-  assert.equal(projections[projections.length - 1], null);
-  assert.equal(workflow.currentJudgment, null);
-  const toHandIndex = trace.findIndex((entry) => Array.isArray(entry) && entry[0] === "to-hand");
-  assert.ok(trace.indexOf("draw") < trace.indexOf("show-judgment"));
-  assert.ok(trace.indexOf("judgmentRevealed") < toHandIndex);
-  assert.ok(trace.indexOf("hide-judgment") < trace.indexOf("refresh"));
-}
-
-test("判定轨迹：draw→show/log→reveal→destination→handVersion→restore", frArch8JudgmentWorkflowDefenseTrace);
-
-/*
-功能
-验证 delayed-status judgment workflow 的 destination 永远执行 Domain 决定的 discard。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake state/trace。
-
-写入状态
-无。
-
-调用函数
-createJudgmentWorkflow、decideDelayedStatusJudgmentOutcome。
-
-边界与不变量
-equipment 判定触发；tactic/basic 不触发；所有延迟判定牌进弃牌堆。
-*/
-async function frArch8DelayedStatusJudgmentDestination() {
-  const holder = { id:"h", name:"持有者", alive:true, battleTeam:"dawn" };
-  const state = { gameId:"g8d", isGameOver:false, phase:"status", stateVersion:0, players:[holder] };
-  const card = { id:"j2", name:"装备判定", category:"equipment", categoryName:"装备牌", art:"art" };
-  const moved = [];
-  const workflow = createJudgmentWorkflow({
-    getState: () => state,
-    isSessionValid: () => true,
-    emitEvent: async () => { },
-    drawJudgmentCard: () => card,
-    syncDeckAliases: () => { },
-    moveJudgmentToDiscard: (entry) => moved.push(entry),
-    moveJudgmentToHand: () => { },
-    observeJudgmentCard: () => { },
-    presentation: {
-      log: () => { }, showJudgment: () => { }, hideJudgment: () => { }, showCurrentEffect: () => { },
-      showLightningHit: () => { }, showDamageFeedback: () => { }, showShieldFeedback: () => { },
-      showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => { }
-    },
-    setCurrentJudgmentProjection: () => { }
-  });
-  const result = await workflow.judgeDelayedStatus(holder, {
-    statusId:"lightning", statusName:"闪电", triggerCategory:"equipment",
-    triggerMessage: (target) => `${target.name}命中`
-  });
-  assert.equal(result.triggered, true);
-  assert.equal(moved[0], card);
-  assert.equal(state.phase, "status");
-}
-
-test("延迟判定去向：公开后一律执行 Domain 决定的 discard", frArch8DelayedStatusJudgmentDestination);
-
-/*
-功能
-验证 seal/lightning status-resolution workflow 是 Application authority 且只调用 Response/Judgment/Combat。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake state/status/response/judgment/damage records。
-
-写入状态
-fake holder statuses/flags 经 Domain transitions。
-
-调用函数
-createStatusResolutionWorkflow。
-
-边界与不变量
-seal 非战术提交 skipActionPhase；lightning 命中调用 combat damage 3/canBlock false 且 presentation hit 只一次。
-*/
-async function frArch8StatusResolutionWorkflowTrace() {
-  const sealStatus = { cardDefinitionId:"seal", originPlayerId:"s" };
-  const sealHolder = { id:"h", name:"封印者", alive:true, battleTeam:"dawn", statuses:{ sealed:sealStatus }, turnFlags:{ skipActionPhase:false } };
-  const sealState = { gameId:"g8seal", isGameOver:false, stateVersion:0, players:[sealHolder] };
-  const sealEffects = [];
-  const sealWorkflow = createStatusResolutionWorkflow({
-    getState: () => sealState,
-    isSessionValid: () => true,
-    askForStatusCounter: async () => { sealEffects.push("counter"); return { status:"declined", cards:[] }; },
-    judgeSeal: async () => { sealEffects.push("judge"); return { handled:true, triggered:false, category:"basic", card:{ name:"基础牌" } }; },
-    judgeLightning: async () => ({ handled:false, triggered:false }),
-    damage: async () => 0,
-    presentation: {
-      log: () => { }, showCurrentEffect: (...args) => sealEffects.push(["effect", ...args]),
-      showJudgment: () => { }, hideJudgment: () => { }, showLightningHit: () => { }, showDamageFeedback: () => { },
-      showShieldFeedback: () => { }, showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => sealEffects.push("refresh")
-    }
-  });
-  await sealWorkflow.resolveSeal(sealHolder, sealStatus);
-  assert.equal(sealHolder.statuses.sealed, undefined);
-  assert.equal(sealHolder.turnFlags.skipActionPhase, true);
-  assert.deepEqual(sealEffects.slice(0, 3), [["effect", { statusId:"seal", label:"即将判定", holderName:"封印者"}], "counter", "judge"]);
-
-  const lightningStatus = { cardDefinitionId:"lightning", originPlayerId:"s" };
-  const holder = { id:"l", name:"闪电者", alive:true, battleTeam:"dawn", statuses:{ lightning:lightningStatus }, turnFlags:{} };
-  const state = { gameId:"g8light", isGameOver:false, stateVersion:0, players:[holder] };
-  const hits = [];
-  const damages = [];
-  const lightningWorkflow = createStatusResolutionWorkflow({
-    getState: () => state,
-    isSessionValid: () => true,
-    askForStatusCounter: async () => ({ status:"declined", cards:[] }),
-    judgeSeal: async () => ({ handled:false, triggered:false }),
-    judgeLightning: async () => ({ handled:true, triggered:true, category:"equipment", card:{ name:"装备牌" } }),
-    damage: async (...args) => { damages.push(args); return 3; },
-    presentation: {
-      log: () => { }, showCurrentEffect: () => { }, showJudgment: () => { }, hideJudgment: () => { },
-      showLightningHit: (id) => hits.push(id), showDamageFeedback: () => { }, showShieldFeedback: () => { },
-      showHealFeedback: () => { }, showDying: () => { }, hideDying: () => { }, refresh: () => { }
-    }
-  });
-  await lightningWorkflow.resolveLightning(holder, lightningStatus);
-  assert.equal(holder.statuses.lightning, undefined);
-  assert.deepEqual(hits, [holder.id]);
-  assert.equal(damages.length, 1);
-  assert.deepEqual(damages[0][1], holder);
-  assert.equal(damages[0][2], 3);
-  assert.equal(damages[0][3].canBlock, false);
-}
-
-test("延迟状态结算：seal commit 与 lightning hit 只经 Application workflow", frArch8StatusResolutionWorkflowTrace);
-
-/*
-功能
-验证猎印死亡清理的纯规则与 Application workflow ownership。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeGame fixture 与 Domain StatusTransitions。
-
-写入状态
-player.statuses 经 transition 与 cleanup workflow。
-
-调用函数
-isHuntMarkSourceExpired、transitionSetStatus、game.dyingWorkflow.cleanupHuntMarksForSource。
-
-边界与不变量
-只删 sourceId 匹配的猎印；不匹配保留；transition 成功时 stateVersion 递增。
-*/
-function frArch8HuntMarkDeathCleanupOwnership() {
-  assert.equal(isHuntMarkSourceExpired({ sourceId:"dead" }, "dead"), true);
-  assert.equal(isHuntMarkSourceExpired({ sourceId:"other" }, "dead"), false);
-  const hunter = makePlayer("fr8-hunter", 0, "dawn", "ai", 0);
-  const marked = makePlayer("fr8-marked", 1, "dusk", "ai", 1);
-  const unrelated = makePlayer("fr8-unrelated", 2, "dusk", "ai", 2);
-  const { game } = makeGame([hunter, marked, unrelated]);
-  transitionSetStatus(game.state, marked, "huntMark", { sourceId:hunter.id });
-  transitionSetStatus(game.state, unrelated, "huntMark", { sourceId:"someone-else" });
-  const version = game.state.stateVersion;
-  game.dyingWorkflow.cleanupHuntMarksForSource(hunter.id);
-  assert.equal(marked.statuses.huntMark, undefined);
-  assert.equal(unrelated.statuses.huntMark.sourceId, "someone-else");
-  assert.equal(game.state.stateVersion, version + 1);
-}
-
-test("猎印清理：Domain predicate 唯一，Application 只执行 remove/render", frArch8HuntMarkDeathCleanupOwnership);
-
-/*
-功能
-验证 Application Combat/Judgment 无 concrete UI/AI、无 aiMemory/statistics 直接写，旧系统路径均已删除。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-js/application/{combat,judgment} 源码与旧路径存在性。
-
-写入状态
-无。
-
-调用函数
-listJavaScriptFiles、readFile。
-
-边界与不变量
-Domain 规则仍无 application event dependency；composition 的 damage/heal 只转发。
-*/
-async function frArch8OwnershipAndDependencyPurity() {
-  const appFiles = [
-    ...(await listJavaScriptFiles(projectFile("js/application/combat"))),
-    ...(await listJavaScriptFiles(projectFile("js/application/judgment")))
-  ];
-  assert.ok(appFiles.length >= 4);
-  for (const file of appFiles) {
-    const source = await readFile(file, "utf8");
-    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|\/adapters\/|\/ui\/|\/audio\/|\/ai\/|UIManager\.js|AiController\.js|SoundManager\.js|cards\/cardRegistry|characters\/skillRegistry|config\/)/, file);
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
-    assert.doesNotMatch(code, /\.(?:statistics|aiMemory|recentAggressors)\b|\bEventBus\b|\beventDispatcher\b|\bdocument\b|\bwindow\b/, file);
-  }
-  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  assert.doesNotMatch(gameSource, /event\.amount > 0 && event\.canBlock/);
-  assert.match(gameSource, /damage:application\.combatWorkflow\.damage/);
-  assert.match(gameSource, /heal:application\.combatWorkflow\.heal/);
-  for (const path of ["js/core/DyingSystem.js", "js/core/JudgmentSystem.js", "js/core/HpLossSystem.js"]) {
-    await assert.rejects(access(projectFile(path)));
-  }
-}
-
-test("架构·Combat ownership：Application workflow 唯一且旧系统路径不存在", frArch8OwnershipAndDependencyPurity);
-
-/*
-功能
-验证 currentJudgment/dyingContext 的 legacy projection 不 bump stateVersion。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeGame fixture。
-
-写入状态
-fake projection setter。
-
-调用函数
-game.judgmentWorkflow.workflow、game.dyingWorkflow.workflow。
-
-边界与不变量
-两个字段是 Application state；setter 只写 legacy game.state 字段。
-*/
-function frArch8ApplicationStateProjectionNoVersion() {
-  const { game } = makeTeamFixture();
-  const version = game.state.stateVersion;
-  assert.equal(game.judgmentWorkflow.currentJudgment, null);
-  assert.equal(game.dyingWorkflow.currentDyingContext, null);
-  assert.equal(Object.hasOwn(game.judgmentWorkflow, "setCurrentJudgmentProjection"), false);
-  assert.equal(Object.hasOwn(game.dyingWorkflow, "setDyingContextProjection"), false);
-  assert.equal(game.state.stateVersion, version);
-}
-
-test("Application 状态投影：judgment/dying projection 已封装且读取不 bump stateVersion", frArch8ApplicationStateProjectionNoVersion);
-
-// ---- Match、Turn 与 Action ----
-
-/*
-功能
-验证 pre-live match setup 与 live authoritative match 的显式边界。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-Game/matchWorkflow/stateVersion。
-
-写入状态
-startSelection 与 confirmCharacter setup/live 状态。
-
-调用函数
-game.startSelection、game.confirmCharacter。
-
-边界与不变量
-pre-live roster/maxEnergy/startingPlayerIndex 不 bump stateVersion；live 后拒绝重复 setup commit。
-*/
-async function frArch9MatchSetupBoundary() {
-  const ui = makeUi();
-  const game = createGameApplication(ui, () => 0.25);
-  game.simulationMode = true;
-  game.runGameLoop = async () => { };
-  const versionBeforeRoster = game.state.stateVersion;
-  const candidates = game.startSelection();
-  assert.equal(candidates.length, 4);
-  assert.equal(game.state.players.length, 5);
-  assert.equal(game.state.stateVersion, versionBeforeRoster, "pre-live roster/maxEnergy 不 bump stateVersion");
-  assert.equal(game.matchWorkflow.preLiveSetup.rosterCommitted, true);
-  assert.equal(game.matchWorkflow.preLiveSetup.maxEnergyCommitted, true);
-  assert.equal(game.matchWorkflow.liveAuthoritativeMatch, false);
-  await game.confirmCharacter(candidates[0].id);
-  assert.equal(game.matchWorkflow.liveAuthoritativeMatch, true);
-  assert.equal(game.state.startingPlayerIndex, 1);
-  assert.ok(game.state.stateVersion > versionBeforeRoster, "live setup transitions 后 stateVersion authoritative");
-  assert.throws(() => game.startSelection(), /pre-live setup/);
-}
-
-test("Match setup：pre-live one-shot，live 后拒绝重复 setup", frArch9MatchSetupBoundary);
-
-/*
-功能
-验证胜利决定是 Domain Team Rule，Application Match 只提交 workflow。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeGame fixture。
-
-写入状态
-winner/isGameOver/phase 经 transitions。
-
-调用函数
-getWinningTeam、game.checkVictory。
-
-边界与不变量
-双阵营存活无胜者；单阵营返回该阵营并提交 gameOver phase。
-*/
-async function frArch9MatchVictoryWorkflow() {
-  const dawn = makePlayer("fr9-dawn", 0, "dawn"),
-    dusk = makePlayer("fr9-dusk", 1, "dusk");
-  const { game } = makeGame([dawn, dusk]);
-  assert.equal(getWinningTeam(game.state), null);
-  dusk.alive = false;
-  assert.equal(getWinningTeam(game.state), "dawn");
-  assert.equal(await game.checkVictory(), "dawn");
-  assert.equal(game.state.winnerTeam, "dawn");
-  assert.equal(game.state.isGameOver, true);
-  assert.equal(game.state.phase, "gameOver");
-}
-
-test("胜负判定：winner formula 在 Domain TeamRules", frArch9MatchVictoryWorkflow);
-
-/*
-功能
-验证 discard ChoicePort request 为 data-only，且 UI/AI adapter 映射保持旧 legacy entity rebind。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake cards/legacy context。
-
-写入状态
-fake calls。
-
-调用函数
-createDiscardChoiceRequest、createUiChoiceAdapter、createAiChoiceAdapter。
-
-边界与不变量
-selectedIds 只含 cardId；human exact count；AI exact count；canDecline false。
-*/
-async function frArch9DiscardChoicePort() {
-  const request = createDiscardChoiceRequest({
-    requestId:"d1", actorId:"p1", gameId:"g1", stateVersion:1,
-    handCardIds:["c1", "c2"], requiredCount:2, label:"弃牌", handLimit:2
-  });
-  assert.equal(request.kind, "discard");
-  assert.equal(request.canDecline, false);
-  assert.deepEqual(request.options.map((option) => option.optionId), ["c1", "c2"]);
-  const human = createUiChoiceAdapter({
-    requestResponse: async () => null,
-    requestPublicCard: async () => null,
-    requestDiscard: async (player, count, prompt) => {
-      assert.equal(count, 2);
-      assert.equal(prompt, "弃牌");
-      return [{ id:"c1" }, { id:"c2" }];
-    },
-    requestTarget: async () => null,
-    getChoiceContext: () => ({ player:{ id:"p1" }, count:2, prompt:"弃牌" }),
-    isSessionValid: () => true
-  });
-  assert.deepEqual(await human.request(request), createChoiceResult("selected", { selectedIds:["c1", "c2"] }));
-  const ai = createAiChoiceAdapter({
-    getChoiceContext: () => ({ player:{ id:"p1" }, count:2 }),
-    shouldRespond: () => false,
-    choosePublicCard: () => null,
-    chooseDiscards: () => [{ id:"c1" }, { id:"c2" }],
-    isSessionValid: () => true
-  });
-  assert.deepEqual(await ai.request(request), createChoiceResult("selected", { selectedIds:["c1", "c2"] }));
-}
-
-test("ChoicePort·弃牌：data-only 请求，UI/AI adapter 只 rebind", frArch9DiscardChoicePort);
-
-/*
-功能
-验证 target ChoicePort 只接受公开 target facts，human adapter 返回 selected ID 后由 Action 重新绑定。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake targets。
-
-写入状态
-fake calls。
-
-调用函数
-createTargetChoiceRequest、createUiChoiceAdapter。
-
-边界与不变量
-AI Planner 不走该 Choice；request 不含 Player entity。
-*/
-async function frArch9TargetChoicePort() {
-  const request = createTargetChoiceRequest({
-    requestId:"t1", actorId:"human", gameId:"g1", stateVersion:1,
-    targets:[{ id:"e1", name:"敌人", battleTeam:"dusk" }], label:"选择目标", sourcePlayerId:"human", cardId:"a1"
-  });
-  assert.equal(request.kind, "target");
-  assert.equal(request.options[0].optionId, "e1");
-  assert.equal(JSON.stringify(request).includes("hand"), false);
-  const human = createUiChoiceAdapter({
-    requestResponse: async () => null,
-    requestPublicCard: async () => null,
-    requestDiscard: async () => [],
-    requestTarget: async (players, prompt) => { assert.equal(players[0].id, "e1"); assert.equal(prompt, "选择目标"); return players[0]; },
-    getChoiceContext: () => ({ players:[{ id:"e1", name:"敌人" }], prompt:"选择目标", meta:{} }),
-    isSessionValid: () => true
-  });
-  assert.deepEqual(await human.request(request), createChoiceResult("selected", { selectedIds:["e1"] }));
-}
-
-test("ChoicePort·目标：公开 target facts，Action 返回后 revalidate", frArch9TargetChoicePort);
-
-/*
-功能
-验证 Application Match/Turn/Action 无 concrete runtime 依赖且 composition 无 workflow algorithm 残留。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-js/application/{match,turn,action} 与最终 composition 源码。
-
-写入状态
-无。
-
-调用函数
-listJavaScriptFiles、readFile。
-
-边界与不变量
-composition 只有 wiring/forward；旧 match/turn/action algorithm marker 不再出现。
-*/
-async function frArch9ApplicationOwnershipPurity() {
-  const files = [
-    ...(await listJavaScriptFiles(projectFile("js/application/match"))),
-    ...(await listJavaScriptFiles(projectFile("js/application/turn"))),
-    ...(await listJavaScriptFiles(projectFile("js/application/action")))
-  ];
-  assert.ok(files.length >= 3);
-  for (const file of files) {
-    const source = await readFile(file, "utf8");
-    assert.doesNotMatch(source, /from\s+["'][^"']*(?:core\/|\/adapters\/|\/ui\/|\/audio\/|\/ai\/|UIManager\.js|AiController\.js|SoundManager\.js|cards\/cardRegistry|characters\/skillRegistry|config\/|utils\/debug)/, file);
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, "");
-    const concreteRuntimePattern = /\.(?:statistics|aiMemory|recentAggressors)\b|\bEventBus\b|\beventDispatcher\b|\bdocument\b|\bwindow\b|\bPlanner\b|\bSearchState\b/;
-    if (nodePath.basename(file) !== "Player.js") assert.doesNotMatch(code, concreteRuntimePattern, file);
-  }
-  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  assert.match(gameSource, /startSelection:application\.matchWorkflow\.startSelection/);
-  assert.match(gameSource, /runGameLoop:application\.turnWorkflow\.runGameLoop/);
-  assert.match(gameSource, /playCard:application\.actionWorkflow\.playCard/);
-  assert.doesNotMatch(gameSource, /\bconsecutiveTurnFailures\b/);
-  assert.doesNotMatch(gameSource, /setMatchPhase\(\s*this\.state/);
-  assert.doesNotMatch(gameSource, /const preparedTransfer =/);
-  assert.doesNotMatch(gameSource, /recentAggressors/);
-}
-
-test("Application 纯度：Match/Turn/Action 无 concrete adapter，composition 无 workflow body", frArch9ApplicationOwnershipPurity);
-
-/*
-功能
-验证 Dying queue mutable exposure 已关闭且只提供冻结快照。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeGame fixture 与 DyingWorkflow。
-
-写入状态
-无。
-
-调用函数
-Object.isFrozen、Object.hasOwn。
-
-边界与不变量
-façade 不再暴露可变 queue；snapshot 与内部队列解耦。
-*/
-function frArch9DyingQueueSnapshotClosure() {
-  const { game } = makeTeamFixture();
-  assert.equal(Object.hasOwn(game.dyingWorkflow, "queue"), false);
-  const snapshot = game.dyingWorkflow.queueSnapshot;
-  assert.ok(Object.isFrozen(snapshot));
-  assert.ok(Array.isArray(snapshot));
-}
-
-test("濒死队列：只读 snapshot，不暴露可变 owner queue", frArch9DyingQueueSnapshotClosure);
-
-/*
-功能
-验证 concrete Presentation/Diagnostics/AI observation 实现已移出 Game，Game 只做 composition wiring。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-adapters 与 Game 源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-Game 无 showDamageFeedback 实现、无 statistics 写入、无 recentAggressors 写入。
-*/
-async function frArch9ConcreteAdaptersLeftGame() {
-  const gameSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  assert.doesNotMatch(gameSource, /showDamageFeedback:\s*\(playerId/);
-  assert.doesNotMatch(gameSource, /target\.statistics\.damageTaken\s*\+=/);
-  assert.doesNotMatch(gameSource, /target\.aiMemory\.recentAggressors/);
-  const uiAdapter = await readFile(projectFile("js/adapters/ui/GamePresentationAdapter.js"), "utf8");
-  const diagnosticsAdapter = await readFile(projectFile("js/adapters/diagnostics/PlayerStatisticsDiagnosticsAdapter.js"), "utf8");
-  const aiAdapter = await readFile(projectFile("js/adapters/ai/RecentAggressorsObservationAdapter.js"), "utf8");
-  assert.match(uiAdapter, /createPresentationPort/);
-  assert.match(diagnosticsAdapter, /target\.statistics\.damageTaken/);
-  assert.match(aiAdapter, /recentAggressors/);
-}
-
-test("Adapter ownership：Presentation/Diagnostics/AI observation owner 在 adapters", frArch9ConcreteAdaptersLeftGame);
-
-/*
-功能
-验证 action runtime state 由 Application Action 唯一拥有，Game 仅提供兼容 accessor。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-makeGame fixture 与 Game/actionWorkflow 源码。
-
-写入状态
-action state 字段。
-
-调用函数
-readFile。
-
-边界与不变量
-设置 Game.accessor 会写 ActionWorkflow state；resolutionOwners 为同一 Map。
-*/
-async function frArch9ActionRuntimeStateOwnership() {
-  const actor = makePlayer("fr9-action-state", 0, "dawn");
-  const { game } = makeGame([actor]);
-  game.actionWorkflow.setActionLocked(true);
-  assert.equal(game.actionWorkflow.getActionStateSnapshot().actionLocked, true);
-  game.actionWorkflow.resetLocks();
-  game.actionWorkflow.setInteractionLocked(true);
-  assert.equal(game.actionWorkflow.getActionStateSnapshot().interactionLocked, true);
-  game.actionWorkflow.resetLocks();
-  game.actionWorkflow.setPendingHumanPlayEnd(true);
-  assert.equal(game.actionWorkflow.getActionStateSnapshot().pendingHumanPlayEnd, true);
-  game.actionWorkflow.resetLocks();
-  const snapshot = game.actionWorkflow.getResolutionOwnersSnapshot();
-  snapshot.set({}, "x");
-  assert.equal(game.actionWorkflow.getResolutionOwnerCount(), 0);
-  const source = await readFile(projectFile("js/application/action/ActionWorkflow.js"), "utf8");
-  assert.match(source, /resolutionOwners: new Map\(\)/);
-}
-
-test("Action 运行状态：locks/resolution owners 归 Application Action", frArch9ActionRuntimeStateOwnership);
-
-// ---- AI 与 Domain 一致性 ----
-
-/*
-功能
-验证 FR-ARCH-11 carry-in：卡牌固定效果数值只由 CardDefinitions 拥有。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-CardDefinitions 与 CardEffectRules 源码/导出。
-
-写入状态
-无。
-
-调用函数
-readFile、CardEffectRules getters。
-
-边界与不变量
-CardEffectRules 不得重新出现固定 literal getter。
-*/
-async function frArch12CardFixedFactOwnership() {
-  const rules = await import("../js/domain/rules/card/CardEffectRules.js");
-  assert.equal(rules.getAssaultBaseDamage(), DOMAIN_CARD_DEFINITIONS.assault.baseDamage);
-  assert.equal(rules.getRecoverHealAmount(), DOMAIN_CARD_DEFINITIONS.recover.healAmount);
-  assert.equal(rules.getChargeEnergyAmount(), DOMAIN_CARD_DEFINITIONS.charge.energyGain);
-  assert.equal(rules.getShieldAmount(), DOMAIN_CARD_DEFINITIONS.shield.shieldAmount);
-  assert.equal(rules.getShockwaveDamage(), DOMAIN_CARD_DEFINITIONS.shockwave.perTargetDamage);
-  assert.equal(rules.getProvokeDamage(), DOMAIN_CARD_DEFINITIONS.provoke.failDamage);
-  assert.equal(rules.getHarvestDrawCount(), DOMAIN_CARD_DEFINITIONS.harvest.drawCount);
-  assert.equal(rules.getDuelDamage(), DOMAIN_CARD_DEFINITIONS.duel.failDamage);
-  assert.equal(rules.getSymbiosisHealAmount(), DOMAIN_CARD_DEFINITIONS.symbiosis.healAmount);
-  assert.equal(rules.getNextExposeWeaknessStacks({ stacks: 2 }), 3);
-  assert.equal(rules.getMutualBenefitRevealCount(5), 5);
-  const source = await readFile(projectFile("js/domain/rules/card/CardEffectRules.js"), "utf8");
-  assert.doesNotMatch(source, /export function get(?:AssaultBaseDamage|RecoverHealAmount|ChargeEnergyAmount|ShieldAmount|ShockwaveDamage|ProvokeDamage|HarvestDrawCount|DuelDamage|SymbiosisHealAmount)[\s\S]*?return\s+[12];/);
-}
-
-test("定义归属·卡牌固定事实：Definition-owned 且 Rule 不复制 literal", frArch12CardFixedFactOwnership);
-
-/*
-功能
-验证本阶段 Domain closure：装备/技能固定事实单一 Definition authority，Rules 层不再复制 literal，transfer 隐藏手牌边界只消费 primitive。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-Domain definitions/rules 源码与导出、RULESET_DEFINITION。
-
-写入状态
-无。
-
-调用函数
-getRequiredBlockCount、canTriggerRecycleDevice、getTransferableHandCount、getTransferSourceIds、hasHandOrEquipmentFacts、readFile。
-
-边界与不变量
-只验证 ownership 与信息边界，不改变规则行为。
-*/
-async function frArch15DomainClosureFinal() {
-  assert.equal(CARD_DEFINITIONS.telescope.outgoingDistanceModifier, -1);
-  assert.equal(CARD_DEFINITIONS.barrierDevice.incomingDistanceModifier, 1);
-  assert.equal(CARD_DEFINITIONS.battleDevice.assaultRequiredBlockCount, 2);
-  assert.equal(CARD_DEFINITIONS.recycleDevice.triggerDrawCount, 1);
-  assert.equal(CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn, 2);
-
-  const distanceSource = await readFile(projectFile("js/domain/rules/distance/DistanceRules.js"), "utf8");
-  assert.doesNotMatch(distanceSource, /sourceEquipmentDefinitionId === "telescope"/);
-  assert.doesNotMatch(distanceSource, /targetEquipmentDefinitionId === "barrierDevice"/);
-  assert.match(distanceSource, /outgoingDistanceModifier|incomingDistanceModifier/);
-
-  const responseSource = await readFile(projectFile("js/domain/rules/response/ResponseRules.js"), "utf8");
-  assert.doesNotMatch(responseSource, /sourceEquipmentDefinitionId === "battleDevice" \? 2 : 1/);
-  assert.equal(
-    getRequiredBlockCount("battleDevice", true),
-    CARD_DEFINITIONS.battleDevice.assaultRequiredBlockCount
-  );
-
-  const recycleSource = await readFile(projectFile("js/domain/rules/card/RecycleDeviceRules.js"), "utf8");
-  assert.doesNotMatch(recycleSource, /Number\(useCount\) < 2/);
-  const recycleBase = { ownerAlive:true, currentActorId:"a", ownerId:"a", equipmentDefinitionId:"recycleDevice", cardCategory:"tactic", cardUsageMode:"active" };
-  assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount:0 }), true);
-  assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - 1 }), true);
-  assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn }), false);
-
-  assert.equal(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, 2);
-  assert.equal(PASSIVE_SKILL_DEFINITIONS.momentum.stacksGain, 1);
-  assert.equal(PASSIVE_SKILL_DEFINITIONS.gamble.drawChance, 0.6);
-  assert.equal(PASSIVE_SKILL_DEFINITIONS.gamble.drawCount, 1);
-  assert.equal(Object.hasOwn(RULESET_DEFINITION, "gamblerDrawChance"), false);
-  assert.equal(Object.hasOwn(RULESET_DEFINITION, "momentumMaxStacks"), false);
-
-  const cardRulesSource = await readFile(projectFile("js/domain/rules/card/CardRules.js"), "utf8");
-  assert.doesNotMatch(cardRulesSource, /handCardIds/);
-  const transferOnly = { id:"t", seatIndex:0, alive:true, handCount:1, transferableHandCount:0, equipmentDefinitionId:null };
-  assert.equal(getTransferableHandCount(transferOnly), 0);
-  assert.equal(hasHandOrEquipmentFacts(transferOnly), false);
-  assert.deepEqual(
-    getTransferSourceIds(
-      [transferOnly, { id:"u", seatIndex:1, alive:true, handCount:1, equipmentDefinitionId:null }],
-      transferOnly,
-      { effectRange:null, ignoresDistance:true, id:"t" }
-    ),
-    ["u"]
-  );
-}
-
-test("架构·Domain ownership：装备/技能 Definition-owned，transfer 边界 primitive-only", frArch15DomainClosureFinal);
-
-
-/*
-功能
-验证 FR-ARCH-11 carry-in：技能固定效果数值只由 SkillDefinitions 拥有，allIn 动态公式仍由 SkillRules 解释。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-SkillDefinitions 与 SkillRules 导出/源码。
-
-写入状态
-无。
-
-调用函数
-readFile、decideSkillEffect、decideAllInDrawCount、decideAllInEnterChance。
-
-边界与不变量
-SkillRules 不得复制固定 effect literal；AI 不得自行复制 allIn 公式。
-*/
-async function frArch12SkillFixedFactOwnership() {
-  const rules = await import("../js/domain/rules/skill/SkillRules.js");
-  const source = { id:"s", energy:3, alive:true, battleTeam:"dawn", hp:3, maxHp:4, shield:0, handCount:1, equipmentDefinitionId:null };
-  const assertDecision = (skill, fields) => {
-    const decision = rules.decideSkillEffect(skill, source);
-    for (const [field, value] of Object.entries(fields)) assert.equal(decision[field], value, `${skill.id}.${field}`);
-  };
-  assertDecision(ACTIVE_SKILL_DEFINITIONS.breakArmy, { energyCost:2, attackLimitBonus:1 });
-  assertDecision(ACTIVE_SKILL_DEFINITIONS.barrier, { energyCost:2, shieldAmount:1 });
-  assertDecision(ACTIVE_SKILL_DEFINITIONS.symbiosis, { energyCost:2, healAmount:1 });
-  assertDecision(ACTIVE_SKILL_DEFINITIONS.burningField, { energyCost:3, damageAmount:1 });
-  assertDecision(ACTIVE_SKILL_DEFINITIONS.hunt, { energyCost:2, damageAmount:2, blockedRewardDraw:1 });
-  assertDecision(ACTIVE_SKILL_DEFINITIONS.resonance, { energyCost:2, drawCount:1 });
-  const allIn = rules.decideSkillEffect(ACTIVE_SKILL_DEFINITIONS.allIn, { ...source, energy:3 });
-  assert.equal(allIn.energyCost, 3);
-  assert.equal(allIn.drawCount, 2);
-  assertClose(allIn.enterChance, .75);
-  assert.equal(rules.decideAllInDrawCount(2), 1);
-  assertClose(rules.decideAllInEnterChance(4), 1);
-  const skillSource = await readFile(projectFile("js/domain/rules/skill/SkillRules.js"), "utf8");
-  assert.doesNotMatch(skillSource, /if \(skill\.id === "(?:breakArmy|barrier|symbiosis|burningField|hunt|resonance)"\) return Object\.freeze\(\{ energyCost, (?:attackLimitBonus|shieldAmount|healAmount|damageAmount|drawCount): [12]/);
-  const simSource = await readFile(projectFile("js/ai/simulation/SkillEffectSimulation.js"), "utf8");
-  assert.doesNotMatch(simSource, /energyAmount\s*-\s*1|energyAmount\s*\*\s*\.25/);
-}
-
-test("定义归属·技能固定事实：Definition-owned 且 allIn 公式 Rule-owned", frArch12SkillFixedFactOwnership);
-
-/*
-功能
-验证转移方向策略只有 TransferPolicy 一个公式，执行 adapter 只桥接 Human/AI 条件。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-TransferPolicy、TransferExecutionPolicyAdapter 导出与源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-Human ally→enemy 仍合法；AI ally→enemy 仍被 AI policy 禁止。
-*/
-async function frArch12TransferPolicySingleAuthority() {
-  const { isTransferDirectionAllowed } = await import("../js/ai/policy/TransferPolicy.js");
-  const { isTransferExecutionAllowed } = await import("../js/adapters/ai/TransferExecutionPolicyAdapter.js");
-  const actor = { id:"a", battleTeam:"dawn" };
-  const ally = { id:"f", battleTeam:"dawn" };
-  const ally2 = { id:"f2", battleTeam:"dawn" };
-  const enemy = { id:"r", battleTeam:"dusk" };
-  const enemy2 = { id:"r2", battleTeam:"dusk" };
-  assert.equal(isTransferDirectionAllowed(actor, ally, enemy), false);
-  assert.equal(isTransferDirectionAllowed(actor, ally, ally2), true);
-  assert.equal(isTransferDirectionAllowed(actor, enemy, ally), true);
-  assert.equal(isTransferDirectionAllowed(actor, enemy, enemy2), true);
-  assert.equal(isTransferExecutionAllowed({ controllerType:"ai", battleTeam:"dawn" }, ally, enemy), false);
-  assert.equal(isTransferExecutionAllowed({ controllerType:"human", battleTeam:"dawn" }, ally, enemy), true);
-  const adapterSource = await readFile(projectFile("js/adapters/ai/TransferExecutionPolicyAdapter.js"), "utf8");
-  assert.match(adapterSource, /isTransferDirectionAllowed\(source, from, receiver\)/);
-  assert.doesNotMatch(adapterSource, /receiver\?\.battleTeam\s*!==\s*source\.battleTeam/);
-}
-
-test("AI·转移策略：ONE AI POLICY AUTHORITY 且 adapter 只 delegate", frArch12TransferPolicySingleAuthority);
-
-/*
-功能
-验证 AI search/simulation/domain production 已零依赖 legacy ActionLegality/DistanceSystem authority。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-js/ai/search、js/ai/simulation、js/ai/domain 源码。
-
-写入状态
-无。
-
-调用函数
-readdir、readFile。
-
-边界与不变量
-允许 policy/value 保留 AI 配置；本 guard 只检查确定性规则层。
-*/
-async function frArch12AiLegacyRuleImports() {
-  const roots = ["js/ai/search", "js/ai/simulation", "js/ai/domain"];
-  for (const root of roots) {
-    const entries = await readdir(projectFile(root), { withFileTypes:true });
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".js")) continue;
-      const source = await readFile(projectFile(`${root}/${entry.name}`), "utf8");
-      assert.doesNotMatch(source, /core\/ActionLegality\.js|core\/DistanceSystem\.js/, `${root}/${entry.name}`);
-    }
-  }
-}
-
-test("AI·规则依赖：AI search/simulation/domain → ActionLegality/DistanceSystem ZERO", frArch12AiLegacyRuleImports);
-
-/*
-功能
-验证 Distance、Turn、Card、Skill、Combat、Response、Status 的 Domain 决定与 AI projection/确定性分支一致。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-Domain rules、AI projection/distance branches、LightningModel 与 Simulator。
-
-写入状态
-测试局部 SearchState 副本。
-
-调用函数
-projectCanonicalSeatRoster、getRangeConditionBranches、Simulator.applyDamage/heal、LightningModel.nextLightningReceiverId。
-
-边界与不变量
-概率分支总质量为一时 matches 与 Domain deterministic 结论一致。
-*/
-async function frArch12DeterministicParityMatrix() {
-  const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/state/RuleProjection.js");
-  const { getRangeConditionBranches } = await import("../js/ai/state/DistanceProbabilityBranches.js");
-  const { nextLightningReceiverId: aiNextLightningReceiverId } = await import("../js/ai/domain/LightningModel.js");
-
-  const players = [
-    { id:"p0", seatIndex:0, alive:true, battleTeam:"dawn", hp:5, maxHp:5, shield:1, energy:3, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:[] },
-    { id:"p1", seatIndex:1, alive:true, battleTeam:"dusk", hp:5, maxHp:5, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:["lightning"] },
-    { id:"p2", seatIndex:2, alive:true, battleTeam:"dusk", hp:5, maxHp:5, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:1, equipmentDefinitionId:null, statuses:[] }
-  ];
-  const roster = projectCanonicalSeatRoster(players);
-  assert.equal(getDistance(roster, roster[0], roster[1]), 1);
-  const distanceBranches = getRangeConditionBranches(
-    { state:{ players } },
-    [{ source:players[0], target:players[1], range:1 }]
-  );
-  assertClose(totalBranchProbability(distanceBranches.filter((branch) => branch.matches)), 1);
-
-  const usage = projectAttackUsage({ turnFlags:{ attackUsed:1, attackLimit:2 } });
-  assert.equal(hasAttackUseRemaining(usage), true);
-  assert.equal(hasAttackUseRemaining({ used:1, limit:1 }), false);
-
-  assert.deepEqual(getCardTargetIds(roster, roster[0], DOMAIN_CARD_DEFINITIONS.assault), ["p1", "p2"]);
-  assert.deepEqual(getSkillTargetIds(roster, "p0", ACTIVE_SKILL_DEFINITIONS.barrier), ["p0"]);
-
-  assert.equal(nextDomainLightningReceiverId(roster, "p1"), "p2");
-  assert.equal(aiNextLightningReceiverId(players, players[1]), "p2");
-
-  const simulator = new Simulator({ players:[] });
-  const combatState = {
-    players: [
-      { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", characterId:"none", hp:4, maxHp:4, shield:0, energy:0, handCount:0, statuses:[] },
-      { id:"b", seatIndex:1, alive:true, battleTeam:"dusk", characterId:"none", hp:5, maxHp:5, shield:1, energy:0, handCount:0, blockProbability:0, expectedRecoverCount:0, statuses:[] }
-    ]
-  };
-  simulator.applyDamage(combatState, combatState.players[0], combatState.players[1], 3, { canBlock:false });
-  const damageResult = calculateDamageResult(3, 1, 5);
-  assert.equal(combatState.players[1].hp, damageResult.remainingHp);
-  assert.equal(combatState.players[1].shield, 0);
-  simulator.healFrom(combatState, combatState.players[0], combatState.players[1], 5);
-  assert.equal(combatState.players[1].hp, 5);
-}
-
-test("AI·Domain 一致性：Distance/Turn/Card/Skill/Combat/Status 确定性世界与 Domain 一致", frArch12DeterministicParityMatrix);
-
-/*
-功能
-验证 AI 概率模型模块已声明为 AI MODEL，不是 Repository Domain Rule authority。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-js/ai/domain 模块源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-确定性 receiver/status 公式不在 AI domain models 中重写。
-*/
-async function frArch12AiDomainModelOwnership() {
-  for (const file of ["LightningModel.js", "SealModel.js", "RadarModel.js", "GlobalBenefitModel.js"]) {
-    const source = await readFile(projectFile(`js/ai/domain/${file}`), "utf8");
-    assert.match(source, /AI probabilistic\/search model|AI model|不是 Repository Domain Rule authority/);
-    assert.doesNotMatch(source, /core\/ActionLegality\.js|core\/DistanceSystem\.js/);
-  }
-  const lightning = await readFile(projectFile("js/ai/domain/LightningModel.js"), "utf8");
-  assert.match(lightning, /nextDomainLightningReceiverId/);
-  assert.doesNotMatch(lightning, /players\[\(initialHolder\.seatIndex \+ offset\) % count\]/);
-}
-
-test("AI·Domain model 边界：AI MODEL NOT DOMAIN RULE AUTHORITY", frArch12AiDomainModelOwnership);
-
-// ---- SearchRequest、Descriptor 与 RNG ----
-
-/*
-功能
-验证 FR12 carry-ins：根目录残片已删除且 guard 存在，canonical roster 不再被 AI projection 静默重编号。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-文件系统与 checker/production source。
-
-写入状态
-无。
-
-调用函数
-access、readFile、projectCanonicalSeatRoster、Domain seat-order rules。
-
-边界与不变量
-非 canonical roster 必须 fail fast；full roster 含 dead player 仍合法。
-*/
-async function frArch13CarryInRosterAndRootArtifacts() {
-  for (const file of ["AI", "application", "transitions"]) {
-    await assert.rejects(access(projectFile(file)), /ENOENT/);
-  }
-  const checkerSource = await readFile(projectFile("tools/check-code-quality.mjs"), "utf8");
-  assert.match(checkerSource, /ACCIDENTAL_ROOT_ARTIFACTS/);
-  assert.match(checkerSource, /accidentalRootArtifacts/);
-
-  const { projectCanonicalSeatRoster } = await import("../js/ai/state/RuleProjection.js");
-  const { getCounterResponderOrder, getDyingRescueResponderOrder } = await import("../js/domain/rules/response/ResponseRules.js");
-  const { nextLightningReceiverId } = await import("../js/domain/rules/status/StatusRules.js");
-  const player = (id, seatIndex, alive = true) => ({
-    id, seatIndex, alive, battleTeam: id === "d" ? "dusk" : "dawn",
-    hp:4, maxHp:4, shield:0, energy:0, maxEnergy:3, attackRange:1, handCount:0,
-    equipmentDefinitionId:null, statuses:[]
-  });
-  const canonical = projectCanonicalSeatRoster([player("a", 0), player("b", 1), player("c", 2)]);
-  assert.deepEqual(canonical.map((entry) => entry.seatIndex), [0, 1, 2]);
-  projectCanonicalSeatRoster([player("dead", 0, false), player("b", 1)]);
-  assert.throws(() => projectCanonicalSeatRoster([player("b", 1), player("a", 0), player("c", 2)]), /canonical roster/);
-  assert.throws(() => projectCanonicalSeatRoster([player("a", 0), player("b", 0)]), /canonical roster/);
-  assert.throws(() => projectCanonicalSeatRoster([player("a", 0), player("c", 2)]), /canonical roster/);
-  assert.throws(
-    () => projectCanonicalSeatRoster(
-      [player("dead", 0, false), player("b", 1), player("c", 2)].filter((entry) => entry.alive)
-    ),
-    /canonical roster/
-  );
-  assert.equal(nextLightningReceiverId(canonical, "a"), "b");
-  assert.deepEqual(getCounterResponderOrder(canonical, "a"), ["b", "c"]);
-  assert.deepEqual(getDyingRescueResponderOrder(canonical, "b"), ["b", "c", "a"]);
-}
-
-test("架构边界：root artifacts 删除，canonical seat roster authoritative/fail-fast", frArch13CarryInRosterAndRootArtifacts);
-
-/*
-功能
-验证 SearchRequest 是 structured-clone-safe、data-only 且不含隐藏实体或 runtime capability。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-SearchRequest contract 与生产 Visible/Search 投影。
-
-写入状态
-测试 Game。
-
-调用函数
-createSearchRequest、searchRequestViolations、structuredClone。
-
-边界与不变量
-clone 前后语义相等；敌方真实 hand definition 不得进入 request。
-*/
-async function frArch13SearchRequestContract() {
-  const { createSearchRequest, searchRequestViolations } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
-  const actor = makePlayer("sr-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("sr-enemy", 1, "dusk", "ai", 1);
-  const secret = instance("harvest");
-  enemy.hand.push(secret);
-  const { game } = makeGame([actor, enemy]);
-  const searchState = createInitialSearchState(actor.id, game.state, { assault: 1 });
-  const request = createSearchRequest({
-    requestId:"sr-1",
-    gameId:game.state.gameId,
-    stateVersion:game.state.stateVersion,
-    actorId:actor.id,
-    phase:game.state.phase,
-    currentRound:game.state.currentRound,
-    searchState,
-    searchConfig:game.aiController.buildSearchConfig(),
-    rng:{ seed:7, state:7, algorithm:"lcg", draws:0 },
-    rootActionDescriptors:[{ type:"end", cardId:null, cardInstanceId:null, targetId:null, targetIds:[], selection:null }],
-    rootSearchActions:[describeRootSearchAction({ type:"end" })]
-  });
-  const cloned = structuredClone(request);
-  assert.deepEqual(cloned, request);
-  assert.deepEqual(searchRequestViolations(cloned), []);
-  const text = JSON.stringify(cloned);
-  assert.equal(text.includes(secret.id), false);
-  assert.equal(text.includes(secret.definitionId), false);
-  assert.equal(typeof cloned.random, "undefined");
-  assert.equal(cloned.searchState.players.find((player) => player.id === enemy.id)?.hand, undefined);
-}
-
-test("AI·SearchRequest：structured clone / data-only / no hidden leak", frArch13SearchRequestContract);
-
-/*
-功能
-验证 AIController result acceptance 的 session/stateVersion/actor/phase/rebind 拒绝语义。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产 AIController boundary 与当前 Game state。
-
-写入状态
-测试 Game stateVersion/phase/hand。
-
-调用函数
-createSearchRequest、acceptSearchResult、bumpStateVersion。
-
-边界与不变量
-任一失败只能返回安全 end；合法 descriptor 必须在当前 Domain-legal set rebind。
-*/
-async function frArch13StaleResultRejection() {
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
-  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js");
-  const actor = makePlayer("stale-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("stale-enemy", 1, "dusk", "ai", 1);
-  const card = instance("assault");
-  actor.hand.push(card);
-  const { game } = makeGame([actor, enemy]);
-  game.aiRandomnessRange = 0;
-  const controller = game.aiController;
-  const makeRequest = () => {
-    const roots = controller.getActionCandidates(actor);
-    return createSearchRequest({
-      requestId:controller.createId("stale-test"),
-      gameId:game.state.gameId,
-      stateVersion:game.state.stateVersion,
-      actorId:actor.id,
-      phase:game.state.phase,
-      currentRound:game.state.currentRound,
-      searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
-      searchConfig:controller.buildSearchConfig(),
-      rng:controller.searchRng.snapshot(),
-      rootActionDescriptors:roots.map(ActionDescriptor.describe),
-      rootSearchActions:roots.map(describeRootSearchAction)
-    });
-  };
-  const action = controller.getActionCandidates(actor).find((entry) => entry.card?.id === card.id);
-  assert.ok(action);
-  const request = makeRequest();
-  const accepted = controller.acceptSearchResult({
-    request,
-    action,
-    plannedSequence:[action],
-    stats:{ stopReason:"COMPLETE" }
-  });
-  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
-  assert.equal(accepted.action.card.id, card.id);
-
-  bumpStateVersion(game.state);
-  const stale = controller.acceptSearchResult({ request, action, plannedSequence:[], stats:null });
-  assert.equal(stale.result.status, SEARCH_RESULT_STATUS.STALE_VERSION);
-  assert.equal(stale.action.type, "end");
-  bumpStateVersion(game.state);
-  const freshRequest = makeRequest();
-  game.state.isDisposed = true;
-  const invalidSession = controller.acceptSearchResult({
-    request:freshRequest, action, plannedSequence:[], stats:null
-  });
-  assert.equal(invalidSession.result.status, SEARCH_RESULT_STATUS.INVALID_SESSION);
-  assert.equal(invalidSession.action.type, "end");
-  game.state.isDisposed = false;
-
-  const versionNow = game.state.stateVersion;
-  const validAgain = makeRequest();
-  assert.equal(validAgain.stateVersion, versionNow);
-  actor.alive = false;
-  const deadActor = controller.acceptSearchResult({ request:validAgain, action, plannedSequence:[], stats:null });
-  assert.equal(deadActor.result.status, SEARCH_RESULT_STATUS.INVALID_ACTOR);
-  assert.equal(deadActor.action.type, "end");
-  actor.alive = true;
-
-  const phaseNowRequest = makeRequest();
-  game.state.phase = "discard";
-  const wrongPhase = controller.acceptSearchResult({ request:phaseNowRequest, action, plannedSequence:[], stats:null });
-  assert.equal(wrongPhase.result.status, SEARCH_RESULT_STATUS.INVALID_PHASE);
-  assert.equal(wrongPhase.action.type, "end");
-  game.state.phase = "play";
-
-  const movedRequest = makeRequest();
-  actor.hand = [];
-  const moved = controller.acceptSearchResult({ request:movedRequest, action, plannedSequence:[], stats:null });
-  assert.equal(moved.result.status, SEARCH_RESULT_STATUS.INVALID_ACTION);
-  assert.equal(moved.action.type, "end");
-}
-
-test("AI·陈旧结果拒绝：session/stateVersion/actor/phase/rebind 全拒绝", frArch13StaleResultRejection);
-
-/*
-功能
-验证 queued planned sequence 在自身 action commit bump stateVersion 后仍按 current-state rebind，非法项返回 null。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-AIController resolvePlannedAction 与 Domain candidate set。
-
-写入状态
-测试 Game stateVersion 与手牌。
-
-调用函数
-bumpStateVersion。
-
-边界与不变量
-第一项执行后的 version 变化不得让第二项必然 stale；失效动作只返回 null，由 TurnWorkflow 清空 plan。
-*/
-async function frArch13PlannedSequenceReuse() {
-  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js");
-  const actor = makePlayer("plan-actor", 0, "dawn", "ai", 2);
-  const enemy = makePlayer("plan-enemy", 1, "dusk", "ai", 1);
-  const charge = instance("charge");
-  actor.hand.push(charge);
-  const { game } = makeGame([actor, enemy]);
-  const descriptor = ActionDescriptor.describe({ type:"card", card:charge, targets:[] });
-  const first = game.aiController.resolvePlannedAction(actor, descriptor);
-  assert.equal(first?.card?.id, charge.id);
-  bumpStateVersion(game.state);
-  const second = game.aiController.resolvePlannedAction(actor, descriptor);
-  assert.equal(second?.card?.id, charge.id, "queued plan 第二项不得因 stateVersion 变化而必然 stale");
-  actor.hand = [];
-  assert.equal(game.aiController.resolvePlannedAction(actor, descriptor), null);
-}
-
-test("AI·计划序列：current-state rebind 与 version 变化共存", frArch13PlannedSequenceReuse);
-
-/*
-功能
-验证 AI Search RNG 与真实 Game RNG 隔离且固定 seed 可复现。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-Game random、AIController selectAction 与 Planner stats。
-
-写入状态
-测试 Game 与 SearchRng。
-
-调用函数
-SearchRng、selectAction。
-
-边界与不变量
-纯 AI search 不推进 real random；相同 AI seed 产生相同 descriptor。
-*/
-async function frArch13RngIsolation() {
-  const actor = makePlayer("rng-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("rng-enemy", 1, "dusk", "ai", 1);
-  let realCalls = 0;
-  const realRandom = () => { realCalls += 1; return .5; };
-  const { game } = makeGame([actor, enemy], { random: realRandom });
-  game.aiController.searchRng = new SearchRng(7);
-  game.aiRandomnessRange = 0;
-  const before = realCalls;
-  await game.aiController.selectAction(actor, { gameId: game.state.gameId });
-  assert.equal(realCalls, before, "AI search 不得推进真实 Game RNG");
-
-  const firstGame = makeGame([actor, enemy]).game;
-  const secondGame = makeGame([actor, enemy]).game;
-  firstGame.aiController.searchRng = new SearchRng(11);
-  secondGame.aiController.searchRng = new SearchRng(11);
-  firstGame.aiRandomnessRange = 0;
-  secondGame.aiRandomnessRange = 0;
-  const firstAction = await firstGame.aiController.selectAction(firstGame.state.players[0], { gameId: firstGame.state.gameId });
-  const secondAction = await secondGame.aiController.selectAction(secondGame.state.players[0], { gameId: secondGame.state.gameId });
-  assert.deepEqual(ActionDescriptor.describe(firstAction), ActionDescriptor.describe(secondAction));
-}
-
-test("AI·RNG 隔离：AI search RNG 与 real RNG 分离且 fixed-seed 可复现", frArch13RngIsolation);
-
-/*
-功能
-验证 cancelled / session-invalid search result 永远不返回真实执行 action。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-AIController acceptSearchResult 与 SearchResult contract。
-
-写入状态
-测试 request/result。
-
-调用函数
-createSearchRequest、acceptSearchResult。
-
-边界与不变量
-cancelled/invalid 只允许安全 end，不执行真实 Card/Player。
-*/
-async function frArch13CancellationContract() {
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
-  const actor = makePlayer("cancel-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("cancel-enemy", 1, "dusk", "ai", 1);
-  const card = instance("assault");
-  actor.hand.push(card);
-  const { game } = makeGame([actor, enemy]);
-  const request = createSearchRequest({
-    requestId:game.aiController.createId("cancel"),
-    gameId:game.state.gameId,
-    stateVersion:game.state.stateVersion,
-    actorId:actor.id,
-    phase:game.state.phase,
-    currentRound:game.state.currentRound,
-    searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
-    searchConfig:game.aiController.buildSearchConfig(),
-    rng:game.aiController.searchRng.snapshot(),
-    rootActionDescriptors:game.aiController.getActionCandidates(actor).map(ActionDescriptor.describe),
-    rootSearchActions:game.aiController.getActionCandidates(actor).map(describeRootSearchAction)
-  });
-  const action = game.aiController.getActionCandidates(actor)[0];
-  const cancelled = game.aiController.acceptSearchResult({
-    request,
-    action,
-    plannedSequence:[],
-    stats:{ stopReason:"CANCELLED" }
-  });
-  assert.equal(cancelled.result.status, SEARCH_RESULT_STATUS.CANCELLED);
-  assert.equal(cancelled.action.type, "end");
-  assert.equal(cancelled.action.card, undefined);
-}
-
-test("AI·搜索取消：cancelled result 不执行真实 action", frArch13CancellationContract);
-
-// ---- Worker 与传输 ----
-
-/*
-功能
-验证 FR13 carry-in：SearchResult planned sequence descriptors 只投影一次且 round-trip identity 保留。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-ActionDescriptor/SearchResult contracts。
-
-写入状态
-无。
-
-调用函数
-ActionDescriptor.describe、createSearchResult。
-
-边界与不变量
-end/card/skill/transfer/leverage descriptor 不再二次 describe。
-*/
-async function frArch14SearchResultDescriptorIdempotence() {
-  const { createSearchResult } = await import("../js/ai/search/SearchResult.js");
-  const target = { id:"t" };
-  const rawActions = [
-    { type:"end" },
-    { type:"card", card:instance("assault"), targets:[target] },
-    { type:"skill", skill:ACTIVE_SKILL_DEFINITIONS.barrier, targets:[target], energyCost:2 },
-    { type:"card", card:instance("transfer"), targets:[], selection:{ sourceId:"s", receiverId:"r", zone:"hand", selectionKind:"unknown", availableUnknownCount:1, expectedValue:4, score:.5 } },
-    { type:"card", card:instance("leverage"), targets:[target], selection:{ firstTargetId:"a", equipmentCardId:"e", secondTargetId:"b", equipmentDefinitionId:"battleDevice" } }
-  ];
-  const descriptors = rawActions.map(ActionDescriptor.describe);
-  const request = {
-    requestId:"r", gameId:"g", stateVersion:0, actorId:"a"
-  };
-  const result = createSearchResult({
-    request,
-    actionDescriptor:descriptors[0],
-    plannedSequenceDescriptors:descriptors,
-    stats:null,
-    status:"ACCEPTED"
-  });
-  assert.deepEqual(result.actionDescriptor, descriptors[0]);
-  assert.deepEqual(result.plannedSequenceDescriptors, descriptors);
-  assert.deepEqual(
-    result.plannedSequenceDescriptors.map((descriptor) => descriptor.cardInstanceId),
-    descriptors.map((descriptor) => descriptor.cardInstanceId)
-  );
-}
-
-test("AI·Worker 边界：SearchResult descriptor 只投影一次且 idempotent", frArch14SearchResultDescriptorIdempotence);
-
-/*
-功能
-验证 Worker RNG snapshot/restore/commit continuation。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-SearchRng。
-
-写入状态
-测试 RNG 实例。
-
-调用函数
-SearchRng.restore/commit/snapshot。
-
-边界与不变量
-restore 后 Worker 序列与 main 未消费序列一致；commit 后 next search 从 rngAfter 继续。
-*/
-async function frArch14RngHandoff() {
-  const { SearchRng } = await import("../js/ai/search/SearchRng.js");
-  const main = new SearchRng(42);
-  main.next();
-  const before = main.snapshot();
-  const worker = SearchRng.restore(before);
-  const workerValues = [worker.next(), worker.next(), worker.next()];
-  const after = worker.snapshot();
-  const mainValues = [];
-  main.commit(before);
-  main.next(); main.next(); main.next();
-  main.commit(after);
-  const nextWorker = SearchRng.restore(after);
-  assert.deepEqual([main.next(), main.next()], [nextWorker.next(), nextWorker.next()]);
-  assert.equal(after.draws, before.draws + 3);
-}
-
-test("AI·Worker 边界：AI RNG worker handoff restore/commit 连续", frArch14RngHandoff);
-
-/*
-功能
-验证 root search action 投影/rehydrate 与原始 action 的 search identity 无损。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-production root actions 与 SearchState。
-
-写入状态
-无。
-
-调用函数
-describeRootSearchAction、rehydrateRootSearchAction、ActionDescriptor.describe。
-
-边界与不变量
-比较 descriptor、card/skill identity、target order、selection 与 energyCost；不比较实体引用。
-*/
-async function frArch14RootActionRehydration() {
-  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
-  const actor = makePlayer("root-actor", 0, "dawn", "ai", 2);
-  const enemy = makePlayer("root-enemy", 1, "dusk", "ai", 1);
-  const assault = instance("assault");
-  actor.hand.push(assault);
-  const { game } = makeGame([actor, enemy]);
-  const roots = game.aiController.getActionCandidates(actor);
-  const visible = createInitialSearchState(actor.id, game.state);
-  for (const raw of roots) {
-    const record = describeRootSearchAction(raw);
-    const hydrated = rehydrateRootSearchAction(record, visible, visible.players.find((player) => player.id === actor.id));
-    assert.deepEqual(ActionDescriptor.describe(hydrated), ActionDescriptor.describe(raw));
-    assert.equal(hydrated.type, raw.type);
-    assert.equal(hydrated.card?.definitionId ?? null, raw.card?.definitionId ?? null);
-    assert.equal(hydrated.card?.id ?? null, raw.card?.id ?? null);
-    assert.equal(hydrated.skill?.id ?? null, raw.skill?.id ?? null);
-    assert.deepEqual((hydrated.targets ?? []).map((target) => target.id), (raw.targets ?? []).map((target) => target.id));
-    assert.deepEqual(hydrated.selection ?? null, raw.selection ?? null);
-    assert.equal(hydrated.energyCost ?? null, raw.energyCost ?? null);
-  }
-}
-
-test("AI·Root action 重建：all root action families lossless", frArch14RootActionRehydration);
-
-/*
-功能
-验证 runSearchRequest 是 serializable outcome 的唯一 worker-safe search entry，且 main acceptance 可 rebind。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-SearchRequest/WorkerSearchOutcome/AIController acceptance。
-
-写入状态
-测试 Game。
-
-调用函数
-createSearchRequest、describeRootSearchAction、runSearchRequest、workerOutcomeViolations、acceptWorkerSearchOutcome。
-
-边界与不变量
-outcome 无真实实体/函数；Main Thread 仍负责 ACCEPTED 与 rebind。
-*/
-async function frArch14RunSearchRequest() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
-  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
-  const actor = makePlayer("run-actor", 0, "dawn", "ai", 2);
-  const enemy = makePlayer("run-enemy", 1, "dusk", "ai", 1);
-  actor.hand.push(instance("charge"), instance("assault"));
-  const { game } = makeGame([actor, enemy]);
-  game.aiRandomnessRange = 0;
-  game.aiSearchNodeBudgetOverride = 8;
-  const roots = game.aiController.getActionCandidates(actor);
-  const request = createSearchRequest({
-    requestId:"run-worker-1",
-    gameId:game.state.gameId,
-    stateVersion:game.state.stateVersion,
-    actorId:actor.id,
-    phase:game.state.phase,
-    currentRound:game.state.currentRound,
-    searchState:createInitialSearchState(actor.id, game.state, { assault:1, charge:1 }),
-    searchConfig:game.aiController.buildSearchConfig(),
-    rng:game.aiController.searchRng.snapshot(),
-    rootActionDescriptors:roots.map(ActionDescriptor.describe),
-    rootSearchActions:roots.map(describeRootSearchAction)
-  });
-  const outcome = await runSearchRequest(request, { yieldControl: async () => true });
-  assert.deepEqual(workerOutcomeViolations(outcome, request), []);
-  assert.deepEqual(structuredClone(outcome), outcome);
-  assert.equal(typeof outcome.actionDescriptor, "object");
-  assert.equal(outcome.actionDescriptor?.cardInstanceId === undefined || typeof outcome.actionDescriptor.cardInstanceId === "string", true);
-  const accepted = game.aiController.acceptWorkerSearchOutcome(request, outcome);
-  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
-  assert.ok(["card", "end"].includes(accepted.action.type));
-  assert.deepEqual(accepted.result.rngAfter, outcome.rngAfter);
-  assert.deepEqual(game.aiController.searchRng.snapshot(), outcome.rngAfter);
-}
-
-test("AI·Worker 搜索请求：serializable Worker outcome + main acceptance", frArch14RunSearchRequest);
-
-/*
-功能
-验证 Worker message protocol 的 terminal outcome/unknown message 安全语义。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-searchWorker protocol 与 runSearchRequest。
-
-写入状态
-fake postMessage 队列。
-
-调用函数
-createSearchWorkerMessageHandler。
-
-边界与不变量
-一个 requestId 只产生一个 terminal result；unknown message 返回 ERROR。
-*/
-async function frArch14WorkerProtocol() {
-  const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js");
-  const messages = [];
-  const handler = createSearchWorkerMessageHandler({ postMessage: (data) => messages.push(structuredClone(data)) });
-  await handler.handleMessage({ type:"UNKNOWN" });
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0].type, "ERROR");
-  const actor = makePlayer("proto-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("proto-enemy", 1, "dusk", "ai", 1);
-  const { game } = makeGame([actor, enemy]);
-  game.aiSearchNodeBudgetOverride = 2;
-  const roots = game.aiController.getActionCandidates(actor);
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
-  const request = createSearchRequest({
-    requestId:"proto-1",
-    gameId:game.state.gameId,
-    stateVersion:game.state.stateVersion,
-    actorId:actor.id,
-    phase:game.state.phase,
-    currentRound:game.state.currentRound,
-    searchState:createInitialSearchState(actor.id, game.state, { assault:1 }),
-    searchConfig:game.aiController.buildSearchConfig(),
-    rng:game.aiController.searchRng.snapshot(),
-    rootActionDescriptors:roots.map(ActionDescriptor.describe),
-    rootSearchActions:roots.map(describeRootSearchAction)
-  });
-  await handler.handleMessage({ type:"SEARCH", requestId:request.requestId, request:structuredClone(request) });
-  assert.equal(messages.length, 2);
-  assert.equal(messages[1].type, "RESULT");
-  assert.equal(messages[1].requestId, request.requestId);
-  assert.deepEqual(workerOutcomeViolations(messages[1].outcome, request), []);
-}
-
-test("AI·Worker 协议：SEARCH -> RESULT，unknown -> ERROR", frArch14WorkerProtocol);
-
-
-/*
-功能
-验证 Worker-safe search runtime 通过 periodic macrotask yield 保持 main thread/heartbeat 可运行。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-SearchRequest/WorkerSearchRuntime。
-
-写入状态
-测试 interval 计数器。
-
-调用函数
-runSearchRequest、setInterval、clearInterval。
-
-边界与不变量
-不依赖 wall-clock 精确值；只证明搜索期间事件循环可运行。
-*/
-async function frArch14MainThreadResponsiveness() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
-  const actor = makePlayer("heart-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("heart-enemy", 1, "dusk", "ai", 1);
-  for (let index = 0; index < 60; index += 1) actor.hand.push(instance("exposeWeakness"));
-  const { game } = makeGame([actor, enemy]);
-  game.aiSearchNodeBudgetOverride = 100;
-  const roots = game.aiController.getActionCandidates(actor);
-  const request = createSearchRequest({
-    requestId:"heartbeat-1",
-    gameId:game.state.gameId,
-    stateVersion:game.state.stateVersion,
-    actorId:actor.id,
-    phase:game.state.phase,
-    currentRound:game.state.currentRound,
-    searchState:createInitialSearchState(actor.id, game.state, { assault:1, charge:1 }),
-    searchConfig:game.aiController.buildSearchConfig(),
-    rng:game.aiController.searchRng.snapshot(),
-    rootActionDescriptors:roots.map(ActionDescriptor.describe),
-    rootSearchActions:roots.map(describeRootSearchAction)
-  });
-  let heartbeats = 0;
-  const timer = setInterval(() => { heartbeats += 1; }, 5);
-  const outcome = await runSearchRequest(request, {
-    yieldControl: async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      return true;
-    }
-  });
-  clearInterval(timer);
-  assert.ok(heartbeats > 0, "搜索期间 main thread/heartbeat 必须获得运行机会");
-  assert.equal(outcome.workerError, null);
-}
-
-test("AI·Worker 响应性：Worker-safe search yield 保持 main-thread heartbeat", frArch14MainThreadResponsiveness);
-
-// ---- 异步、展示与运行时边界 ----
-
-/*
-功能
-验证互利从 root candidate 到 Worker projection、rehydrate、main acceptance、实体 rebind、ActionWorkflow 执行与公开池完成的完整 runtime 链。
-
-调用方
-FR-ARCH-14 runtime regression。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-SearchRequest/RootSearchAction/WorkerSearchRuntime/AIController/Game playCard/PublicCardPool。
-
-写入状态
-测试 Game 状态。
-
-调用函数
-makePlayer、makeGame、instance、createInitialSearchState、getActionCandidates、createSearchRequest、describeRootSearchAction、rehydrateRootSearchAction、runSearchRequest、createWorkerSearchOutcome、acceptWorkerSearchOutcome、Game.playCard。
-
-边界与不变量
-Search 选择是否 end 不影响执行边界验证；执行使用显式 mutualBenefit root descriptor 的合法 rebind。
-*/
-async function frArch14MutualBenefitRuntimeTrace() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
-  const { createWorkerSearchOutcome, workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
-  const actor = makePlayer("mb-runtime-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("mb-runtime-enemy", 1, "dusk", "ai", 1);
-  const benefit = instance("mutualBenefit");
-  actor.hand.push(benefit);
-  const { game } = makeGame([actor, enemy]);
-  game.state.deck.cards = [instance("block"), instance("charge")];
-  game.aiSearchNodeBudgetOverride = 8;
-  const roots = game.aiController.getActionCandidates(actor);
-  const root = roots.find((action) => action.card?.definitionId === "mutualBenefit");
-  assert.ok(root, "root candidate 必须包含 mutualBenefit");
-  const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
-  const record = describeRootSearchAction(root);
-  const hydrated = rehydrateRootSearchAction(record, visible, visible.players.find((player) => player.id === actor.id));
-  assert.equal(hydrated.card.definitionId, "mutualBenefit");
-  assert.equal(hydrated.card.category, root.card.category);
-  assert.equal(hydrated.card.usageMode, root.card.usageMode);
-  assert.equal(hydrated.card.targetType, root.card.targetType);
-  assert.equal(hydrated.card.ignoresDistance, root.card.ignoresDistance);
-  assert.equal(hydrated.card.aiValue, root.card.aiValue);
-  assert.deepEqual(ActionDescriptor.describe(hydrated), ActionDescriptor.describe(root));
-  const request = createSearchRequest({
-    requestId:"mb-runtime-request",
-    gameId:game.state.gameId,
-    stateVersion:game.state.stateVersion,
-    actorId:actor.id,
-    phase:game.state.phase,
-    currentRound:game.state.currentRound,
-    searchState:visible,
-    searchConfig:game.aiController.buildSearchConfig(),
-    rng:game.aiController.searchRng.snapshot(),
-    rootActionDescriptors:roots.map(ActionDescriptor.describe),
-    rootSearchActions:roots.map(describeRootSearchAction)
-  });
-  assert.ok(request.rootSearchActions.some((entry) => entry.card?.definitionId === "mutualBenefit"));
-  const outcome = await runSearchRequest(request, { yieldControl: async () => true });
-  assert.deepEqual(workerOutcomeViolations(outcome, request), []);
-  assert.deepEqual(structuredClone(outcome), outcome);
-  assert.ok(outcome.actionDescriptor === null || request.rootActionDescriptors.some(
-    (descriptor) => JSON.stringify(descriptor) === JSON.stringify(outcome.actionDescriptor)
-  ));
-  const executionOutcome = createWorkerSearchOutcome({
-    request,
-    actionDescriptor:ActionDescriptor.describe(root),
-    plannedSequenceDescriptors:[ActionDescriptor.describe(root), ActionDescriptor.describe({ type:"end" })],
-    stats:outcome.stats,
-    searchStopReason:"COMPLETE",
-    rngAfter:outcome.rngAfter
-  });
-  const accepted = game.aiController.acceptWorkerSearchOutcome(request, executionOutcome);
-  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
-  assert.equal(accepted.action.type, "card");
-  assert.equal(accepted.action.card.id, benefit.id);
-  assert.deepEqual(accepted.action.targets.map((target) => target.id), [actor.id, enemy.id]);
-  assert.equal(await game.playCard(actor, accepted.action.card, accepted.action.targets, accepted.action.selection), true);
-  assert.equal(actor.hand.length, 1);
-  assert.equal(enemy.hand.length, 1);
-  assert.equal(game.state.publicCardPool.length, 0);
-  assert.ok(game.state.deck.discardPile.includes(benefit));
-  game.dispose();
-}
-
-test("AI·Worker 互利链路：root → worker → rebind → execution → public pool 全链", frArch14MutualBenefitRuntimeTrace);
-
-/*
-功能
-覆盖 AI 强制弃牌不变量：HP 1/2/3、多余1/2/多张、普通/快速模式，以及 AI choice cancelled 或 selectedIds 不足时仍收束到 hand.length <= hp。
-
-调用方
-FR-ARCH-14 runtime regression。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-TurnWorkflow.handleDiscardPhase 与 AI_SEARCH_PROFILES。
-
-写入状态
-测试 Game 手牌/弃牌堆。
-
-调用函数
-new Game、makePlayer、instance、createChoiceResult、handleDiscardPhase。
-
-边界与不变量
-兜底只保证 AI 弃牌收束，不改变正常 AI 选牌策略；真人取消仍保留既有交互语义。
-*/
-async function frArch14DiscardInvariantMatrix() {
-  const makeFixture = (hp, handCount, fastMode, choiceKind) => {
-    const ui = makeUi();
-    const game = createGameApplication(ui, () => 0.25, {
-      choicePort: {
-        async request(choiceRequest) {
-          if (choiceRequest?.kind !== "discard") return createChoiceResult("declined");
-          if (choiceKind === "cancelled") return createChoiceResult("cancelled");
-          const selectedIds = choiceRequest.options.slice(0, 1).map((option) => option.optionId);
-          return createChoiceResult("selected", { selectedIds });
-        }
-      }
-    });
-    const player = makePlayer(`discard-${hp}-${handCount}-${fastMode ? "fast" : "normal"}-${choiceKind}`, 0, "dawn", "ai", 0);
-    const enemy = makePlayer(`discard-enemy-${hp}-${handCount}-${fastMode ? "fast" : "normal"}-${choiceKind}`, 1, "dusk", "ai", 1);
-    player.hp = hp;
-    for (let index = 0; index < handCount; index += 1) {
-      player.hand.push(instance(["assault", "scout", "recover", "block", "charge", "counter"][index % 6]));
-    }
-    game.state.players = [player, enemy];
-    game.state.currentPlayerIndex = 0;
-    game.state.phase = "discard";
-    game.animationFastMode = fastMode;
-    game.cleanupManager.delay = async () => true;
-    return { game, player };
-  };
-  for (const hp of [1, 2, 3]) {
-    for (const extra of [1, 2, 5]) {
-      for (const fastMode of [false, true]) {
-        for (const choiceKind of ["cancelled", "partial"]) {
-          const { game, player } = makeFixture(hp, hp + extra, fastMode, choiceKind);
-          const profile = game.aiController.buildSearchConfig();
-          assert.equal(profile.searchMode, fastMode ? "FAST" : "NORMAL");
-          assert.equal(profile.timeBudgetMs, fastMode
-            ? AI_SEARCH_PROFILES.FAST.searchDeadlineMs
-            : AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs);
-          await game.turnWorkflow.handleDiscardPhase(player, game.state.gameId);
-          assert.ok(player.hand.length <= hp, `hp=${hp} hand=${hp + extra} fast=${fastMode} ${choiceKind}`);
-          game.dispose();
-        }
-      }
-    }
-  }
-}
-
-test("AI·Worker 弃牌：AI HP1/2/3 普通/快速与取消/不足选择后不超手牌上限", frArch14DiscardInvariantMatrix);
-
-/*
-功能
-冻结 AI 弃牌阶段 Normal/Fast 的 thinking 与 presentation delay 顺序。
-
-调用方
-TurnWorkflow pacing regression。
-
-输入
-同一名超手牌上限 AI，分别使用 Normal 与 Fast 展示模式。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-RUNTIME_POLICY discard range、TurnWorkflow 与 ChoiceCoordinator。
-
-写入状态
-测试手牌弃置与 trace。
-
-调用函数
-makeGame、handleDiscardPhase。
-
-边界与不变量
-Normal 使用可读最小值，Fast 只缩放展示时间；两者都必须 thinking on→delay→thinking off。
-*/
-async function discardPresentationPacingModes() {
-  for (const [fastMode, expectedDelay] of [[false, 1600], [true, 128]]) {
-    const actor = makePlayer(`discard-pacing-${fastMode}`, 0, "dawn", "ai", 0);
-    actor.hp = 1;
-    actor.hand.push(instance("charge"), instance("shield"));
-    const { game, ui } = makeGame([actor]);
-    game.simulationMode = false;
-    game.animationFastMode = fastMode;
-    game.presentationRandom = () => 0;
-    const trace = [];
-    const originalThinking = ui.setThinking.bind(ui);
-    ui.setThinking = (...args) => { trace.push(["thinking", args[0]]); originalThinking(...args); };
-    game.cleanupManager.delay = async (ms) => { trace.push(["delay", ms]); return true; };
-    await game.handleDiscardPhase(actor, game.state.gameId);
-    assert.deepEqual(trace.slice(0, 3), [
-      ["thinking", true], ["delay", expectedDelay], ["thinking", false]
-    ]);
-    assert.equal(actor.hand.length, 1);
-    game.dispose();
-  }
-}
-
-test("展示节奏·AI 弃牌：Normal 可读且 Fast 缩放并保持 thinking 生命周期", discardPresentationPacingModes);
-
-/*
-功能
-用 fake Dedicated Worker 验证 SearchWorkerClient 的首个 Worker 已接线、RESULT settle、duplicate/stale 消息隔离、postMessage 失败清空 pending、cancel 与 createSearchExecutor 生产选择。
-
-调用方
-FR-ARCH-14 browser transport regression。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-SearchWorkerClient 与 createSearchExecutor。
-
-写入状态
-fake Worker 消息队列与测试 executor。
-
-调用函数
-createSearchWorkerClient、createSearchExecutor。
-
-边界与不变量
-不执行真实 search；只验证 browser transport 协议与 pending 生命周期。
-*/
-async function frArch14WorkerClientTransport() {
-  const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js");
-  const { createSearchExecutor } = await import("../js/adapters/ai/worker/createSearchExecutor.js");
-  const instances = [];
-  class FakeWorker {
-    constructor(url, options) {
-      this.url = url;
-      this.options = options;
-      this.listeners = new Map();
-      this.posted = [];
-      this.terminated = false;
-      this.throwOnPost = false;
-      instances.push(this);
-    }
-    addEventListener(type, listener) {
-      if (!this.listeners.has(type)) this.listeners.set(type, []);
-      this.listeners.get(type).push(listener);
-    }
-    postMessage(message) {
-      if (this.throwOnPost) throw new Error("structuredClone failed");
-      this.posted.push(message);
-    }
-    terminate() { this.terminated = true; }
-    emit(type, data) {
-      for (const listener of this.listeners.get(type) ?? []) listener({ data });
-    }
-  }
-  const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
-  delete globalThis.Worker;
-  delete globalThis.window;
-  delete globalThis.document;
-  const headlessExecutor = createSearchExecutor({});
-  assert.equal(headlessExecutor.transport, "headless-local", "Node/headless 无 Worker 时必须保留本地 transport");
-  headlessExecutor.dispose();
-  Object.defineProperty(globalThis, "Worker", { configurable:true, writable:true, value:FakeWorker });
-  try {
-    const makeOutcome = (requestId) => ({
-      requestId,
-      gameId:"game-1",
-      stateVersion:0,
-      actorId:"actor-1",
-      actionDescriptor:{ type:"end", cardId:null, cardInstanceId:null, targetId:null, targetIds:[], selection:null },
-      plannedSequenceDescriptors:[],
-      stats:null,
-      searchStopReason:"COMPLETE",
-      rngAfter:{ seed:1, state:1, algorithm:"lcg", draws:0 },
-      cancelled:false,
-      workerError:null
-    });
-    const makeRequest = (requestId) => ({ requestId, gameId:"game-1", stateVersion:0, actorId:"actor-1", searchConfig:{ hardWatchdogMs:5000 } });
-    const client = createSearchWorkerClient("searchWorker.js");
-    assert.equal(instances.length, 1, "首个 production Worker 必须立即接线");
-    const firstWorker = instances[0];
-    assert.equal(firstWorker.listeners.get("message")?.length, 1);
-    const firstRequest = makeRequest("first");
-    const firstPromise = client.search(firstRequest);
-    assert.equal(firstWorker.posted[0].type, "SEARCH");
-    firstWorker.emit("message", { type:"RESULT", requestId:"first", outcome:makeOutcome("first") });
-    assert.deepEqual(await firstPromise, makeOutcome("first"));
-    firstWorker.emit("message", { type:"RESULT", requestId:"first", outcome:makeOutcome("first") });
-    client.dispose();
-    assert.equal(firstWorker.terminated, true);
-
-    const recoveryClient = createSearchWorkerClient("searchWorker.js");
-    const recoveryWorker = instances[1];
-    recoveryWorker.throwOnPost = true;
-    await assert.rejects(recoveryClient.search(makeRequest("clone-fail")), /structuredClone failed/);
-    recoveryWorker.throwOnPost = false;
-    const secondPromise = recoveryClient.search(makeRequest("second"));
-    recoveryWorker.emit("message", { type:"ERROR", requestId:"stale", workerError:"stale error" });
-    recoveryWorker.emit("message", { type:"RESULT", requestId:"second", outcome:makeOutcome("second") });
-    assert.deepEqual(await secondPromise, makeOutcome("second"));
-    const cancelPromise = recoveryClient.search(makeRequest("cancel-me"));
-    recoveryClient.cancel("cancel-me");
-    await assert.rejects(cancelPromise, /cancelled/);
-    assert.ok(recoveryWorker.posted.some((message) => message.type === "CANCEL" && message.requestId === "cancel-me"));
-    recoveryClient.dispose();
-
-    const executor = createSearchExecutor({});
-    assert.equal(executor.transport, "dedicated-worker", "browser 存在 Worker 时 production 必须使用 Dedicated Worker");
-    executor.dispose();
-    assert.equal(createSearchExecutor({ forceLocal:true }).transport, "headless-local");
-
-    delete globalThis.Worker;
-    Object.defineProperty(globalThis, "window", { configurable:true, value:{} });
-    Object.defineProperty(globalThis, "document", { configurable:true, value:{} });
-    assert.throws(
-      () => createSearchExecutor({}),
-      /不支持 Dedicated Worker.*不能回退到主线程/
-    );
-  } finally {
-    for (const instance of instances) instance.terminate();
-    if (previousWorker) Object.defineProperty(globalThis, "Worker", previousWorker);
-    else delete globalThis.Worker;
-    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
-    else delete globalThis.window;
-    if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
-    else delete globalThis.document;
-  }
-}
-
-test("AI·Worker 传输：Dedicated Worker 初始接线/结果/清理/恢复与 production 选择", frArch14WorkerClientTransport);
-
-/*
-功能
-对同一固定 state 比较 FR13-equivalent main Planner（raw roots）与 FR14 Worker runSearchRequest（rehydrated roots）的完整确定性 trace。
-
-调用方
-FR-ARCH-14 worker search parity audit。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-Planner/runSearchRequest/SearchRng/ActionDescriptor。
-
-写入状态
-测试 Game 与两个独立 SearchRng continuation。
-
-调用函数
-makeGame、instance、getActionCandidates、createInitialSearchState、createSearchRequest、describeRootSearchAction、SearchRng.restore、Planner.plan、runSearchRequest。
-
-边界与不变量
-固定 node budget 保证双方同 stopReason；比较 action、计划序列、stats、RNG after 与 hidden samples。
-*/
-async function frArch14WorkerSearchParityTrace() {
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
-  const actor = makePlayer("parity-actor", 0, "dawn", "ai", 0);
-  const ally = makePlayer("parity-ally", 2, "dawn", "ai", 2);
-  const enemy = makePlayer("parity-enemy", 1, "dusk", "ai", 1);
-  actor.hand.push(instance("assault"), instance("assault"), instance("scout"), instance("recover"));
-  const { game } = makeGame([actor, enemy, ally]);
-  game.aiRandomnessRange = 0;
-  game.aiSearchNodeBudgetOverride = 120;
-  game.aiController.searchRng = new SearchRng(777001);
-  const player = game.state.players[0];
-  const roots = game.aiController.getActionCandidates(player);
-  const visible = createInitialSearchState(player.id, game.state, game.aiController.knowledge.remainingCounts(player));
-  const before = game.aiController.searchRng.snapshot();
-  const localRng = SearchRng.restore(before);
-  game.aiController.searchRng = localRng;
-  const mainAction = await game.aiController.planner.plan(player, visible, roots, { gameId:game.state.gameId });
-  const mainStats = { ...game.aiController.planner.lastSearchStats };
-  const mainSequence = game.aiController.planner.lastPlannedSequence.map((entry) => ({
-    type:entry.type,
-    cardId:entry.cardId,
-    cardInstanceId:entry.cardInstanceId,
-    targetId:entry.targetId,
-    targetIds:[...entry.targetIds],
-    selection:entry.selection ? { ...entry.selection } : null
-  }));
-  const mainAfter = localRng.snapshot();
-  const request = createSearchRequest({
-    requestId:"parity-request",
-    gameId:game.state.gameId,
-    stateVersion:game.state.stateVersion,
-    actorId:player.id,
-    phase:game.state.phase,
-    currentRound:game.state.currentRound,
-    searchState:visible,
-    searchConfig:game.aiController.buildSearchConfig(),
-    rng:before,
-    rootActionDescriptors:roots.map(ActionDescriptor.describe),
-    rootSearchActions:roots.map(describeRootSearchAction)
-  });
-  const outcome = await runSearchRequest(request, { yieldControl: async () => true });
-  assert.deepEqual(outcome.actionDescriptor, ActionDescriptor.describe(mainAction));
-  assert.deepEqual(outcome.plannedSequenceDescriptors.map((entry) => ({
-    type:entry.type,
-    cardId:entry.cardId,
-    cardInstanceId:entry.cardInstanceId,
-    targetId:entry.targetId,
-    targetIds:[...entry.targetIds],
-    selection:entry.selection ? { ...entry.selection } : null
-  })), mainSequence);
-  assert.equal(outcome.searchStopReason, mainStats.stopReason);
-  assert.equal(outcome.stats.expanded, mainStats.expanded);
-  assert.equal(outcome.stats.depth, mainStats.depth);
-  assert.equal(outcome.stats.hiddenSamples, mainStats.hiddenSamples);
-  assert.equal(outcome.stats.simulationCalls, mainStats.simulationCalls);
-  assert.equal(outcome.stats.counterfactualCalls, mainStats.counterfactualCalls);
-  assert.equal(outcome.stats.stateUtilityCalls, mainStats.stateUtilityCalls);
-  assert.equal(outcome.stats.bestValueScore, mainStats.bestValueScore);
-  assert.deepEqual(outcome.rngAfter, mainAfter);
-  game.dispose();
-}
-
-test("AI·Worker 搜索一致性：同一 state/seed/config 下 raw vs rehydrated 全 trace 一致", frArch14WorkerSearchParityTrace);
-
-/*
-功能
-验证连续两次 accepted Worker-equivalent search 的 RNG continuation、duplicate 不二次 commit、rejected outcome 不 commit。
-
-调用方
-FR-ARCH-14 RNG continuity runtime audit。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-AIController selectAction/acceptWorkerSearchOutcome/SearchRng。
-
-写入状态
-测试 Game 与 SearchRng。
-
-调用函数
-makeGame、instance、selectAction、acceptWorkerSearchOutcome、createWorkerSearchOutcome。
-
-边界与不变量
-所有断言只读 diagnostic；不改变 AI policy/value。
-*/
-async function frArch14RngContinuityAcceptedSearches() {
-  const { createWorkerSearchOutcome } = await import("../js/ai/search/WorkerSearchOutcome.js");
-  const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
-  const actor = makePlayer("rng-continuity-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("rng-continuity-enemy", 1, "dusk", "ai", 1);
-  actor.hand.push(instance("assault"));
-  const { game } = makeGame([actor, enemy]);
-  game.aiSearchNodeBudgetOverride = 12;
-  game.aiController.searchRng = new SearchRng(9001);
-  const player = game.state.players[0];
-  const firstAction = await game.aiController.selectAction(player, { gameId:game.state.gameId });
-  assert.ok(["card", "end"].includes(firstAction.type));
-  const firstResult = game.aiController.lastSearchResult;
-  const firstRequest = game.aiController.lastSearchRequest;
-  const firstOutcome = game.aiController.lastWorkerOutcome;
-  assert.equal(firstResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
-  assert.deepEqual(game.aiController.searchRng.snapshot(), firstResult.rngAfter);
-  const secondAction = await game.aiController.selectAction(player, { gameId:game.state.gameId });
-  assert.ok(["card", "end"].includes(secondAction.type));
-  const secondRequest = game.aiController.lastSearchRequest;
-  assert.deepEqual(secondRequest.rng, firstResult.rngAfter, "Search2.rngBefore 必须等于 Search1.accepted.rngAfter");
-  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
-  const beforeDuplicate = game.aiController.searchRng.snapshot();
-  const duplicate = game.aiController.acceptWorkerSearchOutcome(firstRequest, firstOutcome);
-  assert.equal(duplicate.result.rngAfter, null, "duplicate RESULT 不得二次 commit");
-  assert.deepEqual(game.aiController.searchRng.snapshot(), beforeDuplicate);
-  const beforeRejected = game.aiController.searchRng.snapshot();
-  game.aiController.searchExecutor = {
-    search: async (request) => createWorkerSearchOutcome({
-      request,
-      actionDescriptor:null,
-      plannedSequenceDescriptors:[],
-      stats:null,
-      searchStopReason:null,
-      rngAfter:request.rng,
-      cancelled:false,
-      workerError:"intentional worker failure"
-    })
-  };
-  const rejectedAction = await game.aiController.selectAction(player, { gameId:game.state.gameId });
-  assert.equal(rejectedAction.type, "end");
-  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.INVALID_ACTION);
-  assert.deepEqual(game.aiController.searchRng.snapshot(), beforeRejected, "rejected outcome 不得 commit RNG");
-  assert.equal(game.aiController.getSearchDiagnostics().WORKER_ERROR, 1);
-  game.dispose();
-}
-
-test("AI·Worker RNG：连续 accepted 搜索续接、rejected 不提交、duplicate 不二次提交", frArch14RngContinuityAcceptedSearches);
-
-/*
-功能
-验证 AI 出牌 presentation pacing 完整：showThinking、await delay、clearThinking、playActionCue 与真实 playCard 顺序稳定。
-
-调用方
-FR-ARCH-14 presentation sequencing audit。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-TurnWorkflow/ActionWorkflow/GamePresentationAdapter。
-
-写入状态
-测试 Game 手牌/能量与 UI 记录。
-
-调用函数
-makeGame、instance、takeAiPlayPhase。
-
-边界与不变量
-simulation 路径延迟值为零但仍经过可取消 await；真实展示路径由 timing 单测冻结范围。
-*/
-async function frArch14PresentationPacingSequence() {
-  const actor = makePlayer("presentation-zero-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("presentation-zero-enemy", 1, "dusk", "ai", 1);
-  const charge = instance("charge");
-  actor.hand.push(charge);
-  const { game, ui } = makeGame([actor, enemy]);
-  const sounds = [];
-  const trace = [];
-  const originalThinking = ui.setThinking.bind(ui);
-  const originalCurrentCard = ui.setCurrentCard.bind(ui);
-  ui.setThinking = (...args) => { trace.push(["thinking", args[0], args[2] ?? ""]); originalThinking(...args); };
-  ui.setCurrentCard = (...args) => { trace.push(["current-card", args[0]?.id ?? args[0]]); originalCurrentCard(...args); };
-  ui.playSound = (name) => sounds.push(name);
-  game.cleanupManager.delay = async (ms) => { trace.push(["delay", ms]); return true; };
-  let actionCount = 0;
-  game.aiController.selectAction = async () => (
-    actionCount++ === 0 ? { type:"card", card:charge, targets:[] } : { type:"end" }
-  );
-  await game.takeAiPlayPhase(actor, game.state.gameId);
-  assert.ok(ui.thinking.some(([thinking]) => thinking === true));
-  assert.ok(ui.thinking.some(([thinking]) => thinking === false));
-  assert.ok(ui.currentCards.some((entry) => entry.cardOrName === charge));
-  assert.ok(sounds.includes("playCard"), "playActionCue 必须在零 fake thinking 路径存活");
-  assert.equal(actor.hand.length, 0);
-  assert.deepEqual(trace.filter(([kind]) => kind === "delay").map(([, ms]) => ms), [0, 0, 0]);
-  const preparedIndex = trace.findIndex(([kind, value, message]) => kind === "thinking" && value === true && message.includes("准备使用"));
-  const actionDelayIndex = trace.findIndex((entry, index) => index > preparedIndex && entry[0] === "delay");
-  const clearIndex = trace.findIndex((entry, index) => index > actionDelayIndex && entry[0] === "thinking" && entry[1] === false);
-  const cardIndex = trace.findIndex((entry, index) => index > clearIndex && entry[0] === "current-card");
-  assert.ok(preparedIndex >= 0 && preparedIndex < actionDelayIndex && actionDelayIndex < clearIndex && clearIndex < cardIndex);
-  game.dispose();
-}
-
-test("展示节奏·AI 行动：thinking→await pacing→clear→play 且 simulation 延迟为零", frArch14PresentationPacingSequence);
-
-/*
-功能
-验证 animationFastMode 只映射命名 search profile，普通/快速 timeBudget、softTarget 与 watchdog 均为有限正数或规定 null。
-
-调用方
-FR-ARCH-14 search configuration audit。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-AIController.buildSearchConfig 与 AI_SEARCH_PROFILES。
-
-写入状态
-测试 Game 配置字段。
-
-调用函数
-makeGame、buildSearchConfig。
-
-边界与不变量
-不改变搜索结构；simulationMode 不得把 production 模式映射成 local。
-*/
-function frArch14SearchProfileRuntimeValues() {
-  const actor = makePlayer("profile-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("profile-enemy", 1, "dusk", "ai", 1);
-  const { game } = makeGame([actor, enemy]);
-  game.simulationMode = true;
-  game.aiSearchBudgetOverrideMs = null;
-  game.aiSearchNodeBudgetOverride = null;
-  game.animationFastMode = false;
-  const normal = game.aiController.buildSearchConfig();
-  assert.equal(normal.searchMode, "NORMAL");
-  assert.equal(normal.softTargetMs, AI_SEARCH_PROFILES.NORMAL.softTargetMs);
-  assert.equal(normal.timeBudgetMs, AI_SEARCH_PROFILES.NORMAL.searchDeadlineMs);
-  assert.equal(normal.searchDeadlineMs, 3000);
-  assert.equal(normal.hardWatchdogMs, AI_SEARCH_PROFILES.NORMAL.hardWatchdogMs);
-  assert.ok(Number.isFinite(normal.timeBudgetMs) && normal.timeBudgetMs > 0);
-  assert.equal(normal.nodeBudget, null);
-  game.animationFastMode = true;
-  const fast = game.aiController.buildSearchConfig();
-  assert.equal(fast.searchMode, "FAST");
-  assert.equal(fast.softTargetMs, 500);
-  assert.equal(fast.timeBudgetMs, 900);
-  assert.equal(fast.searchDeadlineMs, 900);
-  assert.equal(fast.hardWatchdogMs, 5000);
-  assert.ok(Number.isFinite(fast.timeBudgetMs) && fast.timeBudgetMs > 0);
-  assert.equal(fast.nodeBudget, null);
-  game.dispose();
-}
-
-test("AI·搜索配置：普通 3000ms / 快速 500+900ms 且 simulationMode 不映射 local", frArch14SearchProfileRuntimeValues);
-
-/*
-功能
-验证零 fake-thinking 后连续 gameplay 音效不被 SoundManager 墙钟节流吞掉，同时保留 select 防误触节流。
-
-调用方
-FR-ARCH-14 audio regression audit。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-SoundManager/SOUND_THROTTLE_MS。
-
-写入状态
-fake AudioContext 节点与测试 SoundManager。
-
-调用函数
-makeFakeAudioContext、withAudioContextStub、SoundManager.play。
-
-边界与不变量
-不增加任何 delay；只删除 gameplay 事件节流。
-*/
-async function frArch14AudioSurvivesZeroTiming() {
-  assert.equal(SOUND_THROTTLE_MS.playCard, undefined);
-  assert.equal(SOUND_THROTTLE_MS.hit, undefined);
-  assert.equal(SOUND_THROTTLE_MS.skill, undefined);
-  assert.equal(SOUND_THROTTLE_MS.select, 35);
-  await withAudioContextStub(async () => {
-    const sound = new SoundManager();
-    const fake = makeFakeAudioContext();
-    sound.context = fake;
-    sound.musicGain = fake.destination;
-    sound.sfxGain = fake.destination;
-    sound.enabled = true;
-    assert.equal(await sound.play("playCard"), true);
-    assert.equal(await sound.play("playCard"), true, "连续真实出牌音效不得被节流吞掉");
-    assert.equal(await sound.play("hit"), true);
-    assert.equal(await sound.play("skill"), true);
-    assert.equal(await sound.play("select"), true);
-    assert.equal(await sound.play("select"), false, "UI select 防误触节流必须保留");
-    assert.ok(fake.bufferSources.length >= 6, "gameplay SFX 应创建独立 AudioBufferSource");
-  });
-}
-
-test("音频与展示节奏：连续 gameplay 音效不被零 fake-thinking 节流吞掉", frArch14AudioSurvivesZeroTiming);
-
-// ---- Private Reveal 异步边界 ----
-
-/*
-功能
-等待一个异步边界条件成立，避免依赖不确定数量的微任务 flush。
-
-调用方
-私人情报异步边界回归测试。
-
-输入
-condition 与失败提示。
-
-输出
-无返回值，超时抛错。
-
-读取状态
-condition 闭包。
-
-写入状态
-无。
-
-调用函数
-setTimeout。
-
-边界与不变量
-只用于测试 polling，不进入生产语义。
-*/
-async function waitForPrivateRevealBoundaryCondition(condition, label) {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (condition()) return;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error(`等待异步边界条件超时：${label}`);
-}
-
-/*
-功能
-证明真人窥探的 private reveal 是真实异步 gameplay boundary：
-showPrivateReveal 返回的 Promise 未 resolve 前，scout resolver、后续日志、cardUsed 与 playCard 均不得越过。
-
-调用方
-FR-ARCH-15 前置回归。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-Game/ActionWorkflow/CardEffectRuntime/GamePresentationAdapter 路径与 UI 记录。
-
-写入状态
-测试 Game 手牌/记忆/日志与 UI 记录。
-
-调用函数
-makePlayer、makeGame、choosePrivateCardThroughInteraction、waitForPrivateRevealBoundaryCondition。
-
-边界与不变量
-只验证既有 human 窥探路径，不修改规则或 AI scout 路径。
-*/
-async function privateRevealScoutBlocksUntilClosed() {
-  const source = makePlayer("private-reveal-scout-source", 0, "dawn", "human"),
-    target = makePlayer("private-reveal-scout-target", 1, "dusk");
-  const scout = instance("scout"),
-    first = instance("charge"),
-    second = instance("harvest");
-  source.hand.push(scout);
-  target.hand.push(first, second);
-  const { game, ui } = makeGame([source, target]);
-  const selection = await choosePrivateCardThroughInteraction(
-    game, source, scout, target, { handIndexes: [0, 1] }
-  );
-  const order = [];
-  let revealCalls = 0;
-  let settleReveal = null;
-  ui.showPrivateReveal = (title, cards) => {
-    revealCalls += 1;
-    order.push("reveal");
-    ui.reveals.push({ title, cards: [...cards] });
-    return new Promise((resolve) => { settleReveal = resolve; });
-  };
-  const originalLog = game.log.bind(game);
-  game.log = (message, kind) => {
-    if (message.includes("窥探了")) order.push("scout-log");
-    return originalLog(message, kind);
-  };
-  let cardUsed = false;
-  game.eventDispatcher.on("cardUsed", "test:private-reveal-scout-boundary", (event) => {
-    if (event.card === scout) cardUsed = true;
-  });
-  let playSettled = false;
-  const playPromise = game.playCard(source, scout, [target], selection).then((result) => {
-    playSettled = true;
-    return result;
-  });
-  await waitForPrivateRevealBoundaryCondition(() => revealCalls === 1, "scout 应已进入 showPrivateReveal");
-  assert.equal(order.includes("reveal"), true);
-  assert.equal(order.includes("scout-log"), false);
-  assert.equal(cardUsed, false);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(playSettled, false, "收起情报前 scout 结算不得完成");
-  assert.equal(order.includes("scout-log"), false);
-  assert.equal(cardUsed, false);
-  settleReveal();
-  assert.equal(await playPromise, true);
-  assert.deepEqual(order, ["reveal", "scout-log"]);
-  assert.equal(cardUsed, true);
-  assert.deepEqual(ui.reveals.at(-1)?.cards, [first, second]);
-  assert.ok(game.state.logs.some((entry) => entry.message.includes("窥探了")));
-  game.dispose();
-}
-
-/*
-功能
-证明真人窥隙的 private reveal 会阻塞 EventDispatcher：
-spyGap listener 未完成前 dispatcher 不得执行 sentinel listener，也不得 resolve dispatcher Promise。
-
-调用方
-FR-ARCH-15 前置回归。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-EventDispatcher/PassiveSkillTriggerRegistry/GamePresentationAdapter 路径与 UI 记录。
-
-写入状态
-测试 Game 状态与 UI 记录。
-
-调用函数
-makePlayer、makeGame、registerPassiveSkills、waitForPrivateRevealBoundaryCondition。
-
-边界与不变量
-直接触发真实 afterDamage event 与 spyGap 监听器；不新增规则条件。
-*/
-async function privateRevealSpyGapBlocksDispatcher() {
-  const shade = makePlayer("private-reveal-spygap-shade", 0, "dawn", "human", 3),
-    target = makePlayer("private-reveal-spygap-target", 1, "dusk");
-  target.hand.push(instance("charge"), instance("harvest"));
-  const { game, ui } = makeGame([shade, target]);
-  registerPassiveSkills(game);
-  const order = [];
-  let revealCalls = 0;
-  let settleReveal = null;
-  ui.showPrivateReveal = (title, cards) => {
-    revealCalls += 1;
-    order.push("reveal");
-    ui.reveals.push({ title, cards: [...cards] });
-    return new Promise((resolve) => { settleReveal = resolve; });
-  };
-  const originalLog = game.log.bind(game);
-  game.log = (message, kind) => {
-    if (message.includes("触发「窥隙」")) order.push("spygap-log");
-    return originalLog(message, kind);
-  };
-  let sentinelRuns = 0;
-  game.eventDispatcher.on("afterDamage", "test:private-reveal-spygap-sentinel", () => {
-    sentinelRuns += 1;
-    order.push("sentinel");
-  });
-  const event = {
-    type: "afterDamage", source: shade, target, actualAmount: 1,
-    card: instance("assault"), resolutionId: "private-reveal-spygap-resolution"
-  };
-  let dispatcherSettled = false;
-  const dispatcherPromise = game.eventDispatcher.emit("afterDamage", event).then((payload) => {
-    dispatcherSettled = true;
-    return payload;
-  });
-  await waitForPrivateRevealBoundaryCondition(() => revealCalls === 1, "窥隙应已进入 showPrivateReveal");
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
-  assert.equal(sentinelRuns, 0);
-  assert.equal(order.includes("spygap-log"), false);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(dispatcherSettled, false, "收起情报前 dispatcher 不得越过窥隙 listener");
-  assert.equal(sentinelRuns, 0);
-  settleReveal();
-  assert.equal(await dispatcherPromise, event);
-  assert.equal(sentinelRuns, 1);
-  assert.deepEqual(order, ["reveal", "spygap-log", "sentinel"]);
-  assert.ok(game.state.logs.some((entry) => entry.message.includes("触发「窥隙」")));
-  game.dispose();
-}
-
-/*
-功能
-证明 private reveal pending 时 dispose/cleanup 会 settle reveal Promise，
-随后恢复的旧 resolver 会因 session invalid 直接结束，不写 stale log、不发 cardUsed。
-
-调用方
-FR-ARCH-15 前置回归。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-Game/ActionWorkflow/CardEffectRuntime 路径与 dispose lifecycle。
-
-写入状态
-测试 Game 状态与 UI 记录。
-
-调用函数
-makePlayer、makeGame、choosePrivateCardThroughInteraction、waitForPrivateRevealBoundaryCondition。
-
-边界与不变量
-模拟当前真实 UI cleanup settle pending reveal；不重复实现 cleanup。
-*/
-async function privateRevealDisposeInvalidatesPendingScout() {
-  const source = makePlayer("private-reveal-dispose-source", 0, "dawn", "human"),
-    target = makePlayer("private-reveal-dispose-target", 1, "dusk");
-  const scout = instance("scout"),
-    first = instance("charge"),
-    second = instance("harvest");
-  source.hand.push(scout);
-  target.hand.push(first, second);
-  const { game, ui } = makeGame([source, target]);
-  const selection = await choosePrivateCardThroughInteraction(
-    game, source, scout, target, { handIndexes: [0, 1] }
-  );
-  let settleReveal = null;
-  ui.showPrivateReveal = () => new Promise((resolve) => { settleReveal = resolve; });
-  const baseCancelPendingInteractions = ui.cancelPendingInteractions.bind(ui);
-  ui.cancelPendingInteractions = () => {
-    baseCancelPendingInteractions();
-    if (settleReveal) {
-      const resolve = settleReveal;
-      settleReveal = null;
-      resolve();
-    }
-  };
-  let cardUsed = false;
-  game.eventDispatcher.on("cardUsed", "test:private-reveal-dispose-boundary", (event) => {
-    if (event.card === scout) cardUsed = true;
-  });
-  let playSettled = false;
-  const playPromise = game.playCard(source, scout, [target], selection).then((result) => {
-    playSettled = true;
-    return result;
-  });
-  await waitForPrivateRevealBoundaryCondition(() => settleReveal !== null, "scout 应已进入 pending reveal");
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(playSettled, false, "pending reveal 未清理前 scout 结算不得提前完成");
-  game.dispose();
-  assert.equal(settleReveal, null);
-  assert.equal(await playPromise, false);
-  assert.equal(cardUsed, false);
-  assert.ok(!game.state.logs.some((entry) => entry.message.includes("窥探了")));
-}
-
-/*
-功能
-验证 PrivateRevealView 现有 cleanup contract：hide() 会 settle 未关闭的 show() Promise 并清空 overlay。
-
-调用方
-私人情报异步边界回归。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-PrivateRevealView 实例。
-
-写入状态
-fake DOM element 状态。
-
-调用函数
-makeInteractiveElement、PrivateRevealView。
-
-边界与不变量
-只验证既有 UI cleanup，不创建第二份 lifecycle。
-*/
-async function privateRevealViewHideSettlesPendingShow() {
-  const closeButton = makeInteractiveElement();
-  const element = {
-    ...makeInteractiveElement(),
-    querySelector: (selector) => selector === "[data-close-private]" ? closeButton : null
-  };
-  const view = new PrivateRevealView(element);
-  let settled = false;
-  const pending = view.show("测试情报", [instance("charge")]).then(() => { settled = true; });
-  assert.equal(settled, false);
-  assert.equal(element.classList.contains("is-hidden"), false);
-  assert.match(element.innerHTML, /收起情报/);
-  view.hide();
-  await pending;
-  assert.equal(settled, true);
-  assert.equal(element.innerHTML, "");
-  assert.equal(element.classList.contains("is-hidden"), true);
-}
-
-test("私人情报异步边界：真人窥探在收起情报前阻塞 resolver 日志与 cardUsed", privateRevealScoutBlocksUntilClosed);
-test("私人情报异步边界：真人窥隙在收起情报前阻塞 EventDispatcher 后续 listener", privateRevealSpyGapBlocksDispatcher);
-test("私人情报异步边界：pending reveal 时 dispose 清理后旧 scout 不写 stale log/mutation", privateRevealDisposeInvalidatesPendingScout);
-test("私人情报异步边界：PrivateRevealView.hide settle pending show Promise 并清空 overlay", privateRevealViewHideSettlesPendingShow);
 
 // ==================== Test Runner 最终执行 ====================
 

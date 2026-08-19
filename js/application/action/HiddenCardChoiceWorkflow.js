@@ -40,7 +40,7 @@ composition root。
 仅通过 hiddenSelection 创建或清理 token session。
 
 调用函数
-requestHiddenCards、requestZoneCard、chooseAiHiddenCards、chooseAiZoneCard。
+requestHiddenChoice、createHiddenCardChoiceRequest、ChoiceCoordinator.request、HiddenCardSelectionAdapter methods。
 
 边界与不变量
 所有返回实体都必须仍位于原区域；异步边界后必须重新校验 session；未知手牌不按真实定义比较。
@@ -119,7 +119,7 @@ export function createHiddenCardChoiceWorkflow(runtime) {
   CardIntentRuntime、choosePlayerZoneCard 与测试。
 
   输入
-  行动者、持有者、数量、提示、可选选择描述、排除集合与 AI 用途上下文。
+  行动者、持有者、数量、提示、可选选择描述、排除集合、AI 用途上下文与 exact 选项。
 
   输出
   已去重且仍在持有者手牌中的实体牌数组。
@@ -131,12 +131,12 @@ export function createHiddenCardChoiceWorkflow(runtime) {
   通过 hiddenSelection 创建或清理 token session。
 
   调用函数
-  requestHiddenCards、chooseAiHiddenCards、HiddenCardSelectionAdapter methods。
+  requestHiddenChoice、HiddenCardSelectionAdapter.createHiddenSelection/resolveToken/clearSelection。
 
   边界与不变量
-  真人选择只按 token/实体 ID 复核；异步返回后重新验证当前对局。
+  exact 默认为 true；真人选择只按 token/实体 ID 复核；异步返回后重新验证当前对局。
   */
-  async function chooseHiddenCards(actor, owner, count, reason, selection = null, excludedCardIds = null, aiContext = null) {
+  async function chooseHiddenCards(actor, owner, count, reason, selection = null, excludedCardIds = null, aiContext = null, { exact = true } = {}) {
     const gameId = runtime.getState().gameId;
     if (!runtime.isSessionValid(gameId)) return [];
     const eligibleCards = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
@@ -158,7 +158,7 @@ export function createHiddenCardChoiceWorkflow(runtime) {
     try {
       const result = await requestHiddenChoice(actor, owner, maximum, reason, {
         mode: "hand",
-        exact: true,
+        exact,
         selection: hidden,
         excludedCardIds,
         aiContext
@@ -193,7 +193,7 @@ export function createHiddenCardChoiceWorkflow(runtime) {
   通过 hiddenSelection 清理已完成的 token session。
 
   调用函数
-  chooseHiddenCards、requestZoneCard、chooseAiZoneCard。
+  chooseHiddenCards、requestHiddenChoice、HiddenCardSelectionAdapter methods。
 
   边界与不变量
   装备必须仍与提交的 equipmentCardId 一致；手牌选择继续走 opaque token 复核。
@@ -248,7 +248,7 @@ export function createHiddenCardChoiceWorkflow(runtime) {
   真人路径创建并最终清理 token session。
 
   调用函数
-  requestHiddenCards、chooseAiHiddenCards、resolveConfirmedTokens。
+  requestHiddenChoice、HiddenCardSelectionAdapter.createHiddenSelection/clearSelection。
 
   边界与不变量
   真人可少选；AI 路径由 adapter policy 选择；finally 必须清理 token session。

@@ -182,7 +182,7 @@ export function createCardIntentRuntime(dependencies) {
   短期 token cleanup。
 
   调用函数
-  getCardTargets、chooseHiddenCards、chooseZoneCard、chooseHiddenCardsHuman、chooseZoneCardHuman。
+  getCardTargets、chooseHiddenCards、choosePlayerZoneCard。
 
   边界与不变量
   公开 context 只含 owner/zone/count。
@@ -201,7 +201,8 @@ export function createCardIntentRuntime(dependencies) {
         const maxRevealCount = getScoutMaxRevealCount();
         cards = await runtime.chooseHiddenCards(
           source, target, Math.min(maxRevealCount, target.hand.length),
-          `${card.name}：选择至多${maxRevealCount}张隐藏手牌`, selection, null, { purpose: "scout" }
+          `${card.name}：选择至多${maxRevealCount}张隐藏手牌`, selection, null,
+          { purpose: "scout" }, { exact:false }
         );
       } else if (["plunder", "destroy"].includes(card.definitionId)) {
         const chosen = await runtime.choosePlayerZoneCard(
