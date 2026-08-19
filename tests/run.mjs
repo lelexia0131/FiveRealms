@@ -131,6 +131,7 @@ import { createDyingWorkflow } from "../js/application/combat/DyingWorkflow.js";
 import { createJudgmentWorkflow } from "../js/application/judgment/JudgmentWorkflow.js";
 import { createStatusResolutionWorkflow } from "../js/application/judgment/StatusResolutionWorkflow.js";
 import { createMatchWorkflow } from "../js/application/match/MatchWorkflow.js";
+import { CharacterSelection } from "../js/application/match/CharacterSelection.js";
 import { createTurnWorkflow } from "../js/application/turn/TurnWorkflow.js";
 import { createActionWorkflow } from "../js/application/action/ActionWorkflow.js";
 import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoiceRequest.js";
@@ -3524,6 +3525,26 @@ async function frArch9MatchSetupBoundary() {
 }
 
 test("Match setup：pre-live one-shot，live 后拒绝重复 setup", frArch9MatchSetupBoundary);
+
+test("Match setup：random 编队先于角色候选消费 match RNG", async () => {
+  const sequence = Array.from({ length: 4096 }, (_, index) => ((index * 37 + 11) % 101) / 101);
+  let cursor = 0;
+  const game = createGameApplication(makeUi(), () => sequence[cursor++]);
+  game.simulationMode = true;
+  game.runGameLoop = async () => { };
+  const expectedCursor = { value: 0 };
+  const expectedRandom = () => sequence[expectedCursor.value++];
+  const expectedTeams = TeamManager.assignTeams(expectedRandom, "random");
+  const expectedCandidates = new CharacterSelection(expectedRandom).createCandidates();
+  const candidates = game.startSelection("random");
+  assert.deepEqual(candidates.map((candidate) => candidate.id), expectedCandidates.map((candidate) => candidate.id));
+  assert.equal(cursor, expectedCursor.value, "random 编队必须先于候选角色消费同一 RNG");
+  assert.equal(game.state.players.length, 0);
+  await game.confirmCharacter(candidates[0].id);
+  assert.deepEqual(game.state.players.map((player) => player.battleTeam), expectedTeams);
+  game.dispose();
+  await game.loopPromise;
+});
 
 test("Match setup：二人小队在角色确认后生成真人 2 人阵营", async () => {
   const game = createGameApplication(makeUi(), () => 0.25);

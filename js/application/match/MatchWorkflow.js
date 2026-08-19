@@ -78,6 +78,7 @@ export function createMatchWorkflow(dependencies) {
   let liveAuthoritativeMatch = false;
   let candidates = [];
   let teamAssignmentMode = null;
+  let pendingTeams = null;
 
   /*
   功能
@@ -127,16 +128,16 @@ export function createMatchWorkflow(dependencies) {
   候选角色数组。
 
   读取状态
-  MatchState 与合法编队方式集合。
+  MatchState、合法编队方式集合与 match RNG。
 
   写入状态
-  workflow 的 teamAssignmentMode 与 candidates。
+  workflow 的 teamAssignmentMode、pendingTeams 与 candidates。
 
   调用函数
-  createCandidates。
+  assignTeams、createCandidates。
 
   边界与不变量
-  每局只能选择一次模式；角色确认前不解析队伍规模或创建玩家花名册。
+  每局只能选择一次模式；编队方式在此解析为 pre-live pending team layout，正式 roster 仍只在角色确认后创建；random 保持 assignTeams → createCandidates 的历史 RNG 顺序。
   */
   function startSelection(selectedMode) {
     const state = runtime.getState();
@@ -144,6 +145,7 @@ export function createMatchWorkflow(dependencies) {
     if (teamAssignmentMode) throw new Error("编队方式已确认，不能重复开始征召");
     if (!TEAM_ASSIGNMENT_MODES.includes(selectedMode)) throw new TypeError(`未知编队方式：${selectedMode}`);
     teamAssignmentMode = selectedMode;
+    pendingTeams = runtime.assignTeams(selectedMode);
     candidates = runtime.createCandidates();
     return candidates;
   }
@@ -162,25 +164,24 @@ export function createMatchWorkflow(dependencies) {
   true；session 失效返回 false；无效选择抛错。
 
   读取状态
-  teamAssignmentMode、candidates、random、team rules 与 deck。
+  teamAssignmentMode、pendingTeams、candidates、team rules 与 deck。
 
   写入状态
   pre-live startingPlayerIndex 经 one-shot commit；其余 Domain 写入经 transitions。
 
   调用函数
-  assignTeams、createPlayer、getMaxEnergy、applyCharacterDefinition、registerGlobalRules、registerPassiveSkills、buildDeck、resetTurnFlags、resetRoundFlags、drawCards、setCurrentPlayerIndex、emitEvent、startTurnLoop。
+  createPlayer、getMaxEnergy、applyCharacterDefinition、registerGlobalRules、registerPassiveSkills、buildDeck、resetTurnFlags、resetRoundFlags、drawCards、setCurrentPlayerIndex、emitEvent、startTurnLoop。
 
   边界与不变量
-  只在角色确认后解析编队方式；random 复用 TeamAssignment 旧随机语义，固定模式不执行规模抽签；每个 await 保留 session 检查。
+  使用 startSelection 已解析的 pending team layout；角色确认前不创建正式 roster；每个 await 保留 session 检查。
   */
   async function confirmCharacter(characterId) {
     const state = runtime.getState();
     const gameId = state.gameId;
-    if (!teamAssignmentMode) throw new Error("尚未选择编队方式");
+    if (!teamAssignmentMode || !pendingTeams) throw new Error("尚未选择编队方式");
     const selected = candidates.find((character) => character.id === characterId);
     if (!selected || state.selectedCharacterId) throw new Error("角色选择无效或已确认");
-    const teams = runtime.assignTeams(teamAssignmentMode);
-    const roster = teams.map((battleTeam, seatIndex) => runtime.createPlayer({
+    const roster = pendingTeams.map((battleTeam, seatIndex) => runtime.createPlayer({
       id: runtime.createId("player"),
       seatIndex,
       battleTeam,
@@ -320,6 +321,7 @@ export function createMatchWorkflow(dependencies) {
     const state = runtime.getState();
     if (state.isDisposed) return;
     teamAssignmentMode = null;
+    pendingTeams = null;
     candidates = [];
     runtime.markDisposed();
     runtime.resetActionLocks();
