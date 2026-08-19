@@ -8610,16 +8610,21 @@ test("回收站触发：predicate 在 Domain，trigger 在 Application", frArch1
 
 test("雷达：判定战术牌时令此次攻击无效并把判定牌弃置", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
-  const { game }
+  const { game, ui }
     = makeGame([a, b]);
   b.equipment = instance("defenseDevice");
   const judgment = instance("harvest");
+  assert.equal(judgment.categoryName, undefined);
   game.state.deck.cards.push(judgment);
   const hp = b.hp;
   await game.damage(a, b, 1, { card: instance("assault"), canBlock: true, damageType: "normal" });
   assert.equal(b.hp, hp);
   assert.ok(game.state.deck.discardPile.includes(judgment));
   assert.equal(game.state.deck.judgmentZone.length, 0);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${b.name}的「雷达」判定为「${judgment.name}」，为战术牌。`
+  ));
+  assert.equal(ui.judgments[0].card.categoryName, "战术牌");
   assert.ok(game.state.logs.some(
     (entry) => entry.message === `${b.name}的「雷达」生效，此次攻击无效。`
   ));
@@ -8628,15 +8633,20 @@ test("雷达：判定战术牌时令此次攻击无效并把判定牌弃置", as
 
 test("雷达：判定基础牌时获得该牌并继续攻击", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
-  const { game }
+  const { game, ui }
     = makeGame([a, b]);
   b.equipment = instance("defenseDevice");
   const judgment = instance("charge");
+  assert.equal(judgment.categoryName, undefined);
   game.state.deck.cards.push(judgment);
   const hp = b.hp;
   await game.damage(a, b, 1, { card: instance("assault"), canBlock: true, damageType: "normal" });
   assert.ok(b.hand.includes(judgment));
   assert.equal(b.hp, hp - 1);
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${b.name}的「雷达」判定为「${judgment.name}」，为基础牌。`
+  ));
+  assert.equal(ui.judgments[0].card.categoryName, "基础牌");
   assert.ok(game.state.logs.some(
     (entry) => entry.message === `${b.name}获得判定牌，此次攻击继续结算。`
   ));
@@ -8656,10 +8666,11 @@ test("雷达：获得的格挡可立即用于当前攻击", async () => {
 
 test("雷达：判定装备牌时不直接扣血且原攻击继续由护盾吸收", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
-  const { game }
+  const { game, ui }
     = makeGame([a, b]);
   b.equipment = instance("defenseDevice");
   const judgment = instance("energyDevice");
+  assert.equal(judgment.categoryName, undefined);
   game.state.deck.cards.push(judgment);
   b.shield = 2;
   const hp = b.hp;
@@ -8668,6 +8679,10 @@ test("雷达：判定装备牌时不直接扣血且原攻击继续由护盾吸�
   assert.equal(b.shield, 1);
   assert.ok(game.state.deck.discardPile.includes(judgment));
   assert.equal(b.equipment.definitionId, "defenseDevice");
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${b.name}的「雷达」判定为「${judgment.name}」，为装备牌。`
+  ));
+  assert.equal(ui.judgments[0].card.categoryName, "装备牌");
   assert.ok(game.state.logs.some(
     (entry) => entry.message === `${b.name}的「雷达」未生效，判定牌进入弃牌堆，此次攻击继续结算。`
   ));
@@ -20604,7 +20619,7 @@ test("AI·闪电：AI 装备判定概率按类别聚合且不修改计数", () =
   assert.equal(nextLightningReceiver(players, players[0]), "d");
 });
 
-test("AI·闪电：AI 状态反制决策不是固定 true 或 false", () => {
+test("AI·闪电：己方进入 burden 比较而敌方 holder 被硬保护拒绝", () => {
   const holderAlly = makePlayer("a", 0, "dawn"),
     receiverEnemy = makePlayer("b", 1, "dusk"),
     responder = makePlayer("r", 2, "dawn");
@@ -20613,11 +20628,21 @@ test("AI·闪电：AI 状态反制决策不是固定 true 或 false", () => {
   holderAlly.hp = 1;
   holderAlly.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holderAlly.id };
   game.aiController.knowledge.remainingCounts = () => ({ defenseDevice: 9, assault: 1 });
+  const allyBurdenQueries = [];
+  game.aiController.evaluator.lightningTeamBurden = () => {
+    allyBurdenQueries.push("stay");
+    return 100;
+  };
+  game.aiController.evaluator.lightningTransferredBurden = () => {
+    allyBurdenQueries.push("transfer");
+    return 0;
+  };
   const context = { statusCounterContext: { holderId: holderAlly.id, holderName: holderAlly.name } };
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(responder, "counter", context, [instance("counter")]),
     true
   );
+  assert.deepEqual(allyBurdenQueries, ["stay", "transfer"]);
   const responder2 = makePlayer("r2", 0, "dawn"),
     holderEnemy = makePlayer("e", 1, "dusk"),
     receiverAlly = makePlayer("f", 2, "dawn");
@@ -20626,6 +20651,15 @@ test("AI·闪电：AI 状态反制决策不是固定 true 或 false", () => {
   holderEnemy.hp = 4;
   holderEnemy.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: holderEnemy.id };
   game2.aiController.knowledge.remainingCounts = () => ({ defenseDevice: 9, assault: 1 });
+  const enemyBurdenQueries = [];
+  game2.aiController.evaluator.lightningTeamBurden = () => {
+    enemyBurdenQueries.push("stay");
+    return 100;
+  };
+  game2.aiController.evaluator.lightningTransferredBurden = () => {
+    enemyBurdenQueries.push("transfer");
+    return 0;
+  };
   const context2 = {
     statusCounterContext: { holderId: holderEnemy.id, holderName: holderEnemy.name }
   };
@@ -20635,6 +20669,7 @@ test("AI·闪电：AI 状态反制决策不是固定 true 或 false", () => {
     ),
     false
   );
+  assert.deepEqual(enemyBurdenQueries, []);
 });
 
 // ---- AI 装备行为·公共 ----

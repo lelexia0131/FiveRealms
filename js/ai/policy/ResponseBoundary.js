@@ -160,7 +160,7 @@ export class ResponseBoundary {
   responsePlayerView、createInitialSearchState、ValueSimulationQuery 与既有 Domain/Value 辅助函数。
 
   边界与不变量
-  所有昂贵查询惰性执行且每个响应分支至多一次，避免无条件 State 投影或重复计算。
+  所有昂贵查询惰性执行且每个响应分支至多一次；状态反制只为同阵营 holder 进入价值比较。
   */
   buildDecisionContext(responder, type, rawContext, cards = []) {
     const rawPlayers = this.getState().players;
@@ -271,7 +271,8 @@ export class ResponseBoundary {
         const holder = rawPlayers.find((player) => (
           player.id === rawContext.statusCounterContext?.holderId && player.alive
         ));
-        if (!holder || !hasLightning(holder)) {
+        // 反制会让 holder 跳过本次判定并立即转移闪电，敌方 holder 不能进入 AI 的价值比较。
+        if (!holder || !hasLightning(holder) || holder.battleTeam !== responder.battleTeam) {
           return { valid: false, noCounterBurden: 0, withCounterBurden: 0 };
         }
         const state = createInitialSearchState(

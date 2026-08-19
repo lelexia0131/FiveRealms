@@ -36,6 +36,37 @@ const REQUIRED_DEPENDENCIES = [
 
 /*
 功能
+把判定牌的 Domain category 转换为统一的中文展示名称。
+
+调用方
+judgeDefense、judgeDelayedStatus。
+
+输入
+category 是判定牌类别；fallback 只用于未知类别的兼容展示。
+
+输出
+基础牌、战术牌、装备牌或调用方提供的 fallback。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+三个正式类别必须以 category 为权威，不依赖运行时牌对象是否携带 categoryName。
+*/
+function judgmentCategoryLabel(category, fallback = null) {
+  return category === "basic" ? "基础牌"
+    : category === "tactic" ? "战术牌"
+      : category === "equipment" ? "装备牌" : fallback;
+}
+
+/*
+功能
 创建 Application Judgment Workflow。
 
 调用方
@@ -116,10 +147,10 @@ export function createJudgmentWorkflow(dependencies) {
   phase 经 MatchStateTransition；牌区经 deck collaborator；handVersion 经 PlayerStateTransition。
 
   调用函数
-  drawJudgmentCard、setMatchPhase、showJudgment、emitEvent、decideDefenseJudgmentOutcome、moveJudgmentToDiscard、moveJudgmentToHand、bumpHandVersion、observeJudgmentCard。
+  drawJudgmentCard、judgmentCategoryLabel、setMatchPhase、showJudgment、emitEvent、decideDefenseJudgmentOutcome、moveJudgmentToDiscard、moveJudgmentToHand、bumpHandVersion、observeJudgmentCard。
 
   边界与不变量
-  判定牌进入独立判定区；basic 进入守方手牌并更新知识；phase/currentJudgment 恢复顺序不变。
+  判定牌进入独立判定区；展示类别只读 category；basic 进入守方手牌并更新知识；phase/currentJudgment 恢复顺序不变。
   */
   async function judgeDefense(attacker, defender, attackContext) {
     const state = runtime.getState();
@@ -128,15 +159,16 @@ export function createJudgmentWorkflow(dependencies) {
     if (defender.equipment?.definitionId !== "defenseDevice") return { handled: false, immune: false };
     const card = runtime.drawJudgmentCard();
     if (!card) return { handled: false, immune: false };
+    const categoryLabel = judgmentCategoryLabel(card.category, card.categoryName);
     const previousPhase = state.phase;
     setMatchPhase(state, "judgment");
     setJudgmentProjection({ card, defenderId: defender.id, attackerId: attacker?.id ?? null });
     runtime.presentation.showJudgment({
       playerId: defender.id,
-      card: { name: card.name, categoryName: card.categoryName, art: card.art },
+      card: { name: card.name, categoryName: categoryLabel, art: card.art },
       delayedStatusContext: null
     });
-    runtime.presentation.log(`${defender.name}的「雷达」判定为「${card.name}」（${card.categoryName}）。`, "important");
+    runtime.presentation.log(`${defender.name}的「雷达」判定为「${card.name}」，为${categoryLabel}。`, "important");
     await runtime.emitEvent("judgmentRevealed", { type: "judgmentRevealed", attacker, defender, card, attackContext });
     if (!runtime.isSessionValid(gameId)) return { handled: false, immune: false, cancelled: true };
     const outcome = decideDefenseJudgmentOutcome(card.category);
@@ -183,7 +215,7 @@ export function createJudgmentWorkflow(dependencies) {
   phase 经 MatchStateTransition；判定区经 deck collaborator。
 
   调用函数
-  drawJudgmentCard、setMatchPhase、showJudgment、emitEvent、decideDelayedStatusJudgmentOutcome、moveJudgmentToDiscard。
+  drawJudgmentCard、judgmentCategoryLabel、setMatchPhase、showJudgment、emitEvent、decideDelayedStatusJudgmentOutcome、moveJudgmentToDiscard。
 
   边界与不变量
   延迟判定牌总是公开后进入弃牌堆；showJudgment/hideJudgment/phase restore 顺序不变。
@@ -207,9 +239,7 @@ export function createJudgmentWorkflow(dependencies) {
       runtime.presentation.log(`没有可翻开的判定牌，「${statusName}」结算顺延。`);
       return { handled: false, triggered: false };
     }
-    const categoryLabel = card.category === "basic" ? "基础牌"
-      : card.category === "tactic" ? "战术牌"
-        : card.category === "equipment" ? "装备牌" : card.categoryName;
+    const categoryLabel = judgmentCategoryLabel(card.category, card.categoryName);
     const previousPhase = state.phase;
     setMatchPhase(state, "judgment");
     setJudgmentProjection({ card, defenderId: holder.id, attackerId: null, statusId });
@@ -222,7 +252,7 @@ export function createJudgmentWorkflow(dependencies) {
     }
     runtime.presentation.showJudgment({
       playerId: holder.id,
-      card: { name: card.name, categoryName: card.categoryName, art: card.art },
+      card: { name: card.name, categoryName: categoryLabel, art: card.art },
       delayedStatusContext: {
         ownerId: holder.id,
         ownerName: holder.name,
