@@ -6,7 +6,7 @@
 application/combat 与 composition root。
 
 下游
-concrete diagnostics adapter（当前由 Game composition 桥接）。
+concrete diagnostics adapter（当前由 MatchApplication composition 桥接）。
 
 状态边界
 只接收 data-only telemetry DTO；不读写真 GameState。
@@ -32,7 +32,7 @@ const REQUIRED_METHODS = [
 验证并冻结一个 DiagnosticsPort implementation。
 
 调用方
-Game composition root 与 tests。
+MatchApplication composition root 与 tests。
 
 输入
 含 recordDamage/recordHealing/recordHpLoss 的 implementation。

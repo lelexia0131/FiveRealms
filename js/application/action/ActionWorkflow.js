@@ -192,7 +192,7 @@ export function createActionWorkflow(dependencies) {
   清空全部 action runtime locks。
 
   调用方
-  Game turn/action reset collaborator。
+  TurnWorkflow 与 action reset collaborator。
 
   输入
   无。
@@ -256,7 +256,7 @@ export function createActionWorkflow(dependencies) {
   查询 resolution owner。
 
   调用方
-  Game zone helpers 与 ActionWorkflow finally。
+  ResourceWorkflow zone capabilities 与 ActionWorkflow finally。
 
   输入
   card 与 resolutionId。
@@ -285,7 +285,7 @@ export function createActionWorkflow(dependencies) {
   记录卡牌实体 resolution owner。
 
   调用方
-  Game moveHandToResolving。
+  ResourceWorkflow.moveHandToResolving。
 
   输入
   card 与 resolutionId。
@@ -316,7 +316,7 @@ export function createActionWorkflow(dependencies) {
   读取卡牌实体 resolution owner ID。
 
   调用方
-  Game zone helpers 与 ActionWorkflow finally。
+  ResourceWorkflow zone capabilities 与 ActionWorkflow finally。
 
   输入
   card。

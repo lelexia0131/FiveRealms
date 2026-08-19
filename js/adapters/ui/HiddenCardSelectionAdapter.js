@@ -11,7 +11,7 @@ export class HiddenCardSelectionAdapter {
   创建 boundary 并注入 application-owned hidden selection store。
 
   调用方
-  Game 构造函数。
+  MatchApplication composition root。
 
   输入
   game。
@@ -44,7 +44,7 @@ export class HiddenCardSelectionAdapter {
   把真实隐藏牌转换为短期不透明 token selection。
 
   调用方
-  Game、InteractionController 与测试。
+  HiddenCardChoiceWorkflow、InteractionController 与测试。
 
   输入
   owner 与可选 cards。
@@ -87,7 +87,7 @@ export class HiddenCardSelectionAdapter {
   把 token 解析回仍有效的真实 Card entity。
 
   调用方
-  Game、InteractionController 与测试。
+  UiChoiceAdapter、InteractionController 与测试。
 
   输入
   token、expectedOwner 与 expectedSelectionId。
@@ -122,7 +122,7 @@ export class HiddenCardSelectionAdapter {
   固化一组已确认 token 为当前手牌实体意图。
 
   调用方
-  Game、InteractionController 与测试。
+  UiChoiceAdapter、InteractionController 与测试。
 
   输入
   tokens、expectedOwner、expectedSelectionId 与 maximum。
@@ -157,7 +157,7 @@ export class HiddenCardSelectionAdapter {
   判断 selection 会话是否仍 active。
 
   调用方
-  Game 与测试。
+  UiChoiceAdapter 与测试。
 
   输入
   selectionId 与 expectedOwner。
@@ -192,7 +192,7 @@ export class HiddenCardSelectionAdapter {
   清理指定 selection 的 token 与 session。
 
   调用方
-  Game、InteractionController 与测试。
+  UiChoiceAdapter、InteractionController 与测试。
 
   输入
   selectionId。
@@ -219,7 +219,7 @@ export class HiddenCardSelectionAdapter {
   清空全部隐藏选择状态。
 
   调用方
-  Game.dispose 与重新征召。
+  MatchWorkflow.dispose、UiChoiceAdapter request cleanup 与重新征召。
 
   输入
   无。

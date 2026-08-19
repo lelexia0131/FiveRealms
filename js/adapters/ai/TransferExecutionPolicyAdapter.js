@@ -24,7 +24,7 @@ import { isTransferDirectionAllowed } from "../../ai/policy/TransferPolicy.js";
 判断 AI 来源→敌方接收者的转移是否允许执行。
 
 调用方
-Game composition 注入 CardIntentRuntime。
+MatchApplication composition 注入 CardIntentRuntime。
 
 输入
 source、from 与 receiver。

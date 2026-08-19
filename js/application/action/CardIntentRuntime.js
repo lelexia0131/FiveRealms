@@ -50,7 +50,7 @@ CardRuntime composition。
 无。
 
 边界与不变量
-旧 Game card-specific prep 顺序与 hidden-information protection 完全保留。
+既有 card-specific prep 顺序与 hidden-information protection 完全保留。
 */
 export function createCardIntentRuntime(dependencies) {
   for (const name of REQUIRED_DEPENDENCIES) {
@@ -104,7 +104,7 @@ export function createCardIntentRuntime(dependencies) {
     if (!runtime.isTransferExecutionAllowed(source, from, receiver)) return null;
 
     const hiddenCard = (await runtime.chooseHiddenCards(
-      source, from, 1, "选择要转移的手牌", planned, excludedCardIds, { purpose: "transfer", receiver }
+      source, from, 1, "转移：选择1张手牌", planned, excludedCardIds, { purpose: "transfer", receiver }
     ))[0] ?? null;
     const chosen = hiddenCard ? { card: hiddenCard, zone: "hand" } : null;
     if (!runtime.isSessionValid(gameId)) return null;
@@ -201,12 +201,12 @@ export function createCardIntentRuntime(dependencies) {
         const maxRevealCount = getScoutMaxRevealCount();
         cards = await runtime.chooseHiddenCards(
           source, target, Math.min(maxRevealCount, target.hand.length),
-          `选择至多${maxRevealCount}张手牌进行窥探`, selection, null, { purpose: "scout" }
+          `${card.name}：选择至多${maxRevealCount}张隐藏手牌`, selection, null, { purpose: "scout" }
         );
       } else if (["plunder", "destroy"].includes(card.definitionId)) {
         const chosen = await runtime.choosePlayerZoneCard(
           source, target,
-          card.definitionId === "plunder" ? "选择要掠夺的手牌或装备牌" : "选择要破坏的手牌或装备牌",
+          `${card.name}：选择1张手牌或装备牌`,
           selection, null, { purpose: card.definitionId }
         );
         if (chosen) {

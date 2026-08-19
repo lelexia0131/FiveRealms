@@ -1,6 +1,6 @@
 /*
 模块职责
-把 Application PresentationPort 的 data-only semantic DTO bridge 到本局 UIManager session；只拥有 FR-ARCH-8 已证明的 concrete UI mapping，不拥有 application presentation policy。
+把 Application PresentationPort 的 data-only semantic DTO bridge 到本局 UIManager session；只拥有 concrete UI mapping，不拥有 Application presentation policy。
 
 上游
 composition root。

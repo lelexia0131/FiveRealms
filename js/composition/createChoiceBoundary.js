@@ -3,7 +3,7 @@
 为单局应用组合 human/AI peer Choice adapters，并按 participant metadata 路由到对应 port；这是窄 composition bridge，不是 service locator。
 
 上游
-Game 构造函数。
+MatchApplication constructor。
 
 下游
 application/choice、application/ports 与 adapters/ui、adapters/ai。
@@ -29,7 +29,7 @@ import { getAiDelay } from "../utils/aiTiming.js";
 创建单局 Choice boundary（port router 与 coordinator）。
 
 调用方
-Game 构造函数。
+MatchApplication constructor。
 
 输入
 dependencies（state/ui/choiceContexts/AI capability/lifecycle）与可选外部注入 choicePort。
@@ -58,6 +58,14 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     shouldRespond,
     choosePublicCard,
     chooseDiscards,
+    chooseHiddenCards,
+    chooseZoneCard,
+    requestHiddenCards,
+    requestZoneCard,
+    resolveHiddenToken,
+    resolveConfirmedHiddenTokens,
+    isHiddenSelectionActive,
+    clearHiddenSelection,
     cleanupDelay,
     getAiResponseDelay
   } = dependencies;
@@ -70,6 +78,12 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     requestPublicCard: (player, cards) => ui.requestPublicCard?.(player, cards),
     requestDiscard: (player, count, prompt) => ui.requestDiscard(player, count, prompt),
     requestTarget: (players, prompt, meta) => ui.requestTarget(players, prompt, meta),
+    requestHiddenCards,
+    requestZoneCard,
+    resolveHiddenToken,
+    resolveConfirmedHiddenTokens,
+    isHiddenSelectionActive,
+    clearHiddenSelection,
     getChoiceContext: (requestId) => choiceContexts.get(requestId),
     isSessionValid
   }));
@@ -78,6 +92,8 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     shouldRespond,
     choosePublicCard,
     chooseDiscards,
+    chooseHiddenCards,
+    chooseZoneCard,
     isSessionValid
   }));
   const aiPort = createChoicePort(createAiResponseTimingDecorator(rawAiPort, {

@@ -125,7 +125,7 @@ export function createMatchWorkflow(dependencies) {
   候选角色数组。
 
   读取状态
-  Game state 与 random capability。
+  MatchState 与 random capability。
 
   写入状态
   pre-live roster/maxEnergy/candidates。
@@ -251,7 +251,7 @@ export function createMatchWorkflow(dependencies) {
   winnerTeam 或 null。
 
   读取状态
-  Game state 存活阵营。
+  MatchState 存活阵营。
 
   写入状态
   winnerTeam/isGameOver/phase 经 Domain transitions。
@@ -308,7 +308,7 @@ export function createMatchWorkflow(dependencies) {
   markDisposed、resetActionLocks、cleanupManagerCleanup、responseCleanup、cardSelectionCleanup、dyingCleanup、publicCardPoolCleanup、eventBusClear、cancelPendingInteractions、traceError。
 
   边界与不变量
-  重复 dispose 直接返回；EventDispatcher concrete cleanup 仍属 FR-ARCH-11，这里只经 collaborator。
+  重复 dispose 直接返回；EventDispatcher concrete cleanup 只经注入 collaborator 执行。
   */
   function dispose() {
     const state = runtime.getState();

@@ -83,7 +83,7 @@ export class CardSelectionBoundary {
   从当前合法手牌实体中按 Policy 选择位置并解析为实体数组。
 
   调用方
-  AIController、Game 资源选择、chooseZoneCard 与直接测试。
+  AIController、AiChoiceAdapter、chooseZoneCard 与直接测试。
 
   输入
   观察者、拥有者、数量、排除 ID、用途上下文和可选 remaining counts。
@@ -188,7 +188,7 @@ export class CardSelectionBoundary {
   在真实手牌与公开装备区之间解析 Resource Policy 的区域选择。
 
   调用方
-  AIController、Game 破坏/掠夺边界与测试。
+  AIController、HiddenCardChoiceWorkflow 破坏/掠夺边界与测试。
 
   输入
   行动者、资源拥有者、用途上下文和排除 ID。
@@ -419,7 +419,7 @@ export class CardSelectionBoundary {
   构造公开弃牌上下文并解析 ResourceSelectionPolicy 的实体 ID 结果。
 
   调用方
-  AIController、Game 与角色规则。
+  AIController、AiChoiceAdapter 与角色规则。
 
   输入
   付款 Player 与弃牌数量。

@@ -112,7 +112,7 @@ export function createTurnWorkflow(dependencies) {
   Promise。
 
   读取状态
-  Game state、当前玩家与 session。
+  MatchState、当前玩家与 Application session。
 
   写入状态
   轮次/回合经 Domain transitions。
@@ -188,7 +188,7 @@ export function createTurnWorkflow(dependencies) {
   Promise。
 
   读取状态
-  Game state、Domain Team Rules 与 session。
+  MatchState、Domain Team Rules 与 Application session。
 
   写入状态
   phase 经 MatchStateTransition；资源经注入 gainEnergy/drawCards。
@@ -285,7 +285,7 @@ export function createTurnWorkflow(dependencies) {
   Promise。
 
   读取状态
-  Game state、注入 AI action capability、时延配置与会话状态。
+  MatchState、注入 AI action capability、时延配置与 Application session。
 
   写入状态
   thinking/prompt 经 PresentationPort；真实卡牌/技能经注入 action collaborators。
@@ -465,7 +465,7 @@ export function createTurnWorkflow(dependencies) {
   Promise。
 
   读取状态
-  Game state 与玩家存活。
+  MatchState 与玩家存活。
 
   写入状态
   currentRound/currentPlayerIndex 经 Domain transitions。

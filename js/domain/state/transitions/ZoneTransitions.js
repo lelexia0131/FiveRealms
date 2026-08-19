@@ -123,7 +123,7 @@ export function moveCardBetweenZones(state, fromZone, toZone, card) {
 将一组 Card entity 从来源牌区一次性移动到目标牌区。
 
 调用方
-Game.payCardsFromHandAtomically 与 atomic payment tests。
+ResourceWorkflow.payCardsFromHandAtomically 与 atomic payment tests。
 
 输入
 state、来源数组、目标数组与 Card 数组。
@@ -157,7 +157,7 @@ export function moveCardsAtomically(state, fromZone, toZone, cards) {
 将装备槽 Card entity 原子移动到目标玩家手牌。
 
 调用方
-Game.moveEquipmentToHand 与 direct tests。
+ResourceWorkflow.moveEquipmentToHand 与 direct tests。
 
 输入
 state、来源 Player、目标 Player 与 Card。
@@ -190,7 +190,7 @@ export function moveEquipmentToHand(state, from, to, card) {
 将装备槽 Card entity 原子移动到弃牌堆。
 
 调用方
-Game.discardEquipment 与 direct tests。
+ResourceWorkflow.discardEquipment、DyingWorkflow 与 direct tests。
 
 输入
 state、Player、Card 与弃牌堆数组。
@@ -223,7 +223,7 @@ export function discardEquipment(state, player, card, discardPile) {
 原子提交装备替换：旧装备进弃牌堆、新装备从结算区进入装备槽。
 
 调用方
-Game.equipCard 与 direct tests。
+ResourceWorkflow.equipCard 与 direct tests。
 
 输入
 state、Player、新装备 Card、旧装备 Card 或 null、结算区数组与弃牌堆数组。
@@ -258,7 +258,7 @@ export function commitEquipmentReplacement(state, player, newCard, oldCard, reso
 将 Card entity 从所有已给定牌区/玩家区域清除，并唯一追加到弃牌堆。
 
 调用方
-Game.cleanupFailedResolution 与 failure cleanup tests。
+ResourceWorkflow.cleanupFailedResolution 与 failure cleanup tests。
 
 输入
 state、Card、牌区数组集合、players、额外牌区数组与弃牌堆。

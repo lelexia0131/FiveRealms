@@ -5,31 +5,30 @@
 import { RUNTIME_POLICY } from "../application/policy/RuntimePolicy.js";
 
 export class Debug {
-  /** 在 debugMode 开启时输出带模块标签的信息；不会修改游戏状态。 */
   /*
   功能
-  执行 log 对应的 debug 职责。
+  在 debugMode 开启时输出带模块标签的诊断信息。
 
   调用方
-  本模块内部流程及显式公开边界。
+  音频加载、Application 异常恢复与页面 bootstrap。
 
   输入
-  函数签名声明的参数。
+  诊断 scope、消息及可选 detail。
 
   输出
-  函数实现声明的返回值。
+  无返回值。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  RUNTIME_POLICY.debugMode。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  仅在调试模式写浏览器 console。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  console.debug。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  不写公开对局日志或游戏状态；生产模式必须安静返回。
   */
   static log(scope, message, detail = undefined) {
     if (!RUNTIME_POLICY.debugMode) return;

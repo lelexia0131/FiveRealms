@@ -25,7 +25,7 @@ import { clamp } from "../../../utils/helpers.js";
 按当前能量上限安全变更能量并返回实际变化量。
 
 调用方
-Game.gainEnergy、技能 execute 与直接测试。
+ResourceWorkflow.gainEnergy、SkillEffectRuntime、Player boundary 与直接测试。
 
 输入
 authoritative state、Player 与能量增量。
@@ -58,7 +58,7 @@ export function changeEnergy(state, player, amount) {
 对玩家生命执行已决定的整数增量。
 
 调用方
-Game.damage、Game.heal、CombatWorkflow、DyingWorkflow 与直接测试。
+CombatWorkflow、DyingWorkflow 与直接测试。
 
 输入
 state、Player 与生命增量。
@@ -121,7 +121,7 @@ export function setHp(state, player, value) {
 对玩家护盾执行已决定的整数增量。
 
 调用方
-Game.damage、CardRuntime、SkillRuntime 与直接测试。
+CombatWorkflow、CardEffectRuntime、SkillEffectRuntime 与直接测试。
 
 输入
 state、Player 与护盾增量。

@@ -17,6 +17,8 @@ HiddenCardSelectionAdapter、Human/AI choice capabilities。
 架构约束
 不得依赖 concrete UI/AI 模块、DOM、Domain transition 或卡牌效果规则。
 */
+import { createId } from "../../utils/helpers.js";
+import { createHiddenCardChoiceRequest } from "../choice/HiddenCardChoiceRequest.js";
 
 /*
 功能
@@ -44,6 +46,71 @@ requestHiddenCards、requestZoneCard、chooseAiHiddenCards、chooseAiZoneCard。
 所有返回实体都必须仍位于原区域；异步边界后必须重新校验 session；未知手牌不按真实定义比较。
 */
 export function createHiddenCardChoiceWorkflow(runtime) {
+  /*
+  功能
+  通过统一 ChoicePort 请求一次隐藏手牌或区域选择。
+
+  调用方
+  chooseHiddenCards、choosePlayerZoneCard 与 choosePrivateHandPeekCards。
+
+  输入
+  actor、owner、最大数量、提示以及 mode/exact/selection/AI context 等私有桥接事实。
+
+  输出
+  canonical ChoiceResult。
+
+  读取状态
+  当前 gameId/stateVersion 与 opaque selection token。
+
+  写入状态
+  choiceContexts 只在请求存续期间保存实体重绑上下文。
+
+  调用函数
+  createHiddenCardChoiceRequest、ChoiceCoordinator.request。
+
+  边界与不变量
+  ChoiceRequest 只含 primitive facts；Human/AI routing 只能发生在 ChoicePort router。
+  */
+  async function requestHiddenChoice(actor, owner, maximum, reason, {
+    mode,
+    exact,
+    selection = null,
+    excludedCardIds = null,
+    aiContext = null,
+    confirmed = false
+  }) {
+    const state = runtime.getState();
+    const requestId = createId("hidden-card-choice");
+    runtime.choiceContexts.set(requestId, {
+      actor,
+      owner,
+      maximum,
+      reason,
+      mode,
+      exact,
+      selection,
+      excludedCardIds,
+      aiContext,
+      confirmed
+    });
+    try {
+      return await runtime.choiceCoordinator.request(createHiddenCardChoiceRequest({
+        requestId,
+        actorId: actor.id,
+        ownerId: owner.id,
+        gameId: state.gameId,
+        stateVersion: state.stateVersion,
+        mode,
+        maximum,
+        exact,
+        prompt: reason,
+        optionIds: selection?.tokens?.map((entry) => entry.token) ?? []
+      }));
+    } finally {
+      runtime.choiceContexts.delete(requestId);
+    }
+  }
+
   /*
   功能
   在真人令牌选择与 AI 隐藏位置策略之间统一选择手牌实体。
@@ -87,18 +154,23 @@ export function createHiddenCardChoiceWorkflow(runtime) {
       runtime.hiddenSelection.clearSelection(selection.selectionId);
       return cards;
     }
-    if (actor.controllerType === "human") {
-      const hidden = runtime.hiddenSelection.createHiddenSelection(owner, eligibleCards);
-      const tokens = await runtime.requestHiddenCards(hidden, maximum, reason, { exact:true, viewer:actor, owner });
-      if (!runtime.isSessionValid(gameId)) return [];
-      const uniqueTokens = [...new Set(tokens ?? [])].slice(0, maximum);
-      const resolved = uniqueTokens.map((token) => runtime.hiddenSelection.resolveToken(token, owner, hidden.selectionId))
-        .filter((card) => card && !excludedCardIds?.has(card.id));
-      const cards = [...new Map(resolved.map((card) => [card.id, card])).values()];
+    const hidden = runtime.hiddenSelection.createHiddenSelection(owner, eligibleCards);
+    try {
+      const result = await requestHiddenChoice(actor, owner, maximum, reason, {
+        mode: "hand",
+        exact: true,
+        selection: hidden,
+        excludedCardIds,
+        aiContext
+      });
+      if (!runtime.isSessionValid(gameId) || result.status !== "selected") return [];
+      const eligibleById = new Map(eligibleCards.map((card) => [card.id, card]));
+      return [...new Set(result.selectedIds)].slice(0, maximum)
+        .map((cardId) => eligibleById.get(cardId))
+        .filter((card) => card && owner.hand.includes(card) && !excludedCardIds?.has(card.id));
+    } finally {
       runtime.hiddenSelection.clearSelection(hidden.selectionId);
-      return cards;
     }
-    return runtime.chooseAiHiddenCards(actor, owner, maximum, excludedCardIds, aiContext);
   }
 
   /*
@@ -143,12 +215,17 @@ export function createHiddenCardChoiceWorkflow(runtime) {
       if (!runtime.isSessionValid(gameId)) return null;
       return card ? { card, zone:"hand" } : null;
     }
-    if (actor.controllerType === "human") {
-      const requested = await runtime.requestZoneCard(actor, owner, reason, excludedCardIds);
-      if (!runtime.isSessionValid(gameId)) return null;
-      return requested ? choosePlayerZoneCard(actor, owner, reason, requested, excludedCardIds) : null;
-    }
-    return runtime.chooseAiZoneCard(actor, owner, aiContext, excludedCardIds);
+    const result = await requestHiddenChoice(actor, owner, 1, reason, {
+      mode: "zone",
+      exact: true,
+      excludedCardIds,
+      aiContext
+    });
+    if (!runtime.isSessionValid(gameId) || result.status !== "selected") return null;
+    const selectedId = result.selectedIds[0] ?? null;
+    if (owner.equipment?.id === selectedId) return { card: owner.equipment, zone: "equipment" };
+    const card = owner.hand.find((entry) => entry.id === selectedId && !excludedCardIds?.has(entry.id)) ?? null;
+    return card ? { card, zone: "hand" } : null;
   }
 
   /*
@@ -177,14 +254,20 @@ export function createHiddenCardChoiceWorkflow(runtime) {
   真人可少选；AI 路径由 adapter policy 选择；finally 必须清理 token session。
   */
   async function choosePrivateHandPeekCards(viewer, owner, maximum, reason, aiContext) {
-    if (viewer.controllerType !== "human") {
-      return runtime.chooseAiHiddenCards(viewer, owner, maximum, null, aiContext);
-    }
     const hidden = runtime.hiddenSelection.createHiddenSelection(owner);
     try {
-      const tokens = await runtime.requestHiddenCards(hidden, maximum, reason, { exact:false, viewer, owner });
-      if (!runtime.isSessionValid(runtime.getState().gameId) || !viewer.alive || !owner.alive) return [];
-      return runtime.hiddenSelection.resolveConfirmedTokens(tokens, owner, hidden.selectionId, maximum);
+      const gameId = runtime.getState().gameId;
+      const result = await requestHiddenChoice(viewer, owner, maximum, reason, {
+        mode: "hand",
+        exact: false,
+        selection: hidden,
+        aiContext,
+        confirmed: true
+      });
+      if (!runtime.isSessionValid(gameId) || !viewer.alive || !owner.alive
+        || result.status !== "selected") return [];
+      const selectedIds = new Set(result.selectedIds.slice(0, maximum));
+      return owner.hand.filter((card) => selectedIds.has(card.id));
     } finally {
       runtime.hiddenSelection.clearSelection(hidden.selectionId);
     }

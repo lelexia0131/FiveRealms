@@ -16,28 +16,28 @@ const definitionOrder = new Map(CARD_DEFINITION_DISPLAY_ORDER.map((definitionId,
 
 /*
 功能
-查询并返回 knownCardView 对应的 handVisibility 结果。
+把合法已知的卡牌定义转换为不可变展示模型。
 
 调用方
-本模块内部流程及显式公开边界。
+createOpponentHandView 与 createHiddenSelectionView。
 
 输入
-函数签名声明的参数。
+已确认可见的卡牌定义。
 
 输出
-函数实现声明的返回值。
+不含实体 ID 的冻结展示对象。
 
 读取状态
-仅函数体显式读取的参数、模块或实例状态。
+CardPresentationDefinitions 中的公开展示字段。
 
 写入状态
-仅执行函数体显式声明的写入；查询路径不写状态。
+无。
 
 调用函数
-仅调用函数体中显式列出的依赖。
+presentCard、Object.freeze。
 
 边界与不变量
-遵守模块头定义的 ownership、状态与信息边界。
+不得携带实体 ID 或回读未知牌；subtypes 必须复制以避免共享可变数组。
 */
 function knownCardView(definition) {
   const card = presentCard(definition);
@@ -56,6 +56,31 @@ function knownCardView(definition) {
   });
 }
 
+/*
+功能
+按类别、定义和名称稳定比较对手手牌展示项。
+
+调用方
+createOpponentHandView 的 Array.sort。
+
+输入
+两个包含展示排序键与原始位置的条目。
+
+输出
+符合 Array.sort 契约的负数、零或正数。
+
+读取状态
+CARD_CATEGORY_DISPLAY_ORDER。
+
+写入状态
+无。
+
+调用函数
+localeCompare。
+
+边界与不变量
+未知槽位只保持原始位置，不得通过真实定义参与排序而泄露信息。
+*/
 function compareDisplayEntries(left, right) {
   const categoryDifference = left.categoryOrder - right.categoryOrder;
   if (categoryDifference) return categoryDifference;
@@ -66,6 +91,31 @@ function compareDisplayEntries(left, right) {
   return nameDifference || left.originalIndex - right.originalIndex;
 }
 
+/*
+功能
+生成本地真人可合法观察的对手手牌展示序列。
+
+调用方
+UIManager.render 与 playerTemplate。
+
+输入
+观察者与手牌所有者。
+
+输出
+由已知牌面和无信息背面组成的展示数组。
+
+读取状态
+owner.hand 与 viewer.aiMemory.knownCardsByPlayer。
+
+写入状态
+无。
+
+调用函数
+knownCardView、compareDisplayEntries。
+
+边界与不变量
+记忆必须同时匹配实体 ID 与当前 definitionId；未知牌不携带任何定义或实体事实。
+*/
 export function createOpponentHandView(viewer, owner) {
   const knownByEntity = viewer?.aiMemory?.knownCardsByPlayer?.[owner?.id] ?? {};
   return (owner?.hand ?? []).map((card, originalIndex) => {
@@ -87,7 +137,31 @@ export function createOpponentHandView(viewer, owner) {
   }).sort(compareDisplayEntries).map((entry) => entry.view);
 }
 
-/** 为不透明 token 生成安全展示数据；未知项只携带 token 与 known=false。 */
+/*
+功能
+为一次隐藏选择生成仅含合法知识和不透明 token 的展示槽位。
+
+调用方
+InteractionController.requestZoneCard/requestHiddenCards。
+
+输入
+观察者、手牌所有者与 HiddenCardSelectionAdapter selection。
+
+输出
+按 selection token 顺序排列的冻结展示项。
+
+读取状态
+owner.hand、selection.positions 与 viewer.aiMemory。
+
+写入状态
+无。
+
+调用函数
+knownCardView、Object.freeze。
+
+边界与不变量
+未知项只能包含 token 与 known=false；不得把真实实体 ID 或 definitionId 写入 DOM 模型。
+*/
 export function createHiddenSelectionView(viewer, owner, selection) {
   const knownByEntity = viewer?.aiMemory?.knownCardsByPlayer?.[owner?.id] ?? {};
   return (selection?.tokens ?? []).map((entry) => {

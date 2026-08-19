@@ -3,7 +3,7 @@
 唯一拥有状态存在性与闪电下一持有者的纯规则语义；不拥有生命周期 workflow、伤害、判定或响应。
 
 上游
-ActionLegality、Game status workflow 与 tests。
+ActionLegality、StatusResolutionWorkflow 与 tests。
 
 下游
 STATUS_DEFINITIONS。
@@ -171,7 +171,7 @@ export function isHuntMarkExpired(statusDetail, currentTrackingTurn) {
 决定闪电状态的下一名合法持有者 ID。
 
 调用方
-Game status workflow 与 ActionLegality。
+StatusResolutionWorkflow 与 ActionLegality。
 
 输入
 Rule Player 投影数组与当前 holder id。

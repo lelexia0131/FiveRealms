@@ -3,7 +3,7 @@
 按 runtime environment 选择 AI search transport：browser production 使用 Dedicated Worker，Node/headless 使用同一 runSearchRequest 的 local transport。
 
 上游
-Game composition root。
+MatchApplication composition root。
 
 下游
 SearchWorkerClient、LocalSearchExecutor。
@@ -25,7 +25,7 @@ import { createSearchWorkerClient } from "./SearchWorkerClient.js";
 创建 AI search executor。
 
 调用方
-Game 构造函数。
+MatchApplication constructor。
 
 输入
 { explicitExecutor, forceLocal } 选项。

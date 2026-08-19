@@ -602,7 +602,7 @@ class SimulatorCore {
         actor.momentum = 0;
       }
       next.playPhaseEnded = true;
-      // 真实 Game 在出牌阶段结束后立即进入弃牌阶段并把手牌压到生命上限；
+      // 真实 TurnWorkflow 在出牌阶段结束后立即进入弃牌阶段并把手牌压到生命上限；
       // 搜索世界必须投影同一结算，否则 end 会把马上被强制弃置的牌仍计为可保留资源。
       this.applyMandatoryDiscard(next, actor);
       return next;

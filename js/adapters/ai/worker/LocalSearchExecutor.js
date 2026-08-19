@@ -3,7 +3,7 @@
 提供 Node/headless test 专用的 local search transport；它只调用与 Dedicated Worker 完全相同的 runSearchRequest，不复制 Planner/Simulator。
 
 上游
-Game composition 在无 browser Worker 的 headless environment 注入。
+MatchApplication composition 在无 browser Worker 的 headless environment 注入。
 
 下游
 runSearchRequest。
@@ -131,7 +131,7 @@ export function createLocalSearchExecutor() {
     终止 local executor 的 in-flight search。
 
     调用方
-    Game.dispose。
+    MatchApplication.dispose。
 
     输入
     无。

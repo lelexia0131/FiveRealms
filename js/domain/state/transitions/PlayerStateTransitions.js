@@ -24,7 +24,7 @@ import { bumpStateVersion } from "./StateVersion.js";
 将已决定的角色定义应用到 PlayerState。
 
 调用方
-Game.confirmCharacter 与直接测试。
+MatchWorkflow.confirmCharacter、Player.applyCharacter 与直接测试。
 
 输入
 state、Player 与 character definition。
@@ -76,7 +76,7 @@ export function applyCharacterDefinition(state, player, character) {
 递增手牌版本并返回新版本。
 
 调用方
-Game 卡牌移动与 HiddenCardChoiceWorkflow。
+ResourceWorkflow、JudgmentWorkflow、Player boundary 与 HiddenCardChoiceWorkflow。
 
 输入
 state 与 Player。
@@ -139,7 +139,7 @@ export function setAlive(state, player, alive) {
 写入装备槽 Card 引用。
 
 调用方
-Game equipment movement 与直接测试。
+ResourceWorkflow equipment movement 与直接测试。
 
 输入
 state、Player 与 Card 或 null。

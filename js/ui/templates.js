@@ -3,6 +3,31 @@ import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js";
 import { presentCharacter } from "../adapters/ui/CharacterPresentationDefinitions.js";
 import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../domain/definitions/skills/SkillDefinitions.js";
 
+/*
+功能
+转义插入 HTML 文本或属性的动态值。
+
+调用方
+本模块全部模板及 UI View 的动态标记生成。
+
+输入
+任意可字符串化值。
+
+输出
+替换 HTML 特殊字符后的字符串。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+String、String.replace。
+
+边界与不变量
+null/undefined 按空字符串处理；所有动态文本进入 innerHTML 前必须经过此边界。
+*/
 export const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
 })[character]);

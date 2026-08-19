@@ -7,59 +7,58 @@ import { createId } from "../../utils/helpers.js";
 export class MatchLogAdapter {
   /*
   功能
-  创建并初始化 MatchLogAdapter 实例。
+  创建绑定当前 MatchState 与日志展示能力的公开日志适配器。
 
   调用方
-  本模块内部流程及显式公开边界。
+  createGameApplication composition root。
 
   输入
-  函数签名声明的参数。
+  当前 MatchState 与窄 UI 日志接口。
 
   输出
-  函数实现声明的返回值。
+  MatchLogAdapter 实例。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  无。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  保存 state 与 ui 引用。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  无。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  调用方只能传可公开文本；适配器不得读取 AI 私密信息。
   */
   constructor(state, ui) {
     this.state = state;
     this.ui = ui;
   }
 
-  /** 按当前玩家数据把角色名拆成安全 token；普通文本仍作为纯文本片段保存。 */
   /*
   功能
-  查询并返回 tokenizePlayers 对应的 MatchLogAdapter 结果。
+  按当前玩家名称把日志拆成可安全渲染的角色和纯文本片段。
 
   调用方
-  本模块内部流程及显式公开边界。
+  MatchLogAdapter.add。
 
   输入
-  函数签名声明的参数。
+  已确认可公开的日志字符串。
 
   输出
-  函数实现声明的返回值。
+  按原顺序排列的 text/player fragment 数组。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  state.players 的名称、ID 与 battleTeam。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  String.startsWith/slice。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  优先匹配较长名称避免前缀冲突；普通片段保持原文本，不生成 HTML。
   */
   tokenizePlayers(message) {
     const players = [...(this.state.players ?? [])]
@@ -83,31 +82,30 @@ export class MatchLogAdapter {
     return fragments;
   }
 
-  /** 添加一条公开日志并通知 UI 自动滚动；会修改 state.logs。 */
   /*
   功能
-  执行 add 对应的 MatchLogAdapter 职责。
+  追加一条结构化公开对局日志并通知 UI。
 
   调用方
-  本模块内部流程及显式公开边界。
+  MatchApplication.log public boundary 与 Application workflows。
 
   输入
-  函数签名声明的参数。
+  可公开消息与日志 kind。
 
   输出
-  函数实现声明的返回值。
+  新建的日志 entry。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  state.players 与当前 logs 长度。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  向 state.logs 追加 entry，并更新 UI 日志 DOM。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  createId、tokenizePlayers、ui.appendLog。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  fragments 只包含公开角色事实；entry 顺序与调用顺序一致。
   */
   add(message, kind = "normal") {
     const entry = {

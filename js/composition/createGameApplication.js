@@ -73,7 +73,7 @@ import { addTrackingTarget, markCategoryUsed, setGuardianAidUsed, setKillRewardG
 按 Card identity 在 runtime 全部规则区域中查找实体。
 
 调用方
-Game composition 的 Presentation adapter。
+MatchApplication composition 的 Presentation adapter。
 
 输入
 cardId。
@@ -154,28 +154,28 @@ function assembleApplicationBoundary(application) {
   Object.assign(application, {
     /*
     功能
-    更新或清理 setAnimationFastMode 对应的 createGameApplication 状态。
+    同步对局的快速动画展示选项。
 
     调用方
-    本模块内部流程及显式公开边界。
+    main bootstrap 初始设置与 UI 快速动画 callback。
 
     输入
-    函数签名声明的参数。
+    是否启用快速动画。
 
     输出
-    函数实现声明的返回值。
+    归一化后的 animationFastMode 布尔值。
 
     读取状态
-    仅函数体显式读取的参数、模块或实例状态。
+    application.ui。
 
     写入状态
-    仅执行函数体显式声明的写入；查询路径不写状态。
+    application.animationFastMode 与 UI CSS 展示状态。
 
     调用函数
-    仅调用函数体中显式列出的依赖。
+    ui.setFastMode。
 
     边界与不变量
-    遵守模块头定义的 ownership、状态与信息边界。
+    只改变展示动画速度，不改变 Application/AI delay、搜索预算或游戏时序。
     */
     setAnimationFastMode(enabled) {
       application.animationFastMode = Boolean(enabled);
@@ -186,28 +186,28 @@ function assembleApplicationBoundary(application) {
     confirmCharacter:application.matchWorkflow.confirmCharacter,
     /*
     功能
-    执行 registerGlobalRules 对应的 createGameApplication 职责。
+    通过已装配 trigger owners 注册全局被动规则监听器。
 
     调用方
-    本模块内部流程及显式公开边界。
+    MatchWorkflow.confirmCharacter 开局装配。
 
     输入
-    函数签名声明的参数。
+    无。
 
     输出
-    函数实现声明的返回值。
+    无返回值。
 
     读取状态
-    仅函数体显式读取的参数、模块或实例状态。
+    recycleDeviceTrigger 与 globalTriggerRegistry。
 
     写入状态
-    仅执行函数体显式声明的写入；查询路径不写状态。
+    由两个 registry 向 EventDispatcher 注册监听器。
 
     调用函数
-    仅调用函数体中显式列出的依赖。
+    RecycleDeviceTrigger.register、GlobalTriggerRegistry.register。
 
     边界与不变量
-    遵守模块头定义的 ownership、状态与信息边界。
+    composition 只串接 registry，不拥有触发条件或规则分支。
     */
     registerGlobalRules() {
       application.recycleDeviceTrigger.register();
@@ -261,28 +261,28 @@ function assembleApplicationBoundary(application) {
     choosePlayerZoneCard:application.hiddenCardChoiceWorkflow.choosePlayerZoneCard,
     /*
     功能
-    执行 log 对应的 createGameApplication 职责。
+    在当前有效 session 中追加公开对局日志。
 
     调用方
-    本模块内部流程及显式公开边界。
+    Application workflows 与事件/规则 presentation collaborators。
 
     输入
-    函数签名声明的参数。
+    可公开消息与日志 kind。
 
     输出
-    函数实现声明的返回值。
+    新日志 entry；失效 session 返回 null。
 
     读取状态
-    仅函数体显式读取的参数、模块或实例状态。
+    application.state.gameId 与 session 有效性。
 
     写入状态
-    仅执行函数体显式声明的写入；查询路径不写状态。
+    有效时由 MatchLogAdapter 写 state.logs 和 UI。
 
     调用函数
-    仅调用函数体中显式列出的依赖。
+    isSessionValid、MatchLogAdapter.add。
 
     边界与不变量
-    遵守模块头定义的 ownership、状态与信息边界。
+    stale session 不得写日志或 DOM；调用方负责只传可公开内容。
     */
     log(message, kind = "normal") {
       if (!application.isSessionValid(application.state.gameId)) return null;
@@ -290,28 +290,28 @@ function assembleApplicationBoundary(application) {
     },
     /*
     功能
-    更新或清理 syncDeckAliases 对应的 createGameApplication 状态。
+    同步 MatchState 上供既有查询读取的三个牌区别名。
 
     调用方
-    本模块内部流程及显式公开边界。
+    MatchWorkflow、ResourceWorkflow、JudgmentWorkflow、DyingWorkflow 与 PublicCardPoolWorkflow。
 
     输入
-    函数签名声明的参数。
+    无。
 
     输出
-    函数实现声明的返回值。
+    无返回值。
 
     读取状态
-    仅函数体显式读取的参数、模块或实例状态。
+    application.state.deck 的 discardPile、resolvingCards、judgmentZone。
 
     写入状态
-    仅执行函数体显式声明的写入；查询路径不写状态。
+    state 上对应别名引用。
 
     调用函数
-    仅调用函数体中显式列出的依赖。
+    无。
 
     边界与不变量
-    遵守模块头定义的 ownership、状态与信息边界。
+    别名必须指向 Deck owner 的同一数组对象，不得复制或产生第二份牌区状态。
     */
     syncDeckAliases() {
       application.state.discardPile = application.state.deck.discardPile;
@@ -320,28 +320,28 @@ function assembleApplicationBoundary(application) {
     },
     /*
     功能
-    判断 isSessionValid 对应的 createGameApplication 条件。
+    判断异步 continuation 是否仍属于当前未销毁对局和 UI owner。
 
     调用方
-    本模块内部流程及显式公开边界。
+    所有 Application workflows、Choice adapters 与 public log boundary。
 
     输入
-    函数签名声明的参数。
+    continuation 捕获的 gameId。
 
     输出
-    函数实现声明的返回值。
+    state 未销毁、gameId 相同且仍拥有 UI 时返回 true。
 
     读取状态
-    仅函数体显式读取的参数、模块或实例状态。
+    state.isDisposed/gameId 与 ui.isSessionCurrent。
 
     写入状态
-    仅执行函数体显式声明的写入；查询路径不写状态。
+    无。
 
     调用函数
-    仅调用函数体中显式列出的依赖。
+    ui.isSessionCurrent。
 
     边界与不变量
-    遵守模块头定义的 ownership、状态与信息边界。
+    缺少 UI session capability 的 headless 环境只校验 Domain/Application 生命周期。
     */
     isSessionValid(gameId) {
       const ownsUi = typeof application.ui?.isSessionCurrent !== "function" || application.ui.isSessionCurrent();
@@ -349,28 +349,28 @@ function assembleApplicationBoundary(application) {
     },
     /*
     功能
-    更新或清理 dispose 对应的 createGameApplication 状态。
+    销毁当前对局 workflow 并释放 AI search executor。
 
     调用方
-    本模块内部流程及显式公开边界。
+    main 重新征召流程与测试清理。
 
     输入
-    函数签名声明的参数。
+    无。
 
     输出
-    函数实现声明的返回值。
+    MatchWorkflow.dispose 的既有结果。
 
     读取状态
-    仅函数体显式读取的参数、模块或实例状态。
+    matchWorkflow 与可选 searchExecutor。
 
     写入状态
-    仅执行函数体显式声明的写入；查询路径不写状态。
+    由 MatchWorkflow 终止 session/UI/等待，并释放 Worker/search client。
 
     调用函数
-    仅调用函数体中显式列出的依赖。
+    MatchWorkflow.dispose、searchExecutor.dispose。
 
     边界与不变量
-    遵守模块头定义的 ownership、状态与信息边界。
+    search executor 无论 workflow 返回值为何都必须释放；重复销毁保持下游幂等语义。
     */
     dispose() {
       const result = application.matchWorkflow.dispose();
@@ -393,7 +393,7 @@ class MatchApplication {
   UI 实例、可替换真实游戏随机源与可选 choice/search/presentationRandom 注入项。
 
   输出
-  已完成 service 组合但尚未发牌/启动的 Game 实例。
+  已完成 service 组合但尚未发牌/启动的 MatchApplication 实例。
 
   读取状态
   无既有状态。
@@ -478,6 +478,7 @@ class MatchApplication {
       searchRng: this.aiRandom,
       searchExecutor: this.searchExecutor
     });
+    this.hiddenCardSelection = new HiddenCardSelectionAdapter(() => this.state.players);
     const choiceBoundary = createChoiceBoundary({
       state: this.state,
       ui: this.ui,
@@ -486,6 +487,14 @@ class MatchApplication {
       shouldRespond: (responder, type, context, cards) => this.aiController.shouldRespond(responder, type, context, cards),
       choosePublicCard: (player, cards) => this.aiController.choosePublicCard(player, cards),
       chooseDiscards: (player, count) => this.aiController.chooseDiscards(player, count),
+      chooseHiddenCards: (...args) => this.aiController.chooseHiddenCards(...args),
+      chooseZoneCard: (...args) => this.aiController.chooseZoneCard(...args),
+      requestHiddenCards: (...args) => this.ui.requestHiddenCards?.(...args),
+      requestZoneCard: (...args) => this.ui.requestZoneCard?.(this, ...args),
+      resolveHiddenToken: (...args) => this.hiddenCardSelection.resolveToken(...args),
+      resolveConfirmedHiddenTokens: (...args) => this.hiddenCardSelection.resolveConfirmedTokens(...args),
+      isHiddenSelectionActive: (...args) => this.hiddenCardSelection.isSelectionActive(...args),
+      clearHiddenSelection: (...args) => this.hiddenCardSelection.clearSelection(...args),
       cleanupDelay: (ms) => this.cleanupManager.delay(ms),
       getAiResponseDelay: () => getAiDelay(this, "response")
     }, options.choicePort ?? null);
@@ -513,15 +522,12 @@ class MatchApplication {
       getResponseTimeoutMs:() => RUNTIME_POLICY.responseTimeoutMs,
       createId
     });
-    this.hiddenCardSelection = new HiddenCardSelectionAdapter(() => this.state.players);
     this.hiddenCardChoiceWorkflow = createHiddenCardChoiceWorkflow({
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
       hiddenSelection: this.hiddenCardSelection,
-      requestHiddenCards: (...args) => this.ui.requestHiddenCards?.(...args),
-      requestZoneCard: (...args) => this.ui.requestZoneCard?.(this, ...args),
-      chooseAiHiddenCards: (...args) => this.aiController.chooseHiddenCards(...args),
-      chooseAiZoneCard: (...args) => this.aiController.chooseZoneCard(...args)
+      choiceContexts: this.choiceContexts,
+      choiceCoordinator: this.choiceCoordinator
     });
     const aiObservation = createRecentAggressorsObservationAdapter();
     this.presentationPort = createGamePresentationAdapter({
@@ -578,28 +584,28 @@ class MatchApplication {
     this.judgmentWorkflow = Object.freeze({
       /*
       功能
-      执行 currentJudgment 对应的 createGameApplication 职责。
+      暴露 JudgmentWorkflow 当前判定的只读 projection。
 
       调用方
-      本模块内部流程及显式公开边界。
+      MatchApplication public boundary 与判定状态测试。
 
       输入
-      函数签名声明的参数。
+      无。
 
       输出
-      函数实现声明的返回值。
+      当前判定牌/上下文或 null。
 
       读取状态
-      仅函数体显式读取的参数、模块或实例状态。
+      judgmentWorkflow.currentJudgment。
 
       写入状态
-      仅执行函数体显式声明的写入；查询路径不写状态。
+      无。
 
       调用函数
-      仅调用函数体中显式列出的依赖。
+      JudgmentWorkflow getter。
 
       边界与不变量
-      遵守模块头定义的 ownership、状态与信息边界。
+      projection 只读；唯一写入口仍是 JudgmentWorkflow 注入的 setter。
       */
       get currentJudgment() { return judgmentWorkflow.currentJudgment; },
       judgeDefense:(...args) => judgmentWorkflow.judgeDefense(...args),

@@ -6,7 +6,7 @@
 application/combat、application/judgment 与 composition root。
 
 下游
-concrete UI/presentation adapter（当前由 Game composition 桥接）。
+concrete UI/presentation adapter（当前由 MatchApplication composition 桥接）。
 
 状态边界
 只接收 data-only semantic DTO；不读写真 GameState。
@@ -49,10 +49,10 @@ const REQUIRED_METHODS = [
 验证并冻结一个 PresentationPort implementation。
 
 调用方
-Game composition root 与 tests。
+MatchApplication composition root 与 tests。
 
 输入
-含全部 FR-ARCH-8 evidence 方法的 implementation。
+实现全部当前 PresentationPort 语义方法的 concrete adapter。
 
 输出
 冻结 PresentationPort。
@@ -67,7 +67,7 @@ Game composition root 与 tests。
 Object.freeze。
 
 边界与不变量
-只要求当前 Combat/Dying/Judgment/Status 与 FR-ARCH-9 Match/Turn/Action 真实消费的语义 surface；不创建 UIManager 副本。
+只要求当前 Combat/Dying/Judgment/Status/Match/Turn/Action 真实消费的语义 surface；不创建 UIManager 副本。
 */
 export function createPresentationPort(implementation) {
   if (!implementation) throw new TypeError("PresentationPort 需要 implementation");

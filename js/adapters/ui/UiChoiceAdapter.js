@@ -1,6 +1,6 @@
 /*
 模块职责
-把 Application response ChoiceRequest bridge 到既有 UIManager session request API；不改 UI 渲染或交互语义。
+把 Application ChoiceRequest bridge 到既有 UIManager session request API；不改 UI 渲染或交互语义。
 
 上游
 composition root 的 human choice port。
@@ -9,10 +9,10 @@ composition root 的 human choice port。
 现有 UI session 的 requestResponse。
 
 状态边界
-不读写真 GameState；不接触 Card/Player 实体。
+不写 GameState；只在 composition 私有 context 内把隐藏 token 重绑为当前 Card ID。
 
 信息边界
-只把 data-only ChoiceRequest 映射为 UI session request。
+ChoiceRequest 只含 data-only facts；Player/Card 实体不离开私有 adapter context。
 
 架构约束
 不得 import UIManager、AIController、SoundManager、Game runtime 或其它 concrete adapter。
@@ -49,6 +49,12 @@ export function createUiChoiceAdapter({
   requestPublicCard,
   requestDiscard,
   requestTarget,
+  requestHiddenCards,
+  requestZoneCard,
+  resolveHiddenToken,
+  resolveConfirmedHiddenTokens,
+  isHiddenSelectionActive,
+  clearHiddenSelection,
   getChoiceContext,
   isSessionValid
 }) {
@@ -88,6 +94,78 @@ export function createUiChoiceAdapter({
     不改 UI 交互、超时或取消语义。
     */
     async request(choiceRequest) {
+      if (choiceRequest?.kind === "hiddenCard") {
+        const choiceContext = getChoiceContext(choiceRequest.requestId);
+        if (!choiceContext?.actor || !choiceContext?.owner) return createChoiceResult("cancelled");
+        const maximum = choiceRequest.constraints.requiredCount;
+        if (choiceRequest.constraints.mode === "zone") {
+          if (typeof requestZoneCard !== "function" || typeof resolveHiddenToken !== "function"
+            || typeof isHiddenSelectionActive !== "function" || typeof clearHiddenSelection !== "function") {
+            return createChoiceResult("cancelled", { reason:"hidden-zone-adapter-unavailable" });
+          }
+          const selection = await requestZoneCard(
+            choiceContext.actor,
+            choiceContext.owner,
+            choiceContext.reason,
+            choiceContext.excludedCardIds
+          );
+          if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
+          if (!selection?.selectionId) return createChoiceResult("declined");
+          try {
+            if (!isHiddenSelectionActive(selection.selectionId, choiceContext.owner)) {
+              return createChoiceResult("declined");
+            }
+            if (selection.zone === "equipment") {
+              const equipment = choiceContext.owner.equipment;
+              return equipment?.id === selection.equipmentCardId
+                ? createChoiceResult("selected", { selectedIds:[equipment.id] })
+                : createChoiceResult("declined");
+            }
+            const card = resolveHiddenToken(
+              selection.tokens?.[0],
+              choiceContext.owner,
+              selection.selectionId
+            );
+            return card
+              ? createChoiceResult("selected", { selectedIds:[card.id] })
+              : createChoiceResult("declined");
+          } finally {
+            clearHiddenSelection(selection.selectionId);
+          }
+        }
+        if (typeof requestHiddenCards !== "function" || !choiceContext.selection) {
+          return createChoiceResult("cancelled", { reason:"hidden-card-adapter-unavailable" });
+        }
+        const tokens = await requestHiddenCards(
+          choiceContext.selection,
+          maximum,
+          choiceContext.reason,
+          {
+            exact: choiceContext.exact,
+            viewer: choiceContext.actor,
+            owner: choiceContext.owner
+          }
+        );
+        if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
+        const cards = choiceContext.confirmed
+          ? resolveConfirmedHiddenTokens?.(
+            tokens,
+            choiceContext.owner,
+            choiceContext.selection.selectionId,
+            maximum
+          ) ?? []
+          : [...new Set(tokens ?? [])].slice(0, maximum)
+            .map((token) => resolveHiddenToken?.(
+              token,
+              choiceContext.owner,
+              choiceContext.selection.selectionId
+            ))
+            .filter(Boolean);
+        const selectedIds = [...new Set(cards.map((card) => card.id))];
+        return selectedIds.length
+          ? createChoiceResult("selected", { selectedIds })
+          : createChoiceResult("declined");
+      }
       if (choiceRequest?.kind === "publicCard") {
         const choiceContext = getChoiceContext(choiceRequest.requestId);
         if (!choiceContext?.player || !Array.isArray(choiceContext.cards)) return createChoiceResult("cancelled");

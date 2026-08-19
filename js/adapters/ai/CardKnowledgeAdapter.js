@@ -47,28 +47,28 @@ export function createCardKnowledgeAdapter(getPlayers) {
   if (typeof getPlayers !== "function") throw new TypeError("CardKnowledgeAdapter 缺少 getPlayers capability");
   /*
   功能
-  更新或清理 invalidate 对应的 CardKnowledgeAdapter 状态。
+  从所有观察者记忆中移除离开原手牌的实体牌知识。
 
   调用方
-  本模块内部流程及显式公开边界。
+  ResourceWorkflow 的牌区移动能力。
 
   输入
-  函数签名声明的参数。
+  卡牌实体 ID 与原 owner ID。
 
   输出
-  函数实现声明的返回值。
+  无返回值。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  getPlayers 返回的各玩家 aiMemory。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  删除 knownCardsByPlayer[ownerId][cardId]。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  getPlayers。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  只按实体 ID 失效，不能按 definitionId 误删同名牌知识。
   */
   const invalidate = (cardId, ownerId) => {
     for (const player of getPlayers()) {
@@ -78,28 +78,28 @@ export function createCardKnowledgeAdapter(getPlayers) {
   };
   /*
   功能
-  执行 remember 对应的 CardKnowledgeAdapter 职责。
+  记录某观察者已合法看见 owner 的指定实体牌。
 
   调用方
-  本模块内部流程及显式公开边界。
+  私密查看、公开牌池与判定观察 workflows。
 
   输入
-  函数签名声明的参数。
+  viewer、owner 与已被合法揭示的 Card 实体。
 
   输出
-  函数实现声明的返回值。
+  无返回值。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  viewer.aiMemory 与 card.definitionId。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  knownCardsByPlayer[owner.id][card.id]。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  无。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  只有调用方显式提供的合法观察可建立知识，不能推断未见牌。
   */
   const remember = (viewer, owner, card) => {
     const bucket = viewer.aiMemory.knownCardsByPlayer[owner.id] ??= {};
@@ -107,28 +107,28 @@ export function createCardKnowledgeAdapter(getPlayers) {
   };
   /*
   功能
-  判断 isKnownTo 对应的 CardKnowledgeAdapter 条件。
+  判断指定观察者是否仍合法知道某实体牌定义。
 
   调用方
-  本模块内部流程及显式公开边界。
+  labelForHuman、AI 知识投影与隐藏手牌展示。
 
   输入
-  函数签名声明的参数。
+  viewer、owner 与待判断 Card 实体。
 
   输出
-  函数实现声明的返回值。
+  当前知识与实体定义一致时返回 true。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  owner.hand 与 viewer.aiMemory.knownCardsByPlayer。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  Array.includes。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  自己只对仍在手牌的实体天然已知；记忆必须同时匹配 card.id 和当前 definitionId。
   */
   const isKnownTo = (viewer, owner, card) => {
     if (!viewer || !owner || !card) return false;
@@ -141,28 +141,28 @@ export function createCardKnowledgeAdapter(getPlayers) {
     isKnownTo,
     /*
     功能
-    执行 labelForHuman 对应的 CardKnowledgeAdapter 职责。
+    为公开日志生成不会泄露真人未知牌的卡牌标签。
 
     调用方
-    本模块内部流程及显式公开边界。
+    Application 日志 workflow。
 
     输入
-    函数签名声明的参数。
+    卡牌 owner 与 Card 实体。
 
     输出
-    函数实现声明的返回值。
+    已知时返回带牌名标签，未知时返回“1张手牌”。
 
     读取状态
-    仅函数体显式读取的参数、模块或实例状态。
+    当前玩家列表及真人的合法 card knowledge。
 
     写入状态
-    仅执行函数体显式声明的写入；查询路径不写状态。
+    无。
 
     调用函数
-    仅调用函数体中显式列出的依赖。
+    getPlayers、isKnownTo。
 
     边界与不变量
-    遵守模块头定义的 ownership、状态与信息边界。
+    不得为了日志标签读取或揭示真人未知的真实 card.name。
     */
     labelForHuman(owner, card) {
       const players = getPlayers();

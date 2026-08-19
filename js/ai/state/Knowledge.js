@@ -221,7 +221,7 @@ export class Knowledge {
   使观察者对已离开目标手牌的实体记忆立即失效。
 
   调用方
-  Game 卡牌区域迁移与记忆维护流程。
+  ResourceWorkflow 卡牌区域迁移与记忆维护流程。
 
   输入
   观察者 Player、原持牌者 ID 与卡牌实体 ID。

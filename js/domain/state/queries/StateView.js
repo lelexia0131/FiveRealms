@@ -99,7 +99,7 @@ state.players 与 source.seatIndex。
 无。
 
 边界与不变量
-includeSource 为 true 时 source 排首位；顺序与当前 Game.seatOrderFrom 完全一致。
+includeSource 为 true 时 source 排首位；顺序与当前 MatchApplication.seatOrderFrom projection 完全一致。
 */
 function viewSeatOrderFrom(state, source, includeSource = false) {
   const ordered = includeSource ? [source] : [];
@@ -117,7 +117,7 @@ function viewSeatOrderFrom(state, source, includeSource = false) {
 MatchQueries 与未来 domain/rules 消费者。
 
 输入
-真实 Game.state 或与其同形的只读 state。
+真实 MatchState 或与其同形的只读 state。
 
 输出
 冻结的语义读方法集合。

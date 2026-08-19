@@ -29,6 +29,7 @@ import { createPresentationPort } from "../js/application/ports/PresentationPort
 import { createChoiceCoordinator } from "../js/application/choice/ChoiceCoordinator.js";
 import { createResponseChoiceRequest } from "../js/application/choice/ResponseChoiceRequest.js";
 import { createPublicCardChoiceRequest } from "../js/application/choice/PublicCardChoiceRequest.js";
+import { createHiddenCardChoiceRequest } from "../js/application/choice/HiddenCardChoiceRequest.js";
 import { createHiddenCardSelectionStore } from "../js/application/choice/HiddenCardSelectionStore.js";
 import { createUiChoiceAdapter } from "../js/adapters/ui/UiChoiceAdapter.js";
 import { createGamePresentationAdapter } from "../js/adapters/ui/GamePresentationAdapter.js";
@@ -478,20 +479,24 @@ function clickTarget(selector, dataset = {}) {
 }
 
 async function choosePrivateCardThroughInteraction(game, actor, card, target, { handIndexes = [0], equipment = false } = {}) {
-  const ui = {
-    game,
-    elements: { response_panel: makeInteractiveElement() },
-    render() { },
-    async requestTarget(players) { return players[0] ?? null; }
-  };
+  const ui = { async requestTarget(players) { return players[0] ?? null; } };
   const controller = new InteractionController(ui);
-  controller.requestHiddenCards = async (selection, _count, _prompt, options = {}) => {
-    if (
-      equipment
-    ) return [options.slots.find((slot) => slot.zone === "equipment")?.token].filter(Boolean);
-    return handIndexes.map((index) => selection.tokens[index]?.token).filter(Boolean);
+  const flowSelection = await controller.requestCardFlow(game, actor, card, [target]);
+  const hidden = game.hiddenCardSelection.createHiddenSelection(target);
+  if (equipment) {
+    return {
+      ...flowSelection,
+      zone: "equipment",
+      equipmentCardId: target.equipment?.id ?? null,
+      selectionId: hidden.selectionId
+    };
+  }
+  return {
+    ...flowSelection,
+    zone: "hand",
+    tokens: handIndexes.map((index) => hidden.tokens[index]?.token).filter(Boolean),
+    selectionId: hidden.selectionId
   };
-  return controller.requestCardFlow(game, actor, card, [target]);
 }
 
 function assertNoHiddenSelectionLeak(value, hiddenCards) {
@@ -1959,21 +1964,21 @@ test("转移：真人转移选牌界面不提供装备区选项", async () => {
   actor.hand.push(use);
   from.hand.push(held);
   from.equipment = equipment;
-  const { game }
-    = makeGame([actor, from, receiver]),
-    chosenPlayers = [from, receiver],
-    ui = { requestTarget: async () => chosenPlayers.shift() },
-    controller = new InteractionController(ui);
-  let slots = null;
-  controller.requestHiddenCards = async (selection, _count, _prompt, options) => {
-    slots = options.slots;
+  const { game } = makeGame([actor, from, receiver]);
+  const chosenPlayers = [from, receiver];
+  const controller = new InteractionController({ requestTarget: async () => chosenPlayers.shift() });
+  let hiddenSelection = null;
+  game.ui.requestCardFlow = (...args) => controller.requestCardFlow(...args);
+  game.ui.requestHiddenCards = async (selection) => {
+    hiddenSelection = selection;
     return [selection.tokens[0].token];
   };
-  const result = await controller.requestCardFlow(game, actor, use, []);
-  assert.equal(result.zone, "hand");
-  assert.ok(result.tokens.length === 1);
-  assert.equal(slots.length, 1);
-  assert.ok(slots.every((slot) => slot.zone !== "equipment" && slot.token !== "public-equipment"));
+  assert.equal(await game.handleHumanCard(use.id), true);
+  assert.equal(hiddenSelection.tokens.length, 1);
+  assert.equal(from.equipment, equipment);
+  assert.ok(!from.hand.includes(held));
+  assert.ok(receiver.hand.includes(held));
+  game.dispose();
 });
 
 test("转移：与掠夺按统一动态距离限制且转移来源必须持有手牌", () => {
@@ -8914,7 +8919,138 @@ function testStateContractCompositionBoundary() {
 
 test("AI·状态契约：组合入口等价于显式 SearchState", testStateContractCompositionBoundary);
 
-// ---- AI 系统·依赖注入 ----
+// ---- AI 架构与依赖边界 ----
+
+test("AI·架构：Simulation facade 与五个效果组件保持单向依赖和唯一 owner", async () => {
+  const paths = {
+    facade: "js/ai/simulation/Simulator.js",
+    response: "js/ai/simulation/ResponseSimulation.js",
+    combat: "js/ai/simulation/CombatSimulation.js",
+    card: "js/ai/simulation/CardEffectSimulation.js",
+    skill: "js/ai/simulation/SkillEffectSimulation.js",
+    status: "js/ai/simulation/StatusSimulation.js",
+    support: "js/ai/simulation/SimulationSupport.js",
+    planner: "js/ai/search/Planner.js",
+    valueQuery: "js/ai/simulation/ValueSimulationQuery.js"
+  };
+  const source = Object.fromEntries(await Promise.all(
+    Object.entries(paths).map(async ([name, path]) => [name, await readFile(projectFile(path), "utf8")])
+  ));
+  assert.doesNotMatch(source.facade, /\.\.\/policy\/|\.\.\/value\/|\.\.\/domain\/|ActionLegality|CARD_DEFINITIONS/);
+  for (const name of ["response", "combat", "card", "skill", "status", "support"]) {
+    assert.doesNotMatch(
+      source[name],
+      /from\s+["'][^"']*(?:AiController|UIManager|core\/Game\.js|simulation\/Simulator\.js)[^"']*["']/,
+      name
+    );
+  }
+  assert.doesNotMatch(source.planner, /^import\s/m);
+  assert.match(source.valueQuery, /from "\.\/Simulator\.js/);
+  assert.match(source.response, /consumeBlockResponseWorlds[\s\S]*consumeTargetCounterResponseWorlds/);
+  assert.match(source.combat, /applyDamage[\s\S]*resolveFatal[\s\S]*healFrom/);
+  assert.match(source.card, /applyCardEffect[\s\S]*takeResourceToHand[\s\S]*destroyResource/);
+  assert.match(source.skill, /applySkill/);
+  assert.match(source.status, /applyDelayedStatusCard[\s\S]*$/);
+  for (const moved of [
+    "applyDamage", "resolveFatal", "consumeBlockResponseWorlds", "applyCardEffect",
+    "applySkill", "applyDelayedStatusCard"
+  ]) {
+    assert.doesNotMatch(source.facade, new RegExp(`^  ${moved}\\s*\\(`, "m"), moved);
+  }
+  assert.equal((source.facade.match(/withResponseSimulation\(/g) ?? []).length, 1);
+  assert.equal((source.facade.match(/withCombatSimulation\(/g) ?? []).length, 1);
+  assert.equal((source.facade.match(/withCardEffectSimulation\(/g) ?? []).length, 1);
+  assert.equal((source.facade.match(/withSkillEffectSimulation\(/g) ?? []).length, 1);
+  assert.equal((source.facade.match(/withStatusSimulation\(/g) ?? []).length, 1);
+  assert.doesNotMatch(source.facade, /new (?:Response|Combat|CardEffect|SkillEffect|Status)Simulation/);
+});
+
+test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 service locator", async () => {
+  const aiRoot = projectFile("js/ai");
+  const files = (await listJavaScriptFiles(aiRoot)).map((file) => nodePath.normalize(file));
+  const fileSet = new Set(files);
+  const rootFiles = (await readdir(aiRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .map((entry) => entry.name)
+    .sort();
+  assert.deepEqual(rootFiles, ["AiController.js"]);
+
+  const removedCompatibilityNames = new Set([
+    "AiSimulator", "AiEvaluator", "AiStateValue", "AiVisibleState", "AiKnowledge",
+    "AiProbabilityBranches", "AiEconomics", "ThreatCalculator", "roleCardValue",
+    "discardScoring", "resourceSelectionValue", "transferScoring", "sealScoring",
+    "lightningScoring", "AiGlobalBenefit", "AiPlanner", "AiActionGenerator",
+    "AiCardSelector", "AiResponsePolicy", "AiValueSimulationQuery"
+  ]);
+  const componentNames = new Set([
+    "ResponseSimulation", "CombatSimulation", "CardEffectSimulation",
+    "SkillEffectSimulation", "StatusSimulation", "SimulationSupport"
+  ]);
+  const graph = new Map();
+  const importPattern = /^\s*import\s+(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/gm;
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    assert.doesNotMatch(code, /\b(?:this\.)?game\.aiController\b/, file);
+    const dependencies = [];
+    for (const match of code.matchAll(importPattern)) {
+      const specifier = match[1].split("?")[0];
+      if (!specifier.startsWith(".")) continue;
+      const target = nodePath.normalize(nodePath.resolve(nodePath.dirname(file), specifier));
+      const importedName = nodePath.basename(target, ".js");
+      assert.equal(removedCompatibilityNames.has(importedName), false, `${file} -> ${specifier}`);
+      if (componentNames.has(importedName)) {
+        assert.equal(
+          nodePath.dirname(file),
+          nodePath.dirname(target),
+          `Simulation component leaked outside simulation/: ${file} -> ${specifier}`
+        );
+      }
+      if (fileSet.has(target)) dependencies.push(target);
+    }
+    graph.set(file, dependencies);
+  }
+
+  const visiting = new Set();
+  const visited = new Set();
+  const stack = [];
+  const visit = (file) => {
+    if (visiting.has(file)) {
+      const start = stack.indexOf(file);
+      assert.fail(`AI static import cycle: ${[...stack.slice(start), file]
+        .map((entry) => nodePath.relative(aiRoot, entry)).join(" -> ")}`);
+    }
+    if (visited.has(file)) return;
+    visiting.add(file);
+    stack.push(file);
+    for (const dependency of graph.get(file) ?? []) visit(dependency);
+    stack.pop();
+    visiting.delete(file);
+    visited.add(file);
+  };
+  for (const file of files) visit(file);
+});
+
+test("AI·架构：正式 Planner 只通过 Simulator/SearchBudget factory 消费运行能力", async () => {
+  const source = await readFile(projectFile("js/ai/search/Planner.js"), "utf8");
+  assert.doesNotMatch(source, /^import\s/m);
+  assert.doesNotMatch(source, /new\s+(?:Ai)?Simulator\s*\(/);
+  assert.doesNotMatch(
+    source,
+    /cardConfig|gameConfig|characterConfig|skillRegistry|ActionLegality|AiController|\.\.\/policy\/|\.\.\/domain\//
+  );
+  assert.match(source, /simulatorFactory\(visibleState\)/);
+  assert.match(source, /searchBudgetFactory\(\)/);
+  assert.throws(() => new Planner({
+    candidateMaterializer: {},
+    searchPolicy: {},
+    simulatorFactory: () => ({}),
+    generateFromVisible: () => [],
+    yieldControl: async () => true
+  }), /searchBudgetFactory/);
+});
+
+// ---- AI 依赖注入 ----
 
 /*
 功能
@@ -9017,6 +9153,292 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
 }
 
 test("AI·依赖注入：Planner 脱离 Game 与 Controller 后保持固定种子搜索轨迹", testPlannerExplicitDependenciesPreserveTrace);
+
+/*
+功能
+验证 ActionGenerator 只调用构造时注入的转移选择能力。
+
+调用方
+AI 依赖注入回归测试。
+
+输入
+没有可用 aiController 的 Game、转移牌行动者与固定选择描述。
+
+输出
+生成的转移动作携带注入选择，且能力只调用一次。
+
+读取状态
+测试 GameState 与 ActionLegality 合法性。
+
+写入状态
+测试期间临时清空并恢复 game.aiController。
+
+调用函数
+ActionGenerator.generate。
+
+边界与不变量
+生成器不得通过 Game 回取 CardSelector，转移选择不触发实体移动或额外随机调用。
+*/
+function testActionGeneratorUsesInjectedTransferSelection() {
+  const actor = makePlayer("di-generator-actor", 0, "dawn", "ai", 0);
+  const ally = makePlayer("di-generator-ally", 1, "dawn", "ai", 1);
+  const enemy = makePlayer("di-generator-enemy", 2, "dusk", "ai", 2);
+  const transfer = instance("transfer");
+  actor.hand.push(transfer);
+  ally.hand.push(instance("block"));
+  enemy.hand.push(instance("assault"));
+  const { game } = makeGame([actor, ally, enemy]);
+  const selection = { sourceId: ally.id, receiverId: actor.id, zone: "hand" };
+  let calls = 0;
+  const generator = new ActionGenerator({
+    getRootContext: () => ({
+      state: game.state,
+      currentPlayer: game.state.players[game.state.currentPlayerIndex] ?? null,
+      phase: game.state.phase
+    }),
+    chooseTransferCombination: () => {
+      calls += 1;
+      return selection;
+    },
+  });
+  const controller = game.aiController;
+  game.aiController = null;
+  try {
+    const action = generator.generate(actor).find((entry) => entry.card?.id === transfer.id);
+    assert.equal(calls, 1);
+    assert.deepEqual(action?.selection, selection);
+  } finally {
+    game.aiController = controller;
+  }
+}
+
+test("AI·依赖注入：ActionGenerator 无 Controller CardSelector 仍生成转移动作", testActionGeneratorUsesInjectedTransferSelection);
+
+/*
+功能
+验证 Planner 与 ActionGenerator 的必要依赖在构造阶段明确失败。
+
+调用方
+AI 依赖注入回归测试。
+
+输入
+缺少 evaluator、动作生成或转移选择能力的构造参数。
+
+输出
+包含具体依赖名的 TypeError。
+
+读取状态
+测试 Game fixture。
+
+写入状态
+无。
+
+调用函数
+Planner、ActionGenerator 构造函数。
+
+边界与不变量
+不得创建半装配组件或依赖首次运行时才暴露错误。
+*/
+function testMissingAiDependenciesFailAtConstruction() {
+  const actor = makePlayer("di-missing-actor", 0, "dawn");
+  const enemy = makePlayer("di-missing-enemy", 1, "dusk");
+  const { game } = makeGame([actor, enemy]);
+  assert.throws(() => new Planner(), /candidateMaterializer/);
+  assert.throws(() => new Planner({
+    candidateMaterializer: {},
+    searchPolicy: {},
+    simulatorFactory: () => ({}),
+    searchBudgetFactory: () => ({}),
+    yieldControl: async () => true
+  }), /generateFromVisible/);
+  assert.throws(() => new ActionGenerator({ chooseTransferCombination: () => null }), /getRootContext/);
+  assert.throws(() => new ActionGenerator({ getRootContext: () => ({ state:{ players:[] } }) }), /chooseTransferCombination/);
+}
+
+test("AI·依赖注入：缺少必要能力时构造立即给出依赖名", testMissingAiDependenciesFailAtConstruction);
+
+/*
+功能
+验证 Controller 边界与正式子组件使用同一转移选择和 descriptor 重绑语义。
+
+调用方
+AI 依赖注入回归测试。
+
+输入
+固定转移选择、合法转移牌与当前 GameState。
+
+输出
+门面、生成器和描述重绑返回同一选择及当前动作。
+
+读取状态
+AIController、CardSelector、ActionGenerator 与当前合法动作集合。
+
+写入状态
+测试期间临时替换并恢复 CardSelector 转移方法。
+
+调用函数
+AIController.chooseTransferCombination、getActionCandidates、resolvePlannedAction、Planner.describeAction。
+
+边界与不变量
+公开 owner 字段不得形成第二套策略，Controller 边界只透明转发且 descriptor 必须按当前实体重绑。
+*/
+function testControllerFacadePreservesTransferAndDescriptor() {
+  const actor = makePlayer("di-facade-actor", 0, "dawn", "ai", 0);
+  const ally = makePlayer("di-facade-ally", 1, "dawn", "ai", 1);
+  const enemy = makePlayer("di-facade-enemy", 2, "dusk", "ai", 2);
+  const transfer = instance("transfer");
+  actor.hand.push(transfer);
+  ally.hand.push(instance("block"));
+  enemy.hand.push(instance("assault"));
+  const { game } = makeGame([actor, ally, enemy]);
+  const controller = game.aiController;
+  const selection = { sourceId: ally.id, receiverId: actor.id, zone: "hand" };
+  const originalChoose = controller.cardSelector.chooseTransferCombination;
+  controller.cardSelector.chooseTransferCombination = () => selection;
+  try {
+    assert.equal(controller.chooseTransferCombination(actor, transfer, [ally]), selection);
+    const action = controller.getActionCandidates(actor).find((entry) => entry.card?.id === transfer.id);
+    assert.deepEqual(action?.selection, selection);
+    const descriptor = describeAction(action);
+    const rebound = controller.resolvePlannedAction(actor, descriptor);
+    assert.deepEqual(describeAction(rebound), descriptor);
+  } finally {
+    controller.cardSelector.chooseTransferCombination = originalChoose;
+  }
+}
+
+test("AI·依赖注入：Controller 门面保持转移选择与 descriptor 重绑", testControllerFacadePreservesTransferAndDescriptor);
+
+// ---- AI 模拟器架构回归 ----
+
+/*
+功能
+冻结拆分前模拟器对完整 SearchState 的序列化结果。
+
+调用方
+Simulation 架构迁移 characterization 回归测试。
+
+输入
+固定战斗响应、卡牌资源、主动技能与延迟状态四类场景。
+
+输出
+去除会话随机 ID 后的完整状态 SHA-256 指纹。
+
+读取状态
+测试 GameState、Knowledge remaining counts 与 Simulator 输出。
+
+写入状态
+仅写独立模拟 clone 的稳定 gameId 占位符。
+
+调用函数
+createInitialSearchState、Simulator.apply/applyLightningHit、createHash。
+
+边界与不变量
+指纹覆盖全部深层字段、概率条件键与数组顺序；迁移不得通过挑选摘要字段掩盖状态差异。
+*/
+function testSimulationSearchStateCharacterization() {
+  const fingerprint = (state) => {
+    state.gameId = "<stable>";
+    return createHash("sha256").update(JSON.stringify(state)).digest("hex");
+  };
+  const makeFixture = (players) => makeBenchmarkGame({
+    players,
+    options: { actorId: "a", nodeBudget: 200, seed: 20260814 }
+  });
+  const visibleState = (game) => {
+    const actor = game.state.players.find((player) => player.id === "a");
+    return createInitialSearchState(
+      actor.id,
+      game.state,
+      game.aiController.knowledge.remainingCounts(actor)
+    );
+  };
+  const fingerprints = {};
+
+  const combat = makeFixture([
+    { id: "a", team: "dawn", character: "blade-walker", hand: [makeBenchmarkCard("assault", "char-assault")], hp: 4 },
+    { id: "b", team: "dusk", character: "shade-agent", hand: [makeBenchmarkCard("block", "char-block")], hp: 2, shield: 1 },
+    { id: "c", team: "dusk", character: "oath-warden", hand: [makeBenchmarkCard("recover", "char-recover")], hp: 3 }
+  ]);
+  try {
+    const state = visibleState(combat);
+    fingerprints.combat = fingerprint(new Simulator(state).apply(state, {
+      type: "card",
+      card: state.players[0].hand[0],
+      targets: [state.players[1]],
+      executionProbability: 1
+    }, "a"));
+  } finally {
+    disposeBenchmarkGame(combat);
+  }
+
+  const card = makeFixture([
+    { id: "a", team: "dawn", character: "shade-agent", hand: [makeBenchmarkCard("transfer", "char-transfer")], hp: 4 },
+    { id: "b", team: "dawn", character: "spirit-medic", hand: [], hp: 2 },
+    { id: "c", team: "dusk", character: "blade-walker", hand: [makeBenchmarkCard("assault", "char-transfer-source")], hp: 4 }
+  ]);
+  try {
+    const state = visibleState(card);
+    fingerprints.card = fingerprint(new Simulator(state).apply(state, {
+      type: "card",
+      card: state.players[0].hand[0],
+      targets: [],
+      selection: {
+        sourceId: "c", receiverId: "b", zone: "hand", selectionKind: "unknown",
+        availableUnknownCount: 1
+      },
+      executionProbability: 1
+    }, "a"));
+  } finally {
+    disposeBenchmarkGame(card);
+  }
+
+  const skill = makeFixture([
+    { id: "a", team: "dawn", character: "oath-warden", hand: [], hp: 4, energy: 3 },
+    { id: "b", team: "dawn", character: "shade-agent", hand: [], hp: 3 },
+    { id: "c", team: "dusk", character: "blade-walker", hand: [], hp: 4 }
+  ]);
+  try {
+    const state = visibleState(skill);
+    fingerprints.skill = fingerprint(new Simulator(state).apply(state, {
+      type: "skill",
+      skill: ACTIVE_SKILLS.barrier,
+      targets: [state.players[1]],
+      executionProbability: 1
+    }, "a"));
+  } finally {
+    disposeBenchmarkGame(skill);
+  }
+
+  const status = makeFixture([
+    { id: "a", team: "dawn", character: "blade-walker", hand: [], hp: 4 },
+    { id: "b", team: "dusk", character: "shade-agent", hand: [], hp: 2 },
+    { id: "c", team: "dusk", character: "spirit-medic", hand: [makeBenchmarkCard("recover", "char-status-recover")], hp: 3 }
+  ]);
+  status.state.players[1].statuses.lightning = {
+    cardDefinitionId: "lightning", originPlayerId: "a"
+  };
+  try {
+    const state = visibleState(status);
+    fingerprints.status = fingerprint(new Simulator(state).applyLightningHit(state, "b"));
+  } finally {
+    disposeBenchmarkGame(status);
+  }
+
+  assert.deepEqual(fingerprints, {
+    combat: "17f1364cda22aa6cd892a28d65546c6da4b092e6bab0f0247e51c9669a33dd95",
+    card: "862f5421a4c99a7fd5b65ddbce0a3cc2f8a31a5a5c9df4468cd7eac59ecea6cd",
+    skill: "56d1c815ebdca627359cff2ba347f0847099a945e41d5d97d598e199e8153b83",
+    status: "a036bf4012b178d65fc2954f53587199ab6692432fff0a2ff59697e8a1735a40"
+  });
+}
+
+test(
+  "AI·模拟器：四类完整 SearchState 指纹保持冻结",
+  testSimulationSearchStateCharacterization
+);
+
+// ---- AI 搜索与规划·固定轨迹与预算 ----
 
 test("AI·搜索：Simulation 七类固定场景保持根动作、序列与搜索统计", async () => {
   const end = {
@@ -9306,346 +9728,6 @@ test("AI·搜索：Simulation 拆分保持固定 D4 封印链逐字段一致", a
   }
 });
 
-/*
-功能
-冻结拆分前模拟器对完整 SearchState 的序列化结果。
-
-调用方
-Simulation 架构迁移 characterization 回归测试。
-
-输入
-固定战斗响应、卡牌资源、主动技能与延迟状态四类场景。
-
-输出
-去除会话随机 ID 后的完整状态 SHA-256 指纹。
-
-读取状态
-测试 GameState、Knowledge remaining counts 与 Simulator 输出。
-
-写入状态
-仅写独立模拟 clone 的稳定 gameId 占位符。
-
-调用函数
-createInitialSearchState、Simulator.apply/applyLightningHit、createHash。
-
-边界与不变量
-指纹覆盖全部深层字段、概率条件键与数组顺序；迁移不得通过挑选摘要字段掩盖状态差异。
-*/
-function testSimulationSearchStateCharacterization() {
-  const fingerprint = (state) => {
-    state.gameId = "<stable>";
-    return createHash("sha256").update(JSON.stringify(state)).digest("hex");
-  };
-  const makeFixture = (players) => makeBenchmarkGame({
-    players,
-    options: { actorId: "a", nodeBudget: 200, seed: 20260814 }
-  });
-  const visibleState = (game) => {
-    const actor = game.state.players.find((player) => player.id === "a");
-    return createInitialSearchState(
-      actor.id,
-      game.state,
-      game.aiController.knowledge.remainingCounts(actor)
-    );
-  };
-  const fingerprints = {};
-
-  const combat = makeFixture([
-    { id: "a", team: "dawn", character: "blade-walker", hand: [makeBenchmarkCard("assault", "char-assault")], hp: 4 },
-    { id: "b", team: "dusk", character: "shade-agent", hand: [makeBenchmarkCard("block", "char-block")], hp: 2, shield: 1 },
-    { id: "c", team: "dusk", character: "oath-warden", hand: [makeBenchmarkCard("recover", "char-recover")], hp: 3 }
-  ]);
-  try {
-    const state = visibleState(combat);
-    fingerprints.combat = fingerprint(new Simulator(state).apply(state, {
-      type: "card",
-      card: state.players[0].hand[0],
-      targets: [state.players[1]],
-      executionProbability: 1
-    }, "a"));
-  } finally {
-    disposeBenchmarkGame(combat);
-  }
-
-  const card = makeFixture([
-    { id: "a", team: "dawn", character: "shade-agent", hand: [makeBenchmarkCard("transfer", "char-transfer")], hp: 4 },
-    { id: "b", team: "dawn", character: "spirit-medic", hand: [], hp: 2 },
-    { id: "c", team: "dusk", character: "blade-walker", hand: [makeBenchmarkCard("assault", "char-transfer-source")], hp: 4 }
-  ]);
-  try {
-    const state = visibleState(card);
-    fingerprints.card = fingerprint(new Simulator(state).apply(state, {
-      type: "card",
-      card: state.players[0].hand[0],
-      targets: [],
-      selection: {
-        sourceId: "c", receiverId: "b", zone: "hand", selectionKind: "unknown",
-        availableUnknownCount: 1
-      },
-      executionProbability: 1
-    }, "a"));
-  } finally {
-    disposeBenchmarkGame(card);
-  }
-
-  const skill = makeFixture([
-    { id: "a", team: "dawn", character: "oath-warden", hand: [], hp: 4, energy: 3 },
-    { id: "b", team: "dawn", character: "shade-agent", hand: [], hp: 3 },
-    { id: "c", team: "dusk", character: "blade-walker", hand: [], hp: 4 }
-  ]);
-  try {
-    const state = visibleState(skill);
-    fingerprints.skill = fingerprint(new Simulator(state).apply(state, {
-      type: "skill",
-      skill: ACTIVE_SKILLS.barrier,
-      targets: [state.players[1]],
-      executionProbability: 1
-    }, "a"));
-  } finally {
-    disposeBenchmarkGame(skill);
-  }
-
-  const status = makeFixture([
-    { id: "a", team: "dawn", character: "blade-walker", hand: [], hp: 4 },
-    { id: "b", team: "dusk", character: "shade-agent", hand: [], hp: 2 },
-    { id: "c", team: "dusk", character: "spirit-medic", hand: [makeBenchmarkCard("recover", "char-status-recover")], hp: 3 }
-  ]);
-  status.state.players[1].statuses.lightning = {
-    cardDefinitionId: "lightning", originPlayerId: "a"
-  };
-  try {
-    const state = visibleState(status);
-    fingerprints.status = fingerprint(new Simulator(state).applyLightningHit(state, "b"));
-  } finally {
-    disposeBenchmarkGame(status);
-  }
-
-  assert.deepEqual(fingerprints, {
-    combat: "17f1364cda22aa6cd892a28d65546c6da4b092e6bab0f0247e51c9669a33dd95",
-    card: "862f5421a4c99a7fd5b65ddbce0a3cc2f8a31a5a5c9df4468cd7eac59ecea6cd",
-    skill: "56d1c815ebdca627359cff2ba347f0847099a945e41d5d97d598e199e8153b83",
-    status: "a036bf4012b178d65fc2954f53587199ab6692432fff0a2ff59697e8a1735a40"
-  });
-}
-
-test(
-  "AI·模拟器：四类完整 SearchState 指纹保持冻结",
-  testSimulationSearchStateCharacterization
-);
-
-test("AI·架构：Simulation facade 与五个效果组件保持单向依赖和唯一 owner", async () => {
-  const paths = {
-    facade: "js/ai/simulation/Simulator.js",
-    response: "js/ai/simulation/ResponseSimulation.js",
-    combat: "js/ai/simulation/CombatSimulation.js",
-    card: "js/ai/simulation/CardEffectSimulation.js",
-    skill: "js/ai/simulation/SkillEffectSimulation.js",
-    status: "js/ai/simulation/StatusSimulation.js",
-    support: "js/ai/simulation/SimulationSupport.js",
-    planner: "js/ai/search/Planner.js",
-    valueQuery: "js/ai/simulation/ValueSimulationQuery.js"
-  };
-  const source = Object.fromEntries(await Promise.all(
-    Object.entries(paths).map(async ([name, path]) => [name, await readFile(projectFile(path), "utf8")])
-  ));
-  assert.doesNotMatch(source.facade, /\.\.\/policy\/|\.\.\/value\/|\.\.\/domain\/|ActionLegality|CARD_DEFINITIONS/);
-  for (const name of ["response", "combat", "card", "skill", "status", "support"]) {
-    assert.doesNotMatch(
-      source[name],
-      /from\s+["'][^"']*(?:AiController|UIManager|core\/Game\.js|simulation\/Simulator\.js)[^"']*["']/,
-      name
-    );
-  }
-  assert.doesNotMatch(source.planner, /^import\s/m);
-  assert.match(source.valueQuery, /from "\.\/Simulator\.js/);
-  assert.match(source.response, /consumeBlockResponseWorlds[\s\S]*consumeTargetCounterResponseWorlds/);
-  assert.match(source.combat, /applyDamage[\s\S]*resolveFatal[\s\S]*healFrom/);
-  assert.match(source.card, /applyCardEffect[\s\S]*takeResourceToHand[\s\S]*destroyResource/);
-  assert.match(source.skill, /applySkill/);
-  assert.match(source.status, /applyDelayedStatusCard[\s\S]*$/);
-  for (const moved of [
-    "applyDamage", "resolveFatal", "consumeBlockResponseWorlds", "applyCardEffect",
-    "applySkill", "applyDelayedStatusCard"
-  ]) {
-    assert.doesNotMatch(source.facade, new RegExp(`^  ${moved}\\s*\\(`, "m"), moved);
-  }
-  assert.equal((source.facade.match(/withResponseSimulation\(/g) ?? []).length, 1);
-  assert.equal((source.facade.match(/withCombatSimulation\(/g) ?? []).length, 1);
-  assert.equal((source.facade.match(/withCardEffectSimulation\(/g) ?? []).length, 1);
-  assert.equal((source.facade.match(/withSkillEffectSimulation\(/g) ?? []).length, 1);
-  assert.equal((source.facade.match(/withStatusSimulation\(/g) ?? []).length, 1);
-  assert.doesNotMatch(source.facade, /new (?:Response|Combat|CardEffect|SkillEffect|Status)Simulation/);
-});
-
-test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 service locator", async () => {
-  const aiRoot = projectFile("js/ai");
-  const files = (await listJavaScriptFiles(aiRoot)).map((file) => nodePath.normalize(file));
-  const fileSet = new Set(files);
-  const rootFiles = (await readdir(aiRoot, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
-    .map((entry) => entry.name)
-    .sort();
-  assert.deepEqual(rootFiles, ["AiController.js"]);
-
-  const removedCompatibilityNames = new Set([
-    "AiSimulator", "AiEvaluator", "AiStateValue", "AiVisibleState", "AiKnowledge",
-    "AiProbabilityBranches", "AiEconomics", "ThreatCalculator", "roleCardValue",
-    "discardScoring", "resourceSelectionValue", "transferScoring", "sealScoring",
-    "lightningScoring", "AiGlobalBenefit", "AiPlanner", "AiActionGenerator",
-    "AiCardSelector", "AiResponsePolicy", "AiValueSimulationQuery"
-  ]);
-  const componentNames = new Set([
-    "ResponseSimulation", "CombatSimulation", "CardEffectSimulation",
-    "SkillEffectSimulation", "StatusSimulation", "SimulationSupport"
-  ]);
-  const graph = new Map();
-  const importPattern = /^\s*import\s+(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/gm;
-  for (const file of files) {
-    const source = await readFile(file, "utf8");
-    const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
-    assert.doesNotMatch(code, /\b(?:this\.)?game\.aiController\b/, file);
-    const dependencies = [];
-    for (const match of code.matchAll(importPattern)) {
-      const specifier = match[1].split("?")[0];
-      if (!specifier.startsWith(".")) continue;
-      const target = nodePath.normalize(nodePath.resolve(nodePath.dirname(file), specifier));
-      const importedName = nodePath.basename(target, ".js");
-      assert.equal(removedCompatibilityNames.has(importedName), false, `${file} -> ${specifier}`);
-      if (componentNames.has(importedName)) {
-        assert.equal(
-          nodePath.dirname(file),
-          nodePath.dirname(target),
-          `Simulation component leaked outside simulation/: ${file} -> ${specifier}`
-        );
-      }
-      if (fileSet.has(target)) dependencies.push(target);
-    }
-    graph.set(file, dependencies);
-  }
-
-  const visiting = new Set();
-  const visited = new Set();
-  const stack = [];
-  const visit = (file) => {
-    if (visiting.has(file)) {
-      const start = stack.indexOf(file);
-      assert.fail(`AI static import cycle: ${[...stack.slice(start), file]
-        .map((entry) => nodePath.relative(aiRoot, entry)).join(" -> ")}`);
-    }
-    if (visited.has(file)) return;
-    visiting.add(file);
-    stack.push(file);
-    for (const dependency of graph.get(file) ?? []) visit(dependency);
-    stack.pop();
-    visiting.delete(file);
-    visited.add(file);
-  };
-  for (const file of files) visit(file);
-});
-
-/*
-功能
-验证 ActionGenerator 只调用构造时注入的转移选择能力。
-
-调用方
-AI 依赖注入回归测试。
-
-输入
-没有可用 aiController 的 Game、转移牌行动者与固定选择描述。
-
-输出
-生成的转移动作携带注入选择，且能力只调用一次。
-
-读取状态
-测试 GameState 与 ActionLegality 合法性。
-
-写入状态
-测试期间临时清空并恢复 game.aiController。
-
-调用函数
-ActionGenerator.generate。
-
-边界与不变量
-生成器不得通过 Game 回取 CardSelector，转移选择不触发实体移动或额外随机调用。
-*/
-function testActionGeneratorUsesInjectedTransferSelection() {
-  const actor = makePlayer("di-generator-actor", 0, "dawn", "ai", 0);
-  const ally = makePlayer("di-generator-ally", 1, "dawn", "ai", 1);
-  const enemy = makePlayer("di-generator-enemy", 2, "dusk", "ai", 2);
-  const transfer = instance("transfer");
-  actor.hand.push(transfer);
-  ally.hand.push(instance("block"));
-  enemy.hand.push(instance("assault"));
-  const { game } = makeGame([actor, ally, enemy]);
-  const selection = { sourceId: ally.id, receiverId: actor.id, zone: "hand" };
-  let calls = 0;
-  const generator = new ActionGenerator({
-    getRootContext: () => ({
-      state: game.state,
-      currentPlayer: game.state.players[game.state.currentPlayerIndex] ?? null,
-      phase: game.state.phase
-    }),
-    chooseTransferCombination: () => {
-      calls += 1;
-      return selection;
-    },
-  });
-  const controller = game.aiController;
-  game.aiController = null;
-  try {
-    const action = generator.generate(actor).find((entry) => entry.card?.id === transfer.id);
-    assert.equal(calls, 1);
-    assert.deepEqual(action?.selection, selection);
-  } finally {
-    game.aiController = controller;
-  }
-}
-
-test("AI·依赖注入：ActionGenerator 无 Controller CardSelector 仍生成转移动作", testActionGeneratorUsesInjectedTransferSelection);
-
-/*
-功能
-验证 Planner 与 ActionGenerator 的必要依赖在构造阶段明确失败。
-
-调用方
-AI 依赖注入回归测试。
-
-输入
-缺少 evaluator、动作生成或转移选择能力的构造参数。
-
-输出
-包含具体依赖名的 TypeError。
-
-读取状态
-测试 Game fixture。
-
-写入状态
-无。
-
-调用函数
-Planner、ActionGenerator 构造函数。
-
-边界与不变量
-不得创建半装配组件或依赖首次运行时才暴露错误。
-*/
-function testMissingAiDependenciesFailAtConstruction() {
-  const actor = makePlayer("di-missing-actor", 0, "dawn");
-  const enemy = makePlayer("di-missing-enemy", 1, "dusk");
-  const { game } = makeGame([actor, enemy]);
-  assert.throws(() => new Planner(), /candidateMaterializer/);
-  assert.throws(() => new Planner({
-    candidateMaterializer: {},
-    searchPolicy: {},
-    simulatorFactory: () => ({}),
-    searchBudgetFactory: () => ({}),
-    yieldControl: async () => true
-  }), /generateFromVisible/);
-  assert.throws(() => new ActionGenerator({ chooseTransferCombination: () => null }), /getRootContext/);
-  assert.throws(() => new ActionGenerator({ getRootContext: () => ({ state:{ players:[] } }) }), /chooseTransferCombination/);
-}
-
-test("AI·依赖注入：缺少必要能力时构造立即给出依赖名", testMissingAiDependenciesFailAtConstruction);
-
 test("AI·搜索：SearchBudget 用确定性时钟统一 TIME/NODE/COMPLETE 停止原因", () => {
   const timeValues = [100, 105, 110];
   const timeBudget = new SearchBudget({
@@ -9668,77 +9750,6 @@ test("AI·搜索：SearchBudget 用确定性时钟统一 TIME/NODE/COMPLETE 停�
   assert.equal(completeBudget.complete(), "COMPLETE");
   assert.equal(completeBudget.shouldStop(), true);
 });
-
-test("AI·架构：正式 Planner 只通过 Simulator/SearchBudget factory 消费运行能力", async () => {
-  const source = await readFile(projectFile("js/ai/search/Planner.js"), "utf8");
-  assert.doesNotMatch(source, /^import\s/m);
-  assert.doesNotMatch(source, /new\s+(?:Ai)?Simulator\s*\(/);
-  assert.doesNotMatch(
-    source,
-    /cardConfig|gameConfig|characterConfig|skillRegistry|ActionLegality|AiController|\.\.\/policy\/|\.\.\/domain\//
-  );
-  assert.match(source, /simulatorFactory\(visibleState\)/);
-  assert.match(source, /searchBudgetFactory\(\)/);
-  assert.throws(() => new Planner({
-    candidateMaterializer: {},
-    searchPolicy: {},
-    simulatorFactory: () => ({}),
-    generateFromVisible: () => [],
-    yieldControl: async () => true
-  }), /searchBudgetFactory/);
-});
-
-/*
-功能
-验证 Controller 边界与正式子组件使用同一转移选择和 descriptor 重绑语义。
-
-调用方
-AI 依赖注入回归测试。
-
-输入
-固定转移选择、合法转移牌与当前 GameState。
-
-输出
-门面、生成器和描述重绑返回同一选择及当前动作。
-
-读取状态
-AIController、CardSelector、ActionGenerator 与当前合法动作集合。
-
-写入状态
-测试期间临时替换并恢复 CardSelector 转移方法。
-
-调用函数
-AIController.chooseTransferCombination、getActionCandidates、resolvePlannedAction、Planner.describeAction。
-
-边界与不变量
-公开 owner 字段不得形成第二套策略，Controller 边界只透明转发且 descriptor 必须按当前实体重绑。
-*/
-function testControllerFacadePreservesTransferAndDescriptor() {
-  const actor = makePlayer("di-facade-actor", 0, "dawn", "ai", 0);
-  const ally = makePlayer("di-facade-ally", 1, "dawn", "ai", 1);
-  const enemy = makePlayer("di-facade-enemy", 2, "dusk", "ai", 2);
-  const transfer = instance("transfer");
-  actor.hand.push(transfer);
-  ally.hand.push(instance("block"));
-  enemy.hand.push(instance("assault"));
-  const { game } = makeGame([actor, ally, enemy]);
-  const controller = game.aiController;
-  const selection = { sourceId: ally.id, receiverId: actor.id, zone: "hand" };
-  const originalChoose = controller.cardSelector.chooseTransferCombination;
-  controller.cardSelector.chooseTransferCombination = () => selection;
-  try {
-    assert.equal(controller.chooseTransferCombination(actor, transfer, [ally]), selection);
-    const action = controller.getActionCandidates(actor).find((entry) => entry.card?.id === transfer.id);
-    assert.deepEqual(action?.selection, selection);
-    const descriptor = describeAction(action);
-    const rebound = controller.resolvePlannedAction(actor, descriptor);
-    assert.deepEqual(describeAction(rebound), descriptor);
-  } finally {
-    controller.cardSelector.chooseTransferCombination = originalChoose;
-  }
-}
-
-test("AI·依赖注入：Controller 门面保持转移选择与 descriptor 重绑", testControllerFacadePreservesTransferAndDescriptor);
 
 // ---- AI 核心状态·可见状态 ----
 
@@ -34959,7 +34970,7 @@ test("AI·价值归属：纯 Evaluator 不持有 Game 且只消费上游闪电�
   assert.equal("game" in standalone, false);
 });
 
-test("AI·价值归属：TransitionValue 的逐 term 与迁移前公式完全一致", () => {
+test("AI·价值归属：TransitionValue 逐 term 保持唯一组合公式", () => {
   const actor = {
     id: "transition-owner",
     hand: [{ definitionId: "charge" }],
@@ -38436,7 +38447,7 @@ test("集成：控制器文件名：导出类名仍为 AIController", async () =
 });
 
 
-// ==================== FR-ARCH-1 Governance & Characterization ====================
+// ---- 架构治理与特征回归 ----
 
 /*
 功能
@@ -38580,7 +38591,7 @@ async function frArchAssaultEventTrace() {
   assert.equal(target.hp, target.maxHp - 1);
 }
 
-test("FR-ARCH·事件顺序：突袭真实结算冻结 before/after 与移动事件序列", frArchAssaultEventTrace);
+test("结算事件顺序：突袭真实结算冻结 before/after 与移动事件序列", frArchAssaultEventTrace);
 
 /*
 功能
@@ -38621,7 +38632,7 @@ async function frArchCounterOrderTrace() {
   assert.ok(calls.every((entry) => entry.rootCardId === "harvest"));
 }
 
-test("FR-ARCH·响应顺序：反制链逐层座次与 counterDepth 冻结", frArchCounterOrderTrace);
+test("响应顺序：反制链逐层座次与 counterDepth 冻结", frArchCounterOrderTrace);
 
 /*
 功能
@@ -38674,7 +38685,7 @@ async function frArchAtomicZoneTrace() {
   ]);
 }
 
-test("FR-ARCH·zone 不变量：原子支付与实体唯一区域冻结", frArchAtomicZoneTrace);
+test("区域不变量：原子支付与实体唯一区域冻结", frArchAtomicZoneTrace);
 
 /*
 功能
@@ -38716,7 +38727,7 @@ async function frArchSkillTrace() {
   assert.ok(trace.events.length === 0, "主动技能当前不应经过额外领域事件");
 }
 
-test("FR-ARCH·技能 trace：破军费用、次数上限与中央展示顺序冻结", frArchSkillTrace);
+test("技能结算轨迹：破军费用、次数上限与中央展示顺序冻结", frArchSkillTrace);
 
 /*
 功能
@@ -38763,7 +38774,7 @@ async function frArchRealSimulationDelta() {
   assert.deepEqual(game.getCardZoneOccurrences(card), ["discard"]);
 }
 
-test("FR-ARCH·真实 vs 模拟：确定性突袭差分冻结", frArchRealSimulationDelta);
+test("AI·真实与模拟一致性：确定性突袭差分冻结", frArchRealSimulationDelta);
 
 /*
 功能
@@ -38820,7 +38831,7 @@ function frArchHiddenInformationAndRootAction() {
   assert.equal(serializedDescriptor.includes(hidden.name), false);
 }
 
-test("FR-ARCH·隐藏信息：SearchState 过滤与 root action descriptor blocker", frArchHiddenInformationAndRootAction);
+test("AI·隐藏信息边界：SearchState 过滤与 root action descriptor blocker", frArchHiddenInformationAndRootAction);
 
 /*
 功能
@@ -38875,7 +38886,7 @@ function frArchActionDescriptorContract() {
   });
 }
 
-test("FR-ARCH·ActionDescriptor：cardInstanceId、targetIds 与 transfer selection 冻结", frArchActionDescriptorContract);
+test("AI·ActionDescriptor：cardInstanceId、targetIds 与 transfer selection 冻结", frArchActionDescriptorContract);
 
 /*
 功能
@@ -38956,7 +38967,7 @@ async function frArchSearchQualityBaseline() {
   }
 }
 
-test("FR-ARCH·搜索质量基线：900ms 固定种子 fixtures schema 与确定性重放", frArchSearchQualityBaseline);
+test("AI·搜索确定性：900ms 固定种子 fixtures schema 与确定性重放", frArchSearchQualityBaseline);
 
 /*
 功能
@@ -39008,7 +39019,7 @@ async function frArchCurrentTimingFreeze() {
   assert.match(timingSource, /Math\.max\(RUNTIME_POLICY\.animationFastMinimumMs/);
 }
 
-test("FR-ARCH·timing 基线：当前 900ms/48-yield 与展示时序配置冻结", frArchCurrentTimingFreeze);
+test("AI·搜索时序：当前 900ms/48-yield 与展示时序配置冻结", frArchCurrentTimingFreeze);
 
 /*
 功能
@@ -39056,10 +39067,9 @@ async function frArchGovernanceDocumentContract() {
   ]) assert.match(checker, new RegExp(fragment));
 }
 
-test("FR-ARCH·governance：architecture authority 与 checker guard 已冻结", frArchGovernanceDocumentContract);
+test("架构治理：architecture authority 与 checker guard 已冻结", frArchGovernanceDocumentContract);
 
-
-// ==================== FR-ARCH-2 Definition Authority Tests ====================
+// ---- 定义与所有权 ----
 
 /*
 功能
@@ -39101,7 +39111,7 @@ async function frArchFinalDefinitionOwners() {
   }
 }
 
-test("FR-ARCH-15·definition owners：Domain、AI、Presentation 与 Runtime Policy 已拆分", frArchFinalDefinitionOwners);
+test("架构·定义归属：Domain、AI、Presentation 与 Runtime Policy 已拆分", frArchFinalDefinitionOwners);
 
 /*
 功能
@@ -39141,7 +39151,7 @@ async function frArchCardAuthority() {
   assert.doesNotMatch(source, /aiValue|frameStyle|deckComposition/);
 }
 
-test("FR-ARCH-2·card authority：domain definitions 唯一拥有规则字段", frArchCardAuthority);
+test("定义归属·卡牌：domain definitions 唯一拥有规则字段", frArchCardAuthority);
 
 /*
 功能
@@ -39187,7 +39197,7 @@ async function frArchCharacterSkillAuthority() {
   await assert.rejects(access(projectFile("js/config/characterConfig.js")));
 }
 
-test("FR-ARCH-2·character/skill authority：旧 characterConfig 不再维护领域 literal", frArchCharacterSkillAuthority);
+test("定义归属·角色与技能：旧 characterConfig 不再维护领域 literal", frArchCharacterSkillAuthority);
 
 /*
 功能
@@ -39226,7 +39236,7 @@ async function frArchSkillRuntimeSingleAuthority() {
   await assert.rejects(access(projectFile("js/characters/skillRegistry.js")));
 }
 
-test("FR-ARCH-2·skill runtime authority：ACTIVE_SKILLS 只投影 Domain Skill Definition", frArchSkillRuntimeSingleAuthority);
+test("定义归属·技能运行时：ACTIVE_SKILLS 只投影 Domain Skill Definition", frArchSkillRuntimeSingleAuthority);
 
 /*
 功能
@@ -39276,7 +39286,7 @@ async function frArchRulesetAuthority() {
   }
 }
 
-test("FR-ARCH-2·ruleset authority：RUNTIME_POLICY 领域字段单一来源", frArchRulesetAuthority);
+test("定义归属·运行策略：RUNTIME_POLICY 领域字段单一来源", frArchRulesetAuthority);
 
 /*
 功能
@@ -39312,7 +39322,7 @@ async function frArchResponseTimeoutOwnership() {
   assert.match(runtimeSource, /responseTimeoutMs:\s*null/);
 }
 
-test("FR-ARCH-2.1·responseTimeoutMs ownership：NOT DOMAIN，legacy runtime policy 单一 literal", frArchResponseTimeoutOwnership);
+test("运行策略·响应超时：只归 Runtime Policy 且保持单一 literal", frArchResponseTimeoutOwnership);
 
 
 /*
@@ -39356,7 +39366,7 @@ async function frArchStatusAuthority() {
   }
 }
 
-test("FR-ARCH-2·status authority：仅静态身份与文案，无生命周期", frArchStatusAuthority);
+test("定义归属·状态：仅静态身份与文案，无生命周期", frArchStatusAuthority);
 
 /*
 功能
@@ -39394,10 +39404,9 @@ async function frArchDefinitionModuleIdentity() {
   }
 }
 
-test("FR-ARCH-2·module identity：domain definitions 消费稳定本地 URL", frArchDefinitionModuleIdentity);
+test("模块身份：domain definitions 消费稳定本地 URL", frArchDefinitionModuleIdentity);
 
-
-// ==================== FR-ARCH-3 Domain State Foundation Tests ====================
+// ---- 状态模型与查询 ----
 
 /*
 功能
@@ -39453,7 +39462,7 @@ function frArchStateModelFactories() {
   assert.equal(new Deck().reshuffleCount, 0);
 }
 
-test("FR-ARCH-3·state model：Domain factories 初始 shape 与 dormant stateVersion", frArchStateModelFactories);
+test("状态模型：Domain factories 初始 shape 与 dormant stateVersion", frArchStateModelFactories);
 
 /*
 功能
@@ -39508,7 +39517,7 @@ async function frArchFinalStateComposition() {
   assert.match(deckSource, /this\.cards = zoneState\.cards/);
 }
 
-test("FR-ARCH-15·composition：composition root、Player 与 Deck 只组合 Domain state", frArchFinalStateComposition);
+test("状态组合：composition root、Player 与 Deck 只组合 Domain state", frArchFinalStateComposition);
 
 /*
 功能
@@ -39566,7 +39575,7 @@ function frArchStateQueryEquivalence() {
   assert.equal(large.battleTeam, "dusk");
 }
 
-test("FR-ARCH-3·query equivalence：current/allies/enemies/seat order 与旧 Game 完全一致", frArchStateQueryEquivalence);
+test("状态查询：current/allies/enemies/seat order 与旧 Game 完全一致", frArchStateQueryEquivalence);
 
 /*
 功能
@@ -39616,7 +39625,7 @@ function frArchZoneQueryEquivalence() {
   assert.equal(queryCommittedToEquipment(game.state, other, equipment), false);
 }
 
-test("FR-ARCH-3·zone query equivalence：出现位置、重复计数与提交判定", frArchZoneQueryEquivalence);
+test("区域查询：出现位置、重复计数与提交判定", frArchZoneQueryEquivalence);
 
 /*
 功能
@@ -39658,7 +39667,7 @@ async function frArchDomainStatePurity() {
   }
 }
 
-test("FR-ARCH-3·domain purity：State Model/View/Queries 不识别 AI、UI 或 runtime", frArchDomainStatePurity);
+test("Domain 状态纯度：State Model/View/Queries 不识别 AI、UI 或 runtime", frArchDomainStatePurity);
 
 /*
 功能
@@ -39705,10 +39714,9 @@ async function frArchStateVersionDormant() {
   }
 }
 
-test("FR-ARCH-3·stateVersion：authority 唯一，成功 +1，no-op +0", frArchStateVersionDormant);
+test("状态版本：authority 唯一，成功 +1，no-op +0", frArchStateVersionDormant);
 
-
-// ==================== FR-ARCH-4 Atomic Transition Foundation Tests ====================
+// ---- Domain Transitions 与状态版本 ----
 
 /*
 功能
@@ -39758,7 +39766,7 @@ function frArchResourceTransitions() {
   assert.equal(state.stateVersion, 6);
 }
 
-test("FR-ARCH-4·resource transitions：energy clamp、hp/shield 与 no-op", frArchResourceTransitions);
+test("Domain Transition·资源：energy clamp、hp/shield 与 no-op", frArchResourceTransitions);
 
 /*
 功能
@@ -39800,7 +39808,7 @@ function frArchStatusTransitions() {
   assert.deepEqual(player.statuses, {});
 }
 
-test("FR-ARCH-4·status transitions：generic set/remove/clear，不解释状态语义", frArchStatusTransitions);
+test("Domain Transition·状态：generic set/remove/clear，不解释状态语义", frArchStatusTransitions);
 
 /*
 功能
@@ -39843,7 +39851,7 @@ function frArchZoneTransitions() {
   assert.equal(transitionMoveCardBetweenZones(state, source, target, card), false);
 }
 
-test("FR-ARCH-4·zone transitions：通用数组移动与实体身份", frArchZoneTransitions);
+test("Domain Transition·区域：通用数组移动与实体身份", frArchZoneTransitions);
 
 /*
 功能
@@ -39900,7 +39908,7 @@ function frArchPrimitiveStateTransitions() {
   assert.equal(player.equipment, equipment);
 }
 
-test("FR-ARCH-4·match/player transitions：只提交已决定 primitive 写入", frArchPrimitiveStateTransitions);
+test("Domain Transition·对局与玩家：只提交已决定 primitive 写入", frArchPrimitiveStateTransitions);
 
 /*
 功能
@@ -39939,7 +39947,7 @@ async function frArchTransitionPurity() {
   }
 }
 
-test("FR-ARCH-4·transition purity：无 runtime/rule import 与 cardId/skillId 分支", frArchTransitionPurity);
+test("Domain Transition·纯度：无 runtime/rule import 与 cardId/skillId 分支", frArchTransitionPurity);
 
 /*
 功能
@@ -39984,10 +39992,10 @@ async function frArchFinalCommitOwners() {
   assert.doesNotMatch(skillSource, /target\.shield\s*=\s*\(/);
 }
 
-test("FR-ARCH-15·commit owners：Application effects 经 transition 且 stateVersion 增长", frArchFinalCommitOwners);
+test("架构·状态提交：Application effects 经 transition 且 stateVersion 增长", frArchFinalCommitOwners);
 
 
-// ==================== FR-ARCH-4B Phase A Carry-in Tests ====================
+// ---- StateView 与提交边界 ----
 
 /*
 功能
@@ -40046,7 +40054,7 @@ function frArchPhaseACarryInClosure() {
   assert.equal(player.character, legacyCharacter);
 }
 
-test("FR-ARCH-4B·carry-in：selectedCharacterId/legacy character/RuleStateView boundary 已关闭", frArchPhaseACarryInClosure);
+test("状态视图边界：selectedCharacterId/legacy character/RuleStateView boundary 已关闭", frArchPhaseACarryInClosure);
 
 /*
 功能
@@ -40146,7 +40154,7 @@ function frArchPhaseARuleStateViewContract() {
   assert.throws(() => view.seatOrderFrom(game.state.players[0]), /Rule Player projection/);
 }
 
-test("FR-ARCH-4B·micro-closure：RuleStateView projection 可组合且拒绝 Real Player 双 schema", frArchPhaseARuleStateViewContract);
+test("状态视图：RuleStateView projection 可组合且拒绝 Real Player 双 schema", frArchPhaseARuleStateViewContract);
 
 /*
 功能
@@ -40185,10 +40193,10 @@ async function frArchPhaseAMutationGateStillBlocked() {
   assert.doesNotMatch(skillSource, /owner\.turnFlags\.momentum\s*=/);
 }
 
-test("FR-ARCH-4B·gate：direct writes 已关闭，stateVersion authoritative", frArchPhaseAMutationGateStillBlocked);
+test("架构·状态写入：direct writes 已关闭，stateVersion authoritative", frArchPhaseAMutationGateStillBlocked);
 
 
-// ==================== FR-ARCH-4B stateVersion Contract Tests ====================
+// ---- 状态版本契约 ----
 
 /*
 功能
@@ -40237,10 +40245,9 @@ function frArchStateVersionContract() {
   assert.deepEqual(discard, cards);
 }
 
-test("FR-ARCH-4B·stateVersion：success +1、no-op/fail +0、atomic group +1", frArchStateVersionContract);
+test("状态版本：success +1、no-op/fail +0、atomic group +1", frArchStateVersionContract);
 
-
-// ==================== FR-ARCH-5 Foundational Domain Rule Tests ====================
+// ---- Domain 规则 ----
 
 /*
 功能
@@ -40302,7 +40309,7 @@ function frArch5TeamRules() {
   assert.deepEqual(view.enemiesOf(smallRule).map((entry) => entry.id), game.getEnemies(small).map((entry) => entry.id));
 }
 
-test("FR-ARCH-5·team rules：规模/手牌/摸牌/能量/攻击/调息与 ally-enemy 语义", frArch5TeamRules);
+test("Domain 规则·阵营：规模/手牌/摸牌/能量/攻击/调息与 ally-enemy 语义", frArch5TeamRules);
 
 /*
 功能
@@ -40363,7 +40370,7 @@ function frArch5DistanceRules() {
   assert.equal(domainSource.includes("equipmentRetentionProbability"), false);
 }
 
-test("FR-ARCH-5·distance rules：确定性核心完整，AI probability 不进入 Domain", frArch5DistanceRules);
+test("Domain 规则·距离：确定性核心完整，AI probability 不进入 Domain", frArch5DistanceRules);
 
 /*
 功能
@@ -40458,7 +40465,7 @@ async function frArch5TurnRules() {
   assert.match(transitionSource, /decidedTurnFlags|decidedRoundFlags|decidedReactiveState/);
 }
 
-test("FR-ARCH-5·turn rules：reset semantics 由 Domain Turn Rule 拥有，Transition 只 commit", frArch5TurnRules);
+test("Domain 规则·回合：reset semantics 由 Domain Turn Rule 拥有，Transition 只 commit", frArch5TurnRules);
 
 /*
 功能
@@ -40495,7 +40502,7 @@ function frArch5JudgmentRules() {
   assert.equal(interpretDelayedStatusJudgment("basic", "tactic"), false);
 }
 
-test("FR-ARCH-5·judgment rules：雷达/封印/闪电判定分类", frArch5JudgmentRules);
+test("Domain 规则·判定：雷达/封印/闪电判定分类", frArch5JudgmentRules);
 
 /*
 功能
@@ -40536,7 +40543,7 @@ function frArch5CombatRules() {
   assert.equal(calculateHealAmount(0, 4, 2), 0);
 }
 
-test("FR-ARCH-5·combat rules：damage/shield/lethal/overkill/negative HP/heal clamp", frArch5CombatRules);
+test("Domain 规则·战斗：damage/shield/lethal/overkill/negative HP/heal clamp", frArch5CombatRules);
 
 /*
 功能
@@ -40602,7 +40609,7 @@ function frArch5StatusRules() {
   assert.equal(nextDomainLightningReceiverId(view.players(), holder.id), "large");
 }
 
-test("FR-ARCH-5·status rules：破势/孤注/猎印/封印/闪电与 identity authority", frArch5StatusRules);
+test("Domain 规则·状态：破势/孤注/猎印/封印/闪电与 identity authority", frArch5StatusRules);
 
 /*
 功能
@@ -40663,7 +40670,7 @@ function frArch5ResponseRules() {
   assert.deepEqual(getStatusCounterResponderOrder(players, "p2"), []);
 }
 
-test("FR-ARCH-5·response rules：block/counter/order/eligibility 纯规则", frArch5ResponseRules);
+test("Domain 规则·响应：block/counter/order/eligibility 纯规则", frArch5ResponseRules);
 
 /*
 功能
@@ -40710,7 +40717,7 @@ function frArch5RuleStateViewAccessors() {
   }
 }
 
-test("FR-ARCH-5·RuleStateView：status/usage/momentum 受控 accessor", frArch5RuleStateViewAccessors);
+test("Domain 规则·状态视图：status/usage/momentum 受控 accessor", frArch5RuleStateViewAccessors);
 
 /*
 功能
@@ -40757,10 +40764,9 @@ async function frArch5DomainRulePurity() {
   assert.equal(hasStatus({ statusIds:["sealed"] }, "sealed"), true);
 }
 
-test("FR-ARCH-5·purity：domain/rules 无 runtime/AI/UI/EventBus/await/random/dual-schema/God Object", frArch5DomainRulePurity);
+test("Domain 规则·纯度：domain/rules 无 runtime/AI/UI/EventBus/await/random/dual-schema/God Object", frArch5DomainRulePurity);
 
-
-// ==================== FR-ARCH-6 Choice + Ports Boundary Tests ====================
+// ---- Choice、Ports 与隐藏信息 ----
 
 /*
 功能
@@ -40794,7 +40800,7 @@ function frArch6TurnUsageCanonical() {
   assert.throws(() => getAttackUsage(null), /canonical \{ used, limit \}/);
 }
 
-test("FR-ARCH-6·carry-in：Turn usage canonical shape 单一", frArch6TurnUsageCanonical);
+test("架构边界：Turn usage canonical shape 单一", frArch6TurnUsageCanonical);
 
 /*
 功能
@@ -40851,7 +40857,7 @@ function frArch6SeatRosterContract() {
   assert.deepEqual(getStatusCounterResponderOrder(roster, "h"), ["h", "a", "b"], "status counter order unchanged");
 }
 
-test("FR-ARCH-6·carry-in：seat-order 只接受 full canonical roster", frArch6SeatRosterContract);
+test("架构边界：seat-order 只接受 full canonical roster", frArch6SeatRosterContract);
 
 /*
 功能
@@ -40911,7 +40917,7 @@ async function frArch6ChoiceContract() {
   assert.deepEqual(await coordinator.request(request), createChoiceResult("selected", { selectedIds:["c1"] }));
 }
 
-test("FR-ARCH-6·choice contract：data-only request/result 与 canonical normalization", async () => frArch6ChoiceContract());
+test("Choice 契约：data-only request/result 与 canonical normalization", async () => frArch6ChoiceContract());
 
 /*
 功能
@@ -40991,7 +40997,7 @@ async function frArch6PeerChoiceAdapters() {
   assert.deepEqual(cancelledThinking.map(([value]) => value), [true, false]);
 }
 
-test("FR-ARCH-6·peer adapters：human/AI 同一 request 返回同一 result shape", frArch6PeerChoiceAdapters);
+test("Choice 适配器：human/AI 同一 request 返回同一 result shape", frArch6PeerChoiceAdapters);
 
 /*
 功能
@@ -41038,7 +41044,7 @@ function frArch6HiddenSelectionStore() {
   assert.equal(store.sessions.size, 0);
 }
 
-test("FR-ARCH-6·hidden information：application store 只保存 opaque token 与版本事实", frArch6HiddenSelectionStore);
+test("Choice 隐藏信息：application store 只保存 opaque token 与版本事实", frArch6HiddenSelectionStore);
 
 /*
 功能
@@ -41085,7 +41091,107 @@ async function frArch6ChoiceRouting() {
   assert.deepEqual(await game.choicePort.request(responseRequest("missing")), createChoiceResult("cancelled", { reason:"unknown-actor" }));
 }
 
-test("FR-ARCH-6·choice routing：participant metadata 路由 Human/AI peer", frArch6ChoiceRouting);
+test("Choice 路由：participant metadata 路由 Human/AI peer", frArch6ChoiceRouting);
+
+/*
+功能
+验证隐藏手牌与区域选择由 Application 构造 data-only request，并统一经 ChoicePort 路由 Human/AI peer。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+HiddenCardChoiceWorkflow、ChoicePort router 与 Human/AI adapter 私有重绑 context。
+
+写入状态
+仅替换测试局的 UI/AI 选择 capability 并创建短期 opaque selection。
+
+调用函数
+createHiddenCardChoiceRequest、chooseHiddenCards、choosePlayerZoneCard。
+
+边界与不变量
+Application 不按 controllerType 分支；请求不含隐藏牌定义或实体；返回后仍按当前实体位置复核并清理 context/token。
+*/
+async function hiddenChoiceRoutesThroughChoicePort() {
+  const contract = createHiddenCardChoiceRequest({
+    requestId:"hidden-contract",
+    actorId:"viewer",
+    ownerId:"owner",
+    gameId:"game",
+    stateVersion:3,
+    mode:"hand",
+    maximum:2,
+    exact:false,
+    prompt:"选择隐藏牌",
+    optionIds:["opaque-a", "opaque-b"]
+  });
+  assert.equal(contract.kind, "hiddenCard");
+  assert.deepEqual(contract.options.map((option) => option.optionId), ["opaque-a", "opaque-b"]);
+  assert.doesNotMatch(JSON.stringify(contract), /definitionId|charge|block/);
+
+  const human = makePlayer("hidden-human", 0, "dawn", "human");
+  const ai = makePlayer("hidden-ai", 1, "dawn", "ai");
+  const owner = makePlayer("hidden-owner", 2, "dusk", "ai");
+  const first = instance("charge"), second = instance("block"), equipment = instance("defenseDevice");
+  owner.hand.push(first, second);
+  owner.equipment = equipment;
+  const { game } = makeGame([human, ai, owner]);
+  let humanHandRequests = 0, humanZoneRequests = 0, aiHandRequests = 0, aiZoneRequests = 0;
+  game.ui.requestHiddenCards = async (selection) => {
+    humanHandRequests += 1;
+    return [selection.tokens[1].token];
+  };
+  game.ui.requestZoneCard = async (_game, _actor, target) => {
+    humanZoneRequests += 1;
+    const selection = game.hiddenCardSelection.createHiddenSelection(target);
+    return { zone:"equipment", equipmentCardId:target.equipment.id, selectionId:selection.selectionId };
+  };
+  game.aiController.chooseHiddenCards = (_actor, target) => {
+    aiHandRequests += 1;
+    return [target.hand[0]];
+  };
+  game.aiController.chooseZoneCard = (_actor, target) => {
+    aiZoneRequests += 1;
+    return { card:target.hand[0], zone:"hand" };
+  };
+
+  assert.deepEqual(
+    await game.hiddenCardChoiceWorkflow.chooseHiddenCards(human, owner, 1, "真人隐藏选择"),
+    [second]
+  );
+  assert.deepEqual(
+    await game.hiddenCardChoiceWorkflow.chooseHiddenCards(ai, owner, 1, "AI 隐藏选择"),
+    [first]
+  );
+  assert.deepEqual(
+    await game.hiddenCardChoiceWorkflow.choosePlayerZoneCard(human, owner, "真人区域选择"),
+    { card:equipment, zone:"equipment" }
+  );
+  assert.deepEqual(
+    await game.hiddenCardChoiceWorkflow.choosePlayerZoneCard(ai, owner, "AI 区域选择"),
+    { card:first, zone:"hand" }
+  );
+  assert.deepEqual(
+    { humanHandRequests, humanZoneRequests, aiHandRequests, aiZoneRequests },
+    { humanHandRequests:1, humanZoneRequests:1, aiHandRequests:1, aiZoneRequests:1 }
+  );
+  assert.equal(game.choiceContexts.size, 0);
+  assert.equal(game.hiddenCardSelection.sessions.size, 0);
+
+  const workflowSource = await readFile(projectFile("js/application/action/HiddenCardChoiceWorkflow.js"), "utf8");
+  const workflowCode = workflowSource.replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.doesNotMatch(workflowCode, /\bcontrollerType\b|runtime\.(?:requestHiddenCards|requestZoneCard|chooseAiHiddenCards|chooseAiZoneCard)/);
+  assert.match(workflowCode, /runtime\.choiceCoordinator\.request\(/);
+  game.dispose();
+}
+
+test("架构·Hidden Choice：Application 仅经 ChoicePort 路由 Human/AI", hiddenChoiceRoutesThroughChoicePort);
 
 /*
 功能
@@ -41120,7 +41226,7 @@ function frArch6RandomPort() {
   assert.throws(() => createRandomPort({}), /next/);
 }
 
-test("FR-ARCH-6·random port：minimal next() boundary", frArch6RandomPort);
+test("RandomPort：minimal next() boundary", frArch6RandomPort);
 
 /*
 功能
@@ -41169,10 +41275,476 @@ async function frArch6ApplicationPurity() {
   assert.equal(adapterFiles.every((file) => !file.includes("UiChoiceAdapter") || !file.includes("AiChoiceAdapter")), true);
 }
 
-test("FR-ARCH-6·purity：application choice/ports 无 concrete runtime 依赖", frArch6ApplicationPurity);
+test("Choice 与 Port 纯度：application choice/ports 无 concrete runtime 依赖", frArch6ApplicationPurity);
 
+// ---- Messaging 与 Events ----
 
-// ==================== FR-ARCH-7 Response Workflow Tests ====================
+/*
+功能
+验证 EventDispatcher 完整保留旧 EventBus 语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+dispatcher。
+
+写入状态
+dispatcher registry。
+
+调用函数
+EventDispatcher.on/emit/clear。
+
+边界与不变量
+same-key overwrite、order、shared mutable object、mutation visibility、unsubscribe、generation、clear during dispatch。
+*/
+async function frArch11DispatcherSemantics() {
+  const dispatcher = new EventDispatcher(() => true);
+  const trace = [];
+  dispatcher.on("hook", "b", async (event) => { trace.push(["b-before", event.value]); event.value += 1; });
+  dispatcher.on("hook", "a", async (event) => { trace.push(["a", event.value]); event.value += 1; });
+  const event = { value: 1 };
+  assert.equal(await dispatcher.emit("hook", event), event);
+  assert.deepEqual(trace, [["b-before", 1], ["a", 2]]);
+  assert.equal(event.value, 3, "前一 handler mutation 必须对后一 handler 可见");
+
+  dispatcher.on("hook", "b", async () => { trace.push(["b-replaced"]); });
+  await dispatcher.emit("hook", { value: 0 });
+  assert.deepEqual(trace.slice(2), [["b-replaced"], ["a", 0]]);
+
+  const once = [];
+  const off = dispatcher.on("hook", "once", () => { once.push(1); });
+  off();
+  await dispatcher.emit("hook", { value: 0 });
+  assert.equal(once.length, 0);
+
+  const deep = new EventDispatcher(() => true);
+  for (let index = 0; index < 25; index += 1) deep.on("nested", `k${index}`, () => { });
+  deep.on("nested", "boom", async () => { await deep.emit("nested", {}); });
+  await assert.rejects(deep.emit("nested", {}), /超过安全深度/);
+
+  const clearTrace = [];
+  const clearDispatcher = new EventDispatcher(() => true);
+  clearDispatcher.on("x", "one", async () => { clearTrace.push(1); clearDispatcher.clear(); });
+  clearDispatcher.on("x", "two", async () => { clearTrace.push(2); });
+  await clearDispatcher.emit("x", {});
+  assert.deepEqual(clearTrace, [1], "clear during dispatch 阻止后续 handler");
+}
+
+test("事件分发：order/shared mutable/generation/clear/overflow 全语义保留", frArch11DispatcherSemantics);
+
+/*
+功能
+验证 Domain Match facts 是 frozen data-only 且 gameStart 不含 Game。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fact builders。
+
+写入状态
+无。
+
+调用函数
+createGameStartFact、createGameOverFact。
+
+边界与不变量
+JSON 序列化无 Game/Player/function/Map/Set。
+*/
+function frArch11DomainMatchFacts() {
+  const start = createGameStartFact({ gameId:"g1", stateVersion:7, humanPlayerId:"p1", selectedCharacterId:"hero" });
+  assert.ok(Object.isFrozen(start));
+  assert.equal(JSON.stringify(start).includes("function"), false);
+  assert.equal(JSON.stringify(start).includes("Game"), false);
+  const parsed = JSON.parse(JSON.stringify(start));
+  assert.deepEqual(parsed, { type:"gameStart", gameId:"g1", stateVersion:7, humanPlayerId:"p1", selectedCharacterId:"hero" });
+  const over = createGameOverFact({ gameId:"g1", stateVersion:9, winnerTeam:"dawn" });
+  assert.ok(Object.isFrozen(over));
+  assert.equal(over.winnerTeam, "dawn");
+}
+
+test("Domain 事件事实：frozen/data-only，gameStart 无 Game entity", frArch11DomainMatchFacts);
+
+/*
+功能
+验证 MatchWorkflow 不再有 getLegacyGameRef 且 core/EventBus 只是 façade。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+EventDispatcher 是唯一 listener registry implementation，旧 EventBus 路径不存在。
+*/
+async function frArch11MatchAndEventBusClosure() {
+  const matchSource = await readFile(projectFile("js/application/match/MatchWorkflow.js"), "utf8");
+  assert.doesNotMatch(matchSource, /getLegacyGameRef/);
+  assert.match(matchSource, /publishFact/);
+  assert.doesNotMatch(matchSource, /game:\s*runtime\.getLegacyGameRef/);
+  const eventDispatcherSource = await readFile(projectFile("js/application/messaging/EventDispatcher.js"), "utf8");
+  assert.match(eventDispatcherSource, /listeners\s*=\s*new Map/);
+  assert.match(eventDispatcherSource, /maxDepth/);
+  await assert.rejects(access(projectFile("js/core/EventBus.js")), /ENOENT/);
+}
+
+test("架构·事件 ownership：MatchWorkflow 无 shell ref，EventDispatcher 唯一", frArch11MatchAndEventBusClosure);
+
+/*
+功能
+验证 FR-ARCH-10 carry-ins：AI transfer policy 与 passive predicate 归属。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码与 Domain predicates。
+
+写入状态
+无。
+
+调用函数
+readFile、canTriggerMomentumCategory、canTriggerRejuvenation、shouldConsumeMomentum。
+
+边界与不变量
+Application 无 controllerType AI 转移公式；predicate 由 Domain 拥有。
+*/
+async function frArch11CarryInOwnership() {
+  const cardIntent = await readFile(projectFile("js/application/action/CardIntentRuntime.js"), "utf8");
+  assert.doesNotMatch(cardIntent, /source\.controllerType === "ai"/);
+  assert.match(cardIntent, /isTransferExecutionAllowed/);
+  const trigger = await readFile(projectFile("js/application/trigger/PassiveSkillTriggerRegistry.js"), "utf8");
+  assert.match(trigger, /canTriggerMomentumCategory/);
+  const owner = { id:"a", alive:true, turnFlags:{ categoriesUsed:new Set() } };
+  assert.equal(canTriggerMomentumCategory(owner, { source:{ id:"a" }, card:{ category:"basic" } }), true);
+  assert.equal(shouldConsumeMomentum(owner, { source:{ id:"a" }, actualAmount:1, metadata:{ consumeMomentum:true } }), true);
+}
+
+test("Application ownership：AI policy/被动 predicates 不留在 Application runtime", frArch11CarryInOwnership);
+
+/*
+功能
+验证 GlobalTriggerRegistry 拥有 huntMark/seal/lightning 注册。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+composition 只调用 registry，业务事件 key 只存在于 trigger owner。
+*/
+async function frArch11GlobalTriggerOwnership() {
+  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  assert.match(compositionSource, /globalTriggerRegistry\.register\(\)/);
+  assert.doesNotMatch(compositionSource, /onEvent\("playerDead"/);
+  assert.doesNotMatch(compositionSource, /onEvent\("beforeStatusResolve"/);
+  const registry = await readFile(projectFile("js/application/trigger/GlobalTriggerRegistry.js"), "utf8");
+  assert.match(registry, /global:huntMarkSourceCleanup/);
+  assert.match(registry, /global:seal/);
+  assert.match(registry, /global:lightning/);
+}
+
+test("全局触发器：huntMark/seal/lightning registration 归 Application", frArch11GlobalTriggerOwnership);
+
+// ---- Card、Skill Domain 与 Runtime ----
+
+/*
+功能
+验证 Domain CardRules 纯目标/借势/转移公式。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake canonical facts。
+
+写入状态
+无。
+
+调用函数
+getCardTargetIds、getAssaultTargetIds、getLeverageFirstTargetIds、getTransferSourceIds、canActuallyUseAssaultRule、canPlayCardRule。
+
+边界与不变量
+Domain 不接受 entity；reason 与旧 ActionLegality 一致。
+*/
+function frArch10DomainCardRules() {
+  const players = [
+    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", attackRange:1, handCount:1, equipmentDefinitionId:null, hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] },
+    { id:"b", seatIndex:1, alive:true, battleTeam:"dusk", attackRange:1, handCount:1, equipmentDefinitionId:"defenseDevice", hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] },
+    { id:"c", seatIndex:2, alive:true, battleTeam:"dawn", attackRange:1, handCount:1, equipmentDefinitionId:null, hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] }
+  ];
+  const source = players[0];
+  assert.deepEqual(getCardTargetIds(players, source, { targetType:"singleEnemyInRange", effectRange:null }), ["b"]);
+  assert.deepEqual(getAssaultTargetIds(players, players[1]), ["a", "c"]);
+  assert.deepEqual(getLeverageFirstTargetIds(players, source), ["b"]);
+  assert.deepEqual(getTransferSourceIds(players, source, { effectRange:null, ignoresDistance:true, id:"x" }), ["a", "b", "c"]);
+  const transferOnly = { ...players[0], handCount:1, transferableHandCount:0 };
+  assert.equal(getTransferableHandCount(transferOnly), 0);
+  assert.equal(hasHandOrEquipmentFacts(transferOnly), false);
+  assert.deepEqual(
+    getTransferSourceIds(
+      [transferOnly, players[1], players[2]], transferOnly,
+      { effectRange:null, ignoresDistance:true, id:"transfer-card" }
+    ),
+    ["b", "c"]
+  );
+  assert.equal(canActuallyUseAssaultRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, usage:{ used:0, limit:1 } }).ok, true);
+  assert.equal(canPlayCardRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, assaultUsage:{ used:0, limit:1 } }).ok, true);
+}
+
+test("Domain 规则·卡牌：target/leverage/transfer/legality 纯公式", frArch10DomainCardRules);
+
+/*
+功能
+验证 Domain SkillRules 的 cost/base legality/target 纯决定。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake canonical facts。
+
+写入状态
+无。
+
+调用函数
+canUseSkillBase、getSkillTargetIds。
+
+边界与不变量
+reason 与旧 skillRegistry 一致。
+*/
+function frArch10DomainSkillRules() {
+  const players = [
+    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", attackRange:1, handCount:0, equipmentDefinitionId:null, hp:4, maxHp:4, energy:2, maxEnergy:3, huntMarkSourceId:null, statusIds:[] },
+    { id:"b", seatIndex:1, alive:true, battleTeam:"dawn", attackRange:1, handCount:0, equipmentDefinitionId:null, hp:2, maxHp:4, energy:0, maxEnergy:3, huntMarkSourceId:null, statusIds:[] }
+  ];
+  assert.deepEqual(getSkillTargetIds(players, "a", { id:"barrier", rangeRule:"ally" }), ["a", "b"]);
+  assert.equal(canUseSkillBase({ players, sourceId:"a", currentPlayerId:"a", phase:"play", skill:{ id:"barrier", cost:2, limitPerTurn:2 }, used:0, limitPerTurn:2, energy:2 }).ok, true);
+  assert.equal(canUseSkillBase({ players, sourceId:"a", currentPlayerId:"a", phase:"play", skill:{ id:"barrier", cost:2, limitPerTurn:2 }, used:0, limitPerTurn:2, energy:1 }).reason, "能量不足");
+}
+
+test("Domain 规则·技能：cost/base legality/target 纯决定", frArch10DomainSkillRules);
+
+/*
+功能
+验证 recycleDevice Domain predicate 与应用 trigger 已从 Game 迁出。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+fake predicate 与最终 composition source。
+
+写入状态
+无。
+
+调用函数
+canTriggerRecycleDevice、readFile。
+
+边界与不变量
+predicate 只读；composition 只负责注册 trigger，不拥有 semantic formula。
+*/
+async function frArch10RecycleDeviceTrigger() {
+  const facts = { ownerAlive:true, currentActorId:"a", ownerId:"a", equipmentDefinitionId:"recycleDevice", cardCategory:"tactic", cardUsageMode:"active", useCount:1 };
+  assert.equal(canTriggerRecycleDevice(facts), true);
+  assert.equal(canTriggerRecycleDevice({ ...facts, useCount:2 }), false);
+  assert.equal(canTriggerRecycleDevice({ ...facts, cardCategory:"basic" }), false);
+  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  assert.doesNotMatch(compositionSource, /global:recycleDevice[\s\S]*setRecycleDeviceUses/);
+  assert.match(compositionSource, /application\.recycleDeviceTrigger\.register\(\)/);
+  const triggerSource = await readFile(projectFile("js/application/trigger/RecycleDeviceTrigger.js"), "utf8");
+  assert.match(triggerSource, /canTriggerRecycleDevice/);
+}
+
+test("回收站触发：predicate 在 Domain，trigger 在 Application", frArch10RecycleDeviceTrigger);
+
+/*
+功能
+验证 ActionWorkflow 无 specific card ID branch 且不暴露 mutable runtime。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+ActionWorkflow/Game 源码与 fake Game。
+
+写入状态
+无。
+
+调用函数
+readFile、makeGame。
+
+边界与不变量
+resolutionOwners snapshot 修改不影响 owner。
+*/
+async function frArch10ActionGenericAndEncapsulated() {
+  const source = await readFile(projectFile("js/application/action/ActionWorkflow.js"), "utf8");
+  for (const token of ["transfer", "leverage", "scout", "plunder", "destroy", "mutualBenefit"]) {
+    assert.doesNotMatch(source, new RegExp(`\\\\b${token}\\\\b`), token);
+  }
+  assert.doesNotMatch(source, /state:\s*actionRuntime/);
+  const actor = makePlayer("fr10-action", 0, "dawn");
+  const { game } = makeGame([actor]);
+  const snapshot = game.actionWorkflow.getResolutionOwnersSnapshot();
+  snapshot.set({}, "x");
+  assert.equal(game.actionWorkflow.getResolutionOwnerCount(), 0);
+  assert.equal(game.resolutionOwners.size, 0);
+}
+
+test("ActionWorkflow：generic + encapsulated，resolutionOwners 无 mutable escape", frArch10ActionGenericAndEncapsulated);
+
+/*
+功能
+验证已删除的 registry 不再充当 façade，最终 runtime/legality owner 各自独立。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+源码断言低误报。
+*/
+async function frArch10RegistryClosure() {
+  await assert.rejects(access(projectFile("js/cards/cardRegistry.js")), /ENOENT/);
+  await assert.rejects(access(projectFile("js/characters/skillRegistry.js")), /ENOENT/);
+  const cardRuntime = await readFile(projectFile("js/application/action/CardEffectRuntime.js"), "utf8");
+  assert.match(cardRuntime, /async function resolve\(/);
+  const skillRuntime = await readFile(projectFile("js/application/action/SkillEffectRuntime.js"), "utf8");
+  assert.match(skillRuntime, /async function execute\(/);
+  const actionLegality = await readFile(projectFile("js/application/action/ActionLegality.js"), "utf8");
+  assert.doesNotMatch(actionLegality, /switch \(card\.targetType\)/);
+  assert.doesNotMatch(actionLegality, /skillId === "barrier"/);
+  assert.match(actionLegality, /getCardTargetIds/);
+  assert.match(actionLegality, /getSkillTargetIds/);
+}
+
+test("架构·卡牌运行时：registry façade 已删除，effect 与 legality owner 独立", frArch10RegistryClosure);
+
+/*
+功能
+验证 passive skill trigger runtime 已迁到 Application Trigger。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+生产源码与 application fixture。
+
+写入状态
+无。
+
+调用函数
+readFile、makeGame、registerPassiveSkills。
+
+边界与不变量
+registration once；composition 仅委托最终 trigger registry。
+*/
+async function frArch10PassiveTriggerOwnership() {
+  const triggerSource = await readFile(projectFile("js/application/trigger/PassiveSkillTriggerRegistry.js"), "utf8");
+  assert.match(triggerSource, /momentum\(/);
+  assert.match(triggerSource, /coordination\(/);
+  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
+  assert.match(compositionSource, /passiveTriggerRegistry\.registerForPlayers/);
+  await assert.rejects(access(projectFile("js/characters/skillRegistry.js")), /ENOENT/);
+  const owner = makePlayer("fr10-passive", 0, "dawn", "ai", 4);
+  const { game } = makeGame([owner]);
+  registerPassiveSkills(game);
+  assert.ok(game.passiveTriggerRegistry.hasSkill("momentum"));
+}
+
+test("被动触发器：Application Trigger 独占注册", frArch10PassiveTriggerOwnership);
+
+// ---- Response ownership ----
 
 /*
 功能
@@ -41208,7 +41780,7 @@ function frArch7ResponseResultContract() {
   assert.deepEqual(createResponseWorkflowResult(WORKFLOW_RESPONSE_STATUS.INVALID), { status:"invalid" });
 }
 
-test("FR-ARCH-7·result contract：ChoiceResult 与 ResponseWorkflowResult 分离", frArch7ResponseResultContract);
+test("Response 结果契约：ChoiceResult 与 ResponseWorkflowResult 分离", frArch7ResponseResultContract);
 
 /*
 功能
@@ -41307,7 +41879,7 @@ async function frArch7ApplicationWorkflow() {
   assert.equal(invalidResult.cards.length, 0);
 }
 
-test("FR-ARCH-7·application workflow：choice/payment/revalidation 由 Application 拥有", frArch7ApplicationWorkflow);
+test("Response ownership：choice/payment/revalidation 由 Application 拥有", frArch7ApplicationWorkflow);
 
 /*
 功能
@@ -41348,7 +41920,7 @@ async function frArch7ResponseOwnershipPurity() {
   await assert.rejects(access(projectFile("js/core/ResponseSystem.js")), /ENOENT/);
 }
 
-test("FR-ARCH-15·response closure：Application workflow 唯一且旧系统路径不存在", frArch7ResponseOwnershipPurity);
+test("架构·Response ownership：Application workflow 唯一且旧系统路径不存在", frArch7ResponseOwnershipPurity);
 
 /*
 功能
@@ -41392,9 +41964,9 @@ function frArch7ResponsePresentationDto() {
   ].sort());
 }
 
-test("FR-ARCH-7·presentation DTO：data-only 且 observable 等价", frArch7ResponsePresentationDto);
+test("Response 展示 DTO：data-only 且 observable 等价", frArch7ResponsePresentationDto);
 
-// ==================== FR-ARCH-8 Combat/Dying/Judgment/Status Workflow Tests ====================
+// ---- Combat、濒死、判定与状态 ----
 
 /*
 功能
@@ -41433,7 +42005,7 @@ function frArch8RescueOrderDomainRule() {
   assert.throws(() => getDyingRescueResponderOrder([view.players()[1], view.players()[2]], small.id), /canonical roster/);
 }
 
-test("FR-ARCH-8·rescue order rule：Domain 唯一拥有 self→顺时针存活队友公式", frArch8RescueOrderDomainRule);
+test("濒死救援顺序：Domain 唯一拥有 self→顺时针存活队友公式", frArch8RescueOrderDomainRule);
 
 /*
 功能
@@ -41468,7 +42040,7 @@ function frArch8JudgmentOutcomeRules() {
   assert.deepEqual(decideDelayedStatusJudgmentOutcome("basic", "equipment"), { triggered:false, category:"basic", destination:"discard" });
 }
 
-test("FR-ARCH-8·judgment outcome rule：destination 由 Domain 决定，Application 只执行", frArch8JudgmentOutcomeRules);
+test("判定结果规则：destination 由 Domain 决定，Application 只执行", frArch8JudgmentOutcomeRules);
 
 /*
 功能
@@ -41502,7 +42074,7 @@ function frArch8ParticipantPolicyExplicit() {
   assert.equal(shouldForceAiSelfRescue({ controllerType:"ai", id:"p1" }, { id:"p2" }), false);
 }
 
-test("FR-ARCH-8·participant policy：窗口与 AI 救援兼容策略显式归 Application", frArch8ParticipantPolicyExplicit);
+test("响应参与策略：窗口与 AI 救援兼容策略显式归 Application", frArch8ParticipantPolicyExplicit);
 
 /*
 功能
@@ -41575,7 +42147,7 @@ async function frArch8CombatWorkflowDamageTrace() {
   assert.deepEqual(feedback.slice(0, 2), [["shield", "t", 2], ["damage", "t", 1]]);
 }
 
-test("FR-ARCH-8·damage trace：judgment→block→before→commit→after 顺序冻结", frArch8CombatWorkflowDamageTrace);
+test("战斗结算轨迹：judgment→block→before→commit→after 顺序冻结", frArch8CombatWorkflowDamageTrace);
 
 /*
 功能
@@ -41641,7 +42213,7 @@ async function frArch8CombatWorkflowHealAndHpLossTrace() {
   assert.deepEqual(telemetry, [["heal", { sourceId:"s", actualAmount:2 }], ["loss", { targetId:"t", amount:2 }]]);
 }
 
-test("FR-ARCH-8·heal/hp-loss trace：独立 workflow、绕过盾/格挡/雷达", frArch8CombatWorkflowHealAndHpLossTrace);
+test("治疗与失去生命轨迹：独立 workflow、绕过盾/格挡/雷达", frArch8CombatWorkflowHealAndHpLossTrace);
 
 /*
 功能
@@ -41707,9 +42279,9 @@ function frArch8PortsMinimalSurface() {
   assert.throws(() => createDiagnosticsPort({ recordDamage() { } }), /recordHealing/);
 }
 
-test("FR-ARCH-8·ports：Presentation CREATE，Diagnostics CREATE，surface 最小", frArch8PortsMinimalSurface);
+test("Application Ports：Presentation CREATE，Diagnostics CREATE，surface 最小", frArch8PortsMinimalSurface);
 
-test("FR-ARCH-8·ports：公开牌池只跨边界传 ID 并由 adapter 重绑实体", () => {
+test("Application Ports：公开牌池只跨边界传 ID 并由 adapter 重绑实体", () => {
   const player = makePlayer("public-pool-port-player", 0, "dawn", "human"),
     cardA = instance("block"),
     cardB = instance("charge");
@@ -41779,7 +42351,7 @@ async function frArch8DyingCancelProjectionAuthority() {
   assert.equal(game.dyingWorkflow.currentDyingContext, null);
 }
 
-test("FR-ARCH-8·dying cancel：hp=1 且 currentDyingContext 仅 Application projection", frArch8DyingCancelProjectionAuthority);
+test("濒死取消：hp=1 且 currentDyingContext 仅 Application projection", frArch8DyingCancelProjectionAuthority);
 
 /*
 功能
@@ -41822,7 +42394,7 @@ async function frArch8DyingRescueUsesResponseWorkflow() {
   assert.deepEqual(trace, ["beforePlayerDying", "playerDying", "beforeHeal", "afterHeal", "dyingRescueUsed", "cardUsed", "playerRescued"]);
 }
 
-test("FR-ARCH-8·dying rescue trace：Response authority preserved，事件顺序等价", frArch8DyingRescueUsesResponseWorkflow);
+test("濒死救援轨迹：Response authority preserved，事件顺序等价", frArch8DyingRescueUsesResponseWorkflow);
 
 /*
 功能
@@ -41857,7 +42429,7 @@ function frArch8KillRewardRuleAuthority() {
   assert.equal(RULESET_DEFINITION.killRewardDrawCount, 1);
 }
 
-test("FR-ARCH-8·kill reward：资格归 Combat Rule，数量归 RulesetDefinition", frArch8KillRewardRuleAuthority);
+test("击杀奖励规则：资格归 Combat Rule，数量归 RulesetDefinition", frArch8KillRewardRuleAuthority);
 
 /*
 功能
@@ -41927,7 +42499,7 @@ async function frArch8JudgmentWorkflowDefenseTrace() {
   assert.ok(trace.indexOf("hide-judgment") < trace.indexOf("refresh"));
 }
 
-test("FR-ARCH-8·judgment trace：draw→show/log→reveal→destination→handVersion→restore", frArch8JudgmentWorkflowDefenseTrace);
+test("判定轨迹：draw→show/log→reveal→destination→handVersion→restore", frArch8JudgmentWorkflowDefenseTrace);
 
 /*
 功能
@@ -41984,7 +42556,7 @@ async function frArch8DelayedStatusJudgmentDestination() {
   assert.equal(state.phase, "status");
 }
 
-test("FR-ARCH-8·delayed judgment destination：公开后一律执行 Domain 决定的 discard", frArch8DelayedStatusJudgmentDestination);
+test("延迟判定去向：公开后一律执行 Domain 决定的 discard", frArch8DelayedStatusJudgmentDestination);
 
 /*
 功能
@@ -42061,7 +42633,7 @@ async function frArch8StatusResolutionWorkflowTrace() {
   assert.equal(damages[0][3].canBlock, false);
 }
 
-test("FR-ARCH-8·status resolution trace：seal commit 与 lightning hit 只经 Application workflow", frArch8StatusResolutionWorkflowTrace);
+test("延迟状态结算：seal commit 与 lightning hit 只经 Application workflow", frArch8StatusResolutionWorkflowTrace);
 
 /*
 功能
@@ -42104,7 +42676,7 @@ function frArch8HuntMarkDeathCleanupOwnership() {
   assert.equal(game.state.stateVersion, version + 1);
 }
 
-test("FR-ARCH-8·huntMark cleanup：Domain predicate 唯一，Application 只执行 remove/render", frArch8HuntMarkDeathCleanupOwnership);
+test("猎印清理：Domain predicate 唯一，Application 只执行 remove/render", frArch8HuntMarkDeathCleanupOwnership);
 
 /*
 功能
@@ -42152,7 +42724,7 @@ async function frArch8OwnershipAndDependencyPurity() {
   }
 }
 
-test("FR-ARCH-15·combat closure：Application workflow 唯一且旧系统路径不存在", frArch8OwnershipAndDependencyPurity);
+test("架构·Combat ownership：Application workflow 唯一且旧系统路径不存在", frArch8OwnershipAndDependencyPurity);
 
 /*
 功能
@@ -42189,10 +42761,9 @@ function frArch8ApplicationStateProjectionNoVersion() {
   assert.equal(game.state.stateVersion, version);
 }
 
-test("FR-ARCH-15·application state：judgment/dying projection 已封装且读取不 bump stateVersion", frArch8ApplicationStateProjectionNoVersion);
+test("Application 状态投影：judgment/dying projection 已封装且读取不 bump stateVersion", frArch8ApplicationStateProjectionNoVersion);
 
-
-// ==================== FR-ARCH-9 Match/Turn/Action Workflow Tests ====================
+// ---- Match、Turn 与 Action ----
 
 /*
 功能
@@ -42239,7 +42810,7 @@ async function frArch9MatchSetupBoundary() {
   assert.throws(() => game.startSelection(), /pre-live setup/);
 }
 
-test("FR-ARCH-9·setup boundary：pre-live one-shot，live 后拒绝重复 setup", frArch9MatchSetupBoundary);
+test("Match setup：pre-live one-shot，live 后拒绝重复 setup", frArch9MatchSetupBoundary);
 
 /*
 功能
@@ -42279,7 +42850,7 @@ async function frArch9MatchVictoryWorkflow() {
   assert.equal(game.state.phase, "gameOver");
 }
 
-test("FR-ARCH-9·victory workflow：winner formula 在 Domain TeamRules", frArch9MatchVictoryWorkflow);
+test("胜负判定：winner formula 在 Domain TeamRules", frArch9MatchVictoryWorkflow);
 
 /*
 功能
@@ -42337,7 +42908,7 @@ async function frArch9DiscardChoicePort() {
   assert.deepEqual(await ai.request(request), createChoiceResult("selected", { selectedIds:["c1", "c2"] }));
 }
 
-test("FR-ARCH-9·discard ChoicePort：data-only 请求，UI/AI adapter 只 rebind", frArch9DiscardChoicePort);
+test("ChoicePort·弃牌：data-only 请求，UI/AI adapter 只 rebind", frArch9DiscardChoicePort);
 
 /*
 功能
@@ -42383,7 +42954,7 @@ async function frArch9TargetChoicePort() {
   assert.deepEqual(await human.request(request), createChoiceResult("selected", { selectedIds:["e1"] }));
 }
 
-test("FR-ARCH-9·target ChoicePort：公开 target facts，Action 返回后 revalidate", frArch9TargetChoicePort);
+test("ChoicePort·目标：公开 target facts，Action 返回后 revalidate", frArch9TargetChoicePort);
 
 /*
 功能
@@ -42434,7 +43005,7 @@ async function frArch9ApplicationOwnershipPurity() {
   assert.doesNotMatch(gameSource, /recentAggressors/);
 }
 
-test("FR-ARCH-15·application purity：Match/Turn/Action 无 concrete adapter，composition 无 workflow body", frArch9ApplicationOwnershipPurity);
+test("Application 纯度：Match/Turn/Action 无 concrete adapter，composition 无 workflow body", frArch9ApplicationOwnershipPurity);
 
 /*
 功能
@@ -42469,7 +43040,7 @@ function frArch9DyingQueueSnapshotClosure() {
   assert.ok(Array.isArray(snapshot));
 }
 
-test("FR-ARCH-9·dying queue closure：只读 snapshot，不暴露可变 owner queue", frArch9DyingQueueSnapshotClosure);
+test("濒死队列：只读 snapshot，不暴露可变 owner queue", frArch9DyingQueueSnapshotClosure);
 
 /*
 功能
@@ -42509,7 +43080,7 @@ async function frArch9ConcreteAdaptersLeftGame() {
   assert.match(aiAdapter, /recentAggressors/);
 }
 
-test("FR-ARCH-9·concrete adapters：Presentation/Diagnostics/AI observation owner 在 adapters", frArch9ConcreteAdaptersLeftGame);
+test("Adapter ownership：Presentation/Diagnostics/AI observation owner 在 adapters", frArch9ConcreteAdaptersLeftGame);
 
 /*
 功能
@@ -42555,477 +43126,9 @@ async function frArch9ActionRuntimeStateOwnership() {
   assert.match(source, /resolutionOwners: new Map\(\)/);
 }
 
-test("FR-ARCH-9·action runtime state：locks/resolution owners 归 Application Action", frArch9ActionRuntimeStateOwnership);
+test("Action 运行状态：locks/resolution owners 归 Application Action", frArch9ActionRuntimeStateOwnership);
 
-// ==================== FR-ARCH-10 Card/Skill Domain + Runtime Tests ====================
-
-/*
-功能
-验证 Domain CardRules 纯目标/借势/转移公式。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake canonical facts。
-
-写入状态
-无。
-
-调用函数
-getCardTargetIds、getAssaultTargetIds、getLeverageFirstTargetIds、getTransferSourceIds、canActuallyUseAssaultRule、canPlayCardRule。
-
-边界与不变量
-Domain 不接受 entity；reason 与旧 ActionLegality 一致。
-*/
-function frArch10DomainCardRules() {
-  const players = [
-    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", attackRange:1, handCount:1, equipmentDefinitionId:null, hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] },
-    { id:"b", seatIndex:1, alive:true, battleTeam:"dusk", attackRange:1, handCount:1, equipmentDefinitionId:"defenseDevice", hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] },
-    { id:"c", seatIndex:2, alive:true, battleTeam:"dawn", attackRange:1, handCount:1, equipmentDefinitionId:null, hp:4, maxHp:4, energy:0, maxEnergy:3, statusIds:[] }
-  ];
-  const source = players[0];
-  assert.deepEqual(getCardTargetIds(players, source, { targetType:"singleEnemyInRange", effectRange:null }), ["b"]);
-  assert.deepEqual(getAssaultTargetIds(players, players[1]), ["a", "c"]);
-  assert.deepEqual(getLeverageFirstTargetIds(players, source), ["b"]);
-  assert.deepEqual(getTransferSourceIds(players, source, { effectRange:null, ignoresDistance:true, id:"x" }), ["a", "b", "c"]);
-  const transferOnly = { ...players[0], handCount:1, transferableHandCount:0 };
-  assert.equal(getTransferableHandCount(transferOnly), 0);
-  assert.equal(hasHandOrEquipmentFacts(transferOnly), false);
-  assert.deepEqual(
-    getTransferSourceIds(
-      [transferOnly, players[1], players[2]], transferOnly,
-      { effectRange:null, ignoresDistance:true, id:"transfer-card" }
-    ),
-    ["b", "c"]
-  );
-  assert.equal(canActuallyUseAssaultRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, usage:{ used:0, limit:1 } }).ok, true);
-  assert.equal(canPlayCardRule({ players, sourceId:"a", currentPlayerId:"a", phase:"play", card:{ definitionId:"assault", usageMode:"active", targetType:"singleEnemyInRange" }, inHand:true, assaultUsage:{ used:0, limit:1 } }).ok, true);
-}
-
-test("FR-ARCH-10·domain card rules：target/leverage/transfer/legality 纯公式", frArch10DomainCardRules);
-
-/*
-功能
-验证 Domain SkillRules 的 cost/base legality/target 纯决定。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake canonical facts。
-
-写入状态
-无。
-
-调用函数
-canUseSkillBase、getSkillTargetIds。
-
-边界与不变量
-reason 与旧 skillRegistry 一致。
-*/
-function frArch10DomainSkillRules() {
-  const players = [
-    { id:"a", seatIndex:0, alive:true, battleTeam:"dawn", attackRange:1, handCount:0, equipmentDefinitionId:null, hp:4, maxHp:4, energy:2, maxEnergy:3, huntMarkSourceId:null, statusIds:[] },
-    { id:"b", seatIndex:1, alive:true, battleTeam:"dawn", attackRange:1, handCount:0, equipmentDefinitionId:null, hp:2, maxHp:4, energy:0, maxEnergy:3, huntMarkSourceId:null, statusIds:[] }
-  ];
-  assert.deepEqual(getSkillTargetIds(players, "a", { id:"barrier", rangeRule:"ally" }), ["a", "b"]);
-  assert.equal(canUseSkillBase({ players, sourceId:"a", currentPlayerId:"a", phase:"play", skill:{ id:"barrier", cost:2, limitPerTurn:2 }, used:0, limitPerTurn:2, energy:2 }).ok, true);
-  assert.equal(canUseSkillBase({ players, sourceId:"a", currentPlayerId:"a", phase:"play", skill:{ id:"barrier", cost:2, limitPerTurn:2 }, used:0, limitPerTurn:2, energy:1 }).reason, "能量不足");
-}
-
-test("FR-ARCH-10·domain skill rules：cost/base legality/target 纯决定", frArch10DomainSkillRules);
-
-/*
-功能
-验证 recycleDevice Domain predicate 与应用 trigger 已从 Game 迁出。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fake predicate 与最终 composition source。
-
-写入状态
-无。
-
-调用函数
-canTriggerRecycleDevice、readFile。
-
-边界与不变量
-predicate 只读；composition 只负责注册 trigger，不拥有 semantic formula。
-*/
-async function frArch10RecycleDeviceTrigger() {
-  const facts = { ownerAlive:true, currentActorId:"a", ownerId:"a", equipmentDefinitionId:"recycleDevice", cardCategory:"tactic", cardUsageMode:"active", useCount:1 };
-  assert.equal(canTriggerRecycleDevice(facts), true);
-  assert.equal(canTriggerRecycleDevice({ ...facts, useCount:2 }), false);
-  assert.equal(canTriggerRecycleDevice({ ...facts, cardCategory:"basic" }), false);
-  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  assert.doesNotMatch(compositionSource, /global:recycleDevice[\s\S]*setRecycleDeviceUses/);
-  assert.match(compositionSource, /application\.recycleDeviceTrigger\.register\(\)/);
-  const triggerSource = await readFile(projectFile("js/application/trigger/RecycleDeviceTrigger.js"), "utf8");
-  assert.match(triggerSource, /canTriggerRecycleDevice/);
-}
-
-test("FR-ARCH-10·recycleDevice：predicate 在 Domain，trigger 在 Application", frArch10RecycleDeviceTrigger);
-
-/*
-功能
-验证 ActionWorkflow 无 specific card ID branch 且不暴露 mutable runtime。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-ActionWorkflow/Game 源码与 fake Game。
-
-写入状态
-无。
-
-调用函数
-readFile、makeGame。
-
-边界与不变量
-resolutionOwners snapshot 修改不影响 owner。
-*/
-async function frArch10ActionGenericAndEncapsulated() {
-  const source = await readFile(projectFile("js/application/action/ActionWorkflow.js"), "utf8");
-  for (const token of ["transfer", "leverage", "scout", "plunder", "destroy", "mutualBenefit"]) {
-    assert.doesNotMatch(source, new RegExp(`\\\\b${token}\\\\b`), token);
-  }
-  assert.doesNotMatch(source, /state:\s*actionRuntime/);
-  const actor = makePlayer("fr10-action", 0, "dawn");
-  const { game } = makeGame([actor]);
-  const snapshot = game.actionWorkflow.getResolutionOwnersSnapshot();
-  snapshot.set({}, "x");
-  assert.equal(game.actionWorkflow.getResolutionOwnerCount(), 0);
-  assert.equal(game.resolutionOwners.size, 0);
-}
-
-test("FR-ARCH-10·ActionWorkflow：generic + encapsulated，resolutionOwners 无 mutable escape", frArch10ActionGenericAndEncapsulated);
-
-/*
-功能
-验证已删除的 registry 不再充当 façade，最终 runtime/legality owner 各自独立。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-源码断言低误报。
-*/
-async function frArch10RegistryClosure() {
-  await assert.rejects(access(projectFile("js/cards/cardRegistry.js")), /ENOENT/);
-  await assert.rejects(access(projectFile("js/characters/skillRegistry.js")), /ENOENT/);
-  const cardRuntime = await readFile(projectFile("js/application/action/CardEffectRuntime.js"), "utf8");
-  assert.match(cardRuntime, /async function resolve\(/);
-  const skillRuntime = await readFile(projectFile("js/application/action/SkillEffectRuntime.js"), "utf8");
-  assert.match(skillRuntime, /async function execute\(/);
-  const actionLegality = await readFile(projectFile("js/application/action/ActionLegality.js"), "utf8");
-  assert.doesNotMatch(actionLegality, /switch \(card\.targetType\)/);
-  assert.doesNotMatch(actionLegality, /skillId === "barrier"/);
-  assert.match(actionLegality, /getCardTargetIds/);
-  assert.match(actionLegality, /getSkillTargetIds/);
-}
-
-test("FR-ARCH-15·runtime closure：registry façade 已删除，effect 与 legality owner 独立", frArch10RegistryClosure);
-
-/*
-功能
-验证 passive skill trigger runtime 已迁到 Application Trigger。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产源码与 application fixture。
-
-写入状态
-无。
-
-调用函数
-readFile、makeGame、registerPassiveSkills。
-
-边界与不变量
-registration once；composition 仅委托最终 trigger registry。
-*/
-async function frArch10PassiveTriggerOwnership() {
-  const triggerSource = await readFile(projectFile("js/application/trigger/PassiveSkillTriggerRegistry.js"), "utf8");
-  assert.match(triggerSource, /momentum\(/);
-  assert.match(triggerSource, /coordination\(/);
-  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  assert.match(compositionSource, /passiveTriggerRegistry\.registerForPlayers/);
-  await assert.rejects(access(projectFile("js/characters/skillRegistry.js")), /ENOENT/);
-  const owner = makePlayer("fr10-passive", 0, "dawn", "ai", 4);
-  const { game } = makeGame([owner]);
-  registerPassiveSkills(game);
-  assert.ok(game.passiveTriggerRegistry.hasSkill("momentum"));
-}
-
-test("FR-ARCH-15·passive triggers：Application Trigger 独占注册", frArch10PassiveTriggerOwnership);
-
-// ==================== FR-ARCH-11 Messaging / Event Boundary Tests ====================
-
-/*
-功能
-验证 EventDispatcher 完整保留旧 EventBus 语义。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-dispatcher。
-
-写入状态
-dispatcher registry。
-
-调用函数
-EventDispatcher.on/emit/clear。
-
-边界与不变量
-same-key overwrite、order、shared mutable object、mutation visibility、unsubscribe、generation、clear during dispatch。
-*/
-async function frArch11DispatcherSemantics() {
-  const dispatcher = new EventDispatcher(() => true);
-  const trace = [];
-  dispatcher.on("hook", "b", async (event) => { trace.push(["b-before", event.value]); event.value += 1; });
-  dispatcher.on("hook", "a", async (event) => { trace.push(["a", event.value]); event.value += 1; });
-  const event = { value: 1 };
-  assert.equal(await dispatcher.emit("hook", event), event);
-  assert.deepEqual(trace, [["b-before", 1], ["a", 2]]);
-  assert.equal(event.value, 3, "前一 handler mutation 必须对后一 handler 可见");
-
-  dispatcher.on("hook", "b", async () => { trace.push(["b-replaced"]); });
-  await dispatcher.emit("hook", { value: 0 });
-  assert.deepEqual(trace.slice(2), [["b-replaced"], ["a", 0]]);
-
-  const once = [];
-  const off = dispatcher.on("hook", "once", () => { once.push(1); });
-  off();
-  await dispatcher.emit("hook", { value: 0 });
-  assert.equal(once.length, 0);
-
-  const deep = new EventDispatcher(() => true);
-  for (let index = 0; index < 25; index += 1) deep.on("nested", `k${index}`, () => { });
-  deep.on("nested", "boom", async () => { await deep.emit("nested", {}); });
-  await assert.rejects(deep.emit("nested", {}), /超过安全深度/);
-
-  const clearTrace = [];
-  const clearDispatcher = new EventDispatcher(() => true);
-  clearDispatcher.on("x", "one", async () => { clearTrace.push(1); clearDispatcher.clear(); });
-  clearDispatcher.on("x", "two", async () => { clearTrace.push(2); });
-  await clearDispatcher.emit("x", {});
-  assert.deepEqual(clearTrace, [1], "clear during dispatch 阻止后续 handler");
-}
-
-test("FR-ARCH-11·dispatcher：order/shared mutable/generation/clear/overflow 全语义保留", frArch11DispatcherSemantics);
-
-/*
-功能
-验证 Domain Match facts 是 frozen data-only 且 gameStart 不含 Game。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-fact builders。
-
-写入状态
-无。
-
-调用函数
-createGameStartFact、createGameOverFact。
-
-边界与不变量
-JSON 序列化无 Game/Player/function/Map/Set。
-*/
-function frArch11DomainMatchFacts() {
-  const start = createGameStartFact({ gameId:"g1", stateVersion:7, humanPlayerId:"p1", selectedCharacterId:"hero" });
-  assert.ok(Object.isFrozen(start));
-  assert.equal(JSON.stringify(start).includes("function"), false);
-  assert.equal(JSON.stringify(start).includes("Game"), false);
-  const parsed = JSON.parse(JSON.stringify(start));
-  assert.deepEqual(parsed, { type:"gameStart", gameId:"g1", stateVersion:7, humanPlayerId:"p1", selectedCharacterId:"hero" });
-  const over = createGameOverFact({ gameId:"g1", stateVersion:9, winnerTeam:"dawn" });
-  assert.ok(Object.isFrozen(over));
-  assert.equal(over.winnerTeam, "dawn");
-}
-
-test("FR-ARCH-11·domain facts：frozen/data-only，gameStart 无 Game entity", frArch11DomainMatchFacts);
-
-/*
-功能
-验证 MatchWorkflow 不再有 getLegacyGameRef 且 core/EventBus 只是 façade。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-EventDispatcher 是唯一 listener registry implementation，旧 EventBus 路径不存在。
-*/
-async function frArch11MatchAndEventBusClosure() {
-  const matchSource = await readFile(projectFile("js/application/match/MatchWorkflow.js"), "utf8");
-  assert.doesNotMatch(matchSource, /getLegacyGameRef/);
-  assert.match(matchSource, /publishFact/);
-  assert.doesNotMatch(matchSource, /game:\s*runtime\.getLegacyGameRef/);
-  const eventDispatcherSource = await readFile(projectFile("js/application/messaging/EventDispatcher.js"), "utf8");
-  assert.match(eventDispatcherSource, /listeners\s*=\s*new Map/);
-  assert.match(eventDispatcherSource, /maxDepth/);
-  await assert.rejects(access(projectFile("js/core/EventBus.js")), /ENOENT/);
-}
-
-test("FR-ARCH-15·event closure：MatchWorkflow 无 shell ref，EventDispatcher 唯一", frArch11MatchAndEventBusClosure);
-
-/*
-功能
-验证 FR-ARCH-10 carry-ins：AI transfer policy 与 passive predicate 归属。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产源码与 Domain predicates。
-
-写入状态
-无。
-
-调用函数
-readFile、canTriggerMomentumCategory、canTriggerRejuvenation、shouldConsumeMomentum。
-
-边界与不变量
-Application 无 controllerType AI 转移公式；predicate 由 Domain 拥有。
-*/
-async function frArch11CarryInOwnership() {
-  const cardIntent = await readFile(projectFile("js/application/action/CardIntentRuntime.js"), "utf8");
-  assert.doesNotMatch(cardIntent, /source\.controllerType === "ai"/);
-  assert.match(cardIntent, /isTransferExecutionAllowed/);
-  const trigger = await readFile(projectFile("js/application/trigger/PassiveSkillTriggerRegistry.js"), "utf8");
-  assert.match(trigger, /canTriggerMomentumCategory/);
-  const owner = { id:"a", alive:true, turnFlags:{ categoriesUsed:new Set() } };
-  assert.equal(canTriggerMomentumCategory(owner, { source:{ id:"a" }, card:{ category:"basic" } }), true);
-  assert.equal(shouldConsumeMomentum(owner, { source:{ id:"a" }, actualAmount:1, metadata:{ consumeMomentum:true } }), true);
-}
-
-test("FR-ARCH-11·carry-ins：AI policy/被动 predicates 不留在 Application runtime", frArch11CarryInOwnership);
-
-/*
-功能
-验证 GlobalTriggerRegistry 拥有 huntMark/seal/lightning 注册。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-生产源码。
-
-写入状态
-无。
-
-调用函数
-readFile。
-
-边界与不变量
-composition 只调用 registry，业务事件 key 只存在于 trigger owner。
-*/
-async function frArch11GlobalTriggerOwnership() {
-  const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  assert.match(compositionSource, /globalTriggerRegistry\.register\(\)/);
-  assert.doesNotMatch(compositionSource, /onEvent\("playerDead"/);
-  assert.doesNotMatch(compositionSource, /onEvent\("beforeStatusResolve"/);
-  const registry = await readFile(projectFile("js/application/trigger/GlobalTriggerRegistry.js"), "utf8");
-  assert.match(registry, /global:huntMarkSourceCleanup/);
-  assert.match(registry, /global:seal/);
-  assert.match(registry, /global:lightning/);
-}
-
-test("FR-ARCH-11·global triggers：huntMark/seal/lightning registration 归 Application", frArch11GlobalTriggerOwnership);
-
-
-// ==================== FR-ARCH-12 AI ↔ Domain Convergence Tests ====================
+// ---- AI 与 Domain 一致性 ----
 
 /*
 功能
@@ -43069,7 +43172,7 @@ async function frArch12CardFixedFactOwnership() {
   assert.doesNotMatch(source, /export function get(?:AssaultBaseDamage|RecoverHealAmount|ChargeEnergyAmount|ShieldAmount|ShockwaveDamage|ProvokeDamage|HarvestDrawCount|DuelDamage|SymbiosisHealAmount)[\s\S]*?return\s+[12];/);
 }
 
-test("FR-ARCH-12·card fixed facts：Definition-owned 且 Rule 不复制 literal", frArch12CardFixedFactOwnership);
+test("定义归属·卡牌固定事实：Definition-owned 且 Rule 不复制 literal", frArch12CardFixedFactOwnership);
 
 /*
 功能
@@ -43144,7 +43247,7 @@ async function frArch15DomainClosureFinal() {
   );
 }
 
-test("FR-ARCH-15·domain closure：装备/技能 Definition-owned，transfer 边界 primitive-only", frArch15DomainClosureFinal);
+test("架构·Domain ownership：装备/技能 Definition-owned，transfer 边界 primitive-only", frArch15DomainClosureFinal);
 
 
 /*
@@ -43197,7 +43300,7 @@ async function frArch12SkillFixedFactOwnership() {
   assert.doesNotMatch(simSource, /energyAmount\s*-\s*1|energyAmount\s*\*\s*\.25/);
 }
 
-test("FR-ARCH-12·skill fixed facts：Definition-owned 且 allIn 公式 Rule-owned", frArch12SkillFixedFactOwnership);
+test("定义归属·技能固定事实：Definition-owned 且 allIn 公式 Rule-owned", frArch12SkillFixedFactOwnership);
 
 /*
 功能
@@ -43243,7 +43346,7 @@ async function frArch12TransferPolicySingleAuthority() {
   assert.doesNotMatch(adapterSource, /receiver\?\.battleTeam\s*!==\s*source\.battleTeam/);
 }
 
-test("FR-ARCH-12·transfer policy：ONE AI POLICY AUTHORITY 且 adapter 只 delegate", frArch12TransferPolicySingleAuthority);
+test("AI·转移策略：ONE AI POLICY AUTHORITY 且 adapter 只 delegate", frArch12TransferPolicySingleAuthority);
 
 /*
 功能
@@ -43282,7 +43385,7 @@ async function frArch12AiLegacyRuleImports() {
   }
 }
 
-test("FR-ARCH-12·legacy imports：AI search/simulation/domain → ActionLegality/DistanceSystem ZERO", frArch12AiLegacyRuleImports);
+test("AI·规则依赖：AI search/simulation/domain → ActionLegality/DistanceSystem ZERO", frArch12AiLegacyRuleImports);
 
 /*
 功能
@@ -43352,7 +43455,7 @@ async function frArch12DeterministicParityMatrix() {
   assert.equal(combatState.players[1].hp, 5);
 }
 
-test("FR-ARCH-12·parity：Distance/Turn/Card/Skill/Combat/Status 确定性世界与 Domain 一致", frArch12DeterministicParityMatrix);
+test("AI·Domain 一致性：Distance/Turn/Card/Skill/Combat/Status 确定性世界与 Domain 一致", frArch12DeterministicParityMatrix);
 
 /*
 功能
@@ -43390,10 +43493,9 @@ async function frArch12AiDomainModelOwnership() {
   assert.doesNotMatch(lightning, /players\[\(initialHolder\.seatIndex \+ offset\) % count\]/);
 }
 
-test("FR-ARCH-12·AI domain models：AI MODEL NOT DOMAIN RULE AUTHORITY", frArch12AiDomainModelOwnership);
+test("AI·Domain model 边界：AI MODEL NOT DOMAIN RULE AUTHORITY", frArch12AiDomainModelOwnership);
 
-
-// ==================== FR-ARCH-13 Main-Thread Boundary Tests ====================
+// ---- SearchRequest、Descriptor 与 RNG ----
 
 /*
 功能
@@ -43453,7 +43555,7 @@ async function frArch13CarryInRosterAndRootArtifacts() {
   assert.deepEqual(getDyingRescueResponderOrder(canonical, "b"), ["b", "c", "a"]);
 }
 
-test("FR-ARCH-13·carry-in：root artifacts 删除，canonical seat roster authoritative/fail-fast", frArch13CarryInRosterAndRootArtifacts);
+test("架构边界：root artifacts 删除，canonical seat roster authoritative/fail-fast", frArch13CarryInRosterAndRootArtifacts);
 
 /*
 功能
@@ -43512,7 +43614,7 @@ async function frArch13SearchRequestContract() {
   assert.equal(cloned.searchState.players.find((player) => player.id === enemy.id)?.hand, undefined);
 }
 
-test("FR-ARCH-13·SearchRequest：structured clone / data-only / no hidden leak", frArch13SearchRequestContract);
+test("AI·SearchRequest：structured clone / data-only / no hidden leak", frArch13SearchRequestContract);
 
 /*
 功能
@@ -43616,7 +43718,7 @@ async function frArch13StaleResultRejection() {
   assert.equal(moved.action.type, "end");
 }
 
-test("FR-ARCH-13·stale validation：session/stateVersion/actor/phase/rebind 全拒绝", frArch13StaleResultRejection);
+test("AI·陈旧结果拒绝：session/stateVersion/actor/phase/rebind 全拒绝", frArch13StaleResultRejection);
 
 /*
 功能
@@ -43660,7 +43762,7 @@ async function frArch13PlannedSequenceReuse() {
   assert.equal(game.aiController.resolvePlannedAction(actor, descriptor), null);
 }
 
-test("FR-ARCH-13·planned sequence：current-state rebind 与 version 变化共存", frArch13PlannedSequenceReuse);
+test("AI·计划序列：current-state rebind 与 version 变化共存", frArch13PlannedSequenceReuse);
 
 /*
 功能
@@ -43710,7 +43812,7 @@ async function frArch13RngIsolation() {
   assert.deepEqual(ActionDescriptor.describe(firstAction), ActionDescriptor.describe(secondAction));
 }
 
-test("FR-ARCH-13·RNG isolation：AI search RNG 与 real RNG 分离且 fixed-seed 可复现", frArch13RngIsolation);
+test("AI·RNG 隔离：AI search RNG 与 real RNG 分离且 fixed-seed 可复现", frArch13RngIsolation);
 
 /*
 功能
@@ -43771,10 +43873,9 @@ async function frArch13CancellationContract() {
   assert.equal(cancelled.action.card, undefined);
 }
 
-test("FR-ARCH-13·cancellation：cancelled result 不执行真实 action", frArch13CancellationContract);
+test("AI·搜索取消：cancelled result 不执行真实 action", frArch13CancellationContract);
 
-
-// ==================== FR-ARCH-14 Worker / Thinking-Time Tests ====================
+// ---- Worker 与传输 ----
 
 /*
 功能
@@ -43830,7 +43931,7 @@ async function frArch14SearchResultDescriptorIdempotence() {
   );
 }
 
-test("FR-ARCH-14·carry-in：SearchResult descriptor 只投影一次且 idempotent", frArch14SearchResultDescriptorIdempotence);
+test("AI·Worker 边界：SearchResult descriptor 只投影一次且 idempotent", frArch14SearchResultDescriptorIdempotence);
 
 /*
 功能
@@ -43874,7 +43975,7 @@ async function frArch14RngHandoff() {
   assert.equal(after.draws, before.draws + 3);
 }
 
-test("FR-ARCH-14·carry-in：AI RNG worker handoff restore/commit 连续", frArch14RngHandoff);
+test("AI·Worker 边界：AI RNG worker handoff restore/commit 连续", frArch14RngHandoff);
 
 /*
 功能
@@ -43924,7 +44025,7 @@ async function frArch14RootActionRehydration() {
   }
 }
 
-test("FR-ARCH-14·root rehydration：all root action families lossless", frArch14RootActionRehydration);
+test("AI·Root action 重建：all root action families lossless", frArch14RootActionRehydration);
 
 /*
 功能
@@ -43989,7 +44090,7 @@ async function frArch14RunSearchRequest() {
   assert.deepEqual(game.aiController.searchRng.snapshot(), outcome.rngAfter);
 }
 
-test("FR-ARCH-14·runSearchRequest：serializable Worker outcome + main acceptance", frArch14RunSearchRequest);
+test("AI·Worker 搜索请求：serializable Worker outcome + main acceptance", frArch14RunSearchRequest);
 
 /*
 功能
@@ -44051,7 +44152,7 @@ async function frArch14WorkerProtocol() {
   assert.deepEqual(workerOutcomeViolations(messages[1].outcome, request), []);
 }
 
-test("FR-ARCH-14·worker protocol：SEARCH -> RESULT，unknown -> ERROR", frArch14WorkerProtocol);
+test("AI·Worker 协议：SEARCH -> RESULT，unknown -> ERROR", frArch14WorkerProtocol);
 
 
 /*
@@ -44115,9 +44216,9 @@ async function frArch14MainThreadResponsiveness() {
   assert.equal(outcome.workerError, null);
 }
 
-test("FR-ARCH-14·responsiveness：Worker-safe search yield 保持 main-thread heartbeat", frArch14MainThreadResponsiveness);
+test("AI·Worker 响应性：Worker-safe search yield 保持 main-thread heartbeat", frArch14MainThreadResponsiveness);
 
-// ==================== FR-ARCH-14 Runtime Regression Closure ====================
+// ---- 异步、展示与运行时边界 ----
 
 /*
 功能
@@ -44211,7 +44312,7 @@ async function frArch14MutualBenefitRuntimeTrace() {
   game.dispose();
 }
 
-test("FR-ARCH-14·mutualBenefit：root → worker → rebind → execution → public pool 全链", frArch14MutualBenefitRuntimeTrace);
+test("AI·Worker 互利链路：root → worker → rebind → execution → public pool 全链", frArch14MutualBenefitRuntimeTrace);
 
 /*
 功能
@@ -44283,7 +44384,7 @@ async function frArch14DiscardInvariantMatrix() {
   }
 }
 
-test("FR-ARCH-14·discard：AI HP1/2/3 普通/快速与取消/不足选择后不超手牌上限", frArch14DiscardInvariantMatrix);
+test("AI·Worker 弃牌：AI HP1/2/3 普通/快速与取消/不足选择后不超手牌上限", frArch14DiscardInvariantMatrix);
 
 /*
 功能
@@ -44462,7 +44563,7 @@ async function frArch14WorkerClientTransport() {
   }
 }
 
-test("FR-ARCH-14·transport：Dedicated Worker 初始接线/结果/清理/恢复与 production 选择", frArch14WorkerClientTransport);
+test("AI·Worker 传输：Dedicated Worker 初始接线/结果/清理/恢复与 production 选择", frArch14WorkerClientTransport);
 
 /*
 功能
@@ -44553,7 +44654,7 @@ async function frArch14WorkerSearchParityTrace() {
   game.dispose();
 }
 
-test("FR-ARCH-14·search parity：同一 state/seed/config 下 raw vs rehydrated 全 trace 一致", frArch14WorkerSearchParityTrace);
+test("AI·Worker 搜索一致性：同一 state/seed/config 下 raw vs rehydrated 全 trace 一致", frArch14WorkerSearchParityTrace);
 
 /*
 功能
@@ -44627,7 +44728,7 @@ async function frArch14RngContinuityAcceptedSearches() {
   game.dispose();
 }
 
-test("FR-ARCH-14·RNG：连续 accepted 搜索续接、rejected 不提交、duplicate 不二次提交", frArch14RngContinuityAcceptedSearches);
+test("AI·Worker RNG：连续 accepted 搜索续接、rejected 不提交、duplicate 不二次提交", frArch14RngContinuityAcceptedSearches);
 
 /*
 功能
@@ -44742,7 +44843,7 @@ function frArch14SearchProfileRuntimeValues() {
   game.dispose();
 }
 
-test("FR-ARCH-14·search profile：普通 3000ms / 快速 500+900ms 且 simulationMode 不映射 local", frArch14SearchProfileRuntimeValues);
+test("AI·搜索配置：普通 3000ms / 快速 500+900ms 且 simulationMode 不映射 local", frArch14SearchProfileRuntimeValues);
 
 /*
 功能
@@ -44791,10 +44892,9 @@ async function frArch14AudioSurvivesZeroTiming() {
   });
 }
 
-test("FR-ARCH-14·audio：连续 gameplay 音效不被零 fake-thinking 节流吞掉", frArch14AudioSurvivesZeroTiming);
+test("音频与展示节奏：连续 gameplay 音效不被零 fake-thinking 节流吞掉", frArch14AudioSurvivesZeroTiming);
 
-
-// ---- 私人情报异步边界回归 ----
+// ---- Private Reveal 异步边界 ----
 
 /*
 功能
@@ -45098,7 +45198,6 @@ test("私人情报异步边界：真人窥探在收起情报前阻塞 resolver �
 test("私人情报异步边界：真人窥隙在收起情报前阻塞 EventDispatcher 后续 listener", privateRevealSpyGapBlocksDispatcher);
 test("私人情报异步边界：pending reveal 时 dispose 清理后旧 scout 不写 stale log/mutation", privateRevealDisposeInvalidatesPendingScout);
 test("私人情报异步边界：PrivateRevealView.hide settle pending show Promise 并清空 overlay", privateRevealViewHideSettlesPendingShow);
-
 
 // ==================== Test Runner 最终执行 ====================
 

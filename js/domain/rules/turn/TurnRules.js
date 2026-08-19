@@ -23,7 +23,7 @@ match application、Player 测试 boundary、RuleUsageTransitions 调用方与 t
 创建 actor-turn usage state 的决定值。
 
 调用方
-Game.takeTurn 与 tests。
+TurnWorkflow.takeTurn 与 tests。
 
 输入
 teamRules。
@@ -70,7 +70,7 @@ export function createTurnUsageState(teamRules = null) {
 创建 global-turn reactive 字段的决定值。
 
 调用方
-Game.takeTurn 与 tests。
+TurnWorkflow.takeTurn 与 tests。
 
 输入
 无。
@@ -109,7 +109,7 @@ export function createGlobalTurnReactiveState() {
 创建轮级 usage state 的决定值。
 
 调用方
-Game 轮末重置与 tests。
+TurnWorkflow 回合/轮次重置与 tests。
 
 输入
 无。
@@ -383,7 +383,7 @@ export function shouldSkipActionPhase(usage) {
 决定从当前索引开始的下一名存活玩家并判断是否经过起始座位。
 
 调用方
-Game.advanceTurn 与 tests。
+TurnWorkflow.advanceTurn 与 tests。
 
 输入
 players、currentIndex 与 startingIndex。

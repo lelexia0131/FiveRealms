@@ -24,7 +24,7 @@ import { bumpStateVersion } from "./StateVersion.js";
 重置玩家回合级使用状态。
 
 调用方
-Game.takeTurn 与测试 fixture。
+TurnWorkflow.takeTurn、MatchWorkflow 开局初始化与测试 fixture。
 
 输入
 state、Player 与 team rules。
@@ -84,7 +84,7 @@ export function resetGlobalTurnReactiveFlags(state, player, decidedReactiveState
 提交已决定的轮级标记对象。
 
 调用方
-Game.runGameLoop/advanceTurn 与测试 fixture。
+TurnWorkflow.runGameLoop/advanceTurn、MatchWorkflow 开局初始化与测试 fixture。
 
 输入
 state、Player 与已决定 roundFlags。
@@ -273,7 +273,7 @@ export function markCategoryUsed(state, player, category) {
 记录一次主动技能使用。
 
 调用方
-Game.useActiveSkill。
+ActionWorkflow.useActiveSkill。
 
 输入
 state、Player 与 skillId。
@@ -306,7 +306,7 @@ export function recordActiveSkillUse(state, player, skillId) {
 写入回收站触发次数。
 
 调用方
-Game recycleDevice rule。
+RecycleDeviceTrigger。
 
 输入
 state、Player 与新值。

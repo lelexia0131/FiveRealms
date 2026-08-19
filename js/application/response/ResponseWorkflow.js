@@ -152,7 +152,7 @@ export function createResponseWorkflow(dependencies) {
   规范化 USED/DECLINED/CANCELLED/INVALID 结果。
 
   读取状态
-  responder 当前手牌实体、Game 会话与响应请求注册表。
+  responder 当前手牌实体、Application session 与响应请求注册表。
 
   写入状态
   pendingResponses、UI thinking/prompt 与经支付 transition 的手牌。
@@ -222,7 +222,7 @@ export function createResponseWorkflow(dependencies) {
   请求格挡响应。
 
   调用方
-  Game.damage。
+  CombatWorkflow.damage。
 
   输入
   source、target 与 context。
@@ -231,7 +231,7 @@ export function createResponseWorkflow(dependencies) {
   规范化响应结果。
 
   读取状态
-  Game state、响应策略与 UI/AI boundary。
+  MatchState、响应策略与 UI/AI boundary。
 
   写入状态
   经支付 transition。
@@ -305,7 +305,7 @@ export function createResponseWorkflow(dependencies) {
   执行反制链响应编排。
 
   调用方
-  Game.playCard 与状态反制 workflow。
+  ActionWorkflow.playCard 与状态反制 workflow。
 
   输入
   source、card、targets 与 chainContext。
@@ -314,7 +314,7 @@ export function createResponseWorkflow(dependencies) {
   USED/DECLINED/CANCELLED。
 
   读取状态
-  Game state、响应策略与 UI/AI boundary。
+  MatchState、响应策略与 UI/AI boundary。
 
   写入状态
   经支付 transition。
@@ -405,7 +405,7 @@ export function createResponseWorkflow(dependencies) {
   编排延迟战术状态判定前的独立反制窗口。
 
   调用方
-  Game 延迟状态判定 workflow。
+  StatusResolutionWorkflow 延迟状态判定。
 
   输入
   holder 与 context。
@@ -414,7 +414,7 @@ export function createResponseWorkflow(dependencies) {
   USED/DECLINED/CANCELLED。
 
   读取状态
-  Game 会话、RuleStateView 座次与响应策略。
+  Application session、RuleStateView 座次与响应策略。
 
   写入状态
   经 requestCardResponse/payCardsFromHandAtomically 支付反制牌。
@@ -488,7 +488,7 @@ export function createResponseWorkflow(dependencies) {
   USED/DECLINED/CANCELLED。
 
   读取状态
-  Game state、响应策略与 UI/AI boundary。
+  MatchState、响应策略与 UI/AI boundary。
 
   写入状态
   经支付 transition。
@@ -559,7 +559,7 @@ export function createResponseWorkflow(dependencies) {
   请求强制打出一张突袭作为响应。
 
   调用方
-  Game 决斗/借势 response workflow。
+  ResponseWorkflow 决斗/借势窗口。
 
   输入
   responder、reason 与 context。
@@ -568,7 +568,7 @@ export function createResponseWorkflow(dependencies) {
   USED/DECLINED/CANCELLED/INVALID。
 
   读取状态
-  responder 存活、手牌实体、Game 会话与响应策略。
+  responder 存活、手牌实体、Application session 与响应策略。
 
   写入状态
   pendingResponses、UI 思考与经支付 transition 的手牌。
@@ -615,10 +615,10 @@ export function createResponseWorkflow(dependencies) {
 
   /*
   功能
-  执行借势强制突袭 response window；确认后返回同一实体，由 Game.playCard 走普通突袭流程。
+  执行借势强制突袭 response window；确认后返回同一实体，由 ActionWorkflow.playCard 走普通突袭流程。
 
   调用方
-  Game leverage workflow。
+  CardIntentRuntime leverage workflow。
 
   输入
   responder、target 与 context。
@@ -762,7 +762,7 @@ export function createResponseWorkflow(dependencies) {
   清空全部 active response request 与 pending responses。
 
   调用方
-  Game dispose/restart。
+  MatchWorkflow.dispose/restart。
 
   输入
   无。

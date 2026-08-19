@@ -1,6 +1,6 @@
 /*
 模块职责
-提供真实牌区实体出现位置的纯只读查询，并作为 Game zone query 的 forwarding target。
+提供真实牌区实体出现位置的纯只读查询，并作为 ResourceWorkflow zone query 的 forwarding target。
 
 上游
 match application 的 zone query boundary 与当前 transitions 前置校验。
@@ -23,7 +23,7 @@ match application 的 zone query boundary 与当前 transitions 前置校验。
 返回实体牌在所有规则区域中的实际出现位置。
 
 调用方
-Game.getCardZoneOccurrences 与 zone invariant tests。
+ResourceWorkflow.getCardZoneOccurrences 与 zone invariant tests。
 
 输入
 state 与 Card entity。
@@ -41,7 +41,7 @@ state.deck 四区、state.publicCardPool、每名玩家 hand/equipment。
 无。
 
 边界与不变量
-zone 枚举顺序和 label 格式与当前 Game 实现完全一致。
+zone 枚举顺序和 label 格式与当前 ResourceWorkflow public projection 完全一致。
 */
 export function getCardZoneOccurrences(state, card) {
   const occurrences = [];
@@ -90,7 +90,7 @@ export function getCardZoneOccurrences(state, card) {
 判断实体牌当前唯一处于弃牌堆。
 
 调用方
-Game.isCardCommittedToDiscard 与 zone invariant tests。
+ResourceWorkflow.isCardCommittedToDiscard 与 zone invariant tests。
 
 输入
 state 与 Card entity。
@@ -120,7 +120,7 @@ export function isCardCommittedToDiscard(state, card) {
 判断实体牌当前唯一处于指定玩家装备槽。
 
 调用方
-Game.isCardCommittedToEquipment 与 zone invariant tests。
+ResourceWorkflow.isCardCommittedToEquipment 与 zone invariant tests。
 
 输入
 state、Player 与 Card entity。

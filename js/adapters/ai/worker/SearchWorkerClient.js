@@ -3,7 +3,7 @@
 Main-thread Dedicated AI Worker client：负责 Worker 创建、SEARCH/CANCEL transport、hard watchdog 与 terminal promise；不执行任何 search/domain 逻辑。
 
 上游
-Game composition / createSearchExecutor。
+MatchApplication composition / createSearchExecutor。
 
 下游
 searchWorker.js。
@@ -199,7 +199,7 @@ export function createSearchWorkerClient(workerUrl) {
     取消指定 in-flight Worker search。
 
     调用方
-    AIController/Game lifecycle。
+    AIController/MatchApplication lifecycle。
 
     输入
     requestId。
@@ -231,7 +231,7 @@ export function createSearchWorkerClient(workerUrl) {
     终止 Worker 并取消 in-flight search。
 
     调用方
-    Game.dispose。
+    MatchApplication.dispose。
 
     输入
     无。

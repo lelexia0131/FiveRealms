@@ -3,7 +3,7 @@
 拥有状态对象的 root-aware 通用 set/remove/clear 原子写操作；不拥有任何具体状态生命周期或规则。
 
 上游
-CardRuntime、SkillRuntime、Game 状态 workflow 与直接测试。
+CardEffectRuntime、SkillEffectRuntime、StatusResolutionWorkflow 与直接测试。
 
 下游
 无。

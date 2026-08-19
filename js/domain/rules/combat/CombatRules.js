@@ -3,7 +3,7 @@
 唯一拥有伤害/护盾吸收/治疗上限与濒死谓词的纯战斗语义；不拥有 response、dying workflow 或 mutation。
 
 上游
-Game.damage/heal 与 tests。
+CombatWorkflow.damage/heal 与 tests。
 
 下游
 无。
@@ -23,7 +23,7 @@ Game.damage/heal 与 tests。
 计算护盾吸收量。
 
 调用方
-Game.damage。
+CombatWorkflow.damage。
 
 输入
 shield 与 amount。
@@ -52,7 +52,7 @@ export function calculateShieldAbsorption(shield, amount) {
 计算扣除护盾后的生命伤害。
 
 调用方
-Game.damage。
+CombatWorkflow.damage。
 
 输入
 amount 与 shieldAbsorbed。
@@ -81,7 +81,7 @@ export function calculateHpDamage(amount, shieldAbsorbed) {
 判断目标是否进入濒死。
 
 调用方
-Game.damage。
+CombatWorkflow.damage。
 
 输入
 hp 与 alive。
@@ -110,7 +110,7 @@ export function isDying(hp, alive) {
 计算一次伤害应用后的护盾吸收、生命伤害、剩余生命与濒死结论。
 
 调用方
-Game.damage 与 tests。
+CombatWorkflow.damage 与 tests。
 
 输入
 伤害量、当前护盾与当前生命。
@@ -175,7 +175,7 @@ export function isKillRewardEligible(targetFacts, sourceFacts) {
 计算治疗实际量。
 
 调用方
-Game.heal。
+CombatWorkflow.heal。
 
 输入
 请求量、最大生命与当前生命。

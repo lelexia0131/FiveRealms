@@ -1,6 +1,6 @@
 /*
 模块职责
-把 Application ChoiceRequest bridge 到既有 AIController 决策 API；只拥有 AI POLICY DECISION mechanism，不拥有 timing/presentation。
+把 Application ChoiceRequest bridge 到既有 AIController 响应与资源选择 API；只拥有 AI POLICY DECISION mechanism，不拥有 timing/presentation。
 
 上游
 composition boundary 的 AI ChoicePort wiring。
@@ -49,6 +49,8 @@ export function createAiChoiceAdapter({
   shouldRespond,
   choosePublicCard,
   chooseDiscards,
+  chooseHiddenCards,
+  chooseZoneCard,
   isSessionValid
 }) {
   if (typeof getChoiceContext !== "function" || typeof shouldRespond !== "function"
@@ -83,6 +85,40 @@ export function createAiChoiceAdapter({
     AI policy/search/planner 不变；不拥有 Application delay 或 presentation state。
     */
     async request(choiceRequest) {
+      if (choiceRequest?.kind === "hiddenCard") {
+        const choiceContext = getChoiceContext(choiceRequest.requestId);
+        if (!choiceContext?.actor || !choiceContext?.owner
+          || !isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
+        if (choiceRequest.constraints.mode === "zone") {
+          if (typeof chooseZoneCard !== "function") {
+            return createChoiceResult("cancelled", { reason:"hidden-zone-adapter-unavailable" });
+          }
+          const selection = chooseZoneCard(
+            choiceContext.actor,
+            choiceContext.owner,
+            choiceContext.aiContext,
+            choiceContext.excludedCardIds
+          );
+          return selection?.card?.id
+            ? createChoiceResult("selected", { selectedIds:[selection.card.id] })
+            : createChoiceResult("declined");
+        }
+        if (typeof chooseHiddenCards !== "function") {
+          return createChoiceResult("cancelled", { reason:"hidden-card-adapter-unavailable" });
+        }
+        const cards = chooseHiddenCards(
+          choiceContext.actor,
+          choiceContext.owner,
+          choiceRequest.constraints.requiredCount,
+          choiceContext.excludedCardIds,
+          choiceContext.aiContext
+        );
+        const selectedIds = [...new Set((cards ?? []).map((card) => card?.id).filter(Boolean))]
+          .slice(0, choiceRequest.constraints.requiredCount);
+        return selectedIds.length
+          ? createChoiceResult("selected", { selectedIds })
+          : createChoiceResult("declined");
+      }
       if (choiceRequest?.kind === "discard") {
         const choiceContext = getChoiceContext(choiceRequest.requestId);
         if (!choiceContext?.player || !Number.isFinite(choiceContext.count)) return createChoiceResult("cancelled");

@@ -148,7 +148,7 @@ export class ActionLegality {
   返回下一名合法闪电接收者。
 
   调用方
-  Game 状态 workflow 与 tests。
+  Application action workflow 与 tests。
 
   输入
   players 与 holder。
@@ -323,7 +323,7 @@ export class ActionLegality {
   { ok, reason }。
 
   读取状态
-  Game 玩家/阶段、手牌实体、突袭次数与合法目标。
+  MatchState 玩家/阶段、手牌实体、突袭次数与合法目标。
 
   写入状态
   无。
@@ -647,7 +647,7 @@ export class ActionLegality {
   判断主动卡牌在真实对局中是否合法可出。
 
   调用方
-  Game.playCard、AI 执行边界与 tests。
+  ActionWorkflow.playCard、AI 执行边界与 tests。
 
   输入
   game、source 与 card。
@@ -656,7 +656,7 @@ export class ActionLegality {
   { ok, reason }。
 
   读取状态
-  Game 阶段/当前行动者、手牌实体、资源与状态。
+  MatchState 阶段/当前行动者、手牌实体、资源与状态。
 
   写入状态
   无。

@@ -1,22 +1,91 @@
 /** 闪电采样约 3.2 秒；视觉在 3 秒自然收束，避免声音尾部结束后仍残留强光。 */
 export const LIGHTNING_HIT_DURATION_MS = 3000;
 
-/** 将 Game 提交的公开事件映射为短暂 CSS 反馈；本类从不修改任何游戏状态。 */
+/** 将 Presentation adapter 提交的公开事件映射为短暂 CSS 反馈；本类从不修改任何游戏状态。 */
 export class AnimationController {
+  /*
+  功能
+  创建公开 UI 反馈队列与闪电动画生命周期容器。
+
+  调用方
+  UIManager 构造函数。
+
+  输入
+  无。
+
+  输出
+  AnimationController 实例。
+
+  读取状态
+  无。
+
+  写入状态
+  初始化 pending、activeLightning 与序号。
+
+  调用函数
+  Map 构造器。
+
+  边界与不变量
+  动画状态只属于 DOM 展示，不得修改对局状态。
+  */
   constructor() {
     this.pending = [];
     this.activeLightning = new Map();
     this.lightningSerial = 0;
   }
 
+  /*
+  功能
+  把一项公开反馈登记到下次 render 后的刷新队列。
+
+  调用方
+  UIManager.queueFeedback。
+
+  输入
+  反馈类型、可选玩家 ID 与可选数值。
+
+  输出
+  无返回值。
+
+  读取状态
+  无。
+
+  写入状态
+  追加 pending 条目。
+
+  调用函数
+  Array.push。
+
+  边界与不变量
+  只保存公开 primitive，不保留玩家实体。
+  */
   queue(type, playerId = null, amount = null) { this.pending.push({ type, playerId, amount }); }
 
-  /**
-   * 电弧 overlay 按人物框的可视矩形挂到页面层并向外扩展，不参与布局也不接收指针
-   * 事件，因此人物框自身的 overflow 不会把分叉和火花裁成规则边框。重复命中会先
-   * 清理旧实例再建立新生命周期；render 替换人物框 DOM 后，flush 会按剩余时长
-   * 重新挂载，因此响应框或濒死流程中的重绘不会提前截断动画。
-   */
+  /*
+  功能
+  为指定玩家启动可跨 DOM 重绘续接的闪电命中动画。
+
+  调用方
+  UIManager.playLightningHit 与 flush 中的 lightning 反馈。
+
+  输入
+  公开玩家 ID 与可选文档根节点。
+
+  输出
+  无返回值。
+
+  读取状态
+  activeLightning、lightningSerial 与当前时间。
+
+  写入状态
+  替换该玩家的 activeLightning 条目并登记清理 timer。
+
+  调用函数
+  removeLightning、attachLightning、setTimeout。
+
+  边界与不变量
+  重复命中先清旧实例；overlay 不参与布局，render 替换人物框后按剩余时长重新挂载。
+  */
   startLightning(playerId, root = globalThis.document) {
     if (!playerId || !root) return;
     this.removeLightning(playerId);
@@ -33,11 +102,61 @@ export class AnimationController {
     this.attachLightning(playerId, entry, root);
   }
 
+  /*
+  功能
+  在给定 DOM 根中查找公开玩家 ID 对应的人物面板。
+
+  调用方
+  attachLightning。
+
+  输入
+  DOM 根节点与玩家 ID。
+
+  输出
+  匹配的人物面板元素或 null。
+
+  读取状态
+  globalThis.CSS.escape 能力。
+
+  写入状态
+  无。
+
+  调用函数
+  root.querySelector。
+
+  边界与不变量
+  玩家 ID 必须转义后才能拼入选择器。
+  */
   playerPanel(root, playerId) {
     const escape = globalThis.CSS?.escape ?? ((value) => String(value).replaceAll('"', '\\"'));
     return root.querySelector(`[data-player-id="${escape(playerId)}"]`);
   }
 
+  /*
+  功能
+  把仍有效的闪电生命周期挂载到当前人物面板 DOM。
+
+  调用方
+  startLightning 与 flush 的重挂载路径。
+
+  输入
+  玩家 ID、activeLightning 条目与文档根节点。
+
+  输出
+  无返回值。
+
+  读取状态
+  条目到期时间、当前 DOM 面板矩形与窗口滚动位置。
+
+  写入状态
+  overlay DOM、panel 样式以及条目的跟随清理函数。
+
+  调用函数
+  playerPanel、DOM/SVG 创建与事件监听 API。
+
+  边界与不变量
+  缺少面板时保持生命周期等待重挂载；旧 overlay 和 resize/scroll listener 必须先清理。
+  */
   attachLightning(playerId, entry, root) {
     const panel = this.playerPanel(root, playerId);
     if (!panel) return;
@@ -55,6 +174,31 @@ export class AnimationController {
     const rect = panel.getBoundingClientRect?.();
     if (rect && doc.body) {
       const overflow = 10;
+      /*
+      功能
+      让页面层闪电 overlay 跟随人物面板的当前可视矩形。
+
+      调用方
+      attachLightning 初次挂载及窗口 resize/scroll listener。
+
+      输入
+      无；闭包捕获 panel、overlay 与 overflow。
+
+      输出
+      无返回值。
+
+      读取状态
+      panel.getBoundingClientRect。
+
+      写入状态
+      overlay 的定位 CSS 变量。
+
+      调用函数
+      getBoundingClientRect、style.setProperty。
+
+      边界与不变量
+      只更新展示坐标，不改变页面布局或对局状态。
+      */
       const position = () => {
         const current = panel.getBoundingClientRect();
         overlay.style.setProperty("--lightning-left", `${current.left - overflow}px`);
@@ -123,6 +267,31 @@ export class AnimationController {
     entry.overlay = overlay;
   }
 
+  /*
+  功能
+  清除指定玩家当前或指定 token 的闪电动画。
+
+  调用方
+  startLightning、到期 timer、animationend、flush 与 clear。
+
+  输入
+  玩家 ID 与可选生命周期 token。
+
+  输出
+  无返回值。
+
+  读取状态
+  activeLightning 中对应条目。
+
+  写入状态
+  移除 timer、监听器、DOM、面板样式与 Map 条目。
+
+  调用函数
+  clearTimeout 与条目清理能力。
+
+  边界与不变量
+  token 不匹配时不得清除更新后的动画实例。
+  */
   removeLightning(playerId, token = null) {
     const entry = this.activeLightning.get(playerId);
     if (!entry || (token !== null && entry.token !== token)) return;
@@ -134,6 +303,31 @@ export class AnimationController {
     this.activeLightning.delete(playerId);
   }
 
+  /*
+  功能
+  在一次 UI render 后提交普通反馈并续接活跃闪电动画。
+
+  调用方
+  UIManager.render。
+
+  输入
+  当前文档根节点。
+
+  输出
+  无返回值。
+
+  读取状态
+  pending 队列、activeLightning 与当前 DOM。
+
+  写入状态
+  消费 pending，创建短暂反馈 DOM，并更新过期/断连的闪电条目。
+
+  调用函数
+  startLightning、attachLightning、removeLightning 与 DOM animation API。
+
+  边界与不变量
+  pending 每项只消费一次；DOM 重绘不得延长闪电原到期时间。
+  */
   flush(root = document) {
     for (const feedback of this.pending.splice(0)) {
       if (feedback.type === "lightning") {
@@ -161,6 +355,31 @@ export class AnimationController {
     }
   }
 
+  /*
+  功能
+  清空全部待提交反馈和活跃闪电生命周期。
+
+  调用方
+  UIManager.cancelPendingInteractions。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  pending 与 activeLightning。
+
+  写入状态
+  清空 pending 并移除所有闪电条目和 DOM。
+
+  调用函数
+  removeLightning。
+
+  边界与不变量
+  重开或销毁后不得遗留 timer、listener 或 overlay。
+  */
   clear() {
     this.pending.length = 0;
     for (const playerId of [...this.activeLightning.keys()]) this.removeLightning(playerId);

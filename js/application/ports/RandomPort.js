@@ -6,7 +6,7 @@
 match application composition root 与 random consumers。
 
 下游
-concrete random source（当前为 Game constructor 注入的函数）。
+concrete random source（当前为 MatchApplication constructor 注入的函数）。
 
 状态边界
 不保存或写入状态。
@@ -23,7 +23,7 @@ concrete random source（当前为 Game constructor 注入的函数）。
 创建并验证 minimal RandomPort。
 
 调用方
-Game 构造函数。
+MatchApplication constructor。
 
 输入
 注入的 next 能力。

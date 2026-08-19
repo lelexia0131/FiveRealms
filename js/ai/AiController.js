@@ -57,7 +57,7 @@ export class AIController {
   按明确顺序构造 AI 组件，并把窄能力一次性注入依赖方。
 
   调用方
-  Game 构造函数与直接构造测试。
+  MatchApplication composition root 与直接构造测试。
 
   输入
   显式 narrow dependencies（state/session/rule capability/search RNG/lifecycle/rebind）。
@@ -254,7 +254,7 @@ export class AIController {
   通过动作生成器返回当前真实局面中经规则校验与 AI 候选策略筛选的根动作。
 
   调用方
-  Game、selectAction、动作重绑与测试。
+  MatchApplication、selectAction、动作重绑与测试。
 
   输入
   当前行动 Player。
@@ -283,7 +283,7 @@ export class AIController {
   从当前真实状态构造搜索快照并请求 Planner 选择动作。
 
   调用方
-  Game AI 出牌循环与测试。
+  TurnWorkflow.takeAiPlayPhase 与测试。
 
   输入
   当前行动 Player 与可选搜索上下文。
@@ -528,7 +528,7 @@ export class AIController {
   从当前权威 state 构造 SearchRequest、执行 Planner，并只返回通过 stale/rebind/Domain-legality 验证的 action。
 
   调用方
-  Game/TurnWorkflow 与测试。
+  MatchApplication/TurnWorkflow 与测试。
 
   输入
   当前行动 Player 与可选上下文。
@@ -571,7 +571,7 @@ export class AIController {
   isSessionValid、SearchRng.commit。
 
   边界与不变量
-  同一 requestId 只 commit 一次；invalid session 不 commit，新 Game 不继承旧 session RNG。
+  同一 requestId 只 commit 一次；invalid session 不 commit，新对局不继承旧 session RNG。
   */
   commitWorkerRng(request, outcome) {
     if (!outcome?.rngAfter || this.committedRngRequestIds.has(request.requestId)) return false;
@@ -810,7 +810,7 @@ export class AIController {
   将搜索计划中的动作描述重新绑定到当前真实局面的 AI 候选动作。
 
   调用方
-  Game 复用计划序列时。
+  TurnWorkflow 复用计划序列时。
 
   输入
   当前行动 Player 与稳定动作描述。
@@ -858,7 +858,7 @@ export class AIController {
   返回 Planner 最近生成计划序列的隔离副本。
 
   调用方
-  Game 可选连续计划执行路径。
+  TurnWorkflow 可选连续计划执行路径。
 
   输入
   无。
@@ -888,7 +888,7 @@ export class AIController {
   选择需要弃置的实体牌。
 
   调用方
-  Game 与角色被动规则。
+  AiChoiceAdapter 与角色被动规则。
 
   输入
   付款 Player 与弃牌数量。
@@ -917,7 +917,7 @@ export class AIController {
   为转移牌选择来源、接收者和资源类别。
 
   调用方
-  Game 转移准备与 ActionGenerator 注入能力。
+  CardIntentRuntime 转移准备与 ActionGenerator 注入能力。
 
   输入
   转移行动者、卡牌、合法来源及可选接收者和排除集合。
@@ -946,7 +946,7 @@ export class AIController {
   从合法隐藏手牌位置中选择实体牌。
 
   调用方
-  Game 的隐藏选择边界。
+  AiChoiceAdapter hiddenCard 请求。
 
   输入
   观察者、持有者、数量及可选排除和用途上下文。
@@ -975,7 +975,7 @@ export class AIController {
   在目标手牌与装备区之间选择资源实体。
 
   调用方
-  Game 的区域选择边界。
+  AiChoiceAdapter hiddenCard zone 请求。
 
   输入
   行动者、资源持有者、用途上下文与排除集合。

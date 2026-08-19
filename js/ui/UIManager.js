@@ -17,14 +17,88 @@ import { createOpponentHandView } from "./handVisibility.js";
 import { toggleCardSelection } from "./selectionUtils.js";
 import { SoundManager } from "../audio/SoundManager.js";
 
+/*
+功能
+判断响应请求是否拥有足够合法卡牌 ID 可提交。
+
+调用方
+renderResponseRequest 与响应 UI 测试。
+
+输入
+data-only response request。
+
+输出
+requiredCount 为零或合法 ID 数量足够时返回 true。
+
+读取状态
+request.requiredCount、legalCardIds。
+
+写入状态
+无。
+
+调用函数
+Math.max、Number。
+
+边界与不变量
+非法 requiredCount 按零处理；不读取或解析 Card 实体。
+*/
 export function canSubmitResponse(request) {
   const requiredCount = Math.max(0, Number(request?.requiredCount) || 0);
   return requiredCount === 0 || (request?.legalCardIds?.length ?? 0) >= requiredCount;
 }
 
+/*
+功能
+取得主动技能按钮的安全展示名称。
+
+调用方
+UIManager.renderControls 与 UI 测试。
+
+输入
+可选技能定义。
+
+输出
+技能名或缺省“主动技能”。
+
+读取状态
+skill.name。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只读取定义展示字段，不调用技能运行时方法。
+*/
 export const skillButtonLabel = (skill) => skill?.name ?? "主动技能";
 
-/** 渲染响应事件；优先使用结构化片段，缺失或异常时回退整段转义文本。 */
+/*
+功能
+把结构化响应事件片段渲染为安全 HTML。
+
+调用方
+UIManager.renderResponseRequest。
+
+输入
+响应 presentation 与纯文本 fallback。
+
+输出
+转义后的响应事件标记。
+
+读取状态
+presentation.eventFragments 的公开文本、玩家 ID 与阵营。
+
+写入状态
+无。
+
+调用函数
+escapeHtml。
+
+边界与不变量
+任一片段结构异常时整段回退转义文本；阵营 class 只接受 dawn/dusk。
+*/
 function renderResponseEvent(presentation, eventText) {
   const fragments = presentation?.eventFragments;
   if (!Array.isArray(fragments) || !fragments.length) return escapeHtml(eventText);
@@ -59,6 +133,31 @@ const CANCELLED_ASYNC_RESULTS = Object.freeze({
 });
 
 export class UIManager {
+  /*
+  功能
+  绑定页面元素并创建所有浏览器展示/交互子视图。
+
+  调用方
+  main bootstrap。
+
+  输入
+  无；使用当前 document/window。
+
+  输出
+  UIManager 实例。
+
+  读取状态
+  页面 DOM、窗口宽度与已持久化声音偏好。
+
+  写入状态
+  初始化元素引用、交互状态、声音、动画和各 View，并绑定事件。
+
+  调用函数
+  SoundManager、AnimationController、InteractionController、各 View 构造器、bindEvents。
+
+  边界与不变量
+  UI 只提交 ID/token/intent，不直接修改权威游戏状态。
+  */
   constructor() {
     this.elements = Object.fromEntries([
       "start-screen", "selection-screen", "game-screen", "start-button", "candidate-grid", "team-preview",
@@ -93,27 +192,147 @@ export class UIManager {
     this.bindEvents();
   }
 
+  /*
+  功能
+  注册页面级用户意图回调。
+
+  调用方
+  main bootstrap。
+
+  输入
+  onStart/onRestart/onCard/onSkill 等回调集合。
+
+  输出
+  无返回值。
+
+  读取状态
+  无。
+
+  写入状态
+  替换 callbacks。
+
+  调用函数
+  无。
+
+  边界与不变量
+  UI 事件只经这些回调进入 Application composition。
+  */
   setCallbacks(callbacks) { this.callbacks = callbacks; }
 
-  /** 切换共享 UI 的当前对局所有权；普通 render 永远不能改变该绑定。 */
+  /*
+  功能
+  切换共享 UI 的当前对局所有权。
+
+  调用方
+  main 创建新对局、showGame。
+
+  输入
+  当前 MatchApplication 或 null。
+
+  输出
+  新的 game 绑定。
+
+  读取状态
+  旧 game 绑定。
+
+  写入状态
+  必要时取消旧交互并更新 this.game。
+
+  调用函数
+  cancelPendingInteractions。
+
+  边界与不变量
+  普通 render 不得改变绑定；更换实例前必须收束旧局 Promise。
+  */
   attachGame(game) {
     if (this.game && this.game !== game) this.cancelPendingInteractions();
     this.game = game ?? null;
     return this.game;
   }
 
+  /*
+  功能
+  判断给定对局是否仍拥有共享 UI。
+
+  调用方
+  createGameSession proxy 与 render。
+
+  输入
+  待校验 MatchApplication。
+
+  输出
+  实例相同、未销毁且 gameId 一致时返回 true。
+
+  读取状态
+  this.game 与双方 state 生命周期字段。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  仅对象相同不足以证明会话有效，必须同时校验 disposed 和 gameId。
+  */
   isGameAttached(game) {
     return Boolean(game && this.game === game && !game.state?.isDisposed &&
       game.state?.gameId && this.game.state.gameId === game.state.gameId);
   }
 
-  /**
-   * 为单局创建带所有权校验的 UI 门面。旧局恢复执行后，所有同步 UI 写入都会
-   * 被忽略，异步请求则立即得到可终止的取消结果。
-   */
+  /*
+  功能
+  为单局创建带所有权校验的 UI session 门面。
+
+  调用方
+  createGameApplication composition root。
+
+  输入
+  门面绑定的 MatchApplication。
+
+  输出
+  转发当前会话调用并拒绝旧会话写入的 Proxy。
+
+  读取状态
+  UIManager 当前 game 绑定与 CANCELLED_ASYNC_RESULTS。
+
+  写入状态
+  当前会话调用可写 UI；旧会话本身不写状态。
+
+  调用函数
+  isGameAttached、Reflect.get 与原 UIManager 方法。
+
+  边界与不变量
+  旧局异步请求必须得到确定取消结果；仅当前 owner 可执行 cancelPendingInteractions。
+  */
   createGameSession(game) {
     const manager = this;
     return new Proxy(manager, {
+      /*
+      功能
+      按会话所有权解析并包装 UIManager 属性访问。
+
+      调用方
+      createGameSession 返回的 Proxy 内部 [[Get]]。
+
+      输入
+      Proxy target 与属性键。
+
+      输出
+      原值、会话辅助能力或带 stale-session 拒绝的函数包装。
+
+      读取状态
+      manager.game、绑定 game 生命周期与取消结果表。
+
+      写入状态
+      仅有效包装函数可写 UI。
+
+      调用函数
+      Reflect.get、isGameAttached、Function.apply。
+
+      边界与不变量
+      stale session 不得调用同步 UI 写入；异步入口返回与既有契约同形的取消值。
+      */
       get(target, property) {
         if (property === "attachedGame") return game;
         if (property === "isSessionCurrent") return () => manager.isGameAttached(game);
@@ -136,28 +355,28 @@ export class UIManager {
 
   /*
   功能
-  执行 bindEvents 对应的 UIManager 职责。
+  绑定页面级输入事件并路由到 UI 状态或 Application callbacks。
 
   调用方
-  本模块内部流程及显式公开边界。
+  UIManager 构造函数。
 
   输入
-  函数签名声明的参数。
+  无；使用已绑定 DOM 元素。
 
   输出
-  函数实现声明的返回值。
+  无返回值。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  elements、audioButtons、musicVolumeInputs 与当前交互状态。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  注册 DOM/window/document listeners。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  UIManager 交互方法、InteractionController.bind 与 callbacks。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  事件处理只提交公开 ID/意图；不得直接执行游戏规则或权威 mutation。
   */
   bindEvents() {
     this.updateAudioButtons();
@@ -210,6 +429,31 @@ export class UIManager {
     document.addEventListener("keydown", (event) => { if (event.key === "Escape") this.hideSkillDetails(); });
   }
 
+  /*
+  功能
+  返回开始屏幕并清理上一局可见记录。
+
+  调用方
+  main bootstrap 的初始展示。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  页面屏幕元素与 SoundManager。
+
+  写入状态
+  停止 BGM、清空日志并切换屏幕可见性。
+
+  调用函数
+  SoundManager.stopMusic、clearLog。
+
+  边界与不变量
+  只清理 UI，不销毁或创建 MatchApplication。
+  */
   showStart() {
     this.sound.stopMusic();
     this.clearLog();
@@ -220,28 +464,28 @@ export class UIManager {
 
   /*
   功能
-  生成或展示 showSelection 对应的 UIManager 视图。
+  展示当前阵营的角色候选选择屏幕。
 
   调用方
-  本模块内部流程及显式公开边界。
+  MatchWorkflow.startSelection 经 session UI。
 
   输入
-  函数签名声明的参数。
+  公开角色候选数组与真人阵营 ID。
 
   输出
-  函数实现声明的返回值。
+  无返回值。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  候选 presentation 与页面屏幕元素。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  清理旧交互/日志/结算牌，切换 BGM 与候选 DOM。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  SoundManager.setMusicTeam、cancelPendingInteractions、candidateCardTemplate。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  只展示公开候选；切换屏幕前必须收束上一会话交互。
   */
   showSelection(candidates, battleTeam) {
     this.sound.setMusicTeam(battleTeam);
@@ -258,28 +502,28 @@ export class UIManager {
 
   /*
   功能
-  生成或展示 showGame 对应的 UIManager 视图。
+  绑定并展示已创建的对局主界面。
 
   调用方
-  本模块内部流程及显式公开边界。
+  MatchWorkflow.confirmCharacter 经 session UI。
 
   输入
-  函数签名声明的参数。
+  当前 MatchApplication。
 
   输出
-  函数实现声明的返回值。
+  无返回值。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  game.state 玩家角色与当前窗口宽度。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  更新 UI owner、主屏显隐、日志折叠与结算牌 DOM。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  attachGame、resetCurrentCard、clearLog、setLogCollapsed、render。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  仅全部角色已确认后执行首帧 render。
   */
   showGame(game) {
     this.attachGame(game);
@@ -293,6 +537,31 @@ export class UIManager {
     if (game.state.players.every((player) => player.character)) this.render(game);
   }
 
+  /*
+  功能
+  在视口跨入窄布局时自动折叠对局日志。
+
+  调用方
+  window resize listener。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  window.innerWidth、viewportWasNarrow 与 game-screen 可见性。
+
+  写入状态
+  更新 viewportWasNarrow，必要时折叠日志。
+
+  调用函数
+  setLogCollapsed。
+
+  边界与不变量
+  只在从宽变窄且主界面可见时自动折叠，不覆盖同宽区间内用户选择。
+  */
   handleViewportResize() {
     const isNarrow = window.innerWidth < 1280;
     if (isNarrow && !this.viewportWasNarrow && !this.elements.game_screen.classList.contains("is-hidden")) {
@@ -303,55 +572,55 @@ export class UIManager {
 
   /*
   功能
-  判断 candidateTemplate 对应的 UIManager 条件。
+  兼容 UI 调用生成单个角色候选模板。
 
   调用方
-  本模块内部流程及显式公开边界。
+  UI 渲染测试与历史页面入口。
 
   输入
-  函数签名声明的参数。
+  角色定义与候选序号。
 
   输出
-  函数实现声明的返回值。
+  候选卡 HTML。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  角色公开 presentation。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  candidateCardTemplate。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  不读取或修改对局状态。
   */
   candidateTemplate(character, index) { return candidateCardTemplate(character, index); }
 
   /*
   功能
-  生成或展示 render 对应的 UIManager 视图。
+  从当前公开对局状态重绘主战场界面。
 
   调用方
-  本模块内部流程及显式公开边界。
+  Application presentation 调用及 UI 交互状态变更。
 
   输入
-  函数签名声明的参数。
+  当前 UI owner MatchApplication；缺省为 this.game。
 
   输出
-  函数实现声明的返回值。
+  完成渲染返回 true；无效/未初始化会话返回 false。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  game.state 公开字段、ActionLegality 展示查询及 UI 临时选择状态。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  更新状态指标、玩家面板、手牌、控件与动画 DOM。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  isGameAttached、playerPanelTemplate、createOpponentHandView、renderHand、renderControls、AnimationController.flush。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  对手未知手牌只能经脱敏 ViewModel；render 不得改变 UI owner 或权威状态。
   */
   render(game = this.game) {
     if (!this.isGameAttached(game) || !game.state.players.length || !game.state.players[0].character) return false;
@@ -390,6 +659,31 @@ export class UIManager {
     return true;
   }
 
+  /*
+  功能
+  生成单个玩家面板的兼容展示模板。
+
+  调用方
+  UI 渲染测试与历史局部渲染入口。
+
+  输入
+  待展示玩家、真人玩家与是否真人席位。
+
+  输出
+  玩家面板 HTML。
+
+  读取状态
+  当前 game、targetState、thinkingPlayerId 与合法手牌知识。
+
+  写入状态
+  无。
+
+  调用函数
+  playerPanelTemplate、createOpponentHandView。
+
+  边界与不变量
+  非真人手牌必须先转换为脱敏槽位，不得直接渲染实体牌。
+  */
   playerTemplate(player, human, isHuman) {
     return playerPanelTemplate(player, {
       humanTeam: human.battleTeam, isHuman, isCurrent: this.game?.currentPlayer?.id === player.id,
@@ -400,34 +694,59 @@ export class UIManager {
     });
   }
 
+  /*
+  功能
+  判断是否存在会阻塞普通真人操作的 UI/Application 交互。
+
+  调用方
+  renderHand、renderControls 与 UI 交互测试。
+
+  输入
+  无。
+
+  输出
+  任一目标、弃牌、响应、隐藏选择或 Application 锁存在时返回 true。
+
+  读取状态
+  targetState、discardState、responseState、InteractionController.pending 与 game.interactionLocked。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只聚合既有锁状态，不创建新的业务锁。
+  */
   isInteractionActive() {
     return Boolean(this.targetState || this.discardState || this.responseState || this.interactionController?.pending || this.game?.interactionLocked);
   }
 
   /*
   功能
-  查询并返回 getDistanceState 对应的 UIManager 结果。
+  生成目标面板的公开距离/阵营/突袭可达提示。
 
   调用方
-  本模块内部流程及显式公开边界。
+  render。
 
   输入
-  函数签名声明的参数。
+  距离源玩家与目标玩家。
 
   输出
-  函数实现声明的返回值。
+  中文距离状态文本。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  target.alive、双方阵营、targetState.card 与当前 game。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  无。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  ActionLegality.getDistance。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  提示只描述规则查询结果，不自行决定目标合法性。
   */
   getDistanceState(source, target) {
     if (!target.alive) return "已阵亡";
@@ -440,28 +759,28 @@ export class UIManager {
 
   /*
   功能
-  生成或展示 renderHand 对应的 UIManager 视图。
+  渲染真人手牌并按当前交互状态标记可用和选中状态。
 
   调用方
-  本模块内部流程及显式公开边界。
+  render。
 
   输入
-  函数签名声明的参数。
+  当前 MatchApplication 与真人 Player。
 
   输出
-  函数实现声明的返回值。
+  无返回值。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  human.hand、discardState、交互锁与 ActionLegality.canPlayCard。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  更新真人手牌和提示 DOM。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  isInteractionActive、ActionLegality.canPlayCard、handCardTemplate。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  牌的可用性必须来自合法性查询；UI 禁用不得修改手牌或行动次数。
   */
   renderHand(game, human) {
     const inDiscard = Boolean(this.discardState);
@@ -517,6 +836,31 @@ export class UIManager {
     }
   }
 
+  /*
+  功能
+  处理真人手牌点击并路由为弃牌选择或出牌意图。
+
+  调用方
+  bindEvents 注册的 human_hand click listener。
+
+  输入
+  DOM 点击事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  卡牌 data attribute、discardState 与按钮 disabled 标记。
+
+  写入状态
+  弃牌模式切换 selectedIds；普通模式只调用 onCard callback。
+
+  调用函数
+  toggleCardSelection、render、callbacks.onCard。
+
+  边界与不变量
+  普通模式不得提交禁用卡牌；只向 Application 提交公开 cardId。
+  */
   handleHandClick(event) {
     const button = event.target.closest("[data-card-id]");
     if (!button || (button.dataset.disabled === "true" && !this.discardState)) return;
@@ -530,6 +874,31 @@ export class UIManager {
     this.callbacks.onCard?.(cardId);
   }
 
+  /*
+  功能
+  处理玩家面板点击并路由为技能详情或目标选择。
+
+  调用方
+  bindEvents 注册的玩家区域 click/keydown listener。
+
+  输入
+  DOM 事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  game.state.players、targetState 合法 ID 与选择元数据。
+
+  写入状态
+  更新 targetState.selected 或结算目标 Promise；也可展示技能详情。
+
+  调用函数
+  showSkillDetails、renderTargetConfirmation、render、playSound。
+
+  边界与不变量
+  目标必须来自本次 players 且 ID 在 legalIds；不在 UI 重算游戏规则。
+  */
   handlePlayerClick(event) {
     // 目标选择期间，角色区域点击优先用于选择目标。
     const skillTrigger = event.target.closest("[data-skill-player-id]");
@@ -560,28 +929,28 @@ export class UIManager {
 
   /*
   功能
-  生成或展示 showSkillDetails 对应的 UIManager 视图。
+  展示指定角色的公开技能详情并管理焦点。
 
   调用方
-  本模块内部流程及显式公开边界。
+  handlePlayerClick 与 UI 测试。
 
   输入
-  函数签名声明的参数。
+  已选将玩家与可选触发元素。
 
   输出
-  函数实现声明的返回值。
+  成功展示返回 true；无角色返回 false。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  player.character 的公开定义。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  skillDetailsTrigger、overlay DOM、显隐与焦点。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  skillDetailsTemplate、DOM focus。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  只展示定义信息；关闭后应把焦点还给仍连接的触发元素。
   */
   showSkillDetails(player, trigger = null) {
     if (!player?.character) return false;
@@ -592,6 +961,31 @@ export class UIManager {
     return true;
   }
 
+  /*
+  功能
+  关闭技能详情并恢复触发元素焦点。
+
+  调用方
+  overlay 点击、Escape 键与 cancelPendingInteractions。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  skillDetailsTrigger 与 overlay。
+
+  写入状态
+  清空 overlay 和 trigger 引用。
+
+  调用函数
+  trigger.focus。
+
+  边界与不变量
+  触发元素已断开时不得尝试恢复焦点。
+  */
   hideSkillDetails() {
     this.elements.skill_details_overlay.classList.add("is-hidden");
     this.elements.skill_details_overlay.innerHTML = "";
@@ -600,6 +994,31 @@ export class UIManager {
     if (trigger?.focus && trigger.isConnected !== false) trigger.focus();
   }
 
+  /*
+  功能
+  请求真人从已给定合法玩家集合中选择目标。
+
+  调用方
+  UiChoiceAdapter 与 InteractionController 多阶段流程。
+
+  输入
+  合法玩家实体数组、提示与仅用于展示/确认的元数据。
+
+  输出
+  解析为所选玩家实体或取消时 null 的 Promise。
+
+  读取状态
+  当前 UI owner 与玩家公开字段。
+
+  写入状态
+  建立 targetState、提示和目标高亮 DOM。
+
+  调用函数
+  cancelTarget、setPrompt、renderTargetConfirmation、render。
+
+  边界与不变量
+  空候选立即返回 null；UI 只能从传入 players 中按 ID 选择。
+  */
   requestTarget(players, prompt, meta = {}) {
     if (!players.length) return Promise.resolve(null);
     this.cancelTarget();
@@ -611,6 +1030,31 @@ export class UIManager {
     });
   }
 
+  /*
+  功能
+  渲染需要二次确认的目标选择摘要。
+
+  调用方
+  requestTarget 与 handlePlayerClick。
+
+  输入
+  无；读取当前 targetState。
+
+  输出
+  无返回值。
+
+  读取状态
+  targetState 的 prompt、selected 与展示元数据。
+
+  写入状态
+  response_panel HTML 与可见类。
+
+  调用函数
+  escapeHtml。
+
+  边界与不变量
+  未开启 confirmSelection 时不渲染；所有动态文本必须转义。
+  */
   renderTargetConfirmation() {
     if (!this.targetState?.meta?.confirmSelection) return;
     const selectedName = this.targetState.selected?.name ?? "尚未选择";
@@ -618,6 +1062,31 @@ export class UIManager {
     this.elements.response_panel.classList.remove("is-hidden");
   }
 
+  /*
+  功能
+  确认二次选择的目标并结束请求。
+
+  调用方
+  response_panel 的 target confirm 点击。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  targetState.confirmSelection、selected 与 resolve。
+
+  写入状态
+  清空 targetState 和确认 DOM，结算请求并重绘。
+
+  调用函数
+  targetState.resolve、render。
+
+  边界与不变量
+  未选择合法目标时不得结算；状态先清空再调用 resolve 防止重入。
+  */
   confirmTarget() {
     if (!this.targetState?.meta?.confirmSelection || !this.targetState.selected) return;
     const { resolve, selected } = this.targetState;
@@ -628,6 +1097,31 @@ export class UIManager {
     if (this.game) this.render(this.game);
   }
 
+  /*
+  功能
+  取消当前目标选择并以 null 结束请求。
+
+  调用方
+  新 requestTarget、取消按钮与 cancelPendingInteractions。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  targetState.resolve。
+
+  写入状态
+  清空 targetState 和确认 DOM并重绘。
+
+  调用函数
+  targetState.resolve、render。
+
+  边界与不变量
+  无请求时为 no-op；每个目标 Promise 只结算一次。
+  */
   cancelTarget() {
     if (!this.targetState) return;
     const resolve = this.targetState.resolve;
@@ -638,6 +1132,31 @@ export class UIManager {
     if (this.game) this.render(this.game);
   }
 
+  /*
+  功能
+  请求真人从自己手牌中精确选择指定数量的弃牌。
+
+  调用方
+  UiChoiceAdapter discard 请求。
+
+  输入
+  玩家实体、弃牌数量与公开提示。
+
+  输出
+  解析为所选 Card 实体数组的 Promise。
+
+  读取状态
+  player.hand。
+
+  写入状态
+  建立 discardState 并更新提示/手牌 DOM。
+
+  调用函数
+  setPrompt、render。
+
+  边界与不变量
+  只登记选择，不移动卡牌；实体重验和实际弃牌由 Application/Domain 完成。
+  */
   requestDiscard(player, count, prompt) {
     return new Promise((resolve) => {
       this.discardState = { player, count, selectedIds: new Set(), resolve };
@@ -646,6 +1165,31 @@ export class UIManager {
     });
   }
 
+  /*
+  功能
+  确认数量正确的弃牌选择并结束请求。
+
+  调用方
+  bindEvents 注册的弃牌确认按钮。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  discardState 与 player 当前 hand。
+
+  写入状态
+  清空 discardState、结算 Promise 并重绘。
+
+  调用函数
+  Array.filter、discardState.resolve、render。
+
+  边界与不变量
+  数量不符时不得结算；返回实体必须仍在当前手牌中。
+  */
   confirmDiscard() {
     if (!this.discardState || this.discardState.selectedIds.size !== this.discardState.count) return;
     const state = this.discardState;
@@ -655,12 +1199,62 @@ export class UIManager {
     this.render(this.game);
   }
 
+  /*
+  功能
+  展示真人响应窗口并等待使用、放弃、取消或可选超时。
+
+  调用方
+  UiChoiceAdapter response 请求。
+
+  输入
+  data-only response request 与按钮标签。
+
+  输出
+  解析为 response choice result 的 Promise。
+
+  读取状态
+  request presentation/timeout 与当前 responseState。
+
+  写入状态
+  替换 responseState、倒计时 timer 和响应面板 DOM。
+
+  调用函数
+  resolveResponse、renderResponseRequest、CleanupManager.delay、render。
+
+  边界与不变量
+  当前单机 null timeout 无限等待；新请求先取消旧请求，请求 ID 防止旧闭包结算新窗口。
+  */
   requestResponse(request, label) {
     if (this.responseState) this.resolveResponse({ status:"cancelled" });
     return new Promise((resolve) => {
       // null 是当前单机模式的无限等待；正有限值保留未来限时模式的原倒计时与 fallback。
       const timeoutEnabled = Number.isFinite(request.timeoutMs) && request.timeoutMs > 0;
       const deadline = timeoutEnabled ? Date.now() + request.timeoutMs : null;
+      /*
+      功能
+      以一次响应选择收束当前同 ID 的 UI 窗口。
+
+      调用方
+      resolveResponse 与 requestResponse 超时路径。
+
+      输入
+      布尔决定或结构化 response result。
+
+      输出
+      无返回值。
+
+      读取状态
+      responseState.request.id、interval 与当前 game。
+
+      写入状态
+      清理 timer、responseState 和响应面板并结算外层 Promise。
+
+      调用函数
+      window.clearInterval、resolve、render。
+
+      边界与不变量
+      只结算创建本闭包的 request.id；布尔兼容值转换为既有 status 形状。
+      */
       const settle = (choice) => {
         if (!this.responseState || this.responseState.request.id !== request.id) return;
         if (this.responseState.interval !== null) window.clearInterval(this.responseState.interval);
@@ -670,6 +1264,31 @@ export class UIManager {
         resolve(typeof choice === "object" ? choice : { status:choice ? "used" : "declined" });
         if (this.game) this.render(this.game);
       };
+      /*
+      功能
+      刷新有限响应窗口的倒计时文本。
+
+      调用方
+      requestResponse 初次展示与 200ms interval。
+
+      输入
+      无；闭包捕获 deadline。
+
+      输出
+      无返回值。
+
+      读取状态
+      当前时间与 response_panel countdown 元素。
+
+      写入状态
+      countdown 文本。
+
+      调用函数
+      Date.now、Math.ceil。
+
+      边界与不变量
+      显示值不得小于零；无限等待模式不创建该 interval。
+      */
       const update = () => {
         const node = this.elements.response_panel.querySelector(".countdown");
         if (node) node.textContent = `${Math.max(0, Math.ceil((deadline - Date.now()) / 1000))}s`;
@@ -688,6 +1307,31 @@ export class UIManager {
     });
   }
 
+  /*
+  功能
+  从当前 responseState 渲染公开响应说明和可用按钮。
+
+  调用方
+  requestResponse 与 toggleResponseCard。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  responseState.request、presentation、label 与 deadline。
+
+  写入状态
+  response_panel HTML。
+
+  调用函数
+  canSubmitResponse、renderResponseEvent、escapeHtml。
+
+  边界与不变量
+  只渲染 data-only presentation；不足 requiredCount 时使用按钮必须禁用。
+  */
   renderResponseRequest() {
     const state = this.responseState;
     if (!state) return;
@@ -703,6 +1347,31 @@ export class UIManager {
     this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong>${countdown}</div><div class="response-copy"><p class="response-event">${renderResponseEvent(presentation, eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div><div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">${escapeHtml(presentation.declineLabel ?? "放弃响应")}</button></div>`;
   }
 
+  /*
+  功能
+  切换借势响应中显式选择的一张合法突袭牌 ID。
+
+  调用方
+  response_panel 的响应牌点击处理。
+
+  输入
+  被点击 cardId。
+
+  输出
+  无返回值。
+
+  读取状态
+  responseState request type 与 legalCardIds。
+
+  写入状态
+  更新 selectedCardIds 并重绘响应面板。
+
+  调用函数
+  toggleCardSelection、renderResponseRequest。
+
+  边界与不变量
+  只接受 leverageAssault 请求中列出的公开合法 ID，选择上限为一。
+  */
   toggleResponseCard(cardId) {
     const state = this.responseState;
     if (!state || state.request.type !== "leverageAssault" || !state.request.legalCardIds.includes(cardId)) return;
@@ -745,11 +1414,136 @@ export class UIManager {
       : { status:choice ? "used" : "declined", selectedIds:choice ? selectedIds : [] };
     this.responseState?.resolve(result);
   }
+  /*
+  功能
+  转发卡牌公开多阶段意图请求。
+
+  调用方
+  ActionWorkflow 经 session UI。
+
+  输入
+  InteractionController.requestCardFlow 的参数。
+
+  输出
+  公开卡牌意图或取消结果的 Promise。
+
+  读取状态
+  interactionController。
+
+  写入状态
+  由 InteractionController 管理临时 UI 交互。
+
+  调用函数
+  InteractionController.requestCardFlow。
+
+  边界与不变量
+  只转发公开选择阶段；隐藏选择由 ChoicePort 后续请求。
+  */
   requestCardFlow(...args) { return this.interactionController.requestCardFlow(...args); }
+  /*
+  功能
+  转发真人隐藏 token 选择请求。
+
+  调用方
+  UiChoiceAdapter。
+
+  输入
+  InteractionController.requestHiddenCards 的参数。
+
+  输出
+  token 数组或取消结果的 Promise。
+
+  读取状态
+  interactionController。
+
+  写入状态
+  由 InteractionController 管理 pending 和 DOM。
+
+  调用函数
+  InteractionController.requestHiddenCards。
+
+  边界与不变量
+  UIManager 不解析 token，也不接收未知牌定义。
+  */
   requestHiddenCards(...args) { return this.interactionController.requestHiddenCards(...args); }
+  /*
+  功能
+  转发真人隐藏手牌/公开装备区域选择请求。
+
+  调用方
+  UiChoiceAdapter。
+
+  输入
+  InteractionController.requestZoneCard 的参数。
+
+  输出
+  区域选择或取消结果的 Promise。
+
+  读取状态
+  interactionController。
+
+  写入状态
+  由 InteractionController 管理临时 selection 和 DOM。
+
+  调用函数
+  InteractionController.requestZoneCard。
+
+  边界与不变量
+  返回值只含区域、opaque token 或公开装备 ID。
+  */
   requestZoneCard(...args) { return this.interactionController.requestZoneCard(...args); }
+  /*
+  功能
+  等待真人显式结束当前出牌阶段。
+
+  调用方
+  TurnWorkflow 真人回合入口。
+
+  输入
+  当前 gameId。
+
+  输出
+  结束按钮解析 true、清理解析 false 的 Promise。
+
+  读取状态
+  当前 UI owner。
+
+  写入状态
+  建立 playEndState 并重绘控件。
+
+  调用函数
+  render。
+
+  边界与不变量
+  gameId 绑定本次等待，旧会话按钮不能结束新局回合。
+  */
   waitForHumanPlayEnd(gameId) { return new Promise((resolve) => { this.playEndState = { gameId, resolve }; this.render(this.game); }); }
 
+  /*
+  功能
+  以当前 gameId 结束真人出牌阶段等待。
+
+  调用方
+  main onEndPlay callback。
+
+  输入
+  触发结束的 gameId。
+
+  输出
+  无返回值。
+
+  读取状态
+  playEndState.gameId 与 resolve。
+
+  写入状态
+  清空 playEndState、结算 true 并重绘。
+
+  调用函数
+  playEndState.resolve、render。
+
+  边界与不变量
+  ID 不匹配时不得结算当前等待。
+  */
   resolveHumanPlayEnd(gameId) {
     if (!this.playEndState || this.playEndState.gameId !== gameId) return;
     const resolve = this.playEndState.resolve;
@@ -758,6 +1552,31 @@ export class UIManager {
     this.render(this.game);
   }
 
+  /*
+  功能
+  更新行动提示和可选手牌辅助提示。
+
+  调用方
+  Application presentation、requestTarget/requestDiscard 与 setThinking。
+
+  输入
+  主提示文本与可选 handHint。
+
+  输出
+  无返回值。
+
+  读取状态
+  无。
+
+  写入状态
+  action_prompt 和必要时 hand_hint 文本。
+
+  调用函数
+  DOM textContent。
+
+  边界与不变量
+  空 handHint 保留当前手牌提示，不写 innerHTML。
+  */
   setPrompt(message, handHint = "") {
     this.elements.action_prompt.textContent = message;
     if (handHint) this.elements.hand_hint.textContent = handHint;
@@ -765,28 +1584,28 @@ export class UIManager {
 
   /*
   功能
-  更新或清理 setThinking 对应的 UIManager 状态。
+  切换 AI 思考指示并同步行动提示可见性。
 
   调用方
-  本模块内部流程及显式公开边界。
+  TurnWorkflow 经 PresentationPort。
 
   输入
-  函数签名声明的参数。
+  是否思考、玩家实体或名称，以及公开思考摘要。
 
   输出
-  函数实现声明的返回值。
+  无返回值。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  game.state.players 与当前主界面状态。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  thinkingPlayerId/message、指示器和 action_prompt DOM。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  thinkingTemplate、render。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  思考摘要只展示已由 Application 公开的信息，不暴露搜索状态或隐藏牌。
   */
   setThinking(isThinking, playerOrName = "电脑角色", message = "正在思考") {
     const player = typeof playerOrName === "object" ? playerOrName : this.game?.state.players.find((entry) => entry.name === playerOrName);
@@ -799,6 +1618,31 @@ export class UIManager {
     if (this.game?.state.players[0]?.character) this.render(this.game);
   }
 
+  /*
+  功能
+  在中央结算区展示当前卡牌或技能及公开目标。
+
+  调用方
+  ActionPresentation 经 PresentationPort。
+
+  输入
+  牌实体或技能名、来源、目标标签与可选结构化目标。
+
+  输出
+  无返回值。
+
+  读取状态
+  传入公开 presentation 数据。
+
+  写入状态
+  current_card HTML 与进入动画 class。
+
+  调用函数
+  resolvingCardTemplate。
+
+  边界与不变量
+  只展示已进入结算流程的公开事实；重启动画不改变结算时序。
+  */
   setCurrentCard(cardOrName, source, targetLabel = "", displayTargets = null) {
     this.elements.current_card.innerHTML = resolvingCardTemplate(
       cardOrName, source, targetLabel, displayTargets
@@ -808,11 +1652,61 @@ export class UIManager {
     this.elements.current_card.classList.add("is-entering");
   }
 
+  /*
+  功能
+  将中央结算区恢复为空闲占位。
+
+  调用方
+  showSelection、showGame 与 ActionPresentation 清理。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  current_card 元素。
+
+  写入状态
+  清除进入 class 并替换为空模板。
+
+  调用函数
+  emptyResolvingCardTemplate。
+
+  边界与不变量
+  只清理展示，不移动 resolving zone 卡牌。
+  */
   resetCurrentCard() {
     this.elements.current_card.classList.remove("is-entering");
     this.elements.current_card.innerHTML = emptyResolvingCardTemplate();
   }
 
+  /*
+  功能
+  展示私密情报并在有牌时等待真人关闭。
+
+  调用方
+  GamePresentationAdapter.showPrivateReveal。
+
+  输入
+  标题与仅真人可见的牌实体数组。
+
+  输出
+  PrivateRevealView 的等待结果。
+
+  读取状态
+  privateRevealView 与当前 game.cleanupManager。
+
+  写入状态
+  私密展示 DOM；无牌提示登记 3.2 秒自动隐藏。
+
+  调用函数
+  PrivateRevealView.show/hide、CleanupManager.delay。
+
+  边界与不变量
+  无牌提示不阻塞 workflow；有牌时必须由关闭或清理收束。
+  */
   showPrivateReveal(title, cards = []) {
     const shown = this.privateRevealView.show(title, cards);
     if (!cards.length) this.game?.cleanupManager.delay(3200).then((completed) => {
@@ -820,19 +1714,269 @@ export class UIManager {
     });
     return shown;
   }
+  /*
+  功能
+  展示只读公开牌池。
+
+  调用方
+  GamePresentationAdapter.showPublicPool。
+
+  输入
+  当前公开牌数组。
+
+  输出
+  无返回值。
+
+  读取状态
+  publicPoolView。
+
+  写入状态
+  公开牌池 DOM。
+
+  调用函数
+  PublicPoolView.show。
+
+  边界与不变量
+  不创建选择 Promise，不移动牌实体。
+  */
   showPublicPool(cards) { this.publicPoolView.show(cards); }
+  /*
+  功能
+  请求真人从公开牌池确认一张牌。
+
+  调用方
+  UiChoiceAdapter publicCard 请求。
+
+  输入
+  当前玩家与公开牌数组。
+
+  输出
+  所选牌实体或取消结果的 Promise。
+
+  读取状态
+  publicPoolView。
+
+  写入状态
+  由 PublicPoolView 管理 pending 和 DOM。
+
+  调用函数
+  PublicPoolView.request。
+
+  边界与不变量
+  选择结果必须来自传入公开数组。
+  */
   requestPublicCard(player, cards) { return this.publicPoolView.request(player, cards); }
+  /*
+  功能
+  隐藏只读公开牌池展示。
+
+  调用方
+  GamePresentationAdapter.hidePublicPool。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  publicPoolView。
+
+  写入状态
+  清空公开牌池 DOM。
+
+  调用函数
+  PublicPoolView.hide。
+
+  边界与不变量
+  不应替代 cancel 收束活跃选择 Promise。
+  */
   hidePublicPool() { this.publicPoolView.hide(); }
+  /*
+  功能
+  展示公开判定牌。
+
+  调用方
+  GamePresentationAdapter.showJudgment。
+
+  输入
+  判定玩家、公开牌与展示上下文。
+
+  输出
+  无返回值。
+
+  读取状态
+  judgmentView。
+
+  写入状态
+  判定视图 DOM。
+
+  调用函数
+  JudgmentView.show。
+
+  边界与不变量
+  不计算判定或移动牌。
+  */
   showJudgment(player, card, context = {}) { this.judgmentView.show(player, card, context); }
+  /*
+  功能
+  清空公共判定视图。
+
+  调用方
+  GamePresentationAdapter.hideJudgment 与清理流程。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  judgmentView。
+
+  写入状态
+  清空判定 DOM。
+
+  调用函数
+  JudgmentView.hide。
+
+  边界与不变量
+  不影响判定 workflow 状态。
+  */
   hideJudgment() { this.judgmentView.hide(); }
+  /*
+  功能
+  展示公开濒死状态和所需恢复量。
+
+  调用方
+  GamePresentationAdapter.showDying。
+
+  输入
+  濒死目标与公开 hp/need 上下文。
+
+  输出
+  无返回值。
+
+  读取状态
+  target.name 与 context。
+
+  写入状态
+  dying_view HTML 与可见类。
+
+  调用函数
+  escapeHtml。
+
+  边界与不变量
+  只展示已公开结算状态，不决定救援顺序。
+  */
   showDying(target, context) {
     this.elements.dying_view.innerHTML = `<strong>${escapeHtml(target.name)}濒死</strong><span>当前生命 ${context.currentHp}</span><b>还需恢复${context.need}点生命</b>`;
     this.elements.dying_view.classList.remove("is-hidden");
   }
+  /*
+  功能
+  清空濒死展示。
+
+  调用方
+  GamePresentationAdapter.hideDying 与清理流程。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  dying_view。
+
+  写入状态
+  隐藏并清空 dying_view。
+
+  调用函数
+  DOM classList。
+
+  边界与不变量
+  不修改目标 alive/hp 状态。
+  */
   hideDying() { this.elements.dying_view.classList.add("is-hidden"); this.elements.dying_view.innerHTML = ""; }
+  /*
+  功能
+  展示当前决斗出牌方与对手。
+
+  调用方
+  GamePresentationAdapter.showDuel。
+
+  输入
+  当前响应者与决斗对手。
+
+  输出
+  无返回值。
+
+  读取状态
+  双方公开名称。
+
+  写入状态
+  duel_view HTML 与可见类。
+
+  调用函数
+  escapeHtml。
+
+  边界与不变量
+  不决定响应顺序或是否有突袭牌。
+  */
   showDuel(current, opponent) { this.elements.duel_view.innerHTML = `<strong>决斗</strong><span>${escapeHtml(current.name)}需打出突袭</span><small>对手：${escapeHtml(opponent.name)}</small>`; this.elements.duel_view.classList.remove("is-hidden"); }
+  /*
+  功能
+  清空决斗展示。
+
+  调用方
+  GamePresentationAdapter.hideDuel 与清理流程。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  duel_view。
+
+  写入状态
+  隐藏并清空 duel_view。
+
+  调用函数
+  DOM classList。
+
+  边界与不变量
+  不结束或取消 response workflow。
+  */
   hideDuel() { this.elements.duel_view.classList.add("is-hidden"); this.elements.duel_view.innerHTML = ""; }
 
+  /*
+  功能
+  把一条结构化公开日志追加到可滚动列表。
+
+  调用方
+  MatchLogAdapter.add。
+
+  输入
+  已公开日志 entry 与当前日志总数。
+
+  输出
+  无返回值。
+
+  读取状态
+  entry.kind/fragments 与 log_list。
+
+  写入状态
+  追加日志 DOM、更新计数并滚到底部。
+
+  调用函数
+  formatLogEntry、updateLogCount。
+
+  边界与不变量
+  动态内容必须经结构化日志格式器转义；不得写入 AI 私密信息。
+  */
   appendLog(entry, count) {
     const node = document.createElement("div");
     node.className = `log-entry ${entry.kind === "normal" ? "" : `is-${entry.kind}`}`;
@@ -842,12 +1986,62 @@ export class UIManager {
     this.elements.log_list.scrollTop = this.elements.log_list.scrollHeight;
   }
 
+  /*
+  功能
+  清空可见对局日志并重置计数。
+
+  调用方
+  showStart、showSelection、showGame。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  log_list。
+
+  写入状态
+  清空日志 DOM、滚动位置与计数展示。
+
+  调用函数
+  updateLogCount。
+
+  边界与不变量
+  只清理 DOM，不修改 state.logs 的权威记录。
+  */
   clearLog() {
     this.elements.log_list.innerHTML = "";
     this.elements.log_list.scrollTop = 0;
     this.updateLogCount(0);
   }
 
+  /*
+  功能
+  规范化并同步公开日志数量的文本和无障碍标签。
+
+  调用方
+  appendLog、clearLog。
+
+  输入
+  候选日志数量。
+
+  输出
+  无返回值。
+
+  读取状态
+  无。
+
+  写入状态
+  log_count 的 textContent、title 与 aria-label。
+
+  调用函数
+  Number、Math.trunc、Math.max。
+
+  边界与不变量
+  非有限或负数显示为零，不改变真实日志集合。
+  */
   updateLogCount(count) {
     const safeCount = Number.isFinite(Number(count)) ? Math.max(0, Math.trunc(Number(count))) : 0;
     const label = `${safeCount} 条`;
@@ -856,21 +2050,145 @@ export class UIManager {
     this.elements.log_count.setAttribute("aria-label", `共 ${safeCount} 条对局记录`);
   }
 
+  /*
+  功能
+  非阻塞请求播放命名音效。
+
+  调用方
+  UI 事件与展示反馈入口。
+
+  输入
+  SoundManager 支持的音效名称。
+
+  输出
+  无返回值。
+
+  读取状态
+  sound。
+
+  写入状态
+  由 SoundManager 管理音频节点与节流状态。
+
+  调用函数
+  SoundManager.play。
+
+  边界与不变量
+  音频失败不得阻塞 UI 或游戏 workflow。
+  */
   playSound(name) { void this.sound.play(name); }
 
-  /** 闪电判中唯一反馈入口：声音和人物框电弧从同一事件同时开始。 */
+  /*
+  功能
+  从同一公开判中事件同时启动雷击声音和人物框电弧。
+
+  调用方
+  GamePresentationAdapter.playLightningHit。
+
+  输入
+  被命中的公开玩家 ID。
+
+  输出
+  无返回值。
+
+  读取状态
+  sound 与 animationController。
+
+  写入状态
+  创建雷击音频节点和闪电动画生命周期。
+
+  调用函数
+  playSound、AnimationController.startLightning。
+
+  边界与不变量
+  声音与视觉从同一入口触发；反馈不得改变判定或伤害状态。
+  */
   playLightningHit(playerId) {
     this.playSound("lightning");
     this.animationController.startLightning(playerId, globalThis.document);
   }
 
+  /*
+  功能
+  选择或停止当前阵营 BGM。
+
+  调用方
+  GamePresentationAdapter.setMusicTeam 与选将界面。
+
+  输入
+  阵营 ID。
+
+  输出
+  无返回值。
+
+  读取状态
+  sound。
+
+  写入状态
+  由 SoundManager 更新 BGM 调度状态。
+
+  调用函数
+  SoundManager.setMusicTeam。
+
+  边界与不变量
+  UI 不解释阵营音乐 profile。
+  */
   setMusicTeam(team) { this.sound.setMusicTeam(team); }
 
+  /*
+  功能
+  切换声音开关并刷新全部音频控件。
+
+  调用方
+  bindEvents 的音频按钮 listener。
+
+  输入
+  无。
+
+  输出
+  切换完成的 Promise。
+
+  读取状态
+  sound.enabled。
+
+  写入状态
+  SoundManager 开关与音频按钮 DOM。
+
+  调用函数
+  SoundManager.setEnabled、updateAudioButtons。
+
+  边界与不变量
+  必须等待浏览器音频解锁/切换后再同步按钮状态。
+  */
   async toggleAudio() {
     await this.sound.setEnabled(!this.sound.enabled);
     this.updateAudioButtons();
   }
 
+  /*
+  功能
+  同步声音开关和音乐音量控件的可见/无障碍状态。
+
+  调用方
+  bindEvents 初始化、toggleAudio、setMusicVolume。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  sound.enabled、sound.musicVolume 与控件集合。
+
+  写入状态
+  音频按钮属性/标签及音量输入值。
+
+  调用函数
+  DOM attribute API。
+
+  边界与不变量
+  百分比只用于展示，不反向修改 SoundManager。
+  */
   updateAudioButtons() {
     for (const button of this.audioButtons) {
       button.setAttribute("aria-pressed", String(this.sound.enabled));
@@ -885,17 +2203,92 @@ export class UIManager {
     }
   }
 
+  /*
+  功能
+  将百分比输入转换为 SoundManager 音量并刷新控件。
+
+  调用方
+  bindEvents 的音乐音量 input listener。
+
+  输入
+  0 至 100 的控件值。
+
+  输出
+  无返回值。
+
+  读取状态
+  sound。
+
+  写入状态
+  SoundManager.musicVolume 与控件 DOM。
+
+  调用函数
+  SoundManager.setMusicVolume、updateAudioButtons。
+
+  边界与不变量
+  UI 百分比必须除以 100 后交给归一化音量边界。
+  */
   setMusicVolume(value) {
     this.sound.setMusicVolume(Number(value) / 100);
     this.updateAudioButtons();
   }
 
+  /*
+  功能
+  排队公开视觉反馈并同步触发对应通用音效。
+
+  调用方
+  GamePresentationAdapter.queueFeedback。
+
+  输入
+  反馈类型、可选玩家 ID 与数值。
+
+  输出
+  无返回值。
+
+  读取状态
+  固定 feedback-to-sound 映射。
+
+  写入状态
+  AnimationController.pending 与 SoundManager 音效节点。
+
+  调用函数
+  AnimationController.queue、playSound。
+
+  边界与不变量
+  只消费公开 primitive；反馈与声音不能改变真实结算顺序。
+  */
   queueFeedback(type, playerId = null, amount = null) {
     this.animationController.queue(type, playerId, amount);
     const soundByFeedback = { draw:"draw", damage:"hit", heal:"heal", shield:"shield", discard:"discard" };
     if (soundByFeedback[type]) this.playSound(soundByFeedback[type]);
   }
 
+  /*
+  功能
+  切换页面快速动画展示模式。
+
+  调用方
+  main onToggleFastMode callback。
+
+  输入
+  是否启用快速动画。
+
+  输出
+  无返回值。
+
+  读取状态
+  无。
+
+  写入状态
+  fastMode、body class 与按钮属性/标签。
+
+  调用函数
+  DOM classList/attribute API。
+
+  边界与不变量
+  只改变 CSS 动画速度，不改变 Application/AI 延迟或游戏时序。
+  */
   setFastMode(enabled) {
     this.fastMode = Boolean(enabled);
     document.body.classList.toggle("fast-mode", this.fastMode);
@@ -903,6 +2296,31 @@ export class UIManager {
     this.elements.fast_mode_button.querySelector("span").textContent = this.fastMode ? "快速动画：开" : "快速动画：关";
   }
 
+  /*
+  功能
+  切换对局日志面板折叠状态。
+
+  调用方
+  日志按钮、showGame 与 handleViewportResize。
+
+  输入
+  是否折叠。
+
+  输出
+  无返回值。
+
+  读取状态
+  无。
+
+  写入状态
+  logCollapsed、布局 class 与按钮无障碍属性。
+
+  调用函数
+  DOM classList/attribute API。
+
+  边界与不变量
+  只改变布局展示，不清除日志内容。
+  */
   setLogCollapsed(collapsed) {
     this.logCollapsed = Boolean(collapsed);
     this.elements.log_panel.classList.toggle("is-collapsed", this.logCollapsed);
@@ -913,28 +2331,28 @@ export class UIManager {
 
   /*
   功能
-  生成或展示 showGameOver 对应的 UIManager 视图。
+  展示对局胜负结果 overlay。
 
   调用方
-  本模块内部流程及显式公开边界。
+  MatchWorkflow.finishGame 经 PresentationPort。
 
   输入
-  函数签名声明的参数。
+  胜方阵营 ID 与真人阵营是否获胜。
 
   输出
-  函数实现声明的返回值。
+  无返回值。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  TEAM_PRESENTATION 与公开胜负事实。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  game-over 标题、说明和 overlay 可见类。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  DOM textContent/classList。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  只展示已由 Domain/Application 确认的 winnerTeam，不自行计算胜负。
   */
   showGameOver(winnerTeam, humanWon) {
     this.elements.game_over_title.textContent = humanWon ? "你的阵营获胜" : "你的阵营落败";
@@ -942,6 +2360,31 @@ export class UIManager {
     this.elements.game_over_overlay.classList.remove("is-hidden");
   }
 
+  /*
+  功能
+  收束所有待处理 UI 交互并清空瞬态展示。
+
+  调用方
+  attachGame、showSelection、MatchWorkflow.dispose 经 session UI。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  target/discard/response/playEnd、各子 View pending 与瞬态 DOM。
+
+  写入状态
+  所有 UI pending 以契约取消值结算，清理动画/overlay/提示状态。
+
+  调用函数
+  各 resolve、AnimationController.clear、InteractionController.cancel、各 View hide/cancel。
+
+  边界与不变量
+  销毁/重开不得遗留 Promise、timer 或私密 DOM；不修改权威游戏状态。
+  */
   cancelPendingInteractions() {
     if (this.targetState) { const resolve = this.targetState.resolve; this.targetState = null; resolve(null); }
     if (this.discardState) { const resolve = this.discardState.resolve; this.discardState = null; resolve([]); }

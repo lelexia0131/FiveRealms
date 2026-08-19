@@ -1,6 +1,6 @@
 /**
  * 真人多阶段交互控制器。只把公开玩家 ID 或不透明隐藏 token 放入 DOM，并将
- * 最终意图交回 Game；不修改生命、能量、手牌、装备、状态或胜负。
+ * 最终公开意图交回 Application action workflow；不修改生命、能量、手牌、装备、状态或胜负。
  */
 import { escapeHtml, hiddenCardBackTemplate, hiddenKnownCardTemplate } from "./templates.js";
 import { createHiddenSelectionView } from "./handVisibility.js";
@@ -11,6 +11,31 @@ import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js";
 
 const EQUIPMENT_OPTION_TOKEN = "public-equipment";
 
+/*
+功能
+把隐藏选择槽位渲染为只含不透明 token 的安全 HTML。
+
+调用方
+InteractionController.requestHiddenCards 与隐藏信息 UI 测试。
+
+输入
+隐藏 selection 及可选的已脱敏展示槽位。
+
+输出
+隐藏牌按钮 HTML 字符串。
+
+读取状态
+selection.tokens 或传入 slots 的合法展示事实。
+
+写入状态
+无。
+
+调用函数
+hiddenKnownCardTemplate、hiddenCardBackTemplate。
+
+边界与不变量
+未知槽位不得包含实体 ID、定义或牌面；DOM 只接收不透明 token。
+*/
 export function hiddenSelectionMarkup(selection, slots = null) {
   const displaySlots = slots ?? selection.tokens.map((entry) => ({ token:entry.token, known:false }));
   return displaySlots.map((slot) => slot.known
@@ -21,8 +46,58 @@ export function hiddenSelectionMarkup(selection, slots = null) {
 
 /** 多阶段真人选择器。只把公开 ID 或不透明令牌交给 DOM。 */
 export class InteractionController {
+  /*
+  功能
+  创建真人多阶段选择控制器。
+
+  调用方
+  UIManager 构造函数。
+
+  输入
+  UIManager 展示能力。
+
+  输出
+  InteractionController 实例。
+
+  读取状态
+  无。
+
+  写入状态
+  保存 ui 并初始化 pending。
+
+  调用函数
+  无。
+
+  边界与不变量
+  同一控制器至多持有一个待结算交互。
+  */
   constructor(ui) { this.ui = ui; this.pending = null; }
 
+  /*
+  功能
+  绑定隐藏选择、确认与取消的事件委托。
+
+  调用方
+  UIManager.bindEvents。
+
+  输入
+  响应面板根 DOM 元素。
+
+  输出
+  无返回值。
+
+  读取状态
+  DOM 点击目标与 pending。
+
+  写入状态
+  通过 toggleHidden、confirm 或 cancel 更新当前交互。
+
+  调用函数
+  toggleHidden、confirm、cancel。
+
+  边界与不变量
+  只消费本根元素内带协议 data attribute 的点击。
+  */
   bind(root) {
     root.addEventListener("click", (event) => {
       const hidden = event.target.closest("[data-hidden-token]");
@@ -36,28 +111,28 @@ export class InteractionController {
 
   /*
   功能
-  完成 requestCardFlow 对应的 InteractionController 交互选择。
+  收集卡牌公开多阶段意图，不预选后续隐藏牌。
 
   调用方
-  本模块内部流程及显式公开边界。
+  UIManager.requestCardFlow、ActionWorkflow 真人出牌入口。
 
   输入
-  函数签名声明的参数。
+  当前 MatchApplication、行动者、卡牌与第一阶段目标。
 
   输出
-  函数实现声明的返回值。
+  公开 ID 组成的意图对象；取消或过期会话返回 null。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  当前 session、公开玩家/装备与 ActionLegality 查询。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  仅写 UI 的目标选择与确认状态。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  UIManager.requestTarget、requestConfirmation 与 ActionLegality。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  隐藏手牌/区域选择由后续 HiddenCardChoiceWorkflow 经 ChoicePort 发起；await 后必须复核 session 和实体身份。
   */
   async requestCardFlow(game, actor, card, initialTargets) {
     const gameId = game.state.gameId;
@@ -100,52 +175,45 @@ export class InteractionController {
       const receiver = await this.ui.requestTarget(receivers, "转移：选择距离1内的接收者", { source:actor, card });
       if (!game.isSessionValid(gameId)) return null;
       if (!receiver) return null;
-      const selected = await this.requestHandCard(game, actor, source, "转移：选择1张手牌", new Set([card.id]));
-      if (!game.isSessionValid(gameId)) return null;
-      return selected ? { sourceId:source.id, receiverId:receiver.id, ...selected } : null;
+      return { sourceId:source.id, receiverId:receiver.id };
     }
     if (["plunder","destroy"].includes(card.definitionId)) {
       const target = initialTargets[0];
       if (!target) return null;
-      return this.requestZoneCard(game, actor, target, `${card.name}：选择1张手牌或装备牌`);
+      return {};
     }
     if (card.definitionId === "scout") {
       const target = initialTargets[0];
       if (!target) return null;
-      const hidden = game.hiddenCardSelection.createHiddenSelection(target);
-      const count = Math.min(2, target.hand.length);
-      const slots = createHiddenSelectionView(actor, target, hidden);
-      const tokens = await this.requestHiddenCards(hidden, count, `${card.name}：选择至多2张隐藏手牌`, { exact:false, slots });
-      if (!game.isSessionValid(gameId)) return null;
-      return tokens?.length ? { tokens, selectionId:hidden.selectionId } : null;
+      return {};
     }
     return {};
   }
 
   /*
   功能
-  完成 requestZoneCard 对应的 InteractionController 交互选择。
+  呈现一次真人隐藏手牌或公开装备的区域选择。
 
   调用方
-  本模块内部流程及显式公开边界。
+  UIManager.requestZoneCard、UiChoiceAdapter hiddenCard 请求。
 
   输入
-  函数签名声明的参数。
+  当前 MatchApplication、观察者、区域所有者、提示及排除实体 ID。
 
   输出
-  函数实现声明的返回值。
+  选中区域及 token/装备 ID；取消或过期返回 null。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  当前 session、owner 手牌/装备与隐藏选择 adapter。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  创建临时隐藏 selection 并更新交互 DOM。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  HiddenCardSelectionAdapter、createHiddenSelectionView、presentCard、requestHiddenCards。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  未知手牌只以 token 呈现；公开装备使用固定 UI token，返回前必须复核 gameId。
   */
   async requestZoneCard(game, actor, owner, prompt, excludedCardIds = null) {
     const gameId = game.state.gameId;
@@ -165,45 +233,31 @@ export class InteractionController {
     return { zone:"hand", tokens:selected, selectionId:hidden.selectionId };
   }
 
-  /** 转移专用：只呈现隐藏手牌槽位，不把公开装备加入候选。 */
   /*
   功能
-  完成 requestHandCard 对应的 InteractionController 交互选择。
+  请求真人从隐藏槽位中选择限定数量的 token。
 
   调用方
-  本模块内部流程及显式公开边界。
+  requestZoneCard 与 UiChoiceAdapter。
 
   输入
-  函数签名声明的参数。
+  隐藏 selection、最大数量、提示及 exact/slots/viewer/owner 展示选项。
 
   输出
-  函数实现声明的返回值。
+  解析为 token 数组或取消时 null 的 Promise。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  selection 安全槽位与 UI response_panel。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  pending 选择状态及响应面板 DOM。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  cancel、createHiddenSelectionView、hiddenSelectionMarkup、UIManager.render。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  新请求先收束旧请求；DOM 不得接收未知牌的实体或定义信息。
   */
-  async requestHandCard(game, actor, owner, prompt, excludedCardIds = null) {
-    const gameId = game.state.gameId;
-    if (!game.isSessionValid(gameId)) return null;
-    const eligibleHand = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)) ?? [];
-    if (!eligibleHand.length) return null;
-    const hidden = game.hiddenCardSelection.createHiddenSelection(owner, eligibleHand);
-    const slots = createHiddenSelectionView(actor, owner, hidden);
-    const selected = await this.requestHiddenCards(hidden, 1, prompt, { exact:true, slots, totalCount:slots.length });
-    if (!game.isSessionValid(gameId)) return null;
-    if (!selected?.length) return null;
-    return { zone:"hand", tokens:selected, selectionId:hidden.selectionId };
-  }
-
   requestHiddenCards(selection, count, prompt, options = {}) {
     this.cancel();
     return new Promise((resolve) => {
@@ -218,6 +272,31 @@ export class InteractionController {
     });
   }
 
+  /*
+  功能
+  请求真人确认或取消已汇总的公开多阶段意图。
+
+  调用方
+  requestCardFlow 的借势流程。
+
+  输入
+  对话标题与公开摘要。
+
+  输出
+  解析为 true 或取消时 null 的 Promise。
+
+  读取状态
+  UI response_panel。
+
+  写入状态
+  pending 确认状态及响应面板 DOM。
+
+  调用函数
+  cancel、escapeHtml、UIManager.render。
+
+  边界与不变量
+  摘要必须只含公开信息；新请求先取消旧请求。
+  */
   requestConfirmation(title, summary) {
     this.cancel();
     return new Promise((resolve) => {
@@ -228,6 +307,31 @@ export class InteractionController {
     });
   }
 
+  /*
+  功能
+  切换当前隐藏 token 并同步确认按钮状态。
+
+  调用方
+  bind 注册的隐藏牌点击处理。
+
+  输入
+  被点击的不透明 token。
+
+  输出
+  无返回值。
+
+  读取状态
+  pending 的 count、exact 与 selected。
+
+  写入状态
+  pending.selected 以及槽位和确认按钮 DOM 状态。
+
+  调用函数
+  toggleCardSelection、isCardSelectionValid、UIManager.playSound。
+
+  边界与不变量
+  仅 hidden 类型 pending 可处理；不得解析 token 或读取真实卡牌。
+  */
   toggleHidden(token) {
     if (this.pending?.type !== "hidden") return;
     this.ui.playSound?.("select");
@@ -240,35 +344,85 @@ export class InteractionController {
     if (confirm) confirm.disabled = !isCardSelectionValid(this.pending.selected, this.pending.count, this.pending.exact);
   }
 
+  /*
+  功能
+  以当前选择或确认值完成待处理交互。
+
+  调用方
+  bind 注册的确认按钮处理。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  pending 类型与 selected。
+
+  写入状态
+  通过 settle 清空 pending。
+
+  调用函数
+  settle。
+
+  边界与不变量
+  无 pending 时为 no-op；hidden 结果只返回 token 数组。
+  */
   confirm() {
     if (!this.pending) return;
     this.settle(this.pending.type === "confirm" ? true : [...this.pending.selected]);
   }
+  /*
+  功能
+  取消当前真人交互。
+
+  调用方
+  bind、新交互启动与 UIManager.cancelPendingInteractions。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  pending。
+
+  写入状态
+  通过 settle 清空 pending。
+
+  调用函数
+  settle。
+
+  边界与不变量
+  无 pending 时为 no-op；取消结果统一为 null。
+  */
   cancel() { if (this.pending) this.settle(null); }
   /*
   功能
-  更新或清理 settle 对应的 InteractionController 状态。
+  收束当前交互并清理临时隐藏选择和 DOM。
 
   调用方
-  本模块内部流程及显式公开边界。
+  confirm、cancel。
 
   输入
-  函数签名声明的参数。
+  交互结果；null 表示取消。
 
   输出
-  函数实现声明的返回值。
+  无返回值。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  pending、UIManager 当前 game 与 response_panel。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  清空 pending、响应面板 DOM；取消时清理隐藏 selection。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  HiddenCardSelectionAdapter.clearSelection、pending.resolve、UIManager.render。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  pending 先清空再回调，避免重入重复结算；取消不得遗留 opaque token session。
   */
   settle(value) {
     const current = this.pending;

@@ -73,7 +73,7 @@ export function createGlobalTriggerRegistry(dependencies) {
   onEvent。
 
   边界与不变量
-  key 与旧 Game.registerGlobalRules 完全一致。
+  key 与既有 registerGlobalRules public boundary 完全一致。
   */
   function register() {
     runtime.onEvent("playerDead", "global:huntMarkSourceCleanup", (event) => {

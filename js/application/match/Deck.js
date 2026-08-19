@@ -15,7 +15,7 @@ export class Deck {
   创建 Deck runtime 并组合 Domain zone state 初始数组。
 
   调用方
-  Game constructor 与测试 fixture。
+  MatchApplication composition root 与测试 fixture。
 
   输入
   可替换随机源。
@@ -51,7 +51,7 @@ export class Deck {
   根据集中配置创建实体牌并执行 Fisher-Yates 洗牌。
 
   调用方
-  Game.confirmCharacter 与测试。
+  MatchWorkflow.confirmCharacter 经 buildDeck capability 与测试。
 
   输入
   authoritative state。
@@ -155,7 +155,7 @@ export class Deck {
   将一张已离开手牌的卡放入结算区。
 
   调用方
-  Game.moveHandToResolving 与 draw workflow。
+  ResourceWorkflow.moveHandToResolving 与 draw workflow。
 
   输入
   authoritative state 与 Card entity。
@@ -187,7 +187,7 @@ export class Deck {
   将结算区卡提交到弃牌堆。
 
   调用方
-  Game.finishResolvingToDiscard。
+  ResourceWorkflow.finishResolvingToDiscard。
 
   输入
   authoritative state 与 Card entity。
@@ -219,7 +219,7 @@ export class Deck {
   从结算区移除将要进入装备区的牌。
 
   调用方
-  Game.equipCard。
+  ResourceWorkflow.equipCard。
 
   输入
   authoritative state 与 Card entity。

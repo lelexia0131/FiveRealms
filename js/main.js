@@ -10,28 +10,28 @@ let game = null;
 
 /*
 功能
-执行 startSelection 对应的 main 职责。
+销毁旧局并创建一局新的角色选择流程。
 
 调用方
-本模块内部流程及显式公开边界。
+开始、重新征召和再来一局按钮 callback。
 
 输入
-函数签名声明的参数。
+无。
 
 输出
-函数实现声明的返回值。
+无返回值。
 
 读取状态
-仅函数体显式读取的参数、模块或实例状态。
+当前 game、UI fastMode 与新局首位玩家阵营。
 
 写入状态
-仅执行函数体显式声明的写入；查询路径不写状态。
+销毁旧 game、替换模块级 game 并切换 UI owner/选将屏幕。
 
 调用函数
-仅调用函数体中显式列出的依赖。
+MatchApplication.dispose/startSelection/setAnimationFastMode、createGameApplication、UIManager.attachGame/showSelection。
 
 边界与不变量
-遵守模块头定义的 ownership、状态与信息边界。
+必须先 dispose 旧局；新局 UI owner 在任何异步流程启动前完成绑定。
 */
 function startSelection() {
   game?.dispose();
@@ -47,28 +47,28 @@ ui.setCallbacks({
   onRestart: startSelection,
   /*
   功能
-  执行 onSelectCharacter 对应的 main 职责。
+  确认真人角色并启动当前对局。
 
   调用方
-  本模块内部流程及显式公开边界。
+  UIManager 候选角色点击 callback。
 
   输入
-  函数签名声明的参数。
+  被点击的 characterId。
 
   输出
-  函数实现声明的返回值。
+  对局确认流程完成的 Promise。
 
   读取状态
-  仅函数体显式读取的参数、模块或实例状态。
+  当前 game、selectedCharacterId 与 UI session owner。
 
   写入状态
-  仅执行函数体显式声明的写入；查询路径不写状态。
+  展示当前对局并由 MatchWorkflow 完成角色确认/开局；失败时更新提示。
 
   调用函数
-  仅调用函数体中显式列出的依赖。
+  UIManager.showGame/isGameAttached/setPrompt、MatchApplication.confirmCharacter、Debug.log。
 
   边界与不变量
-  遵守模块头定义的 ownership、状态与信息边界。
+  重复选择被拒绝；异步失败只能更新仍是当前 UI owner 的同一局。
   */
   async onSelectCharacter(characterId) {
     if (!game || game.state.selectedCharacterId) return;

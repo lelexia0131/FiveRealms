@@ -89,7 +89,7 @@ export class PublicCardPoolWorkflow {
   完成返回 true；会话失效或游戏结束返回 false。
 
   读取状态
-  当前 GameState、公开牌池与 Choice/Presentation ports。
+  当前 MatchState、公开牌池与 Choice/Presentation ports。
 
   写入状态
   玩家手牌、合法记忆、公开牌池、弃牌堆与 presentation state。
@@ -159,7 +159,7 @@ export class PublicCardPoolWorkflow {
   选中的 Card entity 或 null。
 
   读取状态
-  Game stateVersion 与公开牌池实体。
+  MatchState.stateVersion 与公开牌池实体。
 
   写入状态
   choiceContexts registry 仅在本方法调用期间保存 bridge context。
@@ -193,7 +193,7 @@ export class PublicCardPoolWorkflow {
   清空公开牌池本地数组并提交空 publicCardPool。
 
   调用方
-  Game.dispose 与重新征召。
+  MatchWorkflow.dispose 与重新征召。
 
   输入
   无。

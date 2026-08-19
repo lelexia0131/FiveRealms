@@ -1,6 +1,6 @@
 /*
 模块职责
-提供真实 Domain MatchState 的纯只读玩家/座次查询入口，并作为当前 Game query 的 forwarding target。
+提供真实 Domain MatchState 的纯只读玩家/座次查询入口，并作为 MatchApplication public query 的 forwarding target。
 
 上游
 match application 的 query boundary 与当前 domain/rules 消费者。
@@ -24,10 +24,10 @@ import { createStateView } from "./StateView.js";
 返回当前行动角色。
 
 调用方
-Game.currentPlayer 与 domain query tests。
+MatchApplication.currentPlayer projection 与 domain query tests。
 
 输入
-真实 Game.state 或同形只读 state。
+真实 MatchState 或同形只读 state。
 
 输出
 当前 Player 实例或 null。
@@ -56,7 +56,7 @@ export function getCurrentActor(state) {
 domain query tests 与未来 rules。
 
 输入
-真实 Game.state 或同形只读 state。
+真实 MatchState 或同形只读 state。
 
 输出
 原始 Player 引用数组，保持 state.players 顺序。
@@ -82,7 +82,7 @@ export function getLivingPlayers(state) {
 返回指定玩家含自身在内的存活同阵营玩家。
 
 调用方
-Game.getAllies 与未来 rules。
+MatchApplication.getAllies projection 与 Domain rules。
 
 输入
 state 与 Player。
@@ -111,7 +111,7 @@ export function getAllies(state, player) {
 返回指定玩家的存活敌对阵营玩家。
 
 调用方
-Game.getEnemies 与未来 rules。
+MatchApplication.getEnemies projection 与 Domain rules。
 
 输入
 state 与 Player。
@@ -140,7 +140,7 @@ export function getEnemies(state, player) {
 返回从指定角色下一座位开始的环形座位顺序。
 
 调用方
-Game.seatOrderFrom 与未来 rules。
+MatchApplication.seatOrderFrom projection 与 Domain rules。
 
 输入
 state、source Player 与 includeSource。
@@ -158,7 +158,7 @@ StateView.seatOrderFrom。
 createStateView。
 
 边界与不变量
-与当前 Game.seatOrderFrom 的 includeSource 和环形语义完全一致。
+与当前 MatchApplication.seatOrderFrom projection 的 includeSource 和环形语义完全一致。
 */
 export function getSeatOrderFrom(state, source, includeSource = false) {
   return createStateView(state).seatOrderFrom(source, includeSource);

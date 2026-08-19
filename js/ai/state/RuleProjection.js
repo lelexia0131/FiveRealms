@@ -1,6 +1,6 @@
 /*
 模块职责
-把真实 Game/Player 或 AI SearchState 玩家摘要投影为 Domain Rules 可读的 canonical data-only facts。
+把真实 MatchState/Player 或 AI SearchState 玩家摘要投影为 Domain Rules 可读的 canonical data-only facts。
 
 上游
 js/ai/search、js/ai/simulation、js/ai/domain 与 AI 执行边界。

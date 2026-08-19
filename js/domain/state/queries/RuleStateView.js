@@ -109,7 +109,7 @@ function requireRulePlayerProjection(player) {
 未来 domain/rules 与 architecture tests。
 
 输入
-真实 Game.state 或同形只读 state。
+真实 MatchState 或同形只读 state。
 
 输出
 冻结的 rule-facing read view。

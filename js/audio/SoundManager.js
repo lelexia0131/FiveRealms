@@ -15,11 +15,61 @@ export const SOUND_THROTTLE_MS = Object.freeze({ select:35 });
 const LIGHTNING_SOURCE = "../../assets/audio/lightning.wav";
 
 // 0–75% 保持原来的线性手感，最后四分之一提供额外余量，让需要更响 BGM 的玩家可以继续推高。
+/*
+功能
+把用户音乐音量映射为 BGM gain，并在高端提供渐进增益。
+
+调用方
+SoundManager.createGraph、setMusicVolume。
+
+输入
+归一化音量 [0, 1]。
+
+输出
+用于 Web Audio GainNode 的非负增益。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+Math.max。
+
+边界与不变量
+0 至 0.75 保持既有线性手感，额外增益只作用于最后四分之一。
+*/
 const musicGainForVolume = (volume) => {
   const upperBoost = Math.max(0, (volume - 0.75) / 0.25);
   return volume * 2.2 + upperBoost * upperBoost;
 };
 
+/*
+功能
+把多个乐句拼接并冻结为不可变旋律序列。
+
+调用方
+DAWN_MELODY、DUSK_MELODY 常量初始化。
+
+输入
+任意数量的音符/休止符数组。
+
+输出
+冻结的扁平音符数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+Array.flat、Object.freeze。
+
+边界与不变量
+保持乐句和音符原顺序，不做复制以外的音乐变换。
+*/
 const longMelody = (...phrases) => Object.freeze(phrases.flat());
 
 // 每个乐句16步、全曲12句，共192步；晨约74秒、昏约80秒才完成一次循环。
@@ -78,18 +128,118 @@ export const MUSIC_PROFILES = Object.freeze({
   })
 });
 
+/*
+功能
+把 MIDI 音符编号转换为十二平均律频率。
+
+调用方
+SoundManager.tone。
+
+输入
+MIDI note 数值。
+
+输出
+以 A4=440Hz 为基准的频率。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+转换公式固定使用十二平均律，不承担输入范围校验。
+*/
 const midiToFrequency = (note) => 440 * (2 ** ((note - 69) / 12));
 
+/*
+功能
+读取声音开关偏好并对不可用存储安全降级。
+
+调用方
+SoundManager 构造函数。
+
+输入
+无。
+
+输出
+除显式存储 off 外均返回 true。
+
+读取状态
+localStorage 的声音偏好键。
+
+写入状态
+无。
+
+调用函数
+localStorage.getItem。
+
+边界与不变量
+隐私模式或存储异常不得阻止本次会话使用声音。
+*/
 function safelyReadPreference() {
   try { return globalThis.localStorage?.getItem(STORAGE_KEY) !== "off"; }
   catch { return true; }
 }
 
+/*
+功能
+持久化声音开关偏好。
+
+调用方
+SoundManager.setEnabled。
+
+输入
+是否启用声音。
+
+输出
+无返回值。
+
+读取状态
+无。
+
+写入状态
+localStorage 的声音偏好键。
+
+调用函数
+localStorage.setItem。
+
+边界与不变量
+存储异常静默忽略，不能回滚当前会话设置。
+*/
 function safelyStorePreference(enabled) {
   try { globalThis.localStorage?.setItem(STORAGE_KEY, enabled ? "on" : "off"); }
   catch { /* 隐私模式或禁用存储时仍允许本次会话使用声音。 */ }
 }
 
+/*
+功能
+读取并校验持久化的音乐音量。
+
+调用方
+SoundManager 构造函数。
+
+输入
+无。
+
+输出
+[0, 1] 内音量；缺失、非法或读取失败时返回默认值。
+
+读取状态
+localStorage 的音乐音量键。
+
+写入状态
+无。
+
+调用函数
+localStorage.getItem、Number。
+
+边界与不变量
+空字符串和非有限值不得被解释为有效的零音量。
+*/
 function safelyReadMusicVolume() {
   try {
     const stored = globalThis.localStorage?.getItem(MUSIC_VOLUME_KEY);
@@ -99,12 +249,62 @@ function safelyReadMusicVolume() {
   } catch { return DEFAULT_MUSIC_VOLUME; }
 }
 
+/*
+功能
+持久化归一化音乐音量。
+
+调用方
+SoundManager.setMusicVolume。
+
+输入
+已归一化的音量数值。
+
+输出
+无返回值。
+
+读取状态
+无。
+
+写入状态
+localStorage 的音乐音量键。
+
+调用函数
+localStorage.setItem。
+
+边界与不变量
+存储异常静默忽略，当前 AudioContext 设置仍然生效。
+*/
 function safelyStoreMusicVolume(volume) {
   try { globalThis.localStorage?.setItem(MUSIC_VOLUME_KEY, String(volume)); }
   catch { /* 存储不可用时只保留本次会话设置。 */ }
 }
 
 export class SoundManager {
+  /*
+  功能
+  创建延迟解锁的 Web Audio 声音与音乐控制器。
+
+  调用方
+  UIManager 构造函数。
+
+  输入
+  无。
+
+  输出
+  SoundManager 实例。
+
+  读取状态
+  已持久化的声音开关和音乐音量。
+
+  写入状态
+  初始化 AudioContext、调度器、缓存和节流生命周期字段。
+
+  调用函数
+  safelyReadPreference、safelyReadMusicVolume。
+
+  边界与不变量
+  构造时不得创建 AudioContext，必须等待用户交互解锁。
+  */
   constructor() {
     this.enabled = safelyReadPreference();
     this.musicVolume = safelyReadMusicVolume();
@@ -125,10 +325,60 @@ export class SoundManager {
     this.lastPlayedAt = new Map();
   }
 
+  /*
+  功能
+  判断当前浏览器是否提供 Web Audio 上下文。
+
+  调用方
+  SoundManager.unlock 与 UI 能力检测。
+
+  输入
+  无。
+
+  输出
+  支持 AudioContext 或 webkitAudioContext 时返回 true。
+
+  读取状态
+  globalThis AudioContext 能力。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只做能力检测，不创建音频节点。
+  */
   get isSupported() {
     return Boolean(globalThis.AudioContext || globalThis.webkitAudioContext);
   }
 
+  /*
+  功能
+  在用户交互后创建或恢复 AudioContext 并启动已选择的 BGM。
+
+  调用方
+  UI 启动交互、setEnabled、setMusicTeam 与 play。
+
+  输入
+  无。
+
+  输出
+  AudioContext 进入 running 状态时解析为 true。
+
+  读取状态
+  enabled、isSupported、context 与 musicTeam。
+
+  写入状态
+  延迟创建/恢复音频图并可能启动调度器和雷击采样预载。
+
+  调用函数
+  createGraph、AudioContext.resume、startScheduler、loadLightningBuffer。
+
+  边界与不变量
+  未启用或不支持时不得创建上下文；采样预载不能阻塞解锁结果。
+  */
   async unlock() {
     if (!this.enabled || !this.isSupported) return false;
     if (!this.context) this.createGraph();
@@ -139,6 +389,31 @@ export class SoundManager {
     return this.context.state === "running";
   }
 
+  /*
+  功能
+  创建 SFX/BGM 分路并连接到浏览器音频输出。
+
+  调用方
+  SoundManager.unlock 首次解锁路径。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  enabled 与 musicVolume。
+
+  写入状态
+  context、masterGain、sfxGain、musicGain 及节点连接。
+
+  调用函数
+  AudioContext、musicGainForVolume。
+
+  边界与不变量
+  每个 SoundManager 只应创建一张音频图；音乐和音效必须经 masterGain 汇合。
+  */
   createGraph() {
     const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
     this.context = new AudioContextClass();
@@ -153,6 +428,31 @@ export class SoundManager {
     this.masterGain.connect(this.context.destination);
   }
 
+  /*
+  功能
+  切换声音总开关并平滑更新主增益。
+
+  调用方
+  UIManager.toggleAudio。
+
+  输入
+  新的启用状态。
+
+  输出
+  归一化后的 enabled 布尔值。
+
+  读取状态
+  context、masterGain 与现有 enabled。
+
+  写入状态
+  enabled、持久化偏好、主增益与音乐调度器状态。
+
+  调用函数
+  safelyStorePreference、unlock、stopScheduler、play。
+
+  边界与不变量
+  关闭只静音并停止排程，不销毁 AudioContext；开启提示音必须绕过普通 enabled 节流。
+  */
   async setEnabled(enabled) {
     this.enabled = Boolean(enabled);
     safelyStorePreference(this.enabled);
@@ -167,6 +467,31 @@ export class SoundManager {
     return this.enabled;
   }
 
+  /*
+  功能
+  设置并持久化 BGM 音量。
+
+  调用方
+  UIManager.setMusicVolume。
+
+  输入
+  可转换为数值的音量。
+
+  输出
+  限制在 [0, 1] 的音量。
+
+  读取状态
+  context 与 musicGain。
+
+  写入状态
+  musicVolume、持久化值与当前音乐增益。
+
+  调用函数
+  safelyStoreMusicVolume、musicGainForVolume。
+
+  边界与不变量
+  非数值按零处理；已有节点使用短时间平滑过渡。
+  */
   setMusicVolume(volume) {
     const normalized = Math.min(1, Math.max(0, Number(volume) || 0));
     this.musicVolume = normalized;
@@ -177,6 +502,31 @@ export class SoundManager {
     return normalized;
   }
 
+  /*
+  功能
+  选择阵营 BGM 并在主题切换时续接各自播放进度。
+
+  调用方
+  UIManager.setMusicTeam、选将/对局展示流程。
+
+  输入
+  dawn/dusk 阵营 ID；未知值表示停止音乐。
+
+  输出
+  有效阵营 ID；未知阵营走 stopMusic 返回值。
+
+  读取状态
+  MUSIC_PROFILES、musicTeam、musicStep 与 musicStepsByTeam。
+
+  写入状态
+  当前主题、步进位置、调度时钟和活跃音乐节点。
+
+  调用函数
+  stopMusic、stopMusicSources、stopScheduler、unlock。
+
+  边界与不变量
+  同阵营重复设置不得重置进度；切换时旧主题不能叠音。
+  */
   setMusicTeam(team) {
     if (!MUSIC_PROFILES[team]) return this.stopMusic();
     const changed = this.musicTeam !== team;
@@ -192,6 +542,31 @@ export class SoundManager {
     return team;
   }
 
+  /*
+  功能
+  停止当前 BGM 并保存其续接步进。
+
+  调用方
+  UIManager.showStart 与 setMusicTeam 的无效阵营路径。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  musicTeam、musicStep。
+
+  写入状态
+  保存阵营步进并清空当前主题和调度器。
+
+  调用函数
+  stopMusicSources、stopScheduler。
+
+  边界与不变量
+  停止后不得继续排程或保留当前主题。
+  */
   stopMusic() {
     if (this.musicTeam) this.musicStepsByTeam[this.musicTeam] = this.musicStep;
     this.stopMusicSources();
@@ -199,7 +574,31 @@ export class SoundManager {
     this.stopScheduler();
   }
 
-  /** 停止已提前排程但仍存活的音乐节点，避免阵营切换时新旧 BGM 叠音。 */
+  /*
+  功能
+  淡出并释放已提前排程但仍存活的音乐 gain 节点。
+
+  调用方
+  setMusicTeam、stopMusic。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  musicSources 与 context.currentTime。
+
+  写入状态
+  取消节点增益排程、启动短淡出并清空 musicSources。
+
+  调用函数
+  AudioParam.cancelScheduledValues、setTargetAtTime。
+
+  边界与不变量
+  节点已自然结束时安全忽略；主题切换不得出现新旧 BGM 叠音或硬截断。
+  */
   stopMusicSources() {
     if (!this.musicSources.size) return;
     const now = this.context?.currentTime ?? 0;
@@ -213,6 +612,31 @@ export class SoundManager {
     this.musicSources.clear();
   }
 
+  /*
+  功能
+  启动 BGM 前瞻调度循环。
+
+  调用方
+  unlock。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  musicTimer、context 状态、musicTeam 与 nextMusicTime。
+
+  写入状态
+  校准 nextMusicTime 并创建 musicTimer。
+
+  调用函数
+  scheduleMusic、globalThis.setInterval。
+
+  边界与不变量
+  同一实例至多一个 timer；上下文未 running 或无主题时不得启动。
+  */
   startScheduler() {
     if (this.musicTimer || !this.context || this.context.state !== "running" || !this.musicTeam) return;
     this.nextMusicTime = Math.max(this.context.currentTime + 0.02, this.nextMusicTime);
@@ -220,11 +644,61 @@ export class SoundManager {
     this.musicTimer = globalThis.setInterval(() => this.scheduleMusic(), 250);
   }
 
+  /*
+  功能
+  停止 BGM 前瞻调度 timer。
+
+  调用方
+  setEnabled、setMusicTeam、stopMusic。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  musicTimer。
+
+  写入状态
+  清除并置空 musicTimer。
+
+  调用函数
+  globalThis.clearInterval。
+
+  边界与不变量
+  可重复调用；已排程节点由 stopMusicSources 单独管理。
+  */
   stopScheduler() {
     if (this.musicTimer) globalThis.clearInterval(this.musicTimer);
     this.musicTimer = null;
   }
 
+  /*
+  功能
+  把当前主题的音符持续排程到固定前瞻窗口。
+
+  调用方
+  startScheduler 的立即调用与 interval tick。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  MUSIC_PROFILES、context.currentTime、musicTeam、musicStep 与 nextMusicTime。
+
+  写入状态
+  推进 musicStep 与 nextMusicTime。
+
+  调用函数
+  scheduleMusicStep。
+
+  边界与不变量
+  未启用、无主题或 context 非 running 时不得推进步进。
+  */
   scheduleMusic() {
     const profile = MUSIC_PROFILES[this.musicTeam];
     if (!this.enabled || !profile || !this.context || this.context.state !== "running") return;
@@ -236,6 +710,31 @@ export class SoundManager {
     }
   }
 
+  /*
+  功能
+  为单个音乐步进排程主旋律、和声和阵营装饰音。
+
+  调用方
+  scheduleMusic。
+
+  输入
+  音乐 profile、绝对步进、开始时间与步长秒数。
+
+  输出
+  无返回值。
+
+  读取状态
+  profile 音符/和声配置与 musicTeam。
+
+  写入状态
+  通过 tone 创建并登记 Web Audio 节点。
+
+  调用函数
+  tone。
+
+  边界与不变量
+  休止符不创建旋律节点；取模顺序与既有循环节拍必须保持稳定。
+  */
   scheduleMusicStep(profile, step, time, duration) {
     const note = profile.lead[step % profile.lead.length];
     if (note != null && (step % 2 === 0 || step % 8 === 7)) {
@@ -296,7 +795,31 @@ export class SoundManager {
     return true;
   }
 
-  /** 加载并缓存真实雷击采样；失败安全降级为静音，不阻塞任何游戏流程。 */
+  /*
+  功能
+  加载、解码并缓存真实雷击采样。
+
+  调用方
+  unlock 后台预载与 playLightningSample。
+
+  输入
+  无。
+
+  输出
+  解析为 AudioBuffer；请求或解码失败时解析为 null。
+
+  读取状态
+  lightningBuffer、lightningBufferPromise、context 与 LIGHTNING_SOURCE。
+
+  写入状态
+  缓存 buffer 或进行中的 Promise；失败后清除 Promise 以允许重试。
+
+  调用函数
+  fetch、AudioContext.decodeAudioData、Debug.log。
+
+  边界与不变量
+  并发调用共享同一 Promise；失败静默降级为本次雷击无声，不得阻塞游戏流程。
+  */
   async loadLightningBuffer() {
     if (this.lightningBuffer) return this.lightningBuffer;
     if (this.lightningBufferPromise) return this.lightningBufferPromise;
@@ -315,7 +838,31 @@ export class SoundManager {
     return this.lightningBufferPromise;
   }
 
-  /** 播放真实雷击采样：每次命中创建独立 BufferSource，经 local gain 接入 sfxGain。 */
+  /*
+  功能
+  播放一次真实雷击采样。
+
+  调用方
+  SoundManager.play 的 lightning 分支。
+
+  输入
+  无。
+
+  输出
+  成功建立播放节点时解析为 true，否则 false。
+
+  读取状态
+  enabled、context、lightningBuffer 与 sfxGain。
+
+  写入状态
+  创建一次性 BufferSource 和局部 GainNode。
+
+  调用函数
+  loadLightningBuffer、Web Audio 节点 API。
+
+  边界与不变量
+  每次命中使用独立 source；未解锁、禁用或采样失败时不得创建播放节点。
+  */
   async playLightningSample() {
     if (!this.enabled || !this.context || this.context.state !== "running") return false;
     const buffer = await this.loadLightningBuffer();
@@ -329,6 +876,31 @@ export class SoundManager {
     return true;
   }
 
+  /*
+  功能
+  创建带包络的单个振荡器音符。
+
+  调用方
+  BGM 排程与 sound_skill/sound_heal/sound_shield。
+
+  输入
+  MIDI 音符、时间、时长、波形、增益、目标节点、attack 与是否跟踪。
+
+  输出
+  无返回值。
+
+  读取状态
+  context 与默认 sfxGain。
+
+  写入状态
+  创建/排程 oscillator 和 gain；tracked 时登记 musicSources。
+
+  调用函数
+  midiToFrequency、Web Audio Oscillator/Gain API。
+
+  边界与不变量
+  gain 全程保持正值以满足指数 ramp；tracked 节点结束后必须移出 musicSources。
+  */
   tone(note, time, duration, type = "sine", level = 0.1, destination = this.sfxGain, attack = 0.008, tracked = false) {
     const oscillator = this.context.createOscillator();
     const gain = this.context.createGain();
@@ -346,6 +918,31 @@ export class SoundManager {
     }
   }
 
+  /*
+  功能
+  创建从起始频率滑向结束频率的短音效。
+
+  调用方
+  sound_hit、sound_discard。
+
+  输入
+  起止 Hz、时间、时长、波形与增益。
+
+  输出
+  无返回值。
+
+  读取状态
+  context 与 sfxGain。
+
+  写入状态
+  创建并排程 oscillator 和 gain 节点。
+
+  调用函数
+  Web Audio Oscillator/Gain API。
+
+  边界与不变量
+  起止频率必须为正；节点在包络结束后及时停止。
+  */
   sweep(fromHz, toHz, time, duration, type, level) {
     const oscillator = this.context.createOscillator();
     const gain = this.context.createGain();
@@ -360,6 +957,31 @@ export class SoundManager {
     oscillator.stop(time + duration + 0.03);
   }
 
+  /*
+  功能
+  播放可选滤波的白噪声包络。
+
+  调用方
+  sound_draw、sound_hit、sound_discard。
+
+  输入
+  时间、时长、增益、可选滤波频率/类型与 attack。
+
+  输出
+  无返回值。
+
+  读取状态
+  context、sfxGain 与缓存 noiseBuffer。
+
+  写入状态
+  首次生成白噪声缓存并创建一次性 source/filter/gain 节点。
+
+  调用函数
+  Math.random、Web Audio Buffer/Filter/Gain API。
+
+  边界与不变量
+  随机噪声仅用于音效，不能与游戏或 AI RNG 共享；包络 attack 不得超过时长四分之一。
+  */
   noise(time, duration, level, filterFrequency = 0, filterType = "highpass", attack = 0.006) {
     if (!this.noiseBuffer) {
       const length = Math.ceil(this.context.sampleRate * 0.55);
@@ -385,7 +1007,31 @@ export class SoundManager {
     source.stop(time + duration);
   }
 
-  /** 低频、非周期的棕噪声脉冲，适合纸牌轻触与木质落桌，不含尖锐白噪声或持续音高。 */
+  /*
+  功能
+  播放低通棕噪声脉冲作为纸牌与轻触反馈。
+
+  调用方
+  sound_select、sound_playCard。
+
+  输入
+  时间、时长、增益、低通截止频率与 attack。
+
+  输出
+  无返回值。
+
+  读取状态
+  context、sfxGain 与缓存 softNoiseBuffer。
+
+  写入状态
+  首次生成棕噪声缓存并创建一次性 source/filter/gain 节点。
+
+  调用函数
+  Math.random、Web Audio Buffer/Filter/Gain API。
+
+  边界与不变量
+  随机源只塑造音色；反馈不得产生持续音高，attack 不得超过时长五分之一。
+  */
   softNoise(time, duration, level, cutoff = 520, attack = 0.004) {
     if (!this.softNoiseBuffer) {
       const length = Math.ceil(this.context.sampleRate * 0.24);
@@ -412,40 +1058,240 @@ export class SoundManager {
     source.stop(time + duration);
   }
 
+  /*
+  功能
+  合成 UI 选择轻触音效。
+
+  调用方
+  SoundManager.play 的 select 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  SoundManager 音频图。
+
+  写入状态
+  创建一次 softNoise 音效节点。
+
+  调用函数
+  softNoise。
+
+  边界与不变量
+  select 节流由 play 统一处理，本方法不读墙钟。
+  */
   sound_select(time) {
     this.softNoise(time, 0.032, 0.028, 680, 0.003);
   }
 
+  /*
+  功能
+  合成两段纸张摩擦的摸牌音效。
+
+  调用方
+  SoundManager.play 的 draw 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  SoundManager 音频图。
+
+  写入状态
+  创建两段 noise 音效节点。
+
+  调用函数
+  noise。
+
+  边界与不变量
+  两段相对时间和低通参数共同定义既有可听节奏。
+  */
   sound_draw(time) {
     // 两段短促的低通纸张摩擦；不使用持续振荡器，彻底避免飞虫般的嗡鸣和尖锐滑音。
     this.noise(time, 0.075, 0.038, 820, "lowpass", 0.014);
     this.noise(time + 0.052, 0.09, 0.026, 620, "lowpass", 0.018);
   }
 
+  /*
+  功能
+  合成先轻擦后落桌的出牌音效。
+
+  调用方
+  SoundManager.play 的 playCard 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  SoundManager 音频图。
+
+  写入状态
+  创建两段 softNoise 音效节点。
+
+  调用函数
+  softNoise。
+
+  边界与不变量
+  不复用尖锐白噪声；两段相对时序保持既有落牌质感。
+  */
   sound_playCard(time) {
     // 全新的低频棕噪声落牌：先轻擦、后轻落，不复用容易产生尖锐感的白噪声声源。
     this.softNoise(time, 0.045, 0.065, 440, 0.006);
     this.softNoise(time + 0.038, 0.065, 0.075, 240, 0.004);
   }
 
+  /*
+  功能
+  合成噪声冲击与低频下滑组成的受击音效。
+
+  调用方
+  SoundManager.play 的 hit 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  SoundManager 音频图。
+
+  写入状态
+  创建 noise 与 sweep 音效节点。
+
+  调用函数
+  noise、sweep。
+
+  边界与不变量
+  两层音效从同一事件时间开始，不改变伤害结算时序。
+  */
   sound_hit(time) {
     this.noise(time, 0.13, 0.2, 180);
     this.sweep(118, 48, time, 0.23, "sine", 0.2);
   }
 
+  /*
+  功能
+  合成递进琶音的技能音效。
+
+  调用方
+  SoundManager.play 的 skill 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  固定音符序列与 SoundManager 音频图。
+
+  写入状态
+  创建四个 tone 节点。
+
+  调用函数
+  tone。
+
+  边界与不变量
+  音符顺序和 55ms 间隔保持固定。
+  */
   sound_skill(time) {
     [64, 68, 71, 76].forEach((note, index) => this.tone(note, time + index * 0.055, 0.38, index % 2 ? "sine" : "triangle", 0.095));
   }
 
+  /*
+  功能
+  合成噪声与下滑音组成的弃牌音效。
+
+  调用方
+  SoundManager.play 的 discard 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  SoundManager 音频图。
+
+  写入状态
+  创建 noise 与 sweep 音效节点。
+
+  调用函数
+  noise、sweep。
+
+  边界与不变量
+  音效不参与牌区移动或弃牌顺序。
+  */
   sound_discard(time) {
     this.noise(time, 0.2, 0.075, 700);
     this.sweep(520, 155, time, 0.22, "triangle", 0.07);
   }
 
+  /*
+  功能
+  合成上行琶音的治疗音效。
+
+  调用方
+  SoundManager.play 的 heal 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  固定音符序列与 SoundManager 音频图。
+
+  写入状态
+  创建四个 tone 节点。
+
+  调用函数
+  tone。
+
+  边界与不变量
+  音符顺序和 70ms 间隔保持固定。
+  */
   sound_heal(time) {
     [60, 64, 67, 72].forEach((note, index) => this.tone(note, time + index * 0.07, 0.42, "sine", 0.085));
   }
 
+  /*
+  功能
+  合成三层持续音组成的护盾音效。
+
+  调用方
+  SoundManager.play 的 shield 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  SoundManager 音频图。
+
+  写入状态
+  创建三个错峰 tone 节点。
+
+  调用函数
+  tone。
+
+  边界与不变量
+  三层相对时间、音高和响度共同定义既有音色。
+  */
   sound_shield(time) {
     this.tone(55, time, 0.52, "triangle", 0.11);
     this.tone(62, time + 0.018, 0.58, "sine", 0.075);

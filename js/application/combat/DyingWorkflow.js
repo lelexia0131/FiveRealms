@@ -155,7 +155,7 @@ export function createDyingWorkflow(dependencies) {
   是否最终脱离濒死。
 
   读取状态
-  Game session、target 存活与生命。
+  Application session、target 存活与生命。
 
   写入状态
   active/queue；phase 经 MatchStateTransition；生命经 ResourceTransition。
@@ -205,7 +205,7 @@ export function createDyingWorkflow(dependencies) {
   是否成功脱离濒死。
 
   读取状态
-  Game session、玩家手牌、阵营与 response workflow。
+  Application session、玩家手牌、阵营与 response workflow。
 
   写入状态
   dyingContext 投影、phase/hp/alive/statuses 经 Domain transitions。
@@ -311,7 +311,7 @@ export function createDyingWorkflow(dependencies) {
   session 是否仍有效。
 
   读取状态
-  Game session、牌堆、装备与玩家。
+  Application session、牌堆、装备与玩家。
 
   写入状态
   hp/alive/statuses/equipment/usage flags 经 Domain transitions。
@@ -402,7 +402,7 @@ export function createDyingWorkflow(dependencies) {
   清空濒死队列与 active 标记。
 
   调用方
-  Game.dispose。
+  MatchWorkflow.dispose。
 
   输入
   无。

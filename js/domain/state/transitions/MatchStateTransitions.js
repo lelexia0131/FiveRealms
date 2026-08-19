@@ -24,7 +24,7 @@ import { bumpStateVersion } from "./StateVersion.js";
 写入当前行动玩家索引。
 
 调用方
-Game.advanceTurn 与直接测试。
+TurnWorkflow.advanceTurn、MatchWorkflow 开局定位与直接测试。
 
 输入
 state 与索引。
@@ -56,7 +56,7 @@ export function setCurrentPlayerIndex(state, index) {
 写入当前轮次编号。
 
 调用方
-Game.advanceTurn 与直接测试。
+TurnWorkflow.advanceTurn 与直接测试。
 
 输入
 state 与轮次编号。
@@ -88,7 +88,7 @@ export function setCurrentRound(state, round) {
 写入当前 match phase。
 
 调用方
-Game turn flow、DyingWorkflow、JudgmentWorkflow 与直接测试。
+TurnWorkflow、MatchWorkflow、DyingWorkflow、JudgmentWorkflow 与直接测试。
 
 输入
 state 与 phase。
@@ -120,7 +120,7 @@ export function setMatchPhase(state, phase) {
 写入胜者阵营。
 
 调用方
-Game.checkVictory 与直接测试。
+MatchWorkflow.checkVictory 与直接测试。
 
 输入
 state 与 team id。
@@ -152,7 +152,7 @@ export function setWinnerTeam(state, winnerTeam) {
 写入游戏结束标记。
 
 调用方
-Game.checkVictory 与直接测试。
+MatchWorkflow.checkVictory 与直接测试。
 
 输入
 state 与布尔值。

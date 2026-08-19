@@ -15,7 +15,7 @@ export class Player {
   创建一个 composite Player runtime，其领域字段由 Domain PlayerState factory 提供。
 
   调用方
-  Game.startSelection 与测试 fixture。
+  MatchWorkflow.startSelection 经 createPlayer capability 与测试 fixture。
 
   输入
   id、seatIndex、controllerType 与 battleTeam。
@@ -72,7 +72,7 @@ export class Player {
   将已决定的角色定义应用到 PlayerState。
 
   调用方
-  Game.confirmCharacter 与测试 fixture。
+  直接测试；生产 MatchWorkflow 直接调用同一 applyCharacterDefinition transition。
 
   输入
   authoritative state 与 character definition。
@@ -102,7 +102,7 @@ export class Player {
   重置每回合次数与技能标记；生产调用必须提供 authoritative state。
 
   调用方
-  Game.takeTurn 与测试 fixture。
+  直接测试；生产 TurnWorkflow 直接调用同一 resetTurnFlags transition。
 
   输入
   authoritative state 与 teamRules（可选规则对象）。
@@ -131,7 +131,7 @@ export class Player {
   重置所有玩家共用的 global-turn reactive 额度。
 
   调用方
-  Game.takeTurn 与测试 fixture。
+  直接测试；生产 TurnWorkflow 直接调用同一 resetGlobalTurnReactiveFlags transition。
 
   输入
   authoritative state。
@@ -160,7 +160,7 @@ export class Player {
   递增手牌版本并返回新版本。
 
   调用方
-  Game 卡牌移动与 HiddenCardChoiceWorkflow。
+  ResourceWorkflow 牌区移动与 HiddenCardChoiceWorkflow。
 
   输入
   authoritative state。
@@ -189,7 +189,7 @@ export class Player {
   重置每轮技能标记；生产调用必须提供 authoritative state。
 
   调用方
-  Game.runGameLoop 与测试 fixture。
+  直接测试；生产 TurnWorkflow 直接调用同一 resetRoundFlags transition。
 
   输入
   authoritative state。
@@ -218,7 +218,7 @@ export class Player {
   安全增加能量并限制在上限内。
 
   调用方
-  Game 与技能 execute。
+  ResourceWorkflow、SkillEffectRuntime 与测试 fixture。
 
   输入
   authoritative state 与能量增量。

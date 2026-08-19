@@ -3,7 +3,7 @@
 拥有 AI Search/Decision 专用可复现 RNG；与真实 Game RNG 完全分离，并可为 SearchRequest 提供稳定 seed 事实。
 
 上游
-Game composition root 与 AIController。
+MatchApplication composition root 与 AIController。
 
 下游
 SearchPolicy、Knowledge hidden-world sampling 与 CardSelectionPolicy 的 AI 随机消费。
@@ -58,7 +58,7 @@ export class SearchRng {
   创建与真实 Game RNG 隔离的 AI search RNG。
 
   调用方
-  Game composition root、AIController 与 RNG 隔离测试。
+  MatchApplication composition root、AIController 与 RNG 隔离测试。
 
   输入
   数值 seed。

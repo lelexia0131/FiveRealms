@@ -71,7 +71,7 @@ const PASSIVE_SKILLS = {
   registerPassiveSkills。
 
   输入
-  Game 与 owner。
+  MatchState 与 owner。
 
   输出
   无返回值。
@@ -132,7 +132,7 @@ const PASSIVE_SKILLS = {
   registerPassiveSkills。
 
   输入
-  Game 与 owner。
+  MatchState 与 owner。
 
   输出
   无返回值。
@@ -195,7 +195,7 @@ const PASSIVE_SKILLS = {
   registerPassiveSkills。
 
   输入
-  Game 与 owner。
+  MatchState 与 owner。
 
   输出
   无返回值。
@@ -235,7 +235,7 @@ const PASSIVE_SKILLS = {
   registerPassiveSkills。
 
   输入
-  Game 与 owner。
+  MatchState 与 owner。
 
   输出
   无返回值。
@@ -267,7 +267,7 @@ const PASSIVE_SKILLS = {
     无返回值。
 
     读取状态
-    owner 额度、目标手牌与 Game 私密选择。
+    owner 额度、目标手牌与 HiddenCardChoiceWorkflow 私密选择。
 
     写入状态
     spyGapTriggered 经 RuleUsageTransition；AI 记忆经既有 API。
@@ -323,7 +323,7 @@ const PASSIVE_SKILLS = {
   registerPassiveSkills。
 
   输入
-  Game 与 owner。
+  MatchState 与 owner。
 
   输出
   无返回值。
@@ -357,13 +357,13 @@ const PASSIVE_SKILLS = {
   registerPassiveSkills。
 
   输入
-  Game 与 owner。
+  MatchState 与 owner。
 
   输出
   无返回值。
 
   读取状态
-  Game EventDispatcher 与玩家 flags/statuses。
+  EventDispatcher 与玩家 flags/statuses。
 
   写入状态
   turnFlags/gameFlags 由 Application trigger runtime 拥有；status 经 StatusTransition。
@@ -405,13 +405,13 @@ const PASSIVE_SKILLS = {
   registerPassiveSkills。
 
   输入
-  Game 与 owner。
+  MatchState 与 owner。
 
   输出
   无返回值。
 
   读取状态
-  Game EventDispatcher、玩家 flags 与状态。
+  EventDispatcher、玩家 flags 与状态。
 
   写入状态
   flags 由 Application trigger runtime 拥有；status 经 StatusTransition。
@@ -458,7 +458,7 @@ const PASSIVE_SKILLS = {
   registerPassiveSkills。
 
   输入
-  Game 与 owner。
+  MatchState 与 owner。
 
   输出
   无返回值。

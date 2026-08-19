@@ -84,7 +84,7 @@ export function createCombatWorkflow(dependencies) {
   Promise<实际生命伤害量>。
 
   读取状态
-  Game state facts、response/judgment/dying collaborators。
+  MatchState facts、response/judgment/dying collaborators。
 
   写入状态
   shield/hp 经 ResourceTransitions；telemetry 经 DiagnosticsPort/AI observation collaborator。
@@ -175,7 +175,7 @@ export function createCombatWorkflow(dependencies) {
   Promise<实际治疗量>。
 
   读取状态
-  Game state facts 与 event collaborators。
+  MatchState facts 与 event collaborators。
 
   写入状态
   hp 经 ResourceTransition；healing telemetry 经 DiagnosticsPort。
@@ -224,7 +224,7 @@ export function createCombatWorkflow(dependencies) {
   Promise<实际失去生命量>。
 
   读取状态
-  Game state facts、event 与 dying collaborators。
+  MatchState facts、event 与 dying collaborators。
 
   写入状态
   hp 经 ResourceTransition；damageTaken telemetry 经 DiagnosticsPort。
