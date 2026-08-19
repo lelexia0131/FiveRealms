@@ -43706,9 +43706,12 @@ function frVfxOverlayLifecycle() {
   const energyOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-energy"));
   const shieldLossOverlay = doc.body.children.find((overlay) => overlay.className === "resolution-vfx-overlay"
     && overlay.children[0]?.className === "floating-feedback is-shield");
-  const healIcon = healOverlay.children.find((child) => child.className === "positive-vfx-icon");
-  const shieldIcon = shieldOverlay.children.find((child) => child.className === "positive-vfx-icon");
-  const energyIcon = energyOverlay.children.find((child) => child.className === "positive-vfx-icon");
+  const healVisual = healOverlay.children.find((child) => child.className === "positive-vfx-visual");
+  const shieldVisual = shieldOverlay.children.find((child) => child.className === "positive-vfx-visual");
+  const energyVisual = energyOverlay.children.find((child) => child.className === "positive-vfx-visual");
+  const healIcon = healVisual.children[0];
+  const shieldIcon = shieldVisual.children[0];
+  const energyIcon = energyVisual.children[0];
   assert.equal(healOverlay.children.find((child) => child.className === "floating-feedback is-heal").textContent, "+1");
   assert.equal(shieldOverlay.children.find((child) => child.className === "floating-feedback is-shield").textContent, "+2");
   assert.equal(energyOverlay.children.find((child) => child.className === "floating-feedback is-energy").textContent, "+2");
@@ -43716,9 +43719,9 @@ function frVfxOverlayLifecycle() {
   assert.equal(healOverlay.style.getPropertyValue("--resolution-vfx-duration"), "1000ms");
   assert.equal(shieldOverlay.style.getPropertyValue("--resolution-vfx-duration"), "1000ms");
   assert.equal(energyOverlay.style.getPropertyValue("--resolution-vfx-duration"), "1000ms");
-  assert.deepEqual([healIcon.tagName, healIcon.src], ["IMG", CARD_PRESENTATION.recover.icon]);
-  assert.deepEqual([shieldIcon.tagName, shieldIcon.src], ["IMG", CARD_PRESENTATION.shield.icon]);
-  assert.deepEqual([energyIcon.tagName, energyIcon.src], ["IMG", CARD_PRESENTATION.charge.icon]);
+  assert.deepEqual([healIcon.tagName, healIcon.src], ["IMG", CARD_PRESENTATION.recover.glyph]);
+  assert.deepEqual([shieldIcon.tagName, shieldIcon.src], ["IMG", CARD_PRESENTATION.shield.glyph]);
+  assert.deepEqual([energyIcon.tagName, energyIcon.src], ["IMG", CARD_PRESENTATION.charge.glyph]);
   for (const icon of [healIcon, shieldIcon, energyIcon]) {
     assert.equal(icon["aria-hidden"], "true");
     assert.equal(icon.draggable, "false");
@@ -43730,7 +43733,7 @@ function frVfxOverlayLifecycle() {
   controller.queue("energy", "target-a", 0);
   controller.flush(doc);
   assert.equal(doc.body.children.length, 6, "零治疗和零能量不得创建成功 overlay");
-  energyOverlay.listeners.get("animationend")({ target: energyOverlay, animationName: "resolutionVfxLifetime" });
+  energyOverlay.listeners.get("animationend")({ target: energyOverlay, animationName: "positiveVfxLifetime" });
   assert.equal(energyOverlay.isConnected, false);
   assert.equal(controller.activeResolutionEffects.size, 5, "生命周期动画结束后必须清理对应 overlay");
 
@@ -43742,6 +43745,55 @@ function frVfxOverlayLifecycle() {
 }
 
 test("UI·结算特效：signed 数值、多目标正向 overlay 与生命周期保持独立", frVfxOverlayLifecycle);
+
+/*
+功能
+验证三类正向 VFX 使用从对应卡牌主体原样提取的透明 glyph。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+Promise<void>，断言失败时拒绝。
+
+读取状态
+CARD_PRESENTATION、三张卡牌 SVG、三个 glyph SVG 与 index.html。
+
+写入状态
+无。
+
+调用函数
+readFile、正则与集合断言。
+
+边界与不变量
+glyph 的每个主体 shape 必须原样存在于对应卡图；不得包含整卡背景，且首次触发前必须预加载。
+*/
+async function frPositiveVfxGlyphAssets() {
+  const index = await readFile(projectFile("index.html"), "utf8");
+  for (const [definitionId, glyphName] of [
+    ["recover", "recover-glyph.svg"],
+    ["shield", "shield-glyph.svg"],
+    ["charge", "charge-glyph.svg"]
+  ]) {
+    const glyphPath = `./assets/ui/${glyphName}`;
+    const [card, glyph] = await Promise.all([
+      readFile(projectFile(`assets/cards/${definitionId}.svg`), "utf8"),
+      readFile(projectFile(`assets/ui/${glyphName}`), "utf8")
+    ]);
+    assert.equal(CARD_PRESENTATION[definitionId].glyph, glyphPath);
+    assert.notEqual(CARD_PRESENTATION[definitionId].glyph, CARD_PRESENTATION[definitionId].icon);
+    const shapes = glyph.match(/<(?:path|circle)\b[^>]*\/>/g) ?? [];
+    assert.ok(shapes.length > 0, `${glyphName} 必须包含主体 shape`);
+    for (const shape of shapes) assert.ok(card.includes(shape), `${glyphName} 含有非卡图来源的 shape`);
+    assert.doesNotMatch(glyph, /<rect\b|id="(?:bg|glow|soft)"/i);
+    assert.match(index, new RegExp(`rel="preload" href="\\.\\/assets\\/ui\\/${glyphName.replace(".", "\\.")}" as="image"`));
+  }
+}
+
+test("UI·结算特效：正向 glyph 原样复用卡牌主体且不包含整卡背景", frPositiveVfxGlyphAssets);
 
 test("UI·闪电反馈：样式包含外扩锯齿主弧、分叉、火花且不参与布局或指针事件", async () => {
   const source = await readFile(projectFile("css/animations.css"), "utf8");
@@ -43771,7 +43823,7 @@ test("UI·闪电反馈：样式包含外扩锯齿主弧、分叉、火花且不�
 Promise<void>，断言失败时拒绝。
 
 读取状态
-css/animations.css。
+css/animations.css 与 js/ui/animationController.js。
 
 写入状态
 无。
@@ -43780,13 +43832,16 @@ css/animations.css。
 readFile、正则断言。
 
 边界与不变量
-单斩与双斩选择器必须不同；正向效果形状和数值 feedback 分离；所有效果共用 pointer-events:none overlay。
+单斩与双斩选择器必须不同；正向效果共用单一连续动画且 cleanup 不早于视觉结束；数值 feedback 保持独立。
 */
 async function frVfxCssContract() {
-  const source = await readFile(projectFile("css/animations.css"), "utf8");
-  const positiveKeyframes = source.slice(
+  const [source, controllerSource] = await Promise.all([
+    readFile(projectFile("css/animations.css"), "utf8"),
+    readFile(projectFile("js/ui/animationController.js"), "utf8")
+  ]);
+  const positiveMotion = source.slice(
     source.indexOf("@keyframes positiveVfxExpand"),
-    source.indexOf("@keyframes lightningHitLifetime")
+    source.indexOf("@keyframes positiveVfxLifetime")
   );
   assert.match(source, /\.resolution-vfx-overlay\s*\{[^}]*position:\s*fixed/);
   assert.match(source, /\.resolution-vfx-overlay\s*\{[^}]*pointer-events:\s*none/);
@@ -43794,11 +43849,22 @@ async function frVfxCssContract() {
   assert.match(source, /\.resolution-vfx-overlay\.is-cross-slash::after/);
   assert.match(source, /\.resolution-vfx-overlay\.is-explosion::before/);
   assert.match(source, /\.resolution-vfx-overlay\.is-red-impact::before/);
-  assert.match(positiveKeyframes, /32%\s*\{\s*opacity:\s*\.88;[^}]*scale\(1\)/);
-  assert.match(positiveKeyframes, /68%\s*\{\s*opacity:\s*\.5;[^}]*scale\(1\.36\)/);
-  assert.doesNotMatch(positiveKeyframes, /rotate|spin/);
-  assert.match(source, /\.positive-vfx-icon\s*\{[^}]*z-index:\s*2;[^}]*object-fit:\s*cover;[^}]*animation:\s*positiveVfxExpand \.92s/s);
-  assert.match(source, /\.resolution-vfx-overlay\.is-(?:heal|shield|energy)::after\s*\{[^}]*z-index:\s*1;/s);
+  assert.match(positiveMotion, /from\s*\{\s*opacity:\s*\.96;[^}]*scale\(\.55\)/);
+  assert.match(positiveMotion, /to\s*\{\s*opacity:\s*0;[^}]*scale\(1\.45\)/);
+  assert.doesNotMatch(positiveMotion, /(?:^|})\s*\d+%\s*\{|rotate|spin|steps\(/);
+  assert.equal((source.match(/animation:\s*positiveVfxExpand/g) ?? []).length, 1);
+  assert.match(source, /\.resolution-vfx-overlay:is\(\.is-heal,\.is-shield,\.is-energy\)\s*\{[^}]*--positive-vfx-size:\s*min\(64%,168px\);[^}]*animation-name:\s*positiveVfxLifetime;/s);
+  assert.match(source, /\.positive-vfx-visual\s*\{[^}]*will-change:\s*transform,opacity;[^}]*animation:\s*positiveVfxExpand \.9s cubic-bezier\(\.16,\.75,\.28,1\) forwards;/s);
+  assert.match(source, /\.positive-vfx-visual::before\s*\{[^}]*z-index:\s*1;[^}]*box-shadow:/s);
+  assert.match(source, /\.positive-vfx-icon\s*\{[^}]*z-index:\s*2;[^}]*object-fit:\s*contain;[^}]*transform:\s*scale\(var\(--positive-glyph-scale\)\);/s);
+  assert.doesNotMatch(source, /\.positive-vfx-icon\s*\{[^}]*(?:object-fit:\s*cover|border-radius:\s*50%|animation:)/s);
+  assert.doesNotMatch(source, /\.resolution-vfx-overlay\.is-(?:heal|shield|energy)::after/);
+  assert.match(source, /@keyframes positiveVfxLifetime\s*\{\s*from,to\s*\{\s*opacity:\s*1;/);
+  const visualDurationMs = Number(source.match(/animation:\s*positiveVfxExpand\s+([\d.]+)s/)?.[1]) * 1000;
+  const cleanupDurationMs = Number(controllerSource.match(/const POSITIVE_RESOLUTION_VFX_DURATION_MS = (\d+);/)?.[1]);
+  const cleanupBufferMs = Number(controllerSource.match(/const RESOLUTION_VFX_CLEANUP_BUFFER_MS = (\d+);/)?.[1]);
+  assert.ok(cleanupDurationMs + cleanupBufferMs >= visualDurationMs);
+  assert.doesNotMatch(positiveMotion, /filter|width|height|left|top|border/);
   assert.doesNotMatch(source, /--positive-vfx-art|\.resolution-vfx-overlay\.is-(?:heal|shield|energy)::before/);
   assert.doesNotMatch(source, /@keyframes (?:healMote|energyStarExpand|energyAuraExpand)/);
   assert.doesNotMatch(source, /\.resolution-vfx-overlay\.is-heal::after\s*\{[^}]*(?:--mote-x|width:\s*10px)/s);

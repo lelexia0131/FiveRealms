@@ -9,9 +9,9 @@ const POSITIVE_RESOLUTION_VFX_DURATION_MS = 1000;
 const RESOLUTION_VFX_CLEANUP_BUFFER_MS = 60;
 const NUMERIC_FEEDBACK_TYPES = new Set(["damage", "heal", "energy", "shield"]);
 const POSITIVE_VFX_ART_BY_EFFECT = Object.freeze({
-  heal: CARD_PRESENTATION.recover.icon,
-  energy: CARD_PRESENTATION.charge.icon,
-  shield: CARD_PRESENTATION.shield.icon
+  heal: CARD_PRESENTATION.recover.glyph,
+  energy: CARD_PRESENTATION.charge.glyph,
+  shield: CARD_PRESENTATION.shield.glyph
 });
 
 /** 将 Presentation adapter 提交的公开事件映射为短暂 CSS 反馈；本类从不修改任何游戏状态。 */
@@ -482,13 +482,16 @@ export class AnimationController {
     overlay.style.setProperty("--resolution-vfx-duration", `${duration}ms`);
     const effectArt = POSITIVE_VFX_ART_BY_EFFECT[effectName];
     if (effectArt) {
+      const visual = doc.createElement("span");
+      visual.className = "positive-vfx-visual";
       const icon = doc.createElement("img");
       icon.className = "positive-vfx-icon";
       icon.setAttribute("src", effectArt);
       icon.setAttribute("alt", "");
       icon.setAttribute("aria-hidden", "true");
       icon.setAttribute("draggable", "false");
-      overlay.append(icon);
+      visual.append(icon);
+      overlay.append(visual);
     }
 
     const signedAmount = feedback.type === "damage" ? -Math.abs(amount) : amount;
@@ -542,8 +545,9 @@ export class AnimationController {
       this.activeResolutionEffects.delete(entry);
     };
     entry.cleanup = cleanup;
+    const lifetimeAnimationName = effectArt ? "positiveVfxLifetime" : "resolutionVfxLifetime";
     overlay.addEventListener("animationend", (event) => {
-      if (event.target === overlay && event.animationName === "resolutionVfxLifetime") cleanup();
+      if (event.target === overlay && event.animationName === lifetimeAnimationName) cleanup();
     });
     entry.timer = setTimeout(cleanup, duration + RESOLUTION_VFX_CLEANUP_BUFFER_MS);
     entry.timer?.unref?.();
