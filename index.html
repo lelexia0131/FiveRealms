@@ -136,6 +136,16 @@
           </section>
         </section>
 
+        <section id="game-over-overlay" class="game-over-overlay is-hidden" role="region"
+          aria-labelledby="game-over-title">
+          <div class="game-over-card">
+            <p class="eyebrow">对局终幕</p>
+            <h2 id="game-over-title">胜负已定</h2>
+            <p id="game-over-copy"></p>
+            <button id="play-again-button" class="primary-button" type="button">再开一局</button>
+          </div>
+        </section>
+
         <aside id="log-panel" class="log-panel" aria-labelledby="log-title">
           <button id="log-toggle-button" class="log-toggle-button" type="button" aria-expanded="true"
             aria-label="折叠对局记录"><span aria-hidden="true">›</span></button>
@@ -152,16 +162,6 @@
 
   <div id="skill-details-overlay" class="skill-details-overlay is-hidden" role="dialog" aria-modal="true"
     aria-labelledby="skill-details-title"></div>
-
-  <div id="game-over-overlay" class="game-over-overlay is-hidden" role="dialog" aria-modal="true"
-    aria-labelledby="game-over-title">
-    <div class="game-over-card">
-      <p class="eyebrow">对局终幕</p>
-      <h2 id="game-over-title">胜负已定</h2>
-      <p id="game-over-copy"></p>
-      <button id="play-again-button" class="primary-button" type="button">再开一局</button>
-    </div>
-  </div>
 
   <script type="module" src="./js/main.js"></script>
 </body>

@@ -43321,6 +43321,75 @@ test("UI·日志：同句连势技能名为蓝色而累计状态名保持卡牌�
   assert.equal((rendered.match(/log-card-name/g) ?? []).length, 1);
 });
 
+test("UI·结束页面：结果层只覆盖战场且与可滚动日志和再开一局按钮共存", async () => {
+  const [index, layout, components] = await Promise.all([
+    readFile(projectFile("index.html"), "utf8"),
+    readFile(projectFile("css/layout.css"), "utf8"),
+    readFile(projectFile("css/components.css"), "utf8")
+  ]);
+  const battleLayout = index.match(/<div id="battle-layout"[\s\S]*?<\/div>\s*<\/section>\s*<\/main>/)?.[0] ?? "";
+  assert.match(battleLayout, /id="game-over-overlay"[\s\S]*id="play-again-button"[\s\S]*id="log-panel"/);
+  assert.match(battleLayout, /id="game-over-overlay"[^>]*role="region"/);
+  assert.doesNotMatch(battleLayout, /id="game-over-overlay"[^>]*aria-modal/);
+  assert.match(layout, /\.battlefield, \.game-over-overlay\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*1;/s);
+  assert.match(layout, /\.log-panel\s*\{[^}]*grid-column:\s*2;[^}]*grid-row:\s*1;[^}]*max-height:\s*100%;/s);
+  assert.match(layout, /\.log-list\s*\{[^}]*overflow-y:\s*auto;/s);
+  const overlayRule = components.match(/\.game-over-overlay\s*\{[^}]*\}/)?.[0] ?? "";
+  assert.match(overlayRule, /position:\s*relative/);
+  assert.doesNotMatch(overlayRule, /position:\s*fixed|inset:\s*0/);
+});
+
+test("UI·结束页面：结束时保留现有日志且进入下一局选择时才清空", async () => {
+  const winner = makePlayer("winner", 0, "dawn"), defeated = makePlayer("defeated", 1, "dusk");
+  const { game, ui } = makeGame([winner, defeated]);
+  game.log("首回合开始。");
+  defeated.alive = false;
+  await game.checkVictory();
+  const finalLog = game.state.logs.at(-1);
+  assert.match(finalLog.message, /晨星阵营消灭了全部敌人，获得胜利/);
+  assert.equal(ui.logs.at(-1), finalLog.message);
+
+  const overlayClasses = new Set(["is-hidden"]);
+  const overlay = {
+    classList: {
+      add: (name) => overlayClasses.add(name),
+      remove: (name) => overlayClasses.delete(name)
+    }
+  };
+  const authoritativeLogMarkup = game.state.logs.map((entry) => `<div>${formatLogEntry(entry)}</div>`).join("");
+  const logList = { innerHTML: authoritativeLogMarkup, scrollTop: 37 };
+  const title = { textContent: "" }, copy = { textContent: "" };
+  UIManager.prototype.showGameOver.call({
+    elements: { game_over_title: title, game_over_copy: copy, game_over_overlay: overlay }
+  }, "dawn", true);
+  assert.equal(logList.innerHTML, authoritativeLogMarkup);
+  assert.equal(logList.scrollTop, 37);
+  assert.equal(overlayClasses.has("is-hidden"), false);
+  assert.equal(title.textContent, "你的阵营获胜");
+  assert.match(copy.textContent, /晨星阵营存活到了最后/);
+
+  let visibleLogCount = 2;
+  const classList = { add() { }, remove() { } };
+  UIManager.prototype.showSelection.call({
+    sound: { setMusicTeam() { } },
+    cancelPendingInteractions() { },
+    resetCurrentCard() { },
+    clearLog() {
+      logList.innerHTML = "";
+      logList.scrollTop = 0;
+      visibleLogCount = 0;
+    },
+    elements: {
+      start_screen: { classList }, game_screen: { classList }, selection_screen: { classList },
+      game_over_overlay: overlay, team_preview: { innerHTML: "" }, candidate_grid: { innerHTML: "" }
+    }
+  }, [], "dawn");
+  assert.equal(logList.innerHTML, "");
+  assert.equal(logList.scrollTop, 0);
+  assert.equal(visibleLogCount, 0);
+  assert.equal(overlayClasses.has("is-hidden"), true);
+});
+
 /*
 功能
 验证 UI adapter 将公开结算来源映射为正确 VFX 变体。
