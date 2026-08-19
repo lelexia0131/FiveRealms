@@ -1357,8 +1357,8 @@ async function frArchGovernanceDocumentContract() {
   const architecture = await readFile(projectFile("docs/architecture/FR_ARCHITECTURE.md"), "utf8");
   const checker = await readFile(projectFile("tools/check-code-quality.mjs"), "utf8");
   for (const fragment of [
-    "Fast profile 为 500ms soft target、900ms search deadline",
-    "Normal profile 为 3000ms search deadline",
+    "浏览器生产搜索固定使用 `NORMAL` AI search profile",
+    "1×、2×、3× AI 速度只控制 presentation pacing",
     "搜索计算 RNG、真实游戏 RNG 与 presentation pacing RNG 相互隔离",
     "session、gameId、stateVersion",
     "TARGET ARCHITECTURE IMPLEMENTED",
