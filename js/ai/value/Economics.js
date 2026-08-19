@@ -21,6 +21,7 @@ Evaluator、TransitionValue、SearchPrior、Simulator 与响应策略。
 import { hasPassiveSkill } from "../state/RuleProjection.js";
 
 export const STATE_DELTA_SCALE = 0.08;
+export const RESOURCE_MATERIAL_SCALE = 0.25;
 export const HP_VALUE = 5;
 export const ENERGY_STATE_WEIGHT = 1.2;
 export const SKILL_THRESHOLD_OPTION_VALUE = 4;

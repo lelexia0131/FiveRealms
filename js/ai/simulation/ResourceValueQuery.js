@@ -6,7 +6,7 @@
 CardSelectionBoundary、CardEffectSimulation 与 AI composition roots。
 
 下游
-注入的 StateValue、纯 Evaluator equipment material primitive 与 Simulator factory。
+value/Economics、注入的 StateValue、纯 Evaluator equipment material primitive 与 Simulator factory。
 
 状态边界
 只写 Simulator 创建的独立 SearchState 克隆，不修改输入或真实 GameState。
@@ -18,9 +18,7 @@ CardSelectionBoundary、CardEffectSimulation 与 AI composition roots。
 不生成 Planner action、不决定候选胜负；强制 mutation 不得重新进入 ResourceSelectionPolicy。
 */
 import { PROBABILITY_EPSILON } from "../state/Probability.js";
-
-// 与现有 StateValue 装备资产项使用同一尺度；这里只补充 Plunder 接收方实际获得的牌资产。
-export const RESOURCE_ACQUISITION_MATERIAL_SCALE = 0.25;
+import { RESOURCE_MATERIAL_SCALE } from "../value/Economics.js";
 
 export class ResourceValueQuery {
   /*
@@ -110,7 +108,7 @@ export class ResourceValueQuery {
       );
       const contextualStateDelta = rawStateDelta - equipmentMaterialDelta;
       const acquisitionMaterial = purpose === "plunder"
-        ? candidate.acquisitionUtility * RESOURCE_ACQUISITION_MATERIAL_SCALE * applied
+        ? candidate.acquisitionUtility * RESOURCE_MATERIAL_SCALE * applied
         : 0;
       return {
         ...candidate,

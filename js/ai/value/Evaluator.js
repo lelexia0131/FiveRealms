@@ -23,6 +23,7 @@ import { cardAvailability, getBaseCardAiValue, roleCardDelta } from "./CardValue
 import {
   ENERGY_STATE_WEIGHT,
   HP_VALUE,
+  RESOURCE_MATERIAL_SCALE,
   energyDeviceFutureUtility
 } from "./Economics.js";
 import {
@@ -130,7 +131,7 @@ export class Evaluator {
     const initialEquipmentValue = player.initialEquipmentValue ?? equipmentValue;
     const equipmentDelta = (equipmentValue
       * (player.equipmentRetentionProbability ?? (equipmentValue ? 1 : 0))
-      - initialEquipmentValue + (player.expectedEquipmentGain ?? 0)) * 0.25;
+      - initialEquipmentValue + (player.expectedEquipmentGain ?? 0)) * RESOURCE_MATERIAL_SCALE;
     const currentEquipmentRoleDelta = player.equipmentDefinitionId
       ? roleCardDelta(player.characterId, player.equipmentDefinitionId)
       : 0;
@@ -139,7 +140,8 @@ export class Evaluator {
       : currentEquipmentRoleDelta;
     const equipmentRoleDelta = (currentEquipmentRoleDelta
       * (player.equipmentRetentionProbability ?? (currentEquipmentRoleDelta ? 1 : 0))
-      - initialEquipmentRoleDelta + (player.expectedEquipmentRoleDelta ?? 0)) * 0.25;
+      - initialEquipmentRoleDelta + (player.expectedEquipmentRoleDelta ?? 0))
+      * RESOURCE_MATERIAL_SCALE;
     const handRoleDelta = player.id === viewerId
       ? (player.hand ?? []).reduce((sum, card) => (
           sum + roleCardDelta(player.characterId, card?.definitionId) * cardAvailability(card)
