@@ -184,7 +184,7 @@ export function createCombatWorkflow(dependencies) {
       runtime.presentation.showDamageFeedback(
         target.id,
         hpDamage,
-        event.card?.definitionId ?? null,
+        event.card?.definitionId ?? event.skill ?? null,
         event.damageType
       );
     } else {

@@ -20,11 +20,13 @@ application/ports/PresentationPort 与 UIManager。
 import { presentCard } from "./CardPresentationDefinitions.js";
 import { createPresentationPort } from "../../application/ports/PresentationPort.js";
 
-const DAMAGE_VFX_BY_CARD_ID = Object.freeze({
+const DAMAGE_VFX_BY_EFFECT_ID = Object.freeze({
   assault: "slash",
   shockwave: "explosion",
   provoke: "red-impact",
-  duel: "cross-slash"
+  duel: "cross-slash",
+  hunt: "hunt",
+  burningField: "burning-field"
 });
 
 /*
@@ -59,11 +61,11 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
   }
   return createPresentationPort({
     log: (message, kind = "normal") => log(message, kind),
-    showDamageFeedback: (playerId, amount, cardDefinitionId) => ui.queueFeedback?.(
+    showDamageFeedback: (playerId, amount, effectDefinitionId) => ui.queueFeedback?.(
       "damage",
       playerId,
       amount,
-      DAMAGE_VFX_BY_CARD_ID[cardDefinitionId] ?? null
+      DAMAGE_VFX_BY_EFFECT_ID[effectDefinitionId] ?? null
     ),
     showShieldFeedback: (playerId, amount, mode) => ui.queueFeedback?.("shield", playerId, amount, mode),
     showHealFeedback: (playerId, amount) => ui.queueFeedback?.("heal", playerId, amount),

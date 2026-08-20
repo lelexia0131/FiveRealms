@@ -44786,13 +44786,15 @@ function frVfxAdapterMapping() {
     },
     renderTarget: {}
   });
-  for (const [cardDefinitionId, variant] of [
+  for (const [effectDefinitionId, variant] of [
     ["assault", "slash"],
     ["shockwave", "explosion"],
     ["provoke", "red-impact"],
-    ["duel", "cross-slash"]
+    ["duel", "cross-slash"],
+    ["hunt", "hunt"],
+    ["burningField", "burning-field"]
   ]) {
-    presentation.showDamageFeedback("target", 1, cardDefinitionId, "normal");
+    presentation.showDamageFeedback("target", 1, effectDefinitionId, "normal");
     assert.deepEqual(queued.at(-1), ["damage", "target", 1, variant]);
   }
   presentation.showShieldFeedback("target", 2, "gain");
@@ -44805,7 +44807,7 @@ function frVfxAdapterMapping() {
   ]);
 }
 
-test("UI·结算特效：adapter 映射四类伤害并区分护盾获得与吸收", frVfxAdapterMapping);
+test("UI·结算特效：adapter 映射卡牌与技能伤害并区分护盾获得与吸收", frVfxAdapterMapping);
 
 /*
 功能
@@ -44935,6 +44937,79 @@ async function frVfxRealResolutionFeedback() {
 }
 
 test("UI·结算特效：真实卡牌结算只向实际目标提交对应反馈", frVfxRealResolutionFeedback);
+
+/*
+功能
+验证猎杀与焚场只为实际生命伤害提交技能 VFX，且焚场反馈保持真实目标结算顺序。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+Promise<void>，断言失败时拒绝。
+
+读取状态
+独立 makeGame fixtures 的技能、格挡响应、生命与 presentation 队列。
+
+写入状态
+各 fixture 按正式技能 workflow 完成结算。
+
+调用函数
+Game.useActiveSkill、makeGame。
+
+边界与不变量
+格挡目标不得提交成功 VFX；焚场受伤反馈不得脱离 getEnemies 的真实结算顺序。
+*/
+async function frSkillVfxRealResolutionFeedback() {
+  {
+    const hunter = makePlayer("vfx-hunt-source", 0, "dawn", "ai", 5),
+      target = makePlayer("vfx-hunt-target", 1, "dusk", "human"),
+      { game, ui } = makeGame([hunter, target]),
+      feedback = [];
+    hunter.energy = 2;
+    target.statuses.huntMark = { sourceId: hunter.id };
+    ui.queueFeedback = (...args) => feedback.push(args);
+    assert.equal(await game.useActiveSkill(hunter, "hunt", [target]), true);
+    assert.ok(feedback.some((entry) => entry[0] === "damage"
+      && entry[1] === target.id && entry[3] === "hunt"));
+  }
+  {
+    const hunter = makePlayer("vfx-blocked-hunt-source", 0, "dawn", "ai", 5),
+      target = makePlayer("vfx-blocked-hunt-target", 1, "dusk", "human"),
+      { game, ui } = makeGame([hunter, target], {
+        response: (request) => request.type === "block" && request.targetPlayerId === target.id
+      }),
+      feedback = [];
+    hunter.energy = 2;
+    target.statuses.huntMark = { sourceId: hunter.id };
+    target.hand.push(instance("block"));
+    ui.queueFeedback = (...args) => feedback.push(args);
+    assert.equal(await game.useActiveSkill(hunter, "hunt", [target]), true);
+    assert.equal(feedback.some((entry) => entry[0] === "damage" && entry[3] === "hunt"), false);
+  }
+  {
+    const ember = makePlayer("vfx-field-source", 0, "dawn", "human", 4),
+      blocked = makePlayer("vfx-field-blocked", 1, "dusk", "human"),
+      damagedA = makePlayer("vfx-field-damaged-a", 2, "dusk"),
+      damagedB = makePlayer("vfx-field-damaged-b", 3, "dusk"),
+      { game, ui } = makeGame([ember, blocked, damagedA, damagedB], {
+        response: (request) => request.type === "block" && request.targetPlayerId === blocked.id
+      }),
+      feedback = [];
+    ember.energy = 3;
+    blocked.hand.push(instance("block"));
+    ui.queueFeedback = (...args) => feedback.push(args);
+    assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
+    const burningHits = feedback.filter((entry) => entry[0] === "damage"
+      && entry[3] === "burning-field");
+    assert.deepEqual(burningHits.map((entry) => entry[1]), [damagedA.id, damagedB.id]);
+  }
+}
+
+test("UI·结算特效：猎杀与焚场仅对实际受伤目标提交技能反馈", frSkillVfxRealResolutionFeedback);
 
 // ---- 布局与样式 ----
 
@@ -45187,9 +45262,38 @@ function frVfxOverlayLifecycle() {
   assert.equal(controller.activeDamageFeedback.size, 0);
   assert.equal(controller.activeResolutionEffects.size, 0);
   assert.equal(replacement.classList.contains("feedback-damage"), false);
+
+  controller.queue("damage", "target-a", 2, "hunt");
+  controller.flush(doc);
+  const huntOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-hunt"));
+  assert.equal(huntOverlay.style.getPropertyValue("--resolution-vfx-duration"), "720ms");
+  assert.ok(replacement.classList.contains("feedback-damage"), "猎杀保留统一受伤震动");
+  controller.clear();
+
+  controller.queue("damage", "target-a", 1, "burning-field");
+  controller.queue("damage", "target-b", 1, "burning-field");
+  controller.flush(doc);
+  let burningOverlays = doc.body.children.filter((overlay) => overlay.className.includes("is-burning-field"));
+  assert.equal(burningOverlays.length, 1, "焚场同一时刻只启动一个目标的爆燃");
+  assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-duration"), "880ms");
+  assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-left"), "30px");
+  assert.equal(controller.sequentialDamageFeedback.length, 1);
+  burningOverlays[0].listeners.get("animationend")({
+    target: burningOverlays[0], animationName: "resolutionVfxLifetime"
+  });
+  clearTimeout(controller.sequentialDamageTimer);
+  controller.sequentialDamageTimer = null;
+  controller.playNextSequentialDamageFeedback();
+  burningOverlays = doc.body.children.filter((overlay) => overlay.className.includes("is-burning-field"));
+  assert.equal(burningOverlays.length, 1);
+  assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-left"), "370px");
+  assert.equal(controller.sequentialDamageFeedback.length, 0);
+  controller.clear();
+  assert.equal(controller.sequentialDamageTimer, null);
+  assert.equal(doc.body.children.length, 0);
 }
 
-test("UI·结算特效：signed 数值、多目标正向 overlay 与生命周期保持独立", frVfxOverlayLifecycle);
+test("UI·结算特效：signed 数值、逐目标技能与 overlay 生命周期保持独立", frVfxOverlayLifecycle);
 
 /*
 功能
@@ -45277,7 +45381,7 @@ css/animations.css 与 js/ui/animationController.js。
 readFile、正则断言。
 
 边界与不变量
-单斩与双斩选择器必须不同；正向效果共用单一连续动画且 cleanup 不早于视觉结束；数值 feedback 保持独立。
+卡牌与技能伤害选择器必须不同；正向效果共用单一连续动画且 cleanup 不早于视觉结束；数值 feedback 保持独立。
 */
 async function frVfxCssContract() {
   const [source, controllerSource] = await Promise.all([
@@ -45294,6 +45398,19 @@ async function frVfxCssContract() {
   assert.match(source, /\.resolution-vfx-overlay\.is-cross-slash::after/);
   assert.match(source, /\.resolution-vfx-overlay\.is-explosion::before/);
   assert.match(source, /\.resolution-vfx-overlay\.is-red-impact::before/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-hunt\s*\{[^}]*huntLockFlash \.72s/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-hunt::before\s*\{[^}]*huntSlashA \.29s \.09s/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-hunt::after\s*\{[^}]*huntSlashB \.29s \.14s/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-burning-field\s*\{[^}]*burningFieldFlash \.88s/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-burning-field::before\s*\{[^}]*burningFieldFlame \.88s/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-burning-field::after\s*\{[^}]*burningFieldRing \.88s/);
+  const huntDurationMs = Number(controllerSource.match(/const HUNT_HIT_DURATION_MS = (\d+);/)?.[1]);
+  const burningFieldDurationMs = Number(
+    controllerSource.match(/const BURNING_FIELD_HIT_DURATION_MS = (\d+);/)?.[1]
+  );
+  assert.ok(huntDurationMs >= 600 && huntDurationMs <= 800);
+  assert.ok(burningFieldDurationMs >= 750 && burningFieldDurationMs <= 950);
+  assert.match(controllerSource, /const SEQUENTIAL_DAMAGE_VFX = new Set\(\["burning-field"\]\)/);
   assert.match(positiveMotion, /from\s*\{\s*opacity:\s*\.96;[^}]*scale\(\.55\)/);
   assert.match(positiveMotion, /to\s*\{\s*opacity:\s*0;[^}]*scale\(1\.45\)/);
   assert.doesNotMatch(positiveMotion, /(?:^|})\s*\d+%\s*\{|rotate|spin|steps\(/);

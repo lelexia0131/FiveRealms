@@ -5,9 +5,16 @@ export const LIGHTNING_HIT_DURATION_MS = 3000;
 
 const DAMAGE_FEEDBACK_DURATION_MS = 360;
 const RESOLUTION_VFX_DURATION_MS = 800;
+const HUNT_HIT_DURATION_MS = 720;
+const BURNING_FIELD_HIT_DURATION_MS = 880;
 const POSITIVE_RESOLUTION_VFX_DURATION_MS = 1000;
 const RESOLUTION_VFX_CLEANUP_BUFFER_MS = 60;
 const NUMERIC_FEEDBACK_TYPES = new Set(["damage", "heal", "energy", "shield"]);
+const SEQUENTIAL_DAMAGE_VFX = new Set(["burning-field"]);
+const RESOLUTION_VFX_DURATION_BY_EFFECT = Object.freeze({
+  hunt: HUNT_HIT_DURATION_MS,
+  "burning-field": BURNING_FIELD_HIT_DURATION_MS
+});
 const POSITIVE_VFX_ART_BY_EFFECT = Object.freeze({
   heal: CARD_PRESENTATION.recover.glyph,
   energy: CARD_PRESENTATION.charge.glyph,
@@ -33,7 +40,7 @@ export class AnimationController {
   无。
 
   写入状态
-  初始化 pending、闪电/伤害生命周期与结算 overlay 集合。
+  初始化 pending、逐目标技能反馈、闪电/伤害生命周期与结算 overlay 集合。
 
   调用函数
   Map 构造器。
@@ -48,6 +55,8 @@ export class AnimationController {
     this.activeDamageFeedback = new Map();
     this.damageFeedbackSerial = 0;
     this.activeResolutionEffects = new Set();
+    this.sequentialDamageFeedback = [];
+    this.sequentialDamageTimer = null;
   }
 
   /*
@@ -438,6 +447,78 @@ export class AnimationController {
 
   /*
   功能
+  将需要逐目标展示的技能伤害加入 FIFO，并在空闲时立即播放队首。
+
+  调用方
+  flush 消费焚场 damage feedback 时。
+
+  输入
+  data-only damage feedback 与当前文档根节点。
+
+  输出
+  无返回值。
+
+  读取状态
+  sequentialDamageTimer。
+
+  写入状态
+  sequentialDamageFeedback。
+
+  调用函数
+  playNextSequentialDamageFeedback。
+
+  边界与不变量
+  队列只控制展示先后；不得延迟或重排权威伤害、日志和事件结算。
+  */
+  enqueueSequentialDamageFeedback(feedback, root) {
+    this.sequentialDamageFeedback.push({ feedback, root });
+    if (this.sequentialDamageTimer === null) this.playNextSequentialDamageFeedback();
+  }
+
+  /*
+  功能
+  播放一个逐目标技能伤害反馈，并在其视觉生命周期结束后推进下一项。
+
+  调用方
+  enqueueSequentialDamageFeedback 与自身 timer。
+
+  输入
+  无；读取 FIFO 队首保存的 feedback 与文档根节点。
+
+  输出
+  无返回值。
+
+  读取状态
+  sequentialDamageFeedback 与技能 VFX 时长映射。
+
+  写入状态
+  启动结算 overlay、受伤震动与 sequentialDamageTimer。
+
+  调用函数
+  startResolutionEffect、startDamageFeedback、setTimeout。
+
+  边界与不变量
+  同一时刻只启动一个逐目标技能反馈；下一项必须等待当前效果完整收束。
+  */
+  playNextSequentialDamageFeedback() {
+    const entry = this.sequentialDamageFeedback.shift();
+    if (!entry) {
+      this.sequentialDamageTimer = null;
+      return;
+    }
+    this.startResolutionEffect(entry.feedback, entry.root);
+    this.startDamageFeedback(entry.feedback.playerId, entry.root);
+    const duration = RESOLUTION_VFX_DURATION_BY_EFFECT[entry.feedback.variant]
+      ?? RESOLUTION_VFX_DURATION_MS;
+    this.sequentialDamageTimer = setTimeout(() => {
+      this.sequentialDamageTimer = null;
+      this.playNextSequentialDamageFeedback();
+    }, duration);
+    this.sequentialDamageTimer?.unref?.();
+  }
+
+  /*
+  功能
   在人物框坐标上创建不受后续 render 替换影响的短生命周期结算特效。
 
   调用方
@@ -473,7 +554,7 @@ export class AnimationController {
     else if (feedback.variant === "gain") effectName = "shield";
     const duration = ["heal", "shield", "energy"].includes(effectName)
       ? POSITIVE_RESOLUTION_VFX_DURATION_MS
-      : RESOLUTION_VFX_DURATION_MS;
+      : RESOLUTION_VFX_DURATION_BY_EFFECT[effectName] ?? RESOLUTION_VFX_DURATION_MS;
 
     const doc = root.ownerDocument ?? root;
     const overlay = doc.createElement("span");
@@ -569,16 +650,16 @@ export class AnimationController {
   无返回值。
 
   读取状态
-  pending、activeDamageFeedback、activeLightning 与当前 DOM。
+  pending、逐目标技能 VFX 类型、activeDamageFeedback、activeLightning 与当前 DOM。
 
   写入状态
-  消费 pending，创建短暂结算 DOM，并更新过期或断连的伤害/闪电条目。
+  消费 pending，排队逐目标技能反馈，创建短暂结算 DOM，并更新过期或断连的伤害/闪电条目。
 
   调用函数
-  startDamageFeedback、startResolutionEffect、startLightning 与 DOM animation API。
+  enqueueSequentialDamageFeedback、startDamageFeedback、startResolutionEffect、startLightning 与 DOM animation API。
 
   边界与不变量
-  pending 每项只消费一次；新结算 overlay 与负护盾数字不得叠加旧人物框动画；DOM 重绘不得延长闪电原到期时间。
+  pending 每项只消费一次；焚场伤害按到达顺序逐个展示；新结算 overlay 与负护盾数字不得叠加旧人物框动画；DOM 重绘不得延长闪电原到期时间。
   */
   flush(root = document) {
     for (const feedback of this.pending.splice(0)) {
@@ -592,6 +673,10 @@ export class AnimationController {
       const panel = feedback.playerId ? this.playerPanel(root, feedback.playerId) : null;
       const target = panel || root.querySelector(".command-deck");
       if (!target) continue;
+      if (feedback.type === "damage" && SEQUENTIAL_DAMAGE_VFX.has(feedback.variant)) {
+        this.enqueueSequentialDamageFeedback(feedback, root);
+        continue;
+      }
       const hasResolutionOverlay = this.startResolutionEffect(feedback, root);
       // 护盾减少在 overlay 无法定位时仍是数字反馈，不能回退为获得护盾的 outline。
       const isShieldLoss = feedback.type === "shield" && numericAmount < 0;
@@ -637,10 +722,10 @@ export class AnimationController {
   无返回值。
 
   读取状态
-  pending、activeDamageFeedback、activeResolutionEffects 与 activeLightning。
+  pending、逐目标技能反馈、activeDamageFeedback、activeResolutionEffects 与 activeLightning。
 
   写入状态
-  清空 pending 并移除所有活跃反馈条目、timer 和 DOM。
+  清空 pending/逐目标技能 FIFO，并移除所有活跃反馈条目、timer 和 DOM。
 
   调用函数
   removeDamageFeedback、结算 overlay cleanup、removeLightning。
@@ -650,6 +735,9 @@ export class AnimationController {
   */
   clear() {
     this.pending.length = 0;
+    this.sequentialDamageFeedback.length = 0;
+    clearTimeout(this.sequentialDamageTimer);
+    this.sequentialDamageTimer = null;
     for (const playerId of [...this.activeDamageFeedback.keys()]) this.removeDamageFeedback(playerId);
     for (const entry of [...this.activeResolutionEffects]) entry.cleanup?.();
     for (const playerId of [...this.activeLightning.keys()]) this.removeLightning(playerId);
