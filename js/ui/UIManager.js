@@ -415,17 +415,8 @@ export class UIManager {
     this.elements.start_button.addEventListener("click", () => { void this.sound.unlock(); this.playSound("select"); this.callbacks.onStart?.(); });
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
-    this.elements.squad_mode_grid.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-team-assignment-mode]");
-      if (button) {
-        this.playSound("select");
-        this.callbacks.onSelectTeamAssignmentMode?.(button.dataset.teamAssignmentMode);
-      }
-    });
-    this.elements.candidate_grid.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-character-id]");
-      if (button) { this.playSound("select"); this.callbacks.onSelectCharacter?.(button.dataset.characterId); }
-    });
+    this.elements.squad_mode_grid.addEventListener("click", (event) => this.handleSquadModeClick(event));
+    this.elements.candidate_grid.addEventListener("click", (event) => this.handleCharacterCandidateClick(event));
     this.elements.human_hand.addEventListener("click", (event) => this.handleHandClick(event));
     this.elements.cpu_grid.addEventListener("wheel", (event) => {
       const strip = event.target.closest(".opponent-hand-strip");
@@ -473,6 +464,70 @@ export class UIManager {
 
   /*
   功能
+  把一次有效编队方式卡牌点击路由为一次选择音效和一次 Application intent。
+
+  调用方
+  bindEvents 注册的 squad_mode_grid click listener。
+
+  输入
+  浏览器 click event。
+
+  输出
+  无返回值。
+
+  读取状态
+  点击目标、按钮可用状态与 callbacks。
+
+  写入状态
+  请求播放一次 cardSelect SFX，并提交一次公开编队 mode。
+
+  调用函数
+  playSound、callbacks.onSelectTeamAssignmentMode。
+
+  边界与不变量
+  非卡牌、disabled 或 aria-disabled 按钮不得播放或提交；一次事件至多触发一次。
+  */
+  handleSquadModeClick(event) {
+    const button = event.target.closest("[data-team-assignment-mode]");
+    if (!button || button.disabled || button.getAttribute?.("aria-disabled") === "true") return;
+    this.playSound("cardSelect");
+    this.callbacks.onSelectTeamAssignmentMode?.(button.dataset.teamAssignmentMode);
+  }
+
+  /*
+  功能
+  把一次有效角色候选卡牌点击路由为一次选择音效和一次 Application intent。
+
+  调用方
+  bindEvents 注册的 candidate_grid click listener。
+
+  输入
+  浏览器 click event。
+
+  输出
+  无返回值。
+
+  读取状态
+  点击目标、按钮可用状态与 callbacks。
+
+  写入状态
+  请求播放一次 cardSelect SFX，并提交一次公开角色 ID。
+
+  调用函数
+  playSound、callbacks.onSelectCharacter。
+
+  边界与不变量
+  非卡牌、disabled 或 aria-disabled 按钮不得播放或提交；一次事件至多触发一次。
+  */
+  handleCharacterCandidateClick(event) {
+    const button = event.target.closest("[data-character-id]");
+    if (!button || button.disabled || button.getAttribute?.("aria-disabled") === "true") return;
+    this.playSound("cardSelect");
+    this.callbacks.onSelectCharacter?.(button.dataset.characterId);
+  }
+
+  /*
+  功能
   返回开始屏幕并清理上一局可见记录。
 
   调用方
@@ -488,16 +543,16 @@ export class UIManager {
   页面屏幕元素与 SoundManager。
 
   写入状态
-  停止 BGM、清空日志并切换屏幕可见性。
+  选择准备阶段 BGM、清空日志并切换屏幕可见性。
 
   调用函数
-  SoundManager.stopMusic、clearLog。
+  SoundManager.playPreMatchMusic、clearLog。
 
   边界与不变量
   只清理 UI，不销毁或创建 MatchApplication。
   */
   showStart() {
-    this.sound.stopMusic();
+    this.sound.playPreMatchMusic();
     this.clearLog();
     this.elements.start_screen.classList.remove("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
@@ -522,16 +577,16 @@ export class UIManager {
   页面屏幕元素与 SoundManager。
 
   写入状态
-  停止旧阵营音乐、清理旧交互/日志并仅显示编队方式屏幕。
+  选择准备阶段 BGM、清理旧交互/日志并仅显示编队方式屏幕。
 
   调用函数
-  SoundManager.stopMusic、cancelPendingInteractions、resetCurrentCard、clearLog。
+  SoundManager.playPreMatchMusic、cancelPendingInteractions、resetCurrentCard、clearLog。
 
   边界与不变量
   只展示选择入口，不保存模式或解析阵营规模。
   */
   showSquadSelection() {
-    this.sound.stopMusic();
+    this.sound.playPreMatchMusic();
     this.cancelPendingInteractions();
     this.resetCurrentCard();
     this.clearLog();
@@ -562,7 +617,7 @@ export class UIManager {
   清理旧交互/日志/结算牌，写入模式上下文与候选 DOM。
 
   调用函数
-  SoundManager.stopMusic、cancelPendingInteractions、candidateCardTemplate。
+  SoundManager.playPreMatchMusic、cancelPendingInteractions、candidateCardTemplate。
 
   边界与不变量
   只展示公开候选和已确认 mode；真人阵营尚未解析，不得提前启动阵营 BGM。
@@ -570,7 +625,7 @@ export class UIManager {
   showSelection(candidates, teamAssignmentMode) {
     const presentation = TEAM_ASSIGNMENT_PRESENTATION[teamAssignmentMode];
     if (!presentation) throw new TypeError(`未知编队方式：${teamAssignmentMode}`);
-    this.sound.stopMusic();
+    this.sound.playPreMatchMusic();
     this.cancelPendingInteractions();
     this.resetCurrentCard();
     this.clearLog();
@@ -603,15 +658,16 @@ export class UIManager {
   game.state 玩家角色与当前窗口宽度。
 
   写入状态
-  更新 UI owner、主屏显隐、日志折叠与结算牌 DOM。
+  停止准备阶段 BGM，更新 UI owner、主屏显隐、日志折叠与结算牌 DOM。
 
   调用函数
-  attachGame、resetCurrentCard、clearLog、setLogCollapsed、render。
+  SoundManager.stopMusic、attachGame、resetCurrentCard、clearLog、setLogCollapsed、render。
 
   边界与不变量
   仅全部角色已确认后执行首帧 render。
   */
   showGame(game) {
+    this.sound.stopMusic();
     this.attachGame(game);
     this.resetCurrentCard();
     this.clearLog();

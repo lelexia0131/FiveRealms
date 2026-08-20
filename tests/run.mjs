@@ -42310,7 +42310,7 @@ test("UI·编队方式：角色选择页显示 two、three 与 random 的征召�
     candidate_grid: { innerHTML: "" }
   };
   const context = {
-    sound: { stopMusic() { } },
+    sound: { playPreMatchMusic() { } },
     cancelPendingInteractions() { },
     resetCurrentCard() { },
     clearLog() { },
@@ -42329,6 +42329,58 @@ test("UI·编队方式：角色选择页显示 two、three 与 random 的征召�
     assert.match(elements.team_preview.innerHTML, new RegExp(title.replace("征召", "")));
   }
 });
+
+/*
+功能
+验证两类准备阶段卡牌只在有效点击时各提交一次语义 SFX 与一次选择 intent。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+UIManager 两个卡牌点击处理方法与 fake button 状态。
+
+写入状态
+本地 sound/callback 调用记录。
+
+调用函数
+UIManager.handleSquadModeClick、handleCharacterCandidateClick。
+
+边界与不变量
+一次有效点击必须一音一 intent；disabled 与 aria-disabled 卡牌不得触发任何调用。
+*/
+function preMatchCardClicksUseSingleSfxIntent() {
+  const calls = [];
+  const context = {
+    callbacks: {
+      onSelectTeamAssignmentMode: (mode) => calls.push(["mode", mode]),
+      onSelectCharacter: (characterId) => calls.push(["character", characterId])
+    },
+    playSound: (name) => calls.push(["sound", name])
+  };
+  const eventFor = (selector, button) => ({ target: { closest: (query) => query === selector ? button : null } });
+  const modeButton = { dataset: { teamAssignmentMode: "two" }, disabled: false, getAttribute: () => null };
+  UIManager.prototype.handleSquadModeClick.call(context, eventFor("[data-team-assignment-mode]", modeButton));
+  assert.deepEqual(calls, [["sound", "cardSelect"], ["mode", "two"]]);
+  modeButton.disabled = true;
+  UIManager.prototype.handleSquadModeClick.call(context, eventFor("[data-team-assignment-mode]", modeButton));
+  assert.equal(calls.length, 2);
+
+  const characterButton = { dataset: { characterId: "blade-walker" }, disabled: false, getAttribute: () => null };
+  UIManager.prototype.handleCharacterCandidateClick.call(context, eventFor("[data-character-id]", characterButton));
+  assert.deepEqual(calls.slice(2), [["sound", "cardSelect"], ["character", "blade-walker"]]);
+  characterButton.getAttribute = () => "true";
+  UIManager.prototype.handleCharacterCandidateClick.call(context, eventFor("[data-character-id]", characterButton));
+  assert.equal(calls.length, 4);
+}
+
+test("UI·准备阶段卡牌：有效点击各播放一次 cardSelect 且不可用卡牌静音", preMatchCardClicksUseSingleSfxIntent);
 
 // ---- 玩家面板与技能详情 ----
 
@@ -44002,7 +44054,7 @@ test("UI·结束页面：结束时保留现有日志且进入下一局选择时�
   let visibleLogCount = 2;
   const classList = { add() { }, remove() { } };
   UIManager.prototype.showSelection.call({
-    sound: { stopMusic() { } },
+    sound: { playPreMatchMusic() { } },
     cancelPendingInteractions() { },
     resetCurrentCard() { },
     clearLog() {
@@ -45069,9 +45121,9 @@ test("UI·音频控制：初始化与调整同步 BGM 和音效音量", uiAudioV
 
 // ---------- 音频与 BGM ----------
 
-test("音频：合成声音覆盖八类反馈且 lightning 改为采样播放", async () => {
+test("音频：合成声音覆盖通用反馈与准备阶段卡牌选择且 lightning 改为采样播放", async () => {
   const sound = new SoundManager();
-  for (const name of ["draw", "select", "playCard", "hit", "skill", "discard", "heal", "shield"]) {
+  for (const name of ["draw", "select", "cardSelect", "playCard", "hit", "skill", "discard", "heal", "shield"]) {
     assert.equal(typeof sound[`sound_${name}`], "function", name);
   }
   assert.equal(sound.sound_lightning, undefined, "lightning 不应再使用合成方法");
@@ -45079,7 +45131,11 @@ test("音频：合成声音覆盖八类反馈且 lightning 改为采样播放", 
   if (!sound.isSupported) assert.equal(await sound.play("draw"), false);
 });
 
-test("音频：晨昏 BGM 使用不同速度、音色与旋律轮廓", () => {
+test("音频：准备阶段与晨昏 BGM 使用独立且可完整循环的旋律 profile", () => {
+  assert.notDeepEqual(MUSIC_PROFILES.preMatch.lead, MUSIC_PROFILES.dawn.lead);
+  assert.notDeepEqual(MUSIC_PROFILES.preMatch.lead, MUSIC_PROFILES.dusk.lead);
+  assert.ok(MUSIC_PROFILES.preMatch.tempo < MUSIC_PROFILES.dawn.tempo);
+  assert.ok(MUSIC_PROFILES.preMatch.tempo < MUSIC_PROFILES.dusk.tempo);
   assert.notEqual(MUSIC_PROFILES.dawn.tempo, MUSIC_PROFILES.dusk.tempo);
   assert.notEqual(MUSIC_PROFILES.dawn.wave, MUSIC_PROFILES.dusk.wave);
   assert.notDeepEqual(MUSIC_PROFILES.dawn.lead, MUSIC_PROFILES.dusk.lead);
@@ -45224,6 +45280,110 @@ function audioSfxGainIndependence() {
 }
 
 test("音频：SFX 音量按总增益缩放且不影响 BGM", audioSfxGainIndependence);
+
+/*
+功能
+验证三个准备页面声明同一音乐场景，正式对局页面只负责切出该场景。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+UIManager 页面展示方法与 fake SoundManager 调用记录。
+
+写入状态
+fake screen 可见状态、页面清理记录与音乐调用记录。
+
+调用函数
+UIManager.showStart、showSquadSelection、showSelection、showGame。
+
+边界与不变量
+开始、编队与选角必须共用 preMatch 请求；进入 game screen 时必须停止它，战斗主题由既有确认流程另行选择。
+*/
+function preMatchPagesShareOneMusicScene() {
+  const musicCalls = [];
+  const elements = {
+    start_screen: makeInteractiveElement(),
+    squad_selection_screen: makeInteractiveElement(),
+    selection_screen: makeInteractiveElement(),
+    game_screen: makeInteractiveElement(),
+    game_over_overlay: makeInteractiveElement(),
+    selection_eyebrow: { textContent: "" },
+    selection_title: { textContent: "" },
+    selection_copy: { textContent: "" },
+    team_preview: { innerHTML: "" },
+    candidate_grid: { innerHTML: "" }
+  };
+  const context = {
+    sound: {
+      playPreMatchMusic: () => musicCalls.push("preMatch"),
+      stopMusic: () => musicCalls.push("stop")
+    },
+    elements,
+    cancelPendingInteractions() { },
+    resetCurrentCard() { },
+    clearLog() { },
+    attachGame() { },
+    setLogCollapsed() { }
+  };
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  try {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { innerWidth: 1440 } });
+    UIManager.prototype.showStart.call(context);
+    UIManager.prototype.showSquadSelection.call(context);
+    UIManager.prototype.showSelection.call(context, [], "two");
+    UIManager.prototype.showGame.call(context, { state: { players: [] } });
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow); else delete globalThis.window;
+  }
+  assert.deepEqual(musicCalls, ["preMatch", "preMatch", "preMatch", "stop"]);
+}
+
+test("UI·准备阶段 BGM：开始、编队与角色页共用场景且正式开局切出", preMatchPagesShareOneMusicScene);
+
+/*
+功能
+验证初始开始页只登记准备音乐场景，不会在用户手势前创建 AudioContext。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+Promise；断言失败时拒绝。
+
+读取状态
+SoundManager 延迟解锁状态与 AudioContext stub。
+
+写入状态
+临时 AudioContext 全局能力。
+
+调用函数
+withAudioContextStub、SoundManager.playPreMatchMusic。
+
+边界与不变量
+preMatch 主题必须可先登记；context、scheduler 和音频节点必须继续等待真实用户交互。
+*/
+async function preMatchBootstrapDefersAudioContext() {
+  await withAudioContextStub(async () => {
+    const sound = new SoundManager();
+    assert.equal(sound.playPreMatchMusic(), "preMatch");
+    assert.equal(sound.musicTeam, "preMatch");
+    assert.equal(sound.context, null);
+    assert.equal(sound.musicTimer, null);
+    assert.equal(sound.musicSources.size, 0);
+  });
+}
+
+test("音频：开始页登记 preMatch 场景但等待用户手势解锁", preMatchBootstrapDefersAudioContext);
 
 /** 构造最小 Web Audio 假实现，用于验证 BGM 排程连续性、索引回绕与旧节点停止。 */
 function makeFakeAudioContext() {
@@ -45434,6 +45594,62 @@ test("音频：同阵营重复 setMusicTeam 保持幂等", async () => {
   });
 });
 
+/*
+功能
+验证准备阶段主题重复请求不重启调度器、不清理节点或重置播放位置。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+Promise；断言失败时拒绝。
+
+读取状态
+SoundManager preMatch 主题调度状态。
+
+写入状态
+fake AudioContext 排程节点。
+
+调用函数
+withAudioContextStub、SoundManager.startScheduler、playPreMatchMusic。
+
+边界与不变量
+三个页面可以重复声明同一场景，但音乐时间轴必须保持连续。
+*/
+async function preMatchMusicRequestIsIdempotent() {
+  await withAudioContextStub(async () => {
+    const sound = new SoundManager();
+    const fake = makeFakeAudioContext();
+    sound.context = fake;
+    sound.musicGain = fake.createGain();
+    sound.sfxGain = fake.createGain();
+    sound.enabled = true;
+    sound.playPreMatchMusic();
+    sound.musicTimer?.unref?.();
+    assert.equal(sound.musicTeam, "preMatch");
+    assert.ok(sound.musicTimer);
+    assert.ok(sound.musicSources.size > 0);
+    assert.ok([...sound.musicSources].every((gain) => gain.connected.includes(sound.musicGain)));
+    sound.setMusicVolume(0.42);
+    assert.equal(sound.musicGain.gain.calls.at(-1)[0], "target");
+    assert.equal(sound.sfxGain.gain.calls.length, 0);
+    const timer = sound.musicTimer;
+    const step = sound.musicStep;
+    const nextTime = sound.nextMusicTime;
+    const sources = sound.musicSources.size;
+    sound.playPreMatchMusic();
+    assert.equal(sound.musicTimer, timer);
+    assert.equal(sound.musicStep, step);
+    assert.equal(sound.nextMusicTime, nextTime);
+    assert.equal(sound.musicSources.size, sources);
+  });
+}
+
+test("音频：重复声明 preMatch 场景保持 BGM 时间轴连续", preMatchMusicRequestIsIdempotent);
+
 test("音频：全部 SFX 只走 sfxGain 且不触碰 musicGain", async () => {
   await withAudioContextStub(async () => {
     await withFetchStub(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) }), async () => {
@@ -45448,7 +45664,7 @@ test("音频：全部 SFX 只走 sfxGain 且不触碰 musicGain", async () => {
       sound.musicTimer?.unref?.();
       const timer = sound.musicTimer;
       const sources = sound.musicSources.size;
-      for (const name of ["select", "draw", "playCard", "hit", "skill", "discard", "heal", "shield", "lightning"]) {
+      for (const name of ["select", "cardSelect", "draw", "playCard", "hit", "skill", "discard", "heal", "shield", "lightning"]) {
         const before = sound.musicGain.gain.calls.length;
         assert.equal(await sound.play(name, { force: true }), true, name);
         assert.equal(sound.musicGain.gain.calls.length, before, `${name} 不得触碰 musicGain`);
@@ -45614,12 +45830,12 @@ test("BGM：多阵营角色轮流行动全程保持真人主题", async () => {
   fixture.game.dispose();
 });
 
-test("BGM：编队与选角阶段停止旧主题且阵营确认后启动真人主题", () => {
-  const themes = [], stops = [];
+test("BGM：编队与选角阶段共用准备主题且阵营确认后启动真人主题", () => {
+  const themes = [], preMatchCalls = [];
   const classList = { add() { }, remove() { } };
   const context = {
     sound: {
-      stopMusic: () => stops.push("stop"),
+      playPreMatchMusic: () => preMatchCalls.push("preMatch"),
       setMusicTeam: (team) => themes.push(team)
     },
     cancelPendingInteractions() { },
@@ -45641,7 +45857,7 @@ test("BGM：编队与选角阶段停止旧主题且阵营确认后启动真人�
   UIManager.prototype.showSquadSelection.call(context);
   UIManager.prototype.showSelection.call(context, [], "two");
   UIManager.prototype.setMusicTeam.call(context, "dawn");
-  assert.deepEqual(stops, ["stop", "stop"]);
+  assert.deepEqual(preMatchCalls, ["preMatch", "preMatch"]);
   assert.deepEqual(themes, ["dawn"]);
 });
 

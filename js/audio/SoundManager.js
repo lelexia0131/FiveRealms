@@ -15,7 +15,7 @@ const SFX_GAIN_BASE = 0.9;
 
 // 零 fake-thinking 后连续真实游戏事件会在同一帧内到达；gameplay 音效不得按墙钟
 // 节流吞掉，只保留 UI 连点 select 的防误触节流。
-export const SOUND_THROTTLE_MS = Object.freeze({ select:35 });
+export const SOUND_THROTTLE_MS = Object.freeze({ select: 35 });
 const LIGHTNING_SOURCE = "../../assets/audio/lightning.wav";
 
 // 0–75% 保持原来的线性手感，最后四分之一提供额外余量，让需要更响 BGM 的玩家可以继续推高。
@@ -54,7 +54,7 @@ const musicGainForVolume = (volume) => {
 把多个乐句拼接并冻结为不可变旋律序列。
 
 调用方
-DAWN_MELODY、DUSK_MELODY 常量初始化。
+PRE_MATCH_MELODY、DAWN_MELODY、DUSK_MELODY 常量初始化。
 
 输入
 任意数量的音符/休止符数组。
@@ -76,46 +76,67 @@ Array.flat、Object.freeze。
 */
 const longMelody = (...phrases) => Object.freeze(phrases.flat());
 
-// 每个乐句16步、全曲12句，共192步；晨约74秒、昏约80秒才完成一次循环。
+// 准备阶段采用更稀疏的五声音阶旋律；末句停在属音 D4，回到开头 G4 时保持自然的 V→I 衔接。
+const PRE_MATCH_MELODY = longMelody(
+  [67, null, 71, null, 74, null, 71, null, 69, null, 67, null, 64, null, 62, null],
+  [67, null, 69, null, 71, 74, 71, null, 69, null, 64, null, 62, null, 67, null],
+  [71, null, 74, null, 79, null, 76, null, 74, null, 71, null, 69, null, 67, null],
+  [64, null, 67, null, 71, null, 69, null, 67, null, 64, null, 62, null, 67, null],
+  [69, null, 71, null, 74, null, 76, null, 74, null, 71, null, 67, null, 64, null],
+  [67, null, 71, 74, 79, null, 76, null, 74, null, 71, null, 69, null, 67, null],
+  [64, null, 67, null, 69, null, 71, null, 74, null, 71, null, 69, null, 64, null],
+  [67, null, 64, null, 62, null, 64, null, 67, null, 69, null, 67, null, 62, null]
+);
+
+// 正式对局每个乐句16步、全曲12句，共192步；晨约74秒、昏约80秒才完成一次循环。
 const DAWN_MELODY = longMelody(
-  [60,null,64,null,67,null,69,67,64,null,62,null,64,null,67,null],
-  [67,null,69,72,69,null,67,null,64,67,64,null,62,null,60,null],
-  [60,null,64,null,67,69,72,null,69,67,64,null,62,64,67,null],
-  [64,null,67,null,72,71,69,null,67,null,64,62,64,null,67,null],
-  [69,72,74,null,72,69,67,null,64,67,69,null,67,64,62,null],
-  [67,null,71,72,76,null,74,72,69,null,67,64,67,null,69,null],
-  [72,null,76,79,76,null,74,null,72,69,67,null,69,null,72,null],
-  [64,67,69,null,72,null,71,69,67,null,64,67,69,null,64,null],
-  [60,64,67,72,71,null,69,67,64,null,67,69,72,null,74,null],
-  [69,null,72,74,76,null,74,72,69,67,64,null,67,69,72,null],
-  [72,null,69,67,64,null,62,64,67,69,67,null,64,62,60,null],
+  [60, null, 64, null, 67, null, 69, 67, 64, null, 62, null, 64, null, 67, null],
+  [67, null, 69, 72, 69, null, 67, null, 64, 67, 64, null, 62, null, 60, null],
+  [60, null, 64, null, 67, 69, 72, null, 69, 67, 64, null, 62, 64, 67, null],
+  [64, null, 67, null, 72, 71, 69, null, 67, null, 64, 62, 64, null, 67, null],
+  [69, 72, 74, null, 72, 69, 67, null, 64, 67, 69, null, 67, 64, 62, null],
+  [67, null, 71, 72, 76, null, 74, 72, 69, null, 67, 64, 67, null, 69, null],
+  [72, null, 76, 79, 76, null, 74, null, 72, 69, 67, null, 69, null, 72, null],
+  [64, 67, 69, null, 72, null, 71, 69, 67, null, 64, 67, 69, null, 64, null],
+  [60, 64, 67, 72, 71, null, 69, 67, 64, null, 67, 69, 72, null, 74, null],
+  [69, null, 72, 74, 76, null, 74, 72, 69, 67, 64, null, 67, 69, 72, null],
+  [72, null, 69, 67, 64, null, 62, 64, 67, 69, 67, null, 64, 62, 60, null],
   // 末句停在属音 G4：把收尾从“终止式”改成“导回开头”，循环回第一乐句的 C4 时形成 V→I 自然衔接。
-  [67,64,62,null,60,null,64,67,69,null,67,64,62,null,67,null]
+  [67, 64, 62, null, 60, null, 64, 67, 69, null, 67, 64, 62, null, 67, null]
 );
 
 const DUSK_MELODY = longMelody(
-  [57,null,60,null,64,null,65,64,60,null,57,null,55,null,53,null],
-  [53,null,57,60,57,null,55,null,52,55,57,null,60,null,57,null],
-  [45,null,52,53,57,null,60,57,55,null,52,53,55,null,57,null],
-  [60,64,65,null,64,60,57,null,55,57,60,null,57,55,52,null],
-  [52,null,55,57,60,null,64,60,57,null,55,52,53,null,55,null],
-  [57,null,60,64,65,null,67,65,64,null,60,57,60,null,64,null],
-  [64,null,67,69,67,null,65,64,60,null,57,55,57,null,60,null],
-  [53,57,60,null,64,null,62,60,57,null,53,55,57,null,52,null],
-  [45,52,57,60,59,null,57,53,52,null,55,57,60,null,62,null],
-  [60,null,64,65,67,null,65,64,60,57,55,null,57,60,64,null],
-  [64,null,60,57,53,null,52,53,55,57,55,null,53,52,48,null],
+  [57, null, 60, null, 64, null, 65, 64, 60, null, 57, null, 55, null, 53, null],
+  [53, null, 57, 60, 57, null, 55, null, 52, 55, 57, null, 60, null, 57, null],
+  [45, null, 52, 53, 57, null, 60, 57, 55, null, 52, 53, 55, null, 57, null],
+  [60, 64, 65, null, 64, 60, 57, null, 55, 57, 60, null, 57, 55, 52, null],
+  [52, null, 55, 57, 60, null, 64, 60, 57, null, 55, 52, 53, null, 55, null],
+  [57, null, 60, 64, 65, null, 67, 65, 64, null, 60, 57, 60, null, 64, null],
+  [64, null, 67, 69, 67, null, 65, 64, 60, null, 57, 55, 57, null, 60, null],
+  [53, 57, 60, null, 64, null, 62, 60, 57, null, 53, 55, 57, null, 52, null],
+  [45, 52, 57, 60, 59, null, 57, 53, 52, null, 55, 57, 60, null, 62, null],
+  [60, null, 64, 65, 67, null, 65, 64, 60, 57, 55, null, 57, 60, 64, null],
+  [64, null, 60, 57, 53, null, 52, 53, 55, 57, 55, null, 53, 52, 48, null],
   // 末句停在 A3：避免旋律跌到最低音 A2 再重新跳回，循环回第一乐句的 A3 时保持同一音区连续。
-  [57,53,52,null,48,null,52,55,57,null,55,52,50,null,57,null]
+  [57, 53, 52, null, 48, null, 52, 55, 57, null, 55, 52, 50, null, 57, null]
 );
 
 export const MUSIC_PROFILES = Object.freeze({
+  preMatch: Object.freeze({
+    tempo: 64,
+    lead: PRE_MATCH_MELODY,
+    bass: Object.freeze([43, 40, 45, 38, 40, 43, 38, 38, 43, 40, 45, 38, 40, 43, 38, 38]),
+    thirds: Object.freeze([4, 3, 4, 3, 3, 4, 3, 3, 4, 3, 4, 3, 3, 4, 3, 3]),
+    wave: "sine",
+    leadLevel: 0.026,
+    padLevel: 0.016
+  }),
   dawn: Object.freeze({
     tempo: 78,
     lead: DAWN_MELODY,
     // 尾段 G→C 改为 G→G：结束在属和弦上，跨循环点再解决到开头的 C。
-    bass: Object.freeze([48,45,43,48,45,50,48,43,45,48,50,47,48,45,43,50,45,48,43,47,48,45,43,43]),
-    thirds: Object.freeze([4,3,4,2,4,4,3,4,3,4,4,3,4,3,4,4,3,4,2,3,4,3,4,4]),
+    bass: Object.freeze([48, 45, 43, 48, 45, 50, 48, 43, 45, 48, 50, 47, 48, 45, 43, 50, 45, 48, 43, 47, 48, 45, 43, 43]),
+    thirds: Object.freeze([4, 3, 4, 2, 4, 4, 3, 4, 3, 4, 4, 3, 4, 3, 4, 4, 3, 4, 2, 3, 4, 3, 4, 4]),
     wave: "triangle",
     leadLevel: 0.036,
     padLevel: 0.022
@@ -124,8 +145,8 @@ export const MUSIC_PROFILES = Object.freeze({
     tempo: 72,
     lead: DUSK_MELODY,
     // 尾段 Dm→Am 改为 Dm→Dm：结束在下属和弦上，跨循环点再解决到开头的 Am。
-    bass: Object.freeze([45,41,43,40,41,45,43,40,45,41,38,43,45,40,41,43,38,45,41,40,43,41,38,38]),
-    thirds: Object.freeze([3,3,4,3,3,3,4,3,3,3,3,4,3,3,3,4,3,3,4,3,4,3,3,3]),
+    bass: Object.freeze([45, 41, 43, 40, 41, 45, 43, 40, 45, 41, 38, 43, 45, 40, 41, 43, 38, 45, 41, 40, 43, 41, 38, 38]),
+    thirds: Object.freeze([3, 3, 4, 3, 3, 3, 4, 3, 3, 3, 3, 4, 3, 3, 3, 4, 3, 3, 4, 3, 4, 3, 3, 3]),
     wave: "sine",
     leadLevel: 0.042,
     padLevel: 0.028
@@ -387,7 +408,7 @@ export class SoundManager {
     this.musicTimer = null;
     this.nextMusicTime = 0;
     this.musicStep = 0;
-    this.musicStepsByTeam = { dawn:0, dusk:0 };
+    this.musicStepsByTeam = { preMatch: 0, dawn: 0, dusk: 0 };
     this.musicSources = new Set();
     this.lightningBuffer = null;
     this.lightningBufferPromise = null;
@@ -528,7 +549,7 @@ export class SoundManager {
     if (this.enabled) {
       await this.unlock();
       if (this.masterGain) this.masterGain.gain.setTargetAtTime(0.82, this.context.currentTime, 0.035);
-      this.play("select", { force:true });
+      this.play("select", { force: true });
     } else {
       this.stopScheduler();
       if (this.masterGain) this.masterGain.gain.setTargetAtTime(0.0001, this.context.currentTime, 0.025);
@@ -608,16 +629,16 @@ export class SoundManager {
 
   /*
   功能
-  选择阵营 BGM 并在主题切换时续接各自播放进度。
+  选择统一 BGM profile，并在主题切换时续接各自播放进度。
 
   调用方
-  UIManager.setMusicTeam、选将/对局展示流程。
+  UIManager.setMusicTeam、playPreMatchMusic 与对局展示流程。
 
   输入
-  dawn/dusk 阵营 ID；未知值表示停止音乐。
+  preMatch/dawn/dusk 主题 ID，以及是否立即尝试解锁 AudioContext 的内部选项；未知主题表示停止音乐。
 
   输出
-  有效阵营 ID；未知阵营走 stopMusic 返回值。
+  有效主题 ID；未知主题走 stopMusic 返回值。
 
   读取状态
   MUSIC_PROFILES、musicTeam、musicStep 与 musicStepsByTeam。
@@ -629,9 +650,9 @@ export class SoundManager {
   stopMusic、stopMusicSources、stopScheduler、unlock。
 
   边界与不变量
-  同阵营重复设置不得重置进度；切换时旧主题不能叠音。
+  同主题重复设置不得重置进度；切换时旧主题不能叠音。
   */
-  setMusicTeam(team) {
+  setMusicTeam(team, options = {}) {
     if (!MUSIC_PROFILES[team]) return this.stopMusic();
     const changed = this.musicTeam !== team;
     if (changed) {
@@ -642,8 +663,37 @@ export class SoundManager {
       this.musicStep = this.musicStepsByTeam[team] ?? 0;
       this.nextMusicTime = 0;
     }
-    if (this.enabled) void this.unlock();
+    if (this.enabled && options.unlock !== false) void this.unlock();
     return team;
+  }
+
+  /*
+  功能
+  选择准备阶段 BGM，并复用统一音乐主题的幂等与续播生命周期。
+
+  调用方
+  UIManager 的开始、编队方式和角色选择页面展示入口。
+
+  输入
+  无。
+
+  输出
+  preMatch 音乐主题 ID。
+
+  读取状态
+  SoundManager 当前音乐主题。
+
+  写入状态
+  仅在离开其他主题时切换到 preMatch；重复请求保持当前调度进度。
+
+  调用函数
+  setMusicTeam。
+
+  边界与不变量
+  三个准备页面共用同一主题；bootstrap 只登记主题，不得在用户手势前创建 AudioContext；重复进入不得重启 scheduler 或重置 musicStep。
+  */
+  playPreMatchMusic() {
+    return this.setMusicTeam("preMatch", { unlock: Boolean(this.context) });
   }
 
   /*
@@ -651,7 +701,7 @@ export class SoundManager {
   停止当前 BGM 并保存其续接步进。
 
   调用方
-  UIManager.showStart 与 setMusicTeam 的无效阵营路径。
+  UIManager.showGame 与 setMusicTeam 的无效主题路径。
 
   输入
   无。
@@ -1189,6 +1239,36 @@ export class SoundManager {
   */
   sound_select(time) {
     this.softNoise(time, 0.032, 0.028, 680, 0.003);
+  }
+
+  /*
+  功能
+  合成短促 UI 点击与轻微纸牌触感叠加的选择音效。
+
+  调用方
+  SoundManager.play 的 cardSelect 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  SoundManager 音频图。
+
+  写入状态
+  创建两段经 sfxGain 输出的 softNoise 音效节点。
+
+  调用函数
+  softNoise。
+
+  边界与不变量
+  每次有效卡牌点击由 Presentation 边界调用一次；不得连接 musicGain；两层局部目标增益合计保持在 0.14，避免叠加削波。
+  */
+  sound_cardSelect(time) {
+    this.softNoise(time, 0.038, 0.8, 760, 0.003);
+    this.softNoise(time + 0.018, 0.045, 0.055, 430, 0.004);
   }
 
   /*
