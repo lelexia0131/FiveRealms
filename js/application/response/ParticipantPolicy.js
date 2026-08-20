@@ -78,10 +78,10 @@ export function isAiParticipant(participant) {
 
 /*
 功能
-决定响应者没有足够响应牌时是否仍展示响应窗口。
+决定合法实体选择不足时是否直接拒绝创建响应请求。
 
 调用方
-ResponseWorkflow.requestCardResponse/requestDyingRescue/requestAssaultDiscard。
+ResponseWorkflow 的实体牌响应入口。
 
 输入
 responder 投影。
@@ -99,9 +99,9 @@ controllerType。
 isHumanParticipant。
 
 边界与不变量
-只有真人无牌仍展示交互窗口；AI 无牌由 workflow 在完成统一 presentation pacing 后返回 unavailable。
+只有真人提前拒绝；AI 必须继续经过 decision/timing boundary 后再返回 unavailable，避免手牌侧信道。
 */
-export function shouldShowResponseWindowWithoutCards(responder) {
+export function shouldRejectResponseWithoutLegalOptions(responder) {
   return isHumanParticipant(responder);
 }
 
@@ -193,34 +193,5 @@ isHumanParticipant。
 AI 策略仍固定采用可用牌第一张；该差异是 Application participant policy。
 */
 export function shouldPreferExplicitSelection(responder) {
-  return isHumanParticipant(responder);
-}
-
-/*
-功能
-决定借势响应者在没有合法突袭牌时是否直接不可用。
-
-调用方
-ResponseWorkflow.requestLeverageAssault。
-
-输入
-responder 投影。
-
-输出
-布尔值。
-
-读取状态
-controllerType。
-
-写入状态
-无。
-
-调用函数
-isHumanParticipant。
-
-边界与不变量
-只有真人无合法突袭不创建窗口；AI 仍走 timing 窗口，避免手牌侧信道。
-*/
-export function shouldRejectLeverageWithoutCards(responder) {
   return isHumanParticipant(responder);
 }

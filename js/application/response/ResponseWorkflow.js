@@ -20,11 +20,15 @@ Domain ResponseRules、Choice application modules、ResponsePresentation 与注�
 import {
   getCounterResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId,
   getStatusCounterResponderOrder, isAssaultDamage,
-  isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible
+  hasSufficientResponseCards, isBlockResponseAvailable, isCounterEligible,
+  isDyingRescueEligible, isResponderEligible
 } from "../../domain/rules/response/ResponseRules.js";
 import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js";
 import { createResponseChoiceRequest } from "../choice/ResponseChoiceRequest.js";
-import { shouldForceAiRescueHuman, shouldForceAiSelfRescue, shouldPreferExplicitSelection, shouldRejectLeverageWithoutCards, shouldShowResponseWindowWithoutCards } from "./ParticipantPolicy.js";
+import {
+  shouldForceAiRescueHuman, shouldForceAiSelfRescue, shouldPreferExplicitSelection,
+  shouldRejectResponseWithoutLegalOptions
+} from "./ParticipantPolicy.js";
 import { buildResponsePresentation, publicPlayerContext } from "./ResponsePresentation.js";
 import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } from "./ResponseResult.js";
 
@@ -192,7 +196,7 @@ export function createResponseWorkflow(dependencies) {
   responder、type、context 与 requiredCount。
 
   输出
-  规范化 USED/DECLINED/CANCELLED/INVALID 结果。
+  规范化 USED/DECLINED/CANCELLED/INVALID/UNAVAILABLE 结果。
 
   读取状态
   responder 当前手牌实体、Application session 与响应请求注册表。
@@ -204,18 +208,22 @@ export function createResponseWorkflow(dependencies) {
   getResponseCardDefinitionId、isResponderEligible、waitForDecision、finishRequest、payCardsFromHandAtomically。
 
   边界与不变量
+  真人合法实体不足时不得创建 pending/UI 请求；AI 候选不足仍经过 timing boundary。
   只按返回的唯一 selectedIds 从当前手牌重绑实体；数量、合法集合、会话或实体位置任一失效都不得支付。
   */
   async function requestCardResponse(responder, type, context, requiredCount = 1) {
     const gameId = runtime.getState().gameId;
     const definitionId = getResponseCardDefinitionId(type);
     const availableCards = responder.hand.filter((card) => card.definitionId === definitionId);
-    const unavailableAfterTiming = availableCards.length < requiredCount
-      && !shouldShowResponseWindowWithoutCards(responder);
+    const lacksRequiredCards = !hasSufficientResponseCards(availableCards.length, requiredCount);
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
     if (!isResponderEligible(responder) || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
-    // 真人继续显示完整窗口；AI 即使没有足够牌也必须经过同一 decision/timing boundary，
-    // 最后再恢复 unavailable 结果，避免手牌数量通过响应耗时泄露。
+    if (lacksRequiredCards && shouldRejectResponseWithoutLegalOptions(responder)) {
+      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
+    }
+    // AI 即使没有足够牌也必须经过同一 decision/timing boundary，最后再恢复 unavailable，
+    // 避免玩家通过响应耗时推断 AI 手牌数量。
+    const unavailableAfterTiming = lacksRequiredCards;
     const fallbackLabel = type === "block" ? (requiredCount === 2 ? "使用2张「格挡」" : "格挡") : "反制";
     const request = { id:runtime.createId("response"), type, sourcePlayerId:context.source?.id ?? null, targetPlayerId:responder.id,
       cardId:context.card?.id ?? null, legalCardIds:availableCards.map((card) => card.id), requiredCount,
@@ -387,7 +395,7 @@ export function createResponseWorkflow(dependencies) {
   source、card、targets 与 chainContext。
 
   输出
-  USED/DECLINED/CANCELLED。
+  USED/DECLINED/CANCELLED/INVALID/UNAVAILABLE。
 
   读取状态
   MatchState、响应策略与 UI/AI boundary。
@@ -573,7 +581,7 @@ export function createResponseWorkflow(dependencies) {
   isDyingRescueEligible、waitForDecision、payCardsFromHandAtomically。
 
   边界与不变量
-  救援资格由 Domain Rule 决定。
+  救援资格由 Domain Rule 决定；真人没有合法调息时不得创建 pending/UI 请求，AI 仍保留 timing boundary。
   */
   async function requestDyingRescue(rescuer, target, card) {
     const gameId = runtime.getState().gameId;
@@ -583,7 +591,11 @@ export function createResponseWorkflow(dependencies) {
     }
     const availableCards = rescuer.hand.filter((entry) => entry.definitionId === "recover");
     const legalCard = card?.definitionId === "recover" && rescuer.hand.includes(card) ? card : (availableCards[0] ?? null);
-    const unavailableAfterTiming = !availableCards.length && !shouldShowResponseWindowWithoutCards(rescuer);
+    const lacksRequiredCards = !hasSufficientResponseCards(availableCards.length, 1);
+    if (lacksRequiredCards && shouldRejectResponseWithoutLegalOptions(rescuer)) {
+      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    }
+    const unavailableAfterTiming = lacksRequiredCards;
     const request = { id:runtime.createId("dying-response"), type:"dyingRescue", sourcePlayerId:rescuer.id, targetPlayerId:target.id,
       cardId:null, legalCardIds:availableCards.map((entry) => entry.id), requiredCount:1, legalSkillIds:[], timeoutMs:runtime.getResponseTimeoutMs(), allowDecline:true,
       need:1 - target.hp, currentHp:target.hp,
@@ -645,15 +657,19 @@ export function createResponseWorkflow(dependencies) {
   isResponderEligible、waitForDecision、finishRequest、payCardsFromHandAtomically。
 
   边界与不变量
-  响应类型与资格由 Domain Rule 决定；human/AI 选择仍属 workflow。
+  响应类型与资格由 Domain Rule 决定；真人没有合法突袭时不得创建 pending/UI 请求，AI 仍保留 timing boundary。
   */
   async function requestAssaultDiscard(responder, reason, context = {}) {
     const gameId = runtime.getState().gameId;
     const availableCards = responder.hand.filter((entry) => entry.definitionId === "assault");
     const cardToUse = availableCards[0] ?? null;
-    const unavailableAfterTiming = !availableCards.length && !shouldShowResponseWindowWithoutCards(responder);
+    const lacksRequiredCards = !hasSufficientResponseCards(availableCards.length, 1);
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
     if (!isResponderEligible(responder) || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    if (lacksRequiredCards && shouldRejectResponseWithoutLegalOptions(responder)) {
+      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    }
+    const unavailableAfterTiming = lacksRequiredCards;
     const presentation = buildResponsePresentation(responder, "assaultDiscard", context, 1, availableCards.length, reason);
     const request = { id:runtime.createId("assault-discard"), type:"assaultDiscard", sourcePlayerId:context.source?.id ?? null,
       targetPlayerId:responder.id, cardId:context.card?.id ?? null, legalCardIds:availableCards.map((entry) => entry.id), requiredCount:1,
@@ -715,7 +731,8 @@ export function createResponseWorkflow(dependencies) {
     if (!responder?.alive || !target?.alive || runtime.getState().isGameOver) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
-    if (!availableCards.length && shouldRejectLeverageWithoutCards(responder)) {
+    if (!hasSufficientResponseCards(availableCards.length, 1)
+      && shouldRejectResponseWithoutLegalOptions(responder)) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
     const presentation = {

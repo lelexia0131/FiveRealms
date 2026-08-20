@@ -127,7 +127,7 @@ import { isCardSelectionValid, toggleCardSelection } from "../js/ui/selectionUti
 import { buildResponsePresentation } from "../js/application/response/ResponsePresentation.js";
 import { RESPONSE_STATUS as WORKFLOW_RESPONSE_STATUS, createResponseWorkflowResult } from "../js/application/response/ResponseResult.js";
 import { createResponseWorkflow } from "../js/application/response/ResponseWorkflow.js";
-import { shouldForceAiSelfRescue, shouldShowResponseWindowWithoutCards } from "../js/application/response/ParticipantPolicy.js";
+import { shouldForceAiSelfRescue, shouldRejectResponseWithoutLegalOptions } from "../js/application/response/ParticipantPolicy.js";
 import { createCombatWorkflow } from "../js/application/combat/CombatWorkflow.js";
 import { createDyingWorkflow } from "../js/application/combat/DyingWorkflow.js";
 import { createJudgmentWorkflow } from "../js/application/judgment/JudgmentWorkflow.js";
@@ -4386,7 +4386,7 @@ test("判定结果规则：destination 由 Domain 决定，Application 只执行
 
 /*
 功能
-验证 Application participant policy 显式拥有无牌窗口与 AI 救援兼容策略。
+验证 Application participant policy 显式拥有真人无合法选择早退与 AI 救援兼容策略。
 
 调用方
 当前测试。
@@ -4404,14 +4404,14 @@ controllerType/id/battleTeam metadata。
 无。
 
 调用函数
-shouldShowResponseWindowWithoutCards、shouldForceAiSelfRescue。
+shouldRejectResponseWithoutLegalOptions、shouldForceAiSelfRescue。
 
 边界与不变量
-真人无牌展示；AI 无牌跳过；AI 自救固定使用调息。
+真人无合法选择提前拒绝；AI 不提前拒绝并保留 timing boundary；AI 自救固定使用调息。
 */
 function frArch8ParticipantPolicyExplicit() {
-  assert.equal(shouldShowResponseWindowWithoutCards({ controllerType: "human" }), true);
-  assert.equal(shouldShowResponseWindowWithoutCards({ controllerType: "ai" }), false);
+  assert.equal(shouldRejectResponseWithoutLegalOptions({ controllerType: "human" }), true);
+  assert.equal(shouldRejectResponseWithoutLegalOptions({ controllerType: "ai" }), false);
   assert.equal(shouldForceAiSelfRescue({ controllerType: "ai", id: "p1" }, { id: "p1" }), true);
   assert.equal(shouldForceAiSelfRescue({ controllerType: "ai", id: "p1" }, { id: "p2" }), false);
 }
@@ -6219,6 +6219,7 @@ test("转移：在反制前的日志和响应上下文包含来源与接收者�
   const use = instance("transfer"), secret = instance("block");
   actor.hand.push(use);
   from.hand.push(secret);
+  responder.hand.push(instance("counter"));
   from.bumpHandVersion(TEST_VERSION_STATE);
   const { game, ui }
     = makeGame([actor, from, responder, receiver], { response: () => false });
@@ -7241,13 +7242,12 @@ test("反制：者包含盟友并按施牌者后的座位顺序", async () => {
     = makeGame(
       [a, b, c],
       {
-        response: (request) => (
-          order.push(request.targetPlayerId), request.legalCardIds.length >= request.requiredCount
-        )
+        response: (request) => (order.push(request.targetPlayerId), false)
       }
     );
   a.hand.push(instance("harvest"));
   b.hand.push(instance("counter"));
+  c.hand.push(instance("counter"));
   await game.playCard(a, a.hand[0], []);
   assert.deepEqual(order, [b.id, c.id]);
 });
@@ -7392,7 +7392,7 @@ test("反制：两次反制后原战术牌恢复生效", async () => {
   b.hand.push(instance("counter"));
   c.hand.push(instance("counter"));
   await game.playCard(a, a.hand[0], []);
-  assert.deepEqual(order, [b.id, c.id, a.id, b.id]);
+  assert.deepEqual(order, [b.id, c.id]);
   assert.equal(a.hand.length, 2);
   assert.equal(b.hand.length, 0);
   assert.equal(c.hand.length, 0);
@@ -7421,7 +7421,7 @@ test("反制：三次反制后原战术牌仍被取消", async () => {
   c.hand.push(instance("counter"));
   d.hand.push(instance("counter"));
   await game.playCard(a, a.hand[0], []);
-  assert.deepEqual(order, [b.id, c.id, d.id, a.id, b.id, c.id]);
+  assert.deepEqual(order, [b.id, c.id, d.id]);
   assert.equal(a.hand.length, 0);
   assert.equal(b.hand.length, 0);
   assert.equal(c.hand.length, 0);
@@ -8251,7 +8251,7 @@ test("闪电：判中后的护援响应沿用状态持有者语义而不构造�
     enemy = makePlayer("lightning-enemy", 2, "dusk", "ai", 2);
   const { game, ui } = makeGame([holder, guardian, enemy], { response: () => false });
   registerPassiveSkills(game);
-  guardian.hand.push(instance("charge"));
+  guardian.hand.push(instance("charge"), instance("counter"));
   holder.statuses.lightning = { cardDefinitionId: "lightning", originPlayerId: enemy.id };
   game.state.deck.cards = [instance("energyDevice")];
   await game.eventDispatcher.emit("beforeStatusResolve", { player: holder, cancelled: false });
@@ -9028,7 +9028,7 @@ test("军火库：响应显示完整数量并原子消耗两张格挡", async ()
   assert.equal(target.hand.filter((card) => card.definitionId === "block").length, 1);
 });
 
-test("军火库：要求2张格挡；只有1张时仍显示响应但按钮禁用且不会浪费", async () => {
+test("军火库：要求2张格挡但真人只有1张时不创建响应且不会浪费", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game, ui }
     = makeGame([a, b], { response: () => true });
@@ -9036,23 +9036,23 @@ test("军火库：要求2张格挡；只有1张时仍显示响应但按钮禁用
   b.hand.push(instance("block"));
   const hp = b.hp;
   await game.damage(a, b, 1, { card: instance("assault"), canBlock: true, damageType: "normal" });
-  const request = ui.responseRequests[0];
-  assert.equal(request.requiredCount, 2);
-  assert.equal(request.legalCardIds.length, 1);
-  assert.equal(canSubmitResponse(request), false);
-  assert.equal(request.presentation.availabilityText, "需要2张「格挡」，你当前只有1张，无法格挡。");
+  assert.equal(ui.responseRequests.length, 0);
+  assert.equal(game.state.pendingResponses.length, 0);
   assert.equal(b.hp, hp - 1);
   assert.equal(b.hand.length, 1);
 });
 
-test("军火库：面对2张格挡时原子弃置并完全防住", async () => {
+test("军火库：真人有2张格挡时正常响应并原子弃置两张", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
-  const { game }
+  const { game, ui }
     = makeGame([a, b], { response: () => true });
   a.equipment = instance("battleDevice");
   b.hand.push(instance("block"), instance("block"));
   const hp = b.hp;
   await game.damage(a, b, 1, { card: instance("assault"), canBlock: true, damageType: "normal" });
+  assert.equal(ui.responseRequests.length, 1);
+  assert.equal(ui.responseRequests[0].requiredCount, 2);
+  assert.equal(ui.responseRequests[0].legalCardIds.length, 2);
   assert.equal(b.hp, hp);
   assert.equal(b.hand.length, 0);
 });
@@ -9520,7 +9520,7 @@ test("守誓者：突袭先结算格挡且被格挡攻击不消耗护援", async
   assert.equal(guardian.hand.length, 0);
   assert.ok(game.state.deck.discardPile.includes(aidCost));
   assert.equal(guardian.turnFlags.guardianAidUsed, true);
-  assert.deepEqual(responseOrder, ["block:1", "block:2", "guardianAid"]);
+  assert.deepEqual(responseOrder, ["block:1", "guardianAid"]);
   const messages = game.state.logs.map((entry) => entry.message),
     attackMessage = `${attacker.name}对${target.name}使用了「突袭」。`,
     secondAttackIndex = messages.lastIndexOf(attackMessage),
@@ -9706,9 +9706,10 @@ test("守誓者：震荡逐目标完成格挡后仅护援未挡住的目标", as
   );
   assert.ok(!aidLogs.some((entry) => entry.message.includes(blockedTarget.name)));
   const firstBlockIndex = responseOrder.indexOf(`block:${blockedTarget.id}`),
-    secondBlockIndex = responseOrder.indexOf(`block:${insufficientTarget.id}`),
+    insufficientBlockIndex = responseOrder.indexOf(`block:${insufficientTarget.id}`),
     aidIndex = responseOrder.findIndex((entry) => entry.startsWith("guardianAid:"));
-  assert.ok(firstBlockIndex >= 0 && firstBlockIndex < secondBlockIndex && secondBlockIndex < aidIndex);
+  assert.equal(insufficientBlockIndex, -1);
+  assert.ok(firstBlockIndex >= 0 && firstBlockIndex < aidIndex);
   assert.match(responseOrder[aidIndex], new RegExp(insufficientTarget.name));
 });
 
@@ -10676,7 +10677,7 @@ test("炎术师：焚场只伤害存活敌人、队友与本人不受伤且伤�
   assert.equal(observed.skill, "burningField");
 });
 
-test("炎术师：焚场每个目标独立响应，格挡抵消自身伤害且不影响其他目标", async () => {
+test("炎术师：焚场仅为有格挡目标创建响应且不影响其他目标", async () => {
   const ember = makePlayer("ember-block-field", 0, "dawn", "human", 4),
     ally = makePlayer("ember-block-ally", 1, "dawn", "ai", 0),
     blocker = makePlayer("ember-blocker", 2, "dusk", "human", 5),
@@ -10689,10 +10690,10 @@ test("炎术师：焚场每个目标独立响应，格挡抵消自身伤害且�
   const allyHp = ally.hp, blockerHp = blocker.hp, openHp = open.hp;
   assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
   const blockRequests = ui.responseRequests.filter((entry) => entry.type === "block");
-  assert.equal(blockRequests.length, 2);
+  assert.equal(blockRequests.length, 1);
   assert.deepEqual(
     blockRequests.map((entry) => entry.targetPlayerId),
-    [blocker.id, open.id]
+    [blocker.id]
   );
   assert.equal(blocker.hp, blockerHp);
   assert.equal(blocker.hand.length, 0);
@@ -10891,6 +10892,7 @@ test("追猎者：猎杀命中前记录一次带目标的行动声明", async ()
     target = makePlayer("hit-target", 1, "dusk", "human"),
     ally = makePlayer("hit-ally", 2, "dawn");
   target.statuses.huntMark = { sourceId: hunter.id };
+  target.hand.push(instance("block"));
   let gameRef = null, declarationVisibleInResponse = false;
   const { game } = makeGame([hunter, target, ally], {
     response: (request) => {
@@ -12049,49 +12051,51 @@ test("响应窗口：所有真人响应请求统一使用默认无限等待", as
   assert.equal(game.state.pendingResponses.length, 0);
 });
 
-test("响应窗口：真人没有格挡时仍出现完整响应窗口，但不能凭空格挡", async () => {
+test("响应窗口：真人没有格挡且 requiredCount 为一时不创建响应请求", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game, ui }
     = makeGame([a, b], { response: () => true });
   const hp = b.hp, assault = instance("assault");
   await game.damage(a, b, 1, { card: assault, canBlock: true, damageType: "normal" });
-  assert.equal(ui.responseRequests.length, 1);
-  const request = ui.responseRequests[0];
-  assert.deepEqual(request.legalCardIds, []);
-  assert.equal(request.requiredCount, 1);
-  assert.match(request.presentation.eventText, new RegExp(`${a.name}.*你.*突袭`));
-  assert.equal(request.presentation.availabilityText, "需要1张「格挡」，你当前没有，无法格挡。");
-  assert.equal(canSubmitResponse(request), false);
+  assert.equal(ui.responseRequests.length, 0);
+  assert.equal(game.state.pendingResponses.length, 0);
   assert.equal(b.hp, hp - 1);
 });
 
-test("AI·响应窗口：没有合法格挡时仍经过思考节奏且不创建真人响应请求", async () => {
+test("AI·响应窗口：无反制或格挡仍经过 decision timing boundary 后返回不可用", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "ai");
   const { game, ui }
     = makeGame([a, b]);
-  const hp = b.hp;
-  await game.damage(a, b, 1, { card: instance("assault"), canBlock: true, damageType: "normal" });
+  let timingBoundaries = 0;
+  game.cleanupManager.delay = async () => {
+    timingBoundaries += 1;
+    return !game.state.isDisposed;
+  };
+  const block = await game.responseWorkflow.requestCardResponse(
+    b, "block", { source: a, target: b, card: instance("assault") }, 1
+  );
+  const counter = await game.responseWorkflow.requestCardResponse(
+    b, "counter", { source: a, target: b, card: instance("harvest") }, 1
+  );
+  assert.equal(block.status, "unavailable");
+  assert.equal(counter.status, "unavailable");
   assert.equal(ui.responseRequests.length, 0);
-  assert.deepEqual(ui.thinking.map(([thinking]) => thinking), [true, false]);
-  assert.equal(b.hp, hp - 1);
+  assert.equal(timingBoundaries, 2);
+  assert.deepEqual(ui.thinking.map(([thinking]) => thinking), [true, false, true, false]);
+  assert.equal(game.state.pendingResponses.length, 0);
 });
 
-test("响应窗口：真人没有反制也按座次获得一次响应窗口", async () => {
+test("响应窗口：真人没有反制时直接返回不可用且不创建响应请求", async () => {
   const a = makePlayer("a", 0, "dawn"),
-    b = makePlayer("b", 1, "dusk", "human"),
-    c = makePlayer("c", 2, "dawn", "human");
+    b = makePlayer("b", 1, "dusk", "human");
   const { game, ui }
-    = makeGame([a, b, c]);
-  a.hand.push(instance("harvest"));
-  game.state.deck.cards.push(instance("charge"), instance("block"));
-  await game.playCard(a, a.hand[0], []);
-  assert.deepEqual(
-    ui.responseRequests.filter(
-      (request) => request.type === "counter"
-    ).map((request) => request.targetPlayerId),
-    [b.id, c.id]
+    = makeGame([a, b]);
+  const result = await game.responseWorkflow.requestCardResponse(
+    b, "counter", { source: a, target: b, card: instance("harvest") }, 1
   );
-  assert.ok(ui.responseRequests.every((request) => request.legalCardIds.length === 0));
+  assert.equal(result.status, "unavailable");
+  assert.equal(ui.responseRequests.length, 0);
+  assert.equal(game.state.pendingResponses.length, 0);
 });
 
 test("响应窗口：格挡确认只在合法牌数达到要求时可用", () => {
@@ -12239,32 +12243,27 @@ test("响应窗口：反制、强制突袭与濒死调息显示完整持有数�
   assert.equal(responder.hand.filter((card) => card.definitionId === "recover").length, 1);
 });
 
-test("响应窗口：决斗轮到无突袭真人时先显示响应窗口再结算伤害", async () => {
+test("响应窗口：决斗轮到无突袭真人时不显示响应窗口并直接结算伤害", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game, ui }
     = makeGame([a, b], { response: () => false });
   const duel = instance("duel"), hp = b.hp;
   a.hand.push(duel);
   await game.playCard(a, duel, [b]);
-  const request = ui.responseRequests.find((entry) => entry.type === "assaultDiscard");
-  assert.ok(request);
-  assert.deepEqual(request.legalCardIds, []);
-  assert.match(request.presentation.eventText, new RegExp(`${a.name}.*你.*决斗`));
-  assert.match(request.presentation.responseText, /1张「突袭」/);
+  assert.equal(ui.responseRequests.some((entry) => entry.type === "assaultDiscard"), false);
+  assert.equal(game.state.pendingResponses.length, 0);
   assert.equal(b.hp, hp - 1);
 });
 
-test("响应窗口：挑衅轮到无突袭真人时仍显示响应窗口", async () => {
+test("响应窗口：挑衅轮到无突袭真人时不显示响应窗口", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game, ui }
     = makeGame([a, b], { response: () => false });
   const provoke = instance("provoke"), hp = b.hp;
   a.hand.push(provoke);
   await game.playCard(a, provoke, [b]);
-  const request = ui.responseRequests.find((entry) => entry.type === "assaultDiscard");
-  assert.ok(request);
-  assert.equal(request.presentation.responseCardName, "突袭");
-  assert.equal(request.presentation.availabilityText, "需要1张「突袭」，你当前没有，无法使用「突袭」。");
+  assert.equal(ui.responseRequests.some((entry) => entry.type === "assaultDiscard"), false);
+  assert.equal(game.state.pendingResponses.length, 0);
   assert.equal(b.hp, hp - 1);
 });
 
@@ -12738,22 +12737,17 @@ test("濒死：无人可救时濒死角色在救援窗口后以0生命阵亡", a
   assert.equal(b.hp, 0);
 });
 
-test("濒死：合法真人救援者没有调息时仍显示响应窗口", async () => {
+test("濒死：合法真人救援者没有调息时直接返回不可用且不创建响应请求", async () => {
   const target = makePlayer("target", 0, "dawn"),
     human = makePlayer("human", 1, "dawn", "human"),
     enemy = makePlayer("enemy", 2, "dusk");
   target.hp = 0;
   const { game, ui }
     = makeGame([target, human, enemy], { response: () => false });
-  await game.dyingWorkflow.enter(target, enemy);
-  const request = ui.responseRequests.find(
-    (entry) => entry.type === "dyingRescue" && entry.sourcePlayerId === human.id
-  );
-  assert.ok(request);
-  assert.deepEqual(request.legalCardIds, []);
-  assert.match(request.presentation.eventText, new RegExp(`${target.name}.*濒死`));
-  assert.match(request.presentation.responseText, /调息.*救援/);
-  assert.equal(request.presentation.availabilityText, "需要1张「调息」，你当前没有，无法救援。");
+  const result = await game.responseWorkflow.requestDyingRescue(human, target, null);
+  assert.equal(result.status, "unavailable");
+  assert.equal(ui.responseRequests.length, 0);
+  assert.equal(game.state.pendingResponses.length, 0);
 });
 
 test("濒死：负1生命需恢复2点生命并以两次普通救援脱离濒死", async () => {
@@ -12785,14 +12779,14 @@ test("濒死：救援顺序为濒死本人后再从下一座位起的盟友", as
   assert.equal(dying.hp, 1);
 });
 
-test("濒死：敌人永远不会进入濒死救援候选队列", async () => {
+test("濒死：无调息真人不创建请求且敌人永远不会进入救援候选队列", async () => {
   const dying = makePlayer("d", 0, "dawn", "human"), enemy = makePlayer("e", 1, "dusk", "human");
   dying.hp = 0;
   enemy.hand.push(instance("recover"));
   const { game, ui }
     = makeGame([dying, enemy], { response: () => false });
   await game.dyingWorkflow.enter(dying, enemy);
-  assert.deepEqual(ui.responseRequests.map((request) => request.sourcePlayerId), [dying.id]);
+  assert.deepEqual(ui.responseRequests.map((request) => request.sourcePlayerId), []);
   assert.ok(!ui.responseRequests.some((request) => request.sourcePlayerId === enemy.id));
   assert.equal(dying.alive, false);
 });
@@ -43455,6 +43449,7 @@ test("UI·响应窗口：反制链响应说明包含来源、目标、原牌和�
     );
   a.hand.push(instance("harvest"));
   b.hand.push(instance("counter"));
+  c.hand.push(instance("counter"));
   await game.playCard(a, a.hand[0], []);
   const chained = ui.responseRequests.find(
     (request) => request.type === "counter" && request.sourcePlayerId === b.id && request.targetPlayerId === c.id
@@ -43491,6 +43486,7 @@ test("UI·响应窗口：破势真实出牌流程的反制请求不显示自目�
     = makeGame([source, responder], { response: () => false });
   const card = instance("exposeWeakness");
   source.hand.push(card);
+  responder.hand.push(instance("counter"));
   await game.playCard(source, card, []);
   const request = ui.responseRequests.find(
     (entry) => entry.type === "counter" && entry.targetPlayerId === responder.id
@@ -43761,6 +43757,7 @@ test("UI·响应窗口：转移响应片段包含来源与接收者的队伍", a
   const use = instance("transfer"), secret = instance("block");
   actor.hand.push(use);
   from.hand.push(secret);
+  responder.hand.push(instance("counter"));
   from.bumpHandVersion(TEST_VERSION_STATE);
   const { game, ui }
     = makeGame([actor, from, responder, receiver], { response: () => false });
@@ -46531,6 +46528,7 @@ for (const definitionId of ["duel", "provoke"]) test(`生命周期：旧局${CAR
   const ui = makeOwnedUi(),
     source = makePlayer(`old-${definitionId}-source`, 0, "dawn"),
     target = makePlayer(`old-${definitionId}-target`, 1, "dusk", "human");
+  target.hand.push(instance("assault"));
   const old = configureOwnedGame(createGameApplication(ui), [source, target]);
   ui.attachGame(old);
   const use = instance(definitionId);
@@ -46681,6 +46679,7 @@ test("生命周期：默认无限等待响应可由 teardown 取消并清理 UI"
 
 test("生命周期：销毁对局会以 cancelled 结束未完成响应并清空请求", async () => {
   const a = makePlayer("a", 0, "dawn"), human = makePlayer("human", 1, "dusk", "human");
+  human.hand.push(instance("block"));
   const { game, ui }
     = makeGame([a, human]);
   let settle = null;
@@ -46715,6 +46714,7 @@ test("生命周期：旧局格挡窗口取消后不能扣血、刷新新局 UI �
   ui.onResponse = (request) => {
     if (request.type === "block") openedResolve();
   };
+  target.hand.push(instance("block"));
   const hp = target.hp,
     pending = old.damage(
       source, target, 1, { card: instance("assault"), canBlock: true, damageType: "normal" }
@@ -46865,6 +46865,7 @@ test("生命周期：旧局反制链取消后不会完成战术结算或污染�
   const ui = makeOwnedUi(),
     source = makePlayer("old-counter-source", 0, "dawn"),
     responder = makePlayer("old-counter-human", 1, "dusk", "human");
+  responder.hand.push(instance("counter"));
   const old = configureOwnedGame(createGameApplication(ui), [source, responder]);
   ui.attachGame(old);
   const use = instance("harvest");
