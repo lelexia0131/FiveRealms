@@ -30,9 +30,9 @@ export const CHARACTER_SELECTION_TAGS = Object.freeze({
 });
 
 export const SMALL_TEAM_CHARACTER_PRIORITY = Object.freeze({
-  "ember-magus": 10,
-  "trail-hunter": 9,
-  "oath-warden": 8,
-  "blade-walker": 5,
-  "resonance-tuner": 3
+  "ember-magus": 0.05, // 炎术师：约 +9.5% 选中概率
+  "trail-hunter": 0.04, // 追猎者：约 +7.7% 选中概率
+  "oath-warden": 0.03, // 守誓者：约 +5.8% 选中概率
+  "blade-walker": 0.02, // 刃行者：约 +3.9% 选中概率
+  "resonance-tuner": 0.02 // 调律师：约 +3.9% 选中概率
 });
