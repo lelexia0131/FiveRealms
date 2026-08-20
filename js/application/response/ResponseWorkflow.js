@@ -265,6 +265,38 @@ export function createResponseWorkflow(dependencies) {
 
   /*
   功能
+  取得一次伤害当前需要满足的权威格挡数量。
+
+  调用方
+  CombatWorkflow.damage、askForBlock。
+
+  输入
+  伤害来源与含 card/damageType 的响应上下文。
+
+  输出
+  Domain Response Rule 决定的正整数格挡需求。
+
+  读取状态
+  source 当前装备与 context 的伤害事实。
+
+  写入状态
+  无。
+
+  调用函数
+  getRequiredBlockCount、isAssaultDamage。
+
+  边界与不变量
+  军火库等效果只能通过 Domain 拥有的格挡需求数量组合，不在 workflow 按装备名分支。
+  */
+  function getBlockRequirement(source, context) {
+    return getRequiredBlockCount(
+      source?.equipment?.definitionId ?? null,
+      isAssaultDamage(context.card, context.damageType)
+    );
+  }
+
+  /*
+  功能
   请求格挡响应。
 
   调用方
@@ -283,19 +315,17 @@ export function createResponseWorkflow(dependencies) {
   经支付 transition。
 
   调用函数
-  getRequiredBlockCount、requestCardResponse。
+  getBlockRequirement、requestCardResponse。
 
   边界与不变量
-  格挡需求由 Domain Rule 决定。
+  格挡需求由 Domain Rule 决定；雷达已免除的需求由 CombatWorkflow 通过 requiredBlockCount 传入。
   */
   async function askForBlock(source, target, context) {
     if (!isBlockResponseAvailable(context.canBlock, context.amount)) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
     }
-    const required = getRequiredBlockCount(
-      source?.equipment?.definitionId ?? null,
-      isAssaultDamage(context.card, context.damageType)
-    );
+    const required = context.requiredBlockCount ?? getBlockRequirement(source, context);
+    if (required <= 0) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
     return requestCardResponse(target, "block", { source, target, ...context }, required);
   }
 
@@ -748,20 +778,22 @@ export function createResponseWorkflow(dependencies) {
   buildResponsePresentation、waitForDecision、finishRequest。
 
   边界与不变量
-  skill 效果仍由 SkillRuntime 执行。
+  actor 始终是 responder；targetPlayerId 必须指向 context.target，skill 效果仍由 SkillRuntime 执行。
   */
   async function requestSkillResponse(responder, skillId, responseName, context) {
     const gameId = runtime.getState().gameId;
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-    if (!responder.alive || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE);
+    if (!responder.alive || !context.target?.alive || responder.id === context.target.id
+      || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE);
     const buttonLabel = `发动「${responseName}」`;
     const request = { id:runtime.createId("skill-response"), type:"skill", sourcePlayerId:context.source?.id ?? null,
-      targetPlayerId:responder.id, cardId:context.card?.id ?? null, legalCardIds:[], legalSkillIds:[skillId],
+      targetPlayerId:context.target?.id ?? responder.id, cardId:context.card?.id ?? null, legalCardIds:[], legalSkillIds:[skillId],
       requiredCount:0, timeoutMs:runtime.getResponseTimeoutMs(), allowDecline:true,
       presentation:buildResponsePresentation(responder, "skill", { ...context, responseName, buttonLabel }, 0, 0, buttonLabel) };
     activeRequestIds.add(request.id); runtime.pushPendingResponse(request);
     const decision = await waitForDecision(responder, request, buttonLabel, context, []);
-    const valid = activeRequestIds.has(request.id) && runtime.isSessionValid(gameId) && responder.alive;
+    const valid = activeRequestIds.has(request.id) && runtime.isSessionValid(gameId)
+      && responder.alive && context.target.alive && responder.id !== context.target.id;
     finishRequest(request.id);
     if (isCancelledResponse(decision) || !runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
     if (decision.status !== RESPONSE_STATUS.USED) return responseResult(decision.status);
@@ -826,6 +858,7 @@ export function createResponseWorkflow(dependencies) {
   return Object.freeze({
     waitForDecision,
     requestCardResponse,
+    getBlockRequirement,
     askForBlock,
     emitResolvedCounterUse,
     askForCounter,

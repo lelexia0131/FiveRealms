@@ -150,3 +150,103 @@ export function buildRadarJudgmentProbabilities(remainingCardCounts = null, over
     hasJudgmentPool:totalWeight > PROBABILITY_EPSILON || Boolean(override)
   };
 }
+
+/*
+功能
+按无放回牌池或显式逐槽覆盖计算多个雷达判定的联合结果分区。
+
+调用方
+StatusSimulation.buildRadarOutcomeSequencePartition。
+
+输入
+公开剩余牌计数、正整数判定次数、可选逐槽概率覆盖与可选统一概率覆盖。
+
+输出
+概率质量为一的 `{ probability, outcomes }` 数组；outcomes 按判定顺序排列。
+
+读取状态
+CARD_DEFINITIONS、RULESET_DEFINITION.deckComposition 与传入计数。
+
+写入状态
+无。
+
+调用函数
+buildRadarJudgmentProbabilities。
+
+边界与不变量
+默认牌池严格无放回；显式概率覆盖仅用于调用方指定的独立概率槽，不读取未来真实判定牌。
+*/
+export function buildRadarJudgmentSequenceProbabilities(
+  remainingCardCounts,
+  requirementCount,
+  overrideProbabilitiesByRequirement = null,
+  overrideProbabilities = null
+) {
+  const count = Math.max(0, Math.floor(Number(requirementCount) || 0));
+  if (count <= 0) return [{ probability:1, outcomes:[] }];
+  const overrides = Array.isArray(overrideProbabilitiesByRequirement)
+    ? overrideProbabilitiesByRequirement
+    : null;
+  if (overrides?.length || overrideProbabilities) {
+    let worlds = [{ probability:1, outcomes:[] }];
+    for (let slot = 0; slot < count; slot += 1) {
+      const probabilities = buildRadarJudgmentProbabilities(
+        remainingCardCounts,
+        overrides?.[slot] ?? overrideProbabilities
+      );
+      const outcomes = [];
+      if (!probabilities.hasJudgmentPool) outcomes.push(["noJudgment", 1]);
+      else {
+        if (probabilities.tactic > PROBABILITY_EPSILON) outcomes.push(["tactic", probabilities.tactic]);
+        if (probabilities.equipment > PROBABILITY_EPSILON) outcomes.push(["equipment", probabilities.equipment]);
+        for (const definitionId of RADAR_BASIC_DEFINITIONS) {
+          const probability = probabilities.basic[definitionId];
+          if (probability > PROBABILITY_EPSILON) outcomes.push([`basic:${definitionId}`, probability]);
+        }
+      }
+      worlds = worlds.flatMap((world) => outcomes.map(([outcome, probability]) => ({
+        probability:world.probability * probability,
+        outcomes:[...world.outcomes, outcome]
+      })));
+    }
+    return worlds;
+  }
+
+  const sourceCounts = remainingCardCounts && typeof remainingCardCounts === "object"
+    && !Array.isArray(remainingCardCounts)
+    ? remainingCardCounts
+    : RULESET_DEFINITION.deckComposition;
+  const outcomeCounts = {};
+  for (const [definitionId, rawCount] of Object.entries(sourceCounts)) {
+    const cardCount = Number(rawCount);
+    const definition = CARD_DEFINITIONS[definitionId];
+    if (!definition || !Number.isFinite(cardCount) || cardCount <= 0) continue;
+    const outcome = definition.category === "basic"
+      ? `basic:${definitionId}`
+      : definition.category;
+    outcomeCounts[outcome] = (outcomeCounts[outcome] ?? 0) + cardCount;
+  }
+  let worlds = [{
+    probability:1,
+    outcomes:[],
+    counts:outcomeCounts,
+    total:Object.values(outcomeCounts).reduce((sum, value) => sum + value, 0)
+  }];
+  for (let slot = 0; slot < count; slot += 1) {
+    worlds = worlds.flatMap((world) => {
+      if (world.total <= PROBABILITY_EPSILON) {
+        return [{ ...world, outcomes:[...world.outcomes, "noJudgment"] }];
+      }
+      return Object.entries(world.counts).flatMap(([outcome, available]) => {
+        if (available <= PROBABILITY_EPSILON) return [];
+        return [{
+          probability:world.probability * available / world.total,
+          outcomes:[...world.outcomes, outcome],
+          counts:{ ...world.counts, [outcome]:available - 1 },
+          total:world.total - 1
+        }];
+      });
+    });
+  }
+  return worlds.map(({ probability, outcomes }) => ({ probability, outcomes }));
+}

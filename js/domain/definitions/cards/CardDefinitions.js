@@ -386,7 +386,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     category: "equipment",
     targetType: "self",
     subtypes: Object.freeze(["equipment", "judgment", "defense"]),
-    description: "当需要打出「格挡」进行响应时判定：战术牌令此次攻击无效；基础牌进入手牌后继续结算；装备牌进入弃牌堆且此次攻击继续结算。",
+    description: "对每个格挡需求分别判定：战术牌免除该次格挡需求；基础牌进入手牌后继续结算；装备牌进入弃牌堆并继续结算该次需求。",
   }),
 
   battleDevice: Object.freeze({

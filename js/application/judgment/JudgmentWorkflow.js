@@ -138,7 +138,7 @@ export function createJudgmentWorkflow(dependencies) {
   attacker、defender 与 attackContext。
 
   输出
-  旧形状 { handled, immune, category } 或 cancelled。
+  { handled, immune, waivedBlock, category } 或 cancelled；immune 仅保留单次判定兼容语义。
 
   读取状态
   defender 装备、判定区与 session。
@@ -150,16 +150,19 @@ export function createJudgmentWorkflow(dependencies) {
   drawJudgmentCard、judgmentCategoryLabel、setMatchPhase、showJudgment、emitEvent、decideDefenseJudgmentOutcome、moveJudgmentToDiscard、moveJudgmentToHand、bumpHandVersion、observeJudgmentCard。
 
   边界与不变量
-  判定牌进入独立判定区；展示类别只读 category；basic 进入守方手牌并更新知识；phase/currentJudgment 恢复顺序不变。
+  每次调用只处理一个格挡需求；判定牌进入独立判定区；basic 进入守方手牌并更新知识；不得把单次成功解释为多需求攻击整体免疫。
   */
   async function judgeDefense(attacker, defender, attackContext) {
     const state = runtime.getState();
     const gameId = state.gameId;
-    if (!runtime.isSessionValid(gameId)) return { handled: false, immune: false, cancelled: true };
-    if (defender.equipment?.definitionId !== "defenseDevice") return { handled: false, immune: false };
+    if (!runtime.isSessionValid(gameId)) return { handled: false, immune: false, waivedBlock: false, cancelled: true };
+    if (defender.equipment?.definitionId !== "defenseDevice") return { handled: false, immune: false, waivedBlock: false };
     const card = runtime.drawJudgmentCard();
-    if (!card) return { handled: false, immune: false };
+    if (!card) return { handled: false, immune: false, waivedBlock: false };
     const categoryLabel = judgmentCategoryLabel(card.category, card.categoryName);
+    const requirementIndex = Math.max(1, Number(attackContext.radarRequirementIndex) || 1);
+    const requirementCount = Math.max(1, Number(attackContext.radarRequirementCount) || 1);
+    const requirementLabel = requirementCount > 1 ? `第${requirementIndex}/${requirementCount}次` : "";
     const previousPhase = state.phase;
     setMatchPhase(state, "judgment");
     setJudgmentProjection({ card, defenderId: defender.id, attackerId: attacker?.id ?? null });
@@ -168,9 +171,9 @@ export function createJudgmentWorkflow(dependencies) {
       card: { name: card.name, categoryName: categoryLabel, art: card.art },
       delayedStatusContext: null
     });
-    runtime.presentation.log(`${defender.name}的「雷达」判定为「${card.name}」，为${categoryLabel}。`, "important");
+    runtime.presentation.log(`${defender.name}的「雷达」${requirementLabel}判定为「${card.name}」，为${categoryLabel}。`, "important");
     await runtime.emitEvent("judgmentRevealed", { type: "judgmentRevealed", attacker, defender, card, attackContext });
-    if (!runtime.isSessionValid(gameId)) return { handled: false, immune: false, cancelled: true };
+    if (!runtime.isSessionValid(gameId)) return { handled: false, immune: false, waivedBlock: false, cancelled: true };
     const outcome = decideDefenseJudgmentOutcome(card.category);
     if (outcome.destination === "hand") {
       runtime.moveJudgmentToHand(card, defender);
@@ -178,13 +181,17 @@ export function createJudgmentWorkflow(dependencies) {
       for (const viewer of state.players) {
         if (viewer.id !== defender.id) runtime.observeJudgmentCard(viewer, defender, card);
       }
-      runtime.presentation.log(`${defender.name}获得判定牌，此次攻击继续结算。`);
+      runtime.presentation.log(`${defender.name}获得判定牌，${requirementCount > 1 ? "本次格挡需求继续结算" : "此次攻击继续结算"}。`);
     } else {
       runtime.moveJudgmentToDiscard(card);
       if (outcome.immune) {
-        runtime.presentation.log(`${defender.name}的「雷达」生效，此次攻击无效。`, "important");
+        runtime.presentation.log(requirementCount > 1
+          ? `${defender.name}的「雷达」${requirementLabel}判定生效，免除1次格挡需求。`
+          : `${defender.name}的「雷达」生效，此次攻击无效。`, "important");
       } else {
-        runtime.presentation.log(`${defender.name}的「雷达」未生效，判定牌进入弃牌堆，此次攻击继续结算。`, "important");
+        runtime.presentation.log(requirementCount > 1
+          ? `${defender.name}的「雷达」${requirementLabel}判定未免除格挡需求，判定牌进入弃牌堆。`
+          : `${defender.name}的「雷达」未生效，判定牌进入弃牌堆，此次攻击继续结算。`, "important");
       }
     }
     setJudgmentProjection(null);
@@ -192,7 +199,7 @@ export function createJudgmentWorkflow(dependencies) {
     if (!state.isGameOver) setMatchPhase(state, previousPhase);
     runtime.syncDeckAliases();
     runtime.presentation.refresh();
-    return { handled: outcome.handled, immune: outcome.immune, category: outcome.category };
+    return { handled: outcome.handled, immune: outcome.immune, waivedBlock: outcome.immune, category: outcome.category };
   }
 
   /*

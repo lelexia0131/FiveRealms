@@ -91,7 +91,7 @@ export function createUiChoiceAdapter({
     requestResponse、requestPublicCard、normalizeChoiceResult、createChoiceResult。
 
     边界与不变量
-    不改 UI 交互、超时或取消语义。
+    response actor 与 effect target 必须分别来自 actorId/context.targetPlayerId；不改 UI 交互、超时或取消语义。
     */
     async request(choiceRequest) {
       if (choiceRequest?.kind === "hiddenCard") {
@@ -199,7 +199,7 @@ export function createUiChoiceAdapter({
         id: choiceRequest.requestId,
         type: constraints.responseType,
         sourcePlayerId: context.sourcePlayerId,
-        targetPlayerId: choiceRequest.actorId,
+        targetPlayerId: context.targetPlayerId,
         cardId: context.cardId,
         legalCardIds: choiceRequest.options.map((option) => option.optionId),
         requiredCount: constraints.requiredCount,

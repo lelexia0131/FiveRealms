@@ -160,12 +160,12 @@ canTriggerGuardianAid consumers。
 无。
 
 边界与不变量
-保持纯决定，不写状态。
+仅接受 authoritative pending HP damage；保持纯决定，不写状态，owner 与目标必须是不同实体。
 */
 export function canTriggerGuardianAid(owner, event) {
   return Boolean(owner?.alive && event?.target?.alive && owner.id !== event.target.id
     && owner.battleTeam === event.target.battleTeam
-    && !owner.turnFlags.guardianAidUsed && owner.hand.length && event.amount > 0);
+    && !owner.turnFlags.guardianAidUsed && owner.hand.length && event.pendingHpDamage > 0);
 }
 
 /*

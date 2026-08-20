@@ -23,6 +23,7 @@ import {
   parentPort,
   workerData
 } from "node:worker_threads";
+import { configureAllAiRoster } from "./headless_match_setup.mjs";
 
 const DEFAULT_SEED_BASE = 0x9e3779b9;
 const GOLDEN_RATIO_32 = 2654435761;
@@ -177,10 +178,10 @@ async function runOneGame(createApplication, index, config) {
     game.animationFastMode = true;
     game.aiSearchNodeBudgetOverride = config.searchNodeBudget;
     game.cleanupManager.delay = async () => !game.state.isDisposed;
+    configureAllAiRoster(game, `balance:all-ai:${index}`);
 
     const candidates = game.startSelection("random");
     if (!candidates.length) throw new Error(`第 ${index} 局没有可选角色`);
-    game.state.players[0].controllerType = "ai";
 
     game.eventDispatcher.on("afterCardMove", `balance:move:${index}`, (event) => {
       if (config.detailed) {

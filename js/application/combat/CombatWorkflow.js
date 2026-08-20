@@ -24,6 +24,7 @@ const REQUIRED_DEPENDENCIES = [
   "getState",
   "isSessionValid",
   "askForBlock",
+  "getBlockRequirement",
   "judgeDefense",
   "enterDying",
   "emitEvent",
@@ -64,7 +65,8 @@ export function createCombatWorkflow(dependencies) {
   }
   const runtime = dependencies;
   if (typeof runtime.getState !== "function" || typeof runtime.isSessionValid !== "function"
-    || typeof runtime.askForBlock !== "function" || typeof runtime.judgeDefense !== "function"
+    || typeof runtime.askForBlock !== "function" || typeof runtime.getBlockRequirement !== "function"
+    || typeof runtime.judgeDefense !== "function"
     || typeof runtime.enterDying !== "function" || typeof runtime.emitEvent !== "function"
     || typeof runtime.createId !== "function") {
     throw new TypeError("CombatWorkflow 存在类型不正确的 collaborator");
@@ -90,10 +92,10 @@ export function createCombatWorkflow(dependencies) {
   shield/hp 经 ResourceTransitions；telemetry 经 DiagnosticsPort/AI observation collaborator。
 
   调用函数
-  judgeDefense、askForBlock、emitEvent、calculateDamageResult、changeShield、changeHp、diagnostics.recordDamage、observeDamage、enterDying。
+  getBlockRequirement、judgeDefense、askForBlock、emitEvent、calculateDamageResult、changeShield、changeHp、diagnostics.recordDamage、observeDamage、enterDying。
 
   边界与不变量
-  雷达与格挡路径不触发 beforeDamage；block 路径保持 context.blockedByCard；每次 await 后 session 检查点不减少。
+  每个格挡需求独立进行雷达判定；正常格挡结束且预览生命伤害为正后才发布 beforeHpDamage；HP mutation 前保留 session 检查点。
   */
   async function damage(source, target, amount, context = {}) {
     const state = runtime.getState();
@@ -108,15 +110,28 @@ export function createCombatWorkflow(dependencies) {
       delayedStatusContext: context.delayedStatusContext ?? null,
       cancelled: false, metadata, resolutionId: context.resolutionId ?? runtime.createId("skill-resolution")
     };
-    if (event.amount > 0 && event.canBlock) {
-      const judgment = await runtime.judgeDefense(source, target, event);
-      if (!runtime.isSessionValid(gameId) || judgment.cancelled) return 0;
-      if (judgment.immune || !target.alive || state.isGameOver) {
+    let requiredBlockCount = event.amount > 0 && event.canBlock
+      ? runtime.getBlockRequirement(source, event)
+      : 0;
+    if (requiredBlockCount > 0) {
+      const originalRequirement = requiredBlockCount;
+      // 雷达免除的是单个格挡需求；所有原始需求都必须完成独立判定，不能因前一次命中短路。
+      for (let index = 0; index < originalRequirement; index += 1) {
+        const judgment = await runtime.judgeDefense(source, target, {
+          ...event,
+          radarRequirementIndex: index + 1,
+          radarRequirementCount: originalRequirement
+        });
+        if (!runtime.isSessionValid(gameId) || judgment.cancelled) return 0;
+        if (judgment.waivedBlock) requiredBlockCount = Math.max(0, requiredBlockCount - 1);
+        if (!target.alive || state.isGameOver) return 0;
+      }
+      if (requiredBlockCount <= 0) {
         await runtime.emitEvent("afterDamage", { ...event, type: "afterDamage", actualAmount: 0, shieldAbsorbed: 0, preventedBy: "defenseDevice" });
         return 0;
       }
     }
-    const blockResult = await runtime.askForBlock(source, target, event);
+    const blockResult = await runtime.askForBlock(source, target, { ...event, requiredBlockCount });
     if (!runtime.isSessionValid(gameId) || blockResult.status === "cancelled") return 0;
     if (blockResult.status === "used") {
       context.blockedByCard = true;
@@ -136,6 +151,23 @@ export function createCombatWorkflow(dependencies) {
       if (!runtime.isSessionValid(gameId)) return 0;
       runtime.presentation.refresh();
       return 0;
+    }
+    const pendingDamage = calculateDamageResult(event.amount, target.shield, target.hp);
+    if (pendingDamage.hpDamage > 0) {
+      event.type = "beforeHpDamage";
+      event.pendingHpDamage = pendingDamage.hpDamage;
+      await runtime.emitEvent("beforeHpDamage", event);
+      if (!runtime.isSessionValid(gameId)) return 0;
+      if (event.cancelled || !target.alive) return 0;
+      if (event.amount <= 0) {
+        runtime.presentation.log(`${target.name}没有受到生命伤害。`);
+        await runtime.emitEvent("afterDamage", {
+          ...event, type: "afterDamage", actualAmount: 0, shieldAbsorbed: 0, preventedBy: "damageReduction"
+        });
+        if (!runtime.isSessionValid(gameId)) return 0;
+        runtime.presentation.refresh();
+        return 0;
+      }
     }
     const damageResult = calculateDamageResult(event.amount, target.shield, target.hp);
     changeShield(state, target, -damageResult.shieldAbsorbed);

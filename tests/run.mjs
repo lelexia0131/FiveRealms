@@ -155,6 +155,7 @@ import {
   makeRandom as makeBenchmarkRandom,
   runAiDecision as runBenchmarkAiDecision
 } from "./ai-benchmark/helpers.mjs";
+import { configureAllAiRoster } from "./headless_match_setup.mjs";
 import {
   UNKNOWN_HAND_EXPECTED_VALUE,
   buildTransferCandidates,
@@ -3531,6 +3532,53 @@ async function frArch9MatchSetupBoundary() {
 
 test("Match setup：pre-live one-shot，live 后拒绝重复 setup", frArch9MatchSetupBoundary);
 
+/*
+功能
+验证 headless Balance 通过正式 MatchWorkflow 提交 roster 后配置全 AI 并启动对局。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+公开 application boundary、teamAssigned roster 与 loopPromise。
+
+写入状态
+独立测试对局的 participant metadata 与 match setup 状态。
+
+调用函数
+createGameApplication、configureAllAiRoster、startSelection、confirmCharacter。
+
+边界与不变量
+startSelection 后 roster 必须仍为空；全 AI 配置只能作用于 confirmCharacter 已提交的五人 roster。
+*/
+async function balanceHeadlessInitializationUsesCommittedRoster() {
+  const game = createGameApplication(makeUi(), () => 0.25);
+  game.simulationMode = true;
+  let loopStarted = false;
+  game.runGameLoop = async () => { loopStarted = true; };
+  configureAllAiRoster(game, "test:balance:all-ai");
+  const candidates = game.startSelection("random");
+  assert.equal(game.state.players.length, 0);
+  await game.confirmCharacter(candidates[0].id);
+  await game.loopPromise;
+  assert.equal(game.state.players.length, 5);
+  assert.ok(game.state.players.every((player) => player.controllerType === "ai"));
+  assert.ok(game.state.players.every((player) => Boolean(player.characterId)));
+  assert.equal(loopStarted, true);
+  game.dispose();
+}
+
+test(
+  "Balance 初始化：正式征召提交 roster 后配置全 AI 并启动对局",
+  balanceHeadlessInitializationUsesCommittedRoster
+);
+
 test("Match setup：random 编队先于角色候选消费 match RNG", async () => {
   const sequence = Array.from({ length: 4096 }, (_, index) => ((index * 37 + 11) % 101) / 101);
   let cursor = 0;
@@ -4407,7 +4455,8 @@ async function frArch8CombatWorkflowDamageTrace() {
   const workflow = createCombatWorkflow({
     getState: () => state,
     isSessionValid: () => true,
-    judgeDefense: async () => ({ handled: false, immune: false }),
+    getBlockRequirement: () => 1,
+    judgeDefense: async () => ({ handled: false, immune: false, waivedBlock: false }),
     askForBlock: async () => ({ status: "declined", cards: [] }),
     enterDying: async (...args) => { events.push({ type: "dying-entry", args }); return false; },
     emitEvent: async (type, payload) => { events.push({ type, payload }); },
@@ -4439,7 +4488,7 @@ async function frArch8CombatWorkflowDamageTrace() {
   }), 1);
   assert.equal(target.hp, 2);
   assert.equal(target.shield, 0);
-  assert.deepEqual(events.map((entry) => entry.type), ["beforeDamage", "afterDamage"]);
+  assert.deepEqual(events.map((entry) => entry.type), ["beforeDamage", "beforeHpDamage", "afterDamage"]);
   assert.deepEqual(telemetry, [{ targetId: "t", sourceId: "s", hpDamage: 1 }]);
   assert.equal(aiObservation.length, 1);
   assert.deepEqual(feedback.slice(0, 2), [
@@ -4486,7 +4535,8 @@ async function frArch8CombatWorkflowHealAndHpLossTrace() {
   const workflow = createCombatWorkflow({
     getState: () => state,
     isSessionValid: () => true,
-    judgeDefense: async () => { judgeCalls += 1; return { handled: false, immune: false }; },
+    getBlockRequirement: () => 1,
+    judgeDefense: async () => { judgeCalls += 1; return { handled: false, immune: false, waivedBlock: false }; },
     askForBlock: async () => { blockCalls += 1; return { status: "declined", cards: [] }; },
     enterDying: async () => false,
     emitEvent: async (type) => { events.push(type); },
@@ -4788,7 +4838,7 @@ async function frArch8JudgmentWorkflowDefenseTrace() {
     setCurrentJudgmentProjection: (value) => projections.push(value)
   });
   const result = await workflow.judgeDefense(attacker, defender, {});
-  assert.deepEqual(result, { handled: true, immune: false, category: "basic" });
+  assert.deepEqual(result, { handled: true, immune: false, waivedBlock: false, category: "basic" });
   assert.equal(defender.hand[0], card);
   assert.equal(defender.handVersion, 1);
   assert.equal(observations.length, 2);
@@ -5758,6 +5808,7 @@ async function frArchAssaultEventTrace() {
     "targetSelected",
     "beforeCardResolve",
     "beforeDamage",
+    "beforeHpDamage",
     "afterDamage",
     "beforeCardMove",
     "afterCardMove",
@@ -8863,13 +8914,100 @@ test("雷达：焚场需要格挡时同样触发判定且日志不冒充突袭",
   await equipmentRun();
 });
 
-test("雷达：描述与 README 统一为需要格挡时判定而不枚举具体卡牌", async () => {
+test("雷达：描述与 README 统一为按每个格挡需求独立判定", async () => {
   const readme = await readFile(projectFile("README.md"), "utf8");
   const description = CARD_DEFINITIONS.defenseDevice.description;
-  assert.match(description, /当需要打出「格挡」/);
+  assert.match(description, /每个格挡需求分别判定/);
   assert.doesNotMatch(description, /「突袭」|「震荡」/);
-  assert.match(readme, /雷达：当需要打出「格挡」进行响应时公开判定/);
+  assert.match(readme, /雷达：对每个格挡需求分别公开判定/);
   assert.doesNotMatch(readme, /雷达：受到「突袭」或「震荡」/);
+});
+
+/*
+功能
+运行一次军火库攻击雷达目标的双判定夹具，并返回权威剩余格挡需求与判定轨迹。
+
+调用方
+军火库与雷达四种命中组合回归测试。
+
+输入
+第一、第二次雷达是否命中。
+
+输出
+{ remainingBlockCount, judgmentCategories, judgmentCount, hpBefore, hpAfter }。
+
+读取状态
+独立 MatchState 的判定牌堆、响应请求与目标生命。
+
+写入状态
+仅修改独立测试对局。
+
+调用函数
+makePlayer、makeGame、instance、game.damage。
+
+边界与不变量
+牌堆按真实 pop 顺序固定两次判定；目标拒绝格挡，使剩余需求可直接从 response request 观察。
+*/
+async function runBattleRadarCombination(firstHit, secondHit) {
+  const source = makePlayer(`battle-radar-source-${firstHit}-${secondHit}`, 0, "dusk"),
+    target = makePlayer(`battle-radar-target-${firstHit}-${secondHit}`, 1, "dawn", "human"),
+    { game, ui } = makeGame([source, target], { response: () => false });
+  source.equipment = instance("battleDevice");
+  target.equipment = instance("defenseDevice");
+  target.hand.push(instance("block"), instance("block"));
+  const firstJudgment = instance(firstHit ? "harvest" : "energyDevice"),
+    secondJudgment = instance(secondHit ? "harvest" : "energyDevice"),
+    judgmentCategories = [];
+  game.state.deck.cards.push(secondJudgment, firstJudgment);
+  game.eventDispatcher.on(
+    "judgmentRevealed",
+    `test:battle-radar:${firstHit}:${secondHit}`,
+    (event) => judgmentCategories.push(event.card.category)
+  );
+  const hpBefore = target.hp;
+  await game.damage(source, target, 1, {
+    card:instance("assault"), canBlock:true, damageType:"normal"
+  });
+  const blockRequest = ui.responseRequests.find((request) => request.type === "block");
+  return {
+    remainingBlockCount:blockRequest?.requiredCount ?? 0,
+    judgmentCategories,
+    judgmentCount:ui.judgments.length,
+    hpBefore,
+    hpAfter:target.hp
+  };
+}
+
+test("雷达：军火库双判定命中/命中免除全部两个格挡需求", async () => {
+  const result = await runBattleRadarCombination(true, true);
+  assert.equal(result.remainingBlockCount, 0);
+  assert.deepEqual(result.judgmentCategories, ["tactic", "tactic"]);
+  assert.equal(result.judgmentCount, 2);
+  assert.equal(result.hpAfter, result.hpBefore);
+});
+
+test("雷达：军火库双判定命中/未命中剩余一个格挡需求", async () => {
+  const result = await runBattleRadarCombination(true, false);
+  assert.equal(result.remainingBlockCount, 1);
+  assert.deepEqual(result.judgmentCategories, ["tactic", "equipment"]);
+  assert.equal(result.judgmentCount, 2);
+  assert.equal(result.hpAfter, result.hpBefore - 1);
+});
+
+test("雷达：军火库双判定未命中/命中剩余一个格挡需求", async () => {
+  const result = await runBattleRadarCombination(false, true);
+  assert.equal(result.remainingBlockCount, 1);
+  assert.deepEqual(result.judgmentCategories, ["equipment", "tactic"]);
+  assert.equal(result.judgmentCount, 2);
+  assert.equal(result.hpAfter, result.hpBefore - 1);
+});
+
+test("雷达：军火库双判定未命中/未命中保留两个格挡需求", async () => {
+  const result = await runBattleRadarCombination(false, false);
+  assert.equal(result.remainingBlockCount, 2);
+  assert.deepEqual(result.judgmentCategories, ["equipment", "equipment"]);
+  assert.equal(result.judgmentCount, 2);
+  assert.equal(result.hpAfter, result.hpBefore - 1);
 });
 
 // ---- 军火库 ----
@@ -9396,7 +9534,7 @@ test("守誓者：突袭先结算格挡且被格挡攻击不消耗护援", async
   assert.equal(messages.filter((message) => message === `${target.name}没有受到生命伤害。`).length, 1);
 });
 
-test("守誓者：护援先于护盾减伤且减至0时不消耗护盾", async () => {
+test("守誓者：护盾预览后仅对仍会造成生命伤害的事件开放护援", async () => {
   const run = async (amount) => {
     const source = makePlayer(`aid-shield-source-${amount}`, 0, "dusk", "ai", 4),
       target = makePlayer(`aid-shield-target-${amount}`, 1, "dawn", "ai", 3),
@@ -9417,13 +9555,16 @@ test("守誓者：护援先于护盾减伤且减至0时不消耗护盾", async (
 
   const reducedToZero = await run(1);
   assert.equal(reducedToZero.target.hp, reducedToZero.hp);
-  assert.equal(reducedToZero.target.shield, 1);
-  assert.equal(reducedToZero.guardian.hand.includes(reducedToZero.cost), false);
+  assert.equal(reducedToZero.target.shield, 0);
+  assert.equal(reducedToZero.guardian.hand.includes(reducedToZero.cost), true);
+  assert.equal(reducedToZero.guardian.turnFlags.guardianAidUsed, false);
+  assert.ok(!reducedToZero.game.state.logs.some((entry) => entry.message.includes("「护援」")));
 
   const absorbedAfterAid = await run(2);
   assert.equal(absorbedAfterAid.target.hp, absorbedAfterAid.hp);
   assert.equal(absorbedAfterAid.target.shield, 0);
   assert.equal(absorbedAfterAid.guardian.hand.includes(absorbedAfterAid.cost), false);
+  assert.equal(absorbedAfterAid.guardian.turnFlags.guardianAidUsed, true);
 });
 
 test("守誓者：护援减伤至0仍完成统一伤害收尾且只记录一次零伤害", async () => {
@@ -9569,6 +9710,40 @@ test("守誓者：震荡逐目标完成格挡后仅护援未挡住的目标", as
     aidIndex = responseOrder.findIndex((entry) => entry.startsWith("guardianAid:"));
   assert.ok(firstBlockIndex >= 0 && firstBlockIndex < secondBlockIndex && secondBlockIndex < aidIndex);
   assert.match(responseOrder[aidIndex], new RegExp(insufficientTarget.name));
+});
+
+test("守誓者：自己受伤不生成护援候选且队友受伤仍使用正确目标", async () => {
+  const source = makePlayer("aid-self-source", 0, "dusk", "ai", 4),
+    guardian = makePlayer("aid-self-guardian", 1, "dawn", "human", 1),
+    ally = makePlayer("aid-self-ally", 2, "dawn", "ai", 2),
+    aidCost = instance("charge"),
+    { game, ui } = makeGame([source, guardian, ally], {
+      response: (request) => request.type === "skill"
+    });
+  guardian.hand.push(aidCost);
+  registerPassiveSkills(game);
+  const guardianHp = guardian.hp,
+    allyHp = ally.hp;
+
+  await game.damage(source, guardian, 1, {
+    canBlock:false, damageType:"skill", actionName:"测试"
+  });
+  assert.equal(guardian.hp, guardianHp - 1);
+  assert.ok(guardian.hand.includes(aidCost));
+  assert.equal(guardian.turnFlags.guardianAidUsed, false);
+  assert.ok(!ui.responseRequests.some((request) => request.type === "skill"));
+  assert.ok(!game.state.logs.some((entry) => entry.message.includes("护援") && entry.message.includes(guardian.name)));
+
+  await game.damage(source, ally, 1, {
+    canBlock:false, damageType:"skill", actionName:"测试"
+  });
+  const aidRequest = ui.responseRequests.find((request) => request.type === "skill");
+  assert.ok(aidRequest);
+  assert.equal(aidRequest.targetPlayerId, ally.id);
+  assert.notEqual(aidRequest.targetPlayerId, guardian.id);
+  assert.equal(ally.hp, allyHp);
+  assert.equal(guardian.turnFlags.guardianAidUsed, true);
+  assert.equal(guardian.hand.includes(aidCost), false);
 });
 
 test("守誓者：护援同一玩家回合内第二次伤害不能再次触发", async () => {
@@ -10557,8 +10732,8 @@ test("炎术师：焚场先结算格挡且被格挡目标不消耗护援", async
   assert.equal(guardian.turnFlags.guardianAidUsed, false);
   const aidRequests = order.filter((entry) => entry.startsWith("aid:"));
   assert.equal(aidRequests.length, 1, "只有未格挡目标触发护援响应");
-  assert.equal(aidRequests[0], `aid:${guardian.id}`);
-  assert.ok(order.indexOf(`aid:${guardian.id}`) > order.indexOf(`block:${open.id}`));
+  assert.equal(aidRequests[0], `aid:${open.id}`);
+  assert.ok(order.indexOf(`aid:${open.id}`) > order.indexOf(`block:${open.id}`));
 });
 
 test("炎术师：焚场每回合最多发动两次且第三次不扣费不造成伤害", async () => {
@@ -11830,7 +12005,8 @@ test("响应窗口：所有真人响应请求统一使用默认无限等待", as
   const source = makePlayer("source", 0, "dusk"),
     responder = makePlayer("responder", 1, "dawn", "human"),
     target = makePlayer("target", 2, "dusk"),
-    { game, ui } = makeGame([source, responder, target]);
+    ally = makePlayer("skill-target", 3, "dawn"),
+    { game, ui } = makeGame([source, responder, target, ally]);
   responder.hand.push(instance("block"), instance("counter"), instance("recover"), instance("assault"));
 
   const capture = async (start) => {
@@ -11866,7 +12042,7 @@ test("响应窗口：所有真人响应请求统一使用默认无限等待", as
     responder, target, { source, equipment: instance("energyDevice"), card: instance("leverage") }
   )));
   types.push(await capture(() => game.responseWorkflow.requestSkillResponse(
-    responder, "aid", "护援", { source, target: responder, actionName: "伤害" }
+    responder, "aid", "护援", { source, target: ally, actionName: "伤害" }
   )));
 
   assert.deepEqual(types, ["block", "counter", "dyingRescue", "assaultDiscard", "leverageAssault", "skill"]);
@@ -13394,7 +13570,7 @@ function testSimulationSearchStateCharacterization() {
   }
 
   assert.deepEqual(fingerprints, {
-    combat: "17f1364cda22aa6cd892a28d65546c6da4b092e6bab0f0247e51c9669a33dd95",
+    combat: "28a5e1a4e537db6bf26a94e68305fe13b5a6eb280e05615be5742f1319d6fcb5",
     card: "862f5421a4c99a7fd5b65ddbce0a3cc2f8a31a5a5c9df4468cd7eac59ecea6cd",
     skill: "56d1c815ebdca627359cff2ba347f0847099a945e41d5d97d598e199e8153b83",
     status: "a036bf4012b178d65fc2954f53587199ab6692432fff0a2ff59697e8a1735a40"
@@ -21433,7 +21609,7 @@ test("AI·雷达：公开获得的基础牌写入其他 AI 记忆", async () => 
   assert.equal(a.aiMemory.knownCardsByPlayer[b.id][judgment.id], "charge");
 });
 
-test("AI·雷达：按判定牌类型计算格挡消耗并保持手牌非负", () => {
+test("AI·雷达：多需求联合判定保持格挡分布守恒且手牌非负", () => {
   const battleProbability = .25,
     normalBlockProbability = .1,
     twoBlockProbability = .02,
@@ -21468,30 +21644,17 @@ test("AI·雷达：按判定牌类型计算格挡消耗并保持手牌非负", (
         }
       ]
     },
-    basicTotal = Object.values(
-      CARD_DEFINITIONS
-    ).filter((card) => card.category === "basic").reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0),
-    equipmentTotal = Object.values(
-      CARD_DEFINITIONS
-    ).filter((card) => card.category === "equipment").reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0),
-    blockChance = CARD_COUNTS.block / TOTAL_CARD_COUNT,
-    otherBasicChance = (basicTotal - CARD_COUNTS.block) / TOTAL_CARD_COUNT,
-    equipmentChance = equipmentTotal / TOTAL_CARD_COUNT,
-    normalSpent = blockChance + (otherBasicChance + equipmentChance) * normalBlockProbability,
-    battleSpent = 2 * (
-      blockChance * normalBlockProbability + (otherBasicChance + equipmentChance) * twoBlockProbability
-    ),
-    expectedSpent = battleProbability * battleSpent + (1 - battleProbability) * normalSpent,
     simulator = new Simulator(state);
   simulator.applyDamage(
     state, state.players[0], state.players[1], 1, { canBlock: true, deviceAttack: true }
   );
-  assert.ok(
-    Math.abs(
-      state.players[1].handCount - Math.max(0, basicTotal / TOTAL_CARD_COUNT - expectedSpent)
-    ) < 1e-9
-  );
+  assert.ok(Number.isFinite(state.players[1].handCount));
   assert.ok(state.players[1].handCount >= 0);
+  assertClose(
+    state.players[1].blockCountDistribution.reduce((sum, branch) => sum + branch.probability, 0),
+    1
+  );
+  assert.ok(state.players[1].hp >= 3 && state.players[1].hp <= 4);
 });
 
 test("AI·雷达：模拟雷达按当前牌堆配置计算判定概率", () => {
@@ -21592,7 +21755,7 @@ test("AI·雷达：战术判定免疫且不消耗原格挡，基础与装备判�
   assert.equal(equipment.handCount, 0);
 });
 
-test("AI·雷达：军火库雷达判得格挡后仍要求原手牌另有一张格挡", () => {
+test("AI·雷达：军火库一项判得格挡且另一项未免除时仍需要另一张格挡", () => {
   const simulator = new Simulator({ players: [] });
   const run = (normalBlockChance, handCount) => {
     const state = {
@@ -21631,7 +21794,10 @@ test("AI·雷达：军火库雷达判得格挡后仍要求原手牌另有一张�
       {
         canBlock: true,
         deviceAttack: true,
-        radarJudgmentProbabilities: { block: 1, otherBasic: 0, equipment: 0 }
+        radarJudgmentProbabilitiesByRequirement: [
+          { block: 1, otherBasic: 0, equipment: 0 },
+          { block: 0, otherBasic: 0, equipment: 1 }
+        ]
       }
     );
     return state.players[1];
@@ -21642,6 +21808,61 @@ test("AI·雷达：军火库雷达判得格挡后仍要求原手牌另有一张�
   const withOriginal = run(1, 1);
   assert.equal(withOriginal.hp, 4);
   assert.equal(withOriginal.handCount, 0);
+});
+
+/*
+功能
+运行 AI 镜像中的军火库双雷达确定性命中组合。
+
+调用方
+AI·雷达双需求四组合回归测试。
+
+输入
+两次雷达是否命中。
+
+输出
+目标与 outcome diagnostics。
+
+读取状态
+独立 SearchState 的生命、格挡分布与雷达装备概率。
+
+写入状态
+仅修改独立模拟状态。
+
+调用函数
+radarApply、radarFixtureTarget、radarBattleAttacker。
+
+边界与不变量
+逐需求覆盖只控制雷达类别，不新增格挡手牌；remainingBlockCountBranches 必须为确定单值。
+*/
+function runSimulatedBattleRadarCombination(firstHit, secondHit) {
+  const hit = { block:0, otherBasic:0, equipment:0 },
+    miss = { block:0, otherBasic:0, equipment:1 },
+    target = radarFixtureTarget({
+      blockCountDistribution:[{ probability:1, conditions:{}, blockCount:0 }]
+    }),
+    outcome = {};
+  radarApply(target, radarBattleAttacker(), {
+    radarJudgmentProbabilitiesByRequirement:[firstHit ? hit : miss, secondHit ? hit : miss],
+    outcome
+  });
+  return { target, outcome };
+}
+
+test("AI·雷达：军火库双需求镜像覆盖命中组合后的0/1/1/2剩余数量", () => {
+  for (const [firstHit, secondHit, expectedRemaining, expectedHp] of [
+    [true, true, 0, 4],
+    [true, false, 1, 3],
+    [false, true, 1, 3],
+    [false, false, 2, 3]
+  ]) {
+    const { target, outcome } = runSimulatedBattleRadarCombination(firstHit, secondHit);
+    assert.equal(target.hp, expectedHp);
+    assert.ok(outcome.remainingBlockCountBranches.length > 0);
+    assert.ok(outcome.remainingBlockCountBranches.every(
+      (branch) => branch.remainingBlockCount === expectedRemaining
+    ));
+  }
 });
 
 test("AI·雷达：部分概率攻击额外缩放雷达得牌、格挡消耗与最终伤害", () => {
@@ -21994,28 +22215,20 @@ test("AI·雷达：40%攻击未发生世界不判定不消费不受伤", () => {
   assertClose(byCount[1] ?? 0, .6);
 });
 
-test("AI·雷达：混合判定身份互斥且每个世界最多一张基础牌", () => {
+test("AI·雷达：军火库两次基础判定按无放回顺序保留对应身份", () => {
   const target = radarFixtureTarget(
     { blockCountDistribution: [{ probability: 1, conditions: {}, blockCount: 0 }] }
   );
   const { simulator }
     = radarApply(target, radarBattleAttacker(), { remainingCardCounts: { block: 5, charge: 5 } });
-  assert.equal(target.hp, 3);
-  // 军火库只有一张判定格挡不足两张，两个分支都命中
-  const block = target.knownCards.find((entry) => entry.definitionId === "block");
-  const charge = target.knownCards.find((entry) => entry.definitionId === "charge");
-  assert.ok(block);
-  assert.ok(charge);
-  assertClose(simulator.cardAvailability(block), .5);
-  assertClose(simulator.cardAvailability(charge), .5);
-  const joined = joinProbabilityStateBranches(
-    projectAvailability(block.availabilityStateBranches, "blockAvail"),
-    projectAvailability(charge.availabilityStateBranches, "chargeAvail")
-  );
-  const bothAvailable = joined.filter(
-    (branch) => branch.blockAvail && branch.chargeAvail
-  ).reduce((sum, branch) => sum + branch.probability, 0);
-  assert.ok(Math.abs(bothAvailable) < 1e-9);
+  assertClose(target.hp, 3 + 2 / 9);
+  const blocks = target.knownCards.filter((entry) => entry.definitionId === "block"),
+    charges = target.knownCards.filter((entry) => entry.definitionId === "charge");
+  assert.equal(blocks.length, 2);
+  assert.equal(charges.length, 2);
+  assertClose(blocks.reduce((sum, card) => sum + simulator.cardAvailability(card), 0), 5 / 9);
+  assertClose(charges.reduce((sum, card) => sum + simulator.cardAvailability(card), 0), 1);
+  assertClose(target.handCount, 14 / 9);
 });
 
 test("AI·雷达：clone 后雷达判定消费状态不恢复", () => {

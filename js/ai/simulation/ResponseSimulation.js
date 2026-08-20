@@ -1696,7 +1696,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   CombatSimulation.applyDamage：把已确定攻击世界与格挡容量和雷达结果联合。
 
   输入
-  SearchState、目标、攻击世界及可选判定前格挡/判定牌身份。
+  SearchState、目标、攻击世界及可选判定前格挡/多个判定牌身份。
 
   输出
   outcomeWorlds、blockedProbability 与 expectedBlockSpend。
@@ -1711,7 +1711,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   getBlockCountBranches、consumeBlockIdentities、Probability 连接/投影 辅助函数。
 
   边界与不变量
-  格挡选择、容量扣减和身份消费共享同一世界；雷达判定格挡只有补足缺口时才消费。
+  格挡选择、容量扣减和身份消费共享同一世界；雷达判定格挡按判定顺序只补足原格挡容量缺口。
   */
   consumeBlockResponseWorlds(state, target, attackWorlds, options = {}) {
     const blockState = this.getBlockCountBranches(target, state?.remainingCardCounts ?? null);
@@ -1754,7 +1754,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     const responseMatches = (branch) => Boolean(
       branch.occurs
       && branch.responseAllowed !== false
-      && !branch.immuneByRadar
+      && branch.requiredCount > 0
       && branch.blockCount >= branch.requiredCount
     );
     const consumedBranches = joined.filter(responseMatches);
@@ -1775,45 +1775,57 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       requiredCount:branch.requiredCount,
       blockUsed:responseMatches(branch)
     }));
-    const judgmentBlockCard = options.judgmentBlockCard ?? null;
-    const excludedCardIds = judgmentBlockCard
-      ? new Set([judgmentBlockCard.id ?? judgmentBlockCard.cardId])
+    const judgmentBlockCards = Array.isArray(options.judgmentBlockCards)
+      ? options.judgmentBlockCards.filter(Boolean)
+      : options.judgmentBlockCard
+        ? [options.judgmentBlockCard]
+        : [];
+    const excludedCardIds = judgmentBlockCards.length
+      ? new Set(judgmentBlockCards.map((card) => card.id ?? card.cardId))
       : null;
     this.consumeBlockIdentities(state, target, identityWorlds, excludedCardIds);
-    if (judgmentBlockCard && preJudgmentPartition) {
-      // 判定牌追加在手牌末尾：原匿名格挡容量足够时，判定格挡身份必须保留；
-      // 只有判定前总格挡不足 requiredCount 的世界才真正消费判定格挡。
-      const judgmentConsumedWorlds = projectProbabilityStateBranches(joined, (branch) => ({
-        occurs:Boolean(
-          responseMatches(branch)
-          && branch.preBlockCount < branch.requiredCount
-        )
-      }));
-      const judgmentAvailability = getAvailabilityStateBranches(judgmentBlockCard).map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        available:Boolean(branch.available)
-      }));
-      const joinedJudgment = joinProbabilityStateBranches(judgmentAvailability, judgmentConsumedWorlds);
-      judgmentBlockCard.availabilityStateBranches = projectProbabilityStateBranches(joinedJudgment, (branch) => ({
-        available:Boolean(branch.available && !branch.occurs)
-      }));
-      judgmentBlockCard.availabilityBranches = availableBranchesFromState(
-        judgmentBlockCard.availabilityStateBranches
-      );
-      if (totalBranchProbability(judgmentBlockCard.availabilityBranches) <= PROBABILITY_EPSILON) {
-        if (Array.isArray(target.hand)) target.hand = target.hand.filter((card) => card !== judgmentBlockCard);
-        if (Array.isArray(target.knownCards)) target.knownCards = target.knownCards.filter((entry) => entry !== judgmentBlockCard);
+    if (judgmentBlockCards.length && preJudgmentPartition) {
+      let joinedJudgments = joined;
+      for (let index = 0; index < judgmentBlockCards.length; index += 1) {
+        const availabilityField = `judgmentBlockAvailable${index}`;
+        const availability = getAvailabilityStateBranches(judgmentBlockCards[index]).map((branch) => ({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          [availabilityField]:Boolean(branch.available)
+        }));
+        joinedJudgments = joinProbabilityStateBranches(joinedJudgments, availability);
+      }
+      for (let index = 0; index < judgmentBlockCards.length; index += 1) {
+        const judgmentBlockCard = judgmentBlockCards[index];
+        const availabilityField = `judgmentBlockAvailable${index}`;
+        const judgmentConsumedWorlds = projectProbabilityStateBranches(joinedJudgments, (branch) => {
+          let earlierAvailable = 0;
+          for (let prior = 0; prior < index; prior += 1) {
+            if (branch[`judgmentBlockAvailable${prior}`]) earlierAvailable += 1;
+          }
+          const neededFromJudgments = Math.max(0, branch.requiredCount - branch.preBlockCount);
+          return {
+            available:Boolean(branch[availabilityField]
+              && !(responseMatches(branch) && earlierAvailable < neededFromJudgments))
+          };
+        });
+        judgmentBlockCard.availabilityStateBranches = judgmentConsumedWorlds;
+        judgmentBlockCard.availabilityBranches = availableBranchesFromState(judgmentConsumedWorlds);
+        if (totalBranchProbability(judgmentBlockCard.availabilityBranches) <= PROBABILITY_EPSILON) {
+          if (Array.isArray(target.hand)) target.hand = target.hand.filter((card) => card !== judgmentBlockCard);
+          if (Array.isArray(target.knownCards)) target.knownCards = target.knownCards.filter((entry) => entry !== judgmentBlockCard);
+        }
       }
     }
     target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
     const outcomeWorlds = projectProbabilityStateBranches(joined, (branch) => ({
       occurs:Boolean(branch.occurs),
-      radarOutcome:branch.radarOutcome ?? null,
+      radarOutcome:branch.radarOutcomes?.[0] ?? null,
+      radarOutcomes:branch.radarOutcomes ?? [],
       requiredCount:branch.requiredCount,
-      immuneByRadar:Boolean(branch.immuneByRadar),
+      immuneByRadar:Boolean(branch.occurs && branch.originalRequiredCount > 0 && branch.requiredCount <= 0),
       blockedByCard:responseMatches(branch),
-      passes:Boolean(branch.occurs && !branch.immuneByRadar && !responseMatches(branch))
+      passes:Boolean(branch.occurs && branch.requiredCount > 0 && !responseMatches(branch))
     }));
     return { outcomeWorlds, blockedProbability, expectedBlockSpend };
   }

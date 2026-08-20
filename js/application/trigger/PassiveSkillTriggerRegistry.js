@@ -147,14 +147,15 @@ const PASSIVE_SKILLS = {
   setGuardianAidUsed、runtime.discardCardFromHand。
 
   边界与不变量
-  响应与弃牌顺序不变。
+  只消费 CombatWorkflow 已确认的 pending HP damage；响应与弃牌顺序不变，不能护援自己。
   */
   guardianAid(game, owner) {
-    runtime.onEvent("beforeDamage", `${owner.id}:guardianAid`, async (event) => {
+    runtime.onEvent("beforeHpDamage", `${owner.id}:guardianAid`, async (event) => {
       const gameId = runtime.getState().gameId;
       if (!canTriggerGuardianAid(owner, event)) return;
       const response = await runtime.responseWorkflow.requestSkillResponse(owner, "guardianAid", "护援", event);
-      if (!runtime.isSessionValid(gameId) || response.status !== "used" || !owner.alive || !owner.hand.length) return;
+      if (!runtime.isSessionValid(gameId) || response.status !== "used"
+        || !canTriggerGuardianAid(owner, event)) return;
       const discardRequestId = runtime.createId("guardian-aid-discard");
       const discardRequest = createDiscardChoiceRequest({
         requestId: discardRequestId,
@@ -174,6 +175,7 @@ const PASSIVE_SKILLS = {
         runtime.choiceContexts.delete(discardRequestId);
       }
       if (!runtime.isSessionValid(gameId)) return;
+      if (!canTriggerGuardianAid(owner, event)) return;
       const discard = (discardDecision.selectedIds ?? [])
         .map((cardId) => owner.hand.find((card) => card.id === cardId))
         .find(Boolean) ?? null;
@@ -183,6 +185,7 @@ const PASSIVE_SKILLS = {
       setGuardianAidUsed(runtime.getState(), owner, true);
       const reduction = PASSIVE_SKILL_DEFINITIONS.guardianAid.damageReduction;
       event.amount = Math.max(0, event.amount - reduction);
+      event.pendingHpDamage = Math.max(0, event.pendingHpDamage - reduction);
       runtime.presentation.log(`${owner.name}发动「护援」，令${event.target.name}受到的伤害减少${reduction}点。`, "important");
     });
   },

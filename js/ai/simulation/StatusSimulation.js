@@ -23,8 +23,7 @@ import { interpretDefenseJudgment } from "../../domain/rules/judgment/JudgmentRu
 import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js";
 import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js";
 import {
-  RADAR_BASIC_DEFINITIONS,
-  buildRadarJudgmentProbabilities
+  buildRadarJudgmentSequenceProbabilities
 } from "../domain/RadarModel.js";
 import { hasPassiveSkill } from "../state/RuleProjection.js";
 import {
@@ -716,119 +715,50 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
 
   /*
   功能
-  组合防御结果与雷达判定类别，生成互斥且概率守恒的结果分区。
+  把权威格挡需求数量映射为按顺序排列的多次雷达联合判定分区。
 
   调用方
-  CombatSimulation.applyDamage：在防御装置存在世界中建立雷达判定结果。
+  CombatSimulation.applyDamage。
 
   输入
-  SearchState、防御装置存在概率与可选显式判定概率。
+  SearchState、格挡需求数量、可选统一概率覆盖与可选逐需求概率覆盖。
 
   输出
-  新的互斥雷达结果概率分支数组。
+  互斥且概率守恒的 `{ radarOutcomes, waivedBlockSlots }` 条件分支。
 
   读取状态
-  remainingCardCounts 或调用方 override，不读取未来判定实体。
+  remainingCardCounts 或调用方显式覆盖。
 
   写入状态
-  仅为中间概率事件分配条件键。
+  仅为联合判定分配一个条件键。
 
   调用函数
-  buildRadarJudgmentProbabilities、nextProbabilityEventKey、mergeProbabilityStateBranches。
+  buildRadarJudgmentSequenceProbabilities、interpretDefenseJudgment、nextProbabilityEventKey。
 
   边界与不变量
-  防御装置不存在、各基础牌、战术和装备结果互斥且总质量为一。
+  outcomes 顺序与真实判定调用顺序一致；每个战术结果只免除一个格挡需求。
   */
-  buildRadarOutcomePartition(state, defenseProbability, overrideProbabilities = null) {
-    const defense = clampProbability(defenseProbability);
-    const {
-      tactic: tacticProbability,
-      equipment: equipmentProbability,
-      basic: basicProbabilities,
-      hasJudgmentPool
-    } = buildRadarJudgmentProbabilities(state?.remainingCardCounts ?? null, overrideProbabilities);
-
-    const key = this.nextProbabilityEventKey(state, "radar-outcome");
-    const branches = [];
-    const noRadarProbability = 1 - defense;
-    if (noRadarProbability > PROBABILITY_EPSILON) {
-      branches.push({
-        probability: noRadarProbability,
-        conditions: { [key]: "noRadar" },
-        radarOutcome: "noRadar",
-        responseAllowed: true,
-        immuneByRadar: false
-      });
-    }
-    if (defense > PROBABILITY_EPSILON) {
-      /*
-      功能
-      向雷达结果分区追加一个带联合条件的非零概率结果。
-
-      调用方
-      buildRadarOutcomePartition：向局部结果数组追加一种非零雷达结局。
-
-      输入
-      结果标签、概率、是否允许格挡与是否由雷达免疫。
-
-      输出
-      无返回值；闭包中的 outcomes 可能追加一个分支。
-
-      读取状态
-      闭包事件键。
-
-      写入状态
-      仅写 buildRadarOutcomePartition 的局部 outcomes 数组。
-
-      调用函数
-      无。
-
-      边界与不变量
-      零概率结果不创建分支；每个结果必须使用同一事件键保持互斥。
-      */
-      const pushOutcome = (outcome, probability, responseAllowed, immuneByRadar) => {
-        const chance = probability * defense;
-        if (chance > PROBABILITY_EPSILON) {
-          branches.push({
-            probability: chance,
-            conditions: { [key]: outcome },
-            radarOutcome: outcome,
-            responseAllowed,
-            immuneByRadar
-          });
-        }
-      };
-      if (!hasJudgmentPool) {
-        pushOutcome("noJudgment", 1, true, false);
-      } else {
-        const tacticOutcome = interpretDefenseJudgment("tactic");
-        const nonTacticOutcome = interpretDefenseJudgment("basic");
-        pushOutcome(
-          "tactic",
-          tacticProbability,
-          !tacticOutcome.immune,
-          tacticOutcome.immune
-        );
-        pushOutcome(
-          "equipment",
-          equipmentProbability,
-          !nonTacticOutcome.immune,
-          nonTacticOutcome.immune
-        );
-        for (const definitionId of RADAR_BASIC_DEFINITIONS) {
-          pushOutcome(
-            `basic:${definitionId}`,
-            basicProbabilities[definitionId],
-            !nonTacticOutcome.immune,
-            nonTacticOutcome.immune
-          );
-        }
-      }
-    }
-    const branchTotal = branches.reduce((sum, branch) => sum + branch.probability, 0);
-    return branchTotal > 0
-      ? branches.map((branch) => ({ ...branch, probability: branch.probability / branchTotal }))
-      : [{ probability: 1, conditions: { [key]: "noRadar" }, radarOutcome: "noRadar", responseAllowed: true, immuneByRadar: false }];
+  buildRadarOutcomeSequencePartition(
+    state,
+    requirementCount,
+    overrideProbabilities = null,
+    overrideProbabilitiesByRequirement = null
+  ) {
+    const sequence = buildRadarJudgmentSequenceProbabilities(
+      state?.remainingCardCounts ?? null,
+      requirementCount,
+      overrideProbabilitiesByRequirement,
+      overrideProbabilities
+    );
+    const key = this.nextProbabilityEventKey(state, "radar-outcome-sequence");
+    return sequence.map((branch, index) => ({
+      probability:branch.probability,
+      conditions:{ [key]:`v${index}` },
+      radarOutcomes:branch.outcomes,
+      waivedBlockSlots:branch.outcomes.map((outcome) => (
+        outcome === "tactic" && interpretDefenseJudgment("tactic").immune ? 1 : 0
+      ))
+    }));
   }
 
   /*

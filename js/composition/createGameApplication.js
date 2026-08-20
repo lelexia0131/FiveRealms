@@ -553,9 +553,10 @@ class MatchApplication {
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
       askForBlock: (...args) => this.responseWorkflow.askForBlock(...args),
+      getBlockRequirement: (...args) => this.responseWorkflow.getBlockRequirement(...args),
       judgeDefense: (...args) => this.judgmentWorkflow
         ? this.judgmentWorkflow.judgeDefense(...args)
-        : Promise.resolve({ handled: false, immune: false }),
+        : Promise.resolve({ handled: false, immune: false, waivedBlock: false }),
       enterDying: (...args) => this.dyingWorkflow
         ? this.dyingWorkflow.enter(...args)
         : Promise.resolve(false),

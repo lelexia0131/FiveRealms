@@ -273,7 +273,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
 
   /*
   功能
-  按护盾、生命、救援与伤后钩子的真实顺序结算条件化伤害世界。
+  按多槽雷达、格挡、实际生命伤害护援、护盾、生命、救援与伤后钩子的真实顺序结算条件化伤害世界。
 
   调用方
   CardEffect、SkillEffect、Status、ValueSimulationQuery 与本模块攻击入口：镜像一次条件化伤害。
@@ -291,10 +291,10 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   格挡身份和容量、护援资源、护盾、生命、濒死/死亡及伤后状态。
 
   调用函数
-  buildRadarOutcomePartition、consumeBlockResponseWorlds、simulateGuardianAid、resolveFatal 与伤后钩子。
+  buildRadarOutcomeSequencePartition、consumeBlockResponseWorlds、simulateGuardianAid、resolveFatal 与伤后钩子。
 
   边界与不变量
-  顺序固定为响应/护援→护盾→生命→伤后钩子→濒死；同一格挡或反制资源不得重复消费。
+  顺序固定为逐需求雷达→格挡→pending HP damage 护援→护盾/生命 commit→伤后钩子→濒死；同一响应资源不得重复消费。
   */
   applyDamage(state, attacker, target, amount, options = {}) {
     if (!target.alive || amount <= 0) {
@@ -331,10 +331,6 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     let passChance = 1;
     let attackOutcomeWorlds = null;
     if (defenseProbability > 0) {
-      // 雷达路径：单一互斥结果分区，判定身份、格挡消费与伤害通过共用同一组条件世界。
-      const radarOutcomePartition = this.buildRadarOutcomePartition(
-        state, defenseProbability, options.radarJudgmentProbabilities
-      );
       const battleKey = this.nextProbabilityEventKey(
         state,
         `battle-required:${attacker?.id ?? "unknown"}:${target.id}`
@@ -355,12 +351,41 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
                 requiredCount:getRequiredBlockCount(null, true)
               }
             ];
+      const radarPresencePartition = probabilityEventPartition(
+        this.nextProbabilityEventKey(state, `radar-present:${target.id}`),
+        defenseProbability,
+        "hasRadar"
+      );
+      const maximumRequirement = Math.max(
+        0,
+        ...requiredPartition.map((branch) => Math.max(0, Math.floor(Number(branch.requiredCount) || 0)))
+      );
+      const radarOutcomeSequence = this.buildRadarOutcomeSequencePartition(
+        state,
+        maximumRequirement,
+        options.radarJudgmentProbabilities,
+        options.radarJudgmentProbabilitiesByRequirement
+      );
       const baseWorlds = joinProbabilityStateBranches(
-        eventWorlds, radarOutcomePartition, requiredPartition
-      ).map((branch) => ({
-        ...branch,
-        responseAllowed:Boolean(options.canBlock) && branch.responseAllowed !== false
-      }));
+        eventWorlds, requiredPartition, radarPresencePartition, radarOutcomeSequence
+      ).map((branch) => {
+        const originalRequiredCount = branch.requiredCount;
+        const radarOutcomes = branch.hasRadar && branch.occurs
+          ? branch.radarOutcomes.slice(0, originalRequiredCount)
+          : Array.from({ length:originalRequiredCount }, () => null);
+        const waivedBlockCount = branch.hasRadar && branch.occurs
+          ? branch.waivedBlockSlots.slice(0, originalRequiredCount)
+            .reduce((sum, waived) => sum + waived, 0)
+          : 0;
+        return {
+          ...branch,
+          radarOutcomes,
+          waivedBlockCount,
+          originalRequiredCount,
+          requiredCount:Math.max(0, originalRequiredCount - waivedBlockCount),
+          responseAllowed:Boolean(options.canBlock)
+        };
+      });
       // 先保存判定前的格挡容量：若在判定身份加入后重建分布，新身份会同时进入
       // 根容量和本次增量；该快照也用于判断判定得到的格挡是否真的被消费。
       // 无条件的匿名容量分支在这里显式键化，使判定格挡身份、判定前容量和
@@ -375,29 +400,36 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       }));
       target.blockCountDistribution = preJudgmentBlockState;
       this.syncBlockSummary(target);
-      let judgmentBlockCard = null;
-      // 基础判定牌先加入身份：判定得到的格挡可以立即用于本次响应。
-      for (const definitionId of RADAR_BASIC_DEFINITIONS) {
-        const acquisitionWorlds = projectProbabilityStateBranches(baseWorlds, (branch) => ({
-          occurs:Boolean(branch.occurs && branch.radarOutcome === `basic:${definitionId}`)
-        }));
-        if (this.eventProbability(acquisitionWorlds) <= PROBABILITY_EPSILON) continue;
-        const simulatedId = this.nextSimulatedCardId(state, definitionId);
-        if (Array.isArray(target.hand)) {
-          this.addSimulatedCardToHand(state, target, { id:simulatedId, definitionId }, acquisitionWorlds);
-          if (definitionId === "block") {
-            judgmentBlockCard = target.hand.find((card) => card.id === simulatedId) ?? null;
-          }
-        } else {
-          this.addSimulatedKnownCard(state, target, { cardId:simulatedId, definitionId }, acquisitionWorlds);
-          if (definitionId === "block") {
-            judgmentBlockCard = target.knownCards.find((entry) => entry.cardId === simulatedId) ?? null;
+      const judgmentBlockCards = [];
+      // 每个基础判定牌分别加入身份；判得格挡可在全部雷达槽位完成后用于当前响应。
+      for (let slot = 0; slot < maximumRequirement; slot += 1) {
+        for (const definitionId of RADAR_BASIC_DEFINITIONS) {
+          const acquisitionWorlds = projectProbabilityStateBranches(baseWorlds, (branch) => ({
+            occurs:Boolean(branch.occurs
+              && branch.hasRadar
+              && slot < branch.originalRequiredCount
+              && branch.radarOutcomes?.[slot] === `basic:${definitionId}`)
+          }));
+          if (this.eventProbability(acquisitionWorlds) <= PROBABILITY_EPSILON) continue;
+          const simulatedId = this.nextSimulatedCardId(state, definitionId);
+          if (Array.isArray(target.hand)) {
+            this.addSimulatedCardToHand(state, target, { id:simulatedId, definitionId }, acquisitionWorlds);
+            if (definitionId === "block") {
+              const judgedBlock = target.hand.find((card) => card.id === simulatedId) ?? null;
+              if (judgedBlock) judgmentBlockCards.push(judgedBlock);
+            }
+          } else {
+            this.addSimulatedKnownCard(state, target, { cardId:simulatedId, definitionId }, acquisitionWorlds);
+            if (definitionId === "block") {
+              const judgedBlock = target.knownCards.find((entry) => entry.cardId === simulatedId) ?? null;
+              if (judgedBlock) judgmentBlockCards.push(judgedBlock);
+            }
           }
         }
       }
       const response = this.consumeBlockResponseWorlds(state, target, baseWorlds, {
         preJudgmentBlockState,
-        judgmentBlockCard
+        judgmentBlockCards
       });
       attackOutcomeWorlds = response.outcomeWorlds;
       blockedByCardChance = eventProbability > 0
@@ -458,29 +490,69 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     const damagePassProbability = attackOutcomeWorlds
       ? totalBranchProbability(attackOutcomeWorlds.filter((branch) => branch.occurs && branch.passes))
       : eventProbability * passChance;
-    let aidReductionPerPass = 0;
-    if (damagePassProbability > PROBABILITY_EPSILON) {
-      const passWorlds = attackOutcomeWorlds
-        ?? joinProbabilityStateBranches(eventWorlds, probabilityEventPartition(
-          this.nextProbabilityEventKey(state, `damage-pass-aid:${attacker?.id ?? "unknown"}:${target.id}`),
-          passChance,
-          "passes"
-        ));
-      const incomingExpectedDamage = joinProbabilityStateBranches(passWorlds, amountState)
-        .reduce((sum, branch) => (
-          sum + (branch.occurs && branch.passes ? branch.probability * branch.damageAmount : 0)
-        ), 0);
-      const aidedExpectedDamage = this.simulateGuardianAid(
-        state, target, incomingExpectedDamage, damagePassProbability, options.excludedGuardianIds, options
-      );
-      aidReductionPerPass = Math.max(0,
-        (incomingExpectedDamage - aidedExpectedDamage) / damagePassProbability);
-    }
     const shieldState = getValueBranches(target, "shield", target.shield).map((branch) => ({
       probability:branch.probability,
       conditions:branch.conditions,
       shieldAmount:branch.amount
     }));
+    const aidPassWorlds = attackOutcomeWorlds
+      ?? joinProbabilityStateBranches(eventWorlds, probabilityEventPartition(
+        this.nextProbabilityEventKey(state, `damage-pass-aid:${attacker?.id ?? "unknown"}:${target.id}`),
+        passChance,
+        "passes"
+      ));
+    const preAidDamageWorlds = joinProbabilityStateBranches(aidPassWorlds, shieldState, amountState);
+    /*
+    功能
+    读取护援前真正会穿过护盾落到生命值的伤害量。
+
+    调用方
+    applyDamage 的护援资格与最终条件世界投影。
+
+    输入
+    含 occurs、passes、damageAmount 与 shieldAmount 的伤害分支。
+
+    输出
+    该分支护援前的非负生命伤害。
+
+    读取状态
+    无。
+
+    写入状态
+    无。
+
+    调用函数
+    calculateShieldAbsorption、calculateHpDamage。
+
+    边界与不变量
+    未发生或未穿过响应的世界必须为零；只用于决定护援窗口，不提交护盾或生命。
+    */
+    const preAidHpDamageFor = (branch) => {
+      if (!branch.occurs || !branch.passes) return 0;
+      const absorbed = calculateShieldAbsorption(branch.shieldAmount, branch.damageAmount);
+      return calculateHpDamage(branch.damageAmount, absorbed);
+    };
+    const pendingLifeDamageProbability = totalBranchProbability(
+      preAidDamageWorlds.filter((branch) => preAidHpDamageFor(branch) > PROBABILITY_EPSILON)
+    );
+    let aidReductionPerLifeDamage = 0;
+    if (damagePassProbability > PROBABILITY_EPSILON) {
+      const incomingExpectedHpDamage = preAidDamageWorlds.reduce(
+        (sum, branch) => sum + branch.probability * preAidHpDamageFor(branch), 0
+      );
+      const aidedExpectedHpDamage = this.simulateGuardianAid(
+        state,
+        target,
+        incomingExpectedHpDamage,
+        pendingLifeDamageProbability,
+        options.excludedGuardianIds,
+        options
+      );
+      if (pendingLifeDamageProbability > PROBABILITY_EPSILON) {
+        aidReductionPerLifeDamage = Math.max(0,
+          (incomingExpectedHpDamage - aidedExpectedHpDamage) / pendingLifeDamageProbability);
+      }
+    }
     const damageWorlds = attackOutcomeWorlds
       ? joinProbabilityStateBranches(attackOutcomeWorlds, shieldState, amountState)
       : joinProbabilityStateBranches(eventWorlds, probabilityEventPartition(
@@ -502,7 +574,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     扣除本次护援减免后的非负伤害量。
 
     读取状态
-    闭包中的 aidReductionPerPass。
+    闭包中的 aidReductionPerLifeDamage 与 preAidHpDamageFor。
 
     写入状态
     无。
@@ -511,9 +583,13 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     无。
 
     边界与不变量
-    只在当前 applyDamage 调用内使用；不得再次应用格挡或护盾减免。
+    只有护援前确实存在生命伤害的世界才减少入射伤害；不得再次应用格挡或护盾减免。
     */
-    const effectiveDamageFor = (branch) => Math.max(0, branch.damageAmount - aidReductionPerPass);
+    const effectiveDamageFor = (branch) => Math.max(
+      0,
+      branch.damageAmount
+        - (preAidHpDamageFor(branch) > PROBABILITY_EPSILON ? aidReductionPerLifeDamage : 0)
+    );
     /*
     功能
     读取指定条件世界中穿过护盾并落到生命值的伤害量。
@@ -568,6 +644,11 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       options.outcome.lifeDamageBranches = lifeDamageBranches;
       options.outcome.lifeDamageChance = lifeDamageChance;
       options.outcome.blockedByCardChance = eventProbability * blockedByCardChance;
+      options.outcome.remainingBlockCountBranches = attackOutcomeWorlds
+        ? projectProbabilityStateBranches(attackOutcomeWorlds, (branch) => ({
+            remainingBlockCount:branch.requiredCount
+          }))
+        : null;
     }
     target.hp -= actualDamage;
     this.simulateAfterLifeDamage(state, attacker, target, lifeDamageChance,
