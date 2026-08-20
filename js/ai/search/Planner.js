@@ -150,7 +150,8 @@ export class Planner {
   simulatorFactory、searchBudgetFactory、CandidateMaterializer、SearchPolicy、generateFromVisible、yieldControl。
 
   边界与不变量
-  一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；TIME/NODE 绝不从未完整物化的搜索前沿重选。
+  一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；TIME/NODE 绝不从未完整物化的搜索前沿重选；
+  根层已有合法终止动作时，任何停止原因或近似同分随机都不得强制执行价值更低的动作。
   */
   async plan(player, visibleState, rootActions, options = {}) {
     this.lastPlannedSequence = [];
@@ -306,13 +307,20 @@ export class Planner {
       bestSeenCandidate
     });
 
-    // 正常完成时恢复可能被束搜索先验剪掉的根终止候选；预算中断只允许返回 best-seen candidate。
-    if (budget.stopReason === "COMPLETE") {
-      const rootTerminalAction = this.candidateMaterializer.findTerminalAction(rootActions);
-      const terminalInFinalBeam = activeBeam.some(
+    // 根终止动作是已由规则提供的安全基线：COMPLETE 下防止 prior/随机把更差动作抬过它，
+    // TIME/NODE 下则补足预算中断前尚未来得及物化的终止候选。
+    const rootTerminalAction = this.candidateMaterializer.findTerminalAction(rootActions);
+    if (rootTerminalAction) {
+      const terminalInFinalBeam = activeBeam.find(
         (node) => this.candidateMaterializer.findTerminalAction([node.action])
       );
-      if (rootTerminalAction && !terminalInFinalBeam) {
+      const materializedRootTerminal = budget.stopReason === "COMPLETE"
+        ? null
+        : beam.find(
+            (node) => this.candidateMaterializer.findTerminalAction([node.action])
+          );
+      let terminalChoice = terminalInFinalBeam ?? materializedRootTerminal;
+      if (!terminalChoice) {
         budget.observeSimulation();
         const terminalState = simulator.apply(
           visibleState,
@@ -325,18 +333,19 @@ export class Planner {
           rootSummary.endFallbackBase,
           visibleState
         );
-        if (!choice || fallback.valueScore > choice.valueScore) {
-          choice = {
-            action:rootTerminalAction,
-            state:terminalState,
-            terminal:true,
-            valueScore:fallback.valueScore,
-            pruneScore:fallback.valueScore,
-            sequence:[rootTerminalAction],
-            remainingHistory:[],
-            frontierResidual:fallback.frontierResidual
-          };
-        }
+        terminalChoice = {
+          action:rootTerminalAction,
+          state:terminalState,
+          terminal:true,
+          valueScore:fallback.valueScore,
+          pruneScore:fallback.valueScore,
+          sequence:[rootTerminalAction],
+          remainingHistory:[],
+          frontierResidual:fallback.frontierResidual
+        };
+      }
+      if (!choice || terminalChoice.valueScore > choice.valueScore) {
+        choice = terminalChoice;
       }
     }
 

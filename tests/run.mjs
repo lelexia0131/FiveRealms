@@ -40179,6 +40179,49 @@ test("AI·闪电评分：闪电：概率状态对完整生命周期价值保持�
   assertClose(evaluator.lightningTeamBurden(partial, partialHolder, fixture.actor.id), full * 0.6);
 });
 
+test("AI·闪电评分：预算中断仍以完整负收益拒绝三名满血友军对两名残血敌人的主动闪电", async () => {
+  const fixture = makeLightningFixture(["dawn", "dusk", "dawn", "dusk", "dawn"], {
+    hps: [4, 1, 4, 1, 4]
+  });
+  const roots = fixture.game.aiController.getActionCandidates(fixture.actor);
+  const lightningAction = roots.find(
+    (action) => action.card?.definitionId === "lightning"
+  );
+  const query = fixture.game.aiController.valueSimulationQuery;
+  const holder = fixture.visible.players[0];
+  const ownerDeltas = query.lightningLifecycleOwnerDeltas(
+    fixture.visible, holder, fixture.actor.id, 1
+  );
+  const allyHarm = fixture.visible.players
+    .filter((player) => player.battleTeam === fixture.actor.battleTeam)
+    .reduce((sum, player) => sum + (ownerDeltas.get(player.id) ?? 0), 0);
+  const enemyBenefit = -fixture.visible.players
+    .filter((player) => player.battleTeam !== fixture.actor.battleTeam)
+    .reduce((sum, player) => sum + (ownerDeltas.get(player.id) ?? 0), 0);
+  const after = new Simulator(fixture.visible).apply(
+    fixture.visible, lightningAction, fixture.actor.id
+  );
+  const transition = fixture.game.aiController.transitionValue.evaluateBase({
+    action: lightningAction,
+    player: fixture.actor,
+    beforeState: fixture.visible,
+    afterState: after,
+    depth: 1
+  });
+  assertClose(allyHarm, -13.2);
+  assertClose(enemyBenefit, 10.4);
+  assertClose(query.lightningLifecycleValue(fixture.visible, holder, fixture.actor.id, 1), -2.8);
+  assertClose(transition.stateDelta, -3.9);
+  assertClose(transition.baseTransition, -0.312);
+  fixture.game.aiRandomnessRange = 0;
+  fixture.game.aiSearchNodeBudgetOverride = 1;
+  const selected = await fixture.game.aiController.selectAction(
+    fixture.actor, { gameId: fixture.game.state.gameId }
+  );
+  assert.equal(fixture.game.aiController.lastSearchResult.stats.stopReason, "NODE");
+  assert.equal(selected.type, "end");
+});
+
 test("AI·闪电评分：闪电：3友1敌全满血时生产 AIController 链硬拒绝主动闪电", async () => {
   const fixture = makeLightningFixture(["dawn", "dawn", "dawn", "dusk"], {
     hps: [4, 4, 4, 4]
@@ -40215,6 +40258,40 @@ test("AI·闪电评分：闪电：1友3敌且敌方致死风险占优时 Planner
   const { selected } = await planLightningFixture(fixture);
   assert.ok(lightningValue(fixture) > 0);
   assert.equal(selected.card?.definitionId, "lightning");
+});
+
+test("AI·闪电评分：接近零的负收益闪电由终止动作稳定拒绝", async () => {
+  const fixture = makeLightningFixture(["dawn", "dusk", "dawn", "dusk", "dawn"], {
+    hps: [4, 4, 4, 4, 4],
+    shields: [2, 1, 2, 1, 2]
+  });
+  const roots = fixture.game.aiController.getActionCandidates(fixture.actor);
+  const lightningAction = roots.find(
+    (action) => action.card?.definitionId === "lightning"
+  );
+  const after = new Simulator(fixture.visible).apply(
+    fixture.visible, lightningAction, fixture.actor.id
+  );
+  const transition = fixture.game.aiController.transitionValue.evaluateBase({
+    action: lightningAction,
+    player: fixture.actor,
+    beforeState: fixture.visible,
+    afterState: after,
+    depth: 1
+  });
+  assertClose(transition.baseTransition, -0.04);
+  fixture.game.aiSearchNodeBudgetOverride = 100;
+  const rolls = [0, 1];
+  fixture.game.aiController.searchPolicy.random = () => rolls.shift() ?? 0.5;
+  fixture.game.aiRandomnessRange = 0.035;
+  const selected = await fixture.game.aiController.planner.plan(
+    fixture.actor,
+    fixture.visible,
+    roots,
+    { gameId: fixture.game.state.gameId }
+  );
+  assert.equal(fixture.game.aiController.planner.lastSearchStats.stopReason, "COMPLETE");
+  assert.equal(selected.type, "end");
 });
 
 test("AI·闪电评分：闪电：3友1敌即使敌方仅1HP且生命周期收益为正也硬拒绝", () => {
