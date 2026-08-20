@@ -34,6 +34,35 @@ import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } fr
 
 /*
 功能
+仅凭玩家可见的手牌数量判断卡牌响应是否必然无法满足数量要求。
+
+调用方
+ResponseWorkflow 的格挡、反制、调息救援与突袭响应入口。
+
+输入
+响应者投影与当前窗口要求的响应牌数量。
+
+输出
+公开手牌数不足时返回 true，否则返回 false。
+
+读取状态
+responder.hand.length 这一公开数量事实；不读取 card id、definitionId 或牌面。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+false 不代表实际可响应；只要仍有足够未知手牌，就必须继续原有 timing boundary。
+*/
+function isCardResponseImpossibleFromPublicInfo(responder, requiredCount) {
+  return responder.hand.length < Math.max(0, Number(requiredCount) || 0);
+}
+
+/*
+功能
 创建 Application Response Workflow。
 
 调用方
@@ -205,19 +234,22 @@ export function createResponseWorkflow(dependencies) {
   pendingResponses、UI thinking/prompt 与经支付 transition 的手牌。
 
   调用函数
-  getResponseCardDefinitionId、isResponderEligible、waitForDecision、finishRequest、payCardsFromHandAtomically。
+  isCardResponseImpossibleFromPublicInfo、getResponseCardDefinitionId、isResponderEligible、waitForDecision、finishRequest、payCardsFromHandAtomically。
 
   边界与不变量
-  真人合法实体不足时不得创建 pending/UI 请求；AI 候选不足仍经过 timing boundary。
+  公开手牌数已不足时直接结束；否则真人合法实体不足时不得创建 pending/UI 请求，AI 候选不足仍经过 timing boundary。
   只按返回的唯一 selectedIds 从当前手牌重绑实体；数量、合法集合、会话或实体位置任一失效都不得支付。
   */
   async function requestCardResponse(responder, type, context, requiredCount = 1) {
     const gameId = runtime.getState().gameId;
     const definitionId = getResponseCardDefinitionId(type);
-    const availableCards = responder.hand.filter((card) => card.definitionId === definitionId);
-    const lacksRequiredCards = !hasSufficientResponseCards(availableCards.length, requiredCount);
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
     if (!isResponderEligible(responder) || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
+    if (isCardResponseImpossibleFromPublicInfo(responder, requiredCount)) {
+      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
+    }
+    const availableCards = responder.hand.filter((card) => card.definitionId === definitionId);
+    const lacksRequiredCards = !hasSufficientResponseCards(availableCards.length, requiredCount);
     if (lacksRequiredCards && shouldRejectResponseWithoutLegalOptions(responder)) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
     }
@@ -578,16 +610,19 @@ export function createResponseWorkflow(dependencies) {
   经支付 transition。
 
   调用函数
-  isDyingRescueEligible、waitForDecision、payCardsFromHandAtomically。
+  isDyingRescueEligible、isCardResponseImpossibleFromPublicInfo、waitForDecision、payCardsFromHandAtomically。
 
   边界与不变量
-  救援资格由 Domain Rule 决定；真人没有合法调息时不得创建 pending/UI 请求，AI 仍保留 timing boundary。
+  救援资格由 Domain Rule 决定；公开空手时直接结束，否则真人没有合法调息时不创建窗口，AI 仍保留 timing boundary。
   */
   async function requestDyingRescue(rescuer, target, card) {
     const gameId = runtime.getState().gameId;
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
     if (!isDyingRescueEligible(rescuer, target) || runtime.getState().isGameOver) {
       return responseResult(runtime.getState().isDisposed ? RESPONSE_STATUS.CANCELLED : RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    }
+    if (isCardResponseImpossibleFromPublicInfo(rescuer, 1)) {
+      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
     const availableCards = rescuer.hand.filter((entry) => entry.definitionId === "recover");
     const legalCard = card?.definitionId === "recover" && rescuer.hand.includes(card) ? card : (availableCards[0] ?? null);
@@ -654,18 +689,21 @@ export function createResponseWorkflow(dependencies) {
   pendingResponses、UI 思考与经支付 transition 的手牌。
 
   调用函数
-  isResponderEligible、waitForDecision、finishRequest、payCardsFromHandAtomically。
+  isResponderEligible、isCardResponseImpossibleFromPublicInfo、waitForDecision、finishRequest、payCardsFromHandAtomically。
 
   边界与不变量
-  响应类型与资格由 Domain Rule 决定；真人没有合法突袭时不得创建 pending/UI 请求，AI 仍保留 timing boundary。
+  响应类型与资格由 Domain Rule 决定；公开空手时直接结束，否则真人没有合法突袭时不创建窗口，AI 仍保留 timing boundary。
   */
   async function requestAssaultDiscard(responder, reason, context = {}) {
     const gameId = runtime.getState().gameId;
+    if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
+    if (!isResponderEligible(responder) || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    if (isCardResponseImpossibleFromPublicInfo(responder, 1)) {
+      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    }
     const availableCards = responder.hand.filter((entry) => entry.definitionId === "assault");
     const cardToUse = availableCards[0] ?? null;
     const lacksRequiredCards = !hasSufficientResponseCards(availableCards.length, 1);
-    if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
-    if (!isResponderEligible(responder) || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     if (lacksRequiredCards && shouldRejectResponseWithoutLegalOptions(responder)) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
@@ -719,18 +757,21 @@ export function createResponseWorkflow(dependencies) {
   pendingResponses 与 choice registry；不在此消费牌。
 
   调用函数
-  buildResponsePresentation、waitForDecision、runtime.canUseForcedAssault。
+  isCardResponseImpossibleFromPublicInfo、buildResponsePresentation、waitForDecision、runtime.canUseForcedAssault。
 
   边界与不变量
-  真人无合法突袭不创建窗口；AI 仍经 timing decorator 等待，避免手牌侧信道。
+  公开空手时直接结束；否则真人无合法突袭不创建窗口，AI 仍经 timing decorator 等待，避免手牌侧信道。
   */
   async function requestLeverageAssault(responder, target, context = {}) {
     const gameId = runtime.getState().gameId;
-    const availableCards = runtime.getUsableAssaultCards(responder, target);
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
     if (!responder?.alive || !target?.alive || runtime.getState().isGameOver) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
+    if (isCardResponseImpossibleFromPublicInfo(responder, 1)) {
+      return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
+    }
+    const availableCards = runtime.getUsableAssaultCards(responder, target);
     if (!hasSufficientResponseCards(availableCards.length, 1)
       && shouldRejectResponseWithoutLegalOptions(responder)) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });

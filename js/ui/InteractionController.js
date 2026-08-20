@@ -44,6 +44,35 @@ export function hiddenSelectionMarkup(selection, slots = null) {
   ).join("");
 }
 
+/*
+功能
+把公开装备槽位稳定排列在隐藏手牌槽位之前。
+
+调用方
+InteractionController.requestZoneCard 与区域选牌展示回归测试。
+
+输入
+按装备区原顺序生成的公开装备槽位，以及按 token 原顺序生成的手牌槽位。
+
+输出
+装备在前、手牌在后的新槽位数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+不排序、不修改输入数组，也不读取任何隐藏手牌牌面；两个区域各自保持稳定顺序。
+*/
+export function orderZoneSelectionSlots(equipmentSlots, handSlots) {
+  return [...equipmentSlots, ...handSlots];
+}
+
 /** 多阶段真人选择器。只把公开 ID 或不透明令牌交给 DOM。 */
 export class InteractionController {
   /*
@@ -213,7 +242,7 @@ export class InteractionController {
   HiddenCardSelectionAdapter、createHiddenSelectionView、presentCard、requestHiddenCards。
 
   边界与不变量
-  未知手牌只以 token 呈现；公开装备使用固定 UI token，返回前必须复核 gameId。
+  未知手牌只以 token 呈现；公开装备使用固定 UI token 并排在手牌前，返回前必须复核 gameId。
   */
   async requestZoneCard(game, actor, owner, prompt, excludedCardIds = null) {
     const gameId = game.state.gameId;
@@ -221,11 +250,13 @@ export class InteractionController {
     const eligibleHand = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)) ?? [];
     if (!eligibleHand.length && !owner?.equipment) return null;
     const hidden = game.hiddenCardSelection.createHiddenSelection(owner, eligibleHand);
-    const slots = createHiddenSelectionView(actor, owner, hidden);
+    const handSlots = createHiddenSelectionView(actor, owner, hidden);
+    const equipmentSlots = [];
     if (owner.equipment) {
       const { name, categoryName, description, art, icon, accent, frameStyle, flavorText } = presentCard(owner.equipment);
-      slots.push({ token:EQUIPMENT_OPTION_TOKEN, known:true, zone:"equipment", name, categoryName, description, art, icon, accent, frameStyle, flavorText });
+      equipmentSlots.push({ token:EQUIPMENT_OPTION_TOKEN, known:true, zone:"equipment", name, categoryName, description, art, icon, accent, frameStyle, flavorText });
     }
+    const slots = orderZoneSelectionSlots(equipmentSlots, handSlots);
     const selected = await this.requestHiddenCards(hidden, 1, prompt, { exact:true, slots, totalCount:slots.length });
     if (!game.isSessionValid(gameId)) return null;
     if (!selected?.length) return null;

@@ -111,7 +111,7 @@ import {
   resolvingCardTemplate,
   skillDetailsTemplate
 } from "../js/ui/templates.js";
-import { InteractionController, hiddenSelectionMarkup } from "../js/ui/InteractionController.js";
+import { InteractionController, hiddenSelectionMarkup, orderZoneSelectionSlots } from "../js/ui/InteractionController.js";
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
 import { PrivateRevealView } from "../js/ui/PrivateRevealView.js";
 import { AnimationController, LIGHTNING_HIT_DURATION_MS } from "../js/ui/animationController.js";
@@ -12062,7 +12062,7 @@ test("响应窗口：真人没有格挡且 requiredCount 为一时不创建响�
   assert.equal(b.hp, hp - 1);
 });
 
-test("AI·响应窗口：无反制或格挡仍经过 decision timing boundary 后返回不可用", async () => {
+test("AI·响应窗口：公开手牌为0时直接不可用且不进入 minimum response delay", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "ai");
   const { game, ui }
     = makeGame([a, b]);
@@ -12077,11 +12077,70 @@ test("AI·响应窗口：无反制或格挡仍经过 decision timing boundary �
   const counter = await game.responseWorkflow.requestCardResponse(
     b, "counter", { source: a, target: b, card: instance("harvest") }, 1
   );
+  const assault = await game.responseWorkflow.requestAssaultDiscard(
+    b, "决斗", { source: a, target: b, card: instance("duel") }
+  );
+  const leverage = await game.responseWorkflow.requestLeverageAssault(
+    b, a, { source: a, target: b, card: instance("leverage"), equipment: instance("energyDevice") }
+  );
+  b.hp = 0;
+  const rescue = await game.responseWorkflow.requestDyingRescue(b, b, null);
   assert.equal(block.status, "unavailable");
   assert.equal(counter.status, "unavailable");
+  assert.equal(assault.status, "unavailable");
+  assert.equal(leverage.status, "unavailable");
+  assert.equal(rescue.status, "unavailable");
   assert.equal(ui.responseRequests.length, 0);
-  assert.equal(timingBoundaries, 2);
-  assert.deepEqual(ui.thinking.map(([thinking]) => thinking), [true, false, true, false]);
+  assert.equal(timingBoundaries, 0);
+  assert.deepEqual(ui.thinking, []);
+  assert.equal(game.state.pendingResponses.length, 0);
+});
+
+test("AI·响应窗口：有未知手牌但实际无对应响应牌时仍保留伪装等待", async () => {
+  const source = makePlayer("private-impossible-source", 0, "dawn"),
+    responder = makePlayer("private-impossible-ai", 1, "dusk", "ai");
+  responder.hand.push(instance("charge"), instance("shield"), instance("recover"));
+  const { game, ui } = makeGame([source, responder]);
+  let timingBoundaries = 0;
+  game.cleanupManager.delay = async () => {
+    timingBoundaries += 1;
+    return !game.state.isDisposed;
+  };
+  const result = await game.responseWorkflow.requestCardResponse(
+    responder, "counter", { source, target: responder, card: instance("harvest") }, 1
+  );
+  assert.equal(result.status, "unavailable");
+  assert.equal(timingBoundaries, 1);
+  assert.deepEqual(ui.thinking.map(([thinking]) => thinking), [true, false]);
+  assert.equal(responder.hand.length, 3);
+  assert.equal(game.state.pendingResponses.length, 0);
+});
+
+test("AI·响应窗口：实际有响应牌但策略放弃时仍保留伪装等待", async () => {
+  const source = makePlayer("policy-pass-source", 0, "dawn"),
+    responder = makePlayer("policy-pass-ai", 1, "dusk", "ai"),
+    counter = instance("counter"),
+    fillerA = instance("charge"),
+    fillerB = instance("shield");
+  responder.hand.push(counter, fillerA, fillerB);
+  const { game, ui } = makeGame([source, responder]);
+  let timingBoundaries = 0, policyCalls = 0;
+  game.cleanupManager.delay = async () => {
+    timingBoundaries += 1;
+    return !game.state.isDisposed;
+  };
+  game.aiController.responsePolicy.shouldRespond = () => {
+    policyCalls += 1;
+    return false;
+  };
+  const result = await game.responseWorkflow.requestCardResponse(
+    responder, "counter", { source, target: responder, card: instance("harvest") }, 1
+  );
+  assert.equal(result.status, "declined");
+  assert.equal(policyCalls, 1);
+  assert.equal(timingBoundaries, 1);
+  assert.deepEqual(ui.thinking.map(([thinking]) => thinking), [true, false]);
+  assert.deepEqual(responder.hand, [counter, fillerA, fillerB]);
   assert.equal(game.state.pendingResponses.length, 0);
 });
 
@@ -12932,13 +12991,17 @@ test("隐藏信息：隐藏选择池的已知牌与未知牌同尺寸且全部�
   );
 });
 
-test("隐藏信息：掠夺选择池的公开装备复用正常牌面图标与说明", async () => {
+test("隐藏信息：掠夺与破坏共享选择池把公开装备稳定排在隐藏手牌前", async () => {
   const actor = makePlayer("plunder-pool-actor", 0, "dawn", "human"),
     owner = makePlayer("plunder-pool-owner", 1, "dusk"),
     equipment = instance("defenseDevice"),
+    knownHand = instance("block"),
+    unknownHand = instance("counter"),
     { game }
       = makeGame([actor, owner]);
+  owner.hand.push(knownHand, unknownHand);
   owner.equipment = equipment;
+  game.rememberPrivateCard(actor, owner, knownHand);
   const panel = makeInteractiveElement(),
     controller = new InteractionController({ game, elements: { response_panel: panel }, render() { } });
   let receivedSelection = null, receivedOptions = null;
@@ -12953,6 +13016,14 @@ test("隐藏信息：掠夺选择池的公开装备复用正常牌面图标与�
     result,
     { zone: "equipment", equipmentCardId: equipment.id, selectionId: receivedSelection.selectionId }
   );
+  assert.equal(receivedOptions.slots[0].zone, "equipment");
+  assert.equal(receivedOptions.slots[0].name, equipment.name);
+  assert.deepEqual(
+    receivedOptions.slots.slice(1).map((slot) => slot.token),
+    receivedSelection.tokens.map((entry) => entry.token)
+  );
+  assert.equal(receivedOptions.slots.length, receivedSelection.tokens.length + 1);
+  assertNoHiddenSelectionLeak(receivedOptions.slots, [unknownHand]);
   for (
     const className of [
       "hand-card",
@@ -12968,13 +13039,22 @@ test("隐藏信息：掠夺选择池的公开装备复用正常牌面图标与�
       "card-flavor"
     ]
   ) assert.match(markup, new RegExp(className));
-  assert.equal((markup.match(/<img\b/g) ?? []).length, 2);
+  assert.equal((markup.match(/<img\b/g) ?? []).length, 4);
   const equipmentPresentation = presentCard(equipment);
   assert.match(markup, new RegExp(equipment.name));
   assert.match(markup, new RegExp(equipmentPresentation.categoryName));
   assert.match(markup, new RegExp(equipment.description));
   assert.doesNotMatch(markup, /data-card-id/);
   assert.doesNotMatch(markup, new RegExp(equipment.id));
+});
+
+test("UI·区域选牌：多张装备与手牌候选各自保持稳定顺序", () => {
+  const equipmentSlots = [{ token: "equipment-a" }, { token: "equipment-b" }],
+    handSlots = [{ token: "hand-a" }, { token: "hand-b" }];
+  const ordered = orderZoneSelectionSlots(equipmentSlots, handSlots);
+  assert.deepEqual(ordered.map((slot) => slot.token), ["equipment-a", "equipment-b", "hand-a", "hand-b"]);
+  assert.deepEqual(equipmentSlots.map((slot) => slot.token), ["equipment-a", "equipment-b"]);
+  assert.deepEqual(handSlots.map((slot) => slot.token), ["hand-a", "hand-b"]);
 });
 
 test("隐藏信息：过期手牌版本令不透明令牌失效", () => {
@@ -19245,7 +19325,7 @@ test("AI·借势：响应通过可见快照评估真实玩家状态", () => {
   assert.equal(typeof decision, "boolean");
 });
 
-test("AI·借势：有牌拒绝与无牌拒绝经过相同思考提示且日志不泄露原因", async () => {
+test("AI·借势：相同公开手牌数下有突袭与无突袭拒绝经过相同伪装等待", async () => {
   const run = async (withAssault) => {
     const actor = makePlayer(`actor-${withAssault}`, 0, "dawn"),
       first = makePlayer(`first-${withAssault}`, 1, "dusk"),
@@ -19253,7 +19333,7 @@ test("AI·借势：有牌拒绝与无牌拒绝经过相同思考提示且日志�
       use = instance("leverage");
     actor.hand.push(use);
     first.equipment = equipment;
-    if (withAssault) first.hand.push(instance("assault"));
+    first.hand.push(instance(withAssault ? "assault" : "charge"));
     const { game, ui }
       = makeGame([actor, first]);
     game.aiController.responsePolicy.shouldRespond = () => false;
@@ -41918,7 +41998,7 @@ test("AI·展示节奏：旧 fastMode 偏好单向迁移到三档速度", () => 
   assert.equal(values.get("five-realms-ai-speed"), "1");
 });
 
-test("AI·展示节奏：响应先决策再按 elapsed 等待，no-card 与有牌拒绝共用 timing boundary", async () => {
+test("AI·展示节奏：响应 decorator 不根据私有合法候选或最终 pass 缩短等待", async () => {
   const request = createResponseChoiceRequest({
     requestId: "timing-response",
     actorId: "timing-ai",
@@ -41945,11 +42025,11 @@ test("AI·展示节奏：响应先决策再按 elapsed 等待，no-card 与有�
     });
     return { result: await port.request(request), trace };
   };
-  const noCard = await run(createChoiceResult("declined"));
+  const hiddenNoCard = await run(createChoiceResult("declined"));
   const haveCardDecline = await run(createChoiceResult("declined"));
-  assert.deepEqual(noCard.result, createChoiceResult("declined"));
-  assert.deepEqual(noCard.trace, ["thinking-on", "decision", ["delay", 400], "thinking-off"]);
-  assert.deepEqual(haveCardDecline.trace, noCard.trace);
+  assert.deepEqual(hiddenNoCard.result, createChoiceResult("declined"));
+  assert.deepEqual(hiddenNoCard.trace, ["thinking-on", "decision", ["delay", 400], "thinking-off"]);
+  assert.deepEqual(haveCardDecline.trace, hiddenNoCard.trace);
 });
 
 /*
