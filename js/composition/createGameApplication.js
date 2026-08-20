@@ -36,7 +36,12 @@ import { AIController } from "../ai/AiController.js";
 import { hashSearchSeed, SearchRng } from "../ai/search/SearchRng.js";
 import { createSearchExecutor } from "../adapters/ai/worker/createSearchExecutor.js";
 import { CleanupManager } from "../utils/CleanupManager.js";
-import { getAiDelay, normalizeAiSpeed } from "../utils/aiTiming.js";
+import {
+  getAiDelay,
+  getRemainingAiDecisionDelay,
+  normalizeAiSpeed,
+  sampleAiDecisionWindow
+} from "../utils/aiTiming.js";
 import { Debug } from "../utils/debug.js";
 import { createDyingWorkflow } from "../application/combat/DyingWorkflow.js";
 import { createJudgmentWorkflow } from "../application/judgment/JudgmentWorkflow.js";
@@ -175,7 +180,7 @@ function assembleApplicationBoundary(application) {
     ui.setAiSpeed。
 
     边界与不变量
-    只改变 presentation pacing，不改变搜索预算、AI 决策或游戏时序。
+    只改变后续 AI decision 的 wall-clock 时间窗口；不改变搜索算法、价值、合法性或游戏时序。
     */
     setAiSpeed(speed) {
       const normalized = normalizeAiSpeed(speed);
@@ -861,6 +866,8 @@ class MatchApplication {
       cleanupDefeatedZones: () => this.cleanupDefeatedZones(),
       delay: (ms) => this.cleanupManager.delay(ms),
       getAiDelay: (kind, options) => getAiDelay(this, kind, options),
+      sampleAiDecisionWindow: () => sampleAiDecisionWindow(this),
+      getRemainingAiDecisionDelay,
       now: () => this.now(),
       getTeamRules: (player) => this.teamRules.getRules(player),
       waitForHumanPlayEnd: (gameId) => this.ui.waitForHumanPlayEnd(gameId),

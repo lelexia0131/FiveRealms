@@ -1,6 +1,6 @@
 /*
 模块职责
-唯一拥有不属于 Domain Ruleset 的应用响应等待、展示节奏、调试与会话运行策略。
+唯一拥有不属于 Domain Ruleset 的应用响应等待、AI 单步思考窗口、展示节奏、调试与会话运行策略。
 
 上游
 composition root、Application timing/response/turn consumers 与 presentation timing helper。
@@ -15,7 +15,7 @@ composition root、Application timing/response/turn consumers 与 presentation t
 全部字段均为公开产品配置，不含对局隐藏信息。
 
 架构约束
-不得复制 Ruleset、Card、Character、Skill 或 AI 搜索策略；展示与真实游戏 RNG 仍相互独立。
+不得复制 Ruleset、Card、Character、Skill 或 AI 搜索算法；思考窗口只能由 composition 作为显式毫秒预算交给 AI，timing RNG 与真实游戏/搜索 RNG 仍相互独立。
 */
 
 export const RUNTIME_POLICY = Object.freeze({

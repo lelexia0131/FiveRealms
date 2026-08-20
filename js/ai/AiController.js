@@ -346,19 +346,19 @@ export class AIController {
   */
   /*
   功能
-  组装不受展示速度影响的 data-only search configuration snapshot。
+  组装只理解显式毫秒预算的 data-only search configuration snapshot。
 
   调用方
   selectAction。
 
   输入
-  无。
+  可选 { timeBudgetMs }；调用方传入本次 decision 已采样的 wall-clock 上限。
 
   输出
   冻结 search config 普通对象。
 
   读取状态
-  SearchPolicy 默认、单一 AI_SEARCH_PROFILE 与 main-thread runtime override getters。
+  SearchPolicy 默认、AI_SEARCH_PROFILE 技术余量与 main-thread runtime override getters。
 
   写入状态
   无。
@@ -367,23 +367,29 @@ export class AIController {
   SearchPolicy.snapshot。
 
   边界与不变量
-  runtime override 只覆盖已有字段；1×/2×/3× 只属于 presentation pacing，不得改变搜索预算。
+  runtime override 只服务显式测试/诊断覆盖；Controller 不理解速度档位或 timing RNG；normal deadline 只比 Planner budget 多固定技术余量。
   */
-  buildSearchConfig() {
+  buildSearchConfig(options = {}) {
     const base = this.searchPolicy.snapshot();
-    const timeBudget = this.getSearchTimeBudget();
+    const timeBudgetOverride = this.getSearchTimeBudget();
     const nodeBudget = this.getSearchNodeBudget();
-    const numericTime = Number(timeBudget);
+    const numericOverride = Number(timeBudgetOverride);
+    const numericRequested = Number(options.timeBudgetMs);
     const numericNodes = Number(nodeBudget);
+    const hasOverride = timeBudgetOverride !== null && timeBudgetOverride !== undefined
+      && Number.isFinite(numericOverride);
+    const hasRequested = options.timeBudgetMs !== null && options.timeBudgetMs !== undefined
+      && Number.isFinite(numericRequested);
+    const timeBudgetMs = Math.max(0, hasOverride
+      ? numericOverride
+      : hasRequested ? numericRequested : AI_RUNTIME_POLICY.searchTimeBudgetMs);
     return Object.freeze({
       ...base,
       searchMode:AI_SEARCH_PROFILE.mode,
       softTargetMs:AI_SEARCH_PROFILE.softTargetMs,
-      searchDeadlineMs:AI_SEARCH_PROFILE.searchDeadlineMs,
+      searchDeadlineMs:timeBudgetMs + AI_SEARCH_PROFILE.searchDeadlineMarginMs,
       hardWatchdogMs:AI_SEARCH_PROFILE.hardWatchdogMs,
-      timeBudgetMs:timeBudget === null || timeBudget === undefined || !Number.isFinite(numericTime)
-        ? AI_SEARCH_PROFILE.searchDeadlineMs
-        : Math.max(0, numericTime),
+      timeBudgetMs,
       nodeBudget:nodeBudget === null || nodeBudget === undefined
         || !Number.isFinite(numericNodes) || numericNodes < 1
         ? null
@@ -758,7 +764,7 @@ export class AIController {
   TurnWorkflow 与测试。
 
   输入
-  player 与可选 options/signal。
+  player 与可选 options/signal/searchTimeBudgetMs。
 
   输出
   当前可执行 action；executor error/stale/cancel 安全返回 end。
@@ -773,7 +779,7 @@ export class AIController {
   createInitialSearchState、getActionCandidates、createSearchRequest、searchExecutor.search、acceptWorkerSearchOutcome。
 
   边界与不变量
-  生产 Planner execution 由 executor 负责；Main Thread 只 rebind 与 Domain-legal validation。
+  生产 Planner execution 由 executor 负责；Main Thread 只把显式毫秒预算写入 request，再负责 rebind 与 Domain-legal validation；不读取速度档位。
   */
   async selectAction(player, options = {}) {
     const state = this.getState();
@@ -789,7 +795,7 @@ export class AIController {
       phase:state.phase,
       currentRound:state.currentRound,
       searchState:visible,
-      searchConfig:this.buildSearchConfig(),
+      searchConfig:this.buildSearchConfig({ timeBudgetMs:options.searchTimeBudgetMs }),
       rng:this.searchRng.snapshot(),
       rootActionDescriptors:rootActions.map(ActionDescriptor.describe),
       rootSearchActions:rootActions.map(describeRootSearchAction)

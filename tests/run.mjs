@@ -89,9 +89,11 @@ import {
   clampAiThinkingTime,
   getAiDelay,
   getAiPacingBounds,
+  getRemainingAiDecisionDelay,
   getRemainingAiThinkingDelay,
   normalizeAiSpeed,
   readAiSpeedPreference,
+  sampleAiDecisionWindow,
   sampleDelay,
   writeAiSpeedPreference
 } from "../js/utils/aiTiming.js";
@@ -1358,9 +1360,10 @@ async function frArchGovernanceDocumentContract() {
   const architecture = await readFile(projectFile("docs/architecture/FR_ARCHITECTURE.md"), "utf8");
   const checker = await readFile(projectFile("tools/check-code-quality.mjs"), "utf8");
   for (const fragment of [
-    "浏览器生产搜索固定使用 `NORMAL` AI search profile",
-    "1×、2×、3× AI 速度只控制 presentation pacing",
-    "搜索计算 RNG、真实游戏 RNG 与 presentation pacing RNG 相互隔离",
+    "浏览器生产搜索固定使用同一 `NORMAL` 搜索结构与价值模型",
+    "Application 在每次真实 decision 前以独立 timing RNG 采样 `{Tmin,Tmax}`",
+    "10 秒 hard watchdog 仅处理失控 Worker",
+    "搜索计算 RNG、真实游戏 RNG 与 timing/presentation RNG 相互隔离",
     "session、gameId、stateVersion",
     "TARGET ARCHITECTURE IMPLEMENTED",
     "LEGACY MIGRATION CLOSED"
@@ -14854,7 +14857,7 @@ async function frArchSearchQualityBaseline() {
 
 /*
 功能
-运行 FR-ARCH-1 当前 timing 配置冻结检查。
+运行当前 AI timing window、fallback search budget 与 Worker deadline 分层配置检查。
 
 调用方
 当前测试。
@@ -14875,7 +14878,7 @@ RUNTIME_POLICY 与 SearchBudget 源码。
 readFile。
 
 边界与不变量
-本测试只冻结数值，不修改任何 production timing。
+900ms 只冻结无 Application 单步窗口时的直接调用 fallback；浏览器正常 decision 使用显式 sampled Tmax。
 */
 async function frArchCurrentTimingFreeze() {
   assert.equal(AI_RUNTIME_POLICY.searchTimeBudgetMs, 900);
@@ -14887,7 +14890,7 @@ async function frArchCurrentTimingFreeze() {
   assert.deepEqual(RUNTIME_POLICY.aiRawThinkingRanges.initial, { minimumMs: 3000, maximumMs: 5500, complexMaximumMs: 7000 });
   assert.equal(AI_SEARCH_PROFILE.mode, "NORMAL");
   assert.equal(AI_SEARCH_PROFILE.softTargetMs, null);
-  assert.equal(AI_SEARCH_PROFILE.searchDeadlineMs, 3000);
+  assert.equal(AI_SEARCH_PROFILE.searchDeadlineMarginMs, 100);
   assert.equal(AI_SEARCH_PROFILE.hardWatchdogMs, 10000);
   const budgetSource = await readFile(projectFile("js/ai/search/SearchBudget.js"), "utf8");
   const timingSource = await readFile(projectFile("js/utils/aiTiming.js"), "utf8");
@@ -16747,7 +16750,7 @@ test("AI·搜索：END-B 零/近零收益 sibling 不被固定 end 惩罚强制�
 
 test("AI·搜索确定性：900ms 固定种子 fixtures schema 与确定性重放", frArchSearchQualityBaseline);
 
-test("AI·搜索时序：当前 900ms/48-yield 与展示时序配置冻结", frArchCurrentTimingFreeze);
+test("AI·搜索时序：900ms fallback、48-yield 与单步窗口/Worker deadline 分层冻结", frArchCurrentTimingFreeze);
 
 // ---- SearchRequest、Descriptor 与 RNG ----
 
@@ -17623,7 +17626,11 @@ async function frArch14DiscardInvariantMatrix() {
           const { game, player } = makeFixture(hp, hp + extra, speed, choiceKind);
           const profile = game.aiController.buildSearchConfig();
           assert.equal(profile.searchMode, AI_SEARCH_PROFILE.mode);
-          assert.equal(profile.timeBudgetMs, AI_SEARCH_PROFILE.searchDeadlineMs);
+          assert.equal(profile.timeBudgetMs, AI_RUNTIME_POLICY.searchTimeBudgetMs);
+          assert.equal(
+            profile.searchDeadlineMs,
+            profile.timeBudgetMs + AI_SEARCH_PROFILE.searchDeadlineMarginMs
+          );
           await game.turnWorkflow.handleDiscardPhase(player, game.state.gameId);
           assert.ok(player.hand.length <= hp, `hp=${hp} hand=${hp + extra} speed=${speed} ${choiceKind}`);
           game.dispose();
@@ -17711,7 +17718,13 @@ async function frArch14WorkerClientTransport() {
       cancelled: false,
       workerError: null
     });
-    const makeRequest = (requestId) => ({ requestId, gameId: "game-1", stateVersion: 0, actorId: "actor-1", searchConfig: { hardWatchdogMs: 5000 } });
+    const makeRequest = (requestId, searchConfig = {}) => ({
+      requestId,
+      gameId: "game-1",
+      stateVersion: 0,
+      actorId: "actor-1",
+      searchConfig: { searchDeadlineMs: 1000, hardWatchdogMs: 5000, ...searchConfig }
+    });
     const client = createSearchWorkerClient("searchWorker.js");
     assert.equal(instances.length, 1, "首个 production Worker 必须立即接线");
     const firstWorker = instances[0];
@@ -17739,6 +17752,39 @@ async function frArch14WorkerClientTransport() {
     await assert.rejects(cancelPromise, /cancelled/);
     assert.ok(recoveryWorker.posted.some((message) => message.type === "CANCEL" && message.requestId === "cancel-me"));
     recoveryClient.dispose();
+
+    const normalDeadlineClient = createSearchWorkerClient("searchWorker.js");
+    const normalDeadlineWorker = instances.at(-1);
+    const normalDeadlinePromise = normalDeadlineClient.search(makeRequest(
+      "normal-deadline",
+      { searchDeadlineMs: 5, hardWatchdogMs: 100 }
+    ));
+    const normalDeadlineRejection = assert.rejects(normalDeadlinePromise, /normal deadline/);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(normalDeadlineWorker.posted.some(
+      (message) => message.type === "CANCEL" && message.requestId === "normal-deadline"
+    ));
+    assert.equal(normalDeadlineWorker.terminated, false, "normal deadline 不得终止 healthy Worker");
+    normalDeadlineWorker.emit("message", {
+      type: "ERROR",
+      requestId: "normal-deadline",
+      workerError: "cancelled"
+    });
+    await normalDeadlineRejection;
+    normalDeadlineClient.dispose();
+
+    const hardWatchdogClient = createSearchWorkerClient("searchWorker.js");
+    const hardWatchdogWorker = instances.at(-1);
+    await assert.rejects(
+      hardWatchdogClient.search(makeRequest(
+        "hard-watchdog",
+        { searchDeadlineMs: 0, hardWatchdogMs: 5 }
+      )),
+      /hard watchdog/
+    );
+    assert.equal(hardWatchdogWorker.terminated, true);
+    assert.notEqual(instances.at(-1), hardWatchdogWorker, "hard watchdog 后必须重建下一 Worker");
+    hardWatchdogClient.dispose();
 
     const executor = createSearchExecutor({});
     assert.equal(executor.transport, "dedicated-worker", "browser 存在 Worker 时 production 必须使用 Dedicated Worker");
@@ -17934,10 +17980,10 @@ test("AI·Worker RNG：连续 accepted 搜索续接、rejected 不提交、dupli
 
 /*
 功能
-验证三档 AI presentation speed 都使用同一命名 search profile，速度不会改变搜索预算。
+验证 Controller 只消费显式毫秒预算，并为 Worker normal deadline 增加固定技术余量。
 
 调用方
-FR-ARCH-14 search configuration audit。
+AI runtime search configuration audit。
 
 输入
 无。
@@ -17946,7 +17992,7 @@ FR-ARCH-14 search configuration audit。
 无返回值，断言失败时抛错。
 
 读取状态
-AIController.buildSearchConfig 与 AI_SEARCH_PROFILE。
+AIController.buildSearchConfig、AI_RUNTIME_POLICY 与 AI_SEARCH_PROFILE。
 
 写入状态
 测试 Game 配置字段。
@@ -17955,7 +18001,7 @@ AIController.buildSearchConfig 与 AI_SEARCH_PROFILE。
 makeGame、buildSearchConfig。
 
 边界与不变量
-不改变搜索结构；simulationMode 不得把 production 模式映射成 local。
+不改变搜索结构；Controller 不读取速度档位；runtime override 优先于单次预算。
 */
 function frArch14SearchProfileRuntimeValues() {
   const actor = makePlayer("profile-actor", 0, "dawn", "ai", 0);
@@ -17964,25 +18010,25 @@ function frArch14SearchProfileRuntimeValues() {
   game.simulationMode = true;
   game.aiSearchBudgetOverrideMs = null;
   game.aiSearchNodeBudgetOverride = null;
-  game.aiSpeed = 1;
-  const normal = game.aiController.buildSearchConfig();
+  const normal = game.aiController.buildSearchConfig({ timeBudgetMs: 2740 });
   assert.equal(normal.searchMode, "NORMAL");
   assert.equal(normal.softTargetMs, AI_SEARCH_PROFILE.softTargetMs);
-  assert.equal(normal.timeBudgetMs, AI_SEARCH_PROFILE.searchDeadlineMs);
-  assert.equal(normal.searchDeadlineMs, 3000);
+  assert.equal(normal.timeBudgetMs, 2740);
+  assert.equal(normal.searchDeadlineMs, 2840);
   assert.equal(normal.hardWatchdogMs, AI_SEARCH_PROFILE.hardWatchdogMs);
   assert.ok(Number.isFinite(normal.timeBudgetMs) && normal.timeBudgetMs > 0);
   assert.equal(normal.nodeBudget, null);
-  for (const speed of [2, 3]) {
-    game.aiSpeed = speed;
-    assert.deepEqual(game.aiController.buildSearchConfig(), normal);
-  }
+  game.aiSpeed = 3;
+  assert.deepEqual(game.aiController.buildSearchConfig({ timeBudgetMs: 2740 }), normal);
+  assert.equal(game.aiController.buildSearchConfig({ timeBudgetMs: 910 }).timeBudgetMs, 910);
+  game.aiSearchBudgetOverrideMs = 1234;
+  assert.equal(game.aiController.buildSearchConfig({ timeBudgetMs: 910 }).timeBudgetMs, 1234);
   game.dispose();
 }
 
-test("AI·搜索配置：三档展示速度共用 Normal 搜索预算且 simulationMode 不映射 local", frArch14SearchProfileRuntimeValues);
+test("AI·搜索配置：显式单步预算进入 SearchRequest 配置且 normal deadline 只加技术余量", frArch14SearchProfileRuntimeValues);
 
-test("AI·搜索配置：同一状态在 1×/2×/3× 下返回相同动作", async () => {
+test("AI·搜索配置：同一状态在固定节点预算下不因速度字段改变动作", async () => {
   const actor = makePlayer("speed-invariant-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("speed-invariant-enemy", 1, "dusk", "ai", 1);
   actor.hand.push(instance("charge"), instance("assault"));
@@ -17997,6 +18043,116 @@ test("AI·搜索配置：同一状态在 1×/2×/3× 下返回相同动作", asy
   assert.deepEqual(actions[1], actions[0]);
   assert.deepEqual(actions[2], actions[0]);
   game.dispose();
+});
+
+/*
+功能
+在同一个确定性 SearchState 上用可控单调时钟执行一次正式 Worker search。
+
+调用方
+AI 搜索时间窗口回归。
+
+输入
+timeBudgetMs、每次时钟读取推进量，以及 actor 手牌定义列表。
+
+输出
+WorkerSearchOutcome。
+
+读取状态
+独立测试 Game 的 SearchState、根候选与固定 SearchRng。
+
+写入状态
+只推进局部 fake clock 与 Worker 内搜索状态。
+
+调用函数
+makeGame、createInitialSearchState、createSearchRequest、describeRootSearchAction、runSearchRequest。
+
+边界与不变量
+不同预算运行使用同一局面、同一 seed、同一搜索结构和同一时钟推进规则；只允许 wall-clock budget 不同。
+*/
+async function runTimedWorkerSearch(timeBudgetMs, tickMs, cardDefinitionIds) {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const actor = makePlayer("timed-worker-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("timed-worker-enemy", 1, "dusk", "ai", 1);
+  for (const definitionId of cardDefinitionIds) actor.hand.push(instance(definitionId));
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = null;
+  game.aiSearchNodeBudgetOverride = null;
+  game.aiController.searchRng = new SearchRng(884422);
+  const roots = game.aiController.getActionCandidates(actor);
+  const request = createSearchRequest({
+    requestId: `timed-worker-${timeBudgetMs}`,
+    gameId: game.state.gameId,
+    stateVersion: game.state.stateVersion,
+    actorId: actor.id,
+    phase: game.state.phase,
+    currentRound: game.state.currentRound,
+    searchState: createInitialSearchState(
+      actor.id,
+      game.state,
+      game.aiController.knowledge.remainingCounts(actor)
+    ),
+    searchConfig: game.aiController.buildSearchConfig({ timeBudgetMs }),
+    rng: game.aiController.searchRng.snapshot(),
+    rootActionDescriptors: roots.map(ActionDescriptor.describe),
+    rootSearchActions: roots.map(describeRootSearchAction)
+  });
+  let currentMs = 0;
+  const outcome = await runSearchRequest(request, {
+    now: () => {
+      const value = currentMs;
+      currentMs += tickMs;
+      return value;
+    },
+    yieldControl: async () => true
+  });
+  game.dispose();
+  return outcome;
+}
+
+test("AI·搜索配置：较长单步预算在同一局面物化更多完整节点", async () => {
+  const cards = ["charge", "exposeWeakness", "assault", "scout", "recover", "harvest"];
+  const fast = await runTimedWorkerSearch(600, 100, cards);
+  const balanced = await runTimedWorkerSearch(1500, 100, cards);
+  const quality = await runTimedWorkerSearch(3000, 100, cards);
+  assert.equal(fast.searchStopReason, "TIME");
+  assert.ok(balanced.stats.expanded > fast.stats.expanded, JSON.stringify({ fast: fast.stats, balanced: balanced.stats }));
+  assert.ok(quality.stats.expanded > balanced.stats.expanded, JSON.stringify({ balanced: balanced.stats, quality: quality.stats }));
+});
+
+test("AI·搜索配置：简单局面三档都完整搜索并返回同一动作", async () => {
+  const outcomes = [];
+  for (const budget of [3000, 1500, 1000]) {
+    outcomes.push(await runTimedWorkerSearch(budget, 400, []));
+  }
+  assert.deepEqual(outcomes.map((outcome) => outcome.searchStopReason), ["COMPLETE", "COMPLETE", "COMPLETE"]);
+  assert.deepEqual(outcomes[1].actionDescriptor, outcomes[0].actionDescriptor);
+  assert.deepEqual(outcomes[2].actionDescriptor, outcomes[0].actionDescriptor);
+});
+
+test("AI·搜索配置：确定性1000ms与2000ms工作量按本次 Tmax 分别 COMPLETE/TIME", () => {
+  const windows = {
+    quality: { minimumMs: 1800, maximumMs: 2740 },
+    balanced: { minimumMs: 900, maximumMs: 1370 },
+    speed: { minimumMs: 600, maximumMs: 930 }
+  };
+  const stopReasons = [];
+  for (const naturalCompletionMs of [1000, 2000]) {
+    const reasons = [];
+    for (const window of Object.values(windows)) {
+      let nowMs = 0;
+      const budget = new SearchBudget({ timeBudget: window.maximumMs, now: () => nowMs });
+      nowMs = naturalCompletionMs;
+      if (!budget.shouldStop()) budget.complete();
+      reasons.push(budget.stopReason);
+    }
+    stopReasons.push(reasons);
+  }
+  assert.deepEqual(stopReasons[0], ["COMPLETE", "COMPLETE", "TIME"]);
+  assert.deepEqual(stopReasons[1], ["COMPLETE", "TIME", "TIME"]);
 });
 
 
@@ -40222,6 +40378,33 @@ test("AI·闪电评分：预算中断仍以完整负收益拒绝三名满血友�
   assert.equal(selected.type, "end");
 });
 
+test("AI·闪电评分：3× 时间窗口提前 TIME 仍以根 end 拒绝完整负收益闪电", async () => {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const fixture = makeLightningFixture(["dawn", "dusk", "dawn", "dusk", "dawn"], {
+    hps: [4, 1, 4, 1, 4]
+  });
+  fixture.game.aiRandomnessRange = 0;
+  fixture.game.aiSearchNodeBudgetOverride = null;
+  let currentMs = 0;
+  fixture.game.aiController.searchExecutor = {
+    search: (request) => runSearchRequest(request, {
+      now: () => {
+        const value = currentMs;
+        currentMs += 700;
+        return value;
+      },
+      yieldControl: async () => true
+    })
+  };
+  const selected = await fixture.game.aiController.selectAction(fixture.actor, {
+    gameId: fixture.game.state.gameId,
+    searchTimeBudgetMs: 690
+  });
+  assert.equal(fixture.game.aiController.lastSearchResult.stats.stopReason, "TIME");
+  assert.equal(selected.type, "end");
+  fixture.game.dispose();
+});
+
 test("AI·闪电评分：闪电：3友1敌全满血时生产 AIController 链硬拒绝主动闪电", async () => {
   const fixture = makeLightningFixture(["dawn", "dawn", "dawn", "dusk"], {
     hps: [4, 4, 4, 4]
@@ -41393,6 +41576,92 @@ test("AI·展示节奏：三档配置分别 jitter MIN/MAX，clamp 保留区间�
   assert.equal(getRemainingAiThinkingDelay(1800, 400), 1400);
   assert.equal(getRemainingAiThinkingDelay(1800, 1333), 467);
   assert.equal(getRemainingAiThinkingDelay(1800, 4000), 0);
+  const runtime = { aiSpeed: 2, presentationRandom: () => 0.5, simulationMode: false };
+  const decisionWindow = sampleAiDecisionWindow(runtime);
+  assert.deepEqual(decisionWindow, { minimumMs: 900, maximumMs: 1500 });
+  assert.equal(getRemainingAiDecisionDelay(decisionWindow, 400), 500);
+  assert.equal(getRemainingAiDecisionDelay(decisionWindow, 1000), 0);
+});
+
+/*
+功能
+用 fake clock 和 fake Worker outcome 运行一次真实 TurnWorkflow AI decision。
+
+调用方
+AI 单步思考窗口展示回归。
+
+输入
+速度档位与模拟自然搜索耗时。
+
+输出
+采样次数、SearchRequest 与 Application delay 记录。
+
+读取状态
+独立测试 Game、AI_PACING 与 TurnWorkflow。
+
+写入状态
+局部 fake clock、timing random 计数与 fake search request 记录。
+
+调用函数
+makeGame、createWorkerSearchOutcome、takeAiPlayPhase。
+
+边界与不变量
+fake Worker 只替代计算耗时和 terminal outcome，不绕过 SearchRequest 构造/acceptance；同一 decision 的 MIN/MAX 必须只采样一次。
+*/
+async function runDecisionWindowScenario(speed, searchElapsedMs) {
+  const { createWorkerSearchOutcome } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const actor = makePlayer(`decision-window-actor-${speed}`, 0, "dawn", "ai", 0);
+  const enemy = makePlayer(`decision-window-enemy-${speed}`, 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  game.simulationMode = false;
+  game.aiSpeed = speed;
+  game.aiMaxActionsPerTurn = 1;
+  let timingRandomCalls = 0;
+  game.presentationRandom = () => {
+    timingRandomCalls += 1;
+    return 0.5;
+  };
+  let nowMs = 0;
+  game.now = () => nowMs;
+  const delays = [];
+  game.cleanupManager.delay = async (ms) => {
+    delays.push(ms);
+    return true;
+  };
+  let capturedRequest = null;
+  game.aiController.searchExecutor = {
+    async search(request) {
+      capturedRequest = request;
+      nowMs = searchElapsedMs;
+      const end = request.rootActionDescriptors.find((descriptor) => descriptor.type === "end");
+      return createWorkerSearchOutcome({
+        request,
+        actionDescriptor: end,
+        plannedSequenceDescriptors: [end],
+        stats: { stopReason: "COMPLETE", elapsedMs: searchElapsedMs, expanded: 1 },
+        searchStopReason: "COMPLETE",
+        rngAfter: request.rng
+      });
+    }
+  };
+  await game.takeAiPlayPhase(actor, game.state.gameId);
+  game.dispose();
+  return { timingRandomCalls, capturedRequest, delays };
+}
+
+test("AI·展示节奏：400ms 简单搜索只补到 Tmin 且同一 decision 不重复采样", async () => {
+  const result = await runDecisionWindowScenario(1, 400);
+  assert.equal(result.capturedRequest.searchConfig.timeBudgetMs, 3000);
+  assert.equal(result.capturedRequest.searchConfig.searchDeadlineMs, 3100);
+  assert.deepEqual(result.delays, [3000, 1400]);
+  assert.equal(result.timingRandomCalls, 5, "initial 三次 + decision MIN/MAX 两次，end 不得再次采样");
+});
+
+test("AI·展示节奏：1000ms 搜索超过 Tmin 后立即行动而不补到 Tmax", async () => {
+  const result = await runDecisionWindowScenario(2, 1000);
+  assert.equal(result.capturedRequest.searchConfig.timeBudgetMs, 1500);
+  assert.deepEqual(result.delays, [1500, 0]);
+  assert.equal(result.timingRandomCalls, 5);
 });
 
 test("AI·展示节奏：旧 fastMode 偏好单向迁移到三档速度", () => {
@@ -41468,7 +41737,7 @@ RUNTIME_POLICY discard range、TurnWorkflow 与 ChoiceCoordinator。
 makeGame、handleDiscardPhase。
 
 边界与不变量
-不同档位只改变 presentation pacing；都必须 thinking on→decision→delay→thinking off。
+弃牌阶段没有 Planner 搜索，因此不同档位只改变 presentation pacing；都必须 thinking on→decision→delay→thinking off。
 */
 async function discardPresentationPacingModes() {
   for (const [speed, expectedDelay] of [[1, 1600], [3, 850]]) {

@@ -36,6 +36,7 @@ export const AI_RUNTIME_POLICY = Object.freeze({
 export const AI_SEARCH_PROFILE = Object.freeze({
   mode:"NORMAL",
   softTargetMs:null,
-  searchDeadlineMs:3000,
+  // SearchBudget 先按本次显式预算收束；Worker normal deadline 只留候选物化与 transport 的小幅技术余量。
+  searchDeadlineMarginMs:100,
   hardWatchdogMs:10000
 });

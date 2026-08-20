@@ -59,7 +59,7 @@ export function createLocalSearchExecutor() {
     SearchRequest 与可选 signal。
 
     输出
-    Promise<WorkerSearchOutcome>；watchdog/cancel 可 reject。
+    Promise<WorkerSearchOutcome>；normal deadline/watchdog/cancel 可 reject。
 
     读取状态
     无。
@@ -71,13 +71,14 @@ export function createLocalSearchExecutor() {
     runSearchRequest、setTimeout。
 
     边界与不变量
-    与 browser Worker 共享同一 runSearchRequest；不直接运行 Planner。
+    与 browser Worker 共享同一 runSearchRequest；normal deadline 只协作取消，hard watchdog 仍是最后故障保险；不直接运行 Planner。
     */
     async search(request, options = {}) {
       controller = options.signal instanceof AbortController
         ? options.signal
         : new AbortController();
       const signal = controller.signal;
+      const normalDeadlineMs = Number(request.searchConfig?.searchDeadlineMs);
       const watchdogMs = Number(request.searchConfig?.hardWatchdogMs);
       const work = runSearchRequest(request, {
         now: () => globalThis.performance?.now?.() ?? Date.now(),
@@ -86,17 +87,26 @@ export function createLocalSearchExecutor() {
           return !signal.aborted;
         }
       });
-      if (!Number.isFinite(watchdogMs) || watchdogMs <= 0) return work;
-      return Promise.race([
-        work,
-        new Promise((_, reject) => {
+      const races = [work];
+      if (Number.isFinite(normalDeadlineMs) && normalDeadlineMs > 0) {
+        races.push(new Promise((_, reject) => {
+          const timer = setTimeout(() => {
+            controller.abort();
+            reject(new Error("AI search normal deadline"));
+          }, normalDeadlineMs);
+          work.finally(() => clearTimeout(timer));
+        }));
+      }
+      if (Number.isFinite(watchdogMs) && watchdogMs > 0) {
+        races.push(new Promise((_, reject) => {
           const timer = setTimeout(() => {
             controller.abort();
             reject(new Error("AI search hard watchdog"));
           }, watchdogMs);
           work.finally(() => clearTimeout(timer));
-        })
-      ]);
+        }));
+      }
+      return races.length === 1 ? work : Promise.race(races);
     },
     /*
     功能

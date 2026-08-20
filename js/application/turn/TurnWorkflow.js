@@ -30,6 +30,7 @@ import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from ".
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics", "runTurn",
   "gainEnergy", "drawCards", "cleanupDefeatedZones", "delay", "getAiDelay", "now",
+  "sampleAiDecisionWindow", "getRemainingAiDecisionDelay",
   "getTeamRules", "waitForHumanPlayEnd", "runAiPlayPhase", "choiceCoordinator",
   "choiceContexts", "createId",
   "getActionCandidates", "selectAction", "resolvePlannedAction", "getPlannedSequence",
@@ -294,7 +295,7 @@ export function createTurnWorkflow(dependencies) {
   getActionCandidates、selectAction、resolvePlannedAction、getPlannedSequence、playCard、useActiveSkill。
 
   边界与不变量
-  计划重用必须重绑当前合法实体；执行失败立即停止；search compute 与可见 presentation pacing 使用独立预算。
+  计划重用必须重绑当前合法实体；执行失败立即停止；真实搜索每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
   */
   async function takeAiPlayPhase(player, gameId) {
     const state = runtime.getState();
@@ -319,13 +320,18 @@ export function createTurnWorkflow(dependencies) {
         if (!runtime.isSessionValid(gameId) || state.isGameOver || !player.alive) break;
         const decisionStartedAt = runtime.now();
         let action = null;
+        let decisionWindow = null;
         if (!runtime.getAiReplanAfterEveryAction() && queuedPlan.length) {
           action = runtime.resolvePlannedAction(player, queuedPlan.shift());
           if (!action) queuedPlan = [];
         }
         if (!action) {
+          decisionWindow = runtime.sampleAiDecisionWindow();
           try {
-            action = await runtime.selectAction(player, { gameId });
+            action = await runtime.selectAction(player, {
+              gameId,
+              searchTimeBudgetMs:decisionWindow.maximumMs
+            });
           } catch (error) {
             runtime.diagnostics.reportWorkflowError("AI", `${player.name}规划行动失败，安全结束出牌阶段`, error);
             action = { type: "end" };
@@ -334,10 +340,15 @@ export function createTurnWorkflow(dependencies) {
           if (!runtime.getAiReplanAfterEveryAction()) queuedPlan = runtime.getPlannedSequence().slice(1);
         }
         const decisionElapsedMs = Math.max(0, runtime.now() - decisionStartedAt);
+        const remainingSearchDelay = decisionWindow
+          ? runtime.getRemainingAiDecisionDelay(decisionWindow, decisionElapsedMs)
+          : null;
         if (action.type === "end") {
           runtime.presentation.setPrompt(`${player.name}准备结束出牌阶段。`);
           runtime.presentation.showThinking({ playerId: player.id, message: "正在收束回合" });
-          if (!(await runtime.delay(runtime.getAiDelay("end", { elapsedMs:decisionElapsedMs })))) return;
+          if (!(await runtime.delay(decisionWindow
+            ? remainingSearchDelay
+            : runtime.getAiDelay("end", { elapsedMs:decisionElapsedMs })))) return;
           if (!runtime.isSessionValid(gameId)) return;
           break;
         }
@@ -345,7 +356,9 @@ export function createTurnWorkflow(dependencies) {
         const targetLabel = runtime.getActionTargetLabel(player, action.type === "card" ? action.card : action.skill, action.targets, action.selection);
         const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
         runtime.presentation.showThinking({ playerId: player.id, message: actionDescription });
-        if (!(await runtime.delay(runtime.getAiDelay("action", { elapsedMs:decisionElapsedMs })))) return;
+        if (!(await runtime.delay(decisionWindow
+          ? remainingSearchDelay
+          : runtime.getAiDelay("action", { elapsedMs:decisionElapsedMs })))) return;
         if (!runtime.isSessionValid(gameId)) return;
         runtime.presentation.clearThinking();
         let executed = false;

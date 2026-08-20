@@ -37,7 +37,7 @@ npm run test:balance
 6. 主动技能通过中央技能按钮发动；点击“结束出牌”进入弃牌阶段。
 7. 手牌超过当前生命时，选择准确数量并确认弃牌。
 8. 格挡、反制、挑衅交牌、决斗和濒死救援会打开独立响应窗口。
-9. 顶部“AI速度”提供 1× 标准、2× 较快、3× 快速三档，只改变玩家可观察到的 AI 展示节奏与等待，不改变规则、随机源、搜索质量或合法性。
+9. 顶部“AI速度”提供 1× 质量优先、2× 平衡、3× 速度优先三档。三档共用同一搜索算法、价值与合法性模型，但每步提供不同的真实 wall-clock 搜索时间窗口；更慢档位允许复杂局面搜索更久。
 10. 右侧记录可折叠；“重新征召”会取消旧回合、响应、搜索和计时器并创建新对局。
 
 ## 阵营与交错座位
@@ -287,7 +287,7 @@ AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/�
 
 - `AiActionGenerator`：通过 `RuleEngine` 生成当前合法动作和模拟后的后续动作。
 - `AiEvaluator`：按整队存活、生命、资源、斩杀、治疗净收益和状态评分。
-- `AiPlanner`：深度 4、宽度 10 的 beam search，默认 900ms 时间预算。
+- `AiPlanner`：深度 4、宽度 10 的 beam search；浏览器每步时间预算来自当前速度档位本次采样的 `Tmax`。
 - `AiSimulator`：只克隆过滤后的快照，无 UI、日志、事件或真实状态副作用。
 - `AiKnowledge`：从 163 张组成减去公开/合法已知牌，采样 10 个隐藏世界。
 - `AiResponsePolicy`：评估格挡、反制、借势突袭、交牌、决斗和救援的团队效用。
@@ -297,12 +297,12 @@ AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/�
 
 借势搜索枚举“第一目标、公开装备实体、第二目标”的合法组合；第二目标与真人选择器一致，只按第一目标的攻击距离枚举其他角色，随后综合实际「突袭」概率、双方关系、装备价值和防御风险评分。
 
-AI 搜索计算与玩家可见展示节奏彼此独立。浏览器生产路径在 Dedicated Worker 中固定使用同一 `NORMAL` AI search profile；1×、2×、3× 都不改变搜索预算、搜索质量、决策逻辑或难度。主线程只接受通过 session、stateVersion、actor、phase、实体重绑和当前合法性校验的结果。动作间、响应、弃牌和结束提示由独立 presentation pacing 控制，不推进真实游戏 RNG 或搜索 RNG。
+浏览器生产路径在每次真实 AI 决策前由 Application 使用独立 timing RNG 采样 `{Tmin,Tmax}`：`Tmax` 通过 data-only `SearchRequest` 成为本次 Worker `SearchBudget` 的 wall-clock 上限，搜索自然完成后只补足 `Tmin - elapsed`，超过 `Tmin` 即立即行动。1×、2×、3× 共用同一搜索深度、束宽、隐藏样本、价值、合法性和随机选择规则；更长窗口只会让复杂局面有机会物化更多完整候选。Worker normal deadline 仅比本次预算多 100ms 技术余量，10 秒 hard watchdog 只处理 Worker 卡死的情况。timing RNG、AI search RNG 与真实游戏 RNG 相互隔离；response、discard、initial 等无 Planner 搜索的阶段继续只使用 presentation pacing。
 
 修改 AI：
 
-- 展示速度：调整 `js/application/policy/RuntimePolicy.js` 中 `AI_PACING` 的三档 pacing 配置；它只影响可观察等待，不影响搜索。
-- 搜索强度：调整 `js/ai/policy/AiRuntimePolicy.js` 中的 `searchDepth`、`beamWidth`、`hiddenStateSamples`、`searchTimeBudgetMs` 和 `AI_SEARCH_PROFILE`。提高会增加 CPU 占用。
+- 单步时间窗口：调整 `js/application/policy/RuntimePolicy.js` 中 `AI_PACING` 的三档 `{baseMinMs,baseMaxMs,jitter}`；`Tmin` 控制最低自然节奏，`Tmax` 同时控制本次真实搜索上限。
+- 搜索结构：调整 `js/ai/policy/AiRuntimePolicy.js` 中的 `searchDepth`、`beamWidth`、`hiddenStateSamples` 与相关 policy。`searchTimeBudgetMs` 只是没有 Application 单步窗口时的直接调用 fallback；浏览器正常决策使用显式 `Tmax`。
 - 行为倾向：优先修改 `AiEvaluator` 与 `AiResponsePolicy`，不要让 AI 访问完整隐藏手牌。
 - 随机性：`randomnessRange` 控制近似同分候选的评分扰动范围，设为 `0` 时稳定选择最高分。
 - 难度：`difficultyMultiplier` 缩放公开威胁优先级；`ThreatCalculator` 的稳定 `roleTags`、斩杀线、公开资源、状态和近期攻击者会直接影响攻击/控制目标。改变评分后应按 `test.md` 运行当前 Balance 入口。

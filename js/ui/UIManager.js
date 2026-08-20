@@ -2409,7 +2409,7 @@ export class UIManager {
   normalizeAiSpeed、writeAiSpeedPreference 与 DOM attribute API。
 
   边界与不变量
-  只改变 AI presentation pacing，不改变 AI 决策或搜索质量。
+  只更新用户选择的时间窗口档位；Application 在后续 decision 采样窗口，UI 不持有 Planner budget、搜索结果或规则。
   */
   setAiSpeed(speed) {
     this.aiSpeed = writeAiSpeedPreference(normalizeAiSpeed(speed));

@@ -1,6 +1,6 @@
 /*
 模块职责
-唯一拥有 AI 可观察思考节奏的纯计算、独立随机边界与浏览器速度偏好迁移。
+唯一拥有 AI 单步思考窗口、纯展示节奏、独立 timing 随机边界与浏览器速度偏好迁移。
 
 上游
 Application turn/response timing、UI 设置与 timing tests。
@@ -15,7 +15,7 @@ Application RuntimePolicy。
 速度与 timing random 均为公开展示配置，不读取任何隐藏手牌或 AI SearchState。
 
 架构约束
-不得读取真实游戏 RNG、AI search RNG 或修改搜索预算；旧 fastMode 只能单向迁移到 speed。
+不得读取真实游戏 RNG 或 AI search RNG；只输出 data-only 毫秒窗口，由 composition 决定是否把上限传给搜索；旧 fastMode 只能单向迁移到 speed。
 */
 import { AI_PACING, RUNTIME_POLICY } from "../application/policy/RuntimePolicy.js";
 
@@ -231,8 +231,71 @@ export function getAiPacingBounds(speed, random = Math.random) {
   const sampledMaximum = Math.max(0, sampleJitteredBound(config.baseMaxMs, config.maxJitter, random));
   return Object.freeze({
     minimumMs,
-    maximumMs:Math.max(minimumMs + 1, sampledMaximum)
+    maximumMs: Math.max(minimumMs + 1, sampledMaximum)
   });
+}
+
+/*
+功能
+为一次 AI 决策生成思考时间窗口。
+调用方
+Application TurnWorkflow 的 composition collaborator 与 timing tests。
+
+输入
+game-like application runtime，以及可选 timing random。
+
+输出
+冻结的 { minimumMs, maximumMs }；simulation/headless 返回零窗口。
+
+读取状态
+game.aiSpeed、game.presentationRandom、RUNTIME_POLICY.simulationMode 与 AI_PACING。
+
+写入状态
+非 simulation 路径只推进 timing random 两次。
+
+调用函数
+getAiPacingBounds。
+
+边界与不变量
+同一次 decision 只能调用一次；maximumMs 可作为显式搜索预算，minimumMs 只用于剩余展示等待；不接触游戏或搜索 RNG。
+*/
+export function sampleAiDecisionWindow(game, options = {}) {
+  if (RUNTIME_POLICY.simulationMode || game?.simulationMode) {
+    return Object.freeze({ minimumMs: 0, maximumMs: 0 });
+  }
+  return getAiPacingBounds(
+    game?.aiSpeed,
+    options.random ?? game?.presentationRandom ?? Math.random
+  );
+}
+
+/*
+功能
+根据已采样的思考时间窗口和实际搜索耗时，计算搜索结束后还需等待的时间。
+
+调用方
+Application TurnWorkflow 的 composition collaborator 与 timing tests。
+
+输入
+本次 decision window 与 elapsedMs。
+
+输出
+补足 minimumMs 所需的非负整数毫秒。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+getRemainingAiThinkingDelay。
+
+边界与不变量
+elapsed 达到 minimumMs 后立即返回零；maximumMs 不参与二次 clamp，也不会再次随机。
+*/
+export function getRemainingAiDecisionDelay(window, elapsedMs = 0) {
+  return getRemainingAiThinkingDelay(window?.minimumMs, elapsedMs);
 }
 
 /*
@@ -329,10 +392,10 @@ export function getAiDelay(game, phase, options = {}) {
   const rawThinkingTime = Number.isFinite(Number(options.rawThinkingTime))
     ? Math.max(0, Number(options.rawThinkingTime))
     : sampleDelay(
-        presentationRandom,
-        range.minimumMs,
-        phase === "initial" && options.complex ? range.complexMaximumMs : range.maximumMs
-      );
+      presentationRandom,
+      range.minimumMs,
+      phase === "initial" && options.complex ? range.complexMaximumMs : range.maximumMs
+    );
   const bounds = getAiPacingBounds(game?.aiSpeed, presentationRandom);
   const planned = clampAiThinkingTime(rawThinkingTime, bounds);
   return getRemainingAiThinkingDelay(planned, options.elapsedMs);
