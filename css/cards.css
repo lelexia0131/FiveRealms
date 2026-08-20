@@ -41,6 +41,10 @@
 
 .hidden-card-grid, .private-card-grid, .tableau-cards { display: flex; flex-wrap: nowrap; align-items: flex-start; justify-content: safe center; gap: 10px; margin: 16px 0 12px; padding: 10px 2px 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain; scroll-snap-type: x proximity; touch-action: pan-x; }
 .hidden-card-grid { gap: 9px; }
+:is(.human-hand, .opponent-hand-strip, .hidden-card-grid, .private-card-grid, .tableau-cards) { cursor: grab; user-select: none; }
+#game-screen :is(.human-hand, .opponent-hand-strip, .hidden-card-grid, .private-card-grid, .tableau-cards) > * { cursor: grab; }
+:is(.human-hand, .opponent-hand-strip, .hidden-card-grid, .private-card-grid, .tableau-cards).is-dragging { cursor: grabbing; scroll-snap-type: none; }
+#game-screen :is(.human-hand, .opponent-hand-strip, .hidden-card-grid, .private-card-grid, .tableau-cards).is-dragging > * { cursor: grabbing; }
 .leverage-response-cards .hand-card { flex: 0 0 150px; width: 150px; height: 210px; }
 .hidden-card-grid .hand-card:hover, .hidden-card-grid .hand-card:focus-visible,
 .private-card-grid .hand-card:hover, .private-card-grid .hand-card:focus-visible,

@@ -72,6 +72,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .thinking-indicator > img { width: 45px; height: 45px; object-fit: cover; object-position: top; border: 2px solid var(--gold); border-radius: 50%; background: var(--surface-muted); }
 .thinking-indicator > div { display: grid; min-width: 0; }
 .thinking-indicator strong { font-size: 15px; }
+.thinking-indicator .thinking-player-name.team-dawn { color: var(--dawn); }
+.thinking-indicator .thinking-player-name.team-dusk { color: var(--dusk); }
 .thinking-indicator div span { color: var(--text-secondary); font-size: 13px; }
 .thinking-dots { display: flex; align-self: end; gap: 3px; margin-left: auto; padding-bottom: 5px; }
 .thinking-dots b { width: 5px; height: 5px; border-radius: 50%; background: var(--gold); }

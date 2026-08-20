@@ -230,9 +230,37 @@ export function emptyResolvingCardTemplate() {
   return `<div class="resolving-card is-empty"><span class="skill-sigil" aria-hidden="true">◇</span><div><small>中央结算区</small><strong>等待第一张牌</strong><span>行动会在这里公开展示</span></div></div>`;
 }
 
+/*
+功能
+渲染公开的 AI 思考指示，并为真实角色名附加现有阵营语义 class。
+
+调用方
+UIManager.setThinking 与 UI 回归测试。
+
+输入
+公开玩家展示字段与思考摘要文本。
+
+输出
+已转义的 thinking-indicator 内部 HTML。
+
+读取状态
+player.character、name、battleTeam。
+
+写入状态
+无。
+
+调用函数
+presentCharacter、escapeHtml。
+
+边界与不变量
+只接受 dawn/dusk 作为队伍 class；思考正文保持普通 span，不继承角色名阵营语义。
+*/
 export function thinkingTemplate(player, message) {
   const character = presentCharacter(player?.character);
-  return `<img src="${escapeHtml(character?.portrait || "")}" alt="" aria-hidden="true"><div><strong>${escapeHtml(player?.name || "电脑角色")}</strong><span>${escapeHtml(message || "正在思考")}</span></div><i class="thinking-dots" aria-label="思考中"><b></b><b></b><b></b></i>`;
+  const teamClass = player?.battleTeam === "dawn" || player?.battleTeam === "dusk"
+    ? ` team-${player.battleTeam}`
+    : "";
+  return `<img src="${escapeHtml(character?.portrait || "")}" alt="" aria-hidden="true"><div><strong class="thinking-player-name${teamClass}">${escapeHtml(player?.name || "电脑角色")}</strong><span>${escapeHtml(message || "正在思考")}</span></div><i class="thinking-dots" aria-label="思考中"><b></b><b></b><b></b></i>`;
 }
 
 export function formatLogMessage(message) {

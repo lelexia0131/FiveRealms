@@ -42959,6 +42959,365 @@ test("UI·玩家面板：关闭技能弹窗后焦点返回原生触发按钮", (
 
 // ---- 手牌与对手面板 ----
 
+test("UI·横向卡牌拖拽：五类真实卡牌容器共享拖动规则与原生 scrollbar", async () => {
+  const index = await readFile(projectFile("index.html"), "utf8"),
+    layout = await readFile(projectFile("css/layout.css"), "utf8"),
+    characters = await readFile(projectFile("css/characters.css"), "utf8"),
+    cardsCss = await readFile(projectFile("css/cards.css"), "utf8");
+  assert.match(index, /id="human-hand" class="human-hand"/);
+  assert.match(opponentHandStripTemplate([{ known: false }]), /class="opponent-hand-strip"/);
+
+  const responsePanel = {
+    innerHTML: "",
+    classList: { add() { }, remove() { } },
+    querySelectorAll: () => [],
+    querySelector: () => null
+  };
+  const interaction = new InteractionController({
+    elements: { response_panel: responsePanel }, game: null
+  });
+  const hiddenPending = interaction.requestHiddenCards(
+    { selectionId: "drag-hidden", tokens: [{ token: "opaque-1" }] },
+    1,
+    "选择一张牌",
+    { exact: true, slots: [{ token: "opaque-1", known: false }] }
+  );
+  assert.match(responsePanel.innerHTML, /class="hidden-card-grid"/);
+  interaction.cancel();
+  await hiddenPending;
+
+  const revealElement = {
+    innerHTML: "",
+    classList: { add() { }, remove() { } },
+    querySelector: () => ({ addEventListener() { } })
+  };
+  const reveal = new PrivateRevealView(revealElement), revealPending = reveal.show("窥探", [instance("block")]);
+  assert.match(revealElement.innerHTML, /class="private-card-grid"/);
+  reveal.hide();
+  await revealPending;
+
+  const publicElement = { innerHTML: "", classList: { add() { }, remove() { } } };
+  new PublicPoolView(publicElement).show([instance("mutualBenefit")]);
+  assert.match(publicElement.innerHTML, /class="tableau-cards"/);
+  assert.match(layout, /\.human-hand\s*\{[^}]*overflow-x:\s*auto/s);
+  assert.match(characters, /\.opponent-hand-strip\s*\{[^}]*overflow-x:\s*auto/s);
+  assert.match(cardsCss, /\.hidden-card-grid,\s*\.private-card-grid,\s*\.tableau-cards\s*\{[^}]*overflow-x:\s*auto/s);
+  for (const className of [
+    "human-hand", "opponent-hand-strip", "hidden-card-grid", "private-card-grid", "tableau-cards"
+  ]) assert.match(
+    cardsCss,
+    new RegExp(`:is\\([^)]*\\.${className}[^)]*\\)\\s*\\{[^}]*cursor:\\s*grab[^}]*user-select:\\s*none`, "s")
+  );
+  assert.match(cardsCss, /:is\([^)]*\.human-hand[^)]*\)\.is-dragging\s*\{[^}]*cursor:\s*grabbing/s);
+});
+
+test("UI·横向卡牌拖拽：主手牌、敌方手牌、隐藏选择、私密展示与公共池方向一致", () => {
+  for (const className of [
+    "human-hand", "opponent-hand-strip", "hidden-card-grid", "private-card-grid", "tableau-cards"
+  ]) {
+    const classes = new Set([className]), captured = [], released = [];
+    const container = {
+      scrollLeft: 80,
+      scrollWidth: 600,
+      clientWidth: 300,
+      classList: {
+        add: (name) => classes.add(name),
+        remove: (name) => classes.delete(name)
+      },
+      setPointerCapture: (pointerId) => captured.push(pointerId),
+      hasPointerCapture: () => true,
+      releasePointerCapture: (pointerId) => released.push(pointerId)
+    };
+    const target = { closest: (selector) => selector.includes(`.${className}`) ? container : null };
+    const fake = { horizontalCardDragState: null, horizontalCardDragSuppressClick: false };
+    UIManager.prototype.handleHorizontalCardPointerDown.call(
+      fake, { button: 0, pointerId: 7, clientX: 200, target }
+    );
+    UIManager.prototype.handleHorizontalCardPointerMove.call(
+      fake, { pointerId: 7, clientX: 170, preventDefault() { } }
+    );
+    assert.equal(container.scrollLeft, 110, className);
+    UIManager.prototype.handleHorizontalCardPointerMove.call(
+      fake, { pointerId: 7, clientX: 220, preventDefault() { } }
+    );
+    assert.equal(container.scrollLeft, 60, className);
+    assert.equal(classes.has("is-dragging"), true, className);
+    UIManager.prototype.handleHorizontalCardPointerEnd.call(fake, { pointerId: 7 });
+    assert.equal(classes.has("is-dragging"), false, className);
+    assert.deepEqual(captured, [7], className);
+    assert.deepEqual(released, [7], className);
+  }
+});
+
+test("UI·横向卡牌拖拽：普通点击保留而明显拖动后的选择 click 被捕获", () => {
+  for (const className of ["hidden-card-grid", "tableau-cards"]) {
+    const container = {
+      scrollLeft: 0,
+      scrollWidth: 600,
+      clientWidth: 300,
+      classList: { add() { }, remove() { } },
+      setPointerCapture() { },
+      hasPointerCapture: () => true,
+      releasePointerCapture() { }
+    };
+    const target = { closest: (selector) => selector.includes(`.${className}`) ? container : null };
+    const fake = { horizontalCardDragState: null, horizontalCardDragSuppressClick: false };
+    let selected = 0, stopped = false;
+    UIManager.prototype.handleHorizontalCardPointerDown.call(
+      fake, { button: 0, pointerId: 3, clientX: 100, target }
+    );
+    UIManager.prototype.handleHorizontalCardPointerMove.call(
+      fake, { pointerId: 3, clientX: 97, preventDefault() { throw new Error("微小移动不得进入拖动"); } }
+    );
+    UIManager.prototype.handleHorizontalCardPointerEnd.call(fake, { pointerId: 3 });
+    UIManager.prototype.handleHorizontalCardClick.call(fake, {
+      target, preventDefault() { }, stopPropagation() { stopped = true; }
+    });
+    if (!stopped) selected += 1;
+    assert.equal(selected, 1, `${className} 普通点击`);
+
+    UIManager.prototype.handleHorizontalCardPointerDown.call(
+      fake, { button: 0, pointerId: 4, clientX: 100, target }
+    );
+    UIManager.prototype.handleHorizontalCardPointerMove.call(
+      fake, { pointerId: 4, clientX: 70, preventDefault() { } }
+    );
+    UIManager.prototype.handleHorizontalCardPointerEnd.call(fake, { pointerId: 4 });
+    stopped = false;
+    UIManager.prototype.handleHorizontalCardClick.call(fake, {
+      target, preventDefault() { }, stopPropagation() { stopped = true; }
+    });
+    if (!stopped) selected += 1;
+    assert.equal(stopped, true, `${className} 拖后 click`);
+    assert.equal(selected, 1, `${className} 不得误选`);
+  }
+});
+
+test("UI·横向卡牌拖拽：原生选区与拖放仅在卡牌 scroller 交互范围内被阻止", () => {
+  const container = {
+    scrollLeft: 0,
+    scrollWidth: 600,
+    clientWidth: 300,
+    classList: { add() { }, remove() { } },
+    setPointerCapture() { },
+    hasPointerCapture: () => true,
+    releasePointerCapture() { }
+  };
+  const scrollerTarget = {
+    closest: (selector) => selector.includes(".opponent-hand-strip") ? container : null
+  };
+  const panelTarget = { closest: () => null };
+  const fake = { horizontalCardDragState: null, horizontalCardDragSuppressClick: false };
+  const nativeEvent = (target) => {
+    let prevented = 0;
+    return { target, preventDefault: () => { prevented += 1; }, prevented: () => prevented };
+  };
+
+  const idlePanelSelection = nativeEvent(panelTarget);
+  UIManager.prototype.handleHorizontalCardNativeStart.call(fake, idlePanelSelection);
+  assert.equal(idlePanelSelection.prevented(), 0, "普通角色面板文本必须仍可选择");
+
+  const idleScrollerSelection = nativeEvent(scrollerTarget);
+  UIManager.prototype.handleHorizontalCardNativeStart.call(fake, idleScrollerSelection);
+  assert.equal(idleScrollerSelection.prevented(), 1, "卡牌容器本身不得建立文字选区");
+
+  UIManager.prototype.handleHorizontalCardPointerDown.call(
+    fake, { button: 0, pointerId: 21, clientX: 180, target: scrollerTarget }
+  );
+  const escapedSelection = nativeEvent(panelTarget);
+  UIManager.prototype.handleHorizontalCardNativeStart.call(fake, escapedSelection);
+  assert.equal(escapedSelection.prevented(), 1, "从卡牌区起拖后移到角色面板仍不得建立选区");
+  const nativeDrag = nativeEvent(scrollerTarget);
+  UIManager.prototype.handleHorizontalCardNativeStart.call(fake, nativeDrag);
+  assert.equal(nativeDrag.prevented(), 1, "卡牌不得触发浏览器原生拖放");
+
+  UIManager.prototype.handleHorizontalCardPointerEnd.call(fake, { pointerId: 21 });
+  const releasedPanelSelection = nativeEvent(panelTarget);
+  UIManager.prototype.handleHorizontalCardNativeStart.call(fake, releasedPanelSelection);
+  assert.equal(releasedPanelSelection.prevented(), 0, "松开后页面其他文本必须恢复正常选择");
+});
+
+test("UI·横向卡牌拖拽：统一绑定幂等且动态重渲染与容器外松开均可清理", () => {
+  const previousWindow = globalThis.window;
+  const rootListeners = new Map(), windowListeners = new Map();
+  const root = {
+    addEventListener(type, handler) {
+      if (!rootListeners.has(type)) rootListeners.set(type, []);
+      rootListeners.get(type).push(handler);
+    }
+  };
+  globalThis.window = {
+    addEventListener(type, handler) {
+      if (!windowListeners.has(type)) windowListeners.set(type, []);
+      windowListeners.get(type).push(handler);
+    }
+  };
+  const fake = {
+    horizontalCardDragRoot: null,
+    horizontalCardDragState: null,
+    horizontalCardDragSuppressClick: false,
+    handleHorizontalCardPointerDown: UIManager.prototype.handleHorizontalCardPointerDown,
+    handleHorizontalCardPointerMove: UIManager.prototype.handleHorizontalCardPointerMove,
+    handleHorizontalCardPointerEnd: UIManager.prototype.handleHorizontalCardPointerEnd,
+    handleHorizontalCardClick: UIManager.prototype.handleHorizontalCardClick,
+    handleHorizontalCardNativeStart: UIManager.prototype.handleHorizontalCardNativeStart
+  };
+  try {
+    assert.equal(UIManager.prototype.bindHorizontalCardDrag.call(fake, root), true);
+    assert.equal(UIManager.prototype.bindHorizontalCardDrag.call(fake, root), false);
+    for (const type of ["pointerdown", "pointermove", "click", "selectstart", "dragstart"]) {
+      assert.equal(rootListeners.get(type).length, 1, type);
+    }
+    for (const type of ["pointerup", "pointercancel"]) assert.equal(windowListeners.get(type).length, 1, type);
+
+    for (const [index, startLeft] of [10, 70].entries()) {
+      const dynamicContainer = {
+        scrollLeft: startLeft,
+        scrollWidth: 500,
+        clientWidth: 200,
+        classList: { add() { }, remove() { } },
+        setPointerCapture() { },
+        hasPointerCapture: () => true,
+        releasePointerCapture() { }
+      };
+      const target = { closest: (selector) => selector.includes(".tableau-cards") ? dynamicContainer : null };
+      rootListeners.get("pointerdown")[0]({ button: 0, pointerId: 11, clientX: 100, target });
+      rootListeners.get("pointermove")[0]({ pointerId: 11, clientX: 70, preventDefault() { } });
+      assert.equal(dynamicContainer.scrollLeft, startLeft + 30);
+      windowListeners.get(index === 0 ? "pointerup" : "pointercancel")[0]({ pointerId: 11 });
+      assert.equal(fake.horizontalCardDragState, null);
+    }
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+  }
+});
+
+test("UI·横向卡牌位置：主手牌重绘保留原位置并按新最大距离收束", () => {
+  const human = makePlayer("scroll-human", 0, "dawn", "human"),
+    enemy = makePlayer("scroll-enemy", 1, "dusk");
+  human.hand.push(
+    instance("assault"), instance("block"), instance("charge"), instance("shield"),
+    instance("scout"), instance("transfer")
+  );
+  const { game } = makeGame([human, enemy]);
+  let renderedScrollWidth = 800;
+  const hand = {
+    scrollLeft: 200,
+    scrollWidth: 900,
+    clientWidth: 300,
+    _innerHTML: "",
+    get innerHTML() { return this._innerHTML; },
+    set innerHTML(value) {
+      this._innerHTML = value;
+      this.scrollLeft = 0;
+      this.scrollWidth = renderedScrollWidth;
+    }
+  };
+  const fake = {
+    elements: { human_hand: hand, hand_hint: { textContent: "" } },
+    discardState: null,
+    targetState: null,
+    isInteractionActive: () => false
+  };
+  UIManager.prototype.renderHand.call(fake, game, human);
+  assert.equal(hand.scrollLeft, 200, "普通手牌重绘不得回到最左侧");
+
+  hand.scrollLeft = 400;
+  renderedScrollWidth = 600;
+  human.hand.pop();
+  UIManager.prototype.renderHand.call(fake, game, human);
+  assert.equal(hand.scrollLeft, 300, "内容缩短后必须 clamp 到新的 maxScrollLeft");
+});
+
+test("UI·横向卡牌位置：敌方席位重建后按玩家 ID 分别恢复位置", () => {
+  const previousDocument = globalThis.document;
+  const human = makePlayer("scroll-viewer", 0, "dawn", "human"),
+    first = makePlayer("scroll-first", 1, "dusk"),
+    second = makePlayer("scroll-second", 2, "dawn");
+  first.hand.push(instance("assault"), instance("block"));
+  second.hand.push(instance("charge"), instance("shield"));
+  const { game } = makeGame([human, first, second]);
+  const makePanel = (playerId, scrollLeft) => {
+    const scroller = { scrollLeft, scrollWidth: 600, clientWidth: 300 };
+    return {
+      dataset: { playerId },
+      scroller,
+      querySelector: (selector) => selector === ".opponent-hand-strip" ? scroller : null
+    };
+  };
+  let panels = [makePanel(first.id, 180), makePanel(second.id, 40)];
+  const cpuGrid = {
+    _innerHTML: "",
+    querySelectorAll: () => panels,
+    get innerHTML() { return this._innerHTML; },
+    set innerHTML(value) {
+      this._innerHTML = value;
+      panels = [makePanel(first.id, 0), makePanel(second.id, 0)];
+    }
+  };
+  const fake = {
+    game,
+    horizontalCardScrollGameId: game.state.gameId,
+    targetState: null,
+    thinkingPlayerId: null,
+    elements: {
+      status_metrics: { innerHTML: "" },
+      cpu_grid: cpuGrid,
+      human_panel: { innerHTML: "" }
+    },
+    isGameAttached: () => true,
+    getDistanceState: () => "距离 1",
+    renderHand() { },
+    renderControls() { },
+    animationController: { flush() { } }
+  };
+  globalThis.document = {};
+  try {
+    UIManager.prototype.render.call(fake, game);
+    assert.equal(panels[0].scroller.scrollLeft, 180);
+    assert.equal(panels[1].scroller.scrollLeft, 40);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
+
+test("UI·横向卡牌位置：互利同一请求重绘保留并 clamp，新请求不继承旧位置", () => {
+  let nextScrollWidth = 700, scroller = null;
+  const element = {
+    _innerHTML: "",
+    classList: { add() { }, remove() { } },
+    querySelector: (selector) => selector === ".tableau-cards" ? scroller : null,
+    get innerHTML() { return this._innerHTML; },
+    set innerHTML(value) {
+      this._innerHTML = value;
+      scroller = value.includes("tableau-cards")
+        ? { scrollLeft: 0, scrollWidth: nextScrollWidth, clientWidth: 300 }
+        : null;
+    }
+  };
+  const cards = [instance("assault"), instance("block"), instance("charge")];
+  const view = new PublicPoolView(element);
+  view.show(cards, { interactive: true });
+  assert.equal(scroller.scrollLeft, 0);
+
+  view.pending = { selected: new Set() };
+  scroller.scrollLeft = 220;
+  view.show(cards, { interactive: true, selectedId: cards[1].id });
+  assert.equal(scroller.scrollLeft, 220, "同一互利请求选择牌后不得回到左侧");
+
+  scroller.scrollLeft = 380;
+  nextScrollWidth = 500;
+  view.show(cards.slice(0, 2), { interactive: true, selectedId: cards[0].id });
+  assert.equal(scroller.scrollLeft, 200, "牌池缩短后必须 clamp 到新的最右侧");
+
+  view.pending = null;
+  view.hide();
+  nextScrollWidth = 700;
+  view.show(cards, { interactive: true });
+  assert.equal(scroller.scrollLeft, 0, "新公开牌池请求不得继承旧请求位置");
+});
+
 test("UI·手牌：电脑玩家模板只暴露手牌数量", () => {
   const human = makePlayer("h", 0, "dawn", "human"), ai = makePlayer("ai", 1, "dusk");
   ai.hand.push({ ...instance("counter"), name: "绝密名称" });
@@ -43391,6 +43750,44 @@ const renderResponseEventHtml = async (presentation) => {
     if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
   }
 };
+
+test("UI·响应思考：真实 setThinking 链为晨昏角色名着色且正文保持普通语义", async () => {
+  const indicator = {
+    innerHTML: "",
+    classList: { toggle() { } }
+  };
+  const fake = {
+    game: null,
+    elements: {
+      thinking_indicator: indicator,
+      action_prompt: { classList: { toggle() { } } }
+    },
+    thinkingPlayerId: null,
+    thinkingMessage: ""
+  };
+  for (const [team, name] of [["dawn", "晨星角色"], ["dusk", "暮影角色"]]) {
+    UIManager.prototype.setThinking.call(
+      fake,
+      true,
+      { id: `${team}-thinker`, name, battleTeam: team, character: null },
+      "正在考虑是否反制"
+    );
+    assert.match(
+      indicator.innerHTML,
+      new RegExp(`<strong class="thinking-player-name team-${team}">${name}</strong>`)
+    );
+    assert.match(indicator.innerHTML, /<span>正在考虑是否反制<\/span>/);
+    assert.equal((indicator.innerHTML.match(/team-(?:dawn|dusk)/g) ?? []).length, 1);
+  }
+  const css = await readFile(projectFile("css/components.css"), "utf8");
+  assert.match(
+    css, /\.thinking-indicator \.thinking-player-name\.team-dawn\s*\{[^}]*color:\s*var\(--dawn\)/s
+  );
+  assert.match(
+    css, /\.thinking-indicator \.thinking-player-name\.team-dusk\s*\{[^}]*color:\s*var\(--dusk\)/s
+  );
+  assert.match(css, /\.thinking-indicator div span\s*\{[^}]*color:\s*var\(--text-secondary\)/s);
+});
 
 test("UI·响应窗口：响应窗口保持居中浮层原布局且中央结算卡在普通阶段下移", async () => {
   const css = await readFile(projectFile("css/layout.css"), "utf8");
@@ -44183,6 +44580,72 @@ test("UI·中央结算卡：none 型主动技能：中央结算卡经 displayTar
     );
     assert.match(markup, /作用对象/);
     assert.match(markup, new RegExp(`${source.name}（自己）`));
+  }
+});
+
+test("UI·日志：位于底部时新日志继续自动跟随", () => {
+  const previousDocument = globalThis.document;
+  const list = {
+    scrollTop: 100,
+    scrollHeight: 200,
+    clientHeight: 100,
+    append() { this.scrollHeight += 40; }
+  };
+  globalThis.document = { createElement: () => ({ className: "", innerHTML: "" }) };
+  try {
+    UIManager.prototype.appendLog.call(
+      { elements: { log_list: list }, updateLogCount() { } },
+      { kind: "normal", message: "新日志" },
+      1
+    );
+    assert.equal(list.scrollTop, list.scrollHeight);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
+
+test("UI·日志：用户上滚时新日志保持原阅读位置", () => {
+  const previousDocument = globalThis.document;
+  const list = {
+    scrollTop: 40,
+    scrollHeight: 200,
+    clientHeight: 100,
+    append() { this.scrollHeight += 40; }
+  };
+  globalThis.document = { createElement: () => ({ className: "", innerHTML: "" }) };
+  try {
+    UIManager.prototype.appendLog.call(
+      { elements: { log_list: list }, updateLogCount() { } },
+      { kind: "normal", message: "新日志" },
+      1
+    );
+    assert.equal(list.scrollTop, 40);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
+
+test("UI·日志：用户重新滚到底部后恢复自动跟随", () => {
+  const previousDocument = globalThis.document;
+  const list = {
+    scrollTop: 40,
+    scrollHeight: 200,
+    clientHeight: 100,
+    append() { this.scrollHeight += 40; }
+  };
+  globalThis.document = { createElement: () => ({ className: "", innerHTML: "" }) };
+  try {
+    const fake = { elements: { log_list: list }, updateLogCount() { } };
+    UIManager.prototype.appendLog.call(fake, { kind: "normal", message: "第一条" }, 1);
+    assert.equal(list.scrollTop, 40);
+    list.scrollTop = list.scrollHeight - list.clientHeight;
+    UIManager.prototype.appendLog.call(fake, { kind: "normal", message: "第二条" }, 2);
+    assert.equal(list.scrollTop, list.scrollHeight);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
   }
 });
 

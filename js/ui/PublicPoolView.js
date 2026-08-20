@@ -4,6 +4,7 @@
  * 正常互利结算必须由当前存活角色确认一张牌。
  */
 import { publicPoolCardTemplate } from "./templates.js";
+import { restoreHorizontalCardScroll } from "./horizontalCardScroll.js";
 import { isCardSelectionValid, toggleCardSelection } from "./selectionUtils.js";
 
 export class PublicPoolView {
@@ -47,20 +48,25 @@ export class PublicPoolView {
   无返回值。
 
   读取状态
-  公开卡牌 presentation 字段。
+  公开卡牌 presentation 字段、pending 与当前 tableau scrollLeft。
 
   写入状态
-  element 内容与可见类。
+  element 内容、可见类及同一请求内的 tableau scrollLeft。
 
   调用函数
-  publicPoolCardTemplate。
+  publicPoolCardTemplate、restoreHorizontalCardScroll。
 
   边界与不变量
-  只把公开实体 ID 放入 DOM，不改变牌池顺序或实体身份。
+  只把公开实体 ID 放入 DOM；仅 pending 同一请求重绘时保留位置，新请求从初始位置开始。
   */
   show(cards, options = {}) {
     const selectedId = options.selectedId ?? null;
+    const previousScroller = this.pending ? this.element.querySelector?.(".tableau-cards") : null;
+    const previousScrollLeft = previousScroller?.scrollLeft ?? 0;
     this.element.innerHTML = `<div class="tableau-title">互利公开牌池</div><div class="tableau-cards">${cards.map((card) => publicPoolCardTemplate(card, { selected:card.id === selectedId })).join("")}</div>${options.interactive ? `<div class="tableau-actions"><button class="primary-button" type="button" data-public-confirm${selectedId ? "" : " disabled"}>确定</button></div>` : ""}`;
+    if (previousScroller) {
+      restoreHorizontalCardScroll(this.element.querySelector?.(".tableau-cards"), previousScrollLeft);
+    }
     this.element.classList.remove("is-hidden");
   }
   /*

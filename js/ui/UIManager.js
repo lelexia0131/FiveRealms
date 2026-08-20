@@ -14,6 +14,7 @@ import { PublicPoolView } from "./PublicPoolView.js";
 import { PrivateRevealView } from "./PrivateRevealView.js";
 import { JudgmentView } from "./JudgmentView.js";
 import { createOpponentHandView } from "./handVisibility.js";
+import { restoreHorizontalCardScroll } from "./horizontalCardScroll.js";
 import { toggleCardSelection } from "./selectionUtils.js";
 import { SoundManager } from "../audio/SoundManager.js";
 import { normalizeAiSpeed, readAiSpeedPreference, writeAiSpeedPreference } from "../utils/aiTiming.js";
@@ -42,6 +43,11 @@ const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
     detail: "随机加入二人或三人阵营"
   })
 });
+
+// 5px 区分指针微小抖动与明确拖拽；2px 只吸收滚动尺寸的子像素误差。
+const CARD_DRAG_THRESHOLD_PX = 5;
+const HORIZONTAL_CARD_SCROLL_SELECTOR = ".human-hand, .opponent-hand-strip, .hidden-card-grid, .private-card-grid, .tableau-cards";
+const LOG_BOTTOM_TOLERANCE_PX = 2;
 
 /*
 功能
@@ -211,6 +217,10 @@ export class UIManager {
     this.skillDetailsTrigger = null;
     this.aiSpeed = readAiSpeedPreference();
     this.logCollapsed = false;
+    this.horizontalCardDragRoot = null;
+    this.horizontalCardDragState = null;
+    this.horizontalCardDragSuppressClick = false;
+    this.horizontalCardScrollGameId = null;
     this.animationController = new AnimationController();
     this.interactionController = new InteractionController(this);
     this.publicPoolView = new PublicPoolView(this.elements.public_pool_view, () => this.playSound("select"));
@@ -417,6 +427,7 @@ export class UIManager {
     this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.squad_mode_grid.addEventListener("click", (event) => this.handleSquadModeClick(event));
     this.elements.candidate_grid.addEventListener("click", (event) => this.handleCharacterCandidateClick(event));
+    this.bindHorizontalCardDrag(this.elements.game_screen);
     this.elements.human_hand.addEventListener("click", (event) => this.handleHandClick(event));
     this.elements.cpu_grid.addEventListener("wheel", (event) => {
       const strip = event.target.closest(".opponent-hand-strip");
@@ -754,21 +765,29 @@ export class UIManager {
   完成渲染返回 true；无效/未初始化会话返回 false。
 
   读取状态
-  game.state 公开字段、ActionLegality 展示查询及 UI 临时选择状态。
+  game.state 公开字段、ActionLegality 展示查询、UI 临时选择状态及当前卡牌区域 scrollLeft。
 
   写入状态
-  更新状态指标、玩家面板、手牌、控件与动画 DOM。
+  更新状态指标、玩家面板、手牌、控件、动画 DOM 与本对局滚动上下文 ID。
 
   调用函数
-  isGameAttached、playerPanelTemplate、createOpponentHandView、renderHand、renderControls、AnimationController.flush。
+  isGameAttached、playerPanelTemplate、createOpponentHandView、restoreHorizontalCardScroll、renderHand、renderControls、AnimationController.flush。
 
   边界与不变量
-  对手未知手牌只能经脱敏 ViewModel；render 不得改变 UI owner 或权威状态。
+  对手未知手牌只能经脱敏 ViewModel；同一 gameId 按玩家 ID 独立恢复位置，新对局不得继承旧位置。
   */
   render(game = this.game) {
     if (!this.isGameAttached(game) || !game.state.players.length || !game.state.players[0].character) return false;
     const state = game.state;
     const human = state.players[0];
+    const preserveCardScroll = this.horizontalCardScrollGameId === state.gameId;
+    const opponentHandScroll = new Map();
+    if (preserveCardScroll) {
+      for (const panel of this.elements.cpu_grid.querySelectorAll?.("[data-player-id]") ?? []) {
+        const scroller = panel.querySelector?.(".opponent-hand-strip");
+        if (scroller) opponentHandScroll.set(panel.dataset.playerId, scroller.scrollLeft);
+      }
+    }
     const dawnAlive = state.players.filter((player) => player.alive && player.battleTeam === "dawn").length;
     const duskAlive = state.players.filter((player) => player.alive && player.battleTeam === "dusk").length;
     const metrics = [
@@ -788,6 +807,12 @@ export class UIManager {
       distanceState: this.getDistanceState(targetSource, player),
       opponentHandSlots: createOpponentHandView(human, player)
     })).join("");
+    for (const panel of this.elements.cpu_grid.querySelectorAll?.("[data-player-id]") ?? []) {
+      if (!opponentHandScroll.has(panel.dataset.playerId)) continue;
+      restoreHorizontalCardScroll(
+        panel.querySelector?.(".opponent-hand-strip"), opponentHandScroll.get(panel.dataset.playerId)
+      );
+    }
     this.elements.human_panel.innerHTML = playerPanelTemplate(human, {
       ...targetOptions, isHuman: true, isCurrent: game.currentPlayer?.id === human.id,
       isLegalTarget: Boolean(this.targetState?.legalIds.has(human.id)),
@@ -796,9 +821,10 @@ export class UIManager {
       distanceInfo:this.targetState && targetSource.id !== human.id ? ActionLegality.describeDistance(game, targetSource, human) : null,
       distanceState:this.targetState && targetSource.id !== human.id ? this.getDistanceState(targetSource, human) : null
     });
-    this.renderHand(game, human);
+    this.renderHand(game, human, { preserveScroll: preserveCardScroll });
     this.renderControls(game, human);
     this.animationController.flush(document);
+    this.horizontalCardScrollGameId = state.gameId;
     return true;
   }
 
@@ -908,32 +934,35 @@ export class UIManager {
   render。
 
   输入
-  当前 MatchApplication 与真人 Player。
+  当前 MatchApplication、真人 Player 与是否保留同一对局滚动位置。
 
   输出
   无返回值。
 
   读取状态
-  human.hand、discardState、交互锁与 ActionLegality.canPlayCard。
+  human.hand、discardState、交互锁、当前 scrollLeft 与 ActionLegality.canPlayCard。
 
   写入状态
   更新真人手牌和提示 DOM。
 
   调用函数
-  isInteractionActive、ActionLegality.canPlayCard、handCardTemplate。
+  isInteractionActive、ActionLegality.canPlayCard、handCardTemplate、restoreHorizontalCardScroll。
 
   边界与不变量
-  牌的可用性必须来自合法性查询；UI 禁用不得修改手牌或行动次数。
+  牌的可用性必须来自合法性查询；同一 gameId 才保留位置，新对局首帧从初始位置开始。
   */
-  renderHand(game, human) {
+  renderHand(game, human, { preserveScroll = true } = {}) {
     const inDiscard = Boolean(this.discardState);
     const blockedByInteraction = this.isInteractionActive();
-    this.elements.human_hand.innerHTML = human.hand.map((card) => {
+    const hand = this.elements.human_hand;
+    const previousScrollLeft = preserveScroll ? hand.scrollLeft : 0;
+    hand.innerHTML = human.hand.map((card) => {
       const playable = ActionLegality.canPlayCard(game, human, card).ok;
       const selected = this.discardState?.selectedIds.has(card.id);
       const disabled = !inDiscard && (!playable || blockedByInteraction || game.actionLocked);
       return handCardTemplate(card, { selected, disabled });
     }).join("") || '<div class="empty-hand"><span aria-hidden="true">◇</span><strong>手牌为空</strong><small>下一次摸牌会从牌堆飞入这里</small></div>';
+    restoreHorizontalCardScroll(hand, previousScrollLeft);
     if (this.discardState) this.elements.hand_hint.textContent = `已选 ${this.discardState.selectedIds.size} / ${this.discardState.count}`;
     else if (!this.targetState) this.elements.hand_hint.textContent = `${human.hand.length}张 · 不可用的牌仍可聚焦查看`;
   }
@@ -981,6 +1010,224 @@ export class UIManager {
 
   /*
   功能
+  在稳定对局根节点上幂等注册横向卡牌容器的委托拖动事件。
+
+  调用方
+  bindEvents 与 UI 回归测试。
+
+  输入
+  包含全部静态及动态卡牌区域的 game-screen 根节点。
+
+  输出
+  首次绑定返回 true；同一根节点重复绑定返回 false。
+
+  读取状态
+  horizontalCardDragRoot。
+
+  写入状态
+  horizontalCardDragRoot 及 root/window 事件监听器。
+
+  调用函数
+  handleHorizontalCardPointerDown、handleHorizontalCardPointerMove、handleHorizontalCardPointerEnd、handleHorizontalCardClick、handleHorizontalCardNativeStart。
+
+  边界与不变量
+  事件委托必须覆盖动态 innerHTML；click 使用 capture 阶段以先于各选择 View 消费拖后误点。
+  */
+  bindHorizontalCardDrag(root) {
+    if (this.horizontalCardDragRoot === root) return false;
+    this.horizontalCardDragRoot = root;
+    root.addEventListener("pointerdown", (event) => this.handleHorizontalCardPointerDown(event));
+    root.addEventListener("pointermove", (event) => this.handleHorizontalCardPointerMove(event));
+    root.addEventListener("click", (event) => this.handleHorizontalCardClick(event), true);
+    root.addEventListener("selectstart", (event) => this.handleHorizontalCardNativeStart(event), true);
+    root.addEventListener("dragstart", (event) => this.handleHorizontalCardNativeStart(event), true);
+    window.addEventListener("pointerup", (event) => this.handleHorizontalCardPointerEnd(event));
+    window.addEventListener("pointercancel", (event) => this.handleHorizontalCardPointerEnd(event));
+    return true;
+  }
+
+  /*
+  功能
+  记录任一溢出横向卡牌容器的拖动起点。
+
+  调用方
+  game-screen 委托 pointerdown listener。
+
+  输入
+  主指针按下事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  事件目标所属卡牌容器的滚动宽度、可视宽度与 scrollLeft。
+
+  写入状态
+  horizontalCardDragState、horizontalCardDragSuppressClick。
+
+  调用函数
+  Element.closest。
+
+  边界与不变量
+  只接受鼠标左键/主指针且仅在内容溢出时启动；阈值前不捕获指针，以保留卡牌原生 click 目标。
+  */
+  handleHorizontalCardPointerDown(event) {
+    if (event.button !== 0) return;
+    this.horizontalCardDragSuppressClick = false;
+    const container = event.target.closest(HORIZONTAL_CARD_SCROLL_SELECTOR);
+    if (!container || container.scrollWidth <= container.clientWidth) return;
+    this.horizontalCardDragState = {
+      container,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startScrollLeft: container.scrollLeft,
+      dragged: false
+    };
+  }
+
+  /*
+  功能
+  把超过阈值的横向指针移动转换为当前卡牌容器滚动。
+
+  调用方
+  game-screen 委托 pointermove listener。
+
+  输入
+  当前指针移动事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  horizontalCardDragState 的容器、指针、起始坐标与起始 scrollLeft。
+
+  写入状态
+  当前容器 scrollLeft、拖动 class、dragged 与 horizontalCardDragSuppressClick。
+
+  调用函数
+  Math.abs、setPointerCapture、preventDefault。
+
+  边界与不变量
+  小于等于 5px 的移动仍视为点击；向左拖增加 scrollLeft，且只有明确拖动后才捕获指针并抑制 click。
+  */
+  handleHorizontalCardPointerMove(event) {
+    const state = this.horizontalCardDragState;
+    if (!state || state.pointerId !== event.pointerId) return;
+    const deltaX = event.clientX - state.startX;
+    if (!state.dragged && Math.abs(deltaX) <= CARD_DRAG_THRESHOLD_PX) return;
+    if (!state.dragged) {
+      state.dragged = true;
+      this.horizontalCardDragSuppressClick = true;
+      state.container.classList.add("is-dragging");
+      state.container.setPointerCapture?.(event.pointerId);
+    }
+    state.container.scrollLeft = state.startScrollLeft - deltaX;
+    event.preventDefault();
+  }
+
+  /*
+  功能
+  结束当前卡牌容器拖动并保留本次 click 抑制结论。
+
+  调用方
+  window pointerup/pointercancel listener。
+
+  输入
+  结束当前指针的事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  horizontalCardDragState 及其容器。
+
+  写入状态
+  清空 horizontalCardDragState、移除拖动 class，并同步 horizontalCardDragSuppressClick。
+
+  调用函数
+  releasePointerCapture。
+
+  边界与不变量
+  只结束同一 pointerId；未超过阈值时不得抑制随后卡牌 click。
+  */
+  handleHorizontalCardPointerEnd(event) {
+    const state = this.horizontalCardDragState;
+    if (!state || state.pointerId !== event.pointerId) return;
+    if (state.dragged) {
+      state.container.classList.remove("is-dragging");
+      if (!state.container.hasPointerCapture || state.container.hasPointerCapture(event.pointerId)) {
+        state.container.releasePointerCapture?.(event.pointerId);
+      }
+    }
+    this.horizontalCardDragSuppressClick = state.dragged;
+    this.horizontalCardDragState = null;
+  }
+
+  /*
+  功能
+  在 capture 阶段消费明确拖动后产生的合成 click。
+
+  调用方
+  game-screen 委托 click capture listener。
+
+  输入
+  DOM click 事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  horizontalCardDragSuppressClick 与事件目标所属卡牌容器。
+
+  写入状态
+  消费后清空 horizontalCardDragSuppressClick。
+
+  调用函数
+  Element.closest、preventDefault、stopPropagation。
+
+  边界与不变量
+  普通点击与非卡牌容器点击不得被拦截；拖动只抑制紧随其后的同类容器 click。
+  */
+  handleHorizontalCardClick(event) {
+    if (!this.horizontalCardDragSuppressClick || !event.target.closest(HORIZONTAL_CARD_SCROLL_SELECTOR)) return;
+    this.horizontalCardDragSuppressClick = false;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  /*
+  功能
+  阻止横向卡牌交互建立浏览器原生文字选区或拖放会话。
+
+  调用方
+  game-screen 委托 selectstart/dragstart capture listener。
+
+  输入
+  原生 selectstart 或 dragstart 事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  horizontalCardDragState 与事件目标所属卡牌容器。
+
+  写入状态
+  无。
+
+  调用函数
+  Element.closest、preventDefault。
+
+  边界与不变量
+  潜在拖动从卡牌容器开始后，即使指针移到相邻面板也继续阻止选区；无卡牌交互时不得影响页面其他文本。
+  */
+  handleHorizontalCardNativeStart(event) {
+    const withinScroller = event.target.closest?.(HORIZONTAL_CARD_SCROLL_SELECTOR);
+    if (!withinScroller && !this.horizontalCardDragState) return;
+    event.preventDefault();
+  }
+
+  /*
+  功能
   处理真人手牌点击并路由为弃牌选择或出牌意图。
 
   调用方
@@ -1002,7 +1249,7 @@ export class UIManager {
   toggleCardSelection、render、callbacks.onCard。
 
   边界与不变量
-  普通模式不得提交禁用卡牌；只向 Application 提交公开 cardId。
+  普通模式不得提交禁用卡牌；拖后 click 由 game-screen capture 边界消费；只向 Application 提交公开 cardId。
   */
   handleHandClick(event) {
     const button = event.target.closest("[data-card-id]");
@@ -2112,21 +2359,24 @@ export class UIManager {
   entry.kind/fragments 与 log_list。
 
   写入状态
-  追加日志 DOM、更新计数并滚到底部。
+  追加日志 DOM、更新计数，并按插入前位置决定是否跟随底部。
 
   调用函数
   formatLogEntry、updateLogCount。
 
   边界与不变量
-  动态内容必须经结构化日志格式器转义；不得写入 AI 私密信息。
+  动态内容必须经结构化日志格式器转义；只有插入前距底部不超过 2px 时才跟随新内容；不得写入 AI 私密信息。
   */
   appendLog(entry, count) {
+    const list = this.elements.log_list;
+    const previousScrollTop = list.scrollTop;
+    const wasFollowingBottom = list.scrollHeight - list.scrollTop - list.clientHeight <= LOG_BOTTOM_TOLERANCE_PX;
     const node = document.createElement("div");
     node.className = `log-entry ${entry.kind === "normal" ? "" : `is-${entry.kind}`}`;
     node.innerHTML = formatLogEntry(entry);
-    this.elements.log_list.append(node);
+    list.append(node);
     this.updateLogCount(count);
-    this.elements.log_list.scrollTop = this.elements.log_list.scrollHeight;
+    list.scrollTop = wasFollowingBottom ? list.scrollHeight : previousScrollTop;
   }
 
   /*
