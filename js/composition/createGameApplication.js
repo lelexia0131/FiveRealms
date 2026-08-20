@@ -875,7 +875,6 @@ class MatchApplication {
       choiceCoordinator: this.choiceCoordinator,
       choiceContexts: this.choiceContexts,
       createId,
-      getActionCandidates: (player) => this.aiController.getActionCandidates(player),
       selectAction: (player, options) => this.aiController.selectAction(player, options),
       resolvePlannedAction: (player, action) => this.aiController.resolvePlannedAction(player, action),
       getPlannedSequence: () => this.aiController.getPlannedSequence(),
@@ -884,7 +883,6 @@ class MatchApplication {
       getAiMaxActions: () => this.aiMaxActionsPerTurn,
       getAiReplanAfterEveryAction: () => this.aiReplanAfterEveryAction,
       getActionTargetLabel: (source, cardOrSkill, targets, selection) => getActionTargetLabelFromRuntime(this.state, source, cardOrSkill, targets, selection),
-      getAiBeamWidth: () => AI_RUNTIME_POLICY.beamWidth,
       resetActionLocks: () => this.actionWorkflow.resetLocks(),
       discardCardFromHand: (...args) => this.discardCardFromHand(...args),
       cancelPendingInteractions: () => this.ui.cancelPendingInteractions?.()

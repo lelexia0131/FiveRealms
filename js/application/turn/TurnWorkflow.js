@@ -33,9 +33,9 @@ const REQUIRED_DEPENDENCIES = [
   "sampleAiDecisionWindow", "getRemainingAiDecisionDelay",
   "getTeamRules", "waitForHumanPlayEnd", "runAiPlayPhase", "choiceCoordinator",
   "choiceContexts", "createId",
-  "getActionCandidates", "selectAction", "resolvePlannedAction", "getPlannedSequence",
+  "selectAction", "resolvePlannedAction", "getPlannedSequence",
   "playCard", "useActiveSkill", "getAiMaxActions", "getAiReplanAfterEveryAction",
-  "getActionTargetLabel", "getAiBeamWidth", "resetActionLocks", "discardCardFromHand",
+  "getActionTargetLabel", "resetActionLocks", "discardCardFromHand",
   "cancelPendingInteractions"
 ];
 
@@ -292,10 +292,10 @@ export function createTurnWorkflow(dependencies) {
   thinking/prompt 经 PresentationPort；真实卡牌/技能经注入 action collaborators。
 
   调用函数
-  getActionCandidates、selectAction、resolvePlannedAction、getPlannedSequence、playCard、useActiveSkill。
+  selectAction、resolvePlannedAction、getPlannedSequence、playCard、useActiveSkill。
 
   边界与不变量
-  计划重用必须重绑当前合法实体；执行失败立即停止；真实搜索每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
+  首次动作与后续重规划都不得先叠加 initial pacing；计划重用必须重绑当前合法实体；真实搜索每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
   */
   async function takeAiPlayPhase(player, gameId) {
     const state = runtime.getState();
@@ -303,19 +303,6 @@ export function createTurnWorkflow(dependencies) {
     try {
       runtime.presentation.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
       runtime.presentation.showThinking({ playerId: player.id, message: "正在观察战场与可用资源" });
-      const initialStartedAt = runtime.now();
-      let complexPosition = false;
-      try {
-        complexPosition = runtime.getActionCandidates(player).length > runtime.getAiBeamWidth();
-      } catch (error) {
-        runtime.diagnostics.reportWorkflowError("AI", `${player.name}生成合法动作失败，安全结束出牌阶段`, error);
-        return;
-      }
-      if (!(await runtime.delay(runtime.getAiDelay("initial", {
-        complex:complexPosition,
-        elapsedMs:Math.max(0, runtime.now() - initialStartedAt)
-      })))) return;
-      if (!runtime.isSessionValid(gameId)) return;
       for (let count = 0; count < runtime.getAiMaxActions(); count += 1) {
         if (!runtime.isSessionValid(gameId) || state.isGameOver || !player.alive) break;
         const decisionStartedAt = runtime.now();

@@ -358,7 +358,7 @@ export class AIController {
   冻结 search config 普通对象。
 
   读取状态
-  SearchPolicy 默认、AI_SEARCH_PROFILE 技术余量与 main-thread runtime override getters。
+  SearchPolicy 默认、AI_SEARCH_PROFILE hard watchdog 与 main-thread runtime override getters。
 
   写入状态
   无。
@@ -367,7 +367,7 @@ export class AIController {
   SearchPolicy.snapshot。
 
   边界与不变量
-  runtime override 只服务显式测试/诊断覆盖；Controller 不理解速度档位或 timing RNG；normal deadline 只比 Planner budget 多固定技术余量。
+  runtime override 只服务显式测试/诊断覆盖；Controller 不理解速度档位或 timing RNG；正常 wall-clock 截止只由 Worker 内 SearchBudget.TIME 收束。
   */
   buildSearchConfig(options = {}) {
     const base = this.searchPolicy.snapshot();
@@ -387,7 +387,6 @@ export class AIController {
       ...base,
       searchMode:AI_SEARCH_PROFILE.mode,
       softTargetMs:AI_SEARCH_PROFILE.softTargetMs,
-      searchDeadlineMs:timeBudgetMs + AI_SEARCH_PROFILE.searchDeadlineMarginMs,
       hardWatchdogMs:AI_SEARCH_PROFILE.hardWatchdogMs,
       timeBudgetMs,
       nodeBudget:nodeBudget === null || nodeBudget === undefined

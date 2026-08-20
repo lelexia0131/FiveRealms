@@ -1,6 +1,6 @@
 /*
 模块职责
-Main-thread Dedicated AI Worker client：负责 Worker 创建、SEARCH/CANCEL transport、normal deadline、hard watchdog 与 terminal promise；不执行任何 search/domain 逻辑。
+Main-thread Dedicated AI Worker client：负责 Worker 创建、SEARCH/CANCEL transport、hard watchdog 与 terminal promise；不执行任何 search/domain 逻辑。
 
 上游
 MatchApplication composition / createSearchExecutor。
@@ -26,7 +26,7 @@ searchWorker.js。
 createSearchExecutor。
 
 输入
-Worker URL。
+Worker URL 与可选 timer capability；默认使用 globalThis.setTimeout/clearTimeout。
 
 输出
 { transport, search, cancel, dispose }。
@@ -38,16 +38,21 @@ Worker URL。
 Worker 引用与 pending map。
 
 调用函数
-Worker、addEventListener、postMessage、terminate、setTimeout。
+Worker、addEventListener、postMessage、terminate、scheduleTimeout、cancelTimeout。
 
 边界与不变量
-一个 requestId 只 settle 一次；duplicate RESULT ignored；normal deadline 只请求协作取消，hard watchdog 才终止失控 Worker并重建。
+一个 requestId 只 settle 一次；duplicate RESULT ignored；正常 TIME/NODE 由 Worker 返回，只有 hard watchdog 会终止失控 Worker并重建。
 */
-export function createSearchWorkerClient(workerUrl) {
+export function createSearchWorkerClient(workerUrl, timers = {}) {
+  const scheduleTimeout = typeof timers.setTimeout === "function"
+    ? timers.setTimeout
+    : globalThis.setTimeout;
+  const cancelTimeout = typeof timers.clearTimeout === "function"
+    ? timers.clearTimeout
+    : globalThis.clearTimeout;
   let worker = null;
   let pending = null;
   let disposed = false;
-  let normalDeadlineTimer = null;
   let watchdogTimer = null;
 
   /*
@@ -81,22 +86,14 @@ export function createSearchWorkerClient(workerUrl) {
       const message = event.data ?? {};
       if (disposed || !pending || message.requestId !== pending.requestId) return;
       if (message.type === "RESULT") {
-        clearTimeout(normalDeadlineTimer);
-        normalDeadlineTimer = null;
-        clearTimeout(watchdogTimer);
+        cancelTimeout(watchdogTimer);
         watchdogTimer = null;
         pending.resolve(message.outcome);
         pending = null;
       } else if (message.type === "ERROR") {
-        clearTimeout(normalDeadlineTimer);
-        normalDeadlineTimer = null;
-        clearTimeout(watchdogTimer);
+        cancelTimeout(watchdogTimer);
         watchdogTimer = null;
-        pending.reject(new Error(
-          pending.normalDeadlineTriggered
-            ? "AI search normal deadline"
-            : message.workerError ?? "AI Worker error"
-        ));
+        pending.reject(new Error(message.workerError ?? "AI Worker error"));
         pending = null;
       }
     });
@@ -127,22 +124,20 @@ export function createSearchWorkerClient(workerUrl) {
   无。
 
   读取状态
-  pending、normalDeadlineTimer 与 watchdogTimer。
+  pending 与 watchdogTimer。
 
   写入状态
-  pending 清空、两个 timer 清理并 reject。
+  pending 清空、watchdog timer 清理并 reject。
 
   调用函数
-  clearTimeout。
+  cancelTimeout。
 
   边界与不变量
   一个 promise 只 settle 一次。
   */
   const settleError = (error) => {
     if (!pending) return;
-    clearTimeout(normalDeadlineTimer);
-    normalDeadlineTimer = null;
-    clearTimeout(watchdogTimer);
+    cancelTimeout(watchdogTimer);
     watchdogTimer = null;
     pending.reject(error);
     pending = null;
@@ -162,33 +157,28 @@ export function createSearchWorkerClient(workerUrl) {
     AIController。
 
     输入
-    SearchRequest；searchConfig.searchDeadlineMs 是 Planner budget 之外的小幅技术余量。
+    SearchRequest。
 
     输出
     Promise<WorkerSearchOutcome>；in-flight/watchdog/cancel/dispose 时 reject。
 
     读取状态
-    disposed/pending/request.searchConfig.searchDeadlineMs/hardWatchdogMs。
+    disposed/pending/request.searchConfig.hardWatchdogMs。
 
     写入状态
-    pending、normalDeadlineTimer 与 watchdogTimer。
+    pending 与 watchdogTimer。
 
     调用函数
-    worker.postMessage、setTimeout。
+    worker.postMessage、scheduleTimeout。
 
     边界与不变量
-    同一 client 同时只允许一个 in-flight search；normal deadline 只发 CANCEL 并等待安全收束，hard watchdog 才终止失控 Worker并重建。
+    同一 client 同时只允许一个 in-flight search；TIME/NODE outcome 不得被 transport 降级为 CANCEL，hard watchdog 才终止失控 Worker并重建。
     */
     search(request) {
       if (disposed) return Promise.reject(new Error("AI Worker disposed"));
       if (pending) return Promise.reject(new Error("another AI search is in-flight"));
       return new Promise((resolve, reject) => {
-        pending = {
-          requestId:request.requestId,
-          resolve,
-          reject,
-          normalDeadlineTriggered:false
-        };
+        pending = { requestId:request.requestId, resolve, reject };
         try {
           worker.postMessage({ type:"SEARCH", requestId:request.requestId, request });
         } catch (error) {
@@ -197,21 +187,9 @@ export function createSearchWorkerClient(workerUrl) {
           settleError(error instanceof Error ? error : new Error(String(error)));
           return;
         }
-        const normalDeadlineMs = Number(request.searchConfig?.searchDeadlineMs);
-        if (Number.isFinite(normalDeadlineMs) && normalDeadlineMs > 0) {
-          normalDeadlineTimer = setTimeout(() => {
-            if (!pending || pending.requestId !== request.requestId) return;
-            pending.normalDeadlineTriggered = true;
-            try {
-              worker.postMessage({ type:"CANCEL", requestId:request.requestId });
-            } catch (error) {
-              settleError(error instanceof Error ? error : new Error(String(error)));
-            }
-          }, normalDeadlineMs);
-        }
         const watchdogMs = Number(request.searchConfig?.hardWatchdogMs);
         if (Number.isFinite(watchdogMs) && watchdogMs > 0) {
-          watchdogTimer = setTimeout(() => {
+          watchdogTimer = scheduleTimeout(() => {
             try {
               worker.postMessage({ type:"CANCEL", requestId:request.requestId });
             } catch { /* worker 已不可用，settleError 仍必须收束 pending。 */ }
@@ -268,21 +246,20 @@ export function createSearchWorkerClient(workerUrl) {
     无。
 
     读取状态
-    disposed/pending/normalDeadlineTimer/watchdogTimer。
+    disposed/pending/watchdogTimer。
 
     写入状态
     pending reject、timer 清理、Worker terminate。
 
     调用函数
-    clearTimeout、settleError、worker.terminate。
+    cancelTimeout、settleError、worker.terminate。
 
     边界与不变量
     dispose 后不再接受新 search。
     */
     dispose() {
       disposed = true;
-      clearTimeout(normalDeadlineTimer);
-      clearTimeout(watchdogTimer);
+      cancelTimeout(watchdogTimer);
       settleError(new Error("AI Worker disposed"));
       worker.terminate();
     }

@@ -297,7 +297,7 @@ AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/�
 
 借势搜索枚举“第一目标、公开装备实体、第二目标”的合法组合；第二目标与真人选择器一致，只按第一目标的攻击距离枚举其他角色，随后综合实际「突袭」概率、双方关系、装备价值和防御风险评分。
 
-浏览器生产路径在每次真实 AI 决策前由 Application 使用独立 timing RNG 采样 `{Tmin,Tmax}`：`Tmax` 通过 data-only `SearchRequest` 成为本次 Worker `SearchBudget` 的 wall-clock 上限，搜索自然完成后只补足 `Tmin - elapsed`，超过 `Tmin` 即立即行动。1×、2×、3× 共用同一搜索深度、束宽、隐藏样本、价值、合法性和随机选择规则；更长窗口只会让复杂局面有机会物化更多完整候选。Worker normal deadline 仅比本次预算多 100ms 技术余量，10 秒 hard watchdog 只处理 Worker 卡死的情况。timing RNG、AI search RNG 与真实游戏 RNG 相互隔离；response、discard、initial 等无 Planner 搜索的阶段继续只使用 presentation pacing。
+浏览器生产路径在每次真实 AI 决策前由 Application 使用独立 timing RNG 采样 `{Tmin,Tmax}`：`Tmax` 通过 data-only `SearchRequest` 成为本次 Worker `SearchBudget` 的 wall-clock 上限，搜索自然完成后只补足 `Tmin - elapsed`，超过 `Tmin` 即立即行动。进入出牌阶段时会立即显示观察战场的 thinking 文案，但首个动作不会再额外等待一轮 initial pacing。1×、2×、3× 共用同一搜索深度、束宽、隐藏样本、价值、合法性和随机选择规则；更长窗口只会让复杂局面有机会物化更多完整候选。`SearchBudget.TIME` 是正常时间截止的唯一权威，完整候选可轻微越过 Tmax 后在下一检查点正常收束；node-budget 模式只按 NODE、session cancel 或 10 秒 hard watchdog 停止。hard watchdog 只处理 Worker 卡死。timing RNG、AI search RNG 与真实游戏 RNG 相互隔离；response、discard 等没有 Planner 搜索的阶段继续只使用 presentation pacing。
 
 修改 AI：
 

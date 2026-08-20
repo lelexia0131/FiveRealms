@@ -15,7 +15,7 @@ RUNTIME_POLICY 默认时间配置与注入时钟。
 不读取动作、玩家、卡牌、技能或隐藏信息。
 
 架构约束
-节点预算只统计已经完成候选物化的 SearchNode；不得把模拟调用折算成节点成本。
+TIME 是正常 wall-clock 截止的唯一权威；节点预算只统计已经完成候选物化的 SearchNode，node mode 不读取时间截止；不得把模拟调用折算成节点成本。
 */
 import { AI_RUNTIME_POLICY } from "../policy/AiRuntimePolicy.js";
 
@@ -98,7 +98,7 @@ export class SearchBudget {
   now。
 
   边界与不变量
-  节点模式不读取时钟；已完成的一个不可中断物化可以轻微越过时间预算。
+  节点模式不读取时钟；已开始的不可中断物化可以轻微越过时间预算，并在下一检查点以 TIME 保留完整 best-seen。
   */
   shouldStop() {
     if (this.stopReason !== null) return true;

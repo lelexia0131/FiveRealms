@@ -184,7 +184,7 @@ Main Thread 永远负责：
 - accepted RNG state commit；
 - real action、trigger、presentation 与 audio continuation。
 
-浏览器生产搜索固定使用同一 `NORMAL` 搜索结构与价值模型。Application 在每次真实 decision 前以独立 timing RNG 采样 `{Tmin,Tmax}`，只通过 data-only config 把 `Tmax` 传给 `SearchRequest`；Planner/Worker 不读取速度档位或 Presentation 状态。`Tmin` 只补足搜索后的最低可见节奏，`Tmax` 是本次 `SearchBudget` 的正常 wall-clock 上限；Worker normal deadline 只增加 100ms 候选物化/transport 余量，10 秒 hard watchdog 仅处理失控 Worker。1×、2×、3× 不改变 searchDepth、beamWidth、hiddenStateSamples、价值、合法性或随机选择规则，但更长窗口可以物化更多完整候选。搜索计算 RNG、真实游戏 RNG 与 timing/presentation RNG 相互隔离。
+浏览器生产搜索固定使用同一 `NORMAL` 搜索结构与价值模型。Application 在每次真实 decision 前以独立 timing RNG 采样 `{Tmin,Tmax}`，只通过 data-only config 把 `Tmax` 传给 `SearchRequest`；Planner/Worker 不读取速度档位或 Presentation 状态。`Tmin` 只补足搜索后的最低可见节奏，首次动作与后续重规划都不叠加额外 initial pacing；`Tmax` 只由 `SearchBudget.TIME` 解释为正常 wall-clock 上限，已开始的完整候选可在下一预算检查点正常收束并保留 best-seen。node-budget 模式不使用正常 wall-clock deadline，只由 NODE、session cancel 或 10 秒 hard watchdog 停止；hard watchdog 仅处理失控 Worker。1×、2×、3× 不改变 searchDepth、beamWidth、hiddenStateSamples、价值、合法性或随机选择规则，但更长窗口可以物化更多完整候选。搜索计算 RNG、真实游戏 RNG 与 timing/presentation RNG 相互隔离。
 
 ## 11. Behavior Preservation
 

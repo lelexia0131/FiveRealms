@@ -61,7 +61,7 @@ FR-ARCH-14 current facts：
 - `SearchRng.snapshot` 携带 seed/state/draws；Worker outcome 返回 `rngAfter`；main thread exactly-once commit，新 session 不继承旧 RNG；
 - 搜索固定使用同一 `NORMAL` 结构与价值模型；node-budget override 仍优先。Application 每次真实 decision 只用独立 timing RNG 采样一次 `{Tmin,Tmax}`，经 `selectAction(options.searchTimeBudgetMs)` 与 data-only `SearchRequest.searchConfig.timeBudgetMs` 把 `Tmax` 交给 Worker `SearchBudget`；Planner/Worker 不读取 1×/2×/3×、DOM 或 Presentation 状态；
 - `Tmin` 只用于 `max(0, Tmin - searchElapsed)` 的剩余可见等待，搜索在窗口内完成且已超过 `Tmin` 时立即行动。三档不改变 searchDepth、beamWidth、hiddenStateSamples、价值、合法性、prior、tie-break 或随机选择规则；更长 `Tmax` 只允许物化更多完整候选；
-- Worker normal deadline 为本次 `Tmax + 100ms`，只给不可半截中断的候选物化和 transport 留技术余量；`hardWatchdogMs=10000` 只负责卡死 Worker 的 reject、terminate 与 rebuild。simulation/headless decision window 为零；Real Game RNG、Search RNG 与 timing RNG 继续隔离；
+- 首次动作与后续重规划都不叠加额外 initial pacing；`SearchBudget.TIME` 是正常 wall-clock 截止的唯一权威，完整候选可轻微越过 Tmax 后在下一检查点正常收束并保留 best-seen。node-budget 模式不受正常 wall-clock deadline 影响，只由 NODE、session cancel 或 `hardWatchdogMs=10000` 停止；hard watchdog 负责卡死 Worker 的 reject、terminate 与 rebuild。simulation/headless decision window 为零；Real Game RNG、Search RNG 与 timing RNG 继续隔离；
 - production browser path 使用 `new Worker(url, { type:"module" })`；浏览器缺少 Worker 时 fail fast，不允许静默回退主线程；Node/headless 使用同一 `runSearchRequest` 的 local transport；
 - browser Worker client 初始实例与 watchdog 重建实例共用同一 wiring；postMessage/messageerror 失败会清空 pending 并重建，不在下一次合法搜索上产生 false in-flight；
 - AI 弃牌阶段有 runtime invariant guard：即使 ChoicePort 异常 cancelled/declined/selectedIds 不足，AI 回合结束仍收束到 `hand.length <= hp`；
