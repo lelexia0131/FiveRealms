@@ -510,7 +510,7 @@ export class CounterfactualTerms {
   CandidateMaterializer.materialize。
 
   输入
-  before/after、动作、行动者、深度、回合开始时已有层的来源记录与 Simulator。
+  before/after、动作、行动者、搜索深度、回合开始时已有层的来源记录与 Simulator。
 
   输出
   exposeMarginal、assaultStacksCredit 与 remainingProvenance。
@@ -525,7 +525,9 @@ export class CounterfactualTerms {
   evaluateExposeMarginal、evaluateAssaultStacksMarginal、advanceRemainingRootExposeStacks。
 
   边界与不变量
-  两项边际在深层各除 depth 一次；根层 depth=1 保持原值。
+  破势边际只作为 Search Prior 的原始状态效用差，不进入 final value；
+  窥隙信息项是有限隐藏世界采样得到的 Monte Carlo 价值估计，不得解释为 continuation 概率；
+  只在真实执行后会立即重规划的根动作估算该选择价值，避免深层反事实递归枚举隐藏世界。
   */
   candidateTerms({
     beforeState,
@@ -545,7 +547,7 @@ export class CounterfactualTerms {
           actorId,
           simulator,
           searchBudget
-        ) / depth
+        )
       : 0;
     const assaultStacksCredit = action.card?.definitionId === "assault"
       ? this.evaluateAssaultStacksMarginal(
@@ -555,7 +557,7 @@ export class CounterfactualTerms {
           remainingProvenance,
           simulator,
           searchBudget
-        ) / depth
+        )
       : 0;
     const nextProvenance = action.card?.definitionId === "assault"
       ? this.advanceRemainingRootExposeStacks(

@@ -259,11 +259,9 @@
         "legalActionCount": 3,
         "action": {
           "type": "card",
-          "cardId": "assault",
-          "cardInstanceId": "fr-c-assault",
-          "targetIds": [
-            "fr-c-target"
-          ],
+          "cardId": "charge",
+          "cardInstanceId": "fr-c-charge",
+          "targetIds": [],
           "selection": null
         },
         "stats": {
@@ -284,20 +282,20 @@
           "bestSequence": [
             {
               "type": "card",
+              "cardId": "charge",
+              "cardInstanceId": "fr-c-charge",
+              "targetId": null,
+              "targetIds": [],
+              "selection": null
+            },
+            {
+              "type": "card",
               "cardId": "assault",
               "cardInstanceId": "fr-c-assault",
               "targetId": "fr-c-target",
               "targetIds": [
                 "fr-c-target"
               ],
-              "selection": null
-            },
-            {
-              "type": "card",
-              "cardId": "charge",
-              "cardInstanceId": "fr-c-charge",
-              "targetId": null,
-              "targetIds": [],
               "selection": null
             },
             {
@@ -314,7 +312,7 @@
             0,
             0
           ],
-          "bestValueScore": 1.564,
+          "bestValueScore": 1.6079999999999999,
           "rootLedgers": []
         }
       }

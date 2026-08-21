@@ -6,13 +6,13 @@
 CandidateMaterializer。
 
 下游
-Economics 的既有 END cap/资源尺度、CardValue、ResourceSelectionPolicy 与 SealTiming。
+Economics 的既有 END cap/资源尺度、CardValue 与 ResourceSelectionPolicy。
 
 状态边界
 只读行动者自己的 before/after SearchState 手牌身份，并更新候选的显式数值字段。
 
 信息边界
-只理解行动者自己的可见手牌、动作终止类型、封印定义标识和候选 base transition；不读取敌方隐藏牌。
+只理解行动者自己的可见手牌、动作终止类型和候选 base transition；不读取敌方隐藏牌。
 
 架构约束
 不得执行弃牌或其它模拟、组合最终价值、决定 beam、复制弃牌评分或拥有 Seal 领域概率模型。
@@ -20,21 +20,20 @@ Economics 的既有 END cap/资源尺度、CardValue、ResourceSelectionPolicy �
 import { cardAvailability } from "../value/CardValue.js";
 import { END_OPPORTUNITY_CAP, RESOURCE_MATERIAL_SCALE } from "../value/Economics.js";
 import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js";
-import { sealDelayCost, sealEarlyUsePenalty } from "./SealTiming.js";
 
 export class SiblingTransitionTerms {
   /*
   功能
-  在同一 parent 的候选完整物化后产生 end opportunity 与 seal timing term。
+  在同一 parent 的候选完整物化后产生 end opportunity term。
 
   调用方
   CandidateMaterializer.finalizeSiblings。
 
   输入
-  带 action/baseTransition 的同层候选与当前 depth。
+  带 action/baseTransition 的同层候选。
 
   输出
-  endFallbackBase；候选获得最终 baseTransition 与 sealTimingPenalty。
+  endFallbackBase；终止候选获得包含真实 sibling 机会成本的 baseTransition。
 
   读取状态
   候选动作类型、定义和 base transition。
@@ -43,14 +42,14 @@ export class SiblingTransitionTerms {
   只修改候选的显式数值 term。
 
   调用函数
-  sealDelayCost、sealEarlyUsePenalty。
+  无。
 
   边界与不变量
-  END cap、正收益 non-end sibling、forced-discard option、non-seal sibling 与 depth 公式保持既有运算顺序；
+  END cap、正收益 non-end sibling 与 forced-discard option 保持既有运算顺序；
+  depth 只属于搜索 horizon，不得缩放终止机会成本；
   end 自身的 base（含手牌上限弃牌等状态变化）叠加在机会成本之上，不能被覆盖丢失。
   */
-  finalize(candidates, depth) {
-    let bestNonSealBase = -Infinity;
+  finalize(candidates) {
     let bestPositiveMarginal = 0;
     const forcedDiscardByCardId = new Map();
     for (const candidate of candidates) {
@@ -64,14 +63,10 @@ export class SiblingTransitionTerms {
     }
     let bestForcedDiscardOpportunity = 0;
     for (const candidate of candidates) {
-      if (candidate.action.card?.definitionId !== "seal"
-        && !this.isTerminalAction(candidate.action)) {
-        bestNonSealBase = Math.max(bestNonSealBase, candidate.baseTransition);
-      }
       if (!this.isTerminalAction(candidate.action)) {
         bestPositiveMarginal = Math.max(
           bestPositiveMarginal,
-          candidate.baseTransition * depth
+          candidate.baseTransition
         );
         const forcedOption = forcedDiscardByCardId.get(candidate.action.card?.id);
         if (forcedOption) {
@@ -98,7 +93,7 @@ export class SiblingTransitionTerms {
     const endFallbackBase = -Math.min(
       END_OPPORTUNITY_CAP,
       Math.max(bestPositiveMarginal, forcedDiscardOpportunity)
-    ) / depth;
+    );
     for (const candidate of candidates) {
       if (this.isTerminalAction(candidate.action)) {
         // 机会成本只覆盖“放弃继续出牌”的部分；end 自身状态变化（例如手牌上限弃牌）
@@ -106,13 +101,10 @@ export class SiblingTransitionTerms {
         const ownBase = Number(candidate.baseTerms?.baseTransition);
         candidate.baseTransition = endFallbackBase
           + (Number.isFinite(ownBase) ? ownBase : 0);
-        candidate.forcedDiscardOpportunity = forcedDiscardOpportunity / depth;
+        candidate.forcedDiscardOpportunity = forcedDiscardOpportunity;
       }
-      candidate.sealTimingPenalty = candidate.action.card?.definitionId === "seal"
-        ? sealEarlyUsePenalty(sealDelayCost(bestNonSealBase, depth))
-        : 0;
     }
-    return { endFallbackBase, forcedDiscardOpportunity:forcedDiscardOpportunity / depth };
+    return { endFallbackBase, forcedDiscardOpportunity };
   }
 
   /*

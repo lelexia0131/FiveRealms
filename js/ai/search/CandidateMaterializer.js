@@ -6,7 +6,7 @@
 Planner 与搜索价值回归测试。
 
 下游
-TransitionValue、ValueLedger、FrontierValue、SearchPrior、CounterfactualTerms、SiblingTransitionTerms 与 ActionDescriptor。
+TransitionValue、ValueLedger、FrontierValue、SearchPrior、CounterfactualTerms、SiblingTransitionTerms、ActionDescriptor 与 Economics 尺度。
 
 状态边界
 只读动作前后的 SearchState；反事实写入由注入的数值项生产者隔离。
@@ -17,6 +17,7 @@ TransitionValue、ValueLedger、FrontierValue、SearchPrior、CounterfactualTerm
 架构约束
 每项价值只向唯一归属者请求一次；不得生成/执行真实动作、决定束裁剪或同分裁决，也不得复制最终价值组合公式。
 */
+import { STATE_DELTA_SCALE } from "../value/Economics.js";
 
 export class CandidateMaterializer {
   /*
@@ -252,9 +253,13 @@ export class CandidateMaterializer {
           simulator.buildDiscardKeepValueContext(beforeState, beforeActor)
         )
       : [];
+    // 破势的配对前瞻值帮助有限 beam 保留兑现路线；真实后续效果仍只由 later state delta 进入 final。
+    const domainPrior = (terms.exposeMarginal + terms.assaultStacksCredit) * STATE_DELTA_SCALE;
+    const searchCredit = this.searchPrior.actionSearchPrior(action, player, beforeState);
     const prior = this.counterfactualTerms.hiddenPrior(action, context)
       + this.searchPrior.actionUtility(action, player, beforeState)
-      + this.searchPrior.actionSearchPrior(action, player, beforeState);
+      + searchCredit
+      + domainPrior;
     return {
       action,
       state:afterState,
@@ -271,21 +276,22 @@ export class CandidateMaterializer {
       frontierValue,
       forcedDiscardOptions,
       forcedDiscardOpportunity:0,
+      domainPrior,
+      searchCredit,
       prior,
-      sealTimingPenalty:0,
       transitionValue:null
     };
   }
 
   /*
   功能
-  完成同层结束/封印项，并通过唯一公式计算每个候选的最终 Transition Value。
+  完成同层结束机会项，并通过唯一公式计算每个候选的最终 Transition Value。
 
   调用方
   Planner 完成同一父节点下的所有候选物化后。
 
   输入
-  同层候选记录与真实搜索深度。
+  同层候选记录。
 
   输出
   结束回退基值摘要；每个候选获得 transitionValue。
@@ -294,7 +300,7 @@ export class CandidateMaterializer {
   候选记录中的显式数值项。
 
   写入状态
-  写候选的基础转移、封印时机和最终转移数值字段。
+  写候选的基础转移和最终转移数值字段。
 
   调用函数
   SiblingTransitionTerms.finalize、TransitionValue.composeCandidateValue。
@@ -302,16 +308,13 @@ export class CandidateMaterializer {
   边界与不变量
   最终组合只调用正式归属模块；responseNet 仍为诊断项，不影响公式结果。
   */
-  finalizeSiblings(candidates, depth) {
-    const summary = this.siblingTerms.finalize(candidates, depth);
+  finalizeSiblings(candidates) {
+    const summary = this.siblingTerms.finalize(candidates);
     for (const candidate of candidates) {
       candidate.transitionValue = this.transitionValue.composeCandidateValue({
         baseTransition:candidate.baseTransition,
         responseNet:candidate.responseNet,
         frontierValue:candidate.frontierValue,
-        sealTimingPenalty:candidate.sealTimingPenalty,
-        exposeMarginal:candidate.exposeMarginal,
-        assaultStacksCredit:candidate.assaultStacksCredit,
         spyGapInformationValue:candidate.spyGapInformationValue ?? 0
       });
     }
@@ -495,10 +498,9 @@ export class CandidateMaterializer {
     const comparableSiblings = (siblingCandidates ?? []).map((candidate) => ({
       ...candidate,
       baseTransition:candidate.baseTerms?.baseTransition ?? candidate.baseTransition,
-      sealTimingPenalty:0,
       transitionValue:null
     }));
-    this.finalizeSiblings([...comparableSiblings, terminalCandidate], 1);
+    this.finalizeSiblings([...comparableSiblings, terminalCandidate]);
     return terminalCandidate;
   }
 }

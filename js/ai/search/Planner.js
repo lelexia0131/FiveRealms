@@ -210,7 +210,7 @@ export class Planner {
     }
 
     // 同层转移项是 SearchNode 最终价值的一部分；完成它之后候选才具备 best-seen 资格。
-    this.candidateMaterializer.finalizeSiblings(rootCandidates, 1);
+    this.candidateMaterializer.finalizeSiblings(rootCandidates);
     const initiallyMaterializedRootActions = new Set(
       rootCandidates.map((candidate) => candidate.action)
     );
@@ -267,7 +267,7 @@ export class Planner {
           rootLedgers.push(this.candidateMaterializer.diagnosticEntry(candidate));
         }
       }
-      this.candidateMaterializer.finalizeSiblings(rootCandidates, 1);
+      this.candidateMaterializer.finalizeSiblings(rootCandidates);
     }
     const beam = rootCandidates.map((candidate) => {
       const valueScore = candidate.transitionValue;
@@ -277,6 +277,7 @@ export class Planner {
         terminal:candidate.terminal,
         valueScore,
         pruneScore:this.searchPolicy.pruneScore(valueScore, candidate.prior, 1),
+        searchCredit:candidate.searchCredit,
         sequence:[candidate.action],
         remainingProvenance:candidate.remainingProvenance,
         remainingHistory:[candidate.remainingProvenance],
@@ -293,7 +294,7 @@ export class Planner {
       for (const node of activeBeam) {
         if (budget.shouldStop()) break;
         if (node.terminal) {
-          candidates.push({ ...node, pruneScore:node.valueScore });
+          candidates.push({ ...node, pruneScore:node.valueScore, searchCredit:0 });
           continue;
         }
         const followActions = this.generateFromVisible(node.state, player.id);
@@ -330,7 +331,7 @@ export class Planner {
             }
           }
         }
-        this.candidateMaterializer.finalizeSiblings(nodeCandidates, depth);
+        this.candidateMaterializer.finalizeSiblings(nodeCandidates);
         for (const candidate of nodeCandidates) {
           const valueScore = node.valueScore + candidate.transitionValue;
           const nextNode = {
@@ -343,6 +344,7 @@ export class Planner {
               candidate.prior,
               depth
             ),
+            searchCredit:candidate.searchCredit,
             sequence:[...node.sequence, candidate.action],
             remainingProvenance:candidate.remainingProvenance,
             remainingHistory:[

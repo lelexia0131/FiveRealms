@@ -175,23 +175,35 @@ export class SearchPolicy {
   候选数组与束宽。
 
   输出
-  排序后前 beamWidth 个候选。
+  不超过 beamWidth 个候选；保留 prior 排序结果及真实价值最高候选。
 
   读取状态
-  候选 pruneScore。
+  候选 pruneScore、valueScore 与显式 searchCredit。
 
   写入状态
   原地排序候选数组。
 
   调用函数
-  无。
+  bestByValue。
 
   边界与不变量
-  比较器保持 b-a；相等项依赖 JavaScript 稳定排序维持生成顺序。
+  比较器保持 b-a；相等项依赖 JavaScript 稳定排序维持生成顺序；
+  Search Prior 可以决定探索顺序，但不能把已完整物化的最高真实价值候选完全挤出 beam。
   */
   prune(candidates, beamWidth) {
     candidates.sort((a,b) => b.pruneScore - a.pruneScore);
-    return candidates.slice(0, beamWidth);
+    const beam = candidates.slice(0, beamWidth);
+    const bestValueCandidate = this.bestByValue(candidates);
+    if (beam.length && bestValueCandidate && !beam.includes(bestValueCandidate)) {
+      // Prior 是有限预算下的探索启发式；至少保留一个槽位给当前已证明的真实价值最优路径。
+      let replacementIndex = beam.length - 1;
+      while (replacementIndex >= 0 && beam[replacementIndex].searchCredit > 0) {
+        replacementIndex -= 1;
+      }
+      if (replacementIndex < 0) replacementIndex = beam.length - 1;
+      beam[replacementIndex] = bestValueCandidate;
+    }
+    return beam;
   }
 
   /*

@@ -90,7 +90,7 @@ export class TransitionValue {
   Planner 根节点和深层候选展开。
 
   输入
-  动作、actor、before/after、depth、end 机会成本与 resolutionScale 查询函数。
+  动作、actor、before/after、仅作 horizon 诊断的 depth、end 机会成本与 resolutionScale 查询函数。
 
   输出
   包含逐 term 数值和 baseTransition 的不可变语义对象。
@@ -105,7 +105,8 @@ export class TransitionValue {
   actionEconomicValue、stateDelta、getResolutionScale。
 
   边界与不变量
-  只有非零 economic 读取 resolutionScale；after-state 变化只经 stateDelta×0.08 一次进入。
+  只有非零 economic 读取 resolutionScale；after-state 变化只经 stateDelta×0.08 一次进入；
+  depth 只限制 Planner 的搜索 horizon，不得缩放动作价值。
   */
   evaluateBase({
     action,
@@ -124,7 +125,7 @@ export class TransitionValue {
     const immediate = (economic * resolutionScale) * executionProbability;
     const stateDelta = this.stateDelta(beforeState, afterState, player.id);
     const stateDeltaValue = stateDelta * STATE_DELTA_SCALE;
-    const baseTransition = (immediate + stateDeltaValue) / depth;
+    const baseTransition = immediate + stateDeltaValue;
     return {
       economic,
       resolutionScale,
@@ -139,13 +140,13 @@ export class TransitionValue {
 
   /*
   功能
-  组合 base transition、terminal frontier、封印 timing 与领域边际为最终候选值。
+  组合 base transition、terminal frontier 与信息选择价值为最终候选值。
 
   调用方
   Planner 与直接测试入口。
 
   输入
-  baseTransition、诊断 responseNet、frontier、seal penalty、expose 与 assault stack 边际。
+  baseTransition、terminal frontier 与窥隙信息选择价值。
 
   输出
   当前候选的最终 Transition Value。
@@ -160,19 +161,15 @@ export class TransitionValue {
   无。
 
   边界与不变量
-  response 已完整包含在 state delta 中故不再相加；领域边际按既有相加顺序统一乘 0.08。
+  response 与实际后续效果已包含在 state delta 中故不再相加；Expose/既有破势边际只作 Search Prior，
+  不得与后续 after-state 重复进入 final；窥隙项是未包含在状态中的 Monte Carlo 信息选择价值，不是概率。
   */
   composeCandidateValue({
     baseTransition,
-    responseNet = 0,
     frontierValue = 0,
-    sealTimingPenalty = 0,
-    exposeMarginal = 0,
-    assaultStacksCredit = 0,
     spyGapInformationValue = 0
   }) {
     return baseTransition + frontierValue
-      - sealTimingPenalty
-      + (exposeMarginal + assaultStacksCredit + spyGapInformationValue) * STATE_DELTA_SCALE;
+      + spyGapInformationValue * STATE_DELTA_SCALE;
   }
 }
