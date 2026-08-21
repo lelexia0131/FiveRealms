@@ -150,9 +150,9 @@ export class Planner {
   simulatorFactory、searchBudgetFactory、CandidateMaterializer、SearchPolicy、generateFromVisible、yieldControl。
 
   边界与不变量
-  一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；TIME/NODE 绝不从未完整物化的搜索前沿重选；
-  根层已物化 end 可作为安全基线；未物化 end 只有在所有 non-end roots 都已比较时才能补算。
-  预算中断且已知候选全为负时，返回原物化顺序中下一个未物化 non-end 根动作，不追加价值查询、模拟、节点或随机调用。
+  一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；TIME/NODE 绝不执行未物化动作；
+  根层已物化 end 可作为安全基线；未物化 end 只有在所有 non-end roots 都已比较且全为负时才能补算。
+  预算中断且已知候选全为负时，只对剩余 non-end roots 执行有限的深度一补评估，不继续束搜索或随机选择。
   */
   async plan(player, visibleState, rootActions, options = {}) {
     this.lastPlannedSequence = [];
@@ -208,6 +208,44 @@ export class Planner {
 
     // 同层转移项是 SearchNode 最终价值的一部分；完成它之后候选才具备 best-seen 资格。
     this.candidateMaterializer.finalizeSiblings(rootCandidates, 1);
+    const initiallyMaterializedRootActions = new Set(
+      rootCandidates.map((candidate) => candidate.action)
+    );
+    const unmaterializedNonTerminalRoots = rootActions.filter((action) => (
+      !this.candidateMaterializer.findTerminalAction([action])
+      && !initiallyMaterializedRootActions.has(action)
+    ));
+    const bestMaterializedRoot = rootCandidates.reduce((best, candidate) => (
+      !best || candidate.transitionValue > best.transitionValue ? candidate : best
+    ), null);
+    const interruptedByBudget = budget.stopReason === "NODE" || budget.stopReason === "TIME";
+    if (interruptedByBudget && bestMaterializedRoot?.transitionValue < 0
+      && unmaterializedNonTerminalRoots.length) {
+      // 预算只中止后续搜索；有限 root rescue 仍完整计算每个剩余根动作，
+      // 从而既不猜测未评估动作，也不让未物化 end 越过未知 sibling。
+      for (const action of unmaterializedNonTerminalRoots) {
+        budget.observeSimulation();
+        const state = simulator.apply(visibleState, action, player.id);
+        const candidate = this.candidateMaterializer.materialize({
+          action,
+          beforeState:visibleState,
+          afterState:state,
+          player,
+          depth:1,
+          remainingProvenance:context.rootProvenance,
+          simulator,
+          context,
+          collectDiagnostics,
+          searchBudget:budget
+        });
+        rootCandidates.push(candidate);
+        budget.observeNode();
+        if (collectDiagnostics) {
+          rootLedgers.push(this.candidateMaterializer.diagnosticEntry(candidate));
+        }
+      }
+      this.candidateMaterializer.finalizeSiblings(rootCandidates, 1);
+    }
     const beam = rootCandidates.map((candidate) => {
       const valueScore = candidate.transitionValue;
       return {
@@ -303,15 +341,10 @@ export class Planner {
 
     budget.complete();
     const materializedRootActions = new Set(rootCandidates.map((candidate) => candidate.action));
-    const unmaterializedNonTerminalRoots = rootActions.filter((action) => (
-      !this.candidateMaterializer.findTerminalAction([action])
-      && !materializedRootActions.has(action)
-    ));
     let choice = this.searchPolicy.selectFinal({
       stopReason:budget.stopReason,
       completedCandidates:activeBeam,
-      bestSeenCandidate,
-      nextUnmaterializedRootAction:unmaterializedNonTerminalRoots[0] ?? null
+      bestSeenCandidate
     });
 
     // 已物化 end 可在任何停止原因下比较；未物化 end 只有在全部 non-end
@@ -322,6 +355,9 @@ export class Planner {
         this.candidateMaterializer.findTerminalAction([action])
         || materializedRootActions.has(action)
       ));
+      const allMaterializedNonTerminalRootsNegative = rootCandidates
+        .filter((candidate) => !this.candidateMaterializer.findTerminalAction([candidate.action]))
+        .every((candidate) => candidate.transitionValue < 0);
       const terminalInFinalBeam = activeBeam.find(
         (node) => this.candidateMaterializer.findTerminalAction([node.action])
       );
@@ -331,7 +367,8 @@ export class Planner {
             (node) => this.candidateMaterializer.findTerminalAction([node.action])
           );
       let terminalChoice = terminalInFinalBeam ?? materializedRootTerminal;
-      if (!terminalChoice && allNonTerminalRootsMaterialized) {
+      if (!terminalChoice && allNonTerminalRootsMaterialized
+        && allMaterializedNonTerminalRootsNegative) {
         budget.observeSimulation();
         const terminalState = simulator.apply(
           visibleState,
@@ -359,8 +396,7 @@ export class Planner {
           frontierResidual:fallback.frontierResidual
         };
       }
-      if (terminalChoice && (!choice || (choice.valueScore !== null
-        && terminalChoice.valueScore > choice.valueScore))) {
+      if (terminalChoice && (!choice || terminalChoice.valueScore > choice.valueScore)) {
         choice = terminalChoice;
       }
     }

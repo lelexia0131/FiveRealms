@@ -172,17 +172,17 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   非负 raw information option value；完全已知或空手牌时为零。
 
   读取状态
-  目标 handCount/knownCards、Belief 派生的防御/进攻资源概率、HP 与公开攻击暴露。
+  目标 handCount/knownCards、remainingCardCounts、Belief 派生的关键资源概率、HP 与公开攻击暴露。
 
   写入状态
   无。
 
   调用函数
-  cardAvailability、ThreatValue.incomingExposure、clampProbability。
+  cardAvailability、cardEstimateDistribution、remainingCardDensity、ThreatValue.incomingExposure、clampProbability。
 
   边界与不变量
-  公式不读取 authoritative 隐藏牌面，也不以阵营给固定加减分；
-  反制身份已在通用身份不确定性中，且其阻止窥探的价值由 resolution scale 结算，不再单独奖励以避免双计；
+  公式不读取 authoritative 隐藏牌面，也不以阵营给固定加减分；身份熵只来自合法剩余牌池；
+  关键资源只计算 belief 下“是否至少一张”的不确定性，不能把期望数量当作概率；
   本项只表示身份与关键资源不确定性的减少，不复制 knownCards 供后续具体动作使用时的收益。
   */
   privatePeekInformationValue(state, target, revealCount) {
@@ -200,15 +200,29 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     const survivalRisk = clampProbability(
       missingHpRatio + incomingExposure(state, target) / HP_VALUE
     );
-    const revealFraction = revealed / unknownCount;
-    const identityUncertainty = revealed * Math.log2(unknownCount + 1);
+    const identityEntropy = Object.keys(DOMAIN_CARD_DEFINITIONS).reduce((sum, definitionId) => {
+      const density = remainingCardDensity(state?.remainingCardCounts ?? null, definitionId);
+      return density > PROBABILITY_EPSILON ? sum - density * Math.log2(density) : sum;
+    }, 0);
+    const identityUncertainty = revealed * identityEntropy;
     const assaultChance = clampProbability(target.assaultResponseProbability);
     const blockChance = clampProbability(target.blockProbability);
-    const recoverChance = clampProbability(target.expectedRecoverCount);
+    const recoverChance = clampProbability(
+      this.cardEstimateDistribution(
+        target,
+        "recover",
+        state?.remainingCardCounts ?? null
+      ).reduce(
+        (sum, branch) => sum + (branch.count >= 1 ? branch.probability : 0),
+        0
+      )
+    );
+    const counterChance = clampProbability(target.counterProbability);
     const offensiveResourceUncertainty = assaultChance * (1 - assaultChance);
     const defensiveResourceUncertainty = blockChance * (1 - blockChance)
-      + recoverChance * (1 - recoverChance);
-    return identityUncertainty + revealFraction * (
+      + recoverChance * (1 - recoverChance)
+      + counterChance * (1 - counterChance);
+    return identityUncertainty + revealed * (
       offensiveResourceUncertainty
       + defensiveResourceUncertainty * (1 + survivalRisk)
     );

@@ -21,6 +21,7 @@ import { AI_RUNTIME_POLICY } from "../policy/AiRuntimePolicy.js";
 import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js";
 import { sealUseValue } from "./SealPrior.js";
 import {
+  cardAvailability,
   getBaseCardAiValue,
   getEquipmentKeepValueDeduction,
   getRoleCardAiValue,
@@ -249,7 +250,7 @@ export class SearchPrior {
           value -= 12;
         }
       }
-      if (["plunder", "destroy", "scout"].includes(card.definitionId)) {
+      if (["plunder", "destroy"].includes(card.definitionId)) {
         const equipmentValue = target.equipmentDefinitionId || target.equipment
           ? (card.definitionId === "plunder" ? 1 : 2)
           : 0;
@@ -257,6 +258,14 @@ export class SearchPrior {
           5,
           (target.hand?.length ?? target.handCount ?? 0) + equipmentValue
         );
+      }
+      if (card.definitionId === "scout") {
+        const knownExpectedCount = (target.knownCards ?? [])
+          .reduce((sum, entry) => sum + cardAvailability(entry), 0);
+        value += Math.min(5, Math.max(
+          0,
+          (target.hand?.length ?? target.handCount ?? 0) - knownExpectedCount
+        ));
       }
       if (!enemy && ["plunder", "destroy"].includes(card.definitionId)) value -= 30;
       if (enemy && ["assault", "duel", "plunder", "destroy"].includes(card.definitionId)) {
