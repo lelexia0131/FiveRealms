@@ -15776,6 +15776,429 @@ test("AI·搜索：规划序列中的 end 始终位于末尾且真实 AI 仍能�
   assert.equal(game.state.phase, "play");
 });
 
+/*
+功能
+把同一根状态的动作完整物化为可比较候选，供强制弃牌机会成本回归复用。
+
+调用方
+AI·搜索的 end/mandatory-discard 专项测试。
+
+输入
+独立 Game fixture、行动者、根 SearchState 与根候选数组。
+
+输出
+已完成 sibling terms 与 final transition 组合的候选数组。
+
+读取状态
+Planner 正式 CandidateMaterializer 与输入 SearchState。
+
+写入状态
+只写 Simulator 的独立克隆和候选数值记录，不修改真实 GameState。
+
+调用函数
+CandidateMaterializer.createContext/materialize/finalizeSiblings、Simulator.apply。
+
+边界与不变量
+所有根动作必须来自同一状态；不替换 SearchPrior、State Value 或 Transition Value owner。
+*/
+function materializeRootSearchCandidates(game, actor, visible, roots) {
+  const materializer = game.aiController.planner.candidateMaterializer;
+  const simulator = new Simulator(visible);
+  const context = materializer.createContext(actor, visible, roots);
+  const candidates = roots.map((action) => materializer.materialize({
+    action,
+    beforeState: visible,
+    afterState: simulator.apply(visible, action, actor.id),
+    player: actor,
+    depth: 1,
+    remainingProvenance: context.rootProvenance,
+    simulator,
+    context,
+    collectDiagnostics: false
+  }));
+  materializer.finalizeSiblings(candidates, 1);
+  return candidates;
+}
+
+test("AI·搜索：强制弃牌时确定格挡的突袭仍明显优于白弃", async () => {
+  const actor = makePlayer("forced-assault-actor", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("forced-assault-enemy", 1, "dusk", "ai", 5);
+  actor.maxHp = 3;
+  actor.hp = 3;
+  const assault = instance("assault");
+  const enemyBlock = instance("block");
+  actor.hand.push(assault, instance("block"), instance("counter"), instance("recover"));
+  enemy.hand.push(enemyBlock);
+  actor.aiMemory.knownCardsByPlayer[enemy.id] = { [enemyBlock.id]: enemyBlock.definitionId };
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  game.aiController.knowledge.sampleHiddenWorlds = () => [];
+  const visible = createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const roots = game.aiController.getActionCandidates(actor);
+  const candidates = materializeRootSearchCandidates(game, actor, visible, roots);
+  const assaultCandidate = candidates.find((candidate) => candidate.action.card?.id === assault.id);
+  const endCandidate = candidates.find((candidate) => candidate.action.type === "end");
+  assert.ok(assaultCandidate && endCandidate);
+  assert.ok(
+    assaultCandidate.transitionValue - endCandidate.transitionValue > AI_RUNTIME_POLICY.nearTieRange,
+    `突袭 ${assaultCandidate.transitionValue} 与 end ${endCandidate.transitionValue} 不得仍是 near tie`
+  );
+  const enemyAfterAssault = assaultCandidate.state.players.find((player) => player.id === enemy.id);
+  assert.equal(enemyAfterAssault.handCount, 0);
+  assert.equal(enemyAfterAssault.blockProbability, 0);
+  const chosen = await game.aiController.planner.plan(
+    actor, visible, roots, { gameId: game.state.gameId }
+  );
+  assert.equal(chosen.card?.id, assault.id);
+});
+
+test("AI·搜索：重复突袭实例经 Worker 根边界仍与实际强制弃牌身份对齐", async () => {
+  const actor = makePlayer("forced-duplicate-actor", 0, "dawn", "ai", 3);
+  const enemy = makePlayer("forced-duplicate-enemy", 1, "dusk", "ai", 5);
+  const allyA = makePlayer("forced-duplicate-ally-a", 2, "dawn", "ai", 1);
+  const allyB = makePlayer("forced-duplicate-ally-b", 3, "dawn", "ai", 2);
+  actor.hp = 4;
+  const lightning = instance("lightning");
+  const assaults = [instance("assault"), instance("assault"), instance("assault")];
+  const enemyBlock = instance("block");
+  actor.hand.push(
+    lightning,
+    ...assaults,
+    instance("block"),
+    instance("counter"),
+    instance("recover")
+  );
+  enemy.hand.push(enemyBlock);
+  actor.aiMemory.knownCardsByPlayer[enemy.id] = { [enemyBlock.id]: enemyBlock.definitionId };
+  const { game } = makeGame([actor, enemy, allyA, allyB]);
+  actor.turnFlags.attackLimit = 2;
+  actor.attackLimit = 2;
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  game.aiController.knowledge.sampleHiddenWorlds = () => [];
+  const visible = createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const roots = game.aiController.getActionCandidates(actor);
+  const assaultRoots = roots.filter((action) => action.card?.definitionId === "assault");
+  assert.equal(
+    new Set(assaultRoots.map((action) => action.card.id)).size,
+    assaults.length,
+    JSON.stringify(roots.map((action) => ({
+      type:action.type,
+      cardId:action.card?.definitionId ?? null,
+      cardInstanceId:action.card?.id ?? null,
+      targetIds:action.targets?.map((target) => target.id) ?? []
+    })))
+  );
+  assert.deepEqual(
+    new Set(assaultRoots.map((action) => action.card.id)),
+    new Set(assaults.map((card) => card.id))
+  );
+  const candidates = materializeRootSearchCandidates(game, actor, visible, roots);
+  const endCandidate = candidates.find((candidate) => candidate.action.type === "end");
+  const discardedAssaultIds = new Set(
+    endCandidate.forcedDiscardOptions
+      .filter((option) => option.definitionId === "assault")
+      .map((option) => option.cardId)
+  );
+  const legalAssaultIds = new Set(assaultRoots.map((action) => action.card.id));
+  assert.equal(discardedAssaultIds.size, 2);
+  assert.ok([...discardedAssaultIds].every((cardId) => legalAssaultIds.has(cardId)));
+  const nonEndRoots = roots.filter((action) => action.type !== "end");
+  const nonEndCandidates = materializeRootSearchCandidates(game, actor, visible, nonEndRoots);
+  const fallbackContext = game.aiController.candidateMaterializer.createContext(
+    actor,
+    visible,
+    roots
+  );
+  const fallback = game.aiController.candidateMaterializer.terminalFallback({
+    action:roots.find((action) => action.type === "end"),
+    beforeState:visible,
+    afterState:endCandidate.state,
+    player:actor,
+    siblingCandidates:nonEndCandidates,
+    remainingProvenance:fallbackContext.rootProvenance,
+    simulator:new Simulator(visible),
+    context:fallbackContext
+  });
+  assert.equal(fallback.forcedDiscardOpportunity, endCandidate.forcedDiscardOpportunity);
+  assert.equal(fallback.frontierValue, endCandidate.frontierValue);
+  assert.equal(
+    fallback.transitionValue,
+    endCandidate.transitionValue,
+    JSON.stringify({
+      discardedAssaultIds:[...discardedAssaultIds],
+      legalAssaultIds:[...legalAssaultIds],
+      forcedDiscardOpportunity:endCandidate.forcedDiscardOpportunity,
+      regularEndValue:endCandidate.transitionValue,
+      fallbackEndValue:fallback.transitionValue
+    })
+  );
+  game.aiSearchNodeBudgetOverride = roots.filter((action) => action.type !== "end").length;
+  const chosen = await game.aiController.selectAction(actor, {
+    gameId: game.state.gameId,
+    searchTimeBudgetMs: 30000
+  });
+  assert.equal(chosen.type, "card");
+  assert.equal(chosen.card.definitionId, "assault");
+});
+
+test("AI·搜索：多张同定义突袭逐动作重规划时连续兑现仍会白弃的资源", async () => {
+  const actor = makePlayer("forced-replan-actor", 0, "dawn", "ai", 3);
+  const enemy = makePlayer("forced-replan-enemy", 1, "dusk", "ai", 5);
+  const allyA = makePlayer("forced-replan-ally-a", 2, "dawn", "ai", 1);
+  const allyB = makePlayer("forced-replan-ally-b", 3, "dawn", "ai", 2);
+  actor.hp = 4;
+  const lightning = instance("lightning");
+  const assaults = [instance("assault"), instance("assault"), instance("assault")];
+  const enemyBlocks = [instance("block"), instance("block")];
+  actor.hand.push(
+    lightning,
+    ...assaults,
+    instance("block"),
+    instance("counter"),
+    instance("recover")
+  );
+  enemy.hand.push(...enemyBlocks);
+  actor.aiMemory.knownCardsByPlayer[enemy.id] = Object.fromEntries(
+    enemyBlocks.map((card) => [card.id, card.definitionId])
+  );
+  const { game } = makeGame([actor, enemy, allyA, allyB]);
+  actor.turnFlags.attackLimit = 2;
+  actor.attackLimit = 2;
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.cleanupManager.delay = async () => true;
+
+  const firstRoots = game.aiController.getActionCandidates(actor);
+  game.aiSearchNodeBudgetOverride = firstRoots.filter((action) => action.type !== "end").length;
+  const first = await game.aiController.selectAction(actor, {
+    gameId:game.state.gameId,
+    searchTimeBudgetMs:30000
+  });
+  assert.equal(first.card?.definitionId, "assault");
+  assert.equal(await game.playCard(actor, first.card, first.targets, first.selection ?? null), true);
+
+  const secondRoots = game.aiController.getActionCandidates(actor);
+  assert.ok(secondRoots.some((action) => action.card?.definitionId === "assault"));
+  assert.ok(actor.hand.length > actor.hp);
+  game.aiSearchNodeBudgetOverride = secondRoots.filter((action) => action.type !== "end").length;
+  const second = await game.aiController.selectAction(actor, {
+    gameId:game.state.gameId,
+    searchTimeBudgetMs:30000
+  });
+  assert.equal(second.card?.definitionId, "assault");
+});
+
+test("AI·搜索：会被弃的突袭没有合法目标时不产生 forced-discard opportunity", async () => {
+  const actor = makePlayer("forced-no-target-actor", 0, "dawn", "ai", 3);
+  const allyA = makePlayer("forced-no-target-ally-a", 1, "dawn", "ai", 1);
+  const enemyA = makePlayer("forced-no-target-enemy-a", 2, "dusk", "ai", 5);
+  const enemyB = makePlayer("forced-no-target-enemy-b", 3, "dusk", "ai", 6);
+  const allyB = makePlayer("forced-no-target-ally-b", 4, "dawn", "ai", 2);
+  actor.hp = 1;
+  const assault = instance("assault");
+  actor.hand.push(assault, instance("block"));
+  const { game } = makeGame([actor, allyA, enemyA, enemyB, allyB]);
+  actor.turnFlags.attackLimit = 1;
+  actor.attackLimit = 1;
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  const visible = createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const roots = game.aiController.getActionCandidates(actor);
+  assert.ok(!roots.some((action) => action.card?.definitionId === "assault"));
+  const endCandidate = materializeRootSearchCandidates(game, actor, visible, roots)
+    .find((candidate) => candidate.action.type === "end");
+  assert.ok(endCandidate.forcedDiscardOptions.some((option) => option.cardId === assault.id));
+  assert.equal(endCandidate.forcedDiscardOpportunity, 0);
+  const chosen = await game.aiController.planner.plan(
+    actor,
+    visible,
+    roots,
+    { gameId:game.state.gameId }
+  );
+  assert.equal(chosen.type, "end");
+});
+
+test("AI·搜索：不同定义的合法牌不能兑现被弃突袭的 forced-discard opportunity", () => {
+  const actor = makePlayer("forced-definition-actor", 0, "dawn", "ai", 3);
+  const allyA = makePlayer("forced-definition-ally-a", 1, "dawn", "ai", 1);
+  const enemyA = makePlayer("forced-definition-enemy-a", 2, "dusk", "ai", 5);
+  const enemyB = makePlayer("forced-definition-enemy-b", 3, "dusk", "ai", 6);
+  const allyB = makePlayer("forced-definition-ally-b", 4, "dawn", "ai", 2);
+  actor.hp = 1;
+  const assault = instance("assault");
+  const equipment = instance("defenseDevice");
+  actor.hand.push(assault, equipment);
+  const { game } = makeGame([actor, allyA, enemyA, enemyB, allyB]);
+  actor.turnFlags.attackLimit = 1;
+  actor.attackLimit = 1;
+  const visible = createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const roots = game.aiController.getActionCandidates(actor);
+  assert.ok(roots.some((action) => action.card?.id === equipment.id));
+  assert.ok(!roots.some((action) => action.card?.definitionId === "assault"));
+  const endCandidate = materializeRootSearchCandidates(game, actor, visible, roots)
+    .find((candidate) => candidate.action.type === "end");
+  assert.ok(endCandidate.forcedDiscardOptions.some((option) => option.cardId === assault.id));
+  assert.equal(endCandidate.forcedDiscardOpportunity, 0);
+});
+
+test("AI·搜索：强制弃牌的破坏与窥探按实际用途价值胜过直接 end", async () => {
+  const scenarios = [
+    {
+      name: "destroy",
+      cardId: "destroy",
+      enemyEquipment: "energyDevice",
+      enemyHand: []
+    },
+    {
+      name: "scout",
+      cardId: "scout",
+      enemyEquipment: null,
+      enemyHand: ["charge", "assault"]
+    }
+  ];
+  for (const scenario of scenarios) {
+    const actor = makePlayer(`forced-${scenario.name}-actor`, 0, "dawn", "ai", 1);
+    const enemy = makePlayer(`forced-${scenario.name}-enemy`, 1, "dusk", "ai", 5);
+    actor.hp = 3;
+    const use = instance(scenario.cardId);
+    actor.hand.push(use, instance("block"), instance("counter"), instance("recover"));
+    if (scenario.enemyEquipment) enemy.equipment = instance(scenario.enemyEquipment);
+    enemy.hand.push(...scenario.enemyHand.map((definitionId) => instance(definitionId)));
+    const { game } = makeGame([actor, enemy]);
+    game.aiRandomnessRange = 0;
+    game.aiSearchBudgetOverrideMs = 30000;
+    game.aiSearchNodeBudgetOverride = 20000;
+    game.aiController.knowledge.sampleHiddenWorlds = () => [];
+    const visible = createInitialSearchState(
+      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    );
+    const roots = game.aiController.getActionCandidates(actor);
+    const candidates = materializeRootSearchCandidates(game, actor, visible, roots);
+    const useCandidate = candidates.find((candidate) => candidate.action.card?.id === use.id);
+    const endCandidate = candidates.find((candidate) => candidate.action.type === "end");
+    assert.ok(useCandidate && endCandidate, `${scenario.name} 应同时存在 card/end 候选`);
+    assert.ok(
+      useCandidate.transitionValue > endCandidate.transitionValue,
+      `${scenario.name} ${useCandidate.transitionValue} 应优于 end ${endCandidate.transitionValue}`
+    );
+    const chosen = await game.aiController.planner.plan(
+      actor, visible, roots, { gameId: game.state.gameId }
+    );
+    assert.notEqual(chosen.type, "end", `${scenario.name} 不得被白弃`);
+  }
+});
+
+test("AI·搜索：守誓者挑衅后持有破势与破坏时重新规划不得直接白弃", async () => {
+  const actor = makePlayer("forced-oath-log-actor", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("forced-oath-log-enemy", 1, "dusk", "ai", 5);
+  actor.hp = 2;
+  const expose = instance("exposeWeakness");
+  const destroy = instance("destroy");
+  actor.hand.push(expose, destroy, instance("block"), instance("counter"));
+  enemy.equipment = instance("energyDevice");
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  game.aiController.knowledge.sampleHiddenWorlds = () => [];
+  const visible = createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const roots = game.aiController.getActionCandidates(actor);
+  const discardedIds = new Set(
+    rankDiscardCandidates(actor, actor.hand).slice(0, 2).map((card) => card.id)
+  );
+  assert.deepEqual(discardedIds, new Set([expose.id, destroy.id]));
+  const chosen = await game.aiController.planner.plan(
+    actor, visible, roots, { gameId: game.state.gameId }
+  );
+  assert.notEqual(chosen.type, "end");
+  assert.ok([expose.id, destroy.id].includes(chosen.card?.id));
+});
+
+test("AI·搜索：强制弃牌机会仍允许真实负收益的重复装备选择 end", async () => {
+  const actor = makePlayer("forced-negative-actor", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("forced-negative-enemy", 1, "dusk", "ai", 5);
+  actor.hp = 1;
+  actor.equipment = instance("recycleDevice");
+  const duplicate = instance("recycleDevice");
+  actor.hand.push(duplicate, instance("counter"));
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchBudgetOverrideMs = 30000;
+  game.aiSearchNodeBudgetOverride = 20000;
+  game.aiController.knowledge.sampleHiddenWorlds = () => [];
+  const visible = createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const roots = game.aiController.getActionCandidates(actor);
+  const chosen = await game.aiController.planner.plan(
+    actor, visible, roots, { gameId: game.state.gameId }
+  );
+  assert.equal(chosen.type, "end");
+});
+
+test("AI·搜索：手牌未超上限时不产生新的 forced-discard end 惩罚", () => {
+  const actor = makePlayer("no-forced-discard-actor", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("no-forced-discard-enemy", 1, "dusk", "ai", 5);
+  actor.hp = 2;
+  actor.equipment = instance("recycleDevice");
+  actor.hand.push(instance("recycleDevice"), instance("counter"));
+  const { game } = makeGame([actor, enemy]);
+  const visible = createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const roots = game.aiController.getActionCandidates(actor);
+  const candidates = materializeRootSearchCandidates(game, actor, visible, roots);
+  const endCandidate = candidates.find((candidate) => candidate.action.type === "end");
+  assert.ok(endCandidate);
+  assert.equal(endCandidate.forcedDiscardOpportunity ?? 0, 0);
+  assert.equal(endCandidate.transitionValue, endCandidate.baseTerms.baseTransition);
+});
+
+test("AI·搜索：节点预算中断时未物化 end 不得获得特殊 terminal fallback", async () => {
+  const actor = makePlayer("root-starvation-actor", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("root-starvation-enemy", 1, "dusk", "ai", 5);
+  const low = instance("charge");
+  const valuable = instance("harvest");
+  actor.hand.push(low, valuable);
+  const { game } = makeGame([actor, enemy]);
+  const visible = createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const planner = game.aiController.planner;
+  game.aiSearchNodeBudgetOverride = 1;
+  game.aiRandomnessRange = 0;
+  configurePlannerValueStubs(planner, {
+    actionUtility: () => 0,
+    actionEconomicValue: (action) => action.card?.id === low.id
+      ? -1
+      : action.card?.id === valuable.id ? 5 : 0,
+    stateUtility: () => 0
+  });
+  const chosen = await planner.plan(actor, visible, [
+    { type: "card", card: low, targets: [] },
+    { type: "card", card: valuable, targets: [] },
+    { type: "end" }
+  ], { gameId: game.state.gameId });
+  assert.equal(planner.lastSearchStats.stopReason, "NODE");
+  assert.equal(planner.lastSearchStats.expanded, 1);
+  assert.equal(chosen.card?.id, low.id);
+});
+
 test("AI·搜索：手牌超过生命上限时 end 不再因虚假保留将弃资源而胜出合法动作", async () => {
   const actor = makePlayer("overflow-end-actor", 0, "dawn", "ai", 1),
     enemy1 = makePlayer("overflow-end-enemy-1", 1, "dusk", "ai", 5),

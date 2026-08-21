@@ -186,7 +186,8 @@ export class CandidateMaterializer {
   CounterfactualTerms、TransitionValue、ValueLedger、FrontierValue 与 SearchPrior。
 
   边界与不变量
-  基础转移只计算一次；诊断关闭时不构造账本；最终价值尚不在此组合。
+  基础转移只计算一次；end 只读取既有 mandatory-discard 前后身份，不再次模拟；
+  诊断关闭时不构造账本；最终价值尚不在此组合。
   */
   materialize({
     action,
@@ -242,6 +243,15 @@ export class CandidateMaterializer {
       ? this.frontierValue.frontierResidual(afterState, player.id)
       : null;
     const frontierValue = this.frontierValue.finalValue(frontierResidual, terminal);
+    const beforeActor = beforeState.players.find((entry) => entry.id === player.id);
+    const forcedDiscardOptions = terminal && beforeActor
+      ? this.siblingTerms.forcedDiscardOptions(
+          beforeState,
+          afterState,
+          player.id,
+          simulator.buildDiscardKeepValueContext(beforeState, beforeActor)
+        )
+      : [];
     const prior = this.counterfactualTerms.hiddenPrior(action, context)
       + this.searchPrior.actionUtility(action, player, beforeState)
       + this.searchPrior.actionSearchPrior(action, player, beforeState);
@@ -259,6 +269,8 @@ export class CandidateMaterializer {
       responseNet,
       frontierResidual,
       frontierValue,
+      forcedDiscardOptions,
+      forcedDiscardOpportunity:0,
       prior,
       sealTimingPenalty:0,
       transitionValue:null
@@ -434,54 +446,59 @@ export class CandidateMaterializer {
 
   /*
   功能
-  为被束搜索剪出的根终止动作恢复既有回退最终价值。
+  把预算边界补算的根终止动作送回正常候选物化与 sibling finalization 路径。
 
   调用方
   Planner 最终选择。
 
   输入
-  终止后的状态、观察者 ID、同层结束回退基值与可选的终止前状态。
+  end 动作、前后状态、行动者、已物化 non-end siblings、根 provenance、Simulator 与搜索 context。
 
   输出
-  前沿残值与最终 valueScore。
+  与普通根 end 相同 shape 且已完成 transitionValue 的候选记录。
 
   读取状态
-  终止 SearchState。
+  before/after SearchState、已物化 siblings 与正式搜索归属模块。
 
   写入状态
-  无。
+  只写新建终止候选和 siblings 的浅复制，不修改调用方候选或真实 GameState。
 
   调用函数
-  FrontierValue、TransitionValue.composeCandidateValue/evaluateBase。
+  materialize、finalizeSiblings。
 
   边界与不变量
-  不重新计算领域边际；end 自身状态变化由终止前状态经 evaluateBase 一次性计入，
-  与机会成本共同组成最终 base，保留原回退路径的一次最终组合。
+  不再次执行 end 模拟；fallback 必须与普通 end 共同经过 forced-discard/seal sibling owner，
+  不能用预算中断前缺少 end 的 summary 绕过终止机会成本。
   */
-  terminalFallback(afterState, viewerId, endFallbackBase, beforeState = null) {
-    const terminal = Boolean(afterState.playPhaseEnded);
-    const frontierResidual = terminal
-      ? this.frontierValue.frontierResidual(afterState, viewerId)
-      : null;
-    const frontierValue = this.frontierValue.finalValue(frontierResidual, terminal);
-    // end 自身状态变化（例如手牌上限弃牌）与放弃正收益 sibling 的机会成本共同构成最终 base。
-    const ownBase = beforeState
-      ? this.transitionValue.evaluateBase({
-          action:{ type:"end" },
-          player:{ id:viewerId },
-          beforeState,
-          afterState,
-          depth:1
-        }).baseTransition
-      : 0;
-    const valueScore = this.transitionValue.composeCandidateValue({
-      baseTransition:endFallbackBase + ownBase,
-      responseNet:0,
-      frontierValue,
-      sealTimingPenalty:0,
-      exposeMarginal:0,
-      assaultStacksCredit:0
+  terminalFallback({
+    action,
+    beforeState,
+    afterState,
+    player,
+    siblingCandidates,
+    remainingProvenance,
+    simulator,
+    context
+  }) {
+    const terminalCandidate = this.materialize({
+      action,
+      beforeState,
+      afterState,
+      player,
+      depth:1,
+      remainingProvenance,
+      simulator,
+      context,
+      collectDiagnostics:false,
+      searchBudget:null
     });
-    return { frontierResidual, valueScore };
+    const comparableSiblings = (siblingCandidates ?? []).map((candidate) => ({
+      ...candidate,
+      baseTransition:candidate.baseTerms?.baseTransition ?? candidate.baseTransition,
+      sealTimingPenalty:0,
+      transitionValue:null
+    }));
+    this.finalizeSiblings([...comparableSiblings, terminalCandidate], 1);
+    return terminalCandidate;
   }
 }
