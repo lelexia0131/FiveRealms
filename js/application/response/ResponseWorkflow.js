@@ -100,6 +100,7 @@ export function createResponseWorkflow(dependencies) {
     log,
     emitCardUsed,
     getForceAiRescueHuman,
+    isAiDyingRescueGuaranteedImpossible,
     setThinking,
     delayResponse,
     getUsableAssaultCards,
@@ -640,14 +641,18 @@ export function createResponseWorkflow(dependencies) {
     let decision;
     const aiSelfRescue = shouldForceAiSelfRescue(rescuer, target);
     const forcedHumanRescue = shouldForceAiRescueHuman(rescuer, target, runtime.getForceAiRescueHuman());
+    const mustDeclineGuaranteedImpossible = (aiSelfRescue || forcedHumanRescue)
+      && runtime.isAiDyingRescueGuaranteedImpossible?.(rescuer, target) === true;
 
-    if (aiSelfRescue || forcedHumanRescue) {
+    if ((aiSelfRescue || forcedHumanRescue) && !mustDeclineGuaranteedImpossible) {
       decision = await waitForFixedAiDecision(
         rescuer,
         gameId,
         `正在准备救援${target.name}`,
         () => responseResult(unavailableAfterTiming ? RESPONSE_STATUS.UNAVAILABLE : RESPONSE_STATUS.USED)
       );
+    } else if (mustDeclineGuaranteedImpossible) {
+      decision = responseResult(RESPONSE_STATUS.DECLINED);
     } else {
       decision = await waitForDecision(rescuer, request, request.presentation.buttonLabel, { target, source:rescuer, card:legalCard }, availableCards);
     }

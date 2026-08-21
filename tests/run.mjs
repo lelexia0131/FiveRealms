@@ -14173,6 +14173,13 @@ test("AI·模拟器：模拟调息不足时保持0血离散阵亡而不制造半
   assert.equal(next.players[1].alive, false);
   assert.equal(next.players[1].hp, 0);
   assert.equal(next.players[1].survivalChance, .5);
+  const { game } = makeGame([makePlayer("a", 0, "dawn")]);
+  const withoutPartialOutlook = structuredClone(next);
+  delete withoutPartialOutlook.players[1].survivalChance;
+  assert.equal(
+    game.aiController.evaluator.stateUtility(next, "a"),
+    game.aiController.evaluator.stateUtility(withoutPartialOutlook, "a")
+  );
 });
 
 test("AI·模拟器：模拟阵亡会清空手牌装备摘要且评估器只保留死亡惩罚", () => {
@@ -32370,12 +32377,35 @@ test("AI·救援：三人阵营 AI 能协作各交一张调息救回负1血队�
   ally2.hand.push(instance("recover"));
   const { game }
     = makeGame([target, ally1, ally2, enemy]);
-  assert.equal(game.aiController.responsePolicy.assessDyingRescue(ally1, target).strategic, true);
+  ally1.aiMemory.knownCardsByPlayer[ally2.id] = { [ally2.hand[0].id]: "recover" };
+  const assessment = game.aiController.assessDyingRescue(ally1, target);
+  assert.equal(assessment.strategic, true);
+  assert.equal(assessment.guaranteedSurvivable, true);
+  assert.equal(assessment.guaranteedImpossible, false);
   await game.dyingWorkflow.enter(target, enemy);
   assert.equal(target.alive, true);
   assert.equal(target.hp, 1);
   assert.equal(ally1.hand.length, 0);
   assert.equal(ally2.hand.length, 0);
+});
+
+test("AI·救援：当前调息足够时正常响应并救活", async () => {
+  const target = makePlayer("direct-rescue-target", 0, "dawn"),
+    ally = makePlayer("direct-rescue-ally", 1, "dawn"),
+    enemy = makePlayer("direct-rescue-enemy", 2, "dusk");
+  target.hp = 0;
+  ally.hand.push(instance("recover"));
+  const { game } = makeGame([target, ally, enemy]);
+  const assessment = game.aiController.assessDyingRescue(ally, target);
+  assert.equal(assessment.guaranteedSurvivable, true);
+  assert.equal(
+    game.aiController.shouldRespond(ally, "dyingRescue", { target }, ally.hand),
+    true
+  );
+  await game.dyingWorkflow.enter(target, enemy);
+  assert.equal(target.alive, true);
+  assert.equal(target.hp, 1);
+  assert.equal(ally.hand.length, 0);
 });
 
 test("AI·救援：按单张边际价值启动负2血的1+2协作救援", async () => {
@@ -32470,7 +32500,7 @@ test("AI·救援：强制救援：AI 评分函数返回 false 时仍绕过策略
   assert.equal(policyCalls, 0);
 });
 
-test("AI·救援：强制救援：AI 即使无法独自完全救活也必须先使用调息", async () => {
+test("AI·救援：确定必败：AI 无法达到存活条件时不消耗调息", async () => {
   const human = makePlayer("human", 0, "dawn", "human"),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
@@ -32480,11 +32510,30 @@ test("AI·救援：强制救援：AI 即使无法独自完全救活也必须先�
     = makeGame([human, ally, enemy]);
   game.aiController.responsePolicy.shouldRespond = () => false;
   await game.dyingWorkflow.enter(human, enemy);
-  assert.equal(ally.hand.length, 0);
-  assert.equal(ally.statistics.healingDone, 1);
+  assert.equal(ally.hand.length, 1);
+  assert.equal(ally.statistics.healingDone, 0);
   assert.equal(human.hp, 0);
   assert.equal(human.alive, false);
-  assert.ok(ui.logs.some((message) => message.includes(`${human.name}仍处于濒死，还需恢复1点生命`)));
+  assert.ok(ui.logs.some((message) => message.includes(`${human.name}救援失败，阵亡`)));
+});
+
+test("AI·救援：确定必败：普通响应路径不消耗调息", async () => {
+  const target = makePlayer("impossible-target", 0, "dawn"),
+    ally = makePlayer("impossible-ally", 1, "dawn"),
+    enemy = makePlayer("impossible-enemy", 2, "dusk");
+  target.hp = -1;
+  ally.hand.push(instance("recover"));
+  const { game } = makeGame([target, ally, enemy]);
+  const assessment = game.aiController.assessDyingRescue(ally, target);
+  assert.equal(assessment.guaranteedImpossible, true);
+  assert.equal(
+    game.aiController.shouldRespond(ally, "dyingRescue", { target }, ally.hand),
+    false
+  );
+  await game.dyingWorkflow.enter(target, enemy);
+  assert.equal(target.alive, false);
+  assert.equal(ally.hand.length, 1);
+  assert.equal(ally.statistics.healingDone, 0);
 });
 
 test("AI·救援：强制救援：真人负1血时两名 AI 各用一张并救活", async () => {
@@ -32521,7 +32570,7 @@ test("AI·救援：强制救援：真人负2血时同一 AI 跨三轮连续使�
   assert.equal(ally.statistics.healingDone, 3);
 });
 
-test("AI·救援：强制救援：总共仅两张时仍全部使用，真人到0血后阵亡", async () => {
+test("AI·救援：确定必败：多张调息仍不足时不开始救援", async () => {
   const human = makePlayer("human", 0, "dawn", "human"),
     allyA = makePlayer("ally-a", 1, "dawn"),
     allyB = makePlayer("ally-b", 2, "dawn"),
@@ -32535,8 +32584,8 @@ test("AI·救援：强制救援：总共仅两张时仍全部使用，真人到0
   await game.dyingWorkflow.enter(human, enemy);
   assert.equal(human.hp, 0);
   assert.equal(human.alive, false);
-  assert.equal(allyA.hand.length, 0);
-  assert.equal(allyB.hand.length, 0);
+  assert.equal(allyA.hand.length, 1);
+  assert.equal(allyB.hand.length, 1);
 });
 
 test("AI·救援：强制救援：敌方 AI 即使持有调息也不能救真人", async () => {
@@ -32674,6 +32723,7 @@ test("AI·救援：自救响应策略为确定必用，敌方救援为拒绝", (
     enemy = makePlayer("enemy", 2, "dusk");
   const { game }
     = makeGame([a, ally, enemy]);
+  a.hand.push(instance("recover"));
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(
       a, "dyingRescue", { target: a }, [instance("recover")]
@@ -32686,6 +32736,45 @@ test("AI·救援：自救响应策略为确定必用，敌方救援为拒绝", (
     ),
     false
   );
+});
+
+test("AI·救援：隐藏手牌未知时决策不读取真实后续牌面", async () => {
+  const run = async (laterCard) => {
+    const target = makePlayer(`hidden-target-${laterCard}`, 0, "dawn", "human"),
+      responder = makePlayer(`hidden-responder-${laterCard}`, 1, "dawn"),
+      later = makePlayer(`hidden-later-${laterCard}`, 2, "dawn"),
+      enemy = makePlayer(`hidden-enemy-${laterCard}`, 3, "dusk");
+    target.hp = -1;
+    responder.hand.push(instance("recover"));
+    later.hand.push(instance(laterCard));
+    const { game } = makeGame([target, responder, later, enemy]);
+    game.forceAiRescueHuman = false;
+    const assessment = game.aiController.assessDyingRescue(responder, target);
+    const use = game.aiController.shouldRespond(
+      responder,
+      "dyingRescue",
+      { target },
+      responder.hand
+    );
+    await game.dyingWorkflow.enter(target, enemy);
+    return { assessment, use, target, responder, later };
+  };
+  const withHiddenRecover = await run("recover");
+  const withHiddenAssault = await run("assault");
+  assert.equal(withHiddenRecover.assessment.guaranteedImpossible, false);
+  assert.equal(withHiddenAssault.assessment.guaranteedImpossible, false);
+  assert.equal(
+    withHiddenRecover.assessment.maximumFeasibleRecovery,
+    withHiddenAssault.assessment.maximumFeasibleRecovery
+  );
+  assert.equal(withHiddenRecover.use, true);
+  assert.equal(withHiddenAssault.use, true);
+  assert.equal(withHiddenRecover.responder.hand.length, 0);
+  assert.equal(withHiddenAssault.responder.hand.length, 0);
+  assert.equal(withHiddenRecover.target.alive, true);
+  assert.equal(withHiddenAssault.target.alive, false);
+  assert.equal(withHiddenRecover.later.hand.length, 0);
+  assert.equal(withHiddenAssault.later.hand.length, 1);
 });
 
 test("AI·救援：濒死救援在本人后按相对座位环绕顺序消费调息", () => {

@@ -208,7 +208,7 @@ export class ResponseBoundary {
       }
       return remainingCardCounts;
     };
-    const needsRemainingCounts = type === "counter" || type === "skill";
+    const needsRemainingCounts = type === "counter" || type === "skill" || type === "dyingRescue";
     if (needsRemainingCounts) getRemainingCardCounts();
     const rescueOrder = type === "dyingRescue"
       ? this.getDyingRescueOrder(rawContext.target ?? responder)
@@ -377,7 +377,8 @@ export class ResponseBoundary {
       rescueOrder: decision.rescueOrder,
       responderHandDefinitionIds: decision.responderHandDefinitionIds,
       knownCardsByPlayer: decision.knownCardsByPlayer,
-      recoverDensity: decision.recoverDensity
+      recoverDensity: decision.recoverDensity,
+      remainingCardCounts: decision.remainingCardCounts
     });
   }
 

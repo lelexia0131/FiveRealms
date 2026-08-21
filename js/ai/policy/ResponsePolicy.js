@@ -20,6 +20,7 @@ value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query�
 import { getBaseCardAiValue } from "../value/CardValue.js";
 import { cardAvailability } from "../value/CardValue.js";
 import { HP_VALUE } from "../value/Economics.js";
+import { getRecoverHealAmount } from "../../domain/rules/card/CardEffectRules.js";
 
 /*
 功能
@@ -342,7 +343,7 @@ export class ResponsePolicy {
   shouldRespond 与直接策略测试。
 
   输入
-  已过滤的 responder/target、救援顺序、自己手牌定义、合法记忆和 recover density。
+  已过滤的 responder/target、救援顺序、自己手牌定义、合法记忆、recover density 和剩余牌计数。
 
   输出
   冻结字段的救援 assessment object。
@@ -365,9 +366,11 @@ export class ResponsePolicy {
     rescueOrder,
     responderHandDefinitionIds,
     knownCardsByPlayer,
-    recoverDensity
+    recoverDensity,
+    remainingCardCounts
   }) {
     const need = Math.max(1, 1 - target.hp);
+    const recoverHealAmount = getRecoverHealAmount();
     const ownRecover = responderHandDefinitionIds
       .filter((definitionId) => definitionId === "recover").length;
     const responderIndex = rescueOrder.findIndex((player) => player.id === responder.id);
@@ -379,7 +382,26 @@ export class ResponsePolicy {
       const unknownCards = Math.max(0, player.handCount - Object.keys(known).length);
       return sum + knownRecover + unknownCards * recoverDensity;
     }, 0);
-    const remainingAfterThisCard = Math.max(0, need - 1);
+    const knownRecoverCapacity = rescueOrder.reduce((sum, player) => {
+      if (player.id === responder.id) return sum + ownRecover;
+      const known = knownCardsByPlayer[player.id] ?? {};
+      return sum + Object.values(known)
+        .filter((definitionId) => definitionId === "recover").length;
+    }, 0);
+    const unknownRecoverSlots = rescueOrder.reduce((sum, player) => {
+      if (player.id === responder.id) return sum;
+      const known = knownCardsByPlayer[player.id] ?? {};
+      return sum + Math.max(0, player.handCount - Object.keys(known).length);
+    }, 0);
+    const remainingRecoverCount = Number(remainingCardCounts?.recover);
+    const unknownRecoverCapacity = Number.isFinite(remainingRecoverCount)
+      ? Math.min(unknownRecoverSlots, Math.max(0, remainingRecoverCount))
+      : unknownRecoverSlots;
+    const knownFeasibleRecovery = knownRecoverCapacity * recoverHealAmount;
+    const maximumFeasibleRecovery = (
+      knownRecoverCapacity + unknownRecoverCapacity
+    ) * recoverHealAmount;
+    const remainingAfterThisCard = Math.max(0, need - recoverHealAmount);
     const aliveTeam = rescueOrder.filter(
       (player) => player.alive && player.battleTeam === target.battleTeam
     );
@@ -404,6 +426,11 @@ export class ResponsePolicy {
       ownRecover,
       recoverDensity,
       futureExpectedRecover,
+      knownFeasibleRecovery,
+      maximumFeasibleRecovery,
+      unknownRecoverCapacity,
+      guaranteedImpossible: maximumFeasibleRecovery < need,
+      guaranteedSurvivable: knownFeasibleRecovery >= need,
       remainingAfterThisCard,
       strategic,
       immediateDefeatRisk,
@@ -498,22 +525,26 @@ export class ResponsePolicy {
     } = decision;
     const target = context.target ?? responder;
     if (type === "dyingRescue") {
-      if (target.id === responder.id) return true;
       if (target.battleTeam !== responder.battleTeam) return false;
-      if (
-        forceAiRescueHuman
-        && responder.controllerType === "ai"
-        && target.controllerType === "human"
-      ) return true;
       const assessment = this.assessDyingRescue({
         responder,
         target,
         rescueOrder,
         responderHandDefinitionIds,
         knownCardsByPlayer,
-        recoverDensity
+        recoverDensity,
+        remainingCardCounts
       });
       if (!assessment.ownRecover) return false;
+      // 这是由公开座次、合法记忆、手牌槽位和剩余牌池共同给出的容量上界；
+      // 只有即使所有未知槽位都恰为调息仍不足时，才可确定本次救援必败。
+      if (assessment.guaranteedImpossible) return false;
+      if (target.id === responder.id) return true;
+      if (
+        forceAiRescueHuman
+        && responder.controllerType === "ai"
+        && target.controllerType === "human"
+      ) return true;
       return assessment.immediateDefeatRisk
         || assessment.likelyFollowUp
         || assessment.strategic

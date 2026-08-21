@@ -1103,6 +1103,35 @@ export class AIController {
 
   /*
   功能
+  基于当前合法信息评估一名 AI 对濒死目标的救援容量。
+
+  调用方
+  ResponseWorkflow 注入的必败救援查询与直接策略测试。
+
+  输入
+  响应者与濒死目标真实实体。
+
+  输出
+  ResponseBoundary 生成的救援 assessment object。
+
+  读取状态
+  ResponseBoundary 读取的当前公开状态、合法记忆与 Belief。
+
+  写入状态
+  无。
+
+  调用函数
+  ResponseBoundary.assessDyingRescue。
+
+  边界与不变量
+  Controller 只暴露窄查询；不得让 Application 直接访问 Policy 内部 owner。
+  */
+  assessDyingRescue(responder, target) {
+    return this.responsePolicy.assessDyingRescue(responder, target);
+  }
+
+  /*
+  功能
   在重定向备选目标中保持既有首项选择语义。
 
   调用方
