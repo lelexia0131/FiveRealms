@@ -28,10 +28,11 @@ import {
   roleCardDelta
 } from "../value/CardValue.js";
 import {
+  HP_VALUE,
   SKILL_THRESHOLD_OPTION_VALUE,
   STATE_DELTA_SCALE
 } from "../value/Economics.js";
-import { ThreatCalculator } from "../value/ThreatValue.js";
+import { ThreatCalculator, incomingExposure } from "../value/ThreatValue.js";
 
 export const BURNING_FIELD_SEARCH_PRIOR = 8;
 
@@ -159,6 +160,99 @@ export class SearchPrior {
 
   /*
   功能
+  为窥探候选提供廉价的决策相关性排序代理。
+
+  调用方
+  actionUtility 的 scout 分支。
+
+  输入
+  窥探使用者、被查看目标与过滤后 SearchState。
+
+  输出
+  零到一的排序相关性；只用于 prior。
+
+  读取状态
+  使用者合法已知手牌、目标 Belief 资源概率、生命与公开威胁。
+
+  写入状态
+  无。
+
+  调用函数
+  cardAvailability、ThreatValue.incomingExposure。
+
+  边界与不变量
+  只用关键资源的最大二项分布方差作轻量代理，不复制正式 VOI 求和；
+  不读装备或隐藏牌面，不以敌友身份给固定加减分。
+  */
+  scoutDecisionRelevance(actor, target, visible) {
+    const decisionDefinitions = (actor?.hand ?? [])
+      .filter((entry) => cardAvailability(entry) > 0)
+      .map((entry) => entry)
+      .filter((definition) => !definition.subtypes?.includes("information"));
+    const offensiveDecision = Math.min(1, Math.max(
+      0,
+      Number(actor?.expectedAssaultCount) || 0,
+      decisionDefinitions.some((definition) => definition.subtypes?.some(
+        (subtype) => ["attack", "damage", "attack-buff"].includes(subtype)
+      )) ? 1 : 0
+    ));
+    const tacticDecision = decisionDefinitions.some((definition) => (
+      definition.category === "tactic" && definition.counterable !== false
+    )) ? 1 : 0;
+    const protectionDecision = decisionDefinitions.some((definition) => (
+      definition.subtypes?.some(
+        (subtype) => ["defense", "response", "rescue", "support"].includes(subtype)
+      ) || definition.targetType === "multiStage"
+    )) ? 1 : 0;
+    const assaultProbability = Math.min(
+      1, Math.max(0, Number(target.assaultResponseProbability) || 0)
+    );
+    const blockProbability = Math.min(1, Math.max(0, Number(target.blockProbability) || 0));
+    const counterProbability = Math.min(1, Math.max(0, Number(target.counterProbability) || 0));
+    const assaultUncertainty = assaultProbability * (1 - assaultProbability) / 0.25;
+    const blockUncertainty = blockProbability * (1 - blockProbability) / 0.25;
+    const counterUncertainty = counterProbability * (1 - counterProbability) / 0.25;
+
+    if (target.battleTeam !== actor.battleTeam) {
+      const teamThreatRelevance = (visible?.players ?? [])
+        .filter((player) => player.alive && player.battleTeam === actor.battleTeam)
+        .reduce((highest, player) => Math.max(
+          highest,
+          Math.min(1, Math.max(
+            0,
+            (player.maxHp > 0 ? (player.maxHp - player.hp) / player.maxHp : 0)
+              + incomingExposure(visible, player) / HP_VALUE
+          ))
+        ), 0);
+      return Math.min(1, Math.max(
+        blockUncertainty * offensiveDecision,
+        counterUncertainty * tacticDecision,
+        assaultUncertainty * Math.max(teamThreatRelevance, protectionDecision)
+      ));
+    }
+
+    const allySurvivalRelevance = Math.min(1, Math.max(
+      0,
+      (target.maxHp > 0 ? (target.maxHp - target.hp) / target.maxHp : 0)
+        + incomingExposure(visible, target) / HP_VALUE
+    )) * protectionDecision;
+    const enemyKillRelevance = (visible?.players ?? [])
+      .filter((player) => player.alive && player.battleTeam !== actor.battleTeam)
+      .reduce((highest, player) => Math.max(
+        highest,
+        player.maxHp > 0 ? Math.min(1, Math.max(0, (player.maxHp - player.hp) / player.maxHp)) : 0
+      ), 0);
+    return Math.min(1, Math.max(
+      allySurvivalRelevance * Math.max(
+        blockUncertainty,
+        counterUncertainty
+      ),
+      enemyKillRelevance * Math.max(offensiveDecision, tacticDecision) * assaultUncertainty
+    ));
+  }
+
+  /*
+  功能
   计算动作在 beam pruning/ranking 中的既有静态与上下文 prior。
 
   调用方
@@ -262,10 +356,15 @@ export class SearchPrior {
       if (card.definitionId === "scout") {
         const knownExpectedCount = (target.knownCards ?? [])
           .reduce((sum, entry) => sum + cardAvailability(entry), 0);
-        value += Math.min(5, Math.max(
+        const unknownCount = Math.max(
           0,
           (target.hand?.length ?? target.handCount ?? 0) - knownExpectedCount
-        ));
+        );
+        const revealLimit = Math.max(1, Number(card.maxRevealCount) || 1);
+        const revealCoverage = Math.min(revealLimit, unknownCount) / revealLimit;
+        value += getBaseCardAiValue(card.definitionId)
+          * revealCoverage
+          * this.scoutDecisionRelevance(actor, target, visible);
       }
       if (!enemy && ["plunder", "destroy"].includes(card.definitionId)) value -= 30;
       if (enemy && ["assault", "duel", "plunder", "destroy"].includes(card.definitionId)) {

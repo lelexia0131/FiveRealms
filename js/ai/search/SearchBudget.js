@@ -73,6 +73,10 @@ export class SearchBudget {
     this.stateUtilityCalls = 0;
     this.yieldCount = 0;
     this.stopReason = null;
+    this.rootSafetyCompletion = null;
+    this.rootSafetyCandidateActive = false;
+    this.rootSafetyExpandedNodes = 0;
+    this.rootSafetySimulationCalls = 0;
   }
 
   /*
@@ -114,6 +118,81 @@ export class SearchBudget {
 
   /*
   功能
+  在主搜索已因 TIME/NODE 停止后，申请一次有界的根安全补评估。
+
+  调用方
+  Planner 根候选首轮收束。
+
+  输入
+  评估深度与当前尚未完成的根候选数。
+
+  输出
+  SearchBudget 允许该阶段返回 true，否则返回 false。
+
+  读取状态
+  stopReason 与已有 rootSafetyCompletion。
+
+  写入状态
+  最多写入一次 depth=1 的候选数上限。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只有已观察到的 TIME/NODE 可授权；只授权一次 depth=1，上限冻结为申请时的剩余根数。
+  SearchBudget 不读取根动作内容，也不授权深层、beam 或隐藏采样。
+  */
+  requestRootSafetyCompletion({ depth, candidateCount } = {}) {
+    const interrupted = this.stopReason === SEARCH_STOP_REASON.NODE
+      || this.stopReason === SEARCH_STOP_REASON.TIME;
+    const requestedCount = Number(candidateCount);
+    if (!interrupted || depth !== 1 || this.rootSafetyCompletion
+      || !Number.isFinite(requestedCount) || requestedCount < 1) return false;
+    this.rootSafetyCompletion = {
+      depth:1,
+      candidateLimit:Math.floor(requestedCount),
+      startedCandidates:0,
+      completedCandidates:0
+    };
+    return true;
+  }
+
+  /*
+  功能
+  从已授权的根安全阶段领取一个 depth-1 候选物化名额。
+
+  调用方
+  Planner 在每个剩余根动作的 apply 之前。
+
+  输入
+  当前候选深度。
+
+  输出
+  尚有 depth-1 名额时返回 true，否则返回 false。
+
+  读取状态
+  rootSafetyCompletion 授权与当前活动候选。
+
+  写入状态
+  startedCandidates 加一并标记当前候选正在物化。
+
+  调用函数
+  无。
+
+  边界与不变量
+  同时只能有一个候选占用名额；深度不等于一或已达冻结上限时拒绝。
+  */
+  beginRootSafetyCandidate(depth) {
+    const completion = this.rootSafetyCompletion;
+    if (!completion || this.rootSafetyCandidateActive || depth !== completion.depth
+      || completion.startedCandidates >= completion.candidateLimit) return false;
+    completion.startedCandidates += 1;
+    this.rootSafetyCandidateActive = true;
+    return true;
+  }
+
+  /*
+  功能
   记录一个候选已完成全部物化并可登记为 SearchNode。
 
   调用方
@@ -139,6 +218,11 @@ export class SearchBudget {
   */
   observeNode() {
     this.expandedNodes += 1;
+    if (this.rootSafetyCandidateActive) {
+      this.rootSafetyExpandedNodes += 1;
+      this.rootSafetyCompletion.completedCandidates += 1;
+      this.rootSafetyCandidateActive = false;
+    }
     return this.expandedNodes;
   }
 
@@ -168,7 +252,9 @@ export class SearchBudget {
   该计数只作诊断，不参与 node budget 或候选评分。
   */
   observeSimulation(count = 1) {
-    this.simulationCalls += Math.max(0, Number(count) || 0);
+    const observed = Math.max(0, Number(count) || 0);
+    this.simulationCalls += observed;
+    if (this.rootSafetyCandidateActive) this.rootSafetySimulationCalls += observed;
     return this.simulationCalls;
   }
 
@@ -330,6 +416,8 @@ export class SearchBudget {
       counterfactualCalls:this.counterfactualCalls,
       stateUtilityCalls:this.stateUtilityCalls,
       yieldCount:this.yieldCount,
+      rootSafetyExpandedNodes:this.rootSafetyExpandedNodes,
+      rootSafetySimulationCalls:this.rootSafetySimulationCalls,
       stopReason:this.stopReason
     };
   }

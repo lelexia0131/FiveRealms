@@ -16176,7 +16176,7 @@ test("AI·搜索：手牌未超上限时不产生新的 forced-discard end 惩�
   assert.equal(endCandidate.transitionValue, endCandidate.baseTerms.baseTransition);
 });
 
-test("AI·搜索：NODE/TIME 中断时未物化 end 不得越过未比较高价值 sibling", async () => {
+test("AI·搜索 Root Safety：NODE/TIME 补评估真实物化 valuable sibling 并保留数值与状态", async () => {
   for (const mode of ["NODE", "TIME"]) {
     const actor = makePlayer(`root-starvation-${mode}-actor`, 0, "dawn", "ai", 1);
     const enemy = makePlayer(`root-starvation-${mode}-enemy`, 1, "dusk", "ai", 5);
@@ -16197,6 +16197,13 @@ test("AI·搜索：NODE/TIME 中断时未物化 end 不得越过未比较高价�
         now: () => now++
       });
     }
+    let hiddenSampleCalls = 0;
+    planner.candidateMaterializer.counterfactualTerms.sampleHiddenWorlds = () => {
+      hiddenSampleCalls += 1;
+      return [];
+    };
+    planner.generateFromVisible = () => assert.fail("root safety 不得进入 depth2+");
+    planner.searchPolicy.random = () => assert.fail("root safety 不得进入随机 tie-break");
     const evaluatedCardIds = [];
     configurePlannerValueStubs(planner, {
       actionUtility: () => 0,
@@ -16208,6 +16215,16 @@ test("AI·搜索：NODE/TIME 中断时未物化 end 不得越过未比较高价�
       },
       stateUtility: () => 0
     });
+    let valuableCandidate = null;
+    const materializer = planner.candidateMaterializer;
+    const materialize = materializer.materialize.bind(materializer);
+    materializer.materialize = (input) => {
+      const candidate = materialize(input);
+      if (input.depth === 1 && input.action.card?.id === valuable.id) {
+        valuableCandidate = candidate;
+      }
+      return candidate;
+    };
     const chosen = await planner.plan(actor, visible, [
       { type: "card", card: low, targets: [] },
       { type: "card", card: valuable, targets: [] },
@@ -16215,13 +16232,18 @@ test("AI·搜索：NODE/TIME 中断时未物化 end 不得越过未比较高价�
     ], { gameId: game.state.gameId });
     assert.equal(planner.lastSearchStats.stopReason, mode);
     assert.equal(planner.lastSearchStats.expanded, 2);
+    assert.equal(planner.lastSearchStats.rootSafetyExpandedNodes, 1);
+    assert.equal(planner.lastSearchStats.rootSafetySimulationCalls, 1);
     assert.deepEqual(evaluatedCardIds, [low.id, valuable.id]);
     assert.equal(planner.lastSearchStats.bestValueScore, 5);
     assert.equal(chosen.card?.id, valuable.id);
+    assert.ok(valuableCandidate?.state);
+    assert.equal(typeof valuableCandidate?.transitionValue, "number");
+    assert.equal(hiddenSampleCalls, 1);
   }
 });
 
-test("AI·搜索：NODE/TIME 根补评估确认全部 non-end 为负后才选择 end", async () => {
+test("AI·搜索 Root Safety：NODE/TIME 只在全部 non-end 完整评估为负后物化 end", async () => {
   for (const mode of ["NODE", "TIME"]) {
     const actor = makePlayer(`root-rescue-negative-${mode}-actor`, 0, "dawn", "ai", 1);
     const enemy = makePlayer(`root-rescue-negative-${mode}-enemy`, 1, "dusk", "ai", 5);
@@ -16241,6 +16263,13 @@ test("AI·搜索：NODE/TIME 根补评估确认全部 non-end 为负后才选择
         now: () => now++
       });
     }
+    let hiddenSampleCalls = 0;
+    planner.candidateMaterializer.counterfactualTerms.sampleHiddenWorlds = () => {
+      hiddenSampleCalls += 1;
+      return [];
+    };
+    planner.generateFromVisible = () => assert.fail("root safety 不得进入 depth2+");
+    planner.searchPolicy.random = () => assert.fail("root safety 不得进入随机 tie-break");
     const evaluatedCardIds = [];
     configurePlannerValueStubs(planner, {
       actionUtility: () => 0,
@@ -16250,17 +16279,103 @@ test("AI·搜索：NODE/TIME 根补评估确认全部 non-end 为负后才选择
       },
       stateUtility: () => 0
     });
+    const materializedNonEnd = [];
+    const materializer = planner.candidateMaterializer;
+    const materialize = materializer.materialize.bind(materializer);
+    materializer.materialize = (input) => {
+      const candidate = materialize(input);
+      if (input.depth === 1 && input.action.type !== "end") {
+        materializedNonEnd.push(candidate);
+      }
+      return candidate;
+    };
     const chosen = await planner.plan(actor, visible, [
       { type: "card", card: negativeA, targets: [] },
       { type: "card", card: negativeB, targets: [] },
       { type: "end" }
     ], { gameId: game.state.gameId });
     assert.equal(planner.lastSearchStats.stopReason, mode);
-    assert.equal(planner.lastSearchStats.expanded, 2);
+    assert.equal(planner.lastSearchStats.expanded, 3);
+    assert.equal(planner.lastSearchStats.rootSafetyExpandedNodes, 2);
+    assert.equal(planner.lastSearchStats.rootSafetySimulationCalls, 2);
     assert.deepEqual(evaluatedCardIds, [negativeA.id, negativeB.id]);
     assert.equal(planner.lastSearchStats.bestValueScore, 0);
     assert.equal(chosen.type, "end");
+    assert.equal(materializedNonEnd.length, 2);
+    assert.ok(materializedNonEnd.every((candidate) => (
+      candidate.state && typeof candidate.transitionValue === "number"
+    )));
+    assert.equal(hiddenSampleCalls, 1);
   }
+});
+
+test("AI·搜索 Root Safety：Planner 在缺少 SearchBudget capability 时不自行越过 stopReason", async () => {
+  const actor = makePlayer("root-capability-actor", 0, "dawn", "ai", 1),
+    enemy = makePlayer("root-capability-enemy", 1, "dusk", "ai", 5),
+    low = instance("charge"), valuable = instance("harvest");
+  actor.hand.push(low, valuable);
+  const { game } = makeGame([actor, enemy]);
+  const visible = createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  );
+  const planner = game.aiController.planner;
+  planner.searchBudgetFactory = () => {
+    const budget = new SearchBudget({ nodeBudget:1, now:() => 0 });
+    budget.requestRootSafetyCompletion = undefined;
+    return budget;
+  };
+  const evaluatedCardIds = [];
+  configurePlannerValueStubs(planner, {
+    actionUtility: () => 0,
+    actionEconomicValue: (action) => {
+      if (action.card?.id) evaluatedCardIds.push(action.card.id);
+      return action.card?.id === low.id ? -1 : 5;
+    },
+    stateUtility: () => 0
+  });
+  const chosen = await planner.plan(actor, visible, [
+    { type:"card", card:low, targets:[] },
+    { type:"card", card:valuable, targets:[] },
+    { type:"end" }
+  ], { gameId:game.state.gameId });
+  assert.equal(planner.lastSearchStats.stopReason, "NODE");
+  assert.deepEqual(evaluatedCardIds, [low.id]);
+  assert.equal(planner.lastSearchStats.expanded, 1);
+  assert.equal(planner.lastSearchStats.rootSafetyExpandedNodes, 0);
+  assert.equal(chosen.card?.id, low.id);
+});
+
+test("AI·搜索 Root Safety：SearchBudget 只授权一次有界 depth1 完成并如实记录统计", () => {
+  const budget = new SearchBudget({ nodeBudget:1, now:() => 0 });
+  budget.observeNode();
+  assert.equal(budget.shouldStop(), true);
+  assert.equal(budget.requestRootSafetyCompletion({ depth:2, candidateCount:2 }), false);
+  assert.equal(budget.requestRootSafetyCompletion({ depth:1, candidateCount:2 }), true);
+  assert.equal(budget.beginRootSafetyCandidate(2), false);
+  assert.equal(budget.beginRootSafetyCandidate(1), true);
+  budget.observeSimulation(2);
+  budget.observeNode();
+  assert.equal(budget.beginRootSafetyCandidate(1), true);
+  budget.observeSimulation();
+  budget.observeNode();
+  assert.equal(budget.beginRootSafetyCandidate(1), false);
+  assert.equal(budget.requestRootSafetyCompletion({ depth:1, candidateCount:1 }), false);
+  assert.deepEqual(
+    {
+      expandedNodes:budget.diagnostics().expandedNodes,
+      simulationCalls:budget.diagnostics().simulationCalls,
+      rootSafetyExpandedNodes:budget.diagnostics().rootSafetyExpandedNodes,
+      rootSafetySimulationCalls:budget.diagnostics().rootSafetySimulationCalls,
+      stopReason:budget.diagnostics().stopReason
+    },
+    {
+      expandedNodes:3,
+      simulationCalls:3,
+      rootSafetyExpandedNodes:2,
+      rootSafetySimulationCalls:3,
+      stopReason:"NODE"
+    }
+  );
 });
 
 test("AI·搜索：手牌超过生命上限时 end 不再因虚假保留将弃资源而胜出合法动作", async () => {
@@ -19357,28 +19472,43 @@ test("AI·共生：己方总治疗收益更高时仍允许敌方同时恢复", a
 
 // ---- AI 卡牌行为·窥探 ----
 
-test("AI·窥探：搜索 prior 只读取未知手牌而不读取公开装备", () => {
+test("AI·窥探：搜索 prior 不读装备且不以更多队友未知牌压过决策相关敌人", () => {
   const actor = makePlayer("scout-prior-actor", 0, "dawn", "ai", 1),
-    target = makePlayer("scout-prior-target", 1, "dusk", "ai", 5),
+    ally = makePlayer("scout-prior-ally", 1, "dawn", "ai", 0),
+    enemy = makePlayer("scout-prior-enemy", 2, "dusk", "ai", 5),
     scout = instance("scout");
-  actor.hand.push(scout);
-  target.hand.push(instance("block"), instance("charge"));
-  const { game } = makeGame([actor, target]);
+  actor.hand.push(scout, instance("assault"), instance("exposeWeakness"));
+  ally.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
+  enemy.hand.push(instance("block"), instance("counter"));
+  const { game } = makeGame([actor, ally, enemy]);
   const visible = structuredClone(createInitialSearchState(
     actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
   ));
-  const action = { type: "card", card: scout, targets: [{ id: target.id }] };
+  const allyState = visible.players.find((player) => player.id === ally.id),
+    enemyState = visible.players.find((player) => player.id === enemy.id);
+  allyState.assaultResponseProbability = 0.5;
+  allyState.blockProbability = 0.5;
+  allyState.counterProbability = 0.5;
+  enemyState.assaultResponseProbability = 0.5;
+  enemyState.blockProbability = 0.5;
+  enemyState.counterProbability = 0.5;
+  const allyAction = { type: "card", card: scout, targets: [{ id: ally.id }] },
+    enemyAction = { type: "card", card: scout, targets: [{ id: enemy.id }] };
   const withoutEquipment = structuredClone(visible);
   const withEquipment = structuredClone(visible);
-  withEquipment.players.find((player) => player.id === target.id).equipmentDefinitionId
+  withEquipment.players.find((player) => player.id === enemy.id).equipmentDefinitionId
     = "energyDevice";
   assert.equal(
-    game.aiController.evaluator.actionUtility(action, actor, withoutEquipment),
-    game.aiController.evaluator.actionUtility(action, actor, withEquipment)
+    game.aiController.evaluator.actionUtility(enemyAction, actor, withoutEquipment),
+    game.aiController.evaluator.actionUtility(enemyAction, actor, withEquipment)
+  );
+  assert.ok(
+    game.aiController.evaluator.actionUtility(enemyAction, actor, withoutEquipment)
+      > game.aiController.evaluator.actionUtility(allyAction, actor, withoutEquipment)
   );
 });
 
-test("AI·窥探：身份价值使用合法剩余牌池熵而不是未知手牌数量对数", () => {
+test("AI·窥探：合法剩余牌池熵只是容量且无决策相关性时价值为零", () => {
   const actor = makePlayer("scout-entropy-actor", 0, "dawn", "ai", 1),
     target = makePlayer("scout-entropy-target", 1, "dusk", "ai", 5);
   target.hand.push(instance("block"), instance("charge"), instance("assault"), instance("counter"));
@@ -19395,23 +19525,30 @@ test("AI·窥探：身份价值使用合法剩余牌池熵而不是未知手牌�
     targetState.counterProbability = 0;
     const simulator = new Simulator(state);
     simulator.cardEstimateDistribution = () => [{ count: 0, probability: 1 }];
-    return simulator.privatePeekInformationValue(state, targetState, 2);
+    return simulator.privatePeekInformationValue(
+      state,
+      state.players.find((player) => player.id === actor.id),
+      targetState,
+      2
+    );
   };
   const concentrated = valueFor({ block: 4 });
   const mixed = valueFor({ block: 1, recover: 1, counter: 1, assault: 1 });
   assert.equal(concentrated, 0);
-  assert.ok(mixed > concentrated);
+  assert.equal(mixed, 0);
 });
 
 test("AI·窥探：调息关键资源使用至少一张概率而不是期望数量", () => {
   const actor = makePlayer("scout-recover-probability-actor", 0, "dawn", "ai", 1),
     target = makePlayer("scout-recover-probability-target", 1, "dusk", "ai", 5);
+  actor.hand.push(instance("assault"));
   target.hand.push(instance("charge"), instance("harvest"));
+  target.hp = 1;
   const { game } = makeGame([actor, target]);
   const state = structuredClone(createInitialSearchState(
     actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
   ));
-  state.remainingCardCounts = { charge: 1 };
+  state.remainingCardCounts = { charge: 1, recover: 1 };
   const targetState = state.players.find((player) => player.id === target.id);
   targetState.expectedRecoverCount = 1;
   targetState.assaultResponseProbability = 0;
@@ -19420,7 +19557,12 @@ test("AI·窥探：调息关键资源使用至少一张概率而不是期望数�
   const valueFor = (distribution) => {
     const simulator = new Simulator(state);
     simulator.cardEstimateDistribution = () => distribution;
-    return simulator.privatePeekInformationValue(state, targetState, 1);
+    return simulator.privatePeekInformationValue(
+      state,
+      state.players.find((player) => player.id === actor.id),
+      targetState,
+      1
+    );
   };
   const uncertain = valueFor([
     { count: 0, probability: 0.5 },
@@ -19433,21 +19575,23 @@ test("AI·窥探：调息关键资源使用至少一张概率而不是期望数�
 test("AI·窥探：反制存在概率进入关键响应资源不确定性", () => {
   const actor = makePlayer("scout-counter-value-actor", 0, "dawn", "ai", 1),
     target = makePlayer("scout-counter-value-target", 1, "dusk", "ai", 5);
+  actor.hand.push(instance("exposeWeakness"));
   target.hand.push(instance("charge"), instance("harvest"));
   const { game } = makeGame([actor, target]);
   const state = structuredClone(createInitialSearchState(
     actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
   ));
-  state.remainingCardCounts = { charge: 1 };
+  state.remainingCardCounts = { charge: 1, counter: 1 };
   const targetState = state.players.find((player) => player.id === target.id);
   targetState.assaultResponseProbability = 0;
   targetState.blockProbability = 0;
   const simulator = new Simulator(state);
   simulator.cardEstimateDistribution = () => [{ count: 0, probability: 1 }];
   targetState.counterProbability = 0;
-  const known = simulator.privatePeekInformationValue(state, targetState, 1);
+  const actorState = state.players.find((player) => player.id === actor.id);
+  const known = simulator.privatePeekInformationValue(state, actorState, targetState, 1);
   targetState.counterProbability = 0.5;
-  const uncertain = simulator.privatePeekInformationValue(state, targetState, 1);
+  const uncertain = simulator.privatePeekInformationValue(state, actorState, targetState, 1);
   assert.ok(uncertain > known);
 });
 
@@ -19456,7 +19600,7 @@ test("AI·窥探：队友未知牌产生正信息价值且高生存风险提升�
     ally = makePlayer("scout-ally-value-target", 1, "dawn", "ai", 0),
     enemy = makePlayer("scout-ally-value-enemy", 2, "dusk", "ai", 5),
     card = instance("scout");
-  actor.hand.push(card);
+  actor.hand.push(card, instance("shield"), instance("recover"));
   ally.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
   const { game } = makeGame([actor, ally, enemy]);
   const visible = structuredClone(createInitialSearchState(
@@ -19477,21 +19621,21 @@ test("AI·窥探：队友未知牌产生正信息价值且高生存风险提升�
     riskyAfter = new Simulator(risky).apply(risky, action, actor.id),
     safeGain = safeAfter.players.find((player) => player.id === actor.id).expectedInformationGain,
     riskyGain = riskyAfter.players.find((player) => player.id === actor.id).expectedInformationGain;
-  assert.ok(safeGain > 0, "队友窥探不得固定为零信息价值");
+  assert.equal(safeGain, 0, "安全队友不应仅因未知手牌产生信息价值");
   assert.ok(riskyGain > safeGain, "残血且面临突袭的队友应提高防御资源信息价值");
 });
 
-test("AI·窥探：未知数量与存活风险决定敌友目标的净信息价值", () => {
+test("AI·窥探：普通安全队友四张未知低于当前进攻相关的敌方情报", () => {
   const actor = makePlayer("scout-value-actor", 0, "dawn", "ai", 1),
     ally = makePlayer("scout-value-ally", 1, "dawn", "ai", 0),
     enemyMany = makePlayer("scout-value-enemy-many", 2, "dusk", "ai", 5),
     enemyFew = makePlayer("scout-value-enemy-few", 3, "dusk", "ai", 6),
     card = instance("scout");
-  actor.hand.push(card);
-  ally.hand.push(instance("block"), instance("charge"));
-  enemyMany.hand.push(
-    instance("block"), instance("charge"), instance("assault"), instance("counter")
+  actor.hand.push(card, instance("assault"), instance("exposeWeakness"));
+  ally.hand.push(
+    instance("block"), instance("recover"), instance("counter"), instance("assault")
   );
+  enemyMany.hand.push(instance("block"), instance("counter"));
   enemyFew.hand.push(instance("block"));
   const { game } = makeGame([actor, ally, enemyMany, enemyFew]);
   const visible = createInitialSearchState(
@@ -19512,7 +19656,8 @@ test("AI·窥探：敌方大部分已知而队友大量未知时无协调也允�
     ally = makePlayer("scout-ally-rank-ally", 1, "dawn", "ai", 1),
     enemy = makePlayer("scout-ally-rank-enemy", 2, "dusk", "ai", 5),
     card = instance("scout");
-  actor.hand.push(card);
+  actor.hand.push(card, instance("shield"), instance("recover"));
+  ally.hp = 1;
   ally.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
   enemy.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
   const { game } = makeGame([actor, ally, enemy]);
@@ -19530,12 +19675,73 @@ test("AI·窥探：敌方大部分已知而队友大量未知时无协调也允�
   assert.ok(valueFor(ally.id) > valueFor(enemy.id));
 });
 
+test("AI·窥探：敌友未知数相同时只有敌方资源影响当前攻击与战术", () => {
+  const actor = makePlayer("scout-equal-actor", 0, "dawn", "ai", 1),
+    ally = makePlayer("scout-equal-ally", 1, "dawn", "ai", 0),
+    enemy = makePlayer("scout-equal-enemy", 2, "dusk", "ai", 5),
+    scout = instance("scout");
+  actor.hand.push(scout, instance("assault"), instance("exposeWeakness"));
+  ally.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
+  enemy.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
+  const { game } = makeGame([actor, ally, enemy]);
+  const visible = structuredClone(createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  ));
+  for (const player of visible.players.filter((entry) => entry.id !== actor.id)) {
+    player.assaultResponseProbability = 0.5;
+    player.blockProbability = 0.5;
+    player.counterProbability = 0.5;
+  }
+  const simulator = new Simulator(visible);
+  simulator.cardEstimateDistribution = () => [
+    { count:0, probability:0.5 },
+    { count:1, probability:0.5 }
+  ];
+  const actorState = visible.players.find((player) => player.id === actor.id),
+    allyValue = simulator.privatePeekInformationValue(
+      visible, actorState, visible.players.find((player) => player.id === ally.id), 2
+    ),
+    enemyValue = simulator.privatePeekInformationValue(
+      visible, actorState, visible.players.find((player) => player.id === enemy.id), 2
+    );
+  assert.ok(enemyValue > allyValue);
+});
+
+test("AI·窥探：安全队友单纯增加未知数不会线性增长为高价值", () => {
+  const actor = makePlayer("scout-safe-count-actor", 0, "dawn", "ai", 1),
+    ally = makePlayer("scout-safe-count-ally", 1, "dawn", "ai", 0),
+    enemy = makePlayer("scout-safe-count-enemy", 2, "dusk", "ai", 5);
+  actor.hand.push(instance("scout"), instance("shield"));
+  ally.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
+  const { game } = makeGame([actor, ally, enemy]);
+  const fourUnknown = structuredClone(createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  ));
+  const twoUnknown = structuredClone(fourUnknown);
+  twoUnknown.players.find((player) => player.id === ally.id).handCount = 2;
+  const evaluate = (state) => {
+    const simulator = new Simulator(state);
+    simulator.cardEstimateDistribution = () => [
+      { count:0, probability:0.5 },
+      { count:1, probability:0.5 }
+    ];
+    const actorState = state.players.find((player) => player.id === actor.id),
+      allyState = state.players.find((player) => player.id === ally.id);
+    allyState.assaultResponseProbability = 0.5;
+    allyState.blockProbability = 0.5;
+    allyState.counterProbability = 0.5;
+    return simulator.privatePeekInformationValue(state, actorState, allyState, 2);
+  };
+  assert.equal(evaluate(fourUnknown), evaluate(twoUnknown));
+  assert.equal(evaluate(fourUnknown), 0);
+});
+
 test("AI·窥探：已知牌只留下真正未知部分且连续模拟不会重复获得完整信息", () => {
   const actor = makePlayer("scout-known-actor", 0, "dawn", "ai", 1),
     unknown = makePlayer("scout-known-unknown", 1, "dusk", "ai", 5),
     mostlyKnown = makePlayer("scout-known-target", 2, "dusk", "ai", 6),
     first = instance("scout"), second = instance("scout");
-  actor.hand.push(first, second);
+  actor.hand.push(first, second, instance("assault"), instance("exposeWeakness"));
   unknown.hand.push(instance("block"), instance("charge"), instance("assault"));
   mostlyKnown.hand.push(
     instance("block"), instance("charge"), instance("assault"), instance("counter")
@@ -19565,7 +19771,7 @@ test("AI·窥探：已知牌只留下真正未知部分且连续模拟不会重�
     firstKnownGain = firstKnown.players[0].expectedInformationGain,
     repeatedGain = repeated.players[0].expectedInformationGain;
   assert.ok(firstUnknownGain > firstKnownGain);
-  assert.ok(firstKnownGain > 0);
+  assert.ok(firstKnownGain >= 0);
   assert.ok(repeatedGain > firstUnknownGain);
   assert.ok(repeatedGain - firstUnknownGain < firstUnknownGain);
   const repeatedTarget = repeated.players.find((player) => player.id === unknown.id);
@@ -19582,7 +19788,7 @@ test("AI·窥探：authoritative 隐藏牌面不改变信息价值", () => {
     const actor = makePlayer("scout-hidden-actor", 0, "dawn", "ai", 1),
       target = makePlayer("scout-hidden-target", 1, "dusk", "ai", 5),
       scout = { ...CARD_DEFINITIONS.scout, id: "scout-hidden-use" };
-    actor.hand.push(scout);
+    actor.hand.push(scout, instance("assault"), instance("exposeWeakness"));
     target.hand.push(...definitionIds.map((definitionId, index) => ({
       ...CARD_DEFINITIONS[definitionId], id: `scout-hidden-${index}`
     })));
@@ -19607,13 +19813,19 @@ test("AI·窥探：authoritative 隐藏牌面不改变信息价值", () => {
   );
 });
 
-test("AI·窥探：生产 Planner 在队友2张未知与敌人4张未知时选择敌人", async () => {
+test("AI·窥探：生产 Planner 不会让安全队友越过决策相关敌人", async () => {
   const actor = makePlayer("scout-rank-actor", 0, "dawn", "ai", 1),
     ally = makePlayer("scout-rank-ally", 1, "dawn", "ai", 0),
     enemy = makePlayer("scout-rank-enemy", 2, "dusk", "ai", 5),
     scout = instance("scout");
   actor.hp = 3;
-  actor.hand.push(scout, instance("counter"), instance("counter"), instance("block"));
+  actor.hand.push(
+    scout,
+    instance("assault"),
+    instance("exposeWeakness"),
+    instance("counter"),
+    instance("block")
+  );
   ally.hand.push(instance("block"), instance("charge"));
   enemy.hand.push(
     instance("block"), instance("charge"), instance("assault"), instance("counter")
@@ -19622,32 +19834,66 @@ test("AI·窥探：生产 Planner 在队友2张未知与敌人4张未知时选�
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 200;
   game.aiController.knowledge.sampleHiddenWorlds = () => [];
-  const selected = await game.aiController.selectAction(
-    actor, { gameId: game.state.gameId }
+  const visible = createInitialSearchState(
+    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
   );
-  assert.equal(selected.card?.id, scout.id);
-  assert.equal(selected.targets[0].id, enemy.id);
+  const scoutRoots = game.aiController.getActionCandidates(actor).filter((action) => (
+    action.card?.id === scout.id || action.type === "end"
+  ));
+  const selected = await game.aiController.planner.plan(
+    actor, visible, scoutRoots, { gameId: game.state.gameId }
+  );
+  assert.notEqual(selected.targets?.[0]?.id, ally.id);
+  if (selected.card?.id === scout.id) assert.equal(selected.targets[0].id, enemy.id);
 });
 
-test("AI·窥探：调律师的真实协调收益仍可使队友目标胜出", () => {
+test("AI·窥探：调律师协调是额外收益但不会无条件把安全队友推成最优", () => {
+  const applyToSafeAlly = (characterIndex) => {
+    const source = makePlayer(`scout-coordination-${characterIndex}-actor`, 0, "dawn", "ai", characterIndex),
+      friend = makePlayer(`scout-coordination-${characterIndex}-ally`, 1, "dawn", "ai", 0),
+      opponent = makePlayer(`scout-coordination-${characterIndex}-enemy`, 2, "dusk", "ai", 5),
+      use = instance("scout");
+    source.hand.push(use, instance("assault"), instance("exposeWeakness"));
+    friend.hand.push(instance("block"), instance("charge"));
+    const { game: fixtureGame } = makeGame([source, friend, opponent]);
+    const state = createInitialSearchState(
+      source.id, fixtureGame.state, fixtureGame.aiController.knowledge.remainingCounts(source)
+    );
+    const after = new Simulator(state).apply(
+      state, { type:"card", card:use, targets:[{ id:friend.id }] }, source.id
+    );
+    return after.players.find((player) => player.id === source.id);
+  };
+  const ordinaryAfter = applyToSafeAlly(1), tunerAfter = applyToSafeAlly(7);
+  assert.equal(tunerAfter.expectedInformationGain, ordinaryAfter.expectedInformationGain);
+  assert.equal(tunerAfter.handCount, ordinaryAfter.handCount + 1);
+
   const actor = makePlayer("scout-synergy-actor", 0, "dawn", "ai", 7),
     ally = makePlayer("scout-synergy-ally", 1, "dawn", "ai", 0),
     enemy = makePlayer("scout-synergy-enemy", 2, "dusk", "ai", 5),
     scout = instance("scout");
-  actor.hand.push(scout);
-  ally.hand.push(instance("block"), instance("charge"));
+  actor.hand.push(scout, instance("assault"), instance("exposeWeakness"));
+  ally.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
   enemy.hand.push(instance("block"), instance("charge"));
   const { game } = makeGame([actor, ally, enemy]);
-  const visible = createInitialSearchState(
+  const visible = structuredClone(createInitialSearchState(
     actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
-  );
+  ));
+  const allyState = visible.players.find((player) => player.id === ally.id),
+    enemyState = visible.players.find((player) => player.id === enemy.id);
+  allyState.assaultResponseProbability = 0.5;
+  allyState.blockProbability = 0.5;
+  allyState.counterProbability = 0.5;
+  enemyState.assaultResponseProbability = 0.5;
+  enemyState.blockProbability = 0.5;
+  enemyState.counterProbability = 0.5;
   const candidates = materializeRootSearchCandidates(
     game, actor, visible, game.aiController.getActionCandidates(actor)
   ).filter((entry) => entry.action.card?.id === scout.id);
   const valueFor = (targetId) => candidates.find(
     (entry) => entry.action.targets[0].id === targetId
   ).transitionValue;
-  assert.ok(valueFor(ally.id) > valueFor(enemy.id));
+  assert.ok(valueFor(enemy.id) > valueFor(ally.id));
 });
 
 test("AI·窥探：记忆绑定实体 card.id", async () => {

@@ -117,6 +117,8 @@ export class Planner {
       counterfactualCalls:budgetStats.counterfactualCalls,
       stateUtilityCalls:budgetStats.stateUtilityCalls,
       yieldCount:budgetStats.yieldCount,
+      rootSafetyExpandedNodes:budgetStats.rootSafetyExpandedNodes,
+      rootSafetySimulationCalls:budgetStats.rootSafetySimulationCalls,
       discoveredDynamicTarget:contextStats.discoveredDynamicTarget,
       hiddenSamples:contextStats.hiddenSamples,
       bestSequence:this.lastPlannedSequence,
@@ -152,7 +154,8 @@ export class Planner {
   边界与不变量
   一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；TIME/NODE 绝不执行未物化动作；
   根层已物化 end 可作为安全基线；未物化 end 只有在所有 non-end roots 都已比较且全为负时才能补算。
-  预算中断且已知候选全为负时，只对剩余 non-end roots 执行有限的深度一补评估，不继续束搜索或随机选择。
+  预算中断且已知候选全为负时，只通过 SearchBudget 授权对剩余 roots 执行有限 depth-1 补评估，
+  不继续束搜索、隐藏采样或随机选择；Planner 不得自行解释 TIME/NODE 例外。
   */
   async plan(player, visibleState, rootActions, options = {}) {
     this.lastPlannedSequence = [];
@@ -215,15 +218,35 @@ export class Planner {
       !this.candidateMaterializer.findTerminalAction([action])
       && !initiallyMaterializedRootActions.has(action)
     ));
-    const bestMaterializedRoot = rootCandidates.reduce((best, candidate) => (
-      !best || candidate.transitionValue > best.transitionValue ? candidate : best
-    ), null);
-    const interruptedByBudget = budget.stopReason === "NODE" || budget.stopReason === "TIME";
-    if (interruptedByBudget && bestMaterializedRoot?.transitionValue < 0
-      && unmaterializedNonTerminalRoots.length) {
-      // 预算只中止后续搜索；有限 root rescue 仍完整计算每个剩余根动作，
-      // 从而既不猜测未评估动作，也不让未物化 end 越过未知 sibling。
+    const rootTerminalAction = this.candidateMaterializer.findTerminalAction(rootActions);
+    const unmaterializedRootTerminal = rootTerminalAction
+      && !initiallyMaterializedRootActions.has(rootTerminalAction);
+    const bestMaterializedNonTerminalRoot = rootCandidates
+      .filter((candidate) => !this.candidateMaterializer.findTerminalAction([candidate.action]))
+      .reduce((best, candidate) => (
+        !best || candidate.transitionValue > best.transitionValue ? candidate : best
+      ), null);
+    const remainingRootSafetyCount = unmaterializedNonTerminalRoots.length
+      + (unmaterializedRootTerminal ? 1 : 0);
+    const rootSafetyNeeded = (
+      unmaterializedNonTerminalRoots.length > 0
+        && !(bestMaterializedNonTerminalRoot?.transitionValue >= 0)
+    ) || (
+      unmaterializedRootTerminal
+        && bestMaterializedNonTerminalRoot?.transitionValue < 0
+    );
+    const rootSafetyCompletionGranted = rootSafetyNeeded
+      && remainingRootSafetyCount > 0
+      && typeof budget.requestRootSafetyCompletion === "function"
+      && budget.requestRootSafetyCompletion({
+        depth:1,
+        candidateCount:remainingRootSafetyCount
+      });
+    if (rootSafetyCompletionGranted) {
+      // SearchBudget 冻结当前剩余根数并逐个授权；Planner 只编排已授权的
+      // depth-1 物化，不建立新 beam、深层循环或采样上下文。
       for (const action of unmaterializedNonTerminalRoots) {
+        if (!budget.beginRootSafetyCandidate?.(1)) break;
         budget.observeSimulation();
         const state = simulator.apply(visibleState, action, player.id);
         const candidate = this.candidateMaterializer.materialize({
@@ -349,7 +372,6 @@ export class Planner {
 
     // 已物化 end 可在任何停止原因下比较；未物化 end 只有在全部 non-end
     // 根动作都已物化后才能恢复，不得越过同样未比较的 card/skill sibling。
-    const rootTerminalAction = this.candidateMaterializer.findTerminalAction(rootActions);
     if (rootTerminalAction) {
       const allNonTerminalRootsMaterialized = rootActions.every((action) => (
         this.candidateMaterializer.findTerminalAction([action])
@@ -368,7 +390,9 @@ export class Planner {
           );
       let terminalChoice = terminalInFinalBeam ?? materializedRootTerminal;
       if (!terminalChoice && allNonTerminalRootsMaterialized
-        && allMaterializedNonTerminalRootsNegative) {
+        && allMaterializedNonTerminalRootsNegative
+        && rootSafetyCompletionGranted
+        && budget.beginRootSafetyCandidate?.(1)) {
         budget.observeSimulation();
         const terminalState = simulator.apply(
           visibleState,
@@ -385,6 +409,7 @@ export class Planner {
           simulator,
           context
         });
+        budget.observeNode();
         terminalChoice = {
           action:rootTerminalAction,
           state:terminalState,

@@ -160,13 +160,98 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
+  按当前可见决策机会计算突袭、格挡、调息与反制身份的敌我目标相关性。
+
+  调用方
+  privatePeekInformationValue。
+
+  输入
+  当前 SearchState、窥探使用者与被查看目标。
+
+  输出
+  { assault, block, recover, counter } 四类资源的零到一决策相关性。
+
+  读取状态
+  使用者合法已知手牌、资源摘要、目标生命与公开攻击暴露。
+
+  写入状态
+  无。
+
+  调用函数
+  cardAvailability、ThreatValue.incomingExposure、clampProbability。
+
+  边界与不变量
+  敌方资源只由当前进攻、战术、击杀线与威胁决策激活；
+  队友资源只由生存保护、救援/资源分配或明确集火决策激活。
+  这里不设置敌友固定加成、折扣或惩罚。
+  */
+  privatePeekDecisionRelevance(state, actor, target) {
+    const decisionDefinitions = (actor?.hand ?? [])
+      .filter((entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON)
+      .map((entry) => DOMAIN_CARD_DEFINITIONS[entry.definitionId] ?? entry)
+      .filter((definition) => !definition.subtypes?.includes("information"));
+    const offensiveDecision = clampProbability(Math.max(
+      Number(actor?.expectedAssaultCount) || 0,
+      decisionDefinitions.some((definition) => definition.subtypes?.some(
+        (subtype) => ["attack", "damage", "attack-buff"].includes(subtype)
+      )) ? 1 : 0
+    ));
+    const tacticDecision = decisionDefinitions.some((definition) => (
+      definition.category === "tactic" && definition.counterable !== false
+    )) ? 1 : 0;
+    const protectionDecision = decisionDefinitions.some((definition) => (
+      definition.subtypes?.some(
+        (subtype) => ["defense", "response", "rescue", "support"].includes(subtype)
+      ) || definition.targetType === "multiStage"
+    )) ? 1 : 0;
+    if (target.battleTeam !== actor.battleTeam) {
+      const targetKillRelevance = target.maxHp > 0
+        ? clampProbability((target.maxHp - target.hp) / target.maxHp)
+        : 0;
+      const teamThreatRelevance = (state?.players ?? [])
+        .filter((player) => player.alive && player.battleTeam === actor.battleTeam)
+        .reduce((highest, player) => Math.max(
+          highest,
+          clampProbability(
+            (player.maxHp > 0 ? Math.max(0, player.maxHp - player.hp) / player.maxHp : 0)
+              + incomingExposure(state, player) / HP_VALUE
+          )
+        ), 0);
+      return {
+        assault:Math.max(teamThreatRelevance, protectionDecision),
+        block:offensiveDecision,
+        recover:offensiveDecision * targetKillRelevance,
+        counter:tacticDecision
+      };
+    }
+
+    const allySurvivalRelevance = clampProbability(
+      (target.maxHp > 0 ? Math.max(0, target.maxHp - target.hp) / target.maxHp : 0)
+        + incomingExposure(state, target) / HP_VALUE
+    ) * protectionDecision;
+    const enemyKillRelevance = (state?.players ?? [])
+      .filter((player) => player.alive && player.battleTeam !== actor.battleTeam)
+      .reduce((highest, player) => Math.max(
+        highest,
+        player.maxHp > 0 ? clampProbability((player.maxHp - player.hp) / player.maxHp) : 0
+      ), 0);
+    return {
+      assault:enemyKillRelevance * Math.max(offensiveDecision, tacticDecision),
+      block:allySurvivalRelevance,
+      recover:allySurvivalRelevance,
+      counter:allySurvivalRelevance
+    };
+  }
+
+  /*
+  功能
   估算一次私密查看本身减少的决策不确定性。
 
   调用方
   applyCardEffect 的 scout 结算分支。
 
   输入
-  当前 SearchState、被查看目标与名义最大揭示数量。
+  当前 SearchState、窥探使用者、被查看目标与名义最大揭示数量。
 
   输出
   非负 raw information option value；完全已知或空手牌时为零。
@@ -178,14 +263,15 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   无。
 
   调用函数
-  cardAvailability、cardEstimateDistribution、remainingCardDensity、ThreatValue.incomingExposure、clampProbability。
+  privatePeekDecisionRelevance、cardAvailability、cardEstimateDistribution、remainingCardDensity、clampProbability。
 
   边界与不变量
-  公式不读取 authoritative 隐藏牌面，也不以阵营给固定加减分；身份熵只来自合法剩余牌池；
-  关键资源只计算 belief 下“是否至少一张”的不确定性，不能把期望数量当作概率；
+  公式不读取 authoritative 隐藏牌面，也不以阵营给固定加减分；身份熵只是可揭示信息容量上限，
+  不能脱离决策相关性直接进入收益；关键资源只计算 belief 下“是否至少一张”的不确定性，
+  不能把期望数量当作概率；
   本项只表示身份与关键资源不确定性的减少，不复制 knownCards 供后续具体动作使用时的收益。
   */
-  privatePeekInformationValue(state, target, revealCount) {
+  privatePeekInformationValue(state, actor, target, revealCount) {
     const knownExpectedCount = (target?.knownCards ?? [])
       .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
     const unknownCount = Math.max(
@@ -194,17 +280,12 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     );
     const revealed = Math.min(Math.max(0, Number(revealCount) || 0), unknownCount);
     if (revealed <= PROBABILITY_EPSILON) return 0;
-    const missingHpRatio = target.maxHp > 0
-      ? Math.max(0, target.maxHp - target.hp) / target.maxHp
-      : 0;
-    const survivalRisk = clampProbability(
-      missingHpRatio + incomingExposure(state, target) / HP_VALUE
-    );
     const identityEntropy = Object.keys(DOMAIN_CARD_DEFINITIONS).reduce((sum, definitionId) => {
       const density = remainingCardDensity(state?.remainingCardCounts ?? null, definitionId);
       return density > PROBABILITY_EPSILON ? sum - density * Math.log2(density) : sum;
     }, 0);
-    const identityUncertainty = revealed * identityEntropy;
+    const informationCapacity = unknownCount * identityEntropy;
+    const revealCoverage = revealed / unknownCount;
     const assaultChance = clampProbability(target.assaultResponseProbability);
     const blockChance = clampProbability(target.blockProbability);
     const recoverChance = clampProbability(
@@ -218,14 +299,12 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       )
     );
     const counterChance = clampProbability(target.counterProbability);
-    const offensiveResourceUncertainty = assaultChance * (1 - assaultChance);
-    const defensiveResourceUncertainty = blockChance * (1 - blockChance)
-      + recoverChance * (1 - recoverChance)
-      + counterChance * (1 - counterChance);
-    return identityUncertainty + revealed * (
-      offensiveResourceUncertainty
-      + defensiveResourceUncertainty * (1 + survivalRisk)
-    );
+    const relevance = this.privatePeekDecisionRelevance(state, actor, target);
+    const decisionWeightedUncertainty = assaultChance * (1 - assaultChance) * relevance.assault
+      + blockChance * (1 - blockChance) * relevance.block
+      + recoverChance * (1 - recoverChance) * relevance.recover
+      + counterChance * (1 - counterChance) * relevance.counter;
+    return informationCapacity * revealCoverage * decisionWeightedUncertainty;
   }
 
   /*
@@ -301,6 +380,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         if (!target?.alive) break;
         const informationGain = this.privatePeekInformationValue(
           stateBeforeResponse,
+          actor,
           targetBeforeResponse,
           DOMAIN_CARD_DEFINITIONS.scout.maxRevealCount
         );
