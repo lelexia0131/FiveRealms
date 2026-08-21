@@ -259,10 +259,7 @@ export class SearchPrior {
         );
       }
       if (!enemy && ["plunder", "destroy"].includes(card.definitionId)) value -= 30;
-      if (!enemy && card.definitionId === "scout") {
-        value -= actor.activeSkillId === "resonance" ? 5 : 12;
-      }
-      if (enemy && ["assault", "duel", "plunder", "destroy", "scout"].includes(card.definitionId)) {
+      if (enemy && ["assault", "duel", "plunder", "destroy"].includes(card.definitionId)) {
         value += this.threatPriority(
           actor,
           target,

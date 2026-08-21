@@ -635,7 +635,9 @@ class SimulatorCore {
     const assaultAvailabilityBeforeUse = card.definitionId === "assault"
       ? clampProbability(actor.assaultResponseProbability)
       : 0;
-    const target = next.players.find((player) => player.id === abstractAction.targets?.[0]?.id);
+    const targetId = abstractAction.targets?.[0]?.id;
+    const target = next.players.find((player) => player.id === targetId);
+    const targetBeforeResponse = state.players.find((player) => player.id === targetId);
     const heldCard = (actor.hand ?? []).find((entry) => entry.id === card.id) ?? null;
     const availabilityBranches = getAvailabilityBranches(heldCard ?? card);
     const cardProbability = totalBranchProbability(availabilityBranches);
@@ -707,7 +709,9 @@ class SimulatorCore {
       cardEventWorlds,
       effectEventWorlds,
       executionProbability,
-      scale
+      scale,
+      stateBeforeResponse:state,
+      targetBeforeResponse
     });
   }
 

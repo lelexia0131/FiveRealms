@@ -151,8 +151,8 @@ export class Planner {
 
   边界与不变量
   一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；TIME/NODE 绝不从未完整物化的搜索前沿重选；
-  根层合法终止动作始终是安全基线；预算不足时只用已物化 siblings 计算其机会成本，
-  不得因为尚有未比较动作而强制执行已经确认的负收益动作。
+  根层已物化 end 可作为安全基线；未物化 end 只有在所有 non-end roots 都已比较时才能补算。
+  预算中断且已知候选全为负时，返回原物化顺序中下一个未物化 non-end 根动作，不追加价值查询、模拟、节点或随机调用。
   */
   async plan(player, visibleState, rootActions, options = {}) {
     this.lastPlannedSequence = [];
@@ -302,16 +302,26 @@ export class Planner {
     }
 
     budget.complete();
+    const materializedRootActions = new Set(rootCandidates.map((candidate) => candidate.action));
+    const unmaterializedNonTerminalRoots = rootActions.filter((action) => (
+      !this.candidateMaterializer.findTerminalAction([action])
+      && !materializedRootActions.has(action)
+    ));
     let choice = this.searchPolicy.selectFinal({
       stopReason:budget.stopReason,
       completedCandidates:activeBeam,
-      bestSeenCandidate
+      bestSeenCandidate,
+      nextUnmaterializedRootAction:unmaterializedNonTerminalRoots[0] ?? null
     });
 
-    // 根终止动作是规则提供的安全基线；预算中断时仍按已经物化的 siblings 计算，
-    // 这样未知候选不会把已确认的负收益动作抬过“不行动”。
+    // 已物化 end 可在任何停止原因下比较；未物化 end 只有在全部 non-end
+    // 根动作都已物化后才能恢复，不得越过同样未比较的 card/skill sibling。
     const rootTerminalAction = this.candidateMaterializer.findTerminalAction(rootActions);
     if (rootTerminalAction) {
+      const allNonTerminalRootsMaterialized = rootActions.every((action) => (
+        this.candidateMaterializer.findTerminalAction([action])
+        || materializedRootActions.has(action)
+      ));
       const terminalInFinalBeam = activeBeam.find(
         (node) => this.candidateMaterializer.findTerminalAction([node.action])
       );
@@ -321,7 +331,7 @@ export class Planner {
             (node) => this.candidateMaterializer.findTerminalAction([node.action])
           );
       let terminalChoice = terminalInFinalBeam ?? materializedRootTerminal;
-      if (!terminalChoice) {
+      if (!terminalChoice && allNonTerminalRootsMaterialized) {
         budget.observeSimulation();
         const terminalState = simulator.apply(
           visibleState,
@@ -349,7 +359,8 @@ export class Planner {
           frontierResidual:fallback.frontierResidual
         };
       }
-      if (terminalChoice && (!choice || terminalChoice.valueScore > choice.valueScore)) {
+      if (terminalChoice && (!choice || (choice.valueScore !== null
+        && terminalChoice.valueScore > choice.valueScore))) {
         choice = terminalChoice;
       }
     }

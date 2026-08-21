@@ -305,10 +305,11 @@ export class SearchPolicy {
   Planner 搜索收束阶段。
 
   输入
-  stopReason、完整 final candidate set 与已完整物化的 bestSeenCandidate。
+  stopReason、完整 final candidate set、已完整物化的 bestSeenCandidate 与可选的下一个未物化根动作。
 
   输出
-  COMPLETE 时按既有近似平局与随机选择规则处理；预算中断时返回 best-seen candidate。
+  COMPLETE 时按既有近似平局与随机选择规则处理；预算中断时返回 best-seen，
+  或在已知结果全为负时返回下一个未物化根动作。
 
   读取状态
   候选 valueScore 与注入随机能力。
@@ -320,15 +321,34 @@ export class SearchPolicy {
   orderFinal、chooseCandidate。
 
   边界与不变量
-  TIME/NODE 不得从未完整物化的搜索前沿重新执行近似平局选择；CANCELLED 不选择候选。
+  TIME/NODE 不得从未完整物化的深层前沿重选；但根层只已确认负收益时，
+  必须按既有根物化顺序保留下一个尚未评估的合法 non-end 选项，
+  不调用 prior/模拟也不把它登记为 best-seen；CANCELLED 不选择候选。
   */
-  selectFinal({ stopReason, completedCandidates, bestSeenCandidate }) {
+  selectFinal({
+    stopReason,
+    completedCandidates,
+    bestSeenCandidate,
+    nextUnmaterializedRootAction = null
+  }) {
     if (stopReason === SEARCH_STOP_REASON.COMPLETE) {
       this.orderFinal(completedCandidates);
       return this.chooseCandidate(completedCandidates);
     }
     if (stopReason === SEARCH_STOP_REASON.TIME
       || stopReason === SEARCH_STOP_REASON.NODE) {
+      if ((bestSeenCandidate?.valueScore ?? -Infinity) < 0 && nextUnmaterializedRootAction) {
+        return {
+          action:nextUnmaterializedRootAction,
+          state:null,
+          terminal:false,
+          valueScore:null,
+          pruneScore:null,
+          sequence:[nextUnmaterializedRootAction],
+          remainingHistory:[],
+          frontierResidual:null
+        };
+      }
       return bestSeenCandidate;
     }
     return null;

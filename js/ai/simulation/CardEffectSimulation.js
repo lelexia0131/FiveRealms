@@ -27,6 +27,8 @@ import { inAttackRange } from "../state/DistanceProbabilityBranches.js";
 import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js";
 import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js";
 import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js";
+import { incomingExposure } from "../value/ThreatValue.js";
+import { HP_VALUE } from "../value/Economics.js";
 import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js";
 import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js";
 import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js";
@@ -158,13 +160,70 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
 
   /*
   功能
+  估算一次私密查看本身减少的决策不确定性。
+
+  调用方
+  applyCardEffect 的 scout 结算分支。
+
+  输入
+  当前 SearchState、被查看目标与名义最大揭示数量。
+
+  输出
+  非负 raw information option value；完全已知或空手牌时为零。
+
+  读取状态
+  目标 handCount/knownCards、Belief 派生的防御/进攻资源概率、HP 与公开攻击暴露。
+
+  写入状态
+  无。
+
+  调用函数
+  cardAvailability、ThreatValue.incomingExposure、clampProbability。
+
+  边界与不变量
+  公式不读取 authoritative 隐藏牌面，也不以阵营给固定加减分；
+  反制身份已在通用身份不确定性中，且其阻止窥探的价值由 resolution scale 结算，不再单独奖励以避免双计；
+  本项只表示身份与关键资源不确定性的减少，不复制 knownCards 供后续具体动作使用时的收益。
+  */
+  privatePeekInformationValue(state, target, revealCount) {
+    const knownExpectedCount = (target?.knownCards ?? [])
+      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+    const unknownCount = Math.max(
+      0,
+      (Number(target?.handCount) || 0) - knownExpectedCount
+    );
+    const revealed = Math.min(Math.max(0, Number(revealCount) || 0), unknownCount);
+    if (revealed <= PROBABILITY_EPSILON) return 0;
+    const missingHpRatio = target.maxHp > 0
+      ? Math.max(0, target.maxHp - target.hp) / target.maxHp
+      : 0;
+    const survivalRisk = clampProbability(
+      missingHpRatio + incomingExposure(state, target) / HP_VALUE
+    );
+    const revealFraction = revealed / unknownCount;
+    const identityUncertainty = revealed * Math.log2(unknownCount + 1);
+    const assaultChance = clampProbability(target.assaultResponseProbability);
+    const blockChance = clampProbability(target.blockProbability);
+    const recoverChance = clampProbability(target.expectedRecoverCount);
+    const offensiveResourceUncertainty = assaultChance * (1 - assaultChance);
+    const defensiveResourceUncertainty = blockChance * (1 - blockChance)
+      + recoverChance * (1 - recoverChance);
+    return identityUncertainty + revealFraction * (
+      offensiveResourceUncertainty
+      + defensiveResourceUncertainty * (1 + survivalRisk)
+    );
+  }
+
+  /*
+  功能
   执行一张已完成动作支付与 card-scope 响应门控的卡牌效果。
 
   调用方
   Simulator.apply 唯一动作分派入口。
 
   输入
-  独立 SearchState、行动者、抽象动作以及 Simulator 门面计算出的共享事件世界。
+  独立 SearchState、行动者、抽象动作，以及 Simulator 门面计算出的共享事件世界、
+  响应前状态和目标摘要。
 
   输出
   同一独立 SearchState。
@@ -179,7 +238,8 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   CombatSimulation、ResponseSimulation、Skill/Status 后置钩子与资源辅助函数。
 
   边界与不变量
-  不重新计算动作支付或 card-scope 响应；switch 顺序与既有后置触发顺序保持不变。
+  不重新计算动作支付或 card-scope 响应；响应前摘要只供窥探 option value 读取，
+  不能作为结算目标；switch 顺序与既有后置触发顺序保持不变。
   */
   applyCardEffect(next, actor, abstractAction, context) {
     const {
@@ -188,7 +248,9 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       cardEventWorlds,
       effectEventWorlds,
       executionProbability,
-      scale
+      scale,
+      stateBeforeResponse,
+      targetBeforeResponse
     } = context;
     const cardDamageContext = { cardDamage:true, emberTriggeredProbabilities:{} };
     let coordinationProbability = 0;
@@ -223,16 +285,13 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         break;
       case "scout": {
         if (!target?.alive) break;
-        const knownExpectedCount = (target.knownCards ?? [])
-          .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
-        const unknownCount = Math.max(0, (Number(target.handCount) || 0) - knownExpectedCount);
-        const informationGain = Math.min(DOMAIN_CARD_DEFINITIONS.scout.maxRevealCount, unknownCount);
-        // 敌方未知牌会改善当前 AI 的对抗决策；队友情报不凭空获得固定分，
-        // 其真实收益由下方 knowledge 推进后的后续模拟及协调等明确联动结算。
-        if (target.battleTeam !== actor.battleTeam) {
-          actor.expectedInformationGain = (actor.expectedInformationGain ?? 0)
-            + informationGain * scale;
-        }
+        const informationGain = this.privatePeekInformationValue(
+          stateBeforeResponse,
+          targetBeforeResponse,
+          DOMAIN_CARD_DEFINITIONS.scout.maxRevealCount
+        );
+        actor.expectedInformationGain = (actor.expectedInformationGain ?? 0)
+          + informationGain * scale;
         this.recordSimulatedPrivatePeek(
           next,
           actor,
