@@ -32354,6 +32354,63 @@ test("AI·突袭次数槽：攻击与技能次数槽选择执行概率最高的�
 
 // ---- AI 响应模型·救援 ----
 
+/*
+功能
+构造只有一个未知后续手牌槽的濒死救援 DecisionContext。
+
+调用方
+高概率、低概率与 strategic 救援策略测试。
+
+输入
+Belief 调息密度与目标角色标签。
+
+输出
+正式 ResponsePolicy 及其 plain DecisionContext。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+ResponsePolicy。
+
+边界与不变量
+剩余牌计数与密度一致；未知槽位不携带真实 definitionId。
+*/
+function makeProbabilisticRescueDecision(recoverDensity, roleTags = []) {
+  const responder = {
+    id: "probabilistic-responder", alive: true, battleTeam: "dawn",
+    controllerType: "ai", hp: 3, handCount: 1, roleTags: []
+  };
+  const target = {
+    id: "probabilistic-target", alive: true, battleTeam: "dawn",
+    controllerType: "ai", hp: -1, handCount: 0, energy: 0,
+    hasEquipment: false, roleTags
+  };
+  const later = {
+    id: "probabilistic-later", alive: true, battleTeam: "dawn",
+    controllerType: "ai", hp: 3, handCount: 1, roleTags: []
+  };
+  const recoverCount = Math.round(recoverDensity * 100);
+  return {
+    policy:new ResponsePolicy({ assessGlobalBenefit }),
+    decision: {
+      responder,
+      target,
+      responseType:"dyingRescue",
+      context:{ target },
+      rescueOrder:[target, responder, later],
+      responderHandDefinitionIds:["recover"],
+      knownCardsByPlayer:{},
+      recoverDensity,
+      remainingCardCounts:{ recover:recoverCount, assault:100 - recoverCount },
+      forceAiRescueHuman:false
+    }
+  };
+}
+
 test("AI·救援：濒死本人有调息时必须自救", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   b.hp = 1;
@@ -32408,7 +32465,7 @@ test("AI·救援：当前调息足够时正常响应并救活", async () => {
   assert.equal(ally.hand.length, 0);
 });
 
-test("AI·救援：按单张边际价值启动负2血的1+2协作救援", async () => {
+test("AI·救援：已知1+2协作容量足够时连续救活负2血队友", async () => {
   const target = makePlayer("d", 0, "dawn", "ai", 2),
     ally1 = makePlayer("a1", 1, "dawn"),
     ally2 = makePlayer("a2", 2, "dawn"),
@@ -32418,8 +32475,11 @@ test("AI·救援：按单张边际价值启动负2血的1+2协作救援", async 
   ally2.hand.push(instance("recover"), instance("recover"));
   const { game }
     = makeGame([target, ally1, ally2, enemy]);
+  ally1.aiMemory.knownCardsByPlayer[ally2.id] = Object.fromEntries(
+    ally2.hand.map((card) => [card.id, card.definitionId])
+  );
   const assessment = game.aiController.responsePolicy.assessDyingRescue(ally1, target);
-  assert.ok(assessment.futureExpectedRecover > 0);
+  assert.equal(assessment.guaranteedSurvivable, true);
   assert.equal(
     game.aiController.responsePolicy.shouldRespond(ally1, "dyingRescue", { target }, [ally1.hand[0]]),
     true
@@ -32500,21 +32560,28 @@ test("AI·救援：强制救援：AI 评分函数返回 false 时仍绕过策略
   assert.equal(policyCalls, 0);
 });
 
-test("AI·救援：确定必败：AI 无法达到存活条件时不消耗调息", async () => {
+test("AI·救援：确定必败：固定拒绝仍经过 AI timing 且不消耗调息", async () => {
   const human = makePlayer("human", 0, "dawn", "human"),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   human.hp = -1;
-  ally.hand.push(instance("recover"));
+  const recover = instance("recover");
+  ally.hand.push(recover);
   const { game, ui }
     = makeGame([human, ally, enemy]);
-  game.aiController.responsePolicy.shouldRespond = () => false;
-  await game.dyingWorkflow.enter(human, enemy);
+  const delays = [];
+  game.cleanupManager.delay = async (milliseconds) => {
+    delays.push(milliseconds);
+    return true;
+  };
+  const result = await game.responseWorkflow.requestDyingRescue(ally, human, recover);
+  assert.equal(result.status, "declined");
+  assert.equal(delays.length, 1);
+  assert.ok(ui.thinking.some(([active, player]) => active && player.id === ally.id));
+  assert.equal(ui.thinking.at(-1)[0], false);
   assert.equal(ally.hand.length, 1);
   assert.equal(ally.statistics.healingDone, 0);
-  assert.equal(human.hp, 0);
-  assert.equal(human.alive, false);
-  assert.ok(ui.logs.some((message) => message.includes(`${human.name}救援失败，阵亡`)));
+  assert.equal(game.state.pendingResponses.length, 0);
 });
 
 test("AI·救援：确定必败：普通响应路径不消耗调息", async () => {
@@ -32749,6 +32816,7 @@ test("AI·救援：隐藏手牌未知时决策不读取真实后续牌面", asyn
     later.hand.push(instance(laterCard));
     const { game } = makeGame([target, responder, later, enemy]);
     game.forceAiRescueHuman = false;
+    game.aiController.knowledge.remainingCounts = () => ({ recover:9, assault:1 });
     const assessment = game.aiController.assessDyingRescue(responder, target);
     const use = game.aiController.shouldRespond(
       responder,
@@ -32764,17 +32832,54 @@ test("AI·救援：隐藏手牌未知时决策不读取真实后续牌面", asyn
   assert.equal(withHiddenRecover.assessment.guaranteedImpossible, false);
   assert.equal(withHiddenAssault.assessment.guaranteedImpossible, false);
   assert.equal(
+    withHiddenRecover.assessment.rescueSuccessProbability,
+    withHiddenAssault.assessment.rescueSuccessProbability
+  );
+  assert.equal(
+    withHiddenRecover.assessment.expectedRescueValue,
+    withHiddenAssault.assessment.expectedRescueValue
+  );
+  assert.equal(
     withHiddenRecover.assessment.maximumFeasibleRecovery,
     withHiddenAssault.assessment.maximumFeasibleRecovery
   );
+  assert.equal(withHiddenRecover.use, withHiddenAssault.use);
   assert.equal(withHiddenRecover.use, true);
-  assert.equal(withHiddenAssault.use, true);
   assert.equal(withHiddenRecover.responder.hand.length, 0);
   assert.equal(withHiddenAssault.responder.hand.length, 0);
   assert.equal(withHiddenRecover.target.alive, true);
   assert.equal(withHiddenAssault.target.alive, false);
   assert.equal(withHiddenRecover.later.hand.length, 0);
   assert.equal(withHiddenAssault.later.hand.length, 1);
+});
+
+test("AI·救援：高概率不确定救援按正期望使用调息", () => {
+  const { policy, decision } = makeProbabilisticRescueDecision(0.9);
+  const assessment = policy.assessDyingRescue(decision);
+  assert.equal(assessment.guaranteedImpossible, false);
+  assert.equal(assessment.guaranteedSurvivable, false);
+  assert.ok(Math.abs(assessment.rescueSuccessProbability - 0.9) < 1e-12);
+  assert.ok(assessment.expectedRescueValue > 0);
+  assert.equal(policy.shouldRespond(decision), true);
+});
+
+test("AI·救援：低概率不确定救援按负期望保留调息", () => {
+  const { policy, decision } = makeProbabilisticRescueDecision(0.01);
+  const assessment = policy.assessDyingRescue(decision);
+  assert.equal(assessment.guaranteedImpossible, false);
+  assert.equal(assessment.guaranteedSurvivable, false);
+  assert.ok(Math.abs(assessment.rescueSuccessProbability - 0.01) < 1e-12);
+  assert.ok(assessment.expectedRescueValue < 0);
+  assert.equal(policy.shouldRespond(decision), false);
+});
+
+test("AI·救援：strategic 目标在极低成功率下不能覆盖负期望", () => {
+  const { policy, decision } = makeProbabilisticRescueDecision(0.01, ["support"]);
+  const assessment = policy.assessDyingRescue(decision);
+  assert.equal(assessment.strategic, true);
+  assert.equal(assessment.actionValue, 3);
+  assert.ok(assessment.expectedRescueValue < 0);
+  assert.equal(policy.shouldRespond(decision), false);
 });
 
 test("AI·救援：濒死救援在本人后按相对座位环绕顺序消费调息", () => {

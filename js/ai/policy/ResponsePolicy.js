@@ -20,6 +20,7 @@ value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query�
 import { getBaseCardAiValue } from "../value/CardValue.js";
 import { cardAvailability } from "../value/CardValue.js";
 import { HP_VALUE } from "../value/Economics.js";
+import { probabilityAtLeast } from "../state/BeliefState.js";
 import { getRecoverHealAmount } from "../../domain/rules/card/CardEffectRules.js";
 
 /*
@@ -346,7 +347,7 @@ export class ResponsePolicy {
   已过滤的 responder/target、救援顺序、自己手牌定义、合法记忆、recover density 和剩余牌计数。
 
   输出
-  冻结字段的救援 assessment object。
+  冻结字段的救援容量、成功概率与期望价值 assessment object。
 
   读取状态
   只读 DecisionContext 公开/合法信息。
@@ -355,10 +356,11 @@ export class ResponsePolicy {
   无。
 
   调用函数
-  无。
+  probabilityAtLeast、getBaseCardAiValue、getRecoverHealAmount。
 
   边界与不变量
-  后续未知手牌只按公开 handCount 与统一 recover density 估算。
+  后续未知手牌只按公开 handCount、合法记忆与 Belief recover density 估算；
+  guaranteed impossible 保持硬拒绝，strategic 只提高存活价值。
   */
   assessDyingRescue({
     responder,
@@ -373,15 +375,6 @@ export class ResponsePolicy {
     const recoverHealAmount = getRecoverHealAmount();
     const ownRecover = responderHandDefinitionIds
       .filter((definitionId) => definitionId === "recover").length;
-    const responderIndex = rescueOrder.findIndex((player) => player.id === responder.id);
-    const later = responderIndex < 0 ? [] : rescueOrder.slice(responderIndex + 1);
-    const futureExpectedRecover = later.reduce((sum, player) => {
-      const known = knownCardsByPlayer[player.id] ?? {};
-      const knownRecover = Object.values(known)
-        .filter((definitionId) => definitionId === "recover").length;
-      const unknownCards = Math.max(0, player.handCount - Object.keys(known).length);
-      return sum + knownRecover + unknownCards * recoverDensity;
-    }, 0);
     const knownRecoverCapacity = rescueOrder.reduce((sum, player) => {
       if (player.id === responder.id) return sum + ownRecover;
       const known = knownCardsByPlayer[player.id] ?? {};
@@ -401,6 +394,15 @@ export class ResponsePolicy {
     const maximumFeasibleRecovery = (
       knownRecoverCapacity + unknownRecoverCapacity
     ) * recoverHealAmount;
+    const guaranteedImpossible = maximumFeasibleRecovery < need;
+    const guaranteedSurvivable = knownFeasibleRecovery >= need;
+    const requiredRecoverCount = Math.ceil(need / recoverHealAmount);
+    const unknownRecoveryRequired = Math.max(0, requiredRecoverCount - knownRecoverCapacity);
+    const rescueSuccessProbability = guaranteedImpossible
+      ? 0
+      : probabilityAtLeast(unknownRecoverSlots, recoverDensity, unknownRecoveryRequired);
+    const futureExpectedRecover = Math.max(0, knownRecoverCapacity - 1)
+      + unknownRecoverSlots * recoverDensity;
     const remainingAfterThisCard = Math.max(0, need - recoverHealAmount);
     const aliveTeam = rescueOrder.filter(
       (player) => player.alive && player.battleTeam === target.battleTeam
@@ -413,14 +415,12 @@ export class ResponsePolicy {
       + (target.hasEquipment ? 2 : 0)
       + (strategic ? 3 : 0);
     const immediateDefeatRisk = aliveTeam.length <= 2;
-    const likelyFollowUp = futureExpectedRecover > 0;
     const lastRecoverPenalty = ownRecover === 1 ? (responder.hp <= 2 ? 3 : 1.5) : 0;
-    const score = 3 + actionValue
-      + (immediateDefeatRisk ? 8 : 0)
-      + (likelyFollowUp ? 4 : 0)
-      + (ownRecover > 1 ? 3 : 0)
-      - lastRecoverPenalty
-      - remainingAfterThisCard;
+    const survivalValue = HP_VALUE + actionValue + (immediateDefeatRisk ? 8 : 0);
+    // Policy 沿用现有响应资源的 35% 静态保留尺度；最后一张调息的自保价值只计入机会成本。
+    const recoverOpportunityCost = getBaseCardAiValue("recover") * 0.35 + lastRecoverPenalty;
+    const expectedRescueValue = rescueSuccessProbability * survivalValue
+      - recoverOpportunityCost;
     return {
       need,
       ownRecover,
@@ -429,14 +429,18 @@ export class ResponsePolicy {
       knownFeasibleRecovery,
       maximumFeasibleRecovery,
       unknownRecoverCapacity,
-      guaranteedImpossible: maximumFeasibleRecovery < need,
-      guaranteedSurvivable: knownFeasibleRecovery >= need,
+      unknownRecoveryRequired,
+      guaranteedImpossible,
+      guaranteedSurvivable,
+      rescueSuccessProbability,
       remainingAfterThisCard,
       strategic,
       immediateDefeatRisk,
-      likelyFollowUp,
       actionValue,
-      score
+      survivalValue,
+      recoverOpportunityCost,
+      expectedRescueValue,
+      score:expectedRescueValue
     };
   }
 
@@ -501,7 +505,8 @@ export class ResponsePolicy {
   assessDyingRescue、knownPendingAssaultBonus、状态/guardian/dynamic query。
 
   边界与不变量
-  Policy 不投影 State、不构造 Simulator；所有阈值、严格比较和分支顺序保持冻结。
+  Policy 不投影 State、不构造 Simulator；确定必败硬拒绝，自救与强制真人救援保留固定策略，
+  其余救援只在连续期望价值严格为正时响应。
   */
   shouldRespond(decision) {
     const {
@@ -545,11 +550,7 @@ export class ResponsePolicy {
         && responder.controllerType === "ai"
         && target.controllerType === "human"
       ) return true;
-      return assessment.immediateDefeatRisk
-        || assessment.likelyFollowUp
-        || assessment.strategic
-        || assessment.ownRecover > 1
-        || assessment.score > 0;
+      return assessment.expectedRescueValue > 0;
     }
     if (type === "block") {
       const incoming = Math.max(0, Number(context.amount ?? 1) || 0)

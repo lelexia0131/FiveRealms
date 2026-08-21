@@ -130,7 +130,7 @@ function remainingCardDensity(remainingCardCounts, definitionId) {
 计算独立同分布未知槽位中至少出现指定次数目标牌的概率。
 
 调用方
-createCardEstimate。
+createCardEstimate、ResponsePolicy.assessDyingRescue。
 
 输入
 未知槽位数、单槽密度和至少需要的成功数。
@@ -150,7 +150,7 @@ createCardEstimate。
 边界与不变量
 所需次数非正返回一，槽位不足或密度非正返回零。
 */
-function probabilityAtLeast(trials, probability, required) {
+export function probabilityAtLeast(trials, probability, required) {
   if (required <= 0) return 1;
   if (trials < required || probability <= 0) return 0;
   let below = 0;

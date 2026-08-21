@@ -611,7 +611,8 @@ export function createResponseWorkflow(dependencies) {
   经支付 transition。
 
   调用函数
-  isDyingRescueEligible、isCardResponseImpossibleFromPublicInfo、waitForDecision、payCardsFromHandAtomically。
+  isDyingRescueEligible、isCardResponseImpossibleFromPublicInfo、waitForFixedAiDecision、waitForDecision、
+  payCardsFromHandAtomically。
 
   边界与不变量
   救援资格由 Domain Rule 决定；公开空手时直接结束，否则真人没有合法调息时不创建窗口，AI 仍保留 timing boundary。
@@ -644,15 +645,17 @@ export function createResponseWorkflow(dependencies) {
     const mustDeclineGuaranteedImpossible = (aiSelfRescue || forcedHumanRescue)
       && runtime.isAiDyingRescueGuaranteedImpossible?.(rescuer, target) === true;
 
-    if ((aiSelfRescue || forcedHumanRescue) && !mustDeclineGuaranteedImpossible) {
+    if (aiSelfRescue || forcedHumanRescue) {
       decision = await waitForFixedAiDecision(
         rescuer,
         gameId,
         `正在准备救援${target.name}`,
-        () => responseResult(unavailableAfterTiming ? RESPONSE_STATUS.UNAVAILABLE : RESPONSE_STATUS.USED)
+        () => responseResult(
+          mustDeclineGuaranteedImpossible
+            ? RESPONSE_STATUS.DECLINED
+            : (unavailableAfterTiming ? RESPONSE_STATUS.UNAVAILABLE : RESPONSE_STATUS.USED)
+        )
       );
-    } else if (mustDeclineGuaranteedImpossible) {
-      decision = responseResult(RESPONSE_STATUS.DECLINED);
     } else {
       decision = await waitForDecision(rescuer, request, request.presentation.buttonLabel, { target, source:rescuer, card:legalCard }, availableCards);
     }
