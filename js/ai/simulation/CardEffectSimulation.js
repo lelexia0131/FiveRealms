@@ -227,7 +227,19 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
           .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
         const unknownCount = Math.max(0, (Number(target.handCount) || 0) - knownExpectedCount);
         const informationGain = Math.min(DOMAIN_CARD_DEFINITIONS.scout.maxRevealCount, unknownCount);
-        actor.expectedInformationGain = (actor.expectedInformationGain ?? 0) + informationGain * scale;
+        // 敌方未知牌会改善当前 AI 的对抗决策；队友情报不凭空获得固定分，
+        // 其真实收益由下方 knowledge 推进后的后续模拟及协调等明确联动结算。
+        if (target.battleTeam !== actor.battleTeam) {
+          actor.expectedInformationGain = (actor.expectedInformationGain ?? 0)
+            + informationGain * scale;
+        }
+        this.recordSimulatedPrivatePeek(
+          next,
+          actor,
+          target,
+          DOMAIN_CARD_DEFINITIONS.scout.maxRevealCount,
+          effectEventWorlds
+        );
         coordinationProbability = scale;
         coordinationTargets = [target];
         break;

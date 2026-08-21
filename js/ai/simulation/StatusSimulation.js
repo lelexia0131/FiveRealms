@@ -514,10 +514,10 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
 
   /*
   功能
-  把窥隙实际看到的未知手牌身份按合法先验写入目标的 knownCards 概率条目。
+  把私密查看获得的未知手牌身份按合法先验写入目标的 knownCards 概率条目。
 
   调用方
-  simulateSpyGapAfterLifeDamage：在窥隙新触发世界中推进私密信息状态。
+  CardEffectSimulation 的窥探结算与 simulateSpyGapAfterLifeDamage：推进私密信息状态。
 
   输入
   SearchState、观察者、被观察者、期望揭示数量与触发条件世界。
@@ -535,14 +535,18 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   cardAvailability、gateEventWorlds、nextSimulatedCardId、remainingCardDensity、availableBranchesFromState、syncCardEstimates。
 
   边界与不变量
-  窥隙只观察已在目标手牌中的槽位，不得改变 handCount 或凭空重抽格挡/反制容量；
-  每张观察身份拥有独立概率世界，重复窥探已确定身份不会产生新的揭示质量。
+  私密查看只观察已在目标手牌中的槽位，不得改变 handCount 或凭空重抽格挡/反制容量；
+  每次查看使用独立身份组，已确定身份不会在后续查看中重复产生揭示质量。
   */
-  recordSimulatedSpyGapPeek(state, source, target, revealCount, triggerWorlds) {
+  recordSimulatedPrivatePeek(state, source, target, revealCount, triggerWorlds) {
     if (!target?.alive || !Array.isArray(state?.players)) return;
     target.knownCards ??= [];
     const triggerProbability = this.eventProbability(triggerWorlds);
     if (triggerProbability <= PROBABILITY_EPSILON) return;
+    const peekKey = this.nextProbabilityEventKey(
+      state,
+      `private-peek:${source.id}:${target.id}`
+    );
     const knownOccupancy = target.knownCards.reduce(
       (sum, entry) => sum + this.cardAvailability(entry),
       0
@@ -558,13 +562,13 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
         state,
         triggerWorlds,
         positionProbability,
-        `spy-gap-reveal:${source.id}:${target.id}:${position}`
+        `private-peek-reveal:${peekKey}:${position}`
       );
       const revealProbability = this.eventProbability(revealWorlds);
       if (revealProbability <= PROBABILITY_EPSILON) break;
       // 同一观察槽位的各牌身份必须共享一个条件键，保证候选互斥；
       // 否则 Probability 会把 26 个身份误当成独立牌反复叉乘。
-      const identityKey = `spy-gap-identity:${source.id}:${target.id}:${position}`;
+      const identityKey = `private-peek-identity:${peekKey}:${position}`;
       const identityPartition = mergeProbabilityStateBranches(revealWorlds.flatMap((branch) => {
         if (!branch.occurs) {
           return [{
@@ -656,7 +660,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   spyGapTriggeredProbability、spyGapTriggered、lastSpyGapTargetId，以及委托记录的目标已知牌与摘要。
 
   调用函数
-  recordSimulatedSpyGapPeek。
+  recordSimulatedPrivatePeek。
 
   边界与不变量
   只有本回合尚未触发的边际生命伤害世界会揭示新牌；空手、队友、已死亡或已触发时不会产生信息价值。
@@ -678,7 +682,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       triggerProbability,
       "occurs"
     );
-    this.recordSimulatedSpyGapPeek(
+    this.recordSimulatedPrivatePeek(
       state, source, target, PASSIVE_SKILL_DEFINITIONS.spyGap.maxRevealCount, triggerWorlds
     );
   }

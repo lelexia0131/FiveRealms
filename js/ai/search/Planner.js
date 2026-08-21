@@ -151,8 +151,8 @@ export class Planner {
 
   边界与不变量
   一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；TIME/NODE 绝不从未完整物化的搜索前沿重选；
-  根层已完整物化的终止动作可作为安全基线；只有全部 non-end 根动作都已比较时才能补算未物化的 end，
-  避免预算一面强制执行真实负收益动作，一面让 end 越过未比较的 card sibling。
+  根层合法终止动作始终是安全基线；预算不足时只用已物化 siblings 计算其机会成本，
+  不得因为尚有未比较动作而强制执行已经确认的负收益动作。
   */
   async plan(player, visibleState, rootActions, options = {}) {
     this.lastPlannedSequence = [];
@@ -308,15 +308,10 @@ export class Planner {
       bestSeenCandidate
     });
 
-    // 根终止动作是已由规则提供的安全基线。已物化的 end 可在任何停止原因下参与比较；
-    // 未物化的 end 只有在全部 non-end 根动作都已比较后才能恢复，不能越过同样未物化的 card 候选。
+    // 根终止动作是规则提供的安全基线；预算中断时仍按已经物化的 siblings 计算，
+    // 这样未知候选不会把已确认的负收益动作抬过“不行动”。
     const rootTerminalAction = this.candidateMaterializer.findTerminalAction(rootActions);
     if (rootTerminalAction) {
-      const materializedRootActions = new Set(rootCandidates.map((candidate) => candidate.action));
-      const allNonTerminalRootsMaterialized = rootActions.every((action) => (
-        this.candidateMaterializer.findTerminalAction([action])
-        || materializedRootActions.has(action)
-      ));
       const terminalInFinalBeam = activeBeam.find(
         (node) => this.candidateMaterializer.findTerminalAction([node.action])
       );
@@ -326,7 +321,7 @@ export class Planner {
             (node) => this.candidateMaterializer.findTerminalAction([node.action])
           );
       let terminalChoice = terminalInFinalBeam ?? materializedRootTerminal;
-      if (!terminalChoice && allNonTerminalRootsMaterialized) {
+      if (!terminalChoice) {
         budget.observeSimulation();
         const terminalState = simulator.apply(
           visibleState,
