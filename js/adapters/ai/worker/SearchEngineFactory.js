@@ -36,6 +36,7 @@ import {
 import { CandidateMaterializer } from "../../../ai/search/CandidateMaterializer.js";
 import { CounterfactualTerms } from "../../../ai/search/CounterfactualTerms.js";
 import { FrontierValue } from "../../../ai/search/FrontierValue.js";
+import { PatternMatcher } from "../../../ai/search/pattern/PatternMatcher.js";
 import { Planner } from "../../../ai/search/Planner.js";
 import { SearchBudget } from "../../../ai/search/SearchBudget.js";
 import { SearchPolicy } from "../../../ai/search/SearchPolicy.js";
@@ -257,8 +258,10 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     actionDescriptor:ActionDescriptor,
     getResolutionScale:tacticResolutionScale
   });
+  const patternMatcher = new PatternMatcher({ actionDescriptor:ActionDescriptor });
   const planner = new Planner({
     candidateMaterializer,
+    patternMatcher,
     searchPolicy,
     simulatorFactory,
     searchBudgetFactory: () => new SearchBudget({

@@ -136,6 +136,93 @@ export class CandidateMaterializer {
 
   /*
   功能
+  返回保留 execution 与 availability 差异的普通搜索 secondary key。
+
+  调用方
+  Planner 的 root 与 child 确定性同 intent 排序。
+
+  输入
+  当前 runtime search action。
+
+  输出
+  ActionDescriptor 提供的稳定 search-semantic 字符串。
+
+  读取状态
+  只读动作已经携带的公开搜索执行语义。
+
+  写入状态
+  无。
+
+  调用函数
+  ActionDescriptor.searchSemanticKey。
+
+  边界与不变量
+  不得进入 Pattern intent、候选 value 或 prior；不得使用 hand index 或 card instance ID。
+  */
+  schedulingSecondaryKey(action) {
+    return this.actionDescriptor.searchSemanticKey(action);
+  }
+
+  /*
+  功能
+  把深层候选的廉价探索顺序评分委托给现有 SearchPrior owner。
+
+  调用方
+  Planner 在任何 child materialization 前。
+
+  输入
+  当前动作、行动者与动作生成后的 SearchState。
+
+  输出
+  与 root scheduling 相同定义的有限调度分数。
+
+  读取状态
+  只读 SearchPrior 与输入动作/状态。
+
+  写入状态
+  无。
+
+  调用函数
+  SearchPrior.rootSchedulingScore。
+
+  边界与不变量
+  这是同一搜索先验的结构性复用，不引入新的权重，也不得进入候选 value/prior。
+  */
+  childSchedulingScore(action, player, state) {
+    return this.rootSchedulingScore(action, player, state);
+  }
+
+  /*
+  功能
+  返回不含 hand index 与 card instance ID 的深层动作调度语义键。
+
+  调用方
+  Planner 的确定性 child 同分排序。
+
+  输入
+  当前深层候选动作。
+
+  输出
+  ActionDescriptor 提供的稳定字符串键。
+
+  读取状态
+  只读动作公开搜索语义。
+
+  写入状态
+  无。
+
+  调用函数
+  ActionDescriptor.schedulingKey。
+
+  边界与不变量
+  必须与 root scheduling 使用同一 semantic identity，不得读取物理手牌顺序。
+  */
+  childSchedulingKey(action) {
+    return this.rootSchedulingKey(action);
+  }
+
+  /*
+  功能
   创建一次规划共用的领域转移上下文（context）。
 
   调用方

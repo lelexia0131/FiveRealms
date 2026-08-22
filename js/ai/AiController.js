@@ -38,6 +38,7 @@ import { createSearchResult, SEARCH_RESULT_STATUS } from "./search/SearchResult.
 import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js";
 import { CandidateMaterializer } from "./search/CandidateMaterializer.js";
 import { CounterfactualTerms } from "./search/CounterfactualTerms.js";
+import { PatternMatcher } from "./search/pattern/PatternMatcher.js";
 import { Planner } from "./search/Planner.js";
 import { SearchBudget } from "./search/SearchBudget.js";
 import { SearchPolicy } from "./search/SearchPolicy.js";
@@ -314,8 +315,10 @@ export class AIController {
       actionDescriptor: ActionDescriptor,
       getResolutionScale: tacticResolutionScale
     });
+    this.patternMatcher = new PatternMatcher({ actionDescriptor:ActionDescriptor });
     this.planner = new Planner({
       candidateMaterializer: this.candidateMaterializer,
+      patternMatcher:this.patternMatcher,
       searchPolicy: this.searchPolicy,
       simulatorFactory,
       searchBudgetFactory: () => new SearchBudget({

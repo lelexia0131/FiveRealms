@@ -151,10 +151,10 @@ export function normalizeConditions(conditions = {}) {
 为规范化世界条件生成稳定比较签名。
 
 调用方
-mergeProbabilityBranches。
+mergeProbabilityBranchesWithCheckpoint。
 
 输入
-条件键值对象。
+已经规范化的条件键值对象。
 
 输出
 稳定 JSON 字符串。
@@ -166,13 +166,13 @@ mergeProbabilityBranches。
 无。
 
 调用函数
-normalizeConditions。
+JSON.stringify。
 
 边界与不变量
-键顺序不同但语义相同的条件必须得到同一签名。
+调用方必须先完成本次 operation 的唯一一次条件规范化；本函数不得重复排序。
 */
 function conditionSignature(conditions) {
-  return JSON.stringify(normalizeConditions(conditions));
+  return JSON.stringify(conditions);
 }
 
 /*
@@ -270,13 +270,13 @@ function stateSignatureFromNormalizedParts(conditions, state) {
 
 /*
 功能
-为一次状态 join 局部预解析分支条件、状态字段与兼容比较条目。
+为一次状态 join 局部提取已合并分支的条件、状态与兼容比较条目。
 
 调用方
 joinProbabilityStateBranchesWithCheckpoint。
 
 输入
-已经过当前 partition merge 的概率状态分支。
+已经过当前 partition merge、字段顺序稳定的概率状态分支。
 
 输出
 只在本次 join operation 内使用的预计算普通对象。
@@ -288,16 +288,17 @@ joinProbabilityStateBranchesWithCheckpoint。
 无。
 
 调用函数
-branchState、normalizeConditions。
+Object.entries。
 
 边界与不变量
-不得修改或跨 operation 缓存输入分支；状态和条件各解析一次，概率值保持原分支数值。
+不得修改或跨 operation 缓存输入分支；merge 已完成的排序不得在 join 内重复执行。
 */
 function prepareProbabilityStateBranch(branch) {
-  const state = branchState(branch);
+  const { probability, conditions, ...state } = branch;
   return {
-    probability:branch.probability,
-    conditions:normalizeConditions(branch?.conditions),
+    probability,
+    conditions,
+    conditionEntries:Object.entries(conditions),
     state,
     stateEntries:Object.entries(state)
   };
@@ -323,13 +324,15 @@ joinProbabilityStateBranches。
 无。
 
 调用函数
-conditionsCompatible。
+无。
 
 边界与不变量
-同名状态字段取值冲突必须拒绝联合；不得在 base × candidate 比较中重新解析状态字段。
+同名条件或状态字段取值冲突必须拒绝联合；不得在 base × candidate 比较中重新枚举字段。
 */
 function stateBranchesCompatible(base, candidate) {
-  if (!conditionsCompatible(base.conditions, candidate.conditions)) return false;
+  if (!base.conditionEntries.every(([key, value]) => (
+    candidate.conditions[key] === undefined || candidate.conditions[key] === value
+  ))) return false;
   return base.stateEntries.every(([key, value]) => (
     candidate.state[key] === undefined || Object.is(candidate.state[key], value)
   ));
@@ -626,7 +629,7 @@ function joinProbabilityStateBranchesWithCheckpoint(partitions, checkpoint = nul
           ...base.state,
           ...candidate.state,
           probability:base.probability * candidate.probability / denominator,
-          conditions:normalizeConditions({ ...base.conditions, ...candidate.conditions })
+          conditions:{ ...base.conditions, ...candidate.conditions }
         });
       }
     }

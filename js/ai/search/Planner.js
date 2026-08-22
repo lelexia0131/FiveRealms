@@ -6,7 +6,7 @@
 AIController 组合根与搜索回归测试。
 
 下游
-注入的 Simulator/SearchBudget 工厂、CandidateMaterializer、SearchPolicy 与动作生成/让步能力。
+注入的 PatternMatcher、Simulator/SearchBudget 工厂、CandidateMaterializer、SearchPolicy 与动作生成/让步能力。
 
 状态边界
 只读输入 SearchState，所有分支写入由 simulatorFactory 创建的独立 Simulator 承担。
@@ -27,7 +27,8 @@ export class Planner {
   AIController 的组合根（统一组装依赖的位置）与正式边界。
 
   输入
-  CandidateMaterializer、SearchPolicy、Simulator/SearchBudget factory、候选去重、深层生成与可取消让步能力。
+  CandidateMaterializer、PatternMatcher、SearchPolicy、Simulator/SearchBudget factory、候选去重、
+  深层生成与可取消让步能力。
 
   输出
   可执行 plan 的 Planner。
@@ -46,6 +47,7 @@ export class Planner {
   */
   constructor({
     candidateMaterializer,
+    patternMatcher,
     searchPolicy,
     simulatorFactory,
     searchBudgetFactory,
@@ -53,7 +55,7 @@ export class Planner {
     generateFromVisible,
     yieldControl
   } = {}) {
-    const services = { candidateMaterializer, searchPolicy };
+    const services = { candidateMaterializer, patternMatcher, searchPolicy };
     const capabilities = {
       simulatorFactory,
       searchBudgetFactory,
@@ -124,22 +126,28 @@ export class Planner {
   父节点、完整子候选与当前深度。
 
   输出
-  继承根动作、累计价值、序列和 provenance 的完整搜索节点。
+  继承根动作、累计价值、序列、provenance 与纯调度 Pattern metadata 的完整搜索节点。
 
   读取状态
-  SearchPolicy 的 pruneScore 公式与父/子候选字段。
+  SearchPolicy 的 pruneScore 公式、父/子候选字段与父节点 Pattern prefix。
 
   写入状态
   无。
 
   调用函数
-  SearchPolicy.pruneScore。
+  SearchPolicy.pruneScore、advancePatternState。
 
   边界与不变量
-  只连接已经完整物化并完成 sibling terms 的候选；不得登记 partial state 或改变 final value。
+  只连接已经完整物化并完成 sibling terms 的候选；Pattern metadata 不得登记 partial state 或改变 final value。
   */
   buildChildNode(node, candidate, depth) {
     const valueScore = node.valueScore + candidate.transitionValue;
+    const patternState = this.advancePatternState(
+      node.activePatternProposals,
+      candidate.action,
+      depth - 1,
+      node.completedPatternIds
+    );
     return {
       action:node.action,
       state:candidate.state,
@@ -153,8 +161,272 @@ export class Planner {
         ...node.remainingHistory,
         candidate.remainingProvenance
       ],
-      frontierResidual:candidate.frontierResidual
+      frontierResidual:candidate.frontierResidual,
+      completedAtWorkCount:candidate.completedAtWorkCount,
+      ...patternState
     };
+  }
+
+  /*
+  功能
+  按 Pattern proposal 的语义前缀推进搜索节点上的纯调度 metadata。
+
+  调用方
+  root node 构造与 buildChildNode。
+
+  输入
+  尚在匹配的 proposals、当前动作、零基 step 索引与此前已完成的 Pattern IDs。
+
+  输出
+  仍可继续的 proposals、本步新完成 proposals 和继承后的完成 Pattern IDs。
+
+  读取状态
+  CandidateMaterializer 的 ActionDescriptor semantic key。
+
+  写入状态
+  无。
+
+  调用函数
+  CandidateMaterializer.childSchedulingKey。
+
+  边界与不变量
+  metadata 不进入 value/prune score；只有当前完整节点动作匹配完整 proposal step 时才可完成 Pattern。
+  */
+  advancePatternState(proposals, action, stepIndex, completedPatternIds = []) {
+    const actionKey = this.candidateMaterializer.childSchedulingKey(action);
+    const matched = (proposals ?? []).filter(
+      (proposal) => proposal.stepKeys[stepIndex] === actionKey
+    );
+    const newlyCompletedPatternProposals = matched.filter(
+      (proposal) => proposal.stepKeys.length === stepIndex + 1
+    );
+    return {
+      activePatternProposals:matched.filter(
+        (proposal) => proposal.stepKeys.length > stepIndex + 1
+      ),
+      newlyCompletedPatternProposals,
+      completedPatternIds:[...new Set([
+        ...completedPatternIds,
+        ...newlyCompletedPatternProposals.map((proposal) => proposal.patternId)
+      ])]
+    };
+  }
+
+  /*
+  功能
+  把 Pattern-guided roots 与既有 SearchPrior root 顺序进行公平交错。
+
+  调用方
+  plan 的 root scheduling 阶段。
+
+  输入
+  已去重合法 roots、行动者、根 SearchState 与有界 proposals。
+
+  输出
+  最多提升一个最高优先级 guided root，其余 roots 保持现有 SearchPrior 顺序。
+
+  读取状态
+  CandidateMaterializer root scheduling score/key。
+
+  写入状态
+  无。
+
+  调用函数
+  CandidateMaterializer.rootSchedulingScore/rootSchedulingKey/schedulingSecondaryKey。
+
+  边界与不变量
+  空 proposal 必须严格保留既有顺序；Pattern 只有一个正向提升位，其他 proposals 不得挤占 ordinary coverage。
+  */
+  scheduleRootActions(actions, player, state, proposals = []) {
+    const scheduled = (actions ?? []).map((action) => ({
+      action,
+      score:this.candidateMaterializer.rootSchedulingScore(action, player, state),
+      key:this.candidateMaterializer.rootSchedulingKey(action),
+      secondaryKey:this.candidateMaterializer.schedulingSecondaryKey?.(action)
+        ?? this.candidateMaterializer.rootSchedulingKey(action)
+    })).sort((left, right) => {
+      if (left.score !== right.score) return left.score > right.score ? -1 : 1;
+      const intentOrder = left.key.localeCompare(right.key);
+      if (intentOrder !== 0) return intentOrder;
+      return left.secondaryKey.localeCompare(right.secondaryKey);
+    });
+    if (!proposals.length) return scheduled.map((entry) => entry.action);
+    let promotedEntry = null;
+    for (const proposal of proposals) {
+      const key = proposal.stepKeys[0];
+      promotedEntry = scheduled.find((entry) => entry.key === key) ?? null;
+      if (promotedEntry) break;
+    }
+    if (!promotedEntry) return scheduled.map((entry) => entry.action);
+    return [
+      promotedEntry.action,
+      ...scheduled.filter((entry) => entry !== promotedEntry).map((entry) => entry.action)
+    ];
+  }
+
+  /*
+  功能
+  在昂贵深层物化前按现有 SearchPrior 与 semantic key 稳定排列 legal children。
+
+  调用方
+  materializeChildCandidates。
+
+  输入
+  当前合法动作、行动者、生成这些动作的 post-state 与按 proposal 顺序排列的 guided semantic keys。
+
+  输出
+  guided intent 优先、其余动作按现有 SearchPrior/coarse intent/search-semantic secondary key 排列的新数组。
+
+  读取状态
+  CandidateMaterializer 提供的 child scheduling score/key。
+
+  写入状态
+  无。
+
+  调用函数
+  CandidateMaterializer.childSchedulingScore/childSchedulingKey/schedulingSecondaryKey。
+
+  边界与不变量
+  只改变探索顺序，不改变合法集合、Final Utility 或 incumbent 规则；
+  guided 与普通同分都不得读取 hand index 或 card instance ID；同 intent 的执行分支必须稳定排序。
+  */
+  scheduleChildActions(actions, player, state, guidedStepKeys = []) {
+    const guidedRanks = new Map();
+    for (const [index, key] of guidedStepKeys.entries()) {
+      if (!guidedRanks.has(key)) guidedRanks.set(key, index);
+    }
+    return (actions ?? []).map((action) => ({
+      action,
+      score:this.candidateMaterializer.childSchedulingScore(action, player, state),
+      key:this.candidateMaterializer.childSchedulingKey(action),
+      secondaryKey:this.candidateMaterializer.schedulingSecondaryKey?.(action)
+        ?? this.candidateMaterializer.childSchedulingKey(action)
+    })).sort((left, right) => {
+      const leftRank = guidedRanks.get(left.key) ?? Number.POSITIVE_INFINITY;
+      const rightRank = guidedRanks.get(right.key) ?? Number.POSITIVE_INFINITY;
+      if (leftRank !== rightRank) return leftRank < rightRank ? -1 : 1;
+      if (left.score !== right.score) return left.score > right.score ? -1 : 1;
+      const intentOrder = left.key.localeCompare(right.key);
+      if (intentOrder !== 0) return intentOrder;
+      return left.secondaryKey.localeCompare(right.secondaryKey);
+    }).map((entry) => entry.action);
+  }
+
+  /*
+  功能
+  只为首次完整形成的 Pattern proposal 登记完成诊断。
+
+  调用方
+  plan 在完整 root/child node 建立后。
+
+  输入
+  完整搜索节点与本次搜索工作诊断。
+
+  输出
+  无。
+
+  读取状态
+  节点的 newlyCompletedPatternProposals。
+
+  写入状态
+  completedPatternProposalKeys 与 completedPatternCount。
+
+  调用函数
+  Set.has/add。
+
+  边界与不变量
+  partial candidate 不会形成节点，因此不得登记；同一 proposal 经 cache 复用时只计一次。
+  */
+  observeCompletedPatterns(node, workDiagnostics) {
+    for (const proposal of node.newlyCompletedPatternProposals ?? []) {
+      if (workDiagnostics.completedPatternProposalKeys.has(proposal.semanticKey)) continue;
+      workDiagnostics.completedPatternProposalKeys.add(proposal.semanticKey);
+      workDiagnostics.completedPatternCount += 1;
+    }
+  }
+
+  /*
+  功能
+  用唯一 SearchPolicy incumbent 规则比较一个完整节点并同步工作诊断。
+
+  调用方
+  plan 的 root、progressive 与 beam 完整节点登记点。
+
+  输入
+  当前 incumbent、完整节点和本次搜索工作诊断。
+
+  输出
+  SearchPolicy 选择后的唯一 incumbent。
+
+  读取状态
+  节点 valueScore、完成工作计数与 Pattern 完成 metadata。
+
+  写入状态
+  incumbent 及 Pattern incumbent 更新计数。
+
+  调用函数
+  SearchPolicy.bestByValue。
+
+  边界与不变量
+  Pattern metadata 不参与比较；只有完整 Pattern node 按既有 valueScore 真正推翻 incumbent 时才记录更新。
+  */
+  considerIncumbent(bestSeenCandidate, node, workDiagnostics) {
+    const nextBest = this.searchPolicy.bestByValue(
+      [bestSeenCandidate, node].filter(Boolean)
+    );
+    if (nextBest !== bestSeenCandidate) {
+      workDiagnostics.incumbentUpdateCount += 1;
+      workDiagnostics.firstCompletedIncumbentAtWorkCount ??= node.completedAtWorkCount;
+      workDiagnostics.finalIncumbentAtWorkCount = node.completedAtWorkCount;
+      if (node.newlyCompletedPatternProposals?.length) {
+        workDiagnostics.patternIncumbentUpdateCount += 1;
+      }
+    }
+    return nextBest;
+  }
+
+  /*
+  功能
+  在现有 beam 内优先选择仍有 Pattern continuation 的 progressive spine。
+
+  调用方
+  plan 的逐深度 progressive traversal。
+
+  输入
+  当前完整 beam nodes。
+
+  输出
+  最高 proposal explorationPriority 的可继续节点；没有 guidance 时返回既有 value best。
+
+  读取状态
+  节点 activePatternProposals 与 SearchPolicy value 比较。
+
+  写入状态
+  无。
+
+  调用函数
+  SearchPolicy.bestByValue。
+
+  边界与不变量
+  只改变下一份预算花在哪里，不改变 beam membership、valueScore 或 final selection。
+  */
+  selectProgressiveSpine(nodes) {
+    const available = (nodes ?? []).filter((node) => !node.terminal);
+    const guided = available.map((node) => ({
+      node,
+      proposal:[...(node.activePatternProposals ?? [])].sort((left, right) => {
+        if (left.explorationPriority !== right.explorationPriority) {
+          return left.explorationPriority > right.explorationPriority ? -1 : 1;
+        }
+        return left.semanticKey.localeCompare(right.semanticKey);
+      })[0] ?? null
+    })).filter((entry) => entry.proposal).sort((left, right) => {
+      if (left.proposal.explorationPriority !== right.proposal.explorationPriority) {
+        return left.proposal.explorationPriority > right.proposal.explorationPriority ? -1 : 1;
+      }
+      return left.proposal.semanticKey.localeCompare(right.proposal.semanticKey);
+    });
+    return guided[0]?.node ?? this.searchPolicy.bestByValue(available);
   }
 
   /*
@@ -165,22 +437,27 @@ export class Planner {
   plan 的最高调度 root 预展开、progressive spine 与常规 beam 展开。
 
   输入
-  父状态/provenance、深度、行动者、Simulator、SearchBudget、搜索上下文、结构和工作诊断。
+  父状态/provenance、深度、行动者、Simulator、SearchBudget、搜索上下文、结构、
+  当前 Pattern proposals、是否只推进可解析 guided step、可选的同父 expansion cache、
+  单次新增上限和工作诊断。
 
   输出
-  已完成 sibling terms 的完整子候选数组，以及会话是否在 yield 时取消。
+  可恢复 expansion cache，以及会话是否在 yield 时取消。
 
   读取状态
   注入的深层动作生成、CandidateMaterializer、SearchBudget 与 yieldControl。
 
   写入状态
-  SearchBudget 工作计数、搜索上下文诊断与 workDiagnostics 深度/分支计数。
+  SearchBudget 工作计数、搜索上下文诊断与 workDiagnostics 深度/分支/Pattern 中断计数。
 
   调用函数
-  generateFromVisible、prepareCandidate、Simulator.apply、CandidateMaterializer.materialize/finalizeSiblings、yieldControl。
+  generateFromVisible、scheduleChildActions、prepareCandidate、Simulator.apply、
+  CandidateMaterializer.materialize/finalizeSiblings、yieldControl。
 
   边界与不变量
-  cooperative interruption 只丢弃当前 partial child；返回数组只含完整候选，调用方可安全缓存并在 COMPLETE 中复用。
+  cooperative interruption 只丢弃当前 partial child；cache 只含完整候选和未消费的 semantic action 顺序；
+  Pattern 下一步只从当前 post-state legal actions 语义解析；有界 early expansion 后必须从同一 cache 继续，
+  不能重复生成或物化已完成 child，也不能把中断的 Pattern prefix 标记为完成。
   */
   async materializeChildCandidates({
     parentState,
@@ -192,13 +469,38 @@ export class Planner {
     context,
     structure,
     options,
+    activePatternProposals = [],
+    guidedContinuationOnly = false,
+    resumeExpansion = null,
+    maxNewCandidates = Number.POSITIVE_INFINITY,
     workDiagnostics
   }) {
-    const followActions = this.generateFromVisible(parentState, player.id, budget);
-    workDiagnostics.childBranches += followActions.length;
-    const candidates = [];
-    for (const action of followActions) {
+    const guidedStepKeys = activePatternProposals.map(
+      (proposal) => proposal.stepKeys[depth - 1]
+    ).filter(Boolean);
+    const followActions = resumeExpansion?.actions ?? this.scheduleChildActions(
+      this.generateFromVisible(parentState, player.id, budget),
+      player,
+      parentState,
+      guidedStepKeys
+    );
+    if (!resumeExpansion) workDiagnostics.childBranches += followActions.length;
+    const candidates = [...(resumeExpansion?.candidates ?? [])];
+    let nextActionIndex = resumeExpansion?.nextActionIndex ?? 0;
+    let newCandidateCount = 0;
+    const requestedCandidateLimit = Number.isFinite(maxNewCandidates)
+      ? Math.max(0, Math.floor(maxNewCandidates))
+      : Number.POSITIVE_INFINITY;
+    const firstActionKey = followActions[nextActionIndex]
+      ? this.candidateMaterializer.childSchedulingKey(followActions[nextActionIndex])
+      : null;
+    const candidateLimit = guidedContinuationOnly
+      && !guidedStepKeys.includes(firstActionKey)
+      ? 0
+      : requestedCandidateLimit;
+    while (nextActionIndex < followActions.length && newCandidateCount < candidateLimit) {
       if (budget.shouldStop()) break;
+      const action = followActions[nextActionIndex];
       this.candidateMaterializer.observeCandidate(action, context);
       const prepared = this.prepareCandidate(budget, depth, () => {
         budget.observeSimulation();
@@ -220,11 +522,22 @@ export class Planner {
       const candidate = prepared?.candidate ?? null;
       if (!candidate) {
         workDiagnostics.abortedCandidateCount += 1;
+        const actionKey = this.candidateMaterializer.childSchedulingKey(action);
+        for (const proposal of activePatternProposals) {
+          if (proposal.stepKeys[depth - 1] !== actionKey
+            || workDiagnostics.completedPatternProposalKeys.has(proposal.semanticKey)
+            || workDiagnostics.abortedPatternProposalKeys.has(proposal.semanticKey)) continue;
+          workDiagnostics.abortedPatternProposalKeys.add(proposal.semanticKey);
+          workDiagnostics.abortedPatternCount += 1;
+        }
         break;
       }
       candidate.completedAtWorkCount = budget.simulationCalls;
       candidates.push(candidate);
+      nextActionIndex += 1;
+      newCandidateCount += 1;
       budget.observeNode();
+      workDiagnostics.completedChildCandidateCount += 1;
       workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, depth);
       if (depth === 2) {
         workDiagnostics.firstDepth2AtWorkCount ??= candidate.completedAtWorkCount;
@@ -233,12 +546,24 @@ export class Planner {
         budget.observeYield();
         if (!(await this.yieldControl(options.gameId))) {
           budget.cancel();
-          return { candidates:[], cancelled:true };
+          return {
+            actions:followActions,
+            candidates:[],
+            nextActionIndex,
+            complete:false,
+            cancelled:true
+          };
         }
       }
     }
     this.candidateMaterializer.finalizeSiblings(candidates);
-    return { candidates, cancelled:false };
+    return {
+      actions:followActions,
+      candidates,
+      nextActionIndex,
+      complete:nextActionIndex >= followActions.length,
+      cancelled:false
+    };
   }
 
   /*
@@ -363,9 +688,16 @@ export class Planner {
       abortedRootCandidateCount:workDiagnostics.abortedRootCandidateCount,
       abortedCandidateCount:workDiagnostics.abortedCandidateCount,
       childBranches:workDiagnostics.childBranches,
+      completedChildCandidateCount:workDiagnostics.completedChildCandidateCount,
       incumbentUpdateCount:workDiagnostics.incumbentUpdateCount,
       firstCompletedIncumbentAtWorkCount:workDiagnostics.firstCompletedIncumbentAtWorkCount,
       finalIncumbentAtWorkCount:workDiagnostics.finalIncumbentAtWorkCount,
+      matchedPatternCount:workDiagnostics.matchedPatternCount,
+      patternProposalCount:workDiagnostics.patternProposalCount,
+      completedPatternCount:workDiagnostics.completedPatternCount,
+      abortedPatternCount:workDiagnostics.abortedPatternCount,
+      patternIncumbentUpdateCount:workDiagnostics.patternIncumbentUpdateCount,
+      selectedPatternId:choice?.completedPatternIds?.[0] ?? null,
       depthReached:workDiagnostics.depthReached,
       firstDepth2AtWorkCount:workDiagnostics.firstDepth2AtWorkCount,
       provisionalFallbackUsed,
@@ -394,16 +726,19 @@ export class Planner {
   当前最佳完整根动作；TIME/NODE 零完整 root 时返回已标记的合法 provisional root，取消时安全终止。
 
   读取状态
-  SearchState、显式搜索归属模块、动作生成、预算与会话能力。
+  SearchState、PatternMatcher proposal、显式搜索归属模块、动作生成、预算与会话能力。
 
   写入状态
   lastSearchStats、lastPlannedSequence 与注入能力的既有随机/让步序列。
 
   调用函数
-  simulatorFactory、searchBudgetFactory、CandidateMaterializer root scheduling/materialization、SearchPolicy、generateFromVisible、yieldControl。
+  PatternMatcher.match、simulatorFactory、searchBudgetFactory、CandidateMaterializer root scheduling/materialization、
+  SearchPolicy、generateFromVisible、yieldControl。
 
   边界与不变量
   root 在昂贵物化前按 SearchPrior 廉价分数和稳定语义键排序，不得依赖 card instance ID 或 hand index；
+  Pattern 只可正向安排 guided root/continuation，ordinary challenger 必须先获得 root coverage；
+  每个 continuation 从当前 post-state legal actions 解析，Pattern metadata 不进入 value 或 final incumbent rule；
   progressive 只缓存完整子候选；常规逐层 beam 必须复用或补齐原有展开，COMPLETE 仍只从标准 final beam 选择；
   一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；TIME/NODE 绝不执行未物化动作；
   TIME/NODE 零完整 root 时只可返回调度最高的合法 non-end provisional root，且不得登记成 candidate/计划；
@@ -419,14 +754,19 @@ export class Planner {
     const budget = this.searchBudgetFactory();
     const structure = this.searchPolicy.structure();
     const uniqueRootActions = this.deduplicateActions(rootActions);
-    const scheduledRootActions = uniqueRootActions.map((action) => ({
-      action,
-      score:this.candidateMaterializer.rootSchedulingScore(action, player, visibleState),
-      key:this.candidateMaterializer.rootSchedulingKey(action)
-    })).sort((left, right) => {
-      if (left.score !== right.score) return left.score > right.score ? -1 : 1;
-      return left.key.localeCompare(right.key);
-    }).map((entry) => entry.action);
+    const patternMatch = this.patternMatcher.match({
+      player,
+      state:visibleState,
+      legalActions:uniqueRootActions,
+      structure
+    });
+    const patternProposals = patternMatch.proposals ?? [];
+    const scheduledRootActions = this.scheduleRootActions(
+      uniqueRootActions,
+      player,
+      visibleState,
+      patternProposals
+    );
     const provisionalRootFallback = scheduledRootActions.find(
       (action) => !this.candidateMaterializer.findTerminalAction([action])
     ) ?? this.candidateMaterializer.findTerminalAction(scheduledRootActions)
@@ -448,9 +788,17 @@ export class Planner {
       abortedRootCandidateCount:0,
       abortedCandidateCount:0,
       childBranches:0,
+      completedChildCandidateCount:0,
       incumbentUpdateCount:0,
       firstCompletedIncumbentAtWorkCount:null,
       finalIncumbentAtWorkCount:null,
+      matchedPatternCount:patternMatch.matchedPatternCount ?? 0,
+      patternProposalCount:patternProposals.length,
+      completedPatternCount:0,
+      abortedPatternCount:0,
+      patternIncumbentUpdateCount:0,
+      completedPatternProposalKeys:new Set(),
+      abortedPatternProposalKeys:new Set(),
       depthReached:0,
       firstDepth2AtWorkCount:null,
       scheduledRootOrder:scheduledRootActions.map(
@@ -491,7 +839,13 @@ export class Planner {
 
     const rootCandidates = [];
     const rootLedgers = [];
-    const progressiveDepth2Candidates = new Map();
+    const progressiveDepth2Expansions = new Map();
+    // early depth 前先填满现有 root beam 的可用覆盖位；roots 超过 beamWidth 时
+    // 仍只覆盖一个 beam，而不会退化为“全部 roots 完成后才进入 depth 2”。
+    const earlyProgressiveRootCoverage = Math.min(
+      structure.beamWidth,
+      uniqueRootActions.length
+    );
     for (const action of scheduledRootActions) {
       // 与既有根语义一致：空结果时至少尝试第一个动作；之后只在新的原子物化前检查预算。
       if (rootCandidates.length && budget.shouldStop()) break;
@@ -543,16 +897,20 @@ export class Planner {
       if (collectDiagnostics) {
         rootLedgers.push(this.candidateMaterializer.diagnosticEntry(candidate));
       }
-      if (uniqueRootActions.length <= structure.beamWidth
-        && workDiagnostics.completedRootCandidateCount === 1
-        && !candidate.terminal
+      if (!progressiveDepth2Expansions.size
+        && structure.depth >= 2
+        && workDiagnostics.completedRootCandidateCount === earlyProgressiveRootCoverage
         && !budget.shouldStop()) {
-        // 全部 roots 能进入同一 beam 时，最高 SearchPrior root 必然属于原 depth-2
-        // 搜索空间。先完成这一层并缓存，可避免完整 root coverage 恰好耗尽 TIME；
-        // 常规 depth-2 随后复用缓存，因此 COMPLETE 不增删候选。
+        const progressiveRoot = rootCandidates.find((entry) => !entry.terminal);
+        if (!progressiveRoot) continue;
+        const rootPatternState = this.advancePatternState(
+          patternProposals,
+          progressiveRoot.action,
+          0
+        );
         const expansion = await this.materializeChildCandidates({
-          parentState:state,
-          parentProvenance:candidate.remainingProvenance,
+          parentState:progressiveRoot.state,
+          parentProvenance:progressiveRoot.remainingProvenance,
           depth:2,
           player,
           simulator,
@@ -560,6 +918,9 @@ export class Planner {
           context,
           structure,
           options,
+          activePatternProposals:rootPatternState.activePatternProposals,
+          guidedContinuationOnly:Boolean(rootPatternState.activePatternProposals.length),
+          maxNewCandidates:1,
           workDiagnostics
         });
         if (expansion.cancelled) {
@@ -573,7 +934,7 @@ export class Planner {
             workDiagnostics
           });
         }
-        progressiveDepth2Candidates.set(action, expansion.candidates);
+        progressiveDepth2Expansions.set(progressiveRoot.action, expansion);
       }
       if (budget.expandedNodes % structure.yieldEvery === 0) {
         budget.observeYield();
@@ -695,55 +1056,44 @@ export class Planner {
         remainingHistory:[candidate.remainingProvenance],
         candidateLedger:candidate.candidateLedger,
         frontierResidual:candidate.frontierResidual,
-        completedAtWorkCount:candidate.completedAtWorkCount
+        completedAtWorkCount:candidate.completedAtWorkCount,
+        ...this.advancePatternState(patternProposals, candidate.action, 0)
       };
     });
+    for (const node of beam) this.observeCompletedPatterns(node, workDiagnostics);
     let activeBeam = this.searchPolicy.prune(beam, structure.beamWidth);
     let bestSeenCandidate = null;
     for (const node of beam) {
-      const nextBest = this.searchPolicy.bestByValue(
-        [bestSeenCandidate, node].filter(Boolean)
+      bestSeenCandidate = this.considerIncumbent(
+        bestSeenCandidate,
+        node,
+        workDiagnostics
       );
-      if (nextBest !== bestSeenCandidate) {
-        workDiagnostics.incumbentUpdateCount += 1;
-        workDiagnostics.firstCompletedIncumbentAtWorkCount ??= node.completedAtWorkCount;
-        workDiagnostics.finalIncumbentAtWorkCount = node.completedAtWorkCount;
-      }
-      bestSeenCandidate = nextBest;
     }
     bestSeenCandidate ??= activeBeam[0];
 
     const progressiveNodesByDepth = new Map([[2, new Map()]]);
-    for (const [rootAction, nodeCandidates] of progressiveDepth2Candidates) {
+    for (const [rootAction, expansion] of progressiveDepth2Expansions) {
       const parent = beam.find((node) => node.action === rootAction);
       if (!parent) continue;
-      const childNodes = nodeCandidates.map(
+      const childNodes = expansion.candidates.map(
         (candidate) => this.buildChildNode(parent, candidate, 2)
       );
-      progressiveNodesByDepth.get(2).set(parent, childNodes);
-      for (let index = 0; index < childNodes.length; index += 1) {
-        const childNode = childNodes[index];
-        const nextBest = this.searchPolicy.bestByValue([
+      progressiveNodesByDepth.get(2).set(parent, { ...expansion, childNodes });
+      for (const childNode of childNodes) {
+        this.observeCompletedPatterns(childNode, workDiagnostics);
+        bestSeenCandidate = this.considerIncumbent(
           bestSeenCandidate,
-          childNode
-        ].filter(Boolean));
-        if (nextBest !== bestSeenCandidate) {
-          workDiagnostics.incumbentUpdateCount += 1;
-          const childCandidate = nodeCandidates[index];
-          workDiagnostics.firstCompletedIncumbentAtWorkCount ??=
-            childCandidate.completedAtWorkCount;
-          workDiagnostics.finalIncumbentAtWorkCount = childCandidate.completedAtWorkCount;
-        }
-        bestSeenCandidate = nextBest;
+          childNode,
+          workDiagnostics
+        );
       }
     }
 
     // 先沿当前 fully-materialized best 节点推进一条 spine，再执行标准逐层 beam。
     // 每层结果按父节点身份缓存；父节点进入常规 beam 时直接复用，因此 COMPLETE
     // 仍覆盖原有逐层候选，而 TIME 不必等同层所有 sibling 完成后才看见下一层。
-    let progressiveSpine = this.searchPolicy.bestByValue(
-      activeBeam.filter((node) => !node.terminal)
-    );
+    let progressiveSpine = this.selectProgressiveSpine(activeBeam);
     for (let depth = 2;
       progressiveSpine && depth <= structure.depth && !budget.shouldStop();
       depth += 1) {
@@ -755,8 +1105,9 @@ export class Planner {
         depthCache = new Map();
         progressiveNodesByDepth.set(depth, depthCache);
       }
-      let childNodes = depthCache.get(progressiveSpine) ?? null;
-      let childCandidates = null;
+      const cachedExpansion = depthCache.get(progressiveSpine) ?? null;
+      let childNodes = cachedExpansion?.childNodes ?? null;
+      let childCandidates = cachedExpansion?.candidates ?? null;
       if (!childNodes) {
         const expansion = await this.materializeChildCandidates({
           parentState:progressiveSpine.state,
@@ -768,6 +1119,11 @@ export class Planner {
           context,
           structure,
           options,
+          activePatternProposals:progressiveSpine.activePatternProposals,
+          guidedContinuationOnly:Boolean(progressiveSpine.activePatternProposals?.length),
+          maxNewCandidates:progressiveSpine.activePatternProposals?.length
+            ? 1
+            : Number.POSITIVE_INFINITY,
           workDiagnostics
         });
         if (expansion.cancelled) break;
@@ -775,26 +1131,17 @@ export class Planner {
         childNodes = childCandidates.map(
           (candidate) => this.buildChildNode(progressiveSpine, candidate, depth)
         );
-        depthCache.set(progressiveSpine, childNodes);
+        depthCache.set(progressiveSpine, { ...expansion, childNodes });
       }
-      for (let index = 0; index < childNodes.length; index += 1) {
-        const childNode = childNodes[index];
-        const nextBest = this.searchPolicy.bestByValue([
+      for (const childNode of childNodes) {
+        this.observeCompletedPatterns(childNode, workDiagnostics);
+        bestSeenCandidate = this.considerIncumbent(
           bestSeenCandidate,
-          childNode
-        ].filter(Boolean));
-        if (nextBest !== bestSeenCandidate) {
-          workDiagnostics.incumbentUpdateCount += 1;
-          const completedAtWorkCount = childCandidates?.[index]?.completedAtWorkCount
-            ?? budget.simulationCalls;
-          workDiagnostics.firstCompletedIncumbentAtWorkCount ??= completedAtWorkCount;
-          workDiagnostics.finalIncumbentAtWorkCount = completedAtWorkCount;
-        }
-        bestSeenCandidate = nextBest;
+          childNode,
+          workDiagnostics
+        );
       }
-      progressiveSpine = this.searchPolicy.bestByValue(
-        childNodes.filter((node) => !node.terminal)
-      );
+      progressiveSpine = this.selectProgressiveSpine(childNodes);
       workDiagnostics.activeRoot = null;
     }
 
@@ -808,12 +1155,17 @@ export class Planner {
           continue;
         }
         workDiagnostics.activeRoot = this.candidateMaterializer.describeAction(node.action);
-        const cachedChildNodes = progressiveNodesByDepth.get(depth)?.get(node) ?? null;
-        if (cachedChildNodes) {
-          candidates.push(...cachedChildNodes);
+        const depthCache = progressiveNodesByDepth.get(depth) ?? new Map();
+        if (!progressiveNodesByDepth.has(depth)) {
+          progressiveNodesByDepth.set(depth, depthCache);
+        }
+        const cachedExpansion = depthCache.get(node) ?? null;
+        if (cachedExpansion?.complete) {
+          candidates.push(...cachedExpansion.childNodes);
           workDiagnostics.activeRoot = null;
           continue;
         }
+        const previousCandidateCount = cachedExpansion?.candidates.length ?? 0;
         const expansion = await this.materializeChildCandidates({
           parentState:node.state,
           parentProvenance:node.remainingProvenance,
@@ -824,6 +1176,8 @@ export class Planner {
           context,
           structure,
           options,
+          activePatternProposals:node.activePatternProposals,
+          resumeExpansion:cachedExpansion,
           workDiagnostics
         });
         if (expansion.cancelled) {
@@ -837,20 +1191,22 @@ export class Planner {
             workDiagnostics
           });
         }
-        const nodeCandidates = expansion.candidates;
-        for (const candidate of nodeCandidates) {
-          const nextNode = this.buildChildNode(node, candidate, depth);
-          candidates.push(nextNode);
-          const nextBest = this.searchPolicy.bestByValue([
+        const childNodes = [
+          ...(cachedExpansion?.childNodes ?? []),
+          ...expansion.candidates.slice(previousCandidateCount).map(
+            (candidate) => this.buildChildNode(node, candidate, depth)
+          )
+        ];
+        depthCache.set(node, { ...expansion, childNodes });
+        candidates.push(...childNodes);
+        for (let index = previousCandidateCount; index < childNodes.length; index += 1) {
+          const nextNode = childNodes[index];
+          this.observeCompletedPatterns(nextNode, workDiagnostics);
+          bestSeenCandidate = this.considerIncumbent(
             bestSeenCandidate,
-            nextNode
-          ].filter(Boolean));
-          if (nextBest !== bestSeenCandidate) {
-            workDiagnostics.incumbentUpdateCount += 1;
-            workDiagnostics.firstCompletedIncumbentAtWorkCount ??= candidate.completedAtWorkCount;
-            workDiagnostics.finalIncumbentAtWorkCount = candidate.completedAtWorkCount;
-          }
-          bestSeenCandidate = nextBest;
+            nextNode,
+            workDiagnostics
+          );
         }
         if (budget.shouldStop()) break;
         workDiagnostics.activeRoot = null;

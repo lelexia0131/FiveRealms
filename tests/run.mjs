@@ -75,6 +75,7 @@ import {
 } from "../js/ai/state/Probability.js";
 import { Simulator } from "../js/ai/simulation/Simulator.js";
 import { Planner } from "../js/ai/search/Planner.js";
+import { PatternMatcher } from "../js/ai/search/pattern/PatternMatcher.js";
 import { SearchBudget } from "../js/ai/search/SearchBudget.js";
 import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
 import { SearchRng } from "../js/ai/search/SearchRng.js";
@@ -13309,6 +13310,7 @@ test("AI·架构：正式 Planner 只通过 Simulator/SearchBudget factory 消�
   assert.match(source, /searchBudgetFactory\(\)/);
   assert.throws(() => new Planner({
     candidateMaterializer: {},
+    patternMatcher:{},
     searchPolicy: {},
     simulatorFactory: () => ({}),
     generateFromVisible: () => [],
@@ -13376,6 +13378,7 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
   };
   const directPlanner = new Planner({
     candidateMaterializer: productionPlanner.candidateMaterializer,
+    patternMatcher:productionPlanner.patternMatcher,
     searchPolicy: productionPlanner.searchPolicy,
     simulatorFactory: productionPlanner.simulatorFactory,
     searchBudgetFactory: productionPlanner.searchBudgetFactory,
@@ -13510,9 +13513,11 @@ function testMissingAiDependenciesFailAtConstruction() {
   const actor = makePlayer("di-missing-actor", 0, "dawn");
   const enemy = makePlayer("di-missing-enemy", 1, "dusk");
   const { game } = makeGame([actor, enemy]);
+  assert.throws(() => new PatternMatcher(), /actionDescriptor/);
   assert.throws(() => new Planner(), /candidateMaterializer/);
   assert.throws(() => new Planner({
     candidateMaterializer: {},
+    patternMatcher:{},
     searchPolicy: {},
     simulatorFactory: () => ({}),
     searchBudgetFactory: () => ({}),
@@ -16348,6 +16353,205 @@ test("AI·搜索：root scheduling 不受 hand 实体排列影响", async () => 
   assert.equal(reversed.stats.completedRootCandidateCount, 2);
 });
 
+test("AI·搜索：三个 ordinary roots 在有界 depth2 预取前获得公平物化", async () => {
+  const actor = makePlayer("root-coverage-actor", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("root-coverage-enemy", 1, "dusk", "ai", 5);
+  const low = instance("charge");
+  const middle = instance("harvest");
+  const valuable = instance("recycleDevice");
+  actor.hand.push(low, middle, valuable);
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  const planner = game.aiController.planner;
+  let deadlineExpired = false;
+  planner.searchBudgetFactory = () => new SearchBudget({
+    timeBudget:1,
+    now:() => deadlineExpired ? 1 : 0
+  });
+  configurePlannerValueStubs(planner, {
+    actionEconomicValue:(action) => action.card?.id === valuable.id
+      ? 10
+      : action.card?.id === middle.id ? 5 : 1,
+    stateUtility:() => 0
+  });
+  planner.candidateMaterializer.searchPrior.rootSchedulingScore = (action) => (
+    action.card?.id === low.id
+      ? 3
+      : action.card?.id === middle.id ? 2 : action.card?.id === valuable.id ? 1 : -1
+  );
+  const materializer = planner.candidateMaterializer;
+  const materialize = materializer.materialize.bind(materializer);
+  materializer.materialize = (input) => {
+    if (input.depth === 2) {
+      deadlineExpired = true;
+      input.searchBudget.checkpointCurrentWork();
+    }
+    return materialize(input);
+  };
+  const visible = createInitialSearchState(
+    actor.id,
+    game.state,
+    game.aiController.knowledge.remainingCounts(actor)
+  );
+  const generated = game.aiController.getActionCandidates(actor);
+  const roots = [low, middle, valuable].map((card) => generated.find(
+    (action) => action.card?.id === card.id
+  ));
+  assert.ok(roots.every(Boolean));
+
+  const selected = await planner.plan(actor, visible, roots, { gameId:game.state.gameId });
+  const stats = planner.lastSearchStats;
+
+  assert.equal(selected.card?.id, valuable.id);
+  assert.equal(stats.stopReason, "TIME");
+  assert.equal(stats.completedRootCandidateCount, 3);
+  assert.equal(stats.completedChildCandidateCount, 0);
+  assert.equal(stats.abortedCandidateCount, 1);
+  assert.equal(stats.simulationCalls, 4);
+  assert.equal(stats.bestValueScore, 10);
+  assert.deepEqual(stats.rootWork.map((entry) => entry.action.cardInstanceId), [
+    low.id,
+    middle.id,
+    valuable.id
+  ]);
+  game.dispose();
+});
+
+/*
+功能
+在同一逻辑 post-state 的两种物理手牌排列下运行固定 NODE 深层搜索。
+
+调用方
+AI·搜索 depth2 semantic scheduling 回归。
+
+输入
+根动作后剩余卡牌的 definition 顺序与节点预算。
+
+输出
+原始/语义调度 child 顺序、完整 child 集合、最佳序列、根动作与统计。
+
+读取状态
+独立测试 Game 的 SearchState、正式 ActionGenerator、SearchPrior 与 Planner。
+
+写入状态
+只推进独立 SearchState 和固定节点 SearchBudget。
+
+调用函数
+createInitialSearchState、Planner.scheduleChildActions/plan。
+
+边界与不变量
+两个运行除 actor.hand 的物理顺序外使用相同规则、NODE、depth、beam 与价值；
+比较时排除 card instance ID，只保留 semantic identity。
+*/
+async function runChildHandOrderSchedulingFixture(definitionOrder, nodeBudget = 2) {
+  const actor = makePlayer("child-order-actor", 0, "dawn", "ai", 2);
+  const enemy = makePlayer("child-order-enemy", 1, "dusk", "ai", 5);
+  const rootCard = instance("charge");
+  actor.hand.push(rootCard, ...definitionOrder.map((definitionId) => instance(definitionId)));
+  const { game } = makeGame([actor, enemy]);
+  game.aiRandomnessRange = 0;
+  game.aiSearchNodeBudgetOverride = nodeBudget;
+  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  const planner = game.aiController.planner;
+  configurePlannerValueStubs(planner, {
+    actionEconomicValue:(action) => action.card?.definitionId === "harvest" ? 10 : 1,
+    stateUtility:() => 0
+  });
+  planner.candidateMaterializer.searchPrior.rootSchedulingScore = (action) => {
+    if (action.type === "end") return Number.NEGATIVE_INFINITY;
+    return action.card?.definitionId === "assault" ? 2 : 1;
+  };
+  const generateFromVisible = planner.generateFromVisible.bind(planner);
+  planner.generateFromVisible = (state, ...args) => {
+    const currentActor = state.players.find((player) => player.id === actor.id);
+    const actions = generateFromVisible(state, ...args);
+    if (currentActor?.hand?.length === 2) return actions;
+    return currentActor?.hand?.length === 1
+      ? actions.filter((action) => action.type === "end")
+      : [];
+  };
+  const semantic = (action) => {
+    const descriptor = describeAction(action);
+    return {
+      type:descriptor.type,
+      cardId:descriptor.cardId,
+      targetIds:descriptor.targetIds,
+      selection:descriptor.selection
+    };
+  };
+  let physicalChildOrder = [];
+  let scheduledChildOrder = [];
+  const scheduleChildren = planner.scheduleChildActions.bind(planner);
+  planner.scheduleChildActions = (actions, player, state) => {
+    physicalChildOrder = actions.map(semantic);
+    const scheduled = scheduleChildren(actions, player, state);
+    scheduledChildOrder = scheduled.map(semantic);
+    return scheduled;
+  };
+  const completedChildren = [];
+  const materializer = planner.candidateMaterializer;
+  const materialize = materializer.materialize.bind(materializer);
+  materializer.materialize = (input) => {
+    const candidate = materialize(input);
+    if (candidate && input.depth >= 2) completedChildren.push(semantic(input.action));
+    return candidate;
+  };
+  const visible = createInitialSearchState(
+    actor.id,
+    game.state,
+    game.aiController.knowledge.remainingCounts(actor)
+  );
+  const root = game.aiController.getActionCandidates(actor).find(
+    (action) => action.card?.id === rootCard.id
+  );
+  assert.ok(root);
+  const selected = await planner.plan(actor, visible, [root], { gameId:game.state.gameId });
+  const result = {
+    physicalChildOrder,
+    scheduledChildOrder,
+    completedChildren,
+    bestSequence:planner.lastSearchStats.bestSequence.map((descriptor) => ({
+      type:descriptor.type,
+      cardId:descriptor.cardId,
+      targetIds:descriptor.targetIds,
+      selection:descriptor.selection
+    })),
+    selected:semantic(selected),
+    stats:planner.lastSearchStats
+  };
+  game.dispose();
+  return result;
+}
+
+test("AI·搜索：depth2 semantic scheduling 不受 physical hand order 影响", async () => {
+  const forward = await runChildHandOrderSchedulingFixture(["assault", "harvest"]);
+  const reversed = await runChildHandOrderSchedulingFixture(["harvest", "assault"]);
+  assert.notDeepEqual(forward.physicalChildOrder, reversed.physicalChildOrder);
+  assert.deepEqual(forward.scheduledChildOrder, reversed.scheduledChildOrder);
+  assert.deepEqual(forward.completedChildren, reversed.completedChildren);
+  assert.deepEqual(forward.bestSequence, reversed.bestSequence);
+  assert.deepEqual(forward.selected, reversed.selected);
+  assert.equal(forward.stats.stopReason, "NODE");
+  assert.equal(reversed.stats.stopReason, "NODE");
+  assert.equal(forward.stats.completedChildCandidateCount, 1);
+  assert.equal(reversed.stats.completedChildCandidateCount, 1);
+  assert.equal(forward.stats.depthReached, 2);
+  assert.equal(reversed.stats.depthReached, 2);
+});
+
+test("AI·搜索：early progressive child 不缩减 COMPLETE 的普通 child 空间", async () => {
+  const early = await runChildHandOrderSchedulingFixture(["assault", "harvest"], 2);
+  const complete = await runChildHandOrderSchedulingFixture(["assault", "harvest"], 10);
+  assert.equal(early.completedChildren[0].cardId, "assault");
+  assert.equal(early.stats.completedChildCandidateCount, 1);
+  assert.equal(early.stats.stopReason, "NODE");
+  assert.ok(complete.completedChildren.some((action) => action.cardId === "assault"));
+  assert.ok(complete.completedChildren.some((action) => action.cardId === "harvest"));
+  assert.equal(complete.bestSequence[1].cardId, "harvest");
+  assert.equal(complete.stats.stopReason, "COMPLETE");
+});
+
 test("AI·搜索：零时间预算不启动昂贵 root 且返回合法 provisional fallback", async () => {
   const actor = makePlayer("root-budget-actor", 0, "dawn"),
     enemy = makePlayer("root-budget-enemy", 1, "dusk"),
@@ -17527,7 +17731,7 @@ test("AI·搜索：production TIME 在聚能后进入主动技能 depth2 并保�
     production.outcome.stats.depthReached,
     production.outcome.stats.firstDepth2AtWorkCount,
     production.outcome.stats.simulationCalls
-  ], [2, 2, 2, 0, 2, 2, 4]);
+  ], [2, 2, 2, 0, 2, 3, 3]);
   assert.deepEqual([
     full.outcome.stats.physicalRootCount,
     full.outcome.stats.uniqueRootCount,
@@ -17536,7 +17740,7 @@ test("AI·搜索：production TIME 在聚能后进入主动技能 depth2 并保�
     full.outcome.stats.depthReached,
     full.outcome.stats.firstDepth2AtWorkCount,
     full.outcome.stats.simulationCalls
-  ], [2, 2, 2, 0, 3, 2, 5]);
+  ], [2, 2, 2, 0, 3, 3, 5]);
   assert.equal(production.outcome.searchStopReason, "TIME");
   assert.equal(full.outcome.searchStopReason, "COMPLETE");
   assert.deepEqual(
@@ -17572,7 +17776,7 @@ test("AI·搜索：production TIME 在回收站后进入战术 depth2 并保持 
     production.outcome.stats.depthReached,
     production.outcome.stats.firstDepth2AtWorkCount,
     production.outcome.stats.simulationCalls
-  ], [3, 3, 3, 0, 2, 2, 6]);
+  ], [3, 3, 3, 0, 2, 4, 6]);
   assert.deepEqual([
     full.outcome.stats.physicalRootCount,
     full.outcome.stats.uniqueRootCount,
@@ -17581,7 +17785,7 @@ test("AI·搜索：production TIME 在回收站后进入战术 depth2 并保持 
     full.outcome.stats.depthReached,
     full.outcome.stats.firstDepth2AtWorkCount,
     full.outcome.stats.simulationCalls
-  ], [3, 3, 3, 0, 3, 2, 9]);
+  ], [3, 3, 3, 0, 3, 4, 9]);
   assert.equal(production.outcome.searchStopReason, "TIME");
   assert.equal(full.outcome.searchStopReason, "COMPLETE");
   assert.deepEqual(
@@ -17598,6 +17802,623 @@ test("AI·搜索：production TIME 在回收站后进入战术 depth2 并保持 
   );
   assert.ok(production.outcome.stats.largestProbabilityOperation);
   assert.ok(production.outcome.stats.probabilityWorldBranches > 0);
+});
+
+test("AI·搜索：调度修复后 TIME/COMPLETE 工作基线保持冻结", async () => {
+  const time = await runTwoStepHorizonFixture(
+    "charge",
+    AI_RUNTIME_POLICY.searchTimeBudgetMs,
+    10
+  );
+  const complete = await runTwoStepHorizonFixture("charge", 6000, 10);
+  const project = ({ outcome }) => ({
+    stopReason:outcome.searchStopReason,
+    action:{
+      type:outcome.actionDescriptor.type,
+      cardId:outcome.actionDescriptor.cardId,
+      targetId:outcome.actionDescriptor.targetId
+    },
+    bestValueScore:outcome.stats.bestValueScore,
+    completedRootCandidateCount:outcome.stats.completedRootCandidateCount,
+    completedChildCandidateCount:outcome.stats.completedChildCandidateCount,
+    depthReached:outcome.stats.depthReached,
+    simulationCalls:outcome.stats.simulationCalls,
+    firstDepth2AtWorkCount:outcome.stats.firstDepth2AtWorkCount,
+    incumbentUpdateCount:outcome.stats.incumbentUpdateCount,
+    firstCompletedIncumbentAtWorkCount:outcome.stats.firstCompletedIncumbentAtWorkCount,
+    finalIncumbentAtWorkCount:outcome.stats.finalIncumbentAtWorkCount,
+    probabilityOperations:outcome.stats.probabilityOperations,
+    probabilityWorldBranches:outcome.stats.probabilityWorldBranches,
+    deadlineWork:outcome.stats.workAfterDeadline,
+    bestSequence:outcome.stats.bestSequence.map((descriptor) => ({
+      type:descriptor.type,
+      cardId:descriptor.cardId,
+      targetId:descriptor.targetId
+    })),
+    matchedPatternCount:outcome.stats.matchedPatternCount,
+    patternProposalCount:outcome.stats.patternProposalCount,
+    completedPatternCount:outcome.stats.completedPatternCount,
+    abortedPatternCount:outcome.stats.abortedPatternCount,
+    patternIncumbentUpdateCount:outcome.stats.patternIncumbentUpdateCount,
+    selectedPatternId:outcome.stats.selectedPatternId
+  });
+  assert.deepEqual({ time:project(time), complete:project(complete) }, {
+    time:{
+      stopReason:"TIME",
+      action:{ type:"card", cardId:"charge", targetId:null },
+      bestValueScore:1.439,
+      completedRootCandidateCount:2,
+      completedChildCandidateCount:1,
+      depthReached:2,
+      simulationCalls:3,
+      firstDepth2AtWorkCount:3,
+      incumbentUpdateCount:3,
+      firstCompletedIncumbentAtWorkCount:1,
+      finalIncumbentAtWorkCount:3,
+      probabilityOperations:62,
+      probabilityWorldBranches:64,
+      deadlineWork:{
+        simulationCalls:0,
+        cloneCalls:0,
+        responseBranches:0,
+        probabilityOperations:0,
+        probabilityPreparations:0,
+        probabilityWorldBranches:0,
+        executionWorldBranches:0,
+        conditionBranches:0
+      },
+      bestSequence:[
+        { type:"card", cardId:"charge", targetId:null },
+        { type:"skill", cardId:"symbiosis", targetId:"horizon-charge-ally" }
+      ],
+      matchedPatternCount:0,
+      patternProposalCount:0,
+      completedPatternCount:0,
+      abortedPatternCount:0,
+      patternIncumbentUpdateCount:0,
+      selectedPatternId:null
+    },
+    complete:{
+      stopReason:"COMPLETE",
+      action:{ type:"card", cardId:"charge", targetId:null },
+      bestValueScore:1.439,
+      completedRootCandidateCount:2,
+      completedChildCandidateCount:3,
+      depthReached:3,
+      simulationCalls:5,
+      firstDepth2AtWorkCount:3,
+      incumbentUpdateCount:3,
+      firstCompletedIncumbentAtWorkCount:1,
+      finalIncumbentAtWorkCount:3,
+      probabilityOperations:82,
+      probabilityWorldBranches:83,
+      deadlineWork:{
+        simulationCalls:0,
+        cloneCalls:0,
+        responseBranches:0,
+        probabilityOperations:0,
+        probabilityPreparations:0,
+        probabilityWorldBranches:0,
+        executionWorldBranches:0,
+        conditionBranches:0
+      },
+      bestSequence:[
+        { type:"card", cardId:"charge", targetId:null },
+        { type:"skill", cardId:"symbiosis", targetId:"horizon-charge-ally" },
+        { type:"end", cardId:null, targetId:null }
+      ],
+      matchedPatternCount:0,
+      patternProposalCount:0,
+      completedPatternCount:0,
+      abortedPatternCount:0,
+      patternIncumbentUpdateCount:0,
+      selectedPatternId:null
+    }
+  });
+});
+
+/*
+功能
+创建 Pattern infrastructure tests 使用的稳定语义卡牌动作。
+
+调用方
+runTacticalPatternFixture 与 PatternMatcher 顺序测试。
+
+输入
+卡牌定义 ID、候选 value、SearchPrior 顺序分与实例后缀。
+
+输出
+包含最小搜索字段的 data-only action。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+实例后缀只用于证明 semantic identity 不依赖 card instance ID。
+*/
+function tacticalPatternAction(cardId, value, searchPrior, instanceSuffix = cardId) {
+  return {
+    type:"card",
+    card:{ id:`${cardId}-${instanceSuffix}`, definitionId:cardId },
+    targets:[],
+    testValue:value,
+    testSearchPrior:searchPrior
+  };
+}
+
+/*
+功能
+构造只提出 A→B 语义序列的 test-only fake Pattern。
+
+调用方
+Pattern infrastructure focused tests。
+
+输入
+Pattern ID 与 exploration priority。
+
+输出
+符合 V1 definition shape 的普通对象。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只用于测试注入，不进入 PatternMatcher production definitions。
+*/
+function fakeTacticalPattern(id = "fake-a-b", explorationPriority = 10) {
+  return {
+    id,
+    match:() => true,
+    buildSequences:() => [{
+      steps:[
+        { type:"card", cardId:"pattern-a", targetIds:[], selection:null },
+        { type:"card", cardId:"pattern-b", targetIds:[], selection:null }
+      ],
+      explorationPriority,
+      reason:"test-only semantic continuation"
+    }]
+  };
+}
+
+/*
+功能
+运行最小真实 Planner/SearchBudget fixture，观察 fake Pattern 的调度、原子性与 incumbent 行为。
+
+调用方
+Pattern post-state、abort、prefix reuse、incumbent 与 starvation focused tests。
+
+输入
+Pattern/normal/child value，以及是否在 B 的 cooperative checkpoint 触发 TIME。
+
+输出
+选择动作、计划序列、搜索诊断和实际 apply/materialize 轨迹。
+
+读取状态
+仅 data-only fixture state 与注入 fake Pattern。
+
+写入状态
+独立 Planner、SearchBudget 与轨迹数组。
+
+调用函数
+PatternMatcher、Planner、SearchBudget、ActionDescriptor。
+
+边界与不变量
+所有 candidate value 由同一 test materializer 提供；Pattern 不读写 value，也没有第二套 candidate。
+*/
+async function runTacticalPatternFixture({
+  patternValue = 1,
+  normalValue = 5,
+  continuationValue = 10,
+  abortContinuation = false
+} = {}) {
+  const patternRoot = tacticalPatternAction("pattern-a", patternValue, 1, "root"),
+    normalRoot = tacticalPatternAction("normal", normalValue, 100, "root"),
+    secondNormalRoot = tacticalPatternAction("ordinary-two", normalValue - 1, 90, "root"),
+    patternChild = tacticalPatternAction("pattern-b", continuationValue, 1, "post-state"),
+    ordinaryChild = tacticalPatternAction("ordinary-child", 50, 100, "post-state");
+  const applied = [];
+  const materialized = [];
+  const generatedFromPaths = [];
+  let deadlineExpired = false;
+  const candidateMaterializer = {
+    rootSchedulingScore:(action) => action.testSearchPrior,
+    rootSchedulingKey:(action) => ActionDescriptor.schedulingKey(action),
+    childSchedulingScore:(action) => action.testSearchPrior,
+    childSchedulingKey:(action) => ActionDescriptor.schedulingKey(action),
+    findTerminalAction:(actions) => actions.find((action) => action.type === "end") ?? null,
+    createContext:() => ({ rootProvenance:null }),
+    contextDiagnostics:() => ({ discoveredDynamicTarget:false, hiddenSamples:0 }),
+    observeCandidate:() => {},
+    finalizeSiblings:() => {},
+    describeAction:(action) => ActionDescriptor.describe(action),
+    describeSequence:(actions) => actions.map((action) => ActionDescriptor.describe(action)),
+    materialize:({ action, beforeState, afterState }) => {
+      materialized.push({
+        cardId:action.card?.definitionId ?? null,
+        beforePath:[...(beforeState.path ?? [])]
+      });
+      return {
+        action,
+        state:afterState,
+        terminal:false,
+        transitionValue:action.testValue,
+        prior:0,
+        searchCredit:0,
+        remainingProvenance:null,
+        frontierResidual:0
+      };
+    }
+  };
+  const bestByValue = (nodes) => (nodes ?? []).reduce((best, node) => (
+    !best || node.valueScore > best.valueScore ? node : best
+  ), null);
+  const searchPolicy = {
+    structure:() => ({ depth:2, beamWidth:3, hiddenSamples:0, yieldEvery:100 }),
+    pruneScore:(valueScore) => valueScore,
+    bestByValue,
+    prune:(nodes, width) => [...nodes]
+      .sort((left, right) => right.pruneScore - left.pruneScore)
+      .slice(0, width),
+    selectFinal:({ stopReason, completedCandidates, bestSeenCandidate }) => (
+      stopReason === "COMPLETE" ? bestByValue(completedCandidates) : bestSeenCandidate
+    )
+  };
+  const planner = new Planner({
+    candidateMaterializer,
+    patternMatcher:new PatternMatcher({
+      actionDescriptor:ActionDescriptor,
+      definitions:[fakeTacticalPattern()]
+    }),
+    searchPolicy,
+    simulatorFactory:(_state, { searchBudget }) => ({
+      apply:(state, action) => {
+        const cardId = action.card?.definitionId ?? action.type;
+        applied.push({ cardId, beforePath:[...(state.path ?? [])] });
+        if (abortContinuation && cardId === "pattern-b") {
+          deadlineExpired = true;
+          searchBudget.checkpointCurrentWork();
+        }
+        return { ...state, path:[...(state.path ?? []), cardId] };
+      }
+    }),
+    searchBudgetFactory:() => abortContinuation
+      ? new SearchBudget({ timeBudget:1, now:() => deadlineExpired ? 1 : 0 })
+      : new SearchBudget({ nodeBudget:4 }),
+    deduplicateActions:(actions) => actions,
+    generateFromVisible:(state) => {
+      generatedFromPaths.push([...(state.path ?? [])]);
+      return state.path?.at(-1) === "pattern-a"
+        ? [ordinaryChild, patternChild]
+        : [];
+    },
+    yieldControl:async () => true
+  });
+  const selected = await planner.plan(
+    { id:"pattern-actor" },
+    { path:[] },
+    [normalRoot, secondNormalRoot, patternRoot],
+    { gameId:"pattern-fixture" }
+  );
+  return {
+    selected:ActionDescriptor.describe(selected),
+    sequence:planner.lastSearchStats.bestSequence,
+    stats:planner.lastSearchStats,
+    applied,
+    materialized,
+    generatedFromPaths
+  };
+}
+
+test("AI·搜索：空 Pattern owner 保持 production definitions 与 diagnostics 为空", () => {
+  const matcher = new PatternMatcher({ actionDescriptor:ActionDescriptor });
+  const result = matcher.match({
+    player:{ id:"empty-pattern-actor" },
+    state:{},
+    legalActions:[tacticalPatternAction("pattern-a", 1, 1)],
+    structure:{ depth:3, beamWidth:3 }
+  });
+  assert.equal(PatternMatcher.definitions.length, 0);
+  assert.deepEqual(result, {
+    matchedPatternCount:0,
+    proposals:[],
+    deferredRootKeys:[]
+  });
+});
+
+test("AI·搜索：Pattern descriptor aliases 解析为既有 runtime intent key", () => {
+  const matcher = new PatternMatcher({
+    actionDescriptor:ActionDescriptor,
+    definitions:[{
+      id:"fake-descriptor-aliases",
+      match:() => true,
+      buildSequences:() => [{
+        steps:[
+          { type:"card", definitionId:"recycleDevice" },
+          { type:"skill", skillId:"symbiosis" }
+        ],
+        explorationPriority:1,
+        reason:"test-only descriptor aliases"
+      }]
+    }]
+  });
+  const runtimeCard = tacticalPatternAction("recycleDevice", 1, 1),
+    runtimeSkill = { type:"skill", skill:{ id:"symbiosis" }, targets:[] };
+  const result = matcher.match({
+    player:{ id:"alias-actor" },
+    state:{},
+    legalActions:[runtimeCard, runtimeSkill],
+    structure:{ depth:2, beamWidth:2 }
+  });
+  assert.deepEqual(result.proposals[0].steps, [
+    { cardId:"recycleDevice", selection:null, targetIds:[], type:"card" },
+    { cardId:"symbiosis", selection:null, targetIds:[], type:"skill" }
+  ]);
+  assert.deepEqual(result.proposals[0].stepKeys, [
+    ActionDescriptor.schedulingKey(runtimeCard),
+    ActionDescriptor.schedulingKey(runtimeSkill)
+  ]);
+  assert.equal(
+    ActionDescriptor.schedulingKey(runtimeCard),
+    '{"cardId":"recycleDevice","selection":null,"targetIds":[],"type":"card"}'
+  );
+  assert.equal(
+    ActionDescriptor.schedulingKey(runtimeSkill),
+    '{"cardId":"symbiosis","selection":null,"targetIds":[],"type":"skill"}'
+  );
+});
+
+test("AI·搜索：Pattern coarse intent 与 search-semantic secondary key 分离", () => {
+  const actor = makePlayer("pattern-secondary-actor", 0, "dawn", "ai", 2);
+  const target = makePlayer("pattern-secondary-target", 1, "dusk", "ai", 5);
+  const { game } = makeGame([actor, target]);
+  const buildAssault = (suffix, probability) => ({
+    type:"card",
+    card:{
+      id:`pattern-secondary-${suffix}`,
+      definitionId:"assault",
+      availabilityBranches:[{
+        probability,
+        conditions:{ [`availability-${suffix}`]:"yes" }
+      }]
+    },
+    targets:[target],
+    executionProbability:probability,
+    executionWorldBranches:[{
+      probability,
+      conditions:{ [`execution-${suffix}`]:"yes" },
+      executes:true
+    }]
+  });
+  const low = buildAssault("low", .25),
+    high = buildAssault("high", .75);
+  const proposal = new PatternMatcher({
+    actionDescriptor:ActionDescriptor,
+    definitions:[{
+      id:"fake-assault-intent",
+      match:() => true,
+      buildSequences:() => [{
+        steps:[{
+          type:"card",
+          definitionId:"assault",
+          targetIds:[target.id]
+        }],
+        explorationPriority:1,
+        reason:"test-only coarse intent"
+      }]
+    }]
+  }).match({
+    player:actor,
+    state:{},
+    legalActions:[low, high],
+    structure:{ depth:2, beamWidth:2 }
+  }).proposals[0];
+  const materializer = game.aiController.planner.candidateMaterializer;
+  materializer.searchPrior.rootSchedulingScore = () => 1;
+  assert.equal(ActionDescriptor.schedulingKey(low), ActionDescriptor.schedulingKey(high));
+  assert.notEqual(
+    ActionDescriptor.searchSemanticKey(low),
+    ActionDescriptor.searchSemanticKey(high)
+  );
+  assert.equal(
+    [low, high].filter(
+      (action) => ActionDescriptor.schedulingKey(action) === proposal.stepKeys[0]
+    ).length,
+    2
+  );
+  const planner = game.aiController.planner;
+  const project = (actions) => actions.map(ActionDescriptor.searchSemanticKey);
+  assert.deepEqual(
+    project(planner.scheduleRootActions([low, high], actor, {}, [])),
+    project(planner.scheduleRootActions([high, low], actor, {}, []))
+  );
+  assert.deepEqual(
+    project(planner.scheduleChildActions([low, high], actor, {}, [proposal.stepKeys[0]])),
+    project(planner.scheduleChildActions([high, low], actor, {}, [proposal.stepKeys[0]]))
+  );
+  game.dispose();
+});
+
+test("AI·搜索：多 Pattern roots 只提升最高 proposal 并保留 ordinary beam coverage", () => {
+  const actor = makePlayer("pattern-root-fairness-actor", 0, "dawn", "ai", 2);
+  const enemy = makePlayer("pattern-root-fairness-enemy", 1, "dusk", "ai", 5);
+  const { game } = makeGame([actor, enemy]);
+  const guided = Array.from({ length:9 }, (_, index) => (
+    tacticalPatternAction(`guided-${index}`, 1, 10 - index)
+  ));
+  const ordinary = Array.from({ length:3 }, (_, index) => (
+    tacticalPatternAction(`ordinary-${index}`, 1, 100 - index)
+  ));
+  const matcher = new PatternMatcher({
+    actionDescriptor:ActionDescriptor,
+    definitions:guided.map((action, index) => ({
+      id:`fake-guided-${index}`,
+      match:() => true,
+      buildSequences:() => [{
+        steps:[{ type:"card", definitionId:action.card.definitionId }],
+        explorationPriority:100 - index,
+        reason:"test-only guided root"
+      }]
+    }))
+  });
+  const structure = { depth:2, beamWidth:10 };
+  const proposals = matcher.match({
+    player:actor,
+    state:{},
+    legalActions:[...guided, ...ordinary],
+    structure
+  }).proposals;
+  const planner = game.aiController.planner;
+  planner.candidateMaterializer.searchPrior.rootSchedulingScore = (
+    action
+  ) => action.testSearchPrior;
+  const scheduled = planner.scheduleRootActions(
+    [...guided, ...ordinary],
+    actor,
+    {},
+    proposals
+  );
+  const coverage = scheduled.slice(0, structure.beamWidth);
+  assert.equal(proposals.length, 9);
+  assert.equal(coverage[0].card.definitionId, "guided-0");
+  assert.deepEqual(
+    coverage.filter((action) => action.card.definitionId.startsWith("ordinary-"))
+      .map((action) => action.card.definitionId),
+    ["ordinary-0", "ordinary-1", "ordinary-2"]
+  );
+  assert.equal(
+    coverage.filter((action) => action.card.definitionId.startsWith("guided-")).length,
+    7
+  );
+  game.dispose();
+});
+
+test("AI·搜索：Pattern proposal 语义与顺序不依赖 physical hand order", () => {
+  const definition = {
+    id:"fake-order",
+    match:() => true,
+    buildSequences:({ legalActions, describeAction }) => legalActions.map((action) => ({
+      steps:[describeAction(action)],
+      explorationPriority:1,
+      reason:"test-only order"
+    }))
+  };
+  const project = (actions) => new PatternMatcher({
+    actionDescriptor:ActionDescriptor,
+    definitions:[definition]
+  }).match({
+    player:{ id:"order-actor" },
+    state:{},
+    legalActions:actions,
+    structure:{ depth:2, beamWidth:4 }
+  }).proposals.map((proposal) => ({
+    steps:proposal.steps,
+    semanticKey:proposal.semanticKey
+  }));
+  const a = tacticalPatternAction("pattern-a", 1, 1, "one"),
+    b = tacticalPatternAction("pattern-b", 1, 1, "two");
+  assert.deepEqual(project([a, b]), project([b, a]));
+});
+
+test("AI·搜索：Pattern proposals 服从既有 depth 与 beamWidth 上限", () => {
+  const matcher = new PatternMatcher({
+    actionDescriptor:ActionDescriptor,
+    definitions:[{
+      id:"fake-bounds",
+      match:() => true,
+      buildSequences:() => [
+        { steps:[
+          { type:"card", cardId:"a" },
+          { type:"card", cardId:"b" },
+          { type:"card", cardId:"c" }
+        ], explorationPriority:100, reason:"over depth" },
+        { steps:[{ type:"card", cardId:"c" }], explorationPriority:3, reason:"bounded" },
+        { steps:[{ type:"card", cardId:"b" }], explorationPriority:2, reason:"bounded" },
+        { steps:[{ type:"card", cardId:"a" }], explorationPriority:1, reason:"over beam" }
+      ]
+    }]
+  });
+  const result = matcher.match({
+    player:{ id:"bounds-actor" },
+    state:{},
+    legalActions:[],
+    structure:{ depth:2, beamWidth:2 }
+  });
+  assert.equal(result.proposals.length, 2);
+  assert.deepEqual(result.proposals.map((proposal) => proposal.steps[0].cardId), ["c", "b"]);
+  assert.ok(result.proposals.every((proposal) => proposal.steps.length <= 2));
+  assert.deepEqual(result.deferredRootKeys, []);
+});
+
+test("AI·搜索：Pattern continuation 从 post-state 语义解析并以完整 candidate 竞争 incumbent", async () => {
+  const result = await runTacticalPatternFixture();
+  assert.deepEqual(result.generatedFromPaths[0], ["pattern-a"]);
+  assert.deepEqual(result.applied.slice(0, 4).map((entry) => entry.cardId), [
+    "pattern-a",
+    "normal",
+    "ordinary-two",
+    "pattern-b"
+  ]);
+  assert.deepEqual(result.materialized[3], {
+    cardId:"pattern-b",
+    beforePath:["pattern-a"]
+  });
+  assert.deepEqual(result.sequence.map((entry) => entry.cardId), ["pattern-a", "pattern-b"]);
+  assert.equal(result.selected.cardId, "pattern-a");
+  assert.equal(result.stats.matchedPatternCount, 1);
+  assert.equal(result.stats.patternProposalCount, 1);
+  assert.equal(result.stats.completedPatternCount, 1);
+  assert.equal(result.stats.abortedPatternCount, 0);
+  assert.equal(result.stats.patternIncumbentUpdateCount, 1);
+  assert.equal(result.stats.selectedPatternId, "fake-a-b");
+});
+
+test("AI·搜索：Pattern child 中断原子复用 normal prefix 且不饿死 ordinary root", async () => {
+  const result = await runTacticalPatternFixture({
+    patternValue:6,
+    normalValue:5,
+    abortContinuation:true
+  });
+  assert.equal(result.stats.stopReason, "TIME");
+  assert.equal(result.stats.completedRootCandidateCount, 3);
+  assert.equal(result.stats.completedChildCandidateCount, 0);
+  assert.equal(result.stats.matchedPatternCount, 1);
+  assert.equal(result.stats.patternProposalCount, 1);
+  assert.equal(result.stats.completedPatternCount, 0);
+  assert.equal(result.stats.abortedPatternCount, 1);
+  assert.equal(result.stats.simulationCalls, 4);
+  assert.equal(result.stats.selectedPatternId, null);
+  assert.equal(result.selected.cardId, "pattern-a");
+  assert.deepEqual(result.sequence.map((entry) => entry.cardId), ["pattern-a"]);
+  assert.deepEqual(result.stats.rootWork.map((entry) => entry.action.cardId), [
+    "pattern-a",
+    "normal",
+    "ordinary-two"
+  ]);
+});
+
+test("AI·搜索：normal candidate 可按同一 value incumbent 推翻完整 Pattern", async () => {
+  const result = await runTacticalPatternFixture({
+    patternValue:1,
+    normalValue:8,
+    continuationValue:1
+  });
+  assert.equal(result.stats.completedPatternCount, 1);
+  assert.equal(result.stats.patternIncumbentUpdateCount, 0);
+  assert.equal(result.stats.selectedPatternId, null);
+  assert.equal(result.selected.cardId, "normal");
+  assert.deepEqual(result.sequence.map((entry) => entry.cardId), ["normal"]);
 });
 
 test("AI·搜索：同定义实体动作只合并搜索等价分支并保留身份语义差异", async () => {
@@ -20864,9 +21685,9 @@ async function runTimedWorkerSearch(timeBudgetMs, tickMs, cardDefinitionIds, nod
 
 test("AI·搜索配置：较长单步预算在同一局面物化更多完整节点", async () => {
   const cards = ["charge", "exposeWeakness", "assault", "scout", "recover", "harvest"];
-  const fast = await runTimedWorkerSearch(600, 100, cards);
-  const balanced = await runTimedWorkerSearch(1500, 100, cards);
-  const quality = await runTimedWorkerSearch(3000, 100, cards);
+  const fast = await runTimedWorkerSearch(600, 10, cards);
+  const balanced = await runTimedWorkerSearch(1500, 10, cards);
+  const quality = await runTimedWorkerSearch(3000, 10, cards);
   assert.equal(fast.searchStopReason, "TIME");
   assert.ok(balanced.stats.expanded > fast.stats.expanded, JSON.stringify({ fast: fast.stats, balanced: balanced.stats }));
   assert.ok(quality.stats.expanded > balanced.stats.expanded, JSON.stringify({ balanced: balanced.stats, quality: quality.stats }));
@@ -20875,7 +21696,7 @@ test("AI·搜索配置：较长单步预算在同一局面物化更多完整节�
 test("AI·搜索配置：简单局面三档都完整搜索并返回同一动作", async () => {
   const outcomes = [];
   for (const budget of [3000, 1500, 1000]) {
-    outcomes.push(await runTimedWorkerSearch(budget, 400, []));
+    outcomes.push(await runTimedWorkerSearch(budget, 100, []));
   }
   assert.deepEqual(outcomes.map((outcome) => outcome.searchStopReason), ["COMPLETE", "COMPLETE", "COMPLETE"]);
   assert.deepEqual(outcomes[1].actionDescriptor, outcomes[0].actionDescriptor);
@@ -20905,8 +21726,8 @@ test("AI·搜索配置：确定性1000ms与2000ms工作量按本次 Tmax 分别 
 });
 
 test("AI·搜索配置：TIME 轻微越过 Tmax 后正常返回完整 bestSeen 而非 CANCEL/error", async () => {
-  const outcome = await runTimedWorkerSearch(500, 20, ["charge"]);
-  assert.equal(outcome.searchStopReason, "TIME");
+  const outcome = await runTimedWorkerSearch(500, 30, ["charge"]);
+  assert.equal(outcome.searchStopReason, "TIME", JSON.stringify(outcome.stats));
   assert.ok(outcome.stats.elapsedMs > outcome.stats.timeBudget);
   assert.equal(outcome.cancelled, false);
   assert.equal(outcome.workerError, null);
@@ -33805,14 +34626,16 @@ test("AI·格挡概率：普通突袭大型 block worlds 在 damage 前 cooperat
   visibleTarget.blockProbability = .5;
   visibleTarget.twoBlockProbability = 0;
   const inputFingerprint = JSON.stringify(visible);
-  let nowCalls = 0;
+  let deadlineExpired = false;
   const budget = new SearchBudget({
     timeBudget:1,
-    now:() => {
-      nowCalls += 1;
-      return nowCalls <= 9 ? 0 : 2;
-    }
+    now:() => deadlineExpired ? 2 : 0
   });
+  const beginProbabilityOperation = budget.beginProbabilityOperation.bind(budget);
+  budget.beginProbabilityOperation = (operation, ...args) => {
+    if (operation === "CombatSimulation.applyDamage:block") deadlineExpired = true;
+    return beginProbabilityOperation(operation, ...args);
+  };
   const simulator = new Simulator(visible);
   simulator.searchBudget = budget;
   assert.throws(

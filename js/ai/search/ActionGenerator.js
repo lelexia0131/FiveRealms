@@ -46,6 +46,7 @@ import {
 import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js";
 import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js";
 import { TransferPolicy } from "../policy/TransferPolicy.js";
+import { searchSemanticKey } from "./ActionDescriptor.js";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
@@ -58,78 +59,6 @@ import {
   projectProbabilityStateBranchesCooperatively,
   totalBranchProbability
 } from "../state/Probability.js";
-
-/*
-功能
-把搜索动作键中的数组和普通对象递归规范为稳定属性顺序。
-
-调用方
-searchEquivalentActionKey。
-
-输入
-动作语义中的普通值、数组或 data-only 对象。
-
-输出
-属性顺序稳定且不共享可变容器的新值。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-自身递归调用。
-
-边界与不变量
-不得删除 selection、概率条件或实体语义字段；只规范表示顺序。
-*/
-function normalizeSearchKeyValue(value) {
-  if (Array.isArray(value)) return value.map(normalizeSearchKeyValue);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.keys(value).sort().map((key) => [key, normalizeSearchKeyValue(value[key])])
-  );
-}
-
-/*
-功能
-为当前搜索语义完全等价的动作生成稳定键。
-
-调用方
-deduplicateSearchEquivalentActions。
-
-输入
-已由 ActionGenerator 枚举的根或深层动作。
-
-输出
-忽略可互换使用牌实体 ID、保留所有其它语义字段的字符串键。
-
-读取状态
-动作类型、卡牌定义/实例元数据、目标、selection、概率世界与次数槽。
-
-写入状态
-无。
-
-调用函数
-normalizeSearchKeyValue、JSON.stringify。
-
-边界与不变量
-只忽略被打出卡牌自身的 id；identityGroupKey、availability、selection 中的资源 ID、
-目标顺序和条件世界任一不同都必须保留独立分支。
-*/
-function searchEquivalentActionKey(action) {
-  const { card = null, skill = null, targets = [], ...actionFields } = action ?? {};
-  const cardFields = card
-    ? Object.fromEntries(Object.entries(card).filter(([key]) => key !== "id"))
-    : null;
-  return JSON.stringify(normalizeSearchKeyValue({
-    ...actionFields,
-    card:cardFields,
-    skillId:skill?.id ?? null,
-    targetIds:(targets ?? []).map((target) => target?.id ?? null)
-  }));
-}
 
 /*
 功能
@@ -151,7 +80,7 @@ WorkerSearchRuntime 根候选恢复与 generateFromVisible 深层候选生成。
 无。
 
 调用函数
-searchEquivalentActionKey。
+ActionDescriptor.searchSemanticKey。
 
 边界与不变量
 不修改原动作；真正依赖实体身份、availability、selection 或条件世界的动作不得合并，
@@ -161,7 +90,7 @@ export function deduplicateSearchEquivalentActions(actions) {
   const seen = new Set();
   const unique = [];
   for (const action of actions ?? []) {
-    const key = searchEquivalentActionKey(action);
+    const key = searchSemanticKey(action);
     if (seen.has(key)) continue;
     seen.add(key);
     unique.push(action);
