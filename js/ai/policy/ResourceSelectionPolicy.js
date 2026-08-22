@@ -27,6 +27,8 @@ import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js";
 
 export const RESPONSE_SURVIVAL_BONUS_DANGER = 1;
 export const RESPONSE_SURVIVAL_BONUS_LETHAL = 2;
+// 该值只表示资源选择中的技能门槛策略选择权，不是概率、State/Final Utility 或单位换算。
+export const SKILL_THRESHOLD_POLICY_BONUS = 4;
 
 /*
 功能
@@ -398,6 +400,50 @@ export function getUnknownAcquisitionUtility(remainingCardCounts = null) {
 
 /*
 功能
+计算移除充能桩时原持有者失去的下一回合技能门槛策略价值。
+
+调用方
+buildResourceCandidates。
+
+输入
+资源行动者、原持有者与公开装备 definitionId。
+
+输出
+行动者视角的 Resource Selection Policy 点数；敌方损失为正，同阵营损失为负。
+
+读取状态
+只读双方阵营，以及原持有者的能量、回合能量增益和主动技能门槛摘要。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只恢复既有技能门槛选择权 4 点；调用方按资源实际应用质量缩放。
+该值不是概率、State Utility、Final Utility 或单位换算，也不得进入 transition final value。
+*/
+export function skillThresholdOptionPolicyValue(actor, owner, equipmentDefinitionId) {
+  if (equipmentDefinitionId !== "energyDevice" || !owner?.activeSkillId) return 0;
+  const skillCost = Math.max(0, Number(owner.activeSkillCost) || 0);
+  const skillLimit = Math.max(0, Number(owner.activeSkillLimit) || 0);
+  if (skillCost <= 0 || skillLimit <= 0) return 0;
+  const cap = Math.max(0, Number(owner.maxEnergy) || 0);
+  const currentEnergy = Math.max(0, Number(owner.energy) || 0);
+  const withoutGain = Math.max(0, Number(owner.turnEnergyGainWithoutEquipment) || 0);
+  const equipmentGain = Math.max(0, Number(owner.energyDeviceTurnEnergyGain) || 0);
+  const withoutEnergy = Math.min(cap, currentEnergy + withoutGain);
+  const withEnergy = Math.min(cap, withoutEnergy + equipmentGain);
+  const withoutAffordableUses = Math.min(skillLimit, Math.floor(withoutEnergy / skillCost));
+  const withAffordableUses = Math.min(skillLimit, Math.floor(withEnergy / skillCost));
+  const localValue = Math.max(0, withAffordableUses - withoutAffordableUses)
+    * SKILL_THRESHOLD_POLICY_BONUS;
+  return owner.battleTeam === actor?.battleTeam ? -localValue : localValue;
+}
+
+/*
+功能
 把装备、合法确定手牌与一个匿名手牌槽整理为资源反事实候选。
 
 调用方
@@ -468,7 +514,10 @@ export function buildResourceCandidates({
       ),
       acquisitionUtility: purpose === "plunder"
         ? getBaseCardAiValue(equipmentDefinitionId)
-        : 0
+        : 0,
+      skillThresholdOption: skillThresholdOptionPolicyValue(
+        actor, owner, equipmentDefinitionId
+      )
     });
   }
   return candidates;

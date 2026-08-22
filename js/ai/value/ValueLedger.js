@@ -18,6 +18,7 @@ Planner 诊断、正式边界 与价值归属测试。
 账本解释已有价值，不是第二个 Evaluator；所有响应/候选字段仅供诊断，开关不得改变最终价值或选择。
 */
 import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js";
+import { statePointsToUtility } from "./Economics.js";
 import { sealTeamBurden } from "./SealValue.js";
 
 export class ValueLedger {
@@ -60,7 +61,7 @@ export class ValueLedger {
   computeCandidateLedger、正式边界 与价值归属测试。
 
   输入
-  before、after 与 viewer ID。
+  before、after、viewer ID 与可选父 SearchBudget。
 
   输出
   包含 owners 和未签名 owner total 的账本。
@@ -75,9 +76,10 @@ export class ValueLedger {
   Evaluator.ownerStateTerms、sealTeamBurden、lightningOwnerDelta。
 
   边界与不变量
-  每个字段只归属于一个 owner；团队符号只在 projectOwnerLedger 施加。
+  每个字段只归属于一个 owner；团队符号只在 projectOwnerLedger 施加；
+  闪电 nested simulation 必须继承父 SearchBudget。
   */
-  ownerStateLedger(before, after, viewerId) {
+  ownerStateLedger(before, after, viewerId, searchBudget = null) {
     const radarTactic = buildRadarJudgmentProbabilities(
       after?.remainingCardCounts ?? null
     ).tactic;
@@ -104,11 +106,21 @@ export class ValueLedger {
         radarTactic
       );
       const beforeBurden = {
-        lightning: this.simulationQuery.lightningOwnerDelta(before, beforePlayer.id, viewerId),
+        lightning: this.simulationQuery.lightningOwnerDelta(
+          before,
+          beforePlayer.id,
+          viewerId,
+          searchBudget
+        ),
         seal: sealTeamBurden(before, beforePlayer, viewer.battleTeam)
       };
       const afterBurden = {
-        lightning: this.simulationQuery.lightningOwnerDelta(after, afterPlayer.id, viewerId),
+        lightning: this.simulationQuery.lightningOwnerDelta(
+          after,
+          afterPlayer.id,
+          viewerId,
+          searchBudget
+        ),
         seal: sealTeamBurden(after, afterPlayer, viewer.battleTeam)
       };
       const fields = {};
@@ -182,18 +194,23 @@ export class ValueLedger {
   无。
 
   调用函数
-  无。
+  statePointsToUtility。
 
   边界与不变量
-  projected.total 必须等于同一 before/after 的完整 state delta。
+  projected.total 是显式 Final Utility 诊断，必须等于同一 before/after 原始 State points
+  delta 经 statePointsToUtility 的单次边界换算。
   */
   projectOwnerLedger(ledger, viewerId) {
     const self = ledger.owners.find((owner) => owner.playerId === viewerId);
     const allies = ledger.owners.filter((owner) => owner.relation === "ally");
     const enemies = ledger.owners.filter((owner) => owner.relation === "enemy");
-    const selfValue = self?.total ?? 0;
-    const allyValue = allies.reduce((sum, owner) => sum + owner.total, 0);
-    const enemyValue = enemies.reduce((sum, owner) => sum + owner.total, 0);
+    const selfValue = statePointsToUtility(self?.total ?? 0);
+    const allyValue = statePointsToUtility(
+      allies.reduce((sum, owner) => sum + owner.total, 0)
+    );
+    const enemyValue = statePointsToUtility(
+      enemies.reduce((sum, owner) => sum + owner.total, 0)
+    );
     return {
       perspectiveId: viewerId,
       self: selfValue,
@@ -211,7 +228,7 @@ export class ValueLedger {
   Planner 与 computeResponseLedger。
 
   输入
-  before、动作、actor/defender/viewer ID、移除项与可选 actual after。
+  before、动作、actor/defender/viewer ID、移除项、可选 actual after 与父 SearchBudget。
 
   输出
   grossAvoided、ownerValue 与 projected value。
@@ -226,9 +243,18 @@ export class ValueLedger {
   ValueSimulationQuery.responseCounterfactual。
 
   边界与不变量
-  本层不模拟也不改公式，只把正式 State Value 显式交给 ValueSimulationQuery。
+  本层不模拟也不改公式，只把正式 State Value 与父 SearchBudget 显式交给 ValueSimulationQuery。
   */
-  responseCounterfactual(before, action, actorId, defenderId, viewerId, opts = {}, after = null) {
+  responseCounterfactual(
+    before,
+    action,
+    actorId,
+    defenderId,
+    viewerId,
+    opts = {},
+    after = null,
+    searchBudget = null
+  ) {
     return this.simulationQuery.responseCounterfactual(
       before,
       action,
@@ -237,7 +263,8 @@ export class ValueLedger {
       viewerId,
       opts,
       after,
-      this.stateValue
+      this.stateValue,
+      searchBudget
     );
   }
 
@@ -249,7 +276,7 @@ export class ValueLedger {
   computeCandidateLedger 与测试。
 
   输入
-  before、动作、after 与 viewer ID。
+  before、动作、after、viewer ID 与可选父 SearchBudget。
 
   输出
   responses 数组。
@@ -266,7 +293,7 @@ export class ValueLedger {
   边界与不变量
   响应值已包含在 state delta 中，仅作 owner attribution，不能再次加进 final value。
   */
-  computeResponseLedger(before, action, after, viewerId) {
+  computeResponseLedger(before, action, after, viewerId, searchBudget = null) {
     if (!action) return { responses: [] };
     const beforeById = new Map(before.players.map((player) => [player.id, player]));
     const actorId = viewerId;
@@ -287,7 +314,8 @@ export class ValueLedger {
           player.id,
           viewerId,
           { removeBlock: blockDropped, removeCounter: counterDropped },
-          after
+          after,
+          searchBudget
         );
         responses.push({
           kind: blockDropped && counterDropped
@@ -319,7 +347,8 @@ export class ValueLedger {
           rescuer.id,
           viewerId,
           { removeRecover: true },
-          after
+          after,
+          searchBudget
         );
         responses.push({
           kind: "rescue",
@@ -343,7 +372,7 @@ export class ValueLedger {
   Planner 的显式 diagnostics 路径与测试。
 
   输入
-  before、动作、after、viewer ID 与是否计算响应反事实。
+  before、动作、after、viewer ID、是否计算响应反事实与可选父 SearchBudget。
 
   输出
   ownerLedger、projected 与 responses。
@@ -360,11 +389,18 @@ export class ValueLedger {
   边界与不变量
   生产 diagnostics 关闭时不得调用本方法；返回字段不参与候选评分。
   */
-  computeCandidateLedger(before, action, after, viewerId, includeResponse) {
-    const ownerLedger = this.ownerStateLedger(before, after, viewerId);
+  computeCandidateLedger(
+    before,
+    action,
+    after,
+    viewerId,
+    includeResponse,
+    searchBudget = null
+  ) {
+    const ownerLedger = this.ownerStateLedger(before, after, viewerId, searchBudget);
     const projected = this.projectOwnerLedger(ownerLedger, viewerId);
     const responses = includeResponse
-      ? this.computeResponseLedger(before, action, after, viewerId).responses
+      ? this.computeResponseLedger(before, action, after, viewerId, searchBudget).responses
       : [];
     return { ownerLedger, projected, responses };
   }

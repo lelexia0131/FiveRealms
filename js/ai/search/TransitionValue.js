@@ -18,8 +18,8 @@ Planner 与价值等价测试。
 不读取 Game/Controller，不搜索、不决定束裁剪或同分裁决，也绝不消费仅用于剪枝的 SearchPrior。
 */
 import {
-  STATE_DELTA_SCALE,
-  actionEconomicValue
+  actionEconomicValue,
+  statePointsToUtility
 } from "../value/Economics.js";
 
 export class TransitionValue {
@@ -60,10 +60,10 @@ export class TransitionValue {
   evaluateBase 与逐 term 等价测试。
 
   输入
-  beforeState、afterState 与 viewer ID。
+  beforeState、afterState、viewer ID 与可选父 SearchBudget。
 
   输出
-  after state value 减 before state value 的未缩放差值。
+  after State Value 减 before State Value 的原始 points 差值。
 
   读取状态
   只读两个过滤后的 SearchState。
@@ -75,11 +75,12 @@ export class TransitionValue {
   stateValue.stateUtility。
 
   边界与不变量
-  运算顺序固定为 after 减 before；Planner 与其他生产模块不得再次实现该公式。
+  运算顺序固定为 after 减 before；Planner 与其他生产模块不得再次实现该公式；
+  State Value 内的 nested simulation 必须继承父 SearchBudget。
   */
-  stateDelta(beforeState, afterState, viewerId) {
-    return this.stateValue.stateUtility(afterState, viewerId)
-      - this.stateValue.stateUtility(beforeState, viewerId);
+  stateDelta(beforeState, afterState, viewerId, searchBudget = null) {
+    return this.stateValue.stateUtility(afterState, viewerId, searchBudget)
+      - this.stateValue.stateUtility(beforeState, viewerId, searchBudget);
   }
 
   /*
@@ -90,7 +91,7 @@ export class TransitionValue {
   Planner 根节点和深层候选展开。
 
   输入
-  动作、actor、before/after、仅作 horizon 诊断的 depth、end 机会成本与 resolutionScale 查询函数。
+  动作、actor、before/after、仅作 horizon 诊断的 depth、end 机会成本、resolutionScale 查询函数与父 SearchBudget。
 
   输出
   包含逐 term 数值和 baseTransition 的不可变语义对象。
@@ -105,8 +106,9 @@ export class TransitionValue {
   actionEconomicValue、stateDelta、getResolutionScale。
 
   边界与不变量
-  只有非零 economic 读取 resolutionScale；after-state 变化只经 stateDelta×0.08 一次进入；
-  depth 只限制 Planner 的搜索 horizon，不得缩放动作价值。
+  只有非零 economic 读取 resolutionScale；raw State Value delta 在此唯一 Final Utility 边界
+  转换为 HP-equivalent utility；depth 只限制 Planner 的搜索 horizon，不得缩放动作价值；
+  State Value 内的 nested simulation 必须继承父 SearchBudget。
   */
   evaluateBase({
     action,
@@ -115,7 +117,8 @@ export class TransitionValue {
     afterState,
     depth = 1,
     endOpportunityCost = 0,
-    getResolutionScale = () => 1
+    getResolutionScale = () => 1,
+    searchBudget = null
   }) {
     const executionProbability = action.executionProbability ?? 1;
     const economic = action.type === "end"
@@ -123,8 +126,8 @@ export class TransitionValue {
       : actionEconomicValue(action, player, beforeState);
     const resolutionScale = economic === 0 ? 1 : getResolutionScale();
     const immediate = (economic * resolutionScale) * executionProbability;
-    const stateDelta = this.stateDelta(beforeState, afterState, player.id);
-    const stateDeltaValue = stateDelta * STATE_DELTA_SCALE;
+    const stateDelta = this.stateDelta(beforeState, afterState, player.id, searchBudget);
+    const stateDeltaValue = statePointsToUtility(stateDelta);
     const baseTransition = immediate + stateDeltaValue;
     return {
       economic,
@@ -145,8 +148,8 @@ export class TransitionValue {
   调用方
   Planner 与直接测试入口。
 
-  输入
-  baseTransition、terminal frontier 与窥隙信息选择价值。
+输入
+  HP-equivalent baseTransition/terminal frontier，以及 raw State points 的窥隙信息选择价值。
 
   输出
   当前候选的最终 Transition Value。
@@ -157,12 +160,13 @@ export class TransitionValue {
   写入状态
   无。
 
-  调用函数
-  无。
+调用函数
+  statePointsToUtility。
 
   边界与不变量
   response 与实际后续效果已包含在 state delta 中故不再相加；Expose/既有破势边际只作 Search Prior，
-  不得与后续 after-state 重复进入 final；窥隙项是未包含在状态中的 Monte Carlo 信息选择价值，不是概率。
+  不得与后续 after-state 重复进入 final；窥隙项是 raw State points 的 Monte Carlo 信息选择价值，
+  在本边界只转换一次且不是概率。
   */
   composeCandidateValue({
     baseTransition,
@@ -170,6 +174,6 @@ export class TransitionValue {
     spyGapInformationValue = 0
   }) {
     return baseTransition + frontierValue
-      + spyGapInformationValue * STATE_DELTA_SCALE;
+      + statePointsToUtility(spyGapInformationValue);
   }
 }

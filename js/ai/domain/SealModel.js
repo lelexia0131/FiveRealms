@@ -23,6 +23,7 @@ import { hasStatus } from "../../domain/rules/status/StatusRules.js";
 import { projectRulePlayer } from "../state/RuleProjection.js";
 import {
   clampProbability,
+  joinProbabilityStateBranches,
   mergeProbabilityStateBranches,
   totalBranchProbability
 } from "../state/Probability.js";
@@ -64,7 +65,7 @@ export function hasSeal(player) {
 ActionGenerator、Simulator 与直接领域测试。
 
 输入
-过滤玩家摘要。
+过滤玩家摘要，以及可选的状态分支合并能力。
 
 输出
 规范化的新状态分支数组。
@@ -76,14 +77,17 @@ sealedStatusStateBranches 或确定性 statuses。
 无。
 
 调用函数
-mergeProbabilityStateBranches、hasSeal。
+mergeStateBranches、hasSeal。
 
 边界与不变量
-缺少概率分支时退化为概率一的确定状态；输出不复用输入分支对象。
+缺少概率分支时退化为概率一的确定状态；Simulation 可注入 cooperative merge，输出不复用输入分支对象。
 */
-export function getSealStatusStateBranches(player) {
+export function getSealStatusStateBranches(
+  player,
+  mergeStateBranches = mergeProbabilityStateBranches
+) {
   if (Array.isArray(player?.sealedStatusStateBranches) && player.sealedStatusStateBranches.length) {
-    return mergeProbabilityStateBranches(
+    return mergeStateBranches(
       player.sealedStatusStateBranches.map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions ?? {},
@@ -175,7 +179,7 @@ export function tacticJudgmentProbability(remainingCardCounts = null) {
 
 /*
 功能
-估算封印触发时持有者阵营至少拥有一张反制的概率。
+计算封印触发时持有者阵营至少拥有一张反制的 Belief probability。
 
 调用方
 sealOutcomeProbabilities、正式边界与直接领域测试。
@@ -187,23 +191,41 @@ sealOutcomeProbabilities、正式边界与直接领域测试。
 零到一的团队反制概率。
 
 读取状态
-存活同阵营玩家的 counterProbability。
+存活同阵营玩家的共享 counterCountDistribution；旧状态仅有 counterProbability 时使用二元回退。
 
 写入状态
 无。
 
 调用函数
-clampProbability。
+clampProbability、joinProbabilityStateBranches、totalBranchProbability。
 
 边界与不变量
-不同队友的公开反制容量概率沿用既有独立近似；死亡持有者返回零。
+带共享 condition keys 的队友容量只条件化一次；只有缺少正式数量分支的旧状态才使用独立二元回退。
 */
 export function sealCounterProbability(state, holder) {
   if (!holder?.alive) return 0;
-  const noCounter = (state?.players ?? [])
-    .filter((player) => player.alive && player.battleTeam === holder.battleTeam)
-    .reduce((probability, player) => probability * (1 - clampProbability(player.counterProbability ?? 0)), 1);
-  return clampProbability(1 - noCounter);
+  const team = (state?.players ?? [])
+    .filter((player) => player.alive && player.battleTeam === holder.battleTeam);
+  const fields = team.map((player) => `counterCount:${player.id}`);
+  const partitions = team.map((player, index) => {
+    const source = Array.isArray(player.counterCountDistribution)
+      && player.counterCountDistribution.length
+      ? player.counterCountDistribution
+      : [
+          { probability:1 - clampProbability(player.counterProbability ?? 0), conditions:{}, counterCount:0 },
+          { probability:clampProbability(player.counterProbability ?? 0), conditions:{}, counterCount:1 }
+        ];
+    return source.filter((branch) => branch.probability > 0).map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions ?? {},
+      [fields[index]]:Math.max(0, Math.floor(Number(branch.counterCount ?? branch.count) || 0))
+    }));
+  });
+  if (!partitions.length) return 0;
+  const worlds = joinProbabilityStateBranches(...partitions);
+  return clampProbability(totalBranchProbability(worlds.filter(
+    (world) => fields.some((field) => world[field] >= 1)
+  )));
 }
 
 /*

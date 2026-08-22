@@ -31,7 +31,7 @@ import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules
 import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js";
 import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js";
 import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js";
-import { PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js";
+import { PROBABILITY_CLASSIFICATION, PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, probabilityEventPartition, totalBranchProbability } from "../state/Probability.js";
 import { clampProbability, unionProbability } from "./SimulationSupport.js";
 
 /*
@@ -159,106 +159,76 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     const resolutionProbability = clampProbability(scale);
     const actorDistribution = this.syncAssaultSummary(actor);
     const targetDistribution = this.syncAssaultSummary(target);
-    const actorRemaining = new Map();
-    const targetRemaining = new Map();
-    /*
-    功能
-    把一个对决状态写入同条件聚合桶，累加其联合概率质量。
-
-    调用方
-    applyDuel 的未发生世界与每个对决配对世界：聚合相同剩余数量。
-
-    输入
-    局部 Map、非负剩余数量与联合概率。
-
-    输出
-    无返回值；局部聚合桶已更新。
-
-    读取状态
-    仅局部 Map 现有概率。
-
-    写入状态
-    仅写 applyDuel 的局部 Map。
-
-    调用函数
-    无。
-
-    边界与不变量
-    小于等于概率容差的分支不进入桶；相同数量只累加质量，不改变条件外状态。
-    */
-    const addBranch = (map, count, probability) => {
-      if (probability <= PROBABILITY_EPSILON) return;
-      map.set(count, (map.get(count) ?? 0) + probability);
-    };
-    for (const branch of actorDistribution) addBranch(
-      actorRemaining, branch.count, branch.probability * (1 - resolutionProbability)
+    const actorState = actorDistribution.map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions ?? {},
+      actorCount:branch.count
+    }));
+    const targetState = targetDistribution.map((branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions ?? {},
+      targetCount:branch.count
+    }));
+    const resolutionState = probabilityEventPartition(
+      this.nextProbabilityEventKey(state, `duel-resolution:${actor.id}:${target.id}`),
+      resolutionProbability,
+      "resolves"
     );
-    for (const branch of targetDistribution) addBranch(
-      targetRemaining, branch.count, branch.probability * (1 - resolutionProbability)
+    const joinedOutcomeWorlds = this.joinProbabilityWork(
+      [actorState, targetState, resolutionState],
+      "CombatSimulation.applyDuel:outcomes"
     );
-
+    const outcomeWorlds = this.projectProbabilityWork(joinedOutcomeWorlds, (branch) => {
+      const targetLoses = branch.resolves && branch.targetCount <= branch.actorCount;
+      const actorLoses = branch.resolves && !targetLoses;
+      return {
+        ...branch,
+        targetLoses,
+        actorLoses,
+        actorSpent:branch.resolves ? Math.min(branch.actorCount, branch.targetCount) : 0,
+        targetSpent:branch.resolves ? Math.min(branch.targetCount, branch.actorCount + 1) : 0
+      };
+    }, "CombatSimulation.applyDuel:resolved-outcomes");
     let actorLoseProbability = 0;
     let targetLoseProbability = 0;
     let expectedActorSpent = 0;
     let expectedTargetSpent = 0;
-    for (const actorBranch of actorDistribution) {
-      for (const targetBranch of targetDistribution) {
-        const probability = actorBranch.probability * targetBranch.probability * resolutionProbability;
-        if (probability <= PROBABILITY_EPSILON) continue;
-        const actorCount = actorBranch.count;
-        const targetCount = targetBranch.count;
-        const targetLoses = targetCount <= actorCount;
-        const actorSpent = Math.min(actorCount, targetCount);
-        const targetSpent = Math.min(targetCount, actorCount + 1);
-        expectedActorSpent += probability * actorSpent;
-        expectedTargetSpent += probability * targetSpent;
-        if (targetLoses) targetLoseProbability += probability;
-        else actorLoseProbability += probability;
-        addBranch(actorRemaining, actorCount - actorSpent, probability);
-        addBranch(targetRemaining, targetCount - targetSpent, probability);
-      }
+    for (let index = 0; index < outcomeWorlds.length; index += 1) {
+      if (index % 32 === 0) this.checkpointSearchWork();
+      const branch = outcomeWorlds[index];
+      if (branch.actorLoses) actorLoseProbability += Math.max(0, Number(branch.probability) || 0);
+      if (branch.targetLoses) targetLoseProbability += Math.max(0, Number(branch.probability) || 0);
+      expectedActorSpent += branch.probability * branch.actorSpent;
+      expectedTargetSpent += branch.probability * branch.targetSpent;
     }
-
-    /*
-    功能
-    将对决聚合桶规范化为供后续伤害结算使用的概率分布。
-
-    调用方
-    applyDuel：把双方局部聚合桶交回正式突袭摘要同步入口。
-
-    输入
-    按剩余突袭数量聚合的局部 Map。
-
-    输出
-    新的 count/probability 分支数组。
-
-    读取状态
-    仅局部 Map。
-
-    写入状态
-    无。
-
-    调用函数
-    无。
-
-    边界与不变量
-    只改变表示形式，不归一化或重排对决结果的概率含义。
-    */
-    const toDistribution = (map) => [...map.entries()].map(([count, probability]) => ({ count, probability }));
-    const actorRemainingDistribution = this.syncAssaultSummary(actor, toDistribution(actorRemaining));
-    const targetRemainingDistribution = this.syncAssaultSummary(target, toDistribution(targetRemaining));
+    const actorRemainingDistribution = this.syncAssaultSummary(
+      actor,
+      this.projectProbabilityWork(outcomeWorlds, (branch) => ({
+        count:branch.actorCount - branch.actorSpent
+      }), "CombatSimulation.applyDuel:actor-remaining")
+    );
+    const targetRemainingDistribution = this.syncAssaultSummary(
+      target,
+      this.projectProbabilityWork(outcomeWorlds, (branch) => ({
+        count:branch.targetCount - branch.targetSpent
+      }), "CombatSimulation.applyDuel:target-remaining")
+    );
     actor.handCount = Math.max(0, actor.handCount - expectedActorSpent);
     target.handCount = Math.max(0, target.handCount - expectedTargetSpent);
     this.consumeKnownCardsFromHand(state, actor, "assault", expectedActorSpent);
     this.consumeKnownCardsFromHand(state, target, "assault", expectedTargetSpent);
     this.applyDamage(state, target, actor, DOMAIN_CARD_DEFINITIONS.duel.failDamage, {
       canBlock:false,
-      eventProbability:actorLoseProbability,
+      eventBranches:this.projectProbabilityWork(outcomeWorlds, (branch) => ({
+        occurs:branch.actorLoses
+      }), "CombatSimulation.applyDuel:actor-loses"),
       damageContext
     });
     this.applyDamage(state, actor, target, DOMAIN_CARD_DEFINITIONS.duel.failDamage, {
       canBlock:false,
-      eventProbability:targetLoseProbability,
+      eventBranches:this.projectProbabilityWork(outcomeWorlds, (branch) => ({
+        occurs:branch.targetLoses
+      }), "CombatSimulation.applyDuel:target-loses"),
       damageContext
     });
     return {
@@ -269,6 +239,119 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       actorRemainingDistribution,
       targetRemainingDistribution
     };
+  }
+
+  /*
+  功能
+  读取玩家生命/存活的联合概率状态，并为旧 SearchState 提供确定性回退。
+
+  调用方
+  applyDamage。
+
+  输入
+  玩家过滤摘要。
+
+  输出
+  规范化的 hp/alive 状态分支。
+
+  读取状态
+  player.hpStateBranches、hp 与 alive。
+
+  写入状态
+  无。
+
+  调用函数
+  mergeProbabilityStateBranches。
+
+  边界与不变量
+  标量回退只能表示一个确定世界；已有分支的条件和概率不得丢失。
+  */
+  getHpStateBranches(player) {
+    const source = Array.isArray(player?.hpStateBranches) && player.hpStateBranches.length
+      ? player.hpStateBranches
+      : [{ probability:1, conditions:{}, hp:player?.hp ?? 0, alive:Boolean(player?.alive) }];
+    return this.projectProbabilityWork(source, (branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions ?? {},
+      hp:Number(branch.hp) || 0,
+      alive:Boolean(branch.alive)
+    }), "CombatSimulation.getHpStateBranches");
+  }
+
+  /*
+  功能
+  把伤害条件世界投影为 HP/存活分支，并明确标记标量 HP 是否只是期望摘要。
+
+  调用方
+  applyDamage 在护盾和实际生命伤害确定后。
+
+  输入
+  SearchState、目标、伤害世界与逐世界生命伤害查询。
+
+  输出
+  新的 hp/alive 分支数组。
+
+  读取状态
+  目标既有 HP 分支与同阵营调息期望容量。
+
+  写入状态
+  hpStateBranches、分支/摘要分类、aliveProbability 与标量 hp。
+
+  调用函数
+  getHpStateBranches、joinProbabilityStateBranches、projectProbabilityStateBranches。
+
+  边界与不变量
+  无救援容量时死亡边界按每个世界离散结算；可能救援的濒死世界保留为非 exact 限制，
+  绝不把跨边界的 expected HP 宣称为确定状态。
+  */
+  commitHpOutcomeBranches(state, target, damageWorlds, hpDamageFor) {
+    const hpWorlds = this.joinProbabilityWork(
+      [this.getHpStateBranches(target), damageWorlds],
+      "CombatSimulation.commitHpOutcomeBranches:join"
+    );
+    const rescueCapacity = (state?.players ?? []).filter((player) => (
+      player.alive && player.battleTeam === target.battleTeam
+    )).reduce((sum, player) => sum + Math.max(0, Number(player.expectedRecoverCount) || 0), 0);
+    let hasUnresolvedRescue = false;
+    if (rescueCapacity > PROBABILITY_EPSILON) {
+      for (let index = 0; index < hpWorlds.length; index += 1) {
+        if (index % 32 === 0) this.checkpointSearchWork();
+        const branch = hpWorlds[index];
+        if (!branch.alive || branch.hp - hpDamageFor(branch) > 0) continue;
+        hasUnresolvedRescue = true;
+        break;
+      }
+    }
+    const branches = this.projectProbabilityWork(hpWorlds, (branch) => {
+      const hpAfterDamage = branch.alive ? branch.hp - hpDamageFor(branch) : branch.hp;
+      const survivesWithoutRescue = branch.alive && hpAfterDamage > 0;
+      return {
+        hp:survivesWithoutRescue || hasUnresolvedRescue ? hpAfterDamage : 0,
+        alive:hasUnresolvedRescue ? branch.alive : survivesWithoutRescue
+      };
+    }, "CombatSimulation.commitHpOutcomeBranches:project");
+    const distinct = new Set();
+    let aliveProbability = 0;
+    let expectedHp = 0;
+    for (let index = 0; index < branches.length; index += 1) {
+      if (index % 32 === 0) this.checkpointSearchWork();
+      const branch = branches[index];
+      distinct.add(`${branch.hp}|${branch.alive}`);
+      if (branch.alive) aliveProbability += branch.probability;
+      expectedHp += branch.hp * branch.probability;
+    }
+    target.hpStateBranches = branches;
+    target.hpStateBranchesClassification = hasUnresolvedRescue
+      ? PROBABILITY_CLASSIFICATION.EXPECTED_VALUE
+      : distinct.size > 1
+        ? PROBABILITY_CLASSIFICATION.BELIEF_PROBABILITY
+        : PROBABILITY_CLASSIFICATION.EXACT;
+    target.hpSummaryClassification = distinct.size > 1
+      ? PROBABILITY_CLASSIFICATION.EXPECTED_VALUE
+      : PROBABILITY_CLASSIFICATION.EXACT;
+    target.aliveProbability = aliveProbability;
+    target.hp = expectedHp;
+    return branches;
   }
 
   /*
@@ -311,7 +394,10 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     const eventProbability = this.eventProbability(eventWorlds);
     if (eventProbability <= 0) return 0;
     const amountState = (Array.isArray(options.amountBranches) && options.amountBranches.length
-      ? mergeProbabilityStateBranches(options.amountBranches)
+      ? this.mergeProbabilityWork(
+          options.amountBranches,
+          "CombatSimulation.applyDamage:amount"
+        )
       : [{ probability:1, conditions:{}, amount }]).map((branch) => ({
       probability:branch.probability,
       conditions:branch.conditions,
@@ -366,9 +452,12 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
         options.radarJudgmentProbabilities,
         options.radarJudgmentProbabilitiesByRequirement
       );
-      const baseWorlds = joinProbabilityStateBranches(
-        eventWorlds, requiredPartition, radarPresencePartition, radarOutcomeSequence
-      ).map((branch) => {
+      const joinedBaseWorlds = this.joinProbabilityWork(
+        [eventWorlds, requiredPartition, radarPresencePartition, radarOutcomeSequence],
+        "CombatSimulation.applyDamage:radar-base"
+      );
+      const baseWorlds = joinedBaseWorlds.map((branch, index) => {
+        if (index % 32 === 0) this.checkpointSearchWork();
         const originalRequiredCount = branch.requiredCount;
         const radarOutcomes = branch.hasRadar && branch.occurs
           ? branch.radarOutcomes.slice(0, originalRequiredCount)
@@ -404,12 +493,17 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       // 每个基础判定牌分别加入身份；判得格挡可在全部雷达槽位完成后用于当前响应。
       for (let slot = 0; slot < maximumRequirement; slot += 1) {
         for (const definitionId of RADAR_BASIC_DEFINITIONS) {
-          const acquisitionWorlds = projectProbabilityStateBranches(baseWorlds, (branch) => ({
-            occurs:Boolean(branch.occurs
-              && branch.hasRadar
-              && slot < branch.originalRequiredCount
-              && branch.radarOutcomes?.[slot] === `basic:${definitionId}`)
-          }));
+          this.checkpointSearchWork();
+          const acquisitionWorlds = this.projectProbabilityWork(
+            baseWorlds,
+            (branch) => ({
+              occurs:Boolean(branch.occurs
+                && branch.hasRadar
+                && slot < branch.originalRequiredCount
+                && branch.radarOutcomes?.[slot] === `basic:${definitionId}`)
+            }),
+            "CombatSimulation.applyDamage:radar-identity"
+          );
           if (this.eventProbability(acquisitionWorlds) <= PROBABILITY_EPSILON) continue;
           const simulatedId = this.nextSimulatedCardId(state, definitionId);
           if (Array.isArray(target.hand)) {
@@ -459,49 +553,78 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
               }
             ];
       const blockState = this.getBlockCountBranches(target, state?.remainingCardCounts ?? null);
-      const blockWorlds = joinProbabilityStateBranches(eventWorlds, requiredPartition, blockState);
-      const consumedBranches = blockWorlds.filter(
-        (branch) => branch.occurs && branch.blockCount >= branch.requiredCount
+      const blockWorlds = this.joinProbabilityWork(
+        [eventWorlds, requiredPartition, blockState],
+        "CombatSimulation.applyDamage:block"
       );
-      const blockedProbability = totalBranchProbability(consumedBranches);
+      const consumedBranches = [];
+      let blockedProbability = 0;
+      for (let index = 0; index < blockWorlds.length; index += 1) {
+        if (index % 32 === 0) this.checkpointSearchWork();
+        const branch = blockWorlds[index];
+        if (!branch.occurs || branch.blockCount < branch.requiredCount) continue;
+        consumedBranches.push(branch);
+        blockedProbability += Math.max(0, Number(branch.probability) || 0);
+      }
       blockedByCardChance = eventProbability > 0
         ? Math.min(1, blockedProbability / eventProbability)
         : 0;
       passChance = Math.max(0, Math.min(1, 1 - blockedByCardChance));
-      expectedBlockSpend = consumedBranches.reduce(
-        (sum, branch) => sum + branch.probability * branch.requiredCount, 0
-      );
-      const remainingBlockBranches = projectProbabilityStateBranches(blockWorlds, (branch) => ({
+      for (let index = 0; index < consumedBranches.length; index += 1) {
+        if (index % 32 === 0) this.checkpointSearchWork();
+        const branch = consumedBranches[index];
+        expectedBlockSpend += branch.probability * branch.requiredCount;
+      }
+      const remainingBlockBranches = this.projectProbabilityWork(blockWorlds, (branch) => ({
         blockCount: branch.occurs && branch.blockCount >= branch.requiredCount
           ? Math.max(0, branch.blockCount - branch.requiredCount)
           : branch.blockCount
-      }));
+      }), "CombatSimulation.applyDamage:block-remaining");
       target.blockCountDistribution = remainingBlockBranches;
       this.syncBlockSummary(target);
-      const identityWorlds = blockWorlds.map((branch) => ({
+      const identityWorlds = this.projectProbabilityWork(blockWorlds, (branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         requiredCount:branch.requiredCount,
         blockUsed:Boolean(branch.occurs && branch.blockCount >= branch.requiredCount)
-      }));
+      }), "CombatSimulation.applyDamage:block-identities");
       this.consumeBlockIdentities(state, target, identityWorlds);
       target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
     }
-    const damagePassProbability = attackOutcomeWorlds
-      ? totalBranchProbability(attackOutcomeWorlds.filter((branch) => branch.occurs && branch.passes))
-      : eventProbability * passChance;
-    const shieldState = getValueBranches(target, "shield", target.shield).map((branch) => ({
+    let damagePassProbability = eventProbability * passChance;
+    if (attackOutcomeWorlds) {
+      damagePassProbability = 0;
+      for (let index = 0; index < attackOutcomeWorlds.length; index += 1) {
+        if (index % 32 === 0) this.checkpointSearchWork();
+        const branch = attackOutcomeWorlds[index];
+        if (branch.occurs && branch.passes) {
+          damagePassProbability += Math.max(0, Number(branch.probability) || 0);
+        }
+      }
+    }
+    const shieldState = this.getValueBranchesWork(
+      target,
+      "shield",
+      target.shield,
+      "CombatSimulation.applyDamage:shield-state"
+    ).map((branch) => ({
       probability:branch.probability,
       conditions:branch.conditions,
       shieldAmount:branch.amount
     }));
     const aidPassWorlds = attackOutcomeWorlds
-      ?? joinProbabilityStateBranches(eventWorlds, probabilityEventPartition(
-        this.nextProbabilityEventKey(state, `damage-pass-aid:${attacker?.id ?? "unknown"}:${target.id}`),
-        passChance,
-        "passes"
-      ));
-    const preAidDamageWorlds = joinProbabilityStateBranches(aidPassWorlds, shieldState, amountState);
+      ?? this.joinProbabilityWork([
+        eventWorlds,
+        probabilityEventPartition(
+          this.nextProbabilityEventKey(state, `damage-pass-aid:${attacker?.id ?? "unknown"}:${target.id}`),
+          passChance,
+          "passes"
+        )
+      ], "CombatSimulation.applyDamage:aid-pass");
+    const preAidDamageWorlds = this.joinProbabilityWork(
+      [aidPassWorlds, shieldState, amountState],
+      "CombatSimulation.applyDamage:pre-aid"
+    );
     /*
     功能
     读取护援前真正会穿过护盾落到生命值的伤害量。
@@ -532,14 +655,19 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       const absorbed = calculateShieldAbsorption(branch.shieldAmount, branch.damageAmount);
       return calculateHpDamage(branch.damageAmount, absorbed);
     };
-    const pendingLifeDamageProbability = totalBranchProbability(
-      preAidDamageWorlds.filter((branch) => preAidHpDamageFor(branch) > PROBABILITY_EPSILON)
-    );
+    let pendingLifeDamageProbability = 0;
+    let incomingExpectedHpDamage = 0;
+    for (let index = 0; index < preAidDamageWorlds.length; index += 1) {
+      if (index % 32 === 0) this.checkpointSearchWork();
+      const branch = preAidDamageWorlds[index];
+      const hpDamage = preAidHpDamageFor(branch);
+      if (hpDamage > PROBABILITY_EPSILON) {
+        pendingLifeDamageProbability += Math.max(0, Number(branch.probability) || 0);
+      }
+      incomingExpectedHpDamage += branch.probability * hpDamage;
+    }
     let aidReductionPerLifeDamage = 0;
     if (damagePassProbability > PROBABILITY_EPSILON) {
-      const incomingExpectedHpDamage = preAidDamageWorlds.reduce(
-        (sum, branch) => sum + branch.probability * preAidHpDamageFor(branch), 0
-      );
       const aidedExpectedHpDamage = this.simulateGuardianAid(
         state,
         target,
@@ -554,12 +682,20 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       }
     }
     const damageWorlds = attackOutcomeWorlds
-      ? joinProbabilityStateBranches(attackOutcomeWorlds, shieldState, amountState)
-      : joinProbabilityStateBranches(eventWorlds, probabilityEventPartition(
-          this.nextProbabilityEventKey(state, `damage-pass:${attacker?.id ?? "unknown"}:${target.id}`),
-          passChance,
-          "passes"
-        ), shieldState, amountState);
+      ? this.joinProbabilityWork(
+          [attackOutcomeWorlds, shieldState, amountState],
+          "CombatSimulation.applyDamage:damage-worlds"
+        )
+      : this.joinProbabilityWork([
+          eventWorlds,
+          probabilityEventPartition(
+            this.nextProbabilityEventKey(state, `damage-pass:${attacker?.id ?? "unknown"}:${target.id}`),
+            passChance,
+            "passes"
+          ),
+          shieldState,
+          amountState
+        ], "CombatSimulation.applyDamage:damage-worlds");
     /*
     功能
     读取指定条件世界中扣除免伤后的实际伤害量。
@@ -621,7 +757,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       const absorbed = calculateShieldAbsorption(branch.shieldAmount, effectiveAmount);
       return calculateHpDamage(effectiveAmount, absorbed);
     };
-    target.shieldBranches = projectProbabilityStateBranches(damageWorlds, (branch) => ({
+    target.shieldBranches = this.projectProbabilityWork(damageWorlds, (branch) => ({
       amount:branch.occurs && branch.passes
         ? Math.max(
             0,
@@ -631,26 +767,29 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
             )
           )
         : branch.shieldAmount
-    }));
+    }), "CombatSimulation.applyDamage:shield-outcome");
     target.shield = expectedBranchValue(target.shieldBranches);
-    const actualDamage = damageWorlds.reduce((sum, branch) => (
-      sum + branch.probability * hpDamageFor(branch)
-    ), 0);
-    const lifeDamageBranches = projectProbabilityStateBranches(damageWorlds, (branch) => ({
+    let actualDamage = 0;
+    for (let index = 0; index < damageWorlds.length; index += 1) {
+      if (index % 32 === 0) this.checkpointSearchWork();
+      const branch = damageWorlds[index];
+      actualDamage += branch.probability * hpDamageFor(branch);
+    }
+    const lifeDamageBranches = this.projectProbabilityWork(damageWorlds, (branch) => ({
       occurs:hpDamageFor(branch) > PROBABILITY_EPSILON
-    }));
+    }), "CombatSimulation.applyDamage:life-damage");
     const lifeDamageChance = this.eventProbability(lifeDamageBranches);
     if (options.outcome) {
       options.outcome.lifeDamageBranches = lifeDamageBranches;
       options.outcome.lifeDamageChance = lifeDamageChance;
       options.outcome.blockedByCardChance = eventProbability * blockedByCardChance;
       options.outcome.remainingBlockCountBranches = attackOutcomeWorlds
-        ? projectProbabilityStateBranches(attackOutcomeWorlds, (branch) => ({
+        ? this.projectProbabilityWork(attackOutcomeWorlds, (branch) => ({
             remainingBlockCount:branch.requiredCount
-          }))
+          }), "CombatSimulation.applyDamage:remaining-blocks")
         : null;
     }
-    target.hp -= actualDamage;
+    this.commitHpOutcomeBranches(state, target, damageWorlds, hpDamageFor);
     this.simulateAfterLifeDamage(state, attacker, target, lifeDamageChance,
       lifeDamageBranches, options.damageContext ?? {});
     this.resolveFatal(state, target, attacker);
@@ -723,7 +862,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       .map((id) => state.players.find((player) => player.id === id))
       .filter(Boolean);
     const capacity = allies.reduce((sum, player) => sum + (player.expectedRecoverCount ?? 0), 0);
-    target.survivalChance = Math.min(1, capacity / need);
+    target.expectedRescueCoverage = Math.min(1, capacity / need);
     if (capacity < need) {
       target.alive = false;
       target.hp = 0;
@@ -807,7 +946,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     }
     const appliedHealing = calculateHealAmount(healingApplied, target.maxHp, target.hp);
     target.hp += appliedHealing;
-    target.survivalChance = 1;
+    target.expectedRescueCoverage = 1;
     target.alive = true;
   }
 

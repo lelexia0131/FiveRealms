@@ -217,10 +217,10 @@ export class SearchPolicy {
   候选数组。
 
   输出
-  首个最高 valueScore 节点或 null。
+  最高 valueScore 节点；机器精度同分时按动作类型 Policy 稳定破同分，空数组返回 null。
 
   读取状态
-  候选 valueScore。
+  候选 valueScore 与根动作类型。
 
   写入状态
   无。
@@ -229,12 +229,25 @@ export class SearchPolicy {
   无。
 
   边界与不变量
-  严格大于才替换，保留既有首个平局候选。
+  真实 valueScore 优先；只有差值处于 IEEE machine precision 内时，skill-root 才优先于
+  card-root，以稳定保留不消耗手牌身份的等价执行顺序；同类型保持原顺序。该 Policy
+  不修改或重新解释 Final Utility，也不依赖任何具体技能或卡牌。
   */
   bestByValue(candidates) {
-    return candidates.reduce((best, node) => (
-      !best || node.valueScore > best.valueScore ? node : best
-    ), null);
+    return candidates.reduce((best, node) => {
+      if (!best) return node;
+      const difference = node.valueScore - best.valueScore;
+      const tolerance = Number.EPSILON * Math.max(
+        1,
+        Math.abs(node.valueScore),
+        Math.abs(best.valueScore)
+      );
+      if (difference > tolerance) return node;
+      if (Math.abs(difference) <= tolerance
+        && node.action?.type === "skill"
+        && best.action?.type === "card") return node;
+      return best;
+    }, null);
   }
 
   /*

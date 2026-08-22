@@ -26,8 +26,6 @@ import {
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
-  joinProbabilityStateBranches,
-  projectProbabilityStateBranches,
   totalBranchProbability
 } from "../state/Probability.js";
 import { clampProbability } from "./SimulationSupport.js";
@@ -144,9 +142,9 @@ export const withSkillEffectSimulation = (Base) => class SkillEffectSimulation e
     this.changeEnergy(state, actor, -energyCost, eventWorlds);
     if (skill.id === "breakArmy") {
       const attackSlots = this.ensureAttackUseSlots(actor);
-      attackSlots.push(projectProbabilityStateBranches(eventWorlds, (branch) => ({
+      attackSlots.push(this.projectProbabilityWork(eventWorlds, (branch) => ({
         available:Boolean(branch.occurs)
-      })));
+      }), "SkillEffectSimulation.applySkill:break-army-slot"));
       actor.attackLimit = (actor.attackLimit ?? attackSlots.length - 1)
         + chance * ACTIVE_SKILL_DEFINITIONS.breakArmy.attackLimitBonus;
       actor.attackAvailabilityBranches = attackSlots.map(availableBranchesFromState);
@@ -173,10 +171,14 @@ export const withSkillEffectSimulation = (Base) => class SkillEffectSimulation e
           conditions:branch.conditions,
           marked:Boolean(branch.marked)
         }));
-        const joinedMarks = joinProbabilityStateBranches(markedState, eventWorlds);
-        target.huntMarkStateBranchesBySource[actor.id] = projectProbabilityStateBranches(
+        const joinedMarks = this.joinProbabilityWork(
+          [markedState, eventWorlds],
+          "SkillEffectSimulation.applySkill:hunt-join"
+        );
+        target.huntMarkStateBranchesBySource[actor.id] = this.projectProbabilityWork(
           joinedMarks,
-          (branch) => ({ marked:Boolean(branch.marked && !branch.occurs) })
+          (branch) => ({ marked:Boolean(branch.marked && !branch.occurs) }),
+          "SkillEffectSimulation.applySkill:hunt-remaining"
         );
         target.huntMarkProbabilities[actor.id] = totalBranchProbability(
           target.huntMarkStateBranchesBySource[actor.id].filter((branch) => branch.marked)

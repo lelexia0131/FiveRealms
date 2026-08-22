@@ -29,12 +29,16 @@ import {
 } from "../value/CardValue.js";
 import {
   HP_VALUE,
-  SKILL_THRESHOLD_OPTION_VALUE,
-  STATE_DELTA_SCALE
+  statePointsToUtility
 } from "../value/Economics.js";
 import { ThreatCalculator, incomingExposure } from "../value/ThreatValue.js";
 
 export const BURNING_FIELD_SEARCH_PRIOR = 8;
+// 这些权重只维持有限 beam 的相对探索顺序，不是单位换算，也不得进入 Final Utility。
+export const STATE_UTILITY_PRIOR_WEIGHT = 0.4;
+
+const END_PRIOR_PENALTY = 0.8;
+const SKILL_THRESHOLD_PRIOR_BONUS = 4;
 
 export class SearchPrior {
   /*
@@ -275,12 +279,13 @@ export class SearchPrior {
 
   边界与不变量
   静态牌值、目标焦点和领域启发式绝不进入 valueScore；已在 after-state 的收益这里只能作展开偏置。
+  闪电 nested simulation 必须继承 options.searchBudget。
   */
   actionUtility(action, player, visible, options = {}) {
     const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
     if (action.type === "end") {
       const remainingCards = actor.handCount ?? actor.hand?.length ?? player.hand.length;
-      return remainingCards > 0 ? -0.8 : 0;
+      return remainingCards > 0 ? -END_PRIOR_PENALTY : 0;
     }
     if (action.type === "skill") {
       const actionTarget = action.targets?.[0];
@@ -316,12 +321,13 @@ export class SearchPrior {
         : (card?.definitionId ? getBaseCardAiValue(card.definitionId) : 0));
     if (card.definitionId === "lightning") {
       value = getBaseCardAiValue(card.definitionId)
-        + this.simulationQuery.lightningLifecycleValue(
+        + statePointsToUtility(this.simulationQuery.lightningLifecycleValue(
           visible,
           actor,
           actor.id,
-          1
-        ) * STATE_DELTA_SCALE
+          1,
+          options.searchBudget ?? null
+        )) * STATE_UTILITY_PRIOR_WEIGHT
         + identityDelta;
     }
     const actionTarget = action.targets?.[0];
@@ -381,7 +387,7 @@ export class SearchPrior {
         + (actor.activeSkillId && !actor.activeSkillUsed
           && actor.energy < actor.activeSkillCost
           && actor.energy + 1 >= actor.activeSkillCost
-          ? SKILL_THRESHOLD_OPTION_VALUE
+          ? SKILL_THRESHOLD_PRIOR_BONUS
           : 0);
     }
     if (card.definitionId === "provoke") {

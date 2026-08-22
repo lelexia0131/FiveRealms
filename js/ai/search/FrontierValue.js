@@ -20,7 +20,7 @@ ThreatValue、CardValue 与 Economics。
 import { cardAvailability } from "../value/CardValue.js";
 import {
   HP_VALUE,
-  STATE_DELTA_SCALE
+  statePointsToUtility
 } from "../value/Economics.js";
 import { exposureComponents } from "../value/ThreatValue.js";
 
@@ -93,7 +93,7 @@ export class FrontierValue {
   frontierResidual 返回的表示与是否 terminal。
 
   输出
-  terminal 时 recover+recycle 的缩放值，否则为零。
+  terminal 时 recover+recycle 的 HP-equivalent option utility，否则为零。
 
   读取状态
   只读 residual 对象。
@@ -109,7 +109,8 @@ export class FrontierValue {
   */
   finalValue(residual, terminal) {
     if (!terminal || !residual) return 0;
-    return ((residual.held?.recover ?? 0) + (residual.held?.recycle ?? 0))
-      * STATE_DELTA_SCALE;
+    return statePointsToUtility(
+      (residual.held?.recover ?? 0) + (residual.held?.recycle ?? 0)
+    );
   }
 }

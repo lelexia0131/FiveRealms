@@ -53,11 +53,121 @@ import {
   getAvailabilityStateBranches,
   getValueBranches,
   huntMarkConditionKey,
-  joinProbabilityStateBranches,
-  mergeProbabilityBranches,
-  projectProbabilityStateBranches,
+  joinProbabilityStateBranchesCooperatively,
+  mergeProbabilityBranchesCooperatively,
+  projectProbabilityStateBranchesCooperatively,
   totalBranchProbability
 } from "../state/Probability.js";
+
+/*
+功能
+把搜索动作键中的数组和普通对象递归规范为稳定属性顺序。
+
+调用方
+searchEquivalentActionKey。
+
+输入
+动作语义中的普通值、数组或 data-only 对象。
+
+输出
+属性顺序稳定且不共享可变容器的新值。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+自身递归调用。
+
+边界与不变量
+不得删除 selection、概率条件或实体语义字段；只规范表示顺序。
+*/
+function normalizeSearchKeyValue(value) {
+  if (Array.isArray(value)) return value.map(normalizeSearchKeyValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().map((key) => [key, normalizeSearchKeyValue(value[key])])
+  );
+}
+
+/*
+功能
+为当前搜索语义完全等价的动作生成稳定键。
+
+调用方
+deduplicateSearchEquivalentActions。
+
+输入
+已由 ActionGenerator 枚举的根或深层动作。
+
+输出
+忽略可互换使用牌实体 ID、保留所有其它语义字段的字符串键。
+
+读取状态
+动作类型、卡牌定义/实例元数据、目标、selection、概率世界与次数槽。
+
+写入状态
+无。
+
+调用函数
+normalizeSearchKeyValue、JSON.stringify。
+
+边界与不变量
+只忽略被打出卡牌自身的 id；identityGroupKey、availability、selection 中的资源 ID、
+目标顺序和条件世界任一不同都必须保留独立分支。
+*/
+function searchEquivalentActionKey(action) {
+  const { card = null, skill = null, targets = [], ...actionFields } = action ?? {};
+  const cardFields = card
+    ? Object.fromEntries(Object.entries(card).filter(([key]) => key !== "id"))
+    : null;
+  return JSON.stringify(normalizeSearchKeyValue({
+    ...actionFields,
+    card:cardFields,
+    skillId:skill?.id ?? null,
+    targetIds:(targets ?? []).map((target) => target?.id ?? null)
+  }));
+}
+
+/*
+功能
+在候选生成 owner 内合并仅使用牌实体 ID 不同的搜索等价动作。
+
+调用方
+WorkerSearchRuntime 根候选恢复与 generateFromVisible 深层候选生成。
+
+输入
+保持稳定枚举顺序的动作数组。
+
+输出
+每个搜索语义键保留首个实体代表的动作数组。
+
+读取状态
+动作的搜索语义字段。
+
+写入状态
+无。
+
+调用函数
+searchEquivalentActionKey。
+
+边界与不变量
+不修改原动作；真正依赖实体身份、availability、selection 或条件世界的动作不得合并，
+首个代表仍携带可由 Main Thread 重绑和执行的真实 card instance ID。
+*/
+export function deduplicateSearchEquivalentActions(actions) {
+  const seen = new Set();
+  const unique = [];
+  for (const action of actions ?? []) {
+    const key = searchEquivalentActionKey(action);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(action);
+  }
+  return unique;
+}
 
 export class ActionGenerator {
   /*
@@ -628,7 +738,7 @@ export class ActionGenerator {
   Planner 注入的 generateFromVisible 能力。
 
   输入
-  SearchState 与当前行动者 ID。
+  SearchState、当前行动者 ID 与可选 SearchBudget 诊断能力。
 
   输出
   带执行概率分支的 AI policy candidate action 数组。
@@ -640,12 +750,15 @@ export class ActionGenerator {
   无。
 
   调用函数
-  Domain Card/Skill Rules、ActionCandidatePolicy、TransferPolicy、attachProbabilityBranches。
+  Domain Card/Skill Rules、ActionCandidatePolicy、TransferPolicy、deduplicateSearchEquivalentActions、attachProbabilityBranches。
 
   边界与不变量
-  动态距离只使用实时 alive ring；Policy 过滤不改变 Domain authority 的合法性定义。
+  动态距离只使用实时 alive ring；Policy 过滤不改变 Domain authority 的合法性定义；
+  identity、availability、selection 与条件世界可能在 preparation 后才完整，必须保留逐实体准备和原有 post-preparation dedup；
+  TIME 可在单个 preparation 的安全概率边界 cooperative abort；当前未完成动作整体作废，
+  已完整 preparation 的动作继续保留，且不改变 NODE 的完整候选语义。
   */
-  generateFromVisible(state, playerId) {
+  generateFromVisible(state, playerId, searchBudget = null) {
     if (state.playPhaseEnded) return [];
     const actor = state.players.find((player) => player.id === playerId && player.alive);
     if (!actor) return [{ type:"end" }];
@@ -771,8 +884,31 @@ export class ActionGenerator {
       else for (const target of targets) actions.push({ type:"skill", skill, targets:[target] });
     }
     actions.push({ type:"end" });
-    return actions.map((action) => this.attachProbabilityBranches(state, actor, action))
-      .filter(Boolean);
+    const preparedActions = [];
+    for (const action of actions) {
+      if (searchBudget?.shouldAbortCurrentWork?.()) break;
+      let prepared = null;
+      try {
+        prepared = this.attachProbabilityBranches(state, actor, action, searchBudget);
+      } catch (error) {
+        if (searchBudget?.isCurrentWorkInterruption?.(error)) break;
+        throw error;
+      }
+      if (!prepared) continue;
+      preparedActions.push(prepared);
+      searchBudget?.observeActionGeneration?.({
+        preparedCandidates:1,
+        probabilityPreparations:action.type === "end" ? 0 : 1,
+        conditionBranches:prepared.conditionBranches?.length ?? 0,
+        executionWorldBranches:prepared.executionWorldBranches?.length ?? 0
+      });
+    }
+    const uniquePreparedActions = deduplicateSearchEquivalentActions(preparedActions);
+    searchBudget?.observeActionGeneration?.({
+      physicalCandidates:actions.length,
+      uniqueCandidates:uniquePreparedActions.length
+    });
+    return uniquePreparedActions;
   }
 
   /*
@@ -970,13 +1106,42 @@ export class ActionGenerator {
 
   /*
   功能
+  在单个 action probability preparation 内观察父 SearchBudget。
+
+  调用方
+  buildExecutionWorlds、summarizeExecution 与 attachProbabilityBranches。
+
+  输入
+  可选父 SearchBudget。
+
+  输出
+  可继续时返回 true；停止时抛出父预算的 cooperative unwind signal。
+
+  读取状态
+  传入 SearchBudget。
+
+  写入状态
+  SearchBudget 首次过期时写入停止原因。
+
+  调用函数
+  SearchBudget.checkpointCurrentWork。
+
+  边界与不变量
+  不创建第二套 timeout；无预算的根动作准备保持原完整同步语义。
+  */
+  checkpointProbabilityPreparation(searchBudget) {
+    return searchBudget?.checkpointCurrentWork?.() ?? true;
+  }
+
+  /*
+  功能
   联合多个共享条件分区并标记每个完整世界是否执行动作。
 
   调用方
   attachProbabilityBranches。
 
   输入
-  概率分区数组与对联合分支的执行谓词。
+  概率分区数组、对联合分支的执行谓词与可选 SearchBudget。
 
   输出
   新的完整世界数组，每项带 executes 标记。
@@ -988,16 +1153,28 @@ export class ActionGenerator {
   无。
 
   调用函数
-  joinProbabilityStateBranches、predicate。
+  joinProbabilityStateBranchesCooperatively、predicate、SearchBudget checkpoint/诊断。
 
   边界与不变量
-  相同条件键必须先联合再求谓词，避免相关资源容量被独立相乘。
+  相同条件键必须先联合再求谓词，避免相关资源容量被独立相乘；
+  中断时不得返回 partial worlds。
   */
-  buildExecutionWorlds(partitions, predicate) {
-    return joinProbabilityStateBranches(...partitions).map((branch) => ({
-      ...branch,
-      executes:Boolean(predicate(branch))
-    }));
+  buildExecutionWorlds(partitions, predicate, searchBudget = null) {
+    const joined = joinProbabilityStateBranchesCooperatively(
+      partitions,
+      () => this.checkpointProbabilityPreparation(searchBudget)
+    );
+    searchBudget?.observeProbabilityWork?.(joined.length);
+    const worlds = [];
+    for (let index = 0; index < joined.length; index += 1) {
+      if (index % 32 === 0) this.checkpointProbabilityPreparation(searchBudget);
+      const branch = joined[index];
+      worlds.push({
+        ...branch,
+        executes:Boolean(predicate(branch))
+      });
+    }
+    return worlds;
   }
 
   /*
@@ -1008,7 +1185,7 @@ export class ActionGenerator {
   attachProbabilityBranches。
 
   输入
-  带 executes 标记的完整世界数组。
+  带 executes 标记的完整世界数组与可选 SearchBudget。
 
   输出
   executionBranches 与 executionProbability。
@@ -1020,14 +1197,28 @@ export class ActionGenerator {
   无。
 
   调用函数
-  mergeProbabilityBranches、totalBranchProbability。
+  mergeProbabilityBranchesCooperatively、SearchBudget checkpoint/诊断。
 
   边界与不变量
-  合并只发生在已执行世界，条件质量守恒且不改变动作排序。
+  合并只发生在已执行世界，条件质量守恒且不改变动作排序；中断不返回 partial summary。
   */
-  summarizeExecution(worlds) {
-    const executionBranches = mergeProbabilityBranches(worlds.filter((branch) => branch.executes));
-    return { executionBranches, executionProbability:totalBranchProbability(executionBranches) };
+  summarizeExecution(worlds, searchBudget = null) {
+    const executed = [];
+    for (let index = 0; index < worlds.length; index += 1) {
+      if (index % 32 === 0) this.checkpointProbabilityPreparation(searchBudget);
+      if (worlds[index].executes) executed.push(worlds[index]);
+    }
+    const executionBranches = mergeProbabilityBranchesCooperatively(
+      executed,
+      () => this.checkpointProbabilityPreparation(searchBudget)
+    );
+    searchBudget?.observeProbabilityWork?.(executionBranches.length);
+    let executionProbability = 0;
+    for (let index = 0; index < executionBranches.length; index += 1) {
+      if (index % 32 === 0) this.checkpointProbabilityPreparation(searchBudget);
+      executionProbability += Math.max(0, Number(executionBranches[index]?.probability) || 0);
+    }
+    return { executionBranches, executionProbability };
   }
 
   /*
@@ -1038,7 +1229,7 @@ export class ActionGenerator {
   根与深层候选生成路径。
 
   输入
-  SearchState、行动者、动作及其条件/卡牌/技能/次数槽约束。
+  SearchState、行动者、动作、可选 SearchBudget 及其条件/卡牌/技能/次数槽约束。
 
   输出
   带 executionWorldBranches 与 executionProbability 的新动作描述。
@@ -1050,14 +1241,18 @@ export class ActionGenerator {
   无；返回浅复制动作与新的世界分支数组。
 
   调用函数
-  getActionConditionPartition、getAvailabilityStateBranches、getAttackUseSlots、getSkillUseSlots、joinProbabilityStateBranches。
+  getActionConditionPartition、getAvailabilityStateBranches、getAttackUseSlots、getSkillUseSlots、
+  cooperative Probability join/project/merge 与 SearchBudget checkpoint。
 
   边界与不变量
-  所有约束必须在同一条件世界联合，不能把相关概率当作独立标量相乘。
+  所有约束必须在同一条件世界联合，不能把相关概率当作独立标量相乘；
+  任一 checkpoint 中断会丢弃整个 action preparation。
   */
-  attachProbabilityBranches(state, actor, action) {
+  attachProbabilityBranches(state, actor, action, searchBudget = null) {
+    this.checkpointProbabilityPreparation(searchBudget);
     if (action.type === "end") return action;
     const conditionBranches = this.getActionConditionPartition(state, actor, action);
+    this.checkpointProbabilityPreparation(searchBudget);
     if (action.type === "card") {
       const cardState = getAvailabilityStateBranches(action.card).map((branch) => ({
         probability:branch.probability,
@@ -1068,6 +1263,7 @@ export class ActionGenerator {
       const attackSlots = action.card.definitionId === "assault" ? this.getAttackUseSlots(actor) : [null];
       let bestResult = null;
       for (let attackUseSlot = 0; attackUseSlot < attackSlots.length; attackUseSlot += 1) {
+        this.checkpointProbabilityPreparation(searchBudget);
         const attackState = attackSlots[attackUseSlot]?.map((branch) => ({
           probability:branch.probability,
           conditions:branch.conditions,
@@ -1075,13 +1271,17 @@ export class ActionGenerator {
         }));
         const worlds = this.buildExecutionWorlds(
           attackState ? [...basePartitions, attackState] : basePartitions,
-          (branch) => branch.matches && branch.cardAvailable && (attackState ? branch.attackSlotAvailable : true)
+          (branch) => branch.matches && branch.cardAvailable && (attackState ? branch.attackSlotAvailable : true),
+          searchBudget
         );
-        const summary = this.summarizeExecution(worlds);
+        const summary = this.summarizeExecution(worlds, searchBudget);
         if (summary.executionProbability <= PROBABILITY_EPSILON) continue;
-        const cardAvailabilityStateBranches = projectProbabilityStateBranches(worlds, (branch) => ({
-          available:branch.cardAvailable && !branch.executes
-        }));
+        const cardAvailabilityStateBranches = projectProbabilityStateBranchesCooperatively(
+          worlds,
+          (branch) => ({ available:branch.cardAvailable && !branch.executes }),
+          () => this.checkpointProbabilityPreparation(searchBudget)
+        );
+        searchBudget?.observeProbabilityWork?.(cardAvailabilityStateBranches.length);
         const result = {
           ...action,
           conditionBranches,
@@ -1109,6 +1309,7 @@ export class ActionGenerator {
       : getSkillCost(action.skill, actor);
     let bestResult = null;
     for (let skillUseSlot = 0; skillUseSlot < slots.length; skillUseSlot += 1) {
+      this.checkpointProbabilityPreparation(searchBudget);
       const slotState = slots[skillUseSlot].map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
@@ -1116,13 +1317,17 @@ export class ActionGenerator {
       }));
       const worlds = this.buildExecutionWorlds(
         [conditionBranches, slotState, energyState],
-        (branch) => branch.matches && branch.skillSlotAvailable && branch.energyAmount >= minimumEnergy
+        (branch) => branch.matches && branch.skillSlotAvailable && branch.energyAmount >= minimumEnergy,
+        searchBudget
       );
-      const summary = this.summarizeExecution(worlds);
+      const summary = this.summarizeExecution(worlds, searchBudget);
       if (summary.executionProbability <= PROBABILITY_EPSILON) continue;
-      const skillAvailabilityStateBranches = projectProbabilityStateBranches(worlds, (branch) => ({
-        available:branch.skillSlotAvailable && !branch.executes
-      }));
+      const skillAvailabilityStateBranches = projectProbabilityStateBranchesCooperatively(
+        worlds,
+        (branch) => ({ available:branch.skillSlotAvailable && !branch.executes }),
+        () => this.checkpointProbabilityPreparation(searchBudget)
+      );
+      searchBudget?.observeProbabilityWork?.(skillAvailabilityStateBranches.length);
       const result = {
         ...action,
         energyCost:minimumEnergy,

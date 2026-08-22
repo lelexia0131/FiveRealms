@@ -68,7 +68,7 @@ export function hasLightning(player) {
 ActionGenerator、Simulator 与直接领域测试。
 
 输入
-过滤玩家摘要。
+过滤玩家摘要，以及可选的状态分支合并能力。
 
 输出
 规范化的新状态分支数组。
@@ -80,14 +80,17 @@ lightningStatusStateBranches 或确定性 statuses。
 无。
 
 调用函数
-mergeProbabilityStateBranches、Domain StatusRules.hasStatus。
+mergeStateBranches、Domain StatusRules.hasStatus。
 
 边界与不变量
-缺少概率分支时退化为概率一的确定状态；输出不复用输入分支对象。
+缺少概率分支时退化为概率一的确定状态；Simulation 可注入 cooperative merge，输出不复用输入分支对象。
 */
-export function getLightningStatusStateBranches(player) {
+export function getLightningStatusStateBranches(
+  player,
+  mergeStateBranches = mergeProbabilityStateBranches
+) {
   if (Array.isArray(player?.lightningStatusStateBranches) && player.lightningStatusStateBranches.length) {
-    return mergeProbabilityStateBranches(
+    return mergeStateBranches(
       player.lightningStatusStateBranches.map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions ?? {},

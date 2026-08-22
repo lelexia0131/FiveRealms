@@ -20,7 +20,7 @@ value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query�
 import { getBaseCardAiValue } from "../value/CardValue.js";
 import { cardAvailability } from "../value/CardValue.js";
 import { HP_VALUE } from "../value/Economics.js";
-import { probabilityAtLeast } from "../state/BeliefState.js";
+import { hypergeometricProbabilityAtLeast } from "../state/BeliefState.js";
 import { getRecoverHealAmount } from "../../domain/rules/card/CardEffectRules.js";
 
 /*
@@ -54,7 +54,7 @@ export function counterOpportunityCost() {
 
 /*
 功能
-根据全体受益 Domain/Value assessment 与反制链 parity 决定局部反制意愿。
+根据全体受益 Domain/Value assessment 与反制链 parity 作出局部反制决策。
 
 调用方
 ResponsePolicy 与 GlobalBenefitValue 正式边界。
@@ -63,7 +63,7 @@ ResponsePolicy 与 GlobalBenefitValue 正式边界。
 显式 assessment 查询、公开玩家、响应者阵营、root 定义和链上下文。
 
 输出
-非全体受益牌返回 null；否则返回零或一。
+非全体受益牌返回 null；否则返回布尔决策。
 
 读取状态
 只读公开玩家、Belief counts 与 assessment 纯结果。
@@ -77,7 +77,7 @@ assessGlobalBenefit、counterOpportunityCost。
 边界与不变量
 偶数 depth 表示 root 生效；首层队友非负收益保护与既有严格成本比较保持不变。
 */
-export function globalBenefitCounterDesire(
+export function globalBenefitCounterDecision(
   assessGlobalBenefit,
   players,
   battleTeam,
@@ -99,10 +99,10 @@ export function globalBenefitCounterDesire(
   if (counterDepth === 0 && rootSourceId) {
     const rootSource = (players ?? []).find((player) => player?.id === rootSourceId);
     if (rootSource?.battleTeam === battleTeam && (assessment.allyBenefit ?? 0) >= 0) {
-      return 0;
+      return false;
     }
   }
-  return (flip - stay) > counterOpportunityCost() ? 1 : 0;
+  return (flip - stay) > counterOpportunityCost();
 }
 
 /*
@@ -249,7 +249,7 @@ export function planningDynamicCounterGain(
 
 /*
 功能
-把规划世界的 root 效果收益映射为当前响应者的反制意愿。
+在确定的规划世界中决定当前响应者是否打出反制。
 
 调用方
 ResponseSimulation 的 card-scope 与 target-scope 响应评估。
@@ -258,7 +258,7 @@ ResponseSimulation 的 card-scope 与 target-scope 响应评估。
 SearchState、响应上下文、全体受益 assessment、root guard 与动态收益查询。
 
 输出
-零到一之间的反制意愿。
+确定的 respond / do not respond 布尔值。
 
 读取状态
 输入状态的反制容量、阵营与 root 上下文。
@@ -267,12 +267,12 @@ SearchState、响应上下文、全体受益 assessment、root guard 与动态�
 无。
 
 调用函数
-globalBenefitCounterDesire、counterOpportunityCost、dynamicCounterGain。
+globalBenefitCounterDecision、counterOpportunityCost、dynamicCounterGain。
 
 边界与不变量
-先处理全体受益，再执行递归守卫和无容量短路；映射顺序与严格成本尺度保持不变。
+先处理全体受益，再执行递归守卫和无容量短路；Policy 分数不得作为随机响应概率。
 */
-export function planningCounterDesire(
+export function planningCounterDecision(
   state,
   responder,
   actor,
@@ -281,7 +281,7 @@ export function planningCounterDesire(
   selection,
   { assessGlobalBenefit, simulatingRootResolution = false, dynamicCounterGain }
 ) {
-  const globalDesire = globalBenefitCounterDesire(
+  const globalDecision = globalBenefitCounterDecision(
     assessGlobalBenefit,
     state.players,
     responder.battleTeam,
@@ -292,15 +292,15 @@ export function planningCounterDesire(
       remainingCardCounts:state?.remainingCardCounts ?? null
     }
   );
-  if (globalDesire !== null) return globalDesire;
-  if (simulatingRootResolution) return 0;
+  if (globalDecision !== null) return globalDecision;
+  if (simulatingRootResolution) return false;
   const hasCounter = (responder.counterCountDistribution ?? [])
     .some((branch) => (branch.counterCount ?? 0) >= 1 && (branch.probability ?? 0) > 0)
     || (responder.counterProbability ?? 0) > 0;
-  if (!hasCounter) return 0;
+  if (!hasCounter) return false;
   const gain = dynamicCounterGain(state, responder, actor, card, targets, selection);
-  if (!Number.isFinite(gain)) return 0;
-  return Math.max(0, Math.min(1, (Number(gain) || 0) / counterOpportunityCost()));
+  if (!Number.isFinite(gain)) return false;
+  return gain > counterOpportunityCost();
 }
 
 export class ResponsePolicy {
@@ -356,10 +356,10 @@ export class ResponsePolicy {
   无。
 
   调用函数
-  probabilityAtLeast、getBaseCardAiValue、getRecoverHealAmount。
+  hypergeometricProbabilityAtLeast、getBaseCardAiValue、getRecoverHealAmount。
 
   边界与不变量
-  后续未知手牌只按公开 handCount、合法记忆与 Belief recover density 估算；
+  后续未知手牌只按公开 handCount、合法记忆与 Remaining Knowledge 无放回计数估算；
   guaranteed impossible 保持硬拒绝，strategic 只提高存活价值。
   */
   assessDyingRescue({
@@ -398,11 +398,23 @@ export class ResponsePolicy {
     const guaranteedSurvivable = knownFeasibleRecovery >= need;
     const requiredRecoverCount = Math.ceil(need / recoverHealAmount);
     const unknownRecoveryRequired = Math.max(0, requiredRecoverCount - knownRecoverCapacity);
-    const rescueSuccessProbability = guaranteedImpossible
+    const remainingPopulation = Object.values(remainingCardCounts ?? {}).reduce(
+      (sum, count) => sum + (Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0),
+      0
+    );
+    const rescueSuccessProbability = guaranteedImpossible || remainingPopulation <= 0
       ? 0
-      : probabilityAtLeast(unknownRecoverSlots, recoverDensity, unknownRecoveryRequired);
+      : hypergeometricProbabilityAtLeast(
+          remainingPopulation,
+          Math.max(0, remainingRecoverCount),
+          unknownRecoverSlots,
+          unknownRecoveryRequired
+        );
+    const expectedUnknownRecover = remainingPopulation > 0
+      ? unknownRecoverSlots * Math.max(0, remainingRecoverCount) / remainingPopulation
+      : 0;
     const futureExpectedRecover = Math.max(0, knownRecoverCapacity - 1)
-      + unknownRecoverSlots * recoverDensity;
+      + expectedUnknownRecover;
     const remainingAfterThisCard = Math.max(0, need - recoverHealAmount);
     const aliveTeam = rescueOrder.filter(
       (player) => player.alive && player.battleTeam === target.battleTeam
@@ -575,7 +587,7 @@ export class ResponsePolicy {
         ?? context.rootSource?.id
         ?? context.source?.id
         ?? null;
-      const globalDesire = globalBenefitCounterDesire(
+      const globalDecision = globalBenefitCounterDecision(
         this.assessGlobalBenefit,
         players,
         responder.battleTeam,
@@ -586,7 +598,7 @@ export class ResponsePolicy {
           remainingCardCounts
         }
       );
-      if (globalDesire !== null) return globalDesire > 0;
+      if (globalDecision !== null) return globalDecision;
       if (rootId === "counter") {
         const sourceEnemy = context.source?.battleTeam !== responder.battleTeam;
         return sourceEnemy && context.card?.definitionId

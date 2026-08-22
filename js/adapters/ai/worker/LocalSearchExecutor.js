@@ -71,7 +71,8 @@ export function createLocalSearchExecutor() {
     runSearchRequest、setTimeout。
 
     边界与不变量
-    与 browser Worker 共享同一 runSearchRequest；正常时间模式由 SearchBudget.TIME 收束，节点模式由 NODE 收束，hard watchdog 只作最后故障保险；不直接运行 Planner。
+    与 browser Worker 共享同一 runSearchRequest；正常时间模式由 SearchBudget.TIME 收束，节点模式由 NODE 自然收束；
+    local transport 无法终止同步 work，显式 NODE 诊断不得用 Promise race 伪造提前 fallback；不直接运行 Planner。
     */
     async search(request, options = {}) {
       controller = options.signal instanceof AbortController
@@ -79,6 +80,7 @@ export function createLocalSearchExecutor() {
         : new AbortController();
       const signal = controller.signal;
       const watchdogMs = Number(request.searchConfig?.hardWatchdogMs);
+      const nodeBudget = Number(request.searchConfig?.nodeBudget);
       const work = runSearchRequest(request, {
         now: () => globalThis.performance?.now?.() ?? Date.now(),
         yieldControl: async () => {
@@ -86,6 +88,7 @@ export function createLocalSearchExecutor() {
           return !signal.aborted;
         }
       });
+      if (Number.isFinite(nodeBudget) && nodeBudget >= 1) return work;
       if (!Number.isFinite(watchdogMs) || watchdogMs <= 0) return work;
       return Promise.race([
         work,

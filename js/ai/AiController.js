@@ -21,7 +21,10 @@ import { createInitialSearchState } from "./state/StateContracts.js";
 import { Knowledge } from "./state/Knowledge.js";
 import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js";
 import { ResponseBoundary } from "./policy/ResponseBoundary.js";
-import { ActionGenerator } from "./search/ActionGenerator.js";
+import {
+  ActionGenerator,
+  deduplicateSearchEquivalentActions
+} from "./search/ActionGenerator.js";
 import { ValueService } from "./value/ValueService.js";
 import { StateValue } from "./value/StateValue.js";
 import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js";
@@ -51,6 +54,35 @@ import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js";
 import { ResponsePolicy } from "./policy/ResponsePolicy.js";
 import { TransferPolicy } from "./policy/TransferPolicy.js";
 import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js";
+
+/*
+功能
+读取 main-thread decision diagnostics 使用的单调墙钟。
+
+调用方
+AIController.selectAction。
+
+输入
+无。
+
+输出
+当前高精度毫秒时间；运行时不支持 performance 时回退 Date.now。
+
+读取状态
+globalThis.performance。
+
+写入状态
+无。
+
+调用函数
+performance.now、Date.now。
+
+边界与不变量
+只用于诊断，不参与 SearchBudget、watchdog、排序或策略。
+*/
+function decisionNow() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
 
 export class AIController {
   /*
@@ -115,6 +147,9 @@ export class AIController {
     this.lastSearchRequest = null;
     this.lastSearchResult = null;
     this.lastWorkerOutcome = null;
+    this.lastSearchFallback = null;
+    this.lastDecisionDiagnostics = null;
+    this.lastMainThreadOperationDiagnostics = null;
     this.acceptedPlannedSequence = [];
     this.planSource = "planner";
     this.committedRngRequestIds = new Set();
@@ -124,7 +159,8 @@ export class AIController {
       CANCEL:0,
       WATCHDOG:0,
       STALE:0,
-      WORKER_ERROR:0
+      WORKER_ERROR:0,
+      FALLBACK:0
     };
 
     this.knowledge = new Knowledge({
@@ -144,7 +180,7 @@ export class AIController {
     ValueSimulationQuery、ResourceValueQuery 与 Planner。
 
     输入
-    当前查询或搜索节点的 SearchState。
+    当前查询或搜索节点的 SearchState，以及可选搜索工作诊断上下文。
 
     输出
     注入正式资源 Policy/query 的 Simulator。
@@ -161,9 +197,10 @@ export class AIController {
     边界与不变量
     闭包允许在 ResourceValueQuery 初始化完成前声明，但只在组合完成后调用；不得回读 Game。
     */
-    const simulatorFactory = (state) => new Simulator(state, {
+    const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
       resourceSelectionPolicy: this.resourceSelectionPolicy,
-      resourceValueQuery: this.resourceValueQuery ?? null
+      resourceValueQuery: this.resourceValueQuery ?? null,
+      searchBudget:runtime.searchBudget ?? null
     });
     this.valueSimulationQuery = new ValueSimulationQuery(
       this.stateEvaluator,
@@ -285,6 +322,7 @@ export class AIController {
         timeBudget: this.getSearchTimeBudget(),
         nodeBudget: this.getSearchNodeBudget()
       }),
+      deduplicateActions:deduplicateSearchEquivalentActions,
       generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
       yieldControl: (gameId) => this.yieldControl(gameId)
     });
@@ -317,6 +355,53 @@ export class AIController {
   */
   getActionCandidates(player) {
     return this.actionGenerator.generate(player);
+  }
+
+  /*
+  功能
+  记录一次浏览器主线程同步 AI 操作的起止时间与已有规模计数。
+
+  调用方
+  selectAction 的 pre-worker 阶段与 AIController 的 Response/CardSelection 门面。
+
+  输入
+  operation 名称、startMs，以及可选 candidate/world count。
+
+  输出
+  只含 operation/timing/count 的冻结诊断记录。
+
+  读取状态
+  performance.now 或 Date.now。
+
+  写入状态
+  lastMainThreadOperationDiagnostics。
+
+  调用函数
+  decisionNow。
+
+  边界与不变量
+  只记录数字规模，不记录 GameState、SearchState、Card、Player 或 probability world 内容；不参与决策。
+  */
+  recordMainThreadOperation(
+    operation,
+    startMs,
+    { candidateCount = "unavailable", worldCount = "unavailable" } = {}
+  ) {
+    const endMs = decisionNow();
+    const record = Object.freeze({
+      operation:String(operation),
+      startMs,
+      endMs,
+      durationMs:Math.max(0, endMs - startMs),
+      candidateCount:Number.isFinite(Number(candidateCount))
+        ? Math.max(0, Number(candidateCount))
+        : "unavailable",
+      worldCount:Number.isFinite(Number(worldCount))
+        ? Math.max(0, Number(worldCount))
+        : "unavailable"
+    });
+    this.lastMainThreadOperationDiagnostics = record;
+    return record;
   }
 
   /*
@@ -627,53 +712,148 @@ export class AIController {
 
   /*
   功能
-  接受 WorkerSearchOutcome 并产生 main-thread authoritative SearchResult。
+  在 Worker 基础设施失败时，用现有 Search Prior 对当前合法根候选做确定性降级选择。
+
+  调用方
+  acceptWorkerSearchOutcome 的 malformed/workerError 分支。
+
+  输入
+  当前真实 Player、已通过 session/version/actor/phase 验证的 SearchRequest 与可选 decision-local 合法根集合。
+
+  输出
+  { action, actionDescriptor, score }；候选按 prior 总分稳定择优。
+
+  读取状态
+  当前 Domain/Policy 合法根候选、request.searchState 与 SearchPrior。
+
+  写入状态
+  无。
+
+  调用函数
+  getActionCandidates、SearchPrior.actionUtility/actionSearchPrior、ActionDescriptor.describe。
+
+  边界与不变量
+  该路径不执行 Planner、Simulator、随机数或 Final Utility；通过 stateVersion 验证的 decision-local 根集合
+  与当前权威状态严格对应，可直接复用而不建立跨决策缓存；同分保持 ActionGenerator 稳定顺序。
+  */
+  selectWorkerFailureFallback(player, request, decisionRootActions = null) {
+    const candidates = Array.isArray(decisionRootActions)
+      ? decisionRootActions
+      : this.getActionCandidates(player);
+    const ranked = candidates.map((action) => {
+      const score = this.searchPrior.actionUtility(
+        action, player, request.searchState
+      ) + this.searchPrior.actionSearchPrior(action, player, request.searchState);
+      return {
+        action,
+        score:Number.isFinite(score) ? score : Number.NEGATIVE_INFINITY
+      };
+    });
+    const best = ranked.reduce((current, candidate) => (
+      !current || candidate.score > current.score ? candidate : current
+    ), null);
+    if (!best) return null;
+    return {
+      action:best.action,
+      actionDescriptor:ActionDescriptor.describe(best.action),
+      score:best.score
+    };
+  }
+
+  /*
+  功能
+  接受 WorkerSearchOutcome，并在基础设施故障时通过确定性根候选 Policy 产生安全 fallback。
 
   调用方
   selectAction 与 worker result tests。
 
   输入
-  request 与 WorkerSearchOutcome。
+  request、WorkerSearchOutcome 与可选 decision-local 合法根集合。
 
   输出
-  { action, result }；Worker error/cancelled/非法 outcome 只返回安全 end。
+  { action, result }；正常结果执行权威重绑，Worker fault 返回已重新比较的合法 fallback。
 
   读取状态
-  current GameState、session、request、outcome 与 Domain candidate set。
+  current GameState、session、request、outcome、Domain candidate set 与 Search Prior。
 
   写入状态
-  searchRng continuation、lastWorkerOutcome、lastSearchResult、acceptedPlannedSequence。
+  searchRng continuation、lastWorkerOutcome、lastSearchResult、lastSearchFallback、acceptedPlannedSequence。
 
   调用函数
-  workerOutcomeViolations、commitWorkerRng、validateRequestAcceptance、isDescriptorInRootSet、resolvePlannedAction、createSearchResult。
+  workerOutcomeViolations、selectWorkerFailureFallback、commitWorkerRng、validateRequestAcceptance、
+  isDescriptorInRootSet、resolvePlannedAction、createSearchResult。
 
   边界与不变量
-  Worker 不宣布 ACCEPTED；Main Thread 验证全部身份/version/actor/phase/rebind/legality；descriptor 不二次投影。
+  Worker 不宣布 ACCEPTED；Main Thread 验证全部身份/version/actor/phase/rebind/legality；
+  CANCELLED 与 stale 状态仍安全结束；validation 通过时允许复用同一 decision 已生成的合法实体根，
+  但不得跨 stateVersion 或跨 decision 缓存。
   */
-  acceptWorkerSearchOutcome(request, outcome) {
+  acceptWorkerSearchOutcome(request, outcome, decisionRootActions = null) {
     this.lastWorkerOutcome = outcome;
     this.planSource = "worker";
+    this.lastSearchFallback = null;
     // Main planner 在 Worker 生产路径只作诊断兼容；同步 outcome 数据保持既有测试/诊断读口。
     if (outcome?.stats) this.planner.lastSearchStats = { ...outcome.stats };
     if (Array.isArray(outcome?.plannedSequenceDescriptors)) {
       this.planner.lastPlannedSequence = [...outcome.plannedSequenceDescriptors];
     }
     const malformed = workerOutcomeViolations(outcome, request);
-    if (malformed.length || outcome.workerError) {
+    if (malformed.length || outcome?.workerError) {
       this.searchDiagnostics.WORKER_ERROR += 1;
-      if (String(outcome.workerError ?? "").includes("watchdog")) this.searchDiagnostics.WATCHDOG += 1;
+      const fallbackReason = outcome?.workerError ?? malformed.join(", ");
+      if (String(fallbackReason).includes("watchdog")) this.searchDiagnostics.WATCHDOG += 1;
+      const player = this.getState().players.find((entry) => entry.id === request.actorId) ?? null;
+      const validation = this.validateRequestAcceptance(player, request);
+      if (validation.status) {
+        const result = createSearchResult({
+          request,
+          actionDescriptor:null,
+          plannedSequenceDescriptors:[],
+          stats:outcome?.stats ?? null,
+          status:validation.status,
+          rejectionReason:validation.reason,
+          rngAfter:null
+        });
+        this.lastSearchResult = result;
+        this.acceptedPlannedSequence = [];
+        return { action:{ type:"end" }, result };
+      }
+      const fallback = this.selectWorkerFailureFallback(player, request, decisionRootActions);
+      if (!fallback) {
+        const result = createSearchResult({
+          request,
+          actionDescriptor:null,
+          plannedSequenceDescriptors:[],
+          stats:outcome?.stats ?? null,
+          status:SEARCH_RESULT_STATUS.INVALID_ACTION,
+          rejectionReason:fallbackReason,
+          rngAfter:null
+        });
+        this.lastSearchResult = result;
+        this.acceptedPlannedSequence = [];
+        return { action:{ type:"end" }, result };
+      }
       const result = createSearchResult({
         request,
-        actionDescriptor:null,
+        actionDescriptor:fallback.actionDescriptor,
         plannedSequenceDescriptors:[],
         stats:outcome?.stats ?? null,
-        status:SEARCH_RESULT_STATUS.INVALID_ACTION,
-        rejectionReason:outcome?.workerError ?? malformed.join(", "),
+        status:SEARCH_RESULT_STATUS.FALLBACK,
+        rejectionReason:fallbackReason,
         rngAfter:null
       });
+      this.planSource = "worker-fallback";
+      this.lastSearchFallback = Object.freeze({
+        source:"root-search-prior",
+        reason:fallbackReason,
+        score:fallback.score,
+        actionDescriptor:Object.freeze({ ...fallback.actionDescriptor })
+      });
+      this.searchDiagnostics.FALLBACK += 1;
       this.lastSearchResult = result;
       this.acceptedPlannedSequence = [];
-      return { action:{ type:"end" }, result };
+      this.planner.lastPlannedSequence = [];
+      return { action:fallback.action, result };
     }
     if (outcome.cancelled || outcome.searchStopReason === "CANCELLED") {
       this.searchDiagnostics.CANCEL += 1;
@@ -724,7 +904,7 @@ export class AIController {
       return { action:{ type:"end" }, result };
     }
 
-    const rebound = this.resolvePlannedAction(player, descriptor);
+    const rebound = this.resolvePlannedAction(player, descriptor, decisionRootActions);
     if (!rebound) {
       const result = createSearchResult({
         request,
@@ -766,26 +946,46 @@ export class AIController {
   player 与可选 options/signal/searchTimeBudgetMs。
 
   输出
-  当前可执行 action；executor error/stale/cancel 安全返回 end。
+  当前可执行 action；executor fault 进入确定性 root fallback，stale/cancel 安全返回 end。
 
   读取状态
   current GameState、Knowledge、SearchPolicy、searchRng。
 
   写入状态
-  lastSearchRequest、worker/acceptance diagnostics、RNG continuation 与 accepted plan。
+  lastSearchRequest、lastDecisionDiagnostics、worker/fallback diagnostics、RNG continuation 与 accepted plan。
 
   调用函数
-  createInitialSearchState、getActionCandidates、createSearchRequest、searchExecutor.search、acceptWorkerSearchOutcome。
+  createInitialSearchState、getActionCandidates、createSearchRequest、searchExecutor.search、acceptWorkerSearchOutcome、decisionNow。
 
   边界与不变量
-  生产 Planner execution 由 executor 负责；Main Thread 只把显式毫秒预算写入 request，再负责 rebind 与 Domain-legal validation；不读取速度档位。
+  生产 Planner execution 由 executor 负责；正常 TIME 仍由 Worker 返回 incumbent；Main Thread 只在
+  infrastructure fault 时使用既有合法根候选与 Search Prior，且不执行 Planner/Simulator。
   */
   async selectAction(player, options = {}) {
     const state = this.getState();
     if (!this.isSessionValid(options.gameId ?? state.gameId)) return { type:"end" };
+    const preWorkerStartedAt = decisionNow();
+    const mainThreadOperations = [];
+    let operationStartedAt = decisionNow();
     const remainingCardCounts = this.knowledge.remainingCounts(player);
+    mainThreadOperations.push(this.recordMainThreadOperation(
+      "AiController.selectAction:remaining-counts",
+      operationStartedAt
+    ));
+    operationStartedAt = decisionNow();
     const visible = createInitialSearchState(player.id, state, remainingCardCounts);
+    mainThreadOperations.push(this.recordMainThreadOperation(
+      "AiController.selectAction:create-search-state",
+      operationStartedAt
+    ));
+    operationStartedAt = decisionNow();
     const rootActions = this.getActionCandidates(player);
+    mainThreadOperations.push(this.recordMainThreadOperation(
+      "AiController.selectAction:root-candidates",
+      operationStartedAt,
+      { candidateCount:rootActions.length }
+    ));
+    const uniqueRootCount = deduplicateSearchEquivalentActions(rootActions).length;
     const request = createSearchRequest({
       requestId:this.createId("search-request"),
       gameId:state.gameId,
@@ -801,24 +1001,52 @@ export class AIController {
     });
     this.lastSearchRequest = request;
     this.searchDiagnostics.SEARCH += 1;
+    const preWorkerFinishedAt = decisionNow();
+    const workerRoundTripStartedAt = preWorkerFinishedAt;
     let outcome;
     try {
       outcome = await this.searchExecutor.search(request, options);
     } catch (error) {
-      this.searchDiagnostics.WORKER_ERROR += 1;
-      if (String(error?.message ?? error).includes("watchdog")) this.searchDiagnostics.WATCHDOG += 1;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const cancelled = /\bcancell?ed\b/iu.test(errorMessage);
       outcome = createWorkerSearchOutcome({
         request,
         actionDescriptor:null,
         plannedSequenceDescriptors:[],
         stats:null,
-        searchStopReason:null,
+        searchStopReason:cancelled ? "CANCELLED" : null,
         rngAfter:this.searchRng.snapshot(),
-        cancelled:false,
-        workerError:error instanceof Error ? error.message : String(error)
+        cancelled,
+        workerError:cancelled ? null : errorMessage
       });
     }
-    return this.acceptWorkerSearchOutcome(request, outcome).action;
+    const workerRoundTripFinishedAt = decisionNow();
+    const accepted = this.acceptWorkerSearchOutcome(request, outcome, rootActions);
+    const postWorkerFinishedAt = decisionNow();
+    const workerSearchMs = Number(outcome?.stats?.workerSearchMs);
+    const transportDiagnostics = this.searchExecutor.getLastTransportDiagnostics?.() ?? null;
+    this.lastDecisionDiagnostics = Object.freeze({
+      requestId:request.requestId,
+      preWorkerMs:Math.max(0, preWorkerFinishedAt - preWorkerStartedAt),
+      workerSearchMs:Number.isFinite(workerSearchMs) ? Math.max(0, workerSearchMs) : null,
+      workerRoundTripMs:Math.max(0, workerRoundTripFinishedAt - workerRoundTripStartedAt),
+      workerTransportMs:Number.isFinite(workerSearchMs)
+        ? Math.max(0, workerRoundTripFinishedAt - workerRoundTripStartedAt - workerSearchMs)
+        : null,
+      postMessageMs:transportDiagnostics?.requestId === request.requestId
+        && Number.isFinite(Number(transportDiagnostics.postMessageMs))
+        ? Math.max(0, Number(transportDiagnostics.postMessageMs))
+        : null,
+      postWorkerMs:Math.max(0, postWorkerFinishedAt - workerRoundTripFinishedAt),
+      physicalRootCount:rootActions.length,
+      uniqueRootCount,
+      preWorkerProbabilityPreparations:"unavailable",
+      preWorkerConditionBranches:"unavailable",
+      mainThreadOperations,
+      searchStopReason:outcome?.searchStopReason ?? null,
+      resultStatus:accepted.result?.status ?? null
+    });
+    return accepted.action;
   }
   /*
   功能
@@ -831,7 +1059,7 @@ export class AIController {
   无。
 
   输出
-  SEARCH/RESULT/CANCEL/WATCHDOG/STALE/WORKER_ERROR 计数副本。
+  SEARCH/RESULT/CANCEL/WATCHDOG/STALE/WORKER_ERROR/FALLBACK 计数副本。
 
   读取状态
   searchDiagnostics。
@@ -851,13 +1079,78 @@ export class AIController {
 
   /*
   功能
+  返回最近一次真实 selectAction 的阶段耗时与 pre-worker 工作摘要。
+
+  调用方
+  runtime diagnostics、真实入口回归与 browser console audit。
+
+  输入
+  无。
+
+  输出
+  最近 decision diagnostics 的隔离副本；尚未决策时返回 null。
+
+  读取状态
+  lastDecisionDiagnostics。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  仅诊断；不得被搜索预算、合法性、评分、fallback 或 RNG 读取。
+  */
+  getLastDecisionDiagnostics() {
+    return this.lastDecisionDiagnostics
+      ? {
+          ...this.lastDecisionDiagnostics,
+          mainThreadOperations:[...(this.lastDecisionDiagnostics.mainThreadOperations ?? [])]
+        }
+      : null;
+  }
+
+  /*
+  功能
+  返回最近一次同步 main-thread AI 边界操作的数字诊断。
+
+  调用方
+  runtime diagnostics、focused regression 与 browser console audit。
+
+  输入
+  无。
+
+  输出
+  最近 operation/timing/count 的隔离副本；尚未执行时返回 null。
+
+  读取状态
+  lastMainThreadOperationDiagnostics。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只读诊断，不得被 ResponsePolicy、CardSelectionPolicy、搜索或 RNG 使用。
+  */
+  getLastMainThreadOperationDiagnostics() {
+    return this.lastMainThreadOperationDiagnostics
+      ? { ...this.lastMainThreadOperationDiagnostics }
+      : null;
+  }
+
+  /*
+  功能
   将搜索计划中的动作描述重新绑定到当前真实局面的 AI 候选动作。
 
   调用方
   TurnWorkflow 复用计划序列时。
 
   输入
-  当前行动 Player 与稳定动作描述。
+  当前行动 Player、稳定动作描述与可选 decision-local 合法根集合。
 
   输出
   匹配的当前动作；状态变化导致不匹配时返回 null。
@@ -872,16 +1165,20 @@ export class AIController {
   getActionCandidates。
 
   边界与不变量
-  实体牌优先按实例 ID 重绑，目标顺序和选择字段必须完全一致。
+  实体牌优先按实例 ID 重绑，目标顺序和选择字段必须完全一致；外部计划复用仍重新生成当前合法集合，
+  只有同一 request 且 stateVersion 已验证的 selectAction acceptance 可提供 decision-local 集合。
   */
-  resolvePlannedAction(player, descriptor) {
+  resolvePlannedAction(player, descriptor, decisionRootActions = null) {
     if (!descriptor) return null;
     const state = this.getState();
     if (!this.isSessionValid(state.gameId)) return null;
     const currentPlayer = state.players[state.currentPlayerIndex] ?? null;
     if (!player?.alive || currentPlayer?.id !== player.id || state.phase !== "play") return null;
     if (descriptor.type === "end") return { type:"end" };
-    return this.getActionCandidates(player).find((action) => {
+    const candidates = Array.isArray(decisionRootActions)
+      ? decisionRootActions
+      : this.getActionCandidates(player);
+    return candidates.find((action) => {
       if (action.type !== descriptor.type) return false;
       if (action.type === "end") return true;
       if (action.type === "skill" && action.skill?.id !== descriptor.cardId) return false;
@@ -923,7 +1220,7 @@ export class AIController {
   调用方不得通过返回数组修改 Planner 内部序列。
   */
   getPlannedSequence() {
-    if (this.planSource === "worker") return [...this.acceptedPlannedSequence];
+    if (this.planSource !== "planner") return [...this.acceptedPlannedSequence];
     return [...this.planner.lastPlannedSequence];
   }
 
@@ -953,7 +1250,14 @@ export class AIController {
   门面不改动选择结果或牌序。
   */
   chooseDiscards(player, count) {
-    return this.cardSelector.chooseDiscards(player, count);
+    const startedAt = decisionNow();
+    const cards = this.cardSelector.chooseDiscards(player, count);
+    this.recordMainThreadOperation(
+      "CardSelectionBoundary.chooseDiscards",
+      startedAt,
+      { candidateCount:player?.hand?.length }
+    );
+    return cards;
   }
 
   /*
@@ -982,7 +1286,14 @@ export class AIController {
   不解析或移动实体牌，真实执行仍必须重新验证。
   */
   chooseTransferCombination(...args) {
-    return this.cardSelector.chooseTransferCombination(...args);
+    const startedAt = decisionNow();
+    const selection = this.cardSelector.chooseTransferCombination(...args);
+    this.recordMainThreadOperation(
+      "CardSelectionBoundary.chooseTransferCombination",
+      startedAt,
+      { candidateCount:Array.isArray(args[2]) ? args[2].length : "unavailable" }
+    );
+    return selection;
   }
 
   /*
@@ -1011,7 +1322,14 @@ export class AIController {
   未知牌只能按位置采样，调用次数和随机数顺序保持选择器既有语义。
   */
   chooseHiddenCards(...args) {
-    return this.cardSelector.chooseHiddenCards(...args);
+    const startedAt = decisionNow();
+    const cards = this.cardSelector.chooseHiddenCards(...args);
+    this.recordMainThreadOperation(
+      "CardSelectionBoundary.chooseHiddenCards",
+      startedAt,
+      { candidateCount:Array.isArray(args[1]?.hand) ? args[1].hand.length : "unavailable" }
+    );
+    return cards;
   }
 
   /*
@@ -1040,7 +1358,16 @@ export class AIController {
   不读取未知牌定义，真实执行仍按实体身份复核。
   */
   chooseZoneCard(...args) {
-    return this.cardSelector.chooseZoneCard(...args);
+    const startedAt = decisionNow();
+    const selection = this.cardSelector.chooseZoneCard(...args);
+    const owner = args[1];
+    const handCount = Array.isArray(owner?.hand) ? owner.hand.length : Number.NaN;
+    this.recordMainThreadOperation(
+      "CardSelectionBoundary.chooseZoneCard",
+      startedAt,
+      { candidateCount:Number.isFinite(handCount) ? handCount + (owner?.equipment ? 1 : 0) : "unavailable" }
+    );
+    return selection;
   }
 
   /*
@@ -1069,7 +1396,14 @@ export class AIController {
   门面不改变同分时的原始顺序。
   */
   choosePublicCard(...args) {
-    return this.cardSelector.choosePublicCard(...args);
+    const startedAt = decisionNow();
+    const card = this.cardSelector.choosePublicCard(...args);
+    this.recordMainThreadOperation(
+      "CardSelectionBoundary.choosePublicCard",
+      startedAt,
+      { candidateCount:Array.isArray(args[1]) ? args[1].length : "unavailable" }
+    );
+    return card;
   }
 
   /*
@@ -1098,7 +1432,14 @@ export class AIController {
   候选牌默认空数组；门面不得构造或泄露额外隐藏信息。
   */
   shouldRespond(player, type, context, cards = []) {
-    return this.responsePolicy.shouldRespond(player, type, context, cards);
+    const startedAt = decisionNow();
+    const decision = this.responsePolicy.shouldRespond(player, type, context, cards);
+    this.recordMainThreadOperation(
+      "ResponseBoundary.shouldRespond",
+      startedAt,
+      { candidateCount:Array.isArray(cards) ? cards.length : "unavailable" }
+    );
+    return decision;
   }
 
   /*
@@ -1127,7 +1468,14 @@ export class AIController {
   Controller 只暴露窄查询；不得让 Application 直接访问 Policy 内部 owner。
   */
   assessDyingRescue(responder, target) {
-    return this.responsePolicy.assessDyingRescue(responder, target);
+    const startedAt = decisionNow();
+    const assessment = this.responsePolicy.assessDyingRescue(responder, target);
+    this.recordMainThreadOperation(
+      "ResponseBoundary.assessDyingRescue",
+      startedAt,
+      { candidateCount:this.getState()?.players?.length }
+    );
+    return assessment;
   }
 
   /*

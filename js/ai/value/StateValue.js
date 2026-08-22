@@ -57,7 +57,7 @@ export class StateValue {
   TransitionValue、ValueLedger、Search/Policy 查询入口与测试。
 
   输入
-  过滤后的状态与 viewer ID。
+  过滤后的状态、viewer ID 与可选父 SearchBudget。
 
   输出
   value/Evaluator 返回的团队 State Value。
@@ -72,10 +72,11 @@ export class StateValue {
   ValueSimulationQuery.lightningValues、Evaluator.stateUtility。
 
   边界与不变量
-  模拟结果先物化为纯值再交给 Evaluator；本层不复制任何估值公式。
+  模拟结果先物化为纯值再交给 Evaluator；本层不复制任何估值公式；
+  父搜索存在时必须把同一个 SearchBudget 传给 ValueSimulationQuery。
   */
-  stateUtility(state, viewerId) {
-    const lightningValues = this.simulationQuery.lightningValues(state, viewerId);
+  stateUtility(state, viewerId, searchBudget = null) {
+    const lightningValues = this.simulationQuery.lightningValues(state, viewerId, searchBudget);
     return this.evaluator.stateUtility(state, viewerId, lightningValues);
   }
 }

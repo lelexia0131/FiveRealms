@@ -1249,3 +1249,119 @@ planning benchmark（seed `20260814`、node budget `200`、`planning` category�
 AI-ARCH-10 的阶段验证记录保留在 Git 历史与测试输出；当前验收以 `tests/run.mjs` 的 `AI 系统`、FR-ARCH、完整非 Balance suite、architecture checker 和真实浏览器 smoke 为准。浏览器模块图统一使用页首构建标识。
 
 AI 架构不存在兼容算法或缺失 owner。后续功能必须在上述 final owner 内演进；Git 提交、推送与合并仍由维护者执行。
+
+## 33. Probability Semantics 与 Final Utility 当前事实
+
+本节记录 2026-08-21 完成概率语义和最终价值量纲审计后的现状。它覆盖第 24 节等历史记录中的旧 `0.08` 公式；历史章节只用于追溯当时实现，不再代表生产公式。
+
+### 33.1 允许的概率语义
+
+生产 AI 中涉及不确定性的数值只能使用下列五类语义：
+
+| 当前 symbol / field | Owner | Classification | 当前含义与约束 |
+|---|---|---|---|
+| 确定规则事件、单一 HP/alive 世界、确定 availability | `state/Probability`、Simulation | `EXACT` | 由规则、确定状态或完整条件世界严格推出；只有此类值可称 exact。 |
+| `recover/block/counter/assaultCountDistribution` | `state/BeliefState` | `BELIEF PROBABILITY` | 由合法 Remaining Knowledge 和未知槽位数条件化；不读取敌方真实未知牌面。 |
+| `blockProbability`、`twoBlockProbability`、`counterProbability`、`assaultResponseProbability` | `state/BeliefState` / Simulation projection | `BELIEF PROBABILITY` | 全部是相应 count distribution 的尾概率，不单独建模。 |
+| `equipmentRetentionProbability`、距离/状态/响应条件分支 | State / Domain / Simulation | `BELIEF PROBABILITY` | 与原始 condition key 共享同一世界；派生规则不得重新独立相乘。 |
+| `tacticResolutionChance`、`targetResolutionChance` | `simulation/ResponseSimulation` | `BELIEF PROBABILITY` | 确定 Policy decision 与反制容量 Belief 相交后的结算概率；不包含软 Policy 分数。 |
+| `sampleHiddenWorlds` 结果 | `state/BeliefState` | `MONTE CARLO ESTIMATE` | 返回 `{ classification, sampleCount, worlds }`；样本比例不是 exact probability。 |
+| 由有限 hidden worlds 平均得到的 hidden prior / information option | `search/CounterfactualTerms` | `MONTE CARLO ESTIMATE` | 是有限样本上的搜索/效用估计，不能通过 exact probability 接口消费。 |
+| `counterOpportunityCost`、`planningDynamicCounterGain`、Card/Response/Search Prior | Policy / Search | `POLICY HEURISTIC` | 用于确定选择或 beam 探索；不得乘入自然概率或 Final Utility。 |
+| `planningCounterDecision`、`counterDecision` | `policy/ResponsePolicy` / Simulation query | `POLICY HEURISTIC` | 输出确定 boolean；Policy 分数先比较阈值，再决定 respond / do not respond。 |
+| `expectedRecoverCount`、`expectedAssaultCount`、`expectedInformationGain`、`expectedEquipmentGain` | Belief / Simulation | `EXPECTED VALUE, NOT PROBABILITY` | 资源数量或价值期望；不能作为条件事件概率使用。 |
+| `hp`（跨分支摘要）、`hpSummaryClassification` | `simulation/CombatSimulation` | `EXPECTED VALUE, NOT PROBABILITY` | 多个 HP/alive 世界的标量摘要；不得声明为确定生命状态。 |
+| `expectedRescueCoverage` | `simulation/CombatSimulation` | `EXPECTED VALUE, NOT PROBABILITY` | `expected recover capacity / required recovery` 的覆盖比例，不是 survival probability。 |
+| `hpStateBranches`、`aliveProbability` | `simulation/CombatSimulation` | `BELIEF PROBABILITY` | 保留跨死亡边界的联合 HP/alive 世界；确定单世界仍标记 `EXACT`。 |
+
+`joinProbabilityStateBranches` 只负责条件代数，不改变输入来源的语义分类。相同 condition key 表示同一事实：连接时按条件概率只条件化一次；不同 condition key 才表示可相乘的独立来源。
+
+### 33.2 无放回隐藏手牌模型
+
+单个未知玩家在剩余牌池中持有目标牌的数量服从超几何分布：
+
+```text
+P(X = k) = C(K, k) C(N - K, n - k) / C(N, n)
+```
+
+- `N`：扣除观察者手牌、公开牌区、公开装备、合法私有记忆和其他合法已知移出实例后的剩余总数；
+- `K`：其中目标 definition 的剩余实例数；
+- `n`：该玩家扣除合法已知牌后的未知手牌槽位数。
+
+`hypergeometricCountDistribution` 直接维护 `0..n` 的 count distribution；`hypergeometricProbabilityAtLeast` 只从该分布求尾概率。动态整数未知槽位同样使用无放回分布，不再使用 `Binomial(n, K/N)`。
+
+同一 definition 在多个未知玩家之间使用逐玩家条件超几何分配。每层同时扣除该玩家消费的全部槽位与目标实例，并把完整联合分配写入稳定 condition key：
+
+```text
+hidden-card-allocation:<definitionId>
+```
+
+因此同一牌种不会在多个玩家间超额分配，card-scope 反制、Seal team counter 与 Duel assault 世界可复用相关性。解析式 Belief 当前只精确保留“同一 definition 跨玩家”的相关性；不同 definition 之间的完整联合手牌身份仍由 Monte Carlo hidden worlds 表示，未进行指数级全局枚举。
+
+### 33.3 Response Policy 边界
+
+反制响应分为两个独立步骤：
+
+1. `ResponsePolicy` 在确定输入世界中比较 gain 与 policy cost，输出 boolean decision；
+2. `ResponseSimulation` 把该 decision 与共享 `counterCountDistribution` 相交，得到实际响应/结算概率并消费同一条件世界中的容量、身份和 hand count。
+
+任意小数 heuristic 都不能传给 Simulation 生成“愿意响应”的随机事件。card-scope effect resolution 与后续动作合法性互相独立：当前战术被反制不会自动降低下一张合法突袭的 execution probability。
+
+### 33.4 HP / alive 边界
+
+伤害世界可能跨过 `alive/dead` 离散边界时，`CombatSimulation` 保留 `hpStateBranches`、`aliveProbability` 和语义分类；`Evaluator` 按分支分别计算死亡、危险和其他非线性 State Value 后再求期望。标量 `hp` 仅是期望摘要，正式测试锁定 `50% alive + 50% dead` 不得退化为 exact scalar。
+
+本阶段没有全面重写 Combat lifecycle。以下限制仍存在：
+
+- 含不确定救援容量的 dying 世界仍以 `EXPECTED VALUE, NOT PROBABILITY` 标记，未建立完整条件救援链；
+- `applyHpLoss`、救援资源逐轮消费、kill reward、死亡清理、game termination 与后续 actor/target legality 尚未全部按 HP world 分支推进；
+- 混合 alive/dead 世界的标量 `alive` 暂为兼容摘要，只有 State Value 明确按 `hpStateBranches` 非线性求值；其他下游不得把该摘要宣称为 exact。
+
+后续若迁移这些路径，必须保持伤害、响应、救援、死亡清理和奖励的真实顺序，并用条件世界连接现有 response/recover 分布；不得用 `f(E[HP])` 代替 `E[f(HP)]`。
+
+### 33.5 Final Utility 单位
+
+内部 State Value primitive 仍使用历史 state points，正式换算由单一函数定义：
+
+```text
+HP_VALUE = 5 state points / HP
+statePointsToUtility(points) = points / HP_VALUE
+1 Final Utility = 1 HP 的状态价值
+```
+
+`Evaluator.stateUtility` 汇总后仍返回原始 state points，保证 Policy/CardValue consumer 不发生单位往返。换算只发生在明确的 Final Utility 边界：`TransitionValue` 的 state delta 与 SpyGap information option、`FrontierValue` 的 terminal held option，以及明确输出 Final Utility 诊断的 `ValueLedger.projectOwnerLedger`。当前最终公式为：
+
+```text
+RawStateDelta           = StateValuePoints(after) - StateValuePoints(before)
+DeltaStateUtility       = statePointsToUtility(RawStateDelta)
+FinalFlowUtility        = 0
+TerminalOptionUtility   = terminal ? statePointsToUtility(heldRecover + heldRecycle) : 0
+InformationOptionUtility = statePointsToUtility(spyGapInformationValuePoints)
+
+FinalTransitionUtility
+  = DeltaStateUtility
+  + FinalFlowUtility
+  + TerminalOptionUtility
+  + InformationOptionUtility
+```
+
+`responseNet`、raw owner ledger、forced-discard information、static CardValue、SearchPrior 以及 expose/assault 的有限 beam 前瞻只用于诊断或搜索排序，不进入 final composition。`STATE_UTILITY_PRIOR_WEIGHT=0.4` 只是为保持 beam 相对排序的 heuristic：它可消费按 HP 基线归一化的输入，但不是 Final Utility 换算，也不是 `0.08` 的替代。Raw State delta 在路径上严格 telescoping；depth 不缩放动作价值。
+
+### 33.6 `0.08` 历史结论与剩余常数
+
+最早找到的 `0.08` 来源是 commit `66a5d486a0862d65509a3eaad8657271d8cb6c66`（`feat:卡牌重置，加入距离限制，阵营平衡性调整`，2026-07-29）。当时它用于压缩绝对 state value；commit `f656205` 把公式改为 state delta 后仍原样保留。仓库中没有找到数学推导、单位定义、校准报告、Balance 依据或证明换算含义的正式测试。
+
+最终判定：
+
+```text
+B. historical magic number
+```
+
+因此 `STATE_DELTA_SCALE` 已从生产 final path 删除，没有替换为 `1`、新 gamma 或另一个经验 scale。`END_OPPORTUNITY_CAP` 和 `SKILL_THRESHOLD_OPTION_VALUE` 也已从 final path 删除：结束后的弃牌/存量由 after-state 和 sibling 候选比较表达；聚能门槛由能量 state stock 与后续技能 transition 表达。
+
+仍保留的常数分两类：
+
+- `HP_VALUE=5` 是 state points 到 HP utility 的正式语义基线；`RESOURCE_MATERIAL_SCALE`、`ENERGY_STATE_WEIGHT`、死亡/危险/威胁权重属于 State Value 内部模型，只能经一次 state delta 进入 final；
+- `STATE_UTILITY_PRIOR_WEIGHT`、`END_PRIOR_PENALTY`、`SKILL_THRESHOLD_PRIOR_BONUS` 与静态 CardValue 只属于 Search/Policy，不是 Final Utility 换算。
+
+这些类别不得再次混入同一个 final 加法公式。

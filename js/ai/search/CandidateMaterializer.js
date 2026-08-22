@@ -17,7 +17,8 @@ TransitionValue、ValueLedger、FrontierValue、SearchPrior、CounterfactualTerm
 架构约束
 每项价值只向唯一归属者请求一次；不得生成/执行真实动作、决定束裁剪或同分裁决，也不得复制最终价值组合公式。
 */
-import { STATE_DELTA_SCALE } from "../value/Economics.js";
+import { statePointsToUtility } from "../value/Economics.js";
+import { STATE_UTILITY_PRIOR_WEIGHT } from "./SearchPrior.js";
 
 export class CandidateMaterializer {
   /*
@@ -159,7 +160,7 @@ export class CandidateMaterializer {
   */
   contextDiagnostics(context) {
     return {
-      hiddenSamples:context.hiddenWorlds.length,
+      hiddenSamples:context.hiddenWorldEstimate.sampleCount,
       discoveredDynamicTarget:Boolean(context.discoveredDynamicTarget)
     };
   }
@@ -175,7 +176,7 @@ export class CandidateMaterializer {
   动作、前后状态、行动者、深度、来源记录、Simulator、领域上下文与诊断开关。
 
   输出
-  包含基础转移、领域项、前沿值、搜索先验与诊断账本的候选记录。
+  包含基础转移、领域项、前沿值、搜索先验与诊断账本的候选记录；预算中断返回 null。
 
   读取状态
   只读输入状态并调用正式归属模块。
@@ -188,7 +189,8 @@ export class CandidateMaterializer {
 
   边界与不变量
   基础转移只计算一次；end 只读取既有 mandatory-discard 前后身份，不再次模拟；
-  诊断关闭时不构造账本；最终价值尚不在此组合。
+  诊断关闭时不构造账本；最终价值尚不在此组合；反事实未完整返回时不得登记 partial candidate。
+  所有 nested value/simulation query 必须继承传入的同一 SearchBudget。
   */
   materialize({
     action,
@@ -213,6 +215,7 @@ export class CandidateMaterializer {
       context,
       searchBudget
     });
+    if (terms === null) return null;
     const baseTerms = this.transitionValue.evaluateBase({
       action,
       player,
@@ -225,7 +228,8 @@ export class CandidateMaterializer {
         beforeState,
         player.id,
         simulator
-      )
+      ),
+      searchBudget
     });
     const baseTransition = baseTerms.baseTransition;
     const candidateLedger = collectDiagnostics
@@ -234,7 +238,8 @@ export class CandidateMaterializer {
           action,
           afterState,
           player.id,
-          true
+          true,
+          searchBudget
         )
       : null;
     const responseNet = (candidateLedger?.responses ?? [])
@@ -253,11 +258,13 @@ export class CandidateMaterializer {
           simulator.buildDiscardKeepValueContext(beforeState, beforeActor)
         )
       : [];
-    // 破势的配对前瞻值帮助有限 beam 保留兑现路线；真实后续效果仍只由 later state delta 进入 final。
-    const domainPrior = (terms.exposeMarginal + terms.assaultStacksCredit) * STATE_DELTA_SCALE;
+    // 破势点数先按 HP 基线归一化，再乘纯 beam heuristic；该结果不进入 Final Utility。
+    const domainPrior = statePointsToUtility(
+      terms.exposeMarginal + terms.assaultStacksCredit
+    ) * STATE_UTILITY_PRIOR_WEIGHT;
     const searchCredit = this.searchPrior.actionSearchPrior(action, player, beforeState);
     const prior = this.counterfactualTerms.hiddenPrior(action, context)
-      + this.searchPrior.actionUtility(action, player, beforeState)
+      + this.searchPrior.actionUtility(action, player, beforeState, { searchBudget })
       + searchCredit
       + domainPrior;
     return {
@@ -285,7 +292,7 @@ export class CandidateMaterializer {
 
   /*
   功能
-  完成同层结束机会项，并通过唯一公式计算每个候选的最终 Transition Value。
+  完成同层 end 兼容收口，并通过唯一公式计算每个候选的最终 Transition Value。
 
   调用方
   Planner 完成同一父节点下的所有候选物化后。
@@ -294,7 +301,7 @@ export class CandidateMaterializer {
   同层候选记录。
 
   输出
-  结束回退基值摘要；每个候选获得 transitionValue。
+  零值 end 兼容摘要；每个候选获得 transitionValue。
 
   读取状态
   候选记录中的显式数值项。
@@ -455,7 +462,7 @@ export class CandidateMaterializer {
   Planner 最终选择。
 
   输入
-  end 动作、前后状态、行动者、已物化 non-end siblings、根 provenance、Simulator 与搜索 context。
+  end 动作、前后状态、行动者、已物化 non-end siblings、根 provenance、Simulator、搜索 context 与父 SearchBudget。
 
   输出
   与普通根 end 相同 shape 且已完成 transitionValue 的候选记录。
@@ -471,7 +478,8 @@ export class CandidateMaterializer {
 
   边界与不变量
   不再次执行 end 模拟；fallback 必须与普通 end 共同经过 forced-discard/seal sibling owner，
-  不能用预算中断前缺少 end 的 summary 绕过终止机会成本。
+  不能用预算中断前缺少 end 的 summary 绕过正常 after-state 与最终价值组合；
+  nested value/simulation query 必须继承同一个父 SearchBudget。
   */
   terminalFallback({
     action,
@@ -481,7 +489,8 @@ export class CandidateMaterializer {
     siblingCandidates,
     remainingProvenance,
     simulator,
-    context
+    context,
+    searchBudget = null
   }) {
     const terminalCandidate = this.materialize({
       action,
@@ -493,7 +502,7 @@ export class CandidateMaterializer {
       simulator,
       context,
       collectDiagnostics:false,
-      searchBudget:null
+      searchBudget
     });
     const comparableSiblings = (siblingCandidates ?? []).map((candidate) => ({
       ...candidate,

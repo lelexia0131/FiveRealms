@@ -18,6 +18,8 @@ AI 状态组合入口、Simulator 与状态契约测试。
 不得计算领域规则或价值；搜索所需扁平字段只在此处组装，克隆不得回读 Game。
 */
 
+import { PROBABILITY_CLASSIFICATION } from "./Probability.js";
+
 const CATEGORIES = Object.freeze(["basic", "tactic", "equipment"]);
 
 /*
@@ -114,6 +116,10 @@ function createSearchPlayer(visiblePlayer, knownCards, beliefPlayer, viewerId, d
   const huntMarkSourceId = visiblePlayer.huntMarkSourceId;
   return Object.freeze({
     ...visiblePlayer,
+    hpStateBranches:certainStateBranch({ hp:visiblePlayer.hp, alive:visiblePlayer.alive }),
+    hpStateBranchesClassification:PROBABILITY_CLASSIFICATION.EXACT,
+    hpSummaryClassification:PROBABILITY_CLASSIFICATION.EXACT,
+    aliveProbability:visiblePlayer.alive ? 1 : 0,
     shieldBranches:certainStateBranch({ amount:visiblePlayer.shield }),
     energyBranches:certainStateBranch({ amount:visiblePlayer.energy }),
     turnEnergyGainWithoutEquipment:derivedPlayer.turnEnergyGainWithoutEquipment,
@@ -159,6 +165,7 @@ function createSearchPlayer(visiblePlayer, knownCards, beliefPlayer, viewerId, d
     expectedEquipmentGain:0,
     expectedEquipmentRoleDelta:0,
     expectedRecoverCount:beliefPlayer.expectedRecoverCount,
+    recoverCountDistribution:beliefPlayer.recoverCountDistribution.map((branch) => ({ ...branch })),
     blockProbability:beliefPlayer.blockProbability,
     twoBlockProbability:beliefPlayer.twoBlockProbability,
     blockCountDistribution:beliefPlayer.blockCountDistribution.map((branch) => ({ ...branch })),

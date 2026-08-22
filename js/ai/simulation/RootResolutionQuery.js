@@ -179,10 +179,10 @@ export function resolveRootState(
 ValueSimulationQuery 与直接响应反事实测试。
 
 输入
-StateValue、Simulator capability、响应状态、响应者、root 卡/来源/深度/目标上下文。
+  StateValue、Simulator capability、响应状态、响应者、root 卡/来源/深度/目标上下文与父 SearchBudget。
 
 输出
-全体受益或非法 root 为 null；否则返回 flip 世界减 stay 世界的价值。
+全体受益或非法 root 为 null；否则返回 flip 世界减 stay 世界的原始 State Value points。
 
 读取状态
 过滤后的当前响应状态与实时目标。
@@ -191,10 +191,12 @@ StateValue、Simulator capability、响应状态、响应者、root 卡/来源/�
 仅由 Simulator 写独立克隆。
 
 调用函数
-isGlobalBenefitCard、buildTargetScopedBase、resolveRootState、StateValue.stateUtility。
+  isGlobalBenefitCard、buildTargetScopedBase、resolveRootState、StateValue.stateUtility。
 
 边界与不变量
-两世界只改变 root 是否生效；保持相同响应容量、隐藏信息、概率世界和其他状态。
+  两世界只改变 root 是否生效；保持相同响应容量、隐藏信息、概率世界和其他状态；
+  State Value 内的 nested query 必须继承父 SearchBudget；
+State Value 与 counter CardValue 成本继续使用既有 Policy state points。
 */
 export function dynamicRootFlipGain(
   stateValue,
@@ -205,7 +207,8 @@ export function dynamicRootFlipGain(
   rootSourceId,
   counterDepth,
   rootTargetIds,
-  options = {}
+  options = {},
+  searchBudget = null
 ) {
   const definitionId = rootCard?.definitionId;
   if (!definitionId || rootCard.category !== "tactic" || isGlobalBenefitCard(definitionId)) {
@@ -228,8 +231,8 @@ export function dynamicRootFlipGain(
     targets,
     options
   );
-  const baseValue = stateValue.stateUtility(baseState, responderId);
-  const resolvedValue = stateValue.stateUtility(resolvedState, responderId);
+  const baseValue = stateValue.stateUtility(baseState, responderId, searchBudget);
+  const resolvedValue = stateValue.stateUtility(resolvedState, responderId, searchBudget);
   const rootEffectValue = resolvedValue - baseValue;
   return resolvesAtStay ? -rootEffectValue : rootEffectValue;
 }

@@ -19,6 +19,7 @@ baseline（基线世界）与 boosted（只增强被测因素的世界）必须�
 */
 
 import {
+  PROBABILITY_CLASSIFICATION,
   PROBABILITY_EPSILON,
   clampProbability,
   totalBranchProbability
@@ -74,6 +75,39 @@ export class CounterfactualTerms {
 
   /*
   功能
+  在昂贵反事实的原子工作边界查询 cooperative search abort。
+
+  调用方
+  后续动作、隐藏世界、破势配对模拟循环。
+
+  输入
+  可选 SearchBudget。
+
+  输出
+  TIME/NODE/CANCELLED 要求当前工作回退时返回 true。
+
+  读取状态
+  SearchBudget stop reason、时间或节点状态。
+
+  写入状态
+  尚未停止时可由 SearchBudget 首次观察并写入停止原因。
+
+  调用函数
+  SearchBudget.shouldAbortCurrentWork/shouldStop。
+
+  边界与不变量
+  无预算的直接价值测试保持完整计算；本模块不自行解释预算数值或修改候选价值。
+  */
+  isInterrupted(searchBudget) {
+    if (!searchBudget) return false;
+    if (typeof searchBudget.shouldAbortCurrentWork === "function") {
+      return searchBudget.shouldAbortCurrentWork();
+    }
+    return typeof searchBudget.shouldStop === "function" && searchBudget.shouldStop();
+  }
+
+  /*
+  功能
   为一次根搜索冻结隐藏样本、回合开始时已有破势层的来源记录与动态目标诊断基线。
 
   调用方
@@ -104,12 +138,19 @@ export class CounterfactualTerms {
         .filter((action) => action.card?.definitionId === "assault")
         .map((action) => action.targets?.[0]?.id)
     );
+    const hiddenWorldEstimate = this.sampleHiddenWorlds(
+      player,
+      visibleState,
+      this.hiddenSampleCount
+    );
+    if (hiddenWorldEstimate?.classification
+      !== PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE
+      || !Array.isArray(hiddenWorldEstimate.worlds)
+      || hiddenWorldEstimate.sampleCount !== hiddenWorldEstimate.worlds.length) {
+      throw new TypeError("隐藏世界采样必须返回显式 MONTE CARLO ESTIMATE 契约");
+    }
     return {
-      hiddenWorlds:this.sampleHiddenWorlds(
-        player,
-        visibleState,
-        this.hiddenSampleCount
-      ),
+      hiddenWorldEstimate,
       rootProvenance:rootActor?.exposeWeaknessStacks ?? 0,
       rootAssaultTargets,
       discoveredDynamicTarget:false
@@ -174,7 +215,7 @@ export class CounterfactualTerms {
   系数 -1.5、样本分母与零样本行为保持不变，不进入 final value。
   */
   hiddenPrior(action, context) {
-    const hiddenWorlds = context.hiddenWorlds;
+    const hiddenWorlds = context.hiddenWorldEstimate.worlds;
     if (action.card?.definitionId !== "assault" || !hiddenWorlds.length) return 0;
     const targetId = action.targets?.[0]?.id;
     if (!targetId) return 0;
@@ -307,18 +348,25 @@ export class CounterfactualTerms {
   generateFromVisible、simulator.apply、evaluator.stateUtility。
 
   边界与不变量
-  每个候选从同一输入状态独立模拟；end 候选保持生成顺序参与同分。
+  每个候选从同一输入状态独立模拟；end 候选保持生成顺序参与同分；
+  nested State Value 查询继承同一 SearchBudget。
   */
   bestFollowUpUtility(state, actorId, simulator, searchBudget = null) {
-    const candidates = this.generateFromVisible(state, actorId);
+    if (this.isInterrupted(searchBudget)) return null;
+    const candidates = this.generateFromVisible(state, actorId, searchBudget);
     let best = -Infinity;
     for (const candidate of candidates) {
+      if (this.isInterrupted(searchBudget)) return null;
       searchBudget?.observeSimulation();
       const after = simulator.apply(state, candidate, actorId);
-      const utility = this.evaluator.stateUtility(after, actorId);
+      if (this.isInterrupted(searchBudget)) return null;
+      const utility = this.evaluator.stateUtility(after, actorId, searchBudget);
       if (utility > best) best = utility;
     }
-    return Number.isFinite(best) ? best : this.evaluator.stateUtility(state, actorId);
+    if (this.isInterrupted(searchBudget)) return null;
+    return Number.isFinite(best)
+      ? best
+      : this.evaluator.stateUtility(state, actorId, searchBudget);
   }
 
   /*
@@ -335,7 +383,7 @@ export class CounterfactualTerms {
   非负的 raw information option value；无样本或目标缺失时为零。
 
   读取状态
-  context.hiddenWorlds、afterState 后续候选与 stateUtility。
+  context.hiddenWorldEstimate、afterState 后续候选与 stateUtility。
 
   写入状态
   只写 Simulator 返回的独立世界。
@@ -348,16 +396,29 @@ export class CounterfactualTerms {
   */
   evaluateSpyGapInformationValue(beforeState, afterState, action, actorId, simulator, context, searchBudget = null) {
     const targetId = this.newlyTriggeredSpyGapTarget(beforeState, afterState, actorId);
-    if (!targetId || !context?.hiddenWorlds?.length) return 0;
+    const hiddenWorlds = context?.hiddenWorldEstimate?.worlds ?? [];
+    if (!targetId || !hiddenWorlds.length) return 0;
+    if (this.isInterrupted(searchBudget)) return null;
     const baselineBest = this.bestFollowUpUtility(afterState, actorId, simulator, searchBudget);
+    if (baselineBest === null) return null;
     let informedTotal = 0;
-    for (const world of context.hiddenWorlds) {
+    for (const world of hiddenWorlds) {
+      if (this.isInterrupted(searchBudget)) return null;
       const specializedBefore = this.specializeHiddenWorld(beforeState, world, actorId, simulator);
+      if (this.isInterrupted(searchBudget)) return null;
       searchBudget?.observeSimulation();
       const specializedAfter = simulator.apply(specializedBefore, action, actorId);
-      informedTotal += this.bestFollowUpUtility(specializedAfter, actorId, simulator, searchBudget);
+      if (this.isInterrupted(searchBudget)) return null;
+      const informedBest = this.bestFollowUpUtility(
+        specializedAfter,
+        actorId,
+        simulator,
+        searchBudget
+      );
+      if (informedBest === null) return null;
+      informedTotal += informedBest;
     }
-    return Math.max(0, informedTotal / context.hiddenWorlds.length - baselineBest);
+    return Math.max(0, informedTotal / hiddenWorlds.length - baselineBest);
   }
 
   /*
@@ -368,7 +429,7 @@ export class CounterfactualTerms {
   candidateTerms 与领域边际测试。
 
   输入
-  动作前后 SearchState、行动者 ID 与复用 Simulator。
+  动作前后 SearchState、行动者 ID、复用 Simulator 与可选 SearchBudget。
 
   输出
   下一次突袭的最大非负效用增量。
@@ -383,7 +444,8 @@ export class CounterfactualTerms {
   generateFromVisible、Simulator.apply、evaluator.stateUtility。
 
   边界与不变量
-  baseline 只回退本动作新增层数；同一合法突袭的 paired worlds 仅改变被测层数。
+  baseline 只回退本动作新增层数；同一合法突袭的 paired worlds 仅改变被测层数；
+  nested State Value 查询继承同一 SearchBudget。
   */
   evaluateExposeMarginal(beforeState, afterState, actorId, simulator, searchBudget = null) {
     const beforeActor = beforeState.players.find((entry) => entry.id === actorId);
@@ -391,22 +453,27 @@ export class CounterfactualTerms {
     const addedStacks = (afterActor?.exposeWeaknessStacks ?? 0)
       - (beforeActor?.exposeWeaknessStacks ?? 0);
     if (!(addedStacks > 0)) return 0;
+    if (this.isInterrupted(searchBudget)) return null;
     const baselineState = structuredClone(afterState);
     const baselineActor = baselineState.players.find((entry) => entry.id === actorId);
     baselineActor.exposeWeaknessStacks = Math.max(
       0,
       (baselineActor.exposeWeaknessStacks ?? 0) - addedStacks
     );
-    const candidates = this.generateFromVisible(afterState, actorId);
+    const candidates = this.generateFromVisible(afterState, actorId, searchBudget);
     let best = 0;
     for (const candidate of candidates) {
       if (candidate.card?.definitionId !== "assault") continue;
-      searchBudget?.observeSimulation(2);
+      if (this.isInterrupted(searchBudget)) return null;
+      searchBudget?.observeSimulation();
       const base = simulator.apply(baselineState, candidate, actorId);
+      if (this.isInterrupted(searchBudget)) return null;
+      searchBudget?.observeSimulation();
       const boosted = simulator.apply(afterState, candidate, actorId);
+      if (this.isInterrupted(searchBudget)) return null;
       searchBudget?.observeCounterfactual(2);
-      const marginal = this.evaluator.stateUtility(boosted, actorId)
-        - this.evaluator.stateUtility(base, actorId);
+      const marginal = this.evaluator.stateUtility(boosted, actorId, searchBudget)
+        - this.evaluator.stateUtility(base, actorId, searchBudget);
       if (marginal > best) best = marginal;
     }
     return best;
@@ -420,7 +487,7 @@ export class CounterfactualTerms {
   candidateTerms 与领域边际测试。
 
   输入
-  当前 SearchState、突袭动作、行动者 ID、剩余旧层与复用 Simulator。
+  当前 SearchState、突袭动作、行动者 ID、剩余旧层、复用 Simulator 与可选 SearchBudget。
 
   输出
   非负旧层消费信用。
@@ -435,7 +502,8 @@ export class CounterfactualTerms {
   Simulator.apply、evaluator.stateUtility。
 
   边界与不变量
-  paired worlds 只改变 exposeWeaknessStacks；负边际仍截为零。
+  paired worlds 只改变 exposeWeaknessStacks；负边际仍截为零；
+  nested State Value 查询继承同一 SearchBudget。
   */
   evaluateAssaultStacksMarginal(
     currentState,
@@ -446,18 +514,22 @@ export class CounterfactualTerms {
     searchBudget = null
   ) {
     if (!(remainingRootExposeStacks > 0)) return 0;
+    if (this.isInterrupted(searchBudget)) return null;
     const boostedState = structuredClone(currentState);
     const baselineState = structuredClone(currentState);
     const boostedActor = boostedState.players.find((entry) => entry.id === actorId);
     const baselineActor = baselineState.players.find((entry) => entry.id === actorId);
     boostedActor.exposeWeaknessStacks = remainingRootExposeStacks;
     baselineActor.exposeWeaknessStacks = 0;
-    searchBudget?.observeSimulation(2);
+    searchBudget?.observeSimulation();
     const boosted = simulator.apply(boostedState, action, actorId);
+    if (this.isInterrupted(searchBudget)) return null;
+    searchBudget?.observeSimulation();
     const baseline = simulator.apply(baselineState, action, actorId);
+    if (this.isInterrupted(searchBudget)) return null;
     searchBudget?.observeCounterfactual(2);
-    const marginal = this.evaluator.stateUtility(boosted, actorId)
-      - this.evaluator.stateUtility(baseline, actorId);
+    const marginal = this.evaluator.stateUtility(boosted, actorId, searchBudget)
+      - this.evaluator.stateUtility(baseline, actorId, searchBudget);
     return marginal > 0 ? marginal : 0;
   }
 
@@ -549,6 +621,7 @@ export class CounterfactualTerms {
           searchBudget
         )
       : 0;
+    if (exposeMarginal === null) return null;
     const assaultStacksCredit = action.card?.definitionId === "assault"
       ? this.evaluateAssaultStacksMarginal(
           beforeState,
@@ -559,6 +632,7 @@ export class CounterfactualTerms {
           searchBudget
         )
       : 0;
+    if (assaultStacksCredit === null) return null;
     const nextProvenance = action.card?.definitionId === "assault"
       ? this.advanceRemainingRootExposeStacks(
           beforeState,
@@ -578,6 +652,7 @@ export class CounterfactualTerms {
           searchBudget
         )
       : 0;
+    if (spyGapInformationValue === null) return null;
     return {
       exposeMarginal,
       assaultStacksCredit,

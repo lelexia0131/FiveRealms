@@ -23,6 +23,7 @@ import {
   getCardTargetIds
 } from "../../domain/rules/card/CardRules.js";
 import { hasPassiveSkill, projectRulePlayers } from "../state/RuleProjection.js";
+import { hypergeometricCountDistribution } from "../state/BeliefState.js";
 import { inAttackRange } from "../state/DistanceProbabilityBranches.js";
 import { mutualBenefitDraftValues } from "../value/GlobalBenefitValue.js";
 import { chooseBestResourceHandCandidate, chooseResourceZone } from "../policy/ResourceSelectionPolicy.js";
@@ -30,7 +31,7 @@ import { getBaseCardAiValue, getRoleCardAiValue } from "../value/CardValue.js";
 import { incomingExposure } from "../value/ThreatValue.js";
 import { HP_VALUE } from "../value/Economics.js";
 import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, probabilityEventPartition, totalBranchProbability } from "../state/Probability.js";
 import { clampProbability, fixedCardDensity, remainingCardDensity } from "./SimulationSupport.js";
 
 /*
@@ -409,7 +410,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
             next,
             player,
             effectEventWorlds,
-            this.counterDesire(next, player, actor, card, [player])
+            this.counterDecision(next, player, actor, card, [player])
           );
           this.applyDamage(next, actor, player, DOMAIN_CARD_DEFINITIONS.shockwave.perTargetDamage, {
             canBlock:true,
@@ -425,7 +426,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
             next,
             player,
             effectEventWorlds,
-            this.counterDesire(next, player, actor, card, [player])
+            this.counterDecision(next, player, actor, card, [player])
           );
           const targetWorlds = counterResponse.effectPassWorlds;
           const response = player.assaultResponseProbability ?? 0;
@@ -844,9 +845,9 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   */
   addSimulatedCardToHand(state, player, cardIdentity, acquisitionWorlds) {
     if (!player || !cardIdentity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
-    const acquired = projectProbabilityStateBranches(acquisitionWorlds, (branch) => ({
+    const acquired = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
       available:Boolean(branch.occurs)
-    }));
+    }), "CardEffectSimulation.addSimulatedCardToHand:acquired");
     const acquisitionProbability = totalBranchProbability(acquired.filter((branch) => branch.available));
     if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
     const id = cardIdentity.id ?? this.nextSimulatedCardId(state, cardIdentity.definitionId);
@@ -965,9 +966,9 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   */
   addSimulatedKnownCard(state, player, identity, acquisitionWorlds) {
     if (!player || !identity?.cardId || !identity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
-    const acquired = projectProbabilityStateBranches(acquisitionWorlds, (branch) => ({
+    const acquired = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
       available:Boolean(branch.occurs)
-    }));
+    }), "CardEffectSimulation.addSimulatedKnownCard:acquired");
     const acquisitionProbability = totalBranchProbability(acquired.filter((branch) => branch.available));
     if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
     this.ensureCounterCountDistribution(player, state?.remainingCardCounts ?? null);
@@ -980,15 +981,23 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       if (existing.definitionId !== identity.definitionId) {
         throw new Error(`addSimulatedKnownCard 同 cardId 不同 definitionId：${identity.cardId}`);
       }
-      const oldState = getAvailabilityStateBranches(existing);
+      const oldState = this.getAvailabilityStateWork(
+        existing,
+        "availabilityStateBranches",
+        1,
+        "CardEffectSimulation.addSimulatedKnownCard:existing"
+      );
       const oldProbability = this.cardAvailability(existing);
-      const newState = projectProbabilityStateBranches(acquisitionWorlds, (branch) => ({
+      const newState = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
         newAvailable:Boolean(branch.occurs)
-      }));
-      const merged = joinProbabilityStateBranches(oldState, newState);
-      const mergedState = projectProbabilityStateBranches(merged, (branch) => ({
+      }), "CardEffectSimulation.addSimulatedKnownCard:new");
+      const merged = this.joinProbabilityWork(
+        [oldState, newState],
+        "CardEffectSimulation.addSimulatedKnownCard:join"
+      );
+      const mergedState = this.projectProbabilityWork(merged, (branch) => ({
         available:Boolean(branch.available || branch.newAvailable)
-      }));
+      }), "CardEffectSimulation.addSimulatedKnownCard:merged");
       existing.availabilityStateBranches = mergedState;
       existing.availabilityBranches = availableBranchesFromState(mergedState);
       const addedProbability = Math.max(0,
@@ -996,15 +1005,15 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       if (addedProbability > PROBABILITY_EPSILON) {
         player.handCount = (player.handCount ?? 0) + addedProbability;
         if (identity.definitionId === "block") {
-          const addedWorlds = projectProbabilityStateBranches(merged, (branch) => ({
+          const addedWorlds = this.projectProbabilityWork(merged, (branch) => ({
             occurs:Boolean(branch.newAvailable && !branch.available)
-          }));
+          }), "CardEffectSimulation.addSimulatedKnownCard:block-added");
           this.addKnownBlockToDistribution(state, player, addedWorlds);
         }
         if (identity.definitionId === "counter") {
-          const addedWorlds = projectProbabilityStateBranches(merged, (branch) => ({
+          const addedWorlds = this.projectProbabilityWork(merged, (branch) => ({
             occurs:Boolean(branch.newAvailable && !branch.available)
-          }));
+          }), "CardEffectSimulation.addSimulatedKnownCard:counter-added");
           this.addKnownCounterToDistribution(state, player, addedWorlds);
         }
       }
@@ -1056,14 +1065,22 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       ? this.findTransferCardEntry(source, identity.cardId, identity.definitionId)
       : null;
     if (!entry || this.cardAvailability(entry) <= PROBABILITY_EPSILON) return 0;
-    const availabilityState = getAvailabilityStateBranches(entry);
-    const joined = joinProbabilityStateBranches(effectWorlds, availabilityState);
-    const remainingState = projectProbabilityStateBranches(joined, (branch) => ({
+    const availabilityState = this.getAvailabilityStateWork(
+      entry,
+      "availabilityStateBranches",
+      1,
+      "CardEffectSimulation.transferKnownCardIdentity:availability"
+    );
+    const joined = this.joinProbabilityWork(
+      [effectWorlds, availabilityState],
+      "CardEffectSimulation.transferKnownCardIdentity:join"
+    );
+    const remainingState = this.projectProbabilityWork(joined, (branch) => ({
       available:Boolean(branch.available && !branch.occurs)
-    }));
-    const acquisitionWorlds = projectProbabilityStateBranches(joined, (branch) => ({
+    }), "CardEffectSimulation.transferKnownCardIdentity:remaining");
+    const acquisitionWorlds = this.projectProbabilityWork(joined, (branch) => ({
       occurs:Boolean(branch.available && branch.occurs)
-    }));
+    }), "CardEffectSimulation.transferKnownCardIdentity:acquired");
     const transferProbability = this.eventProbability(acquisitionWorlds);
     if (transferProbability <= PROBABILITY_EPSILON) return 0;
     if (identity.definitionId === "block") {
@@ -1138,13 +1155,13 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   按 count 升序、概率归一的新分布数组。
 
   读取状态
-  全部已知身份的 availability、handCount 与未知池密度。
+  全部已知身份的 availability、handCount 与有限剩余牌计数。
 
   写入状态
   无。
 
   调用函数
-  cardAvailability、remainingCardDensity。
+  cardAvailability、hypergeometricCountDistribution。
 
   边界与不变量
   确定身份逐张进入分布；只有扣除全部已知身份占用后的真实匿名容量才使用聚合密度，
@@ -1166,7 +1183,6 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     const anonymousExpectedCount = Math.max(0, handCount - totalExplicitOccupancy);
     const wholeSlots = Math.floor(anonymousExpectedCount);
     const fractionalSlot = anonymousExpectedCount - wholeSlots;
-    const density = remainingCardDensity(remainingCardCounts, definitionId);
     let distribution = [{ count:0, probability:1 }];
     /*
     功能
@@ -1195,18 +1211,69 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     */
     const convolve = (probability) => {
       const next = [];
-      for (const branch of distribution) {
+      for (let branchIndex = 0; branchIndex < distribution.length; branchIndex += 1) {
+        if (branchIndex % 32 === 0) this.checkpointSearchWork();
+        const branch = distribution[branchIndex];
         next.push({ count:branch.count, probability:branch.probability * (1 - probability) });
         next.push({ count:branch.count + 1, probability:branch.probability * probability });
       }
       distribution = next;
     };
-    for (const card of matchingEntries) convolve(this.cardAvailability(card));
-    for (let slot = 0; slot < wholeSlots; slot += 1) convolve(density);
-    if (fractionalSlot > PROBABILITY_EPSILON) convolve(fractionalSlot * density);
+    for (let index = 0; index < matchingEntries.length; index += 1) {
+      this.checkpointSearchWork();
+      convolve(this.cardAvailability(matchingEntries[index]));
+    }
+    const finiteCounts = remainingCardCounts
+      && typeof remainingCardCounts === "object"
+      && !Array.isArray(remainingCardCounts);
+    if (finiteCounts) {
+      const countedPopulation = Object.values(remainingCardCounts).reduce(
+        (sum, count) => sum + (Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0),
+        0
+      );
+      const population = Math.max(countedPopulation, Math.ceil(anonymousExpectedCount));
+      const successes = Math.max(0, Number(remainingCardCounts[definitionId]) || 0);
+      const lower = hypergeometricCountDistribution(population, successes, wholeSlots);
+      const upper = fractionalSlot > PROBABILITY_EPSILON
+        ? hypergeometricCountDistribution(population, successes, wholeSlots + 1)
+        : [];
+      const unknownDistribution = [
+        ...lower.map((branch) => ({
+          count:branch.count,
+          probability:branch.probability * (1 - fractionalSlot)
+        })),
+        ...upper.map((branch) => ({
+          count:branch.count,
+          probability:branch.probability * fractionalSlot
+        }))
+      ];
+      const jointDistribution = [];
+      for (let knownIndex = 0; knownIndex < distribution.length; knownIndex += 1) {
+        if (knownIndex % 32 === 0) this.checkpointSearchWork();
+        const knownBranch = distribution[knownIndex];
+        for (let unknownIndex = 0; unknownIndex < unknownDistribution.length; unknownIndex += 1) {
+          if (unknownIndex % 32 === 0) this.checkpointSearchWork();
+          const unknownBranch = unknownDistribution[unknownIndex];
+          jointDistribution.push({
+            count:knownBranch.count + unknownBranch.count,
+            probability:knownBranch.probability * unknownBranch.probability
+          });
+        }
+      }
+      distribution = jointDistribution;
+    } else {
+      const density = remainingCardDensity(remainingCardCounts, definitionId);
+      for (let slot = 0; slot < wholeSlots; slot += 1) {
+        this.checkpointSearchWork();
+        convolve(density);
+      }
+      if (fractionalSlot > PROBABILITY_EPSILON) convolve(fractionalSlot * density);
+    }
     const maxCount = Math.max(0, Math.ceil(handCount));
     const merged = new Map();
-    for (const branch of distribution) {
+    for (let index = 0; index < distribution.length; index += 1) {
+      if (index % 32 === 0) this.checkpointSearchWork();
+      const branch = distribution[index];
       const count = Math.max(0, Math.min(maxCount, Math.floor(Number(branch?.count) || 0)));
       const probability = Math.max(0, Number(branch?.probability) || 0);
       if (probability <= PROBABILITY_EPSILON) continue;
@@ -1304,6 +1371,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     );
     const recoverDistribution = this.cardEstimateDistribution(player, "recover", remainingCardCounts);
     const assaultDistribution = this.cardEstimateDistribution(player, "assault", remainingCardCounts);
+    player.recoverCountDistribution = recoverDistribution;
     player.expectedRecoverCount = expectation(recoverDistribution);
     if (!Array.isArray(player.blockCountDistribution) || !player.blockCountDistribution.length) {
       player.blockCountDistribution = this.buildInitialBlockCountDistribution(player, remainingCardCounts);
@@ -1382,7 +1450,8 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   ResourceSelectionPolicy.buildCandidates/chooseContextual、ResourceValueQuery.evaluate；旧直接测试回退使用静态选择函数。
 
   边界与不变量
-  本函数只选择，不移动资源；未知候选不携带真实 definitionId；生产深层模拟必须使用注入的同一 query 语义。
+  本函数只选择，不移动资源；未知候选不携带真实 definitionId；生产深层模拟必须使用注入的同一 query 语义，
+  且 nested ResourceValueQuery 必须继承当前 Simulator 的 SearchBudget。
   */
   chooseSimulatedResourceSelection(state, actor, target, purpose) {
     const { knownCards, unknownCount } = this.buildSimulatedKnownCards(target);
@@ -1404,7 +1473,8 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         actorId: actor.id,
         targetId: target.id,
         purpose,
-        candidates
+        candidates,
+        searchBudget:this.searchBudget
       });
       return this.resourceSelectionPolicy.chooseContextual(evaluated);
     }
@@ -1498,7 +1568,12 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     if (!Array.isArray(player?.hand) || remaining <= PROBABILITY_EPSILON) return;
     for (const card of [...player.hand]) {
       if (card.definitionId !== definitionId || remaining <= PROBABILITY_EPSILON) continue;
-      const availabilityState = getAvailabilityStateBranches(card);
+      const availabilityState = this.getAvailabilityStateWork(
+        card,
+        "availabilityStateBranches",
+        1,
+        "CardEffectSimulation.consumeKnownCardsFromHand:availability"
+      );
       const availableProbability = totalBranchProbability(
         availabilityState.filter((branch) => branch.available)
       );
@@ -1506,10 +1581,13 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       const spendProbability = Math.min(availableProbability, remaining);
       const spendWorlds = this.getEventWorlds(state, spendProbability / availableProbability, null,
         `response-card:${player.id}:${card.id}`);
-      const joined = joinProbabilityStateBranches(availabilityState, spendWorlds);
-      card.availabilityStateBranches = projectProbabilityStateBranches(joined, (branch) => ({
+      const joined = this.joinProbabilityWork(
+        [availabilityState, spendWorlds],
+        "CardEffectSimulation.consumeKnownCardsFromHand:join"
+      );
+      card.availabilityStateBranches = this.projectProbabilityWork(joined, (branch) => ({
         available:Boolean(branch.available && !branch.occurs)
-      }));
+      }), "CardEffectSimulation.consumeKnownCardsFromHand:remaining");
       card.availabilityBranches = availableBranchesFromState(card.availabilityStateBranches);
       if (totalBranchProbability(card.availabilityBranches) <= PROBABILITY_EPSILON) {
         player.hand = player.hand.filter((entry) => entry.id !== card.id);
@@ -1550,10 +1628,15 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     if (!source && Array.isArray(player?.hand)
       && (player.hand.length > 0 || !(Number(player.expectedAssaultCount) > 0))) {
       source = [{ count:0, probability:1 }];
-      for (const card of player.hand.filter((entry) => entry.definitionId === "assault")) {
-        const availability = clampProbability(totalBranchProbability(getAvailabilityBranches(card)));
+      const assaultCards = player.hand.filter((entry) => entry.definitionId === "assault");
+      for (let cardIndex = 0; cardIndex < assaultCards.length; cardIndex += 1) {
+        this.checkpointSearchWork();
+        const card = assaultCards[cardIndex];
+        const availability = clampProbability(this.cardAvailability(card));
         const next = [];
-        for (const branch of source) {
+        for (let branchIndex = 0; branchIndex < source.length; branchIndex += 1) {
+          if (branchIndex % 32 === 0) this.checkpointSearchWork();
+          const branch = source[branchIndex];
           next.push({ count:branch.count, probability:branch.probability * (1 - availability) });
           next.push({ count:branch.count + 1, probability:branch.probability * availability });
         }
@@ -1579,18 +1662,20 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       }
     }
     const maxCount = Math.max(0, Math.ceil(Number(player?.handCount) || 0));
-    const merged = new Map();
-    for (const branch of source) {
-      const count = Math.max(0, Math.min(maxCount, Math.floor(Number(branch?.count) || 0)));
-      const probability = Math.max(0, Number(branch?.probability) || 0);
-      if (probability <= PROBABILITY_EPSILON) continue;
-      merged.set(count, (merged.get(count) ?? 0) + probability);
-    }
-    if (!merged.size) return [{ count:0, probability:1 }];
-    const total = [...merged.values()].reduce((sum, probability) => sum + probability, 0);
-    return [...merged.entries()]
-      .sort(([left], [right]) => left - right)
-      .map(([count, probability]) => ({ count, probability:probability / total }));
+    const merged = this.projectProbabilityWork(source, (branch) => ({
+      count:Math.max(0, Math.min(maxCount, Math.floor(Number(branch?.count) || 0))),
+      probability:Math.max(0, Number(branch?.probability) || 0),
+      conditions:branch.conditions ?? {}
+    }), "CardEffectSimulation.getExactIntegerCountDistribution");
+    if (!merged.length) return [{ count:0, probability:1 }];
+    const total = totalBranchProbability(merged);
+    return merged
+      .sort((left, right) => left.count - right.count)
+      .map((branch) => {
+        const normalized = { count:branch.count, probability:branch.probability / total };
+        if (Object.keys(branch.conditions).length) normalized.conditions = branch.conditions;
+        return normalized;
+      });
   }
 
   /*
@@ -1810,15 +1895,31 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   identitySlotStateFor(player, groupKey, entries) {
     const stored = player?.identitySlotStates?.[groupKey];
     if (Array.isArray(stored) && stored.length) return stored;
-    const branches = entries.flatMap((entry) => (
-      getAvailabilityStateBranches(entry).map((branch) => ({
+    const branches = [];
+    for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+      this.checkpointSearchWork();
+      const entry = entries[entryIndex];
+      const availability = this.getAvailabilityStateWork(
+        entry,
+        "availabilityStateBranches",
+        1,
+        "CardEffectSimulation.identitySlotStateFor:availability"
+      );
+      for (let branchIndex = 0; branchIndex < availability.length; branchIndex += 1) {
+        if (branchIndex % 32 === 0) this.checkpointSearchWork();
+        const branch = availability[branchIndex];
+        branches.push({
         probability:branch.probability,
         conditions:branch.conditions,
         slotAvailable:Boolean(branch.available),
         definitionId:branch.available ? entry.definitionId : null
-      }))
-    ));
-    const merged = mergeProbabilityStateBranches(branches);
+        });
+      }
+    }
+    const merged = this.mergeProbabilityWork(
+      branches,
+      "CardEffectSimulation.identitySlotStateFor:merge"
+    );
     const mass = totalBranchProbability(merged);
     return Math.abs(mass - 1) <= 1e-7 ? merged : null;
   }
@@ -1843,28 +1944,36 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   无。
 
   调用函数
-  mergeProbabilityBranches。
+  checkpointSearchWork、mergeProbabilityWork。
 
   边界与不变量
   只边缘化调用方显式声明的槽位内部身份键；其他共享世界条件必须原样保留，
   因此不会把相关性错误的独立化，也不修改任何身份条目。
   */
   marginalizeIdentitySlotBranches(entries, identityKey) {
-    return mergeProbabilityBranches(entries.flatMap((entry) => {
+    const flattened = [];
+    for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+      this.checkpointSearchWork();
+      const entry = entries[entryIndex];
       const branches = Array.isArray(entry.availabilityStateBranches)
         ? entry.availabilityStateBranches
         : entry.availabilityBranches ?? [];
-      return branches
-        .filter((branch) => branch.available !== false)
-        .map((branch) => {
-          const conditions = { ...(branch.conditions ?? {}) };
-          delete conditions[identityKey];
-          return {
-            probability:Math.max(0, Number(branch.probability) || 0),
-            conditions
-          };
+      for (let branchIndex = 0; branchIndex < branches.length; branchIndex += 1) {
+        if (branchIndex % 32 === 0) this.checkpointSearchWork();
+        const branch = branches[branchIndex];
+        if (branch.available === false) continue;
+        const conditions = { ...(branch.conditions ?? {}) };
+        delete conditions[identityKey];
+        flattened.push({
+          probability:Math.max(0, Number(branch.probability) || 0),
+          conditions
         });
-    }));
+      }
+    }
+    return this.mergeProbabilityWork(
+      flattened,
+      "CardEffectSimulation.marginalizeIdentitySlotBranches"
+    );
   }
 
   /*
@@ -1887,12 +1996,15 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   牌/匿名 availability、响应数量分布、handCount 与可选结果世界。
 
   调用函数
-  Probability 连接/投影 辅助函数、syncBlockSummary、syncCounterSummary、clearCountersWhenHandEmpty。
+  cooperative Probability 连接/投影/合并 辅助函数、SearchBudget checkpoint、
+  syncBlockSummary、syncCounterSummary、clearCountersWhenHandEmpty。
 
   边界与不变量
-  身份选择分区必须互斥；同一张牌在一个世界最多移除一次，响应容量与手牌身份共享条件。
+  身份选择分区必须互斥；同一张牌在一个世界最多移除一次，响应容量与手牌身份共享条件；
+  中断时整个未完成 identity world 更新随当前 candidate 作废。
   */
   removeOneRandomCardFromHand(state, player, spend, options = {}) {
+    this.checkpointSearchWork();
     const eventMass = Array.isArray(options.eventWorlds) && options.eventWorlds.length
       ? this.eventProbability(options.eventWorlds)
       : null;
@@ -1928,10 +2040,13 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     // 随机移除只把它们当作一个聚合候选，避免二十余个互斥身份反复进入 Probability 叉乘。
     if (!options.anonymousOnly) {
       const groupedEntries = new Map();
-      for (const entries of [
+      const groupedCandidates = [
         ...(Array.isArray(player.hand) ? player.hand : []),
         ...(Array.isArray(player.knownCards) ? player.knownCards : [])
-      ]) {
+      ];
+      for (let index = 0; index < groupedCandidates.length; index += 1) {
+        if (index % 32 === 0) this.checkpointSearchWork();
+        const entries = groupedCandidates[index];
         if (!entries.identityGroupKey || this.cardAvailability(entries) <= PROBABILITY_EPSILON) continue;
         if (!groupedEntries.has(entries.identityGroupKey)) groupedEntries.set(entries.identityGroupKey, []);
         groupedEntries.get(entries.identityGroupKey).push(entries);
@@ -1952,7 +2067,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
             slotState
           };
           if (slotState) {
-            candidate.card.availabilityStateBranches = projectProbabilityStateBranches(
+            candidate.card.availabilityStateBranches = this.projectProbabilityWork(
               slotState,
               (branch) => ({ available:Boolean(branch.slotAvailable) })
             );
@@ -1969,7 +2084,7 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     if (!candidates.length && expectedUnknown <= PROBABILITY_EPSILON) return 0;
 
     let anonymousState = Array.isArray(player.anonymousCountBranches) && player.anonymousCountBranches.length
-      ? mergeProbabilityStateBranches(player.anonymousCountBranches)
+      ? this.mergeProbabilityWork(player.anonymousCountBranches)
       : null;
     if (anonymousState) {
       const anonymousExpected = anonymousState.reduce(
@@ -1995,7 +2110,12 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
           "occurs"
         );
     const candidatePartitions = candidates.map((candidate, index) => (
-      getAvailabilityStateBranches(candidate.card).map((branch) => ({
+      this.getAvailabilityStateWork(
+        candidate.card,
+        "availabilityStateBranches",
+        1,
+        "CardEffectSimulation.removeOneRandomCardFromHand:candidate-availability"
+      ).map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         [`c${index}`]:Boolean(branch.available)
@@ -2006,12 +2126,16 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       conditions:branch.conditions,
       anonymousCount:Math.max(0, Number(branch.anonymousCount) || 0)
     }));
-    const joined = joinProbabilityStateBranches(
-      removalWorlds, ...candidatePartitions, anonymousPartition
-    );
+    const joined = this.joinProbabilityWork([
+      removalWorlds,
+      ...candidatePartitions,
+      anonymousPartition
+    ], "CardEffectSimulation.removeOneRandomCardFromHand:candidate-worlds");
     const selectionKey = this.nextProbabilityEventKey(state, "random-hand-selection");
     const outcomes = [];
-    for (const branch of joined) {
+    for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
+      if (branchIndex % 32 === 0) this.checkpointSearchWork();
+      const branch = joined[branchIndex];
       const occurs = Boolean(branch.occurs);
       const available = candidates.map((_, index) => Boolean(branch[`c${index}`]));
       const knownCount = available.reduce((sum, value) => sum + (value ? 1 : 0), 0);
@@ -2047,11 +2171,12 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       });
     }
 
-    const selectionPartition = mergeProbabilityStateBranches(outcomes);
+    const selectionPartition = this.mergeProbabilityWork(outcomes);
     // 聚合槽位已在上面按完整 slotState 重建 block/counter 容量；
     // 响应容量循环只消费真正的独立 block/counter 候选，不再次解释 aggregate 选择。
-    const responseSelectionPartition = mergeProbabilityStateBranches(
-      selectionPartition.map((branch) => {
+    const responseSelectionPartition = this.projectProbabilityWork(
+      selectionPartition,
+      (branch) => {
         const selectedAggregate = branch.selectedIndex >= 0
           && Boolean(candidates[branch.selectedIndex]?.aggregateEntries);
         return {
@@ -2061,31 +2186,49 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
           anonymousSelected:selectedAggregate ? false : branch.anonymousSelected,
           anonymousCount:branch.anonymousCount ?? 0
         };
-      })
+      },
+      "CardEffectSimulation.removeOneRandomCardFromHand:response-selection"
     );
     if (options.result) {
       options.result.selectionPartition = selectionPartition;
-      options.result.knownIdentityWorlds = candidates.map((candidate, index) => ({
-        definitionId:candidate.definitionId,
-        cardId:candidate.card?.id ?? candidate.card?.cardId ?? null,
-        worlds:mergeProbabilityStateBranches(
-          selectionPartition
-            .filter((branch) => branch.selectedIndex === index)
-            .map((branch) => ({
-              probability:branch.probability,
-              conditions:branch.conditions,
-              occurs:true
-            }))
-        )
-      }));
-      options.result.anonymousSelectionWorlds = mergeProbabilityStateBranches(
-        selectionPartition
-          .filter((branch) => branch.anonymousSelected)
-          .map((branch) => ({
+      options.result.knownIdentityWorlds = [];
+      for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+        this.checkpointSearchWork();
+        const candidate = candidates[candidateIndex];
+        const selectedBranches = [];
+        for (let branchIndex = 0; branchIndex < selectionPartition.length; branchIndex += 1) {
+          if (branchIndex % 32 === 0) this.checkpointSearchWork();
+          const branch = selectionPartition[branchIndex];
+          if (branch.selectedIndex !== candidateIndex) continue;
+          selectedBranches.push({
             probability:branch.probability,
             conditions:branch.conditions,
             occurs:true
-          }))
+          });
+        }
+        options.result.knownIdentityWorlds.push({
+          definitionId:candidate.definitionId,
+          cardId:candidate.card?.id ?? candidate.card?.cardId ?? null,
+          worlds:this.mergeProbabilityWork(
+            selectedBranches,
+            "CardEffectSimulation.removeOneRandomCardFromHand:selected-identity"
+          )
+        });
+      }
+      const anonymousSelectionBranches = [];
+      for (let branchIndex = 0; branchIndex < selectionPartition.length; branchIndex += 1) {
+        if (branchIndex % 32 === 0) this.checkpointSearchWork();
+        const branch = selectionPartition[branchIndex];
+        if (!branch.anonymousSelected) continue;
+        anonymousSelectionBranches.push({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          occurs:true
+        });
+      }
+      options.result.anonymousSelectionWorlds = this.mergeProbabilityWork(
+        anonymousSelectionBranches,
+        "CardEffectSimulation.removeOneRandomCardFromHand:anonymous-selection"
       );
     }
     let aggregateBlockRemovedWorlds = null;
@@ -2093,12 +2236,17 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     let handCountAdjusted = false;
     const hasAggregateCandidate = candidates.some((candidate) => candidate.aggregateEntries);
     for (let index = 0; index < candidates.length; index += 1) {
+      this.checkpointSearchWork();
       const candidate = candidates[index];
       if (candidate.aggregateEntries) {
         if (candidate.slotState) {
-          const joinedSlot = joinProbabilityStateBranches(candidate.slotState, selectionPartition);
-          aggregateBlockRemovedWorlds = mergeProbabilityStateBranches(
-            joinedSlot.map((branch) => ({
+          const joinedSlot = this.joinProbabilityWork([
+            candidate.slotState,
+            selectionPartition
+          ], "CardEffectSimulation.removeOneRandomCardFromHand:group-slot");
+          aggregateBlockRemovedWorlds = this.projectProbabilityWork(
+            joinedSlot,
+            (branch) => ({
               probability:branch.probability,
               conditions:branch.conditions,
               occurs:Boolean(
@@ -2106,10 +2254,12 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
                 && branch.selectedIndex === index
                 && branch.definitionId === "block"
               )
-            }))
+            }),
+            "CardEffectSimulation.removeOneRandomCardFromHand:aggregate-block"
           );
-          aggregateCounterRemovedWorlds = mergeProbabilityStateBranches(
-            joinedSlot.map((branch) => ({
+          aggregateCounterRemovedWorlds = this.projectProbabilityWork(
+            joinedSlot,
+            (branch) => ({
               probability:branch.probability,
               conditions:branch.conditions,
               occurs:Boolean(
@@ -2117,9 +2267,10 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
                 && branch.selectedIndex === index
                 && branch.definitionId === "counter"
               )
-            }))
+            }),
+            "CardEffectSimulation.removeOneRandomCardFromHand:aggregate-counter"
           );
-          const updatedSlot = projectProbabilityStateBranches(joinedSlot, (branch) => ({
+          const updatedSlot = this.projectProbabilityWork(joinedSlot, (branch) => ({
             slotAvailable:Boolean(branch.slotAvailable && branch.selectedIndex !== index),
             definitionId:branch.definitionId
           }));
@@ -2127,7 +2278,8 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
             player.identitySlotStates[candidate.slotKey] = updatedSlot;
           }
           for (const entry of candidate.aggregateEntries) {
-            entry.availabilityStateBranches = projectProbabilityStateBranches(updatedSlot, (branch) => ({
+            this.checkpointSearchWork();
+            entry.availabilityStateBranches = this.projectProbabilityWork(updatedSlot, (branch) => ({
               available:Boolean(branch.slotAvailable && branch.definitionId === entry.definitionId)
             }));
             entry.availabilityBranches = availableBranchesFromState(entry.availabilityStateBranches);
@@ -2141,13 +2293,22 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
           continue;
         }
         for (const entry of candidate.aggregateEntries) {
-          const entryState = getAvailabilityStateBranches(entry).map((branch) => ({
+          this.checkpointSearchWork();
+          const entryState = this.getAvailabilityStateWork(
+            entry,
+            "availabilityStateBranches",
+            1,
+            "CardEffectSimulation.removeOneRandomCardFromHand:group-availability"
+          ).map((branch) => ({
             probability:branch.probability,
             conditions:branch.conditions,
             available:Boolean(branch.available)
           }));
-          const joinedEntry = joinProbabilityStateBranches(entryState, selectionPartition);
-          entry.availabilityStateBranches = projectProbabilityStateBranches(joinedEntry, (branch) => ({
+          const joinedEntry = this.joinProbabilityWork(
+            [entryState, selectionPartition],
+            "CardEffectSimulation.removeOneRandomCardFromHand:group-entry"
+          );
+          entry.availabilityStateBranches = this.projectProbabilityWork(joinedEntry, (branch) => ({
             available:Boolean(branch.available && branch.selectedIndex !== index)
           }));
           entry.availabilityBranches = availableBranchesFromState(entry.availabilityStateBranches);
@@ -2160,13 +2321,21 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         }
         continue;
       }
-      const availabilityState = getAvailabilityStateBranches(candidate.card).map((branch) => ({
+      const availabilityState = this.getAvailabilityStateWork(
+        candidate.card,
+        "availabilityStateBranches",
+        1,
+        "CardEffectSimulation.removeOneRandomCardFromHand:remaining-availability"
+      ).map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         available:Boolean(branch.available)
       }));
-      const joinedAvailability = joinProbabilityStateBranches(availabilityState, selectionPartition);
-      candidate.card.availabilityStateBranches = projectProbabilityStateBranches(
+      const joinedAvailability = this.joinProbabilityWork([
+        availabilityState,
+        selectionPartition
+      ], "CardEffectSimulation.removeOneRandomCardFromHand:candidate-remaining");
+      candidate.card.availabilityStateBranches = this.projectProbabilityWork(
         joinedAvailability,
         (branch) => ({ available:Boolean(branch.available && !(branch.selectedIndex === index)) })
       );
@@ -2201,25 +2370,29 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       }));
       this.syncCounterSummary(player);
       if (options.result) {
-        const selectedBlockWorlds = mergeProbabilityStateBranches(
-          selectionPartition.map((branch) => ({
+        const selectedBlockWorlds = this.projectProbabilityWork(
+          selectionPartition,
+          (branch) => ({
             probability:branch.probability,
             conditions:branch.conditions,
             occurs:Boolean(
               branch.selectedIndex >= 0
               && candidates[branch.selectedIndex]?.definitionId === "block"
             )
-          }))
+          }),
+          "CardEffectSimulation.removeOneRandomCardFromHand:selected-block"
         );
-        const selectedCounterWorlds = mergeProbabilityStateBranches(
-          selectionPartition.map((branch) => ({
+        const selectedCounterWorlds = this.projectProbabilityWork(
+          selectionPartition,
+          (branch) => ({
             probability:branch.probability,
             conditions:branch.conditions,
             occurs:Boolean(
               branch.selectedIndex >= 0
               && candidates[branch.selectedIndex]?.definitionId === "counter"
             )
-          }))
+          }),
+          "CardEffectSimulation.removeOneRandomCardFromHand:selected-counter"
         );
         options.result.blockRemovedWorlds = aggregateBlockRemovedWorlds
           ? aggregateBlockRemovedWorlds
@@ -2231,9 +2404,15 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     } else {
       const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
       const knownState = this.getKnownBlockCountBranches(player);
-      const joinedBlock = joinProbabilityStateBranches(blockState, knownState, selectionPartition);
+      const joinedBlock = this.joinProbabilityWork([
+        blockState,
+        knownState,
+        selectionPartition
+      ], "CardEffectSimulation.removeOneRandomCardFromHand:block-capacity");
       const blockOutcomes = [];
-      for (const branch of joinedBlock) {
+      for (let branchIndex = 0; branchIndex < joinedBlock.length; branchIndex += 1) {
+        if (branchIndex % 32 === 0) this.checkpointSearchWork();
+        const branch = joinedBlock[branchIndex];
         const totalBlocks = Math.max(0, Math.floor(Number(branch.blockCount) || 0));
         const knownBlocks = Math.max(0, Math.floor(Number(branch.knownBlockCount) || 0));
         const selectedIndex = Number.isFinite(Number(branch.selectedIndex)) ? Number(branch.selectedIndex) : -1;
@@ -2272,22 +2451,30 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         }
       }
       if (options.result) {
-        options.result.blockRemovedWorlds = mergeProbabilityStateBranches(
-          blockOutcomes.map((branch) => ({
+        options.result.blockRemovedWorlds = this.projectProbabilityWork(
+          blockOutcomes,
+          (branch) => ({
             probability:branch.probability,
             conditions:branch.conditions,
             occurs:Boolean(branch.blockRemoved ?? false)
-          }))
+          }),
+          "CardEffectSimulation.removeOneRandomCardFromHand:block-removed"
         );
       }
-      player.blockCountDistribution = mergeProbabilityStateBranches(blockOutcomes);
+      player.blockCountDistribution = this.mergeProbabilityWork(blockOutcomes);
       this.syncBlockSummary(player);
 
       const counterState = this.getCounterCountBranches(player, state?.remainingCardCounts ?? null);
       const knownCounterState = this.getKnownCounterCountBranches(player);
-      const joinedCounter = joinProbabilityStateBranches(counterState, knownCounterState, selectionPartition);
+      const joinedCounter = this.joinProbabilityWork([
+        counterState,
+        knownCounterState,
+        selectionPartition
+      ], "CardEffectSimulation.removeOneRandomCardFromHand:counter-capacity");
       const counterOutcomes = [];
-      for (const branch of joinedCounter) {
+      for (let branchIndex = 0; branchIndex < joinedCounter.length; branchIndex += 1) {
+        if (branchIndex % 32 === 0) this.checkpointSearchWork();
+        const branch = joinedCounter[branchIndex];
         const totalCounters = Math.max(0, Math.floor(Number(branch.counterCount) || 0));
         const knownCounters = Math.max(0, Math.floor(Number(branch.knownCounterCount) || 0));
         const selectedIndex = Number.isFinite(Number(branch.selectedIndex)) ? Number(branch.selectedIndex) : -1;
@@ -2325,25 +2512,32 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
           });
         }
       }
-      const counterRemovedPartition = mergeProbabilityStateBranches(
-        counterOutcomes.map((branch) => ({
+      const counterRemovedPartition = this.projectProbabilityWork(
+        counterOutcomes,
+        (branch) => ({
           probability:branch.probability,
           conditions:branch.conditions,
           occurs:Boolean(branch.counterRemoved)
-        }))
+        }),
+        "CardEffectSimulation.removeOneRandomCardFromHand:counter-removed"
       );
       if (options.result && counterRemovedPartition.length) {
         options.result.counterRemovedWorlds.push(counterRemovedPartition);
       }
-      player.counterCountDistribution = mergeProbabilityStateBranches(
-        counterOutcomes.map(({ probability, conditions, counterCount }) => ({
+      player.counterCountDistribution = this.projectProbabilityWork(
+        counterOutcomes,
+        ({ probability, conditions, counterCount }) => ({
           probability, conditions, counterCount
-        }))
+        }),
+        "CardEffectSimulation.removeOneRandomCardFromHand:counter-remaining"
       );
       this.syncCounterSummary(player);
     }
-    const joinedAnonymous = joinProbabilityStateBranches(anonymousPartition, selectionPartition);
-    player.anonymousCountBranches = projectProbabilityStateBranches(joinedAnonymous, (branch) => ({
+    const joinedAnonymous = this.joinProbabilityWork([
+      anonymousPartition,
+      selectionPartition
+    ], "CardEffectSimulation.removeOneRandomCardFromHand:anonymous-capacity");
+    player.anonymousCountBranches = this.projectProbabilityWork(joinedAnonymous, (branch) => ({
       anonymousCount:Math.max(0, (Number(branch.anonymousCount) || 0) - (branch.anonymousSelected ? 1 : 0))
     }));
 
@@ -2380,21 +2574,25 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   由单张移除 辅助函数 推进的手牌/响应状态。
 
   调用函数
-  removeOneRandomCardFromHand、syncAssaultSummary。
+  removeOneRandomCardFromHand、syncAssaultSummary、SearchBudget checkpoint。
 
   边界与不变量
-  每轮最多移除一张并使用更新后的手牌作下一轮分母；不越过当前 handCount。
+  每轮最多移除一张并使用更新后的手牌作下一轮分母；不越过当前 handCount；
+  中断时不返回 partial 资源结果。
   */
   consumeRandomHandCards(state, player, expectedAmount, options = {}) {
     let remaining = Math.max(0, Number(expectedAmount) || 0);
     let totalSpent = 0;
     const result = options.result ?? null;
     while (remaining > PROBABILITY_EPSILON && (player.handCount ?? 0) > PROBABILITY_EPSILON) {
+      this.checkpointSearchWork();
       const handBefore = Math.max(PROBABILITY_EPSILON, Number(player.handCount) || 0);
       const spend = Math.min(1, remaining, handBefore);
       const distribution = this.syncAssaultSummary(player);
       const next = [];
-      for (const branch of distribution) {
+      for (let index = 0; index < distribution.length; index += 1) {
+        if (index % 32 === 0) this.checkpointSearchWork();
+        const branch = distribution[index];
         const assaultLossChance = clampProbability(spend * branch.count / handBefore);
         next.push({ count:branch.count, probability:branch.probability * (1 - assaultLossChance) });
         if (branch.count > 0) next.push({ count:branch.count - 1, probability:branch.probability * assaultLossChance });
@@ -2534,15 +2732,23 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         conditions: branch.conditions,
         removed: Boolean(branch.occurs)
       }));
-      const availabilityState = getAvailabilityStateBranches(chosen).map((branch) => ({
+      const availabilityState = this.getAvailabilityStateWork(
+        chosen,
+        "availabilityStateBranches",
+        1,
+        "CardEffectSimulation.consumeChosenHandCard:availability"
+      ).map((branch) => ({
         probability: branch.probability,
         conditions: branch.conditions,
         available: Boolean(branch.available)
       }));
-      const joinedAvailability = joinProbabilityStateBranches(availabilityState, removalPartition);
-      chosen.availabilityStateBranches = projectProbabilityStateBranches(joinedAvailability, (branch) => ({
+      const joinedAvailability = this.joinProbabilityWork(
+        [availabilityState, removalPartition],
+        "CardEffectSimulation.consumeChosenHandCard:join"
+      );
+      chosen.availabilityStateBranches = this.projectProbabilityWork(joinedAvailability, (branch) => ({
         available: Boolean(branch.available && !branch.removed)
-      }));
+      }), "CardEffectSimulation.consumeChosenHandCard:remaining");
       chosen.availabilityBranches = availableBranchesFromState(chosen.availabilityStateBranches);
       if (chosen.definitionId === "block") this.removeKnownBlockFromDistribution(state, player, spendWorlds);
       if (chosen.definitionId === "counter") this.removeKnownCounterFromDistribution(state, player, spendWorlds);
@@ -2552,10 +2758,13 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
           conditions: branch.conditions,
           count: branch.count
         }));
-        const joinedAssault = joinProbabilityStateBranches(assaultState, removalPartition);
-        player.assaultCountDistribution = projectProbabilityStateBranches(joinedAssault, (branch) => ({
+        const joinedAssault = this.joinProbabilityWork(
+          [assaultState, removalPartition],
+          "CardEffectSimulation.consumeChosenHandCard:assault-join"
+        );
+        player.assaultCountDistribution = this.projectProbabilityWork(joinedAssault, (branch) => ({
           count: Math.max(0, branch.count - (branch.removed && branch.count > 0 ? 1 : 0))
-        }));
+        }), "CardEffectSimulation.consumeChosenHandCard:assault-remaining");
         this.syncAssaultSummary(player);
       }
       if (chosen.definitionId === "recover") {
@@ -2710,11 +2919,19 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     } else if (selection.zone === "hand" && selection.selectionKind === "known") {
       const entry = this.findKnownCardEntry(target, selection.cardId, selection.definitionId);
       if (entry && this.cardAvailability(entry) > PROBABILITY_EPSILON) {
-        const availabilityState = getAvailabilityStateBranches(entry);
-        const joined = joinProbabilityStateBranches(effectWorlds, availabilityState);
-        const removalWorlds = projectProbabilityStateBranches(joined, (branch) => ({
+        const availabilityState = this.getAvailabilityStateWork(
+          entry,
+          "availabilityStateBranches",
+          1,
+          "CardEffectSimulation.destroyResource:availability"
+        );
+        const joined = this.joinProbabilityWork(
+          [effectWorlds, availabilityState],
+          "CardEffectSimulation.destroyResource:join"
+        );
+        const removalWorlds = this.projectProbabilityWork(joined, (branch) => ({
           occurs:Boolean(branch.available && branch.occurs)
-        }));
+        }), "CardEffectSimulation.destroyResource:removal");
         const removalProbability = this.eventProbability(removalWorlds);
         if (removalProbability <= PROBABILITY_EPSILON) return 0;
         if (selection.definitionId === "block") {
@@ -2723,9 +2940,9 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         if (selection.definitionId === "counter") {
           this.removeKnownCounterFromDistribution(state, target, removalWorlds);
         }
-        entry.availabilityStateBranches = projectProbabilityStateBranches(joined, (branch) => ({
+        entry.availabilityStateBranches = this.projectProbabilityWork(joined, (branch) => ({
           available:Boolean(branch.available && !branch.occurs)
-        }));
+        }), "CardEffectSimulation.destroyResource:remaining");
         entry.availabilityBranches = availableBranchesFromState(entry.availabilityStateBranches);
         if (totalBranchProbability(entry.availabilityBranches) <= PROBABILITY_EPSILON) {
           target.knownCards = target.knownCards.filter((item) => item !== entry);
@@ -2774,9 +2991,9 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   */
   addStolenIdentityToHand(state, actor, cardIdentity, acquisitionWorlds) {
     if (!actor || !cardIdentity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
-    const acquired = projectProbabilityStateBranches(acquisitionWorlds, (branch) => ({
+    const acquired = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
       available:Boolean(branch.occurs ?? branch.available)
-    }));
+    }), "CardEffectSimulation.addStolenIdentityToHand:acquired");
     const acquisitionProbability = totalBranchProbability(
       acquired.filter((branch) => branch.available)
     );
@@ -2788,7 +3005,12 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       if (existing.definitionId !== cardIdentity.definitionId) {
         throw new Error(`addStolenIdentityToHand 同 cardId 不同 definitionId：${identityId}`);
       }
-      const oldState = getAvailabilityStateBranches(existing);
+      const oldState = this.getAvailabilityStateWork(
+        existing,
+        "availabilityStateBranches",
+        1,
+        "CardEffectSimulation.addStolenIdentityToHand:existing"
+      );
       const oldProbability = totalBranchProbability(
         oldState.filter((branch) => branch.available)
       );
@@ -2797,9 +3019,14 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         conditions:branch.conditions,
         newAvailable:Boolean(branch.available)
       }));
-      const mergedState = projectProbabilityStateBranches(
-        joinProbabilityStateBranches(oldState, newState),
-        (branch) => ({ available:Boolean(branch.available || branch.newAvailable) })
+      const joined = this.joinProbabilityWork(
+        [oldState, newState],
+        "CardEffectSimulation.addStolenIdentityToHand:join"
+      );
+      const mergedState = this.projectProbabilityWork(
+        joined,
+        (branch) => ({ available:Boolean(branch.available || branch.newAvailable) }),
+        "CardEffectSimulation.addStolenIdentityToHand:merged"
       );
       existing.availabilityStateBranches = mergedState;
       existing.availabilityBranches = availableBranchesFromState(mergedState);
@@ -2847,27 +3074,43 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     const selection = Array.isArray(result?.selectionPartition)
       ? result.selectionPartition
       : [];
-    const selectionPartition = selection.map((branch) => ({
+    const selectionPartition = this.projectProbabilityWork(selection, (branch) => ({
       probability:branch.probability,
       conditions:branch.conditions,
       stolen:Boolean(branch.anonymousSelected)
-    }));
-    const stolenMass = totalBranchProbability(
-      selectionPartition.filter((branch) => branch.stolen)
-    );
+    }), "CardEffectSimulation.addAnonymousStolenIdentityToHand:selection");
+    let stolenMass = 0;
+    for (let branchIndex = 0; branchIndex < selectionPartition.length; branchIndex += 1) {
+      if (branchIndex % 32 === 0) this.checkpointSearchWork();
+      const branch = selectionPartition[branchIndex];
+      if (branch.stolen) stolenMass += Math.max(0, Number(branch.probability) || 0);
+    }
     if (stolenMass <= PROBABILITY_EPSILON) return 0;
-    const blockPartition = (result.blockRemovedWorlds ?? []).map((branch) => ({
+    const blockPartition = this.projectProbabilityWork(
+      result.blockRemovedWorlds ?? [],
+      (branch) => ({
       probability:branch.probability,
       conditions:branch.conditions,
       blockRemoved:Boolean(branch.occurs)
-    }));
-    const counterPartition = (result.counterRemovedWorlds ?? []).flatMap((partition) => (
-      Array.isArray(partition) ? partition : []
-    )).map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      counterRemoved:Boolean(branch.occurs)
-    }));
+      }),
+      "CardEffectSimulation.addAnonymousStolenIdentityToHand:block-removal"
+    );
+    const flattenedCounterWorlds = [];
+    const counterPartitions = result.counterRemovedWorlds ?? [];
+    for (let partitionIndex = 0; partitionIndex < counterPartitions.length; partitionIndex += 1) {
+      this.checkpointSearchWork();
+      const partition = counterPartitions[partitionIndex];
+      if (!Array.isArray(partition)) continue;
+      for (let branchIndex = 0; branchIndex < partition.length; branchIndex += 1) {
+        if (branchIndex % 32 === 0) this.checkpointSearchWork();
+        flattenedCounterWorlds.push(partition[branchIndex]);
+      }
+    }
+    const counterPartition = this.projectProbabilityWork(
+      flattenedCounterWorlds,
+      (branch) => ({ counterRemoved:Boolean(branch.occurs) }),
+      "CardEffectSimulation.addAnonymousStolenIdentityToHand:counter-removal"
+    );
     const stolenSlotIdentityKey = `steal-unknown-identity:${actor.id}:${this.nextProbabilityEventKey(
       state,
       `steal-unknown-slot:${actor.id}`
@@ -2878,53 +3121,68 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
     const otherDensity = otherDefinitions.reduce((sum, definitionId) => (
       sum + remainingCardDensity(state?.remainingCardCounts ?? null, definitionId)
     ), 0);
-    const joined = joinProbabilityStateBranches(
-      selectionPartition,
-      blockPartition,
-      counterPartition
+    const joined = this.joinProbabilityWork(
+      [selectionPartition, blockPartition, counterPartition],
+      "CardEffectSimulation.addAnonymousStolenIdentityToHand:join"
     );
     // block/counter 与其余定义合并为同一物理槽位的互斥身份分区；
     // 随机移除只需该分区边缘化，响应容量则从选中身份世界精确恢复。
-    const identityPartition = mergeProbabilityStateBranches(joined.flatMap((branch) => {
+    const identityBranches = [];
+    for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
+      if (branchIndex % 32 === 0) this.checkpointSearchWork();
+      const branch = joined[branchIndex];
       if (!branch.stolen) {
-        return [{
+        identityBranches.push({
           probability:branch.probability,
           conditions:branch.conditions,
           observedDefinitionId:null
-        }];
+        });
+        continue;
       }
       if (branch.blockRemoved) {
-        return [{
+        identityBranches.push({
           probability:branch.probability,
           conditions:branch.conditions,
           observedDefinitionId:"block"
-        }];
+        });
+        continue;
       }
       if (branch.counterRemoved && !branch.blockRemoved) {
-        return [{
+        identityBranches.push({
           probability:branch.probability,
           conditions:branch.conditions,
           observedDefinitionId:"counter"
-        }];
+        });
+        continue;
       }
       if (otherDensity <= PROBABILITY_EPSILON) {
-        return [{
+        identityBranches.push({
           probability:branch.probability,
           conditions:branch.conditions,
           observedDefinitionId:null
-        }];
+        });
+        continue;
       }
-      return otherDefinitions.map((definitionId) => ({
-        probability:branch.probability
+      for (const definitionId of otherDefinitions) {
+        const probability = branch.probability
           * remainingCardDensity(state?.remainingCardCounts ?? null, definitionId)
-          / otherDensity,
-        conditions:branch.conditions,
-        observedDefinitionId:definitionId
-      }));
-    }).filter((branch) => branch.probability > PROBABILITY_EPSILON));
+          / otherDensity;
+        if (probability <= PROBABILITY_EPSILON) continue;
+        identityBranches.push({
+          probability,
+          conditions:branch.conditions,
+          observedDefinitionId:definitionId
+        });
+      }
+    }
+    const identityPartition = this.mergeProbabilityWork(
+      identityBranches,
+      "CardEffectSimulation.addAnonymousStolenIdentityToHand:identity"
+    );
     actor.identitySlotStates ??= {};
-    actor.identitySlotStates[stolenSlotIdentityKey] = mergeProbabilityStateBranches(
-      identityPartition.map((branch) => {
+    actor.identitySlotStates[stolenSlotIdentityKey] = this.projectProbabilityWork(
+      identityPartition,
+      (branch) => {
         const conditions = { ...branch.conditions, [stolenSlotKey]:branch.observedDefinitionId ? "yes" : "no" };
         return {
           probability:branch.probability,
@@ -2932,31 +3190,42 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
           slotAvailable:branch.observedDefinitionId !== null,
           definitionId:branch.observedDefinitionId
         };
-      })
+      },
+      "CardEffectSimulation.addAnonymousStolenIdentityToHand:slot"
     );
-    const blockRemovalPartition = mergeProbabilityStateBranches(
-      identityPartition.map((branch) => ({
+    const blockRemovalPartition = this.projectProbabilityWork(
+      identityPartition,
+      (branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         occurs:branch.observedDefinitionId === "block"
-      }))
+      }),
+      "CardEffectSimulation.addAnonymousStolenIdentityToHand:block"
     );
-    const counterRemovalPartition = mergeProbabilityStateBranches(
-      identityPartition.map((branch) => ({
+    const counterRemovalPartition = this.projectProbabilityWork(
+      identityPartition,
+      (branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         occurs:branch.observedDefinitionId === "counter"
-      }))
+      }),
+      "CardEffectSimulation.addAnonymousStolenIdentityToHand:counter"
     );
     for (const definitionId of ["block", "counter", ...otherDefinitions]) {
-      const identityWorlds = mergeProbabilityStateBranches(
-        identityPartition
-          .filter((branch) => branch.observedDefinitionId === definitionId)
-          .map((branch) => ({
-            probability:branch.probability,
-            conditions:branch.conditions,
-            occurs:true
-          }))
+      const matchingIdentityBranches = [];
+      for (let branchIndex = 0; branchIndex < identityPartition.length; branchIndex += 1) {
+        if (branchIndex % 32 === 0) this.checkpointSearchWork();
+        const branch = identityPartition[branchIndex];
+        if (branch.observedDefinitionId !== definitionId) continue;
+        matchingIdentityBranches.push({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          occurs:true
+        });
+      }
+      const identityWorlds = this.mergeProbabilityWork(
+        matchingIdentityBranches,
+        "CardEffectSimulation.addAnonymousStolenIdentityToHand:definition"
       );
       const identityMass = this.eventProbability(identityWorlds);
       if (identityMass <= PROBABILITY_EPSILON) continue;
@@ -3006,13 +3275,15 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
   必须保留未选中世界，否则下游 Probability join 会把不完整分区错误重归一化。
   */
   projectStealOutcome(selectionPartition, outcome, cardId = null) {
-    return mergeProbabilityStateBranches(
-      selectionPartition.map((branch) => ({
+    return this.projectProbabilityWork(
+      selectionPartition,
+      (branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         occurs:branch.outcome === outcome
           && (cardId == null || branch.cardId === cardId)
-      }))
+      }),
+      "CardEffectSimulation.projectStealOutcome"
     );
   }
 
@@ -3066,7 +3337,9 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         outcome:"equipment"
       });
     }
-    for (const card of knownCards) {
+    for (let index = 0; index < knownCards.length; index += 1) {
+      if (index % 32 === 0) this.checkpointSearchWork();
+      const card = knownCards[index];
       outcomeBranches.push({
         probability:chance / poolSize,
         conditions:{ [selectionKey]:`known:${card.cardId}` },
@@ -3087,7 +3360,10 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       conditions:{ [selectionKey]:"none" },
       outcome:"none"
     });
-    const selectionPartition = mergeProbabilityStateBranches(outcomeBranches);
+    const selectionPartition = this.mergeProbabilityWork(
+      outcomeBranches,
+      "CardEffectSimulation.stealResourceToHand:selection"
+    );
     if (equipmentLossProbability > PROBABILITY_EPSILON && target.equipmentDefinitionId) {
       const stolenEquipmentDefinitionId = target.equipmentDefinitionId;
       const equipmentWorlds = this.projectStealOutcome(selectionPartition, "equipment");

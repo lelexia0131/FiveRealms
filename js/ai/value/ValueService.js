@@ -23,7 +23,7 @@ import * as ThreatValue from "./ThreatValue.js";
 
 export {
   HP_VALUE,
-  STATE_DELTA_SCALE
+  statePointsToUtility
 } from "./Economics.js";
 export { HP_RISK_OPTION_WEIGHT } from "./ThreatValue.js";
 

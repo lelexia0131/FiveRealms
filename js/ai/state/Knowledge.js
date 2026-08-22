@@ -285,7 +285,7 @@ export class Knowledge {
   观察者 Player、SearchState 与非负样本数。
 
   输出
-  彼此独立的隐藏牌定义世界数组。
+  带 classification、sampleCount 与 worlds 的 Monte Carlo estimate 契约。
 
   读取状态
   SearchState 剩余计数与玩家知识字段、注入 AI search RNG。

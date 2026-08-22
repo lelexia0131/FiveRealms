@@ -17,13 +17,14 @@ AI 状态组合入口、Knowledge、Planner 隐藏世界采样与状态契约测
 架构约束
 不得生成动作、计算价值、写 GameState，概率分布必须归一且不持有输入计数引用。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 import { cardAvailability } from "../value/CardValue.js";
-import { PROBABILITY_EPSILON } from "./Probability.js";
+import {
+  PROBABILITY_CLASSIFICATION,
+  PROBABILITY_EPSILON
+} from "./Probability.js";
 
 const CARD_COUNTS = RULESET_DEFINITION.deckComposition;
-const TOTAL_CARD_COUNT = Object.values(CARD_COUNTS).reduce((sum, count) => sum + count, 0);
 
 /*
 功能
@@ -59,19 +60,19 @@ function normalizeRemainingCardCounts(remainingCardCounts) {
 
 /*
 功能
-计算固定牌组配置中指定定义的基础密度。
+计算组合数，供有限牌池的超几何概率使用。
 
 调用方
-remainingCardDensity。
+hypergeometricCountDistribution。
 
 输入
-卡牌定义 ID。
+非负总体数与选择数。
 
 输出
-零到一之间的固定密度。
+组合数；越界选择返回零。
 
 读取状态
-CARD_DEFINITIONS、TOTAL_CARD_COUNT。
+无。
 
 写入状态
 无。
@@ -80,63 +81,30 @@ CARD_DEFINITIONS、TOTAL_CARD_COUNT。
 无。
 
 边界与不变量
-未知定义按零张处理。
+使用较短乘积路径降低浮点放大；当前牌组规模内结果保持有限。
 */
-function fixedCardDensity(definitionId) {
-  return (CARD_COUNTS[definitionId] ?? 0) / TOTAL_CARD_COUNT;
+function combination(total, selected) {
+  if (selected < 0 || selected > total) return 0;
+  const count = Math.min(selected, total - selected);
+  let result = 1;
+  for (let index = 1; index <= count; index += 1) {
+    result = result * (total - count + index) / index;
+  }
+  return result;
 }
 
 /*
 功能
-从剩余牌计数计算指定定义的条件密度。
+计算有限剩余牌池无放回抽取的目标牌数量分布。
 
 调用方
-createCardEstimate。
+BeliefState 联合分配、ResponsePolicy、Simulation 动态 Belief 与正式概率测试。
 
 输入
-剩余牌计数快照与卡牌定义 ID。
+剩余总数 N、目标牌数 K、未知槽位数 n 与已知目标牌偏移。
 
 输出
-零到一之间的密度；缺少计数时退化为固定牌组密度。
-
-读取状态
-剩余牌计数、固定牌组配置。
-
-写入状态
-无。
-
-调用函数
-fixedCardDensity。
-
-边界与不变量
-空牌池或非正计数返回零，非法数值不进入总数。
-*/
-function remainingCardDensity(remainingCardCounts, definitionId) {
-  if (!remainingCardCounts || typeof remainingCardCounts !== "object" || Array.isArray(remainingCardCounts)) {
-    return fixedCardDensity(definitionId);
-  }
-  let total = 0;
-  for (const count of Object.values(remainingCardCounts)) {
-    if (Number.isFinite(count)) total += Math.max(0, count);
-  }
-  if (total <= 0) return 0;
-  const count = Number(remainingCardCounts[definitionId]);
-  if (!Number.isFinite(count) || count <= 0) return 0;
-  return Math.max(0, Math.min(1, count / total));
-}
-
-/*
-功能
-计算独立同分布未知槽位中至少出现指定次数目标牌的概率。
-
-调用方
-createCardEstimate、ResponsePolicy.assessDyingRescue。
-
-输入
-未知槽位数、单槽密度和至少需要的成功数。
-
-输出
-零到一之间的二项尾概率。
+冻结且归一的 count/probability 分支数组。
 
 读取状态
 无。
@@ -145,67 +113,38 @@ createCardEstimate、ResponsePolicy.assessDyingRescue。
 无。
 
 调用函数
-无。
+combination。
 
 边界与不变量
-所需次数非正返回一，槽位不足或密度非正返回零。
+概率严格采用 C(K,k)C(N-K,n-k)/C(N,n)；n>N 是非法知识快照并抛错。
 */
-export function probabilityAtLeast(trials, probability, required) {
-  if (required <= 0) return 1;
-  if (trials < required || probability <= 0) return 0;
-  let below = 0;
-  for (let successes = 0; successes < required; successes += 1) {
-    let combinations = 1;
-    for (let index = 1; index <= successes; index += 1) {
-      combinations = combinations * (trials - index + 1) / index;
-    }
-    below += combinations * probability ** successes * (1 - probability) ** (trials - successes);
+export function hypergeometricCountDistribution(
+  populationSize,
+  successCount,
+  draws,
+  offset = 0
+) {
+  const population = Math.max(0, Math.floor(Number(populationSize) || 0));
+  const successes = Math.max(0, Math.min(population, Math.floor(Number(successCount) || 0)));
+  const sampleSize = Math.max(0, Math.floor(Number(draws) || 0));
+  const knownOffset = Math.max(0, Math.floor(Number(offset) || 0));
+  if (sampleSize > population) {
+    throw new RangeError("超几何分布的未知槽位超过剩余牌池");
   }
-  return Math.max(0, Math.min(1, 1 - below));
-}
-
-/*
-功能
-生成已知数量偏移后的未知牌二项计数分布。
-
-调用方
-createCardEstimate。
-
-输入
-未知槽位数、单槽密度和已知目标牌数量。
-
-输出
-冻结且概率和为一的计数分支数组。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-无。
-
-边界与不变量
-槽位与偏移按非负整数处理，极端密度只产生一个确定分支。
-*/
-function binomialCountDistribution(trials, probability, offset = 0) {
-  const count = Math.max(0, Math.floor(Number(trials) || 0));
-  const chance = Math.max(0, Math.min(1, Number(probability) || 0));
-  if (!count || chance <= 0) {
-    return Object.freeze([Object.freeze({ count:Math.max(0, offset), probability:1 })]);
+  const denominator = combination(population, sampleSize);
+  if (denominator <= 0) {
+    return Object.freeze([Object.freeze({ count:knownOffset, probability:1 })]);
   }
-  if (chance >= 1) {
-    return Object.freeze([Object.freeze({ count:Math.max(0, offset + count), probability:1 })]);
-  }
+  const minimum = Math.max(0, sampleSize - (population - successes));
+  const maximum = Math.min(sampleSize, successes);
   const branches = [];
-  let combinations = 1;
-  for (let successes = 0; successes <= count; successes += 1) {
-    if (successes > 0) combinations = combinations * (count - successes + 1) / successes;
-    branches.push({
-      count:Math.max(0, offset + successes),
-      probability:combinations * chance ** successes * (1 - chance) ** (count - successes)
-    });
+  for (let count = minimum; count <= maximum; count += 1) {
+    const probability = combination(successes, count)
+      * combination(population - successes, sampleSize - count)
+      / denominator;
+    if (probability > PROBABILITY_EPSILON) {
+      branches.push({ count:knownOffset + count, probability });
+    }
   }
   const total = branches.reduce((sum, branch) => sum + branch.probability, 0);
   return Object.freeze(branches.map((branch) => Object.freeze({
@@ -216,48 +155,186 @@ function binomialCountDistribution(trials, probability, offset = 0) {
 
 /*
 功能
-为一名玩家的指定卡牌定义建立数量与至少一张概率估计。
+计算有限剩余牌池中至少得到指定总数量目标牌的概率。
 
 调用方
-createBeliefState。
+ResponsePolicy 与正式概率测试。
 
 输入
-观察者 ID、VisibleState 玩家、合法已知牌、卡牌定义与剩余计数。
+剩余总数、目标牌数、未知槽位数、所需总数与已知数量偏移。
 
 输出
-冻结的期望值、尾概率和计数分布。
+零到一的超几何尾概率。
 
 读取状态
-VisibleState 本人手牌或他人 handCount、Knowledge 已知牌、剩余牌密度。
+无。
 
 写入状态
 无。
 
 调用函数
-remainingCardDensity、probabilityAtLeast、binomialCountDistribution。
+hypergeometricCountDistribution。
 
 边界与不变量
-本人使用确定手牌；他人只按合法记忆和未知槽位估计，不读取真实手牌。
+所需总数已由 offset 满足时返回一；不使用独立同分布近似。
 */
-function createCardEstimate(viewerId, player, knownCards, definitionId, remainingCardCounts) {
-  if (player.id === viewerId) {
-    const count = (player.hand ?? []).filter((card) => card.definitionId === definitionId).length;
-    return Object.freeze({
-      expected:count,
-      atLeastOne:count > 0 ? 1 : 0,
-      atLeastTwo:count > 1 ? 1 : 0,
-      distribution:Object.freeze([Object.freeze({ count, probability:1 })])
+export function hypergeometricProbabilityAtLeast(
+  populationSize,
+  successCount,
+  draws,
+  required,
+  offset = 0
+) {
+  if (required <= offset) return 1;
+  return hypergeometricCountDistribution(
+    populationSize,
+    successCount,
+    draws,
+    offset
+  ).reduce((sum, branch) => sum + (branch.count >= required ? branch.probability : 0), 0);
+}
+
+/*
+功能
+为一个牌种枚举全部未知玩家从同一剩余牌池取得目标牌的联合分配世界。
+
+调用方
+createBeliefState。
+
+输入
+观察者 ID、Visible 玩家、合法 Knowledge、牌种与剩余牌计数。
+
+输出
+按玩家 ID 索引的冻结 Belief 数量估计。
+
+读取状态
+观察者手牌、其他玩家 handCount、合法已知牌与剩余计数。
+
+写入状态
+无。
+
+调用函数
+hypergeometricCountDistribution。
+
+边界与不变量
+同一牌种的所有未知玩家共享一个 condition key；联合世界中分配总量不得超过 K，
+且任何玩家的边际不得在后续联合时重新独立相乘。
+*/
+function createSharedCardEstimates(
+  viewerId,
+  players,
+  knowledgeState,
+  definitionId,
+  remainingCardCounts
+) {
+  const modelCounts = remainingCardCounts ?? CARD_COUNTS;
+  const countedPopulation = Object.values(modelCounts).reduce((sum, value) => (
+    sum + (Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0)
+  ), 0);
+  const descriptors = players.filter((player) => player.id !== viewerId).map((player) => {
+    const knownCards = knowledgeState.knownCardsByPlayer[player.id] ?? [];
+    return {
+      id:player.id,
+      knownCount:knownCards.filter((card) => card.definitionId === definitionId).length,
+      unknownCount:Math.max(0, Math.floor(Number(player.handCount) || 0) - knownCards.length)
+    };
+  });
+  const totalUnknownSlots = descriptors.reduce((sum, descriptor) => sum + descriptor.unknownCount, 0);
+  // 正式 Remaining Knowledge 会列出全部定义；测试或窄调用方可只列目标定义。
+  // 未列出的槽位只能视为非目标牌，不能据此制造目标实例或拒绝合法的隐藏容量。
+  const population = Math.max(countedPopulation, totalUnknownSlots);
+  const successes = Math.max(
+    0,
+    Math.min(population, Math.floor(Number(modelCounts?.[definitionId]) || 0))
+  );
+  const worlds = [];
+  const allocation = {};
+  /*
+  功能
+  递归展开逐玩家条件超几何分配，并保留完整共享牌池状态。
+
+  调用方
+  createSharedCardEstimates 内部唯一入口。
+
+  输入
+  当前玩家下标、剩余 N/K 与累计联合概率。
+
+  输出
+  无；完成分配时向 worlds 加入独立快照。
+
+  读取状态
+  闭包 descriptors、allocation。
+
+  写入状态
+  闭包 allocation 与 worlds。
+
+  调用函数
+  hypergeometricCountDistribution、自身递归。
+
+  边界与不变量
+  每层同时扣除该玩家全部未知槽位和其中目标牌数，故后续玩家不能重复消费同一实例。
+  */
+  const visit = (index, remainingPopulation, remainingSuccesses, probability) => {
+    if (index >= descriptors.length) {
+      worlds.push({ probability, allocation:{ ...allocation } });
+      return;
+    }
+    const descriptor = descriptors[index];
+    const distribution = hypergeometricCountDistribution(
+      remainingPopulation,
+      remainingSuccesses,
+      descriptor.unknownCount
+    );
+    for (const branch of distribution) {
+      allocation[descriptor.id] = branch.count;
+      visit(
+        index + 1,
+        remainingPopulation - descriptor.unknownCount,
+        remainingSuccesses - branch.count,
+        probability * branch.probability
+      );
+    }
+  };
+  visit(0, population, successes, 1);
+  const conditionKey = `hidden-card-allocation:${definitionId}`;
+  const conditionedWorlds = worlds.map((world) => ({
+    ...world,
+    conditions:{
+      [conditionKey]:descriptors.map((descriptor) => (
+        `${descriptor.id}=${world.allocation[descriptor.id] ?? 0}`
+      )).join("|")
+    }
+  }));
+  const estimates = {};
+  for (const player of players) {
+    if (player.id === viewerId) {
+      const count = (player.hand ?? []).filter((card) => card.definitionId === definitionId).length;
+      estimates[player.id] = Object.freeze({
+        expected:count,
+        atLeastOne:count > 0 ? 1 : 0,
+        atLeastTwo:count > 1 ? 1 : 0,
+        distribution:Object.freeze([Object.freeze({ count, probability:1 })])
+      });
+      continue;
+    }
+    const descriptor = descriptors.find((entry) => entry.id === player.id);
+    const distribution = Object.freeze(conditionedWorlds.map((world) => Object.freeze({
+      count:descriptor.knownCount + (world.allocation[player.id] ?? 0),
+      probability:world.probability,
+      conditions:Object.freeze({ ...world.conditions })
+    })));
+    estimates[player.id] = Object.freeze({
+      expected:distribution.reduce((sum, branch) => sum + branch.count * branch.probability, 0),
+      atLeastOne:distribution.reduce(
+        (sum, branch) => sum + (branch.count >= 1 ? branch.probability : 0), 0
+      ),
+      atLeastTwo:distribution.reduce(
+        (sum, branch) => sum + (branch.count >= 2 ? branch.probability : 0), 0
+      ),
+      distribution
     });
   }
-  const knownCount = knownCards.filter((card) => card.definitionId === definitionId).length;
-  const unknownCount = Math.max(0, player.handCount - knownCards.length);
-  const density = remainingCardDensity(remainingCardCounts, definitionId);
-  return Object.freeze({
-    expected:knownCount + unknownCount * density,
-    atLeastOne:knownCount > 0 ? 1 : probabilityAtLeast(unknownCount, density, 1),
-    atLeastTwo:knownCount >= 2 ? 1 : probabilityAtLeast(unknownCount, density, 2 - knownCount),
-    distribution:binomialCountDistribution(unknownCount, density, knownCount)
-  });
+  return Object.freeze(estimates);
 }
 
 /*
@@ -396,14 +473,26 @@ normalizeRemainingCardCounts、createCardEstimate。
 */
 export function createBeliefState(viewerId, visibleState, knowledgeState, remainingCardCounts = null) {
   const counts = normalizeRemainingCardCounts(remainingCardCounts);
+  const estimatesByDefinition = Object.fromEntries(
+    ["recover", "block", "counter", "assault"].map((definitionId) => [
+      definitionId,
+      createSharedCardEstimates(
+        viewerId,
+        visibleState.players,
+        knowledgeState,
+        definitionId,
+        counts
+      )
+    ])
+  );
   const playersById = Object.fromEntries(visibleState.players.map((player) => {
-    const knownCards = knowledgeState.knownCardsByPlayer[player.id] ?? [];
-    const recover = createCardEstimate(viewerId, player, knownCards, "recover", counts);
-    const block = createCardEstimate(viewerId, player, knownCards, "block", counts);
-    const counter = createCardEstimate(viewerId, player, knownCards, "counter", counts);
-    const assault = createCardEstimate(viewerId, player, knownCards, "assault", counts);
+    const recover = estimatesByDefinition.recover[player.id];
+    const block = estimatesByDefinition.block[player.id];
+    const counter = estimatesByDefinition.counter[player.id];
+    const assault = estimatesByDefinition.assault[player.id];
     return [player.id, Object.freeze({
       expectedRecoverCount:recover.expected,
+      recoverCountDistribution:recover.distribution,
       expectedBlockCount:block.expected,
       blockProbability:block.atLeastOne,
       twoBlockProbability:block.atLeastTwo,
@@ -416,6 +505,7 @@ export function createBeliefState(viewerId, visibleState, knowledgeState, remain
     })];
   }));
   return Object.freeze({
+    classification:PROBABILITY_CLASSIFICATION.BELIEF_PROBABILITY,
     remainingCardCounts:counts,
     playersById:Object.freeze(playersById)
   });
@@ -474,7 +564,7 @@ Knowledge.sampleHiddenWorlds、Planner。
 观察者、SearchState、非负样本数与随机函数。
 
 输出
-样本数组，每个样本按玩家 ID 给出确定已知牌加采样未知牌定义。
+显式 MONTE CARLO ESTIMATE；worlds 中每个样本按玩家 ID 给出确定已知牌加采样未知牌定义。
 
 读取状态
 SearchState 剩余计数、玩家 handCount 与 knownCards。
@@ -493,7 +583,8 @@ export function sampleHiddenWorlds(viewer, searchState, count, random) {
   if (!rootCounts || typeof rootCounts !== "object" || Array.isArray(rootCounts)) {
     throw new Error("sampleHiddenWorlds 需要合法的可见剩余牌计数快照");
   }
-  return Array.from({ length:count }, () => {
+  const sampleCount = Math.max(0, Math.floor(Number(count) || 0));
+  const worlds = Array.from({ length:sampleCount }, () => {
     const remaining = { ...rootCounts };
     return Object.fromEntries(searchState.players.filter((player) => player.id !== viewer.id).map((player) => {
       const certainKnown = (player.knownCards ?? []).filter((entry) => (
@@ -507,5 +598,10 @@ export function sampleHiddenWorlds(viewer, searchState, count, random) {
       }
       return [player.id, [...known.values(), ...sampled]];
     }));
+  });
+  return Object.freeze({
+    classification:PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE,
+    sampleCount,
+    worlds:Object.freeze(worlds)
   });
 }

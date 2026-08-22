@@ -20,6 +20,14 @@ ActionGenerator、Simulator、领域评分模块、概率正式组合入口与�
 
 export const PROBABILITY_EPSILON = 1e-12;
 
+export const PROBABILITY_CLASSIFICATION = Object.freeze({
+  EXACT:"EXACT",
+  BELIEF_PROBABILITY:"BELIEF PROBABILITY",
+  MONTE_CARLO_ESTIMATE:"MONTE CARLO ESTIMATE",
+  POLICY_HEURISTIC:"POLICY HEURISTIC",
+  EXPECTED_VALUE:"EXPECTED VALUE, NOT PROBABILITY"
+});
+
 /*
 功能
 把任意数值压缩为合法概率。
@@ -318,9 +326,11 @@ normalizeConditions、conditionSignature。
 边界与不变量
 非正或低于误差阈值的质量丢弃，输入分支不被修改。
 */
-export function mergeProbabilityBranches(branches = []) {
+function mergeProbabilityBranchesWithCheckpoint(branches = [], checkpoint = null) {
   const merged = new Map();
-  for (const branch of branches) {
+  for (let index = 0; index < branches.length; index += 1) {
+    if (index % 32 === 0 && checkpoint?.() === false) return null;
+    const branch = branches[index];
     const probability = Math.max(0, Number(branch?.probability) || 0);
     if (probability <= PROBABILITY_EPSILON) continue;
     const conditions = normalizeConditions(branch.conditions);
@@ -330,6 +340,64 @@ export function mergeProbabilityBranches(branches = []) {
     else merged.set(signature, { probability, conditions });
   }
   return [...merged.values()];
+}
+
+/*
+功能
+合并条件集合完全相同的概率质量。
+
+调用方
+资源可用性与条件分区工具。
+
+输入
+只需 probability 与 conditions 的分支数组。
+
+输出
+条件唯一且概率为正的新分支数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+mergeProbabilityBranchesWithCheckpoint。
+
+边界与不变量
+普通调用不启用 cooperative interruption，保持既有合并顺序和概率语义。
+*/
+export function mergeProbabilityBranches(branches = []) {
+  return mergeProbabilityBranchesWithCheckpoint(branches);
+}
+
+/*
+功能
+在 cooperative checkpoint 保护下合并纯条件概率分支。
+
+调用方
+ActionGenerator 的单 action probability preparation。
+
+输入
+概率分支数组与返回 false 表示中断的 checkpoint。
+
+输出
+完整合并结果；checkpoint 返回 false 时返回 null，绝不返回部分结果。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+mergeProbabilityBranchesWithCheckpoint、checkpoint。
+
+边界与不变量
+每 32 个输入世界检查一次；正常路径与 mergeProbabilityBranches 完全等价。
+*/
+export function mergeProbabilityBranchesCooperatively(branches = [], checkpoint = null) {
+  return mergeProbabilityBranchesWithCheckpoint(branches, checkpoint);
 }
 
 /*
@@ -389,9 +457,11 @@ branchState、normalizeConditions、stateSignature。
 边界与不变量
 状态不同的世界不得因条件相同而合并。
 */
-export function mergeProbabilityStateBranches(branches = []) {
+function mergeProbabilityStateBranchesWithCheckpoint(branches = [], checkpoint = null) {
   const merged = new Map();
-  for (const rawBranch of branches) {
+  for (let index = 0; index < branches.length; index += 1) {
+    if (index % 32 === 0 && checkpoint?.() === false) return null;
+    const rawBranch = branches[index];
     const probability = Math.max(0, Number(rawBranch?.probability) || 0);
     if (probability <= PROBABILITY_EPSILON) continue;
     const branch = {
@@ -405,6 +475,64 @@ export function mergeProbabilityStateBranches(branches = []) {
     else merged.set(signature, branch);
   }
   return [...merged.values()].filter((branch) => branch.probability > PROBABILITY_EPSILON);
+}
+
+/*
+功能
+合并条件与状态完全相同的概率质量。
+
+调用方
+Simulator、Domain/Value/Search 概率状态消费者与测试。
+
+输入
+包含 probability、conditions 和普通状态字段的分支数组。
+
+输出
+完整签名唯一且概率为正的新分支数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+mergeProbabilityStateBranchesWithCheckpoint。
+
+边界与不变量
+普通调用不启用 cooperative interruption，保持既有同步概率代数。
+*/
+export function mergeProbabilityStateBranches(branches = []) {
+  return mergeProbabilityStateBranchesWithCheckpoint(branches);
+}
+
+/*
+功能
+在 cooperative checkpoint 保护下合并完整概率状态分支。
+
+调用方
+已证实会形成长同步尾巴的 Search Action/Response probability preparation。
+
+输入
+概率状态分支数组与返回 false 表示中断的 checkpoint。
+
+输出
+完整合并结果；checkpoint 返回 false 时返回 null，绝不返回部分结果。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+mergeProbabilityStateBranchesWithCheckpoint、checkpoint。
+
+边界与不变量
+每 32 个输入世界检查一次；正常路径与 mergeProbabilityStateBranches 的顺序、签名和概率代数完全相同。
+*/
+export function mergeProbabilityStateBranchesCooperatively(branches = [], checkpoint = null) {
+  return mergeProbabilityStateBranchesWithCheckpoint(branches, checkpoint);
 }
 
 /*
@@ -432,20 +560,30 @@ mergeProbabilityStateBranches、stateBranchesCompatible、branchState、normaliz
 边界与不变量
 共享条件只条件化一次，独立条件才相乘，同名状态冲突必须排除。
 */
-export function joinProbabilityStateBranches(...partitions) {
+function joinProbabilityStateBranchesWithCheckpoint(partitions, checkpoint = null) {
   let joined = [{ probability:1, conditions:{} }];
   for (const rawPartition of partitions.filter(Array.isArray)) {
-    const partition = mergeProbabilityStateBranches(rawPartition);
+    if (checkpoint?.() === false) return null;
+    const partition = mergeProbabilityStateBranchesWithCheckpoint(rawPartition, checkpoint);
+    if (partition === null) return null;
     if (!partition.length) return [];
     const next = [];
-    for (const base of joined) {
-      const compatibleBranches = partition.filter((candidate) => stateBranchesCompatible(base, candidate));
-      const denominator = compatibleBranches.reduce(
-        (sum, branch) => sum + Math.max(0, Number(branch.probability) || 0),
-        0
-      );
+    for (let baseIndex = 0; baseIndex < joined.length; baseIndex += 1) {
+      if (baseIndex % 32 === 0 && checkpoint?.() === false) return null;
+      const base = joined[baseIndex];
+      const compatibleBranches = [];
+      let denominator = 0;
+      for (let partitionIndex = 0; partitionIndex < partition.length; partitionIndex += 1) {
+        if (partitionIndex % 32 === 0 && checkpoint?.() === false) return null;
+        const candidate = partition[partitionIndex];
+        if (!stateBranchesCompatible(base, candidate)) continue;
+        compatibleBranches.push(candidate);
+        denominator += Math.max(0, Number(candidate.probability) || 0);
+      }
       if (denominator <= PROBABILITY_EPSILON) continue;
-      for (const candidate of compatibleBranches) {
+      for (let candidateIndex = 0; candidateIndex < compatibleBranches.length; candidateIndex += 1) {
+        if (candidateIndex % 32 === 0 && checkpoint?.() === false) return null;
+        const candidate = compatibleBranches[candidateIndex];
         next.push({
           ...branchState(base),
           ...branchState(candidate),
@@ -454,9 +592,68 @@ export function joinProbabilityStateBranches(...partitions) {
         });
       }
     }
-    joined = mergeProbabilityStateBranches(next);
+    joined = mergeProbabilityStateBranchesWithCheckpoint(next, checkpoint);
+    if (joined === null) return null;
   }
   return joined;
+}
+
+/*
+功能
+联合多个完整概率分区并正确条件化共享世界条件。
+
+调用方
+Simulator 与多资源联合评分、状态契约测试。
+
+输入
+零个或多个完整概率状态分区。
+
+输出
+条件与同名状态字段兼容的联合分支数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+joinProbabilityStateBranchesWithCheckpoint。
+
+边界与不变量
+普通调用不启用 cooperative interruption，保持既有同步概率代数与输出顺序。
+*/
+export function joinProbabilityStateBranches(...partitions) {
+  return joinProbabilityStateBranchesWithCheckpoint(partitions);
+}
+
+/*
+功能
+在 cooperative checkpoint 保护下联合多个完整概率分区。
+
+调用方
+已证实会形成长同步尾巴的 Search Action/Response probability preparation。
+
+输入
+概率分区数组与返回 false 表示中断的 checkpoint。
+
+输出
+完整联合世界；checkpoint 返回 false 时返回 null，绝不返回部分世界。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+joinProbabilityStateBranchesWithCheckpoint、checkpoint。
+
+边界与不变量
+共享条件代数、兼容过滤和输出顺序与普通 join 完全一致；中断只丢弃当前未完成联合。
+*/
+export function joinProbabilityStateBranchesCooperatively(partitions = [], checkpoint = null) {
+  return joinProbabilityStateBranchesWithCheckpoint(partitions, checkpoint);
 }
 
 /*
@@ -490,6 +687,50 @@ export function projectProbabilityStateBranches(worldBranches, projector) {
     probability:world.probability,
     conditions:world.conditions
   })));
+}
+
+/*
+功能
+在 cooperative checkpoint 保护下投影并合并概率世界。
+
+调用方
+已证实会形成长同步尾巴的 Search Response probability preparation。
+
+输入
+完整世界、纯 projector 与返回 false 表示中断的 checkpoint。
+
+输出
+完整投影分区；checkpoint 返回 false 时返回 null，绝不返回部分投影。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+projector、mergeProbabilityStateBranchesWithCheckpoint、checkpoint。
+
+边界与不变量
+每 32 个世界检查一次；正常路径保持原投影顺序、概率与条件签名。
+*/
+export function projectProbabilityStateBranchesCooperatively(
+  worldBranches,
+  projector,
+  checkpoint = null
+) {
+  const projected = [];
+  const worlds = worldBranches ?? [];
+  for (let index = 0; index < worlds.length; index += 1) {
+    if (index % 32 === 0 && checkpoint?.() === false) return null;
+    const world = worlds[index];
+    projected.push({
+      ...projector(world),
+      probability:world.probability,
+      conditions:world.conditions
+    });
+  }
+  return mergeProbabilityStateBranchesWithCheckpoint(projected, checkpoint);
 }
 
 /*

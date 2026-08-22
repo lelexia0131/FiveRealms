@@ -30,11 +30,7 @@ import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
   expectedBranchValue,
-  getValueBranches,
-  joinProbabilityStateBranches,
-  mergeProbabilityStateBranches,
   probabilityEventPartition,
-  projectProbabilityStateBranches,
   totalBranchProbability
 } from "../state/Probability.js";
 import {
@@ -153,11 +149,17 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   势能量不得为负；摘要必须由完整分支投影，不能另行累加。
   */
   syncMomentumSummary(player) {
-    player.momentumBranches = projectProbabilityStateBranches(
-      getValueBranches(player, "momentum", player.momentum),
+    player.momentumBranches = this.projectProbabilityWork(
+      this.getValueBranchesWork(
+        player,
+        "momentum",
+        player.momentum,
+        "StatusSimulation.syncMomentumSummary:current"
+      ),
       (branch) => ({
         amount: Math.max(0, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, Number(branch.amount) || 0))
-      })
+      }),
+      "StatusSimulation.syncMomentumSummary:project"
     );
     player.momentum = expectedBranchValue(player.momentumBranches);
     return player.momentumBranches;
@@ -189,8 +191,9 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   只有概率一的类别才进入确定列表；不同类别的条件身份不得互相覆盖。
   */
   syncCategoryUsedSummary(player, category) {
-    const branches = mergeProbabilityStateBranches(
-      player.categoryUsedStateBranchesByCategory?.[category] ?? []
+    const branches = this.mergeProbabilityWork(
+      player.categoryUsedStateBranchesByCategory?.[category] ?? [],
+      "StatusSimulation.syncCategoryUsedSummary"
     );
     player.categoryUsedStateBranchesByCategory[category] = branches;
     const probability = totalBranchProbability(branches.filter((branch) => branch.used));
@@ -248,10 +251,8 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       conditions: branch.conditions,
       categoryUsed: Boolean(branch.used)
     }));
-    const joined = joinProbabilityStateBranches(
-      momentumState,
-      categoryState,
-      useWorlds.map((branch) => ({
+    const joined = this.joinProbabilityWork(
+      [momentumState, categoryState, useWorlds.map((branch) => ({
         probability: branch.probability,
         conditions: branch.conditions,
         cardUsed: Boolean(branch.occurs)
@@ -260,22 +261,24 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
         probability: branch.probability,
         conditions: branch.conditions,
         lifeDamage: Boolean(branch.occurs)
-      }))
+      }))],
+      "StatusSimulation.simulateCategoryUse:join"
     );
     const firstUseProbability = totalBranchProbability(
       joined.filter((branch) => branch.cardUsed && !branch.categoryUsed)
     );
-    player.momentumBranches = projectProbabilityStateBranches(joined, (branch) => {
+    player.momentumBranches = this.projectProbabilityWork(joined, (branch) => {
       if (!branch.cardUsed) return { amount: branch.momentumAmount };
       const retained = branch.lifeDamage ? 0 : branch.momentumAmount;
       return {
         amount: Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks,
           retained + (!branch.categoryUsed ? PASSIVE_SKILL_DEFINITIONS.momentum.stacksGain : 0))
       };
-    });
-    player.categoryUsedStateBranchesByCategory[category] = projectProbabilityStateBranches(
+    }, "StatusSimulation.simulateCategoryUse:momentum");
+    player.categoryUsedStateBranchesByCategory[category] = this.projectProbabilityWork(
       joined,
-      (branch) => ({ used: Boolean(branch.categoryUsed || branch.cardUsed) })
+      (branch) => ({ used: Boolean(branch.categoryUsed || branch.cardUsed) }),
+      "StatusSimulation.simulateCategoryUse:category"
     );
     this.syncMomentumSummary(player);
     this.syncCategoryUsedSummary(player, category);
@@ -433,10 +436,13 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
         oldProbability,
         "marked"
       );
-    const joined = joinProbabilityStateBranches(existingBranches, limitedEventWorlds);
-    const markState = projectProbabilityStateBranches(joined, (branch) => ({
+    const joined = this.joinProbabilityWork(
+      [existingBranches, limitedEventWorlds],
+      "StatusSimulation.simulateTracking:join"
+    );
+    const markState = this.projectProbabilityWork(joined, (branch) => ({
       marked: Boolean(branch.marked || branch.occurs)
-    }));
+    }), "StatusSimulation.simulateTracking:project");
     const markProbability = totalBranchProbability(markState.filter((branch) => branch.marked));
     const gainedProbability = Math.max(0, markProbability - oldProbability);
     target.huntMarkStateBranchesBySource ??= {};
@@ -486,7 +492,12 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       const newProbability = unionProbability(oldProbability, chance);
       damageContext.emberTriggeredProbabilities[source.id] = newProbability;
       damageContext.emberBaseEnergyBranches ??= {};
-      damageContext.emberBaseEnergyBranches[source.id] ??= getValueBranches(source, "energy", source.energy);
+      damageContext.emberBaseEnergyBranches[source.id] ??= this.getValueBranchesWork(
+        source,
+        "energy",
+        source.energy,
+        "StatusSimulation.simulateAfterLifeDamage:ember-base-energy"
+      );
       if (newProbability > oldProbability + PROBABILITY_EPSILON) {
         const triggerWorlds = oldProbability <= PROBABILITY_EPSILON && lifeDamageBranches
           ? lifeDamageBranches
@@ -500,13 +511,16 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
           conditions: branch.conditions,
           baseEnergyAmount: branch.amount
         }));
-        const joined = joinProbabilityStateBranches(baseEnergy, triggerWorlds);
-        source.energyBranches = projectProbabilityStateBranches(joined, (branch) => ({
+        const joined = this.joinProbabilityWork(
+          [baseEnergy, triggerWorlds],
+          "StatusSimulation.simulateAfterLifeDamage:ember-join"
+        );
+        source.energyBranches = this.projectProbabilityWork(joined, (branch) => ({
           amount: Math.max(0, Math.min(source.maxEnergy ?? Infinity,
             branch.baseEnergyAmount + (branch.occurs
               ? PASSIVE_SKILL_DEFINITIONS.ember.energyGain
               : 0)))
-        }));
+        }), "StatusSimulation.simulateAfterLifeDamage:ember-project");
         source.energy = expectedBranchValue(source.energyBranches);
       }
     }
@@ -569,25 +583,38 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       // 同一观察槽位的各牌身份必须共享一个条件键，保证候选互斥；
       // 否则 Probability 会把 26 个身份误当成独立牌反复叉乘。
       const identityKey = `private-peek-identity:${peekKey}:${position}`;
-      const identityPartition = mergeProbabilityStateBranches(revealWorlds.flatMap((branch) => {
+      const identityBranches = [];
+      for (let branchIndex = 0; branchIndex < revealWorlds.length; branchIndex += 1) {
+        if (branchIndex % 32 === 0) this.checkpointSearchWork();
+        const branch = revealWorlds[branchIndex];
         if (!branch.occurs) {
-          return [{
+          identityBranches.push({
             probability: branch.probability,
             conditions: { ...branch.conditions, [identityKey]: "none" },
             observedDefinitionId: null
-          }];
+          });
+          continue;
         }
-        return Object.keys(DOMAIN_CARD_DEFINITIONS).map((definitionId) => ({
-          probability: branch.probability
-            * remainingCardDensity(state?.remainingCardCounts ?? null, definitionId),
-          conditions: { ...branch.conditions, [identityKey]: definitionId },
-          observedDefinitionId: definitionId
-        }));
-      }).filter((branch) => branch.probability > PROBABILITY_EPSILON));
+        for (const definitionId of Object.keys(DOMAIN_CARD_DEFINITIONS)) {
+          const probability = branch.probability
+            * remainingCardDensity(state?.remainingCardCounts ?? null, definitionId);
+          if (probability <= PROBABILITY_EPSILON) continue;
+          identityBranches.push({
+            probability,
+            conditions: { ...branch.conditions, [identityKey]: definitionId },
+            observedDefinitionId: definitionId
+          });
+        }
+      }
+      const identityPartition = this.mergeProbabilityWork(
+        identityBranches,
+        "StatusSimulation.simulateSpyGapAfterLifeDamage:identity"
+      );
       const slotKey = `${identityKey}:slot`;
       target.identitySlotStates ??= {};
-      target.identitySlotStates[identityKey] = mergeProbabilityStateBranches(
-        identityPartition.map((branch) => {
+      target.identitySlotStates[identityKey] = this.projectProbabilityWork(
+        identityPartition,
+        (branch) => {
           const conditions = { ...branch.conditions, [slotKey]: branch.observedDefinitionId ? "yes" : "no" };
           delete conditions[identityKey];
           return {
@@ -596,17 +623,24 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
             slotAvailable: branch.observedDefinitionId !== null,
             definitionId: branch.observedDefinitionId
           };
-        })
+        },
+        "StatusSimulation.simulateSpyGapAfterLifeDamage:slot"
       );
       for (const definitionId of Object.keys(DOMAIN_CARD_DEFINITIONS)) {
-        const identityWorlds = mergeProbabilityStateBranches(
-          identityPartition
-            .filter((branch) => branch.observedDefinitionId === definitionId)
-            .map((branch) => ({
-              probability: branch.probability,
-              conditions: branch.conditions,
-              occurs: true
-            }))
+        const matchingIdentityBranches = [];
+        for (let branchIndex = 0; branchIndex < identityPartition.length; branchIndex += 1) {
+          if (branchIndex % 32 === 0) this.checkpointSearchWork();
+          const branch = identityPartition[branchIndex];
+          if (branch.observedDefinitionId !== definitionId) continue;
+          matchingIdentityBranches.push({
+            probability: branch.probability,
+            conditions: branch.conditions,
+            occurs: true
+          });
+        }
+        const identityWorlds = this.mergeProbabilityWork(
+          matchingIdentityBranches,
+          "StatusSimulation.simulateSpyGapAfterLifeDamage:definition"
         );
         const identityProbability = this.eventProbability(identityWorlds);
         if (identityProbability <= PROBABILITY_EPSILON) continue;
@@ -615,9 +649,9 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
           cardId: this.nextSimulatedCardId(state, definitionId),
           definitionId,
           availabilityBranches: availableBranchesFromState(
-            projectProbabilityStateBranches(identityWorlds, (branch) => ({
+            this.projectProbabilityWork(identityWorlds, (branch) => ({
               available: Boolean(branch.occurs)
-            }))
+            }), "StatusSimulation.simulateSpyGapAfterLifeDamage:availability")
           ).map((branch) => ({
             ...branch,
             conditions: {
@@ -874,12 +908,21 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     const holder = statusId === "lightning" ? actor : target;
     if (!holder?.alive || (statusId === "sealed" && holder.battleTeam === actor.battleTeam)) return;
     const oldBranches = statusId === "lightning"
-      ? getLightningStatusStateBranches(holder)
-      : getSealStatusStateBranches(holder);
-    const joined = joinProbabilityStateBranches(oldBranches, effectEventWorlds);
-    const projected = projectProbabilityStateBranches(joined, (branch) => ({
+      ? getLightningStatusStateBranches(holder, (branches) => this.mergeProbabilityWork(
+          branches,
+          `StatusSimulation.applyDelayedStatusCard:${statusId}:existing`
+        ))
+      : getSealStatusStateBranches(holder, (branches) => this.mergeProbabilityWork(
+          branches,
+          `StatusSimulation.applyDelayedStatusCard:${statusId}:existing`
+        ));
+    const joined = this.joinProbabilityWork(
+      [oldBranches, effectEventWorlds],
+      `StatusSimulation.applyDelayedStatusCard:${statusId}:join`
+    );
+    const projected = this.projectProbabilityWork(joined, (branch) => ({
       present: Boolean(branch.present || branch.occurs)
-    }));
+    }), `StatusSimulation.applyDelayedStatusCard:${statusId}:project`);
     const probability = totalBranchProbability(projected.filter((branch) => branch.present));
     if (statusId === "lightning") {
       holder.lightningStatusStateBranches = projected;

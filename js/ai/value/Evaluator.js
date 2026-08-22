@@ -18,6 +18,7 @@ Economics、CardValue、ThreatValue 以及封印、雷达的现有纯领域函�
 不得导入或构造 Simulator、Planner、Controller；State Value 只读一个状态，闪电等生命周期结果必须由调用层先计算为纯值。
 */
 import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js";
+import { PROBABILITY_CLASSIFICATION } from "../state/Probability.js";
 import { sealTeamBurden } from "./SealValue.js";
 import { cardAvailability, getBaseCardAiValue, roleCardDelta } from "./CardValue.js";
 import {
@@ -120,11 +121,34 @@ export class Evaluator {
   这里不施加团队符号，也不计封印/闪电 burden；同一分项同时供 state value 与 ledger 使用。
   */
   playerValueTerms(state, player, viewerId, radarTacticProbability) {
+    const hpBranches = player.hpStateBranchesClassification
+      !== PROBABILITY_CLASSIFICATION.EXPECTED_VALUE
+      && Array.isArray(player.hpStateBranches)
+      && player.hpStateBranches.length > 1
+      ? player.hpStateBranches
+      : null;
+    if (hpBranches) {
+      let death = 0;
+      const terms = {};
+      for (const branch of hpBranches) {
+        const projected = this.playerValueTerms(state, {
+          ...player,
+          hp:branch.hp,
+          alive:branch.alive,
+          hpStateBranches:null
+        }, viewerId, radarTacticProbability);
+        death += branch.probability * projected.death;
+        for (const [name, value] of Object.entries(projected.terms)) {
+          terms[name] = (terms[name] ?? 0) + branch.probability * value;
+        }
+      }
+      return { death, terms };
+    }
     if (!player.alive) return { death: -DEATH_VALUE, terms: {} };
     const danger = player.hp <= 1 ? -DANGER_VALUE : 0;
-    const rescueOutlook = player.survivalChance === undefined
+    const rescueOutlook = player.expectedRescueCoverage === undefined
       ? 0
-      : (player.survivalChance - 0.5) * 8;
+      : (player.expectedRescueCoverage - 0.5) * 8;
     const equipmentValue = player.equipmentDefinitionId
       ? getBaseCardAiValue(player.equipmentDefinitionId)
       : 0;
@@ -319,7 +343,7 @@ export class Evaluator {
   过滤后的状态、viewer ID，以及按 holder 顺序排列的闪电生命周期纯数值。
 
   输出
-  viewer 团队视角的 State Value；找不到 viewer 时返回负无穷。
+  viewer 团队视角的原始 State Value points；找不到 viewer 时返回负无穷。
 
   读取状态
   只读公开资源、合法概率摘要和传入的领域值。
@@ -331,7 +355,8 @@ export class Evaluator {
   playerValueTerms、sealTeamBurden、buildRadarJudgmentProbabilities。
 
   边界与不变量
-  闪电值由调用层模拟后传入；本函数不模拟，且按既有玩家、holder 顺序保持浮点运算顺序。
+  闪电值由调用层以 State points 传入；本函数始终保留原始 State Value points，
+  只有进入 Final Utility 的边界才执行 HP-equivalent 换算。
   */
   stateUtility(state, viewerId, lightningValues = []) {
     const viewer = state.players.find((player) => player.id === viewerId);

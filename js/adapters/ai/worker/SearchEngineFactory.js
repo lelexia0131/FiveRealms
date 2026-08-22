@@ -29,7 +29,10 @@ import { Simulator } from "../../../ai/simulation/Simulator.js";
 import { ActionCandidatePolicy } from "../../../ai/policy/ActionCandidatePolicy.js";
 import { ResourceSelectionPolicy } from "../../../ai/policy/ResourceSelectionPolicy.js";
 import { TransferPolicy } from "../../../ai/policy/TransferPolicy.js";
-import { ActionGenerator } from "../../../ai/search/ActionGenerator.js";
+import {
+  ActionGenerator,
+  deduplicateSearchEquivalentActions
+} from "../../../ai/search/ActionGenerator.js";
 import { CandidateMaterializer } from "../../../ai/search/CandidateMaterializer.js";
 import { CounterfactualTerms } from "../../../ai/search/CounterfactualTerms.js";
 import { FrontierValue } from "../../../ai/search/FrontierValue.js";
@@ -175,7 +178,7 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
   ValueSimulationQuery、ResourceValueQuery 与 Planner。
 
   输入
-  当前查询或搜索节点的 SearchState。
+  当前查询或搜索节点的 SearchState，以及可选搜索工作诊断上下文。
 
   输出
   注入正式资源 Policy/query 的 Simulator。
@@ -192,9 +195,10 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
   边界与不变量
   闭包允许在 ResourceValueQuery 初始化完成前声明，但只在组合完成后调用；不得依赖 main-thread 对象。
   */
-  const simulatorFactory = (state) => new Simulator(state, {
+  const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
     resourceSelectionPolicy,
-    resourceValueQuery
+    resourceValueQuery,
+    searchBudget:runtime.searchBudget ?? null
   });
   const valueSimulationQuery = new ValueSimulationQuery(
     stateEvaluator,
@@ -262,6 +266,7 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
       nodeBudget:config.nodeBudget,
       now:typeof runtimeControl.now === "function" ? runtimeControl.now : null
     }),
+    deduplicateActions:deduplicateSearchEquivalentActions,
     generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
     yieldControl: typeof runtimeControl.yieldControl === "function"
       ? runtimeControl.yieldControl

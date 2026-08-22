@@ -21,8 +21,8 @@ import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/Skill
 import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/response/ResponseRules.js";
 import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js";
 import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js";
-import { planningCounterDesire, planningDynamicCounterGain } from "../policy/ResponsePolicy.js";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, getAvailabilityStateBranches, getValueBranches, joinProbabilityStateBranches, mergeProbabilityStateBranches, probabilityEventPartition, projectProbabilityStateBranches, totalBranchProbability } from "../state/Probability.js";
+import { planningCounterDecision, planningDynamicCounterGain } from "../policy/ResponsePolicy.js";
+import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, joinProbabilityStateBranches, probabilityEventPartition, totalBranchProbability } from "../state/Probability.js";
 import { clampProbability, remainingCardDensity, unionProbability } from "./SimulationSupport.js";
 
 /*
@@ -177,12 +177,14 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     if (!Array.isArray(player.blockCountDistribution) || !player.blockCountDistribution.length) {
       player.blockCountDistribution = [{ probability:1, conditions:{}, blockCount:0 }];
     }
-    const branches = mergeProbabilityStateBranches(
-      player.blockCountDistribution.map((branch) => ({
+    const branches = this.projectProbabilityWork(
+      player.blockCountDistribution,
+      (branch) => ({
         probability:branch.probability,
         conditions:branch.conditions ?? {},
         blockCount:Math.max(0, Math.floor(Number(branch.blockCount ?? branch.count) || 0))
-      }))
+      }),
+      "ResponseSimulation.syncBlockSummary"
     );
     player.blockCountDistribution = branches;
     player.blockProbability = branches.reduce(
@@ -262,15 +264,25 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     ];
     let branches = [{ probability:1, conditions:{}, knownBlockCount:0 }];
     for (const card of cards) {
-      const availabilityState = getAvailabilityStateBranches(card).map((branch) => ({
+      const availabilityState = this.getAvailabilityStateWork(
+        card,
+        "availabilityStateBranches",
+        1,
+        "ResponseSimulation.getKnownBlockCountBranches:availability"
+      ).map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         available:Boolean(branch.available)
       }));
-      const joined = joinProbabilityStateBranches(branches, availabilityState);
-      branches = projectProbabilityStateBranches(joined, (branch) => ({
-        knownBlockCount:branch.knownBlockCount + (branch.available ? 1 : 0)
-      }));
+      const joined = this.joinProbabilityWork(
+        [branches, availabilityState],
+        "ResponseSimulation.getKnownBlockCountBranches:join"
+      );
+      branches = this.projectProbabilityWork(
+        joined,
+        (branch) => ({ knownBlockCount:branch.knownBlockCount + (branch.available ? 1 : 0) }),
+        "ResponseSimulation.getKnownBlockCountBranches:project"
+      );
     }
     return branches;
   }
@@ -435,12 +447,14 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     if (!Array.isArray(player.counterCountDistribution) || !player.counterCountDistribution.length) {
       player.counterCountDistribution = [{ probability:1, conditions:{}, counterCount:0 }];
     }
-    const branches = mergeProbabilityStateBranches(
-      player.counterCountDistribution.map((branch) => ({
+    const branches = this.projectProbabilityWork(
+      player.counterCountDistribution,
+      (branch) => ({
         probability:branch.probability,
         conditions:branch.conditions ?? {},
         counterCount:Math.max(0, Math.floor(Number(branch.counterCount ?? branch.count) || 0))
-      }))
+      }),
+      "ResponseSimulation.syncCounterSummary"
     );
     player.counterCountDistribution = branches;
     const counterProbability = Math.max(0, Math.min(1, branches.reduce(
@@ -490,6 +504,43 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
 
   /*
   功能
+  纯读取玩家反制数量分支，供不允许修改根 SearchState 的概率查询使用。
+
+  调用方
+  card-scope 与 target-scope 的反制结算概率查询。
+
+  输入
+  玩家过滤摘要与可选 remainingCardCounts。
+
+  输出
+  独立且规范化的 counterCount 概率分支。
+
+  读取状态
+  已有 counterCountDistribution，缺失时读取合法根信息建立临时分布。
+
+  写入状态
+  无。
+
+  调用函数
+  buildInitialCounterCountDistribution、mergeProbabilityStateBranches。
+
+  边界与不变量
+  查询冻结的根 SearchState 时不得调用会同步兼容摘要的写入 helper。
+  */
+  queryCounterCountBranches(player, remainingCardCounts = null) {
+    const source = Array.isArray(player?.counterCountDistribution)
+      && player.counterCountDistribution.length
+      ? player.counterCountDistribution
+      : this.buildInitialCounterCountDistribution(player, remainingCardCounts);
+    return this.projectProbabilityWork(source, (branch) => ({
+      probability:branch.probability,
+      conditions:branch.conditions ?? {},
+      counterCount:Math.max(0, Math.floor(Number(branch.counterCount ?? branch.count) || 0))
+    }), "ResponseSimulation.queryCounterCountBranches");
+  }
+
+  /*
+  功能
   按已知反制卡身份构造确定的反制数量分支，不推测未知牌面。
 
   调用方
@@ -520,15 +571,25 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     ];
     let branches = [{ probability:1, conditions:{}, knownCounterCount:0 }];
     for (const card of cards) {
-      const availabilityState = getAvailabilityStateBranches(card).map((branch) => ({
+      const availabilityState = this.getAvailabilityStateWork(
+        card,
+        "availabilityStateBranches",
+        1,
+        "ResponseSimulation.getKnownCounterCountBranches:availability"
+      ).map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         available:Boolean(branch.available)
       }));
-      const joined = joinProbabilityStateBranches(branches, availabilityState);
-      branches = projectProbabilityStateBranches(joined, (branch) => ({
-        knownCounterCount:branch.knownCounterCount + (branch.available ? 1 : 0)
-      }));
+      const joined = this.joinProbabilityWork(
+        [branches, availabilityState],
+        "ResponseSimulation.getKnownCounterCountBranches:join"
+      );
+      branches = this.projectProbabilityWork(
+        joined,
+        (branch) => ({ knownCounterCount:branch.knownCounterCount + (branch.available ? 1 : 0) }),
+        "ResponseSimulation.getKnownCounterCountBranches:project"
+      );
     }
     return branches;
   }
@@ -634,10 +695,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       conditions:branch.conditions ?? {},
       gained:Boolean(branch.occurs ?? branch.available)
     }));
-    const joined = joinProbabilityStateBranches(counterState, partition);
-    player.counterCountDistribution = projectProbabilityStateBranches(joined, (branch) => ({
+    const joined = this.joinProbabilityWork(
+      [counterState, partition],
+      "ResponseSimulation.addKnownCounterToDistribution:join"
+    );
+    player.counterCountDistribution = this.projectProbabilityWork(joined, (branch) => ({
       counterCount:branch.counterCount + (branch.gained ? 1 : 0)
-    }));
+    }), "ResponseSimulation.addKnownCounterToDistribution:project");
     this.syncCounterSummary(player);
   }
 
@@ -703,10 +767,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       conditions:branch.conditions ?? {},
       removed:Boolean(branch.occurs ?? branch.available)
     }));
-    const joined = joinProbabilityStateBranches(counterState, partition);
-    player.counterCountDistribution = projectProbabilityStateBranches(joined, (branch) => ({
+    const joined = this.joinProbabilityWork(
+      [counterState, partition],
+      "ResponseSimulation.removeKnownCounterFromDistribution:join"
+    );
+    player.counterCountDistribution = this.projectProbabilityWork(joined, (branch) => ({
       counterCount:Math.max(0, branch.counterCount - (branch.removed ? 1 : 0))
-    }));
+    }), "ResponseSimulation.removeKnownCounterFromDistribution:project");
     this.syncCounterSummary(player);
   }
 
@@ -743,9 +810,14 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       conditions:branch.conditions ?? {},
       gained:Boolean(branch.occurs ?? branch.available)
     }));
-    const joined = joinProbabilityStateBranches(counterState, partition);
+    const joined = this.joinProbabilityWork(
+      [counterState, partition],
+      "ResponseSimulation.addOneUnknownCardToCounterDistribution:join"
+    );
     const outcomes = [];
-    for (const branch of joined) {
+    for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
+      if (branchIndex % 32 === 0) this.checkpointSearchWork();
+      const branch = joined[branchIndex];
       if (branch.gained && density > 0) {
         outcomes.push({
           probability:branch.probability * (1 - density),
@@ -765,7 +837,10 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         });
       }
     }
-    player.counterCountDistribution = mergeProbabilityStateBranches(outcomes);
+    player.counterCountDistribution = this.mergeProbabilityWork(
+      outcomes,
+      "ResponseSimulation.addOneUnknownCardToCounterDistribution:merge"
+    );
     this.syncCounterSummary(player);
   }
 
@@ -808,8 +883,10 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       ));
       let gained = 0;
       while (remainingByBranch.some((remaining) => remaining > PROBABILITY_EPSILON)) {
+        this.checkpointSearchWork();
         const cardWorlds = [];
         for (let index = 0; index < worlds.length; index += 1) {
+          if (index % 32 === 0) this.checkpointSearchWork();
           const branch = worlds[index];
           const remaining = remainingByBranch[index];
           if (remaining <= PROBABILITY_EPSILON) {
@@ -825,7 +902,12 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
               cardProbability,
               "gateOccurs"
             );
-            for (const gated of joinProbabilityStateBranches([branch], gate)) {
+            const gatedWorlds = this.rawProbabilityWork(
+              "ResponseSimulation.gainUnknownCardsWithCounterState:single-branch-gate",
+              3,
+              () => joinProbabilityStateBranches([branch], gate)
+            );
+            for (const gated of gatedWorlds) {
               cardWorlds.push({ ...gated, occurs:Boolean(gated.gateOccurs) });
             }
           }
@@ -844,6 +926,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     let remaining = Math.max(0, Number(amount) || 0);
     let gained = 0;
     while (remaining > PROBABILITY_EPSILON) {
+      this.checkpointSearchWork();
       const cardProbability = Math.min(1, remaining);
       const gateChance = Math.min(1, cardProbability / eventMass);
       const cardWorlds = gateChance >= 1 - PROBABILITY_EPSILON
@@ -891,10 +974,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       conditions:branch.conditions ?? {},
       gained:Boolean(branch.occurs ?? branch.available)
     }));
-    const joined = joinProbabilityStateBranches(blockState, partition);
-    player.blockCountDistribution = projectProbabilityStateBranches(joined, (branch) => ({
+    const joined = this.joinProbabilityWork(
+      [blockState, partition],
+      "ResponseSimulation.addKnownBlockToDistribution:join"
+    );
+    player.blockCountDistribution = this.projectProbabilityWork(joined, (branch) => ({
       blockCount:branch.blockCount + (branch.gained ? 1 : 0)
-    }));
+    }), "ResponseSimulation.addKnownBlockToDistribution:project");
     this.syncBlockSummary(player);
   }
 
@@ -930,10 +1016,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       conditions:branch.conditions ?? {},
       removed:Boolean(branch.occurs ?? branch.available)
     }));
-    const joined = joinProbabilityStateBranches(blockState, partition);
-    player.blockCountDistribution = projectProbabilityStateBranches(joined, (branch) => ({
+    const joined = this.joinProbabilityWork(
+      [blockState, partition],
+      "ResponseSimulation.removeKnownBlockFromDistribution:join"
+    );
+    player.blockCountDistribution = this.projectProbabilityWork(joined, (branch) => ({
       blockCount:Math.max(0, branch.blockCount - (branch.removed ? 1 : 0))
-    }));
+    }), "ResponseSimulation.removeKnownBlockFromDistribution:project");
     this.syncBlockSummary(player);
   }
 
@@ -970,9 +1059,14 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       conditions:branch.conditions ?? {},
       gained:Boolean(branch.occurs ?? branch.available)
     }));
-    const joined = joinProbabilityStateBranches(blockState, partition);
+    const joined = this.joinProbabilityWork(
+      [blockState, partition],
+      "ResponseSimulation.addOneUnknownCardToBlockDistribution:join"
+    );
     const outcomes = [];
-    for (const branch of joined) {
+    for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
+      if (branchIndex % 32 === 0) this.checkpointSearchWork();
+      const branch = joined[branchIndex];
       if (branch.gained && density > 0) {
         outcomes.push({
           probability:branch.probability * (1 - density),
@@ -992,7 +1086,10 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         });
       }
     }
-    player.blockCountDistribution = mergeProbabilityStateBranches(outcomes);
+    player.blockCountDistribution = this.mergeProbabilityWork(
+      outcomes,
+      "ResponseSimulation.addOneUnknownCardToBlockDistribution:merge"
+    );
     this.syncBlockSummary(player);
   }
 
@@ -1057,9 +1154,14 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }
     const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
     const knownState = this.getKnownBlockCountBranches(player);
-    const joined = joinProbabilityStateBranches(blockState, removalWorlds, knownState);
+    const joined = this.joinProbabilityWork(
+      [blockState, removalWorlds, knownState],
+      "ResponseSimulation.removeUnknownCardsFromBlockDistribution:join"
+    );
     const outcomes = [];
-    for (const branch of joined) {
+    for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
+      if (branchIndex % 32 === 0) this.checkpointSearchWork();
+      const branch = joined[branchIndex];
       const total = branch.blockCount;
       const known = branch.knownBlockCount;
       const anonymousBlocks = Math.max(0, Math.min(unknown, total - known));
@@ -1099,21 +1201,25 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         });
       }
     }
-    player.blockCountDistribution = mergeProbabilityStateBranches(
-      outcomes.map((branch) => ({
+    player.blockCountDistribution = this.projectProbabilityWork(
+      outcomes,
+      (branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         blockCount:branch.blockCount
-      }))
+      }),
+      "ResponseSimulation.removeUnknownCardsFromBlockDistribution:remaining"
     );
     this.syncBlockSummary(player);
-    const identityWorlds = mergeProbabilityStateBranches(
-      outcomes.map((branch) => ({
+    const identityWorlds = this.projectProbabilityWork(
+      outcomes,
+      (branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         occurs:branch.occurs,
         blockRemoved:branch.blockRemoved
-      }))
+      }),
+      "ResponseSimulation.removeUnknownCardsFromBlockDistribution:identity"
     );
     let removed = totalBranchProbability(identityWorlds.filter((branch) => branch.occurs));
     if (Math.abs(removed - spent) <= PROBABILITY_EPSILON * 1e3) removed = spent;
@@ -1181,9 +1287,14 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }
     const counterState = this.getCounterCountBranches(player, state?.remainingCardCounts ?? null);
     const knownState = this.getKnownCounterCountBranches(player);
-    const joined = joinProbabilityStateBranches(counterState, removalWorlds, knownState);
+    const joined = this.joinProbabilityWork(
+      [counterState, removalWorlds, knownState],
+      "ResponseSimulation.removeUnknownCardsFromCounterDistribution:join"
+    );
     const outcomes = [];
-    for (const branch of joined) {
+    for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
+      if (branchIndex % 32 === 0) this.checkpointSearchWork();
+      const branch = joined[branchIndex];
       const total = branch.counterCount;
       const known = branch.knownCounterCount;
       const anonymousCounters = Math.max(0, Math.min(unknown, total - known));
@@ -1222,21 +1333,25 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         });
       }
     }
-    player.counterCountDistribution = mergeProbabilityStateBranches(
-      outcomes.map((branch) => ({
+    player.counterCountDistribution = this.projectProbabilityWork(
+      outcomes,
+      (branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         counterCount:branch.counterCount
-      }))
+      }),
+      "ResponseSimulation.removeUnknownCardsFromCounterDistribution:remaining"
     );
     this.syncCounterSummary(player);
-    const identityWorlds = mergeProbabilityStateBranches(
-      outcomes.map((branch) => ({
+    const identityWorlds = this.projectProbabilityWork(
+      outcomes,
+      (branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         occurs:branch.occurs,
         counterRemoved:branch.counterRemoved
-      }))
+      }),
+      "ResponseSimulation.removeUnknownCardsFromCounterDistribution:identity"
     );
     let removed = totalBranchProbability(identityWorlds.filter((branch) => branch.occurs));
     if (Math.abs(removed - spent) <= PROBABILITY_EPSILON * 1e3) removed = spent;
@@ -1282,10 +1397,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     if (removed <= PROBABILITY_EPSILON) return 0;
     this.downgradePartialKnownCardsAfterRandomLoss(source);
     const blockState = this.getBlockCountBranches(receiver, state?.remainingCardCounts ?? null);
-    const joined = joinProbabilityStateBranches(blockState, identityWorlds);
-    receiver.blockCountDistribution = projectProbabilityStateBranches(joined, (branch) => ({
+    const joined = this.joinProbabilityWork(
+      [blockState, identityWorlds],
+      "ResponseSimulation.transferUnknownBlockCapacity:block-join"
+    );
+    receiver.blockCountDistribution = this.projectProbabilityWork(joined, (branch) => ({
       blockCount:branch.blockCount + (branch.occurs && branch.blockRemoved ? 1 : 0)
-    }));
+    }), "ResponseSimulation.transferUnknownBlockCapacity:block-project");
     this.syncBlockSummary(receiver);
     const counterRemoval = this.removeUnknownCardsFromCounterDistribution(
       state,
@@ -1299,10 +1417,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     source.handCount = Math.max(0, (source.handCount ?? 0) - removed);
     this.clearCountersWhenHandEmpty(source);
     const counterState = this.getCounterCountBranches(receiver, state?.remainingCardCounts ?? null);
-    const joinedCounter = joinProbabilityStateBranches(counterState, counterRemoval.identityWorlds);
-    receiver.counterCountDistribution = projectProbabilityStateBranches(joinedCounter, (branch) => ({
+    const joinedCounter = this.joinProbabilityWork(
+      [counterState, counterRemoval.identityWorlds],
+      "ResponseSimulation.transferUnknownBlockCapacity:counter-join"
+    );
+    receiver.counterCountDistribution = this.projectProbabilityWork(joinedCounter, (branch) => ({
       counterCount:branch.counterCount + (branch.occurs && branch.counterRemoved ? 1 : 0)
-    }));
+    }), "ResponseSimulation.transferUnknownBlockCapacity:counter-project");
     this.syncCounterSummary(receiver);
     receiver.handCount = (receiver.handCount ?? 0) + removed;
     this.syncCardEstimates(source, state?.remainingCardCounts);
@@ -1342,28 +1463,48 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       ...(Array.isArray(player.knownCards) ? player.knownCards.filter((entry) => entry.definitionId === "block") : [])
     ].filter((card) => !excludedCardIds?.has(card.id ?? card.cardId));
     if (!candidates.length) return;
-    let remainingWorlds = blockWorlds.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      remaining:branch.blockUsed
-        ? Math.max(0, Number(branch.requiredCount) || 1)
-        : 0
-    }));
+    let remainingWorlds = this.projectProbabilityWork(
+      blockWorlds,
+      (branch) => ({
+        remaining:branch.blockUsed
+          ? Math.max(0, Number(branch.requiredCount) || 1)
+          : 0
+      }),
+      "ResponseSimulation.consumeBlockIdentities:remaining"
+    );
     for (const card of candidates) {
-      const availabilityState = getAvailabilityStateBranches(card).map((branch) => ({
+      this.checkpointSearchWork();
+      const availabilityState = this.getAvailabilityStateWork(
+        card,
+        "availabilityStateBranches",
+        1,
+        "ResponseSimulation.consumeBlockIdentities:availability"
+      ).map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         available:Boolean(branch.available)
       }));
-      const joined = joinProbabilityStateBranches(remainingWorlds, availabilityState);
+      const joined = this.joinProbabilityWork(
+        [remainingWorlds, availabilityState],
+        "ResponseSimulation.consumeBlockIdentities:join"
+      );
       if (!joined.length) break;
-      const usedWorlds = projectProbabilityStateBranches(joined, (branch) => ({
-        used:Boolean(branch.available && branch.remaining > 0),
-        remaining:Math.max(0, Number(branch.remaining) - (branch.available && branch.remaining > 0 ? 1 : 0))
-      }));
-      card.availabilityStateBranches = projectProbabilityStateBranches(joined, (branch) => ({
-        available:Boolean(branch.available && !(branch.available && branch.remaining > 0))
-      }));
+      const usedWorlds = this.projectProbabilityWork(
+        joined,
+        (branch) => ({
+          used:Boolean(branch.available && branch.remaining > 0),
+          remaining:Math.max(0, Number(branch.remaining)
+            - (branch.available && branch.remaining > 0 ? 1 : 0))
+        }),
+        "ResponseSimulation.consumeBlockIdentities:used"
+      );
+      card.availabilityStateBranches = this.projectProbabilityWork(
+        joined,
+        (branch) => ({
+          available:Boolean(branch.available && !(branch.available && branch.remaining > 0))
+        }),
+        "ResponseSimulation.consumeBlockIdentities:card-remaining"
+      );
       card.availabilityBranches = availableBranchesFromState(card.availabilityStateBranches);
       if (totalBranchProbability(card.availabilityBranches) <= PROBABILITY_EPSILON) {
         if (Array.isArray(player.hand)) player.hand = player.hand.filter((entry) => entry !== card);
@@ -1449,7 +1590,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   所有卡牌级反制链结算后的零到一生效概率。
 
   读取状态
-  响应者 counter 分布、座次、阵营与正式反制意愿查询。
+  响应者 counter 分布、座次、阵营与正式反制决策查询。
 
   写入状态
   无。
@@ -1467,7 +1608,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
 
   /*
   功能
-  按座次评估卡牌级反制链，返回每名响应者的条件消费世界。
+  按座次评估卡牌级反制链，在共享隐藏牌世界中选择首名确定响应者。
 
   调用方
   tacticResolutionChance、consumeCountersForCardScope 与 Simulator.apply：冻结一次卡牌级反制链。
@@ -1476,35 +1617,66 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   SearchState、行动者、战术牌、目标列表与可选 selection。
 
   输出
-  包含 resolutionChance 和每名响应者条件消费世界的独立对象。
+  包含 resolutionChance、联合响应世界和每名响应者边际消费质量的独立对象。
 
   读取状态
-  存活座次、counterProbability 与正式 counterDesire 结果。
+  存活座次、共享 counterCountDistribution 与正式 counter decision。
 
   写入状态
   无。
 
   调用函数
-  seatOrderFrom、counterDesire、Probability 事件 辅助函数。
+  queryCounterCountBranches、counterDecision、Probability 联合/投影辅助函数。
 
   边界与不变量
-  链顺序和奇偶翻转只计算一次；返回结果不得修改任何响应容量。
+  链顺序和奇偶翻转只计算一次；返回结果不得修改任何响应容量；
+  join/project 中断时整个未完成响应 preparation 作废。
   */
   evaluateCardScopeCounterResponses(state, actor, card, targets = [], selection = null) {
-    const contenders = [];
-    let resolutionChance = 1;
+    this.checkpointSearchWork();
     const roster = projectCanonicalSeatRoster(state.players);
     const responderOrder = getCounterResponderOrder(roster, actor.id);
-    for (const responderId of responderOrder) {
+    const contenders = [];
+    for (let index = 0; index < responderOrder.length; index += 1) {
+      if (index % 32 === 0) this.checkpointSearchWork();
+      const responderId = responderOrder[index];
       const player = state.players.find((entry) => entry.id === responderId);
       if (!player?.alive || player.id === actor.id) continue;
       const counterProbability = clampProbability(player.counterProbability ?? 0);
-      const desire = this.counterDesire(state, player, actor, card, targets, selection);
-      const effectiveProbability = clampProbability(counterProbability * desire);
-      contenders.push({ player, counterProbability, desire, effectiveProbability });
-      resolutionChance *= 1 - effectiveProbability;
+      const decision = this.counterDecision(state, player, actor, card, targets, selection) === true;
+      contenders.push({ player, counterProbability, decision, effectiveProbability:0 });
     }
-    return { resolutionChance, contenders };
+    const active = contenders.filter((contender) => contender.decision);
+    const partitions = active.map(({ player }) => {
+      const field = `counterCount:${player.id}`;
+      return this.queryCounterCountBranches(player, state?.remainingCardCounts ?? null)
+        .map((branch) => ({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          [field]:branch.counterCount
+        }));
+    });
+    const jointWorlds = partitions.length
+      ? this.joinProbabilityWork(partitions)
+      : [{ probability:1, conditions:{} }];
+    const responseWorlds = this.projectProbabilityWork(jointWorlds, (world) => {
+      const responder = active.find(({ player }) => (
+        (world[`counterCount:${player.id}`] ?? 0) >= 1
+      ));
+      return { responderId:responder?.player.id ?? null };
+    });
+    const resolutionChance = totalBranchProbability(
+      responseWorlds.filter((world) => world.responderId === null)
+    );
+    for (let index = 0; index < contenders.length; index += 1) {
+      if (index % 32 === 0) this.checkpointSearchWork();
+      const contender = contenders[index];
+      contender.effectiveProbability = totalBranchProbability(
+        responseWorlds.filter((world) => world.responderId === contender.player.id)
+      );
+    }
+    this.searchBudget?.observeResponseBranches?.(responseWorlds.length);
+    return { resolutionChance, contenders, responseWorlds };
   }
 
   /*
@@ -1527,73 +1699,60 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   响应者 counterCountDistribution、counterProbability、handCount 与确定反制身份。
 
   调用函数
-  evaluateCardScopeCounterResponses、consumeExpectedCounters、consumeKnownCardsFromHand。
+  evaluateCardScopeCounterResponses、consumeCounterResponseWorlds。
 
   边界与不变量
-  必须消费用于 resolutionChance 的同一链；不得再次调用意愿查询造成二次随机或双计。
+  必须消费用于 resolutionChance 的同一链；不得再次调用决策查询造成重复计算或双计。
   */
   consumeCountersForCardScope(state, actor, card, targets, selection = null, responseEvaluation = null) {
     const evaluation = responseEvaluation
       ?? this.evaluateCardScopeCounterResponses(state, actor, card, targets, selection);
-    let notYetCancelled = 1;
     for (const { player, effectiveProbability } of evaluation.contenders) {
-      const p = effectiveProbability;
-      if (p <= PROBABILITY_EPSILON) continue;
-      const marginal = notYetCancelled * p;
-      if (marginal > PROBABILITY_EPSILON) {
-        this.consumeExpectedCounters(state, player, marginal);
-      }
-      notYetCancelled *= 1 - p;
-      if (notYetCancelled <= PROBABILITY_EPSILON) break;
+      if (effectiveProbability <= PROBABILITY_EPSILON) continue;
+      this.consumeCounterResponseWorlds(state, player, evaluation.responseWorlds);
     }
   }
 
   /*
   功能
-  从玩家反制数量分布中扣除给定期望消耗量并同步摘要。
+  在已冻结的共享响应世界中扣除一名玩家实际打出的反制并同步摘要。
 
   调用方
-  consumeCountersForCardScope：从单名响应者容量中兑现至多一张期望反制。
+  consumeCountersForCardScope：按同一次 card-scope 响应评估兑现资源。
 
   输入
-  SearchState、响应者与零到一期望消耗。
+  SearchState、响应者与包含 responderId 的共享响应世界。
 
   输出
   实际消费的反制概率质量。
 
   读取状态
-  counterCountDistribution 与 remaining counts。
+  counterCountDistribution、共享 condition keys 与响应世界。
 
   写入状态
-  counterCountDistribution 与 counterProbability。
+  counterCountDistribution、counterProbability、handCount 与确定身份 availability。
 
   调用函数
-  getCounterCountBranches、probabilityEventPartition、syncCounterSummary。
+  consumeTargetCounterResponseWorlds、Probability 投影/汇总辅助函数。
 
   边界与不变量
-  只在存在反制的世界扣一张；本函数不选择具体身份或改变 handCount。
+  只在同一条件世界中该玩家确为首名响应者且存在反制时扣一张，不重新抽取独立事件；
+  projection 中断时由上层丢弃当前 partial candidate。
   */
-  consumeExpectedCounters(state, player, expectedAmount) {
-    const amount = Math.min(Math.max(0, Number(expectedAmount) || 0), 1);
-    if (amount <= PROBABILITY_EPSILON || !player) return 0;
-    const counterState = this.getCounterCountBranches(player, state?.remainingCardCounts ?? null);
-    const existence = counterState.reduce((sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0);
-    if (existence <= PROBABILITY_EPSILON) return 0;
-    const conditional = Math.min(1, amount / existence);
-    if (conditional <= PROBABILITY_EPSILON) return 0;
-    const gate = probabilityEventPartition(
-      this.nextProbabilityEventKey(state, `card-scope-counter:${player.id}`), conditional, "counterUsed"
-    );
-    const joined = joinProbabilityStateBranches(counterState, gate);
-    player.counterCountDistribution = projectProbabilityStateBranches(joined, (branch) => ({
-      counterCount: Boolean(branch.counterUsed) && branch.counterCount >= 1
-        ? Math.max(0, branch.counterCount - 1)
-        : branch.counterCount
+  consumeCounterResponseWorlds(state, player, responseWorlds) {
+    if (!player || !Array.isArray(responseWorlds) || !responseWorlds.length) return 0;
+    const attemptWorlds = this.projectProbabilityWork(responseWorlds, (world) => ({
+      occurs:world.responderId === player.id
     }));
-    this.syncCounterSummary(player);
-    return totalBranchProbability(projectProbabilityStateBranches(joined, (branch) => ({
-      occurs: Boolean(branch.counterUsed) && branch.counterCount >= 1
-    })).filter((branch) => branch.occurs));
+    const response = this.consumeTargetCounterResponseWorlds(
+      state,
+      player,
+      attemptWorlds,
+      true
+    );
+    return totalBranchProbability(
+      response.outcomeWorlds.filter((world) => world.counterConsumed)
+    );
   }
 
   /*
@@ -1610,34 +1769,38 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   目标效果最终生效概率；非目标级可反制战术返回一。
 
   读取状态
-  目标 counterProbability 与正式 counterDesire。
+  目标 counter 分布与正式 counter decision。
 
   写入状态
   无。
 
   调用函数
-  counterDesire。
+  counterDecision、queryCounterCountBranches。
 
   边界与不变量
   只做概率查询，不消费反制；实际目标响应由 consumeTargetCounterResponseWorlds 结算。
   */
   targetResolutionChance(state, actor, card, target) {
     if (!isCounterEligible(card.category, card.counterable) || card.counterScope !== "target") return 1;
-    return 1 - (target.counterProbability ?? 0) * this.counterDesire(state, target, actor, card, [target]);
+    if (this.counterDecision(state, target, actor, card, [target]) !== true) return 1;
+    return this.queryCounterCountBranches(target, state?.remainingCardCounts ?? null).reduce(
+      (sum, branch) => sum + (branch.counterCount < 1 ? branch.probability : 0),
+      0
+    );
   }
 
   /*
   功能
-  根据阵营关系、效果价值与当前状态计算响应者反制意愿。
+  根据阵营关系、效果价值与当前状态作出确定的规划反制决策。
 
   调用方
-  card-scope 与 target-scope 响应查询：请求正式 ResponsePolicy 的规划反制意愿。
+  card-scope 与 target-scope 响应查询：请求正式 ResponsePolicy 的规划反制决策。
 
   输入
   SearchState、响应者、行动者、卡牌、目标列表与可选 selection。
 
   输出
-  零到一的局部反制意愿。
+  确定的 respond / do not respond 布尔值。
 
   读取状态
   公开/过滤状态、全体受益 assessment 与 root 递归守卫。
@@ -1646,13 +1809,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   无。
 
   调用函数
-  planningCounterDesire、dynamicCounterGain。
+  planningCounterDecision、dynamicCounterGain。
 
   边界与不变量
   Simulation 不复制策略公式；root 递归守卫只阻止重复反事实，不改变普通响应。
   */
-  counterDesire(state, responder, actor, card, targets, selection = null) {
-    return planningCounterDesire(state, responder, actor, card, targets, selection, {
+  counterDecision(state, responder, actor, card, targets, selection = null) {
+    return planningCounterDecision(state, responder, actor, card, targets, selection, {
       assessGlobalBenefit,
       simulatingRootResolution:this._simulatingRootResolution,
       dynamicCounterGain:(...args) => this.dynamicCounterGain(...args)
@@ -1664,7 +1827,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   比较反制前后状态价值，计算当前响应在此世界中的动态收益。
 
   调用方
-  planningCounterDesire：需要比较反制前后 root 结局时请求有界价值增量。
+  planningCounterDecision：需要比较反制前后 root 结局时请求有界价值增量。
 
   输入
   SearchState、响应者、行动者、卡牌、目标列表与可选 selection。
@@ -1690,7 +1853,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
 
   /*
   功能
-  将攻击世界与格挡容量、意愿和身份相交，返回命中与格挡后的互斥世界。
+  将攻击世界与格挡容量和身份相交，返回命中与格挡后的互斥世界。
 
   调用方
   CombatSimulation.applyDamage：把已确定攻击世界与格挡容量和雷达结果联合。
@@ -1723,9 +1886,11 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
           preBlockCount:branch.blockCount
         }))
       : null;
-    const joined = preJudgmentPartition
-      ? joinProbabilityStateBranches(attackWorlds, blockState, preJudgmentPartition)
-      : joinProbabilityStateBranches(attackWorlds, blockState);
+    const joined = this.joinProbabilityWork(
+      preJudgmentPartition
+        ? [attackWorlds, blockState, preJudgmentPartition]
+        : [attackWorlds, blockState]
+    );
     /*
     功能
     判断一条响应资源分支与攻击世界条件是否兼容，避免跨世界重复消费。
@@ -1757,24 +1922,36 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       && branch.requiredCount > 0
       && branch.blockCount >= branch.requiredCount
     );
-    const consumedBranches = joined.filter(responseMatches);
-    const blockedProbability = totalBranchProbability(consumedBranches);
-    const expectedBlockSpend = consumedBranches.reduce(
-      (sum, branch) => sum + branch.probability * branch.requiredCount, 0
+    const consumedBranches = [];
+    let blockedProbability = 0;
+    let expectedBlockSpend = 0;
+    for (let index = 0; index < joined.length; index += 1) {
+      if (index % 32 === 0) this.checkpointSearchWork();
+      const branch = joined[index];
+      if (!responseMatches(branch)) continue;
+      consumedBranches.push(branch);
+      blockedProbability += Math.max(0, Number(branch.probability) || 0);
+      expectedBlockSpend += branch.probability * branch.requiredCount;
+    }
+    const remainingBlockBranches = this.projectProbabilityWork(
+      joined,
+      (branch) => ({
+        blockCount:responseMatches(branch)
+          ? Math.max(0, branch.blockCount - branch.requiredCount)
+          : branch.blockCount
+      })
     );
-    const remainingBlockBranches = projectProbabilityStateBranches(joined, (branch) => ({
-      blockCount:responseMatches(branch)
-        ? Math.max(0, branch.blockCount - branch.requiredCount)
-        : branch.blockCount
-    }));
     target.blockCountDistribution = remainingBlockBranches;
     this.syncBlockSummary(target);
-    const identityWorlds = joined.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      requiredCount:branch.requiredCount,
-      blockUsed:responseMatches(branch)
-    }));
+    const identityWorlds = joined.map((branch, index) => {
+      if (index % 32 === 0) this.checkpointSearchWork();
+      return {
+        probability:branch.probability,
+        conditions:branch.conditions,
+        requiredCount:branch.requiredCount,
+        blockUsed:responseMatches(branch)
+      };
+    });
     const judgmentBlockCards = Array.isArray(options.judgmentBlockCards)
       ? options.judgmentBlockCards.filter(Boolean)
       : options.judgmentBlockCard
@@ -1784,31 +1961,42 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       ? new Set(judgmentBlockCards.map((card) => card.id ?? card.cardId))
       : null;
     this.consumeBlockIdentities(state, target, identityWorlds, excludedCardIds);
+    this.checkpointSearchWork();
     if (judgmentBlockCards.length && preJudgmentPartition) {
       let joinedJudgments = joined;
       for (let index = 0; index < judgmentBlockCards.length; index += 1) {
+        this.checkpointSearchWork();
         const availabilityField = `judgmentBlockAvailable${index}`;
-        const availability = getAvailabilityStateBranches(judgmentBlockCards[index]).map((branch) => ({
+        const availability = this.getAvailabilityStateWork(
+          judgmentBlockCards[index],
+          "availabilityStateBranches",
+          1,
+          "ResponseSimulation.consumeBlockResponseWorlds:judgment-availability"
+        ).map((branch) => ({
           probability:branch.probability,
           conditions:branch.conditions,
           [availabilityField]:Boolean(branch.available)
         }));
-        joinedJudgments = joinProbabilityStateBranches(joinedJudgments, availability);
+        joinedJudgments = this.joinProbabilityWork([joinedJudgments, availability]);
       }
       for (let index = 0; index < judgmentBlockCards.length; index += 1) {
+        this.checkpointSearchWork();
         const judgmentBlockCard = judgmentBlockCards[index];
         const availabilityField = `judgmentBlockAvailable${index}`;
-        const judgmentConsumedWorlds = projectProbabilityStateBranches(joinedJudgments, (branch) => {
-          let earlierAvailable = 0;
-          for (let prior = 0; prior < index; prior += 1) {
-            if (branch[`judgmentBlockAvailable${prior}`]) earlierAvailable += 1;
+        const judgmentConsumedWorlds = this.projectProbabilityWork(
+          joinedJudgments,
+          (branch) => {
+            let earlierAvailable = 0;
+            for (let prior = 0; prior < index; prior += 1) {
+              if (branch[`judgmentBlockAvailable${prior}`]) earlierAvailable += 1;
+            }
+            const neededFromJudgments = Math.max(0, branch.requiredCount - branch.preBlockCount);
+            return {
+              available:Boolean(branch[availabilityField]
+                && !(responseMatches(branch) && earlierAvailable < neededFromJudgments))
+            };
           }
-          const neededFromJudgments = Math.max(0, branch.requiredCount - branch.preBlockCount);
-          return {
-            available:Boolean(branch[availabilityField]
-              && !(responseMatches(branch) && earlierAvailable < neededFromJudgments))
-          };
-        });
+        );
         judgmentBlockCard.availabilityStateBranches = judgmentConsumedWorlds;
         judgmentBlockCard.availabilityBranches = availableBranchesFromState(judgmentConsumedWorlds);
         if (totalBranchProbability(judgmentBlockCard.availabilityBranches) <= PROBABILITY_EPSILON) {
@@ -1818,33 +2006,37 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       }
     }
     target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
-    const outcomeWorlds = projectProbabilityStateBranches(joined, (branch) => ({
-      occurs:Boolean(branch.occurs),
-      radarOutcome:branch.radarOutcomes?.[0] ?? null,
-      radarOutcomes:branch.radarOutcomes ?? [],
-      requiredCount:branch.requiredCount,
-      immuneByRadar:Boolean(branch.occurs && branch.originalRequiredCount > 0 && branch.requiredCount <= 0),
-      blockedByCard:responseMatches(branch),
-      passes:Boolean(branch.occurs && branch.requiredCount > 0 && !responseMatches(branch))
-    }));
+    const outcomeWorlds = this.projectProbabilityWork(
+      joined,
+      (branch) => ({
+        occurs:Boolean(branch.occurs),
+        radarOutcome:branch.radarOutcomes?.[0] ?? null,
+        radarOutcomes:branch.radarOutcomes ?? [],
+        requiredCount:branch.requiredCount,
+        immuneByRadar:Boolean(branch.occurs && branch.originalRequiredCount > 0 && branch.requiredCount <= 0),
+        blockedByCard:responseMatches(branch),
+        passes:Boolean(branch.occurs && branch.requiredCount > 0 && !responseMatches(branch))
+      })
+    );
+    this.searchBudget?.observeResponseBranches?.(outcomeWorlds.length);
     return { outcomeWorlds, blockedProbability, expectedBlockSpend };
   }
 
   /*
   功能
-  将目标效果世界与反制容量和意愿相交，消费资源并返回最终生效世界。
+  将目标效果世界与反制容量和确定决策相交，消费资源并返回最终生效世界。
 
   调用方
   CardEffectSimulation 的 target-scope 战术：兑现单目标反制尝试。
 
   输入
-  SearchState、目标、效果世界、已计算意愿与可选响应选项。
+  SearchState、目标、效果世界、布尔反制决策与可选响应选项。
 
   输出
   完整 outcomeWorlds、最终 effectPassWorlds 与 counterAttemptedWorlds。
 
   读取状态
-  目标 counter/knownCounter 分布、确定身份 availability 与效果/意愿条件。
+  目标 counter/knownCounter 分布、确定身份 availability 与效果条件。
 
   写入状态
   counterCountDistribution/摘要、反制身份 availability、hand/knownCards 与 handCount。
@@ -1853,11 +2045,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   getCounterCountBranches、getKnownCounterCountBranches、Probability 连接/投影 辅助函数。
 
   边界与不变量
-  意愿、容量、具体身份选择和效果取消必须条件耦合；每个目标世界最多消费一张反制。
+  Policy heuristic 不得在这里转成随机事件；容量、具体身份选择和效果取消必须条件耦合；
+  所有长 join/project/merge 在同一 SearchBudget 下 cooperative abort，partial outcome 不得返回。
   */
-  consumeTargetCounterResponseWorlds(state, target, effectWorlds, desire, options = {}) {
+  consumeTargetCounterResponseWorlds(state, target, effectWorlds, counterDecision, options = {}) {
+    this.checkpointSearchWork();
     if (!target) {
-      const emptyOutcome = projectProbabilityStateBranches(effectWorlds, (branch) => ({
+      const emptyOutcome = this.projectProbabilityWork(effectWorlds, (branch) => ({
         effectOccurs:Boolean(branch.occurs),
         counterWilling:false,
         counterAvailable:false,
@@ -1867,22 +2061,22 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         effectPasses:Boolean(branch.occurs),
         responderId:null
       }));
+      this.searchBudget?.observeResponseBranches?.(emptyOutcome.length);
       return {
         outcomeWorlds:emptyOutcome,
         effectPassWorlds:effectWorlds,
-        counterAttemptedWorlds:projectProbabilityStateBranches(effectWorlds, () => ({ occurs:false }))
+        counterAttemptedWorlds:this.projectProbabilityWork(
+          effectWorlds,
+          () => ({ occurs:false })
+        )
       };
     }
-    const desireChance = clampProbability(Number(desire) || 0);
-    const desireKey = this.nextProbabilityEventKey(state, `counter-desire:${target.id ?? "unknown"}`);
-    const desirePartition = desireChance >= 1 - PROBABILITY_EPSILON
-      ? [{ probability:1, conditions:{}, willing:true }]
-      : desireChance <= PROBABILITY_EPSILON
-        ? [{ probability:1, conditions:{}, willing:false }]
-        : [
-            { probability:desireChance, conditions:{ [desireKey]:"yes" }, willing:true },
-            { probability:1 - desireChance, conditions:{ [desireKey]:"no" }, willing:false }
-          ];
+    void options;
+    const decisionPartition = [{
+      probability:1,
+      conditions:{},
+      willing:counterDecision === true
+    }];
     const counterState = this.getCounterCountBranches(target, state?.remainingCardCounts ?? null);
     const knownCounterState = this.getKnownCounterCountBranches(target);
     const candidates = [
@@ -1894,18 +2088,29 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         .map((entry, index) => ({ key:`known:${entry.cardId ?? index}`, card:entry, definitionId:"counter" })) : [])
     ];
     const candidatePartitions = candidates.map((candidate, index) => (
-      getAvailabilityStateBranches(candidate.card).map((branch) => ({
+      this.getAvailabilityStateWork(
+        candidate.card,
+        "availabilityStateBranches",
+        1,
+        "ResponseSimulation.consumeTargetCounterResponseWorlds:candidate-availability"
+      ).map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         [`c${index}`]:Boolean(branch.available)
       }))
     ));
-    const joined = joinProbabilityStateBranches(
-      effectWorlds, desirePartition, counterState, knownCounterState, ...candidatePartitions
-    );
+    const joined = this.joinProbabilityWork([
+      effectWorlds,
+      decisionPartition,
+      counterState,
+      knownCounterState,
+      ...candidatePartitions
+    ], "ResponseSimulation.consumeTargetCounterResponseWorlds:candidate-worlds");
     const selectionKey = this.nextProbabilityEventKey(state, `counter-selection:${target.id ?? "unknown"}`);
     const outcomes = [];
-    for (const branch of joined) {
+    for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
+      if (branchIndex % 32 === 0) this.checkpointSearchWork();
+      const branch = joined[branchIndex];
       const effectOccurs = Boolean(branch.occurs);
       const willing = Boolean(branch.willing);
       const counterCount = Math.max(0, Math.floor(Number(branch.counterCount) || 0));
@@ -1965,16 +2170,25 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       }
     }
 
-    const selectionPartition = mergeProbabilityStateBranches(outcomes);
+    const selectionPartition = this.mergeProbabilityWork(outcomes);
     for (let index = 0; index < candidates.length; index += 1) {
+      this.checkpointSearchWork();
       const candidate = candidates[index];
-      const availabilityState = getAvailabilityStateBranches(candidate.card).map((branch) => ({
+      const availabilityState = this.getAvailabilityStateWork(
+        candidate.card,
+        "availabilityStateBranches",
+        1,
+        "ResponseSimulation.consumeTargetCounterResponseWorlds:remaining-availability"
+      ).map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         available:Boolean(branch.available)
       }));
-      const joinedAvailability = joinProbabilityStateBranches(availabilityState, selectionPartition);
-      candidate.card.availabilityStateBranches = projectProbabilityStateBranches(
+      const joinedAvailability = this.joinProbabilityWork([
+        availabilityState,
+        selectionPartition
+      ]);
+      candidate.card.availabilityStateBranches = this.projectProbabilityWork(
         joinedAvailability,
         (branch) => ({ available:Boolean(branch.available && !(branch.selectedIndex === index)) })
       );
@@ -1986,7 +2200,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     }
 
     // 数量与 handCount 只在 counterAttempted 世界扣减；身份选择只决定具体删哪张。
-    const attemptedPartition = projectProbabilityStateBranches(joined, (branch) => ({
+    const attemptedPartition = this.projectProbabilityWork(joined, (branch) => ({
       occurs:Boolean(
         branch.occurs
         && branch.willing
@@ -1994,15 +2208,15 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       )
     }));
     const currentCounterState = this.getCounterCountBranches(target, state?.remainingCardCounts ?? null);
-    const joinedCount = joinProbabilityStateBranches(currentCounterState, attemptedPartition);
-    target.counterCountDistribution = projectProbabilityStateBranches(joinedCount, (branch) => ({
+    const joinedCount = this.joinProbabilityWork([currentCounterState, attemptedPartition]);
+    target.counterCountDistribution = this.projectProbabilityWork(joinedCount, (branch) => ({
       counterCount:Math.max(0, branch.counterCount - (branch.occurs ? 1 : 0))
     }));
     this.syncCounterSummary(target);
     const attemptedProbability = this.eventProbability(attemptedPartition);
     target.handCount = Math.max(0, (target.handCount ?? 0) - attemptedProbability);
 
-    const outcomeWorlds = projectProbabilityStateBranches(joined, (branch) => {
+    const outcomeWorlds = this.projectProbabilityWork(joined, (branch) => {
       const effectOccurs = Boolean(branch.occurs);
       const willing = Boolean(branch.willing);
       const counterCount = Math.max(0, Math.floor(Number(branch.counterCount) || 0));
@@ -2018,12 +2232,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         responderId:target.id ?? null
       };
     });
+    this.searchBudget?.observeResponseBranches?.(outcomeWorlds.length);
     return {
       outcomeWorlds,
-      effectPassWorlds:projectProbabilityStateBranches(outcomeWorlds, (branch) => ({
+      effectPassWorlds:this.projectProbabilityWork(outcomeWorlds, (branch) => ({
         occurs:branch.effectPasses
       })),
-      counterAttemptedWorlds:projectProbabilityStateBranches(outcomeWorlds, (branch) => ({
+      counterAttemptedWorlds:this.projectProbabilityWork(outcomeWorlds, (branch) => ({
         occurs:branch.counterAttempted
       }))
     };

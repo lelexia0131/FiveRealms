@@ -69,10 +69,10 @@ export class ResourceValueQuery {
   CardSelectionBoundary 与 CardEffectSimulation。
 
   输入
-  SearchState、actor/target ID、purpose 与已合法整理的候选数组。
+  SearchState、actor/target ID、purpose、已合法整理的候选数组与可选父 SearchBudget。
 
   输出
-  附加 raw/contextual/acquisition 分项的新候选数组。
+  附加 raw/contextual/acquisition/skill-threshold Policy 点数分项的新候选数组。
 
   读取状态
   StateValue、装备材料分解和候选公开/合法身份。
@@ -81,18 +81,25 @@ export class ResourceValueQuery {
   仅写每个候选独立 clone；不写输入状态。
 
   调用函数
-  Simulator.clone/applyForcedResourceSelection、StateValue.stateUtility、Evaluator.equipmentMaterialDelta。
+  SearchBudget checkpoint、Simulator.clone/applyForcedResourceSelection、
+  StateValue.stateUtility、Evaluator.equipmentMaterialDelta。
 
   边界与不变量
-  每个候选恰好一次强制 mutation；静态装备持有值从当前效果中剥离，Plunder 接收资产按既有尺度另计；不会递归选择资源。
+  父搜索存在时，nested Simulator 与 State Value 查询必须继承同一个 SearchBudget；
+  每个候选恰好一次强制 mutation；State Value 与装备材料、CardValue 派生项均保持
+  既有 Policy state points，不在查询出口往返换算；技能门槛项只参与资源候选排序，
+  不是概率、State/Final Utility 或单位换算；不会递归选择资源。
   */
-  evaluate({ state, actorId, targetId, purpose, candidates }) {
+  evaluate({ state, actorId, targetId, purpose, candidates, searchBudget = null }) {
     if (!Array.isArray(state?.players) || !Array.isArray(candidates) || !candidates.length) {
       return [];
     }
-    const baseline = this.stateValue.stateUtility(state, actorId);
-    const simulator = this.simulatorFactory(state);
-    return candidates.map((candidate) => {
+    searchBudget?.checkpointCurrentWork?.();
+    const baseline = this.stateValue.stateUtility(state, actorId, searchBudget);
+    const simulator = this.simulatorFactory(state, { searchBudget });
+    const evaluated = [];
+    for (const candidate of candidates) {
+      searchBudget?.checkpointCurrentWork?.();
       const after = simulator.clone(state);
       const actor = after.players.find((player) => player.id === actorId);
       const target = after.players.find((player) => player.id === targetId);
@@ -100,9 +107,10 @@ export class ResourceValueQuery {
         after, actor, target, purpose, candidate
       );
       if (applied <= PROBABILITY_EPSILON) {
-        return { ...candidate, contextualUtility: -Infinity, appliedProbability: 0 };
+        evaluated.push({ ...candidate, contextualUtility: -Infinity, appliedProbability: 0 });
+        continue;
       }
-      const rawStateDelta = this.stateValue.stateUtility(after, actorId) - baseline;
+      const rawStateDelta = this.stateValue.stateUtility(after, actorId, searchBudget) - baseline;
       const equipmentMaterialDelta = this.evaluator.equipmentMaterialDelta(
         state, after, actorId
       );
@@ -110,15 +118,18 @@ export class ResourceValueQuery {
       const acquisitionMaterial = purpose === "plunder"
         ? candidate.acquisitionUtility * RESOURCE_MATERIAL_SCALE * applied
         : 0;
-      return {
+      const skillThresholdOption = (Number(candidate.skillThresholdOption) || 0) * applied;
+      evaluated.push({
         ...candidate,
         appliedProbability: applied,
         rawStateDelta,
         equipmentMaterialDelta,
         contextualStateDelta,
         acquisitionMaterial,
-        contextualUtility: contextualStateDelta + acquisitionMaterial
-      };
-    });
+        skillThresholdOption,
+        contextualUtility: contextualStateDelta + acquisitionMaterial + skillThresholdOption
+      });
+    }
+    return evaluated;
   }
 }

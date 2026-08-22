@@ -33,8 +33,9 @@ searchWorker onmessage、LocalSearchExecutor 与纯 runtime 测试。
 输入
 SearchRequest 与 { yieldControl, now } runtime control。
 
-输出
-WorkerSearchOutcome；Worker error 时返回 workerError outcome 且无 actionDescriptor。
+  输出
+  WorkerSearchOutcome；Worker error 时返回 workerError outcome 且无 actionDescriptor，
+  成功时 stats 含 Worker 墙钟耗时与 workerReturned=true。
 
 读取状态
 request.searchState/searchConfig/rng/rootSearchActions。
@@ -50,6 +51,7 @@ rngAfter 必须存在；cancelled/error 不返回可执行 descriptor；root act
 */
 export async function runSearchRequest(request, runtimeControl = {}) {
   let rng;
+  const workerStartedAt = globalThis.performance?.now?.() ?? Date.now();
   try {
     rng = SearchRng.restore(request.rng);
     const actor = request.searchState.players.find((player) => player.id === request.actorId) ?? null;
@@ -62,14 +64,22 @@ export async function runSearchRequest(request, runtimeControl = {}) {
       actor,
       request.searchState,
       rootActions,
-      { gameId:request.gameId }
+      {
+        gameId:request.gameId,
+        rootCandidateCount:rootActions.length
+      }
     );
     const cancelled = engine.planner.lastSearchStats?.stopReason === "CANCELLED";
+    const workerFinishedAt = globalThis.performance?.now?.() ?? Date.now();
     return createWorkerSearchOutcome({
       request,
       actionDescriptor:cancelled ? null : describeAction(action),
       plannedSequenceDescriptors:cancelled ? [] : engine.planner.lastPlannedSequence,
-      stats:engine.planner.lastSearchStats,
+      stats:{
+        ...engine.planner.lastSearchStats,
+        workerSearchMs:Math.max(0, workerFinishedAt - workerStartedAt),
+        workerReturned:true
+      },
       searchStopReason:engine.planner.lastSearchStats?.stopReason ?? null,
       rngAfter:rng.snapshot(),
       cancelled
